@@ -1,0 +1,218 @@
+/* 배송 추적 UI — 아마존 주문 상세의 배송 영역을 참고했다. */
+:root {
+  --dlv-brand: #232f3e;        /* 아마존 계열의 진한 네이비 */
+  --dlv-accent: #ff9900;
+  --dlv-done: #067d62;         /* 완료 — 아마존의 초록 */
+  --dlv-danger: #d13212;
+  --dlv-muted: #6b7280;
+  --dlv-border: #e5e7eb;
+  --dlv-surface: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dlv-surface: #1f2937;
+    --dlv-border: #374151;
+  }
+}
+
+.dlv {
+  border: 1px solid var(--dlv-border);
+  border-radius: 10px;
+  background: var(--dlv-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dlv--loading, .dlv--pending {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--dlv-muted);
+  font-size: 14px;
+}
+
+/* 사용자가 가장 알고 싶은 것 하나를 크게. */
+.dlv__headline {
+  font-size: 19px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dlv__headline--today     { color: var(--dlv-done); }
+.dlv__headline--done      { color: var(--dlv-done); }
+.dlv__headline--problem   { color: var(--dlv-danger); }
+.dlv__headline--cancelled { color: var(--dlv-muted); }
+.dlv__sub {
+  flex-basis: 100%;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--dlv-muted);
+}
+
+/* 진행 바. 단계 사이를 선으로 잇되, 마지막 단계 뒤에는 선을 그리지 않는다. */
+.dlv__progress {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+}
+.dlv__step {
+  flex: 1;
+  position: relative;
+  text-align: center;
+  color: var(--dlv-muted);
+  font-size: 12px;
+}
+.dlv__step::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 50%;
+  width: 100%;
+  height: 3px;
+  background: var(--dlv-border);
+  z-index: 0;
+}
+.dlv__step:last-child::before { display: none; }
+.dlv__step--done { color: var(--dlv-done); font-weight: 600; }
+.dlv__step--done::before { background: var(--dlv-done); }
+
+.dlv__step-icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--dlv-surface);
+  border: 2px solid var(--dlv-border);
+}
+.dlv__step--done .dlv__step-icon {
+  border-color: var(--dlv-done);
+  color: var(--dlv-done);
+}
+.dlv__step-label { display: block; margin-top: 4px; }
+
+.dlv__note {
+  font-size: 13px;
+  color: var(--dlv-muted);
+  background: rgba(255, 153, 0, 0.1);
+  border-left: 3px solid var(--dlv-accent);
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+
+.dlv__shipment {
+  border: 1px solid var(--dlv-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.dlv__shipment-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.dlv__pkg { font-weight: 600; font-size: 14px; }
+.dlv__carrier { font-size: 12px; color: var(--dlv-muted); }
+
+.dlv__items { list-style: none; margin: 0 0 8px; padding: 0; }
+.dlv__items li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.dlv__items img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+.dlv__items em { color: var(--dlv-muted); font-style: normal; }
+
+.dlv__toggle {
+  background: none;
+  border: none;
+  color: var(--dlv-brand);
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+/* 이력. 최신이 위로 오게 뒤집어 렌더링한다. */
+.dlv__timeline { list-style: none; margin: 8px 0 0; padding: 0 0 0 4px; }
+.dlv__timeline li {
+  display: grid;
+  grid-template-columns: 84px 84px 1fr;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 5px 0;
+  border-left: 2px solid var(--dlv-border);
+  padding-left: 10px;
+}
+.dlv__timeline li:first-child { border-left-color: var(--dlv-done); font-weight: 600; }
+.dlv__loc { color: var(--dlv-muted); }
+@media (max-width: 480px) {
+  /* 좁은 화면에서 3열은 무너진다. 시각·지점을 한 줄로 접는다. */
+  .dlv__timeline li { grid-template-columns: 84px 1fr; }
+  .dlv__loc { grid-column: 2; }
+  .dlv__desc { grid-column: 1 / -1; }
+}
+
+.dlv__external {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--dlv-brand);
+}
+
+.dlv__address { border-top: 1px solid var(--dlv-border); padding-top: 12px; }
+.dlv__address-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.dlv__address-body { font-size: 13px; line-height: 1.6; }
+.dlv__muted { color: var(--dlv-muted); font-size: 12px; font-weight: 400; }
+.dlv__link {
+  background: none;
+  border: none;
+  color: var(--dlv-brand);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+.dlv__cancel {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--dlv-border);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.dlv__cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dlv__error { color: var(--dlv-danger); font-size: 13px; }

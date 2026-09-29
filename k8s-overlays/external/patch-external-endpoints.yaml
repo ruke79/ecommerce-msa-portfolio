@@ -1,0 +1,127 @@
+# 관리형 인프라 엔드포인트. ConfigMap 의 data 는 전략적 병합에서 **키 단위로 합쳐지므로**
+# 여기 적은 키만 덮어쓰고 나머지(FEIGN_*, EUREKA_*, APP_PUBLIC_URL …)는 베이스 값을 유지한다.
+#
+# ⚠️ 비밀은 여기 두지 않는다. 비밀번호·API 키는 k8s/20-secret.yaml(gitignore) 로 간다.
+#    이 파일은 커밋되므로 REPLACE_ME 자리에 실제 호스트를 적어 커밋하지 말 것 —
+#    관리형 엔드포인트 호스트명은 비밀은 아니지만 공격 표면을 넓힌다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+data:
+  # ── PostgreSQL (Neon / Supabase / Aiven) ──────────────────────────────
+  #
+  # 베이스의 JDBC URL 이 `jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/<db>?sslmode=require`
+  # 라서 이 두 키만 바꾸면 10개 데이터소스가 전부 따라온다. 데이터베이스 이름
+  # (userdb·productdb·metadb·cartdb·orderdb·paydb·coupondb·chatdb·notificationdb·deliverydb)과
+  # 역할 이름(product)은 그대로여야 한다 — ops/25-provision-external-postgres.sh 가 만든다.
+  #
+  # ⚠️ 풀러(pooler) 엔드포인트를 쓸 경우: PgBouncer transaction 모드는 서버 사이드 프리페어드
+  #    스테이트먼트와 충돌한다. 그때는 URL 에 &prepareThreshold=0 이 필요한데, 그건 이 두 키로는
+  #    못 넣고 각 Deployment 의 SPRING_DATASOURCE*_URL 을 패치해야 한다(docs/32 §5).
+  #
+  # ── 호스트명을 어디서 얻나 ────────────────────────────────────────────
+  #
+  # §2 에서 쓴 ADMIN_URL 에 이미 들어 있다. 콘솔에서 눈으로 옮겨 적지 말고 뽑아낸다:
+  #
+  #     echo "$ADMIN_URL" | sed -E 's|.*@([^/:?]+).*|\1|'
+  #     # → ep-<이름>-<ID>.<리전>.aws.neon.tech   ← 실제 값. 이 예시를 복사하지 말 것
+  #
+  # ⚠️ **호스트명만** 넣는다. 다음은 전부 들어가면 안 된다:
+  #     · `postgresql://` 스킴          · `사용자:비밀번호@`
+  #     · `:5432` 포트(POSTGRES_PORT 가 따로 있다)
+  #     · `/neondb` 데이터베이스 이름(각 서비스가 자기 DB 를 붙인다)
+  #     · `?sslmode=require`(베이스 URL 에 이미 있다) · `&channel_binding=require`
+  #       (libpq 전용 옵션이다. JDBC 는 모르는 파라미터로 보고 실패한다)
+  #
+  # ⚠️ **`-pooler` 가 붙은 주소를 쓰지 않는다.** PgBouncer transaction 모드는 서버 사이드
+  #    프리페어드 스테이트먼트와 충돌해 `prepared statement "S_1" already exists` 가
+  #    산발적으로 난다. 확인:  case "$HOST" in *-pooler.*) echo "풀러다";; esac
+  POSTGRES_HOST: "REPLACE_ME.example.neon.tech"
+  POSTGRES_PORT: "5432"
+
+  # 무료 티어는 커넥션 수가 곧 한도다. 10 데이터소스 × 3 × 레플리카 3 = 90.
+  # 베이스 기본값 5 로 두면 150 이라 Supabase 직결(60)·Neon 소형 컴퓨트에서 넘친다.
+  DB_POOL_SIZE: "3"
+
+  # ── Redis — **여기서 바꾸지 않는다** ──────────────────────────────────
+  #
+  # Redis 는 클러스터 안에 남기기로 했다(docs/32 §6). 그래서 이 패치는 Redis 키를
+  # 건드리지 않고, 베이스(k8s/10-configmap.yaml)의 `redis.redis.svc.cluster.local` 이
+  # 그대로 쓰인다.
+  #
+  # 근거 요약: 외부화로 아끼는 자원이 50m/64Mi 뿐이다.
+  #
+  # ⚠️ 예전에는 여기에 "캐시·분산락·카운터라 전부 재구성 가능하다"고 적혀 있었는데 **틀렸다.**
+  #    user-service 는 리프레시 토큰과 **로그아웃 블랙리스트**를 Redis 에 둔다. 블랙리스트가
+  #    사라지면 이미 무효화한 토큰이 만료 전까지 되살아난다 — 불편이 아니라 보안 회귀다.
+  #    그래서 90-dev-infra 의 Redis 는 PVC + appendonly 로 바꿨다. 관리형으로 옮길 때도
+  #    영속성이 있는 플랜인지 확인할 것(무료 티어 중에는 휘발성인 것이 있다).
+  #
+  # ⚠️ 그러므로 `kubectl -n redis delete deploy redis` 를 하면 **안 된다.** PG·Mongo 와
+  #    나란히 있어 함께 지우기 쉬운데, Redis 를 쓰는 서비스는 **7개**다:
+  #      cart · catalog · chat · notification · order · pay · user
+  #    즉 12개 중 7개가 기동에 실패한다. 증상은
+  #      `RedisConnectionException: Unable to connect to redis.redis.svc.cluster.local`
+  #      `Connection refused: .../10.43.x.x:6379`
+  #    ⚠️ Service 는 남아 있으므로 **이름은 해석되고 ClusterIP 도 잡힌다.** 그래서
+  #       "DNS 는 되는데 왜 안 되지" 로 보인다 — 뒤에 파드가 없을 뿐이다. 확인:
+  #         kubectl -n redis get endpoints redis     # <none> 이면 파드가 없다
+  #    되살리기: kubectl apply -f k8s/90-dev-infra.yaml (pg·mongo 도 같이 돌아오니 다시 지운다)
+  #
+  # 나중에 관리형(Upstash 등)으로 옮기고 싶다면 여기에 다음을 넣는다. ⚠️ 스토어 경로를
+  # **빈 값으로 덮어써야 한다** — 베이스는 사설 CA 로 발급한 truststore/keystore 경로를
+  # 주입하는데 관리형 Redis 인증서는 공개 CA 로 발급되므로, 경로가 남아 있으면 사설 CA 만
+  # 담긴 트러스트스토어로 검증하다 핸드셰이크가 실패한다(docs/32 §4):
+  #
+  #   SPRING_DATA_REDIS_HOST: "<호스트>.upstash.io"
+  #   SPRING_DATA_REDIS_PORT: "6379"
+  #   SPRING_DATA_REDIS_SSL_ENABLED: "true"
+  #   SPRING_DATA_REDIS_SSL_TRUSTSTORE: ""
+  #   SPRING_DATA_REDIS_SSL_KEYSTORE: ""
+  #   SPRING_DATA_REDIS_SSL_CACERT: ""
+  #   REDIS_HOST: "<호스트>.upstash.io"   # 예전 이름을 읽는 서비스(cart·gateway)용
+  #   REDIS_PORT: "6379"
+  #
+  # 단 Redisson 호환은 검증되지 않았다(docs/32 §6). 옮기기 전에 장바구니 담기로 확인할 것.
+
+  # ── MongoDB (Atlas M0) ────────────────────────────────────────────────
+  #
+  # 접속 문자열 자체는 비밀번호를 포함하므로 **전부 Secret**(SPRING_DATA_MONGODB_CLIENT)에
+  # 있다. 여기서는 인증서 경로만 비운다 — Redis 와 같은 이유다. mongodb+srv 는 TLS 가
+  # 기본이고 Atlas 인증서는 공개 CA 로 발급된다(docs/32 §4).
+  SPRING_DATA_MONGODB_CACERT: ""
+  SPRING_DATA_MONGODB_KEYSTORE: ""
+  #
+  # ⚠️ `MONGODB_HOST` 는 여기서 **덮어쓰지 않는다.** 예전에는 `REPLACE_ME.mongodb.net` 을
+  #    두고 채우라고 했지만, **그 키를 읽는 곳이 없다.** 베이스 ConfigMap 에 값이 있을 뿐
+  #    어떤 매니페스트도 `$(MONGODB_HOST)` 로 전개하지 않고, chat-service 도 참조하지
+  #    않는다 — Mongo 접속은 전적으로 SPRING_DATA_MONGODB_CLIENT 하나로 결정된다.
+  #    게다가 Atlas 는 SRV 주소라 `<클러스터>.xxxxx.mongodb.net` 꼴이어서 저 자리에 무엇을
+  #    넣어야 하는지도 분명하지 않았다. 채울 수도 없고 채워도 쓰이지 않는 REPLACE_ME 는
+  #    apply 전 `grep REPLACE_ME` 점검(docs/33 §8)을 영원히 빨간불로 만든다. 그래서 뺐다.
+
+  # ── Kafka ─────────────────────────────────────────────────────────────
+  #
+  # 클러스터 안에 남는다(docs/32 §3). 상시 무료 관리형 Kafka 가 없다.
+  # 관리형(Confluent Cloud / Redpanda / Aiven)으로 옮길 때는 아래 세 줄의 주석을 풀고,
+  # KAFKA_SASL_USERNAME/PASSWORD 를 Secret 에 넣은 뒤 KAFKA_SSL_*_LOCATION 을 비운다.
+  #
+  #   KAFKA_URL: "pkc-XXXXX.region.provider.confluent.cloud:9092"
+  #   KAFKA_SECURITY_PROTOCOL: "SASL_SSL"
+  #   KAFKA_SASL_MECHANISM: "PLAIN"
+  #   KAFKA_SSL_TRUST_STORE_LOCATION: ""
+  #   KAFKA_SSL_KEY_STORE_LOCATION: ""
+  KAFKA_URL: "kafka.kafka.svc.cluster.local:9092"
+  # ⚠️ 프로토콜을 URL 과 **같이** 못박는다. 베이스 ConfigMap 의 기본값은 SSL 인데
+  #    90-dev-infra 의 브로커는 PLAINTEXT 리스너 하나뿐이다. 둘이 어긋나면 모든 Kafka
+  #    클라이언트가 핸드셰이크에서 실패한다. 지금까지 이 조합이 드러나지 않은 이유는
+  #    ops/13 이 적용 시 sed 로 PLAINTEXT 로 덮어썼기 때문인데, 그 우회는 ops/13 경로에만
+  #    있고 이 오버레이로 배포하면 적용되지 않았다.
+  #    관리형 Kafka 로 옮길 때는 위 주석 블록처럼 이 값도 함께 바꾼다.
+  KAFKA_SECURITY_PROTOCOL: "PLAINTEXT"
+
+  # ── Elasticsearch ─────────────────────────────────────────────────────
+  # 클러스터 안에 남는다 — nori 플러그인이 필요해서다(docs/32 §3).
+  # 접속 URI 는 41-catalog-service.yaml 이 직접 지정하므로 여기에 없다.

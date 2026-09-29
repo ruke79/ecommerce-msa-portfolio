@@ -1,0 +1,241 @@
+package com.project.userservice.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.Optional;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import com.project.userservice.dto.WithdrawalStatusDto;
+import com.project.userservice.model.User;
+import com.project.userservice.repository.jpa.PasswordResetTokenRepository;
+import com.project.userservice.repository.jpa.ReviewLikeRepository;
+import com.project.userservice.repository.jpa.ShippingAddressRepository;
+import com.project.userservice.repository.jpa.UserRepository;
+import com.project.userservice.repository.jpa.VerificationTokenRepository;
+import com.project.userservice.repository.jpa.WishiItemRepository;
+
+/**
+ * 회원 탈퇴의 <b>되돌릴 수 있는 구간</b>을 고정한다.
+ *
+ * <p>최종 처리는 되돌릴 수 없으므로, "처리한다"보다 "처리하지 않는다"를 더 많이 검증한다 —
+ * 그 사이 취소한 계정, 이미 처리한 계정, 비밀번호가 틀린 신청.
+ */
+@DisplayName("회원 탈퇴")
+class WithdrawalServiceTest {
+
+    private static final Long USER_ID = 1234567890123456789L;
+    private static final String PASSWORD = "correct-horse";
+
+    private UserRepository userRepository;
+    private ShippingAddressRepository shippingAddressRepository;
+    private WishiItemRepository wishItemRepository;
+    private VerificationTokenRepository verificationTokenRepository;
+    private PasswordResetTokenRepository passwordResetTokenRepository;
+    private ReviewLikeRepository reviewLikeRepository;
+    private PasswordEncoder passwordEncoder;
+    private com.project.userservice.message.UserOutboxHelper outboxHelper;
+    private WithdrawalService service;
+
+    private User user;
+
+    @BeforeEach
+    void setUp() {
+        userRepository = mock(UserRepository.class);
+        shippingAddressRepository = mock(ShippingAddressRepository.class);
+        wishItemRepository = mock(WishiItemRepository.class);
+        verificationTokenRepository = mock(VerificationTokenRepository.class);
+        passwordResetTokenRepository = mock(PasswordResetTokenRepository.class);
+        reviewLikeRepository = mock(ReviewLikeRepository.class);
+        passwordEncoder = new BCryptPasswordEncoder();
+        outboxHelper = mock(com.project.userservice.message.UserOutboxHelper.class);
+
+        user = new User("tester", "tester@example.com", passwordEncoder.encode(PASSWORD));
+        user.setUserId(USER_ID);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        service = new WithdrawalService(userRepository, shippingAddressRepository,
+                wishItemRepository, verificationTokenRepository, passwordResetTokenRepository,
+                reviewLikeRepository, passwordEncoder, outboxHelper);
+        ReflectionTestUtils.setField(service, "grace", Duration.ofDays(7));
+    }
+
+    // ── 신청 ────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("신청하면 예정일이 유예 기간만큼 뒤로 잡힌다")
+    void requestSchedulesAfterGrace() {
+        WithdrawalStatusDto status = service.request(USER_ID, PASSWORD, "안 씀");
+
+        assertThat(status.pending()).isTrue();
+        assertThat(user.getWithdrawalRequestedAt()).isNotNull();
+        assertThat(status.scheduledAt())
+                .isEqualTo(user.getWithdrawalRequestedAt().plusDays(7));
+        assertThat(status.daysLeft()).isEqualTo(7);
+    }
+
+    @Test
+    @DisplayName("비밀번호가 틀리면 신청되지 않는다 — 되돌릴 수 없는 동작의 본인 확인")
+    void wrongPasswordDoesNotRequest() {
+        assertThatThrownBy(() -> service.request(USER_ID, "wrong", null))
+                .isInstanceOf(BadCredentialsException.class);
+
+        assertThat(user.getWithdrawalRequestedAt()).isNull();
+        verify(userRepository, never()).save(user);
+    }
+
+    @Test
+    @DisplayName("비밀번호를 안 보내도 신청되지 않는다")
+    void missingPasswordDoesNotRequest() {
+        assertThatThrownBy(() -> service.request(USER_ID, null, null))
+                .isInstanceOf(BadCredentialsException.class);
+
+        assertThat(user.getWithdrawalRequestedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("소셜 로그인 계정은 비밀번호 없이 신청한다 — 요구하면 탈퇴할 방법이 없다")
+    void socialAccountNeedsNoPassword() {
+        user.setPassword(null);
+
+        WithdrawalStatusDto status = service.request(USER_ID, null, null);
+
+        assertThat(status.pending()).isTrue();
+    }
+
+    @Test
+    @DisplayName("다시 신청해도 예정일이 밀리지 않는다")
+    void repeatedRequestDoesNotResetTheClock() {
+        LocalDateTime first = LocalDateTime.now().minusDays(3);
+        user.setWithdrawalRequestedAt(first);
+
+        WithdrawalStatusDto status = service.request(USER_ID, PASSWORD, "또 눌렀다");
+
+        assertThat(user.getWithdrawalRequestedAt()).isEqualTo(first);
+        assertThat(status.daysLeft()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("남은 기간은 올림한다 — 23시간 남았는데 '0일'이면 이미 지난 것처럼 읽힌다")
+    void daysLeftRoundsUp() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(6).minusHours(1));
+
+        assertThat(service.status(USER_ID).daysLeft()).isEqualTo(1);
+    }
+
+    // ── 취소 ────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("취소하면 신청 기록이 사라진다")
+    void cancelClearsTheRequest() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(1));
+        user.setWithdrawalReason("사유");
+
+        WithdrawalStatusDto status = service.cancel(USER_ID);
+
+        assertThat(status.pending()).isFalse();
+        assertThat(user.getWithdrawalRequestedAt()).isNull();
+        assertThat(user.getWithdrawalReason()).isNull();
+    }
+
+    @Test
+    @DisplayName("신청한 적 없는 계정의 취소는 아무 일도 하지 않는다")
+    void cancelWithoutRequestIsANoOp() {
+        service.cancel(USER_ID);
+
+        verify(userRepository, never()).save(user);
+    }
+
+    // ── 최종 처리 ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("최종 처리는 식별정보를 지우고 로그인 경로를 닫는다")
+    void finalizeAnonymizes() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(8));
+        String oldPasswordHash = user.getPassword();
+
+        assertThat(service.finalizeWithdrawal(USER_ID)).isTrue();
+
+        assertThat(user.getEmail()).doesNotContain("tester@example.com");
+        assertThat(user.getUsername()).isNotEqualTo("tester");
+        assertThat(user.isEnabled()).isFalse();
+        assertThat(user.getWithdrawnAt()).isNotNull();
+        // 옛 비밀번호로는 더 이상 들어올 수 없다
+        assertThat(user.getPassword()).isNotEqualTo(oldPasswordHash);
+        assertThat(passwordEncoder.matches(PASSWORD, user.getPassword())).isFalse();
+    }
+
+    @Test
+    @DisplayName("익명화한 username 은 20자 제한을 넘지 않는다")
+    void anonymizedUsernameFitsTheColumn() {
+        user.setUserId(Long.MAX_VALUE);          // 가장 긴 식별자
+        when(userRepository.findById(Long.MAX_VALUE)).thenReturn(Optional.of(user));
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(8));
+
+        service.finalizeWithdrawal(Long.MAX_VALUE);
+
+        // @Size(max = 20) 이다. 10진수 TSID 를 그대로 쓰면 19자 + 접두사로 넘친다.
+        assertThat(user.getUsername().length()).isLessThanOrEqualTo(20);
+        assertThat(user.getEmail().length()).isLessThanOrEqualTo(50);
+    }
+
+    @Test
+    @DisplayName("최종 처리는 부속 개인정보를 함께 지운다")
+    void finalizeDeletesPersonalData() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(8));
+
+        service.finalizeWithdrawal(USER_ID);
+
+        verify(shippingAddressRepository).deleteByUserId(USER_ID);
+        verify(wishItemRepository).deleteByUserId(USER_ID);
+        verify(reviewLikeRepository).deleteByUserId(USER_ID);
+        verify(verificationTokenRepository).deleteByUserId(USER_ID);
+        verify(passwordResetTokenRepository).deleteByUserId(USER_ID);
+    }
+
+    /** 🔴 원본만 지우면 chat 의 복제본에 이메일·이름·사진이 남는다(docs/48 §6-⑤). */
+    @Test
+    @DisplayName("🔴 최종 처리는 user-deleted 를 같은 트랜잭션의 아웃박스에 적는다 — 복제본도 지우게")
+    void finalizeTellsReplicas() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(8));
+
+        service.finalizeWithdrawal(USER_ID);
+
+        verify(outboxHelper).recordUserDeleted(USER_ID);
+    }
+
+    @Test
+    @DisplayName("그 사이 취소한 계정은 건드리지 않는다")
+    void finalizeSkipsCancelledAccounts() {
+        // withdrawalRequestedAt 이 null = 취소했다
+        assertThat(service.finalizeWithdrawal(USER_ID)).isFalse();
+
+        assertThat(user.getEmail()).isEqualTo("tester@example.com");
+        verify(shippingAddressRepository, never()).deleteByUserId(USER_ID);
+        verify(outboxHelper, never()).recordUserDeleted(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("이미 처리된 계정을 두 번 처리하지 않는다")
+    void finalizeIsNotRepeated() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(30));
+        user.setWithdrawnAt(LocalDateTime.now().minusDays(23));
+
+        assertThat(service.finalizeWithdrawal(USER_ID)).isFalse();
+
+        verify(shippingAddressRepository, never()).deleteByUserId(USER_ID);
+    }
+}

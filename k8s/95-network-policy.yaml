@@ -1,0 +1,129 @@
+# 네트워크 정책 — 기본 거부 + 허용 목록 (docs/57 §11)
+#
+# ⚠️ kustomization.yaml 에 넣지 않았다. 잘못 막으면 서비스 전체가 끊기므로 **ops/35-network-policy.sh apply** 로만 적용한다 —
+#    적용 직후 허용·차단 흐름을 실제로 두드려 보고, 허용돼야 할 흐름이 하나라도 막히면 스스로 되돌린다.
+#
+# 무엇을 막나: **다른 네임스페이스에서 들어오는 연결.** 지금은 클러스터 안 어느 파드든 user-service 의 내부 API 와 Postgres·
+# Redis·Kafka·Mongo·ES 에 곧바로 붙을 수 있다. 내부 API 의 "신원 헤더 없음 = 내부 호출"(InternalCallGuard) 은 그 전제
+# 위에 있다 — 파드 하나만 뚫리면 전부 열린다(docs/27 §14, docs/54 §10.1).
+#
+# 무엇을 열어 두나:
+#   · ecommerce 안끼리는 모두 — 서비스끼리 Eureka(파드 IP)로 부르고, cloudflared·백업 CronJob 도 여기 있다.
+#   · kube-system(traefik) → frontend·gateway-server — 터널의 나머지 경로가 traefik 을 거친다(k8s-overlays/prod/cloudflared.yaml).
+#   · 인프라 네임스페이스(postgres·redis·kafka·mongodb·elasticsearch)는 ecommerce 와 자기 네임스페이스에서만.
+#   · 노드 자신(kubelet 프로브, kubectl port-forward/exec, 노드의 관측 스택)은 k3s 의 정책 컨트롤러(kube-router)가
+#     정책과 무관하게 허용한다 — ops/35 가 적용 뒤 파드 준비 상태로 확인한다.
+#
+# 무엇을 하지 않나: **나가는(egress) 연결은 막지 않는다.** 외부 결제사·SMS·메일·택배사 API 를 부르고 DNS 를 쓴다 — 그 목록을
+# 틀리면 결제가 멈춘다. 들어오는 쪽만으로 "다른 네임스페이스에서 내부 API·DB 로" 가는 길은 닫힌다.
+#
+# 전제: k3s 는 기본으로 NetworkPolicy 를 집행한다(--disable-network-policy 로 끄지 않았다면). ops/35 가 "막혀야 할 흐름이
+# 실제로 막히는가" 를 두드려 집행 여부도 함께 확인한다 — 집행되지 않으면 이 파일은 아무것도 하지 않는다.
+
+# ── ecommerce ────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ecommerce
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: ecommerce
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-edge
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [ frontend, gateway-server ] }
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+---
+# ── 인프라 — ecommerce 와 자기 네임스페이스에서만 ─────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ecommerce-only
+  namespace: postgres
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ecommerce }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ecommerce-only
+  namespace: redis
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ecommerce }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ecommerce-only
+  namespace: kafka
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ecommerce }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ecommerce-only
+  namespace: mongodb
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ecommerce }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ecommerce-only
+  namespace: elasticsearch
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ecommerce }

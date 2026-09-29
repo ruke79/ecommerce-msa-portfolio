@@ -1,0 +1,10 @@
+{
+  "type": "record", "name": "UserCreatedRequest", "namespace": "com.project.common.avro",
+  "doc": "v2(email 제거 — 소비자 누구도 쓰지 않는다, docs/48 §6-⑥). v1 은 avro-history/. user → coupon·chat 회원 생성. 토픽 user-created. 키 userId.",
+  "fields": [
+    { "name": "userId",   "type": "long" },
+    { "name": "image",    "type": ["null", "string"], "default": null },
+    { "name": "username", "type": ["null", "string"], "default": null },
+    { "name": "nickname", "type": ["null", "string"], "default": null }
+  ]
+}

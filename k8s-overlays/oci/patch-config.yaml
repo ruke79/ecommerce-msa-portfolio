@@ -1,0 +1,20 @@
+# Elasticsearch 를 띄우지 않으므로 헬스 인디케이터를 끈다.
+#
+# 끄지 않으면 catalog-service 의 종합 헬스(/actuator/health)가 계속 DOWN 으로 보인다.
+# ⚠️ readiness 프로브(/actuator/health/readiness)는 readinessState 그룹만 보므로 파드는
+#    정상으로 뜬다 — 즉 **파드는 멀쩡한데 헬스만 빨간** 헷갈리는 상태가 된다.
+#    ops/06 스모크도 여기서 경고를 낸다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+data:
+  MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED: "false"
+  SEARCH_ENGINE: "postgres"
+
+  # 톰캣 워커 스레드. 기본 200개는 스택만으로 서비스당 200MB 가까이 잡는다.
+  # 이 박스의 실효 동시성(2 OCPU / 12서비스)에는 50이면 충분하고도 남는다.
+  # -Xss 로 스택 크기를 줄이는 것보다 안전하다 — 개수를 줄이는 것은 부작용이 없다.
+  # (gateway-server 는 WebFlux 라 이 값을 읽지 않는다. 무해하다.)
+  SERVER_TOMCAT_THREADS_MAX: "50"

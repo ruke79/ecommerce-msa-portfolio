@@ -1,0 +1,253 @@
+# OpenTelemetry Collector — 추적의 단일 입구 (docs/63)
+#
+# OpenTelemetry 데모(open-telemetry/opentelemetry-demo)의 구성을 따랐다:
+#
+#   서비스 ──OTLP/HTTP :4318──▶ Collector ─┬─▶ span_metrics 커넥터 ─▶ :8889 ◀── Prometheus 가 긁는다   (스팬 전부)
+#                                         └─▶ tail_sampling ─▶ Jaeger (저장·검색·UI)                  (고른 추적만)
+#
+# 샘플링은 **여기서, 추적이 끝난 뒤에** 한다(꼬리 샘플링). 서비스는 전부 보낸다(TRACING_SAMPLING_PROBABILITY=1.0).
+#  - 머리 샘플링(서비스가 요청 시작에 동전을 던짐)은 결과를 모르고 고른다 — 10% 로 낮추면 오류 추적도 90% 버려진다.
+#  - RED 지표는 샘플링 **앞**에서 센다 — 샘플링 비율과 상관없이 호출 수 · 오류율 · 지연이 정확하다.
+#
+# 왜 서비스가 Jaeger 로 바로 보내지 않고 한 단계를 거치나(데모도 같다):
+#  - 서비스는 "OTLP 로 localhost/노드에 보낸다" 만 안다. 저장소를 바꾸거나(Jaeger → Tempo) 두 곳에 보내도
+#    서비스 설정·이미지는 그대로다. Zipkin 시절에는 수집기 주소 = 저장소 주소라 둘이 묶여 있었다.
+#  - 추적에서 RED 지표(요청 수·오류·지연)를 뽑는 곳(span_metrics)이 여기다. 서비스마다 따로 계산하지 않는다.
+#  - 개인정보·자격 증명을 **저장 전에** 지우는 마지막 방어선이 여기다(아래 transform/redact · redaction).
+#  - 메모리 상한(memory_limiter)이 있어서, 추적이 폭주해도 노드가 아니라 추적이 버려진다.
+#
+# 이미지 버전은 docker-compose-observability.yml 에 고정했다. 설정 키 이름(otlp_grpc · span_metrics)은
+# 그 버전(0.160)의 이름이다 — 올릴 때는 `otelcol-contrib validate --config` 로 먼저 확인한다(docs/63 §6).
+# [JA] OpenTelemetry Collector — トレースの単一の入口 (docs/63)
+#
+#      OpenTelemetry デモ(open-telemetry/opentelemetry-demo)の構成にならった。
+#
+#      上の図のラベル: 서비스 = サービス / Prometheus 가 긁는다 = Prometheus がスクレイプする /
+#      스팬 전부 = 全スパン / 저장·검색·UI = 保存・検索・UI / 고른 추적만 = 選んだトレースのみ
+#
+#      サンプリングは**ここで、トレースが終わった後に**行う(テールサンプリング)。サービスはすべて送る
+#      (TRACING_SAMPLING_PROBABILITY=1.0)。
+#       - ヘッドサンプリング(サービスがリクエスト開始時にコインを投げる)は結果を知らずに選ぶ — 10% に下げると
+#         エラーのトレースも 90% 捨てられる。
+#       - RED メトリクスはサンプリングの**前**で数える — サンプリング率に関係なく呼び出し数・エラー率・レイテンシが正確である。
+#
+#      なぜサービスが Jaeger に直接送らず一段挟むのか(デモも同じ):
+#       - サービスは「OTLP で localhost/ノードに送る」ことしか知らない。保存先を変えても(Jaeger → Tempo)、二か所に
+#         送っても、サービスの設定・イメージはそのままである。Zipkin 時代はコレクタのアドレス = 保存先のアドレスで、
+#         両者が結び付いていた。
+#       - トレースから RED メトリクス(リクエスト数・エラー・レイテンシ)を取り出す場所(span_metrics)がここである。
+#         サービスごとに別々に計算しない。
+#       - 個人情報・認証情報を**保存前に**消す最後の防衛線がここである(下の transform/redact ・ redaction)。
+#       - メモリ上限(memory_limiter)があるので、トレースが暴走してもノードではなくトレースが捨てられる。
+#
+#      イメージのバージョンは docker-compose-observability.yml で固定した。設定キー名(otlp_grpc ・ span_metrics)は
+#      そのバージョン(0.160)での名前である — 上げるときは `otelcol-contrib validate --config` でまず確認する(docs/63 §6)。
+
+extensions:
+  # ops/05 가 본다. 루프백에만 연다(docker-compose-observability.yml).
+  # [JA] ops/05 が参照する。ループバックにのみ公開する(docker-compose-observability.yml)。
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      # 서비스는 HTTP 만 쓴다(management.otlp.tracing.transport: http). gRPC 는 컨테이너 망 안에서만 연다 —
+      # 노드 밖으로 여는 포트는 4318 하나다.
+      # [JA] サービスは HTTP のみを使う(management.otlp.tracing.transport: http)。gRPC はコンテナネットワーク内でのみ開く —
+      #      ノードの外に開くポートは 4318 だけである。
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # 가장 먼저 — 한도에 닿으면 받기를 거절한다(서비스의 OTLP 내보내기는 그 배치를 버리고 계속 돈다).
+  # 컨테이너 한도(256m)보다 넉넉히 아래에 둔다. Go 런타임 몫이 따로 있다.
+  # [JA] 最初に置く — 上限に達したら受信を拒否する(サービスの OTLP エクスポートはそのバッチを捨てて動き続ける)。
+  #      コンテナの上限(256m)より十分低くしておく。Go ランタイムの取り分が別にある。
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+    spike_limit_mib: 50
+
+  # 🔒 URL 의 쿼리 문자열을 지운다. 경로는 남긴다(어느 API 였는지는 필요하다).
+  # 쿼리에는 자격 증명이 실린다 — OAuth 콜백의 code·state, 가입 인증 링크의 token, 비밀번호 재설정 링크.
+  # 서버 스팬(Spring MVC)의 http.url 은 경로만이지만, 게이트웨이의 클라이언트 스팬과 Feign·WebClient 스팬은
+  # 쿼리까지 싣는다. Zipkin 시절에는 이것이 그대로 저장됐다(docs/63 §4).
+  # [JA] 🔒 URL のクエリ文字列を消す。パスは残す(どの API だったかは必要である)。
+  #      クエリには認証情報が載る — OAuth コールバックの code・state、登録確認リンクの token、パスワード再設定リンク。
+  #      サーバースパン(Spring MVC)の http.url はパスのみだが、ゲートウェイのクライアントスパンと Feign・WebClient の
+  #      スパンはクエリまで載せる。Zipkin 時代はこれがそのまま保存されていた(docs/63 §4)。
+  transform/redact:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(attributes["http.url"], "\\?.*$", "?[redacted]")
+          - replace_pattern(attributes["url.full"], "\\?.*$", "?[redacted]")
+          - replace_pattern(attributes["http.uri"], "\\?.*$", "?[redacted]")
+          - replace_pattern(attributes["uri"], "\\?.*$", "?[redacted]")
+          - delete_key(attributes, "url.query")
+
+  # 🔒 위가 모르는 속성까지 막는 그물 — 키 이름과 값의 모양으로 가린다.
+  #  - 키: password · secret · token · authorization · cookie 가 들어간 속성
+  #  - 값: JWT(액세스·리프레시 토큰은 로그·메시지·URL 어디에도 두지 않는다 — 추적도 마찬가지), 이메일 주소
+  # allow_all_keys: true 여야 한다 — false 면 allowed_keys 에 없는 속성을 **전부** 지운다(데모의 주석과 같다).
+  # [JA] 🔒 上が知らない属性まで防ぐ網 — キー名と値の形でマスクする。
+  #       - キー: password ・ secret ・ token ・ authorization ・ cookie を含む属性
+  #       - 値: JWT(アクセス・リフレッシュトークンはログ・メッセージ・URL のどこにも置かない — トレースも同様)、
+  #         メールアドレス
+  #      allow_all_keys: true でなければならない — false だと allowed_keys に無い属性を**すべて**消す
+  #      (デモのコメントと同じ)。
+  redaction:
+    allow_all_keys: true
+    blocked_key_patterns:
+      - "(?i)password"
+      - "(?i)secret"
+      - "(?i)token"
+      - "(?i)authorization"
+      - "(?i)cookie"
+    blocked_values:
+      - "eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*"
+      - "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+    summary: silent
+
+  # 꼬리 샘플링 — 추적의 스팬이 다 모일 때까지(decision_wait) 들고 있다가 추적 단위로 고른다. 정책은 OR 다
+  # (하나라도 "남긴다" 면 남긴다). 단일 노드라 한 추적의 스팬이 모두 이 Collector 로 온다 — 노드가 여럿이 되면
+  # 추적 id 로 Collector 를 고르는 loadbalancing 내보내기를 앞에 둬야 한다(docs/63 §8).
+  # [JA] テールサンプリング — トレースのスパンがすべて揃うまで(decision_wait)保持し、トレース単位で選ぶ。ポリシーは OR
+  #      (一つでも「残す」なら残す)。単一ノードなので一つのトレースのスパンはすべてこの Collector に来る — ノードが
+  #      複数になったら、トレース id で Collector を選ぶ loadbalancing エクスポーターを前段に置く必要がある(docs/63 §8)。
+  tail_sampling:
+    decision_wait: 30s          # 아웃박스 릴레이 · Kafka 를 건너는 사가도 대개 이 안에 끝난다 ／ [JA] アウトボックスリレー・Kafka をまたぐ Saga もたいていこの時間内に終わる
+    num_traces: 20000           # 결정 전까지 들고 있는 추적 수. 넘치면 오래된 것부터 결정 없이 버린다(경보) ／ [JA] 決定まで保持するトレース数。溢れたら古いものから決定なしで捨てる(アラート)
+    expected_new_traces_per_sec: 20
+    # 결정한 뒤에 늦게 온 스팬(사용자가 PayPal 승인을 몇 분 뒤에 누른 결제 사가 등)도 같은 결정을 따르게 기억한다.
+    # 이것이 없으면 늦은 스팬이 새 결정을 받아 추적이 반쪽만 남는다.
+    # [JA] 決定の後に遅れて届いたスパン(ユーザーが PayPal の承認を数分後に押した決済 Saga など)も同じ決定に従うよう記憶する。
+    #      これが無いと、遅れたスパンが新たな決定を受け、トレースが半分だけ残ることになる。
+    decision_cache:
+      sampled_cache_size: 100000
+      non_sampled_cache_size: 100000
+    policies:
+      # 오류가 난 추적은 모두
+      # [JA] エラーが発生したトレースはすべて
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # 느린 추적은 모두 — 지연 그래프에서 누를 가치가 있는 점(exemplar)은 대개 이쪽이다
+      # [JA] 遅いトレースはすべて — レイテンシグラフでクリックする価値のある点(exemplar)はたいていこちらである
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: ${env:TAIL_SAMPLING_SLOW_MS:-1000}
+      # 돈이 오간 추적은 모두 — 주문 · 결제 · 배송. 둘러보기(상품 · 검색) 요청보다 훨씬 적고, 문의가 오면 봐야 한다
+      # [JA] お金が動いたトレースはすべて — 注文・決済・配送。閲覧(商品・検索)リクエストよりずっと少なく、
+      #      問い合わせが来たら見る必要がある
+      - name: money-path
+        type: string_attribute
+        string_attribute:
+          key: service.name
+          values: [order-service, pay-service, delivery-service]
+      # 나머지는 표본으로
+      # [JA] 残りは標本として(確率サンプリング)
+      - name: baseline
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: ${env:TAIL_SAMPLING_PERCENT:-10}
+
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+connectors:
+  # 샘플링 전 파이프라인 → 샘플링 파이프라인. span_metrics 와 tail_sampling 을 다른 파이프라인에 두기 위한 연결이다.
+  # [JA] サンプリング前のパイプライン → サンプリングパイプライン。span_metrics と tail_sampling を別々のパイプラインに
+  #      置くための接続である。
+  forward/sampling:
+
+  # 추적 → RED 지표. 서비스·스팬 이름·종류·상태 코드별 호출 수와 지연 히스토그램을 만든다.
+  # Prometheus 에서는 traces_span_metrics_calls_total · traces_span_metrics_duration_milliseconds_bucket 이 된다.
+  # Jaeger 의 Monitor 탭과 Grafana 의 "Tracing RED" 대시보드가 이것을 읽는다.
+  # [JA] トレース → RED メトリクス。サービス・スパン名・種別・ステータスコードごとの呼び出し数とレイテンシのヒストグラムを作る。
+  #      Prometheus では traces_span_metrics_calls_total ・ traces_span_metrics_duration_milliseconds_bucket になる。
+  #      Jaeger の Monitor タブと Grafana の "Tracing RED" ダッシュボードがこれを読む。
+  span_metrics:
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+    # 기본 차원(service.name · span.name · span.kind · status.code)에 HTTP 결과만 더한다.
+    # uri 템플릿은 span.name 에 이미 있다. 사용자 id · 주문 id 같은 값은 **절대** 차원으로 두지 않는다 —
+    # 시계열이 요청 수만큼 생긴다.
+    # [JA] デフォルトの次元(service.name ・ span.name ・ span.kind ・ status.code)に HTTP の結果だけを加える。
+    #      uri テンプレートは span.name に既にある。ユーザー id ・注文 id のような値は**決して**次元にしない —
+    #      時系列がリクエスト数だけ生まれてしまう。
+    dimensions:
+      - name: outcome
+    exemplars:
+      enabled: true
+    # 스팬 이름이 폭주해도(예: uri 템플릿이 아닌 실제 경로가 이름에 들어간 스팬) 시계열 수에 상한을 둔다.
+    # [JA] スパン名が暴走しても(例: uri テンプレートではなく実際のパスが名前に入ったスパン)時系列数に上限を設ける。
+    aggregation_cardinality_limit: 2000
+    metrics_flush_interval: 15s
+
+exporters:
+  otlp_grpc/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true      # 같은 도커 망 안 ／ [JA] 同じ Docker ネットワーク内
+    sending_queue:
+      queue_size: 2000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 60s
+
+  # Prometheus 가 긁는다(observability/prometheus.yml 의 otel-collector 작업). OpenMetrics 로 내야 exemplar
+  # (지표의 점 → 그 추적)가 함께 간다. resource 의 service.name 을 service_name 라벨로 내린다 —
+  # Jaeger Monitor 탭이 그 라벨 이름으로 찾는다.
+  # [JA] Prometheus がスクレイプする(observability/prometheus.yml の otel-collector ジョブ)。OpenMetrics で出力して
+  #      初めて exemplar(メトリクスの点 → そのトレース)が一緒に渡る。resource の service.name を service_name ラベルに
+  #      落とす — Jaeger の Monitor タブがそのラベル名で探すためである。
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    enable_open_metrics: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  extensions: [health_check]
+  pipelines:
+    # 스팬 전부 — 가린 뒤 RED 지표로, 그리고 샘플링 파이프라인으로. ⚠️ span_metrics 를 샘플링 뒤로 옮기면
+    # 호출 수가 10% 로 줄고 오류율이 부풀려진다(오류는 다 남고 정상은 10% 만 남으므로). 가드 B-72.
+    # [JA] 全スパン — マスクした後 RED メトリクスへ、そしてサンプリングパイプラインへ。⚠️ span_metrics をサンプリングの
+    #      後ろに移すと、呼び出し数が 10% に減りエラー率が水増しされる(エラーはすべて残り、正常は 10% しか残らないため)。
+    #      ガード B-72。
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/redact, redaction]
+      exporters: [span_metrics, forward/sampling]
+    # 고른 추적만 Jaeger 로
+    # [JA] 選んだトレースだけを Jaeger へ
+    traces/sampled:
+      receivers: [forward/sampling]
+      processors: [tail_sampling, batch]
+      exporters: [otlp_grpc/jaeger]
+    metrics/span_metrics:
+      receivers: [span_metrics]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+  telemetry:
+    # Collector 자신의 지표 — 버린 스팬·내보내기 실패를 경보가 본다(observability/alert-rules.yml).
+    # [JA] Collector 自身のメトリクス — 捨てたスパン・エクスポート失敗をアラートが監視する(observability/alert-rules.yml)。
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      level: info

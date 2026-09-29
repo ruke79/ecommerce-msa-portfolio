@@ -1,0 +1,160 @@
+server:
+  port: 8188
+
+  ssl:
+      key-store: ${LOCAL_KEY_STORE_PATH}
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+      key-password: ${LOCAL_KEY_PASSWORD}
+
+# Kafka 접속 설정은 common/application-common.yml 이 소유한다(docs/18).
+
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    non-secure-port-enabled : false
+    secure-port-enabled : true
+    secure-port : 8188
+
+spring:
+  application:
+    name: notification-service
+
+  config:
+      import: "classpath:application-common.yml, optional:classpath:kafka-secrets.properties"
+
+  datasource:
+      # 커넥션 풀 산정은 다른 서비스와 같다(docs/19 §3). 데이터소스가 하나 늘었으므로
+      # 가드레일 B-32 의 총합 계산에도 이 서비스가 포함된다.
+      hikari:
+        maximum-pool-size: ${DB_POOL_SIZE:5}
+        minimum-idle: ${DB_POOL_MIN_IDLE:2}
+        connection-timeout: 5000
+        leak-detection-threshold: 20000
+        max-lifetime: 1200000
+      url: jdbc:postgresql://localhost:5435/notificationdb?sslmode=require
+      username: product
+      password: ${LOCAL_DB_PASSWORD}
+      properties:
+        ssl: true
+        sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+        sslrootcert: ${LOCAL_KEY_STORE_PATH}
+        sslpassword: ${LOCAL_KEY_PASSWORD}
+
+  # SMTP 접속. notification.mail.provider=smtp 일 때만 쓰인다.
+  #
+  # ⚠️ 값이 없으면 JavaMailSender 빈 자체가 만들어지지 않는다. 그래서 MailConfig 는 이 빈을
+  #    ObjectProvider 로 받는다 — 직접 주입하면 logging 발송기를 쓰려는 경우에도 기동이 실패한다.
+  #
+  # user-service 에 있던 블록을 그대로 옮겨 왔다(docs/29). 타임아웃이 핵심이다:
+  #    기본값은 **무한 대기**라, SMTP 서버가 응답하지 않으면 디스패처 스레드가 영원히 붙잡히고
+  #    다음 주기의 메일까지 전부 밀린다. 메일은 느려도 되지만 멈춰서는 안 된다.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+  data:
+    redis:
+      # 인증번호 발급 속도 제한에 쓴다. 레플리카가 2개 이상이라 인메모리 카운터로는
+      # 제한이 레플리카 수만큼 느슨해진다 — 요금이 걸린 제한이므로 공유 저장소가 필요하다.
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      # 빈 문자열 기본값을 주면 Redisson/Lettuce 가 빈 비밀번호로 AUTH 를 시도하다 실패한다.
+      # 게이트웨이·order·cart 에서 세 번 반복된 실수라 가드레일 B-30 이 막고 있다.
+      password: ${REDIS_PASSWORD:${LOCAL_DB_PASSWORD:}}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+
+  jpa:
+    show-sql: false
+    hibernate:
+      # 스키마는 Flyway 가 소유한다(docs/20). 이 값이 update 면 가드레일 B-33 이 빌드를 막는다.
+      ddl-auto: ${DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+notification:
+  sms:
+    # ⚠️ 기본값이 logging 인 것은 의도적이다. SMS 는 건당 과금이고 되돌릴 수 없다.
+    #    설정이 덜 된 채 배포됐을 때 "아무 문자도 안 나간다"가 "모르는 사이 요금이 나간다"보다 낫다.
+    #    실제 발송은 http 로 명시해야 켜진다.
+    provider: ${SMS_PROVIDER:logging}
+    batch-size: ${SMS_BATCH_SIZE:50}
+    max-attempts: ${SMS_MAX_ATTEMPTS:3}
+    # 🔴 상한만 있고 간격이 없으면 재시도는 이름뿐이다. 폴링 주기가 5초라, 이 값이 없던 동안
+    #    3회가 **15초 만에** 소진됐다 — 게이트웨이가 잠깐 흔들린 경우조차 살아남지 못했다.
+    #    30초 → 60초로 벌어지고 상한에서 멈춘다.
+    retry-backoff-ms: ${SMS_RETRY_BACKOFF_MS:30000}
+    retry-backoff-max-ms: ${SMS_RETRY_BACKOFF_MAX_MS:600000}
+    dispatch-interval-ms: ${SMS_DISPATCH_INTERVAL_MS:5000}
+    dispatch-initial-delay-ms: ${SMS_DISPATCH_INITIAL_DELAY_MS:10000}
+    http:
+      # 공급자를 코드가 아니라 설정으로 기술한다(HttpSmsSender).
+      # 한국: CoolSMS/알리고/NHN Cloud, 일본: Twilio/KDDI 등 — 어느 쪽이든 같은 모양이다.
+      url: ${SMS_API_URL:}
+      auth-header: ${SMS_AUTH_HEADER:Authorization}
+      auth-value: ${SMS_AUTH_VALUE:}
+      # ⚠️ 한국에서는 사전 등록된 발신번호여야 한다(전기통신사업법). 등록되지 않은 번호로
+      #    보내면 공급자가 거부한다 — HttpSmsSender 는 이를 영구 실패로 기록한다.
+      from: ${SMS_FROM:}
+      to-field: ${SMS_TO_FIELD:to}
+      text-field: ${SMS_TEXT_FIELD:text}
+      from-field: ${SMS_FROM_FIELD:from}
+      timeout-ms: ${SMS_TIMEOUT_MS:5000}
+
+  mail:
+    # ⚠️ 기본값이 logging 인 것도 의도적이다. 메일은 대개 공짜지만 **되돌릴 수 없고 평판이 남는다** —
+    #    설정이 덜 된 채 배포돼 테스트 주소로 메일이 나가면 그 하드 바운스가 발신 도메인에 쌓이고,
+    #    한 번 스팸으로 분류된 도메인을 되돌리는 데는 몇 주가 걸린다.
+    #    실제 발송은 smtp 로 명시해야 켜진다.
+    provider: ${MAIL_PROVIDER:logging}
+    # 발신 주소. SPF/DKIM 정렬에 직결되므로 비워 두면 MailConfig 가 기동을 막는다.
+    from: ${MAIL_FROM:}
+    # 수신함에 서비스명이 보이게 한다 — 열람률보다 **사용자가 피싱과 구분할 수 있다**는 쪽이 중요하다.
+    from-name: ${MAIL_FROM_NAME:}
+    batch-size: ${MAIL_BATCH_SIZE:50}
+    # SMS(3회)보다 크다. 그레이리스팅을 쓰는 수신 서버는 처음 온 발신자를 일부러 한 번 거절하고
+    # 재시도를 기다린다 — 상한이 작으면 그런 서버로는 첫 메일이 영영 안 간다.
+    max-attempts: ${MAIL_MAX_ATTEMPTS:5}
+    # 🔴 상한 5회를 **실제로** 그레이리스팅 대비로 만드는 값이다. 이게 없던 동안 선점 질의가
+    #    상한에 닿지 않은 행을 5초마다 무조건 다시 집어, 다섯 번이 **20초 만에** 끝났다.
+    #    그레이리스팅은 보통 수 분을 기다려야 풀리므로 위 주석이 막겠다던 실패가 그대로 났다.
+    #    1 → 2 → 4 → 8분이면 마지막 시도가 약 15분 뒤라 그 구간을 지난다.
+    retry-backoff-ms: ${MAIL_RETRY_BACKOFF_MS:60000}
+    retry-backoff-max-ms: ${MAIL_RETRY_BACKOFF_MAX_MS:1800000}
+    dispatch-interval-ms: ${MAIL_DISPATCH_INTERVAL_MS:5000}
+    dispatch-initial-delay-ms: ${MAIL_DISPATCH_INITIAL_DELAY_MS:10000}
+    # 끝내 발송되지 못한 행의 링크를 지우는 주기와 보존 시간. 링크 자체가 24시간이면 만료되므로
+    # 그 뒤로 DB 에 들고 있을 이유가 없다(MailDispatcher#scrubStaleParams).
+    scrub-interval-ms: ${MAIL_SCRUB_INTERVAL_MS:3600000}
+    params-retention-hours: ${MAIL_PARAMS_RETENTION_HOURS:24}
+
+  verification:
+    # 6자리 코드의 해시에 섞는 값. 이게 없으면 100만 개짜리 무지개 표로 즉시 역산되어
+    # 해시로 저장한 의미가 사라진다. 운영에서는 반드시 주입할 것.
+    pepper: ${SMS_CODE_PEPPER:local-dev-pepper-change-me}
+
+logging:
+  level:
+    root: info
+    com.project.notification_service: ${LOG_LEVEL_APP:info}
+  file:
+    path: ./logs
+    name: ${logging.file.path}/notification_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+  # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
+  # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).

@@ -1,0 +1,43 @@
+# Loki 로그 경보 규칙 — 메트릭이 없는 "사람이 손대야 하는 일" 을 로그로 잡는다 (docs/51 §4i).
+#
+# Loki ruler 가 1분마다 평가해 기존 Alertmanager 로 보낸다 — 받는 채널은 Prometheus 경보와 같다
+# (observability/alertmanager.yml, severity 로 critical/warning 이 갈린다).
+#
+# 경로: docker-compose-observability.yml 이 이 디렉터리를 /etc/loki/rules/fake 에 붙인다. auth_enabled:false
+# 인 Loki 의 테넌트 이름이 "fake" 라 그 아래에 있어야 읽힌다.
+#
+# ⚠️ 문구가 곧 계약이다. 코드의 log.error/warn 문구와 아래 정규식이 어긋나면 경보가 조용히 안 온다 —
+#    ConfigurationGuardrailTest B-61 이 "수동 … 필요" 문구가 전부 MANUAL_ACTION_REGEX 에 걸리는지 본다.
+groups:
+  - name: manual-action
+    interval: 1m
+    rules:
+      # 돈·재고가 이미 움직였는데 뒤따를 일이 실패했다 — 재고 복원·쿠폰 복원 발행 실패, 환불액·통화
+      # 불일치, 취소된 주문에 도착한 결제. 자동 재시도가 없어 사람이 맞춰야 한다.
+      - alert: ManualActionRequired
+        # MANUAL_ACTION_REGEX: 수동 (확인|환불)이? 필요
+        expr: |
+          sum by (service) (count_over_time({job=~"ecommerce.*"} |~ "수동 (확인|환불)이? 필요" [5m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }}: 사람이 확인해야 하는 일이 생겼다"
+          description: >-
+            최근 5분 동안 {{ $labels.service }} 로그에 "수동 확인/환불 필요" 가 {{ $value }} 번 찍혔습니다.
+            Grafana Explore → Loki 에서 {service="{{ $labels.service }}"} |~ "수동 (확인|환불)이? 필요" 로
+            찾고, 줄의 orderId 로 주문을 맞춘 뒤 traceId 로 Jaeger(또는 ops/41-show-trace.sh)에서 앞뒤를 보세요.
+
+  - name: inventory
+    interval: 1m
+    rules:
+      # 판매 중인 옵션의 재고가 0 이 됐다 — catalog-service 가 재고를 차감하다 0 을 만들 때 한 번 찍는다
+      # (StockTransitions, docs/53). 재고를 채우면 재입고 알림을 신청한 손님에게 알림이 간다.
+      - alert: ProductSoldOut
+        # SOLD_OUT_MARKER: 품절 발생
+        expr: |
+          sum by (service) (count_over_time({job=~"ecommerce.*", service="catalog-service"} |= "품절 발생" [5m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "품절 발생 — 재고를 채울 상품이 있다"
+          description: >-
+            최근 5분 동안 {{ $value }} 개 옵션이 품절됐습니다. Grafana Explore → Loki 에서
+            {service="catalog-service"} |= "품절 발생" 으로 상품·사이즈를 확인하세요.

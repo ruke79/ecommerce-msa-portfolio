@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>    
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+
+    <!--
+      🐛 <title> 이 아예 없었다. 그래서 자바스크립트가 실행되기 전(그리고 제목을 세우지
+      않는 화면에서) 탭에 URL 이 그대로 보였다. Header 가 그리던 <title> 은 <body> 안이라
+      React 18 에서는 무시된다 — 화면별 제목은 hook/useDocumentTitle 이 세운다.
+      여기 값은 첫 페인트 전까지의 기본값이다.
+    -->
+    <title>ysyproject</title>
+    <meta name="description" content="ysyproject — 온라인 쇼핑몰" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/logo192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <!--
+      Font Awesome — 채팅 화면의 <i className="fas fa-…"> 아이콘이 쓴다.
+
+      🐛 예전에는 **두 CDN 에서 두 버전**을 받았다(cdnjs 5.8.2 + use.fontawesome.com 5.7.0).
+         · 같은 글꼴을 두 번 내려받는다 — 첫 화면 렌더가 두 번 막힌다
+         · 뒤에 온 5.7.0 이 앞의 5.8.2 를 덮어쓴다. 즉 실제로 쓰이는 것은 **옛 버전**이고
+           최신을 받아 온 요청은 통째로 낭비다
+         · 외부 도메인이 하나 더 늘어난다 — 그만큼 DNS·TLS 왕복이 늘고, 그 도메인이
+           우리 사용자의 방문을 그대로 본다
+      하나만 남긴다. 버전은 이미 쓰이고 있던 5.8.2 그대로다 — 아이콘 이름이 바뀔 여지를
+      만들지 않으려고 올리지 않았다.
+
+      ⚠️ integrity(SRI)는 붙이지 않았다. 해시는 **실제 파일에서 계산해야** 하는데 이
+      작업 환경에서는 CDN 에 나갈 수 없었다. 추측한 해시를 넣으면 브라우저가 스타일시트를
+      통째로 거부해 채팅 아이콘이 전부 사라진다 — 틀린 자물쇠가 없는 자물쇠보다 나쁘다.
+      나갈 수 있는 환경에서 아래로 계산해 붙일 것:
+        curl -s <위 URL> | openssl dgst -sha384 -binary | openssl base64 -A
+      더 나은 방법은 이 CSS 를 의존성으로 받아 번들에 넣는 것이다(외부 도메인 0).
+    -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.8.2/css/all.min.css"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer" />
+</head>
+<body>
+    <div id="root"></div>
+    <div id="modal"></div>
+</body>
+</html>
+    
+    

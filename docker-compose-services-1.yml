@@ -1,0 +1,147 @@
+version: '3.8'
+
+# 공통 앵커: 재시작 정책. 각 서비스는 healthcheck/mem_limit/cpus를 개별 지정한다.
+x-restart-policy: &restart-policy
+  restart: unless-stopped
+
+services:
+  user-service:
+    image: ${USER_SERVICE_IMAGE_NAME}:${USER_SERVICE_IMAGE_VERSION}
+    container_name: user-service
+    hostname: user-service-host
+    <<: *restart-policy
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/user-service:/var/log/user-service
+    environment:
+      - SERVER_PORT=8080
+      - SPRING_APPLICATION_NAME=user-service
+      - SERVER_SSL_KEY_STORE_PASSWORD=
+      - SERVER_SSL_KEY_PASSWORD=
+      - SERVER_SSL_KEY_STORE_ALIAS=
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-1-network
+
+  cart-service:
+    image: ${CART_SERVICE_IMAGE_NAME}:${CART_SERVICE_IMAGE_VERSION}
+    container_name: cart-service
+    hostname: cart-service-host
+    <<: *restart-policy
+    build:
+      context: ./cart-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/cart-service:/var/log/cart-service
+    environment:
+      - SERVER_PORT=8082
+      - SPRING_APPLICATION_NAME=cart-service
+      - SERVER_SSL_KEY_STORE_PASSWORD=
+      - SERVER_SSL_KEY_PASSWORD=
+      - SERVER_SSL_KEY_STORE_ALIAS=
+      # (주의) 다른 서비스는 https 로 eureka/config에 접속하는데 cart만 http 였음 → https 로 통일
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8082' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-1-network
+
+  catalog-service:
+    image: ${CATALOG_SERVICE_IMAGE_NAME}:${CATALOG_SERVICE_IMAGE_VERSION}
+    container_name: catalog-service
+    hostname: catalog-service-host
+    <<: *restart-policy
+    build:
+      context: ./catalog-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/catalog-service:/var/log/catalog-service
+    environment:
+      - SERVER_PORT=8081
+      - SPRING_APPLICATION_NAME=catalog-service
+      - SERVER_SSL_KEY_STORE_PASSWORD=
+      - SERVER_SSL_KEY_PASSWORD=
+      - SERVER_SSL_KEY_STORE_ALIAS=
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8081' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-1-network
+
+  chat-service:
+    image: ${CHAT_SERVICE_IMAGE_NAME}:${CHAT_SERVICE_IMAGE_VERSION}
+    container_name: chat-service
+    hostname: chat-service-host
+    <<: *restart-policy
+    build:
+      context: ./chat-service
+      dockerfile: Dockerfile
+    ports:
+      - "8086:8086"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/chat-service:/var/log/chat-service
+    environment:
+      - SERVER_PORT=8086
+      - SPRING_APPLICATION_NAME=chat-service
+      - SERVER_SSL_KEY_STORE_PASSWORD=
+      - SERVER_SSL_KEY_PASSWORD=
+      - SERVER_SSL_KEY_STORE_ALIAS=
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8086' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-1-network
+
+networks:
+  services-1-network:
+    driver: bridge

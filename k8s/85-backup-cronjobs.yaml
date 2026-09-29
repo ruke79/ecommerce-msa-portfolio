@@ -1,0 +1,352 @@
+# 백업 자동화 — CronJob 으로 클러스터 안에서 돌린다.
+#
+# 왜 매니페스트로 만드나: ops/08·ops/10 은 검증까지 마친 스크립트지만, **어딘가에서 실제로
+# 돌고 있지 않으면 백업이 0인 것과 같다.** docs/15 는 crontab 예시를 적어 뒀는데, 그건 누군가
+# 서버에 손으로 등록해야 하고 등록됐는지 확인할 방법도 없다. CronJob 이면 `kubectl get cronjob`
+# 하나로 마지막 실행 시각이 보이고, 실패하면 이벤트가 남는다.
+#
+# ⚠️ 백업이 "돌고 있다"와 "복구된다"는 다른 얘기다. 주간 복원 훈련(아래 restore-drill)이
+#    그 차이를 메운다 — DROP TABLE 사고를 내고 되돌려 본다(ops/09).
+#
+# ⚠️ PostgreSQL 서버 쪽 준비가 먼저다. pg_basebackup 은 일반 접속이 아니라 **replication
+#    접속**을 쓰는데, 기본 pg_hba.conf 에는 원격 replication 항목이 없다. 준비 없이 적용하면
+#    첫 실행에서 'no pg_hba.conf entry for replication connection' 으로 실패한다.
+#    (실제로 이 매니페스트를 컨테이너에 돌려 보고서야 확인했다.)
+#    `ACTION=check ./ops/08-backup-postgres.sh` 로 wal_level·max_wal_senders·pg_hba 를 먼저 점검할 것.
+#
+# 필요한 것:
+#   · Secret  backup-credentials : PGPASSWORD, MONGO_URI
+#   · PVC     backup-storage      : 백업 보관 (운영에서는 오브젝트 스토리지 권장 — 아래 주석)
+#   · ConfigMap backup-config     : PGHOST, PGUSER 등 (10-configmap.yaml 재사용 가능)
+#
+# ⚠️ **backup-credentials 는 이 파일이 만들지 않는다.** 없으면 파드가 컨테이너를 만들기
+#    전에 `CreateContainerConfigError` 로 멈추고 — **로그가 없다.** redis-auth 와 똑같은
+#    함정이고 실배포에서 실제로 31시간 동안 그 상태로 방치됐다(docs/33 §13). 먼저 만든다:
+#
+#      read -rs MONGO_URI && export MONGO_URI     # 화면에 안 보임
+#      kubectl -n ecommerce create secret generic backup-credentials \
+#        --from-literal=MONGO_URI="$MONGO_URI" \
+#        --from-literal=PGPASSWORD="$PGPASSWORD" \
+#        --dry-run=client -o yaml | kubectl apply -f -
+#      unset MONGO_URI PGPASSWORD
+#
+# ── 관리형 PostgreSQL(external 오버레이)에서는 postgres-backup 이 쓸모없다 ──────
+#
+# `pg_basebackup` 은 replication 프로토콜로 붙는다. Neon·Supabase·Aiven 같은 관리형
+# 서비스는 그 접속을 열어 주지 않는다 — 비밀번호를 아무리 맞춰도 통하지 않는다.
+# **백업은 provider 의 책임**이고(Neon 은 PITR 를 자체 제공한다), 여기서 할 일은 없다.
+#
+# 반대로 **mongo-backup 은 필요하다.** Atlas M0 무료 티어에는 백업이 없다.
+#
+# 그래서 postgres-backup 과 restore-drill 은 **기본이 suspend: true** 다. 되는지 확인한
+# 뒤에 사람이 켜는 편이, 안 되는 채로 매일 실패 이벤트를 쌓는 것보다 낫다:
+#
+#      ACTION=check ./ops/08-backup-postgres.sh          # wal_level·max_wal_senders·pg_hba
+#      kubectl -n ecommerce patch cronjob postgres-backup -p '{"spec":{"suspend":false}}'
+#      kubectl -n ecommerce patch cronjob restore-drill   -p '{"spec":{"suspend":false}}'
+#
+# ⚠️ suspend 된 백업은 **백업이 없는 것과 같다.** 클러스터 안 PostgreSQL 을 쓴다면 위
+#    확인을 마치고 반드시 켤 것. PostgresBackupStale 경보가 잊은 것을 잡아 준다.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      # ⚠️ 이 크기는 **여러분의 데이터 크기 × 보존 일수**로 다시 잡아야 한다.
+      #    가득 차면 백업이 조용히 실패한다 — PostgresBackupStale 경보가 그걸 잡는다.
+      storage: 50Gi
+  # storageClassName: <운영 스토리지클래스>
+  #
+  # 운영 권장: 노드 로컬 PVC 는 클러스터와 운명을 같이한다. 클러스터가 통째로 사라지는
+  # 사고(리전 장애, 잘못된 삭제)에서는 백업도 함께 사라진다. S3/GCS 등 **클러스터 밖**으로
+  # 내보내는 단계를 추가하거나, CNPG 의 barmanObjectStore 를 쓰는 편이 낫다.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: ecommerce
+spec:
+  # ⚠️ 기본 정지. 관리형 PostgreSQL 에서는 pg_basebackup 이 아예 통하지 않고, 클러스터 안
+  #    PostgreSQL 이라도 pg_hba 준비 없이는 첫 실행부터 실패한다. 파일 상단 참조.
+  suspend: true
+  schedule: "0 3 * * *"          # 매일 03:00 UTC
+  timeZone: Etc/UTC              # 명시하지 않으면 노드 시계에 따라 달라진다
+  concurrencyPolicy: Forbid      # 앞 백업이 안 끝났는데 또 시작하면 서로를 방해한다
+  startingDeadlineSeconds: 3600  # 클러스터가 잠깐 죽어 놓친 실행은 1시간 안에 따라잡는다
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7      # 실패는 더 오래 남긴다 — 원인을 봐야 하므로
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          # ⚠️ OnFailure 가 아니라 Never 다. 차이가 실패했을 때 드러난다:
+          #    OnFailure 는 **같은 파드를 그 자리에서 재시작**하고, 백오프 한도에 닿으면
+          #    job-controller 가 그 파드를 **지운다** — 로그가 통째로 사라진다.
+          #    Never 는 시도마다 새 파드를 만들고 실패한 파드를 **남긴다.**
+          #    백업이 왜 실패했는지는 백업이 도는 것만큼 중요하다. 실제로 mongo-backup 이
+          #    14초 만에 실패했는데 파드가 지워져 원인을 볼 수 없었다(docs/33 §13).
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 999        # postgres 이미지의 postgres 사용자
+            fsGroup: 999          # PVC 를 쓸 수 있게
+          containers:
+            - name: pg-basebackup
+              image: postgres:16-alpine
+              env:
+                - name: PGHOST
+                  valueFrom: { configMapKeyRef: { name: ecommerce-config, key: POSTGRES_HOST } }
+                - name: PGUSER
+                  value: postgres
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: PGPASSWORD } }
+                - name: RETENTION_DAYS
+                  value: "14"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+
+                  # 접속 확인. 여기서 걸리면 자격증명이나 호스트 문제다.
+                  if ! psql -U "$PGUSER" -d postgres -tAc 'select 1' >/dev/null 2>&1; then
+                      echo "ERROR: $PGHOST 에 접속할 수 없습니다 (PGUSER=$PGUSER)" >&2
+                      exit 1
+                  fi
+
+                  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+                  DEST="/backup/pg/$STAMP"
+                  mkdir -p "$DEST"
+                  echo ">>> base backup → $DEST"
+
+                  # -X stream 으로 WAL 을 함께 받는다. 이게 없으면 백업 자체로는
+                  # 일관된 복구 시작점이 되지 못한다.
+                  #
+                  # ⚠️ pg_basebackup 은 일반 접속이 아니라 **replication 접속**을 쓴다. 기본
+                  # pg_hba.conf 에는 원격 replication 항목이 없어서 배포 첫날 이렇게 실패한다:
+                  #   FATAL: no pg_hba.conf entry for replication connection from host "..."
+                  # 03:00 에 나는 실패는 아무도 안 본다. 그래서 오류를 붙잡아 원인을 그대로
+                  # 알려 준다. 별도 프리플라이트를 두지 않는 이유는, 실제 동작 자체를 검사로
+                  # 삼는 편이 정확하기 때문이다 — 처음엔 replication 접속을 흉내 내는 프로브를
+                  # 넣었는데 그 프로브가 틀려서, 서버가 정상인데도 실패를 보고했다.
+                  if ! pg_basebackup -D "$DEST" -Ft -z -X stream -P -c fast 2>/tmp/bb.err; then
+                      cat /tmp/bb.err >&2
+                      if grep -qi 'pg_hba.conf entry for replication' /tmp/bb.err; then
+                          echo "" >&2
+                          echo "→ 서버의 pg_hba.conf 에 다음이 필요합니다:" >&2
+                          echo "    host  replication  $PGUSER  <이 파드 대역>/16  scram-sha-256" >&2
+                          echo "  postgresql.conf 에는:  wal_level=replica, max_wal_senders>=2" >&2
+                          echo "  ACTION=check ./ops/08-backup-postgres.sh 가 전체 상태를 점검합니다." >&2
+                      fi
+                      rm -rf "$DEST"
+                      exit 1
+                  fi
+                  # 무결성 확인 — 만들어진 tar 가 실제로 읽히는지 본다.
+                  # "파일이 생겼다"와 "복구에 쓸 수 있다"는 다르다.
+                  for f in "$DEST"/*.tar.gz; do
+                      gzip -t "$f"
+                      echo "    ok: $f ($(stat -c%s "$f") bytes)"
+                  done
+                  echo "$STAMP" > /backup/pg/LATEST
+                  echo ">>> 보존 정리 (${RETENTION_DAYS}일)"
+                  find /backup/pg -maxdepth 1 -type d -name '20*' -mtime "+${RETENTION_DAYS}" \
+                       -exec rm -rf {} + || true
+                  # Prometheus 가 읽을 지표 — PostgresBackupStale 경보의 근거가 된다.
+                  # 파일이 **없는 것 자체**도 경보 대상이다(PostgresBackupMetricMissing).
+                  mkdir -p /metrics
+                  cat > /metrics/pg_backup.prom <<EOF
+                  # HELP ecommerce_pg_backup_last_success_timestamp 마지막 성공 시각
+                  # TYPE ecommerce_pg_backup_last_success_timestamp gauge
+                  ecommerce_pg_backup_last_success_timestamp $(date -u +%s)
+                  EOF
+                  echo ">>> 완료"
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+                - { name: metrics, mountPath: /metrics }
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits:   { cpu: "1",  memory: 1Gi }
+          volumes:
+            - name: backup
+              persistentVolumeClaim: { claimName: backup-storage }
+            - name: metrics
+              hostPath: { path: /var/lib/node_exporter, type: DirectoryOrCreate }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongo-backup
+  namespace: ecommerce
+spec:
+  schedule: "0 4 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          # postgres-backup 과 같은 이유로 Never — 실패한 파드를 남겨 로그를 볼 수 있게 한다.
+          restartPolicy: Never
+          containers:
+            - name: mongodump
+              image: mongo:7
+              env:
+                - name: MONGO_URI
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: MONGO_URI } }
+                - name: RETENTION_DAYS
+                  value: "14"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # MONGO_URI 가 URI 가 아닌 채로 들어오는 사고가 실제로 있었다. mongodump 의
+                  # 에러만 보면 원인이 Secret 인지 네트워크인지 갈리지 않으므로 여기서 먼저
+                  # 자른다. ⚠️ 값은 절대 출력하지 않는다 — 길이와 스킴만 본다.
+                  case "${MONGO_URI:-}" in
+                    mongodb://*|mongodb+srv://*) ;;
+                    *)
+                      echo "!! MONGO_URI 가 mongodb:// 또는 mongodb+srv:// 로 시작하지 않습니다." >&2
+                      echo "   길이=${#MONGO_URI}. backup-credentials Secret 을 확인하세요." >&2
+                      echo "   흔한 원인: \`read -rs MONGO_URI\` 를 여러 줄 블록에 섞어 붙여넣으면" >&2
+                      echo "   셸이 **다음 줄을 값으로 읽어** 갑니다. read 는 따로 실행할 것." >&2
+                      exit 2 ;;
+                  esac
+                  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+                  DEST="/backup/mongo/$STAMP.archive.gz"
+                  mkdir -p /backup/mongo
+                  echo ">>> mongodump → $DEST"
+                  mongodump --uri="$MONGO_URI" --archive="$DEST" --gzip
+                  # gzip 무결성 — 채팅 데이터는 재생성이 불가능하므로 특히 확인한다.
+                  gzip -t "$DEST"
+                  SIZE="$(stat -c%s "$DEST")"
+                  echo "    ok: $DEST ($SIZE bytes)"
+
+                  # ⚠️ gzip -t 는 **빈 아카이브도 통과시킨다.** 실제로 116바이트짜리 덤프가
+                  #    "완료"로 끝난 적이 있다. 아무것도 안 담긴 백업은 백업이 아니므로,
+                  #    무엇이 담겼는지 세어 보고 비어 있으면 크게 알린다.
+                  #    ⚠️ 실패로 끝내지는 않는다 — 갓 배포한 시점에는 정말로 빈 것이 맞다.
+                  if [ "$SIZE" -lt 1024 ]; then
+                    echo "!! 덤프가 ${SIZE}바이트다 — 사실상 비어 있다." >&2
+                    echo "   갓 배포해 채팅 데이터가 없다면 정상이다. 아니라면 확인할 것:" >&2
+                    echo "   · 이 프로젝트는 URI 경로가 아니라 spring.data.mongodb.name 으로" >&2
+                    echo "     DB 를 고른다 — 값은 'chat' 이다. MONGO_URI 가 다른 DB 를" >&2
+                    echo "     가리키면 mongodump 는 성공하고 아무것도 담지 않는다." >&2
+                    echo "   현재 클러스터에 보이는 데이터베이스:" >&2
+                    mongosh "$MONGO_URI" --quiet --eval '
+                      db.getMongo().getDBNames()
+                        .filter(n => !["admin","local","config"].includes(n))
+                        .forEach(n => print("     " + n + ": 컬렉션 " +
+                          db.getSiblingDB(n).getCollectionNames().length + "개"))' >&2 \
+                      || echo "     (mongosh 조회 실패)" >&2
+                  fi
+                  echo "$STAMP" > /backup/mongo/LATEST
+                  find /backup/mongo -maxdepth 1 -type f -name '20*.archive.gz' \
+                       -mtime "+${RETENTION_DAYS}" -delete || true
+                  mkdir -p /metrics
+                  cat > /metrics/mongo_backup.prom <<EOF
+                  # HELP ecommerce_mongo_backup_last_success_timestamp 마지막 성공 시각
+                  # TYPE ecommerce_mongo_backup_last_success_timestamp gauge
+                  ecommerce_mongo_backup_last_success_timestamp $(date -u +%s)
+                  # HELP ecommerce_mongo_backup_last_size_bytes 마지막 덤프 크기
+                  # TYPE ecommerce_mongo_backup_last_size_bytes gauge
+                  # ⚠️ 시각만으로는 "돌았다"까지만 알 수 있다. 빈 덤프도 제시간에 성공한다.
+                  #    크기를 함께 내보내야 MongoBackupEmpty 경보를 걸 수 있다.
+                  ecommerce_mongo_backup_last_size_bytes $SIZE
+                  EOF
+                  echo ">>> 완료"
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+                - { name: metrics, mountPath: /metrics }
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits:   { cpu: "1",  memory: 1Gi }
+          volumes:
+            - name: backup
+              persistentVolumeClaim: { claimName: backup-storage }
+            - name: metrics
+              hostPath: { path: /var/lib/node_exporter, type: DirectoryOrCreate }
+---
+# 주간 복원 훈련.
+#
+# 백업이 도는 것과 복구되는 것은 다른 문제다. 이 CronJob 은 **가장 최근 백업을 빈 인스턴스에
+# 실제로 복원**해 보고, 되지 않으면 실패한다. 실패하면 Job 이 남고 경보가 뜬다.
+#
+# CI 에서도 주 1회 돌지만(ops/09), 거긴 합성 데이터다. 여기서는 **여러분의 실제 백업**을 쓴다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restore-drill
+  namespace: ecommerce
+spec:
+  # ⚠️ 기본 정지. postgres-backup 이 남긴 백업을 되돌려 보는 훈련이라, 그쪽이 꺼져 있으면
+  #    복원할 것이 없다. postgres-backup 을 켤 때 함께 켠다. 파일 상단 참조.
+  suspend: true
+  schedule: "0 5 * * 1"          # 매주 월요일 05:00 UTC
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 8
+  jobTemplate:
+    spec:
+      backoffLimit: 0            # 재시도하지 않는다 — 실패 자체가 알아야 할 신호다
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: drill
+              image: postgres:16-alpine
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  LATEST="$(cat /backup/pg/LATEST)"
+                  SRC="/backup/pg/$LATEST"
+                  echo ">>> 복원 훈련 대상: $SRC"
+                  test -d "$SRC" || { echo "백업 디렉터리가 없습니다"; exit 1; }
+
+                  # 빈 데이터 디렉터리에 풀어 실제로 기동되는지 본다.
+                  # tar 가 풀리는 것만 확인하면 "읽히는 압축 파일"까지만 증명된다.
+                  RESTORE=/tmp/restore
+                  rm -rf "$RESTORE"; mkdir -p "$RESTORE"
+                  tar -xzf "$SRC/base.tar.gz" -C "$RESTORE"
+                  if [ -f "$SRC/pg_wal.tar.gz" ]; then
+                      mkdir -p "$RESTORE/pg_wal"
+                      tar -xzf "$SRC/pg_wal.tar.gz" -C "$RESTORE/pg_wal"
+                  fi
+                  chmod 700 "$RESTORE"
+
+                  echo ">>> 복원본 기동"
+                  pg_ctl -D "$RESTORE" -o "-p 5433 -c listen_addresses=127.0.0.1" -w -t 120 start
+
+                  echo ">>> 데이터가 실제로 읽히는지 확인"
+                  psql -h 127.0.0.1 -p 5433 -U postgres -tAc \
+                    "select count(*) from information_schema.tables where table_schema not in ('pg_catalog','information_schema')" \
+                    | while read n; do
+                        echo "    사용자 테이블 $n 개"
+                        [ "$n" -gt 0 ] || { echo "복원본에 테이블이 없습니다 — 백업이 비어 있습니다"; exit 1; }
+                      done
+
+                  pg_ctl -D "$RESTORE" -m immediate stop
+                  echo ">>> 복원 훈련 통과 ($LATEST)"
+              env:
+                - name: PGUSER
+                  value: postgres
+              volumeMounts:
+                - { name: backup, mountPath: /backup, readOnly: true }
+              securityContext:
+                runAsUser: 999
+              resources:
+                requests: { cpu: 200m, memory: 512Mi }
+                limits:   { cpu: "2",  memory: 2Gi }
+          volumes:
+            - name: backup
+              persistentVolumeClaim: { claimName: backup-storage }

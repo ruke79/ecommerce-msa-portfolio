@@ -1,0 +1,294 @@
+server:
+  port: 8084
+
+  ssl:    
+      key-store: ${LOCAL_KEY_STORE_PATH}    
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+      key-password: ${LOCAL_KEY_PASSWORD}
+
+# Kafka 접속 설정은 common/application-common.yml 이 소유한다.
+#
+# 여기에는 개발자 PC 의 절대 경로가 그대로 박혀 있었다:
+#     trust-store-location: file:E:/github/amazon-clone-msa/.../local_truststore.jks
+# 그 경로는 다른 어떤 머신에도 존재하지 않으므로, 이 블록은 protocol: "SSL" 을 켜 놓은 채
+# 존재하지도 않는 스토어를 가리키고 있었다. 로컬 브로커가 PLAINTEXT 라 조용히 넘어갔을 뿐이다.
+#
+# 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
+# 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    non-secure-port-enabled : false
+    secure-port-enabled : true
+    secure-port : 8084
+  
+
+feign:
+  # 서비스 간 Feign 호출 대상. 기존에는 어디에도 정의돼 있지 않아
+  # @FeignClient(url="${feign.*-url}") 해석 실패로 기동 자체가 불가능했다.
+  # 환경변수(FEIGN_*_URL, k8s ConfigMap)로 오버라이드 가능.
+  cart-url: ${FEIGN_CART_URL:https://localhost:8082}
+  catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
+  user-url: ${FEIGN_USER_URL:https://localhost:8080}
+  # 주문 총액을 서버에서 계산할 때 쿠폰 할인액을 물어본다(docs/40 #10).
+  coupon-url: ${FEIGN_COUPON_URL:https://localhost:8183}
+  # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
+  # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
+  # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.
+
+spring:
+  application:
+    name: order-service
+
+
+  config:
+      import: "classpath:application-common.yml, optional:classpath:kafka-secrets.properties"    
+      #import: optional:configserver:https://localhost:8888
+  
+  datasource:
+      # 커넥션 풀 산정 (docs/19).
+      # 기본값 10 을 그대로 두면 데이터소스 8개 × 10 = 80 커넥션이고, HPA 로 레플리카가
+      # 2개만 돼도 160 으로 PostgreSQL 기본 max_connections(100)를 **산술적으로 초과**한다.
+      # 그 순간의 증상은 '느려짐'이 아니라 'FATAL: sorry, too many clients already' —
+      # 늦게 뜬 파드가 통째로 기동 실패한다.
+      # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
+      # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+      hikari:
+        maximum-pool-size: ${DB_POOL_SIZE:5}
+        minimum-idle: ${DB_POOL_MIN_IDLE:2}
+        # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+        connection-timeout: 5000
+        # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
+        leak-detection-threshold: 20000
+        max-lifetime: 1200000
+      url: jdbc:postgresql://localhost:5435/orderdb?sslmode=require
+      username: product
+      password: ${LOCAL_DB_PASSWORD}
+      properties:
+        ssl: true
+        sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+        sslrootcert: ${LOCAL_KEY_STORE_PATH}
+        sslpassword: ${LOCAL_KEY_PASSWORD}
+  # Redis: order-service 의 RedisCacheConfig/RedissonConfig 가 요구하는 프로퍼티인데
+  # 기존에는 어디에도 정의돼 있지 않아 'Could not resolve placeholder spring.data.redis.host'
+  # 로 기동 자체가 불가능했다. 환경변수로 오버라이드 가능.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # 다른 서비스는 전부 LOCAL_DB_PASSWORD 로 Redis 에 인증하는데 여기만 기본값이 빈 값이었다.
+      # requirepass Redis 앞에서 order-service 만 WRONGPASS 로 기동 실패 — 스테이징 리허설에서 실측.
+      password: ${REDIS_PASSWORD:${LOCAL_DB_PASSWORD:}}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+        cacert: ${LOCAL_CACERT_PATH:}
+        keystore: ${LOCAL_KEY_STORE_PATH:}
+        truststore: ${LOCAL_TRUST_STORE_PATH:}
+        storePassword: ${LOCAL_KEY_PASSWORD:}
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: ${DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect : org.hibernate.dialect.PostgreSQLDialect
+
+# PayPal 결제 검증 (docs/35).
+#
+# ⚠️ 예전에는 브라우저가 보낸 "결제했다"를 서버가 그대로 믿었다. 이제 서버가 PayPal 에
+#    직접 조회해 상태·금액·통화를 대조한다. 그래서 여기서 **처음으로 시크릿이 필요해진다.**
+#
+# mode 기본값이 http 인 것이 중요하다 — 자격증명이 없으면 **기동이 실패한다.** 그게 의도다.
+# 검증 없이 돌리려면 PAYPAL_VERIFICATION_MODE=disabled 를 명시해야 하고, 그때는 기동 로그에
+# 경고가 찍힌다. 메일·SMS 는 반대로 logging 이 기본값인데(docs/29), 안전한 방향이 서로 다르다:
+# 메일은 실수로 **보내는 것**이, 결제는 실수로 **통과시키는 것**이 위험하다.
+# 결제 후 브라우저가 돌아올 곳. Stripe Checkout 은 서버가 성공·취소 URL 을 정해
+# 세션에 넣으므로 order-service 가 프론트 주소를 알아야 한다.
+#
+# 🐛 예전에는 FRONTEND_URL 만 봤는데 그 변수를 **어떤 매니페스트도 설정하지 않았다.**
+#    클러스터에서는 조용히 https://localhost:3000 이 되어 Stripe 결제 뒤 브라우저가
+#    사용자 자기 PC 의 3000 포트로 돌아갔다 — 결제는 됐는데 주문은 "확인 중" 에 멈춘다
+#    (웹훅이 결국 반영하지만 사용자는 그 사이 아무것도 못 본다).
+#    이미 모든 서비스가 아는 APP_PUBLIC_URL(configmap · 사이트 주소)을 기본으로 쓴다.
+#    FRONTEND_URL 은 프론트가 다른 호스트에 있을 때만 따로 준다.
+frontend:
+  url: ${FRONTEND_URL:${APP_PUBLIC_URL:https://localhost:3000}}
+
+# ── Stripe ────────────────────────────────────────────────────────────────
+#
+# 기본값이 꺼짐인 것은 PayPal 과 반대다. PayPal 검증은 이미 쓰는 수단이라 "설정을
+# 깜빡하면 검증 없이 통과" 가 되면 안 되므로 기본이 켜짐이다. Stripe 는 새로 추가되는
+# 수단이라, 설정하지 않은 환경에서 기동이 실패하면 기존 배포가 전부 멈춘다.
+# 대신 **켠 뒤에 자격증명이 없으면 기동을 막는다** — 반쯤 켜진 상태가 제일 나쁘다.
+#
+# 🔑 test/live 스위치는 없다. Stripe 비밀키가 sk_test_ / sk_live_ 로 스스로 말하므로
+#    따로 두면 키와 어긋난 스위치가 거짓말이 된다. 기동 로그가 어느 쪽인지 찍는다.
+# ── 포트원(구 아임포트) ────────────────────────────────────────────────────
+#
+# Stripe 와 같은 규칙: 기본 꺼짐, 켠 뒤 키가 없으면 기동 실패.
+#
+# ⚠️ Stripe 는 키가 sk_test_/sk_live_ 로 테스트 여부를 말하지만 **포트원은 그렇지 않다** —
+#    테스트/실결제는 상점에 연결된 PG 설정이 정한다. 기동 로그에 키 앞 4자리를 찍으니
+#    프론트의 REACT_APP_PORTONE_IMP_CODE(가맹점 식별코드)와 짝이 맞는지 확인할 것.
+portone:
+  enabled: ${PORTONE_ENABLED:false}
+  # v1 = 아임포트(imp_key · 가맹점 식별코드 imp…), v2 = api.portone.io(API Secret · Store ID).
+  # 계정이 정한다 — 콘솔에 imp… 가 없고 store-… 만 보이면 v2 다. 프론트 빌드 인자도 같이 바뀐다.
+  version: ${PORTONE_VERSION:v1}
+  api-base-url: ${PORTONE_API_BASE_URL:https://api.iamport.kr}
+  # 🔒 Secret 에서만 온다. 절대 커밋하지 않는다.
+  api-key: ${PORTONE_API_KEY:}
+  api-secret: ${PORTONE_API_SECRET:}
+  connect-timeout-ms: ${PORTONE_CONNECT_TIMEOUT_MS:3000}
+  read-timeout-ms: ${PORTONE_READ_TIMEOUT_MS:5000}
+  v2:
+    api-base-url: ${PORTONE_V2_API_BASE_URL:https://api.portone.io}
+    # 🔒 Secret 에서만 온다. V2 API Secret 은 토큰 교환 없이 매 요청의 Authorization 에 그대로 실린다.
+    api-secret: ${PORTONE_V2_API_SECRET:}
+    # 콘솔에서 웹훅 엔드포인트를 만들면 나오는 whsec_… — Standard Webhooks 서명 키.
+    webhook-secret: ${PORTONE_V2_WEBHOOK_SECRET:}
+
+# ── 통화 — 결제수단마다 다르다 ────────────────────────────────────────────
+#
+# base-currency 는 **상점 통화**다: 카탈로그 가격 · Order.total · 매출 집계 · pay-service.
+# providers.* 는 그 제공자에게 **실제로 청구하는 통화**. 둘이 다르면 주문을 만들 때 rates 의
+# 환율로 청구액을 정해 주문에 저장하고(currency · charged_amount · fx_rate), 결제 확인과
+# 환불은 그 저장값과 대조한다.
+#
+# 예 — 포트원(국내 PG)은 KRW 로만 결제되므로 PORTONE_CURRENCY=KRW, FX_RATE_KRW=1350.
+#      일본 결제를 시험하려면 STRIPE_CURRENCY=JPY, FX_RATE_JPY=150 (Stripe 대시보드가 JPY 를
+#      받도록 돼 있어야 한다). PayPal 도 PAYPAL_CURRENCY=JPY 가 되지만 **프론트의
+#      PayPalScriptProvider 통화는 주문의 청구 통화로 런타임에 바뀐다**(Payment.jsx).
+#
+# rates.* 는 고정 환율이다. 청구 통화의 환율이 없으면 그 결제수단으로는 **주문 생성이
+# 실패**한다 — 조용히 환율 1 로 청구하지 않는다.
+#
+# fx.live.enabled=true 면 Frankfurter(ECB 참조 환율, 키 없음)에서 받은 값을 먼저 쓴다.
+# 그래도 rates.* 는 남긴다 — API 가 죽으면 대비책이고, 실시간 값이 고정값과
+# fx.max-deviation-percent 넘게 다르면 고정값을 쓰고 경고한다(청구액이 열 배가 되는 사고의
+# 마지막 방어선). 어느 쪽이든 환율은 주문에 고정된다(fx_rate). ECB 는 평일 하루 한 번
+# 갱신하므로 ttl 을 더 짧게 해도 값이 더 자주 바뀌지는 않는다.
+# ⚠️ 파드에서 api.frankfurter.app 으로 나가는 HTTPS 가 열려 있어야 한다.
+payment:
+  base-currency: ${STORE_CURRENCY:USD}
+  providers:
+    PAYPAL: ${PAYPAL_CURRENCY:${STORE_CURRENCY:USD}}
+    STRIPE: ${STRIPE_CURRENCY:${STORE_CURRENCY:USD}}
+    PORTONE: ${PORTONE_CURRENCY:KRW}
+    # 무통장입금 — 국내 계좌면 KRW. 손님이 입금할 금액이 이 통화로 안내된다.
+    BANK_TRANSFER: ${BANK_TRANSFER_CURRENCY:${STORE_CURRENCY:USD}}
+  rates:
+    KRW: ${FX_RATE_KRW:1350}
+    JPY: ${FX_RATE_JPY:150}
+    USD: ${FX_RATE_USD:1}
+  fx:
+    max-deviation-percent: ${FX_LIVE_MAX_DEVIATION_PERCENT:30}
+    live:
+      enabled: ${FX_LIVE_ENABLED:false}
+      url: ${FX_LIVE_URL:https://api.frankfurter.app}
+      ttl-minutes: ${FX_LIVE_TTL_MINUTES:60}
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
+
+# ── 무통장입금 (docs/49 §11) — 결제 API 가 아니라 주문 상태 기계 ────────────────
+#
+# NOT_PROCESSED ─(입금 안내: 고객)─▶ UNPAID ─(입금 확인: 관리자)─▶ PAID
+#                                      └─(기한 경과 · 취소)─▶ CANCELED
+# 계좌는 손님에게 보여 주는 값이라 비밀이 아니다 — 그래도 비어 있으면 안내를 시작할 수 없다.
+bank-transfer:
+  enabled: ${BANK_TRANSFER_ENABLED:true}
+  bank: ${BANK_TRANSFER_BANK:}
+  account: ${BANK_TRANSFER_ACCOUNT:}
+  holder: ${BANK_TRANSFER_HOLDER:}
+  deadline-hours: ${BANK_TRANSFER_DEADLINE_HOURS:48}
+  expiry-check-ms: 3600000
+
+# ── 구매 확정 (docs/25 §12) — DELIVERED → COMPLETED, 주문의 마지막 전이 ──────────────
+#
+# 손님이 주문 상세에서 누르거나, 배달 완료 뒤 days 가 지나면 한 시간마다 도는 잡이 자동으로
+# 확정한다. 시뮬레이터로 시험할 때는 ORDER_AUTO_CONFIRM_DAYS=0 으로 두면 다음 주기에 바로 된다.
+order:
+  auto-confirm:
+    enabled: ${ORDER_AUTO_CONFIRM_ENABLED:true}
+    days: ${ORDER_AUTO_CONFIRM_DAYS:7}
+    check-ms: ${ORDER_AUTO_CONFIRM_CHECK_MS:3600000}
+    batch-size: 200
+
+stripe:
+  enabled: ${STRIPE_ENABLED:false}
+  api-base-url: ${STRIPE_API_BASE_URL:https://api.stripe.com}
+  # 🔒 Secret 에서만 온다. 절대 커밋하지 않는다.
+  secret-key: ${STRIPE_SECRET_KEY:}
+  # 웹훅 서명 비밀(whsec_…). 이것이 없으면 공개 웹훅 엔드포인트를 아무나 호출할 수 있다.
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  connect-timeout-ms: ${STRIPE_CONNECT_TIMEOUT_MS:3000}
+  read-timeout-ms: ${STRIPE_READ_TIMEOUT_MS:5000}
+
+paypal:
+  # ── 샌드박스 / 라이브 ───────────────────────────────────────────────────
+  # 이 한 값이 PayPal 호스트를 정한다. sandbox(기본) 또는 live.
+  #
+  # ⚠️ 서버만 바꿔서는 안 된다. **브라우저에 박히는 client id 도 같은 환경**이어야 한다:
+  #      REACT_APP_PAYPAL_CLIENT_ID  ← 프론트 **빌드 시점**에 박힌다(B-51)
+  #    셋(env · 서버 client-id/secret · 프론트 client id)이 어긋나도 기동은 성공하고,
+  #    증상은 결제 화면까지 간 뒤에야 나온다 — 브라우저는 샌드박스에서 결제를 만들었는데
+  #    서버는 라이브에 조회하니 "그런 주문 없음"이다. 기동 로그에 env 와 client id 앞
+  #    6자리를 찍으므로 그것으로 대조할 것.
+  #
+  # 기본값이 sandbox 인 이유: 설정을 깜빡한 결과가 "테스트에 붙는다"여야지 "실제 돈이
+  # 오간다"여서는 안 된다.
+  env: ${PAYPAL_ENV:sandbox}
+
+  # 호스트를 직접 지정해야 할 때만(사내 프록시 등). 비우면 env 에서 유도한다.
+  # env 와 어긋나면 기동을 막는다 — 조용히 어긋나 있는 것이 애초의 문제였다.
+  api-base-url: ${PAYPAL_API_BASE_URL:}
+  client-id: ${PAYPAL_CLIENT_ID:}
+  client-secret: ${PAYPAL_CLIENT_SECRET:}
+  # (옮겨 갔다) 대조 통화는 이제 payment.* 가 정한다 — 결제수단마다 다를 수 있어서다.
+  verification:
+    mode: ${PAYPAL_VERIFICATION_MODE:http}
+    connect-timeout-ms: ${PAYPAL_CONNECT_TIMEOUT_MS:3000}
+    # 짧게 잡아 '확인 불가'로 거부되는 편이, 길게 잡아 사용자가 빈 화면을 오래 보는 것보다 낫다.
+    # 거부돼도 돈은 PayPal 에 그대로 있고 다시 시도할 수 있다.
+    read-timeout-ms: ${PAYPAL_READ_TIMEOUT_MS:5000}
+
+order-service:
+  # 폴러는 이제 안전망이다 — 행이 커밋되면 곧바로 한 번 릴레이한다(outbox-relay-on-commit, docs/56).
+  # 이 간격은 즉시 릴레이가 놓친 것(발행 실패·커밋 직후 종료)을 되줍는 주기다.
+  outbox-scheduler-fixed-rate: 10000 # 10초
+  outbox-scheduler-initial-delay: 3000 # 3초
+  # false 면 즉시 릴레이를 끄고 폴러만 남는다 — 결제 사가가 다시 폴링 간격 두 번(평균 약 10초)만큼 늦는다.
+  outbox-relay-on-commit: ${OUTBOX_RELAY_ON_COMMIT:true}
+
+logging:
+  level:
+    root: info
+    # 모든 스케줄링 관련 로그를 INFO 이상으로만 기록합니다.
+    org.springframework.scheduling: WARN
+    com.project.order_service: ${LOG_LEVEL_APP:info}
+    org.springframework.jdbc: ${LOG_LEVEL_SQL:warn}
+    org.springframework.orm.jpa: ${LOG_LEVEL_SQL:warn}
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:warn}
+
+  file:
+    path: ./logs
+    name: ${logging.file.path}/order_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+  # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
+  # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+       
+        
+
+    
+        
+        
+
+# 아웃박스 월 파티션을 미리 만든다(common OutboxPartitionAutoConfiguration, docs/09 §4.6).
+# V1 마이그레이션이 만든 파티션은 2027-01 까지다 — 이 잡이 없으면 그 뒤로는 모든 행이 DEFAULT 로 간다.
+outbox:
+  partitions:
+    tables: orders.payment_outbox_event
+    months-ahead: ${OUTBOX_PARTITION_MONTHS_AHEAD:3}

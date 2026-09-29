@@ -1,0 +1,65 @@
+# Prometheus 스크레이프 설정 (docs/03 부록 "관측 지표 체크리스트"의 수집기 역할)
+#
+# 전제:
+#  - 각 서비스는 application-common.yml 로 /actuator/prometheus 를 이미 노출한다.
+#  - 서비스들이 자체 TLS(HTTPS, 자가서명)로 뜨므로 scheme: https + insecure_skip_verify 로 수집한다.
+#    (운영에서는 사설 CA를 ca_file 로 신뢰시키고 skip_verify 를 제거할 것)
+#  - 컨테이너에서 호스트의 서비스에 접근하기 위해 host.docker.internal 을 사용한다
+#    (docker-compose-observability.yml 의 extra_hosts 참조). 서비스가 컨테이너/다른 호스트에
+#    있으면 타깃 주소만 바꾸면 된다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: "spring-actuator"
+    metrics_path: /actuator/prometheus
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+        labels: { service: gateway-server }
+      - targets: ["host.docker.internal:8080"]
+        labels: { service: user-service }
+      - targets: ["host.docker.internal:8081"]
+        labels: { service: catalog-service }
+      - targets: ["host.docker.internal:8082"]
+        labels: { service: cart-service }
+      - targets: ["host.docker.internal:8084"]
+        labels: { service: order-service }
+      - targets: ["host.docker.internal:8086"]
+        labels: { service: chat-service }
+      - targets: ["host.docker.internal:8087"]
+        labels: { service: pay-service }
+      - targets: ["host.docker.internal:8183"]
+        labels: { service: coupon-service }
+      - targets: ["host.docker.internal:8190"]
+        labels: { service: saga-projection }
+
+  # 추적에서 뽑은 RED 지표(docs/63) — Collector 의 span_metrics 커넥터가 :8889 로 낸다.
+  # 서비스 이름은 service_name 라벨이다(job 은 이 작업 이름). OpenMetrics 로 긁어야 exemplar 가 온다 —
+  # Prometheus 기본 협상이 OpenMetrics 를 먼저 청한다.
+  - job_name: "otel-span-metrics"
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # 추적 파이프라인 자신의 건강 — 버린 스팬·내보내기 실패(alert-rules.yml 의 tracing-pipeline).
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector:8888"]
+  - job_name: "jaeger"
+    static_configs:
+      - targets: ["jaeger:8888"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

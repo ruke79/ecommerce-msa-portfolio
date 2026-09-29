@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saga-projection
+  namespace: ecommerce
+  labels:
+    app: saga-projection
+  annotations:
+    # 신원 인증서가 갱신되면(cert-manager — k8s/96) 롤링 재시작 — 자바는 keystore 를 기동할 때만 읽는다. Reloader 가 없으면 아무 일도 없다.
+    secret.reloader.stakater.com/reload: "tls-id-saga-projection"
+spec:
+  # 2 = 활성 1 + 대기(standby) 1. 입력 토픽이 파티션 하나라 활성 태스크는 하나뿐이고, 두 번째 파드는
+  # 변경 로그로 저장소 사본을 유지하며 조회를 로컬에서 답한다(stale 표시). 레플리카를
+  # SAGA_STANDBY_REPLICAS+1 보다 늘리면 사본이 없는 파드가 생겨 그 파드는 503 을 낸다 — 늘릴 때는
+  # 둘을 같이 올릴 것(docs/38 §1.17).
+  replicas: 2
+  selector:
+    matchLabels:
+      app: saga-projection
+  template:
+    metadata:
+      labels:
+        app: saga-projection
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: saga-projection
+          # docker build --build-arg SERVICE_DIR=saga-projection --build-arg SPRING_PROFILES_ACTIVE=local \
+          #   -t <registry>/ecommerce-msa/saga-projection:1.0.0 -f saga-projection/Dockerfile .
+          image: REGISTRY_PLACEHOLDER/ecommerce-msa/saga-projection:1.0.0
+          ports:
+            - containerPort: 8190
+          envFrom:
+            - configMapRef:
+                name: ecommerce-config
+            - secretRef:
+                name: ecommerce-secrets
+          env:
+            - name: SPRING_APPLICATION_NAME
+              value: "saga-projection"
+            # 분산 추적 → 이 노드에서 도는 관측 스택의 OTel Collector(docker-compose-observability.yml, :4318)
+            # (docs/51 §4d, docs/63). 설정 기본값 localhost:4318 은 파드 안에서는 파드 자신이라 추적이 어디에도
+            # 가지 않는다. 노드 IP 는 downward API 로 받는다 — 매니페스트에 IP 를 적지 않는다.
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: "http://$(HOST_IP):4318/v1/traces"
+            # 48-delivery-service.yaml 의 EUREKA_INSTANCE_HOSTNAME 주석과 같은 이유 — 인증서 SAN 은 서비스 DNS 다.
+            - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
+              value: "false"
+            - name: EUREKA_INSTANCE_HOSTNAME
+              value: "saga-projection.ecommerce.svc.cluster.local"
+            # Kafka Streams 의 application.server — 대화형 조회에서 "이 키의 활성/대기 사본이 나인가"를
+            # 판정하는 자기 주소. **파드마다 달라야** 하므로 파드 IP 를 쓴다. 서비스 DNS 를 쓰면 모든
+            # 파드가 자기를 활성이라 믿고 남의 키를 빈 값으로 답한다. 포워딩은 하지 않으므로(파드 IP 는
+            # SAN 에 없다) 이 주소로 실제 HTTP 가 나가지는 않는다.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SAGA_APPLICATION_SERVER
+              value: "$(POD_IP):8190"
+            - name: SAGA_STANDBY_REPLICAS
+              value: "1"
+            # RocksDB 상태. emptyDir 라 파드가 교체되면 사라지고 변경 로그에서 복구한다 — 같은 파드의
+            # 재시작에서는 남아 있어 복구를 건너뛴다. 주문 수 × 수백 바이트라 작다.
+            - name: SAGA_STATE_DIR
+              value: "/app/state"
+            # 서비스 JVM 이 사설 CA 를 신뢰하게 한다(48-delivery-service.yaml 의 JAVA_TOOL_OPTIONS 주석 참조).
+            - name: LOCAL_KEY_STORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: LOCAL_KEY_STORE_PASSWORD
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Djavax.net.ssl.trustStore=/app/resources/truststore.p12
+                -Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)
+                -Djavax.net.ssl.trustStoreType=PKCS12
+                -Djavax.net.ssl.keyStore=/app/identity/keystore.p12
+                -Djavax.net.ssl.keyStorePassword=$(LOCAL_KEY_STORE_PASSWORD)
+                -Djavax.net.ssl.keyStoreType=PKCS12
+            # 서버 쪽 — 부르는 서비스에게 클라이언트 인증서를 요청한다(want: 없어도 연결은 된다 — 프로브·게이트웨이). docs/57 §16
+            - name: SERVER_SSL_CLIENT_AUTH
+              value: "want"
+            - name: LOCAL_KEY_STORE_PATH
+              value: "/app/resources/keystore.p12"
+            - name: LOCAL_TRUST_STORE_PATH
+              value: "/app/resources/truststore.p12"
+            - name: LOCAL_CACERT_PATH
+              value: "/app/resources/ca.crt"
+            - name: LOCAL_CRT_PATH
+              value: "/app/resources/tls.crt"
+            - name: LOCAL_KEY_PATH
+              value: "/app/resources/tls.key"
+          volumeMounts:
+            - name: tls-keystore
+              mountPath: /app/resources
+              readOnly: true
+            # 서비스 자신의 신원(CN=saga-projection) — 다른 서비스를 부를 때 내는 클라이언트 인증서(JVM 기본 keystore, 위 JAVA_TOOL_OPTIONS).
+            # 서버 인증서·Redis·Kafka 는 위 공유 tls-keystore 그대로. 발급: ops/38 (docs/57 §16)
+            - name: tls-id
+              mountPath: /app/identity
+              readOnly: true
+            - name: state
+              mountPath: /app/state
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "384Mi"
+            limits:
+              cpu: "1000m"
+              memory: "768Mi"
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8190
+              scheme: HTTPS
+            # 기동 시 변경 로그에서 상태를 복구한다. 주문 수에 비례하므로 다른 서비스와 같은 5분 예산.
+            failureThreshold: 60
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8190
+              scheme: HTTPS
+            periodSeconds: 15
+          readinessProbe:
+            # readiness 그룹에 kafkaStreams 지표가 들어 있다 — 처리 스레드가 죽어 클라이언트가 내려가면
+            # JVM 은 살아 있어도 트래픽에서 빠진다.
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8190
+              scheme: HTTPS
+            periodSeconds: 10
+      volumes:
+        - name: tls-keystore
+          secret:
+            secretName: tls-keystore
+        - name: tls-id
+          secret:
+            secretName: tls-id-saga-projection
+        - name: state
+          emptyDir:
+            sizeLimit: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saga-projection
+  namespace: ecommerce
+spec:
+  selector:
+    app: saga-projection
+  ports:
+    - port: 8190
+      targetPort: 8190

@@ -1,0 +1,17 @@
+{
+  "type": "record", "name": "ProductUpdateRequest", "namespace": "com.project.common.avro",
+  "doc": "v2(autorizationToken 제거 — catalog 는 읽지 않았다, docs/54 §1.7). v1 은 avro-history/. order → catalog 재고·판매량 갱신. 토픽 product-update. 키 eventId(order-<id>).",
+  "fields": [
+    { "name": "orderProducts", "type": { "type": "array", "items": {
+        "type": "record", "name": "OrderProductRequest", "namespace": "com.project.common.avro",
+        "fields": [
+          { "name": "productId", "type": ["null", "long"], "default": null },
+          { "name": "qty",       "type": "int" },
+          { "name": "size",      "type": ["null", "string"], "default": null },
+          { "name": "colorId",   "type": ["null", "long"], "default": null }
+        ] } }, "default": [] },
+    { "name": "eventId", "type": ["null", "string"], "default": null, "doc": "멱등성 키. null 이면 구버전 생산자" },
+    { "name": "restock", "type": "boolean", "default": false,
+      "doc": "true 면 재고 복원(환불·반품 입고): 수량을 되돌리고 판매량을 뺀다. 키 restock-<orderId>. 기본 false 라 옛 생산자·소비자는 차감으로 읽는다" }
+  ]
+}

@@ -1,0 +1,24 @@
+// saga-projection — 주문 결제 사가의 읽기 모델을 Kafka Streams 로 만든다(docs/38 §1.17).
+//
+// DB 가 없다. 상태는 Streams 의 로컬 저장소(RocksDB) + 변경 로그 토픽이고, 그래서 이 모듈만이
+// 이 저장소에서 유일하게 exactly-once(processing.guarantee=exactly_once_v2)를 실제로 누린다 —
+// 입력 오프셋·상태 변경 로그·출력이 한 Kafka 트랜잭션이다. DB 를 쓰는 15개 리스너는 그럴 수 없다.
+
+dependencies {
+
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.cloud:spring-cloud-starter'
+	implementation 'org.springframework.cloud:spring-cloud-starter-bootstrap'
+	implementation 'org.springframework.cloud:spring-cloud-starter-config'
+	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+	implementation 'org.springframework.kafka:spring-kafka'
+	// 버전은 Spring Boot BOM 이 kafka-clients 와 맞춰 관리한다(3.8.x).
+	implementation 'org.apache.kafka:kafka-streams'
+
+	implementation project(':common')
+
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+	// 브로커 없이 토폴로지를 돌린다 — 입력 레코드를 밀어 넣고 상태 저장소·출력 토픽을 본다.
+	testImplementation 'org.apache.kafka:kafka-streams-test-utils'
+}

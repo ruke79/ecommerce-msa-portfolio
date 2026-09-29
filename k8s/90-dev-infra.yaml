@@ -1,0 +1,433 @@
+# 개발/검증용 인클러스터 인프라 — PostgreSQL(SSL) · Redis · Kafka(KRaft) · MongoDB · Elasticsearch
+#
+# 왜 있나: k8s/10-configmap.yaml 은 kafka.kafka.svc.cluster.local 같은 **인프라 DNS 를 전제**하지만,
+# 그 인프라를 만드는 매니페스트는 저장소에 없었다 — "여러분의 인프라에 맞게 수정하세요"가
+# 새 클러스터에서는 "아무것도 못 띄운다"와 같은 뜻이었다. 이 파일이 그 전제를 채워
+# **빈 k3s/k8s 클러스터에서도 전체 스택이 뜨게** 한다 (ops/13-k3s-deploy.sh 가 사용).
+#
+# ⚠️ 운영용이 아니다: 단일 레플리카 · 고정 dev 자격증명 전제.
+#    운영에서는 CloudNativePG(80-postgres-cnpg.yaml.example)·관리형 Kafka 등으로 교체할 것.
+#
+# ── 무엇이 살아남고 무엇이 사라지나 ────────────────────────────────────
+#
+#   PostgreSQL   PVC(pg-data).    **파드가 교체돼도 데이터가 남는다.**
+#   Kafka        PVC(kafka-data). 토픽·오프셋·KRaft 메타데이터가 남는다. 이게 없으면 파드를
+#                갈 때마다 ops/02-create-dlt-topics.sh 를 다시 돌려야 했고(컴팩션 토픽 포함),
+#                컨슈머 그룹은 auto.offset.reset 으로 되감겨 사가가 재생되거나 건너뛰었다.
+#   MongoDB      PVC(mongo-data). 채팅 메시지는 **원본 데이터**다 — 어디서도 재구성할 수
+#                없다. 앞서 "재구성 가능"이라고 적었던 것은 틀렸다.
+#   Elasticsearch PVC(es-data). 색인은 PostgreSQL 에서 재구성할 수 있지만
+#                (ops/03-enable-es-search.sh), 그 재색인은 수동이고 시간이 든다.
+#                파드가 교체될 때마다 검색이 조용히 빈 결과를 주는 편보다 낫다.
+#   Redis        PVC(redis-data) + AOF. 오래 "캐시라서 날아가도 된다"고 분류해 왔는데,
+#                실제로 들어 있는 것은 그것만이 아니다:
+#                  · 리프레시 토큰 — 날아가면 전원이 다시 로그인해야 한다(눈에 띄는 불편)
+#                  · **로그아웃 블랙리스트** — 날아가면 이미 무효화한 토큰이 다시 유효해진다.
+#                    만료 전까지 되살아나므로 이건 불편이 아니라 **보안 회귀**다.
+#                그래서 스냅샷(RDB)만으로는 부족하다고 보고 appendonly 를 켠다. 기본 RDB 저장
+#                지점은 "60초에 1만 건" 같은 조건이라, 한산한 시간대의 로그아웃 한 건은
+#                디스크에 닿기 전에 파드가 갈릴 수 있다.
+#
+#   PVC 는 클러스터 기본 StorageClass 를 쓴다(k3s 는 local-path 가 기본).
+#   기본 StorageClass 가 없는 클러스터에서는 PVC 가 Pending 으로 남고 파드도 뜨지 않는다:
+#     kubectl get storageclass        # (default) 표시가 있는지 확인
+#
+#   ⚠️ local-path 는 **그 노드의 디스크**다. 노드가 사라지면 데이터도 사라진다.
+#      백업은 ops/08-backup-postgres.sh 가 담당한다.
+#
+# 필요한 시크릿(ops/13 이 생성):
+#   postgres/pg-tls          : tls.crt, tls.key            (ops/07 산출물)
+#   postgres/pg-credentials  : password (role 'product')
+#   redis/redis-auth         : password
+#   mongodb/mongo-auth       : username, password
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: postgres }
+---
+# PostgreSQL 데이터. StorageClass 를 지정하지 않아 **클러스터 기본값**을 쓴다
+# (k3s 는 local-path). 지정하면 그 이름이 없는 클러스터에서 Pending 으로 멈춘다.
+#
+# ⚠️ 이 PVC 를 지우면 데이터가 사라진다. `kubectl delete -f k8s/90-dev-infra.yaml` 은
+#    PVC 까지 지운다 — 인프라를 내릴 때는 Deployment 만 지울 것.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-data
+  namespace: postgres
+spec:
+  accessModes: [ ReadWriteOnce ]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: redis }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: kafka }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: mongodb }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: elasticsearch }
+---
+# ── PostgreSQL ──────────────────────────────────────────────────────────────
+# 서비스 datasource 가 sslmode=require 이므로 SSL 을 켠다. 인증서는 ops/07 산출물.
+# init 스크립트가 ① 인증서를 postgres 소유 600 으로 복사(마운트 원본은 root 소유라 직접 못 읽음 —
+# ops/12 리허설에서 실측한 함정) ② postgresql.conf 에 ssl 설정 추가(명령행 -c 는 엔트리포인트의
+# **초기화용 임시 서버**에도 적용돼 인증서 복사 전에 죽는다 — 같은 리허설의 함정 ③)
+# ③ role 'product' + DB 8종 생성.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-init
+  namespace: postgres
+data:
+  00-init.sh: |
+    #!/bin/bash
+    set -e
+    mkdir -p /var/lib/postgresql/tls
+    cp /pg-tls/tls.crt /pg-tls/tls.key /var/lib/postgresql/tls/
+    chown postgres:postgres /var/lib/postgresql/tls/*
+    chmod 600 /var/lib/postgresql/tls/tls.key
+    cat >> "$PGDATA/postgresql.conf" <<'CONF'
+    ssl = on
+    ssl_cert_file = '/var/lib/postgresql/tls/tls.crt'
+    ssl_key_file = '/var/lib/postgresql/tls/tls.key'
+    CONF
+    psql -v ON_ERROR_STOP=1 -U postgres \
+         -c "CREATE ROLE product LOGIN PASSWORD '$PRODUCT_PASSWORD'"
+    # ⚠️ 이 목록은 k8s/4x-*.yaml 의 JDBC URL 과 **정확히 일치해야** 한다. 서비스를 더하면서
+    #    여기를 빠뜨리면 그 서비스만 `FATAL: database "xxx" does not exist` 로 기동에 실패하고,
+    #    나머지는 멀쩡해서 원인이 그 서비스 안에 있는 것처럼 보인다. 실제로 notificationdb 와
+    #    deliverydb 가 그렇게 빠져 있었다(두 서비스는 이 파일보다 나중에 생겼다).
+    #    ConfigurationGuardrailTest B-40 이 두 목록을 대조한다.
+    for db in userdb productdb metadb cartdb orderdb paydb coupondb chatdb notificationdb deliverydb; do
+        psql -v ON_ERROR_STOP=1 -U postgres -c "CREATE DATABASE $db OWNER product"
+    done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: postgres
+spec:
+  replicas: 1
+  # ⚠️ Recreate 여야 한다. 기본값(RollingUpdate)은 새 파드를 먼저 띄우는데, 그러면 **두
+  #    postgres 프로세스가 같은 PGDATA 를 동시에 연다.** 단일 노드에서는 RWO 볼륨이라도
+  #    같은 노드이므로 둘 다 마운트에 성공하고, 그 결과는 데이터 손상이다. emptyDir 일
+  #    때는 파드마다 볼륨이 따로라 드러나지 않던 문제다.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: mirror.gcr.io/postgres:16-alpine
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: pg-credentials, key: password } }
+            - name: PRODUCT_PASSWORD
+              valueFrom: { secretKeyRef: { name: pg-credentials, key: password } }
+          ports: [ { containerPort: 5432 } ]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: pg-tls, mountPath: /pg-tls, readOnly: true }
+            - { name: pg-init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres"] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: pg-data } }
+        - { name: pg-tls, secret: { secretName: pg-tls } }
+        - { name: pg-init, configMap: { name: pg-init, defaultMode: 0755 } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: postgres
+spec:
+  selector: { app: postgres }
+  ports: [ { port: 5432, targetPort: 5432 } ]
+---
+# ── Redis ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: redis
+spec:
+  accessModes: [ ReadWriteOnce ]
+  # 다른 넷보다 작다. 토큰·락·카운터라 건당 수십 바이트고, AOF 는 재작성으로 잘린다.
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: redis
+spec:
+  replicas: 1
+  # 인스턴스 둘이 같은 AOF/RDB 를 쓰면 파일이 섞인다.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: mirror.gcr.io/redis:7-alpine
+          # $(VAR) 는 kubelet 이 env 로 치환한다 — 비밀번호가 매니페스트에 남지 않는다
+          #
+          # --appendonly yes: 기본값은 RDB 스냅샷뿐이고 저장 지점이 "3600초에 1건,
+          #   300초에 100건, 60초에 1만 건" 이다. 로그아웃 블랙리스트처럼 **한 건이 곧
+          #   보안 의미**인 쓰기가 몇 분씩 디스크에 닿지 않는다는 뜻이라 AOF 를 켠다.
+          #   기록 위치는 작업 디렉터리(/data)이고 아래 볼륨이 거기다.
+          args: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: redis-auth, key: password } }
+          ports: [ { containerPort: 6379 } ]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          readinessProbe:
+            exec: { command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            # AOF 재작성은 순간적으로 메모리를 더 쓴다. 64Mi 요청은 그대로 두되 상한만 올린다.
+            limits: { memory: 384Mi }
+      volumes:
+        # redis 이미지도 엔트리포인트가 root 로 시작해 /data 를 redis 소유로 chown 한다 —
+        # ES 와 달리 fsGroup 이 필요 없다.
+        - { name: data, persistentVolumeClaim: { claimName: redis-data } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: redis
+spec:
+  selector: { app: redis }
+  ports: [ { port: 6379, targetPort: 6379 } ]
+---
+# ── Kafka (KRaft 단일 노드) ─────────────────────────────────────────────────
+# ⚠️ PLAINTEXT 리스너다. 10-configmap 기본값(KAFKA_SECURITY_PROTOCOL: "SSL")과 다르므로
+# 맞춰 주는 쪽이 둘 있다: ops/13 은 적용 시 sed 로 덮어쓰고, k8s-overlays/external 은
+# KAFKA_URL 옆에서 PLAINTEXT 로 못박는다. 브로커 mTLS 는 운영 Kafka 에서 구성할 것.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+  namespace: kafka
+spec:
+  accessModes: [ ReadWriteOnce ]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: kafka
+spec:
+  replicas: 1
+  # ⚠️ postgres 와 같은 이유로 Recreate 다. 브로커 둘이 같은 로그 디렉터리를 열면
+  #    두 번째가 .lock 을 못 잡아 죽거나, 운이 나쁘면 메타데이터가 엉킨다.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: kafka } }
+  template:
+    metadata: { labels: { app: kafka } }
+    spec:
+      # k8s 는 같은 네임스페이스의 Service 를 KAFKA_PORT=tcp://... 형태의 레거시 환경변수로
+      # 자동 주입하는데, cp-kafka 의 설정 스크립트가 이를 브로커 설정 `port` 로 오해해
+      # 기동이 죽는다("port is deprecated..." 후 CrashLoop — 실측). Service 이름이 kafka 인 이상
+      # 피할 수 없으므로 레거시 주입 자체를 끈다(DNS 디스커버리에는 영향 없음).
+      enableServiceLinks: false
+      containers:
+        - name: kafka
+          image: mirror.gcr.io/confluentinc/cp-kafka:7.6.1
+          env:
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093" }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka.kafka.svc.cluster.local:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT" }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "PLAINTEXT" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: CLUSTER_ID, value: "MkU3OEVBNTcwNTJENDM2Qk" }
+            # 로그 디렉터리를 **명시한다.** 이미지 기본값과 같은 경로지만, 아래 마운트
+            # 지점과 한 눈에 맞물려야 한다 — 둘이 어긋나면 브로커는 정상으로 뜨고 데이터만
+            # 볼륨 밖(컨테이너 쓰기 계층)에 쌓인다. 파드를 갈아야만 드러나는 종류다.
+            # KRaft 메타데이터도 여기 있으므로 CLUSTER_ID 와 함께 보존된다.
+            - { name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data" }
+            # 브로커 힙을 명시적으로 묶는다. 기본 1G 힙이면 컨테이너 리밋과 경합해
+            # 프로브/CLI 가 OOM(137) 으로 죽는다 — 실측.
+            - { name: KAFKA_HEAP_OPTS, value: "-Xmx512m -Xms256m" }
+          ports: [ { containerPort: 9092 } ]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/kafka/data }
+          readinessProbe:
+            # kafka-topics 는 JVM 을 하나 더 띄운다 — 리밋이 빠듯한 파드에서는 프로브 자체가
+            # OOM(137) 으로 죽어 브로커가 멀쩡한데도 영원히 0/1 이다(실측). TCP 로 충분하다.
+            tcpSocket: { port: 9092 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        # ⚠️ cp-kafka 는 uid 1000(appuser)으로 돈다. k3s 의 local-path 는 디렉터리를 0777 로
+        #    만들어 주므로 그대로 쓸 수 있지만, 다른 프로비저너에서 권한이 root 전용이면
+        #    브로커가 로그 디렉터리 생성에서 죽는다. 그때 로그에 나오는 문구는 권한이 아니라
+        #    "Failed to create data directory" 라 원인이 바로 보이지 않는다.
+        #    해결은 파드에 securityContext.fsGroup: 1000 을 주는 것이다.
+        - { name: data, persistentVolumeClaim: { claimName: kafka-data } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: kafka
+spec:
+  selector: { app: kafka }
+  ports: [ { port: 9092, targetPort: 9092 } ]
+---
+# ── MongoDB ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-data
+  namespace: mongodb
+spec:
+  accessModes: [ ReadWriteOnce ]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: mongodb
+spec:
+  replicas: 1
+  # postgres·kafka 와 같은 이유. mongod 둘이 같은 dbPath 를 열면 두 번째가 mongod.lock
+  # 때문에 죽고, 그 사이 첫 번째는 종료 중이라 어느 쪽도 서비스하지 못한다.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: mongodb } }
+  template:
+    metadata: { labels: { app: mongodb } }
+    spec:
+      containers:
+        - name: mongodb
+          image: mirror.gcr.io/mongo:7
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom: { secretKeyRef: { name: mongo-auth, key: username } }
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: mongo-auth, key: password } }
+          ports: [ { containerPort: 27017 } ]
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+          readinessProbe:
+            exec: { command: ["mongosh", "--quiet", "--eval", "db.runCommand({ping:1})"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 768Mi }
+      volumes:
+        # mongo 이미지는 엔트리포인트가 root 로 시작해 /data/db 를 mongodb 소유로 chown 한
+        # 뒤 권한을 내린다. 그래서 아래 ES 와 달리 fsGroup 이 필요 없다.
+        - { name: data, persistentVolumeClaim: { claimName: mongo-data } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: mongodb
+spec:
+  selector: { app: mongodb }
+  ports: [ { port: 27017, targetPort: 27017 } ]
+---
+# ── Elasticsearch ───────────────────────────────────────────────────────────
+# 호스트에 vm.max_map_count >= 262144 필요 (ops/13 이 확인/설정).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: es-data
+  namespace: elasticsearch
+spec:
+  accessModes: [ ReadWriteOnce ]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  namespace: elasticsearch
+spec:
+  replicas: 1
+  # 노드 둘이 같은 data 경로를 열면 두 번째가 node.lock 에서 죽는다.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: elasticsearch } }
+  template:
+    metadata: { labels: { app: elasticsearch } }
+    spec:
+      # ⚠️ ES 이미지는 uid 1000 으로 돌면서 데이터 경로를 **chown 하지 않는다.** mongo·postgres
+      #    와 다른 점이다. 경로를 못 쓰면 기동 중에 이렇게 죽는다:
+      #      java.nio.file.AccessDeniedException: /usr/share/elasticsearch/data/nodes
+      #    k3s 의 local-path 는 디렉터리를 0777 로 만들어 주므로 이 설정 없이도 돌지만,
+      #    hostPath 기반 볼륨에는 fsGroup 이 적용되지 않아 이 줄은 그 환경에서 무효다.
+      #    CSI 프로비저너를 쓰는 클러스터에서는 이 줄이 실제로 소유권을 맞춰 준다.
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: elasticsearch
+          image: mirror.gcr.io/elasticsearch:8.15.5
+          env:
+            - { name: discovery.type, value: "single-node" }
+            - { name: xpack.security.enabled, value: "false" }
+            - { name: ES_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+          ports: [ { containerPort: 9200 } ]
+          volumeMounts:
+            - { name: data, mountPath: /usr/share/elasticsearch/data }
+          readinessProbe:
+            httpGet: { path: /_cluster/health, port: 9200 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 200m, memory: 768Mi }
+            limits: { memory: 1536Mi }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: es-data } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: elasticsearch
+spec:
+  selector: { app: elasticsearch }
+  ports: [ { port: 9200, targetPort: 9200 } ]

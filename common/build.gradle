@@ -1,0 +1,149 @@
+plugins	{
+	 id 'java-library'
+	 // AvroMappingContract(DTO ↔ Avro 계약 검사)를 다른 모듈의 테스트가 쓰도록 — chat 의 매핑은 chat-service 에 있다.
+	 id 'java-test-fixtures'
+	 // gRPC 계약(src/main/proto) → 메시지 · 스텁 생성(docs/66). 플랫폼별 protoc 을 알아서 받는다(x86 CI · Ampere 운영 빌드).
+	 id 'com.google.protobuf' version '0.10.0'
+	// id 'org.springframework.boot' version '3.4.1'
+	// id 'io.spring.dependency-management' version '1.1.7'	
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+
+
+bootJar { enabled = false } 
+jar { enabled = true }
+
+// ── Avro ────────────────────────────────────────────────────────────────────
+// 스키마(src/main/avro/*.avsc)에서 SpecificRecord 클래스를 만든다. Gradle Avro 플러그인은
+// 플러그인 포털에서 받히지 않아(프록시) avro-compiler 의 Ant 태스크로 직접 돌린다.
+// 생성물은 build/generated/avro 에 두고 커밋하지 않는다 — 스키마가 진실이다.
+configurations { avroTool }
+dependencies { avroTool 'org.apache.avro:avro-compiler:1.11.4' }
+
+def avroOut = layout.buildDirectory.dir('generated/avro')
+tasks.register('generateAvro') {
+	inputs.dir('src/main/avro')
+	outputs.dir(avroOut)
+	doLast {
+		ant.taskdef(name: 'avroSchema', classname: 'org.apache.avro.compiler.specific.SchemaTask',
+				classpath: configurations.avroTool.asPath)
+		ant.avroSchema(destdir: avroOut.get().asFile, stringType: 'String') {
+			fileset(dir: 'src/main/avro', includes: '**/*.avsc')
+		}
+	}
+}
+sourceSets.main.java.srcDir avroOut
+compileJava.dependsOn 'generateAvro'
+
+// ── gRPC (docs/66) ──────────────────────────────────────────────────────────
+// 스키마(src/main/proto)가 진실이다 — 생성물은 build/generated/source/proto 에 두고 커밋하지 않는다(Avro 와 같다).
+// 런타임 의존성은 compileOnly — common 을 쓰는 서비스 중 gRPC 를 쓰는 것은 catalog · order 뿐이다. 나머지로 Netty 를
+// 끌고 가지 않는다. 쓰는 서비스가 자기 build.gradle 에서 런타임을 얹는다.
+protobuf {
+	protoc { artifact = "com.google.protobuf:protoc:${protobufVersion}" }
+	plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}" } }
+	generateProtoTasks {
+		all().each { task ->
+			// @javax.annotation.Generated 를 붙이지 않는다 — javax.annotation 의존을 늘리지 않는다(@GrpcGenerated 는 남는다).
+			task.plugins { grpc { option '@generated=omit' } }
+		}
+	}
+}
+
+dependencies {
+
+	// 설정 가드레일 테스트(ConfigurationGuardrailTest)용. common 은 java-library 라
+	// 루트의 subprojects 블록이 주는 테스트 의존성을 받지 않으므로 여기서 직접 선언한다.
+	testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+	testImplementation 'org.assertj:assertj-core:3.26.3'
+	testImplementation 'com.fasterxml.jackson.core:jackson-databind'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	// KafkaSecuritySettings 는 설정 키를 문자열로 들고 있다 — common 을 의존하는 모듈 중에는
+	// Kafka 를 아예 쓰지 않는 것들(eureka-server, config-server)이 있어서, 상수 하나 때문에
+	// kafka-clients 를 그쪽 런타임까지 끌고 갈 이유가 없기 때문이다.
+	// 대신 그 문자열이 실제 상수와 일치하는지는 여기서 검증한다 — **테스트 클래스패스에만** 둔다.
+	testImplementation 'org.apache.kafka:kafka-clients'
+	// AggregateKeyPartitioner 는 Partitioner 인터페이스를 구현해야 하므로 컴파일 시점에는 필요하다.
+	// compileOnly 라 common 을 의존하는 모듈의 런타임으로는 전파되지 않는다 — 위와 같은 이유.
+	// 파티셔너를 실제로 쓰는 모듈은 spring-kafka 를 통해 이미 kafka-clients 를 갖고 있다.
+	compileOnly 'org.apache.kafka:kafka-clients'
+	// LoggingRebalanceListener 는 spring-kafka 의 ConsumerAwareRebalanceListener 를 구현한다 — 같은 이유로 compileOnly.
+	compileOnly 'org.springframework.kafka:spring-kafka'
+	testImplementation 'org.springframework.kafka:spring-kafka'
+	// OutboxRelayTrigger 가 커밋 뒤 콜백(TransactionSynchronization)을 건다. 아웃박스를 쓰는 모듈은 JPA 로
+	// 이미 spring-tx 를 갖고 있다 — 위와 같은 이유로 compileOnly.
+	compileOnly 'org.springframework:spring-tx'
+	testImplementation 'org.springframework:spring-tx'
+	// 아웃박스 파티션 잡의 지표(OutboxPartitionAutoConfiguration.Metrics). 파티션을 쓰는 모듈은 actuator 로 이미
+	// micrometer 를 갖고 있다 — 위와 같은 이유로 compileOnly(eureka·config-server 로 끌고 가지 않는다).
+	compileOnly 'io.micrometer:micrometer-core'
+	// 추적 테스트용 OTel 추적기(OtelTestTracing — 운영과 같은 브리지 · W3C 전파, 끝난 span 을 메모리에 모은다).
+	// 이 모듈을 쓰는 서비스의 추적 테스트가 testFixtures 의존성으로 받는다(각 서비스 build.gradle).
+	testFixturesApi 'io.micrometer:micrometer-tracing-bridge-otel'
+	testFixturesApi 'io.opentelemetry:opentelemetry-sdk'
+	testFixturesApi 'io.opentelemetry:opentelemetry-sdk-testing'
+	testImplementation 'io.micrometer:micrometer-tracing-bridge-otel'
+	// 파티션 잡의 실제 PostgreSQL 검증(OutboxPartitionMaintainerPostgresTest — containers 태그, CI 통합 단계).
+	testImplementation 'org.postgresql:postgresql'
+	testImplementation 'org.testcontainers:postgresql'
+	// 관측 설정(observability/*.yml)을 구조로 읽는 가드(B-72) — 파이프라인 순서는 문자열로는 못 본다.
+	testImplementation 'org.yaml:snakeyaml'
+	// MockEnvironment
+	testImplementation 'org.springframework:spring-test'
+
+
+	// Avro 런타임 — 생성된 SpecificRecord 와 단일 객체 인코더가 쓴다. 스키마 레지스트리는 없다:
+	// Confluent 직렬화기는 이 환경의 프록시가 막고, 그 없이도 Avro 의 단일 객체 인코딩(스키마
+	// 지문 헤더)으로 진화가 된다(docs/38 §1.16). api 인 이유: 모듈의 리스너가 생성 클래스를 볼 수 있어야 한다.
+	api 'org.apache.avro:avro:1.11.4'
+
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+	// gRPC 계약 · 부품(docs/66) — compileOnly 인 이유는 protobuf 블록의 주석. 테스트는 실제 TLS 로 돈다.
+	compileOnly platform("io.grpc:grpc-bom:${grpcVersion}")
+	compileOnly 'io.grpc:grpc-protobuf'
+	compileOnly 'io.grpc:grpc-stub'
+	compileOnly 'io.grpc:grpc-netty-shaded'
+	compileOnly "com.google.protobuf:protobuf-java:${protobufVersion}"
+	testImplementation platform("io.grpc:grpc-bom:${grpcVersion}")
+	testImplementation 'io.grpc:grpc-protobuf'
+	testImplementation 'io.grpc:grpc-stub'
+	testImplementation 'io.grpc:grpc-netty-shaded'
+	testImplementation "com.google.protobuf:protobuf-java:${protobufVersion}"
+
+	// 공통 로그 설정(logback-spring.xml)과 마스킹(com.project.common.logging)이 쓴다.
+	// implementation 이어도 런타임에는 common 을 쓰는 모든 서비스로 전파된다 — 공통 logback
+	// 설정이 이 클래스들을 참조하므로 **반드시** 런타임에 있어야 한다. 없으면 logback 설정 오류로
+	// 기동이 실패한다. 버전은 루트 subprojects 블록과 같게 둔다.
+	implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
+
+	// RedisTemplate의 GenericJackson2JsonRedisSerializer의 Java8 날짜 및 시간 지원을 위한 Jackson 모듈
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+}
+
+
+tasks.named('test') {
+	useJUnitPlatform()
+
+	// 이 모듈의 테스트는 **다른 모듈의 파일**을 읽는 가드레일이다
+	// (ConfigurationGuardrailTest 는 각 서비스의 yml·k8s 매니페스트를,
+	//  EntityPersistenceGuardrailTest 는 각 서비스의 엔티티 소스를 훑는다).
+	// 그 파일들은 :common:test 의 선언된 입력이 아니므로, common 자신이 안 바뀌면
+	// Gradle 이 UP-TO-DATE 로 건너뛴다 — 즉 **가드레일이 지켜야 할 바로 그 변경에서
+	// 조용히 실행되지 않는다.** 실제로 다른 모듈의 엔티티를 되돌려 놓고 돌렸을 때
+	// 통과해 버리는 것을 확인했다.
+	//
+	// 저장소 전체를 입력으로 선언하면 build 산출물 때문에 매번 바뀌어 결국 같은 결과이므로,
+	// 캐시를 끄는 쪽이 정직하다. 이 모듈의 테스트는 파일을 읽고 문자열을 검사할 뿐이라
+	// 몇 초면 끝난다.
+	outputs.upToDateWhen { false }
+}

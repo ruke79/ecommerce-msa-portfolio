@@ -1,0 +1,49 @@
+# k8s 환경의 PostgreSQL HA — CloudNativePG(CNPG) 예시 (docs/09 P2, docs/13 §2)
+#
+# ⚠️ .example 확장자인 이유: CNPG 오퍼레이터(CRD)가 설치돼 있지 않으면 apply 가 실패하므로
+#    `kubectl apply -f k8s/` 일괄 적용에서 제외되도록 했다. 사용하려면:
+#
+#   1) 오퍼레이터 설치:
+#      kubectl apply --server-side -f \
+#        https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.1.yaml
+#   2) 이 파일을 80-postgres-cnpg.yaml 로 복사해 값 수정 후 apply
+#   3) 서비스들의 POSTGRES_HOST 를 아래 rw/ro 서비스로 전환:
+#      - 쓰기(및 read-your-writes 경로): ecommerce-pg-rw.ecommerce.svc.cluster.local
+#      - 읽기 전용:                       ecommerce-pg-ro.ecommerce.svc.cluster.local
+#
+# CNPG 는 스트리밍 복제 구성·자동 failover(승격)·rw/ro 서비스 라우팅을 오퍼레이터가
+# 자동으로 관리한다 — docker-compose-postgres-ha.yml 의 수동 절차의 k8s 완성형.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ecommerce-pg
+  namespace: ecommerce
+spec:
+  instances: 3            # 프라이머리 1 + 스탠바이 2 (자동 failover)
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  primaryUpdateStrategy: unsupervised
+
+  storage:
+    size: 20Gi
+    # storageClass: local-path   # k3s 기본 StorageClass
+
+  postgresql:
+    parameters:
+      wal_keep_size: "512MB"
+
+  bootstrap:
+    initdb:
+      database: userdb
+      owner: product
+      secret:
+        name: ecommerce-pg-credentials   # kubectl create secret generic ... --from-literal=username=product --from-literal=password=...
+      # 나머지 DB(cartdb productdb metadb coupondb orderdb paydb chatdb)는
+      # 초기화 후 psql 로 생성하거나 postInitSQL 로 추가:
+      postInitSQL:
+        - CREATE DATABASE cartdb OWNER product;
+        - CREATE DATABASE productdb OWNER product;
+        - CREATE DATABASE metadb OWNER product;
+        - CREATE DATABASE coupondb OWNER product;
+        - CREATE DATABASE orderdb OWNER product;
+        - CREATE DATABASE paydb OWNER product;
+        - CREATE DATABASE chatdb OWNER product;

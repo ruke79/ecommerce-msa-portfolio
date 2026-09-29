@@ -1,0 +1,26 @@
+{
+  "type": "record",
+  "name": "PaymentRequest",
+  "namespace": "com.project.common.avro",
+  "doc": "order → pay 결제 요청. 토픽 order. DTO com.project.common.message.dto.request.PaymentRequest 와 1:1 — 변환은 PaymentRequestAvroMapping.",
+  "fields": [
+    { "name": "orderId",     "type": "long",             "doc": "파티션 키이기도 하다" },
+    { "name": "customerId",  "type": ["null", "long"],   "default": null },
+    { "name": "trackingId",  "type": ["null", "string"], "default": null },
+    { "name": "paypalOrderId", "type": ["null", "string"], "default": null },
+    { "name": "couponName",  "type": ["null", "string"], "default": null },
+    { "name": "amounts",     "type": ["null", "string"], "default": null,
+      "doc": "BigDecimal.toPlainString(). decimal 논리 타입 대신 문자열인 이유: 자릿수를 스키마에 고정하지 않고도 손실이 없다" },
+    { "name": "orderStatus", "type": ["null", { "type": "enum", "name": "OrderStatus", "namespace": "com.project.common.avro",
+        "symbols": ["NOT_PROCESSED", "PAID", "UNPAID", "PROCESSING", "DISPATCHED", "DELIVERED", "CANCELED", "COMPLETED", "REFUNDED"],
+        "default": "NOT_PROCESSED" }], "default": null },
+    { "name": "paymentType", "type": ["null", { "type": "enum", "name": "PaymentType", "namespace": "com.project.common.avro",
+        "symbols": ["PAYPAL", "STRIPE", "PORTONE", "CREDIT_CARD", "CASH"], "default": "PAYPAL" }], "default": null },
+    { "name": "paymentStatus", "type": ["null", { "type": "enum", "name": "PaymentStatus", "namespace": "com.project.common.avro",
+        "symbols": ["COMPLETED", "CANCELED", "FAILED"], "default": "FAILED" }], "default": null },
+    { "name": "createdAt",   "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null,
+      "doc": "UTC epoch millis. DTO 의 LocalDateTime 은 UTC 로 간주한다" },
+    { "name": "authorizationToken", "type": ["null", "string"], "default": null,
+      "doc": "헤더를 못 싣는 릴레이(CDC)를 위해 페이로드에도 실린다" }
+  ]
+}

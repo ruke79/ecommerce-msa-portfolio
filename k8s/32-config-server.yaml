@@ -1,0 +1,209 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-server
+  namespace: ecommerce
+  labels:
+    app: config-server
+spec:
+  # config-server 는 상태가 없다(설정의 진실은 git 저장소다). eureka-server 와 달리 늘려도
+  # 조용히 깨지지 않으므로 2로 올려도 된다. 1로 두는 이유는 단지 자원이다 —
+  # Always Free 박스에서는 파드 하나가 아깝고, 이 서비스가 잠깐 없어도 클라이언트는
+  # optional: 로 넘어간다(아래 SPRING_CONFIG_IMPORT 주석 참조).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-server
+  template:
+    metadata:
+      labels:
+        app: config-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: config-server
+          # docker build --build-arg SERVICE_DIR=config-server --build-arg SPRING_PROFILES_ACTIVE=local \
+          #   -t <registry>/ecommerce-msa/config-server:1.0.0 -f config-server/Dockerfile .
+          image: REGISTRY_PLACEHOLDER/ecommerce-msa/config-server:1.0.0
+          ports:
+            - containerPort: 8888
+          envFrom:
+            - configMapRef:
+                name: ecommerce-config
+            - secretRef:
+                name: ecommerce-secrets
+          env:
+            # ⚠️ 이름이 없으면 Eureka 에 **UNKNOWN 으로 등록된다.** config-server 는 자기
+            #    application.yml 어디에도 spring.application.name 을 선언하지 않아 실제로
+            #    그랬다(`POST /eureka/apps/UNKNOWN` 으로 확인). 지금은 다른 서비스들이
+            #    config-server 를 주소로 직접 찾으므로 드러나지 않지만,
+            #    spring.cloud.config.discovery 로 바꾸는 순간 이름으로 찾지 못해 깨진다.
+            - name: SPRING_APPLICATION_NAME
+              value: "config-server"
+
+            # ⚠️ **자기 자신을 import 하지 않게 덮어쓴다.** 공용 ConfigMap 의
+            #    SPRING_CONFIG_IMPORT 는 `optional:configserver:https://config-server...:8888`
+            #    이고 envFrom 으로 이 파드에도 들어온다. 그대로 두면 config-server 가 기동 중에
+            #    자기 자신에게 설정을 물으러 간다 — 아직 Endpoints 에 없으니 실패하고,
+            #    optional: 라 넘어가긴 하지만 매 기동마다 무의미한 왕복과 경고가 남는다.
+            #    환경변수가 yml 보다 우선하므로 여기서 원래 값으로 되돌린다.
+            - name: SPRING_CONFIG_IMPORT
+              value: "optional:classpath:application-common.yml"
+
+            # ── 설정 저장소 ────────────────────────────────────────────────
+            # 채우기 전까지 config-server 는 **뜨지만 설정을 내주지는 못한다** — git 백엔드는
+            # clone-on-start 가 꺼져 있어 첫 요청 때 클론하므로 기동은 성공한다.
+            # 클라이언트는 전부 optional: 이라 그 실패를 로그로만 남기고 자기 번들 설정으로 돈다.
+            #
+            # ⚠️ 이름이 Spring 프로퍼티(SPRING_CLOUD_CONFIG_SERVER_GIT_URI)가 아니라
+            #    CONFIG_GIT_URI 인 이유: 값은 application-local.yml 의 `${CONFIG_GIT_URI:...}`
+            #    가 받는다. 하이픈이 든 프로퍼티의 환경변수 이름 규칙을 매번 기억하지 않기
+            #    위해서다(가드레일 B-44 가 두 이름을 대조한다).
+            - name: CONFIG_GIT_URI
+              value: "REPLACE_ME_config_repo_url"
+
+            # 저장소를 실제로 연결한 뒤 켤 것. 기동 시 클론하므로 URI·자격증명이 틀리면
+            # **기동에서 바로** 실패한다 — 지금처럼 "파드는 Ready 인데 설정이 안 내려가는"
+            # 조용한 실패보다 낫다.
+            # - name: CONFIG_GIT_CLONE_ON_START
+            #   value: "true"
+
+            # 비공개 저장소라면. 이 둘은 하이픈이 없어 Spring 프로퍼티 이름을 그대로 써도
+            # 매핑이 모호하지 않다. **반드시 Secret 으로** — value: 로 적으면 커밋된다.
+            # - name: SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME
+            #   valueFrom:
+            #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_GIT_USERNAME }
+            # - name: SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_GIT_PASSWORD }
+
+            # 설정 저장소에 `{cipher}...` 로 비밀을 넣고 여기서 복호화하려면 필요하다.
+            # 의존성 확인 완료: spring-security-crypto 가 들어와 있어 **대칭키 방식은 그대로
+            # 동작한다.** 키스토어 기반 비대칭 방식은 spring-security-rsa 가 없어 추가가 필요하다.
+            # - name: ENCRYPT_KEY
+            #   valueFrom:
+            #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_ENCRYPT_KEY }
+            #
+            # ⚠️ 그리고 설정 저장소를 실제로 쓰기 시작한다면 **HTTP 인증이 선행 조건**이다.
+            #    지금 이 서비스에는 spring-boot-starter-security 가 없어(확인 완료)
+            #    GET /{application}/{profile} 로 전 서비스의 설정을 누구나 읽을 수 있다.
+            #    지금은 내줄 것이 없어 노출될 내용이 없을 뿐이다.
+
+            # ── Spring Cloud Bus (AMQP) ───────────────────────────────────
+            # ⚠️ 이 매니페스트 세트에는 **RabbitMQ 가 없다.** config-server 만 유일하게
+            #    spring-cloud-starter-bus-amqp 를 갖고 있어서, 켜 두면 브로커를 찾지 못해
+            #    재연결을 반복하고 /actuator/health 가 DOWN 으로 내려간다(readiness 그룹은
+            #    readinessState 만 보므로 파드는 Ready 로 남는다 — 더 헷갈리는 조합이다).
+            #    버스는 설정 변경을 전 서비스에 방송하는 용도이고 지금은 쓰이지 않으므로 끈다.
+            #    RabbitMQ 를 들이면 둘 다 지우고 SPRING_RABBITMQ_HOST 를 주면 된다.
+            - name: SPRING_CLOUD_BUS_ENABLED
+              value: "false"
+            - name: MANAGEMENT_HEALTH_RABBIT_ENABLED
+              value: "false"
+
+            # ⚠️ config-server 는 common 모듈에 의존하지 않아 application-common.yml 이
+            #    클래스패스에 없다(그래서 위 import 가 optional: 이다). 그 파일이 켜 주던
+            #    health probes 가 여기서는 켜지지 않으므로 직접 켠다 — 없으면
+            #    /actuator/health/liveness 가 404 라 아래 프로브가 전부 실패한다.
+            #    (쿠버네티스에서는 Boot 가 자동으로 켜 주기도 하지만, 그 자동 판정에
+            #     기동 가능 여부를 걸어 둘 이유가 없다.)
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+
+            # ── TLS ────────────────────────────────────────────────────────
+            # ⚠️ 공용 ConfigMap 이 클라이언트에게 **https://** config-server:8888 로 오라고
+            #    말한다. 그런데 config-server 의 application-local.yml 에는 server.ssl 블록이
+            #    아예 없어 평문 HTTP 로 뜬다 — 그대로 두면 모든 클라이언트가 TLS 핸드셰이크에서
+            #    실패한다. 다른 서비스들은 yml 에 블록이 있고 경로만 주입받지만, 여기서는
+            #    블록 자체가 없으므로 환경변수로 만든다(Spring relaxed binding).
+            - name: LOCAL_KEY_STORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: LOCAL_KEY_STORE_PASSWORD
+            - name: LOCAL_KEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: LOCAL_KEY_PASSWORD
+            - name: SERVER_SSL_KEY_STORE
+              value: "/app/resources/keystore.p12"
+            - name: SERVER_SSL_KEY_STORE_TYPE
+              value: "PKCS12"
+            - name: SERVER_SSL_KEY_STORE_PASSWORD
+              value: "$(LOCAL_KEY_STORE_PASSWORD)"
+            - name: SERVER_SSL_KEY_PASSWORD
+              value: "$(LOCAL_KEY_PASSWORD)"
+
+            # 사설 CA 를 JVM 기본 트러스트스토어로 신뢰하게 한다 — Eureka 등록(Jersey)과
+            # 액추에이터 아웃바운드는 server.ssl 이 아니라 이쪽을 쓴다(30-eureka-server.yaml 주석).
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Djavax.net.ssl.trustStore=/app/resources/truststore.p12
+                -Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)
+                -Djavax.net.ssl.trustStoreType=PKCS12
+            - name: LOCAL_KEY_STORE_PATH
+              value: "/app/resources/keystore.p12"
+            - name: LOCAL_TRUST_STORE_PATH
+              value: "/app/resources/truststore.p12"
+            - name: LOCAL_CACERT_PATH
+              value: "/app/resources/ca.crt"
+            - name: LOCAL_CRT_PATH
+              value: "/app/resources/tls.crt"
+            - name: LOCAL_KEY_PATH
+              value: "/app/resources/tls.key"
+
+            # 인증서 SAN 이 커버하는 이름으로 Eureka 에 등록한다(48-delivery-service.yaml 주석).
+            - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
+              value: "false"
+            - name: EUREKA_INSTANCE_HOSTNAME
+              value: "config-server.ecommerce.svc.cluster.local"
+          volumeMounts:
+            - name: tls-keystore
+              mountPath: /app/resources
+              readOnly: true
+          # 네 값이 모두 있어야 한다. external·oci 오버레이가 JSON6902 replace 로
+          # 이 경로들을 덮어쓰므로, 하나라도 없으면 kustomize 빌드가 실패한다.
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "1000m"
+              memory: "768Mi"
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8888
+              scheme: HTTPS
+            failureThreshold: 60
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8888
+              scheme: HTTPS
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8888
+              scheme: HTTPS
+            periodSeconds: 10
+      volumes:
+        - name: tls-keystore
+          secret:
+            secretName: tls-keystore
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-server
+  namespace: ecommerce
+spec:
+  selector:
+    app: config-server
+  ports:
+    - port: 8888
+      targetPort: 8888

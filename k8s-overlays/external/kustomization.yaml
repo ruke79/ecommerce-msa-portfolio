@@ -1,0 +1,97 @@
+# external 오버레이 — 상태 저장 인프라를 클러스터 **밖**의 관리형 서비스로 뺀다.
+#
+#   kubectl apply -k k8s-overlays/external
+#   # ⚠️ k8s/70-autoscaling.yaml 은 **적용하지 않는다** — 아래 §어느 박스에 들어가나
+#
+# prod 오버레이를 그대로 상속하고(이미지 고정, replicas 삭제, Cloudflare Tunnel),
+# **엔드포인트만** 바꾼다. 애플리케이션 이미지는 한 줄도 다르지 않다.
+#
+# ── 무엇이 밖으로 나가고 무엇이 남는가 ─────────────────────────────────
+#
+#   PostgreSQL   → 나간다.  Neon / Supabase / Aiven (전부 진짜 PostgreSQL)
+#   MongoDB      → 나간다.  MongoDB Atlas M0
+#   Redis        → **남는다.** 아끼는 자원이 50m/64Mi 뿐이고, PG·Mongo 를 뺀 이유
+#                  (emptyDir 라 재시작하면 데이터가 사라진다)가 여기엔 해당하지 않는다.
+#                  캐시·분산락·카운터는 전부 재구성 가능한 값이다 (docs/32 §6)
+#   Kafka        → **남는다.** 상시 무료 관리형 Kafka 가 없다 (docs/32 §3)
+#   Elasticsearch→ **남는다.** nori 형태소 분석기 플러그인이 필요하다 (docs/32 §3)
+#
+# 즉 이 오버레이는 "전부 밖으로"가 아니다. 실제로 나가는 것만 나간다 — **둘뿐이다.**
+# 그래서 k8s/90-dev-infra.yaml 을 통째로 띄운 뒤 그 둘만 지운다:
+#
+#   kubectl apply -f k8s/90-dev-infra.yaml
+#   kubectl -n postgres delete deploy postgres
+#   kubectl -n mongodb  delete deploy mongodb
+#
+# ⚠️ **redis 는 지우지 않는다.** PG·Mongo 와 나란히 있어서 같이 지우기 쉬운데, 지우면
+#    cart-service 의 Redisson 락 경로가 죽는다. 실수로 지웠다면 되살린다:
+#
+#      kubectl apply -f k8s/90-dev-infra.yaml
+#
+# ⚠️ 반대로 **다시 apply 하면 지웠던 postgres·mongodb 도 같이 돌아온다.** 이 파일은
+#    낱개 매니페스트라 부분 적용이 안 된다. redis 를 되살린 뒤 둘을 다시 지울 것.
+#
+# (90-dev-infra 는 낱개 파일이라 오버레이에서 참조할 수 없다 — dev/prod 와 같은 제약.
+#  Deployment 만 지우고 Service·Namespace 는 남는데, 앱이 외부 호스트를 보므로 무해하다.)
+#
+# ── 아낀 자원 ──────────────────────────────────────────────────────────
+#
+# 90-dev-infra 기준 요청값으로 PG(100m/256Mi) + Redis(50m/64Mi) + Mongo(100m/256Mi) =
+# **250m / 576Mi**. 남는 Kafka(200m/512Mi) + ES(200m/768Mi) 가 400m/1280Mi 다.
+#
+# ⚠️ 착각하지 말 것: OCI Ampere 를 넘기는 주범은 인프라가 아니라 **애플리케이션**이다
+#    (prod HPA min=2 기준 5,300m). 인프라를 전부 빼도 앱만으로 초과한다. docs/32 §2 의 표 참조.
+#
+# ── 어느 박스에 들어가나 ───────────────────────────────────────────────
+#
+# 이 오버레이는 prod 의 리소스 값(250m/384Mi)을 그대로 쓴다. 전부 1레플리카 + Kafka·ES·
+# Redis 로 **3,550m / 6,592Mi** 다(2026-09 saga-projection·config-server 추가분 포함).
+#
+#   4 OCPU / 24GB   ✅ 들어간다. 여유 650m 으로 핵심 두어 개를 2레플리카로 올려 볼 수 있다
+#   2 OCPU / 12GB   🔴 넘는다. 그때는 이 위에 `k8s-overlays/oci` 를 얹는다(docs/33 §4)
+#
+# ⚠️ Always Free Ampere 한도는 **테넌시마다 다르다.** 2026-06-15 축소 공지 이후에도
+#    4 OCPU/24GB 가 그대로 잡히는 계정이 있다. 문서로 단정하지 말고 인스턴스에서 `nproc`
+#    으로 확인할 것 — `ops/23-oci-ampere-bootstrap.sh --check` 가 보고 골라 준다.
+#
+# ⚠️ 어느 쪽이든 `k8s/70-autoscaling.yaml` 은 적용하지 않는다. prod 의 HPA 는 min=2 라
+#    11개 서비스가 5,300m 이 되어 4 OCPU 도 넘긴다.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../prod          # prod 오버레이를 그대로 상속한다(디렉터리 베이스라 참조 가능)
+
+# ── 레플리카 ───────────────────────────────────────────────────────────
+# prod 의 remove-replicas 패치가 HPA 대상에서 replicas 를 지워 전부 1이 되는데,
+# saga-projection 은 HPA 대상이 아니라 매니페스트의 값(2)이 그대로 남는다. 그 2는
+# **활성 1 + 대기 1** 이고, 노드가 여럿인 클러스터에서 파드 장애 시 상태 사본을 이미
+# 갖고 있는 인스턴스가 이어받게 하는 값이다(docs/38 §1.17).
+#
+# 이 오버레이의 대상은 **단일 노드 박스**다. 두 파드가 같은 노드에 뜨므로 노드가 죽으면
+# 둘 다 죽고, 남는 이득은 파드 단위 장애·롤링 업데이트뿐이다. 그 이득에 100m/384Mi 를
+# 더 쓰는 것은 이미 요청 합계가 노드의 85%를 넘는 상황에서 맞지 않는다 —
+# 자리가 모자라면 롤아웃이 Pending 에서 멈춘다(patch-java-requests.yaml 주석의 실측).
+# 진짜 다중 노드에 올릴 때는 prod 오버레이를 쓰고, 거기서는 2가 유지된다.
+replicas:
+  - name: saga-projection
+    count: 1
+
+patches:
+  # 엔드포인트만 갈아 끼운다. JDBC URL 은 베이스가 이미
+  # `jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/<db>` 형태라
+  # ConfigMap 두 키만 바꾸면 10개 데이터소스가 한꺼번에 따라온다.
+  - path: patch-external-endpoints.yaml
+
+  # CPU **요청**만 낮춘다(상한은 그대로). 베이스의 250m × 14개는 4 OCPU 노드를 99% 로
+  #채워 롤링 업데이트가 Pending 에서 멈춘다 — 실측이다. 근거는 패치 파일 주석 참조.
+  #
+  # JSON6902 인 이유: 컨테이너 이름이 Deployment 마다 달라 전략적 병합으로는 한 번에
+  # 못 고친다. 인덱스 0 은 모든 Deployment 가 단일 컨테이너라 안전하다.
+  - path: patch-java-requests.yaml
+    target:
+      kind: Deployment
+      name: "eureka-server|gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|chat-service|notification-service|delivery-service|saga-projection|config-server"

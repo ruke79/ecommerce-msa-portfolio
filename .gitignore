@@ -1,0 +1,117 @@
+# common 모듈의 resources 폴더에 있는 보안 파일 제외
+common/src/main/resources/kafka-secrets.properties
+common/src/main/resources/certs/
+
+# k3s 배포용 실제 Secret 값 (k8s/20-secret.example.yaml을 복사해서 만든 파일)
+#
+# ⚠️ 접미사까지 막는다. 예전 규칙은 정확히 `k8s/20-secret.yaml` 하나만 막아서,
+#    편집기가 남긴 `20-secret.yaml.save`(nano)·`.bak`·`~` 가 **무시되지도 추적되지도
+#    않은 상태**로 작업 트리에 떠 있었다. `git add -A` 한 번이면 JWT 서명키·DB 비밀번호·
+#    AWS 키·PayPal 시크릿·SMTP 비밀번호가 공개 저장소로 간다.
+#    실제로 운영 인스턴스의 `git status` 에서 `?? k8s/20-secret.yaml.save` 로 발견했다.
+#
+#    `20-secret.yaml*` 은 `20-secret.example.yaml`(커밋되어야 하는 템플릿)을 잡지 않는다 —
+#    접두사가 `20-secret.yaml` 이어야 걸리기 때문이다.
+k8s/20-secret.yaml*
+
+# 편집기 백업본. 원본이 무엇이든 커밋할 이유가 없고, 비밀 파일의 사본일 때가 가장 위험하다.
+*.save
+*.bak
+
+apllication-prd.yml
+chat-connector.json
+order-outbox-connector.json
+payment-outbox-connector.json
+
+# Ignore Gradle project-specific cache directory
+.gradle
+
+# Ignore Gradle build output directory
+build/
+
+# QueryDSL 등 annotation processor가 생성하는 소스 (컴파일 산출물)
+**/src/main/generated/
+
+bin/
+gen/
+
+bin
+gen
+
+kafka_2.12-3.7.2/
+
+logs/
+
+node_modules/
+
+.vscode/launch.json
+db/dump-productdb-202508141310.sql
+chat-server/src/main/resources/application-prd.yml
+catalog-service/src/main/resources/application-prd.yml
+cart-service/src/main/resources/application-prd.yml
+config-server/src/main/resources/application-prd.yml
+coupon-service/src/main/resources/application-prd.yml
+eureka-server/src/main/resources/application-prd.yml
+gateway-server/src/main/resources/application-prd.yml
+order-service/src/main/resources/application-prd.yml
+pay-service/src/main/resources/application-prd.yml
+user-service/src/main/resources/application-prd.yml
+package-lock.json
+package.json
+frontend/webpack.config.base.js
+frontend/webpack.config.base.js
+common/src/main/resources/local_truststore.jks
+common/src/main/resources/localhost.crt
+common/src/main/resources/localhost.key
+common/src/main/resources/localhost.p12
+
+
+docker-compose-services-2-prd.yml
+docker-compose-services-1-prd.yml
+docker-compose-core-prd.yml
+chat-service/src/main/resources/application-prd.yml
+chat-service/gradle/wrapper/gradle-wrapper.properties
+chat-service/gradle/wrapper/gradle-wrapper.jar
+.idea/.gitignore
+.idea/.name
+.idea/compiler.xml
+.idea/gradle.xml
+.idea/IntelliLang.xml
+.idea/misc.xml
+.idea/vcs.xml
+
+# 인증서 발급 산출물 (ops/07-issue-certificates.sh) — 개인키 포함, 절대 커밋 금지
+certs/
+*.p12
+*.jks
+*.key
+certs.env
+
+# 스테이징 리허설 런타임 (ops/12) — 로그·PID·PG용 키 사본
+.staging/
+
+# Alertmanager 웹훅 URL — 값 자체가 인증 수단이라 커밋 금지 (docs/22)
+observability/secrets/
+
+# 로컬 전용 오버레이 — **패치 파일만** 제외한다.
+#
+# 예전에는 `k8s-overlays/local/` 을 통째로 제외했다. 그런데 그 안의
+# kustomization.yaml 은 환경 고유값이 아니라 **베이스를 따라가야 하는 목록**이다:
+# images 열거, replicas, 패치 대상 정규식. 제외해 두면 가드레일 B-39 가 그 파일을
+# 보지 못하고(`k8s-overlays/*/kustomization.yaml` 을 순회한다), 새 서비스를 더할 때
+# 이 오버레이만 조용히 뒤처진다.
+#
+# 실제로 두 번 물렸다: saga-projection 때 images 누락으로 REPLACE_ME_OWNER 가 그대로
+# 남아 InvalidImageName, content-service 때 또 한 번. 둘 다 "말로 전달"에 기대고 있었다.
+#
+# 반대로 패치 파일에는 환경 고유값이 들어간다 — 특히 patch-mail.yaml 의 MAIL_FROM 은
+# 실제 개인 메일 주소다(자격증명은 아니지만 공개 저장소에 올릴 값은 아니다).
+# 그 둘만 제외한다. 템플릿은 k8s-overlays/local.example/ 에 있다 (docs/33 §8).
+k8s-overlays/local/patch-*.yaml
+
+# ops/28-deploy.sh 가 배포할 때마다 새로 쓰는 임시 오버레이(태그 주입용).
+# 커밋된 오버레이를 고치지 않기 위해 존재한다 — 산출물이지 소스가 아니다 (docs/36 §3).
+.deploy/
+
+# 프론트 빌드 값(환경마다 다르다) — ops/frontend.env.example 참조
+ops/frontend.env

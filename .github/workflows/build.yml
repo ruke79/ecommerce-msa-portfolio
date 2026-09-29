@@ -1,0 +1,461 @@
+# 배포 파이프라인 (deployment pipeline)
+#
+# 『Continuous Delivery』(Humble & Farley) 의 배포 파이프라인 구조를 그대로 옮긴 것이다.
+# 커밋 하나가 파이프라인 왼쪽에서 들어와 오른쪽으로 갈수록 비싼 검증을 통과하고,
+# 끝까지 통과하면 **배포 가능한 릴리스 후보**가 된다.
+#
+#   commit ──> integration ─┐
+#      │                    ├──> release-candidate ──> (승인) deploy-oci.yml → ops/28-deploy.sh
+#      └────> acceptance ───┘
+#
+# ── 이 구조가 고치는 것 ─────────────────────────────────────────────────
+#
+# 이 저장소의 예전 CI 는 테스트만 돌렸다. 그래서 **배포되는 바이너리와 테스트한 바이너리가
+# 서로 다른 물건이었다** — CI 가 `./gradlew build` 로 jar 를 만들어 버리고, 실제 배포용
+# 이미지는 나중에 개발자 노트북에서 `ops/19-build-images.sh` 가 jar 를 **다시** 만들어
+# 감쌌다. 책이 가장 강하게 말하는 규칙이 정확히 이것을 금지한다:
+#
+#     "you should only build your binaries once, during the commit stage of the build"
+#
+# 다시 빌드하면 같은 소스라도 같은 바이너리가 나온다는 보장이 없다(베이스 이미지 갱신,
+# 의존성 해석 시점, 빌드 환경). 그러면 인수 테스트가 통과했다는 사실이 배포본에 대해
+# 아무것도 보증하지 않는다.
+#
+# 그래서 여기서는:
+#   · 커밋 스테이지가 jar 와 프론트엔드 번들을 **한 번** 만들고, 곧바로 컨테이너 이미지로
+#     감싸 레지스트리(GHCR)에 올린다. 레지스트리가 책이 말하는 '산출물 저장소'다.
+#   · 인수 스테이지는 그 이미지를 **받아서** 사가를 돌린다. 다시 빌드하지 않는다.
+#   · 배포도 그 이미지를 그대로 쓴다(ops/28-deploy.sh).
+#
+# ── 태그는 커밋 SHA 다 ──────────────────────────────────────────────────
+#
+# 사람이 고른 `1.0.0` 이 아니다. 릴리스 후보의 이름은 리비전이어야 한다 — 그래야
+# "지금 도는 게 어느 커밋인가"에 답할 수 있고, 같은 태그를 덮어써서 노드가 캐시된
+# 옛 이미지를 계속 쓰는 사고(imagePullPolicy: IfNotPresent)가 원천적으로 사라진다.
+# 실제로 이 저장소에서 그 사고를 겪었다(docs/33 §13).
+#
+# ── 배포 스테이지는 deploy-oci.yml 이다 ──────────────────────────────────
+#
+# 배포 대상 클러스터(OCI Ampere)는 인바운드가 **SSH 22번, 그것도 특정 IP 한 곳으로만**
+# 열려 있어 GitHub 호스티드 러너가 닿지 못한다. 이 파이프라인이 기본 브랜치의 push 로
+# 초록이 되면 deploy-oci.yml 이 이어받아, 사람의 승인 뒤 인스턴스의 셀프호스티드 러너가
+# ops/28-deploy.sh 를 실행한다 — 운영자가 손으로 하던 것과 **같은 절차**다(docs/36 §6).
+name: deployment pipeline
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 매주 월요일 03:00 UTC — 복원 훈련(restore-drill) 전용.
+    - cron: "0 3 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # 기본 브랜치에서는 취소하지 않는다. 취소된 실행은 릴리스 후보를 만들지 못하고,
+  # 그러면 그 커밋은 배포할 수 없는 커밋이 된다 — "모든 커밋이 릴리스 후보"가 깨진다.
+  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
+
+permissions:
+  contents: read
+  # GHCR push 에 필요하다. 다만 이것만으로는 부족할 수 있다 — GITHUB_TOKEN 은 **저장소에
+  # 연결된 패키지**에만 쓸 수 있어서, 사람이 PAT 로 먼저 만들어 둔 패키지는 거부된다.
+  # 아래 'GHCR 로그인' 단계 주석과 docs/36 §3.7 참조.
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}/
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════
+  # 1. 커밋 스테이지
+  #
+  # 책의 기준: 이상적으로 5분, 넘어도 10분 안. 여기서 하는 일은 딱 그 범위다 —
+  # 컴파일, 단위 테스트, **바이너리 1회 생성**, 이미지화. 이 스테이지가 초록이면
+  # 개발자는 다음 일로 넘어가도 된다.
+  # ══════════════════════════════════════════════════════════════════════
+  commit:
+    name: 커밋 스테이지 (단위 테스트 · 바이너리 생성 · 이미지 발행)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.rev.outputs.version }}
+      published: ${{ steps.rev.outputs.published }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 리비전 확정
+        id: rev
+        # 릴리스 후보의 이름. 짧은 SHA 12자 — ops/19 의 기본 태그와 같은 규칙이다.
+        #
+        # PR 이벤트에서는 발행하지 않는다. 같은 저장소의 PR 은 브랜치 push 로 이미
+        # 파이프라인이 돌아 이미지가 나오고, 포크 PR 은 GITHUB_TOKEN 이 읽기 전용이라
+        # push 자체가 불가능하다. 발행하지 않는 실행은 인수 스테이지가 jar 로 폴백한다.
+        run: |
+          echo "version=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          # 공개 저장소: 이미지 발행은 저장소 변수 PUBLISH_IMAGES=true 일 때만.
+          # 기본값으로는 이미지를 만들지 않고 빌드·테스트만 돈다(인수 스테이지는 jar 로 폴백).
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ vars.PUBLISH_IMAGES }}" != "true" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ── 단위 테스트 (Docker 불필요) ────────────────────────────────────
+      #
+      # 이 저장소에서 발견된 결함 27건은 거의 전부 "컴파일도 되고 리뷰도 통과하지만
+      # 실행하면 죽는" 종류였다(docs/14 · docs/16 · docs/17).
+      - name: 자바 단위 테스트 · bootJar
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: 프론트엔드 단위 테스트
+        working-directory: frontend
+        # 빌드보다 테스트를 먼저 돌린다. 빌드는 타입 오류 수준만 잡아내고, 실제로 문제가
+        # 났던 것들(입력 글자 유실, disabled 무시, 할인 계산 오류, 권한 가드)은 전부
+        # 빌드가 통과하는 코드였다.
+        run: |
+          npm ci
+          npm test -- --ci
+
+      # ── 린트 래칫 ─────────────────────────────────────────────────────
+      #
+      # `no-unused-vars` 를 켠다(docs/40 #18). 다만 기존 경고 198개를 한 번에 error 로
+      # 올리면 CI 가 첫날부터 빨갛고, 그러면 사람들은 규칙을 고치는 대신 규칙을 끈다.
+      #
+      # lint 스크립트가 --max-warnings 를 현재 개수로 고정하므로 **새로 생긴 경고 하나면
+      # 여기서 막힌다.** 기존 것은 고칠 때마다 그 숫자를 내려서 잠근다 — 올라가지 않는다.
+      #
+      # 잡고 싶은 것의 실제 사례: checkout.jsx 가 react-query 의 isPending 을 쓰면서
+      # @reduxjs/toolkit 의 동명 함수를 import 하고 있었다. 누가 그걸 조건으로 쓰면
+      # 언제나 참인 함수 객체를 검사하게 된다.
+      - name: 프론트엔드 린트
+        working-directory: frontend
+        run: npm run lint
+
+      - name: 테스트 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commit-stage-test-reports
+          path: "**/build/reports/tests/test"
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # ── 바이너리를 이미지로 (한 번만) ──────────────────────────────────
+      - name: QEMU (멀티아키텍처용)
+        if: steps.rev.outputs.published == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: buildx
+        if: steps.rev.outputs.published == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: GHCR 로그인
+        if: steps.rev.outputs.published == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GHCR_PAT 이 있으면 그것을, 없으면 GITHUB_TOKEN 을 쓴다.
+          #
+          # 왜 둘 다 필요한가: GITHUB_TOKEN 은 **저장소에 연결된 패키지**에만 쓸 수 있다.
+          # 사람이 PAT 로 먼저 push 해 둔 패키지는 연결돼 있지 않아서, packages: write 가
+          # 있어도 push 가 `denied: permission_denied: read_package` 로 거부된다.
+          # 첫 파이프라인 실행이 정확히 여기서 죽었다.
+          #
+          # 근본 해결은 패키지를 저장소에 연결하는 것이다(패키지 settings → Manage
+          # Actions access → 이 저장소 → Write). 그러면 GHCR_PAT 을 지워도 된다.
+          # docs/36 §3.7 참조.
+          password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: 릴리스 후보 이미지 발행
+        if: steps.rev.outputs.published == 'true'
+        env:
+          # ⚠️ REACT_APP_* 는 **번들에 박힌다.** 런타임 환경변수로 못 바꾼다.
+          #    비어 있으면 프론트엔드가 상대 경로로 API 를 부르고, 그건 nginx 프록시가
+          #    같은 호스트에서 게이트웨이로 넘겨주는 배포 형태(현재 구성)에서 정상이다.
+          #    ops/frontend.env.example 의 키와 같다 — 전부 **공개값**이라 Secrets 가 아니라 저장소 Variables 에 둔다
+          #    (Settings → Secrets and variables → Actions → Variables). 🐛 예전에는 둘만 넘겨, CI 가 만든 프론트 이미지에
+          #    포트원·통화 설정이 빠져 있었다 — 운영에 그대로 쓸 수 없는 이미지였다.
+          REACT_APP_API_URL: ${{ vars.REACT_APP_API_URL }}
+          REACT_APP_PAYPAL_CLIENT_ID: ${{ vars.REACT_APP_PAYPAL_CLIENT_ID }}
+          REACT_APP_PORTONE_IMP_CODE: ${{ vars.REACT_APP_PORTONE_IMP_CODE }}
+          REACT_APP_PORTONE_PG: ${{ vars.REACT_APP_PORTONE_PG }}
+          REACT_APP_PORTONE_STORE_ID: ${{ vars.REACT_APP_PORTONE_STORE_ID }}
+          REACT_APP_PORTONE_CHANNEL_KEY: ${{ vars.REACT_APP_PORTONE_CHANNEL_KEY }}
+          REACT_APP_STORE_CURRENCY: ${{ vars.REACT_APP_STORE_CURRENCY }}
+        # ⭐ CI 전용 docker build 단계를 따로 두지 않는다. 운영자가 손으로 쓰는 것과
+        #    **같은 스크립트**를 호출한다. 두 벌이 되면 반드시 어긋나고, 그때부터
+        #    "CI 에서는 되는데 손으로 하면 안 된다" 가 시작된다.
+        #    --skip-gradle: 위에서 만든 jar 를 그대로 쓴다(다시 만들지 않는다).
+        run: |
+          ./ops/19-build-images.sh \
+            --registry "$REGISTRY" \
+            --tag "${{ steps.rev.outputs.version }}" \
+            --platform linux/amd64,linux/arm64 \
+            --skip-gradle \
+            --push
+
+  # ══════════════════════════════════════════════════════════════════════
+  # 0. 비밀 스캔 (docs/57 §6)
+  #
+  # 유출은 **커밋되는 순간** 끝난 일이다 — 공개 저장소는 푸시 몇 분 안에 스크레이퍼가 읽는다. 그래서 가장 싼
+  # 이 검사를 모든 푸시·PR 에 건다. 예전에는 ops/20 을 사람이 가끔 돌렸다(docs/30 §5).
+  #
+  #   · --head  : 지금 트리
+  #   · --range : 이번에 들어온 커밋들이 만든 blob — PR 안에서 넣었다가 다음 커밋에서 지운 비밀도 잡는다
+  #               (현재 트리만 보면 놓친다. 머지되면 이력에 그대로 남는다)
+  #
+  # 스크립트는 **값을 출력하지 않는다** — 종류와 경로만. 로그가 공개여도 새로 새지 않는다.
+  # 찾으면 exit 2 로 실패하고, 릴리스 후보 승격이 막힌다. 할 일은 폐기·재발급이 먼저다(docs/30 §3).
+  # ══════════════════════════════════════════════════════════════════════
+  secrets:
+    name: 비밀 스캔 (ops/20)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 범위 검사에 이력이 필요하다.
+          fetch-depth: 0
+
+      - name: 현재 트리
+        run: bash ops/20-scan-history-secrets.sh --head
+
+      - name: 이번에 들어온 커밋들
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          # PR 은 대상 브랜치 이후의 커밋, 푸시는 직전 끝(before) 이후의 커밋. 새 브랜치의 첫 푸시는 before 가
+          # 0000… 이라 기본 브랜치와의 차이로 대신한다. 어느 쪽도 못 정하면 현재 트리 검사로 충분하다고 보고 넘긴다.
+          if [ "$EVENT" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+            RANGE="origin/${BASE_REF}..HEAD"
+          elif [ -n "$BEFORE" ] && ! echo "$BEFORE" | grep -qE '^0+$' && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            RANGE="${BEFORE}..HEAD"
+          elif git rev-parse -q --verify "origin/${DEFAULT_BRANCH}" >/dev/null; then
+            RANGE="origin/${DEFAULT_BRANCH}..HEAD"
+          else
+            echo "범위를 정할 수 없어 건너뜁니다 — 현재 트리 검사는 위에서 했습니다."
+            exit 0
+          fi
+          echo "검사 범위: ${RANGE} ($(git rev-list --count "$RANGE") 커밋)"
+          bash ops/20-scan-history-secrets.sh --range "$RANGE"
+
+  # ══════════════════════════════════════════════════════════════════════
+  # 2. 통합 스테이지 — 서비스가 빈 DB 에서 실제로 뜨는가
+  #
+  # Testcontainers 로 진짜 PostgreSQL/Redis/Kafka/Mongo/ES 를 띄운다. 여기서
+  # 검증되는 것: 8개 서비스가 기동하는가, 액추에이터 프로브가 인증에 막히지 않는가,
+  # 사가 재전달 시 재고가 이중 차감되지 않는가.
+  # ══════════════════════════════════════════════════════════════════════
+  integration:
+    name: 통합 테스트 (Testcontainers)
+    runs-on: ubuntu-latest
+    needs: commit
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 서비스별 통합 테스트
+        # -PwithContainers 가 'containers' 태그를 포함시킨다.
+        # e2e 는 다음 스테이지가 **발행된 이미지로** 돌리므로 여기서는 뺀다.
+        run: ./gradlew test -PwithContainers -x :e2e-tests:test --no-daemon --stacktrace
+
+      - name: 테스트 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-reports
+          path: "**/build/reports/tests/test"
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ══════════════════════════════════════════════════════════════════════
+  # 3. 인수 스테이지 — 릴리스 후보 그 자체를 검증한다
+  #
+  # ⭐ 여기가 이번 개편의 핵심이다. 주문→결제→재고 사가 전 구간을, **커밋 스테이지가
+  #    레지스트리에 올린 바로 그 이미지**를 받아서 돌린다. 소스에서 다시 빌드하지
+  #    않는다. 그래서 이 스테이지가 초록이라는 말은 "배포될 물건이 동작한다"는 뜻이고,
+  #    다시 빌드했다면 "배포될 물건과 비슷한 무언가가 동작한다"는 뜻밖에 못 된다.
+  # ══════════════════════════════════════════════════════════════════════
+  acceptance:
+    name: 인수 테스트 (사가 E2E — 발행된 이미지)
+    runs-on: ubuntu-latest
+    needs: commit
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: GHCR 로그인 (이미지 pull 용)
+        if: needs.commit.outputs.published == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GHCR_PAT 이 있으면 그것을, 없으면 GITHUB_TOKEN 을 쓴다.
+          #
+          # 왜 둘 다 필요한가: GITHUB_TOKEN 은 **저장소에 연결된 패키지**에만 쓸 수 있다.
+          # 사람이 PAT 로 먼저 push 해 둔 패키지는 연결돼 있지 않아서, packages: write 가
+          # 있어도 push 가 `denied: permission_denied: read_package` 로 거부된다.
+          # 첫 파이프라인 실행이 정확히 여기서 죽었다.
+          #
+          # 근본 해결은 패키지를 저장소에 연결하는 것이다(패키지 settings → Manage
+          # Actions access → 이 저장소 → Write). 그러면 GHCR_PAT 을 지워도 된다.
+          # docs/36 §3.7 참조.
+          password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: 사가 전 구간 (발행된 이미지)
+        if: needs.commit.outputs.published == 'true'
+        env:
+          E2E_IMAGE_PREFIX: ghcr.io/${{ github.repository }}/
+          E2E_IMAGE_TAG: ${{ needs.commit.outputs.version }}
+        run: ./gradlew :e2e-tests:test -PwithContainers --no-daemon --stacktrace
+
+      - name: 사가 전 구간 (PR — 이미지가 없어 jar 로 빌드)
+        if: needs.commit.outputs.published != 'true'
+        # 포크 PR 은 패키지 쓰기 권한이 없어 발행 자체가 불가능하다. 검증은 하되,
+        # 이 경로로 통과한 것은 **릴리스 후보에 대한 보증이 아니다**(다른 바이너리다).
+        run: ./gradlew :e2e-tests:test -PwithContainers --no-daemon --stacktrace
+
+      - name: 테스트 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-test-reports
+          path: "**/build/reports/tests/test"
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ══════════════════════════════════════════════════════════════════════
+  # 4. 릴리스 후보 승격
+  #
+  # 앞 스테이지가 전부 통과했을 때만 도달한다. 여기서 만드는 것은 새 바이너리가 아니라
+  # **기록**이다 — 어떤 리비전이, 어떤 이미지 목록으로, 어떤 검증을 통과했는지.
+  # 배포는 이 기록에 적힌 버전을 그대로 인자로 받는다.
+  # ══════════════════════════════════════════════════════════════════════
+  release-candidate:
+    name: 릴리스 후보 승격
+    runs-on: ubuntu-latest
+    # 비밀 스캔이 실패한 커밋은 릴리스 후보가 될 수 없다(docs/57 §6).
+    needs: [commit, integration, acceptance, secrets]
+    if: needs.commit.outputs.published == 'true'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 후보 매니페스트 작성
+        env:
+          VERSION: ${{ needs.commit.outputs.version }}
+        run: |
+          set -euo pipefail
+          services="eureka-server config-server gateway-server user-service catalog-service \
+                    cart-service order-service pay-service coupon-service chat-service \
+                    notification-service delivery-service frontend"
+          {
+            echo '{'
+            echo "  \"revision\": \"${GITHUB_SHA}\","
+            echo "  \"version\": \"${VERSION}\","
+            echo "  \"branch\": \"${GITHUB_REF_NAME}\","
+            echo "  \"run\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\","
+            echo "  \"committedAt\": \"$(git show -s --format=%cI HEAD)\","
+            echo "  \"promotedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+            echo "  \"stages\": [\"commit\", \"integration\", \"acceptance\"],"
+            echo "  \"images\": ["
+            first=1
+            for s in $services; do
+              [ $first -eq 1 ] || echo ","
+              first=0
+              printf '    "%s%s:%s"' "${IMAGE_PREFIX}" "$s" "$VERSION"
+            done
+            echo ""
+            echo "  ]"
+            echo '}'
+          } > release-candidate.json
+          cat release-candidate.json
+
+      - name: 후보 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ needs.commit.outputs.version }}
+          path: release-candidate.json
+          retention-days: 90
+
+      - name: 요약 (배포 명령)
+        env:
+          VERSION: ${{ needs.commit.outputs.version }}
+        run: |
+          {
+            echo "### 릴리스 후보 \`$VERSION\` 승격됨"
+            echo
+            echo "커밋 · 통합 · 인수 스테이지를 모두 통과했습니다. 배포 가능합니다."
+            echo
+            echo '```bash'
+            echo "./ops/28-deploy.sh prod $VERSION"
+            echo '```'
+            echo
+            echo "문제가 생기면 **같은 스크립트로 직전 버전을 다시 배포**합니다 —"
+            echo "되돌리기 위한 별도 절차는 없습니다(docs/36 §4)."
+            echo
+            echo '```bash'
+            echo "./ops/28-deploy.sh prod --rollback"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ══════════════════════════════════════════════════════════════════════
+  # 5. 복원 훈련 — 매 커밋이 아니라 주 1회
+  #
+  # 목적은 "백업 절차가 여전히 동작하는가"의 정기 확인이다(docs/15 §5). 훈련하지 않은
+  # 복구 절차는 필요한 날 반드시 실패한다. 책도 롤백 계획을 릴리스 전마다 연습하라고
+  # 못박는다 — "practice your rollback plan ... before every release to make sure it works".
+  # ══════════════════════════════════════════════════════════════════════
+  restore-drill:
+    name: PITR 복원 훈련
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: DROP TABLE 사고를 내고 시점 복구로 되돌린다
+        # 실패하면 exit 1 — 백업이 복구 불가능해졌다는 뜻이므로 반드시 조사해야 한다.
+        run: ./ops/09-restore-drill.sh

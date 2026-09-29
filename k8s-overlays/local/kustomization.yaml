@@ -1,0 +1,153 @@
+# local 오버레이 — **이 디렉터리는 커밋되지 않는다** (.gitignore).
+#
+# ── 왜 있나 ────────────────────────────────────────────────────────────
+#
+# external 오버레이까지는 누구나 그대로 쓸 수 있다. 하지만 마지막 한 겹에는 **여러분의
+# 환경에만 있는 값**이 들어간다 — GHCR 소유자, 이미지 태그, Neon 호스트, 공개 도메인.
+#
+# 예전에는 그 값들을 추적 대상 파일(prod/kustomization.yaml, patch-external-endpoints.yaml,
+# k8s/10-configmap.yaml)에 직접 적게 했다. 결과는 실배포에서 이랬다:
+#
+#   · `git pull` 이 매번 충돌한다. 값을 채운 줄과 저장소가 고친 줄이 같은 줄이라서
+#   · 충돌 마커가 남으면 kustomize 가 파일 전체를 거부한다 —
+#     `error: trouble configuring builtin PatchTransformer` / ScannerError
+#   · 되돌리면 실제 호스트가 사라져 서비스가 28P01·InvalidImageName 으로 죽는다
+#   · 그리고 무엇보다, **호스트명과 레지스트리 소유자가 커밋될 뻔했다**
+#
+# 이 오버레이는 그 값들을 추적 밖으로 뺀다. 저장소는 이제 자유롭게 pull 할 수 있다.
+#
+# ── 쓰는 법 ────────────────────────────────────────────────────────────
+#
+#   cp -r k8s-overlays/local.example k8s-overlays/local   # 최초 1회
+#   $EDITOR k8s-overlays/local/kustomization.yaml         # 아래 REPLACE_ME 채우기
+#   $EDITOR k8s-overlays/local/patch-local-endpoints.yaml
+#
+#   # ⚠️ 적용 전 확인. 아래 **두 줄만** 남아야 한다. 그 밖에 REPLACE_ME 가 보이면
+#   #    채우지 않은 값이 있다는 뜻이고, 대개 DNS 가 해석되지 않아 그 서비스만 조용히 죽는다.
+#   #
+#   #      REPLACE_ME_TUNNEL_ID        ops/24 가 클러스터에서 치환한다(여기서 채우지 않는다)
+#   #      REPLACE_ME_config_repo_url  config-server 의 설정 저장소. 비워 두면 config-server 는
+#   #                                  뜨지만 설정을 내주지 못하고, 클라이언트는 전부
+#   #                                  `optional:` 이라 조용히 자기 번들 설정으로 돈다.
+#   #                                  실제로 쓰려면 k8s/32-config-server.yaml 의
+#   #                                  CONFIG_GIT_URI 를 채운다.
+#   kubectl kustomize k8s-overlays/local | grep REPLACE_ME
+#
+#   kubectl apply -k k8s-overlays/local
+#
+# ⚠️ Secret 은 여기 두지 않는다. k8s/20-secret.yaml(역시 gitignore)이 담당한다.
+#    이 파일에 들어가는 것은 **비밀이 아닌 식별자**뿐이다 — 호스트명, 소유자, 태그.
+#
+# ── 2 OCPU 인스턴스라면 ────────────────────────────────────────────────
+#
+# 아래 `resources` 를 `../oci` 로 바꾼다. 그쪽이 요청값을 더 낮게 잡는다(docs/32 §2).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../external
+
+
+# ── 레플리카 — 단일 노드에서는 전부 1 ──────────────────────────────────
+#
+# 노드가 하나뿐이면 두 번째 파드는 **가용성을 주지 않는다.** 같은 노드에 뜨므로 노드가
+# 죽으면 둘 다 죽고, 남는 이득은 파드 단위 장애와 롤링 업데이트뿐이다. 그 대가로 요청량이
+# 두 배가 되고, 자리가 모자라면 롤아웃이 Pending 에서 멈춘다(실제로 그렇게 막혔다).
+#
+# 아무것도 안 해도 1이 되는 것 아닌가 — 부분적으로만 맞다:
+#   · prod 오버레이가 replicas 필드를 지우는 10개는 기본값 1이 된다.
+#   · 그러나 **k8s/70-autoscaling.yaml 을 적용했다면** HPA 가 minReplicas=2 로 곧바로
+#     되올린다. 여기 적어도 HPA 를 이기지 못한다. 단일 노드라면 HPA 를 지울 것:
+#         kubectl -n ecommerce delete hpa --all
+#   · remove-replicas 대상이 아닌 것들(saga-projection, cloudflared, chat-service,
+#     eureka-server, config-server)은 매니페스트 값이 그대로 남는다. 그쪽을 내리는 것이
+#     이 블록의 실제 역할이다.
+#
+# 명시해 두는 두 번째 이유는 기록이다. 기본값에 기대면 다음 사람이 왜 1인지 모른다.
+#
+# ⚠️ 레플리카 1에서는 이 저장소가 레플리카 2에서 잡아 온 동시성 버그가 재현되지 않는다
+#    (아웃박스 중복 발행, 메일·SMS 디스패처 이중 선점 — docs/21, docs/31 §3).
+#    그건 ops/12-staging-rehearsal.sh 로 따로 확인해야 한다.
+replicas:
+  # 원래부터 1이어야 하는 것들 — 늘리면 조용히 깨진다(ConfigurationGuardrailTest B-34)
+  - { name: eureka-server, count: 1 }
+  - { name: chat-service, count: 1 }
+  # 상태가 없어 늘려도 되지만 이 박스에서는 1
+  - { name: gateway-server, count: 1 }
+  - { name: config-server, count: 1 }
+  - { name: user-service, count: 1 }
+  - { name: catalog-service, count: 1 }
+  - { name: cart-service, count: 1 }
+  - { name: order-service, count: 1 }
+  - { name: pay-service, count: 1 }
+  - { name: coupon-service, count: 1 }
+  - { name: notification-service, count: 1 }
+  - { name: delivery-service, count: 1 }
+  - { name: frontend, count: 1 }
+  # 매니페스트 값이 2다(활성 1 + 대기 1). 단일 노드에서는 대기 사본의 이득이 적다.
+  - { name: saga-projection, count: 1 }
+  # 노드가 하나면 터널 파드 2개는 가용성을 주지 못한다.
+  - { name: cloudflared, count: 1 }
+
+# ── 이미지 ─────────────────────────────────────────────────────────────
+#
+# ⚠️ `name:` 은 **prod 오버레이가 이미 바꿔 놓은 이름**과 일치해야 한다. 원본
+#    `REGISTRY_PLACEHOLDER/...` 로 적으면 아무것도 매칭되지 않는다 — 부모의 변환이
+#    먼저 끝난 결과 위에 이 변환이 얹히기 때문이다. 조용히 아무 일도 일어나지 않고
+#    파드는 REPLACE_ME_OWNER 그대로 `InvalidImageName` 이 된다.
+#
+# ⚠️ 이미지를 다시 빌드했다면 **태그를 올린다.** imagePullPolicy 가 IfNotPresent 라
+#    같은 태그는 노드가 캐시된 것을 그대로 쓴다(docs/33 §6).
+images:
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/eureka-server
+    newName: ghcr.io/ruke79/ecommerce-msa/eureka-server
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/gateway-server
+    newName: ghcr.io/ruke79/ecommerce-msa/gateway-server
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/user-service
+    newName: ghcr.io/ruke79/ecommerce-msa/user-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/catalog-service
+    newName: ghcr.io/ruke79/ecommerce-msa/catalog-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/cart-service
+    newName: ghcr.io/ruke79/ecommerce-msa/cart-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/order-service
+    newName: ghcr.io/ruke79/ecommerce-msa/order-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/pay-service
+    newName: ghcr.io/ruke79/ecommerce-msa/pay-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/coupon-service
+    newName: ghcr.io/ruke79/ecommerce-msa/coupon-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/chat-service
+    newName: ghcr.io/ruke79/ecommerce-msa/chat-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/notification-service
+    newName: ghcr.io/ruke79/ecommerce-msa/notification-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/delivery-service
+    newName: ghcr.io/ruke79/ecommerce-msa/delivery-service
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/saga-projection
+    newName: ghcr.io/ruke79/ecommerce-msa/saga-projection
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/config-server
+    newName: ghcr.io/ruke79/ecommerce-msa/config-server
+    newTag: "95007cf4f4cd"
+  - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/frontend
+    newName: ghcr.io/ruke79/ecommerce-msa/frontend
+    newTag: "95007cf4f4cd"
+
+patches:
+  - path: patch-local-endpoints.yaml
+
+  # 실제 메일 발송. 베이스는 안전하게 "logging"(발송 안 함)이므로 여기서 켠다.
+  # ⚠️ Secret 의 MAIL_* 만 채우고 이 패치를 빼면 메일은 로그에만 찍히고 나가지 않는다.
+  #    회원가입 인증 메일이 안 온다면 대개 이 줄이 빠진 것이다.
+  - path: patch-mail.yaml

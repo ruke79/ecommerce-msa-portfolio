@@ -1,0 +1,13 @@
+{
+  "name": "chat-connector",
+  "config": {
+      "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",	  
+      "connection.uri": "mongodb://<mongo-host>:27017",	  
+	  "topics": "chat",
+	  "database": "chat",
+	  "collection": "chat",
+	  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+	  "value.converter": "org.apache.kafka.connect.storage.StringConverter"  	    	  
+	  }
+}
+

@@ -1,0 +1,9 @@
+{
+  "type": "record", "name": "CouponUseRequest", "namespace": "com.project.common.avro",
+  "doc": "v2(authorizationToken 제거, docs/54 §10.1). v1 은 avro-history/. coupon → cart 쿠폰 적용 결과. 토픽 coupon-use. 키 userId.",
+  "fields": [
+    { "name": "userId",   "type": "long" },
+    { "name": "discount", "type": "int", "default": 0 },
+    { "name": "totalAfterDiscount", "type": ["null", "string"], "default": null, "doc": "BigDecimal.toPlainString()" }
+  ]
+}

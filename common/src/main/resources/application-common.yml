@@ -1,0 +1,227 @@
+# Kafka 접속 기본값.
+#
+# 실제 값은 저장소 밖의 kafka-secrets.properties(또는 환경변수)가 덮어쓴다. 그 파일은 비밀번호를
+# 담고 있어 .gitignore 대상인데, 예전에는 각 서비스가 그 파일을 **필수로** import 하고 있었다.
+# 그래서 새로 클론한 저장소도, 빌드한 컨테이너 이미지도 이 오류로 기동조차 못 했다:
+#
+#   Config data resource 'class path resource [kafka-secrets.properties]' does not exist
+#
+# import 를 optional 로 바꾸고 여기에 개발용 기본값을 둔다 — 비밀이 아닌 값들이다.
+# 운영에서는 시크릿 파일이나 KAFKA_* 환경변수가 이 값을 덮어쓴다.
+#
+# 인증서/키스토어 파일은 ops/07-issue-certificates.sh 가 만든다(docs/18). 그 스크립트가
+# 출력하는 certs.env 를 source 하면 아래 KAFKA_SSL_* 이 채워진다.
+# [JA] Kafka 接続のデフォルト値。
+#
+#      実際の値はリポジトリ外の kafka-secrets.properties(または環境変数)が上書きする。そのファイルはパスワードを
+#      含むので .gitignore の対象だが、以前は各サービスがそのファイルを**必須で** import していた。
+#      そのため新しくクローンしたリポジトリも、ビルドしたコンテナイメージも、次のエラーで起動すらできなかった:
+#
+#        Config data resource 'class path resource [kafka-secrets.properties]' does not exist
+#
+#      import を optional に変え、ここに開発用のデフォルト値を置く — 秘密ではない値である。
+#      本番ではシークレットファイルや KAFKA_* 環境変数がこの値を上書きする。
+#
+#      証明書/キーストアファイルは ops/07-issue-certificates.sh が作る(docs/18)。そのスクリプトが
+#      出力する certs.env を source すると、下の KAFKA_SSL_* が埋まる。
+kafka:
+  url: ${KAFKA_URL:localhost:29092}
+  security:
+    protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+  ssl:
+    # 환경변수 이름은 k8s/10-configmap.yaml 이 이미 쓰고 있던 KAFKA_SSL_* 로 통일했다.
+    # (예전 이름 KAFKA_TRUST_STORE_LOCATION 은 어느 매니페스트에서도 주입되지 않아 죽은 채였다.)
+    # [JA] 環境変数名は、k8s/10-configmap.yaml がすでに使っていた KAFKA_SSL_* に統一した。
+    #      (旧名 KAFKA_TRUST_STORE_LOCATION はどのマニフェストからも注入されず、死んだままだった。)
+    trust-store-location: ${KAFKA_SSL_TRUST_STORE_LOCATION:}
+    trust-store-password: ${KAFKA_SSL_TRUST_STORE_PASSWORD:}
+    key-store-location: ${KAFKA_SSL_KEY_STORE_LOCATION:}
+    key-store-password: ${KAFKA_SSL_KEY_STORE_PASSWORD:}
+    # 스토어 형식. 자바 코드가 "JKS" 로 하드코딩하고 있었는데 정작 key-store-location 은
+    # .p12 를 가리켜, SSL 을 켜는 순간 'Invalid keystore format' 이 나는 조합이었다.
+    # 기본값은 ops/07 이 생성하는 파일 형식과 일치시킨다.
+    # [JA] ストア形式。Java コードが "JKS" とハードコードしていたのに、肝心の key-store-location は
+    #      .p12 を指しており、SSL を有効にした瞬間に 'Invalid keystore format' が出る組み合わせだった。
+    #      デフォルト値は ops/07 が生成するファイル形式と一致させる。
+    key-store-type: ${KAFKA_SSL_KEY_STORE_TYPE:PKCS12}
+    trust-store-type: ${KAFKA_SSL_TRUST_STORE_TYPE:JKS}
+  # 관리형 Kafka(Confluent Cloud, Redpanda Cloud, Aiven …)는 mTLS 가 아니라
+  # **SASL_SSL + API 키**로 인증한다. 그쪽으로 붙일 때 채우는 값들이다(docs/32).
+  #
+  #   KAFKA_SECURITY_PROTOCOL=SASL_SSL
+  #   KAFKA_SASL_MECHANISM=PLAIN            (Redpanda 는 SCRAM-SHA-256 을 쓰기도 한다)
+  #   KAFKA_SASL_USERNAME / KAFKA_SASL_PASSWORD
+  #
+  # 이때 KAFKA_SSL_*_LOCATION 은 **비워 두어야 한다**. 값이 있으면 사설 CA 트러스트스토어를
+  # 쓰게 되어 공개 CA 로 발급된 관리형 브로커 인증서 검증이 실패한다(KafkaSecuritySettings).
+  # [JA] マネージド Kafka(Confluent Cloud, Redpanda Cloud, Aiven …)は mTLS ではなく
+  #      **SASL_SSL + API キー**で認証する。そちらに接続するときに埋める値である(docs/32)。
+  #
+  #        KAFKA_SECURITY_PROTOCOL=SASL_SSL
+  #        KAFKA_SASL_MECHANISM=PLAIN            (Redpanda は SCRAM-SHA-256 を使うこともある)
+  #        KAFKA_SASL_USERNAME / KAFKA_SASL_PASSWORD
+  #
+  #      このとき KAFKA_SSL_*_LOCATION は**空にしておかなければならない**。値があるとプライベート CA のトラストストアを
+  #      使うことになり、公開 CA で発行されたマネージドブローカーの証明書検証が失敗する(KafkaSecuritySettings)。
+  sasl:
+    mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
+    # 콘솔이 JAAS 한 줄을 통째로 주는 경우 이쪽에 넣으면 username/password 보다 우선한다.
+    # [JA] コンソールが JAAS の一行を丸ごと渡してくる場合、ここに入れると username/password より優先される。
+    jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
+    username: ${KAFKA_SASL_USERNAME:}
+    password: ${KAFKA_SASL_PASSWORD:}
+
+eureka:
+    client:
+      register-with-eureka: true
+      fetch-registry: true
+      service-url:
+        defaultZone: http://localhost:8761/eureka
+
+spring:
+  # spring.application.name 을 여기에 두면 안 된다. 이 파일은 **모든 서비스가 공유**하므로
+  # 서비스마다 자기 이름을 선언해도 이 값(common)이 이겨서, 실행 중인 모든 서비스가
+  # 스스로를 'common' 이라고 보고했다(docs/14 B-22). 실제 피해:
+  #   - 추적(Jaeger): 모든 스팬이 'common' 한 서비스로 뭉쳐 분산 추적의 의미가 사라짐
+  #   - Prometheus: management.metrics.tags.application 이 전부 'common' → 대시보드가 서비스별로
+  #     구분되지 않음
+  #   - Eureka: 서비스들이 같은 이름으로 등록될 위험(게이트웨이의 lb:// 라우팅 근간이 흔들린다)
+  # 이름은 각 서비스의 application-local.yml 이 선언한다.
+  # [JA] spring.application.name をここに置いてはならない。このファイルは**全サービスが共有**するので、
+  #      サービスごとに自分の名前を宣言してもこの値(common)が勝ち、稼働中の全サービスが
+  #      自分を 'common' と報告していた(docs/14 B-22)。実際の被害:
+  #        - トレース(Jaeger): すべてのスパンが 'common' という一つのサービスにまとまり、分散トレースの意味が失われた
+  #        - Prometheus: management.metrics.tags.application がすべて 'common' → ダッシュボードがサービスごとに
+  #          区別されない
+  #        - Eureka: サービスが同じ名前で登録される危険(ゲートウェイの lb:// ルーティングの根幹が揺らぐ)
+  #      名前は各サービスの application-local.yml が宣言する。
+  config:
+    import: "optional:classpath:application-common.yml"
+
+  cloud:
+    config:
+      enabled: false
+
+    # 서비스 간 OpenFeign 호출의 기본 타임아웃 표준 — **전 서비스의 유일한 정의 지점**.
+    #
+    # ⚠️ 접두사가 `spring.cloud.openfeign` 이어야 한다. 예전에는 최상위 `feign.client.config`
+    #    에 있었는데, 그 키는 Spring Cloud 2022.0(OpenFeign 4.x)부터 **읽히지 않는다**.
+    #    폴백도 경고도 없다. 그래서 "3초/5초"라고 믿고 있던 동안 실제로는 Feign 기본값인
+    #    **연결 10초 / 읽기 60초**가 적용되고 있었다(docs/37 §2.1 — jar 바이트코드로 확인).
+    #    풀 크기 5인 DB 앞에서 60초는 "상대 서비스가 멈추면 내 DB 풀이 마른다"는 뜻이다.
+    #
+    #    ConfigurationGuardrailTest(B-37)가 옛 접두사의 부활을 막고,
+    #    cart-service 의 FeignTimeoutBindingTest 가 이 값이 실제로 바인딩되어
+    #    5초에 Read timed out 이 나는 것까지 확인한다.
+    #
+    # 타임아웃이 없으면 느린 다운스트림 응답이 서블릿 워커 스레드와 DB 커넥션을 점유해
+    # 정상 기능까지 동반 장애(cascading failure)로 번진다.
+    # (Feign 레벨 서킷브레이커/폴백은 FeignConfig의 RequestContextHolder(ThreadLocal) 기반
+    #  인증 헤더 전파와 충돌할 수 있어 docs/03 로드맵에서 컨텍스트 전파와 함께 도입한다.)
+    # [JA] サービス間 OpenFeign 呼び出しのデフォルトタイムアウト標準 — **全サービスで唯一の定義箇所**。
+    #
+    #      ⚠️ 接頭辞は `spring.cloud.openfeign` でなければならない。以前はトップレベルの `feign.client.config`
+    #         にあったが、そのキーは Spring Cloud 2022.0(OpenFeign 4.x)から**読まれない**。
+    #         フォールバックも警告もない。そのため「3秒/5秒」と信じていた間、実際には Feign のデフォルト値である
+    #         **接続 10秒 / 読み取り 60秒**が適用されていた(docs/37 §2.1 — jar のバイトコードで確認)。
+    #         プールサイズ 5 の DB の前で 60秒とは「相手サービスが止まると自分の DB プールが枯れる」という意味である。
+    #
+    #         ConfigurationGuardrailTest(B-37)が旧接頭辞の復活を防ぎ、
+    #         cart-service の FeignTimeoutBindingTest がこの値が実際にバインドされ、
+    #         5秒で Read timed out が起きることまで確認する。
+    #
+    #      タイムアウトがないと、遅い下流の応答がサーブレットのワーカースレッドと DB コネクションを占有し、
+    #      正常な機能まで巻き込む連鎖障害(cascading failure)へと広がる。
+    #      (Feign レベルのサーキットブレーカー/フォールバックは、FeignConfig の RequestContextHolder(ThreadLocal)ベースの
+    #       認証ヘッダー伝播と衝突しうるため、docs/03 のロードマップでコンテキスト伝播と合わせて導入する。)
+    openfeign:
+      client:
+        config:
+          default:
+            connectTimeout: 3000
+            readTimeout: 5000
+            loggerLevel: basic
+
+  # 스키마 마이그레이션 (docs/09 P0, docs/20).
+  # 이미 Hibernate가 만들어 둔 기존 DB에는 baseline-on-migrate가 버전 0으로 기준선을 잡고
+  # V1부터의 마이그레이션만 적용한다. 빈 DB에서는 V1부터 전부 실행된다.
+  #
+  # 스키마는 이제 **Flyway가 전부 소유**하고 Hibernate는 validate로 검증만 한다.
+  # 과도기의 `ddl-auto: update`는 세 가지가 동시에 문제였다:
+  #  - 스키마 변경이 이력에 남지 않는다(무엇이 언제 왜 바뀌었는지 아무도 모른다)
+  #  - 운영 DB에 예고 없는 DDL이 나간다(리뷰도 롤백 계획도 없이)
+  #  - 제약을 **지우지는 않는다** — 잘못 걸린 제약은 영원히 남는다(V4가 그 뒤처리였다)
+  # 각 서비스의 V*__baseline_schema.sql이 엔티티와 일치하는 스키마를 만든다.
+  # 그 파일들은 손으로 쓴 것이 아니라 Hibernate의 DDL을 기계 변환한 것이다(docs/20 §3).
+  # [JA] スキーママイグレーション (docs/09 P0, docs/20)。
+  #      Hibernate がすでに作っていた既存 DB では baseline-on-migrate がバージョン 0 でベースラインを取り、
+  #      V1 以降のマイグレーションだけを適用する。空の DB では V1 からすべて実行される。
+  #
+  #      スキーマは今や **Flyway がすべて所有**し、Hibernate は validate で検証するだけである。
+  #      過渡期の `ddl-auto: update` は三つの点が同時に問題だった:
+  #       - スキーマ変更が履歴に残らない(何がいつなぜ変わったのか誰にもわからない)
+  #       - 本番 DB に予告なしの DDL が流れる(レビューもロールバック計画もなしに)
+  #       - 制約を**削除はしない** — 誤って付いた制約は永遠に残る(V4 がその後始末だった)
+  #      各サービスの V*__baseline_schema.sql がエンティティと一致するスキーマを作る。
+  #      それらのファイルは手書きではなく、Hibernate の DDL を機械変換したものである(docs/20 §3)。
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: "0"
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus, health, info, metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true          # /actuator/health/liveness, /readiness (컨테이너 프로브용) ／ [JA] (コンテナのプローブ用)
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      # p99 경보/대시보드(observability/alert-rules.yml)가 histogram_quantile 을 쓰므로 버킷 노출
+      # [JA] p99 アラート/ダッシュボード(observability/alert-rules.yml)が histogram_quantile を使うのでバケットを公開する
+      percentiles-histogram:
+        http.server.requests: true
+  # 분산 추적 — OpenTelemetry(docs/63). 서비스는 OTLP(HTTP)로 **OTel Collector** 에만 보낸다. 어디에 저장할지
+  # (Jaeger), 추적에서 지표를 뽑을지(spanmetrics), 무엇을 지울지(개인정보)는 Collector 가 정한다 — 서비스는 모른다.
+  # 서비스는 전부 보낸다(1.0). 무엇을 남길지는 Collector 의 꼬리 샘플링이 추적이 끝난 뒤에 고른다(docs/63 §5) —
+  # 여기서 낮추면 결과(오류 · 지연)를 모르는 채 버려진다. 환경 변수는 비상용(Collector 가 없는 환경)이다.
+  # [JA] 分散トレース — OpenTelemetry(docs/63)。サービスは OTLP(HTTP)で **OTel Collector** にだけ送る。どこに保存するか
+  #      (Jaeger)、トレースからメトリクスを抽出するか(spanmetrics)、何を消すか(個人情報)は Collector が決める
+  #      — サービスは関知しない。
+  #      サービスはすべて送る(1.0)。何を残すかは Collector のテールサンプリングがトレース完了後に選ぶ(docs/63 §5) —
+  #      ここで下げると結果(エラー・遅延)がわからないまま捨てられる。環境変数は非常用(Collector がない環境)である。
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+      transport: http
+  # 추적의 resource 속성 — Jaeger · spanmetrics 가 서비스를 가르는 이름(service.name)은 spring.application.name 이다.
+  # [JA] トレースの resource 属性 — Jaeger・spanmetrics がサービスを区別する名前(service.name)は spring.application.name である。
+  opentelemetry:
+    resource-attributes:
+      deployment.environment: ${DEPLOYMENT_ENVIRONMENT:local}
+# ── 로그 출력 스위치 (docs/51 §3) ─────────────────────────────────────────────
+# 형식·마스킹·롤링은 common 의 logback-spring.xml 이 정하고, 여기서는 무엇을 켤지만 고른다.
+# 모든 환경이 local 프로파일로 돌기 때문에(k8s 포함) 프로파일이 아니라 환경변수로 고른다.
+# [JA] ── ログ出力スイッチ (docs/51 §3) ──
+#      形式・マスキング・ローリングは common の logback-spring.xml が決め、ここでは何を有効にするかだけを選ぶ。
+#      すべての環境が local プロファイルで動くため(k8s を含む)、プロファイルではなく環境変数で選ぶ。
+app:
+  logging:
+    # text: 사람이 읽는 한 줄(kubectl logs). json: 수집기가 stdout 을 읽을 때.
+    # [JA] text: 人が読む一行(kubectl logs)。json: 収集器が stdout を読むとき。
+    console-format: ${LOG_CONSOLE_FORMAT:text}
+    # logging.file.name 의 JSON 파일. 로컬 관측 스택(Alloy)이 읽는다. k8s 에서는 끈다 —
+    # 컨테이너 안의 파일은 아무도 읽지 않고 파드가 지워지면 사라지며 노드 디스크만 쓴다.
+    # [JA] logging.file.name の JSON ファイル。ローカル観測スタック(Alloy)が読む。k8s では無効にする —
+    #      コンテナ内のファイルは誰も読まず、Pod が消えれば消え、ノードのディスクを使うだけである。
+    json-file: ${LOG_JSON_FILE:true}

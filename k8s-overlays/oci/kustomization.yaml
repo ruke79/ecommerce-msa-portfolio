@@ -1,0 +1,84 @@
+# oci 오버레이 — Always Free Ampere **2 OCPU / 12GB** 한 대에 욱여넣는다.
+#
+#   kubectl apply -k k8s-overlays/oci
+#   # ⚠️ k8s/70-autoscaling.yaml 은 **적용하지 않는다** (아래 §HPA)
+#
+# ⚠️ **4 OCPU / 24GB 를 받았다면 이게 아니라 `k8s-overlays/external` 이다.** 이 오버레이도
+#    물론 돌지만(더 조인 값이라 여유가 남을 뿐이다), 4 OCPU 에서는 요청·상한을 깎을 이유가
+#    없고 Elasticsearch 도 남길 수 있다. 어느 쪽인지는 인스턴스에서 `nproc` 으로 본다 —
+#    `ops/23-oci-ampere-bootstrap.sh --check` 가 코어 수를 보고 골라 준다.
+#
+# ── 왜 생겼나 ──────────────────────────────────────────────────────────
+#
+# 2026-06-15 부로 Oracle 이 Always Free Ampere A1 한도를 **4 OCPU/24GB → 2 OCPU/12GB 로
+# 반토막** 냈다고 공지 없이 문서만 바뀌었다. 다만 **실제로는 4 OCPU/24GB 가 그대로 잡히는
+# 계정이 있다** — 한도는 테넌시마다 다르므로 단정하지 말고 확인할 것.
+#
+# 그 전까지의 계획(docs/32 §2)은 4 OCPU 기준이었다. 2 OCPU 로 다시 계산하면:
+#
+#   external 오버레이 그대로, 전부 1레플리카 + Kafka·ES·Redis   3,550m  → 2 OCPU 초과 🔴
+#   이 오버레이 + Kafka·Redis (ES 제외)                        ~1,115m  → 들어간다 ✅
+#
+#   (2026-09 추가분 반영: saga-projection 과 config-server 둘. external 은 각 +100m,
+#    이 오버레이는 각 +60m. saga-projection 은 external 의 replicas 블록이 1레플리카로
+#    고정한 값 기준이고, config-server 는 매니페스트 자체가 1이다.)
+#
+# ── 무엇을 줄이나 ──────────────────────────────────────────────────────
+#
+#   요청(requests)  250m/384Mi → 60m/256Mi     스케줄러가 잡아 두는 양이다
+#   상한(limits)    1000m/768Mi → 800m/512Mi   실제로 쓸 수 있는 천장
+#   JVM 힙          -XX:MaxRAMPercentage=60    상한을 낮췄으니 힙도 같이 낮춘다
+#   cloudflared     레플리카 2 → 1             노드가 하나뿐이라 2개는 의미가 없다
+#
+# ⚠️ docs/31 §3 은 "requests 만 낮추고 limits 는 건드리지 말라"고 적었다. 여기서는
+#    **limits 도 낮춘다** — 그 조언의 전제가 "힙이 상한에 맞춰 자동으로 잡힌다"였기 때문이다.
+#    JVM 기본 힙은 컨테이너 상한의 1/4 이라, 상한만 낮추면 힙이 따라 내려가긴 하지만
+#    14개 서비스가 동시에 상한까지 오르면 14 × 768Mi = 10.8GB 로 12GB 노드가 OOM 이다.
+#    상한을 512Mi 로 내리고 MaxRAMPercentage 로 힙을 명시해 **예측 가능하게** 만든다.
+#    (ENTRYPOINT 가 `java ${JAVA_OPTS} -jar` 라 JAVA_OPTS 가 그대로 먹는다.
+#     JAVA_TOOL_OPTIONS 은 트러스트스토어용으로 이미 쓰이고 있어 건드리지 않는다.)
+#
+# ── HPA 를 적용하지 않는다 ─────────────────────────────────────────────
+#
+# prod 오버레이가 Deployment 에서 replicas 를 지웠으므로(HPA 소유), HPA 를 적용하지 않으면
+# 쿠버네티스 기본값인 **1레플리카**가 된다. 그게 이 노드에서 원하는 값이다.
+#
+# 70-autoscaling.yaml 을 적용하면 minReplicas=2 로 올라가 곧바로 자원이 모자란다.
+# 굳이 쓰려면 min=1/max=2 로 낮춰서 적용할 것.
+#
+# ⚠️ 레플리카 1에서는 이 저장소가 레플리카 2에서 잡았던 동시성 버그가 재현되지 않는다
+#    (아웃박스 중복 발행, 메일·SMS 디스패처 이중 선점 — docs/21, docs/31 §3).
+#    그건 ops/12-staging-rehearsal.sh 로 따로 확인해야 한다.
+#
+# ── Elasticsearch 는 띄우지 않는다 ─────────────────────────────────────
+#
+# `SEARCH_ENGINE=postgres` 가 기본값이라 ES 없이도 검색이 동작한다(LIKE 경로).
+# ES 는 요청만 200m/768Mi 이고 실제 힙이 512MB 라, 2 OCPU 박스에서 **꺼져 있는 기능에
+# 주기에는 너무 비싸다.** 한국어 형태소 검색(nori)이 필요해지면 그때 판단할 것 —
+# 그때는 이 박스로는 부족하다.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../external          # 관리형 PG/Mongo 엔드포인트 + cloudflared 를 그대로 상속
+
+patches:
+  # 자바 서비스 13종 — 요청·상한을 줄이고 힙을 명시한다.
+  - path: patch-java-resources.yaml
+    target:
+      kind: Deployment
+      name: "eureka-server|gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|chat-service|notification-service|delivery-service|saga-projection|config-server"
+
+  # frontend 는 nginx 라 자바 설정이 필요 없고 원래도 작다.
+  - path: patch-frontend.yaml
+    target: { kind: Deployment, name: frontend }
+
+  # 노드가 하나뿐이라 cloudflared 2개는 가용성을 주지 못한다 — 자원만 쓴다.
+  - path: patch-cloudflared.yaml
+    target: { kind: Deployment, name: cloudflared }
+
+  # ES 를 띄우지 않으므로 헬스 인디케이터를 끈다(§위).
+  - path: patch-config.yaml

@@ -1,0 +1,18 @@
+# OpenJDK 17 기반의 경량화된 이미지 사용
+FROM openjdk:17-jdk-slim
+
+# JAR 파일을 복사할 디렉토리 생성
+WORKDIR /chat-service
+
+# JAR 파일을 컨테이너 내부로 복사
+# 프로젝트 루트에서 빌드한 후 해당 모듈의 target 디렉토리에 생성된 JAR 파일을 복사
+ARG JAR_FILE=build/libs/*.jar
+COPY ${JAR_FILE} app.jar
+
+# 컨테이너가 시작될 때 실행될 명령어
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+
+# 애플리케이션 포트 노출
+# 애플리케이션의 실제 포트 번호에 맞게 수정
+EXPOSE 8086

@@ -1,0 +1,650 @@
+package com.project.coupon_service.service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.project.common.constants.coupon.CouponScope;
+import com.project.common.constants.event.AudienceSegment;
+import com.project.common.constants.coupon.CouponStatus;
+import com.project.common.dto.CartDto;
+import com.project.common.dto.CartProductDto;
+import com.project.common.dto.ProductDto;
+import com.project.common.dto.SharedUserDto;
+import com.project.common.message.dto.request.CouponRollbackRequest;
+import com.project.common.message.dto.request.CouponUseRequest;
+import com.project.common.message.dto.response.PaymentResponse;
+import com.project.common.util.EmailValidator;
+import com.project.coupon_service.client.CartServiceClient;
+import com.project.coupon_service.client.CatalogServiceClient;
+import com.project.coupon_service.client.UserServiceClient;
+import com.project.coupon_service.dto.CouponDto;
+import com.project.coupon_service.model.Coupon;
+import com.project.coupon_service.model.CouponTarget;
+import com.project.coupon_service.repository.jpa.CouponRepository;
+import com.project.coupon_service.repository.jpa.CouponTargetRepository;
+import com.project.coupon_service.dto.request.CouponApplyRequest;
+import com.project.coupon_service.dto.request.CouponRequest;
+import com.project.coupon_service.dto.response.CouponResponse;
+import com.project.coupon_service.message.producer.CouponIssuedProducer;
+import com.project.coupon_service.message.producer.CouponUseProducer;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class CouponService {
+
+    private final CouponRepository couponRepository;
+    private final CouponTargetRepository couponTargetRepository;
+    private final UserServiceClient userServiceClient;
+    private final CartServiceClient cartServiceClient;
+    private final CatalogServiceClient catalogServiceClient;
+    private final CouponUseProducer couponUseProducer;
+    private final CouponIssuedProducer couponIssuedProducer;
+
+
+    
+    @Transactional
+    /**
+     * @param userId       게이트웨이가 검증한 사용자({@code User-Id} 헤더 = 토큰의 uid). 본문에는 신원 필드가 없다 —
+     *                     예전에는 본문의 {@code userEmail} 을 믿어 남의 쿠폰이 적용됐다(컨트롤러 주석 참조).
+     */
+    public CouponResponse applyCoupon(CouponApplyRequest request, Long userId) {
+
+        Quoted quoted = computeQuote(request.getCouponName(), userId);
+
+        if (quoted.usable()) {
+            couponUseProducer.publish(CouponUseRequest.builder()
+                    .userId(quoted.userId())
+                    .totalAfterDiscount(quoted.response().getTotalAfterDiscount())
+                    .discount(quoted.response().getDiscount())
+                    .build());
+        }
+
+        return quoted.response();
+    }
+
+    /**
+     * 얼마가 깎이는가 — <b>부수효과 없이</b>.
+     *
+     * <p>{@link #applyCoupon} 과 계산은 똑같고, 쿠폰 사용 이벤트를 발행하지 않는 것만
+     * 다르다. order-service 가 주문 총액을 서버에서 다시 계산할 때 부른다(docs/40 #10).
+     *
+     * <p>🔴 <b>주문 생성이 쿠폰을 "사용" 처리하면 안 된다.</b> 결제가 실패하거나 사용자가
+     * 결제 화면에서 이탈하면 쓰지도 않은 쿠폰이 소모된다. 사용 처리는 원래 적용 시점에
+     * 일어나고, 여기서는 금액만 답한다.
+     */
+    @Transactional(readOnly = true)
+    public CouponResponse quote(String couponName, Long userId) {
+        if (userId == null) {
+            return CouponResponse.builder().message("Failed to get coupons").build();
+        }
+        return computeQuote(couponName, userId).response();
+    }
+
+    /**
+     * 쿠폰 계산 본체.
+     *
+     * @param couponName   적용할 쿠폰 이름
+     * @param userId       <b>게이트웨이가 검증한</b> 신원(토큰의 uid). 본문에서 온 값을 넣으면 안 된다. 예전에는
+     *                     이메일을 받아 매번 user-service 에 id 를 다시 물었다(docs/48 §6-⑥).
+     */
+    private Quoted computeQuote(String couponName, Long userId) {
+
+        Coupon coupon = getCouponNotUsed(couponName, userId);
+
+        if (null == coupon) {
+            return Quoted.rejected(CouponResponse.builder().message("Failed to get coupons").build());
+        }
+
+        // 🕐 기간 검증. 예전에는 이 검사가 **어디에도 없었다** — startDate/endDate 를
+        // 저장만 하고 적용 시점에 보지 않았다. 가입 쿠폰의 31일 유효기간은 장식이었고,
+        // 1년 전에 만료된 쿠폰도 그대로 할인됐다.
+        if (!coupon.isUsableAt(LocalDateTime.now())) {
+            return Quoted.rejected(CouponResponse.builder()
+                    .message("사용 기간이 지난 쿠폰입니다.")
+                    .build());
+        }
+
+        // 🔒 할인의 기준 금액은 **서버가 읽은 장바구니**다. 요청 본문의 금액은 쓰지 않는다
+        //    (docs/40 #10). 예전에는 제약 없는 쿠폰이 본문의 totalPrice 를 그대로 믿었고,
+        //    그 값은 브라우저가 정했다.
+        CartDto cart = fetchCart(userId);
+        if (cart == null) {
+            // 장바구니를 못 읽으면 금액을 정할 수 없다. 본문 값으로 대신하지 않는다 —
+            // 그러면 장바구니 서비스를 잠시 막는 것만으로 원하는 금액을 부를 수 있다.
+            return Quoted.rejected(CouponResponse.builder()
+                    .message("장바구니를 확인할 수 없어 쿠폰을 적용하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+                    .build());
+        }
+
+        CouponScope scope = coupon.scope();
+        Set<String> targets = targetValues(coupon.getCouponId(), scope);
+
+        // 줄 목록은 **언제나** 만든다. 제약 없는 쿠폰도 상품 금액을 기준으로 깎아야
+        // 하기 때문이다(배송비는 할인하지 않는다 — CouponCalculator 주석).
+        //
+        // 다만 **카테고리 조회(catalog 왕복)는 제약 있는 쿠폰에서만** 한다. 제약이 없으면
+        // 어떤 카테고리인지 알 필요가 없고, 결제 직전 경로에 서비스 간 왕복을 더할 이유가
+        // 없다.
+        List<CouponCalculator.Line> lines = scope == CouponScope.ALL
+                ? plainLines(cart)
+                : cartLines(cart);
+
+        CouponCalculator.Result calc = CouponCalculator.calculate(
+                coupon.getDiscount(), scope, targets, cartTotal(cart), lines);
+
+        if (scope != CouponScope.ALL && calc.eligibleItemCount() == 0) {
+            // 조용히 0원 할인으로 끝내면 "쿠폰을 넣었는데 아무 일도 안 일어난다"가 된다.
+            return Quoted.rejected(CouponResponse.builder()
+                    .message("이 쿠폰을 적용할 수 있는 상품이 장바구니에 없습니다.")
+                    .eligibleSubtotal(BigDecimal.ZERO)
+                    .discountAmount(BigDecimal.ZERO)
+                    .eligibleItemCount(0)
+                    .build());
+        }
+
+        return new Quoted(CouponResponse.builder()
+                .totalAfterDiscount(calc.totalAfterDiscount())
+                .discount(coupon.getDiscount())
+                .message("")
+                .discountAmount(calc.discountAmount())
+                .eligibleSubtotal(calc.eligibleSubtotal())
+                .eligibleItemCount(calc.eligibleItemCount())
+                .build(), userId, true);
+    }
+
+    /**
+     * 계산 결과와, 그것이 <b>실제로 쓸 수 있는 할인인지</b>.
+     *
+     * <p>{@code usable} 이 false 인 응답에는 거절 사유({@code message})만 담긴다. 이 값이
+     * 쿠폰 사용 이벤트를 발행할지를 가른다 — 거절된 계산으로 사용 처리를 하면 쓰지도
+     * 못한 쿠폰이 소모된다.
+     */
+    private record Quoted(CouponResponse response, Long userId, boolean usable) {
+        static Quoted rejected(CouponResponse response) {
+            return new Quoted(response, null, false);
+        }
+    }
+
+    /**
+     * 할인 계산의 기준이 되는 장바구니 총액.
+     *
+     * <p>cart-service 가 카탈로그 가격으로 직접 계산해 저장한 값이다({@code computeCartTotal}).
+     * 배송비가 포함돼 있고, 사용자가 장바구니 화면에서 보는 숫자와 같다.
+     *
+     * <p>예전에는 제약 있는 쿠폰일 때 <b>줄 금액의 합</b>(배송비 제외)을 기준으로 삼아,
+     * 같은 장바구니인데 쿠폰 종류에 따라 기준 총액이 달랐다. 그래서 {@code totalAfterDiscount}
+     * 가 "장바구니 총액 − 할인액" 과 맞지 않는 경우가 생겼다.
+     */
+    private BigDecimal cartTotal(CartDto cart) {
+        return cart.getCartTotal() == null ? BigDecimal.ZERO : cart.getCartTotal();
+    }
+
+    /** 이 쿠폰의 대상 id 집합. scope 가 ALL 이면 조회하지 않는다. */
+    @Transactional(readOnly = true)
+    Set<String> targetValues(Long couponId, CouponScope scope) {
+        if (scope == CouponScope.ALL) {
+            return Set.of();
+        }
+        return couponTargetRepository.findByCouponId(couponId).stream()
+                .filter(t -> t.getTargetType() == scope)
+                .map(CouponTarget::getTargetValue)
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * 장바구니를 서버에서 읽는다 — <b>금액의 유일한 근거</b>다.
+     *
+     * <p>cart-service 는 카탈로그 가격으로 총액을 직접 계산해 저장하므로, 여기서 읽은
+     * {@code cartTotal} 은 브라우저가 손댈 수 없는 값이다. 요청 본문의 금액을 쓰던 경로를
+     * 전부 이쪽으로 옮겼다(docs/40 #10).
+     *
+     * <p>읽지 못하면 {@code null} 이고, 부르는 쪽은 <b>거절한다.</b> 예외를 밖으로 던지지는
+     * 않는다 — 쿠폰 실패로 결제 화면이 통째로 날아가면 안 된다. 하지만 본문 금액으로
+     * 대신하지도 않는다. 그러면 장바구니 서비스를 잠시 막는 것만으로 원하는 금액을 부를
+     * 수 있다.
+     *
+     * <p>빈 장바구니도 {@code null} 로 본다. 담긴 것이 없으면 할인할 대상도 없다.
+     */
+    private CartDto fetchCart(Long userId) {
+        try {
+            CartDto cart = cartServiceClient.getCart(userId).getBody();
+            if (cart == null || cart.getProducts() == null || cart.getProducts().isEmpty()) {
+                return null;
+            }
+            return cart;
+        } catch (RuntimeException e) {
+            log.warn("쿠폰 적용: 장바구니를 읽지 못했다 — 금액을 정할 수 없다. {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * 카테고리 없이 줄만 만든다 — 제약 없는 쿠폰용.
+     *
+     * <p>할인 기준이 되는 것은 {@code price × qty} 뿐이라 카테고리가 필요 없다.
+     * catalog 를 부르지 않으므로 결제 직전 경로에 왕복이 늘지 않는다.
+     */
+    private List<CouponCalculator.Line> plainLines(CartDto cart) {
+        List<CouponCalculator.Line> lines = new ArrayList<>();
+        for (CartProductDto item : cart.getProducts()) {
+            lines.add(new CouponCalculator.Line(
+                    item.getProductId(), null, item.getPrice(), item.getQty()));
+        }
+        return lines;
+    }
+
+    /**
+     * 각 줄의 카테고리를 catalog 에서 <b>한 번에</b> 채운다.
+     *
+     * <p>줄마다 상품을 조회하면 항목 수만큼 왕복이 생긴다 — 배치 엔드포인트를 쓴다
+     * (cart-service 가 같은 이유로 이미 쓰고 있다). catalog 가 모르는 id 는 응답에서
+     * 빠지고, 그 줄은 카테고리 null 로 남아 대상이 아닌 것으로 취급된다.
+     */
+    private List<CouponCalculator.Line> cartLines(CartDto cart) {
+        Map<String, String> categoryByProduct = categoriesOf(cart.getProducts());
+
+        List<CouponCalculator.Line> lines = new ArrayList<>();
+        for (CartProductDto item : cart.getProducts()) {
+            String productId = item.getProductId();
+            lines.add(new CouponCalculator.Line(
+                    productId,
+                    productId == null ? null : categoryByProduct.get(productId),
+                    item.getPrice(),
+                    item.getQty()));
+        }
+        return lines;
+    }
+
+    private Map<String, String> categoriesOf(List<CartProductDto> items) {
+        List<Long> ids = items.stream()
+                .map(CartProductDto::getProductId)
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .map(Long::parseLong)
+                .collect(Collectors.toList());
+
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+
+        try {
+            List<ProductDto> products = catalogServiceClient.getProductsInfo(ids).getBody();
+            if (products == null) {
+                return Map.of();
+            }
+            Map<String, String> result = new HashMap<>();
+            for (ProductDto product : products) {
+                if (product.getId() != null && product.getCategory() != null
+                        && product.getCategory().getId() != null) {
+                    result.put(product.getId(), product.getCategory().getId());
+                }
+            }
+            return result;
+        } catch (RuntimeException e) {
+            log.warn("쿠폰 적용: 상품 카테고리를 읽지 못했다. {}", e.toString());
+            return Map.of();
+        }
+    }
+
+    @Transactional
+    public Coupon updateCouponStatus(PaymentResponse response, String authorizationToken) {
+
+        if (null !=  response.getCouponName()) {
+
+            
+
+            Coupon coupon= getCouponByNameAndUserIdAndCouponStatus(response.getCouponName(), response.getCustomerId(), CouponStatus.NOT_USED);
+
+            if ( null != coupon) {
+                coupon.setCouponStatus(CouponStatus.USED);
+                coupon = couponRepository.save(coupon);
+                return coupon;
+            }
+        }
+        return null;
+    }
+
+    @Transactional
+    public boolean delete(String id) {
+
+        Coupon coupon = couponRepository.findById(Long.parseLong(id))
+                .orElseThrow(() -> new RuntimeException("Coupon not found. "));
+
+        if (null != coupon) {
+            // 대상 행을 먼저 지운다. FK 를 걸지 않았으므로(V5 주석) 여기서 챙기지 않으면
+            // 고아 행이 남는다. 지금은 조회 시 쿠폰이 없어 무해하지만, 나중에 같은 TSID 가
+            // 재사용될 일이 없더라도 쓰레기를 남길 이유는 없다.
+            couponTargetRepository.deleteByCouponId(coupon.getCouponId());
+            couponRepository.delete(coupon);
+            return true;
+        }
+
+        return false;
+    }
+
+    public CouponDto update(CouponRequest request) {
+
+        // Long id = Long.parseLong(request.getCoupon().getId());
+        // Coupon coupon = couponRepository.findById(id)
+        //         .orElseThrow(() -> new RuntimeException("Coupon not found. "));
+
+        // if (null != coupon) {
+        //     coupon.setName(request.getCoupon().getName());
+        //     coupon.setStartDate(request.getCoupon().getStartDate());
+        //     coupon.setEndDate(request.getCoupon().getEndDate());
+        //     coupon.setDiscount(request.getCoupon().getDiscount());
+
+        //     couponRepository.save(coupon);
+
+        //     return CouponDto.builder()
+        //             .id(Long.toString(coupon.getCouponId()))
+        //             .name(coupon.getName())
+        //             .startDate(coupon.getStartDate())
+        //             .endDate(coupon.getEndDate())
+        //             .discount(coupon.getDiscount())
+        //             .build();
+        // }
+
+        return null;
+    }
+
+    
+
+    public List<CouponDto> getCoupons() {
+
+        List<Coupon> coupons = couponRepository.findAll();
+
+        List<CouponDto> result = new ArrayList<CouponDto>();
+        for (Coupon coupon : coupons) {
+
+            result.add(CouponDto.convertToDto(coupon));
+        }
+
+        return result;
+    }
+
+    @Transactional(readOnly=true)
+    public boolean existsCoupon(String couponName, Long userId) {
+
+        boolean existCoupon = couponRepository.existsByNameAndUserId(couponName, userId);
+
+        return existCoupon;
+    }
+
+    @Transactional
+    public Coupon create(CouponRequest request) {
+
+
+        // 🐛 <b>이메일로 발급하는 경로는 지금까지 동작한 적이 없다.</b> 중복 검사만 이메일을
+        //    숫자 id 로 바꿔 놓고, 정작 쿠폰을 만들 때는 아래에서 다시
+        //    `Long.parseLong(request.getUserId())` 를 불렀다 — 이메일을 숫자로 파싱하니
+        //    NumberFormatException 이다. 검사는 통과하고 저장에서 터지는 모양이라,
+        //    "이메일로 쿠폰을 발급한다"는 코드가 있는데 실제로는 500 만 났다.
+        //
+        //    해결한 id 를 끝까지 들고 간다. 쿠폰의 주인은 언제나 숫자 id 다.
+        Long ownerId;
+        if (EmailValidator.isValidEmail(request.getUserId())) {
+            ObjectMapper mapper = new ObjectMapper();
+            SharedUserDto response = mapper.convertValue(
+                    userServiceClient.findUserByEmail(request.getUserId()).getBody(),
+                    SharedUserDto.class);
+            if (response == null || response.getUserId() == null) {
+                // 없는 사용자에게 쿠폰을 만들면 아무도 쓸 수 없는 행이 남는다.
+                throw new IllegalArgumentException("쿠폰을 받을 사용자를 찾지 못했습니다.");
+            }
+            ownerId = response.getUserId();
+        } else {
+            ownerId = Long.parseLong(request.getUserId());
+        }
+
+        boolean existCoupon = existsCoupon(request.getName(), ownerId);
+
+        if (!existCoupon) {
+
+            CouponScope scope = request.scopeOrAll();
+            List<String> targets = request.targetsOrEmpty();
+
+            if (scope != CouponScope.ALL && targets.isEmpty()) {
+                // 대상 없는 제약 쿠폰은 아무 상품에도 적용되지 않는다. 만들어 두면
+                // "쿠폰은 있는데 무엇에도 안 먹는다"는 문의만 남는다. 만들지 않는다.
+                throw new IllegalArgumentException(
+                        "scope 가 " + scope + " 인 쿠폰은 대상(targets)이 하나 이상 있어야 합니다.");
+            }
+            if (request.getScope() != null && !request.getScope().isBlank()
+                    && scope == CouponScope.ALL
+                    && !"ALL".equalsIgnoreCase(request.getScope().trim())) {
+                log.warn("알 수 없는 쿠폰 scope 값이라 ALL 로 처리한다: {}", request.getScope());
+            }
+
+            Coupon newCoupon = Coupon.builder()
+                    .name(request.getName())
+                    .startDate(request.getStartDate())
+                    .endDate(request.getEndDate())
+                    .discount(request.getDiscount())
+                    .userId(ownerId)
+                    .couponStatus(CouponStatus.NOT_USED)
+                    .scope(scope)
+                    .build();
+
+            newCoupon = couponRepository.save(newCoupon);
+
+            if (scope != CouponScope.ALL) {
+                Long couponId = newCoupon.getCouponId();
+                // distinct — 같은 대상이 두 번 들어오면 uk_coupon_target 위반으로 생성
+                // 전체가 실패한다. 중복은 요청자의 실수일 뿐 거절할 이유가 아니다.
+                for (String target : targets.stream().filter(t -> t != null && !t.isBlank())
+                        .map(String::trim).distinct().toList()) {
+                    couponTargetRepository.save(CouponTarget.builder()
+                            .couponId(couponId)
+                            .targetType(scope)
+                            .targetValue(target)
+                            .build());
+                }
+            }
+
+            // 🐛 지금까지 쿠폰이 발급돼도 아무도 알려 주지 않았다. NotificationType.COUPON_ISSUED
+            //    는 메일 제목·SMS 문구·수신 설정까지 다 있는데 만드는 쪽만 없었다.
+            //    발행 실패가 발급을 되돌리지는 않는다(CouponIssuedProducer 주석).
+            couponIssuedProducer.publish(newCoupon);
+
+            return newCoupon;
+        }
+        return null;
+    }
+
+
+    /**
+     * 기획전 쿠폰을 받아 간다.
+     *
+     * <p><b>왜 나눠 주지 않고 받아 가게 하나.</b> 기획전이 시작될 때 전 사용자에게 발급하면
+     * 사용자 수만큼 coupon 행이 생긴다 — 공지 알림에서 개인별 행을 만들지 않기로 한 것과
+     * 같은 문제이고, 게다가 대부분은 쓰지 않는다. 받아 간 사람만 행이 생기게 두면 쓰기량이
+     * 실제 관심에 비례한다.
+     *
+     * <p><b>중복 수령은 이미 막혀 있다.</b> coupon 테이블의 {@code uk_coupon_name_user_id}
+     * 가 한 사람이 같은 이름의 쿠폰을 두 번 갖지 못하게 한다. {@link #create} 가 그 검사를
+     * 하고 이미 있으면 null 을 돌려주므로, 여기서 따로 방어를 만들지 않는다 — 만들면
+     * 같은 규칙이 두 곳에 생긴다.
+     *
+     * <p>순서가 중요하다: <b>기획전 조건을 먼저</b> 읽고, 그 다음 고객군을 본다. 반대로 하면
+     * 이미 끝난 기획전에 대해서도 사용자 조회가 한 번 나간다.
+     *
+     * @return 발급된 쿠폰. 이미 갖고 있으면 {@link ClaimResult#alreadyOwned()}
+     */
+    @Transactional
+    public ClaimResult claimEventCoupon(String slug, Long userId) {
+
+        CatalogServiceClient.EventCouponOffer offer;
+        try {
+            offer = catalogServiceClient.getEventCouponOffer(slug).getBody();
+        } catch (Exception e) {
+            // 404 (진행 중이 아니거나 쿠폰 없음)와 통신 실패를 구분하지 않는다 — 어느
+            // 쪽이든 지금은 받을 수 없고, 사용자가 할 수 있는 일도 같다.
+            log.info("기획전 쿠폰 조건을 읽지 못했다: slug={}, {}", slug, e.getMessage());
+            return ClaimResult.unavailable("지금은 받을 수 없는 쿠폰입니다.");
+        }
+        if (offer == null || offer.couponName() == null || offer.couponDiscount() <= 0) {
+            return ClaimResult.unavailable("이 기획전에는 받을 수 있는 쿠폰이 없습니다.");
+        }
+
+        AudienceSegment audience = AudienceSegment.from(offer.audience());
+        if (audience != AudienceSegment.ALL && !audience.matches(segmentsOf(userId))) {
+            // 어떤 세그먼트에 속하는지는 알려주지 않는다 — 가입 시점을 되짚을 수 있다.
+            return ClaimResult.notEligible("이 쿠폰의 대상이 아닙니다.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        CouponRequest request = new CouponRequest(
+                offer.couponName(), now, now.plusDays(offer.couponValidDays()),
+                offer.couponDiscount(), Long.toString(userId),
+                offer.couponScope(),
+                offer.couponTargets() == null ? List.of() : offer.couponTargets());
+
+        Coupon issued = create(request);
+        if (issued == null) {
+            return ClaimResult.alreadyOwned();
+        }
+        log.info("기획전 쿠폰 발급: slug={}, couponId={}", slug, issued.getCouponId());
+        return ClaimResult.issued(CouponDto.convertToDto(issued));
+    }
+
+    /** 이 사용자의 고객군. 판정은 user-service 가 한다(그쪽만 가입일을 갖고 있다). */
+    private List<String> segmentsOf(Long userId) {
+        try {
+            Map<String, List<String>> body = userServiceClient.findUserSegments(userId).getBody();
+            List<String> segments = body == null ? null : body.get("segments");
+            return segments == null ? List.of() : segments;
+        } catch (Exception e) {
+            // 판정할 수 없으면 <b>주지 않는다.</b> 세그먼트 조회가 실패했을 때 통과시키면
+            // 대상이 아닌 사람에게 쿠폰이 나가고, 그건 되돌리기 어렵다.
+            log.warn("고객군을 확인하지 못했다 — 대상이 아닌 것으로 본다: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * 수령 결과.
+     *
+     * <p>"이미 갖고 있다"를 실패로 두지 않는 이유: 사용자 입장에서는 성공과 다르지 않다.
+     * 버튼을 두 번 눌렀거나 다른 탭에서 이미 받은 것이고, 오류를 띄우면 무엇이 잘못됐는지
+     * 찾게 만든다.
+     */
+    public record ClaimResult(String status, String message, CouponDto coupon) {
+
+        public static ClaimResult issued(CouponDto coupon) {
+            return new ClaimResult("ISSUED", "쿠폰을 받았습니다.", coupon);
+        }
+
+        public static ClaimResult alreadyOwned() {
+            return new ClaimResult("ALREADY_OWNED", "이미 받은 쿠폰입니다.", null);
+        }
+
+        public static ClaimResult notEligible(String message) {
+            return new ClaimResult("NOT_ELIGIBLE", message, null);
+        }
+
+        public static ClaimResult unavailable(String message) {
+            return new ClaimResult("UNAVAILABLE", message, null);
+        }
+
+        public boolean ok() {
+            return "ISSUED".equals(status) || "ALREADY_OWNED".equals(status);
+        }
+    }
+
+    public Coupon getCouponNotUsed(String couponName, Long userId) {
+
+        Coupon coupon = getCouponByNameAndUserIdAndCouponStatus(couponName, userId, CouponStatus.NOT_USED);
+
+        //log.info("Coupon : {} {}", couponName, userId);        
+
+        return coupon;
+        
+    }
+
+    
+    /** 이 사용자의 쓰지 않은 쿠폰. 사용자 id 로 바로 찾는다 — 예전에는 이메일로 user-service 에 id 를 물었다. */
+    public List<CouponDto> getCouponsNotUsed(Long userId) {
+
+        if (null != userId) {
+
+            List<Coupon> coupons = getCouponsByUserIdAndCouponStatus(userId, CouponStatus.NOT_USED);
+
+            if (coupons != null && !coupons.isEmpty()) {
+
+                LocalDateTime now = LocalDateTime.now();
+                List<CouponDto> result = new ArrayList<>();
+                for (Coupon coupon : coupons) {
+                    // 쿠폰 목록은 보통 한두 장이라 대상 조회를 쿠폰마다 해도 무방하다.
+                    // 장 수가 늘면 couponId IN (...) 한 번으로 바꾸면 된다.
+                    List<String> targets = new ArrayList<>(
+                            targetValues(coupon.getCouponId(), coupon.scope()));
+                    result.add(CouponDto.convertToDto(coupon, targets, now));
+                }
+
+                // 쓸 수 있는 것을 먼저, 그 안에서는 할인율이 큰 것을 먼저. 화면이 목록을
+                // 그대로 그리고 첫 번째를 기본 선택으로 쓰기 때문에 순서가 곧 UX 다.
+                result.sort(java.util.Comparator
+                        .comparing(CouponDto::isUsable).reversed()
+                        .thenComparing(java.util.Comparator.comparingInt(CouponDto::getDiscount).reversed()));
+
+                return result;
+            }
+
+        }
+
+        // 예전에는 null 을 돌려줬다. 화면은 `coupons?.length > 0` 로 받고 있어 동작은
+        // 같지만, "쿠폰이 없다"는 빈 목록이지 값이 없는 것이 아니다.
+        return List.of();
+    }
+
+    @Transactional(readOnly=true)
+    Coupon getCouponByNameAndUserIdAndCouponStatus(String couponName, Long userId, CouponStatus couponStatus) {
+
+        Coupon coupon = couponRepository.findByNameAndUserIdAndCouponStatus(couponName, userId, couponStatus).orElse(null);
+
+        return coupon;
+    }
+
+    @Transactional(readOnly=true)
+    List<Coupon> getCouponsByUserIdAndCouponStatus(Long userId, CouponStatus couponStatus) {
+
+        List<Coupon> coupons = couponRepository.findByUserIdAndCouponStatus(userId, couponStatus).orElse(null);
+
+        return coupons;
+    }
+
+    @Transactional 
+    public Coupon couponRollback(CouponRollbackRequest request) {
+
+        Coupon coupon = getCouponByNameAndUserIdAndCouponStatus(
+            request.getCouponName(), request.getUserId(), CouponStatus.USED);
+
+        if (null != coupon) {
+
+            coupon.setCouponStatus(CouponStatus.NOT_USED);
+
+            coupon = couponRepository.save(coupon);
+
+            return coupon;
+        }
+
+        return null;
+    }
+
+
+}

@@ -1,0 +1,198 @@
+/* 알림 UI.
+ *
+ * 색은 CSS 변수로 뺀다 — 다크모드나 브랜드 색이 바뀔 때 이 파일 한 곳만 고치면 된다.
+ */
+:root {
+  --notif-brand: #4f46e5;
+  --notif-ok: #16a34a;
+  --notif-danger: #dc2626;
+  --notif-info: #0891b2;
+  --notif-accent: #d97706;
+  --notif-muted: #6b7280;
+  --notif-surface: #ffffff;
+  --notif-border: #e5e7eb;
+  --notif-unread-bg: #eef2ff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --notif-surface: #1f2937;
+    --notif-border: #374151;
+    --notif-unread-bg: #312e81;
+  }
+}
+
+.notif { position: relative; display: inline-block; }
+
+.notif__button {
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+}
+.notif__button:focus-visible {
+  /* 키보드 사용자를 위해 초점을 반드시 보이게 한다. outline: none 은 접근성 문제다. */
+  outline: 2px solid var(--notif-brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.notif__badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--notif-danger);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.notif__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(360px, calc(100vw - 32px));  /* 좁은 화면에서 화면 밖으로 나가지 않게 */
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--notif-surface);
+  border: 1px solid var(--notif-border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+}
+
+.notif__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--notif-border);
+  font-weight: 600;
+}
+
+.notif__link {
+  background: none;
+  border: none;
+  color: var(--notif-brand);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.notif__empty {
+  padding: 28px 14px;
+  text-align: center;
+  color: var(--notif-muted);
+  font-size: 14px;
+}
+
+.notif__list { list-style: none; margin: 0; padding: 0; }
+
+.notif__item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--notif-border);
+  cursor: pointer;
+}
+.notif__item:hover { background: rgba(127, 127, 127, 0.08); }
+.notif__item--unread { background: var(--notif-unread-bg); }
+.notif__item:focus-visible { outline: 2px solid var(--notif-brand); outline-offset: -2px; }
+
+.notif__body { flex: 1; min-width: 0; }   /* min-width:0 이 없으면 긴 본문이 패널을 밀어낸다 */
+.notif__title { font-weight: 600; font-size: 14px; }
+.notif__content {
+  font-size: 13px;
+  color: var(--notif-muted);
+  margin-top: 2px;
+  /* 본문이 길어도 목록이 무너지지 않게 두 줄로 자른다. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notif__meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--notif-muted);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.notif__sms {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--notif-ok);
+}
+.notif__sms--failed { color: var(--notif-danger); }
+
+/* 전체 공지 표시. SMS 배지와 같은 모양이되 색으로 구분한다 — 상태가 아니라 출처다. */
+.notif__scope {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--notif-brand);
+}
+
+.notif__remove {
+  background: none;
+  border: none;
+  color: var(--notif-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.notif-icon { display: inline-flex; flex: 0 0 auto; padding-top: 2px; }
+.notif-icon--brand  { color: var(--notif-brand); }
+.notif-icon--ok     { color: var(--notif-ok); }
+.notif-icon--danger { color: var(--notif-danger); }
+.notif-icon--info   { color: var(--notif-info); }
+.notif-icon--accent { color: var(--notif-accent); }
+.notif-icon--muted  { color: var(--notif-muted); }
+
+/* ── SMS 인증 ─────────────────────────────────────────────────────────────── */
+
+.sms-verify { display: flex; flex-direction: column; gap: 12px; max-width: 420px; }
+.sms-verify__row { display: flex; gap: 8px; }
+.sms-verify__row input,
+.sms-verify__row select {
+  padding: 10px 12px;
+  border: 1px solid var(--notif-border);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.sms-verify__row input { flex: 1; min-width: 0; }
+.sms-verify__button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--notif-brand);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sms-verify__button:disabled { opacity: 0.5; cursor: not-allowed; }
+.sms-verify__hint { font-size: 13px; color: var(--notif-muted); }
+.sms-verify__error { font-size: 13px; color: var(--notif-danger); }
+.sms-verify__ok { font-size: 13px; color: var(--notif-ok); }
+
+/* 인증번호 입력은 6자리 숫자다. 자간을 넓혀 한 자리씩 확인하기 쉽게 한다. */
+.sms-verify__code {
+  letter-spacing: 0.5em;
+  text-align: center;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}

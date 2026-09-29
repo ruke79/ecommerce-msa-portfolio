@@ -1,0 +1,30 @@
+# JSON6902 — 컨테이너 이름이 서비스마다 달라서 전략적 병합으로는 한 번에 못 고친다.
+# 인덱스 0 은 모든 Deployment 가 단일 컨테이너라 안전하다.
+- op: replace
+  path: /spec/template/spec/containers/0/resources/requests/cpu
+  value: "60m"
+- op: replace
+  path: /spec/template/spec/containers/0/resources/requests/memory
+  value: "256Mi"
+- op: replace
+  path: /spec/template/spec/containers/0/resources/limits/cpu
+  value: "800m"
+- op: replace
+  path: /spec/template/spec/containers/0/resources/limits/memory
+  value: "512Mi"
+# 상한을 낮췄으니 힙도 명시한다. 512Mi × 60% ≈ 307Mi 힙 + 나머지는 메타스페이스·스택·네이티브.
+# 이걸 빼면 JVM 이 상한의 1/4(128Mi)만 힙으로 잡아 오히려 GC 로 허덕인다.
+#
+# UseSerialGC: 2 OCPU 를 12개 JVM 이 나눠 쓰면 서비스당 실효 0.16코어다. G1 의 동시 GC
+#   스레드는 그 환경에서 이득보다 경합이 크다. (JVM 도 코어·메모리가 적으면 스스로
+#   SerialGC 를 고르지만, 컨테이너에서는 그 판정이 어긋날 수 있어 명시한다.)
+#
+# ⚠️ -Xss 는 넣지 않는다. 스레드 스택을 줄이면 메모리는 아끼지만 Spring 의 깊은
+#    프록시·리플렉션 호출에서 StackOverflowError 가 날 수 있고, 그건 특정 경로에서만
+#    터져 재현이 어렵다. 스레드 **개수**를 줄이는 편이 안전하다(ConfigMap 의
+#    SERVER_TOMCAT_THREADS_MAX — 200 → 50).
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: JAVA_OPTS
+    value: "-XX:MaxRAMPercentage=60 -XX:+UseSerialGC"

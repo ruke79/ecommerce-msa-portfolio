@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "PaymentResponse",
+  "namespace": "com.project.common.avro",
+  "doc": "pay → order 결제 응답. 토픽 payment. DTO com.project.common.message.dto.response.PaymentResponse 와 1:1.",
+  "fields": [
+    { "name": "paymentId",   "type": ["null", "long"],   "default": null },
+    { "name": "orderId",     "type": "long",             "doc": "파티션 키" },
+    { "name": "customerId",  "type": ["null", "long"],   "default": null },
+    { "name": "couponName",  "type": ["null", "string"], "default": null },
+    { "name": "amounts",     "type": ["null", "string"], "default": null, "doc": "BigDecimal.toPlainString()" },
+    { "name": "paymentStatus", "type": ["null", { "type": "enum", "name": "PaymentStatus", "namespace": "com.project.common.avro",
+        "symbols": ["COMPLETED", "CANCELED", "FAILED"], "default": "FAILED",
+        "doc": "PaymentRequest.avsc 와 같은 정의여야 한다 — 스키마 파일은 각각 따로 파싱되므로 참조 대신 같은 정의를 둔다" }], "default": null }
+  ]
+}

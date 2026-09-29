@@ -1,0 +1,12 @@
+{
+  "type": "record", "name": "OutgoingMailRequest", "namespace": "com.project.common.avro",
+  "doc": "user → notification 메일 발송 명령. 토픽 outgoing-mail. 키 toEmail. params 에는 자격증명(확인 URL)이 들어간다 — 로그 금지.",
+  "fields": [
+    { "name": "sourceEventId",   "type": ["null", "string"], "default": null },
+    { "name": "toEmail",         "type": "string" },
+    { "name": "recipientUserId", "type": ["null", "long"],   "default": null },
+    { "name": "kind",            "type": "string" },
+    { "name": "params",          "type": { "type": "map", "values": "string" }, "default": {} },
+    { "name": "locale",          "type": ["null", "string"], "default": null }
+  ]
+}

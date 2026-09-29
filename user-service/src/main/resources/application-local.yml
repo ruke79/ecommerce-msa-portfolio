@@ -1,0 +1,316 @@
+server:
+    port: 8080    
+    ssl:    
+      key-store: ${LOCAL_KEY_STORE_PATH}    
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+      key-password: ${LOCAL_KEY_PASSWORD}
+
+frontend:
+    # 소셜 로그인 완료 후 돌아갈 주소. 운영에서는 공개 도메인과 같다(단일 출처 구성).
+    url: ${FRONTEND_URL:${APP_PUBLIC_URL:https://localhost:3000}}
+
+# ── 소셜 로그인 (선택) ────────────────────────────────────────────────
+#
+# 자격증명이 **있는 프로바이더만** 등록된다(SocialClientRegistration). 전부 비워 두면
+# 소셜 로그인 버튼 자체가 표시되지 않는다 — 켜는 법은 docs/33 §7 참조.
+# ⚠️ 프로바이더 콘솔의 redirect URI 는 정확히 이 형태여야 한다:
+#     {APP_PUBLIC_URL}/user-service/login/oauth2/code/{google|github|facebook|kakao|line}
+oauth2:
+    google:
+        client-id: ${OAUTH2_GOOGLE_CLIENT_ID:}
+        client-secret: ${OAUTH2_GOOGLE_CLIENT_SECRET:}
+    github:
+        client-id: ${OAUTH2_GITHUB_CLIENT_ID:}
+        client-secret: ${OAUTH2_GITHUB_CLIENT_SECRET:}
+    facebook:
+        client-id: ${OAUTH2_FACEBOOK_CLIENT_ID:}
+        client-secret: ${OAUTH2_FACEBOOK_CLIENT_SECRET:}
+    # 카카오: client-id = 앱의 REST API 키, client-secret = [보안] Client Secret(사용함으로 켤 것)
+    kakao:
+        client-id: ${OAUTH2_KAKAO_CLIENT_ID:}
+        client-secret: ${OAUTH2_KAKAO_CLIENT_SECRET:}
+    # LINE: client-id = 채널 ID, client-secret = 채널 시크릿. 이메일 주소 권한 승인이 있어야 로그인된다
+    line:
+        client-id: ${OAUTH2_LINE_CLIENT_ID:}
+        client-secret: ${OAUTH2_LINE_CLIENT_SECRET:}
+
+# Kafka 접속 설정은 common/application-common.yml 이 소유한다.
+#
+# 여기에는 개발자 PC 의 절대 경로가 그대로 박혀 있었다:
+#     trust-store-location: file:E:/github/amazon-clone-msa/.../local_truststore.jks
+# 그 경로는 다른 어떤 머신에도 존재하지 않으므로, 이 블록은 protocol: "SSL" 을 켜 놓은 채
+# 존재하지도 않는 스토어를 가리키고 있었다. 로컬 브로커가 PLAINTEXT 라 조용히 넘어갔을 뿐이다.
+#
+# 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
+# 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+
+cloud:
+  aws:
+    credentials:
+      access-key: ${AMAZON_ACCESS_KEY}
+      secret-key: ${AMAZON_SECRET_KEY}      
+    s3:
+      bucket: ${AMAZON_BUCKET_NAME}
+    region:
+      static: ${AMAZON_REGION}
+    stack:
+      auto: false
+
+feign:
+  # 서비스 간 Feign 호출 대상. 기존에는 어디에도 정의돼 있지 않아
+  # @FeignClient(url="${feign.*-url}") 해석 실패로 기동 자체가 불가능했다.
+  # 환경변수(FEIGN_*_URL, k8s ConfigMap)로 오버라이드 가능.
+  catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
+  # 등급 배치가 구매 집계를 가져오는 곳(CustomerTierService). 배치 전용이라
+  # 사용자 요청 경로에는 들어가지 않는다 — 주문 서비스가 죽어도 로그인·쿠폰은 돈다.
+  order-url: ${FEIGN_ORDER_URL:https://localhost:8084}
+  # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
+  # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
+  # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.
+
+ 
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    non-secure-port-enabled : false
+    secure-port-enabled : true
+    secure-port : 8080
+
+  
+
+spring:
+    application:
+        name: user-service
+
+    config:
+      import: "classpath:application-common.yml, optional:classpath:kafka-secrets.properties"    
+      #import: optional:configserver:https://localhost:8888
+
+    datasource:
+      # 커넥션 풀 산정 (docs/19).
+      # 기본값 10 을 그대로 두면 데이터소스 8개 × 10 = 80 커넥션이고, HPA 로 레플리카가
+      # 2개만 돼도 160 으로 PostgreSQL 기본 max_connections(100)를 **산술적으로 초과**한다.
+      # 그 순간의 증상은 '느려짐'이 아니라 'FATAL: sorry, too many clients already' —
+      # 늦게 뜬 파드가 통째로 기동 실패한다.
+      # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
+      # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+      hikari:
+        maximum-pool-size: ${DB_POOL_SIZE:5}
+        minimum-idle: ${DB_POOL_MIN_IDLE:2}
+        # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+        connection-timeout: 5000
+        # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
+        leak-detection-threshold: 20000
+        max-lifetime: 1200000
+      url: jdbc:postgresql://localhost:5435/userdb?sslmode=require
+      username: product
+      password: ${LOCAL_DB_PASSWORD}
+      properties:
+        ssl: true
+        sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+        sslrootcert: ${LOCAL_KEY_STORE_PATH}
+        sslpassword: ${LOCAL_KEY_PASSWORD}
+      
+      driver-class-name: org.postgresql.Driver
+    jpa:
+        show-sql: false
+        hibernate:
+            ddl-auto: ${DDL_AUTO:validate}
+        properties:
+             hibernate:
+                 format_sql: true
+                 #use_sql_comments: true
+                 #type: trace
+                 dialect: org.hibernate.dialect.PostgreSQLDialect
+
+                 
+
+    data:
+      redis:        
+          ssl:
+            enabled : false
+            cacert : ${LOCAL_CACERT_PATH}
+            # 코드(RedisCacheConfig)가 요구하는 키. 기존에는 cert/key 라는 다른 이름만 있어
+            # "Could not resolve placeholder spring.data.redis.ssl.keystore" 로 기동 불가였다.
+            keystore : ${LOCAL_KEY_STORE_PATH:}
+            truststore : ${LOCAL_TRUST_STORE_PATH:}
+            cert : ${LOCAL_CRT_PATH}
+            key : ${LOCAL_KEY_PATH}
+            storePassword : ${LOCAL_KEY_PASSWORD} 
+          lettuce:
+            pool:
+              max-active: 5
+              max-idle: 5
+              min-idle: 2  
+          host: localhost
+          port: 6379
+          password: ${LOCAL_DB_PASSWORD}
+
+    app:
+       jwtCookieName: user-cookie
+       jwtRefreshCookieName: user-refresh-cookie
+       jwtSecret: ${JWT_SECRET_KEY}
+       # 액세스 토큰 15분. 예전에는 2시간이었다.
+       #
+       # 이 시스템의 JWT 는 **폐기할 수 없다.** 게이트웨이는 서명만 검증하고(introspection 없음),
+       # RedisSessionManager 는 이름과 달리 인메모리 HashMap 이며 그것을 읽는
+       # isRequestAuthorized 는 호출되는 곳이 없다. 즉 로그아웃해도, 계정이 탈취돼도, 이미
+       # 발급된 액세스 토큰은 만료까지 유효하다. 그런 토큰의 유일한 방어는 **짧은 수명**이다
+       # (www-security 데모 ch9 "자체 인코딩 토큰은 로컬 검증만으로는 폐기 반영 불가 →
+       # 수명을 짧게 + refresh 로 보완").
+       #
+       # 사용자 체감은 없다 — TokenRefresher 가 만료 10초 전에 리프레시 쿠키(14일)로 조용히
+       # 갱신한다. 리프레시 토큰은 서버가 관리하므로 로그아웃 시 진짜로 무효화된다.
+       jwtExpirationMs: 900000
+       jwtRefreshExpirationMs: 1209600000
+
+    # spring.mail.* 설정을 뺐다. user-service 는 더 이상 SMTP 를 직접 호출하지 않고
+    # outgoing-mail 토픽에 요청만 넣는다 — 발송은 notification-service 가 한다(docs/29).
+    # SMTP 접속 정보는 그쪽 application-local.yml 과 k8s/47 로 옮겼다.
+    #
+    # 남겨 두면 안 되는 이유가 하나 더 있다: 위 블록은 ${MAIL_HOST} 를 기본값 없이 참조했다.
+    # 그 환경변수가 없는 환경에서 누가 이 값을 읽는 코드를 다시 넣으면 기동이 실패한다.
+
+    security:    
+      require-ssl: true
+    #    oauth2:
+    #      client:
+    #        registration:
+    #             google:
+    #                client-id: 
+    #                client-secret: 
+    
+
+logging:
+  level:
+    root: info
+    # 모든 스케줄링 관련 로그를 INFO 이상으로만 기록합니다.
+    org.springframework.scheduling: WARN    
+    com.project.userservice: ${LOG_LEVEL_APP:info}
+    org.springframework.jdbc: ${LOG_LEVEL_SQL:warn}
+    org.springframework.orm.jpa: ${LOG_LEVEL_SQL:warn}
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:warn}
+    org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer: ERROR
+
+  file:
+    path: ./logs
+    name: ${logging.file.path}/user_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+  # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
+  # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+
+# 회원가입 확인 메일 관련 설정.
+app:
+  # 확인 링크에 넣을 백엔드 공개 주소. 환경마다 다르므로 반드시 주입한다.
+  public-url: ${APP_PUBLIC_URL:https://localhost:8000}
+
+  # ── 2FA(TOTP) 비밀 저장 암호화 (docs/70) ────────────────────────────────
+  totp:
+    # base64 32바이트(openssl rand -base64 32). 비우면 JWT 비밀에서 파생한 키로 암호화한다 — 새 비밀 없이 배포할 수 있지만
+    # JWT 비밀을 교체하면 그 암호문을 풀 수 없다. 교체 전에 이 값을 넣고 한 번 배포하면 기동 백필이 전용 키로 다시 잠근다.
+    encryption-key: ${TOTP_ENCRYPTION_KEY:}
+    # 기동할 때 평문 · 옛 키 암호문을 지금 키로 맞춘다(TotpSecretBackfill). 멱등이다.
+    backfill-enabled: ${APP_TOTP_BACKFILL_ENABLED:true}
+
+  # ── 아웃박스 릴레이 (UserOutboxScheduler) ──────────────────────────────
+  #
+  # user-created 이벤트는 인증 확정과 **같은 트랜잭션**으로 users.outbox_event 에
+  # 적히고, 이 폴러가 읽어서 카프카로 보낸다(docs/48 ②). 예전에는 트랜잭션 밖에서
+  # kafkaTemplate.send 한 줄이었고, 실패해도 아무 데도 남지 않았다(docs/47).
+  outbox:
+    # 한 번에 선점(FOR UPDATE SKIP LOCKED)할 행 수. user-service 는 replicas: 2 이므로
+    # 제한이 없으면 한 레플리카가 전부 잠가 다른 쪽이 논다.
+    batch-size: ${APP_OUTBOX_BATCH_SIZE:100}
+    # 폴러는 안전망이다 — 행이 커밋되면 곧바로 한 번 릴레이한다(relay-on-commit, docs/56 §9). 이 간격은
+    # 즉시 릴레이가 놓친 것(커밋 직후 종료·실행기 거절)을 되줍는 주기다. 더 짧게 잡으면 빈 조회만 늘어난다.
+    fixed-delay-ms: ${APP_OUTBOX_FIXED_DELAY_MS:10000}
+    initial-delay-ms: ${APP_OUTBOX_INITIAL_DELAY_MS:3000}
+    # false 면 즉시 릴레이를 끄고 폴러만 남는다 — 가입 뒤 채팅 회원·가입 쿠폰이 다시 최대 10초 늦는다.
+    relay-on-commit: ${APP_OUTBOX_RELAY_ON_COMMIT:true}
+    # 브로커 ack 대기 시간. 무한정 기다리면 그 배치가 잠금을 쥔 채 멈춘다.
+    publish-timeout-ms: ${APP_OUTBOX_PUBLISH_TIMEOUT_MS:10000}
+  # 보내는 사람 주소는 notification-service 가 갖는다(notification.mail.from) — 메일을 실제로
+  # 만드는 쪽에 있어야 SPF/DKIM 정렬과 함께 관리된다.
+  verification:
+    # 확인 토큰 유효 기간(ISO-8601). 예전 코드는 3분이었다 — 메일 배달 지연만으로도
+    # 만료되어 상당수 가입자가 링크를 눌러도 실패했다.
+    token-ttl: ${APP_VERIFICATION_TTL:PT24H}
+
+    # ── 미인증 계정·만료 토큰 정리 (UnverifiedAccountCleanup) ────────────
+    cleanup:
+      # 만료 토큰 정리. 해가 없으므로 기본으로 켠다 — 끄면 토큰 테이블이 무한히 자란다.
+      # 확인 토큰은 **이미 활성화된 계정의 것만** 지운다(비활성 계정의 토큰은 아래 판정의
+      # 유일한 근거다). 비밀번호 재설정 토큰은 만료된 것을 모두 지운다.
+      enabled: ${APP_VERIFICATION_CLEANUP_ENABLED:true}
+
+      # 계정 삭제. **되돌릴 수 없으므로 기본은 꺼짐.**
+      #
+      # 꺼진 동안에는 "지웠다면 몇 건이었는지"만 로그로 남는다. 켜기 전에 그 숫자로 영향
+      # 범위를 확인할 것 — 예상과 다르면 켜면 안 된다는 뜻이다.
+      #
+      # ⚠️ 인증 게이트(require-email-verification)가 꺼져 있으면 켤 이유가 없다. 그때는
+      #    모든 계정이 활성으로 만들어져 삭제 대상이 아예 생기지 않는다.
+      delete-accounts: ${APP_VERIFICATION_CLEANUP_DELETE_ACCOUNTS:false}
+
+      # 토큰이 만료된 뒤 이만큼 더 기다린 계정만 지운다. 만료 직후 지우면 확인 메일
+      # 재발송으로 복구하려던 사용자를 잘라 낸다.
+      grace: ${APP_VERIFICATION_CLEANUP_GRACE:P7D}
+
+      # 한 번에 처리할 계정 수. 트랜잭션을 짧게 유지한다(계정마다 독립 트랜잭션이다).
+      batch-size: ${APP_VERIFICATION_CLEANUP_BATCH_SIZE:200}
+
+      interval-ms: ${APP_VERIFICATION_CLEANUP_INTERVAL_MS:3600000}
+      initial-delay-ms: ${APP_VERIFICATION_CLEANUP_INITIAL_DELAY_MS:300000}
+
+    # 가입 직후 계정을 **비활성 상태로** 만들지 여부.
+    #
+    # ⚠️ 기본값이 false 인 것은 안전해서가 아니라, **메일이 실제로 나가지 않는 환경에서
+    #    켜면 아무도 로그인할 수 없기 때문**이다. notification-service 의 기본 발송기는
+    #    logging(발송 안 함)이라, 그 상태로 이 값을 true 로 두면 가입은 되는데 인증
+    #    메일이 오지 않아 계정이 영구히 잠긴다.
+    #
+    # 실제 배포에서 이 값이 없던 동안 무슨 일이 있었나: User 엔티티의 enabled 기본값이
+    # true 라 가입 즉시 활성화됐고, 확인 링크를 누르지 않아도 로그인이 됐다. 즉 메일
+    # 인증 코드는 존재하지만 **아무것도 막지 않았다** — 남의 이메일로 가입해도 그대로
+    # 쓸 수 있었다.
+    #
+    # 켜는 순서(docs/33 §7):
+    #   1) local 오버레이의 patch-mail.yaml 로 MAIL_PROVIDER=smtp 를 켠다
+    #   2) 실제로 메일이 오는지 가입 한 번으로 확인한다
+    #   3) 그 다음에 APP_REQUIRE_EMAIL_VERIFICATION=true
+    #
+    # 잠긴 계정은 DB 에서 열 수 있다(비상 탈출구):
+    #   UPDATE users.users SET enabled = true WHERE email = '...';
+    require-email-verification: ${APP_REQUIRE_EMAIL_VERIFICATION:false}
+
+  # ── 회원 탈퇴 (WithdrawalService / WithdrawalProcessor) ──────────────────
+  withdrawal:
+    # 탈퇴 신청부터 최종 처리까지 기다리는 기간(ISO-8601).
+    #
+    # 이 값은 서비스와 배치가 **함께** 본다. 화면에 보여 주는 "N일 남음"도 여기서 나오므로
+    # 한쪽만 바꿀 수 있는 구조가 아니다.
+    #
+    # 유예 기간 동안 계정은 평소처럼 쓸 수 있다. 잠그면 취소할 방법이 사라지기 때문이다
+    # (취소 링크를 메일로 보내는 별도 경로를 만들지 않는 한). 화면이 상태를 조회해
+    # "N일 뒤 삭제됩니다 / 취소하기"를 띄운다.
+    grace: ${APP_WITHDRAWAL_GRACE:P7D}
+
+    processor:
+      # **기본으로 켠다.** 미인증 계정 정리(위)가 기본 꺼짐인 것과 다른데, 그쪽은 우리가
+      # 지우겠다고 판단하는 계정이라 켜기 전에 영향 범위를 봐야 한다. 여기는 본인이
+      # 요청했고 유예 기간까지 지난 계정이다 — 끄면 탈퇴 신청이 영원히 처리되지 않는다.
+      enabled: ${APP_WITHDRAWAL_PROCESSOR_ENABLED:true}
+
+      # 한 번에 처리할 계정 수. 계정마다 독립 트랜잭션이라 하나가 실패해도 나머지는 진행된다.
+      batch-size: ${APP_WITHDRAWAL_PROCESSOR_BATCH_SIZE:200}
+
+      interval-ms: ${APP_WITHDRAWAL_PROCESSOR_INTERVAL_MS:3600000}
+      initial-delay-ms: ${APP_WITHDRAWAL_PROCESSOR_INITIAL_DELAY_MS:300000}
+
+# 아웃박스 월 파티션을 미리 만든다(common OutboxPartitionAutoConfiguration, docs/09 §4.6).
+# V1 마이그레이션이 만든 파티션은 2027-01 까지다 — 이 잡이 없으면 그 뒤로는 모든 행이 DEFAULT 로 간다.
+outbox:
+  partitions:
+    tables: users.outbox_event
+    months-ahead: ${OUTBOX_PARTITION_MONTHS_AHEAD:3}

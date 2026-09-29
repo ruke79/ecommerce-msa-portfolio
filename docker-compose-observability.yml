@@ -1,0 +1,181 @@
+# 관측성 스택: Prometheus(메트릭 수집) + Grafana(대시보드) + OpenTelemetry Collector · Jaeger(분산 추적)
+#             + Loki(로그 저장) + Alloy(로그 수집) — docs/51 §4, docs/63
+#
+# 배경(docs/03, docs/10): 서비스들은 /actuator/prometheus 와 traceId 를 노출만 하고 있었고
+# 수집기가 없어 장애 탐지 수단 자체가 없었다. 이 스택이 그 공백을 메운다.
+#
+# 실행:   docker compose -f docker-compose-observability.yml up -d
+# 접속:   Prometheus http://localhost:9090 · Grafana http://localhost:3001 (admin / admin)
+#         Jaeger http://localhost:16686 · Loki http://localhost:3100 · Alloy http://localhost:12345
+#         (Jaeger 는 루프백에만 연다 — 서버에서는 ssh -L 16686:localhost:16686 으로 본다)
+#
+# 서비스 쪽 설정은 이미 되어 있음:
+#  - 메트릭: application-common.yml 의 actuator 노출
+#  - 추적:   Micrometer Tracing(OpenTelemetry 브리지) + OTLP/HTTP →  otel-collector:4318 → Jaeger · span_metrics
+#            (OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, 기본 http://localhost:4318/v1/traces). OpenTelemetry 데모의 구성이다.
+#  - 로그:   common 의 logback-spring.xml 이 <모듈>/logs/*.json 에 JSON 한 줄씩(마스킹 뒤) 쓴다.
+#            서비스를 모듈 디렉터리에서 띄우면(./gradlew :order-service:bootRun) 그 파일을 Alloy 가 읽는다.
+#            Grafana → Explore → Loki 에서 {service="order-service"} 로 찾고, 줄의 traceId 를 누르면
+#            Jaeger 의 그 요청으로, Jaeger 의 스팬에서 "Logs for this span" 을 누르면 그 요청의 로그로 간다.
+#            지연 그래프의 점(exemplar)을 누르면 그 지연을 만든 추적으로 간다.
+#
+# k8s 환경에서는 이 compose 대신 kube-prometheus-stack(Helm) + OTel Collector(Helm) 사용을 권장 (k8s/README).
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      # 지표의 점 → 그 추적(exemplar). Spring 의 http_server_requests 와 span_metrics 가 trace_id 를 싣는다.
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # 리눅스에서 호스트의 서비스 스크레이프용
+    mem_limit: 512m
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}   # 운영에서는 반드시 변경
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"    # 프론트엔드(3000)와 충돌 방지
+    depends_on:
+      - prometheus
+    mem_limit: 512m
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # 웹훅 URL 은 설정이 아니라 **비밀**이다(URL 을 아는 사람은 누구나 그 채널에 쓸 수 있다).
+      # 그래서 커밋되지 않는 파일로 마운트한다. 없으면 Alertmanager 가 기동에 실패한다 —
+      # 알림이 조용히 안 가는 것보다 낫다. 만드는 법: ./ops/17-configure-alert-receivers.sh
+      - ./observability/secrets:/etc/alertmanager/secrets:ro
+    ports:
+      - "9093:9093"
+    mem_limit: 256m
+
+  # ── 추적 (docs/63) — OpenTelemetry 데모의 구성: 서비스 → Collector → Jaeger / span_metrics → Prometheus ──
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    container_name: otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./observability/otel-collector.yml:/etc/otelcol/config.yml:ro
+    ports:
+      # k3s 파드가 노드 IP 로 보낸다(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://$(HOST_IP):4318/v1/traces).
+      # 그래서 127.0.0.1 이 아니라 모든 인터페이스에 연다. 🔒 OCI 보안 목록에서는 4318 을 **열지 않는다** —
+      # 파드 → 노드는 노드 안의 통신이다(docs/51 §4d). 4317(gRPC)·8889(span_metrics)·8888(자기 지표)는
+      # 도커 망 안에서만 쓰므로 호스트로 내지 않는다.
+      - "4318:4318"
+      - "127.0.0.1:13133:13133"   # 헬스 체크(ops/05)
+    depends_on:
+      - jaeger
+    mem_limit: 256m               # processors.memory_limiter(200MiB)가 이 아래에서 받기를 멈춘다
+
+  # 새 볼륨은 root 소유로 생긴다. Jaeger 이미지는 uid 10001 로 돌아 쓰지 못하므로 한 번 소유자를 맞추고 끝난다.
+  jaeger-data-init:
+    image: busybox:1.36
+    command: ["sh", "-c", "mkdir -p /badger/keys /badger/values && chown -R 10001:10001 /badger"]
+    volumes:
+      - jaeger-data:/badger
+    restart: "no"
+
+  jaeger:
+    # 2.20 에 고정한다 — 2.21 이 "UI 가 더는 부르지 않는 v1 HTTP API"(/api/services · /api/traces?service=)를
+    # 지웠는데, Grafana 의 Jaeger 데이터소스가 검색에 그것을 쓴다(ID 조회만 남아 로그 → 추적은 되고 검색이 404).
+    # 올리기 전에 Grafana 에서 Explore → Jaeger → Search 가 되는지 본다(docs/63 §6).
+    image: jaegertracing/jaeger:2.20.0
+    container_name: jaeger
+    restart: unless-stopped
+    command: ["--config=file:/etc/jaeger/config.yml"]
+    environment:
+      - JAEGER_TRACE_TTL=168h     # 추적 보관 기간(badger 가 지난 것을 스스로 지운다)
+    volumes:
+      - ./observability/jaeger.yml:/etc/jaeger/config.yml:ro
+      # 추적 저장(badger) — 재시작 · 재배포를 넘긴다. 이미지는 uid 10001 로 돈다 — 아래 jaeger-data-init 이 권한을 맞춘다.
+      - jaeger-data:/badger
+    depends_on:
+      jaeger-data-init:
+        condition: service_completed_successfully
+    ports:
+      # UI 는 루프백에만 — 서버에서는 ssh -L 16686:localhost:16686 으로 본다. Grafana 는 도커 망으로 붙는다.
+      - "127.0.0.1:16686:16686"
+    mem_limit: 512m
+
+  # ── 로그 (docs/51 §4) ───────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./observability/loki-config.yml:/etc/loki/config.yml:ro
+      # 로그 경보 규칙(docs/51 §4i). 테넌트 "fake"(auth_enabled:false) 아래에 있어야 ruler 가 읽는다.
+      - ./observability/loki-rules:/etc/loki/rules/fake:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    mem_limit: 512m
+
+  # Promtail 이 아니라 Alloy 다 — Grafana 가 Promtail 을 지원 종료하고 Alloy 를 후속으로 내놓았다.
+  alloy:
+    image: grafana/alloy:v1.9.1
+    container_name: alloy
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      # 🔒 저장소 전체가 아니라 모듈마다 logs 디렉터리만 읽기 전용으로 붙인다. 저장소 루트를 통째로
+      #    붙이면 gitignore 된 비밀 파일(k8s/20-secret.yaml, kafka-secrets.properties)까지 컨테이너에
+      #    보인다. 서비스를 더하면 여기에도 한 줄 더한다.
+      - ./cart-service/logs:/var/log/ecommerce/cart-service/logs:ro
+      - ./catalog-service/logs:/var/log/ecommerce/catalog-service/logs:ro
+      - ./chat-service/logs:/var/log/ecommerce/chat-service/logs:ro
+      - ./coupon-service/logs:/var/log/ecommerce/coupon-service/logs:ro
+      - ./delivery-service/logs:/var/log/ecommerce/delivery-service/logs:ro
+      - ./eureka-server/logs:/var/log/ecommerce/eureka-server/logs:ro
+      - ./gateway-server/logs:/var/log/ecommerce/gateway-server/logs:ro
+      - ./notification-service/logs:/var/log/ecommerce/notification-service/logs:ro
+      - ./order-service/logs:/var/log/ecommerce/order-service/logs:ro
+      - ./pay-service/logs:/var/log/ecommerce/pay-service/logs:ro
+      - ./saga-projection/logs:/var/log/ecommerce/saga-projection/logs:ro
+      - ./user-service/logs:/var/log/ecommerce/user-service/logs:ro
+      # k3s 파드의 표준 출력 로그(docs/51 §4c). 같은 호스트에서 k3s 가 돌 때 ecommerce 네임스페이스의
+      # 파드 로그를 읽는다. k3s 가 없는 PC 에서는 빈 디렉터리일 뿐이다. 다른 위치면 K3S_POD_LOG_DIR 로 바꾼다.
+      - ${K3S_POD_LOG_DIR:-/var/log/pods}:/var/log/pods:ro
+      - alloy-data:/var/lib/alloy/data
+    # 파드 로그 파일은 root 소유(0640)라 root 로 읽는다. 마운트는 전부 읽기 전용이다.
+    user: "0:0"
+    ports:
+      - "12345:12345"
+    depends_on:
+      - loki
+    mem_limit: 256m
+
+volumes:
+  jaeger-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alloy-data:

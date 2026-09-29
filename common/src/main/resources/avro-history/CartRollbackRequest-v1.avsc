@@ -1,0 +1,9 @@
+{
+  "type": "record", "name": "CartRollbackRequest", "namespace": "com.project.common.avro",
+  "doc": "order → cart 사가 보상(장바구니 복원). 토픽 cart-rollback. 키 userId.",
+  "fields": [
+    { "name": "userId", "type": "long" },
+    { "name": "qty",    "type": "int", "default": 1 },
+    { "name": "authorizationToken", "type": ["null", "string"], "default": null }
+  ]
+}

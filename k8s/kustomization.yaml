@@ -1,0 +1,55 @@
+# 공통 베이스 — 환경에 무관한 것만.
+#
+# ⚠️ 이 파일이 생기면서 `kubectl apply -f k8s/` 는 더 이상 쓸 수 없다.
+#    kubectl 이 이 파일을 리소스로 읽으려다 실패한다. 대신:
+#
+#      kubectl apply -k k8s/overlays/dev
+#      kubectl apply -k k8s/overlays/prod
+#
+#    개별 파일 적용(`kubectl apply -f k8s/40-user-service.yaml`)은 그대로 된다.
+#    ops/13-k3s-deploy.sh 도 개별 파일을 적용하므로 영향받지 않는다.
+#
+# ── 왜 base 를 k8s/ 바로 아래에 두는가 ──────────────────────────────────
+#
+# kustomize 는 **kustomization 디렉터리 밖의 파일을 참조하지 못한다**(보안 제약).
+# `k8s/base/kustomization.yaml` 에서 `../40-user-service.yaml` 을 쓰면 거부된다:
+#
+#     security; file '.../k8s/40-user-service.yaml' is not in or below '.../k8s/base'
+#
+# 매니페스트를 전부 `k8s/base/` 로 옮기면 해결되지만, ops/13·문서·README 가 참조하는
+# 경로가 전부 깨진다. 그 대가가 더 크다고 봤다.
+#
+# ── 여기 없는 것과 그 이유 ──────────────────────────────────────────────
+#
+#   20-secret.example.yaml      REPLACE_ME 플레이스홀더다. 실제 Secret(20-secret.yaml)은
+#                               gitignore 되어 있고 클러스터에 따로 넣는다(docs/13)
+#   70-autoscaling.yaml         HPA 는 metrics-server 가 필요하다 → prod 오버레이에만
+#   85-backup-cronjobs.yaml     운영 전용 → prod 오버레이
+#   90-dev-infra.yaml           Kafka/PG/Redis/Mongo/ES 를 클러스터 안에 띄운다 → dev 전용
+#   80-postgres-cnpg.yaml.example  예시 파일
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - 00-namespace.yaml
+  - 10-configmap.yaml
+  - 30-eureka-server.yaml
+  - 31-gateway-server.yaml
+  - 32-config-server.yaml
+  - 40-user-service.yaml
+  - 41-catalog-service.yaml
+  - 42-cart-service.yaml
+  - 43-order-service.yaml
+  - 44-pay-service.yaml
+  - 45-coupon-service.yaml
+  - 46-chat-service.yaml
+  - 47-notification-service.yaml
+  - 48-delivery-service.yaml
+  - 49-saga-projection.yaml
+  - 50-frontend.yaml
+  - 60-ingress.yaml
+
+# 이미지 태그는 오버레이가 정한다(images: 항목). 베이스는 매니페스트에 적힌 값을 그대로 둔다.

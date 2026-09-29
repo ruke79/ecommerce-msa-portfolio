@@ -1,0 +1,118 @@
+server:
+  port: 8189
+
+  ssl:
+      key-store: ${LOCAL_KEY_STORE_PATH}
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+      key-password: ${LOCAL_KEY_PASSWORD}
+
+# Kafka 접속 설정은 common/application-common.yml 이 소유한다(docs/18).
+
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    non-secure-port-enabled : false
+    secure-port-enabled : true
+    secure-port : 8189
+
+spring:
+  application:
+    name: delivery-service
+
+  config:
+      import: "classpath:application-common.yml, optional:classpath:kafka-secrets.properties"
+
+  datasource:
+      # 커넥션 풀 산정은 다른 서비스와 같다(docs/19 §3). 데이터소스가 하나 늘었으므로
+      # 가드레일 B-32 의 총합 계산에도 이 서비스가 포함된다.
+      hikari:
+        maximum-pool-size: ${DB_POOL_SIZE:5}
+        minimum-idle: ${DB_POOL_MIN_IDLE:2}
+        connection-timeout: 5000
+        leak-detection-threshold: 20000
+        max-lifetime: 1200000
+      url: jdbc:postgresql://localhost:5435/deliverydb?sslmode=require
+      username: product
+      password: ${LOCAL_DB_PASSWORD}
+      properties:
+        ssl: true
+        sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+        sslrootcert: ${LOCAL_KEY_STORE_PATH}
+        sslpassword: ${LOCAL_KEY_PASSWORD}
+
+  data:
+    redis:
+      # 인증번호 발급 속도 제한에 쓴다. 레플리카가 2개 이상이라 인메모리 카운터로는
+      # 제한이 레플리카 수만큼 느슨해진다 — 요금이 걸린 제한이므로 공유 저장소가 필요하다.
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      # 빈 문자열 기본값을 주면 Redisson/Lettuce 가 빈 비밀번호로 AUTH 를 시도하다 실패한다.
+      # 게이트웨이·order·cart 에서 세 번 반복된 실수라 가드레일 B-30 이 막고 있다.
+      password: ${REDIS_PASSWORD:${LOCAL_DB_PASSWORD:}}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+
+  jpa:
+    show-sql: false
+    hibernate:
+      # 스키마는 Flyway 가 소유한다(docs/20). 이 값이 update 면 가드레일 B-33 이 빌드를 막는다.
+      ddl-auto: ${DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+feign:
+  # 결제 완료 뒤 주문의 배송 단면(수취인·주소·품목)을 묻는 곳. k8s 에서는 configmap 의
+  # FEIGN_ORDER_URL 이 덮어쓴다. 타임아웃은 common 의 spring.cloud.openfeign 이 정한다.
+  order-url: ${FEIGN_ORDER_URL:https://localhost:8084}
+
+delivery:
+  # 발송국. 이 나라 밖으로 가는 배송은 국제 배송으로 보고 통관 단계를 넣는다.
+  origin-country: ${DELIVERY_ORIGIN_COUNTRY:KR}
+
+  polling:
+    # 스케줄러가 도는 주기. 실제 조회 간격은 배송 **상태**가 정한다(DeliveryStatus).
+    # 배달 출발이면 30분, 이동 중이면 3시간, 끝났으면 아예 조회하지 않는다 —
+    # 전 건을 같은 주기로 돌면 공공 API 일일 한도를 금방 넘긴다(docs/25 §5).
+    interval-ms: ${DELIVERY_POLL_INTERVAL_MS:60000}
+    initial-delay-ms: ${DELIVERY_POLL_INITIAL_DELAY_MS:15000}
+    # 한 번에 선점할 상자 수. 외부 HTTP 호출이 이 수만큼 직렬로 붙으므로 크게 잡지 않는다.
+    batch-size: ${DELIVERY_POLL_BATCH_SIZE:20}
+
+  topics:
+    status: ${DELIVERY_STATUS_TOPIC:delivery-status}
+
+  carriers:
+    koreapost:
+      # 공공데이터포털. 서비스키가 없으면 조회가 영구 실패로 기록된다 — 조용히 넘어가면
+      # "왜 갱신이 안 되지"가 되므로 일부러 실패로 남긴다.
+      base-url: ${DELIVERY_KOREAPOST_BASE_URL:https://apis.data.go.kr/1721000/TrackingInfoService/getTrackingInfo}
+      service-key: ${DELIVERY_KOREAPOST_SERVICE_KEY:}
+      # ⚠️ 응답 필드 이름을 설정으로 뺀 이유: 이 어댑터는 실제 키 없이 실호출을 검증하지
+      #    못했다. 공공데이터포털 API 는 버전에 따라 필드명이 다르므로, 키를 받은 뒤
+      #    코드가 아니라 이 값들만 맞추면 되게 했다(docs/25 §4.1).
+      field:
+        events-path: ${DELIVERY_KOREAPOST_EVENTS_PATH:response.body.items.item}
+        time: ${DELIVERY_KOREAPOST_FIELD_TIME:dlvyDate}
+        status: ${DELIVERY_KOREAPOST_FIELD_STATUS:dlvySttus}
+        location: ${DELIVERY_KOREAPOST_FIELD_LOCATION:nowLc}
+        description: ${DELIVERY_KOREAPOST_FIELD_DESC:dlvyNm}
+
+    simulated:
+      # 실제 택배사 없이 결제→배송→추적→알림 전 경로를 돌려 보기 위한 어댑터.
+      # 운영에서는 끈다.
+      enabled: ${DELIVERY_SIMULATED_ENABLED:true}
+      step-duration-ms: ${DELIVERY_SIMULATED_STEP_MS:21600000}
+
+logging:
+  level:
+    root: info
+    com.project.delivery_service: ${LOG_LEVEL_APP:info}
+  file:
+    path: ./logs
+    name: ${logging.file.path}/delivery_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+  # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
+  # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).

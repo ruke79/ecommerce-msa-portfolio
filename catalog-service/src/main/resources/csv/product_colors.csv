@@ -1,0 +1,510 @@
+color_id,color,color_image
+1,#5e4bf7,images\food\Image_2.jpg
+2,#963d39,images\food\Image_2.jpg
+3,#534c17,images\books\Image_5.jpg
+4,#aba59b,images\food\Image_5.jpg
+5,#799ba7,images\food\Image_5.jpg
+6,#b07dbf,images\furniture\Image_5.jpg
+7,#42c4a4,images\furniture\Image_5.jpg
+8,#b209e6,images\furniture\Image_5.jpg
+9,#006c2c,images\furniture\Image_3.jpg
+10,#0368ef,images\furniture\Image_5.jpg
+11,#ddeeab,images\furniture\Image_5.jpg
+12,#f7decf,images\fashion\Image_4.jpg
+13,#004191,images\consumer electronics\Image_7.png
+14,#83ab29,images\consumer electronics\Image_7.png
+15,#35d55b,images\food\Image_9.jpg
+16,#6b9565,images\food\Image_3.jpg
+17,#2e3309,images\food\Image_3.jpg
+18,#35c4fa,images\fashion\Image_4.jpg
+19,#644346,images\fashion\Image_4.jpg
+20,#75c016,images\fashion\Image_8.jpg
+21,#7259fa,images\fashion\Image_8.jpg
+22,#782317,images\fashion\Image_8.jpg
+23,#8870e7,images\food\Image_8.jpg
+24,#da7c0e,images\food\Image_8.jpg
+25,#8549d9,images\books\Image_2.jpg
+26,#c36ac1,images\books\Image_9.png
+27,#cbd800,images\books\Image_9.png
+28,#bfa2f0,images\books\Image_9.png
+29,#e57c52,images\fashion\Image_6.jpg
+30,#348ae2,images\fashion\Image_6.jpg
+31,#c04f44,images\fashion\Image_6.jpg
+32,#940800,images\furniture\Image_2.jpg
+33,#fa1be0,images\furniture\Image_2.jpg
+34,#dc8543,images\furniture\Image_2.jpg
+35,#9b90dd,images\furniture\Image_4.jpg
+36,#e532bc,images\furniture\Image_4.jpg
+37,#b60fce,images\furniture\Image_4.jpg
+38,#f90ea0,images\books\Image_5.jpg
+39,#d4f729,images\fashion\Image_3.jpg
+40,#aa1700,images\consumer electronics\Image_9.jpg
+41,#cb8dbe,images\consumer electronics\Image_2.jpg
+42,#056bb1,images\consumer electronics\Image_2.jpg
+43,#64521c,images\books\Image_5.jpg
+44,#d3b113,images\books\Image_5.jpg
+45,#f79250,images\furniture\Image_3.jpg
+46,#48a462,images\furniture\Image_3.jpg
+47,#085cd2,images\furniture\Image_3.jpg
+48,#04eeb8,images\books\Image_6.jpg
+49,#413982,images\books\Image_6.jpg
+50,#15b743,images\books\Image_6.jpg
+51,#f8c1ad,images\consumer electronics\Image_8.png
+52,#6ece33,images\consumer electronics\Image_8.png
+53,#44f638,images\consumer electronics\Image_8.png
+54,#45f43d,images\furniture\Image_5.jpg
+55,#db5780,images\books\Image_10.jpg
+56,#471a08,images\books\Image_10.jpg
+57,#04074b,images\fashion\Image_6.jpg
+58,#ba1b4d,images\fashion\Image_6.jpg
+59,#5943ad,images\consumer electronics\Image_9.jpg
+60,#7ab01a,images\consumer electronics\Image_9.jpg
+61,#bd0a17,images\consumer electronics\Image_9.jpg
+62,#9cb173,images\furniture\Image_6.jpg
+63,#9b0dd5,images\fashion\Image_4.jpg
+64,#e30106,images\fashion\Image_4.jpg
+65,#183975,images\fashion\Image_4.jpg
+66,#74bb95,images\food\Image_10.jpg
+67,#0fb829,images\furniture\Image_8.jpg
+68,#646102,images\furniture\Image_8.jpg
+69,#9ec513,images\food\Image_2.jpg
+70,#4d4622,images\food\Image_2.jpg
+71,#a35fdb,images\food\Image_2.jpg
+72,#080d3f,images\books\Image_8.jpg
+73,#a64a9b,images\books\Image_8.jpg
+74,#006bc6,images\books\Image_1.png
+75,#7ae212,images\books\Image_1.png
+76,#dbcc98,images\books\Image_1.png
+77,#2feb01,images\consumer electronics\Image_3.jpg
+78,#e4abf3,images\consumer electronics\Image_3.jpg
+79,#83ad9a,images\fashion\Image_6.jpg
+80,#1deec7,images\fashion\Image_6.jpg
+81,#3aa173,images\fashion\Image_6.jpg
+82,#0d5f7e,images\furniture\Image_9.jpg
+83,#6690d6,images\books\Image_4.jpg
+84,#d93417,images\books\Image_4.jpg
+85,#e3394b,images\furniture\Image_6.jpg
+86,#75975e,images\consumer electronics\Image_5.jpg
+87,#f39c2f,images\books\Image_4.jpg
+88,#2bef46,images\books\Image_4.jpg
+89,#527182,images\books\Image_4.jpg
+90,#873ec9,images\books\Image_10.jpg
+91,#3d5755,images\furniture\Image_6.jpg
+92,#3a052e,images\furniture\Image_10.jpg
+93,#6369d3,images\furniture\Image_10.jpg
+94,#d818ae,images\furniture\Image_10.jpg
+95,#e778d7,images\books\Image_9.png
+96,#0cf386,images\books\Image_9.png
+97,#bd9b32,images\books\Image_9.png
+98,#b05f79,images\books\Image_10.jpg
+99,#9ce0ea,images\books\Image_10.jpg
+100,#19f174,images\books\Image_10.jpg
+101,#8b3945,images\consumer electronics\Image_8.png
+102,#1e1759,images\consumer electronics\Image_8.png
+103,#ede084,images\books\Image_8.jpg
+104,#da8f58,images\food\Image_10.jpg
+105,#6eee30,images\food\Image_10.jpg
+106,#a4d716,images\furniture\Image_7.jpg
+107,#2283c8,images\furniture\Image_6.jpg
+108,#4239fb,images\books\Image_9.png
+109,#8d81eb,images\books\Image_9.png
+110,#f0cfd1,images\books\Image_7.jpg
+111,#ef246e,images\books\Image_7.jpg
+112,#98a90f,images\books\Image_7.jpg
+113,#859aca,images\books\Image_5.jpg
+114,#bb2ab7,images\books\Image_5.jpg
+115,#b860dd,images\books\Image_5.jpg
+116,#70837e,images\fashion\Image_5.jpg
+117,#9d8323,images\fashion\Image_5.jpg
+118,#730111,images\fashion\Image_5.jpg
+119,#56455f,images\fashion\Image_1.jpg
+120,#ad55a1,images\food\Image_7.jpg
+121,#6fba27,images\food\Image_7.jpg
+122,#e7f6b9,images\food\Image_7.jpg
+123,#519e4e,images\consumer electronics\Image_8.png
+124,#367c7c,images\furniture\Image_7.jpg
+125,#8cb32e,images\furniture\Image_6.jpg
+126,#04c838,images\furniture\Image_6.jpg
+127,#06d079,images\furniture\Image_6.jpg
+128,#eb93ab,images\books\Image_6.jpg
+129,#1b663e,images\books\Image_6.jpg
+130,#fff5d3,images\books\Image_6.jpg
+131,#a87d42,images\fashion\Image_6.jpg
+132,#b67dbe,images\fashion\Image_6.jpg
+133,#ba373e,images\food\Image_1.jpg
+134,#a3a0f0,images\food\Image_1.jpg
+135,#d17faf,images\books\Image_7.jpg
+136,#6f4131,images\books\Image_7.jpg
+137,#1f4120,images\books\Image_7.jpg
+138,#bc684c,images\furniture\Image_9.jpg
+139,#1b5140,images\furniture\Image_9.jpg
+140,#27595c,images\books\Image_10.jpg
+141,#550fd1,images\books\Image_10.jpg
+142,#5fb4f2,images\furniture\Image_2.jpg
+143,#0e6bef,images\furniture\Image_2.jpg
+144,#5d1fa6,images\fashion\Image_5.jpg
+145,#2c091b,images\fashion\Image_5.jpg
+146,#e26d2e,images\fashion\Image_5.jpg
+147,#407882,images\books\Image_9.png
+148,#3eeef5,images\consumer electronics\Image_9.jpg
+149,#775bd6,images\consumer electronics\Image_9.jpg
+150,#7061f8,images\consumer electronics\Image_9.jpg
+151,#bcfde0,images\books\Image_9.png
+152,#b7bc43,images\books\Image_9.png
+153,#d70647,images\consumer electronics\Image_1.jpg
+154,#514f20,images\consumer electronics\Image_1.jpg
+155,#880f7c,images\fashion\Image_10.jpg
+156,#d0b40f,images\fashion\Image_10.jpg
+157,#033d31,images\furniture\Image_8.jpg
+158,#7553f5,images\furniture\Image_8.jpg
+159,#b6756b,images\furniture\Image_8.jpg
+160,#2ec56b,images\fashion\Image_10.jpg
+161,#487dea,images\fashion\Image_10.jpg
+162,#77dbd7,images\fashion\Image_10.jpg
+163,#2c0d11,images\fashion\Image_9.jpg
+164,#6cdeea,images\fashion\Image_9.jpg
+165,#e1ae56,images\fashion\Image_9.jpg
+166,#0046fe,images\food\Image_7.jpg
+167,#6750d3,images\food\Image_7.jpg
+168,#23ee34,images\food\Image_7.jpg
+169,#644351,images\consumer electronics\Image_7.png
+170,#6c7333,images\consumer electronics\Image_7.png
+171,#cbd5bf,images\consumer electronics\Image_7.png
+172,#0f39db,images\food\Image_7.jpg
+173,#ee6814,images\food\Image_7.jpg
+174,#181de7,images\food\Image_7.jpg
+175,#6eaa26,images\fashion\Image_3.jpg
+176,#92cc34,images\fashion\Image_3.jpg
+177,#1b254d,images\books\Image_10.jpg
+178,#58eb48,images\furniture\Image_7.jpg
+179,#b2a38a,images\furniture\Image_7.jpg
+180,#3b4b2f,images\furniture\Image_7.jpg
+181,#053d55,images\books\Image_5.jpg
+182,#9d9832,images\books\Image_1.png
+183,#ef5a37,images\books\Image_1.png
+184,#5e31ab,images\books\Image_1.png
+185,#7d0e75,images\fashion\Image_1.jpg
+186,#f6dc82,images\books\Image_3.jpg
+187,#e0b6de,images\consumer electronics\Image_5.jpg
+188,#93bffc,images\consumer electronics\Image_5.jpg
+189,#bfa523,images\consumer electronics\Image_5.jpg
+190,#5b355a,images\books\Image_9.png
+191,#f4bab8,images\food\Image_1.jpg
+192,#4b8799,images\food\Image_1.jpg
+193,#514279,images\food\Image_1.jpg
+194,#404cea,images\food\Image_10.jpg
+195,#e7034a,images\food\Image_10.jpg
+196,#b3c4ba,images\furniture\Image_10.jpg
+197,#0b1031,images\fashion\Image_7.jpg
+198,#ecc471,images\fashion\Image_1.jpg
+199,#c46316,images\fashion\Image_1.jpg
+200,#2184c9,images\fashion\Image_1.jpg
+201,#b5fa9b,images\furniture\Image_5.jpg
+202,#73b220,images\furniture\Image_5.jpg
+203,#ed793d,images\furniture\Image_5.jpg
+204,#0c2623,images\consumer electronics\Image_2.jpg
+205,#209c23,images\consumer electronics\Image_2.jpg
+206,#e7d4af,images\consumer electronics\Image_2.jpg
+207,#c118a7,images\consumer electronics\Image_3.jpg
+208,#ebdcef,images\food\Image_7.jpg
+209,#80c6ff,images\food\Image_7.jpg
+210,#50ee6e,images\consumer electronics\Image_10.jpg
+211,#16c12e,images\consumer electronics\Image_10.jpg
+212,#89f5e2,images\fashion\Image_6.jpg
+213,#c5dff3,images\fashion\Image_6.jpg
+214,#95d728,images\fashion\Image_6.jpg
+215,#6132b8,images\food\Image_10.jpg
+216,#43bdc4,images\food\Image_10.jpg
+217,#b352ec,images\food\Image_10.jpg
+218,#ecab51,images\consumer electronics\Image_3.jpg
+219,#892e37,images\consumer electronics\Image_3.jpg
+220,#f9369c,images\furniture\Image_10.jpg
+221,#003526,images\furniture\Image_10.jpg
+222,#c31d08,images\fashion\Image_5.jpg
+223,#db49e7,images\food\Image_9.jpg
+224,#4d3722,images\food\Image_9.jpg
+225,#d07aae,images\furniture\Image_5.jpg
+226,#fc5225,images\consumer electronics\Image_2.jpg
+227,#5a36a4,images\consumer electronics\Image_2.jpg
+228,#d78041,images\consumer electronics\Image_2.jpg
+229,#bc2202,images\consumer electronics\Image_7.png
+230,#31c7dd,images\consumer electronics\Image_7.png
+231,#9d02fe,images\consumer electronics\Image_7.png
+232,#117378,images\fashion\Image_10.jpg
+233,#bed7ac,images\fashion\Image_10.jpg
+234,#93de68,images\books\Image_6.jpg
+235,#c83290,images\books\Image_6.jpg
+236,#443a92,images\food\Image_8.jpg
+237,#58e37f,images\food\Image_8.jpg
+238,#a03405,images\food\Image_8.jpg
+239,#0d7be0,images\books\Image_8.jpg
+240,#5d4044,images\books\Image_9.png
+241,#7cccdc,images\furniture\Image_5.jpg
+242,#baf8b2,images\furniture\Image_5.jpg
+243,#f1f06b,images\furniture\Image_5.jpg
+244,#ec1825,images\fashion\Image_6.jpg
+245,#12874b,images\fashion\Image_6.jpg
+246,#b38830,images\fashion\Image_6.jpg
+247,#adda29,images\consumer electronics\Image_4.png
+248,#1e9daf,images\books\Image_1.png
+249,#47b61d,images\consumer electronics\Image_8.png
+250,#9394b2,images\books\Image_10.jpg
+251,#27dcf2,images\books\Image_10.jpg
+252,#a21039,images\furniture\Image_2.jpg
+253,#711643,images\furniture\Image_2.jpg
+254,#ce89ef,images\furniture\Image_2.jpg
+255,#668125,images\fashion\Image_5.jpg
+256,#feba2c,images\fashion\Image_5.jpg
+257,#0e5ffb,images\fashion\Image_5.jpg
+258,#d66aed,images\food\Image_10.jpg
+259,#17d72f,images\furniture\Image_5.jpg
+260,#7b1973,images\furniture\Image_5.jpg
+261,#a50480,images\consumer electronics\Image_1.jpg
+262,#fe371d,images\consumer electronics\Image_1.jpg
+263,#fbc979,images\consumer electronics\Image_2.jpg
+264,#b5fb1e,images\consumer electronics\Image_2.jpg
+265,#eb462a,images\consumer electronics\Image_2.jpg
+266,#1a1b51,images\fashion\Image_9.jpg
+267,#e86c15,images\fashion\Image_9.jpg
+268,#92e257,images\furniture\Image_2.jpg
+269,#2daf0b,images\furniture\Image_2.jpg
+270,#206d26,images\furniture\Image_3.jpg
+271,#517858,images\food\Image_4.png
+272,#d81fc8,images\food\Image_4.png
+273,#a1aa05,images\consumer electronics\Image_5.jpg
+274,#50befa,images\consumer electronics\Image_5.jpg
+275,#59ad4a,images\consumer electronics\Image_5.jpg
+276,#657157,images\consumer electronics\Image_8.png
+277,#a4c664,images\consumer electronics\Image_8.png
+278,#4cdde0,images\food\Image_6.jpg
+279,#6f64c6,images\food\Image_6.jpg
+280,#c0ef59,images\food\Image_6.jpg
+281,#37d03d,images\consumer electronics\Image_1.jpg
+282,#ab3296,images\consumer electronics\Image_1.jpg
+283,#f9ef49,images\consumer electronics\Image_1.jpg
+284,#0a1150,images\fashion\Image_1.jpg
+285,#50077c,images\fashion\Image_1.jpg
+286,#085714,images\fashion\Image_1.jpg
+287,#8e44f4,images\consumer electronics\Image_3.jpg
+288,#b82109,images\consumer electronics\Image_3.jpg
+289,#0e21d9,images\fashion\Image_3.jpg
+290,#9807d6,images\fashion\Image_3.jpg
+291,#9be20e,images\fashion\Image_3.jpg
+292,#cb8f0b,images\furniture\Image_7.jpg
+293,#1b76c8,images\furniture\Image_7.jpg
+294,#211cae,images\fashion\Image_5.jpg
+295,#6838a0,images\fashion\Image_5.jpg
+296,#2c6c77,images\fashion\Image_6.jpg
+297,#d893ea,images\fashion\Image_6.jpg
+298,#f25fb8,images\food\Image_6.jpg
+299,#6cfd7e,images\food\Image_6.jpg
+300,#72d847,images\furniture\Image_2.jpg
+301,#c35d94,images\furniture\Image_2.jpg
+302,#2de14d,images\food\Image_7.jpg
+303,#3c6cf2,images\food\Image_7.jpg
+304,#0c4d1b,images\fashion\Image_8.jpg
+305,#8b7afb,images\fashion\Image_8.jpg
+306,#c10f57,images\fashion\Image_8.jpg
+307,#deba8c,images\consumer electronics\Image_2.jpg
+308,#28ffac,images\consumer electronics\Image_2.jpg
+309,#4eb30a,images\consumer electronics\Image_2.jpg
+310,#86d74d,images\consumer electronics\Image_9.jpg
+311,#9e6758,images\consumer electronics\Image_9.jpg
+312,#1ddc62,images\consumer electronics\Image_9.jpg
+313,#2228c7,images\furniture\Image_6.jpg
+314,#fa51b8,images\books\Image_4.jpg
+315,#b95187,images\books\Image_4.jpg
+316,#d44927,images\books\Image_8.jpg
+317,#f70925,images\consumer electronics\Image_7.png
+318,#0847a0,images\consumer electronics\Image_7.png
+319,#cdced1,images\fashion\Image_9.jpg
+320,#8b68f1,images\fashion\Image_9.jpg
+321,#44567b,images\fashion\Image_9.jpg
+322,#fce572,images\consumer electronics\Image_8.png
+323,#4c09d8,images\consumer electronics\Image_8.png
+324,#723d7d,images\consumer electronics\Image_8.png
+325,#86130c,images\fashion\Image_7.jpg
+326,#2608cb,images\fashion\Image_7.jpg
+327,#bfdf9f,images\food\Image_8.jpg
+328,#d6f6dc,images\fashion\Image_9.jpg
+329,#a3c5fc,images\books\Image_8.jpg
+330,#de2af5,images\fashion\Image_4.jpg
+331,#99ca48,images\books\Image_7.jpg
+332,#b069d1,images\consumer electronics\Image_8.png
+333,#beeb74,images\consumer electronics\Image_8.png
+334,#9b703e,images\books\Image_10.jpg
+335,#8e0873,images\books\Image_10.jpg
+336,#13ee87,images\consumer electronics\Image_10.jpg
+337,#c58a3b,images\consumer electronics\Image_10.jpg
+338,#1eea27,images\consumer electronics\Image_10.jpg
+339,#db36f9,images\consumer electronics\Image_10.jpg
+340,#d65065,images\consumer electronics\Image_10.jpg
+341,#fce654,images\consumer electronics\Image_10.jpg
+342,#1af98a,images\books\Image_7.jpg
+343,#d6d278,images\books\Image_7.jpg
+344,#5ffec0,images\books\Image_3.jpg
+345,#0f641b,images\books\Image_3.jpg
+346,#d61157,images\consumer electronics\Image_3.jpg
+347,#d3da8f,images\books\Image_5.jpg
+348,#4ce5f6,images\books\Image_5.jpg
+349,#10b20c,images\food\Image_10.jpg
+350,#a0469d,images\consumer electronics\Image_4.png
+351,#d6e504,images\consumer electronics\Image_4.png
+352,#2ef207,images\fashion\Image_5.jpg
+353,#50d95b,images\fashion\Image_5.jpg
+354,#c77f82,images\fashion\Image_5.jpg
+355,#e91437,images\food\Image_3.jpg
+356,#900aef,images\food\Image_3.jpg
+357,#f0f113,images\food\Image_9.jpg
+358,#e06032,images\fashion\Image_4.jpg
+359,#3bc572,images\fashion\Image_4.jpg
+360,#c8a08f,images\fashion\Image_4.jpg
+361,#79ad45,images\books\Image_2.jpg
+362,#a453cf,images\books\Image_10.jpg
+363,#eb6ba9,images\food\Image_1.jpg
+364,#f92322,images\food\Image_1.jpg
+365,#2070c3,images\food\Image_1.jpg
+366,#79ef40,images\furniture\Image_7.jpg
+367,#0d74bd,images\furniture\Image_7.jpg
+368,#bae52d,images\food\Image_2.jpg
+369,#ff4a24,images\books\Image_3.jpg
+370,#49fe2f,images\furniture\Image_3.jpg
+371,#783e6e,images\furniture\Image_3.jpg
+372,#26551a,images\books\Image_2.jpg
+373,#989a73,images\books\Image_2.jpg
+374,#f3bc25,images\books\Image_2.jpg
+375,#e1bf0e,images\books\Image_9.png
+376,#255460,images\food\Image_2.jpg
+377,#d33c29,images\books\Image_5.jpg
+378,#f7247d,images\fashion\Image_9.jpg
+379,#c8a06b,images\fashion\Image_9.jpg
+380,#2fddb4,images\fashion\Image_9.jpg
+381,#bf8f25,images\fashion\Image_5.jpg
+382,#085d94,images\fashion\Image_5.jpg
+383,#5439a4,images\fashion\Image_5.jpg
+384,#960a38,images\books\Image_9.png
+385,#2e07b3,images\furniture\Image_3.jpg
+386,#44e2d6,images\furniture\Image_3.jpg
+387,#e0aefb,images\fashion\Image_7.jpg
+388,#f9c962,images\fashion\Image_7.jpg
+389,#2f539a,images\fashion\Image_7.jpg
+390,#98b798,images\furniture\Image_4.jpg
+391,#d7e6cf,images\furniture\Image_4.jpg
+392,#3cbca8,images\furniture\Image_4.jpg
+393,#22b4f8,images\books\Image_4.jpg
+394,#f83389,images\books\Image_4.jpg
+395,#8fd06a,images\books\Image_4.jpg
+396,#f9de66,images\books\Image_10.jpg
+397,#a5881c,images\food\Image_4.png
+398,#b44f00,images\food\Image_4.png
+399,#7ac95f,images\books\Image_10.jpg
+400,#f73e1a,images\books\Image_10.jpg
+401,#641e73,images\books\Image_10.jpg
+402,#10624f,images\food\Image_6.jpg
+403,#21d4ea,images\food\Image_6.jpg
+404,#6eaa83,images\food\Image_6.jpg
+405,#eb3413,images\books\Image_5.jpg
+406,#f250d9,images\books\Image_5.jpg
+407,#46ba88,images\books\Image_5.jpg
+408,#61a120,images\food\Image_7.jpg
+409,#d5baf0,images\books\Image_1.png
+410,#f13310,images\books\Image_1.png
+411,#402d87,images\books\Image_1.png
+412,#83ab74,images\food\Image_2.jpg
+413,#90db98,images\books\Image_5.jpg
+414,#c80735,images\books\Image_5.jpg
+415,#f0b056,images\books\Image_5.jpg
+416,#d6ab13,images\food\Image_4.png
+417,#d80ce2,images\food\Image_9.jpg
+418,#0b86cc,images\food\Image_9.jpg
+419,#2f0c20,images\food\Image_9.jpg
+420,#d63a83,images\consumer electronics\Image_8.png
+421,#f28533,images\consumer electronics\Image_8.png
+422,#56a76b,images\consumer electronics\Image_8.png
+423,#0cb0be,images\furniture\Image_4.jpg
+424,#8afb94,images\furniture\Image_4.jpg
+425,#a89d7a,images\furniture\Image_4.jpg
+426,#3f8d01,images\fashion\Image_4.jpg
+427,#8e4b1f,images\fashion\Image_4.jpg
+428,#54182d,images\fashion\Image_4.jpg
+429,#101bfd,images\fashion\Image_6.jpg
+430,#d8be19,images\fashion\Image_6.jpg
+431,#4fd8f8,images\fashion\Image_6.jpg
+432,#b880f6,images\consumer electronics\Image_1.jpg
+433,#a8ae4d,images\consumer electronics\Image_1.jpg
+434,#ed5bec,images\consumer electronics\Image_1.jpg
+435,#80a44f,images\furniture\Image_1.jpg
+436,#f0109d,images\furniture\Image_1.jpg
+437,#241da0,images\books\Image_9.png
+438,#a454e7,images\food\Image_9.jpg
+439,#9cea24,images\furniture\Image_7.jpg
+440,#883cbd,images\consumer electronics\Image_5.jpg
+441,#b98415,images\furniture\Image_1.jpg
+442,#d51077,images\furniture\Image_1.jpg
+443,#3ed5b6,images\consumer electronics\Image_9.jpg
+444,#fe8cdc,images\consumer electronics\Image_9.jpg
+445,#87ccbd,images\consumer electronics\Image_9.jpg
+446,#7a5b47,images\books\Image_9.png
+447,#d05758,images\furniture\Image_5.jpg
+448,#9e14c0,images\furniture\Image_5.jpg
+449,#75ccdb,images\furniture\Image_5.jpg
+450,#2e5a4e,images\fashion\Image_9.jpg
+451,#846ecb,images\consumer electronics\Image_1.jpg
+452,#5e614c,images\consumer electronics\Image_1.jpg
+453,#e852a7,images\consumer electronics\Image_1.jpg
+454,#9622b6,images\consumer electronics\Image_4.png
+455,#db85c5,images\consumer electronics\Image_4.png
+456,#88cf5d,images\food\Image_3.jpg
+457,#1f0479,images\consumer electronics\Image_5.jpg
+458,#854502,images\consumer electronics\Image_5.jpg
+459,#57ea93,images\consumer electronics\Image_5.jpg
+460,#d5ee5a,images\books\Image_2.jpg
+461,#e19b59,images\books\Image_4.jpg
+462,#369578,images\books\Image_4.jpg
+463,#1e0c24,images\books\Image_4.jpg
+464,#a28a48,images\fashion\Image_4.jpg
+465,#7bae75,images\fashion\Image_4.jpg
+466,#d35250,images\fashion\Image_4.jpg
+467,#41d17c,images\food\Image_1.jpg
+468,#5cb318,images\consumer electronics\Image_2.jpg
+469,#f01add,images\consumer electronics\Image_2.jpg
+470,#90f65c,images\consumer electronics\Image_2.jpg
+471,#18c45a,images\furniture\Image_1.jpg
+472,#8365f2,images\fashion\Image_7.jpg
+473,#303ea9,images\fashion\Image_7.jpg
+474,#886cf6,images\furniture\Image_5.jpg
+475,#54fee6,images\consumer electronics\Image_3.jpg
+476,#23a63b,images\consumer electronics\Image_3.jpg
+477,#82006e,images\consumer electronics\Image_3.jpg
+478,#2b840e,images\food\Image_3.jpg
+479,#275a36,images\books\Image_5.jpg
+480,#fdb52a,images\books\Image_5.jpg
+481,#bc5215,images\consumer electronics\Image_2.jpg
+482,#255b85,images\furniture\Image_7.jpg
+483,#6960fb,images\furniture\Image_7.jpg
+484,#863823,images\furniture\Image_7.jpg
+485,#e49d99,images\consumer electronics\Image_4.png
+486,#d42928,images\consumer electronics\Image_4.png
+487,#4affea,images\consumer electronics\Image_4.png
+488,#97df7c,images\furniture\Image_5.jpg
+489,#459f82,images\furniture\Image_5.jpg
+490,#afefcf,images\furniture\Image_5.jpg
+491,#8a242d,images\consumer electronics\Image_10.jpg
+492,#c85195,images\books\Image_7.jpg
+493,#1b2337,images\books\Image_7.jpg
+494,#dbbab2,images\food\Image_8.jpg
+495,#50203b,images\consumer electronics\Image_2.jpg
+496,#144958,images\consumer electronics\Image_2.jpg
+497,#10f76b,images\consumer electronics\Image_2.jpg
+498,#39ff9c,images\books\Image_1.png
+499,#76adf8,images\books\Image_1.png
+500,#1c20fb,images\books\Image_1.png
+501,#3b46ee,images\fashion\Image_7.jpg
+502,#cd979f,images\fashion\Image_7.jpg
+503,#412cd2,images\fashion\Image_7.jpg
+504,#861fc6,images\consumer electronics\Image_3.jpg
+505,#4d6b52,images\consumer electronics\Image_3.jpg
+506,#4cfdef,images\food\Image_3.jpg
+507,#953a90,images\furniture\Image_4.jpg
+508,#4e391d,images\books\Image_5.jpg
+509,#9bd19d,images\food\Image_6.jpg

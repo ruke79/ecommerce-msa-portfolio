@@ -1,0 +1,234 @@
+server:
+  port: 8081
+  ssl:    
+      key-store: ${LOCAL_KEY_STORE_PATH}    
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+      key-password: ${LOCAL_KEY_PASSWORD}
+
+# Kafka 접속 설정은 common/application-common.yml 이 소유한다.
+#
+# 여기에는 개발자 PC 의 절대 경로가 그대로 박혀 있었다:
+#     trust-store-location: file:E:/github/amazon-clone-msa/.../local_truststore.jks
+# 그 경로는 다른 어떤 머신에도 존재하지 않으므로, 이 블록은 protocol: "SSL" 을 켜 놓은 채
+# 존재하지도 않는 스토어를 가리키고 있었다. 로컬 브로커가 PLAINTEXT 라 조용히 넘어갔을 뿐이다.
+#
+# 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
+# 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+
+cloud:
+  aws:
+    credentials:
+      access-key: ${AMAZON_ACCESS_KEY}
+      secret-key: ${AMAZON_SECRET_KEY}      
+    s3:
+      bucket: ${AMAZON_BUCKET_NAME}
+    region:
+      static: ${AMAZON_REGION}
+    stack:
+      auto: false
+
+
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    non-secure-port-enabled : false
+    secure-port-enabled : true
+    secure-port : 8081
+
+
+
+spring:
+  application:
+    name: catalog-service
+
+  config:
+      import: "classpath:application-common.yml, optional:classpath:kafka-secrets.properties"    
+      #import: optional:configserver:https://localhost:8888
+
+
+  elasticsearch:
+      uris: https://localhost:9200
+      username: ${LOCAL_ELASTICSEARCH_USERNAME}
+      password: ${LOCAL_ELASTICSEARCH_PASSWORD}
+      ssl:
+        bundle: "my-elasticsearch-ssl"
+  ssl:
+      bundle:
+        pem:
+          my-elasticsearch-ssl:
+            truststore:
+              location: "classpath: ${LOCAL_CRT_PATH}"
+              type: "PEM"
+   # client.rest.coneection-timeout는 오타로 보이며, connection-timeout으로 수정했습니다.
+  elasticsearch.client.rest.connection-timeout: 600s
+  elasticsearch.client.rest.socket-timeout: 600s
+  
+
+  datasource-data:
+    # 커넥션 풀 산정 (docs/19).
+    # 기본값 10 을 그대로 두면 데이터소스 8개 × 10 = 80 커넥션이고, HPA 로 레플리카가
+    # 2개만 돼도 160 으로 PostgreSQL 기본 max_connections(100)를 **산술적으로 초과**한다.
+    # 그 순간의 증상은 '느려짐'이 아니라 'FATAL: sorry, too many clients already' —
+    # 늦게 뜬 파드가 통째로 기동 실패한다.
+    # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
+    # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:5}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+      connection-timeout: 5000
+      # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
+      leak-detection-threshold: 20000
+      max-lifetime: 1200000
+    url: jdbc:postgresql://localhost:5435/productdb?sslmode=require
+    username: product
+    password: ${LOCAL_DB_PASSWORD}
+    properties:
+      ssl: true
+      sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+      sslrootcert: ${LOCAL_KEY_STORE_PATH}
+      sslpassword: ${LOCAL_KEY_PASSWORD}
+    
+    driver-class-name: org.postgresql.Driver
+
+  # ⚠️ 이 데이터소스는 **Spring Batch 메타데이터에 쓰이지 않는다.**
+  # JobRepository 는 @Primary 데이터소스(datasource-data → productdb)를 사용하며,
+  # 배치 메타는 그쪽 meta 스키마에 저장된다(docs/16 §7). 이름 때문에 오해하기 쉬워 명시해 둔다.
+  datasource-meta:
+    # 커넥션 풀 산정 (docs/19).
+    # 기본값 10 을 그대로 두면 데이터소스 8개 × 10 = 80 커넥션이고, HPA 로 레플리카가
+    # 2개만 돼도 160 으로 PostgreSQL 기본 max_connections(100)를 **산술적으로 초과**한다.
+    # 그 순간의 증상은 '느려짐'이 아니라 'FATAL: sorry, too many clients already' —
+    # 늦게 뜬 파드가 통째로 기동 실패한다.
+    # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
+    # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:5}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+      connection-timeout: 5000
+      # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
+      leak-detection-threshold: 20000
+      max-lifetime: 1200000
+    url: jdbc:postgresql://localhost:5435/metadb?sslmode=require
+    username: product
+    password: ${LOCAL_DB_PASSWORD}
+    properties:
+      ssl: true
+      sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+      sslrootcert: ${LOCAL_KEY_STORE_PATH}
+      sslpassword: ${LOCAL_KEY_PASSWORD}
+    
+    driver-class-name: org.postgresql.Driver
+
+    
+  
+  jpa:
+    show-sql: false
+    hibernate:
+      # create-drop은 재기동마다 스키마를 drop하여 데이터가 전부 유실된다(docs/06 CAT-15).
+      # 신규 DDL은 Flyway(db/migration)가 소유하고, Hibernate는 증분 보정만 담당한다(docs/09 P0).
+      ddl-auto: ${DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect : org.hibernate.dialect.PostgreSQLDialect
+
+  data:
+     redis:       
+          ssl:
+            enabled : false
+            cacert : ${LOCAL_CACERT_PATH}
+            # 코드(RedisCacheConfig)가 요구하는 키. 기존에는 cert/key 라는 다른 이름만 있어
+            # "Could not resolve placeholder spring.data.redis.ssl.keystore" 로 기동 불가였다.
+            keystore : ${LOCAL_KEY_STORE_PATH:}
+            truststore : ${LOCAL_TRUST_STORE_PATH:}
+            cert : ${LOCAL_CRT_PATH}
+            key : ${LOCAL_KEY_PATH}
+            storePassword : ${LOCAL_KEY_PASSWORD} 
+          lettuce:
+            pool:
+              max-active: 5
+              max-idle: 5
+              min-idle: 2  
+          host: localhost
+          port: 6379
+          password: ${LOCAL_DB_PASSWORD}
+
+# csv 파일 로드 시만 사용
+  batch:
+     job:
+       enabled: false
+     jdbc:
+       # 배치 메타데이터 스키마/테이블은 Flyway 마이그레이션(V3__create_batch_metadata.sql)이 만든다.
+       # Spring Batch 의 자동 생성에 맡기지 않는 이유: 그 스크립트는 CREATE TABLE 에 IF NOT EXISTS 가
+       # 없어 재기동 때 깨질 수 있고, 스키마 변경 이력이 버전 관리 밖에 놓인다.
+       #
+       # ⚠️ 이 메타데이터는 **기본 데이터소스(productdb)의 meta 스키마**에 저장된다(docs/16 §7 결정).
+       # JobRepository 는 @Primary 데이터소스를 쓰므로 아래 datasource-meta 는 배치에 관여하지 않는다.
+       initialize-schema: never
+       table-prefix: meta.BATCH_
+     transaction:
+       rollback-on: java.lang.Exception
+
+# ── 마케팅 콘텐츠(배너·공지) ─────────────────────────────────────────────
+# 이 서비스 안에 있지만 카탈로그 도메인은 아니다. 주문·재고와 트랜잭션을 공유하지 않고
+# 검색 색인에도 들어가지 않아, DB 스키마도 product 가 아니라 content 로 나눠 두었다
+# (V9__banner_notice.sql). 파드를 하나 더 늘리지 않으려고 여기에 얹었다.
+content:
+  banner:
+    # 공개 목록이 한 번에 돌려주는 최대 건수. 배너가 실수로 100개 공개돼도 홈 화면이
+    # 그걸 전부 받아 오지는 않게 한다.
+    max-visible: ${CONTENT_BANNER_MAX_VISIBLE:10}
+  notice:
+    # 공지 목록 페이지 크기의 상한. 클라이언트가 보낸 size 는 이 값으로 잘린다 —
+    # ?size=100000 으로 전체를 끌어가는 경로를 막는다.
+    max-page-size: ${CONTENT_NOTICE_MAX_PAGE_SIZE:50}
+  topics:
+    # 공지를 공개하면 여기로 발행되고, notification-service 가 전체 알림으로 만든다.
+    # ⚠️ 이름을 바꾸면 ops/02-create-dlt-topics.sh 의 TOPICS 도 같이 바꿔야 한다 —
+    #    그 토픽의 DLT 를 아무도 만들지 않으면 처리 실패가 격리되지 않는다(가드레일 B-41).
+    notice-published: ${CONTENT_NOTICE_PUBLISHED_TOPIC:notice-published}
+    # 기획전이 시작될 때(SCHEDULED → ACTIVE) 발행된다. 종료는 알리지 않는다.
+    event-started: ${CONTENT_EVENT_STARTED_TOPIC:event-started}
+
+# ⚠️ 로그 레벨을 코드에 DEBUG 로 **박아 두지 않는다.**
+#
+# 예전에는 이 블록이 전부 DEBUG 였다 — 우리 패키지는 물론 org.hibernate.SQL 까지.
+# 즉 **모든 SQL 이 운영에서 한 줄씩 찍히고** 있었고, 그 비용이 눈에 보이는 곳에서 드러났다:
+# catalog-service 기동에 195초가 걸렸고(단일 노드에서 startupProbe 예산 300초를 위협한다),
+# 정작 장애가 났을 때는 로그가 DEBUG 로 가득 차 원인 줄을 찾기가 어려웠다.
+#
+# 이제 기본은 운영값이고, 조사할 때만 환경변수로 올린다:
+#   LOG_LEVEL_APP=debug   우리 패키지
+#   LOG_LEVEL_SQL=debug   JDBC·JPA·Hibernate SQL (평소 warn — 쿼리와 스키마 모양이 로그로 샌다)
+#   LOG_LEVEL_BATCH=debug 임포트 잡을 들여다볼 때
+# (ConfigurationGuardrailTest B-46 이 DEBUG 가 다시 박히는 것을 막는다.)
+logging:
+  level:
+    root: info
+    org.springframework.batch: ${LOG_LEVEL_BATCH:info}
+    com.project.catalog_service: ${LOG_LEVEL_APP:info}
+    org.springframework.jdbc: ${LOG_LEVEL_SQL:warn}
+    org.springframework.orm.jpa: ${LOG_LEVEL_SQL:warn}
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:warn}
+
+# Elasticsearch 클라이언트 패키지의 로깅 레벨을 DEBUG로 설정
+    #co.elastic.clients: DEBUG
+# HTTP 요청/응답 헤더 및 바디를 보려면 TRACE 레벨 설정
+# 이 설정은 Elasticsearch 클라이언트가 내부적으로 사용하는 Apache HTTP 클라이언트에 대한 로그를 활성화합니다.
+    #org.apache.http: DEBUG
+    #apache.http.wire: DEBUG
+  file:
+    path: ./logs
+    name: ${logging.file.path}/catalog_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+  # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
+  # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+      
+
+        
+
+
+

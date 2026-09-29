@@ -1,0 +1,31 @@
+
+dependencies {
+
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.cloud:spring-cloud-starter'
+	implementation 'org.springframework.cloud:spring-cloud-starter-bootstrap'
+	implementation 'org.springframework.cloud:spring-cloud-starter-config'
+	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+	// 결제 완료 뒤 주문의 배송 단면(주소·품목)을 order-service 에 묻는다 (client/OrderServiceClient)
+	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
+	implementation 'org.springframework.kafka:spring-kafka'
+
+	implementation project(':common')
+	// 추적 테스트의 OTel 추적기(OtelTestTracing — 운영과 같은 브리지)
+	testImplementation(testFixtures(project(':common')))
+
+	runtimeOnly 'org.postgresql:postgresql'
+	// 스키마는 Flyway 가 소유한다 (docs/20)
+	implementation 'org.flywaydb:flyway-core'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
+
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	testImplementation 'org.testcontainers:junit-jupiter'
+	testImplementation 'org.testcontainers:postgresql'
+}

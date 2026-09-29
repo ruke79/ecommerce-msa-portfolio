@@ -1,0 +1,13 @@
+-- 고객별 주문 조회용 인덱스 (docs/59 §4).
+--
+-- 주문을 만들 때 같은 고객의 앞선 결제 전 주문이 잡은 재고를 풀어 준다 — 장바구니는 결제 뒤에야 비워지므로, 주문하고
+-- 돌아가 다시 주문하면 앞 주문의 예약이 새 주문을 막는다. 그 조회가 customer_id 로 거른다. 기존 idx_order 는
+-- (tracking_id, customer_id, payment_method) 라 customer_id 만으로는 쓰지 못한다 — 주문을 만들 때마다 orders 전체를 훑게 된다.
+-- 고객의 주문 목록 조회도 같은 조건이라 함께 빨라진다.
+--
+-- 상태 조건을 넣은 부분 인덱스로 하지 않는다: 조회가 상태를 바인딩 값으로 넘겨 PostgreSQL 의 일반 플랜이 부분 인덱스를 쓰지
+-- 못한다(docs/59 §3 — catalog 에서 확인한 것과 같은 이유).
+--
+-- 이 규모의 표에서는 잠금이 짧다. 표가 커지면 CREATE INDEX CONCURRENTLY 를 트랜잭션 밖에서(Flyway executeInTransaction=false)
+-- 따로 돌린다 — IF NOT EXISTS 라 그 뒤 이 파일은 아무것도 하지 않는다.
+CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders.orders (customer_id);

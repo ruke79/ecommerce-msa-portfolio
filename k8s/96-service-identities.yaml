@@ -1,0 +1,332 @@
+# 서비스별 신원 인증서를 cert-manager 가 발급·갱신한다 (docs/57 §18).
+#
+# ⚠️ kustomization.yaml 에 넣지 않았다 — cert-manager(CRD)가 먼저 있어야 적용된다. **ops/39-cert-manager.sh** 로만 적용한다
+#    (설치 → CA 등록 → 이 파일 → Ready 확인).
+#
+# 무엇을 만드나: 서비스마다 Secret tls-id-<서비스> — ops/38 이 손으로 만들던 것과 **같은 이름·같은 키**다(tls.crt·tls.key·
+# ca.crt·keystore.p12). 그래서 매니페스트(k8s/40~49)는 바뀌지 않는다. 발급자만 바뀐다.
+#
+#   · 수명 90일, 만료 30일 전에 새로 발급(키도 새로 — rotationPolicy: Always)
+#   · keystore.p12 비밀번호는 서비스들이 이미 쓰는 값(ecommerce-secrets 의 LOCAL_KEY_STORE_PASSWORD)
+#   · 자바는 keystore 를 기동할 때만 읽는다 — Secret 이 바뀌면 Reloader 가 그 Deployment 를 롤링 재시작한다
+#     (각 Deployment 의 secret.reloader.stakater.com/reload 주석)
+#
+# CA 개인키는 cert-manager 네임스페이스의 Secret internal-ca 에만 둔다(ClusterIssuer 의 규칙) — 앱 네임스페이스(ecommerce)에서
+# Secret 을 읽을 수 있는 것이 생겨도 CA 키는 거기 없다.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca
+spec:
+  ca:
+    secretName: internal-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-user-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-user-service
+  commonName: user-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - user-service
+    - user-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-catalog-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-catalog-service
+  commonName: catalog-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - catalog-service
+    - catalog-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-cart-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-cart-service
+  commonName: cart-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - cart-service
+    - cart-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-order-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-order-service
+  commonName: order-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - order-service
+    - order-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-pay-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-pay-service
+  commonName: pay-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - pay-service
+    - pay-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-coupon-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-coupon-service
+  commonName: coupon-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - coupon-service
+    - coupon-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-chat-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-chat-service
+  commonName: chat-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - chat-service
+    - chat-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-notification-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-notification-service
+  commonName: notification-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - notification-service
+    - notification-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-delivery-service
+  namespace: ecommerce
+spec:
+  secretName: tls-id-delivery-service
+  commonName: delivery-service
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - delivery-service
+    - delivery-service.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-saga-projection
+  namespace: ecommerce
+spec:
+  secretName: tls-id-saga-projection
+  commonName: saga-projection
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - saga-projection
+    - saga-projection.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer

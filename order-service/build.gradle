@@ -1,0 +1,50 @@
+
+
+
+dependencies {
+	
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	//implementation 'org.springframework.boot:spring-boot-starter-web'
+	//implementation 'org.springframework.boot:spring-boot-starter-validation'	
+	implementation 'org.springframework.cloud:spring-cloud-starter'
+	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+	implementation 'org.springframework.cloud:spring-cloud-starter-config'
+	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
+	implementation 'org.springframework.kafka:spring-kafka'
+	
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+	 // Redisson
+    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능
+	
+	implementation project(':common')
+
+	// 재고 예약 gRPC 클라이언트(docs/66). 계약 · 생성 스텁은 common 에 있고(compileOnly), 런타임은 쓰는 서비스가 얹는다.
+	// grpc-netty-shaded — Netty 를 자기 안에 숨겨 가진다(Spring 의 Netty · Reactor 와 버전이 부딪히지 않게).
+	implementation platform("io.grpc:grpc-bom:${grpcVersion}")
+	implementation 'io.grpc:grpc-netty-shaded'
+	implementation 'io.grpc:grpc-protobuf'
+	implementation 'io.grpc:grpc-stub'
+	implementation "com.google.protobuf:protobuf-java:${protobufVersion}"
+	testImplementation 'io.grpc:grpc-inprocess'
+	// 추적 테스트의 OTel 추적기(OtelTestTracing — 운영과 같은 브리지)
+	testImplementation(testFixtures(project(':common')))
+	
+	runtimeOnly 'org.postgresql:postgresql'
+	// 스키마 마이그레이션: 파티셔닝 등 Hibernate ddl-auto가 만들 수 없는 DDL은 Flyway가 소유한다 (docs/09 P0)
+	implementation 'org.flywaydb:flyway-core'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'		
+	//runtimeOnly 'com.mysql:mysql-connector-j'
+	
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+	
+		
+	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+
+

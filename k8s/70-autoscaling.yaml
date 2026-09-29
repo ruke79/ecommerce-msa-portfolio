@@ -1,0 +1,248 @@
+# 오토스케일(HPA) + 무중단 유지(PDB)
+#
+# 전제: k3s는 metrics-server를 기본 내장하므로 HPA의 CPU 메트릭이 바로 동작한다.
+#
+# 제외 대상(의도적):
+#  - chat-service: 인메모리 SimpleBroker 기반 STOMP라 스케일아웃 시 인스턴스 간 메시지가
+#    전달되지 않는다(docs/03 F-7). 외부 브로커(Redis/RabbitMQ relay) 도입 전까지 1개 고정.
+#  - eureka-server: 다중 인스턴스는 peer-awareness 상호 설정이 선행돼야 하므로 HPA 부적합.
+#
+# PDB는 maxUnavailable: 1 로 설정한다 — 레플리카 1일 때는 노드 드레인을 막지 않고,
+# HPA로 2개 이상으로 늘어난 시점부터 "최소 1개는 항상 유지"라는 보호가 실질 동작한다.
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway-server
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: gateway-server }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: user-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: catalog-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: catalog-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cart-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: cart-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: order-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pay-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: pay-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: coupon-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: coupon-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: frontend }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway-server
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: gateway-server } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: user-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: catalog-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: catalog-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cart-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: cart-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: order-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pay-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: pay-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coupon-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: coupon-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chat-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: chat-service } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: frontend } }
+---
+# notification-service 는 수평 확장이 안전하다.
+#  · Kafka 컨슈머 그룹이 하나라 한 메시지는 한 파드만 받는다 (알림 중복 생성 없음)
+#  · SMS 발송은 FOR UPDATE SKIP LOCKED 로 선점한다 (같은 문자가 두 통 가지 않는다)
+# chat-service 와 반대다 — 그쪽은 브로드캐스트가 필요해 확장하면 조용히 깨진다(docs/21 §2).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notification-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: notification-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: notification-service } }
+---
+# delivery-service 는 수평 확장이 안전하다.
+#  · Kafka 컨슈머 그룹이 하나라 결제 이벤트를 한 파드만 받는다 (배송 중복 생성 없음)
+#  · 추적 폴링은 FOR UPDATE SKIP LOCKED 로 선점한다 — 잠금이 없으면 레플리카 둘이 같은
+#    송장을 조회해 **택배사 API 쿼터를 두 배로 태운다**(docs/25 §5)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: delivery-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: delivery-service }
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: delivery-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: delivery-service } }

@@ -1,0 +1,79 @@
+# Jaeger v2 — 추적 저장·검색·UI (docs/63)
+#
+# OpenTelemetry 데모의 src/jaeger/config.yml 을 따랐다. Jaeger v2 는 그 자체가 OTel Collector 로 만들어져
+# 있어 설정 모양이 같다. 추적은 Collector(observability/otel-collector.yml)에게서만 받는다 —
+# 서비스가 Jaeger 로 바로 보내지 않는다.
+#
+# 저장은 badger(Jaeger 에 내장된 파일 키-값 저장소)다 — 도커 볼륨 jaeger-data 에 남아 재시작 · 재배포를 넘긴다.
+# 예전(Zipkin 시절과 처음의 Jaeger)에는 메모리라 재시작하면 추적이 사라졌다: "어제 밤 결제 실패" 문의가 오면 로그의
+# traceId 를 눌러도 빈 화면이었다. 보관 기간은 JAEGER_TRACE_TTL(기본 7일)이고, 지나면 badger 가 스스로 지운다.
+# 노드 하나 · 트래픽이 적은 동안은 이것으로 충분하다 — 여러 노드가 같은 저장소를 봐야 하면 OpenSearch/ClickHouse(docs/63 §8).
+
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      attributes:
+        - name: service.name
+          value: jaeger
+    metrics:
+      level: basic
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      level: info
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+
+  jaeger_query:
+    storage:
+      traces: badger_store
+      # Monitor 탭(SPM) — Collector 의 span_metrics 가 Prometheus 에 남긴 RED 지표를 읽는다.
+      metrics: prometheus
+    http:
+      endpoint: 0.0.0.0:16686
+
+  jaeger_storage:
+    backends:
+      badger_store:
+        badger:
+          directories:
+            keys: /badger/keys
+            values: /badger/values
+          ephemeral: false
+          ttl:
+            spans: ${env:JAEGER_TRACE_TTL:-168h}
+    metric_backends:
+      prometheus:
+        prometheus:
+          endpoint: http://prometheus:9090
+          # span_metrics 커넥터의 이름 규칙(traces_span_metrics_calls_total · _duration_milliseconds_bucket)
+          normalize_calls: true
+          normalize_duration: true
+
+receivers:
+  otlp:
+    protocols:
+      # 도커 망 안에서 Collector 만 보낸다. 호스트로 열지 않는다.
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: badger_store

@@ -1,0 +1,114 @@
+# prod 오버레이.
+#
+#   kubectl apply -k k8s-overlays/prod
+#   kubectl apply -f k8s/70-autoscaling.yaml     # HPA·PDB (아래 §왜 따로 참조)
+#   kubectl apply -f k8s/85-backup-cronjobs.yaml # 백업
+#
+# 🔴 **위 apply 는 최초 배포에서만 쓴다.** 아래 `images:` 의 `newTag` 는 손으로 적어 둔
+#    값이라 금방 낡는다. 배포한 뒤 이 파일을 그대로 apply 하면 전 서비스가 **그 옛 태그로
+#    되돌아간다** — 실패도 롤백도 아니고 적힌 대로 적용된 것이라, 증상은 "배포가 이상하다"
+#    로만 보인다(실제로 프론트엔드가 몇 주 전 버전으로 돌아갔다). 두 번째부터는:
+#
+#      ./ops/28-deploy.sh prod <커밋SHA12자>                   # 배포
+#      ./ops/28-deploy.sh prod --config-only                   # 설정만(이미지 유지)
+#      ./ops/28-deploy.sh prod --config-only --restart <deploy> # 값을 읽히려면 재시작
+#
+#    ops/28 은 배포할 버전(또는 클러스터에서 읽은 현재 버전)으로 태그를 덮어써 적용한다.
+#
+# ── 무엇이 dev 와 다른가 ───────────────────────────────────────────────
+#
+#   레플리카      **Deployment 에서 아예 지운다.** HPA 가 소유한다 — 아래 §replicas
+#   리소스        베이스 값을 그대로 쓴다(이미 운영 기준으로 잡혀 있다)
+#   이미지        실제 레지스트리 + 고정 태그
+#   인그레스      Cloudflare Tunnel 로 들어온다(cloudflared.yaml) — 공인 IP·LB 불필요
+#   인프라        클러스터 밖(관리형 또는 별도 노드). 90-dev-infra 를 쓰지 않는다
+#
+# ── 왜 replicas 를 지우는가 ────────────────────────────────────────────
+#
+# HPA 가 관리하는 Deployment 에 `replicas` 가 남아 있으면 **매 `kubectl apply` 마다
+# 매니페스트 값으로 되돌아갔다가 HPA 가 다시 끌어올린다.** 트래픽이 몰려 6개로 늘어난
+# 상태에서 배포하면 2로 떨어졌다가 다시 올라간다 — 그 사이가 장애다.
+#
+# 그래서 여기서는 필드를 **삭제**한다(JSON6902 remove). 초기 개수는 HPA 의 minReplicas 가
+# 정한다(k8s/70-autoscaling.yaml 에서 전부 min=2).
+#
+# eureka-server 와 chat-service 는 HPA 가 없으므로 replicas 를 남겨 둔다.
+#   · eureka-server  1대로 충분하다(피어 복제를 설정하지 않았다)
+#   · chat-service   WebSocket 세션이 파드에 붙어 있어 늘리려면 세션 공유가 먼저다(docs/21)
+#
+# ── 왜 HPA·백업을 오버레이에 넣지 않는가 ────────────────────────────────
+#
+# kustomize 는 오버레이 디렉터리 **밖의 낱개 파일**을 참조하지 못한다(디렉터리 베이스만
+# 가능). `k8s/70-autoscaling.yaml` 을 넣으려면 매니페스트를 복제하거나 파일을 옮겨야 하는데,
+# 복제본은 반드시 원본과 어긋나고 이동은 50곳 가까운 참조를 깨뜨린다. 따로 적용한다.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce
+
+resources:
+  - ../../k8s          # 베이스
+  - cloudflared.yaml   # 오버레이 안에 있으므로 참조 가능하다
+
+# ── 이미지 ─────────────────────────────────────────────────────────────
+# 배포할 때마다 태그를 바꾼다:
+#   kustomize edit set image REGISTRY_PLACEHOLDER/ecommerce-msa/user-service=ghcr.io/ruke79/ecommerce-msa/user-service:1.2.3
+#
+# ⚠️ latest 를 쓰지 말 것. 롤백할 수 없고, 노드마다 다른 이미지가 돌 수 있다.
+images:
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/eureka-server
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/eureka-server
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/gateway-server
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/gateway-server
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/user-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/user-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/catalog-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/catalog-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/cart-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/cart-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/order-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/order-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/pay-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/pay-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/coupon-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/coupon-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/chat-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/chat-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/notification-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/notification-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/delivery-service
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/delivery-service
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/saga-projection
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/saga-projection
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/config-server
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/config-server
+    newTag: "1.0.0"
+  - name: REGISTRY_PLACEHOLDER/ecommerce-msa/frontend
+    newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/frontend
+    newTag: "1.0.0"
+
+patches:
+  # HPA 가 관리하는 Deployment 에서 replicas 를 지운다(§위 설명).
+  #
+  # ⚠️ saga-projection 은 **일부러 빠져 있다.** HPA 대상이 아니기 때문이다(70-autoscaling.yaml
+  #    에도 없다). Kafka Streams 의 병렬도는 입력 파티션 수가 정하므로 — 지금은 1 — 레플리카를
+  #    늘려도 활성 태스크는 하나뿐이다. 매니페스트의 replicas: 2 는 확장이 아니라 **대기
+  #    복제본**(활성 1 + standby 1)이고, 그 값이 num.standby.replicas 와 짝을 이뤄야 한다.
+  #    여기에 넣으면 replicas 가 지워져 기본값 1이 되고 대기 사본이 사라진다.
+  - path: patch-remove-replicas.yaml
+    target:
+      kind: Deployment
+      name: "gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|notification-service|delivery-service|frontend"

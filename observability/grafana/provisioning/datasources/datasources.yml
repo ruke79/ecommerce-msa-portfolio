@@ -1,0 +1,86 @@
+# Grafana 데이터소스 자동 프로비저닝 — 기동 즉시 Prometheus/Jaeger/Loki 연결 완료 상태로 시작
+#
+# 지표 · 추적 · 로그 왕복 (docs/51 §4, docs/63) — OpenTelemetry 데모와 같은 연결이다
+#   Loki 의 로그 줄      → traceId 를 누르면 Jaeger 의 그 요청(derivedFields)
+#   Jaeger 의 스팬       → "Logs for this span" 을 누르면 그 요청의 로그(tracesToLogsV2)
+#   Jaeger 의 스팬       → 그 서비스·스팬의 RED 지표(tracesToMetrics — span_metrics)
+#   Prometheus 의 점     → 그 지연을 만든 추적(exemplarTraceIdDestinations)
+#   서로를 uid 로 가리키므로 uid 를 고정한다.
+#
+# ⚠️ 이 파일의 $ 는 Grafana 가 환경변수로 해석한다. Grafana 변수(${__value.raw} 등)는 $$ 로 적는다.
+apiVersion: 1
+
+# 예전 이름의 데이터소스를 지운다(Zipkin → Jaeger). 남겨 두면 없는 zipkin:9411 을 가리키는 항목이 목록에 남는다.
+deleteDatasources:
+  - name: Zipkin
+    orgId: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # 지연 그래프의 점(exemplar) → Jaeger 의 그 추적. Spring 의 http_server_requests 와 span_metrics 가
+      # 모두 trace_id 라는 이름으로 싣는다.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+          urlDisplayLabel: "Jaeger 에서 보기"
+
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        # 스팬 앞뒤로 조금 넓게 — 비동기 작업(메일·재색인)의 로그가 스팬 끝보다 늦게 찍힌다.
+        spanStartTimeShift: "-1m"
+        spanEndTimeShift: "5m"
+        customQuery: true
+        # traceId 는 라벨이 아니라 줄 안의 값이다(라벨로 두면 요청마다 스트림이 생긴다). 줄 필터(|=)라
+        # 로컬의 JSON 파일(job=ecommerce)과 k3s 파드의 텍스트 줄(job=ecommerce-k3s) 모두에서 찾는다.
+        query: '{job=~"ecommerce.*"} |= "$${__trace.traceId}"'
+      # 스팬 → 그 서비스 · 스팬 이름의 호출률 · 오류율 · p95(span_metrics 커넥터가 만든 지표)
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: "-10m"
+        spanEndTimeShift: "10m"
+        tags:
+          - key: service.name
+            value: service_name
+        queries:
+          - name: "호출률 (req/s)"
+            query: 'sum(rate(traces_span_metrics_calls_total{$$__tags, span_name="$${__span.name}"}[5m]))'
+          - name: "오류율"
+            query: 'sum(rate(traces_span_metrics_calls_total{$$__tags, span_name="$${__span.name}", status_code="STATUS_CODE_ERROR"}[5m])) / sum(rate(traces_span_metrics_calls_total{$$__tags, span_name="$${__span.name}"}[5m]))'
+          - name: "p95 (ms)"
+            query: 'histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{$$__tags, span_name="$${__span.name}"}[5m])))'
+      nodeGraph:
+        enabled: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # OpenTelemetry 의 traceId 는 32자리 소문자 16진수다(Brave 시절의 16자리도 받는다 — 옛 로그).
+        # JSON 줄의 "traceId":"…" 에서 뽑는다.
+        - name: traceId
+          matcherRegex: '"traceId":"([0-9a-f]{16,32})"'
+          datasourceUid: jaeger
+          url: "$${__value.raw}"
+          urlDisplayLabel: "Jaeger 에서 보기"
+        # k3s 파드의 텍스트 줄: "… [traceId,spanId,userId] LEVEL …"
+        - name: traceId (text)
+          matcherRegex: '\] \[([0-9a-f]{16,32}),'
+          datasourceUid: jaeger
+          url: "$${__value.raw}"
+          urlDisplayLabel: "Jaeger 에서 보기"

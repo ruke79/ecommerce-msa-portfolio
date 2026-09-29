@@ -1,0 +1,202 @@
+# 서비스 간 공유되는 "비밀이 아닌" 설정.
+# 실제 값(호스트명 등)은 여러분의 k3s 클러스터/외부 인프라 배치에 맞게 수정하세요.
+# 이 프로젝트는 애플리케이션이 spring.config.import로 application-common.yml만 참조하고
+# 나머지 값은 전부 OS 환경변수(Spring relaxed binding)로 주입하는 구조이므로,
+# 이 ConfigMap/Secret만 채우면 애플리케이션 코드/이미지를 건드리지 않고 배포할 수 있습니다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+data:
+  SPRING_PROFILES_ACTIVE: "local"
+  LOGGING_LEVEL_ROOT: "INFO"
+  # 로그 출력 (docs/51 §3). 마스킹은 언제나 켜져 있다 — 이 둘은 무엇을 어디로 낼지만 고른다.
+  #   LOG_CONSOLE_FORMAT: text(kubectl logs 로 읽기 좋음) | json(클러스터에 Loki/Alloy 를 붙여 stdout 을 모을 때)
+  #   LOG_JSON_FILE: 컨테이너 안의 JSON 파일. 아무도 읽지 않고 노드 디스크만 쓰므로 끈다.
+  LOG_CONSOLE_FORMAT: "text"
+  LOG_JSON_FILE: "false"
+
+  # 분산 추적 (docs/63). 수집기 주소(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)는 노드 IP 가 들어가므로 각 Deployment 에 있다.
+  #   TRACING_SAMPLING_PROBABILITY: 1.0 에 둔다. 무엇을 남길지는 Collector 의 꼬리 샘플링이 추적이 끝난 뒤에 고른다
+  #     (오류 · 느린 요청 · 주문/결제/배송은 모두, 나머지 10%). 여기서 낮추면 그 전에 버려져 오류 추적도 사라지고
+  #     RED 지표도 줄어든다 — 가드 B-72.
+  #   DEPLOYMENT_ENVIRONMENT: 추적의 resource 속성 deployment.environment — Jaeger · Grafana 에서 환경을 가른다.
+  TRACING_SAMPLING_PROBABILITY: "1.0"
+  DEPLOYMENT_ENVIRONMENT: "production"
+
+  # 검색 엔진 선택 (catalog-service): postgres(기본, LIKE) | es(관련도 검색, docs/13 §3)
+  # 전환은 ops/03-enable-es-search.sh 가 재색인·검증 후 이 값을 패치한다.
+  SEARCH_ENGINE: "postgres"
+
+  # ---- Eureka / Config Server ----
+  # config-server 는 32-config-server.yaml 로 배포됩니다. 다만 그 매니페스트의
+  # SPRING_CLOUD_CONFIG_SERVER_GIT_URI 를 실제 설정 저장소로 바꾸기 전까지는 설정을 내주지
+  # 못합니다. 모든 서비스가 아래 import 에 optional: 접두어를 쓰므로 그동안에도 기동에는
+  # 지장이 없고, 각자 이미지에 들어 있는 application-local.yml 로 돕니다.
+  #
+  # ⚠️ 아래 주소는 **https** 입니다. config-server 매니페스트가 SERVER_SSL_* 환경변수로 TLS 를
+  #    켜 주기 때문에 맞는 값입니다 — config-server 의 yml 에는 server.ssl 블록이 없습니다.
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "https://eureka-server.ecommerce.svc.cluster.local:8761/eureka"
+  SPRING_CONFIG_IMPORT: "optional:configserver:https://config-server.ecommerce.svc.cluster.local:8888"
+
+  # ---- Kafka ----
+  # 클러스터 내부에 Kafka를 별도로 배포했거나, 외부 Kafka를 쓰는 경우 그 broker 주소로 교체하세요.
+  KAFKA_URL: "kafka.kafka.svc.cluster.local:9092"
+  KAFKA_SECURITY_PROTOCOL: "SSL"
+  # /app/resources 는 아래 각 Deployment가 tls-keystore Secret을 마운트하는 경로입니다.
+  # 파일 자체는 ops/07-issue-certificates.sh 가 만들어 Secret으로 내보냅니다(docs/18).
+  KAFKA_SSL_TRUST_STORE_LOCATION: "/app/resources/kafka-truststore.jks"
+  KAFKA_SSL_KEY_STORE_LOCATION: "/app/resources/kafka-keystore.p12"
+  # 스토어 형식은 위 파일 확장자와 반드시 일치해야 합니다. 예전에는 자바 코드가 둘 다 "JKS"로
+  # 하드코딩하고 있어, 실제로 SSL을 켜면 .p12 키스토어에서 'Invalid keystore format'이 났습니다.
+  KAFKA_SSL_KEY_STORE_TYPE: "PKCS12"
+  KAFKA_SSL_TRUST_STORE_TYPE: "JKS"
+
+  # ---- Redis (spring.data.redis.*) ----
+  SPRING_DATA_REDIS_HOST: "redis.redis.svc.cluster.local"
+  SPRING_DATA_REDIS_PORT: "6379"
+
+  # ---- 서비스 간 mTLS (docs/57 §16) ----
+  # 백엔드 서비스(k8s/40~49)는 클라이언트 인증서를 **요청**하고(SERVER_SSL_CLIENT_AUTH=want — 각 Deployment 에만. eureka·config·
+  # 게이트웨이는 그대로 둔다: 틀리면 등록·설정이 멈춰 전체가 선다), 서비스끼리의 Feign 호출은 JVM 키스토어로 인증서를 낸다.
+  # 받는 쪽의 InternalCallerFilter 가 그것으로 "내부 호출" 을 판정한다 — 신원 헤더가 없다는 것만으로는 내부로 보지 않는다.
+  #   INTERNAL_AUTH_MODE: off → observe(판정만, 인증서 없이 내부 경로에 온 요청을 WARN) → enforce(내부 전용 API 403)
+  #   ops/37-check-mtls.sh 로 확인한 뒤 enforce 로 올린다. 되돌리기: observe 또는 off 로 바꾸고 rollout restart.
+  #   ✅ 2026-09-26 운영 enforce 확인(docs/57 §16). ⚠️ 기본값이 observe 로 남아 있으면 ops/28 이 매니페스트를 적용할 때 kubectl patch
+  #   로 올린 enforce 를 **조용히 되돌린다** — 그래서 기본값을 enforce 로 둔다. 새 환경에서 인증서가 아직이면 오버레이에서 낮춘다.
+  INTERNAL_AUTH_MODE: "enforce"
+  # 서비스별 신원(CN=서비스 이름 — ops/38 이 발급, k8s/40~49 가 /app/identity 에 마운트)으로 "어느 서비스인가" 까지 본다.
+  #   ALLOWED_SUBJECTS — 내부 호출로 받을 CN. 공유 인증서(CN=localhost — 게이트웨이도 서버 인증서로 갖고 있다)는 넣지 않는다.
+  #   PATH_RULES — 경로 앞부분=부를 수 있는 서비스(|로 여럿). 가장 긴 앞부분이 이긴다. none = 서비스는 못 부른다(관리자만).
+  #                지도: docs/57 §16 표 — 호출하는 Feign 을 더하거나 옮기면 여기도 바꾼다(아니면 enforce 에서 403).
+  #   RULES_MODE — observe: 어긋나면 [mTLS rule] 로 남기기만(모든 파드가 새 신원으로 뜨기 전·규칙을 바꾼 직후)
+  #                enforce: 막는다. ops/37 의 ①-2(규칙 위반 0건)을 본 뒤 올린다.
+  INTERNAL_AUTH_ALLOWED_SUBJECTS: "user-service,catalog-service,cart-service,order-service,pay-service,coupon-service,chat-service,notification-service,delivery-service,saga-projection"
+  INTERNAL_AUTH_PATH_RULES: "/api/order/internal/purchase-stats=user-service;/api/order/internal/purchased=user-service;/api/order/internal/orders=delivery-service;/api/coupon/internal/quote=order-service;/api/internal/stock/reservations=order-service;/ecommerce.stock.v1.StockReservation/=order-service;/api/product/rating=user-service;/api/auth/user/emails=order-service;/api/auth/user/name=order-service;/api/auth/user/segments=coupon-service;/api/auth/user/id=coupon-service|order-service|chat-service;/api/auth/user/email/=none;/api/auth/user/profile/=none"
+  INTERNAL_AUTH_RULES_MODE: "observe"
+  #   gRPC(docs/66)도 같은 규칙을 쓴다 — gRPC 메서드의 HTTP/2 경로가 "/패키지.서비스/메서드" 라서 위 경로 앞부분 형식이 그대로 맞는다
+  #   (/ecommerce.stock.v1.StockReservation/=order-service). proto 에 서비스를 더하면 여기에도 더한다(B-73 이 잡는다).
+
+  # ---- 재고 예약 전송 (gRPC 시범, docs/66) ----
+  # http(기본) — 지금까지의 Feign 경로(/api/internal/stock/reservations). grpc — catalog 의 9095(mTLS, 같은 경로 규칙).
+  # 바꾸는 법: 이 값을 고치고 ./ops/28-deploy.sh <env> <ver> --config-only (kubectl patch 는 ops/28 이 되돌린다).
+  # 되돌리기도 같다 — http 로. 두 전송은 catalog 의 같은 서비스 메서드에 닿으므로 진행 중인 예약의 의미는 바뀌지 않는다.
+  # 그 밖의 값은 order 기동 실패(오타가 조용히 http 가 되지 않게).
+  STOCK_RPC_TRANSPORT: "http"
+  STOCK_GRPC_TARGET: "dns:///catalog-service.ecommerce.svc.cluster.local:9095"
+  # 호출마다 거는 기한(ms) — 서버로 전파된다. Feign 읽기 제한(5초)보다 짧게: 결제 화면 앞에서 오래 붙잡지 않는다.
+  STOCK_GRPC_DEADLINE_MS: "3000"
+
+  # ---- API 명세(springdoc) — 클러스터에서는 끈다 (docs/57 §12) ----
+  # 게이트웨이가 /<서비스>/v3/api-docs·swagger-ui 를 404 로 막지만(InternalEndpointBlockFilter), 서비스 안에서도 끄는 것이
+  # 심층 방어다 — 관리자 API 의 전체 모양이 들어 있다. 로컬 개발(docker compose·bootRun)은 이 ConfigMap 을 쓰지 않아 그대로 켜져 있다.
+  SPRINGDOC_API_DOCS_ENABLED: "false"
+  SPRINGDOC_SWAGGER_UI_ENABLED: "false"
+
+  # ---- MongoDB (chat-service 전용, spring.data.mongodb.client 커스텀 프로퍼티) ----
+  # 비밀번호가 포함되므로 실제 접속 문자열은 20-secret.example.yaml 쪽에 둡니다. 여기는 호스트 정보만 참고용.
+  MONGODB_HOST: "mongodb.mongodb.svc.cluster.local:27017"
+
+  # ---- Elasticsearch ----
+  # catalog-service 전용 설정이라 여기 두지 않고 41-catalog-service.yaml에서 직접 지정합니다
+  # (TLS 트러스트스토어 경로 버그 우회를 위해 http로 오버라이드하는 코멘트 참고).
+
+  # ---- 서비스 간 Feign 호출 대상 URL ----
+  # 주의: 원본 코드의 application-local.yml 어디에도 feign.catalog-url/cart-url/user-url 값이
+  # 정의되어 있지 않습니다(docker-compose에도 없었음) — 즉 이 env가 없으면 cart/order/coupon/chat/user
+  # 서비스가 기동 시 "Could not resolve placeholder" 로 실패합니다. 여기서 클러스터 내부 DNS로 채워줍니다.
+  FEIGN_CATALOG_URL: "https://catalog-service.ecommerce.svc.cluster.local:8081"
+  FEIGN_CART_URL: "https://cart-service.ecommerce.svc.cluster.local:8082"
+  FEIGN_USER_URL: "https://user-service.ecommerce.svc.cluster.local:8080"
+  # user-service 의 등급 배치(CustomerTierService)가 구매 집계를 가져옵니다.
+  # 이 값이 없으면 user-service 가 기동하지 않습니다(@FeignClient url 플레이스홀더).
+  FEIGN_ORDER_URL: "https://order-service.ecommerce.svc.cluster.local:8084"
+  # order-service 가 주문 총액을 서버에서 계산할 때 쿠폰 할인액을 물어봅니다(docs/40 #10).
+  FEIGN_COUPON_URL: "https://coupon-service.ecommerce.svc.cluster.local:8183"
+
+  # ---- 외부에서 접근 가능한 백엔드 주소 ----
+  # 회원가입 확인 메일의 링크에 쓰입니다. 클러스터 내부 주소가 아니라 **사용자의 브라우저가
+  # 열 수 있는 주소**여야 합니다(보통 Ingress 호스트). 예전에는 특정 배포 환경의 호스트명이
+  # RegistrationListener 에 하드코딩돼 있어, 어느 환경에서 띄우든 링크가 그 호스트를 가리켰습니다.
+  APP_PUBLIC_URL: "https://REPLACE_ME_your_ingress_host"
+
+  # ---- PayPal 결제 검증 (order-service, docs/35) ----
+  # 서버가 PayPal 에 직접 조회해 결제를 확인한다. 예전에는 브라우저가 보낸 "결제했다"를
+  # 그대로 믿었다 — 결제 없이 주문을 완료시킬 수 있었다.
+  #
+  # ⚠️ mode 는 http 가 기본이고, 자격증명(Secret 의 PAYPAL_CLIENT_ID/SECRET)이 없으면
+  #    order-service 가 **기동하지 않는다.** 그게 의도다. 검증 없이 돌리려면 아래를
+  #    disabled 로 바꿔야 하고, 그러면 기동 로그에 경고가 찍힌다.
+  PAYPAL_VERIFICATION_MODE: "http"
+  # sandbox: https://api-m.sandbox.paypal.com · live: https://api-m.paypal.com
+  # 샌드박스 / 라이브 전환은 이 한 값으로 한다. sandbox(기본) 또는 live.
+  #
+  # ⚠️ 서버만 바꾸면 안 된다 — 프론트 빌드의 REACT_APP_PAYPAL_CLIENT_ID 와
+  #    Secret 의 PAYPAL_CLIENT_ID/SECRET 도 같은 환경이어야 한다. 어긋나도 기동은
+  #    성공하고, 증상은 결제 화면까지 간 뒤에야 나온다(order-service 기동 로그의
+  #    "PayPal 결제 검증 활성화: env=… clientId=…" 줄로 대조할 것).
+  # Stripe 를 붙일지. 기본이 꺼짐인 것은 PayPal 과 반대다 — PayPal 검증은 이미 쓰는
+  # 수단이라 "설정을 깜빡하면 검증 없이 통과"가 되면 안 되므로 기본이 켜짐이고, Stripe 는
+  # 새 수단이라 설정하지 않은 환경에서 기동이 실패하면 기존 배포가 멈춘다.
+  # ⚠️ 켜면 STRIPE_SECRET_KEY 와 STRIPE_WEBHOOK_SECRET 이 **둘 다** 필요하다(없으면 기동 실패).
+  STRIPE_ENABLED: "false"
+  # 포트원(구 아임포트). 켜면 PORTONE_API_KEY/SECRET 이 둘 다 필요하다(없으면 기동 실패).
+  # ⚠️ 프론트의 REACT_APP_PORTONE_IMP_CODE(가맹점 식별코드)도 같은 상점이어야 한다 —
+  #    그 값은 빌드 시점에 박힌다(B-51).
+  PORTONE_ENABLED: "false"
+  # v1(아임포트, imp… 식별코드) 또는 v2(store-… Store ID). 계정이 정한다 — 신규 계정은 v2 뿐이다.
+  # v2 면 PORTONE_V2_API_SECRET · PORTONE_V2_WEBHOOK_SECRET 이 필요하고, 프론트는
+  # REACT_APP_PORTONE_STORE_ID · REACT_APP_PORTONE_CHANNEL_KEY 로 빌드한다.
+  PORTONE_VERSION: "v1"
+  # ── 무통장입금 (docs/49 §11) ── 결제 API 가 없다. 계좌는 손님에게 보여 주는 값(비밀 아님).
+  # 비어 있으면 "입금 안내 받기" 가 설정 오류로 거절된다. 기한이 지나면 주문이 자동으로 접힌다.
+  BANK_TRANSFER_ENABLED: "true"
+  BANK_TRANSFER_BANK: ""
+  BANK_TRANSFER_ACCOUNT: ""
+  BANK_TRANSFER_HOLDER: ""
+  BANK_TRANSFER_DEADLINE_HOURS: "48"
+  BANK_TRANSFER_CURRENCY: "KRW"
+  # ── 구매 확정 (docs/25 §12) ── DELIVERED → COMPLETED. 손님이 누르거나, 배달 완료 뒤 DAYS 가
+  # 지나면 한 시간마다 도는 잡이 자동으로 확정한다. 시뮬레이터로 끝까지 볼 때는 오버레이에서
+  # DAYS 를 "0" 으로 덮어쓰면 다음 주기(최대 1시간)에 확정된다.
+  ORDER_AUTO_CONFIRM_ENABLED: "true"
+  ORDER_AUTO_CONFIRM_DAYS: "7"
+  PAYPAL_ENV: "sandbox"
+  # 호스트를 직접 지정해야 할 때만. 비우면 PAYPAL_ENV 에서 유도하고, 어긋나면 기동을 막는다.
+  PAYPAL_API_BASE_URL: ""
+  # ── 통화 (docs/49 §6) ──
+  # STORE_CURRENCY 는 상점 통화(카탈로그·주문 총액·매출). 결제수단별 청구 통화는 따로다 —
+  # 포트원은 KRW 로만 결제되고, 일본 테스트는 Stripe/PayPal 을 JPY 로 돌린다.
+  # 청구 통화가 상점 통화와 다르면 FX_RATE_<통화>(상점 통화 1 단위 = 얼마)가 필요하다.
+  # FX_RATE_* 는 고정 환율. 없으면 그 수단으로 주문 생성이 실패한다(조용히 1 로 두지 않는다).
+  # FX_LIVE_ENABLED=true 면 Frankfurter(ECB, 키 없음)의 실시간 값을 먼저 쓰고, 고정값은
+  # 대비책·상한선(FX_LIVE_MAX_DEVIATION_PERCENT 넘게 다르면 고정값)으로 남는다.
+  # ⚠️ 켜려면 order-service 파드에서 api.frankfurter.app 으로 나가는 HTTPS 가 열려 있어야 한다.
+  STORE_CURRENCY: "USD"
+  PAYPAL_CURRENCY: "USD"
+  STRIPE_CURRENCY: "USD"
+  PORTONE_CURRENCY: "KRW"
+  FX_RATE_KRW: "1350"
+  FX_RATE_JPY: "150"
+  FX_LIVE_ENABLED: "false"
+  FX_LIVE_TTL_MINUTES: "60"
+  FX_LIVE_MAX_DEVIATION_PERCENT: "30"
+
+  # ── 배송 (delivery-service, docs/25 §11) ──
+  # 시뮬레이터 택배사. 운영에서는 끈다 — 켜면 관리자가 SIM… 송장을 등록했을 때 정해진 각본대로
+  # 접수→집화→이동→배달출발→배달완료 가 STEP_MS 간격으로 진행된다. 실제 택배사 없이
+  # 결제→배송→추적→알림→주문 DISPATCHED/DELIVERED 전 경로를 돌려 보는 용도다.
+  # 예전에는 48-delivery-service.yaml 의 env 에 박혀 있어 오버레이 패치로 켤 수 없었다.
+  # 켜려면 k8s-overlays/local/patch-local-endpoints.yaml 에서 이 두 키를 덮어쓴다.
+  DELIVERY_SIMULATED_ENABLED: "false"
+  DELIVERY_SIMULATED_STEP_MS: "21600000"
+  # 폴링 스케줄러 주기(ms). 실제 조회 간격은 배송 상태가 정한다(DeliveryStatus). 시뮬레이터로
+  # 시험할 때 STEP_MS 를 짧게 잡았다면 이 값도 그에 맞춰 줄인다.
+  DELIVERY_POLL_INTERVAL_MS: "60000"
+
+  # ---- Postgres ----
+  # 서비스마다 같은 인스턴스의 다른 DB를 쓰는 구조입니다. 호스트/포트만 공용으로 두고,
+  # DB 이름이 다른 URL 전체는 각 서비스 Deployment에서 개별적으로 지정합니다.
+  POSTGRES_HOST: "postgres.postgres.svc.cluster.local"
+  POSTGRES_PORT: "5432"

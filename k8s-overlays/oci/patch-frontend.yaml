@@ -1,0 +1,4 @@
+# nginx 는 원래도 가볍다. 요청만 조금 더 줄인다.
+- op: replace
+  path: /spec/template/spec/containers/0/resources/requests/cpu
+  value: "40m"

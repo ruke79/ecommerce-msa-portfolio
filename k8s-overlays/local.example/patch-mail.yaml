@@ -1,0 +1,45 @@
+# 실제 메일 발송을 켠다. **커밋되지 않는다**(local/ 은 .gitignore).
+#
+# ── 왜 별도 패치인가 ───────────────────────────────────────────────────
+#
+# 베이스(k8s/47)는 MAIL_PROVIDER 를 "logging" 으로 둔다. 요금이 아니라 **평판** 때문이다:
+# 설정이 덜 된 채 배포돼 테스트 주소로 메일이 나가면 그 하드 바운스가 발신 도메인에
+# 쌓이고, 한 번 스팸으로 분류되면 되돌리는 데 몇 주가 걸린다(docs/29).
+#
+# ⚠️ Secret 에 MAIL_* 를 넣는 것만으로는 **아무 일도 일어나지 않는다.** provider 가
+#    logging 이면 JavaMailSender 를 아예 쳐다보지 않는다. 이 패치가 그 스위치다.
+#
+# ── 켜기 전에 ──────────────────────────────────────────────────────────
+#
+# Secret 에 네 값이 있어야 한다(k8s/20-secret.yaml):
+#   MAIL_HOST=smtp.gmail.com  MAIL_PORT=587  MAIL_USERNAME=<계정>  MAIL_PASSWORD=<앱 비밀번호>
+#
+# ⚠️ Gmail 은 **앱 비밀번호**여야 한다(계정 비밀번호가 아니다). 2단계 인증을 켠 뒤
+#    Google 계정 → 보안 → 앱 비밀번호에서 16자리를 발급받는다. 공백이 섞여 표시되는데
+#    🔴 **공백은 반드시 뺀다.** 구글 화면은 읽기 쉬우라고 4자씩 4묶음으로 보여주지만,
+#    그 공백까지 넣으면 SMTP 는 19자 문자열을 그대로 받아 대조하고 **인증에 실패한다**
+#    (detail=auth_failed). 실제로 이 함정에 걸렸다.
+#
+#    16자, 영문 소문자다 — 숫자가 아니다. 그리고 base64 로 넣을 때 줄바꿈이 섞이지 않게
+#    한다: `printf '%s' '...' | base64` (echo 는 끝에 \n 을 붙인다).
+#
+# ⚠️ MAIL_FROM 은 **MAIL_USERNAME 과 같은 주소**로 둘 것. 다르면 Gmail 이 발신자를
+#    계정 주소로 갈아 끼우거나 거부하고, SPF/DKIM 정렬이 깨져 스팸으로 분류된다.
+#    MailConfig 는 from 이 비면 아예 기동을 막는다 — 조용히 잘못되지 않게 한 장치다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: ecommerce
+spec:
+  template:
+    spec:
+      containers:
+        - name: notification-service
+          env:
+            - name: MAIL_PROVIDER
+              value: "smtp"
+            - name: MAIL_FROM
+              value: "REPLACE_ME_your_gmail_address"
+            - name: MAIL_FROM_NAME
+              value: "ysyproject"

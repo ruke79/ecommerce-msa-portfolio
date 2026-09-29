@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ecommerce
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: frontend
+          # REACT_APP_API_URL / REACT_APP_PAYPAL_CLIENT_ID 는 런타임이 아니라 빌드 시점에 박히는 값이라
+          # 여기(Deployment env)에서 지정해도 반영되지 않습니다. frontend/Dockerfile 주석 참고,
+          # 이미지 빌드 시 --build-arg로 gateway-server의 공인 도메인/포트를 넣어 빌드하세요.
+          # docker build --build-arg REACT_APP_API_URL=https://<게이트웨이 외부 주소>:8000 \
+          #   --build-arg REACT_APP_PAYPAL_CLIENT_ID=<paypal client id> \
+          #   -t <registry>/ecommerce-msa/frontend:1.0.0 -f frontend/Dockerfile frontend
+          image: REGISTRY_PLACEHOLDER/ecommerce-msa/frontend:1.0.0
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            failureThreshold: 12
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: ecommerce
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 8080
+      targetPort: 8080

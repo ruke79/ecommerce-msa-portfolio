@@ -1,0 +1,53 @@
+# 멀티아키텍처 런타임 이미지 (JVM 서비스 공용).
+#
+# ⭐ 왜 서비스별 Dockerfile 을 쓰지 않는가
+#
+# 각 서비스의 Dockerfile 은 빌더 스테이지에서 **Gradle 풀빌드를 다시 한다.** 그걸
+# `--platform linux/amd64,linux/arm64` 로 돌리면 한쪽 아키텍처는 QEMU 에뮬레이션 위에서
+# Gradle 을 통째로 돌리게 된다 — 네이티브 대비 수 배에서 열 배까지 느려지고, 메모리도
+# 그만큼 더 쓴다.
+#
+# 그럴 이유가 없다. **자바 바이트코드는 아키텍처 독립적**이라 jar 는 한 번만 빌드하면
+# 양쪽에서 그대로 돈다. 아키텍처마다 달라야 하는 것은 **JRE 베이스 이미지뿐**이고,
+# 그건 buildx 가 플랫폼별로 알아서 받아 온다.
+#
+# 그래서 이 파일은 이미 만들어진 jar 를 감싸기만 한다. 남은 RUN 은 mkdir/chown 한 줄뿐이라
+# 에뮬레이션이 걸려도 1초가 안 된다.
+#
+# 빌드 컨텍스트는 **jar 가 있는 디렉터리**다(ops/19-build-images.sh 가 그렇게 넘긴다).
+# 저장소 전체를 컨텍스트로 보내면 수백 MB 를 매 서비스마다 전송하게 된다.
+
+ARG JRE_IMAGE=eclipse-temurin:17-jre-jammy
+FROM ${JRE_IMAGE}
+
+ARG JAR_FILE
+ARG SERVICE_PORT=8080
+
+WORKDIR /app
+
+# ⚠️ 순서가 중요하다. mkdir/chown 을 **COPY 앞에** 둔다.
+#
+# 반대로 하면(COPY 후 `RUN chown -R /app`) chown 이 jar 의 메타데이터를 바꾸면서 도커가
+# **104MB jar 를 통째로 새 레이어에 복제한다.** 실측으로 이미지가 서비스당 109MB 커졌고,
+# 12개 서비스면 1.3GB 를 그냥 버리는 셈이었다.
+#
+# 여기서는 /app 이 아직 비어 있으므로 이 RUN 은 몇 KB짜리 레이어로 끝나고,
+# jar 는 COPY --chown 으로 처음부터 올바른 소유자로 들어간다(레이어 하나).
+#
+# logs 디렉터리가 필요한 이유: 앱이 logging.file.path(./logs)에 쓴다. 없으면 uid 1000 이
+# 디렉터리를 만들지 못해 앱은 뜨지만 파일 로그가 조용히 사라진다 — 가장 나쁜 실패 방식이다.
+RUN mkdir -p /app/logs && chown -R 1000:1000 /app
+
+COPY --chown=1000:1000 ${JAR_FILE} app.jar
+
+# ⚠️ 반드시 **숫자 UID**. k8s 의 runAsNonRoot 는 이름(spring)으로는 검증하지 못하고
+# 'image will run as root' 로 파드 생성을 거부한다(ops/13 의 k3s 실측).
+USER 1000
+
+ENV SPRING_PROFILES_ACTIVE=local
+
+# CONFIG_SERVER_URL 이 비어 있으면 config server import 자체를 생략한다.
+# 빈 값으로 넘기면 Spring 이 빈 URL 로 접속을 시도하다 기동에 실패한다.
+ENTRYPOINT ["sh","-c","java ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
+
+EXPOSE ${SERVICE_PORT}

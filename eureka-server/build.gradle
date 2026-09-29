@@ -1,0 +1,20 @@
+
+
+
+dependencies {
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-server'
+
+     // common 모듈에 대한 의존성 추가
+    implementation project(':common')
+    
+}
+
+// sourceSets {
+//     main {
+//         // 상위 모듈의 resources 디렉터리를 클래스패스에 추가
+//         // 파일이 없으면 찾을 수 없다고 에러 나오므로 순서 변경
+//         resources {
+//             srcDirs '../resources', 'src/main/resources'
+//         }
+//     }
+// }

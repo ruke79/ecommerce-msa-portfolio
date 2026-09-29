@@ -1,0 +1,80 @@
+# PostgreSQL 프라이머리-레플리카 (스트리밍 복제) — docs/09 P2 / docs/13 §2
+#
+# 배경: 현재 8개 논리 DB가 물리적으로 단일 인스턴스라(docs/03 F-8) 그 한 대가 죽으면
+# 전 서비스가 정지한다. 이 스택은 스트리밍 복제 스탠바이를 추가해:
+#  - 프라이머리 장애 시 수동 승격(promote)으로 복구(RPO≈0, RTO=승격 소요)
+#  - 읽기 부하 분산(스탠바이는 read-only 쿼리 수용 — hot standby)
+#
+# 이 절차(basebackup → 스탠바이 → 복제 확인 → promote)는 로컬 PostgreSQL 16.13 에서
+# 실제로 검증되었다(docs/13 §2 기록).
+#
+# 실행:
+#   POSTGRES_PASSWORD=... REPLICATION_PASSWORD=... \
+#     docker compose -f docker-compose-postgres-ha.yml up -d
+#
+# 장애 시 승격(수동 failover):
+#   docker exec postgres-replica pg_ctl promote -D /var/lib/postgresql/data
+#   → 이후 서비스들의 POSTGRES_HOST 를 레플리카로 전환(또는 앞단 VIP/프록시 재지정)
+#
+# 자동 failover 가 필요하면 Patroni(compose) 또는 k8s 의 CloudNativePG
+# (k8s/80-postgres-cnpg.yaml.example) 로 승격하는 것을 권장한다.
+version: '3.8'
+
+services:
+  postgres-primary:
+    image: postgres:16
+    container_name: postgres-primary
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=product
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - REPLICATION_PASSWORD=${REPLICATION_PASSWORD:?REPLICATION_PASSWORD is required}
+      # 서비스별 DB 는 최초 기동 후 생성: userdb cartdb productdb metadb coupondb orderdb paydb chatdb
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - wal_keep_size=512MB       # 레플리카 일시 단절 시 WAL 보존 여유
+    volumes:
+      - ./postgres-ha/init-primary.sh:/docker-entrypoint-initdb.d/10-init-primary.sh:ro
+      - pg-primary-data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"               # 기존 서비스 설정(localhost:5435)과 호환
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U product"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+
+  postgres-replica:
+    image: postgres:16
+    container_name: postgres-replica
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=product
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - REPLICATION_PASSWORD=${REPLICATION_PASSWORD:?REPLICATION_PASSWORD is required}
+      - PRIMARY_HOST=postgres-primary
+    entrypoint: ["/replica-entrypoint.sh"]
+    volumes:
+      - ./postgres-ha/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+      - pg-replica-data:/var/lib/postgresql/data
+    ports:
+      - "5436:5432"               # 읽기 전용 엔드포인트 (read-your-writes 경로는 프라이머리로! docs/09 §5.2)
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U product"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 1g
+
+volumes:
+  pg-primary-data:
+  pg-replica-data:

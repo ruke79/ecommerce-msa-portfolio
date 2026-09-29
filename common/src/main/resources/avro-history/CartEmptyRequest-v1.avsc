@@ -1,0 +1,69 @@
+{
+  "type": "record",
+  "name": "CartEmptyRequest",
+  "namespace": "com.project.common.avro",
+  "doc": "order → cart 장바구니 비우기. 토픽 cart-empty. 키 userId.",
+  "fields": [
+    {
+      "name": "userId",
+      "type": "long"
+    },
+    {
+      "name": "emptyCart",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "name": "authorizationToken",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "items",
+      "doc": "이 주문의 품목만 뺀다. 비어 있으면(옛 발행자) 전부 비운다.",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "CartEmptyItem",
+          "namespace": "com.project.common.avro",
+          "fields": [
+            {
+              "name": "productId",
+              "type": [
+                "null",
+                "long"
+              ],
+              "default": null
+            },
+            {
+              "name": "size",
+              "type": [
+                "null",
+                "string"
+              ],
+              "default": null
+            },
+            {
+              "name": "colorId",
+              "type": [
+                "null",
+                "long"
+              ],
+              "default": null
+            },
+            {
+              "name": "qty",
+              "type": "int",
+              "default": 0
+            }
+          ]
+        }
+      },
+      "default": []
+    }
+  ]
+}

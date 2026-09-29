@@ -1,0 +1,181 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-service
+  namespace: ecommerce
+  labels:
+    app: chat-service
+  annotations:
+    # 신원 인증서가 갱신되면(cert-manager — k8s/96) 롤링 재시작 — 자바는 keystore 를 기동할 때만 읽는다. Reloader 가 없으면 아무 일도 없다.
+    secret.reloader.stakater.com/reload: "tls-id-chat-service"
+spec:
+  # replicas 는 1 로 유지한다. STOMP 브로커가 **인메모리**이고(enableSimpleBroker),
+  # Kafka 컨슈머 그룹은 메시지를 파드 하나에만 준다. 2개로 올리면 A 파드에 접속한 사용자는
+  # B 파드가 소비한 메시지를 **받지 못한다**. 늘리려면 브로커 릴레이(RabbitMQ/ActiveMQ)나
+  # Redis pub/sub 팬아웃이 먼저다. HPA 대상에서도 빠져 있다(k8s/70-autoscaling.yaml).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat-service
+  template:
+    metadata:
+      labels:
+        app: chat-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: chat-service
+          # docker build --build-arg SERVICE_DIR=chat-service --build-arg SPRING_PROFILES_ACTIVE=local \
+          #   -t <registry>/ecommerce-msa/chat-service:1.0.0 -f chat-service/Dockerfile .
+          image: REGISTRY_PLACEHOLDER/ecommerce-msa/chat-service:1.0.0
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: ecommerce-config
+            - secretRef:
+                name: ecommerce-secrets
+          env:
+            - name: SPRING_APPLICATION_NAME
+              value: "chat-service"
+            # 분산 추적 → 이 노드에서 도는 관측 스택의 OTel Collector(docker-compose-observability.yml, :4318)
+            # (docs/51 §4d, docs/63). 설정 기본값 localhost:4318 은 파드 안에서는 파드 자신이라 추적이 어디에도
+            # 가지 않는다. 노드 IP 는 downward API 로 받는다 — 매니페스트에 IP 를 적지 않는다.
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: "http://$(HOST_IP):4318/v1/traces"
+            # 인증서 SAN 이 커버하는 이름으로 Eureka 에 등록한다.
+            # 기본값(prefer-ip-address: true)대로면 파드 IP 로 등록되는데, 파드 IP 는 인증서
+            # SAN 에 넣을 수 없으므로(동적) 게이트웨이의 TLS 검증이 'No subject alternative
+            # names matching IP address ...' 로 전부 거부한다 — 스테이징 리허설(ops/12)에서
+            # 실측한 실패다. 서비스 DNS 는 와일드카드 SAN(*.ecommerce.svc.cluster.local)이
+            # 커버하고, k8s Service 가 파드로 부하분산해 준다.
+            #
+            # ⚠️ 트레이드오프(HPA 로 레플리카가 2 이상이 될 때):
+            #   모든 레플리카가 **같은 주소**로 등록되므로 Eureka 의 클라이언트 사이드
+            #   로드밸런싱은 실질적으로 무력화되고, 분배는 k8s Service(kube-proxy)가 맡는다.
+            #   기능적으로는 정상이지만(요청은 고르게 분산된다) Eureka 대시보드에서
+            #   인스턴스별 구분이 흐려진다. 파드별 신원이 꼭 필요하면 선택지는 둘이다:
+            #     ① StatefulSet + 헤드리스 Service 로 파드별 안정 DNS 를 부여하고
+            #        그 이름들을 SAN 에 포함시킨다.
+            #     ② 서비스 메시(mTLS 를 사이드카에 위임)로 옮긴다.
+            #   현재 규모(maxReplicas 3)에서는 ①의 복잡도가 이득보다 크다고 판단했다.
+            - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
+              value: "false"
+            - name: EUREKA_INSTANCE_HOSTNAME
+              value: "chat-service.ecommerce.svc.cluster.local"
+            # 서비스 JVM 이 사설 CA 를 신뢰하게 한다.
+            # LOCAL_TRUST_STORE_PATH 는 server.ssl / eureka.client.tls 같은 **특정 설정**만 읽는다.
+            # 반면 Eureka 클라이언트 등록(Jersey), Feign 호출, 액추에이터 아웃바운드는 전부
+            # **JVM 기본 트러스트스토어**를 쓰므로, 사설 CA 로 발급한 환경에서는
+            # 'PKIX path building failed' 로 서비스 등록 자체가 실패한다(k3s 검증에서 실측:
+            # 파드 9/9 가 Running 인데 Eureka 등록은 0건이었다).
+            # $(VAR) 치환은 같은 env 목록의 앞선 항목만 참조할 수 있어 비밀번호를 여기서 다시 선언한다.
+            - name: LOCAL_KEY_STORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: LOCAL_KEY_STORE_PASSWORD
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Djavax.net.ssl.trustStore=/app/resources/truststore.p12
+                -Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)
+                -Djavax.net.ssl.trustStoreType=PKCS12
+                -Djavax.net.ssl.keyStore=/app/identity/keystore.p12
+                -Djavax.net.ssl.keyStorePassword=$(LOCAL_KEY_STORE_PASSWORD)
+                -Djavax.net.ssl.keyStoreType=PKCS12
+            # 서버 쪽 — 부르는 서비스에게 클라이언트 인증서를 요청한다(want: 없어도 연결은 된다 — 프로브·게이트웨이). docs/57 §16
+            - name: SERVER_SSL_CLIENT_AUTH
+              value: "want"
+            - name: LOCAL_KEY_STORE_PATH
+              value: "/app/resources/keystore.p12"
+            # 인증서 경로는 키스토어 하나가 아니라 **다섯 개가 한 세트**다(docs/18 §4 산출물 표).
+            # 예전에는 키스토어 경로만 주입해, eureka.client.tls 의 file:${LOCAL_TRUST_STORE_PATH} 가
+            # placeholder 그대로 남아 'KeyStore not exists: URL [file:${...}]' 로 기동이 죽었다
+            # (k3s 검증에서 실측 — 둘 다 넣었던 gateway 만 살아났다).
+            - name: LOCAL_TRUST_STORE_PATH
+              value: "/app/resources/truststore.p12"
+            - name: LOCAL_CACERT_PATH
+              value: "/app/resources/ca.crt"
+            - name: LOCAL_CRT_PATH
+              value: "/app/resources/tls.crt"
+            - name: LOCAL_KEY_PATH
+              value: "/app/resources/tls.key"
+            # 알려진 이슈: application-local.yml에 chat-service의 spring.datasource.url이
+            # paydb를 가리키고 hibernate dialect도 MySQLDialect로 되어 있습니다(복붙 오류로 보임).
+            # 여기서 chatdb + PostgreSQL 방언으로 명시적으로 덮어씁니다.
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/chatdb?sslmode=require"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "product"
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: LOCAL_DB_PASSWORD
+            - name: SPRING_DATASOURCE_PROPERTIES_SSL
+              value: "false"
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT
+              value: "org.hibernate.dialect.PostgreSQLDialect"
+          volumeMounts:
+            - name: tls-keystore
+              mountPath: /app/resources
+              readOnly: true
+            # 서비스 자신의 신원(CN=chat-service) — 다른 서비스를 부를 때 내는 클라이언트 인증서(JVM 기본 keystore, 위 JAVA_TOOL_OPTIONS).
+            # 서버 인증서·Redis·Kafka 는 위 공유 tls-keystore 그대로. 발급: ops/38 (docs/57 §16)
+            - name: tls-id
+              mountPath: /app/identity
+              readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "1000m"
+              memory: "768Mi"
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8086
+              scheme: HTTPS
+            # 5초 × 60 = 5분. 이 서비스들은 기동 중 Flyway 마이그레이션·Eureka 등록·Kafka
+            # 컨슈머 배정을 모두 수행하며, 노드가 붐빌 때는 웹 컨텍스트 초기화만 40초가 걸린다.
+            # 기존 150초 예산은 그런 순간에 **정상 기동을 죽여** CrashLoop 로 오인하게 만든다
+            # (k3s 검증에서 exit 137 로 실측).
+            failureThreshold: 60
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8086
+              scheme: HTTPS
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8086
+              scheme: HTTPS
+            periodSeconds: 10
+      volumes:
+        - name: tls-keystore
+          secret:
+            secretName: tls-keystore
+        - name: tls-id
+          secret:
+            secretName: tls-id-chat-service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-service
+  namespace: ecommerce
+spec:
+  selector:
+    app: chat-service
+  ports:
+    - port: 8086
+      targetPort: 8086

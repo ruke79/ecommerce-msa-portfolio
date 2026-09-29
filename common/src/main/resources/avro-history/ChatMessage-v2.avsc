@@ -1,0 +1,19 @@
+{
+  "type": "record", "name": "ChatMessage", "namespace": "com.project.common.avro",
+  "doc": "v2(senderId 추가). 옛 v1 은 avro-history/ChatMessage-v1.avsc — 읽는 쪽이 SchemaStore 로 안다. chat → chat(브로드캐스트·저장)·notification. 토픽 chat. 키 roomId. DTO 는 chat-service 의 MessageDto — 매핑도 그쪽(ChatMessageAvroMapping).",
+  "fields": [
+    { "name": "id",        "type": ["null", "string"], "default": null },
+    { "name": "type",      "type": ["null", { "type": "enum", "name": "MessageType", "namespace": "com.project.common.avro",
+        "symbols": ["TEXT_ENTER", "TEXT_TALK", "TEXT_LEAVE", "IMAGE"], "default": "TEXT_TALK" }], "default": null },
+    { "name": "roomId",    "type": "string" },
+    { "name": "email",     "type": ["null", "string"], "default": null,
+      "doc": "쓰지 않는다(v2) — 발신자는 senderId. 옛 프로듀서(v1)의 레코드를 읽을 때만 채워져 있다(docs/48 §6-⑥)" },
+    { "name": "nickname",  "type": ["null", "string"], "default": null },
+    { "name": "content",   "type": ["null", "string"], "default": null },
+    { "name": "imageUrl",  "type": ["null", "string"], "default": null },
+    { "name": "readCount", "type": ["null", "int"],    "default": null },
+    { "name": "createdAt", "type": ["null", "long"],   "default": null, "doc": "epoch millis — MessageDto 가 이미 Long 이다" },
+    { "name": "senderId",  "type": ["null", "long"],   "default": null,
+      "doc": "v2. 발신자 = 검증된 토큰의 uid(chat member_id). 이메일은 방의 상대방에게 전달하지 않는다(docs/48 §6-⑥)" }
+  ]
+}

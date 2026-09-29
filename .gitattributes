@@ -1,0 +1,58 @@
+#
+# 줄바꿈 정규화 — https://help.github.com/articles/dealing-with-line-endings/
+#
+# ⚠️ 왜 이 파일이 중요한가.
+#
+# Windows 의 git 은 core.autocrlf=true 가 기본이라 체크아웃할 때 LF 를 CRLF 로 바꾼다.
+# 그러면 셸 스크립트의 셔뱅이 `#!/usr/bin/env bash\r` 가 되고, 커널은 `bash\r` 라는 이름의
+# 프로그램을 찾다 실패한다:
+#
+#     /usr/bin/env: ‘bash\r’: No such file or directory
+#
+# WSL 에서 Windows 드라이브(/mnt/c, /mnt/d)에 클론했을 때 반드시 밟는다. 증상이 스크립트
+# 내용과 무관해서 원인을 찾기 어렵고, 한 파일을 고쳐도 그것이 호출하는 다음 스크립트에서
+# 똑같이 막힌다(ops/13 → ops/07 에서 실측).
+#
+# 아래 규칙은 **저장소에 무엇이 저장되는지를 바꾸지 않는다.** 체크아웃할 때 어떤 줄바꿈으로
+# 펼쳐지는지만 강제한다.
+
+# ── 실행되는 것은 전부 LF ────────────────────────────────────────────────
+*.sh            text eol=lf
+gradlew         text eol=lf
+*.py            text eol=lf
+
+# 컨테이너 안에서 실행되는 것들. 이미지 빌드 시점에 CRLF 가 섞이면 ENTRYPOINT 가 같은
+# 이유로 죽는데, 그때는 로컬에서 재현조차 되지 않는다.
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+*.dockerfile    text eol=lf
+.env            text eol=lf
+.env.*          text eol=lf
+
+# ── 도구가 읽는 것도 LF 로 통일 ──────────────────────────────────────────
+# kubectl·kustomize·psql 은 CRLF 를 견디지만, SQL 의 경우 문자열 리터럴 안에 \r 이
+# 그대로 저장돼 나중에 비교가 어긋난다. 처음부터 섞지 않는 편이 낫다.
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.sql           text eol=lf
+*.json          text eol=lf
+*.properties    text eol=lf
+*.md            text eol=lf
+*.java          text eol=lf
+*.gradle        text eol=lf
+
+# ── Windows 전용 ─────────────────────────────────────────────────────────
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# ── 바이너리 (git 이 텍스트로 오해해 줄바꿈을 건드리면 파일이 깨진다) ────
+*.jar           binary
+*.p12           binary
+*.jks           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary

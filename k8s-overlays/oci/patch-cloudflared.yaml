@@ -1,0 +1,9 @@
+# 노드가 하나뿐이다. 레플리카 2는 무중단 롤아웃만 주고 가용성은 주지 못하는데,
+# 2 OCPU 에서는 그 대가가 크다. 터널이 잠깐 끊기는 것을 받아들인다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: ecommerce
+spec:
+  replicas: 1

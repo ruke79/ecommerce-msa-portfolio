@@ -1,0 +1,41 @@
+# k3s는 기본적으로 Traefik을 내장 Ingress 컨트롤러로 함께 설치합니다(ingressClassName: traefik).
+#
+# frontend는 평문 HTTP로 서빙되므로 표준 Ingress로 바로 노출합니다.
+# gateway-server는 스스로 HTTPS(mTLS)를 종료하므로 여기 Ingress에 포함하지 않고
+# 31-gateway-server.yaml에서 Service type=LoadBalancer로 직접 노출합니다
+# (표준 Ingress는 백엔드까지 TLS를 그대로 통과시키지 않고 HTTP로 프록시하는 것이 기본 동작이라,
+#  게이트웨이의 자체 TLS 종료와 맞지 않습니다. 공인 인증서를 게이트웨이 앞단에 두고 싶다면
+#  Traefik IngressRoute + ServersTransport(TLS passthrough)를 별도로 구성하세요).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ecommerce-frontend
+  namespace: ecommerce
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  ingressClassName: traefik
+  rules:
+    # ⚠️ host 필드를 일부러 두지 않는다 — 모든 호스트에 매칭된다.
+    #
+    # 예전에는 여기에 `host: shop.example.com` 이 플레이스홀더로 있었다. 그게 함정이었다:
+    # 교체를 잊어도 배포는 **성공한 것처럼 보이고**, 실패는 한참 뒤 브라우저에서 404 로만
+    # 드러난다. 클러스터 안에서는 파드가 전부 Running 이고 Ingress 도 정상이라 원인을
+    # 짚을 실마리가 없다. 실제 배포에서 여기에 걸렸다(docs/33 §13).
+    #
+    # 호스트를 안 박아도 되는 이유: 이 클러스터로 들어오는 트래픽은 Cloudflare Tunnel
+    # 하나뿐이고(인바운드 포트가 0개다 — k8s-overlays/prod/cloudflared.yaml), 어떤
+    # 호스트명을 받아들일지는 **Cloudflare 가 이미 결정한다.** 여기서 한 번 더 검사해도
+    # 얻는 것이 없고, apex(example.com)와 www 를 둘 다 받으려면 규칙만 두 벌이 된다.
+    #
+    # 인바운드 포트를 직접 여는 구성으로 바꾼다면(터널 없이 NodePort·LB 를 노출한다면)
+    # 그때는 host 를 명시할 것 — 그 경우엔 IP 로 직접 때리는 요청까지 이 규칙이 받는다.
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8080

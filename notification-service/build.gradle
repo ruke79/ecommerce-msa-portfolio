@@ -1,0 +1,43 @@
+
+
+dependencies {
+
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+	implementation 'org.springframework.cloud:spring-cloud-starter'
+	implementation 'org.springframework.cloud:spring-cloud-starter-bootstrap'
+	implementation 'org.springframework.cloud:spring-cloud-starter-config'
+	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+	implementation 'org.springframework.kafka:spring-kafka'
+	// 트랜잭션 메일 발송(SmtpMailSender). spring.mail.host 가 설정된 경우에만
+	// JavaMailSender 빈이 만들어지고, 그렇지 않으면 MailConfig 가 로깅 발송기를 쓴다.
+	implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+	implementation project(':common')
+
+	// 전화번호 파싱·검증·정규화 (Apache-2.0, 무료).
+	//
+	// 왜 직접 정규식을 쓰지 않나: 한국(+82)과 일본(+81)은 규칙이 서로 다르고 둘 다 까다롭다.
+	//   · 국내 표기는 앞에 0 이 붙지만(010-1234-5678) E.164 로 가면 그 0 이 빠진다(+821012345678).
+	//     정규식으로 짜면 이 '0 트렁크 프리픽스' 처리를 반드시 틀린다.
+	//   · 일본 휴대폰은 070/080/090 이고, 자릿수가 지역번호에 따라 다르다.
+	//   · 번호 대역은 통신사 사정으로 계속 바뀐다 — 직접 유지보수할 성격이 아니다.
+	// libphonenumber 는 구글이 관리하는 그 데이터를 담고 있다.
+	implementation 'com.googlecode.libphonenumber:libphonenumber:8.13.52'
+
+	runtimeOnly 'org.postgresql:postgresql'
+	// 스키마는 Flyway 가 소유한다 (docs/20)
+	implementation 'org.flywaydb:flyway-core'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
+
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	testImplementation 'org.testcontainers:junit-jupiter'
+	testImplementation 'org.testcontainers:postgresql'
+}

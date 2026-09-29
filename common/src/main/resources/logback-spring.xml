@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  모든 서비스의 공통 로그 설정 (docs/51).
+
+  common 모듈 jar 의 루트에 있으므로 common 을 쓰는 모든 서비스가 이 파일로 로그를 쓴다.
+  서비스가 자기 logback*.xml 을 두면 그쪽이 이긴다 — 그러면 마스킹이 빠진다. 그래서 가드
+  B-57 이 서비스의 logback 설정 파일을 막는다.
+
+  서비스가 정하는 것:  logging.level.*(레벨), logging.file.name(JSON 파일 경로, .json)
+  여기서 정하는 것:    형식, 마스킹, 롤링, 비동기
+  환경변수로 고르는 것(application-common.yml 의 app.logging.*):
+    LOG_CONSOLE_FORMAT  text(기본) | json   — kubectl logs 로 읽는다면 text, 수집기가 stdout 을 읽는다면 json
+    LOG_JSON_FILE       true(기본) | false  — k8s 에서는 false. 컨테이너 안의 파일은 아무도 읽지 않고 디스크만 쓴다
+
+  🔒 모든 출력이 마스킹을 지난다(가드 B-57b).
+     텍스트: %mask(%msg) · %mask(%wEx)     JSON: SensitiveValueMasker(모든 문자열 값)
+-->
+<configuration>
+
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <conversionRule conversionWord="mask"
+                    class="com.project.common.logging.MaskingPatternConverter"/>
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="app"/>
+    <springProperty scope="context" name="CONSOLE_FORMAT" source="app.logging.console-format" defaultValue="text"/>
+    <springProperty scope="context" name="JSON_FILE_ENABLED" source="app.logging.json-file" defaultValue="true"/>
+
+    <!--
+      [traceId,spanId,userId] — traceId·spanId 는 Micrometer Tracing, userId 는 UserMdcFilter 가 넣는다.
+      예전 서비스 yml 의 패턴에 userId 만 더했다.
+
+      🐛 %mask(...) 뒤의 {} 를 지우지 말 것. logback 은 복합 변환자 %mask(...) 바로 뒤에 붙은 %n 을
+         줄바꿈이 아니라 글자 "%n" 으로 찍는다. 운영에서 모든 줄이 "…%n2026-09-24 …" 처럼 한 줄로 붙어
+         기동 실패 메시지조차 읽을 수 없었다. 빈 옵션 {} 로 복합 변환자를 닫으면 정상이다(가드 B-57b).
+    -->
+    <property name="TEXT_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-},%X{userId:-}] %-5level %logger{36} - %mask(%msg){}%n%mask(%wEx){}"/>
+
+    <!-- LOG_FILE 은 스프링이 logging.file.name 으로 채운다. 없으면 ./logs/<서비스>.json -->
+    <property name="JSON_FILE" value="${LOG_FILE:-${LOG_PATH:-./logs}/${APP_NAME}.json}"/>
+
+    <!-- ===================== 콘솔 — 텍스트 ===================== -->
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="com.project.common.logging.FormatSwitchFilter">
+            <actual>${CONSOLE_FORMAT}</actual>
+            <expected>text</expected>
+        </filter>
+        <encoder>
+            <charset>UTF-8</charset>
+            <pattern>${TEXT_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ===================== 콘솔 — JSON (수집기가 stdout 을 읽을 때) ===================== -->
+
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="com.project.common.logging.FormatSwitchFilter">
+            <actual>${CONSOLE_FORMAT}</actual>
+            <expected>json</expected>
+        </filter>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdc>true</includeMdc>
+            <!-- true 면 스프링이 넣는 컨텍스트 값(LOG_FILE·CONSOLE_FORMAT…)이 모든 줄에 붙는다. -->
+            <includeContext>false</includeContext>
+            <customFields>{"service":"${APP_NAME}"}</customFields>
+            <fieldNames>
+                <version>[ignore]</version>
+            </fieldNames>
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <valueMasker class="com.project.common.logging.SensitiveValueMasker"/>
+            </jsonGeneratorDecorator>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <maxLength>8192</maxLength>
+                <shortenedClassNameLength>40</shortenedClassNameLength>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <!-- ===================== 파일 — JSON, 롤링 ===================== -->
+
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${JSON_FILE}</file>
+        <filter class="com.project.common.logging.FormatSwitchFilter">
+            <actual>${JSON_FILE_ENABLED}</actual>
+            <expected>true</expected>
+        </filter>
+        <!--
+          날짜 + 크기. 총량 상한(totalSizeCap)이 없으면 언젠가 디스크가 찬다.
+          Loki 가 7일을 보관하므로 서비스 쪽은 14일·1GB 면 충분하다.
+        -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${JSON_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdc>true</includeMdc>
+            <includeContext>false</includeContext>
+            <customFields>{"service":"${APP_NAME}"}</customFields>
+            <fieldNames>
+                <version>[ignore]</version>
+            </fieldNames>
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <valueMasker class="com.project.common.logging.SensitiveValueMasker"/>
+            </jsonGeneratorDecorator>
+            <!-- 스택트레이스는 길이를 제한한다. 한 건이 수십 KB 면 수집 파이프라인을 막는다. -->
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <maxLength>8192</maxLength>
+                <shortenedClassNameLength>40</shortenedClassNameLength>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <!--
+      파일은 비동기로 쓴다 — 디스크가 느려져도 요청 스레드가 기다리지 않게.
+        discardingThreshold 0 : 큐가 차도 INFO 를 조용히 버리지 않는다(기본 20 은 버린다)
+        neverBlock false      : 큐가 가득 차면 잠시 기다린다 — 로그 유실보다 지연이 낫다
+        includeCallerData false: 호출 위치 조회는 몹시 느리다
+      종료 때는 스프링의 로깅 종료 훅이 큐를 비운다(maxFlushTime).
+      콘솔은 동기로 둔다 — 파드가 죽기 직전의 마지막 줄이 kubectl logs 에 남아야 한다.
+    -->
+    <appender name="ASYNC_JSON_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="JSON_FILE"/>
+        <queueSize>8192</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <maxFlushTime>3000</maxFlushTime>
+        <neverBlock>false</neverBlock>
+        <includeCallerData>false</includeCallerData>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON_CONSOLE"/>
+        <appender-ref ref="ASYNC_JSON_FILE"/>
+    </root>
+</configuration>

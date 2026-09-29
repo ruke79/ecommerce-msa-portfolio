@@ -1,0 +1,11 @@
+{
+  "type": "record", "name": "UserCreatedRequest", "namespace": "com.project.common.avro",
+  "doc": "user → order·coupon·chat 회원 생성. 토픽 user-created. 키 userId.",
+  "fields": [
+    { "name": "userId",   "type": "long" },
+    { "name": "image",    "type": ["null", "string"], "default": null },
+    { "name": "username", "type": ["null", "string"], "default": null },
+    { "name": "nickname", "type": ["null", "string"], "default": null },
+    { "name": "email",    "type": ["null", "string"], "default": null }
+  ]
+}

@@ -1,0 +1,120 @@
+// Grafana Alloy — 서비스의 JSON 로그 파일을 읽어 Loki 로 보낸다 (docs/51 §4).
+//
+// Promtail 이 아니라 Alloy 인 이유: Grafana 가 Promtail 을 지원 종료하고 Alloy 를 후속으로
+// 내놓았다. 새로 붙이는 수집기를 지원이 끝난 것으로 고를 이유가 없다.
+//
+// 읽는 파일: 각 서비스 모듈의 logs/*.json — common 의 logback-spring.xml 이 쓰는 JSON 파일이다
+// (마스킹을 지난 뒤다). compose 가 저장소 루트를 /var/log/ecommerce 로 읽기 전용 마운트한다.
+// 서비스를 모듈 디렉터리에서 띄우면(./gradlew :order-service:bootRun) 파일이
+// order-service/logs/order_service.json(서비스 yml 의 logging.file.name) 에 생긴다.
+
+local.file_match "services" {
+  path_targets = [{
+    "__path__" = "/var/log/ecommerce/*/logs/*.json",
+    "job"      = "ecommerce",
+  }]
+  sync_period = "5s"
+}
+
+loki.source.file "services" {
+  targets    = local.file_match.services.targets
+  forward_to = [loki.process.services.receiver]
+}
+
+loki.process "services" {
+  // 필드 이름은 LogstashEncoder 의 것이다. service 는 공통 설정의 customFields 가 넣는다.
+  stage.json {
+    expressions = {
+      level     = "level",
+      service   = "service",
+      timestamp = "\"@timestamp\"",
+    }
+  }
+
+  // 라벨은 둘뿐이다. traceId·userId 는 라벨로 만들지 않는다(요청마다 스트림이 생긴다) —
+  // Grafana 에서 `| json | traceId="..."` 로 거른다.
+  stage.labels {
+    values = {
+      level   = "",
+      service = "",
+    }
+  }
+
+  // 수집 시각이 아니라 로그가 찍힌 시각으로 저장한다. 파일을 뒤늦게 읽어도 순서가 맞는다.
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ── k3s 파드 로그 (docs/51 §4c) ─────────────────────────────────────────────
+//
+// 서비스가 k3s 에서 돌면 로그는 파일이 아니라 파드의 표준 출력이고(k8s configmap 은 LOG_JSON_FILE=false),
+// k3s 는 그것을 호스트의 /var/log/pods/<네임스페이스>_<파드>_<uid>/<컨테이너>/<n>.log 에 CRI 형식으로
+// 쌓는다. 위의 JSON 파일 경로만 읽으면 k3s 로 배포한 서비스의 로그는 Loki 에 하나도 오지 않는다.
+//
+// 콘솔은 텍스트다(LOG_CONSOLE_FORMAT=text, kubectl logs 로 읽기 좋게). 그래서 줄에서 레벨만 뽑는다:
+//   2026-09-24 12:53:07.336 [main] [traceId,spanId,userId] ERROR o.s.b.SpringApplication - …
+// 마스킹은 서비스가 출력하기 전에 이미 끝났다.
+
+local.file_match "k3s_pods" {
+  path_targets = [{
+    "__path__" = "/var/log/pods/ecommerce_*/*/*.log",
+    "job"      = "ecommerce-k3s",
+  }]
+  sync_period = "10s"
+}
+
+// 컨테이너 이름(= 서비스 이름, 예: order-service)을 경로에서 뽑아 service 라벨로.
+discovery.relabel "k3s_pods" {
+  targets = local.file_match.k3s_pods.targets
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = `/var/log/pods/[^/]+/([^/]+)/.*`
+    target_label  = "service"
+  }
+}
+
+loki.source.file "k3s_pods" {
+  targets    = discovery.relabel.k3s_pods.output
+  forward_to = [loki.process.k3s_pods.receiver]
+}
+
+loki.process "k3s_pods" {
+  // "<시각> stdout F <줄>" 을 풀고, 그 시각을 로그 시각으로 쓴다.
+  stage.cri {}
+
+  // 우리 스프링 서비스에만 — frontend(nginx)·cloudflared 의 줄은 날짜로 시작하지 않아서, 여러 줄 묶기를
+  // 걸면 앞 줄에 계속 붙어 버린다.
+  stage.match {
+    selector = `{service=~".+-(service|server)|saga-projection"}`
+
+    // 스택트레이스는 여러 줄이다 — 날짜로 시작하지 않는 줄은 앞 줄에 붙여 한 건으로 만든다.
+    stage.multiline {
+      firstline     = `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`
+      max_wait_time = "3s"
+    }
+
+    // 공통 텍스트 패턴의 레벨.
+    stage.regex {
+      expression = `^\S+ \S+ \[[^\]]*\] \[[0-9a-f]*,[0-9a-f]*,[^\]]*\] (?P<level>[A-Z]+)\s`
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}

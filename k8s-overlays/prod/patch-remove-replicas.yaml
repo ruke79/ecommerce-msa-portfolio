@@ -1,0 +1,6 @@
+# replicas 필드를 지운다 — HPA 가 소유한다.
+#
+# 남겨 두면 `kubectl apply` 마다 매니페스트 값(2)으로 되돌아갔다가 HPA 가 다시 올린다.
+# 부하로 6개까지 늘어난 상태에서 배포하면 그 순간 2로 떨어진다.
+- op: remove
+  path: /spec/replicas

@@ -1,0 +1,16 @@
+subcategory_id,subcategory_name,slug,category_id,created_at
+1,men's clothing,men's-clothing,1,2025-01-17
+2,women's clothing,women's-clothing,1,2025-05-30
+3,accessories,accessories,1,2025-05-16
+4,smartphones,smartphones,2,2025-05-27
+5,laptops,laptops,2,2025-02-23
+6,wearable tech,wearable-tech,2,2025-07-22
+7,fiction,fiction,3,2024-09-14
+8,non-fiction,non-fiction,3,2025-07-24
+9,children's books,children's-books,3,2024-12-21
+10,fresh produce,fresh-produce,4,2024-11-09
+11,bakery,bakery,4,2025-03-25
+12,beverages,beverages,4,2025-06-09
+13,chairs,chairs,5,2024-09-01
+14,tables,tables,5,2025-02-01
+15,storage,storage,5,2024-08-25

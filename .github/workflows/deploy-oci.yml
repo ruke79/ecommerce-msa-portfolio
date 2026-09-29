@@ -1,0 +1,169 @@
+# 배포 스테이지 — OCI Ampere(arm64) k3s 에, **사람이 승인한 뒤** 자동으로 (docs/36 §6)
+#
+#   deployment pipeline(build.yml) 이 기본 브랜치의 푸시에서 끝까지 초록 ──> 이 워크플로
+#       ├─ gate   (GitHub 호스티드) 무엇을 배포하나 · 그 커밋의 파이프라인이 초록인가 · 프론트 설정이 있나
+#       └─ deploy (OCI 인스턴스의 셀프호스티드 러너) Environment `production` 승인 → ops/28-deploy.sh
+#
+# ── 왜 셀프호스티드 러너인가 ─────────────────────────────────────────────
+#
+# 클러스터는 인바운드가 SSH 22번(특정 IP 하나)뿐이다. GitHub 호스티드 러너에서는 kube-apiserver 에 닿을 수 없다.
+# 인스턴스에 러너를 두면 러너가 GitHub 쪽으로 **나가는 연결만** 쓴다 — 포트를 더 열지 않는다. 설치: ops/40-deploy-runner.sh.
+#
+# ── 배포는 운영자가 쓰는 것과 같은 스크립트다 ─────────────────────────────
+#
+# ops/28-deploy.sh 를 그대로 부른다 — 이미지 존재 확인, 되돌릴 수 없는 마이그레이션 검사, 스모크 게이트, 실패 시 직전 버전으로
+# 자동 복귀, 배포 이력($HOME/.ecommerce-msa/deploy-journal.tsv — 러너가 운영자와 같은 사용자라 이력이 하나다). 여기에
+# kubectl 을 따로 쓰면 CI 로 배포할 때와 손으로 배포할 때가 달라진다(『Continuous Delivery』 10장).
+#
+# 이미지는 다시 만들지 않는다. build.yml 의 커밋 스테이지가 만든 amd64·arm64 이미지(태그 = 커밋 SHA 12자리)를 받는다.
+#
+# ── 러너에 없는 것: gitignore 된 로컬 오버레이 ───────────────────────────
+#
+# k8s-overlays/<환경>(엔드포인트·메일 등 로컬 값)은 저장소에 없다. 운영자의 작업 사본(DEPLOY_REPO_DIR)에 있는 것을 링크한다.
+# 비밀(k8s/20-secret.yaml)은 오버레이에 들어 있지 않다 — 클러스터에 이미 있는 것을 쓴다(이 워크플로는 비밀을 만지지 않는다).
+#
+# ── 🔒 막아 둔 것 ─────────────────────────────────────────────────────────
+#
+#   · 러너는 운영 클러스터 자격증명을 가진다. 그래서 이 잡은 **기본 브랜치의 push** 로 초록이 된 실행에서만, 같은 저장소의 것만
+#     돈다(pull_request·포크·다른 브랜치 제외). 수동 실행도 기본 브랜치에서만.
+#   · Environment `production` 에 승인자를 둔다(Settings → Environments). 승인 전에는 러너에 아무것도 닿지 않는다.
+#   · 저장소는 비공개여야 한다 — 공개 저장소의 셀프호스티드 러너는 포크 PR 의 코드를 실행할 수 있다(GitHub 권고).
+#   · 한 번에 하나만(concurrency). 앞 배포가 도는 중이면 기다린다 — 취소하지 않는다(중간에 끊긴 배포가 더 위험하다).
+name: deploy (OCI Ampere)
+
+# 공개 저장소: 자동 실행하지 않는다. 운영 러너는 원래(비공개) 저장소에만 연결돼 있다.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "배포할 커밋(SHA 12자리). 비우면 이 실행의 커밋. 그 커밋의 파이프라인이 초록이어야 한다"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: 배포 대상 확인
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success'
+       && github.event.workflow_run.event == 'push'
+       && github.event.workflow_run.head_branch == github.event.repository.default_branch
+       && github.event.workflow_run.head_repository.full_name == github.repository)
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+    steps:
+      - name: 무엇을 배포하나
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_VERSION: ${{ inputs.version }}
+          DISPATCH_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPO: ${{ github.repository }}
+          # CI 가 만든 프론트 이미지는 이 값들을 번들에 박는다(build.yml). 비어 있으면 운영 화면의 API 주소가 undefined 다.
+          API_URL: ${{ vars.REACT_APP_API_URL }}
+          PAYPAL_ID: ${{ vars.REACT_APP_PAYPAL_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$API_URL" ] || [ -z "$PAYPAL_ID" ]; then
+            echo "::error::저장소 Variables 의 REACT_APP_API_URL·REACT_APP_PAYPAL_CLIENT_ID 가 비어 있다 — CI 가 만든 프론트 이미지를 배포하면 화면이 깨진다(Settings → Secrets and variables → Actions → Variables)"
+            exit 1
+          fi
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              echo "::error::수동 배포는 기본 브랜치($DEFAULT_BRANCH)에서만 실행한다 — 지금: $REF_NAME"
+              exit 1
+            fi
+            want="${INPUT_VERSION:-$DISPATCH_SHA}"
+          else
+            want="$RUN_SHA"
+          fi
+          want="$(printf '%s' "$want" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+          if ! [[ "$want" =~ ^[0-9a-f]{12,40}$ ]]; then
+            echo "::error::버전은 커밋 SHA(12자리 이상)다: '$want'"
+            exit 1
+          fi
+          sha="$(gh api "repos/$REPO/commits/$want" --jq .sha)"
+          version="${sha:0:12}"
+
+          # 수동 실행이면 그 커밋의 파이프라인이 초록인지 여기서 본다(자동 실행은 이미 success 로 들어왔다). 이미지가 있다는
+          # 것만으로는 부족하다 — 이미지는 커밋 스테이지에서 발행되고, 인수 테스트는 그 뒤다.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            ok="$(gh api "repos/$REPO/actions/workflows/build.yml/runs?head_sha=$sha&status=success&event=push&per_page=1" --jq '.total_count')"
+            if [ "${ok:-0}" -lt 1 ]; then
+              echo "::error::커밋 $version 의 deployment pipeline(push) 이 초록이 아니다 — 릴리스 후보가 아닌 것은 배포하지 않는다"
+              exit 1
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 배포 대상 \`$version\`"
+            echo
+            echo "승인하면 OCI Ampere 러너가 \`./ops/28-deploy.sh \${DEPLOY_ENV:-local} $version\` 을 실행한다."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: 배포 (ops/28 — 스모크 게이트·자동 복귀)
+    needs: gate
+    # ops/40-deploy-runner.sh 가 이 라벨로 등록한다.
+    runs-on: [self-hosted, linux, ARM64, oci-ampere]
+    # 🔒 승인 게이트 — Settings → Environments → production → Required reviewers.
+    environment: production
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      # 운영자의 작업 사본 — gitignore 된 로컬 오버레이가 여기 있다.
+      DEPLOY_REPO_DIR: ${{ vars.DEPLOY_REPO_DIR || '/home/ubuntu/ecommerce-msa' }}
+      # ops/28 의 환경 인자(오버레이 이름). 이 운영 클러스터는 local 이다(docs/33).
+      DEPLOY_ENV: ${{ vars.DEPLOY_ENV || 'local' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          # 배포 스크립트만 쓴다 — 이력은 필요 없다(되돌릴 수 없는 마이그레이션 검사는 ops/28 이 git 으로 두 커밋을 비교한다).
+          fetch-depth: 0
+
+      - name: 로컬 오버레이 연결
+        run: |
+          set -euo pipefail
+          src="$DEPLOY_REPO_DIR/k8s-overlays/$DEPLOY_ENV"
+          if [ ! -f "$src/kustomization.yaml" ]; then
+            echo "::error::$src/kustomization.yaml 이 없다 — DEPLOY_REPO_DIR·DEPLOY_ENV(저장소 Variables)를 확인"
+            exit 1
+          fi
+          # 커밋된 오버레이(dev·prod 등)와 이름이 같으면 덮지 않는다 — 로컬 전용(gitignore) 오버레이만 링크한다.
+          if [ -e "k8s-overlays/$DEPLOY_ENV" ] && [ ! -L "k8s-overlays/$DEPLOY_ENV" ]; then
+            echo "커밋된 오버레이 k8s-overlays/$DEPLOY_ENV 를 쓴다"
+          else
+            ln -sfn "$src" "k8s-overlays/$DEPLOY_ENV"
+            echo "링크: k8s-overlays/$DEPLOY_ENV → $src"
+          fi
+
+      - name: 배포
+        run: ./ops/28-deploy.sh "$DEPLOY_ENV" "$VERSION"
+
+      - name: 요약
+        if: always()
+        run: |
+          {
+            echo "### OCI 배포 \`$VERSION\` — ${{ job.status }}"
+            echo
+            echo "배포 이력: \`./ops/28-deploy.sh --report\` · 되돌리기: \`./ops/28-deploy.sh $DEPLOY_ENV --rollback\`"
+          } >> "$GITHUB_STEP_SUMMARY"

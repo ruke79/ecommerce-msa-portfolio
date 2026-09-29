@@ -1,0 +1,89 @@
+server:
+  port: 8888
+
+
+
+
+spring:
+  cloud:
+    config:
+      server:
+        # ── 설정 저장소 ──────────────────────────────────────────────────
+        #
+        # ⚠️ **이 서비스는 아직 아무 일도 하지 않는다.** uri 기본값이 플레이스홀더라
+        #    설정을 내줄 수 없고, 클라이언트 쪽 SPRING_CONFIG_IMPORT 는 전부
+        #    `optional:configserver:...`(k8s/10-configmap.yaml)이라 그 실패를 **로그로만**
+        #    남기고 각자 번들 설정으로 돈다. 즉 지금은 증상이 없다 — 쓰기 시작하려면
+        #    CONFIG_GIT_URI 를 채우는 것이 첫 단계다.
+        #
+        # ⚠️ 값을 여기서 `${ENV:기본값}` 으로 받는 이유: 환경변수 이름 매핑은 하이픈을
+        #    지운다(`default-label` → `DEFAULTLABEL`). 같은 저장소의
+        #    EUREKA_CLIENT_SERVICEURL_DEFAULTZONE 이 그 규칙의 실례다. 매니페스트에
+        #    Spring 프로퍼티 이름을 그대로 적으면 하이픈이 든 것마다 규칙을 기억해야 하고
+        #    틀려도 **조용히 무시된다.** 이 저장소의 다른 서비스가 전부 이 방식이다.
+        git:
+          uri: ${CONFIG_GIT_URI:REPLACE_ME_config_repo_url}
+          default-label: ${CONFIG_GIT_LABEL:main}
+
+          # 기동 시 클론할지. **기본은 false** — true 로 두면 uri 가 플레이스홀더인 지금
+          # 파드가 기동에서 죽는다. 저장소를 실제로 연결한 뒤에는 true 를 권한다:
+          # 지금은 첫 요청 때 클론하므로 uri 가 틀려도 파드는 Ready 로 뜨고, 문제가
+          # "설정이 왜 안 먹지"라는 형태로 한참 뒤에 드러난다.
+          clone-on-start: ${CONFIG_GIT_CLONE_ON_START:false}
+
+          # 0(스프링 기본)이면 **요청마다 git fetch** 다. 서비스 14개가 동시에 뜨면
+          # 그만큼 나간다. 설정이 분 단위로 늦게 반영되는 것은 문제가 되지 않는다.
+          refresh-rate: ${CONFIG_GIT_REFRESH_RATE:60}
+
+          timeout: ${CONFIG_GIT_TIMEOUT:10}
+
+          # 클론 위치. 스프링 기본값은 무작위 임시 디렉터리라 디버깅할 때 찾기 어렵고,
+          # 나중에 readOnlyRootFilesystem 을 켜면 쓰기 가능한 경로를 명시해야 한다.
+          basedir: ${CONFIG_GIT_BASEDIR:/tmp/config-repo}
+
+          search-paths:
+            - '{application}'
+            - '{application}/{profile}'
+
+  config:
+      # config-server 는 common 모듈에 의존하지 않아 application-common.yml 이 클래스패스에
+      # 없다. 필수 import 로 둔 탓에 ConfigDataResourceNotFoundException 으로 기동이
+      # 불가능했다(docs/14 B-18). 이 서비스에 필요한 설정(management/logging)은 아래에 이미
+      # 있으므로 optional 로 두어, 나중에 common 을 의존하게 되면 자동으로 적용되게 한다.
+      import: "optional:classpath:application-common.yml"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 🔒 예전에는 "*" 였다. config-server 는 **모든 서비스의 설정을 쥐고 있는**
+        # 서비스라 노출 범위가 가장 좁아야 하는데, 정반대로 전부 열려 있었다.
+        #   · /actuator/env         → DB 비밀번호·JWT 시크릿을 포함한 전체 환경변수
+        #   · /actuator/configprops → 바인딩된 설정값 전체
+        #   · /actuator/heapdump    → 힙 덤프(메모리 안의 평문 자격증명까지)
+        #   · /actuator/shutdown    → (기본 비활성이지만 "*" 로 열어 두는 습관 자체가 위험)
+        # 인증도 걸려 있지 않아 네트워크에 닿는 누구나 읽을 수 있었다.
+        #
+        # 운영에 필요한 것만 남긴다. env/configprops/heapdump 가 필요하면 그때만
+        # 일시적으로 열고, 반드시 인증 뒤에 둔다.
+        include: health, info, prometheus
+  endpoint:
+    health:
+      show-details: never
+
+
+logging:
+  level:
+    root: ${LOGGING_LEVEL_ROOT:INFO}
+    # ⚠️ 예전에는 DEBUG 로 고정돼 있었다. 이 패키지의 DEBUG 로그는 **어떤 애플리케이션의
+    #    어떤 프로퍼티를 내보냈는지**를 남긴다. 지금은 내보낼 것이 없어 무해하지만,
+    #    설정 저장소를 연결하는 순간 로그가 설정 내용의 사본이 된다. 기본을 INFO 로 두고
+    #    필요할 때만 CONFIG_SERVER_LOG_LEVEL=DEBUG 로 올린다.
+    org.springframework.cloud.config.server: ${CONFIG_SERVER_LOG_LEVEL:INFO}
+    org.springframework.web: INFO # Spring Web 관련 로그를 INFO 레벨로 설정
+  file:
+    path: ./logs
+    name: ${logging.file.path}/config_server.log
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-}] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-}] %-5level %logger{36} - %msg%n"

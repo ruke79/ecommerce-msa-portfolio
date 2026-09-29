@@ -1,0 +1,10 @@
+{
+  "type": "record", "name": "CouponUseRequest", "namespace": "com.project.common.avro",
+  "doc": "coupon → cart 쿠폰 적용 결과. 토픽 coupon-use. 키 userId.",
+  "fields": [
+    { "name": "userId",   "type": "long" },
+    { "name": "discount", "type": "int", "default": 0 },
+    { "name": "totalAfterDiscount", "type": ["null", "string"], "default": null, "doc": "BigDecimal.toPlainString()" },
+    { "name": "authorizationToken", "type": ["null", "string"], "default": null }
+  ]
+}

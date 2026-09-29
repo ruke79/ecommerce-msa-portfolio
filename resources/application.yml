@@ -1,0 +1,8 @@
+spring:
+  profiles:
+    active: local
+    group:
+      prd:
+        - prd
+      local:
+        - local

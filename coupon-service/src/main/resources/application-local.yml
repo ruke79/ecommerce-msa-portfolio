@@ -1,0 +1,117 @@
+server:
+  port: 8183
+
+  ssl:    
+      key-store: ${LOCAL_KEY_STORE_PATH}    
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+      key-password: ${LOCAL_KEY_PASSWORD}
+
+# Kafka 접속 설정은 common/application-common.yml 이 소유한다.
+#
+# 여기에는 개발자 PC 의 절대 경로가 그대로 박혀 있었다:
+#     trust-store-location: file:E:/github/amazon-clone-msa/.../local_truststore.jks
+# 그 경로는 다른 어떤 머신에도 존재하지 않으므로, 이 블록은 protocol: "SSL" 을 켜 놓은 채
+# 존재하지도 않는 스토어를 가리키고 있었다. 로컬 브로커가 PLAINTEXT 라 조용히 넘어갔을 뿐이다.
+#
+# 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
+# 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    non-secure-port-enabled : false
+    secure-port-enabled : true
+    secure-port : 8183
+  
+
+feign:
+  # 서비스 간 Feign 호출 대상. 기존에는 어디에도 정의돼 있지 않아
+  # @FeignClient(url="${feign.*-url}") 해석 실패로 기동 자체가 불가능했다.
+  # 환경변수(FEIGN_*_URL, k8s ConfigMap)로 오버라이드 가능.
+  user-url: ${FEIGN_USER_URL:https://localhost:8080}
+  # 제약(상품·카테고리) 있는 쿠폰을 판정할 때만 쓴다. 장바구니는 cart-service 에서
+  # 직접 읽고(클라이언트가 보낸 목록을 믿지 않는다), 상품의 카테고리는 catalog 에서 받는다.
+  # 두 키 모두 k8s ConfigMap 에 이미 있다(FEIGN_CART_URL, FEIGN_CATALOG_URL).
+  cart-url: ${FEIGN_CART_URL:https://localhost:8082}
+  catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
+  # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
+  # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
+  # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.
+
+coupon:
+  topics:
+    # 쿠폰 발급 이벤트. notification-service 가 듣고 COUPON_ISSUED 알림을 만든다.
+    issued: ${COUPON_ISSUED_TOPIC:coupon-issued}
+  welcome:
+    # 가입 축하 쿠폰. 예전에는 이름·할인율·유효기간이 UserMessageListener 자바 코드에
+    # 리터럴로 박혀 있었다("30% discount coupon", 30, 31일). 판촉 정책은 코드가 아니라
+    # 설정이므로 여기로 옮겼다. 할인율을 바꾸려고 서비스를 다시 빌드하지 않는다.
+    enabled: ${COUPON_WELCOME_ENABLED:true}
+    name: ${COUPON_WELCOME_NAME:웰컴 10% 할인 쿠폰}
+    discount: ${COUPON_WELCOME_DISCOUNT:10}
+    valid-days: ${COUPON_WELCOME_VALID_DAYS:31}
+
+spring:
+  application:
+    name: coupon-service
+
+  config:
+      import: "classpath:application-common.yml, optional:classpath:kafka-secrets.properties"    
+      #import: optional:configserver:https://localhost:8888
+
+  datasource:
+      # 커넥션 풀 산정 (docs/19).
+      # 기본값 10 을 그대로 두면 데이터소스 8개 × 10 = 80 커넥션이고, HPA 로 레플리카가
+      # 2개만 돼도 160 으로 PostgreSQL 기본 max_connections(100)를 **산술적으로 초과**한다.
+      # 그 순간의 증상은 '느려짐'이 아니라 'FATAL: sorry, too many clients already' —
+      # 늦게 뜬 파드가 통째로 기동 실패한다.
+      # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
+      # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+      hikari:
+        maximum-pool-size: ${DB_POOL_SIZE:5}
+        minimum-idle: ${DB_POOL_MIN_IDLE:2}
+        # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+        connection-timeout: 5000
+        # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
+        leak-detection-threshold: 20000
+        max-lifetime: 1200000
+      url: jdbc:postgresql://localhost:5435/coupondb?sslmode=require
+      username: product
+      password: ${LOCAL_DB_PASSWORD}
+      properties:
+        ssl: true
+        sslfactory: org.postgresql.ssl.DefaultJavaSSLFactory
+        sslrootcert: ${LOCAL_KEY_STORE_PATH}
+        sslpassword: ${LOCAL_KEY_PASSWORD}
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: ${DDL_AUTO:validate}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+logging:
+  level:
+    root: info
+    org.springframework.batch: ${LOG_LEVEL_BATCH:info}
+    com.project.coupon_service: ${LOG_LEVEL_APP:info}
+    org.springframework.jdbc: ${LOG_LEVEL_SQL:warn}
+    org.springframework.orm.jpa: ${LOG_LEVEL_SQL:warn}
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:warn}
+
+# Elasticsearch 클라이언트 패키지의 로깅 레벨을 DEBUG로 설정
+    #co.elastic.clients: DEBUG
+# HTTP 요청/응답 헤더 및 바디를 보려면 TRACE 레벨 설정
+# 이 설정은 Elasticsearch 클라이언트가 내부적으로 사용하는 Apache HTTP 클라이언트에 대한 로그를 활성화합니다.
+    #org.apache.http: DEBUG
+    #apache.http.wire: DEBUG
+  file:
+    path: ./logs
+    name: ${logging.file.path}/coupon_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+  # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
+  # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+              

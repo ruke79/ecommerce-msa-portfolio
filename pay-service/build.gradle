@@ -1,0 +1,46 @@
+
+
+dependencies {
+	
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	//implementation 'org.springframework.boot:spring-boot-starter-web'
+	//implementation 'org.springframework.boot:spring-boot-starter-validation'
+	
+	 // Redisson
+    // implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능
+
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'   // 버전은 Boot BOM 이 정한다(고정하면 Boot 를 올려도 따라가지 않는다)
+	
+	implementation 'org.springframework.cloud:spring-cloud-starter'
+	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+	implementation 'org.springframework.cloud:spring-cloud-starter-config'
+	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
+	implementation 'org.springframework.kafka:spring-kafka'
+
+	implementation project(':common')
+	// 추적 테스트의 OTel 추적기(OtelTestTracing — 운영과 같은 브리지)
+	testImplementation(testFixtures(project(':common')))
+
+	
+	runtimeOnly 'org.postgresql:postgresql'
+	// 스키마 마이그레이션: 파티셔닝 등 Hibernate ddl-auto가 만들 수 없는 DDL은 Flyway가 소유한다 (docs/09 P0)
+	implementation 'org.flywaydb:flyway-core'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'		
+	//runtimeOnly 'com.mysql:mysql-connector-j'
+	
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+	
+	
+	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	// 실제 트랜잭션 경계를 H2 로 확인한다(PaymentPersistAtomicityTest) — cart-service 와 같은 방식
+	testRuntimeOnly 'com.h2database:h2'
+	
+}
+
+
+
+

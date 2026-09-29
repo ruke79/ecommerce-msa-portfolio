@@ -1,0 +1,108 @@
+version: '3.8'
+
+x-restart-policy: &restart-policy
+  restart: unless-stopped
+
+services:
+  coupon-service:
+    image: ${COUPON_SERVICE_IMAGE_NAME}:${COUPON_SERVICE_IMAGE_VERSION}
+    container_name: coupon-service
+    hostname: coupon-service-host
+    <<: *restart-policy
+    build:
+      context: ./coupon-service
+      dockerfile: Dockerfile
+    ports:
+      - "8183:8183"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/coupon-service:/var/log/coupon-service
+    environment:
+      - SERVER_PORT=8183
+      - SPRING_APPLICATION_NAME=coupon-service
+      - SERVER_SSL_KEY_STORE_PASSWORD=
+      - SERVER_SSL_KEY_PASSWORD=
+      - SERVER_SSL_KEY_STORE_ALIAS=
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8183' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-2-network
+
+  pay-service:
+    image: ${PAY_SERVICE_IMAGE_NAME}:${PAY_SERVICE_IMAGE_VERSION}
+    container_name: pay-service
+    hostname: pay-service-host
+    <<: *restart-policy
+    build:
+      context: ./pay-service
+      dockerfile: Dockerfile
+    ports:
+      - "8087:8087"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/pay-service:/var/log/pay-service
+    environment:
+      - SERVER_PORT=8087
+      - SPRING_APPLICATION_NAME=pay-service
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8087' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-2-network
+
+  order-service:
+    image: ${ORDER_SERVICE_IMAGE_NAME}:${ORDER_SERVICE_IMAGE_VERSION}
+    container_name: order-service
+    hostname: order-service-host
+    <<: *restart-policy
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    ports:
+      - "8084:8084"
+    volumes:
+      - /home/ubuntu/resources:/app/resources
+      - /var/log/order-service:/var/log/order-service
+    environment:
+      - SERVER_PORT=8084
+      - SPRING_APPLICATION_NAME=order-service
+      - SERVER_SSL_KEY_STORE_PASSWORD=
+      - SERVER_SSL_KEY_PASSWORD=
+      - SERVER_SSL_KEY_STORE_ALIAS=
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
+      - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
+      - LOGGING_LEVEL_ROOT=INFO
+      - SPRING_PROFILES_ACTIVE=local
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8084' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - services-2-network
+
+networks:
+  services-2-network:
+    driver: bridge

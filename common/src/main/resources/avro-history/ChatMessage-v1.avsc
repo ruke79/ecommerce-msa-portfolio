@@ -1,0 +1,16 @@
+{
+  "type": "record", "name": "ChatMessage", "namespace": "com.project.common.avro",
+  "doc": "chat → chat(브로드캐스트·저장)·notification. 토픽 chat. 키 roomId. DTO 는 chat-service 의 MessageDto — 매핑도 그쪽(ChatMessageAvroMapping).",
+  "fields": [
+    { "name": "id",        "type": ["null", "string"], "default": null },
+    { "name": "type",      "type": ["null", { "type": "enum", "name": "MessageType", "namespace": "com.project.common.avro",
+        "symbols": ["TEXT_ENTER", "TEXT_TALK", "TEXT_LEAVE", "IMAGE"], "default": "TEXT_TALK" }], "default": null },
+    { "name": "roomId",    "type": "string" },
+    { "name": "email",     "type": ["null", "string"], "default": null },
+    { "name": "nickname",  "type": ["null", "string"], "default": null },
+    { "name": "content",   "type": ["null", "string"], "default": null },
+    { "name": "imageUrl",  "type": ["null", "string"], "default": null },
+    { "name": "readCount", "type": ["null", "int"],    "default": null },
+    { "name": "createdAt", "type": ["null", "long"],   "default": null, "doc": "epoch millis — MessageDto 가 이미 Long 이다" }
+  ]
+}

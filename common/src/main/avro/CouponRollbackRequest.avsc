@@ -1,0 +1,8 @@
+{
+  "type": "record", "name": "CouponRollbackRequest", "namespace": "com.project.common.avro",
+  "doc": "order → coupon 사가 보상(쿠폰 복원). 토픽 coupon-rollback. 키 userId.",
+  "fields": [
+    { "name": "userId",     "type": "long" },
+    { "name": "couponName", "type": ["null", "string"], "default": null }
+  ]
+}

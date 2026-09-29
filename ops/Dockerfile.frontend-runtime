@@ -1,0 +1,47 @@
+# 프론트엔드 런타임 이미지 (멀티아키텍처).
+#
+# frontend/Dockerfile 은 빌더 스테이지에서 `npm ci && npm run build` 를 돌린다. 그걸
+# 다른 아키텍처로 빌드하면 **Node 툴체인 전체가 QEMU 위에서** 돌아 몇 배 느려진다.
+#
+# webpack 이 뱉는 산출물(dist/)은 정적 파일이라 아키텍처와 무관하다. 그래서 여기서는
+# 이미 빌드된 dist 를 nginx 로 감싸기만 한다 — ops/Dockerfile.runtime 과 같은 이유다.
+#
+# ⚠️ REACT_APP_* 값은 **번들에 박히므로** dist 를 만들 때 이미 결정돼 있어야 한다.
+#    이 이미지에서 런타임 환경변수로 바꿀 수 없다(ops/19-build-images.sh 가 빌드 전에 넣는다).
+#    GATEWAY_URL 만 예외로, nginx 템플릿이 기동 시 치환한다.
+
+FROM nginx:1.27-alpine
+
+# 빌드 컨텍스트는 frontend/ 다. dist/ 는 미리 만들어져 있어야 한다.
+COPY dist /usr/share/nginx/html
+
+# nginx.conf 를 **템플릿**으로 넣는다. 공식 엔트리포인트가 기동 시 envsubst 로 치환한다.
+# conf.d 로 바로 넣으면 ${GATEWAY_URL} 이 그대로 남아 nginx 가 기동에 실패한다.
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+
+# ⚠️ 치환 대상을 제한한다. 필터가 없으면 envsubst 가 $host, $remote_addr 같은
+#    nginx 자체 변수까지 빈 문자열로 치환해 프록시가 통째로 망가진다.
+ENV NGINX_ENVSUBST_FILTER="^(GATEWAY_URL)$"
+ENV GATEWAY_URL="http://gateway-server.ecommerce.svc.cluster.local:8000"
+
+# ⚠️ UID 를 **숫자로 고정**하고 USER 도 숫자로 준다.
+#
+# 매니페스트가 `securityContext.runAsNonRoot: true` 를 걸고 있는데, kubelet 은 이미지의
+# USER 가 **숫자일 때만** root 여부를 판정할 수 있다. 이름(`USER spring`)이면 판정 자체가
+# 불가능해 컨테이너를 만들기 전에 거부한다:
+#
+#     CreateContainerConfigError
+#     container has runAsNonRoot and image has non-numeric user (spring),
+#     cannot verify user is non-root
+#
+# 로그가 없어(컨테이너가 생성되지 않았다) 원인을 찾기 어렵다. 실제로 이 상태로 배포되어
+# frontend 만 뜨지 못했다 — Java 이미지들은 `USER 1000` 이라 멀쩡했다(Dockerfile.runtime).
+#
+# 1000 은 Dockerfile.runtime 과 맞춘 값이다. adduser 에 -u 를 주지 않으면 Alpine 이
+# 시스템 UID 를 임의로 배정해 이미지마다 달라진다.
+RUN addgroup -g 1000 -S spring && adduser -u 1000 -S spring -G spring \
+    && chown -R spring:spring /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx/conf.d /etc/nginx/templates \
+    && touch /var/run/nginx.pid && chown spring:spring /var/run/nginx.pid
+USER 1000
+
+EXPOSE 8080

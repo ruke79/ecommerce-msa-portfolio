@@ -1,0 +1,47 @@
+# Alertmanager 라우팅.
+#
+# ⚠️ 이 파일에는 비밀이 들어가지 않는다. 웹훅 URL 자체가 인증 수단이므로(URL 을 아는 사람은
+#    누구나 그 채널에 글을 쓸 수 있다) 커밋하면 안 된다. 그래서 값이 아니라 **파일 경로**를
+#    가리키고, 그 파일은 배포 환경이 마운트한다:
+#
+#      docker-compose : ./observability/secrets/webhook-url-*        (gitignore 됨)
+#      k8s            : Secret alertmanager-secrets → /etc/alertmanager/secrets/
+#
+#    파일이 없으면 Alertmanager 가 기동에 실패한다. 그게 맞다 — "알림이 설정된 줄 알았는데
+#    실은 아무 데도 안 가고 있었다"보다 낫다(이 저장소가 바로 그 상태였다).
+#    설정 상태는 `./ops/05-check-observability.sh` 가 점검한다.
+
+route:
+  receiver: warning
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # critical 은 사람을 깨워야 하는 것들이다: 서비스 다운, 5xx 급증, 백업 정지,
+    # WAL 아카이빙 실패(= PITR 복구 지점이 더 이상 생기지 않고 있다는 뜻).
+    # 더 빨리 묶어 보내고, 해소될 때까지 더 자주 다시 알린다.
+    - matchers: [severity="critical"]
+      receiver: critical
+      group_wait: 10s
+      group_interval: 2m
+      repeat_interval: 30m
+
+inhibit_rules:
+  # 서비스가 죽었으면 그 서비스의 5xx·지연 경보는 같은 사건의 증상일 뿐이다.
+  # 억제하지 않으면 장애 때 채널이 파생 경보로 뒤덮여 정작 원인을 못 찾는다.
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [severity=~"warning|critical"]
+    equal: [service]
+
+receivers:
+  - name: critical
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/webhook-url-critical
+        send_resolved: true
+
+  - name: warning
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/webhook-url-warning
+        send_resolved: true
