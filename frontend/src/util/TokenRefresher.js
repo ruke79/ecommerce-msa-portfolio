@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import api, { getRequest } from "util/api";
+import api, { getRequest, postRequest } from "util/api";
 import { STATUS, useAuthContext } from "store/AuthContext";
 import toast from "react-hot-toast";
 import { jwtDecode } from "jwt-decode";
@@ -8,6 +8,7 @@ import { toUser } from "./jwtUser";
 import { translate } from "i18n/I18nProvider";
 import { AUTH_REFRESH_EVENT } from "./authEvents";
 import { subscribeAuth, SIGNED_IN, SIGNED_OUT } from "./authSync";
+import { hasPendingLogout, clearPendingLogout } from "./pendingLogout";
 
 /**
  * 강제 로그아웃이 일어났다는 사실과 **누가 시켰는지**를 남긴다.
@@ -188,11 +189,35 @@ export function useTokenRefresh() {
     });
   }, [login, logout, refreshAccessToken]);
 
+  // 지난번 로그아웃이 서버에 반영되지 못했다(util/pendingLogout) — 자동 복구 대신 서버 로그아웃을 먼저 마무리한다.
+  // 로그아웃 API 는 게이트웨이가 액세스 토큰을 요구하므로 한 번 갱신해 받은 토큰으로 부르고, 그 토큰은 화면 상태에 넣지 않는다.
+  // 서버가 답했으면(성공이든 "이미 끝난 세션" 이든) 표시를 지운다. 네트워크가 안 되면 표시를 남기고 로그아웃 상태로 둔다.
+  // [JA] 前回のログアウトがサーバーに反映されていない — 自動復旧の代わりにサーバーのログアウトを先に完了させる。
+  const finishPendingLogout = useCallback(async () => {
+    try {
+      const response = await getRequest(REFRESH_URL);
+      if (response.status === 200) {
+        await postRequest("/user-service/api/auth/logout", null, undefined, {
+          headers: { Authorization: `Bearer ${response.headers["access"]}`, MultiLogin: "false" },
+        });
+      }
+      clearPendingLogout();
+    } catch (error) {
+      if (error?.response) clearPendingLogout();   // 서버가 답했다 — 세션이 이미 끝났다
+    } finally {
+      logout({ broadcast: false });
+    }
+  }, [logout]);
+
   useEffect(() => {
     if (status === STATUS.PENDING) {
-      refreshAccessToken();
+      if (hasPendingLogout()) {
+        finishPendingLogout();
+      } else {
+        refreshAccessToken();
+      }
     }
-  }, [refreshAccessToken, status]); // status를 의존성 배열에 추가하여 초기 로딩 시 동작하도록 변경
+  }, [refreshAccessToken, finishPendingLogout, status]); // status를 의존성 배열에 추가하여 초기 로딩 시 동작하도록 변경
 
   // 긴 연결(채팅 · 알림)이 서버에게 닫혔다 — 토큰이 만료됐거나 로그인이 해제됐다(docs/68 §9). 한 번만 갱신한다:
   // 여러 연결이 한꺼번에 닫혀도 갱신 요청은 하나다(갱신마다 리프레시 토큰이 회전한다).

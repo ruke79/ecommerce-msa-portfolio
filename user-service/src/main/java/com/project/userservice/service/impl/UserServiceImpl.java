@@ -108,6 +108,9 @@ public class UserServiceImpl implements UserService {
 
     private final com.project.userservice.message.UserOutboxHelper userOutboxHelper;
 
+    /** 관리자가 계정을 막을 때 이미 열린 로그인도 끊는다(docs/68 §13). */
+    private final com.project.userservice.service.RefreshTokenService refreshTokenService;
+
     
     /**
      * 확인 토큰 유효 기간. 기본 24시간.
@@ -332,6 +335,22 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
         user.setAccountNonLocked(!lock);
         userRepository.save(user);
+        if (lock) {
+            endSessions(userId, "잠금");
+        }
+    }
+
+    /**
+     * 🐛 관리자가 계정을 정지 · 잠금 · 만료해도 <b>DB 값만 바뀌었다</b> — 이미 로그인한 사용자는 리프레시 토큰으로 계속 갱신해 최대 30일
+     * 동안 주문 · 채팅을 계속했다(막히는 것은 새 로그인뿐). 막는 순간 모든 로그인 묶음을 끊고 채팅 · 알림 연결도 닫는다(revokeAll).
+     * 갱신 경로도 계정 상태를 다시 본다(RefreshTokenController) — 이것이 실패해도 다음 갱신에서 끊긴다.
+     * 로그인 5회 실패의 자동 잠금은 다른 필드(lockExpiresAt)라 여기에 오지 않는다 — 공격자가 남의 로그인을 끊는 데 쓸 수 없다.
+     */
+    // [JA] 管理者がアカウントを停止 · ロック · 期限切れにしても DB の値だけが変わり、ログイン済みのユーザーは最大 30 日使い続けた。
+    //      止めた瞬間に全ファミリーを切り、チャット · 通知の接続も閉じる。自動ロック(5 回失敗)は別フィールドなのでここには来ない。
+    private void endSessions(Long userId, String why) {
+        int revoked = refreshTokenService.revokeAll(userId);
+        log.info("관리자 {} — 로그인 {}개를 끊었다. userId={}", why, revoked, userId);
     }
 
     @Override
@@ -345,6 +364,9 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
         user.setAccountNonExpired(!expire);
         userRepository.save(user);
+        if (expire) {
+            endSessions(userId, "계정 만료");
+        }
     }
 
     @Override
@@ -353,6 +375,9 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
         user.setEnabled(enabled);
         userRepository.save(user);
+        if (!enabled) {
+            endSessions(userId, "정지");
+        }
     }
 
     @Override
@@ -361,6 +386,9 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
         user.setCredentialsNonExpired(!expire);
         userRepository.save(user);
+        if (expire) {
+            endSessions(userId, "자격 증명 만료");
+        }
     }
 
     /**

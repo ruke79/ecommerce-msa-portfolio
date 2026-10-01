@@ -49,6 +49,7 @@ const shell = {
     "home.banner.item": "バナー項目",
     "skeleton.products_loading": "商品を読み込み中",
     "logout.done": "ログアウトしました。",
+    "logout.local_only": "サーバーに接続できませんでした。この端末ではログアウトし、次回アクセス時にログアウトを完了します。",
     "logout.failed": "ログアウトできませんでした。",
     "footer.section.shopping": "ショッピング",
     "footer.link.all_products": "すべての商品",

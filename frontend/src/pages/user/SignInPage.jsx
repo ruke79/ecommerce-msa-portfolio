@@ -19,6 +19,7 @@ import { loginResultMessage } from 'util/loginResult'
 import { jwtDecode } from "jwt-decode";
 import { toUser } from "util/jwtUser";
 import { useMutation } from '@tanstack/react-query';
+import { clearPendingLogout } from "util/pendingLogout";
 import { useErrorBoundary } from "react-error-boundary";
 
 
@@ -225,6 +226,8 @@ const SignInPage = () => {
 
         //store the token on the context state  so that it can be shared any where in our application by context provider       
 
+        // 새로 로그인했다 — 마무리하지 못한 예전 로그아웃 표시가 다음 접속에서 이 로그인을 끊지 않게(util/pendingLogout).
+        clearPendingLogout();
         login(user, accessToken, decodedToken.exp);
         //updateToken(accessToken);
         navigate(redirectTo, { replace: true });

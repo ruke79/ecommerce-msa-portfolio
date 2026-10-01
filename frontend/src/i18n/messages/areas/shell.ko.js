@@ -49,6 +49,7 @@ const shell = {
     "home.banner.item": "배너 항목",
     "skeleton.products_loading": "상품을 불러오는 중",
     "logout.done": "로그아웃되었습니다.",
+    "logout.local_only": "서버에 연결하지 못했습니다. 이 기기에서는 로그아웃했고, 다음 접속 때 로그아웃을 마무리합니다.",
     "logout.failed": "로그아웃하지 못했습니다.",
     "footer.section.shopping": "쇼핑",
     "footer.link.all_products": "전체 상품",

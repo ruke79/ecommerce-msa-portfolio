@@ -7,6 +7,7 @@ import { useAuthContext } from "store/AuthContext";
 import api, { createChatRoom, getChatRoomList, getRoomMessages, getReviews, getCoupons, getOrder } from "util/api";
 import { getRequest, postRequest, getAddresses, getOrders, loadCart, loadCheckOut, throwWithoutData } from "util/api";
 import tokenUtil from "util/tokenUtil";
+import { clearPendingLogout, markPendingLogout } from "util/pendingLogout";
 import { translate } from "i18n/I18nProvider";
 
 export function useReRenderer() {
@@ -64,14 +65,22 @@ export const useLogout = (isMultipleLogin = false) => {
         headers: { MultiLogin: isMultipleLogin ? "true" : "false" },
       }),
     onSuccess: () => {
+      clearPendingLogout();
       tokenUtil.remove();
       logout();
       navigate('/signin');
       toast.success(translate("logout.done"));
     },
+    // 🐛 예전에는 실패하면 안내만 띄우고 화면은 로그인 상태로 남았다 — 공용 PC 의 사용자는 로그아웃된 줄 알고 자리를 뜬다.
+    //    화면(과 다른 탭)은 지금 로그아웃하고, 서버 로그아웃은 다음 접속 때 마무리한다(util/pendingLogout, docs/68 §13).
+    // [JA] 以前は失敗すると案内だけで画面はログイン状態のままだった。画面(と他のタブ)は今ログアウトし、サーバーのログアウトは次回に仕上げる。
     onError: (err) => {
-      toast.error(translate("logout.failed"));
-      console.error(err.response?.data.message);
+      markPendingLogout();
+      tokenUtil.remove();
+      logout();
+      navigate('/signin');
+      toast.error(translate("logout.local_only"), { id: "logoutLocalOnly" });
+      console.error(err.response?.data?.message);
     },
   });
 

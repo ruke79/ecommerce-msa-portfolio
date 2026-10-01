@@ -71,6 +71,10 @@ class RefreshTokenRotationControllerTest {
         when(jwtUtils.getIdFromJwtToken(PRESENTED)).thenReturn("a@example.com");
         owner = mock(User.class);
         when(owner.getUserId()).thenReturn(7L);
+        when(owner.isEnabled()).thenReturn(true);
+        when(owner.isAccountNonLocked()).thenReturn(true);
+        when(owner.isAccountNonExpired()).thenReturn(true);
+        when(owner.isCredentialsNonExpired()).thenReturn(true);
         when(userService.findByEmail("a@example.com")).thenReturn(owner);
         when(jwtUtils.generateTokenFromUser(owner)).thenReturn("new.access");
         // 쿠키는 새 토큰의 남은 수명으로 — 절대 수명(30일)이 가까우면 14일보다 짧다(docs/68 §12)
@@ -135,5 +139,26 @@ class RefreshTokenRotationControllerTest {
 
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         verify(refreshTokenService, never()).rotate(anyString(), any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = { "정지", "잠금", "계정 만료", "자격 증명 만료" })
+    @DisplayName("🔴 관리자가 막은 계정은 갱신하지 않고 그 묶음을 끊는다(docs/68 §13)")
+    void blockedAccountCannotRefresh(String how) throws Exception {
+        switch (how) {
+            case "정지" -> when(owner.isEnabled()).thenReturn(false);
+            case "잠금" -> when(owner.isAccountNonLocked()).thenReturn(false);
+            case "계정 만료" -> when(owner.isAccountNonExpired()).thenReturn(false);
+            default -> when(owner.isCredentialsNonExpired()).thenReturn(false);
+        }
+
+        var res = controller.refreshtoken(request, response);
+
+        assertThat(res.getStatusCode().value()).isEqualTo(400);
+        assertThat(res.getBody()).isEqualTo("account disabled");
+        verify(refreshTokenService).revoke(PRESENTED);
+        verify(refreshTokenService, never()).rotate(any(), any());
+        verify(jwtUtils, never()).generateTokenFromUser(any());
+        assertThat(response.getCookie(TokenType.REFRESH.getType()).getMaxAge()).isZero();
     }
 }

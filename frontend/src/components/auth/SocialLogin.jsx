@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getRequest } from "../../util/api";
+import { clearPendingLogout } from "util/pendingLogout";
 import { useTranslation } from "i18n/I18nProvider";
 
 /**
@@ -58,6 +59,8 @@ const SocialLogin = () => {
                         data-testid={`social-${p}`}
                         className={`w-full py-2 rounded text-sm font-medium ${meta.bg} ${meta.textClass}`}
                         onClick={() => {
+                            // 새 로그인을 시작한다 — 돌아온 뒤의 자동 복구가 이 로그인을 이어받게, 마무리 못 한 옛 로그아웃 표시를 지운다.
+                            clearPendingLogout();
                             window.location.href = `/user-service/oauth2/authorization/${p}`;
                         }}
                     >
