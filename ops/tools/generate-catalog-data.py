@@ -829,7 +829,7 @@ def main():
     if args.out:
         print(f"    배치 잡은 클래스패스의 csv/ 를 읽는다 — catalog-service/src/main/resources/csv/ 를 {args.out} 의 파일로")
         print("    바꿔 빌드한다(시드 원본은 따로 보관). 배치의 마지막 단계가 사이즈별 SKU 코드를 채운다.")
-    print("    ⚠️ 검색은 Elasticsearch 를 본다 — 재색인 필요:  ./ops/03-enable-es-search.sh")
+    print("    검색이 Elasticsearch 모드(SEARCH_ENGINE=es)면 재색인 필요:  ./ops/03-enable-es-search.sh")
     print("    부하 측정:  ./ops/14-load-test.sh")
     print(f"    끝나면 지우기:  {sys.argv[0]} --products {args.products} --id-offset {args.id_offset} --copy … --purge --yes")
 
