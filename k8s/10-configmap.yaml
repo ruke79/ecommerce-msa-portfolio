@@ -72,9 +72,11 @@ data:
   #                지도: docs/57 §16 표 — 호출하는 Feign 을 더하거나 옮기면 여기도 바꾼다(아니면 enforce 에서 403).
   #   RULES_MODE — observe: 어긋나면 [mTLS rule] 로 남기기만(모든 파드가 새 신원으로 뜨기 전·규칙을 바꾼 직후)
   #                enforce: 막는다. ops/37 의 ①-2(규칙 위반 0건)을 본 뒤 올린다.
+  #   ✅ 2026-10-01 저장소 기본값 enforce. 어긋난 호출은 익명으로 취급돼 그 내부 API 가 403 을 낸다. B-67 이 Feign 호출 ↔ 규칙을,
+  #   B-73 이 gRPC 서비스 ↔ 규칙을 대조한다. 되돌리기: observe 로 바꾸고 ./ops/28-deploy.sh <env> --config-only + 백엔드 재시작.
   INTERNAL_AUTH_ALLOWED_SUBJECTS: "user-service,catalog-service,cart-service,order-service,pay-service,coupon-service,chat-service,notification-service,delivery-service,saga-projection"
   INTERNAL_AUTH_PATH_RULES: "/api/order/internal/purchase-stats=user-service;/api/order/internal/purchased=user-service;/api/order/internal/orders=delivery-service;/api/coupon/internal/quote=order-service;/api/internal/stock/reservations=order-service;/ecommerce.stock.v1.StockReservation/=order-service;/api/product/rating=user-service;/api/auth/user/emails=order-service;/api/auth/user/name=order-service;/api/auth/user/segments=coupon-service;/api/auth/user/id=coupon-service|order-service|chat-service;/api/auth/user/email/=none;/api/auth/user/profile/=none"
-  INTERNAL_AUTH_RULES_MODE: "observe"
+  INTERNAL_AUTH_RULES_MODE: "enforce"
   #   gRPC(docs/66)도 같은 규칙을 쓴다 — gRPC 메서드의 HTTP/2 경로가 "/패키지.서비스/메서드" 라서 위 경로 앞부분 형식이 그대로 맞는다
   #   (/ecommerce.stock.v1.StockReservation/=order-service). proto 에 서비스를 더하면 여기에도 더한다(B-73 이 잡는다).
 

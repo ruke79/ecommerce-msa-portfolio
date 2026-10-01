@@ -271,17 +271,15 @@
 **対応した内容**
 - サービス間の **mTLS** を導入しました。サービスごとに証明書を別々に持たせます（CN = サービス名、cert-manager が90日の寿命で自動更新し、Reloader が再起動）。
 - 受け取る側の `InternalCallerFilter` が証明書で呼び出し元を判定します。観察モードで回してみた後、強制モードに切り替えました。
-- パスごとの許可リスト（`INTERNAL_AUTH_PATH_RULES`）で「どのサービスがどの内部パスを呼べるか」まで見ます。
+- パスごとの許可リスト（`INTERNAL_AUTH_PATH_RULES`）で「どのサービスがどの内部パスを呼べるか」まで見ます。これも観察段階を経て強制モードに切り替え、Feign・gRPC の呼び出しとルールが合っているかはガード（B-67・B-73）がビルドで照合します。
 - NetworkPolicy はデフォルト拒否です。自動ルートは無効にしました。外部公開は Cloudflare Tunnel で行い、インバウンドポートは 0 個です。
 
 **限界**
-- パスごとのルールは段階的に適用しています（観察 → 強制）。
 - サーバー証明書（`tls-keystore`）は依然としてサービス間で共有しており、手で管理しています。
 - NetworkPolicy は受信側（ingress）だけで、送信側（egress）のルールがありません。
 - Prometheus の収集が TLS 検証を省略しています。
 
 **改善点**
-- `ops/37` でルール違反 0 件を確認しながら、パスごとのルールの強制適用を仕上げます。
 - サーバー証明書も cert-manager に移し、egress の許可リストと Prometheus の CA 信頼を追加します。
 
 → [docs/57 §16·§18](57-remaining-priorities.md) · [docs/18](18-certificates.md)

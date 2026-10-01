@@ -2615,11 +2615,15 @@ class ConfigurationGuardrailTest {
      * 호출하는 모듈이 가장 긴 앞부분 규칙의 목록에 있는지 본다(docs/57 §16).
      */
     @Test
-    @DisplayName("B-67: Feign 이 부르는 내부 경로는 경로 규칙이 그 호출 서비스를 허용한다")
+    @DisplayName("B-67: Feign 이 부르는 내부 경로는 경로 규칙이 그 호출 서비스를 허용한다 — 규칙은 enforce")
     void feignInternalCallsAreAllowedByPathRules() throws IOException {
         String cm = Files.readString(repoRoot().resolve("k8s/10-configmap.yaml"), StandardCharsets.UTF_8);
         Matcher rm = Pattern.compile("INTERNAL_AUTH_PATH_RULES:\\s*\"([^\"]*)\"").matcher(cm);
         assertThat(rm.find()).as("k8s/10-configmap.yaml 에 INTERNAL_AUTH_PATH_RULES 가 있어야 한다").isTrue();
+        // 규칙은 강제한다(2026-10-01). 기본값이 observe 로 돌아가면 ops/28 배포가 운영의 enforce 를 조용히 되돌린다.
+        // [JA] ルールは強制する。既定値が observe に戻ると ops/28 のデプロイが運用の enforce を黙って戻す。
+        assertThat(cm).as("INTERNAL_AUTH_RULES_MODE 는 enforce — 낮추려면 오버레이에서(docs/57 §16)")
+                .containsPattern("(?m)^\\s*INTERNAL_AUTH_RULES_MODE:\\s*\"enforce\"");
         java.util.List<java.util.Map.Entry<String, Set<String>>> rules = new ArrayList<>();
         for (String part : rm.group(1).split(";")) {
             int eq = part.indexOf('=');

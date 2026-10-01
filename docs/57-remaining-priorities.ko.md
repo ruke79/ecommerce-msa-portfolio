@@ -557,12 +557,13 @@ Secret 모양은 cert-manager 의 Certificate(`keystores.pkcs12`)가 만드는 �
 # ③ 주요 흐름(주문·결제·배송·리뷰·쿠폰)을 한 번 돌린 뒤
 ./ops/37-check-mtls.sh --callers               #    누가 무엇을 불렀나 — 모두 자기 이름인가
 ./ops/37-check-mtls.sh                         #    ①-2 규칙 위반 0건이면 ↓
-kubectl -n ecommerce patch configmap ecommerce-config --type merge -p '{"data":{"INTERNAL_AUTH_RULES_MODE":"enforce"}}'
-kubectl -n ecommerce rollout restart deploy/<백엔드 열 개>
+# k8s/10-configmap.yaml 의 INTERNAL_AUTH_RULES_MODE 를 "enforce" 로(✅ 2026-10-01 저장소 기본값) →
+./ops/28-deploy.sh local --config-only         #    kubectl patch 로만 바꾸면 다음 배포가 매니페스트 값으로 되돌린다
+kubectl -n ecommerce rollout restart deploy/<백엔드 열 개>   # 환경 변수는 재시작해야 읽는다
 ./ops/37-check-mtls.sh                         # ④ 대조는 user-service 의 신원으로 200, 인증서 없이 403
 ```
 
-되돌리기: `INTERNAL_AUTH_RULES_MODE=observe` + 재시작(판정은 "내부 CA 인증서면 된다" 로 돌아간다).
+되돌리기: `INTERNAL_AUTH_RULES_MODE=observe` 로 바꾸고 `--config-only` + 재시작(판정은 "내부 CA 인증서면 된다" 로 돌아간다). B-67 이 저장소 기본값이 enforce 인지도 본다.
 
 ### 남은 것 — 정직하게
 

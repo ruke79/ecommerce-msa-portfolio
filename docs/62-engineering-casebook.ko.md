@@ -271,17 +271,15 @@
 **처리한 내용**
 - 서비스 간 **mTLS** 를 도입했습니다. 서비스마다 인증서를 따로 둡니다(CN = 서비스 이름, cert-manager 가 90일 수명으로 자동 갱신하고 Reloader 가 재시작).
 - 받는 쪽 `InternalCallerFilter` 가 인증서로 호출자를 판정합니다. 관찰 모드로 돌려 본 뒤 강제 모드로 바꿨습니다.
-- 경로별 허용 목록(`INTERNAL_AUTH_PATH_RULES`)으로 "어느 서비스가 어느 내부 경로를 부를 수 있는가" 까지 봅니다.
+- 경로별 허용 목록(`INTERNAL_AUTH_PATH_RULES`)으로 "어느 서비스가 어느 내부 경로를 부를 수 있는가" 까지 봅니다. 이것도 관찰 단계를 거쳐 강제 모드로 바꿨고, Feign·gRPC 호출과 규칙이 맞는지는 가드(B-67·B-73)가 빌드에서 대조합니다.
 - NetworkPolicy 는 기본 거부입니다. 자동 라우트는 껐습니다. 외부 노출은 Cloudflare Tunnel 로 해서 인바운드 포트가 0 개입니다.
 
 **한계**
-- 경로별 규칙은 단계적으로 적용 중입니다(관찰 → 강제).
 - 서버 인증서(`tls-keystore`)는 여전히 서비스들이 공유하고, 손으로 관리합니다.
 - NetworkPolicy 는 들어오는 쪽(ingress)만 있고 나가는 쪽(egress) 규칙이 없습니다.
 - Prometheus 수집이 TLS 검증을 생략합니다.
 
 **개선할 점**
-- `ops/37` 로 규칙 위반 0 건을 확인하며 경로별 규칙의 강제 적용을 마무리합니다.
 - 서버 인증서도 cert-manager 로 옮기고, egress 허용 목록과 Prometheus 의 CA 신뢰를 추가합니다.
 
 → [docs/57 §16·§18](57-remaining-priorities.ko.md) · [docs/18](18-certificates.ko.md)
