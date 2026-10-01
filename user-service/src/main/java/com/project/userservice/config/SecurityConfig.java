@@ -212,6 +212,12 @@ public class SecurityConfig {
                 http.formLogin(login -> login.disable());
                 http.logout((logout) -> logout.disable());
 
+                // CSRF 토큰은 쓰지 않는다. 그래도 CSRF 가 막히는 이유(docs/62 §8):
+                //  · 액세스 토큰은 쿠키가 아니라 Authorization 헤더로 온다 — 남의 사이트가 브라우저에 실어 보낼 수 없다.
+                //  · 쿠키로 신원을 싣는 요청(리프레시 회전·2FA 확인·로그아웃)은 모두 POST 이고, 그 쿠키는 SameSite=Lax 다
+                //    (JwtUtils.createCookie). 다른 사이트에서 시작한 POST 에는 실리지 않는다.
+                // [JA] CSRF トークンは使わない。それでも CSRF が止まる理由: アクセストークンは Authorization ヘッダーで来る。Cookie で
+                //      身元を運ぶ要求はすべて POST で、その Cookie は SameSite=Lax(JwtUtils.createCookie)なので他サイト発の POST には載らない。
                 http.csrf(AbstractHttpConfigurer::disable);
                 http.authorizeHttpRequests((requests) -> requests
                                 .requestMatchers(CorsUtils::isPreFlightRequest).permitAll()

@@ -2,7 +2,7 @@
 
 [日本語](04-frontend-issues.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** FE-1~9 는 [05](05-frontend-improvements.ko.md) · [26](26-frontend-review-and-refactor.ko.md) 에서 고쳤습니다. FE-10(CSRF)은 쿠키·CSRF 정책 강화 과제로 이어집니다([docs/62 §8](62-engineering-casebook.ko.md)).
+> 🕰️ **상태(2026-09-27) — 이전 기록.** FE-1~9 는 [05](05-frontend-improvements.ko.md) · [26](26-frontend-review-and-refactor.ko.md) 에서 고쳤습니다. FE-10(CSRF)은 서버 쿠키를 `SameSite=Lax` 로 명시해 해결했습니다([docs/62 §8](62-engineering-casebook.ko.md)).
 
 > 작성일: 2026-07-24
 > 대상: `frontend/` (React 18 SPA)

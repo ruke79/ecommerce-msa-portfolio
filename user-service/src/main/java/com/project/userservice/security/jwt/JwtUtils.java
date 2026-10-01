@@ -427,36 +427,11 @@ public class JwtUtils {
   }
 
   // Http only cookie + JWT
-
-  public ResponseCookie generateJwtCookie(User user) {
-    String jwt = generateTokenFromUser(user);
-    return generateCookie(jwtCookie, jwt, "/api");
-  }
-
-  public ResponseCookie generateRefreshJwtCookie(String refreshToken) {
-    return generateCookie(jwtRefreshCookie, refreshToken, "/");
-  }
-
-  public ResponseCookie getCleanJwtCookie() {
-    ResponseCookie cookie = ResponseCookie.from(jwtCookie,
-        null).path("/api").build();
-    return cookie;
-  }
-
-  public ResponseCookie getCleanJwtRefreshCookie() {
-    ResponseCookie cookie = ResponseCookie.from(jwtRefreshCookie,
-        null).path("/api").build();
-    return cookie;
-  }
-
-  private ResponseCookie generateCookie(String name, String value, String path) {
-    ResponseCookie cookie = ResponseCookie.from(name, value)
-        .path(path).maxAge(24 * 60 * 60)
-        .sameSite("None")
-        .secure(true)
-        .httpOnly(true).build();
-    return cookie;
-  }
+  //
+  // 🗑️ 예전에는 여기 ResponseCookie 로 쿠키를 만드는 메서드 다섯 개가 있었고 SameSite=None 이었다. 부르는 곳이 없었다 — 실제 쿠키는
+  //    전부 아래 createCookie 가 만든다. 코드를 읽는 사람이 "리프레시 쿠키가 SameSite=None" 이라고 오해하게만 했다.
+  // [JA] 🗑️ 以前はここに ResponseCookie で Cookie を作るメソッドが5つあり SameSite=None だった。呼び出し元はなかった — 実際の Cookie は
+  //    すべて下の createCookie が作る。読む人に「リフレッシュ Cookie は SameSite=None」と誤解させるだけだった。
 
   /**
    * 🐛 예전에는 {@code int expiry} 였고 단위가 호출하는 쪽마다 달랐다 — 2FA 대기 쿠키는 초를, 리프레시 쿠키는
@@ -477,9 +452,31 @@ public class JwtUtils {
     cookie.setSecure(true);
     cookie.setPath("/");
     cookie.setHttpOnly(true);
+    // 🔒 SameSite=Lax — 다른 사이트에서 시작한 POST·fetch 에는 쿠키가 실리지 않는다. 쿠키로 신원을 싣는 요청(리프레시 회전,
+    //    2FA 확인, 로그아웃)은 모두 POST 라, 남의 사이트가 사용자 브라우저로 그것들을 대신 보내는 CSRF 가 여기서 막힌다.
+    //    액세스 토큰은 쿠키가 아니라 Authorization 헤더로 다니므로 애초에 CSRF 대상이 아니다.
+    //
+    //    🐛 예전에는 속성을 아예 적지 않았다. 브라우저마다 기본값이 다르다 — Chrome 은 Lax 로 보되 발급 후 2분 동안은 교차 사이트
+    //    POST 에도 실어 보내고(Lax+POST), Safari·Firefox 는 None 으로 취급한다. 명시해야 모든 브라우저에서 같다.
+    //
+    //    Strict 가 아닌 이유: OAuth 제공자(구글·카카오·LINE)에서 돌아오는 것은 다른 사이트에서 시작한 최상위 GET 이동이다.
+    //    Strict 면 그 이동에 기존 쿠키(기기 식별 등)가 실리지 않는다. Lax 는 최상위 GET 이동에는 싣고, POST 에는 싣지 않는다.
+    //    프론트와 API 가 같은 사이트(같은 도메인 또는 그 하위 도메인)에 있다는 전제다 — 운영 구성(nginx 가 같은 호스트에서 프록시)이 그렇다.
+    // [JA] 🔒 SameSite=Lax — 他サイトから始まった POST・fetch には Cookie が載らない。Cookie で身元を運ぶ要求(リフレッシュのローテーション、
+    //    2FA 確認、ログアウト)はすべて POST なので、他サイトがユーザーのブラウザで代わりに送る CSRF がここで止まる。
+    //    アクセストークンは Cookie ではなく Authorization ヘッダーで運ぶので、そもそも CSRF の対象ではない。
+    //    🐛 以前は属性を書いていなかった。ブラウザごとに既定値が違う(Chrome は Lax 扱いだが発行後2分は他サイトの POST にも載せる、
+    //    Safari・Firefox は None 扱い)。明示してすべてのブラウザで同じにする。
+    //    Strict にしない理由: OAuth 提供者から戻るのは他サイト発のトップレベル GET 遷移で、Strict だと既存の Cookie が載らない。
+    //    フロントと API が同じサイトにある前提 — 運用構成(nginx が同じホストでプロキシ)はそうなっている。
+    cookie.setAttribute("SameSite", SAME_SITE);
 
     return cookie;
   }
+
+  /** 모든 인증 쿠키의 SameSite 값. */
+  // [JA] すべての認証 Cookie の SameSite 値。
+  public static final String SAME_SITE = "Lax";
 
   /** 리프레시 토큰의 수명 — 쿠키 {@code Max-Age} 와 Redis TTL 이 같은 값을 쓴다. */
   // [JA] リフレッシュトークンの寿命 — Cookie の {@code Max-Age} と Redis の TTL が同じ値を使う。

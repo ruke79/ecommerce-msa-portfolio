@@ -255,7 +255,6 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
                     jwtUtils.createCookie(TokenType.REFRESH.getType(), refreshToken.getToken(), jwtUtils.refreshTokenLifetime()));
             // refreshTokenService.deleteByUserId(userDetails.getId());
             // response.setHeader(HttpHeaders.SET_COOKIE,
-            // jwtUtils.generateRefreshJwtCookie(refreshToken.getToken()).toString());
             response.getWriter().write(data);
             response.setStatus(HttpStatus.OK.value());
             

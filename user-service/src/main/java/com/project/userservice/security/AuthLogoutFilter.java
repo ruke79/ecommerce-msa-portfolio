@@ -127,11 +127,9 @@ public class AuthLogoutFilter extends GenericFilterBean {
                 log.info("중복 로그인 시도에 의한 로그아웃");
             }
             
-            // Refresh 토큰 쿠키 만료
-            Cookie cookie = new Cookie(TokenType.REFRESH.getType(), null);
-            cookie.setMaxAge(0);
-            cookie.setPath("/");
-            response.addCookie(cookie);
+            // Refresh 토큰 쿠키 만료 — 발급할 때와 같은 속성(Secure·HttpOnly·SameSite)으로 지운다.
+            // [JA] Refresh トークン Cookie を失効 — 発行時と同じ属性(Secure・HttpOnly・SameSite)で消す。
+            response.addCookie(jwtUtils.createCookie(TokenType.REFRESH.getType(), null, java.time.Duration.ZERO));
 
             // 성공 응답 전송
             response.setStatus(HttpServletResponse.SC_OK);

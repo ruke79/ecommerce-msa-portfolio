@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](04-frontend-issues.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** FE-1〜9 は [05](05-frontend-improvements.md) · [26](26-frontend-review-and-refactor.md) で修正しました。FE-10（CSRF）はクッキー・CSRF ポリシー強化の課題として引き継いでいます（[docs/62 §8](62-engineering-casebook.md)）。
+> 🕰️ **状態（2026-09-27）— 過去の記録。** FE-1〜9 は [05](05-frontend-improvements.md) · [26](26-frontend-review-and-refactor.md) で修正しました。FE-10（CSRF）はサーバーのクッキーを `SameSite=Lax` と明示して解決しました（[docs/62 §8](62-engineering-casebook.md)）。
 
 > 作成日: 2026-07-24
 > 対象: `frontend/`（React 18 SPA）
