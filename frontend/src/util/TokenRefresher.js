@@ -7,6 +7,7 @@ import { jwtDecode } from "jwt-decode";
 import { toUser } from "./jwtUser";
 import { translate } from "i18n/I18nProvider";
 import { AUTH_REFRESH_EVENT } from "./authEvents";
+import { subscribeAuth, SIGNED_IN, SIGNED_OUT } from "./authSync";
 
 /**
  * 강제 로그아웃이 일어났다는 사실과 **누가 시켰는지**를 남긴다.
@@ -94,6 +95,7 @@ export function useTokenRefresh() {
     login,
     logout,
     token,
+    user,
     addresses,
     status,
     isAuthenticated,
@@ -104,25 +106,54 @@ export function useTokenRefresh() {
 
   
 
-  const refreshAccessToken = useCallback(async () => {
+  /** @param options.broadcast false 면 결과를 다른 탭에 알리지 않는다(다른 탭의 알림을 받아 갱신할 때). */
+  const refreshAccessToken = useCallback(async ({ broadcast = true } = {}) => {
     try {
       const response = await getRequest("/user-service/api/token/refresh");
 
       if (response.status === 204) {
-        logout();
+        logout({ broadcast });
       } else if (response.status === 200) {
         const accessToken = response.headers["access"];
         const decodedToken = jwtDecode(accessToken);
         const user = toUser(decodedToken, accessToken);
         const expiredAt = decodedToken.exp;
-        login(user, accessToken, expiredAt);
+        login(user, accessToken, expiredAt, { broadcast });
         //setAuthenticationStatus(STATUS.SUCCEEDED);  --> flicking problem
       }
     } catch (error) {
-      logout();
+      logout({ broadcast });
       //setAuthenticationStatus(STATUS.FAILED);  --> flicking problem
     }
   }, [login, logout]);
+
+  // 다른 탭의 로그인 · 로그아웃을 따라간다(util/authSync). 받은 알림으로는 다시 알리지 않는다 — 탭끼리 주고받기가 멈추지 않는다.
+  // [JA] 他のタブのログイン · ログアウトに追従する。受けた通知では再通知しない。
+  const authSnapshot = useRef({ isAuthenticated, status, userId: null });
+  authSnapshot.current = { isAuthenticated, status, userId: user?.userId ?? null };
+  useEffect(() => {
+    return subscribeAuth(({ type, uid }) => {
+      const now = authSnapshot.current;
+      if (type === SIGNED_OUT) {
+        if (now.isAuthenticated) {
+          logout({ broadcast: false });
+          toast(translate("auth2.signed_out_elsewhere"), { id: "signedOutElsewhere" });
+        }
+        return;
+      }
+      if (type === SIGNED_IN) {
+        // 처음 복구 중이면 그 갱신이 결과를 정한다 — 겹쳐 부르면 리프레시 토큰이 두 번 회전한다.
+        if (now.status === STATUS.PENDING) return;
+        if (!now.isAuthenticated) {
+          // 로그인 화면이나 "세션 만료" 에 멈춰 있던 탭 — 공유 쿠키로 자기 토큰을 받는다. 작성 중이던 화면은 그대로 둔다.
+          refreshAccessToken({ broadcast: false });
+        } else if (uid && now.userId && uid !== now.userId) {
+          // 다른 사용자로 바뀌었다 — 앞 사용자의 화면 상태를 남기지 않는다.
+          window.location.reload();
+        }
+      }
+    });
+  }, [login, logout, refreshAccessToken]);
 
   useEffect(() => {
     if (status === STATUS.PENDING) {

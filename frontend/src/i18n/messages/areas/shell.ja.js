@@ -108,6 +108,7 @@ const shell = {
     "notice.detail.not_found": "お知らせが見つかりません。",
     "notice.detail.error": "お知らせを読み込めませんでした。",
     "notice.detail.back": "← お知らせ一覧",
+    "auth2.signed_out_elsewhere": "別のタブでログアウトしました。",
     "auth2.session_expired": "セッションの有効期限が切れたため、ログアウトしました。再度ログインしてください。",
     "auth2.service_unavailable": "サーバーが一時的に応答していません。しばらくしてから再度お試しください。",
     "auth2.signin_again": "ログイン情報が無効です。再度ログインしてください。",

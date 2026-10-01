@@ -11,6 +11,7 @@ import toast from "react-hot-toast";
 import { useErrorBoundary } from "react-error-boundary";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
+import { publishAuth, SIGNED_IN, SIGNED_OUT } from "util/authSync";
 
 export const STATUS = Object.freeze({
   IDLE: "idle",
@@ -84,7 +85,16 @@ export const ContextProvider = ({ children }) => {
   // 인증 상태는 전적으로 메모리(reducer)에 보관한다. (localStorage 조회 제거)
   const [state, dispatch] = React.useReducer(authReducer, initialState);
 
-  const login = React.useCallback((user, token, expiresAt) => {
+  // 탭 간 동기화(util/authSync) — 로그아웃은 "로그인돼 있던 탭이 로그아웃할 때" 만 알린다. 처음 열린 탭의 복구 실패(쿠키 없음)까지
+  // 알리면, 다른 탭의 멀쩡한 로그인을 끊는다.
+  // [JA] タブ間同期 — ログアウトは「ログインしていたタブがログアウトするとき」だけ知らせる。
+  const authenticatedRef = React.useRef(false);
+  authenticatedRef.current = state.isAuthenticated;
+
+  /**
+   * @param options.broadcast false 면 다른 탭에 알리지 않는다 — 다른 탭의 알림을 받아 따라 할 때(알림이 되돌아오지 않게)
+   */
+  const login = React.useCallback((user, token, expiresAt, { broadcast = true } = {}) => {
     dispatch({
       type: "login",
       payload: {
@@ -93,12 +103,16 @@ export const ContextProvider = ({ children }) => {
         expiresAt,
       },
     });
+    // 갱신마다 알린다 — 받은 탭 중 로그아웃 상태인 탭만 움직인다(같은 사용자로 로그인된 탭은 무시한다).
+    if (broadcast) publishAuth(SIGNED_IN, user?.userId);
   }, []);
 
-  const logout = React.useCallback(() => {
+  const logout = React.useCallback(({ broadcast = true } = {}) => {
+    const wasAuthenticated = authenticatedRef.current;
     dispatch({
       type: "logout",
     });
+    if (broadcast === true && wasAuthenticated) publishAuth(SIGNED_OUT);
   }, []);
 
   const updateUser = React.useCallback((user) => {

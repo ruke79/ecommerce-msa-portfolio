@@ -108,6 +108,7 @@ const shell = {
     "notice.detail.not_found": "공지를 찾을 수 없습니다.",
     "notice.detail.error": "공지를 불러오지 못했습니다.",
     "notice.detail.back": "← 공지사항 목록",
+    "auth2.signed_out_elsewhere": "다른 탭에서 로그아웃되었습니다.",
     "auth2.session_expired": "세션이 만료되어 로그아웃되었습니다. 다시 로그인해 주세요.",
     "auth2.service_unavailable": "서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요.",
     "auth2.signin_again": "로그인 정보가 유효하지 않습니다. 다시 로그인해 주세요.",

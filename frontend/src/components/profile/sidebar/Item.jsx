@@ -5,26 +5,25 @@ import { Link  } from "react-router-dom";
 import { ArrowLongRightIcon } from "@heroicons/react/24/solid";
 import slugify from "slugify";
 import { useAuthContext } from "store/AuthContext";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useLogout } from "hook/hooks";
+import { useSearchParams } from "react-router-dom";
 
 const Item = ({ item, visible, index }) => {
     const { t } = useTranslation();
-    const { token, logout } = useAuthContext();
+    const { token } = useAuthContext();
 
     const [show, setShow] = useState(visible);
-    const navigate = useNavigate();
+
 
     const [ searchParams, setSearchParams] = useSearchParams();
     const qParam = searchParams.get('q');
 
+    // 🐛 예전에는 화면의 로그인 표시만 지웠다(logout()) — 서버의 리프레시 토큰과 쿠키가 남아, 새로고침하면 다시 로그인돼 있었고
+    //    다른 탭은 계속 로그인 상태였다. 헤더의 로그아웃과 같은 경로(useLogout — 서버 로그아웃 → 화면 · 다른 탭 정리)를 쓴다.
+    // [JA] 以前は画面のログイン表示だけを消していた — サーバーのリフレッシュトークンと Cookie が残り、再読み込みで再ログイン状態になった。
+    const { logout: signOut } = useLogout();
     const handleLogout = () => {
-        // localStorage.removeItem("access_token"); // Updated to remove token from localStorage
-        // localStorage.removeItem("USER"); // Remove user details as well        
-        // localStorage.removeItem("IS_ADMIN");
-        // setToken(null);       
-        logout();
-        
-        navigate("/signin");
+        signOut();
       };
       
     
