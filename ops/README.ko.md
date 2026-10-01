@@ -45,7 +45,7 @@
 | ㉝ | `33-deploy-some.sh` | **서비스 여러 개를 한 태그로 빌드해서 차례로 올린다 — 개발 루프용.** ops/31 의 여러 서비스판이고 같은 이유로 ops/28 의 대체재가 **아니다**(저널·스모크 없음, 버전이 섞인다 — 끝날 때 수렴 명령을 출력). 빌드는 ops/19 한 번(`--only "a b c"`). 올리는 순서가 정해져 있다(기반 → 백엔드 → user-service → 게이트웨이 → 프론트). 기본은 **하나씩 올리고 실패하면 거기서 멈추며** 이미 올린 것의 되돌리기 명령을 역순으로 출력한다 — `--rollback-on-failure` 면 직접 되돌린다, `--parallel` 은 한꺼번에 바꾸고 기다린다. user-service ↔ gateway-server 는 짝이라 하나만 주면 다른 하나를 더한다(`--allow-split`). `--changed <git ref>` 는 그 뒤 바뀐 모듈로 대상을 고른다(common·루트 gradle·런타임 Dockerfile 이면 자바 서비스 전부). 같은 태그면 거부, `--dry-run` | 🟢 개발 중에만 |
 | ㊷ | `42-repair-orphan-sizes.sh` | **부모 없이 저장된 사이즈 복구**(관리자 등록 버그, docs/65 §5) — `status` · `preview`(생성 시각으로 짝 추정 · 확신도 HIGH/CHECK/NONE, 고치지 않음) · `apply <size_id>:<스타일 id>`(확인한 짝만, 한 트랜잭션, 하나라도 틀리면 전부 되돌림) | 배포 후 한 번 |
 | ㊶ | `41-show-trace.sh` | **추적 하나를 터미널에 나무로 그린다** — 최신 · `--longest`(사가) · `--errors` · 로그의 traceId. 스팬 사이 빈틈이 아웃박스 · Kafka 를 건넌 시간 (docs/63) | 조사할 때 |
-| — | `tools/generate-catalog-data.py` | **부하용 카탈로그 데이터 생성** — 시드 CSV 를 템플릿으로 증식(분포 보존). 5만 상품/55만 행을 25초에 COPY 적재. 인덱스 선택도 측정의 전제(docs/19 §5) | 🟡 튜닝 시 |
+| — | `tools/generate-catalog-data.py` | **부하용 카탈로그 데이터 생성** — 대형 쇼핑몰식 분류(대분류 20 · 소분류 99) 또는 시드 증식. 묶음 단위 COPY 로 수천만 개까지(`--resume` · `--purge`), `--estimate` 로 용량 미리 보기 — 상품당 약 2.1KB 실측(docs/19 §5.1) | 🟡 튜닝 시 |
 | — | `tools/hbm2flyway.py` | **스키마 베이스라인 생성** — Hibernate 가 뽑은 DDL 을 멱등 Flyway 마이그레이션으로 변환. 손으로 쓰면 반드시 어긋나므로 기계 변환한다(docs/20 §3) | 엔티티 대개편 시 |
 
 ## 빠른 시작
