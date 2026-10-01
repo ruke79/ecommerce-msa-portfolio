@@ -725,7 +725,7 @@ class CsvSink:
 MEASURED = {
     "rows_per_product": {"product_sku": 1.70, "product_size": 3.02, "product_subcategory": 1.0},
     "bytes_per_product": 2_108,
-    "products_per_sec": 3_000,     # 4코어 x86 · synchronous_commit=off. 2코어 노드 · 기본 설정이면 3~5배 느리다
+    "products_per_sec": 3_000,     # 4코어 x86 · synchronous_commit=off. 운영 노드 · 기본 설정이면 3~5배로 잡는다
 }
 # Elasticsearch 는 재지 않았다 — 문서(ProductDocument: 이름 · 설명 · 브랜드 다중 필드 + nested skus · subcategories)
 # 원본 JSON 약 0.7KB 에 색인 오버헤드를 더한 추정 범위다.
@@ -744,7 +744,7 @@ def estimate(n: int):
     print(f"    PostgreSQL 표 + 인덱스    약 {gib:,.1f} GiB  (실측 기반)")
     print(f"    적재 중 WAL 여유까지      디스크 약 {gib * 1.5:,.0f} GiB 가 비어 있어야 한다")
     print(f"    Elasticsearch 재색인 후   약 {es_lo:,.0f} ~ {es_hi:,.0f} GiB  (추정, 복제본 0)")
-    print(f"    적재 시간                 약 {hours:,.1f}시간(4코어 실측) — 2코어 노드면 {hours * 3:,.1f} ~ {hours * 5:,.1f}시간")
+    print(f"    적재 시간                 약 {hours:,.1f}시간(4코어 실측) — 운영 노드면 {hours * 3:,.1f} ~ {hours * 5:,.1f}시간")
     return gib
 
 

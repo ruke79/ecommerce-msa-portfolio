@@ -403,23 +403,53 @@ spec:
       #    CSI 프로비저너를 쓰는 클러스터에서는 이 줄이 실제로 소유권을 맞춰 준다.
       securityContext:
         fsGroup: 1000
+      # 형태소 분석 플러그인(nori · kuromoji) — common/src/main/resources/es/es-settings.json 이 nori_tokenizer ·
+      # kuromoji_tokenizer 를 쓴다. 기본 이미지에는 없어서, 없으면 재색인이 **색인 생성 단계에서** 실패한다
+      # (Unknown tokenizer type). 플러그인은 PVC 안(.es-plugins)에 둔다 — 한 번 받으면 재시작에 네트워크가 필요 없다.
+      # ES 이미지를 올리면 플러그인 버전이 어긋나므로, 버전이 다른 것만 지우고 다시 받는다(docs/19 §5.2).
+      # ⚠️ k8s 는 args 의 $(…) 를 환경 변수 참조로 읽는다 — 명령 치환은 $$(…) 로 쓴다.
+      initContainers:
+        - name: install-analysis-plugins
+          image: mirror.gcr.io/elasticsearch:8.15.5
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -eu
+              want=$$(ls /usr/share/elasticsearch/lib/ | sed -n -E 's/^elasticsearch-([0-9]+\.[0-9]+\.[0-9]+)\.jar$/\1/p')
+              [ -n "$want" ] || { echo "ES 버전을 알 수 없다"; exit 1; }
+              missing=""
+              for p in analysis-nori analysis-kuromoji; do
+                have=$$(sed -n 's/^elasticsearch.version=//p' "/usr/share/elasticsearch/plugins/$p/plugin-descriptor.properties" 2>/dev/null || true)
+                if [ "$have" != "$want" ]; then
+                  rm -rf "/usr/share/elasticsearch/plugins/$p"
+                  missing="$missing $p"
+                fi
+              done
+              if [ -z "$missing" ]; then echo "형태소 분석 플러그인이 이미 있다(ES $want)"; exit 0; fi
+              echo "설치:$missing (ES $want)"
+              /usr/share/elasticsearch/bin/elasticsearch-plugin install --batch $missing
+          volumeMounts:
+            - { name: data, mountPath: /usr/share/elasticsearch/plugins, subPath: .es-plugins }
       containers:
         - name: elasticsearch
           image: mirror.gcr.io/elasticsearch:8.15.5
           env:
             - { name: discovery.type, value: "single-node" }
             - { name: xpack.security.enabled, value: "false" }
-            - { name: ES_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+            # 힙 1GB — 상품 수백만 개(nested 포함 Lucene 문서 수천만)를 색인할 때 512MB 로는 병합 중 메모리가 모자란다(docs/19 §5.2).
+            # 컨테이너 상한은 힙의 2배(오프힙 · 파일 캐시 몫).
+            - { name: ES_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
           ports: [ { containerPort: 9200 } ]
           volumeMounts:
             - { name: data, mountPath: /usr/share/elasticsearch/data }
+            - { name: data, mountPath: /usr/share/elasticsearch/plugins, subPath: .es-plugins }
           readinessProbe:
             httpGet: { path: /_cluster/health, port: 9200 }
             initialDelaySeconds: 15
             periodSeconds: 10
           resources:
-            requests: { cpu: 200m, memory: 768Mi }
-            limits: { memory: 1536Mi }
+            requests: { cpu: 200m, memory: 1Gi }
+            limits: { memory: 2Gi }
       volumes:
         - { name: data, persistentVolumeClaim: { claimName: es-data } }
 ---

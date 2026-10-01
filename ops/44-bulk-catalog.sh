@@ -27,7 +27,7 @@
 #   STORAGE_DIR=/var/lib/rancher/k3s/storage   # local-path 가 PVC 를 두는 곳(디스크 여유를 여기서 잰다)
 #   FORCE=1   백업 시간대 · 디스크 경고를 무시     YES=1   purge 확인을 묻지 않음
 #
-# ⚠️ 2천만 개 같은 큰 값은 운영 노드에 넣지 않는다 — 노드 2코어 / 12GB, PostgreSQL 파드 메모리 512Mi(docs/19 §5.1).
+# ⚠️ 2천만 개 같은 큰 값은 운영 노드에 넣지 않는다 — 디스크 60~90GB, PostgreSQL 파드 메모리 512Mi(docs/19 §5.1).
 #
 set -euo pipefail
 

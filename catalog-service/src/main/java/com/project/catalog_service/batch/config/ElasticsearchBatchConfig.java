@@ -28,6 +28,8 @@ import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.database.JpaPagingItemReader;
+
+import com.project.catalog_service.batch.reader.KeysetItemReader;
 import org.springframework.batch.item.database.builder.JpaPagingItemReaderBuilder;
 import org.springframework.batch.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -124,28 +126,34 @@ public class ElasticsearchBatchConfig {
     }
 
     // --- Readers (수정된 부분) ---
+    /**
+     * 상품 — id 키셋 페이징(KeysetItemReader). 예전에는 컬렉션 넷을 JOIN FETCH 한 쿼리에 OFFSET 페이징을 걸어 Hibernate 가
+     * <b>매 페이지마다 결과 전체를 메모리에 올렸다</b>(HHH90003004) — 200만 개면 OOM 이다(docs/19 §5.2).
+     *
+     * <p>매퍼(ProductDocumentMapper)가 읽는 것만 채운다: 카테고리 · SKU(색상) 는 본 쿼리에서, 소분류 · 사이즈는 컬렉션마다 쿼리 하나.
+     * details · questions 는 매퍼가 쓰지 않아 읽지 않는다(예전에는 읽고 버렸다).
+     */
+    // [JA] 商品 — id キーセットページング。旧実装はコレクション 4 つを JOIN FETCH したクエリに OFFSET ページングをかけ、Hibernate が
+    //      ページごとに結果全体をメモリに載せていた(HHH90003004)。マッパーが読むものだけを満たす。
     @Bean
-    public JpaPagingItemReader<Product> productReader() {
-        String queryString = "SELECT p FROM Product p " +
-                "LEFT JOIN FETCH p.category " +
-                "LEFT JOIN FETCH p.subcategories " +
-                "LEFT JOIN FETCH p.details " +
-                "LEFT JOIN FETCH p.questions " +
-                "LEFT JOIN FETCH p.skus s " +
-                // s.sizes 를 함께 JOIN FETCH 하면 List 컬렉션(bag) 두 개를 동시에 패치하게 되어
-                //   MultipleBagFetchException: cannot simultaneously fetch multiple bags
-                //     [ProductSku.sizes, Product.subcategories]
-                // 로 **색인 스텝이 매번 실패**했다(docs/16 B-26). sizes 는 @BatchSize 로
-                // 배치 로딩하도록 두고 여기서는 패치하지 않는다.
-                "LEFT JOIN FETCH s.color "; // `ProductSku` 내의 `color` 연관 패치
-        
-        return new JpaPagingItemReaderBuilder<Product>()
-                .name("productReader")
-                .entityManagerFactory(entityManagerFactory)
-                .queryString(queryString)
-                .pageSize(CHUNK_SIZE)
-                .saveState(false)
-                .build();
+    public KeysetItemReader<Product> productReader() {
+        return new KeysetItemReader<>(entityManagerFactory, "Product", "productId",
+                "SELECT DISTINCT p FROM Product p "
+                        + "LEFT JOIN FETCH p.category "
+                        + "LEFT JOIN FETCH p.skus s "
+                        + "LEFT JOIN FETCH s.color "
+                        + "WHERE p.productId IN :ids",
+                Product::getProductId,
+                (em, ids) -> {
+                    // 같은 영속성 컨텍스트라 이미 읽은 상품 · SKU 의 컬렉션에 붙는다(List 두 개를 한 쿼리에 FETCH 하면
+                    // MultipleBagFetchException — docs/16 B-26).
+                    em.createQuery("SELECT DISTINCT p FROM Product p "
+                            + "LEFT JOIN FETCH p.subcategories ps LEFT JOIN FETCH ps.subcategory "
+                            + "WHERE p.productId IN :ids").setParameter("ids", ids).getResultList();
+                    em.createQuery("SELECT DISTINCT s FROM ProductSku s LEFT JOIN FETCH s.sizes "
+                            + "WHERE s.product.productId IN :ids").setParameter("ids", ids).getResultList();
+                },
+                CHUNK_SIZE);
     }
 
     @Bean
@@ -192,26 +200,20 @@ public class ElasticsearchBatchConfig {
                 .build();
     }
 
+    /** 수백만 행 — OFFSET 페이징이면 앞 페이지를 매번 다시 건너뛴다. id 키셋으로 읽는다(docs/19 §5.2). */
+    // [JA] 数百万行 — OFFSET ページングだと前のページを毎回読み飛ばす。id キーセットで読む。
     @Bean
-    public JpaPagingItemReader<ProductSku> productSkuReader() {
-        return new JpaPagingItemReaderBuilder<ProductSku>()
-                .name("productSkuReader")
-                .entityManagerFactory(entityManagerFactory)
-                .queryString("SELECT ps FROM ProductSku ps")
-                .pageSize(CHUNK_SIZE)
-                .saveState(false)
-                .build();
+    public KeysetItemReader<ProductSku> productSkuReader() {
+        return new KeysetItemReader<>(entityManagerFactory, "ProductSku", "skuproductId",
+                "SELECT e FROM ProductSku e WHERE e.skuproductId IN :ids", ProductSku::getSkuproductId, null, CHUNK_SIZE);
     }
 
+    /** 수백만 행 — OFFSET 페이징이면 앞 페이지를 매번 다시 건너뛴다. id 키셋으로 읽는다(docs/19 §5.2). */
+    // [JA] 数百万行 — OFFSET ページングだと前のページを毎回読み飛ばす。id キーセットで読む。
     @Bean
-    public JpaPagingItemReader<ProductSize> productSizeReader() {
-        return new JpaPagingItemReaderBuilder<ProductSize>()
-                .name("productSizeReader")
-                .entityManagerFactory(entityManagerFactory)
-                .queryString("SELECT ps FROM ProductSize ps")
-                .pageSize(CHUNK_SIZE)
-                .saveState(false)
-                .build();
+    public KeysetItemReader<ProductSize> productSizeReader() {
+        return new KeysetItemReader<>(entityManagerFactory, "ProductSize", "sizeId",
+                "SELECT e FROM ProductSize e WHERE e.sizeId IN :ids", ProductSize::getSizeId, null, CHUNK_SIZE);
     }
 
     @Bean

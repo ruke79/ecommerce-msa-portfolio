@@ -45,7 +45,7 @@ if [ "$DRY_RUN" != "1" ]; then
     echo ">>> 4) 애널라이저 샘플 검증(nori):"
     "${CURL[@]}" "${ES_AUTH[@]}" -H 'Content-Type: application/json' \
         "$ES_URL/$ALIAS/_analyze" -d '{"analyzer":"korean_analyzer","text":"운동화"}' || \
-        echo "WARN: korean_analyzer 실패 — ES 에 nori 플러그인이 설치되어 있는지 확인 (bin/elasticsearch-plugin install analysis-nori)"
+        echo "WARN: korean_analyzer 실패 — ES 에 nori 플러그인이 설치되어 있는지 확인 — kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins (k8s/90, docs/19 §5.2)"
 fi
 
 echo

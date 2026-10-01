@@ -202,7 +202,7 @@ export DOCKER_HOST=unix:///var/run/docker.sock
 
 | 항목 | 상태 |
 |---|---|
-| **한국어 형태소 분석(nori)** | ❌ — 플러그인을 어디서도 구할 수 없다. Maven Central 에 `analysis-kuromoji` 는 있으나 `analysis-nori` 는 없고, Lucene 의 `lucene-analysis-nori` 에는 Elasticsearch 플러그인 래퍼 클래스가 없어 **플러그인을 직접 작성**해야 한다. 그건 이 저장소가 떠안을 유지보수 부담이라 하지 않았다. nori 가 설치된 환경에서 재확인이 필요하다. |
+| **한국어 형태소 분석(nori)** | ❌ — 플러그인을 어디서도 구할 수 없다. Maven Central 에 `analysis-kuromoji` 는 있으나 `analysis-nori` 는 없고, Lucene 의 `lucene-analysis-nori` 에는 Elasticsearch 플러그인 래퍼 클래스가 없어 **플러그인을 직접 작성**해야 한다. 그건 이 저장소가 떠안을 유지보수 부담이라 하지 않았다. nori 가 설치된 환경에서 재확인이 필요하다. 클러스터의 ES 는 이제 initContainer 로 설치한다(docs/19 §5.2) — 첫 기동 로그로 확인한다. |
 | **컨슈머 멱등성 확산** | ⚠️ — 12개 중 5개. 나머지는 성격상 재실행이 무해하거나(cart-empty) 이미 상태 검사로 보호된다(order 사가). 일괄 적용은 의식(ceremony)일 뿐이라 하지 않았다. |
 | **채팅 WebSocket/STOMP 경로** | ✅ 해결 — `ChatStompIntegrationTest` 가 전 구간을 밟는다(아래 §6.1). |
 | **Grafana 대시보드 렌더링** | ❌ — 쿼리가 데이터를 돌려주는 것까지는 확인했지만(docs/16), 패널이 실제로 그려지는지는 확인하지 못했다(바이너리 다운로드가 막혀 있었다). |

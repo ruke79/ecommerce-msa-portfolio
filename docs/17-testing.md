@@ -202,7 +202,7 @@ export DOCKER_HOST=unix:///var/run/docker.sock
 
 | 項目 | 状態 |
 |---|---|
-| **韓国語の形態素解析（nori）** | ❌ — プラグインをどこからも入手できない。Maven Central に `analysis-kuromoji` はあるが `analysis-nori` はなく、Lucene の `lucene-analysis-nori` には Elasticsearch プラグインのラッパークラスがないため、**プラグインを自作** する必要がある。それはこのリポジトリが抱え込む保守負担なのでやらなかった。nori がインストールされた環境での再確認が必要だ。 |
+| **韓国語の形態素解析（nori）** | ❌ — プラグインをどこからも入手できない。Maven Central に `analysis-kuromoji` はあるが `analysis-nori` はなく、Lucene の `lucene-analysis-nori` には Elasticsearch プラグインのラッパークラスがないため、**プラグインを自作** する必要がある。それはこのリポジトリが抱え込む保守負担なのでやらなかった。nori がインストールされた環境での再確認が必要だ。 クラスタの ES は今は initContainer でインストールする(docs/19 §5.2) — 初回起動ログで確認する。 |
 | **コンシューマー冪等性の展開** | ⚠️ — 12個中5個。残りは性質上再実行が無害か（cart-empty）、すでに状態チェックで保護されている（order Saga）。一括適用は儀式（ceremony）にすぎないのでやらなかった。 |
 | **チャットの WebSocket/STOMP 経路** | ✅ 解決 — `ChatStompIntegrationTest` が全区間を通る（下記 §6.1）。 |
 | **Grafana ダッシュボードのレンダリング** | ❌ — クエリがデータを返すところまでは確認したが（docs/16）、パネルが実際に描画されるかは確認できなかった（バイナリのダウンロードがブロックされていた）。 |

@@ -248,11 +248,11 @@ SKU 509 = 色 509 で制約を **ちょうど飽和** させていたため、�
 | 行数 | 商品 2,000 万 · SKU 3,400 万 · サイズ 6,040 万 · 紐づけ 2,000 万 |
 | PostgreSQL | **約 39 GiB**(投入中の WAL まで約 59 GiB の空きが必要) |
 | Elasticsearch | 約 19〜30 GiB(推定 — 測っていない) |
-| 投入時間 | 4 コアで約 2 時間、2 コアのノードで 6〜9 時間 |
+| 投入時間 | 4 コア x86 で約 2 時間、運用ノード(Ampere · 既定設定)ではその 3〜5 倍と見る |
 
 **⚠️ 運用ノードにそのまま入れてはいけない理由**
 
-- ノードは 2 OCPU / 12GB、ブートボリュームは無料枠の合計 200GB。DB + インデックスだけで 60〜90GB になる。
+- ノードのメモリは 24GB(2026-10-01 `free -h`: 使用 9.7Gi · 利用可能 13Gi)、ブートボリュームは無料枠の合計 200GB。DB + インデックスだけで 60〜90GB になる。
 - PostgreSQL ポッドのメモリ上限は 512Mi、Elasticsearch のヒープは 512MB(k8s/90)。39 GiB のテーブルをそのメモリで読めば、ほぼすべての
   照会がディスクに行く — 測るのはアプリではなくディスクになる。512MB のヒープで 2,000 万件(nested を含め約 7 千万の Lucene 文書)を
   索引すると、メモリ不足で止まる可能性が高い。
@@ -262,6 +262,28 @@ SKU 509 = 色 509 で制約を **ちょうど飽和** させていたため、�
 
 推奨: 2,000 万件は **別の負荷テスト環境**(PostgreSQL のメモリ 4GB 以上、ES ヒープ 2〜4GB)で。運用ノードで測るなら **200 万件**(約 4 GiB +
 索引 2〜3 GiB)が現実的な上限。終わったら `--purge` のあと `VACUUM`。
+
+### 5.2 Elasticsearch に切り替えて測る — 塞がっていた 3 か所 (2026-10-01)
+
+検索を `SEARCH_ENGINE=es` に切り替えて同じデータで比べようとしたところ、再索引が大量データで動かない理由が 3 つ見つかった。
+
+| # | 問題 | 直したこと | 確認 |
+|---|---|---|---|
+| ① | `es-settings.json` が nori · kuromoji のトークナイザを使うが、クラスタの ES(既定イメージ)にプラグインがない — 再索引が**索引作成の段階で**失敗する(docs/16 · docs/17 に「nori 未検証」として残っていたもの) | `k8s/90` の ES に initContainer — `elasticsearch-plugin install analysis-nori analysis-kuromoji`。プラグインは PVC 内(`.es-plugins`)に置き、一度取得すれば再起動にネットワークは要らない。ES のバージョンが変わればずれたものだけを取り直す | 同じイメージで「既にある → スキップ」「バージョン違い → 消してインストール」を動かした。ES がデータパス内の `.es-plugins` と一緒に green で起動することも確認。**実際のダウンロードは検証環境のネットワーク制限(artifacts.elastic.co 遮断)でできなかった — 運用での初回起動ログで確認すること。** ガード: 設定が使うプラグインのトークナイザごとに ES マニフェストがインストールするか(外すと失敗することを確認) |
+| ② | 商品リーダーがコレクション 4 つを JOIN FETCH したクエリに OFFSET ページング — Hibernate が**ページごとに結果全体をメモリに載せる**(HHH90003004)。ORDER BY もない。SKU · サイズのリーダーは OFFSET なので 600 万行で終わらない。マルチスレッドのステップのプロセッサが、リーダーの EntityManager で LAZY を同時に読んでいた | `KeysetItemReader` — id だけを `WHERE id > :last ORDER BY id LIMIT n`、その id の実体を `IN` で、マッパーが使う関連(カテゴリ · SKU · 色 · 小分類 · サイズ)を同じページ内で満たし、EntityManager を閉じて detached のエンティティを渡す | `KeysetProductReaderTest`(PostgreSQL コンテナ): 最初の read が 1 ページだけ読む · すべての商品を id 順に 1 回ずつ · DELETED を除外 · セッションなしでマッパーが動く · 4 スレッド同時読み取りで重複なし。ページ制限や関連の初期化を外すと該当テストが失敗する |
+| ③ | ES のヒープ 512MB | ヒープ 1GB、コンテナ上限 2Gi | ノードの利用可能メモリ 13Gi(実測)の範囲内 |
+
+**手順** — 商品を入れたあと:
+
+```bash
+./ops/28-deploy.sh local <バージョン>     # ① ② を含むイメージ · マニフェスト
+kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins   # 「설치: …」または「이미 있다」
+./ops/44-bulk-catalog.sh load            # 商品 200 万
+./ops/03-enable-es-search.sh             # 再索引 → エイリアス → 文書数 → アナライザ確認
+# k8s/10-configmap.yaml の SEARCH_ENGINE を "es" に → ./ops/28-deploy.sh local --config-only → catalog-service を再起動
+```
+
+比べるときは `SEARCH_ENGINE` だけを変えて同じデータで測る。生成器は DB にだけ入れるので、ES は**入れたあと再索引しないと**見えない。
 
 ## 6. 実測 — 5 万商品での実行計画
 

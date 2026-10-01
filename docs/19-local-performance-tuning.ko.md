@@ -248,11 +248,11 @@ SKU 509 = 색상 509 로 제약을 **정확히 포화**시키고 있어서, 상�
 | 행 수 | 상품 2,000만 · SKU 3,400만 · 사이즈 6,040만 · 연결 2,000만 |
 | PostgreSQL | **약 39 GiB**(적재 중 WAL 까지 약 59 GiB 여유 필요) |
 | Elasticsearch | 약 19~30 GiB(추정 — 재지 않았다) |
-| 적재 시간 | 4코어에서 약 2시간, 2코어 노드에서 6~9시간 |
+| 적재 시간 | 4코어 x86 에서 약 2시간, 운영 노드(Ampere · 기본 설정)에서는 그 3~5배로 잡는다 |
 
 **⚠️ 운영 노드에 그대로 넣으면 안 되는 이유**
 
-- 노드는 2 OCPU / 12GB, 부트 볼륨은 무료 한도 합계 200GB 다. DB + 색인만 60~90GB 다.
+- 노드 메모리는 24GB(2026-10-01 `free -h`: 사용 9.7Gi · 가용 13Gi), 부트 볼륨은 무료 한도 합계 200GB 다. DB + 색인만 60~90GB 다.
 - PostgreSQL 파드의 메모리 상한은 512Mi, Elasticsearch 힙은 512MB 다(k8s/90). 39 GiB 표를 그 메모리로 읽으면 거의 모든 조회가
   디스크로 간다 — 재는 것이 앱이 아니라 디스크가 된다. 512MB 힙으로 2천만 개(nested 문서 포함 약 7천만 Lucene 문서)를 색인하면
   메모리 부족으로 멈출 가능성이 크다.
@@ -262,6 +262,28 @@ SKU 509 = 색상 509 로 제약을 **정확히 포화**시키고 있어서, 상�
 
 권장: 2천만 개는 **별도 부하 테스트 환경**(PostgreSQL 메모리 4GB 이상, ES 힙 2~4GB)에서. 운영 노드에서 재려면 **200만 개**(약 4 GiB +
 색인 2~3 GiB)가 현실적인 상한이다. 끝나면 `--purge` 후 `VACUUM`.
+
+### 5.2 Elasticsearch 로 바꿔 재기 — 막혀 있던 세 곳 (2026-10-01)
+
+검색을 `SEARCH_ENGINE=es` 로 바꿔 같은 데이터로 비교하려 하자, 재색인이 대량 데이터에서 돌 수 없는 이유 세 가지가 나왔다.
+
+| # | 문제 | 고친 것 | 확인 |
+|---|---|---|---|
+| ① | `es-settings.json` 이 nori · kuromoji 토크나이저를 쓰는데 클러스터의 ES(기본 이미지)에 플러그인이 없다 — 재색인이 **색인 생성 단계에서** 실패한다(docs/16 · docs/17 에 "nori 미검증"으로 남아 있던 것) | `k8s/90` ES 에 initContainer — `elasticsearch-plugin install analysis-nori analysis-kuromoji`. 플러그인은 PVC 안(`.es-plugins`)에 두어 한 번 받으면 재시작에 네트워크가 필요 없다. ES 버전이 바뀌면 어긋난 것만 다시 받는다 | 같은 이미지로 "이미 있음 → 건너뜀", "버전 다름 → 지우고 설치" 를 돌렸다. ES 가 데이터 경로 안의 `.es-plugins` 와 함께 green 으로 뜨는 것도 확인. **실제 내려받기는 검증 환경의 네트워크 제한(artifacts.elastic.co 차단)으로 못 했다 — 운영에서 첫 기동 로그로 확인할 것.** 가드: 설정이 쓰는 플러그인 토크나이저마다 ES 매니페스트가 설치하는가(빼면 실패 확인) |
+| ② | 상품 리더가 컬렉션 넷을 JOIN FETCH 한 쿼리에 OFFSET 페이징 — Hibernate 가 **매 페이지마다 결과 전체를 메모리에 올린다**(HHH90003004). ORDER BY 도 없다. SKU · 사이즈 리더는 OFFSET 이라 600만 행에서 끝나지 않는다. 멀티 스레드 스텝의 프로세서가 리더의 EntityManager 로 LAZY 를 동시에 읽었다 | `KeysetItemReader` — id 만 `WHERE id > :last ORDER BY id LIMIT n`, 그 id 들의 엔티티를 `IN` 으로, 매퍼가 쓰는 연관(카테고리 · SKU · 색상 · 소분류 · 사이즈)을 같은 페이지 안에서 채우고 EntityManager 를 닫아 분리된 엔티티를 넘긴다 | `KeysetProductReaderTest`(PostgreSQL 컨테이너): 첫 read 가 한 페이지만 읽는다 · 모든 상품을 id 순으로 한 번씩 · DELETED 제외 · 세션 없이 매퍼가 돈다 · 4 스레드 동시 읽기에 중복 없음. 페이지 제한이나 연관 채우기를 빼면 해당 테스트가 실패한다 |
+| ③ | ES 힙 512MB | 힙 1GB, 컨테이너 상한 2Gi | 노드 가용 메모리 13Gi(실측) 안에서 |
+
+**절차** — 상품을 넣은 뒤:
+
+```bash
+./ops/28-deploy.sh local <버전>          # ① ② 가 들어간 이미지 · 매니페스트
+kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins   # "설치: analysis-nori analysis-kuromoji" 또는 "이미 있다"
+./ops/44-bulk-catalog.sh load            # 상품 200만
+./ops/03-enable-es-search.sh             # 재색인 → 별칭 → 문서 수 → 분석기 확인
+# k8s/10-configmap.yaml 의 SEARCH_ENGINE 을 "es" 로 → ./ops/28-deploy.sh local --config-only → catalog-service 재시작
+```
+
+비교할 때는 `SEARCH_ENGINE` 만 바꿔 같은 데이터로 잰다. 생성기는 DB 에만 넣으므로 ES 는 **넣은 뒤 재색인해야** 보인다.
 
 ## 6. 실측 — 5만 상품에서의 실행계획
 

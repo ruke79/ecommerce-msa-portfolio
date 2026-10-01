@@ -137,6 +137,26 @@ class ConfigurationGuardrailTest {
         // ProductDocument 등이 @Field(analyzer = ...) 로 참조하는 이름들.
         assertThat(analyzers.has("korean_analyzer")).isTrue();
         assertThat(analyzers.has("japanese_analyzer")).isTrue();
+
+        // 플러그인이 주는 토크나이저(nori · kuromoji)는 기본 ES 이미지에 없다 — 클러스터의 ES 가 설치해야 한다.
+        // 없으면 재색인이 색인 생성 단계에서 "Unknown tokenizer type" 으로 실패하는데, 단위 테스트는 모두 초록이다(docs/19 §5.2).
+        // [JA] プラグインのトークナイザ(nori · kuromoji)は既定の ES イメージにない — クラスタの ES がインストールする必要がある。
+        JsonNode tokenizers = new ObjectMapper()
+                .readTree(Files.readString(settings, StandardCharsets.UTF_8))
+                .path("analysis").path("tokenizer");
+        String infra = Files.readString(repoRoot().resolve("k8s/90-dev-infra.yaml"), StandardCharsets.UTF_8);
+        java.util.Map<String, String> pluginOf = java.util.Map.of(
+                "nori_tokenizer", "analysis-nori", "kuromoji_tokenizer", "analysis-kuromoji");
+        List<String> missing = new ArrayList<>();
+        tokenizers.forEach(t -> {
+            String plugin = pluginOf.get(t.path("type").asText());
+            if (plugin != null && !infra.contains(plugin)) {
+                missing.add(t.path("type").asText() + " → " + plugin);
+            }
+        });
+        assertThat(missing).as("k8s/90-dev-infra.yaml 의 Elasticsearch 가 이 플러그인을 설치하지 않는다").isEmpty();
+        assertThat(infra).as("플러그인 설치는 initContainer 에서 elasticsearch-plugin 으로")
+                .contains("elasticsearch-plugin install");
     }
 
     @Test
