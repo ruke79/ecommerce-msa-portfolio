@@ -165,6 +165,8 @@ spring:
        # 갱신한다. 리프레시 토큰은 서버가 관리하므로 로그아웃 시 진짜로 무효화된다.
        jwtExpirationMs: 900000
        jwtRefreshExpirationMs: 1209600000
+       # 로그인의 절대 수명(최초 로그인부터, 갱신해도 늘지 않는다) — 30일(docs/68 §12)
+       jwtRefreshAbsoluteMs: ${JWT_REFRESH_ABSOLUTE_MS:2592000000}
 
     # spring.mail.* 설정을 뺐다. user-service 는 더 이상 SMTP 를 직접 호출하지 않고
     # outgoing-mail 토픽에 요청만 넣는다 — 발송은 notification-service 가 한다(docs/29).

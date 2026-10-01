@@ -140,6 +140,33 @@ class RefreshTokenRotationTest {
     }
 
     @Test
+    @DisplayName("🔴 회전해도 최초 로그인 시각은 그대로 — 절대 수명(30일)이 갱신으로 늘지 않는다(docs/68 §12)")
+    void rotationKeepsAuthTime() {
+        String first = login();
+        long authTime = jwt.getAuthTimeFromJwtToken(first);
+
+        var r1 = service.rotate(first, 7L);
+        var r2 = service.rotate(r1.token(), 7L);
+
+        assertThat(jwt.getAuthTimeFromJwtToken(r2.token())).isEqualTo(authTime);
+    }
+
+    @Test
+    @DisplayName("🔴 절대 수명이 지난 로그인은 갱신하지 않고 묶음을 끊는다 — 정책을 줄인 뒤 남아 있던 토큰도")
+    void pastAbsoluteLifetimeEndsTheSession() {
+        String token = login();
+        // 운영자가 절대 수명을 줄였다 — 그 전에 발급된 토큰은 서명 · 만료가 멀쩡해도 여기서 끝나야 한다.
+        ReflectionTestUtils.setField(jwt, "jwtRefreshAbsoluteMs", 0L);
+
+        var r = service.rotate(token, 7L);
+
+        assertThat(r.kind()).isEqualTo(Kind.SESSION_ENDED);
+        assertThat(r.ok()).isFalse();
+        assertThat(repo.isFamilyRevoked(jwt.getFamilyIdFromJwtToken(token))).isTrue();
+        assertThat(count("session_ended")).isEqualTo(1.0);
+    }
+
+    @Test
     @DisplayName("🔴 재사용 감지 — 유예가 지난 뒤 옛 토큰이 다시 오면 묶음 전체를 끊는다(지금 토큰도 못 쓴다)")
     void reuseRevokesTheWholeFamily() throws Exception {
         String stolen = login();

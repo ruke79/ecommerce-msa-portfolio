@@ -53,6 +53,15 @@ public class JwtUtils {
   @Value("${spring.app.jwtRefreshExpirationMs}")
   private int jwtRefreshExpirationMs;
 
+  /**
+   * 로그인의 <b>절대 수명</b> — 최초 로그인({@code auth_time})부터 이 시간이 지나면 갱신해도 다시 로그인한다(docs/68 §12).
+   * 기본 30일. 리프레시 토큰은 갱신마다 14일씩 늘어나므로, 이것이 없으면 가끔 쓰기만 해도 로그인이 끝나지 않는다.
+   * 필드 기본값은 스프링 밖(단위 테스트)에서도 같은 값이 되게 둔다.
+   */
+  // [JA] ログインの絶対寿命 — 最初のログイン(auth_time)からこの時間が過ぎたら、更新しても再ログイン。既定 30 日。
+  @Value("${spring.app.jwtRefreshAbsoluteMs:2592000000}")
+  private long jwtRefreshAbsoluteMs = 2_592_000_000L;
+
   @Value("${spring.app.jwtCookieName}")
   private String jwtCookie;
 
@@ -179,18 +188,37 @@ public class JwtUtils {
   //      更新に使用済みのトークンが再び来たら(再利用)、このファミリー全体を切る。
   public static final String FAMILY_CLAIM = "fam";
 
+  /**
+   * 리프레시 토큰의 "최초 로그인 시각"(epoch 초, OIDC 의 {@code auth_time} 과 같은 뜻) — 회전해도 그대로 이어진다.
+   * 절대 수명(30일)을 이것으로 잰다(docs/68 §12).
+   */
+  // [JA] リフレッシュトークンの「最初のログイン時刻」(epoch 秒)。ローテーションしてもそのまま引き継ぐ。絶対寿命をこれで測る。
+  public static final String AUTH_TIME_CLAIM = "auth_time";
+
   /** 새 로그인 — 새 묶음으로 발급한다. */
   public String generatRefreshTokenFromUser(User user) {
     return generateRefreshToken(user, java.util.UUID.randomUUID().toString());
   }
 
-  /** 갱신 — 같은 묶음으로, 새 세션 id 로 발급한다. */
+  /** 새 로그인의 첫 토큰 — 최초 로그인 시각은 지금. */
   public String generateRefreshToken(User user, String familyId) {
+    return generateRefreshToken(user, familyId, System.currentTimeMillis() / 1000);
+  }
+
+  /**
+   * 갱신 — 같은 묶음으로, 새 세션 id 로, <b>최초 로그인 시각을 이어받아</b> 발급한다.
+   *
+   * <p>만료 = min(지금 + 리프레시 수명(14일), 최초 로그인 + 절대 수명(30일)). 절대 수명이 가까우면 14일보다 짧아진다.
+   */
+  // [JA] 更新 — 同じファミリー、新しいセッション id、最初のログイン時刻を引き継いで発行。期限 = min(今 + 14 日, 最初のログイン + 30 日)。
+  public String generateRefreshToken(User user, String familyId, long authTimeEpochSec) {
 
     String email = user.getEmail();
     String role = user.getRole().getRoleName().name();
 
     String sessionId = generateSessionId();
+    long now = System.currentTimeMillis();
+    long expiresAt = Math.min(now + jwtRefreshExpirationMs, authTimeEpochSec * 1000 + jwtRefreshAbsoluteMs);
 
     return Jwts.builder()
         .subject(email)
@@ -199,9 +227,10 @@ public class JwtUtils {
         .claim("is2faEnabled", user.isTwoFactorEnabled())
         .claim("sessionId", sessionId)
         .claim(FAMILY_CLAIM, familyId)
+        .claim(AUTH_TIME_CLAIM, authTimeEpochSec)
         .claim(TOKEN_TYPE_CLAIM, REFRESH)
-        .issuedAt(new Date(System.currentTimeMillis()))
-        .expiration(new Date(System.currentTimeMillis() + jwtRefreshExpirationMs))
+        .issuedAt(new Date(now))
+        .expiration(new Date(expiresAt))
         .signWith(key())
         .compact();
   }
@@ -327,6 +356,34 @@ public class JwtUtils {
 
     return Jwts.parser().verifyWith(key()).build()
         .parseSignedClaims(token).getPayload().get("sessionId", String.class);
+  }
+
+  /** 최초 로그인 시각(epoch 초). 이 클레임 이전에 발급된 토큰이면 발급 시각으로 대신한다 — 그 토큰부터 30일. */
+  // [JA] 最初のログイン時刻(epoch 秒)。このクレーム以前に発行されたトークンなら発行時刻で代える。
+  public long getAuthTimeFromJwtToken(String token) {
+    var claims = Jwts.parser().verifyWith(key()).build().parseSignedClaims(token).getPayload();
+    Object v = claims.get(AUTH_TIME_CLAIM);
+    if (v instanceof Number n) {
+      return n.longValue();
+    }
+    return claims.getIssuedAt() != null ? claims.getIssuedAt().getTime() / 1000 : System.currentTimeMillis() / 1000;
+  }
+
+  /** 최초 로그인부터 절대 수명이 지났는가. */
+  public boolean isPastAbsoluteLifetime(long authTimeEpochSec) {
+    return System.currentTimeMillis() >= authTimeEpochSec * 1000 + jwtRefreshAbsoluteMs;
+  }
+
+  /** 토큰의 남은 수명 — 쿠키 Max-Age 를 토큰과 같이 끝나게. 이미 지났으면 0. */
+  public java.time.Duration remainingLifetime(String token) {
+    Date exp;
+    try {
+      exp = Jwts.parser().verifyWith(key()).build().parseSignedClaims(token).getPayload().getExpiration();
+    } catch (io.jsonwebtoken.ExpiredJwtException e) {
+      return java.time.Duration.ZERO;
+    }
+    long ms = exp == null ? 0 : exp.getTime() - System.currentTimeMillis();
+    return java.time.Duration.ofMillis(Math.max(0, ms));
   }
 
   /** 리프레시 토큰의 묶음 id — 회전 이전에 발급된 토큰이면 null. */

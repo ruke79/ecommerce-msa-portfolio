@@ -82,6 +82,39 @@ function isPreAuthRequest(config) {
   return NO_SESSION_URLS.some((prefix) => url.includes(prefix));
 }
 
+/** 만료 몇 초 전에 미리 갱신하나. */
+const REFRESH_LEAD_MS = 10 * 1000;
+/** 갱신 사이 최소 간격 — 무엇이 어긋나도 갱신이 연달아 쏟아지지 않게. */
+export const MIN_REFRESH_DELAY_MS = 5 * 1000;
+
+/**
+ * 다음 선제 갱신까지 기다릴 시간.
+ *
+ * <p>🐛 예전: {@code exp(서버 시계) − Date.now()(이 PC 시계)}. PC 시계가 액세스 토큰 수명(15분)보다 앞서 있으면 <b>막 받은 토큰도 이미
+ * 만료로 보여</b> 즉시 갱신 → 새 토큰도 만료로 보여 즉시 갱신 … 이 끝없이 돌았다. 갱신마다 리프레시 토큰이 회전하니 서버도 함께 바빴다.
+ * 시계를 손으로 맞추는 PC · 시간대가 틀린 PC 에서 실제로 생긴다.
+ *
+ * <p>지금: 두 시계를 섞지 않는다. 토큰의 <b>수명(exp − iat, 둘 다 서버 시계)</b>만큼 지금부터 기다린다 — 이 함수는 토큰을 막 받은
+ * 때 불린다(로그인 · 갱신 직후). 그래도 무엇이 어긋나면 최소 간격을 둔다. 갱신이 늦어지는 쪽(PC 시계가 느림)은 401 → 갱신 → 재시도가 받는다.
+ */
+// [JA] 次の先行更新まで待つ時間。以前は exp(サーバー時計) − Date.now()(この PC の時計)で、PC の時計がトークン寿命より進んでいると、
+//      受け取ったばかりのトークンも期限切れに見えて即時更新が無限に続いた。今はトークンの寿命(exp − iat、どちらもサーバー時計)だけ待つ。
+export function refreshDelayMs(token, expiresAt, now) {
+  let lifetimeMs = null;
+  try {
+    const { iat, exp } = token ? jwtDecode(token) : {};
+    if (Number.isFinite(iat) && Number.isFinite(exp) && exp > iat) {
+      lifetimeMs = (exp - iat) * 1000;
+    }
+  } catch {
+    // 읽을 수 없는 토큰 — 아래의 예전 계산으로
+  }
+  const delay = lifetimeMs != null
+    ? lifetimeMs - REFRESH_LEAD_MS
+    : expiresAt * 1000 - now - REFRESH_LEAD_MS;
+  return Math.max(MIN_REFRESH_DELAY_MS, delay);
+}
+
 export function useTokenRefresh() {
   // Use useRef to prevent a re-render in the useEffect.
   // A ref, cannot be used as a useEffect dependency, hence,
@@ -182,9 +215,7 @@ export function useTokenRefresh() {
     let refreshAccessTokenTimerId;
 
     if (isAuthenticated && expiresAt) {
-      // expiresAt = JWT exp (초 단위 epoch). ms로 변환 후 만료 10초 전에 선제 갱신.
-      // 남은 시간이 음수면 즉시(0ms) 갱신한다.
-      const delay = Math.max(0, expiresAt * 1000 - Date.now() - 10 * 1000);
+      const delay = refreshDelayMs(token, expiresAt, Date.now());
       refreshAccessTokenTimerId = setTimeout(() => {
         refreshAccessToken();
       }, delay);
@@ -195,7 +226,7 @@ export function useTokenRefresh() {
         clearTimeout(refreshAccessTokenTimerId);
       }
     };
-  }, [expiresAt, isAuthenticated, refreshAccessToken]);
+  }, [token, expiresAt, isAuthenticated, refreshAccessToken]);
 
   const [prevToken, setPrevToken] = useState(null);
   if (prevToken !== token) {

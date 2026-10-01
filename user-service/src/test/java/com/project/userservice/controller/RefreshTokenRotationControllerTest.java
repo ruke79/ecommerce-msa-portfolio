@@ -73,7 +73,8 @@ class RefreshTokenRotationControllerTest {
         when(owner.getUserId()).thenReturn(7L);
         when(userService.findByEmail("a@example.com")).thenReturn(owner);
         when(jwtUtils.generateTokenFromUser(owner)).thenReturn("new.access");
-        when(jwtUtils.refreshTokenLifetime()).thenReturn(Duration.ofDays(14));
+        // 쿠키는 새 토큰의 남은 수명으로 — 절대 수명(30일)이 가까우면 14일보다 짧다(docs/68 §12)
+        when(jwtUtils.remainingLifetime(anyString())).thenReturn(Duration.ofDays(14));
         when(jwtUtils.createCookie(anyString(), any(), any(Duration.class))).thenAnswer(inv -> {
             Cookie c = new Cookie(inv.getArgument(0), inv.getArgument(1));
             c.setMaxAge((int) ((Duration) inv.getArgument(2)).getSeconds());

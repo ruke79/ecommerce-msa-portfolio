@@ -60,6 +60,8 @@ public class RefreshTokenService {
         REVOKED,
         /** 회전 이전에 발급된 토큰(fam 없음) — 다시 로그인 */
         LEGACY,
+        /** 최초 로그인부터 절대 수명(30일)이 지났다 — 다시 로그인(docs/68 §12) */
+        SESSION_ENDED,
         /** 저장된 값과 다르다 · 다른 요청이 회전 중인데 기다려도 끝나지 않았다 */
         REJECTED
     }
@@ -111,14 +113,18 @@ public class RefreshTokenService {
     /** 새 로그인 — 새 묶음. 끝난 묶음을 사용자 색인에서 치운다(로그인은 드물어 여기서 해도 싸다). */
     public RefreshToken createRefreshToken(Long userId) {
         refreshTokenRepository.pruneUserFamilies(userId);
-        return createRefreshToken(userId, UUID.randomUUID().toString());
+        return createRefreshToken(userId, UUID.randomUUID().toString(), System.currentTimeMillis() / 1000);
     }
 
-    /** 같은 묶음으로 발급하고, 묶음의 지금 세션으로 적는다. */
-    public RefreshToken createRefreshToken(Long userId, String familyId) {
+    /**
+     * 같은 묶음으로 발급하고, 묶음의 지금 세션으로 적는다.
+     *
+     * @param authTimeEpochSec 최초 로그인 시각 — 회전할 때는 받은 토큰의 값을 이어받는다(절대 수명, docs/68 §12)
+     */
+    public RefreshToken createRefreshToken(Long userId, String familyId, long authTimeEpochSec) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
-        String token = jwtUtils.generateRefreshToken(user, familyId);
+        String token = jwtUtils.generateRefreshToken(user, familyId, authTimeEpochSec);
         String sessionId = jwtUtils.getSessionIdFromJwtToken(token);
 
         RefreshToken refreshToken = new RefreshToken(sessionId, user.getEmail(), token);
@@ -145,10 +151,18 @@ public class RefreshTokenService {
         if (refreshTokenRepository.isFamilyRevoked(familyId)) {
             return outcome(Kind.REVOKED, null, userId);
         }
+        // 절대 수명 — 토큰의 만료가 이미 "최초 로그인 + 30일" 로 잘려 있어 보통은 서명 검사에서 먼저 걸린다. 여기는 그 앞에서
+        // 발급된 토큰(클레임 없음 → 발급 시각 기준)과 경계의 방어선이다. 묶음도 끊어 둔다.
+        // [JA] 絶対寿命 — 期限が既に「最初のログイン + 30 日」で切られているので通常は署名検査で先に弾かれる。ここは防御線。
+        long authTime = jwtUtils.getAuthTimeFromJwtToken(presented);
+        if (jwtUtils.isPastAbsoluteLifetime(authTime)) {
+            refreshTokenRepository.revokeFamily(familyId);
+            return outcome(Kind.SESSION_ENDED, null, userId);
+        }
 
         long r = refreshTokenRepository.rotate(sessionId, presented, graceMs);
         if (r == 1L) {
-            RefreshToken next = createRefreshToken(userId, familyId);
+            RefreshToken next = createRefreshToken(userId, familyId, authTime);
             // 유예 키에는 새 토큰의 암호문을 둔다 — 해시는 되돌릴 수 없어 두 번째 탭에 줄 수 없고, 원문은 두지 않는다(§10).
             refreshTokenRepository.completeGrace(sessionId, graceCipher.seal(sessionId, next.getToken()), graceMs);
             return outcome(Kind.ROTATED, next.getToken(), userId);

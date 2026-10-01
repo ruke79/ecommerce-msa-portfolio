@@ -151,7 +151,7 @@ public class RefreshTokenController {
             expireRefreshCookie(response);
             // 400 — 프론트의 갱신은 200 이 아니면 로그아웃으로 간다(TokenRefresher). 재사용이든 옛 토큰이든 다시 로그인이 답이다.
             return new ResponseEntity<>(switch (rotation.kind()) {
-                case LEGACY -> "refresh token expired";   // 회전 이전 토큰 — 사용자에게는 "만료" 와 같다
+                case LEGACY, SESSION_ENDED -> "refresh token expired";   // 회전 이전 토큰 · 절대 수명 — 사용자에게는 "만료" 와 같다
                 default -> "invalid refresh token";
             }, HttpStatus.BAD_REQUEST);
         }
@@ -175,7 +175,8 @@ public class RefreshTokenController {
             log.info("토큰 재발급 성공 ({})", rotation.kind());
 
             response.setHeader(TokenType.ACCESS.getType(), newAccess);
-            response.addCookie(jwtUtils.createCookie(TokenType.REFRESH.getType(), rotation.token(), jwtUtils.refreshTokenLifetime()));
+            // 쿠키도 토큰과 같이 끝나게 — 절대 수명이 가까우면 14일보다 짧다(docs/68 §12).
+            response.addCookie(jwtUtils.createCookie(TokenType.REFRESH.getType(), rotation.token(), jwtUtils.remainingLifetime(rotation.token())));
 
          } catch (JsonProcessingException e) {
             // TODO Auto-generated catch block
