@@ -47,6 +47,20 @@ public class JwtUtils {
   @Value("${spring.app.jwtSecret}")
   private String jwtSecret;
 
+  /**
+   * 서명 키 링(docs/68 §17) — {@code JWT_SIGNING_KEYS}("kid=비밀,...") · {@code JWT_ACTIVE_KID} · {@code JWT_ACCEPT_LEGACY}.
+   * 비워 두면 예전처럼 {@code JWT_SECRET_KEY} 하나(kid "legacy")로 서명 · 검증한다. 교체 절차는 ops/46.
+   */
+  // [JA] 署名鍵リング。空なら従来どおり JWT_SECRET_KEY 一つ(kid "legacy")で署名・検証する。交換手順は ops/46。
+  @Value("${spring.app.jwtSigningKeys:}")
+  private String jwtSigningKeys = "";
+
+  @Value("${spring.app.jwtActiveKid:}")
+  private String jwtActiveKid = "";
+
+  @Value("${spring.app.jwtAcceptLegacy:true}")
+  private boolean jwtAcceptLegacy = true;
+
   @Value("${spring.app.jwtExpirationMs}")
   private int jwtExpirationMs;
 
@@ -83,9 +97,46 @@ public class JwtUtils {
     this.redisSessionMgr = redisSessionMgr;
   }
 
-  private SecretKey key() {
-    return new SecretKeySpec(jwtSecret.getBytes(StandardCharsets.UTF_8),
-        Jwts.SIG.HS256.key().build().getAlgorithm());
+  /** 설정 문자열이 같으면 다시 만들지 않는다(테스트가 값을 바꾸면 그에 맞춰 다시 만든다). */
+  private volatile String ringSource;
+  private volatile com.project.common.security.JwtKeyRing ring;
+
+  com.project.common.security.JwtKeyRing ring() {
+    String source = jwtSecret + "\u0000" + jwtSigningKeys + "\u0000" + jwtActiveKid + "\u0000" + jwtAcceptLegacy;
+    if (!source.equals(ringSource)) {
+      ring = com.project.common.security.JwtKeyRing.of(jwtSecret, jwtSigningKeys, jwtActiveKid, jwtAcceptLegacy);
+      ringSource = source;
+    }
+    return ring;
+  }
+
+  /** 기동할 때 한 번 만들어 본다 — 키 설정이 틀렸으면 틀린 키로 서명하기 전에 뜨지 않는다. */
+  @PostConstruct
+  void checkKeyRing() {
+    var r = ring();
+    // 이름만 남긴다 — 값 · 길이는 남기지 않는다.
+    log.info("[jwt] 서명 키={} · 아는 키={} · legacy 허용={}", r.activeKid(), r.kids(), r.acceptsLegacy());
+  }
+
+  private static SecretKey hmac(byte[] bytes) {
+    return new SecretKeySpec(bytes, "HmacSHA256");
+  }
+
+  /** 서명 키 — 지금 켜진 kid 의 키. */
+  private SecretKey signingKey() {
+    return hmac(ring().activeKey());
+  }
+
+  /**
+   * 검증 키를 토큰 머리의 kid 로 고른다. kid 가 없으면 이 변경 전의 토큰 — legacy 키. 모르는 kid · 은퇴한 legacy 면 거절
+   * (UnsupportedJwtException → {@link TokenStatus#UNSUPPORTED}).
+   */
+  private Locator<Key> keyLocator() {
+    return header -> {
+      String kid = header instanceof ProtectedHeader ph ? ph.getKeyId() : null;
+      return ring().verificationKey(kid).map(b -> (Key) hmac(b))
+          .orElseThrow(() -> new UnsupportedJwtException("알 수 없는 서명 키"));
+    };
   }
 
   private String generateSessionId() {
@@ -176,7 +227,8 @@ public class JwtUtils {
         .claim(TOKEN_TYPE_CLAIM, ACCESS)
         .issuedAt(new Date(System.currentTimeMillis()))
         .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
-        .signWith(key())
+        .header().keyId(ring().activeKid()).and()
+        .signWith(signingKey())
         .compact();
   }
 
@@ -231,7 +283,8 @@ public class JwtUtils {
         .claim(TOKEN_TYPE_CLAIM, REFRESH)
         .issuedAt(new Date(now))
         .expiration(new Date(expiresAt))
-        .signWith(key())
+        .header().keyId(ring().activeKid()).and()
+        .signWith(signingKey())
         .compact();
   }
 
@@ -268,7 +321,8 @@ public class JwtUtils {
     return builder
         .issuedAt(new Date(System.currentTimeMillis()))
         .expiration(new Date(System.currentTimeMillis() + expirationMs))
-        .signWith(key())
+        .header().keyId(ring().activeKid()).and()
+        .signWith(signingKey())
         .compact();
   }
 
@@ -298,7 +352,8 @@ public class JwtUtils {
     return builder
         .issuedAt(new Date(System.currentTimeMillis()))
         .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
-        .signWith(key())
+        .header().keyId(ring().activeKid()).and()
+        .signWith(signingKey())
         .compact();
   }
 
@@ -317,7 +372,7 @@ public class JwtUtils {
    */
   public String getIdFromJwtToken(String token) {
     return Jwts.parser()
-        .verifyWith(key())
+        .keyLocator(keyLocator())
         .build().parseSignedClaims(token)
         .getPayload().getSubject();
   }
@@ -326,7 +381,7 @@ public class JwtUtils {
   // [JA] 署名・有効期限が有効で、種別が {@code access} か。クレームの無い古いトークンは該当しない。
   public boolean isAccessToken(String token) {
     try {
-      return ACCESS.equals(Jwts.parser().verifyWith(key()).build()
+      return ACCESS.equals(Jwts.parser().keyLocator(keyLocator()).build()
           .parseSignedClaims(token).getPayload().get(TOKEN_TYPE_CLAIM, String.class));
     } catch (RuntimeException e) {
       return false;
@@ -338,7 +393,7 @@ public class JwtUtils {
   //      アクセストークンは該当しない。
   public boolean isRefreshTokenType(String token) {
     try {
-      String type = Jwts.parser().verifyWith(key()).build()
+      String type = Jwts.parser().keyLocator(keyLocator()).build()
           .parseSignedClaims(token).getPayload().get(TOKEN_TYPE_CLAIM, String.class);
       return type == null || REFRESH.equals(type);
     } catch (RuntimeException e) {
@@ -348,20 +403,20 @@ public class JwtUtils {
 
   public String getRoleFromJwtToken(String token) {
 
-    return Jwts.parser().verifyWith(key()).build()
+    return Jwts.parser().keyLocator(keyLocator()).build()
         .parseSignedClaims(token).getPayload().get("role", String.class);
   }
 
   public String getSessionIdFromJwtToken(String token) {
 
-    return Jwts.parser().verifyWith(key()).build()
+    return Jwts.parser().keyLocator(keyLocator()).build()
         .parseSignedClaims(token).getPayload().get("sessionId", String.class);
   }
 
   /** 최초 로그인 시각(epoch 초). 이 클레임 이전에 발급된 토큰이면 발급 시각으로 대신한다 — 그 토큰부터 30일. */
   // [JA] 最初のログイン時刻(epoch 秒)。このクレーム以前に発行されたトークンなら発行時刻で代える。
   public long getAuthTimeFromJwtToken(String token) {
-    var claims = Jwts.parser().verifyWith(key()).build().parseSignedClaims(token).getPayload();
+    var claims = Jwts.parser().keyLocator(keyLocator()).build().parseSignedClaims(token).getPayload();
     Object v = claims.get(AUTH_TIME_CLAIM);
     if (v instanceof Number n) {
       return n.longValue();
@@ -378,7 +433,7 @@ public class JwtUtils {
   public java.time.Duration remainingLifetime(String token) {
     Date exp;
     try {
-      exp = Jwts.parser().verifyWith(key()).build().parseSignedClaims(token).getPayload().getExpiration();
+      exp = Jwts.parser().keyLocator(keyLocator()).build().parseSignedClaims(token).getPayload().getExpiration();
     } catch (io.jsonwebtoken.ExpiredJwtException e) {
       return java.time.Duration.ZERO;
     }
@@ -388,7 +443,7 @@ public class JwtUtils {
 
   /** 리프레시 토큰의 묶음 id — 회전 이전에 발급된 토큰이면 null. */
   public String getFamilyIdFromJwtToken(String token) {
-    return Jwts.parser().verifyWith(key()).build()
+    return Jwts.parser().keyLocator(keyLocator()).build()
         .parseSignedClaims(token).getPayload().get(FAMILY_CLAIM, String.class);
   }
 
@@ -411,7 +466,7 @@ public class JwtUtils {
    *         [JA] 発行時刻。{@code iat} の無いトークンなら null
    */
   public Date getIssuedAtFromJwtToken(String token) {
-    return Jwts.parser().verifyWith(key()).build()
+    return Jwts.parser().keyLocator(keyLocator()).build()
         .parseSignedClaims(token).getPayload().getIssuedAt();
   }
 
@@ -420,7 +475,7 @@ public class JwtUtils {
   }
 
   public LiveClaims liveClaimsOf(String token) {
-    var claims = Jwts.parser().verifyWith(key()).build().parseSignedClaims(token).getPayload();
+    var claims = Jwts.parser().keyLocator(keyLocator()).build().parseSignedClaims(token).getPayload();
     Number uid = claims.get(UID_CLAIM, Number.class);
     Date iat = claims.getIssuedAt();
     return new LiveClaims(uid == null ? null : uid.longValue(),
@@ -430,7 +485,7 @@ public class JwtUtils {
 
   public Boolean isJwtTokenExpired(String token) {
     return Jwts.parser()
-        .verifyWith(key())
+        .keyLocator(keyLocator())
         .build().parseSignedClaims(token)
         .getPayload().getExpiration().before(new Date());
   }
@@ -440,7 +495,7 @@ public class JwtUtils {
     Date now = new Date();
 
     return Jwts.parser()
-        .verifyWith(key())
+        .keyLocator(keyLocator())
         .build().parseSignedClaims(token)
         .getPayload().getExpiration().getTime() - now.getTime();
   }
@@ -449,7 +504,7 @@ public class JwtUtils {
     try {
 
       Claims claims = Jwts.parser()
-          .verifyWith(key())
+          .keyLocator(keyLocator())
           .build().parseSignedClaims(token)
           .getPayload();
 
@@ -465,7 +520,7 @@ public class JwtUtils {
 
   public TokenStatus validateJwtToken(String authToken) {
     try {
-      Jwts.parser().verifyWith(key())
+      Jwts.parser().keyLocator(keyLocator())
           .build().parseSignedClaims(authToken);
       return TokenStatus.VALID;
     } catch (MalformedJwtException e) {

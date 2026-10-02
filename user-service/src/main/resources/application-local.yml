@@ -152,6 +152,10 @@ spring:
        jwtCookieName: user-cookie
        jwtRefreshCookieName: user-refresh-cookie
        jwtSecret: ${JWT_SECRET_KEY}
+       # 서명 키 링(docs/68 §17) — 비워 두면 JWT_SECRET_KEY 하나(kid "legacy"). 교체는 ops/46. 세 서비스(user · gateway · chat)가 같은 값이어야 한다.
+       jwtSigningKeys: ${JWT_SIGNING_KEYS:}
+       jwtActiveKid: ${JWT_ACTIVE_KID:}
+       jwtAcceptLegacy: ${JWT_ACCEPT_LEGACY:true}
        # 액세스 토큰 15분. 예전에는 2시간이었다.
        #
        # 이 시스템의 JWT 는 **폐기할 수 없다.** 게이트웨이는 서명만 검증하고(introspection 없음),

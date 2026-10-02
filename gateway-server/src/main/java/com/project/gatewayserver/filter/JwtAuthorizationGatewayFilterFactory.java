@@ -61,6 +61,20 @@ public class JwtAuthorizationGatewayFilterFactory
     @Value("${spring.app.jwtSecret}")
     private String secretKey;
 
+    /** 서명 키 링(docs/68 §17) — user-service 와 같은 값을 본다. 비어 있으면 JWT_SECRET_KEY 하나(kid "legacy"). */
+    // [JA] 署名鍵リング — user-service と同じ値を見る。空なら JWT_SECRET_KEY 一つ。
+    @Value("${spring.app.jwtSigningKeys:}")
+    private String jwtSigningKeys = "";
+
+    @Value("${spring.app.jwtActiveKid:}")
+    private String jwtActiveKid = "";
+
+    @Value("${spring.app.jwtAcceptLegacy:true}")
+    private boolean jwtAcceptLegacy = true;
+
+    private volatile String ringSource;
+    private volatile com.project.common.security.JwtKeyRing ring;
+
     public JwtAuthorizationGatewayFilterFactory() {
         super(Config.class);
         // this.env = env;
@@ -123,6 +137,12 @@ public class JwtAuthorizationGatewayFilterFactory
 
             } catch (ExpiredJwtException e) {
                 return OnError(exchange, "access token expired", HttpStatus.UNAUTHORIZED);
+            } catch (io.jsonwebtoken.JwtException | IllegalArgumentException e) {
+                // 🐛 예전: 서명이 안 맞는 토큰 · 모르는 kid 는 예외가 그대로 올라가 500 이었다. 화면은 401 이어야 리프레시로 새 토큰을
+                //    받는다 — 키를 은퇴시킨 직후(docs/68 §17) 옛 키의 토큰을 든 사용자가 500 을 보게 된다. 종류만 남긴다(토큰은 남기지 않는다).
+                // [JA] 以前は署名不一致 · 未知の kid の例外がそのまま上がり 500 だった。401 なら画面がリフレッシュで新しいトークンを受け取る。
+                log.info("유효하지 않은 토큰 — 401 ({})", e.getClass().getSimpleName());
+                return OnError(exchange, "invalid access token", HttpStatus.UNAUTHORIZED);
             }
 
             TokenStatus tokenStatus = validateJwtToken(jwt);
@@ -208,16 +228,36 @@ public class JwtAuthorizationGatewayFilterFactory
     // [JA] 署名を検証したうえで種別クレームが {@code access} か。なければ(リフレッシュ・旧トークン)違う。
     boolean isAccessToken(String token) {
         try {
-            return ACCESS.equals(Jwts.parser().verifyWith(key()).build()
+            return ACCESS.equals(Jwts.parser().keyLocator(keyLocator()).build()
                     .parseSignedClaims(token).getPayload().get(TOKEN_TYPE_CLAIM, String.class));
         } catch (RuntimeException e) {
             return false;
         }
     }
 
-    private SecretKey key() {
-        return new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8),
-                Jwts.SIG.HS256.key().build().getAlgorithm());
+    com.project.common.security.JwtKeyRing ring() {
+        String source = secretKey + "\u0000" + jwtSigningKeys + "\u0000" + jwtActiveKid + "\u0000" + jwtAcceptLegacy;
+        if (!source.equals(ringSource)) {
+            ring = com.project.common.security.JwtKeyRing.of(secretKey, jwtSigningKeys, jwtActiveKid, jwtAcceptLegacy);
+            ringSource = source;
+        }
+        return ring;
+    }
+
+    /** 기동 때 한 번 — 키 설정이 틀렸으면 뜨지 않는다(검증만 하는 쪽도 모르는 키로 서명된 토큰을 받게 두지 않는다). */
+    @jakarta.annotation.PostConstruct
+    void checkKeyRing() {
+        ring();
+    }
+
+    /** 토큰 머리의 kid 로 검증 키를 고른다 — kid 가 없으면 옛 토큰(legacy), 모르는 kid 는 거절(docs/68 §17). */
+    private io.jsonwebtoken.Locator<java.security.Key> keyLocator() {
+        return header -> {
+            String kid = header instanceof io.jsonwebtoken.ProtectedHeader ph ? ph.getKeyId() : null;
+            return ring().verificationKey(kid)
+                    .map(b -> (java.security.Key) new SecretKeySpec(b, "HmacSHA256"))
+                    .orElseThrow(() -> new UnsupportedJwtException("알 수 없는 서명 키"));
+        };
     }
 
     /** 토큰의 subject — 이메일이다. 서명을 검증한 뒤에만 읽는다. */
@@ -225,7 +265,7 @@ public class JwtAuthorizationGatewayFilterFactory
     private String extractSubjectFromJwt(String token) {
         try {
             return Jwts.parser()
-                    .verifyWith(key())
+                    .keyLocator(keyLocator())
                     .build().parseSignedClaims(token)
                     .getPayload().getSubject();
 
@@ -240,7 +280,7 @@ public class JwtAuthorizationGatewayFilterFactory
     private String extractRoleFromJwt(String token) {
         try {
             Object role = Jwts.parser()
-                    .verifyWith(key())
+                    .keyLocator(keyLocator())
                     .build().parseSignedClaims(token)
                     .getPayload().get("role");
 
@@ -264,7 +304,7 @@ public class JwtAuthorizationGatewayFilterFactory
     private Long extractUidFromJwt(String token) {
         try {
             Object uid = Jwts.parser()
-                    .verifyWith(key())
+                    .keyLocator(keyLocator())
                     .build().parseSignedClaims(token)
                     .getPayload().get("uid");
 
@@ -305,14 +345,14 @@ public class JwtAuthorizationGatewayFilterFactory
     private boolean isJwtTokenExpired(String token) {
 
         return Jwts.parser()
-                .verifyWith(key())
+                .keyLocator(keyLocator())
                 .build().parseSignedClaims(token)
                 .getPayload().getExpiration().before(new Date());
     }
 
     public TokenStatus validateJwtToken(String authToken) {
         try {
-            Jwts.parser().verifyWith(key())
+            Jwts.parser().keyLocator(keyLocator())
                     .build().parseSignedClaims(authToken);
             return TokenStatus.VALID;
         } catch (MalformedJwtException e) {

@@ -46,6 +46,7 @@
 | ㊶ | `41-show-trace.sh` | **추적 하나를 터미널에 나무로 그린다** — 최신 · `--longest`(사가) · `--errors` · 로그의 traceId. 스팬 사이 빈틈이 아웃박스 · Kafka 를 건넌 시간 (docs/63) | 조사할 때 |
 | ㊷ | `42-repair-orphan-sizes.sh` | **부모 없이 저장된 사이즈 복구**(관리자 등록 버그, docs/65 §5) — `status` · `preview`(생성 시각으로 짝 추정 · 확신도 HIGH/CHECK/NONE, 고치지 않음) · `apply <size_id>:<스타일 id>`(확인한 짝만, 한 트랜잭션, 하나라도 틀리면 전부 되돌림) | 배포 후 한 번 |
 | ㊹ | `44-bulk-catalog.sh` | **부하 테스트용 상품 대량 등록 · 삭제** — 생성기를 운영 노드에서 안전하게: 디스크 · 백업 시간대 점검, DB 를 잠깐 port-forward, 비밀번호는 Secret 에서 환경 변수로만, 끊기면 이어서, 끝나면 카탈로그 캐시 비우기. `estimate` · `load` · `status` · `purge` · `flush-cache` (docs/19 §5.1) | 🟡 부하 테스트 시 |
+| ㊻ | `46-rotate-jwt-key.sh` | **JWT 서명 키 무중단 교체** — `add`(새 키를 링에 넣고 세 서비스 재시작, 서명은 그대로) → `activate`(세 서비스의 모든 파드가 지금 Secret 으로 떠 있을 때만 서명 키 전환) → `retire`(전환 뒤 30일이 지나야, 샜다면 `--force`). 값은 화면 · 인자 · 로그에 남기지 않는다(stdin · 환경 변수), 로컬 `20-secret.yaml` 도 같은 값으로. `status` 로 아는 키 · 서명 키 · 은퇴까지 남은 날. docs/68 §17 | 🟠 키 교체 · 유출 의심 때 |
 | — | `tools/generate-catalog-data.py` | **부하용 카탈로그 데이터 생성** — 대형 쇼핑몰식 분류(대분류 20 · 소분류 99) 또는 시드 증식. 묶음 단위 COPY 로 수천만 개까지(`--resume` · `--purge`), `--estimate` 로 용량 미리 보기 — 상품당 약 2.1KB 실측(docs/19 §5.1) | 🟡 튜닝 시 |
 | — | `tools/hbm2flyway.py` | **스키마 베이스라인 생성** — Hibernate 가 뽑은 DDL 을 멱등 Flyway 마이그레이션으로 변환. 손으로 쓰면 반드시 어긋나므로 기계 변환한다(docs/20 §3) | 엔티티 대개편 시 |
 

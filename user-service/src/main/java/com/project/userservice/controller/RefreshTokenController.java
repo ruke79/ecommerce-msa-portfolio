@@ -101,6 +101,13 @@ public class RefreshTokenController {
             log.info("만료된 리프레시 토큰 — 쿠키를 지운다");
             expireRefreshCookie(response);
             return new ResponseEntity<>("refresh token expired", HttpStatus.BAD_REQUEST);
+        } catch (io.jsonwebtoken.JwtException | IllegalArgumentException e) {
+            // 🐛 예전: 서명이 안 맞는 토큰은 여기서 예외가 그대로 올라가 500 이었다. 키를 은퇴시킨 뒤(docs/68 §17) 옛 키의 리프레시 토큰을
+            //    든 사용자는 400 을 받아야 화면이 로그아웃 상태로 정리된다 — 500 이면 "잠시 후 다시" 만 반복한다.
+            // [JA] 以前は署名不一致のトークンの例外がそのまま上がり 500 だった。鍵の引退後、旧鍵のトークンは 400 で画面をログアウト状態に整理する。
+            log.info("검증할 수 없는 리프레시 토큰({}) — 쿠키를 지운다", e.getClass().getSimpleName());
+            expireRefreshCookie(response);
+            return new ResponseEntity<>("invalid refresh token", HttpStatus.BAD_REQUEST);
         }
 
         // 🔒 액세스 토큰으로는 갱신하지 않는다 — 종류가 다른 토큰을 섞어 쓰는 창을 닫는다(JwtUtils.TOKEN_TYPE_CLAIM).

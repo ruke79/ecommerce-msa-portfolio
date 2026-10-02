@@ -161,4 +161,19 @@ class RefreshTokenRotationControllerTest {
         verify(jwtUtils, never()).generateTokenFromUser(any());
         assertThat(response.getCookie(TokenType.REFRESH.getType()).getMaxAge()).isZero();
     }
+    /**
+     * 🐛 예전: 서명을 확인할 수 없는 리프레시 토큰은 예외가 그대로 올라가 500 이었다. 키를 은퇴시킨 뒤(docs/68 §17) 옛 키의 토큰을 든
+     * 사용자는 400 이어야 화면이 로그아웃으로 정리된다.
+     */
+    @Test
+    @DisplayName("🔴 은퇴한 키 · 모르는 kid · 서명 불일치 — 500 이 아니라 400, 쿠키를 지운다")
+    void unverifiableTokenIs400() throws Exception {
+        when(jwtUtils.isJwtTokenExpired(PRESENTED)).thenThrow(new io.jsonwebtoken.UnsupportedJwtException("알 수 없는 서명 키"));
+
+        ResponseEntity<?> r = controller.refreshtoken(request, response);
+
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getCookie(TokenType.REFRESH.getType()).getMaxAge()).isZero();
+        verify(refreshTokenService, never()).rotate(anyString(), any());
+    }
 }

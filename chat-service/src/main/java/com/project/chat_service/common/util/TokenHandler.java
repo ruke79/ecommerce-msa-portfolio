@@ -20,6 +20,35 @@ public class TokenHandler {
     @Value("${spring.app.jwtSecret}")
     private String secretKey;
 
+    /** 서명 키 링(docs/68 §17) — user-service · 게이트웨이와 같은 값. 비어 있으면 JWT_SECRET_KEY 하나(kid "legacy"). */
+    // [JA] 署名鍵リング — user-service · ゲートウェイと同じ値。空なら JWT_SECRET_KEY 一つ。
+    @Value("${spring.app.jwtSigningKeys:}")
+    private String jwtSigningKeys = "";
+
+    @Value("${spring.app.jwtActiveKid:}")
+    private String jwtActiveKid = "";
+
+    @Value("${spring.app.jwtAcceptLegacy:true}")
+    private boolean jwtAcceptLegacy = true;
+
+    private volatile String ringSource;
+    private volatile com.project.common.security.JwtKeyRing ring;
+
+    com.project.common.security.JwtKeyRing ring() {
+        String source = secretKey + "\u0000" + jwtSigningKeys + "\u0000" + jwtActiveKid + "\u0000" + jwtAcceptLegacy;
+        if (!source.equals(ringSource)) {
+            ring = com.project.common.security.JwtKeyRing.of(secretKey, jwtSigningKeys, jwtActiveKid, jwtAcceptLegacy);
+            ringSource = source;
+        }
+        return ring;
+    }
+
+    /** 기동 때 한 번 — 키 설정이 틀렸으면 뜨지 않는다. */
+    @jakarta.annotation.PostConstruct
+    void checkKeyRing() {
+        ring();
+    }
+
 
     
 
@@ -41,7 +70,13 @@ public class TokenHandler {
 
     public boolean verifyToken(String token) {
         try {
-            JWTVerifier verifier = JWT.require(Algorithm.HMAC256(secretKey.getBytes())).build();
+            // 토큰 머리의 kid 로 키를 고른다 — 없으면 옛 토큰(legacy), 모르는 kid 는 거절(docs/68 §17).
+            byte[] key = ring().verificationKey(JWT.decode(token).getKeyId()).orElse(null);
+            if (key == null) {
+                log.info("알 수 없는 서명 키 — 거절");
+                return false;
+            }
+            JWTVerifier verifier = JWT.require(Algorithm.HMAC256(key)).build();
             DecodedJWT decodedJWT = verifier.verify(token);
             // 🔒 액세스 토큰만 — 리프레시 토큰(같은 키로 서명, 14일)으로 STOMP·API 에 붙지 못하게(user-service JwtUtils.TOKEN_TYPE_CLAIM).
             if (!"access".equals(decodedJWT.getClaim("tokenType").asString())) {

@@ -196,3 +196,22 @@ outbox.partitions.tables 는 '스키마.테이블'(소문자) 이어야 한다: 
 
 outbox.partitions.months-ahead 는 0 이상: {}
 = -
+
+# JWT 서명 키 링(docs/68 §17) — 기동을 멈추는 운영자용 문구라 번역하지 않는다.
+JWT_SIGNING_KEYS 형식은 kid=비밀,kid2=비밀2 입니다 (항목 {})
+= -
+
+JWT_SIGNING_KEYS 의 kid 는 영문 · 숫자 · . _ - 1~32자이고 '{}' 가 아니어야 합니다: {}
+= -
+
+JWT_SIGNING_KEYS 에 같은 kid 가 두 번 있습니다: {}
+= -
+
+JWT_ACTIVE_KID '{}' 가 키 링에 없습니다 — 먼저 추가하고 배포한 뒤 전환합니다(ops/46)
+= -
+
+legacy 키로 서명하면서 legacy 를 거절할 수는 없습니다 — 먼저 다른 키로 전환합니다(ops/46)
+= -
+
+JWT 키 '{}' 가 {}바이트입니다 — HS256 은 {}바이트 이상(openssl rand -hex 32)
+= -

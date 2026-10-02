@@ -87,6 +87,10 @@ spring:
 
   app:    
      jwtSecret: ${JWT_SECRET_KEY}
+     # 서명 키 링(docs/68 §17) — 비워 두면 JWT_SECRET_KEY 하나(kid "legacy"). 교체는 ops/46. 세 서비스(user · gateway · chat)가 같은 값이어야 한다.
+     jwtSigningKeys: ${JWT_SIGNING_KEYS:}
+     jwtActiveKid: ${JWT_ACTIVE_KID:}
+     jwtAcceptLegacy: ${JWT_ACCEPT_LEGACY:true}
   main:
     web-application-type: reactive
 
