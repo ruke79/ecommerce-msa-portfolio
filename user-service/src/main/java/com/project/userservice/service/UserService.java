@@ -80,6 +80,18 @@ public interface UserService {
 
     void disable2FA(Long userId);
 
+    /** 로그인 중의 2FA 변경 결과(docs/68 §14). */
+    enum TwoFactorChange { OK, INVALID_CODE, TOO_MANY_ATTEMPTS, ALREADY_ENABLED, NOT_ENABLED }
+
+    /** 설정 시작 — 이미 켜져 있으면 비밀을 바꾸지 않는다(끄고 다시 켠다). */
+    TwoFactorChange start2FASetup(Long userId);
+
+    /** 설정 확인 — 새 앱의 코드가 맞으면 켠다. */
+    TwoFactorChange confirm2FASetup(Long userId, int code);
+
+    /** 끄기 — 지금 코드가 맞아야 한다. */
+    TwoFactorChange disable2FA(Long userId, int code);
+
     String updatePaymentMethod(String username, String paymentMethod);
 
     List<String> getUsersFromSessionRegistry();

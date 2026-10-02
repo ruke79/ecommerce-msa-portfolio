@@ -171,13 +171,9 @@ public class AuthController {
         response.addCookie(jwtUtils.createCookie(
                 com.project.userservice.constants.TokenType.REFRESH.getType(),
                 refreshToken.getToken(), jwtUtils.refreshTokenLifetime()));
-        jakarta.servlet.http.Cookie clear = new jakarta.servlet.http.Cookie(
-                com.project.userservice.security.PendingTwoFactor.COOKIE, "");
-        clear.setMaxAge(0);
-        clear.setPath("/");
-        clear.setHttpOnly(true);
-        clear.setSecure(true);
-        response.addCookie(clear);
+        // 지우는 쿠키도 발급할 때와 같은 속성(Secure · HttpOnly · SameSite)으로 — 쿠키는 JwtUtils.createCookie 한 곳에서 만든다.
+        response.addCookie(jwtUtils.createCookie(
+                com.project.userservice.security.PendingTwoFactor.COOKIE, null, java.time.Duration.ZERO));
 
         return ResponseEntity.ok(Map.of("message", "ok"));
     }
@@ -630,30 +626,41 @@ public class AuthController {
     @PostMapping("/enable-2fa")
     public ResponseEntity<String> enable2FA() {
         Long userId = authUtil.loggedInUserId();
+        // 🔒 이미 켜져 있으면 비밀을 바꾸지 않는다 — 세션만 가진 사람이 자기 앱으로 바꿔 끼우지 못하게(끄고 다시 켠다, docs/68 §14).
+        if (userService.start2FASetup(userId) == UserService.TwoFactorChange.ALREADY_ENABLED) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body("2FA already enabled");
+        }
         GoogleAuthenticatorKey secret = userService.generate2FASecret(userId);
         String qrCodeUrl = totpService.getQrCodeUrl(secret,
                 userService.getUserProfileById(userId).getUsername());
         return ResponseEntity.ok(qrCodeUrl);
     }
 
+    /**
+     * 🔒 끄려면 지금 코드가 맞아야 한다(docs/68 §14). 🐛 예전에는 세션만 있으면 아무것도 묻지 않고 껐다 — 공용 PC 에 남은 세션 하나로
+     * 2FA 를 끄고 계정을 가져갈 수 있었다. 틀린 시도는 세어 막고, 바뀌면 주인에게 알린다.
+     */
+    // [JA] 無効化には現在のコードが必要。以前はセッションだけで何も聞かずに無効化していた。
     @PostMapping("/disable-2fa")
-    public ResponseEntity<String> disable2FA() {
+    public ResponseEntity<String> disable2FA(@RequestParam int code) {
         Long userId = authUtil.loggedInUserId();
-        userService.disable2FA(userId);
-        return ResponseEntity.ok("2FA disabled");
+        return twoFactorResponse(userService.disable2FA(userId, code), "2FA disabled");
     }
 
     @PostMapping("/verify-2fa")
     public ResponseEntity<String> verify2FA(@RequestParam int code) {
         Long userId = authUtil.loggedInUserId();
-        boolean isValid = userService.validate2FACode(userId, code);
-        if (isValid) {
-            userService.enable2FA(userId);
-            return ResponseEntity.ok("2FA Verified");
-        } else {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body("Invalid 2FA Code");
-        }
+        return twoFactorResponse(userService.confirm2FASetup(userId, code), "2FA Verified");
+    }
+
+    private static ResponseEntity<String> twoFactorResponse(UserService.TwoFactorChange result, String ok) {
+        return switch (result) {
+            case OK -> ResponseEntity.ok(ok);
+            case INVALID_CODE -> ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid 2FA Code");
+            case TOO_MANY_ATTEMPTS -> ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body("Too many attempts");
+            case ALREADY_ENABLED -> ResponseEntity.status(HttpStatus.CONFLICT).body("2FA already enabled");
+            case NOT_ENABLED -> ResponseEntity.status(HttpStatus.CONFLICT).body("2FA is not enabled");
+        };
     }
 
     @GetMapping("/user/2fa-status")

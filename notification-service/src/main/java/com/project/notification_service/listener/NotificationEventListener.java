@@ -35,6 +35,8 @@ public class NotificationEventListener {
 
     /** {@code security-alert} 의 {@code alert} 값 — 리프레시 토큰 재사용으로 로그인이 끊겼다(user-service SecurityAlertProducer). */
     static final String ALERT_REFRESH_REUSE = "refresh-reuse";
+    static final String ALERT_2FA_ENABLED = "2fa-enabled";
+    static final String ALERT_2FA_DISABLED = "2fa-disabled";
 
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
@@ -389,13 +391,26 @@ public class NotificationEventListener {
 
                 // 같은 토픽 · 같은 종류(SECURITY_ALERT — 수신 설정을 무시한다)에 사건만 다르다. alert 가 없으면 새 기기(예전 이벤트).
                 // [JA] 同じトピック・同じ種類で出来事だけが違う。alert がなければ新しい端末(以前のイベント)。
-                boolean sessionRevoked = ALERT_REFRESH_REUSE.equals(textOf(event, "alert"));
+                String alert = textOf(event, "alert");
+                String title;
+                String body;
+                if (ALERT_REFRESH_REUSE.equals(alert)) {
+                    title = NotificationTexts.SESSION_REVOKED_TITLE;
+                    body = NotificationTexts.SESSION_REVOKED_BODY;
+                } else if (ALERT_2FA_ENABLED.equals(alert)) {
+                    title = NotificationTexts.TWO_FACTOR_ENABLED_TITLE;
+                    body = NotificationTexts.TWO_FACTOR_ENABLED_BODY;
+                } else if (ALERT_2FA_DISABLED.equals(alert)) {
+                    title = NotificationTexts.TWO_FACTOR_DISABLED_TITLE;
+                    body = NotificationTexts.TWO_FACTOR_DISABLED_BODY;
+                } else {
+                    title = NotificationTexts.SECURITY_TITLE;
+                    body = NotificationTexts.securityBody(textOf(event, "deviceLabel"), textOf(event, "maskedIp"));
+                }
                 notificationService.create(
                         userId, NotificationType.SECURITY_ALERT,
-                        sessionRevoked ? NotificationTexts.SESSION_REVOKED_TITLE : NotificationTexts.SECURITY_TITLE,
-                        sessionRevoked
-                                ? NotificationTexts.SESSION_REVOKED_BODY
-                                : NotificationTexts.securityBody(textOf(event, "deviceLabel"), textOf(event, "maskedIp")),
+                        title,
+                        body,
                         NotificationType.SECURITY_ALERT.path(),
                         // 발행자가 "security:device:<id>" · "security:refresh-reuse:<묶음 해시>" 로 만들어 준다 — 재전달돼도 하나다.
                         textOf(event, "eventId"),

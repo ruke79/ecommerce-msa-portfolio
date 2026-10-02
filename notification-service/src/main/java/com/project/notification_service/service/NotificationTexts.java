@@ -122,6 +122,17 @@ public final class NotificationTexts {
             "이미 사용된 로그인 정보가 다른 곳에서 다시 쓰인 흔적이 있어, 안전을 위해 해당 로그인을 종료했습니다. "
             + "다시 로그인해 주세요. 본인이 한 일이 아니라면 비밀번호를 바로 변경해 주세요.";
 
+    /**
+     * 2단계 인증을 켜거나 껐다(user-service docs/68 §14). 본인이 한 일이 아니면 누군가 로그인 상태를 쓰고 있다는 신호다 — 할 일을 분명히.
+     */
+    // [JA] 2 段階認証の有効化・無効化。本人でなければ誰かがログイン状態を使っている合図 — やることを明確に。
+    public static final String TWO_FACTOR_ENABLED_TITLE = "2단계 인증이 켜졌습니다";
+    public static final String TWO_FACTOR_ENABLED_BODY =
+            "계정에 2단계 인증이 설정되었습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 고객센터에 알려 주세요.";
+    public static final String TWO_FACTOR_DISABLED_TITLE = "2단계 인증이 꺼졌습니다";
+    public static final String TWO_FACTOR_DISABLED_BODY =
+            "계정의 2단계 인증이 해제되었습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 2단계 인증을 다시 켜 주세요.";
+
     // ── 채팅·상담·친구 ────────────────────────────────────────────────────
     public static final String SUPPORT_REPLY_TITLE = "고객지원팀 답변";
     public static final String SUPPORT_REPLY_BODY = "상담원이 문의에 답변했습니다.";
@@ -157,6 +168,7 @@ public final class NotificationTexts {
             couponTitle(null), couponTitle("{}"), couponBody("{}", null), couponBody("{}", "{}"),
             SECURITY_TITLE, securityBody("{}", null), securityBody(null, null),
             SESSION_REVOKED_TITLE, SESSION_REVOKED_BODY,
+            TWO_FACTOR_ENABLED_TITLE, TWO_FACTOR_ENABLED_BODY, TWO_FACTOR_DISABLED_TITLE, TWO_FACTOR_DISABLED_BODY,
             SUPPORT_REPLY_TITLE, SUPPORT_REPLY_BODY, chatTitle(null), chatTitle("{}"), CHAT_BODY,
             friendOnlineTitle("{}"), friendOnlineTitle(null), FRIEND_ONLINE_BODY,
             RESTOCK_TITLE, restockBody("{}", "{}"), restockBody(RESTOCK_FALLBACK_PRODUCT, "{}"));

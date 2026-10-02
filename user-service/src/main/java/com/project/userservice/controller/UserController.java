@@ -47,6 +47,10 @@ public class UserController {
 
     private final UserServiceImpl userService;
 
+    /** 비밀번호를 바꾸면 다른 기기는 끊고 이 기기는 새 로그인으로 이어 준다(docs/68 §14). */
+    private final com.project.userservice.service.RefreshTokenService refreshTokenService;
+    private final com.project.userservice.security.jwt.JwtUtils jwtUtils;
+
     private final AddressService addressService;
 
     private final ImageService imageService;
@@ -377,7 +381,8 @@ public class UserController {
      */
     @PutMapping("/update-password")
     public ResponseEntity<?> updatePassword(@RequestBody PasswordRequest request,
-            @AuthenticationPrincipal UserDetails userDetails) {
+            @AuthenticationPrincipal UserDetails userDetails,
+            jakarta.servlet.http.HttpServletResponse response) {
 
         if (null == userDetails) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
@@ -388,6 +393,14 @@ public class UserController {
             UserDetailsImpl user = (UserDetailsImpl) userDetails;
             userService.updatePassword(user.getId(), request.getCurrent_password(),
                     request.getNew_password());
+            // 🐛 예전: 응답은 "다른 기기에서는 다시 로그인" 이었지만 **이 기기도** 몇 분 뒤 튕겼다 — "비밀번호 변경 전에 발급된 리프레시 토큰은
+            //    거절" 이 지금 기기의 토큰에도 걸렸는데 새 토큰을 주지 않았다. 이제 모든 로그인을 끊고(다른 기기 · 채팅 · 알림 즉시) 이 기기에는
+            //    새 로그인 묶음을 쿠키로 준다(docs/68 §14).
+            // [JA] 以前は「他の端末では再ログイン」と返しつつ、この端末も数分後に弾かれた。今は全ログインを切り、この端末には新しいファミリーを渡す。
+            refreshTokenService.revokeAll(user.getId());
+            var fresh = refreshTokenService.createRefreshToken(user.getId());
+            response.addCookie(jwtUtils.createCookie(com.project.userservice.constants.TokenType.REFRESH.getType(),
+                    fresh.getToken(), jwtUtils.refreshTokenLifetime()));
             return ResponseEntity.ok(new MessageResponse(
                     "비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다."));
         } catch (RuntimeException e) {

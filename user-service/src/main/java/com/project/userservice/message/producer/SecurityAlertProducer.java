@@ -140,6 +140,31 @@ public class SecurityAlertProducer {
 
     /** {@code security-alert} 의 사건 구분 — notification-service 가 문구를 고른다. 없으면 새 기기 로그인. */
     public static final String ALERT_REFRESH_REUSE = "refresh-reuse";
+    public static final String ALERT_2FA_ENABLED = "2fa-enabled";
+    public static final String ALERT_2FA_DISABLED = "2fa-disabled";
+
+    /**
+     * 2단계 인증을 켜거나 껐다고 알린다(docs/68 §14). 본인이 한 일이 아니면 세션을 누군가 쓰고 있다는 신호다 — 수신 설정과 무관하게 나간다.
+     * 발행 실패는 응답을 바꾸지 않는다(변경은 이미 저장됐다).
+     */
+    // [JA] 2 段階認証を有効・無効にしたことを知らせる。本人でなければ誰かがセッションを使っている合図。発行失敗は応答を変えない。
+    public void publishTwoFactorChanged(Long userId, String email, boolean enabled) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("alert", enabled ? ALERT_2FA_ENABLED : ALERT_2FA_DISABLED);
+            event.put("customerId", userId);
+            event.put("email", email);
+            event.put("occurredAt", LocalDateTime.now().toString());
+            event.put("eventId", "security:2fa:" + userId + ":" + (enabled ? "on" : "off") + ":" + System.currentTimeMillis());
+            kafkaTemplate.send(TOPIC, String.valueOf(userId), objectMapper.writeValueAsString(event));
+            log.info("2단계 인증 {} 알림 발행: userId={}", enabled ? "켜기" : "끄기", userId);
+        } catch (Exception e) {
+            log.error("2단계 인증 변경 알림을 발행하지 못했습니다: userId={} ({})", userId, e.getMessage());
+        }
+    }
 
     static String familyDigest(String familyId) {
         try {

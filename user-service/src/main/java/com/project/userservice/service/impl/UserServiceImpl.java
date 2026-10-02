@@ -108,6 +108,12 @@ public class UserServiceImpl implements UserService {
 
     private final com.project.userservice.message.UserOutboxHelper userOutboxHelper;
 
+    /** OTP 재사용 거절 · 로그인 중 2FA 변경 시도 제한(docs/68 §14). */
+    private final com.project.userservice.security.totp.TotpReplayGuard totpReplayGuard;
+
+    /** 2FA 를 켜고 끄면 계정 주인에게 알린다(docs/68 §14). */
+    private final com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
+
     /** 관리자가 계정을 막을 때 이미 열린 로그인도 끊는다(docs/68 §13). */
     private final com.project.userservice.service.RefreshTokenService refreshTokenService;
 
@@ -669,11 +675,81 @@ public class UserServiceImpl implements UserService {
         return key;
     }
 
+    /**
+     * 코드가 맞고, 그 시간 구간의 코드가 <b>아직 쓰이지 않았으면</b> true(docs/68 §14).
+     *
+     * <p>🐛 예전에는 맞기만 하면 통과였다 — 같은 6자리를 약 90초 동안 몇 번이고 쓸 수 있었다(피싱 중계 · 어깨 너머).
+     */
+    // [JA] コードが合い、その時間区間のコードがまだ使われていなければ true。以前は合えば通り、同じ 6 桁を約 90 秒何度でも使えた。
     @Override
     public boolean validate2FACode(Long userId, int code) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
-        return totpService.verifyCode(user.getTwoFactorSecret(), code);
+        java.util.OptionalLong step = totpService.matchedStep(user.getTwoFactorSecret(), code, System.currentTimeMillis());
+        return step.isPresent() && totpReplayGuard.claim(userId, step.getAsLong());
+    }
+
+    /*
+     * 🐛 로그인 중의 2FA 변경에 확인이 없었다(docs/68 §14).
+     *   · 끄기(/disable-2fa)는 비밀번호도 코드도 묻지 않았다 — 공용 PC 에 남은 세션 · 탈취한 세션 하나면 2FA 를 끄고 계정을 가져갈 수 있었다.
+     *   · 켜기(/enable-2fa)는 이미 켜져 있어도 비밀을 새로 만들어 덮어썼다 — 공격자가 자기 앱으로 바꿔 끼우면 주인의 앱은 쓸모가 없어진다.
+     * 이제 끄려면 지금 코드가 맞아야 하고, 켜져 있으면 다시 설정할 수 없으며(끄고 켠다), 틀린 시도는 세어 막고, 바뀌면 주인에게 알린다.
+     * [JA] ログイン中の 2FA 変更に確認がなかった。無効化はパスワードもコードも求めず、有効化は既に有効でも秘密を上書きしていた。
+     *      今は無効化に現在のコードを要求し、有効なら再設定できず、失敗を数えて止め、変わったら持ち主に知らせる。
+     */
+    @Override
+    public TwoFactorChange start2FASetup(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
+        return user.isTwoFactorEnabled() ? TwoFactorChange.ALREADY_ENABLED : TwoFactorChange.OK;
+    }
+
+    @Override
+    public TwoFactorChange confirm2FASetup(Long userId, int code) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
+        if (user.isTwoFactorEnabled()) {
+            return TwoFactorChange.ALREADY_ENABLED;
+        }
+        TwoFactorChange checked = checkCode(userId, code);
+        if (checked != TwoFactorChange.OK) {
+            return checked;
+        }
+        enable2FA(userId);
+        securityAlertProducer.publishTwoFactorChanged(userId, user.getEmail(), true);
+        return TwoFactorChange.OK;
+    }
+
+    @Override
+    public TwoFactorChange disable2FA(Long userId, int code) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
+        if (!user.isTwoFactorEnabled()) {
+            return TwoFactorChange.NOT_ENABLED;
+        }
+        TwoFactorChange checked = checkCode(userId, code);
+        if (checked != TwoFactorChange.OK) {
+            return checked;
+        }
+        // 비밀도 지운다 — 남겨 두면 예전 앱의 코드가 다시 켤 때 그대로 맞는다.
+        user.setTwoFactorEnabled(false);
+        user.setTwoFactorSecret(null);
+        userRepository.save(user);
+        securityAlertProducer.publishTwoFactorChanged(userId, user.getEmail(), false);
+        return TwoFactorChange.OK;
+    }
+
+    private TwoFactorChange checkCode(Long userId, int code) {
+        if (totpReplayGuard.locked(userId)) {
+            return TwoFactorChange.TOO_MANY_ATTEMPTS;
+        }
+        if (!validate2FACode(userId, code)) {
+            totpReplayGuard.recordFailure(userId);
+            log.info("2FA 변경 확인 실패: userId={}", userId);
+            return TwoFactorChange.INVALID_CODE;
+        }
+        totpReplayGuard.clearFailures(userId);
+        return TwoFactorChange.OK;
     }
 
     @Override

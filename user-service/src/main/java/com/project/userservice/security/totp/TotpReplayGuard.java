@@ -1,0 +1,92 @@
+package com.project.userservice.security.totp;
+
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.stereotype.Component;
+
+/**
+ * OTP(TOTP) 코드를 <b>한 번만</b> 쓰게 하고, 로그인한 상태의 2FA 변경 시도를 세어 막는다(docs/68 §14).
+ *
+ * <h3>재사용</h3>
+ *
+ * <p>🐛 예전: 검증이 앞뒤 한 구간(30초)씩 시계 오차를 허용하면서 <b>쓴 코드를 기록하지 않았다</b> — 같은 6자리를 약 90초 동안 몇 번이고
+ * 쓸 수 있었다. 피싱 사이트가 사용자가 넣은 코드를 그대로 중계하거나, 어깨 너머로 본 코드를 같은 구간에 다시 쓰는 공격이 통했다.
+ *
+ * <p>지금: 사용자마다 마지막으로 받아들인 <b>시간 구간 번호</b>를 남기고, 같은 구간 또는 그 이전 구간의 코드는 거절한다(RFC 6238 §5.2 —
+ * "검증자는 한 번 성공한 OTP 를 다시 받으면 안 된다"). 비교와 기록은 Lua 한 번으로 — 같은 코드로 동시에 두 요청이 와도 하나만 통과한다.
+ * 기록은 허용 창이 지나면 의미가 없으므로 몇 분 뒤 지워진다.
+ *
+ * <h3>시도 제한</h3>
+ *
+ * <p>로그인 중의 2FA 설정 확인 · 끄기는 세션만 있으면 부를 수 있다. 6자리를 무한히 대입하지 못하게 사용자별로 실패를 센다 — 로그인 2단계는
+ * 대기 토큰이 따로 센다(PendingTwoFactor).
+ */
+// [JA] OTP(TOTP)のコードを一度だけ使わせ、ログイン中の 2FA 変更の試行を数えて止める。以前は前後 1 区間の時刻ずれを許しつつ使ったコードを
+//      記録せず、同じ 6 桁を約 90 秒何度でも使えた(フィッシングの中継・肩越しの再利用)。今はユーザーごとに最後に受け入れた時間区間番号を残し、
+//      同じか以前の区間のコードを拒否する(RFC 6238 §5.2)。比較と記録は Lua 一回で原子的に。
+@Component
+public class TotpReplayGuard {
+
+    static final String STEP_KEY = "totp:last-step:";
+    static final String FAIL_KEY = "totp:mgmt-fail:";
+
+    /** 마지막 구간보다 새 구간일 때만 기록하고 1, 아니면 0. */
+    private static final DefaultRedisScript<Long> CLAIM = new DefaultRedisScript<>("""
+            local cur = tonumber(redis.call('GET', KEYS[1]) or '-1')
+            local step = tonumber(ARGV[1])
+            if step <= cur then
+              return 0
+            end
+            redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+            return 1
+            """, Long.class);
+
+    /** 실패를 하나 더하고, 처음이면 창의 길이만큼 TTL. 지금까지의 실패 수. */
+    private static final DefaultRedisScript<Long> FAIL = new DefaultRedisScript<>("""
+            local n = redis.call('INCR', KEYS[1])
+            if n == 1 then
+              redis.call('PEXPIRE', KEYS[1], ARGV[1])
+            end
+            return n
+            """, Long.class);
+
+    private final StringRedisTemplate redis;
+    private final int maxFailures;
+    private final long failureWindowMs;
+
+    public TotpReplayGuard(StringRedisTemplate redis,
+            @Value("${auth.totp.max-failures:5}") int maxFailures,
+            @Value("${auth.totp.failure-window-ms:900000}") long failureWindowMs) {
+        this.redis = redis;
+        this.maxFailures = maxFailures;
+        this.failureWindowMs = failureWindowMs;
+    }
+
+    /**
+     * 이 구간의 코드를 받아들여도 되는가 — 되면 기록한다.
+     *
+     * @return false 면 이미 같은(또는 더 늦은) 구간의 코드가 쓰였다 = 재사용
+     */
+    public boolean claim(Long userId, long timeStep) {
+        // 기록은 허용 창(앞뒤 한 구간 = 90초)보다 넉넉히 — 그 뒤에는 옛 구간의 코드가 어차피 맞지 않는다.
+        Long r = redis.execute(CLAIM, List.of(STEP_KEY + userId), String.valueOf(timeStep), "300000");
+        return r != null && r == 1L;
+    }
+
+    /** 로그인 중의 2FA 변경 시도가 너무 많이 틀렸는가. */
+    public boolean locked(Long userId) {
+        String v = redis.opsForValue().get(FAIL_KEY + userId);
+        return v != null && Integer.parseInt(v) >= maxFailures;
+    }
+
+    public void recordFailure(Long userId) {
+        redis.execute(FAIL, List.of(FAIL_KEY + userId), String.valueOf(failureWindowMs));
+    }
+
+    public void clearFailures(Long userId) {
+        redis.delete(FAIL_KEY + userId);
+    }
+}

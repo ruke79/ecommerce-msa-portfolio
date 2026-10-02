@@ -129,7 +129,9 @@ public class RefreshTokenController {
         User tokenOwner = userService.findByEmail(email);
         if (tokenOwner != null && tokenOwner.getPasswordChangedAt() != null) {
             java.util.Date issuedAt = jwtUtils.getIssuedAtFromJwtToken(refresh);
-            java.util.Date changedAt = java.sql.Timestamp.valueOf(tokenOwner.getPasswordChangedAt());
+            // 초 단위로 비교한다 — JWT 의 iat 는 초까지라, 비밀번호를 바꾼 바로 그 초에 이 기기에 새로 준 토큰(UserController)이
+            // 밀리초 차이로 "이전" 이 되어 거절되지 않게(docs/68 §14). 같은 초의 옛 토큰은 변경 때 묶음을 끊어 막는다.
+            java.util.Date changedAt = java.sql.Timestamp.valueOf(tokenOwner.getPasswordChangedAt().withNano(0));
             if (issuedAt == null || issuedAt.before(changedAt)) {
                 log.info("비밀번호 변경 이전에 발급된 리프레시 토큰을 거절한다: userId={}",
                         tokenOwner.getUserId());
