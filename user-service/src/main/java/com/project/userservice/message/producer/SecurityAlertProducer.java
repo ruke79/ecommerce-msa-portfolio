@@ -150,6 +150,9 @@ public class SecurityAlertProducer {
     public static final String ALERT_SOCIAL_LINKED = "social-linked";
     /** 소셜 로그인이 이메일 소유를 증명해, 확인된 적 없는 비밀번호를 해제했다(사전 탈취 방어, docs/68 §15). */
     public static final String ALERT_UNPROVEN_PASSWORD_CLEARED = "unproven-password-cleared";
+    /** 패스키를 새로 등록했다 · 지웠다(docs/68 §20) — 본인이 한 일이 아니면 누군가 세션을 쓰고 있다. */
+    public static final String ALERT_PASSKEY_ADDED = "passkey-added";
+    public static final String ALERT_PASSKEY_REMOVED = "passkey-removed";
 
     /**
      * 2단계 인증을 켜거나 껐다고 알린다(docs/68 §14). 본인이 한 일이 아니면 세션을 누군가 쓰고 있다는 신호다 — 수신 설정과 무관하게 나간다.

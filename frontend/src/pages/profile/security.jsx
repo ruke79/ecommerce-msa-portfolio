@@ -12,6 +12,7 @@ import { useAuthContext } from "store/AuthContext";
 import SmsVerification from "components/notification/SmsVerification";
 import AccountWithdrawal from "components/profile/AccountWithdrawal";
 import LoginDevices from "components/profile/LoginDevices";
+import Passkeys from "components/profile/Passkeys";
 import SignOutEverywhere from "components/profile/SignOutEverywhere";
 import toast from "react-hot-toast";
 import tokenUtil from "util/tokenUtil";
@@ -175,6 +176,9 @@ const Security = () => {
                     {/* 로그인 기기. "새로운 기기에서 로그인되었습니다" 알림을 받은
                         사용자가 갈 곳이다 — 알림만 있고 확인할 화면이 없으면 정말
                         조치가 필요한 상황인지 판단할 근거가 없다. */}
+                    {/* 패스키 — 비밀번호 없이, 피싱에 넘어가지 않는 로그인(user-service docs/68 §20). */}
+                    <Passkeys />
+
                     <LoginDevices />
 
                     {/* 모든 기기에서 로그아웃 — 위 "기억 지우기" 는 로그아웃이 아니다. 알림을 받은 사용자가 실제로 끊을 수 있는 곳(docs/68 §8). */}

@@ -686,6 +686,39 @@ export const getMyTier = async () => {
 export const forgetDevice = async (deviceId) =>
   deleteRequest(`/user-service/api/user/profile/devices/${deviceId}`);
 
+// ── 패스키(user-service docs/68 §20) ──────────────────────────────────────
+//
+// 신원은 보내지 않는다 — 서버가 토큰에서 읽는다. 등록 전에는 "최근 로그인" 이 필요하다(403 code=reauth_required).
+
+export const getPasskeys = async () => {
+  const { data } = await getRequest("/user-service/api/user/passkeys");
+  return data;
+};
+
+export const getPasskeyRegistrationOptions = async () => {
+  const { data } = await postRequest("/user-service/api/user/passkeys/options");
+  return data;
+};
+
+export const registerPasskey = async (name, credential) => {
+  const { data } = await postRequest("/user-service/api/user/passkeys", { name, credential });
+  return data;
+};
+
+export const deletePasskey = async (passkeyId) =>
+  deleteRequest(`/user-service/api/user/passkeys/${passkeyId}`);
+
+/** 로그인 옵션 — challenge 는 HttpOnly 쿠키(PENDING_PASSKEY)로 이 브라우저에 묶인다. */
+export const getPasskeyLoginOptions = async () => {
+  const { data } = await postRequest("/user-service/api/auth/public/passkey/options");
+  return data;
+};
+
+export const loginWithPasskey = async (credential) => {
+  const { data } = await postRequest("/user-service/api/auth/public/passkey/login", credential);
+  return data;
+};
+
 /**
  * 모든 기기에서 로그아웃 — 이 기기를 포함한 모든 로그인을 끊는다(user-service docs/68 §8).
  * 신원은 보내지 않는다 — 서버가 토큰에서 읽는다. 다른 기기는 최대 15분(액세스 토큰 수명) 안에 끊긴다.

@@ -407,6 +407,17 @@ class DeliveryStatusNotificationTest {
     }
 
     @Test
+    @DisplayName("🔴 패스키 등록 · 삭제는 그 사건의 문구로 — 새 기기 문구로 떨어지지 않는다(user-service docs/68 §20)")
+    void passkeyAlertsHaveTheirOwnText() {
+        listener.onSecurityAlert(List.of(securityEvent(",\"alert\":\"passkey-added\"")), null);
+        assertThat(captureTitle().getValue()).isEqualTo("새 패스키가 등록되었습니다");
+
+        org.mockito.Mockito.clearInvocations(notificationService);
+        listener.onSecurityAlert(List.of(securityEvent(",\"alert\":\"passkey-removed\"")), null);
+        assertThat(captureTitle().getValue()).isEqualTo("패스키가 삭제되었습니다");
+    }
+
+    @Test
     @DisplayName("alert 가 없는 예전 이벤트는 그대로 새 기기 로그인이다")
     void missingAlertMeansNewDevice() {
         listener.onSecurityAlert(List.of(securityEvent(",\"alert\":\"something-else\"")), null);

@@ -12,7 +12,8 @@ import * as Yup from "yup";
 import ButtonInput from "./ButtonInput";
 import { useAuthContext, STATUS } from "../../store/AuthContext";
 import toast from "react-hot-toast";
-import api, { queryClient } from 'util/api'
+import api, { queryClient, getPasskeyLoginOptions, loginWithPasskey } from 'util/api'
+import { credentialToJSON, isPasskeySupported, isUserCancel, toRequestOptions } from 'util/passkey'
 import { API_BASE } from 'util/apiBase'
 import { alreadyToasted, loginErrorMessage } from 'util/loginError'
 import { loginResultMessage } from 'util/loginResult'
@@ -198,6 +199,28 @@ const SignInPage = () => {
      * 통과하면 서버가 REFRESH 쿠키를 심으므로, 전체 리로드로 앱을 다시 띄우면 TokenRefresher 가 그 쿠키로
      * 세션을 복구한다 — 정상 로그인과 같은 끝. 가려던 곳(redirectTo)은 내부 경로만 남아 있다.
      */
+    // 패스키 로그인(user-service docs/68 §20) — 이메일을 먼저 묻지 않는다. 기기가 이 사이트의 계정 목록을 보여 준다.
+    // 통과하면 서버가 REFRESH 쿠키를 심는다 — 2FA 확인과 같은 끝(전체 리로드).
+    // [JA] パスキーログイン — メールを先に聞かない。通過したらサーバーが REFRESH Cookie を付ける(2FA 確認と同じ終わり方)。
+    const [passkeyBusy, setPasskeyBusy] = useState(false);
+    const [passkeyError, setPasskeyError] = useState("");
+    const passkeyHandler = async () => {
+        setPasskeyBusy(true);
+        setPasskeyError("");
+        try {
+            const options = await getPasskeyLoginOptions();
+            const credential = await navigator.credentials.get({ publicKey: toRequestOptions(options) });
+            await loginWithPasskey(credentialToJSON(credential));
+            window.location.href = redirectTo;
+        } catch (error) {
+            // 기기 창을 닫은 것은 오류가 아니다.
+            if (!isUserCancel(error)) {
+                setPasskeyError(error?.response?.data?.message ?? t("user.signin.passkey.failed"));
+            }
+            setPasskeyBusy(false);
+        }
+    };
+
     const verify2faHandler = async () => {
         setVerifying(true);
         setTwoFactorError("");
@@ -410,6 +433,22 @@ const SignInPage = () => {
                             </div>
                         )}
                     </div>
+
+                    {isPasskeySupported() && (
+                        <div className="flex flex-col space-y-1">
+                            <button
+                                type="button"
+                                onClick={passkeyHandler}
+                                disabled={passkeyBusy}
+                                className="w-full border rounded py-2 text-sm hover:bg-slate-50 disabled:opacity-40"
+                            >
+                                {t("user.signin.passkey.button")}
+                            </button>
+                            {passkeyError && (
+                                <p className="text-red-500 text-sm" role="alert">{passkeyError}</p>
+                            )}
+                        </div>
+                    )}
 
                     <SocialLogin />
                 </div>

@@ -42,6 +42,8 @@ public class NotificationEventListener {
     static final String ALERT_PASSWORD_RESET = "password-reset";
     static final String ALERT_SOCIAL_LINKED = "social-linked";
     static final String ALERT_UNPROVEN_PASSWORD_CLEARED = "unproven-password-cleared";
+    static final String ALERT_PASSKEY_ADDED = "passkey-added";
+    static final String ALERT_PASSKEY_REMOVED = "passkey-removed";
 
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
@@ -420,6 +422,13 @@ public class NotificationEventListener {
                 } else if (ALERT_UNPROVEN_PASSWORD_CLEARED.equals(alert)) {
                     title = NotificationTexts.UNPROVEN_PASSWORD_CLEARED_TITLE;
                     body = NotificationTexts.UNPROVEN_PASSWORD_CLEARED_BODY;
+                } else if (ALERT_PASSKEY_ADDED.equals(alert)) {
+                    // 모르는 사건은 아래 "새 기기" 문구로 떨어진다 — 패스키 등록을 새 기기 로그인으로 알리면 사용자가 무엇을 확인할지 모른다.
+                    title = NotificationTexts.PASSKEY_ADDED_TITLE;
+                    body = NotificationTexts.PASSKEY_ADDED_BODY;
+                } else if (ALERT_PASSKEY_REMOVED.equals(alert)) {
+                    title = NotificationTexts.PASSKEY_REMOVED_TITLE;
+                    body = NotificationTexts.PASSKEY_REMOVED_BODY;
                 } else {
                     title = NotificationTexts.SECURITY_TITLE;
                     body = NotificationTexts.securityBody(textOf(event, "deviceLabel"), textOf(event, "maskedIp"));

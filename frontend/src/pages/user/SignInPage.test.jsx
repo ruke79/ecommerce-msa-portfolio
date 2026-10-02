@@ -375,6 +375,77 @@ describe("SignInPage", () => {
     expect(mockLogin).not.toHaveBeenCalled();
   });
 
+  /**
+   * 패스키 로그인(user-service docs/68 §20) — 이메일 · 비밀번호 없이 기기 서명으로. 통과하면 서버가 REFRESH 쿠키를 심고
+   * 화면은 가려던 곳으로 전체 리로드한다(2FA 와 같은 끝). 지원하지 않는 브라우저에는 버튼이 없다.
+   */
+  describe("패스키 로그인", () => {
+    const bytes = (...values) => new Uint8Array(values).buffer;
+    let get;
+
+    beforeEach(() => {
+      window.PublicKeyCredential = function PublicKeyCredential() {};
+      get = jest.fn().mockResolvedValue({
+        id: "AQI", rawId: bytes(1, 2), type: "public-key",
+        response: { clientDataJSON: bytes(9), authenticatorData: bytes(5), signature: bytes(6), userHandle: bytes(4) },
+      });
+      Object.defineProperty(navigator, "credentials", { value: { get, create: jest.fn() }, configurable: true });
+    });
+
+    afterEach(() => {
+      delete window.PublicKeyCredential;
+    });
+
+    it("옵션 → 기기 서명 → 로그인 → 가려던 곳으로", async () => {
+      global.__mockLocationState = { from: { pathname: "/checkout" } };
+      const post = jest.spyOn(api, "post")
+        .mockResolvedValueOnce({ data: { challenge: "AAEC", rpId: "shop.example.com", allowCredentials: [] } })
+        .mockResolvedValueOnce({ data: { message: "ok" } });
+      delete window.location;
+      window.location = { href: "" };
+
+      renderPage();
+      await userEvent.click(screen.getByRole("button", { name: "패스키로 로그인" }));
+
+      await waitFor(() => expect(window.location.href).toBe("/checkout"));
+      expect(post.mock.calls[0][0]).toContain("/api/auth/public/passkey/options");
+      expect(new Uint8Array(get.mock.calls[0][0].publicKey.challenge)).toEqual(new Uint8Array([0, 1, 2]));
+      expect(post.mock.calls[1][0]).toContain("/api/auth/public/passkey/login");
+      expect(post.mock.calls[1][1]).toMatchObject({ rawId: "AQI", response: { signature: "Bg", userHandle: "BA" } });
+      expect(mockLogin).not.toHaveBeenCalled();
+    });
+
+    it("기기 창을 닫으면 오류 없이 그대로 — 로그인 요청도 없다", async () => {
+      get.mockRejectedValue({ name: "NotAllowedError" });
+      const post = jest.spyOn(api, "post")
+        .mockResolvedValueOnce({ data: { challenge: "AAEC", rpId: "shop.example.com", allowCredentials: [] } });
+
+      renderPage();
+      await userEvent.click(screen.getByRole("button", { name: "패스키로 로그인" }));
+
+      await waitFor(() => expect(get).toHaveBeenCalled());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+
+    it("서버가 거절하면 그 문구를 보여 준다", async () => {
+      jest.spyOn(api, "post")
+        .mockResolvedValueOnce({ data: { challenge: "AAEC", rpId: "shop.example.com", allowCredentials: [] } })
+        .mockRejectedValueOnce({ response: { status: 401, data: { message: "패스키로 로그인하지 못했습니다." } } });
+
+      renderPage();
+      await userEvent.click(screen.getByRole("button", { name: "패스키로 로그인" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("패스키로 로그인하지 못했습니다");
+    });
+
+    it("지원하지 않는 브라우저에는 버튼이 없다", () => {
+      delete window.PublicKeyCredential;
+      renderPage();
+      expect(screen.queryByRole("button", { name: "패스키로 로그인" })).not.toBeInTheDocument();
+    });
+  });
+
   it("소셜 2FA(?oauth2fa=1): 바로 2FA 화면이 뜨고, 코드는 public 엔드포인트로 간다", async () => {
     // 신원은 PENDING_2FA httpOnly 쿠키가 나른다 — 화면은 토큰을 만지지 않는다.
     global.__mockSearch = "oauth2fa=1";

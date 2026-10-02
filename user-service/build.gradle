@@ -32,6 +32,8 @@ dependencies {
 	
 	implementation group: 'org.passay', name: 'passay', version: '1.6.4'
 	implementation group: 'com.warrenstrange', name: 'googleauth', version: '1.4.0'
+	// 패스키(WebAuthn) 검증 — Spring Security 6.5 의 webauthn 이 쓰는 것과 같은 라이브러리. 0.31 부터 Jackson 3 이라 0.30 에 머문다(docs/68 §20).
+	implementation group: 'com.webauthn4j', name: 'webauthn4j-core', version: '0.30.3.RELEASE'
 	implementation group: 'commons-io', name: 'commons-io', version: '2.22.0'
 	//implementation group: 'com.google.code.gson', name: 'gson', version: '2.11.0'
 	implementation group: 'com.amazonaws', name: 'aws-java-sdk-s3', version: '1.12.797'

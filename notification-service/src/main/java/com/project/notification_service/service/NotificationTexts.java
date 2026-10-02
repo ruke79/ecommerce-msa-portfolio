@@ -153,6 +153,14 @@ public final class NotificationTexts {
     public static final String UNPROVEN_PASSWORD_CLEARED_BODY =
             "소셜 로그인으로 이메일 주소의 주인이 확인되어, 주소 확인 없이 설정돼 있던 비밀번호를 해제하고 모든 기기의 로그인을 종료했습니다. "
             + "비밀번호로도 로그인하려면 '비밀번호 찾기' 로 새로 설정해 주세요.";
+    /** 패스키 등록 · 삭제(user-service docs/68 §20). */
+    public static final String PASSKEY_ADDED_TITLE = "새 패스키가 등록되었습니다";
+    public static final String PASSKEY_ADDED_BODY =
+            "이 계정에 로그인할 수 있는 패스키가 새로 등록되었습니다. 본인이 한 일이 아니라면 보안 설정에서 그 패스키를 삭제하고, "
+            + "비밀번호를 변경한 뒤 모든 기기에서 로그아웃해 주세요.";
+    public static final String PASSKEY_REMOVED_TITLE = "패스키가 삭제되었습니다";
+    public static final String PASSKEY_REMOVED_BODY =
+            "이 계정의 패스키 하나가 삭제되었습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
 
     /** 프로바이더 표시 이름 — 사용자에게는 registrationId(google · kakao)가 아니라 서비스 이름을 보여 준다. */
     static String providerLabel(String provider) {
@@ -205,6 +213,7 @@ public final class NotificationTexts {
             TWO_FACTOR_FAILURES_TITLE, TWO_FACTOR_FAILURES_BODY, PASSWORD_RESET_TITLE, PASSWORD_RESET_BODY,
             SOCIAL_LINKED_TITLE, socialLinkedBody("{}"), socialLinkedBody(null),
             UNPROVEN_PASSWORD_CLEARED_TITLE, UNPROVEN_PASSWORD_CLEARED_BODY,
+            PASSKEY_ADDED_TITLE, PASSKEY_ADDED_BODY, PASSKEY_REMOVED_TITLE, PASSKEY_REMOVED_BODY,
             SUPPORT_REPLY_TITLE, SUPPORT_REPLY_BODY, chatTitle(null), chatTitle("{}"), CHAT_BODY,
             friendOnlineTitle("{}"), friendOnlineTitle(null), FRIEND_ONLINE_BODY,
             RESTOCK_TITLE, restockBody("{}", "{}"), restockBody(RESTOCK_FALLBACK_PRODUCT, "{}"));
