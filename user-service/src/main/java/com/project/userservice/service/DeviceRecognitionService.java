@@ -92,6 +92,17 @@ public class DeviceRecognitionService {
         return firstEver ? Recognition.firstDevice(device, token) : Recognition.newDevice(device, token);
     }
 
+    /**
+     * 이 브라우저가 이 사용자의 <b>아는 기기</b>인가 — 기록하지 않고 보기만 한다(위험 기반 로그인, docs/68 §19).
+     * 확인 코드를 통과하기 전에는 기기를 기록하지 않는다 — 기록하면 다음 시도부터 "아는 기기" 가 되어 확인을 건너뛴다.
+     */
+    // [JA] このブラウザがこのユーザーの既知の端末か — 記録せずに見るだけ。確認コードを通るまで端末を記録しない。
+    @Transactional(readOnly = true)
+    public boolean isKnown(Long userId, String presentedToken) {
+        return presentedToken != null
+                && knownDeviceRepository.findByUserIdAndTokenHash(userId, DeviceIdentity.hash(presentedToken)).isPresent();
+    }
+
     private KnownDevice save(Long userId, String token, String label, String maskedIp, LocalDateTime now) {
         try {
             return knownDeviceRepository.save(KnownDevice.builder()

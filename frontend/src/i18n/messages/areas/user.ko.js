@@ -48,6 +48,8 @@ const user = {
     "user.signin.2fa.confirm": "확인",
     "user.signin.2fa.failed": "인증에 실패했습니다.",
     "user.signin.2fa.other_account": "다른 계정으로 로그인",
+    "user.signin.check.title": "로그인 확인",
+    "user.signin.check.hint": "처음 보는 기기에서의 로그인이라 한 번 더 확인합니다. 가입한 메일 주소로 보낸 6자리 코드를 입력해 주세요(10분 동안 유효).",
 
     // ── 회원가입 ────────────────────────────────────────────────────────
     "user.register.heading": "회원가입",

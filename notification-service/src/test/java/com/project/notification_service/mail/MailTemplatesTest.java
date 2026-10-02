@@ -178,4 +178,23 @@ class MailTemplatesTest {
                 Map.of("subject", "로그인\r\nBcc: evil@example.com"));
         assertThat(r.subject()).doesNotContain("\r").doesNotContain("\n");
     }
+
+    @Test
+    @DisplayName("로그인 확인 코드 — 숫자 6자리만 싣고 링크가 없다(docs/68 §19)")
+    void 로그인_확인_코드() {
+        var ko = MailTemplates.render(Region.KR, MailKind.LOGIN_CHALLENGE,
+                Map.of("code", "123456", "url", "https://evil.example.com"));
+        assertThat(ko.subject()).isEqualTo("[쇼핑몰] 로그인 확인 코드 123456");
+        assertThat(ko.text()).contains("확인 코드: 123456");
+        assertThat(ko.html()).contains("123456").doesNotContain("href").doesNotContain("evil");
+
+        var ja = MailTemplates.render(Region.JP, MailKind.LOGIN_CHALLENGE, Map.of("code", "654321"));
+        assertThat(ja.subject()).isEqualTo("[ショップ] ログイン確認コード 654321");
+        assertThat(ja.html()).doesNotContain("href").doesNotContain("로그인");
+
+        // 코드 자리에 다른 것이 와도 숫자만, 6자리까지만 — 제목 헤더 주입도 막힌다.
+        var odd = MailTemplates.render(Region.KR, MailKind.LOGIN_CHALLENGE,
+                Map.of("code", "12<b>34\r\nBcc: x@y.z 5678"));
+        assertThat(odd.subject()).endsWith(" 123456").doesNotContain("<").doesNotContain("Bcc");
+    }
 }

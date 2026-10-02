@@ -65,6 +65,13 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
     /** 2FA 계정의 첫 단계 통과 — 세션 대신 대기 토큰을 준다. */
     private final PendingTwoFactor pendingTwoFactor;
 
+    /** 위험 기반 로그인 — 실패 신호 기록 · 처음 보는 기기의 메일 확인(docs/68 §19). */
+    private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
+    private final com.project.userservice.service.EmailService emailService;
+
+    /** 실패 처리에서 이메일을 다시 읽을 수 없어(본문은 한 번만 읽힌다) 요청 속성에 둔다 — 응답 · 로그에는 싣지 않는다. */
+    static final String EMAIL_ATTR = AuthLoginFilter.class.getName() + ".email";
+
     /** 비밀번호는 맞았고 코드 확인이 남았다. 프론트는 이 코드를 보고 코드 입력 화면으로 간다. */
     public static final String TWO_FACTOR_REQUIRED_CODE = "two_factor_required";
 
@@ -75,7 +82,9 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
             DeviceRecognitionService deviceRecognitionService,
             SecurityAlertProducer securityAlertProducer,
             RedisSessionManager sessionManager,
-            PendingTwoFactor pendingTwoFactor) {
+            PendingTwoFactor pendingTwoFactor,
+            com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard,
+            com.project.userservice.service.EmailService emailService) {
         this.authenticationManager = authenticationManager;
         this.jwtUtils = jwtUtils;
         this.refreshTokenService = refreshTokenService;
@@ -84,6 +93,8 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
         this.securityAlertProducer = securityAlertProducer;
         this.sessionManager = sessionManager;
         this.pendingTwoFactor = pendingTwoFactor;
+        this.loginRiskGuard = loginRiskGuard;
+        this.emailService = emailService;
     }
 
     /**
@@ -122,6 +133,7 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
 
         String email = loginInfo.getEmail() == null ? "" : loginInfo.getEmail().trim();
         String password = loginInfo.getPassword() == null ? "" : loginInfo.getPassword();
+        request.setAttribute(EMAIL_ATTR, email);
 
         // 빈 값으로 인증기에 들어가면 "Bad Credentials" 가 되어 사용자는 비밀번호가 틀린
         // 줄 안다. 실제로는 아무것도 보내지 않은 것이다(폼 검증을 우회했거나 API 직접 호출).
@@ -186,6 +198,17 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
             response.getWriter().write(new ObjectMapper().writeValueAsString(new LoginResponse(
                     userDetails.getUsername(), roles, "Two-factor code required", TWO_FACTOR_REQUIRED_CODE)));
             log.info("로그인 1단계 통과 — 2FA 확인 대기. userId={}", userDetails.getId());
+            return;
+        }
+
+        // ── 위험 기반 확인 ───────────────────────────────────────────────────
+        //
+        // 비밀번호가 맞았다 — 그런데 크리덴셜 스터핑은 "맞는 비밀번호" 로 들어온다(다른 사이트에서 샌 목록). 처음 보는 기기이고 지금
+        // 공격 신호(IP 팬아웃 · 표적 계정 · 전체 급증)가 있으면 토큰을 내주지 않고 메일 코드로 한 번 더 확인한다(docs/68 §19).
+        // 기기 기록도 하지 않는다 — 기록하면 다음 시도부터 "아는 기기" 가 되어 확인을 건너뛴다.
+        // [JA] パスワードは合った。だがスタッフィングは「正しいパスワード」で入ってくる。未知の端末で攻撃信号があれば、トークンを
+        //      渡さずメールコードで確認する。端末の記録もしない(記録すると次から「既知の端末」になり確認を飛ばす)。
+        if (challengeIfRisky(request, response, userDetails, roles)) {
             return;
         }
 
@@ -280,6 +303,48 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
      * 여기서 예외가 올라가면 비밀번호를 맞게 넣은 사용자가 로그인하지 못한다 — 보안
      * 알림을 붙이려다 서비스를 멈추는 것이고, 그건 훨씬 나쁘다.
      */
+    /** 확인 코드가 나가는 응답 코드 — 프론트가 이 값을 보고 코드 입력 화면으로 간다. */
+    public static final String LOGIN_CHECK_REQUIRED_CODE = "login_check_required";
+
+    /** @return 확인을 걸어 응답을 썼으면 true(호출자는 여기서 끝낸다) */
+    private boolean challengeIfRisky(HttpServletRequest request, HttpServletResponse response,
+            UserDetailsImpl userDetails, List<String> roles) throws IOException {
+        java.util.List<com.project.userservice.security.risk.LoginRiskGuard.Signal> signals;
+        com.project.userservice.security.risk.LoginRiskGuard.IssuedChallenge issued;
+        try {
+            if (deviceRecognitionService.isKnown(userDetails.getId(), DeviceIdentity.tokenFrom(request))) {
+                return false;   // 아는 기기 — 목록으로 들어온 공격자는 이 쿠키를 갖고 있지 않다
+            }
+            signals = loginRiskGuard.signals(userDetails.getEmail(), DeviceIdentity.clientIp(request));
+            if (!com.project.userservice.security.risk.LoginRiskGuard.needsChallenge(false, signals)) {
+                return false;
+            }
+            issued = loginRiskGuard.issue(userDetails.getId(), signals);
+        } catch (RuntimeException e) {
+            // 판단할 수 없으면 막지 않는다(Redis · DB 장애가 로그인 장애가 되지 않게). 종류만 남긴다.
+            log.warn("로그인 위험 판단을 하지 못해 통과시켰다 — {}", e.getClass().getSimpleName());
+            return false;
+        }
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("utf-8");
+        if (!emailService.sendLoginChallengeEmail(userDetails.getId(), userDetails.getEmail(), issued.code())) {
+            // 공격 신호가 있는데 확인 메일을 보낼 수 없다 — 이때는 통과시키지 않는다(신호가 없는 평소에는 여기 오지 않는다).
+            response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+            response.getWriter().write(new ObjectMapper().writeValueAsString(java.util.Map.of("message",
+                    com.project.common.i18n.ClientText.localize("지금은 로그인 확인 메일을 보낼 수 없습니다. 잠시 후 다시 시도해 주세요."))));
+            return true;
+        }
+        response.addCookie(jwtUtils.createCookie(com.project.userservice.security.risk.LoginRiskGuard.COOKIE,
+                issued.issued().cookieValue(), com.project.userservice.security.risk.LoginRiskGuard.CHALLENGE_TTL));
+        response.setStatus(HttpStatus.OK.value());
+        response.getWriter().write(new ObjectMapper().writeValueAsString(new LoginResponse(
+                userDetails.getUsername(), roles, "Login check required", LOGIN_CHECK_REQUIRED_CODE)));
+        // 코드 · 쿠키 값은 남기지 않는다 — 신호 이름만.
+        log.info("로그인 위험 신호 — 메일 확인 대기. userId={}, signals={}", userDetails.getId(), signals);
+        return true;
+    }
+
     private void recordDevice(HttpServletRequest request, HttpServletResponse response,
             UserDetailsImpl userDetails) {
         try {
@@ -400,6 +465,13 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
             AuthenticationException failed) {
 
         Failure failure = describe(failed);
+
+        // 비밀번호가 틀린 시도만 위험 신호로 센다(docs/68 §19) — 잠긴 계정 · 빈 요청은 스터핑의 흔적이 아니다.
+        if (failed instanceof org.springframework.security.authentication.BadCredentialsException
+                || failed instanceof org.springframework.security.core.userdetails.UsernameNotFoundException) {
+            Object email = request.getAttribute(EMAIL_ATTR);
+            loginRiskGuard.recordFailure(email == null ? "" : email.toString(), DeviceIdentity.clientIp(request));
+        }
 
         // 로그에는 예외 종류만 남긴다. 메시지에 이메일이 섞여 있을 수 있고(예:
         // UsernameNotFoundException), 실패한 로그인마다 주소가 로그에 쌓이면 그 로그가

@@ -62,6 +62,11 @@ public class AuthController {
     /** 2FA 대기 토큰 — 첫 단계는 통과했고 코드 확인이 남은 상태(비밀번호·소셜 공통). */
     private final com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
 
+    /** 위험 기반 로그인의 메일 확인(docs/68 §19). */
+    private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
+    private final com.project.userservice.service.DeviceRecognitionService deviceRecognitionService;
+    private final com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
+
 
     //private final RoleRepository roleRepository;
 
@@ -84,10 +89,16 @@ public class AuthController {
             com.project.userservice.security.oauth2.repository.CustomClientRegistrationRepository customClientRegistrationRepository,
             com.project.userservice.service.RefreshTokenService refreshTokenService,
             com.project.userservice.service.SegmentService segmentService,
-            com.project.userservice.security.PendingTwoFactor pendingTwoFactor
+            com.project.userservice.security.PendingTwoFactor pendingTwoFactor,
+            com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard,
+            com.project.userservice.service.DeviceRecognitionService deviceRecognitionService,
+            com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer
             ) {
         this.segmentService = segmentService;
         this.pendingTwoFactor = pendingTwoFactor;
+        this.loginRiskGuard = loginRiskGuard;
+        this.deviceRecognitionService = deviceRecognitionService;
+        this.securityAlertProducer = securityAlertProducer;
         this.jwtUtils = jwtUtils;
         this.customClientRegistrationRepository = customClientRegistrationRepository;
         this.refreshTokenService = refreshTokenService;
@@ -185,6 +196,67 @@ public class AuthController {
         response.addCookie(jwtUtils.createCookie(
                 com.project.userservice.security.PendingTwoFactor.COOKIE, null, java.time.Duration.ZERO));
 
+        return ResponseEntity.ok(Map.of("message", "ok"));
+    }
+
+    /**
+     * 위험 기반 로그인의 메일 확인 — 비밀번호 단계가 심은 PENDING_LOGIN_CHECK(httpOnly) 쿠키와 메일로 받은 6자리 코드(docs/68 §19).
+     *
+     * <p>통과하면 그때 기기를 기록하고(새 기기 알림 포함) REFRESH 쿠키를 준다 — 2FA 확인과 같은 끝이다. 대기 값은 한 번만 쓰이고,
+     * 틀린 코드는 대기 값마다 5번까지다. 만료 · 위조 · 시도 초과는 구분해 알려 주지 않는다 — 어차피 처음부터 다시 하면 된다.
+     */
+    // [JA] リスクベースログインのメール確認。通過したらそのとき端末を記録し(新しい端末の通知を含む) REFRESH Cookie を渡す。
+    @PostMapping("/public/verify-login-check")
+    public ResponseEntity<?> verifyLoginCheck(@RequestParam String code,
+            HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response) {
+        final String expired = "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요.";
+        var clearPending = jwtUtils.createCookie(com.project.userservice.security.risk.LoginRiskGuard.COOKIE, null,
+                java.time.Duration.ZERO);
+
+        var result = loginRiskGuard.verify(
+                com.project.userservice.security.risk.LoginRiskGuard.cookieValue(request).orElse(null), code);
+        if (result instanceof com.project.userservice.security.risk.LoginRiskGuard.Wrong wrong) {
+            if (!wrong.more()) {
+                response.addCookie(clearPending);
+            }
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("message", wrong.more() ? "인증 코드가 올바르지 않습니다." : expired));
+        }
+        if (!(result instanceof com.project.userservice.security.risk.LoginRiskGuard.Passed passed)) {
+            response.addCookie(clearPending);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
+        }
+
+        User user = userRepository.findById(passed.userId()).orElse(null);
+        // 코드를 받는 사이 막힌 계정(정지 · 탈퇴)이면 세션을 주지 않는다.
+        if (user == null || !user.isEnabled() || !user.isAccountNonLocked()) {
+            response.addCookie(clearPending);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
+        }
+
+        // 이제야 기기를 기록한다 — 확인을 통과한 브라우저만 "아는 기기" 가 된다.
+        try {
+            var recognition = deviceRecognitionService.recognize(user.getUserId(),
+                    com.project.userservice.security.DeviceIdentity.tokenFrom(request),
+                    request.getHeader("User-Agent"), com.project.userservice.security.DeviceIdentity.clientIp(request));
+            if (recognition.cookieToken() != null) {
+                response.addCookie(jwtUtils.createCookie(com.project.userservice.security.DeviceIdentity.COOKIE_NAME,
+                        recognition.cookieToken(),
+                        java.time.Duration.ofSeconds(com.project.userservice.security.DeviceIdentity.COOKIE_MAX_AGE_SECONDS)));
+            }
+            if (recognition.shouldAlert()) {
+                securityAlertProducer.publishNewDevice(user.getUserId(), user.getEmail(), recognition.device());
+            }
+        } catch (RuntimeException e) {
+            log.error("기기 기록에 실패했습니다 — 로그인은 계속합니다: {}", e.getClass().getSimpleName());
+        }
+
+        var refreshToken = refreshTokenService.createRefreshToken(user.getUserId());
+        response.addCookie(jwtUtils.createCookie(
+                com.project.userservice.constants.TokenType.REFRESH.getType(),
+                refreshToken.getToken(), jwtUtils.refreshTokenLifetime()));
+        response.addCookie(clearPending);
+        log.info("로그인 메일 확인 통과 — userId={}", user.getUserId());
         return ResponseEntity.ok(Map.of("message", "ok"));
     }
 

@@ -101,6 +101,18 @@ public final class MailTemplates {
                              "비밀번호 재설정", url, KO_LINK_HINT,
                              "이 링크는 한 번만 사용할 수 있습니다. 본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다."));
             }
+            case LOGIN_CHALLENGE -> {
+                // 코드는 숫자 6자리만 — 파라미터에 다른 것이 섞여 와도 본문에 싣지 않는다. 링크가 없다(피싱 메일과 구별되게 "코드만").
+                String code = loginCode(p);
+                yield new Rendered(
+                        "[" + brand + "] 로그인 확인 코드 " + code,
+                        body("로그인을 마치려면 아래 확인 코드를 로그인 화면에 입력해 주세요.\r\n\r\n확인 코드: " + code, "",
+                             "이 코드는 10분 동안, 한 번만 쓸 수 있습니다. 누구에게도 알려 주지 마세요 — 고객센터도 묻지 않습니다.",
+                             "본인이 로그인하려던 것이 아니라면 비밀번호가 다른 사람에게 알려진 것입니다. 바로 비밀번호를 변경해 주세요."),
+                        html("로그인 확인 코드", "로그인을 마치려면 아래 확인 코드를 로그인 화면에 입력해 주세요. 확인 코드: " + code,
+                             "", "", "",
+                             "이 코드는 10분 동안, 한 번만 쓸 수 있습니다. 본인이 로그인하려던 것이 아니라면 바로 비밀번호를 변경해 주세요."));
+            }
             case SECURITY_ALERT -> {
                 // 보안 알림은 사건이 여럿이다(새 기기 · 로그인 해제, docs/68) — 제목은 종류가 아니라 알림 제목을 따른다.
                 // 예전에는 종류로 고정("새로운 기기에서 로그인되었습니다")이라 다른 사건도 새 기기 메일로 나갈 뻔했다.
@@ -170,6 +182,17 @@ public final class MailTemplates {
                         html("パスワードの再設定", "以下のボタンから新しいパスワードを設定してください。",
                              "パスワードを再設定する", url, JA_LINK_HINT,
                              "このリンクは一度だけ使用できます。お心当たりのない場合は、このメールを破棄してください。"));
+            }
+            case LOGIN_CHALLENGE -> {
+                String code = loginCode(p);
+                yield new Rendered(
+                        "[" + brand + "] ログイン確認コード " + code,
+                        body("ログインを完了するには、以下の確認コードをログイン画面に入力してください。\r\n\r\n確認コード: " + code, "",
+                             "このコードは 10 分間、一度だけ使用できます。誰にも教えないでください — カスタマーサポートがお尋ねすることもありません。",
+                             "ご本人のログインでない場合、パスワードが他人に知られています。すぐにパスワードを変更してください。"),
+                        html("ログイン確認コード", "ログインを完了するには、以下の確認コードをログイン画面に入力してください。確認コード: " + code,
+                             "", "", "",
+                             "このコードは 10 分間、一度だけ使用できます。ご本人のログインでない場合は、すぐにパスワードを変更してください。"));
             }
             case SECURITY_ALERT -> {
                 // 제목은 알림 제목을 따른다(한국어 분기 주석). subject 는 이미 일본어로 바뀌어 온다(NotificationService.enqueueMail).
@@ -262,6 +285,12 @@ public final class MailTemplates {
                   <p style="color:#888;font-size:12px">%s</p>
                 </div>
                 """.formatted(escape(title), escape(intro), button, escape(footer));
+    }
+
+    /** 확인 코드 — 숫자만, 최대 6자리. 파라미터에 다른 것이 섞여 와도 본문에 싣지 않는다(docs/68 §19). */
+    static String loginCode(Map<String, String> p) {
+        String digits = p.getOrDefault("code", "").replaceAll("[^0-9]", "");
+        return digits.length() > 6 ? digits.substring(0, 6) : digits;
     }
 
     /** 메일 제목 헤더에 들어가는 값 — 줄바꿈을 없앤다(헤더 주입 · 접힘 방지). */

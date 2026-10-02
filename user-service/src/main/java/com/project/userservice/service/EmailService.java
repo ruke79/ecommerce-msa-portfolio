@@ -60,4 +60,24 @@ public class EmailService {
             log.error("비밀번호 재설정 메일 요청을 발행하지 못했습니다: userId={}", userId);
         }
     }
+    /**
+     * 위험 기반 로그인의 확인 코드 메일을 요청한다(docs/68 §19).
+     *
+     * <p>코드는 재설정 링크와 같은 자격증명이다 — 로그에 남기지 않고, 메일 행의 파라미터는 발송 뒤 지워진다(notification-service MailDispatcher).
+     * 발행에 실패하면 false — 호출자는 확인을 걸지 않고 다른 길(로그인 실패 안내)로 간다.
+     */
+    // [JA] リスクベースログインの確認コードメールを要求する。コードは資格情報なのでログに残さない。
+    public boolean sendLoginChallengeEmail(Long userId, String to, String code) {
+        boolean published = mailProducer.publish(OutgoingMailRequest.builder()
+                .sourceEventId("login-challenge:" + userId + ":" + System.nanoTime())
+                .toEmail(to)
+                .recipientUserId(userId)
+                .kind("LOGIN_CHALLENGE")
+                .params(Map.of("code", code))
+                .build());
+        if (!published) {
+            log.error("로그인 확인 코드 메일 요청을 발행하지 못했습니다: userId={}", userId);
+        }
+        return published;
+    }
 }

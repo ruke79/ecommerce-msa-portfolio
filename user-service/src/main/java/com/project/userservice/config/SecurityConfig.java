@@ -103,6 +103,10 @@ public class SecurityConfig {
 
         private final com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
 
+        /** 위험 기반 로그인(docs/68 §19). */
+        private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
+        private final com.project.userservice.service.EmailService emailService;
+
         private final CustomOAuth2UserService customOAuth2UserService;
         private final com.project.userservice.security.service.CustomOidcUserService customOidcUserService;
         private final CustomClientRegistrationRepository customClientRegistrationRepository;
@@ -299,7 +303,7 @@ public class SecurityConfig {
                 AuthLoginFilter loginFilter = new AuthLoginFilter(authenticationManager(http), jwtUtils,
                                 refreshTokenService, notificationService,
                                 deviceRecognitionService, securityAlertProducer, redisSessionManager,
-                                pendingTwoFactor);
+                                pendingTwoFactor, loginRiskGuard, emailService);
                 loginFilter.setFilterProcessesUrl("/api/auth/public/signin");
                 http.addFilterAt(loginFilter, UsernamePasswordAuthenticationFilter.class);
 

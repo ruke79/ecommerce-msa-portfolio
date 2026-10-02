@@ -45,6 +45,8 @@ const user = {
     "user.signin.2fa.confirm": "確認",
     "user.signin.2fa.failed": "認証に失敗しました。",
     "user.signin.2fa.other_account": "別のアカウントでログイン",
+    "user.signin.check.title": "ログイン確認",
+    "user.signin.check.hint": "初めての端末からのログインのため、もう一度確認します。ご登録のメールアドレスに送った 6 桁のコードを入力してください(10 分間有効)。",
 
     // ── 회원가입 ────────────────────────────────────────────────────────
     "user.register.heading": "会員登録",

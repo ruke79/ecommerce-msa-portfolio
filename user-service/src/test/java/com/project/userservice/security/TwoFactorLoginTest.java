@@ -131,7 +131,8 @@ class TwoFactorLoginTest {
     private AuthLoginFilter filter(JwtUtils jwtUtils, RefreshTokenService refresh, RedisSessionManager sessions) {
         return new AuthLoginFilter(mock(AuthenticationManager.class), jwtUtils, refresh,
                 mock(NotificationService.class), mock(DeviceRecognitionService.class),
-                mock(SecurityAlertProducer.class), sessions, pending);
+                mock(SecurityAlertProducer.class), sessions, pending,
+                mock(com.project.userservice.security.risk.LoginRiskGuard.class), mock(com.project.userservice.service.EmailService.class));
     }
 
     private static UsernamePasswordAuthenticationToken auth(boolean twoFactor) {

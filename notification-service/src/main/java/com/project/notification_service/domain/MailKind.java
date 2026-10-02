@@ -23,6 +23,9 @@ public enum MailKind {
     /** 비밀번호 재설정 링크. params: {@code resetUrl} */
     PASSWORD_RESET(true),
 
+    /** 위험 기반 로그인의 확인 코드(user-service docs/68 §19). params: {@code code}(6자리). 로그인 전 메일이라 수신 설정과 무관. */
+    LOGIN_CHALLENGE(true),
+
     /** 주문 접수. params: {@code subject}, {@code url} */
     ORDER_PLACED(false),
 

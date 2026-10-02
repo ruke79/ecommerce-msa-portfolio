@@ -143,6 +143,9 @@ const SignInPage = () => {
     //    2FA 를 건너뛰었다. 이제 서버는 2FA 계정에 토큰 대신 대기 쿠키(PENDING_2FA, httpOnly)만 심고
     //    code=two_factor_required 로 답한다. 비밀번호 경로도 소셜 경로와 같은 끝이다.
     const [code2fa, setCode2fa] = useState("");
+    // 두 번째 단계가 무엇인가 — "totp"(2단계 인증 앱) 또는 "email"(처음 보는 기기 + 공격 신호일 때 메일로 보낸 코드, docs/68 §19).
+    // [JA] 2 段階目が何か — "totp"(認証アプリ)または "email"(未知の端末 + 攻撃信号のときメールで送ったコード)。
+    const [checkMode, setCheckMode] = useState("totp");
     const [verifying, setVerifying] = useState(false);
     const [twoFactorError, setTwoFactorError] = useState("");
 
@@ -155,6 +158,11 @@ const SignInPage = () => {
             setLoginError("");
             setNeedsVerification(false);
             if (response?.data?.code === "two_factor_required") {
+                setCheckMode("totp");
+                setStep(2);
+            } else if (response?.data?.code === "login_check_required") {
+                // 비밀번호는 맞았지만 서버가 토큰 대신 확인 대기 쿠키만 줬다 — 메일로 온 코드를 받는다.
+                setCheckMode("email");
                 setStep(2);
             } else {
                 const access = response.headers['access'];
@@ -194,9 +202,10 @@ const SignInPage = () => {
         setVerifying(true);
         setTwoFactorError("");
         try {
-            await api.post(
-                `/user-service/api/auth/public/verify-2fa?code=${encodeURIComponent(code2fa)}`
-            );
+            const path = checkMode === "email"
+                ? "/user-service/api/auth/public/verify-login-check"
+                : "/user-service/api/auth/public/verify-2fa";
+            await api.post(`${path}?code=${encodeURIComponent(code2fa)}`);
             window.location.href = isOauth2fa ? "/" : redirectTo;
         } catch (error) {
             setTwoFactorError(
@@ -256,9 +265,11 @@ const SignInPage = () => {
                     아무 반응 없이 로그인이 안 되는 것처럼 보였다. */}
                 {step === 2 ? (
                     <div className="flex flex-col p-4 my-4 bg-white rounded border space-y-4">
-                        <h3 className="text-xl font-bold">{t("user.signin.2fa.title")}</h3>
+                        <h3 className="text-xl font-bold">
+                            {t(checkMode === "email" ? "user.signin.check.title" : "user.signin.2fa.title")}
+                        </h3>
                         <p className="text-sm text-slate-600">
-                            {t("user.signin.2fa.hint")}
+                            {t(checkMode === "email" ? "user.signin.check.hint" : "user.signin.2fa.hint")}
                         </p>
                         <input
                             type="text"

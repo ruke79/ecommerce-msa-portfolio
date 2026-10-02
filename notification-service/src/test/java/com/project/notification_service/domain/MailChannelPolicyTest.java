@@ -51,6 +51,7 @@ class MailChannelPolicyTest {
         // 본인이 방금 요청한 메일이다. 이걸 수신 거부로 막으면 계정에 못 들어간다.
         assertThat(MailKind.REGISTRATION_CONFIRM.isTransactional()).isTrue();
         assertThat(MailKind.PASSWORD_RESET.isTransactional()).isTrue();
+        assertThat(MailKind.LOGIN_CHALLENGE.isTransactional()).isTrue();
 
         // 알림성 메일은 끌 수 있어야 한다.
         assertThat(MailKind.ORDER_PLACED.isTransactional()).isFalse();

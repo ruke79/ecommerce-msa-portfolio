@@ -347,6 +347,34 @@ describe("SignInPage", () => {
     expect(mockLogin).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 위험 기반 로그인(docs/68 §19) — 처음 보는 기기 + 공격 신호면 서버가 토큰 대신 확인 대기 쿠키만 주고
+   * code=login_check_required 로 답한다. 화면은 메일 코드 입력으로 가고, 코드는 2FA 가 아닌 엔드포인트로 간다.
+   */
+  it("login_check_required 면 메일 코드 단계가 뜨고 verify-login-check 로 보낸다", async () => {
+    const post = jest.spyOn(api, "post")
+      .mockResolvedValueOnce({ headers: {}, data: { code: "login_check_required", message: "Login check required" } })
+      .mockResolvedValueOnce({ data: { message: "ok" } });
+    delete window.location;
+    window.location = { href: "" };
+
+    renderPage();
+    await submitCredentials();
+
+    expect(await screen.findByText("로그인 확인")).toBeInTheDocument();
+    expect(screen.getByText(/메일 주소로 보낸 6자리 코드/)).toBeInTheDocument();
+    expect(screen.queryByText("2단계 인증")).not.toBeInTheDocument();
+    expect(mockLogin).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText("인증 코드"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: /확인/ }));
+
+    await waitFor(() => expect(post.mock.calls[1][0]).toContain("/api/auth/public/verify-login-check?code=123456"));
+    expect(post.mock.calls[1][0]).not.toContain("verify-2fa");
+    await waitFor(() => expect(window.location.href).not.toBe(""));
+    expect(mockLogin).not.toHaveBeenCalled();
+  });
+
   it("소셜 2FA(?oauth2fa=1): 바로 2FA 화면이 뜨고, 코드는 public 엔드포인트로 간다", async () => {
     // 신원은 PENDING_2FA httpOnly 쿠키가 나른다 — 화면은 토큰을 만지지 않는다.
     global.__mockSearch = "oauth2fa=1";

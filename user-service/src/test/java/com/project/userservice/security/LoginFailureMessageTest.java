@@ -65,7 +65,8 @@ class LoginFailureMessageTest {
                 mock(RefreshTokenService.class), mock(NotificationService.class),
                 // 기기 기록은 로그인 성공 뒤에만 불린다 — 이 테스트는 실패 경로만 본다.
                 mock(DeviceRecognitionService.class), mock(SecurityAlertProducer.class),
-                mock(RedisSessionManager.class), mock(PendingTwoFactor.class));
+                mock(RedisSessionManager.class), mock(PendingTwoFactor.class),
+                mock(com.project.userservice.security.risk.LoginRiskGuard.class), mock(com.project.userservice.service.EmailService.class));
         SecurityContextHolder.clearContext();
     }
 
