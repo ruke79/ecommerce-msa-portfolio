@@ -50,6 +50,13 @@ class CustomOAuth2UserServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private RoleRepository roleRepository;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private SocialAccountLinker socialAccountLinker;
+
+    @org.junit.jupiter.api.BeforeEach
+    void passThroughLinker() {
+        // 연결 규칙은 SocialAccountLinkerTest 가 본다 — 여기서는 받은 계정을 그대로 돌려준다.
+        when(socialAccountLinker.link(any(), any())).thenAnswer(inv -> inv.getArgument(0));
+    }
 
     @Spy
     @InjectMocks
@@ -113,6 +120,8 @@ class CustomOAuth2UserServiceTest {
         assertTrue(principal.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")));
         verify(userRepository, never()).save(any());
+        // 🔒 기존 계정이면 반드시 연결 규칙(사전 탈취 방어)을 지난다(docs/68 §15).
+        verify(socialAccountLinker).link(existing, "google");
     }
 
     @Test

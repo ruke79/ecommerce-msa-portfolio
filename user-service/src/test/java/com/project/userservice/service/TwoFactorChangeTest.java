@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -126,5 +127,42 @@ class TwoFactorChangeTest {
         when(guard.claim(7L, 100)).thenReturn(false);
 
         assertThat(userService.validate2FACode(7L, 123456)).isFalse();
+    }
+    // ── 로그인 2단계 (docs/68 §15) ────────────────────────────────────────
+
+    @Test
+    @DisplayName("🔴 로그인 2단계도 사용자별로 센다 — 막혀 있으면 맞는 코드도 받지 않는다")
+    void loginStepUsesPerUserLimit() {
+        codeIs(true);
+        when(guard.locked(7L)).thenReturn(true);
+
+        assertThat(userService.verifyLoginTwoFactor(7L, 123456)).isEqualTo(TwoFactorChange.TOO_MANY_ATTEMPTS);
+        verify(guard, never()).claim(anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("🔴 한도에 닿는 순간 한 번 알린다 — 비밀번호가 샜다는 신호")
+    void alertsOnceWhenLimitReached() {
+        codeIs(false);
+        when(guard.maxFailures()).thenReturn(5);
+        when(guard.recordFailure(7L)).thenReturn(4L, 5L, 6L);
+
+        userService.verifyLoginTwoFactor(7L, 1);
+        verify(alerts, never()).publishAccountEvent(anyLong(), any(), any(), any());
+
+        userService.verifyLoginTwoFactor(7L, 1);
+        userService.verifyLoginTwoFactor(7L, 1);
+        verify(alerts, times(1)).publishAccountEvent(7L, "a@example.com", SecurityAlertProducer.ALERT_2FA_FAILURES, null);
+    }
+
+    @Test
+    @DisplayName("로그인 2단계 — 맞는 코드면 실패 기록을 지운다, 2FA 가 꺼진 계정은 NOT_ENABLED")
+    void loginStepSuccessAndNotEnabled() {
+        codeIs(true);
+        assertThat(userService.verifyLoginTwoFactor(7L, 123456)).isEqualTo(TwoFactorChange.OK);
+        verify(guard).clearFailures(7L);
+
+        user.setTwoFactorEnabled(false);
+        assertThat(userService.verifyLoginTwoFactor(7L, 123456)).isEqualTo(TwoFactorChange.NOT_ENABLED);
     }
 }

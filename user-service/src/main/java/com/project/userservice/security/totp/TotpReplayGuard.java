@@ -21,8 +21,9 @@ import org.springframework.stereotype.Component;
  *
  * <h3>시도 제한</h3>
  *
- * <p>로그인 중의 2FA 설정 확인 · 끄기는 세션만 있으면 부를 수 있다. 6자리를 무한히 대입하지 못하게 사용자별로 실패를 센다 — 로그인 2단계는
- * 대기 토큰이 따로 센다(PendingTwoFactor).
+ * <p>6자리를 무한히 대입하지 못하게 <b>사용자별로</b> 실패를 센다 — 로그인 중의 2FA 설정 확인 · 끄기, 그리고 로그인 2단계(docs/68 §15)가
+ * 같은 칸을 쓴다. 로그인 2단계의 대기 토큰도 토큰당 5번을 세지만(PendingTwoFactor), 그것만으로는 비밀번호로 다시 로그인해 새 토큰을 받으면
+ * 다시 5번이었다 — 비밀번호를 아는 공격자(2FA 가 막아야 할 바로 그 상대)에게는 제한이 없었다.
  */
 // [JA] OTP(TOTP)のコードを一度だけ使わせ、ログイン中の 2FA 変更の試行を数えて止める。以前は前後 1 区間の時刻ずれを許しつつ使ったコードを
 //      記録せず、同じ 6 桁を約 90 秒何度でも使えた(フィッシングの中継・肩越しの再利用)。今はユーザーごとに最後に受け入れた時間区間番号を残し、
@@ -76,14 +77,20 @@ public class TotpReplayGuard {
         return r != null && r == 1L;
     }
 
-    /** 로그인 중의 2FA 변경 시도가 너무 많이 틀렸는가. */
+    /** 이 사용자의 2FA 코드가 창 안에서 너무 많이 틀렸는가. */
     public boolean locked(Long userId) {
         String v = redis.opsForValue().get(FAIL_KEY + userId);
         return v != null && Integer.parseInt(v) >= maxFailures;
     }
 
-    public void recordFailure(Long userId) {
-        redis.execute(FAIL, List.of(FAIL_KEY + userId), String.valueOf(failureWindowMs));
+    /** @return 이 창에서의 실패 수 — {@link #maxFailures()} 와 같아지는 순간이 "막힌 순간" 이다(알림은 그때 한 번). */
+    public long recordFailure(Long userId) {
+        Long n = redis.execute(FAIL, List.of(FAIL_KEY + userId), String.valueOf(failureWindowMs));
+        return n == null ? 0L : n;
+    }
+
+    public int maxFailures() {
+        return maxFailures;
     }
 
     public void clearFailures(Long userId) {

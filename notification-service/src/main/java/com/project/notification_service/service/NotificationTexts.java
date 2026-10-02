@@ -133,6 +133,39 @@ public final class NotificationTexts {
     public static final String TWO_FACTOR_DISABLED_BODY =
             "계정의 2단계 인증이 해제되었습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 2단계 인증을 다시 켜 주세요.";
 
+    /**
+     * 로그인 보안 2차(user-service docs/68 §15). 일어난 일 · 할 일만 — 코드 · 프로바이더 내부 이름은 말하지 않는다.
+     */
+    // [JA] ログインセキュリティ第 2 弾。起きたこととやることだけを伝える。
+    public static final String TWO_FACTOR_FAILURES_TITLE = "2단계 인증 실패가 반복되었습니다";
+    public static final String TWO_FACTOR_FAILURES_BODY =
+            "비밀번호는 맞았지만 2단계 인증 코드가 여러 번 틀려 잠시 로그인을 막았습니다. "
+            + "본인이 아니라면 비밀번호가 다른 사람에게 알려진 것입니다 — 바로 비밀번호를 변경해 주세요.";
+    public static final String PASSWORD_RESET_TITLE = "비밀번호가 재설정되었습니다";
+    public static final String PASSWORD_RESET_BODY =
+            "비밀번호 찾기로 새 비밀번호가 설정되어, 모든 기기의 로그인을 종료했습니다. "
+            + "본인이 한 일이 아니라면 이메일 계정의 보안을 확인하고 고객센터에 알려 주세요.";
+    public static final String SOCIAL_LINKED_TITLE = "새 로그인 방법이 연결되었습니다";
+    public static String socialLinkedBody(String provider) {
+        return (provider == null ? "소셜" : providerLabel(provider)) + " 계정으로 로그인했습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 고객센터에 알려 주세요.";
+    }
+    public static final String UNPROVEN_PASSWORD_CLEARED_TITLE = "확인되지 않은 비밀번호를 해제했습니다";
+    public static final String UNPROVEN_PASSWORD_CLEARED_BODY =
+            "소셜 로그인으로 이메일 주소의 주인이 확인되어, 주소 확인 없이 설정돼 있던 비밀번호를 해제하고 모든 기기의 로그인을 종료했습니다. "
+            + "비밀번호로도 로그인하려면 '비밀번호 찾기' 로 새로 설정해 주세요.";
+
+    /** 프로바이더 표시 이름 — 사용자에게는 registrationId(google · kakao)가 아니라 서비스 이름을 보여 준다. */
+    static String providerLabel(String provider) {
+        return switch (provider) {
+            case "google" -> "Google";
+            case "github" -> "GitHub";
+            case "facebook" -> "Facebook";
+            case "kakao" -> "Kakao";
+            case "line" -> "LINE";
+            default -> provider;
+        };
+    }
+
     // ── 채팅·상담·친구 ────────────────────────────────────────────────────
     public static final String SUPPORT_REPLY_TITLE = "고객지원팀 답변";
     public static final String SUPPORT_REPLY_BODY = "상담원이 문의에 답변했습니다.";
@@ -169,6 +202,9 @@ public final class NotificationTexts {
             SECURITY_TITLE, securityBody("{}", null), securityBody(null, null),
             SESSION_REVOKED_TITLE, SESSION_REVOKED_BODY,
             TWO_FACTOR_ENABLED_TITLE, TWO_FACTOR_ENABLED_BODY, TWO_FACTOR_DISABLED_TITLE, TWO_FACTOR_DISABLED_BODY,
+            TWO_FACTOR_FAILURES_TITLE, TWO_FACTOR_FAILURES_BODY, PASSWORD_RESET_TITLE, PASSWORD_RESET_BODY,
+            SOCIAL_LINKED_TITLE, socialLinkedBody("{}"), socialLinkedBody(null),
+            UNPROVEN_PASSWORD_CLEARED_TITLE, UNPROVEN_PASSWORD_CLEARED_BODY,
             SUPPORT_REPLY_TITLE, SUPPORT_REPLY_BODY, chatTitle(null), chatTitle("{}"), CHAT_BODY,
             friendOnlineTitle("{}"), friendOnlineTitle(null), FRIEND_ONLINE_BODY,
             RESTOCK_TITLE, restockBody("{}", "{}"), restockBody(RESTOCK_FALLBACK_PRODUCT, "{}"));

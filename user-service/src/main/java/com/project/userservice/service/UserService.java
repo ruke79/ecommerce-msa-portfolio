@@ -92,6 +92,12 @@ public interface UserService {
     /** 끄기 — 지금 코드가 맞아야 한다. */
     TwoFactorChange disable2FA(Long userId, int code);
 
+    /**
+     * 로그인 2단계의 코드 확인 — 사용자별 실패 한도를 관리 경로와 같이 센다(docs/68 §15).
+     * OK · INVALID_CODE · TOO_MANY_ATTEMPTS · NOT_ENABLED.
+     */
+    TwoFactorChange verifyLoginTwoFactor(Long userId, int code);
+
     String updatePaymentMethod(String username, String paymentMethod);
 
     List<String> getUsersFromSessionRegistry();

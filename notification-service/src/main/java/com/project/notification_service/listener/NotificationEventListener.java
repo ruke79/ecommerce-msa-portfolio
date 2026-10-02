@@ -37,6 +37,11 @@ public class NotificationEventListener {
     static final String ALERT_REFRESH_REUSE = "refresh-reuse";
     static final String ALERT_2FA_ENABLED = "2fa-enabled";
     static final String ALERT_2FA_DISABLED = "2fa-disabled";
+    // 로그인 보안 2차(user-service docs/68 §15) — SecurityAlertProducer 의 같은 이름 상수와 값이 같아야 한다.
+    static final String ALERT_2FA_FAILURES = "2fa-failures";
+    static final String ALERT_PASSWORD_RESET = "password-reset";
+    static final String ALERT_SOCIAL_LINKED = "social-linked";
+    static final String ALERT_UNPROVEN_PASSWORD_CLEARED = "unproven-password-cleared";
 
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
@@ -403,6 +408,18 @@ public class NotificationEventListener {
                 } else if (ALERT_2FA_DISABLED.equals(alert)) {
                     title = NotificationTexts.TWO_FACTOR_DISABLED_TITLE;
                     body = NotificationTexts.TWO_FACTOR_DISABLED_BODY;
+                } else if (ALERT_2FA_FAILURES.equals(alert)) {
+                    title = NotificationTexts.TWO_FACTOR_FAILURES_TITLE;
+                    body = NotificationTexts.TWO_FACTOR_FAILURES_BODY;
+                } else if (ALERT_PASSWORD_RESET.equals(alert)) {
+                    title = NotificationTexts.PASSWORD_RESET_TITLE;
+                    body = NotificationTexts.PASSWORD_RESET_BODY;
+                } else if (ALERT_SOCIAL_LINKED.equals(alert)) {
+                    title = NotificationTexts.SOCIAL_LINKED_TITLE;
+                    body = NotificationTexts.socialLinkedBody(textOf(event, "provider"));
+                } else if (ALERT_UNPROVEN_PASSWORD_CLEARED.equals(alert)) {
+                    title = NotificationTexts.UNPROVEN_PASSWORD_CLEARED_TITLE;
+                    body = NotificationTexts.UNPROVEN_PASSWORD_CLEARED_BODY;
                 } else {
                     title = NotificationTexts.SECURITY_TITLE;
                     body = NotificationTexts.securityBody(textOf(event, "deviceLabel"), textOf(event, "maskedIp"));

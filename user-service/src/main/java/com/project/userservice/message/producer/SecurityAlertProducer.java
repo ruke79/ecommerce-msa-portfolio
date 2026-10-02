@@ -142,6 +142,14 @@ public class SecurityAlertProducer {
     public static final String ALERT_REFRESH_REUSE = "refresh-reuse";
     public static final String ALERT_2FA_ENABLED = "2fa-enabled";
     public static final String ALERT_2FA_DISABLED = "2fa-disabled";
+    /** 비밀번호는 맞았는데 2FA 코드가 창 안에서 한도만큼 틀렸다 — 비밀번호가 샜다는 신호(docs/68 §15). */
+    public static final String ALERT_2FA_FAILURES = "2fa-failures";
+    /** 비밀번호 찾기로 비밀번호를 새로 정했다(docs/68 §15). */
+    public static final String ALERT_PASSWORD_RESET = "password-reset";
+    /** 소셜 로그인이 처음으로 이 계정에 연결됐다(docs/68 §15). provider 를 싣는다. */
+    public static final String ALERT_SOCIAL_LINKED = "social-linked";
+    /** 소셜 로그인이 이메일 소유를 증명해, 확인된 적 없는 비밀번호를 해제했다(사전 탈취 방어, docs/68 §15). */
+    public static final String ALERT_UNPROVEN_PASSWORD_CLEARED = "unproven-password-cleared";
 
     /**
      * 2단계 인증을 켜거나 껐다고 알린다(docs/68 §14). 본인이 한 일이 아니면 세션을 누군가 쓰고 있다는 신호다 — 수신 설정과 무관하게 나간다.
@@ -163,6 +171,33 @@ public class SecurityAlertProducer {
             log.info("2단계 인증 {} 알림 발행: userId={}", enabled ? "켜기" : "끄기", userId);
         } catch (Exception e) {
             log.error("2단계 인증 변경 알림을 발행하지 못했습니다: userId={} ({})", userId, e.getMessage());
+        }
+    }
+
+    /**
+     * 사건 하나를 알린다 — 2FA 실패 한도 · 비밀번호 재설정 · 소셜 연결 · 미확인 비밀번호 해제(docs/68 §15).
+     *
+     * <p>싣는 것은 종류 · userId · 주소 · (소셜이면) 프로바이더 이름뿐 — 코드 · 토큰 · IP 는 싣지 않는다. 발행 실패는 응답을 바꾸지 않는다.
+     */
+    // [JA] 出来事を一つ知らせる。載せるのは種類 · userId · アドレス · (ソーシャルなら)プロバイダー名だけ。発行失敗は応答を変えない。
+    public void publishAccountEvent(Long userId, String email, String alert, String provider) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("alert", alert);
+            event.put("customerId", userId);
+            event.put("email", email);
+            if (provider != null) {
+                event.put("provider", provider);
+            }
+            event.put("occurredAt", LocalDateTime.now().toString());
+            event.put("eventId", "security:" + alert + ":" + userId + ":" + System.currentTimeMillis());
+            kafkaTemplate.send(TOPIC, String.valueOf(userId), objectMapper.writeValueAsString(event));
+            log.info("보안 알림 발행: alert={}, userId={}", alert, userId);
+        } catch (Exception e) {
+            log.error("보안 알림을 발행하지 못했습니다: alert={}, userId={} ({})", alert, userId, e.getMessage());
         }
     }
 

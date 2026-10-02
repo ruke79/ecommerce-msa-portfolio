@@ -50,7 +50,6 @@ import com.project.userservice.message.repository.jpa.OutboxEventRepository;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
@@ -139,6 +138,10 @@ public class UserServiceImpl implements UserService {
      */
     @Value("${app.verification.require-email-verification:false}")
     private boolean requireEmailVerification;
+
+    /** 비밀번호 재설정 링크의 수명(docs/68 §15). */
+    @Value("${auth.password-reset.ttl:PT1H}")
+    private java.time.Duration passwordResetTtl = java.time.Duration.ofHours(1);
 
     public static final String TOKEN_INVALID = "invalidToken";
     public static final String TOKEN_EXPIRED = "expired";
@@ -495,7 +498,8 @@ public class UserServiceImpl implements UserService {
         }
 
         String token = UUID.randomUUID().toString();
-        Instant expiryDate = Instant.now().plus(24, ChronoUnit.HOURS);
+        // 1시간(docs/68 §15) — 예전 24시간은 메일함이 털렸을 때 쓸 수 있는 시간이 그만큼 길었다. 메일은 보통 몇 분 안에 온다.
+        Instant expiryDate = Instant.now().plus(passwordResetTtl);
 
         // 🔒 같은 행을 재사용한다 — 사용자당 살아 있는 링크가 하나여야 한다. 예전에는
         //    요청할 때마다 새 행을 넣고 이전 것을 그대로 뒀다. 열 번 누르면 24시간짜리
@@ -539,10 +543,21 @@ public class UserServiceImpl implements UserService {
 
         User user = resetToken.getUser();
         applyNewPassword(user, newPassword);
+        // 메일의 링크를 눌렀다 = 그 주소의 주인이다. 소셜 연결 때 이 비밀번호를 "확인된 적 없음" 으로 다루지 않게(docs/68 §15).
+        user.setEmailVerified(true);
+        userRepository.save(user);
 
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
-        log.info("비밀번호 재설정 완료: userId={}", user.getUserId());
+
+        // 🐛 예전: passwordChangedAt 만 남겼다 — 리프레시는 막혀도 액세스 토큰(15분)과 채팅 · 알림 연결은 그대로 살아 있었다.
+        //    비밀번호를 되찾는 사람의 상당수는 계정을 도둑맞아서 온다 — 그때 공격자를 바로 내보내야 한다. 그리고 알린다
+        //    (본인이 요청하지 않은 재설정이면 메일함이 털렸다는 뜻이다).
+        // [JA] 以前は passwordChangedAt だけで、アクセストークン(15 分)とチャット · 通知の接続は生きていた。今は全ログインを切り、知らせる。
+        int revoked = refreshTokenService.revokeAll(user.getUserId());
+        securityAlertProducer.publishAccountEvent(user.getUserId(), user.getEmail(),
+                com.project.userservice.message.producer.SecurityAlertProducer.ALERT_PASSWORD_RESET, null);
+        log.info("비밀번호 재설정 완료: userId={}, 끊은 로그인={}", user.getUserId(), revoked);
     }
 
     @Override
@@ -711,7 +726,7 @@ public class UserServiceImpl implements UserService {
         if (user.isTwoFactorEnabled()) {
             return TwoFactorChange.ALREADY_ENABLED;
         }
-        TwoFactorChange checked = checkCode(userId, code);
+        TwoFactorChange checked = checkCode(user, code);
         if (checked != TwoFactorChange.OK) {
             return checked;
         }
@@ -727,7 +742,7 @@ public class UserServiceImpl implements UserService {
         if (!user.isTwoFactorEnabled()) {
             return TwoFactorChange.NOT_ENABLED;
         }
-        TwoFactorChange checked = checkCode(userId, code);
+        TwoFactorChange checked = checkCode(user, code);
         if (checked != TwoFactorChange.OK) {
             return checked;
         }
@@ -739,13 +754,34 @@ public class UserServiceImpl implements UserService {
         return TwoFactorChange.OK;
     }
 
-    private TwoFactorChange checkCode(Long userId, int code) {
+    /*
+     * 🐛 로그인 2단계의 코드는 대기 토큰당 5번만 셌다(docs/68 §15). 비밀번호로 다시 로그인하면 새 토큰 = 다시 5번 — 비밀번호를 아는
+     *    공격자에게는 사실상 무제한이었다(한 번에 맞을 확률 약 3/1,000,000, 초당 5번이면 평균 하루 안).
+     *    이제 관리 경로와 같은 사용자별 칸에서 센다. 한도에 닿는 순간 한 번 알린다 — 비밀번호가 샜다는 신호다.
+     * [JA] ログイン 2 段階のコードは待機トークンごとに 5 回しか数えず、再ログインで新しいトークン = また 5 回だった。今はユーザー単位で数え、上限に達した瞬間に一度知らせる。
+     */
+    @Override
+    public TwoFactorChange verifyLoginTwoFactor(Long userId, int code) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
+        if (!user.isTwoFactorEnabled()) {
+            return TwoFactorChange.NOT_ENABLED;
+        }
+        return checkCode(user, code);
+    }
+
+    private TwoFactorChange checkCode(User user, int code) {
+        Long userId = user.getUserId();
         if (totpReplayGuard.locked(userId)) {
             return TwoFactorChange.TOO_MANY_ATTEMPTS;
         }
         if (!validate2FACode(userId, code)) {
-            totpReplayGuard.recordFailure(userId);
-            log.info("2FA 변경 확인 실패: userId={}", userId);
+            long failures = totpReplayGuard.recordFailure(userId);
+            log.info("2FA 코드 확인 실패: userId={}, 실패={}", userId, failures);
+            if (failures == totpReplayGuard.maxFailures()) {
+                securityAlertProducer.publishAccountEvent(userId, user.getEmail(),
+                        com.project.userservice.message.producer.SecurityAlertProducer.ALERT_2FA_FAILURES, null);
+            }
             return TwoFactorChange.INVALID_CODE;
         }
         totpReplayGuard.clearFailures(userId);
@@ -991,6 +1027,8 @@ public class UserServiceImpl implements UserService {
         }
 
         user.setEnabled(true);
+        // 메일의 링크를 눌렀다 = 주소의 주인이다(docs/68 §15 — 소셜 연결이 이 값을 본다).
+        user.setEmailVerified(true);
         userRepository.save(user);
 
         // ⚠️ user-created 이벤트는 여기가 아니라 **가입 시점**에 적는다

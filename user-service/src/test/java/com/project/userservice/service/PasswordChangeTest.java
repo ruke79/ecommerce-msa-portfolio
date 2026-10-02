@@ -53,6 +53,8 @@ class PasswordChangeTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private EmailService emailService;
     @Mock private com.project.userservice.security.RedisSessionManager sessionManager;
+    @Mock private com.project.userservice.service.RefreshTokenService refreshTokenService;
+    @Mock private com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
 
     @InjectMocks private UserServiceImpl userService;
 
@@ -214,6 +216,53 @@ class PasswordChangeTest {
         assertThat(user.getPasswordChangedAt())
                 .as("재설정하러 오는 사람의 절반은 계정을 도둑맞아서 온다")
                 .isNotNull();
+    }
+
+    /**
+     * 🐛 예전: 재설정은 변경 시각만 남겼다 — 리프레시는 막혀도 액세스 토큰(15분) · 채팅 · 알림 연결은 살아 있었다(docs/68 §15).
+     */
+    @Test
+    @DisplayName("🔴 재설정하면 모든 로그인을 바로 끊고, 주인에게 알리고, 주소를 확인됨으로 둔다")
+    void resetEndsSessionsAndAlerts() {
+        PasswordResetToken token = new PasswordResetToken(
+                "raw-token", Instant.now().plus(1, ChronoUnit.HOURS), user);
+        when(passwordResetTokenRepository.findByToken(PasswordResetToken.hash("raw-token")))
+                .thenReturn(Optional.of(token));
+
+        userService.resetPassword("raw-token", "newpw123");
+
+        verify(refreshTokenService).revokeAll(7L);
+        verify(securityAlertProducer).publishAccountEvent(7L, "buyer@example.com",
+                com.project.userservice.message.producer.SecurityAlertProducer.ALERT_PASSWORD_RESET, null);
+        assertThat(user.isEmailVerified())
+                .as("메일의 링크를 눌렀다 = 주소의 주인 — 소셜 연결 때 이 비밀번호를 해제하지 않게")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("실패한 재설정은 아무 로그인도 끊지 않는다")
+    void failedResetKeepsSessions() {
+        when(passwordResetTokenRepository.findByToken(any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.resetPassword("raw", "newpw123"));
+
+        verify(refreshTokenService, never()).revokeAll(any());
+        verify(securityAlertProducer, never()).publishAccountEvent(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("🔒 재설정 링크는 1시간 — 예전 24시간은 메일함이 털렸을 때 쓸 수 있는 시간이었다")
+    void resetLinkLivesOneHour() {
+        when(passwordResetTokenRepository.findByUser(user)).thenReturn(Optional.empty());
+        Instant before = Instant.now();
+
+        userService.generatePasswordResetToken("buyer@example.com");
+
+        ArgumentCaptor<PasswordResetToken> saved = ArgumentCaptor.forClass(PasswordResetToken.class);
+        verify(passwordResetTokenRepository).save(saved.capture());
+        assertThat(saved.getValue().getExpiryDate())
+                .isAfter(before.plus(59, ChronoUnit.MINUTES))
+                .isBefore(Instant.now().plus(61, ChronoUnit.MINUTES));
     }
 
     @Test

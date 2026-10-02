@@ -135,7 +135,7 @@ public class AuthController {
      *
      * <p>public 경로인 이유: 이 시점의 사용자는 아직 인증되지 않았다(그게 이 단계의 존재 이유다). 신원은 대기
      * 토큰이 증명한다 — 액세스 토큰과 <b>다른 키</b>로 서명돼 있어 그 자체로는 어디에도 들어갈 수 없다
-     * ({@link com.project.userservice.security.PendingTwoFactor}). 틀린 코드는 토큰당 5번까지다.
+     * ({@link com.project.userservice.security.PendingTwoFactor}). 틀린 코드는 토큰당 5번, 그리고 <b>사용자당 15분에 5번</b>까지다(docs/68 §15).
      *
      * <p>{@code /public/oauth2/verify-2fa} 는 소셜 경로만 있던 때의 이름이다 — 배포 중인 옛 화면을 위해 남긴다.
      */
@@ -159,7 +159,17 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
         }
 
-        if (!userService.validate2FACode(user.getUserId(), code)) {
+        // 사용자별 한도(docs/68 §15) — 대기 토큰의 5번은 비밀번호로 다시 로그인하면 새로 생겼다. 막혔으면 맞는 코드도 받지 않는다.
+        // [JA] ユーザー単位の上限 — 待機トークンの 5 回は再ログインで新しく生まれていた。止まっていれば正しいコードも受けない。
+        UserService.TwoFactorChange checked = userService.verifyLoginTwoFactor(user.getUserId(), code);
+        if (checked == UserService.TwoFactorChange.TOO_MANY_ATTEMPTS) {
+            pendingTwoFactor.consume(pending);
+            response.addCookie(jwtUtils.createCookie(
+                    com.project.userservice.security.PendingTwoFactor.COOKIE, null, java.time.Duration.ZERO));
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("message", "인증 코드를 너무 많이 틀렸습니다. 잠시 후 다시 로그인해 주세요."));
+        }
+        if (checked != UserService.TwoFactorChange.OK) {
             boolean more = pendingTwoFactor.recordFailure(pending);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", more ? "인증 코드가 올바르지 않습니다." : expired));

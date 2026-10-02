@@ -58,6 +58,8 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    /** 기존 계정에 연결할 때의 사전 탈취 방어 · 연결 알림(docs/68 §15). */
+    private final SocialAccountLinker socialAccountLinker;
 
     /** 깃허브 이메일 폴백용. 테스트에서 바꿔 끼울 수 있게 필드로 둔다. */
     RestTemplate rest = new RestTemplate();
@@ -116,6 +118,8 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
             user = createSocialUser(response, email, registrationId);
         } else {
             log.info("소셜 로그인 → 기존 계정 연결. provider={}, userId={}", registrationId, user.getUserId());
+            // 🔒 주소가 확인된 적 없는 비밀번호 계정이면 그 비밀번호를 해제한다 — 남의 주소로 먼저 가입해 둔 사람이 들어오지 못하게.
+            user = socialAccountLinker.link(user, registrationId);
         }
 
         return new CustomOAuth2User(new ResolvedResponse(response, email),
@@ -148,6 +152,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         user.setCredentialsNonExpired(true);
         // 프로바이더가 이메일을 검증했으므로 메일 인증 게이트를 다시 세우지 않는다.
         user.setEnabled(true);
+        user.setEmailVerified(true);
         user.setCredentialsExpiryDate(LocalDate.now().plusYears(1));
         user.setAccountExpiryDate(LocalDate.now().plusYears(1));
         user.setTwoFactorEnabled(false);
