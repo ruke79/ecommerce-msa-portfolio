@@ -56,6 +56,8 @@ class PasswordChangeTest {
     @Mock private com.project.userservice.service.RefreshTokenService refreshTokenService;
     @Mock private com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
 
+    @Mock private com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
+
     @InjectMocks private UserServiceImpl userService;
 
     private User user;
@@ -263,6 +265,27 @@ class PasswordChangeTest {
         assertThat(saved.getValue().getExpiryDate())
                 .isAfter(before.plus(59, ChronoUnit.MINUTES))
                 .isBefore(Instant.now().plus(61, ChronoUnit.MINUTES));
+    }
+
+    /** 🔴 유출 · 흔한 비밀번호(docs/68 §18) — 변경 · 재설정 모두 저장 전에 거절한다. 재설정 링크는 소진되지 않아 다시 시도할 수 있다. */
+    @Test
+    @DisplayName("🔴 유출된 비밀번호로는 바꾸지 않는다 — 변경 · 재설정 모두, 재설정 링크는 그대로 남는다")
+    void breachedPasswordRejected() {
+        org.mockito.Mockito.doThrow(new com.project.userservice.security.password.BreachedPasswordException())
+                .when(breachedPasswordChecker).assertAcceptable("leaked-pass");
+        when(passwordEncoder.matches("old", "$2a$old")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.updatePassword(7L, "old", "leaked-pass"))
+                .isInstanceOf(com.project.userservice.security.password.BreachedPasswordException.class);
+        assertThat(user.getPassword()).isEqualTo("$2a$old");
+
+        PasswordResetToken token = new PasswordResetToken("raw", Instant.now().plus(1, ChronoUnit.HOURS), user);
+        when(passwordResetTokenRepository.findByToken(PasswordResetToken.hash("raw"))).thenReturn(Optional.of(token));
+        assertThatThrownBy(() -> userService.resetPassword("raw", "leaked-pass"))
+                .isInstanceOf(com.project.userservice.security.password.BreachedPasswordException.class);
+        assertThat(token.isUsed()).isFalse();
+        assertThat(user.getPassword()).isEqualTo("$2a$old");
+        verify(refreshTokenService, never()).revokeAll(any());
     }
 
     @Test

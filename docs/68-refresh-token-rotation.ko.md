@@ -515,3 +515,30 @@ Redis 덤프(백업 파일 · 잘못 열린 포트 · 스냅샷)가 새면 원�
 전환 뒤 옛 토큰 · 리프레시도 통과, 은퇴 뒤 거절, 모르는 kid · kid 위장 거절) · `JwtKeyRingGatewayTest` · `TokenHandlerKeyRingTest`(게이트웨이 · chat 이 같은 규칙) ·
 `RefreshTokenRotationControllerTest`(+1: 확인할 수 없는 토큰은 400) · `JwtKeyRingWiringTest`(JWT 를 읽는 모든 서비스가 링 세 값을 같은 이름으로 읽음 ·
 ops/46 이 키를 출력하지 않음).
+
+## 18. 유출된 비밀번호를 받지 않는다 — k-익명성 조회 (2026-10-02)
+
+**문제.** 크리덴셜 스터핑은 다른 사이트에서 샌 "이메일 + 비밀번호" 목록을 그대로 넣어 본다. 사용자가 그 비밀번호를 여기서도 쓰면, 우리 쪽에
+아무 결함이 없어도 계정이 넘어간다. 길이 · 문자 종류 규칙은 이것을 막지 못한다 — `P@ssw0rd!` 는 규칙을 다 지키지만 유출 목록의 맨 위에 있다.
+NIST SP 800-63B 도 구성 규칙 대신 "알려진 유출 · 흔한 비밀번호 목록과 대조" 를 요구한다.
+
+**어떻게 — 비밀번호를 밖으로 보내지 않고(`BreachedPasswordChecker`).**
+- Have I Been Pwned 의 Pwned Passwords range API: 비밀번호 SHA-1 의 **앞 5글자만** 보내고, 그 접두사를 가진 해시 뒷부분 수백 개를 받아
+  **우리 쪽에서** 맞춰 본다. 서비스는 어느 것이 우리 사용자의 것인지 모른다(k-익명성).
+- `Add-Padding: true` — 응답 크기까지 고르게 해 접두사별 응답 길이로도 추측하지 못하게 한다. 패딩 줄은 개수 0 이라 유출로 보지 않는다.
+- 로컬 목록(`security/common-passwords.txt`, 흔한 비밀번호 100여 개 — 한국어 자판 배열 `qwer1234` · `1q2w3e4r` 등 포함)은 API 와 상관없이 언제나 막는다.
+- 거절 문구에는 유출 횟수를 싣지 않는다 — "유출됐거나 너무 흔해서 쉽게 추측되는 비밀번호" 한 가지.
+
+**어디서.** 비밀번호를 정하는 모든 경로 — 가입 · 변경 · 재설정(관리 경로 포함). 저장하기 **전에** 보므로 재설정 링크는 소진되지 않아 다시 시도할 수 있다.
+로그인 때는 보지 않는다(로그인마다 외부 호출을 하지 않는다) — 다음 단계로 "로그인한 비밀번호가 유출 목록에 있으면 변경 권고" 를 둘 수 있다.
+
+**API 가 안 될 때는 막지 않는다(fail-open).** 외부 서비스 장애로 가입 · 재설정이 멈추면 안 된다. 대신 지표 `auth.breached_password.unavailable` 과
+경고 로그를 남긴다(거절은 `auth.breached_password.rejected{reason=breached|common}`). 시간 제한 2초(`auth.breached-password.timeout`),
+끄려면 `auth.breached-password.enabled=false`(로컬 목록은 그래도 막는다). NetworkPolicy 는 들어오는 쪽만 막아 별도 설정이 필요 없다.
+
+**함께 고친 것 — 가입 400 의 본문이 문자열 하나였다.** 화면은 `error.response.data.message` 를 읽는데 본문이 그냥 문자열이라 "가입하지 못했습니다" 만
+보였다. 409 와 같은 모양(`{message}`)으로 바꿔, 유출 비밀번호처럼 사용자가 고칠 수 있는 이유가 보이게 했다.
+
+**가드**: `BreachedPasswordCheckerTest`(유출이면 거절 · 문구에 횟수 없음, 밖으로 나가는 것은 앞 5글자뿐, 패딩 줄 · 미일치 통과 · 대소문자 무관,
+API 장애면 통과 + 지표, 흔한 비밀번호는 꺼도 거절) · `PasswordChangeTest`(+1: 변경 · 재설정 거절, 링크 그대로, 로그인 끊지 않음) · `RegisterRoleTest`(+1: 가입 거절 ·
+계정 · 이벤트 없음) · `RegisterDuplicateTest`(+1: 400 도 message). 각 검사를 빼면 해당 테스트가 실패하는 것을 확인했다.

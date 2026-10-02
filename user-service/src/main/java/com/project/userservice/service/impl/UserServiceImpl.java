@@ -116,6 +116,9 @@ public class UserServiceImpl implements UserService {
     /** 관리자가 계정을 막을 때 이미 열린 로그인도 끊는다(docs/68 §13). */
     private final com.project.userservice.service.RefreshTokenService refreshTokenService;
 
+    /** 유출 · 흔한 비밀번호를 거절한다 — 비밀번호를 정하는 모든 경로(가입 · 변경 · 재설정)에서(docs/68 §18). */
+    private final com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
+
     
     /**
      * 확인 토큰 유효 기간. 기본 24시간.
@@ -452,6 +455,8 @@ public class UserServiceImpl implements UserService {
      * 모든 요청마다 DB 를 보는 구조라야 가능하고, 그 비용은 이 서비스에 맞지 않는다.
      */
     private void applyNewPassword(User user, String rawPassword) {
+        // 저장하기 전에 — 유출 목록에 있는 비밀번호면 바꾸지 않는다(재설정 링크도 소진되지 않아 다시 시도할 수 있다).
+        breachedPasswordChecker.assertAcceptable(rawPassword);
         user.setPassword(passwordEncoder.encode(rawPassword));
         user.setPasswordChangedAt(java.time.LocalDateTime.now());
         userRepository.save(user);
@@ -468,8 +473,11 @@ public class UserServiceImpl implements UserService {
             User user = userRepository.findById(userId)
                     .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
 
+            breachedPasswordChecker.assertAcceptable(password);
             user.setPassword(passwordEncoder.encode(password));
             userRepository.save(user);
+        } catch (com.project.userservice.security.password.BreachedPasswordException e) {
+            throw e;   // 이유를 그대로 — 아래에서 뭉뚱그리면 "왜 안 되는지" 가 사라진다
         } catch (Exception e) {
             throw new RuntimeException("Failed to update password");
         }
@@ -594,6 +602,9 @@ public class UserServiceImpl implements UserService {
 
     @Override    
     public User registerNewUserAccount(SignupRequest request) {
+
+        // 유출 · 흔한 비밀번호로는 가입하지 않는다(docs/68 §18) — 다른 사이트에서 샌 목록을 그대로 넣는 크리덴셜 스터핑의 재료다.
+        breachedPasswordChecker.assertAcceptable(request.getPassword());
 
         // Create new user's account
         User user = new User(request.getUsername(),

@@ -71,6 +71,8 @@ class UserCreatedOutboxTest {
     @Mock private org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     @Mock private UserOutboxHelper userOutboxHelper;
 
+    @Mock private com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
+
     @InjectMocks private UserServiceImpl userService;
 
     private User user;

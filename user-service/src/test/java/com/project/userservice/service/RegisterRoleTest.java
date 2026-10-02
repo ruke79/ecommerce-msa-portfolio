@@ -55,6 +55,8 @@ class RegisterRoleTest {
      */
     @Mock private com.project.userservice.message.UserOutboxHelper userOutboxHelper;
 
+    @Mock private com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
+
     @InjectMocks private UserServiceImpl userService;
 
     private SignupRequest signup(Set<String> roles) {
@@ -71,6 +73,19 @@ class RegisterRoleTest {
         when(roleRepository.findByRoleName(AppRole.ROLE_USER))
                 .thenReturn(Optional.of(new Role(AppRole.ROLE_USER)));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    @Test
+    @DisplayName("🔴 유출 · 흔한 비밀번호로는 가입하지 않는다 — 계정도 이벤트도 만들지 않는다(docs/68 §18)")
+    void breachedPasswordSignupRejected() {
+        givenRolesExist();
+        org.mockito.Mockito.doThrow(new com.project.userservice.security.password.BreachedPasswordException())
+                .when(breachedPasswordChecker).assertAcceptable(org.mockito.ArgumentMatchers.any());
+
+        org.junit.jupiter.api.Assertions.assertThrows(com.project.userservice.security.password.BreachedPasswordException.class,
+                () -> userService.registerNewUserAccount(signup(null)));
+        verify(userRepository, never()).save(org.mockito.ArgumentMatchers.any());
+        verify(userOutboxHelper, never()).recordUserCreated(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

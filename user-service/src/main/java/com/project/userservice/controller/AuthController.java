@@ -241,9 +241,11 @@ public class AuthController {
                 return new ResponseEntity<>(new GenericResponse(StatusMessages.USER_REGISTRATION_SUCCESS), HttpStatus.OK);
                 }
                 catch(RuntimeException e) {
-
+                    // 🐛 예전: 본문이 문자열 하나라 화면(error.response.data.message)이 읽지 못하고 "가입하지 못했습니다" 만 띄웠다 —
+                    //    유출 비밀번호(docs/68 §18)처럼 사용자가 고칠 수 있는 이유가 보이지 않았다. 409 와 같은 모양으로.
+                    // [JA] 以前は本文が文字列一つで、画面が理由を読めなかった。409 と同じ形にする。
                     return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(ClientMessage.of(e));
+                    .body(new GenericResponse(ClientMessage.of(e)));
                 }
     }
     
