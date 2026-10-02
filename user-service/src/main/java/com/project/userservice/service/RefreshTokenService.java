@@ -200,6 +200,34 @@ public class RefreshTokenService {
         return outcome(Kind.REUSED, null, userId);
     }
 
+    /**
+     * 이 브라우저의 로그인이 <b>언제 시작됐는가</b>(epoch 초) — 되돌릴 수 없는 동작의 "최근 로그인" 재인증에 쓴다(docs/68 §16).
+     *
+     * <p>쿠키의 리프레시 토큰이 서명 · 종류 · 만료가 맞고, 주인이 이 사용자이고, 그 묶음이 끊기지 않았을 때만 값을 준다.
+     * 회전해도 {@code auth_time} 은 처음 로그인한 시각 그대로라, "몇 분 전에 비밀번호 · 소셜 · 2FA 를 거쳐 들어왔다" 를 뜻한다.
+     */
+    // [JA] このブラウザのログインがいつ始まったか(epoch 秒)。取り消せない操作の「最近のログイン」再認証に使う。
+    public java.util.OptionalLong authTimeOf(String presented, User owner) {
+        if (presented == null || presented.isBlank() || owner == null || owner.getEmail() == null) {
+            return java.util.OptionalLong.empty();
+        }
+        try {
+            if (jwtUtils.validateJwtToken(presented) != com.project.common.constants.TokenStatus.VALID
+                    || !jwtUtils.isRefreshTokenType(presented)
+                    || !owner.getEmail().equals(jwtUtils.getIdFromJwtToken(presented))) {
+                return java.util.OptionalLong.empty();
+            }
+            String familyId = jwtUtils.getFamilyIdFromJwtToken(presented);
+            if (familyId == null || familyId.isBlank() || refreshTokenRepository.isFamilyRevoked(familyId)) {
+                return java.util.OptionalLong.empty();
+            }
+            return java.util.OptionalLong.of(jwtUtils.getAuthTimeFromJwtToken(presented));
+        } catch (RuntimeException e) {
+            // 깨진 · 만료된 토큰 — 재인증 근거가 아니다.
+            return java.util.OptionalLong.empty();
+        }
+    }
+
     /** 로그아웃 — 그 토큰의 묶음 전체를 끊는다(회전 이전 토큰이면 그 키만). */
     public void revoke(String presented) {
         String familyId = jwtUtils.getFamilyIdFromJwtToken(presented);

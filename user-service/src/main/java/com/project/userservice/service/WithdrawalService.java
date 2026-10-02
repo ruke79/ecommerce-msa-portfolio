@@ -61,10 +61,16 @@ public class WithdrawalService {
     private final PasswordEncoder passwordEncoder;
     /** 복제본(chat_member)도 식별정보를 지우게 한다 — 같은 트랜잭션의 아웃박스(docs/48 §6-⑤). */
     private final com.project.userservice.message.UserOutboxHelper userOutboxHelper;
+    /** 최근 로그인 확인 · 최종 처리 때 로그인 끊기(docs/68 §16). */
+    private final RefreshTokenService refreshTokenService;
 
     /** 신청부터 최종 처리까지 기다리는 기간. */
     @Value("${app.withdrawal.grace:P7D}")
     private Duration grace;
+
+    /** 비밀번호 대신 "최근 로그인" 으로 본인 확인할 때, 로그인한 지 이 시간 안이어야 한다(docs/68 §16). */
+    @Value("${app.withdrawal.reauth-window:PT10M}")
+    private Duration reauthWindow = Duration.ofMinutes(10);
 
     @Transactional(readOnly = true)
     public WithdrawalStatusDto status(Long userId) {
@@ -79,13 +85,21 @@ public class WithdrawalService {
      */
     @Transactional
     public WithdrawalStatusDto request(Long userId, String rawPassword, String reason) {
+        return request(userId, rawPassword, reason, null);
+    }
+
+    /**
+     * @param presentedRefresh 이 브라우저의 리프레시 쿠키 — 비밀번호를 비웠을 때 "최근 로그인" 을 확인한다(없으면 null)
+     */
+    @Transactional
+    public WithdrawalStatusDto request(Long userId, String rawPassword, String reason, String presentedRefresh) {
         User user = load(userId);
 
         if (user.isWithdrawalPending()) {
             return statusOf(user);
         }
 
-        requirePassword(user, rawPassword);
+        requireReauthentication(user, rawPassword, presentedRefresh);
 
         user.setWithdrawalRequestedAt(LocalDateTime.now());
         user.setWithdrawalReason(reason == null || reason.isBlank() ? null : reason.trim());
@@ -130,6 +144,10 @@ public class WithdrawalService {
 
         anonymize(user);
         userRepository.saveAndFlush(user);
+        // 🐛 예전: 비활성으로만 바꿔, 열려 있던 로그인은 다음 갱신 때까지 · 채팅 · 알림 연결은 계속 살아 있었다(docs/68 §16).
+        //    다른 차단 경로(관리자 정지 · 비밀번호 변경 · 재설정)처럼 지금 끊는다.
+        // [JA] 以前は無効にするだけで、開いたログインは次の更新まで · チャット · 通知の接続は生きていた。今すぐ切る。
+        refreshTokenService.revokeAll(userId);
         // 원본만 지우면 복제본에는 이메일·이름·사진이 남는다 — 탈퇴의 약속이 절반만 지켜진다.
         userOutboxHelper.recordUserDeleted(userId);
 
@@ -174,19 +192,31 @@ public class WithdrawalService {
     }
 
     /**
-     * 본인 확인.
+     * 본인 확인 — <b>비밀번호</b>, 또는 비밀번호를 비웠다면 <b>최근 로그인</b>(docs/68 §16).
      *
-     * <p>소셜 로그인 계정에는 확인할 비밀번호가 없다. 그런 계정에까지 비밀번호를 요구하면
-     * <b>탈퇴할 방법 자체가 사라진다.</b>
+     * <p>🐛 예전: "저장된 비밀번호가 비어 있으면 소셜 계정이니 건너뛴다" 였다. 그런데 소셜 가입은 비밀번호 칸에 <b>아무도 모르는 난수</b>를
+     * 넣는다(CustomOAuth2UserService) — 비어 있지 않다. 화면은 "소셜 계정은 비워 두세요" 라고 안내하는데 서버는 늘 "비밀번호가 일치하지
+     * 않습니다" 였다. 소셜 가입자는 <b>탈퇴할 방법이 없었다.</b> 소셜 연결 때 비밀번호를 해제한 계정(§15)도 같은 처지가 된다.
+     *
+     * <p>지금: 비밀번호를 넣었으면 그것만 본다(틀리면 거절 — 다른 길로 넘어가지 않는다). 비웠으면 이 브라우저의 로그인이
+     * {@link #reauthWindow} 안에 시작됐는지 본다 — 비밀번호 · 소셜 · 2FA 중 그 계정의 로그인 절차를 방금 다시 거쳤다는 뜻이다(GitHub ·
+     * Google 의 "sudo 모드" 와 같은 생각). 오래 열어 둔 공용 PC 의 세션만으로는 탈퇴할 수 없다.
      */
-    private void requirePassword(User user, String rawPassword) {
-        String stored = user.getPassword();
-        if (stored == null || stored.isBlank()) {
+    // [JA] 本人確認 — パスワード、または空欄なら「最近のログイン」。以前はソーシャル登録のランダムなパスワードのせいで、ソーシャル会員は退会できなかった。
+    private void requireReauthentication(User user, String rawPassword, String presentedRefresh) {
+        if (rawPassword != null && !rawPassword.isBlank()) {
+            if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
+                throw new BadCredentialsException("비밀번호가 일치하지 않습니다.");
+            }
             return;
         }
-        if (rawPassword == null || !passwordEncoder.matches(rawPassword, stored)) {
-            throw new BadCredentialsException("비밀번호가 일치하지 않습니다.");
+        java.util.OptionalLong authTime = refreshTokenService.authTimeOf(presentedRefresh, user);
+        long now = java.time.Instant.now().getEpochSecond();
+        if (authTime.isPresent() && now - authTime.getAsLong() <= reauthWindow.toSeconds()) {
+            return;
         }
+        throw new BadCredentialsException(
+                "비밀번호를 입력하거나, 다시 로그인한 뒤 " + reauthWindow.toMinutes() + "분 안에 신청해 주세요.");
     }
 
     private User load(Long userId) {

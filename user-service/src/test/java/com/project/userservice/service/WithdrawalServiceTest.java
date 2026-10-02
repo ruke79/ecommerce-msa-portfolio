@@ -2,6 +2,7 @@ package com.project.userservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,6 +49,7 @@ class WithdrawalServiceTest {
     private ReviewLikeRepository reviewLikeRepository;
     private PasswordEncoder passwordEncoder;
     private com.project.userservice.message.UserOutboxHelper outboxHelper;
+    private com.project.userservice.service.RefreshTokenService refreshTokenService;
     private WithdrawalService service;
 
     private User user;
@@ -62,6 +64,8 @@ class WithdrawalServiceTest {
         reviewLikeRepository = mock(ReviewLikeRepository.class);
         passwordEncoder = new BCryptPasswordEncoder();
         outboxHelper = mock(com.project.userservice.message.UserOutboxHelper.class);
+        refreshTokenService = mock(com.project.userservice.service.RefreshTokenService.class);
+        when(refreshTokenService.authTimeOf(any(), any())).thenReturn(java.util.OptionalLong.empty());
 
         user = new User("tester", "tester@example.com", passwordEncoder.encode(PASSWORD));
         user.setUserId(USER_ID);
@@ -69,7 +73,7 @@ class WithdrawalServiceTest {
 
         service = new WithdrawalService(userRepository, shippingAddressRepository,
                 wishItemRepository, verificationTokenRepository, passwordResetTokenRepository,
-                reviewLikeRepository, passwordEncoder, outboxHelper);
+                reviewLikeRepository, passwordEncoder, outboxHelper, refreshTokenService);
         ReflectionTestUtils.setField(service, "grace", Duration.ofDays(7));
     }
 
@@ -106,14 +110,43 @@ class WithdrawalServiceTest {
         assertThat(user.getWithdrawalRequestedAt()).isNull();
     }
 
+    /**
+     * 🐛 예전 테스트는 소셜 계정을 {@code password = null} 로 만들었다 — 실제 소셜 가입은 <b>아무도 모르는 난수</b>를 넣으므로 그 계정은
+     * 존재하지 않는다. 테스트가 통과하는 동안 실제 소셜 가입자는 탈퇴할 수 없었다(docs/68 §16). 이제 실제와 같은 모양으로 만든다.
+     */
     @Test
-    @DisplayName("소셜 로그인 계정은 비밀번호 없이 신청한다 — 요구하면 탈퇴할 방법이 없다")
-    void socialAccountNeedsNoPassword() {
-        user.setPassword(null);
+    @DisplayName("🔴 소셜 계정(난수 비밀번호)은 비밀번호 없이, 최근 로그인으로 신청한다")
+    void socialAccountUsesRecentLogin() {
+        user.setPassword(passwordEncoder.encode(java.util.UUID.randomUUID().toString()));
+        when(refreshTokenService.authTimeOf("cookie", user))
+                .thenReturn(java.util.OptionalLong.of(java.time.Instant.now().minusSeconds(120).getEpochSecond()));
 
-        WithdrawalStatusDto status = service.request(USER_ID, null, null);
+        WithdrawalStatusDto status = service.request(USER_ID, null, null, "cookie");
 
         assertThat(status.pending()).isTrue();
+    }
+
+    @Test
+    @DisplayName("🔒 비밀번호도 없고 로그인이 오래됐으면 거절 — 열어 둔 공용 PC 의 세션만으로는 탈퇴할 수 없다")
+    void staleLoginWithoutPasswordRejected() {
+        when(refreshTokenService.authTimeOf("cookie", user))
+                .thenReturn(java.util.OptionalLong.of(java.time.Instant.now().minusSeconds(3600).getEpochSecond()));
+
+        assertThatThrownBy(() -> service.request(USER_ID, null, null, "cookie"))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessageContaining("다시 로그인한 뒤 10분 안에");
+        assertThat(user.getWithdrawalRequestedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("🔒 비밀번호를 넣었는데 틀리면 최근 로그인이 있어도 거절 — 다른 길로 넘어가지 않는다")
+    void wrongPasswordDoesNotFallBackToRecentLogin() {
+        when(refreshTokenService.authTimeOf(any(), any()))
+                .thenReturn(java.util.OptionalLong.of(java.time.Instant.now().getEpochSecond()));
+
+        assertThatThrownBy(() -> service.request(USER_ID, "wrong", null, "cookie"))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessageContaining("일치하지 않습니다");
     }
 
     @Test
@@ -190,6 +223,16 @@ class WithdrawalServiceTest {
         // @Size(max = 20) 이다. 10진수 TSID 를 그대로 쓰면 19자 + 접두사로 넘친다.
         assertThat(user.getUsername().length()).isLessThanOrEqualTo(20);
         assertThat(user.getEmail().length()).isLessThanOrEqualTo(50);
+    }
+
+    @Test
+    @DisplayName("🔴 최종 처리는 열려 있던 로그인을 지금 끊는다 — 비활성만으로는 다음 갱신까지 · 채팅 연결은 계속 살아 있었다")
+    void finalizeEndsSessions() {
+        user.setWithdrawalRequestedAt(java.time.LocalDateTime.now().minusDays(8));
+
+        service.finalizeWithdrawal(USER_ID);
+
+        verify(refreshTokenService).revokeAll(USER_ID);
     }
 
     @Test

@@ -145,7 +145,7 @@ const user = {
     "profile.withdrawal.notice_after": "にアカウントが削除されます。その期間中はこの画面から取り消せます。",
     "profile.withdrawal.data_notice":
         "削除すると、お届け先・ウィッシュリスト・いいね・会員情報が消去されます。注文履歴は取引記録として残りますが、会員情報とは紐づかなくなります。",
-    "profile.withdrawal.social_hint": "ソーシャルログインで登録したアカウントは空欄のままにしてください。",
+    "profile.withdrawal.social_hint": "パスワードのないアカウント(ソーシャルログイン)は空欄のままにしてください。その場合は、もう一度ログインしてから 10 分以内に申請してください。",
     "profile.withdrawal.reason": "退会理由（任意）",
     "profile.withdrawal.confirm": "{{days}}日後にアカウントが削除され、復元できないことを理解しました。",
     "profile.withdrawal.submit": "退会を申請",

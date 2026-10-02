@@ -149,7 +149,7 @@ const user = {
     "profile.withdrawal.notice_after": " 계정이 삭제됩니다. 그 기간 동안에는 이 화면에서 취소할 수 있습니다.",
     "profile.withdrawal.data_notice":
         "삭제 시 배송지·위시리스트·좋아요와 회원정보가 지워집니다. 주문 내역은 거래 기록으로 남지만 회원정보와 연결되지 않습니다.",
-    "profile.withdrawal.social_hint": "소셜 로그인으로 가입한 계정은 비워 두세요.",
+    "profile.withdrawal.social_hint": "비밀번호가 없는 계정(소셜 로그인)은 비워 두세요. 그때는 다시 로그인한 뒤 10분 안에 신청해야 합니다.",
     "profile.withdrawal.reason": "떠나는 이유 (선택)",
     "profile.withdrawal.confirm": "{{days}}일 뒤 계정이 삭제되며 복구할 수 없다는 점을 이해했습니다.",
     "profile.withdrawal.submit": "탈퇴 신청",

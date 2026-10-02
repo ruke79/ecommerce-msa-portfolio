@@ -50,7 +50,9 @@ public class WithdrawalController {
 
     @PostMapping
     ResponseEntity<?> request(@Valid @RequestBody(required = false) WithdrawalRequest request,
-            @AuthenticationPrincipal UserDetails userDetails) {
+            @AuthenticationPrincipal UserDetails userDetails,
+            // 비밀번호를 비웠을 때 "최근 로그인" 을 확인하는 근거(docs/68 §16). HttpOnly 쿠키라 화면은 만지지 않는다.
+            @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {   // = TokenType.REFRESH
 
         Long userId = idOf(userDetails);
         if (userId == null) {
@@ -61,7 +63,7 @@ public class WithdrawalController {
         String reason = request == null ? null : request.getReason();
 
         try {
-            return ResponseEntity.ok(withdrawalService.request(userId, password, reason));
+            return ResponseEntity.ok(withdrawalService.request(userId, password, reason, refresh));
         } catch (BadCredentialsException e) {
             // 비밀번호가 틀렸다. 되돌릴 수 없는 동작 앞의 본인 확인이므로 통과시키지 않는다.
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
