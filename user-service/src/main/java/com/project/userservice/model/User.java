@@ -185,6 +185,7 @@ public class User extends BaseEntity{
     @JsonManagedReference // ShippingAddress 리스트의 순환 참조를 관리합니다.
     private List<ShippingAddress> shippingAddresses = new ArrayList<>();
 
+    @Builder.Default
     @OneToMany(mappedBy="user", fetch = FetchType.LAZY,
             cascade = CascadeType.PERSIST,targetEntity = WishItem.class)
     @JsonManagedReference // WishList 리스트의 순환 참조를 관리합니다.
@@ -195,6 +196,7 @@ public class User extends BaseEntity{
     // private List<Order> orderLists;
     //private List<Long> orderList;
 
+    @Builder.Default
     @OneToMany(mappedBy="reviewedBy", fetch = FetchType.LAZY,
     cascade = CascadeType.PERSIST, targetEntity = Review.class)    
     @JsonManagedReference // Review 리스트의 순환 참조를 관리합니다.
@@ -204,13 +206,19 @@ public class User extends BaseEntity{
     private String defaultPaymentMethod;
 
    
+    // 🐛 두 생성자는 반드시 this() 로 시작한다. @Builder.Default 는 필드 초기값을 빌더 · 생성된 무인자 생성자로 옮겨서,
+    //    손으로 쓴 생성자에는 남지 않는다 — tier 가 null 로 INSERT 돼 V9(NOT NULL) 뒤로 모든 가입이 DB 에서 거절됐다(UserDefaultsTest).
+    // [JA] 二つのコンストラクタは必ず this() で始める。@Builder.Default は初期値をビルダー · 生成された引数なしコンストラクタへ移すため、
+    //      手書きのコンストラクタには残らない — tier が null で INSERT され、V9(NOT NULL)以降すべての登録が DB に拒否されていた。
     public User(String userName, String email, String password) {
+        this();
         this.username = userName;
         this.email = email;
         this.password = password;
     }
 
     public User(String userName, String email) {
+        this();
         this.username = userName;
         this.email = email;
     }
