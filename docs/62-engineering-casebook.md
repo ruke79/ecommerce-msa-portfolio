@@ -35,6 +35,7 @@
 | 15 | 可観測性 | アラートがどこにも届かず、すべてのサービスが自分を `common` と名乗っていた | *Observability Engineering* |
 | 16 | テスト | モック（mock）テストは通ったのに、本番で保存・参照が壊れた | *Software Engineering at Google* |
 | 17 | フロントエンド | いいねが1から0に — 19桁の id を JS が丸めた | *JavaScript: The Definitive Guide* |
+| 18 | データモデル | コンパイルも通りテストも通るのに、データが間違っていた — モデル層の点検 | *Designing Data-Intensive Applications* |
 
 ---
 
@@ -500,11 +501,46 @@
 
 ---
 
+## 18. コンパイルも通りテストも通るのに、データが間違っていた — モデル層の点検
+
+**📖 参考書** — Martin Kleppmann, *Designing Data-Intensive Applications* (O'Reilly, 2017), 第7章 "Transactions"。読んで・直して・書く 2 つのトランザクションの間で起きる **更新の消失（lost update）** と、それをアトミックな書き込み・条件付き更新で防ぐ話です。
+
+**問題** — モデル（エンティティ）フォルダをサービスごとに読み直すと、エラーを出さずに **間違ったデータ** を作る欠陥が出てきました。
+- **会員登録が DB で拒否されていました。** `User` の手書きコンストラクタが `@Builder.Default` の初期値（ランクなど）を飛ばし、NOT NULL に違反していました。Lombok は初期値をビルダーとデフォルトコンストラクタにしか移しません。
+- **クーポンが「使用済み」にならず、再利用できました。** 決済応答のコンシューマーがヘッダー条件に引っかかり、状態変更まで届いていませんでした。
+- **`BaseEntity` の `@Data`** が equals を監査フィールドで作り、同じ瞬間に作った詳細行が `Set` の中で 1 つにまとめられていました。
+- **商品 Q&A が保存されず**（cascade が MERGE のみ）、**バリエーション登録は常に 500** でした（orphanRemoval のコレクションを丸ごと差し替え）。
+- **既定の配送先の変更** が部分ユニークインデックスに引っかかり（Hibernate の flush 順序）、**期限切れトークンの掃除** は `Date` を `Instant` フィールドに渡して拒否され、**長いレビュー** は B-tree の行上限（2,704 バイト）を超えていました。
+- **相談の担当割り当てが消えていました。** 顧客のメッセージがスレッドを読んだ後に担当者が条件付き UPDATE で引き受けると、メッセージ側のコミットが **全列** を読んだ時点の値（待機中・担当者なし）で書き戻していました。チャットの時刻は UTC の JVM で 9 時間早く、相談の本文がログに残っていました。
+- 3 行目以降は **H2・モックのテストでは再現しませんでした。**
+
+**対応した内容**
+- コンストラクタは `this()` から始め、エンティティは `@Getter @Setter`（識別子による同値性）、コレクションは中身だけを入れ替え（`clear + addAll`）、cascade は `{PERSIST, MERGE}`。
+- 割引価格は `common` の `Discount` 1 つで計算します。決済・返金の時刻はエンティティ自身が記録します。
+- `SupportThread` に `@DynamicUpdate` — 変更した列だけを書きます。割り当て自体は元から条件付き UPDATE なので、同時割り当ては既に防げていました。
+- **ガード** `EntityLombokGuardTest`（common）— 全サービスでエンティティの `@Data` を禁止し、`@Builder.Default` を持つエンティティのコンストラクタが `this()` から始まるかを確認します。
+- 再現は **実際の PostgreSQL**（Testcontainers）で行いました。修正を元に戻すと失敗することを確認しています（`expected ACTIVE but was WAITING`、重複キー、`index row size 6024 exceeds … 2704` など）。
+
+**限界** — スキーマ変更やデータ移行が必要なため、今回は手を付けなかったものがあります。
+- catalog: `Notice` の `@Lob`（ラージオブジェクトのリーク）、`ProductSubcategory` の EAGER。
+- cart: `Cart.userId` にユニーク制約がない、`CartProduct.style` がインデックス値。
+- chat: Mongo `ChatMessage` のインデックス、`ChatMember` の更新消失、`ParticipantChatRoom` のユニーク制約、使われていない Alarm エンティティ、チャットルームの Redis コピー。
+- order: `Order.taxPrice`、注文 ↔ 住所の二重外部キー、使われていない `OrderCacheService`、決済 `trackingId` のインデックス。coupon: `CouponStatus.EXPIRED`。
+- 既に保存されたチャットメッセージの時刻は 9 時間早いまま残ります。
+
+**改善点**
+- 読んで・直して・書くエンティティに `@Version`（楽観ロック）を置きます。`@DynamicUpdate` が防ぐのは **別の列** 同士の上書きだけです。
+- リポジトリ層のテストを Testcontainers の PostgreSQL に移します（§16 と同じ結論）。
+
+→ [docs/17](17-testing.md) · §16
+
+---
+
 ## 参考書一覧
 
 | 本 | 出版 | 事例 |
 |---|---|---|
-| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 |
+| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 |
 | Sam Newman, *Building Microservices*, 2nd ed. | O'Reilly, 2021 | 5 · 6 · 8 · 13 |
 | Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty, *Kafka: The Definitive Guide*, 2nd ed. | O'Reilly, 2021 | 4 |
 | Andrew Hoffman, *Web Application Security*, 2nd ed. | O'Reilly, 2024 | 1 |

@@ -35,6 +35,7 @@
 | 15 | 관측성 | 경보가 어디로도 가지 않았고, 모든 서비스가 자기를 `common` 이라 불렀다 | *Observability Engineering* |
 | 16 | 테스트 | 목(mock) 테스트는 통과했는데 운영에서 저장·조회가 깨졌다 | *Software Engineering at Google* |
 | 17 | 프론트엔드 | 좋아요가 1에서 0으로 — 19자리 id 를 JS 가 반올림했다 | *JavaScript: The Definitive Guide* |
+| 18 | 데이터 모델 | 컴파일되고 테스트도 통과하는데 데이터가 틀렸다 — 모델 계층 점검 | *Designing Data-Intensive Applications* |
 
 ---
 
@@ -500,11 +501,46 @@
 
 ---
 
+## 18. 컴파일되고 테스트도 통과하는데 데이터가 틀렸다 — 모델 계층 점검
+
+**📖 참고서** — Martin Kleppmann, *Designing Data-Intensive Applications* (O'Reilly, 2017), 7장 "Transactions". 읽고-고치고-쓰는 두 트랜잭션 사이의 **갱신 손실(lost update)** 과, 그것을 원자적 쓰기 · 조건부 갱신으로 막는 이야기입니다.
+
+**문제** — 모델(엔티티) 폴더를 서비스마다 다시 읽자, 오류 없이 **틀린 데이터**를 만드는 결함이 나왔습니다.
+- **가입이 DB 에서 거절되었습니다.** `User` 의 손으로 쓴 생성자가 `@Builder.Default` 초기값(등급 등)을 건너뛰어 NOT NULL 을 어겼습니다. Lombok 은 초기값을 빌더와 기본 생성자로만 옮깁니다.
+- **쿠폰이 '사용됨' 이 되지 않아 다시 쓸 수 있었습니다.** 결제 응답 소비자가 헤더 조건에 걸려 상태 변경까지 가지 않았습니다.
+- **`BaseEntity` 의 `@Data`** 가 equals 를 감사 필드로 만들어, 같은 순간에 만든 상세 행이 `Set` 에서 하나로 합쳐졌습니다.
+- **상품 Q&A 가 저장되지 않고**(cascade 가 MERGE 뿐), **변형 등록은 늘 500** 이었습니다(orphanRemoval 컬렉션을 통째로 교체).
+- **기본 배송지 변경**이 부분 유니크 인덱스에 걸렸고(Hibernate 의 flush 순서), **만료 토큰 정리**는 `Date` 를 `Instant` 필드에 넘겨 거절됐고, **긴 리뷰**는 B-tree 행 한도(2,704바이트)를 넘었습니다.
+- **상담 배정이 사라졌습니다.** 고객 메시지가 스레드를 읽은 뒤 상담원이 조건부 UPDATE 로 맡으면, 메시지 쪽 커밋이 **모든 컬럼**을 읽어 둔 값(대기 · 담당자 없음)으로 다시 썼습니다. 채팅 시각은 UTC JVM 에서 9시간 일렀고, 상담 본문이 로그에 남았습니다.
+- 셋째 줄 아래는 **H2 · 목 테스트에서 재현되지 않았습니다.**
+
+**처리한 내용**
+- 생성자는 `this()` 로 시작, 엔티티는 `@Getter @Setter`(식별자 동등성), 컬렉션은 내용만 교체(`clear + addAll`), cascade 는 `{PERSIST, MERGE}`.
+- 할인가는 `common` 의 `Discount` 하나로 계산합니다. 결제 · 환불 시각은 엔티티가 스스로 기록합니다.
+- `SupportThread` 에 `@DynamicUpdate` — 바뀐 컬럼만 씁니다. 배정은 원래 조건부 UPDATE 라 동시 배정은 이미 막혀 있었습니다.
+- **가드** `EntityLombokGuardTest`(common) — 모든 서비스에서 엔티티의 `@Data` 를 금지하고, `@Builder.Default` 엔티티의 생성자가 `this()` 로 시작하는지 봅니다.
+- 재현은 **실제 PostgreSQL**(Testcontainers)로 했습니다. 고친 것을 되돌리면 실패하는 것을 확인했습니다(`expected ACTIVE but was WAITING`, 중복 키, `index row size 6024 exceeds … 2704` 등).
+
+**한계** — 스키마 변경이나 데이터 이전이 필요해 이번에 손대지 않은 것이 있습니다.
+- catalog: `Notice` 의 `@Lob`(대형 객체 누수), `ProductSubcategory` 의 EAGER.
+- cart: `Cart.userId` 유니크 없음, `CartProduct.style` 이 인덱스 값.
+- chat: Mongo `ChatMessage` 인덱스, `ChatMember` 갱신 손실, `ParticipantChatRoom` 유니크, 쓰지 않는 Alarm 엔티티, 채팅방의 Redis 사본.
+- order: `Order.taxPrice`, 주문 ↔ 주소 이중 외래 키, 쓰지 않는 `OrderCacheService`, 결제 `trackingId` 인덱스. coupon: `CouponStatus.EXPIRED`.
+- 이미 저장된 채팅 메시지의 시각은 9시간 이른 채로 남습니다.
+
+**개선할 점**
+- 읽고-고치고-쓰는 엔티티에 `@Version`(낙관적 잠금)을 둡니다. `@DynamicUpdate` 는 **다른 컬럼**끼리의 덮어쓰기만 막습니다.
+- 저장소 계층 테스트를 Testcontainers PostgreSQL 로 옮깁니다(§16 과 같은 결론).
+
+→ [docs/17](17-testing.ko.md) · §16
+
+---
+
 ## 참고서 목록
 
 | 책 | 출판 | 사례 |
 |---|---|---|
-| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 |
+| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 |
 | Sam Newman, *Building Microservices*, 2nd ed. | O'Reilly, 2021 | 5 · 6 · 8 · 13 |
 | Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty, *Kafka: The Definitive Guide*, 2nd ed. | O'Reilly, 2021 | 4 |
 | Andrew Hoffman, *Web Application Security*, 2nd ed. | O'Reilly, 2024 | 1 |
