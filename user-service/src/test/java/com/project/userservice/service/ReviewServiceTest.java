@@ -139,6 +139,20 @@ class ReviewServiceTest {
     }
 
     @Test
+    @DisplayName("🔴 리뷰를 고쳐도 스타일 행은 그대로 고쳐 쓴다 — 예전엔 새 행으로 바꿔 끼워 옛 review_style 이 주인 없이 남았다")
+    void editKeepsTheSameStyleRow() throws Exception {
+        Review mine = reviewBy(100L, me, 2F);
+        ReviewStyle before = mine.getStyle();
+        givenExistingReviews(mine);
+
+        service.addReview("me", PRODUCT_ID, request(5F), null);
+
+        assertThat(mine.getStyle()).isSameAs(before);
+        assertThat(before.getColor()).isEqualTo("white");
+        assertThat(before.getImage()).isEqualTo("img2");
+    }
+
+    @Test
     @DisplayName("첫 리뷰의 평점은 NaN 이 아니다 — 빈 목록으로 나누던 자리")
     void firstReviewProducesRealRating() throws Exception {
         givenExistingReviews();

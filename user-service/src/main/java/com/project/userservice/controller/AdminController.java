@@ -14,7 +14,6 @@ import com.project.common.response.MessageResponse;
 import com.project.userservice.dto.CouponDto;
 
 import com.project.userservice.dto.UserProfileDto;
-import com.project.userservice.model.Role;
 
 import com.project.userservice.model.User;
 
@@ -67,9 +66,21 @@ public class AdminController {
         return ResponseEntity.ok(StatusMessages.ACCOUNT_LOCK_STATUS_UPDATED);
     }
 
+    /** 역할 목록 — 이름과 id 만(id 는 문자열, 브라우저의 숫자 정밀도). */
+    record RoleView(String roleId, String roleName) {
+    }
+
+    /**
+     * 🐛 예전: {@code Role} 엔티티를 그대로 돌려줬다. {@code Role.users} 가 {@code @JsonManagedReference} 라 Jackson 이
+     * <b>모든 사용자</b>(이메일 · 등급 · 잠금 · 탈퇴 사유, 주소 · 전화번호까지 지연 로딩으로)를 직렬화했다 — 관리자 화면이라도
+     * 내보낼 이유가 없는 값이고, 리뷰의 지연 프록시에 닿으면 500 이었다. 응답은 DTO 로만(TotpSecretExposureTest 가 Role 도 본다).
+     */
+    // [JA] 以前は Role エンティティをそのまま返し、Role.users 経由で全ユーザー(メール · 住所 · 電話番号まで)を直列化していた。
     @GetMapping("/roles")
-    List<Role> getAllRoles() {
-        return userService.getAllRoles();
+    List<RoleView> getAllRoles() {
+        return userService.getAllRoles().stream()
+                .map(r -> new RoleView(String.valueOf(r.getRoleId()), r.getRoleName().name()))
+                .toList();
     }
 
     @PutMapping("/update-expiry-status")

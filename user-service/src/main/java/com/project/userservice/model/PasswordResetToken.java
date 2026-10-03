@@ -1,7 +1,7 @@
 package com.project.userservice.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.experimental.SuperBuilder;
 import lombok.AccessLevel;
@@ -14,8 +14,11 @@ import java.util.HexFormat;
 
 import io.hypersistence.utils.hibernate.id.Tsid;
 
+// 🐛 예전 @Data — 원문을 해시하지 않고 넣는 public setToken() 이 열려 있었고, equals/hashCode 가 지연 로딩 user 까지
+//    건드렸다. 읽기만 열고, 바꾸는 길은 refresh() · markUsed() 둘뿐이다.
+// [JA] 以前は @Data — 原文をハッシュせずに入れる setToken() が公開され、equals/hashCode が遅延ロードの user まで触っていた。
 @Entity
-@Data
+@Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name="password_reset_token", schema="users",  
        indexes = {
@@ -98,5 +101,10 @@ public class PasswordResetToken {
     @Override
     public String toString() {
         return "PasswordResetToken(id=" + id + ", used=" + used + ", expiryDate=" + expiryDate + ")";
+    }
+
+    /** 링크를 썼다 — 한 번만 쓰인다. */
+    public void markUsed() {
+        this.used = true;
     }
 }

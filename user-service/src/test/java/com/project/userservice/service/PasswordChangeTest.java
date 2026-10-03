@@ -293,7 +293,7 @@ class PasswordChangeTest {
     void usedTokenRejected() {
         PasswordResetToken token = new PasswordResetToken(
                 "raw", Instant.now().plus(1, ChronoUnit.HOURS), user);
-        token.setUsed(true);
+        token.markUsed();
         when(passwordResetTokenRepository.findByToken(any())).thenReturn(Optional.of(token));
 
         assertThatThrownBy(() -> userService.resetPassword("raw", "newpw123"))

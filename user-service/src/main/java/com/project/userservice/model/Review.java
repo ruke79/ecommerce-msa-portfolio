@@ -36,9 +36,10 @@ import lombok.experimental.SuperBuilder;
 @Getter
 @SuperBuilder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name="review", schema="users", 
+// 인덱스는 Flyway 가 소유한다 — 예전 @Index(rating, review, size, fit)는 쓰는 쿼리가 없었고, 긴 리뷰를 B-tree 한도로 막았다(V16).
+@Table(name="review", schema="users",
          indexes = {
-          @Index(columnList = "rating, review, size, fit", name = "idx_review") }
+          @Index(columnList = "product_id", name = "idx_review_product") }
 )
 public class Review extends BaseEntity{
     

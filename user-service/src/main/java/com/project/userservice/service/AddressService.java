@@ -45,6 +45,10 @@ public class AddressService {
         // 같은 필드를 다시 덮었다(ShippingAddress.from 주석 참조).
         ShippingAddress address = ShippingAddress.from(request.getAddress());
 
+        // 새 주소를 기본으로 저장하면 지금 기본을 먼저 끈다 — 아니면 '사용자당 기본 하나' 인덱스에 걸린다(아래 deactivateCurrentDefault).
+        if (address.isActive()) {
+            deactivateCurrentDefault(user.getUserId(), null);
+        }
         address.setUser(user);
 
         address = shippingAddressRepository.save(address);
@@ -107,12 +111,7 @@ public class AddressService {
         }
 
         // 이 사용자의 현재 기본 배송지만 끈다.
-        shippingAddressRepository.findByUser_UserIdAndActiveTrue(user.getUserId())
-                .filter(current -> !Objects.equals(current.getShippingAddressId(), targetId))
-                .ifPresent(current -> {
-                    current.setActive(false);
-                    shippingAddressRepository.save(current);
-                });
+        deactivateCurrentDefault(user.getUserId(), targetId);
 
         address.setActive(true);
         address = shippingAddressRepository.save(address);
@@ -137,6 +136,25 @@ public class AddressService {
             log.warn("주소 id 가 숫자가 아니다");
             return null;
         }
+    }
+
+    /**
+     * 지금 기본 배송지를 끄고 <b>바로 DB 에 반영</b>한다.
+     *
+     * <p>🐛 예전: 두 엔티티를 바꾼 뒤 커밋 때 함께 flush 했다. Hibernate 는 읽은 순서대로 UPDATE 를 내보내서, 새 기본
+     * (먼저 읽음, active=true)이 옛 기본(active=false)보다 먼저 갔다 — 그 순간 같은 사용자의 기본이 둘이라
+     * V7 의 부분 유니크 인덱스 {@code uq_shipping_address_active_per_user} 가 즉시 거절했다. <b>기본 배송지 변경이 늘 실패했다</b>
+     * (실제 PostgreSQL 로 재현 — UserServiceApplicationTests).
+     */
+    // [JA] 今の既定の配送先をオフにし、すぐ DB に反映する。以前は二つの更新を読み込み順に flush し、新しい既定が先に出て
+    //      部分ユニークインデックスに即座に拒否されていた — 既定の配送先の変更が常に失敗していた。
+    private void deactivateCurrentDefault(Long userId, Long keepId) {
+        shippingAddressRepository.findByUser_UserIdAndActiveTrue(userId)
+                .filter(current -> !Objects.equals(current.getShippingAddressId(), keepId))
+                .ifPresent(current -> {
+                    current.setActive(false);
+                    shippingAddressRepository.saveAndFlush(current);
+                });
     }
 
     @Transactional(readOnly = true)

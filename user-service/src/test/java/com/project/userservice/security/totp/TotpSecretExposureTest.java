@@ -49,7 +49,8 @@ class TotpSecretExposureTest {
     void noControllerReturnsTheEntity() throws Exception {
         var scanner = new ClassPathScanningCandidateComponentProvider(false);
         scanner.addIncludeFilter(new AnnotationTypeFilter(RestController.class));
-        Pattern entity = Pattern.compile("\\bcom\\.project\\.userservice\\.model\\.User\\b(?![A-Za-z0-9_$])");
+        // Role 도 — Role.users 를 따라 모든 사용자가 직렬화된다(예전 /api/admin/roles).
+        Pattern entity = Pattern.compile("\\bcom\\.project\\.userservice\\.model\\.(User|Role)\\b(?![A-Za-z0-9_$])");
         List<String> offenders = new ArrayList<>();
         var controllers = scanner.findCandidateComponents("com.project.userservice");
         for (var bd : controllers) {

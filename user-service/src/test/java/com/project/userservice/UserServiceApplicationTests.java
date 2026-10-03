@@ -160,4 +160,61 @@ class UserServiceApplicationTests {
 				.as("액추에이터를 열었다고 업무 API 까지 열리면 안 된다")
 				.isEqualTo(HttpStatus.UNAUTHORIZED);
 	}
+
+	@Autowired
+	private com.project.userservice.repository.jpa.PasswordResetTokenRepository passwordResetTokenRepository;
+
+	@Autowired
+	private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+	@Test
+	@DisplayName("🔴 만료된 재설정 토큰 정리가 실제 DB 에서 돈다 — 예전엔 Date 를 Instant 필드에 묶어 매번 실패했다(경고 로그뿐)")
+	void expiredResetTokenPurgeRunsOnPostgres() {
+		new org.springframework.transaction.support.TransactionTemplate(transactionManager).executeWithoutResult(s ->
+				passwordResetTokenRepository.deleteAllExpiredSince(java.time.Instant.now()));
+	}
+
+	@Autowired
+	private javax.sql.DataSource dataSource;
+
+	@Autowired
+	private com.project.userservice.service.AddressService addressService;
+
+	@Test
+	@DisplayName("🔴 기본 배송지를 바꿔도 '사용자당 기본 하나' 유니크 인덱스에 걸리지 않는다(실제 PostgreSQL)")
+	void switchingDefaultAddressRespectsPartialUniqueIndex() {
+		var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+		jdbc.update("INSERT INTO users.users (user_id, username, email, account_non_expired, account_non_locked,"
+				+ " credentials_non_expired, email_verified, enabled, is_two_factor_enabled)"
+				+ " VALUES (9001, 'addr-switch', 'addr-switch@example.com', true, true, true, true, true, false)");
+		jdbc.update("INSERT INTO users.shipping_address (shipping_address_id, user_id, version, active, address1, city, state, zip_code)"
+				+ " VALUES (9101, 9001, 0, true, 'addr-1', 'Seoul', 'Seoul', '01234'), (9102, 9001, 0, false, 'addr-2', 'Busan', 'Busan', '05678')");
+
+		var selected = addressService.selectShipAddress("addr-switch", "9102");
+
+		org.assertj.core.api.Assertions.assertThat(selected).isNotNull();
+		org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+				"SELECT shipping_address_id FROM users.shipping_address WHERE user_id = 9001 AND active", Long.class))
+				.containsExactly(9102L);
+	}
+
+	@Test
+	@DisplayName("🔴 2,000자 한국어 리뷰가 저장된다 — 예전 idx_review(rating, review, size, fit)는 B-tree 행 한도(약 2.7KB)를 넘어 거절했다")
+	void longKoreanReviewIsStored() {
+		var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+		jdbc.update("INSERT INTO users.users (user_id, username, email, account_non_expired, account_non_locked,"
+				+ " credentials_non_expired, email_verified, enabled, is_two_factor_enabled)"
+				+ " VALUES (9002, 'long-review', 'long-review@example.com', true, true, true, true, true, false)");
+		jdbc.update("INSERT INTO users.review_style (rstyle_id, version, color, image) VALUES (9201, 0, 'black', 'img')");
+		// 무작위 음절 — 압축으로 줄어들지 않는 실제 문장에 가깝게(같은 글자 반복은 압축돼 한도를 넘지 않는다).
+		var random = new java.util.Random(42);
+		var text = new StringBuilder();
+		for (int i = 0; i < 2000; i++) {
+			text.append((char) (0xAC00 + random.nextInt(11172)));
+		}
+		jdbc.update("INSERT INTO users.review (review_id, version, rating, product_id, rstyle_id, user_id, review, size, fit)"
+				+ " VALUES (9301, 0, 5, 1, 9201, 9002, ?, 'L', 'Large')", text.toString());
+		org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+				"SELECT char_length(review) FROM users.review WHERE review_id = 9301", Integer.class)).isEqualTo(2000);
+	}
 }

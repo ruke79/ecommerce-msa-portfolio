@@ -134,18 +134,55 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         return super.loadUser(userRequest);
     }
 
+    /** users.username · users.name 의 길이(varchar(20), V2). */
+    static final int USERNAME_MAX = 20;
+
+    /**
+     * 소셜 사용자의 username — {@code provider_providerId}, 20자를 넘으면 안정된 짧은 꼴.
+     *
+     * <p>🐛 예전: 그대로 썼다. 구글 sub 는 21자리라 {@code google_…} 가 28자 — users.username(varchar(20))에 들어가지 않아
+     * 구글 · 페이스북 · 네이버 · LINE 가입이 DB 에서 거절됐다(깃허브 · 카카오는 짧아서 통했다). 컬럼을 넓히지 않고 맞춘다:
+     * 이미 맞는 것(기존 계정)은 그대로, 넘는 것만 {@code 프로바이더앞6자_SHA-256 앞 64비트의 36진수} — 같은 계정이면 늘 같은 값이고,
+     * 기존 계정은 이메일로 찾으므로 이름 규칙이 바뀌어도 영향이 없다.
+     */
+    // [JA] ソーシャルユーザーの username — 20 文字を超えたら安定した短い形に。以前は google_ + 21 桁の sub で 28 文字になり、
+    //      varchar(20) に入らず Google · Facebook · Naver · LINE の登録が DB で拒否されていた。
+    static String socialUsername(String provider, String providerId) {
+        String raw = provider + "_" + providerId;
+        if (raw.length() <= USERNAME_MAX) {
+            return raw;
+        }
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            long bits = java.nio.ByteBuffer.wrap(h, 0, 8).getLong();
+            String prefix = provider.length() > 6 ? provider.substring(0, 6) : provider;
+            return prefix + "_" + Long.toUnsignedString(bits, 36);   // 최대 6 + 1 + 13 = 20자
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다
+        }
+    }
+
+    /** 표시 이름 — 컬럼(20자)에 맞게 자른다. 서로게이트 쌍(이모지)을 반으로 자르지 않는다. */
+    static String cap(String value, int max) {
+        if (value == null || value.codePointCount(0, value.length()) <= max) {
+            return value;
+        }
+        return value.substring(0, value.offsetByCodePoints(0, max));
+    }
+
     private User createSocialUser(OAuth2Response response, String email, String provider) {
         Role role = roleRepository.findByRoleName(AppRole.ROLE_USER)
                 .orElseThrow(() -> new IllegalStateException(
                         "users.roles 에 ROLE_USER 가 없습니다 — V3__seed_roles.sql 확인"));
 
         // username 은 유일해야 한다. 소셜 사용자는 provider_providerId — 사람이 고른
-        // 이름과 절대 충돌하지 않는 형태다.
-        User user = new User(response.getProvider() + "_" + response.getProviderId(), email,
+        // 이름과 절대 충돌하지 않는 형태다. 20자를 넘으면 줄인다(socialUsername).
+        User user = new User(socialUsername(response.getProvider(), response.getProviderId()), email,
                 // 비밀번호 로그인 경로를 확실히 잠근다. null 로 두면 BCrypt matches 가
                 // 예외를 던지는 애매한 상태가 된다 — 아무도 모르는 난수를 넣는다.
                 passwordEncoder.encode(UUID.randomUUID().toString()));
-        user.setName(response.getName());
+        user.setName(cap(response.getName(), USERNAME_MAX));
         user.setRole(role);
         user.setAccountNonLocked(true);
         user.setAccountNonExpired(true);

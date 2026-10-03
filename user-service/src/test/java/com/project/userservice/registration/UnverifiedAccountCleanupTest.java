@@ -163,7 +163,7 @@ class UnverifiedAccountCleanupTest {
         verify(tokenRepository).deleteExpiredOfEnabledUsers(now);
         // 전체 삭제 메서드를 쓰면 유예 기간 중인 계정의 근거가 사라진다.
         verify(tokenRepository, never()).deleteAllExpiredSince(any(Date.class));
-        verify(passwordResetTokenRepository).deleteAllExpiredSince(now);
+        verify(passwordResetTokenRepository).deleteAllExpiredSince(now.toInstant());
     }
 
     @Test

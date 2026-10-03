@@ -555,7 +555,7 @@ public class UserServiceImpl implements UserService {
         user.setEmailVerified(true);
         userRepository.save(user);
 
-        resetToken.setUsed(true);
+        resetToken.markUsed();
         passwordResetTokenRepository.save(resetToken);
 
         // 🐛 예전: passwordChangedAt 만 남겼다 — 리프레시는 막혀도 액세스 토큰(15분)과 채팅 · 알림 연결은 그대로 살아 있었다.

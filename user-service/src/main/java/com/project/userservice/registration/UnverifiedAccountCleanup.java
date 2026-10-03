@@ -175,7 +175,7 @@ public class UnverifiedAccountCleanup {
         try {
             tx.executeWithoutResult(status -> {
                 int verification = tokenRepository.deleteExpiredOfEnabledUsers(now);
-                passwordResetTokenRepository.deleteAllExpiredSince(now);
+                passwordResetTokenRepository.deleteAllExpiredSince(now.toInstant());
                 if (verification > 0) {
                     log.info("만료된 확인 토큰 {}건 정리", verification);
                 }

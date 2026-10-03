@@ -301,7 +301,14 @@ public class ReviewService {
             mine.setFit(request.getFit());
             mine.setSize(request.getSize());
             mine.setRating(request.getRating());
-            mine.setStyle(style);
+            // 🐛 예전: 수정할 때마다 새 ReviewStyle 로 바꿔 끼웠다 — 옛 review_style 행이 주인 없이 남았다(cascade 가 PERSIST 뿐).
+            //    있으면 그 행을 고쳐 쓴다.
+            if (mine.getStyle() != null) {
+                mine.getStyle().setColor(style.getColor());
+                mine.getStyle().setImage(style.getImage());
+            } else {
+                mine.setStyle(style);
+            }
 
             if (null != imageUrls) {
                 mine.setImages(imageUrls);
