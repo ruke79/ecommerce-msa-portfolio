@@ -29,7 +29,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -136,42 +135,6 @@ public class CartService {
                 log.debug("Cache updated for {}", cacheKey(cart.getUserId()));
             }
         });
-    }
-
-    /**
-     * 카트에서 특정 아이템을 삭제합니다.
-     * 트랜잭션 커밋 후 캐시를 삭제합니다.
-     * @param uid 카트 상품의 고유 식별자
-     * @param userId 사용자 ID
-     * @return 삭제 성공 여부 (1: 성공, 0: 실패)
-     */
-    public int deleteCartItem(String uid, Long userId) {
-        log.debug("Deleting cart item with uid: {} for user ID: {}", uid, userId);
-
-        CartProduct item = cartProductRepository.findBy_uid(uid)
-                .orElseThrow(() -> new RuntimeException("Cart item not found"));
-
-        Cart cart = getCartByUserId(userId);
-        if (cart == null) {
-            throw new RuntimeException("Cart not found for user ID: " + userId);
-        }
-
-        BigDecimal deletedPrice = item.getPrice().add(item.getShipping());
-        cart.setCartTotal(cart.getCartTotal().subtract(deletedPrice));
-
-        cartRepository.save(cart);
-
-        if (cart.getCartTotal().compareTo(BigDecimal.ZERO) <= 0) {
-            cartRepository.delete(cart);
-            log.info("Cart is empty after deletion, removing the cart.");
-        }
-
-        cartProductRepository.delete(item);
-        log.info("Successfully deleted cart item with uid: {}", uid);
-
-        evictAfterCommit(userId);
-
-        return 1;
     }
 
     /**
@@ -359,7 +322,7 @@ public class CartService {
         CartProduct line = findLine(cart, productId, colorId, size);
         if (line != null) {
             if (qty <= 0) {
-                // 동일성으로 뺀다 — List.remove 는 equals 를 쓰는데, 엔티티의 equals 는 BaseEntity(@Data)의 것이라 줄을 가리지 못한다.
+                // 동일성으로 뺀다 — 엔티티는 동일성으로만 비교한다(예전 BaseEntity @Data 의 equals 는 줄을 가리지 못했다).
                 cart.getCartProducts().removeIf(l -> l == line);   // orphanRemoval 이 행을 지운다
             } else {
                 line.setQty(qty);
@@ -750,8 +713,7 @@ public class CartService {
         ProductDto product = requireProduct(products, cartItem.getId());
         BigDecimal originalPrice = computeOriginalPriceFromSkusByStyleAndSize(
                 product.getSkus(), cartItem.getStyle(), cartItem.getSize());
-        BigDecimal discount = new BigDecimal(product.getSkus().get(cartItem.getStyle()).getDiscount());
-        BigDecimal price = computeDiscountedPriceFromOriginalPrice(originalPrice, discount);
+        BigDecimal price = discountedPrice(originalPrice, product.getSkus().get(cartItem.getStyle()).getDiscount());
 
         ProductInfoDto dto = new ProductInfoDto(cartItem);
         dto.setPriceBefore(originalPrice.toPlainString());
@@ -782,8 +744,7 @@ public class CartService {
         BigDecimal originalPrice = computeOriginalPriceFromSkusByStyleAndSize(product.getSkus(), styleIndex, p.getSize());
         dto.setPriceBefore(originalPrice.toPlainString());
 
-        BigDecimal discount = new BigDecimal(product.getSkus().get(styleIndex).getDiscount());
-        BigDecimal price = computeDiscountedPriceFromOriginalPrice(originalPrice, discount);
+        BigDecimal price = discountedPrice(originalPrice, product.getSkus().get(styleIndex).getDiscount());
         dto.setPrice(price.toPlainString());
 
         dto.setQty(p.getQty());
@@ -796,13 +757,14 @@ public class CartService {
     }
 
     /**
-     * 할인가를 계산합니다.
+     * 할인가 — 할인 값은 퍼센트다. 식은 common 의 {@link com.project.common.pricing.Discount} 하나뿐이다.
+     *
+     * <p>🐛 예전 식은 {@code price − price / discount} 였다 — catalog · 화면은 9월에 퍼센트 식으로 고쳤는데 여기만 남아,
+     * 50% 할인 상품이 장바구니 · 결제에서 정가의 98% 로 청구됐다(주문 금액은 이 장바구니 합계에서 온다 — order OrderPricing).
      */
-    private BigDecimal computeDiscountedPriceFromOriginalPrice(BigDecimal originalPrice, BigDecimal discount) {
-        if (discount.compareTo(BigDecimal.ZERO) > 0) {
-            return originalPrice.subtract(originalPrice.divide(discount, 2, RoundingMode.HALF_UP));
-        }
-        return originalPrice;
+    // [JA] 割引価格 — 割引値はパーセント。旧式(price − price / discount)がここだけ残り、50% 割引の商品が定価の 98% で請求されていた。
+    private static BigDecimal discountedPrice(BigDecimal originalPrice, int discountPercent) {
+        return com.project.common.pricing.Discount.apply(originalPrice, discountPercent);
     }
 
     /**
@@ -824,11 +786,7 @@ public class CartService {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Product size not found")).getPrice();
 
-        if (sku.getDiscount() > 0) {
-            BigDecimal discount = new BigDecimal(sku.getDiscount());
-            price = price.subtract(price.divide(discount, 2, RoundingMode.HALF_UP));
-        }
-        return price;
+        return discountedPrice(price, sku.getDiscount());
     }
 
     /**

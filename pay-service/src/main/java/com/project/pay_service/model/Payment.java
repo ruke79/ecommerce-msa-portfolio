@@ -6,8 +6,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.hibernate.annotations.CreationTimestamp;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
 
 import com.project.common.constants.PaymentProvider;
 import com.project.common.constants.PaymentStatus;
@@ -68,10 +66,16 @@ public class Payment extends BaseEntity{
 
     private String trackingId;
     
-    @CreatedDate
+    /** 결제 시각 — 요청에서 옮겨 온다(PaymentService.persistPayment). */
     private LocalDateTime paymentCreatedAt;
 
-    @LastModifiedDate   
+    /**
+     * 환불(취소) 시각 — {@link #markCanceled()} 가 적는다.
+     *
+     * <p>🐛 예전: {@code @LastModifiedDate} 였는데 이 서비스는 JPA 감사(auditing)를 켜지 않아 <b>한 번도 채워지지 않았다</b>(언제나 NULL).
+     * 켰다면 더 나빴다 — 결제를 만드는 순간 "취소 시각" 이 찍히고, {@code @CreatedDate} 는 요청에서 옮겨 온 결제 시각을 덮어썼다.
+     */
+    // [JA] 返金(取消)時刻 — markCanceled() が書く。以前は @LastModifiedDate だったが監査が無効で常に NULL だった。
     private LocalDateTime cancelCreatedAT;
 
     @Enumerated(EnumType.STRING)    
@@ -94,6 +98,7 @@ public class Payment extends BaseEntity{
             return false;
         }
         paymentStatus = PaymentStatus.CANCELED;
+        cancelCreatedAT = LocalDateTime.now();
         return true;
     }
 }

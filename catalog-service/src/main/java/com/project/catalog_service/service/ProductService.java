@@ -2,7 +2,6 @@ package com.project.catalog_service.service;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -1055,13 +1054,8 @@ public class ProductService  {
      * 들어와도 가격이 음수가 되지 않게 자른다.
      */
     static BigDecimal discounted(BigDecimal priceBefore, int discountPercent) {
-        if (priceBefore == null || discountPercent <= 0) {
-            return priceBefore;
-        }
-        int capped = Math.min(discountPercent, 100);
-        return priceBefore
-                .multiply(BigDecimal.valueOf(100 - capped))
-                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        // 식은 common 의 하나뿐 — cart-service 가 옛 식을 따로 갖고 있다가 결제 금액이 달라졌다(Discount 주석).
+        return com.project.common.pricing.Discount.apply(priceBefore, discountPercent);
     }
 
     /**

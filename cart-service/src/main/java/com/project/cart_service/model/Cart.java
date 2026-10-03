@@ -44,7 +44,9 @@ public class Cart extends BaseEntity {
 
     @JsonManagedReference
     @OneToMany(mappedBy = "cart", fetch = FetchType.LAZY,
-    cascade = CascadeType.PERSIST,targetEntity = CartProduct.class, orphanRemoval = true)
+    // MERGE 도 — 예전 PERSIST 뿐이라, 이미 저장된 장바구니에 줄을 붙이고 merge 로 저장하면 새 줄이 조용히 빠졌다
+    // (실제로 "담기가 안 되는" 버그였다 — CartService 가 새 줄을 직접 save 해서 막는다. 그 우회를 빼먹는 새 코드도 안전하게).
+    cascade = {CascadeType.PERSIST, CascadeType.MERGE}, targetEntity = CartProduct.class, orphanRemoval = true)
     private List<CartProduct> cartProducts = new ArrayList<>();
 
 

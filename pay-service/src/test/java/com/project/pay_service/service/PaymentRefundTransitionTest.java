@@ -112,4 +112,15 @@ class PaymentRefundTransitionTest {
         assertThat(existing.markCanceled()).isTrue();
         assertThat(existing.markCanceled()).isFalse();
     }
+
+    @Test
+    @DisplayName("🔴 환불 시각이 남는다 — 예전 @LastModifiedDate 는 감사가 꺼져 있어 언제나 NULL 이었다 · 두 번째 호출은 시각을 바꾸지 않는다")
+    void markCanceledRecordsTime() {
+        assertThat(existing.getCancelCreatedAT()).isNull();
+        existing.markCanceled();
+        var first = existing.getCancelCreatedAT();
+        assertThat(first).isNotNull();
+        existing.markCanceled();
+        assertThat(existing.getCancelCreatedAT()).isSameAs(first);
+    }
 }

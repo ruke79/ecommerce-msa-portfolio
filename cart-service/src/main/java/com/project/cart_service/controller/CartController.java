@@ -75,22 +75,6 @@ public class CartController {
 
             
     }
-    // @DeleteMapping("/deleteItem/{productId}")
-    // ResponseEntity<?> deleteCartItem(@PathVariable(required = true) String productId,  @RequestParam("userId") String email  ) {
-
-        
-    //         try {
-    //             cartService.deleteCartItem(productId, email);
-
-    //             return new ResponseEntity<>("Cart item deleted successfuly.", HttpStatus.OK);
-    //         } 
-    //         catch(RuntimeException e) {
-    //             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-    //             .body(new MessageResponse(ClientMessage.of(e)));
-    //         }           
-       
-    // }
-
     /**
      * 🔒 예전에는 {@code ?userId=} 로 <b>남의 이메일을 넣으면 그 사람의 장바구니</b>가
      * 그대로 나왔다. 신원은 게이트웨이가 검증한 토큰에서만 온다 — {@code User-Id}(토큰의 uid),

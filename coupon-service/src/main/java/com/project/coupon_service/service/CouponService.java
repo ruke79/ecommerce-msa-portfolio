@@ -301,7 +301,7 @@ public class CouponService {
     }
 
     @Transactional
-    public Coupon updateCouponStatus(PaymentResponse response, String authorizationToken) {
+    public Coupon updateCouponStatus(PaymentResponse response) {
 
         if (null !=  response.getCouponName()) {
 

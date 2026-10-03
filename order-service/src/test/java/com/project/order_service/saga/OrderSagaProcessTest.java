@@ -66,6 +66,8 @@ class OrderSagaProcessTest {
         saga.process(response());
 
         assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAID);
+        // 🔴 결제 시각도 남는다 — 예전에는 무통장입금 수동 확인에서만 채워졌다.
+        assertThat(order.getPaidCreatedAt()).isNotNull();
         verify(productPublisher).publish(any());
         verify(cartPublisher).publish(any());
     }

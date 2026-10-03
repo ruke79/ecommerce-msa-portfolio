@@ -195,28 +195,15 @@ public class OrderSaga {
     @Transactional
     private Order updateOrderStatus(Order order, OrderStatus orderStatus) {
         log.debug("OrderSaga: Updating order {} status from {} to {}.", order.getOrderId(), order.getOrderStatus(), orderStatus);
-        order.setOrderStatus(orderStatus);
+        if (orderStatus == OrderStatus.PAID) {
+            order.markPaid(java.time.LocalDateTime.now());   // 결제 시각도 함께 — 카드 · 간편결제 경로는 여기서만 PAID 가 된다
+        } else {
+            order.setOrderStatus(orderStatus);
+        }
         order = orderRepository.save(order);
         cacheEvictor.evictOrderCaches(order.getOrderId(), "status→" + orderStatus);
         log.info("OrderSaga: Order {} status successfully updated to {}.", order.getOrderId(), orderStatus);
         return order;
-    }
-
-    @Transactional
-    private void rollbackOrderQty(Long orderId) {
-        log.debug("OrderSaga: Rolling back order quantities for order ID {}.", orderId);
-        Optional<List<OrderProduct>> productsOptional = orderProductRepository.findByOrder_OrderId(orderId);
-
-        if (productsOptional.isPresent()) {
-            productsOptional.get().forEach(p -> {
-                log.debug("OrderSaga: Rolling back quantity for product {} (old Qty: {}). Setting to 1 (this might be a specific business logic, confirm if 1 is always correct).", p.getProductId(), p.getQty());
-                p.setQty(1); // 이 롤백 로직이 '수량 초기화'인지 '원래 주문 수량으로 되돌리기'인지 확인 필요. 현재는 1로 강제 설정. ／ [JA] 数量の初期化か元の注文数量への復元か要確認。現状は 1 に固定。
-                orderProductRepository.save(p);
-            });
-            log.info("OrderSaga: Order quantities rolled back for order ID {}.", orderId);
-        } else {
-            log.warn("OrderSaga: No products found for order ID {} to rollback quantities.", orderId);
-        }
     }
 
     private void publishCouponStateRollback(Long customerId, String couponName) {

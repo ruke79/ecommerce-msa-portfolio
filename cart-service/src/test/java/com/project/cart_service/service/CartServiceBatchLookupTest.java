@@ -100,7 +100,24 @@ class CartServiceBatchLookupTest {
         assertThat(result.get(0).getPrice()).isEqualTo("100");
         assertThat(result.get(0).getShipping()).isEqualTo("5");
         assertThat(result.get(2).getPriceBefore()).isEqualTo("80");
-        assertThat(result.get(2).getPrice()).isEqualTo("72.00");       // 80 - 80/10
+        assertThat(result.get(2).getPrice()).isEqualTo("72.00");       // 80 × 90%
+    }
+
+    @Test
+    @DisplayName("🔴 할인은 퍼센트 — 50% 면 반값(옛 식 price − price/d 는 9,800 원 = 2% 할인이었다)")
+    void discountIsPercent() {
+        when(catalogServiceClient.getProductsInfo(List.of(1L, 2L)))
+                .thenReturn(ResponseEntity.ok(List.of(
+                        product("1", "M", "10000", 50, "0"),
+                        product("2", "L", "10000", 5, "0"))));
+
+        List<ProductInfoDto> result = cartService.updateCart(requestOf(
+                ProductInfoDto.builder().id("1").style(0).size("M").qty(1).build(),
+                ProductInfoDto.builder().id("2").style(0).size("L").qty(1).build()));
+
+        assertThat(result.get(0).getPrice()).isEqualTo("5000.00");
+        assertThat(result.get(1).getPrice()).isEqualTo("9500.00");
+        assertThat(result.get(1).getPriceBefore()).isEqualTo("10000");
     }
 
     @Test

@@ -110,7 +110,22 @@ public class Order extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private OrderStatus orderStatus;    
     
+    /**
+     * 결제가 확인된 시각 — {@link #markPaid(LocalDateTime)} 가 처음 한 번만 적는다.
+     *
+     * <p>🐛 예전: 무통장입금 수동 확인에서만 채워졌다. 카드 · PayPal · Stripe · 포트원은 사가가 상태만 PAID 로 바꿔
+     * 비어 있었고, 관리자 환불 화면은 주문 생성 시각으로 대신 보여 줬다.
+     */
+    // [JA] 決済が確認された時刻 — markPaid() が最初の一回だけ書く。以前は銀行振込の手動確認でしか埋まらなかった。
     private LocalDateTime paidCreatedAt;
+
+    /** 결제 확인 — 상태를 PAID 로, 결제 시각은 처음 한 번만(재전달로 다시 와도 처음 시각을 지킨다). */
+    public void markPaid(LocalDateTime at) {
+        this.orderStatus = OrderStatus.PAID;
+        if (this.paidCreatedAt == null) {
+            this.paidCreatedAt = at;
+        }
+    }
 
     private LocalDateTime deliveredCreatedAt;
 
