@@ -3,7 +3,6 @@ package com.project.chat_service.service;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -162,7 +161,7 @@ public class ChatService {
             nickname = fallbackNickname();
             log.warn("채팅 회원 행이 없는 발신자 — 대체 닉네임을 쓴다(docs/48). messageId={}", message.getId());
         }
-        message.setSendTimeAndSender(LocalDateTime.now(), nickname, senderId, 0);
+        message.setSendTimeAndSender(java.time.Instant.now(), nickname, senderId, 0);
 
         messageProducer.send(KafkaUtil.KAFKA_TOPIC, message);
     }
@@ -237,7 +236,7 @@ public class ChatService {
         Objects.requireNonNull(headerAccessor.getSessionAttributes()).put("roomId", msg.getRoomId());
         String nickname = displayNameOf(msg.getSenderId());
         msg.setContent(ChatNotices.entered(nickname));
-        msg.setSendTimeAndSender(LocalDateTime.now(), nickname, msg.getSenderId(), 0);
+        msg.setSendTimeAndSender(java.time.Instant.now(), nickname, msg.getSenderId(), 0);
 
         messageProducer.send(KafkaUtil.KAFKA_TOPIC, msg);
     }
@@ -247,7 +246,7 @@ public class ChatService {
         Objects.requireNonNull(headerAccessor.getSessionAttributes()).put("roomId", msg.getRoomId());
         String nickname = displayNameOf(msg.getSenderId());
         msg.setContent(ChatNotices.left(nickname));
-        msg.setSendTimeAndSender(LocalDateTime.now(), nickname, msg.getSenderId(), 0);
+        msg.setSendTimeAndSender(java.time.Instant.now(), nickname, msg.getSenderId(), 0);
 
         messageProducer.send(KafkaUtil.KAFKA_TOPIC, msg);
     }

@@ -3,8 +3,6 @@ package com.project.chat_service.dto;
 
 import java.io.Serializable;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 
 import com.project.common.constants.chat.MessageType;
 
@@ -51,8 +49,10 @@ public class MessageDto implements Serializable {
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long senderId;
 
+    @ToString.Exclude   // 사람을 가리키는 값 — 로그에 싣지 않는다
     private String nickname;
                
+    @ToString.Exclude   // 대화 본문(상담 내용 포함) — 로그에 싣지 않는다
     private String content;    
 
     private String imageUrl;
@@ -62,10 +62,16 @@ public class MessageDto implements Serializable {
     private Long createdAt;
   
 
-    public void setSendTimeAndSender(LocalDateTime sendTime, String nickName, Long senderId, Integer readCount) {
+    /**
+     * @param sendTime 보낸 순간. 🐛 예전 인자는 {@code LocalDateTime.now()} 를 서울 시간으로 해석했는데, 컨테이너 JVM 은 UTC 라
+     *                 모든 메시지 시각이 <b>9시간 일렀다</b>(상담 스레드의 마지막 메시지 시각 · Instant 와도 어긋났다).
+     *                 순간(Instant)을 받아 시간대 해석 없이 epoch 밀리초로 둔다. 이미 저장된 메시지는 그대로다.
+     */
+    // [JA] 以前は LocalDateTime.now() をソウル時間として解釈していたが、コンテナの JVM は UTC なので全メッセージ時刻が 9 時間早かった。
+    public void setSendTimeAndSender(Instant sendTime, String nickName, Long senderId, Integer readCount) {
         this.senderId = senderId;
         this.nickname = nickName;
-        this.createdAt = sendTime.atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli();        
+        this.createdAt = sendTime.toEpochMilli();
         this.readCount = readCount;
     }
     

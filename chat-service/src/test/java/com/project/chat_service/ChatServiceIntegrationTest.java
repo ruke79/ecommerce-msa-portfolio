@@ -97,6 +97,15 @@ class ChatServiceIntegrationTest {
     @Autowired
     private ChatMessageRepository chatMessageRepository;
 
+    @Autowired
+    private com.project.chat_service.repository.jpa.SupportThreadRepository supportThreads;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager txManager;
+
+    @Autowired
+    private com.project.chat_service.service.ChatService chatService;
+
     @BeforeEach
     void clean() {
         chatMessageRepository.deleteAll();
@@ -225,5 +234,34 @@ class ChatServiceIntegrationTest {
 
         assertThat(chatMessageRepository.save(MessageMapper.toChatMessage(dto)).getId())
                 .isEqualTo("seq-9002");
+    }
+
+    @Test
+    @DisplayName("고객 메시지 갱신이 그 사이에 커밋된 상담 배정(claim)을 덮어쓰지 않는다 — @DynamicUpdate")
+    void messageDoesNotOverwriteConcurrentClaim() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        tx.executeWithoutResult(s -> { chatService.ensureMember(501L); chatService.ensureMember(900L); });
+        var thread = supportThreads.save(
+                com.project.chat_service.model.SupportThread.open(501L, java.time.Instant.now()));
+        Long id = thread.getId();
+
+        // 고객 메시지(acceptMessage 와 같은 순서): 스레드를 읽고 요약을 바꾼다 → 커밋 전에 상담원이 맡는다 → 커밋.
+        tx.executeWithoutResult(s -> {
+            var t = supportThreads.findById(id).orElseThrow();
+            t.recordMessage("주문이 아직 안 왔어요", true, java.time.Instant.now());
+
+            var requiresNew = new org.springframework.transaction.support.TransactionTemplate(txManager);
+            requiresNew.setPropagationBehavior(
+                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            int claimed = requiresNew.execute(s2 -> supportThreads.claim(id, 900L, java.time.Instant.now()));
+            assertThat(claimed).isEqualTo(1);
+        });
+
+        var after = supportThreads.findById(id).orElseThrow();
+        // 예전에는 메시지 쪽 UPDATE 가 모든 컬럼을 다시 써 WAITING · 담당자 없음으로 돌아갔다.
+        assertThat(after.getStatus()).isEqualTo(com.project.chat_service.constants.SupportThreadStatus.ACTIVE);
+        assertThat(after.getAgentId()).isEqualTo(900L);
+        assertThat(after.getLastMessagePreview()).isEqualTo("주문이 아직 안 왔어요");
+        assertThat(after.isAwaitingReply()).isTrue();
     }
 }

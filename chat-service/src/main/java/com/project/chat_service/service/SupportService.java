@@ -2,7 +2,6 @@ package com.project.chat_service.service;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -354,7 +353,7 @@ public class SupportService {
     private void announce(String roomId, MessageType type, String content) {
         MessageDto notice = MessageDto.builder().type(type).roomId(roomId).content(content).build();
         notice.setId(sequenceGenerator.generateSequence(MessageDto.SEQUENCE_NAME));
-        notice.setSendTimeAndSender(LocalDateTime.now(), TEAM_NAME, null, 0);
+        notice.setSendTimeAndSender(java.time.Instant.now(), TEAM_NAME, null, 0);
         messageProducer.send(KafkaUtil.KAFKA_TOPIC, notice);
     }
 

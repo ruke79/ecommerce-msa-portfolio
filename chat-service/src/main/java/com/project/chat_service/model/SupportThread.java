@@ -22,8 +22,16 @@ import lombok.NoArgsConstructor;
  *
  * <p>메시지 본문은 친구 채팅과 같은 MongoDB 컬렉션에 {@link #roomId()} 로 쌓인다. 여기는 상태·담당자·목록 요약이다.
  * 회원은 id 로만 든다 — 연관을 걸면 목록 한 번에 회원 행을 줄줄이 읽는다.
+ *
+ * <p>🐛 {@code @DynamicUpdate} — 바뀐 컬럼만 UPDATE 한다. 예전에는 Hibernate 가 <b>모든 컬럼</b>을 다시 썼다. 고객의 메시지
+ * ({@link #recordMessage})가 스레드를 읽은 뒤 커밋하기 전에 상담원이 조건부 UPDATE 로 맡으면({@code claim}), 메시지 쪽 커밋이
+ * 읽어 둔 {@code status=WAITING · agent_id=null} 을 그대로 다시 써 <b>배정이 사라졌다</b> — 상담원에게는 "맡았다", 고객에게는
+ * "상담원이 들어왔다" 안내까지 갔는데 스레드는 대기열로 돌아갔다. 내부 메모와 메시지 요약도 서로를 덮었다.
+ * [JA] 変更した列だけを UPDATE する。以前は全列を書き戻し、メッセージ受信と同時に担当者が引き受ける(claim)と、
+ * 読み込んだ時点の WAITING・担当者なしで上書きして割り当てが消えていた。
  */
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "support_thread", schema = "chat")
@@ -112,13 +120,20 @@ public class SupportThread {
         return ROOM_PREFIX + id;
     }
 
-    /** 방 id 가 상담 스레드의 것이면 스레드 번호, 아니면 null. */
+    /**
+     * 방 id 가 상담 스레드의 것이면 스레드 번호, 아니면 null.
+     *
+     * <p>🐛 {@link #roomId()} 가 만드는 모양({@code support-<번호>}) 그대로일 때만 번호다. 예전에는 {@code support-+7} ·
+     * {@code support-007} 도 7 로 읽었다 — 접근 검사는 7번 스레드로 통과하고, 메시지는 다른 방 id 로 저장 · 전송돼 상담 기록과
+     * 구독 화면 어디에도 나타나지 않았다. [JA] roomId() と同じ形のときだけ番号として扱う。
+     */
     public static Long threadIdOf(String roomId) {
         if (roomId == null || !roomId.startsWith(ROOM_PREFIX)) {
             return null;
         }
         try {
-            return Long.parseLong(roomId.substring(ROOM_PREFIX.length()));
+            long id = Long.parseLong(roomId.substring(ROOM_PREFIX.length()));
+            return roomId.equals(ROOM_PREFIX + id) ? id : -1L;
         } catch (NumberFormatException e) {
             return -1L;   // 접두사는 맞는데 번호가 아니다 — 없는 스레드로 다룬다(구독·조회가 거절된다)
         }
@@ -174,8 +189,18 @@ public class SupportThread {
     /** 메시지가 오갔다 — 목록 요약과 "답변 필요" 를 갱신한다. */
     public void recordMessage(String content, boolean fromCustomer, Instant now) {
         String text = content == null ? "" : content.strip();
-        this.lastMessagePreview = text.length() > PREVIEW_LENGTH ? text.substring(0, PREVIEW_LENGTH - 1) + "…" : text;
+        // 코드 포인트 경계에서 자른다 — char 로 자르면 이모지(서로게이트 쌍)가 반으로 갈라져 목록에 깨진 글자가 찍혔다.
+        this.lastMessagePreview = text.length() > PREVIEW_LENGTH ? truncate(text, PREVIEW_LENGTH - 1) + "…" : text;
         this.lastMessageAt = now;
         this.awaitingReply = fromCustomer;
+    }
+
+    /** 앞에서부터 최대 {@code maxChars} 개의 char 안에 들어가는 코드 포인트까지. */
+    static String truncate(String text, int maxChars) {
+        int end = text.offsetByCodePoints(0, Math.min(text.codePointCount(0, text.length()), maxChars));
+        while (end > maxChars) {
+            end = text.offsetByCodePoints(end, -1);
+        }
+        return text.substring(0, end);
     }
 }

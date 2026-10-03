@@ -26,8 +26,8 @@ public class MessageConsumer {
 
     @KafkaListener(topics = KafkaUtil.KAFKA_TOPIC, containerFactory = "kafkaListenerContainerFactory")
     public void receiveMessage(MessageDto message) {
-        log.info("전송 위치 = /sub/chat/room/"+ message.getRoomId());
-        log.info("채팅 방으로 메시지 전송 = {}", message);
+        // 🔒 메시지 전체를 찍지 않는다 — 예전엔 본문 · 닉네임까지 INFO 로 남겼다(상담 대화 포함). 식별자만.
+        log.info("채팅 방으로 메시지 전송: roomId={}, messageId={}", message.getRoomId(), message.getId());
 
         // 영속화는 **소비자 측**에서 한다(docs/16 B-24).
         // 예전에는 ChatService.saveMessage 를 호출하는 곳이 저장소 전체에 하나도 없어
