@@ -44,6 +44,7 @@ public class Notification extends BaseEntity{
     private boolean isRead = false;   // read is mysql db preserved word
     
     public Notification(String message, String userId, String sessionId) {
+        this();   // @Builder.Default 기본값(EntityLombokGuardTest)
         this.message = message;
         this.sessionId = sessionId;
         this.email = userId;        

@@ -326,8 +326,11 @@ class ProductServiceUnitTest {
                 com.project.common.dto.catalog.request.ProductRequest.class,
                 List.class,
                 org.springframework.web.multipart.MultipartFile.class);
-        CacheEvict evictOnAdd = addProduct.getAnnotation(CacheEvict.class);
-        assertThat(evictOnAdd).as("addProduct에 @CacheEvict가 있어야 함").isNotNull();
-        assertThat(List.of(evictOnAdd.value())).contains("search_cache");
+        // 부모 상품의 "product" 캐시도 함께 지우므로 @Caching 안에 둘이 있다(ProductCacheKeyTest).
+        org.springframework.cache.annotation.Caching caching =
+                addProduct.getAnnotation(org.springframework.cache.annotation.Caching.class);
+        assertThat(caching).as("addProduct에 @Caching(evict = …) 가 있어야 함").isNotNull();
+        assertThat(java.util.Arrays.stream(caching.evict()).flatMap(e -> java.util.Arrays.stream(e.value())))
+                .contains("search_cache", "product");
     }
 }

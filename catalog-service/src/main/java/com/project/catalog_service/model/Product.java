@@ -89,17 +89,20 @@ public class Product extends BaseEntity {
 //     inverseJoinColumns = { @JoinColumn(name="subcategory_id", referencedColumnName = "subcategory_id")})    
     private List<ProductSubcategory> subcategories = new ArrayList<>();   
 
+    @Builder.Default
     @BatchSize(size = 20)
     @JsonManagedReference // ProductDetails로의 순환 참조를 관리합니다.
     @OneToMany(mappedBy="product", fetch = FetchType.LAZY,
     cascade = CascadeType.PERSIST,targetEntity = ProductDetails.class, orphanRemoval = true)
-    private Set<ProductDetails> details;
+    private Set<ProductDetails> details = new java.util.HashSet<>();
 
+    // 🐛 예전 cascade 가 MERGE 뿐이라, 새 상품을 persist 하면 Q&A 가 저장되지 않고 <b>조용히 빠졌다</b>(details 는 PERSIST 라 저장됐다).
+    @Builder.Default
     @BatchSize(size = 20)
     @JsonManagedReference // ProductQA로의 순환 참조를 관리합니다.
-    @OneToMany(mappedBy="product", fetch = FetchType.LAZY,    
-    cascade = CascadeType.MERGE, targetEntity = ProductQA.class, orphanRemoval = true)    
-    private Set<ProductQA> questions;
+    @OneToMany(mappedBy="product", fetch = FetchType.LAZY,
+    cascade = {CascadeType.PERSIST, CascadeType.MERGE}, targetEntity = ProductQA.class, orphanRemoval = true)
+    private Set<ProductQA> questions = new java.util.HashSet<>();
 
     @BatchSize(size = 20)
     @JsonManagedReference // ProductColorAttribute로의 순환 참조를 관리합니다.
@@ -109,7 +112,32 @@ public class Product extends BaseEntity {
     // 화면(캐시된 DTO)과 장바구니 담기(새로 읽은 엔티티)에서 다른 SKU 를 가리킬 수 있었다. @OrderBy 면 Hibernate 가 순서를
     // 지키는 Set 을 쓴다.
     @jakarta.persistence.OrderBy("skuproductId ASC")
-    private Set<ProductSku> skus;
+    @Builder.Default
+    private Set<ProductSku> skus = new java.util.LinkedHashSet<>();
+
+    /**
+     * 상세를 <b>바꿔 넣는다</b> — 컬렉션 객체는 그대로 두고 내용만(orphanRemoval 이 빠진 행을 지운다).
+     *
+     * <p>🐛 예전: {@code setDetails(new HashSet<>())} 로 컬렉션을 통째로 갈아 끼웠다. 이미 저장된 상품(변형 추가 · 대량 적재의
+     * 부모)에서는 Hibernate 가 "orphan deletion 컬렉션이 더 이상 참조되지 않는다" 로 flush 를 거절했다 — 변형 등록이 늘 500 이었다.
+     */
+    // [JA] 詳細を入れ替える — コレクション自体はそのままで中身だけ。以前はコレクションを丸ごと差し替え、保存済みの商品では flush が拒否されていた。
+    public void replaceDetails(java.util.Collection<ProductDetails> next) {
+        if (details == null) {
+            details = new java.util.HashSet<>();
+        }
+        details.clear();
+        details.addAll(next);
+    }
+
+    /** {@link #replaceDetails} 와 같다 — Q&A. */
+    public void replaceQuestions(java.util.Collection<ProductQA> next) {
+        if (questions == null) {
+            questions = new java.util.HashSet<>();
+        }
+        questions.clear();
+        questions.addAll(next);
+    }
 
     @Builder.Default 
     private String refundPolicy = "30 days";

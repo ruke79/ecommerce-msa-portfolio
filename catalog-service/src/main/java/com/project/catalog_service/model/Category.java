@@ -67,7 +67,9 @@ public class Category extends BaseEntity {
     private List<Product> products = new ArrayList<>();
 
 
+    // this() 로 시작한다 — @Builder.Default 의 컬렉션 기본값은 손으로 쓴 생성자에 남지 않는다(EntityLombokGuardTest).
     public Category(String name, String slug) {
+        this();
         this.categoryName = name;
         this.slug = slug;
     }

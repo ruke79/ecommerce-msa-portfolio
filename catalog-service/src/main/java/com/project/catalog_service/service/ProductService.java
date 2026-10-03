@@ -360,8 +360,7 @@ public class ProductService  {
         return loadSku(request, product, images, colorImage);
     }
 
-    @Transactional
-    @CachePut(value = "product", key = "#result.productId")
+    // private 이라 @Transactional · @CachePut 이 돌지 않았다 — 그리고 "product" 캐시에 엔티티를 넣으려 했다. 둘 다 지웠다.
     private Product createOrFindProduct(ProductAddRequest request) {
         if (request.getParent() != null && !request.getParent().isEmpty()) {
             return productRepository.findById(Long.parseLong(request.getParent()))
@@ -415,8 +414,13 @@ public class ProductService  {
     @Transactional
     // 신규 상품 등록 시 검색/필터 캐시를 무효화하지 않으면 최대 60분(search_cache TTL) 동안
     // 등록한 상품이 검색 결과에 나타나지 않는다.
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
-    @CachePut(value = "product", key = "#result.productId")
+    // 🐛 예전 @CachePut(value = "product", key = "#result.productId") — 돌려주는 ProductSku 에는 productId 가 없어 프록시에서
+    //    SpEL 예외(EL1008E)로 등록이 500 이 됐고, 됐더라도 ProductDto 를 담는 "product" 캐시에 엔티티를 넣었다. 부모 상품의
+    //    캐시를 <b>지운다</b> — 다음 조회가 새 변형까지 담아 다시 만든다(ProductCacheKeyTest).
+    @org.springframework.cache.annotation.Caching(evict = {
+            @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true),
+            @CacheEvict(value = "product", key = "#result.product.productId")
+    })
     // ⚠️ 이 메서드는 예전에 세 가지 방식으로 조용히 잘못됐다. 전부 실배포에서 확인된
     //    형태라 고친 이유를 남긴다:
     //
@@ -448,8 +452,7 @@ public class ProductService  {
                     .orElseThrow(() -> new IllegalArgumentException(
                             "부모 상품이 없습니다: id=" + request.getParent()));
 
-            ProductSku newSku = createSku(request, parent, images, colorImage);
-            parent.getSkus().add(newSku);
+            ProductSku newSku = createSku(request, parent, images, colorImage, false);   // 변형 — 상품 정보는 그대로
             productRepository.save(parent);
             productIndexService.index(parent);
             return newSku;
@@ -507,7 +510,7 @@ public class ProductService  {
         product.setSubcategories(list);
 
         productRepository.save(product);
-        ProductSku created = createSku(request, product, images, colorImage);
+        ProductSku created = createSku(request, product, images, colorImage, true);
         // 색인은 SKU(이미지·가격)까지 저장된 뒤에 — 문서에 SKU 목록이 들어간다.
         productIndexService.index(product);
         return created;
@@ -685,7 +688,13 @@ public class ProductService  {
         return sizes;
     }
 
-    /** {@link #sizesOf} 와 같은 이유 — 저장되는 객체에 부모를 건다. */
+    /**
+     * {@link #sizesOf} 와 같은 이유 — 저장되는 객체에 부모를 건다. <b>새 상품에만</b> 쓴다.
+     *
+     * <p>🐛 예전: 변형(기존 상품에 스타일 추가) · 대량 적재의 부모에서도 불렀고, 컬렉션을 통째로 갈아 끼워 flush 가
+     * "orphan deletion 컬렉션" 예외로 거절됐다 — 변형 등록이 늘 500 이었다. 설령 통과했어도 부모의 상세를 변형 양식의
+     * 빈 줄로 덮어썼을 것이다. 변형은 스타일을 더할 뿐 상품 정보를 바꾸지 않는다. 내용은 {@link Product#replaceDetails} 로 바꾼다.
+     */
     private static void attachDetailsAndQuestions(Product product, Collection<ProductDetailsDto> details,
             Collection<ProductQADto> questions) {
         if (details != null) {
@@ -697,7 +706,7 @@ public class ProductService  {
                     entities.add(d);
                 }
             }
-            product.setDetails(entities);
+            product.replaceDetails(entities);
         }
         if (questions != null) {
             Set<ProductQA> entities = new HashSet<>();
@@ -708,7 +717,7 @@ public class ProductService  {
                     entities.add(q);
                 }
             }
-            product.setQuestions(entities);
+            product.replaceQuestions(entities);
         }
     }
 
@@ -772,15 +781,19 @@ public class ProductService  {
         productColorRepository.save(skuProject.getColor());
 
         skuProject.setSizes(sizesOf(request.getSizes(), skuProject));
-        attachDetailsAndQuestions(product, request.getDetails(), request.getQuestions());
+        // 부모에 붙이는 변형이면 상품 정보는 건드리지 않는다(createSku 와 같은 이유).
+        if (request.getParent() == null || request.getParent().isEmpty()) {
+            attachDetailsAndQuestions(product, request.getDetails(), request.getQuestions());
+        }
 
         skuProject.setProduct(product);
+        product.getSkus().add(skuProject);
         return withSizeSkuCodes(productskuRepository.save(skuProject));
 
     }
 
     private ProductSku createSku(ProductRequest request, Product product, List<MultipartFile> images,
-            MultipartFile colorImage) throws IOException {
+            MultipartFile colorImage, boolean newProduct) throws IOException {
 
         // SKU: 비우면 생성하고, 주면 중복을 거절한다. 어느 쪽이든 유일성은 V7 의
         // UNIQUE 인덱스가 최후 방어선이다 — 여기 검사는 좋은 에러 메시지를 위한 것이다.
@@ -833,9 +846,13 @@ public class ProductService  {
             skuProject.getColor().setColorImage(colorImageUrl);
 
             skuProject.setSizes(sizesOf(request.getSizes(), skuProject));
-            attachDetailsAndQuestions(product, request.getDetails(), request.getQuestions());
+            if (newProduct) {
+                attachDetailsAndQuestions(product, request.getDetails(), request.getQuestions());
+            }
 
             skuProject.setProduct(product);
+            // 양쪽을 맞춘다 — 예전엔 상품의 skus 에 넣지 않아, 바로 뒤의 검색 색인이 SKU 없는 문서를 만들었다.
+            product.getSkus().add(skuProject);
 
             return withSizeSkuCodes(productskuRepository.save(skuProject));
 
@@ -1161,7 +1178,7 @@ public class ProductService  {
     @Transactional
     // 판매량/재고 변경(주문 성공 Kafka 소비 경로)도 검색 필터(재고·판매량 기반)에 영향 → 캐시 무효화.
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
-    @CachePut(value = "product", key = "#result.productId")
+    // "product" 캐시는 ProductDto 를 담는다 — 여기 있던 @CachePut 은 ProductSku 를 넣으려 했다(자기 호출이라 실제로는 돌지 않았다).
     public ProductSku updateSoldValue(Long productId, String slug, String size, Long colorId, int qty) {
         Optional<ProductSku> optionalSku = productskuRepository
                 .findForStockUpdate(productId, size, colorId);
@@ -1213,7 +1230,7 @@ public class ProductService  {
 
     @Transactional
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
-    @CachePut(value = "product", key = "#result.skuId")
+    // "product" 캐시에 ProductSize 를 넣으려던 @CachePut 을 지웠다(위와 같은 이유).
     public ProductSize updateProductSize_Qty(String slug, Long skuId, String size, int qty) {
         ProductSize productSize = getProductSizeModel(skuId, size);
 

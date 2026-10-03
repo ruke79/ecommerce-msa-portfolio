@@ -70,7 +70,9 @@ public class Subcategory extends BaseEntity {
     @OneToMany(mappedBy = "subcategory", fetch= FetchType.LAZY, cascade = CascadeType.PERSIST)        
     private List<ProductSubcategory> products = new ArrayList<>();
 
+    // this() 로 시작한다 — @Builder.Default 의 컬렉션 기본값은 손으로 쓴 생성자에 남지 않는다(EntityLombokGuardTest).
     public Subcategory(String name, String slug, Category category) {
+        this();
         this.subcategoryName = name;
         this.slug = slug;
         this.category = category;
