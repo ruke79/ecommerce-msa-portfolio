@@ -214,14 +214,48 @@ public class CartService {
             return null;   // 옛 스키마의 줄 — 물을 id 가 없다(dropLinesWithoutProduct)
         }
         ProductDto product = products.get(Long.toString(p.getProductId()));
-        if (product == null || product.getSkus() == null || product.getSkus().size() <= p.getStyle()) {
+        int style = product == null ? -1 : styleIndexOf(p, product);
+        if (style < 0) {
             return null;
         }
         try {
-            return CartProductInfoRequest.Item.key(p.getProductId(), p.getStyle(), sizeIndexOf(product, p.getStyle(), p.getSize()));
+            return CartProductInfoRequest.Item.key(p.getProductId(), style, sizeIndexOf(product, style, p.getSize()));
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * 이 줄이 가리키는 SKU(스타일)가 지금 상품의 SKU 목록에서 몇 번째인지. 없으면 -1.
+     *
+     * <p>🐛 줄은 담을 때의 <b>목록 위치</b>({@code style})만 믿었다. 위치는 catalog 의 SKU 목록이 바뀌면(변형이 빠지거나 순서가
+     * 달라지면) 다른 색상 · 가격을 가리킨다 — 장바구니가 조용히 다른 변형을 보여 주고 그 값으로 청구한다. 줄에는 담을 때 SKU 가
+     * 정한 색상 id 가 있으므로 그것으로 찾고, 저장된 위치는 그 위치의 색상이 같을 때만 쓴다. 색상 id 가 없는 옛 줄만 위치를 그대로 쓴다.
+     */
+    // [JA] 行は追加時の一覧上の位置(style)だけを信じていた。位置は SKU 一覧が変わると別の色・価格を指すので、保存した色 id で探す。
+    static int styleIndexOf(CartProduct p, ProductDto product) {
+        List<ProductSkuDto> skus = product.getSkus();
+        if (skus == null) {
+            return -1;
+        }
+        int stored = p.getStyle();
+        if (p.getColorId() == null) {
+            return stored >= 0 && stored < skus.size() ? stored : -1;
+        }
+        String color = Long.toString(p.getColorId());
+        if (stored >= 0 && stored < skus.size() && color.equals(colorIdOf(skus.get(stored)))) {
+            return stored;
+        }
+        for (int i = 0; i < skus.size(); i++) {
+            if (color.equals(colorIdOf(skus.get(i)))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static String colorIdOf(ProductSkuDto sku) {
+        return sku.getColor() == null ? null : sku.getColor().getId();
     }
 
     /** SKU 의 사이즈 목록에서 이 항목의 사이즈가 몇 번째인지 — catalog 의 단건·배치 API 가 인덱스를 받는다. */
@@ -349,10 +383,19 @@ public class CartService {
         }
     }
 
+    /**
+     * 사용자의 장바구니 — 없으면 만든다.
+     *
+     * <p>🐛 예전에는 "읽고 없으면 save" 였다. 처음 담기가 두 탭에서 동시에 오면 장바구니가 둘 생겼고, 그 뒤로 이 사용자의
+     * {@code findByUserId} 는 결과가 둘이라 예외 — 장바구니가 영영 열리지 않았다. 이제 user_id 는 유니크(V5)이고, 만들기는
+     * {@link CartRepository#insertIfAbsent} 로 해서 늦은 쪽도 실패하지 않고 같은 장바구니를 쓴다.
+     */
+    // [JA] 以前は「読んで無ければ save」で、同時の初回追加でカートが二つでき、以後そのユーザーのカートが開けなくなっていた。
     private Cart cartOf(Long userId) {
         Cart cart = getCartByUserId(userId);
         if (cart == null) {
-            return cartRepository.save(new Cart(userId));
+            cartRepository.insertIfAbsent(io.hypersistence.tsid.TSID.Factory.getTsid().toLong(), userId);
+            return getCartByUserId(userId);
         }
         dropLinesWithoutProduct(cart);
         return cart;
@@ -730,7 +773,7 @@ public class CartService {
     private ProductInfoDto mapToProductInfoDto(CartProduct p, Map<String, ProductDto> products,
                                                Map<String, ProductInfoDto> cartInfos) {
         ProductDto product = requireProduct(products, Long.toString(p.getProductId()));
-        int styleIndex = p.getStyle();
+        int styleIndex = styleIndexOf(p, product);   // 저장된 위치가 아니라 색상으로 찾은 지금 위치(loadCart 의 infoKey 와 같다)
 
         // 배치 응답에서 이 항목의 (상품, 스타일, 사이즈) 정보. 없으면 품절·삭제·잘못된 인덱스다 —
         // 단건 API 가 null 을 돌려주던 경우와 같다.

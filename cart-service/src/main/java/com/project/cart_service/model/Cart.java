@@ -31,9 +31,10 @@ import lombok.AccessLevel;
 @Setter
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
+// 사용자당 하나(V5) — 예전 일반 인덱스로는 처음 담기가 동시에 일어나면 장바구니가 둘 생겼다(CartService.cartOf).
 @Table(name="cart", schema = "cart",
        indexes = {
-        @Index(columnList = "user_id", name = "idx_cart_user") }
+        @Index(columnList = "user_id", name = "uq_cart_user", unique = true) }
 )
 public class Cart extends BaseEntity {
 

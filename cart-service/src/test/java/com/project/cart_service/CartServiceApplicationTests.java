@@ -85,4 +85,41 @@ class CartServiceApplicationTests {
 					.isPositive();
 		}
 	}
+
+	@Autowired
+	private com.project.cart_service.repository.jpa.CartRepository cartRepository;
+
+	@Autowired
+	private org.springframework.transaction.PlatformTransactionManager txManager;
+
+	@Test
+	@DisplayName("처음 담기가 동시에 와도 장바구니는 하나 — 늦은 쪽은 앞선 쪽의 커밋을 기다렸다가 같은 장바구니를 읽는다")
+	void concurrentFirstAddCreatesOneCart() throws Exception {
+		long userId = 4242L;
+		var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+		var firstInserted = new java.util.concurrent.CountDownLatch(1);
+		var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+		try {
+			var a = pool.submit(() -> tx.execute(s -> {
+				cartRepository.insertIfAbsent(1L, userId);
+				firstInserted.countDown();
+				try {
+					Thread.sleep(500);   // 커밋 전 — B 의 INSERT 가 이 행에서 기다린다
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+				return cartRepository.findByUserId(userId).orElseThrow().getCartId();
+			}));
+			firstInserted.await();
+			var b = pool.submit(() -> tx.execute(s -> {
+				int created = cartRepository.insertIfAbsent(2L, userId);
+				assertThat(created).as("늦은 쪽은 만들지 않는다").isZero();
+				return cartRepository.findByUserId(userId).orElseThrow().getCartId();
+			}));
+			assertThat(a.get()).isEqualTo(1L);
+			assertThat(b.get()).as("예전에는 장바구니가 둘 생겨 이 조회가 예외였다").isEqualTo(1L);
+		} finally {
+			pool.shutdownNow();
+		}
+	}
 }

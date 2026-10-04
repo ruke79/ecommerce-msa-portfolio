@@ -74,6 +74,15 @@ class CartSkuCodeTest {
         stored = new Cart[1];
         when(cartRepository.findByUserId(7L)).thenAnswer(i -> Optional.ofNullable(stored[0]));
         when(cartRepository.save(any(Cart.class))).thenAnswer(i -> stored[0] = i.getArgument(0));
+        // 처음 담기 — 없을 때만 만든다(CartRepository.insertIfAbsent, V5)
+        when(cartRepository.insertIfAbsent(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenAnswer(i -> {
+                    if (stored[0] != null) {
+                        return 0;
+                    }
+                    stored[0] = new Cart(i.getArgument(1));
+                    return 1;
+                });
 
         // 상품 1 — 스타일 둘(검정 5, 흰색 6). 스타일마다 사이즈 줄의 SKU 가 다르다.
         when(catalog.getProductsInfo(anyList())).thenAnswer(i -> ResponseEntity.ok(List.of(ProductDto.builder()
