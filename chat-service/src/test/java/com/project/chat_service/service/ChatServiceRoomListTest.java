@@ -55,13 +55,12 @@ class ChatServiceRoomListTest {
     @Test
     @DisplayName("🔴 Redis 가 비어 있어도 DB 의 방이 목록에 나온다")
     void listComesFromTheDatabase() {
-        when(chatRoomRepository.findAllRoom()).thenReturn(List.of());
         when(chatRoomJpaRepository.findAllByOrderByIdAsc())
                 .thenReturn(List.of(ChatRoom.create("test1"), ChatRoom.create("test2")));
 
         List<ChatRoom> rooms = service.fildAllRooms();
 
         assertThat(rooms).extracting(ChatRoom::getRoomName).containsExactly("test1", "test2");
-        verify(chatRoomRepository, never()).findAllRoom();
+        org.mockito.Mockito.verifyNoInteractions(chatRoomRepository);   // Redis 에는 방이 없다(사본을 없앴다)
     }
 }

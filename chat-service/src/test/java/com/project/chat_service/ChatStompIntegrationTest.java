@@ -106,6 +106,7 @@ class ChatStompIntegrationTest {
         registry.add("spring.data.mongodb.client",
                 () -> mongo.getConnectionString() + "/chat?ssl=false");
         registry.add("spring.data.mongodb.name", () -> "chat");
+        registry.add("chat.message-maintenance.enabled", () -> false);   // 백그라운드 정비는 테스트가 부르지 않는다
         registry.add("spring.data.mongodb.cacert", () -> "");
         registry.add("spring.data.mongodb.keystore", () -> "");
         registry.add("spring.data.mongodb.keystorePassword", () -> "");

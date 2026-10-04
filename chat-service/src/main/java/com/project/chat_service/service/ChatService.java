@@ -208,8 +208,9 @@ public class ChatService {
                 try {
                     ChatRoom chatRoom = ChatRoom.create(roomName);
                     saveChatRoom(chatRoom);
-                    chatRoomDto = chatRoomRepository.saveChatRoom(chatRoom);
-                    saveParticipantRoom(chatRoomDto.getRoomId(), userId);
+                    // 예전에는 Redis 해시(CHAT_ROOM)에도 방 사본을 넣었다 — 목록이 DB 기준이 된 뒤로 읽는 곳이 없는, 쌓이기만 하는 사본이었다.
+                    chatRoomDto = ChatRoomDto.builder().name(chatRoom.getRoomName()).roomId(chatRoom.getRoomUid()).build();
+                    saveParticipantRoom(chatRoom.getRoomUid(), userId);
                 } finally {
                     lock.unlock();
                 }
@@ -296,11 +297,11 @@ public class ChatService {
         }
 
         // 재구독/재접속마다 호출되므로, 이미 참여중인 사용자는 다시 저장하지 않는다.
+        // 🐛 예전에는 "있나 보고 없으면 persist" 였다 — 두 탭이 동시에 구독하면 둘 다 "없음" 을 읽어 참여 행이 둘 생겼다.
+        //    이제 (방, 회원)은 유니크(V9)이고, 넣기는 없을 때만이라 늦은 쪽도 실패하지 않는다.
+        // [JA] 以前は「あるか見て無ければ persist」で、同時の購読で参加行が二つできていた。今は(ルーム, 会員)ユニーク + 無ければ挿入。
         if (!participantChatRoomRepository.existsByRoom_RoomUidAndMember_Id(roomId, member.getId())) {
-            ParticipantChatRoom chatRoomInfo = ParticipantChatRoom.get(chatRoom, member);
-            em.persist(chatRoomInfo);
-            member.getRoomList().add(chatRoomInfo);
-            chatRoom.getRoomList().add(chatRoomInfo);
+            participantChatRoomRepository.insertIfAbsent(chatRoom.getId(), member.getId());
         }
         return member;
     }

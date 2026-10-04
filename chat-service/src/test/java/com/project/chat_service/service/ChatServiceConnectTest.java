@@ -102,11 +102,8 @@ class ChatServiceConnectTest {
         service.connect(ROOM, SESSION, 7L);
 
         verify(chatRoomJpaRepository).findByRoomUid(ROOM);
-        verify(chatRoomRepository, never()).findRoomById(any());
-        verify(em).persist(any());
-        assertThat(room.getRoomList()).hasSize(1);
-        assertThat(member.getRoomList()).hasSize(1);
-        assertThat(room.getRoomList().get(0).getRoom()).isSameAs(room);
+        // DB 의 방(그 id)으로, 없을 때만 넣는다(V9 유니크 — 동시 구독이 참여를 두 번 남기지 않게).
+        verify(participantChatRoomRepository).insertIfAbsent(room.getId(), member.getId());
     }
 
     /** 방을 만든 사람은 이미 참여자다 — 다시 저장하지 않는다(그래서 예전 버그가 안 보였다). */
@@ -120,7 +117,7 @@ class ChatServiceConnectTest {
 
         service.connect(ROOM, SESSION, 7L);
 
-        verify(em, never()).persist(any());
+        verify(participantChatRoomRepository, never()).insertIfAbsent(any(), any());
     }
 
     /** 세션↔방 매핑이 먼저다 — 참여자 등록이 실패해도 DISCONNECT 가 정리할 것은 남는다. */

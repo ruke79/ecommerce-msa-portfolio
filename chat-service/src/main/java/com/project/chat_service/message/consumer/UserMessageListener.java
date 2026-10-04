@@ -34,7 +34,7 @@ public class UserMessageListener {
         // 접속 순간 즉석으로 만든 행(ChatService.createMissingMember)이 먼저 있을 수 있다 — 그 행의 닉네임은 임시값이다.
         // 예전에는 여기서 id 충돌을 삼키고 끝나 임시 닉네임이 영영 남았다. 원본의 값으로 채운다. 이미 프로필 변경을
         // 받았거나 탈퇴했으면 applyProfile 이 거른다(가입 이벤트가 가장 오래된 값이다 — 시각 0).
-        java.util.Optional<ChatMember> existing = chatMemberRepository.findById(createdUser.getUserId());
+        java.util.Optional<ChatMember> existing = chatMemberRepository.findForUpdate(createdUser.getUserId());
         if (existing.isPresent()) {
             if (existing.get().applyProfile(createdUser.getNickname(), createdUser.getImage(), 0L)) {
                 log.info("user-created: 즉석으로 만든 채팅 회원을 원본 프로필로 채웠다. id={}", createdUser.getUserId());
@@ -73,7 +73,7 @@ public class UserMessageListener {
      */
     @Transactional
     void userUpdated(long userId, String nickname, String image, long updatedAt) {
-        chatMemberRepository.findById(userId).ifPresentOrElse(member -> {
+        chatMemberRepository.findForUpdate(userId).ifPresentOrElse(member -> {
             if (member.applyProfile(nickname, image, updatedAt)) {
                 log.info("user-updated 반영: userId={}", userId);
             } else {
@@ -87,7 +87,7 @@ public class UserMessageListener {
      */
     @Transactional
     void userDeleted(long userId) {
-        chatMemberRepository.findById(userId).ifPresentOrElse(member -> {
+        chatMemberRepository.findForUpdate(userId).ifPresentOrElse(member -> {
             member.anonymize();
             log.info("user-deleted 반영(익명화): userId={}", userId);
         }, () -> log.info("user-deleted: 복제본이 없다 — 회원 행은 지울 것이 없다. userId={}", userId));

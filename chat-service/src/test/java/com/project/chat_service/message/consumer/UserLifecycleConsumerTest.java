@@ -50,7 +50,7 @@ class UserLifecycleConsumerTest {
                 new OutboxTraceContext(() -> null, () -> null));
         member = ChatMember.builder().id(USER_ID)
                 .nickname("옛이름").imageUrl("old.png").build();
-        when(repository.findById(USER_ID)).thenReturn(Optional.of(member));
+        when(repository.findForUpdate(USER_ID)).thenReturn(Optional.of(member));
     }
 
     private static String updated(String nickname, String image, long at) {
@@ -141,7 +141,7 @@ class UserLifecycleConsumerTest {
     @Test
     @DisplayName("복제본이 없으면 건너뛴다 — 실패로 DLT 에 보내지 않는다")
     void missingMemberIsSkipped() {
-        when(repository.findById(anyLong())).thenReturn(Optional.empty());
+        when(repository.findForUpdate(anyLong())).thenReturn(Optional.empty());
 
         consumer.updated(List.of(updated("새이름", "new.png", 1000)), Map.of());
         consumer.deleted(List.of("{\"userId\":1}"), Map.of());
@@ -169,7 +169,7 @@ class UserLifecycleConsumerTest {
     @Test
     @DisplayName("🔒 새 회원은 id·닉네임·사진만으로 복제된다")
     void createdStoresNoEmail() {
-        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        when(repository.findForUpdate(USER_ID)).thenReturn(Optional.empty());
         when(repository.saveAndFlush(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
 
         created("새사람", "me.png");

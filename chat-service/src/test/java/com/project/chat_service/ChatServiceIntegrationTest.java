@@ -79,6 +79,8 @@ class ChatServiceIntegrationTest {
         registry.add("spring.data.redis.ssl.enabled", () -> false);
 
         registry.add("eureka.client.enabled", () -> false);
+        // 백그라운드 정비(인덱스 · 옛 시각 보정)는 테스트가 직접 부른다 — 심어 둔 문서의 시각을 몰래 옮기지 않게.
+        registry.add("chat.message-maintenance.enabled", () -> false);
         registry.add("eureka.client.register-with-eureka", () -> false);
         registry.add("eureka.client.fetch-registry", () -> false);
         registry.add("management.tracing.enabled", () -> false);
@@ -263,5 +265,59 @@ class ChatServiceIntegrationTest {
         assertThat(after.getAgentId()).isEqualTo(900L);
         assertThat(after.getLastMessagePreview()).isEqualTo("주문이 아직 안 왔어요");
         assertThat(after.isAwaitingReply()).isTrue();
+    }
+
+    @Autowired
+    private com.project.chat_service.repository.jpa.ChatMemberRepository chatMembers;
+
+    @Test
+    @DisplayName("탈퇴(익명화)가 커밋되는 사이에 온 프로필 변경이 이름을 되살리지 않는다 — 회원 행 쓰기 잠금")
+    void profileUpdateDoesNotResurrectWithdrawnMember() throws Exception {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        tx.executeWithoutResult(s -> chatService.ensureMember(777L));
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            // user-deleted 처리(UserMessageListener.userDeleted 와 같은 순서): 잠그고 읽어 익명화 → 커밋 전에 잠시 멈춘다.
+            var deleted = pool.submit(() -> tx.executeWithoutResult(s -> {
+                chatMembers.findForUpdate(777L).orElseThrow().anonymize();
+                chatMembers.flush();
+                locked.countDown();
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }));
+            locked.await();
+            // 그 사이에 user-updated 처리 — 예전처럼 그냥 읽었다면 익명화 전 값을 보고 시각 검사를 통과했다.
+            var updated = pool.submit(() -> tx.execute(s ->
+                    chatMembers.findForUpdate(777L).orElseThrow().applyProfile("되살아난 이름", null, 1_000L)));
+            deleted.get();
+            assertThat(updated.get()).as("탈퇴가 커밋된 뒤의 값을 읽어 거른다").isFalse();
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(chatMembers.findById(777L).orElseThrow().getNickname())
+                .isEqualTo(com.project.chat_service.model.ChatMember.WITHDRAWN_NICKNAME);
+    }
+
+    @Autowired
+    private com.project.chat_service.repository.jpa.ParticipantChatRoomRepository participants;
+
+    @Test
+    @DisplayName("참여 행은 없을 때만 넣는다 — 두 번 넣어도 한 줄(V9 유니크)")
+    void participantInsertIsIdempotent() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        Long roomPk = tx.execute(s -> {
+            chatService.ensureMember(778L);
+            var room = com.project.chat_service.model.ChatRoom.create("dup-test");
+            chatService.saveChatRoom(room);
+            return room.getId();
+        });
+        int first = tx.execute(s -> participants.insertIfAbsent(roomPk, 778L));
+        int second = tx.execute(s -> participants.insertIfAbsent(roomPk, 778L));
+        assertThat(first).isEqualTo(1);
+        assertThat(second).isZero();
     }
 }
