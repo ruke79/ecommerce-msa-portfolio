@@ -158,8 +158,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // ── 재고가 모자라 성립하지 않은 주문 버리기(docs/59) ────────────────────────
     //
     // 주문은 저장한 뒤에 재고를 잡는다(주문 id 가 예약의 키다). 모자라면 방금 만든 주문을 지운다 — 결제 전이고 밖으로
-    // 나간 적도 없다(아웃박스·배송·환불 행이 없다). 주문과 주소가 서로를 가리켜(orders.order_address_id ↔
-    // order_address.order_id) 순서대로 지운다. 모든 단계가 "결제 전·결제 참조 없음" 을 조건으로 건다 — 잘못 불러도 결제된
+    // 나간 적도 없다(아웃박스·배송·환불 행이 없다). 주문이 주소를 가리키므로(orders.order_address_id, V25) 주소 id 를 읽고
+    // 끊은 뒤 주소 → 품목 → 주문 순서로 지운다(V25 전에 만든 주소는 order_id 로 주문도 가리킨다 — 주문보다 먼저 지우면 된다). 모든 단계가 "결제 전·결제 참조 없음" 을 조건으로 건다 — 잘못 불러도 결제된
     // 주문은 지워지지 않는다.
 
     @Modifying
@@ -169,14 +169,21 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             """, nativeQuery = true)
     int detachAddressOfUnplaced(@Param("id") Long id);
 
+    /** 결제 전 주문이 가리키는 주소 id — 끊기 전에 읽는다(V25 부터 주소는 주문을 가리키지 않는다). */
+    @Query(value = """
+            select order_address_id from orders.orders
+             where order_id = :id and order_status = 'NOT_PROCESSED' and provider_payment_id is null
+            """, nativeQuery = true)
+    Long findAddressIdOfUnplaced(@Param("id") Long id);
+
+    /** 끊어 낸 주소를 지운다 — 아직 어느 주문이 가리키면 지우지 않는다. */
     @Modifying
     @Query(value = """
             delete from orders.order_address a
-             where a.order_id = :id
-               and exists (select 1 from orders.orders o
-                            where o.order_id = :id and o.order_status = 'NOT_PROCESSED' and o.provider_payment_id is null)
+             where a.order_address_id = :addressId
+               and not exists (select 1 from orders.orders o where o.order_address_id = :addressId)
             """, nativeQuery = true)
-    int deleteAddressOfUnplaced(@Param("id") Long id);
+    int deleteDetachedAddress(@Param("addressId") Long addressId);
 
     @Modifying
     @Query(value = """

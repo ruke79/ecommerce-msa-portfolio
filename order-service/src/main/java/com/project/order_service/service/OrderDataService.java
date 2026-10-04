@@ -320,9 +320,9 @@ public class OrderDataService {
         }
 
             order.setOrderedProducts(ordered);
-            Order result = orderRepository.save(order);
 
-            log.info("주문 저장 완료: orderId={}", result.getOrderId());
+            // 주소를 먼저 저장하고 주문이 가리킨다 — INSERT 두 번. 예전에는 주문 → 주소 → 주문 UPDATE 세 번이었다(주소도 주문을
+            // 가리키는 외래 키가 있어서, V25).
             OrderAddress address = OrderAddress.builder()
                     .firstname(shipTo.getFirstname())
                     .lastname(shipTo.getLastname())
@@ -334,12 +334,11 @@ public class OrderDataService {
                     .country(shipTo.getCountry())
                     .phoneNumber(shipTo.getPhoneNumber())
                     .build();
-
-            result.setShippingAddress(address);
-            address.setOrder(result);
             orderAddressRepository.save(address);
+            order.setShippingAddress(address);
+            Order result = orderRepository.save(order);
 
-            log.debug("Shipping address for order ID {} saved successfully.", result.getOrderId());
+            log.info("주문 저장 완료: orderId={}", result.getOrderId());
             return result;
     }
 
@@ -352,8 +351,11 @@ public class OrderDataService {
      */
     @Transactional
     public boolean discardUnplaced(Long orderId) {
+        Long addressId = orderRepository.findAddressIdOfUnplaced(orderId);
         orderRepository.detachAddressOfUnplaced(orderId);
-        orderRepository.deleteAddressOfUnplaced(orderId);
+        if (addressId != null) {
+            orderRepository.deleteDetachedAddress(addressId);
+        }
         orderRepository.deleteProductsOfUnplaced(orderId);
         boolean deleted = orderRepository.deleteUnplaced(orderId) == 1;
         log.info("재고 부족으로 주문을 버렸다: orderId={} deleted={}", orderId, deleted);

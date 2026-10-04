@@ -3,24 +3,18 @@ package com.project.order_service.model;
 
 import java.util.List;
 
-import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.project.common.dto.order.OrderAddressDto;
 
 import io.hypersistence.utils.hibernate.id.Tsid;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Index;
-import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
-import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -35,13 +29,8 @@ import lombok.experimental.SuperBuilder;
 @Entity
 @SuperBuilder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name="order_address", schema = "orders",
-        indexes = {
-                @Index(columnList = "order_id", name = "idx_order_address") },
-        uniqueConstraints = {
-                @UniqueConstraint(name = "uk_order_address_orderId", columnNames = {"order_id"})
-        }
-)
+// 주소는 주문이 가리킨다(Order.shippingAddress) — 예전에는 여기서도 주문을 가리켜(order_id) 외래 키가 둘이었다(V25).
+@Table(name="order_address", schema = "orders")
 public class OrderAddress extends BaseEntity {
 
     
@@ -77,10 +66,6 @@ public class OrderAddress extends BaseEntity {
 
     private String phoneNumber;
 
-    @OneToOne(fetch=FetchType.LAZY)
-    @JoinColumn(name = "order_id", referencedColumnName = "order_id", nullable = false)
-    @JsonBackReference
-    private Order order;
        
     
                

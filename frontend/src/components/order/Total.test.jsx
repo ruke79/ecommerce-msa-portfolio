@@ -30,6 +30,8 @@ describe("Total — 주문 상세의 금액 세 줄", () => {
     it("쿠폰이 없으면 할인 줄이 없다", () => {
         render(<Total order={{ total: 100, totalBeforeDiscount: 100 }} />);
         expect(screen.queryByText("order.total.coupon")).not.toBeInTheDocument();
-        expect(screen.getByText("order.total.free")).toBeInTheDocument();
+        // 세금은 가격에 포함돼 있다 — 예전에는 늘 "무료" 라고 적었다
+        expect(screen.getByText("order.total.included")).toBeInTheDocument();
+        expect(screen.queryByText("order.total.free")).not.toBeInTheDocument();
     });
 });

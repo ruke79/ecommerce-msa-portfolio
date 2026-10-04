@@ -94,4 +94,74 @@ class OrderServiceApplicationTests {
 					.isGreaterThan(1);
 		}
 	}
+
+	@Autowired
+	private com.project.order_service.repository.jpa.OrderRepository orders;
+
+	@Autowired
+	private com.project.order_service.repository.jpa.OrderAddressRepository addresses;
+
+	@Autowired
+	private com.project.order_service.service.OrderDataService orderData;
+
+	@Autowired
+	private org.springframework.transaction.PlatformTransactionManager txManager;
+
+	private long jdbcLong(String sql) throws Exception {
+		try (var conn = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+				var st = conn.createStatement(); var rs = st.executeQuery(sql)) {
+			return rs.next() ? rs.getLong(1) : -1;
+		}
+	}
+
+	private void jdbc(String sql) throws Exception {
+		try (var conn = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+				var st = conn.createStatement()) {
+			st.execute(sql);
+		}
+	}
+
+	private Long newOrderWithAddress() {
+		return new org.springframework.transaction.support.TransactionTemplate(txManager).execute(s -> {
+			var address = com.project.order_service.model.OrderAddress.builder()
+					.firstname("길동").lastname("홍").address1("세종대로 1").city("서울").state("서울")
+					.zipCode("04524").country("KR").phoneNumber("010-0000-0000").build();
+			addresses.save(address);
+			var order = com.project.order_service.model.Order.builder()
+					.customerId(5L).trackingId("t-" + java.util.UUID.randomUUID())
+					.orderStatus(com.project.common.constants.OrderStatus.NOT_PROCESSED)
+					.shippingAddress(address).build();
+			return orders.save(order).getOrderId();
+		});
+	}
+
+	@Test
+	@DisplayName("주문은 주소를 한 방향으로만 가리킨다 — 주소의 order_id 는 비고, 세금 열은 기본값 0(V25)")
+	void orderPointsToAddressOneWay() throws Exception {
+		Long id = newOrderWithAddress();
+		long addressId = jdbcLong("select order_address_id from orders.orders where order_id = " + id);
+		assertThat(addressId).isPositive();
+		assertThat(jdbcLong("select count(*) from orders.order_address where order_address_id = " + addressId + " and order_id is null"))
+				.as("새 주소는 주문을 가리키지 않는다(외래 키는 주문 쪽 하나)").isEqualTo(1);
+		assertThat(jdbcLong("select tax_price from orders.orders where order_id = " + id)).isZero();
+	}
+
+	@Test
+	@DisplayName("결제 전 주문 버리기 — 새 모양(주문 → 주소)과 V25 전 모양(주소도 주문을 가리킴) 모두 주문 · 주소가 지워진다")
+	void discardRemovesOrderAndAddressInBothShapes() throws Exception {
+		Long fresh = newOrderWithAddress();
+		long freshAddress = jdbcLong("select order_address_id from orders.orders where order_id = " + fresh);
+
+		Long legacy = newOrderWithAddress();
+		long legacyAddress = jdbcLong("select order_address_id from orders.orders where order_id = " + legacy);
+		jdbc("update orders.order_address set order_id = " + legacy + " where order_address_id = " + legacyAddress);
+
+		assertThat(orderData.discardUnplaced(fresh)).isTrue();
+		assertThat(orderData.discardUnplaced(legacy)).isTrue();
+
+		for (long a : new long[] { freshAddress, legacyAddress }) {
+			assertThat(jdbcLong("select count(*) from orders.order_address where order_address_id = " + a)).isZero();
+		}
+		assertThat(jdbcLong("select count(*) from orders.orders where order_id in (" + fresh + ", " + legacy + ")")).isZero();
+	}
 }

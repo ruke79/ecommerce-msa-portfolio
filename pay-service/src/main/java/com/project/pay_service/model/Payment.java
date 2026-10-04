@@ -37,7 +37,8 @@ import lombok.experimental.SuperBuilder;
 @Table(name="payment", schema = "pay", uniqueConstraints = {
                 @UniqueConstraint(name="UniqueOrderIdAndTrackingId", columnNames = {"orderId", "trackingId"})                
      },indexes = {
-        @Index(columnList = "orderId, trackingId, customerId", name = "idx_payment"),
+        // 결제는 추적 id 로 찾는다(findByTrackingId) — 예전 idx_payment(orderId, …)는 그 조회에 쓰이지 않았다(V7).
+        @Index(columnList = "trackingId", name = "idx_payment_tracking"),
         @Index(columnList = "paymentProvider, providerPaymentId", name = "idx_payment_provider_ref") })
 public class Payment extends BaseEntity{
 

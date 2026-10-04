@@ -85,4 +85,24 @@ class PayServiceApplicationTests {
 					.isPositive();
 		}
 	}
+
+	@Test
+	@DisplayName("결제를 추적 id 로 찾는 조회가 인덱스를 쓴다(V7) — 예전에는 tracking_id 로 시작하는 인덱스가 없어 전체를 읽었다")
+	void trackingIdLookupUsesAnIndex() throws Exception {
+		try (var conn = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+				var st = conn.createStatement()) {
+			st.execute("SET enable_seqscan = off");   // 빈 표에서도 쓸 수 있는 인덱스가 있는지만 본다
+			StringBuilder plan = new StringBuilder();
+			try (var rs = st.executeQuery("EXPLAIN SELECT * FROM pay.payment WHERE tracking_id = 'x'")) {
+				while (rs.next()) {
+					plan.append(rs.getString(1)).append('\n');
+				}
+			}
+			assertThat(plan.toString()).contains("idx_payment_tracking");
+			try (var rs = st.executeQuery("SELECT count(*) FROM pg_indexes WHERE schemaname = 'pay' AND indexname = 'idx_payment'")) {
+				rs.next();
+				assertThat(rs.getInt(1)).as("유니크 제약과 겹치던 인덱스는 지웠다").isZero();
+			}
+		}
+	}
 }

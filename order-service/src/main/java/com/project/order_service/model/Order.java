@@ -68,7 +68,8 @@ public class Order extends BaseEntity {
     private List<OrderProduct> orderedProducts = new ArrayList();
 
     
-    @ManyToOne(fetch=FetchType.LAZY)
+    // 주문 → 주소 한 방향(V25). 주소는 주문마다 따로 만드는 사본이라 일대일이다(uq_orders_order_address).
+    @jakarta.persistence.OneToOne(fetch=FetchType.LAZY)
     @JoinColumn(name="order_address_id", referencedColumnName = "order_address_id")
     private OrderAddress shippingAddress;
     
@@ -102,9 +103,7 @@ public class Order extends BaseEntity {
 
     private String couponApplied;
 
-    @Builder.Default
-    @Column(precision = 19, scale = 2, nullable = false)
-    private java.math.BigDecimal taxPrice = java.math.BigDecimal.ZERO;
+    // 세금 금액(taxPrice)은 없앴다 — 아무도 채우지 않아 늘 0 이었고, 화면은 그것을 "세금 무료" 로 보였다. 가격은 세금 포함이다(V25).
 
 
     @Enumerated(EnumType.STRING)

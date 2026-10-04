@@ -250,7 +250,7 @@ const ja = {
     "order.total.subtotal": "商品の小計",
     "order.total.coupon": "クーポン適用",
     "order.total.tax": "税金",
-    "order.total.free": "無料",
+    "order.total.included": "込み",
     "order.total.to_pay": "お支払い金額",
     "order.total.refunded": "返金済み",
     "order.progress.title": "注文の進行状況",

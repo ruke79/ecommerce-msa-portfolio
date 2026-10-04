@@ -246,7 +246,7 @@ const ko = {
     "order.total.subtotal": "상품 금액",
     "order.total.coupon": "쿠폰 적용",
     "order.total.tax": "세금",
-    "order.total.free": "무료",
+    "order.total.included": "포함",
     "order.total.to_pay": "결제 금액",
     "order.total.refunded": "환불",
     "order.progress.title": "주문 진행",

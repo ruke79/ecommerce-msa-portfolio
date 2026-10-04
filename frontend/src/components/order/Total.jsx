@@ -38,7 +38,8 @@ const Total = ({ order }) => {
             )}
             <div className="flex items-center justify-between font-semibold text-slate-800">
                 <span>{t("order.total.tax")}</span>
-                {order.tax ? (<span>+ {money(order.taxPrice)}</span>) : (<span>{t("order.total.free")}</span>)}
+                {/* 가격은 세금 포함이다. 예전에는 서버에 없는 order.tax 를 보고 늘 "무료" 라고 적었다(docs/62 §18). */}
+                <span>{t("order.total.included")}</span>
             </div>
             <div className="flex items-center justify-between font-bold text-slate-800 border-t pt-2">
                 <span>{t("order.total.to_pay")}</span>

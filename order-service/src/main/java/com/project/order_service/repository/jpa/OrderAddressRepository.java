@@ -15,9 +15,7 @@ import com.project.order_service.model.OrderAddress;
 @Repository
 public interface OrderAddressRepository extends JpaRepository<OrderAddress, Long> {
 
-    // 비관적 잠금: 주문 주소를 조회할 때 락을 걸어 동시 수정을 막습니다.
-    //@Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<OrderAddress> findByOrder_OrderId(Long orderId);
+    // 주문 id 로 주소를 찾는 조회는 없다 — 주소는 주문이 가리킨다(Order.getShippingAddress, V25).
 
     // 낙관적 잠금: 주문 주소 엔티티의 @Version 필드를 활용합니다.
     //@Lock(LockModeType.OPTIMISTIC)

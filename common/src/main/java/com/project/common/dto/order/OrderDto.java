@@ -40,7 +40,6 @@ public class OrderDto {
 
     private String couponApplied;
 
-    private java.math.BigDecimal taxPrice;
     
     private String orderStatus;    
 
