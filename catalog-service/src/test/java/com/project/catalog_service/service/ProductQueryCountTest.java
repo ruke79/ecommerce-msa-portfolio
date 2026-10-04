@@ -2,6 +2,8 @@ package com.project.catalog_service.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+
 
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -205,5 +207,49 @@ class ProductQueryCountTest {
                 .as("product_sku(color_id) 의 UNIQUE 제약이 남아 있으면 색상 공유가 여전히 막힌다 "
                         + "— V4 마이그레이션이 적용됐는지 확인할 것")
                 .isZero();
+    }
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager txManager;
+
+    @Autowired
+    private com.project.catalog_service.repository.jpa.data.ProductRepository productRepository;
+
+    @Test
+    @DisplayName("하위 카테고리가 달린 상품 20건 — 조회 SQL 수가 상품 수와 무관하게 작다(하위 카테고리 연관)")
+    void listingWithSubcategoriesIsBounded() {
+        jdbc.update("delete from product.product_subcategory");
+        jdbc.update("delete from product.product where product_id between 9000 and 9999");
+        jdbc.update("delete from product.subcategory where subcategory_id between 9000 and 9999");
+        jdbc.update("delete from product.category where category_id = 9000");
+        jdbc.update("insert into product.category (category_id, category_name, slug) values (9000, 'qc', 'qc')");
+        for (int s = 0; s < 5; s++) {
+            jdbc.update("insert into product.subcategory (subcategory_id, category_id, subcategory_name, slug) values (?, 9000, ?, ?)",
+                    9000 + s, "sub" + s, "sub-" + s);
+        }
+        for (int i = 0; i < PRODUCTS; i++) {
+            jdbc.update("insert into product.product (product_id, category_id, name, slug, status, rating) values (?, 9000, ?, ?, 'ACTIVE', 0)",
+                    9000 + i, "p" + i, "p-" + i);
+            jdbc.update("insert into product.product_subcategory (product_id, subcategory_id, version) values (?, ?, 0)",
+                    9000 + i, 9000 + (i % 5));
+        }
+
+        // getProducts() 는 캐시(@Cacheable "products")를 거쳐 SQL 을 세지 못한다 — 같은 일(읽고 매퍼로 변환)을 트랜잭션 하나에서.
+        List<Long> ids = java.util.stream.LongStream.range(9000, 9000 + PRODUCTS).boxed().toList();
+        stats().clear();
+        List<com.project.common.dto.ProductDto> listed = new org.springframework.transaction.support.TransactionTemplate(txManager)
+                .execute(s -> productRepository.findAllById(ids).stream()
+                        .map(com.project.catalog_service.mapper.ProductMapper::toDto).toList());
+        long queries = stats().getPrepareStatementCount();
+
+        assertThat(listed).hasSize(PRODUCTS);
+        assertThat(listed.stream().filter(p -> p.getSubCategories() != null && !p.getSubCategories().isEmpty()).count())
+                .as("하위 카테고리가 응답에 실린다(지연 로딩이어도 같은 트랜잭션에서 채운다)").isEqualTo(PRODUCTS);
+        // 실측(2026-10): 연결 행 연관이 EAGER 일 때 6, LAZY + Subcategory · Category 의 @BatchSize 로 7. LAZY 만 두고 배치가 없으면 11 —
+        // 서로 다른 하위 카테고리 · 카테고리마다 SELECT 가 나간다. 상한은 상품 수(N+1 의 정의).
+        assertThat(queries).as("상품 %d건에 SQL %d회", PRODUCTS, queries).isLessThan(PRODUCTS);
     }
 }

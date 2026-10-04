@@ -36,6 +36,8 @@ import lombok.experimental.SuperBuilder;
 @Getter
 @Setter
 @Entity
+// 지연 로딩 프록시(상품 → 하위 카테고리 → 카테고리)를 한 번에 채운다 — 없으면 상품 목록이 서로 다른 하위 카테고리마다 SELECT 를 낸다(ProductQueryCountTest).
+@org.hibernate.annotations.BatchSize(size = 100)
 @SuperBuilder // @Builder 대신 @SuperBuilder 사용
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name="subcategory",  schema="product",

@@ -55,6 +55,8 @@ public class ChatMessageMaintenance implements ApplicationRunner {
     private final MongoTemplate mongoTemplate;
     private final Clock clock;
 
+    // 생성자가 둘이다 — 빈은 이것으로(B-65)
+    @org.springframework.beans.factory.annotation.Autowired
     public ChatMessageMaintenance(MongoTemplate mongoTemplate) {
         this(mongoTemplate, Clock.systemUTC());
     }

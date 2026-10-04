@@ -140,4 +140,26 @@ class ProductAggregatePersistenceTest {
 
         assertThat(count("ProductDetails", id)).isEqualTo(3);
     }
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Test
+    @DisplayName("공지 본문은 text 열에 글 그대로 저장된다 — 대형 객체(OID)를 거치지 않는다")
+    void noticeBodyIsStoredAsPlainText() {
+        long largeObjectsBefore = jdbc.queryForObject("select count(*) from pg_largeobject_metadata", Long.class);
+        String body = "점검 안내 — 10월 5일 02:00~04:00 결제가 잠시 멈춥니다.";
+        Long id = new TransactionTemplate(txManager).execute(s -> {
+            Notice n = Notice.builder().title("점검").body(body).build();
+            em.persist(n);
+            return n.getNoticeId();
+        });
+
+        String raw = jdbc.queryForObject("select body from content.notice where notice_id = ?", String.class, id);
+        long largeObjectsAfter = jdbc.queryForObject("select count(*) from pg_largeobject_metadata", Long.class);
+        assertThat(raw).as("열에 OID 번호가 아니라 글이 있어야 다른 도구 · SQL 로 읽을 수 있다").isEqualTo(body);
+        assertThat(largeObjectsAfter).as("저장마다 대형 객체가 생기면 지워지지 않고 쌓인다").isEqualTo(largeObjectsBefore);
+        String read = new TransactionTemplate(txManager).execute(s -> em.find(Notice.class, id).getBody());
+        assertThat(read).isEqualTo(body);
+    }
 }

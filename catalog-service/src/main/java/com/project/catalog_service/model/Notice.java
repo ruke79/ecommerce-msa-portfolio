@@ -10,7 +10,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -49,7 +48,9 @@ public class Notice {
      * 본문. 길이를 예측할 수 없어 text 다 — varchar(n) 으로 잡으면 언젠가 n 을 늘리는
      * 마이그레이션을 하게 되고, 그동안 운영자는 글자 수를 세야 한다.
      */
-    @Lob
+    // 🐛 예전에는 @Lob 이었다 — Hibernate 6 은 PostgreSQL 에서 그것을 대형 객체로 저장해, 열에는 OID 번호만 남고 고칠 때마다
+    //    옛 대형 객체가 버려진 채 쌓였다(V18 이 옮기고 해제한다). text 열이면 String 그대로 충분하다.
+    // [JA] 以前は @Lob — PostgreSQL ではラージオブジェクトになり、列には OID の番号だけが残っていた。
     @Column(nullable = false, columnDefinition = "text")
     private String body;
 
