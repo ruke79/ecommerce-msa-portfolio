@@ -521,12 +521,22 @@
 - **ガード** `EntityLombokGuardTest`（common）— 全サービスでエンティティの `@Data` を禁止し、`@Builder.Default` を持つエンティティのコンストラクタが `this()` から始まるかを確認します。
 - 再現は **実際の PostgreSQL**（Testcontainers）で行いました。修正を元に戻すと失敗することを確認しています（`expected ACTIVE but was WAITING`、重複キー、`index row size 6024 exceeds … 2704` など）。
 
-**限界** — スキーマ変更やデータ移行が必要なため、今回は手を付けなかったものがあります。
-- catalog: `Notice` の `@Lob`（ラージオブジェクトのリーク）、`ProductSubcategory` の EAGER。
-- cart: `Cart.userId` にユニーク制約がない、`CartProduct.style` がインデックス値。
-- chat: Mongo `ChatMessage` のインデックス、`ChatMember` の更新消失、`ParticipantChatRoom` のユニーク制約、使われていない Alarm エンティティ、チャットルームの Redis コピー。
-- order: `Order.taxPrice`、注文 ↔ 住所の二重外部キー、使われていない `OrderCacheService`、決済 `trackingId` のインデックス。coupon: `CouponStatus.EXPIRED`。
-- 既に保存されたチャットメッセージの時刻は 9 時間早いまま残ります。
+**2 次 — スキーマ変更・データ移行が必要で後回しにしたもの**(マイグレーションはすべて実際の PostgreSQL・MongoDB で確認)
+- **カートがユーザーごとに二つ** — 初回の追加が同時に来ると両方が作り、以後そのユーザーのカート取得が常に例外でした。cart V5 が最新の一つにまとめ(無い行だけ移す)`user_id` をユニークに、作成は `INSERT … ON CONFLICT DO NOTHING`。行は SKU の**一覧上の位置**ではなく**色 id** でバリエーションを探します。
+- **退会会員の名前が復活** — user-updated と user-deleted は別トピックで同時に処理されます。イベント処理は会員行を `SELECT … FOR UPDATE` で読みます。
+- **チャット参加の重複** — chat V9 (ルーム, 会員)ユニーク + `ON CONFLICT DO NOTHING`。
+- **会話のインデックス** — クエリと**同じ collation**(numericOrdering)の `{roomId, _id:-1}`。起動中の自動作成は大きなコレクションで起動を止めるので、バックグラウンドで作ります(explain で IXSCAN を確認)。
+- **旧メッセージ時刻 +9 時間** — 修正版が最初に起動した時刻を基準として Mongo に一度記録し、それより前の文書を移しながら `tzFixed` を付けます(何度実行しても同じ)。ローリング中に旧 Pod が書いた文書は 15 分後の 2 回目の実行が拾います。
+- **お知らせ本文がラージオブジェクト** — `@Lob` のせいで列には OID の番号だけ(実測 `16698`)、編集のたびにラージオブジェクトが捨てられていました。catalog V18 が本文へ移して解放します(**ROLLBACK-UNSAFE** — このデプロイでは自動ロールバックが無効になります)。
+- **EAGER** — リポジトリ全体で最後の二つの to-one(商品 ↔ 下位カテゴリの連結)を LAZY + `@BatchSize` に。実測: 一覧の SQL は EAGER 6、LAZY のみ 11、LAZY + バッチ 7。
+- **注文 ↔ 配送先の二重外部キー** — 注文 → 住所の一方向(order V25、expand)。**「税金 無料」表示** — 常に 0 の `taxPrice` を削除し「税込み」。**決済検索のインデックス** — pay V7 `tracking_id`。
+- 整理: Redis のルームのコピー・Alarm エンティティ・`CouponStatus.EXPIRED`・全文コメントの `OrderService_RedisTemplate`。(`OrderCacheService` はデッドコードでは**ありませんでした** — 1 次点検の誤判断。)
+- **ガード** `EntityMappingGuardTest`(common)— to-one は `fetch = LAZY`、`@Lob` 禁止。
+
+**限界**
+- **次のリリース(contract)**: `order_address.order_id` とその外部キー・インデックス、`orders.tax_price` 列を削除します — 今回のバージョンが安定してから(ロールバックした旧イメージはその列を使います)。
+- Redis の旧ルームハッシュは残っています — `DEL CHAT_ROOM` で消して構いません。
+- お知らせの V18 は元に戻せません — 旧イメージは本文を OID として読もうとして失敗します。
 
 **改善点**
 - 読んで・直して・書くエンティティに `@Version`（楽観ロック）を置きます。`@DynamicUpdate` が防ぐのは **別の列** 同士の上書きだけです。

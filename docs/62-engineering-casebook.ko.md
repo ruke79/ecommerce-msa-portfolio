@@ -521,12 +521,22 @@
 - **가드** `EntityLombokGuardTest`(common) — 모든 서비스에서 엔티티의 `@Data` 를 금지하고, `@Builder.Default` 엔티티의 생성자가 `this()` 로 시작하는지 봅니다.
 - 재현은 **실제 PostgreSQL**(Testcontainers)로 했습니다. 고친 것을 되돌리면 실패하는 것을 확인했습니다(`expected ACTIVE but was WAITING`, 중복 키, `index row size 6024 exceeds … 2704` 등).
 
-**한계** — 스키마 변경이나 데이터 이전이 필요해 이번에 손대지 않은 것이 있습니다.
-- catalog: `Notice` 의 `@Lob`(대형 객체 누수), `ProductSubcategory` 의 EAGER.
-- cart: `Cart.userId` 유니크 없음, `CartProduct.style` 이 인덱스 값.
-- chat: Mongo `ChatMessage` 인덱스, `ChatMember` 갱신 손실, `ParticipantChatRoom` 유니크, 쓰지 않는 Alarm 엔티티, 채팅방의 Redis 사본.
-- order: `Order.taxPrice`, 주문 ↔ 주소 이중 외래 키, 쓰지 않는 `OrderCacheService`, 결제 `trackingId` 인덱스. coupon: `CouponStatus.EXPIRED`.
-- 이미 저장된 채팅 메시지의 시각은 9시간 이른 채로 남습니다.
+**2차 — 스키마 변경 · 데이터 이전이 필요해 미뤘던 것** (마이그레이션은 모두 실제 PostgreSQL · MongoDB 로 확인)
+- **장바구니가 사용자당 둘** — 처음 담기가 동시에 오면 둘 다 만들었고, 그 뒤 그 사용자의 장바구니 조회가 늘 예외였습니다. cart V5 가 최근 것 하나로 합치고(없는 줄만 옮김) `user_id` 유니크, 만들기는 `INSERT … ON CONFLICT DO NOTHING`. 줄은 SKU **목록 위치**가 아니라 **색상 id** 로 변형을 찾습니다.
+- **탈퇴 회원 이름이 되살아남** — user-updated 와 user-deleted 는 다른 토픽이라 동시에 처리됩니다. 이벤트 처리는 회원 행을 `SELECT … FOR UPDATE` 로 읽습니다.
+- **채팅 참여 중복** — chat V9 (방, 회원) 유니크 + `ON CONFLICT DO NOTHING`.
+- **대화 인덱스** — 조회와 **같은 collation**(numericOrdering)의 `{roomId, _id:-1}`. 기동 중 자동 생성은 큰 컬렉션에서 기동을 붙잡으므로 백그라운드에서 만듭니다(explain 으로 IXSCAN 확인).
+- **옛 메시지 시각 +9시간** — 고친 코드가 처음 뜬 시각을 기준으로 몽고에 한 번 적고, 그보다 이른 문서를 옮기며 `tzFixed` 표시(몇 번 돌아도 같음). 롤링 중 옛 파드가 쓴 문서는 15분 뒤 2차 실행이 잡습니다.
+- **공지 본문이 대형 객체** — `@Lob` 때문에 열에는 OID 번호만(실측 `16698`), 고칠 때마다 대형 객체가 버려졌습니다. catalog V18 이 글로 옮기고 해제합니다(**ROLLBACK-UNSAFE** — 이 배포는 자동 복귀가 꺼집니다).
+- **EAGER** — 저장소 전체에서 마지막 두 to-one(상품 ↔ 하위 카테고리 연결)을 LAZY + `@BatchSize` 로. 실측: 목록 SQL 은 EAGER 6, LAZY 만 11, LAZY + 배치 7.
+- **주문 ↔ 배송지 이중 외래 키** — 주문 → 주소 한 방향(order V25, expand). **세금 무료** 표시 — 늘 0 인 `taxPrice` 를 지우고 "세금 포함". **결제 조회 인덱스** — pay V7 `tracking_id`.
+- 정리: Redis 방 사본 · Alarm 엔티티 · `CouponStatus.EXPIRED` · 전부 주석인 `OrderService_RedisTemplate`. (`OrderCacheService` 는 죽은 코드가 **아니었습니다** — 1차 점검의 잘못된 판단.)
+- **가드** `EntityMappingGuardTest`(common) — to-one 은 `fetch = LAZY`, `@Lob` 금지.
+
+**한계**
+- **다음 릴리스(contract)**: `order_address.order_id` 와 그 외래 키 · 인덱스, `orders.tax_price` 열을 지웁니다 — 이번 버전이 안정된 뒤에(되돌린 옛 이미지는 그 열을 씁니다).
+- Redis 의 옛 방 해시는 남아 있습니다 — `DEL CHAT_ROOM` 으로 지워도 됩니다.
+- 공지 V18 은 되돌릴 수 없습니다 — 옛 이미지는 글 본문을 OID 로 읽다 실패합니다.
 
 **개선할 점**
 - 읽고-고치고-쓰는 엔티티에 `@Version`(낙관적 잠금)을 둡니다. `@DynamicUpdate` 는 **다른 컬럼**끼리의 덮어쓰기만 막습니다.
