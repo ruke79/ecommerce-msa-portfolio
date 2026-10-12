@@ -6,9 +6,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -89,6 +91,18 @@ public class OutboxPartitionMaintainer {
     private final Map<String, Status> last = new ConcurrentHashMap<>();
 
     /**
+     * 테이블마다 마지막으로 점검에 성공한 시각 — 지표 {@code outbox_partition_last_success_seconds}. 처음 값은 <b>이 객체를 만든
+     * 시각(≈ 기동 시각)</b>이다. 비워 두면 한 번도 성공하지 못한 동안 값이 NaN 이고, Prometheus 에서 NaN 과의 비교는 늘 거짓이라
+     * "기동 뒤로 한 번도 못 돌았다" 가 경보에 잡히지 않는다. 파티션 테이블이 아니어서 건너뛴 점검(ensure 가 null)은 성공으로 치지
+     * 않는다 — 설정이 틀린 것이므로 조용히 넘기지 않는다.
+     *
+     * <p>[JA] テーブルごとに最後に点検に成功した時刻。初期値は<b>このオブジェクトを作った時刻(≈ 起動時刻)</b>。空にすると一度も成功して
+     * いない間は NaN になり、Prometheus で NaN との比較は常に偽なので「起動後一度も回っていない」がアラートに掛からない。パーティション
+     * テーブルでないため飛ばした点検は成功と数えない — 設定の誤りなので黙って見過ごさない。
+     */
+    private final Map<String, Instant> lastSuccess = new ConcurrentHashMap<>();
+
+    /**
      * @param monthsAhead 몇 달 뒤까지 미리 둘까. 0 이면 이번 달만. 잡이 몇 번 실패해도 버티도록 3 이 기본이다
      *                    [JA] 何か月先まで前もって用意するか。0 なら今月のみ。ジョブが何度か失敗しても耐えられるよう 3 がデフォルトである
      */
@@ -105,16 +119,21 @@ public class OutboxPartitionMaintainer {
         this.tables = List.copyOf(tables);
         this.monthsAhead = monthsAhead;
         this.clock = clock;
+        Instant start = clock.instant();
+        for (String t : this.tables) {
+            lastSuccess.put(t, start);
+        }
     }
 
     /**
      * 점검 결과. {@code monthsCovered} = 이번 달 <b>뒤로</b> 끊기지 않고 이어진 미래 파티션 수 — 정상이면 설정의
-     * {@code monthsAhead} 와 같다. 이번 달만 있으면 0, 이번 달 파티션도 없으면 -1 이다(지표 · 경보가 그대로 읽는다).
+     * {@code monthsAhead} 와 같다. 이번 달만 있으면 0, 이번 달 파티션도 없으면 -1 이다. {@code coveredThrough} 는 끊기지 않고
+     * 이어진 마지막 달 — 지표는 이 값과 <b>지금</b>의 차이로 남은 달을 매번 계산한다({@link #monthsAheadNow}).
      *
      * <p>[JA] 点検結果。{@code monthsCovered} = 今月<b>より後</b>に途切れずに続く将来パーティションの数 — 正常なら設定の
      * {@code monthsAhead} と同じ。今月の分だけなら 0、今月のパーティションもなければ -1(メトリクス · アラートがそのまま読む)。
      */
-    public record Status(int monthsCovered, long defaultRows, List<String> created) {
+    public record Status(int monthsCovered, YearMonth coveredThrough, long defaultRows, List<String> created) {
     }
 
     public List<String> tables() {
@@ -132,7 +151,7 @@ public class OutboxPartitionMaintainer {
             try {
                 Status s = ensure(table);
                 if (s != null) {
-                    last.put(table, s);
+                    record(table, s);
                     // 만들 것이 없어도 한 줄 남긴다 — 잡이 도는지는 로그만으로 알 수 있어야 한다(6시간에 테이블당 한 줄).
                     // 예전에는 생성했을 때만 남겨서, V1 이 이미 만들어 둔 달만 남은 동안(2026-10 까지) 잡이 도는지 알 길이 없었다.
                     // [JA] 作るものがなくても一行残す — ジョブが回っているかはログだけで分かるべきである(6 時間ごとにテーブルあたり一行)。
@@ -195,7 +214,7 @@ public class OutboxPartitionMaintainer {
                 }
                 long defaultRows = defaultPartition == null ? 0 : count(c, schema, defaultPartition);
                 c.commit();
-                return new Status(covered - 1, defaultRows, created);
+                return new Status(covered - 1, now.plusMonths(covered - 1), defaultRows, created);
             } catch (SQLException | RuntimeException e) {
                 c.rollback();
                 throw e;
@@ -203,6 +222,47 @@ public class OutboxPartitionMaintainer {
                 c.setAutoCommit(auto);
             }
         }
+    }
+
+    /** 성공한 점검 결과를 남긴다 — 지표가 읽는 두 값(결과 · 성공 시각)을 함께. */
+    // [JA] 成功した点検結果を残す — 指標が読む二つの値(結果 · 成功時刻)を一緒に。
+    void record(String table, Status s) {
+        last.put(table, s);
+        lastSuccess.put(table, clock.instant());
+    }
+
+    /**
+     * 지금 기준으로 이번 달 뒤에 남은 미래 파티션 수 — 지표 {@code outbox_partition_months_ahead}.
+     *
+     * <p>점검할 때의 값을 그대로 내지 않고 마지막 성공의 {@code coveredThrough} 와 <b>지금</b>으로 매번 계산한다. 점검 결과를
+     * 그대로 내면 성공할 때마다 늘 {@code monthsAhead}(3)라 "줄어든다" 를 볼 수 없고, 실패가 이어지는 동안에는 마지막 값에
+     * 멈춰 있다 — 경보가 잡아야 할 바로 그 상황(잡이 조용히 멈춤)에서 아무것도 알려 주지 못했다. 이제 잡이 멈추면 달이 바뀔
+     * 때마다 1 씩 줄어든다. 한 번도 점검하지 못했으면 NaN — 그 경우는 {@code last_success} 경보가 잡는다.
+     *
+     * <p>[JA] 今を基準に今月より後に残る将来パーティションの数。点検時の値をそのまま出さず、最後の成功の {@code coveredThrough} と
+     * <b>今</b>から毎回計算する — ジョブが止まると月が変わるたびに 1 ずつ減る。
+     */
+    public double monthsAheadNow(String table) {
+        Status s = last.get(table);
+        if (s == null) {
+            return Double.NaN;
+        }
+        YearMonth now = YearMonth.from(LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
+        return ChronoUnit.MONTHS.between(now, s.coveredThrough());
+    }
+
+    /** 마지막 성공 점검의 DEFAULT 파티션 행 수 — 지표 {@code outbox_partition_default_rows}. 점검 전에는 NaN. */
+    // [JA] 最後に成功した点検の DEFAULT パーティションの行数。点検前は NaN。
+    public double defaultRows(String table) {
+        Status s = last.get(table);
+        return s == null ? Double.NaN : s.defaultRows();
+    }
+
+    /** 마지막으로 점검에 성공한 시각(유닉스 초) — 지표 {@code outbox_partition_last_success_seconds}. 처음 값은 기동 시각. */
+    // [JA] 最後に点検に成功した時刻(UNIX 秒)。初期値は起動時刻。
+    public double lastSuccessEpochSeconds(String table) {
+        Instant i = lastSuccess.get(table);
+        return i == null ? Double.NaN : i.getEpochSecond();
     }
 
     static String partitionName(String table, YearMonth m) {

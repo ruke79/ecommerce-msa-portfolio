@@ -106,10 +106,33 @@ groups:
 
   # 아웃박스 월 파티션(cart · order · pay · user) — common OutboxPartitionAutoConfiguration 이 6시간마다 앞으로 3달치를
   # 만든다(docs/09 §4.6). 잡이 조용히 멈추면 달이 바뀌는 순간 행이 DEFAULT 파티션으로 간다 — 에러는 나지 않는다.
+  #
+  # ⚠️ 2026-10-12 까지 이 그룹은 한 번도 울릴 수 없었다. ① 지표가 등록되지 않았다(자동 설정 순서 — 이제 MeterBinder) ②
+  #    months_ahead 는 점검에 성공했을 때의 값을 그대로 냈다 — 성공하면 늘 3, 실패가 이어지면 마지막 값에 멈춤, 한 번도 성공
+  #    못 하면 NaN(NaN 과의 비교는 거짓). 이제 months_ahead 는 지금 시각 기준으로 매번 계산하고(잡이 멈추면 달마다 1 씩 준다),
+  #    "마지막 성공" 과 "지표 없음" 을 따로 본다.
   - name: outbox-health
     rules:
+      - alert: OutboxPartitionJobStale
+        # 마지막 성공 시각. 처음 값은 기동 시각이라 "기동 뒤 한 번도 못 돌았다" 도 여기서 잡힌다. 주기 6시간 — 하루면 4번 연속 실패.
+        expr: time() - max by (service, table) (outbox_partition_last_success_seconds) > 86400
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "아웃박스 파티션 점검이 {{ $value | humanizeDuration }} 동안 성공하지 못했습니다 ({{ $labels.table }})"
+          description: "로그의 '아웃박스 파티션 점검 실패'(DB 권한 · 연결) 또는 '파티션 테이블이 아니다'(V1 을 건너뛴 DB)를 확인하세요. outbox.partitions.enabled=false 로 잡을 끈 경우에도 울립니다 — 그 동안은 아무도 파티션을 만들지 않습니다 (docs/09 §4.6)."
+
+      - alert: OutboxPartitionMetricsMissing
+        # 파티션을 쓰는 서비스가 하나도 이 지표를 내지 않는다 — 위 경보들이 모두 침묵한다. 2026-10-12 까지 실제로 그랬다.
+        expr: absent(outbox_partition_months_ahead)
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "아웃박스 파티션 지표가 없습니다 — 파티션 경보가 모두 울릴 수 없는 상태입니다"
+          description: "cart · order · pay · user 의 /actuator/prometheus 에 outbox_partition_* 가 있는지, 그 서비스들이 수집 대상인지 확인하세요(OutboxPartitionAutoConfiguration.Metrics)."
+
       - alert: OutboxPartitionRunwayShort
-        # 이번 달 뒤로 미리 만들어진 파티션 수. 정상이면 3. 1 까지 줄었다면 잡이 두 달 가까이 못 돌았다.
+        # 지금 기준 이번 달 뒤로 미리 만들어진 파티션 수. 정상이면 3. 잡이 멈추면 달이 바뀔 때마다 1 씩 준다 — 1 이면 두 달 가까이 못 돌았다.
         expr: min by (service, table) (outbox_partition_months_ahead) < 2
         for: 6h
         labels: { severity: warning }
@@ -132,7 +155,7 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "아웃박스 행이 DEFAULT 파티션에 쌓이고 있습니다 ({{ $labels.table }})"
-          description: "그 달의 파티션이 없는 동안 들어온 행입니다. 파티션 잡이 다음 실행에서 옮깁니다 — 계속 늘면 잡이 실패하고 있는 것입니다."
+          description: "그 달의 파티션이 없는 동안 들어온 행입니다. 파티션 잡이 다음 실행에서 옮깁니다. 이 값은 마지막으로 성공한 점검의 것이라 잡이 실패하는 동안에는 늘지 않습니다 — 그 경우는 OutboxPartitionJobStale 이 잡습니다."
 
   # 추적 파이프라인(docs/63) — 서비스 → OTel Collector → Jaeger · span_metrics. 어디가 끊겨도 서비스는 오류 없이 돈다
   # (OTLP 내보내기는 실패한 배치를 버리고 계속 간다). 그래서 "추적이 안 보인다" 를 사람이 먼저 알아채기 전에 여기서 잡는다.

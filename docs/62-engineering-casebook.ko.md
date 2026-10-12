@@ -120,6 +120,7 @@
   - DEFAULT 에 그 달의 행이 이미 들어와 있어도 만듭니다. 빈 테이블을 만들고 행을 옮긴 뒤 `ATTACH` 합니다. 그냥 `PARTITION OF` 로 만들면 `updated partition constraint for default partition would be violated` 로 실패합니다.
   - 레플리카가 여럿이어도 `pg_advisory_xact_lock` 으로 한 번만 만듭니다.
   - 지표 `outbox_partition_months_ahead` · `outbox_partition_default_rows` 와 경보 3개를 두었습니다. 설정을 빠뜨리면 가드 B-70 이 잡습니다.
+  - ⚠️ 2026-10-12 점검에서 **경보 셋이 한 번도 울릴 수 없었던 것**을 찾았습니다. 지표가 `@ConditionalOnBean(MeterRegistry)` 로 걸려 있었는데, 이 자동 설정이 actuator 의 메트릭 자동 설정보다 먼저(알파벳순) 평가되어 늘 빠졌습니다. 그리고 `months_ahead` 는 점검에 성공했을 때의 값을 그대로 내서, 성공하면 늘 3, 실패하면 마지막 값에 멈춤, 한 번도 성공하지 못하면 NaN 이었습니다. 이제 `MeterBinder` 로 등록하고, 남은 달은 지금 시각 기준으로 매번 계산합니다(잡이 멈추면 달마다 1 씩 줄어듭니다). `last_success_seconds`(처음 값은 기동 시각) · 지표 없음(`absent`) 경보를 더했고, `Error` 한 번에 잡이 영구히 멈추던 것도 막았습니다(`OutboxPartitionMetricsTest` · `OutboxPartitionMaintainerTest`).
   - 실제 PostgreSQL 16 으로 검증했습니다(`OutboxPartitionMaintainerPostgresTest`).
 - 남은 것: 오래된 파티션의 폐기(보존 정책)는 사람이 합니다.
 - 트래픽이 늘면 CDC 로 옮기는 것을 검토합니다.

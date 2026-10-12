@@ -120,6 +120,7 @@
   - DEFAULT にその月の行がすでに入っていても作れます。空のテーブルを作り、行を移してから `ATTACH` します。そのまま `PARTITION OF` で作ると `updated partition constraint for default partition would be violated` で失敗します。
   - レプリカが複数あっても `pg_advisory_xact_lock` で 1 回だけ作ります。
   - メトリクス `outbox_partition_months_ahead` · `outbox_partition_default_rows` とアラート 3 件を置きました。設定の書き忘れはガード B-70 が捕まえます。
+  - ⚠️ 2026-10-12 の点検で **3 件のアラートが一度も鳴り得なかった**ことが分かりました。メトリクスが `@ConditionalOnBean(MeterRegistry)` で条件付けされていましたが、この自動設定がアクチュエータのメトリクス自動設定より先に(アルファベット順)評価され、常に外れていました。さらに `months_ahead` は点検に成功したときの値をそのまま出しており、成功すれば常に 3、失敗すれば最後の値で止まり、一度も成功しなければ NaN でした。今は `MeterBinder` で登録し、残り月数は現在時刻を基準に毎回計算します(ジョブが止まると月ごとに 1 ずつ減る)。`last_success_seconds`(初期値は起動時刻)と指標なし(`absent`)のアラートを加え、`Error` 一回でジョブが永久に止まっていた点も防ぎました(`OutboxPartitionMetricsTest` · `OutboxPartitionMaintainerTest`)。
   - 実際の PostgreSQL 16 で検証しました（`OutboxPartitionMaintainerPostgresTest`）。
 - 残り：古いパーティションの廃棄（保持ポリシー）は人が行います。
 - トラフィックが増えたら CDC への移行を検討します。
