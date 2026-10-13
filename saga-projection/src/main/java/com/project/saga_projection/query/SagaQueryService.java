@@ -14,6 +14,7 @@ import org.springframework.kafka.config.StreamsBuilderFactoryBean;
 import org.springframework.stereotype.Service;
 
 import com.project.common.avro.OrderSagaState;
+import com.project.common.avro.OrderTimeline;
 import com.project.saga_projection.config.SagaProjectionProperties;
 import com.project.saga_projection.topology.SagaTopology;
 
@@ -48,13 +49,25 @@ public class SagaQueryService {
         this.self = HostInfo.buildFromEndpoint(props.applicationServer());
     }
 
+    /** 소유권 검사 없음 — 내부 진단용. 게이트웨이를 거친 요청은 {@link #find(long, Long)} 로 온다. */
     public Result find(long orderId) {
+        return find(orderId, null);
+    }
+
+    /**
+     * @param requesterId 게이트웨이가 쓴 {@code User-Id}. null 이 아니면 주문의 customerId 와 같아야 한다 — 다르면
+     *                    <b>NOT_FOUND</b>(남의 자원은 403 이 아니라 404). customerId 를 모르는 레코드도
+     *                    남의 것으로 본다.
+     * [JA] requesterId が null でなければ注文の customerId と一致しなければならない — 違えば NOT_FOUND(他人の資源は 404)。
+     */
+    public Result find(long orderId, Long requesterId) {
         KafkaStreams streams = factory.getKafkaStreams();
         if (streams == null || !isQueryable(streams.state())) {
             return Result.of(Answer.NOT_READY);
         }
         String key = String.valueOf(orderId);
 
+        // 두 저장소는 같은 입력 파티셔닝(주문 id 재키잉)이라 활성 · 대기 호스트가 같다 — 사가 저장소의 메타데이터로 판정한다.
         KeyQueryMetadata meta = streams.queryMetadataForKey(SagaTopology.STORE_NAME, key, Serdes.String().serializer());
         if (meta == null || meta.equals(KeyQueryMetadata.NOT_AVAILABLE)) {
             return Result.of(Answer.NOT_READY);
@@ -68,17 +81,31 @@ public class SagaQueryService {
         }
 
         try {
-            ReadOnlyKeyValueStore<String, OrderSagaState> store = streams.store(
+            ReadOnlyKeyValueStore<String, OrderSagaState> sagaStore = streams.store(
                     StoreQueryParameters.fromNameAndType(SagaTopology.STORE_NAME,
                             QueryableStoreTypes.<String, OrderSagaState>keyValueStore()).enableStaleStores());
-            return Optional.ofNullable(store.get(key))
-                    .map(s -> new Result(Answer.FOUND, OrderSagaView.of(s, !active), null))
-                    .orElse(Result.of(Answer.NOT_FOUND));
+            ReadOnlyKeyValueStore<String, OrderTimeline> timelineStore = streams.store(
+                    StoreQueryParameters.fromNameAndType(SagaTopology.TIMELINE_STORE_NAME,
+                            QueryableStoreTypes.<String, OrderTimeline>keyValueStore()).enableStaleStores());
+            return compose(sagaStore.get(key), timelineStore.get(key), requesterId, !active);
         } catch (InvalidStateStoreException e) {
             // 리밸런스 중이거나 저장소를 아직 복구하는 중이다 — 잠깐 뒤 다시.
             log.debug("상태 저장소를 아직 열 수 없다: {}", e.getMessage());
             return Result.of(Answer.NOT_READY);
         }
+    }
+
+    /** 저장소 둘 → 답. 순수 함수라 Streams 없이 검증한다. */
+    static Result compose(OrderSagaState saga, OrderTimeline timeline, Long requesterId, boolean stale) {
+        if (saga == null && timeline == null) {
+            return Result.of(Answer.NOT_FOUND);
+        }
+        OrderSagaView view = OrderSagaView.of(saga, timeline, stale);
+        if (requesterId != null && !requesterId.equals(view.customerId())) {
+            // 남의 주문 — 있는지조차 알리지 않는다(진짜 없음과 같은 답).
+            return Result.of(Answer.NOT_FOUND);
+        }
+        return new Result(Answer.FOUND, view, null);
     }
 
     static boolean isQueryable(KafkaStreams.State state) {

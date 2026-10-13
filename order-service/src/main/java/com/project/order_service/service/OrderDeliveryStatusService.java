@@ -61,6 +61,15 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class OrderDeliveryStatusService {
 
+    /** 상태 변경 + 이벤트(docs/76). 세터 — 생성자를 쓰는 테스트가 많다. 기본값은 이벤트 없이 상태만 바꾼다(단위 테스트). */
+    // [JA] 状態変更 + イベント(docs/76)。セッター — コンストラクタを使うテストが多い。デフォルトはイベントなしで状態だけ変える。
+    private OrderStatusChanger statusChanger = OrderStatusChanger.withoutEvents();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setStatusChanger(OrderStatusChanger statusChanger) {
+        this.statusChanger = statusChanger;
+    }
+
     /** 배송 이벤트가 움직일 수 있는 주문 상태. 이 밖의 주문은 돈의 상태가 우선이다. */
     static final Set<OrderStatus> MOVABLE = EnumSet.of(OrderStatus.PAID, OrderStatus.PROCESSING, OrderStatus.DISPATCHED);
 
@@ -100,7 +109,7 @@ public class OrderDeliveryStatusService {
             return false;
         }
 
-        order.setOrderStatus(target.get());
+        statusChanger.change(order, target.get(), "delivery");
         if (target.get() == OrderStatus.DELIVERED && order.getDeliveredCreatedAt() == null) {
             order.setDeliveredCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
         }
@@ -129,7 +138,7 @@ public class OrderDeliveryStatusService {
             log.info("배송 취소 — 주문은 그대로 둔다: orderId={} order={}", orderId, current);
             return false;
         }
-        order.setOrderStatus(OrderStatus.PAID);
+        statusChanger.change(order, OrderStatus.PAID, "delivery-cancelled");
         orderRepository.save(order);
         cacheEvictor.evictOrderCaches(orderId, "delivery→CANCELLED");
         log.info("배송 취소로 주문을 되돌림: orderId={} {} → PAID (환불 가능)", orderId, current);

@@ -64,6 +64,15 @@ public class OrderPurchaseConfirmationService {
     private final OrderCacheEvictor cacheEvictor;
     private final OrderCompletedKafkaPublisher publisher;
 
+    /** 상태 변경 + 이벤트(docs/76). 세터 — 생성자를 쓰는 테스트가 많다. 기본값은 이벤트 없이 상태만 바꾼다(단위 테스트). */
+    // [JA] 状態変更 + イベント(docs/76)。セッター — コンストラクタを使うテストが多い。デフォルトはイベントなしで状態だけ変える。
+    private OrderStatusChanger statusChanger = OrderStatusChanger.withoutEvents();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setStatusChanger(OrderStatusChanger statusChanger) {
+        this.statusChanger = statusChanger;
+    }
+
     private final boolean autoEnabled;
     private final int autoDays;
     private final int batchSize;
@@ -150,7 +159,7 @@ public class OrderPurchaseConfirmationService {
 
     private void complete(Order order, boolean auto, LocalDateTime at) {
         OrderStatus before = order.getOrderStatus();
-        order.setOrderStatus(OrderStatus.COMPLETED);
+        statusChanger.change(order, OrderStatus.COMPLETED, auto ? "auto-confirm" : "customer");
         order.setCompletedAt(at);
         order.setAutoCompleted(auto);
         orderRepository.save(order);

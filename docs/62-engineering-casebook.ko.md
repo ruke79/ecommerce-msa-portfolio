@@ -547,11 +547,40 @@
 
 ---
 
+## 19. 상태는 바뀌는데 "언제 · 왜" 는 로그뿐이었다 — 상태 변경 이벤트와 읽기 모델(CQRS)
+
+**📖 참고서** — Martin Kleppmann, *Designing Data-Intensive Applications* (O'Reilly, 2017), 11장 "Stream Processing". 변경 이벤트 스트림에서 파생 데이터(읽기 모델)를 만드는 이야기와, 이벤트 소싱 · CQRS 를 어디까지 들일지에 대한 이야기입니다.
+
+**문제**
+- "이벤트 소싱 · CQRS 가 적용돼 있나" 를 점검했습니다. CQRS 는 두 곳(결제 사가 프로젝션, ES 검색)에 부분적으로, 이벤트 소싱은 없었습니다.
+- 주문 상태는 열 군데가 저마다 `setOrderStatus` 로 덮어썼습니다. **언제 · 무엇이** 바꿨는지는 시각 세 개(`paidCreatedAt` 등)와 로그뿐이었고, 취소 · 환불 · 배송 취소로 되돌아간 이력은 어디에도 없었습니다.
+- 사가 프로젝션은 결제 요청 · 응답만 알아서 "결제 뒤" 를 보여 주지 못했고, 게이트웨이 라우트가 없어 화면에서 쓸 수 없었습니다.
+
+**처리한 내용**
+- 상태 변경을 `OrderStatusChanger` 한 곳으로 모으고, **같은 트랜잭션**에 아웃박스 행(`order-status`)을 남깁니다. 기존 결제 아웃박스 · 릴레이를 그대로 씁니다. 같은 상태로의 "변경" 은 이벤트가 아닙니다.
+- saga-projection 이 `order-status` 를 접어 **주문 진행 타임라인**(새 레코드 · 새 저장소 · 컴팩션 토픽 `order-timeline`)을 만듭니다. 사가 상태 레코드를 바꾸지 않은 것은 스키마 진화(옛 지문)를 피하려는 선택입니다.
+- 접기 규칙: eventId(아웃박스 행 id)로 재발행을 거르고, 순서는 도착이 아니라 **발생 시각**, 상한 50.
+- 게이트웨이 라우트(JwtAuthorization) + 소유권 — **남의 주문은 404**. 화면은 주문 상세에 "진행 기록" 을 그리고, 읽기 모델이 답하지 않으면(404 · 503) 조용히 숨깁니다.
+- **가드** B-78 — `.setOrderStatus(` · `.markPaid(` 를 변경기 밖에서 찾으면 빌드가 빨갛습니다. B-38 은 상태 토픽 둘을 봅니다.
+
+**한계**
+- 이벤트 소싱은 여전히 아닙니다 — 진실은 order 의 DB, 이벤트는 알림입니다. 그 규모에서는 그것이 맞다고 봤습니다.
+- 롤링 중 **옛** 릴레이가 새 행을 FAILED 로 찍을 수 있습니다(모르는 타입). 잃는 것은 읽기 모델 항목이고 UPDATE 한 줄로 되살립니다(docs/76 §3-2). 원칙은 두 릴리스입니다.
+- 주문 목록(여러 주문) 조회는 아직 쓰기 모델입니다.
+
+**개선할 점**
+- 알림 서비스가 `order-status` 를 직접 구독합니다.
+- 고객 id 키의 두 번째 저장소로 "내 주문 진행" 목록을 만듭니다.
+
+→ [docs/76](76-order-status-read-model.ko.md) · [docs/77](77-event-sourcing-decision.ko.md)(이벤트 소싱을 들이지 않은 이유와 설계) · [docs/74](74-feature-flags.ko.md) · §5
+
+---
+
 ## 참고서 목록
 
 | 책 | 출판 | 사례 |
 |---|---|---|
-| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 |
+| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 · 19 |
 | Sam Newman, *Building Microservices*, 2nd ed. | O'Reilly, 2021 | 5 · 6 · 8 · 13 |
 | Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty, *Kafka: The Definitive Guide*, 2nd ed. | O'Reilly, 2021 | 4 |
 | Andrew Hoffman, *Web Application Security*, 2nd ed. | O'Reilly, 2024 | 1 |

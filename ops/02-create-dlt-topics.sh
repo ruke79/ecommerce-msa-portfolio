@@ -44,7 +44,7 @@
 #
 #   COMMAND_CONFIG=/path/client-ssl.properties          # SSL/SASL 브로커
 #   PARTITIONS=3 REPLICATION=1 RETENTION_MS=1209600000(14일) EXTRA_TOPICS="foo bar"
-#   STATE_TOPIC=order-saga-state STATE_PARTITIONS=<n>   # 비우면 order 토픽과 같은 수로 맞춘다
+#   STATE_TOPICS="order-saga-state order-timeline" STATE_PARTITIONS=<n>   # 비우면 order 토픽과 같은 수로 맞춘다
 #   FIX_CONFIGS=0 → 이미 있는 토픽의 잘못된 정책을 고치지 않고 경고만
 #   SKIP_STATE=1  → 상태 토픽은 건드리지 않는다 (DLT 만)
 #   DRY_RUN=1 → 명령만 출력
@@ -58,11 +58,11 @@ FIX_CONFIGS="${FIX_CONFIGS:-1}"
 SKIP_STATE="${SKIP_STATE:-0}"
 CHECK_ONLY=0
 
-# saga-projection 의 출력 토픽. 이름은 saga-projection/src/main/resources/application-local.yml
-# 의 saga-projection.topics.state 와 같아야 한다 — 어긋나면 프로젝션은 자기가 만든(delete 정책)
+# saga-projection 의 출력 토픽들. 이름은 saga-projection/src/main/resources/application-local.yml
+# 의 saga-projection.topics.state · .timeline 과 같아야 한다 — 어긋나면 프로젝션은 자기가 만든(delete 정책)
 # 토픽에 쓰고 이 스크립트는 아무도 안 쓰는 토픽을 컴팩션으로 만든다. 둘 다 조용하다.
-# ConfigurationGuardrailTest(B-38)가 두 값을 대조한다.
-STATE_TOPIC="${STATE_TOPIC:-order-saga-state}"
+# ConfigurationGuardrailTest(B-38)가 값을 대조한다. order-timeline 은 주문 진행 타임라인(docs/76).
+STATE_TOPICS="${STATE_TOPICS:-order-saga-state order-timeline}"
 # 상태 토픽이 본뜨는 입력 토픽. 파티션 수를 여기에 맞춘다(아래 이유 참조).
 STATE_SOURCE_TOPIC="${STATE_SOURCE_TOPIC:-order}"
 
@@ -219,10 +219,9 @@ fi
 STATE_CONFIGS=("cleanup.policy=compact" "segment.ms=86400000" "min.cleanable.dirty.ratio=0.1")
 STATE_CONFIG_CSV=$(IFS=,; echo "${STATE_CONFIGS[*]}")
 
-if [ "$SKIP_STATE" = "1" ]; then
-    printf '\n  SKIP_STATE=1 — %s 는 건드리지 않습니다\n' "$STATE_TOPIC"
-
-elif [ "$DRY_RUN" = "1" ]; then
+provision_state_topic() {
+    local STATE_TOPIC="$1"
+if [ "$DRY_RUN" = "1" ]; then
     # 브로커를 읽지 않는다(기존 토픽 유무에 따라 실제 명령이 갈리므로 둘 다 보여 준다).
     printf '\n\033[1;36m▶ 컴팩션 상태 토픽 %s\033[0m\n' "$STATE_TOPIC"
     echo "[DRY_RUN] 없으면: $CLI ${CFG_ARGS[*]} --create --if-not-exists --topic $STATE_TOPIC --partitions ${STATE_PARTITIONS:-<$STATE_SOURCE_TOPIC 와 동일>} --replication-factor $REPLICATION --config ${STATE_CONFIGS[0]} --config ${STATE_CONFIGS[1]} --config ${STATE_CONFIGS[2]}"
@@ -283,7 +282,16 @@ else
     fi
 
     printf '\n  Streams 내부 토픽(리파티션·변경 로그)은 saga-projection 이 스스로 만든다 — 손대지 마세요.\n'
-    printf '  변경 로그는 이미 컴팩션이고, 이름은 <SAGA_APPLICATION_ID>-order-saga-state-store-changelog 입니다.\n'
+    printf '  변경 로그는 이미 컴팩션이고, 이름은 <SAGA_APPLICATION_ID>-<저장소 이름>-changelog 입니다.\n'
+fi
+}
+
+if [ "$SKIP_STATE" = "1" ]; then
+    printf '\n  SKIP_STATE=1 — %s 는 건드리지 않습니다\n' "$STATE_TOPICS"
+else
+    for st in $STATE_TOPICS; do
+        provision_state_topic "$st"
+    done
 fi
 
 if [ "$DRY_RUN" != "1" ]; then

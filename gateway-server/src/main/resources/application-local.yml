@@ -417,6 +417,24 @@ spring:
                       name: orderServiceCircuitBreaker
                       fallbackUri: forward:/fallback
 
+            # 주문 진행 읽기 모델(docs/76) — saga-projection 의 대화형 조회. JwtAuthorization 이 User-Id 를 넣고,
+            # 서비스가 주문의 customerId 와 대조한다(남의 주문은 404). 조회 전용(GET).
+            # [JA] 注文進行の読み取りモデル(docs/76) — saga-projection の対話型照会。JwtAuthorization が User-Id を入れ、
+            #      サービスが注文の customerId と照合する(他人の注文は 404)。
+            - id: saga-projection
+              uri: lb://saga-projection
+              predicates:
+                  - Path=/saga-projection/api/saga/**
+                  - Method=GET
+              filters:
+                  - RemoveRequestHeader=Cookie
+                  - RewritePath=/saga-projection/(?<segment>.*), /$\{segment}
+                  - JwtAuthorization
+                  - name: CircuitBreaker
+                    args:
+                      name: sagaProjectionCircuitBreaker
+                      fallbackUri: forward:/fallback
+
             - id: pay-service
               uri: lb://pay-service
               predicates:

@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "OrderStatusChanged",
+  "namespace": "com.project.common.avro",
+  "doc": "주문 상태가 바뀌었다 — order-service 가 상태를 쓴 트랜잭션 안에서 아웃박스에 남기고 릴레이가 토픽 order-status(키 = orderId 문자열)로 낸다(docs/76). 진실의 원천이 아니라 알림이다: 진실은 order 의 DB 다. 읽는 쪽은 saga-projection(OrderTimeline 읽기 모델). 토큰 · 이메일 · 주소 같은 개인정보는 싣지 않는다.",
+  "fields": [
+    { "name": "eventId",        "type": "string", "doc": "아웃박스 행 id(UUID). 릴레이는 at-least-once 라 같은 이벤트가 두 번 올 수 있다 — 읽는 쪽은 이것으로 중복을 거른다" },
+    { "name": "orderId",        "type": "long" },
+    { "name": "customerId",     "type": ["null", "long"], "default": null, "doc": "소유권 판정용 — 조회 API 는 User-Id 와 다르면 404" },
+    { "name": "previousStatus", "type": ["null", "string"], "default": null, "doc": "OrderStatus 이름. 주문 생성이면 null" },
+    { "name": "status",         "type": "string", "doc": "OrderStatus 이름. enum 을 복제하지 않으려고 문자열 — 새 상태가 생겨도 스키마를 바꾸지 않는다" },
+    { "name": "source",         "type": "string", "doc": "무엇이 바꿨나 — payment-saga · delivery · customer · admin · bank-transfer · auto-confirm · created … 사람이 읽는 짧은 식별자" },
+    { "name": "occurredAt",     "type": { "type": "long", "logicalType": "timestamp-millis" }, "doc": "order-service 가 상태를 쓴 시각(UTC)" }
+  ]
+}

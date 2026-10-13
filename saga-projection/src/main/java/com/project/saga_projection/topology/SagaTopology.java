@@ -17,6 +17,8 @@ import org.apache.kafka.streams.kstream.Produced;
 import org.apache.kafka.streams.state.KeyValueStore;
 
 import com.project.common.avro.OrderSagaState;
+import com.project.common.avro.OrderStatusChanged;
+import com.project.common.avro.OrderTimeline;
 import com.project.common.kafka.avro.AvroDtoDeserializer;
 import com.project.common.kafka.avro.AvroDtoSerializer;
 import com.project.common.kafka.avro.AvroSpecificSerde;
@@ -57,25 +59,52 @@ import com.project.common.message.dto.response.PaymentResponse;
 public final class SagaTopology {
 
     public static final String STORE_NAME = "order-saga-state-store";
+    /** 주문 진행 타임라인 저장소(docs/76) — 키는 사가 저장소와 같은 주문 id 문자열. */
+    public static final String TIMELINE_STORE_NAME = "order-timeline-store";
 
     private final String orderTopic;
     private final String paymentTopic;
     private final String stateTopic;
+    private final String orderStatusTopic;
+    private final String timelineTopic;
     private final SagaEvents events;
+    private final Clock clock;
 
     public SagaTopology(String orderTopic, String paymentTopic, String stateTopic) {
         this(orderTopic, paymentTopic, stateTopic, Clock.systemUTC());
     }
 
     public SagaTopology(String orderTopic, String paymentTopic, String stateTopic, Clock clock) {
+        this(orderTopic, paymentTopic, stateTopic, "order-status", "order-timeline", clock);
+    }
+
+    public SagaTopology(String orderTopic, String paymentTopic, String stateTopic, String orderStatusTopic,
+            String timelineTopic) {
+        this(orderTopic, paymentTopic, stateTopic, orderStatusTopic, timelineTopic, Clock.systemUTC());
+    }
+
+    public SagaTopology(String orderTopic, String paymentTopic, String stateTopic, String orderStatusTopic,
+            String timelineTopic, Clock clock) {
         this.orderTopic = orderTopic;
         this.paymentTopic = paymentTopic;
         this.stateTopic = stateTopic;
+        this.orderStatusTopic = orderStatusTopic;
+        this.timelineTopic = timelineTopic;
         this.events = new SagaEvents(clock);
+        this.clock = clock;
     }
 
     public static Serde<OrderSagaState> stateSerde() {
         return new AvroSpecificSerde<>(OrderSagaState.getEncoder(), OrderSagaState.getDecoder());
+    }
+
+    /** 입력 {@code order-status} — order-service 의 발행기와 같은 단일 객체 인코딩(docs/76). */
+    public static Serde<OrderStatusChanged> orderStatusSerde() {
+        return new AvroSpecificSerde<>(OrderStatusChanged.getEncoder(), OrderStatusChanged.getDecoder());
+    }
+
+    public static Serde<OrderTimeline> timelineSerde() {
+        return new AvroSpecificSerde<>(OrderTimeline.getEncoder(), OrderTimeline.getDecoder());
     }
 
     public void build(StreamsBuilder builder) {
@@ -108,5 +137,28 @@ public final class SagaTopology {
 
         state.toStream(Named.as("saga-state-changes"))
                 .to(stateTopic, Produced.with(Serdes.String(), stateSerde).withName("to-order-saga-state"));
+
+        // ── 주문 진행 타임라인(docs/76) — 사가와 별개의 저장소다. 같은 레코드(OrderSagaState)에 넣으면 그 스키마를
+        //    바꿔야 하고, 컴팩션 토픽 · 변경 로그 · RocksDB 에 쌓인 옛 지문의 레코드를 전부 읽을 수 있어야 한다(docs/55 §4).
+        //    새 저장소면 그 문제가 없다. 조회 API 가 둘을 합친다.
+        // [JA] 注文進行タイムライン(docs/76) — サーガとは別のストア。同じレコードに入れるとスキーマ進化が要る。新しいストアなら不要。
+        Serde<OrderStatusChanged> orderStatusSerde = orderStatusSerde();
+        Serde<OrderTimeline> timelineSerde = timelineSerde();
+
+        KTable<String, OrderTimeline> timeline = builder
+                .stream(orderStatusTopic, Consumed.with(Serdes.String(), orderStatusSerde).withName("order-status-changes"))
+                .filter((k, v) -> v != null && v.getEventId() != null && v.getStatus() != null,
+                        Named.as("drop-status-changes-without-id"))
+                .map((k, v) -> KeyValue.pair(String.valueOf(v.getOrderId()), OrderTimelineReducer.delta(v, clock.instant())),
+                        Named.as("status-delta"))
+                .groupByKey(Grouped.with("timeline-by-order", Serdes.String(), timelineSerde))
+                .aggregate(() -> null, (orderId, delta, current) -> OrderTimelineReducer.apply(current, delta),
+                        Named.as("fold-timeline"),
+                        Materialized.<String, OrderTimeline, KeyValueStore<Bytes, byte[]>>as(TIMELINE_STORE_NAME)
+                                .withKeySerde(Serdes.String())
+                                .withValueSerde(timelineSerde));
+
+        timeline.toStream(Named.as("timeline-changes"))
+                .to(timelineTopic, Produced.with(Serdes.String(), timelineSerde).withName("to-order-timeline"));
     }
 }

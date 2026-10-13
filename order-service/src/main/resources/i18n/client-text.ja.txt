@@ -579,3 +579,13 @@ scope 가 {} 인 쿠폰은 대상(targets)이 하나 이상 있어야 합니다.
 # order-service/src/main/java/com/project/order_service/stock/StockReservationTransportConfig.java (docs/66) — 운영자용 기동 오류(IllegalStateException 은 클라이언트에 나가지 않는다)
 stock.rpc.transport 는 http · grpc 중 하나여야 한다: {}
 = -
+
+# ── 운영자용: 주문 상태 이벤트(docs/76) — OrderDomainException · IllegalStateException 은 로그로만 남고 클라이언트에 나가지 않는다 ──
+주문 상태 이벤트를 직렬화하지 못했다: orderId={}
+= -
+
+order-status 아웃박스 페이로드를 읽지 못했다: id={}
+= -
+
+주문 id 가 없어 상태 변경 이벤트를 남길 수 없다 — 저장 뒤에 바꿀 것: {}
+= -

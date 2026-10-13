@@ -14,6 +14,7 @@ import StripeReturn from "components/order/StripeReturn";
 import RefundButton from "components/order/RefundButton";
 import ConfirmPurchaseButton from "components/order/ConfirmPurchaseButton";
 import OrderProgress from "components/order/OrderProgress";
+import OrderTimeline from "components/order/OrderTimeline";
 import { useOrderSettling } from "hook/useOrderSettling";
 import { useDispatch, useSelector } from "react-redux";
 import { CartStatus, emptyCart } from "../redux/CartSlice";
@@ -102,6 +103,8 @@ const OrderPage = () => {
             <main className="max-w-screen-2xl mx-auto bg-gray-100 grid grid-cols-3 md:px-10 pt-5 pb-8 gap-8">
                 <section className="col-span-2 bg-white p-2 md:p-5 rounded-xl border">
                     <OrderProgress order={orderData} settling={settling} timedOut={timedOut} />
+                    {/* 상태 변경 이력 — 읽기 모델(saga-projection, docs/76). 주문 상태가 바뀌면 다시 읽는다. */}
+                    <OrderTimeline orderId={orderData.id ?? orderId} orderStatus={orderData.orderStatus} />
                     <OrderInfo order={orderData} />
 
                     {orderData.products.map((product,i) => (

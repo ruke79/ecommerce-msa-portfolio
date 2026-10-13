@@ -5,6 +5,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import org.apache.kafka.streams.KafkaStreams;
+import java.time.Instant;
+import java.util.List;
+import com.project.common.avro.OrderSagaState;
+import com.project.common.avro.OrderTimeline;
+import com.project.common.avro.OrderTimelineEntry;
+import com.project.common.avro.SagaPhase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.config.StreamsBuilderFactoryBean;
@@ -16,7 +22,7 @@ class SagaQueryServiceTest {
 
     private static final SagaProjectionProperties PROPS = new SagaProjectionProperties(
             "saga-projection", "localhost:8190", "./state", 1,
-            new SagaProjectionProperties.Topics("order", "payment", "order-saga-state"));
+            new SagaProjectionProperties.Topics("order", "payment", "order-saga-state", "order-status", "order-timeline"));
 
     @Test
     @DisplayName("Streams 가 아직 없으면 NOT_READY — 503 + Retry-After")
@@ -34,6 +40,65 @@ class SagaQueryServiceTest {
         assertThat(SagaQueryService.isQueryable(KafkaStreams.State.ERROR)).isFalse();
         assertThat(SagaQueryService.isQueryable(KafkaStreams.State.NOT_RUNNING)).isFalse();
         assertThat(SagaQueryService.isQueryable(KafkaStreams.State.CREATED)).isFalse();
+    }
+
+    // ---------------------------------------------------------------- 두 저장소 합치기 · 소유권 (docs/76)
+
+    private static OrderSagaState saga(long customerId) {
+        return OrderSagaState.newBuilder().setOrderId(1L).setPhase(SagaPhase.COMPLETED).setCustomerId(customerId)
+                .setUpdatedAt(Instant.parse("2026-10-07T00:00:00Z")).build();
+    }
+
+    private static OrderTimeline timeline(Long customerId, String status) {
+        return OrderTimeline.newBuilder().setOrderId(1L).setCustomerId(customerId).setStatus(status)
+                .setEntries(List.of(OrderTimelineEntry.newBuilder().setEventId("e").setStatus(status).setSource("test")
+                        .setOccurredAt(Instant.parse("2026-10-07T00:00:10Z")).build()))
+                .setEventCount(1).setUpdatedAt(Instant.parse("2026-10-07T00:00:10Z")).build();
+    }
+
+    @Test
+    @DisplayName("사가 상태와 타임라인을 한 응답으로 — 둘 중 하나만 있어도 FOUND")
+    void composesBothStores() {
+        SagaQueryService.Result both = SagaQueryService.compose(saga(7L), timeline(7L, "PAID"), 7L, false);
+        assertThat(both.answer()).isEqualTo(SagaQueryService.Answer.FOUND);
+        assertThat(both.view().phase()).isEqualTo("COMPLETED");
+        assertThat(both.view().orderStatus()).isEqualTo("PAID");
+        assertThat(both.view().timeline()).hasSize(1);
+        assertThat(both.view().updatedAt()).isEqualTo(Instant.parse("2026-10-07T00:00:10Z"));
+
+        SagaQueryService.Result sagaOnly = SagaQueryService.compose(saga(7L), null, 7L, true);
+        assertThat(sagaOnly.view().orderStatus()).isNull();
+        assertThat(sagaOnly.view().timeline()).isEmpty();
+        assertThat(sagaOnly.view().stale()).isTrue();
+
+        SagaQueryService.Result timelineOnly = SagaQueryService.compose(null, timeline(7L, "NOT_PROCESSED"), 7L, false);
+        assertThat(timelineOnly.view().phase()).isNull();
+        assertThat(timelineOnly.view().orderStatus()).isEqualTo("NOT_PROCESSED");
+
+        assertThat(SagaQueryService.compose(null, null, 7L, false).answer()).isEqualTo(SagaQueryService.Answer.NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("🔴 남의 주문은 NOT_FOUND — 403 이 아니라 404, 있는지조차 알리지 않는다 ")
+    void someoneElsesOrderLooksLikeNotFound() {
+        SagaQueryService.Result r = SagaQueryService.compose(saga(7L), timeline(7L, "PAID"), 8L, false);
+        assertThat(r.answer()).isEqualTo(SagaQueryService.Answer.NOT_FOUND);
+        assertThat(r.view()).isNull();
+        assertThat(r.activeHost()).isNull();
+        assertThat(r).isEqualTo(SagaQueryService.compose(null, null, 8L, false));
+    }
+
+    @Test
+    @DisplayName("customerId 를 모르는 레코드도 남의 것으로 본다 — 모르면 보여 주지 않는다")
+    void unknownCustomerIsNotFoundForAnyRequester() {
+        assertThat(SagaQueryService.compose(null, timeline(null, "PAID"), 7L, false).answer())
+                .isEqualTo(SagaQueryService.Answer.NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("요청자 없음(내부 진단)은 소유권을 보지 않는다")
+    void noRequesterSkipsOwnership() {
+        assertThat(SagaQueryService.compose(saga(7L), null, null, false).answer()).isEqualTo(SagaQueryService.Answer.FOUND);
     }
 
     @Test

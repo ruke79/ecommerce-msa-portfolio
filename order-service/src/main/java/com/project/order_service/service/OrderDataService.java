@@ -77,6 +77,15 @@ public class OrderDataService {
      */
     private final PaymentCurrencyPolicy currencyPolicy;
 
+    /** 상태 변경 + 이벤트(docs/76). 세터 — 생성자를 쓰는 테스트가 많다. 기본값은 이벤트 없이 상태만 바꾼다(단위 테스트). */
+    // [JA] 状態変更 + イベント(docs/76)。セッター — コンストラクタを使うテストが多い。デフォルトはイベントなしで状態だけ変える。
+    private OrderStatusChanger statusChanger = OrderStatusChanger.withoutEvents();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setStatusChanger(OrderStatusChanger statusChanger) {
+        this.statusChanger = statusChanger;
+    }
+
     @Transactional(readOnly = true)
     public List<Order> getOrdersByCustomerId(Long customerId) {
         log.debug("Data Service: Fetching orders for customer ID: {}", customerId);
@@ -337,6 +346,8 @@ public class OrderDataService {
             orderAddressRepository.save(address);
             order.setShippingAddress(address);
             Order result = orderRepository.save(order);
+            // 타임라인의 첫 항목(docs/76) — 저장 뒤여야 주문 id 가 있다.
+            statusChanger.created(result);
 
             log.info("주문 저장 완료: orderId={}", result.getOrderId());
             return result;
@@ -484,7 +495,7 @@ public class OrderDataService {
                     "이미 결제된 주문은 이 경로로 취소할 수 없습니다. 고객센터로 문의해 주세요.");
         }
 
-        order.setOrderStatus(OrderStatus.CANCELED);
+        statusChanger.change(order, OrderStatus.CANCELED, "customer");
         orderRepository.save(order);
         log.info("주문 취소: orderId={}", order.getOrderId());
     }
@@ -773,7 +784,7 @@ public class OrderDataService {
                 .items(itemsJson(quote.items()))
                 .build());
         if (quote.completesOrder()) {
-            order.setOrderStatus(OrderStatus.REFUNDED);
+            statusChanger.change(order, OrderStatus.REFUNDED, admin ? "admin" : "customer");
         }
         orderRepository.saveAndFlush(order);
         log.info("환불 반영: orderId={} provider={} refundId={} by={} store={} charged={} {} complete={} awaitingReturn={}",
@@ -914,7 +925,7 @@ public class OrderDataService {
             throw new PaymentVerificationException(
                     "입금 안내를 받을 수 있는 주문이 아닙니다: status=" + order.getOrderStatus());
         }
-        order.setOrderStatus(OrderStatus.UNPAID);
+        statusChanger.change(order, OrderStatus.UNPAID, "bank-transfer");
         order.setDepositorName(name);
         order.setDepositDeadline(LocalDateTime.now().plusHours(Math.max(1, deadlineHours)));
         orderRepository.save(order);
@@ -1021,7 +1032,7 @@ public class OrderDataService {
             throw new PaymentVerificationException("가상계좌 통화가 다릅니다: issued=" + va.currency()
                     + ", expected=" + expected.currency());
         }
-        order.setOrderStatus(OrderStatus.UNPAID);
+        statusChanger.change(order, OrderStatus.UNPAID, "virtual-account");
         order.setVbankBank(va.bank());
         order.setVbankAccount(va.accountNumber());
         order.setVbankHolder(va.holder());
@@ -1056,7 +1067,7 @@ public class OrderDataService {
             throw new PaymentVerificationException(
                     "입금 대기 중인 주문만 취소할 수 있습니다: status=" + order.getOrderStatus());
         }
-        order.setOrderStatus(OrderStatus.CANCELED);
+        statusChanger.change(order, OrderStatus.CANCELED, admin ? "admin" : "customer");
         orderRepository.save(order);
         log.info("입금 전 취소: orderId={} by={}", order.getOrderId(), admin ? "admin" : "customer");
         return order;
@@ -1073,7 +1084,7 @@ public class OrderDataService {
             if (order.getProviderPaymentId() != null) {
                 continue;   // 입금 확인은 됐는데 사가가 아직 PAID 로 못 바꾼 찰나 — 접지 않는다
             }
-            order.setOrderStatus(OrderStatus.CANCELED);
+            statusChanger.change(order, OrderStatus.CANCELED, "deposit-expired");
             log.info("입금 기한 경과로 취소: orderId={} deadline={}", order.getOrderId(), order.getDepositDeadline());
         }
         List<Order> canceled = expired.stream().filter(o -> o.getOrderStatus() == OrderStatus.CANCELED).toList();

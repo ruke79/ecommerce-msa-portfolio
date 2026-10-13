@@ -96,7 +96,8 @@ class PaymentOutboxTraceTest {
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
 
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(
-                claiming, publisher, mock(TokenRequestKafkaPublisher.class), traceContext);
+                claiming, publisher, mock(TokenRequestKafkaPublisher.class),
+                mock(com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher.class), traceContext);
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
         scheduler.processOutboxMessage();
 

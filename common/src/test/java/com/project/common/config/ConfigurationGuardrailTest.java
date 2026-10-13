@@ -893,17 +893,22 @@ class ConfigurationGuardrailTest {
         }
         assertThat(script).as("컴팩션 토픽을 만드는 스크립트").exists();
 
-        // 'state-dir:' 이 아니라 'state:' 만 — topics 블록의 값이다.
-        Matcher m = Pattern.compile("^\\s*state:\\s*(\\S+)\\s*$", Pattern.MULTILINE)
-                .matcher(Files.readString(yml, StandardCharsets.UTF_8));
-        assertThat(m.find()).as("saga-projection.topics.state 선언").isTrue();
-        String topic = m.group(1);
+        // 'state-dir:' 이 아니라 'state:' 만 — topics 블록의 값이다. timeline 은 주문 진행 타임라인(docs/76).
+        String ymlText = Files.readString(yml, StandardCharsets.UTF_8);
+        String scriptText = Files.readString(script, StandardCharsets.UTF_8);
+        Matcher defaults = Pattern.compile("STATE_TOPICS=\"\\$\\{STATE_TOPICS:-([^}]+)\\}\"").matcher(scriptText);
+        assertThat(defaults.find()).as("ops/02 의 STATE_TOPICS 기본값").isTrue();
+        List<String> provisioned = List.of(defaults.group(1).trim().split("\\s+"));
 
-        assertThat(Files.readString(script, StandardCharsets.UTF_8))
-                .as("ops/02 의 STATE_TOPIC 기본값이 앱의 saga-projection.topics.state('%s')와 달라졌다", topic)
-                .contains("STATE_TOPIC:-" + topic + "}")
-                .as("상태 토픽은 컴팩션으로 만들어야 한다")
-                .contains("cleanup.policy=compact");
+        for (String key : List.of("state", "timeline")) {
+            Matcher m = Pattern.compile("^\\s*" + key + ":\\s*(\\S+)\\s*$", Pattern.MULTILINE).matcher(ymlText);
+            assertThat(m.find()).as("saga-projection.topics." + key + " 선언").isTrue();
+            String topic = m.group(1);
+            assertThat(provisioned)
+                    .as("ops/02 의 STATE_TOPICS 기본값에 앱의 saga-projection.topics.%s('%s')가 없다", key, topic)
+                    .contains(topic);
+        }
+        assertThat(scriptText).as("상태 토픽은 컴팩션으로 만들어야 한다").contains("cleanup.policy=compact");
     }
 
     @Test
@@ -1572,6 +1577,45 @@ class ConfigurationGuardrailTest {
                 .as("deploy-oci.yml 의 트리거는 workflow_dispatch 하나여야 한다 — 자동 트리거(workflow_run · push · schedule …)를 "
                         + "더하면 비공개 저장소에서는 승인 없이 운영에 배포된다(docs/36 §6)")
                 .containsExactly("workflow_dispatch");
+    }
+
+    /**
+     * B-78: 주문 상태는 {@code OrderStatusChanger} 만 바꾼다(docs/76).
+     *
+     * <p>상태 변경은 같은 트랜잭션의 아웃박스 행({@code order-status})이 되어 saga-projection 의 읽기 모델(타임라인)로
+     * 접힌다. 누군가 {@code order.setOrderStatus(...)} 를 직접 부르면 DB 는 바뀌는데 이벤트가 없다 — 읽기 모델이
+     * <b>조용히</b> 틀린다(테스트는 모두 초록). 그래서 호출 자리를 한 곳으로 묶고 여기서 지킨다.
+     *
+     * <p>[JA] 注文状態は OrderStatusChanger だけが変える(docs/76)。直接 setOrderStatus を呼ぶと DB は変わるのにイベントが
+     * なく、読み取りモデルが<b>静かに</b>ずれる。
+     */
+    @Test
+    @DisplayName("B-78: order.setOrderStatus · markPaid 는 OrderStatusChanger 밖에서 부르지 않는다")
+    void orderStatusChangesGoThroughTheChanger() throws IOException {
+        Path src = repoRoot().resolve("order-service/src/main/java");
+        if (!Files.isDirectory(src)) {
+            return;
+        }
+        // statusChanger.markPaid(...) 는 바로 그 변경기 호출이다 — 제외
+        Pattern call = Pattern.compile("(?<!statusChanger)\\.(setOrderStatus|markPaid)\\(");
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> files = Files.walk(src)) {
+            for (Path java : files.filter(x -> x.toString().endsWith(".java")).toList()) {
+                String name = java.getFileName().toString();
+                if (name.equals("OrderStatusChanger.java")) {
+                    continue;
+                }
+                String code = stripComments(Files.readString(java, StandardCharsets.UTF_8));
+                Matcher m = call.matcher(code);
+                while (m.find()) {
+                    int line = code.substring(0, m.start()).split("\n", -1).length;
+                    offenders.add(repoRoot().relativize(java) + ":" + line + " → " + m.group());
+                }
+            }
+        }
+        assertThat(offenders)
+                .as("주문 상태는 OrderStatusChanger.change/markPaid 로 바꾼다 — 직접 바꾸면 order-status 이벤트가 빠진다(docs/76)")
+                .isEmpty();
     }
 
     /**

@@ -66,6 +66,8 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     private final PaymentOutboxHelper paymentOutboxHelper;
     private final PaymentRequestKafkaPublisher paymentRequestMessagePublisher;
     private final TokenRequestKafkaPublisher tokenRequestMessagePublisher;
+    /** 주문 상태 변경(docs/76) — 토픽 order-status. */
+    private final com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher orderStatusPublisher;
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     // 한 번에 선점할 행 수. 제한이 없으면 한 레플리카가 밀린 이벤트를 전부 잠가
@@ -103,6 +105,11 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
             } else if ("token-update".equals(outbox.getEventType())) {
                 settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay token-update",
                         () -> tokenRequestMessagePublisher.publish(outbox, this::updateOutboxStatus));
+            } else if (PaymentOutboxHelper.ORDER_STATUS_EVENT.equals(outbox.getEventType())) {
+                // 상태를 바꾼 요청의 추적 아래에서 — 주문 진행 조회가 그 요청의 추적으로 이어진다(docs/76).
+                // [JA] 状態を変えたリクエストのトレースの下で — 注文進行の照会がそのリクエストのトレースにつながる(docs/76)。
+                settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay order-status",
+                        () -> orderStatusPublisher.publish(outbox, this::updateOutboxStatus));
             } else {
                 // 알 수 없는 이벤트 타입을 STARTED 로 두면 매 폴링마다 다시 집어 무한 반복한다.
                 // [JA] 未知のイベントタイプを STARTED のままにすると、ポーリングのたびに拾い直して無限に繰り返す。

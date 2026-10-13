@@ -73,7 +73,10 @@ class AvroWiringGuardrailTest {
             Map.entry("saga-projection/src/main/java/com/project/saga_projection/topology/SagaTopology.java",
                     List.of("new AvroDtoDeserializer<>(new PaymentRequestAvroMapping())",
                             "new AvroDtoDeserializer<>(new PaymentResponseAvroMapping())",
-                            "new AvroSpecificSerde<>(OrderSagaState.getEncoder(), OrderSagaState.getDecoder())")),
+                            "new AvroSpecificSerde<>(OrderSagaState.getEncoder(), OrderSagaState.getDecoder())",
+                            // 주문 상태 변경 입력 · 진행 타임라인 출력(docs/76) — DTO 없이 레코드 serde
+                            "new AvroSpecificSerde<>(OrderStatusChanged.getEncoder(), OrderStatusChanged.getDecoder())",
+                            "new AvroSpecificSerde<>(OrderTimeline.getEncoder(), OrderTimeline.getDecoder())")),
             // 문자열 소비자 — Avro 를 JSON 문자열로 바꿔 주지 않으면 JsonNode 파싱에서 깨진다
             Map.entry("delivery-service/src/main/java/com/project/delivery_service/config/KafkaConsumerConfig.java",
                     List.of("new AvroJsonTextDeserializer()")),
@@ -107,11 +110,12 @@ class AvroWiringGuardrailTest {
         }
         for (String s : List.of("PaymentRequest", "PaymentResponse", "ProductUpdateRequest", "UserCreatedRequest",
                 "CartEmptyRequest", "CartRollbackRequest", "CouponUseRequest", "CouponRollbackRequest",
-                "OutgoingMailRequest", "ChatMessage", "OrderSagaState")) {
+                "OutgoingMailRequest", "ChatMessage", "OrderSagaState", "OrderStatusChanged", "OrderTimeline")) {
             assertThat(schemas).as(s).contains(s + ".avsc");
         }
         assertThat(com.project.common.kafka.avro.AvroDecoders.byTopic()).hasSize(schemas.size());
-        // DTO 매핑은 chat(모듈 로컬 DTO)과 order-saga-state(DTO 없음, Streams 상태) 둘만 빼고 전부
-        assertThat(com.project.common.kafka.avro.AvroMappings.byTopic()).hasSize(schemas.size() - 2);
+        // DTO 매핑은 chat(모듈 로컬 DTO)과 DTO 없이 생성 레코드를 그대로 싣는 셋(order-saga-state · order-status · order-timeline,
+        // docs/38 §1.17 · docs/76)을 빼고 전부
+        assertThat(com.project.common.kafka.avro.AvroMappings.byTopic()).hasSize(schemas.size() - 4);
     }
 }

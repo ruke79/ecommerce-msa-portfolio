@@ -26,7 +26,7 @@
 
 | # | ドキュメント | 内容 | 状態 |
 |---|---|---|---|
-| 62 | [技術事例集](62-engineering-casebook.md) | 事例 18 個 — 問題 · 対処 · 限界 · 改善点、事例ごとにオライリーの参考書 1 冊 | ✅ |
+| 62 | [技術事例集](62-engineering-casebook.md) | 事例 19 個 — 問題 · 対処 · 限界 · 改善点、事例ごとに参考書 1 冊 | ✅ |
 | 00 | [Before/After 総合索引](00-before-after.md) | 見つけた欠陥（B-1〜29 · FE · CAT …）と解決を 1 つの表に | 🟡 |
 | 54 | [改善の総まとめ — 実務基準との比較](54-improvements-vs-practice.md) | 領域ごとに何が足りず今はどうか、まだ足りないもの、教訓 10 個 | 🟡 |
 | 03 | [アーキテクチャと信頼性](03-architecture-and-reliability.md) | 構成図 · Saga フロー · 障害シナリオ F-1〜9 と対応 | 🟡 |
@@ -90,6 +90,8 @@
 | 72 | [モデルリファクタリング 2 次のデプロイ手順書](72-model-refactor-deploy-runbook.md) | 自動ロールバックが無効になるデプロイ(ROLLBACK-UNSAFE) — 事前点検クエリ・バックアップ・デプロイ中のお知らせ編集禁止・デプロイ後の確認・失敗時は前に進めて直す・次のリリースの contract | ✅ |
 | 73 | [注文 ↔ 配送先の expand → contract](73-order-address-expand-contract.md) | 二重外部キーを二つのリリースで — V25(一方向・注文側のユニーク) → V26(列の削除、ROLLBACK-UNSAFE)、ローリング中の旧・新 Pod、自ら止まる時間・データガード、実 PostgreSQL のマイグレーションテスト | ✅ |
 | 74 | [機能フラグ — 第 1 段階](74-feature-flags.md) | OpenFeature + ファイルプロバイダー(flagd 形式、再起動なしで反映)、search.engine を検索語の比率で切り替え、評価結果をスパン・span_metrics に、キャッシュキーにエンジン、B-76 | ✅ |
+| 76 | [注文状態イベントと進行タイムライン](76-order-status-read-model.md) | CQRS を注文進行の照会へ — OrderStatusChanger(一箇所 + 同じトランザクションのアウトボックス)、order-status → saga-projection の OrderTimeline(eventId 重複排除・発生順・上限)、ゲートウェイ経由の照会は他人の注文を 404、画面の「進行の記録」、B-78 | ✅ |
+| 77 | [イベントソーシング — 適用しなかった理由と設計](77-event-sourcing-decision.md) | 決定の記録 — 今は「DB が真実、イベントは通知」(CDC 側)。Kleppmann・Richardson・Vernon・Young・Fowler を根拠に、約束と代価、Order 37 フィールド・23 クラスの数字、やるなら Order 集約から PostgreSQL イベント表 + 同期プロジェクションで四リリース、見直すシグナル | ✅ |
 | 61 | [新サービス追加チェックリスト](61-adding-a-service.md) | 登録が必要な箇所すべてと、漏れると静かにおかしくなるもの | ✅ |
 | 31 | [環境分離 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.md) | kustomize オーバーレイ、arm64、インバウンドポート 0 | 🟡 |
 | 32 | [インフラの外部化](32-external-managed-infra.md) | マネージドの無料枠に出せるものと出せないもの | ✅ |

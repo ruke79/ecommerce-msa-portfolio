@@ -26,7 +26,7 @@
 
 | # | 문서 | 내용 | 상태 |
 |---|---|---|---|
-| 62 | [기술 사례집](62-engineering-casebook.ko.md) | 사례 18개 — 문제 · 처리 · 한계 · 개선할 점, 사례마다 오라일리 참고서 1권 | ✅ |
+| 62 | [기술 사례집](62-engineering-casebook.ko.md) | 사례 19개 — 문제 · 처리 · 한계 · 개선할 점, 사례마다 참고서 1권 | ✅ |
 | 00 | [전/후 종합 색인](00-before-after.ko.md) | 발견한 결함(B-1~29 · FE · CAT …)과 해결을 한 표로 | 🟡 |
 | 54 | [개선 총정리 — 실무 기준과 비교](54-improvements-vs-practice.ko.md) | 영역별로 무엇이 부족했고 지금은 어떤가, 아직 부족한 것, 교훈 10가지 | 🟡 |
 | 03 | [아키텍처와 신뢰성](03-architecture-and-reliability.ko.md) | 구조도 · 사가 흐름 · 장애 시나리오 F-1~9 와 대응 | 🟡 |
@@ -90,6 +90,8 @@
 | 72 | [모델 리팩토링 2차 배포 런북](72-model-refactor-deploy-runbook.ko.md) | 자동 복귀가 꺼지는 배포(ROLLBACK-UNSAFE) — 사전 점검 쿼리 · 백업 · 배포 중 공지 편집 금지 · 배포 후 확인 · 실패 시 앞으로 고치기 · 다음 릴리스의 contract | ✅ |
 | 73 | [주문 ↔ 배송지 expand → contract](73-order-address-expand-contract.ko.md) | 이중 외래 키를 두 릴리스로 — V25(한 방향 · 주문 쪽 유니크) → V26(열 삭제, ROLLBACK-UNSAFE), 롤링 중 옛 · 새 파드, 스스로 멈추는 시간 · 데이터 가드, 실제 PostgreSQL 마이그레이션 테스트 | ✅ |
 | 74 | [기능 플래그 — 1단계](74-feature-flags.ko.md) | OpenFeature + 파일 공급자(flagd 형식, 재시작 없이 반영), search.engine 을 검색어 비율로 전환, 평가 결과를 스팬 · span_metrics 로, 캐시 키에 엔진, B-76 | ✅ |
+| 76 | [주문 상태 이벤트와 진행 타임라인](76-order-status-read-model.ko.md) | CQRS 를 주문 진행 조회로 — OrderStatusChanger(한 곳 + 같은 트랜잭션의 아웃박스), order-status → saga-projection 의 OrderTimeline(eventId 중복 제거 · 발생 순 · 상한), 게이트웨이 조회는 남의 주문 404, 화면 "진행 기록", B-78 | ✅ |
+| 77 | [이벤트 소싱 — 적용하지 않은 이유와 설계](77-event-sourcing-decision.ko.md) | 결정 기록 — 지금은 "DB 가 진실, 이벤트는 알림"(CDC 쪽). Kleppmann · Richardson · Vernon · Young · Fowler 를 근거로 약속과 대가, Order 37 필드 · 23 클래스의 숫자, 한다면 Order 집합체부터 PostgreSQL 이벤트 표 + 동기 프로젝션으로 네 릴리스, 다시 볼 신호 | ✅ |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |

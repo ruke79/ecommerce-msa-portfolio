@@ -547,11 +547,40 @@
 
 ---
 
+## 19. 状態は変わるのに「いつ・なぜ」はログだけだった — 状態変更イベントと読み取りモデル(CQRS)
+
+**📖 参考書** — Martin Kleppmann, *Designing Data-Intensive Applications* (O'Reilly, 2017), 11 章 "Stream Processing"。変更イベントのストリームから派生データ(読み取りモデル)を作る話と、イベントソーシング・CQRS をどこまで取り入れるかの話です。
+
+**問題**
+- 「イベントソーシング・CQRS は適用されているか」を点検しました。CQRS は二箇所(決済サーガのプロジェクション、ES 検索)に部分的に、イベントソーシングは無し。
+- 注文状態は十箇所がそれぞれ `setOrderStatus` で上書きしていました。**いつ・何が**変えたかは三つの時刻(`paidCreatedAt` など)とログだけで、キャンセル・返金・配送キャンセルで戻った履歴はどこにもありませんでした。
+- サーガのプロジェクションは決済リクエスト・レスポンスしか知らず「決済の後」を見せられず、ゲートウェイのルートが無く画面から使えませんでした。
+
+**対処**
+- 状態変更を `OrderStatusChanger` 一箇所に集め、**同じトランザクション**でアウトボックス行(`order-status`)を残します。既存の決済アウトボックス・リレーをそのまま使います。同じ状態への「変更」はイベントではありません。
+- saga-projection が `order-status` を畳み込んで**注文進行タイムライン**(新レコード・新ストア・コンパクショントピック `order-timeline`)を作ります。サーガ状態のレコードを変えなかったのはスキーマ進化(旧フィンガープリント)を避けるための選択です。
+- 畳み込み規則: eventId(アウトボックス行 id)で再発行を弾き、順序は到着ではなく**発生時刻**、上限 50。
+- ゲートウェイのルート(JwtAuthorization) + 所有権 — **他人の注文は 404**。画面は注文詳細に「進行の記録」を描き、読み取りモデルが答えなければ(404・503)静かに隠します。
+- **ガード** B-78 — `.setOrderStatus(`・`.markPaid(` を変更器の外で見つけたらビルドが赤くなります。B-38 は状態トピック二つを見ます。
+
+**限界**
+- イベントソーシングは依然として違います — 真実は order の DB、イベントは通知です。この規模ではそれが正しいと判断しました。
+- ローリング中に**旧**リレーが新しい行を FAILED にすることがあります(未知のタイプ)。失うのは読み取りモデルの項目で、UPDATE 一行で蘇ります(docs/76 §3-2)。原則は二リリースです。
+- 注文一覧(複数注文)の照会はまだ書き込みモデルです。
+
+**改善点**
+- 通知サービスが `order-status` を直接購読します。
+- 顧客 id キーの二つ目のストアで「自分の注文の進行」一覧を作ります。
+
+→ [docs/76](76-order-status-read-model.md)・[docs/77](77-event-sourcing-decision.md)(イベントソーシングを取り入れなかった理由と設計)・[docs/74](74-feature-flags.md)・§5
+
+---
+
 ## 参考書一覧
 
 | 本 | 出版 | 事例 |
 |---|---|---|
-| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 |
+| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 · 19 |
 | Sam Newman, *Building Microservices*, 2nd ed. | O'Reilly, 2021 | 5 · 6 · 8 · 13 |
 | Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty, *Kafka: The Definitive Guide*, 2nd ed. | O'Reilly, 2021 | 4 |
 | Andrew Hoffman, *Web Application Security*, 2nd ed. | O'Reilly, 2024 | 1 |

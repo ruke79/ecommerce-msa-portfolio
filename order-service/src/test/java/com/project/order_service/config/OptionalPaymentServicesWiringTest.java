@@ -38,6 +38,9 @@ class OptionalPaymentServicesWiringTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withBean(OrderCacheService.class, () -> mock(OrderCacheService.class))
             .withBean(OrderDataService.class, () -> mock(OrderDataService.class))
+            // OrderDataService 의 @Autowired 세터(OrderStatusChanger, docs/76)는 목 하위 클래스에도 적용된다 — 빈이 있어야 뜬다.
+            .withBean(com.project.order_service.service.OrderStatusChanger.class,
+                    com.project.order_service.service.OrderStatusChanger::withoutEvents)
             .withBean(BankTransferService.class, () -> mock(BankTransferService.class))
             .withBean(ObjectMapper.class, ObjectMapper::new)
             .withPropertyValues("frontend.url=https://shop.example")

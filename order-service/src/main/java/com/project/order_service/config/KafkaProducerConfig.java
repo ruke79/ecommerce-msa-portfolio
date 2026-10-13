@@ -81,6 +81,24 @@ public class KafkaProducerConfig {
         return new KafkaTemplate<>(paymentRequestProducerFactory());
     }
 
+    /**
+     * 주문 상태 변경(docs/76) — DTO 없이 생성 레코드({@code OrderStatusChanged})를 단일 객체 인코딩으로 그대로 싣는다.
+     * saga-projection 이 같은 {@code AvroSpecificSerde} 로 읽는다.
+     * [JA] 注文状態変更(docs/76) — DTO なしで生成レコードを単一オブジェクト符号化のまま載せる。
+     */
+    @Bean
+    public ProducerFactory<String, com.project.common.avro.OrderStatusChanged> orderStatusProducerFactory() {
+        return new DefaultKafkaProducerFactory<>(producerConfigurations(), new StringSerializer(),
+                new com.project.common.kafka.avro.AvroSpecificSerde<>(
+                        com.project.common.avro.OrderStatusChanged.getEncoder(),
+                        com.project.common.avro.OrderStatusChanged.getDecoder()).serializer());
+    }
+
+    @Bean
+    public KafkaTemplate<String, com.project.common.avro.OrderStatusChanged> orderStatusKafkaTemplate() {
+        return new KafkaTemplate<>(orderStatusProducerFactory());
+    }
+
     @Bean
     public Map<String, Object> couponRollbackConfigurations() {
         return ImmutableMap.<String, Object>builder()

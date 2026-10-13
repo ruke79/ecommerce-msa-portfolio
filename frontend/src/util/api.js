@@ -221,6 +221,16 @@ export const getOrder = async (orderId) => {
 };
 
 /**
+ * 주문 진행 타임라인 — saga-projection 의 읽기 모델(docs/76). 주문 DB 가 아니라 상태 변경 이벤트를 접은 것이라
+ * 주문 상세와 몇 초 어긋날 수 있다(응답의 stale · updatedAt). 404(아직 이벤트 없음 · 남의 주문) · 503(프로젝션 준비 중)은
+ * 화면이 숨기면 되는 정상 범위다 — 호출자가 catch 한다.
+ */
+export const getOrderTimeline = async (orderId) => {
+  const { data } = await getRequest(`/saga-projection/api/saga/${orderId}`);
+  return data;
+};
+
+/**
  * 구매 확정 — DELIVERED → COMPLETED (docs/25 §12).
  *
  * <p>본문이 없다. 어느 주문인지는 경로, 누가인지는 게이트웨이가 토큰에서 뽑는다. 남의 주문이면

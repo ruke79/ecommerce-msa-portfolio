@@ -31,6 +31,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.kafka.support.serializer.JsonSerializer;
 
 import com.project.common.avro.OrderSagaState;
+import com.project.common.avro.OrderStatusChanged;
+import com.project.common.avro.OrderTimeline;
 import com.project.common.avro.SagaPhase;
 import com.project.common.constants.PaymentStatus;
 import com.project.common.kafka.avro.AvroDtoSerializer;
@@ -59,6 +61,8 @@ class SagaTopologyTest {
     private TestInputTopic<String, byte[]> orderRaw;
     private TestInputTopic<String, byte[]> paymentRaw;
     private TestOutputTopic<String, OrderSagaState> stateOut;
+    private TestInputTopic<String, OrderStatusChanged> statusAvro;
+    private TestOutputTopic<String, OrderTimeline> timelineOut;
 
     @BeforeEach
     void setUp() {
@@ -80,6 +84,10 @@ class SagaTopologyTest {
         paymentRaw = driver.createInputTopic("payment", new StringSerializer(), new ByteArraySerializer());
         stateOut = driver.createOutputTopic("order-saga-state", new StringDeserializer(),
                 SagaTopology.stateSerde().deserializer());
+        statusAvro = driver.createInputTopic("order-status", new StringSerializer(),
+                SagaTopology.orderStatusSerde().serializer());
+        timelineOut = driver.createOutputTopic("order-timeline", new StringDeserializer(),
+                SagaTopology.timelineSerde().deserializer());
     }
 
     @AfterEach
@@ -117,6 +125,45 @@ class SagaTopologyTest {
         assertThat(s.getRequestCount()).isEqualTo(1);
         assertThat(s.getResponseCount()).isEqualTo(1);
         assertThat(s.getUpdatedAt()).isEqualTo(T0);
+    }
+
+    private static OrderStatusChanged statusChanged(String eventId, long orderId, String from, String to, Instant at) {
+        return OrderStatusChanged.newBuilder().setEventId(eventId).setOrderId(orderId).setCustomerId(7L)
+                .setPreviousStatus(from).setStatus(to).setSource("test").setOccurredAt(at).build();
+    }
+
+    /**
+     * 🔴 주문 진행 타임라인(docs/76) — order-status 입력이 별도 저장소 · 출력 토픽으로 접힌다. 사가 저장소는 건드리지
+     * 않는다(그 스키마를 바꾸지 않으려고 저장소를 나눴다).
+     */
+    @Test
+    @DisplayName("🔴 order-status(Avro) → 타임라인 저장소 · order-timeline 토픽 — 사가 저장소는 그대로")
+    void foldsStatusChangesIntoTimeline() {
+        statusAvro.pipeInput("order-11", statusChanged("e1", 11, null, "NOT_PROCESSED", T0));
+        statusAvro.pipeInput("11", statusChanged("e2", 11, "NOT_PROCESSED", "PAID", T0.plusSeconds(5)));
+        statusAvro.pipeInput("11", statusChanged("e2", 11, "NOT_PROCESSED", "PAID", T0.plusSeconds(5)));   // 재발행
+
+        List<KeyValue<String, OrderTimeline>> out = timelineOut.readKeyValuesToList();
+        assertThat(out).extracting(kv -> kv.key).containsOnly("11");
+        assertThat(out.get(out.size() - 1).value.getStatus()).isEqualTo("PAID");
+
+        KeyValueStore<String, OrderTimeline> timelines = driver.getKeyValueStore(SagaTopology.TIMELINE_STORE_NAME);
+        OrderTimeline t = timelines.get("11");
+        assertThat(t.getEntries()).hasSize(2);
+        assertThat(t.getEventCount()).isEqualTo(3);
+        assertThat(t.getCustomerId()).isEqualTo(7L);
+        assertThat(t.getUpdatedAt()).isEqualTo(T0);   // 고정 시계
+        assertThat(store().get("11")).as("사가 저장소에는 아무것도 없다").isNull();
+        assertThat(stateOut.isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("타임라인 출력도 Avro 단일 객체 인코딩이다 — 다른 서비스의 하이브리드 역직렬화기가 그대로 읽는다")
+    void timelineOutputIsAvro() {
+        statusAvro.pipeInput("12", statusChanged("e1", 12, null, "NOT_PROCESSED", T0));
+        TestOutputTopic<String, byte[]> raw = driver.createOutputTopic("order-timeline",
+                new StringDeserializer(), new org.apache.kafka.common.serialization.ByteArrayDeserializer());
+        assertThat(AvroWire.isAvro(raw.readValue())).isTrue();
     }
 
     @Test

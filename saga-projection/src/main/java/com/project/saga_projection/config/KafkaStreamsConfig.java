@@ -86,7 +86,8 @@ public class KafkaStreamsConfig {
     /** 토폴로지를 {@link StreamsBuilder} 에 붙인다. 테스트는 같은 {@link SagaTopology} 를 TopologyTestDriver 에 붙인다. */
     @Bean
     public SagaTopology sagaTopology(SagaProjectionProperties props) {
-        return new SagaTopology(props.topics().order(), props.topics().payment(), props.topics().state());
+        return new SagaTopology(props.topics().order(), props.topics().payment(), props.topics().state(),
+                props.topics().orderStatus(), props.topics().timeline());
     }
 
     @Bean

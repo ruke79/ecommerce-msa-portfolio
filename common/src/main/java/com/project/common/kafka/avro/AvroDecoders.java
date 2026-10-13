@@ -38,6 +38,9 @@ public final class AvroDecoders {
                 Map.entry("chat", com.project.common.avro.ChatMessage.createDecoder(
                         AvroSchemaHistory.store(AvroSchemaHistory.CHAT_MESSAGE))),
                 // saga-projection(Kafka Streams)의 출력. DTO 가 없다 — 스키마가 곧 읽기 모델이다(docs/38 §1.17).
-                Map.entry("order-saga-state", com.project.common.avro.OrderSagaState.getDecoder()));
+                Map.entry("order-saga-state", com.project.common.avro.OrderSagaState.getDecoder()),
+                // 주문 상태 변경(order-service 아웃박스 → 릴레이)과 그것을 접은 진행 타임라인(saga-projection, docs/76).
+                Map.entry("order-status", com.project.common.avro.OrderStatusChanged.getDecoder()),
+                Map.entry("order-timeline", com.project.common.avro.OrderTimeline.getDecoder()));
     }
 }

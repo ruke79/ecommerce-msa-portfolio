@@ -59,6 +59,15 @@ public class OrderSaga {
         this.stockHold = stockHold;
     }
 
+    /** 상태 변경 + 이벤트(docs/76). 세터 — 생성자를 쓰는 테스트가 많다. 기본값은 이벤트 없이 상태만 바꾼다(단위 테스트). */
+    // [JA] 状態変更 + イベント(docs/76)。セッター — コンストラクタを使うテストが多い。デフォルトはイベントなしで状態だけ変える。
+    private com.project.order_service.service.OrderStatusChanger statusChanger = com.project.order_service.service.OrderStatusChanger.withoutEvents();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setStatusChanger(com.project.order_service.service.OrderStatusChanger statusChanger) {
+        this.statusChanger = statusChanger;
+    }
+
     @Transactional(readOnly = true)
     private Order getOrderByOrderStatus(Long orderId, OrderStatus orderStatus) {
         log.debug("OrderSaga: Attempting to get order with ID {} and status {}", orderId, orderStatus);
@@ -196,9 +205,10 @@ public class OrderSaga {
     private Order updateOrderStatus(Order order, OrderStatus orderStatus) {
         log.debug("OrderSaga: Updating order {} status from {} to {}.", order.getOrderId(), order.getOrderStatus(), orderStatus);
         if (orderStatus == OrderStatus.PAID) {
-            order.markPaid(java.time.LocalDateTime.now());   // 결제 시각도 함께 — 카드 · 간편결제 경로는 여기서만 PAID 가 된다
+            // 결제 시각도 함께 — 카드 · 간편결제 경로는 여기서만 PAID 가 된다
+            statusChanger.markPaid(order, java.time.LocalDateTime.now(), "payment-saga");
         } else {
-            order.setOrderStatus(orderStatus);
+            statusChanger.change(order, orderStatus, "payment-saga");
         }
         order = orderRepository.save(order);
         cacheEvictor.evictOrderCaches(order.getOrderId(), "status→" + orderStatus);

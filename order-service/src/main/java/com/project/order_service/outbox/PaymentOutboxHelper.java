@@ -102,6 +102,27 @@ public class PaymentOutboxHelper {
 
 
 
+    /** 아웃박스 이벤트 타입 — 릴레이가 이 이름으로 분기하고, Debezium EventRouter 는 이 이름을 토픽으로 쓴다(docs/76). */
+    public static final String ORDER_STATUS_EVENT = "order-status";
+
+    /**
+     * 주문 상태 변경(docs/76) — {@link com.project.order_service.service.OrderStatusChanger} 만 부른다. 행 id 가 곧
+     * 이벤트 id 다(릴레이가 Avro 의 eventId 에 넣는다 → 읽는 쪽이 재발행을 거른다).
+     * [JA] 注文状態変更(docs/76) — OrderStatusChanger だけが呼ぶ。行 id がイベント id になる。
+     */
+    public void saveOrderStatusOutbox(com.project.order_service.service.OrderStatusChanger.Payload payload, OutboxStatus status) {
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            throw new OrderDomainException("주문 상태 이벤트를 직렬화하지 못했다: orderId=" + payload.orderId(), e);
+        }
+        PaymentOutboxEvent outboxEvent = new PaymentOutboxEvent(Long.toString(payload.orderId()), "Order",
+                ORDER_STATUS_EVENT, json, status);
+        this.save(outboxEvent);
+        relayOnCommit(status);
+    }
+
      /**
      * 토큰 관련 정보를 Outbox에 저장하는 메서드 추가
      * TokenRequest는 토큰 정보(예: userId, tokenValue, tokenType 등)를 담는 DTO

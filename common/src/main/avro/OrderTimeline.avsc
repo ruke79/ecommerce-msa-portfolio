@@ -1,0 +1,23 @@
+{
+  "type": "record",
+  "name": "OrderTimeline",
+  "namespace": "com.project.common.avro",
+  "doc": "주문 하나의 상태 변경 이력 — saga-projection 이 order-status 토픽을 접어 만든 읽기 모델(docs/76). 토픽 order-timeline(키 = orderId 문자열, 컴팩션). 결제 사가 상태(OrderSagaState)와 함께 조회 API 가 합쳐 낸다.",
+  "fields": [
+    { "name": "orderId",    "type": "long" },
+    { "name": "customerId", "type": ["null", "long"], "default": null },
+    { "name": "status",     "type": ["null", "string"], "default": null, "doc": "지금 상태 — occurredAt 이 가장 늦은 항목의 status. 늦게 도착해도 먼저 일어난 변경이 이기지 않는다" },
+    { "name": "entries", "type": { "type": "array", "items": {
+        "type": "record", "name": "OrderTimelineEntry", "namespace": "com.project.common.avro",
+        "fields": [
+          { "name": "eventId",        "type": "string" },
+          { "name": "previousStatus", "type": ["null", "string"], "default": null },
+          { "name": "status",         "type": "string" },
+          { "name": "source",         "type": "string" },
+          { "name": "occurredAt",     "type": { "type": "long", "logicalType": "timestamp-millis" } }
+        ] } }, "default": [],
+      "doc": "occurredAt 오름차순. 같은 eventId 는 한 번만. 상한 MAX_ENTRIES(OrderTimelineReducer) — 넘으면 가장 오래된 것부터 버린다" },
+    { "name": "eventCount", "type": "int", "default": 0, "doc": "본 이벤트 수(중복 포함). entries.size() 보다 크면 릴레이 재발행이 실제로 있었다" },
+    { "name": "updatedAt",  "type": { "type": "long", "logicalType": "timestamp-millis" } }
+  ]
+}
