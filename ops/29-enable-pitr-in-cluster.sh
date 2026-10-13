@@ -37,6 +37,16 @@
 #
 #   ./ops/29-enable-pitr-in-cluster.sh                 # 점검만 (기본, 아무것도 바꾸지 않는다)
 #   ACTION=setup ./ops/29-enable-pitr-in-cluster.sh    # 적용 + 재기동
+#   ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh # 백업 CronJob(k8s/85) 적용 + postgres-backup · restore-drill 켜기
+#
+# ── ACTION=cronjobs — 백업 CronJob 은 언제나 이것으로 적용한다 ─────────────
+#
+# k8s/85 는 postgres-backup · restore-drill 을 `suspend: true` 로 들고 있다(관리형 DB 에서는 성공할 수 없으므로
+# 기본은 꺼 둔다 — 파일 머리말). 그래서 `kubectl patch … suspend:false` 로 켠 뒤 누가 `kubectl apply -f k8s/85…`
+# 를 다시 하면 **아무 표시 없이 다시 꺼진다** — 적용 결과는 'configured' 한 줄뿐이고, 백업은 그날부터 멈춘다.
+# 이 동작은 "적용"과 "켜기"를 한 명령으로 묶는다. 켜기 전에 pg_basebackup 이 거절당할 원인(원격 replication
+# 항목 없음)을 확인하고, 없으면 아무것도 바꾸지 않는다 — 매일 03:00 에 조용히 실패하는 백업을 켜지 않는다.
+# [JA] 適用と有効化を一つにまとめる。あとから apply すると suspend: true に戻るため、常にこれで適用する。
 #   PG_NS=postgres PG_DEPLOY=postgres ARCHIVE_DIR=/var/lib/postgresql/wal_archive ...
 #   YES=1 ...                                          # 재기동 확인 프롬프트 생략
 #
@@ -52,6 +62,8 @@ ARCHIVE_TIMEOUT="${ARCHIVE_TIMEOUT:-60}"
 # 파드 네트워크. replication 을 허용할 대역이다. 기본은 k3s 의 기본 파드 CIDR.
 POD_CIDR="${POD_CIDR:-10.42.0.0/16}"
 YES="${YES:-0}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+APP_NS="${APP_NS:-ecommerce}"
 
 pass=0; fail=0
 ok()   { echo "  ✅ $1"; pass=$((pass+1)); }
@@ -69,6 +81,13 @@ sh_in() { kubectl -n "$PG_NS" exec "deploy/$PG_DEPLOY" -- sh -c "$1"; }
 
 kubectl -n "$PG_NS" get "deploy/$PG_DEPLOY" >/dev/null 2>&1 \
     || die "$PG_NS/$PG_DEPLOY 를 찾을 수 없습니다 (PG_NS·PG_DEPLOY 로 지정하세요)"
+
+# pg_hba.conf 에 루프백이 아닌 replication 항목이 있는가 — 없으면 백업 Job 의 pg_basebackup 이 거절된다.
+hba_allows_remote_replication() {
+    sh_in "grep -qE '^host[[:space:]]+replication[[:space:]]' \"\$PGDATA/pg_hba.conf\" 2>/dev/null \
+                && grep -E '^host[[:space:]]+replication[[:space:]]' \"\$PGDATA/pg_hba.conf\" \
+                   | grep -qv '127.0.0.1\\|::1'" 2>/dev/null
+}
 
 # ---------------------------------------------------------------- 점검
 
@@ -122,9 +141,7 @@ check() {
     fi
 
     # pg_hba 의 replication 항목 — pg_basebackup 이 여기서 막힌다.
-    if sh_in "grep -qE '^host[[:space:]]+replication[[:space:]]' \"\$PGDATA/pg_hba.conf\" 2>/dev/null \
-                && grep -E '^host[[:space:]]+replication[[:space:]]' \"\$PGDATA/pg_hba.conf\" \
-                   | grep -qv '127.0.0.1\\|::1'" 2>/dev/null; then
+    if hba_allows_remote_replication; then
         ok "pg_hba.conf 에 원격 replication 항목이 있습니다"
     else
         bad "pg_hba.conf 에 원격 replication 항목이 없습니다 — pg_basebackup 이 거절됩니다"
@@ -203,8 +220,28 @@ setup() {
     check
 }
 
+# ---------------------------------------------------------------- 백업 CronJob
+
+cronjobs() {
+    echo "════ 백업 CronJob 적용 + 켜기 ($APP_NS, k8s/85) ════"
+    hba_allows_remote_replication \
+        || die "pg_hba.conf 에 원격 replication 항목이 없습니다 — 켜면 postgres-backup 이 매일 거절됩니다. 먼저 ACTION=setup (또는 docs/22 §2 의 한 줄)"
+    ok "pg_hba.conf 에 원격 replication 항목이 있습니다"
+
+    kubectl apply -f "$ROOT/k8s/85-backup-cronjobs.yaml" || die "k8s/85 적용에 실패했습니다"
+    # 매니페스트의 suspend: true 를 이 클러스터에서만 뒤집는다 — 다시 적용할 때도 이 동작을 쓴다(위 머리말).
+    local cj
+    for cj in postgres-backup restore-drill; do
+        kubectl -n "$APP_NS" patch cronjob "$cj" -p '{"spec":{"suspend":false}}' >/dev/null \
+            || die "$cj 를 켜지 못했습니다"
+        ok "$cj 켬"
+    done
+    kubectl -n "$APP_NS" get cronjob
+}
+
 case "$ACTION" in
-    check) check ;;
-    setup) setup ;;
-    *)     die "ACTION 은 check 또는 setup 입니다 (받은 값: $ACTION)" ;;
+    check)    check ;;
+    setup)    setup ;;
+    cronjobs) cronjobs ;;
+    *)        die "ACTION 은 check · setup · cronjobs 입니다 (받은 값: $ACTION)" ;;
 esac
