@@ -24,6 +24,7 @@
 #       ./ops/07-issue-certificates.sh
 #   MODE=verify ./ops/07-issue-certificates.sh
 #   DRY_RUN=1 ./ops/07-issue-certificates.sh                         # 계획만 출력
+#   EXTRA_SANS=shop.lab ./ops/07-issue-certificates.sh               # 기본 SAN 에 이름을 더한다(예: 실습 인그레스 이름)
 set -euo pipefail
 
 MODE="${MODE:-dev}"
@@ -60,6 +61,11 @@ DEFAULT_SANS="$DEFAULT_SANS,kafka,redis,postgres,mongodb,elasticsearch"
 # k8s 클러스터 DNS (와일드카드가 <서비스>.ecommerce.svc.cluster.local 을 전부 덮는다)
 DEFAULT_SANS="$DEFAULT_SANS,*.ecommerce.svc.cluster.local,*.ecommerce.svc,*.ecommerce"
 SANS="${SANS:-$DEFAULT_SANS}"
+# 기본 목록을 **바꾸지 않고 더한다** — 실습 인그레스 이름(shop.lab) 같은 것. SANS 를 통째로 주면 위 목록을 손으로 옮겨
+# 적어야 하고, 목록이 바뀔 때 그 사본만 낡는다.
+# [JA] 既定の一覧を変えずに足す(実習イングレスの shop.lab など)。
+EXTRA_SANS="${EXTRA_SANS:-}"
+[ -z "$EXTRA_SANS" ] || SANS="$SANS,$EXTRA_SANS"
 
 # Let's Encrypt
 LE_DOMAIN="${LE_DOMAIN:-}"

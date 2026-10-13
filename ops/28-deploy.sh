@@ -73,6 +73,9 @@
 #                                        보다 넉넉해야 한다 — 같으면 정상 기동이 타임아웃과
 #                                        경합해서 진다(아래 설명)
 #     APPLY_HPA=1                        HPA·PDB 를 강제로 적용한다. 기본은 prod 에서만
+#     REGISTRY_API=http://<호스트:포트>    이미지 확인을 그 레지스트리의 HTTP API 로 한다(클러스터 안 HTTP 레지스트리).
+#                                        이미지 이름의 레지스트리 부분(예: registry.local:5000)은 노드의 미러 키라 이 기계에서
+#                                        해석되지 않고, docker manifest inspect 는 HTTP 레지스트리를 거부한다
 #                                        적용하고 단일 노드 환경(local·external·oci·dev)에서는
 #                                        건너뛴다 — 이유는 아래 apply 블록 주석 참조
 #
@@ -373,7 +376,12 @@ info "클러스터      : $CONTEXT / ns=$NS"
 
 verify_images() {
     local prober="" missing=0 name
-    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    # 클러스터 안 HTTP 레지스트리 — 이미지 이름에서 레지스트리 부분을 떼고 그 API 에 묻는다. 주면 이것만 쓴다:
+    # 노드가 실제로 받는 곳과 같은 저장소를 보는 길이 이것뿐이다(docker 가 있어도 그 이름을 해석하지 못한다).
+    # [JA] クラスタ内の HTTP レジストリ — イメージ名からレジストリ部分を外してその API に問い合わせる。
+    if [ -n "${REGISTRY_API:-}" ]; then
+        prober=registry-api
+    elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         prober=docker
     elif command -v skopeo >/dev/null 2>&1; then
         prober=skopeo
@@ -392,6 +400,10 @@ verify_images() {
             docker) docker manifest inspect "$name:$VERSION" >/dev/null 2>&1 ;;
             skopeo) skopeo inspect "docker://$name:$VERSION" >/dev/null 2>&1 ;;
             crane)  crane manifest "$name:$VERSION" >/dev/null 2>&1 ;;
+            # 매니페스트 HEAD — 목록(index)·단일 모두 받는다. 200 이면 그 태그가 있다.
+            registry-api) curl -fsS -o /dev/null -I \
+                    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+                    "${REGISTRY_API%/}/v2/${name#*/}/manifests/$VERSION" 2>/dev/null ;;
         esac
         if [ $? -eq 0 ]; then
             info "${name##*/}"
@@ -409,7 +421,8 @@ EOF
   · 파이프라인이 아직 안 끝났을 수 있습니다 — 릴리스 후보 승격까지 기다리세요
   · 비공개 패키지라면 로그인이 필요합니다:
         echo \"\$GHCR_PAT\" | docker login ghcr.io -u <USER> --password-stdin
-  · 버전을 손으로 만들려면:  ./ops/19-build-images.sh --registry <레지스트리> --tag $VERSION --push"
+  · 버전을 손으로 만들려면:  ./ops/19-build-images.sh --registry <레지스트리> --tag $VERSION --push
+  · 클러스터 안 레지스트리(REGISTRY_API)라면 그 레지스트리에 이 태그를 올렸는지 확인하세요"
     fi
 }
 
