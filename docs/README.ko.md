@@ -14,7 +14,7 @@
 
 | 시간 | 순서 |
 |---|---|
-| 5분 | [62 기술 사례집](62-engineering-casebook.ko.md) — 중요한 사례 17개를 문제 · 처리 · 한계와 참고서로 |
+| 5분 | [62 기술 사례집](62-engineering-casebook.ko.md) — 중요한 사례 18개를 문제 · 처리 · 한계와 참고서로 |
 | 15분 | 위에 더해 [00 전/후 종합 색인](00-before-after.ko.md) → [54 개선 총정리와 실무 기준](54-improvements-vs-practice.ko.md) |
 | 주제별 | 아래 표에서 관심 영역을 고릅니다 |
 | 운영자 | [33 배포 런북](33-deploy-runbook.ko.md) → [36 배포 파이프라인](36-deployment-pipeline.ko.md) → [34 인수 체크리스트](34-acceptance-checklist.ko.md) → [운영 스크립트](../ops/README.ko.md) |
@@ -26,7 +26,7 @@
 
 | # | 문서 | 내용 | 상태 |
 |---|---|---|---|
-| 62 | [기술 사례집](62-engineering-casebook.ko.md) | 사례 17개 — 문제 · 처리 · 한계 · 개선할 점, 사례마다 오라일리 참고서 1권 | ✅ |
+| 62 | [기술 사례집](62-engineering-casebook.ko.md) | 사례 18개 — 문제 · 처리 · 한계 · 개선할 점, 사례마다 오라일리 참고서 1권 | ✅ |
 | 00 | [전/후 종합 색인](00-before-after.ko.md) | 발견한 결함(B-1~29 · FE · CAT …)과 해결을 한 표로 | 🟡 |
 | 54 | [개선 총정리 — 실무 기준과 비교](54-improvements-vs-practice.ko.md) | 영역별로 무엇이 부족했고 지금은 어떤가, 아직 부족한 것, 교훈 10가지 | 🟡 |
 | 03 | [아키텍처와 신뢰성](03-architecture-and-reliability.ko.md) | 구조도 · 사가 흐름 · 장애 시나리오 F-1~9 와 대응 | 🟡 |
@@ -87,6 +87,7 @@
 | 36 | [배포 파이프라인](36-deployment-pipeline.ko.md) | 한 번 빌드한 이미지를 SHA 태그로, 스크립트 하나로 배포, 승인 후 자동 배포 | 🟡 |
 | 33 | [배포 런북](33-deploy-runbook.ko.md) | 맥 · 리눅스 · OCI Ampere 1대로 올리는 순서와 자주 막히는 곳, 소셜 로그인 설정 | 🟡 |
 | 34 | [인수 체크리스트](34-acceptance-checklist.ko.md) | 배포한 것을 사람이 끝까지 눌러 보는 경로, 실패를 어디서 보나 | 🟡 |
+| 72 | [모델 리팩토링 2차 배포 런북](72-model-refactor-deploy-runbook.ko.md) | 자동 복귀가 꺼지는 배포(ROLLBACK-UNSAFE) — 사전 점검 쿼리 · 백업 · 배포 중 공지 편집 금지 · 배포 후 확인 · 실패 시 앞으로 고치기 · 다음 릴리스의 contract | ✅ |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |

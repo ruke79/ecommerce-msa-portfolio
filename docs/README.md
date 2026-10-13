@@ -14,7 +14,7 @@
 
 | 時間 | 順序 |
 |---|---|
-| 5 分 | [62 技術事例集](62-engineering-casebook.md) — 重要な事例 17 個を、問題 · 対処 · 限界と参考書で |
+| 5 分 | [62 技術事例集](62-engineering-casebook.md) — 重要な事例 18 個を、問題 · 対処 · 限界と参考書で |
 | 15 分 | 上に加えて [00 Before/After 総合索引](00-before-after.md) → [54 改善の総まとめと実務基準](54-improvements-vs-practice.md) |
 | テーマ別 | 下の表から関心のある領域を選びます |
 | 運用者 | [33 デプロイ Runbook](33-deploy-runbook.md) → [36 デプロイパイプライン](36-deployment-pipeline.md) → [34 受け入れチェックリスト](34-acceptance-checklist.md) → [運用スクリプト](../ops/README.md) |
@@ -26,7 +26,7 @@
 
 | # | ドキュメント | 内容 | 状態 |
 |---|---|---|---|
-| 62 | [技術事例集](62-engineering-casebook.md) | 事例 17 個 — 問題 · 対処 · 限界 · 改善点、事例ごとにオライリーの参考書 1 冊 | ✅ |
+| 62 | [技術事例集](62-engineering-casebook.md) | 事例 18 個 — 問題 · 対処 · 限界 · 改善点、事例ごとにオライリーの参考書 1 冊 | ✅ |
 | 00 | [Before/After 総合索引](00-before-after.md) | 見つけた欠陥（B-1〜29 · FE · CAT …）と解決を 1 つの表に | 🟡 |
 | 54 | [改善の総まとめ — 実務基準との比較](54-improvements-vs-practice.md) | 領域ごとに何が足りず今はどうか、まだ足りないもの、教訓 10 個 | 🟡 |
 | 03 | [アーキテクチャと信頼性](03-architecture-and-reliability.md) | 構成図 · Saga フロー · 障害シナリオ F-1〜9 と対応 | 🟡 |
@@ -87,6 +87,7 @@
 | 36 | [デプロイパイプライン](36-deployment-pipeline.md) | 一度ビルドしたイメージを SHA タグで、スクリプト 1 つでデプロイ、承認後の自動デプロイ | 🟡 |
 | 33 | [デプロイ Runbook](33-deploy-runbook.md) | Mac · Linux · OCI Ampere 1 台に載せる手順とよく詰まる箇所、ソーシャルログインの設定 | 🟡 |
 | 34 | [受け入れチェックリスト](34-acceptance-checklist.md) | デプロイしたものを人が最後まで操作してみる経路、失敗をどこで見るか | 🟡 |
+| 72 | [モデルリファクタリング 2 次のデプロイ手順書](72-model-refactor-deploy-runbook.md) | 自動ロールバックが無効になるデプロイ(ROLLBACK-UNSAFE) — 事前点検クエリ・バックアップ・デプロイ中のお知らせ編集禁止・デプロイ後の確認・失敗時は前に進めて直す・次のリリースの contract | ✅ |
 | 61 | [新サービス追加チェックリスト](61-adding-a-service.md) | 登録が必要な箇所すべてと、漏れると静かにおかしくなるもの | ✅ |
 | 31 | [環境分離 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.md) | kustomize オーバーレイ、arm64、インバウンドポート 0 | 🟡 |
 | 32 | [インフラの外部化](32-external-managed-infra.md) | マネージドの無料枠に出せるものと出せないもの | ✅ |
