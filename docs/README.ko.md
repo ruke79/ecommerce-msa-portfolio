@@ -88,6 +88,7 @@
 | 33 | [배포 런북](33-deploy-runbook.ko.md) | 맥 · 리눅스 · OCI Ampere 1대로 올리는 순서와 자주 막히는 곳, 소셜 로그인 설정 | 🟡 |
 | 34 | [인수 체크리스트](34-acceptance-checklist.ko.md) | 배포한 것을 사람이 끝까지 눌러 보는 경로, 실패를 어디서 보나 | 🟡 |
 | 72 | [모델 리팩토링 2차 배포 런북](72-model-refactor-deploy-runbook.ko.md) | 자동 복귀가 꺼지는 배포(ROLLBACK-UNSAFE) — 사전 점검 쿼리 · 백업 · 배포 중 공지 편집 금지 · 배포 후 확인 · 실패 시 앞으로 고치기 · 다음 릴리스의 contract | ✅ |
+| 73 | [주문 ↔ 배송지 expand → contract](73-order-address-expand-contract.ko.md) | 이중 외래 키를 두 릴리스로 — V25(한 방향 · 주문 쪽 유니크) → V26(열 삭제, ROLLBACK-UNSAFE), 롤링 중 옛 · 새 파드, 스스로 멈추는 시간 · 데이터 가드, 실제 PostgreSQL 마이그레이션 테스트 | ✅ |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |
