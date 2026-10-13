@@ -276,7 +276,6 @@ cat <<EOF
 
    5. ops/20-scan-history-secrets.sh 를 새 클론에서 다시 돌려 확인하세요.
 
-   ⚠️ 이 저장소의 기본 브랜치는 claude/improve-claude-branch-8gf7u4 입니다.
-      force-push 전에 GitHub 설정에서 기본 브랜치를 확인하세요.
+   ⚠️ force-push 전에 GitHub 설정에서 기본 브랜치를 확인하세요.
 
 EOF
