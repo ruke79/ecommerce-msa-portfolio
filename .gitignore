@@ -115,3 +115,7 @@ k8s-overlays/local/patch-*.yaml
 
 # 프론트 빌드 값(환경마다 다르다) — ops/frontend.env.example 참조
 ops/frontend.env
+
+# Python 캐시 — ops/tools 의 스크립트를 import 하면 생긴다(2026-10-09 커밋에 딸려 들어갔던 것)
+__pycache__/
+*.pyc

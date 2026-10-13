@@ -134,7 +134,7 @@ jobs:
       # ops/28 의 환경 인자(오버레이 이름). 이 운영 클러스터는 local 이다(docs/33).
       DEPLOY_ENV: ${{ vars.DEPLOY_ENV || 'local' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.gate.outputs.sha }}
           # 배포 스크립트만 쓴다 — 이력은 필요 없다(되돌릴 수 없는 마이그레이션 검사는 ops/28 이 git 으로 두 커밋을 비교한다).

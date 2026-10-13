@@ -84,7 +84,7 @@ jobs:
       version: ${{ steps.rev.outputs.version }}
       published: ${{ steps.rev.outputs.published }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 리비전 확정
         id: rev
@@ -104,16 +104,16 @@ jobs:
           fi
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: "17"
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -152,7 +152,7 @@ jobs:
 
       - name: 테스트 리포트 업로드
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: commit-stage-test-reports
           path: "**/build/reports/tests/test"
@@ -162,15 +162,15 @@ jobs:
       # ── 바이너리를 이미지로 (한 번만) ──────────────────────────────────
       - name: QEMU (멀티아키텍처용)
         if: steps.rev.outputs.published == 'true'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: buildx
         if: steps.rev.outputs.published == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: GHCR 로그인
         if: steps.rev.outputs.published == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -233,7 +233,7 @@ jobs:
     if: github.event_name != 'schedule'
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # 범위 검사에 이력이 필요하다.
           fetch-depth: 0
@@ -276,16 +276,16 @@ jobs:
     needs: commit
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: "17"
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: 서비스별 통합 테스트
         # -PwithContainers 가 'containers' 태그를 포함시킨다.
@@ -294,7 +294,7 @@ jobs:
 
       - name: 테스트 리포트 업로드
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: integration-test-reports
           path: "**/build/reports/tests/test"
@@ -315,20 +315,20 @@ jobs:
     needs: commit
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: "17"
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: GHCR 로그인 (이미지 pull 용)
         if: needs.commit.outputs.published == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -359,7 +359,7 @@ jobs:
 
       - name: 테스트 리포트 업로드
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: acceptance-test-reports
           path: "**/build/reports/tests/test"
@@ -381,7 +381,7 @@ jobs:
     if: needs.commit.outputs.published == 'true'
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 후보 매니페스트 작성
         env:
@@ -414,7 +414,7 @@ jobs:
           cat release-candidate.json
 
       - name: 후보 업로드
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-candidate-${{ needs.commit.outputs.version }}
           path: release-candidate.json
@@ -454,7 +454,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: DROP TABLE 사고를 내고 시점 복구로 되돌린다
         # 실패하면 exit 1 — 백업이 복구 불가능해졌다는 뜻이므로 반드시 조사해야 한다.

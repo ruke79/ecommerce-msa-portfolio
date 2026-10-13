@@ -133,7 +133,8 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
             include '*/src/main/java/**/Kafka*Config.java'
             include '*/src/main/resources/db/migration/*.sql'
             include 'ops/19-build-images.sh'
-            include '.github/workflows/build.yml'
+            // B-75 — 배포 워크플로
+            include '.github/workflows/*.yml'
             // B-39 · B-56 — 오버레이와 배포 스크립트
             include 'k8s-overlays/**/*.yaml'
             include 'ops/28-deploy.sh'
