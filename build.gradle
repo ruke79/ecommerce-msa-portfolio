@@ -136,6 +136,14 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
     ).withPropertyName('guardrailInputs').withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
+// DemoUserGeneratorIntegrationTest(docs/79)는 모듈 밖의 ops/tools/generate-demo-users.py 를 돌린다 — 입력으로 선언하지
+// 않으면 생성기를 고쳐도 테스트가 UP-TO-DATE 로 건너뛰어진다(실측: 변이 확인이 모두 "통과"했다).
+// [JA] モジュール外の生成器を実行するので入力として宣言する。
+tasks.matching { it.name == 'test' && it.project.name == 'user-service' }.configureEach {
+    inputs.file(file("${rootDir}/ops/tools/generate-demo-users.py"))
+        .withPropertyName('demoUserGenerator').withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 tasks.named('test') {
 		// Docker 가 없는 환경에서도 단위 테스트는 돌아야 하므로 통합 테스트는 'containers' 태그로
 		// 분리한다. 기본 실행에서는 제외되고, `-PwithContainers` 를 줄 때만 포함된다.

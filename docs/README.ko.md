@@ -92,6 +92,7 @@
 | 74 | [기능 플래그 — 1단계](74-feature-flags.ko.md) | OpenFeature + 파일 공급자(flagd 형식, 재시작 없이 반영), search.engine 을 검색어 비율로 전환, 평가 결과를 스팬 · span_metrics 로, 캐시 키에 엔진, B-76 | ✅ |
 | 76 | [주문 상태 이벤트와 진행 타임라인](76-order-status-read-model.ko.md) | CQRS 를 주문 진행 조회로 — OrderStatusChanger(한 곳 + 같은 트랜잭션의 아웃박스), order-status → saga-projection 의 OrderTimeline(eventId 중복 제거 · 발생 순 · 상한), 게이트웨이 조회는 남의 주문 404, 화면 "진행 기록", B-78 | ✅ |
 | 77 | [이벤트 소싱 — 적용하지 않은 이유와 설계](77-event-sourcing-decision.ko.md) | 결정 기록 — 지금은 "DB 가 진실, 이벤트는 알림"(CDC 쪽). Kleppmann · Richardson · Vernon · Young · Fowler 를 근거로 약속과 대가, Order 37 필드 · 23 클래스의 숫자, 한다면 Order 집합체부터 PostgreSQL 이벤트 표 + 동기 프로젝션으로 네 릴리스, 다시 볼 신호 | ✅ |
+| 79 | [운영 데모용 사용자 대량 생성](79-demo-users.ko.md) | 실제로 로그인되는 데모 계정 수십만 명 — `ops/48`(예약 id 범위 · `@demo.invalid` · 같은 BCrypt 해시 · `ROLE_USER`), 같은 트랜잭션의 user-created(쿠폰 · 채팅 복제본), 가입일 8일~2년 전(재조정기 회피), 1KB/명 · 10만 명 17초, 이벤트 흘리는 시간, 로그인 부하 주의(인증 경로 제한 · 다중 로그인 · 실패 집계), purge 는 범위 그리고 도메인만 | ✅ |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |

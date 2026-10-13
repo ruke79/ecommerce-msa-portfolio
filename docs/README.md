@@ -92,6 +92,7 @@
 | 74 | [機能フラグ — 第 1 段階](74-feature-flags.md) | OpenFeature + ファイルプロバイダー(flagd 形式、再起動なしで反映)、search.engine を検索語の比率で切り替え、評価結果をスパン・span_metrics に、キャッシュキーにエンジン、B-76 | ✅ |
 | 76 | [注文状態イベントと進行タイムライン](76-order-status-read-model.md) | CQRS を注文進行の照会へ — OrderStatusChanger(一箇所 + 同じトランザクションのアウトボックス)、order-status → saga-projection の OrderTimeline(eventId 重複排除・発生順・上限)、ゲートウェイ経由の照会は他人の注文を 404、画面の「進行の記録」、B-78 | ✅ |
 | 77 | [イベントソーシング — 適用しなかった理由と設計](77-event-sourcing-decision.md) | 決定の記録 — 今は「DB が真実、イベントは通知」(CDC 側)。Kleppmann・Richardson・Vernon・Young・Fowler を根拠に、約束と代価、Order 37 フィールド・23 クラスの数字、やるなら Order 集約から PostgreSQL イベント表 + 同期プロジェクションで四リリース、見直すシグナル | ✅ |
+| 79 | [運用デモ用ユーザーの大量生成](79-demo-users.md) | 実際にログインできるデモアカウントを数十万人 — `ops/48`(予約 id 範囲・`@demo.invalid`・共通の BCrypt ハッシュ・`ROLE_USER`)、同じトランザクションで user-created(クーポン・チャットの複製)、加入日は 8 日〜2 年前(再調整器を避ける)、1KB/人・10 万人 17 秒、イベント流しの時間、ログイン負荷の注意(認証ルートの制限・多重ログイン・失敗の数え方)、purge は範囲かつドメインだけ | ✅ |
 | 61 | [新サービス追加チェックリスト](61-adding-a-service.md) | 登録が必要な箇所すべてと、漏れると静かにおかしくなるもの | ✅ |
 | 31 | [環境分離 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.md) | kustomize オーバーレイ、arm64、インバウンドポート 0 | 🟡 |
 | 32 | [インフラの外部化](32-external-managed-infra.md) | マネージドの無料枠に出せるものと出せないもの | ✅ |
