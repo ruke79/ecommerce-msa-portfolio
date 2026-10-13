@@ -89,6 +89,7 @@
 | 34 | [受け入れチェックリスト](34-acceptance-checklist.md) | デプロイしたものを人が最後まで操作してみる経路、失敗をどこで見るか | 🟡 |
 | 72 | [モデルリファクタリング 2 次のデプロイ手順書](72-model-refactor-deploy-runbook.md) | 自動ロールバックが無効になるデプロイ(ROLLBACK-UNSAFE) — 事前点検クエリ・バックアップ・デプロイ中のお知らせ編集禁止・デプロイ後の確認・失敗時は前に進めて直す・次のリリースの contract | ✅ |
 | 73 | [注文 ↔ 配送先の expand → contract](73-order-address-expand-contract.md) | 二重外部キーを二つのリリースで — V25(一方向・注文側のユニーク) → V26(列の削除、ROLLBACK-UNSAFE)、ローリング中の旧・新 Pod、自ら止まる時間・データガード、実 PostgreSQL のマイグレーションテスト | ✅ |
+| 74 | [機能フラグ — 第 1 段階](74-feature-flags.md) | OpenFeature + ファイルプロバイダー(flagd 形式、再起動なしで反映)、search.engine を検索語の比率で切り替え、評価結果をスパン・span_metrics に、キャッシュキーにエンジン、B-76 | ✅ |
 | 61 | [新サービス追加チェックリスト](61-adding-a-service.md) | 登録が必要な箇所すべてと、漏れると静かにおかしくなるもの | ✅ |
 | 31 | [環境分離 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.md) | kustomize オーバーレイ、arm64、インバウンドポート 0 | 🟡 |
 | 32 | [インフラの外部化](32-external-managed-infra.md) | マネージドの無料枠に出せるものと出せないもの | ✅ |

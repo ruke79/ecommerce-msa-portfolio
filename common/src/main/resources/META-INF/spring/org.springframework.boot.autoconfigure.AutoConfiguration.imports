@@ -2,3 +2,4 @@ com.project.common.logging.CommonLoggingAutoConfiguration
 com.project.common.i18n.ClientTextAutoConfiguration
 com.project.common.security.InternalCallerAutoConfiguration
 com.project.common.outbox.partition.OutboxPartitionAutoConfiguration
+com.project.common.featureflag.FeatureFlagAutoConfiguration

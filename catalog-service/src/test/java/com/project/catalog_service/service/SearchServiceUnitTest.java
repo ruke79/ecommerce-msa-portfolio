@@ -100,7 +100,7 @@ class SearchServiceUnitTest {
     void defaultPageParams_areClamped() {
         TestParams params = new TestParams(); // page=0, pageSize=0
 
-        assertThatCode(() -> service.searchProducts(params)).doesNotThrowAnyException();
+        assertThatCode(() -> service.searchProducts(params, SearchEngine.POSTGRES)).doesNotThrowAnyException();
 
         verify(listQuery).offset(0L);
         verify(listQuery).limit(20L);
@@ -113,7 +113,7 @@ class SearchServiceUnitTest {
         params.setPage(1);
         params.setPageSize(99999);
 
-        service.searchProducts(params);
+        service.searchProducts(params, SearchEngine.POSTGRES);
 
         verify(listQuery).limit(100L);
     }
@@ -126,7 +126,7 @@ class SearchServiceUnitTest {
         params.setPageSize(10);
         params.setCategory("shoes");
 
-        assertThatCode(() -> service.searchProducts(params)).doesNotThrowAnyException();
+        assertThatCode(() -> service.searchProducts(params, SearchEngine.POSTGRES)).doesNotThrowAnyException();
         verify(productRepository).findBrandsByCategoryName("shoes");
     }
 
@@ -144,7 +144,7 @@ class SearchServiceUnitTest {
         params.setPageSize(10);
         params.setSearch("shoes");
 
-        assertThatCode(() -> service.searchProducts(params)).doesNotThrowAnyException();
+        assertThatCode(() -> service.searchProducts(params, SearchEngine.ES)).doesNotThrowAnyException();
         verify(es).searchProductIds(org.mockito.ArgumentMatchers.eq("shoes"),
                 org.mockito.ArgumentMatchers.anyInt());
     }
@@ -163,7 +163,33 @@ class SearchServiceUnitTest {
         params.setPageSize(10);
         params.setSearch("shoes");
 
-        assertThatCode(() -> service.searchProducts(params)).doesNotThrowAnyException();
+        assertThatCode(() -> service.searchProducts(params, SearchEngine.ES)).doesNotThrowAnyException();
+    }
+
+    /**
+     * 🔴 ES 가 이 배포에 있어도(빈 존재), 이 검색의 엔진이 POSTGRES 면 ES 를 부르지 않는다(docs/74).
+     *
+     * <p>예전에는 빈이 있으면 무조건 ES 였다. 기능 플래그로 일부 검색만 ES 로 보내려면 이 분기가 엔진을 따라야
+     * 한다 — 따르지 않으면 플래그를 0% 로 내려도 모든 검색이 ES 로 가고, 추적의 변형 태그(postgres)는 거짓말이 된다.
+     */
+    @Test
+    @DisplayName("🔴 ES 빈이 있어도 엔진이 POSTGRES 면 LIKE 경로로 간다 (기능 플래그 docs/74)")
+    void esDeployedButEnginePostgres_usesLike() {
+        EsProductSearchService es = mock(EsProductSearchService.class);
+        service.esProductSearchService = es;
+
+        TestParams params = new TestParams();
+        params.setPage(1);
+        params.setPageSize(10);
+        params.setSearch("shoes");
+
+        service.searchProducts(params, SearchEngine.POSTGRES);
+
+        org.mockito.Mockito.verifyNoInteractions(es);
+        org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
+                org.mockito.ArgumentCaptor.forClass(com.querydsl.core.types.Predicate.class);
+        verify(listQuery).where(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().toString()).containsIgnoringCase("like");
     }
 
     /**
@@ -193,7 +219,7 @@ class SearchServiceUnitTest {
         when(productSkuRepository.findProductIDBySizeAndPriceAndColor(any(), any(), any(), any()))
                 .thenReturn(Collections.emptyList());
 
-        service.searchProducts(params);
+        service.searchProducts(params, SearchEngine.POSTGRES);
 
         // 조건이 사라지지 않았다 — 불가능 조건(productId = -1)이 들어가 있어야 한다.
         org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
@@ -268,7 +294,7 @@ class SearchServiceUnitTest {
         params.setPage(1);
         params.setPageSize(10);
 
-        service.searchProducts(params);
+        service.searchProducts(params, SearchEngine.POSTGRES);
 
         org.mockito.Mockito.verify(productSkuRepository, org.mockito.Mockito.never())
                 .findProductIDBySizeAndPriceAndColor(any(), any(), any(), any());
@@ -286,7 +312,7 @@ class SearchServiceUnitTest {
         params.setPageSize(10);
         params.setShipping(java.math.BigDecimal.ZERO);
 
-        service.searchProducts(params);
+        service.searchProducts(params, SearchEngine.POSTGRES);
 
         org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
                 org.mockito.ArgumentCaptor.forClass(com.querydsl.core.types.Predicate.class);
@@ -304,7 +330,7 @@ class SearchServiceUnitTest {
         params.setPageSize(10);
         params.setCategory("123");
 
-        service.searchProducts(params);
+        service.searchProducts(params, SearchEngine.POSTGRES);
 
         verify(productRepository).findBrandsByCategoryId(123L);
     }

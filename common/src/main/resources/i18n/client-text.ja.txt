@@ -215,3 +215,41 @@ legacy 키로 서명하면서 legacy 를 거절할 수는 없습니다 — 먼�
 
 JWT 키 '{}' 가 {}바이트입니다 — HS256 은 {}바이트 이상(openssl rand -hex 32)
 = -
+
+# ── 운영자용(기능 플래그 정의 파일 검증, docs/74) — 로그로만 남고 응답으로 나가지 않는다 ──────────
+JSON 이 아니다: {}
+= -
+
+최상위에 "flags" 객체가 없다
+= -
+
+{}.state 는 ENABLED 또는 DISABLED 여야 한다: '{}'
+= -
+
+{}.variants 가 비었다
+= -
+
+{}.defaultVariant '{}' 가 variants 에 없다
+= -
+
+{}.targeting 은 {"fractional": [...]} 만 지원한다 — 다른 규칙을 조용히 무시하면 의도와 다른 비율로 돈다
+= -
+
+{}.targeting.fractional 의 각 항목은 ["변형", 정수비중] 이다
+= -
+
+{}.targeting.fractional 의 '{}' 가 variants 에 없다
+= -
+
+{}.targeting.fractional 의 비중은 0 이상이다
+= -
+
+{}.targeting.fractional 이 비었다
+= -
+
+{}.metadata.expires 는 YYYY-MM-DD 다: {}
+= -
+
+{} 는 문자열 · 불리언 · 숫자만 된다
+= -
+

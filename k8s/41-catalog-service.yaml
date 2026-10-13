@@ -138,6 +138,10 @@ spec:
             # TLS로 ES에 접속하려면 소스의 오타를 고친 이미지를 빌드하세요.
             - name: SPRING_ELASTICSEARCH_URIS
               value: "http://elasticsearch.elasticsearch.svc.cluster.local:9200"
+            # 기능 플래그 정의(docs/74, k8s/15-feature-flags.yaml). 바꾸면 재시작 없이 1분 안팎에 반영된다.
+            # [JA] 機能フラグ定義(docs/74)。変更すると再起動なしで 1 分前後で反映される。
+            - name: FEATURE_FLAGS_FILE
+              value: "/app/flags/flags.json"
           volumeMounts:
             - name: tls-keystore
               mountPath: /app/resources
@@ -146,6 +150,11 @@ spec:
             # 서버 인증서·Redis·Kafka 는 위 공유 tls-keystore 그대로. 발급: ops/38 (docs/57 §16)
             - name: tls-id
               mountPath: /app/identity
+              readOnly: true
+            # 🔴 디렉터리로 마운트한다 — subPath 로 파일 하나만 마운트하면 ConfigMap 이 바뀌어도 파일이 갱신되지 않아
+            #    플래그를 바꾸려면 재시작해야 한다(B-76). [JA] ディレクトリとしてマウントする — subPath だと更新されない。
+            - name: feature-flags
+              mountPath: /app/flags
               readOnly: true
           resources:
             requests:
@@ -184,6 +193,11 @@ spec:
         - name: tls-id
           secret:
             secretName: tls-id-catalog-service
+        - name: feature-flags
+          configMap:
+            name: feature-flags
+            # 정의가 없어도 뜬다 — 서비스는 코드의 기본값(플래그 이전의 동작)으로 돈다.
+            optional: true
 ---
 apiVersion: v1
 kind: Service

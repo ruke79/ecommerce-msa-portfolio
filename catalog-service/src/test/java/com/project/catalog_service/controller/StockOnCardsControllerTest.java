@@ -77,10 +77,11 @@ class StockOnCardsControllerTest {
         ProductDto cached = product("1", "11", 5);
         SearchResultDto result = SearchResultDto.builder().totalProducts(41)
                 .product(new PageImpl<>(List.of(cached), PageRequest.of(2, 20), 41)).build();
-        when(search.searchProducts(any())).thenReturn(result);
+        when(search.searchProducts(any(), any())).thenReturn(result);
         when(sizes.liveQuantities(anyCollection())).thenReturn(List.<Object[]>of(new Object[] {11L, 2}));
         when(reservations.sumHeldByProducts(anyCollection(), any())).thenReturn(List.of());
-        SearchController controller = new SearchController(search, availability, null, null, null);
+        SearchController controller = new SearchController(search, availability, null, null, null,
+                mock(com.project.catalog_service.service.SearchEngineSelector.class));
 
         SearchResultDto shown = (SearchResultDto) controller.searchProducts(mock(SearchParamsRequest.class)).getBody();
 

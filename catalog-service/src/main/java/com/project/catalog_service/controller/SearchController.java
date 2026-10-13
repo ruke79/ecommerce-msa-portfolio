@@ -44,6 +44,9 @@ public class SearchController {
     // private final Job productIndexingJob;
     private final Map<String, Job> allJobs; // List<Job> 대신 Map<String, Job>을 사용하여 Job 이름으로 특정 Job을 주입
 
+    /** 이 검색을 ES 로 할지 — 기능 플래그(docs/74). 캐시 밖에서 정해 캐시 키에 넣는다. */
+    private final com.project.catalog_service.service.SearchEngineSelector searchEngineSelector;
+
     /** 한 번에 하나만. 싱글턴 리더를 두 실행이 나눠 읽으면 색인이 조용히 망가진다. */
     private final java.util.concurrent.atomic.AtomicBoolean indexing =
             new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -64,7 +67,10 @@ public class SearchController {
     @GetMapping("/search")
     public ResponseEntity<?> searchProducts(SearchParamsRequest params) {
 
-        SearchResultDto dto = searchService.searchProducts(params);
+        // 엔진은 캐시(@Cacheable) 밖에서 정한다 — 여기서 평가해야 이 요청의 서버 스팬에 변형이 남고(docs/74),
+        // 캐시가 맞아도 매 요청 기록된다. [JA] エンジンはキャッシュの外で決める — ここで評価すればこのリクエストの
+        // サーバースパンに変形が残り、キャッシュヒットでも毎回記録される。
+        SearchResultDto dto = searchService.searchProducts(params, searchEngineSelector.select(params));
 
         return new ResponseEntity<>(withStock(dto), HttpStatus.OK);
 

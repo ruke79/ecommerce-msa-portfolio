@@ -1575,6 +1575,103 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-76: 기능 플래그(docs/74) — 정의 파일 · 코드 · 매니페스트가 맞물리고, 다 쓴 플래그가 쌓이지 않는다.
+     *
+     * <ol>
+     *   <li>{@code k8s/15-feature-flags.yaml} 의 {@code flags.json} 이 서비스가 읽는 형식 그대로 읽힌다 — 틀리면 서비스는
+     *       경고 한 줄만 남기고 <b>직전 정의</b>를 쓰므로, 고친 것이 운영에 조용히 반영되지 않는다</li>
+     *   <li>플래그마다 {@code metadata.owner} · {@code metadata.expires}, 그리고 만료가 지나지 않았다. 플래그는 빚이다 —
+     *       날짜가 없으면 아무도 지우지 않는다. 만료되면 이 가드가 빨갛다: 코드와 함께 지우거나 날짜를 미룬다</li>
+     *   <li>OpenFeature 를 쓰는 코드의 {@code static final String …FLAG… = "키"} 가 정의 파일에 있다 — 없으면 모든 평가가 FLAG_NOT_FOUND 로
+     *       코드의 기본값이 되어, 비중을 올려도 아무 일도 일어나지 않는다</li>
+     *   <li>정의 파일의 플래그를 코드가 쓴다 — 아무도 읽지 않는 플래그는 지운 코드의 흔적이다</li>
+     *   <li>catalog 는 ConfigMap 을 <b>디렉터리로</b> 마운트하고 {@code FEATURE_FLAGS_FILE} 이 그 안을 가리킨다 —
+     *       subPath 마운트는 ConfigMap 이 바뀌어도 갱신되지 않는다(재시작해야 반영 = 플래그의 의미가 없다)</li>
+     *   <li>베이스 kustomization 에 들어 있다</li>
+     * </ol>
+     *
+     * <p>[JA] 機能フラグ(docs/74) — 定義ファイル・コード・マニフェストが噛み合い、使い終わったフラグが溜まらない。フラグごとに
+     * owner ・ expires が必要で、期限切れはこのガードが赤くなる。コードが参照するキーは定義ファイルに、定義ファイルの
+     * フラグはコードにある。catalog は ConfigMap を<b>ディレクトリとして</b>マウントする(subPath は更新されない)。
+     */
+    @Test
+    @DisplayName("B-76: 기능 플래그 — 정의 파일이 읽히고, owner · 만료일이 있고, 코드 · 마운트와 맞는다")
+    void featureFlagsAreConsistent() throws IOException {
+        Path root = repoRoot();
+        List<String> offenders = new ArrayList<>();
+
+        String manifest = Files.readString(root.resolve("k8s/15-feature-flags.yaml"), StandardCharsets.UTF_8);
+        Map<String, Object> cm = new org.yaml.snakeyaml.Yaml().load(manifest);
+        @SuppressWarnings("unchecked")
+        String json = (String) ((Map<String, Object>) cm.get("data")).get("flags.json");
+        com.project.common.featureflag.FlagDefinitions defs = com.project.common.featureflag.FlagDefinitions.parse(json);
+
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
+        defs.all().values().forEach(f -> {
+            if (f.owner() == null || f.owner().isBlank()) {
+                offenders.add(f.key() + " → metadata.owner 없음");
+            }
+            if (f.expires() == null) {
+                offenders.add(f.key() + " → metadata.expires 없음");
+            } else if (f.expires().isBefore(today)) {
+                offenders.add(f.key() + " → 만료(" + f.expires() + ") — 코드와 함께 지우거나 날짜를 미룬다");
+            }
+        });
+
+        Pattern constant = Pattern.compile("static\\s+final\\s+String\\s+\\w*FLAG\\w*\\s*=\\s*\"([^\"]+)\"");
+        Set<String> referenced = new TreeSet<>();
+        List<Path> sources = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(root)) {
+            for (Path src : modules.map(m -> m.resolve("src/main/java")).filter(Files::isDirectory).toList()) {
+                try (Stream<Path> files = Files.walk(src)) {
+                    sources.addAll(files.filter(x -> x.toString().endsWith(".java")).toList());
+                }
+            }
+        }
+        {
+            for (Path java : sources) {
+                String code = stripComments(Files.readString(java, StandardCharsets.UTF_8));
+                if (!code.contains("import dev.openfeature.sdk.")) {
+                    continue;   // OpenFeature 를 쓰는 파일만 — 다른 …FLAG 상수(예: 마이그레이션 표식)는 기능 플래그가 아니다
+                }
+                Matcher m = constant.matcher(code);
+                while (m.find()) {
+                    referenced.add(m.group(1));
+                    if (defs.get(m.group(1)) == null) {
+                        offenders.add(root.relativize(java) + " → 플래그 '" + m.group(1) + "' 가 k8s/15-feature-flags.yaml 에 없다");
+                    }
+                }
+            }
+        }
+        defs.all().keySet().stream().filter(k -> !referenced.contains(k))
+                .forEach(k -> offenders.add("k8s/15-feature-flags.yaml → '" + k + "' 를 읽는 코드가 없다(…FLAG 상수)"));
+
+        String catalog = Files.readString(root.resolve("k8s/41-catalog-service.yaml"), StandardCharsets.UTF_8);
+        // volumeMounts 의 항목(매니페스트에서 volumes 보다 앞에 온다) — 다음 "- " 항목 전까지가 그 항목의 키들이다.
+        Matcher mount = Pattern.compile("- name: feature-flags\\n((?: +(?!- )\\S.*\\n)*)").matcher(catalog);
+        Matcher mountPath = mount.find() ? Pattern.compile("mountPath: (\\S+)").matcher(mount.group(1)) : null;
+        if (mountPath == null || !mountPath.find()) {
+            offenders.add("k8s/41-catalog-service.yaml → feature-flags 볼륨 마운트 없음");
+        } else {
+            if (mount.group(1).contains("subPath:")) {
+                offenders.add("k8s/41-catalog-service.yaml → feature-flags 를 subPath 로 마운트했다 — 갱신되지 않는다");
+            }
+            Matcher env = Pattern.compile("- name: FEATURE_FLAGS_FILE\\n\\s+value: \"([^\"]+)\"").matcher(catalog);
+            if (!env.find() || !env.group(1).startsWith(mountPath.group(1) + "/")) {
+                offenders.add("k8s/41-catalog-service.yaml → FEATURE_FLAGS_FILE 이 마운트 경로(" + mountPath.group(1) + ") 안을 가리키지 않는다");
+            }
+        }
+        if (!catalog.contains("configMap:\n            name: feature-flags")) {
+            offenders.add("k8s/41-catalog-service.yaml → feature-flags 볼륨이 ConfigMap feature-flags 가 아니다");
+        }
+        if (!Files.readString(root.resolve("k8s/kustomization.yaml"), StandardCharsets.UTF_8).contains("- 15-feature-flags.yaml")) {
+            offenders.add("k8s/kustomization.yaml → 15-feature-flags.yaml 이 resources 에 없다");
+        }
+
+        assertThat(offenders).as("기능 플래그 정의 · 코드 · 매니페스트가 어긋났다(docs/74)").isEmpty();
+    }
+
+    /**
      * 주석을 지운다 — 주석 안의 예시 코드까지 위반으로 잡으면, 사고를 기록해 둔 주석이
      * 그 자체로 가드를 깨뜨린다(이 가드를 쓰면서 실제로 겪었다).
      *

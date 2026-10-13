@@ -36,6 +36,7 @@ namespace: ecommerce
 resources:
   - 00-namespace.yaml
   - 10-configmap.yaml
+  - 15-feature-flags.yaml
   - 30-eureka-server.yaml
   - 31-gateway-server.yaml
   - 32-config-server.yaml

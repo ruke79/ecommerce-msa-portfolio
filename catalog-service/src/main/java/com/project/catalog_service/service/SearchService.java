@@ -69,11 +69,11 @@ public class SearchService {
 
     /**
      * ES 관련도 검색으로 후보 productId 를 조회한다.
-     * @return ES 비활성(빈 없음) 또는 조회 실패 시 null (호출자가 LIKE 경로로 폴백),
+     * @return 이 검색이 ES 로 가지 않음(엔진 POSTGRES · ES 빈 없음) 또는 조회 실패 시 null (호출자가 LIKE 경로로 폴백),
      *         정상 조회 시 id 목록(비어 있을 수 있음 — "매칭 없음" 의미)
      */
-    private List<Long> searchIdsViaEs(String term) {
-        if (esProductSearchService == null) {
+    private List<Long> searchIdsViaEs(String term, SearchEngine engine) {
+        if (engine != SearchEngine.ES || esProductSearchService == null) {
             return null;
         }
         try {
@@ -149,13 +149,20 @@ public class SearchService {
     private static final int ES_CANDIDATE_LIMIT = 1000;
 
     // (docs/07 R-C1) search.engine=es 일 때만 존재하는 선택적 빈.
-    // 존재하면 텍스트 검색을 "ES 관련도 검색 → id IN 조건" 으로 전환하고,
+    // 존재하고 이 검색의 엔진이 ES 면(docs/74 — 기능 플래그) 텍스트 검색을 "ES 관련도 검색 → id IN 조건" 으로 전환하고,
     // ES 장애 시에는 기존 LIKE 경로로 폴백한다. 테스트 주입을 위해 package-private.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     EsProductSearchService esProductSearchService;
 
+    /**
+     * @param engine 텍스트 검색 엔진 — {@link SearchEngineSelector} 가 정한다(docs/74). <b>캐시 키에 들어간다.</b>
+     *               같은 검색이라도 ES 와 LIKE 의 결과는 다르다. 키에 없으면 비율을 바꾼 뒤 최대 60분(search_cache TTL)
+     *               동안 반대쪽 엔진의 결과가 나가고, 추적의 변형 태그와 실제 결과가 어긋난다.
+     *               [JA] キャッシュキーに含まれる。同じ検索でも ES と LIKE の結果は違う。キーになければ比率を変えた後
+     *               最大 60 分間、反対側のエンジンの結果が返り、トレースの変形タグと実際の結果が食い違う。
+     */
     @Cacheable(value = "search_cache", cacheManager = "redisCacheManager")
-    public SearchResultDto searchProducts(SearchParamsRequest params) {
+    public SearchResultDto searchProducts(SearchParamsRequest params, SearchEngine engine) {
         // category는 숫자 id 또는 이름(name)일 수 있다. 숫자가 아니면 id로 파싱하지 않고 null 처리
         // (기존 Long.parseLong은 이름 검색 시 NumberFormatException → 500을 유발했다).
         Long categoryId = parseCategoryId(params.getCategory());
@@ -171,7 +178,7 @@ public class SearchService {
         // 이때, productIdsFromSku는 IN 절로 활용됩니다.
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
-        BooleanBuilder builder = buildSearchPredicate(params, categoryId, productIdsFromSku);
+        BooleanBuilder builder = buildSearchPredicate(params, categoryId, productIdsFromSku, engine);
 
         long totalProducts = queryFactory.select(product.countDistinct())
                 .from(product)
@@ -245,7 +252,8 @@ public class SearchService {
         return result.build();
     }
 
-    private BooleanBuilder buildSearchPredicate(SearchParamsRequest params, Long categoryId, List<Long> productIdsFromSku) {
+    private BooleanBuilder buildSearchPredicate(SearchParamsRequest params, Long categoryId, List<Long> productIdsFromSku,
+            SearchEngine engine) {
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
         BooleanBuilder builder = new BooleanBuilder();
@@ -294,10 +302,10 @@ public class SearchService {
                     .exists());
         }
 
-        // 3. name 조건 — ES 활성화 시 관련도 검색으로 후보 id 를 구해 IN 으로 좁힌다 (docs/07 R-C1).
-        //    ES 미사용/장애 시에는 기존 LIKE 경로 유지(폴백).
+        // 3. name 조건 — 이 검색의 엔진이 ES 면 관련도 검색으로 후보 id 를 구해 IN 으로 좁힌다 (docs/07 R-C1, docs/74).
+        //    POSTGRES · ES 장애 시에는 기존 LIKE 경로 유지(폴백).
         if (params.getSearch() != null && !params.getSearch().isEmpty()) {
-            List<Long> esIds = searchIdsViaEs(params.getSearch());
+            List<Long> esIds = searchIdsViaEs(params.getSearch(), engine);
             if (esIds == null) {
                 // ES 비활성 또는 실패 → 기존 동작(선행 와일드카드 LIKE)
                 builder.and(product.name.likeIgnoreCase("%" + params.getSearch() + "%"));
