@@ -66,4 +66,13 @@ class GraceTokenCipherTest {
         assertThat(cipher.open("sess-1", "v1:!!!")).isNull();
         assertThat(cipher.open("sess-1", "v1:AAAA")).isNull();
     }
+
+    @Test
+    @DisplayName("🔴 IV 뒤가 태그(16바이트)보다 짧아도 null — JDK 17 은 여기서 ProviderException 을 던져 500 이 됐다")
+    void shorterThanTagIsNull() {
+        for (int afterIv = 1; afterIv < 16; afterIv++) {
+            String sealed = "v1:" + java.util.Base64.getEncoder().encodeToString(new byte[12 + afterIv]);
+            assertThat(cipher.open("sess-1", sealed)).as("IV 뒤 %d바이트", afterIv).isNull();
+        }
+    }
 }

@@ -71,7 +71,10 @@ public class GraceTokenCipher {
         }
         try {
             byte[] in = Base64.getDecoder().decode(sealed.substring(PREFIX.length()));
-            if (in.length <= IV_BYTES) {
+            // 🐛 IV 뒤가 태그(16바이트)보다 짧으면 JDK 17(운영 이미지)은 AEADBadTagException 대신 ProviderException(ShortBufferException)
+            //    을 던진다 — RuntimeException 이라 아래 catch 를 지나 갱신 요청이 500 이 됐다. 길이로 먼저 거른다(JDK 21 은 AEADBadTag).
+            // [JA] IV の後ろがタグ長より短いと JDK 17 は ProviderException を投げ、catch をすり抜けて 500 になっていた。長さで先に弾く。
+            if (in.length < IV_BYTES + TAG_BITS / 8) {
                 return null;
             }
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
