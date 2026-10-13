@@ -1541,6 +1541,39 @@ class ConfigurationGuardrailTest {
                 .isEmpty();
     }
 
+    @Test
+    @DisplayName("B-75: 운영 배포 워크플로는 수동 실행(workflow_dispatch)으로만 시작된다 — 실행이 곧 승인")
+    void deployWorkflowIsManualOnly() throws IOException {
+        // 🐛 deploy-oci.yml 은 파이프라인이 초록이 되면(workflow_run) 자동으로 돌고, Environment `production` 의 Required
+        //    reviewers 가 승인 게이트라고 적혀 있었다. 그러나 비공개 저장소는 Free · Pro · Team 요금제에서 Required reviewers 를
+        //    쓸 수 없다 — `production` 은 첫 실행이 만든 빈 Environment 였고, 러너가 온라인이었다면 사전 점검 · 백업 없이
+        //    되돌릴 수 없는 마이그레이션이 나갈 뻔했다(2026-10-05). 그래서 트리거를 수동 실행 하나로 묶는다.
+        // [JA] 非公開リポジトリでは承認ゲートが無いため、デプロイは手動実行だけで始まるようにする。
+        String wf = Files.readString(repoRoot().resolve(".github/workflows/deploy-oci.yml"), StandardCharsets.UTF_8);
+
+        // 최상위 `on:` 블록의 트리거 이름(두 칸 들여쓴 키)만 모은다
+        Set<String> triggers = new java.util.LinkedHashSet<>();
+        boolean inOn = false;
+        for (String line : wf.lines().toList()) {
+            if (line.matches("^on:\\s*(#.*)?$")) {
+                inOn = true;
+                continue;
+            }
+            if (inOn && line.matches("^\\S.*")) {
+                break;   // 다음 최상위 키
+            }
+            Matcher key = Pattern.compile("^  ([A-Za-z_]+):").matcher(line);
+            if (inOn && key.find()) {
+                triggers.add(key.group(1));
+            }
+        }
+
+        assertThat(triggers)
+                .as("deploy-oci.yml 의 트리거는 workflow_dispatch 하나여야 한다 — 자동 트리거(workflow_run · push · schedule …)를 "
+                        + "더하면 비공개 저장소에서는 승인 없이 운영에 배포된다(docs/36 §6)")
+                .containsExactly("workflow_dispatch");
+    }
+
     /**
      * 주석을 지운다 — 주석 안의 예시 코드까지 위반으로 잡으면, 사고를 기록해 둔 주석이
      * 그 자체로 가드를 깨뜨린다(이 가드를 쓰면서 실제로 겪었다).

@@ -58,7 +58,7 @@ check() {
         warn "k8s-overlays/$DEPLOY_ENV/kustomization.yaml 이 없다 — 손으로 배포하던 그 사본에서 실행할 것"; bad=1
     fi
     info "저장소는 **비공개**여야 한다 — 공개 저장소의 셀프호스티드 러너는 포크 PR 의 코드를 실행할 수 있다(GitHub 권고)"
-    info "Settings → Environments → production → Required reviewers 에 승인자를 넣을 것(승인 없이는 배포되지 않게)"
+    info "배포는 Actions → deploy (OCI Ampere) → Run workflow 로만 시작된다(실행 = 승인). 비공개 저장소는 Required reviewers 를 쓸 수 없다"
     return $bad
 }
 

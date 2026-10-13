@@ -2,7 +2,7 @@
 
 [日本語](36-deployment-pipeline.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** B-54 가드(ROLLBACK-UNSAFE)와 `deploy-oci.yml`(승인 후 배포)이 들어와 §5.2 와 "배포 스테이지가 없다" 는 해소됐습니다.
+> 🕰️ **상태(2026-09-27) — 일부 낡음.** B-54 가드(ROLLBACK-UNSAFE)와 `deploy-oci.yml` 이 들어와 §5.2 와 "배포 스테이지가 없다" 는 해소됐습니다. 2026-10-05 부터 배포는 수동 실행으로만 시작됩니다(실행 = 승인, §6 · B-75).
 
 > 근거 문헌: Jez Humble · David Farley, *Continuous Delivery: Reliable Software Releases
 > through Build, Test, and Deployment Automation* (Addison-Wesley, 2010).
@@ -451,9 +451,10 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<서비스>/settings
 첫째를 골랐다(저장소는 비공개다). 흐름:
 
 ```
-push(기본 브랜치) ─> deployment pipeline(build.yml) 초록 ─> deploy (OCI Ampere)(deploy-oci.yml)
-                                                              ├─ gate   : 대상 커밋·그 파이프라인이 초록인가·프론트 설정 Variables
-                                                              └─ deploy : Environment production **승인** → 러너가 ops/28-deploy.sh local <SHA12>
+push(기본 브랜치) ─> deployment pipeline(build.yml) 초록(릴리스 후보)
+운영자가 Run workflow(버전) ─> deploy (OCI Ampere)(deploy-oci.yml)
+                                ├─ gate   : 대상 커밋·그 파이프라인이 초록인가·프론트 설정 Variables
+                                └─ deploy : 러너가 ops/28-deploy.sh local <SHA12>
 ```
 
 - 이미지는 다시 만들지 않는다 — 커밋 스테이지가 발행한 amd64·arm64 이미지(태그 = 커밋 SHA 12자리)를 그대로 쓴다.
@@ -461,8 +462,10 @@ push(기본 브랜치) ─> deployment pipeline(build.yml) 초록 ─> deploy (O
 - 러너는 운영자와 **같은 사용자**(ubuntu)로 돈다 — `~/.kube/config`·`~/.docker/config.json`·배포 이력(`~/.ecommerce-msa/deploy-journal.tsv`)이
   손으로 배포할 때와 같다. 그래서 `--rollback`·`--report` 도 하나의 이력을 본다.
 - gitignore 된 로컬 오버레이(`k8s-overlays/local`)는 운영자의 작업 사본(`DEPLOY_REPO_DIR`)에 있는 것을 링크한다. 비밀은 만지지 않는다.
-- 수동 실행(Actions → deploy (OCI Ampere) → Run workflow)은 기본 브랜치에서만, 그리고 **그 커밋의 파이프라인이 초록일 때만** 된다.
-- 🔒 자동 실행은 기본 브랜치의 **push** 로 초록이 된 실행, 같은 저장소의 것만(pull_request·포크·다른 브랜치 제외).
+- 실행은 **수동(Actions → deploy (OCI Ampere) → Run workflow)뿐**이다 — 기본 브랜치에서만, 그리고 **그 커밋의 파이프라인이 초록일 때만** 된다.
+- 🔒 **실행 = 승인.** 파이프라인이 초록이 돼도 자동으로 배포하지 않는다(가드 B-75). 예전에는 자동 실행(workflow_run) + Environment
+  `production` 의 Required reviewers 를 승인 게이트로 적었으나, 비공개 저장소는 Free · Pro · Team 요금제에서 Required reviewers 를
+  쓸 수 없어 게이트가 없었다(2026-10-05, 승인 없이 대기하던 배포를 취소하고 수동 실행만 남겼다).
 
 ### 6.1 설치 (한 번)
 
@@ -471,14 +474,14 @@ push(기본 브랜치) ─> deployment pipeline(build.yml) 초록 ─> deploy (O
 2. **저장소 Variables**(Settings → Secrets and variables → Actions → Variables) — `ops/frontend.env` 의 `REACT_APP_*` 일곱 개(공개값).
    비어 있으면 gate 가 배포를 멈춘다(CI 가 만든 프론트 이미지가 깨진다). 필요하면 `DEPLOY_REPO_DIR`(기본 `/home/ubuntu/ecommerce-msa`)·
    `DEPLOY_ENV`(기본 `local`).
-3. **Environment** — Settings → Environments → New environment `production` → Required reviewers(본인). 선택: Deployment branches 를
-   기본 브랜치로 제한.
+3. **Environment** — 따로 만들 것이 없다. `production` 은 첫 실행이 만들고 배포 이력용이다. 비공개 저장소는 요금제에 따라
+   Settings 에 Environments 메뉴가 보이지 않고, Required reviewers 는 Enterprise 에서만 된다 — 승인은 수동 실행으로 대신한다.
 4. **러너** — 인스턴스에서(손으로 배포하던 그 작업 사본):
    ```bash
    ./ops/40-deploy-runner.sh check      # arm64·kubectl·docker·오버레이 점검
    ./ops/40-deploy-runner.sh install    # 토큰은 Settings → Actions → Runners → New self-hosted runner 의 값(입력으로)
    ```
-5. **첫 배포** — Actions → deploy (OCI Ampere) → Run workflow(버전 비움 = 기본 브랜치 최신). 승인 → 러너 로그에서 ops/28 출력 확인.
+5. **첫 배포** — Actions → deploy (OCI Ampere) → Run workflow(버전 비움 = 기본 브랜치 최신) → 러너 로그에서 ops/28 출력 확인.
 
 ### 6.2 예전 Jenkins 스크립트(`CI-CD/`)
 

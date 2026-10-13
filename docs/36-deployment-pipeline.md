@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](36-deployment-pipeline.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** B-54 ガード（ROLLBACK-UNSAFE）と `deploy-oci.yml`（承認後のデプロイ）が入り、§5.2 と「デプロイステージがない」は解消されました。
+> 🕰️ **状態（2026-09-27）— 一部古い。** B-54 ガード（ROLLBACK-UNSAFE）と `deploy-oci.yml` が入り、§5.2 と「デプロイステージがない」は解消されました。2026-10-05 からデプロイは手動実行だけで始まります（実行 = 承認、§6・B-75）。
 
 > 根拠文献: Jez Humble · David Farley, *Continuous Delivery: Reliable Software Releases
 > through Build, Test, and Deployment Automation* (Addison-Wesley, 2010).
@@ -451,9 +451,10 @@ Java のビルドが 2 分 23 秒だ。コールドキャッシュの 6 分は�
 1 つ目を選んだ（リポジトリは非公開だ）。フロー:
 
 ```
-push(デフォルトブランチ) ─> deployment pipeline(build.yml) グリーン ─> deploy (OCI Ampere)(deploy-oci.yml)
-                                                              ├─ gate   : 対象コミット・そのパイプラインがグリーンか・フロントの設定 Variables
-                                                              └─ deploy : Environment production の **承認** → ランナーが ops/28-deploy.sh local <SHA12>
+push(デフォルトブランチ) ─> deployment pipeline(build.yml) グリーン(リリース候補)
+運用者が Run workflow(バージョン) ─> deploy (OCI Ampere)(deploy-oci.yml)
+                                    ├─ gate   : 対象コミット・そのパイプラインがグリーンか・フロントの設定 Variables
+                                    └─ deploy : ランナーが ops/28-deploy.sh local <SHA12>
 ```
 
 - イメージは作り直さない — コミットステージが発行した amd64・arm64 のイメージ（タグ = コミット SHA 12 桁）をそのまま使う。
@@ -461,8 +462,10 @@ push(デフォルトブランチ) ─> deployment pipeline(build.yml) グリー�
 - ランナーは運用者と **同じユーザー**（ubuntu）で動く — `~/.kube/config`・`~/.docker/config.json`・デプロイ履歴（`~/.ecommerce-msa/deploy-journal.tsv`）が
   手作業でデプロイするときと同じだ。そのため `--rollback`・`--report` も 1 つの履歴を見る。
 - gitignore されたローカルオーバーレイ（`k8s-overlays/local`）は、運用者の作業コピー（`DEPLOY_REPO_DIR`）にあるものをリンクする。シークレットには触れない。
-- 手動実行（Actions → deploy (OCI Ampere) → Run workflow）はデフォルトブランチでのみ、そして **そのコミットのパイプラインがグリーンのときだけ** 可能だ。
-- 🔒 自動実行は、デフォルトブランチへの **push** でグリーンになった実行で、同じリポジトリのものだけ（pull_request・フォーク・他のブランチは除外）。
+- 実行は **手動（Actions → deploy (OCI Ampere) → Run workflow）だけ** だ — デフォルトブランチでのみ、そして **そのコミットのパイプラインがグリーンのときだけ** 可能だ。
+- 🔒 **実行 = 承認。** パイプラインがグリーンになっても自動ではデプロイしない（ガード B-75）。以前は自動実行（workflow_run）+ Environment
+  `production` の Required reviewers を承認ゲートと書いていたが、非公開リポジトリでは Free・Pro・Team プランで Required reviewers が
+  使えず、ゲートが無かった（2026-10-05、承認なしで待機していたデプロイを取り消し、手動実行だけを残した）。
 
 ### 6.1 セットアップ（1 回）
 
@@ -471,14 +474,14 @@ push(デフォルトブランチ) ─> deployment pipeline(build.yml) グリー�
 2. **リポジトリの Variables**（Settings → Secrets and variables → Actions → Variables）— `ops/frontend.env` の `REACT_APP_*` 7 個（公開値）。
    空だと gate がデプロイを止める（CI が作るフロントのイメージが壊れる）。必要に応じて `DEPLOY_REPO_DIR`（デフォルト `/home/ubuntu/ecommerce-msa`）・
    `DEPLOY_ENV`（デフォルト `local`）。
-3. **Environment** — Settings → Environments → New environment `production` → Required reviewers（本人）。任意: Deployment branches を
-   デフォルトブランチに制限。
+3. **Environment** — 別途作るものはない。`production` は初回の実行が作り、デプロイ履歴用である。非公開リポジトリではプランによって
+   Settings に Environments メニューが表示されず、Required reviewers は Enterprise でしか使えない — 承認は手動実行で代える。
 4. **ランナー** — インスタンス上で（手作業でデプロイしていたその作業コピーで）:
    ```bash
    ./ops/40-deploy-runner.sh check      # arm64・kubectl・docker・オーバーレイを点検
    ./ops/40-deploy-runner.sh install    # トークンは Settings → Actions → Runners → New self-hosted runner の値（入力で）
    ```
-5. **最初のデプロイ** — Actions → deploy (OCI Ampere) → Run workflow（バージョンは空 = デフォルトブランチの最新）。承認 → ランナーのログで ops/28 の出力を確認。
+5. **最初のデプロイ** — Actions → deploy (OCI Ampere) → Run workflow（バージョンは空 = デフォルトブランチの最新）→ ランナーのログで ops/28 の出力を確認。
 
 ### 6.2 以前の Jenkins スクリプト（`CI-CD/`）
 
