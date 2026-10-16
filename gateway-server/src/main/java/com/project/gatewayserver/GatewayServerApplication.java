@@ -1,31 +1,20 @@
 package com.project.gatewayserver;
 
-import org.apache.catalina.Context;
-import org.apache.catalina.connector.Connector;
-import org.apache.tomcat.util.descriptor.web.SecurityCollection;
-import org.apache.tomcat.util.descriptor.web.SecurityConstraint;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
-import org.springframework.boot.web.servlet.server.ServletWebServerFactory;
 
-//import io.swagger.v3.oas.annotations.OpenAPIDefinition;
-//import io.swagger.v3.oas.annotations.info.Info;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.actuate.web.exchanges.HttpExchangeRepository;
-import org.springframework.boot.actuate.web.exchanges.InMemoryHttpExchangeRepository;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.Primary;
-import org.springframework.web.reactive.socket.client.TomcatWebSocketClient;
-import org.springframework.web.reactive.socket.client.WebSocketClient;
-import org.springframework.web.reactive.socket.server.RequestUpgradeStrategy;
-import org.springframework.web.reactive.socket.server.upgrade.TomcatRequestUpgradeStrategy;
-
-
+/**
+ * 게이트웨이 — WebFlux 를 <b>Reactor Netty</b> 서버 위에서 돌린다. 백엔드 호출도 Reactor Netty 클라이언트다.
+ *
+ * <p>예전에는 spring-boot-starter-websocket 이 서블릿 · Tomcat 을 끌어와 Tomcat 위의 리액티브로 떴고, 그래서 WebSocket 업그레이드
+ * 전략 · 클라이언트를 Tomcat 구현으로 {@code @Primary} 빈 두 개로 맞춰야 했다(셋이 서로를 떠받쳐 하나만 건드리면 조용히 깨졌다).
+ * 이제 build.gradle.kts 가 서블릿 · Tomcat 을 빼므로 Gateway 자동 설정이 ReactorNetty 의 업그레이드 전략 · 클라이언트를 준다 —
+ * 여기에 WebSocket 빈을 두지 않는다(NettyServerTest).
+ *
+ * <p>[JA] ゲートウェイは WebFlux を Reactor Netty サーバーの上で動かす。以前は starter-websocket が Tomcat を連れてきて、WebSocket の
+ * アップグレード戦略・クライアントを Tomcat 実装の @Primary Bean で合わせていた。今は Gateway の自動設定が ReactorNetty のものを用意する。
+ */
 @SpringBootApplication
-//@ComponentScan(basePackages = "com.project.gatewayserver")
 public class GatewayServerApplication {
 
    
@@ -50,22 +39,4 @@ public class GatewayServerApplication {
                     }
                 });
     }
-
-    @Bean
-    public HttpExchangeRepository httpExchangeRepository() {
-        return new InMemoryHttpExchangeRepository();
-    }
-    @Bean
-    @Primary
-    WebSocketClient tomcatWebSocketClient() {
-        return new TomcatWebSocketClient();
-    }
-    @Bean
-    @Primary
-    public RequestUpgradeStrategy requestUpgradeStrategy() {
-        return new TomcatRequestUpgradeStrategy();
-    }
-
-   
-    
 }

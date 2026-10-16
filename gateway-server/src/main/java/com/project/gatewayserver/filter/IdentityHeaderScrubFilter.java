@@ -66,6 +66,9 @@ import reactor.core.publisher.Mono;
 @Component
 public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
 
+    /** 로그 · 내부 엔드포인트 차단 다음 — 순서는 {@link PreLoggingFilter#ORDER} 의 주석. 라우트 필터(1 부터)보다 한참 앞이다. */
+    public static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 20;
+
     /**
      * 게이트웨이만 설정할 수 있는 헤더. JwtAuthorization 이 검증 뒤에 다시 넣는다.
      *
@@ -99,7 +102,7 @@ public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        // 무엇보다 먼저. 특히 JwtAuthorization(라우트 필터라 order 1)보다 먼저여야 한다.
-        return Ordered.HIGHEST_PRECEDENCE;
+        // 라우트 필터보다 먼저. 특히 JwtAuthorization(라우트 필터라 order 1 부터)보다 먼저여야 한다.
+        return ORDER;
     }
 }

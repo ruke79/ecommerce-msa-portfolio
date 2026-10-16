@@ -76,6 +76,8 @@ spring:
      jwtActiveKid: ${JWT_ACTIVE_KID:}
      jwtAcceptLegacy: ${JWT_ACCEPT_LEGACY:true}
   main:
+    # 서블릿 · Tomcat 은 build.gradle.kts 가 클래스패스에서 뺀다 — 이것은 의도를 적어 두는 것(Netty 서버, NettyServerTest).
+    # [JA] サーブレット・Tomcat は build.gradle.kts がクラスパスから外す — これは意図の明記(Netty サーバー)。
     web-application-type: reactive
 
   # RequestRateLimiter 토큰 버킷 저장소. Redis 미가동 시 게이트웨이가 트래픽을 처리하지 못하므로
@@ -356,9 +358,9 @@ spring:
               predicates:
                   - Path=/coupon-service/**
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/coupon-service/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:
@@ -369,9 +371,9 @@ spring:
               predicates:
                   - Path=/notification-service/**
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/notification-service/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:
@@ -384,9 +386,9 @@ spring:
               predicates:
                   - Path=/delivery-service/**
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/delivery-service/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:
@@ -441,9 +443,9 @@ spring:
               predicates:
                   - Path=/order-service/**
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/order-service/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:
@@ -460,9 +462,9 @@ spring:
                   - Path=/saga-projection/api/saga/**
                   - Method=GET
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/saga-projection/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:
@@ -474,9 +476,9 @@ spring:
               predicates:
                   - Path=/pay-service/**
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/pay-service/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:
@@ -499,9 +501,9 @@ spring:
               predicates:
                   - Path=/chat-service/api/**
               filters:
+                  - JwtAuthorization
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
-                  - JwtAuthorization
                   - *rate-default
                   - name: CircuitBreaker
                     args:

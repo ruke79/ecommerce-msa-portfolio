@@ -67,6 +67,23 @@ class JwtAccessTokenTypeTest {
     }
 
     @Test
+    @DisplayName("ACCESS 쿠키로 온 액세스 토큰도 통과하고 User-Id 가 실린다 — 브라우저 경로")
+    void accessCookiePasses() {
+        JwtAuthorizationGatewayFilterFactory factory = new JwtAuthorizationGatewayFilterFactory();
+        ReflectionTestUtils.setField(factory, "secretKey", SECRET);
+        GatewayFilter filter = factory.apply(new JwtAuthorizationGatewayFilterFactory.Config());
+        MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/order-service/api/order/list")
+                .cookie(new org.springframework.http.HttpCookie("ACCESS", token("access"))));
+        org.springframework.web.server.ServerWebExchange[] passed = new org.springframework.web.server.ServerWebExchange[1];
+        filter.filter(exchange, e -> {
+            passed[0] = e;
+            return Mono.empty();
+        }).block();
+        assertThat(passed[0]).as("하위로 넘어갔다").isNotNull();
+        assertThat(passed[0].getRequest().getHeaders().getFirst("User-Id")).isEqualTo("7");
+    }
+
+    @Test
     @DisplayName("🔴 리프레시 토큰은 Bearer 로 보내도 401 — 하위 서비스에 닿지 않는다")
     void refreshRejected() {
         GatewayFilterChain chain = chain();

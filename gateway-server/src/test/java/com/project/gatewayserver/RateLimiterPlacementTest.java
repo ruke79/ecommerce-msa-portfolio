@@ -70,6 +70,23 @@ class RateLimiterPlacementTest {
     }
 
     @Test
+    @DisplayName("🔴 JwtAuthorization 은 RemoveRequestHeader=Cookie 보다 앞 — ACCESS 쿠키로 오는 토큰을 지운 뒤 찾지 않는다")
+    void jwtRunsBeforeCookieRemoval() throws Exception {
+        // 라우트 필터의 order 는 목록 위치 + 1 이고 default-filters 에는 Dedupe 하나뿐이라, 목록 순서가 곧 실행 순서다.
+        // 🐛 예전: 7개 라우트가 쿠키를 먼저 지웠다. 지금 spring-web 은 변형한 요청의 getCookies() 를 원래 요청에 맡겨 우연히 읽혔다 —
+        //    그 내부 동작이 바뀌는 날 브라우저(ACCESS 쿠키) 경로가 로그인해도 401 이 된다.
+        // [JA] 以前は 7 ルートが Cookie を先に消していた。今の spring-web が偶然読ませていただけ。
+        for (RouteDefinition r : gateway().getRoutes()) {
+            List<String> args = r.getFilters().stream().map(f -> f.getName() + "=" + String.join(",", f.getArgs().values())).toList();
+            int jwt = r.getFilters().stream().map(FilterDefinition::getName).toList().indexOf("JwtAuthorization");
+            int cookie = args.indexOf("RemoveRequestHeader=Cookie");
+            if (jwt >= 0 && cookie >= 0) {
+                assertThat(jwt).as(r.getId()).isLessThan(cookie);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("🔴 로그인 라우트만 강한 제한(1/s) — 리뷰 보기 · 토큰 갱신은 그 버킷을 쓰지 않는다")
     void loginBucketIsSeparateFromReadsAndRefresh() throws Exception {
         GatewayProperties g = gateway();

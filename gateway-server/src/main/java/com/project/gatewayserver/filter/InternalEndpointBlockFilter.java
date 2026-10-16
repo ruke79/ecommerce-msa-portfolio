@@ -36,6 +36,9 @@ import reactor.core.publisher.Mono;
 @Component
 public class InternalEndpointBlockFilter implements GlobalFilter, Ordered {
 
+    /** 로그 다음, 신원 헤더 제거 앞 — 순서는 {@link PreLoggingFilter#ORDER} 의 주석. */
+    public static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 10;
+
     /** 서비스 접두사 바로 다음 조각이 이것이면 막는다. */
     static final Set<String> BLOCKED_SEGMENTS = Set.of(
             "actuator", "v3", "swagger-ui", "swagger-ui.html", "api-docs", "swagger-resources", "webjars");
@@ -73,6 +76,6 @@ public class InternalEndpointBlockFilter implements GlobalFilter, Ordered {
     /** 가장 먼저 — 인증 필터보다 앞에서, 라우팅 전에 끊는다. */
     @Override
     public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE;
+        return ORDER;
     }
 }
