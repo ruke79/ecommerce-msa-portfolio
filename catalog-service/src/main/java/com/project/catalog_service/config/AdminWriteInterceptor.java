@@ -57,13 +57,14 @@ public class AdminWriteInterceptor implements HandlerInterceptor {
             throws Exception {
 
         String method = request.getMethod();
-        String path = request.getRequestURI();
+        String path = judgedPath(request);
 
         // 콘텐츠 관리 경로는 **읽기도** 관리자 전용이다. 그 아래에 비공개 배너·초안 공지
         // 목록이 있어서, 쓰기만 막으면 GET 으로 미공개 기획전의 존재와 시작 시각이
         // 그대로 새어 나간다. 경로 규칙이 곧 인가 규칙이므로 새 관리 엔드포인트는 반드시
         // 이 접두사 아래에 둘 것.
-        boolean adminOnlyPath = path.startsWith(ADMIN_CONTENT_PREFIX) || path.startsWith(INTERNAL_PREFIX);
+        boolean adminOnlyPath = path.startsWith(ADMIN_CONTENT_PREFIX) || path.startsWith(INTERNAL_PREFIX)
+                || matchedAdminPattern(request);
 
         // 읽기는 공개다. CORS preflight(OPTIONS)도 여기서 막으면 안 된다.
         if (!adminOnlyPath && !("POST".equals(method) || "PUT".equals(method)
@@ -115,6 +116,30 @@ public class AdminWriteInterceptor implements HandlerInterceptor {
         }
 
         return true;
+    }
+
+    /** 디코딩 · {@code ;…} 제거 · {@code //} 정리를 하는 Spring 의 기본 설정 — 컨트롤러를 고르는 쪽과 같은 경로를 본다. */
+    private static final org.springframework.web.util.UrlPathHelper PATHS = new org.springframework.web.util.UrlPathHelper();
+
+    /**
+     * 판정할 경로 — Spring MVC 가 핸들러를 고를 때 보는 것과 같게(퍼센트 디코딩, 세그먼트의 {@code ;…} 제거, {@code //} 정리).
+     *
+     * <p>🐛 예전에는 {@code getRequestURI()}(디코딩 전 원문)를 앞부분만 비교했다. 그런데 핸들러 매칭은 디코딩하고 {@code ;…} 를 뗀다 —
+     * {@code /api/content/%61dmin/notices} · {@code /api/content;x=1/admin/banners} 는 접두사가 맞지 않아 "공개 읽기" 로
+     * 통과했고, 컨트롤러에는 그대로 닿아 로그인한 일반 사용자가 초안 공지 · 비공개 배너 · 예정 기획전 · 재고 목록을 읽었다.
+     *
+     * <p>[JA] 判定するパス — Spring MVC がハンドラーを選ぶときと同じく、デコード · {@code ;…} 除去 · {@code //} 整理。以前は生の
+     * URI を前方一致で比べ、エンコードや {@code ;} で管理者専用の読み取りを迂回できた。
+     */
+    static String judgedPath(HttpServletRequest request) {
+        String path = PATHS.getPathWithinApplication(request);
+        return path == null ? "" : path;
+    }
+
+    /** 두 번째 확인 — 이미 골라진 핸들러의 패턴이 관리자 경로인가(경로 정규화가 Spring 과 어긋나도 막히게). */
+    private static boolean matchedAdminPattern(HttpServletRequest request) {
+        Object pattern = request.getAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        return pattern != null && pattern.toString().startsWith(ADMIN_CONTENT_PREFIX);
     }
 
     private boolean reject(HttpServletResponse response, HttpStatus status, String message)

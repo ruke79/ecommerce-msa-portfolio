@@ -42,10 +42,11 @@ import lombok.extern.slf4j.Slf4j;
  * 절반 들어간 뒤 SKU 스텝에서 죽는다는 뜻이다. 시작 전에 쓰기 한 번으로 확인하면
  * 그 절반을 만들지 않는다.
  *
- * <p><b>한 인스턴스 기준이다.</b> 상태를 메모리에 들고 있으므로 레플리카가 둘이면
- * 서로의 실행을 모른다. 일괄 임포트는 운영자가 수동으로 한 번 누르는 작업이고
- * 이 클러스터는 단일 노드라 여기까지로 둔다 — 여러 인스턴스에서 눌러야 한다면
- * 잠금을 DB(예: Postgres 어드바이저리 락)로 올려야 한다.
+ * <p><b>파드 사이의 잠금</b>({@link ImportLock}, Redis). 🐛 예전에는 {@code AtomicBoolean} 하나뿐이라 레플리카 2개
+ * (k8s/41)에서 다시 누른 요청이 다른 파드로 가면 임포트가 동시에 두 번 돌았다 — 둘 다 "비어 있음" 을 통과해 카탈로그가
+ * 두 벌이 되거나, reset 쪽이 다른 쪽이 넣는 중인 데이터를 지웠다. 진행 상황(status)은 여전히 요청을 받은 파드의 것이다.
+ *
+ * <p>[JA] ポッド間のロック(Redis)。以前は AtomicBoolean だけで、別ポッドに届いた再実行が同時に走った。
  */
 @Slf4j
 @Service
@@ -58,6 +59,7 @@ public class ProductImportService {
     private final Map<String, Job> allJobs;
     private final ImageService imageService;
     private final CatalogResetService catalogResetService;
+    private final ImportLock importLock;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicReference<ImportStatus> last = new AtomicReference<>(ImportStatus.idle());
@@ -101,8 +103,20 @@ public class ProductImportService {
         if (!running.compareAndSet(false, true)) {
             throw new AlreadyRunningException();
         }
+        if (!importLock.tryAcquire()) {
+            running.set(false);
+            throw new AlreadyRunningException();   // 다른 파드에서 돌고 있다
+        }
 
         try {
+            // 🔒 저장소부터 본다 — 🐛 예전에는 reset(TRUNCATE … CASCADE)이 먼저였다. S3 자격 증명이 만료된 채 reset 을 누르면
+            //    카탈로그 전체가 지워진 뒤 503 만 돌아오고 임포트는 시작되지 않았다(되돌릴 수 없다).
+            // [JA] ストレージを先に確認する。以前は reset が先で、資格情報が切れていると全カタログが消えた後に 503 だった。
+            StorageStatus storage = imageService.probe();
+            if (!storage.writable()) {
+                throw new StorageNotWritableException(storage.detail());
+            }
+
             // ⚠️ 이 잡은 멱등하지 않다 — 이미 들어간 것 위에 또 넣는다. 그래서 카탈로그가
             //    비어 있지 않으면 **시작하지 않는다.** 예전에는 그냥 돌았고, 실패한 임포트를
             //    다시 누른 운영자가 카테고리 5→10 · 하위 15→30 을 만든 뒤 상품에서
@@ -117,12 +131,8 @@ public class ProductImportService {
                 }
                 catalogResetService.reset();
             }
-
-            StorageStatus storage = imageService.probe();
-            if (!storage.writable()) {
-                throw new StorageNotWritableException(storage.detail());
-            }
         } catch (RuntimeException e) {
+            importLock.release();
             running.set(false);
             throw e;
         }
@@ -169,6 +179,12 @@ public class ProductImportService {
             last.set(new ImportStatus("FAILED", startedAt, LocalDateTime.now(),
                     e.getMessage(), List.of()));
         } finally {
+            try {
+                catalogResetService.clearCaches();
+            } catch (RuntimeException e) {
+                log.warn("가져오기 뒤 캐시를 비우지 못했다 — TTL 안에 풀린다 ({})", e.getClass().getSimpleName());
+            }
+            importLock.release();
             running.set(false);
         }
     }

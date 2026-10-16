@@ -162,4 +162,82 @@ class ProductAggregatePersistenceTest {
         String read = new TransactionTemplate(txManager).execute(s -> em.find(Notice.class, id).getBody());
         assertThat(read).isEqualTo(body);
     }
+
+    @Autowired
+    private com.project.catalog_service.repository.jpa.data.ProductRepository productRepository;
+
+    /** 🐛 삭제한 상품의 slug 를 findBySlug 는 못 보지만 유니크 인덱스(V6)는 본다 — 같은 이름으로 다시 등록하면 500 이었다. */
+    @Test
+    @DisplayName("🔴 slugTaken 은 삭제(DELETED)된 상품의 slug 도 쓴 것으로 본다 — findBySlug 와 다르게")
+    void slugTakenSeesDeletedProducts() {
+        Long id = persistProduct(0, 0);
+        String slug = new TransactionTemplate(txManager).execute(s -> {
+            Product p = em.find(Product.class, id);
+            em.createNativeQuery("update product.product set status = 'DELETED' where product_id = :id")
+                    .setParameter("id", id).executeUpdate();
+            return p.getSlug();
+        });
+
+        assertThat(productRepository.findBySlug(slug)).isEmpty();
+        assertThat(productRepository.slugTaken(slug)).isTrue();
+        assertThat(productRepository.slugTaken("never-used-" + id)).isFalse();
+    }
+
+    @Test
+    @DisplayName("🔴 검색 필터의 사이즈 · 색상 정규식은 PostgreSQL 에서 글자 그대로 앞부분만 맞춘다 — 메타문자로 500 이 나지 않는다")
+    void searchFilterRegexIsLiteralInPostgres() {
+        java.util.function.BiFunction<String, String, Boolean> matches = (value, raw) -> (Boolean) em
+                .createNativeQuery("select cast(:v as text) ~* cast(:re as text)")
+                .setParameter("v", value)
+                .setParameter("re", com.project.catalog_service.service.SearchServiceFilters.prefixRegex(raw))
+                .getSingleResult();
+
+        assertThat(matches.apply("XL", "^XL|^M")).isTrue();
+        assertThat(matches.apply("m", "^XL|^M")).as("대소문자 무시").isTrue();
+        assertThat(matches.apply("XL", "^L")).as("앞부분 일치 — L 이 XL 을 고르지 않는다").isFalse();
+        assertThat(matches.apply("(", "(")).as("열린 괄호도 글자 — 예전에는 invalid regular expression").isTrue();
+        assertThat(matches.apply("Navy", ".*")).as(".* 는 아무거나가 아니다").isFalse();
+        assertThat(matches.apply("A+B", "^A+B")).isTrue();
+        assertThat(matches.apply("AAB", "^A+B")).isFalse();
+        assertThat(matches.apply("검정 (무광)", "^검정 (무광)")).isTrue();
+    }
+
+    @Autowired
+    private com.project.catalog_service.repository.jpa.data.ProductSkuRepository skuRepository;
+
+    @Test
+    @DisplayName("🔴 예약의 잠금 대기 상한(SET LOCAL lock_timeout)은 실제로 기다림을 끊고, 트랜잭션이 끝나면 풀린다")
+    void localLockTimeoutBoundsTheWait() throws Exception {
+        Long id = persistProduct(0, 0);
+        String lockRow = "select product_id from product.product where product_id = :id for update";
+        java.util.concurrent.CountDownLatch locked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        Thread holder = new Thread(() -> new TransactionTemplate(txManager).executeWithoutResult(s -> {
+            em.createNativeQuery(lockRow).setParameter("id", id).getResultList();
+            locked.countDown();
+            try {
+                done.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+        holder.start();
+        try {
+            assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long started = System.nanoTime();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new TransactionTemplate(txManager).executeWithoutResult(s -> {
+                skuRepository.setLocalLockTimeout("300ms");
+                em.createNativeQuery(lockRow).setParameter("id", id).getResultList();
+            })).satisfies(e -> assertThat(com.project.catalog_service.grpc.StockReservationGrpcServiceAccess.isLockWait(e))
+                    .as("lock_timeout(55P03) 로 끊겼다 — gRPC 가 DEADLINE_EXCEEDED 로 돌려줄 예외: " + e).isTrue());
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - started)).isLessThan(java.time.Duration.ofSeconds(3));
+        } finally {
+            done.countDown();
+            holder.join(10_000);
+        }
+
+        String after = new TransactionTemplate(txManager).execute(s ->
+                (String) em.createNativeQuery("select current_setting('lock_timeout')").getSingleResult());
+        assertThat(after).as("SET LOCAL — 커넥션 풀로 돌아간 뒤 다른 요청에 남지 않는다").isEqualTo("0");
+    }
 }

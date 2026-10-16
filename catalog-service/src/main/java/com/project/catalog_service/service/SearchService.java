@@ -100,11 +100,13 @@ public class SearchService {
     List<Long> skuFilterIds(SearchParamsRequest params) {
         java.math.BigDecimal low = params.getLowPrice();
         java.math.BigDecimal high = params.getHighPrice();
+        String size = prefixRegex(filterValues(params.getSize()));
+        String color = prefixRegex(filterValues(params.getColor()));
         if (low == null && high == null) {
-            return productSkuRepository.findProductIDBySizeAndPriceAndColor(null, null, params.getSize(), params.getColor());
+            return productSkuRepository.findProductIDBySizeAndPriceAndColor(null, null, size, color);
         }
         java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
-        for (Object[] row : productSkuRepository.findPriceCandidates(low, params.getSize(), params.getColor())) {
+        for (Object[] row : productSkuRepository.findPriceCandidates(low, size, color)) {
             if (row == null || row[0] == null || row[1] == null) {
                 continue;
             }
@@ -124,8 +126,87 @@ public class SearchService {
     private static boolean hasSkuFilter(SearchParamsRequest params) {
         return params.getLowPrice() != null
                 || params.getHighPrice() != null
-                || (params.getSize() != null && !params.getSize().isBlank())
-                || (params.getColor() != null && !params.getColor().isBlank());
+                || !filterValues(params.getSize()).isEmpty()
+                || !filterValues(params.getColor()).isEmpty();
+    }
+
+    /** 다중 선택 필터 하나에 받는 값의 상한 · 값 하나의 길이 상한. */
+    static final int MAX_FILTER_VALUES = 20;
+    static final int MAX_FILTER_VALUE_LENGTH = 100;
+
+    /**
+     * 화면이 보내는 다중 선택 값({@code ^Red|^Blue} — browse.jsx 의 createRegex)을 <b>글자 그대로의 값 목록</b>으로 푼다.
+     * 앞의 {@code ^} 를 떼고 {@code |} 로 나눈다. 정규식으로 읽지 않는다.
+     *
+     * <p>🐛 예전에는 이 문자열을 그대로 썼다:
+     * <ul>
+     *   <li>사이즈 · 색상은 SQL {@code ~*} 의 <b>정규식</b>이 됐다 — 익명 요청이 정규식을 고른다. {@code size=(} 는
+     *       "invalid regular expression" 500, 역참조 · 중첩 반복은 그 SKU 표 전체에 대한 비싼 매칭이었다</li>
+     *   <li>브랜드 · 스타일 · 소재 · 성별은 LIKE {@code '%^Nike|^Adidas%'} 가 됐다 — {@code ^} · {@code |} 를 글자로 찾으니
+     *       <b>화면에서 고른 필터가 한 번도 맞지 않았다</b>(언제나 0건)</li>
+     * </ul>
+     *
+     * <p>[JA] 画面が送る複数選択値({@code ^Red|^Blue})を文字どおりの値リストにする。以前は SQL の正規表現(500 · 高コスト)や
+     * LIKE '%^Nike|^Adidas%'(常に 0 件)になっていた。
+     */
+    static List<String> filterValues(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> values = new java.util.LinkedHashSet<>();
+        for (String part : raw.split("\\|")) {
+            String v = part.strip();
+            while (v.startsWith("^")) {
+                v = v.substring(1).strip();
+            }
+            if (!v.isEmpty() && v.length() <= MAX_FILTER_VALUE_LENGTH) {
+                values.add(v);
+            }
+            if (values.size() >= MAX_FILTER_VALUES) {
+                break;
+            }
+        }
+        return List.copyOf(values);
+    }
+
+    /**
+     * 값 목록 → PostgreSQL {@code ~*} 에 넘길 <b>앞부분 일치</b> 정규식 — 글자와 숫자가 아닌 것은 모두 {@code \} 로 가둔다
+     * (ARE 에서 영숫자가 아닌 글자 앞의 {@code \} 는 그 글자 자체다). 화면의 뜻({@code ^값})은 그대로다. 값이 없으면 null(조건 없음).
+     */
+    static String prefixRegex(List<String> values) {
+        if (values.isEmpty()) {
+            return null;
+        }
+        StringBuilder out = new StringBuilder("^(");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                out.append('|');
+            }
+            values.get(i).codePoints().forEach(cp -> {
+                if (!Character.isLetterOrDigit(cp)) {
+                    out.append('\\');
+                }
+                out.appendCodePoint(cp);
+            });
+        }
+        return out.append(')').toString();
+    }
+
+    /** LIKE 의 {@code %} · {@code _} · 이스케이프 문자를 글자로 — 값 안의 {@code _} 가 "아무 한 글자" 가 되지 않게. */
+    static String likeLiteral(String value) {
+        return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    }
+
+    /** 값 중 하나라도 포함하면 참. 값이 없으면 null(조건 없음). */
+    private static com.querydsl.core.types.Predicate containsAny(com.querydsl.core.types.dsl.StringPath path, List<String> values) {
+        if (values.isEmpty()) {
+            return null;
+        }
+        BooleanBuilder any = new BooleanBuilder();
+        for (String v : values) {
+            any.or(path.likeIgnoreCase("%" + likeLiteral(v) + "%", '!'));
+        }
+        return any;
     }
 
     /** category 파라미터가 숫자 id면 Long으로, 이름이거나 비어있으면 null을 반환한다(이름 검색은 별도 경로). */
@@ -197,6 +278,10 @@ public class SearchService {
                 .distinct()
                 .leftJoin(product.details, productDetails)
                 .where(builder)
+                // 🔒 순서를 고정한다 — 🐛 예전에는 ORDER BY 없이 OFFSET/LIMIT 이라, 무한 스크롤의 2페이지가 1페이지와 겹치거나
+                //    상품을 건너뛸 수 있었다(PostgreSQL 은 순서 없는 결과의 순서를 보장하지 않는다 — 계획 · 갱신에 따라 바뀐다).
+                //    최신 등록 순. [JA] 順序を固定する — 以前は ORDER BY なしの OFFSET/LIMIT で、ページが重複 · 欠落し得た。
+                .orderBy(product.productId.desc())
                 .offset(pageRequest.getOffset())
                 .limit(pageRequest.getPageSize())
                 .fetch();
@@ -318,22 +403,20 @@ public class SearchService {
         }
 
         // 4. brand 조건
-        if (params.getBrand() != null && !params.getBrand().isEmpty()) {
-            builder.and(product.brand.likeIgnoreCase("%" + params.getBrand() + "%"));
+        com.querydsl.core.types.Predicate brand = containsAny(product.brand, filterValues(params.getBrand()));
+        if (brand != null) {
+            builder.and(brand);
         }
 
-        // 5. style, material, gender 조건 (OR 로직)
-        if (params.getStyle() != null || params.getMaterial() != null || params.getGender() != null) {
-            BooleanBuilder detailsBuilder = new BooleanBuilder();
-            if (params.getStyle() != null && !params.getStyle().isEmpty()) {
-                detailsBuilder.or(productDetails.value.likeIgnoreCase("%" + params.getStyle() + "%"));
+        // 5. style, material, gender 조건 (OR 로직) — 값마다 글자 그대로 포함(filterValues)
+        BooleanBuilder detailsBuilder = new BooleanBuilder();
+        for (String raw : new String[] { params.getStyle(), params.getMaterial(), params.getGender() }) {
+            com.querydsl.core.types.Predicate any = containsAny(productDetails.value, filterValues(raw));
+            if (any != null) {
+                detailsBuilder.or(any);
             }
-            if (params.getMaterial() != null && !params.getMaterial().isEmpty()) {
-                detailsBuilder.or(productDetails.value.likeIgnoreCase("%" + params.getMaterial() + "%"));
-            }
-            if (params.getGender() != null && !params.getGender().isEmpty()) {
-                detailsBuilder.or(productDetails.value.likeIgnoreCase("%" + params.getGender() + "%"));
-            }
+        }
+        if (detailsBuilder.hasValue()) {
             builder.and(detailsBuilder);
         }
 

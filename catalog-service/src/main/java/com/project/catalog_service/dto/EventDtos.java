@@ -55,8 +55,10 @@ public final class EventDtos {
             LocalDateTime endsAt,
             /** true 면 DRAFT → SCHEDULED. false 면 초안으로 되돌린다. */
             Boolean publish,
-            List<EventProductRequest> products,
-            List<EventCategoryRequest> categories,
+            // 🔒 @Valid — 🐛 예전에는 없어서 안쪽 레코드의 @Min(0) @Max(100) 이 실행되지 않았다. 할인율 150 이 저장되면 Discount 가
+            //    100 에서 잘라 0원 판매가 됐다(배지는 "-150%"). [JA] @Valid がなく内側の 0〜100 検証が走らなかった(150% → 0 円販売)。
+            List<@jakarta.validation.Valid EventProductRequest> products,
+            List<@jakarta.validation.Valid EventCategoryRequest> categories,
             /**
              * 쿠폰을 받을 수 있는 고객군(ALL · NEW_USER · EXISTING_USER).
              *

@@ -86,7 +86,7 @@ public class EventService {
                 .slug(uniqueSlug(request.slug(), request.title(), null))
                 .description(request.description())
                 .bannerImageUrl(request.bannerImageUrl())
-                .linkUrl(request.linkUrl())
+                .linkUrl(com.project.catalog_service.util.SafeLinks.check(request.linkUrl()))
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
                 .status(EventStatus.DRAFT)
@@ -119,7 +119,7 @@ public class EventService {
         event.setSlug(uniqueSlug(request.slug(), request.title(), event));
         event.setDescription(request.description());
         event.setBannerImageUrl(request.bannerImageUrl());
-        event.setLinkUrl(request.linkUrl());
+        event.setLinkUrl(com.project.catalog_service.util.SafeLinks.check(request.linkUrl()));
         event.setStartsAt(request.startsAt());
         event.setEndsAt(request.endsAt());
         event.replaceProducts(toProducts(request.products()));
@@ -245,6 +245,14 @@ public class EventService {
         // 여기서 DRAFT 로 되돌리면 진행 기록이 사라진다.
     }
 
+    /** 할인율은 0~100 — 요청 검증(@Valid)을 거치지 않은 호출에도(서비스가 마지막 방어선이다). */
+    static int checkedRate(Integer rate) {
+        if (rate == null || rate < 0 || rate > 100) {
+            throw new IllegalArgumentException("할인율은 0~100 사이여야 합니다.");
+        }
+        return rate;
+    }
+
     /**
      * 대상 카테고리를 검증해 값 타입으로 바꾼다.
      *
@@ -264,7 +272,7 @@ public class EventService {
         Map<Long, Integer> byCategory = new LinkedHashMap<>();
         for (EventCategoryRequest item : requested) {
             if (item != null && item.categoryId() != null) {
-                byCategory.put(item.categoryId(), item.discountRate());
+                byCategory.put(item.categoryId(), checkedRate(item.discountRate()));
             }
         }
         if (byCategory.isEmpty()) {
@@ -396,7 +404,7 @@ public class EventService {
             if (item == null || item.productId() == null) {
                 continue;
             }
-            byProduct.put(item.productId(), item.discountRate());
+            byProduct.put(item.productId(), checkedRate(item.discountRate()));
         }
 
         Set<Long> existing = Set.copyOf(productRepository.findAllById(byProduct.keySet()).stream()

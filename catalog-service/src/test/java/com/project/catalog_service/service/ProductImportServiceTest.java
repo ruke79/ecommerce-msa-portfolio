@@ -42,7 +42,7 @@ class ProductImportServiceTest {
 
     private ProductImportService service() {
         return new ProductImportService(jobLauncher,
-                Map.of(ProductImportService.JOB_NAME, job), imageService, emptyCatalog());
+                Map.of(ProductImportService.JOB_NAME, job), imageService, emptyCatalog(), ImportLock.LOCAL);
     }
 
     @Test
@@ -116,7 +116,7 @@ class ProductImportServiceTest {
     @Test
     void failsWhenJobBeanIsMissing() {
         ProductImportService service =
-                new ProductImportService(jobLauncher, Map.of(), imageService, emptyCatalog());
+                new ProductImportService(jobLauncher, Map.of(), imageService, emptyCatalog(), ImportLock.LOCAL);
 
         assertThatThrownBy(() -> service.start(false)).isInstanceOf(IllegalStateException.class);
     }

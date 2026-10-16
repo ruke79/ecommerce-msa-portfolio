@@ -210,4 +210,11 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
         // nativeQuery = true)
         // List<String> findSizesByProductId(@Param("productIds") List<Long>
         // productIds);
+
+    /**
+     * 이 트랜잭션 동안만 잠금 대기 상한을 둔다(SET LOCAL lock_timeout). 예약이 SKU 잠금을 호출자의 기한보다 오래 기다리지 않게 —
+     * 기다림이 길어지면 PostgreSQL 이 55P03 으로 끊는다(StockReservationService.reserve).
+     */
+    @org.springframework.data.jpa.repository.Query(value = "select set_config('lock_timeout', :value, true)", nativeQuery = true)
+    String setLocalLockTimeout(@org.springframework.data.repository.query.Param("value") String value);
 }

@@ -102,6 +102,9 @@ public class StockReservationService {
                 .thenComparing(Option::colorId).thenComparing(Option::size);
     }
 
+    /** 잠금 대기 기본 상한 — 기한을 모르는 호출(HTTP)에도. */
+    public static final Duration DEFAULT_LOCK_TIMEOUT = Duration.ofSeconds(5);
+
     /**
      * 주문의 줄을 한꺼번에 잡는다 — 전부 아니면 전무. 같은 주문으로 다시 부르면 기존 예약을 새 수량·만료로 덮는다.
      *
@@ -112,10 +115,24 @@ public class StockReservationService {
      */
     @Transactional
     public StockReservationResult reserve(StockReservationRequest request) {
+        return reserve(request, DEFAULT_LOCK_TIMEOUT);
+    }
+
+    /**
+     * @param lockTimeout SKU 잠금을 기다릴 상한 — gRPC 는 호출자의 남은 기한으로 준다.
+     *                    🐛 예전에는 상한이 없어, order 가 3초 기한으로 포기한 뒤에도 인기 상품의 잠금을 기다리며 커넥션(풀 5)을 쥐었다.
+     *                    그 사이 같은 주문의 취소가 먼저 돌면 아직 커밋되지 않은 예약을 보지 못해 0건을 풀고, 뒤늦게 커밋된 HELD 가
+     *                    TTL 동안 유령으로 남았다.
+     *                    [JA] SKU ロックを待つ上限 — gRPC は呼び出し側の残り期限で渡す。以前は上限がなく、order が諦めた後も待ち続けた。
+     */
+    @Transactional
+    public StockReservationResult reserve(StockReservationRequest request, Duration lockTimeout) {
         if (request == null || request.getOrderId() == null || request.getLines() == null || request.getLines().isEmpty()) {
             throw new IllegalArgumentException("예약할 주문과 줄이 필요합니다.");
         }
         Long orderId = request.getOrderId();
+        long waitMs = Math.max(1, (lockTimeout == null ? DEFAULT_LOCK_TIMEOUT : lockTimeout).toMillis());
+        skus.setLocalLockTimeout(waitMs + "ms");
         Instant now = Instant.now(clock);
         Instant expiresAt = now.plus(clampTtl(request.getTtlSeconds()));
 

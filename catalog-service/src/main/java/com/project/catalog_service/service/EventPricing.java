@@ -61,8 +61,30 @@ public class EventPricing {
     private volatile Map<Long, Integer> discounts = Map.of();
 
     /** 진행 중인 기획전의 할인을 다시 읽는다. 스케줄러가 1분마다 부른다. */
+    /**
+     * 기동하면서 한 번 읽는다 — 첫 스케줄 실행(10초 뒤)을 기다리지 않는다. ProductService 가 이 빈을 받기 전에 끝나므로 기동 워밍업
+     * (ProductWarmUpService)도 할인이 얹힌 값으로 공유 캐시를 채운다.
+     *
+     * <p>🐛 예전에는 기동 뒤 10초 동안 맵이 비어 있었다 — 그 사이 워밍업 · 요청이 기획전 할인 없는 가격을 공유 Redis 에 넣었고, 다른
+     * 인스턴스는 바뀐 것이 없으니 비우지 않아 캐시 만료(최대 60분)까지 정가가 나갔다. DB 를 못 읽어도 기동은 계속한다(스케줄이 다시 읽는다).
+     *
+     * <p>[JA] 起動時に一度読む — 以前は起動後 10 秒間マップが空で、その間のウォームアップ · 要求が割引なしの価格を共有キャッシュに入れた。
+     */
+    @jakarta.annotation.PostConstruct
+    void loadOnStartup() {
+        try {
+            refresh();
+        } catch (RuntimeException e) {
+            log.warn("기동 시 기획전 할인을 읽지 못했다 — 스케줄러가 다시 읽는다 ({})", e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * @return 할인 맵이 바뀌었는가 — 바뀌었으면 호출자(EventScheduler)가 공유 캐시를 비운다.
+     *         [JA] 割引マップが変わったか — 変わっていれば呼び出し側が共有キャッシュを消す。
+     */
     @Transactional(readOnly = true)
-    public void refresh() {
+    public boolean refresh() {
         Map<Long, Integer> next = new HashMap<>();
 
         // 같은 상품이 여러 곳에 걸려 있으면 **높은 쪽**을 쓴다. 더하면(혹은 곱하면)
@@ -79,9 +101,11 @@ public class EventPricing {
         Map<Long, Integer> before = discounts;
         discounts = Map.copyOf(next);
 
-        if (before.size() != next.size()) {
+        boolean changed = !before.equals(discounts);
+        if (changed) {
             log.info("기획전 할인 갱신: 대상 {}건 (이전 {}건)", next.size(), before.size());
         }
+        return changed;
     }
 
     /**

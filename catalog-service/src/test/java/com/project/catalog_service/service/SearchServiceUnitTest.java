@@ -280,7 +280,7 @@ class SearchServiceUnitTest {
     void sizeOnlyUsesThePlainQuery() {
         TestParams params = priceBetween(null, null);
         params.setSize("M");
-        when(productSkuRepository.findProductIDBySizeAndPriceAndColor(any(), any(), eq("M"), any()))
+        when(productSkuRepository.findProductIDBySizeAndPriceAndColor(any(), any(), eq("^(M)"), any()))
                 .thenReturn(java.util.List.of(9L));
 
         org.assertj.core.api.Assertions.assertThat(service.skuFilterIds(params)).containsExactly(9L);
@@ -333,5 +333,71 @@ class SearchServiceUnitTest {
         service.searchProducts(params, SearchEngine.POSTGRES);
 
         verify(productRepository).findBrandsByCategoryId(123L);
+    }
+
+    // ---------------------------------------------------------------- 다중 선택 값은 글자 그대로 (정규식 · LIKE 주입 없음)
+
+    @Test
+    @DisplayName("🔴 화면의 ^a|^b 는 값 목록으로 — 빈 값 · 너무 긴 값은 버리고, 개수는 상한까지")
+    void filterValuesAreLiteralList() {
+        org.assertj.core.api.Assertions.assertThat(SearchService.filterValues("^Red|^Navy Blue|^Red| |^")).containsExactly("Red", "Navy Blue");
+        org.assertj.core.api.Assertions.assertThat(SearchService.filterValues("M")).containsExactly("M");
+        org.assertj.core.api.Assertions.assertThat(SearchService.filterValues(null)).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(SearchService.filterValues("x".repeat(101))).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(SearchService.filterValues("^a|".repeat(50))).hasSize(1);
+        String many = java.util.stream.IntStream.range(0, 50).mapToObj(i -> "^v" + i).collect(java.util.stream.Collectors.joining("|"));
+        org.assertj.core.api.Assertions.assertThat(SearchService.filterValues(many)).hasSize(SearchService.MAX_FILTER_VALUES);
+    }
+
+    @Test
+    @DisplayName("🔴 사이즈 · 색상 정규식은 메타문자를 모두 가둔다 — 익명 요청이 정규식을 고르지 못한다")
+    void prefixRegexEscapesMetacharacters() {
+        org.assertj.core.api.Assertions.assertThat(SearchService.prefixRegex(SearchService.filterValues("^XL|^M"))).isEqualTo("^(XL|M)");
+        org.assertj.core.api.Assertions.assertThat(SearchService.prefixRegex(SearchService.filterValues("(a+)+$")))
+                .isEqualTo("^(\\(a\\+\\)\\+\\$)");
+        org.assertj.core.api.Assertions.assertThat(SearchService.prefixRegex(java.util.List.of())).isNull();
+    }
+
+    @Test
+    @DisplayName("🔴 사이즈 · 색상만 걸어도 가둔 정규식이 SQL 로 간다 — 들어온 문자열 그대로가 아니다")
+    void skuFilterSendsEscapedRegex() {
+        TestParams params = priceBetween(null, null);
+        params.setColor("^.*|^(");
+
+        service.skuFilterIds(params);
+
+        verify(productSkuRepository).findProductIDBySizeAndPriceAndColor(any(), any(), eq(null), eq("^(\\.\\*|\\()"));
+    }
+
+    @Test
+    @DisplayName("🔴 브랜드 · 스타일은 값마다 포함 검색 — 예전에는 LIKE '%^Nike|^Adidas%' 라 늘 0건")
+    void brandAndDetailsMatchEachValue() {
+        TestParams params = new TestParams();
+        params.setPage(1);
+        params.setPageSize(10);
+        params.setBrand("^Nike|^Adi_das");
+        params.setStyle("^Casual");
+
+        service.searchProducts(params, SearchEngine.POSTGRES);
+
+        org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
+                org.mockito.ArgumentCaptor.forClass(com.querydsl.core.types.Predicate.class);
+        verify(listQuery).where(captor.capture());
+        String where = captor.getValue().toString();
+        org.assertj.core.api.Assertions.assertThat(where)
+                .contains("%nike%").contains("%adi!_das%").contains("%casual%")
+                .doesNotContain("^").doesNotContain("%nike|");
+    }
+
+    @Test
+    @DisplayName("🔴 페이지는 정해진 순서로 자른다 — ORDER BY 없는 OFFSET 은 페이지가 겹치거나 빠진다")
+    void pagesAreOrdered() {
+        TestParams params = new TestParams();
+        params.setPage(2);
+        params.setPageSize(10);
+
+        service.searchProducts(params, SearchEngine.POSTGRES);
+
+        verify(listQuery).orderBy(com.project.catalog_service.model.QProduct.product.productId.desc());
     }
 }

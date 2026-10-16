@@ -79,10 +79,14 @@ public class KafkaDltConfig {
         return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(dltProducerProps(ByteArraySerializer.class)));
     }
 
+    /** DLT 로 보낸 레코드 수 — 토픽별. 경보 KafkaDeadLetterPublished(observability/alert-rules.yml)가 본다. */
+    static final String DLT_METRIC = "kafka.dlt.records";
+
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(
             KafkaTemplate<String, Object> dltJsonKafkaTemplate,
-            KafkaTemplate<String, byte[]> dltBytesKafkaTemplate) {
+            KafkaTemplate<String, byte[]> dltBytesKafkaTemplate,
+            io.micrometer.core.instrument.MeterRegistry meters) {
 
         // 값 타입에 따라 템플릿 선택: 역직렬화 실패면 byte[](원본 보존), 그 외엔 JSON.
         Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
@@ -97,7 +101,17 @@ public class KafkaDltConfig {
         backOff.setInitialInterval(1_000L);
         backOff.setMultiplier(2.0);
 
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
+        // DLT 로 가는 순간을 센다 — 🐛 예전에는 격리가 조용했다. 결제 확정 차감(product-update)이 DLT 로 가면 재고가 줄지 않은 채
+        // 예약이 만료되어 같은 수량이 다시 팔리는데(돈은 받았고 물건은 없다), 그것을 알릴 지표도 경보도 없었다.
+        // [JA] DLT へ送った瞬間を数える。以前は隔離が静かで、決済確定の在庫減算が DLT に行っても誰も気づかなかった。
+        org.springframework.kafka.listener.ConsumerRecordRecoverer counted = counting(recoverer, meters);
+
+        DefaultErrorHandler handler = new DefaultErrorHandler(counted, backOff);
+        // 일시적인 실패는 오래 다시 한다 — 교착(40P01) · 직렬화 실패 · 잠금 대기 · 커넥션 풀 고갈 · DB 페일오버는 몇 초 뒤면 풀린다.
+        // 🐛 예전에는 모든 실패가 1·2·4초 세 번 뒤 DLT 였다 — 결제 확정 차감이 그렇게 7초 만에 사라졌다. 영구적인 실패(버그 · 잘못된
+        // 메시지)는 그대로 짧게 끝낸다 — 파티션을 오래 막지 않게.
+        // [JA] 一時的な失敗(デッドロック · ロック待ち · 接続枯渇 · フェイルオーバー)は長く再試行する。以前はすべて 7 秒で DLT だった。
+        handler.setBackOffFunction((record, ex) -> isTransient(ex) ? transientBackOff() : null);
         // 재시도해도 절대 성공할 수 없는 예외는 즉시 DLT 로 (poison 즉시 격리)
         handler.addNotRetryableExceptions(
                 DeserializationException.class,
@@ -105,5 +119,41 @@ public class KafkaDltConfig {
                 ConversionException.class,
                 ClassCastException.class);
         return handler;
+    }
+
+    static org.springframework.kafka.listener.ConsumerRecordRecoverer counting(
+            org.springframework.kafka.listener.ConsumerRecordRecoverer recoverer, io.micrometer.core.instrument.MeterRegistry meters) {
+        return (record, ex) -> {
+            meters.counter(DLT_METRIC, "topic", record.topic()).increment();
+            recoverer.accept(record, ex);
+        };
+    }
+
+    /** 일시적인 실패의 백오프 — 1 · 2 · 4 · 8 · 16 · 30 · 30 · 30 · 30 · 30초(약 3분). 한 번 쉬는 시간은 max.poll.interval(5분)보다 짧다. */
+    static org.springframework.util.backoff.BackOff transientBackOff() {
+        ExponentialBackOffWithMaxRetries b = new ExponentialBackOffWithMaxRetries(10);
+        b.setInitialInterval(1_000L);
+        b.setMultiplier(2.0);
+        b.setMaxInterval(30_000L);
+        return b;
+    }
+
+    /** 원인 사슬에 일시적인 DB 실패가 있는가 — 시간이 지나면 같은 메시지가 성공할 수 있는 것. */
+    static boolean isTransient(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof org.springframework.dao.TransientDataAccessException
+                    || t instanceof org.springframework.dao.PessimisticLockingFailureException
+                    || t instanceof org.springframework.orm.ObjectOptimisticLockingFailureException
+                    || t instanceof org.springframework.transaction.CannotCreateTransactionException
+                    || t instanceof java.sql.SQLTransientException
+                    || t instanceof java.sql.SQLRecoverableException) {
+                return true;
+            }
+            if (t instanceof java.sql.SQLException sql && sql.getSQLState() != null
+                    && (sql.getSQLState().startsWith("40") || sql.getSQLState().startsWith("08") || "55P03".equals(sql.getSQLState()))) {
+                return true;   // 40001 직렬화 실패 · 40P01 교착 · 08xxx 연결 · 55P03 잠금 대기 시간 초과
+            }
+        }
+        return false;
     }
 }

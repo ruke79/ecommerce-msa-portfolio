@@ -140,4 +140,45 @@ class AdminWriteInterceptorTest {
         assertTrue(interceptor.preHandle(req("POST", "/api/internal/stock/reservations", null, null), new MockHttpServletResponse(), null));
         assertTrue(interceptor.preHandle(req("POST", "/api/internal/stock/reservations/7/release", "1", "ROLE_ADMIN"), new MockHttpServletResponse(), null));
     }
+
+    /**
+     * 🐛 판정이 디코딩 전 원문 URI 의 앞부분만 봤다 — 핸들러 매칭은 디코딩하고 {@code ;…} 를 떼므로, 인코딩한 경로는 관리자 화면에
+     * 닿으면서 "공개 읽기" 로 통과했다.
+     */
+    @Test
+    @DisplayName("🔴 인코딩 · ;매개변수 · 겹슬래시로 적은 관리자 경로도 관리자 전용 — 일반 사용자의 GET 은 403")
+    void encodedAdminPathsAreAdminOnly() throws Exception {
+        for (String uri : java.util.List.of("/api/content/%61dmin/notices", "/api/content;x=1/admin/banners",
+                "/api/content/admin;v=2/stock", "//api/content/admin/notices", "/api/%63ontent/admin/events")) {
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            assertFalse(interceptor.preHandle(req("GET", uri, "42", "ROLE_USER"), res, null), uri);
+            assertEquals(403, res.getStatus(), uri);
+        }
+        assertTrue(interceptor.preHandle(req("GET", "/api/content/%61dmin/notices", "1", "ROLE_ADMIN"),
+                new MockHttpServletResponse(), null));
+    }
+
+    @Test
+    @DisplayName("🔴 실제 디스패처로 — 인코딩한 경로가 관리자 핸들러에 닿아도 인터셉터가 막는다")
+    void dispatcherRoutesEncodedPathButInterceptorBlocks() throws Exception {
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(new AdminProbe())
+                .addInterceptors(interceptor).build();
+        for (String uri : java.util.List.of("/api/content/%61dmin/notices", "/api/content;x=1/admin/notices")) {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(new java.net.URI(uri))
+                            .header(AdminWriteInterceptor.USER_HEADER, "42").header(AdminWriteInterceptor.ROLE_HEADER, "ROLE_USER"))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(new java.net.URI(uri))
+                            .header(AdminWriteInterceptor.USER_HEADER, "1").header(AdminWriteInterceptor.ROLE_HEADER, "ROLE_ADMIN"))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        }
+    }
+
+    @org.springframework.web.bind.annotation.RestController
+    @org.springframework.web.bind.annotation.RequestMapping("/api/content/admin")
+    static class AdminProbe {
+        @org.springframework.web.bind.annotation.GetMapping("/notices")
+        String notices() {
+            return "draft";
+        }
+    }
 }

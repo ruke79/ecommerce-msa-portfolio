@@ -51,7 +51,7 @@ public class BannerService {
         Banner banner = Banner.builder()
                 .title(request.title())
                 .imageUrl(request.imageUrl())
-                .linkUrl(blankToNull(request.linkUrl()))
+                .linkUrl(com.project.catalog_service.util.SafeLinks.check(request.linkUrl()))
                 .sortOrder(request.sortOrder() == null ? 0 : request.sortOrder())
                 // 기본은 비공개다. 만들자마자 첫 화면에 뜨면 작업 중인 배너가 노출된다.
                 .published(Boolean.TRUE.equals(request.published()))
@@ -71,7 +71,7 @@ public class BannerService {
 
         banner.setTitle(request.title());
         banner.setImageUrl(request.imageUrl());
-        banner.setLinkUrl(blankToNull(request.linkUrl()));
+        banner.setLinkUrl(com.project.catalog_service.util.SafeLinks.check(request.linkUrl()));
         if (request.sortOrder() != null) {
             banner.setSortOrder(request.sortOrder());
         }
@@ -93,9 +93,5 @@ public class BannerService {
         }
         bannerRepository.deleteById(id);
         log.warn("배너 삭제: id={}", id);
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
     }
 }

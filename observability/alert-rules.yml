@@ -64,6 +64,16 @@ groups:
           summary: "결제된 주문의 재고가 모자랐습니다 (최근 30분 {{ $value }}개)"
           description: "catalog 가 결제 뒤 재고 차감에서 모자란 수량을 order 에 알렸고, order 가 그만큼 자동 환불합니다. 재고 수치가 실물과 맞는지, 품절 처리가 늦지 않았는지 확인하세요(docs/53)."
 
+      # 결제 확정 차감 · 복원(product-update)이 DLT 로 갔다 — 재고가 줄지 않은 채 예약이 만료되면 같은 수량이 다시 팔린다(돈은 받았고
+      # 물건은 없다). 일시적 DB 실패는 약 3분 다시 하므로(catalog KafkaDltConfig) 여기까지 온 것은 사람이 봐야 한다.
+      # 처리: DLT 레코드의 eventId(order-<주문>) 로 주문을 찾아, 재고를 손으로 맞추거나 원래 토픽으로 다시 보낸다(멱등 — 이미 반영됐으면 건너뛴다).
+      - alert: KafkaDeadLetterPublished
+        expr: sum by (service, topic) (increase(kafka_dlt_records_total[15m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} 가 {{ $labels.topic }} 레코드를 DLT 로 보냈습니다 (최근 15분 {{ $value }}건)"
+          description: "재시도로 처리하지 못한 메시지입니다. product-update 면 결제된 주문의 재고 차감이 빠졌을 수 있습니다 — {{ $labels.topic }}.DLT 를 확인하세요."
+
       - alert: StockShortageRefundNotAutomatic
         expr: sum by (outcome) (increase(order_stock_shortage_total{outcome=~"manual|unknown_order"}[30m])) > 0
         labels: { severity: critical }

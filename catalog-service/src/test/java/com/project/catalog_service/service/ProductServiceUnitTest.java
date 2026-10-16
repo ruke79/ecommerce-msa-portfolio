@@ -137,6 +137,59 @@ class ProductServiceUnitTest {
         verify(service).updateProductSize_Qty("slug", 10L, "M", -3);
     }
 
+    // ---------------------------------------------------------------- 잠금 순서
+
+    private void twoProducts() {
+        for (long id : new long[] {1L, 2L}) {
+            Product p = mock(Product.class);
+            when(p.getProductId()).thenReturn(id);
+            when(p.getSlug()).thenReturn("slug-" + id);
+            when(productRepository.findById(id)).thenReturn(Optional.of(p));
+        }
+        ProductSku sku = mock(ProductSku.class);
+        when(sku.getSkuproductId()).thenReturn(10L);
+        doReturn(sku).when(service).updateSoldValue(anyLong(), anyString(), anyString(), anyLong(), anyInt());
+        doReturn(mock(ProductSize.class)).when(service)
+                .updateProductSize_Qty(anyString(), anyLong(), anyString(), anyInt());
+        doReturn(5).when(service).availableForUpdate(anyLong(), anyString(), anyLong());
+    }
+
+    /**
+     * 🐛 차감 · 복원은 주문 줄 순서대로 SKU 를 잠갔다(예약만 정렬했다) — [B, A] 주문과 [A, B] 주문이 겹치면 교착(40P01), 끊긴
+     * 결제 확정 차감은 재시도를 다 쓰면 DLT 로 갔다. 예약과 같은 (상품, 색상, 사이즈) 순서로 잠근다.
+     */
+    @Test
+    @DisplayName("🔴 결제 확정 차감은 줄 순서와 무관하게 (상품, 색상, 사이즈) 순서로 잠근다 — 예약과 같은 순서")
+    void deductionLocksInCanonicalOrder() {
+        twoProducts();
+        ProductUpdateRequest request = new ProductUpdateRequest();
+        request.setEventId("order-9");
+        request.setOrderProducts(List.of(new OrderProductRequest(2L, 1, "M", 5L), new OrderProductRequest(1L, 1, "S", 7L),
+                new OrderProductRequest(1L, 1, "L", 5L)));
+
+        service.productUpdated(request);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(service);
+        order.verify(service).availableForUpdate(1L, "L", 5L);
+        order.verify(service).availableForUpdate(1L, "S", 7L);
+        order.verify(service).availableForUpdate(2L, "M", 5L);
+    }
+
+    @Test
+    @DisplayName("🔴 복원도 같은 순서로 잠근다")
+    void restockLocksInCanonicalOrder() {
+        twoProducts();
+        ProductUpdateRequest request = new ProductUpdateRequest();
+        request.setRestock(true);
+        request.setOrderProducts(List.of(new OrderProductRequest(2L, 1, "M", 5L), new OrderProductRequest(1L, 1, "M", 5L)));
+
+        service.productUpdated(request);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(service);
+        order.verify(service).updateSoldValue(1L, "slug-1", "M", 5L, -1);
+        order.verify(service).updateSoldValue(2L, "slug-2", "M", 5L, -1);
+    }
+
     // ---------------------------------------------------------------- 초과 판매 (docs/53)
 
     private Product product() {

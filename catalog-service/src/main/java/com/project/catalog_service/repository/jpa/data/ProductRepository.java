@@ -64,6 +64,14 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
 
         // PostgreSQL does not support MATCH AGAINST.
         // We will use the ILIKE operator for case-insensitive pattern matching.
+        /**
+         * 이 slug 를 쓰는 행이 있는가 — <b>삭제(DELETED)된 상품까지.</b> 엔티티의 {@code @SQLRestriction} 을 거치지 않으려고 네이티브다.
+         * 🐛 {@code findBySlug} 로 보면 삭제한 상품의 slug 가 비어 보이는데 유니크 인덱스(V6 uq_product_slug)는 그 행에도 걸려,
+         * 삭제한 상품과 같은 이름으로 다시 등록하면 500 이었다.
+         */
+        @Query(value = "select exists(select 1 from product.product where slug = :slug)", nativeQuery = true)
+        boolean slugTaken(@org.springframework.data.repository.query.Param("slug") String slug);
+
         @Query(value = "select b.product_id from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryRegexp is null or a.category_name ILIKE :categoryRegexp)", nativeQuery = true)
         public List<Long> findProductIDsByCategoryName(@Param("categoryRegexp") String categoryRegexp);
 

@@ -107,7 +107,9 @@ public class ProductController {
 
         try {
            
-            List<ProductDto> response = productService.getProductsByCategory(category, Long.parseLong(cursorId), pageSize);
+            // 상한 — 🐛 공개 경로라 pageSize=1000000 이면 카테고리 전체를 읽어 캐시에 넣었고, 크기마다 키가 새로 생겼다.
+            int size = Math.max(1, Math.min(pageSize, ProductService.MAX_PUBLIC_PAGE_SIZE));
+            List<ProductDto> response = productService.getProductsByCategory(category, Long.parseLong(cursorId), size);
            
             return new ResponseEntity<>(response, HttpStatus.OK);
 

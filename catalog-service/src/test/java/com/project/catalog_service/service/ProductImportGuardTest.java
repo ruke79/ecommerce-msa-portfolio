@@ -41,27 +41,85 @@ class ProductImportGuardTest {
     private final CatalogResetService catalogResetService = mock(CatalogResetService.class);
 
     private final ProductImportService service = new ProductImportService(
-            jobLauncher, Map.of(ProductImportService.JOB_NAME, job), imageService, catalogResetService);
+            jobLauncher, Map.of(ProductImportService.JOB_NAME, job), imageService, catalogResetService, ImportLock.LOCAL);
 
     @Test
     @DisplayName("카탈로그가 비어 있지 않은데 reset 없이 시작하면 거절한다 — 두 벌이 되는 것을 막는다")
     void refusesWhenCatalogNotEmpty() {
         when(catalogResetService.countCatalogRows()).thenReturn(270L);
+        when(imageService.probe()).thenReturn(new StorageStatus(true, "bucket", null));
 
         assertThatThrownBy(() -> service.start(false))
                 .isInstanceOf(CatalogNotEmptyException.class)
                 .hasMessageContaining("270")
                 .hasMessageContaining("reset=true");
 
-        // 비우지도, 저장소를 찔러 보지도 않는다 — 시작 자체를 안 한다.
+        // 비우지 않는다 — 시작 자체를 안 한다(저장소 점검은 그보다 먼저 한다 — 아래).
         verify(catalogResetService, never()).reset();
-        verify(imageService, never()).probe();
+    }
+
+    /** 🐛 예전에는 reset(TRUNCATE … CASCADE)이 저장소 점검보다 먼저였다 — 자격 증명이 만료된 채 누르면 카탈로그가 지워진 뒤 503. */
+    @Test
+    @DisplayName("🔴 저장소에 쓸 수 없으면 reset=true 라도 카탈로그를 비우지 않는다 — 비우기 전에 점검한다")
+    void storageCheckedBeforeReset() {
+        when(catalogResetService.countCatalogRows()).thenReturn(270L);
+        when(imageService.probe()).thenReturn(new StorageStatus(false, "bucket", "AccessDenied"));
+
+        assertThatThrownBy(() -> service.start(true)).isInstanceOf(StorageNotWritableException.class);
+
+        verify(catalogResetService, never()).reset();
+    }
+
+    /** 🐛 예전에는 파드 안의 AtomicBoolean 뿐이라 다른 파드로 간 재실행이 동시에 돌았다(두 벌 · 진행 중 데이터 TRUNCATE). */
+    @Test
+    @DisplayName("🔴 다른 파드가 임포트 잠금을 쥐고 있으면 시작하지 않는다 — 비우지도 않는다")
+    void otherPodHoldsTheLock() {
+        ImportLock held = new ImportLock() {
+            @Override
+            public boolean tryAcquire() {
+                return false;
+            }
+
+            @Override
+            public void release() {
+            }
+        };
+        ProductImportService other = new ProductImportService(
+                jobLauncher, Map.of(ProductImportService.JOB_NAME, job), imageService, catalogResetService, held);
+        when(catalogResetService.countCatalogRows()).thenReturn(270L);
+
+        assertThatThrownBy(() -> other.start(true)).isInstanceOf(AlreadyRunningException.class);
+        verify(catalogResetService, never()).reset();
+    }
+
+    @Test
+    @DisplayName("거절하면 잠금을 푼다 — 남으면 2시간 동안 아무 파드도 시작하지 못한다")
+    void refusalReleasesTheLock() {
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        ImportLock counting = new ImportLock() {
+            @Override
+            public boolean tryAcquire() {
+                return true;
+            }
+
+            @Override
+            public void release() {
+                released.incrementAndGet();
+            }
+        };
+        ProductImportService svc = new ProductImportService(
+                jobLauncher, Map.of(ProductImportService.JOB_NAME, job), imageService, catalogResetService, counting);
+        when(imageService.probe()).thenReturn(new StorageStatus(false, "bucket", "x"));
+
+        assertThatThrownBy(() -> svc.start(false)).isInstanceOf(StorageNotWritableException.class);
+        assertThat(released.get()).isEqualTo(1);
     }
 
     @Test
     @DisplayName("거절한 뒤에는 다시 시작할 수 있어야 한다 — running 플래그가 잠긴 채 남으면 안 된다")
     void refusalReleasesTheRunningFlag() {
         when(catalogResetService.countCatalogRows()).thenReturn(270L);
+        when(imageService.probe()).thenReturn(new StorageStatus(true, "bucket", null));
         assertThatThrownBy(() -> service.start(false)).isInstanceOf(CatalogNotEmptyException.class);
 
         // 두 번째 호출이 AlreadyRunning 이면 플래그가 안 풀린 것이다(그러면 파드를 재시작해야 한다).

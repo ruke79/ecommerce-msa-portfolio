@@ -82,11 +82,21 @@ public class CatalogResetService {
      * {@code reset=true} 를 명시적으로 넘긴 경우뿐이다.
      */
     @Transactional
+    // 카탈로그를 비우면 캐시도 — 🐛 예전에는 남아 있어 다시 가져온 뒤에도 홈 · 상세가 지운 옛 카탈로그를 보였다(products 는 영구였다).
+    @org.springframework.cache.annotation.CacheEvict(value = {"products", "product", "search_cache", "colors_cache",
+            "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
     public void reset() {
         long before = countCatalogRows();
         entityManager.createNativeQuery(
                 "TRUNCATE " + String.join(", ", CATALOG_TABLES) + " RESTART IDENTITY CASCADE")
                 .executeUpdate();
         log.warn("카탈로그를 비웠습니다 — 임포트 재실행 준비 (이전 카테고리+하위카테고리+상품 {}행)", before);
+    }
+
+    /** 가져오기가 끝나면 캐시를 비운다 — 가져오는 동안 들어온 조회가 반쯤 채운 목록을 캐시에 남겼을 수 있다. */
+    @org.springframework.cache.annotation.CacheEvict(value = {"products", "product", "search_cache", "colors_cache",
+            "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    public void clearCaches() {
+        log.info("카탈로그 캐시를 비웠습니다(가져오기 종료).");
     }
 }

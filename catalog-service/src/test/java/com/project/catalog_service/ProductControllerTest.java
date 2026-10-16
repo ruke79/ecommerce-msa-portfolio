@@ -431,4 +431,17 @@ class ProductControllerTest {
     // 테스트였다(docs/14 B-16). 실제로 productService.getProductsByCategoryAndSubcategory
     // 는 HTTP 로 노출된 적이 없고 캐시 워밍업 경로에서만 쓰인다.
     // 페이지네이션 조회는 위의 "페이지네이션 API" 테스트가 실제 엔드포인트로 커버한다.
+
+    @Test
+    @DisplayName("🔴 공개 카테고리 목록의 pageSize 는 100 으로 자른다 — 카테고리 전체를 읽어 캐시에 넣지 않게")
+    void publicPageSizeIsCapped() throws Exception {
+        when(productService.getProductsByCategory(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyInt())).thenReturn(Collections.emptyList());
+
+        mockMvc.perform(get("/api/product/products/page").param("category", "food").param("cursorId", "-1")
+                        .param("pageSize", "1000000"))
+                .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(productService).getProductsByCategory("food", -1L, ProductService.MAX_PUBLIC_PAGE_SIZE);
+    }
 }

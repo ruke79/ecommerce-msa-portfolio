@@ -34,8 +34,9 @@ public class CategoryService {
     }
 
     public boolean findCategory(String categoryName) {
-
-        return null != categoryRepository.findByCategoryName(categoryName);
+        // 🐛 예전: null != Optional — Optional 은 null 이 아니라 언제나 참이었다. 카테고리 만들기(POST /api/category/category)가
+        //    매번 400 "이미 있는 카테고리" 로 막혔다. [JA] Optional を null と比べており常に真で、カテゴリ作成が毎回 400 だった。
+        return categoryRepository.findByCategoryName(categoryName).isPresent();
     }
 
     

@@ -134,7 +134,7 @@ class StockReservationGrpcServerTest {
     @DisplayName("🔴 HTTP 입구와 같은 서비스 메서드에 닿는다 — 줄 · 사이즈(빈 문자열 포함) · 만료가 그대로 오간다")
     void reserveReachesTheSameServiceMethod() throws Exception {
         Instant until = Instant.parse("2026-09-28T10:30:00Z");
-        when(reservations.reserve(any())).thenReturn(StockReservationResult.builder().held(true).expiresAt(until).build());
+        when(reservations.reserve(any(), any())).thenReturn(StockReservationResult.builder().held(true).expiresAt(until).build());
         ObservationRegistry obs = registry();
 
         ReserveResponse res = client(startServer(obs, catalogStore, ca), orderStore, obs).reserve(request());
@@ -142,7 +142,7 @@ class StockReservationGrpcServerTest {
         assertThat(res.getHeld()).isTrue();
         assertThat(res.getExpiresAtEpochMillis()).isEqualTo(until.toEpochMilli());
         ArgumentCaptor<StockReservationRequest> sent = ArgumentCaptor.forClass(StockReservationRequest.class);
-        verify(reservations).reserve(sent.capture());
+        verify(reservations).reserve(sent.capture(), any());
         assertThat(sent.getValue().getOrderId()).isEqualTo(812L);
         assertThat(sent.getValue().getTtlSeconds()).isEqualTo(1800L);
         assertThat(sent.getValue().getLines()).extracting(StockReservationRequest.Line::getSize).containsExactly("270", "");
@@ -151,7 +151,7 @@ class StockReservationGrpcServerTest {
     @Test
     @DisplayName("모자람은 오류가 아니다 — held=false 와 모자란 줄(HTTP 도 200)")
     void shortageIsAResultNotAnError() throws Exception {
-        when(reservations.reserve(any())).thenReturn(StockReservationResult.builder().held(false)
+        when(reservations.reserve(any(), any())).thenReturn(StockReservationResult.builder().held(false)
                 .shortages(List.of(StockReservationResult.Shortage.builder()
                         .productId(10L).colorId(5L).size("270").requested(2).available(1).build()))
                 .build());
@@ -174,12 +174,12 @@ class StockReservationGrpcServerTest {
         var stub = client(startServer(obs, catalogStore, ca), orderStore, obs);
 
         org.mockito.Mockito.doThrow(new IllegalArgumentException("예약할 주문과 줄이 필요합니다."))
-                .when(reservations).reserve(any());
+                .when(reservations).reserve(any(), any());
         assertThatThrownBy(() -> stub.reserve(request())).isInstanceOfSatisfying(StatusRuntimeException.class,
                 e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
 
         org.mockito.Mockito.doThrow(new IllegalStateException("could not obtain lock on row product_sku#77"))
-                .when(reservations).reserve(any());
+                .when(reservations).reserve(any(), any());
         assertThatThrownBy(() -> stub.reserve(request())).isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
             assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INTERNAL);
             assertThat(e.getStatus().getDescription()).doesNotContain("product_sku");
@@ -188,6 +188,47 @@ class StockReservationGrpcServerTest {
         assertThatThrownBy(() -> stub.release(ReleaseRequest.getDefaultInstance()))
                 .isInstanceOfSatisfying(StatusRuntimeException.class,
                         e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
+    }
+
+    /**
+     * 🐛 서버가 호출자의 기한을 보지 않았다 — order 가 3초 기한으로 포기한 뒤에도 catalog 는 잠금을 기다리며 커넥션을 쥐었다.
+     * 이제 남은 기한(여유 200ms 를 뺀 것)을 잠금 대기 상한으로 넘기고, 잠금을 그 안에 얻지 못하면 DEADLINE_EXCEEDED.
+     */
+    @Test
+    @DisplayName("🔴 잠금 대기 상한은 호출자의 남은 기한 이하 — 넘기면 DEADLINE_EXCEEDED(예약은 롤백)")
+    void lockWaitIsBoundedByTheCallersDeadline() throws Exception {
+        ObservationRegistry obs = registry();
+        var stub = client(startServer(obs, catalogStore, ca), orderStore, obs).withDeadlineAfter(2, TimeUnit.SECONDS);
+        org.mockito.ArgumentCaptor<java.time.Duration> budget = org.mockito.ArgumentCaptor.forClass(java.time.Duration.class);
+        when(reservations.reserve(any(), budget.capture()))
+                .thenThrow(new org.springframework.dao.PessimisticLockingFailureException("lock_timeout"));
+
+        assertThatThrownBy(() -> stub.reserve(request())).isInstanceOfSatisfying(StatusRuntimeException.class,
+                e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+        assertThat(budget.getValue()).isPositive().isLessThanOrEqualTo(java.time.Duration.ofMillis(1800));
+    }
+
+    @Test
+    @DisplayName("🔴 잠금 대기 초과 판정 — Spring · JPA · SQLState 55P03 모두, 다른 오류는 아니다")
+    void lockWaitClassification() {
+        assertThat(StockReservationGrpcService.isLockWait(new org.springframework.dao.CannotAcquireLockException("x"))).isTrue();
+        assertThat(StockReservationGrpcService.isLockWait(new jakarta.persistence.PessimisticLockException("x"))).isTrue();
+        assertThat(StockReservationGrpcService.isLockWait(new RuntimeException(new java.sql.SQLException("x", "55P03")))).isTrue();
+        assertThat(StockReservationGrpcService.isLockWait(new RuntimeException(new java.sql.SQLException("x", "23505")))).isFalse();
+        assertThat(StockReservationGrpcService.isLockWait(new IllegalStateException("x"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("🔴 남은 기한 계산 — 취소된 호출은 0(일을 시작하지 않는다), 기한이 없으면 기본 상한, 상한은 5초")
+    void remainingBudget() {
+        io.grpc.Context.CancellableContext cancelled = io.grpc.Context.current().withCancellation();
+        cancelled.cancel(null);
+        assertThat(StockReservationGrpcService.remainingBudget(cancelled)).isEqualTo(java.time.Duration.ZERO);
+        assertThat(StockReservationGrpcService.remainingBudget(io.grpc.Context.ROOT)).isNull();
+        io.grpc.Context.CancellableContext later = io.grpc.Context.current()
+                .withDeadlineAfter(60, TimeUnit.SECONDS, java.util.concurrent.Executors.newSingleThreadScheduledExecutor());
+        assertThat(StockReservationGrpcService.remainingBudget(later)).isEqualTo(java.time.Duration.ofSeconds(5));
+        later.cancel(null);
     }
 
     @Test

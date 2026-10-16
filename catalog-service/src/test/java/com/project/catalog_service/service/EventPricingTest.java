@@ -383,4 +383,36 @@ class EventPricingTest {
             assertThat(ProductService.discounted(null, 50)).isNull();
         }
     }
+
+    @Test
+    @DisplayName("🔴 refresh 는 맵이 바뀌었을 때만 true — 스케줄러가 그걸 보고 공유 캐시를 비운다")
+    void refreshReportsChange() {
+        when(eventRepository.activeCategoryDiscounts()).thenReturn(List.of());
+        when(eventRepository.activeProductDiscounts()).thenReturn(List.<Object[]>of(new Object[] { 1L, 20 }));
+        org.assertj.core.api.Assertions.assertThat(pricing.refresh()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(pricing.refresh()).as("같은 맵").isFalse();
+
+        when(eventRepository.activeProductDiscounts()).thenReturn(List.<Object[]>of(new Object[] { 1L, 30 }));
+        org.assertj.core.api.Assertions.assertThat(pricing.refresh()).as("크기는 같고 할인율만 바뀜").isTrue();
+    }
+
+    @Test
+    @DisplayName("🔴 기동하면서 한 번 읽는다 — 첫 스케줄 전 10초 동안 할인 없는 값이 캐시되지 않게, DB 를 못 읽어도 기동은 계속")
+    void loadsOnStartup() {
+        when(eventRepository.activeCategoryDiscounts()).thenReturn(List.of());
+        when(eventRepository.activeProductDiscounts()).thenReturn(List.<Object[]>of(new Object[] { 7L, 25 }));
+
+        pricing.loadOnStartup();
+        org.assertj.core.api.Assertions.assertThat(pricing.eventDiscountOf(7L)).isEqualTo(25);
+
+        when(eventRepository.activeProductDiscounts()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("down"));
+        new EventPricing(eventRepository, productRepository).loadOnStartup();
+    }
+
+    @Test
+    @DisplayName("기동 시 읽기는 @PostConstruct 다")
+    void startupLoadIsAnInitCallback() throws Exception {
+        org.assertj.core.api.Assertions.assertThat(EventPricing.class.getDeclaredMethod("loadOnStartup")
+                .isAnnotationPresent(jakarta.annotation.PostConstruct.class)).isTrue();
+    }
 }

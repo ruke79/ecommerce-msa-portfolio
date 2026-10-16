@@ -194,7 +194,12 @@ public class ContentAdminController {
 
     @PostMapping("/banners")
     public ResponseEntity<?> createBanner(@Valid @RequestBody BannerRequest request) {
-        return ResponseEntity.ok(bannerService.create(request));
+        try {
+            return ResponseEntity.ok(bannerService.create(request));
+        } catch (IllegalArgumentException e) {
+            // 링크 모양이 틀렸다(SafeLinks) — 관리자가 고칠 수 있는 실패다.
+            return ResponseEntity.badRequest().body(ContentController.message(e));
+        }
     }
 
     @PutMapping("/banners/{id}")

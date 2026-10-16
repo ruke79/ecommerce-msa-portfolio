@@ -76,9 +76,13 @@ public class EventScheduler {
             // 할인 맵을 **먼저** 갱신한다. 캐시를 비운 뒤에 갱신하면 그 사이에 들어온
             // 요청이 DB 를 다시 읽으면서 옛 할인 맵을 얹어, 방금 비운 캐시에 틀린 값을
             // 다시 채워 넣는다.
-            eventPricing.refresh();
+            boolean pricesChanged = eventPricing.refresh();
 
-            if (advanced.changed()) {
+            // 상태 전환이 없어도 할인 맵이 바뀌었으면 비운다 — 🐛 예전에는 전환만 봤다. 관리자가 진행 중인 기획전의 대상 · 할인율을
+            // 고치면 그 요청을 받은 인스턴스만 비우고(refreshNow), 다른 인스턴스는 다음 실행까지 옛 맵으로 공유 Redis 를 다시 채웠다 —
+            // 그 값은 아무도 비우지 않아 캐시 만료까지 남았다. 맵이 바뀐 것을 본 인스턴스가 비우면 그 뒤로는 새 맵의 값만 들어간다.
+            // [JA] 状態遷移がなくても割引マップが変われば消す — 以前は遷移だけを見て、他インスタンスが古いマップで共有キャッシュを埋め直した。
+            if (advanced.changed() || pricesChanged) {
                 evictProductCaches();
             }
 

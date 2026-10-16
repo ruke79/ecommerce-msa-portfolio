@@ -129,7 +129,12 @@ public class ProductService  {
     // private ValueOperations<String, Object> productsOps;
     
 
-    @Cacheable(value = "products", key = "#categoryName + '_' + #cursor + '_' + #pageSize")
+    // 🔒 products 캐시의 키는 메서드마다 접두사를 단다 — 🐛 예전에는 slug · 이름 · 'warmup' · 'all' · 카테고리 키가 한 공간에 섞여,
+    //    `GET /api/product/warmup`(slug 조회)이 관리자 목록의 'warmup' 키에 빈 목록을 영구로 박았다. 빈 결과는 캐시하지 않는다 —
+    //    없는 slug · 카테고리마다 키가 쌓이지 않게(익명 요청으로 공유 Redis 를 채울 수 있었다).
+    // [JA] キーにはメソッドごとの接頭辞を付ける。以前は slug と 'warmup' などが同じ空間で衝突した。空の結果はキャッシュしない。
+    @Cacheable(value = "products", key = "'cat:' + #categoryName + '_' + #cursor + '_' + #pageSize",
+            unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> getProductsByCategory(String categoryName, Long cursor, int pageSize) {
         PageRequest pageRequest = PageRequest.of(0, pageSize + 1);
 
@@ -196,7 +201,10 @@ public class ProductService  {
     /** 관리자 목록 한 페이지의 상한. */
     public static final int MAX_ADMIN_PAGE_SIZE = 100;
 
-    @Cacheable(value = "products", key = "#productName")
+    /** 공개 카테고리 목록 한 페이지의 상한(ProductController). */
+    public static final int MAX_PUBLIC_PAGE_SIZE = 100;
+
+    @Cacheable(value = "products", key = "'name:' + #productName", unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> getProductsByName(String productName) {
 
         List<Product> products = productRepository.findByName(productName);
@@ -217,7 +225,7 @@ public class ProductService  {
 
     
 
-    @Cacheable(value = "products", key = "'all'")
+    @Cacheable(value = "products", key = "'all'", unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> getProducts() {
         List<Product> products = productRepository.findAll();
         return products.stream()
@@ -227,7 +235,8 @@ public class ProductService  {
 
 
      
-    @Cacheable(value = "products", key = "'warmup'")
+    // 키에 pageSize — 🐛 홈(4)과 관리자 목록(20)이 같은 'warmup' 키를 써서 먼저 부른 쪽의 개수가 둘 다에 나왔다(아래 메서드와 같은 버그).
+    @Cacheable(value = "products", key = "'warmup:' + #pageSize", unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> warmUpProductCaches(int pageSize) {
         
         log.info("Starting to warm up product caches...");        
@@ -272,7 +281,8 @@ public class ProductService  {
     //    캐시가 비어 있을 때만 재현되니 "가끔 개수가 다르다"로 보였다.
     //    같은 파일의 getProductsByCategory(114행)는 처음부터 pageSize 를 키에 넣고 있었다.
     @Cacheable(value = "products",
-            key = "#categoryName + '_' + #subcategoryName + '_' + #page + '_' + #pageSize")
+            key = "'sub:' + #categoryName + '_' + #subcategoryName + '_' + #page + '_' + #pageSize",
+            unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> getProductsByCategoryAndSubcategory(String categoryName, String subcategoryName, int page, int pageSize) {
          // 기본 페이지 크기를 10으로 설정합니다.
         // 한 페이지에 1개씩 가져오도록 PageRequest 객체를 생성합니다.
@@ -290,7 +300,8 @@ public class ProductService  {
                 .collect(Collectors.toList());
     }
 
-    @Cacheable(value = "product", key = "#productId")
+    // 없는 id 는 캐시하지 않는다 — 🐛 null 을 막아 둔 캐시가 IllegalArgumentException 을 던져 404 대신 400 이 나갔다.
+    @Cacheable(value = "product", key = "#productId", unless = "#result == null")
     public ProductDto getProductById(Long productId) {
         return productRepository.findById(productId)
                 .map(this::convertToDto)
@@ -317,7 +328,7 @@ public class ProductService  {
                 .collect(Collectors.toList());
     }
 
-    @Cacheable(value = "products", key = "#slug")
+    @Cacheable(value = "products", key = "'slug:' + #slug", unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> getProductsBySlug(String slug) {
         List<Product> products = productRepository.findBySlug(slug);
         return products.stream()
@@ -326,7 +337,8 @@ public class ProductService  {
     }
     
     // 상품 변경 시 검색/필터 관련 캐시(TTL 무효화만으로는 최대 60분 stale)를 즉시 무효화한다.
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    // 별점은 목록 · 상세(products)에도 보인다 — 🐛 예전에는 products 를 비우지 않아 별점이 영구 캐시에 옛 값으로 남았다.
+    @CacheEvict(value = {"products", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
     @CachePut(value = "product", key = "#productId")
     public ProductDto updateRating(Long productId, float rating) {
         productRepository.updateRating(productId, rating);
@@ -335,6 +347,7 @@ public class ProductService  {
     }
 
     
+    @CacheEvict(value = {"products", "product", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
     public List<ProductSku> load(List<ProductAddRequest> products, List<MultipartFile> images,
             List<MultipartFile> colorImages) throws IOException {
 
@@ -354,6 +367,7 @@ public class ProductService  {
     }
 
     
+    @CacheEvict(value = {"products", "product", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
     public ProductSku load(ProductAddRequest request, MultipartFile images, MultipartFile colorImage)
             throws IOException {
         Product product = createOrFindProduct(request);
@@ -418,7 +432,8 @@ public class ProductService  {
     //    SpEL 예외(EL1008E)로 등록이 500 이 됐고, 됐더라도 ProductDto 를 담는 "product" 캐시에 엔티티를 넣었다. 부모 상품의
     //    캐시를 <b>지운다</b> — 다음 조회가 새 변형까지 담아 다시 만든다(ProductCacheKeyTest).
     @org.springframework.cache.annotation.Caching(evict = {
-            @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true),
+            // products 도 — 🐛 예전에는 빠져 있어 새 상품이 홈 · 카테고리 목록에, 새 색상이 상세(slug)에 나오지 않았다.
+            @CacheEvict(value = {"products", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true),
             @CacheEvict(value = "product", key = "#result.product.productId")
     })
     // ⚠️ 이 메서드는 예전에 세 가지 방식으로 조용히 잘못됐다. 전부 실배포에서 확인된
@@ -647,7 +662,7 @@ public class ProductService  {
         }
         String candidate = base;
         int n = 1;
-        while (!productRepository.findBySlug(candidate).isEmpty()) {
+        while (productRepository.slugTaken(candidate)) {   // 삭제된 상품의 slug 도 쓴 것이다(유니크 인덱스가 그 행에도 걸린다)
             n++;
             candidate = base + "-" + n;
             if (n > 100) {
@@ -745,6 +760,19 @@ public class ProductService  {
         return saved;
     }
 
+    /**
+     * 상품 이미지의 저장소 키 — {@code images/product/<이름>.<확장자>}.
+     *
+     * <p>🐛 예전에는 키가 무작위 이름 하나뿐이었다({@code images/} 도 확장자도 없음). 버킷의 공개 읽기 정책은 {@code images/*} 에만
+     * 걸려 있어(ImageService 주석) 업로드는 성공하는데 화면에서는 403 — 관리자가 등록한 상품 이미지가 모두 깨졌다. 일괄 임포트는 CSV 의
+     * {@code images/...} 경로를 그대로 써서 그쪽만 보였다. user-service 리뷰 이미지도 같은 버그였다.
+     *
+     * <p>[JA] 商品画像のキー — {@code images/product/<名前>.<拡張子>}。以前は {@code images/} も拡張子もなく、公開ポリシーの外で 403 だった。
+     */
+    static String productImageKey(MultipartFile file, String name) {
+        return FileUtil.getFilePath(file, "product/" + name, "images");
+    }
+
     private ProductSku loadSku(ProductAddRequest request, Product product, MultipartFile image,
             MultipartFile colorImage) throws IOException {
 
@@ -766,13 +794,13 @@ public class ProductService  {
 
         List<String> imageUrls = new ArrayList<String>();
 
-        String filename = FileUtil.getRandomFilename();
+        String filename = productImageKey(image, FileUtil.getRandomFilename());
         String filepath = imageService.upload(image, filename);
         imageUrls.add(filepath);
 
         skuProject.setImages(imageUrls);
 
-        filename = "color_" + FileUtil.getRandomFilename();
+        filename = productImageKey(colorImage, "color_" + FileUtil.getRandomFilename());
         String colorImageUrl = imageService.upload(colorImage, filename);
 
         skuProject.setColor(ProductColor.builder().colorImage(colorImageUrl)
@@ -831,7 +859,7 @@ public class ProductService  {
             List<String> imageUrls = new ArrayList<String>();
 
             for (MultipartFile image : images) {
-                String filename = FileUtil.getRandomFilename();
+                String filename = productImageKey(image, FileUtil.getRandomFilename());
                 String filepath = imageService.upload(image, filename);
                 uploaded.add(filepath);
                 imageUrls.add(filepath);
@@ -839,7 +867,7 @@ public class ProductService  {
 
             skuProject.setImages(imageUrls);
 
-            String filename = "color_" + FileUtil.getRandomFilename();
+            String filename = productImageKey(colorImage, "color_" + FileUtil.getRandomFilename());
             String colorImageUrl = imageService.upload(colorImage, filename);
             uploaded.add(colorImageUrl);
 
@@ -1206,7 +1234,7 @@ public class ProductService  {
     // This method updates the cache with the latest data.
     // It is public so that the @CachePut annotation can be applied by Spring.
     @Transactional
-    @CachePut(value = "products", key = "#slug")
+    @CachePut(value = "products", key = "'slug:' + #slug")
     public List<ProductDto> updateProductDtoCache(String slug, ProductSku updatedSku) {
         // Here, we re-fetch the product from the DB or a separate method
         // to ensure the DTO list contains the latest data.
@@ -1328,7 +1356,7 @@ public class ProductService  {
      *           이 메서드는 오직 캐시를 업데이트하는 역할만 담당합니다.
      */
     @Transactional
-    @CachePut(value = "products", key = "#slug")
+    @CachePut(value = "products", key = "'slug:' + #slug")
     public List<ProductDto> refreshProductsCache(String slug) {
         log.info("Refreshing cache for slug: {}", slug);
         List<Product> products = productRepository.findBySlug(slug);
@@ -1382,7 +1410,7 @@ public class ProductService  {
             return new StockApplyResult(null, List.of());
         }
 
-        for (OrderProductRequest item : request.getOrderProducts()) {
+        for (OrderProductRequest item : inLockOrder(request.getOrderProducts())) {
             int qty = Math.abs(item.getQty());
             Product product = getProductModel(item.getProductId());
 
@@ -1425,6 +1453,24 @@ public class ProductService  {
             }
         }
         return new StockApplyResult(lastUpdated, List.copyOf(shortages));
+    }
+
+    /**
+     * 잠금 순서 — 예약(StockReservationService.Option.ORDER)과 같은 (상품, 색상, 사이즈) 순서로 줄을 돈다.
+     *
+     * <p>🐛 예전에는 주문 줄 순서대로 SKU 를 잠갔다(예약만 정렬했다). [A, B] 주문과 [B, A] 주문의 차감 · 복원이 겹치면 서로의
+     * 잠금을 기다리다 PostgreSQL 이 한쪽을 교착(40P01)으로 끊었고, 끊긴 결제 확정 차감은 재시도를 다 쓰면 DLT 로 갔다 —
+     * 재고는 줄지 않은 채 예약이 만료되어 같은 수량이 다시 팔렸다.
+     *
+     * <p>[JA] ロック順序 — 仮押さえと同じ (商品, 色, サイズ) 順で行を回る。以前は注文行の順でロックし、逆順の注文同士がデッドロックした。
+     */
+    static List<OrderProductRequest> inLockOrder(List<OrderProductRequest> lines) {
+        List<OrderProductRequest> sorted = new ArrayList<>(lines);
+        sorted.sort(java.util.Comparator
+                .comparing(OrderProductRequest::getProductId, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                .thenComparing(OrderProductRequest::getColorId, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                .thenComparing(OrderProductRequest::getSize, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())));
+        return sorted;
     }
 
     /**

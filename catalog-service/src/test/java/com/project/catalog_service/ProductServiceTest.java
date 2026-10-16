@@ -280,7 +280,6 @@ class ProductServiceTest {
                 request("{\"name\":\"이름\",\"shippingFee\":\"0\",\"category\":\"999\"}");
 
         when(categoryRepository.findById(999L)).thenReturn(Optional.empty());
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> productService.addProduct(request, List.of(img("a")), img("color")));
@@ -305,7 +304,6 @@ class ProductServiceTest {
         com.project.common.dto.catalog.request.ProductRequest request =
                 request("{\"name\":\"이름\",\"shippingFee\":\"공짜\"}");
 
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> productService.addProduct(request, List.of(img("a")), img("color")));
@@ -317,24 +315,36 @@ class ProductServiceTest {
     @Test
     @DisplayName("uniqueSlug: 충돌이 없으면 요청값 그대로")
     void uniqueSlug_keepsRequestedWhenFree() {
-        when(productRepository.findBySlug("my-product")).thenReturn(Collections.emptyList());
+        when(productRepository.slugTaken("my-product")).thenReturn(false);
         assertEquals("my-product", productService.uniqueSlug("my-product", "무시됨"));
     }
 
     @Test
     @DisplayName("uniqueSlug: 충돌하면 -2, -3 … 접미사 — slug 는 상세 URL 이라 중복이면 어느 상품이 보일지 우연이 정한다")
     void uniqueSlug_appendsSuffixOnCollision() {
-        when(productRepository.findBySlug("shoe")).thenReturn(List.of(product));
-        when(productRepository.findBySlug("shoe-2")).thenReturn(List.of(product));
-        when(productRepository.findBySlug("shoe-3")).thenReturn(Collections.emptyList());
+        when(productRepository.slugTaken("shoe")).thenReturn(true);
+        when(productRepository.slugTaken("shoe-2")).thenReturn(true);
+        when(productRepository.slugTaken("shoe-3")).thenReturn(false);
 
         assertEquals("shoe-3", productService.uniqueSlug("shoe", "무시됨"));
+    }
+
+    /**
+     * 🐛 삭제한 상품의 slug — findBySlug 는 @SQLRestriction 으로 DELETED 행을 보지 못해 "비었다" 고 했지만, 유니크 인덱스(V6)는 그 행에도
+     * 걸려 같은 이름으로 다시 등록하면 500 이었다. 삭제된 행까지 보는 slugTaken 으로 판정한다.
+     */
+    @Test
+    @DisplayName("🔴 uniqueSlug: 삭제된 상품이 쓰던 slug 도 쓴 것으로 본다 — 다시 등록하면 -2")
+    void uniqueSlug_countsDeletedProducts() {
+        when(productRepository.slugTaken("tee")).thenReturn(true);                       // 그러나 인덱스에는 있다
+        when(productRepository.slugTaken("tee-2")).thenReturn(false);
+
+        assertEquals("tee-2", productService.uniqueSlug("tee", "무시됨"));
     }
 
     @Test
     @DisplayName("uniqueSlug: slug 가 비면 이름에서 만든다 — 한글 이름도 살아남아야 한다")
     void uniqueSlug_derivesFromNameWhenBlank() {
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
 
         assertEquals("test-product", productService.uniqueSlug(null, "Test Product"));
         // \p{IsAlphabetic} 은 유니코드 기준이라 한글이 살아남는다 — ASCII [a-z] 로
@@ -369,7 +379,6 @@ class ProductServiceTest {
                         + "\"subCategories\":[],\"sizes\":[],"
                         + "\"color\":{\"color\":\"#fff\"}}");
 
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(category));
         when(subCategoryRepository.findBySubcategoryIdIn(anyList())).thenReturn(Collections.emptyList());
         when(imageService.upload(any(MultipartFile.class), anyString())).thenReturn("https://s3/x.jpg");
@@ -400,7 +409,6 @@ class ProductServiceTest {
                         + "\"questions\":[{\"question\":\"q\",\"answer\":\"a\"}],"
                         + "\"color\":{\"color\":\"#000\"}}");
 
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(category));
         when(subCategoryRepository.findBySubcategoryIdIn(anyList())).thenReturn(Collections.emptyList());
         when(imageService.upload(any(MultipartFile.class), anyString())).thenReturn("https://s3/x.jpg");
@@ -449,7 +457,6 @@ class ProductServiceTest {
         Category electronics = Category.builder().categoryId(2L).categoryName("consumer electronics").build();
         Subcategory smartphones = Subcategory.builder().subcategoryId(4L).subcategoryName("smartphones").category(electronics).build();
 
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(category));   // fashion
         when(subCategoryRepository.findBySubcategoryIdIn(anyList())).thenReturn(List.of(smartphones));
 
@@ -467,7 +474,6 @@ class ProductServiceTest {
                         + "\"subCategories\":[],\"sizes\":[],\"sku\":\"FAS-000001\","
                         + "\"color\":{\"color\":\"#fff\"}}");
 
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(category));
         when(subCategoryRepository.findBySubcategoryIdIn(anyList())).thenReturn(Collections.emptyList());
         when(productskuRepository.existsBySku("FAS-000001")).thenReturn(true);
@@ -487,7 +493,6 @@ class ProductServiceTest {
                         + "\"subCategories\":[],\"sizes\":[],"
                         + "\"color\":{\"color\":\"#fff\"}}");
 
-        when(productRepository.findBySlug(anyString())).thenReturn(Collections.emptyList());
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(category));
         when(subCategoryRepository.findBySubcategoryIdIn(anyList())).thenReturn(Collections.emptyList());
         when(imageService.upload(any(MultipartFile.class), anyString())).thenReturn("https://s3/x.jpg");

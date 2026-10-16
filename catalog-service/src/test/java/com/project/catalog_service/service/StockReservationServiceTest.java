@@ -246,4 +246,18 @@ class StockReservationServiceTest {
         verify(reservations).heldByOthers(eq(1L), eq(5L), eq("M"), excluded.capture(), any());
         assertThat(excluded.getValue()).isEqualTo(10L);
     }
+
+    @Test
+    @DisplayName("🔴 SKU 잠금 대기에 상한을 건다 — 주어진 기한, 없으면 기본 5초 (SET LOCAL lock_timeout, 잠금보다 먼저)")
+    void lockWaitIsBounded() {
+        stock(1, 5, "M", 10);
+
+        service.reserve(request(10, 60, line(1, 5, "M", 1)), Duration.ofMillis(1300));
+        InOrder order = inOrder(skus);
+        order.verify(skus).setLocalLockTimeout("1300ms");
+        order.verify(skus).findForStockUpdate(1L, "M", 5L);
+
+        service.reserve(request(11, 60, line(1, 5, "M", 1)));
+        verify(skus).setLocalLockTimeout("5000ms");
+    }
 }

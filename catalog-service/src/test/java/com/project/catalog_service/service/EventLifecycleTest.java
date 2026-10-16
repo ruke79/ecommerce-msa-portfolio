@@ -428,6 +428,22 @@ class EventLifecycleTest {
         }
 
         @Test
+        @DisplayName("🔴 전환이 없어도 할인 맵이 바뀌었으면 캐시를 비운다 — 다른 인스턴스에서 고친 기획전")
+        void changedPricesEvictWithoutTransition() {
+            EventService eventService = mock(EventService.class);
+            EventPricing pricing = mock(EventPricing.class);
+            CacheManager cacheManager = mock(CacheManager.class);
+            Cache cache = mock(Cache.class);
+            when(cacheManager.getCache(anyString())).thenReturn(cache);
+            when(eventService.advanceDueEvents(any())).thenReturn(new Advanced(List.of(), 0));
+            when(pricing.refresh()).thenReturn(true);
+
+            new EventScheduler(eventService, pricing, mock(EventStartedProducer.class), cacheManager).tick();
+
+            verify(cache, times(EventScheduler.PRODUCT_CACHES.size())).clear();
+        }
+
+        @Test
         @DisplayName("시작이 있으면 캐시를 비우고 알림을 보낸다")
         void startEvictsAndPublishes() {
             EventService eventService = mock(EventService.class);

@@ -39,7 +39,7 @@ import java.util.Map;
 @Configuration
 @EnableCaching
 @RequiredArgsConstructor
-public class RedisCacheConfig {
+public class RedisCacheConfig implements org.springframework.cache.annotation.CachingConfigurer {
     @Value("${spring.data.redis.host}")
     private String host;
 
@@ -66,6 +66,20 @@ public class RedisCacheConfig {
 
     private final ResourceLoader resourceLoader;
 
+    /**
+     * Redis 명령 시간 제한. 🐛 직접 만든 Lettuce 설정은 {@code spring.data.redis.timeout} 을 읽지 않아 기본값 60초였다 — Redis 가
+     * 멈추면 상품 조회 요청마다 스레드가 60초씩 묶여 톰캣 스레드가 바닥났다. 캐시는 늦느니 없는 편이 낫다.
+     * [JA] Redis コマンドのタイムアウト。自前の Lettuce 設定は既定 60 秒で、Redis が止まると要求ごとにスレッドが 60 秒拘束された。
+     */
+    @Value("${catalog.redis.command-timeout:PT1S}")
+    private Duration commandTimeout = Duration.ofSeconds(1);
+
+    @Value("${catalog.redis.connect-timeout:PT1S}")
+    private Duration connectTimeout = Duration.ofSeconds(1);
+
+    /** 상품 목록 · 상세 캐시(products)의 수명 — 쓰기마다 비우지만, 놓친 무효화(다른 파드의 할인 맵 등)도 이 시간 안에는 풀린다. */
+    static final Duration PRODUCTS_TTL = Duration.ofMinutes(30);
+
     private static boolean isSet(String value) {
         return value != null && !value.isBlank();
     }
@@ -78,14 +92,20 @@ public class RedisCacheConfig {
         redisConfig.setPassword(RedisPassword.of(password));
 
         LettuceClientConfiguration.LettuceClientConfigurationBuilder lettuceClientConfigurationBuilder = LettuceClientConfiguration
-                .builder();
+                .builder()
+                .commandTimeout(commandTimeout);
+        io.lettuce.core.SocketOptions socket = io.lettuce.core.SocketOptions.builder().connectTimeout(connectTimeout).build();
 
+        if (!useSsl) {
+            lettuceClientConfigurationBuilder.clientOptions(ClientOptions.builder().socketOptions(socket).build());
+        }
         if (useSsl) {
             // ⚠️ 인증서 경로가 비어 있으면 SslOptions 를 아예 만들지 않는다 — JVM 기본 신뢰 저장소
             //    (공개 CA)로 검증한다. 관리형 Redis(Upstash 등)가 바로 이 경우다: 공개 CA 인증서에
             //    비밀번호 인증이고 클라이언트 인증서는 존재하지 않는다. 예전 코드는 빈 경로도
             //    무조건 열어서, TLS 를 켜는 순간 FileNotFoundException 으로 기동이 죽었다(docs/32 §4).
             ClientOptions.Builder clientOptions = ClientOptions.builder()
+                    .socketOptions(socket)
                     .protocolVersion(ProtocolVersion.RESP3);
 
             if (isSet(cacertFileLocation) || isSet(keystoreFileLocation)) {
@@ -140,8 +160,13 @@ public class RedisCacheConfig {
         // 캐시 이름별 설정 맵 생성
         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
 
-        // `products` 캐시 설정: 30분 보관 (원하는 보관 기간으로 변경 가능)
-        cacheConfigurations.put("products", permanentCacheConfig);
+        // `products` 캐시 — 상품 목록 · 상세. 🐛 예전에는 만료 없이 영구였다 — 무효화를 하나 놓치면(상품 등록 · 색상 추가 · 별점 ·
+        // 다른 파드의 할인 맵) 다음 쓰기까지 영원히 옛 값이었고, 공개 조회의 임의 slug 마다 키가 영구로 쌓였다. 이제 30분.
+        // [JA] 以前は期限なしの永久キャッシュだった。無効化を一つ逃すと次の書き込みまで古いままで、任意の slug ごとにキーが永久に溜まった。
+        cacheConfigurations.put("products", RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl(PRODUCTS_TTL)
+                .disableCachingNullValues()
+                .serializeValuesWith(SerializationPair.fromSerializer(permanentValueSerializer())));
         
         // `search_cache` 캐시 설정: 30분 보관
         cacheConfigurations.put("search_cache", redisCacheConfiguration(Duration.ofMinutes(60)));
@@ -152,11 +177,49 @@ public class RedisCacheConfig {
         cacheConfigurations.put("product_cache", permanentCacheConfig);
         cacheConfigurations.put("products_cache", permanentCacheConfig);
 
-        return RedisCacheManager.builder(redisConnectionFactory)
+        // allEntries 비우기는 SCAN 으로 — 🐛 기본은 KEYS 였다. 결제 차감 · 복원 한 건마다 캐시 다섯 개에 KEYS 가 돌았고, KEYS 는 공유
+        // Redis(로그인 잠금 · 블랙리스트 · 유입 제한과 같이 쓴다)의 키 전체를 훑는 동안 Redis 를 막는다.
+        // [JA] allEntries の消去は SCAN で。既定は KEYS で、共有 Redis 全体を走査する間ブロックしていた。
+        return RedisCacheManager.builder(org.springframework.data.redis.cache.RedisCacheWriter.nonLockingRedisCacheWriter(
+                        redisConnectionFactory, org.springframework.data.redis.cache.BatchStrategies.scan(500)))
             .initialCacheNames(cacheConfigurations.keySet())
             .withInitialCacheConfigurations(cacheConfigurations)
             .cacheDefaults(redisCacheConfiguration(Duration.ofMinutes(10)).disableCachingNullValues())
             .build();
+    }
+
+    /**
+     * 캐시 오류는 조회를 막지 않는다 — 읽기 실패는 캐시 미스로, 쓰기 · 비우기 실패는 경고로(값은 TTL 안에 풀린다).
+     * 🐛 예전에는 처리기가 없어 Redis 오류가 그대로 500 이었다 — Redis 하나가 멈추면 검색 · 상세 · 홈이 모두 멈췄다.
+     * [JA] キャッシュの失敗は照会を止めない。以前は Redis の失敗がそのまま 500 で、検索 · 詳細 · ホームがすべて止まった。
+     */
+    @Override
+    public org.springframework.cache.interceptor.CacheErrorHandler errorHandler() {
+        return new LenientCacheErrorHandler();
+    }
+
+    static final class LenientCacheErrorHandler implements org.springframework.cache.interceptor.CacheErrorHandler {
+        private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(LenientCacheErrorHandler.class);
+
+        @Override
+        public void handleCacheGetError(RuntimeException e, org.springframework.cache.Cache cache, Object key) {
+            log.warn("캐시 읽기 실패 — 원본에서 읽는다. cache={} ({})", cache.getName(), e.getClass().getSimpleName());
+        }
+
+        @Override
+        public void handleCachePutError(RuntimeException e, org.springframework.cache.Cache cache, Object key, Object value) {
+            log.warn("캐시 쓰기 실패 — 응답은 그대로. cache={} ({})", cache.getName(), e.getClass().getSimpleName());
+        }
+
+        @Override
+        public void handleCacheEvictError(RuntimeException e, org.springframework.cache.Cache cache, Object key) {
+            log.warn("캐시 비우기 실패 — TTL 안에 풀린다. cache={} ({})", cache.getName(), e.getClass().getSimpleName());
+        }
+
+        @Override
+        public void handleCacheClearError(RuntimeException e, org.springframework.cache.Cache cache) {
+            log.warn("캐시 전체 비우기 실패 — TTL 안에 풀린다. cache={} ({})", cache.getName(), e.getClass().getSimpleName());
+        }
     }
 
     private RedisCacheConfiguration redisCacheConfiguration(Duration duration) {
