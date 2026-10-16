@@ -46,6 +46,15 @@ FAIL=0
 
 command -v kubectl >/dev/null || { echo "kubectl 이 없습니다" >&2; exit 2; }
 kubectl -n "$NS" get secret tls-keystore >/dev/null 2>&1 || { echo "$NS/tls-keystore Secret 이 없습니다(ops/07)" >&2; exit 2; }
+# 🐛 예전: ConfigMap 이 없으면(앱을 아직 배포하지 않은 클러스터 · 다른 컨텍스트) 모드를 조용히 off 로 읽고 빈 결과를 냈다 —
+#    "아무도 안 불렀다" 와 구분되지 않았다. 어느 클러스터를 보는지 먼저 적고, ConfigMap 이 없으면 확인 불가(2)로 멈춘다.
+# [JA] 以前は ConfigMap がなければ(未デプロイのクラスタ・別コンテキスト)モードを黙って off と読み空の結果を出していた。
+CONTEXT=$(kubectl config current-context 2>/dev/null)
+echo "▶ 클러스터: ${CONTEXT:-(컨텍스트 알 수 없음)} · 네임스페이스: $NS"
+if ! kubectl -n "$NS" get configmap "$CONFIGMAP" >/dev/null 2>&1; then
+    echo "$NS/$CONFIGMAP ConfigMap 이 없습니다 — 이 클러스터에는 앱이 아직 배포되지 않았습니다(컨텍스트가 맞는지: kubectl config get-contexts)" >&2
+    exit 2
+fi
 
 MODE=$(kubectl -n "$NS" get configmap "$CONFIGMAP" -o jsonpath='{.data.INTERNAL_AUTH_MODE}' 2>/dev/null)
 MODE="${MODE:-off}"
@@ -58,11 +67,27 @@ echo "▶ 모드: $MODE${HAS_RULES:+ · 규칙: ${RULES_MODE:-enforce}} · 신�
 if [ "${1:-}" = "--callers" ]; then
     echo
     echo "▶ 누가 어느 내부 경로를 불렀나 — [mTLS caller] (파드가 뜬 뒤 처음 본 짝마다 한 줄)"
+    if [ "$MODE" = off ]; then
+        # off 면 필터가 인증서를 보지 않고 바로 넘긴다 — 호출자 기록이 생기지 않는다(InternalCallerFilter)
+        echo "  ℹ️  모드가 off 라 호출자를 기록하지 않습니다 — observe 이상에서만 [mTLS caller] 가 남습니다"
+        exit 0
+    fi
+    found=0 lines=0
     for s in $BACKENDS; do
         kubectl -n "$NS" get "deploy/$s" >/dev/null 2>&1 || continue
-        kubectl -n "$NS" logs "deploy/$s" --all-containers 2>/dev/null | grep -o "\[mTLS caller\] caller=[^ ]* path=[^ \"]*" \
-            | sed "s/^\[mTLS caller\] /  $s ← /" | sort -u
+        found=$((found + 1))
+        out=$(kubectl -n "$NS" logs "deploy/$s" --all-containers 2>/dev/null | grep -o "\[mTLS caller\] caller=[^ ]* path=[^ \"]*" \
+            | sed "s/^\[mTLS caller\] /  $s ← /" | sort -u)
+        if [ -n "$out" ]; then
+            echo "$out"
+            lines=$((lines + $(printf '%s\n' "$out" | wc -l)))
+        fi
     done
+    if [ "$found" -eq 0 ]; then
+        echo "  ℹ️  $NS 에 백엔드 Deployment 가 없습니다"
+    elif [ "$lines" -eq 0 ]; then
+        echo "  ℹ️  기록 없음 — 백엔드 ${found}개의 지금 파드 로그에 내부 호출이 아직 없습니다(재시작하면 로그가 비워진다 — 화면을 한 번 돌린 뒤 다시)"
+    fi
     exit 0
 fi
 

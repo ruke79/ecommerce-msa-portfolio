@@ -46,7 +46,8 @@
 #   PARTITIONS=3 REPLICATION=1 RETENTION_MS=1209600000(14일) EXTRA_TOPICS="foo bar"
 #   STATE_TOPICS="order-saga-state order-timeline" STATE_PARTITIONS=<n>   # 비우면 order 토픽과 같은 수로 맞춘다
 #   FIX_CONFIGS=0 → 이미 있는 토픽의 잘못된 정책을 고치지 않고 경고만
-#   SKIP_STATE=1  → 상태 토픽은 건드리지 않는다 (DLT 만)
+#   SKIP_STATE=1  → 상태 토픽 · saga-projection 입력 토픽은 건드리지 않는다 (DLT 만)
+#   SOURCE_TOPICS="order payment order-status"   # saga-projection 의 입력 — 없으면 브로커 기본 파티션으로 만든다
 #   DRY_RUN=1 → 명령만 출력
 set -euo pipefail
 
@@ -67,6 +68,9 @@ CHECK_ONLY=0
 # 토픽에 쓰고 이 스크립트는 아무도 안 쓰는 토픽을 컴팩션으로 만든다. 둘 다 조용하다.
 # ConfigurationGuardrailTest(B-38)가 값을 대조한다. order-timeline 은 주문 진행 타임라인(docs/76).
 STATE_TOPICS="${STATE_TOPICS:-order-saga-state order-timeline}"
+# saga-projection(Kafka Streams)의 입력 토픽. 이름은 saga-projection.topics.order · payment · order-status 와 같다
+# (DltTopicsScriptTest 가 대조). 아래 "saga-projection 입력 토픽" 의 이유 참조.
+SOURCE_TOPICS="${SOURCE_TOPICS:-order payment order-status}"
 # 상태 토픽이 본뜨는 입력 토픽. 파티션 수를 여기에 맞춘다(아래 이유 참조).
 STATE_SOURCE_TOPIC="${STATE_SOURCE_TOPIC:-order}"
 
@@ -229,6 +233,29 @@ for t in $SECRET_TOPICS; do
         fi
     done
 done
+
+# ------------------------------------------------- saga-projection 입력 토픽
+
+# 본 토픽은 보통 서비스가 처음 보낼 때 브로커가 자동으로 만든다. 그런데 Kafka Streams 는 입력 토픽이 없으면
+# MissingSourceTopicException 으로 처리 스레드를 내리고(SHUTDOWN_CLIENT → ERROR), 토픽이 나중에 생겨도 스스로
+# 돌아오지 않는다 — 파드는 재시작 0회로 Running 인데 readiness 만 영영 DOWN 이다.
+# 🐛 새 클러스터(데모 · 재구축)에서 주문이 한 건도 없을 때 saga-projection 롤아웃이 타임아웃 났다(2026-10-16).
+# 그래서 여기서 먼저 만든다. --partitions 를 주지 않는다 — 자동 생성과 같은 브로커 기본값(num.partitions)이어서,
+# 이미 운영 중인 클러스터의 토픽과 모양이 같다. 이미 있으면 --if-not-exists 로 그대로 둔다.
+# [JA] Kafka Streams は入力トピックがないと処理スレッドを落とし(ERROR)、後でトピックができても戻らない —
+#      新しいクラスタで注文が 0 件だと saga-projection の readiness が永遠に DOWN だった。ここで先に作る(既定パーティション)。
+if [ "$SKIP_STATE" != "1" ]; then
+    printf '\n\033[1;36m▶ saga-projection 입력 토픽\033[0m\n'
+    for t in $SOURCE_TOPICS; do
+        SRC_ARGS=(--create --if-not-exists --topic "$t" --replication-factor "$REPLICATION")
+        if [ "$DRY_RUN" = "1" ]; then
+            echo "[DRY_RUN] $CLI ${CFG_ARGS[*]} ${SRC_ARGS[*]}"
+        else
+            kafka_topics "${CFG_ARGS[@]}" "${SRC_ARGS[@]}" >/dev/null || die "$t 생성 실패"
+            info "$t (없으면 브로커 기본 파티션으로 만들었다)"
+        fi
+    done
+fi
 
 # ------------------------------------------------- 컴팩션 상태 토픽 (docs/38 §1.17)
 

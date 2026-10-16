@@ -10,6 +10,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -64,6 +67,8 @@ class CheckMtlsScriptTest {
                 "  *INTERNAL_AUTH_RULES_MODE*) printf enforce ;;",
                 "  *INTERNAL_AUTH_PATH_RULES*) printf '/api/order/internal/purchase-stats=user-service' ;;",
                 "  *INTERNAL_AUTH_MODE*) printf enforce ;;",
+                "  *'config current-context'*) printf staging-1 ;;",
+                "  *'get configmap'*) [ \"${FAKE_NO_CM:-}\" = 1 ] && exit 1; exit 0 ;;",
                 "  *'get secret'*) exit 0 ;;",
                 "  *'rollout status'*) exit 0 ;;",
                 "  *'notReadyAddresses'*) printf '' ;;",
@@ -81,12 +86,20 @@ class CheckMtlsScriptTest {
     }
 
     private Run run(String identityMode, String forged, String logs) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("bash", repoRoot().resolve("ops/37-check-mtls.sh").toString());
+        return run(identityMode, forged, logs, Map.of());
+    }
+
+    private Run run(String identityMode, String forged, String logs, Map<String, String> extra, String... args)
+            throws Exception {
+        List<String> cmd = new ArrayList<>(List.of("bash", repoRoot().resolve("ops/37-check-mtls.sh").toString()));
+        cmd.addAll(Arrays.asList(args));
+        ProcessBuilder pb = new ProcessBuilder(cmd);
         Map<String, String> env = pb.environment();
         env.put("PATH", bin + ":" + env.get("PATH"));
         env.put("FAKE_IDENTITY_MODE", identityMode);
         env.put("FAKE_FORGED", forged);
         env.put("FAKE_LOGS", logs);
+        env.putAll(extra);
         pb.redirectErrorStream(true);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -117,5 +130,27 @@ class CheckMtlsScriptTest {
                 "WARN [mTLS identity] 내부 인증서 없이 신원 헤더 — caller=(인증서 없음) GET /api/cart (observe)\\n");
         assertThat(dirty.code()).as(dirty.out()).isEqualTo(1);
         assertThat(dirty.out()).contains("①-3 신원 헤더").doesNotContain("INTERNAL_AUTH_IDENTITY_MODE: \"enforce\" 로 올린다");
+    }
+
+    @Test
+    @DisplayName("🔴 ConfigMap 이 없는 클러스터(배포 전 · 다른 컨텍스트)면 off 로 읽고 빈 결과를 내지 않는다 — 확인 불가(2)와 컨텍스트")
+    void missingConfigMapIsNotSilentlyOff() throws Exception {
+        Run r = run("observe", "200", "", Map.of("FAKE_NO_CM", "1"), "--callers");
+        assertThat(r.code()).as(r.out()).isEqualTo(2);
+        assertThat(r.out()).contains("클러스터: staging-1", "ConfigMap 이 없습니다").doesNotContain("모드: off");
+    }
+
+    @Test
+    @DisplayName("--callers — 기록이 있으면 짝마다 한 줄, 없으면 '기록 없음' 이라고 말한다")
+    void callersSaysWhenNothingWasRecorded() throws Exception {
+        Run some = run("observe", "200",
+                "INFO [mTLS caller] caller=user-service path=/api/order/internal/purchase-stats\\n", Map.of(), "--callers");
+        assertThat(some.code()).as(some.out()).isZero();
+        assertThat(some.out()).contains("order-service ← caller=user-service path=/api/order/internal/purchase-stats")
+                .doesNotContain("기록 없음");
+
+        Run none = run("observe", "200", "", Map.of(), "--callers");
+        assertThat(none.code()).as(none.out()).isZero();
+        assertThat(none.out()).contains("기록 없음");
     }
 }
