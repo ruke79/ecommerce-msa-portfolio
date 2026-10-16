@@ -40,6 +40,9 @@ public class OrderRequest {
     /** ⚠️ 읽지 않는다. 주문 품목은 서버가 읽은 장바구니가 정한다. */
     private List<CartProductDto> products;
 
+    /** 없으면 서비스가 "배송지를 선택해 주세요." 로 거절한다(@NotNull 이 아니다 — 그 문구를 지킨다). 있으면 안을 검증한다. */
+    // [JA] なければサービスが「配送先を選択してください」で拒否する。あれば中身を検証する。
+    @jakarta.validation.Valid
     private OrderAddressDto shippingAddress;
     private String paymentMethod;
 

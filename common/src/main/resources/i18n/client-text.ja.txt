@@ -197,6 +197,10 @@ outbox.partitions.tables 는 '스키마.테이블'(소문자) 이어야 한다: 
 outbox.partitions.months-ahead 는 0 이상: {}
 = -
 
+# 파티션 잡의 점검 실패(로그로만 남는다)
+아웃박스 파티션 이름 {}.{} 이 이미 쓰이고 있지만 {} 의 파티션이 아니다(DETACH 된 테이블?) — 확인해서 ATTACH 하거나 이름을 바꾼다/지운다. docs/09 §4.6
+= -
+
 # JWT 서명 키 링(docs/68 §17) — 기동을 멈추는 운영자용 문구라 번역하지 않는다.
 JWT_SIGNING_KEYS 형식은 kid=비밀,kid2=비밀2 입니다 (항목 {})
 = -

@@ -81,6 +81,10 @@ public class OutboxPartitionMaintainer {
     // [JA] {@code スキーマ.テーブル} — 識別子を SQL に連結するので、この形だけを受け付ける。
     static final Pattern QUALIFIED = Pattern.compile("^[a-z_][a-z0-9_]*\\.[a-z_][a-z0-9_]*$");
 
+    /** DDL 트랜잭션의 잠금 대기 상한 — {@link #limitLockWait}. */
+    // [JA] DDL トランザクションのロック待ちの上限。
+    static final String LOCK_TIMEOUT = "3s";
+
     private final DataSource dataSource;
     private final List<String> tables;
     private final int monthsAhead;
@@ -188,6 +192,7 @@ public class OutboxPartitionMaintainer {
             c.setAutoCommit(false);
             try {
                 lock(c, table);
+                limitLockWait(c);
                 if (!isPartitioned(c, schema, name)) {
                     c.rollback();
                     // 운영 DB 를 베이스라인으로 옮겼으면 V1(파티션 전환)을 건너뛰었을 수 있다 — 조용히 넘기지 않는다.
@@ -203,13 +208,25 @@ public class OutboxPartitionMaintainer {
                 for (int i = 0; i <= monthsAhead; i++) {
                     YearMonth m = now.plusMonths(i);
                     String part = partitionName(name, m);
-                    if (!exists(c, schema, part)) {
+                    if (!attached(c, schema, name, part)) {
+                        if (relationExists(c, schema, part)) {
+                            // 이름만 같은 다른 것(DETACH 된 채 남은 테이블 · 같은 이름의 인덱스 등)이 있다. 예전에는 이것을
+                            // "그 달이 있다" 로 보고 건너뛰어, 그 달 행이 모두 조용히 DEFAULT 로 가는데 지표는 꽉 찼다고
+                            // 보고했다. 그 테이블에 무엇이 들었는지 모르니 붙이지도 지우지도 않고 멈춘다 — 사람이 정한다.
+                            // 이 점검이 실패로 남으므로 last_success 경보(24시간)와 줄어드는 months_ahead 가 알린다.
+                            // [JA] 名前だけ同じ別のもの(DETACH されたまま残ったテーブル・同名のインデックスなど)がある。以前はこれを
+                            //      「その月がある」と見なして飛ばし、その月の行がすべて黙って DEFAULT に入るのに指標は満たされていると
+                            //      報告していた。中身が分からないので付けも消しもせずに止まる — 人が決める。
+                            throw new IllegalStateException("아웃박스 파티션 이름 " + schema + "." + part
+                                    + " 이 이미 쓰이고 있지만 " + table + " 의 파티션이 아니다(DETACH 된 테이블?)"
+                                    + " — 확인해서 ATTACH 하거나 이름을 바꾼다/지운다. docs/09 §4.6");
+                        }
                         createPartition(c, schema, name, part, m, defaultPartition, columns);
                         created.add(schema + "." + part);
                     }
                 }
                 int covered = 0;
-                while (exists(c, schema, partitionName(name, now.plusMonths(covered)))) {
+                while (attached(c, schema, name, partitionName(name, now.plusMonths(covered)))) {
                     covered++;
                 }
                 long defaultRows = defaultPartition == null ? 0 : count(c, schema, defaultPartition);
@@ -314,6 +331,26 @@ public class OutboxPartitionMaintainer {
         }
     }
 
+    /**
+     * 이 트랜잭션의 잠금 대기에 상한을 둔다({@link #LOCK_TIMEOUT}).
+     *
+     * <p>DEFAULT 파티션이 있으면 {@code ATTACH} 는 DEFAULT 에 ACCESS EXCLUSIVE 를 잡는다. 백업(pg_dump · 매일 03:00 UTC, 약 3분)
+     * 처럼 오래 ACCESS SHARE 를 쥔 쪽이 있으면 ATTACH 가 잠금 줄에 서고, PostgreSQL 의 잠금 줄은 차례대로라 <b>그 뒤에 오는 DEFAULT
+     * 행 INSERT 까지 함께 멈춘다</b>. 못 잡으면 빨리 실패해 롤백하고(오류 55P03), {@link #runOnce} 가 받아 다음 주기에 다시 한다 —
+     * 미리 3달을 두므로 몇 번 실패해도 괜찮다. advisory lock 을 잡은 <b>뒤</b>에 건다: 다른 레플리카를 기다리는 것은 그쪽의 DDL 이 이
+     * 상한으로 끝나므로 길어지지 않고, 먼저 걸면 동시에 뜬 레플리카가 서로 실패한다.
+     *
+     * <p>[JA] このトランザクションのロック待ちに上限を置く。DEFAULT パーティションがあると {@code ATTACH} は DEFAULT に ACCESS
+     * EXCLUSIVE を取る。バックアップ(pg_dump)のように長く ACCESS SHARE を握る側がいると ATTACH がロック待ちの列に並び、PostgreSQL の
+     * ロック待ちは順番どおりなので<b>その後に来る DEFAULT 行の INSERT まで一緒に止まる</b>。取れなければすぐ失敗してロールバックし
+     * (エラー 55P03)、{@link #runOnce} が受けて次の周期にやり直す。advisory lock を取った<b>後</b>に掛ける。
+     */
+    private static void limitLockWait(Connection c) throws SQLException {
+        try (Statement st = c.createStatement()) {
+            st.execute("SET LOCAL lock_timeout = '" + LOCK_TIMEOUT + "'");
+        }
+    }
+
     private static boolean isPartitioned(Connection c, String schema, String table) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM pg_partitioned_table p JOIN pg_class k ON k.oid = p.partrelid "
@@ -356,11 +393,37 @@ public class OutboxPartitionMaintainer {
         return cols;
     }
 
-    private static boolean exists(Connection c, String schema, String table) throws SQLException {
+    /**
+     * {@code part} 가 지금 {@code parent} 에 붙어 있는 파티션(테이블)인가. 이름만 보지 않는다 — {@code pg_class} 에는 인덱스 ·
+     * 시퀀스 · 뷰, DETACH 된 테이블도 있다.
+     *
+     * <p>[JA] {@code part} が今 {@code parent} に付いているパーティション(テーブル)か。名前だけを見ない — {@code pg_class} には
+     * インデックス・シーケンス・ビュー、DETACH されたテーブルもある。
+     */
+    private static boolean attached(Connection c, String schema, String parent, String part) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM pg_inherits i JOIN pg_class ch ON ch.oid = i.inhrelid "
+                        + "JOIN pg_class pa ON pa.oid = i.inhparent JOIN pg_namespace n ON n.oid = pa.relnamespace "
+                        + "JOIN pg_namespace cn ON cn.oid = ch.relnamespace "
+                        + "WHERE n.nspname = ? AND pa.relname = ? AND cn.nspname = ? AND ch.relname = ? "
+                        + "AND ch.relkind IN ('r', 'p') AND ch.relispartition")) {
+            ps.setString(1, schema);
+            ps.setString(2, parent);
+            ps.setString(3, schema);
+            ps.setString(4, part);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** 그 이름의 관계가 종류와 상관없이 있는가 — 만들기 전에 이름 충돌을 본다. */
+    // [JA] その名前のリレーションが種類を問わずあるか — 作る前に名前の衝突を見る。
+    private static boolean relationExists(Connection c, String schema, String name) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM pg_class k JOIN pg_namespace n ON n.oid = k.relnamespace WHERE n.nspname = ? AND k.relname = ?")) {
             ps.setString(1, schema);
-            ps.setString(2, table);
+            ps.setString(2, name);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }

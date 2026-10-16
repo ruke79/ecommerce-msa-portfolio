@@ -2,6 +2,7 @@ package com.project.chat_service;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.AutoConfigurationExcludeFilter;
 import org.springframework.boot.context.TypeExcludeFilter;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration;
@@ -26,8 +27,14 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 // 슬라이스 테스트도 정상 동작한다.
 @ComponentScan(
 		basePackages = {"com.project.chat_service", "com.project.common"},
-		excludeFilters = @ComponentScan.Filter(
-				type = FilterType.CUSTOM, classes = TypeExcludeFilter.class))
+		// AutoConfigurationExcludeFilter 도 되살린다 — 없으면 common 의 자동 설정이 사용자 설정처럼 스캔되어 조건이 너무
+		// 일찍 평가되고(@ConditionalOnBean(DataSource) 가 DataSource 보다 먼저) 통째로 빠졌다: 아웃박스 파티션 잡이 이 앱에서
+		// 한 번도 돌지 않았다(OutboxPartitionComponentScanTest). 자동 설정은 imports 파일로만 들어온다.
+		// [JA] AutoConfigurationExcludeFilter も戻す — ないと common の自動設定がユーザー設定としてスキャンされ、条件が早すぎる時点で
+		//      評価されて丸ごと外れていた(パーティションジョブが一度も動いていない)。
+		excludeFilters = {
+				@ComponentScan.Filter(type = FilterType.CUSTOM, classes = TypeExcludeFilter.class),
+				@ComponentScan.Filter(type = FilterType.CUSTOM, classes = AutoConfigurationExcludeFilter.class) })
 public class ChatServerApplication {
 
 	public static void main(String[] args) {

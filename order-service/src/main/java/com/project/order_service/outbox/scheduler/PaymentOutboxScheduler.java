@@ -14,7 +14,6 @@ import com.project.common.outbox.OutboxStatus;
 import com.project.order_service.outbox.PaymentOutboxHelper;
 import com.project.order_service.outbox.model.PaymentOutboxEvent;
 import com.project.order_service.ports.output.message.publisher.PaymentRequestKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.TokenRequestKafkaPublisher;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -65,7 +64,6 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
 
     private final PaymentOutboxHelper paymentOutboxHelper;
     private final PaymentRequestKafkaPublisher paymentRequestMessagePublisher;
-    private final TokenRequestKafkaPublisher tokenRequestMessagePublisher;
     /** 주문 상태 변경(docs/76) — 토픽 order-status. */
     private final com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher orderStatusPublisher;
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
@@ -102,9 +100,6 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
                 // [JA] 行を書いたリクエストのトレース文脈の下で送る — 決済リクエストが元の注文リクエストのトレースにつながる(docs/51 §4e)。
                 settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay payment-request",
                         () -> paymentRequestMessagePublisher.publish(outbox, this::updateOutboxStatus));
-            } else if ("token-update".equals(outbox.getEventType())) {
-                settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay token-update",
-                        () -> tokenRequestMessagePublisher.publish(outbox, this::updateOutboxStatus));
             } else if (PaymentOutboxHelper.ORDER_STATUS_EVENT.equals(outbox.getEventType())) {
                 // 상태를 바꾼 요청의 추적 아래에서 — 주문 진행 조회가 그 요청의 추적으로 이어진다(docs/76).
                 // [JA] 状態を変えたリクエストのトレースの下で — 注文進行の照会がそのリクエストのトレースにつながる(docs/76)。

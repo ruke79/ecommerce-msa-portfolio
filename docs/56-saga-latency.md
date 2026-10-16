@@ -40,7 +40,7 @@
 `common/outbox/OutboxRelayTrigger`:
 
 1. ヘルパーが発行待ち（`STARTED`）の行を書くと `relayTrigger.afterCommit()` を呼ぶ。
-   - order: `PaymentOutboxHelper.savePaymentOutbox`・`saveTokenOutbox`
+   - order: `PaymentOutboxHelper.savePaymentOutbox`・`saveOrderStatusOutbox`
    - pay: `OrderOutboxHelper.saveOrderOutbox`
 2. トランザクション内なら `TransactionSynchronization.afterCommit` を登録する — **コミット前には行が見えず、
    ロールバックされれば送るものがない。** トランザクション外なら（すでにコミット済み）すぐに。

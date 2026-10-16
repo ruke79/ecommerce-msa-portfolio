@@ -758,7 +758,7 @@ public class CartService {
                 product.getSkus(), cartItem.getStyle(), cartItem.getSize());
         BigDecimal price = discountedPrice(originalPrice, product.getSkus().get(cartItem.getStyle()).getDiscount());
 
-        ProductInfoDto dto = new ProductInfoDto(cartItem);
+        ProductInfoDto dto = cartItem.toBuilder().build();
         dto.setPriceBefore(originalPrice.toPlainString());
         dto.setQty(cartItem.getQty());
         dto.setPrice(price.toPlainString());
@@ -782,7 +782,7 @@ public class CartService {
         if (found == null) {
             throw new RuntimeException("Cart product info not found: " + key);
         }
-        ProductInfoDto dto = new ProductInfoDto(found);
+        ProductInfoDto dto = found.toBuilder().build();
 
         BigDecimal originalPrice = computeOriginalPriceFromSkusByStyleAndSize(product.getSkus(), styleIndex, p.getSize());
         dto.setPriceBefore(originalPrice.toPlainString());

@@ -25,7 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 앉는다 — docs/38 §5 A1·A2, §1.15. 규칙은 이렇다.
  * <ul>
  *   <li>토픽: {@code event_type} 으로 정하고 스케줄러의 이름과 같게 —
- *       {@code payment-request→order}, {@code token-update→token-u}, {@code payment-response→payment}.</li>
+ *       {@code payment-request→order}, {@code payment-response→payment}.</li>
  *   <li>키: {@code aggregate_id}(집합체 id) 그대로, {@code StringConverter} 로 — 앱 프로듀서의
  *       {@code StringSerializer} 와 바이트가 같아야 같은 파티션이다.</li>
  *   <li>테이블: 실제 스키마({@code orders.}/{@code pay.}) — {@code public.} 은 아무것도 캡처하지 않는다.</li>
@@ -42,7 +42,6 @@ class CdcConnectorGuardrailTest {
     /** 스케줄러가 쓰는 event_type → 토픽. PaymentOutboxScheduler / OrderOutboxScheduler 와 같아야 한다. */
     private static final Map<String, String> SCHEDULER_TOPICS = Map.of(
             "payment-request", "order",
-            "token-update", "token-u",
             "payment-response", "payment");
 
     private static final Set<String> CONNECTORS = Set.of(

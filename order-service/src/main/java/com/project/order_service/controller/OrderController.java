@@ -106,7 +106,9 @@ public class OrderController {
      * 이유는 그것이 대개 내부 사정이기 때문이다.
      */
     @PostMapping("/create")
-    ResponseEntity<?> createOrder(@RequestBody OrderRequest request,
+    // @Valid — 배송지 검증(OrderAddressDto). 틀리면 서비스에 닿기 전에 400(CustomRestExceptionHandler).
+    // [JA] @Valid — 配送先の検証。誤りがあればサービスに届く前に 400。
+    ResponseEntity<?> createOrder(@jakarta.validation.Valid @RequestBody OrderRequest request,
             @RequestHeader(value = "User-Id", required = false) Long userId) {
 
         // 🔒 주문자는 **게이트웨이가 검증한 토큰**에서만 온다.

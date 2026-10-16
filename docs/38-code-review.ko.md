@@ -680,7 +680,7 @@ JSON. delivery·notification 은 값을 `List<String>` 으로 받아 `JsonNode` 
 (`MessageConsumer`)는 `MessageDto` 를 받는다 — `__TypeId__` 헤더가 `MessageDto` 를 가리켜서만 동작하던
 것이다. Avro 는 헤더가 없으니 선언을 실제 타입으로 맞췄다.
 
-**Avro 로 옮기지 않은 것 — 소비자가 없는 토픽.** `token-u`(order 가 문자열로 발행, 듣는 곳 없음),
+**Avro 로 옮기지 않은 것 — 소비자가 없는 토픽.** `token-u`(order 가 문자열로 발행, 듣는 곳 없음 — 2026-10-14 발행 쪽까지 지웠다: 아웃박스 행을 쓰는 곳도 없었고 토큰 원문을 싣는 모양이었다, `MessageDtoNoTokenGuardTest`),
 `delivery-status`(delivery 가 Map→JSON 으로 발행, 듣는 곳 없음), `user-presence`(notification 이 듣지만
 발행하는 곳 없음), user-service 의 `AlarmEventDto` 소비자(발행자 주석 처리). 죽은 토픽에 스키마를 붙이면
 살아 있는 것처럼 보인다. 살릴 때 다섯 자리를 채우면 된다. 프로듀서 배선 파일 6개 + 소비자 8개를

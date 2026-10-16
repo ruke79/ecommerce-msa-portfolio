@@ -1,5 +1,6 @@
 package com.project.catalog_service.config.redis;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -119,11 +120,11 @@ public class RedisCacheConfig {
         redisTemplate.setKeySerializer(new StringRedisSerializer());
         // redisTemplate.setValueSerializer(new
         // Jackson2JsonRedisSerializer<>(Object.class));
-        redisTemplate.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+        redisTemplate.setValueSerializer(permanentValueSerializer());
         redisTemplate.setHashKeySerializer(new StringRedisSerializer());
         // redisTemplate.setHashValueSerializer(new
         // Jackson2JsonRedisSerializer<>(Object.class));
-        redisTemplate.setHashValueSerializer(new GenericJackson2JsonRedisSerializer());
+        redisTemplate.setHashValueSerializer(permanentValueSerializer());
 
         return redisTemplate;
     }
@@ -134,7 +135,7 @@ public class RedisCacheConfig {
         // 만료 기간이 없는 영구 캐시 설정
         RedisCacheConfiguration permanentCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
             .disableCachingNullValues()
-            .serializeValuesWith(SerializationPair.fromSerializer(new GenericJackson2JsonRedisSerializer()));
+            .serializeValuesWith(SerializationPair.fromSerializer(permanentValueSerializer()));
         
         // 캐시 이름별 설정 맵 생성
         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
@@ -166,15 +167,35 @@ public class RedisCacheConfig {
     }
 
     /**
+     * {@code products} · {@code product_cache} · {@code products_cache} 와 RedisTemplate 의 값 직렬화기 — 기본
+     * {@link GenericJackson2JsonRedisSerializer} 그대로(저장 모양이 같다)에 <b>모르는 필드 무시</b>만 더한다.
+     *
+     * <p>기본 직렬화기는 모르는 필드를 만나면 실패한다. 캐시는 배포를 넘어 남으므로, 상품 DTO 에 필드를 더한 배포의 롤링 중 옛 파드가
+     * 새 파드가 쓴 값을 읽다(또는 필드를 지운 뒤 새 파드가 옛 값을 읽다) 상품 조회가 깨진다. 예전에는 DTO 두 개({@code ProductSizeDto} ·
+     * {@code ProductInfoDto})에만 {@code @JsonIgnoreProperties} 를 붙여 막았다 — 직렬화기에서 한 번에 막는다(order-service
+     * {@code RedisCacheConfig} 와 같다).
+     *
+     * <p>[JA] 既定の {@link GenericJackson2JsonRedisSerializer} そのまま(保存形式は同じ)に<b>未知のフィールドの無視</b>だけを足す。
+     * キャッシュはデプロイをまたいで残るので、商品 DTO にフィールドを足したデプロイのローリング中、旧 Pod が新 Pod の書いた値を読んで
+     * 商品照会が壊れる。以前は DTO 二つにだけ {@code @JsonIgnoreProperties} を付けていた — シリアライザで一度に防ぐ。
+     */
+    static GenericJackson2JsonRedisSerializer permanentValueSerializer() {
+        return new GenericJackson2JsonRedisSerializer()
+                .configure(mapper -> mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES));
+    }
+
+    /**
      * 캐시 값 직렬화기. 기본 {@link GenericJackson2JsonRedisSerializer} 와 동일하게 타입 정보를
      * 남기되, {@link PageJacksonModule} 을 추가해 {@code Page} 를 되읽을 수 있게 한다.
      * 이것이 없으면 검색 캐시가 히트하는 순간 역직렬화에 실패해 500 이 된다(docs/16 B-27).
      */
-    private GenericJackson2JsonRedisSerializer cacheValueSerializer() {
+    static GenericJackson2JsonRedisSerializer cacheValueSerializer() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
         mapper.registerModule(new PageJacksonModule());
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        // 모르는 필드는 무시한다 — permanentValueSerializer 와 같은 이유. ／ [JA] 未知のフィールドは無視する(同じ理由)。
+        mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         // GenericJackson2JsonRedisSerializer 기본 동작과 동일하게 @class 로 타입을 남긴다.
         mapper.activateDefaultTypingAsProperty(
                 mapper.getPolymorphicTypeValidator(),

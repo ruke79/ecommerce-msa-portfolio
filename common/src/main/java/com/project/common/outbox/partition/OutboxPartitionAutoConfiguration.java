@@ -18,7 +18,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.binder.MeterBinder;
@@ -61,6 +61,7 @@ import lombok.extern.slf4j.Slf4j;
 @AutoConfiguration(after = DataSourceAutoConfiguration.class)
 @ConditionalOnBean(DataSource.class)
 @ConditionalOnProperty(prefix = "outbox.partitions", name = "tables")
+@Import(OutboxPartitionAutoConfiguration.Metrics.class)
 public class OutboxPartitionAutoConfiguration {
 
     @Bean
@@ -140,7 +141,10 @@ public class OutboxPartitionAutoConfiguration {
      * バインドする。以前の {@code @ConditionalOnBean(MeterRegistry.class)} は、この自動設定がアクチュエータのメトリクス自動設定より
      * 先に評価されるため常に外れ、本番に指標が一つも出ていなかった。
      */
-    @Configuration(proxyBeanMethods = false)
+    // @Configuration 을 달지 않고 위의 @Import 로만 들어온다 — @Configuration 이면 com.project.common 을 스캔하는 앱(cart · order ·
+    // chat)에서 따로 스캔돼, 바깥 조건(DataSource · tables)과 상관없이 Maintainer 를 찾다 기동이 실패했다
+    // (OutboxPartitionComponentScanTest). ／ [JA] @Configuration を付けず @Import でのみ入る — 付けるとスキャンするアプリで
+    // 単独でスキャンされ、外側の条件と無関係に Maintainer を探して起動が失敗した。
     @ConditionalOnClass(name = "io.micrometer.core.instrument.binder.MeterBinder")
     static class Metrics {
 

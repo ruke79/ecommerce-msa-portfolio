@@ -25,7 +25,6 @@ import com.project.order_service.outbox.model.PaymentOutboxEvent;
 import com.project.order_service.outbox.repository.jpa.PaymentOutboxRepository;
 import com.project.order_service.outbox.scheduler.PaymentOutboxScheduler;
 import com.project.order_service.ports.output.message.publisher.PaymentRequestKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.TokenRequestKafkaPublisher;
 
 /**
  * 결제 아웃박스를 건너는 추적 (docs/51 §4e).
@@ -96,7 +95,7 @@ class PaymentOutboxTraceTest {
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
 
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(
-                claiming, publisher, mock(TokenRequestKafkaPublisher.class),
+                claiming, publisher,
                 mock(com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher.class), traceContext);
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
         scheduler.processOutboxMessage();

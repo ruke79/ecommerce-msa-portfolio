@@ -11,7 +11,6 @@ import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.common.message.dto.request.PaymentRequest;
-import com.project.common.message.dto.request.TokenRequest;
 import com.project.common.outbox.OutboxStatus;
 import com.project.order_service.domain.exception.OrderDomainException;
 import com.project.order_service.outbox.model.PaymentOutboxEvent;
@@ -123,25 +122,6 @@ public class PaymentOutboxHelper {
         relayOnCommit(status);
     }
 
-     /**
-     * 토큰 관련 정보를 Outbox에 저장하는 메서드 추가
-     * TokenRequest는 토큰 정보(예: userId, tokenValue, tokenType 등)를 담는 DTO
-     * @throws JacksonException 
-     */
-    public void saveTokenOutbox(TokenRequest request, OutboxStatus status) throws JacksonException {
-        String payload = objectMapper.writeValueAsString(request);
-
-        // 새로운 OutboxEvent 생성: aggregateType과 eventType을 토큰 관련으로 정의
-        PaymentOutboxEvent outboxEvent = new PaymentOutboxEvent(
-            Long.toString(request.getUserId()),  // Aggregate ID: 사용자 ID
-            "UserToken",                         // Aggregate Type: 토큰 소유자
-            "token-update",                      // Event Type: 토큰 업데이트
-            payload,
-            status
-        );
-        this.save(outboxEvent);
-        relayOnCommit(status);
-    }
     
     
 

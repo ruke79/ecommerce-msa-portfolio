@@ -21,7 +21,6 @@ import com.project.order_service.outbox.model.PaymentOutboxEvent;
 import com.project.order_service.outbox.scheduler.PaymentOutboxScheduler;
 import com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.PaymentRequestKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.TokenRequestKafkaPublisher;
 
 /**
  * 릴레이가 {@code order-status} 행을 안다(docs/76). 모르면 "Unknown outbox event type" 으로 FAILED 를 찍어
@@ -48,7 +47,7 @@ class OrderStatusRelayTest {
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
 
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(claiming,
-                mock(PaymentRequestKafkaPublisher.class), mock(TokenRequestKafkaPublisher.class), publisher, traceContext);
+                mock(PaymentRequestKafkaPublisher.class), publisher, traceContext);
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
         scheduler.processOutboxMessage();
 

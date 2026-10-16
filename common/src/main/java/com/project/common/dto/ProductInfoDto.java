@@ -11,7 +11,10 @@ import lombok.NoArgsConstructor;
 import lombok.AccessLevel;
 
 @Data
-@Builder
+// 복사는 toBuilder() 로 — 예전 손으로 쓴 복사 생성자는 필드를 더할 때마다 함께 고쳐야 했고, V17 의 skuCode 를 빠뜨려
+// 장바구니 응답에서 늘 비어 있었다. Lombok 이 모든 필드를 옮긴다.
+// [JA] コピーは toBuilder() で — 以前の手書きのコピーコンストラクタは V17 の skuCode を漏らし、カートの応答で常に空だった。
+@Builder(toBuilder = true)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
@@ -68,31 +71,5 @@ public class ProductInfoDto {
     private int discount;     
     
     private String _uid;
-
-
-    public ProductInfoDto(ProductInfoDto src) {
-        this.id = src.getId();
-        this.name = src.getName();
-        this.style = src.getStyle();
-        this.brand = src.getBrand();
-        this.slug = src.getSlug();
-        this.sku = src.getSku();
-        this.category = src.getCategory();
-        this.subCategories = src.getSubCategories();
-        this.description = src.getDescription();
-        this.color = src.getColor();
-        this.size = src.getSize();
-        this.details = src.getDetails();
-        this.qty = src.getQty();
-        this.quantity = src.getQuantity();
-        this.onHold = src.getOnHold();
-        this.discount = src.getDiscount(); 
-        this.images = src.getImages();
-        this.questions = src.getQuestions();
-        this.shipping = src.getShipping();
-        this.price = src.getPrice();
-        this.priceBefore = src.getPriceBefore();
-        this._uid = src.get_uid();
-    }
 
 }

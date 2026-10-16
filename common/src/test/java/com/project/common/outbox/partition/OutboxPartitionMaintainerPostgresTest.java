@@ -1,12 +1,16 @@
 package com.project.common.outbox.partition;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -118,6 +122,66 @@ class OutboxPartitionMaintainerPostgresTest {
         assertThat(s.defaultRows()).isEqualTo(1);
         // 옮긴 행의 값이 그대로다(나중에 더한 trace_context 포함 — 컬럼을 이름으로 옮긴다)
         assertThat(query("SELECT trace_context FROM orders.payment_outbox_event WHERE id = 'late-1'")).isEqualTo("tc");
+    }
+
+    @Test
+    @DisplayName("🔴 DETACH 된 채 남은 같은 이름의 테이블은 '그 달이 있다' 가 아니다 — 지표를 속이지 않고 실패한다")
+    void detachedLeftoverIsNotAPartition() throws SQLException {
+        // 보존 작업(DETACH → DROP)이 두 단계 사이에서 멈춘 모양
+        exec("CREATE TABLE orders.payment_outbox_event_2027_02 PARTITION OF orders.payment_outbox_event"
+                        + " FOR VALUES FROM ('2027-02-01') TO ('2027-03-01')",
+                "ALTER TABLE orders.payment_outbox_event DETACH PARTITION orders.payment_outbox_event_2027_02");
+
+        OutboxPartitionMaintainer m = at("2027-01-15T00:00:00Z", 3);
+        // 예전: 이름만 보고 건너뛰어 monthsCovered=3 을 보고했고, 2027-02 행은 모두 DEFAULT 로 갔다
+        assertThatThrownBy(() -> m.ensure("orders.payment_outbox_event"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("orders.payment_outbox_event_2027_02")
+                .hasMessageContaining("파티션이 아니다");
+        assertThat(partitions()).as("한 트랜잭션 — 실패하면 다른 달도 만들지 않는다")
+                .doesNotContain("payment_outbox_event_2027_03");
+        assertThat(m.monthsAheadNow("orders.payment_outbox_event")).as("성공으로 기록하지 않는다").isNaN();
+
+        // 사람이 남은 테이블을 정리하면 다음 주기에 채운다
+        exec("DROP TABLE orders.payment_outbox_event_2027_02");
+        OutboxPartitionMaintainer.Status s = m.ensure("orders.payment_outbox_event");
+        assertThat(s.created()).contains("orders.payment_outbox_event_2027_02");
+        assertThat(s.monthsCovered()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("🔴 같은 이름의 인덱스가 있어도 '그 달이 있다' 가 아니다")
+    void sameNamedIndexIsNotAPartition() throws SQLException {
+        exec("CREATE INDEX payment_outbox_event_2027_02 ON orders.payment_outbox_event_2027_01 (created_at)");
+
+        assertThatThrownBy(() -> at("2027-01-15T00:00:00Z", 3).ensure("orders.payment_outbox_event"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("orders.payment_outbox_event_2027_02");
+    }
+
+    @Test
+    @DisplayName("🔴 백업처럼 DEFAULT 를 오래 쥔 쪽이 있으면 기다리지 않고 실패한다 — 그 뒤 INSERT 를 막지 않는다(lock_timeout)")
+    void doesNotQueueBehindALongLock() throws Exception {
+        try (Connection dump = ds.getConnection()) {
+            dump.setAutoCommit(false);
+            try (Statement st = dump.createStatement()) {
+                // pg_dump 가 테이블마다 잡는 것과 같은 잠금
+                st.execute("LOCK TABLE orders.payment_outbox_event_default IN ACCESS SHARE MODE");
+            }
+            OutboxPartitionMaintainer m = at("2027-01-15T00:00:00Z", 1);
+            long start = System.nanoTime();
+            Throwable thrown = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                    () -> catchThrowable(() -> m.ensure("orders.payment_outbox_event")),
+                    "ATTACH 가 잠금 줄에서 끝없이 기다린다 — lock_timeout 이 없다");
+            assertThat(thrown).isInstanceOf(SQLException.class);
+            assertThat(((SQLException) thrown).getSQLState()).as("lock_not_available").isEqualTo("55P03");
+            assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(10));
+            assertThat(partitions()).as("롤백 — 붙다 만 달이 없다").doesNotContain("payment_outbox_event_2027_02");
+            dump.rollback();
+        }
+        // 잠금이 풀리면 다음 주기에 만든다
+        assertThat(at("2027-01-15T00:00:00Z", 1).ensure("orders.payment_outbox_event").created())
+                .containsExactly("orders.payment_outbox_event_2027_02");
     }
 
     @Test

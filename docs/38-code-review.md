@@ -680,7 +680,7 @@ JSON。delivery・notification は値を `List<String>` で受け取って `Json
 （`MessageConsumer`）は `MessageDto` を受け取る — `__TypeId__` ヘッダーが `MessageDto` を指していたから動いていただけ
 だった。Avro はヘッダーがないので、宣言を実際の型に合わせた。
 
-**Avro に移さなかったもの — コンシューマーのいないトピック。** `token-u`（order が文字列で発行、聞いている所なし）、
+**Avro に移さなかったもの — コンシューマーのいないトピック。** `token-u`（order が文字列で発行、聞いている所なし — 2026-10-14 に発行側まで削除した: アウトボックス行を書く所もなく、トークン原文を載せる形だった、`MessageDtoNoTokenGuardTest`）、
 `delivery-status`（delivery が Map→JSON で発行、聞いている所なし）、`user-presence`（notification が聞いているが
 発行する所なし）、user-service の `AlarmEventDto` のコンシューマー（発行側がコメントアウト）。死んだトピックにスキーマを付けると
 生きているように見える。復活させるときに 5 か所を埋めればよい。プロデューサーの配線ファイル 6 つ + コンシューマー 8 つを

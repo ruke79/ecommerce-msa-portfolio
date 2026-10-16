@@ -222,6 +222,35 @@ class OutboxTraceContextTest {
     }
 
     @Test
+    @DisplayName("🔴 저장(capture)이 터져도 예외를 내지 않는다 — 아웃박스 행을 쓰는 주문 · 결제 트랜잭션을 롤백시키지 않는다")
+    void captureNeverThrows() {
+        Propagator broken = new Propagator() {
+            @Override
+            public List<String> fields() {
+                return propagator.fields();
+            }
+
+            @Override
+            public <C> void inject(io.micrometer.tracing.TraceContext context, C carrier, Setter<C> setter) {
+                throw new IllegalStateException("propagator broken");
+            }
+
+            @Override
+            public <C> Span.Builder extract(C carrier, Getter<C> getter) {
+                return propagator.extract(carrier, getter);
+            }
+        };
+        outbox = new OutboxTraceContext(() -> tracer, () -> broken);
+        String[] traceId = new String[1];
+        assertThat(captureInsideRequest(traceId)).as("전파자가 터지면 추적만 버린다").isNull();
+
+        OutboxTraceContext noTracer = new OutboxTraceContext(() -> {
+            throw new IllegalStateException("tracer bean failed");
+        }, () -> propagator);
+        assertThat(noTracer.capture()).as("추적 빈을 찾다 터져도").isNull();
+    }
+
+    @Test
     @DisplayName("보내다 실패하면 예외는 그대로 올라가고 스팬은 닫힌다 — 릴레이가 실패를 처리한다")
     void failurePropagatesAndSpanEnds() {
         String[] traceId = new String[1];

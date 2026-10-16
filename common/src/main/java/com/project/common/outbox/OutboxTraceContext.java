@@ -4,6 +4,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.micrometer.tracing.Span;
 import io.micrometer.tracing.Tracer;
 import io.micrometer.tracing.propagation.Propagator;
@@ -63,6 +66,8 @@ import io.micrometer.tracing.propagation.Propagator;
  */
 public class OutboxTraceContext {
 
+    private static final Logger log = LoggerFactory.getLogger(OutboxTraceContext.class);
+
     /** 추적 없이 동작한다. 단위 테스트가 헬퍼·스케줄러를 직접 만들 때 쓴다. */
     // [JA] トレースなしで動作する。単体テストがヘルパー・スケジューラを直接生成するときに使う。
     public static final OutboxTraceContext NOOP = new OutboxTraceContext(() -> null, () -> null);
@@ -91,6 +96,19 @@ public class OutboxTraceContext {
      *         [JA] 現在のトレースコンテキストの伝搬ヘッダーを {@code 名前=値} の行で連結した文字列。トレースがなければ null
      */
     public String capture() {
+        // 아웃박스 행을 쓰는 비즈니스 트랜잭션 안에서 불린다 — 여기서 예외가 나가면 주문 · 결제가 통째로 롤백된다.
+        // resume · openFrom 처럼 추적만 버리고 진행한다.
+        // [JA] アウトボックス行を書くビジネストランザクションの中で呼ばれる — ここで例外が出ると注文・決済がまるごとロールバックされる。
+        //      resume・openFrom と同様に、トレースだけを捨てて進む。
+        try {
+            return encodeCurrent();
+        } catch (RuntimeException e) {
+            log.debug("아웃박스 추적 문맥을 저장하지 못했다 — 추적 없이 진행한다: {}", e.toString());
+            return null;
+        }
+    }
+
+    private String encodeCurrent() {
         Tracer t = tracer.get();
         Propagator p = propagator.get();
         if (t == null || p == null) {

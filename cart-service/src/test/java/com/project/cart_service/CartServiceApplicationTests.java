@@ -58,6 +58,9 @@ class CartServiceApplicationTests {
 		registry.add("eureka.client.fetch-registry", () -> false);
 		registry.add("management.tracing.enabled", () -> false);
 		registry.add("server.ssl.enabled", () -> false);
+		// 운영(application-local.yml)처럼 파티션 잡을 켠다 — 첫 점검은 1시간 뒤라 이 테스트 동안 DB 를 건드리지 않는다.
+		registry.add("outbox.partitions.tables", () -> "cart.outbox_event");
+		registry.add("outbox.partitions.initial-delay", () -> "PT1H");
 	}
 
 	@Autowired
@@ -67,6 +70,19 @@ class CartServiceApplicationTests {
 	@DisplayName("애플리케이션 컨텍스트가 실제로 뜬다")
 	void contextLoads() {
 		assertThat(context).isNotNull();
+	}
+
+	/**
+	 * 🔴 common 을 컴포넌트 스캔하는 이 앱에서도 파티션 잡이 뜬다. 예전에는 AutoConfigurationExcludeFilter 가 빠져 자동 설정이
+	 * 스캔으로 먼저 평가돼 통째로 빠졌다 — 잡이 한 번도 돌지 않았다(OutboxPartitionComponentScanTest).
+	 * [JA] common をスキャンするこのアプリでもパーティションジョブが起動する。以前は自動設定が丸ごと外れていた。
+	 */
+	@Test
+	@DisplayName("🔴 아웃박스 파티션 잡(Maintainer)과 지표가 뜬다 — common 을 스캔해도 자동 설정이 빠지지 않는다")
+	void outboxPartitionJobIsWired() {
+		assertThat(context.getBeansOfType(com.project.common.outbox.partition.OutboxPartitionMaintainer.class)).hasSize(1);
+		assertThat(context.getBean(com.project.common.outbox.partition.OutboxPartitionMaintainer.class).tables())
+				.containsExactly("cart.outbox_event");
 	}
 
 	@Test

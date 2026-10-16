@@ -390,6 +390,10 @@ ALTER TABLE orders.payment_outbox_event
 DROP TABLE orders.payment_outbox_event_2026_06_25;
 ```
 
+> **二つの段階の間で止まると**、切り離された同じ名前のテーブルが残ります。将来のパーティションを作るジョブ(`common` の `OutboxPartitionMaintainer`)はその名前を「その月がある」とは見なしません — 親に付いたパーティションだけを数えます。付けも消しもせずにその点検を失敗として残すので(`last_success` アラート・減っていく `months_ahead`)、人がそのテーブルを確かめて `ATTACH` するか名前を変えるか削除すれば、次の周期に続きを作ります。ジョブの DDL はロックを 3 秒までしか待ちません(`lock_timeout`) — バックアップ(pg_dump)が DEFAULT を握っていると `ATTACH` がロック待ちの列に並んで後ろの INSERT まで止める代わりに、失敗して 6 時間後にやり直します。
+
+> 🐛 **cart・order ではこのジョブが一度も動いていませんでした(2026-10-14 発見)。** 二つのアプリ(と chat)は `com.project.common` を `@ComponentScan` で直接スキャンしますが、`@SpringBootApplication` が既定で掛ける `AutoConfigurationExcludeFilter` が抜けており、この自動設定がユーザー設定としてスキャンされ、条件(`@ConditionalOnBean(DataSource)`)が DataSource より先に評価されて丸ごと外れていました。pay・user はスキャンしないので正常でした。V1 が 2027-01 まで作ってあるので、まだ DEFAULT に入った行はありません。修正版をデプロイした後、`kubectl -n ecommerce logs deploy/order-service | grep "아웃박스 파티션"` に `아웃박스 파티션 잡: tables=[orders.payment_outbox_event]` と(30 秒後)`아웃박스 파티션 점검` が出るか確認します — cart も同じです(`OutboxPartitionComponentScanTest`)。
+
 パーティションの作成/削除は **`pg_partman`** で自動化することを推奨します（手動運用では「未来のパーティションを作り忘れて INSERT 失敗」が代表的な障害パターンです — 4.3 の DEFAULT パーティションがその安全網）。
 
 ```sql

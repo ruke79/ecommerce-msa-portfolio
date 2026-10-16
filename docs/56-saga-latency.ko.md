@@ -40,7 +40,7 @@
 `common/outbox/OutboxRelayTrigger`:
 
 1. 헬퍼가 발행 대기(`STARTED`) 행을 쓰면 `relayTrigger.afterCommit()` 을 부른다.
-   - order: `PaymentOutboxHelper.savePaymentOutbox`·`saveTokenOutbox`
+   - order: `PaymentOutboxHelper.savePaymentOutbox`·`saveOrderStatusOutbox`
    - pay: `OrderOutboxHelper.saveOrderOutbox`
 2. 트랜잭션 안이면 `TransactionSynchronization.afterCommit` 을 건다 — **커밋 전에는 행이 안 보이고,
    롤백되면 보낼 것이 없다.** 트랜잭션 밖이면(이미 커밋됐다) 바로.

@@ -121,6 +121,26 @@ class CartServiceBatchLookupTest {
     }
 
     @Test
+    @DisplayName("🔴 loadCart 는 catalog 가 준 줄 정보를 빠짐없이 돌려준다 — skuCode 포함(손으로 쓴 복사 생성자가 V17 때 빠뜨렸다)")
+    void loadCart_keepsEveryFieldFromCatalog() {
+        Cart cart = new Cart(7L);
+        cart.setCartProducts(List.of(CartProduct.builder().productId(2L).style(0).size("S").qty(1)._uid("u1").build()));
+        when(cartRepository.findByUserId(7L)).thenReturn(Optional.of(cart));
+        when(catalogServiceClient.getProductsInfo(List.of(2L)))
+                .thenReturn(ResponseEntity.ok(List.of(product("2", "S", "50", 0, "0"))));
+        when(catalogServiceClient.getCartProductsInfo(any())).thenReturn(ResponseEntity.ok(Map.of(
+                "2:0:0", ProductInfoDto.builder().id("2").style(0).size("S").name("p2")
+                        .sku("FAS-2").skuCode("FAS-2-S").slug("p2-slug").brand("b").build())));
+
+        ProductInfoDto line = cartService.loadCart(7L).get(0);
+
+        assertThat(line.getSkuCode()).as("catalog 가 준 사이즈 SKU").isEqualTo("FAS-2-S");
+        assertThat(line.getSku()).isEqualTo("FAS-2");
+        assertThat(line.getSlug()).isEqualTo("p2-slug");
+        assertThat(line.getBrand()).isEqualTo("b");
+    }
+
+    @Test
     @DisplayName("loadCart: 항목 셋 → 상품 배치 1회 + 장바구니 정보 배치 1회 (예전엔 2N). 단건 둘은 0번")
     void loadCart_makesExactlyTwoCatalogCalls_regardlessOfItemCount() {
         Cart cart = new Cart(7L);

@@ -29,7 +29,6 @@ import com.project.common.message.dto.request.CartRollbackRequest;
 import com.project.common.message.dto.request.CouponRollbackRequest;
 import com.project.common.message.dto.request.PaymentRequest;
 import com.project.common.message.dto.request.ProductUpdateRequest;
-import com.project.common.message.dto.request.TokenRequest;
 
 import jakarta.persistence.EntityManagerFactory;
 
@@ -210,14 +209,23 @@ public class KafkaProducerConfig {
         return new KafkaTemplate<>(cartEmptyProducerFactory());
     }
 
-     @Bean
-    public Map<String, Object> tokenUpdateConfigurations() {
+    /**
+     * JSON 문자열을 보내는 비트랜잭션 프로듀서 설정 — 구매 확정 · 환불(아래 둘)이 함께 쓴다.
+     *
+     * <p>예전 이름은 {@code tokenUpdateConfigurations} — 토큰 갱신 릴레이({@code token-update → token-u})가 처음 썼다. 그 릴레이는
+     * 쓰는 곳도(아웃박스 행을 쓰는 호출 0건) 듣는 곳도 없었고, 토큰 원문을 Kafka 에 싣는 모양이라 지웠다.
+     *
+     * <p>[JA] JSON 文字列を送る非トランザクションのプロデューサー設定 — 購入確定・返金が共に使う。旧名は {@code tokenUpdateConfigurations}
+     * — トークン更新リレーは書く側も聞く側もなく、トークン原文を Kafka に載せる形だったので削除した。
+     */
+    @Bean
+    public Map<String, Object> stringRelayConfigurations() {
         return ImmutableMap.<String, Object>builder()
                 .put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
                 .put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class)
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class)                
-                // 트랜잭션 없음, 멱등만 — 아웃박스 릴레이(토큰) — 위와 같다(docs/38 §1.17)
+                // 트랜잭션 없음, 멱등만 — 위와 같다(docs/38 §1.17)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
                 .putAll(securityProps())
@@ -225,27 +233,15 @@ public class KafkaProducerConfig {
 
     }
 
-    @Bean
-    public ProducerFactory<String, String> tokenUpdateProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(tokenUpdateConfigurations());
-
-    }
-
-    @Bean
-    public KafkaTemplate<String, String> tokenUpdateKafkaTemplate() {
-        return new KafkaTemplate<>(tokenUpdateProducerFactory());
-    }
-
     /**
      * 구매 확정 이벤트({@code order-completed}, docs/25 §12) — JSON 문자열.
      *
      * <p>{@code delivery-status} 와 같은 모양이다: DTO 없이 문자열로 보내고 notification-service
-     * 가 필드 이름으로 읽는다. 토큰 릴레이와 설정이 같지만 빈을 따로 두는 이유는, 이 토픽의
-     * 발행자가 "토큰" 이름의 템플릿을 들고 있으면 읽는 사람이 헷갈리기 때문이다.
+     * 가 필드 이름으로 읽는다.
      */
     @Bean
     public ProducerFactory<String, String> orderCompletedProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(tokenUpdateConfigurations());
+        return new DefaultKafkaProducerFactory<>(stringRelayConfigurations());
     }
 
     @Bean
@@ -259,7 +255,7 @@ public class KafkaProducerConfig {
      */
     @Bean
     public ProducerFactory<String, String> orderRefundedProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(tokenUpdateConfigurations());
+        return new DefaultKafkaProducerFactory<>(stringRelayConfigurations());
     }
 
     @Bean
