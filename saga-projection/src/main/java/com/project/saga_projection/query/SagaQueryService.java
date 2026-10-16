@@ -27,7 +27,7 @@ import lombok.extern.slf4j.Slf4j;
  * ({@code enableStaleStores}) 로컬에서 답한다. 포워딩은 파드 IP 로 HTTPS 를 걸어야 하는데 인증서 SAN 이
  * 서비스 DNS 뿐이라 검증에 실패한다(k8s/48 의 EUREKA_INSTANCE_HOSTNAME 주석과 같은 이유). 레플리카 수가
  * standby+1 을 넘으면 이 파드에 사본이 없는 키가 생기고, 그때는 {@link Answer#NOT_HERE} 로 503 을 낸다 —
- * 조용히 "없음"으로 답하는 것보다 낫다. 입력 토픽이 파티션 하나인 지금은 태스크도 하나라 항상 로컬이다.
+ * 조용히 "없음"으로 답하는 것보다 낫다. 입력 토픽이 파티션 하나인 지금은 하위 토폴로지마다 태스크가 하나라(사가 · 타임라인) 레플리카 2 · standby 1 이면 항상 로컬이다.
  */
 @Slf4j
 @Service
@@ -67,18 +67,26 @@ public class SagaQueryService {
         }
         String key = String.valueOf(orderId);
 
-        // 두 저장소는 같은 입력 파티셔닝(주문 id 재키잉)이라 활성 · 대기 호스트가 같다 — 사가 저장소의 메타데이터로 판정한다.
-        KeyQueryMetadata meta = streams.queryMetadataForKey(SagaTopology.STORE_NAME, key, Serdes.String().serializer());
-        if (meta == null || meta.equals(KeyQueryMetadata.NOT_AVAILABLE)) {
+        // 저장소마다 따로 판정한다. 두 집계는 재분할 토픽이 달라(saga-by-order · timeline-by-order) 서로 다른 하위 토폴로지의
+        // 태스크이고, 파티션 수가 같아도 같은 파드에 배정된다는 보장이 없다.
+        // 🐛 예전: 사가 저장소의 메타데이터만 봤다 — 타임라인 사본이 없는 파드가 enableStaleStores 로 빈 저장소를 읽어 "진행 이력
+        //    없음"으로 조용히 답할 수 있었다(레플리카 > standby+1 일 때). 지금(레플리카 2 · standby 1)은 파드마다 둘 다 있다.
+        // [JA] ストアごとに判定する。二つの集約は再パーティショントピックが異なり別サブトポロジーのタスクで、同じ Pod に載る保証がない。
+        //      以前はサガのメタデータだけを見ていて、タイムラインの写しがない Pod が「履歴なし」と黙って答えることがあった。
+        KeyQueryMetadata sagaMeta = streams.queryMetadataForKey(SagaTopology.STORE_NAME, key, Serdes.String().serializer());
+        KeyQueryMetadata timelineMeta = streams.queryMetadataForKey(SagaTopology.TIMELINE_STORE_NAME, key, Serdes.String().serializer());
+        if (unavailable(sagaMeta) || unavailable(timelineMeta)) {
             return Result.of(Answer.NOT_READY);
         }
-        boolean active = self.equals(meta.activeHost());
-        boolean standby = meta.standbyHosts().contains(self);
-        if (!active && !standby) {
-            log.warn("주문 {} 의 상태 사본이 이 인스턴스({})에 없다 — 활성 {}, 대기 {}. 레플리카 > standby+1 인가?",
-                    orderId, self, meta.activeHost(), meta.standbyHosts());
-            return new Result(Answer.NOT_HERE, null, meta.activeHost().host() + ":" + meta.activeHost().port());
+        for (KeyQueryMetadata meta : new KeyQueryMetadata[] { sagaMeta, timelineMeta }) {
+            if (!self.equals(meta.activeHost()) && !meta.standbyHosts().contains(self)) {
+                log.warn("주문 {} 의 상태 사본이 이 인스턴스({})에 없다 — 활성 {}, 대기 {}. 레플리카 > standby+1 인가?",
+                        orderId, self, meta.activeHost(), meta.standbyHosts());
+                return new Result(Answer.NOT_HERE, null, meta.activeHost().host() + ":" + meta.activeHost().port());
+            }
         }
+        // 둘 중 하나라도 대기 사본에서 읽으면 늦을 수 있다
+        boolean stale = !self.equals(sagaMeta.activeHost()) || !self.equals(timelineMeta.activeHost());
 
         try {
             ReadOnlyKeyValueStore<String, OrderSagaState> sagaStore = streams.store(
@@ -87,7 +95,7 @@ public class SagaQueryService {
             ReadOnlyKeyValueStore<String, OrderTimeline> timelineStore = streams.store(
                     StoreQueryParameters.fromNameAndType(SagaTopology.TIMELINE_STORE_NAME,
                             QueryableStoreTypes.<String, OrderTimeline>keyValueStore()).enableStaleStores());
-            return compose(sagaStore.get(key), timelineStore.get(key), requesterId, !active);
+            return compose(sagaStore.get(key), timelineStore.get(key), requesterId, stale);
         } catch (InvalidStateStoreException e) {
             // 리밸런스 중이거나 저장소를 아직 복구하는 중이다 — 잠깐 뒤 다시.
             log.debug("상태 저장소를 아직 열 수 없다: {}", e.getMessage());
@@ -106,6 +114,10 @@ public class SagaQueryService {
             return Result.of(Answer.NOT_FOUND);
         }
         return new Result(Answer.FOUND, view, null);
+    }
+
+    private static boolean unavailable(KeyQueryMetadata meta) {
+        return meta == null || meta.equals(KeyQueryMetadata.NOT_AVAILABLE);
     }
 
     static boolean isQueryable(KafkaStreams.State state) {

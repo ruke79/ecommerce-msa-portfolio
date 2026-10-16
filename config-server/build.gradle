@@ -23,7 +23,7 @@ ext {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
-    implementation 'org.springframework.cloud:spring-cloud-starter-bus-amqp'
+    // spring-cloud-starter-bus-amqp 는 뺐다 — RabbitMQ 가 없어 매니페스트가 꺼 두기만 했다(ConfigServerClasspathTest).
 
     implementation 'org.springframework.cloud:spring-cloud-config-server'
     implementation 'org.springframework.cloud:spring-cloud-starter'

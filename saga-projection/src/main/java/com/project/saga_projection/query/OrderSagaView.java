@@ -70,11 +70,6 @@ public record OrderSagaView(
                 stale);
     }
 
-    /** 예전 시그니처 — 사가 상태만. */
-    public static OrderSagaView of(OrderSagaState s, boolean stale) {
-        return of(s, null, stale);
-    }
-
     private static Instant latest(Instant a, Instant b) {
         if (a == null) return b;
         if (b == null) return a;

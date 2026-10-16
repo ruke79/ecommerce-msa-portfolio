@@ -1580,6 +1580,50 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-91: config-server 는 TLS 로 뜬다 — 공용 ConfigMap 이 클라이언트에게 {@code https://config-server…:8888} 로 오라고 한다.
+     *
+     * <p>config-server 의 yml 에는 {@code server.ssl} 블록이 없고 k8s/32 의 {@code SERVER_SSL_*} 환경 변수 넷이 TLS 를 만든다(relaxed
+     * binding). 그 하나라도 빠지면 config-server 는 평문으로 떠 모든 클라이언트의 설정 가져오기가 핸드셰이크에서 실패하는데, 가져오기가
+     * {@code optional:} 이라 로그 한 줄뿐 — 어디에도 증상이 없다. yml 에 블록을 두면 그쪽이 맞는다.
+     *
+     * <p>[JA] config-server は TLS で起動する — 共用 ConfigMap がクライアントに https で来るよう伝える。yml に server.ssl がなく、
+     * k8s/32 の SERVER_SSL_* 四つが TLS を作る。一つでも抜けると平文で起動し、設定取得が optional: のため症状がどこにも出ない。
+     */
+    @Test
+    @DisplayName("B-91: config-server 는 TLS 로 뜬다 — yml 의 server.ssl 이 없으면 k8s/32 에 SERVER_SSL_* 넷")
+    void configServerServesTls() throws IOException {
+        Path yml = repoRoot().resolve("config-server/src/main/resources/application-local.yml");
+        if (!Files.exists(yml)) {
+            return;   // 모듈이 없는 체크아웃
+        }
+        String configMap = Files.readString(repoRoot().resolve("k8s/10-configmap.yaml"), StandardCharsets.UTF_8);
+        assertThat(configMap).as("클라이언트가 https 로 오지 않는다면 이 검사가 낡은 것이다")
+                .containsPattern("SPRING_CONFIG_IMPORT: \"optional:configserver:https://config-server[.:]");
+
+        Object ssl = null;
+        for (String name : List.of("application.yml", "application-local.yml")) {
+            Path file = repoRoot().resolve("config-server/src/main/resources/" + name);
+            for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(file, StandardCharsets.UTF_8))) {
+                if (doc instanceof Map<?, ?> m && m.get("server") instanceof Map<?, ?> server && server.get("ssl") != null) {
+                    ssl = server.get("ssl");
+                }
+            }
+        }
+        if (ssl instanceof Map<?, ?> block && block.get("key-store") != null) {
+            return;   // yml 이 TLS 를 켠다
+        }
+        String manifest = Files.readString(repoRoot().resolve("k8s/32-config-server.yaml"), StandardCharsets.UTF_8);
+        List<String> missing = new ArrayList<>();
+        for (String env : List.of("SERVER_SSL_KEY_STORE", "SERVER_SSL_KEY_STORE_TYPE", "SERVER_SSL_KEY_STORE_PASSWORD",
+                "SERVER_SSL_KEY_PASSWORD")) {
+            if (!Pattern.compile("(?m)^\\s*- name: " + env + "\\s*\\n\\s*value(From)?:").matcher(manifest).find()) {
+                missing.add(env);
+            }
+        }
+        assertThat(missing).as("config-server 가 평문으로 뜬다 — 클라이언트의 https 설정 가져오기가 조용히 실패한다(B-91)").isEmpty();
+    }
+
+    /**
      * B-90: 자바 모듈에 {@code Dockerfile} 을 두지 않는다 — 백엔드 이미지는 {@code ops/Dockerfile.runtime} 한 벌(ops/19 · CI).
      *
      * <p>2026-10-15 에 지운 모듈별 Dockerfile 13벌은 아무도 쓰지 않았다. 빌더에서 gradle 을 다시 돌리고, 가짜 스토어 비밀번호
