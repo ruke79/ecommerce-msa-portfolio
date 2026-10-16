@@ -14,7 +14,7 @@ docs/11의 레퍼런스 구현(catalog/order)을 나머지 5개 서비스로 확
 |---|---|---|---|
 | cart | `config/KafkaDltConfig` | 4 (record 1 포함) | CartRollback/CartEmpty/CouponUse |
 | coupon | `config/KafkaDltConfig` | 3 | PaymentResponse/CouponRollback/UserCreated |
-| pay | `message/config/KafkaDltConfig` | 1 | PaymentRequestKafaListener (기존 NO-OP 스킵 유지) |
+| pay | `message/config/KafkaDltConfig` | 1 | PaymentRequestKafkaListener (기존 NO-OP 스킵 유지) |
 | user | `message/config/KafkaDltConfig` | 1 (record) | — (record 리스너) |
 | chat | `common/config/kafka/KafkaDltConfig` | 3 (record 2 포함) | UserCreatedConsumer (MessageConsumer 는 record 모드라 무변경) |
 

@@ -54,7 +54,7 @@ class AbsoluteLifetimeTest {
     @DisplayName("새 로그인 — 최초 로그인 시각은 지금, 만료는 14일 뒤")
     void freshLogin() {
         JwtUtils j = jwt();
-        String t = j.generatRefreshTokenFromUser(user());
+        String t = j.generateRefreshTokenFromUser(user());
 
         assertThat(j.getAuthTimeFromJwtToken(t)).isBetween(nowSec() - 2, nowSec());
         assertThat(j.remainingLifetime(t)).isBetween(Duration.ofDays(14).minusSeconds(5), Duration.ofDays(14));

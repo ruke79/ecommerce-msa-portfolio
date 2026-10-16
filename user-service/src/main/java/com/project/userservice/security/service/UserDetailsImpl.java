@@ -103,7 +103,7 @@ public class UserDetailsImpl implements UserDetails {
      * 그래서 관리자가 잠가도 비밀번호 로그인은 통과했고 — 리프레시만 막혀 로그인할 때마다 15분짜리 액세스를 다시 받았다.
      * 이제 엔티티의 값이고 {@code CustomAuthenticationProvider} 가 비밀번호가 맞은 뒤 검사한다.
      *
-     * <p>로그인 5회 실패의 자동 잠금은 여기가 아니다 — {@code lockExpiresAt} 이 판정하고 {@code LoginAttemptService} 가 강제한다
+     * <p>로그인 5회 실패의 자동 잠금은 여기가 아니다 — Redis 의 잠금 키로 {@code LoginAttemptService} 가 판정 · 강제한다
      * (그것을 여기에 섞으면 남이 비밀번호를 틀려 내 갱신까지 끊게 된다). 만료 날짜 열({@code accountExpiryDate} 등)은 아직
      * 판정에 쓰지 않는다 — 불리언만 본다.
      */

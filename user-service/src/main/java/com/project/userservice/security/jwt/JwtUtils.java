@@ -248,7 +248,7 @@ public class JwtUtils {
   public static final String AUTH_TIME_CLAIM = "auth_time";
 
   /** 새 로그인 — 새 묶음으로 발급한다. */
-  public String generatRefreshTokenFromUser(User user) {
+  public String generateRefreshTokenFromUser(User user) {
     return generateRefreshToken(user, java.util.UUID.randomUUID().toString());
   }
 

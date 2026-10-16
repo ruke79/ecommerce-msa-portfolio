@@ -587,7 +587,7 @@ Kafka 리스너 `concurrency` 는 전 모듈 기본값 1 이다. 파티션 수�
 
 **§5 A3 도 적용 — 소비자 쪽.** 컨슈머 설정 9개의 `new JsonDeserializer<>()`(타입 없음 = `__TypeId__` 헤더에만
 의존) 13곳을 `new JsonDeserializer<>(X.class, true)` 로 — 헤더가 있으면 쓰고 없으면 X 로 읽는다. pay 의
-`PaymentRequestKafaListener` 는 `Authorization` 헤더가 없으면 배치를 거부했는데(CDC 레코드는 헤더를 못 싣는다),
+`PaymentRequestKafkaListener` 는 `Authorization` 헤더가 없으면 배치를 거부했는데(CDC 레코드는 헤더를 못 싣는다),
 그 헤더는 로그에만 쓰이고 실제 토큰은 페이로드(`authorizationToken`) 안에 있다 — "헤더 또는 페이로드 토큰"으로
 완화했다. 덤: coupon 의 `UserCreatedConsumer` 가 `@Header("Authorization")` 를 **필수**로 받는데 발행자
 `UserCreatedProducer` 는 헤더를 싣지 않는다 → 헤더 없는 배치가 DLT 로. `required=false` 로. 
@@ -838,7 +838,7 @@ path 불일치로 쿠키가 안 지워진다), `CsrfController`, `message/Outbox
 | 6 | 🟠 | `OrderCacheService.java:78` + `RedisCacheConfig.java:155` | `order` 캐시가 `disableCachingNullValues` 인데 `getOrder` 는 남의 주문/없는 주문에 null 을 돌려주는 것이 정상(docs/27) → `IllegalArgumentException` → 의도한 404 대신 **400 + 캐시 내부 메시지** | 확인 |
 | 7 | 🟠 | `OrderController.java:109-118` + `OrderDataService.java:96` | `/orders` 의 `filter` 가 null 이면 `filter.isEmpty()` NPE, `?filter=all` 이면 `IllegalState` — 주문이 1건 이상인 사용자는 **500** | 확인 |
 | 8 | 🟠 | `OrderSaga.java:75-94, 195-220` | 순서 뒤집힘(`CANCELED` 후 `COMPLETED`)을 경고 로그로만 처리하고 커밋 — 돈은 캡처됐는데 주문은 취소 상태 | |
-| 9 | 🟡 | `PaymentResponseKafaListener.java:26-27` | 배치 리스너인데 `@Header String` 으로 받는다 — 2건 이상이면 `"Bearer a,Bearer b"` 가 될 가능성. E2E 는 항상 1건씩만 보낸다 | 의심 |
+| 9 | 🟡 | `PaymentResponseKafkaListener.java:26-27` | 배치 리스너인데 `@Header String` 으로 받는다 — 2건 이상이면 `"Bearer a,Bearer b"` 가 될 가능성. E2E 는 항상 1건씩만 보낸다 | 의심 |
 | 10 | 🟡 | `KafkaProducerConfig.java:55…` | `TRANSACTIONAL_ID_CONFIG = UUID.randomUUID()` 기동마다 — 좀비 펜싱 무력화, 브로커에 id 상태 누적 | |
 | 11 | 🟡 | `OrderSaga.java:155-169, 185` + `CartService.java:303` | 보상이 **수량을 1로 강제**한다(카트 롤백이 모든 상품을 1개로). 지금은 #1 때문에 도달 불가 | |
 | 12 | 🟡 | `OrderController.java:43-53` | `createOrder` 가 null 을 돌려주는 정상 실패(빈 장바구니)에서 NPE → `{"message":null}` 400 | |

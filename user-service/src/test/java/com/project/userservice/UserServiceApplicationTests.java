@@ -161,6 +161,21 @@ class UserServiceApplicationTests {
 				.isEqualTo(HttpStatus.UNAUTHORIZED);
 	}
 
+	@Test
+	@DisplayName("🔴 가입 확인 링크는 게이트웨이가 재작성한 /registrationConfirm 으로도 열린다 — 예전엔 401(핸들러 · 허용 규칙 모두 옛 경로뿐)")
+	void registrationConfirmWorksBehindTheGateway() throws Exception {
+		java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+				.followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+		for (String path : java.util.List.of("/registrationConfirm", "/user-service/registrationConfirm")) {
+			java.net.http.HttpResponse<Void> response = client.send(java.net.http.HttpRequest.newBuilder(
+					java.net.URI.create("http://localhost:" + port + path + "?token=not-a-real-token")).build(),
+					java.net.http.HttpResponse.BodyHandlers.discarding());
+			// 모르는 토큰 → 실패 화면으로 돌려보낸다(reason=invalid). 401 · 404 가 아니다.
+			assertThat(response.statusCode()).as(path).isBetween(300, 399);
+			assertThat(response.headers().firstValue("Location").orElse("")).as(path).contains("verification-failed?reason=invalid");
+		}
+	}
+
 	@Autowired
 	private com.project.userservice.repository.jpa.PasswordResetTokenRepository passwordResetTokenRepository;
 

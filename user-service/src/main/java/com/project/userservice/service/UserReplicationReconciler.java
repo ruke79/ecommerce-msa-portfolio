@@ -30,6 +30,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>범위는 최근 {@code windowDays}(기본 7일 — Kafka 보존 기간과 같다). 그보다 오래된 누락(이 배치가 생기기 전의 가입자)은
  * 한 번만 넓혀 돌린다: {@code user.replication.reconcile.window-days} 를 크게 주고 재시작한 뒤 되돌린다.
+ *
+ * <p>레플리카가 여럿이어도 회차 임대로 한 파드만 돈다(SchedulerLease). 🐛 예전에는 파드마다 같은 시각에 돌아, 최근 7일 사용자 전원의
+ * 이벤트를 파드 수만큼 아웃박스에 썼다 — 사용자 10만 명이면 하룻밤에 약 40만 행(받는 쪽은 멱등이라 결과는 같았다).
  */
 @Slf4j
 @Component
@@ -40,6 +43,15 @@ public class UserReplicationReconciler {
     private final UserRepository userRepository;
     private final UserOutboxHelper outbox;
     private final TransactionTemplate tx;
+    private final SchedulerLease lease;
+
+    /**
+     * 회차 임대(V17 users.scheduler_lock) — 레플리카가 여럿이어도 하루 한 번은 한 파드만 돈다. <b>끝나도 풀지 않는다</b>: 풀면 시계가
+     * 몇 초 늦은 다른 파드가 같은 회차를 다시 돈다. 한 시간 뒤 저절로 풀리고, 다음 회차는 하루 뒤라 겹치지 않는다.
+     */
+    // [JA] 回のリース — レプリカが複数でも一日一回は一つの Pod だけ。終わっても解放しない(時計が数秒遅い Pod が同じ回を再実行しないように)。
+    static final String LEASE = "user-replication-reconcile";
+    static final java.time.Duration LEASE_FOR = java.time.Duration.ofHours(1);
 
     @Value("${user.replication.reconcile.enabled:true}")
     private boolean enabled = true;
@@ -48,17 +60,18 @@ public class UserReplicationReconciler {
     private int windowDays = 7;
 
     public UserReplicationReconciler(UserRepository userRepository, UserOutboxHelper outbox,
-                                     PlatformTransactionManager transactionManager) {
+                                     PlatformTransactionManager transactionManager, SchedulerLease lease) {
         this.userRepository = userRepository;
         this.outbox = outbox;
         this.tx = new TransactionTemplate(transactionManager);
+        this.lease = lease;
     }
 
     public record Result(int created, int updated, int deleted) {}
 
     @Scheduled(cron = "${user.replication.reconcile.cron:0 25 19 * * *}", zone = "UTC")
     public void scheduled() {
-        if (!enabled) {
+        if (!enabled || !acquired()) {
             return;
         }
         try {
@@ -68,6 +81,19 @@ public class UserReplicationReconciler {
         } catch (Exception e) {
             log.error("복제 대사 실패: {}", e.toString());
         }
+    }
+
+    /** 임대를 못 잡거나(다른 파드가 이 회차를 돈다) 임대 확인이 실패하면 건너뛴다 — 다음 회차가 같은 일을 한다. */
+    private boolean acquired() {
+        try {
+            if (lease.tryAcquire(LEASE, LEASE_FOR)) {
+                return true;
+            }
+            log.info("복제 대사 — 다른 파드가 이 회차를 돈다. 건너뛴다.");
+        } catch (Exception e) {
+            log.warn("복제 대사 임대를 확인하지 못했다 — 이번 회차는 건너뛴다: {}", e.toString());
+        }
+        return false;
     }
 
     /**

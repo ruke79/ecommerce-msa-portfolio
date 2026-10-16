@@ -18,7 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PaymentRequestKafaListener {
+public class PaymentRequestKafkaListener {
 
     private final PaymentRequestMessageListener paymentRequestMessageListener;
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
@@ -117,8 +117,8 @@ public class PaymentRequestKafaListener {
                             new PaymentDomainException("Throwing DataAccessException in" +
                                     " PaymentRequestKafkaListener: " + e.getMessage(), e), i);
                 } catch (PaymentNotFoundException e) {
-                    //NO-OP for PaymentNotFoundException
-                    log.error("No payment found for order id: {}", paymentRequest.getOrderId());
+                    // 의도된 NO-OP — 취소할 결제가 없다(이미 처리됐거나 결제 전). 오류가 아니므로 ERROR 로 두지 않는다(경보 잡음).
+                    log.info("No payment found for order id: {} — nothing to cancel", paymentRequest.getOrderId());
                 } catch (Exception e) {
                     throw new org.springframework.kafka.listener.BatchListenerFailedException(
                             "order(payment-request) 처리 실패", e, i);

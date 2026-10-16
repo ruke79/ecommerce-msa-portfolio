@@ -51,7 +51,7 @@ class UserReplicationReconcilerTest {
         User gone = user(3, SINCE.minusDays(90), SINCE.plusDays(1));
         when(repo.findTouchedSince(eq(SINCE), eq(0L), any())).thenReturn(List.of(fresh, old, gone));
 
-        UserReplicationReconciler.Result r = new UserReplicationReconciler(repo, outbox, tm).reconcile(SINCE);
+        UserReplicationReconciler.Result r = new UserReplicationReconciler(repo, outbox, tm, mock(SchedulerLease.class)).reconcile(SINCE);
 
         assertThat(r).isEqualTo(new UserReplicationReconciler.Result(1, 2, 1));
         verify(outbox).recordUserCreated(fresh);
@@ -75,7 +75,7 @@ class UserReplicationReconcilerTest {
         when(repo.findTouchedSince(eq(SINCE), eq(0L), any())).thenReturn(first);
         when(repo.findTouchedSince(eq(SINCE), eq(200L), any())).thenReturn(List.of(user(201, SINCE.minusDays(30), null)));
 
-        UserReplicationReconciler.Result r = new UserReplicationReconciler(repo, outbox, tm).reconcile(SINCE);
+        UserReplicationReconciler.Result r = new UserReplicationReconciler(repo, outbox, tm, mock(SchedulerLease.class)).reconcile(SINCE);
 
         assertThat(r.updated()).isEqualTo(201);
         verify(repo, never()).findTouchedSince(eq(SINCE), eq(201L), any());

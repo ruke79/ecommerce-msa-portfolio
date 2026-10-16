@@ -67,7 +67,7 @@ class TokenTypeTest {
     @DisplayName("🔴 리프레시 토큰은 액세스가 아니다")
     void refreshToken() {
         JwtUtils j = jwt();
-        String refresh = j.generatRefreshTokenFromUser(user());
+        String refresh = j.generateRefreshTokenFromUser(user());
         assertThat(j.isAccessToken(refresh)).isFalse();
         assertThat(j.isRefreshTokenType(refresh)).isTrue();
     }

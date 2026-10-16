@@ -37,7 +37,7 @@ import com.google.common.collect.ImmutableMap;
  *
  * 리스너는 BatchListenerFailedException(index)을 던져 "배치의 몇 번째 레코드가
  * 실패했는지"를 알려야, 이미 처리된 앞 레코드들의 오프셋은 커밋되고 실패 레코드만
- * 격리된 뒤 나머지가 재전달된다 (PaymentResponseKafaListener 참조).
+ * 격리된 뒤 나머지가 재전달된다 (PaymentResponseKafkaListener 참조).
  */
 @Configuration
 public class KafkaDltConfig {

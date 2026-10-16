@@ -14,7 +14,7 @@ docs/11 のリファレンス実装（catalog/order）を残り 5 つのサー�
 |---|---|---|---|
 | cart | `config/KafkaDltConfig` | 4（record 1 を含む） | CartRollback/CartEmpty/CouponUse |
 | coupon | `config/KafkaDltConfig` | 3 | PaymentResponse/CouponRollback/UserCreated |
-| pay | `message/config/KafkaDltConfig` | 1 | PaymentRequestKafaListener（既存の NO-OP スキップは維持） |
+| pay | `message/config/KafkaDltConfig` | 1 | PaymentRequestKafkaListener（既存の NO-OP スキップは維持） |
 | user | `message/config/KafkaDltConfig` | 1（record） | —（record リスナー） |
 | chat | `common/config/kafka/KafkaDltConfig` | 3（record 2 を含む） | UserCreatedConsumer（MessageConsumer は record モードなので変更なし） |
 

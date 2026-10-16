@@ -375,8 +375,8 @@ Spring Kafka 의 컨슈머 추적(`ContainerProperties.setObservationEnabled(tru
 
 **고친 것** — 사가 경로의 두 배치 리스너가 레코드마다 **자기 헤더**로 추적을 이어받은 안에서 처리한다.
 
-- pay-service `PaymentRequestKafaListener`(결제 요청) — 이 안에서 쓰는 결제 응답 행이 원래 추적을 남긴다
-- order-service `PaymentResponseKafaListener`(결제 응답) — 주문 확정이 같은 추적에 붙는다
+- pay-service `PaymentRequestKafkaListener`(결제 요청) — 이 안에서 쓰는 결제 응답 행이 원래 추적을 남긴다
+- order-service `PaymentResponseKafkaListener`(결제 응답) — 주문 확정이 같은 추적에 붙는다
 
 레코드별 헤더는 스프링의 기본 배치 변환기가 `KafkaHeaders.BATCH_CONVERTED_HEADERS`(레코드마다 `Map`, 값은
 `byte[]`)로 넘긴다. 리스너에 선택 매개변수로 받고 `OutboxTraceContext.continueFrom(headers, name, work)` 로

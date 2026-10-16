@@ -81,7 +81,11 @@ public class RegistrationController {
      * 누르거나 메일 클라이언트가 미리 열어 보는 일은 흔한데, 그때 오류를 띄우면 멀쩡히
      * 가입한 사람이 실패한 줄 안다.
      */
-    @GetMapping("/user-service/registrationConfirm")
+    // 메일 링크는 {공개 주소}/user-service/registrationConfirm — 게이트웨이(user-service-public)가 /user-service 를 떼어 /registrationConfirm
+    // 으로 보낸다. 🐛 예전에는 /user-service/registrationConfirm 만 받아, 게이트웨이를 지난 요청은 맞는 핸들러가 없었다(게이트웨이도
+    // 그 경로를 404 로 막고 있었다 — RouteMatchingTest). 옛 경로도 남긴다(클러스터 안에서 직접 부르는 경우).
+    // [JA] メールのリンクはゲートウェイが /user-service を外して /registrationConfirm で届く。以前は旧経路しか受けなかった。
+    @GetMapping({"/registrationConfirm", "/user-service/registrationConfirm"})
     public ModelAndView confirmRegistration(final HttpServletRequest request, final ModelMap model, @RequestParam("token") final String token) throws JsonProcessingException {
 
         VerificationResult result = userService.validateAndGetUser(token);

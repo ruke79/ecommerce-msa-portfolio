@@ -69,26 +69,6 @@ spring:
         format_sql: true
         dialect : org.hibernate.dialect.PostgreSQLDialect
 
-  data:
-     redis:       
-          ssl:
-            enabled : false
-            cacert : ${LOCAL_CACERT_PATH}
-            # 코드(RedisCacheConfig)가 요구하는 키. 기존에는 cert/key 라는 다른 이름만 있어
-            # "Could not resolve placeholder spring.data.redis.ssl.keystore" 로 기동 불가였다.
-            keystore : ${LOCAL_KEY_STORE_PATH:}
-            truststore : ${LOCAL_TRUST_STORE_PATH:}
-            cert : ${LOCAL_CRT_PATH}
-            key : ${LOCAL_KEY_PATH}
-            storePassword : ${LOCAL_KEY_PASSWORD} 
-          lettuce:
-            pool:
-              max-active: 5
-              max-idle: 5
-              min-idle: 2  
-          host: localhost
-          port: 6379
-          password: ${LOCAL_DB_PASSWORD}
 
 
 pay-service:

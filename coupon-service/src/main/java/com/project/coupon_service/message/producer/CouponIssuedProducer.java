@@ -80,10 +80,19 @@ public class CouponIssuedProducer {
             // 쿠폰 하나당 알림 하나. 재전달돼도 sourceEventId 가 UNIQUE 라 중복되지 않는다.
             event.put("eventId", "coupon:" + coupon.getCouponId());
 
-            kafkaTemplate.send(topic, String.valueOf(coupon.getUserId()),
-                    objectMapper.writeValueAsString(event));
-
-            log.debug("쿠폰 발급 발행: couponId={}", coupon.getCouponId());
+            Long couponId = coupon.getCouponId();
+            // 🐛 예전: send 의 결과를 보지 않았다 — send 는 바로 Future 를 돌려주므로 브로커 거절 · 시간 초과는 아래 catch 에 걸리지
+            //    않고 아무 흔적도 남지 않았다(알림만 조용히 사라졌다). 비동기 결과로 남긴다.
+            // [JA] 以前は send の結果を見ていなかった — ブローカーの拒否・タイムアウトは catch に掛からず痕跡が残らなかった。
+            kafkaTemplate.send(topic, String.valueOf(coupon.getUserId()), objectMapper.writeValueAsString(event))
+                    .whenComplete((result, ex) -> {
+                        if (ex != null) {
+                            log.error("쿠폰 발급 발행 실패(브로커): couponId={} — 알림이 나가지 않는다: {}", couponId,
+                                    ex.getClass().getSimpleName());
+                        } else {
+                            log.debug("쿠폰 발급 발행: couponId={}", couponId);
+                        }
+                    });
 
         } catch (Exception e) {
             // 쿠폰은 이미 저장됐다. 알림만 못 나간 것이라 되돌리지 않는다.

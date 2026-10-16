@@ -10,14 +10,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * pay-service 기동 검증 — 실제 PostgreSQL/Redis 컨테이너 위에서.
+ * pay-service 기동 검증 — 실제 PostgreSQL 컨테이너 위에서(Redis 는 쓰지 않는다).
  *
  * <p>이 저장소에서 가장 비싼 버그들은 하나같이 <b>기동해야만 드러나는</b> 종류였다
  * (docs/14 B-1~B-14, docs/16). 예전에는 인프라가 없어 항상 실패하는 테스트라 꺼 둘 수밖에
@@ -36,23 +35,11 @@ class PayServiceApplicationTests {
 					.withUsername("product")
 					.withPassword("testpw");
 
-	// 빈 문자열 비밀번호는 Redisson 이 AUTH 를 보내다 실패하는 함정이라(docs/14 B-6)
-	// 운영 설정과 같은 형태로 비밀번호를 준다.
-	@Container
-	static GenericContainer<?> redis =
-			new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
-					.withExposedPorts(6379)
-					.withCommand("redis-server", "--requirepass", "testpw");
-
 	@DynamicPropertySource
 	static void properties(DynamicPropertyRegistry registry) {
 		registry.add("spring.datasource.url", postgres::getJdbcUrl);
 		registry.add("spring.datasource.username", postgres::getUsername);
 		registry.add("spring.datasource.password", postgres::getPassword);
-		registry.add("spring.data.redis.host", redis::getHost);
-		registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
-		registry.add("spring.data.redis.password", () -> "testpw");
-		registry.add("spring.data.redis.ssl.enabled", () -> false);
 		registry.add("eureka.client.enabled", () -> false);
 		registry.add("eureka.client.register-with-eureka", () -> false);
 		registry.add("eureka.client.fetch-registry", () -> false);

@@ -68,7 +68,7 @@ class PaymentRequestListenerAdapterTraceTest {
     }
 
     @Configuration
-    @Import({KafkaConsumerConfig.class, PaymentRequestKafaListener.class})
+    @Import({KafkaConsumerConfig.class, PaymentRequestKafkaListener.class})
     static class Wiring {
 
         @Bean

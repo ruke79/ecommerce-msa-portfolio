@@ -52,7 +52,7 @@ docker compose -f docker-compose-observability.yml up -d
 | サービス | ファイル |
 |---|---|
 | catalog | `message/config/KafkaDltConfig.java`（新規）、`KafkaConsumerConfig`、`ProductUpdateKafkaListener` |
-| order | `config/KafkaDltConfig.java`（新規）、`KafkaConsumerConfig`（両方のファクトリ）、`CustomerKafkaListener`、`PaymentResponseKafaListener`（既存の NO-OP 例外スキップは維持） |
+| order | `config/KafkaDltConfig.java`（新規）、`KafkaConsumerConfig`（両方のファクトリ）、`CustomerKafkaListener`、`PaymentResponseKafkaListener`（既存の NO-OP 例外スキップは維持） |
 
 **テスト**: `ProductUpdateKafkaListenerTest` — バッチの途中で失敗したときの「前は処理・失敗インデックスを報告・後ろは未処理」というセマンティクスを固定。
 

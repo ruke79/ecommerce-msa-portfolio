@@ -52,7 +52,7 @@ docker compose -f docker-compose-observability.yml up -d
 | 서비스 | 파일 |
 |---|---|
 | catalog | `message/config/KafkaDltConfig.java`(신규), `KafkaConsumerConfig`, `ProductUpdateKafkaListener` |
-| order | `config/KafkaDltConfig.java`(신규), `KafkaConsumerConfig`(양쪽 팩토리), `CustomerKafkaListener`, `PaymentResponseKafaListener`(기존 NO-OP 예외 스킵은 유지) |
+| order | `config/KafkaDltConfig.java`(신규), `KafkaConsumerConfig`(양쪽 팩토리), `CustomerKafkaListener`, `PaymentResponseKafkaListener`(기존 NO-OP 예외 스킵은 유지) |
 
 **테스트**: `ProductUpdateKafkaListenerTest` — 배치 중간 실패 시 "앞은 처리·실패 인덱스 보고·뒤는 미처리" 시맨틱 고정.
 

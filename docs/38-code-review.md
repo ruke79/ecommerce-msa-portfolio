@@ -587,7 +587,7 @@ Kafka リスナーの `concurrency` は全モジュールでデフォルトの 1
 
 **§5 A3 も適用 — コンシューマー側。** コンシューマー設定 9 つの `new JsonDeserializer<>()`（型なし = `__TypeId__` ヘッダーにだけ
 依存）13 か所を `new JsonDeserializer<>(X.class, true)` に — ヘッダーがあればそれを使い、なければ X として読む。pay の
-`PaymentRequestKafaListener` は `Authorization` ヘッダーがなければバッチを拒否していたが（CDC レコードはヘッダーを載せられない）、
+`PaymentRequestKafkaListener` は `Authorization` ヘッダーがなければバッチを拒否していたが（CDC レコードはヘッダーを載せられない）、
 そのヘッダーはログにしか使われず、実際のトークンはペイロード（`authorizationToken`）の中にある — 「ヘッダーまたはペイロードのトークン」に
 緩和した。おまけ: coupon の `UserCreatedConsumer` が `@Header("Authorization")` を **必須** で受け取るが、発行側の
 `UserCreatedProducer` はヘッダーを載せない → ヘッダーのないバッチが DLT へ。`required=false` に。
@@ -838,7 +838,7 @@ path の不一致で Cookie が消えない）、`CsrfController`、`message/Out
 | 6 | 🟠 | `OrderCacheService.java:78` + `RedisCacheConfig.java:155` | `order` キャッシュが `disableCachingNullValues` なのに、`getOrder` は他人の注文/存在しない注文に null を返すのが正常（docs/27）→ `IllegalArgumentException` → 意図した 404 の代わりに **400 + キャッシュ内部のメッセージ** | 確認 |
 | 7 | 🟠 | `OrderController.java:109-118` + `OrderDataService.java:96` | `/orders` の `filter` が null なら `filter.isEmpty()` で NPE、`?filter=all` なら `IllegalState` — 注文が 1 件以上あるユーザーは **500** | 確認 |
 | 8 | 🟠 | `OrderSaga.java:75-94, 195-220` | 順序の逆転（`CANCELED` の後に `COMPLETED`）を警告ログだけで処理してコミット — お金はキャプチャされたのに注文はキャンセル状態 | |
-| 9 | 🟡 | `PaymentResponseKafaListener.java:26-27` | バッチリスナーなのに `@Header String` で受け取る — 2 件以上なら `"Bearer a,Bearer b"` になる可能性。E2E は常に 1 件ずつしか送らない | 疑い |
+| 9 | 🟡 | `PaymentResponseKafkaListener.java:26-27` | バッチリスナーなのに `@Header String` で受け取る — 2 件以上なら `"Bearer a,Bearer b"` になる可能性。E2E は常に 1 件ずつしか送らない | 疑い |
 | 10 | 🟡 | `KafkaProducerConfig.java:55…` | `TRANSACTIONAL_ID_CONFIG = UUID.randomUUID()` を起動のたびに — ゾンビのフェンシングの無力化、ブローカーに id の状態が蓄積 | |
 | 11 | 🟡 | `OrderSaga.java:155-169, 185` + `CartService.java:303` | 補償が **数量を 1 に強制** する（カートのロールバックがすべての商品を 1 個に）。今は #1 のせいで到達不能 | |
 | 12 | 🟡 | `OrderController.java:43-53` | `createOrder` が null を返す正常な失敗（空のカート）で NPE → `{"message":null}` 400 | |

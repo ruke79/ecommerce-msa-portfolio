@@ -81,7 +81,7 @@ class JwtKeyRotationTest {
     @DisplayName("🔴 전환 뒤: 새 토큰은 k2 로 서명, 전환 전 토큰(legacy · kid 없음)도 그대로 통과 — 아무도 로그아웃되지 않는다")
     void activateKeepsOldTokensValid() {
         String before = jwt("", "", true).generateTokenFromUser(user());
-        String refreshBefore = jwt("", "", true).generatRefreshTokenFromUser(user());
+        String refreshBefore = jwt("", "", true).generateRefreshTokenFromUser(user());
 
         JwtUtils after = jwt("k2=" + K2, "k2", true);
         String fresh = after.generateTokenFromUser(user());

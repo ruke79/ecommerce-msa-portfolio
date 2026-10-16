@@ -30,7 +30,7 @@ class ReviewRatingReconcilerTest {
                 new Object[] { 1L, 4.5d }, new Object[] { 2L, 3.0d }, new Object[] { 3L, 5.0d }));
         doThrow(new RuntimeException("catalog down")).when(catalog).updateRating(eq(2L), eq(3.0F));
 
-        ReviewRatingReconciler.Result r = new ReviewRatingReconciler(repo, catalog).reconcile();
+        ReviewRatingReconciler.Result r = new ReviewRatingReconciler(repo, catalog, mock(SchedulerLease.class)).reconcile();
 
         assertThat(r.sent()).isEqualTo(2);
         assertThat(r.failed()).isEqualTo(1);

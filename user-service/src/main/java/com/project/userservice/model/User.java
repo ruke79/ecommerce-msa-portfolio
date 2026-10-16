@@ -87,7 +87,7 @@ public class User extends BaseEntity{
      *
      * <p>🐛 예전에는 갱신 경로(RefreshTokenController)만 넷을 다 봤다. 비밀번호 로그인은 enabled 만, 패스키 · 메일 확인은
      * 잠금까지만, 소셜 · 2FA 확인은 아무것도 보지 않아 — 관리자가 잠가도 다시 로그인하면 액세스 토큰을 또 받았다. 세션을 주는
-     * 곳은 모두 이것을 본다. 로그인 5회 실패의 자동 잠금(lockExpiresAt)은 여기가 아니다(LoginAttemptService).
+     * 곳은 모두 이것을 본다. 로그인 5회 실패의 자동 잠금은 여기가 아니다 — Redis 의 잠금 키(LoginAttemptService).
      */
     // [JA] ログイン(セッション発行)してよいアカウントか — メール認証 · 管理者ロック · アカウント期限 · 資格期限の四つ全部。
     //      以前は更新経路だけが四つを見ており、管理者がロックしても再ログインでアクセストークンを得られた。
@@ -118,19 +118,17 @@ public class User extends BaseEntity{
      * 토큰이 거절된다({@code RefreshTokenController}) — 계정이 털려서 비밀번호를 바꾼
      * 경우 공격자가 로그인 상태로 남아 있으면 바꾼 의미가 없다.
      *
-     * <p>토큰을 찾아 지우지 않고 시각으로 거르는 이유: 리프레시 토큰은 Redis 에
-     * sessionId 로만 저장돼 "이 사용자의 모든 세션" 을 뒤집어 찾을 수 없고,
-     * {@code RedisSessionManager} 는 이름과 달리 <b>인메모리 HashMap</b> 이라 레플리카마다
-     * 따로 논다. DB 한 곳만 보면 레플리카 수와 무관하게 동작한다.
+     * <p>토큰을 찾아 지우는 것(RefreshTokenService.revokeAll)과 별개로 시각으로도 거르는 이유: 지우기가 실패하거나 늦어도
+     * 갱신할 때마다 DB 한 곳만 보면 막힌다 — 레플리카 수 · Redis 상태와 무관하다.
      */
     private java.time.LocalDateTime passwordChangedAt;
 
-    // ── 로그인 실패 잠금 (V4) ──────────────────────────────────────────
-    // 잠금 판정은 lockExpiresAt 하나다(값이 있고 미래면 잠김). accountNonLocked 를
-    // 재사용하지 않는 이유는 V4 마이그레이션 주석 참조.
-    @Builder.Default
-    private int failedLoginAttempts = 0;
-    private java.time.LocalDateTime lockExpiresAt;
+    // ── 로그인 실패 잠금 ──────────────────────────────────────────────
+    // 엔티티에 없다 — 횟수 · 잠금은 Redis(LoginAttemptService, 이메일 해시 열쇠)다. 🐛 V4 의 failed_login_attempts ·
+    // lock_expires_at 열은 Redis 로 옮긴 뒤 아무도 읽지 않는데 필드와 "잠금 판정은 lockExpiresAt" 주석만 남아, 리뷰가 그 주석을
+    // 사실로 읽었다(UserLockFieldsTest). 열은 다음 contract 릴리스에서 지운다(failed_login_attempts 는 NOT NULL DEFAULT 0 이라
+    // 필드가 없어도 INSERT 가 된다).
+    // [JA] エンティティにない — 回数・ロックは Redis。V4 の列は誰も読まず、フィールドと古い注釈だけが残っていた。列は次の contract で削除。
 
     // ── 회원 탈퇴 (V6) ────────────────────────────────────────────────
     // 상태를 boolean 이 아니라 시각으로 둔다. "언제 지워지는지"를 답할 수 있어야 화면이

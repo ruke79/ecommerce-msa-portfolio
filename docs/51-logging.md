@@ -375,8 +375,8 @@ Spring Kafka のコンシューマのトレース（`ContainerProperties.setObse
 
 **直したもの** — Saga 経路の 2 つのバッチリスナーが、レコードごとに**自分のヘッダ**でトレースを引き継いだ中で処理する。
 
-- pay-service `PaymentRequestKafaListener`（決済リクエスト）— この中で書く決済レスポンスの行が元のトレースを残す
-- order-service `PaymentResponseKafaListener`（決済レスポンス）— 注文確定が同じトレースに付く
+- pay-service `PaymentRequestKafkaListener`（決済リクエスト）— この中で書く決済レスポンスの行が元のトレースを残す
+- order-service `PaymentResponseKafkaListener`（決済レスポンス）— 注文確定が同じトレースに付く
 
 レコードごとのヘッダは、Spring のデフォルトのバッチ変換器が `KafkaHeaders.BATCH_CONVERTED_HEADERS`（レコードごとに `Map`、値は
 `byte[]`）で渡す。リスナーで任意のパラメータとして受け取り、`OutboxTraceContext.continueFrom(headers, name, work)` で

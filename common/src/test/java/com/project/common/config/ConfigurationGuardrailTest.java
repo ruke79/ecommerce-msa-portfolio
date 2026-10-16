@@ -2678,8 +2678,8 @@ class ConfigurationGuardrailTest {
         // 사가 경로의 배치 리스너는 레코드마다 헤더로 추적을 이어받아야 한다 — 배치 리스너에는 컨슈머 추적이
         // 걸리지 않아, 이어받지 않으면 그 안에서 쓴 아웃박스 행이 빈 문맥을 남긴다(docs/51 §4f).
         for (String listener : List.of(
-                "pay-service/src/main/java/com/project/pay_service/ports/input/message/listener/PaymentRequestKafaListener.java",
-                "order-service/src/main/java/com/project/order_service/ports/input/message/listener/PaymentResponseKafaListener.java")) {
+                "pay-service/src/main/java/com/project/pay_service/ports/input/message/listener/PaymentRequestKafkaListener.java",
+                "order-service/src/main/java/com/project/order_service/ports/input/message/listener/PaymentResponseKafkaListener.java")) {
             String code = Files.readString(repoRoot().resolve(listener), StandardCharsets.UTF_8);
             if (!code.contains("outboxTraceContext.continueFrom(")) {
                 missing.add(listener + " — 배치 리스너가 레코드 헤더로 추적을 이어받지 않는다(continueFrom)");

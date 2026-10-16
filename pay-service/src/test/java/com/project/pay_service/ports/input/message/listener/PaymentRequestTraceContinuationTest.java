@@ -51,7 +51,7 @@ class PaymentRequestTraceContinuationTest {
                 Map.of("traceparent", "00-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-2222222222222222-01".getBytes()));
 
         // 배치 변환 헤더로 올 때 — 레코드 어댑터로 올 때는 PaymentRequestListenerAdapterTraceTest 가 본다.
-        new PaymentRequestKafaListener(messages, trace).receive(List.of(first, second),
+        new PaymentRequestKafkaListener(messages, trace).receive(List.of(first, second),
                 Map.of(org.springframework.kafka.support.KafkaHeaders.BATCH_CONVERTED_HEADERS, headers));
 
         assertThat(seen).containsExactly(headers.get(0), headers.get(1));
@@ -71,7 +71,7 @@ class PaymentRequestTraceContinuationTest {
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
         PaymentRequest request = PaymentRequest.builder().orderId(1L).paymentStatus(PaymentStatus.COMPLETED).build();
 
-        new PaymentRequestKafaListener(messages, trace).receive(List.of(request), null);
+        new PaymentRequestKafkaListener(messages, trace).receive(List.of(request), null);
 
         inOrder(messages).verify(messages).completePayment(request);
     }

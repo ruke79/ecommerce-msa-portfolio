@@ -70,7 +70,6 @@ import java.time.LocalDate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.CorsUtils;
 
 @Configuration
@@ -78,8 +77,6 @@ import org.springframework.web.cors.CorsUtils;
 @EnableMethodSecurity(prePostEnabled = true, securedEnabled = true, jsr250Enabled = true)
 @RequiredArgsConstructor
 public class SecurityConfig {
-
-        private final CorsConfigurationSource corsConfigurationSource;
 
         private final JwtAuthEntryPoint unauthorizedHandler;
 
@@ -210,7 +207,8 @@ public class SecurityConfig {
                 // // .ignoringRequestMatchers("/api/order/**")
                 // .ignoringRequestMatchers("/api/product/**")
                 // );
-                // http.cors(cors -> cors.configurationSource(corsConfigurationSource));
+                // CORS 는 게이트웨이가 처리한다(같은 출처 · 로컬은 게이트웨이 globalcors) — 여기서는 끈다. 쓰이지 않던 CorsConfig(전체 주석)와
+                // 주입 필드는 지웠다. ／ [JA] CORS はゲートウェイが処理する — ここでは切る。
                 http.cors(cors -> cors.disable());
 
                 http.formLogin(login -> login.disable());
@@ -241,13 +239,14 @@ public class SecurityConfig {
                                 .requestMatchers("/api/user/**").hasAnyRole("USER", "ADMIN", "SUPPORT")
                                 .requestMatchers("/api/review/**").permitAll()
                                 .requestMatchers("/api/search/**").permitAll()
-                                // .requestMatchers("/api/csrf-token").permitAll()
                                 .requestMatchers("/api/token/**").permitAll()
                                 .requestMatchers("/api/auth/user/**").hasAnyRole("USER", "ADMIN", "SUPPORT")
                                 .requestMatchers("/api/auth/logout").hasAnyRole("USER", "ADMIN", "SUPPORT")
                                 .requestMatchers("/api/auth/public/**").permitAll()
-                                .requestMatchers("/user-service/registrationConfirm").permitAll()  // later change to /registrationConfirm
-                                // .requestMatchers("/registrationConfirm").permitAll()                                
+                                // 가입 확인 메일 링크 — 게이트웨이의 RewritePath 가 /user-service 를 떼므로 실제로는 /registrationConfirm 으로 온다.
+                                // 🐛 예전에는 /user-service/registrationConfirm 만 열려 있어 게이트웨이를 지난 링크가 401 이었다(RegistrationController).
+                                // [JA] 確認メールのリンク — ゲートウェイが /user-service を外すので実際には /registrationConfirm で来る。
+                                .requestMatchers("/registrationConfirm", "/user-service/registrationConfirm").permitAll()
                                 //.requestMatchers("/api/sse").hasAnyRole("USER", "ADMIN")
                                 // 상담원(ROLE_SUPPORT, docs/58)도 로그인한 사람이다 — 프로필·로그아웃·알림을 쓴다. 빠뜨리면
                                 // 상담원 계정은 로그아웃조차 403 이다.
@@ -295,8 +294,11 @@ public class SecurityConfig {
 
                 http.exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler));
 
-                http.addFilterBefore(authenticationJwtTokenFilter(),
-                                AuthLoginFilter.class);
+                // JWT 필터는 로그인 필터 자리(UsernamePasswordAuthenticationFilter) 앞. 🐛 예전에는 AuthLoginFilter.class 를 기준으로 줘
+                //    상속에 기대고 있었다 — 그 클래스가 UsernamePasswordAuthenticationFilter 상속을 끊으면 기동이 IllegalArgumentException 으로
+                //    죽는다. 표준 자리를 직접 가리킨다(아래 addFilterAt 과 같은 자리 · 같은 순서).
+                // [JA] JWT フィルターはログインフィルターの位置の前。以前は AuthLoginFilter.class 基準で継承に頼っていた。
+                http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
 
                 http.addFilterBefore(new AuthLogoutFilter(jwtUtils, refreshTokenService), LogoutFilter.class);
 

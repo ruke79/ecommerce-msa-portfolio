@@ -215,14 +215,20 @@ spring:
             #    유일해야 한다(ConfigurationGuardrailTest B-62).
             - id: user-service-public
               uri: lb://user-service
+              # ⚠️ user-service-auth(/user-service/api/auth/**) 가 이 경로(/api/auth/public/**)를 덮는다 — 순서를 숫자로 고정한다.
+              #    선언 순서에 기대면 줄을 옮기는 순간 로그인 · 가입이 JWT 를 요구해 401 이 된다(RouteMatchingTest).
+              # [JA] user-service-auth がこの経路を覆う — 順序を数値で固定する。
+              order: -1
               predicates:
                   # oauth2/** 는 소셜 로그인 시작(/oauth2/authorization/{provider}),
                   # login/oauth2/** 는 프로바이더가 코드를 들고 돌아오는 콜백이다. 둘 다
                   # 인증 **전** 경로라 JwtAuthorization 없는 이 라우트에 있어야 한다 —
                   # 아래 인증 라우트에 넣으면 로그인하러 가는 길을 로그인으로 막는 꼴이 된다.
-                  - Path=/user-service/api/auth/public/**, \
-                    /user-service/registrationConfirm, \
-                    /user-service/oauth2/**, /user-service/login/oauth2/**
+                  # 🐛 예전에는 여러 줄에 걸쳐 `, \` 로 이어 썼다 — YAML 의 일반 스칼라에서 `\` 는 이어 쓰기가 아니라 글자 그대로라,
+                  #    "\ /user-service/registrationConfirm" · "\ /user-service/oauth2/**" 라는 패턴이 되어 아무것도 맞지 않았다.
+                  #    가입 확인 메일 링크와 소셜 로그인 시작이 게이트웨이에서 404 였다(2026-09-28 부터, RouteMatchingTest).
+                  # [JA] 以前は複数行を `, \` でつないでいた — YAML では `\` は文字そのもので、二つの経路が何にも一致せず 404 だった。
+                  - Path=/user-service/api/auth/public/**,/user-service/registrationConfirm,/user-service/oauth2/**,/user-service/login/oauth2/**
               filters:
                   - RewritePath=/user-service/(?<segment>.*), /$\{segment}
                   # 🔒 인증 전 경로에는 훨씬 강한 제한을 건다.
@@ -414,6 +420,8 @@ spring:
             # 근거는 PortOnePaymentService 주석에 있다.
             - id: order-service-portone-webhook
               uri: lb://order-service
+              # order-service(/order-service/**) 가 이 경로를 덮는다 — 순서를 숫자로 고정한다(선언 순서에 기대지 않는다).
+              order: -1
               predicates:
                   - Path=/order-service/api/order/payment/portone/webhook
               filters:
@@ -427,6 +435,8 @@ spring:
 
             - id: order-service-stripe-webhook
               uri: lb://order-service
+              # order-service(/order-service/**) 가 이 경로를 덮는다 — 순서를 숫자로 고정한다(선언 순서에 기대지 않는다).
+              order: -1
               predicates:
                   - Path=/order-service/api/order/payment/stripe/webhook
               filters:

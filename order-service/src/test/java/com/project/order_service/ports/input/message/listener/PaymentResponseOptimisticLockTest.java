@@ -32,7 +32,7 @@ class PaymentResponseOptimisticLockTest {
     void optimisticLockIsRetried() {
         OrderSaga saga = mock(OrderSaga.class);
         doThrow(new OptimisticLockingFailureException("busy")).when(saga).process(any());
-        PaymentResponseKafaListener listener = new PaymentResponseKafaListener(new PaymentResponseMessageListener(saga),
+        PaymentResponseKafkaListener listener = new PaymentResponseKafkaListener(new PaymentResponseMessageListener(saga),
                 OutboxTraceContext.NOOP);
         PaymentResponse completed = PaymentResponse.builder().orderId(1L).paymentStatus(PaymentStatus.COMPLETED).build();
 
