@@ -64,9 +64,10 @@ public class MailService {
             return Optional.empty();
         }
 
-        // 수신 거부 확인. 단, 사용자가 방금 직접 요청한 메일(가입 확인·비밀번호 재설정)은
-        // 설정으로 막지 않는다 — 막으면 사용자가 스스로 계정에 못 들어간다(MailKind#isTransactional).
-        if (!kind.isTransactional() && recipientUserId != null) {
+        // 수신 거부 확인. 단, 사용자가 방금 직접 요청한 메일(가입 확인·비밀번호 재설정)과 보안 경고는
+        // 설정으로 막지 않는다 — 앞은 막으면 사용자가 스스로 계정에 못 들어가고, 뒤는 공격자가 먼저 수신을 끌 수 있다
+        // (MailKind#ignoresOptOut).
+        if (!kind.ignoresOptOut() && recipientUserId != null) {
             NotificationPreference preference =
                     preferenceRepository.findByUserId(recipientUserId).orElse(null);
             if (preference != null && !preference.isEmailEnabled()) {

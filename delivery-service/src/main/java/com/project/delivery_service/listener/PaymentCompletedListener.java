@@ -101,7 +101,15 @@ public class PaymentCompletedListener {
             return;
         }
 
-        deliveryService.createFromOrder(commandFor(event, orderId));
+        CreateDeliveryCommand command = commandFor(event, orderId);
+        if (command != null) {
+            deliveryService.createFromOrder(command);
+        }
+    }
+
+    /** 그 사이 취소 · 환불된 주문인가 — 배송을 만들면 환불된 물건이 출고된다. */
+    static boolean isCancelledOrRefunded(String orderStatus) {
+        return "CANCELED".equals(orderStatus) || "REFUNDED".equals(orderStatus);
     }
 
     /**
@@ -109,6 +117,8 @@ public class PaymentCompletedListener {
      *
      * <p>주소가 끝내 없으면 예외 → DLT. 조용히 빈 주소로 만들면 송장을 낼 수 없는 배송이
      * 생기고, 그것은 아무 화면에도 "왜" 가 나오지 않는다.
+     *
+     * @return 만들 배송. 주문이 그 사이 취소 · 환불됐으면 null(만들지 않는다)
      */
     private CreateDeliveryCommand commandFor(JsonNode event, Long orderId) {
         JsonNode address = firstOf(event, "shippingAddress", "address", "deliveryAddress");
@@ -135,6 +145,13 @@ public class PaymentCompletedListener {
         // "물어보러 갔다가 못 돌아왔다" 를 로그에서 바로 읽을 수 있게 한다.
         log.info("주문에서 배송 정보를 읽는다: orderId={}", orderId);
         OrderShippingDto order = orderServiceClient.shipping(orderId);
+        if (order != null && isCancelledOrRefunded(order.orderStatus())) {
+            // 결제 완료가 늦게(재전달 · DLT 재주입) 왔고 그 사이 취소 · 환불됐다 — 배송을 만들면 환불된 물건이 출고된다.
+            // 결제 직후에는 주문이 아직 결제 전으로 보일 수 있으므로(order 의 결제 응답 처리가 뒤일 수 있다) 그 상태는 막지 않는다.
+            // [JA] 決済完了が遅れて届き、その間にキャンセル・返金された — 配送を作ると返金済みの品が出荷される。
+            log.warn("결제 완료를 받았지만 주문이 이미 {} — 배송을 만들지 않는다: orderId={}", order.orderStatus(), orderId);
+            return null;
+        }
         if (order == null || order.address() == null) {
             throw new IllegalStateException(
                     "주문 " + orderId + " 에 배송 주소가 없습니다. 주소 없이 배송을 만들면 송장을 낼 수 없습니다.");

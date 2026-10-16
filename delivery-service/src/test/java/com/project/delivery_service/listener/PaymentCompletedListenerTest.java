@@ -150,4 +150,20 @@ class PaymentCompletedListenerTest {
         verify(deliveryService, never()).createFromOrder(any());
         verify(orderServiceClient, never()).shipping(anyLong());
     }
+
+    @Test
+    @DisplayName("🔴 결제 완료가 늦게 왔고 그 사이 주문이 취소 · 환불됐으면 배송을 만들지 않는다 — 결제 직후의 '결제 전' 은 막지 않는다")
+    void cancelledOrRefundedOrderGetsNoDelivery() {
+        for (String status : new String[] {"CANCELED", "REFUNDED"}) {
+            when(orderServiceClient.shipping(889196209423729897L)).thenReturn(
+                    new OrderShippingDto(889196209423729897L, 7L, status, seoul(), List.of()));
+            listener.onPayment(List.of(COMPLETED), null);
+        }
+        verify(deliveryService, never()).createFromOrder(any());
+
+        when(orderServiceClient.shipping(889196209423729897L)).thenReturn(
+                new OrderShippingDto(889196209423729897L, 7L, "NOT_PROCESSED", seoul(), List.of()));
+        listener.onPayment(List.of(COMPLETED), null);
+        verify(deliveryService).createFromOrder(any());
+    }
 }

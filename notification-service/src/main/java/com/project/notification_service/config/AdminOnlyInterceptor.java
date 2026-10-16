@@ -40,8 +40,8 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
 
-        String path = request.getRequestURI();
-        if (!path.startsWith(ADMIN_PREFIX)) {
+        String path = judgedPath(request);
+        if (!path.startsWith(ADMIN_PREFIX) && !matchedAdminPattern(request)) {
             return true;
         }
 
@@ -66,6 +66,31 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
         }
 
         return true;
+    }
+
+    /** 디코딩 · {@code ;…} 제거 · {@code //} 정리를 하는 Spring 의 기본 설정 — 컨트롤러를 고르는 쪽과 같은 경로를 본다. */
+    private static final org.springframework.web.util.UrlPathHelper PATHS = new org.springframework.web.util.UrlPathHelper();
+
+    /**
+     * 판정할 경로 — Spring MVC 가 핸들러를 고를 때 보는 것과 같게(퍼센트 디코딩, 세그먼트의 {@code ;…} 제거, {@code //} 정리).
+     *
+     * <p>🐛 예전에는 {@code getRequestURI()}(디코딩 전 원문)를 앞부분만 비교했다. 핸들러 매칭은 디코딩하고 {@code ;…} 를 떼므로
+     * {@code /api/notifications;x=1/admin/broadcasts} · {@code /api/notifications/%61dmin/broadcasts} 는 접두사가 맞지 않아
+     * 통과했고 BroadcastAdminController 에 그대로 닿았다 — 로그인한 일반 사용자가 전체 공지를 만들고 · 지우고 · 예약분을 읽었다.
+     * catalog AdminWriteInterceptor 와 같은 결함이다(C1).
+     *
+     * <p>[JA] 判定するパス — Spring MVC がハンドラーを選ぶときと同じく、デコード · {@code ;…} 除去 · {@code //} 整理。以前は生の
+     * URI を前方一致で比べ、エンコードや {@code ;} で管理者専用の全体告知 API を一般ユーザーが使えた。
+     */
+    static String judgedPath(HttpServletRequest request) {
+        String path = PATHS.getPathWithinApplication(request);
+        return path == null ? "" : path;
+    }
+
+    /** 두 번째 확인 — 이미 골라진 핸들러의 패턴이 관리자 경로인가(경로 정규화가 Spring 과 어긋나도 막히게). */
+    private static boolean matchedAdminPattern(HttpServletRequest request) {
+        Object pattern = request.getAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        return pattern != null && pattern.toString().startsWith(ADMIN_PREFIX);
     }
 
     private boolean reject(HttpServletResponse response, HttpStatus status, String message)

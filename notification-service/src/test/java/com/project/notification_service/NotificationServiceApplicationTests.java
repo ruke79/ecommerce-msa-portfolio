@@ -126,4 +126,111 @@ class NotificationServiceApplicationTests {
             return columns;
         }
     }
+
+    @Autowired
+    private com.project.notification_service.service.VerificationService verificationService;
+
+    @Autowired
+    private com.project.notification_service.service.MailDispatcher mailDispatcher;
+
+    @Autowired
+    private org.springframework.scheduling.config.ScheduledTaskHolder scheduledTasks;
+
+    private static java.sql.Timestamp utc(java.time.Duration offset) {
+        return java.sql.Timestamp.valueOf(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plus(offset));
+    }
+
+    @Test
+    @DisplayName("🔴 만료 인증번호 · 오래된 끝난 메일은 매일 지운다 — 대기 중인 메일 · 최근 행은 남는다")
+    void retentionJobsDeleteOnlyWhatTheyShould() throws Exception {
+        try (Connection c = dataSource.getConnection()) {
+            try (var ps = c.prepareStatement("insert into notification.phone_verification "
+                    + "(attempts, consumed, created_at, expires_at, user_id, phone_e164, code_hash) values (0, false, ?, ?, null, ?, 'h')")) {
+                ps.setTimestamp(1, utc(java.time.Duration.ofDays(-3)));
+                ps.setTimestamp(2, utc(java.time.Duration.ofDays(-3)));
+                ps.setString(3, "+821000000001");
+                ps.executeUpdate();
+                ps.setTimestamp(1, utc(java.time.Duration.ZERO));
+                ps.setTimestamp(2, utc(java.time.Duration.ofMinutes(5)));
+                ps.setString(3, "+821000000002");
+                ps.executeUpdate();
+            }
+            try (var ps = c.prepareStatement("insert into notification.mail_message "
+                    + "(to_email, kind, status, attempts, source_event_id, created_at) values ('a@example.com', 'ORDER_PLACED', ?, 1, ?, ?)")) {
+                Object[][] rows = {{"SENT", "purge-sent-old", -400}, {"FAILED", "purge-failed-old", -400},
+                        {"PENDING", "purge-pending-old", -400}, {"SENT", "purge-sent-recent", -10}};
+                for (Object[] r : rows) {
+                    ps.setString(1, (String) r[0]);
+                    ps.setString(2, (String) r[1]);
+                    ps.setTimestamp(3, utc(java.time.Duration.ofDays((Integer) r[2])));
+                    ps.executeUpdate();
+                }
+            }
+        }
+
+        verificationService.purgeExpired();
+        mailDispatcher.purgeFinished();
+
+        assertThat(strings("select phone_e164 from notification.phone_verification where phone_e164 like '+82100000000%'"))
+                .containsExactly("+821000000002");
+        assertThat(strings("select source_event_id from notification.mail_message where source_event_id like 'purge-%' order by 1"))
+                .containsExactly("purge-pending-old", "purge-sent-recent");
+        assertThat(scheduledTasks.getScheduledTasks().stream().map(t -> t.getTask().toString()))
+                .as("@Scheduled 가 없으면 아무도 부르지 않는다(예전 purgeExpired)")
+                .anyMatch(t -> t.contains("VerificationService.purgeExpired"))
+                .anyMatch(t -> t.contains("MailDispatcher.purgeFinished"));
+    }
+
+    @Test
+    @DisplayName("🔴 같은 인증번호를 동시에 틀려도 시도는 5회까지만 — 잠그고 읽는다")
+    void concurrentWrongCodesCannotExceedTheAttemptLimit() throws Exception {
+        String phone = "+821077770000";
+        try (Connection c = dataSource.getConnection();
+             var ps = c.prepareStatement("insert into notification.phone_verification "
+                     + "(attempts, consumed, created_at, expires_at, user_id, phone_e164, code_hash) values (0, false, ?, ?, null, ?, 'x')")) {
+            ps.setTimestamp(1, utc(java.time.Duration.ZERO));
+            ps.setTimestamp(2, utc(java.time.Duration.ofMinutes(5)));
+            ps.setString(3, phone);
+            ps.executeUpdate();
+        }
+
+        int threads = 12;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var mismatches = new java.util.concurrent.atomic.AtomicInteger();
+        var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+        for (int i = 0; i < threads; i++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                var r = verificationService.verify("01077770000",
+                        com.project.notification_service.sms.PhoneNumbers.Region.KR, "000000", null);
+                if (r instanceof com.project.notification_service.service.VerificationService.VerifyResult.Rejected rej
+                        && rej.reason().contains("일치하지")) {
+                    mismatches.incrementAndGet();
+                }
+                return null;
+            }));
+        }
+        start.countDown();
+        for (var f : futures) {
+            f.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        pool.shutdown();
+
+        assertThat(mismatches.get()).as("코드 비교까지 간 시도 수").isEqualTo(5);
+        assertThat(strings("select attempts from notification.phone_verification where phone_e164 = '" + phone + "'"))
+                .containsExactly("5");
+    }
+
+    private java.util.List<String> strings(String sql) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            java.util.List<String> out = new java.util.ArrayList<>();
+            while (rs.next()) {
+                out.add(rs.getString(1));
+            }
+            return out;
+        }
+    }
 }

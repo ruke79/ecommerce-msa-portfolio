@@ -255,7 +255,7 @@ public class NotificationController {
             @Valid @RequestBody VerifyCodeRequest request) {
 
         VerifyResult result = verificationService.verify(
-                request.phone(), PhoneNumbers.regionFrom(request.region()), request.code());
+                request.phone(), PhoneNumbers.regionFrom(request.region()), request.code(), userId);
 
         if (result instanceof VerifyResult.Verified verified) {
             if (userId != null) {

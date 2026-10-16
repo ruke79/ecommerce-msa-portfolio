@@ -85,6 +85,10 @@ public class MailDispatcher {
     @Value("${notification.mail.params-retention-hours:24}")
     private int paramsRetentionHours;
 
+    /** 끝난 메일 행의 보관 일수 — 문의 대응("왜 메일이 안 왔나")에는 충분히 길게, 주소를 무기한 두지는 않게. 30일 아래로는 안 내려간다. */
+    @Value("${notification.mail.retention-days:180}")
+    private int retentionDays = 180;
+
     @Transactional
     @Scheduled(fixedDelayString = "${notification.mail.dispatch-interval-ms:5000}",
                initialDelayString = "${notification.mail.dispatch-initial-delay-ms:10000}")
@@ -193,5 +197,23 @@ public class MailDispatcher {
         if (scrubbed > 0) {
             log.info("만료된 메일 링크 {}건을 지웠습니다(행은 남깁니다)", scrubbed);
         }
+    }
+
+    /**
+     * 끝난 메일 행 정리 — 매일, 보관 일수({@code notification.mail.retention-days}, 기본 180일)가 지난 SENT · FAILED 행을 지운다.
+     *
+     * <p>🐛 예전에는 행이 영구히 남아 받는 주소({@code to_email}, 개인정보)가 무기한 쌓였다. 대기 중인 행(PENDING · RETRYABLE)은
+     * 건드리지 않는다. 삭제는 같은 조건이라 파드가 여럿이어도 겹쳐서 해가 없다.
+     * [JA] 終わったメール行の掃除 — 毎日、保存日数(既定 180 日)を過ぎた SENT・FAILED 行を削除する。以前は宛先(個人情報)が無期限に溜まっていた。
+     */
+    @Transactional
+    @Scheduled(cron = "${notification.mail.purge-cron:0 25 4 * * *}")
+    public int purgeFinished() {
+        int days = Math.max(30, retentionDays);
+        int deleted = mailMessageRepository.deleteFinishedOlderThan(LocalDateTime.now(ZoneOffset.UTC).minusDays(days));
+        if (deleted > 0) {
+            log.info("끝난 메일 {}건을 지웠습니다(보관 {}일)", deleted, days);
+        }
+        return deleted;
     }
 }

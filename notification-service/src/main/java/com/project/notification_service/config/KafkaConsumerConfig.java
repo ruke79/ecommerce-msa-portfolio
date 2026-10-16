@@ -59,14 +59,19 @@ public class KafkaConsumerConfig {
     public ConsumerFactory<String, String> notificationConsumerFactory() {
         Map<String, Object> config = new HashMap<>();
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl);
-        // 그룹을 서비스 단위로 하나만 둔다. 레플리카가 늘어도 한 메시지는 한 파드만 받는다 —
-        // 알림은 파드마다 만들면 안 되므로 이게 맞다(채팅 브로드캐스트와 반대다, docs/21 §2).
+        // 기본 그룹. ⚠️ 실제로는 리스너마다 리스너 id 가 곧 group.id 다(idIsGroup) — 리스너마다 따로 그룹이고, 같은
+        // 리스너의 레플리카끼리는 한 그룹이라 한 메시지는 한 파드만 받는다(알림은 파드마다 만들면 안 된다, docs/21 §2).
         config.put(ConsumerConfig.GROUP_ID_CONFIG, "notification");
         config.put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment));
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         config.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
-        config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        // 오프셋이 없을 때(새 리스너를 처음 배포 · 그룹 오프셋 만료)는 처음부터. 🐛 예전에는 latest 라 그 사이의 메시지 — 가입 확인 ·
+        // 비밀번호 재설정(outgoing-mail) · 보안 경고까지 — 가 조용히 사라졌다. 다시 읽어도 각 리스너의 멱등 키(sourceEventId ·
+        // eventId)가 중복을 거른다. 지금 이 순간에만 의미 있는 접속 알림(user-presence)만 리스너에서 latest 로 둔다.
+        // [JA] オフセットがないときは最初から。以前は latest で、新しいリスナーの初回デプロイやオフセット失効の間のメッセージ(登録確認・
+        //      パスワード再設定・セキュリティ警告まで)が黙って消えていた。冪等キーが重複を除く。今だけ意味のある接続通知だけ latest。
+        config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         config.putAll(securityProps());
         // order·payment 토픽은 이제 Avro 다. 이 소비자는 JSON 문자열을 읽으므로 Avro 면 JSON 으로 바꿔 준다(docs/38 §1.16).

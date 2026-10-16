@@ -257,6 +257,13 @@ JSON 이 아니다: {}
 {} 는 문자열 · 불리언 · 숫자만 된다
 = -
 
+# delivery-service DeliveryService.registerTracking — 송장 등록 거절(관리자 화면, 운영자용)
+취소된 배송에는 송장을 등록할 수 없습니다
+= -
+
+이미 발송됐거나 취소된 상자에는 송장을 등록할 수 없습니다
+= -
+
 # common/idempotency/ProcessedEventPurger — 기동 시 설정 오류(운영자용)
 원장 표 이름은 <스키마>.processed_event 모양이어야 한다: {}
 = -

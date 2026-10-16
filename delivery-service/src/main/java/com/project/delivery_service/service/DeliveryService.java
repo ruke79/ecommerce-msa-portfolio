@@ -131,14 +131,34 @@ public class DeliveryService {
             return Optional.empty();
         }
 
+        // 취소된 배송에는 송장을 달지 않는다. 🐛 예전에는 막지 않아, 손님이 배송을 취소해 주문이 PAID 로 돌아간 뒤 송장을 등록하면
+        // 주문이 다시 DISPATCHED 가 돼 환불이 막혔다(환불된 주문이면 "발송되었습니다" 알림 · 폴링까지).
+        // [JA] キャンセル済みの配送には送り状を付けない。以前は止めず、キャンセル後の登録で注文が再び DISPATCHED になり返金が止まった。
+        if (delivery.overallStatus() == DeliveryStatus.CANCELLED) {
+            throw new TrackingRejectedException("취소된 배송에는 송장을 등록할 수 없습니다");
+        }
+
         // 상자를 고른다. sequenceNo 를 주면 그 상자에, 없으면 아직 송장이 없는 첫 상자에,
         // 그것도 없으면 새 상자를 만든다 — 분할 배송이 이 경로로 생긴다.
-        Shipment shipment = delivery.getShipments().stream()
-                .filter(s -> request.sequenceNo() == null || s.getSequenceNo() == request.sequenceNo())
-                .filter(s -> request.sequenceNo() != null || s.getTrackingNumber() == null)
-                .findFirst()
-                .orElseGet(() -> delivery.addShipment(delivery.isInternational(originCountry)));
+        // 고를 수 있는 것은 아직 발송 전(대기 · 접수)인 상자뿐이다. 🐛 예전에는 상태를 보지 않아 sequenceNo 로 배달 완료 · 이동 중인
+        // 상자를 접수로 되돌려 썼고, 송장 없는 첫 상자로 취소된 상자를 골랐다.
+        Shipment shipment;
+        if (request.sequenceNo() != null) {
+            shipment = delivery.getShipments().stream()
+                    .filter(s -> s.getSequenceNo() == request.sequenceNo())
+                    .findFirst()
+                    .orElseGet(() -> delivery.addShipment(delivery.isInternational(originCountry)));
+            if (!shipment.getStatus().isBeforeDispatch()) {
+                throw new TrackingRejectedException("이미 발송됐거나 취소된 상자에는 송장을 등록할 수 없습니다");
+            }
+        } else {
+            shipment = delivery.getShipments().stream()
+                    .filter(s -> s.getTrackingNumber() == null && s.getStatus().isBeforeDispatch())
+                    .findFirst()
+                    .orElseGet(() -> delivery.addShipment(delivery.isInternational(originCountry)));
+        }
 
+        DeliveryStatus overallBefore = delivery.overallStatus();
         String trackingNumber = trackingNumberFor(carrier.getCarrierCode(), request.trackingNumber(), orderId, shipment.getSequenceNo());
         if (trackingNumber == null) {
             log.warn("송장번호가 비었다(테스트 택배사가 아님): orderId={} 택배사={}", orderId, carrier.getCarrierCode());
@@ -154,7 +174,8 @@ public class DeliveryService {
         log.info("송장 등록: orderId={} 상자={} 택배사={} 송장={}",
                 orderId, shipment.getSequenceNo(), carrier.getCarrierCode(), trackingNumber);
 
-        publisher.publish(delivery, shipment.getStatus());
+        // 주문 전체 상태가 바뀌었을 때만 — 두 번째 상자의 송장은 주문을 다시 "발송" 으로 돌리지 않는다.
+        publisher.publishIfOverallChanged(delivery, overallBefore);
         return Optional.of(shipment);
     }
 

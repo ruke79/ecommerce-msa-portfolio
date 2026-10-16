@@ -76,4 +76,14 @@ public interface MailMessageRepository extends JpaRepository<MailMessage, Long> 
               and m.createdAt < :before
            """)
     int scrubParamsOlderThan(@Param("before") LocalDateTime before);
+
+    /** 끝난(보냈거나 영구 실패한) 오래된 메일 행을 지운다 — 받는 주소(개인정보)를 무기한 들고 있지 않는다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+           delete from MailMessage m
+            where m.status in (com.project.notification_service.domain.MailStatus.SENT,
+                               com.project.notification_service.domain.MailStatus.FAILED)
+              and m.createdAt < :before
+           """)
+    int deleteFinishedOlderThan(@Param("before") LocalDateTime before);
 }

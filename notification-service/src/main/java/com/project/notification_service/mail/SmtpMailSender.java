@@ -68,13 +68,15 @@ public class SmtpMailSender implements MailSender {
             // ⚠️ 접두사 [MAIL: 를 붙인다. 발송 결과를 훑는 표준 grep 이 이것이다 —
             //    빠진 줄은 "아무 시도도 없었다" 로 보인다(아래 인증 실패에서 실제로 겪었다).
             log.error("[MAIL:permanent] to={} 메일 구성 실패: {}",
-                    EmailAddresses.mask(to), e.getMessage());
-            return MailResult.permanent("compose_failed: " + e.getMessage());
+                    EmailAddresses.mask(to), describe(e));
+            return MailResult.permanent("compose_failed: " + describe(e));
         }
 
         try {
             delegate.send(message);
-            log.info("[MAIL:sent] to={} subject={}", EmailAddresses.mask(to), subject);
+            // ⚠️ 제목은 남기지 않는다 — 로그인 확인 메일은 제목에 6자리 확인 코드가 들어간다(MailTemplates). 길이만.
+            // [JA] 件名は残さない — ログイン確認メールは件名に 6 桁の確認コードが入る。長さだけ。
+            log.info("[MAIL:sent] to={} subjectLen={}", EmailAddresses.mask(to), subject == null ? 0 : subject.length());
             return MailResult.sent();
 
         } catch (MailAuthenticationException e) {
@@ -84,11 +86,11 @@ public class SmtpMailSender implements MailSender {
             //    (스케줄러·백오프)을 한참 뒤졌다. 결과를 남기는 줄은 전부 같은 접두사를
             //    달아야 한 번의 grep 으로 끝난다.
             log.error("[MAIL:permanent] to={} SMTP 인증 실패 — 설정을 확인해야 합니다: {}",
-                    EmailAddresses.mask(to), e.getMessage());
+                    EmailAddresses.mask(to), describe(e));
             return MailResult.permanent("auth_failed");
 
         } catch (MailParseException | MailPreparationException e) {
-            return MailResult.permanent("prepare_failed: " + e.getMessage());
+            return MailResult.permanent("prepare_failed: " + describe(e));
 
         } catch (MailSendException e) {
             return classify(to, e);
@@ -96,8 +98,8 @@ public class SmtpMailSender implements MailSender {
         } catch (org.springframework.mail.MailException e) {
             // 알 수 없는 메일 예외. 재시도 쪽으로 둔다 — 상한이 있으므로 무한히 시도하지 않고,
             // 보낼 수 있는 메일을 영구 실패로 버리는 쪽이 더 나쁘다.
-            log.warn("[MAIL:error] to={} {}", EmailAddresses.mask(to), e.getMessage());
-            return MailResult.retryable(e.getMessage());
+            log.warn("[MAIL:error] to={} {}", EmailAddresses.mask(to), describe(e));
+            return MailResult.retryable(describe(e));
         }
     }
 
@@ -119,8 +121,8 @@ public class SmtpMailSender implements MailSender {
             return decided;
         }
         log.warn("[MAIL:retryable] to={} 분류 불가 — 재시도합니다: {}",
-                EmailAddresses.mask(to), e.getMessage());
-        return MailResult.retryable(e.getMessage());
+                EmailAddresses.mask(to), describe(e));
+        return MailResult.retryable(describe(e));
     }
 
     /** @return 판정했으면 결과, 이 예외로는 알 수 없으면 null */
@@ -132,12 +134,12 @@ public class SmtpMailSender implements MailSender {
             if (code != null) {
                 if (code >= 500) {
                     log.error("[MAIL:permanent] to={} smtp={} {}",
-                            EmailAddresses.mask(to), code, t.getMessage());
+                            EmailAddresses.mask(to), code, describe(t));
                     return MailResult.permanent("smtp " + code);
                 }
                 if (code >= 400) {
                     log.warn("[MAIL:retryable] to={} smtp={} {}",
-                            EmailAddresses.mask(to), code, t.getMessage());
+                            EmailAddresses.mask(to), code, describe(t));
                     return MailResult.retryable("smtp " + code);
                 }
             }
@@ -164,7 +166,7 @@ public class SmtpMailSender implements MailSender {
                     || t instanceof SocketTimeoutException
                     || t instanceof UnknownHostException) {
                 log.warn("[MAIL:retryable] to={} 메일 서버에 연결하지 못했습니다: {}",
-                        EmailAddresses.mask(to), t.getMessage());
+                        EmailAddresses.mask(to), describe(t));
                 return MailResult.retryable("connect: " + t.getClass().getSimpleName());
             }
         }
@@ -182,6 +184,27 @@ public class SmtpMailSender implements MailSender {
      * <p>반대로 이 정보를 포기하면 4xx(일시)와 5xx(영구)를 구분할 가장 정확한 근거를 잃는다.
      * 그래서 <b>있으면 쓰고 없으면 다음 근거로 넘어가는</b> 형태로 읽는다.
      */
+    /**
+     * 로그 · {@code mail_message.detail} 에 남길 예외 설명 — 예외 종류와 SMTP 응답 코드만.
+     *
+     * <p>🐛 예전에는 예외 메시지를 그대로 남겼다. SMTP 서버 응답 · 주소 예외의 메시지에는 받는 주소 원문이 들어가므로
+     * ({@code 550 5.1.1 <alice@…> User unknown}), 마스킹한 {@code to=} 옆에 원문 주소가 찍혔고 같은 문구가 detail 열에 저장돼
+     * 영구 실패 로그(MailDispatcher)로 한 번 더 나갔다.
+     *
+     * <p>[JA] ログ・detail に残す例外の説明 — 例外の種類と SMTP 応答コードだけ。以前は例外メッセージをそのまま残し、
+     * SMTP 応答に含まれる宛先の生アドレスがマスクした to= の隣に出ていた。
+     */
+    static String describe(Throwable t) {
+        if (t == null) {
+            return "unknown";
+        }
+        Integer code = smtpReturnCode(t);
+        for (Throwable c = t.getCause(); code == null && c != null && c != c.getCause(); c = c.getCause()) {
+            code = smtpReturnCode(c);
+        }
+        return t.getClass().getSimpleName() + (code == null ? "" : " smtp=" + code);
+    }
+
     private static Integer smtpReturnCode(Throwable t) {
         try {
             Method m = t.getClass().getMethod("getReturnCode");

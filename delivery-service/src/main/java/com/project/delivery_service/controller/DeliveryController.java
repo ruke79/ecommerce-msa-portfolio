@@ -234,7 +234,8 @@ public class DeliveryController {
                     "registered", false,
                     "message", "송장번호를 입력해 주세요"));
         }
-        return deliveryService.registerTracking(orderId, request)
+        try {
+            return deliveryService.registerTracking(orderId, request)
                 .<ResponseEntity<Map<String, Object>>>map(shipment -> ResponseEntity.ok(Map.of(
                         "registered", true,
                         "shipmentId", shipment.getShipmentId(),
@@ -243,5 +244,9 @@ public class DeliveryController {
                 .orElseGet(() -> ResponseEntity.badRequest().body(Map.of(
                         "registered", false,
                         "message", "주문 또는 택배사를 찾을 수 없습니다")));
+        } catch (com.project.delivery_service.service.TrackingRejectedException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                    "registered", false, "message", e.reason()));
+        }
     }
 }

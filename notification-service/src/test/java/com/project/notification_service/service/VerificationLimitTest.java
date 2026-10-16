@@ -44,6 +44,7 @@ class VerificationLimitTest {
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(ops);
         when(redis.getExpire(anyString())).thenReturn(-2L);   // 쿨다운 없음 — 제한만 본다
+        when(ops.setIfAbsent(anyString(), anyString(), org.mockito.ArgumentMatchers.any(java.time.Duration.class))).thenReturn(true);
         when(ops.increment(anyString())).thenAnswer(inv -> counters.merge(inv.getArgument(0), 1L, Long::sum));
         sender = mock(SmsSender.class);
         when(sender.send(anyString(), anyString())).thenReturn(SmsResult.sent("m-1"));

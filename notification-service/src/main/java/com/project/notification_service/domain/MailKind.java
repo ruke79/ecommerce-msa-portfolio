@@ -73,6 +73,20 @@ public enum MailKind {
     }
 
     /**
+     * 사용자의 메일 수신 거부를 무시하고 보내는가 — 사용자가 요청한 메일({@link #isTransactional()})과 보안 경고.
+     *
+     * <p>🐛 예전에는 큐에 넣을 때 {@link #isTransactional()} 만 봐서 {@link #SECURITY_ALERT} 가 수신 거부에 막혔다
+     * ({@code NotificationPreference.shouldSendEmail} 은 보안 경고를 예외로 판정하는데도). 세션을 얻은 공격자가 메일 수신을 끈
+     * 뒤 비밀번호 재설정 · 소셜 연결 · 패스키 등록을 해도 메일이 나가지 않았다 — 바로 막으려던 경우다.
+     *
+     * <p>[JA] ユーザーのメール受信拒否を無視して送るか — 本人が要求したメールとセキュリティ警告。以前はキュー投入時に
+     * isTransactional() だけを見ており、セキュリティ警告が受信拒否で止まっていた(攻撃者が先に受信を切れば警告が届かない)。
+     */
+    public boolean ignoresOptOut() {
+        return transactional || this == SECURITY_ALERT;
+    }
+
+    /**
      * 이 알림을 메일로도 보낼 것인가.
      *
      * @return 보낼 종류면 대응하는 {@code MailKind}, 메일로 보내지 않을 종류면 비어 있음

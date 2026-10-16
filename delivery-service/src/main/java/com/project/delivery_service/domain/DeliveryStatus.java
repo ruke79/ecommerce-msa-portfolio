@@ -146,16 +146,34 @@ public enum DeliveryStatus {
      * 뒤로 가는 전이를 그대로 반영하면 "배달완료" 였던 배송이 "배송중" 으로 되돌아간다.
      * 진행은 앞으로만 한다 — 단, 예외·반송은 언제든 될 수 있다(실제로 사고가 났으므로).
      * 취소는 발송 전에만 가능하므로 여기서 특별 취급하지 않는다.
+     *
+     * <p>순서만으로는 안 되는 두 갈래를 따로 둔다(🐛 예전에는 {@code ordinal} 비교뿐이었다):
+     * <ul>
+     *   <li><b>예외 뒤의 정상 스캔</b> — {@code EXCEPTION} 은 {@code DELIVERED} 보다 뒤에 선언돼 있어, '파손' 스캔 뒤에 정상
+     *       배달된 상자가 EXCEPTION 에 고정됐다(12시간마다 영원히 폴링, 주문은 DISPATCHED 에 멈춤). 예외에서는 이동 · 배달 출발 ·
+     *       배달 완료로 갈 수 있다.</li>
+     *   <li><b>재배달 출발</b> — 부재({@code ATTEMPT_FAILED}) 다음의 배달 출발({@code OUT_FOR_DELIVERY})이 "뒤로 가는 전이" 로
+     *       무시돼 배달 출발 알림이 빠지고 폴링 주기가 3시간으로 남았다.</li>
+     * </ul>
+     *
+     * <p>[JA] 順序だけでは扱えない二つ — 例外の後の正常スキャン(以前は EXCEPTION に固定)と、不在の後の再配達出発(以前は無視)。
      */
     public boolean isProgressFrom(DeliveryStatus other) {
         if (other == null) {
             return true;
         }
-        if (other.isTerminal()) {
+        if (other.isTerminal() || this == other) {
             return false;   // 끝난 배송은 되돌리지 않는다
         }
         if (this == EXCEPTION || this == RETURNED) {
             return true;
+        }
+        if (other == EXCEPTION) {
+            // 사고 뒤에 다시 움직이기 시작했다 — 집화 전 단계로는 돌아가지 않는다.
+            return ordinal() >= IN_TRANSIT.ordinal() && ordinal() <= DELIVERED.ordinal();
+        }
+        if (other == ATTEMPT_FAILED && this == OUT_FOR_DELIVERY) {
+            return true;    // 재배달 출발
         }
         return ordinal() > other.ordinal();
     }

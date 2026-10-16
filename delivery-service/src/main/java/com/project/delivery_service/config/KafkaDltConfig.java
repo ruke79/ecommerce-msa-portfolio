@@ -82,7 +82,8 @@ public class KafkaDltConfig {
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(
             KafkaTemplate<String, Object> dltJsonKafkaTemplate,
-            KafkaTemplate<String, byte[]> dltBytesKafkaTemplate) {
+            KafkaTemplate<String, byte[]> dltBytesKafkaTemplate,
+            io.micrometer.core.instrument.MeterRegistry meters) {
 
         // 값 타입에 따라 템플릿 선택: 역직렬화 실패면 byte[](원본 보존), 그 외엔 JSON.
         Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
@@ -97,7 +98,15 @@ public class KafkaDltConfig {
         backOff.setInitialInterval(1_000L);
         backOff.setMultiplier(2.0);
 
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
+        // DLT 로 가는 순간을 센다(경보 KafkaDeadLetterPublished) · 일시적인 실패는 약 3분 다시 한다 — order · catalog · pay 와 같은
+        // 공통 정책(DltRetryPolicy)에, 이 서비스는 order-service 호출의 일시 실패(닿지 못함 · 5xx · 429)를 더한다.
+        // 🐛 예전에는 모든 실패가 1 · 2 · 4초 세 번 뒤 payment.DLT 였고 세지도 않았다 — order-service 가 배포 · 페일오버로 10초만
+        // 멈춰도 그동안의 결제 완료가 모두 DLT 로 가, 배송 없이 PAID 로 남은 주문을 아무도 몰랐다.
+        // [JA] DLT へ送った瞬間を数え、一時的な失敗(order-service に届かない · 5xx · 429 を含む)は約 3 分再試行する。以前は
+        //      すべて 7 秒で payment.DLT、数えもせず、order-service が 10 秒止まるだけで配送のない注文が生まれていた。
+        DefaultErrorHandler handler = new DefaultErrorHandler(com.project.common.kafka.DltRetryPolicy.counting(recoverer, meters), backOff);
+        handler.setBackOffFunction((record, ex) -> isTransient(ex)
+                ? com.project.common.kafka.DltRetryPolicy.transientBackOff() : null);
         // 재시도해도 절대 성공할 수 없는 예외는 즉시 DLT 로 (poison 즉시 격리)
         handler.addNotRetryableExceptions(
                 DeserializationException.class,
@@ -105,5 +114,24 @@ public class KafkaDltConfig {
                 ConversionException.class,
                 ClassCastException.class);
         return handler;
+    }
+
+    /** 시간이 지나면 같은 메시지가 성공할 수 있는 실패 — 공통(DB) + order-service 호출의 닿지 못함 · 5xx · 429. 404 등은 아니다. */
+    static boolean isTransient(Throwable ex) {
+        if (com.project.common.kafka.DltRetryPolicy.isTransient(ex)) {
+            return true;
+        }
+        for (Throwable t = ex; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof feign.RetryableException) {
+                return true;
+            }
+            if (t instanceof feign.FeignException fe && (fe.status() >= 500 || fe.status() == 429)) {
+                return true;
+            }
+            if (t instanceof java.net.ConnectException || t instanceof java.net.SocketTimeoutException) {
+                return true;
+            }
+        }
+        return false;
     }
 }

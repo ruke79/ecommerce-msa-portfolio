@@ -92,12 +92,19 @@ public class DeliveryEvent {
         this.shipment = shipment;
         this.status = status;
         this.occurredAt = occurredAt;
-        this.location = location;
-        this.description = description;
-        this.rawStatus = rawStatus;
+        // 택배사 문구는 길이를 보장하지 않는다 — 컬럼 폭으로 자른다. 🐛 예전에는 자르지 않아 길이 초과 한 건이 배치 트랜잭션을 통째로
+        // 되돌렸고, 같은 배치가 매분 다시 선점돼 전체 폴링이 멈췄다. 중복 제거 키는 자르기 전 원문으로 만든다(조회 쪽과 같게).
+        // [JA] 宅配会社の文言は長さを保証しない — 列幅で切る。以前は切らず、長さ超過一件でバッチ全体が戻り、ポーリングが止まった。
+        this.location = fit(location, 120);
+        this.description = fit(description, 300);
+        this.rawStatus = fit(rawStatus, 120);
         this.rawPayload = rawPayload;
         this.dedupKey = dedupKey(occurredAt, rawStatus, location);
         this.createdAt = LocalDateTime.now(ZoneOffset.UTC);
+    }
+
+    private static String fit(String value, int max) {
+        return value == null || value.length() <= max ? value : value.substring(0, max);
     }
 
     public static String dedupKey(LocalDateTime occurredAt, String rawStatus, String location) {

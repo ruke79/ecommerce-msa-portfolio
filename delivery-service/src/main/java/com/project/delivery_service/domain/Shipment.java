@@ -218,6 +218,16 @@ public class Shipment {
     }
 
     /** 조회에 성공했다. 실패 카운터를 지우고 다음 주기를 잡는다. */
+    /**
+     * 폴러가 이 상자를 가져갔다 — 조회를 마칠 때까지 다른 파드가 다시 가져가지 않도록 다음 조회 시각을 잠시 미룬다(리스).
+     * 조회 결과를 반영하면 {@link #recordSyncSuccess} · {@link #recordSyncFailure} 가 제 시각으로 다시 잡는다.
+     */
+    public void leaseUntil(LocalDateTime until) {
+        if (this.nextPollAt != null) {
+            this.nextPollAt = until;
+        }
+    }
+
     public void recordSyncSuccess() {
         recordSyncSuccess(null);
     }

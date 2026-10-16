@@ -35,8 +35,9 @@ public class LoggingMailSender implements MailSender {
         // ⚠️ 본문을 로그에 남기지 않는다. 확인 링크·재설정 링크가 본문에 들어 있기 때문이다 —
         //    dry-run 이라 해도 로그에 찍히면 실제 발송과 같은 노출이 된다.
         //    주소도 마스킹한다(EmailAddresses.mask 참조).
-        log.info("[MAIL:dry-run] to={} subject={} textLen={} htmlLen={}",
-                EmailAddresses.mask(to), subject,
+        //    제목도 남기지 않는다 — 로그인 확인 메일은 제목에 확인 코드가 들어간다(MailTemplates).
+        log.info("[MAIL:dry-run] to={} subjectLen={} textLen={} htmlLen={}",
+                EmailAddresses.mask(to), subject == null ? 0 : subject.length(),
                 text == null ? 0 : text.length(),
                 html == null ? 0 : html.length());
 

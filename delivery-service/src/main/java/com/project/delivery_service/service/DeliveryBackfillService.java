@@ -55,6 +55,14 @@ public class DeliveryBackfillService {
             return Optional.empty();
         }
 
+        // 결제됐고 아직 배송 전인 주문만. 🐛 예전에는 orderStatus 를 읽지 않아 미결제 · 환불된 주문 번호로도 배송이 생겼다 —
+        // "송장 대기" 목록에 올라 실제로 출고될 수 있었다.
+        // [JA] 決済済みでまだ配送前の注文だけ。以前は orderStatus を読まず、未決済・返金済みの注文にも配送が作られていた。
+        if (!"PAID".equals(order.orderStatus()) && !"PROCESSING".equals(order.orderStatus())) {
+            log.warn("복구: 주문 {} 은 결제됐고 배송 전인 주문이 아니다(상태 {}) — 배송을 만들지 않는다", orderId, order.orderStatus());
+            return Optional.empty();
+        }
+
         OrderShippingDto.Address a = order.address();
         List<CreateDeliveryCommand.Item> items = new ArrayList<>();
         if (order.items() != null) {

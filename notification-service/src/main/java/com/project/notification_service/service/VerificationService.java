@@ -102,8 +102,12 @@ public class VerificationService {
      * @param rawPhone      사용자 입력 번호
      * @param defaultRegion 국가코드가 없을 때 기준
      * @param userId        로그인 사용자면 그 id, 아니면 null
+     *
+     * <p>트랜잭션을 두지 않는다 — 코드 저장은 리포지토리의 짧은 트랜잭션으로 끝나고, SMS 발송(게이트웨이 타임아웃 5초)은 DB 커넥션
+     * 없이 한다. 🐛 예전에는 메서드 전체가 트랜잭션이라 발송 동안 커넥션을 쥐었다(풀 5개 — 게이트웨이가 느리면 동시 요청 몇 개로
+     * 리스너 · API 가 함께 멈췄다).
+     * [JA] トランザクションを置かない — コード保存はリポジトリの短いトランザクションで終わり、SMS 送信は DB 接続なしで行う。
      */
-    @Transactional
     public IssueResult issue(String rawPhone, Region defaultRegion, Long userId) {
 
         Optional<String> normalized = PhoneNumbers.toE164(rawPhone, defaultRegion);
@@ -147,6 +151,15 @@ public class VerificationService {
             }
         }
 
+        // 쿨다운을 **먼저 잡는다**(SET NX EX). 🐛 예전에는 위에서 남은 시간만 보고 발송 뒤에야 set 했다 — 동시 요청은 모두 위를
+        // 통과해 같은 번호로 여러 통이 나갔다. 잡지 못했으면 다른 요청이 방금 보냈다. 발송이 실패하면 아래에서 푼다.
+        // [JA] クールダウンを先に取る(SET NX EX)。以前は送信後に set しており、同時リクエストがすべて通って複数通送られていた。
+        if (!Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(cooldownKey, "1", RESEND_COOLDOWN))) {
+            Long left = redis.getExpire(cooldownKey);
+            return new IssueResult.TooMany("잠시 후 다시 시도해 주세요",
+                    left != null && left > 0 ? left : RESEND_COOLDOWN.toSeconds());
+        }
+
         // ── 코드 생성 ────────────────────────────────────────────────────────
         // SecureRandom 이어야 한다. java.util.Random 은 seed 를 알면 다음 값이 예측된다.
         String code = String.format("%06d", random.nextInt(1_000_000));
@@ -157,13 +170,12 @@ public class VerificationService {
         SmsResult result = smsSender.send(e164, text);
 
         if (!result.isSent()) {
-            // 발송이 실패했으면 쿨다운을 걸지 않는다 — 사용자가 바로 다시 시도할 수 있어야 한다.
+            // 발송이 실패했으면 쿨다운을 풀어 준다 — 사용자가 바로 다시 시도할 수 있어야 한다.
+            redis.delete(cooldownKey);
             log.warn("인증 SMS 발송 실패: phone={} status={} detail={}",
                     PhoneNumbers.mask(e164), result.status(), result.detail());
             return new IssueResult.Rejected("인증번호를 보내지 못했습니다. 잠시 후 다시 시도해 주세요");
         }
-
-        redis.opsForValue().set(cooldownKey, "1", RESEND_COOLDOWN);
 
         // ⚠️ 코드는 절대 로그에 남기지 않는다. 로그를 볼 수 있는 사람이 남의 인증을 통과할 수 있다.
         log.info("인증번호 발급: phone={} userId={}", PhoneNumbers.mask(e164), userId);
@@ -175,7 +187,7 @@ public class VerificationService {
      * 인증번호를 검증한다. 성공하면 코드는 소비되어 재사용할 수 없다.
      */
     @Transactional
-    public VerifyResult verify(String rawPhone, Region defaultRegion, String code) {
+    public VerifyResult verify(String rawPhone, Region defaultRegion, String code, Long userId) {
 
         Optional<String> normalized = PhoneNumbers.toE164(rawPhone, defaultRegion);
         if (normalized.isEmpty()) {
@@ -183,13 +195,22 @@ public class VerificationService {
         }
         String e164 = normalized.get();
 
-        Optional<PhoneVerification> found =
-                verificationRepository.findFirstByPhoneE164AndConsumedFalseOrderByCreatedAtDesc(e164);
+        Optional<PhoneVerification> found = verificationRepository
+                .findLatestForUpdate(e164, org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst();
 
         if (found.isEmpty()) {
             return new VerifyResult.Rejected("인증번호를 다시 요청해 주세요", 0);
         }
         PhoneVerification verification = found.get();
+
+        // 로그인한 사용자가 받은 코드는 그 사용자만 검증한다. 🐛 예전에는 번호만 보았다 — 남의 번호를 알면 일부러 5회 틀려 그 사람의
+        // 코드를 계속 무효로 만들 수 있었다. 다른 사람의 시도는 횟수를 올리지 않는다.
+        // [JA] ログインユーザーが受けたコードはそのユーザーだけが検証する。以前は番号だけを見ており、他人のコードを故意に 5 回
+        //      間違えて無効にし続けられた。
+        if (verification.getUserId() != null && !verification.getUserId().equals(userId)) {
+            log.info("인증번호 검증 거부 — 발급받은 사용자가 아니다: phone={} userId={}", PhoneNumbers.mask(e164), userId);
+            return new VerifyResult.Rejected("인증번호를 다시 요청해 주세요", 0);
+        }
 
         if (!verification.isUsable()) {
             String reason = verification.isExpired() ? "인증번호가 만료되었습니다"
@@ -217,7 +238,9 @@ public class VerificationService {
     /** 하루짜리 카운터를 하나 올린다. 첫 증가에만 만료를 건다. null(파이프라인·트랜잭션 안에서만 온다)이면 0. */
     private long countToday(String key) {
         Long count = redis.opsForValue().increment(key);
-        if (count != null && count == 1L) {
+        // 첫 증가 뒤 expire 전에 죽으면 TTL 없는 키가 남아 그 번호 · 계정이 영구히 막힌다 — 만료가 없으면(-1) 다시 건다.
+        // [JA] 最初の増加の後 expire の前に落ちると TTL のないキーが残り永久に止まる — 期限がなければ(-1)掛け直す。
+        if (count != null && (count == 1L || Long.valueOf(-1L).equals(redis.getExpire(key)))) {
             redis.expire(key, Duration.ofDays(1));
         }
         return count == null ? 0 : count;
@@ -234,8 +257,15 @@ public class VerificationService {
         return preference;
     }
 
-    /** 만료 코드 정리. 개인정보를 필요 이상으로 보관하지 않는다. */
+    /**
+     * 만료 코드 정리 — 매일. 개인정보(전화번호)를 필요 이상으로 보관하지 않는다.
+     *
+     * <p>🐛 예전에는 이 메서드를 부르는 곳이 없어(@Scheduled 없음) {@code phone_verification} 이 영구히 쌓였다. 삭제는 같은 조건이라
+     * 파드가 여럿이어도 겹쳐서 해가 없다.
+     * [JA] 期限切れコードの掃除 — 毎日。以前は呼ぶ所がなく phone_verification(電話番号)が永久に溜まっていた。
+     */
     @Transactional
+    @org.springframework.scheduling.annotation.Scheduled(cron = "${notification.verification.purge-cron:0 20 4 * * *}")
     public int purgeExpired() {
         return verificationRepository.deleteExpiredBefore(
                 LocalDateTime.now(ZoneOffset.UTC).minusDays(1));

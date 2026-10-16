@@ -10,7 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.project.delivery_service.carrier.CarrierAdapter;
 import com.project.delivery_service.carrier.CarrierRegistry;
@@ -55,39 +55,108 @@ public class TrackingPoller {
     @Value("${delivery.polling.batch-size:20}")
     private int batchSize;
 
+    /** 선점한 상자를 조회하는 동안의 리스 — 이 안에 조회 · 반영을 끝내지 못하면 다른 파드가 다시 가져간다. */
+    @Value("${delivery.polling.lease-minutes:10}")
+    private long leaseMinutes = 10;
+
+    /** 없으면(단위 테스트) 그냥 부른다 — 리포지토리 호출마다 자기 트랜잭션이다. */
+    private TransactionTemplate tx;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.tx = new TransactionTemplate(transactionManager);
+    }
+
+    /** 선점한 상자 — 택배사 호출에 필요한 것만 트랜잭션 밖으로 들고 나간다. */
+    private record Claim(Shipment shipment, Long shipmentId, String carrierCode, String trackingNumber, boolean international) {}
+
+    /**
+     * 한 주기.
+     *
+     * <p>🐛 예전에는 메서드 전체가 트랜잭션이었다 — 상자 20개를 {@code FOR UPDATE} 로 잡은 채 택배사 HTTP(접속 5초 + 응답 10초)를
+     * 차례로 불러, 최악이면 5분 동안 커넥션(풀 5개)과 행 잠금을 쥐었다. 그 사이 고객 취소 · 주소 변경 · 송장 등록이 막혔다가
+     * {@code @Version} 충돌로 500 이 됐다. 또 한 건의 DB 오류가 바깥 트랜잭션을 rollback-only 로 만들어 catch 로 삼켜도 배치 20건이
+     * 모두 되돌아갔다 — 실패 기록 · 다음 조회 시각도 함께 — 같은 배치가 매분 다시 선점돼 전체 폴링이 멈췄다.
+     *
+     * <p>이제 ① 짧은 트랜잭션으로 선점하고 리스(다음 조회 시각을 잠시 미룸)를 건 뒤 커밋, ② 택배사 호출은 트랜잭션 밖, ③ 결과는 상자마다
+     * 자기 트랜잭션으로 다시 읽어 반영한다. 반영이 실패하면 그 상자만 따로 실패를 기록한다.
+     *
+     * <p>[JA] 一周期。以前はメソッド全体がトランザクションで、20 箱を FOR UPDATE で掴んだまま宅配会社 HTTP を順に呼び、最悪 5 分間
+     * 接続と行ロックを保持していた。一件の DB エラーでバッチ全体が戻っていた。今は ① 短いトランザクションで先取りしリースを掛けて
+     * コミット、② 宅配会社の呼び出しはトランザクションの外、③ 結果は箱ごとに自分のトランザクションで読み直して反映する。
+     */
     @Scheduled(fixedDelayString = "${delivery.polling.interval-ms:60000}",
                initialDelayString = "${delivery.polling.initial-delay-ms:15000}")
-    @Transactional
     public void poll() {
-        List<Shipment> due = shipmentRepository.claimDueForPolling(
-                LocalDateTime.now(ZoneOffset.UTC), PageRequest.of(0, batchSize));
-
-        if (due.isEmpty()) {
+        List<Claim> claims = inTx(this::claim);
+        if (claims.isEmpty()) {
             return;
         }
-        log.debug("추적 조회 대상 {}건 선점", due.size());
+        log.debug("추적 조회 대상 {}건 선점", claims.size());
 
-        for (Shipment shipment : due) {
+        for (Claim claim : claims) {
+            CarrierAdapter adapter = carriers.find(claim.carrierCode()).orElse(null);
+            TrackingResult result = null;
+            if (adapter != null) {
+                try {
+                    result = adapter.track(claim.trackingNumber(), claim.international());
+                } catch (RuntimeException e) {
+                    log.warn("택배사 조회 중 예외: shipmentId={} {}", claim.shipmentId(), e.toString());
+                }
+            }
+            TrackingResult fetched = result;
             try {
-                pollOne(shipment);
+                inTx(() -> {
+                    apply(claim, adapter, fetched);
+                    return null;
+                });
             } catch (RuntimeException e) {
-                // 한 건의 실패가 배치 전체를 멈추면 안 된다. 그 건만 백오프시키고 넘어간다.
-                log.warn("추적 조회 중 예외: shipmentId={} {}", shipment.getShipmentId(), e.getMessage());
-                shipment.recordSyncFailure();
+                // 한 건의 실패가 배치 전체를 멈추면 안 된다. 그 건만 따로 백오프시키고 넘어간다.
+                log.warn("추적 결과 반영 중 예외: shipmentId={} {}", claim.shipmentId(), e.toString());
+                try {
+                    inTx(() -> {
+                        reload(claim).ifPresent(Shipment::recordSyncFailure);
+                        return null;
+                    });
+                } catch (RuntimeException again) {
+                    log.warn("실패 기록도 하지 못했다 — 리스가 끝나면 다시 조회한다: shipmentId={} {}",
+                            claim.shipmentId(), again.toString());
+                }
             }
         }
     }
 
-    private void pollOne(Shipment shipment) {
-        CarrierAdapter adapter = carriers.find(shipment.getCarrierCode()).orElse(null);
+    private List<Claim> claim() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        List<Shipment> due = shipmentRepository.claimDueForPolling(now, PageRequest.of(0, batchSize));
+        LocalDateTime lease = now.plusMinutes(leaseMinutes);
+        return due.stream().map(s -> {
+            s.leaseUntil(lease);
+            return new Claim(s, s.getShipmentId(), s.getCarrierCode(), s.getTrackingNumber(), s.isInternational());
+        }).toList();
+    }
+
+    /** 반영할 때 다시 읽는다 — 조회하는 동안 취소 · 송장 변경이 있었을 수 있다. id 가 없으면(단위 테스트) 선점한 그 객체. */
+    private java.util.Optional<Shipment> reload(Claim claim) {
+        return claim.shipmentId() == null ? java.util.Optional.of(claim.shipment())
+                : shipmentRepository.findById(claim.shipmentId());
+    }
+
+    private void apply(Claim claim, CarrierAdapter adapter, TrackingResult result) {
+        Shipment shipment = reload(claim).orElse(null);
+        if (shipment == null) {
+            return;
+        }
         if (adapter == null) {
             // 어댑터가 없는 택배사다. 계속 조회 대상으로 두면 매 주기마다 로그만 쌓인다.
-            log.info("어댑터가 없는 택배사라 폴링을 중단한다: {}", shipment.getCarrierCode());
+            log.info("어댑터가 없는 택배사라 폴링을 미룬다: {}", claim.carrierCode());
             shipment.recordSyncFailure();
             return;
         }
-
-        TrackingResult result = adapter.track(shipment.getTrackingNumber(), shipment.isInternational());
+        if (result == null) {
+            shipment.recordSyncFailure();
+            return;
+        }
 
         switch (result.status()) {
             case RETRYABLE -> {
@@ -116,6 +185,10 @@ public class TrackingPoller {
         applyEvents(shipment, result);
         // 택배사가 자기 갱신 주기를 알면 그것을 따른다(CarrierAdapter.pollIntervalCap 주석).
         shipment.recordSyncSuccess(adapter.pollIntervalCap().orElse(null));
+    }
+
+    private <T> T inTx(java.util.function.Supplier<T> work) {
+        return tx == null ? work.get() : tx.execute(status -> work.get());
     }
 
     private void applyEvents(Shipment shipment, TrackingResult result) {
@@ -148,13 +221,15 @@ public class TrackingPoller {
                 .map(TrackingEvent::occurredAt)
                 .orElse(null);
 
+        DeliveryStatus overallBefore = shipment.getDelivery().overallStatus();
         boolean changed = shipment.advanceTo(latest, occurredAt);
 
         if (changed) {
             log.info("배송 상태 전이: shipmentId={} → {} (새 이벤트 {}건)",
                     shipment.getShipmentId(), shipment.getStatus(), fresh.size());
-            // 상태가 바뀐 경우에만 발행한다. 폴링마다 발행하면 알림이 주기마다 나간다.
-            publisher.publish(shipment.getDelivery(), shipment.getStatus());
+            // 상태가 바뀐 경우에만, 그리고 주문 전체 상태가 바뀐 경우에만 발행한다(분할 배송 — 상자 하나의 도착은 주문의 도착이 아니다).
+            // 폴링마다 발행하면 알림이 주기마다 나간다.
+            publisher.publishIfOverallChanged(shipment.getDelivery(), overallBefore);
         }
     }
 }

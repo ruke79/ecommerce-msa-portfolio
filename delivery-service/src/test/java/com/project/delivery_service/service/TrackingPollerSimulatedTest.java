@@ -55,6 +55,8 @@ class TrackingPollerSimulatedTest {
         shipmentRepository = mock(ShipmentRepository.class);
         DeliveryEventRepository eventRepository = mock(DeliveryEventRepository.class);
         publisher = mock(DeliveryStatusPublisher.class);
+        // 주문 전체 상태 판정은 실제로 — 발행(publish)만 가짜다.
+        when(publisher.publishIfOverallChanged(any(), any())).thenCallRealMethod();
         CarrierRegistry carriers = mock(CarrierRegistry.class);
         when(carriers.find("SIMULATED")).thenReturn(Optional.of(simulated));
         when(eventRepository.findDedupKeys(anyLong())).thenReturn(Set.of());

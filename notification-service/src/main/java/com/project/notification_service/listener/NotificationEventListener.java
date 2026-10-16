@@ -209,7 +209,9 @@ public class NotificationEventListener {
      * 도착하면 이미 쓸모없다. 앱 안에서만 보여 준다.
      */
     @KafkaListener(id = "notification-presence", topics = "user-presence",
-                   containerFactory = "notificationListenerContainerFactory")
+                   containerFactory = "notificationListenerContainerFactory",
+                   // 지난 접속을 몰아서 알리지 않는다 — 처음 붙으면 지금부터만(팩토리 기본은 earliest).
+                   properties = "auto.offset.reset=latest")
     public void onPresence(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
