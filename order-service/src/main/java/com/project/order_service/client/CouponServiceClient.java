@@ -27,8 +27,13 @@ import com.project.order_service.config.FeignConfig;
 @FeignClient(name = "coupon-service", url = "${feign.coupon-url}", configuration = FeignConfig.class)
 public interface CouponServiceClient {
 
+    /**
+     * @param cart 주문이 읽은 그 장바구니 — coupon 은 이것으로 계산한다. 🐛 예전에는 coupon 이 장바구니를 다시 읽었고, 그 사이에 줄을
+     *             빼면 품목과 결제 금액이 서로 다른 장바구니에서 나왔다(CouponService.quote).
+     */
     @PostMapping("api/coupon/internal/quote")
-    Quote quote(@RequestParam("userId") Long userId, @RequestParam("couponName") String couponName);
+    Quote quote(@RequestParam("userId") Long userId, @RequestParam("couponName") String couponName,
+            @org.springframework.web.bind.annotation.RequestBody com.project.common.dto.CartDto cart);
 
     /**
      * 결제를 시작한다 — 이 주문이 쿠폰을 {@code holdSeconds} 동안 잡는다(coupon V7). 결과는 {@code CLAIMED · NOT_FOUND · USED ·

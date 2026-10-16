@@ -136,7 +136,8 @@ public class OrderPricing {
 
         CouponServiceClient.Quote quote;
         try {
-            quote = couponServiceClient.quote(userId, couponName);
+            // 품목을 만든 그 장바구니로 계산하게 한다 — coupon 이 다시 읽으면 그 사이 바뀐 장바구니의 금액이 청구됐다(CP1).
+            quote = couponServiceClient.quote(userId, couponName, cart);
         } catch (RuntimeException e) {
             log.warn("주문 생성: 쿠폰 견적을 받지 못했다 — 주문을 거절한다. {}", e.toString());
             throw new OrderDomainException(

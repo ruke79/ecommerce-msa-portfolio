@@ -5,7 +5,6 @@ import com.google.common.collect.ImmutableMap;
 import com.project.common.message.dto.response.PaymentResponse;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -21,7 +20,6 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.listener.adapter.DefaultBatchToRecordAdapter;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 
 import java.util.HashMap;
@@ -45,7 +43,6 @@ public class KafkaConsumerConfig {
     @Value("${kafka.url}")
     private String kafkaServerUrl;
     
-    ConsumerRecord<?, ?> paymentResponseFailed;
 
     // user-created 구독은 없앴다 — order-service 는 고객 사본이 필요 없다. 주문자 id 는 토큰의 uid(User-Id)다
     // (docs/48 §6-①). 기본 이름의 팩토리(kafkaListenerContainerFactory)도 그 리스너 하나만 쓰던 것이라 함께 뺐다.
@@ -85,9 +82,10 @@ public class KafkaConsumerConfig {
         // 파티션 블로킹(주문 영구 PENDING, docs/03 F-2)을 방지한다.
         factory.setCommonErrorHandler(kafkaErrorHandler);
         factory.getContainerProperties().setObservationEnabled(true);
-        factory.setBatchToRecordAdapter(new DefaultBatchToRecordAdapter<>((record, ex) -> {
-            this.paymentResponseFailed = record;
-        }));
+        // 🔴 레코드 어댑터(setBatchToRecordAdapter)를 두지 않는다 — DefaultBatchToRecordAdapter 는 리스너의 예외를 잡아 recoverer 에
+        //    넘기기만 하고 다시 던지지 않는다. 예전 recoverer 는 레코드를 필드에 담기만 해서, 결제 응답 처리의 실패가 위의 재시도
+        //    (DltRetryPolicy 약 3분) · payment.DLT · 경보에 한 번도 닿지 않고 사라졌다 — 돈은 냈는데 주문은 결제 전(가드 B-88).
+        // [JA] レコードアダプターを置かない — 決済応答の失敗が再試行 · DLT · 警報に届かず消えていた。
 
         return factory;
 

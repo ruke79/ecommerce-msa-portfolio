@@ -119,6 +119,8 @@ public class CouponController {
             // 누구의 견적인가 — 사용자 id(docs/48 §6-⑥). 예전에는 이메일을 받아 user-service 에 id 를 다시 물었다.
             @RequestParam("userId") Long userId,
             @RequestParam("couponName") String couponName,
+            // 주문이 읽은 장바구니 — 이것으로 계산한다(주문의 품목과 금액이 같은 장바구니에서 나온다). 없으면(옛 order) 여기서 읽는다.
+            @RequestBody(required = false) com.project.common.dto.CartDto cart,
             @RequestHeader(value = "User-Role", required = false) String callerRole,
             @RequestHeader(value = "User-Email", required = false) String callerEmail,
             @RequestHeader(value = "User-Id", required = false) String callerId) {
@@ -131,7 +133,7 @@ public class CouponController {
                     .body(new MessageResponse("접근할 수 없습니다."));
         }
 
-        return ResponseEntity.ok(couponService.quote(couponName, userId));
+        return ResponseEntity.ok(couponService.quote(couponName, userId, cart));
     }
 
     /**
@@ -248,6 +250,8 @@ public class CouponController {
         }
     }
 
+    static final String UPDATE_UNSUPPORTED_MESSAGE = "쿠폰 수정은 지원하지 않습니다. 쿠폰을 지우고 다시 발급해 주세요.";
+
     /** 쿠폰 수정 — <b>관리자 전용</b>. 지금은 서비스가 아무것도 하지 않지만, 채워지는 순간 할인율을 바꾸는 경로다. */
     @PutMapping("/update")
     ResponseEntity<?> updateCoupon(@RequestBody CouponRequest request,
@@ -258,14 +262,11 @@ public class CouponController {
                     .body(new MessageResponse("쿠폰을 수정할 권한이 없습니다."));
         }
 
-        try {
-            CouponDto result = couponService.update(request);
-
-            return new ResponseEntity<>(result, HttpStatus.OK);
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new MessageResponse("Faield to update a coupon."));
-        }
+        // 🐛 예전에는 서비스가 아무것도 하지 않고(본문은 주석) 200 에 빈 본문을 돌려줬다 — 관리자는 바뀐 줄 알았다(CP8). 지원하지 않는다고
+        //    말한다. 이미 나간 쿠폰의 할인율을 바꾸는 것은 결제 중 · 쓴 주문과 어긋나므로, 필요하면 지우고 다시 발급한다.
+        // [JA] 以前は何もせず 200 を返していた。対応していないと返す。
+        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(new MessageResponse(UPDATE_UNSUPPORTED_MESSAGE));
     }
 
 

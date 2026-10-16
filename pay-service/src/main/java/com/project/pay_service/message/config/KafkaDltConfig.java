@@ -82,7 +82,8 @@ public class KafkaDltConfig {
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(
             KafkaTemplate<String, Object> dltJsonKafkaTemplate,
-            KafkaTemplate<String, byte[]> dltBytesKafkaTemplate) {
+            KafkaTemplate<String, byte[]> dltBytesKafkaTemplate,
+            io.micrometer.core.instrument.MeterRegistry meters) {
 
         // 값 타입에 따라 템플릿 선택: 역직렬화 실패면 byte[](원본 보존), 그 외엔 JSON.
         Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
@@ -97,7 +98,13 @@ public class KafkaDltConfig {
         backOff.setInitialInterval(1_000L);
         backOff.setMultiplier(2.0);
 
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
+        // DLT 로 가는 순간을 센다(경보 KafkaDeadLetterPublished) · 일시적인 실패(교착 · 잠금 대기 · 커넥션 · 페일오버)는 약 3분 다시 한다 —
+        // order · catalog 와 같은 공통 정책(DltRetryPolicy). 🐛 예전에는 모든 실패가 7초 뒤 order.DLT 였고 세지도 않았다 — 결제 요청이
+        // 격리돼도 경보가 울리지 않았다.
+        // [JA] DLT へ送った瞬間を数え、一時的な失敗は約 3 分再試行する(共通方針)。以前はすべて 7 秒で DLT、数えもしなかった。
+        DefaultErrorHandler handler = new DefaultErrorHandler(com.project.common.kafka.DltRetryPolicy.counting(recoverer, meters), backOff);
+        handler.setBackOffFunction((record, ex) -> com.project.common.kafka.DltRetryPolicy.isTransient(ex)
+                ? com.project.common.kafka.DltRetryPolicy.transientBackOff() : null);
         // 재시도해도 절대 성공할 수 없는 예외는 즉시 DLT 로 (poison 즉시 격리)
         handler.addNotRetryableExceptions(
                 DeserializationException.class,

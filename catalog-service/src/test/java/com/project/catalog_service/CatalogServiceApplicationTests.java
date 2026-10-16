@@ -170,4 +170,43 @@ class CatalogServiceApplicationTests {
 		assertThat(explorer.getJobNames()).isNotNull();
 		assertThat(explorer.findJobInstancesByJobName("productImportJob", 0, 10)).isNotNull();
 	}
+
+	@Autowired
+	private com.project.catalog_service.service.ProcessedEventCleanup processedEventCleanup;
+
+	@Autowired
+	private org.springframework.scheduling.config.ScheduledTaskHolder scheduledTasks;
+
+	@Test
+	@DisplayName("멱등 원장 정리 — 보존 기간이 지난 행만 지우고, 예약 작업으로 등록돼 있다")
+	void processedEventCleanupDeletesOnlyOldRows() throws Exception {
+		try (var conn = java.sql.DriverManager.getConnection(
+						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+				var st = conn.createStatement()) {
+			st.execute("INSERT INTO product.processed_event (event_id, processed_at) VALUES "
+					+ "('purge-old-1', now() - interval '40 days'), "
+					+ "('purge-old-2', now() - interval '31 days'), "
+					+ "('purge-recent', now() - interval '29 days'), "
+					+ "('purge-today', now())");
+
+			processedEventCleanup.run();
+
+			try (var rs = st.executeQuery("SELECT event_id FROM product.processed_event "
+					+ "WHERE event_id LIKE 'purge-%' ORDER BY event_id")) {
+				var left = new java.util.ArrayList<String>();
+				while (rs.next()) {
+					left.add(rs.getString(1));
+				}
+				assertThat(left).containsExactly("purge-recent", "purge-today");
+			}
+			try (var rs = st.executeQuery("SELECT count(*) FROM pg_indexes WHERE schemaname = 'product' "
+					+ "AND indexname = 'idx_processed_event_processed_at'")) {
+				rs.next();
+				assertThat(rs.getInt(1)).as("V19 — 정리 조회가 표를 훑지 않게 하는 인덱스").isEqualTo(1);
+			}
+		}
+		assertThat(scheduledTasks.getScheduledTasks())
+				.as("@EnableScheduling 이 없으면 정리는 한 번도 돌지 않는다")
+				.anyMatch(t -> t.getTask().toString().contains("ProcessedEventCleanup.run"));
+	}
 }

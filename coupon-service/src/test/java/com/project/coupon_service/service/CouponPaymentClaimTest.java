@@ -147,4 +147,18 @@ class CouponPaymentClaimTest {
     private static PaymentResponse paid(long orderId) {
         return PaymentResponse.builder().paymentId(orderId * 10).orderId(orderId).customerId(7L).couponName("WELCOME").build();
     }
+
+    /** 🔴 결제하는 지금 사용 기간 밖이면 잡지 않는다 — 예전에는 주문 생성 때만 봐서 만료된 쿠폰 할인으로 결제됐다. */
+    @Test
+    @DisplayName("🔴 결제 시작 때 만료됐으면 EXPIRED — 잡지 않는다(아직 시작 전도)")
+    void expiredAtPaymentIsRefused() {
+        coupon.setEndDate(LocalDateTime.now().minusMinutes(1));
+        assertThat(claim(100)).isEqualTo(CouponService.ClaimOutcome.EXPIRED);
+        assertThat(coupon.getPaymentOrderId()).isNull();
+
+        coupon.setEndDate(LocalDateTime.now().plusDays(1));
+        coupon.setStartDate(LocalDateTime.now().plusHours(1));
+        assertThat(claim(100)).isEqualTo(CouponService.ClaimOutcome.EXPIRED);
+    }
 }
+

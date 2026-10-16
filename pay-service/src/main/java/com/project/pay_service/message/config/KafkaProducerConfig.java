@@ -44,6 +44,10 @@ public class KafkaProducerConfig {
     }
     @Value("${kafka.url}")
     private String kafkaServerUrl;
+
+    /** 발행 기다림의 상한(릴레이의 행 잠금 보유 시간) — 메타데이터를 기다리는 send() 자체도 이만큼만 막힌다(PY6, 기본 60초였다). */
+    @Value("${pay-service.outbox-publish-timeout-ms:5000}")
+    private long publishTimeoutMs = 5000;
     
     //Kafka ProduceFactory를 생성하는 Bean 메서드
 
@@ -64,6 +68,8 @@ public class KafkaProducerConfig {
                 // 트랜잭션 없음, 멱등만 — 아웃박스 릴레이는 ack 뒤에 COMPLETED 를 찍는다(docs/38 §1.17)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
+                // 🐛 기본 max.block.ms(60초) — 브로커 메타데이터를 기다리는 동안 send() 가 60초 막혀, "5초 = 잠금 보유 상한" 이 지켜지지 않았다.
+                .put(ProducerConfig.MAX_BLOCK_MS_CONFIG, publishTimeoutMs)
                 .putAll(securityProps())
                 .build();
     }

@@ -62,8 +62,22 @@ public class OrderOutboxScheduler implements OutboxScheduler {
 
         for (OrderOutboxEvent outbox : outboxList) {
             // 결제 요청을 받은 리스너의 추적 문맥 아래에서 보낸다 — 결제 응답이 같은 사가 추적에 이어진다(docs/51 §4e).
-            boolean settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay payment-response",
-                    () -> paymentResponseMessagePublisher.publish(outbox, this::updateOutboxStatus));
+            boolean settled;
+            try {
+                settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay payment-response",
+                        () -> paymentResponseMessagePublisher.publish(outbox, this::updateOutboxStatus));
+            } catch (RuntimeException e) {
+                if (com.project.common.kafka.DltRetryPolicy.isTransient(e)) {
+                    throw e;   // DB 가 흔들린다 — 배치째 롤백하고 다음 폴링에서 다시(행의 잘못이 아니다)
+                }
+                // 🔒 행 하나의 영구 오류(깨진 페이로드 등)는 그 행만 FAILED 로(order 와 같다) — 🐛 예전에는 예외가 배치 트랜잭션째 롤백시켜
+                //    같은 행을 매 폴링 맨 앞에서 다시 집었다. 그 뒤의 결제 응답이 전부 멈췄다(PY6).
+                // [JA] 一行の恒久エラーはその行だけ FAILED に — 以前はバッチごとロールバックし、後ろの決済応答がすべて止まった。
+                log.error("결제 응답 아웃박스 행을 보낼 수 없다 — FAILED 로 둔다(수동 확인). id={} ({})", outbox.getId(), e.toString());
+                io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC).increment();
+                updateOutboxStatus(outbox, OutboxStatus.FAILED);
+                continue;
+            }
             if (!settled) {
                 // 브로커가 흔들리는 중이다. 남은 배치를 계속 시도하면 타임아웃 × 배치 크기만큼
                 // 행 잠금과 커넥션을 쥐고 있게 된다. 나머지는 다음 폴링이 가져간다.
@@ -73,6 +87,9 @@ public class OrderOutboxScheduler implements OutboxScheduler {
             }
         }
     }
+
+    /** 보낼 수 없어 FAILED 로 둔 결제 응답 행 수 — Prometheus {@code pay_outbox_failed_total}, 경보 PayOutboxRowFailed. */
+    public static final String FAILED_METRIC = "pay.outbox.failed";
 
     private void updateOutboxStatus(OrderOutboxEvent outboxEvent, OutboxStatus outboxStatus) {
         outboxEvent.setOutboxStatus(outboxStatus);

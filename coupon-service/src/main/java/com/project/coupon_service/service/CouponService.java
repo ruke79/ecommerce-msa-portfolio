@@ -56,7 +56,8 @@ public class CouponService {
 
 
     
-    @Transactional
+    // cart · catalog 를 부른다 — 트랜잭션 밖에서(CP2: 예전에는 쓰기 트랜잭션 안에서 불러 그동안 DB 커넥션을 쥐었다).
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     /**
      * @param userId       게이트웨이가 검증한 사용자({@code User-Id} 헤더 = 토큰의 uid). 본문에는 신원 필드가 없다 —
      *                     예전에는 본문의 {@code userEmail} 을 믿어 남의 쿠폰이 적용됐다(컨트롤러 주석 참조).
@@ -86,12 +87,30 @@ public class CouponService {
      * 결제 화면에서 이탈하면 쓰지도 않은 쿠폰이 소모된다. 사용 처리는 원래 적용 시점에
      * 일어나고, 여기서는 금액만 답한다.
      */
-    @Transactional(readOnly = true)
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // cart · catalog 를 부른다(CP2)
     public CouponResponse quote(String couponName, Long userId) {
         if (userId == null) {
             return CouponResponse.builder().message("Failed to get coupons").build();
         }
         return computeQuote(couponName, userId).response();
+    }
+
+    /**
+     * 주문이 읽은 그 장바구니로 견적을 낸다 — order-service 가 주문을 만들 때(내부 호출).
+     *
+     * <p>🐛 예전에는 order 가 장바구니를 읽어 품목을 만들고, 여기서는 장바구니를 <b>다시</b> 읽어 할인 후 금액을 계산했다 — order 는 그
+     * 금액을 그대로 청구했다. 두 읽기 사이(수십 ms)에 다른 탭에서 비싼 줄을 빼면 $1010 어치 품목이 $9 결제로 만들어졌고, 결제 검증은
+     * 주문 총액과만 비교하므로 통과했다. 이제 계산의 근거가 주문의 품목과 같은 장바구니다. 실린 장바구니가 없으면(옛 order) 예전처럼 읽는다.
+     *
+     * <p>[JA] 注文が読んだそのカートで見積もる。以前はここでカートを読み直していて、二つの読み取りの間に行を外すと品目と決済額がずれた。
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 를 부를 수 있다(CP2)
+    public CouponResponse quote(String couponName, Long userId, CartDto orderCart) {
+        if (userId == null) {
+            return CouponResponse.builder().message("Failed to get coupons").build();
+        }
+        CartDto cart = orderCart == null || orderCart.getProducts() == null || orderCart.getProducts().isEmpty() ? null : orderCart;
+        return computeQuote(couponName, userId, cart).response();
     }
 
     /**
@@ -102,6 +121,11 @@ public class CouponService {
      *                     이메일을 받아 매번 user-service 에 id 를 다시 물었다(docs/48 §6-⑥).
      */
     private Quoted computeQuote(String couponName, Long userId) {
+        return computeQuote(couponName, userId, null);
+    }
+
+    /** @param givenCart 계산의 근거로 쓸 장바구니(주문이 읽은 것). null 이면 cart-service 에서 읽는다. */
+    private Quoted computeQuote(String couponName, Long userId, CartDto givenCart) {
 
         Coupon coupon = getCouponNotUsed(couponName, userId);
 
@@ -130,7 +154,7 @@ public class CouponService {
         // 🔒 할인의 기준 금액은 **서버가 읽은 장바구니**다. 요청 본문의 금액은 쓰지 않는다
         //    (docs/40 #10). 예전에는 제약 없는 쿠폰이 본문의 totalPrice 를 그대로 믿었고,
         //    그 값은 브라우저가 정했다.
-        CartDto cart = fetchCart(userId);
+        CartDto cart = givenCart != null ? givenCart : fetchCart(userId);
         if (cart == null) {
             // 장바구니를 못 읽으면 금액을 정할 수 없다. 본문 값으로 대신하지 않는다 —
             // 그러면 장바구니 서비스를 잠시 막는 것만으로 원하는 금액을 부를 수 있다.
@@ -335,7 +359,9 @@ public class CouponService {
         /** 다른 주문이 이미 썼다. */
         USED,
         /** 다른 주문이 지금 결제 중이다. */
-        IN_PAYMENT_ELSEWHERE
+        IN_PAYMENT_ELSEWHERE,
+        /** 사용 기간 밖이다 — 주문을 만들 때는 유효했어도 결제하는 지금 지났다(또는 아직 시작 전). */
+        EXPIRED
     }
 
     /** 결제 중 표시의 상한 — order 가 넘기는 시간이 이보다 길면 줄인다(입금 기한 49시간 + 여유). */
@@ -362,6 +388,13 @@ public class CouponService {
             return orderId.equals(coupon.getUsedOrderId()) ? ClaimOutcome.CLAIMED : ClaimOutcome.USED;
         }
         LocalDateTime now = LocalDateTime.now();
+        // 🔒 결제하는 지금 사용 기간 안인가 — 🐛 예전에는 기간을 견적(주문 생성) 때만 봐서, 만료 직전에 주문하고 며칠 뒤 결제창을 열거나
+        //    입금 안내(기한 49시간)를 받으면 만료된 쿠폰 할인으로 결제됐다. 결제 확정(useForOrder)은 막지 않는다 — 돈은 이미 나갔다.
+        // [JA] 決済する今、利用期間内か — 以前は見積もり(注文作成)時だけ見ていて、期限切れのクーポン割引で決済できた。
+        if (!coupon.isUsableAt(now)) {
+            log.info("쿠폰 결제 시작 거절 — 사용 기간 밖. orderId={} endDate={}", orderId, coupon.getEndDate());
+            return ClaimOutcome.EXPIRED;
+        }
         if (coupon.inPaymentByAnotherOrder(orderId, now)) {
             log.info("쿠폰 결제 시작 거절 — 다른 주문이 결제 중. orderId={} paying={}", orderId, coupon.getPaymentOrderId());
             return ClaimOutcome.IN_PAYMENT_ELSEWHERE;
@@ -475,6 +508,20 @@ public class CouponService {
         return existCoupon;
     }
 
+    private void publishIssuedAfterCommit(Coupon coupon) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            couponIssuedProducer.publish(coupon);
+            return;
+        }
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        couponIssuedProducer.publish(coupon);
+                    }
+                });
+    }
+
     @Transactional
     public Coupon create(CouponRequest request) {
 
@@ -499,6 +546,17 @@ public class CouponService {
             ownerId = response.getUserId();
         } else {
             ownerId = Long.parseLong(request.getUserId());
+        }
+
+        // 🔒 할인율 · 기간을 검사한다(CP8) — 예전에는 아무 값이나 받았다. 계산기가 0 ~ 100 으로 잘라 내지만 발급 알림에는 원래 값(예: 150%)이
+        //    그대로 실렸고, 시작일이 종료일보다 늦은 쿠폰은 아무도 쓸 수 없는 행으로 남았다.
+        // [JA] 割引率 · 期間を検査する。以前は何でも受け付け、通知には 150% のような値がそのまま載った。
+        if (request.getDiscount() < 1 || request.getDiscount() > 100) {
+            throw new IllegalArgumentException("할인율은 1 ~ 100 사이여야 합니다.");
+        }
+        if (request.getStartDate() != null && request.getEndDate() != null
+                && request.getStartDate().isAfter(request.getEndDate())) {
+            throw new IllegalArgumentException("쿠폰 시작일이 종료일보다 늦습니다.");
         }
 
         boolean existCoupon = existsCoupon(request.getName(), ownerId);
@@ -549,7 +607,8 @@ public class CouponService {
             // 🐛 지금까지 쿠폰이 발급돼도 아무도 알려 주지 않았다. NotificationType.COUPON_ISSUED
             //    는 메일 제목·SMS 문구·수신 설정까지 다 있는데 만드는 쪽만 없었다.
             //    발행 실패가 발급을 되돌리지는 않는다(CouponIssuedProducer 주석).
-            couponIssuedProducer.publish(newCoupon);
+            // 커밋된 뒤에 알린다 — 🐛 예전에는 커밋 전에 보내, 동시 수령으로 롤백된 쿠폰(DB 에 없는 쿠폰)의 발급 알림이 나갔다(CP5).
+            publishIssuedAfterCommit(newCoupon);
 
             return newCoupon;
         }
@@ -575,7 +634,8 @@ public class CouponService {
      *
      * @return 발급된 쿠폰. 이미 갖고 있으면 {@link ClaimResult#alreadyOwned()}
      */
-    @Transactional
+    // catalog · user-service 를 먼저(트랜잭션 밖), 발급만 짧은 트랜잭션으로(CP2).
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public ClaimResult claimEventCoupon(String slug, Long userId) {
 
         CatalogServiceClient.EventCouponOffer offer;
@@ -591,7 +651,14 @@ public class CouponService {
             return ClaimResult.unavailable("이 기획전에는 받을 수 있는 쿠폰이 없습니다.");
         }
 
-        AudienceSegment audience = AudienceSegment.from(offer.audience());
+        // 🔒 모르는 고객군은 '전체' 가 아니다(CP3) — AudienceSegment.from 은 모르는 값을 ALL 로 읽는다. 새 고객군을 아는 catalog 가
+        //    coupon 보다 먼저 올라가면(롤링 중) 그 기획전 쿠폰이 전원에게 발급됐다. 발급은 되돌리기 어렵다 — 여기서는 거절한다.
+        //    [JA] 知らない顧客層は「全員」ではない。新しい顧客層を知る catalog が先に上がると全員に発行されていた。
+        AudienceSegment audience = strictAudience(offer.audience());
+        if (audience == null) {
+            log.warn("기획전 쿠폰의 고객군을 모른다 — 발급하지 않는다. slug={} audience={}", slug, offer.audience());
+            return ClaimResult.notEligible("이 쿠폰의 대상이 아닙니다.");
+        }
         if (audience != AudienceSegment.ALL && !audience.matches(segmentsOf(userId))) {
             // 어떤 세그먼트에 속하는지는 알려주지 않는다 — 가입 시점을 되짚을 수 있다.
             return ClaimResult.notEligible("이 쿠폰의 대상이 아닙니다.");
@@ -604,12 +671,43 @@ public class CouponService {
                 offer.couponScope(),
                 offer.couponTargets() == null ? List.of() : offer.couponTargets());
 
-        Coupon issued = create(request);
+        Coupon issued;
+        try {
+            issued = inTransaction(() -> create(request));
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // 두 번 누름 · 두 탭 — 둘 다 "없음" 을 보고 늦은 쪽이 uk_coupon_name_user_id 에 걸렸다(CP5). 🐛 예전에는 500 이었다.
+            log.info("기획전 쿠폰 동시 수령 — 앞선 요청이 발급했다. slug={}", slug);
+            return ClaimResult.alreadyOwned();
+        }
         if (issued == null) {
             return ClaimResult.alreadyOwned();
         }
         log.info("기획전 쿠폰 발급: slug={}, couponId={}", slug, issued.getCouponId());
         return ClaimResult.issued(CouponDto.convertToDto(issued));
+    }
+
+    /** 기획전의 고객군 — 비었으면 ALL, 모르는 값이면 null(발급하지 않는다, CP3). */
+    static AudienceSegment strictAudience(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return AudienceSegment.ALL;
+        }
+        try {
+            return AudienceSegment.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** 발급 같은 짧은 쓰기 트랜잭션. 세터 — 생성자를 쓰는 테스트가 많다. 없으면(단위 테스트) 그대로 돈다. */
+    private org.springframework.transaction.support.TransactionTemplate transactions;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.transactions = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    }
+
+    private <T> T inTransaction(java.util.function.Supplier<T> work) {
+        return transactions == null ? work.get() : transactions.execute(status -> work.get());
     }
 
     /** 이 사용자의 고객군. 판정은 user-service 가 한다(그쪽만 가입일을 갖고 있다). */

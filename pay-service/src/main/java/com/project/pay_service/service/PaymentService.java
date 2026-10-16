@@ -36,7 +36,7 @@ public class PaymentService {
      * {@code OrderOutboxHelper} 의 트랜잭션으로 <b>따로</b> 커밋됐다. 둘 사이에서 실패하면(아웃박스 직렬화 · DB 순간 장애 · 파드 종료)
      * 결제는 기록됐는데 order-service 로 갈 응답은 없다. Kafka 재전달이 오면 "이미 있음" 분기가 아웃박스를 다시 써서
      * <b>우연히</b> 복구됐다 — 재전달이 오지 않으면(오프셋이 이미 커밋됐거나 DLT 로 갔다면) 주문은 결제 대기에 멈춘다.
-     * 이제 둘 다 커밋되거나 둘 다 되돌려진다. 되돌려지면 리스너가 예외를 던져 Kafka 가 다시 준다.
+     * 이제 둘 다 커밋되거나 둘 다 되돌려진다. 되돌려지면 리스너가 예외를 던져 Kafka 가 다시 준다(🐛 2026-10-15 전에는 팩토리의 레코드 어댑터가 그 예외를 삼켜 다시 주지 않았다 — B-88).
      */
     // [JA] 決済行と決済応答アウトボックス行を 1 つのトランザクションで書く。以前は別々にコミットされ、間で失敗すると
     //      決済は記録されたのに order-service への応答がなかった(再配信で偶然復旧していただけ)。
@@ -46,6 +46,11 @@ public class PaymentService {
         Optional<Payment> exist = paymentRepository.findByTrackingId(request.getTrackingId());
 
         if (!exist.isPresent()) {
+            if (request.getPaymentStatus() == PaymentStatus.CANCELED) {
+                // 결제 행이 없는데 환불이 왔다 — 결제 요청을 놓친 것이다(2026-10-15 전에는 처리 실패가 조용히 사라졌다, B-88). 응답은 그대로
+                // 내되 운영자가 보게 남긴다.
+                log.warn("결제 행이 없는 주문의 환불 요청 — 결제 요청을 놓쳤을 수 있다. orderId={}", request.getOrderId());
+            }
             Payment pay = Payment.builder()
                     .customerId(request.getCustomerId())
                     .orderId(request.getOrderId())
@@ -132,6 +137,23 @@ public class PaymentService {
      * <p>중복 판정은 <b>요청한 상태까지</b> 같아야 한다. 저장된 응답의 상태는 페이로드에서
      * 읽는다({@link OrderOutboxHelper#paymentStatusOf}).
      */
+    /**
+     * 같은 상태의 응답이 아직 발행 전(STARTED)인가 — 그러면 릴레이가 곧 보낸다. 새 응답 행을 쓰지 않는다.
+     *
+     * <p>🐛 예전에는 COMPLETED 응답만 보고 판정해, 첫 응답이 발행 대기 중일 때(발행 타임아웃 · 브로커 흔들림) 같은 요청이 다시 오면 응답
+     * 행이 하나 더 생겼다(PY4 — 받는 쪽들이 흡수하지만 같은 결제 응답이 두 번 나갔다).
+     * [JA] 同じ状態の応答がまだ発行前(STARTED)か — ならリレーがすぐ送る。新しい応答行を書かない。
+     */
+    public boolean hasPendingResponse(String aggregateId, PaymentStatus requested) {
+        for (OrderOutboxEvent event : orderOutboxHelper.getCompletedOrderOutboxEvents(aggregateId, OutboxStatus.STARTED)) {
+            if (orderOutboxHelper.paymentStatusOf(event) == requested) {
+                log.info("같은 결제 응답이 발행 대기 중이다 — 새로 쓰지 않는다. orderId={} status={}", aggregateId, requested);
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean publishIfOutboxEventProcessedForPayment(String aggregateId, PaymentStatus requested,
             OutboxStatus outboxStatus) {
 

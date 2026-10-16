@@ -86,6 +86,9 @@ spring:
         sslrootcert: ${LOCAL_KEY_STORE_PATH}
         sslpassword: ${LOCAL_KEY_PASSWORD}
   jpa:
+    # 🔒 요청 내내 DB 커넥션을 쥐지 않는다 — 견적 · 적용 · 기획전 받기는 cart · catalog · user-service 를 트랜잭션 밖에서 부른다(B-87, CP2).
+    #    [JA] リクエスト中ずっと DB 接続を持たない。
+    open-in-view: false
     show-sql: true
     hibernate:
       ddl-auto: ${DDL_AUTO:validate}

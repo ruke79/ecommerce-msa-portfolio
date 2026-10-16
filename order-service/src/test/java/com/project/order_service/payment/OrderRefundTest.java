@@ -176,6 +176,10 @@ class OrderRefundTest {
 
         assertThat(refunded.getOrderStatus()).isEqualTo(OrderStatus.REFUNDED);
         verify(gateway).refund(eq("cs_test_1"), eq(new BigDecimal("8097300")), eq("KRW"), any(), any());
+        // 🔴 PY5 — pay 에 알리는 금액은 상점 통화(결제 요청과 같다). 예전에는 KRW 청구액(8,097,300)을 실었다.
+        ArgumentCaptor<PaymentRequest> captor = ArgumentCaptor.forClass(PaymentRequest.class);
+        verify(outboxHelper).savePaymentOutbox(captor.capture(), eq(OutboxStatus.STARTED));
+        assertThat(captor.getValue().getAmounts()).isEqualByComparingTo(ORDER_TOTAL);
     }
 
     // ---------------------------------------------------------------- 거절 — 제공자를 부르기 전

@@ -27,10 +27,10 @@ public class PaymentResponseKafaListener {
     public void received(List<PaymentResponse> messages,
             // 🐛 배치 리스너에는 컨슈머 추적이 걸리지 않는다. 레코드마다 헤더(traceparent)에서 추적을 이어받아야
             //    이 안에서 쓰는 아웃박스 행·로그가 보낸 쪽의 추적에 이어진다(docs/51 §4f). 없으면 그냥 처리한다.
-            //    ⚠️ 배치 헤더 하나만 받으면 안 된다 — 이 팩토리는 레코드 어댑터라 레코드 헤더가 온다(recordHeaders).
+            //    ⚠️ 배치 헤더 하나만 받으면 안 된다 — 배치 변환 헤더의 i 번째를 읽는다(recordHeaders — 레코드 어댑터 모양도 받는다). 팩토리에 레코드 어댑터는 두지 않는다(예외를 삼킨다, B-88).
             // [JA] 🐛 バッチリスナーにはコンシューマのトレースが掛からない。レコードごとにヘッダ(traceparent)からトレースを
             //      引き継いで初めて、この中で書くアウトボックス行・ログが送信側のトレースにつながる(docs/51 §4f)。無ければそのまま処理する。
-            //      ⚠️ バッチヘッダを一つだけ受け取ってはならない — このファクトリはレコードアダプタなのでレコードヘッダが来る(recordHeaders)。
+            //      ⚠️ バッチヘッダを一つだけ受け取ってはならない — バッチ変換ヘッダの i 番目を読む(recordHeaders)。ファクトリにレコードアダプタは置かない(例外を飲み込む、B-88)。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> headers) {
 
         // 🔒 예전에는 Authorization 헤더가 없으면 배치를 거부했다. 그런데 pay 가 싣는 값은 스케줄러 스레드의

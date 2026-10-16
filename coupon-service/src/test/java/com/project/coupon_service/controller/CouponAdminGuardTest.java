@@ -56,4 +56,14 @@ class CouponAdminGuardTest {
                 .isEqualTo(HttpStatus.FORBIDDEN);
         verify(couponService, never()).update(any());
     }
+
+    @Test
+    @DisplayName("🔴 관리자의 수정은 501 — 예전에는 아무것도 하지 않고 200 을 돌려줬다(CP8)")
+    void updateIsNotImplemented() {
+        var response = controller.updateCoupon(new CouponRequest(), "ROLE_ADMIN");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_IMPLEMENTED);
+        verify(couponService, never()).update(any());
+    }
 }
+

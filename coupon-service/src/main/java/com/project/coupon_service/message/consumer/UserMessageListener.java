@@ -7,7 +7,6 @@ import org.springframework.stereotype.Service;
 import com.project.common.message.dto.request.UserCreatedRequest;
 import com.project.coupon_service.config.WelcomeCouponProperties;
 import com.project.coupon_service.dto.request.CouponRequest;
-import com.project.coupon_service.exception.CustomDomainException;
 import com.project.coupon_service.model.Coupon;
 import com.project.coupon_service.service.CouponService;
 
@@ -56,9 +55,11 @@ public class UserMessageListener {
         Coupon coupon = couponService.create(req);
 
         if (coupon == null) {
-            log.error("Coupon could not be created in coupon database with id: {}", createdUser.getUserId());
-            throw new CustomDomainException("Coupon could not be created in coupon database with id " +
-                    createdUser.getUserId());
+            // 이미 가입 쿠폰이 있다 — 같은 가입 이벤트의 재전달(커밋 전 리밸런스 · 재기동 · CDC 중복)이다. 정상이다.
+            // 🐛 예전에는 던져서 재시도 뒤 user-created.DLT 와 경보(KafkaDeadLetterPublished)로 끝났다(CP4).
+            // [JA] すでに加入クーポンがある — 同じ加入イベントの再配信で正常。以前は例外で DLT と警報になっていた。
+            log.info("가입 쿠폰이 이미 있다 — 재전달로 보고 건너뛴다. userId={}", createdUser.getUserId());
+            return;
         }
         log.debug("Coupon is created in coupon database with id: {}", coupon.getCouponId());
     }

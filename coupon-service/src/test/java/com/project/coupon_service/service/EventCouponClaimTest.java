@@ -323,4 +323,57 @@ class EventCouponClaimTest {
         assertThat(request.scopeOrAll()).isEqualTo(CouponScope.PRODUCT);
         assertThat(request.targetsOrEmpty()).containsExactly("42");
     }
+
+    @Nested
+    @DisplayName("리뷰 수정(2026-10-15)")
+    class ReviewFixes {
+
+        /** 🔴 CP3 — 모르는 고객군은 '전체' 가 아니다. 롤링 중 새 고객군 기획전의 쿠폰이 전원에게 발급되던 것. */
+        @Test
+        @DisplayName("🔴 모르는 고객군의 기획전 쿠폰은 발급하지 않는다 — 예전에는 ALL 로 읽어 전원에게 나갔다")
+        void unknownAudienceIsNotEveryone() {
+            offers("TIER_PLATINUM", "ALL", List.of());
+            issuingWorks();
+
+            CouponService.ClaimResult result = service.claimEventCoupon("autumn", USER_ID);
+
+            assertThat(result.ok()).isFalse();
+            assertThat(result.status()).isEqualTo("NOT_ELIGIBLE");
+            verify(couponRepository, never()).save(any(Coupon.class));
+        }
+
+        /** 🔴 CP5 — 두 번 누름 · 두 탭: 늦은 쪽이 유니크에 걸리면 "이미 받음"(200). 예전에는 500. */
+        @Test
+        @DisplayName("🔴 동시 수령으로 늦은 쪽이 유니크에 걸리면 '이미 받음' — 예전에는 500")
+        void concurrentClaimIsAlreadyOwned() {
+            offers("ALL", "ALL", List.of());
+            when(couponRepository.existsByNameAndUserId(anyString(), anyLong())).thenReturn(false);
+            when(couponRepository.save(any(Coupon.class)))
+                    .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uk_coupon_name_user_id"));
+
+            CouponService.ClaimResult result = service.claimEventCoupon("autumn", USER_ID);
+
+            assertThat(result.status()).isEqualTo("ALREADY_OWNED");
+            verify(couponIssuedProducer, never()).publish(any());
+        }
+
+        /** 🔴 CP5 — 발급 알림은 커밋 뒤에. 예전에는 커밋 전에 보내, 롤백된 쿠폰의 알림이 나갔다. */
+        @Test
+        @DisplayName("🔴 발급 알림은 커밋된 뒤에 나간다 — 롤백되면 나가지 않는다")
+        void issuedNoticeWaitsForCommit() {
+            offers("ALL", "ALL", List.of());
+            issuingWorks();
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                service.claimEventCoupon("autumn", USER_ID);
+                verify(couponIssuedProducer, never()).publish(any());
+
+                org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCommit();
+                verify(couponIssuedProducer).publish(any(Coupon.class));
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            }
+        }
+    }
 }
+

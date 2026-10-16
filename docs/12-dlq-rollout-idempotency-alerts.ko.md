@@ -30,6 +30,7 @@ record 모드 리스너는 `BatchListenerFailedException` 없이도 `DefaultErro
 - **생산자**(order `OrderSaga`): `eventId = "order-<orderId>"`. 랜덤 UUID가 아니라 **자연 멱등 키**를 택했다 — "재고 차감은 주문당 1회"가 업무 규칙이므로, Kafka 재전달뿐 아니라 **사가 자체가 재실행되어 새 메시지를 만들어도** 중복이 걸러진다.
 - **소비자**(catalog): `product.processed_event` 테이블(Flyway `V2__create_processed_event.sql`)에 처리 이력을 **재고 변경과 같은 트랜잭션**으로 기록. 재전달 시 `existsById` 로 스킵. 동시 중복(희귀)은 PK 충돌 → 전체 롤백 → 재전달 시 스킵으로 수렴.
 - **테스트**: `ProductUpdateMessageListenerTest` 3케이스(중복 스킵 / 최초 처리+기록 / eventId 없음 하위호환) 통과.
+- **보존**(2026-10-15): 원장이 막는 것은 같은 이벤트가 다시 오는 것이고, 다시 올 수 있는 기간은 원래 토픽 보존(7일)과 DLT 보존(14일, ops/02 — 원래 토픽으로 되돌리면 거기서 또 7일)이다. 세 원장 모두 common `ProcessedEventPurger` 로 매일 보존 기간(`<서비스>.processed-event.retention`, 기본 30일 · **22일 아래로는 내려가지 않는다**)이 지난 행을 5,000줄씩 문장마다 커밋하며 지운다(한 회차 상한 200번, 남으면 다음 날): coupon `coupon.processed_event` 04:40(V9), catalog `product.processed_event` 04:45(V19), cart `cart.processed_event` 04:50(V7) — 각 마이그레이션은 `processed_at` 인덱스만 더한다. DLT 보존을 늘리면 하한(`MIN_RETENTION`)도 함께 늘린다.
 
 Redis(SETNX)가 아닌 **DB 테이블**을 택한 이유: 처리 이력 기록이 비즈니스 변경과 **원자적**이어야 하기 때문(Redis면 "기록됐는데 DB 롤백" 창이 생긴다).
 

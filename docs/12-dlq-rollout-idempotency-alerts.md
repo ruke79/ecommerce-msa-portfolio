@@ -30,6 +30,7 @@ record モードのリスナーは、`BatchListenerFailedException` がなくて
 - **プロデューサー**（order `OrderSaga`）: `eventId = "order-<orderId>"`。ランダム UUID ではなく **自然な冪等キー** を選んだ — 「在庫減算は注文ごとに 1 回」が業務ルールなので、Kafka の再配信だけでなく **Saga 自体が再実行されて新しいメッセージを作っても** 重複が弾かれる。
 - **コンシューマ**（catalog）: `product.processed_event` テーブル（Flyway `V2__create_processed_event.sql`）に処理履歴を **在庫変更と同じトランザクションで** 記録。再配信時は `existsById` でスキップ。同時重複（まれ）は PK 衝突 → 全体ロールバック → 再配信時にスキップ、という形で収束する。
 - **テスト**: `ProductUpdateMessageListenerTest` の 3 ケース（重複スキップ／初回処理＋記録／eventId なしの後方互換）が通過。
+- **保存**（2026-10-15）: 台帳が防ぐのは同じイベントの再到着で、その期間は元トピックの保存（7 日）と DLT の保存（14 日、ops/02 — 元トピックへ戻すとさらに 7 日）である。三つの台帳とも common `ProcessedEventPurger` で毎日、保存期間（`<サービス>.processed-event.retention`、既定 30 日・**22 日未満にはならない**）を過ぎた行を 5,000 行ずつ文ごとにコミットして削除する（一回の上限 200 回、残りは翌日）: coupon `coupon.processed_event` 04:40（V9）、catalog `product.processed_event` 04:45（V19）、cart `cart.processed_event` 04:50（V7）— 各マイグレーションは `processed_at` インデックスを足すだけ。DLT の保存を延ばすなら下限（`MIN_RETENTION`）も一緒に延ばす。
 
 Redis（SETNX）ではなく **DB テーブル** を選んだ理由: 処理履歴の記録がビジネス上の変更と **アトミック** でなければならないため（Redis だと「記録されたのに DB はロールバック」という隙間が生じる）。
 

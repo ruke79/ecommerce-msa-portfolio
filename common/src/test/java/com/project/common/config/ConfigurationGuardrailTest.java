@@ -1580,7 +1580,43 @@ class ConfigurationGuardrailTest {
     }
 
     /**
-     * B-87: order · cart 는 open-in-view 를 끈다.
+     * B-88: Kafka 리스너 팩토리에 레코드 어댑터({@code setBatchToRecordAdapter})를 두지 않는다.
+     *
+     * <p>{@code DefaultBatchToRecordAdapter} 는 배치를 레코드 하나씩 리스너에 넘기면서 리스너의 예외를 <b>잡아</b> 생성자의 recoverer 에
+     * 넘기기만 한다 — 다시 던지지 않는다. 그래서 리스너가 던진 {@code BatchListenerFailedException} 이 에러 핸들러(재시도 · DLT · 경보
+     * KafkaDeadLetterPublished)에 닿지 않고 오프셋이 커밋된다. pay(결제 요청) · order(결제 응답)가 이 모양이라, DB 가 잠깐 흔들리면
+     * 손님은 돈을 냈는데 주문은 결제 전으로 남았고 아무 경보도 없었다(2026-10-15). 배치 그대로 받고 실패 위치를 던진다.
+     *
+     * <p>[JA] Kafka リスナーファクトリにレコードアダプターを置かない。DefaultBatchToRecordAdapter はリスナーの例外を捕まえて
+     * recoverer に渡すだけで再送出しない — 再試行 · DLT · 警報に届かずオフセットがコミットされる。
+     */
+    @Test
+    @DisplayName("B-88: setBatchToRecordAdapter 를 쓰지 않는다 — 리스너의 예외를 삼켜 재시도 · DLT 가 없어진다")
+    void noBatchToRecordAdapter() throws IOException {
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path src = module.resolve("src/main/java");
+                if (!Files.isDirectory(src)) {
+                    continue;
+                }
+                try (Stream<Path> files = Files.walk(src)) {
+                    for (Path java : files.filter(x -> x.toString().endsWith(".java")).toList()) {
+                        String code = stripComments(Files.readString(java, StandardCharsets.UTF_8));
+                        if (code.contains("setBatchToRecordAdapter(") || code.contains("new DefaultBatchToRecordAdapter")) {
+                            offenders.add(repoRoot().relativize(java).toString());
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(offenders)
+                .as("레코드 어댑터는 리스너의 예외를 삼킨다 — 배치 리스너는 BatchListenerFailedException(index) 를 던지고 에러 핸들러가 받게 한다(B-88)")
+                .isEmpty();
+    }
+
+    /**
+     * B-87: order · cart · coupon 은 open-in-view 를 끈다(coupon 은 2026-10-15 CP2).
      *
      * <p>스프링 기본값(켜짐)이면 요청 내내 EntityManager 가 살아 있고, 첫 조회에서 잡은 DB 커넥션을 요청이 끝날 때까지 놓지 않는다 —
      * 트랜잭션 밖으로 뺀 원격 호출(catalog · coupon · 결제 제공자)도 커넥션을 쥔 채 기다린다. 풀이 5개라 느린 catalog 하나가 다른 요청까지
@@ -1591,9 +1627,9 @@ class ConfigurationGuardrailTest {
      * 接続を持ったまま待つ。
      */
     @Test
-    @DisplayName("B-87: order · cart 의 spring.jpa.open-in-view 는 false")
+    @DisplayName("B-87: order · cart · coupon 의 spring.jpa.open-in-view 는 false")
     void openInViewIsOffWhereRemoteCallsLeaveTransactions() throws IOException {
-        for (String module : List.of("order-service", "cart-service")) {
+        for (String module : List.of("order-service", "cart-service", "coupon-service")) {
             Path yml = repoRoot().resolve(module + "/src/main/resources/application-local.yml");
             if (!Files.exists(yml)) {
                 continue;

@@ -111,6 +111,13 @@ groups:
           summary: "order 아웃박스 {{ $labels.type }} 행을 보내지 못해 FAILED 로 뒀습니다 (최근 30분 {{ $value }}건)"
           description: "order-service 로그의 \"아웃박스 행을 보낼 수 없다\" 에 행 id 가 있습니다. orders.payment_outbox_event 를 확인하세요."
 
+      - alert: PayOutboxRowFailed
+        expr: sum(increase(pay_outbox_failed_total[30m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "pay 결제 응답 아웃박스 행을 보내지 못해 FAILED 로 뒀습니다 (최근 30분 {{ $value }}건)"
+          description: "pay-service 로그의 \"결제 응답 아웃박스 행을 보낼 수 없다\" 에 행 id 가 있습니다. pay.order_outbox_event 를 확인하세요 — 그 주문은 결제 응답을 받지 못했습니다."
+
       - alert: StockShortageRefundNotAutomatic
         expr: sum by (outcome) (increase(order_stock_shortage_total{outcome=~"manual|unknown_order"}[30m])) > 0
         labels: { severity: critical }

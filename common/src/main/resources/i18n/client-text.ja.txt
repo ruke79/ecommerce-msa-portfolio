@@ -257,6 +257,13 @@ JSON 이 아니다: {}
 {} 는 문자열 · 불리언 · 숫자만 된다
 = -
 
+# common/idempotency/ProcessedEventPurger — 기동 시 설정 오류(운영자용)
+원장 표 이름은 <스키마>.processed_event 모양이어야 한다: {}
+= -
+
+batchSize · maxBatches 는 1 이상: {}, {}
+= -
+
 # common/constants/event/AudienceSegment.parseKnown — 기획전 저장(관리자 화면)
 알 수 없는 대상 고객군입니다: {}
 = 不明な対象顧客層です: {}

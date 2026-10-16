@@ -34,8 +34,9 @@ import lombok.experimental.SuperBuilder;
        uniqueConstraints = {
         @jakarta.persistence.UniqueConstraint(columnNames = {"name", "user_id"}, name = "uk_coupon_name_user_id")
        },
+// (name, user_id) 조회는 유니크 제약의 인덱스가 받는다. 사용자의 쓰지 않은 쿠폰 목록은 (user_id, status) — V8.
 indexes = {
-        @Index(columnList = "name, user_id", name = "idx_coupon") })
+        @Index(columnList = "user_id, status", name = "idx_coupon_user_status") })
 public class Coupon extends BaseEntity{
 
     @Id @Tsid    

@@ -33,6 +33,8 @@ public class OrderCouponClaim {
             "이 쿠폰으로 결제가 진행 중인 다른 주문이 있습니다. 그 결제를 마치거나 취소한 뒤 다시 시도해 주세요.";
     static final String USED_MESSAGE =
             "이 주문의 쿠폰은 이미 다른 주문에 쓰였습니다. 이 주문을 취소하고 쿠폰 없이 다시 주문해 주세요.";
+    static final String EXPIRED_MESSAGE =
+            "이 주문의 쿠폰은 사용 기간이 지났습니다. 이 주문을 취소하고 쿠폰 없이 다시 주문해 주세요.";
     static final String NOT_FOUND_MESSAGE =
             "이 주문의 쿠폰을 찾을 수 없습니다. 이 주문을 취소하고 다시 주문해 주세요.";
     static final String UNREACHABLE_MESSAGE =
@@ -71,6 +73,9 @@ public class OrderCouponClaim {
         }
         if ("USED".equals(result)) {
             throw new OrderDomainException(USED_MESSAGE);
+        }
+        if ("EXPIRED".equals(result)) {
+            throw new OrderDomainException(EXPIRED_MESSAGE);
         }
         if ("NOT_FOUND".equals(result)) {
             throw new OrderDomainException(NOT_FOUND_MESSAGE);

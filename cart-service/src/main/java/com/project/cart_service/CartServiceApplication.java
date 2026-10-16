@@ -7,9 +7,13 @@ import org.springframework.boot.context.TypeExcludeFilter;
 import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 
+// @EnableScheduling 은 멱등 원장 정리(ProcessedEventCleanup) 때문에 — common 스캔에 기대지 않고 여기서 켠다.
+// [JA] 冪等台帳の掃除のため — common のスキャンに頼らずここで有効にする。
 @EnableFeignClients
+@EnableScheduling
 @SpringBootApplication
 // TypeExcludeFilter 를 명시적으로 되살린다 — 없으면 @WebMvcTest 등 슬라이스 테스트가
 // 전체 컴포넌트를 로딩하게 된다(docs/14 B-17).

@@ -127,9 +127,10 @@ class FeignContractTest {
     @Test
     @DisplayName("쿠폰 견적은 userId 로 묻는다 — 이메일은 싣지 않는다")
     void couponQuoteSendsTheUserId() throws Exception {
-        Method quote = CouponServiceClient.class.getMethod("quote", Long.class, String.class);
+        Method quote = CouponServiceClient.class.getMethod("quote", Long.class, String.class, com.project.common.dto.CartDto.class);
 
         assertThat(Arrays.stream(quote.getParameters())
+                .filter(p -> p.getAnnotation(RequestParam.class) != null)
                 .map(p -> p.getAnnotation(RequestParam.class).value()))
                 .containsExactly("userId", "couponName");
     }

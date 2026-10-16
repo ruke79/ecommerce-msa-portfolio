@@ -139,4 +139,53 @@ class PaymentResponseListenerAdapterTraceTest {
             assertThat(traceSeen.get()).isEqualTo(TRACE_ID);
         }
     }
+
+    /**
+     * 🔴 처리 실패는 삼키지 않는다 — 실패한 레코드의 위치를 실은 BatchListenerFailedException 이 에러 핸들러(재시도 · DLT · 경보)까지 간다.
+     *
+     * <p>🐛 예전 팩토리는 레코드 어댑터(DefaultBatchToRecordAdapter)를 둬서, 리스너의 예외를 잡아 필드에 담기만 했다 — 재시도도 DLT 도
+     * 없이 오프셋이 커밋됐다(가드 B-88).
+     */
+    @Test
+    @DisplayName("🔴 처리 실패는 실패 위치(두 번째)와 함께 에러 핸들러로 간다 — 예전에는 레코드 어댑터가 삼켰다")
+    @SuppressWarnings("unchecked")
+    void failureReachesTheErrorHandler() {
+        try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext()) {
+            ctx.getEnvironment().getPropertySources().addFirst(
+                    new MapPropertySource("test", Map.of("kafka.url", "localhost:1")));
+            ctx.register(Wiring.class);
+            ctx.refresh();
+
+            PaymentResponseMessageListener messages = ctx.getBean(PaymentResponseMessageListener.class);
+            java.util.List<Long> handled = new java.util.ArrayList<>();
+            doAnswer(i -> {
+                PaymentResponse m = i.getArgument(0);
+                if (m.getOrderId() == 2L) {
+                    throw new org.springframework.dao.CannotAcquireLockException("db down");
+                }
+                handled.add(m.getOrderId());
+                return null;
+            }).when(messages).paymentCompleted(any());
+
+            BatchMessageListener<String, PaymentResponse> adapter = (BatchMessageListener<String, PaymentResponse>)
+                    ctx.getBean(KafkaListenerEndpointRegistry.class).getListenerContainer("payment-response")
+                            .getContainerProperties().getMessageListener();
+            List<ConsumerRecord<String, PaymentResponse>> batch = List.of(
+                    new ConsumerRecord<>("payment", 0, 0L, "1", PaymentResponse.builder().orderId(1L).paymentStatus(PaymentStatus.COMPLETED).build()),
+                    new ConsumerRecord<>("payment", 0, 1L, "2", PaymentResponse.builder().orderId(2L).paymentStatus(PaymentStatus.COMPLETED).build()));
+
+            Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(() -> adapter.onMessage(batch, null, null));
+            // 어댑터는 ListenerExecutionFailedException 으로 감싼다 — 에러 핸들러는 원인 사슬에서 BatchListenerFailedException 을 찾는다.
+            org.springframework.kafka.listener.BatchListenerFailedException failed = null;
+            for (Throwable t = thrown; t != null && failed == null; t = t.getCause()) {
+                if (t instanceof org.springframework.kafka.listener.BatchListenerFailedException b) {
+                    failed = b;
+                }
+            }
+            assertThat(failed).as("예외가 에러 핸들러로 가야 한다 — 삼키면 재시도 · DLT 가 없다").isNotNull();
+            assertThat(failed.getIndex()).as("실패한 레코드의 위치 — 앞의 것은 커밋, 이것부터 재시도").isEqualTo(1);
+            assertThat(handled).containsExactly(1L);
+        }
+    }
 }
+

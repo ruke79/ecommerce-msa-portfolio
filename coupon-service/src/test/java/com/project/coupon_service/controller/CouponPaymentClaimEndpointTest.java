@@ -46,4 +46,15 @@ class CouponPaymentClaimEndpointTest {
         assertThat(response.getBody()).isEqualTo(Map.of("result", "IN_PAYMENT_ELSEWHERE"));
         verify(service).claimForPayment(eq(7L), eq("WELCOME"), eq(100L), eq(Duration.ofSeconds(1800)));
     }
+
+    @Test
+    @DisplayName("🔴 CP1: 견적은 주문이 실어 보낸 장바구니를 그대로 서비스에 넘긴다")
+    void quotePassesTheOrdersCart() {
+        com.project.common.dto.CartDto cart = com.project.common.dto.CartDto.builder().cartTotal(new java.math.BigDecimal("100")).build();
+
+        controller.quote(7L, "WELCOME", cart, null, null, null);
+
+        verify(service).quote("WELCOME", 7L, cart);
+    }
 }
+

@@ -2,7 +2,10 @@ package com.project.order_service.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -74,13 +77,13 @@ class OrderPricingTest {
     void noCouponNoCall() {
         service.priceOrder(cart("100"), "   ", 7L);
 
-        verify(couponServiceClient, never()).quote(anyLong(), anyString());
+        verify(couponServiceClient, never()).quote(anyLong(), anyString(), any());
     }
 
     @Test
     @DisplayName("할인액은 쿠폰 서비스가 정한다")
     void discountComesFromTheCouponService() {
-        when(couponServiceClient.quote(7L, "WELCOME10"))
+        when(couponServiceClient.quote(eq(7L), eq("WELCOME10"), any()))
                 .thenReturn(new CouponServiceClient.Quote(
                         new BigDecimal("90"), new BigDecimal("10"), ""));
 
@@ -114,7 +117,7 @@ class OrderPricingTest {
     @Test
     @DisplayName("쿠폰 서비스가 죽으면 주문을 거절한다 — 조용히 정가로 받지 않는다")
     void anUnreachableCouponServiceRejectsTheOrder() {
-        when(couponServiceClient.quote(anyLong(), anyString()))
+        when(couponServiceClient.quote(anyLong(), anyString(), any()))
                 .thenThrow(new RuntimeException("connection refused"));
 
         assertThatThrownBy(() -> service.priceOrder(cart("100"), "WELCOME10", 7L))
@@ -124,7 +127,7 @@ class OrderPricingTest {
     @Test
     @DisplayName("적용되지 않는 쿠폰이면 그 사유를 그대로 전한다")
     void aRejectedCouponSurfacesItsReason() {
-        when(couponServiceClient.quote(anyLong(), anyString()))
+        when(couponServiceClient.quote(anyLong(), anyString(), any()))
                 .thenReturn(new CouponServiceClient.Quote(null, null, "사용 기간이 지난 쿠폰입니다."));
 
         assertThatThrownBy(() -> service.priceOrder(cart("100"), "OLD", 7L))
@@ -135,7 +138,7 @@ class OrderPricingTest {
     @Test
     @DisplayName("응답이 비어 있어도 주문을 거절한다")
     void aNullQuoteRejectsTheOrder() {
-        when(couponServiceClient.quote(anyLong(), anyString())).thenReturn(null);
+        when(couponServiceClient.quote(anyLong(), anyString(), any())).thenReturn(null);
 
         assertThatThrownBy(() -> service.priceOrder(cart("100"), "WELCOME10", 7L))
                 .isInstanceOf(OrderDomainException.class);
@@ -145,7 +148,7 @@ class OrderPricingTest {
     @Test
     @DisplayName("총액은 음수가 되지 않는다")
     void theTotalNeverGoesNegative() {
-        when(couponServiceClient.quote(anyLong(), anyString()))
+        when(couponServiceClient.quote(anyLong(), anyString(), any()))
                 .thenReturn(new CouponServiceClient.Quote(
                         new BigDecimal("-30"), new BigDecimal("130"), ""));
 
@@ -177,7 +180,7 @@ class OrderPricingTest {
     @Test
     @DisplayName("셋째 자리는 반올림한다 — 컬럼이 numeric(19,2) 다")
     void thirdDecimalIsRounded() {
-        when(couponServiceClient.quote(anyLong(), anyString()))
+        when(couponServiceClient.quote(anyLong(), anyString(), any()))
                 .thenReturn(new CouponServiceClient.Quote(
                         new BigDecimal("53.982"), new BigDecimal("5.998"), ""));
 
@@ -235,7 +238,7 @@ class OrderPricingTest {
     @Test
     @DisplayName("쿠폰을 적용해도 배송비는 그대로다")
     void shippingSurvivesTheDiscount() {
-        when(couponServiceClient.quote(anyLong(), anyString()))
+        when(couponServiceClient.quote(anyLong(), anyString(), any()))
                 .thenReturn(new CouponServiceClient.Quote(
                         new BigDecimal("12000"), new BigDecimal("1000"), ""));
 
@@ -261,4 +264,21 @@ class OrderPricingTest {
 
         assertThat(service.priceOrder(cart, null, 7L).shippingPrice()).isEqualByComparingTo("6000");
     }
+
+    /**
+     * 🔴 CP1 — 견적에는 품목을 만든 그 장바구니를 싣는다. coupon 이 장바구니를 다시 읽으면, 그 사이 다른 탭에서 바뀐 장바구니의 금액이
+     * 이 주문에 청구됐다(품목 $1010 · 결제 $9).
+     */
+    @Test
+    @DisplayName("🔴 견적에는 주문이 읽은 그 장바구니를 싣는다")
+    void quoteCarriesTheOrdersCart() {
+        CartDto ordered = cart("100");
+        when(couponServiceClient.quote(eq(7L), eq("WELCOME10"), any()))
+                .thenReturn(new CouponServiceClient.Quote(new BigDecimal("90"), new BigDecimal("10"), ""));
+
+        service.priceOrder(ordered, "WELCOME10", 7L);
+
+        verify(couponServiceClient).quote(eq(7L), eq("WELCOME10"), same(ordered));
+    }
 }
+

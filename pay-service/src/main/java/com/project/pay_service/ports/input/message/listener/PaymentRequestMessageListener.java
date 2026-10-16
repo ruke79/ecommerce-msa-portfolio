@@ -34,6 +34,9 @@ public class PaymentRequestMessageListener {
                     paymentRequest.getOrderId());
             return;
         }
+        if (paymentService.hasPendingResponse(Long.toString(paymentRequest.getOrderId()), paymentRequest.getPaymentStatus())) {
+            return;
+        }
         log.info("Received payment complete event for order id: {}", paymentRequest.getOrderId());
         
         paymentService.persistPayment(paymentRequest);
@@ -46,6 +49,9 @@ public class PaymentRequestMessageListener {
                 paymentRequest.getPaymentStatus(), OutboxStatus.COMPLETED)) {
             log.info("An outbox message with aggregate id: {} is already saved to database!",
                     paymentRequest.getOrderId());
+            return;
+        }
+        if (paymentService.hasPendingResponse(Long.toString(paymentRequest.getOrderId()), paymentRequest.getPaymentStatus())) {
             return;
         }
 

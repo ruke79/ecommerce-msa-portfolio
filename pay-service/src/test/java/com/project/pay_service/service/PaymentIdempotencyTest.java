@@ -81,4 +81,32 @@ class PaymentIdempotencyTest {
         assertThat(service.publishIfOutboxEventProcessedForPayment("2", PaymentStatus.COMPLETED,
                 OutboxStatus.COMPLETED)).isFalse();
     }
+
+    /** 🔴 PY4 — 같은 상태의 응답이 아직 발행 전(STARTED)이면 새 응답 행을 쓰지 않는다. 예전에는 하나 더 썼다. */
+    @Test
+    @DisplayName("🔴 같은 상태의 응답이 발행 대기(STARTED)면 처리 중으로 본다 — 다른 상태(환불)는 아니다")
+    void pendingResponseOfTheSameStatus() {
+        OrderOutboxEvent pending = new OrderOutboxEvent("3", "Payment", "payment-response",
+                "{\"orderId\":3,\"paymentStatus\":\"COMPLETED\"}", OutboxStatus.STARTED);
+        when(orderOutboxHelper.getCompletedOrderOutboxEvents("3", OutboxStatus.STARTED)).thenReturn(List.of(pending));
+        when(orderOutboxHelper.paymentStatusOf(pending)).thenReturn(PaymentStatus.COMPLETED);
+
+        assertThat(service.hasPendingResponse("3", PaymentStatus.COMPLETED)).isTrue();
+        assertThat(service.hasPendingResponse("3", PaymentStatus.CANCELED)).isFalse();
+        verify(publisher, never()).publish(any(), any());
+    }
+
+    @Test
+    @DisplayName("🔴 리스너 — 발행 대기 응답이 있으면 결제를 다시 쓰지 않는다")
+    void listenerSkipsWhenPending() {
+        PaymentService payments = org.mockito.Mockito.mock(PaymentService.class);
+        when(payments.hasPendingResponse("4", PaymentStatus.COMPLETED)).thenReturn(true);
+        var listener = new com.project.pay_service.ports.input.message.listener.PaymentRequestMessageListenerAccess(payments);
+
+        listener.complete(com.project.common.message.dto.request.PaymentRequest.builder().orderId(4L)
+                .paymentStatus(PaymentStatus.COMPLETED).build());
+
+        verify(payments, never()).persistPayment(any());
+    }
 }
+

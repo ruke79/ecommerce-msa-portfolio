@@ -3,7 +3,6 @@ package com.project.pay_service.ports.input.message.listener;
 import java.util.List;
 
 import org.springframework.dao.DataAccessException;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
@@ -28,12 +27,12 @@ public class PaymentRequestKafaListener {
     public void receive(List<PaymentRequest> messages,
             // 🐛 배치 리스너에는 컨슈머 추적이 걸리지 않는다. 레코드마다 헤더(traceparent)에서 추적을 이어받아야
             //    이 안에서 쓰는 아웃박스 행·로그가 보낸 쪽의 추적에 이어진다(docs/51 §4f). 없으면 그냥 처리한다.
-            //    ⚠️ 배치 헤더 하나만 받으면 안 된다 — 이 팩토리는 레코드 어댑터라 레코드 헤더가 온다(recordHeaders).
+            //    ⚠️ 배치 헤더 하나만 받으면 안 된다 — 배치 변환 헤더의 i 번째를 읽는다(recordHeaders — 레코드 어댑터 모양도 받는다). 팩토리에 레코드 어댑터는 두지 않는다(예외를 삼킨다, B-88).
             // [JA] 🐛 バッチリスナーにはコンシューマのトレースが掛からない。レコードごとにヘッダー(traceparent)から
             //      トレースを引き継いでこそ、この中で書くアウトボックス行・ログが送信側のトレースにつながる(docs/51 §4f)。
             //      ヘッダーが無ければそのまま処理する。
-            //      ⚠️ バッチヘッダーを一つだけ受け取ってはならない — このファクトリはレコードアダプターなので
-            //      レコードヘッダーが届く(recordHeaders)。
+            //      ⚠️ バッチヘッダーを一つだけ受け取ってはならない — バッチ変換ヘッダーの i 番目を読む
+            //      (recordHeaders)。ファクトリにレコードアダプターは置かない(例外を飲み込む、B-88)。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> headers) {
 
         // 🔒 예전에는 "Authorization 헤더 또는 페이로드의 토큰이 있어야 한다" 를 검사했다. 그런데 그 토큰을
@@ -69,10 +68,23 @@ public class PaymentRequestKafaListener {
                         } else if(PaymentStatus.CANCELED == paymentRequest.getPaymentStatus()) {
                             log.info("Cancelling payment for order id: {}", paymentRequest.getOrderId());
                             paymentRequestMessageListener.cancelPayment(paymentRequest);
+                        } else {
+                            // 🐛 예전에는 로그 없이 버렸다(PY7) — 상태가 없거나(역직렬화 실패 · 옛 프로듀서) 모르는 값이면 남긴다.
+                            log.warn("모르는 결제 요청 상태 — 처리하지 않는다. orderId={} status={}",
+                                    paymentRequest == null ? null : paymentRequest.getOrderId(),
+                                    paymentRequest == null ? null : paymentRequest.getPaymentStatus());
                         }
                         return null;
                     });
-                } catch (DuplicateKeyException e) {
+                } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                    if (!isDuplicatePayment(e)) {
+                        throw new org.springframework.kafka.listener.BatchListenerFailedException(
+                                "order(payment-request) 처리 실패", e, i);
+                    }
+                    // 🐛 예전에는 DuplicateKeyException 만 잡았다 — 기본 설정의 Hibernate 는 유니크 위반(23505)을
+                    //    DataIntegrityViolationException 으로 내고, 삽입은 커밋 때 나가므로 이 catch 는 한 번도 타지 않았다(PY3).
+                    //    지금은 제약 이름(UniqueOrderIdAndTrackingId)을 보고 그것만 "이미 처리됨" 으로 삼킨다 — 앞선 쪽이 결제 행과
+                    //    응답을 함께 커밋했다. 다른 무결성 위반은 실패로 보낸다.
                     // 이미 처리된 결제다. pay.payment 의 UNIQUE(order_id, tracking_id) 가 막아 준
                     // 것이므로 중복 소비를 여기서 흡수한다 — Kafka 는 at-least-once 이고, 아웃박스
                     // 재발행도 있으므로 같은 결제 요청은 실제로 두 번 온다.
@@ -114,5 +126,16 @@ public class PaymentRequestKafaListener {
             }
         }
 
+    }
+
+    /** 결제 행의 유니크(order_id, tracking_id) 위반인가 — 같은 결제 요청을 동시에 처리한 늦은 쪽. */
+    static boolean isDuplicatePayment(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && m.toLowerCase().contains("uniqueorderidandtrackingid")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

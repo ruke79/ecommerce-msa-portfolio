@@ -48,13 +48,15 @@ class OrderCouponClaimTest {
     }
 
     @Test
-    @DisplayName("🔴 다른 주문이 결제 중 · 이미 씀 · 없음이면 결제를 시작하지 않는다 — 이유는 손님 문구로")
+    @DisplayName("🔴 다른 주문이 결제 중 · 이미 씀 · 기간 지남 · 없음이면 결제를 시작하지 않는다 — 이유는 손님 문구로")
     void refusals() {
         answers("IN_PAYMENT_ELSEWHERE");
         assertThatThrownBy(() -> claim.claim(order, Duration.ofMinutes(30)))
                 .isInstanceOf(OrderDomainException.class).hasMessage(OrderCouponClaim.IN_PAYMENT_MESSAGE);
         answers("USED");
         assertThatThrownBy(() -> claim.claim(order, Duration.ofMinutes(30))).hasMessage(OrderCouponClaim.USED_MESSAGE);
+        answers("EXPIRED");
+        assertThatThrownBy(() -> claim.claim(order, Duration.ofMinutes(30))).hasMessage(OrderCouponClaim.EXPIRED_MESSAGE);
         answers("NOT_FOUND");
         assertThatThrownBy(() -> claim.claim(order, Duration.ofMinutes(30))).hasMessage(OrderCouponClaim.NOT_FOUND_MESSAGE);
         answers("SOMETHING_NEW");

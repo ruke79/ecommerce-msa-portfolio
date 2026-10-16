@@ -219,4 +219,39 @@ class CouponQuoteTest {
         verify(couponRepository, never()).findByNameAndUserIdAndCouponStatus(any(), anyLong(), any());
         verify(userServiceClient, never()).findUserByEmail(anyString());
     }
+
+    /**
+     * 🔴 CP1 — 주문이 실어 보낸 장바구니로 계산한다. cart-service 를 다시 읽지 않는다.
+     *
+     * <p>🐛 예전에는 다시 읽었다: 주문이 품목을 만든 뒤(10만원) 다른 탭에서 비싼 줄을 빼면 여기서는 1만원 장바구니로 계산해 9천원이
+     * 청구됐다 — 품목은 10만원 어치, 결제는 9천원. 결제 검증은 주문 총액과만 비교하므로 통과했다.
+     */
+    @Test
+    @DisplayName("🔴 주문이 실어 보낸 장바구니로 계산한다 — 그 사이 바뀐 장바구니를 다시 읽지 않는다")
+    void quoteUsesTheOrdersCart() {
+        cartWorth("10000");   // 다른 탭에서 줄을 뺀 뒤의 장바구니
+        CartDto ordered = CartDto.builder()
+                .cartTotal(new BigDecimal("100000"))
+                .products(List.of(CartProductDto.builder().id("1").productId("10").name("t").qty(1)
+                        .price(new BigDecimal("100000")).build()))
+                .build();
+
+        CouponResponse quoted = service.quote("WELCOME10", 7L, ordered);
+
+        assertThat(quoted.getTotalAfterDiscount()).isEqualByComparingTo("90000");
+        assertThat(quoted.getDiscountAmount()).isEqualByComparingTo("10000");
+        verify(cartServiceClient, never()).getCart(anyLong());
+    }
+
+    @Test
+    @DisplayName("장바구니가 실리지 않았으면(옛 order) 예전처럼 cart-service 에서 읽는다")
+    void quoteWithoutCartFetches() {
+        cartWorth("100000");
+
+        assertThat(service.quote("WELCOME10", 7L, null).getTotalAfterDiscount()).isEqualByComparingTo("90000");
+        assertThat(service.quote("WELCOME10", 7L, CartDto.builder().products(List.of()).build()).getTotalAfterDiscount())
+                .isEqualByComparingTo("90000");
+        verify(cartServiceClient, org.mockito.Mockito.times(2)).getCart(7L);
+    }
 }
+

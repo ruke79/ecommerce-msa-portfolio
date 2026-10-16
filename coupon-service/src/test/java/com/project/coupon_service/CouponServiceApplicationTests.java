@@ -101,4 +101,43 @@ class CouponServiceApplicationTests {
 			assertThat(rs.getInt(1)).isEqualTo(1);
 		}
 	}
+
+	@Autowired
+	private com.project.coupon_service.service.ProcessedEventCleanup processedEventCleanup;
+
+	@Autowired
+	private org.springframework.scheduling.config.ScheduledTaskHolder scheduledTasks;
+
+	@Test
+	@DisplayName("멱등 원장 정리 — 보존 기간이 지난 행만 지우고, 예약 작업으로 등록돼 있다")
+	void processedEventCleanupDeletesOnlyOldRows() throws Exception {
+		try (var conn = java.sql.DriverManager.getConnection(
+						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+				var st = conn.createStatement()) {
+			st.execute("INSERT INTO coupon.processed_event (event_id, processed_at) VALUES "
+					+ "('payment-old-1', now() - interval '40 days'), "
+					+ "('payment-old-2', now() - interval '31 days'), "
+					+ "('payment-recent', now() - interval '29 days'), "
+					+ "('payment-today', now())");
+
+			processedEventCleanup.run();
+
+			try (var rs = st.executeQuery("SELECT event_id FROM coupon.processed_event "
+					+ "WHERE event_id LIKE 'payment-%' ORDER BY event_id")) {
+				var left = new java.util.ArrayList<String>();
+				while (rs.next()) {
+					left.add(rs.getString(1));
+				}
+				assertThat(left).containsExactly("payment-recent", "payment-today");
+			}
+			try (var rs = st.executeQuery("SELECT count(*) FROM pg_indexes WHERE schemaname = 'coupon' "
+					+ "AND indexname = 'idx_processed_event_processed_at'")) {
+				rs.next();
+				assertThat(rs.getInt(1)).as("V9 — 정리 조회가 표를 훑지 않게 하는 인덱스").isEqualTo(1);
+			}
+		}
+		assertThat(scheduledTasks.getScheduledTasks())
+				.as("@EnableScheduling 이 없으면 정리는 한 번도 돌지 않는다")
+				.anyMatch(t -> t.getTask().toString().contains("ProcessedEventCleanup.run"));
+	}
 }

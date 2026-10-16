@@ -62,3 +62,13 @@ coupon-rollback 처리 실패
 
 payment(coupon) 처리 실패
 = -
+
+# ── 관리자(CouponController · CouponService.create, CP8) ──────────────────────
+쿠폰 수정은 지원하지 않습니다. 쿠폰을 지우고 다시 발급해 주세요.
+= -
+
+할인율은 1 ~ 100 사이여야 합니다.
+= -
+
+쿠폰 시작일이 종료일보다 늦습니다.
+= -

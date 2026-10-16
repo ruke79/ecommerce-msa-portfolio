@@ -947,7 +947,9 @@ public class OrderDataService {
                     .orderId(order.getOrderId())
                     .customerId(order.getCustomerId())
                     .trackingId(trackingId)
-                    .amounts(order.getRefundedChargedAmount())
+                    // 하류(pay)는 상점 통화로 산다 — 결제 요청과 같다. 🐛 예전에는 청구 통화(KRW · JPY)의 환불액을 실어, pay 에 결제 행이
+                    // 없을 때 만드는 CANCELED 행에 USD 와 KRW 가 섞였다(PY5).
+                    .amounts(order.getRefundedAmount())
                     .paymentProvider(order.getPaymentProvider())
                     .providerPaymentId(order.getProviderPaymentId())
                     .couponName(order.getCouponApplied())
