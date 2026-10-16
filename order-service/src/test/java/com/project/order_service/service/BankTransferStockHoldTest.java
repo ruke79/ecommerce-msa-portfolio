@@ -82,6 +82,17 @@ class BankTransferStockHoldTest {
     }
 
     @Test
+    @DisplayName("🔴 catalog 가 예약 요청을 거절하면 입금 안내를 내지 않는다")
+    void rejectedStopsTransfer() {
+        when(data.getOrderByTrackingId("t-1")).thenReturn(order(OrderStatus.NOT_PROCESSED));
+        when(stockHold.hold(any(), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.REJECTED, null, List.of()));
+
+        assertThatThrownBy(() -> service.start("t-1", 7L, "홍길동"))
+                .isInstanceOf(PaymentVerificationException.class).hasMessage(OrderService.UNORDERABLE_MESSAGE);
+        verify(cache, never()).startBankTransfer(anyString(), anyLong(), anyString(), anyInt());
+    }
+
+    @Test
     @DisplayName("🔒 남의 주문이면 예약을 건드리지 않는다 — 소유 확인은 뒤의 데이터 계층이 한다")
     void othersOrderNotTouched() {
         when(data.getOrderByTrackingId("t-1")).thenReturn(order(OrderStatus.NOT_PROCESSED));
@@ -104,4 +115,39 @@ class BankTransferStockHoldTest {
         service.expire();
         verify(stockHold, org.mockito.Mockito.times(2)).release(77L);
     }
+
+    @Test
+    @DisplayName("🔴 입금 대기 주문이 상한(3)이면 새 입금 안내를 내지 않는다 — 돈을 내지 않고 재고를 49시간씩 묶지 못하게")
+    void tooManyPendingBlocksStart() {
+        when(data.getOrderByTrackingId("t-1")).thenReturn(order(OrderStatus.NOT_PROCESSED));
+        when(data.countAwaitingDeposit(7L)).thenReturn(3L);
+
+        assertThatThrownBy(() -> service.start("t-1", 7L, "홍길동"))
+                .isInstanceOf(PaymentVerificationException.class).hasMessage(BankTransferService.TOO_MANY_PENDING_MESSAGE);
+        verify(stockHold, never()).hold(any(), any());
+        verify(cache, never()).startBankTransfer(anyString(), anyLong(), anyString(), anyInt());
+
+        when(data.countAwaitingDeposit(7L)).thenReturn(2L);
+        when(stockHold.hold(any(), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.HELD, null, List.of()));
+        when(cache.startBankTransfer(anyString(), anyLong(), anyString(), anyInt())).thenReturn(order(OrderStatus.UNPAID));
+        service.start("t-1", 7L, "홍길동");
+        verify(cache).startBankTransfer("t-1", 7L, "홍길동", 48);
+    }
+
+    @Test
+    @DisplayName("🔴 입금 안내 때 쿠폰을 입금 기한(+1시간)까지 이 주문에 잡는다 — 잡지 못하면 안내를 내지 않는다")
+    void couponIsClaimedUntilTheDeadline() {
+        OrderCouponClaim couponClaim = mock(OrderCouponClaim.class);
+        service.setCouponClaim(couponClaim);
+        Order o = order(OrderStatus.NOT_PROCESSED);
+        when(data.getOrderByTrackingId("t-1")).thenReturn(o);
+        when(stockHold.hold(any(), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.HELD,
+                java.time.LocalDateTime.of(2026, 9, 27, 10, 0), List.of()));
+        org.mockito.Mockito.doThrow(new com.project.order_service.domain.exception.OrderDomainException(OrderCouponClaim.IN_PAYMENT_MESSAGE))
+                .when(couponClaim).claim(o, Duration.ofHours(49));
+
+        assertThatThrownBy(() -> service.start("t-1", 7L, "홍길동")).hasMessage(OrderCouponClaim.IN_PAYMENT_MESSAGE);
+        verify(cache, never()).startBankTransfer(anyString(), anyLong(), anyString(), anyInt());
+    }
 }
+

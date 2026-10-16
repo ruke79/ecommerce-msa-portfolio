@@ -52,11 +52,14 @@ class OrderCreateStockHoldTest {
     @InjectMocks OrderService service;
 
     Order created;
+    CartProductDto line;
 
     @BeforeEach
     void setUp() {
         CartDto cart = org.mockito.Mockito.mock(CartDto.class);
-        when(cart.getProducts()).thenReturn(List.of(org.mockito.Mockito.mock(CartProductDto.class)));
+        line = org.mockito.Mockito.mock(CartProductDto.class);
+        when(line.getQty()).thenReturn(3);
+        when(cart.getProducts()).thenReturn(List.of(line));
         when(cartServiceClient.getCart(anyLong())).thenReturn((ResponseEntity) ResponseEntity.ok(cart));
         when(objectMapper.convertValue(any(), eq(CartDto.class))).thenReturn(cart);
         when(orderPricing.priceOrder(any(), any(), any())).thenReturn(
@@ -107,6 +110,30 @@ class OrderCreateStockHoldTest {
 
         assertThat(service.createOrder(new OrderRequest(), 7L)).isSameAs(created);
         verify(cache, never()).discardUnplaced(anyLong());
+        // 기한 초과면 catalog 가 뒤늦게 잡았을 수 있다 — 새 주문이라 한 번 풀어 둔다(유령 예약 방지)
+        verify(stockHold).release(77L);
+    }
+
+    @Test
+    @DisplayName("🔴 catalog 가 요청을 거절하면 주문을 버린다 — 예전에는 '닿지 못함' 처럼 예약 없이 결제로 갔다")
+    void rejectedDiscards() {
+        when(stockHold.hold(eq(created), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.REJECTED, null, List.of()));
+
+        assertThatThrownBy(() -> service.createOrder(new OrderRequest(), 7L))
+                .isInstanceOf(OrderDomainException.class).hasMessage(OrderService.UNORDERABLE_MESSAGE);
+        verify(cache).discardUnplaced(77L);
+    }
+
+    @Test
+    @DisplayName("🔴 장바구니 줄의 수량이 1 ~ 1000 밖이면 금액을 정하기 전에 거절한다 — 음수 수량이 주문 금액을 깎았다")
+    void outOfRangeQuantityIsRejectedBeforePricing() {
+        for (int qty : new int[] { 0, -5, OrderService.MAX_LINE_QTY + 1 }) {
+            when(line.getQty()).thenReturn(qty);
+            assertThatThrownBy(() -> service.createOrder(new OrderRequest(), 7L))
+                    .isInstanceOf(OrderDomainException.class).hasMessage(OrderService.UNORDERABLE_MESSAGE);
+        }
+        verify(orderPricing, never()).priceOrder(any(), any(), any());
+        verify(cache, never()).createOrder(any(), any(), any(), anyLong());
     }
 
     @Test
@@ -122,5 +149,46 @@ class OrderCreateStockHoldTest {
         order.verify(stockHold).release(70L);
         order.verify(stockHold).release(71L);
         order.verify(stockHold).hold(eq(created), any());
+    }
+
+    // ---------------------------------------------------------------- 멱등 키 (V26)
+
+    @Test
+    @DisplayName("🔴 같은 멱등 키로 다시 오면 새 주문을 만들지 않고 이미 만든 주문을 돌려준다 — 장바구니 · 재고도 건드리지 않는다")
+    void sameCreateKeyReturnsTheExistingOrder() {
+        when(cache.findByCreateKey(7L, "checkout-key-1")).thenReturn(created);
+
+        assertThat(service.createOrder(new OrderRequest(), 7L, "checkout-key-1")).isSameAs(created);
+
+        verify(cartServiceClient, never()).getCart(anyLong());
+        verify(cache, never()).createOrder(any(), any(), any(), anyLong(), any());
+        verify(stockHold, never()).hold(any(), any());
+    }
+
+    @Test
+    @DisplayName("🔴 같은 키가 동시에 와서 늦은 쪽이 유니크 제약에 걸리면 앞선 주문을 돌려준다 — 재고를 다시 잡지 않는다")
+    void concurrentSameKeyReturnsTheWinner() {
+        Order winner = Order.builder().orderId(88L).build();
+        when(cache.findByCreateKey(7L, "checkout-key-2")).thenReturn(null, winner);
+        when(cache.createOrder(any(), any(), any(), anyLong(), eq("checkout-key-2")))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_orders_customer_create_key"));
+
+        assertThat(service.createOrder(new OrderRequest(), 7L, "checkout-key-2")).isSameAs(winner);
+        verify(stockHold, never()).hold(any(), any());
+    }
+
+    @Test
+    @DisplayName("새 키면 그 키를 실어 만든다 · 쓸 수 없는 모양의 키는 없는 것으로 본다")
+    void newKeyIsStoredAndBadKeysIgnored() {
+        when(cache.createOrder(any(), any(), any(), anyLong(), eq("checkout-key-3"))).thenReturn(created);
+        when(stockHold.hold(eq(created), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.HELD, null, List.of()));
+
+        assertThat(service.createOrder(new OrderRequest(), 7L, "checkout-key-3")).isSameAs(created);
+
+        assertThat(OrderService.usableCreateKey(" 0f8fad5b-d9cb-469f-a165-70867728950e ")).isEqualTo("0f8fad5b-d9cb-469f-a165-70867728950e");
+        assertThat(OrderService.usableCreateKey("short")).isNull();
+        assertThat(OrderService.usableCreateKey("x".repeat(65))).isNull();
+        assertThat(OrderService.usableCreateKey("bad key with spaces")).isNull();
+        assertThat(OrderService.usableCreateKey(null)).isNull();
     }
 }

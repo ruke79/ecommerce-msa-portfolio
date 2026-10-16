@@ -67,6 +67,10 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     /** 주문 상태 변경(docs/76) — 토픽 order-status. */
     private final com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher orderStatusPublisher;
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
+    /** 결제 확정 차감 · 반품 복원 — 토픽 product-update. */
+    private final com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher productUpdatePublisher;
+    /** 결제 뒤 장바구니 비우기 — 토픽 cart-empty. */
+    private final com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher cartEmptyPublisher;
 
     // 한 번에 선점할 행 수. 제한이 없으면 한 레플리카가 밀린 이벤트를 전부 잠가
     // 나머지 레플리카가 놀게 되고, 트랜잭션도 길어진다.
@@ -95,21 +99,18 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
 
         for (PaymentOutboxEvent outbox : outboxList) {
             boolean settled;
-            if ("payment-request".equals(outbox.getEventType())) {
-                // 행을 쓴 요청의 추적 문맥 아래에서 보낸다 — 결제 요청이 원래 주문 요청의 추적에 이어진다(docs/51 §4e).
-                // [JA] 行を書いたリクエストのトレース文脈の下で送る — 決済リクエストが元の注文リクエストのトレースにつながる(docs/51 §4e)。
-                settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay payment-request",
-                        () -> paymentRequestMessagePublisher.publish(outbox, this::updateOutboxStatus));
-            } else if (PaymentOutboxHelper.ORDER_STATUS_EVENT.equals(outbox.getEventType())) {
-                // 상태를 바꾼 요청의 추적 아래에서 — 주문 진행 조회가 그 요청의 추적으로 이어진다(docs/76).
-                // [JA] 状態を変えたリクエストのトレースの下で — 注文進行の照会がそのリクエストのトレースにつながる(docs/76)。
-                settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay order-status",
-                        () -> orderStatusPublisher.publish(outbox, this::updateOutboxStatus));
-            } else {
-                // 알 수 없는 이벤트 타입을 STARTED 로 두면 매 폴링마다 다시 집어 무한 반복한다.
-                // [JA] 未知のイベントタイプを STARTED のままにすると、ポーリングのたびに拾い直して無限に繰り返す。
-                log.error("Unknown outbox event type '{}' for id {} — marking FAILED",
-                        outbox.getEventType(), outbox.getId());
+            try {
+                settled = relay(outbox);
+            } catch (RuntimeException e) {
+                if (com.project.common.kafka.DltRetryPolicy.isTransient(e)) {
+                    throw e;   // DB 가 흔들린다 — 배치째 롤백하고 다음 폴링에서 다시(행의 잘못이 아니다)
+                }
+                // 🔒 행 하나의 영구 오류(깨진 페이로드 등)는 그 행만 FAILED 로 — 🐛 예전에는 예외가 배치 트랜잭션째 롤백시켜 같은 행을
+                //    매 폴링 다시 집었다. 그 뒤의 결제 요청 · 주문 상태 · 재고 차감이 전부 멈췄다. 일시 실패는 발행기가 false 로 알린다.
+                // [JA] 一行の恒久エラーはその行だけ FAILED に — 以前は例外がバッチごとロールバックし、後ろの行がすべて止まった。
+                log.error("아웃박스 행을 보낼 수 없다 — FAILED 로 둔다(수동 확인). id={} type={} ({})",
+                        outbox.getId(), outbox.getEventType(), e.toString());
+                io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC, "type", String.valueOf(outbox.getEventType())).increment();
                 updateOutboxStatus(outbox, OutboxStatus.FAILED);
                 continue;
             }
@@ -126,6 +127,36 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
                 break;
             }
         }
+    }
+
+    /** 보낼 수 없어 FAILED 로 둔 행 수 — Prometheus {@code order_outbox_failed_total{type}}, 경보 OrderOutboxRowFailed. */
+    public static final String FAILED_METRIC = "order.outbox.failed";
+
+    /** @return 상태가 확정됐으면 true, 일시 실패라 다음 폴링에 다시 보내야 하면 false. 영구 오류는 예외 */
+    private boolean relay(PaymentOutboxEvent outbox) {
+        boolean settled;
+        if ("payment-request".equals(outbox.getEventType())) {
+            // 행을 쓴 요청의 추적 문맥 아래에서 보낸다 — 결제 요청이 원래 주문 요청의 추적에 이어진다(docs/51 §4e).
+            // [JA] 行を書いたリクエストのトレース文脈の下で送る — 決済リクエストが元の注文リクエストのトレースにつながる(docs/51 §4e)。
+            settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay payment-request",
+                    () -> paymentRequestMessagePublisher.publish(outbox, this::updateOutboxStatus));
+        } else if (PaymentOutboxHelper.ORDER_STATUS_EVENT.equals(outbox.getEventType())) {
+            // 상태를 바꾼 요청의 추적 아래에서 — 주문 진행 조회가 그 요청의 추적으로 이어진다(docs/76).
+            // [JA] 状態を変えたリクエストのトレースの下で — 注文進行の照会がそのリクエストのトレースにつながる(docs/76)。
+            settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay order-status",
+                    () -> orderStatusPublisher.publish(outbox, this::updateOutboxStatus));
+        } else if (PaymentOutboxHelper.PRODUCT_UPDATE_EVENT.equals(outbox.getEventType())) {
+            settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay product-update",
+                    () -> productUpdatePublisher.publish(outbox, this::updateOutboxStatus));
+        } else if (PaymentOutboxHelper.CART_EMPTY_EVENT.equals(outbox.getEventType())) {
+            settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay cart-empty",
+                    () -> cartEmptyPublisher.publish(outbox, this::updateOutboxStatus));
+        } else {
+            // 알 수 없는 이벤트 타입을 STARTED 로 두면 매 폴링마다 다시 집어 무한 반복한다.
+            // [JA] 未知のイベントタイプを STARTED のままにすると、ポーリングのたびに拾い直して無限に繰り返す。
+            throw new IllegalStateException("Unknown outbox event type '" + outbox.getEventType() + "'");
+        }
+        return settled;
     }
 
     private void updateOutboxStatus(PaymentOutboxEvent outboxEvent, OutboxStatus outboxStatus) {

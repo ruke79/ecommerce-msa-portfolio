@@ -2,6 +2,8 @@ package com.project.order_service.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -51,7 +53,7 @@ class OrderCreateAddressValidationTest {
 
         Order created = mock(Order.class);
         when(created.getOrderId()).thenReturn(42L);
-        when(orderService.createOrder(any(), anyLong())).thenReturn(created);
+        when(orderService.createOrder(any(), anyLong(), any())).thenReturn(created);
     }
 
     /** 화면(AddShipping.jsx)이 만드는 모양의 정상 주소. */
@@ -101,7 +103,7 @@ class OrderCreateAddressValidationTest {
             a.put(field, field.equals("city") ? "   " : null);
             create(a).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("요청 값이 올바르지 않습니다."));
         }
-        verify(orderService, never()).createOrder(any(), anyLong());
+        verify(orderService, never()).createOrder(any(), anyLong(), any());
     }
 
     @Test
@@ -111,7 +113,7 @@ class OrderCreateAddressValidationTest {
         a.put("firstname", "");
         a.put("lastname", null);
         create(a).andExpect(status().isBadRequest());
-        verify(orderService, never()).createOrder(any(), anyLong());
+        verify(orderService, never()).createOrder(any(), anyLong(), any());
     }
 
     @Test
@@ -120,13 +122,28 @@ class OrderCreateAddressValidationTest {
         Map<String, Object> a = address();
         a.put("address2", "가".repeat(256));
         create(a).andExpect(status().isBadRequest());
-        verify(orderService, never()).createOrder(any(), anyLong());
+        verify(orderService, never()).createOrder(any(), anyLong(), any());
     }
 
     @Test
     @DisplayName("배송지가 아예 없으면 검증이 아니라 서비스가 '배송지를 선택해 주세요.' 로 거절한다(그 문구를 지킨다)")
     void missingAddressIsLeftToTheService() throws Exception {
         create(null);
-        verify(orderService).createOrder(any(), anyLong());
+        verify(orderService).createOrder(any(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("Idempotency-Key 헤더는 그대로 서비스에 닿는다 — 없으면 null(예전 동작)")
+    void idempotencyKeyReachesTheService() throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("shippingAddress", address());
+        body.put("paymentMethod", "paypal");
+        mvc.perform(post("/api/order/create").header("User-Id", "7").header("Idempotency-Key", "a1b2c3d4-try-1")
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body)))
+                .andExpect(status().isOk());
+        verify(orderService).createOrder(any(), eq(7L), eq("a1b2c3d4-try-1"));
+
+        create(address()).andExpect(status().isOk());
+        verify(orderService).createOrder(any(), eq(7L), isNull());
     }
 }

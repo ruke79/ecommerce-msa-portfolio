@@ -131,4 +131,21 @@ class OrderStockHoldTest {
         TransactionSynchronizationUtils.triggerAfterCommit();
         verify(catalog).releaseStock(77L);
     }
+
+    @Test
+    @DisplayName("🔴 catalog 가 요청을 거절하면(HTTP 400 · gRPC INVALID_ARGUMENT) REJECTED — '닿지 못함' 으로 읽어 예약 없이 가지 않는다")
+    void rejectionIsNotFailOpen() {
+        feign.Request req = feign.Request.create(feign.Request.HttpMethod.POST, "/api/internal/stock/reservations",
+                java.util.Map.of(), null, java.nio.charset.StandardCharsets.UTF_8, null);
+        when(catalog.reserveStock(any())).thenThrow(new feign.FeignException.BadRequest("bad", req, null, java.util.Map.of()));
+
+        OrderStockHold.Outcome out = hold.hold(order(), Duration.ofMinutes(30));
+
+        assertThat(out.isRejected()).isTrue();
+        assertThat(count("rejected")).isEqualTo(1);
+        assertThat(count("unavailable")).isZero();
+        assertThat(OrderStockHold.isRejection(io.grpc.Status.INVALID_ARGUMENT.asRuntimeException())).isTrue();
+        assertThat(OrderStockHold.isRejection(io.grpc.Status.DEADLINE_EXCEEDED.asRuntimeException())).isFalse();
+        assertThat(OrderStockHold.isRejection(io.grpc.Status.UNAVAILABLE.asRuntimeException())).isFalse();
+    }
 }

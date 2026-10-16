@@ -104,6 +104,33 @@ public class OrderService {
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Order createOrder(OrderRequest request, Long customerId) {
+        return createOrder(request, customerId, null);
+    }
+
+    /** 멱등 키로 쓸 수 있는 모양 — 화면은 UUID 를 보낸다. 그 밖은 키가 없는 것으로 본다(오래된 화면 · 지어낸 값). */
+    static String usableCreateKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        String k = key.strip();
+        return k.length() >= 8 && k.length() <= 64 && k.matches("[A-Za-z0-9_-]+") ? k : null;
+    }
+
+    /**
+     * @param createKey 멱등 키(Idempotency-Key 헤더, V26) — 같은 고객 · 같은 키로 이미 만든 주문이 있으면 새로 만들지 않고 그것을
+     *                  돌려준다. 🐛 예전에는 없어서 게이트웨이 시간 초과 뒤 다시 보내면 주문이 둘 생겼고 둘 다 재고를 잡았다.
+     *                  [JA] 冪等キー — 同じ顧客 · 同じキーで作った注文があれば新しく作らずそれを返す。
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Order createOrder(OrderRequest request, Long customerId, String createKey) {
+        String key = usableCreateKey(createKey);
+        if (key != null) {
+            Order existing = cahcedOrderService.findByCreateKey(customerId, key);
+            if (existing != null) {
+                log.info("같은 멱등 키의 주문 생성 재요청 — 이미 만든 주문을 돌려준다. orderId={}", existing.getOrderId());
+                return existing;
+            }
+        }
 
         // ① 장바구니 — 무엇을 주문했는가의 근거다. 본문의 products 는 읽지 않는다.
         CartDto latestCart = objectMapper.convertValue(
@@ -119,6 +146,7 @@ public class OrderService {
             throw new OrderDomainException("장바구니가 비어 있습니다. 상품을 담은 뒤 다시 시도해 주세요.");
         }
         fillMissingProductIds(latestCart);
+        requireOrderableQuantities(latestCart);
 
         // ② 금액 — 서버가 정한다(docs/40 #10). 쿠폰 견적 Feign 호출이 여기 들어 있다.
         OrderPricing.Amounts amounts =
@@ -129,7 +157,19 @@ public class OrderService {
         //    docs/48 §6-①. 이메일은 장바구니·쿠폰 서비스가 그것을 키로 받으므로 위 두 호출에만 쓴다.
 
         // ④ 여기서부터 DB. 원격 호출이 끝난 뒤라 트랜잭션이 짧다.
-        Order created = cahcedOrderService.createOrder(request, latestCart, amounts, customerId);
+        Order created;
+        try {
+            created = key == null ? cahcedOrderService.createOrder(request, latestCart, amounts, customerId)
+                    : cahcedOrderService.createOrder(request, latestCart, amounts, customerId, key);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // 같은 키의 요청이 동시에 왔다 — 앞선 쪽이 만들었다(부분 유니크, V26). 그 주문을 돌려준다.
+            Order existing = key == null ? null : cahcedOrderService.findByCreateKey(customerId, key);
+            if (existing == null) {
+                throw e;
+            }
+            log.info("같은 멱등 키의 주문이 동시에 만들어졌다 — 앞선 주문을 돌려준다. orderId={}", existing.getOrderId());
+            return existing;
+        }
 
         // ⑤ 재고를 잡는다(docs/59) — 주문 id 가 예약의 키라 저장한 뒤다. 모자라면 방금 만든 주문을 버리고 이유를 돌려준다
         //    (결제 전이라 버릴 수 있다). catalog 에 닿지 못하면 예약 없이 간다 — 결제 뒤 부족분 환불이 받는다.
@@ -143,11 +183,44 @@ public class OrderService {
             cahcedOrderService.discardUnplaced(created.getOrderId());
             throw new OrderDomainException(shortageMessage(created, hold.shortages()));
         }
+        if (hold.isRejected()) {
+            // 요청이 잘못됐다 — 재고 검사를 건너 결제로 보내지 않는다(예전에는 "닿지 못함" 과 같이 예약 없이 진행했다).
+            cahcedOrderService.discardUnplaced(created.getOrderId());
+            throw new OrderDomainException(UNORDERABLE_MESSAGE);
+        }
+        if (hold.kind() == com.project.order_service.stock.OrderStockHold.Kind.UNAVAILABLE) {
+            // 닿지 못했다(기한 초과 포함) — 예약 없이 간다(docs/59). 다만 기한 초과는 catalog 가 뒤늦게 잡았을 수 있다: 새 주문이라
+            // 앞선 예약이 없으므로 한 번 풀어 둔다(여러 번 불러도 같다) — 🐛 예전에는 그 유령 예약이 TTL(30분) 동안 남의 구매를 막았다.
+            // [JA] 到達できなかった — 予約なしで進める。ただし期限切れは catalog が遅れて押さえた可能性があるので、一度解放しておく。
+            stockHold.release(created.getOrderId());
+        }
         if (hold.isHeld() && hold.holdUntil() != null) {
             cahcedOrderService.recordStockHold(created.getOrderId(), hold.holdUntil());
             created.setStockHoldUntil(hold.holdUntil());
         }
         return created;
+    }
+
+    /** 한 줄의 수량 상한 — 장바구니(CartService.MAX_LINE_QTY)와 같다. */
+    static final int MAX_LINE_QTY = 1000;
+
+    static final String UNORDERABLE_MESSAGE = "주문할 수 없는 수량이 있습니다. 장바구니에서 수량(1 ~ 1000)을 조정해 주세요.";
+
+    /**
+     * 장바구니의 줄 수량은 1 ~ {@link #MAX_LINE_QTY} — 금액을 정하기 전에 본다.
+     *
+     * <p>🐛 예전에는 보지 않았다 — 장바구니의 {@code qty=-5} 줄이 그대로 주문 줄이 되어 주문 금액이 다른 줄의 값을 깎았고(가격 ×
+     * 음수), 재고 예약의 거절도 "닿지 못함" 으로 읽혀 그대로 결제까지 갔다. 장바구니도 이제 막지만(checkedQty) 옛 장바구니 ·
+     * 캐시 사본이 남아 있다.
+     *
+     * <p>[JA] カートの行数量は 1〜1000 — 金額を決める前に見る。以前は負の数量がそのまま注文行になり金額を減らした。
+     */
+    static void requireOrderableQuantities(CartDto cart) {
+        for (com.project.common.dto.CartProductDto p : cart.getProducts()) {
+            if (p == null || p.getQty() < 1 || p.getQty() > MAX_LINE_QTY) {
+                throw new OrderDomainException(UNORDERABLE_MESSAGE);
+            }
+        }
     }
 
     /**
@@ -172,15 +245,29 @@ public class OrderService {
      * <p>결제 전(NOT_PROCESSED) 주문만. 그 밖의 상태·예약 기능이 없거나 catalog 에 닿지 못하면 아무것도 막지 않는다(fail-open,
      * 주문 생성과 같다). 🔒 주문자만 — 아니면 null(404, 남의 주문인지 알리지 않는다).
      *
+     * <p>쿠폰이 있으면 이 주문에 잡는다({@link OrderCouponClaim}) — 같은 쿠폰으로 다른 주문이 결제 중이면 던진다(fail-closed).
+     *
      * @return {@code stockHoldUntil}(잡았으면) 을 담은 맵. 주문이 없거나 남의 것이면 null
      * @throws OrderDomainException 모자라다 — 문구는 주문 생성 때와 같은 모양("결제를 시작하지 못했습니다")
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public java.util.Map<String, Object> renewCheckoutHold(String trackingId, Long requesterId) {
+        return renewCheckoutHold(trackingId, requesterId, null);
+    }
+
+    /**
+     * @param attempt 화면이 창마다 만든 결제 시도 키(Payment-Attempt 헤더, V27) — 다른 창의 시도가 살아 있으면 던진다. 없으면(옛 화면)
+     *                시도는 적지 않는다. 이미 결제가 붙은 주문은 키와 상관없이 던진다.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public java.util.Map<String, Object> renewCheckoutHold(String trackingId, Long requesterId, String attempt) {
         Order order = cahcedOrderService.getOrderByTrackingId(trackingId);
         if (order == null || requesterId == null || !requesterId.equals(order.getCustomerId())) {
             return null;
         }
+        // 주문 하나에 결제창 하나(V27) — 이미 결제됐거나 다른 창이 결제 중이면 여기서 멈춘다(재고 · 쿠폰을 건드리기 전에).
+        cahcedOrderService.startPaymentAttempt(trackingId, usableCreateKey(attempt),
+                java.time.Duration.ofMinutes(Math.max(1, paymentAttemptWindowMinutes)));
         java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
         if (order.getOrderStatus() != com.project.common.constants.OrderStatus.NOT_PROCESSED) {
             body.put("renewed", false);
@@ -191,12 +278,31 @@ public class OrderService {
             throw new OrderDomainException(shortageMessage(order, hold.shortages())
                     .replace("주문하지 못했습니다", "결제를 시작하지 못했습니다"));
         }
+        if (hold.isRejected()) {
+            throw new OrderDomainException(UNORDERABLE_MESSAGE);
+        }
+        // 쿠폰을 이 주문에 잡는다(coupon V7) — 같은 쿠폰으로 다른 주문이 결제 중이면 결제창을 열지 않는다. 재고와 달리 fail-closed.
+        if (couponClaim != null) {
+            couponClaim.claim(order, stockHold.checkoutTtl());
+        }
         body.put("renewed", hold.isHeld());
         if (hold.isHeld() && hold.holdUntil() != null) {
             cahcedOrderService.recordStockHold(order.getOrderId(), hold.holdUntil());
             body.put("stockHoldUntil", hold.holdUntil().toString());
         }
         return body;
+    }
+
+    /** 결제창 하나의 수명(분, V27) — 이 동안 다른 창은 결제를 시작하지 못한다. 결제창을 닫고 새 탭에서 다시 열면 이만큼 기다린다. */
+    @org.springframework.beans.factory.annotation.Value("${order.payment-attempt.window-minutes:10}")
+    private long paymentAttemptWindowMinutes = 10;
+
+    /** 결제 시작 때 쿠폰 잡기(coupon V7). 세터로 받는다 — 생성자를 쓰는 곳을 늘리지 않으려고. 없으면(테스트) 건드리지 않는다. */
+    private OrderCouponClaim couponClaim;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCouponClaim(OrderCouponClaim couponClaim) {
+        this.couponClaim = couponClaim;
     }
 
     /**
@@ -221,12 +327,12 @@ public class OrderService {
 
 
     // @Cacheable: orderId와 email을 키로 사용하여 주문 상세 정보를 캐시합니다.    
-    @Transactional(readOnly = true)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)   // 색상(catalog)을 부른다 — 트랜잭션은 OrderDataService.load* 안에서만
     public OrderDto getOrder(Long orderId, Long requesterId, String filter) {
         log.debug("Fetching order details for order ID: {}, filter: {}", orderId, filter);
         return cahcedOrderService.getOrder(orderId, requesterId, filter);
     }
-    
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)   // 색상(catalog)을 부른다 — 트랜잭션은 OrderDataService.load* 안에서만
     public List<OrderDto> getOrders(Long customerId, String filter) {
        
         return cahcedOrderService.getOrders(customerId, filter);
@@ -241,13 +347,13 @@ public class OrderService {
      * <p><b>캐시하지 않는다.</b> 커서와 필터마다 키가 갈려 적중률이 낮고, 주문 목록은
      * 방금 한 주문이 보여야 하는 화면이다.
      */
-    @Transactional(readOnly = true)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)   // 색상(catalog)을 부른다 — 트랜잭션은 OrderDataService.load* 안에서만
     public Page<OrderDto> getOrdersPage(Long customerId, String filter, Long cursor, int size) {
         return cahcedOrderService.getOrdersPage(customerId, filter, cursor, size);
     }
 
      // 페이지별로 주문 목록을 조회하는 새로운 메서드    
-    @Transactional(readOnly = true)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)   // 색상(catalog)을 부른다 — 트랜잭션은 OrderDataService.load* 안에서만
     public Page<OrderDto> getOrdersByCustomerIdWithPagination(Long customerId, int page, int size) {
         
         return cahcedOrderService.getOrdersByCustomerIdWithPagination(customerId, page, size);
@@ -261,7 +367,7 @@ public class OrderService {
      * @param size 페이지당 주문 개수
      * @return OrderDto 목록과 다음 커서 ID
      */
-    @Transactional(readOnly = true)    
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)   // 색상(catalog)을 부른다 — 트랜잭션은 OrderDataService.load* 안에서만
     public Page<OrderDto> getOrdersByCustomerIdWithCursor(Long customerId, Long cursorId, int size) {
         
         return cahcedOrderService.getOrdersByCustomerIdWithCursor(customerId, cursorId, size);
@@ -291,6 +397,9 @@ public class OrderService {
         Order after = cahcedOrderService.getOrderByTrackingId(request.getTrackingId());
         if (after != null && after.getOrderStatus() == com.project.common.constants.OrderStatus.CANCELED) {
             stockHold.releaseAfterCommit(after.getOrderId());
+            // 결제 시작 때 이 주문에 잡은 쿠폰을 푼다(coupon V7 — coupon-rollback 이 이 주문의 표시만 지운다). 예전에는 보상이 없어도
+            // 됐다(쿠폰은 결제 확정 때만 쓰였다). 이제는 없으면 PayPal 창을 닫고 다시 주문할 때 30분 동안 같은 쿠폰이 막힌다.
+            orderSaga.compensateCancel(after);
         }
     }
 

@@ -29,7 +29,43 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // 낙관적 잠금: 주문 엔티티의 @Version 필드를 활용하여 동시성 문제를 해결합니다.
     //@Lock(LockModeType.OPTIMISTIC)
+    /**
+     * 추적 번호로 주문 — 품목 · 배송지를 함께 읽는다. 결제 시작 · 입금 안내 · Stripe 처럼 트랜잭션 밖에서 이 주문의 품목을 쓰는 곳이 많다
+     * (open-in-view 를 끈 뒤로는 지연 로딩이 거기서 실패한다, B-87).
+     */
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"orderedProducts", "shippingAddress"})
     Optional<Order> findByTrackingId(String trackingId);
+
+    /**
+     * 주문 행을 잠그고(SELECT … FOR UPDATE) 지금 버전을 읽는다 — 돈이 오가는 경로(환불 · 결제 기록)를 줄 세운다.
+     *
+     * <p>🐛 예전에는 잠그지 않고 읽어 @Version 이 커밋 때만 봤다. 같은 주문의 환불 둘이 겹치면 둘 다 제공자에게 돈을 돌려주게 한 뒤
+     * 늦은 쪽의 커밋만 낙관적 잠금으로 실패했다 — 돈은 두 번 나가고 기록은 한 번이었다. 잠근 뒤 버전이 읽은 것과 다르면
+     * (그 사이 다른 요청이 바꿨다) 제공자를 부르기 전에 멈춘다.
+     * [JA] 注文行をロックして現在のバージョンを読む — 返金を直列化する。以前は二つの返金が両方とも提供者を呼び、記録は一回だった。
+     */
+    @org.springframework.data.jpa.repository.Query(value = "select version from orders.orders where order_id = :id for update",
+            nativeQuery = true)
+    Long lockVersion(@org.springframework.data.repository.query.Param("id") Long orderId);
+
+    /**
+     * 결제는 기록됐는데(제공자 결제 참조가 붙었다) 결제 응답이 오지 않아 아직 결제 전인 주문 — 대사(UnconfirmedPaymentWatch).
+     * 정상이면 몇 초 안에 PAID 가 된다. [JA] 決済は記録されたのに決済応答が来ず、まだ決済前の注文 — 照合用。
+     */
+    @org.springframework.data.jpa.repository.Query("select o.orderId from Order o where o.orderStatus = :status"
+            + " and o.providerPaymentId is not null and o.updatedAt < :before order by o.orderId")
+    List<Long> findUnconfirmedPayments(@org.springframework.data.repository.query.Param("status") OrderStatus status,
+            @org.springframework.data.repository.query.Param("before") LocalDateTime before, Pageable pageable);
+
+    @org.springframework.data.jpa.repository.Query("select count(o) from Order o where o.orderStatus = :status"
+            + " and o.providerPaymentId is not null and o.updatedAt < :before")
+    long countUnconfirmedPayments(@org.springframework.data.repository.query.Param("status") OrderStatus status,
+            @org.springframework.data.repository.query.Param("before") LocalDateTime before);
+
+    long countByCustomerIdAndOrderStatus(Long customerId, OrderStatus status);
+
+    /** 주문 생성의 멱등 키(V26) — 부분 유니크 (customer_id, create_key). */
+    Optional<Order> findByCustomerIdAndCreateKey(Long customerId, String createKey);
 
     // --- 관리자 목록 (고객 무관) — 환불 화면. 최신 주문이 위로 온다. ---
     Page<Order> findAllByOrderByOrderIdDesc(Pageable pageable);

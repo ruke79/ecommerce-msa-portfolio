@@ -135,6 +135,32 @@ public class CouponController {
     }
 
     /**
+     * 결제를 시작한다 — 이 주문이 쿠폰을 {@code holdSeconds} 동안 잡는다(V7). order-service 가 결제창을 열기 직전 · 입금 안내 때
+     * 부른다. 결과는 늘 200 의 {@code {"result": CLAIMED | NOT_FOUND | USED | IN_PAYMENT_ELSEWHERE}} — 결제를 열지는 order 가 정한다.
+     * 🔒 quote 와 같은 내부 호출 판정(경로 규칙은 order-service, B-80).
+     *
+     * <p>[JA] 決済開始 — この注文がクーポンを押さえる。order-service が決済画面を開く直前に呼ぶ。
+     */
+    @PostMapping("/internal/payment-claim")
+    ResponseEntity<?> claimForPayment(
+            @RequestParam("userId") Long userId,
+            @RequestParam("couponName") String couponName,
+            @RequestParam("orderId") Long orderId,
+            @RequestParam("holdSeconds") long holdSeconds,
+            @RequestHeader(value = "User-Role", required = false) String callerRole,
+            @RequestHeader(value = "User-Email", required = false) String callerEmail,
+            @RequestHeader(value = "User-Id", required = false) String callerId) {
+        if (!InternalCallGuard.allowed(callerRole, callerEmail, callerId)) {
+            log.warn("외부에서 쿠폰 결제 시작 시도를 차단");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(new MessageResponse("접근할 수 없습니다."));
+        }
+        CouponService.ClaimOutcome outcome = couponService.claimForPayment(userId, couponName, orderId,
+                java.time.Duration.ofSeconds(Math.max(0, holdSeconds)));
+        return ResponseEntity.ok(java.util.Map.of("result", outcome.name()));
+    }
+
+    /**
      * 기획전 쿠폰을 받아 간다.
      *
      * <p>🔒 받는 사람은 <b>게이트웨이가 검증한 {@code User-Id}</b>(토큰의 uid)다. 경로나 본문에서

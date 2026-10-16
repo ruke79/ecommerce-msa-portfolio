@@ -60,9 +60,12 @@ public final class AvroSchemaHistory {
     public static final String[] USER_CREATED = { "avro-history/UserCreatedRequest-v1.avsc" };
 
     /** cart-empty·cart-rollback·coupon-use 의 옛 스키마 — v1 은 사용자 액세스 토큰(authorizationToken)을 실었다. */
-    public static final String[] CART_EMPTY = { "avro-history/CartEmptyRequest-v1.avsc" };
+    public static final String[] CART_EMPTY = { "avro-history/CartEmptyRequest-v1.avsc", "avro-history/CartEmptyRequest-v2.avsc" };
     public static final String[] CART_ROLLBACK = { "avro-history/CartRollbackRequest-v1.avsc" };
     public static final String[] COUPON_USE = { "avro-history/CouponUseRequest-v1.avsc" };
+
+    /** coupon-rollback 의 옛 스키마 — v1 은 orderId 가 없었다(어느 주문의 보상인지 몰라 아무 주문이 쓴 쿠폰이나 되돌렸다). */
+    public static final String[] COUPON_ROLLBACK = { "avro-history/CouponRollbackRequest-v1.avsc" };
 
     /**
      * order 토픽의 옛 스키마 — v1 은 사용자 액세스 토큰을 실었다. v2 는 제공자 중립 필드(paymentProvider·

@@ -64,6 +64,13 @@ public class OrderStockHold {
         /** 모자라 아무것도 잡지 않았다. */
         // [JA] 足りず、何も押さえなかった。
         SHORT,
+        /**
+         * catalog 가 요청 자체를 거절했다(줄의 수량이 1 미만 · 줄이 없음 등 — gRPC INVALID_ARGUMENT · HTTP 400). 예약 없이 가지 않는다.
+         *
+         * <p>🐛 예전에는 이것도 "닿지 못함" 으로 읽어 예약 없이 진행했다 — 잘못된 주문이 재고 검사를 건너 결제까지 갔다.
+         */
+        // [JA] catalog が要求そのものを拒否した(数量 1 未満など)。以前は「到達できない」と同じに読み、予約なしで進めていた。
+        REJECTED,
         /** catalog 에 닿지 못했다 — 예약 없이 간다. */
         // [JA] catalog に到達できなかった — 予約なしで進める。
         UNAVAILABLE,
@@ -79,6 +86,10 @@ public class OrderStockHold {
 
         public boolean isHeld() {
             return kind == Kind.HELD;
+        }
+
+        public boolean isRejected() {
+            return kind == Kind.REJECTED;
         }
     }
 
@@ -121,6 +132,11 @@ public class OrderStockHold {
         try {
             result = catalog.reserve(request);
         } catch (RuntimeException e) {
+            if (isRejection(e)) {
+                count("rejected");
+                log.warn("재고 예약 거절 — catalog 가 요청을 받지 않았다. orderId={} transport={}", order.getOrderId(), catalog.transport());
+                return new Outcome(Kind.REJECTED, null, List.of());
+            }
             count("unavailable");
             log.warn("재고 예약 불가 — catalog 에 닿지 못해 예약 없이 진행한다(결제 뒤 부족분 환불이 받는다). orderId={} transport={} ({})",
                     order.getOrderId(), catalog.transport(), e.getClass().getSimpleName());
@@ -137,6 +153,20 @@ public class OrderStockHold {
         count("held");
         Instant until = result.getExpiresAt();
         return new Outcome(Kind.HELD, until == null ? null : LocalDateTime.ofInstant(until, ZoneId.systemDefault()), List.of());
+    }
+
+    /** 요청 자체의 거절인가 — 닿지 못한 것(장애 · 기한 초과)과 가른다. 전송마다 모양이 다르다(gRPC 상태 · HTTP 상태). */
+    // [JA] 要求そのものの拒否か — 到達できない(障害 · 期限切れ)と区別する。
+    static boolean isRejection(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof io.grpc.StatusRuntimeException s && s.getStatus().getCode() == io.grpc.Status.Code.INVALID_ARGUMENT) {
+                return true;
+            }
+            if (t instanceof feign.FeignException f && (f.status() == 400 || f.status() == 422)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 푼다 — 실패해도 던지지 않는다(catalog 의 만료가 푼다). */

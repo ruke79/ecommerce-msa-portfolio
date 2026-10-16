@@ -1580,6 +1580,32 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-87: order · cart 는 open-in-view 를 끈다.
+     *
+     * <p>스프링 기본값(켜짐)이면 요청 내내 EntityManager 가 살아 있고, 첫 조회에서 잡은 DB 커넥션을 요청이 끝날 때까지 놓지 않는다 —
+     * 트랜잭션 밖으로 뺀 원격 호출(catalog · coupon · 결제 제공자)도 커넥션을 쥔 채 기다린다. 풀이 5개라 느린 catalog 하나가 다른 요청까지
+     * 막았다. 끈 뒤에는 트랜잭션 밖에서 쓰는 엔티티를 조회가 연관과 함께 읽는다(@EntityGraph — OrderRepository.findByTrackingId ·
+     * CartRepository.findByUserId).
+     *
+     * <p>[JA] order · cart は open-in-view を切る。既定(オン)ではリクエスト中ずっと接続を持ち、トランザクション外の遠隔呼び出しも
+     * 接続を持ったまま待つ。
+     */
+    @Test
+    @DisplayName("B-87: order · cart 의 spring.jpa.open-in-view 는 false")
+    void openInViewIsOffWhereRemoteCallsLeaveTransactions() throws IOException {
+        for (String module : List.of("order-service", "cart-service")) {
+            Path yml = repoRoot().resolve(module + "/src/main/resources/application-local.yml");
+            if (!Files.exists(yml)) {
+                continue;
+            }
+            String text = Files.readString(yml, StandardCharsets.UTF_8);
+            assertThat(text)
+                    .as("%s: spring.jpa.open-in-view: false — 켜져 있으면 트랜잭션 밖의 원격 호출도 DB 커넥션을 쥔 채 기다린다(B-87)", module)
+                    .containsPattern("(?m)^\\s+jpa:\\s*\\n(?:\\s+#.*\\n)*\\s+open-in-view:\\s*false\\b");
+        }
+    }
+
+    /**
      * B-78: 주문 상태는 {@code OrderStatusChanger} 만 바꾼다(docs/76).
      *
      * <p>상태 변경은 같은 트랜잭션의 아웃박스 행({@code order-status})이 되어 saga-projection 의 읽기 모델(타임라인)로

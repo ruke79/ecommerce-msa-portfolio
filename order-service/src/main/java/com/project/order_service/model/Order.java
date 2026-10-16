@@ -60,6 +60,24 @@ public class Order extends BaseEntity {
 
     
     private Long customerId;
+
+    /**
+     * 주문 생성의 멱등 키(V26) — 화면이 결제 시도마다 만들어 Idempotency-Key 헤더로 보낸다. 같은 고객 · 같은 키면 새 주문을 만들지
+     * 않고 이 주문을 돌려준다. 옛 주문 · 키 없는 요청은 null.
+     * [JA] 注文作成の冪等キー — 同じ顧客 · 同じキーなら新しい注文を作らずこの注文を返す。
+     */
+    @Column(name = "create_key", length = 64)
+    private String createKey;
+
+    /**
+     * 지금 이 주문의 결제창(V27) — 화면이 창마다 만든 시도 키와 그 끝. 결제 시작이 적고, 끝 전에는 다른 키의 결제 시작을 거절한다.
+     * [JA] 今のこの注文の決済画面 — 窓ごとの試行キーとその期限。期限前は別のキーの決済開始を拒む。
+     */
+    @Column(name = "payment_attempt", length = 64)
+    private String paymentAttempt;
+
+    @Column(name = "payment_attempt_until")
+    private LocalDateTime paymentAttemptUntil;
             
     @Builder.Default
     @JsonManagedReference // OrderProduct로의 순환 참조를 관리합니다.

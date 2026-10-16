@@ -46,7 +46,6 @@ class OrderOwnershipTest {
         // 생성자 인자 순서는 @RequiredArgsConstructor 가 만드는 필드 선언 순서를 따른다.
         service = new OrderDataService(
                 orderRepository,
-                mock(CatalogServiceClient.class),
                 new ObjectMapper(),
                 mock(OrderAddressRepository.class),
                 mock(com.project.order_service.outbox.PaymentOutboxHelper.class),
@@ -73,7 +72,7 @@ class OrderOwnershipTest {
     @DisplayName("남의 주문을 주문번호로 조회하면 아무것도 돌려주지 않는다")
     void otherCustomersOrderIsNotReadable() {
         // 침입자가 주문번호 1번(소유자: OWNER)을 그대로 요청한다.
-        assertThat(service.getOrder(1L, INTRUDER_ID, "")).isNull();
+        assertThat(service.loadOrder(1L, INTRUDER_ID, "")).isNull();
     }
 
     @Test
@@ -81,13 +80,13 @@ class OrderOwnershipTest {
     void unknownRequesterGetsNothing() {
         // 신원이 없는 요청이다. 소유자를 특정할 수 없으므로 통과시키면 안 된다 — null 을 "일치"로
         // 처리하면 전부 열린다.
-        assertThat(service.getOrder(1L, null, "")).isNull();
+        assertThat(service.loadOrder(1L, null, "")).isNull();
     }
 
     @Test
     @DisplayName("주문이 없으면 null 이다 — 소유권 검사보다 먼저 걸린다")
     void missingOrderIsNull() {
         when(orderRepository.findById(999L)).thenReturn(Optional.empty());
-        assertThat(service.getOrder(999L, OWNER_ID, "")).isNull();
+        assertThat(service.loadOrder(999L, OWNER_ID, "")).isNull();
     }
 }

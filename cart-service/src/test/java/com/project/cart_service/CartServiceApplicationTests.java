@@ -138,4 +138,18 @@ class CartServiceApplicationTests {
 			pool.shutdownNow();
 		}
 	}
+
+	@Test
+	@DisplayName("🔴 처리 원장(V6) — 같은 이벤트는 한 번만 1, 두 번째는 0(ON CONFLICT DO NOTHING), 롤백되면 남지 않는다")
+	void processedEventLedger() {
+		var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+		assertThat(tx.<Integer>execute(s -> cartRepository.markProcessed("cart-empty-9001")).intValue()).isEqualTo(1);
+		assertThat(tx.<Integer>execute(s -> cartRepository.markProcessed("cart-empty-9001")).intValue()).isZero();
+
+		tx.executeWithoutResult(s -> {
+			cartRepository.markProcessed("cart-empty-9002");
+			s.setRollbackOnly();   // 비우기가 실패해 롤백됐다 — 다음 재전달이 다시 처리해야 한다
+		});
+		assertThat(tx.<Integer>execute(s -> cartRepository.markProcessed("cart-empty-9002")).intValue()).isEqualTo(1);
+	}
 }

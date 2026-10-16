@@ -101,6 +101,39 @@ public class PaymentOutboxHelper {
 
 
 
+    /** 결제 확정 차감 · 반품 입고 복원(catalog) — 토픽 product-update. */
+    public static final String PRODUCT_UPDATE_EVENT = "product-update";
+
+    /** 결제 뒤 장바구니에서 주문한 줄 빼기(cart) — 토픽 cart-empty. */
+    public static final String CART_EMPTY_EVENT = "cart-empty";
+
+    /**
+     * 사가의 후속 메시지(재고 차감 · 복원 · 장바구니 비우기)를 <b>상태 변경과 같은 트랜잭션</b>의 아웃박스 행으로 쓴다.
+     *
+     * <p>🐛 예전에는 Kafka 로 바로 보냈다(fire-and-forget — 결과는 로그뿐). 주문이 PAID 로 커밋된 뒤 브로커가 흔들려 발행이 빠지면
+     * 재고가 차감되지 않은 채 남았고(다시 팔린다), 반품 입고는 "보냈다" 고 표시한 뒤 실제로는 안 갔을 수 있었다. 이제 행이 커밋돼야
+     * 릴레이가 보내고, 보낼 때까지 다시 시도한다(at-least-once — 받는 쪽은 eventId 로 거른다).
+     *
+     * <p>[JA] サガの後続メッセージを状態変更と同じトランザクションのアウトボックス行として書く。以前は Kafka へ直接送り(結果はログのみ)、
+     * PAID のコミット後に発行が抜けると在庫が減らないまま残った。
+     */
+    /**
+     * @param messageKey Kafka 메시지 키 — 행의 aggregate_id 에 둔다. 폴링 릴레이는 발행기가 같은 키를 다시 만들고, CDC 릴레이
+     *                   (Debezium EventRouter)는 aggregate_id 를 키로 쓴다 — 둘 다 같은 파티션으로 간다(product-update 는 eventId,
+     *                   cart-empty 는 사용자 id — docs/38 §1.15).
+     */
+    public void saveEventOutbox(String eventType, String messageKey, Object payload) {
+        String aggregateId = messageKey;
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            throw new OrderDomainException(eventType + " 아웃박스 페이로드를 직렬화하지 못했다: " + aggregateId, e);
+        }
+        this.save(new PaymentOutboxEvent(aggregateId, "Order", eventType, json, OutboxStatus.STARTED));
+        relayOnCommit(OutboxStatus.STARTED);
+    }
+
     /** 아웃박스 이벤트 타입 — 릴레이가 이 이름으로 분기하고, Debezium EventRouter 는 이 이름을 토픽으로 쓴다(docs/76). */
     public static final String ORDER_STATUS_EVENT = "order-status";
 

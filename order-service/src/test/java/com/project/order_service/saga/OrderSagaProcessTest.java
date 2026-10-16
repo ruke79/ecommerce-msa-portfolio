@@ -19,10 +19,8 @@ import com.project.common.constants.OrderStatus;
 import com.project.common.message.dto.response.PaymentResponse;
 import com.project.order_service.model.Order;
 import com.project.order_service.model.OrderProduct;
-import com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CartRollbackKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CouponRollbackKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher;
 import com.project.order_service.repository.jpa.OrderProductRepository;
 import com.project.order_service.repository.jpa.OrderRepository;
 
@@ -34,18 +32,15 @@ import com.project.order_service.repository.jpa.OrderRepository;
 class OrderSagaProcessTest {
 
     private OrderRepository orderRepository;
-    private ProductUpdateKafkaPublisher productPublisher;
-    private CartEmptyKafkaPublisher cartPublisher;
+    private com.project.order_service.outbox.PaymentOutboxHelper outbox;
     private OrderSaga saga;
 
     @BeforeEach
     void setUp() {
         orderRepository = mock(OrderRepository.class);
         OrderProductRepository orderProductRepository = mock(OrderProductRepository.class);
-        productPublisher = mock(ProductUpdateKafkaPublisher.class);
-        cartPublisher = mock(CartEmptyKafkaPublisher.class);
-        saga = new OrderSaga(orderRepository, orderProductRepository, cartPublisher,
-                productPublisher, mock(CouponRollbackKafkaPublisher.class), mock(CartRollbackKafkaPublisher.class),
+        outbox = mock(com.project.order_service.outbox.PaymentOutboxHelper.class);
+        saga = new OrderSaga(orderRepository, orderProductRepository, outbox, mock(CouponRollbackKafkaPublisher.class), mock(CartRollbackKafkaPublisher.class),
                 mock(com.project.order_service.service.OrderCacheEvictor.class));
         when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
         when(orderProductRepository.findByOrder_OrderId(1L)).thenReturn(Optional.of(List.of(
@@ -68,8 +63,12 @@ class OrderSagaProcessTest {
         assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAID);
         // 🔴 결제 시각도 남는다 — 예전에는 무통장입금 수동 확인에서만 채워졌다.
         assertThat(order.getPaidCreatedAt()).isNotNull();
-        verify(productPublisher).publish(any());
-        verify(cartPublisher).publish(any());
+        // 키는 메시지 키 — CDC 릴레이(EventRouter)가 aggregate_id 를 키로 쓴다: 재고는 eventId, 장바구니는 사용자 id
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), eq("order-1"), any());
+        org.mockito.ArgumentCaptor<Object> cart = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.CART_EMPTY_EVENT), eq("7"), cart.capture());
+        // 🔴 주문 id 를 싣는다 — cart 가 같은 주문의 재전달을 거른다(cart-empty-<orderId>)
+        assertThat(((com.project.common.message.dto.request.CartEmptyRequest) cart.getValue()).getOrderId()).isEqualTo(1L);
     }
 
     @Test
@@ -79,8 +78,8 @@ class OrderSagaProcessTest {
 
         saga.process(response());
 
-        verify(productPublisher, never()).publish(any());
-        verify(cartPublisher, never()).publish(any());
+        verify(outbox, never()).saveEventOutbox(any(), any(), any());
+        
     }
 
     @Test

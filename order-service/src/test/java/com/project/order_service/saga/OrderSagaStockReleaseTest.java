@@ -14,10 +14,8 @@ import org.junit.jupiter.api.Test;
 import com.project.common.constants.OrderStatus;
 import com.project.common.message.dto.response.PaymentResponse;
 import com.project.order_service.model.Order;
-import com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CartRollbackKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CouponRollbackKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher;
 import com.project.order_service.repository.jpa.OrderProductRepository;
 import com.project.order_service.repository.jpa.OrderRepository;
 import com.project.order_service.stock.OrderStockHold;
@@ -30,8 +28,8 @@ class OrderSagaStockReleaseTest {
 
     OrderRepository orders = mock(OrderRepository.class);
     OrderStockHold stockHold = mock(OrderStockHold.class);
-    OrderSaga saga = new OrderSaga(orders, mock(OrderProductRepository.class), mock(CartEmptyKafkaPublisher.class),
-            mock(ProductUpdateKafkaPublisher.class), mock(CouponRollbackKafkaPublisher.class), mock(CartRollbackKafkaPublisher.class),
+    CouponRollbackKafkaPublisher couponRollback = mock(CouponRollbackKafkaPublisher.class);
+    OrderSaga saga = new OrderSaga(orders, mock(OrderProductRepository.class), mock(com.project.order_service.outbox.PaymentOutboxHelper.class), couponRollback, mock(CartRollbackKafkaPublisher.class),
             mock(com.project.order_service.service.OrderCacheEvictor.class));
 
     {
@@ -58,5 +56,20 @@ class OrderSagaStockReleaseTest {
         saga.rollback(PaymentResponse.builder().orderId(1L).build());
 
         verify(stockHold, never()).releaseAfterCommit(any());
+    }
+
+    @Test
+    @DisplayName("🔴 쿠폰 보상에 주문 id 를 싣는다 — coupon 은 이 주문이 쓴 쿠폰일 때만 되돌린다")
+    void couponRollbackCarriesTheOrder() {
+        Order order = Order.builder().orderId(1L).customerId(7L).couponApplied("WELCOME").orderStatus(OrderStatus.NOT_PROCESSED).build();
+        when(orders.findByOrderIdAndOrderStatus(1L, OrderStatus.NOT_PROCESSED)).thenReturn(Optional.of(order));
+
+        saga.rollback(PaymentResponse.builder().orderId(1L).build());
+
+        org.mockito.ArgumentCaptor<com.project.common.message.dto.request.CouponRollbackRequest> sent =
+                org.mockito.ArgumentCaptor.forClass(com.project.common.message.dto.request.CouponRollbackRequest.class);
+        verify(couponRollback).publish(sent.capture());
+        org.assertj.core.api.Assertions.assertThat(sent.getValue().getOrderId()).isEqualTo(1L);
+        org.assertj.core.api.Assertions.assertThat(sent.getValue().getUserId()).isEqualTo(7L);
     }
 }

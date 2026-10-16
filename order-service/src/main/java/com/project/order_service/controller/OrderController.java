@@ -109,7 +109,9 @@ public class OrderController {
     // @Valid — 배송지 검증(OrderAddressDto). 틀리면 서비스에 닿기 전에 400(CustomRestExceptionHandler).
     // [JA] @Valid — 配送先の検証。誤りがあればサービスに届く前に 400。
     ResponseEntity<?> createOrder(@jakarta.validation.Valid @RequestBody OrderRequest request,
-            @RequestHeader(value = "User-Id", required = false) Long userId) {
+            @RequestHeader(value = "User-Id", required = false) Long userId,
+            // 멱등 키 — 같은 결제 시도의 재요청이면 이미 만든 주문을 돌려준다(OrderService.createOrder, V26)
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
 
         // 🔒 주문자는 **게이트웨이가 검증한 토큰**에서만 온다.
         //
@@ -126,7 +128,7 @@ public class OrderController {
         }
 
         try {
-            Order newOrder = orderService.createOrder(request, userId);
+            Order newOrder = orderService.createOrder(request, userId, idempotencyKey);
 
             Map<String, String> data = new HashMap<>();
             data.put("orderId", Long.toString(newOrder.getOrderId()));
@@ -466,12 +468,14 @@ public class OrderController {
      */
     @PostMapping("/payment/stock-hold/{trackingId}")
     public ResponseEntity<?> renewStockHold(@PathVariable("trackingId") String trackingId,
-            @RequestHeader(value = "User-Id", required = false) Long userId) {
+            @RequestHeader(value = "User-Id", required = false) Long userId,
+            // 창마다의 결제 시도 키(V27) — 다른 창이 이 주문을 결제 중이면 400. 옛 화면은 보내지 않는다.
+            @RequestHeader(value = "Payment-Attempt", required = false) String paymentAttempt) {
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new MessageResponse("로그인이 필요합니다."));
         }
         try {
-            Map<String, Object> body = orderService.renewCheckoutHold(trackingId, userId);
+            Map<String, Object> body = orderService.renewCheckoutHold(trackingId, userId, paymentAttempt);
             if (body == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new MessageResponse("주문을 찾을 수 없습니다."));
             }

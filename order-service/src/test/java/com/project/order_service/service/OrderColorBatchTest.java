@@ -60,16 +60,16 @@ class OrderColorBatchTest {
         when(orderRepository.findByCustomerId(eq(7L), any())).thenReturn(new PageImpl<>(orders));
 
         // 생성자 인자 순서는 @RequiredArgsConstructor 가 만드는 필드 선언 순서를 따른다(OrderOwnershipTest 와 동일).
-        OrderDataService service = new OrderDataService(
+        OrderDataService data = new OrderDataService(
                 orderRepository,
-                catalog,
                 new ObjectMapper(),
                 mock(OrderAddressRepository.class),
                 mock(com.project.order_service.outbox.PaymentOutboxHelper.class),
                 mock(com.project.order_service.payment.PaymentGateways.class),
                 new com.project.order_service.payment.PaymentCurrencyPolicy());
 
-        Page<OrderDto> page = service.getOrdersByCustomerIdWithPagination(7L, 0, 10);
+        // 색상은 조회 트랜잭션 밖(OrderCacheService)에서 붙인다 — 데이터 서비스는 catalog 를 갖지 않는다.
+        Page<OrderDto> page = new OrderCacheService(data, catalog).getOrdersByCustomerIdWithPagination(7L, 0, 10);
 
         // 왕복 횟수 — 이 테스트의 존재 이유.
         verify(catalog, times(1)).getColorsInfo(List.of(1L, 2L));

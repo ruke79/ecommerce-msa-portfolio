@@ -32,7 +32,8 @@ public final class AvroDecoders {
                         AvroSchemaHistory.store(AvroSchemaHistory.CART_ROLLBACK))),
                 Map.entry("coupon-use", com.project.common.avro.CouponUseRequest.createDecoder(
                         AvroSchemaHistory.store(AvroSchemaHistory.COUPON_USE))),
-                Map.entry("coupon-rollback", com.project.common.avro.CouponRollbackRequest.getDecoder()),
+                Map.entry("coupon-rollback", com.project.common.avro.CouponRollbackRequest.createDecoder(
+                        AvroSchemaHistory.store(AvroSchemaHistory.COUPON_ROLLBACK))),
                 Map.entry("outgoing-mail", com.project.common.avro.OutgoingMailRequest.getDecoder()),
                 // 옛 스키마(v1·v2)로 쓴 레코드도 읽는다 — 배포 도중 옛 chat 파드가 쓴 것(AvroSchemaHistory).
                 Map.entry("chat", com.project.common.avro.ChatMessage.createDecoder(

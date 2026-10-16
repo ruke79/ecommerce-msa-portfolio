@@ -251,7 +251,9 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
                 PAID.equals(status),
                 status,
                 new BigDecimal(total.asText("0")),
-                currency.toUpperCase());
+                currency.toUpperCase(),
+                trackingIdFromCustomData(payment.path("customData").asText("")).isBlank() ? null
+                        : trackingIdFromCustomData(payment.path("customData").asText("")));
     }
 
     /** {@code customData} 는 우리가 넣은 JSON 문자열이다. 모양이 다르면 빈 문자열. */

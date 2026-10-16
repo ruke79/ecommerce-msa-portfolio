@@ -76,7 +76,6 @@ class PaypalPaymentVerificationTest {
 
         service = new OrderDataService(
                 orderRepository,
-                mock(CatalogServiceClient.class),
                 new ObjectMapper(),
                 mock(OrderAddressRepository.class),
                 outboxHelper,
@@ -347,5 +346,113 @@ class PaypalPaymentVerificationTest {
         assertThat(v.isCompleted()).isTrue();
         // amount 가 null 이라는 것이 '검증하지 않았다'는 신호다.
         assertThat(v.amount()).isNull();
+    }
+
+    // ---------------------------------------------------------------- 이중 결제
+
+    /**
+     * 🔴 이미 결제가 붙은 주문에 다른 결제가 확인되면 — 예전에는 결제 참조를 두 번째 것으로 덮어써 첫 결제의 참조가 사라졌다(환불도 두
+     * 번째 것만). 이제 덮지 않고 거절하며 세어 경보한다(OrderDuplicatePayment).
+     */
+    @Test
+    @DisplayName("🔴 이미 다른 결제가 붙은 주문의 두 번째 결제는 덮어쓰지 않고 거절하며 센다")
+    void secondPaymentIsRejectedAndCounted() {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        io.micrometer.core.instrument.Metrics.addRegistry(meters);
+        try {
+            order.setPaymentProvider(PaymentProvider.PAYPAL);
+            order.setProviderPaymentId("FIRST-PAYMENT");
+            paypalSays("COMPLETED", "5998", "USD");
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> record(PAYPAL_ORDER_ID))
+                    .isInstanceOf(com.project.order_service.payment.PaymentVerificationException.class)
+                    .hasMessage(OrderDataService.DUPLICATE_PAYMENT_MESSAGE);
+
+            assertThat(order.getProviderPaymentId()).as("첫 결제의 참조가 남는다").isEqualTo("FIRST-PAYMENT");
+            verify(outboxHelper, org.mockito.Mockito.never()).savePaymentOutbox(any(), any());
+            assertThat(meters.counter(OrderDataService.DUPLICATE_PAYMENT_METRIC, "provider", "PAYPAL").count()).isEqualTo(1);
+        } finally {
+            io.micrometer.core.instrument.Metrics.removeRegistry(meters);
+        }
+    }
+
+    @Test
+    @DisplayName("🔴 결제 기록은 주문 행을 잠그고 시작한다 — 읽은 뒤 다른 요청이 바꿨으면 거절(겹친 두 결제의 늦은 쪽이 이중 결제 검사를 본다)")
+    void recordPaymentLocksTheOrder() {
+        org.springframework.test.util.ReflectionTestUtils.setField(order, "version", 1L);
+        when(orderRepository.lockVersion(1L)).thenReturn(2L);
+        paypalSays("COMPLETED", "5998", "USD");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> record(PAYPAL_ORDER_ID))
+                .isInstanceOf(com.project.order_service.payment.PaymentVerificationException.class)
+                .hasMessage(OrderDataService.CONCURRENT_CHANGE_MESSAGE);
+        verify(verifier, org.mockito.Mockito.never()).verify(any());
+    }
+
+    @Test
+    @DisplayName("🔴 겹친 두 결제의 늦은 쪽은 잠근 채 다시 읽어 이중 결제 검사에 걸린다 — 예전에는 경보 없이 '처리 중' 으로 거절했다")
+    void lateConcurrentPaymentIsCountedAsDuplicate() {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        io.micrometer.core.instrument.Metrics.addRegistry(meters);
+        try {
+            org.springframework.test.util.ReflectionTestUtils.setField(order, "version", 1L);
+            when(orderRepository.lockVersion(1L)).thenReturn(2L);
+            jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
+            // 다시 읽으면 앞선 결제가 보인다(그 커밋이 버전을 올렸다).
+            org.mockito.Mockito.doAnswer(i -> {
+                order.setPaymentProvider(PaymentProvider.PAYPAL);
+                order.setProviderPaymentId("FIRST-PAYMENT");
+                return null;
+            }).when(em).refresh(order);
+            org.springframework.test.util.ReflectionTestUtils.setField(service, "entityManager", em);
+            paypalSays("COMPLETED", "5998", "USD");
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> record(PAYPAL_ORDER_ID))
+                    .hasMessage(OrderDataService.DUPLICATE_PAYMENT_MESSAGE);
+            verify(em).refresh(order);
+            assertThat(order.getProviderPaymentId()).isEqualTo("FIRST-PAYMENT");
+            assertThat(meters.counter(OrderDataService.DUPLICATE_PAYMENT_METRIC, "provider", "PAYPAL").count()).isEqualTo(1);
+        } finally {
+            io.micrometer.core.instrument.Metrics.removeRegistry(meters);
+        }
+    }
+
+    // ---------------------------------------------------------------- 주문 참조 대조
+
+    private OrderDataService serviceWith(VerifiedPayment verified) {
+        PaymentGateway gateway = new PaymentGateway() {
+            @Override
+            public PaymentProvider provider() {
+                return PaymentProvider.STRIPE;
+            }
+
+            @Override
+            public VerifiedPayment verify(String providerPaymentId) {
+                return verified;
+            }
+        };
+        return new OrderDataService(orderRepository, new ObjectMapper(),
+                mock(OrderAddressRepository.class), outboxHelper, new PaymentGateways(java.util.List.of(gateway)), testPolicy());
+    }
+
+    /** 🔴 같은 금액의 다른 주문(남의 것일 수도 있다)의 결제로 이 주문을 결제 완료로 만들 수 없다 — 예전에는 금액 · 통화만 봤다. */
+    @Test
+    @DisplayName("🔴 제공자가 붙여 둔 주문 참조가 이 주문이 아니면 거절한다")
+    void paymentForAnotherOrderIsRejected() {
+        OrderDataService stripe = serviceWith(new VerifiedPayment(PaymentProvider.STRIPE, "cs_other", true, "paid",
+                new BigDecimal("5998"), "USD", "someone-elses-order"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> stripe.recordPayment(TRACKING_ID, PaymentProvider.STRIPE, "cs_other", 7L))
+                .isInstanceOf(PaymentVerificationException.class).hasMessage(OrderDataService.FOREIGN_PAYMENT_MESSAGE);
+        assertThat(order.getProviderPaymentId()).isNull();
+        verify(outboxHelper, org.mockito.Mockito.never()).savePaymentOutbox(any(), any());
+    }
+
+    @Test
+    @DisplayName("주문 참조가 이 주문이면 · 제공자가 참조를 모르면(null) 그대로 진행")
+    void matchingOrUnknownReferenceProceeds() {
+        serviceWith(new VerifiedPayment(PaymentProvider.STRIPE, "cs_mine", true, "paid", new BigDecimal("5998"), "USD", TRACKING_ID))
+                .recordPayment(TRACKING_ID, PaymentProvider.STRIPE, "cs_mine", 7L);
+        assertThat(order.getProviderPaymentId()).isEqualTo("cs_mine");
     }
 }

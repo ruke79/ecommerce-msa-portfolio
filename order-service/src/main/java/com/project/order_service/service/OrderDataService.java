@@ -15,7 +15,6 @@ import com.project.common.dto.request.OrderItemQtyRequest;
 import com.project.common.dto.request.PaypalPaymentRequest;
 import com.project.common.message.dto.request.PaymentRequest;
 import com.project.common.outbox.OutboxStatus;
-import com.project.order_service.client.CatalogServiceClient;
 import com.project.order_service.domain.exception.OrderDomainException;
 import com.project.order_service.mapper.OrderAddressMapper;
 import com.project.order_service.model.Order;
@@ -60,8 +59,8 @@ import java.util.stream.Collectors;
 public class OrderDataService {
 
     private final OrderRepository orderRepository;
-    private final CatalogServiceClient catalogServiceClient;
-    // 🔒 cartServiceClient · orderPricing 을 여기서 **뺐다**(docs/37 #5).
+    // 🔒 cartServiceClient · orderPricing · catalogServiceClient 를 여기서 **뺐다**(docs/37 #5 · #1). 조회 화면의 색상(catalog)은
+    //    OrderCacheService 가 이 클래스의 load* 가 돌려준 주문으로 트랜잭션 밖에서 붙인다.
     //    이 클래스의 메서드는 전부 트랜잭션 안에서 도므로, 원격 호출 클라이언트를 손에
     //    쥐고 있으면 누군가 "한 줄이면 되는데" 하고 다시 부른다. 필드가 없으면 부를 수가
     //    없다 — 주석보다 확실하다. 원격 호출은 OrderService.createOrder 가 한다.
@@ -105,7 +104,7 @@ public class OrderDataService {
      * {@code null} — 컨트롤러는 이것을 404 로 바꾼다. 403 이 아니라 404 인 이유는, 403 은
      * "그 주문은 존재한다"는 사실을 알려줘 번호를 훑는 것 자체를 막지 못하기 때문이다.
      */
-    public OrderDto getOrder(Long orderId, Long requesterId, String filter) {
+    public Order loadOrder(Long orderId, Long requesterId, String filter) {
         log.debug("Data Service: Fetching order details for order ID: {}", orderId);
         Order data = filter.isEmpty()
                 ? orderRepository.findById(orderId).orElse(null)
@@ -120,19 +119,34 @@ public class OrderDataService {
             return null;
         }
 
-        return OrderService.convertToOrderDto(data, objectMapper, catalogServiceClient, orderAddressRepository);
+        return forView(data);
     }
 
-    @Transactional(readOnly = true)    
-    public List<OrderDto> getOrders(Long customerId, String filter) {
-        List<Order> orders = getOrdersByCustomerId(customerId);
+    /**
+     * 화면 조립(트랜잭션 밖)이 쓸 연관을 지금 읽는다 — 품목 · 배송지. open-in-view 를 끈 뒤로는 트랜잭션이 끝나면 지연 로딩이 안 된다.
+     * [JA] 画面組み立て(トランザクション外)が使う関連を今読む。
+     */
+    private static Order forView(Order order) {
+        org.hibernate.Hibernate.initialize(order.getOrderedProducts());
+        org.hibernate.Hibernate.initialize(order.getShippingAddress());
+        return order;
+    }
 
-        if (orders != null && !orders.isEmpty()) {
-            return orders.stream()
-                    .map(o -> getOrder(o.getOrderId(), customerId, filter))
-                    .collect(Collectors.toList());
+    /**
+     * 고객의 주문 전부 — 예전 {@code getOrders} 의 모양 그대로: 상태가 맞지 않는 주문은 null 로 자리를 지킨다(옛 화면이 그렇게 읽는다).
+     */
+    @Transactional(readOnly = true)
+    public List<Order> loadOrders(Long customerId, String filter) {
+        List<Order> orders = getOrdersByCustomerId(customerId);
+        if (orders == null || orders.isEmpty()) {
+            return null;
         }
-        return null;
+        OrderStatus status = filter == null || filter.isEmpty() ? null : OrderStatus.getStatus(filter);
+        List<Order> result = new java.util.ArrayList<>(orders.size());
+        for (Order o : orders) {
+            result.add(status == null || o.getOrderStatus() == status ? forView(o) : null);
+        }
+        return result;
     }
 
     /**
@@ -159,7 +173,7 @@ public class OrderDataService {
      * @param filter 비어 있으면 상태로 거르지 않는다(화면의 "All Orders").
      */
     @Transactional(readOnly = true)
-    public Page<OrderDto> getOrdersPage(Long customerId, String filter, Long cursor, int size) {
+    public Page<Order> loadOrdersPage(Long customerId, String filter, Long cursor, int size) {
         if (customerId == null) {
             return Page.empty();
         }
@@ -187,27 +201,24 @@ public class OrderDataService {
                             customerId, status, cursor, pageRequest);
         }
 
-        // 색상은 페이지 단위로 한 번 — 주문마다 부르면 페이지당 (주문 × 상품) 번이다.
-        Map<String, ProductColorDto> colors =
-                OrderService.fetchColors(page.getContent(), catalogServiceClient);
-
-        return page.map(order -> OrderService.convertToOrderDto(order, colors));
+        // 색상(catalog)은 OrderCacheService 가 트랜잭션 밖에서 페이지 단위로 한 번에 붙인다.
+        page.getContent().forEach(OrderDataService::forView);
+        return page;
     }
 
     /** 주문 목록 한 페이지의 상한. */
     public static final int MAX_ORDER_PAGE_SIZE = 50;
 
     @Transactional(readOnly = true)
-    public Page<OrderDto> getOrdersByCustomerIdWithPagination(Long customerId, int page, int size) {
+    public Page<Order> loadOrdersByCustomerIdWithPagination(Long customerId, int page, int size) {
         PageRequest pageRequest = PageRequest.of(page, size, Sort.by("createdAt").descending());
         Page<Order> ordersPage = orderRepository.findByCustomerId(customerId, pageRequest);
-        // 색상은 페이지 단위로 한 번 — 주문마다 부르면 페이지당 (주문 × 상품) 번이다.
-        Map<String, ProductColorDto> colors = OrderService.fetchColors(ordersPage.getContent(), catalogServiceClient);
-        return ordersPage.map(order -> OrderService.convertToOrderDto(order, colors));
+        ordersPage.getContent().forEach(OrderDataService::forView);
+        return ordersPage;
     }
     
     @Transactional(readOnly = true)
-    public Page<OrderDto> getOrdersByCustomerIdWithCursor(Long customerId, Long cursorId, int size) {
+    public Page<Order> loadOrdersByCustomerIdWithCursor(Long customerId, Long cursorId, int size) {
         PageRequest pageRequest = PageRequest.of(0, size, Sort.by("orderId").descending());
         Page<Order> ordersPage;
 
@@ -216,8 +227,8 @@ public class OrderDataService {
         } else {
             ordersPage = orderRepository.findByCustomerIdAndOrderIdLessThanOrderByOrderIdDesc(customerId, cursorId, pageRequest);
         }
-        Map<String, ProductColorDto> colors = OrderService.fetchColors(ordersPage.getContent(), catalogServiceClient);
-        return ordersPage.map(order -> OrderService.convertToOrderDto(order, colors));
+        ordersPage.getContent().forEach(OrderDataService::forView);
+        return ordersPage;
     }
 
     /**
@@ -275,6 +286,21 @@ public class OrderDataService {
     @Transactional
     public Order createOrder(OrderRequest request, CartDto latestCart, OrderPricing.Amounts amounts,
             Long customerId) {
+        return createOrder(request, latestCart, amounts, customerId, null);
+    }
+
+    /** 같은 고객 · 같은 멱등 키로 이미 만든 주문(V26). 없으면 null. */
+    @Transactional(readOnly = true)
+    public Order findByCreateKey(Long customerId, String createKey) {
+        if (customerId == null || createKey == null) {
+            return null;
+        }
+        return orderRepository.findByCustomerIdAndCreateKey(customerId, createKey).orElse(null);
+    }
+
+    @Transactional
+    public Order createOrder(OrderRequest request, CartDto latestCart, OrderPricing.Amounts amounts,
+            Long customerId, String createKey) {
 
         // 🐛 예전에는 이 세 갈래가 전부 `return null` 이었다. 컨트롤러는 그 null 에 대고
         //    newOrder.getOrderId() 를 불렀으므로 NPE → catch (RuntimeException) → **본문이
@@ -320,6 +346,7 @@ public class OrderDataService {
                     .shippingPrice(amounts.shippingPrice())
                     .orderStatus(OrderStatus.NOT_PROCESSED)
                     .customerId(customerId)
+                    .createKey(createKey)
                     .build();
 
             List<OrderProduct> ordered = new ArrayList<>();
@@ -394,6 +421,12 @@ public class OrderDataService {
             orderRepository.findAllById(ids).forEach(o -> o.setStockHoldUntil(now));
         }
         return ids;
+    }
+
+    /** 이 고객의 입금 대기(UNPAID) 주문 수 — 무통장 안내 상한(BankTransferService). */
+    @Transactional(readOnly = true)
+    public long countAwaitingDeposit(Long customerId) {
+        return orderRepository.countByCustomerIdAndOrderStatus(customerId, OrderStatus.UNPAID);
     }
 
     @Transactional(readOnly = true)
@@ -547,6 +580,12 @@ public class OrderDataService {
         // 예전에는 옛 컬럼(paypal_order_id)도 함께 봤다 — V4 이전 이미지가 반영한 결제는 그쪽에만 값이 있었고, 새
         // 컬럼만 보면 결제 이벤트를 한 번 더 발행했다. V17 이 그 값을 새 컬럼으로 옮긴 뒤로는 새 컬럼만 보면 된다
         // (docs/49 §3).
+        // 🔒 같은 주문의 결제 기록을 줄 세운다 — 두 탭의 결제가 겹치면 늦은 쪽이 아래의 이중 결제 검사를 보게 된다(lockVersion 주석).
+        //    🐛 예전에는 늦은 쪽을 "다른 요청이 처리 중" 으로 거절했다 — 그 결제도 이미 돈이 나갔는데 경보 없이 끝났다(PayPal 은 화면이
+        //    다시 보내지 않으면 영영 안 보인다). 이제 잠근 채 다시 읽어 이중 결제 검사(경보 OrderDuplicatePayment)에 걸리게 한다.
+        // [JA] 同じ注文の決済記録を直列化する — 遅い方はロックしたまま読み直し、二重決済検査(警報)に掛かる。以前は警報なしで拒否していた。
+        lockFresh(order);
+
         boolean alreadyRecorded = provider == order.getPaymentProvider()
                 && providerPaymentId.equals(order.getProviderPaymentId());
         if (alreadyRecorded) {
@@ -571,6 +610,24 @@ public class OrderDataService {
             throw new PaymentVerificationException(
                     "결제가 완료되지 않았습니다: provider=" + provider
                             + ", status=" + verified.rawStatus());
+        }
+
+        // 🔒 그 결제가 이 주문의 것인가 — 제공자가 결제에 붙여 둔 주문 참조(trackingId)와 대조한다. 🐛 예전에는 금액 · 통화만 봐서, 같은
+        //    금액의 다른 주문(남의 것일 수도 있다)의 결제 참조로 이 주문을 결제 완료로 만들 수 있었다. 참조를 모르는 제공자(PayPal)는 건너뛴다.
+        // [JA] その決済がこの注文のものか — 提供者が付けた注文参照と照合する。以前は金額 · 通貨だけを見ていた。
+        if (verified.orderReference() != null && !verified.orderReference().equals(order.getTrackingId())) {
+            log.warn("다른 주문의 결제를 붙이려는 시도를 거절 — orderId={} provider={}", order.getOrderId(), provider);
+            throw new PaymentVerificationException(FOREIGN_PAYMENT_MESSAGE);
+        }
+
+        // 🔴 이미 다른 결제가 붙은 주문이다 — 두 탭 · 두 수단으로 두 번 낸 돈이다. 🐛 예전에는 아래에서 결제 참조를 이 결제로 덮어써
+        //    첫 결제의 참조가 사라졌다(환불도 두 번째 것만 된다). 덮지 않고 거절하며, 세어 경보한다 — 두 번째 결제는 돌려줘야 한다.
+        // [JA] すでに別の決済が付いた注文 — 二重に払われたお金である。以前は参照を上書きして最初の決済の参照が消えた。
+        if (order.getProviderPaymentId() != null) {
+            io.micrometer.core.instrument.Metrics.counter(DUPLICATE_PAYMENT_METRIC, "provider", String.valueOf(provider)).increment();
+            log.error("이중 결제 — 이미 결제된 주문에 다른 결제가 확인됐다, 수동 환불 필요. orderId={} recorded={}:{} second={}:{}",
+                    order.getOrderId(), order.getPaymentProvider(), order.getProviderPaymentId(), provider, providerPaymentId);
+            throw new PaymentVerificationException(DUPLICATE_PAYMENT_MESSAGE);
         }
 
         // amount 가 null 이면 검증이 꺼진 모드다(DisabledPaypalOrderVerifier).
@@ -661,6 +718,93 @@ public class OrderDataService {
      * @param items 환불할 품목·수량. 비어 있으면 아직 환불되지 않은 전부
      * @return 환불이 반영된 주문(보상 이벤트 발행에 쓴다). 이미 다 환불돼 있었으면 그 주문
      */
+    /** 이중 결제 수 — Prometheus {@code order_duplicate_payment_total{provider}}, 경보 OrderDuplicatePayment. */
+    public static final String DUPLICATE_PAYMENT_METRIC = "order.duplicate.payment";
+
+    public static final String FOREIGN_PAYMENT_MESSAGE = "이 주문의 결제가 아닙니다.";
+
+    public static final String DUPLICATE_PAYMENT_MESSAGE = "이미 결제된 주문입니다. 중복된 결제는 확인 후 환불해 드립니다.";
+
+    public static final String CONCURRENT_CHANGE_MESSAGE = "다른 요청이 이 주문을 처리하고 있습니다. 잠시 뒤 다시 시도해 주세요.";
+
+    public static final String ALREADY_PAID_MESSAGE = "이미 결제된 주문입니다.";
+
+    public static final String OTHER_WINDOW_MESSAGE =
+            "이 주문의 결제가 다른 창에서 진행 중입니다. 그 창에서 결제를 마치거나 잠시 후 다시 시도해 주세요.";
+
+    public static final String DEPOSIT_ON_PAID_MESSAGE =
+            "이미 다른 결제가 붙은 주문입니다. 이 입금은 확인하지 말고 돌려드려야 합니다.";
+
+    /** 결제 기록 · 입금 확인 뒤 다시 읽기(lockFresh). 없으면(JPA 없는 테스트 컨텍스트 · 단위 테스트) 예전처럼 거절한다. */
+    private jakarta.persistence.EntityManager entityManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEntityManager(jakarta.persistence.EntityManager entityManager) {
+        this.entityManager = entityManager;
+    }
+
+    /**
+     * 주문 행을 잠그고, 이 트랜잭션이 읽은 뒤에 다른 커밋이 있었으면 <b>잠근 채 다시 읽는다</b> — 그 뒤의 검사(이미 결제됨 · 이중 결제)가
+     * 지금 값을 본다. 잠금은 트랜잭션 끝까지 간다.
+     */
+    private void lockFresh(Order order) {
+        Long current = orderRepository.lockVersion(order.getOrderId());
+        if (current != null && order.getVersion() != null && !current.equals(order.getVersion())) {
+            if (entityManager == null) {
+                requireUnchanged(order);
+                return;
+            }
+            log.info("주문이 읽은 뒤 바뀌었다 — 잠근 채 다시 읽는다. orderId={} read={} now={}", order.getOrderId(), order.getVersion(), current);
+            entityManager.refresh(order);
+        }
+    }
+
+    /**
+     * 결제를 시작한다(결제창을 열기 직전) — 이 주문의 결제창을 {@code attempt} 하나로(V27).
+     *
+     * <p>🐛 예전에는 결제창을 서버가 기록하지 않아 두 탭에서 같은 주문의 결제창을 열고 둘 다 결제할 수 있었다 — 두 번째 결제 기록에서
+     * 경보만 울리고 돈은 두 번 나갔다. 이제 {@code window} 동안 다른 키의 결제 시작을 거절한다. 같은 키(같은 탭 · 새로고침)는 다시 열고
+     * 끝을 늘린다. 끝이 지난 시도는 넘겨받는다. 키가 없으면(옛 화면) 시도는 적지 않는다.
+     *
+     * <p>이미 결제가 붙은 주문(결제 기록 뒤 사가가 PAID 로 바꾸기 전 포함)은 키와 상관없이 거절한다.
+     *
+     * <p>[JA] 決済開始 — この注文の決済画面を一つに。window の間は別のキーを拒む。決済済みの注文はキーに関係なく拒む。
+     *
+     * @throws PaymentVerificationException 이미 결제됐다 · 다른 창이 결제 중이다
+     */
+    @Transactional
+    public void startPaymentAttempt(String trackingId, String attempt, java.time.Duration window) {
+        Order order = getOrderByTrackingId(trackingId);
+        if (order == null) {
+            return;
+        }
+        lockFresh(order);
+        if (order.getProviderPaymentId() != null) {
+            throw new PaymentVerificationException(ALREADY_PAID_MESSAGE);
+        }
+        if (attempt == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (order.getPaymentAttempt() != null && !order.getPaymentAttempt().equals(attempt)
+                && order.getPaymentAttemptUntil() != null && order.getPaymentAttemptUntil().isAfter(now)) {
+            log.info("결제 시작 거절 — 다른 창이 이 주문을 결제 중이다. orderId={} until={}", order.getOrderId(), order.getPaymentAttemptUntil());
+            throw new PaymentVerificationException(OTHER_WINDOW_MESSAGE);
+        }
+        order.setPaymentAttempt(attempt);
+        order.setPaymentAttemptUntil(now.plus(window));
+        orderRepository.save(order);
+    }
+
+    /** 주문 행을 잠그고, 이 트랜잭션이 읽은 뒤에 다른 커밋이 있었으면 거절한다. 잠금은 트랜잭션 끝까지 간다. */
+    private void requireUnchanged(Order order) {
+        Long current = orderRepository.lockVersion(order.getOrderId());
+        if (current != null && order.getVersion() != null && !current.equals(order.getVersion())) {
+            log.warn("주문이 동시에 바뀌었다 — 처리를 멈춘다. orderId={} read={} now={}", order.getOrderId(), order.getVersion(), current);
+            throw new PaymentVerificationException(CONCURRENT_CHANGE_MESSAGE);
+        }
+    }
+
     @Transactional
     public Order refundOrder(String trackingId, Long requesterId, boolean admin, String reason,
             List<OrderItemQtyRequest> items) {
@@ -677,6 +821,10 @@ public class OrderDataService {
                 throw new PaymentVerificationException("주문을 찾을 수 없습니다: trackingId=" + trackingId);
             }
         }
+
+        // 🔒 같은 주문의 환불을 줄 세운다 — 행을 잠그고, 읽은 뒤에 다른 요청이 바꿨으면 제공자를 부르기 전에 멈춘다(lockVersion 주석).
+        // [JA] 同じ注文の返金を直列化する — 行をロックし、読んだ後に別の要求が変えていれば提供者を呼ぶ前に止める。
+        requireUnchanged(order);
 
         if (order.getOrderStatus() == OrderStatus.REFUNDED || order.remainingRefundable().signum() == 0) {
             log.info("이미 전부 환불된 주문입니다 — 중복 요청을 무시합니다. orderId={}", order.getOrderId());
@@ -811,6 +959,8 @@ public class OrderDataService {
             paymentOutboxHelper.savePaymentOutbox(payload, OutboxStatus.STARTED);
         }
 
+        // 환불 알림(OrderRefundedKafkaPublisher)이 트랜잭션 밖에서 환불 목록을 읽는다 — open-in-view 를 끈 뒤로는 지금 읽어 둔다(B-87).
+        org.hibernate.Hibernate.initialize(order.getRefunds());
         return order;
     }
 
@@ -912,6 +1062,10 @@ public class OrderDataService {
         if (!"cash".equalsIgnoreCase(order.getPaymentMethod())) {
             throw new PaymentVerificationException("무통장입금으로 주문한 건이 아닙니다: paymentMethod=" + order.getPaymentMethod());
         }
+        // 🔴 이미 결제가 붙었다(카드 결제 기록 뒤 사가가 PAID 로 바꾸기 전) — 🐛 예전에는 이 틈에 UNPAID 로 바꿔 입금 안내를 냈다.
+        if (order.getProviderPaymentId() != null) {
+            throw new PaymentVerificationException(ALREADY_PAID_MESSAGE);
+        }
         String name = sanitizeDepositor(depositorName);
         if (name.isEmpty()) {
             throw new PaymentVerificationException("입금자명을 입력해 주세요.");
@@ -949,9 +1103,20 @@ public class OrderDataService {
         if (order == null) {
             throw new PaymentVerificationException("주문을 찾을 수 없습니다: trackingId=" + trackingId);
         }
+        // 🔒 결제 기록과 줄 세운다 — 겹치면 잠근 채 다시 읽어 아래 검사가 지금 값을 본다.
+        lockFresh(order);
         if (order.getPaymentProvider() == PaymentProvider.BANK_TRANSFER && order.getProviderPaymentId() != null) {
             log.info("이미 입금이 확인된 주문입니다 — 중복 요청을 무시합니다. orderId={}", order.getOrderId());
             return order;
+        }
+        // 🔴 다른 수단의 결제가 이미 붙었다 — 이 입금은 두 번째 돈이다. 🐛 예전에는 UNPAID 만 보고 그 결제 참조를 입금 참조로 덮어쓰고
+        //    결제 아웃박스를 한 번 더 썼다(이중 결제 검사도 경보도 거치지 않았다). 덮지 않고 거절하며 이중 결제로 센다.
+        // [JA] 別の手段の決済がすでに付いている — この入金は二重のお金。以前は参照を上書きしていた。上書きせず拒否し二重決済として数える。
+        if (order.getProviderPaymentId() != null) {
+            io.micrometer.core.instrument.Metrics.counter(DUPLICATE_PAYMENT_METRIC, "provider", String.valueOf(PaymentProvider.BANK_TRANSFER)).increment();
+            log.error("이중 결제 — 이미 결제된 주문에 입금 확인이 왔다, 입금 반환 필요. orderId={} recorded={}:{}",
+                    order.getOrderId(), order.getPaymentProvider(), order.getProviderPaymentId());
+            throw new PaymentVerificationException(DEPOSIT_ON_PAID_MESSAGE);
         }
         if (order.getOrderStatus() != OrderStatus.UNPAID) {
             throw new PaymentVerificationException(

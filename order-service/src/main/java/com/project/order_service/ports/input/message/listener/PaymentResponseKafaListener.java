@@ -64,10 +64,12 @@ public class PaymentResponseKafaListener {
                         return null;
                     });
                 } catch (OptimisticLockingFailureException e) {
-                    // NO-OP for optimistic lock. This means another thread finished the work, do
-                    // not throw error to prevent reading the data from kafka again!
-                    log.error("Caught optimistic locking exception in PaymentResponseKafkaListener for order id: {}",
-                            paymentResponse.getOrderId());
+                    // 🔒 다시 시도한다(일시적 실패 — DltRetryPolicy 가 약 3분). 🐛 예전에는 "다른 스레드가 끝냈다" 고 보고 삼켰다 — 그런데
+                    //    충돌의 상대가 결제 확정이 아닐 수 있다(재고 예약 만료 기록 · 관리자 조작 · 결제창 갱신). 그러면 결제 응답이 사라져
+                    //    고객은 돈을 냈는데 주문은 결제 전으로 남았다. 다시 해도 안전하다 — 이미 PAID 면 사가가 대기 상태를 찾지 못해 건너뛴다.
+                    // [JA] 再試行する。以前は「別スレッドが終えた」とみなして握りつぶし、相手が決済確定でなければ決済応答が消えた。
+                    log.warn("결제 응답 처리 중 낙관적 잠금 충돌 — 다시 시도한다. orderId={}", paymentResponse.getOrderId());
+                    throw new org.springframework.kafka.listener.BatchListenerFailedException("payment 응답 처리 충돌", e, i);
                 } catch (OrderNotFoundException e) {
                     // NO-OP for OrderNotFoundException
                     log.error("No order found for order id: {}", paymentResponse.getOrderId());

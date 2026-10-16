@@ -118,6 +118,15 @@ public class CouponService {
                     .build());
         }
 
+        // 🔒 다른 주문이 이 쿠폰으로 결제 중이면 새 주문 · 장바구니 적용에 쓰지 못한다(V7). 예전에는 견적이 USED 만 봐서 같은 쿠폰으로
+        //    주문 둘을 만들고 둘 다 결제할 수 있었다 — 두 번째 결제 확정에서 경보만 울리고 할인은 두 번 나갔다.
+        //    [JA] 他の注文がこのクーポンで決済中なら、新しい注文 · カート適用には使えない。
+        if (coupon.inPaymentByAnotherOrder(null, LocalDateTime.now())) {
+            return Quoted.rejected(CouponResponse.builder()
+                    .message(IN_PAYMENT_MESSAGE)
+                    .build());
+        }
+
         // 🔒 할인의 기준 금액은 **서버가 읽은 장바구니**다. 요청 본문의 금액은 쓰지 않는다
         //    (docs/40 #10). 예전에는 제약 없는 쿠폰이 본문의 totalPrice 를 그대로 믿었고,
         //    그 값은 브라우저가 정했다.
@@ -300,22 +309,103 @@ public class CouponService {
         }
     }
 
+    /** 결제 확정의 결과. */
+    // [JA] 決済確定の結果。
+    public enum UseOutcome {
+        /** NOT_USED → USED, 이 주문을 적었다. */
+        USED,
+        /** 이미 이 주문이 썼다 — 같은 결제 응답이 다시 왔다(멱등). */
+        ALREADY_THIS_ORDER,
+        /** 다른 주문이 이미 썼다 — 한 쿠폰으로 두 주문이 할인을 받았다(이중 사용). */
+        USED_BY_ANOTHER_ORDER,
+        /** 이 사용자에게 그 이름의 쿠폰이 없다. */
+        NOT_FOUND
+    }
+
+    /** 다른 주문이 이 쿠폰으로 결제 중일 때 견적 · 결제 시작이 돌려주는 문구. */
+    public static final String IN_PAYMENT_MESSAGE =
+            "이 쿠폰으로 결제가 진행 중인 다른 주문이 있습니다. 그 결제를 마치거나 취소한 뒤 다시 시도해 주세요.";
+
+    /** 결제 시작의 결과 — order 가 결제창을 열지 정한다. */
+    public enum ClaimOutcome {
+        /** 이 주문이 쿠폰을 잡았다(또는 이미 이 주문이 썼다). */
+        CLAIMED,
+        /** 그런 쿠폰이 없다(삭제 · 다른 사용자). */
+        NOT_FOUND,
+        /** 다른 주문이 이미 썼다. */
+        USED,
+        /** 다른 주문이 지금 결제 중이다. */
+        IN_PAYMENT_ELSEWHERE
+    }
+
+    /** 결제 중 표시의 상한 — order 가 넘기는 시간이 이보다 길면 줄인다(입금 기한 49시간 + 여유). */
+    static final java.time.Duration MAX_PAYMENT_HOLD = java.time.Duration.ofHours(72);
+
+    /**
+     * 결제를 시작한다 — 이 주문이 쿠폰을 {@code hold} 동안 잡는다(V7). 잠그고 읽는다: 같은 쿠폰으로 두 주문이 동시에 결제를 시작해도
+     * 하나만 잡는다. 같은 주문이 다시 부르면(결제창을 다시 열기) 끝을 늘린다. 끝이 지난 다른 주문의 표시는 넘겨받는다.
+     *
+     * <p>🐛 예전에는 이런 단계가 없어 같은 쿠폰으로 주문 둘을 결제할 수 있었다 — 결제 확정에서 경보(CouponDoubleUse)만 울렸다.
+     *
+     * <p>[JA] 決済開始 — この注文がクーポンを hold の間押さえる。ロックして読むので、同時に二つの注文が始めても一つだけが押さえる。
+     */
     @Transactional
-    public Coupon updateCouponStatus(PaymentResponse response) {
-
-        if (null !=  response.getCouponName()) {
-
-            
-
-            Coupon coupon= getCouponByNameAndUserIdAndCouponStatus(response.getCouponName(), response.getCustomerId(), CouponStatus.NOT_USED);
-
-            if ( null != coupon) {
-                coupon.setCouponStatus(CouponStatus.USED);
-                coupon = couponRepository.save(coupon);
-                return coupon;
-            }
+    public ClaimOutcome claimForPayment(Long userId, String couponName, Long orderId, java.time.Duration hold) {
+        if (userId == null || couponName == null || couponName.isBlank() || orderId == null || hold == null) {
+            return ClaimOutcome.NOT_FOUND;
         }
-        return null;
+        Coupon coupon = couponRepository.findForUpdate(couponName, userId).orElse(null);
+        if (coupon == null) {
+            return ClaimOutcome.NOT_FOUND;
+        }
+        if (coupon.getCouponStatus() == CouponStatus.USED) {
+            return orderId.equals(coupon.getUsedOrderId()) ? ClaimOutcome.CLAIMED : ClaimOutcome.USED;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (coupon.inPaymentByAnotherOrder(orderId, now)) {
+            log.info("쿠폰 결제 시작 거절 — 다른 주문이 결제 중. orderId={} paying={}", orderId, coupon.getPaymentOrderId());
+            return ClaimOutcome.IN_PAYMENT_ELSEWHERE;
+        }
+        java.time.Duration bounded = hold.isNegative() || hold.compareTo(MAX_PAYMENT_HOLD) > 0 ? MAX_PAYMENT_HOLD : hold;
+        coupon.setPaymentOrderId(orderId);
+        coupon.setPaymentUntil(now.plus(bounded));
+        couponRepository.save(coupon);
+        return ClaimOutcome.CLAIMED;
+    }
+
+    /**
+     * 결제 확정 — 쿠폰을 USED 로, 쓴 주문을 적는다. 잠그고 읽는다(동시 결제 둘 중 하나만 NOT_USED 를 본다).
+     *
+     * <p>🐛 예전에는 NOT_USED 만 찾아 없으면 null — 같은 결제 응답의 재전달과 다른 주문의 이중 사용을 가르지 못했고, 어느 주문이
+     * 썼는지도 남지 않아 보상(couponRollback)이 아무 주문의 쿠폰이나 되돌렸다.
+     *
+     * <p>[JA] 決済確定 — クーポンを USED にし、使った注文を記録する。以前は再配信と二重使用を区別できず、注文も残らなかった。
+     */
+    @Transactional
+    public UseOutcome useForOrder(PaymentResponse response) {
+        if (response.getCouponName() == null || response.getCustomerId() == null) {
+            return UseOutcome.NOT_FOUND;
+        }
+        Coupon coupon = couponRepository.findForUpdate(response.getCouponName(), response.getCustomerId()).orElse(null);
+        if (coupon == null) {
+            return UseOutcome.NOT_FOUND;
+        }
+        if (coupon.getCouponStatus() == CouponStatus.NOT_USED) {
+            if (coupon.inPaymentByAnotherOrder(response.getOrderId(), LocalDateTime.now())) {
+                // 결제는 이미 끝났다 — 되돌릴 수 없으니 이 주문이 쓴 것으로 적는다. 결제 중이던 다른 주문은 결제 확정에서 이중 사용이 된다.
+                log.warn("결제 중 표시가 다른 주문인데 결제가 확정됐다 — 이 주문이 쓴 것으로 적는다. orderId={} paying={}",
+                        response.getOrderId(), coupon.getPaymentOrderId());
+            }
+            coupon.setCouponStatus(CouponStatus.USED);
+            coupon.setUsedOrderId(response.getOrderId());
+            coupon.clearPayment();
+            couponRepository.save(coupon);
+            return UseOutcome.USED;
+        }
+        if (response.getOrderId() != null && response.getOrderId().equals(coupon.getUsedOrderId())) {
+            return UseOutcome.ALREADY_THIS_ORDER;
+        }
+        return UseOutcome.USED_BY_ANOTHER_ORDER;
     }
 
     @Transactional
@@ -628,22 +718,42 @@ public class CouponService {
         return coupons;
     }
 
-    @Transactional 
+    /**
+     * 사가 보상 — 그 주문이 쓴 쿠폰만 되돌린다.
+     *
+     * <p>🐛 예전에는 이름 · 사용자로 찾은 USED 쿠폰을 무조건 NOT_USED 로 돌렸다. 같은 쿠폰을 고른 주문 A(결제됨) · B(결제 실패)가
+     * 있으면 B 의 보상이 A 가 쓴 쿠폰을 되살렸다 — 같은 쿠폰으로 또 할인을 받을 수 있었다.
+     *
+     * <p>메시지에 주문이 없거나(옛 프로듀서 v1) 쿠폰에 쓴 주문이 없으면(이 변경 전에 쓴 쿠폰) 누구의 것인지 모르므로 예전처럼 되돌린다.
+     *
+     * <p>[JA] 補償 — その注文が使ったクーポンだけを戻す。以前は別注文の補償が決済済みのクーポンを戻していた。
+     *
+     * @return 되돌린 쿠폰, 되돌리지 않았으면 null
+     */
+    @Transactional
     public Coupon couponRollback(CouponRollbackRequest request) {
-
-        Coupon coupon = getCouponByNameAndUserIdAndCouponStatus(
-            request.getCouponName(), request.getUserId(), CouponStatus.USED);
-
-        if (null != coupon) {
-
-            coupon.setCouponStatus(CouponStatus.NOT_USED);
-
-            coupon = couponRepository.save(coupon);
-
-            return coupon;
+        if (request.getCouponName() == null || request.getUserId() == null) {
+            return null;
         }
-
-        return null;
+        Coupon coupon = couponRepository.findForUpdate(request.getCouponName(), request.getUserId()).orElse(null);
+        if (coupon != null && coupon.getCouponStatus() == CouponStatus.NOT_USED
+                && request.getOrderId() != null && request.getOrderId().equals(coupon.getPaymentOrderId())) {
+            // 결제를 시작했다가 실패 · 취소된 주문 — 결제 중 표시만 푼다(쓰이지 않았다). 예전에는 이 경우가 "되돌릴 것 없음" 이라
+            // 재시도 뒤 DLT 로 갔다.
+            coupon.clearPayment();
+            return couponRepository.save(coupon);
+        }
+        if (coupon == null || coupon.getCouponStatus() != CouponStatus.USED) {
+            return null;
+        }
+        if (request.getOrderId() != null && coupon.getUsedOrderId() != null
+                && !request.getOrderId().equals(coupon.getUsedOrderId())) {
+            log.info("쿠폰 보상 건너뜀 — 다른 주문이 쓴 쿠폰이다. orderId={} usedBy={}", request.getOrderId(), coupon.getUsedOrderId());
+            return null;
+        }
+        coupon.setCouponStatus(CouponStatus.NOT_USED);
+        coupon.setUsedOrderId(null);
+        return couponRepository.save(coupon);
     }
 
 

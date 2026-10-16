@@ -18,5 +18,18 @@ public record VerifiedPayment(
         boolean completed,
         String rawStatus,
         BigDecimal amount,
-        String currency) {
+        String currency,
+        /**
+         * 제공자가 그 결제에 붙여 둔 <b>우리 주문 참조</b>(trackingId) — 결제를 만들 때 실은 값(Stripe {@code client_reference_id} ·
+         * 포트원 {@code merchant_uid} · V2 {@code customData}). 제공자가 모르면 null(PayPal — 결제창이 주문 참조를 싣지 않는다).
+         * recordPayment 가 이것이 그 주문인지 대조한다.
+         * [JA] 提供者がその決済に付けた当方の注文参照。recordPayment がその注文か照合する。
+         */
+        String orderReference) {
+
+    /** 주문 참조를 모르는 제공자(PayPal) · 테스트. */
+    public VerifiedPayment(PaymentProvider provider, String providerPaymentId, boolean completed, String rawStatus,
+            BigDecimal amount, String currency) {
+        this(provider, providerPaymentId, completed, rawStatus, amount, currency, null);
+    }
 }

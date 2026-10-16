@@ -5,7 +5,6 @@ import org.springframework.stereotype.Service;
 
 import com.project.common.constants.PaymentStatus;
 import com.project.common.message.dto.response.PaymentResponse;
-import com.project.coupon_service.model.Coupon;
 import com.project.coupon_service.model.ProcessedEvent;
 import com.project.coupon_service.repository.jpa.ProcessedEventRepository;
 import com.project.coupon_service.service.CouponService;
@@ -21,6 +20,9 @@ public class PaymentResponseMessageListener {
 
     private final CouponService couponService;
     private final ProcessedEventRepository processedEventRepository;
+
+    /** 한 쿠폰으로 두 주문이 할인을 받은 수 — Prometheus {@code coupon_double_use_total}, 경보 CouponDoubleUse. */
+    public static final String DOUBLE_USE_METRIC = "coupon.double.use";
 
     @Transactional
     public void completeCoupon(PaymentResponse response) {
@@ -40,14 +42,20 @@ public class PaymentResponseMessageListener {
             return;
         }
 
-        Coupon coupon = couponService.updateCouponStatus(response);
-        if (coupon == null) {
-            // 쓸 수 있는(NOT_USED) 쿠폰이 없다 — 이미 다른 주문에서 쓰였거나 주인이 다르다. 다시 시도해도 결과는 같으므로
-            // DLT 로 보내지 않고 기록만 남긴다(쿠폰 이름은 사용자가 고른 값이라 로그에 싣지 않는다).
-            log.error("결제는 완료됐지만 사용할 수 있는 쿠폰이 없다 — orderId={}, customerId={}",
+        CouponService.UseOutcome outcome = couponService.useForOrder(response);
+        switch (outcome) {
+            case USED -> log.info("쿠폰 사용 처리 — orderId={}", response.getOrderId());
+            case ALREADY_THIS_ORDER -> log.info("쿠폰은 이미 이 주문이 썼다(재전달) — orderId={}", response.getOrderId());
+            case USED_BY_ANOTHER_ORDER -> {
+                // 한 쿠폰으로 두 주문이 할인을 받았다 — 다시 시도해도 결과는 같으므로 DLT 로 보내지 않고 세어 경보한다
+                // (CouponDoubleUse). 쿠폰 이름은 사용자가 고른 값이라 로그에 싣지 않는다.
+                // [JA] 一つのクーポンで二つの注文が割引を受けた — 再試行しても同じなので DLT には送らず、数えて警報する。
+                io.micrometer.core.instrument.Metrics.counter(DOUBLE_USE_METRIC).increment();
+                log.error("쿠폰 이중 사용 — 다른 주문이 이미 쓴 쿠폰으로 결제가 완료됐다. orderId={}, customerId={}",
+                        response.getOrderId(), response.getCustomerId());
+            }
+            case NOT_FOUND -> log.error("결제는 완료됐지만 그 쿠폰이 없다 — orderId={}, customerId={}",
                     response.getOrderId(), response.getCustomerId());
-        } else {
-            log.info("Coupon is used in coupon database with id: {}", coupon.getCouponId());
         }
         if (eventId != null) {
             // 쿠폰 상태 변경과 같은 트랜잭션에 기록 → 둘 다 반영되거나 둘 다 롤백(원자성).

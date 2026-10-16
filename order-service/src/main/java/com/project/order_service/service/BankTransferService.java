@@ -65,12 +65,29 @@ public class BankTransferService {
     /** 입금 기한(시간). 지나면 만료 잡이 접는다. */
     private int deadlineHours = 48;
 
+    /**
+     * 한 고객이 동시에 둘 수 있는 입금 대기(UNPAID) 주문 수. 입금 안내마다 재고를 입금 기한(+1시간)까지 잡으므로 — 🐛 예전에는 상한이
+     * 없어 돈을 내지 않고 안내만 반복해 인기 상품을 49시간씩 묶어 둘 수 있었다.
+     * [JA] 一人の顧客が同時に持てる入金待ち注文の数。以前は上限がなく、払わずに案内だけを繰り返して在庫を 49 時間ずつ押さえられた。
+     */
+    private int maxPendingPerCustomer = 3;
+
+    public static final String TOO_MANY_PENDING_MESSAGE = "입금을 기다리는 주문이 너무 많습니다. 기존 주문을 입금하거나 취소한 뒤 다시 시도해 주세요.";
+
     /** 결제 전 재고 예약(docs/59). 세터로 받는다 — 생성자를 쓰는 곳을 늘리지 않으려고. 없으면(테스트) 예약을 건드리지 않는다. */
     private com.project.order_service.stock.OrderStockHold stockHold;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setStockHold(com.project.order_service.stock.OrderStockHold stockHold) {
         this.stockHold = stockHold;
+    }
+
+    /** 입금 안내 때 쿠폰 잡기(coupon V7). 세터로 받는다. 없으면(테스트) 건드리지 않는다. */
+    private OrderCouponClaim couponClaim;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCouponClaim(OrderCouponClaim couponClaim) {
+        this.couponClaim = couponClaim;
     }
 
     public BankTransferService(OrderCacheService cahcedOrderService, OrderDataService orderDataService,
@@ -110,10 +127,21 @@ public class BankTransferService {
         Order current = orderDataService.getOrderByTrackingId(trackingId);
         if (current != null && requesterId != null && requesterId.equals(current.getCustomerId())
                 && current.getOrderStatus() == OrderStatus.NOT_PROCESSED) {
+            if (orderDataService.countAwaitingDeposit(requesterId) >= maxPendingPerCustomer) {
+                log.warn("입금 대기 주문 상한 — 새 입금 안내를 거절한다. customerId={} max={}", requesterId, maxPendingPerCustomer);
+                throw new PaymentVerificationException(TOO_MANY_PENDING_MESSAGE);
+            }
             Outcome hold = extendHold(current);
             if (hold != null && hold.isShort()) {
                 throw new PaymentVerificationException(
                         OrderService.shortageMessage(current, hold.shortages()).replace("주문하지 못했습니다", "입금을 시작하지 못했습니다"));
+            }
+            if (hold != null && hold.isRejected()) {
+                throw new PaymentVerificationException(OrderService.UNORDERABLE_MESSAGE);
+            }
+            // 쿠폰을 입금 기한(+1시간)까지 이 주문에 잡는다(coupon V7) — 입금을 기다리는 동안 같은 쿠폰으로 다른 주문을 결제하지 못하게.
+            if (couponClaim != null) {
+                couponClaim.claim(current, java.time.Duration.ofHours(deadlineHours + 1L));
             }
         }
         Order order = cahcedOrderService.startBankTransfer(trackingId, requesterId, depositorName, deadlineHours);

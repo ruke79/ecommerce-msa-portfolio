@@ -1,8 +1,9 @@
 {
   "type": "record", "name": "CouponRollbackRequest", "namespace": "com.project.common.avro",
-  "doc": "order → coupon 사가 보상(쿠폰 복원). 토픽 coupon-rollback. 키 userId.",
+  "doc": "v2(orderId 추가 — 그 주문이 쓴 쿠폰만 되돌린다). v1 은 avro-history/. order → coupon 사가 보상(쿠폰 복원). 토픽 coupon-rollback. 키 userId.",
   "fields": [
     { "name": "userId",     "type": "long" },
-    { "name": "couponName", "type": ["null", "string"], "default": null }
+    { "name": "couponName", "type": ["null", "string"], "default": null },
+    { "name": "orderId",    "type": ["null", "long"], "default": null, "doc": "보상하는 주문 — 쿠폰의 used_order_id 와 같을 때만 되돌린다. v1 레코드는 null" }
   ]
 }

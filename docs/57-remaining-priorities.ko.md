@@ -533,6 +533,7 @@ Secret 모양은 cert-manager 의 Certificate(`keystores.pkcs12`)가 만드는 �
 | `/api/order/internal/purchase-stats` · `/purchased` | user-service | 고객 등급 · 리뷰 구매 확인 |
 | `/api/order/internal/orders` | delivery-service | 결제 완료 리스너 · 배송 백필 |
 | `/api/coupon/internal/quote` | order-service | 주문 금액 |
+| `/api/coupon/internal/payment-claim` | order-service | 결제 시작 때 쿠폰 잡기(V7) |
 | `/api/internal/stock/reservations` | order-service | 재고 예약·해제 |
 | `/api/product/rating` | user-service | 리뷰 평점·매일 대사 |
 | `/api/auth/user/emails` · `/name` | order-service | 관리자 주문 목록 |

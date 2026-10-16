@@ -2,7 +2,7 @@
   "type": "record",
   "name": "CartEmptyRequest",
   "namespace": "com.project.common.avro",
-  "doc": "v2(authorizationToken 제거 — 사용자 토큰을 메시지에 싣지 않는다, docs/54 §10.1). v1 은 avro-history/. order → cart 장바구니 비우기. 토픽 cart-empty. 키 userId.",
+  "doc": "v3(orderId 추가 — 같은 주문의 재전달을 cart 가 거른다). v2(authorizationToken 제거, docs/54 §10.1) · v1 은 avro-history/. order → cart 장바구니 비우기. 토픽 cart-empty. 키 userId.",
   "fields": [
     {
       "name": "userId",
@@ -56,6 +56,15 @@
         }
       },
       "default": []
+    },
+    {
+      "name": "orderId",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null,
+      "doc": "결제된 주문 — cart 는 cart-empty-<orderId> 로 한 번만 뺀다. v1 · v2 레코드는 null(예전처럼 거르지 않는다)"
     }
   ]
 }

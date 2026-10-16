@@ -18,6 +18,8 @@ public interface CartRepository extends JpaRepository<Cart, Long> {
     // 비관적 잠금: 사용자의 장바구니를 조회할 때 쓰기 락을 걸어 다른 트랜잭션이 수정하지 못하도록 합니다.
     // 이 메서드를 호출하면 데이터베이스에 "SELECT ... FOR UPDATE" 쿼리가 실행됩니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // 줄을 함께 읽는다 — 조회 · 체크아웃은 트랜잭션 밖에서 줄을 쓴다(open-in-view 를 끈 뒤로는 지연 로딩이 거기서 실패한다, B-87).
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"cartProducts"})
     Optional<Cart> findByUserId(Long userId);
     
     // 낙관적 잠금: @Version 필드를 사용하여 동시성 충돌을 감지하고, 별도의 DB 락은 걸지 않습니다.
@@ -40,4 +42,13 @@ public interface CartRepository extends JpaRepository<Cart, Long> {
     @Query(nativeQuery = true, value = "INSERT INTO cart.cart (cart_id, user_id, version, created_at, updated_at) "
             + "VALUES (:cartId, :userId, 0, LOCALTIMESTAMP, LOCALTIMESTAMP) ON CONFLICT DO NOTHING")
     int insertIfAbsent(@Param("cartId") Long cartId, @Param("userId") Long userId);
+
+    /**
+     * 이 이벤트를 처음 처리하면 원장에 남기고 1, 이미 있으면 0(V6) — 같은 트랜잭션의 처리와 함께 커밋 · 롤백된다. 동시에 둘이 와도 하나만 1.
+     * [JA] このイベントを初めて処理するなら台帳に残して 1、既にあれば 0。
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query(value = "insert into cart.processed_event (event_id, processed_at) values (:id, now())"
+            + " on conflict (event_id) do nothing", nativeQuery = true)
+    int markProcessed(@org.springframework.data.repository.query.Param("id") String eventId);
 }

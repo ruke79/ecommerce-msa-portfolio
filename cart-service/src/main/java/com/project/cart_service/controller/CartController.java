@@ -61,7 +61,13 @@ public class CartController {
                              .body(new MessageResponse("로그인이 필요합니다."));
                  }
 
-                 Cart cart = cartService.saveCart(request, userId);
+                 Cart cart;
+                 try {
+                     cart = cartService.saveCart(request, userId);
+                 } catch (IllegalArgumentException e) {
+                     // 수량이 범위 밖이다(CartService.checkedQty) — 고칠 수 있는 요청 오류다.
+                     return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
+                 }
 
                  if (null != cart ) {
 
@@ -189,7 +195,8 @@ public class CartController {
             }
 
             try {
-                CartDto response = cartService.getCart(userId);
+                // 주문의 근거 — 고른 줄의 가격을 catalog 의 지금 값으로 맞춰 돌려준다(CartService.getCartForCheckout)
+                CartDto response = cartService.getCartForCheckout(userId);
 
                 return new ResponseEntity<>(response, HttpStatus.OK);
             } catch (RuntimeException e) {

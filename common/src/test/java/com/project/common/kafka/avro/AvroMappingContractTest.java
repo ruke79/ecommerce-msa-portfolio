@@ -78,6 +78,7 @@ class AvroMappingContractTest {
     static class RollbackWithExtra {
         Long userId;
         String couponName;
+        Long orderId;
         String providerRef;   // 스키마(CouponRollbackRequest)에 없다
     }
 
@@ -93,7 +94,7 @@ class AvroMappingContractTest {
             @Override
             public com.project.common.avro.CouponRollbackRequest toRecord(RollbackWithExtra d) {
                 return com.project.common.avro.CouponRollbackRequest.newBuilder()
-                        .setUserId(d.userId).setCouponName(d.couponName).build();
+                        .setUserId(d.userId).setCouponName(d.couponName).setOrderId(d.orderId).build();
             }
 
             @Override
@@ -101,6 +102,7 @@ class AvroMappingContractTest {
                 RollbackWithExtra d = new RollbackWithExtra();
                 d.userId = r.getUserId();
                 d.couponName = r.getCouponName();
+                d.orderId = r.getOrderId();
                 return d;
             }
 

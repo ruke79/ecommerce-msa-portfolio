@@ -98,4 +98,60 @@ class CheckoutHoldRenewTest {
         when(stockHold.hold(eq(order), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.UNAVAILABLE, null, List.of()));
         assertThat(service.renewCheckoutHold("t-1", 7L)).containsEntry("renewed", false);
     }
+
+    @Test
+    @DisplayName("🔴 catalog 가 예약 요청을 거절하면 결제창을 열지 않는다")
+    void rejectedStopsCheckout() {
+        when(stockHold.hold(eq(order), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.REJECTED, null, List.of()));
+
+        assertThatThrownBy(() -> service.renewCheckoutHold("t-1", 7L))
+                .isInstanceOf(OrderDomainException.class).hasMessage(OrderService.UNORDERABLE_MESSAGE);
+    }
+
+    @Test
+    @DisplayName("🔴 쿠폰을 이 주문에 잡지 못하면(다른 주문이 결제 중) 결제창을 열지 않는다 — 잡는 시간은 결제 화면 예약과 같다")
+    void couponClaimRefusalStopsCheckout() {
+        OrderCouponClaim couponClaim = org.mockito.Mockito.mock(OrderCouponClaim.class);
+        service.setCouponClaim(couponClaim);
+        when(stockHold.hold(eq(order), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.HELD, LocalDateTime.now(), List.of()));
+        org.mockito.Mockito.doThrow(new OrderDomainException(OrderCouponClaim.IN_PAYMENT_MESSAGE))
+                .when(couponClaim).claim(order, Duration.ofMinutes(30));
+
+        assertThatThrownBy(() -> service.renewCheckoutHold("t-1", 7L)).hasMessage(OrderCouponClaim.IN_PAYMENT_MESSAGE);
+        verify(couponClaim).claim(order, Duration.ofMinutes(30));
+    }
+
+    @Test
+    @DisplayName("결제 전이 아니면 쿠폰도 건드리지 않는다")
+    void couponUntouchedWhenNotPending() {
+        OrderCouponClaim couponClaim = org.mockito.Mockito.mock(OrderCouponClaim.class);
+        service.setCouponClaim(couponClaim);
+        order.setOrderStatus(OrderStatus.PAID);
+
+        service.renewCheckoutHold("t-1", 7L);
+
+        verify(couponClaim, never()).claim(any(), any());
+    }
+
+    @Test
+    @DisplayName("🔴 결제 시작은 창마다의 시도 키를 10분 동안 적는다 — 다른 창이 결제 중이면 재고 · 쿠폰을 건드리기 전에 멈춘다")
+    void paymentAttemptComesFirst() {
+        org.mockito.Mockito.doThrow(new com.project.order_service.payment.PaymentVerificationException(OrderDataService.OTHER_WINDOW_MESSAGE))
+                .when(cache).startPaymentAttempt("t-1", "tab-two-attempt", Duration.ofMinutes(10));
+
+        assertThatThrownBy(() -> service.renewCheckoutHold("t-1", 7L, "tab-two-attempt")).hasMessage(OrderDataService.OTHER_WINDOW_MESSAGE);
+        verify(stockHold, never()).hold(any(), any());
+    }
+
+    @Test
+    @DisplayName("쓸 수 없는 모양의 키 · 옛 화면(키 없음)은 키 없이 — 이미 결제됨 검사는 그대로 받는다")
+    void badOrMissingKeyIsNull() {
+        when(stockHold.hold(eq(order), any())).thenReturn(new OrderStockHold.Outcome(OrderStockHold.Kind.UNAVAILABLE, null, List.of()));
+
+        service.renewCheckoutHold("t-1", 7L, "short");
+        service.renewCheckoutHold("t-1", 7L);
+
+        verify(cache, org.mockito.Mockito.times(2)).startPaymentAttempt("t-1", null, Duration.ofMinutes(10));
+    }
 }
+

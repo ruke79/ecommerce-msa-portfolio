@@ -52,9 +52,36 @@ class OrderTransactionBoundaryTest {
                 .as("OrderDataService 의 메서드는 전부 트랜잭션 안에서 돈다. 여기에 Feign "
                         + "클라이언트를 두면 DB 커넥션을 쥔 채 다른 서비스를 기다리게 된다 "
                         + "— 원격 호출은 OrderService.createOrder 가 한다(docs/37 #5). "
-                        + "catalogServiceClient 는 예외다: 조회 경로의 DTO 조립에 쓰이고 "
-                        + "그건 별도 항목(docs/37 #1)이다")
-                .containsExactly("catalogServiceClient");
+                        + "조회 화면의 색상(catalog)도 OrderCacheService 가 트랜잭션 밖에서 붙인다(docs/37 #1)")
+                .isEmpty();
+    }
+
+    /**
+     * 🔴 조회 화면(상세 · 목록)은 색상을 catalog 에서 받는다 — 그 호출이 트랜잭션 안이면 catalog 가 느린 동안 DB 커넥션(풀 5개)을 쥔다.
+     * 🐛 예전에는 OrderService(readOnly) → OrderCacheService(readOnly) → OrderDataService(readOnly) 가 모두 트랜잭션이었고, 그 안에서
+     * catalog 를 불렀다(목록은 주문마다 한 번). 트랜잭션은 OrderDataService.load* 안에서만 연다.
+     */
+    @Test
+    @DisplayName("🔴 조회 화면의 색상 조회는 트랜잭션 밖이다 — OrderService 는 NOT_SUPPORTED, OrderCacheService 는 트랜잭션을 열지 않는다")
+    void readPathsCallCatalogOutsideATransaction() throws Exception {
+        String[][] reads = {
+                { "getOrder", "Long", "Long", "String" },
+                { "getOrders", "Long", "String" },
+                { "getOrdersPage", "Long", "String", "Long", "int" },
+                { "getOrdersByCustomerIdWithPagination", "Long", "int", "int" },
+                { "getOrdersByCustomerIdWithCursor", "Long", "Long", "int" },
+        };
+        for (String[] r : reads) {
+            Class<?>[] types = Arrays.stream(r).skip(1)
+                    .map(t -> switch (t) { case "int" -> int.class; case "Long" -> Long.class; default -> String.class; })
+                    .toArray(Class<?>[]::new);
+            Transactional outer = OrderService.class.getMethod(r[0], types).getAnnotation(Transactional.class);
+            assertThat(outer).as("OrderService.%s", r[0]).isNotNull();
+            assertThat(outer.propagation()).as("OrderService.%s", r[0]).isEqualTo(Propagation.NOT_SUPPORTED);
+            assertThat(OrderCacheService.class.getMethod(r[0], types).getAnnotation(Transactional.class))
+                    .as("OrderCacheService.%s 는 색상을 부른다 — 트랜잭션이면 안 된다", r[0]).isNull();
+        }
+        assertThat(OrderCacheService.class.getAnnotation(Transactional.class)).as("클래스 레벨 트랜잭션도 없다").isNull();
     }
 
     /**

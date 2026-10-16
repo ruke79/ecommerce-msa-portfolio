@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "i18n/I18nProvider";
 import { useNavigate } from "react-router-dom";
 import { applyCoupon, postRequest } from "util/api";
@@ -6,6 +6,13 @@ import { roundMoney, splitCartTotal } from "util/pricing";
 import { useMoney } from "hook/useMoney";
 import { useFetchCoupons } from "hook/hooks";
 import CouponPicker from "./CouponPicker";
+
+/** 주문 생성 멱등 키 — 서버는 8 ~ 64자의 영숫자 · '-' · '_' 만 쓴다(OrderService.usableCreateKey). */
+function newOrderCreateKey() {
+    return typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 
 
@@ -97,6 +104,20 @@ const Summary = ({
 
     const [placing, setPlacing] = useState(false);
 
+    // 주문 시도 하나에 멱등 키 하나(Idempotency-Key). 응답이 끊겨 다시 누르면 같은 키로 가서 서버가 처음 만든 주문을 돌려준다 —
+    // 예전에는 요청이 서버에 닿고 응답만 잃으면 다시 누를 때 주문이 하나 더 생겼다(placing 가드는 같은 화면의 두 번 누름만 막는다).
+    // 배송지 · 결제수단 · 쿠폰을 바꾸면 다른 주문이므로 새 키, 주문이 만들어지면 비운다.
+    // [JA] 注文の試行ごとに冪等キーを一つ。応答が途切れて押し直すと同じキーで送り、サーバーは最初の注文を返す。
+    // 配送先・決済手段・クーポンを変えたら新しいキー、注文ができたら消す。
+    const attemptRef = useRef(null);
+    const attemptKey = () => {
+        const signature = JSON.stringify([selectedAddress, paymentMethod, coupon]);
+        if (!attemptRef.current || attemptRef.current.signature !== signature) {
+            attemptRef.current = { signature, key: newOrderCreateKey() };
+        }
+        return attemptRef.current.key;
+    };
+
     const placeOrderHandler = async () => {
         // 중복 제출 방지. 예전에는 아무 가드가 없어서 주문 버튼을 두 번 누르면
         // 주문이 두 건 생성됐다 — 결제까지 두 번 이어질 수 있는 경로다.
@@ -129,8 +150,9 @@ const Summary = ({
                 paymentMethod,
                 couponApplied: coupon,
                 // 신원(email)은 보내지 않는다 — 주문자는 게이트웨이가 검증한 토큰의 uid 다.
-            });
+            }, "application/json", { headers: { "Idempotency-Key": attemptKey() } });
 
+            attemptRef.current = null;
             navigate(`/order/${data.orderId}`);
         } catch (error) {
             setOrder_Error(

@@ -88,6 +88,11 @@ spring:
           truststore: ${LOCAL_TRUST_STORE_PATH:}
           storePassword: ${LOCAL_KEY_PASSWORD:}
     jpa:
+      # 🔒 요청 내내 EntityManager(와 그 DB 커넥션)를 쥐지 않는다. 켜져 있으면(스프링 기본값) 트랜잭션 밖으로 뺀 원격 호출도
+      #    요청이 끝날 때까지 커넥션을 쥔 채 기다린다 — 풀이 5개라 느린 catalog 하나가 다른 요청까지 막았다(가드 B-87).
+      #    트랜잭션 밖에서 쓰는 엔티티는 조회가 연관을 함께 읽는다(@EntityGraph).
+      #    [JA] リクエスト中ずっと EntityManager と接続を持たない。既定のままだとトランザクション外の遠隔呼び出しも接続を持ったまま待つ。
+      open-in-view: false
       show-sql: false
       hibernate:
         ddl-auto: ${DDL_AUTO:validate}

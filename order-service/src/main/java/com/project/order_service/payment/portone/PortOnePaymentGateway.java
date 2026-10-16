@@ -298,7 +298,8 @@ public class PortOnePaymentGateway implements PortOneGateway {
                 PAID.equals(status),
                 status,
                 new BigDecimal(amountNode.asText("0")),
-                currency.toUpperCase());
+                currency.toUpperCase(),
+                payment.path("merchant_uid").asText("").isBlank() ? null : payment.path("merchant_uid").asText(""));
     }
 
     // ------------------------------------------------------------------ 토큰

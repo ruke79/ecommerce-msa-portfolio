@@ -182,6 +182,10 @@ spring:
                    - 'Connection'
                    - 'X-Accel-Buffering'
                    - 'MultiLogin'
+                   # 주문 생성 멱등 키(Summary.jsx) — 로컬은 출처가 달라 사전 요청이 이 헤더를 묻는다.
+                   - 'Idempotency-Key'
+                   # 결제 시도 키(Payment.jsx, order V27).
+                   - 'Payment-Attempt'
                 allowedMethods: 
                   - PUT
                   - GET

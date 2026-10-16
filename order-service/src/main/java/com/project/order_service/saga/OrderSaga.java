@@ -20,10 +20,8 @@ import com.project.common.message.dto.request.ProductUpdateRequest;
 import com.project.common.message.dto.response.PaymentResponse;
 import com.project.order_service.model.Order;
 import com.project.order_service.model.OrderProduct;
-import com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CartRollbackKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CouponRollbackKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher;
 import com.project.order_service.repository.jpa.OrderProductRepository;
 import com.project.order_service.repository.jpa.OrderRepository;
 
@@ -41,8 +39,12 @@ public class OrderSaga {
 
     private final OrderRepository orderRepository;
     private final OrderProductRepository orderProductRepository;
-    private final CartEmptyKafkaPublisher cartEmptyKafkaPublisher;
-    private final ProductUpdateKafkaPublisher productUpdateKafkaPublisher;
+    /**
+     * 결제 확정 차감 · 반품 복원 · 장바구니 비우기는 상태 변경과 같은 트랜잭션의 아웃박스 행으로 쓴다 — 릴레이가 보낸다.
+     * 🐛 예전에는 Kafka 로 바로 보냈다(결과는 로그뿐) — PAID 커밋 뒤 발행이 빠지면 재고가 차감되지 않았다.
+     * [JA] 決済確定の減算 · 返品の復元 · カートを空にするは状態変更と同じトランザクションのアウトボックス行として書く。
+     */
+    private final com.project.order_service.outbox.PaymentOutboxHelper outbox;
     private final CouponRollbackKafkaPublisher couponRollbackKafkaPublisher;
     private final CartRollbackKafkaPublisher cartRollbackKafkaPublisher;
     /** 상태를 바꾸면 캐시를 비운다 — 안 비우면 상세가 한 시간 동안 옛 상태다(OrderCacheEvictor 주석). */
@@ -62,6 +64,14 @@ public class OrderSaga {
     /** 상태 변경 + 이벤트(docs/76). 세터 — 생성자를 쓰는 테스트가 많다. 기본값은 이벤트 없이 상태만 바꾼다(단위 테스트). */
     // [JA] 状態変更 + イベント(docs/76)。セッター — コンストラクタを使うテストが多い。デフォルトはイベントなしで状態だけ変える。
     private com.project.order_service.service.OrderStatusChanger statusChanger = com.project.order_service.service.OrderStatusChanger.withoutEvents();
+
+    /** 재고 복원의 트랜잭션. 세터 — 생성자를 쓰는 테스트가 많다. 없으면(단위 테스트) 트랜잭션 없이 돈다. */
+    private org.springframework.transaction.support.TransactionTemplate transactions;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.transactions = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     public void setStatusChanger(com.project.order_service.service.OrderStatusChanger statusChanger) {
@@ -156,8 +166,8 @@ public class OrderSaga {
         // [JA] 冪等キー: 在庫の減算は注文ごとに 1 回 — Kafka の再配信や Saga の再実行時には
         //      catalog がこのキーで重複をスキップする (docs/11 §4)
         request.setEventId("order-" + orderId);
-        productUpdateKafkaPublisher.publish(request);
-        log.info("OrderSaga: ProductUpdateRequest published for order ID {} with {} items.", orderId, request.getOrderProducts().size());
+        outbox.saveEventOutbox(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT, request.getEventId(), request);
+        log.info("OrderSaga: ProductUpdateRequest queued (outbox) for order ID {} with {} items.", orderId, request.getOrderProducts().size());
     }
 
     /**
@@ -186,9 +196,9 @@ public class OrderSaga {
         }
         // 사용자 토큰은 싣지 않는다 — cart 는 캐시 키가 사용자 id 라 토큰이 필요 없다(docs/54 §10.1).
         // [JA] ユーザートークンは載せない — cart はキャッシュキーがユーザー id なのでトークンが不要である(docs/54 §10.1)。
-        CartEmptyRequest request = new CartEmptyRequest(customerId, true, items);
-        cartEmptyKafkaPublisher.publish(request);
-        log.info("OrderSaga: CartEmptyRequest published for customer ID {} with {} lines.", customerId, items.size());
+        CartEmptyRequest request = new CartEmptyRequest(customerId, true, items, order.getOrderId());
+        outbox.saveEventOutbox(com.project.order_service.outbox.PaymentOutboxHelper.CART_EMPTY_EVENT, String.valueOf(customerId), request);
+        log.info("OrderSaga: CartEmptyRequest queued (outbox) for customer ID {} with {} lines.", customerId, items.size());
     }
 
     private OrderProductRequest mappingOrderProductToOrderProductRequest(OrderProduct orderProduct) {
@@ -216,14 +226,16 @@ public class OrderSaga {
         return order;
     }
 
-    private void publishCouponStateRollback(Long customerId, String couponName) {
+    /** 쿠폰 보상 — 주문 id 를 싣는다: coupon 은 이 주문이 쓴 쿠폰일 때만 되돌린다(예전에는 아무 주문이 쓴 쿠폰이나 되돌렸다). */
+    private void publishCouponStateRollback(Order order) {
+        Long customerId = order.getCustomerId();
+        String couponName = order.getCouponApplied();
         log.debug("OrderSaga: Preparing to publish coupon rollback for customer ID {} and coupon {}.", customerId, couponName);
         if (couponName == null || couponName.trim().isEmpty()) {
             log.info("OrderSaga: No coupon applied for customer ID {}. Skipping coupon rollback.", customerId);
             return;
         }
-        CouponRollbackRequest request = new CouponRollbackRequest(
-                customerId, couponName);
+        CouponRollbackRequest request = new CouponRollbackRequest(customerId, couponName, order.getOrderId());
         couponRollbackKafkaPublisher.publish(request);
         log.info("OrderSaga: CouponRollbackRequest published for customer ID {} with coupon {}.", customerId, couponName);
     }
@@ -269,7 +281,7 @@ public class OrderSaga {
         //      買った注文である — 戻すと同じクーポンを二度使えてしまう。
         if (order.getOrderStatus() == OrderStatus.REFUNDED) {
             try {
-                publishCouponStateRollback(order.getCustomerId(), order.getCouponApplied());
+                publishCouponStateRollback(order);
             } catch (RuntimeException e) {
                 // 환불은 이미 반영됐다. 쿠폰 복원이 실패했다고 환불을 되돌릴 수는 없다 —
                 // 로그로 남기고 운영자가 맞춘다.
@@ -298,7 +310,7 @@ public class OrderSaga {
             return;
         }
         try {
-            publishCouponStateRollback(order.getCustomerId(), order.getCouponApplied());
+            publishCouponStateRollback(order);
         } catch (RuntimeException e) {
             log.error("취소 보상(쿠폰 복원) 발행 실패 — 수동 확인 필요. orderId={} coupon={}",
                     order.getOrderId(), order.getCouponApplied(), e);
@@ -318,11 +330,8 @@ public class OrderSaga {
      * 같은 키(재시도가 접힌다), 다음 입고 뒤에는 다른 키. 차감({@code order-<orderId>})과도
      * 다르다.
      *
-     * <p><b>보내고 나서 표시한다.</b> 순서를 바꾸면 발행이 실패했는데 DB 는 "돌려줬다" 가
-     * 된다. 이 순서면 표시가 실패해도 다음 호출이 다시 보내고, catalog 가 eventId 로
-     * 두 번째를 버린다. 표시는 품목 카운터의 조건부 UPDATE 라 돌아온 수를 넘지 않는다.
-     * ⚠️ 발행은 됐는데 표시가 실패하고 <b>그 사이 새 입고</b>가 들어오면 다음 키가 달라져
-     * 이전 수량이 한 번 더 실린다 — 로그(error)로 남기고 운영자가 맞춘다.
+     * <p><b>아웃박스 행과 표시가 한 트랜잭션이다.</b> 둘 다 남거나 둘 다 없다 — 릴레이가 행을 보낼 때까지 다시 시도하고, catalog 가
+     * eventId 로 재전달을 버린다. 🐛 예전에는 Kafka 로 보내고(결과를 기다리지 않고) 표시해, 발행이 빠져도 "돌려놨다" 로 남았다.
      *
      * <p>실패는 로그로 끝난다 — 환불·입고는 이미 반영됐고, 재고 복원이 실패했다고
      * 그것을 되돌릴 수는 없다. 다른 보상과 같은 등급(최선 노력)이다.
@@ -339,11 +348,8 @@ public class OrderSaga {
      * 同じキー(リトライは一つに畳まれる)、次の入庫後は別のキーになる。減算({@code order-<orderId>})とも
      * 異なる。
      *
-     * <p><b>送ってから記録する。</b>順序を逆にすると、発行は失敗したのに DB は「戻した」ことに
-     * なる。この順序なら記録が失敗しても次の呼び出しが再送し、catalog が eventId で
-     * 二回目を捨てる。記録は品目カウンタへの条件付き UPDATE なので、戻ってきた数を超えない。
-     * ⚠️ 発行は成功したが記録が失敗し、<b>その間に新たな入庫</b>が入ると次のキーが変わり、
-     * 以前の数量がもう一度載ってしまう — ログ(error)に残して運用者が整合させる。
+     * <p><b>アウトボックス行と記録が一つのトランザクションである。</b>両方残るか両方ない — リレーが送れるまで再試行し、catalog が
+     * eventId で再配信を捨てる。以前は送って(結果を待たず)記録し、発行が抜けても「戻した」と残った。
      *
      * <p>失敗はログで終わる — 返金・入庫はすでに反映されており、在庫復元が失敗したからといって
      * それを取り消すことはできない。他の補償と同じ等級(ベストエフォート)である。
@@ -353,46 +359,62 @@ public class OrderSaga {
             return;
         }
         try {
-            List<OrderProduct> orderProducts = getOrderProductsByOrder(order.getOrderId());
-            ProductUpdateRequest request = new ProductUpdateRequest();
-            request.setOrderProducts(new ArrayList<>());
-            List<OrderProduct> pendingLines = new ArrayList<>();
-            int restockedSoFar = 0;
-            int pendingUnits = 0;
-            for (OrderProduct p : orderProducts) {
-                restockedSoFar += p.getRestockedQty();
-                int pending = p.pendingRestock();
-                if (pending <= 0) {
-                    continue;
-                }
-                request.getOrderProducts().add(new OrderProductRequest(
-                        p.getProductId(), pending, p.getSize(), p.getColorId()));
-                pendingLines.add(p);
-                pendingUnits += pending;
+            // 행과 표시를 한 트랜잭션으로 — 실패하면 둘 다 없고(롤백), 예외는 여기서 끝난다(환불 · 입고는 이미 반영됐다).
+            // 프록시의 @Transactional 이 아니라 템플릿인 것은 compensateRefund 안에서도 불리기 때문이다(자기 호출은 프록시를 지나지 않는다).
+            // [JA] 行と記録を一つのトランザクションで — 失敗すれば両方ない。テンプレートなのは compensateRefund 内の自己呼び出しのため。
+            if (transactions == null) {
+                restockInTransaction(order);
+            } else {
+                transactions.executeWithoutResult(status -> restockInTransaction(order));
             }
-            if (pendingUnits == 0) {
-                log.debug("재고 복원: 보낼 수량이 없다. orderId={}", order.getOrderId());
-                return;
-            }
-            request.setRestock(true);
-            request.setEventId("restock-" + order.getOrderId() + "-u" + (restockedSoFar + pendingUnits));
-            productUpdateKafkaPublisher.publish(request);
-
-            int markedLines = 0;
-            for (OrderProduct p : pendingLines) {
-                markedLines += orderProductRepository.addRestocked(p.getOrderProductId(), p.pendingRestock());
-            }
-            orderRepository.markStockRestored(order.getOrderId(), java.time.LocalDateTime.now());
-            cacheEvictor.evictOrderCaches(order.getOrderId(), "stockRestored");
-            if (markedLines != pendingLines.size()) {
-                log.error("재고 복원은 보냈는데 표시가 일부 실패했다 — 수동 확인 필요. orderId={} sent={} marked={}",
-                        order.getOrderId(), pendingLines.size(), markedLines);
-            }
-            log.info("재고 복원 발행: orderId={} eventId={} units={} lines={}",
-                    order.getOrderId(), request.getEventId(), pendingUnits, pendingLines.size());
         } catch (RuntimeException e) {
             log.error("재고 복원 발행 실패 — 수동 확인 필요. orderId={}", order.getOrderId(), e);
         }
+    }
+
+    private void restockInTransaction(Order order) {
+        List<OrderProduct> orderProducts = getOrderProductsByOrder(order.getOrderId());
+        ProductUpdateRequest request = new ProductUpdateRequest();
+        request.setOrderProducts(new ArrayList<>());
+        List<OrderProduct> pendingLines = new ArrayList<>();
+        int restockedSoFar = 0;
+        int pendingUnits = 0;
+        for (OrderProduct p : orderProducts) {
+            restockedSoFar += p.getRestockedQty();
+            int pending = p.pendingRestock();
+            if (pending <= 0) {
+                continue;
+            }
+            request.getOrderProducts().add(new OrderProductRequest(
+                    p.getProductId(), pending, p.getSize(), p.getColorId()));
+            pendingLines.add(p);
+            pendingUnits += pending;
+        }
+        if (pendingUnits == 0) {
+            log.debug("재고 복원: 보낼 수량이 없다. orderId={}", order.getOrderId());
+            return;
+        }
+        request.setRestock(true);
+        request.setEventId("restock-" + order.getOrderId() + "-u" + (restockedSoFar + pendingUnits));
+        // 아웃박스 행과 복원 표시가 한 트랜잭션이다 — 예전에는 보내고(결과를 기다리지 않고) 표시해, 발행이 빠져도 "돌려놨다" 로 남았다.
+        // [JA] アウトボックス行と復元の記録が一つのトランザクション — 以前は送って(結果を待たず)記録し、発行が抜けても「戻した」と残った。
+        outbox.saveEventOutbox(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT,
+                request.getEventId(), request);
+
+        int markedLines = 0;
+        for (OrderProduct p : pendingLines) {
+            markedLines += orderProductRepository.addRestocked(p.getOrderProductId(), p.pendingRestock());
+        }
+        if (markedLines != pendingLines.size()) {
+            // 품목 카운터의 조건부 UPDATE 가 일부 실패했다(동시에 다른 입고 · 복원) — 보내면 실제보다 많이 돌려준다. 행째 되돌린다.
+            // [JA] 品目カウンタの条件付き UPDATE が一部失敗した — 送ると実際より多く戻す。行ごと取り消す。
+            throw new IllegalStateException("재고 복원 표시가 일부 실패했다 — 아웃박스 행째 되돌린다. orderId="
+                    + order.getOrderId() + " lines=" + pendingLines.size() + " marked=" + markedLines);
+        }
+        orderRepository.markStockRestored(order.getOrderId(), java.time.LocalDateTime.now());
+        cacheEvictor.evictOrderCaches(order.getOrderId(), "stockRestored");
+        log.info("재고 복원 발행: orderId={} eventId={} units={} lines={}",
+                order.getOrderId(), request.getEventId(), pendingUnits, pendingLines.size());
     }
 
     // 결제 취소 -> 주문상태
@@ -419,7 +441,7 @@ public class OrderSaga {
 
             // 3. 쿠폰 롤백 메시지 발행
             // [JA] 3. クーポンのロールバックメッセージを発行
-            publishCouponStateRollback(order.getCustomerId(), order.getCouponApplied());
+            publishCouponStateRollback(order);
             log.info("OrderSaga: Published coupon rollback state for customer {}.", order.getCustomerId());
 
             // 4. 결제가 실패했다 — 잡아 둔 재고를 푼다(docs/59). 커밋된 뒤에 — 롤백된 취소로 풀면 안 된다.

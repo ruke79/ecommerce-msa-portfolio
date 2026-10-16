@@ -25,8 +25,19 @@ public class CartEmptyRequest implements Serializable {
      */
     java.util.List<CartEmptyItem> items = new java.util.ArrayList<>();
 
+    /**
+     * 결제된 주문 — cart 는 {@code cart-empty-<orderId>} 로 한 번만 뺀다. 🐛 예전에는 없어서, 재전달되면 주문하지 않은 수량(그 사이 다시
+     * 담은 같은 상품)까지 빠졌다. 옛 발행자의 메시지는 null — 그때는 예전처럼 거르지 않는다.
+     */
+    // [JA] 決済された注文 — cart は一度だけ取り除く。以前はなく、再配信で注文していない数量まで抜けた。
+    Long orderId;
+
     public CartEmptyRequest(Long userId, boolean emptyCart) {
-        this(userId, emptyCart, new java.util.ArrayList<>());
+        this(userId, emptyCart, new java.util.ArrayList<>(), null);
+    }
+
+    public CartEmptyRequest(Long userId, boolean emptyCart, java.util.List<CartEmptyItem> items) {
+        this(userId, emptyCart, items, null);
     }
 
     public java.util.List<CartEmptyItem> getItems() {

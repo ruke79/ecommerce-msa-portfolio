@@ -6,8 +6,10 @@ import { withI18n } from "i18n/testing";
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
+// PayPal 버튼은 그리지 않고 받은 콜백만 남긴다 — createOrder 를 직접 불러 본다.
+let mockPaypalProps = null;
 jest.mock("@paypal/react-paypal-js", () => ({
-    PayPalButtons: () => null,
+    PayPalButtons: (props) => { mockPaypalProps = props; return null; },
     usePayPalScriptReducer: () => [{ isPending: false, options: { currency: "USD" } }, jest.fn()],
 }));
 jest.mock("react-redux", () => ({ useDispatch: () => jest.fn() }));
@@ -79,7 +81,8 @@ describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
         fireEvent.click(screen.getByRole("button", { name: "카드로 결제하기 (Stripe)" }));
 
         expect(await screen.findByRole("alert")).toHaveTextContent("티셔츠(M) 품절");
-        expect(postRequest).toHaveBeenCalledWith("/order-service/api/order/payment/stock-hold/track-1", {});
+        expect(postRequest).toHaveBeenCalledWith("/order-service/api/order/payment/stock-hold/track-1", {},
+            "application/json", { headers: { "Payment-Attempt": expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) } });
         expect(postRequest).not.toHaveBeenCalledWith("/order-service/api/order/payment/stripe/session", expect.anything());
         expect(assign).not.toHaveBeenCalled();
     });
@@ -114,3 +117,64 @@ describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
         expect(screen.getByRole("button", { name: /국내 결제/ })).toBeEnabled();
     });
 });
+
+/**
+ * 🔴 PayPal 도 결제창을 열기 전에 결제 시작(재고 예약 갱신 · 쿠폰 잡기, coupon V7)을 거친다. 예전에는 PayPal 만 이 단계를 건너뛰어
+ * 같은 쿠폰으로 다른 주문이 결제 중이어도 PayPal 창이 열렸다.
+ */
+describe("주문 결제 화면 — PayPal 결제 시작", () => {
+    const actions = () => ({ order: { create: jest.fn().mockResolvedValue("PP-ORDER-1") } });
+
+    it("결제 시작이 통과하면 PayPal 주문을 만든다", async () => {
+        postRequest.mockResolvedValue({ data: { renewed: true } });
+        render(<Payment order={order("paypal")} setOrder={jest.fn()} setLoading={jest.fn()} />);
+
+        const a = actions();
+        await expect(mockPaypalProps.createOrder({}, a)).resolves.toBe("PP-ORDER-1");
+        expect(postRequest).toHaveBeenCalledWith("/order-service/api/order/payment/stock-hold/track-1", {},
+            "application/json", { headers: { "Payment-Attempt": expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) } });
+        expect(a.order.create).toHaveBeenCalled();
+    });
+
+    it("🔴 거절되면(쿠폰이 다른 주문에서 결제 중) PayPal 주문을 만들지 않고 이유를 보여 준다", async () => {
+        postRequest.mockRejectedValue({ response: { status: 400, data: {
+            message: "이 쿠폰으로 결제가 진행 중인 다른 주문이 있습니다. 그 결제를 마치거나 취소한 뒤 다시 시도해 주세요." } } });
+        render(<Payment order={order("paypal")} setOrder={jest.fn()} setLoading={jest.fn()} />);
+
+        const a = actions();
+        await expect(mockPaypalProps.createOrder({}, a)).rejects.toThrow();
+        expect(a.order.create).not.toHaveBeenCalled();
+        expect(await screen.findByRole("alert")).toHaveTextContent("결제가 진행 중인 다른 주문");
+    });
+});
+
+/**
+ * 🔴 결제 시작에 창마다의 시도 키를 싣는다(order V27) — 같은 탭에서 다시 누르면 같은 키(다시 열 수 있다), 다른 탭은 다른 키(서버가
+ * 거절한다). 예전에는 두 탭에서 같은 주문을 둘 다 결제할 수 있었다.
+ */
+describe("주문 결제 화면 — 결제 시도 키", () => {
+    const keyOf = (call) => call[3].headers["Payment-Attempt"];
+
+    it("같은 탭에서 다시 시작하면 같은 키 — 탭(sessionStorage)에 남는다", async () => {
+        postRequest.mockResolvedValue({ data: { renewed: true } });
+        render(<Payment order={order("paypal")} setOrder={jest.fn()} setLoading={jest.fn()} />);
+        const a = { order: { create: jest.fn().mockResolvedValue("PP-1") } };
+
+        await mockPaypalProps.createOrder({}, a);
+        await mockPaypalProps.createOrder({}, a);
+
+        const calls = postRequest.mock.calls.filter((c) => c[0].includes("/payment/stock-hold/"));
+        expect(calls).toHaveLength(2);
+        expect(keyOf(calls[1])).toBe(keyOf(calls[0]));
+        expect(window.sessionStorage.getItem("payment-attempt:track-1")).toBe(keyOf(calls[0]));
+    });
+
+    it("다른 탭(저장된 키가 없다)은 다른 키", () => {
+        const { paymentAttemptKey } = jest.requireActual("util/paymentAttempt");
+        window.sessionStorage.setItem("payment-attempt:track-2", "tab-one-key-123");
+        expect(paymentAttemptKey("track-2")).toBe("tab-one-key-123");
+        window.sessionStorage.removeItem("payment-attempt:track-2");
+        expect(paymentAttemptKey("track-3")).not.toBe("tab-one-key-123");
+    });
+});
+

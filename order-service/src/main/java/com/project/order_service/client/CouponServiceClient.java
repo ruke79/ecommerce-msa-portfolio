@@ -31,6 +31,17 @@ public interface CouponServiceClient {
     Quote quote(@RequestParam("userId") Long userId, @RequestParam("couponName") String couponName);
 
     /**
+     * 결제를 시작한다 — 이 주문이 쿠폰을 {@code holdSeconds} 동안 잡는다(coupon V7). 결과는 {@code CLAIMED · NOT_FOUND · USED ·
+     * IN_PAYMENT_ELSEWHERE} 중 하나. 판단은 {@link com.project.order_service.service.OrderCouponClaim}.
+     */
+    @PostMapping("api/coupon/internal/payment-claim")
+    PaymentClaim claimForPayment(@RequestParam("userId") Long userId, @RequestParam("couponName") String couponName,
+            @RequestParam("orderId") Long orderId, @RequestParam("holdSeconds") long holdSeconds);
+
+    record PaymentClaim(String result) {
+    }
+
+    /**
      * coupon-service 의 {@code CouponResponse} 중 금액 계산에 필요한 부분.
      *
      * <p>저쪽 DTO 를 그대로 가져다 쓰지 않는 이유는 모듈 경계다 — coupon-service 의 내부

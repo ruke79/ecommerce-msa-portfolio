@@ -83,8 +83,7 @@ class OrderRefundTest {
 
 
         service = new OrderDataService(
-                orderRepository, mock(CatalogServiceClient.class),
-                new ObjectMapper(), mock(OrderAddressRepository.class), outboxHelper,
+                orderRepository, new ObjectMapper(), mock(OrderAddressRepository.class), outboxHelper,
                 new PaymentGateways(List.of(gateway)), testPolicy());
         // 서비스는 "취소 직전 잔액" 을 싣는 6인자 판을 부른다. 이 목의 기본 메서드는 실제처럼 5인자 판으로 넘긴다 — 아래 검증들이
         // 5인자 판을 본다(잔액을 쓰는 것은 포트원 어댑터뿐이다).
@@ -458,5 +457,38 @@ class OrderRefundTest {
         assertThat(OrderDataService.sanitizeReason("a\"b\nc")).isEqualTo("a b c");
         assertThat(OrderDataService.sanitizeReason(null)).isEmpty();
         assertThat(OrderDataService.sanitizeReason("x".repeat(500))).hasSize(200);
+    }
+
+    // ---------------------------------------------------------------- 동시 환불
+
+    /**
+     * 🔴 같은 주문의 환불 둘이 겹치면 — 예전에는 둘 다 제공자에게 돈을 돌려주게 한 뒤 늦은 커밋만 낙관적 잠금으로 실패했다(돈은 두 번,
+     * 기록은 한 번). 이제 행을 잠그고, 읽은 뒤에 다른 요청이 바꿨으면 제공자를 부르기 전에 멈춘다.
+     */
+    @Test
+    @DisplayName("🔴 읽은 뒤 다른 요청이 주문을 바꿨으면(버전이 다르면) 제공자를 부르지 않고 거절한다")
+    void concurrentChangeStopsBeforeTheProvider() {
+        org.springframework.test.util.ReflectionTestUtils.setField(order, "version", 3L);
+        when(orderRepository.lockVersion(1L)).thenReturn(4L);
+        providerSays(true, "5998", "USD");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(this::refundAsCustomer)
+                .isInstanceOf(PaymentVerificationException.class)
+                .hasMessage(OrderDataService.CONCURRENT_CHANGE_MESSAGE);
+        verify(gateway, never()).refund(anyString(), any(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("🔴 환불은 주문 행을 잠그고 시작한다 — 버전이 같으면 그대로 진행")
+    void refundLocksTheOrderRow() {
+        org.springframework.test.util.ReflectionTestUtils.setField(order, "version", 3L);
+        when(orderRepository.lockVersion(1L)).thenReturn(3L);
+        providerSays(true, "5998", "USD");
+
+        refundAsCustomer();
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(orderRepository, gateway);
+        inOrder.verify(orderRepository).lockVersion(1L);
+        inOrder.verify(gateway).refund(anyString(), any(), anyString(), any(), any());
     }
 }

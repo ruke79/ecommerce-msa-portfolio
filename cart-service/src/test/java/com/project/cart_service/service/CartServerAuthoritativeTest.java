@@ -288,4 +288,43 @@ class CartServerAuthoritativeTest {
 
         assertThat(stored[0].getCartProducts()).extracting(CartProduct::getProductId).containsExactly(1L);
     }
+
+    @Test
+    @DisplayName("🔴 체크아웃 저장은 수량 1 ~ 1000 밖을 거절한다 — 예전에는 qty=-5 가 고른 줄이 되어 총액이 줄었다")
+    void checkoutRejectsOutOfRangeQty() {
+        service.putItem(7L, item("1", "M", 2));
+
+        assertThatThrownBy(() -> service.saveCart(checkout(item("1", "M", 2), item("2", "", -5)), 7L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage(CartService.QTY_MESSAGE);
+        assertThatThrownBy(() -> service.saveCart(checkout(item("1", "M", 0)), 7L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.saveCart(checkout(item("1", "M", CartService.MAX_LINE_QTY + 1)), 7L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(stored[0].getCartProducts()).singleElement().extracting(CartProduct::getQty).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("🔴 담기 · 수량 바꾸기도 상한 1000 — 0 이하로 바꾸기는 여전히 빼기")
+    void putAndSetQtyHaveUpperBound() {
+        assertThatThrownBy(() -> service.putItem(7L, item("1", "M", CartService.MAX_LINE_QTY + 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        service.putItem(7L, item("1", "M", CartService.MAX_LINE_QTY));
+        assertThatThrownBy(() -> service.setItemQty(7L, 1L, 5L, "M", CartService.MAX_LINE_QTY + 1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(stored[0].getCartProducts()).singleElement().extracting(CartProduct::getQty).isEqualTo(CartService.MAX_LINE_QTY);
+    }
+
+    @Test
+    @DisplayName("🔴 결제 실패 보상(cart-rollback)은 줄의 수량을 건드리지 않는다 — 예전에는 모든 줄이 1개가 됐다")
+    void rollbackKeepsQuantities() {
+        service.putItem(7L, item("1", "M", 3));
+        service.putItem(7L, item("2", "", 2));
+        stored[0].setTotalAfterDiscount(new BigDecimal("1.00"));   // 쿠폰 적용액
+
+        service.cartRollback(new com.project.common.message.dto.request.CartRollbackRequest(7L, 1));
+
+        assertThat(stored[0].getCartProducts()).extracting(CartProduct::getQty).containsExactlyInAnyOrder(3, 2);
+        assertThat(stored[0].getTotalAfterDiscount()).as("쿠폰 적용액은 지운다").isEqualByComparingTo("0");
+        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("130.00");   // 20×3 + 10 + 30×2 + 0
+    }
 }

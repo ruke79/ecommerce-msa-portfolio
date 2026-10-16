@@ -60,7 +60,7 @@ class OrderReturnTest {
         when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
         service = new OrderDataService(orderRepository,
-                mock(CatalogServiceClient.class), new ObjectMapper(), mock(OrderAddressRepository.class),
+                new ObjectMapper(), mock(OrderAddressRepository.class),
                 mock(PaymentOutboxHelper.class), new PaymentGateways(List.of()), new PaymentCurrencyPolicy());
     }
 

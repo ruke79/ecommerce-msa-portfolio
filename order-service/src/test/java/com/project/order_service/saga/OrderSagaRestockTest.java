@@ -24,10 +24,8 @@ import com.project.common.message.dto.request.CouponRollbackRequest;
 import com.project.common.message.dto.request.ProductUpdateRequest;
 import com.project.order_service.model.Order;
 import com.project.order_service.model.OrderProduct;
-import com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CartRollbackKafkaPublisher;
 import com.project.order_service.ports.output.message.publisher.CouponRollbackKafkaPublisher;
-import com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher;
 import com.project.order_service.repository.jpa.OrderProductRepository;
 import com.project.order_service.repository.jpa.OrderRepository;
 
@@ -42,7 +40,7 @@ class OrderSagaRestockTest {
 
     private OrderRepository orderRepository;
     private OrderProductRepository orderProductRepository;
-    private ProductUpdateKafkaPublisher productPublisher;
+    private com.project.order_service.outbox.PaymentOutboxHelper outbox;
     private CouponRollbackKafkaPublisher couponPublisher;
     private OrderSaga saga;
 
@@ -50,10 +48,9 @@ class OrderSagaRestockTest {
     void setUp() {
         orderRepository = mock(OrderRepository.class);
         orderProductRepository = mock(OrderProductRepository.class);
-        productPublisher = mock(ProductUpdateKafkaPublisher.class);
+        outbox = mock(com.project.order_service.outbox.PaymentOutboxHelper.class);
         couponPublisher = mock(CouponRollbackKafkaPublisher.class);
-        saga = new OrderSaga(orderRepository, orderProductRepository, mock(CartEmptyKafkaPublisher.class),
-                productPublisher, couponPublisher, mock(CartRollbackKafkaPublisher.class),
+        saga = new OrderSaga(orderRepository, orderProductRepository, outbox, couponPublisher, mock(CartRollbackKafkaPublisher.class),
                 mock(com.project.order_service.service.OrderCacheEvictor.class));
 
         // 발송 전 전액 환불 뒤의 모습: 전 수량이 환불됐고 "돌아온 것" 으로 세어져 있다.
@@ -85,7 +82,7 @@ class OrderSagaRestockTest {
         saga.compensateRefund(refunded(false));
 
         ArgumentCaptor<ProductUpdateRequest> captor = ArgumentCaptor.forClass(ProductUpdateRequest.class);
-        verify(productPublisher).publish(captor.capture());
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), any(), captor.capture());
         ProductUpdateRequest sent = captor.getValue();
         assertThat(sent.isRestock()).isTrue();
         assertThat(sent.getEventId()).isEqualTo("restock-1-u3");
@@ -109,7 +106,7 @@ class OrderSagaRestockTest {
 
         saga.compensateRefund(refunded(true));
 
-        verify(productPublisher, never()).publish(any());
+        verify(outbox, never()).saveEventOutbox(any(), any(), any());
         verify(orderRepository, never()).markStockRestored(anyLong(), any());
         verify(couponPublisher).publish(any(CouponRollbackRequest.class));   // 쿠폰은 돌려준다
     }
@@ -132,7 +129,7 @@ class OrderSagaRestockTest {
         saga.restock(refunded(true));
 
         ArgumentCaptor<ProductUpdateRequest> captor = ArgumentCaptor.forClass(ProductUpdateRequest.class);
-        verify(productPublisher).publish(captor.capture());
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), any(), captor.capture());
         ProductUpdateRequest sent = captor.getValue();
         assertThat(sent.getOrderProducts()).hasSize(2);
         assertThat(sent.getOrderProducts().get(0).getProductId()).isEqualTo(10L);
@@ -159,7 +156,7 @@ class OrderSagaRestockTest {
         saga.restock(order);
         saga.compensateRefund(order);
 
-        verify(productPublisher, never()).publish(any());
+        verify(outbox, never()).saveEventOutbox(any(), any(), any());
     }
 
     /** 일부만 환불된 주문은 여전히 그 쿠폰으로 산 주문이다 — 돌려주면 두 번 쓰게 된다. */
@@ -172,14 +169,14 @@ class OrderSagaRestockTest {
         saga.compensateRefund(partial);
 
         verify(couponPublisher, never()).publish(any(CouponRollbackRequest.class));
-        verify(productPublisher).publish(any());   // 재고는 카운터대로 돌려준다
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), any(), any());   // 재고는 카운터대로 돌려준다
     }
 
-    /** 보내고 나서 표시한다 — 발행이 실패했는데 DB 가 "돌려줬다" 가 되면 안 된다. */
+    /** 아웃박스 행을 먼저 쓴다 — 그것이 실패했는데 DB 가 "돌려줬다" 가 되면 안 된다(같은 트랜잭션이라 둘 다 없다). */
     @Test
-    @DisplayName("발행이 실패하면 표시하지 않는다 — 다음 호출이 다시 보낸다")
+    @DisplayName("아웃박스 쓰기가 실패하면 표시하지 않는다 — 다음 호출이 다시 보낸다")
     void publishFailureLeavesNoMark() {
-        doThrow(new RuntimeException("kafka down")).when(productPublisher).publish(any());
+        doThrow(new RuntimeException("db down")).when(outbox).saveEventOutbox(any(), any(), any());
 
         saga.restock(refunded(false));   // 예외는 삼킨다 — 환불은 이미 반영됐다
 
@@ -194,7 +191,26 @@ class OrderSagaRestockTest {
 
         saga.restock(refunded(false));
 
-        verify(productPublisher, never()).publish(any());
+        verify(outbox, never()).saveEventOutbox(any(), any(), any());
+        verify(orderRepository, never()).markStockRestored(anyLong(), any());
+    }
+
+    /** 🔴 행과 표시는 한 트랜잭션 — 표시가 일부 실패하면(동시 입고) 아웃박스 행째 롤백한다. 보내면 실제보다 많이 돌려준다. */
+    @Test
+    @DisplayName("🔴 재고 복원은 한 트랜잭션 — 정상이면 커밋, 표시가 일부 실패하면 롤백(아웃박스 행도 없다)")
+    void restockIsOneTransaction() {
+        org.springframework.transaction.PlatformTransactionManager tm = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        org.springframework.transaction.TransactionStatus status = new org.springframework.transaction.support.SimpleTransactionStatus();
+        when(tm.getTransaction(any())).thenReturn(status);
+        saga.setTransactionManager(tm);
+
+        saga.restock(refunded(false));
+        verify(tm).commit(status);
+
+        when(orderProductRepository.addRestocked(eq(102L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(0);
+        org.mockito.Mockito.clearInvocations(orderRepository);
+        saga.restock(refunded(false));   // 예외는 삼킨다
+        verify(tm).rollback(status);
         verify(orderRepository, never()).markStockRestored(anyLong(), any());
     }
 }

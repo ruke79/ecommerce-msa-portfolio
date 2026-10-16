@@ -17,6 +17,7 @@ import StockHoldNotice from "components/order/StockHoldNotice";
 import { useDispatch } from "react-redux";
 import { PayPalButtons, usePayPalScriptReducer } from "@paypal/react-paypal-js";
 import { useAuthContext } from "store/AuthContext";
+import { paymentAttemptKey } from "util/paymentAttempt";
 
 function reducer(state, action) {
   switch (action.type) {
@@ -109,7 +110,12 @@ const Payment = ({ order, setLoading, setOrder }) => {
    * 직접 계산한 값이다(docs/40 #10). 브라우저가 정한 숫자를 PayPal 로 넘기는 것이
    * 아니다. 결제가 끝나면 서버가 실제 결제액을 이 총액과 다시 대조한다.
    */
-  function createOrderHanlder(data, actions) {
+  async function createOrderHanlder(data, actions) {
+    // 결제창을 열기 전에 서버에 결제 시작을 알린다 — 재고 예약 갱신과 쿠폰 잡기(coupon V7). 예전에는 PayPal 만 이 단계를 건너뛰어,
+    // 같은 쿠폰의 다른 주문이 결제 중이어도 PayPal 창이 열렸다. 거절되면(400) 이유를 띄우고 창을 열지 않는다.
+    if (!(await renewStockHold())) {
+      throw new Error(t("payment.error.not_completed"));
+    }
     return actions.order
       .create({
         purchase_units: [
@@ -239,7 +245,9 @@ const Payment = ({ order, setLoading, setOrder }) => {
    */
   async function renewStockHold() {
     try {
-      const { data } = await postRequest(`/order-service/api/order/payment/stock-hold/${order.trackingId}`, {});
+      // 창마다의 결제 시도 키(order V27) — 다른 탭이 이 주문을 결제 중이면 서버가 400 과 이유를 준다.
+      const { data } = await postRequest(`/order-service/api/order/payment/stock-hold/${order.trackingId}`, {},
+        "application/json", { headers: { "Payment-Attempt": paymentAttemptKey(order.trackingId) } });
       if (data?.stockHoldUntil) {
         setOrder({ ...order, stockHoldUntil: data.stockHoldUntil });
       }

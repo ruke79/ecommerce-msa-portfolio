@@ -125,6 +125,53 @@ describe("주문 요약", () => {
     expect(await screen.findByText(/사용 기간이 지난 쿠폰입니다/)).toBeInTheDocument();
   });
 
+  /**
+   * 응답이 끊겨 다시 누르면 같은 키로 간다 — 서버가 처음 만든 주문을 돌려준다(주문이 두 건 생기지 않는다).
+   * 예전에는 키가 없어 요청이 서버에 닿고 응답만 잃으면 다시 누를 때 주문이 하나 더 생겼다.
+   */
+  it("다시 시도하면 같은 Idempotency-Key 로 보낸다", async () => {
+    postRequest.mockRejectedValueOnce({ message: "Network Error" });
+    renderSummary();
+
+    await userEvent.click(screen.getByRole("button", { name: /주문하기/ }));
+    await waitFor(() => expect(postRequest).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole("button", { name: /주문하기/ }));
+    await waitFor(() => expect(postRequest).toHaveBeenCalledTimes(2));
+
+    const first = postRequest.mock.calls[0][3].headers["Idempotency-Key"];
+    const second = postRequest.mock.calls[1][3].headers["Idempotency-Key"];
+    expect(first).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+    expect(second).toBe(first);
+    expect(mockNavigate).toHaveBeenCalledWith("/order/77");
+  });
+
+  it("배송지가 바뀌면 다른 주문이다 — 새 키", async () => {
+    postRequest.mockRejectedValueOnce({ message: "Network Error" });
+    const { rerender } = renderSummary();
+
+    await userEvent.click(screen.getByRole("button", { name: /주문하기/ }));
+    await waitFor(() => expect(postRequest).toHaveBeenCalledTimes(1));
+    rerender(
+      withI18n(
+        <Summary
+          selectedAddress={{ id: "2", firstname: "김" }}
+          user={{ email: "buyer@example.com" }}
+          cart={cart}
+          paymentMethod="paypal"
+          totalAfterDiscount=""
+          setTotalAfterDiscount={jest.fn()}
+          setLoading={jest.fn()}
+        />,
+        "ko"
+      )
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /주문하기/ }));
+    await waitFor(() => expect(postRequest).toHaveBeenCalledTimes(2));
+
+    expect(postRequest.mock.calls[1][3].headers["Idempotency-Key"])
+      .not.toBe(postRequest.mock.calls[0][3].headers["Idempotency-Key"]);
+  });
+
   it("결제수단을 고르지 않으면 주문하지 않는다", async () => {
     renderSummary({ paymentMethod: "" });
 

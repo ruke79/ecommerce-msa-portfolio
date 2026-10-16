@@ -80,7 +80,7 @@ public class KafkaDltConfig {
     }
 
     /** DLT 로 보낸 레코드 수 — 토픽별. 경보 KafkaDeadLetterPublished(observability/alert-rules.yml)가 본다. */
-    static final String DLT_METRIC = "kafka.dlt.records";
+    static final String DLT_METRIC = com.project.common.kafka.DltRetryPolicy.DLT_METRIC;
 
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(
@@ -123,37 +123,15 @@ public class KafkaDltConfig {
 
     static org.springframework.kafka.listener.ConsumerRecordRecoverer counting(
             org.springframework.kafka.listener.ConsumerRecordRecoverer recoverer, io.micrometer.core.instrument.MeterRegistry meters) {
-        return (record, ex) -> {
-            meters.counter(DLT_METRIC, "topic", record.topic()).increment();
-            recoverer.accept(record, ex);
-        };
+        return com.project.common.kafka.DltRetryPolicy.counting(recoverer, meters);
     }
 
-    /** 일시적인 실패의 백오프 — 1 · 2 · 4 · 8 · 16 · 30 · 30 · 30 · 30 · 30초(약 3분). 한 번 쉬는 시간은 max.poll.interval(5분)보다 짧다. */
+    /** 일시적인 실패의 백오프 — 정책은 common 의 {@link com.project.common.kafka.DltRetryPolicy}(order 도 쓴다). */
     static org.springframework.util.backoff.BackOff transientBackOff() {
-        ExponentialBackOffWithMaxRetries b = new ExponentialBackOffWithMaxRetries(10);
-        b.setInitialInterval(1_000L);
-        b.setMultiplier(2.0);
-        b.setMaxInterval(30_000L);
-        return b;
+        return com.project.common.kafka.DltRetryPolicy.transientBackOff();
     }
 
-    /** 원인 사슬에 일시적인 DB 실패가 있는가 — 시간이 지나면 같은 메시지가 성공할 수 있는 것. */
     static boolean isTransient(Throwable ex) {
-        for (Throwable t = ex; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            if (t instanceof org.springframework.dao.TransientDataAccessException
-                    || t instanceof org.springframework.dao.PessimisticLockingFailureException
-                    || t instanceof org.springframework.orm.ObjectOptimisticLockingFailureException
-                    || t instanceof org.springframework.transaction.CannotCreateTransactionException
-                    || t instanceof java.sql.SQLTransientException
-                    || t instanceof java.sql.SQLRecoverableException) {
-                return true;
-            }
-            if (t instanceof java.sql.SQLException sql && sql.getSQLState() != null
-                    && (sql.getSQLState().startsWith("40") || sql.getSQLState().startsWith("08") || "55P03".equals(sql.getSQLState()))) {
-                return true;   // 40001 직렬화 실패 · 40P01 교착 · 08xxx 연결 · 55P03 잠금 대기 시간 초과
-            }
-        }
-        return false;
+        return com.project.common.kafka.DltRetryPolicy.isTransient(ex);
     }
 }

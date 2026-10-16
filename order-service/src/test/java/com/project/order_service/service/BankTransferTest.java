@@ -74,8 +74,7 @@ class BankTransferTest {
         when(orderRepository.saveAll(any())).thenAnswer(i -> i.getArgument(0));
 
 
-        service = new OrderDataService(orderRepository, mock(CatalogServiceClient.class),
-                new ObjectMapper(), mock(OrderAddressRepository.class), outboxHelper,
+        service = new OrderDataService(orderRepository, new ObjectMapper(), mock(OrderAddressRepository.class), outboxHelper,
                 new PaymentGateways(List.of(new BankTransferGateway())), new PaymentCurrencyPolicy());
     }
 
@@ -307,7 +306,7 @@ class BankTransferTest {
         when(portone.provider()).thenReturn(PaymentProvider.PORTONE);
         // 소유권 검사는 주문자 id(7)로 통과한다 — 이 테스트의 관심은 그 뒤의 상태 검사다.
         OrderDataService withPortOne = new OrderDataService(orderRepository,
-                mock(CatalogServiceClient.class), new ObjectMapper(), mock(OrderAddressRepository.class),
+                new ObjectMapper(), mock(OrderAddressRepository.class),
                 outboxHelper, new PaymentGateways(List.of(portone)), new PaymentCurrencyPolicy());
 
         assertThatThrownBy(() -> withPortOne.recordPayment("track-1", PaymentProvider.PORTONE, "pay-late",

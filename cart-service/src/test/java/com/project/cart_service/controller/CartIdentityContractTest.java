@@ -124,4 +124,22 @@ class CartIdentityContractTest {
         assertThat(controller.getProductId("12").getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(controller.getProductId("13").getBody()).isEqualTo("5");
     }
+
+    @Test
+    @DisplayName("🔴 savecart 의 수량 범위 밖은 400 — 고칠 수 있는 요청 오류다(500 이 아니다)")
+    void saveCartOutOfRangeQtyIs400() throws Exception {
+        CartRequest body = new com.fasterxml.jackson.databind.ObjectMapper().readValue("{\"products\":[]}", CartRequest.class);
+        when(service.saveCart(any(), anyLong())).thenThrow(new IllegalArgumentException("수량은 1 ~ 1000 사이여야 합니다."));
+
+        assertThat(controller.saveCart(body, 7L).getStatusCode().value()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName("🔴 /checkout(주문의 근거)은 가격을 다시 확인하는 경로로 읽는다")
+    void checkoutReprices() {
+        controller.getCart(7L);
+
+        verify(service).getCartForCheckout(7L);
+        verify(service, org.mockito.Mockito.never()).getCart(any());
+    }
 }

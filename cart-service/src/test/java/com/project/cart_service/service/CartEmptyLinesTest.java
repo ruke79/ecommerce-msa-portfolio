@@ -164,4 +164,18 @@ class CartEmptyLinesTest {
         assertThat(cart.getCartProducts()).hasSize(3);
         verify(cartRepository, never()).delete(any(Cart.class));
     }
+
+    /** 🔴 at-least-once — 같은 주문의 비우기가 다시 와도 한 번만 뺀다(원장 cart-empty-<orderId>, V6). */
+    @Test
+    @DisplayName("🔴 같은 주문의 비우기가 다시 오면 건너뛴다 — 예전에는 주문하지 않은 수량까지 한 번 더 뺐다")
+    void redeliveryOfTheSameOrderIsSkipped() {
+        when(cartRepository.markProcessed("cart-empty-55")).thenReturn(1, 0);
+        CartEmptyRequest request = new CartEmptyRequest(7L, true, List.of(new CartEmptyItem(12L, "S", 7L, 2)), 55L);
+
+        service.cartEmpty(request);
+        service.cartEmpty(request);
+
+        CartProduct remaining = cart.getCartProducts().stream().filter(p -> p.getProductId() == 12L).findFirst().orElseThrow();
+        assertThat(remaining.getQty()).as("3개 중 주문한 2개만 — 재전달로 1개 더 빠지지 않는다").isEqualTo(1);
+    }
 }

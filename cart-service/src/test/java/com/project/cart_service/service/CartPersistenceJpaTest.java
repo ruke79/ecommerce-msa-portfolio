@@ -63,6 +63,8 @@ class CartPersistenceJpaTest {
 
     private CartService service;
     private TransactionTemplate tx;
+    /** catalog 를 부를 때마다 — 그때 트랜잭션이 열려 있었는가(B-87). */
+    private final List<Boolean> catalogInTx = new ArrayList<>();
     private static long nextUser = 1000;
     private long userId;
 
@@ -71,6 +73,7 @@ class CartPersistenceJpaTest {
     void setUp() {
         CatalogServiceClient catalog = mock(CatalogServiceClient.class);
         when(catalog.getProductsInfo(anyList())).thenAnswer(i -> {
+            catalogInTx.add(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
             List<Long> ids = i.getArgument(0);
             List<ProductDto> found = new ArrayList<>();
             for (Long id : ids) {
@@ -84,6 +87,7 @@ class CartPersistenceJpaTest {
             return ResponseEntity.ok(found);
         });
         when(catalog.getCartProductsInfo(anyList())).thenAnswer(i -> {
+            catalogInTx.add(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
             Map<String, ProductInfoDto> found = new HashMap<>();
             for (String k : (List<String>) i.getArgument(0)) {
                 found.put(k, ProductInfoDto.builder().id(k.split(":")[0]).style(0).size("M")
@@ -91,7 +95,10 @@ class CartPersistenceJpaTest {
             }
             return ResponseEntity.ok(found);
         });
-        when(catalog.getColorsInfo(anyList())).thenReturn(ResponseEntity.ok(List.of()));
+        when(catalog.getColorsInfo(anyList())).thenAnswer(i -> {
+            catalogInTx.add(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            return ResponseEntity.ok(List.of());
+        });
 
         RedisTemplate<String, Object> redis = mock(RedisTemplate.class);
         when(redis.opsForValue()).thenReturn(mock(ValueOperations.class));
@@ -176,4 +183,30 @@ class CartPersistenceJpaTest {
         inNewRequest(() -> service.removeItem(userId, 2L, 5L, "M"));
         assertThat(inNewRequest(() -> service.loadCart(userId))).extracting(ProductInfoDto::getId).containsExactly("1", "3");
     }
+
+    /**
+     * 🔴 B-87: 운영처럼 — 요청 트랜잭션 없이(open-in-view 끔) 서비스가 스스로 짧은 트랜잭션을 연다. catalog 는 그 밖에서만 부르고,
+     * 트랜잭션 밖에서 읽은 장바구니도 줄을 쓸 수 있다(findByUserId 의 @EntityGraph).
+     *
+     * <p>🐛 예전에는 담기 · 수량 · 저장 · 조회가 트랜잭션 안에서 catalog 를 불렀고, 커밋 뒤 캐시 갱신도 커넥션을 쥔 채 catalog 를 불렀다.
+     */
+    @Test
+    @DisplayName("🔴 B-87: 담기 · 수량 · 저장 · 조회 · 체크아웃의 catalog 호출은 트랜잭션 밖 — 그래도 DB 에 남고 줄을 읽는다")
+    void catalogIsCalledOutsideTransactions() {
+        service.setTransactionManager(txManager);
+            service.putItem(userId, item(1, 2));
+            service.putItem(userId, item(2, 1));
+            service.setItemQty(userId, 2L, 5L, "M", 3);
+            CartRequest request = mock(CartRequest.class);
+            when(request.getProducts()).thenReturn(List.of(item(1, 2)));
+            service.saveCart(request, userId);
+            List<ProductInfoDto> now = service.loadCart(userId);
+            service.getCart(userId);
+            service.getCartForCheckout(userId);
+
+            assertThat(now).extracting(ProductInfoDto::getId).containsExactly("1", "2");
+            assertThat(now.get(1).getQty()).isEqualTo(3);
+            assertThat(catalogInTx).isNotEmpty().as("catalog 를 부르는 동안 트랜잭션이 없어야 한다").containsOnly(false);
+    }
 }
+

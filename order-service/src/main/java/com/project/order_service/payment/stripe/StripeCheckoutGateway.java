@@ -149,7 +149,12 @@ public class StripeCheckoutGateway implements HostedCheckoutGateway, RefundingGa
                 paymentStatus,
                 // 응답의 통화로 자릿수를 정한다 — JPY 1500 은 1500 이지 15.00 이 아니다.
                 PaymentCurrencyPolicy.fromMinorUnits(amountTotal, currency),
-                currency.toUpperCase());
+                currency.toUpperCase(),
+                blankToNull(session.path("client_reference_id").asText("")));
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
     }
 
     /**

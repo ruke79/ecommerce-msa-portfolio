@@ -51,6 +51,20 @@ import lombok.extern.slf4j.Slf4j;
 public class OrderCacheService {
 
     private final OrderDataService orderDataService;
+    /**
+     * 조회 화면의 색상 — <b>트랜잭션 밖에서만</b> 부른다(아래 조회들은 @Transactional 이 없다). 🐛 예전에는 OrderDataService 가 읽기
+     * 트랜잭션 안에서 불러, catalog 가 느리면 그동안 DB 커넥션(풀 5개)을 쥐고 기다렸다. [JA] 色は必ずトランザクションの外で呼ぶ。
+     */
+    private final CatalogServiceClient catalogServiceClient;
+
+    private OrderDto toView(Order order) {
+        return order == null ? null : OrderService.convertToOrderDto(order, OrderService.fetchColors(List.of(order), catalogServiceClient));
+    }
+
+    private Page<OrderDto> toView(Page<Order> page) {
+        java.util.Map<String, ProductColorDto> colors = OrderService.fetchColors(page.getContent(), catalogServiceClient);
+        return page.map(order -> OrderService.convertToOrderDto(order, colors));
+    }
     
     // @Cacheable: customerId를 키로 사용하여 주문 목록을 캐시합니다.
     @Cacheable(value = "orders", key = "#customerId")
@@ -73,17 +87,39 @@ public class OrderCacheService {
         return orderDataService.createOrder(request, latestCart, amounts, customerId);
     }
 
-    // 키에 요청자 id 가 들어가는 이유: 소유권 검사가 결과를 가른다 — 남의 요청이 내 캐시 항목을 받으면 안 된다.
-    @Cacheable(value = "order", key = "{#orderId, #requesterId, #filter}")
-    @Transactional(readOnly = true)
-    public OrderDto getOrder(Long orderId, Long requesterId, String filter) {
-       return orderDataService.getOrder(orderId, requesterId, filter);
+    /** 멱등 키를 실은 주문 생성(V26). 같은 고객 · 같은 키가 동시에 오면 늦은 쪽의 커밋이 유니크 제약으로 실패한다. */
+    @Transactional
+    @CacheEvict(value = {"orders"}, allEntries = true)
+    public Order createOrder(OrderRequest request, CartDto latestCart, OrderPricing.Amounts amounts,
+            Long customerId, String createKey) {
+        return orderDataService.createOrder(request, latestCart, amounts, customerId, createKey);
     }
 
-     @Transactional(readOnly = true)
+    @Transactional(readOnly = true)
+    public Order findByCreateKey(Long customerId, String createKey) {
+        return orderDataService.findByCreateKey(customerId, createKey);
+    }
+
+    // 키에 요청자 id 가 들어가는 이유: 소유권 검사가 결과를 가른다 — 남의 요청이 내 캐시 항목을 받으면 안 된다.
+    @Cacheable(value = "order", key = "{#orderId, #requesterId, #filter}")
+    public OrderDto getOrder(Long orderId, Long requesterId, String filter) {
+       return toView(orderDataService.loadOrder(orderId, requesterId, filter));
+    }
+
+    /** 색상은 목록 전체에 한 번 — 예전에는 주문마다 catalog 를 불렀다(트랜잭션 안에서 N 번). */
     @Cacheable(value = "orderList", key = "{#customerId, #filter}")
     public List<OrderDto> getOrders(Long customerId, String filter) {
-        return orderDataService.getOrders(customerId, filter);
+        List<Order> orders = orderDataService.loadOrders(customerId, filter);
+        if (orders == null) {
+            return null;
+        }
+        java.util.Map<String, ProductColorDto> colors = OrderService.fetchColors(
+                orders.stream().filter(java.util.Objects::nonNull).toList(), catalogServiceClient);
+        List<OrderDto> result = new ArrayList<>(orders.size());
+        for (Order o : orders) {
+            result.add(o == null ? null : OrderService.convertToOrderDto(o, colors));
+        }
+        return result;
     }
 
     /**
@@ -94,16 +130,14 @@ public class OrderCacheService {
      * 화면이다. 바로 위 {@code orderList} 캐시가 {@code {email, filter}} 하나로 <b>전체
      * 목록</b>을 담고 있던 것이 원래 문제의 일부이기도 하다.
      */
-    @Transactional(readOnly = true)
     public Page<OrderDto> getOrdersPage(Long customerId, String filter, Long cursor, int size) {
-        return orderDataService.getOrdersPage(customerId, filter, cursor, size);
+        return toView(orderDataService.loadOrdersPage(customerId, filter, cursor, size));
     }
 
          // 페이지별로 주문 목록을 조회하는 새로운 메서드
     @Cacheable(value = "ordersPage", key = "{#customerId, #page, #size}")
-    @Transactional(readOnly = true)
     public Page<OrderDto> getOrdersByCustomerIdWithPagination(Long customerId, int page, int size) {
-        return orderDataService.getOrdersByCustomerIdWithPagination(customerId, page, size);
+        return toView(orderDataService.loadOrdersByCustomerIdWithPagination(customerId, page, size));
     }
 
         // --- 점진적 로딩(커서 기반 페이징) 메서드 추가 ---
@@ -114,10 +148,9 @@ public class OrderCacheService {
      * @param size 페이지당 주문 개수
      * @return OrderDto 목록과 다음 커서 ID
      */
-    @Transactional(readOnly = true)
     @Cacheable(value = "ordersCursor", key = "{#customerId, #cursorId, #size}")
     public Page<OrderDto> getOrdersByCustomerIdWithCursor(Long customerId, Long cursorId, int size) {
-        return orderDataService.getOrdersByCustomerIdWithCursor(customerId, cursorId, size);
+        return toView(orderDataService.loadOrdersByCustomerIdWithCursor(customerId, cursorId, size));
     }
     
 
@@ -149,6 +182,11 @@ public class OrderCacheService {
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
     public boolean discardUnplaced(Long orderId) {
         return orderDataService.discardUnplaced(orderId);
+    }
+
+    /** 결제 시작 — 이 주문의 결제창을 하나로(V27). 화면에 보이는 값이 아니라 캐시를 비우지 않는다. */
+    public void startPaymentAttempt(String trackingId, String attempt, java.time.Duration window) {
+        orderDataService.startPaymentAttempt(trackingId, attempt, window);
     }
 
     /** 재고 예약의 만료 시각(docs/59). */

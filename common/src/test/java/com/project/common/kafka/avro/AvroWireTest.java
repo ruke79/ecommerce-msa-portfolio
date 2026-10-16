@@ -225,8 +225,9 @@ class AvroWireTest {
         var lines = roundTrip("cart-empty", new CartEmptyRequestAvroMapping(),
                 new com.project.common.message.dto.request.CartEmptyRequest(7L, true, java.util.List.of(
                         new com.project.common.message.dto.request.CartEmptyItem(10L, "M", 5L, 2),
-                        new com.project.common.message.dto.request.CartEmptyItem(11L, null, null, 1))));
+                        new com.project.common.message.dto.request.CartEmptyItem(11L, null, null, 1)), 55L));
         assertThat(lines.getItems()).hasSize(2);
+        assertThat(lines.getOrderId()).as("v3 — 주문 id(재전달을 cart 가 거른다)").isEqualTo(55L);
         assertThat(lines.getItems().get(0).getProductId()).isEqualTo(10L);
         assertThat(lines.getItems().get(0).getSize()).isEqualTo("M");
         assertThat(lines.getItems().get(0).getColorId()).isEqualTo(5L);
@@ -245,8 +246,9 @@ class AvroWireTest {
         assertThat(use.getTotalAfterDiscount().toPlainString()).isEqualTo("89.10");
 
         var cr = roundTrip("coupon-rollback", new CouponRollbackRequestAvroMapping(),
-                com.project.common.message.dto.request.CouponRollbackRequest.builder().userId(7L).couponName("WELCOME").build());
+                com.project.common.message.dto.request.CouponRollbackRequest.builder().userId(7L).couponName("WELCOME").orderId(42L).build());
         assertThat(cr.getCouponName()).isEqualTo("WELCOME");
+        assertThat(cr.getOrderId()).as("v2 — 보상하는 주문").isEqualTo(42L);
     }
 
     @Test

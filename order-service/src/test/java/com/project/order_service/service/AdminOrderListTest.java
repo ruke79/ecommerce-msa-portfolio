@@ -44,7 +44,7 @@ class AdminOrderListTest {
         orderRepository = mock(OrderRepository.class);
         userServiceClient = mock(com.project.order_service.client.UserServiceClient.class);
         service = new OrderDataService(orderRepository,
-                mock(CatalogServiceClient.class), new ObjectMapper(),
+                new ObjectMapper(),
                 mock(OrderAddressRepository.class), mock(PaymentOutboxHelper.class),
                 new PaymentGateways(List.of()),
                 new com.project.order_service.payment.PaymentCurrencyPolicy());

@@ -187,4 +187,33 @@ class ChatMessageSchemaHistoryTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> AvroSchemaHistory.store("avro-history/nope.avsc"))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    @DisplayName("🔴 coupon-rollback v1(orderId 없음) 레코드 — 새 소비자가 읽는다, 주문은 모름(null → 예전처럼 되돌린다)")
+    void couponRollbackV1IsReadable() throws Exception {
+        Schema v1 = history("avro-history/CouponRollbackRequest-v1.avsc");
+        assertThat(fp(v1)).isNotEqualTo(fp(com.project.common.avro.CouponRollbackRequest.getClassSchema()));
+        byte[] data = encode(v1, Map.of("userId", 7L, "couponName", "WELCOME"));
+
+        var read = (com.project.common.avro.CouponRollbackRequest) AvroDecoders.byTopic().get("coupon-rollback")
+                .decode(ByteBuffer.wrap(data));
+        assertThat(read.getUserId()).isEqualTo(7L);
+        assertThat(read.getOrderId()).isNull();
+        var dto = new CouponRollbackRequestAvroMapping().decoder().decode(ByteBuffer.wrap(data));
+        assertThat(dto.getCouponName().toString()).isEqualTo("WELCOME");
+    }
+
+    @Test
+    @DisplayName("🔴 cart-empty v2(orderId 없음) 레코드 — 새 소비자가 읽는다, 주문은 모름(null → 거르지 않는다)")
+    void cartEmptyV2IsReadable() throws Exception {
+        Schema v2 = history("avro-history/CartEmptyRequest-v2.avsc");
+        assertThat(fp(v2)).isNotEqualTo(fp(com.project.common.avro.CartEmptyRequest.getClassSchema()));
+        byte[] data = encode(v2, Map.of("userId", 7L, "emptyCart", true, "items", java.util.List.of()));
+
+        var dto = new CartEmptyRequestAvroMapping().decoder().decode(ByteBuffer.wrap(data));
+        assertThat(dto.getUserId()).isEqualTo(7L);
+        assertThat(dto.getOrderId()).isNull();
+        var read = (com.project.common.avro.CartEmptyRequest) AvroDecoders.byTopic().get("cart-empty").decode(ByteBuffer.wrap(data));
+        assertThat(read.getOrderId()).isNull();
+    }
 }

@@ -27,7 +27,7 @@ public class CartEmptyRequestAvroMapping implements AvroMapping<com.project.comm
         }
         return com.project.common.avro.CartEmptyRequest.newBuilder()
                 .setUserId(d.getUserId()).setEmptyCart(d.isEmptyCart())
-                .setItems(items).build();
+                .setItems(items).setOrderId(d.getOrderId()).build();
     }
 
     @Override
@@ -41,7 +41,7 @@ public class CartEmptyRequestAvroMapping implements AvroMapping<com.project.comm
             }
         }
         return new com.project.common.message.dto.request.CartEmptyRequest(
-                r.getUserId(), r.getEmptyCart(), items);
+                r.getUserId(), r.getEmptyCart(), items, r.getOrderId());
     }
 
     @Override
@@ -51,7 +51,7 @@ public class CartEmptyRequestAvroMapping implements AvroMapping<com.project.comm
 
     @Override
     public BinaryMessageDecoder<com.project.common.avro.CartEmptyRequest> decoder() {
-        // v1(authorizationToken 있음)으로 쓴 레코드도 읽는다 — 배포 도중 옛 프로듀서가 쓴 것(AvroSchemaHistory).
+        // v1(authorizationToken 있음) · v2(orderId 없음)로 쓴 레코드도 읽는다 — 배포 도중 옛 프로듀서가 쓴 것(AvroSchemaHistory).
         return com.project.common.avro.CartEmptyRequest.createDecoder(AvroSchemaHistory.store(AvroSchemaHistory.CART_EMPTY));
     }
 }

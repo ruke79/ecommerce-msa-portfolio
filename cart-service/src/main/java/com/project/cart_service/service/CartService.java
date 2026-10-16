@@ -82,7 +82,8 @@ public class CartService {
      * @param userId 게이트웨이가 검증한 토큰의 uid({@code User-Id} 헤더)
      * @return 카트 DTO, 없으면 null
      */
-    @Transactional(readOnly = true)
+    // catalog(색상 · SKU)를 부른다 — 트랜잭션 밖에서(B-87). 장바구니는 줄과 함께 짧게 읽는다(findByUserId 의 @EntityGraph).
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public CartDto getCart(Long userId) {
         String cacheKey = cacheKey(userId);
         CartDto cachedCart = (CartDto) redisTemplate.opsForValue().get(cacheKey);
@@ -104,10 +105,115 @@ public class CartService {
 
         // DTO로 변환하여 캐시에 저장
         CartDto cartDto = convertCartToDto(cart);
-        redisTemplate.opsForValue().set(cacheKey, cartDto);
+        redisTemplate.opsForValue().set(cacheKey, cartDto, CACHE_TTL);
         log.debug("Cart data saved to cache for {}", cacheKey);
 
         return cartDto;
+    }
+
+    /** 재계산의 트랜잭션. 세터 — 생성자를 쓰는 테스트가 많다. 없으면(단위 테스트) 트랜잭션 없이 돈다. */
+    private org.springframework.transaction.support.TransactionTemplate transactions;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.transactions = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    }
+
+    /**
+     * 체크아웃 — 주문의 근거(order · coupon 이 {@code /checkout} 으로 읽는다). 고른 줄의 가격 · 배송비를 <b>catalog 의 지금 값</b>으로
+     * 다시 맞춘 뒤 돌려준다.
+     *
+     * <p>🐛 예전에는 담을 때의 가격을 그대로 썼다 — 할인 중에 담아 두면 할인이 끝난 뒤에도 할인가로 결제됐다(반대로 값이 내렸어도 옛
+     * 값). order 는 이 합계를 결제 금액으로 쓴다(OrderPricing).
+     *
+     * <p>catalog 는 트랜잭션 밖에서 부르고, 바뀐 줄이 있을 때만 짧은 트랜잭션으로 저장한다. catalog 에 닿지 못하면 저장된 가격 그대로 —
+     * 주문을 막지는 않는다(경고를 남긴다).
+     *
+     * <p>[JA] チェックアウト — 選んだ行の価格 · 送料を catalog の現在値に合わせて返す。以前は入れた時の価格のままで、セール終了後も
+     * セール価格で決済された。
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public CartDto getCartForCheckout(Long userId) {
+        Cart cart = getCartByUserId(userId);
+        if (cart == null) {
+            return null;
+        }
+        Map<String, BigDecimal[]> fresh = currentPrices(cart);
+        if (!fresh.isEmpty()) {
+            if (transactions == null) {
+                applyPrices(userId, fresh);
+            } else {
+                transactions.executeWithoutResult(status -> applyPrices(userId, fresh));
+            }
+        }
+        return getCart(userId);
+    }
+
+    private static String lineKey(Long productId, Long colorId, String size) {
+        return productId + "|" + colorId + "|" + normalize(size);
+    }
+
+    /** 고른 줄 중 catalog 의 지금 가격 · 배송비가 저장된 것과 다른 줄 → [가격, 배송비]. catalog 에 닿지 못하면 빈 맵. */
+    private Map<String, BigDecimal[]> currentPrices(Cart cart) {
+        List<CartProduct> selected = cart.getCartProducts().stream()
+                .filter(CartProduct::isSelected).filter(l -> l.getProductId() != null).collect(Collectors.toList());
+        if (selected.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, ProductDto> catalog;
+        try {
+            catalog = fetchProducts(selected.stream().map(l -> Long.toString(l.getProductId())).collect(Collectors.toList()));
+        } catch (RuntimeException e) {
+            log.warn("체크아웃 가격 재확인 실패 — 저장된 가격을 쓴다. userId={} ({})", cart.getUserId(), e.getClass().getSimpleName());
+            return Map.of();
+        }
+        Map<String, BigDecimal[]> changed = new java.util.HashMap<>();
+        for (CartProduct line : selected) {
+            ProductDto product = catalog.get(Long.toString(line.getProductId()));
+            ProductSkuDto sku = product == null || product.getSkus() == null || line.getColorId() == null ? null
+                    : product.getSkus().stream()
+                            .filter(s -> s.getColor() != null && Long.toString(line.getColorId()).equals(s.getColor().getId()))
+                            .findFirst().orElse(null);
+            if (sku == null || sku.getSizes() == null) {
+                continue;   // 상품 · 스타일이 없어졌다 — 가격을 지어내지 않는다(주문 쪽 재고 예약이 막는다)
+            }
+            BigDecimal list = sku.getSizes().stream()
+                    .filter(z -> java.util.Objects.equals(normalize(z.getSize()), normalize(line.getSize())))
+                    .map(com.project.common.dto.ProductSizeDto::getPrice).filter(java.util.Objects::nonNull)
+                    .findFirst().orElse(null);
+            if (list == null) {
+                continue;
+            }
+            BigDecimal price = discountedPrice(list, sku.getDiscount());
+            BigDecimal shipping = product.getShipping() == null ? line.getShipping() : new BigDecimal(product.getShipping());
+            if (line.getPrice() == null || price.compareTo(line.getPrice()) != 0
+                    || (shipping != null && (line.getShipping() == null || shipping.compareTo(line.getShipping()) != 0))) {
+                changed.put(lineKey(line.getProductId(), line.getColorId(), line.getSize()), new BigDecimal[] { price, shipping });
+            }
+        }
+        return changed;
+    }
+
+    private void applyPrices(Long userId, Map<String, BigDecimal[]> fresh) {
+        Cart cart = getCartByUserId(userId);
+        if (cart == null) {
+            return;
+        }
+        int updated = 0;
+        for (CartProduct line : cart.getCartProducts()) {
+            BigDecimal[] p = fresh.get(lineKey(line.getProductId(), line.getColorId(), line.getSize()));
+            if (p != null && line.isSelected()) {
+                line.setPrice(p[0]);
+                if (p[1] != null) {
+                    line.setShipping(p[1]);
+                }
+                updated++;
+            }
+        }
+        if (updated > 0) {
+            log.info("체크아웃 가격 재확인 — {}줄의 가격을 지금 값으로 맞췄다. userId={}", updated, userId);
+            saveRecomputed(cart);
+        }
     }
 
     private static boolean hasMissingSkuCode(CartDto cart) {
@@ -126,15 +232,29 @@ public class CartService {
         });
     }
 
-    /** 커밋 뒤에 캐시를 새 값으로 채운다. */
+    /**
+     * 장바구니 캐시의 만료 — 커밋 뒤 갱신 · 삭제가 실패해도 옛 값이 이 시간 뒤에는 사라진다.
+     *
+     * <p>🐛 예전에는 만료 없이 썼다. 커밋 뒤 캐시 갱신이 실패하면(Redis 순간 장애 · DTO 변환 실패) 옛 장바구니가 영영 남아, 주문이 옛 줄 ·
+     * 옛 합계로 만들어졌다(order 가 /checkout 으로 이 캐시를 읽는다).
+     * [JA] カートキャッシュの有効期限 — 以前は期限なしで、コミット後の更新が失敗すると古いカートが残り、注文が古い行と合計で作られた。
+     */
+    static final java.time.Duration CACHE_TTL = java.time.Duration.ofMinutes(30);
+
+    /**
+     * 바꾼 장바구니 — 커밋 뒤에 캐시를 <b>지운다</b>. 다음 조회(getCart)가 트랜잭션 밖에서 다시 만든다.
+     *
+     * <p>🐛 예전에는 커밋 뒤에 새 DTO 를 만들어 넣었다 — 그 변환이 catalog(색상 · SKU)를 부르는데, afterCommit 은 트랜잭션 자원을 정리하기
+     * 전이라 DB 커넥션을 쥔 채 catalog 를 기다렸다(풀 5개, B-87).
+     * [JA] 変更したカート — コミット後にキャッシュを消す。以前は afterCommit で catalog を呼び、接続を持ったまま待っていた。
+     */
     private void putAfterCommit(Cart cart) {
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                redisTemplate.opsForValue().set(cacheKey(cart.getUserId()), convertCartToDto(cart));
-                log.debug("Cache updated for {}", cacheKey(cart.getUserId()));
-            }
-        });
+        evictAfterCommit(cart.getUserId());
+    }
+
+    /** 트랜잭션 하나로 — 원격 호출을 앞뒤로 뺀 쓰기 경로가 쓴다. 트랜잭션 관리자가 없으면(단위 테스트) 그대로 돈다. */
+    private <T> T inTransaction(java.util.function.Supplier<T> work) {
+        return transactions == null ? work.get() : transactions.execute(status -> work.get());
     }
 
     /**
@@ -142,6 +262,7 @@ public class CartService {
      * @param request 상품 정보 요청 DTO
      * @return 업데이트된 상품 정보 DTO 리스트
      */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // DB 를 쓰지 않고 catalog 만 부른다
     public List<ProductInfoDto> updateCart(ProductInfoRequest request) {
         log.debug("Updating cart with new product information.");
         if (request.getProducts() == null) {
@@ -161,7 +282,7 @@ public class CartService {
      * @param userId 게이트웨이가 검증한 토큰의 uid
      * @return 상품 정보 DTO 리스트
      */
-    @Transactional(readOnly = true)
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 를 부른다 — 장바구니는 줄과 함께 짧게 읽는다
     public List<ProductInfoDto> loadCart(Long userId) {
         log.debug("Loading cart for user ID: {}", userId);
 
@@ -290,21 +411,27 @@ public class CartService {
      *
      * @return 장바구니, 고른 줄이 없으면 null(예전과 같다)
      */
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 는 앞에서, 저장은 짧은 트랜잭션으로(B-87)
     public Cart saveCart(CartRequest request, Long userId) {
         log.debug("Saving cart selection for user ID: {}", userId);
         if (request.getProducts() == null || request.getProducts().isEmpty()) {
             log.warn("Attempted to save an empty cart. Returning null.");
             return null;
         }
-
-        // 🔒 본문의 email 은 읽지 않는다 — 신원은 검증된 uid 다(CartController 주석).
-        Cart cart = cartOf(userId);
         Map<String, ProductDto> catalog = fetchProducts(
                 request.getProducts().stream().map(ProductInfoDto::getId).collect(Collectors.toList()));
+        return inTransaction(() -> saveSelection(request, userId, catalog));
+    }
+
+    private Cart saveSelection(CartRequest request, Long userId, Map<String, ProductDto> catalog) {
+        // 🔒 본문의 email 은 읽지 않는다 — 신원은 검증된 uid 다(CartController 주석).
+        Cart cart = cartOf(userId);
 
         java.util.Set<CartProduct> chosen = new java.util.HashSet<>();
         for (ProductInfoDto item : request.getProducts()) {
+            if (item == null) {
+                throw new IllegalArgumentException(QTY_MESSAGE);
+            }
             CartProduct line = upsertLine(cart, item, catalog);
             if (line != null) {
                 chosen.add(line);
@@ -327,28 +454,39 @@ public class CartService {
      * @return 지금 장바구니(loadCart 와 같은 모양)
      * @throws IllegalArgumentException 수량이 1 보다 작거나, 상품·색상·사이즈를 catalog 가 모른다
      */
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 는 앞뒤로, 저장만 짧은 트랜잭션(B-87)
     public List<ProductInfoDto> putItem(Long userId, ProductInfoDto item) {
         if (item == null || item.getId() == null || item.getQty() < 1) {
             throw new IllegalArgumentException("담을 상품과 수량(1 이상)이 필요합니다.");
         }
-        Cart cart = cartOf(userId);
         Map<String, ProductDto> catalog = fetchProducts(List.of(item.getId()));
-        CartProduct line = upsertLine(cart, item, catalog);
-        if (line == null) {
-            throw new IllegalArgumentException("상품을 찾을 수 없습니다.");
-        }
-        line.setSelected(true);
-        saveRecomputed(cart);
+        inTransaction(() -> {
+            Cart cart = cartOf(userId);
+            CartProduct line = upsertLine(cart, item, catalog);
+            if (line == null) {
+                throw new IllegalArgumentException("상품을 찾을 수 없습니다.");
+            }
+            line.setSelected(true);
+            return saveRecomputed(cart);
+        });
         return loadCart(userId);
     }
 
     /** 수량을 바꾼다 — 0 이하면 뺀다. 없는 줄이면 그대로(여러 번 불러도 같다). */
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // 바꾸기는 짧은 트랜잭션, 응답(catalog)은 그 뒤(B-87)
     public List<ProductInfoDto> setItemQty(Long userId, Long productId, Long colorId, String size, int qty) {
+        if (qty > MAX_LINE_QTY) {
+            throw new IllegalArgumentException(QTY_MESSAGE);
+        }
+        boolean found = inTransaction(() -> changeQty(userId, productId, colorId, size, qty));
+        return found ? loadCart(userId) : List.of();
+    }
+
+    /** @return 장바구니가 있었는가 */
+    private boolean changeQty(Long userId, Long productId, Long colorId, String size, int qty) {
         Cart cart = getCartByUserId(userId);
         if (cart == null) {
-            return List.of();
+            return false;
         }
         int before = cart.getCartProducts().size();
         dropLinesWithoutProduct(cart);
@@ -365,11 +503,11 @@ public class CartService {
         if (line != null || dropped) {
             finishChange(cart, userId);
         }
-        return loadCart(userId);
+        return true;
     }
 
     /** 뺀다. 없는 줄이면 그대로. 마지막 줄이면 장바구니를 지운다. */
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public List<ProductInfoDto> removeItem(Long userId, Long productId, Long colorId, String size) {
         return setItemQty(userId, productId, colorId, size, 0);
     }
@@ -428,8 +566,29 @@ public class CartService {
         return null;
     }
 
+    /** 한 줄의 수량 상한 — 총액 계산(가격 × 수량)이 터무니없어지지 않게. */
+    static final int MAX_LINE_QTY = 1000;
+
+    static final String QTY_MESSAGE = "수량은 1 ~ 1000 사이여야 합니다.";
+
+    /**
+     * 한 줄의 수량은 1 ~ {@link #MAX_LINE_QTY}.
+     *
+     * <p>🐛 예전에는 체크아웃 저장(savecart)이 본문의 수량을 그대로 저장했다 — {@code qty=-5} 인 줄이 고른 줄이 되어 장바구니 총액이
+     * 음수가 됐고, 그 장바구니로 만든 주문의 금액이 다른 줄의 값을 깎았다(담기 · 수량 변경은 하한을 봤지만 저장은 보지 않았다).
+     *
+     * <p>[JA] 一行の数量は 1〜1000。以前は savecart が本文の数量をそのまま保存し、負の数量で合計が減った。
+     */
+    static int checkedQty(int qty) {
+        if (qty < 1 || qty > MAX_LINE_QTY) {
+            throw new IllegalArgumentException(QTY_MESSAGE);
+        }
+        return qty;
+    }
+
     /** 이 항목의 줄 — 있으면 수량·가격을 새로, 없으면 만든다. catalog 가 모르는 상품이면 null. */
     private CartProduct upsertLine(Cart cart, ProductInfoDto item, Map<String, ProductDto> catalog) {
+        checkedQty(item.getQty());
         CartProduct fresh = createCartProduct(item, cart, catalog);
         if (fresh == null) {
             return null;
@@ -491,6 +650,12 @@ public class CartService {
      */
     public void cartEmpty(CartEmptyRequest request) {
         log.debug("Emptying cart for user ID: {}", request.getUserId());
+        // 주문당 한 번 — 🐛 예전에는 재전달되면 주문한 줄을 한 번 더 뺐다(그 사이 다시 담은 같은 상품까지). 옛 발행자(orderId 없음)는 그대로.
+        // [JA] 注文ごとに一度 — 以前は再配信で注文した行をもう一度取り除いた。
+        if (request.getOrderId() != null && cartRepository.markProcessed("cart-empty-" + request.getOrderId()) == 0) {
+            log.info("이미 반영한 장바구니 비우기 — 건너뛴다. orderId={} userId={}", request.getOrderId(), request.getUserId());
+            return;
+        }
         if (request.isEmptyCart()) {
             if (request.getItems().isEmpty()) {
                 // 옛 발행자 — 품목이 없다. 예전처럼 전부 비운다.
@@ -567,17 +732,18 @@ public class CartService {
     }
 
     /**
-     * 카트 상품 수량을 롤백합니다.
-     * 트랜잭션 커밋 후 캐시를 업데이트합니다.
-     * @param request 카트 롤백 요청 DTO
-     * @return 롤백된 카트 엔티티
+     * 결제 실패의 보상 — 쿠폰 적용액을 지우고 총액을 다시 센다. <b>줄의 수량은 건드리지 않는다.</b>
+     *
+     * <p>🐛 예전에는 모든 줄의 수량을 1 로 바꿨다 — 3개를 담고 결제가 실패하면 장바구니가 1개가 됐다. 장바구니는 결제가 <b>성공한 뒤에만</b>
+     * 비워지므로(cart-empty) 결제 실패로 되돌릴 수량이 애초에 없다.
+     *
+     * <p>[JA] 決済失敗の補償 — クーポン適用額を消し、合計を数え直す。行の数量には触れない。以前はすべての行を 1 にしていた。
      */
     public Cart cartRollback(CartRollbackRequest request) {
         log.debug("Rolling back cart for user ID: {}", request.getUserId());
         Cart cart = getCartByUserId(request.getUserId());
 
         if (cart != null) {
-            cart.getCartProducts().forEach(p -> updateQty(p, 1));
             BigDecimal cartTotal = computeCartTotal(cart.getCartProducts());
             cart.setCartTotal(cartTotal);
             cart.setTotalAfterDiscount(BigDecimal.ZERO);
@@ -902,13 +1068,5 @@ public class CartService {
                 .build();
     }
     
-    /**
-     * 카트 상품 수량을 업데이트합니다.
-     */
-    void updateQty(CartProduct product, int qty) {
-        log.info("Cart product rollback id: {} qty: {}", product.getCartproductId(), qty);
-        product.setQty(qty);
-        cartProductRepository.save(product);
-    }
  
 }

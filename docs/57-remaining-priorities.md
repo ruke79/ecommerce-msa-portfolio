@@ -533,6 +533,7 @@ Secret の形は cert-manager の Certificate（`keystores.pkcs12`）が作る�
 | `/api/order/internal/purchase-stats` · `/purchased` | user-service | 顧客ランク · レビューの購入確認 |
 | `/api/order/internal/orders` | delivery-service | 決済完了リスナー · 配送のバックフィル |
 | `/api/coupon/internal/quote` | order-service | 注文金額 |
+| `/api/coupon/internal/payment-claim` | order-service | 決済開始時のクーポン確保(V7) |
 | `/api/internal/stock/reservations` | order-service | 在庫予約・解除 |
 | `/api/product/rating` | user-service | レビュー評価・日次突合 |
 | `/api/auth/user/emails` · `/name` | order-service | 管理者の注文一覧 |
