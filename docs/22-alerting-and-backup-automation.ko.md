@@ -209,11 +209,13 @@ kubectl logs -n ecommerce -l job-name=backup-test-1 -f
 
 > **클러스터 안 PostgreSQL(운영 OCI)에서는** ③ 의 `kubectl apply` 대신 `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` 를 쓴다 — 적용과 함께 postgres-backup · restore-drill 의 `suspend` 를 끈다. 매니페스트는 둘을 `suspend: true` 로 들고 있어서(관리형 DB 에서는 성공할 수 없으므로), 손으로 켠 뒤 다시 `kubectl apply` 하면 아무 표시 없이 다시 꺼진다.
 
+**운영 적용(2026-10-13)** — 운영 노드에서 `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` 로 `postgres-backup` · `restore-drill` 을 켰다(세 CronJob 모두 `SUSPEND False`).
+
 ## 4. 남은 것
 
 | 항목 | 상태 |
 |---|---|
-| 백업을 클러스터 **밖**으로 (S3/GCS) | 🟠 지금은 PVC — 클러스터가 통째로 사라지면 백업도 함께 사라진다 |
+| 백업을 클러스터 **밖**으로 (S3/GCS) | 🟡 노드 밖 사본은 따로 둔다 — 다른 지역 사본은 아직 없다 |
 | PVC 크기를 실제 데이터 기준으로 | 🟠 50Gi 는 자리표시자다. k3s 의 `local-path` 는 이 크기를 **강제하지 않고 노드 디스크를 그대로** 쓴다 — 보관 일수 × 백업 크기가 노드의 여유를 넘으면 노드가 DiskPressure 로 파드를 내쫓는다(2026-10-10 운영: 디스크 여유 25G, DB 5.6G) |
 | Alertmanager 고가용성 (클러스터 모드) | 🟡 단일 인스턴스 |
 | 경보 피로도 조정 | 🟡 실제 운영 데이터를 봐야 임계값을 정할 수 있다 |

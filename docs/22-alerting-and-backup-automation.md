@@ -209,11 +209,13 @@ kubectl logs -n ecommerce -l job-name=backup-test-1 -f
 
 > **クラスタ内 PostgreSQL(本番 OCI)では** ③ の `kubectl apply` の代わりに `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` を使う — 適用と同時に postgres-backup・restore-drill の `suspend` を外す。マニフェストは両者を `suspend: true` で持つので(マネージド DB では成功し得ないため)、手で有効にした後に再び `kubectl apply` すると、何の表示もなく再び止まる。
 
+**本番への適用(2026-10-13)** — 本番ノードで `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` により `postgres-backup`・`restore-drill` を有効にした(三つの CronJob すべて `SUSPEND False`)。
+
 ## 4. 残っていること
 
 | 項目 | 状態 |
 |---|---|
-| バックアップをクラスタの**外**へ (S3/GCS) | 🟠 今は PVC — クラスタが丸ごと消えるとバックアップも一緒に消える |
+| バックアップをクラスタの**外**へ (S3/GCS) | 🟡 ノードの外のコピーは別に置く — 別地域のコピーはまだない |
 | PVC サイズを実データ基準に | 🟠 50Gi はプレースホルダーだ。k3s の `local-path` はこのサイズを**強制せず、ノードのディスクをそのまま**使う — 保持日数 × バックアップサイズがノードの空きを超えると、ノードが DiskPressure で Pod を追い出す(2026-10-10 本番: ディスク空き 25G、DB 5.6G) |
 | Alertmanager 高可用性 (クラスタモード) | 🟡 単一インスタンス |
 | アラート疲れの調整 | 🟡 実際の本番データを見ないと閾値を決められない |
