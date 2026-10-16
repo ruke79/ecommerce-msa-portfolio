@@ -113,6 +113,26 @@ public enum AudienceSegment {
         }
     }
 
+    /**
+     * <b>저장할 때</b> 읽는다 — 비었으면 {@link #ALL}, 모르는 값은 거절한다.
+     *
+     * <p>{@link #from} 의 "모르면 ALL" 은 읽을 때(옛 서비스가 새 값을 만났을 때)의 선택이다. 저장할 때 같은 규칙을 쓰면 관리자가
+     * {@code TIER_VIP} 대신 {@code VIP} 라고 적는 순간 조용히 ALL 로 저장돼 VIP 전용 쿠폰이 전원에게 열렸다.
+     *
+     * <p>[JA] <b>保存するとき</b>に読む — 空なら {@link #ALL}、未知の値は拒否する。{@link #from} の「未知なら ALL」は読むとき用。保存時に
+     * 同じ規則を使うと、管理者が {@code VIP} と書いた瞬間に黙って ALL で保存され、VIP 専用クーポンが全員に開いていた。
+     */
+    public static AudienceSegment parseKnown(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return ALL;
+        }
+        try {
+            return valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("알 수 없는 대상 고객군입니다: " + raw.trim());
+        }
+    }
+
     /** 이 사용자가 가진 세그먼트 목록으로 대상 여부를 판정한다. */
     public boolean matches(java.util.Collection<String> userSegments) {
         if (this == ALL) {

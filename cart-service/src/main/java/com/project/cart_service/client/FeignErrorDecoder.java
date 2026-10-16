@@ -34,23 +34,13 @@ public class FeignErrorDecoder implements ErrorDecoder {
             e.printStackTrace();
         }
 
-        switch (response.status()) {
-            case 400:
-                break;
-            case 404:
-                if (methodKey.contains("find")) {
-                    throw ErrorCode.throwUserNotFound();
-                }
-                break;
-            default:
-                try {
-                    String body = Util.toString(response.body().asReader(Util.UTF_8));
-                    // 응답 본문에서 에러 메시지를 파싱하여 반환
-                    return new RuntimeException("API call failed with status " + response.status() + ": " + body);
-                } catch (IOException e) {
-                    return new RuntimeException("API call failed with status " + response.status());
-                }
+        if (response.status() == 404 && methodKey.contains("find")) {
+            throw ErrorCode.throwUserNotFound();
         }
-        return null;
+        // 🐛 예전에는 다른 상태면 상류 본문을 담은 RuntimeException 을 돌려줘 그 내부 문구가 손님에게 나갔고(ClientMessage 가
+        // RuntimeException 을 허용한다), 400 · 그 밖의 404 에는 null 을 돌려줘 Feign 이 던질 예외가 없어 NPE(500)가 났다.
+        // 본문은 위 로그에만 남긴다.
+        // [JA] 以前は上流の本文を含む RuntimeException を返して内部文言が客に出ており、400 などでは null を返して NPE(500)になっていた。
+        return new com.project.common.exception.UpstreamCallException(methodKey, response.status());
     }
 }

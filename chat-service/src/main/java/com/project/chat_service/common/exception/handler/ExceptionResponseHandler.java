@@ -1,5 +1,7 @@
 package com.project.chat_service.common.exception.handler;
 
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -17,6 +19,13 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @RestControllerAdvice
+// 🐛 chat 은 com.project.common 도 스캔해 common 의 CustomRestExceptionHandler 도 함께 등록된다. 예전에는 둘 다 순서가 없고 둘 다
+// Exception 전체를 받아, 빈 등록 순서가 결과를 정했다 — chat 이 먼저면 잘못된 요청(타입 불일치 · 필수 값 누락 · 깨진 JSON · 405 ·
+// 415)이 모두 500 + ERROR 로그였고, common 이 먼저면 chat 의 도메인 예외 응답 모양이 바뀌었다. 이제 chat 의 것을 먼저 보고
+// (아는 예외만), 나머지는 common 이 맡는다 — Exception 전체 받기를 여기서 뺐다.
+// [JA] chat は common もスキャンするので common の処理器も登録される。両方とも順序がなく Exception 全体を受けていたため、
+//      登録順で結果が決まっていた。chat のものを先に(知っている例外だけ)、残りは common に任せる。
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class ExceptionResponseHandler {
     @ExceptionHandler({IllegalArgumentException.class, NoSuchElementException.class})
     public ResponseEntity<ApiResponse> handleCommonException(Exception e) {
@@ -33,13 +42,6 @@ public class ExceptionResponseHandler {
     public ResponseEntity<ApiResponse> handleDomainException(com.project.common.domain.exception.DomainException e) {
         log.info("요청 거절: {}", e.getMessage());
         return ResponseEntity.badRequest().body(ApiResponse.error(ClientMessage.of(e), "002"));
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse> handleUnexpectedException(Exception e) {
-        log.error("처리되지 않은 예외: {}", e.getClass().getName(), e);
-        return ResponseEntity.internalServerError()
-                .body(ApiResponse.error("서버 오류가 발생했습니다. 잠시 뒤 다시 시도해 주세요.", "002"));
     }
 
     @ExceptionHandler(CustomException.class)

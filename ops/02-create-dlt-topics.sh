@@ -53,6 +53,10 @@ set -euo pipefail
 PARTITIONS="${PARTITIONS:-3}"
 REPLICATION="${REPLICATION:-1}"
 RETENTION_MS="${RETENTION_MS:-1209600000}"   # 14일 — DLT 는 재처리 유예 기간만 보존
+# 🔒 살아 있는 비밀(가입 확인 · 비밀번호 재설정 링크)이 흐르는 토픽 — 본 토픽과 DLT 모두 짧게(docs/29 §5.3). 예전에는 DLT 도
+# 14일이라, 처리에 실패한 메일 요청의 확인 링크가 DLT 에 2주 남았다(값 원본 그대로 · 역직렬화 실패면 예외 헤더에도).
+SECRET_TOPICS="${SECRET_TOPICS:-outgoing-mail}"
+SECRET_RETENTION_MS="${SECRET_RETENTION_MS:-3600000}"   # 1시간 — 토큰 수명(24시간)보다 짧게
 DRY_RUN="${DRY_RUN:-0}"
 FIX_CONFIGS="${FIX_CONFIGS:-1}"
 SKIP_STATE="${SKIP_STATE:-0}"
@@ -183,11 +187,15 @@ CFG_ARGS=(--bootstrap-server "$BOOTSTRAP")
 
 printf '\n\033[1;36m▶ DLT 토픽 %d종\033[0m\n' "${#TOPICS[@]}"
 
+is_secret() { case " $SECRET_TOPICS " in *" $1 "*) return 0 ;; esac; return 1; }
+
 for t in "${TOPICS[@]}"; do
     DLT="${t}.DLT"
+    keep="$RETENTION_MS"
+    is_secret "$t" && keep="$SECRET_RETENTION_MS"
     ARGS=(--create --if-not-exists --topic "$DLT"
           --partitions "$PARTITIONS" --replication-factor "$REPLICATION"
-          --config "retention.ms=$RETENTION_MS")
+          --config "retention.ms=$keep")
     if [ "$DRY_RUN" = "1" ]; then
         echo "[DRY_RUN] $CLI ${CFG_ARGS[*]} ${ARGS[*]}"
     else
@@ -203,6 +211,24 @@ if [ "$DRY_RUN" != "1" ]; then
     [ "$CREATED" -ge "${#TOPICS[@]}" ] \
         || warn "기대(${#TOPICS[@]})보다 적습니다 — 위 목록을 확인하세요"
 fi
+
+# ------------------------------------------------- 비밀이 흐르는 토픽의 보존 (docs/29 §5.3)
+
+# 이미 있는 토픽에도 건다 — --create --if-not-exists 는 있는 토픽의 설정을 바꾸지 않는다. 본 토픽은 서비스가 처음 보낼 때
+# 생기므로 아직 없으면 경고만 하고, 첫 발송 뒤 이 스크립트를 다시 돌린다.
+printf '\n\033[1;36m▶ 비밀이 흐르는 토픽 — 보존 %s ms\033[0m\n' "$SECRET_RETENTION_MS"
+for t in $SECRET_TOPICS; do
+    for name in "$t" "$t.DLT"; do
+        ALTER=(--alter --entity-type topics --entity-name "$name" --add-config "retention.ms=$SECRET_RETENTION_MS")
+        if [ "$DRY_RUN" = "1" ]; then
+            echo "[DRY_RUN] $CFG_CLI ${CFG_ARGS[*]} ${ALTER[*]}"
+        elif kafka_configs "${CFG_ARGS[@]}" "${ALTER[@]}" >/dev/null 2>&1; then
+            info "$name — retention.ms=$SECRET_RETENTION_MS"
+        else
+            warn "$name 의 보존을 바꾸지 못했다 — 아직 없는 토픽이면 첫 발송 뒤 다시 실행"
+        fi
+    done
+done
 
 # ------------------------------------------------- 컴팩션 상태 토픽 (docs/38 §1.17)
 

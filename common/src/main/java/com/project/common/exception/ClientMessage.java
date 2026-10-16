@@ -104,6 +104,9 @@ public final class ClientMessage {
         if (cause != null && message.equals(cause.toString())) {
             return false;   // 감싸기만 했다 — 문구는 원인의 것이다 ／ [JA] 包んだだけである — 文言は原因のものである
         }
+        if (e instanceof NotForClients) {
+            return false;   // 운영자용이라고 표시한 예외 — 패키지 규칙보다 먼저 ／ [JA] オペレーター向けと表示した例外
+        }
         Class<?> type = e.getClass();
         return PLAIN.contains(type) || type.getName().startsWith(OWN_PACKAGE);
     }

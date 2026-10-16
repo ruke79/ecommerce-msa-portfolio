@@ -7,9 +7,13 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
@@ -149,7 +153,7 @@ class ProductUpdateSagaIntegrationTest {
         jdbc.update("INSERT INTO product.category(category_id, category_name, slug, createdat, version)"
                 + " VALUES (1, 'fashion', 'fashion', now(), 0) ON CONFLICT DO NOTHING");
         // product_sku 는 color_id 에 UNIQUE 제약이 있어 SKU 마다 색상이 달라야 한다.
-        for (long colorId = 10L; colorId <= 17L; colorId++) {
+        for (long colorId = 10L; colorId <= 18L; colorId++) {
             jdbc.update("INSERT INTO product.product_color(color_id, color, colorimage, createdat, version)"
                     + " VALUES (?, ?, 'c.png', now(), 0) ON CONFLICT DO NOTHING",
                     colorId, "color-" + colorId);
@@ -164,6 +168,7 @@ class ProductUpdateSagaIntegrationTest {
         insertProduct(105L, 1005L, 5005L, 15L, 50);   // 서로 다른 eventId
         insertProduct(106L, 1006L, 5006L, 16L, 50);   // 미존재 상품 주문 (불변이어야 함)
         insertProduct(107L, 1007L, 5007L, 17L, 50);   // 연속 주문 누적
+        insertProduct(108L, 1008L, 5008L, 18L, 50);   // 키 없는 망가진 메시지 → DLT 이후 처리
         seeded = true;
     }
 
@@ -283,6 +288,53 @@ class ProductUpdateSagaIntegrationTest {
                 .untilAsserted(() -> assertThat(quantityOf(104L))
                         .as("망가진 메시지 뒤의 정상 메시지가 처리되어야 한다")
                         .isEqualTo(49));
+    }
+
+    /**
+     * 🔴 키 없이 들어온 레코드가 <b>진짜로</b> 실패해도(역직렬화 불가) DLT 로 옮겨지고 파티션이 계속 간다.
+     *
+     * <p>예전 AggregateKeyPartitioner 는 키가 없으면 -1 을 돌려줬고, KafkaProducer 는 커스텀 파티셔너의 음수를 거절한다. DLT 템플릿도
+     * 이 파티셔너를 써서 DLT 발행이 매번 실패했고, 오류 처리기가 같은 레코드를 끝없이 다시 시도해 이 파티션의 뒤 메시지가 영영
+     * 처리되지 않았다. 위 {@code poisonMessageDoesNotStallTheConsumer} 의 메시지는 기본 타입으로 읽혀 실패하지 않아 이 경로를
+     * 지나지 않았다.
+     * [JA] キーなしで来たレコードが本当に失敗しても DLT へ移され、パーティションが進み続ける。
+     */
+    @Order(7)
+    @Test
+    @DisplayName("🔴 키 없이 온 망가진 메시지도 DLT 로 옮겨지고 뒤 메시지가 처리된다 — 파티셔너가 -1 이면 파티션이 멈춘다")
+    void keylessFailureReachesDltAndPartitionMovesOn() {
+        Map<String, Object> config = Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        try (var producer = new KafkaProducer<String, String>(config)) {
+            var broken = new ProducerRecord<String, String>(TOPIC, "{깨진 JSON — 역직렬화가 반드시 실패한다");
+            broken.headers().add(TYPE_HEADER, REQUEST_TYPE.getBytes());   // 키 없음
+            producer.send(broken);
+            producer.flush();
+        }
+        publish(orderPayload("saga-dlt-1", item(108L, 1, "M", 18L)));
+
+        await().atMost(Duration.ofSeconds(60))
+                .untilAsserted(() -> assertThat(quantityOf(108L)).as("DLT 로 옮긴 뒤 같은 파티션의 다음 메시지가 처리돼야 한다")
+                        .isEqualTo(49));
+
+        Map<String, Object> consumerConfig = Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                ConsumerConfig.GROUP_ID_CONFIG, "dlt-check-" + System.nanoTime(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
+        try (var consumer = new KafkaConsumer<String, byte[]>(consumerConfig)) {
+            consumer.subscribe(List.of(TOPIC + ".DLT"));
+            await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+                boolean found = false;
+                for (var r : consumer.poll(Duration.ofMillis(500))) {
+                    found |= r.key() == null && new String(r.value(), java.nio.charset.StandardCharsets.UTF_8).startsWith("{깨진 JSON");
+                }
+                assertThat(found).as("키 없는 원본이 DLT 에 있다").isTrue();
+            });
+        }
     }
 
     @Order(4)

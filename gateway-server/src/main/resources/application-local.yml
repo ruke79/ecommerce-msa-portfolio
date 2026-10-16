@@ -125,6 +125,15 @@ spring:
                 # Truststore 설정을 추가하여 Eureka Server의 인증서를 신뢰하도록 함
                 trust-store: file:${LOCAL_TRUST_STORE_PATH}
                 trust-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+                # 🔒 백엔드로 넘길 때 게이트웨이 자기 인증서(CN=gateway-server, ops/38 · k8s/96)를 클라이언트 인증서로 낸다.
+                # 받는 쪽(InternalCallerFilter)은 신원 헤더(User-Id · User-Role · User-Email)를 이 인증서로 온 요청에서만
+                # 믿는다 — 예전에는 헤더만 있으면 믿어서 클러스터 안의 파드가 헤더를 직접 붙여 관리자가 될 수 있었다(docs/57 §16).
+                # 비우면(로컬 · 인증서 없는 환경) 인증서를 내지 않는다 — 받는 쪽 identity-mode 가 observe 면 경고만 남는다.
+                # [JA] バックエンドへ渡すとき、ゲートウェイ自身の証明書(CN=gateway-server)をクライアント証明書として提示する。
+                #      受け側は身元ヘッダーをこの証明書で来たリクエストでのみ信じる。空なら提示しない。
+                key-store: ${GATEWAY_CLIENT_KEY_STORE:}
+                key-store-type: PKCS12
+                key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
                 # SSL 번들 설정 제거
                 # bundle: eureka-client
             # 🐛 연결 풀 — 백엔드가 이미 닫은 연결을 재사용해 503 이 나던 것.

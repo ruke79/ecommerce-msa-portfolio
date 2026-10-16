@@ -296,7 +296,9 @@ public class EventService {
      * (coupon 테이블의 {@code uk_coupon_name_user_id}).
      */
     private void applyCoupon(Event event, EventRequest request) {
-        event.setAudience(AudienceSegment.from(request.audience()));
+        // 저장할 때는 모르는 값을 거절한다 — from() 은 "모르면 ALL" 이라 오타가 전원 대상이 됐다.
+        // [JA] 保存時は未知の値を拒否する — from() は「未知なら ALL」なので、誤字が全員対象になっていた。
+        event.setAudience(AudienceSegment.parseKnown(request.audience()));
 
         String name = request.couponName() == null ? null : request.couponName().trim();
         boolean hasName = name != null && !name.isEmpty();

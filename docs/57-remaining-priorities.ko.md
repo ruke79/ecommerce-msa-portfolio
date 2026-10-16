@@ -465,7 +465,7 @@ docs/48 §6-③ 의 남은 항목. 복제본은 이제 둘 — chat 의 회원 �
 
 | 자리 | 한 것 |
 |---|---|
-| 부르는 쪽 — 백엔드 서비스(k8s/40~49) | JVM 키스토어(`-Djavax.net.ssl.keyStore=…keystore.p12`)를 준다. 서비스 간 호출은 전부 Feign(JDK 기본 TLS)이라 서버가 요청하면 이 인증서를 **클라이언트 인증서로** 낸다. 게이트웨이(31)에는 주지 않는다 — 게이트웨이가 넘기는 요청은 내부 호출이 아니다 |
+| 부르는 쪽 — 백엔드 서비스(k8s/40~49) | JVM 키스토어(`-Djavax.net.ssl.keyStore=…keystore.p12`)를 준다. 서비스 간 호출은 전부 Feign(JDK 기본 TLS)이라 서버가 요청하면 이 인증서를 **클라이언트 인증서로** 낸다. 게이트웨이(31)는 JVM 키스토어가 아니라 자기 신원(`tls-id-gateway-server`)을 HttpClient 클라이언트 인증서로 낸다(2026-10-14, 아래 "신원 헤더") — 그래도 헤더 없이 넘기는 요청은 내부 호출이 아니다 |
 | 받는 쪽 — 같은 백엔드 | `SERVER_SSL_CLIENT_AUTH=want` — 클라이언트 인증서를 **요청**한다(없어도 연결은 된다: kubelet 프로브·게이트웨이·Prometheus). eureka·config·게이트웨이는 그대로 둔다 — 틀리면 등록·설정이 멈춰 전체가 선다 |
 | 판정 — `InternalCallerFilter`(common, 모든 서블릿 서비스에 자동 구성) | 신원 헤더가 **없는** 요청만 본다. TLS 로 받은 클라이언트 인증서가 **내부 CA 로 서명**됐으면(여기서 다시 검증 — JVM 신뢰 저장소가 공개 CA 를 믿어도 공개 CA 인증서는 내부가 아니다) 내부 호출. 아니면 `User-Role: ROLE_ANONYMOUS` 를 붙여 넘긴다 → `InternalCallGuard` 가 "외부·관리자 아님" 으로 읽어 **내부 전용 API 가 403**. 호출 자리 수십 곳을 고치지 않고 판정의 입력을 바로잡는다 |
 
@@ -564,6 +564,35 @@ kubectl -n ecommerce rollout restart deploy/<백엔드 열 개>   # 환경 변�
 ```
 
 되돌리기: `INTERNAL_AUTH_RULES_MODE=observe` 로 바꾸고 `--config-only` + 재시작(판정은 "내부 CA 인증서면 된다" 로 돌아간다). B-67 이 저장소 기본값이 enforce 인지도 본다.
+
+### 신원 헤더 — 누가 붙였나 (2026-10-14)
+
+**무엇이 문제였나.** 판정 필터는 신원 헤더(`User-Id` · `User-Role` · `User-Email`)가 **있기만 하면** 게이트웨이가 붙인 것으로 보고 아무것도
+보지 않았다. 서비스는 인증서 없는 연결도 받고(`want`), NetworkPolicy `allow-same-namespace` 는 같은 네임스페이스를 다 허용한다 —
+ecommerce 의 파드 하나(frontend · cloudflared · 백업 Job …)를 장악하면 `User-Role: ROLE_ADMIN` 한 줄로 내부 전용 API(배송 주소 등)를
+읽고, 남의 `User-Id` 로 그 사용자가 됐다. 인증서를 가진 서비스도 헤더 한 줄로 허용 주체 · 경로 규칙을 건너뛰었다.
+
+**한 것.** 게이트웨이도 자기 인증서(CN=gateway-server — ops/38 · k8s/96 의 `tls-id-gateway-server`)를 **클라이언트 인증서로** 낸다
+(Spring Cloud Gateway `httpclient.ssl.key-store` — Netty 클라이언트는 JVM 키스토어를 읽지 않는다). 받는 쪽이 헤더를 믿는 것은 보낸 쪽에 따라 다르다:
+
+| 보낸 쪽(인증서) | 믿는 헤더 |
+|---|---|
+| 게이트웨이(`INTERNAL_AUTH_GATEWAY_SUBJECTS`, 기본 gateway-server) | 셋 다 — 게이트웨이는 클라이언트가 보낸 같은 헤더를 지우고 토큰에서 다시 붙인다 |
+| 내부 서비스(허용 주체) | `User-Id` 만 — 사용자를 대신한 호출(order · coupon → cart `getCart`). 역할 · 이메일은 버린다 — 서비스가 관리자를 자처하지 못한다 |
+| 내부 인증서 없음 · 다른 CA | 없음 — 셋 다 버리고 `ROLE_ANONYMOUS` |
+
+헤더 없이 게이트웨이 인증서로 온 요청(공개 라우트)은 **내부 호출이 아니다** — 허용 주체 목록과 상관없이 외부로 본다.
+
+**켜는 순서** (`INTERNAL_AUTH_IDENTITY_MODE`, 기본 observe):
+
+1. 게이트웨이 인증서 — `./ops/38-issue-service-identities.sh --only gateway-server`(cert-manager 를 쓰면 `./ops/39-cert-manager.sh` 가
+   k8s/96 의 `id-gateway-server` 를 함께 발급). `ops/28` 은 매니페스트가 마운트하는 `tls-id-*` 가 없으면 배포 전에 멈춘다.
+2. 배포 — 게이트웨이가 인증서를 내기 시작하고, 백엔드는 observe 로 어긋난 것을 `[mTLS identity]` 로 남긴다(값은 남기지 않는다).
+3. `./ops/37-check-mtls.sh`(①-3 이 0) → 로그인 · 주문 · 관리자 화면이 한 번씩 돈 뒤 `SINCE=24h` 로 한 번 더.
+4. `k8s/10-configmap.yaml` 의 `INTERNAL_AUTH_IDENTITY_MODE: "enforce"` → `./ops/28-deploy.sh local --config-only` → 백엔드 재시작 →
+   `./ops/37` 의 ②-2(인증서 없이 관리자 헤더 → 403).
+
+되돌리기: observe 로 같은 절차. `InternalCallerFilterTest`(신원 헤더 5개) · `CheckMtlsScriptTest` 가 지킨다.
 
 ### 남은 것 — 정직하게
 

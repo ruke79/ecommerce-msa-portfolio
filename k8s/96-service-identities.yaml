@@ -21,6 +21,38 @@ spec:
   ca:
     secretName: internal-ca
 ---
+# 게이트웨이 — 백엔드로 넘길 때 내는 클라이언트 인증서(신원 헤더를 믿는 근거, docs/57 §16). 서버 인증서는 공유 tls-keystore 그대로.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-gateway-server
+  namespace: ecommerce
+spec:
+  secretName: tls-id-gateway-server
+  commonName: gateway-server
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - gateway-server
+    - gateway-server.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

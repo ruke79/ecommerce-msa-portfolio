@@ -29,4 +29,15 @@ public class UserRestExceptionHandler extends CustomRestExceptionHandler {
             return new ResponseEntity<Object>(apiError, new HttpHeaders(), apiError.getStatus());
         }
 
+        /**
+         * 403 — 메서드 보안(@PreAuthorize 등)이 거절한 것. 예전에는 공통 처리기의 handleAll 로 떨어져 500 + ERROR 로그였다.
+         * 문구는 일반 문구 — 거절 이유(어느 역할이 필요한가)는 내보내지 않는다.
+         * [JA] 403 — メソッドセキュリティが拒否したもの。以前は共通処理器の handleAll に落ちて 500 + ERROR ログだった。
+         */
+        @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+        public final ResponseEntity<Object> handleAccessDenied(Exception ex, WebRequest request) {
+            final ApiError apiError = new ApiError(HttpStatus.FORBIDDEN, "권한이 없습니다.", "access denied");
+            return new ResponseEntity<Object>(apiError, new HttpHeaders(), apiError.getStatus());
+        }
+
 }

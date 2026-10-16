@@ -283,3 +283,7 @@ security/common-passwords.txt 가 없다
 
 보안을 위해 다시 로그인한 뒤 {}분 안에 등록해 주세요.
 = セキュリティのため、再度ログインしてから {} 分以内に登録してください。
+
+# 메서드 보안 거절(UserRestExceptionHandler)
+권한이 없습니다.
+= 権限がありません。

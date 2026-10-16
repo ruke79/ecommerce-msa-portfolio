@@ -159,6 +159,21 @@ public class CustomRestExceptionHandler extends ResponseEntityExceptionHandler {
         return new ResponseEntity<Object>(apiError, new HttpHeaders(), apiError.getStatus());
     }
 
+    /**
+     * 사람이 고칠 수 있는 도메인 실패 — 400 과 그 문구. 예전에는 아래 handleAll 로 떨어져 500 + ERROR 로그였다 — 손님이 고칠 수 있는
+     * 실패가 장애처럼 보였고, 5xx 경보를 흐렸다(컨트롤러가 직접 잡지 않은 곳: 서비스 · 필터 · 다른 컨트롤러). 상태 충돌은 409.
+     *
+     * <p>[JA] 人が直せるドメインの失敗 — 400 とその文言。以前は下の handleAll に落ちて 500 + ERROR ログだった。状態の衝突は 409。
+     */
+    @ExceptionHandler({ com.project.common.domain.exception.DomainException.class })
+    public ResponseEntity<Object> handleDomain(final com.project.common.domain.exception.DomainException ex, final WebRequest request) {
+        HttpStatus status = ex instanceof com.project.common.domain.exception.StateConflictException
+                ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
+        logger.info("요청 거절(" + status.value() + "): " + ex.getClass().getSimpleName());
+        final ApiError apiError = new ApiError(status, ClientMessage.of(ex), "error occurred");
+        return new ResponseEntity<Object>(apiError, new HttpHeaders(), apiError.getStatus());
+    }
+
     // 500
 
     /**

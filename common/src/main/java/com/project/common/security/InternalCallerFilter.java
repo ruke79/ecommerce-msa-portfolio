@@ -61,6 +61,23 @@ import lombok.extern.slf4j.Slf4j;
  * </ul>
  * 처음 보는 (호출한 서비스, 경로) 짝은 {@code [mTLS caller]} 로 한 번 남긴다 — 규칙을 실제 트래픽에서 만든다.
  *
+ * <h3>신원 헤더는 누가 보냈나 — {@code internal-auth.identity-mode} (docs/57 §16)</h3>
+ *
+ * <p>🔒 예전에는 신원 헤더가 <b>있기만 하면</b> 게이트웨이가 붙인 것으로 믿고 아무것도 보지 않았다. 서비스는 인증서 없는 연결도
+ * 받고(client-auth=want) 네트워크 정책은 같은 네임스페이스를 다 허용하므로, 클러스터 안의 파드 하나가 {@code User-Role:
+ * ROLE_ADMIN} 이나 남의 {@code User-Id} 를 직접 붙이면 그대로 관리자 · 그 사용자가 됐다. 이제 게이트웨이도 자기 인증서
+ * (CN=gateway-server)를 낸다. 헤더를 믿는 것은 보낸 쪽 인증서에 따라 다르다:
+ * <ul>
+ *   <li>게이트웨이({@code internal-auth.gateway-subjects}) — 셋 다 믿는다. 게이트웨이는 클라이언트가 보낸 같은 헤더를 지우고
+ *       토큰에서 다시 붙인다.</li>
+ *   <li>내부 서비스(허용 주체) — {@code User-Id} 만(사용자를 대신한 호출: order · coupon → cart). {@code User-Role} ·
+ *       {@code User-Email} 은 버린다 — 서비스가 관리자를 자처하지 못한다.</li>
+ *   <li>내부 인증서 없음 — 셋 다 버리고 익명({@code ROLE_ANONYMOUS})으로 넘긴다.</li>
+ * </ul>
+ * {@code observe}(기본)는 어긋난 것을 {@code [mTLS identity]} 로 한 번씩 남기고 그대로 넘긴다 — 게이트웨이 인증서를 배포한 뒤
+ * 경고가 없음을 보고 {@code enforce} 로 바꾼다. 헤더가 없는 요청에서 게이트웨이 인증서는 <b>내부 호출이 아니다</b>(공개 라우트로
+ * 온 외부 요청이다).
+ *
  * <h3>모드 — {@code internal-auth.mode}</h3>
  * <ul>
  *   <li>{@code off}(기본) — 아무것도 하지 않는다. 로컬 개발·인증서 없는 환경.</li>
@@ -109,6 +126,13 @@ import lombok.extern.slf4j.Slf4j;
  * 初めて見る (呼び出したサービス, パス) の組は {@code [mTLS caller]} として一度だけ記録する — ルールを実際の
  * トラフィックから作る。
  *
+ * <h3>身元ヘッダーは誰が送ったか — {@code internal-auth.identity-mode}</h3>
+ *
+ * <p>🔒 以前は身元ヘッダーが<b>ありさえすれば</b>ゲートウェイが付けたものと信じていた — クラスター内の Pod が {@code User-Role:
+ * ROLE_ADMIN} や他人の {@code User-Id} を直接付ければ、そのまま管理者・その利用者になれた。今はゲートウェイも自分の証明書
+ * (CN=gateway-server)を提示する。ゲートウェイからは三つとも信じ、内部サービスからは {@code User-Id} だけ(利用者の代理呼び出し)、
+ * 内部証明書なしなら三つとも捨てて匿名にする。{@code observe}(デフォルト)は記録だけ、{@code enforce} で捨てる。
+ *
  * <h3>モード — {@code internal-auth.mode}</h3>
  * <ul>
  *   <li>{@code off}(デフォルト) — 何もしない。ローカル開発・証明書のない環境。</li>
@@ -135,6 +159,10 @@ public class InternalCallerFilter extends OncePerRequestFilter {
     static final String PROBE_HEADER = "X-Mtls-Probe";
     static final String PROBE_VALUE = "ops-37";
     private static final String ROLE = "User-Role";
+    private static final String USER_ID = "User-Id";
+    private static final String USER_EMAIL = "User-Email";
+    /** 게이트웨이 인증서의 CN(ops/38 · k8s/96). ／ [JA] ゲートウェイ証明書の CN。 */
+    public static final String DEFAULT_GATEWAY_SUBJECT = "gateway-server";
 
     /** 경로 앞부분 하나와 그것을 부를 수 있는 서비스(CN)들. */
     // [JA] パスの接頭辞一つと、それを呼び出せるサービス(CN)群。
@@ -151,6 +179,12 @@ public class InternalCallerFilter extends OncePerRequestFilter {
     // [JA] 接頭辞が長いものから — 最も具体的なルールが勝つ。
     private final List<PathRule> rules;
     private final Mode rulesMode;
+    /** 신원 헤더를 보낸 쪽 검사 — observe(기본) · enforce. off 면 예전처럼 헤더를 그대로 믿는다. */
+    // [JA] 身元ヘッダーの送り手の検査 — observe(デフォルト)・enforce。off なら以前どおりヘッダーをそのまま信じる。
+    private final Mode identityMode;
+    /** 신원 헤더 셋을 모두 믿을 CN — 게이트웨이. 헤더 없는 요청에서는 내부 호출로 보지 않는다. */
+    // [JA] 身元ヘッダー三つをすべて信じる CN — ゲートウェイ。ヘッダーのないリクエストでは内部呼び出しとみなさない。
+    private final Set<String> gatewaySubjects;
     private final Set<String> seenCallers = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public InternalCallerFilter(Mode mode, X509Certificate ca, Set<String> allowedSubjects, List<String> watchPaths) {
@@ -159,6 +193,13 @@ public class InternalCallerFilter extends OncePerRequestFilter {
 
     public InternalCallerFilter(Mode mode, X509Certificate ca, Set<String> allowedSubjects, List<String> watchPaths,
             List<PathRule> rules, Mode rulesMode) {
+        this(mode, ca, allowedSubjects, watchPaths, rules, rulesMode, Mode.OBSERVE, Set.of(DEFAULT_GATEWAY_SUBJECT));
+    }
+
+    public InternalCallerFilter(Mode mode, X509Certificate ca, Set<String> allowedSubjects, List<String> watchPaths,
+            List<PathRule> rules, Mode rulesMode, Mode identityMode, Set<String> gatewaySubjects) {
+        this.identityMode = identityMode == null ? Mode.OBSERVE : identityMode;
+        this.gatewaySubjects = gatewaySubjects == null ? Set.of() : Set.copyOf(gatewaySubjects);
         this.mode = mode;
         this.ca = ca;
         this.allowedSubjects = allowedSubjects == null ? Set.of() : allowedSubjects;
@@ -192,13 +233,23 @@ public class InternalCallerFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (mode == Mode.OFF || hasIdentity(request)) {
+        if (mode == Mode.OFF) {
             chain.doFilter(request, response);
             return;
         }
         String caller = verifiedCaller(request);
+        boolean gateway = caller != null && gatewaySubjects.contains(caller);
+        if (hasIdentity(request)) {
+            chain.doFilter(identityChecked(request, caller, gateway), response);
+            return;
+        }
+        if (gateway) {
+            // 게이트웨이가 넘긴 헤더 없는 요청 — 공개 라우트(로그인 없는 조회 · 웹훅)로 온 외부 요청이다. 내부 호출이 아니다.
+            // [JA] ゲートウェイが渡したヘッダーなしのリクエスト — 公開ルートで来た外部リクエストである。内部呼び出しではない。
+            caller = null;
+        }
         if (caller != null) {
-            String uri = request.getRequestURI();
+            String uri = matchedPath(request);
             String why = policyViolation(caller, uri);
             if (why == null) {
                 noteCaller(caller, uri);
@@ -221,7 +272,7 @@ public class InternalCallerFilter extends OncePerRequestFilter {
                 // [JA] ops/37 の「証明書なし」対照呼び出し — 警告として残すと次回の点検がそれを数えてしまう。
                 //      ログが異なるだけである(判定とは無関係)。
                 log.info("[mTLS probe] 인증서 없는 대조 호출 {} {}", request.getMethod(), request.getRequestURI());
-            } else if (watched(request.getRequestURI())) {
+            } else if (watched(matchedPath(request))) {
                 log.warn("[mTLS observe] 내부 경로에 내부 인증서 없이 온 요청 — enforce 면 거절된다. {} {}",
                         request.getMethod(), request.getRequestURI());
             }
@@ -230,6 +281,58 @@ public class InternalCallerFilter extends OncePerRequestFilter {
         }
         chain.doFilter(new AnonymousCaller(request), response);
     }
+
+    /**
+     * 신원 헤더가 있는 요청 — 보낸 쪽 인증서에 따라 믿을 헤더만 남긴다(클래스 주석 "신원 헤더는 누가 보냈나").
+     *
+     * <p>[JA] 身元ヘッダーのあるリクエスト — 送り手の証明書に応じて信じるヘッダーだけを残す。
+     */
+    HttpServletRequest identityChecked(HttpServletRequest request, String caller, boolean gateway) {
+        if (identityMode == Mode.OFF || gateway) {
+            return request;
+        }
+        boolean service = caller != null && (allowedSubjects.isEmpty() || allowedSubjects.contains(caller));
+        String why;
+        if (service) {
+            if (!present(request.getHeader(ROLE)) && !present(request.getHeader(USER_EMAIL))) {
+                return request;   // 사용자를 대신한 호출(User-Id 만) ／ [JA] 利用者の代理呼び出し(User-Id のみ)
+            }
+            why = "서비스가 User-Role/User-Email 을 실었다 — User-Id 만 믿는다";
+        } else {
+            why = "내부 인증서 없이 신원 헤더 — 게이트웨이를 거치지 않은 요청";
+        }
+        String who = caller == null ? "(인증서 없음)" : caller;
+        String key = "identity " + who + " " + matchedPath(request)
+                .replaceAll("/\\d+(?=/|$)", "/{id}");
+        if (PROBE_VALUE.equals(request.getHeader(PROBE_HEADER))) {
+            // ops/37 의 "인증서 없이 관리자 헤더" 대조 호출 — 경고로 남기면 다음 점검이 그것을 센다. ／ [JA] ops/37 の対照呼び出し。
+            log.info("[mTLS probe] 인증서 없이 신원 헤더를 붙인 대조 호출 {} {}", request.getMethod(), request.getRequestURI());
+        } else if (seenCallers.size() < MAX_SEEN_CALLERS && seenCallers.add(key)) {
+            // 헤더 값(사용자 id · 이메일 · 역할)은 남기지 않는다 — 누가 어디로 보냈는지만. ／ [JA] ヘッダーの値は残さない。
+            log.warn("[mTLS identity] {} — caller={} {} {} ({})", why, who, request.getMethod(), request.getRequestURI(),
+                    identityMode == Mode.ENFORCE ? "버린다" : "observe — 그대로 넘긴다");
+        }
+        return identityMode == Mode.ENFORCE ? new UntrustedIdentity(request, service) : request;
+    }
+
+    /**
+     * 규칙과 대조할 경로 — 컨트롤러 매칭이 보는 것과 같게: 퍼센트 디코딩, 세그먼트의 {@code ;…} 제거, {@code //} 정리.
+     *
+     * <p>🔒 예전에는 {@code getRequestURI()}(디코딩 전 원시 값)를 앞부분만 비교했다. 그런데 Spring MVC 는 디코딩하고 {@code ;…} 를
+     * 떼고 매칭한다 — {@code /api/order/intern%61l/orders/…} · {@code /api/order/internal;x/orders/…} 는 규칙
+     * ({@code /api/order/internal/orders=delivery-service})과 앞부분이 맞지 않아 "규칙 없음 = 허용 주체면 된다" 로 통과했고,
+     * 컨트롤러에는 그대로 닿아 delivery 전용 API 를 다른 서비스 인증서로 부를 수 있었다.
+     *
+     * <p>[JA] ルールと照合するパス — コントローラーのマッチングが見るものと同じく、パーセントデコード・セグメントの {@code ;…} 除去・
+     * {@code //} 整理。以前は生の {@code getRequestURI()} を前方一致で比べており、エンコードや {@code ;} でルールを迂回できた。
+     */
+    static String matchedPath(HttpServletRequest request) {
+        String path = PATHS.getPathWithinApplication(request);
+        return path == null ? "" : path;
+    }
+
+    /** 디코딩 · {@code ;} 제거 · {@code //} 정리를 하는 Spring 의 기본 설정. ／ [JA] Spring の既定設定。 */
+    private static final org.springframework.web.util.UrlPathHelper PATHS = new org.springframework.web.util.UrlPathHelper();
 
     /** 내부 CA 로 서명된 유효한 클라이언트 인증서면 그 CN(없으면 주체 전체), 아니면 null. */
     // [JA] 内部 CA で署名された有効なクライアント証明書ならその CN(なければ主体全体)、そうでなければ null。
@@ -318,7 +421,7 @@ public class InternalCallerFilter extends OncePerRequestFilter {
     }
 
     private static boolean hasIdentity(HttpServletRequest r) {
-        return present(r.getHeader("User-Role")) || present(r.getHeader("User-Email")) || present(r.getHeader("User-Id"));
+        return present(r.getHeader(ROLE)) || present(r.getHeader(USER_EMAIL)) || present(r.getHeader(USER_ID));
     }
 
     private boolean watched(String uri) {
@@ -351,6 +454,56 @@ public class InternalCallerFilter extends OncePerRequestFilter {
         public Enumeration<String> getHeaderNames() {
             List<String> names = Collections.list(super.getHeaderNames());
             if (names.stream().noneMatch(ROLE::equalsIgnoreCase)) {
+                names.add(ROLE);
+            }
+            return Collections.enumeration(names);
+        }
+    }
+
+    /**
+     * 믿지 않는 신원 헤더를 걷어 낸 모습. 서비스가 보냈으면 {@code User-Id} 만 남기고, 아니면 셋 다 지우고 익명 역할을 붙인다.
+     *
+     * <p>[JA] 信じない身元ヘッダーを取り除いた姿。サービスが送ったなら {@code User-Id} だけを残し、そうでなければ三つとも消して
+     * 匿名ロールを付ける。
+     */
+    static final class UntrustedIdentity extends HttpServletRequestWrapper {
+        private final boolean keepUserId;
+
+        UntrustedIdentity(HttpServletRequest request, boolean keepUserId) {
+            super(request);
+            this.keepUserId = keepUserId;
+        }
+
+        private boolean hidden(String name) {
+            return USER_EMAIL.equalsIgnoreCase(name) || (!keepUserId && USER_ID.equalsIgnoreCase(name))
+                    || (keepUserId && ROLE.equalsIgnoreCase(name));
+        }
+
+        private boolean anonymousRole(String name) {
+            return !keepUserId && ROLE.equalsIgnoreCase(name);
+        }
+
+        @Override
+        public String getHeader(String name) {
+            if (anonymousRole(name)) {
+                return ANONYMOUS_ROLE;
+            }
+            return hidden(name) ? null : super.getHeader(name);
+        }
+
+        @Override
+        public Enumeration<String> getHeaders(String name) {
+            if (anonymousRole(name)) {
+                return Collections.enumeration(List.of(ANONYMOUS_ROLE));
+            }
+            return hidden(name) ? Collections.emptyEnumeration() : super.getHeaders(name);
+        }
+
+        @Override
+        public Enumeration<String> getHeaderNames() {
+            List<String> names = new java.util.ArrayList<>(Collections.list(super.getHeaderNames()));
+            names.removeIf(this::hidden);
+            if (!keepUserId && names.stream().noneMatch(ROLE::equalsIgnoreCase)) {
                 names.add(ROLE);
             }
             return Collections.enumeration(names);

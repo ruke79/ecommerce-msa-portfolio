@@ -11,6 +11,10 @@
 #      **0 이어야 enforce 로 올릴 수 있다.** (0 이 아닌데 올리면 그 호출이 403 으로 끊긴다.)
 #   ①-2 규칙 위반 — "[mTLS rule]"(허용 주체가 아니거나 그 경로를 부를 수 없는 서비스). **0 이어야 RULES_MODE 를 enforce 로 올린다.**
 #      caller=localhost 가 보이면 아직 공유 인증서로 부르는 파드다 — 신원 마운트 뒤 재시작이 안 됐다.
+#   ①-3 신원 헤더 — "[mTLS identity]"(게이트웨이 인증서가 아닌 곳에서 온 신원 헤더 · 서비스가 실은 User-Role/User-Email).
+#      **0 이어야 INTERNAL_AUTH_IDENTITY_MODE 를 enforce 로 올린다.** caller=(인증서 없음) 이 게이트웨이에서 오면 게이트웨이가
+#      아직 자기 인증서(tls-id-gateway-server)를 내지 않는 것이다 — ops/38 · k8s/96 발급 뒤 게이트웨이 재시작.
+#   ②-2 대조 — 인증서 없이 User-Role: ROLE_ADMIN 을 붙여 같은 내부 API 를 부른다. identity enforce 면 403, 아니면 200.
 #
 # 사용:
 #   ./ops/37-check-mtls.sh            # 지금 모드(ConfigMap 의 INTERNAL_AUTH_MODE)에 맞춰 기대값을 정한다
@@ -47,7 +51,9 @@ MODE=$(kubectl -n "$NS" get configmap "$CONFIGMAP" -o jsonpath='{.data.INTERNAL_
 MODE="${MODE:-off}"
 RULES_MODE=$(kubectl -n "$NS" get configmap "$CONFIGMAP" -o jsonpath='{.data.INTERNAL_AUTH_RULES_MODE}' 2>/dev/null)
 HAS_RULES=$(kubectl -n "$NS" get configmap "$CONFIGMAP" -o jsonpath='{.data.INTERNAL_AUTH_PATH_RULES}{.data.INTERNAL_AUTH_ALLOWED_SUBJECTS}' 2>/dev/null)
-echo "▶ 모드: $MODE${HAS_RULES:+ · 규칙: ${RULES_MODE:-enforce}}"
+IDENTITY_MODE=$(kubectl -n "$NS" get configmap "$CONFIGMAP" -o jsonpath='{.data.INTERNAL_AUTH_IDENTITY_MODE}' 2>/dev/null)
+IDENTITY_MODE="${IDENTITY_MODE:-observe}"
+echo "▶ 모드: $MODE${HAS_RULES:+ · 규칙: ${RULES_MODE:-enforce}} · 신원 헤더: $IDENTITY_MODE"
 
 if [ "${1:-}" = "--callers" ]; then
     echo
@@ -101,10 +107,30 @@ if [ -n "$HAS_RULES" ]; then
     fi
 fi
 
+ID_TOTAL=0
+if [ "$MODE" != "off" ] && [ "$IDENTITY_MODE" != "off" ]; then
+    echo
+    echo "▶ ①-3 신원 헤더 — 게이트웨이 인증서가 아닌 곳에서 온 신원 헤더(최근 $SINCE)"
+    for s in $BACKENDS; do
+        kubectl -n "$NS" get "deploy/$s" >/dev/null 2>&1 || continue
+        n=$(kubectl -n "$NS" logs "deploy/$s" --since="$SINCE" --all-containers 2>/dev/null | grep -c "\[mTLS identity\]")
+        if [ "${n:-0}" -gt 0 ]; then
+            bad "$s: $n 건 — 예:"
+            kubectl -n "$NS" logs "deploy/$s" --since="$SINCE" 2>/dev/null | grep "\[mTLS identity\]" | tail -3 | sed 's/^/        /'
+            ID_TOTAL=$((ID_TOTAL + n))
+        fi
+    done
+    if [ "$ID_TOTAL" = 0 ]; then
+        ok "없다 — 신원 헤더는 모두 게이트웨이 인증서(또는 User-Id 만 실은 서비스)로 왔다"
+    else
+        info "caller=(인증서 없음) 이면 게이트웨이가 아직 자기 인증서를 내지 않는다(tls-id-gateway-server 발급 → 게이트웨이 재시작). 서비스 이름이면 그 Feign 이 User-Role/User-Email 을 싣는다"
+    fi
+fi
+
 # curl 파드 — tls-keystore 를 /certs 에 마운트한다. 상태 코드와 curl 의 종료 코드·오류 문구만 찍는다(응답 본문은 버린다).
 OVERRIDES=$(cat <<JSON
 {"spec":{"containers":[{"name":"probe","image":"$IMAGE","command":["sh","-c",
- "ls /certs/ca.crt /certs/tls.crt /certs/tls.key >/dev/null 2>&1 || echo MISSING=\$(for f in ca.crt tls.crt tls.key; do [ -r /certs/\$f ] || printf '%s ' \$f; done); i=0; while :; do N=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' -H 'X-Mtls-Probe: ops-37' --cacert /certs/ca.crt '$TARGET'); case \"\$N\" in '000 7 '*) i=\$((i+1)); [ \$i -ge 8 ] && break; sleep 2;; *) break;; esac; done; echo TRIES=\$i; echo NOCERT=\$N; echo WITHCERT=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' --cacert /certs/ca.crt --cert /certs/tls.crt --key /certs/tls.key '$TARGET')"],
+ "ls /certs/ca.crt /certs/tls.crt /certs/tls.key >/dev/null 2>&1 || echo MISSING=\$(for f in ca.crt tls.crt tls.key; do [ -r /certs/\$f ] || printf '%s ' \$f; done); i=0; while :; do N=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' -H 'X-Mtls-Probe: ops-37' --cacert /certs/ca.crt '$TARGET'); case \"\$N\" in '000 7 '*) i=\$((i+1)); [ \$i -ge 8 ] && break; sleep 2;; *) break;; esac; done; echo TRIES=\$i; echo NOCERT=\$N; echo FORGED=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' -H 'X-Mtls-Probe: ops-37' -H 'User-Id: 1' -H 'User-Role: ROLE_ADMIN' --cacert /certs/ca.crt '$TARGET'); echo WITHCERT=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' --cacert /certs/ca.crt --cert /certs/tls.crt --key /certs/tls.key '$TARGET')"],
  "volumeMounts":[{"name":"certs","mountPath":"/certs","readOnly":true}]}],
  "volumes":[{"name":"certs","secret":{"secretName":"$CERT_SECRET"}}],"restartPolicy":"Never"}}
 JSON
@@ -144,6 +170,7 @@ OUT=$(kubectl -n "$NS" run "mtls-probe-$RANDOM" --image="$IMAGE" --restart=Never
 #    믿지 못했는지(60 — SAN·CA), CA 파일이 Secret 에 없는지(77) 가를 수 없었다.
 NOCERT_LINE=$(printf '%s\n' "$OUT" | sed -n 's/^NOCERT=//p')
 WITHCERT_LINE=$(printf '%s\n' "$OUT" | sed -n 's/^WITHCERT=//p')
+FORGED_LINE=$(printf '%s\n' "$OUT" | sed -n 's/^FORGED=//p')
 MISSING=$(printf '%s\n' "$OUT" | sed -n 's/^MISSING=//p')
 if [ -z "$NOCERT_LINE" ] || [ -z "$WITHCERT_LINE" ]; then
     echo "  확인 불가 — 파드 출력이 없습니다(이미지 받기 실패·order-service 미기동)" >&2
@@ -151,6 +178,7 @@ if [ -z "$NOCERT_LINE" ] || [ -z "$WITHCERT_LINE" ]; then
 fi
 NOCERT=${NOCERT_LINE%% *}
 WITHCERT=${WITHCERT_LINE%% *}
+FORGED=${FORGED_LINE%% *}
 
 why() {   # curl 종료 코드 → 사람 말
     case "$1" in
@@ -201,6 +229,16 @@ case "$MODE" in
         [ "$NOCERT" = "200" ] && info "인증서 없이도 통과(200) — $MODE 는 막지 않는다(기대대로)" \
                                || bad "$MODE 인데 인증서 없이 $NOCERT${NOCERT_LINE:+ — $(detail "$NOCERT_LINE")}" ;;
 esac
+# ②-2 — 인증서 없이 관리자 헤더. 예전에는 헤더만 있으면 믿어서 언제나 200 이었다(docs/57 §16).
+if [ -n "$FORGED" ] && [ "$MODE" != "off" ]; then
+    info "인증서 없이 User-Role: ROLE_ADMIN 을 붙이면: $FORGED"
+    if [ "$IDENTITY_MODE" = "enforce" ]; then
+        [ "$FORGED" = "403" ] && ok "게이트웨이를 거치지 않은 신원 헤더는 버린다(403)" \
+                               || bad "identity enforce 인데 $FORGED — 파드가 재시작되지 않았거나(기동 로그의 identity-mode) 판정이 헤더를 믿는다"
+    else
+        info "identity-mode=$IDENTITY_MODE 는 아직 헤더를 믿는다(기대대로) — ①-3 이 0 이면 enforce 로 올린다"
+    fi
+fi
 
 
 echo
@@ -213,6 +251,10 @@ if [ "$FAIL" = 0 ]; then
         echo "     k8s/10-configmap.yaml 의 INTERNAL_AUTH_RULES_MODE: \"enforce\" 로 바꾸고 커밋 →"
         echo "     ./ops/28-deploy.sh local --config-only  → 백엔드 rollout restart(환경 변수는 재시작해야 읽는다)"
         echo "   ⚠️ kubectl patch 로만 바꾸면 다음 ops/28 배포가 매니페스트 값으로 조용히 되돌린다."
+    fi
+    if [ "$MODE" != "off" ] && [ "$IDENTITY_MODE" = "observe" ] && [ "$ID_TOTAL" = 0 ]; then
+        echo "✅ 게이트웨이가 아닌 곳에서 온 신원 헤더가 없다(최근 $SINCE) — 로그인 · 주문 · 관리자 화면이 한 번씩 돈 뒤 더 긴 창으로"
+        echo "   다시 보고(SINCE=24h) INTERNAL_AUTH_IDENTITY_MODE: \"enforce\" 로 올린다 — 같은 절차(--config-only + 백엔드 재시작)."
     fi
     [ "$MODE" = "off" ] && echo "ℹ️  mTLS 판정이 꺼져 있다 — INTERNAL_AUTH_MODE=observe 로 시작한다."
     exit 0

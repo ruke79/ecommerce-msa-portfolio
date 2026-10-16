@@ -84,6 +84,9 @@ dependencies {
 	// 아웃박스 파티션 잡의 지표(OutboxPartitionAutoConfiguration.Metrics). 파티션을 쓰는 모듈은 actuator 로 이미
 	// micrometer 를 갖고 있다 — 위와 같은 이유로 compileOnly(eureka·config-server 로 끌고 가지 않는다).
 	compileOnly 'io.micrometer:micrometer-core'
+	// MdcTaskDecorator — 추적 문맥(현재 관측)을 작업 스레드로 넘긴다. 있으면 쓴다(ClassUtils.isPresent) — 없는 서비스로 끌고 가지 않는다.
+	compileOnly 'io.micrometer:context-propagation'
+	testImplementation 'io.micrometer:context-propagation'
 	// 추적 테스트용 OTel 추적기(OtelTestTracing — 운영과 같은 브리지 · W3C 전파, 끝난 span 을 메모리에 모은다).
 	// 이 모듈을 쓰는 서비스의 추적 테스트가 testFixtures 의존성으로 받는다(각 서비스 build.gradle).
 	testFixturesApi 'io.micrometer:micrometer-tracing-bridge-otel'

@@ -34,6 +34,7 @@ class InternalCallerFilterTest {
     static X509Certificate ca;
     static X509Certificate service;      // 내부 CA 가 서명, CN=order-service
     static X509Certificate stranger;     // 다른 CA 가 서명
+    static X509Certificate gateway;      // 내부 CA 가 서명, CN=gateway-server
 
     @BeforeAll
     static void issue() throws Exception {
@@ -41,6 +42,7 @@ class InternalCallerFilterTest {
         service = issueLeaf("ca", "svc", "order-service");
         issueCa("other", "other-ca");
         stranger = issueLeaf("other", "evil", "order-service");
+        gateway = issueLeaf("ca", "gw", "gateway-server");
     }
 
     // ── keytool 로 인증서 만들기 ─────────────────────────────────────────────
@@ -132,14 +134,79 @@ class InternalCallerFilterTest {
     }
 
     @Test
-    @DisplayName("게이트웨이가 신원 헤더를 붙인 요청은 건드리지 않는다 — 판정은 그 헤더로")
-    void identityHeadersUntouched() throws Exception {
+    @DisplayName("identity-mode=observe(기본) — 인증서 없이 온 신원 헤더도 아직 그대로 넘긴다(게이트웨이 인증서 배포 전 확인 단계)")
+    void identityObserveDoesNotStrip() throws Exception {
         MockHttpServletRequest r = internalPath();
         r.addHeader("User-Id", "7");
         r.addHeader("User-Role", "ROLE_ADMIN");
         HttpServletRequest seen = pass(enforce(Set.of()), r);
         assertThat(seen.getHeader("User-Role")).isEqualTo("ROLE_ADMIN");
-        assertThat(guardAllows(seen)).isTrue();   // 관리자는 외부에서도 된다(기존 규칙)
+        assertThat(guardAllows(seen)).isTrue();
+    }
+
+    // ── 신원 헤더는 누가 보냈나 (identity-mode=enforce) ───────────────────────
+
+    private static InternalCallerFilter identityEnforce(Set<String> allowed) {
+        return new InternalCallerFilter(InternalCallerFilter.Mode.ENFORCE, ca, allowed, List.of("/internal/"), List.of(),
+                InternalCallerFilter.Mode.ENFORCE, InternalCallerFilter.Mode.ENFORCE, Set.of("gateway-server"));
+    }
+
+    private static MockHttpServletRequest withIdentity(MockHttpServletRequest r, String userId, String role, String email) {
+        if (userId != null) r.addHeader("User-Id", userId);
+        if (role != null) r.addHeader("User-Role", role);
+        if (email != null) r.addHeader("User-Email", email);
+        return r;
+    }
+
+    @Test
+    @DisplayName("🔴 인증서 없이 신원 헤더를 붙인 요청(클러스터 안의 파드)은 관리자도 그 사용자도 아니다 — 셋 다 버리고 익명")
+    void identityWithoutCertIsStripped() throws Exception {
+        HttpServletRequest seen = pass(identityEnforce(Set.of()),
+                withIdentity(internalPath(), "7", "ROLE_ADMIN", "victim@example.com"));
+        assertThat(seen.getHeader("User-Role")).isEqualTo(InternalCallerFilter.ANONYMOUS_ROLE);
+        assertThat(seen.getHeader("User-Id")).isNull();
+        assertThat(seen.getHeader("User-Email")).isNull();
+        assertThat(java.util.Collections.list(seen.getHeaderNames())).doesNotContain("User-Id", "User-Email");
+        assertThat(guardAllows(seen)).as("내부 전용 API 는 403").isFalse();
+        assertThat(guardAllows(pass(identityEnforce(Set.of()), withIdentity(internalPath(stranger), "7", "ROLE_ADMIN", null))))
+                .as("다른 CA 인증서도 같다").isFalse();
+    }
+
+    @Test
+    @DisplayName("🔴 게이트웨이 인증서로 온 신원 헤더는 셋 다 믿는다")
+    void gatewayIdentityIsTrusted() throws Exception {
+        HttpServletRequest seen = pass(identityEnforce(Set.of("order-service")),
+                withIdentity(internalPath(gateway), "7", "ROLE_ADMIN", "admin@example.com"));
+        assertThat(seen.getHeader("User-Id")).isEqualTo("7");
+        assertThat(seen.getHeader("User-Role")).isEqualTo("ROLE_ADMIN");
+        assertThat(seen.getHeader("User-Email")).isEqualTo("admin@example.com");
+        assertThat(guardAllows(seen)).as("관리자는 외부에서도 된다(기존 규칙)").isTrue();
+    }
+
+    @Test
+    @DisplayName("🔴 서비스 인증서로 온 신원 헤더는 User-Id 만 — 사용자를 대신한 호출(order → cart)은 되고, 관리자 행세는 안 된다")
+    void serviceMayOnlyActForAUser() throws Exception {
+        HttpServletRequest onBehalf = pass(identityEnforce(Set.of("order-service")),
+                withIdentity(internalPath(service), "7", null, null));
+        assertThat(onBehalf.getHeader("User-Id")).isEqualTo("7");
+
+        HttpServletRequest forged = pass(identityEnforce(Set.of("order-service")),
+                withIdentity(internalPath(service), "7", "ROLE_ADMIN", "admin@example.com"));
+        assertThat(forged.getHeader("User-Id")).isEqualTo("7");
+        assertThat(forged.getHeader("User-Role")).isNull();
+        assertThat(forged.getHeader("User-Email")).isNull();
+        assertThat(guardAllows(forged)).as("사용자 요청이지 관리자가 아니다").isFalse();
+
+        assertThat(pass(identityEnforce(Set.of("user-service")), withIdentity(internalPath(service), "7", null, null))
+                .getHeader("User-Id")).as("허용 주체가 아닌 서비스는 인증서 없음과 같다").isNull();
+    }
+
+    @Test
+    @DisplayName("🔴 헤더 없이 게이트웨이 인증서로 온 요청은 내부 호출이 아니다 — 공개 라우트로 온 외부 요청")
+    void gatewayWithoutIdentityIsNotInternal() throws Exception {
+        HttpServletRequest seen = pass(identityEnforce(Set.of()), internalPath(gateway));
+        assertThat(guardAllows(seen)).as("허용 주체 목록이 비어 있어도").isFalse();
+        assertThat(seen.getAttribute(InternalCallerFilter.CALLER_ATTRIBUTE)).isNull();
     }
 
     @Test
@@ -172,6 +239,21 @@ class InternalCallerFilterTest {
         var ok = withRules(InternalCallerFilter.Mode.ENFORCE, Set.of(),
                 rule("/api/order/internal/purchase-stats", "order-service", "user-service"));
         assertThat(guardAllows(pass(ok, internalPath(service)))).isTrue();
+    }
+
+    @Test
+    @DisplayName("🔴 인코딩 · ;… · // 로 경로 규칙을 피하지 못한다 — 컨트롤러가 매칭하는 것과 같은 경로로 대조한다")
+    void encodedPathsCannotDodgeRules() throws Exception {
+        var f = withRules(InternalCallerFilter.Mode.ENFORCE, Set.of(),
+                rule("/api/order/internal/orders", "delivery-service"));   // service = CN=order-service — 부를 수 없다
+        for (String uri : List.of("/api/order/internal/orders/123/shipping",
+                "/api/order/intern%61l/orders/123/shipping",
+                "/api/order/internal;x/orders/123/shipping",
+                "/api/order//internal/orders/123/shipping")) {
+            MockHttpServletRequest r = new MockHttpServletRequest("GET", uri);
+            r.setAttribute(InternalCallerFilter.CERT_ATTRIBUTE, new X509Certificate[] { service });
+            assertThat(guardAllows(pass(f, r))).as(uri).isFalse();
+        }
     }
 
     @Test

@@ -33,8 +33,10 @@ DAYS="${DAYS:-365}"
 RENEW_DAYS="${RENEW_DAYS:-30}"
 FORCE="${FORCE:-0}"
 ORG="${ORG:-ecommerce-msa}"
-# 다른 서비스를 부르거나(Feign) 앞으로 부를 수 있는 백엔드. 게이트웨이·eureka·config 는 내부 API 를 부르지 않는다 — 신원이 없다.
-SERVICES="${SERVICES:-user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection}"
+# 다른 서비스를 부르거나(Feign) 앞으로 부를 수 있는 백엔드 + 게이트웨이. 게이트웨이 인증서는 내부 API 를 부르려는 것이 아니라
+# **신원 헤더를 붙여 넘기는 쪽**이라는 증명이다 — 받는 쪽은 그 헤더를 이 CN 으로 온 요청에서만 믿는다(docs/57 §16).
+# eureka·config 는 내부 API 를 부르지 않는다 — 신원이 없다.
+SERVICES="${SERVICES:-gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection}"
 
 MODE="issue"
 while [ $# -gt 0 ]; do

@@ -55,6 +55,15 @@ public final class ClientText {
     private static final Pattern HANGUL = Pattern.compile("[\\uac00-\\ud7a3]");
     private static final Pattern SLOT = Pattern.compile("\\{(\\d*)\\}");
     private static final int MAX_DEPTH = 3;
+    /**
+     * 처리 시간 상한. 쉼표 목록은 이웃 조각을 이어 붙여 다시 번역하는 것을 깊이마다 되풀이해, 상한이 없으면 카탈로그에 없는 조각이
+     * 많을 때 시간이 조각 수에 대해 다항식으로 늘었다(40 조각에 수 초 — ClientTextBoundsTest). 넘으면 번역하지 않고 원문 그대로 —
+     * 번역은 실패해도 원문이 나가는 부가 기능이다.
+     * [JA] 処理時間の上限。上限がないと、カタログにない断片が多いとき時間が断片数に対して多項式的に増えていた。超えたら原文のまま。
+     */
+    static final int MAX_LENGTH = 2000;
+    static final int MAX_LIST_PIECES = 24;
+    static final int MAX_JOIN = 4;
 
     record Rule(Pattern source, String target, int literalLength) {
     }
@@ -79,7 +88,8 @@ public final class ClientText {
     }
 
     public static String localize(String message, Locale locale) {
-        if (message == null || locale == null || !"ja".equals(locale.getLanguage()) || !HANGUL.matcher(message).find()) {
+        if (message == null || locale == null || !"ja".equals(locale.getLanguage()) || message.length() > MAX_LENGTH
+                || !HANGUL.matcher(message).find()) {
             return message;
         }
         return translate(catalog(), message, 0);
@@ -129,6 +139,9 @@ public final class ClientText {
      */
     private static String translateList(Catalog c, String text, int depth) {
         String[] pieces = text.split(", ");
+        if (pieces.length > MAX_LIST_PIECES) {
+            return null;   // 상한 — 원문 그대로 ／ [JA] 上限 — 原文のまま
+        }
         List<String> out = new ArrayList<>();
         boolean changed = false;
         int i = 0;
@@ -136,7 +149,7 @@ public final class ClientText {
             int matched = -1;
             String translated = null;
             StringBuilder joined = new StringBuilder();
-            for (int j = i; j < pieces.length; j++) {
+            for (int j = i; j < pieces.length && j - i < MAX_JOIN; j++) {
                 if (j > i) {
                     joined.append(", ");
                 }

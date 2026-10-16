@@ -25,6 +25,8 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@code internal-auth.watch-paths} — observe 에서 경고할 내부 경로 조각</li>
  *   <li>{@code internal-auth.path-rules} — {@code 경로앞부분=CN|CN;경로앞부분=CN} — 그 경로를 부를 수 있는 서비스</li>
  *   <li>{@code internal-auth.rules-mode} — 허용 주체·경로 규칙을 observe(남기기만)·enforce(막기) 중 무엇으로. 기본 enforce</li>
+ *   <li>{@code internal-auth.identity-mode} — 신원 헤더를 보낸 쪽 검사(게이트웨이만 셋 다, 서비스는 User-Id 만). off·observe(기본)·enforce</li>
+ *   <li>{@code internal-auth.gateway-subjects} — 신원 헤더를 모두 믿을 CN. 기본 gateway-server</li>
  * </ul>
  *
  * <p>enforce 인데 CA 를 읽지 못하면 <b>기동을 멈춘다</b> — 그대로 뜨면 모든 내부 호출이 조용히 403 이 된다.
@@ -58,12 +60,20 @@ public class InternalCallerAutoConfiguration {
             @Value("${internal-auth.allowed-subjects:}") String allowed,
             @Value("${internal-auth.watch-paths:/internal/,/api/product/rating,/api/auth/user/}") String watch,
             @Value("${internal-auth.path-rules:}") String pathRules,
-            @Value("${internal-auth.rules-mode:enforce}") String rulesMode) {
-        return build(mode, caPath, allowed, watch, pathRules, rulesMode);
+            @Value("${internal-auth.rules-mode:enforce}") String rulesMode,
+            @Value("${internal-auth.identity-mode:observe}") String identityMode,
+            @Value("${internal-auth.gateway-subjects:" + InternalCallerFilter.DEFAULT_GATEWAY_SUBJECT + "}") String gateways) {
+        return build(mode, caPath, allowed, watch, pathRules, rulesMode, identityMode, gateways);
     }
 
     FilterRegistrationBean<InternalCallerFilter> build(String mode, String caPath, String allowed, String watch,
             String pathRules, String rulesMode) {
+        return build(mode, caPath, allowed, watch, pathRules, rulesMode, "observe", InternalCallerFilter.DEFAULT_GATEWAY_SUBJECT);
+    }
+
+    FilterRegistrationBean<InternalCallerFilter> build(String mode, String caPath, String allowed, String watch,
+            String pathRules, String rulesMode, String identityMode, String gateways) {
+        InternalCallerFilter.Mode im = parse(identityMode);
 
         InternalCallerFilter.Mode m = parse(mode);
         InternalCallerFilter.Mode rm = parse(rulesMode);
@@ -77,14 +87,15 @@ public class InternalCallerAutoConfiguration {
             log.warn("internal-auth.mode=observe 인데 내부 CA 인증서가 없다 — 모든 헤더 없는 요청이 '인증서 없음' 으로 보인다");
         }
         if (m != InternalCallerFilter.Mode.OFF) {
-            log.info("서비스 간 mTLS 판정: mode={} ca={}", m, ca == null ? "없음" : InternalCallerFilter.commonName(ca));
+            log.info("서비스 간 mTLS 판정: mode={} ca={} identity-mode={} 게이트웨이={}", m,
+                    ca == null ? "없음" : InternalCallerFilter.commonName(ca), im, split(gateways));
             if (!split(allowed).isEmpty() || !rules.isEmpty()) {
                 log.info("서비스 간 mTLS 규칙: rules-mode={} 허용 주체 {}개 경로 규칙 {}개", rm, split(allowed).size(), rules.size());
             }
         }
 
         FilterRegistrationBean<InternalCallerFilter> bean = new FilterRegistrationBean<>(
-                new InternalCallerFilter(m, ca, split(allowed), List.copyOf(split(watch)), rules, rm));
+                new InternalCallerFilter(m, ca, split(allowed), List.copyOf(split(watch)), rules, rm, im, split(gateways)));
         // 인가 판정(인터셉터·컨트롤러·스프링 시큐리티)보다 먼저 — 그것들이 읽는 헤더를 이 필터가 바로잡는다.
         // [JA] 認可判定(インターセプター・コントローラー・Spring Security)より先に — それらが読むヘッダーを
         //      このフィルターが正す。

@@ -77,6 +77,14 @@ data:
   INTERNAL_AUTH_ALLOWED_SUBJECTS: "user-service,catalog-service,cart-service,order-service,pay-service,coupon-service,chat-service,notification-service,delivery-service,saga-projection"
   INTERNAL_AUTH_PATH_RULES: "/api/order/internal/purchase-stats=user-service;/api/order/internal/purchased=user-service;/api/order/internal/orders=delivery-service;/api/coupon/internal/quote=order-service;/api/internal/stock/reservations=order-service;/ecommerce.stock.v1.StockReservation/=order-service;/api/product/rating=user-service;/api/auth/user/emails=order-service;/api/auth/user/name=order-service;/api/auth/user/segments=coupon-service;/api/auth/user/id=coupon-service|order-service|chat-service;/api/auth/user/email/=none;/api/auth/user/profile/=none"
   INTERNAL_AUTH_RULES_MODE: "enforce"
+  # 신원 헤더(User-Id · User-Role · User-Email)는 누가 보냈나 — 게이트웨이 인증서(CN=gateway-server)면 셋 다, 내부 서비스면
+  # User-Id 만(사용자를 대신한 호출), 내부 인증서가 없으면 셋 다 버리고 익명. 예전에는 헤더만 있으면 믿어서 클러스터 안의 파드가
+  # User-Role: ROLE_ADMIN 을 붙여 관리자가 될 수 있었다(docs/57 §16).
+  #   observe: 어긋나면 [mTLS identity] 로 남기기만 — 게이트웨이 인증서(ops/38 또는 k8s/96 의 tls-id-gateway-server)를 배포한 뒤
+  #            이 경고가 없음을 보고(docs/57 §16 "신원 헤더" 절차) enforce 로 올린다.
+  #   enforce: 버린다. 올리기: 이 값을 바꾸고 ./ops/28-deploy.sh <env> --config-only + 백엔드 재시작(kubectl patch 금지 — ops/28 이
+  #            적용할 때 되돌린다). 되돌리기: observe 로 같은 절차.
+  INTERNAL_AUTH_IDENTITY_MODE: "observe"
   #   gRPC(docs/66)도 같은 규칙을 쓴다 — gRPC 메서드의 HTTP/2 경로가 "/패키지.서비스/메서드" 라서 위 경로 앞부분 형식이 그대로 맞는다
   #   (/ecommerce.stock.v1.StockReservation/=order-service). proto 에 서비스를 더하면 여기에도 더한다(B-73 이 잡는다).
 

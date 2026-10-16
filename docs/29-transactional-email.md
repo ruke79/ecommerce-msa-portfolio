@@ -289,7 +289,7 @@ kafka-configs --alter --entity-type topics --entity-name outgoing-mail \
   --add-config retention.ms=3600000   # 1時間
 ```
 
-DLT(`outgoing-mail.DLT`)も同じである。
+DLT(`outgoing-mail.DLT`)も同じである。`ops/02-create-dlt-topics.sh` が両方に掛ける(`SECRET_TOPICS`・1 時間 — DLT は 1 時間で作り、既にある二つのトピックには `--alter`)。本トピックがまだなければ(初回送信前)警告だけなので、初回送信後にもう一度実行する(2026-10-14 — それまで DLT は 14 日だった、`DltTopicsScriptTest`)。
 
 ### 5.4 フロントエンドの受信拒否 UI
 

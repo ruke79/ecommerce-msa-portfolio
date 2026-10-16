@@ -88,4 +88,24 @@ class ClientMessageTest {
         assertThat(ClientMessage.of(new RuntimeException("  "), "대체")).isEqualTo("대체");
         assertThat(ClientMessage.of(null, "대체")).isEqualTo("대체");
     }
+
+    @Test
+    @DisplayName("🔴 상류 호출 실패(UpstreamCallException)는 com.project 예외여도 일반 문구 — 상류의 내부 문구가 손님에게 가지 않는다")
+    void upstreamFailureIsNotShown() {
+        assertThat(ClientMessage.isSafe(new UpstreamCallException("CatalogServiceClient#getProductsInfo(List)", 503))).isFalse();
+        assertThat(ClientMessage.of(new UpstreamCallException("x", 500))).isEqualTo(ClientMessage.DEFAULT);
+    }
+
+    /** 운영자용 표지를 단 우리 예외. */
+    static final class OperatorOnly extends RuntimeException implements NotForClients {
+        OperatorOnly(String message) {
+            super(message);
+        }
+    }
+
+    @Test
+    @DisplayName("NotForClients 표지는 패키지 규칙보다 먼저다")
+    void markerWinsOverPackageRule() {
+        assertThat(ClientMessage.isSafe(new OperatorOnly("주문 상태 이벤트를 직렬화하지 못했다"))).isFalse();
+    }
 }

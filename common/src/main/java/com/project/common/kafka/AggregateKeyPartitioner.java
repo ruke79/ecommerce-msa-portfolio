@@ -2,11 +2,14 @@ package com.project.common.kafka;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.kafka.clients.producer.Partitioner;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.utils.Utils;
 import org.slf4j.Logger;
@@ -31,10 +34,14 @@ import org.slf4j.LoggerFactory;
  *       없는 id)이므로, 스케줄러 릴레이와 CDC 릴레이가 같은 파티션에 쓴다(docs/38 §1.15).</li>
  * </ul>
  *
- * <p><b>키가 없으면.</b> {@link RecordMetadata#UNKNOWN_PARTITION} 을 돌려줘 프로듀서의 내장
- * 스티키 파티셔닝에 맡긴다 — 기본 동작과 같다. 다만 토픽당 한 번 경고를 남긴다.
- * {@code KafkaProducerKeyGuardrailTest} 가 소스에서 막고, 이 경고는 런타임에서 한 번 더 잡는
- * 그물이다.
+ * <p><b>키가 없으면.</b> 사용 가능한 파티션 하나를 무작위로 고른다(없으면 전체에서). 토픽당 한 번 경고를 남긴다.
+ * {@code KafkaProducerKeyGuardrailTest} 가 소스에서 막고, 이 경고는 런타임에서 한 번 더 잡는 그물이다.
+ *
+ * <p>🐛 예전에는 {@link RecordMetadata#UNKNOWN_PARTITION}(-1)을 돌려 "내장 스티키 파티셔닝에 맡긴다" 고 했지만, 그것은 내장
+ * 파티셔너일 때의 이야기다 — {@code KafkaProducer} 는 <b>커스텀</b> 파티셔너가 음수를 돌려주면 {@code IllegalArgumentException}
+ * 으로 발행을 거절한다(kafka-clients 3.9). DLT 템플릿도 이 파티셔너를 써서, 키 없이 들어온 레코드(e2e · kcat)가 처리에 실패하면
+ * DLT 로 옮기는 발행이 매번 실패하고 오류 처리기가 같은 레코드를 끝없이 다시 시도해 <b>그 파티션 전체가 멈췄다</b>(docs/03 F-2 의
+ * 재현).
  *
  * <p>[JA] 集約(aggregate) id でパーティションを選ぶパーティショナー。
  *
@@ -54,8 +61,9 @@ import org.slf4j.LoggerFactory;
  *       なしの id)なので、スケジューラリレーと CDC リレーが同じパーティションに書く(docs/38 §1.15)。</li>
  * </ul>
  *
- * <p><b>キーがない場合。</b>{@link RecordMetadata#UNKNOWN_PARTITION} を返し、プロデューサー内蔵の
- * スティッキーパーティショニングに任せる — デフォルトの動作と同じである。ただしトピックごとに一度警告を残す。
+ * <p><b>キーがない場合。</b>利用可能なパーティションを一つ無作為に選ぶ(なければ全体から)。トピックごとに一度警告を残す。
+ * 以前は {@link RecordMetadata#UNKNOWN_PARTITION}(-1)を返していたが、{@code KafkaProducer} はカスタムパーティショナーの負の値を
+ * 拒否するため、キーなしのレコードが DLT へ移せずパーティション全体が止まっていた。
  * {@code KafkaProducerKeyGuardrailTest} がソース上で防ぎ、この警告はランタイムでもう一度拾う
  * セーフティネットである。
  */
@@ -77,7 +85,9 @@ public class AggregateKeyPartitioner implements Partitioner {
                 log.warn("키 없는 레코드가 '{}' 토픽으로 나간다 — 파티션이 둘 이상이면 같은 집합체의 순서가 깨진다. "
                         + "발행 지점에 키를 실을 것(docs/38 §1.15)", topic);
             }
-            return RecordMetadata.UNKNOWN_PARTITION;
+            List<PartitionInfo> available = cluster.availablePartitionsForTopic(topic);
+            List<PartitionInfo> pool = available.isEmpty() ? cluster.partitionsForTopic(topic) : available;
+            return pool.get(ThreadLocalRandom.current().nextInt(pool.size())).partition();
         }
         byte[] normalized = key instanceof String s ? normalize(s).getBytes(StandardCharsets.UTF_8) : keyBytes;
         return Utils.toPositive(Utils.murmur2(normalized)) % numPartitions;

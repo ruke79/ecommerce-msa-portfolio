@@ -4,6 +4,7 @@ import java.util.Map;
 
 import org.slf4j.MDC;
 import org.springframework.core.task.TaskDecorator;
+import org.springframework.util.ClassUtils;
 
 /**
  * 작업을 스레드풀로 넘길 때 로그 문맥(MDC)을 함께 넘긴다.
@@ -48,8 +49,36 @@ public class MdcTaskDecorator implements TaskDecorator {
         return INSTANCE.decorate(task);
     }
 
+    /** context-propagation(Micrometer)이 있는가 — 있으면 현재 관측(추적 문맥)도 넘긴다. ／ [JA] あれば現在の観測(トレース文脈)も渡す。 */
+    private static final boolean CONTEXT_PROPAGATION =
+            ClassUtils.isPresent("io.micrometer.context.ContextSnapshotFactory", MdcTaskDecorator.class.getClassLoader());
+
+    /**
+     * 🐛 예전에는 MDC 만 복사했다. 작업 스레드에는 부모 관측이 없어, 그 안에서 관측을 켠 KafkaTemplate 으로 보내면(가입 메일 요청)
+     * <b>새 루트 추적</b>이 시작되고 OTel 브리지가 스코프를 닫으며 MDC 의 traceId 를 지웠다 — 이 데코레이터의 목적인 "가입 메일을 요청과
+     * 이어 찾기" 가 바로 그 경로에서 실패했다. 이제 context-propagation 스냅샷(Boot 의 ContextPropagatingTaskDecorator 와 같은 방식)
+     * 으로 현재 관측을 함께 넘긴다.
+     *
+     * <p>[JA] 以前は MDC だけをコピーしていた。作業スレッドには親の観測がなく、そこで観測を有効にした KafkaTemplate で送ると新しい
+     * ルートトレースが始まり、traceId が切れていた。今は context-propagation のスナップショットで現在の観測も渡す。
+     */
     @Override
     public Runnable decorate(Runnable runnable) {
+        Runnable withMdc = withMdc(runnable);
+        return CONTEXT_PROPAGATION ? Snapshots.wrap(withMdc) : withMdc;
+    }
+
+    /** context-propagation 클래스를 이 안에서만 참조한다 — 없으면 이 클래스는 읽히지 않는다. ／ [JA] 無ければこのクラスは読まれない。 */
+    private static final class Snapshots {
+        private static final io.micrometer.context.ContextSnapshotFactory FACTORY =
+                io.micrometer.context.ContextSnapshotFactory.builder().build();
+
+        static Runnable wrap(Runnable task) {
+            return FACTORY.captureAll().wrap(task);
+        }
+    }
+
+    private static Runnable withMdc(Runnable runnable) {
         Map<String, String> caller = MDC.getCopyOfContextMap();
         return () -> {
             Map<String, String> workerBackup = MDC.getCopyOfContextMap();

@@ -48,4 +48,42 @@ class CustomRestExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(body(response).getMessage()).isEqualTo("해당 회원 정보를 찾을 수 없습니다.");
     }
+
+    // ── 실제 디스패치(MockMvc) — 어느 처리기가 고르는가 ───────────────────────
+
+    @org.springframework.web.bind.annotation.RestController
+    static class Throwing {
+        @org.springframework.web.bind.annotation.GetMapping("/domain")
+        String domain() {
+            throw new com.project.common.domain.exception.DomainException("쿠폰 사용 기간이 아닙니다.");
+        }
+
+        @org.springframework.web.bind.annotation.GetMapping("/conflict")
+        String conflict() {
+            throw new com.project.common.domain.exception.StateConflictException("이미 처리된 주문입니다.");
+        }
+    }
+
+    private org.springframework.test.web.servlet.MockMvc mvc() {
+        return org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(new Throwing())
+                .setControllerAdvice(handler).build();
+    }
+
+    @Test
+    @DisplayName("🔴 도메인 예외는 400 과 그 문구 — 예전에는 handleAll 로 떨어져 500 + ERROR 로그였다")
+    void domainExceptionIs400() throws Exception {
+        mvc().perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/domain"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                        .value("쿠폰 사용 기간이 아닙니다."));
+    }
+
+    @Test
+    @DisplayName("🔴 상태 충돌은 409 — StateConflictException 의 약속(주석)대로")
+    void stateConflictIs409() throws Exception {
+        mvc().perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/conflict"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                        .value("이미 처리된 주문입니다."));
+    }
 }

@@ -465,7 +465,7 @@ docs/48 §6-③ の残り項目。複製は今は 2 つ — chat の会員行（
 
 | 箇所 | やったこと |
 |---|---|
-| 呼び出す側 — バックエンドサービス（k8s/40〜49） | JVM キーストア（`-Djavax.net.ssl.keyStore=…keystore.p12`）を渡す。サービス間の呼び出しはすべて Feign（JDK デフォルトの TLS）なので、サーバーが要求すればこの証明書を **クライアント証明書として** 提示する。ゲートウェイ（31）には渡さない — ゲートウェイが転送するリクエストは内部呼び出しではない |
+| 呼び出す側 — バックエンドサービス（k8s/40〜49） | JVM キーストア（`-Djavax.net.ssl.keyStore=…keystore.p12`）を渡す。サービス間の呼び出しはすべて Feign（JDK デフォルトの TLS）なので、サーバーが要求すればこの証明書を **クライアント証明書として** 提示する。ゲートウェイ（31）は JVM キーストアではなく自分の身元（`tls-id-gateway-server`）を HttpClient のクライアント証明書として提示する（2026-10-14、下記「身元ヘッダー」） — それでもヘッダーなしで渡すリクエストは内部呼び出しではない |
 | 受ける側 — 同じバックエンド | `SERVER_SSL_CLIENT_AUTH=want` — クライアント証明書を **要求** する（なくても接続はできる: kubelet のプローブ・ゲートウェイ・Prometheus）。eureka・config・ゲートウェイはそのままにする — 間違えると登録・設定が止まって全体が停止する |
 | 判定 — `InternalCallerFilter`（common、すべてのサーブレットサービスに自動構成） | 身元ヘッダーが **ない** リクエストだけを見る。TLS で受け取ったクライアント証明書が **内部 CA で署名** されていれば（ここで改めて検証する — JVM のトラストストアが公開 CA を信頼していても、公開 CA の証明書は内部ではない）内部呼び出し。そうでなければ `User-Role: ROLE_ANONYMOUS` を付けて渡す → `InternalCallGuard` が「外部・管理者ではない」と読み、**内部専用 API が 403**。数十か所の呼び出し箇所を直さずに、判定の入力を正す |
 
@@ -564,6 +564,34 @@ kubectl -n ecommerce rollout restart deploy/<백엔드 열 개>
 ```
 
 元に戻す: `INTERNAL_AUTH_RULES_MODE=observe` に変えて `--config-only` ＋ 再起動（判定は「内部 CA の証明書ならよい」に戻る）。B-67 はリポジトリの既定値が enforce かも見る。
+
+### 身元ヘッダー — 誰が付けたか（2026-10-14）
+
+**何が問題だったか。** 判定フィルターは身元ヘッダー（`User-Id`・`User-Role`・`User-Email`）が**ありさえすれば**ゲートウェイが付けたものとみなし、何も見ていなかった。
+サービスは証明書のない接続も受け（`want`）、NetworkPolicy `allow-same-namespace` は同じ名前空間をすべて許可する — ecommerce の Pod を一つ乗っ取れば
+`User-Role: ROLE_ADMIN` 一行で内部専用 API（配送先など）を読み、他人の `User-Id` でその利用者になれた。証明書を持つサービスもヘッダー一行で許可主体・パスルールを飛ばせた。
+
+**やったこと。** ゲートウェイも自分の証明書（CN=gateway-server — ops/38・k8s/96 の `tls-id-gateway-server`）を**クライアント証明書として**提示する
+（Spring Cloud Gateway の `httpclient.ssl.key-store` — Netty クライアントは JVM キーストアを読まない）。受け側がヘッダーを信じるかは送り手で決まる:
+
+| 送り手（証明書） | 信じるヘッダー |
+|---|---|
+| ゲートウェイ（`INTERNAL_AUTH_GATEWAY_SUBJECTS`、既定 gateway-server） | 三つとも — ゲートウェイはクライアントが送った同じヘッダーを消してトークンから付け直す |
+| 内部サービス（許可主体） | `User-Id` だけ — 利用者の代理呼び出し（order・coupon → cart `getCart`）。ロール・メールは捨てる — サービスが管理者を名乗れない |
+| 内部証明書なし・別の CA | なし — 三つとも捨てて `ROLE_ANONYMOUS` |
+
+ヘッダーなしでゲートウェイ証明書で来たリクエスト（公開ルート）は**内部呼び出しではない** — 許可主体リストに関係なく外部とみなす。
+
+**有効化の順序**（`INTERNAL_AUTH_IDENTITY_MODE`、既定 observe）:
+
+1. ゲートウェイ証明書 — `./ops/38-issue-service-identities.sh --only gateway-server`（cert-manager なら `./ops/39-cert-manager.sh` が k8s/96 の
+   `id-gateway-server` も発行）。`ops/28` はマニフェストがマウントする `tls-id-*` がなければデプロイ前に止まる。
+2. デプロイ — ゲートウェイが証明書を提示し始め、バックエンドは observe で外れたものを `[mTLS identity]` として記録する（値は残さない）。
+3. `./ops/37-check-mtls.sh`（①-3 が 0）→ ログイン・注文・管理画面が一通り動いた後に `SINCE=24h` でもう一度。
+4. `k8s/10-configmap.yaml` の `INTERNAL_AUTH_IDENTITY_MODE: "enforce"` → `./ops/28-deploy.sh local --config-only` → バックエンド再起動 →
+   `./ops/37` の ②-2（証明書なしで管理者ヘッダー → 403）。
+
+戻し方: observe で同じ手順。`InternalCallerFilterTest`（身元ヘッダー 5 件）・`CheckMtlsScriptTest` が守る。
 
 ### 残っているもの — 正直に
 

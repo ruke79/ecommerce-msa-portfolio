@@ -5,6 +5,9 @@ metadata:
   namespace: ecommerce
   labels:
     app: gateway-server
+  annotations:
+    # 신원 인증서가 갱신되면(cert-manager — k8s/96) 롤링 재시작 — keystore 는 기동할 때만 읽는다.
+    secret.reloader.stakater.com/reload: "tls-id-gateway-server"
 spec:
   replicas: 2
   selector:
@@ -92,9 +95,17 @@ spec:
               value: "/app/resources/tls.key"
             - name: LOCAL_TRUST_STORE_PATH
               value: "/app/resources/truststore.p12"
+            # 🔒 백엔드로 넘길 때 내는 게이트웨이 자기 인증서(CN=gateway-server). 받는 쪽은 신원 헤더를 이 인증서로 온 요청에서만
+            # 믿는다(docs/57 §16, INTERNAL_AUTH_IDENTITY_MODE). JVM 기본 keystore 가 아니라 게이트웨이 HttpClient 설정이다 —
+            # Netty 클라이언트는 JVM keystore 를 읽지 않는다(application-local.yml httpclient.ssl.key-store).
+            - name: GATEWAY_CLIENT_KEY_STORE
+              value: "file:/app/identity/keystore.p12"
           volumeMounts:
             - name: tls-keystore
               mountPath: /app/resources
+              readOnly: true
+            - name: tls-id
+              mountPath: /app/identity
               readOnly: true
           resources:
             requests:
@@ -130,6 +141,9 @@ spec:
         - name: tls-keystore
           secret:
             secretName: tls-keystore
+        - name: tls-id
+          secret:
+            secretName: tls-id-gateway-server
 ---
 apiVersion: v1
 kind: Service

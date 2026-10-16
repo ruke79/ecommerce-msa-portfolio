@@ -61,10 +61,30 @@ class AggregateKeyPartitionerTest {
     }
 
     @Test
-    @DisplayName("키가 없으면 UNKNOWN_PARTITION — 프로듀서의 내장 스티키 파티셔닝에 맡긴다")
-    void nullKey_delegatesToBuiltIn() {
+    @DisplayName("🔴 키가 없어도 실제 파티션 번호(0 이상)를 돌려준다 — -1 이면 KafkaProducer 가 발행을 거절해 DLT 로 못 옮기고 파티션이 멈춘다")
+    void nullKey_picksARealPartition() {
         AggregateKeyPartitioner p = new AggregateKeyPartitioner();
-        assertThat(partitionOf(p, "t", null, clusterWith("t", 3))).isEqualTo(RecordMetadata.UNKNOWN_PARTITION);
+        Cluster cluster = clusterWith("t", 3);
+        Set<Integer> seen = new HashSet<>();
+        for (int i = 0; i < 300; i++) {
+            int partition = partitionOf(p, "t", null, cluster);
+            assertThat(partition).isNotEqualTo(RecordMetadata.UNKNOWN_PARTITION).isBetween(0, 2);
+            seen.add(partition);
+        }
+        assertThat(seen).as("한 파티션에 몰리지 않는다").hasSizeGreaterThan(1);
+    }
+
+    @Test
+    @DisplayName("키가 없으면 리더가 있는 파티션 중에서 고른다")
+    void nullKey_prefersAvailablePartitions() {
+        Node node = new Node(0, "localhost", 9092);
+        Cluster cluster = new Cluster("test", List.of(node), List.of(
+                new PartitionInfo("t", 0, null, new Node[]{node}, new Node[]{}),     // 리더 없음
+                new PartitionInfo("t", 1, node, new Node[]{node}, new Node[]{node})), Set.of(), Set.of());
+        AggregateKeyPartitioner p = new AggregateKeyPartitioner();
+        for (int i = 0; i < 50; i++) {
+            assertThat(partitionOf(p, "t", null, cluster)).isEqualTo(1);
+        }
     }
 
     @Test

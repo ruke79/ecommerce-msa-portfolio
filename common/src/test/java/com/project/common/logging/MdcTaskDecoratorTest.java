@@ -70,6 +70,46 @@ class MdcTaskDecoratorTest {
         assertThat(got).isEqualTo("null");
     }
 
+    /**
+     * 🔴 넘기는 순간의 <b>관측(추적 문맥)</b>도 작업 스레드로 간다. 예전에는 MDC 만 복사해, 작업 스레드에서 관측을 켠 KafkaTemplate 으로
+     * 보내면(가입 메일 요청) 새 루트 추적이 시작돼 요청과 이어지지 않았다.
+     */
+    @Test
+    @DisplayName("🔴 요청의 관측(추적)이 작업 스레드에서도 현재 span 이다 — 작업 안에서 시작한 span 은 그 자식")
+    void observationFollowsTheTask() throws Exception {
+        try (com.project.common.tracing.OtelTestTracing tracing = new com.project.common.tracing.OtelTestTracing()) {
+            io.micrometer.tracing.Tracer tracer = tracing.tracer();
+            io.micrometer.observation.ObservationRegistry registry = io.micrometer.observation.ObservationRegistry.create();
+            registry.observationConfig().observationHandler(
+                    new io.micrometer.tracing.handler.DefaultTracingObservationHandler(tracer));
+            io.micrometer.observation.contextpropagation.ObservationThreadLocalAccessor accessor =
+                    io.micrometer.observation.contextpropagation.ObservationThreadLocalAccessor.getInstance();
+            io.micrometer.observation.ObservationRegistry previous = accessor.getObservationRegistry();
+            accessor.setObservationRegistry(registry);
+            try {
+                AtomicReference<String> childTrace = new AtomicReference<>();
+                String requestTrace;
+                Runnable wrapped;
+                io.micrometer.observation.Observation request =
+                        io.micrometer.observation.Observation.start("POST /api/auth/register", registry);
+                try (io.micrometer.observation.Observation.Scope ignored = request.openScope()) {
+                    requestTrace = tracer.currentSpan().context().traceId();
+                    wrapped = new MdcTaskDecorator().decorate(() -> {
+                        io.micrometer.tracing.Span child = tracer.nextSpan().name("send outgoing-mail").start();
+                        childTrace.set(child.context().traceId());
+                        child.end();
+                    });
+                }
+                pool.submit(wrapped).get(5, TimeUnit.SECONDS);
+                request.stop();
+
+                assertThat(childTrace.get()).as("새 루트가 아니라 요청의 추적").isEqualTo(requestTrace);
+            } finally {
+                accessor.setObservationRegistry(previous);
+            }
+        }
+    }
+
     @Test
     @DisplayName("작업 스레드의 원래 문맥은 작업이 끝나면 돌아온다")
     void restoresWorkerContext() throws Exception {

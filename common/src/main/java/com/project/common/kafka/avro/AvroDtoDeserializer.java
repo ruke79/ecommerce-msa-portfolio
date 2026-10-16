@@ -28,8 +28,15 @@ public class AvroDtoDeserializer<D> implements Deserializer<D> {
     private final AvroMapping<D, ? extends SpecificRecord> mapping;
     private final JsonDeserializer<D> json;
 
+    private final org.apache.avro.message.BinaryMessageDecoder<? extends SpecificRecord> decoder;
+
     public AvroDtoDeserializer(AvroMapping<D, ? extends SpecificRecord> mapping) {
         this.mapping = mapping;
+        // 디코더는 한 번만 만든다(BinaryMessageDecoder 는 스레드 안전하다). 🐛 예전에는 레코드마다 mapping.decoder() 를 불러, 매핑
+        // 대부분이 그 안에서 avsc 이력을 클래스패스에서 읽고 파싱해 새 디코더를 만들었다 — 옛 작성 스키마로 쓴 레코드는 해석 문법까지
+        // 매번 다시 만들었다(소비 핫 경로). 이력이 없으면 여기서 실패한다 — 기동할 때 드러난다.
+        // [JA] デコーダーは一度だけ作る。以前はレコードごとに mapping.decoder() を呼び、avsc 履歴の読み込み・解析から作り直していた。
+        this.decoder = mapping.decoder();
         // 헤더(__TypeId__)가 있으면 쓰고 없으면 dtoType — 컨슈머 설정들과 같은 규칙(docs/38 §5 A3).
         this.json = new JsonDeserializer<>(mapping.dtoType(), true);
         this.json.addTrustedPackages("*");
@@ -63,7 +70,7 @@ public class AvroDtoDeserializer<D> implements Deserializer<D> {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private D decode(byte[] data) throws IOException {
         AvroMapping raw = mapping;
-        SpecificRecord record = (SpecificRecord) raw.decoder().decode(ByteBuffer.wrap(data));
+        SpecificRecord record = (SpecificRecord) decoder.decode(ByteBuffer.wrap(data));
         return (D) raw.toDto(record);
     }
 

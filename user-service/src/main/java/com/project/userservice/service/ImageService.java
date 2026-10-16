@@ -38,9 +38,9 @@ public class ImageService {
 
         ObjectMetadata metadata = new ObjectMetadata();
         metadata.setContentLength(file.getSize());
-        if (file.getContentType() != null) {
-            metadata.setContentType(file.getContentType());
-        }
+        // 🔒 Content-Type 은 파일 내용으로 서버가 정한다 — 클라이언트 값(text/html 등)을 믿지 않는다. 이미지가 아니면 거절(ImageUploads).
+        // [JA] Content-Type はファイルの内容でサーバーが決める — クライアントの値を信じない。画像でなければ拒否。
+        metadata.setContentType(com.project.common.util.ImageUploads.contentTypeOf(file));
 
         try (InputStream stream = file.getInputStream()) {
             // ⚠️ 공개 ACL 을 달지 않는다. 공개 읽기는 **버킷 정책**이 맡는다

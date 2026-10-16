@@ -227,6 +227,16 @@ class EventCategoryAndCouponTest {
             assertThat(view.couponValidDays()).isEqualTo(EventService.DEFAULT_COUPON_VALID_DAYS);
         }
 
+        /** 저장할 때 모르는 고객군을 ALL 로 읽으면 VIP 전용 쿠폰이 전원에게 열린다. */
+        @Test
+        @DisplayName("🔴 모르는 고객군(오타)은 거절한다 — 조용히 ALL(전원)로 저장되지 않는다")
+        void unknownAudienceIsRejected() {
+            assertThatThrownBy(() -> service.create(
+                    with(List.of(), List.of(), "VIP", "VIP 전용 20%", 20, 7)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("알 수 없는 대상 고객군");
+        }
+
         @Test
         @DisplayName("쿠폰이 없으면 고객군은 ALL 로 되돌린다 — 아무것도 전용이 아닌데 전용이라고 보이면 안 된다")
         void audienceIsResetWithoutACoupon() {
@@ -243,19 +253,6 @@ class EventCategoryAndCouponTest {
                     with(List.of(), List.of(), "NEW_USER", "신규 전용 20%", 20, null));
 
             assertThat(view.audience()).isEqualTo("NEW_USER");
-        }
-
-        /**
-         * 모르는 값을 거절하지 않고 ALL 로 읽는다 — 세그먼트가 늘어났을 때 옛 서비스가
-         * 그 값을 만나도 "아무에게도 못 준다" 가 되지 않게 한다.
-         */
-        @Test
-        @DisplayName("모르는 고객군은 ALL 로 읽는다")
-        void unknownAudienceFallsBackToAll() {
-            EventAdminView view = service.create(
-                    with(List.of(), List.of(), "VIP_PLATINUM", "쿠폰", 10, null));
-
-            assertThat(view.audience()).isEqualTo("ALL");
         }
     }
 
