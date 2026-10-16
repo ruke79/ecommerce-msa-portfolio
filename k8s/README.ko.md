@@ -194,13 +194,16 @@ kubectl apply -f k8s/70-autoscaling.yaml   # HPA + PDB — ⚠️ **노드가 �
 ```bash
 kubectl get pods -n ecommerce -w
 kubectl logs -n ecommerce deploy/gateway-server
-kubectl get svc -n ecommerce gateway-server   # LoadBalancer 외부 IP/포트 확인 (k3s 내장 ServiceLB)
+kubectl -n ecommerce port-forward svc/gateway-server 8000:8000   # 게이트웨이는 ClusterIP — 바깥에서는 터널로만 닿는다
 ```
 
 ## 게이트웨이 노출 방식
 
-`gateway-server`는 자체적으로 HTTPS(mTLS)를 종료하므로 `Service type: LoadBalancer`로 직접
-노출합니다(k3s는 기본으로 Klipper ServiceLB를 내장하고 있어 별도 설치 없이 외부 IP가 할당됩니다).
+`gateway-server`는 자체적으로 HTTPS(mTLS)를 종료하고, Service 는 `ClusterIP` 입니다 — 바깥 트래픽은
+Cloudflare 터널(`k8s-overlays/prod/cloudflared.yaml`)이 `https://gateway-server.ecommerce.svc.cluster.local:8000` 으로
+보냅니다. 예전의 `type: LoadBalancer` 는 ServiceLB 를 꺼도(`--disable servicelb`, ops/23) nodePort 를 받아 모든 노드의
+그 포트를 게이트웨이로 열었습니다 — 매니페스트에 LoadBalancer · NodePort 를 두지 않습니다(가드 B-85). 노트북에서
+바로 붙을 때는 `kubectl port-forward` 를 씁니다.
 표준 `Ingress`는 백엔드로 평문 HTTP 프록시가 기본 동작이라 게이트웨이의 자체 TLS 종료 방식과
 맞지 않아 의도적으로 제외했습니다. 공인 도메인 + 공인 인증서를 앞단에 두고 싶다면 Traefik의
 `IngressRoute` + `ServersTransport`(TLS passthrough)를 별도로 구성하세요.

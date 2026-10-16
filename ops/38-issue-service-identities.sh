@@ -35,8 +35,9 @@ FORCE="${FORCE:-0}"
 ORG="${ORG:-ecommerce-msa}"
 # 다른 서비스를 부르거나(Feign) 앞으로 부를 수 있는 백엔드 + 게이트웨이. 게이트웨이 인증서는 내부 API 를 부르려는 것이 아니라
 # **신원 헤더를 붙여 넘기는 쪽**이라는 증명이다 — 받는 쪽은 그 헤더를 이 CN 으로 온 요청에서만 믿는다(docs/57 §16).
-# eureka·config 는 내부 API 를 부르지 않는다 — 신원이 없다.
-SERVICES="${SERVICES:-gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection}"
+# config-server 는 내부 API 를 부르지 않지만 Eureka 에 자기를 등록한다 — Eureka 는 등록을 그 서비스 자신의 CN 으로만 받는다
+# (docs/57 §16 "Eureka 쓰기"). eureka-server 는 자기에게 등록하지 않는다 — 신원이 없다.
+SERVICES="${SERVICES:-gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server}"
 
 MODE="issue"
 while [ $# -gt 0 ]; do

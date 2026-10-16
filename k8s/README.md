@@ -194,13 +194,16 @@ kubectl apply -f k8s/70-autoscaling.yaml   # HPA + PDB — ⚠️ **ノードが
 ```bash
 kubectl get pods -n ecommerce -w
 kubectl logs -n ecommerce deploy/gateway-server
-kubectl get svc -n ecommerce gateway-server   # LoadBalancer の外部 IP/ポートを確認 (k3s 内蔵の ServiceLB)
+kubectl -n ecommerce port-forward svc/gateway-server 8000:8000   # ゲートウェイは ClusterIP — 外からはトンネル経由のみ
 ```
 
 ## ゲートウェイの公開方式
 
-`gateway-server` は自前で HTTPS（mTLS）を終端するので、`Service type: LoadBalancer` で直接
-公開します（k3s はデフォルトで Klipper ServiceLB を内蔵しているため、別途インストールしなくても外部 IP が割り当てられます）。
+`gateway-server` は自前で HTTPS（mTLS）を終端し、Service は `ClusterIP` です — 外のトラフィックは
+Cloudflare トンネル（`k8s-overlays/prod/cloudflared.yaml`）が `https://gateway-server.ecommerce.svc.cluster.local:8000` へ
+送ります。以前の `type: LoadBalancer` は ServiceLB を無効にしても（`--disable servicelb`、ops/23）nodePort を受け、全ノードの
+そのポートをゲートウェイへ開けていました — マニフェストに LoadBalancer · NodePort を置きません（ガード B-85）。ノート PC から
+直接つなぐときは `kubectl port-forward` を使います。
 標準の `Ingress` はバックエンドへ平文 HTTP でプロキシするのがデフォルトの動作であり、ゲートウェイ自身の TLS 終端方式と
 合わないため、意図的に除外しました。公開ドメイン + 公開証明書を前段に置きたい場合は、Traefik の
 `IngressRoute` + `ServersTransport`（TLS passthrough）を別途構成してください。

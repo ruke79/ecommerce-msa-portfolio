@@ -33,6 +33,11 @@ spec:
             - secretRef:
                 name: ecommerce-secrets
           env:
+            # Eureka 등록 · 하트비트에 내는 클라이언트 인증서 = 이 서비스의 신원(/app/identity, CN=서비스 이름). Eureka 는 등록부를 바꾸는
+            # 요청을 그 CN 이 앱 이름과 같을 때만 받는다(EUREKA_WRITE_AUTH_MODE, docs/57 §16 "Eureka 쓰기"). JVM 키스토어는 Eureka
+            # 클라이언트가 쓰지 않는다 — 설정은 common application-common.yml 의 eureka.client.tls(B-86).
+            - name: EUREKA_CLIENT_TLS_ENABLED
+              value: "true"
             - name: SPRING_APPLICATION_NAME
               value: "gateway-server"
             # 분산 추적 → 이 노드에서 도는 관측 스택의 OTel Collector(docker-compose-observability.yml, :4318)
@@ -157,10 +162,17 @@ metadata:
 spec:
   selector:
     app: gateway-server
-  # 게이트웨이는 스스로 HTTPS(mTLS)를 종료하므로, 앞단에서 별도 TLS 종료 없이
-  # k3s 내장 ServiceLB(Klipper)로 바로 외부 노출합니다. 커스텀 도메인 + 공인 인증서를
-  # 붙이려면 Traefik IngressRoute의 TLS passthrough를 별도로 구성하세요(README 참고).
-  type: LoadBalancer
+  # 클러스터 안에서만 닿는다 — 바깥 트래픽은 Cloudflare 터널(k8s-overlays/prod/cloudflared.yaml)이
+  # 이 Service 로 보낸다. 게이트웨이는 스스로 HTTPS(mTLS)를 종료하므로 앞단 TLS 종료는 없다.
+  #
+  # 🐛 예전에는 `type: LoadBalancer` 였다. 운영 k3s 는 `--disable servicelb`(ops/23)라 외부 IP 는 붙지 않지만,
+  #    LoadBalancer 는 nodePort(30000~32767)를 함께 받아 **모든 노드의 그 포트가 게이트웨이로 열렸다** — 터널 · 클라우드
+  #    방화벽 한 겹만 남은 셈이고, 같은 VCN · 노드에서는 그대로 닿았다. 노트북에서 바로 붙으려면
+  #    `kubectl -n ecommerce port-forward svc/gateway-server 8000:8000`(ops/28 의 스모크도 이 방식).
+  #    LoadBalancer → ClusterIP 는 `kubectl apply` 가 서버가 준 nodePort 를 지워 그대로 바뀐다(k3s v1.30 실측).
+  # 🔒 B-85: 매니페스트의 Service 는 LoadBalancer · NodePort 가 아니다.
+  # [JA] クラスター内だけで届く。以前の LoadBalancer は servicelb 無効でも nodePort を受け、全ノードのそのポートが開いていた(B-85)。
+  type: ClusterIP
   ports:
     - name: https
       port: 8000

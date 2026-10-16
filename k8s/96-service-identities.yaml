@@ -362,3 +362,35 @@ spec:
   issuerRef:
     name: internal-ca
     kind: ClusterIssuer
+---
+# config-server — 내부 API 를 부르지 않는다. 이 신원은 Eureka 에 자기를 등록할 때만 낸다(docs/57 §16 "Eureka 쓰기").
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-config-server
+  namespace: ecommerce
+spec:
+  secretName: tls-id-config-server
+  commonName: config-server
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - config-server
+    - config-server.ecommerce.svc.cluster.local
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일
+  renewBefore: 720h    # 만료 30일 전
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer

@@ -360,6 +360,15 @@ public class InternalCallerFilter extends OncePerRequestFilter {
     // [JA] 証明書チェーンから呼び出したサービス — 内部 CA で署名された有効なチェーンなら CN、そうでなければ null。
     //      HTTP(上)と gRPC(InternalCallerGrpcInterceptor)が同じ判定を使う — ルールを二か所に書かない(docs/66)。
     String callerOf(X509Certificate[] chain) {
+        return verifiedCommonName(chain, ca);
+    }
+
+    /**
+     * {@link #callerOf} 의 판정 그 자체 — 내부 CA({@code ca})로 서명된 유효한 체인이면 CN, 아니면 null. Eureka 서버의 등록 쓰기 판정
+     * ({@code RegistryWriteGuard})도 같은 것을 쓴다 — 인증서 판정을 세 번째 곳에 다시 적지 않는다.
+     */
+    // [JA] callerOf の判定そのもの。Eureka サーバーの登録書き込み判定も同じものを使う。
+    public static String verifiedCommonName(X509Certificate[] chain, X509Certificate ca) {
         if (ca == null || chain == null || chain.length == 0) {
             return null;
         }

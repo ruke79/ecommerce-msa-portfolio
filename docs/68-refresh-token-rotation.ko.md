@@ -536,6 +536,13 @@ NIST SP 800-63B 도 구성 규칙 대신 "알려진 유출 · 흔한 비밀번�
 경고 로그를 남긴다(거절은 `auth.breached_password.rejected{reason=breached|common}`). 시간 제한 2초(`auth.breached-password.timeout`),
 끄려면 `auth.breached-password.enabled=false`(로컬 목록은 그래도 막는다). NetworkPolicy 는 들어오는 쪽만 막아 별도 설정이 필요 없다.
 
+**트랜잭션 밖에서 묻는다 (2026-10-14).** 🐛 처음에는 가입 · 변경 · 재설정 · 관리자 변경이 클래스의 `@Transactional` 안에서 이 조회(최대 2초)를
+기다렸다 — 그동안 DB 커넥션(풀 5개)을 쥐고 있어, API 가 느린 날 가입이 몇 건만 몰려도 같은 풀을 쓰는 로그인 · 조회까지 커넥션을 기다렸다. 이제 네
+메서드는 `NOT_SUPPORTED` 이고 순서는 **확인(읽기) → 정책 · 유출 조회(트랜잭션 밖) → 저장(짧은 `TransactionTemplate`)** 이다. 현재 비밀번호 · 재설정
+링크가 틀리면 조회까지 가지 않는다(인증 없는 재설정 경로가 외부 호출을 만들지 않게). 저장 단계는 정책을 지난 표(`AcceptedPassword`)만 받아, 정책을
+건너뛰는 길이 타입으로 막힌다. 가입의 계정 · 가입 이벤트(아웃박스, MANDATORY)는 여전히 한 트랜잭션이다. 가드: `PasswordPolicyOutsideTransactionTest`
+— 서비스를 실제 Spring 트랜잭션 프록시로 감싸 네 경로 모두 "조회할 때 트랜잭션 없음 · 저장할 때 있음" 을 본다(메서드의 `NOT_SUPPORTED` 를 지우면 실패).
+
 **함께 고친 것 — 가입 400 의 본문이 문자열 하나였다.** 화면은 `error.response.data.message` 를 읽는데 본문이 그냥 문자열이라 "가입하지 못했습니다" 만
 보였다. 409 와 같은 모양(`{message}`)으로 바꿔, 유출 비밀번호처럼 사용자가 고칠 수 있는 이유가 보이게 했다.
 

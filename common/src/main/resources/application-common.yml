@@ -77,6 +77,24 @@ eureka:
       fetch-registry: true
       service-url:
         defaultZone: http://localhost:8761/eureka
+      # Eureka 에 등록 · 하트비트를 보낼 때 내는 클라이언트 인증서 = 서비스 자신의 신원(tls-id-<서비스>, CN=서비스 이름).
+      # Eureka 는 등록부를 바꾸는 요청을 그 CN 이 앱 이름과 같을 때만 받는다(eureka-server RegistryWriteGuard, docs/57 §16).
+      #
+      # 🐛 JVM 키스토어(-Djavax.net.ssl.keyStore)를 줘도 Eureka 클라이언트는 그것을 내지 않는다 — 전송(HttpClient 5)이
+      #    자기 SSLContext 를 키 없이 만든다(신뢰만 JVM 기본). Feign 은 JDK 기본 SSLContext 라 냈다. 그래서 여기서 따로 준다.
+      # 매니페스트가 EUREKA_CLIENT_TLS_ENABLED=true 로 켠다(신원을 마운트한 파드만). 로컬 개발 · ops/13 은 꺼진 채다.
+      # ⚠️ 이 파일은 import 되므로 서비스 자신의 application-local.yml 보다 **우선한다** — 서비스 쪽에 tls 를 따로 적지 않는다.
+      # [JA] Eureka への登録・ハートビートで出すクライアント証明書 = サービス自身の身元。JVM キーストアを与えても Eureka クライアントは
+      #      それを出さない(HttpClient 5 がキーなしの SSLContext を作る)ので、ここで別に与える。マニフェストが有効にする。
+      tls:
+        enabled: ${EUREKA_CLIENT_TLS_ENABLED:false}
+        key-store: ${EUREKA_CLIENT_KEY_STORE:file:/app/identity/keystore.p12}
+        key-store-type: PKCS12
+        key-store-password: ${LOCAL_KEY_STORE_PASSWORD:}
+        key-password: ${LOCAL_KEY_STORE_PASSWORD:}
+        trust-store: file:${LOCAL_TRUST_STORE_PATH:/app/resources/truststore.p12}
+        trust-store-type: PKCS12
+        trust-store-password: ${LOCAL_KEY_STORE_PASSWORD:}
 
 spring:
   # spring.application.name 을 여기에 두면 안 된다. 이 파일은 **모든 서비스가 공유**하므로

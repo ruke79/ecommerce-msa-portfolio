@@ -170,33 +170,44 @@ class LoginRiskGuardTest {
         assertThat(guard.verify(other.issued().cookieValue(), other.code())).isEqualTo(new LoginRiskGuard.Passed(78L));
     }
 
-    /** 🐛 예전: tries 를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이 모두 0 을 읽어 6자리를 수백 개 대입할 수 있었다. */
+    /**
+     * 🐛 예전: tries 를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이 모두 0 을 읽어 6자리를 수백 개 대입할 수 있었다.
+     * 🐛 그 다음: 세기는 INCR 로 했지만, 다섯 번째 실패가 키를 지운 <b>뒤에</b> 도착한 요청의 HINCRBY 가 tries 만 든 새 해시를
+     *    만들어(만료도 없이) 다시 1 부터 셌다 — 비교가 5번을 넘었고 그 키는 영원히 남았다. 여러 판 돌려 그 틈을 잡는다.
+     */
     @Test
-    @DisplayName("🔴 동시에 40번 틀린 코드를 보내도 비교까지 가는 것은 대기 값당 5번뿐")
+    @DisplayName("🔴 동시에 40번 틀린 코드를 보내도 비교까지 가는 것은 대기 값당 5번뿐 — 지운 대기 값이 되살아나지 않는다")
     void concurrentWrongCodesAreCapped() throws Exception {
-        var issued = guard.issue(42L, List.of(Signal.IP_FANOUT));
-        String pending = issued.issued().cookieValue();
-        String wrong = issued.code().equals("000000") ? "111111" : "000000";
+        for (int round = 0; round < 10; round++) {
+            long uid = 4200L + round;   // 사용자 칸(MAX_USER_FAILURES)이 판 사이에 섞이지 않게
+            var issued = guard.issue(uid, List.of(Signal.IP_FANOUT));
+            String pending = issued.issued().cookieValue();
+            String wrong = issued.code().equals("000000") ? "111111" : "000000";
 
-        int threads = 40;
-        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
-        var start = new java.util.concurrent.CountDownLatch(1);
-        List<java.util.concurrent.Future<LoginRiskGuard.Verification>> results = new java.util.ArrayList<>();
-        for (int i = 0; i < threads; i++) {
-            results.add(pool.submit(() -> {
-                start.await();
-                return guard.verify(pending, wrong);
-            }));
-        }
-        start.countDown();
-        long compared = 0;
-        for (var f : results) {
-            if (f.get() instanceof LoginRiskGuard.Wrong) {
-                compared++;
+            int threads = 40;
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+            var start = new java.util.concurrent.CountDownLatch(1);
+            List<java.util.concurrent.Future<LoginRiskGuard.Verification>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return guard.verify(pending, wrong);
+                }));
+            }
+            start.countDown();
+            long compared = 0;
+            for (var f : results) {
+                if (f.get() instanceof LoginRiskGuard.Wrong) {
+                    compared++;
+                }
+            }
+            pool.shutdown();
+            assertThat(compared).as("판 %d", round).isLessThanOrEqualTo(LoginRiskGuard.MAX_ATTEMPTS);
+            assertThat(guard.verify(pending, issued.code())).isNotInstanceOf(LoginRiskGuard.Passed.class);
+            // 지운 대기 값이 tries 만 든 채(만료 없이) 되살아나지 않았다.
+            for (String k : template.keys(LoginRiskGuard.CHALLENGE_KEY + "*")) {
+                assertThat(template.getExpire(k)).as("만료 없는 대기 값 " + k).isPositive();
             }
         }
-        pool.shutdown();
-        assertThat(compared).isLessThanOrEqualTo(LoginRiskGuard.MAX_ATTEMPTS);
-        assertThat(guard.verify(pending, issued.code())).isNotInstanceOf(LoginRiskGuard.Passed.class);
     }
 }

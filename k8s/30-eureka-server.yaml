@@ -35,6 +35,12 @@ spec:
             - secretRef:
                 name: ecommerce-secrets
           env:
+            # 클라이언트 인증서를 **요청**한다(want — 없어도 연결은 된다: 프로브 · 대시보드 · 등록부 읽기). 등록부를 바꾸는 요청은
+            # RegistryWriteGuard 가 그 인증서의 CN 으로 판정한다(EUREKA_WRITE_AUTH_MODE, ConfigMap). 클라이언트는 신원 인증서를
+            # 공통 설정의 eureka.client.tls 로 낸다(B-86). need 로 올리지 않는다 — 판정이 쓰기만 막으면 되고, 프로브는 인증서가 없다.
+            # 내는 인증서는 JVM 트러스트스토어(공유 truststore — 내부 CA)로 검증한다.
+            - name: SERVER_SSL_CLIENT_AUTH
+              value: "want"
             - name: SPRING_APPLICATION_NAME
               value: "discovery-service"
             # 서비스 JVM 이 사설 CA 를 신뢰하게 한다.

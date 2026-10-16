@@ -29,6 +29,9 @@ class ProfileNameServiceLimitTest {
 
     @Mock private UserRepository userRepository;
 
+    /** 비밀번호를 정하는 메서드는 짧은 DB 구간을 TransactionTemplate 으로 연다(유출 확인을 그 밖에 두려고). */
+    @org.mockito.Spy private org.springframework.transaction.support.TransactionTemplate tx =
+            com.project.userservice.service.TestTransactions.template();
     @InjectMocks private UserServiceImpl userService;
 
     @Test

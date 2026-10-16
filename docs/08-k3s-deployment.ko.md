@@ -29,6 +29,9 @@ k3s(Kubernetes)에서 직접 실행할 수 없습니다. 이 문서는 그 간�
   맞물리도록 했습니다.
 - 게이트웨이는 자체적으로 mTLS를 종료하므로 표준 Ingress(HTTP 프록시가 기본 동작) 대신
   `Service type: LoadBalancer`(k3s 내장 ServiceLB)로 직접 노출. frontend만 Traefik Ingress로 노출.
+  > **2026-10-14 변경:** 게이트웨이 Service 는 `ClusterIP` 입니다. 운영은 Cloudflare 터널로 들어오고(`--disable servicelb`),
+  > LoadBalancer 는 외부 IP 없이도 nodePort 를 받아 모든 노드의 그 포트를 열었습니다(B-85). 직접 붙을 때는
+  > `kubectl -n ecommerce port-forward svc/gateway-server 8000:8000`.
 
 ## 조사 중 발견해 반영한 기존 이슈
 

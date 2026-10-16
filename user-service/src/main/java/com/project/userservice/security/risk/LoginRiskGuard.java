@@ -185,6 +185,26 @@ public class LoginRiskGuard {
     public record IssuedChallenge(Issued issued, String code) {
     }
 
+    /**
+     * 대기 값이 있으면 이번 시도를 센다 — {tries, 사용자 칸}. 없으면(이미 태웠거나 지웠다) {} — <b>되살리지 않는다.</b> 어느 쪽이든 한도를 넘으면 대기 값을 지우고 {}.
+     * KEYS[1]=대기 값 KEYS[2]=사용자 칸 · ARGV[1]=대기 값당 한도 ARGV[2]=사용자 한도 ARGV[3]=사용자 칸 수명(초)
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static final org.springframework.data.redis.core.script.DefaultRedisScript<List<Long>> RESERVE =
+            new org.springframework.data.redis.core.script.DefaultRedisScript<>("""
+                    if redis.call('EXISTS', KEYS[1]) == 0 then
+                      return {}
+                    end
+                    local n = redis.call('HINCRBY', KEYS[1], 'tries', 1)
+                    local u = redis.call('INCR', KEYS[2])
+                    redis.call('EXPIRE', KEYS[2], ARGV[3])
+                    if n > tonumber(ARGV[1]) or u > tonumber(ARGV[2]) then
+                      redis.call('DEL', KEYS[1])
+                      return {}
+                    end
+                    return {n, u}
+                    """, (Class) List.class);
+
     /** 코드를 확인한다. 맞으면 대기 값을 태운다(한 번만 쓴다). */
     public Verification verify(String pending, String code) {
         if (pending == null || pending.isBlank() || code == null) {
@@ -200,14 +220,17 @@ public class LoginRiskGuard {
         //    모두 같은 "0번" 을 읽어, 6자리를 한 번에 수백 개 대입할 수 있었다. 이제 한도를 넘은 시도는 비교조차 하지 않는다.
         //    맞으면 아래에서 대기 값을 태우므로 세어 둔 수는 의미가 없어진다(사용자 칸은 창이 지나면 사라진다).
         // [JA] 試行を比較する前に数える(INCR は原子的)。以前は読む → 比較 → 間違えたら加算で、同時のリクエストがすべて 0 回を読んでいた。
-        Long n = redis.opsForHash().increment(key, "tries", 1);
+        // 🐛 그 다음: 다섯 번째 실패가 키를 지운 뒤에 도착한 요청의 HINCRBY 가 tries 만 든 새 해시를 만들어(만료도 없이) 1 부터 다시 셌다 —
+        //    비교가 한도를 넘었고 그 키는 영원히 남았다. 이제 "있으면 센다 · 한도를 넘으면 지운다" 를 Lua 한 번으로 한다.
+        // [JA] 5 回目の失敗がキーを消した後に届いたリクエストの HINCRBY が tries だけの新しいハッシュを作っていた。Lua 一回で数える。
         String userKey = USER_FAIL_KEY + uid;
-        Long userAttempts = redis.opsForValue().increment(userKey);
-        redis.expire(userKey, USER_FAIL_WINDOW);
-        if (n == null || n > MAX_ATTEMPTS || userAttempts == null || userAttempts > MAX_USER_FAILURES) {
-            redis.delete(key);
+        List<Long> counted = redis.execute(RESERVE, List.of(key, userKey),
+                String.valueOf(MAX_ATTEMPTS), String.valueOf(MAX_USER_FAILURES), String.valueOf(USER_FAIL_WINDOW.toSeconds()));
+        if (counted == null || counted.size() < 2) {
             return new Expired();
         }
+        long n = counted.get(0);
+        long userAttempts = counted.get(1);
         String expected = String.valueOf(state.get("code"));
         String presented = sha256(pending + ":" + code.trim());
         if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8))) {

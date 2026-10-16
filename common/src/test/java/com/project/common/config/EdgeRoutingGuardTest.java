@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,8 +28,14 @@ import org.junit.jupiter.api.Test;
  *
  * <p>[JA] 外(Cloudflare トンネル)がゲートウェイへ送るパス = ゲートウェイがルーティングするパス。トンネルを忘れるとエラーではなく
  * HTML 200 が返り、サーバーログにも残らない。saga-projection が実際に抜けていた。
+ *
+ * <p>B-85: 바깥으로 들어오는 길은 터널 하나뿐 — 매니페스트(k8s/ · k8s-overlays/)에 노드 포트를 여는 것(Service
+ * {@code type: LoadBalancer · NodePort}, {@code nodePort} · {@code hostPort} · {@code hostNetwork: true})이 없다.
+ * 🐛 게이트웨이 Service 가 LoadBalancer 였다 — 운영은 {@code --disable servicelb} 라 외부 IP 는 없었지만 LoadBalancer 는
+ * nodePort 를 함께 받아 모든 노드의 30000 번대 포트가 게이트웨이로 열려 있었다.
+ * [JA] 外から入る道はトンネルだけ。LoadBalancer は servicelb 無効でも nodePort を受け、全ノードのポートが開いていた。
  */
-@DisplayName("B-82: 터널이 게이트웨이로 보내는 경로 = 게이트웨이 라우트의 첫 경로 조각")
+@DisplayName("B-82 · B-85: 터널이 게이트웨이로 보내는 경로 = 게이트웨이 라우트, 노드 포트를 여는 매니페스트 없음")
 class EdgeRoutingGuardTest {
 
     private static Path root() {
@@ -85,5 +92,58 @@ class EdgeRoutingGuardTest {
         for (String notApi : List.of("/user-servicex/a", "/products/1", "/", "/static/js/main.js")) {
             assertThat(toGateway.stream().anyMatch(r -> r.matcher(notApi).find())).as(notApi).isFalse();
         }
+    }
+
+    /** 노드(호스트)의 포트를 바깥으로 여는 매니페스트 키 — 주석을 뗀 줄에서 찾는다. */
+    static final Pattern NODE_EXPOSURE = Pattern.compile(
+            "^\\s*(?:-\\s*)?(?:type:\\s*[\"']?(?:LoadBalancer|NodePort)\\b|nodePort:|hostPort:|hostNetwork:\\s*true\\b)");
+
+    /** 한 파일에서 노드 포트를 여는 줄들(주석 제외). */
+    static List<String> nodeExposures(String yaml) {
+        List<String> out = new ArrayList<>();
+        for (String line : yaml.split("\\R")) {
+            String code = line.replaceFirst("(^|\\s)#.*$", "");
+            if (NODE_EXPOSURE.matcher(code).find()) {
+                out.add(code.trim());
+            }
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("🔴 B-85: k8s/ · k8s-overlays/ 에 노드 포트를 여는 Service · 파드가 없다 — 바깥은 터널로만 들어온다")
+    void noManifestOpensNodePorts() throws IOException {
+        List<String> found = new ArrayList<>();
+        int files = 0;
+        for (String dir : List.of("k8s", "k8s-overlays")) {
+            try (Stream<Path> walk = Files.walk(root().resolve(dir))) {
+                for (Path f : walk.filter(x -> x.toString().matches(".*\\.ya?ml$")).sorted().toList()) {
+                    files++;
+                    for (String hit : nodeExposures(Files.readString(f))) {
+                        found.add(root().relativize(f) + ": " + hit);
+                    }
+                }
+            }
+        }
+        assertThat(files).as("매니페스트를 읽었다").isGreaterThan(30);
+        assertThat(found).as("노드 포트를 연다 — ClusterIP 로 두고 바깥은 cloudflared, 손으로 붙을 때는 kubectl port-forward").isEmpty();
+    }
+
+    @Test
+    @DisplayName("B-85 판별 — 주석 · ClusterIP 는 통과, LoadBalancer · NodePort · nodePort · hostPort · hostNetwork 는 걸린다")
+    void nodeExposureDetection() {
+        assertThat(nodeExposures("""
+                spec:
+                  # 예전에는 type: LoadBalancer 였다
+                  type: ClusterIP   # nodePort 없음
+                  ports:
+                    - port: 8000
+                """)).isEmpty();
+        assertThat(nodeExposures("  type: LoadBalancer\n")).hasSize(1);
+        assertThat(nodeExposures("  type: \"NodePort\"\n")).hasSize(1);
+        assertThat(nodeExposures("    - nodePort: 30800\n")).hasSize(1);
+        assertThat(nodeExposures("          hostPort: 8000\n")).hasSize(1);
+        assertThat(nodeExposures("      hostNetwork: true\n")).hasSize(1);
+        assertThat(nodeExposures("      hostNetwork: false\n")).isEmpty();
     }
 }

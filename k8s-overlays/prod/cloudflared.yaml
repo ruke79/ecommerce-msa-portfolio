@@ -59,8 +59,8 @@ data:
       #
       #   · k8s/60-ingress.yaml 의 규칙은 `/` → frontend **하나뿐**이다. 게이트웨이
       #     경로가 없어서 /user-service/... 가 프론트엔드로 가 404 가 난다
-      #   · k8s/31-gateway-server.yaml 은 Service 를 type: LoadBalancer 로 두는데,
-      #     ops/23 이 k3s 를 `--disable servicelb` 로 올린다. 외부 IP 가 안 붙는다
+      #   · k8s/31-gateway-server.yaml 의 Service 는 ClusterIP 다(B-85 — 예전 LoadBalancer 는 ops/23 의
+      #     `--disable servicelb` 로 외부 IP 는 없이 nodePort 만 모든 노드에 열었다). 바깥에서는 이 터널로만 닿는다
       #
       # traefik 을 거치지 않고 여기서 바로 보내는 이유: 게이트웨이는 **스스로 HTTPS 를
       # 종단한다**(profile local 의 server.ssl, 포트 8000). 표준 Ingress 는 백엔드로

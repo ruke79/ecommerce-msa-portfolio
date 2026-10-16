@@ -26,7 +26,7 @@ CERT_MANAGER_URL="${CERT_MANAGER_URL:-https://github.com/cert-manager/cert-manag
 RELOADER_VERSION="${RELOADER_VERSION:-v1.1.0}"
 RELOADER_URL="${RELOADER_URL:-https://raw.githubusercontent.com/stakater/Reloader/${RELOADER_VERSION}/deployments/kubernetes/reloader.yaml}"
 MANIFEST="k8s/96-service-identities.yaml"
-SERVICES="gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection"
+SERVICES="gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server"
 
 ok()   { echo "  ✅ $*"; }
 info() { echo "  ℹ️  $*"; }

@@ -36,26 +36,10 @@ eureka:
 
 
 
-    # tls:
-    #    enabled: true
-    #    key-store: ${LOCAL_KEY_STORE_PATH}
-    #    key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
-    #    key-password: ${LOCAL_KEY_PASSWORD}
-    tls:
-      enabled: true
-      # SSL 번들 대신 개별 설정으로 수정
-      #
-      # ⚠️ file: 접두어 필수. eureka.client.tls.* 는 스프링 Resource 로 해석되며,
-      # 접두어가 없으면 ServletContext 상대 경로로 취급돼 'KeyStore not exists' 로 기동이 죽는다.
-      key-store: file:${LOCAL_KEY_STORE_PATH}
-      key-store-type: PKCS12
-      key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
-      key-password: ${LOCAL_KEY_PASSWORD}
-      # alias는 필수 항목이 아니므로 주석 처리합니다.
-      # key-alias:
-      trust-store: file:${LOCAL_TRUST_STORE_PATH}
-      trust-store-password: ${LOCAL_KEY_STORE_PASSWORD}
-      #bundle: gateway
+    # 🐛 여기에 `tls:` 블록이 있었다 — `eureka.instance` 아래라 **eureka.instance.tls** 가 되어 아무도 읽지 않았다(클라이언트 TLS 는
+    #    eureka.client.tls). 게이트웨이의 Eureka 클라이언트는 인증서 없이 붙고 있었다. 이제 공통 설정(application-common.yml 의
+    #    eureka.client.tls — 이 파일보다 우선한다)이 신원 인증서(/app/identity, CN=gateway-server)를 낸다(docs/57 §16 "Eureka 쓰기").
+    # [JA] ここにあった tls ブロックは eureka.instance の下で誰も読まなかった。今は共通設定の eureka.client.tls が身元証明書を出す。
     
   # ssl:
   #   bundle:

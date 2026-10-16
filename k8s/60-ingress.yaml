@@ -2,7 +2,7 @@
 #
 # frontend는 평문 HTTP로 서빙되므로 표준 Ingress로 바로 노출합니다.
 # gateway-server는 스스로 HTTPS(mTLS)를 종료하므로 여기 Ingress에 포함하지 않고
-# 31-gateway-server.yaml에서 Service type=LoadBalancer로 직접 노출합니다
+# Cloudflare 터널이 ClusterIP Service 로 바로 보냅니다(k8s-overlays/prod/cloudflared.yaml, B-85)
 # (표준 Ingress는 백엔드까지 TLS를 그대로 통과시키지 않고 HTTP로 프록시하는 것이 기본 동작이라,
 #  게이트웨이의 자체 TLS 종료와 맞지 않습니다. 공인 인증서를 게이트웨이 앞단에 두고 싶다면
 #  Traefik IngressRoute + ServersTransport(TLS passthrough)를 별도로 구성하세요).

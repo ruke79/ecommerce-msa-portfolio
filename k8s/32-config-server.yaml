@@ -5,6 +5,9 @@ metadata:
   namespace: ecommerce
   labels:
     app: config-server
+  annotations:
+    # 신원 인증서가 갱신되면(cert-manager — k8s/96) 롤링 재시작 — keystore 는 기동할 때만 읽는다.
+    secret.reloader.stakater.com/reload: "tls-id-config-server"
 spec:
   # config-server 는 상태가 없다(설정의 진실은 git 저장소다). eureka-server 와 달리 늘려도
   # 조용히 깨지지 않으므로 2로 올려도 된다. 1로 두는 이유는 단지 자원이다 —
@@ -34,6 +37,10 @@ spec:
             - secretRef:
                 name: ecommerce-secrets
           env:
+            # Eureka 등록 · 하트비트에 내는 클라이언트 인증서 = 이 서비스의 신원(/app/identity, CN=config-server). Eureka 는 등록부를
+            # 바꾸는 요청을 그 CN 이 앱 이름과 같을 때만 받는다(EUREKA_WRITE_AUTH_MODE, docs/57 §16 "Eureka 쓰기", B-86).
+            - name: EUREKA_CLIENT_TLS_ENABLED
+              value: "true"
             # ⚠️ 이름이 없으면 Eureka 에 **UNKNOWN 으로 등록된다.** config-server 는 자기
             #    application.yml 어디에도 spring.application.name 을 선언하지 않아 실제로
             #    그랬다(`POST /eureka/apps/UNKNOWN` 으로 확인). 지금은 다른 서비스들이
@@ -167,6 +174,10 @@ spec:
             - name: tls-keystore
               mountPath: /app/resources
               readOnly: true
+            # 이 서비스의 신원(CN=config-server) — Eureka 에 등록할 때만 낸다. 발급: ops/38(cert-manager 면 k8s/96 · ops/39)
+            - name: tls-id
+              mountPath: /app/identity
+              readOnly: true
           # 네 값이 모두 있어야 한다. external·oci 오버레이가 JSON6902 replace 로
           # 이 경로들을 덮어쓰므로, 하나라도 없으면 kustomize 빌드가 실패한다.
           resources:
@@ -199,6 +210,9 @@ spec:
         - name: tls-keystore
           secret:
             secretName: tls-keystore
+        - name: tls-id
+          secret:
+            secretName: tls-id-config-server
 ---
 apiVersion: v1
 kind: Service

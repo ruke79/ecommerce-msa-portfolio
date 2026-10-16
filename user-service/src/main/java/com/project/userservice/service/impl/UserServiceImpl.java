@@ -122,6 +122,14 @@ public class UserServiceImpl implements UserService {
     /** 유출 · 흔한 비밀번호를 거절한다 — 비밀번호를 정하는 모든 경로(가입 · 변경 · 재설정)에서(docs/68 §18). */
     private final com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
 
+    /**
+     * 짧은 DB 구간 — 유출 확인(HIBP, 외부 호출 최대 2초)을 그 밖에 두기 위해 비밀번호를 정하는 메서드는 클래스의 @Transactional 대신 쓴다.
+     * 🐛 예전에는 가입 · 변경 · 재설정 트랜잭션 안에서 HIBP 를 기다렸다 — 그동안 DB 커넥션(풀 5개)을 쥐고 있어, HIBP 가 느린 날 가입이
+     *    몇 건만 몰려도 같은 풀을 쓰는 로그인 · 조회까지 커넥션을 기다렸다.
+     * [JA] 短い DB 区間。漏えい確認(HIBP、最大 2 秒)をその外に置く。以前はトランザクション内で待ち、DB 接続(プール 5)を握っていた。
+     */
+    private final org.springframework.transaction.support.TransactionTemplate tx;
+
     
     /**
      * 확인 토큰 유효 기간. 기본 24시간.
@@ -435,19 +443,23 @@ public class UserServiceImpl implements UserService {
      * 함께 없앴다. 그게 있으면 아래에서 던지는 구체적인 사유까지 뭉뚱그려진다.
      */
     @Override
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void updatePassword(Long userId, String currPassword, String password) {
-        User user = userRepository.findById(userId)
+        // ① 현재 비밀번호(읽기 한 번) → ② 새 비밀번호 정책 · 유출 확인(트랜잭션 밖) → ③ 저장(짧은 트랜잭션). 순서는 예전과 같다 —
+        //    현재 비밀번호가 틀리면 유출 확인까지 가지 않는다.
+        User current = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
 
         // 🔒 비교 전에 센다 — 🐛 예전에는 제한이 없어 세션만 가진 사람이 이 엔드포인트로 비밀번호를 대입할 수 있었다.
         currentPasswordGuard.reserve(userId);
-        if (!passwordEncoder.matches(currPassword, user.getPassword())) {
+        if (!passwordEncoder.matches(currPassword, current.getPassword())) {
             throw new InvalidCurrentPasswordException();
         }
         currentPasswordGuard.clear(userId);
 
-        applyNewPassword(user, password);
+        AcceptedPassword accepted = acceptNewPassword(password);
+        tx.executeWithoutResult(status -> applyNewPassword(userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND)), accepted));
         log.info("비밀번호 변경: userId={}", userId);
     }
 
@@ -473,15 +485,42 @@ public class UserServiceImpl implements UserService {
     static final int PASSWORD_MIN = 6;
     static final int PASSWORD_MAX = 40;
 
-    private void applyNewPassword(User user, String rawPassword) {
-        // 🐛 비밀번호 정책이 가입에만 있었다 — 변경 · 재설정 · 관리자 경로는 빈 문자열("")도 받아 저장했고(로그인 필터가 빈 비밀번호를
-        //    거부하므로 본인이 잠겼다), 유출 확인이 판단하지 못하면(fail-open) 한 글자 비밀번호도 통과했다. 새 비밀번호는 모두 여기를 지난다.
-        // [JA] パスワードの方針が登録にしかなかった — 変更 · 再設定 · 管理者経路は空文字も受けた。新しいパスワードはすべてここを通る。
+    /**
+     * 새 비밀번호가 정책(길이 · 유출 목록)을 지났다는 표 — {@link #acceptNewPassword} 만 만든다. 저장하는 {@link #applyNewPassword} 는
+     * 이것만 받으므로, 정책을 건너뛰고 저장하는 길이 타입으로 막힌다.
+     */
+    static final class AcceptedPassword {
+        private final String raw;
+
+        private AcceptedPassword(String raw) {
+            this.raw = raw;
+        }
+
+        @Override
+        public String toString() {
+            return "AcceptedPassword[***]";
+        }
+    }
+
+    /**
+     * 새 비밀번호의 정책 — <b>트랜잭션 밖에서</b> 부른다(유출 확인은 외부 호출이다, {@link #tx} 주석).
+     *
+     * <p>🐛 비밀번호 정책이 가입에만 있었다 — 변경 · 재설정 · 관리자 경로는 빈 문자열("")도 받아 저장했고(로그인 필터가 빈 비밀번호를
+     * 거부하므로 본인이 잠겼다), 유출 확인이 판단하지 못하면(fail-open) 한 글자 비밀번호도 통과했다. 새 비밀번호는 모두 여기를 지난다.
+     * 유출 목록에 있으면 바꾸지 않는다(재설정 링크도 소진되지 않아 다시 시도할 수 있다).
+     *
+     * <p>[JA] 新しいパスワードの方針 — トランザクションの外で呼ぶ。新しいパスワードはすべてここを通る。
+     */
+    private AcceptedPassword acceptNewPassword(String rawPassword) {
         if (rawPassword == null || rawPassword.length() < PASSWORD_MIN || rawPassword.length() > PASSWORD_MAX) {
             throw new IllegalArgumentException("비밀번호는 6~40자로 입력해 주세요.");
         }
-        // 저장하기 전에 — 유출 목록에 있는 비밀번호면 바꾸지 않는다(재설정 링크도 소진되지 않아 다시 시도할 수 있다).
         breachedPasswordChecker.assertAcceptable(rawPassword);
+        return new AcceptedPassword(rawPassword);
+    }
+
+    private void applyNewPassword(User user, AcceptedPassword accepted) {
+        String rawPassword = accepted.raw;
         user.setPassword(passwordEncoder.encode(rawPassword));
         user.setPasswordChangedAt(java.time.LocalDateTime.now());
         userRepository.save(user);
@@ -493,18 +532,20 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void updatePassword(Long userId, String password) {
+        AcceptedPassword accepted = acceptNewPassword(password);   // 트랜잭션 밖 — 이유는 그대로 던진다
         try {
-            User user = userRepository.findById(userId)
-                    .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
+            tx.executeWithoutResult(status -> {
+                User user = userRepository.findById(userId)
+                        .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
 
-            // 🐛 예전: 해시만 바꿔 저장했다 — passwordChangedAt 도 세션도 그대로라, 탈취된 계정을 관리자가 비밀번호로 되찾아도
-            //    공격자는 리프레시 토큰으로 최대 30일 동안 계속 갱신했다. 본인 변경 · 재설정과 같은 길(applyNewPassword)로 가고 모든 로그인을 끊는다.
-            // [JA] 以前はハッシュだけ変えて保存 — 管理者がパスワードで取り戻しても攻撃者はリフレッシュで更新し続けた。今は全ログインを切る。
-            applyNewPassword(user, password);
-            endSessions(userId, "비밀번호 변경");
-        } catch (com.project.userservice.security.password.BreachedPasswordException | IllegalArgumentException e) {
-            throw e;   // 이유를 그대로 — 아래에서 뭉뚱그리면 "왜 안 되는지" 가 사라진다
+                // 🐛 예전: 해시만 바꿔 저장했다 — passwordChangedAt 도 세션도 그대로라, 탈취된 계정을 관리자가 비밀번호로 되찾아도
+                //    공격자는 리프레시 토큰으로 최대 30일 동안 계속 갱신했다. 본인 변경 · 재설정과 같은 길(applyNewPassword)로 가고 모든 로그인을 끊는다.
+                // [JA] 以前はハッシュだけ変えて保存 — 管理者がパスワードで取り戻しても攻撃者はリフレッシュで更新し続けた。今は全ログインを切る。
+                applyNewPassword(user, accepted);
+                endSessions(userId, "비밀번호 변경");
+            });
         } catch (Exception e) {
             throw new RuntimeException("Failed to update password");
         }
@@ -564,8 +605,17 @@ public class UserServiceImpl implements UserService {
      * 살아 있으면 되찾은 것이 아니다.
      */
     @Override
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void resetPassword(String token, String newPassword) {
+        // ① 링크부터 — 유효하지 않으면 유출 확인(외부 호출)까지 가지 않는다(인증 없는 경로가 HIBP 호출을 만들지 않게).
+        validResetToken(token);
+        // ② 정책 · 유출 확인 — 트랜잭션 밖
+        AcceptedPassword accepted = acceptNewPassword(newPassword);
+        // ③ 다시 확인하고 바꾼다 — ① 과 ③ 사이에 같은 링크가 쓰였을 수 있다.
+        tx.executeWithoutResult(status -> resetInTransaction(validResetToken(token), accepted));
+    }
+
+    private PasswordResetToken validResetToken(String token) {
         PasswordResetToken resetToken = passwordResetTokenRepository
                 .findByToken(PasswordResetToken.hash(token))
                 .orElseThrow(() -> new RuntimeException("유효하지 않은 링크입니다. 비밀번호 찾기를 다시 요청해 주세요."));
@@ -575,9 +625,12 @@ public class UserServiceImpl implements UserService {
 
         if (resetToken.getExpiryDate().isBefore(Instant.now()))
             throw new RuntimeException("링크의 유효기간이 지났습니다. 비밀번호 찾기를 다시 요청해 주세요.");
+        return resetToken;
+    }
 
+    private void resetInTransaction(PasswordResetToken resetToken, AcceptedPassword accepted) {
         User user = resetToken.getUser();
-        applyNewPassword(user, newPassword);
+        applyNewPassword(user, accepted);
         // 메일의 링크를 눌렀다 = 그 주소의 주인이다. 소셜 연결 때 이 비밀번호를 "확인된 적 없음" 으로 다루지 않게(docs/68 §15).
         user.setEmailVerified(true);
         userRepository.save(user);
@@ -627,12 +680,17 @@ public class UserServiceImpl implements UserService {
         return null;
     }
 
-    @Override    
+    @Override
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public User registerNewUserAccount(SignupRequest request) {
 
         // 유출 · 흔한 비밀번호로는 가입하지 않는다(docs/68 §18) — 다른 사이트에서 샌 목록을 그대로 넣는 크리덴셜 스터핑의 재료다.
+        // 트랜잭션 밖에서(외부 호출 — tx 주석). 계정 · 가입 이벤트(아웃박스, MANDATORY)는 아래 한 트랜잭션이다.
         breachedPasswordChecker.assertAcceptable(request.getPassword());
+        return tx.execute(status -> createAccount(request));
+    }
 
+    private User createAccount(SignupRequest request) {
         // Create new user's account
         User user = new User(request.getUsername(),
                 request.getEmail(),

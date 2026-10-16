@@ -466,7 +466,7 @@ docs/48 §6-③ の残り項目。複製は今は 2 つ — chat の会員行（
 | 箇所 | やったこと |
 |---|---|
 | 呼び出す側 — バックエンドサービス（k8s/40〜49） | JVM キーストア（`-Djavax.net.ssl.keyStore=…keystore.p12`）を渡す。サービス間の呼び出しはすべて Feign（JDK デフォルトの TLS）なので、サーバーが要求すればこの証明書を **クライアント証明書として** 提示する。ゲートウェイ（31）は JVM キーストアではなく自分の身元（`tls-id-gateway-server`）を HttpClient のクライアント証明書として提示する（2026-10-14、下記「身元ヘッダー」） — それでもヘッダーなしで渡すリクエストは内部呼び出しではない |
-| 受ける側 — 同じバックエンド | `SERVER_SSL_CLIENT_AUTH=want` — クライアント証明書を **要求** する（なくても接続はできる: kubelet のプローブ・ゲートウェイ・Prometheus）。eureka・config・ゲートウェイはそのままにする — 間違えると登録・設定が止まって全体が停止する |
+| 受ける側 — 同じバックエンド | `SERVER_SSL_CLIENT_AUTH=want` — クライアント証明書を **要求** する（なくても接続はできる: kubelet のプローブ・ゲートウェイ・Prometheus）。eureka・config・ゲートウェイはそのままにする — 間違えると登録・設定が止まって全体が停止する（eureka は 2026-10-14 に `want` + 書き込み判定 — 下の「Eureka 書き込み」） |
 | 判定 — `InternalCallerFilter`（common、すべてのサーブレットサービスに自動構成） | 身元ヘッダーが **ない** リクエストだけを見る。TLS で受け取ったクライアント証明書が **内部 CA で署名** されていれば（ここで改めて検証する — JVM のトラストストアが公開 CA を信頼していても、公開 CA の証明書は内部ではない）内部呼び出し。そうでなければ `User-Role: ROLE_ANONYMOUS` を付けて渡す → `InternalCallGuard` が「外部・管理者ではない」と読み、**内部専用 API が 403**。数十か所の呼び出し箇所を直さずに、判定の入力を正す |
 
 モード `INTERNAL_AUTH_MODE`（ConfigMap）:
@@ -621,11 +621,49 @@ ops/12 · ops/13 も同じ方式。B-83（`JvmSslPasswordsTest`）がマニフ�
 みなして `LOCAL_KEY_STORE_PASSWORD` を変えるのが正しい（`ops/07` でストアを新しいパスワードで作り直して Secret を更新 → 全サービス再起動、サービス
 身元は `ops/38`）。それまでは Grafana · Loki へのアクセスを運用者だけにする（観測ポートはもともと公開しない）。
 
+### Eureka 書き込み — 登録はそのサービス自身の証明書でのみ（2026-10-14、B-86）
+
+**何が問題だったか。** Eureka はクライアント証明書を見ていなかった（サーバーの `client-auth` なし）。ecommerce 名前空間のポッドが一つ破られるだけで
+`PUT /eureka/apps/ORDER-SERVICE/<id>/status?value=OUT_OF_SERVICE` の一行で order-service のインスタンスが一覧から外れ（ゲートウェイ · Feign の
+`lb://` が宛先を失って 503）、`POST /eureka/apps/ORDER-SERVICE` で偽のインスタンスを差し込めばサービス間呼び出しがそちらへ流れた。上の mTLS 判定は
+バックエンド同士の呼び出しだけを守っていた。
+
+しかも **クライアント側の証明書がなかった。** バックエンドは JVM キーストア（`-Djavax.net.ssl.keyStore`）を持つが、Eureka クライアントの転送（RestTemplate ·
+HttpClient 5）は自分の SSLContext を **鍵なしで** 作る（信頼だけ JVM 既定）— 実際の TLS で確かめた: 同じ JVM キーストアで JDK 既定の接続（Feign の道）は
+証明書を出し、Eureka クライアントは出さなかった。ゲートウェイの `tls:` ブロックは `eureka.instance` の下にあって誰も読んでいなかった。
+
+**やったこと。**
+
+| 場所 | やったこと |
+|---|---|
+| クライアント — 共通設定 | `application-common.yml` の `eureka.client.tls` — 身元キーストア（`/app/identity/keystore.p12`、CN=サービス名）· 共有トラストストア。`EUREKA_CLIENT_TLS_ENABLED` で有効化（既定は無効 — ローカル開発 · ops/13）。import されるファイルなのでサービス自身の yml より優先する |
+| クライアント — マニフェスト | 身元をマウントした Deployment（バックエンド 10 · ゲートウェイ · config-server）が `EUREKA_CLIENT_TLS_ENABLED=true`。config-server にも身元を与えた（k8s/96 · ops/38 · ops/39）— 内部 API は呼ばないが Eureka に自分を登録する |
+| 受け側 — eureka-server | `SERVER_SSL_CLIENT_AUTH=want`（プローブ · ダッシュボード · 登録の読み取りは証明書なしのまま）+ `RegistryWriteGuard`: 書き込み（GET · HEAD · OPTIONS 以外）は内部 CA が署名した証明書の CN がパスのアプリ名と一致すること（大小無視、パスはデコード · `;…` 除去後 — Jersey が見る名前）。`/eureka/apps/` 以外の書き込み（ピア複製 · ASG）はこの単独 Eureka に来ないので拒否。証明書判定は `InternalCallerFilter.verifiedCommonName` 一つを使う。common の `InternalCallerFilter`（内部 API 判定）は eureka-server では無効にする — 有効のままだと許可主体外（config-server）のハートビートごとに `[mTLS rule]` 警告が残る |
+| モード | ConfigMap `EUREKA_WRITE_AUTH_MODE`: off · observe（`[eureka write]` として残して通す）· enforce（403）。enforce なのに CA を読めなければ起動を止める — そのまま起動するとすべてのハートビートが 403 になり 90 秒後に登録が空になる |
+
+**有効化の順序。**
+
+```bash
+./ops/38-issue-service-identities.sh --only config-server     # cert-manager なら ops/39（k8s/96 に id-config-server）
+./ops/28-deploy.sh <環境> <バージョン>                        # クライアント TLS · want · EUREKA_WRITE_AUTH_MODE=observe
+# 1 日後 — 外れた書き込みがないこと（初めて見る (呼び出し元, メソッド, アプリ) ごとに一行）
+kubectl -n ecommerce logs deploy/eureka-server --since=24h | grep -c '\[eureka write\]'      # 0
+# k8s/10 の EUREKA_WRITE_AUTH_MODE を enforce にして
+./ops/28-deploy.sh <環境> --config-only --restart eureka-server
+```
+
+戻し: `EUREKA_WRITE_AUTH_MODE` を observe にして同じ手順。サーバーが再起動してもクライアントは 30 秒のハートビートで再登録する。
+
+テスト: `RegistryWriteGuardTlsTest`（実際の TLS で起動した Eureka に **実際の Eureka クライアント** が共通設定のまま登録 — 身元は通過 · TLS を切った
+クライアントは JVM キーストアがあっても証明書を出さず拒否 · 他サービスの証明書で他のアプリの登録を拒否 · 証明書なしの OUT_OF_SERVICE は 403 ·
+読み取りは 200 · エンコードしたアプリ名も同じ判定）、`RegistryWriteGuardTest`（モード · メソッド · パス）、B-86 `EurekaClientIdentityGuardTest`（身元マウント ↔
+`EUREKA_CLIENT_TLS_ENABLED` · 発行リスト 3 つ · Reloader · want · モード）。
+
 ### 残っているもの — 正直に
 
 - サーバー証明書は依然として共有だ — ゲートウェイもその鍵を持っている。ただしその鍵（CN=localhost）は今は **許可主体ではない** ので、内部呼び出しには
   使えない。サーバー証明書までサービスごとに分けるのは利点が小さい（サーバー認証は「同じ CA か」だけを見る）。
-- サーバー側は `need`（証明書がなければ接続拒否）ではなく `want` だ — kubelet の HTTPS プローブが証明書を提示できない。判定はアプリが行う。
+- サーバー側は `need`（証明書がなければ接続拒否）ではなく `want` だ — kubelet の HTTPS プローブが証明書を提示できない。判定はアプリが行う（Eureka も同じ — 書き込みだけを判定する）。
 - サービスごとの身元（クライアント証明書）は cert-manager が更新する（§18）。**共有サーバー証明書**（`tls-keystore`、825 日）は依然として `ops/07`
   ＋ 再起動だ — `MODE=verify ./ops/07-issue-certificates.sh` が残り日数を知らせる。
 

@@ -33,6 +33,11 @@ spec:
             - secretRef:
                 name: ecommerce-secrets
           env:
+            # Eureka 등록 · 하트비트에 내는 클라이언트 인증서 = 이 서비스의 신원(/app/identity, CN=서비스 이름). Eureka 는 등록부를 바꾸는
+            # 요청을 그 CN 이 앱 이름과 같을 때만 받는다(EUREKA_WRITE_AUTH_MODE, docs/57 §16 "Eureka 쓰기"). JVM 키스토어는 Eureka
+            # 클라이언트가 쓰지 않는다 — 설정은 common application-common.yml 의 eureka.client.tls(B-86).
+            - name: EUREKA_CLIENT_TLS_ENABLED
+              value: "true"
             - name: SPRING_APPLICATION_NAME
               value: "order-service"
             # 분산 추적 → 이 노드에서 도는 관측 스택의 OTel Collector(docker-compose-observability.yml, :4318)
