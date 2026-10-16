@@ -20,7 +20,10 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import com.project.userservice.constants.TokenType;
+import com.project.userservice.constants.AppRole;
+import com.project.userservice.model.Role;
 import com.project.userservice.model.User;
+import com.project.userservice.security.service.UserDetailsImpl;
 import com.project.userservice.security.jwt.JwtUtils;
 import com.project.userservice.service.RefreshTokenService;
 import com.project.userservice.service.impl.UserServiceImpl;
@@ -51,10 +54,18 @@ class SessionControllerTest {
         });
     }
 
-    private static UserDetails principal(String email) {
+    private static UserDetails principal(String username) {
         UserDetails d = mock(UserDetails.class);
-        when(d.getUsername()).thenReturn(email);
+        when(d.getUsername()).thenReturn(username);
         return d;
+    }
+
+    /** 실제 principal — JwtAuthFilter 가 세우는 것과 같다. 가입 아이디(kim)와 이메일이 다르다. */
+    private static UserDetailsImpl realPrincipal() {
+        User u = new User("kim", "kim@example.com", "x");
+        u.setUserId(7L);
+        u.setRole(new Role(AppRole.ROLE_USER));
+        return UserDetailsImpl.build(u);
     }
 
     @Test
@@ -62,15 +73,28 @@ class SessionControllerTest {
     void revokesTheCallersLogins() {
         User me = mock(User.class);
         when(me.getUserId()).thenReturn(7L);
-        when(users.findByEmail("a@example.com")).thenReturn(me);
+        when(users.findById(7L)).thenReturn(me);
         when(tokens.revokeAll(7L)).thenReturn(3);
 
-        var r = controller.revokeAll(principal("a@example.com"), response);
+        var r = controller.revokeAll(realPrincipal(), response);
 
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(r.getBody()).isEqualTo(Map.of("revoked", 3));
         verify(tokens).revokeAll(7L);
         assertThat(response.getCookie(TokenType.REFRESH.getType()).getMaxAge()).isZero();
+    }
+
+    @Test
+    @DisplayName("🔴 getUsername() 은 이메일이 아니다 — 그 값으로 이메일 조회를 하면 모든 사용자가 401 이었다")
+    void doesNotLookUpTheUsernameAsAnEmail() {
+        User me = mock(User.class);
+        when(me.getUserId()).thenReturn(7L);
+        when(users.findById(7L)).thenReturn(me);
+
+        var r = controller.revokeAll(realPrincipal(), response);
+
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(users, never()).findByEmail(anyString());
     }
 
     @Test

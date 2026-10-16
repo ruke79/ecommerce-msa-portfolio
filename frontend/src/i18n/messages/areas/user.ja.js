@@ -35,6 +35,7 @@ const user = {
     "user.signin.oauth_email_required": "ログインにはメールアドレスの提供への同意が必要です。もう一度お試しいただき、メールアドレスの項目に同意してください。",
     "user.signin.oauth_unverified_email": "認証されていないメールアドレスです。アカウントでメール認証を済ませてから、もう一度お試しください。",
     "user.signin.oauth_cancelled": "ソーシャルログインをキャンセルしました。",
+    "user.signin.account_restricted": "ご利用が制限されているアカウントです。カスタマーセンターへお問い合わせください。",
     "user.signin.other_issues": "その他のログインに関するお困りごと",
     "user.signin.new_to_brand": "{{brand}}のご利用は初めてですか？",
     "user.signin.create_account": "{{brand}}のアカウントを作成",

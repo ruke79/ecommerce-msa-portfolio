@@ -38,6 +38,7 @@ const user = {
     "user.signin.oauth_email_required": "이메일 제공에 동의해야 로그인할 수 있습니다. 다시 시도할 때 이메일 항목에 동의해 주세요.",
     "user.signin.oauth_unverified_email": "인증되지 않은 이메일입니다. 계정에서 이메일 인증을 마친 뒤 다시 시도해 주세요.",
     "user.signin.oauth_cancelled": "소셜 로그인을 취소했습니다.",
+    "user.signin.account_restricted": "이용이 제한된 계정입니다. 고객센터로 문의해 주세요.",
     "user.signin.other_issues": "로그인에 다른 문제가 있나요?",
     "user.signin.new_to_brand": "{{brand}} 가 처음이신가요?",
     "user.signin.create_account": "{{brand}} 계정 만들기",

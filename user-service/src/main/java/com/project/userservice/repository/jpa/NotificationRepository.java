@@ -20,4 +20,13 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     //@Lock(LockModeType.OPTIMISTIC)
     @Override
     Optional<Notification> findById(Long id);
+
+    /**
+     * 회원 탈퇴 최종 처리 — 그 사용자의 알림 행. {@code email} 열에는 이제 userId 가 들어가지만(AuthLoginFilter), 옛 행에는 실제 이메일이
+     * 있어 둘 다 지운다.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("delete from Notification n where n.email in :owners")
+    int deleteByOwners(@org.springframework.data.repository.query.Param("owners") java.util.Collection<String> owners);
 }

@@ -158,4 +158,21 @@ class LoginRiskFilterTest {
         f2.unsuccessfulAuthentication(request, new MockHttpServletResponse(), new LockedException("locked"));
         verify(other, never()).recordFailure(any(), any());
     }
+
+    /** 🐛 예전: 위험 판정이 X-Forwarded-For 의 첫 항목을 썼다 — 요청마다 난수 IP 를 붙이면 IP_FANOUT 이 켜지지 않았다. */
+    @Test
+    @DisplayName("🔴 실패 기록의 IP 는 클라이언트가 고를 수 없는 값 — X-Forwarded-For 가 아니라 CF-Connecting-IP(없으면 소켓)")
+    void riskUsesTrustedIp() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.42.0.9");
+        request.addHeader("X-Forwarded-For", "198.51.100.77, 10.42.0.1");
+        request.setAttribute(AuthLoginFilter.EMAIL_ATTR, "kim@example.com");
+
+        filter.unsuccessfulAuthentication(request, new MockHttpServletResponse(), new BadCredentialsException("x"));
+        verify(guard).recordFailure("kim@example.com", "10.42.0.9");
+
+        request.addHeader("CF-Connecting-IP", "203.0.113.50");
+        filter.unsuccessfulAuthentication(request, new MockHttpServletResponse(), new BadCredentialsException("x"));
+        verify(guard).recordFailure("kim@example.com", "203.0.113.50");
+    }
 }

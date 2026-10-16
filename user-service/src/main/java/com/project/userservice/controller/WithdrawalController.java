@@ -64,6 +64,9 @@ public class WithdrawalController {
 
         try {
             return ResponseEntity.ok(withdrawalService.request(userId, password, reason, refresh));
+        } catch (com.project.userservice.security.CurrentPasswordGuard.TooManyAttemptsException e) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(new MessageResponse(ClientMessage.of(e)));
         } catch (BadCredentialsException e) {
             // 비밀번호가 틀렸다. 되돌릴 수 없는 동작 앞의 본인 확인이므로 통과시키지 않는다.
             return ResponseEntity.status(HttpStatus.FORBIDDEN)

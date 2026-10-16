@@ -27,4 +27,10 @@ public interface KnownDeviceRepository extends JpaRepository<KnownDevice, Long> 
     boolean existsByUserId(Long userId);
 
     Optional<KnownDevice> findByDeviceIdAndUserId(Long deviceId, Long userId);
+
+    /** 회원 탈퇴 최종 처리(WithdrawalService) — 그 사용자의 행을 모두 지운다. */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("delete from KnownDevice x where x.userId = :userId")
+    int deleteByUserId(@org.springframework.data.repository.query.Param("userId") Long userId);
 }

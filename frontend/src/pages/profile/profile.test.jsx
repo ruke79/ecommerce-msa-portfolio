@@ -116,14 +116,14 @@ describe("내 프로필 화면", () => {
 
   it("저장이 실패하면 서버가 준 이유를 보여준다", async () => {
     mockUpdateMyProfile.mockRejectedValue({
-      response: { data: { message: "이름은 50자까지 입력할 수 있습니다." } },
+      response: { data: { message: "이름은 20자까지 입력할 수 있습니다." } },
     });
     renderPage();
 
     await screen.findByDisplayValue("홍길동");
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
 
-    expect(await screen.findByText("이름은 50자까지 입력할 수 있습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("이름은 20자까지 입력할 수 있습니다.")).toBeInTheDocument();
   });
 
   // ── 프로필 사진 ─────────────────────────────────────────────────────────

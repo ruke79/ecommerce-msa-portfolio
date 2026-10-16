@@ -57,6 +57,7 @@ class PasswordChangeTest {
     @Mock private com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
 
     @Mock private com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
+    @Mock private com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
 
     @InjectMocks private UserServiceImpl userService;
 
@@ -337,5 +338,45 @@ class PasswordChangeTest {
     void hashIsStable() {
         assertThat(PasswordResetToken.hash("abc")).isEqualTo(PasswordResetToken.hash("abc"));
         assertThat(PasswordResetToken.hash("abc")).isNotEqualTo(PasswordResetToken.hash("abd"));
+    }
+
+    // ── 관리자가 바꾸기 ──────────────────────────────────────────────────
+
+    /**
+     * 🐛 예전: 관리자 변경은 해시만 바꿨다 — passwordChangedAt 도 세션도 그대로라, 탈취된 계정을 관리자가 비밀번호로 되찾아도
+     * 공격자는 리프레시 토큰으로 계속 갱신했다.
+     */
+    @Test
+    @DisplayName("🔴 관리자 변경 — 변경 시각을 남기고 그 사용자의 모든 로그인을 끊는다")
+    void adminChangeEndsSessions() {
+        userService.updatePassword(7L, "admin-set-pw1");
+
+        assertThat(user.getPassword()).isEqualTo("$2a$new");
+        assertThat(user.getPasswordChangedAt()).isNotNull();
+        verify(refreshTokenService).revokeAll(7L);
+    }
+
+    /** 🐛 예전: 비밀번호 정책이 가입에만 있어 변경 · 재설정 · 관리자 경로는 빈 문자열도 받아 저장했다(본인이 잠겼다). */
+    @Test
+    @DisplayName("🔴 새 비밀번호는 모든 경로에서 6~40자 — 빈 문자열 · 짧은 값은 저장하지 않는다")
+    void newPasswordLengthIsEnforcedEverywhere() {
+        when(passwordEncoder.matches("old", "$2a$old")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.updatePassword(7L, "old", "")).hasMessage("비밀번호는 6~40자로 입력해 주세요.");
+        assertThatThrownBy(() -> userService.updatePassword(7L, "abc")).hasMessage("비밀번호는 6~40자로 입력해 주세요.");
+        assertThat(user.getPassword()).isEqualTo("$2a$old");
+    }
+
+    @Test
+    @DisplayName("🔴 현재 비밀번호는 비교 전에 시도를 센다 — 맞으면 지운다")
+    void currentPasswordAttemptsAreCounted() {
+        when(passwordEncoder.matches("old", "$2a$old")).thenReturn(true);
+
+        userService.updatePassword(7L, "old", "newpw123");
+
+        var order = org.mockito.Mockito.inOrder(currentPasswordGuard, passwordEncoder);
+        order.verify(currentPasswordGuard).reserve(7L);
+        order.verify(passwordEncoder).matches("old", "$2a$old");
+        verify(currentPasswordGuard).clear(7L);
     }
 }

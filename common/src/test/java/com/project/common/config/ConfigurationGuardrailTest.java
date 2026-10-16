@@ -1207,7 +1207,7 @@ class ConfigurationGuardrailTest {
         //    바로 그 버그를 놓친다(처음 작성했을 때 실제로 놓쳤다).
         Pattern literal = Pattern.compile(
                 "[\"'`](?:\\$\\{[^}]*\\})?"
-                        + "(/(?:user|catalog|cart|order|pay|coupon|chat|notification|delivery)-service"
+                        + "(/(?:(?:user|catalog|cart|order|pay|coupon|chat|notification|delivery)-service|saga-projection)"
                         + "/[A-Za-z0-9/_.\\-]*)[\"'`]");
 
         Map<String, String> unroutable = new TreeMap<>();

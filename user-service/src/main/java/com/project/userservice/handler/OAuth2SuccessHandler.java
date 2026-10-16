@@ -73,6 +73,15 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             return;
         }
 
+        // 🔒 관리자가 잠그거나 만료한 계정은 소셜로도 들어오지 못한다 — 🐛 예전에는 보지 않아 소셜 버튼이 잠금 우회로였다.
+        //    본인 인증(소셜 제공자)은 이미 끝났으므로 이유를 알려도 가입 여부가 새지 않는다.
+        // [JA] 管理者がロック · 期限切れにしたアカウントはソーシャルでも入れない — 以前は見ておらず抜け道だった。
+        if (!user.canSignIn()) {
+            log.info("소셜 로그인 거부 — 이용이 제한된 계정. userId={}", user.getUserId());
+            response.sendRedirect(frontendUrl + "/signin?error=account_restricted");
+            return;
+        }
+
         if (user.isTwoFactorEnabled()) {
             // 2FA 계정은 여기서 세션을 주지 않는다 — 주면 소셜 버튼이 2FA 우회로가 된다.
             // 대신 5분짜리 보류 토큰을 httpOnly 쿠키로 심고 2FA 입력 화면으로 보낸다.

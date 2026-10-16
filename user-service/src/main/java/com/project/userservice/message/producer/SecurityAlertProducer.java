@@ -45,6 +45,13 @@ public class SecurityAlertProducer {
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** 테스트용 — 템플릿을 직접 받는다. */
+    SecurityAlertProducer(KafkaTemplate<String, String> kafkaTemplate) {
+        this.factory = null;
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
     public SecurityAlertProducer(@Qualifier("producerConfig") Map<String, Object> baseProducerConfig,
             org.springframework.beans.factory.ObjectProvider<io.micrometer.observation.ObservationRegistry> observationRegistry) {
         Map<String, Object> config = new HashMap<>(baseProducerConfig);
@@ -94,9 +101,8 @@ public class SecurityAlertProducer {
             // 기기 하나당 알림 하나. 재전달돼도 sourceEventId 가 UNIQUE 라 중복되지 않는다.
             event.put("eventId", "security:device:" + device.getDeviceId());
 
-            kafkaTemplate.send(TOPIC, String.valueOf(userId), objectMapper.writeValueAsString(event));
             // ⚠️ 이메일과 IP 는 로그에 남기지 않는다. 사실만 남긴다.
-            log.info("새 기기 로그인 알림 발행: userId={}, deviceId={}", userId, device.getDeviceId());
+            send(userId, objectMapper.writeValueAsString(event), "새 기기 로그인");
 
         } catch (Exception e) {
             // 로그인은 이미 성공했다. 알림만 못 나간 것이라 되돌리지 않는다.
@@ -130,8 +136,7 @@ public class SecurityAlertProducer {
             event.put("occurredAt", LocalDateTime.now().toString());
             event.put("eventId", "security:refresh-reuse:" + familyDigest(familyId));
 
-            kafkaTemplate.send(TOPIC, String.valueOf(userId), objectMapper.writeValueAsString(event));
-            log.info("로그인 해제(토큰 재사용) 알림 발행: userId={}", userId);
+            send(userId, objectMapper.writeValueAsString(event), "로그인 해제(토큰 재사용)");
 
         } catch (Exception e) {
             log.error("로그인 해제 알림을 발행하지 못했습니다: userId={} ({})", userId, e.getMessage());
@@ -170,8 +175,7 @@ public class SecurityAlertProducer {
             event.put("email", email);
             event.put("occurredAt", LocalDateTime.now().toString());
             event.put("eventId", "security:2fa:" + userId + ":" + (enabled ? "on" : "off") + ":" + System.currentTimeMillis());
-            kafkaTemplate.send(TOPIC, String.valueOf(userId), objectMapper.writeValueAsString(event));
-            log.info("2단계 인증 {} 알림 발행: userId={}", enabled ? "켜기" : "끄기", userId);
+            send(userId, objectMapper.writeValueAsString(event), enabled ? "2단계 인증 켜기" : "2단계 인증 끄기");
         } catch (Exception e) {
             log.error("2단계 인증 변경 알림을 발행하지 못했습니다: userId={} ({})", userId, e.getMessage());
         }
@@ -197,8 +201,7 @@ public class SecurityAlertProducer {
             }
             event.put("occurredAt", LocalDateTime.now().toString());
             event.put("eventId", "security:" + alert + ":" + userId + ":" + System.currentTimeMillis());
-            kafkaTemplate.send(TOPIC, String.valueOf(userId), objectMapper.writeValueAsString(event));
-            log.info("보안 알림 발행: alert={}, userId={}", alert, userId);
+            send(userId, objectMapper.writeValueAsString(event), alert);
         } catch (Exception e) {
             log.error("보안 알림을 발행하지 못했습니다: alert={}, userId={} ({})", alert, userId, e.getMessage());
         }
@@ -217,6 +220,36 @@ public class SecurityAlertProducer {
     /** 자체 프로듀서 팩토리를 만들었으므로 직접 닫는다. 안 닫으면 종료 시 스레드가 남는다. */
     @PreDestroy
     public void close() {
-        factory.destroy();
+        if (factory != null) {
+            factory.destroy();
+        }
+    }
+
+    /**
+     * 트랜잭션 안이면 <b>커밋 뒤에</b> 보내고, 결과를 확인한다.
+     *
+     * <p>🐛 예전: {@code send} 만 하고 결과를 보지 않았다 — 브로커가 끊겨도 "발행" INFO 가 남고 메일은 나가지 않았다(아무도 몰랐다).
+     * 그리고 트랜잭션 안에서 바로 보내, {@code @Version} 충돌 등으로 롤백돼도 "2FA 꺼짐" 같은 알림은 이미 나갔다 — 일어나지 않은 일을 알렸다.
+     */
+    // [JA] トランザクション中ならコミット後に送り、結果を確かめる。以前は結果を見ず、ロールバックされても通知は既に出ていた。
+    private void send(Long userId, String payload, String what) {
+        Runnable task = () -> kafkaTemplate.send(TOPIC, String.valueOf(userId), payload).whenComplete((result, error) -> {
+            if (error != null) {
+                log.error("보안 알림을 발행하지 못했습니다: {} userId={} ({})", what, userId, error.getClass().getSimpleName());
+            } else {
+                log.info("보안 알림 발행: {} userId={}", what, userId);
+            }
+        });
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            task.run();
+                        }
+                    });
+        } else {
+            task.run();
+        }
     }
 }

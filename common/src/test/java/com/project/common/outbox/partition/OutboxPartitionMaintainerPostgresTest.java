@@ -138,8 +138,11 @@ class OutboxPartitionMaintainerPostgresTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("orders.payment_outbox_event_2027_02")
                 .hasMessageContaining("파티션이 아니다");
-        assertThat(partitions()).as("한 트랜잭션 — 실패하면 다른 달도 만들지 않는다")
-                .doesNotContain("payment_outbox_event_2027_03");
+        // 🐛 예전: 한 트랜잭션 전체가 롤백돼 2027-03 · 04 도 만들지 못했다 — 사람이 고칠 때까지 남은 달까지 DEFAULT 로 갔다.
+        assertThat(partitions()).as("충돌한 달만 건너뛰고 다른 달은 만든다")
+                .contains("payment_outbox_event_2027_03", "payment_outbox_event_2027_04");
+        insert("next-month", "2027-03-02 00:00:00");
+        assertThat(where("next-month")).isEqualTo("payment_outbox_event_2027_03");
         assertThat(m.monthsAheadNow("orders.payment_outbox_event")).as("성공으로 기록하지 않는다").isNaN();
 
         // 사람이 남은 테이블을 정리하면 다음 주기에 채운다

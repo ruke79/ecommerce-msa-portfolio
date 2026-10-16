@@ -156,7 +156,7 @@ public class PasskeyController {
         }
         User user = userRepository.findById(userId.get()).orElse(null);
         // 정지 · 탈퇴 계정은 패스키가 있어도 들어오지 못한다. 실패 사유는 구분하지 않는다.
-        if (user == null || !user.isEnabled() || !user.isAccountNonLocked()) {
+        if (user == null || !user.canSignIn()) {
             return failed();
         }
 

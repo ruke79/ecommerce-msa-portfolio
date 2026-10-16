@@ -32,20 +32,42 @@ import lombok.extern.slf4j.Slf4j;
 public class CustomerTierScheduler {
 
     private final CustomerTierService customerTierService;
+    private final SchedulerLease lease;
+
+    /** 임대 이름(V17 users.scheduler_lock). */
+    static final String LEASE = "customer-tier";
+
+    /**
+     * 임대 길이 — 한 회차가 이보다 오래 걸리면 다른 파드가 이어 돌 수 있다. 회차는 상한(MAX_CUSTOMERS_PER_RUN)이 있어 수 분이다.
+     * 파드가 도중에 죽어도 이 시간이 지나면 다음 회차(다음 날)가 막히지 않는다.
+     */
+    static final java.time.Duration LEASE_FOR = java.time.Duration.ofHours(2);
 
     /**
      * 켜고 끌 수 있게 둔다.
      *
-     * <p>인스턴스가 여러 개면 <b>여러 번 돈다.</b> 결과가 같은 연산이라(같은 입력 → 같은
-     * 등급) 망가지지는 않지만 order-service 를 그만큼 더 부른다. 지금은 단일 노드라
-     * 문제가 없고, 늘어나면 한 인스턴스에서만 켜면 된다.
+     * <p>🐛 예전 주석은 "인스턴스가 여러 개면 여러 번 돈다 — 결과가 같아 망가지지 않는다, 지금은 단일 노드라 괜찮다" 였다. 둘 다
+     * 틀렸다 — 노드가 아니라 <b>파드</b> 수가 문제이고(replicas 2, HPA min 2), 결과도 같지 않았다: 각 회차가 자기 시작 시각으로
+     * {@code tierComputedAt} 을 찍고 그보다 오래된 행을 강등하므로, 늦게 시작한 회차가 먼저 끝나면 앞 회차가 덮어쓴 VIP 를 BASIC 으로
+     * 내렸다. 이제 DB 임대(SchedulerLease)로 한 회차는 한 파드만 돌고, 옛 회차는 새 회차의 값을 덮지 못한다(UserRepository.updateTier).
      */
+    // [JA] 以前は「複数インスタンスなら複数回走るが結果は同じ」とあったが誤り — Pod 数が問題で、遅く始めた回が先に終わると
+    //      前の回が上書きした VIP を BASIC に下げた。今は DB リースで一つの Pod だけが走り、古い回は新しい回の値を上書きできない。
     @Value("${user.tier.scheduler-enabled:true}")
     private boolean enabled;
 
     @Scheduled(cron = "${user.tier.cron:0 10 19 * * *}", zone = "UTC")
     public void recalculate() {
         if (!enabled) {
+            return;
+        }
+        try {
+            if (!lease.tryAcquire(LEASE, LEASE_FOR)) {
+                log.info("등급 배치 — 다른 파드가 이 회차를 돌고 있다. 건너뛴다.");
+                return;
+            }
+        } catch (Exception e) {
+            log.error("등급 배치 임대를 잡지 못했다 — 이번 회차는 건너뛴다: {}", e.toString());
             return;
         }
         try {
@@ -56,6 +78,12 @@ public class CustomerTierScheduler {
         } catch (Exception e) {
             // 배치 하나가 던진 예외로 스케줄러 스레드가 죽으면 이후 회차가 전부 사라진다.
             log.error("등급 배치 실패: {}", e.toString());
+        } finally {
+            try {
+                lease.release(LEASE);
+            } catch (Exception e) {
+                log.warn("등급 배치 임대를 풀지 못했다 — {} 뒤에 저절로 풀린다: {}", LEASE_FOR, e.toString());
+            }
         }
     }
 }

@@ -49,5 +49,43 @@ class WishItemDuplicateTest {
 
         assertThat(status).isEqualTo(OperationStatus.OS_ALREADY_EXISTED);
         verify(wishes, never()).save(any());
+        verify(wishes, never()).saveAndFlush(any());
+    }
+
+    private static WishListRequest req(String id, String style) {
+        WishListRequest r = new WishListRequest();
+        r.setId(id);
+        r.setStyle(style);
+        return r;
+    }
+
+    /** 🐛 예전: "확인 후 삽입" 뿐이라 동시에 온 두 요청이 모두 저장됐다. 이제 DB 유니크(V18)가 막고, 그것을 "이미 있음" 으로 읽는다. */
+    @Test
+    @DisplayName("🔴 동시에 온 두 번째 찜(유니크 위반)은 OS_ALREADY_EXISTED — 500 이 아니다")
+    void uniqueViolationMeansAlreadyThere() {
+        UserRepository users = mock(UserRepository.class);
+        WishiItemRepository wishes = mock(WishiItemRepository.class);
+        CatalogServiceClient catalog = mock(CatalogServiceClient.class);
+        when(users.findByUsername("alice")).thenReturn(Optional.of(new User("alice", "a@example.com", "x")));
+        when(catalog.getProductInfo("7")).thenReturn(ResponseEntity.ok(mock(ProductDto.class)));
+        when(wishes.saveAndFlush(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_wishlist_user_product_style"));
+
+        assertThat(new WishItemService(users, wishes, catalog).addWishList("alice", req("7", "0")))
+                .isEqualTo(OperationStatus.OS_ALREADY_EXISTED);
+    }
+
+    @Test
+    @DisplayName("🔴 style 이 NULL 인 옛 찜이 있어도 NPE 가 나지 않는다")
+    void nullStyleRowDoesNotBreak() {
+        UserRepository users = mock(UserRepository.class);
+        WishiItemRepository wishes = mock(WishiItemRepository.class);
+        CatalogServiceClient catalog = mock(CatalogServiceClient.class);
+        User user = new User("alice", "a@example.com", "x");
+        user.getWishLists().add(new WishItem(null, 7L));
+        when(users.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(catalog.getProductInfo("7")).thenReturn(ResponseEntity.ok(mock(ProductDto.class)));
+
+        assertThat(new WishItemService(users, wishes, catalog).addWishList("alice", req("7", "0")))
+                .isEqualTo(OperationStatus.OS_SUCCESS);
     }
 }

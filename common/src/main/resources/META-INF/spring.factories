@@ -1,0 +1,2 @@
+# JVM 기본 스토어 비밀번호를 환경 변수에서 옮긴다 — 설정 서버 · Eureka 의 첫 TLS 연결보다 먼저(JvmSslPasswords, B-83)
+org.springframework.boot.SpringApplicationRunListener=com.project.common.config.JvmSslPasswords$RunListener

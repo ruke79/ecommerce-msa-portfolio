@@ -33,4 +33,37 @@ class AvroDtoDeserializerTest {
         }
         verify(mapping, times(1)).decoder();
     }
+
+    /** 디코더 하나를 소비자 스레드 여럿이 같이 쓴다 — BinaryMessageDecoder 의 버퍼는 ThreadLocal, 캐시는 ConcurrentHashMap 이라 안전하다. */
+    @Test
+    @DisplayName("디코더 하나를 8 스레드가 동시에 써도 레코드가 섞이지 않는다")
+    void sharedDecoderIsThreadSafe() throws Exception {
+        java.util.List<byte[]> wires = new java.util.ArrayList<>();
+        try (AvroDtoSerializer<CartRollbackRequest> serializer = new AvroDtoSerializer<>(new CartRollbackRequestAvroMapping())) {
+            for (int i = 0; i < 64; i++) {
+                wires.add(serializer.serialize("cart-rollback", new CartRollbackRequest((long) i, i % 5)));
+            }
+        }
+        try (AvroDtoDeserializer<CartRollbackRequest> deserializer = new AvroDtoDeserializer<>(new CartRollbackRequestAvroMapping())) {
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+            java.util.List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+            for (int t = 0; t < 8; t++) {
+                results.add(pool.submit(() -> {
+                    for (int round = 0; round < 50; round++) {
+                        for (int i = 0; i < wires.size(); i++) {
+                            CartRollbackRequest r = deserializer.deserialize("cart-rollback", wires.get(i));
+                            if (r.getUserId() != i || r.getQty() != i % 5) {
+                                return false;
+                            }
+                        }
+                    }
+                    return true;
+                }));
+            }
+            for (var f : results) {
+                assertThat(f.get()).isTrue();
+            }
+            pool.shutdown();
+        }
+    }
 }

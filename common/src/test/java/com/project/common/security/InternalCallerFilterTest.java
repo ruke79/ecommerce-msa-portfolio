@@ -302,4 +302,52 @@ class InternalCallerFilterTest {
                 () -> cfg.build("enforce", dir.resolve("missing.crt").toString(), "", "/internal/", "", "enforce"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("enforce");
     }
+
+    // ── 기록(로그) ──────────────────────────────────────────────────────────
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> capture() {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(InternalCallerFilter.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void release(ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(InternalCallerFilter.class)).detachAppender(appender);
+    }
+
+    /** 🐛 예전: 호출자 기록과 신원 경고가 칸(상한 1000) 하나를 같이 써서, 경로가 많으면 칸이 찬 뒤 신원 경고가 조용히 사라졌다. */
+    @Test
+    @DisplayName("🔴 호출자 기록이 칸을 다 채워도 신원 경고는 남는다 — 칸이 따로다")
+    void identityWarningsHaveTheirOwnBudget() throws Exception {
+        InternalCallerFilter f = new InternalCallerFilter(InternalCallerFilter.Mode.OBSERVE, ca, Set.of(), List.of("/internal/"), List.of(),
+                InternalCallerFilter.Mode.OBSERVE, InternalCallerFilter.Mode.OBSERVE, Set.of("gateway-server"));
+        for (int i = 0; i < 1100; i++) {
+            f.noteCaller("order-service", "/api/path-" + i + "/x");
+        }
+        var logs = capture();
+        try {
+            pass(f, withIdentity(internalPath(), "7", "ROLE_ADMIN", null));
+            assertThat(logs.list).anyMatch(e -> e.getFormattedMessage().contains("[mTLS identity]"));
+        } finally {
+            release(logs);
+        }
+    }
+
+    /** 🐛 예전: 게이트웨이 인증서로 온 헤더 없는 요청도 "내부 인증서 없이 온 요청" 으로 적어, 라우트 설정 문제와 구분할 수 없었다. */
+    @Test
+    @DisplayName("🔴 게이트웨이 인증서로 온 헤더 없는 내부 경로 요청은 '게이트웨이가 넘긴 요청' 으로 적는다 — '인증서 없이' 가 아니다")
+    void gatewayRequestIsNotReportedAsCertless() throws Exception {
+        InternalCallerFilter f = new InternalCallerFilter(InternalCallerFilter.Mode.OBSERVE, ca, Set.of(), List.of("/internal/"), List.of(),
+                InternalCallerFilter.Mode.OBSERVE, InternalCallerFilter.Mode.OBSERVE, Set.of("order-service"));
+        var logs = capture();
+        try {
+            pass(f, internalPath(service));   // service 인증서의 CN(order-service)을 게이트웨이로 둔다
+            assertThat(logs.list).anyMatch(e -> e.getFormattedMessage().contains("게이트웨이(order-service)"))
+                    .noneMatch(e -> e.getFormattedMessage().contains("내부 인증서 없이"));
+        } finally {
+            release(logs);
+        }
+    }
 }

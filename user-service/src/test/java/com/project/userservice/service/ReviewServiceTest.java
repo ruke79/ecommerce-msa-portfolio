@@ -48,6 +48,34 @@ class ReviewServiceTest {
     private ReviewLikeService reviewLikeService;
     private com.project.userservice.client.OrderServiceClient orderServiceClient;
     private ReviewService service;
+    private RecordingTxManager txManager;
+
+    /** 트랜잭션이 열려 있는지 기록하는 가짜 — 외부 호출이 그 밖에서 일어나는지 본다. */
+    static final class RecordingTxManager extends org.springframework.transaction.support.AbstractPlatformTransactionManager {
+        boolean active;
+        int commits;
+
+        @Override
+        protected Object doGetTransaction() {
+            return new Object();
+        }
+
+        @Override
+        protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
+            active = true;
+        }
+
+        @Override
+        protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
+            active = false;
+            commits++;
+        }
+
+        @Override
+        protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus status) {
+            active = false;
+        }
+    }
 
     private User me;
     private User someoneElse;
@@ -69,8 +97,10 @@ class ReviewServiceTest {
         someoneElse = user(2L, "other");
         when(userRepository.findByUsername("me")).thenReturn(Optional.of(me));
 
+        txManager = new RecordingTxManager();
         service = new ReviewService(userRepository, reviewRepository, imageService,
-                catalogServiceClient, reviewLikeService, orderServiceClient);
+                catalogServiceClient, reviewLikeService, orderServiceClient,
+                new org.springframework.transaction.support.TransactionTemplate(txManager));
     }
 
     private static User user(Long id, String username) {
@@ -313,5 +343,49 @@ class ReviewServiceTest {
         when(orderServiceClient.purchased(anyLong(), anyLong())).thenThrow(new RuntimeException("down"));
 
         assertThatCode(() -> service.addReview("me", PRODUCT_ID, request(4), null)).doesNotThrowAnyException();
+    }
+
+    /**
+     * 🐛 예전: 클래스 전체가 @Transactional 이라 구매 확인(order) · 업로드(S3) · 평점(catalog)이 모두 DB 커넥션을 쥔 채 돌았다 — 풀 5개라
+     * S3 가 느리면 로그인까지 모든 DB 요청이 멈췄다. 평점은 커밋 전에 나갔다.
+     */
+    @Test
+    @DisplayName("🔴 구매 확인 · 이미지 업로드 · 평점 반영은 트랜잭션 밖 — 평점은 커밋 뒤")
+    void externalCallsHappenOutsideTheTransaction() throws Exception {
+        givenExistingReviews(reviewBy(100L, someoneElse, 4F));
+        List<String> seen = new ArrayList<>();
+        when(orderServiceClient.purchased(anyLong(), anyLong())).thenAnswer(inv -> {
+            seen.add("purchased tx=" + txManager.active);
+            return java.util.Map.of("purchased", true);
+        });
+        when(imageService.upload(any(), any())).thenAnswer(inv -> {
+            seen.add("upload tx=" + txManager.active);
+            return "https://cdn/x.png";
+        });
+        org.mockito.Mockito.doAnswer(inv -> {
+            seen.add("rating tx=" + txManager.active + " commits=" + txManager.commits);
+            return null;
+        }).when(catalogServiceClient).updateRating(anyLong(), org.mockito.ArgumentMatchers.anyFloat());
+
+        org.springframework.mock.web.MockMultipartFile png = new org.springframework.mock.web.MockMultipartFile(
+                "images", "a.png", "image/png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10});
+        service.addReview("me", PRODUCT_ID, request(5F), List.of(png));
+
+        assertThat(seen).containsExactly("purchased tx=false", "upload tx=false", "rating tx=false commits=2");
+    }
+
+    /** 🐛 예전: 키가 난수 하나뿐(images/ 접두사 · 확장자 없음) — 공개 읽기 정책 밖이라 화면에서 403(깨진 이미지)이었다. */
+    @Test
+    @DisplayName("🔴 리뷰 이미지 키는 images/review/… + 확장자 — 버킷의 공개 읽기 정책(images/*) 안")
+    void reviewImageKeyIsPublic() throws Exception {
+        givenExistingReviews();
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        when(imageService.upload(any(), key.capture())).thenReturn("https://cdn/x.png");
+
+        org.springframework.mock.web.MockMultipartFile jpg = new org.springframework.mock.web.MockMultipartFile(
+                "images", "photo.JPG", "image/jpeg", new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0});
+        service.addReview("me", PRODUCT_ID, request(5F), List.of(jpg));
+
+        assertThat(key.getValue()).matches("images/review/[0-9a-f]{32}\\.jpg");
     }
 }

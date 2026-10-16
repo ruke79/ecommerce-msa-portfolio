@@ -38,10 +38,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u JOIN FETCH u.role WHERE u.email = :email")
     Optional<User> findByEmailWithRoles(@Param("email") String email);
 
+    /** 관리자 회원 목록 — 역할을 함께(사용자마다 따로 읽지 않는다). */
+    @Query("SELECT u FROM User u LEFT JOIN FETCH u.role")
+    List<User> findAllWithRole();
+
     void delete(User user);
 
-    @Query(value = "SELECT a FROM User u LEFT JOIN ShippingAddress a  WHERE u.userId = :userId")
-    List<ShippingAddress> findAddressesByUserUserId(@Param("userId") Long userId);
+    // 🐛 지웠다: findAddressesByUserUserId — ON 조건 없는 엔티티 조인이라 모든 사용자의 주소를 돌려줄 수 있는 모양이었다(쓰는 곳 없음).
+    //    배송지는 ShippingAddressRepository 의 소유자 조건 쿼리로만 읽는다.
 
     @Transactional
     @Modifying
@@ -72,12 +76,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
      *
      * <p>{@code tierComputedAt} 을 <b>반드시</b> 같이 찍는다. 이 시각이 강등 대상을 고르는
      * 유일한 근거다({@link #demoteStale}).
+     *
+     * <p>🔴 <b>더 새 회차가 찍은 행은 덮지 않는다</b>({@code tierComputedAt <= :computedAt}). 두 회차가 겹치면(임대가 만료된 뒤
+     * 늦게 끝난 회차 등) 옛 회차가 새 회차의 등급 · 시각을 옛 값으로 되돌리고, 새 회차의 강등이 그 행을 "손대지 않은 행" 으로 읽어
+     * BASIC 으로 내렸다. 0 을 돌려주는 것은 정상이다 — 새 회차가 이미 매겼다.
      */
+    // [JA] より新しい回が付けた行は上書きしない。古い回が新しい回の値を戻し、新しい回の降格がそれを BASIC に下げていた。
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update User u set u.tier = :tier, u.lifetimeOrderCount = :lifetimeOrderCount, "
             + "u.recentPaidAmount = :recentPaidAmount, u.tierComputedAt = :computedAt "
-            + "where u.userId = :userId")
+            + "where u.userId = :userId and (u.tierComputedAt is null or u.tierComputedAt <= :computedAt)")
     int updateTier(@Param("userId") Long userId,
                    @Param("tier") com.project.common.constants.event.CustomerTier tier,
                    @Param("lifetimeOrderCount") long lifetimeOrderCount,

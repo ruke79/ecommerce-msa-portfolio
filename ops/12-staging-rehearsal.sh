@@ -189,7 +189,8 @@ chmod +x "$RUN/bin/kafka-topics.sh"
 
 # 서비스 JVM 공통 옵션. JVM 기본 트러스트스토어를 우리 CA 트러스트스토어로 바꾼다 —
 # 서비스 간 호출(Eureka 등록, Feign)이 서로의 인증서를 신뢰하게 하는 가장 단순한 방법.
-JTO="-Xms64m -Xmx$HEAP -Djavax.net.ssl.trustStore=$CERTS/truststore.p12 -Djavax.net.ssl.trustStorePassword=$STORE_PW -Djavax.net.ssl.trustStoreType=PKCS12"
+# 비밀번호는 JAVA_TOOL_OPTIONS 에 넣지 않는다 — JVM 이 기동마다 그 변수를 통째로 stderr 에 찍는다. 앱이 JAVAX_NET_SSL_TRUST_STORE_PASSWORD 를 옮긴다(B-83).
+JTO="-Xms64m -Xmx$HEAP -Djavax.net.ssl.trustStore=$CERTS/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12"
 
 boot() {
     local module="$1" name="$1"; shift
@@ -197,7 +198,7 @@ boot() {
     jar=$(ls "$ROOT/$module"/build/libs/*.jar 2>/dev/null | grep -v plain | head -1)
     [ -n "$jar" ] || die "$module bootJar 이 없습니다 — ./gradlew bootJar 먼저"
     (
-        export JAVA_TOOL_OPTIONS="$JTO"
+        export JAVA_TOOL_OPTIONS="$JTO" JAVAX_NET_SSL_TRUST_STORE_PASSWORD="$STORE_PW"
         export LOCAL_DB_PASSWORD="$PW" JWT_SECRET_KEY="$JWT"
         export EUREKA_CLIENT_SERVICEURL_DEFAULTZONE="https://localhost:8761/eureka"
         # 인증서 SAN 이 커버하는 이름으로 등록해야 한다. yml 기본(prefer-ip-address: true)대로면

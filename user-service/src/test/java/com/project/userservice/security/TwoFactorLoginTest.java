@@ -185,4 +185,29 @@ class TwoFactorLoginTest {
         assertThat(response.getCookie("REFRESH")).isNotNull();
         assertThat(response.getCookie(PendingTwoFactor.COOKIE)).isNull();
     }
+
+    /** 🐛 예전: 다중 로그인 알림 행(users.notification)과 Redis 메시지에 실제 이메일을 실었다 — 탈퇴해도 지워지지 않았다(§6). */
+    @Test
+    @DisplayName("🔴 다중 로그인으로 이전 세션을 끊는 알림에는 userId 만 — 이메일이 아니다")
+    void multiLoginNotificationCarriesUserIdNotEmail() throws Exception {
+        JwtUtils jwtUtils = mock(JwtUtils.class);
+        when(jwtUtils.generateToken(anyLong(), anyString(), anyString(), anyBoolean())).thenReturn("access-token");
+        when(jwtUtils.createCookie(anyString(), anyString(), any(java.time.Duration.class)))
+                .thenAnswer(inv -> new Cookie(inv.getArgument(0), inv.getArgument(1)));
+        RefreshTokenService refresh = mock(RefreshTokenService.class);
+        var rt = mock(com.project.userservice.model.redis.RefreshToken.class);
+        when(rt.getToken()).thenReturn("refresh-token");
+        when(refresh.createRefreshToken(42L)).thenReturn(rt);
+        RedisSessionManager sessions = mock(RedisSessionManager.class);
+        when(sessions.getSession("kim@example.com")).thenReturn("old-session");
+        NotificationService notifications = mock(NotificationService.class);
+
+        new AuthLoginFilter(mock(AuthenticationManager.class), jwtUtils, refresh, notifications,
+                mock(DeviceRecognitionService.class), mock(SecurityAlertProducer.class), sessions, pending,
+                mock(com.project.userservice.security.risk.LoginRiskGuard.class), mock(com.project.userservice.service.EmailService.class))
+                .successfulAuthentication(new MockHttpServletRequest(), new MockHttpServletResponse(), null, auth(false));
+
+        verify(notifications).sendNotification("42", "old-session", "Logout");
+        verify(notifications, never()).sendNotification(org.mockito.ArgumentMatchers.eq("kim@example.com"), anyString(), anyString());
+    }
 }

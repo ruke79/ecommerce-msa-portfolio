@@ -57,7 +57,7 @@ public class UserDetailsImpl implements UserDetails {
     public static UserDetailsImpl build(User user) {
         GrantedAuthority authority = new SimpleGrantedAuthority(user.getRole().getRoleName().name());
 
-        return new UserDetailsImpl(
+        UserDetailsImpl details = new UserDetailsImpl(
                 user.getUserId(),
                 user.getUsername(),
                 user.getEmail(),
@@ -66,6 +66,10 @@ public class UserDetailsImpl implements UserDetails {
                 user.isEnabled(),
                 List.of(authority) // Wrapping the single authority in a list
         );
+        details.accountNonLocked = user.isAccountNonLocked();
+        details.accountNonExpired = user.isAccountNonExpired();
+        details.credentialsNonExpired = user.isCredentialsNonExpired();
+        return details;
     }
 
 
@@ -93,30 +97,35 @@ public class UserDetailsImpl implements UserDetails {
     }
 
     /**
-     * ⚠️ 아래 셋은 <b>의도적으로</b> 항상 참이다. 엔티티에 같은 이름의 필드가 있지만 이 저장소에서
-     * 계정 상태를 결정하는 것은 그 필드들이 아니다:
-     * <ul>
-     *   <li>잠금은 {@code lockExpiresAt} 하나가 판정하고 {@code LoginAttemptService} 가 강제한다
-     *       ({@code User} 필드 주석 참조). {@code accountNonLocked} 는 아무도 false 로 만들지 않는다.</li>
-     *   <li>만료는 {@code accountExpiryDate}/{@code credentialsExpiryDate} 날짜 컬럼이 있지만
-     *       그 날짜를 검사하는 코드가 없다. 불리언만 강제하면 "만료됐는데 통과"가 되어 오히려
-     *       지켜지는 것처럼 보인다.</li>
-     * </ul>
-     * 셋 중 하나라도 실제 게이트로 쓰려면 그 판정 로직을 먼저 만들어야 한다.
+     * 관리자가 정하는 계정 상태 셋 — 잠금 · 계정 만료 · 자격 만료({@code User} 의 같은 이름 필드, AdminController).
+     *
+     * <p>🐛 예전에는 셋 다 {@code true} 를 하드코딩했다("아무도 false 로 만들지 않는다"는 주석과 달리 관리자 화면이 만든다).
+     * 그래서 관리자가 잠가도 비밀번호 로그인은 통과했고 — 리프레시만 막혀 로그인할 때마다 15분짜리 액세스를 다시 받았다.
+     * 이제 엔티티의 값이고 {@code CustomAuthenticationProvider} 가 비밀번호가 맞은 뒤 검사한다.
+     *
+     * <p>로그인 5회 실패의 자동 잠금은 여기가 아니다 — {@code lockExpiresAt} 이 판정하고 {@code LoginAttemptService} 가 강제한다
+     * (그것을 여기에 섞으면 남이 비밀번호를 틀려 내 갱신까지 끊게 된다). 만료 날짜 열({@code accountExpiryDate} 등)은 아직
+     * 판정에 쓰지 않는다 — 불리언만 본다.
      */
+    // [JA] 管理者が決めるアカウント状態の三つ。以前は true 固定で、管理者がロックしてもパスワードログインは通った。
+    //      今はエンティティの値で、CustomAuthenticationProvider がパスワード一致の後に検査する。自動ロック(5 回失敗)は別。
+    private boolean accountNonLocked = true;
+    private boolean accountNonExpired = true;
+    private boolean credentialsNonExpired = true;
+
     @Override
     public boolean isAccountNonExpired() {
-        return true;
+        return accountNonExpired;
     }
 
     @Override
     public boolean isAccountNonLocked() {
-        return true;
+        return accountNonLocked;
     }
 
     @Override
     public boolean isCredentialsNonExpired() {
-        return true;
+        return credentialsNonExpired;
     }
 
     /** 메일 인증 게이트. 하드코딩이 아니라 <b>엔티티의 값</b>이다 — 위 {@link #enabled} 주석 참조. */

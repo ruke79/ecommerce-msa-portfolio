@@ -23,9 +23,15 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Review> findById(Long id);
     
-    // --- 낙관적 잠금 적용 ---
-    //@Lock(LockModeType.OPTIMISTIC)
-    List<Review> findByProductId(Long productId);
+    /**
+     * 한 상품의 리뷰 — 작성자 · 스타일을 함께 읽는다.
+     *
+     * <p>🐛 예전: 파생 쿼리라 리뷰를 읽은 뒤 리뷰마다 LAZY 인 {@code style}(OneToOne)과 {@code reviewedBy} 를 따로 불렀다 — 리뷰 300건짜리
+     * 상품 상세 한 번에 쿼리 약 600개. 등록 · 삭제의 "내 리뷰 찾기" 도 작성자 프록시를 전부 깨웠다.
+     */
+    // [JA] 一商品のレビュー — 作成者 · スタイルを一緒に読む。以前はレビューごとに LAZY を別々に読んでいた(300 件で約 600 クエリ)。
+    @Query("select r from Review r join fetch r.reviewedBy join fetch r.style where r.productId = :productId")
+    List<Review> findByProductId(@Param("productId") Long productId);
 
     @Modifying
     @Query("delete from Review where reviewId = :id")

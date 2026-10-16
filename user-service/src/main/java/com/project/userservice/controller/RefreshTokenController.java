@@ -155,8 +155,7 @@ public class RefreshTokenController {
         //    최대 30일 동안 계속 갱신했다. 막을 때 묶음도 끊지만(UserServiceImpl.endSessions) 여기가 마지막 방어선이다.
         //    로그인 5회 실패의 자동 잠금(lockExpiresAt)은 보지 않는다 — 공격자가 비밀번호를 틀려 남의 로그인을 끊게 된다.
         // [JA] 停止 · ロック · 期限切れのアカウントは更新しない。自動ロック(lockExpiresAt)は見ない — 攻撃者が他人のログインを切れてしまう。
-        if (!tokenOwner.isEnabled() || !tokenOwner.isAccountNonLocked()
-                || !tokenOwner.isAccountNonExpired() || !tokenOwner.isCredentialsNonExpired()) {
+        if (!tokenOwner.canSignIn()) {
             log.info("막힌 계정의 리프레시 토큰을 거절한다: userId={}", tokenOwner.getUserId());
             refreshTokenService.revoke(refresh);
             expireRefreshCookie(response);

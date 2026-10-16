@@ -205,6 +205,7 @@ public class OutboxPartitionMaintainer {
 
                 YearMonth now = YearMonth.from(LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
                 List<String> created = new ArrayList<>();
+                List<String> conflicts = new ArrayList<>();
                 for (int i = 0; i <= monthsAhead; i++) {
                     YearMonth m = now.plusMonths(i);
                     String part = partitionName(name, m);
@@ -217,9 +218,14 @@ public class OutboxPartitionMaintainer {
                             // [JA] 名前だけ同じ別のもの(DETACH されたまま残ったテーブル・同名のインデックスなど)がある。以前はこれを
                             //      「その月がある」と見なして飛ばし、その月の行がすべて黙って DEFAULT に入るのに指標は満たされていると
                             //      報告していた。中身が分からないので付けも消しもせずに止まる — 人が決める。
-                            throw new IllegalStateException("아웃박스 파티션 이름 " + schema + "." + part
-                                    + " 이 이미 쓰이고 있지만 " + table + " 의 파티션이 아니다(DETACH 된 테이블?)"
-                                    + " — 확인해서 ATTACH 하거나 이름을 바꾼다/지운다. docs/09 §4.6");
+                            //
+                            // 🐛 예전에는 여기서 바로 던져 트랜잭션 전체가 롤백됐다 — 이 달 하나 때문에 <b>뒤의 달도</b> 만들지 못해,
+                            //    사람이 고칠 때까지 남은 달까지 차례로 DEFAULT 로 갔다. 이제 이 달만 건너뛰고 나머지를 만든 뒤
+                            //    커밋하고, 그다음에 실패로 알린다(성공으로 기록하지 않는다 — 경보는 그대로).
+                            // [JA] 以前はここで即座に投げてトランザクション全体がロールバックされ、後ろの月も作れなかった。
+                            //      今はこの月だけ飛ばして残りを作り、コミットしてから失敗として知らせる。
+                            conflicts.add(schema + "." + part);
+                            continue;
                         }
                         createPartition(c, schema, name, part, m, defaultPartition, columns);
                         created.add(schema + "." + part);
@@ -231,6 +237,11 @@ public class OutboxPartitionMaintainer {
                 }
                 long defaultRows = defaultPartition == null ? 0 : count(c, schema, defaultPartition);
                 c.commit();
+                if (!conflicts.isEmpty()) {
+                    throw new IllegalStateException("아웃박스 파티션 이름 " + String.join(", ", conflicts)
+                            + " 이 이미 쓰이고 있지만 " + table + " 의 파티션이 아니다(DETACH 된 테이블?)"
+                            + " — 확인해서 ATTACH 하거나 이름을 바꾼다/지운다. 다른 달은 만들었다(" + created + "). docs/09 §4.6");
+                }
                 return new Status(covered - 1, now.plusMonths(covered - 1), defaultRows, created);
             } catch (SQLException | RuntimeException e) {
                 c.rollback();
@@ -345,9 +356,18 @@ public class OutboxPartitionMaintainer {
      * ロック待ちは順番どおりなので<b>その後に来る DEFAULT 行の INSERT まで一緒に止まる</b>。取れなければすぐ失敗してロールバックし
      * (エラー 55P03)、{@link #runOnce} が受けて次の周期にやり直す。advisory lock を取った<b>後</b>に掛ける。
      */
+    /**
+     * 🐛 문장 시간 상한도 둔다 — ATTACH 는 DEFAULT 파티션을 훑는 동안 그 파티션을 잠근다(그 사이 DEFAULT 로 가는 삽입이 기다린다).
+     * DEFAULT 에 행이 많이 쌓였으면 그 시간이 길어졌다 — lock_timeout 은 잠금을 <b>얻는</b> 시간만 묶는다. 넘으면 이번 주기는 실패하고
+     * 다음 주기에 다시 한다(경보가 알린다).
+     */
+    // [JA] 文の時間上限も置く — ATTACH は DEFAULT を走査する間ロックする。lock_timeout はロックを得る時間しか縛らない。
+    static final String STATEMENT_TIMEOUT = "30s";
+
     private static void limitLockWait(Connection c) throws SQLException {
         try (Statement st = c.createStatement()) {
             st.execute("SET LOCAL lock_timeout = '" + LOCK_TIMEOUT + "'");
+            st.execute("SET LOCAL statement_timeout = '" + STATEMENT_TIMEOUT + "'");
         }
     }
 

@@ -19,4 +19,10 @@ public interface PasskeyCredentialRepository extends JpaRepository<PasskeyCreden
     long countByUserId(Long userId);
 
     Optional<PasskeyCredential> findByPasskeyIdAndUserId(Long passkeyId, Long userId);
+
+    /** 회원 탈퇴 최종 처리(WithdrawalService) — 그 사용자의 행을 모두 지운다. */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("delete from PasskeyCredential x where x.userId = :userId")
+    int deleteByUserId(@org.springframework.data.repository.query.Param("userId") Long userId);
 }

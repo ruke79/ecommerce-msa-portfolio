@@ -44,6 +44,7 @@ const OAUTH_ERROR_KEYS = {
     email_required: "user.signin.oauth_email_required",
     unverified_email: "user.signin.oauth_unverified_email",
     access_denied: "user.signin.oauth_cancelled",
+    account_restricted: "user.signin.account_restricted",   // OAuth2SuccessHandler — 관리자가 잠그거나 만료한 계정
 };
 
 const SignInPage = () => {

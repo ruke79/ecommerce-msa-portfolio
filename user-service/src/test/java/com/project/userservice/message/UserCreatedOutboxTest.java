@@ -135,6 +135,23 @@ class UserCreatedOutboxTest {
     }
 
     /**
+     * 🐛 운영 기본값(require-email-verification=false)은 가입 즉시 enabled 다. 예전에는 그 계정이 링크를 눌러도 emailVerified 를
+     * 켜지 않아, 나중에 같은 주소의 소셜 로그인이 비밀번호를 "확인된 적 없음" 으로 지웠다(SocialAccountLinker).
+     */
+    @Test
+    @DisplayName("🔴 이미 활성인 계정도 링크를 누르면 emailVerified — 토큰은 남겨 두 번째 클릭도 성공")
+    void enabledAccountGetsVerifiedByTheLink() {
+        user.setEnabled(true);
+
+        var first = userService.validateAndGetUser("raw-token");
+        var second = userService.validateAndGetUser("raw-token");
+
+        assertThat(user.isEmailVerified()).isTrue();
+        assertThat(first.getStatus()).isEqualTo(UserServiceImpl.TOKEN_VALID).isEqualTo(second.getStatus());
+        verify(tokenRepository, never()).delete(any());
+    }
+
+    /**
      * 🔴 {@code MANDATORY} 여야 한다.
      *
      * <p>{@code REQUIRED} 면 트랜잭션 없이 불렸을 때 <b>조용히 새 트랜잭션을 열어</b>

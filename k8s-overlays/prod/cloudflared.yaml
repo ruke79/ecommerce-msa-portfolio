@@ -71,8 +71,11 @@ data:
       # CORS 설정이 필요 없고, 무료 Universal SSL 의 서브도메인 한 단계 제약도 안 걸린다.
       # 그래서 REACT_APP_API_URL 은 그냥 `https://<도메인>` 이다(docs/33 §6).
       #
-      # path 는 정규식이다. 게이트웨이의 Path 술어와 같은 접두사를 쓴다.
-      - path: ^/(user|catalog|cart|order|pay|coupon|chat|notification|delivery)-service(/|$)
+      # path 는 정규식이다. 게이트웨이의 Path 술어와 같은 접두사를 쓴다 — 게이트웨이에 접두사를 더하면 여기도(B-82 가 대조한다).
+      # 🐛 saga-projection(주문 진행 타임라인, docs/76)이 빠져 있었다 — /saga-projection/... 이 traefik → 프론트 nginx 로 가
+      #    index.html 200 을 받았다(try_files). 게이트웨이까지 오지도 않아 서버 로그에도 없었다.
+      # [JA] ゲートウェイの Path 述語と同じ接頭辞。saga-projection が抜けていて、タイムラインが index.html を受け取っていた(B-82)。
+      - path: ^/((user|catalog|cart|order|pay|coupon|chat|notification|delivery)-service|saga-projection)(/|$)
         service: https://gateway-server.ecommerce.svc.cluster.local:8000
         originRequest:
           # 게이트웨이 인증서는 ops/07 이 만든 자체 서명이다. 이 구간은 클러스터

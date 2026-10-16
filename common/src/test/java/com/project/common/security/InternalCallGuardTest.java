@@ -91,4 +91,17 @@ class InternalCallGuardTest {
         assertThat(InternalCallGuard.isAdmin("NOT_ADMIN")).isFalse();
         assertThat(InternalCallGuard.isAdmin("ADMINX")).isFalse();
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("🔴 기본 로캘이 터키어여도 admin 을 관리자로 본다 — toUpperCase() 는 'ADMİN'(점 있는 İ)이 된다")
+    void adminIsRecognisedUnderTurkishLocale() {
+        java.util.Locale before = java.util.Locale.getDefault();
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"));
+            assertThat(InternalCallGuard.isAdmin("admin")).isTrue();
+            assertThat(InternalCallGuard.isAdmin("role_admin")).isTrue();
+        } finally {
+            java.util.Locale.setDefault(before);
+        }
+    }
 }

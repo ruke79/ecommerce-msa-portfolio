@@ -270,7 +270,8 @@ for m in $SERVICES; do
     # 매니페스트의 JAVA_TOOL_OPTIONS(트러스트스토어)가 이미지 ENV 의 힙 상한을 덮어쓴다.
     # 단일 노드에서 9개 JVM 이 공존하려면 둘 다 필요하므로 이어붙인다.
     K -n ecommerce set env deploy/"$m" \
-      JAVA_TOOL_OPTIONS="-Xms48m -Xmx280m -Djavax.net.ssl.trustStore=/app/resources/truststore.p12 -Djavax.net.ssl.trustStorePassword=$STORE_PW -Djavax.net.ssl.trustStoreType=PKCS12" >/dev/null 2>&1
+      JAVA_TOOL_OPTIONS="-Xms48m -Xmx280m -Djavax.net.ssl.trustStore=/app/resources/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12" \
+      JAVAX_NET_SSL_TRUST_STORE_PASSWORD="$STORE_PW" >/dev/null 2>&1   # 비밀번호는 JAVA_TOOL_OPTIONS 밖 — JVM 이 그 변수를 로그에 찍는다(B-83)
 done
 
 # 게이트웨이/유레카를 NodePort 로 노출 (docker run 의 -p 와 맞물린다)

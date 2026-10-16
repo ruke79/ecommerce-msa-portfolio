@@ -239,7 +239,8 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
             // 세션 id 는 INFO 로 남기지 않는다 — 계정당 한 줄씩 쌓이는 식별자다.
             log.debug("이전 세션 종료 요청: userId={}", userDetails.getId());
 
-            notificationService.sendNotification(userDetails.getEmail(), previousSessionId, "Logout");
+            // 알림 행 · Redis 메시지에는 userId 만 — 🐛 예전에는 이메일을 실어 users.notification 에 남았고 탈퇴해도 지워지지 않았다(§6).
+            notificationService.sendNotification(String.valueOf(userDetails.getId()), previousSessionId, "Logout");
 
             message = "User attempted to log in multiply, logging out from previous logged in state";
             code = MULTI_LOGIN_CODE;
@@ -315,7 +316,7 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
             if (deviceRecognitionService.isKnown(userDetails.getId(), DeviceIdentity.tokenFrom(request))) {
                 return false;   // 아는 기기 — 목록으로 들어온 공격자는 이 쿠키를 갖고 있지 않다
             }
-            signals = loginRiskGuard.signals(userDetails.getEmail(), DeviceIdentity.clientIp(request));
+            signals = loginRiskGuard.signals(userDetails.getEmail(), DeviceIdentity.trustedClientIp(request));
             if (!com.project.userservice.security.risk.LoginRiskGuard.needsChallenge(false, signals)) {
                 return false;
             }
@@ -426,6 +427,11 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
             return new Failure(HttpStatus.UNAUTHORIZED.value(), failed.getMessage(),
                     EMAIL_NOT_VERIFIED_CODE);
         }
+        if (failed instanceof org.springframework.security.authentication.AccountExpiredException
+                || failed instanceof org.springframework.security.authentication.CredentialsExpiredException) {
+            // 관리자가 만료한 계정 — 이것도 비밀번호가 맞은 뒤에만 나온다(CustomAuthenticationProvider).
+            return new Failure(HttpStatus.UNAUTHORIZED.value(), failed.getMessage(), null);
+        }
         if (failed instanceof org.springframework.security.authentication.AuthenticationServiceException) {
             // 인증 절차 자체가 실패했다(DB·Redis 등). 사용자의 자격 증명 문제가 아니다.
             return new Failure(HttpStatus.SERVICE_UNAVAILABLE.value(),
@@ -470,7 +476,7 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
         if (failed instanceof org.springframework.security.authentication.BadCredentialsException
                 || failed instanceof org.springframework.security.core.userdetails.UsernameNotFoundException) {
             Object email = request.getAttribute(EMAIL_ATTR);
-            loginRiskGuard.recordFailure(email == null ? "" : email.toString(), DeviceIdentity.clientIp(request));
+            loginRiskGuard.recordFailure(email == null ? "" : email.toString(), DeviceIdentity.trustedClientIp(request));
         }
 
         // 로그에는 예외 종류만 남긴다. 메시지에 이메일이 섞여 있을 수 있고(예:

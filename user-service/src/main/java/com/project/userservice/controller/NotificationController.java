@@ -32,8 +32,9 @@ public class NotificationController {
     public SseEmitter streamNotifications(@AuthenticationPrincipal UserDetails userDetails, 
     HttpServletRequest request, HttpServletResponse response) {
 
-        log.info("SSE 연결 시도"); // 메소드 진입 로그
-        log.info("Spring Security UserDetails: {}", userDetails != null ? userDetails.getUsername() : "null");
+        // userId 만 — 🐛 예전에는 INFO 로 username(실명 · provider_id)을 연결마다(토큰 갱신마다) 남겼다.
+        log.debug("SSE 연결 시도: userId={}", userDetails instanceof com.project.userservice.security.service.UserDetailsImpl u
+                ? u.getId() : null);
 
         String authorization = request.getHeader("Authorization");
 

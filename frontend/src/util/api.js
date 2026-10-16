@@ -167,7 +167,8 @@ export const updateShippingAddress = async (addressId, address) => {
 };
 
 export const selectShippingAddress = async (addressId) => {
-  const { data } = await getRequest(`/user-service/api/user/profile/select/${addressId}`);
+  // 상태를 바꾸므로 PUT(서버는 옛 화면을 위해 GET 도 한동안 받는다).
+  const { data } = await putRequest(`/user-service/api/user/profile/select/${addressId}`, {});
   return data;
 };
 

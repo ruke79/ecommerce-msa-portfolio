@@ -45,4 +45,18 @@ class ClientTextBoundsTest {
         assertTimeoutPreemptively(Duration.ofSeconds(2), () -> ClientText.localize(text, Locale.JAPANESE),
                 "번역이 조각 수에 대해 폭증한다");
     }
+
+    /** 🐛 예전: 조각이 상한(24)을 넘으면 목록 전체가 원문이었다 — 한 조각도 번역되지 않았다. */
+    @Test
+    @DisplayName("🔴 상한을 넘는 목록도 앞의 상한만큼은 번역하고 나머지만 원문")
+    void longKnownListTranslatesItsHead() {
+        StringJoiner j = new StringJoiner(", ");
+        for (int i = 0; i < ClientText.MAX_LIST_PIECES + 6; i++) {
+            j.add("로그인이 필요합니다.");
+        }
+        String out = ClientText.localize(j.toString(), Locale.JAPANESE);
+        assertThat(out).startsWith("ログインが必要です。");
+        assertThat(out.split("ログインが必要です。", -1).length - 1).isEqualTo(ClientText.MAX_LIST_PIECES);
+        assertThat(out).endsWith("로그인이 필요합니다.");
+    }
 }

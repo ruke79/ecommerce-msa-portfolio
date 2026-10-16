@@ -32,7 +32,9 @@ public class AvroDtoDeserializer<D> implements Deserializer<D> {
 
     public AvroDtoDeserializer(AvroMapping<D, ? extends SpecificRecord> mapping) {
         this.mapping = mapping;
-        // 디코더는 한 번만 만든다(BinaryMessageDecoder 는 스레드 안전하다). 🐛 예전에는 레코드마다 mapping.decoder() 를 불러, 매핑
+        // 디코더는 한 번만 만든다(BinaryMessageDecoder 는 스레드 안전하다 — avro 1.11.4 바이트코드로 확인: 읽기 버퍼 · BinaryDecoder 는
+        // ThreadLocal(BaseDecoder.BYTE_BUFFER_IN · RawMessageDecoder.DECODER · HEADER_BUFFER · FP_BUFFER), 지문 → 디코더 캐시는
+        // ConcurrentHashMap, 나머지 필드는 final. Kafka 소비자 스레드가 여럿이어도 한 인스턴스를 같이 쓴다. avro 를 올리면 다시 본다). 🐛 예전에는 레코드마다 mapping.decoder() 를 불러, 매핑
         // 대부분이 그 안에서 avsc 이력을 클래스패스에서 읽고 파싱해 새 디코더를 만들었다 — 옛 작성 스키마로 쓴 레코드는 해석 문법까지
         // 매번 다시 만들었다(소비 핫 경로). 이력이 없으면 여기서 실패한다 — 기동할 때 드러난다.
         // [JA] デコーダーは一度だけ作る。以前はレコードごとに mapping.decoder() を呼び、avsc 履歴の読み込み・解析から作り直していた。

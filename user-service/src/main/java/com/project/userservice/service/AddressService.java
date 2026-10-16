@@ -89,15 +89,18 @@ public class AddressService {
      * </ol>
      */
     public AddressDto selectShipAddress(String username, String addressId) {
+        // 🐛 예전: 없는 사용자 · 잘못된 id · 남의(없는) 주소 모두 null → 200 빈 본문이었다 — 화면은 "기본 배송지로 정했습니다" 로 읽었다.
+        //    이제 잘못된 id 는 400, 없거나 남의 것은 404(어느 쪽인지 말하지 않는다).
+        // [JA] 以前はどの失敗も null → 200 の空本文だった。今は不正な id は 400、ない · 他人のものは 404。
         User user = userRepository.findByUsername(username).orElse(null);
         if (user == null) {
             log.warn("selectShipAddress: 사용자를 찾을 수 없다");
-            return null;
+            throw new java.util.NoSuchElementException(ADDRESS_NOT_FOUND);
         }
 
         Long targetId = parseAddressId(addressId);
         if (targetId == null) {
-            return null;
+            throw new IllegalArgumentException("주소 id 가 올바르지 않습니다.");
         }
 
         // 내 것 중에서 찾는다. 소유권 확인이 쿼리에 들어 있으므로 빠뜨릴 수가 없다.
@@ -107,7 +110,7 @@ public class AddressService {
 
         if (address == null) {
             log.warn("selectShipAddress: 본인의 배송지가 아니거나 존재하지 않는다");
-            return null;
+            throw new java.util.NoSuchElementException(ADDRESS_NOT_FOUND);
         }
 
         // 이 사용자의 현재 기본 배송지만 끈다.
@@ -129,6 +132,8 @@ public class AddressService {
      * (컨트롤러가 RuntimeException 을 400 으로 바꾸기는 하지만, 메시지가
      * "For input string: ..." 이라 무엇이 문제인지 알 수 없다.)
      */
+    static final String ADDRESS_NOT_FOUND = "배송지를 찾을 수 없습니다.";
+
     private Long parseAddressId(String addressId) {
         try {
             return Long.parseLong(addressId);
@@ -161,25 +166,18 @@ public class AddressService {
     public List<AddressDto> getShipAddresses(String username) {
         // 🔒 username 은 로그에 남기지 않는다 — 사용자를 특정하는 값이다.
         //    필요한 것은 "누구의 주소를 몇 건 읽었나" 이고, 그건 userId 로 충분하다.
-        List<ShippingAddress> addresses = new ArrayList<>();
-
-        // try-catch 블록을 추가하여 예외를 처리
-        try {
-            User user = userRepository.findByUsername(username)
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-
-            // Lazy 로딩 문제 해결 발생
-            //addresses = shippingAddressRepository.findByUser_UserId(user.getUserId());
-            // JOIN FETCH를 사용하여 User와 ShippingAddress를 함께 로드
-            addresses = shippingAddressRepository.findByUser_UserIdWithUser(user.getUserId());
-
-            log.debug("배송지 조회: userId={} count={}", user.getUserId(), addresses.size());
-        } catch (RuntimeException e) {
-            // 없는 사용자는 빈 목록이다. 이메일·username 을 남기면 "그 계정이 있는지"가
-            // 로그로 새어 나간다.
+        // 없는 사용자는 빈 목록이다(이메일 · username 을 남기면 "그 계정이 있는지" 가 로그로 샌다).
+        // 🐛 예전에는 try/catch(RuntimeException) 로 감싸 **DB 장애까지** 빈 목록으로 삼켰다 — 결제 화면이 "배송지가 없습니다" 를
+        //    보여 손님이 주소를 다시 넣게 했다. 이제 없는 사용자만 빈 목록이고, 다른 오류는 그대로 올라간다(5xx).
+        // [JA] 存在しないユーザーだけ空リスト。以前は DB 障害まで空リストとして飲み込んでいた。
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null) {
             log.warn("배송지 조회: 사용자를 찾지 못해 빈 목록을 돌려준다");
             return Collections.emptyList();
         }
+        // JOIN FETCH 로 User 와 ShippingAddress 를 함께 로드
+        List<ShippingAddress> addresses = shippingAddressRepository.findByUser_UserIdWithUser(user.getUserId());
+        log.debug("배송지 조회: userId={} count={}", user.getUserId(), addresses.size());
 
         // 스트림 API를 사용하여 변환 로직을 간결하게 작성
         List<AddressDto> addressDtos = addresses.stream()

@@ -63,7 +63,8 @@ loki.write "local" {
 //
 // 콘솔은 텍스트다(LOG_CONSOLE_FORMAT=text, kubectl logs 로 읽기 좋게). 그래서 줄에서 레벨만 뽑는다:
 //   2026-09-24 12:53:07.336 [main] [traceId,spanId,userId] ERROR o.s.b.SpringApplication - …
-// 마스킹은 서비스가 출력하기 전에 이미 끝났다.
+// 마스킹은 서비스가 출력하기 전에 이미 끝났다 — 단, logback 을 거치는 줄만이다. JVM 자신이 찍는 줄(예: "Picked up
+// JAVA_TOOL_OPTIONS: …")은 마스킹되지 않으므로 그 변수에 비밀을 넣지 않는다(B-83 — 예전에는 스토어 비밀번호가 실렸다).
 
 local.file_match "k3s_pods" {
   path_targets = [{

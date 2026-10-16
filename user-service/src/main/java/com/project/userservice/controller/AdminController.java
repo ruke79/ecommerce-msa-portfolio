@@ -104,9 +104,19 @@ public class AdminController {
         return ResponseEntity.ok(StatusMessages.CREDENTIALS_EXPIRY_STATUS_UPDATED);
     }
 
+    /** 관리자가 정하는 새 비밀번호 — 본문으로만 받는다. */
+    record AdminPasswordRequest(@jakarta.validation.constraints.NotBlank String password) {
+    }
+
+    /**
+     * 🔒 비밀번호는 <b>본문</b>으로만 — 🐛 예전에는 {@code @RequestParam} 이라 쿼리스트링으로도 받아 접근 로그 · 프록시 로그에 평문이
+     * 남을 수 있었다. 바꾸면 그 사용자의 모든 로그인을 끊는다(UserServiceImpl.updatePassword).
+     */
+    // [JA] パスワードは本文でのみ受ける — 以前は @RequestParam でクエリ文字列としてアクセスログに残り得た。
     @PutMapping("/update-password")
     ResponseEntity<String> updatePassword(@RequestParam String userId,
-            @RequestParam String password) {
+            @jakarta.validation.Valid @RequestBody AdminPasswordRequest request) {
+        String password = request.password();
         try {
             userService.updatePassword(Long.parseLong(userId), password);
             return ResponseEntity.ok(StatusMessages.PASSWORD_UPDATED);

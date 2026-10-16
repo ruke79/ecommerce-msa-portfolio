@@ -221,9 +221,10 @@ class AddressOwnershipTest {
         when(shippingAddressRepository.findByShippingAddressIdAndUser_UserId(
                 VICTIM_ADDRESS_ID, ME)).thenReturn(Optional.empty());
 
-        var result = service.selectShipAddress("me@example.com", VICTIM_ADDRESS_ID.toString());
-
-        assertThat(result).isNull();
+        // 🐛 예전: null → 200 빈 본문이었다(화면은 성공으로 읽었다). 이제 404 — 남의 것인지 없는 것인지는 말하지 않는다.
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> service.selectShipAddress("me@example.com", VICTIM_ADDRESS_ID.toString()))
+                .isInstanceOf(java.util.NoSuchElementException.class).hasMessage("배송지를 찾을 수 없습니다.");
         verify(shippingAddressRepository, never()).save(any());
     }
 
@@ -253,10 +254,34 @@ class AddressOwnershipTest {
     void unknownUserTouchesNothing() {
         when(userRepository.findByUsername("ghost@example.com")).thenReturn(Optional.empty());
 
-        assertThat(service.selectShipAddress("ghost@example.com", "5")).isNull();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.selectShipAddress("ghost@example.com", "5"))
+                .isInstanceOf(java.util.NoSuchElementException.class);
         service.deleteShippingAddress("ghost@example.com", "5");
 
         verify(shippingAddressRepository, never()).save(any());
         verify(shippingAddressRepository, never()).delete(any());
+    }
+
+    /** 🐛 예전: try/catch(RuntimeException) 로 감싸 DB 장애까지 빈 목록으로 삼켰다 — 결제 화면이 "배송지가 없습니다" 를 보였다. */
+    @Test
+    @DisplayName("🔴 배송지 조회의 DB 오류는 빈 목록이 아니라 오류로 — 없는 사용자만 빈 목록")
+    void addressListDoesNotSwallowDbErrors() {
+        when(userRepository.findByUsername("me@example.com")).thenReturn(Optional.of(me()));
+        when(shippingAddressRepository.findByUser_UserIdWithUser(ME))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("db down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.getShipAddresses("me@example.com"))
+                .isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+
+        when(userRepository.findByUsername("ghost@example.com")).thenReturn(Optional.empty());
+        assertThat(service.getShipAddresses("ghost@example.com")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("잘못된 주소 id 는 400 문구")
+    void badIdIsRejected() {
+        when(userRepository.findByUsername("me@example.com")).thenReturn(Optional.of(me()));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.selectShipAddress("me@example.com", "abc"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("주소 id 가 올바르지 않습니다.");
     }
 }

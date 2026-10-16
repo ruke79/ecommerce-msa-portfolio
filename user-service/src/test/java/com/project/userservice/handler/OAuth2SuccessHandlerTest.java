@@ -116,4 +116,20 @@ class OAuth2SuccessHandlerTest {
         verify(jwtUtils, never()).generateToken(anyLong(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean(), anyLong());
         verify(jwtUtils, never()).generateToken(anyLong(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());
     }
+
+    @Test
+    @DisplayName("🔴 관리자가 잠근 계정: 세션도 2FA 대기도 없이 account_restricted — 소셜 버튼이 잠금 우회로가 되면 안 된다")
+    void restrictedAccountIsTurnedAway() throws Exception {
+        user.setAccountNonLocked(false);
+        user.setTwoFactorEnabled(true);
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, auth("kim@example.com"));
+
+        assertEquals("https://shop.example.com/signin?error=account_restricted", response.getRedirectedUrl());
+        assertNull(response.getCookie("REFRESH"));
+        assertNull(response.getCookie("PENDING_2FA"));
+        verify(refreshTokenService, never()).createRefreshToken(anyLong());
+        verify(pendingTwoFactor, never()).issue(anyLong());
+    }
 }

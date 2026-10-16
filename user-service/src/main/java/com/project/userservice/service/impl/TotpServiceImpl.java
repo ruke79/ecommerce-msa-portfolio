@@ -24,9 +24,20 @@ public class TotpServiceImpl implements TotpService {
         return gAuth.createCredentials();
     }
 
+    /** 인증 앱에 보이는 발급자 이름. */
+    static final String ISSUER = "YSY Shop";
+
+    /**
+     * 인증 앱 등록 URI({@code otpauth://totp/…}) — QR 은 받는 쪽(브라우저)이 그린다.
+     *
+     * <p>🔒 🐛 예전: {@code getOtpAuthURL} 을 썼다 — 이 함수는 {@code https://api.qrserver.com/v1/create-qr-code/?data=otpauth…secret=…}
+     * 를 돌려준다. 화면이 그것을 {@code <img src>} 로 그리는 순간 <b>TOTP 비밀이 제3자 서버로</b> 간다(그 서버의 접근 로그에도 남는다).
+     * 발급자 이름도 남의 예제의 "Secure Notes Application" 이었다.
+     */
+    // [JA] 認証アプリ登録 URI(otpauth://) — QR は受け側が描く。以前は第三者の QR サーバーの URL を返し、表示した瞬間に TOTP の秘密が外へ出た。
     @Override
     public String getQrCodeUrl(GoogleAuthenticatorKey secret, String username){
-        return GoogleAuthenticatorQRGenerator.getOtpAuthURL("Secure Notes Application", username, secret);
+        return GoogleAuthenticatorQRGenerator.getOtpAuthTotpURL(ISSUER, username, secret);
     }
 
     @Override

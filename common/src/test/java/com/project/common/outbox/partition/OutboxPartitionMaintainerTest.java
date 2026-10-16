@@ -138,4 +138,28 @@ class OutboxPartitionMaintainerTest {
             job.destroy();
         }
     }
+
+    /** 🐛 예전: lock_timeout 만 걸었다 — ATTACH 가 DEFAULT 를 훑는 동안(잠금을 쥔 채) 걸리는 시간에는 상한이 없었다. */
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("🔴 DDL 트랜잭션은 잠금 대기와 함께 문장 시간에도 상한을 건다(SET LOCAL statement_timeout)")
+    void ddlTransactionBoundsStatementTime() throws Exception {
+        java.util.List<String> executed = new java.util.ArrayList<>();
+        java.sql.Statement st = (java.sql.Statement) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[] {java.sql.Statement.class}, (proxy, m, args) -> {
+                    if (m.getName().equals("execute")) {
+                        executed.add((String) args[0]);
+                        return false;
+                    }
+                    return null;
+                });
+        java.sql.Connection c = (java.sql.Connection) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[] {java.sql.Connection.class}, (proxy, m, args) -> m.getName().equals("createStatement") ? st : null);
+        java.lang.reflect.Method limit = OutboxPartitionMaintainer.class.getDeclaredMethod("limitLockWait", java.sql.Connection.class);
+        limit.setAccessible(true);
+        limit.invoke(null, c);
+
+        org.assertj.core.api.Assertions.assertThat(executed)
+                .anyMatch(sql -> sql.startsWith("SET LOCAL lock_timeout"))
+                .anyMatch(sql -> sql.startsWith("SET LOCAL statement_timeout"));
+    }
 }

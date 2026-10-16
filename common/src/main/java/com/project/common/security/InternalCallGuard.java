@@ -107,7 +107,8 @@ public final class InternalCallGuard {
         if (!present(userRole)) {
             return false;
         }
-        String normalized = userRole.trim().toUpperCase();
+        // Locale.ROOT — 기본 로캘이 터키어면 "admin".toUpperCase() 가 "ADMİN"(점 있는 İ)이 되어 관리자를 못 알아본다.
+        String normalized = userRole.trim().toUpperCase(java.util.Locale.ROOT);
         return normalized.equals("ADMIN") || normalized.equals("ROLE_ADMIN");
     }
 

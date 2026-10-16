@@ -7,7 +7,6 @@ import org.springframework.stereotype.Service;
 import com.project.common.message.dto.request.OutgoingMailRequest;
 import com.project.userservice.message.producer.OutgoingMailProducer;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -30,10 +29,41 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class EmailService {
 
     private final OutgoingMailProducer mailProducer;
+
+    /** 메일 요청을 내보내는 일꾼 — 가입 확인 메일과 같은 것(AsyncMailConfig). */
+    private final java.util.concurrent.Executor mailExecutor;
+
+    public EmailService(OutgoingMailProducer mailProducer,
+            @org.springframework.beans.factory.annotation.Qualifier("mailExecutor") java.util.concurrent.Executor mailExecutor) {
+        this.mailProducer = mailProducer;
+        this.mailExecutor = mailExecutor;
+    }
+
+    /**
+     * 트랜잭션 안이면 <b>커밋 뒤에</b>, 요청 스레드가 아니라 메일 일꾼에서 돌린다.
+     *
+     * <p>🐛 비밀번호 찾기가 DB 트랜잭션 안에서 Kafka 발행을 <b>동기로 기다렸다</b>(acks=all, 최대 5초). 공개 경로라 Kafka 가 느리면 요청마다
+     * 커넥션을 수 초씩 쥐어 풀이 바닥났고, 가입된 주소만 그 시간이 걸려 <b>응답 시간으로 가입 여부</b>가 갈렸다("어느 주소든 같은 응답" 이
+     * 목적인 엔드포인트다). 롤백될 토큰의 메일을 먼저 보내지도 않는다.
+     */
+    // [JA] トランザクション中ならコミット後に、リクエストスレッドではなくメール用ワーカーで実行する。以前はトランザクション内で Kafka を
+    //      同期で待ち(最大 5 秒)、プールを枯らし、登録済みのアドレスだけ時間がかかって応答時間で登録の有無が分かった。
+    void afterCommit(Runnable task) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            mailExecutor.execute(task);
+                        }
+                    });
+        } else {
+            mailExecutor.execute(task);
+        }
+    }
 
     /**
      * 비밀번호 재설정 메일을 요청한다.
@@ -45,6 +75,10 @@ public class EmailService {
      * @param userId 수신자 사용자 id. 문구 언어를 사용자 설정에서 고르는 데 쓴다
      */
     public void sendPasswordResetEmail(Long userId, String to, String resetUrl) {
+        afterCommit(() -> publishPasswordReset(userId, to, resetUrl));
+    }
+
+    private void publishPasswordReset(Long userId, String to, String resetUrl) {
         boolean published = mailProducer.publish(OutgoingMailRequest.builder()
                 // ⚠️ 멱등 키에 토큰을 넣지 않는다 — 그 값이 로그와 DB 컬럼에 그대로 남는다.
                 //    재설정은 사용자가 요청할 때마다 새 메일이 나가야 하므로 시각을 섞는다.

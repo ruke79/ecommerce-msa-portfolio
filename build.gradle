@@ -131,6 +131,8 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
             include 'k8s/*.yaml'
             include 'common/src/main/resources/es/*.json'
             include '*/src/main/java/**/Kafka*Config.java'
+            // InternalEndpointGuardTest(B-80 · B-81) · B-78 — 컨트롤러 · Feign · 인터셉터 소스를 읽는다(입력이 아니면 고쳐도 UP-TO-DATE 로 건너뛴다)
+            include '*/src/main/java/**/*.java'
             include '*/src/main/resources/db/migration/*.sql'
             include 'ops/19-build-images.sh'
             // B-75 — 배포 워크플로

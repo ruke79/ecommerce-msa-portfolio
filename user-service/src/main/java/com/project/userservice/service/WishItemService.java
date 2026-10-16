@@ -48,7 +48,8 @@ public class WishItemService {
 
                 Optional<WishItem> existed = user.getWishLists().stream()
                         // 🐛 예전 `==` — 박싱된 Long 끼리는 참조 비교라 -128~127 만 같았다. 상품 id 128 부터는 중복을 못 잡아 같은 찜이 계속 쌓였다.
-                        .filter(x -> id.equals(x.getProductId()) && x.getStyle().equals(request.getStyle()))
+                        // 🐛 style 이 NULL 인 옛 행이 있으면 x.getStyle().equals 에서 NPE → 400 이었다 — Objects.equals.
+                        .filter(x -> id.equals(x.getProductId()) && java.util.Objects.equals(x.getStyle(), request.getStyle()))
                         .findFirst();
 
                 if (existed.isPresent()) {
@@ -63,7 +64,13 @@ public class WishItemService {
 
                     wish.setUser(user);
 
-                    wishItemRepository.save(wish);
+                    try {
+                        wishItemRepository.saveAndFlush(wish);
+                    } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                        // 동시에 온 두 번째 요청 — 위의 확인은 둘 다 "없음" 을 읽는다. DB 의 유니크(V18)가 막은 것이니 "이미 있음" 이다.
+                        // [JA] 同時に来た二つ目のリクエスト — DB のユニーク(V18)が防いだので「既にある」。
+                        return OperationStatus.OS_ALREADY_EXISTED;
+                    }
 
                     return OperationStatus.OS_SUCCESS;
                 }

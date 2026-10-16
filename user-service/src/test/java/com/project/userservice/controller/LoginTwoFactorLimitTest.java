@@ -56,10 +56,11 @@ class LoginTwoFactorLimitTest {
 
     private MockHttpServletRequest request;
     private MockHttpServletResponse response;
+    private User user;
 
     @BeforeEach
     void setUp() {
-        User user = User.builder().build();
+        user = User.builder().build();
         user.setUserId(7L);
         user.setTwoFactorEnabled(true);
         when(userRepository.findById(7L)).thenReturn(Optional.of(user));
@@ -109,5 +110,17 @@ class LoginTwoFactorLimitTest {
         verify(userService).verifyLoginTwoFactor(7L, 123456);
         verify(userService, never()).validate2FACode(anyLong(), anyInt());
         verify(refreshTokenService).createRefreshToken(7L);
+    }
+
+    @Test
+    @DisplayName("🔴 코드를 받는 사이 관리자가 잠근 계정 — 맞는 코드여도 세션을 주지 않는다")
+    void restrictedMeanwhileGetsNoSession() {
+        user.setAccountNonLocked(false);
+        when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.OK);
+
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor(123456, request, response);
+
+        assertThat(r.getStatusCode().value()).isEqualTo(401);
+        verify(refreshTokenService, never()).createRefreshToken(anyLong());
     }
 }

@@ -104,6 +104,12 @@ spring:
       # 읽지 않았다. requirepass 가 걸린 Redis(운영 표준) 앞에서는 레이트리미터의 Redis 접속이
       # 조용히 실패해 토큰버킷이 동작하지 않는다 — 스테이징 리허설에서 드러난 설정 드리프트.
       password: ${REDIS_PASSWORD:${LOCAL_DB_PASSWORD:}}
+      # 🐛 명령 타임아웃이 없었다 — Lettuce 기본 60초. Redis 가 잠깐 끊기면(파드 재시작) 속도 제한의 명령이 버퍼에 쌓여
+      #    **모든 API 요청**이 최대 60초 멈췄다(속도 제한은 CircuitBreaker 의 10초 TimeLimiter 보다 앞이라 그것도 받지 못한다).
+      #    짧게 끊으면 RedisRateLimiter 가 오류를 "통과" 로 다룬다(fail-open) — 제한이 잠깐 풀리는 쪽이 전면 정지보다 낫다.
+      # [JA] コマンドタイムアウトがなかった(Lettuce 既定 60 秒)。Redis が一瞬切れると全 API が最大 60 秒止まった。短く切れば fail-open。
+      timeout: ${GATEWAY_REDIS_TIMEOUT:500ms}
+      connect-timeout: ${GATEWAY_REDIS_CONNECT_TIMEOUT:1s}
 
   cloud:
     gateway:
@@ -168,14 +174,15 @@ spring:
            # 지금은 IdentityHeaderScrubFilter(GlobalFilter, HIGHEST_PRECEDENCE)가 한다.
            # 전역 필터는 자기 order 를 그대로 쓰므로 필터 개수·나열 순서에 기대지 않는다.
            # (되돌리면 ConfigurationGuardrailTest B-53 이 막는다.)
-           # 모든 라우트에 유입 트래픽 제한을 적용한다. 버킷 키는 CustomUserKeyResolver가
-           # 인증 사용자(X-User-Id) → 클라이언트 IP 순으로 결정한다(Redis 토큰 버킷).
-           - name: RequestRateLimiter
-             args:
-               key-resolver: "#{@userKeyResolver}"
-               redis-rate-limiter.replenishRate: 20
-               redis-rate-limiter.burstCapacity: 40
-               redis-rate-limiter.requestedTokens: 1
+           # 🔒 유입 트래픽 제한(RequestRateLimiter)은 여기가 아니라 **라우트마다 하나씩** 둔다(아래 &rate-default, 가드 B-84).
+           #
+           # 🐛 예전에는 여기 하나 + 로그인 라우트에 하나였다. RedisRateLimiter 는 설정을 **라우트 id 로** 저장하고(나중에 묶인 것이
+           #    이긴다) Redis 키도 라우트 id + 버킷 키라, 한 라우트의 두 필터가 같은 버킷에서 요청마다 토큰을 **두 개** 썼다 —
+           #    로그인 라우트는 실효 초당 0.5회 · 버스트 5 였고, 같은 라우트의 리뷰 보기 · 토큰 갱신이 그 버킷을 비워 갱신이 429 →
+           #    화면이 로그아웃시켰다. 또 default-filters 는 라우트 필터보다 앞이라 JWT 필터가 User-Id 를 넣기 전에 돌아,
+           #    로그인한 사용자도 IP 하나에 묶였다. 라우트 필터로 두면 JwtAuthorization 뒤에 놓을 수 있다.
+           # [JA] 流入制限はここではなくルートごとに一つ置く。以前はここと ログインルートの二つで、同じバケットからリクエストごとに
+           #      トークンを二つ使い、レビュー閲覧 · トークン更新がバケットを空にしてログアウトさせていた。
       
           globalcors:
             add-to-simple-url-handler-mapping: true
@@ -224,7 +231,7 @@ spring:
                   # 인증 **전** 경로라 JwtAuthorization 없는 이 라우트에 있어야 한다 —
                   # 아래 인증 라우트에 넣으면 로그인하러 가는 길을 로그인으로 막는 꼴이 된다.
                   - Path=/user-service/api/auth/public/**, \
-                    /user-service/registrationConfirm, /user-service/api/token/refresh, /user-service/api/review/**, \
+                    /user-service/registrationConfirm, \
                     /user-service/oauth2/**, /user-service/login/oauth2/**
               filters:
                   - RewritePath=/user-service/(?<segment>.*), /$\{segment}
@@ -243,6 +250,24 @@ spring:
                       redis-rate-limiter.replenishRate: 1
                       redis-rate-limiter.burstCapacity: 10
                       redis-rate-limiter.requestedTokens: 1
+            # 인증 없이 열리는 읽기 · 토큰 갱신 — 로그인용 강한 제한을 쓰지 않는다(🐛 예전에는 위 라우트에 있어, 상품 몇 개의 리뷰를
+            # 보면 갱신이 429 를 받아 화면이 로그아웃시켰다).
+            # [JA] 認証なしの読み取り · トークン更新 — ログイン用の強い制限は使わない。
+            - id: user-service-public-read
+              uri: lb://user-service
+              predicates:
+                  - Path=/user-service/api/token/refresh, /user-service/api/review/**
+              filters:
+                  - RewritePath=/user-service/(?<segment>.*), /$\{segment}
+                  # 기본 유입 제한(초당 20, 버스트 40) — 라우트마다 하나(B-84). 버킷 키는 CustomUserKeyResolver(로그인 사용자 → IP).
+                  # JwtAuthorization 뒤에 두어 User-Id 가 들어간 뒤 돈다. 아래 라우트들은 *rate-default 로 같은 값을 쓴다.
+                  - &rate-default
+                    name: RequestRateLimiter
+                    args:
+                      key-resolver: "#{@userKeyResolver}"
+                      redis-rate-limiter.replenishRate: 20
+                      redis-rate-limiter.burstCapacity: 40
+                      redis-rate-limiter.requestedTokens: 1
             - id: user-service-auth
               uri: lb://user-service
               predicates:
@@ -255,6 +280,7 @@ spring:
               filters:              
                   - RewritePath=/user-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization              
+                  - *rate-default
             
             # ── catalog 은 라우트가 **둘**이다. 읽기는 공개, 쓰기는 인증 ──────────
             #
@@ -286,6 +312,7 @@ spring:
                   - Path=/catalog-service/api/content/admin/**
               filters:
                   - JwtAuthorization
+                  - *rate-default
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/catalog-service/(?<segment>.*), /$\{segment}
                   - name: CircuitBreaker
@@ -301,6 +328,7 @@ spring:
                   - Method=POST,PUT,DELETE,PATCH
               filters:
                   - JwtAuthorization
+                  - *rate-default
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/catalog-service/(?<segment>.*), /$\{segment}
                   - name: CircuitBreaker
@@ -315,6 +343,7 @@ spring:
               filters:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/catalog-service/(?<segment>.*), /$\{segment}
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: catalogServiceCircuitBreaker
@@ -326,6 +355,7 @@ spring:
                   - Path=/cart-service/**
               filters:              
                   - JwtAuthorization       
+                  - *rate-default
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/cart-service/(?<segment>.*), /$\{segment}
                   - name: CircuitBreaker
@@ -341,6 +371,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/coupon-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: couponServiceCircuitBreaker
@@ -353,6 +384,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/notification-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: notificationServiceCircuitBreaker
@@ -367,6 +399,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/delivery-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: deliveryServiceCircuitBreaker
@@ -396,6 +429,7 @@ spring:
               filters:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/order-service/(?<segment>.*), /$\{segment}
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: orderServiceCircuitBreaker
@@ -408,6 +442,7 @@ spring:
               filters:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/order-service/(?<segment>.*), /$\{segment}
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: orderServiceCircuitBreaker
@@ -421,6 +456,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/order-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: orderServiceCircuitBreaker
@@ -439,6 +475,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/saga-projection/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: sagaProjectionCircuitBreaker
@@ -452,6 +489,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/pay-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: payServiceCircuitBreaker
@@ -466,6 +504,7 @@ spring:
               filters:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
+                  - *rate-default
 
             - id: chat-service-api
               uri: lb:ws://chat-service
@@ -475,6 +514,7 @@ spring:
                   - RemoveRequestHeader=Cookie
                   - RewritePath=/chat-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization
+                  - *rate-default
                   - name: CircuitBreaker
                     args:
                       name: chatApiCircuitBreaker

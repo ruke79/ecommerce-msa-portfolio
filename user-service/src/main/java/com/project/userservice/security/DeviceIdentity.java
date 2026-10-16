@@ -179,12 +179,38 @@ public final class DeviceIdentity {
         if (request == null) {
             return null;
         }
+        String edge = request.getHeader(CF_CONNECTING_IP);
+        if (edge != null && !edge.isBlank()) {
+            return edge.trim();
+        }
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
             String first = forwarded.split(",")[0].trim();
             if (!first.isEmpty()) {
                 return first;
             }
+        }
+        return request.getRemoteAddr();
+    }
+
+    /** Cloudflare 엣지가 실제 접속 IP 로 덮어쓰는 헤더 — 클라이언트가 같은 이름을 보내도 엣지에서 교체된다(게이트웨이 CustomUserKeyResolver 와 같다). */
+    static final String CF_CONNECTING_IP = "CF-Connecting-IP";
+
+    /**
+     * <b>판정에 쓰는</b> 클라이언트 IP — 클라이언트가 고를 수 없는 값만: {@code CF-Connecting-IP}, 없으면 소켓 주소.
+     *
+     * <p>🐛 위험 판정(IP_FANOUT · 실패 기록)이 위의 {@link #clientIp} — {@code X-Forwarded-For} 의 첫 항목 — 을 썼다. 위 주석이 "판정에 쓰는
+     * 곳에서는 절대 이렇게 하면 안 된다" 고 적어 둔 바로 그 값이다. 크리덴셜 스터핑 요청마다 {@code X-Forwarded-For: <난수 IP>} 를 붙이면
+     * "한 IP 가 여러 계정을 시도한다" 신호가 끝내 켜지지 않았다. 터널 밖(포트포워드 · 클러스터 안)에서는 소켓 주소라 거칠어질 뿐 열리지는 않는다.
+     */
+    // [JA] 判定に使うクライアント IP — クライアントが選べない値だけ。以前は X-Forwarded-For の先頭を使い、乱数 IP を付けると IP_FANOUT が点かなかった。
+    public static String trustedClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return null;
+        }
+        String edge = request.getHeader(CF_CONNECTING_IP);
+        if (edge != null && !edge.isBlank()) {
+            return edge.trim();
         }
         return request.getRemoteAddr();
     }

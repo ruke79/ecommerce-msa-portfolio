@@ -185,7 +185,13 @@ public class InternalCallerFilter extends OncePerRequestFilter {
     /** 신원 헤더 셋을 모두 믿을 CN — 게이트웨이. 헤더 없는 요청에서는 내부 호출로 보지 않는다. */
     // [JA] 身元ヘッダー三つをすべて信じる CN — ゲートウェイ。ヘッダーのないリクエストでは内部呼び出しとみなさない。
     private final Set<String> gatewaySubjects;
+    /**
+     * 한 번만 남기는 기록의 칸 — 🐛 예전에는 호출자 기록([mTLS caller], 경로 수만큼 생긴다)과 신원 경고([mTLS identity])가 칸 하나
+     * (상한 1000)를 같이 써서, 경로가 많은 서비스에서는 칸이 차고 나면 신원 경고가 <b>조용히</b> 더는 남지 않았다. 따로 둔다.
+     */
+    // [JA] 一度だけ残す記録の枠 — 以前は呼び出し元の記録と身元の警告が一つの枠(上限 1000)を共有し、枠が埋まると警告が黙って消えた。
     private final Set<String> seenCallers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<String> seenIdentity = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public InternalCallerFilter(Mode mode, X509Certificate ca, Set<String> allowedSubjects, List<String> watchPaths) {
         this(mode, ca, allowedSubjects, watchPaths, List.of(), Mode.ENFORCE);
@@ -243,9 +249,11 @@ public class InternalCallerFilter extends OncePerRequestFilter {
             chain.doFilter(identityChecked(request, caller, gateway), response);
             return;
         }
+        String fromGateway = null;
         if (gateway) {
             // 게이트웨이가 넘긴 헤더 없는 요청 — 공개 라우트(로그인 없는 조회 · 웹훅)로 온 외부 요청이다. 내부 호출이 아니다.
             // [JA] ゲートウェイが渡したヘッダーなしのリクエスト — 公開ルートで来た外部リクエストである。内部呼び出しではない。
+            fromGateway = caller;
             caller = null;
         }
         if (caller != null) {
@@ -273,7 +281,11 @@ public class InternalCallerFilter extends OncePerRequestFilter {
                 //      ログが異なるだけである(判定とは無関係)。
                 log.info("[mTLS probe] 인증서 없는 대조 호출 {} {}", request.getMethod(), request.getRequestURI());
             } else if (watched(matchedPath(request))) {
-                log.warn("[mTLS observe] 내부 경로에 내부 인증서 없이 온 요청 — enforce 면 거절된다. {} {}",
+                // 🐛 게이트웨이 인증서로 온 요청도 "내부 인증서 없이" 로 적었다 — 게이트웨이 라우트가 내부 경로를 연 것인지(설정 문제)
+                //    인증서 없는 호출인지 구분할 수 없었다. 누가 보냈는지 적는다.
+                // [JA] ゲートウェイ証明書で来たリクエストも「証明書なし」と記していた。誰が送ったかを記す。
+                log.warn("[mTLS observe] 내부 경로에 {} — enforce 면 거절된다. {} {}",
+                        fromGateway != null ? "게이트웨이(" + fromGateway + ")가 신원 헤더 없이 넘긴 요청(공개 라우트?)" : "내부 인증서 없이 온 요청",
                         request.getMethod(), request.getRequestURI());
             }
             chain.doFilter(request, response);
@@ -307,7 +319,7 @@ public class InternalCallerFilter extends OncePerRequestFilter {
         if (PROBE_VALUE.equals(request.getHeader(PROBE_HEADER))) {
             // ops/37 의 "인증서 없이 관리자 헤더" 대조 호출 — 경고로 남기면 다음 점검이 그것을 센다. ／ [JA] ops/37 の対照呼び出し。
             log.info("[mTLS probe] 인증서 없이 신원 헤더를 붙인 대조 호출 {} {}", request.getMethod(), request.getRequestURI());
-        } else if (seenCallers.size() < MAX_SEEN_CALLERS && seenCallers.add(key)) {
+        } else if (seenIdentity.size() < MAX_SEEN_CALLERS && seenIdentity.add(key)) {
             // 헤더 값(사용자 id · 이메일 · 역할)은 남기지 않는다 — 누가 어디로 보냈는지만. ／ [JA] ヘッダーの値は残さない。
             log.warn("[mTLS identity] {} — caller={} {} {} ({})", why, who, request.getMethod(), request.getRequestURI(),
                     identityMode == Mode.ENFORCE ? "버린다" : "observe — 그대로 넘긴다");

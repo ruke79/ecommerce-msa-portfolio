@@ -142,7 +142,7 @@ const Profile = () => {
                         <input
                             type="text"
                             value={name}
-                            maxLength={50}
+                            maxLength={20}
                             disabled={isPending || busy}
                             onChange={(e) => { setName(e.target.value); setSaved(false); }}
                             placeholder={isPending ? t("profile.loading") : t("profile.name_placeholder")}

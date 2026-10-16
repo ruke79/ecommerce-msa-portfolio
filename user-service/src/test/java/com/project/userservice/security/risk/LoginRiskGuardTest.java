@@ -169,4 +169,34 @@ class LoginRiskGuardTest {
         var other = guard.issue(78L, List.of(Signal.IP_FANOUT));
         assertThat(guard.verify(other.issued().cookieValue(), other.code())).isEqualTo(new LoginRiskGuard.Passed(78L));
     }
+
+    /** 🐛 예전: tries 를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이 모두 0 을 읽어 6자리를 수백 개 대입할 수 있었다. */
+    @Test
+    @DisplayName("🔴 동시에 40번 틀린 코드를 보내도 비교까지 가는 것은 대기 값당 5번뿐")
+    void concurrentWrongCodesAreCapped() throws Exception {
+        var issued = guard.issue(42L, List.of(Signal.IP_FANOUT));
+        String pending = issued.issued().cookieValue();
+        String wrong = issued.code().equals("000000") ? "111111" : "000000";
+
+        int threads = 40;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        List<java.util.concurrent.Future<LoginRiskGuard.Verification>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            results.add(pool.submit(() -> {
+                start.await();
+                return guard.verify(pending, wrong);
+            }));
+        }
+        start.countDown();
+        long compared = 0;
+        for (var f : results) {
+            if (f.get() instanceof LoginRiskGuard.Wrong) {
+                compared++;
+            }
+        }
+        pool.shutdown();
+        assertThat(compared).isLessThanOrEqualTo(LoginRiskGuard.MAX_ATTEMPTS);
+        assertThat(guard.verify(pending, issued.code())).isNotInstanceOf(LoginRiskGuard.Passed.class);
+    }
 }

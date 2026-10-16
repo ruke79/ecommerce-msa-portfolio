@@ -196,25 +196,29 @@ public class LoginRiskGuard {
             return new Expired();
         }
         String uid = String.valueOf(state.get("uid"));
-        long tries = Long.parseLong(String.valueOf(state.getOrDefault("tries", "0")));
-        if (tries >= MAX_ATTEMPTS || count(USER_FAIL_KEY + uid) >= MAX_USER_FAILURES) {
+        // 🔒 시도를 **비교하기 전에** 센다(INCR 은 원자적이다). 🐛 예전에는 횟수를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이
+        //    모두 같은 "0번" 을 읽어, 6자리를 한 번에 수백 개 대입할 수 있었다. 이제 한도를 넘은 시도는 비교조차 하지 않는다.
+        //    맞으면 아래에서 대기 값을 태우므로 세어 둔 수는 의미가 없어진다(사용자 칸은 창이 지나면 사라진다).
+        // [JA] 試行を比較する前に数える(INCR は原子的)。以前は読む → 比較 → 間違えたら加算で、同時のリクエストがすべて 0 回を読んでいた。
+        Long n = redis.opsForHash().increment(key, "tries", 1);
+        String userKey = USER_FAIL_KEY + uid;
+        Long userAttempts = redis.opsForValue().increment(userKey);
+        redis.expire(userKey, USER_FAIL_WINDOW);
+        if (n == null || n > MAX_ATTEMPTS || userAttempts == null || userAttempts > MAX_USER_FAILURES) {
             redis.delete(key);
             return new Expired();
         }
         String expected = String.valueOf(state.get("code"));
         String presented = sha256(pending + ":" + code.trim());
         if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8))) {
-            Long n = redis.opsForHash().increment(key, "tries", 1);
-            String userKey = USER_FAIL_KEY + uid;
-            Long userFailures = redis.opsForValue().increment(userKey);
-            redis.expire(userKey, USER_FAIL_WINDOW);
-            boolean more = n != null && n < MAX_ATTEMPTS
-                    && userFailures != null && userFailures < MAX_USER_FAILURES;
+            boolean more = n < MAX_ATTEMPTS && userAttempts < MAX_USER_FAILURES;
             if (!more) {
                 redis.delete(key);
             }
             return new Wrong(more);
         }
+        // 맞았다 — 이 시도는 실패가 아니다. 사용자 칸에서 되돌린다(다음 로그인의 확인 코드 몫을 깎지 않게).
+        redis.opsForValue().decrement(userKey);
         // 한 번만 — 지우기에 성공한 요청만 통과한다(같은 코드로 동시에 두 번 와도 하나만).
         Boolean deleted = redis.delete(key);
         if (!Boolean.TRUE.equals(deleted)) {

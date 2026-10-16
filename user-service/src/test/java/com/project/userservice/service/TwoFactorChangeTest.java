@@ -74,7 +74,7 @@ class TwoFactorChangeTest {
         assertThat(userService.disable2FA(7L, 111111)).isEqualTo(TwoFactorChange.INVALID_CODE);
 
         assertThat(user.isTwoFactorEnabled()).isTrue();
-        verify(guard).recordFailure(7L);
+        verify(guard).reserveAttempt(7L);
         verify(alerts, never()).publishTwoFactorChanged(anyLong(), any(), anyBoolean());
     }
 
@@ -94,7 +94,8 @@ class TwoFactorChangeTest {
     @Test
     @DisplayName("🔴 너무 많이 틀렸으면 코드를 보지도 않는다")
     void lockedOut() {
-        when(guard.locked(7L)).thenReturn(true);
+        when(guard.maxFailures()).thenReturn(5);
+        when(guard.reserveAttempt(7L)).thenReturn(6L);
         codeIs(true);
 
         assertThat(userService.disable2FA(7L, 123456)).isEqualTo(TwoFactorChange.TOO_MANY_ATTEMPTS);
@@ -128,13 +129,32 @@ class TwoFactorChangeTest {
 
         assertThat(userService.validate2FACode(7L, 123456)).isFalse();
     }
+    /**
+     * 🐛 예전: locked() 로 읽고 → 검증하고 → 틀리면 더했다 — 동시에 보낸 코드 수백 개가 모두 "잠기지 않음" 을 읽고 검증됐다.
+     */
+    @Test
+    @DisplayName("🔴 시도는 코드를 검증하기 전에 센다 — 동시에 보낸 요청이 모두 '잠기지 않음' 을 읽지 않게")
+    void attemptIsCountedBeforeVerifying() {
+        codeIs(true);
+        when(guard.maxFailures()).thenReturn(5);
+        when(guard.reserveAttempt(7L)).thenReturn(1L);
+
+        userService.verifyLoginTwoFactor(7L, 123456);
+
+        var order = org.mockito.Mockito.inOrder(guard, totpService);
+        order.verify(guard).reserveAttempt(7L);
+        order.verify(totpService).matchedStep(eq("SECRET"), anyInt(), anyLong());
+        verify(guard, never()).locked(anyLong());
+    }
+
     // ── 로그인 2단계 (docs/68 §15) ────────────────────────────────────────
 
     @Test
     @DisplayName("🔴 로그인 2단계도 사용자별로 센다 — 막혀 있으면 맞는 코드도 받지 않는다")
     void loginStepUsesPerUserLimit() {
         codeIs(true);
-        when(guard.locked(7L)).thenReturn(true);
+        when(guard.maxFailures()).thenReturn(5);
+        when(guard.reserveAttempt(7L)).thenReturn(6L);
 
         assertThat(userService.verifyLoginTwoFactor(7L, 123456)).isEqualTo(TwoFactorChange.TOO_MANY_ATTEMPTS);
         verify(guard, never()).claim(anyLong(), anyLong());
@@ -145,7 +165,7 @@ class TwoFactorChangeTest {
     void alertsOnceWhenLimitReached() {
         codeIs(false);
         when(guard.maxFailures()).thenReturn(5);
-        when(guard.recordFailure(7L)).thenReturn(4L, 5L, 6L);
+        when(guard.reserveAttempt(7L)).thenReturn(4L, 5L, 6L);
 
         userService.verifyLoginTwoFactor(7L, 1);
         verify(alerts, never()).publishAccountEvent(anyLong(), any(), any(), any());

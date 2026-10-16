@@ -268,7 +268,13 @@ public class UserController {
         }
     }
 
-    @GetMapping("/select/{addressId}")
+    /**
+     * 기본 배송지로 정한다. 🐛 상태를 바꾸는데 GET 이었다 — 화면은 PUT 으로 부른다. 배포 중인 옛 화면을 위해 GET 도 한동안 받는다.
+     * 없거나 남의 주소면 404(예전에는 200 빈 본문).
+     */
+    @org.springframework.web.bind.annotation.RequestMapping(value = "/select/{addressId}",
+            method = {org.springframework.web.bind.annotation.RequestMethod.PUT,
+                    org.springframework.web.bind.annotation.RequestMethod.GET})
     ResponseEntity<?> selectShippingAddress(@PathVariable("addressId") String addressId,
     @AuthenticationPrincipal UserDetails userDetails) {
 
@@ -278,6 +284,9 @@ public class UserController {
 
             try {
                 return new ResponseEntity<>(addressService.selectShipAddress(username, addressId), HttpStatus.OK);
+            } catch (java.util.NoSuchElementException e) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(new MessageResponse(ClientMessage.of(e)));
             } catch (RuntimeException e) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                         .body(new MessageResponse(ClientMessage.of(e)));
@@ -403,6 +412,9 @@ public class UserController {
                     fresh.getToken(), jwtUtils.refreshTokenLifetime()));
             return ResponseEntity.ok(new MessageResponse(
                     "비밀번호가 변경되었습니다. 다른 기기에서는 다시 로그인해야 합니다."));
+        } catch (com.project.userservice.security.CurrentPasswordGuard.TooManyAttemptsException e) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(new MessageResponse(ClientMessage.of(e)));
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new MessageResponse(ClientMessage.of(e)));

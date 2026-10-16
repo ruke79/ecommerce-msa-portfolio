@@ -16,6 +16,7 @@ import com.project.common.response.MessageResponse;
 import com.project.userservice.constants.TokenType;
 import com.project.userservice.model.User;
 import com.project.userservice.security.jwt.JwtUtils;
+import com.project.userservice.security.service.UserDetailsImpl;
 import com.project.userservice.service.RefreshTokenService;
 import com.project.userservice.service.impl.UserServiceImpl;
 
@@ -50,7 +51,12 @@ public class SessionController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new MessageResponse(StatusMessages.USER_NOT_FOUND));
         }
-        User user = userService.findByEmail(userDetails.getUsername());
+        // 🐛 예전: findByEmail(getUsername()) — getUsername() 은 이메일이 아니라 가입 아이디(소셜은 google_…)라 거의 모든
+        //    사용자에게 401 이었다. 새 기기 알림을 받고 눌러도 공격자의 세션이 남았다. 테스트가 getUsername 을 이메일로 목킹해 가렸다.
+        // [JA] 以前は findByEmail(getUsername()) — getUsername() はメールではなく登録 ID なので、ほぼ全員 401 だった。
+        User user = userDetails instanceof UserDetailsImpl impl
+                ? userService.findById(impl.getId())
+                : userService.findByUsername(userDetails.getUsername());
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new MessageResponse(StatusMessages.USER_NOT_FOUND));

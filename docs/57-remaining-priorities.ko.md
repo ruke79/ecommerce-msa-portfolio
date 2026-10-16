@@ -594,6 +594,34 @@ ecommerce 의 파드 하나(frontend · cloudflared · 백업 Job …)를 장악
 
 되돌리기: observe 로 같은 절차. `InternalCallerFilterTest`(신원 헤더 5개) · `CheckMtlsScriptTest` 가 지킨다.
 
+**enforce 의 전제와 마지막 방어선 — 가드 두 개(`InternalEndpointGuardTest`).**
+
+- **B-81 — Feign 은 `User-Role` · `User-Email` 을 싣지 않는다.** enforce 는 내부 서비스가 보낸 그 둘을 버린다. 지금은 싣는 Feign 이
+  없어(대신하는 호출은 `User-Id` 뿐) 4단계에서 동작이 바뀌지 않는다 — 그 전제를 코드로 고정했다. 역할이 필요한 내부 호출이 생기면
+  싣지 말고 받는 쪽이 `User-Id` 로 조회한다.
+- **B-80 — 내부 전용 엔드포인트는 모두 컨트롤러에서 `InternalCallGuard.allowed` 로 판정한다.** 경로 규칙(`INTERNAL_AUTH_PATH_RULES`)은
+  신원 헤더가 있는 요청(게이트웨이 경유)을 건너뛴다 — 그때 실제로 막는 것은 그 한 줄(catalog 는 `AdminWriteInterceptor`)이다. 가드는
+  규칙의 모든 경로에 그 판정이 있는지, `/internal/` 을 가진 엔드포인트가 규칙에 빠짐없이 있는지, 규칙이 가리키는 엔드포인트가 실제로
+  있는지(경로를 바꾸면 규칙도) 본다.
+
+### 스토어 비밀번호는 JVM 옵션 밖으로 (2026-10-14, B-83)
+
+**무엇이 문제였나.** 매니페스트 13개가 `JAVA_TOOL_OPTIONS` 에 `-Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)`(서비스는
+`keyStorePassword` 도)를 넣었다. JVM 은 기동할 때마다 그 변수를 **통째로** `Picked up JAVA_TOOL_OPTIONS: …` 로 stderr 에 찍는다 — logback 을
+거치지 않아 마스킹 없이 파드 로그와 Loki(alloy 가 `/var/log/pods/ecommerce_*` 를 보낸다)에 평문으로 남았다. 같은 값이 와일드카드 개인 키 ·
+서비스 신원 키스토어 · 게이트웨이 신원의 비밀번호다.
+
+**한 것.** `JAVA_TOOL_OPTIONS` 에는 경로 · 형식만 둔다. 비밀번호는 `JAVAX_NET_SSL_TRUST_STORE_PASSWORD` · `JAVAX_NET_SSL_KEY_STORE_PASSWORD`
+환경 변수로 받고, 앱이 `SpringApplication.run` 의 맨 처음(설정 서버 · Eureka 의 첫 TLS 보다 앞)에 `javax.net.ssl.*Password` 로 옮긴다 —
+common 의 `JvmSslPasswords`(실행 리스너), common 을 쓰지 않는 게이트웨이 · config-server 는 `main`. JDK 는 기본 SSLContext 를 처음 쓸 때
+이 속성을 읽는다(실측: 변수로 준 비밀번호로 트러스트스토어가 열리고, 없으면 인증서 0개, `Picked up` 줄에는 비밀번호가 없다).
+ops/12 · ops/13 도 같은 방식. B-83(`JvmSslPasswordsTest`)이 매니페스트 · 오버레이 · ops 의 JVM 옵션에 `Password=` 가 없는지, 스토어마다
+비밀번호 변수가 있는지 본다.
+
+**운영에서 할 일.** 배포만으로 새 로그에는 더 남지 않는다. 이미 남은 것은 지워지지 않는다 — Loki 보관 기간 동안 조회된다. 비밀번호가 새었다고
+보고 `LOCAL_KEY_STORE_PASSWORD` 를 바꾸는 것이 맞다(`ops/07` 로 스토어를 새 비밀번호로 다시 만들고 Secret 갱신 → 전 서비스 재시작, 서비스
+신원은 `ops/38`). 그 전에는 Grafana · Loki 접근을 운영자로만 둔다(관측 포트는 원래 공개하지 않는다).
+
 ### 남은 것 — 정직하게
 
 - 서버 인증서는 여전히 공유다 — 게이트웨이도 그 키를 갖는다. 다만 그 키(CN=localhost)는 이제 **허용 주체가 아니라** 내부 호출로

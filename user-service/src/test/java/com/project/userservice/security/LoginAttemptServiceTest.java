@@ -1,109 +1,144 @@
 package com.project.userservice.security;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.LockedException;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import com.project.userservice.model.User;
-import com.project.userservice.repository.jpa.UserRepository;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /**
- * 계정 잠금 회귀 테스트.
+ * 로그인 실패 잠금 — 실제 Redis.
  *
- * <p>배경: users.account_non_locked 컬럼은 처음부터 있었지만 실패를 세는 코드가 없었고,
- * 커스텀 AuthenticationProvider 는 그 플래그를 검사조차 하지 않았다 — 게이트웨이 IP
- * 레이트리밋이 유일한 방어였는데, IP 를 바꿔 가며 한 계정을 노리는 공격에는 무력하다.
+ * <p>🐛 예전: DB 에서 읽고 → 비교하고 → 틀리면 더했다(버전 없는 읽기-고치기-쓰기) — 동시에 보낸 요청이 서로의 증가를 덮어 횟수가 거의
+ * 늘지 않았다. 그리고 없는 계정은 세지 않아, 여섯 번째의 잠금 문구가 계정이 있다는 표시가 됐다.
+ *
+ * <p>[JA] ログイン失敗ロック — 実 Redis。以前は DB の読む → 比較 → 加算で同時リクエストが増分を失い、存在しないアカウントは数えなかった。
  */
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
+@Tag("containers")
+@Testcontainers
+@DisplayName("로그인 실패 잠금 (실제 Redis)")
 class LoginAttemptServiceTest {
 
-    @Mock private UserRepository userRepository;
+    @Container
+    static GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
+            .withExposedPorts(6379).withCommand("redis-server", "--requirepass", "testpw");
 
-    @InjectMocks private LoginAttemptService service;
+    private static LettuceConnectionFactory factory;
+    private static StringRedisTemplate template;
+    private LoginAttemptService service;
 
-    private User user;
+    @BeforeAll
+    static void connect() {
+        RedisStandaloneConfiguration config = new RedisStandaloneConfiguration(redis.getHost(), redis.getMappedPort(6379));
+        config.setPassword("testpw");
+        factory = new LettuceConnectionFactory(config);
+        factory.afterPropertiesSet();
+        factory.start();
+        template = new StringRedisTemplate(factory);
+        template.afterPropertiesSet();
+    }
+
+    @AfterAll
+    static void close() {
+        factory.destroy();
+    }
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(service, "maxFailures", 5);
-        ReflectionTestUtils.setField(service, "lockDuration", Duration.ofMinutes(15));
-
-        user = new User("kim", "kim@example.com", "$2a$pw");
-        when(userRepository.findByEmail("kim@example.com")).thenReturn(Optional.of(user));
-        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        template.getConnectionFactory().getConnection().serverCommands().flushAll();
+        service = new LoginAttemptService(template, 5, Duration.ofMinutes(15));
     }
 
     @Test
-    @DisplayName("5회 연속 실패에서 잠긴다 — 4회까지는 안 잠긴다")
-    void locksAtThreshold() {
-        for (int i = 0; i < 4; i++) {
+    @DisplayName("다섯 번은 시도하고, 여섯 번째는 잠금 — 문구는 남은 시간만")
+    void locksAfterTheLimit() {
+        for (int i = 0; i < 5; i++) {
+            service.reserveAttempt("kim@example.com");
             service.onFailure("kim@example.com");
         }
-        assertNull(user.getLockExpiresAt());
-        assertEquals(4, user.getFailedLoginAttempts());
-
-        service.onFailure("kim@example.com");
-
-        assertNotNull(user.getLockExpiresAt());
-        assertTrue(user.getLockExpiresAt().isAfter(LocalDateTime.now().plusMinutes(14)));
+        assertThatThrownBy(() -> service.reserveAttempt("kim@example.com"))
+                .isInstanceOf(LockedException.class).hasMessageContaining("분 후");
+        // 잠긴 동안에는 계속 잠금(맞는 비밀번호를 넣을 기회도 없다)
+        assertThatThrownBy(() -> service.reserveAttempt("KIM@example.com ")).isInstanceOf(LockedException.class);
     }
 
     @Test
-    @DisplayName("잠긴 동안에는 비밀번호 검사 전에 LockedException — 맞는 비밀번호도 통과 못 한다")
-    void assertNotLockedThrowsWhileLocked() {
-        user.setLockExpiresAt(LocalDateTime.now().plusMinutes(10));
-
-        LockedException e = assertThrows(LockedException.class,
-                () -> service.assertNotLocked("kim@example.com"));
-        // 사용자 안내는 "언제 풀리나"를 답한다 — 실패 횟수·임계값은 답하지 않는다.
-        assertTrue(e.getMessage().contains("분 후"));
-    }
-
-    @Test
-    @DisplayName("만료된 잠금은 자동 해제 — 운영자 개입이 필요 없다")
-    void expiredLockAutoUnlocks() {
-        user.setLockExpiresAt(LocalDateTime.now().minusSeconds(1));
-        user.setFailedLoginAttempts(5);
-
-        assertDoesNotThrow(() -> service.assertNotLocked("kim@example.com"));
-        assertNull(user.getLockExpiresAt());
-        assertEquals(0, user.getFailedLoginAttempts());
-    }
-
-    @Test
-    @DisplayName("성공하면 카운터가 리셋된다 — 어제 3번 틀린 것이 오늘까지 쌓이지 않는다")
+    @DisplayName("맞으면 카운터가 지워진다 — 네 번 틀리고 맞힌 사람은 다시 다섯 번")
     void successResets() {
-        user.setFailedLoginAttempts(3);
-
+        for (int i = 0; i < 4; i++) {
+            service.reserveAttempt("kim@example.com");
+        }
         service.onSuccess("kim@example.com");
-
-        assertEquals(0, user.getFailedLoginAttempts());
+        for (int i = 0; i < 5; i++) {
+            service.reserveAttempt("kim@example.com");
+        }
+        assertThatThrownBy(() -> service.reserveAttempt("kim@example.com")).isInstanceOf(LockedException.class);
     }
 
     @Test
-    @DisplayName("없는 계정의 실패는 세지 않는다 — 카운터가 계정 존재의 부채널이 되면 안 된다")
-    void unknownAccountIsNotCounted() {
-        when(userRepository.findByEmail("ghost@example.com")).thenReturn(Optional.empty());
+    @DisplayName("🔴 없는 계정도 똑같이 잠긴다 — 여섯 번째의 잠금 문구가 '계정이 있다' 는 표시가 되지 않게")
+    void unknownAccountsLockTheSame() {
+        for (int i = 0; i < 5; i++) {
+            service.reserveAttempt("ghost@example.com");
+        }
+        assertThatThrownBy(() -> service.reserveAttempt("ghost@example.com")).isInstanceOf(LockedException.class);
+    }
 
-        assertDoesNotThrow(() -> service.onFailure("ghost@example.com"));
-        assertDoesNotThrow(() -> service.assertNotLocked("ghost@example.com"));
-        verify(userRepository, never()).save(any());
+    @Test
+    @DisplayName("🔴 동시에 50번 보내도 비밀번호까지 가는 것은 다섯 번뿐 — 읽고 더하는 순서면 모두 통과했다")
+    void concurrentAttemptsAreCapped() throws Exception {
+        int threads = 50;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Boolean>> results = new ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            results.add(pool.submit(() -> {
+                start.await();
+                try {
+                    service.reserveAttempt("kim@example.com");
+                    return true;
+                } catch (LockedException e) {
+                    return false;
+                }
+            }));
+        }
+        start.countDown();
+        int passed = 0;
+        for (Future<Boolean> f : results) {
+            if (f.get()) {
+                passed++;
+            }
+        }
+        pool.shutdown();
+        assertThat(passed).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("Redis 키에 이메일 원문이 없다")
+    void keysDoNotHoldTheAddress() {
+        service.reserveAttempt("kim@example.com");
+        assertThat(template.keys("*")).allSatisfy(k -> assertThat(k).doesNotContain("kim"));
+        assertThatCode(() -> service.onSuccess("kim@example.com")).doesNotThrowAnyException();
     }
 }

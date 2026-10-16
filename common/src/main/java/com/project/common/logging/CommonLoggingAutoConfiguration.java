@@ -28,6 +28,7 @@ public class CommonLoggingAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(TaskDecorator.class)
     public TaskDecorator mdcTaskDecorator() {
+        MdcTaskDecorator.warnIfNoContextPropagation();
         return new MdcTaskDecorator();
     }
 

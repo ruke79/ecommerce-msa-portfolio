@@ -82,6 +82,20 @@ public class User extends BaseEntity{
     @Builder.Default
     private boolean enabled = true;
 
+    /**
+     * 로그인(세션 발급)을 해도 되는 계정인가 — 메일 인증(enabled) · 관리자 잠금 · 계정 만료 · 자격 만료 넷 다.
+     *
+     * <p>🐛 예전에는 갱신 경로(RefreshTokenController)만 넷을 다 봤다. 비밀번호 로그인은 enabled 만, 패스키 · 메일 확인은
+     * 잠금까지만, 소셜 · 2FA 확인은 아무것도 보지 않아 — 관리자가 잠가도 다시 로그인하면 액세스 토큰을 또 받았다. 세션을 주는
+     * 곳은 모두 이것을 본다. 로그인 5회 실패의 자동 잠금(lockExpiresAt)은 여기가 아니다(LoginAttemptService).
+     */
+    // [JA] ログイン(セッション発行)してよいアカウントか — メール認証 · 管理者ロック · アカウント期限 · 資格期限の四つ全部。
+    //      以前は更新経路だけが四つを見ており、管理者がロックしても再ログインでアクセストークンを得られた。
+    public boolean canSignIn() {
+        // 필드가 아니라 게터로 — 지연 로딩 프록시에서 필드는 비어 있다.
+        return isEnabled() && isAccountNonLocked() && isAccountNonExpired() && isCredentialsNonExpired();
+    }
+
     private LocalDate credentialsExpiryDate;
     private LocalDate accountExpiryDate;
 

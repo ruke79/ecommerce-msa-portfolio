@@ -87,6 +87,9 @@ public class UserServiceImpl implements UserService {
 
     private final EmailService emailService;
 
+    /** 로그인 중 "현재 비밀번호" 의 시도 제한(비밀번호 변경). */
+    private final com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
+
     /**
      * 로그인 세션 기록(Redis). 비밀번호를 바꾸면 <b>여기 남은 옛 세션도 지운다.</b>
      *
@@ -159,6 +162,10 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new RuntimeException("Role not found"));
         user.setRole(role);
         userRepository.save(user);
+        // 🐛 예전: 역할을 바꿔도 로그인이 그대로였다 — 관리자에서 내린 계정이 리프레시로 계속 ROLE_ADMIN 토큰을 받았다(역할은 토큰에 실린다).
+        //    잠금 · 정지와 같이 모든 로그인을 끊는다 — 다시 로그인하면 새 역할의 토큰을 받는다.
+        // [JA] 以前はロールを変えてもログインがそのままで、降格したアカウントが ROLE_ADMIN のトークンを受け続けた。今は全ログインを切る。
+        endSessions(userId, "역할 변경");
     }
 
     @Override
@@ -169,7 +176,11 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(readOnly = true)
     public List<UserProfileDto> getAllUserProfiles() {
-        return userRepository.findAll().stream().map(u -> UserProfileDto.toDto(u, rolesOf(u))).toList();
+        // 🐛 예전: findAll() 뒤 사용자마다 loadUserByUsername(SELECT 한 번씩) — 회원 수만큼 쿼리였다. 역할을 함께 읽는다.
+        // [JA] 以前は findAll() の後にユーザーごとに SELECT していた。ロールを一緒に読む。
+        return userRepository.findAllWithRole().stream()
+                .map(u -> UserProfileDto.toDto(u, u.getRole() == null ? List.of() : List.of(u.getRole().getRoleName().name())))
+                .toList();
     }
 
     @Override
@@ -287,8 +298,9 @@ public class UserServiceImpl implements UserService {
         if (trimmed.isEmpty()) {
             throw new IllegalArgumentException("이름을 입력해 주세요.");
         }
-        if (trimmed.length() > 50) {
-            throw new IllegalArgumentException("이름은 50자까지 입력할 수 있습니다.");
+        // 열(users.name)이 20자다 — 🐛 예전에는 50 이라 21~50자가 여기를 지나 저장에서 실패했다(ProfileUpdateRequest 와 같은 한도).
+        if (trimmed.length() > 20) {
+            throw new IllegalArgumentException("이름은 20자까지 입력할 수 있습니다.");
         }
 
         user.setName(trimmed);
@@ -428,9 +440,12 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
 
+        // 🔒 비교 전에 센다 — 🐛 예전에는 제한이 없어 세션만 가진 사람이 이 엔드포인트로 비밀번호를 대입할 수 있었다.
+        currentPasswordGuard.reserve(userId);
         if (!passwordEncoder.matches(currPassword, user.getPassword())) {
             throw new InvalidCurrentPasswordException();
         }
+        currentPasswordGuard.clear(userId);
 
         applyNewPassword(user, password);
         log.info("비밀번호 변경: userId={}", userId);
@@ -454,7 +469,17 @@ public class UserServiceImpl implements UserService {
      * (기본 15분) 동안은 살아 있다 — 그 뒤 갱신이 막혀 로그아웃된다. 완전한 즉시 차단은
      * 모든 요청마다 DB 를 보는 구조라야 가능하고, 그 비용은 이 서비스에 맞지 않는다.
      */
+    /** 가입과 같은 길이(SignupRequest @Size(min = 6, max = 40)). */
+    static final int PASSWORD_MIN = 6;
+    static final int PASSWORD_MAX = 40;
+
     private void applyNewPassword(User user, String rawPassword) {
+        // 🐛 비밀번호 정책이 가입에만 있었다 — 변경 · 재설정 · 관리자 경로는 빈 문자열("")도 받아 저장했고(로그인 필터가 빈 비밀번호를
+        //    거부하므로 본인이 잠겼다), 유출 확인이 판단하지 못하면(fail-open) 한 글자 비밀번호도 통과했다. 새 비밀번호는 모두 여기를 지난다.
+        // [JA] パスワードの方針が登録にしかなかった — 変更 · 再設定 · 管理者経路は空文字も受けた。新しいパスワードはすべてここを通る。
+        if (rawPassword == null || rawPassword.length() < PASSWORD_MIN || rawPassword.length() > PASSWORD_MAX) {
+            throw new IllegalArgumentException("비밀번호는 6~40자로 입력해 주세요.");
+        }
         // 저장하기 전에 — 유출 목록에 있는 비밀번호면 바꾸지 않는다(재설정 링크도 소진되지 않아 다시 시도할 수 있다).
         breachedPasswordChecker.assertAcceptable(rawPassword);
         user.setPassword(passwordEncoder.encode(rawPassword));
@@ -473,10 +498,12 @@ public class UserServiceImpl implements UserService {
             User user = userRepository.findById(userId)
                     .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
 
-            breachedPasswordChecker.assertAcceptable(password);
-            user.setPassword(passwordEncoder.encode(password));
-            userRepository.save(user);
-        } catch (com.project.userservice.security.password.BreachedPasswordException e) {
+            // 🐛 예전: 해시만 바꿔 저장했다 — passwordChangedAt 도 세션도 그대로라, 탈취된 계정을 관리자가 비밀번호로 되찾아도
+            //    공격자는 리프레시 토큰으로 최대 30일 동안 계속 갱신했다. 본인 변경 · 재설정과 같은 길(applyNewPassword)로 가고 모든 로그인을 끊는다.
+            // [JA] 以前はハッシュだけ変えて保存 — 管理者がパスワードで取り戻しても攻撃者はリフレッシュで更新し続けた。今は全ログインを切る。
+            applyNewPassword(user, password);
+            endSessions(userId, "비밀번호 변경");
+        } catch (com.project.userservice.security.password.BreachedPasswordException | IllegalArgumentException e) {
             throw e;   // 이유를 그대로 — 아래에서 뭉뚱그리면 "왜 안 되는지" 가 사라진다
         } catch (Exception e) {
             throw new RuntimeException("Failed to update password");
@@ -628,8 +655,8 @@ public class UserServiceImpl implements UserService {
         // 관리자 승격은 DB 에서 사람이 한다(docs/34 의 UPDATE 문). 승격 API 를 만든다면
         // 그때는 반드시 인증된 관리자만 호출할 수 있는 별도 경로여야 한다.
         if (strRoles != null && !strRoles.isEmpty()) {
-            log.warn("회원가입 요청이 역할을 지정했다 — 무시하고 ROLE_USER 로 만든다. email={}",
-                    request.getEmail());
+            // 이메일은 남기지 않는다(보안 경로 로그에는 userId 만, 이 시점에는 아직 없다). 🐛 예전에는 email= 을 남겼다.
+            log.warn("회원가입 요청이 역할을 지정했다 — 무시하고 ROLE_USER 로 만든다.");
         }
         role = roleRepository.findByRoleName(AppRole.ROLE_USER)
                 .orElseThrow(() -> new IllegalStateException(
@@ -659,8 +686,7 @@ public class UserServiceImpl implements UserService {
         //    내용은 필드 선언부와 application-local.yml 주석 참조.
         user.setEnabled(!requireEmailVerification);
         if (requireEmailVerification) {
-            log.info("가입 계정을 비활성으로 만든다 — 확인 메일의 링크로 활성화된다. email={}",
-                    request.getEmail());
+            log.info("가입 계정을 비활성으로 만든다 — 확인 메일의 링크로 활성화된다.");
         }
 
         user.setRole(role);
@@ -783,11 +809,16 @@ public class UserServiceImpl implements UserService {
 
     private TwoFactorChange checkCode(User user, int code) {
         Long userId = user.getUserId();
-        if (totpReplayGuard.locked(userId)) {
+        // 🔒 시도를 **검증하기 전에** 원자적으로 센다(INCR). 🐛 예전에는 locked() 로 읽고 → 검증하고 → 틀리면 더했다 — 비밀번호를 아는
+        //    공격자가 다른 코드 수백 개를 동시에 보내면 모두 "잠기지 않음" 을 읽고 검증됐다(한 번에 수백 개 대입, 15분마다 반복).
+        //    한도를 넘은 시도는 검증하지 않는다. 맞으면 아래에서 지운다.
+        // [JA] 試行を検証の前に原子的に数える。以前は読む → 検証 → 失敗なら加算で、同時に数百のコードを試せた。
+        long attempt = totpReplayGuard.reserveAttempt(userId);
+        if (attempt > totpReplayGuard.maxFailures()) {
             return TwoFactorChange.TOO_MANY_ATTEMPTS;
         }
         if (!validate2FACode(userId, code)) {
-            long failures = totpReplayGuard.recordFailure(userId);
+            long failures = attempt;
             log.info("2FA 코드 확인 실패: userId={}, 실패={}", userId, failures);
             if (failures == totpReplayGuard.maxFailures()) {
                 securityAlertProducer.publishAccountEvent(userId, user.getEmail(),
@@ -1028,7 +1059,17 @@ public class UserServiceImpl implements UserService {
         final User user = verificationToken.getUser();
 
         // 이미 활성화된 계정이면 몇 번을 눌러도 성공이다(멱등).
+        //
+        // 🐛 예전에는 여기서 그냥 돌아가 emailVerified 를 켜지 않았다 — 운영 기본값(require-email-verification=false)은 가입 즉시
+        //    enabled 라 **모든** 사용자가 이 길로 왔다. 링크를 눌러 주소를 증명한 사용자도 "확인된 적 없음" 으로 남아, 나중에 같은
+        //    주소로 소셜 로그인하면 SocialAccountLinker 가 비밀번호를 지우고 세션을 끊었다. 토큰은 지우지 않는다 — 메일 스캐너가 먼저
+        //    열어도 사용자의 클릭이 실패하지 않게(이 계정에서 토큰이 할 수 있는 일은 이 표시를 켜는 것뿐이다).
+        // [JA] 以前はここで返して emailVerified を立てなかった — 既定ではすべての利用者がこの経路で、リンクで証明しても未確認のままだった。
         if (user != null && user.isEnabled()) {
+            if (!user.isEmailVerified() && !verificationToken.isExpired()) {
+                user.setEmailVerified(true);
+                userRepository.save(user);
+            }
             return new VerificationResult(TOKEN_VALID, user);
         }
 

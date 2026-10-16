@@ -127,7 +127,7 @@ class DisabledAccountLoginTest {
     void lockIsCheckedFirst() {
         when(userDetailsService.loadUserByUsername(anyString())).thenReturn(detailsFor(true));
         org.mockito.Mockito.doThrow(new org.springframework.security.authentication.LockedException("locked"))
-                .when(loginAttemptService).assertNotLocked(anyString());
+                .when(loginAttemptService).reserveAttempt(anyString());
 
         assertThatThrownBy(this::attempt)
                 .isInstanceOf(org.springframework.security.authentication.LockedException.class);

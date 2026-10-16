@@ -76,10 +76,14 @@ spec:
                 secretKeyRef:
                   name: ecommerce-secrets
                   key: LOCAL_KEY_STORE_PASSWORD
+            # 🔒 스토어 비밀번호는 JAVA_TOOL_OPTIONS 에 넣지 않는다 — JVM 이 기동마다 그 변수를 통째로 "Picked up JAVA_TOOL_OPTIONS: …"
+            #    로 stderr 에 찍어 파드 로그 · Loki 에 평문으로 남았다. 앱이 기동 첫 순간에 아래 변수를 javax.net.ssl.*Password 로
+            #    옮긴다(common JvmSslPasswords · 게이트웨이 · config-server 는 main, B-83).
+            - name: JAVAX_NET_SSL_TRUST_STORE_PASSWORD
+              value: "$(LOCAL_KEY_STORE_PASSWORD)"
             - name: JAVA_TOOL_OPTIONS
               value: >-
                 -Djavax.net.ssl.trustStore=/app/resources/truststore.p12
-                -Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)
                 -Djavax.net.ssl.trustStoreType=PKCS12
             - name: LOCAL_KEY_STORE_PATH
               value: "/app/resources/keystore.p12"

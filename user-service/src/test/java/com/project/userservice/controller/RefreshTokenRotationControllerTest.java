@@ -75,6 +75,9 @@ class RefreshTokenRotationControllerTest {
         when(owner.isAccountNonLocked()).thenReturn(true);
         when(owner.isAccountNonExpired()).thenReturn(true);
         when(owner.isCredentialsNonExpired()).thenReturn(true);
+        when(owner.canSignIn()).thenCallRealMethod();
+        when(owner.isAccountNonExpired()).thenReturn(true);
+        when(owner.isCredentialsNonExpired()).thenReturn(true);
         when(userService.findByEmail("a@example.com")).thenReturn(owner);
         when(jwtUtils.generateTokenFromUser(owner)).thenReturn("new.access");
         // 쿠키는 새 토큰의 남은 수명으로 — 절대 수명(30일)이 가까우면 14일보다 짧다(docs/68 §12)

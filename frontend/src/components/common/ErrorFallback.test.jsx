@@ -53,12 +53,12 @@ describe("ErrorFallback", () => {
   it("서버가 보낸 설명이 있으면 그것을 쓴다 — 우리 일반론보다 구체적이다", () => {
     render(
       <ErrorFallback
-        error={httpError(400, "이름은 50자까지 입력할 수 있습니다.")}
+        error={httpError(400, "이름은 20자까지 입력할 수 있습니다.")}
         resetErrorBoundary={reset}
       />
     );
 
-    expect(screen.getByText("이름은 50자까지 입력할 수 있습니다.")).toBeInTheDocument();
+    expect(screen.getByText("이름은 20자까지 입력할 수 있습니다.")).toBeInTheDocument();
   });
 
   /**

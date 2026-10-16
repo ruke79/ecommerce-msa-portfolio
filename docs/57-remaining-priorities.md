@@ -593,6 +593,34 @@ kubectl -n ecommerce rollout restart deploy/<백엔드 열 개>
 
 戻し方: observe で同じ手順。`InternalCallerFilterTest`（身元ヘッダー 5 件）・`CheckMtlsScriptTest` が守る。
 
+**enforce の前提と最後の防衛線 — ガード二つ（`InternalEndpointGuardTest`）。**
+
+- **B-81 — Feign は `User-Role` ・ `User-Email` を載せない。** enforce は内部サービスが送ったその二つを捨てる。今は載せる Feign が
+  なく（代理の呼び出しは `User-Id` だけ）、手順 4 で動作は変わらない — その前提をコードで固定した。ロールが必要な内部呼び出しが
+  できたら、載せずに受け側が `User-Id` で照会する。
+- **B-80 — 内部専用エンドポイントはすべてコントローラーで `InternalCallGuard.allowed` により判定する。** パス規則（`INTERNAL_AUTH_PATH_RULES`）は
+  身元ヘッダーのあるリクエスト（ゲートウェイ経由）を飛ばす — そのとき実際に止めるのはその一行（catalog は `AdminWriteInterceptor`）だ。ガードは
+  規則の全パスにその判定があるか、`/internal/` を持つエンドポイントが規則に漏れなくあるか、規則が指すエンドポイントが実在するか
+  （パスを変えたら規則も）を見る。
+
+### ストアのパスワードは JVM オプションの外へ（2026-10-14、B-83）
+
+**何が問題だったか。** 13 のマニフェストが `JAVA_TOOL_OPTIONS` に `-Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)`（サービスは
+`keyStorePassword` も）を入れていた。JVM は起動のたびにその変数を**まるごと** `Picked up JAVA_TOOL_OPTIONS: …` として stderr に出す — logback を
+通らないのでマスキングされず、Pod ログと Loki（alloy が `/var/log/pods/ecommerce_*` を送る）に平文で残った。同じ値がワイルドカード秘密鍵 ·
+サービス身元キーストア · ゲートウェイ身元のパスワードでもある。
+
+**やったこと。** `JAVA_TOOL_OPTIONS` にはパスと形式だけを置く。パスワードは環境変数 `JAVAX_NET_SSL_TRUST_STORE_PASSWORD` · `JAVAX_NET_SSL_KEY_STORE_PASSWORD`
+で受け、アプリが `SpringApplication.run` の最初（設定サーバー · Eureka の最初の TLS より前）に `javax.net.ssl.*Password` へ移す —
+common の `JvmSslPasswords`（実行リスナー）、common を使わないゲートウェイ · config-server は `main`。JDK は既定の SSLContext を初めて使うときに
+このプロパティを読む（実測: 変数で渡したパスワードでトラストストアが開き、なければ証明書 0 件、`Picked up` 行にパスワードはない）。
+ops/12 · ops/13 も同じ方式。B-83（`JvmSslPasswordsTest`）がマニフェスト · オーバーレイ · ops の JVM オプションに `Password=` がないこと、ストアごとに
+パスワード変数があることを見る。
+
+**運用ですること。** デプロイだけで新しいログにはもう残らない。すでに残ったものは消えない — Loki の保持期間中は照会できる。パスワードが漏れたと
+みなして `LOCAL_KEY_STORE_PASSWORD` を変えるのが正しい（`ops/07` でストアを新しいパスワードで作り直して Secret を更新 → 全サービス再起動、サービス
+身元は `ops/38`）。それまでは Grafana · Loki へのアクセスを運用者だけにする（観測ポートはもともと公開しない）。
+
 ### 残っているもの — 正直に
 
 - サーバー証明書は依然として共有だ — ゲートウェイもその鍵を持っている。ただしその鍵（CN=localhost）は今は **許可主体ではない** ので、内部呼び出しには

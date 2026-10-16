@@ -62,6 +62,21 @@ public class MdcTaskDecorator implements TaskDecorator {
      * <p>[JA] 以前は MDC だけをコピーしていた。作業スレッドには親の観測がなく、そこで観測を有効にした KafkaTemplate で送ると新しい
      * ルートトレースが始まり、traceId が切れていた。今は context-propagation のスナップショットで現在の観測も渡す。
      */
+    /**
+     * context-propagation 이 없으면 기동 때 한 번 알린다 — 🐛 예전에는 조용히 MDC 만 넘겨, 작업 스레드의 추적이 끊겨도(새 루트 추적)
+     * 아무 표시가 없었다. 의존성(io.micrometer:context-propagation)이 빠진 빌드를 로그로 알아챈다.
+     *
+     * @return 있으면 true
+     */
+    // [JA] context-propagation がなければ起動時に一度知らせる — 以前は黙って MDC だけを渡していた。
+    static boolean warnIfNoContextPropagation() {
+        if (!CONTEXT_PROPAGATION) {
+            org.slf4j.LoggerFactory.getLogger(MdcTaskDecorator.class).warn(
+                    "context-propagation 이 클래스패스에 없다 — 작업 스레드로 추적 문맥이 넘어가지 않는다(MDC 만). io.micrometer:context-propagation 을 더한다.");
+        }
+        return CONTEXT_PROPAGATION;
+    }
+
     @Override
     public Runnable decorate(Runnable runnable) {
         Runnable withMdc = withMdc(runnable);

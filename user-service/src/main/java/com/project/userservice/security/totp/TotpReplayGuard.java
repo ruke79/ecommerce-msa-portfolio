@@ -89,6 +89,15 @@ public class TotpReplayGuard {
         return n == null ? 0L : n;
     }
 
+    /**
+     * 시도를 하나 <b>먼저</b> 센다 — 검증 전에 부른다. 돌려준 수가 {@link #maxFailures()} 를 넘으면 검증하지 않는다. 맞으면
+     * {@link #clearFailures} 로 지운다. 읽고-검증하고-더하는 순서로는 동시에 보낸 코드가 모두 "잠기지 않음" 을 읽는다.
+     */
+    // [JA] 試行を先に数える — 検証の前に呼ぶ。上限を超えたら検証しない。
+    public long reserveAttempt(Long userId) {
+        return recordFailure(userId);
+    }
+
     public int maxFailures() {
         return maxFailures;
     }

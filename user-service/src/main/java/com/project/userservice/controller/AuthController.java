@@ -166,7 +166,8 @@ public class AuthController {
         final String expired = "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요.";
         Long userId = pendingTwoFactor.userIdOf(pending).orElse(null);
         User user = userId == null ? null : userRepository.findById(userId).orElse(null);
-        if (user == null || !user.isTwoFactorEnabled()) {
+        // 코드를 받는 사이(최대 5분) 막힌 계정이면 세션을 주지 않는다 — 🐛 예전에는 계정 상태를 보지 않았다.
+        if (user == null || !user.isTwoFactorEnabled() || !user.canSignIn()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
         }
 
@@ -229,7 +230,7 @@ public class AuthController {
 
         User user = userRepository.findById(passed.userId()).orElse(null);
         // 코드를 받는 사이 막힌 계정(정지 · 탈퇴)이면 세션을 주지 않는다.
-        if (user == null || !user.isEnabled() || !user.isAccountNonLocked()) {
+        if (user == null || !user.canSignIn()) {
             response.addCookie(clearPending);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
         }
@@ -706,9 +707,40 @@ public class AuthController {
         }
     }
 
+    /** 2FA 켜기 전 "최근 로그인" 창 — 패스키 등록 · 탈퇴와 같은 생각(docs/68 §16 · §20). */
+    @org.springframework.beans.factory.annotation.Value("${auth.two-factor.reauth-window:PT10M}")
+    private java.time.Duration twoFactorReauthWindow = java.time.Duration.ofMinutes(10);
+
+    /**
+     * 🔒 이 브라우저의 로그인이 방금(창 안에) 시작됐는가 — 비밀번호 · 소셜 · 2FA 를 다시 거쳤다는 뜻이다.
+     *
+     * <p>🐛 예전: 2FA 켜기는 세션만 있으면 됐다. 훔친 세션(공용 PC · 탈취된 쿠키)으로 공격자가 <b>자기</b> 인증 앱을 등록하면, 주인은 다음
+     * 로그인부터 코드를 몰라 들어오지 못한다(비밀번호 재설정은 2FA 를 풀지 않고 복구 코드도 없다). 패스키 등록은 이미 이것을 요구했다.
+     */
+    // [JA] このブラウザのログインが直前(窓の中)に始まったか。以前は 2FA の有効化がセッションだけでできた — 盗んだセッションで攻撃者が
+    //      自分の認証アプリを登録すると、持ち主は次のログインから入れなくなった。
+    private boolean recentlyAuthenticated(String refresh) {
+        User user = authUtil.loggedInUser();
+        if (user == null) {
+            return false;
+        }
+        java.util.OptionalLong authTime = refreshTokenService.authTimeOf(refresh, user);
+        long now = java.time.Instant.now().getEpochSecond();
+        return authTime.isPresent() && now - authTime.getAsLong() <= twoFactorReauthWindow.toSeconds();
+    }
+
+    private ResponseEntity<String> twoFactorReauthRequired() {
+        // 본문은 다른 2FA 응답처럼 문자열 — 화면은 code 대신 403 으로 다시 로그인을 안내한다.
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("reauth_required");
+    }
+
     // 2FA Authentication
     @PostMapping("/enable-2fa")
-    public ResponseEntity<String> enable2FA() {
+    public ResponseEntity<String> enable2FA(
+            @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {
+        if (!recentlyAuthenticated(refresh)) {
+            return twoFactorReauthRequired();
+        }
         Long userId = authUtil.loggedInUserId();
         // 🔒 이미 켜져 있으면 비밀을 바꾸지 않는다 — 세션만 가진 사람이 자기 앱으로 바꿔 끼우지 못하게(끄고 다시 켠다, docs/68 §14).
         if (userService.start2FASetup(userId) == UserService.TwoFactorChange.ALREADY_ENABLED) {
@@ -732,7 +764,12 @@ public class AuthController {
     }
 
     @PostMapping("/verify-2fa")
-    public ResponseEntity<String> verify2FA(@RequestParam int code) {
+    public ResponseEntity<String> verify2FA(@RequestParam int code,
+            @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {
+        // 켜기와 확인 사이에 창이 닫혔을 수도 있다 — 실제로 켜지는 이 순간에 다시 본다.
+        if (!recentlyAuthenticated(refresh)) {
+            return twoFactorReauthRequired();
+        }
         Long userId = authUtil.loggedInUserId();
         return twoFactorResponse(userService.confirm2FASetup(userId, code), "2FA Verified");
     }

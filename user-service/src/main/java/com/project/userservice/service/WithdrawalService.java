@@ -63,6 +63,11 @@ public class WithdrawalService {
     private final com.project.userservice.message.UserOutboxHelper userOutboxHelper;
     /** 최근 로그인 확인 · 최종 처리 때 로그인 끊기(docs/68 §16). */
     private final RefreshTokenService refreshTokenService;
+    private final com.project.userservice.repository.jpa.KnownDeviceRepository knownDeviceRepository;
+    private final com.project.userservice.repository.jpa.PasskeyCredentialRepository passkeyCredentialRepository;
+    private final com.project.userservice.repository.jpa.NotificationRepository notificationRepository;
+    /** 현재 비밀번호의 시도 제한 — 비밀번호 변경과 같은 칸(사용자마다 15분에 5번). */
+    private final com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
 
     /** 신청부터 최종 처리까지 기다리는 기간. */
     @Value("${app.withdrawal.grace:P7D}")
@@ -142,6 +147,8 @@ public class WithdrawalService {
             return false;
         }
 
+        // 익명화 전에 — 옛 알림 행은 실제 이메일을 들고 있다(아래 삭제).
+        String originalEmail = user.getEmail();
         anonymize(user);
         userRepository.saveAndFlush(user);
         // 🐛 예전: 비활성으로만 바꿔, 열려 있던 로그인은 다음 갱신 때까지 · 채팅 · 알림 연결은 계속 살아 있었다(docs/68 §16).
@@ -156,6 +163,14 @@ public class WithdrawalService {
         shippingAddressRepository.deleteByUserId(userId);
         verificationTokenRepository.deleteByUserId(userId);
         passwordResetTokenRepository.deleteByUserId(userId);
+        // 🐛 예전에는 아래가 남았다 — 기기(UA 라벨 · 마스킹 IP) · 패스키(공개 키 · 이름) · 알림(실제 이메일 · 세션 id). 탈퇴 7일 뒤에도
+        //    users.notification 에서 원래 주소가 나왔다.
+        // [JA] 以前は端末 · パスキー · 通知(実メール · セッション id)が残り、退会後も元のアドレスが出てきた。
+        knownDeviceRepository.deleteByUserId(userId);
+        passkeyCredentialRepository.deleteByUserId(userId);
+        notificationRepository.deleteByOwners(originalEmail == null
+                ? java.util.List.of(String.valueOf(userId))
+                : java.util.List.of(String.valueOf(userId), originalEmail));
 
         // 되돌릴 수 없으므로 info 가 아니라 warn 으로 남긴다.
         log.warn("회원 탈퇴 최종 처리: userId={}", userId);
@@ -188,6 +203,9 @@ public class WithdrawalService {
         // 아무도 모르는 값을 넣어 로그인 경로를 확실히 닫는다.
         user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
 
+        // 사용자가 직접 쓴 탈퇴 사유도 — 자유 문장이라 이름 · 연락처가 섞일 수 있다(🐛 예전에는 남겼다).
+        user.setWithdrawalReason(null);
+
         user.setWithdrawnAt(LocalDateTime.now());
     }
 
@@ -205,9 +223,12 @@ public class WithdrawalService {
     // [JA] 本人確認 — パスワード、または空欄なら「最近のログイン」。以前はソーシャル登録のランダムなパスワードのせいで、ソーシャル会員は退会できなかった。
     private void requireReauthentication(User user, String rawPassword, String presentedRefresh) {
         if (rawPassword != null && !rawPassword.isBlank()) {
+            // 🔒 비교 전에 센다 — 🐛 예전에는 제한이 없어 세션만 가진 사람이 탈퇴 신청으로 비밀번호를 대입할 수 있었다.
+            currentPasswordGuard.reserve(user.getUserId());
             if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
                 throw new BadCredentialsException("비밀번호가 일치하지 않습니다.");
             }
+            currentPasswordGuard.clear(user.getUserId());
             return;
         }
         java.util.OptionalLong authTime = refreshTokenService.authTimeOf(presentedRefresh, user);

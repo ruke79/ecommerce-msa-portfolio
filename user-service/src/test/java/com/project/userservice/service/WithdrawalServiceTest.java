@@ -50,7 +50,11 @@ class WithdrawalServiceTest {
     private PasswordEncoder passwordEncoder;
     private com.project.userservice.message.UserOutboxHelper outboxHelper;
     private com.project.userservice.service.RefreshTokenService refreshTokenService;
+    private com.project.userservice.repository.jpa.KnownDeviceRepository knownDeviceRepository;
+    private com.project.userservice.repository.jpa.PasskeyCredentialRepository passkeyCredentialRepository;
+    private com.project.userservice.repository.jpa.NotificationRepository notificationRepository;
     private WithdrawalService service;
+    private com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
 
     private User user;
 
@@ -66,6 +70,10 @@ class WithdrawalServiceTest {
         outboxHelper = mock(com.project.userservice.message.UserOutboxHelper.class);
         refreshTokenService = mock(com.project.userservice.service.RefreshTokenService.class);
         when(refreshTokenService.authTimeOf(any(), any())).thenReturn(java.util.OptionalLong.empty());
+        knownDeviceRepository = mock(com.project.userservice.repository.jpa.KnownDeviceRepository.class);
+        passkeyCredentialRepository = mock(com.project.userservice.repository.jpa.PasskeyCredentialRepository.class);
+        notificationRepository = mock(com.project.userservice.repository.jpa.NotificationRepository.class);
+        currentPasswordGuard = mock(com.project.userservice.security.CurrentPasswordGuard.class);
 
         user = new User("tester", "tester@example.com", passwordEncoder.encode(PASSWORD));
         user.setUserId(USER_ID);
@@ -73,7 +81,8 @@ class WithdrawalServiceTest {
 
         service = new WithdrawalService(userRepository, shippingAddressRepository,
                 wishItemRepository, verificationTokenRepository, passwordResetTokenRepository,
-                reviewLikeRepository, passwordEncoder, outboxHelper, refreshTokenService);
+                reviewLikeRepository, passwordEncoder, outboxHelper, refreshTokenService,
+                knownDeviceRepository, passkeyCredentialRepository, notificationRepository, currentPasswordGuard);
         ReflectionTestUtils.setField(service, "grace", Duration.ofDays(7));
     }
 
@@ -249,6 +258,22 @@ class WithdrawalServiceTest {
         verify(passwordResetTokenRepository).deleteByUserId(USER_ID);
     }
 
+    /** 🐛 예전에는 기기 · 패스키 · 알림(실제 이메일) · 탈퇴 사유가 남아, 탈퇴 7일 뒤에도 원래 주소가 DB 에서 나왔다. */
+    @Test
+    @DisplayName("🔴 최종 처리는 기기 · 패스키 · 알림(옛 행의 실제 이메일 포함) · 탈퇴 사유도 지운다")
+    void finalizeDeletesDevicesPasskeysNotificationsAndReason() {
+        user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(8));
+        user.setWithdrawalReason("010-1234-5678 로 연락 주세요");
+
+        service.finalizeWithdrawal(USER_ID);
+
+        verify(knownDeviceRepository).deleteByUserId(USER_ID);
+        verify(passkeyCredentialRepository).deleteByUserId(USER_ID);
+        verify(notificationRepository).deleteByOwners(
+                java.util.List.of(String.valueOf(USER_ID), "tester@example.com"));
+        assertThat(user.getWithdrawalReason()).isNull();
+    }
+
     /** 🔴 원본만 지우면 chat 의 복제본에 이메일·이름·사진이 남는다(docs/48 §6-⑤). */
     @Test
     @DisplayName("🔴 최종 처리는 user-deleted 를 같은 트랜잭션의 아웃박스에 적는다 — 복제본도 지우게")
@@ -280,5 +305,17 @@ class WithdrawalServiceTest {
         assertThat(service.finalizeWithdrawal(USER_ID)).isFalse();
 
         verify(shippingAddressRepository, never()).deleteByUserId(USER_ID);
+    }
+
+    /** 🐛 예전: 현재 비밀번호 확인에 제한이 없어, 세션만 가진 사람이 탈퇴 신청으로 비밀번호를 대입할 수 있었다. */
+    @Test
+    @DisplayName("🔴 비밀번호 확인은 비교 전에 시도를 센다 — 한도를 넘으면 비교하지 않는다")
+    void passwordAttemptsAreLimited() {
+        org.mockito.Mockito.doThrow(new com.project.userservice.security.CurrentPasswordGuard.TooManyAttemptsException())
+                .when(currentPasswordGuard).reserve(USER_ID);
+
+        assertThatThrownBy(() -> service.request(USER_ID, PASSWORD, null))
+                .isInstanceOf(com.project.userservice.security.CurrentPasswordGuard.TooManyAttemptsException.class);
+        assertThat(user.getWithdrawalRequestedAt()).isNull();
     }
 }

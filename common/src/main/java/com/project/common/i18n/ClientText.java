@@ -138,10 +138,11 @@ public final class ClientText {
      * 것이 번역되는 가장 짧은 j 를 고른다. 어디까지 이어도 맞지 않으면 그 조각만 원문으로 두고 다음으로 간다.
      */
     private static String translateList(Catalog c, String text, int depth) {
-        String[] pieces = text.split(", ");
-        if (pieces.length > MAX_LIST_PIECES) {
-            return null;   // 상한 — 원문 그대로 ／ [JA] 上限 — 原文のまま
-        }
+        String[] all = text.split(", ");
+        // 상한 — 🐛 예전에는 넘으면 **전부** 원문이었다(조각 25개짜리 목록은 한 조각도 번역되지 않았다). 앞의 상한만큼만 번역하고
+        //    나머지는 원문으로 붙인다 — 처리 시간의 상한은 그대로다.
+        // [JA] 上限 — 以前は超えると全部原文だった。先頭の上限分だけ訳し、残りは原文で付ける(処理時間の上限は同じ)。
+        String[] pieces = all.length > MAX_LIST_PIECES ? java.util.Arrays.copyOf(all, MAX_LIST_PIECES) : all;
         List<String> out = new ArrayList<>();
         boolean changed = false;
         int i = 0;
@@ -170,7 +171,13 @@ public final class ClientText {
                 i = matched + 1;
             }
         }
-        return changed ? String.join("、", out) : null;
+        if (!changed) {
+            return null;
+        }
+        String head = String.join("、", out);
+        return all.length > pieces.length
+                ? head + "、" + String.join(", ", java.util.Arrays.copyOfRange(all, pieces.length, all.length))
+                : head;
     }
 
     private static String fill(String target, List<String> parts) {

@@ -28,7 +28,16 @@ import com.project.userservice.service.ReviewLikeService.LikeSnapshot;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-@Transactional
+/**
+ * 리뷰 등록 · 삭제 · 조회.
+ *
+ * <p>🔒 <b>외부 호출(order 의 구매 확인 · S3 업로드 · catalog 의 평점)은 DB 트랜잭션 밖에서 한다.</b> 🐛 예전에는 클래스 전체가
+ * {@code @Transactional} 이라 세 호출이 모두 DB 커넥션을 쥔 채 돌았다 — 풀은 5개(DB_POOL_SIZE)라 S3 가 느릴 때 리뷰 다섯 건이 동시에
+ * 들어오면 로그인을 포함한 모든 DB 요청이 5초 뒤 실패했다. 평점도 커밋 전에 보냈다(롤백돼도 이미 반영). 이제 짧은 읽기 → 외부 호출 →
+ * 짧은 쓰기 → 커밋 뒤 평점 순서다.
+ */
+// [JA] 外部呼び出し(購入確認 · S3 · 評点)は DB トランザクションの外で行う。以前はクラス全体が @Transactional で、プール 5 本を握ったまま
+//      呼んでいた — S3 が遅いと全 DB リクエストが失敗した。今は短い読み → 外部呼び出し → 短い書き → コミット後に評点。
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -46,6 +55,9 @@ public class ReviewService {
 
     /** 리뷰 작성 자격(받은 상품인가)을 묻는다. docs/57 §13. */
     private final com.project.userservice.client.OrderServiceClient orderServiceClient;
+
+    /** 짧은 DB 구간 — 외부 호출을 그 밖에 두기 위해 메서드 단위 @Transactional 대신 쓴다. */
+    private final org.springframework.transaction.support.TransactionTemplate tx;
 
     /**
      * 받은 상품만 리뷰를 쓴다 — 켜고 끌 수 있게 둔다(시연 환경에서 배송까지 기다리기 어려울 때). 기본은 켠다.
@@ -163,21 +175,27 @@ public class ReviewService {
      * catalog 가 신원 헤더 없는 이 호출을 401 로 막고 있어서(docs/57 §3) 실제로 늘 실패했다. 평점은 리뷰에서 다시
      * 계산할 수 있는 <b>파생 값</b>이다 — 반영이 실패해도 리뷰는 남기고, 다음 리뷰가 다시 계산해 보낸다.
      */
-    private void publishRating(Long productId, List<Review> reviews) {
-        float rating;
+    private static float ratingOf(List<Review> reviews) {
         if (reviews.isEmpty()) {
             // 0 으로 나누면 NaN 이 된다. 예전 코드는 첫 리뷰를 쓸 때 비어 있는 목록으로
             // 나눠서 NaN 을 catalog 로 보냈다.
-            rating = 0.0F;
-        } else {
-            float totalPoints = reviews.stream().map(Review::getRating).reduce(0F, Float::sum);
-            rating = totalPoints / reviews.size();
+            return 0.0F;
         }
+        float totalPoints = reviews.stream().map(Review::getRating).reduce(0F, Float::sum);
+        return totalPoints / reviews.size();
+    }
+
+    /** 커밋 뒤에 부른다 — 롤백될 리뷰의 평점을 먼저 보내지 않게. */
+    private void publishRating(Long productId, float rating) {
         try {
             catalogServiceClient.updateRating(productId, rating);
         } catch (RuntimeException e) {
             log.warn("상품 평점 반영 실패 — 리뷰는 저장한다. productId={} ({})", productId, e.getClass().getSimpleName());
         }
+    }
+
+    /** 쓰기 구간의 결과 — 커밋 뒤 보낼 평점과 응답. */
+    private record Written(float rating, List<ReviewDto> dtos) {
     }
 
     /**
@@ -204,8 +222,10 @@ public class ReviewService {
         }
         List<String> imageUrls = new ArrayList<>(images.size());
         for (MultipartFile image : images) {
-            String filename = FileUtil.getRandomFilename();
-            imageUrls.add(imageService.upload(image, filename));
+            // 🐛 예전: 키가 난수 하나뿐이었다 — images/ 접두사도 확장자도 없어 버킷의 공개 읽기 정책(images/*) 밖이라, 업로드는 되는데
+            //    화면에서는 403(깨진 이미지)이었다. 프로필 이미지와 같은 규칙으로(확장자 검사 포함).
+            String key = FileUtil.getFilePath(image, "review/" + FileUtil.getRandomFilename(), "images");
+            imageUrls.add(imageService.upload(image, key));
         }
         return imageUrls;
     }
@@ -219,24 +239,24 @@ public class ReviewService {
      *
      * @throws NoSuchElementException 회원이 없거나, 이 상품에 내 리뷰가 없다
      */
-    @Transactional
     public List<ReviewDto> deleteReview(String username, Long id) {
+        Written w = tx.execute(status -> {
+            User user = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
 
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
+            List<Review> reviews = reviewRepository.findByProductId(id);
 
-        List<Review> reviews = reviewRepository.findByProductId(id);
+            Review mine = findMyReview(reviews, user);
+            if (mine == null) {
+                throw new NoSuchElementException(StatusMessages.REVIEW_NOT_FOUND);
+            }
 
-        Review mine = findMyReview(reviews, user);
-        if (mine == null) {
-            throw new NoSuchElementException(StatusMessages.REVIEW_NOT_FOUND);
-        }
-
-        reviewRepository.deleteById(mine.getReviewId());
-        reviews.remove(mine);
-        publishRating(id, reviews);
-
-        return toDtos(reviews, user.getUserId());
+            reviewRepository.deleteById(mine.getReviewId());
+            reviews.remove(mine);
+            return new Written(ratingOf(reviews), toDtos(reviews, user.getUserId()));
+        });
+        publishRating(id, w.rating());
+        return w.dtos();
     }
 
     /**
@@ -272,80 +292,96 @@ public class ReviewService {
     public List<ReviewDto> addReview(String username, Long id, ReviewRequest request, List<MultipartFile> images)
             throws IOException {
 
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
-
         validate(request);
 
-        List<Review> reviews = reviewRepository.findByProductId(id);
+        // ① 짧은 읽기 — 누구인가, 이미 썼는가.
+        Long[] who = tx.execute(status -> {
+            User user = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
+            Review mine = findMyReview(reviewRepository.findByProductId(id), user);
+            return new Long[] {user.getUserId(), mine == null ? null : mine.getReviewId()};
+        });
+        Long userId = who[0];
+        boolean isNew = who[1] == null;
 
-        Review mine = findMyReview(reviews, user);
-
-        // 새 리뷰만 묻는다 — 이미 쓴 리뷰를 고치는 것은 그때 이미 자격을 확인했다. 이미지를 올리기 전에 본다(거절될 것을 올리지 않는다).
-        if (mine == null && requirePurchase) {
-            requireReceived(user.getUserId(), id);
+        // ② 트랜잭션 밖 — 자격 확인(order) · 이미지 업로드(S3). 새 리뷰만 묻는다 — 이미 쓴 리뷰를 고치는 것은 그때 이미 자격을
+        //    확인했다. 이미지를 올리기 전에 본다(거절될 것을 올리지 않는다).
+        if (isNew && requirePurchase) {
+            requireReceived(userId, id);
         }
-
         // 이미지를 새로 올리지 않았으면 null 이고, 그때는 기존 이미지를 그대로 둔다.
         List<String> imageUrls = uploadImages(images);
 
-        ReviewStyle style = ReviewStyle.builder()
-                .color(request.getStyle().getColor())
-                .image(request.getStyle().getImage())
-                .build();
+        // ③ 짧은 쓰기.
+        Written w = tx.execute(status -> {
+            User user = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
+            List<Review> reviews = reviewRepository.findByProductId(id);
+            Review mine = findMyReview(reviews, user);
+            if (mine == null && !isNew && requirePurchase) {
+                // ①과 ③ 사이에 내 리뷰가 지워졌다 — 새 리뷰가 되는데 자격은 확인하지 않았다. 드문 경합이라 다시 하게 한다.
+                throw ReviewNotAllowedException.checkUnavailable();
+            }
 
-        if (null != mine) {
+            ReviewStyle style = ReviewStyle.builder()
+                    .color(request.getStyle().getColor())
+                    .image(request.getStyle().getImage())
+                    .build();
 
-            mine.setProductId(id);
-            mine.setReview(request.getReview());
-            mine.setFit(request.getFit());
-            mine.setSize(request.getSize());
-            mine.setRating(request.getRating());
-            // 🐛 예전: 수정할 때마다 새 ReviewStyle 로 바꿔 끼웠다 — 옛 review_style 행이 주인 없이 남았다(cascade 가 PERSIST 뿐).
-            //    있으면 그 행을 고쳐 쓴다.
-            if (mine.getStyle() != null) {
-                mine.getStyle().setColor(style.getColor());
-                mine.getStyle().setImage(style.getImage());
+            if (null != mine) {
+
+                mine.setProductId(id);
+                mine.setReview(request.getReview());
+                mine.setFit(request.getFit());
+                mine.setSize(request.getSize());
+                mine.setRating(request.getRating());
+                // 🐛 예전: 수정할 때마다 새 ReviewStyle 로 바꿔 끼웠다 — 옛 review_style 행이 주인 없이 남았다(cascade 가 PERSIST 뿐).
+                //    있으면 그 행을 고쳐 쓴다.
+                if (mine.getStyle() != null) {
+                    mine.getStyle().setColor(style.getColor());
+                    mine.getStyle().setImage(style.getImage());
+                } else {
+                    mine.setStyle(style);
+                }
+
+                if (null != imageUrls) {
+                    mine.setImages(imageUrls);
+                }
+
+                reviewRepository.save(mine);
+
             } else {
-                mine.setStyle(style);
+
+                Review.ReviewBuilder<?, ?> rBuilder = Review.builder()
+                        .fit(request.getFit())
+                        .rating(request.getRating())
+                        .review(request.getReview())
+                        .style(style)
+                        .size(request.getSize())
+                        .reviewedBy(user)
+                        .productId(id);
+
+                if (null != imageUrls) {
+                    rBuilder.images(imageUrls);
+                }
+
+                Review created = rBuilder.build();
+
+                user.getReviews().add(created);
+
+                reviewRepository.save(created);
+
+                // 방금 쓴 리뷰가 평균 계산과 응답 목록에 들어가야 한다. 예전에는 여기서
+                // 빠져 있어서, 리뷰를 쓴 직후 화면에 자기 리뷰가 보이지 않았고 평점도
+                // 갱신 전 목록으로 계산됐다.
+                reviews.add(created);
             }
+            return new Written(ratingOf(reviews), toDtos(reviews, user.getUserId()));
+        });
 
-            if (null != imageUrls) {
-                mine.setImages(imageUrls);
-            }
-
-            reviewRepository.save(mine);
-
-        } else {
-
-            Review.ReviewBuilder<?, ?> rBuilder = Review.builder()
-                    .fit(request.getFit())
-                    .rating(request.getRating())
-                    .review(request.getReview())
-                    .style(style)
-                    .size(request.getSize())
-                    .reviewedBy(user)
-                    .productId(id);
-
-            if (null != imageUrls) {
-                rBuilder.images(imageUrls);
-            }
-
-            Review created = rBuilder.build();
-
-            user.getReviews().add(created);
-
-            reviewRepository.save(created);
-
-            // 방금 쓴 리뷰가 평균 계산과 응답 목록에 들어가야 한다. 예전에는 여기서
-            // 빠져 있어서, 리뷰를 쓴 직후 화면에 자기 리뷰가 보이지 않았고 평점도
-            // 갱신 전 목록으로 계산됐다.
-            reviews.add(created);
-        }
-
-        publishRating(id, reviews);
-
-        return toDtos(reviews, user.getUserId());
+        // ④ 커밋 뒤 — 평점(catalog).
+        publishRating(id, w.rating());
+        return w.dtos();
     }
 
 }
