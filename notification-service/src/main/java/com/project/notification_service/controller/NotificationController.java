@@ -196,25 +196,11 @@ public class NotificationController {
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        NotificationPreference preference = notificationService.preferenceOf(userId, userEmail);
-
-        if (body.containsKey("smsEnabled")) {
-            preference.setSmsEnabled(Boolean.TRUE.equals(body.get("smsEnabled")));
-        }
-        if (body.containsKey("emailEnabled")) {
-            // 메일 수신 거부. ⚠️ 가입 확인·비밀번호 재설정은 이 설정과 무관하게 나간다 —
-            // 본인이 방금 요청한 메일을 수신 거부로 막으면 계정에 못 들어간다
-            // (MailKind#isTransactional).
-            preference.setEmailEnabled(Boolean.TRUE.equals(body.get("emailEnabled")));
-        }
-        if (body.containsKey("twoFactorEnabled")) {
-            // 인증된 번호가 없으면 켤 수 없다 — 켜지면 본인도 로그인하지 못한다.
-            boolean applied = preference.enableTwoFactor(Boolean.TRUE.equals(body.get("twoFactorEnabled")));
-            if (!applied) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).build();
-            }
-        }
-        return ResponseEntity.ok(PreferenceResponse.from(preference));
+        // 바꾸기 · 저장은 서비스의 한 트랜잭션에서(🐛 예전에는 여기서 세터를 불러 저장되지 않았다 — NotificationService.updatePreferences).
+        // 인증된 번호 없이 2단계 인증을 켜려 하면 409 — 켜지면 본인도 로그인하지 못한다.
+        return notificationService.updatePreferences(userId, userEmail, body)
+                .map(p -> ResponseEntity.ok(PreferenceResponse.from(p)))
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.CONFLICT).build());
     }
 
     // ── SMS 인증 (번호 등록 · 2단계 인증) ──────────────────────────────────────

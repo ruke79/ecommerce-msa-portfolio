@@ -248,6 +248,39 @@ public class NotificationService {
     }
 
     /**
+     * 알림 설정을 바꾼다 — 한 트랜잭션에서 읽고 고치고 저장한다. 들어온 키만 바꾼다.
+     *
+     * <p>🐛 예전: 컨트롤러가 {@link #preferenceOf(Long, String)} 로 받은 엔티티에 세터를 불렀다. 그 트랜잭션은 반환할 때 이미 커밋돼,
+     * 세터는 트랜잭션 밖이었다 — open-in-view 는 트랜잭션 밖의 변경을 flush 하지 않으므로 응답은 200 과 새 값인데 DB 는 그대로였다
+     * ("알림을 껐는데 계속 온다 · 새로 고치면 되돌아간다", 2단계 인증 켜기도). 테스트가 없었다(PreferenceUpdateTest).
+     *
+     * <p>2단계 인증을 켜려는데 인증된 번호가 없으면 아무것도 바꾸지 않고 빈 값(→ 409) — 일부만 저장된 채 실패를 돌려주지 않는다.
+     */
+    // [JA] 通知設定を変える — 一つのトランザクションで読み・直し・保存する。以前はコントローラーがトランザクションの外でセッターを呼び、
+    //      200 と新しい値を返すのに DB は元のままだった。二段階認証を番号なしで有効にしようとしたら何も変えず空(409)。
+    @Transactional
+    public java.util.Optional<NotificationPreference> updatePreferences(Long userId, String email,
+            java.util.Map<String, Boolean> changes) {
+        NotificationPreference preference = preferenceOf(userId, email);
+        boolean wantTwoFactor = Boolean.TRUE.equals(changes.get("twoFactorEnabled"));
+        if (changes.containsKey("twoFactorEnabled") && wantTwoFactor && !preference.isPhoneVerified()) {
+            return java.util.Optional.empty();
+        }
+        if (changes.containsKey("smsEnabled")) {
+            preference.setSmsEnabled(Boolean.TRUE.equals(changes.get("smsEnabled")));
+        }
+        if (changes.containsKey("emailEnabled")) {
+            // 메일 수신 거부. ⚠️ 가입 확인·비밀번호 재설정은 이 설정과 무관하게 나간다 — 본인이 방금 요청한 메일을 수신 거부로
+            // 막으면 계정에 못 들어간다(MailKind#isTransactional).
+            preference.setEmailEnabled(Boolean.TRUE.equals(changes.get("emailEnabled")));
+        }
+        if (changes.containsKey("twoFactorEnabled")) {
+            preference.enableTwoFactor(wantTwoFactor);
+        }
+        return java.util.Optional.of(preference);
+    }
+
+    /**
      * 주소만 기록한다. 알림 목록 조회처럼 설정이 필요 없는 경로에서 쓴다.
      *
      * <p>값이 그대로면 {@code rememberEmail} 이 아무것도 하지 않으므로 UPDATE 가 나가지 않는다 —

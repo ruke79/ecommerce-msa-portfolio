@@ -71,6 +71,31 @@ class NotificationServiceApplicationTests {
     @Autowired
     private DataSource dataSource;
 
+    @Autowired
+    private com.project.notification_service.controller.NotificationController notificationController;
+
+    @Autowired
+    private com.project.notification_service.repository.NotificationPreferenceRepository preferenceRepository;
+
+    @Test
+    @DisplayName("🔴 알림 설정 변경이 DB 에 저장된다 — 예전엔 트랜잭션 밖 세터라 200 · 새 값을 주고도 저장되지 않았다")
+    void preferenceUpdateIsPersisted() {
+        long userId = 9_001L;
+        var response = notificationController.updatePreferences(userId, "pref@example.com",
+                java.util.Map.of("smsEnabled", true, "emailEnabled", false));
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+
+        var saved = preferenceRepository.findByUserId(userId).orElseThrow();
+        assertThat(saved.isSmsEnabled()).as("smsEnabled").isTrue();
+        assertThat(saved.isEmailEnabled()).as("emailEnabled").isFalse();
+
+        // 인증된 번호 없이 2단계 인증 켜기 → 409, 함께 보낸 다른 변경도 저장하지 않는다
+        var rejected = notificationController.updatePreferences(userId, "pref@example.com",
+                java.util.Map.of("twoFactorEnabled", true, "emailEnabled", true));
+        assertThat(rejected.getStatusCode().value()).isEqualTo(409);
+        assertThat(preferenceRepository.findByUserId(userId).orElseThrow().isEmailEnabled()).isFalse();
+    }
+
     @Test
     @DisplayName("애플리케이션 컨텍스트가 실제로 뜬다")
     void contextLoads() {

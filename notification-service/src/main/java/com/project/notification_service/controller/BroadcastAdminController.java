@@ -59,15 +59,9 @@ public class BroadcastAdminController {
     public ResponseEntity<BroadcastAdminView> create(@Valid @RequestBody BroadcastRequest request) {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
-        /*
-         * sourceEventId 를 발급 시각으로 만든다.
-         *
-         * 카프카로 들어오는 공지와 달리 여기에는 "원래 사건"이 없다. 그래도 키를 비워 두면
-         * 관리자가 저장 버튼을 두 번 눌렀을 때(또는 응답이 늦어 다시 눌렀을 때) 같은 안내가
-         * 두 줄 생긴다. 제목만으로 막으면 같은 제목의 안내를 두 번 보낼 수 없게 되므로,
-         * 밀리초 단위 시각을 섞는다 — 연타는 막고 의도적인 재발송은 막지 않는다.
-         */
-        String eventId = "admin:" + now.toString();
+        // 카프카로 들어오는 공지와 달리 여기에는 "원래 사건"이 없다 — 키를 비워 두면 저장 버튼을 두 번 누르면 같은 안내가 두 줄
+        // 생긴다. 키 = 내용(제목 · 본문 · 링크)의 해시 + 분 단위 시각(adminEventId).
+        String eventId = adminEventId(request.title(), request.content(), request.url(), now);
 
         return broadcastService.create(
                         NotificationType.ANNOUNCEMENT,
@@ -83,6 +77,28 @@ public class BroadcastAdminController {
                             .body(BroadcastAdminView.of(saved, now));
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.CONFLICT).build());
+    }
+
+    /**
+     * 관리자 안내의 멱등 키 — 같은 내용을 같은 분 안에 두 번 보내면 같은 키(두 번째는 409).
+     *
+     * <p>🐛 예전: {@code "admin:" + now} — 주석은 "밀리초 단위로 섞어 연타를 막는다" 였지만 {@code LocalDateTime.now()} 는 나노초까지라
+     * 연타가 매번 다른 키가 되어 같은 안내가 두 줄 생겼다. 시각만 자르면 같은 분의 서로 다른 안내가 합쳐지므로 내용을 함께 넣는다.
+     * 같은 내용을 일부러 다시 보내려면 1분 뒤에(드물고, 그 편이 실수보다 낫다).
+     */
+    // [JA] 管理者案内の冪等キー — 同じ内容を同じ分に二度送ると同じキー。以前は now() のナノ秒で連打が毎回別キーになっていた。
+    static String adminEventId(String title, String content, String url, LocalDateTime now) {
+        try {
+            java.security.MessageDigest sha = java.security.MessageDigest.getInstance("SHA-256");
+            for (String part : new String[] {title, content, url}) {
+                sha.update(String.valueOf(part).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                sha.update((byte) 0);
+            }
+            String digest = java.util.HexFormat.of().formatHex(sha.digest()).substring(0, 16);
+            return "admin:" + digest + ":" + now.truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다
+        }
     }
 
     /**
