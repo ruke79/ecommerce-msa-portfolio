@@ -5,7 +5,6 @@ import com.google.common.collect.ImmutableMap;
 import com.project.common.message.dto.request.UserCreatedRequest;
 import com.project.chat_service.dto.MessageDto;
 import com.project.chat_service.model.ChatMessage;
-import com.project.common.dto.notification.AlarmEventDto;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -81,42 +80,10 @@ public class KafkaConsumerConfig {
                         // Avro 또는 JSON 을 MessageDto 로 — 리스너(MessageConsumer)가 받는 타입이다(docs/38 §1.16).
                         new AvroDtoDeserializer<>(new ChatMessageAvroMapping())));
     }
-    // @Bean
-    // ConcurrentKafkaListenerContainerFactory<String, String>
-    // kafkaDeletePostContainerFactory() {
-    // ConcurrentKafkaListenerContainerFactory<String, String> factory = new
-    // ConcurrentKafkaListenerContainerFactory<>();
-    // factory.setConsumerFactory(deletePostConsumer());
-    // return factory;
-    // }
-
-    @Bean
-    ConcurrentKafkaListenerContainerFactory<String, AlarmEventDto> kafkaNotificationContainerFactory() {
-        ConcurrentKafkaListenerContainerFactory<String, AlarmEventDto> factory = new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(kafkaNotificationConsumer());
-        factory.getContainerProperties().setConsumerRebalanceListener(new LoggingRebalanceListener());
-        factory.setCommonErrorHandler(kafkaErrorHandler);
-        factory.getContainerProperties().setObservationEnabled(true);
-        return factory;
-    }
-
-    @Bean
-    public ConsumerFactory<String, AlarmEventDto> kafkaNotificationConsumer() {
-        JsonDeserializer<AlarmEventDto> deserializer = new JsonDeserializer<>(AlarmEventDto.class, false);
-        deserializer.addTrustedPackages("*");
-        Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
-                .put(ConsumerConfig.GROUP_ID_CONFIG, "notification")
-                .put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment))
-                .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
-                .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
-                .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
-                .putAll(securityProps())
-                .build();
-
-        return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
-                new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(deserializer));
-    }
+    // 🐛 예전: 여기에 쓰는 곳 없는 알림 팩토리(kafkaNotificationContainerFactory)가 있었다. 그룹 id 가 "notification" —
+    //    notification-service 의 그룹과 같아, 누가 이 팩토리로 리스너를 붙이면 두 서비스가 파티션을 나눠 가져 서로의 메시지를 조용히
+    //    잃었다. 지웠다(2026-10-16).
+    // [JA] 以前は使われない通知ファクトリがあり、グループ id が notification-service と同じだった。削除した。
 
     @Bean
     ConcurrentKafkaListenerContainerFactory<String, UserCreatedRequest> userCreatedContainerFactory() {

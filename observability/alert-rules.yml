@@ -125,6 +125,13 @@ groups:
           summary: "delivery 가 배송 상태 이벤트를 보내지 못했습니다 (최근 30분 {{ $value }}건)"
           description: "delivery-service 로그의 \"배송 상태 발행 실패\" 에 orderId 와 상태가 있습니다. 그 주문의 상태(DISPATCHED · DELIVERED)와 알림이 멈췄을 수 있습니다 — 배송 화면의 상태와 주문 상태를 맞춰 보세요."
 
+      - alert: ChatMessagePublishFailed
+        expr: sum(increase(chat_message_publish_failed_total[30m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "chat 이 채팅 메시지를 Kafka 로 보내지 못했습니다 (최근 30분 {{ $value }}건)"
+          description: "chat-service 로그의 \"채팅 메시지 발행 실패\" 에 roomId 와 예외 종류가 있습니다. 그 메시지는 저장 · 방송되지 않았습니다 — 브로커 상태(채팅 · 상담 모두 멈춤)를 먼저 보세요."
+
       - alert: StockShortageRefundNotAutomatic
         expr: sum by (outcome) (increase(order_stock_shortage_total{outcome=~"manual|unknown_order"}[30m])) > 0
         labels: { severity: critical }

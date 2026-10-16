@@ -936,7 +936,7 @@ default-filters: `Dedupe=1`, `RemoveRequestHeader=User-Id=2`, `User-Email=3`, `U
 | 6 | 🟠 | `common/.../RedisConfig.java:25-31,33-53` | `ObjectMapper` 빈을 둘 등록 → Boot 의 `JacksonAutoConfiguration` 이 물러난다. 이 설정을 스캔하는 order/cart/chat 은 `WRITE_DATES_AS_TIMESTAMPS` ON, `FAIL_ON_UNKNOWN_PROPERTIES` ON → **날짜가 배열로 나가고**, 모르는 필드 하나에 역직렬화가 죽어 호환 배포가 불가능하다 | |
 | 7 | 🟠 | `common/.../CustomRestExceptionHandler.java:147-154` | `Exception` 전부를 500 으로 잡고 `getLocalizedMessage()` 를 본문에 넣는다 → JDBC 예외의 테이블·컬럼·파라미터가 클라이언트로 | |
 | 8 | 🟠 | `common/.../PaymentRequest.java` 외 4개 | Kafka DTO 에 **사용자 액세스 토큰 원문**이 담겨 아웃박스 테이블과 토픽에 평문 저장된다. 보존기간 동안 브로커·DB 읽기 권한이 곧 그 사용자 계정 | ✅ 다섯 DTO·스키마(v2)에서 제거, 소비자의 존재 검사 제거, 아웃박스 행 스크럽(V15) — docs/54 §1.7 |
-| 9 | 🟠 | `application-local.yml:337-356` | `chat-service-ws` 에 `JwtAuthorization` 없음(핸드셰이크 무인증); `chat-service-api` 의 uri 가 **`lb:ws://`** 라 REST 요청이 웹소켓 라우팅으로 샌다 | 의심 |
+| 9 | 🟠 | `application-local.yml:337-356` | `chat-service-ws` 에 `JwtAuthorization` 없음(핸드셰이크 무인증); `chat-service-api` 의 uri 가 **`lb:ws://`** 라 REST 요청이 웹소켓 라우팅으로 샌다 | ✅ 2026-10-16 두 라우트 `lb://`. 운영(Eureka)은 인스턴스가 https 를 알려 ws 가 무시되고 동작했다 — 스킴을 알리지 않는 디스커버리에서는 GET 400 · POST 405 · 평문(ChatRouteTlsTest 로 실측). 핸드셰이크는 STOMP CONNECT 의 토큰으로 인증한다(설계대로) |
 | 10 | 🟡 | `JwtAuthorizationGatewayFilterFactory.java:117,132-134,173-176` | 요청당 JWT 5회 파싱 + `key()` 가 매번 `Jwts.SIG.HS256.key().build()` 로 **임의 키를 생성**(알고리즘 이름만 쓰려고) | |
 | 11 | 🟡 | `eureka-server/application-local.yml:80-92` | `logging:` 이 `eureka:` 아래로 들여쓰기돼 `eureka.logging.*` 로 바인딩 → **유레카 로그 설정이 전부 무시**된다 | |
 | 12 | 🟡 | `common/application-common.yml:46-51` | 유레카 zone 이 평문 `http://localhost:8761` 인데 서버는 TLS → 로컬 실행 시 등록 실패. k8s 는 ConfigMap 이 덮어써서 가려져 있다 | |

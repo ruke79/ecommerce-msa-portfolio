@@ -597,7 +597,7 @@ return `${splitDate[0].trim()}년 ${splitDate[1].trim()}월 ${splitDate[2].trim(
   `JwtAuthorization` の**前**にある。同じファイルの他のルートのコメントが「必ず後ろ」と明記して
   いる順序と逆である。今はブラウザがヘッダーでトークンを送っているので無害だが、Cookie の経路を使った瞬間に
   401 になる。
-- `chat-service-api` の `uri: lb:ws://` — REST のルートが ws スキームである。動いているなら偶然である。
+- `chat-service-api` の `uri: lb:ws://` — REST のルートが ws スキームである。動いているなら偶然である。→ ✅ 2026-10-16 `lb://` に。動いていたのは偶然だった — Eureka のインスタンスが https を知らせ ws が無視されていた(知らせないディスカバリーでは GET 400 · POST 405、ChatRouteTlsTest · RouteMatchingTest)。
 
 ---
 

@@ -4,7 +4,6 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -16,11 +15,6 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Slice;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -67,7 +61,6 @@ public class ChatService {
     private final ParticipantChatRoomRepository participantChatRoomRepository;
     private final SequenceGeneratorService sequenceGenerator;
     private final RedissonClient redissonClient;
-    private final MongoTemplate mongoTemplate; // MongoTemplate 주입
 
     private final MessageMapper messageMapper;
 
@@ -86,6 +79,12 @@ public class ChatService {
         // send 입장 메시지
     }
 
+    /** 친구 채팅방이 있는가 — 없는 방 id 로 보낸 메시지 · 안내는 저장하지 않는다(StompController). */
+    @Transactional(readOnly = true)
+    public boolean roomExists(String roomId) {
+        return roomId != null && chatRoomJpaRepository.existsByRoomUid(roomId);
+    }
+
     public void disconnect(String userSessionId) {
 
         String roomId = chatRoomRepository.getUserEnterRoomId(userSessionId);
@@ -94,16 +93,6 @@ public class ChatService {
         // sendMessage(qit meesage);
 
         chatRoomRepository.removeUserEnterInfo(userSessionId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<MessageDto> getRoomMessages(String roomId) {
-        List<ChatMessage> chatList = chatMessageRepository.findByRoomId(roomId).orElse(Collections.emptyList());
-
-        return chatList.stream()
-            .map(MessageMapper::fromChatMessage)
-            .sorted(Comparator.comparing(MessageDto::getCreatedAt))
-            .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
@@ -197,7 +186,19 @@ public class ChatService {
         return chatRoomJpaRepository.findAllByOrderByIdAsc();
     }
 
+    /** 방 이름 최대 길이 — 화면(CreateRoomModal 의 MAX_LEN)과 같다. */
+    public static final int ROOM_NAME_MAX_LENGTH = 20;
+
+    /**
+     * 🐛 예전: 이름을 보지 않았다 — 빈 이름의 방이 생기고, 255자를 넘으면 DB 오류가 500 으로 나갔다. 화면은 20자로 막는다.
+     * [JA] 以前は名前を見ていなかった — 空の名前のルームができ、255 字を超えると DB エラーが 500 になった。
+     */
     public ChatRoomDto createChatRoom(String roomName, Long userId) throws Exception {
+        if (roomName == null || roomName.isBlank() || roomName.strip().length() > ROOM_NAME_MAX_LENGTH) {
+            throw new com.project.common.domain.exception.DomainException(
+                    "채팅방 이름은 1 ~ " + ROOM_NAME_MAX_LENGTH + "자로 정해 주세요.");
+        }
+        roomName = roomName.strip();
         String lockKey = "chatroom:create:lock:" + roomName;
         RLock lock = redissonClient.getLock(lockKey);
         ChatRoomDto chatRoomDto = null;
@@ -345,18 +346,5 @@ public class ChatService {
         em.persist(member);
         em.flush();
         return member;
-    }
-
-    /**
-     * MongoDB의 findAndModify를 이용한 원자적 메시지 업데이트 메서드
-     * 이 메서드는 예시로, ChatMessage를 수정해야 하는 비즈니스 로직이 있다면 사용 가능합니다.
-     */
-    public ChatMessage updateMessageAtomically(String messageId, String newContent) {
-        Query query = new Query(Criteria.where("id").is(messageId));
-        Update update = new Update().set("content", newContent);
-        FindAndModifyOptions options = new FindAndModifyOptions().returnNew(true);
-
-        // findAndModify는 조회와 수정을 하나의 원자적 연산으로 처리하여 동시성 문제를 방지합니다.
-        return mongoTemplate.findAndModify(query, update, options, ChatMessage.class);
     }
 }

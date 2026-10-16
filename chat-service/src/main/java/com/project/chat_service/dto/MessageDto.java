@@ -35,6 +35,9 @@ public class MessageDto implements Serializable {
     @Transient
     public static final String SEQUENCE_NAME = "message_sequence";
     
+    /** 본문 최대 길이 — 화면의 입력 상한(ChatFooter · SupportConversation 의 MAX_MESSAGE_LENGTH)과 같다. */
+    public static final int MAX_CONTENT_LENGTH = 1000;
+
     @Id    
     private String id;
     private MessageType type;        

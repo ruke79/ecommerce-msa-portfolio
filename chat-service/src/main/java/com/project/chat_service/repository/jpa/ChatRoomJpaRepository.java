@@ -25,6 +25,8 @@ public interface ChatRoomJpaRepository extends JpaRepository<ChatRoom, Long> {
 
     Optional<ChatRoom> findByRoomUid(String roomUid);
 
+    boolean existsByRoomUid(String roomUid);
+
     /** 목록. 만든 순서가 곧 화면 순서다 — 정렬이 없으면 DB 마음대로다. */
     java.util.List<ChatRoom> findAllByOrderByIdAsc();
 }

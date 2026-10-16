@@ -1580,6 +1580,48 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-92: 컨슈머 그룹 id 를 두 모듈이 함께 쓰지 않는다 — {@code GROUP_ID_CONFIG} · {@code groupId} · 리스너 {@code id}(그룹이 된다).
+     *
+     * <p>같은 토픽을 같은 그룹으로 읽으면 두 서비스가 파티션을 나눠 가져 <b>서로의 메시지를 조용히 잃는다</b>. 토픽이 달라도 한쪽 배포가
+     * 다른 쪽 컨슈머를 재조정한다. chat · user-service 에 쓰는 곳 없는 팩토리가 notification-service 의 그룹 {@code notification} 으로
+     * 있었다(2026-10-16 삭제). {@code coupon} 은 이미 운영에 있는 두 그룹이라(cart {@code coupon-use} · coupon {@code coupon-rollback} —
+     * 토픽이 달라 재조정만 엮인다) 남긴다 — 이름을 바꾸면 오프셋이 처음부터라 따로 배포한다.
+     *
+     * <p>[JA] コンシューマーグループ id を二つのモジュールで共有しない。同じトピックなら互いのメッセージを黙って失い、違っても片方の
+     * デプロイがもう片方を再調整する。
+     */
+    @Test
+    @DisplayName("B-92: 컨슈머 그룹 id 는 모듈마다 따로다(알려진 coupon 하나 빼고)")
+    void consumerGroupsAreNotShared() throws IOException {
+        Map<String, String> knownShared = Map.of(
+                "coupon", "cart coupon-use · coupon coupon-rollback — 다른 토픽(재조정만), 이름 변경은 오프셋 이전과 함께");
+        Pattern group = Pattern.compile("GROUP_ID_CONFIG\\s*,\\s*\"([^\"]+)\"|groupId\\s*=\\s*\"([^\"]+)\"");
+        Pattern listenerId = Pattern.compile("@KafkaListener\\([^)]*?\\bid\\s*=\\s*\"([^\"]+)\"", Pattern.DOTALL);
+        Map<String, Set<String>> modulesByGroup = new TreeMap<>();
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(m -> Files.isDirectory(m.resolve("src/main/java"))).toList()) {
+                try (Stream<Path> files = Files.walk(module.resolve("src/main/java"))) {
+                    for (Path f : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                        String src = stripJavaComments(Files.readString(f, StandardCharsets.UTF_8));
+                        for (Pattern p : List.of(group, listenerId)) {
+                            Matcher m = p.matcher(src);
+                            while (m.find()) {
+                                String g = m.group(1) != null ? m.group(1) : m.group(2);
+                                modulesByGroup.computeIfAbsent(g, k -> new TreeSet<>()).add(module.getFileName().toString());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(modulesByGroup).as("그룹 id 를 하나도 못 찾았다면 이 검사가 낡은 것이다").hasSizeGreaterThan(10);
+        List<String> shared = modulesByGroup.entrySet().stream()
+                .filter(e -> e.getValue().size() > 1 && !knownShared.containsKey(e.getKey()))
+                .map(e -> e.getKey() + " ← " + e.getValue()).toList();
+        assertThat(shared).as("같은 그룹 id 를 두 모듈이 쓴다(B-92)").isEmpty();
+    }
+
+    /**
      * B-91: config-server 는 TLS 로 뜬다 — 공용 ConfigMap 이 클라이언트에게 {@code https://config-server…:8888} 로 오라고 한다.
      *
      * <p>config-server 의 yml 에는 {@code server.ssl} 블록이 없고 k8s/32 의 {@code SERVER_SSL_*} 환경 변수 넷이 TLS 를 만든다(relaxed

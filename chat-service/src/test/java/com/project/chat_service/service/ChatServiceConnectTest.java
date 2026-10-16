@@ -71,7 +71,7 @@ class ChatServiceConnectTest {
     void setUp() {
         service = new ChatService(chatMessageRepository, messageProducer, chatRoomRepository,
                 chatRoomJpaRepository, chatMemberService, participantChatRoomRepository,
-                sequenceGenerator, redissonClient, mongoTemplate, messageMapper);
+                sequenceGenerator, redissonClient, messageMapper);
         ReflectionTestUtils.setField(service, "em", em);
     }
 

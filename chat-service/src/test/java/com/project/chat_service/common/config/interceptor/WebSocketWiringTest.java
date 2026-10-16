@@ -54,4 +54,10 @@ class WebSocketWiringTest {
                     assertThat(context).hasSingleBean(StompHandler.class);
                 });
     }
+
+    @Test
+    @DisplayName("🔴 StompHandler 는 컴포넌트 스캔 대상이 아니다 — 빈은 WebSocketConfiguration 의 @Bean 하나(예전에는 둘)")
+    void stompHandlerIsNotAComponent() {
+        assertThat(StompHandler.class.isAnnotationPresent(org.springframework.stereotype.Component.class)).isFalse();
+    }
 }

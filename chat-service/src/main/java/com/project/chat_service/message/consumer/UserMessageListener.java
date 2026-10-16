@@ -59,7 +59,9 @@ public class UserMessageListener {
 
          }
         catch(DataIntegrityViolationException err) {
-            log.error(err.getMessage());
+            // 🔒 예외 문구는 남기지 않는다 — SQL 상세에 닉네임 · 이미지 주소 값이 실린다. 종류와 id 만.
+            //    [JA] 例外の文言は残さない — SQL の詳細にニックネーム・画像 URL の値が載る。種類と id だけ。
+            log.error("user-created 저장 실패: id={} ({})", createdUser.getUserId(), err.getClass().getSimpleName());
         }
 
 

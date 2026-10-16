@@ -68,13 +68,18 @@ public class WebSocketConfiguration implements WebSocketMessageBrokerConfigurer 
         // stompHandler를 인터셉터로 등록하여 STOMP 메시지 핸들링을 수행
         registration.interceptors(myChannelInterceptor());
     }
+    /** 들어오는 STOMP 메시지 하나의 상한 — 본문 1000자(MessageDto.MAX_CONTENT_LENGTH, UTF-8 로 3KB 남짓)와 헤더에 넉넉하다. */
+    static final int MESSAGE_SIZE_LIMIT = 64 * 1024;
+
     /**
-     * STOMP에서 64KB 이상의 데이터 전송을 못하는 문제 해결
+     * 🐛 예전: 메시지 상한이 160 × 64KB = 10MB 였다("64KB 이상을 못 보내는 문제 해결"). 채팅은 글자만 보내므로 그 크기가 필요한 곳이
+     * 없고, 10MB 짜리 메시지가 몽고에 저장되고 방 전체에 방송될 수 있었다. 넘으면 그 연결을 닫는다(Spring 기본 동작).
+     * [JA] 以前はメッセージ上限が 10MB だった。チャットは文字だけなので不要で、巨大なメッセージが保存・放送されえた。
      * param WebSocketTransportRegistration
      */
     @Override
     public void configureWebSocketTransport(WebSocketTransportRegistration registry) {
-        registry.setMessageSizeLimit(160 * 64 * 1024);
+        registry.setMessageSizeLimit(MESSAGE_SIZE_LIMIT);
         registry.setSendTimeLimit(100 * 10000);
         registry.setSendBufferSizeLimit(3 * 512 * 1024);
         registry.addDecoratorFactory(liveSessions::decorate);

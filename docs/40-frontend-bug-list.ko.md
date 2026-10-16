@@ -597,7 +597,7 @@ return `${splitDate[0].trim()}년 ${splitDate[1].trim()}월 ${splitDate[2].trim(
   `JwtAuthorization` **앞**에 있다. 같은 파일의 다른 라우트 주석이 "반드시 뒤" 라고 못 박아
   둔 순서와 반대다. 지금은 브라우저가 헤더로 토큰을 보내 무해하지만, 쿠키 경로를 쓰는 순간
   401 이 난다.
-- `chat-service-api` 의 `uri: lb:ws://` — REST 라우트가 ws 스킴이다. 동작한다면 우연이다.
+- `chat-service-api` 의 `uri: lb:ws://` — REST 라우트가 ws 스킴이다. 동작한다면 우연이다. → ✅ 2026-10-16 `lb://` 로. 동작한 것은 우연이었다 — Eureka 인스턴스가 https 를 알려 ws 가 무시됐다(알리지 않는 디스커버리에서는 GET 400 · POST 405, ChatRouteTlsTest · RouteMatchingTest).
 
 ---
 

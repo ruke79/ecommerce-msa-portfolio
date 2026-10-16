@@ -61,7 +61,7 @@ class ChatServiceSendMessageTest {
     void setUp() {
         service = new ChatService(chatMessageRepository, messageProducer, chatRoomRepository,
                 chatRoomJpaRepository, chatMemberService, participantChatRoomRepository,
-                sequenceGenerator, redissonClient, mongoTemplate, messageMapper);
+                sequenceGenerator, redissonClient, messageMapper);
         when(sequenceGenerator.generateSequence(anyString())).thenReturn("42");
     }
 

@@ -62,7 +62,6 @@ public class ChatApiController {
     @ResponseBody
     public List<ChatRoomDto> room(){
         List<ChatRoom> allRoom = chatService.fildAllRooms();
-        log.info(allRoom.size());
         List<ChatRoomDto> all = new ArrayList<>();
         for (ChatRoom chatRoom : allRoom) {
             ChatRoomDto chatRoomDto = ChatRoomDto.builder()

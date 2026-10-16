@@ -4,14 +4,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
-import org.springframework.stereotype.Component;
 
 import com.project.chat_service.common.exception.handler.ErrorCode;
 import com.project.chat_service.common.util.TokenHandler;
@@ -19,9 +16,12 @@ import com.project.chat_service.service.ChatService;
 
 import java.util.Objects;
 
-@Order(Ordered.HIGHEST_PRECEDENCE + 99)
-@Component
-
+/**
+ * STOMP 프레임의 인증 · 권한(CONNECT · SUBSCRIBE · SEND). 빈은 {@code WebSocketConfiguration.myChannelInterceptor()} 하나다.
+ *
+ * <p>🐛 예전: {@code @Component} 도 붙어 있어 같은 인터셉터가 빈 둘로 떴다(인터셉터로 쓰이는 것은 하나). 지웠다.
+ * [JA] 以前は @Component も付いていて、同じインターセプターが Bean 二つで起動していた。
+ */
 @Slf4j
 public class StompHandler implements ChannelInterceptor {
 

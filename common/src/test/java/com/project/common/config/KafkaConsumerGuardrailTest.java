@@ -81,7 +81,8 @@ class KafkaConsumerGuardrailTest {
             }
         }
 
-        assertThat(inspected).as("KafkaConsumerConfig 파일 수").isGreaterThanOrEqualTo(9);
+        // 8 — user-service 의 것은 리스너가 하나도 없는 죽은 설정이라 지웠다(2026-10-16, B-92)
+        assertThat(inspected).as("KafkaConsumerConfig 파일 수").isGreaterThanOrEqualTo(8);
         assertThat(offenders).isEmpty();
     }
 

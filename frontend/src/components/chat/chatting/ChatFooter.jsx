@@ -74,6 +74,9 @@ const Wrapper = styled.footer`
 
 
 
+// 본문 최대 길이 — 서버(chat-service MessageDto.MAX_CONTENT_LENGTH)와 같다. 넘으면 서버가 조용히 버리므로 입력에서 막는다.
+export const MAX_MESSAGE_LENGTH = 1000;
+
 const ChatFooter = ({ onChatSumbmit }) => {
     const { t } = useTranslation();
     const [message, setMessage] = useState('');
@@ -145,6 +148,7 @@ const ChatFooter = ({ onChatSumbmit }) => {
         </div> */}
         <input className={"input"}
           type="text"          
+          maxLength={MAX_MESSAGE_LENGTH}
           value={message}
           onChange={onMessageChange}
           onKeyDown={onEnterPress}          

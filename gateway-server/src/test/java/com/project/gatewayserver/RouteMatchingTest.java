@@ -60,6 +60,17 @@ class RouteMatchingTest {
         }
     }
 
+    @Test
+    @DisplayName("🔴 라우트 uri 에 ws · wss 스킴이 없다 — 인스턴스가 스킴을 모르면 일반 요청까지 핸드셰이크가 된다(400 · 405 · 평문)")
+    void noWebSocketSchemeRoutes() throws Exception {
+        // lb:// 면 일반 요청은 https, 업그레이드 요청은 게이트웨이(WebsocketRoutingFilter)가 wss 로 바꾼다 — ChatRouteTlsTest.
+        // lb:ws:// 가 운영(Eureka)에서 동작한 것은 인스턴스의 https 가 이겨서였다 — 디스커버리에 기대지 않는다.
+        // [JA] lb:// なら通常は https、アップグレードはゲートウェイが wss に変える。
+        for (RouteDefinition r : routes()) {
+            assertThat(r.getUri().toString()).as(r.getId()).doesNotContainPattern("^(lb:)?wss?:");
+        }
+    }
+
     /** a 가 b 보다 좁은가 — b 가 {@code /x/**} 이고 a 가 {@code /x/…} 이면서 같지 않을 때. */
     private static boolean narrower(String a, String b) {
         return b.endsWith("/**") && !a.equals(b) && a.startsWith(b.substring(0, b.length() - 2));
