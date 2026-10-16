@@ -638,7 +638,7 @@ HttpClient 5）は自分の SSLContext を **鍵なしで** 作る（信頼だ�
 | 場所 | やったこと |
 |---|---|
 | クライアント — 共通設定 | `application-common.yml` の `eureka.client.tls` — 身元キーストア（`/app/identity/keystore.p12`、CN=サービス名）· 共有トラストストア。`EUREKA_CLIENT_TLS_ENABLED` で有効化（既定は無効 — ローカル開発 · ops/13）。import されるファイルなのでサービス自身の yml より優先する |
-| クライアント — マニフェスト | 身元をマウントした Deployment（バックエンド 10 · ゲートウェイ · config-server）が `EUREKA_CLIENT_TLS_ENABLED=true`。config-server にも身元を与えた（k8s/96 · ops/38 · ops/39）— 内部 API は呼ばないが Eureka に自分を登録する |
+| クライアント — マニフェスト | 身元をマウントした Deployment（バックエンド 10 · ゲートウェイ · config-server）が `EUREKA_CLIENT_TLS_ENABLED=true`。config-server にも身元を与えた（k8s/96 · ops/38 · ops/39）— 内部 API は呼ばないが Eureka に自分を登録する。⚠️ config-server は common を使わないので共通設定の `eureka.client.tls` を受け取れない — 同じブロックを自分の `application-local.yml` に置く（2026-10-15 以前はなく、鍵なしの SSL で登録していた — observe で 30 秒ごとに `[eureka write]`、ガード B-86 が今は照合する） |
 | 受け側 — eureka-server | `SERVER_SSL_CLIENT_AUTH=want`（プローブ · ダッシュボード · 登録の読み取りは証明書なしのまま）+ `RegistryWriteGuard`: 書き込み（GET · HEAD · OPTIONS 以外）は内部 CA が署名した証明書の CN がパスのアプリ名と一致すること（大小無視、パスはデコード · `;…` 除去後 — Jersey が見る名前）。`/eureka/apps/` 以外の書き込み（ピア複製 · ASG）はこの単独 Eureka に来ないので拒否。証明書判定は `InternalCallerFilter.verifiedCommonName` 一つを使う。common の `InternalCallerFilter`（内部 API 判定）は eureka-server では無効にする — 有効のままだと許可主体外（config-server）のハートビートごとに `[mTLS rule]` 警告が残る |
 | モード | ConfigMap `EUREKA_WRITE_AUTH_MODE`: off · observe（`[eureka write]` として残して通す）· enforce（403）。enforce なのに CA を読めなければ起動を止める — そのまま起動するとすべてのハートビートが 403 になり 90 秒後に登録が空になる |
 

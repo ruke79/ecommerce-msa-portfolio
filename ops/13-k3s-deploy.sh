@@ -72,8 +72,8 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
     sh gradlew --stop >/dev/null 2>&1 || true   # 데몬 메모리 반환 — 파드 9개와 공존 못 한다
 
     log "     서비스 이미지 ${SERVICES// /, } 빌드"
-    # 저장소의 서비스 Dockerfile 은 빌더 스테이지에서 gradle 풀빌드를 다시 한다 — 로컬 검증에서는
-    # 방금 빌드한 jar 를 같은 런타임(JRE + 동일 기동 인자)으로 감싸는 편이 수 배 빠르다.
+    # 방금 빌드한 jar 를 같은 런타임(JRE + 동일 기동 인자 — ops/Dockerfile.runtime 과 같다)으로 감싼다. 레지스트리 없이 k3s 로
+    # 바로 넣으므로 ops/19 를 쓰지 않는다. (모듈마다 있던 Dockerfile 은 빌더에서 gradle 을 다시 돌렸고 쓰이지 않아 지웠다.)
     # 기동 인자(--spring.profiles.active, optional configserver import)는 원본 이미지와 동일하게 유지한다.
     for m in $SERVICES; do
         jar=$(ls "$m"/build/libs/*.jar | grep -v plain | head -1)
@@ -85,7 +85,7 @@ ENV SPRING_PROFILES_ACTIVE=local
 # 9개 JVM 이 한 노드에 동시에 뜬다. 힙을 묶지 않으면 파드 limit(768Mi)×9 까지 부풀어
 # 단일 노드 검증 환경에서 k3s 컨테이너째 OOM 으로 죽는다(11라운드에서 실측).
 ENV JAVA_TOOL_OPTIONS="-Xms48m -Xmx280m"
-# 매니페스트의 runAsNonRoot 는 **숫자 UID** 여야 검증된다 — 원본 Dockerfile 처럼 이름(spring)만
+# 매니페스트의 runAsNonRoot 는 **숫자 UID** 여야 검증된다 — 예전 모듈 Dockerfile 처럼 이름(spring)만
 # 쓰면 kubelet 이 'image will run as root' 로 거부한다(10라운드에서 실측).
 RUN useradd --system --uid 1000 spring
 USER 1000

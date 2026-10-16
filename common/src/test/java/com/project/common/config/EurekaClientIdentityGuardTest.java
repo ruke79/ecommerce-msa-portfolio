@@ -134,6 +134,52 @@ class EurekaClientIdentityGuardTest {
         assertThat(read("k8s/10-configmap.yaml")).containsPattern("(?m)^  EUREKA_WRITE_AUTH_MODE: \"(observe|enforce)\"$");
     }
 
+    /** yml 문서들에서 처음 나오는 eureka.client.tls. */
+    private static Object tlsOf(String yml) {
+        for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(yml)) {
+            Object tls = at(doc, "eureka", "client", "tls");
+            if (tls != null) {
+                return tls;
+            }
+        }
+        return null;
+    }
+
+    @Test
+    @DisplayName("🔴 common 을 쓰지 않는 모듈이 Eureka TLS 를 켜면 자기 yml 에 공통과 같은 eureka.client.tls 가 있다")
+    void modulesWithoutCommonCarryTheTlsBlock() throws IOException {
+        Object common = tlsOf(read("common/src/main/resources/application-common.yml"));
+        assertThat(common).isNotNull();
+        List<String> offenders = new ArrayList<>();
+        int withoutCommon = 0;
+        for (Path f : deployments()) {
+            String y = Files.readString(f);
+            if (!TLS_ON.matcher(y).find()) {
+                continue;
+            }
+            Matcher name = Pattern.compile("(?m)^  name: ([a-z-]+)$").matcher(y);
+            assertThat(name.find()).as(f.getFileName().toString()).isTrue();
+            Path module = root().resolve(name.group(1));
+            Path build = Files.exists(module.resolve("build.gradle")) ? module.resolve("build.gradle") : module.resolve("build.gradle.kts");
+            if (!Files.exists(build)) {
+                continue;
+            }
+            String gradle = Files.readString(build);
+            if (gradle.contains("project(':common')") || gradle.contains("project(\":common\")")) {
+                continue;   // application-common.yml 이 클래스패스에 있다
+            }
+            withoutCommon++;
+            Path yml = module.resolve("src/main/resources/application-local.yml");
+            Object tls = Files.exists(yml) ? tlsOf(Files.readString(yml)) : null;
+            if (!common.equals(tls)) {
+                offenders.add(name.group(1) + ": common 을 쓰지 않아 application-common.yml 의 eureka.client.tls 를 받지 못한다 — "
+                        + "자기 application-local.yml 에 같은 블록이 없으면 키 없는 SSL 로 등록한다(인증서 없음)");
+            }
+        }
+        assertThat(withoutCommon).as("config-server").isGreaterThanOrEqualTo(1);
+        assertThat(offenders).isEmpty();
+    }
+
     private static Object at(Object node, String... keys) {
         for (String k : keys) {
             if (!(node instanceof java.util.Map<?, ?> m)) {

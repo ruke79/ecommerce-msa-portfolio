@@ -1580,6 +1580,73 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-90: 자바 모듈에 {@code Dockerfile} 을 두지 않는다 — 백엔드 이미지는 {@code ops/Dockerfile.runtime} 한 벌(ops/19 · CI).
+     *
+     * <p>2026-10-15 에 지운 모듈별 Dockerfile 13벌은 아무도 쓰지 않았다. 빌더에서 gradle 을 다시 돌리고, 가짜 스토어 비밀번호
+     * ({@code keystore_password})와 없는 경로가 든 JMX 실행 스크립트를 담고 있었다 — 손으로 그 파일로 빌드하면 운영과 다른 이미지가
+     * 됐다. frontend 의 Dockerfile 은 손 빌드 경로로 문서에 있어 남긴다.
+     *
+     * <p>[JA] Java モジュールに Dockerfile を置かない — バックエンドのイメージは ops/Dockerfile.runtime 一つ。削除した 13 個は誰も
+     * 使っておらず、偽のストアパスワード入りの JMX 起動スクリプトを含んでいた。
+     */
+    @Test
+    @DisplayName("B-90: 자바 모듈(build.gradle 이 있는 디렉터리)에 Dockerfile 이 없다 — 이미지는 ops/Dockerfile.runtime")
+    void noPerModuleDockerfiles() throws IOException {
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                if (!Files.exists(module.resolve("build.gradle")) && !Files.exists(module.resolve("build.gradle.kts"))) {
+                    continue;
+                }
+                try (Stream<Path> files = Files.list(module)) {
+                    files.map(f -> f.getFileName().toString()).filter(n -> n.startsWith("Dockerfile"))
+                            .forEach(n -> offenders.add(module.getFileName() + "/" + n));
+                }
+            }
+        }
+        assertThat(Files.exists(repoRoot().resolve("ops/Dockerfile.runtime"))).isTrue();
+        assertThat(offenders).as("백엔드 이미지는 ops/19 가 ops/Dockerfile.runtime 으로 만든다(B-90)").isEmpty();
+    }
+
+    /**
+     * B-89: 읽히지 않는 {@code bootstrap.yml} 을 두지 않는다.
+     *
+     * <p>Boot 2.4 이후 {@code bootstrap.yml} 은 {@code spring-cloud-starter-bootstrap} 이 있을 때만 읽힌다. 모듈 루트의 사본은 아예
+     * 클래스패스 밖이다. 그런데 파일이 있으면 읽는 사람은 그 설정({@code spring.cloud.config.uri} 등)이 살아 있다고 믿는다 — eureka ·
+     * gateway 의 {@code src/main/resources/bootstrap.yml} 과 모듈 9곳의 루트 사본이 그랬다(pay 의 사본은 이름까지 order-service 였다,
+     * 2026-10-15 삭제). 설정은 {@code application*.yml} 에 둔다.
+     *
+     * <p>[JA] 読まれない bootstrap.yml を置かない。spring-cloud-starter-bootstrap がなければ読まれず、モジュール直下の写しはクラスパスの
+     * 外。あると設定が生きていると誤解される。
+     */
+    @Test
+    @DisplayName("B-89: bootstrap.yml 은 spring-cloud-starter-bootstrap 이 있는 모듈의 src/main/resources 에만")
+    void noUnreadBootstrapFiles() throws IOException {
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path build = Files.exists(module.resolve("build.gradle")) ? module.resolve("build.gradle")
+                        : module.resolve("build.gradle.kts");
+                if (!Files.exists(build)) {
+                    continue;
+                }
+                boolean starter = stripComments(Files.readString(build, StandardCharsets.UTF_8))
+                        .contains("spring-cloud-starter-bootstrap");
+                for (String name : List.of("bootstrap.yml", "bootstrap.yaml", "bootstrap.properties")) {
+                    if (Files.exists(module.resolve(name))) {
+                        offenders.add(module.getFileName() + "/" + name + " — 모듈 루트는 클래스패스가 아니다");
+                    }
+                    if (!starter && Files.exists(module.resolve("src/main/resources/" + name))) {
+                        offenders.add(module.getFileName() + "/src/main/resources/" + name
+                                + " — spring-cloud-starter-bootstrap 이 없어 읽히지 않는다");
+                    }
+                }
+            }
+        }
+        assertThat(offenders).as("읽히지 않는 bootstrap 설정은 지우고 application*.yml 에 둔다(B-89)").isEmpty();
+    }
+
+    /**
      * B-88: Kafka 리스너 팩토리에 레코드 어댑터({@code setBatchToRecordAdapter})를 두지 않는다.
      *
      * <p>{@code DefaultBatchToRecordAdapter} 는 배치를 레코드 하나씩 리스너에 넘기면서 리스너의 예외를 <b>잡아</b> 생성자의 recoverer 에

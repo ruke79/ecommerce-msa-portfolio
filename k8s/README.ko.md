@@ -71,20 +71,18 @@ relaxed binding(OS 환경변수가 yml 값보다 항상 우선) 덕분에 **OS �
 
 ## 1. 이미지 빌드 & 푸시
 
-기존 각 서비스의 `Dockerfile`을 그대로 사용합니다(레포 루트에서 빌드 컨텍스트를 잡아야 `common` 모듈과
-루트 Gradle 파일을 함께 COPY할 수 있습니다):
+백엔드 이미지는 `ops/19-build-images.sh` 하나로 만듭니다 — CI(build.yml)도 같은 스크립트를 부릅니다. Gradle 로 jar 를 만든 뒤
+`ops/Dockerfile.runtime`(JRE · 숫자 UID · 같은 기동 인자)으로 감쌉니다. 모듈마다 있던 `Dockerfile` 은 쓰이지 않아 지웠습니다(2026-10-15).
+
+```bash
+ops/19-build-images.sh --registry <your-registry> --platform linux/amd64 --push              # 백엔드 전부 + frontend
+ops/19-build-images.sh --registry <your-registry> --push --only "order-service gateway-server" # 일부만
+```
+
+아래는 frontend 를 손으로 따로 만들 때입니다.
 
 ```bash
 REGISTRY=<your-registry>/ecommerce-msa
-for svc in eureka-server gateway-server user-service catalog-service cart-service \
-           order-service pay-service coupon-service chat-service; do
-  docker build \
-    --build-arg SERVICE_DIR=$svc \
-    --build-arg SPRING_PROFILES_ACTIVE=local \
-    -t $REGISTRY/$svc:1.0.0 \
-    -f $svc/Dockerfile .
-  docker push $REGISTRY/$svc:1.0.0
-done
 
 # frontend는 이번에 새로 추가한 Dockerfile을 사용하며, 빌드 컨텍스트가 frontend/ 자체입니다.
 # REACT_APP_API_URL/REACT_APP_PAYPAL_CLIENT_ID는 런타임이 아니라 빌드 시점에 번들에 박히므로

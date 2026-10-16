@@ -52,6 +52,28 @@ spring:
       # 있으므로 optional 로 두어, 나중에 common 을 의존하게 되면 자동으로 적용되게 한다.
       import: "optional:classpath:application-common.yml"
 
+eureka:
+  client:
+    # Eureka 에 등록 · 하트비트를 보낼 때 내는 클라이언트 인증서 = 이 서비스의 신원(tls-id-config-server, CN=config-server).
+    # Eureka 는 등록부를 바꾸는 요청을 그 CN 이 앱 이름과 같을 때만 받는다(eureka-server RegistryWriteGuard, docs/57 §16 "Eureka 쓰기").
+    #
+    # 🐛 다른 서비스는 이 블록을 common 의 application-common.yml 에서 받는데, config-server 는 common 에 의존하지 않아 그 파일이
+    #    클래스패스에 없다(위 import 는 optional). 그래서 매니페스트가 EUREKA_CLIENT_TLS_ENABLED=true 를 줘도 키스토어 경로가 비어
+    #    spring-cloud-commons 의 SSLContextFactory 가 경고만 남기고 **키 없는** SSL 로 붙었다 — 인증서 없는 등록 · 하트비트라 observe
+    #    에서 30초마다 [eureka write] 가 남아 enforce 전환 조건(24시간 0건)이 채워지지 않았고, enforce 면 등록부에서 빠졌다.
+    #    값은 application-common.yml 과 같아야 한다(가드 B-86 이 대조한다). 로컬 개발은 꺼진 채다(기본 false).
+    # [JA] 他サービスはこのブロックを common の application-common.yml から受け取るが、config-server は common に依存せずその
+    #      ファイルがない。そのため鍵ストアが空で、証明書なしで登録していた。値は application-common.yml と同じにする(B-86)。
+    tls:
+      enabled: ${EUREKA_CLIENT_TLS_ENABLED:false}
+      key-store: ${EUREKA_CLIENT_KEY_STORE:file:/app/identity/keystore.p12}
+      key-store-type: PKCS12
+      key-store-password: ${LOCAL_KEY_STORE_PASSWORD:}
+      key-password: ${LOCAL_KEY_STORE_PASSWORD:}
+      trust-store: file:${LOCAL_TRUST_STORE_PATH:/app/resources/truststore.p12}
+      trust-store-type: PKCS12
+      trust-store-password: ${LOCAL_KEY_STORE_PASSWORD:}
+
 management:
   endpoints:
     web:
@@ -85,5 +107,8 @@ logging:
     path: ./logs
     name: ${logging.file.path}/config_server.log
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-}] %-5level %logger{36} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-}] %-5level %logger{36} - %msg%n"
+    # 다른 서비스(common logback-spring.xml 의 TEXT_PATTERN)와 같은 칸 — [traceId,spanId,userId]. 예전에는 userId 칸이 없어 같은 정규식으로
+    # 읽히지 않았다. ⚠️ common 을 쓰지 않아 마스킹 변환자는 없다 — 이 서비스는 사용자 데이터를 다루지 않고, 설정 내용을 남기는 DEBUG 는
+    # 기본으로 끈다(위 org.springframework.cloud.config.server).
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-},%X{userId:-}] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-},%X{userId:-}] %-5level %logger{36} - %msg%n"

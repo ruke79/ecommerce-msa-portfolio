@@ -1,4 +1,7 @@
 spring:
+  # 매니페스트도 SPRING_APPLICATION_NAME 으로 주지만 로컬 실행은 여기서 — 없으면 Eureka 에 UNKNOWN 으로 등록된다.
+  application:
+    name: config-server
   profiles:
     active: local
     group:

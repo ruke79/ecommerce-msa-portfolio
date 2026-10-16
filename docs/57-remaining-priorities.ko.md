@@ -639,7 +639,7 @@ HttpClient 5)은 자기 SSLContext 를 **키 없이** 만든다(신뢰만 JVM �
 | 자리 | 한 것 |
 |---|---|
 | 클라이언트 — 공통 설정 | `application-common.yml` 의 `eureka.client.tls` — 신원 keystore(`/app/identity/keystore.p12`, CN=서비스 이름) · 공유 truststore. `EUREKA_CLIENT_TLS_ENABLED` 로 켠다(기본 꺼짐 — 로컬 개발 · ops/13). import 된 파일이라 서비스 자신의 yml 보다 우선한다 |
-| 클라이언트 — 매니페스트 | 신원을 마운트한 Deployment(백엔드 10 · 게이트웨이 · config-server)가 `EUREKA_CLIENT_TLS_ENABLED=true`. config-server 에도 신원을 줬다(k8s/96 · ops/38 · ops/39) — 내부 API 는 부르지 않지만 Eureka 에 자기를 등록한다 |
+| 클라이언트 — 매니페스트 | 신원을 마운트한 Deployment(백엔드 10 · 게이트웨이 · config-server)가 `EUREKA_CLIENT_TLS_ENABLED=true`. config-server 에도 신원을 줬다(k8s/96 · ops/38 · ops/39) — 내부 API 는 부르지 않지만 Eureka 에 자기를 등록한다. ⚠️ config-server 는 common 을 쓰지 않아 공통 설정의 `eureka.client.tls` 를 받지 못한다 — 같은 블록을 자기 `application-local.yml` 에 둔다(2026-10-15 전에는 없어 키 없는 SSL 로 등록했다 — observe 에서 30초마다 `[eureka write]`, 가드 B-86 이 이제 대조한다) |
 | 받는 쪽 — eureka-server | `SERVER_SSL_CLIENT_AUTH=want`(프로브 · 대시보드 · 등록부 읽기는 인증서 없이 그대로) + `RegistryWriteGuard`: 쓰기(GET · HEAD · OPTIONS 밖)는 내부 CA 가 서명한 인증서의 CN 이 경로의 앱 이름과 같아야 한다(대소문자 무시, 경로는 디코딩 · `;…` 제거 뒤 — Jersey 가 보는 이름). `/eureka/apps/` 밖의 쓰기(피어 복제 · ASG)는 이 단독 Eureka 에 올 일이 없어 거절. 인증서 판정은 `InternalCallerFilter.verifiedCommonName` 하나를 쓴다. common 의 `InternalCallerFilter`(내부 API 판정)는 eureka-server 에서 끈다 — 켜 두면 허용 주체 밖(config-server)의 하트비트마다 `[mTLS rule]` 경고가 남는다 |
 | 모드 | ConfigMap `EUREKA_WRITE_AUTH_MODE`: off · observe(`[eureka write]` 로 남기고 통과) · enforce(403). enforce 인데 CA 를 못 읽으면 기동을 멈춘다 — 그대로 뜨면 모든 하트비트가 403 이 되어 90초 뒤 등록부가 빈다 |
 

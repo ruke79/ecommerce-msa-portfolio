@@ -71,20 +71,18 @@ relaxed binding（OS の環境変数が yml の値より常に優先）のおか
 
 ## 1. イメージのビルド & プッシュ
 
-既存の各サービスの `Dockerfile` をそのまま使用します（リポジトリのルートでビルドコンテキストを取ることで、`common` モジュールと
-ルートの Gradle ファイルを一緒に COPY できます）:
+バックエンドのイメージは `ops/19-build-images.sh` 一つで作ります — CI（build.yml）も同じスクリプトを呼びます。Gradle で jar を作り、
+`ops/Dockerfile.runtime`（JRE · 数値 UID · 同じ起動引数）で包みます。モジュールごとにあった `Dockerfile` は使われていなかったので削除しました（2026-10-15）。
+
+```bash
+ops/19-build-images.sh --registry <your-registry> --platform linux/amd64 --push              # バックエンド全部 + frontend
+ops/19-build-images.sh --registry <your-registry> --push --only "order-service gateway-server" # 一部だけ
+```
+
+以下は frontend を手で別に作る場合です。
 
 ```bash
 REGISTRY=<your-registry>/ecommerce-msa
-for svc in eureka-server gateway-server user-service catalog-service cart-service \
-           order-service pay-service coupon-service chat-service; do
-  docker build \
-    --build-arg SERVICE_DIR=$svc \
-    --build-arg SPRING_PROFILES_ACTIVE=local \
-    -t $REGISTRY/$svc:1.0.0 \
-    -f $svc/Dockerfile .
-  docker push $REGISTRY/$svc:1.0.0
-done
 
 # frontend は今回新たに追加した Dockerfile を使用し、ビルドコンテキストは frontend/ 自体です。
 # REACT_APP_API_URL/REACT_APP_PAYPAL_CLIENT_ID はランタイムではなくビルド時にバンドルへ埋め込まれるので、

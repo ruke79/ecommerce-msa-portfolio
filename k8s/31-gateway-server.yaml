@@ -22,8 +22,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: gateway-server
-          # docker build --build-arg SERVICE_DIR=gateway-server --build-arg SPRING_PROFILES_ACTIVE=local \
-          #   -t <registry>/ecommerce-msa/gateway-server:1.0.0 -f gateway-server/Dockerfile .
+          # 이미지는 ops/19-build-images.sh 가 ops/Dockerfile.runtime 으로 만든다(CI 와 같은 경로 — 모듈별 Dockerfile 은 지웠다).
           image: REGISTRY_PLACEHOLDER/ecommerce-msa/gateway-server:1.0.0
           ports:
             - containerPort: 8000

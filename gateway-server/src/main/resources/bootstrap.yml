@@ -1,7 +1,0 @@
-spring:
-  application:
-    name: gateway-server # Config Server에서 가져올 설정 파일명
-  cloud:
-    config:
-      uri: http://localhost:8888 # Config Server 주소
-      
