@@ -147,7 +147,7 @@ class TwoFactorChangeTest {
         var order = org.mockito.Mockito.inOrder(guard, totpService);
         order.verify(guard).reserveAttempt(7L);
         order.verify(totpService).matchedStep(eq("SECRET"), anyInt(), anyLong());
-        verify(guard, never()).locked(anyLong());
+        // 잠겼는지 읽기만 하던 guard.locked() 는 없앴다 — 이제 "먼저 확인하고 검증" 으로 되돌아가려면 컴파일되지 않는다.
     }
 
     // ── 로그인 2단계 (docs/68 §15) ────────────────────────────────────────

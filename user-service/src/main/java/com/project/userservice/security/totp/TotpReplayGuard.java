@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
  *
  * <h3>시도 제한</h3>
  *
- * <p>6자리를 무한히 대입하지 못하게 <b>사용자별로</b> 실패를 센다 — 로그인 중의 2FA 설정 확인 · 끄기, 그리고 로그인 2단계(docs/68 §15)가
+ * <p>6자리를 무한히 대입하지 못하게 <b>사용자별로</b> 시도를 센다({@link #reserveAttempt} — 검증 전에) — 로그인 중의 2FA 설정 확인 · 끄기, 그리고 로그인 2단계(docs/68 §15)가
  * 같은 칸을 쓴다. 로그인 2단계의 대기 토큰도 토큰당 5번을 세지만(PendingTwoFactor), 그것만으로는 비밀번호로 다시 로그인해 새 토큰을 받으면
  * 다시 5번이었다 — 비밀번호를 아는 공격자(2FA 가 막아야 할 바로 그 상대)에게는 제한이 없었다.
  */
@@ -77,25 +77,19 @@ public class TotpReplayGuard {
         return r != null && r == 1L;
     }
 
-    /** 이 사용자의 2FA 코드가 창 안에서 너무 많이 틀렸는가. */
-    public boolean locked(Long userId) {
-        String v = redis.opsForValue().get(FAIL_KEY + userId);
-        return v != null && Integer.parseInt(v) >= maxFailures;
-    }
-
-    /** @return 이 창에서의 실패 수 — {@link #maxFailures()} 와 같아지는 순간이 "막힌 순간" 이다(알림은 그때 한 번). */
-    public long recordFailure(Long userId) {
-        Long n = redis.execute(FAIL, List.of(FAIL_KEY + userId), String.valueOf(failureWindowMs));
-        return n == null ? 0L : n;
-    }
-
     /**
      * 시도를 하나 <b>먼저</b> 센다 — 검증 전에 부른다. 돌려준 수가 {@link #maxFailures()} 를 넘으면 검증하지 않는다. 맞으면
      * {@link #clearFailures} 로 지운다. 읽고-검증하고-더하는 순서로는 동시에 보낸 코드가 모두 "잠기지 않음" 을 읽는다.
+     *
+     * <p>이 창에서 몇 번째 시도인지를 돌려준다 — {@link #maxFailures()} 와 <b>같아지는</b> 순간이 "막힌 순간" 이다(알림은 그때 한 번).
+     *
+     * <p>🐛 잠겼는지 <b>읽기만</b> 하는 {@code locked()} 도 있었다. 지금 그 길을 쓰는 곳은 없지만, 남겨 두면 "먼저 확인하고
+     * 검증하자" 로 되돌아가기 쉽다 — 그것이 고친 결함이다(동시에 보낸 코드 수백 개가 모두 "잠기지 않음" 을 읽었다). 그래서 지웠다.
      */
-    // [JA] 試行を先に数える — 検証の前に呼ぶ。上限を超えたら検証しない。
+    // [JA] 試行を先に数える — 検証の前に呼ぶ。上限を超えたら検証しない。読むだけの locked() は、確認してから検証する順序に戻りやすいので消した。
     public long reserveAttempt(Long userId) {
-        return recordFailure(userId);
+        Long n = redis.execute(FAIL, List.of(FAIL_KEY + userId), String.valueOf(failureWindowMs));
+        return n == null ? 0L : n;
     }
 
     public int maxFailures() {

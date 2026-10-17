@@ -99,15 +99,27 @@ class TotpReplayGuardTest {
     }
 
     @Test
-    @DisplayName("변경 시도 실패를 세어 막고, 성공하면 지운다 · 창이 지나면 저절로 풀린다")
+    @DisplayName("변경 시도를 세어 막고, 성공하면 지운다 · 센 키에는 만료가 붙는다")
     void failureLimit() {
-        guard.recordFailure(7L);
-        guard.recordFailure(7L);
-        assertThat(guard.locked(7L)).isFalse();
-        guard.recordFailure(7L);
-        assertThat(guard.locked(7L)).isTrue();
+        // 호출부(UserServiceImpl.checkCode)와 같은 판정 — 돌려준 수가 한도를 넘으면 검증하지 않는다.
+        for (int i = 1; i <= guard.maxFailures(); i++) {
+            assertThat(guard.reserveAttempt(7L)).isEqualTo(i).isLessThanOrEqualTo(guard.maxFailures());
+        }
+        assertThat(guard.reserveAttempt(7L)).isGreaterThan(guard.maxFailures());
+        // 창이 지나면 저절로 풀린다 — 영구 잠금은 남의 계정을 잠그는 DoS 버튼이 된다.
         assertThat(template.getExpire(TotpReplayGuard.FAIL_KEY + 7L)).isPositive();
+
         guard.clearFailures(7L);
-        assertThat(guard.locked(7L)).isFalse();
+        assertThat(guard.reserveAttempt(7L)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("🔴 사용자마다 따로 센다 — 한 사람이 막혀도 다른 사람은 그대로")
+    void attemptsAreCountedPerUser() {
+        for (int i = 0; i <= guard.maxFailures(); i++) {
+            guard.reserveAttempt(7L);
+        }
+        assertThat(guard.reserveAttempt(7L)).isGreaterThan(guard.maxFailures());
+        assertThat(guard.reserveAttempt(8L)).isEqualTo(1);
     }
 }
