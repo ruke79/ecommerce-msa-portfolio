@@ -1,5 +1,6 @@
 package com.project.userservice.security.service;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -9,6 +10,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.RequestEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
@@ -61,8 +63,25 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
     /** 기존 계정에 연결할 때의 사전 탈취 방어 · 연결 알림(docs/68 §15). */
     private final SocialAccountLinker socialAccountLinker;
 
-    /** 깃허브 이메일 폴백용. 테스트에서 바꿔 끼울 수 있게 필드로 둔다. */
-    RestTemplate rest = new RestTemplate();
+    /** 깃허브 폴백 호출의 상한 — 로그인 스레드가 프로바이더에 묶이지 않게. */
+    static final Duration GITHUB_TIMEOUT = Duration.ofSeconds(3);
+
+    /**
+     * 깃허브 이메일 폴백용. 테스트에서 바꿔 끼울 수 있게 필드로 둔다.
+     *
+     * <p>🐛 {@code new RestTemplate()} 의 기본 팩토리는 타임아웃이 <b>무제한</b>이다 — 깃허브가 응답하지 않으면 그 로그인
+     * 요청의 스레드가 끝없이 묶인다(톰캣 스레드 풀이 마르면 다른 요청도 함께 멈춘다). 이메일 폴백은 없으면 거절하면 그만이므로
+     * 오래 기다릴 이유가 없다.
+     */
+    // [JA] GitHub メールのフォールバック用。既定の RestTemplate はタイムアウトが無制限で、応答がないとログインのスレッドが縛られる。
+    RestTemplate rest = restWithTimeout();
+
+    private static RestTemplate restWithTimeout() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) GITHUB_TIMEOUT.toMillis());
+        factory.setReadTimeout((int) GITHUB_TIMEOUT.toMillis());
+        return new RestTemplate(factory);
+    }
 
     @Override
     public OAuth2User loadUser(OAuth2UserRequest userRequest) throws OAuth2AuthenticationException {
@@ -220,8 +239,9 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                             Boolean.TRUE.equals(b.get("primary")), Boolean.TRUE.equals(a.get("primary"))))
                     .map(e -> String.valueOf(e.get("email")))
                     .findFirst().orElse(null);
-        } catch (Exception e) {
-            log.warn("깃허브 이메일 조회 실패: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            // 🔒 예외 원문은 남기지 않는다 — 깃허브 응답 본문 · 요청 URL 에 이메일 주소가 섞여 로그(Loki)에 남는다(//    notification 의 N-H2 와 같은 결함). 종류만으로 충분하다 — 어차피 폴백 실패는 email_required 로 끝난다.
+            log.warn("깃허브 이메일 조회 실패 — {}", e.getClass().getSimpleName());
             return null;
         }
     }
