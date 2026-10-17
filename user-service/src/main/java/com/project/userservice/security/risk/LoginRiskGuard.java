@@ -207,22 +207,32 @@ public class LoginRiskGuard {
     }
 
     /**
-     * 대기 값이 있으면 이번 시도를 센다 — {tries, 사용자 칸}. 없으면(이미 태웠거나 지웠다) {} — <b>되살리지 않는다.</b> 어느 쪽이든 한도를 넘으면 대기 값을 지우고 {}.
-     * KEYS[1]=대기 값 KEYS[2]=사용자 칸 · ARGV[1]=대기 값당 한도 ARGV[2]=사용자 한도 ARGV[3]=사용자 칸 수명(초)
+     * 대기 값이 있으면 이번 시도를 세고 {tries, 사용자 칸, uid, 코드 해시} 를 돌려준다. 없으면(이미 태웠거나 지웠다) {} —
+     * <b>되살리지 않는다.</b> 어느 쪽이든 한도를 넘으면 대기 값을 지우고 {}.
+     *
+     * <p>uid · 코드 해시도 여기서 함께 읽는다 — 예전에는 사용자 칸의 이름을 만들려고 스크립트 <b>앞에서</b> 해시를 한 번 더 읽었다.
+     * 그 사이에 키가 지워져도 스크립트가 {} 를 돌려주어 안전하게 끝났지만, 왕복이 둘이고 "읽은 값" 과 "센 대상" 이 갈라져 있었다.
+     * 코드 칸이 없는(깨진) 해시면 돌려줄 것이 셋뿐이라 호출자가 만료로 본다 — 막는 쪽이다.
+     *
+     * <p>사용자 칸의 이름은 스크립트 안에서 접두사 + uid 로 만든다(단일 Redis — 클러스터로 가면 두 키가 같은 슬롯이어야 한다).
+     * KEYS[1]=대기 값 · ARGV[1]=대기 값당 한도 ARGV[2]=사용자 한도 ARGV[3]=사용자 칸 수명(초) ARGV[4]=사용자 칸 접두사
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private static final DefaultRedisScript<List<Long>> RESERVE = new DefaultRedisScript<>("""
-                    if redis.call('EXISTS', KEYS[1]) == 0 then
+    private static final DefaultRedisScript<List<Object>> RESERVE = new DefaultRedisScript<>("""
+                    local uid = redis.call('HGET', KEYS[1], 'uid')
+                    if not uid then
                       return {}
                     end
+                    local code = redis.call('HGET', KEYS[1], 'code')
+                    local userKey = ARGV[4] .. uid
                     local n = redis.call('HINCRBY', KEYS[1], 'tries', 1)
-                    local u = redis.call('INCR', KEYS[2])
-                    redis.call('EXPIRE', KEYS[2], ARGV[3])
+                    local u = redis.call('INCR', userKey)
+                    redis.call('EXPIRE', userKey, ARGV[3])
                     if n > tonumber(ARGV[1]) or u > tonumber(ARGV[2]) then
                       redis.call('DEL', KEYS[1])
                       return {}
                     end
-                    return {n, u}
+                    return {n, u, uid, code}
                     """, (Class) List.class);
 
     /** 코드를 확인한다. 맞으면 대기 값을 태운다(한 번만 쓴다). */
@@ -231,27 +241,24 @@ public class LoginRiskGuard {
             return new Expired();
         }
         String key = CHALLENGE_KEY + sha256(pending);
-        Map<Object, Object> state = redis.opsForHash().entries(key);
-        if (state == null || state.isEmpty()) {
-            return new Expired();
-        }
-        String uid = String.valueOf(state.get("uid"));
-        // 🔒 시도를 **비교하기 전에** 센다(INCR 은 원자적이다). 🐛 예전에는 횟수를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이
+        // 🔒 시도를 **비교하기 전에** 센다(Lua 한 번). 🐛 예전에는 횟수를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이
         //    모두 같은 "0번" 을 읽어, 6자리를 한 번에 수백 개 대입할 수 있었다. 이제 한도를 넘은 시도는 비교조차 하지 않는다.
         //    맞으면 아래에서 대기 값을 태우므로 세어 둔 수는 의미가 없어진다(사용자 칸은 창이 지나면 사라진다).
-        // [JA] 試行を比較する前に数える(INCR は原子的)。以前は読む → 比較 → 間違えたら加算で、同時のリクエストがすべて 0 回を読んでいた。
+        // [JA] 試行を比較する前に数える。以前は読む → 比較 → 間違えたら加算で、同時のリクエストがすべて 0 回を読んでいた。
         // 🐛 그 다음: 다섯 번째 실패가 키를 지운 뒤에 도착한 요청의 HINCRBY 가 tries 만 든 새 해시를 만들어(만료도 없이) 1 부터 다시 셌다 —
         //    비교가 한도를 넘었고 그 키는 영원히 남았다. 이제 "있으면 센다 · 한도를 넘으면 지운다" 를 Lua 한 번으로 한다.
         // [JA] 5 回目の失敗がキーを消した後に届いたリクエストの HINCRBY が tries だけの新しいハッシュを作っていた。Lua 一回で数える。
-        String userKey = USER_FAIL_KEY + uid;
-        List<Long> counted = redis.execute(RESERVE, List.of(key, userKey),
-                String.valueOf(MAX_ATTEMPTS), String.valueOf(MAX_USER_FAILURES), String.valueOf(USER_FAIL_WINDOW.toSeconds()));
-        if (counted == null || counted.size() < 2) {
+        List<Object> counted = redis.execute(RESERVE, List.of(key),
+                String.valueOf(MAX_ATTEMPTS), String.valueOf(MAX_USER_FAILURES),
+                String.valueOf(USER_FAIL_WINDOW.toSeconds()), USER_FAIL_KEY);
+        if (counted == null || counted.size() < 4) {
             return new Expired();
         }
-        long n = counted.get(0);
-        long userAttempts = counted.get(1);
-        String expected = String.valueOf(state.get("code"));
+        long n = (Long) counted.get(0);
+        long userAttempts = (Long) counted.get(1);
+        String uid = String.valueOf(counted.get(2));
+        String userKey = USER_FAIL_KEY + uid;
+        String expected = String.valueOf(counted.get(3));
         String presented = sha256(pending + ":" + code.trim());
         if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), presented.getBytes(StandardCharsets.UTF_8))) {
             boolean more = n < MAX_ATTEMPTS && userAttempts < MAX_USER_FAILURES;
