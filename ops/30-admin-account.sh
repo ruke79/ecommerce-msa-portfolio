@@ -137,10 +137,28 @@ SQL
 
 # 앱과 같은 BCrypt 로 해시를 만든다. BCryptPasswordEncoder 의 생성자는 commons-logging 을
 # 끌어오므로, 의존성이 없는 저수준 BCrypt 클래스를 직접 쓴다(결과는 동일한 $2a$10$ 형식).
+# spring-security-crypto 의 **클래스** jar — Gradle 캐시에는 IDE 가 받은 -sources · -javadoc jar 도 같은 이름 앞부분으로 있다.
+# 🐛 예전: find | head -1 이 그것을 집으면 클래스가 없어 "package org.springframework.security.crypto.bcrypt does not exist" 로
+#    해시를 만들지 못했다(2026-10-17, IDE 가 있는 기계). 판이 여럿이면 가장 새것, BCrypt.class 가 든 것만.
+# [JA] Gradle キャッシュには IDE が落とした -sources · -javadoc の jar もある。以前は head -1 がそれを拾い、クラスがなく失敗した。
+crypto_jar() {
+    local j
+    find "${GRADLE_USER_HOME:-$HOME/.gradle}/caches" -name 'spring-security-crypto-*.jar' \
+            ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' 2>/dev/null | sort -rV \
+        | while read -r j; do
+            if command -v unzip >/dev/null 2>&1; then
+                unzip -Z1 "$j" 2>/dev/null | grep -qx 'org/springframework/security/crypto/bcrypt/BCrypt.class' || continue
+            elif command -v jar >/dev/null 2>&1; then
+                jar tf "$j" 2>/dev/null | grep -qx 'org/springframework/security/crypto/bcrypt/BCrypt.class' || continue
+            fi
+            echo "$j"; break
+        done
+}
+
 bcrypt_hash() {   # stdin 으로 평문을 받아 stdout 으로 해시를 낸다
     local jar workdir
-    jar=$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/caches" -name 'spring-security-crypto-*.jar' 2>/dev/null | head -1)
-    [ -n "$jar" ] || die "spring-security-crypto jar 를 찾지 못했습니다 — 먼저 ./gradlew :user-service:bootJar 로 의존성을 받으세요"
+    jar=$(crypto_jar)
+    [ -n "$jar" ] || die "spring-security-crypto 의 클래스 jar 를 찾지 못했습니다(-sources · -javadoc 은 제외) — 먼저 ./gradlew :user-service:bootJar 로 의존성을 받으세요"
 
     workdir=$(mktemp -d)
     cat > "$workdir/Bc.java" <<'JAVA'
