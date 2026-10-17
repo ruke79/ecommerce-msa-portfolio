@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -63,11 +64,14 @@ class TwoFactorLoginTest {
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(ops);
         when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0)));
-        when(ops.increment(anyString())).thenAnswer(inv -> {
-            long n = Long.parseLong(store.getOrDefault(inv.getArgument(0), "0")) + 1;
-            store.put(inv.getArgument(0), String.valueOf(n));
-            return n;
-        });
+        // reserveAttempt 의 Lua(증가 + 첫 시도면 TTL) 를 흉내 낸다 — 원자성 자체는 실제 Redis 로 본다(PendingTwoFactorTest).
+        when(redis.execute(any(org.springframework.data.redis.core.script.RedisScript.class), anyList(), any()))
+                .thenAnswer(inv -> {
+                    String key = ((java.util.List<String>) inv.getArgument(1)).get(0);
+                    long n = Long.parseLong(store.getOrDefault(key, "0")) + 1;
+                    store.put(key, String.valueOf(n));
+                    return n;
+                });
         org.mockito.Mockito.doAnswer(inv -> store.put(inv.getArgument(0), inv.getArgument(1)))
                 .when(ops).set(anyString(), anyString(), any(Duration.class));
         pending = new PendingTwoFactor(SECRET, redis);
@@ -85,7 +89,8 @@ class TwoFactorLoginTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(
                 () -> Jwts.parser().verifyWith(accessKey).build().parseSignedClaims(token))
                 .isInstanceOf(JwtException.class);
-        assertThat(pending.userIdOf(token)).contains(42L);
+        assertThat(pending.reserveAttempt(token)).get()
+                .extracting(PendingTwoFactor.Attempt::userId).isEqualTo(42L);
     }
 
     @Test
@@ -95,7 +100,7 @@ class TwoFactorLoginTest {
         String access = Jwts.builder().subject("42").id("j").claim("purpose", "2fa_pending")
                 .expiration(new Date(System.currentTimeMillis() + 60_000)).signWith(accessKey).compact();
 
-        assertThat(pending.userIdOf(access)).isEmpty();
+        assertThat(pending.reserveAttempt(access)).isEmpty();
     }
 
     @Test
@@ -103,10 +108,13 @@ class TwoFactorLoginTest {
     void attemptsAreLimited() {
         String token = pending.issue(42L);
         for (int i = 1; i < PendingTwoFactor.MAX_ATTEMPTS; i++) {
-            assertThat(pending.recordFailure(token)).isTrue();
+            assertThat(pending.reserveAttempt(token)).get()
+                    .extracting(PendingTwoFactor.Attempt::moreAfterThis).isEqualTo(true);
         }
-        assertThat(pending.recordFailure(token)).isFalse();
-        assertThat(pending.userIdOf(token)).isEmpty();
+        // 다섯 번째는 쓸 수 있지만 마지막이다 — 여섯 번째부터 검증까지 가지 않는다.
+        assertThat(pending.reserveAttempt(token)).get()
+                .extracting(PendingTwoFactor.Attempt::moreAfterThis).isEqualTo(false);
+        assertThat(pending.reserveAttempt(token)).isEmpty();
     }
 
     @Test
@@ -115,15 +123,15 @@ class TwoFactorLoginTest {
         String token = pending.issue(42L);
         pending.consume(token);
 
-        assertThat(pending.userIdOf(token)).isEmpty();
+        assertThat(pending.reserveAttempt(token)).isEmpty();
     }
 
     @Test
     @DisplayName("쓰레기·빈 값은 조용히 거절한다")
     void garbageIsRejected() {
-        assertThat(pending.userIdOf(null)).isEmpty();
-        assertThat(pending.userIdOf("not.a.jwt")).isEmpty();
-        assertThat(pending.recordFailure("not.a.jwt")).isFalse();
+        assertThat(pending.reserveAttempt(null)).isEmpty();
+        assertThat(pending.reserveAttempt("not.a.jwt")).isEmpty();
+        assertThat(pending.reserveAttempt("")).isEmpty();
     }
 
     // ── 로그인 필터 ───────────────────────────────────────────────────────
@@ -157,7 +165,8 @@ class TwoFactorLoginTest {
         assertThat(response.getHeader("access")).isNull();
         assertThat(response.getCookie("REFRESH")).isNull();
         assertThat(response.getCookie(PendingTwoFactor.COOKIE)).isNotNull();
-        assertThat(pending.userIdOf(response.getCookie(PendingTwoFactor.COOKIE).getValue())).contains(42L);
+        assertThat(pending.reserveAttempt(response.getCookie(PendingTwoFactor.COOKIE).getValue())).get()
+                .extracting(PendingTwoFactor.Attempt::userId).isEqualTo(42L);
         assertThat(response.getContentAsString()).contains(AuthLoginFilter.TWO_FACTOR_REQUIRED_CODE);
         verify(jwtUtils, never()).generateToken(anyLong(), anyString(), anyString(), anyBoolean());
         verify(refresh, never()).createRefreshToken(anyLong());

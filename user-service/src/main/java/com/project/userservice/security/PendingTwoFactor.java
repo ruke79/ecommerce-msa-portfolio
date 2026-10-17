@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -13,6 +14,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import io.jsonwebtoken.Claims;
@@ -39,9 +41,14 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <h3>시도 횟수 · 1회용</h3>
  *
- * <p>6자리 TOTP 는 100만 가지다. 횟수 제한이 없으면 5분 안에 훑을 수 있다. 토큰마다 실패를
+ * <p>6자리 TOTP 는 100만 가지다. 횟수 제한이 없으면 5분 안에 훑을 수 있다. 토큰마다 시도를
  * {@value #MAX_ATTEMPTS} 번까지 세고 넘으면 그 토큰을 태운다 — 처음(비밀번호)부터 다시 해야 하고, 거기에는
  * 로그인 잠금(docs/27)이 걸려 있다. 성공하면 곧바로 태워 같은 토큰으로 세션을 두 번 받지 못하게 한다.
+ *
+ * <p>🐛 예전에는 <b>읽고(userIdOf) → 검증하고 → 틀리면 더하는(recordFailure)</b> 순서였다 — 코드 수십 개를 동시에 보내면 모두
+ * "아직 0번" 을 읽고 전부 검증을 받았다(토큰 하나로 5번이 아니라 보낸 만큼). 증가에도 틈이 있었다: {@code INCR} 다음 줄의
+ * {@code expire} 사이에 끊기면 TTL 없는 키가 남아 그 사용자의 2FA 가 영영 막혔다. 지금은 {@link #reserveAttempt} 가
+ * <b>검증 전에</b> Lua 한 번(증가 + 첫 시도면 TTL)으로 센다 — LoginAttemptService · CurrentPasswordGuard · TotpReplayGuard 와 같은 모양.
  */
 @Slf4j
 @Component
@@ -53,6 +60,15 @@ public class PendingTwoFactor {
     static final int MAX_ATTEMPTS = 5;
     static final String PURPOSE = "2fa_pending";
     private static final String KEY_PREFIX = "2fa:pending:";
+
+    /** 이번 시도를 세고(첫 시도면 토큰 수명만큼 TTL) 지금까지의 수를 돌려준다 — 읽기 · 증가 · 만료가 한 덩어리다. */
+    private static final DefaultRedisScript<Long> RESERVE = new DefaultRedisScript<>("""
+            local n = redis.call('INCR', KEYS[1])
+            if n == 1 then
+              redis.call('PEXPIRE', KEYS[1], ARGV[1])
+            end
+            return n
+            """, Long.class);
 
     private final SecretKey key;
     private final StringRedisTemplate redis;
@@ -86,46 +102,48 @@ public class PendingTwoFactor {
                 .compact();
     }
 
-    /** 유효하고(서명·만료·용도) 아직 타지 않은 토큰이면 그 사용자 id. */
-    public Optional<Long> userIdOf(String token) {
+    /**
+     * 이번 시도의 결과 — 누구인지와, 이 토큰으로 <b>더</b> 시도할 수 있는지.
+     *
+     * @param userId         대기 중인 사용자
+     * @param moreAfterThis  이번이 마지막 시도가 아니면 true(틀렸을 때의 안내 문구가 갈린다)
+     */
+    public record Attempt(long userId, boolean moreAfterThis) {
+    }
+
+    /**
+     * 코드를 <b>검증하기 전에</b> 부른다 — 이번 시도를 토큰의 몫에서 먼저 센다(Lua 한 번).
+     *
+     * <p>비어 있으면 그 토큰으로는 더 할 수 없다: 서명 · 만료 · 용도가 맞지 않거나, 이미 탔거나
+     * ({@link #consume}), 시도를 {@value #MAX_ATTEMPTS} 번 다 썼다. 맞았으면 {@link #consume} 으로 태운다.
+     *
+     * <p>🐛 읽고-검증하고-더하는 순서였을 때는 동시에 보낸 코드가 모두 "아직 0번" 을 읽고 전부 검증됐다.
+     */
+    // [JA] 検証の前に呼ぶ — 今回の試行を先に数える(Lua 一回)。空なら、そのトークンではもう試せない。
+    public Optional<Attempt> reserveAttempt(String token) {
         Claims claims = parse(token);
-        if (claims == null || attempts(claims.getId()) >= MAX_ATTEMPTS) {
+        if (claims == null) {
             return Optional.empty();
         }
+        long userId;
         try {
-            return Optional.of(Long.parseLong(claims.getSubject()));
+            userId = Long.parseLong(claims.getSubject());
         } catch (NumberFormatException e) {
             return Optional.empty();
         }
-    }
-
-    /** 코드가 틀렸다. @return 이 토큰으로 더 시도할 수 있으면 true */
-    public boolean recordFailure(String token) {
-        Claims claims = parse(token);
-        if (claims == null) {
-            return false;
+        Long n = redis.execute(RESERVE, List.of(KEY_PREFIX + claims.getId()), String.valueOf(TTL_MS));
+        if (n == null || n > MAX_ATTEMPTS) {
+            return Optional.empty();
         }
-        String k = KEY_PREFIX + claims.getId();
-        Long n = redis.opsForValue().increment(k);
-        redis.expire(k, Duration.ofMillis(TTL_MS));
-        return n != null && n < MAX_ATTEMPTS;
+        return Optional.of(new Attempt(userId, n < MAX_ATTEMPTS));
     }
 
-    /** 통과했다 — 같은 토큰을 다시 쓰지 못하게 태운다. */
+    /** 통과했다(또는 더 받지 않는다) — 같은 토큰을 다시 쓰지 못하게 태운다: 다음 {@link #reserveAttempt} 는 한도를 넘는다. */
     public void consume(String token) {
         Claims claims = parse(token);
         if (claims != null) {
             redis.opsForValue().set(KEY_PREFIX + claims.getId(), String.valueOf(MAX_ATTEMPTS),
                     Duration.ofMillis(TTL_MS));
-        }
-    }
-
-    private int attempts(String jti) {
-        String v = redis.opsForValue().get(KEY_PREFIX + jti);
-        try {
-            return v == null ? 0 : Integer.parseInt(v);
-        } catch (NumberFormatException e) {
-            return MAX_ATTEMPTS;
         }
     }
 

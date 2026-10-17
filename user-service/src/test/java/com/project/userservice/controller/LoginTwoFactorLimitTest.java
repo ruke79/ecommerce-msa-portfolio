@@ -64,8 +64,8 @@ class LoginTwoFactorLimitTest {
         user.setUserId(7L);
         user.setTwoFactorEnabled(true);
         when(userRepository.findById(7L)).thenReturn(Optional.of(user));
-        when(pendingTwoFactor.userIdOf("pending")).thenReturn(Optional.of(7L));
-        when(pendingTwoFactor.recordFailure("pending")).thenReturn(true);
+        when(pendingTwoFactor.reserveAttempt("pending"))
+                .thenReturn(Optional.of(new PendingTwoFactor.Attempt(7L, true)));
         when(jwtUtils.createCookie(any(), any(), any())).thenAnswer(inv -> new Cookie(inv.getArgument(0), "x"));
         when(refreshTokenService.createRefreshToken(7L)).thenReturn(new RefreshToken("s", "7", "refresh"));
 
@@ -88,14 +88,41 @@ class LoginTwoFactorLimitTest {
     }
 
     @Test
-    @DisplayName("틀린 코드는 401 — 토큰당 기록도 그대로 남긴다")
+    @DisplayName("틀린 코드는 401 — 시도는 검증 전에 토큰 몫에서 셌다")
     void wrongCodeIs401() {
         when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.INVALID_CODE);
 
         ResponseEntity<?> r = controller.verifyPendingTwoFactor(111111, request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(401);
-        verify(pendingTwoFactor).recordFailure("pending");
+        assertThat(((Map<?, ?>) r.getBody()).get("message").toString()).contains("올바르지 않습니다");
+        // 세는 것은 검증 전 한 번뿐이다 — 틀린 뒤 또 세면 토큰당 5번이 사실은 2~3번이 된다.
+        verify(pendingTwoFactor).reserveAttempt("pending");
+        verify(refreshTokenService, never()).createRefreshToken(anyLong());
+    }
+
+    @Test
+    @DisplayName("마지막 한 번을 틀리면 '다시 로그인' — 남은 시도를 알려주지 않는다")
+    void lastWrongCodeTellsToStartOver() {
+        when(pendingTwoFactor.reserveAttempt("pending"))
+                .thenReturn(Optional.of(new PendingTwoFactor.Attempt(7L, false)));
+        when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.INVALID_CODE);
+
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor(111111, request, response);
+
+        assertThat(r.getStatusCode().value()).isEqualTo(401);
+        assertThat(((Map<?, ?>) r.getBody()).get("message").toString()).contains("다시 시작");
+    }
+
+    @Test
+    @DisplayName("🔴 시도를 다 쓴(또는 탄) 토큰은 검증까지 가지 않는다")
+    void usedUpTokenNeverReachesVerification() {
+        when(pendingTwoFactor.reserveAttempt("pending")).thenReturn(Optional.empty());
+
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor(123456, request, response);
+
+        assertThat(r.getStatusCode().value()).isEqualTo(401);
+        verify(userService, never()).verifyLoginTwoFactor(anyLong(), anyInt());
         verify(refreshTokenService, never()).createRefreshToken(anyLong());
     }
 

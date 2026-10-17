@@ -164,7 +164,9 @@ public class AuthController {
         }
         // 만료(5분)·위조·부재·시도 초과를 구분해 알려주지 않는다 — 어차피 처음부터 다시 하면 된다.
         final String expired = "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요.";
-        Long userId = pendingTwoFactor.userIdOf(pending).orElse(null);
+        // 🔒 시도는 검증 **전에** 센다 — 동시에 보낸 코드가 모두 "아직 0번" 을 읽고 전부 검증되던 것을 막는다(PendingTwoFactor 주석).
+        var attempt = pendingTwoFactor.reserveAttempt(pending).orElse(null);
+        Long userId = attempt == null ? null : attempt.userId();
         User user = userId == null ? null : userRepository.findById(userId).orElse(null);
         // 코드를 받는 사이(최대 5분) 막힌 계정이면 세션을 주지 않는다 — 🐛 예전에는 계정 상태를 보지 않았다.
         if (user == null || !user.isTwoFactorEnabled() || !user.canSignIn()) {
@@ -182,9 +184,9 @@ public class AuthController {
                     .body(Map.of("message", "인증 코드를 너무 많이 틀렸습니다. 잠시 후 다시 로그인해 주세요."));
         }
         if (checked != UserService.TwoFactorChange.OK) {
-            boolean more = pendingTwoFactor.recordFailure(pending);
+            // 이번 시도는 위에서 이미 셌다 — 남은 시도가 없으면 다음 요청은 토큰부터 거절된다.
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", more ? "인증 코드가 올바르지 않습니다." : expired));
+                    .body(Map.of("message", attempt.moreAfterThis() ? "인증 코드가 올바르지 않습니다." : expired));
         }
 
         // 통과 — 정상 로그인과 같은 REFRESH 쿠키를 심는다. 대기 토큰은 1회용이다 — 태우고 쿠키도 지운다.
