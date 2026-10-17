@@ -18,6 +18,8 @@
 #   ./ops/44-bulk-catalog.sh flush-cache         # 카탈로그 캐시만 비우기
 #
 #   PRODUCTS=500000 ./ops/44-bulk-catalog.sh load   # 개수 바꾸기(purge 도 같은 값으로)
+#   PRODUCTS=1000 PLACEHOLDER_IMAGE=/logo512.png ./ops/44-bulk-catalog.sh load
+#                                                  # 이미지 저장소(S3)가 없는 데모 클러스터 — 시드 배치 잡 없이
 #
 # 환경 변수(기본값):
 #   PRODUCTS=2000000  ID_OFFSET=1000000  TAXONOMY=dept  CHUNK=20000
@@ -25,6 +27,8 @@
 #   APP_NS=ecommerce SECRET=ecommerce-secrets SECRET_KEY=LOCAL_DB_PASSWORD
 #   REDIS_NS=redis REDIS_DEPLOY=redis
 #   STORAGE_DIR=/var/lib/rancher/k3s/storage   # local-path 가 PVC 를 두는 곳(디스크 여유를 여기서 잰다)
+#   PLACEHOLDER_IMAGE=   # 비우면 시드 배치 잡이 만든 색상 · 이미지 URL 이 있어야 한다. 주면(/경로 · http(s)) 색상이 비었을 때
+#                        # 시드 CSV 에서 넣고 모든 SKU 이미지를 이 주소로 — 데모(S3 없음)는 프론트가 내보내는 /logo512.png
 #   FORCE=1   백업 시간대 · 디스크 경고를 무시     YES=1   purge 확인을 묻지 않음
 #
 # ⚠️ 2천만 개 같은 큰 값은 운영 노드에 넣지 않는다 — 디스크 60~90GB, PostgreSQL 파드 메모리 512Mi(docs/19 §5.1).
@@ -47,6 +51,7 @@ SECRET_KEY="${SECRET_KEY:-LOCAL_DB_PASSWORD}"
 REDIS_NS="${REDIS_NS:-redis}"
 REDIS_DEPLOY="${REDIS_DEPLOY:-redis}"
 STORAGE_DIR="${STORAGE_DIR:-/var/lib/rancher/k3s/storage}"
+PLACEHOLDER_IMAGE="${PLACEHOLDER_IMAGE:-}"
 
 # 상품당 표 + 인덱스 바이트 — 생성기의 MEASURED["bytes_per_product"] 와 같은 값(로컬 50만 개 실측)
 BYTES_PER_PRODUCT=2108
@@ -190,7 +195,9 @@ cmd_load() {
     check_disk
     open_db
     info "적재 — 끊기면 같은 명령을 다시 실행하면 이어서 넣는다"
-    run_gen_db --taxonomy "$TAXONOMY" --chunk "$CHUNK" --resume --yes
+    local extra=()
+    [ -n "$PLACEHOLDER_IMAGE" ] && extra+=(--placeholder-image "$PLACEHOLDER_IMAGE")
+    run_gen_db --taxonomy "$TAXONOMY" --chunk "$CHUNK" --resume --yes ${extra[@]+"${extra[@]}"}
     flush_cache
     status
     echo
@@ -222,5 +229,5 @@ case "${1:-}" in
     status)      need kubectl; status ;;
     purge)       cmd_purge ;;
     flush-cache) need kubectl; flush_cache ;;
-    *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

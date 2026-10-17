@@ -503,14 +503,24 @@ def pg_rows(table: str, rows):
             yield [*r, 0]
 
 
+def check_placeholder(url: str) -> str:
+    """자리 표시 이미지 주소 — 같은 출처 경로(/…) 또는 http(s). 장바구니 · 주문 줄의 image 가 varchar(255) 라 그 안으로."""
+    if not (url.startswith("/") or re.match(r"^https?://", url)):
+        sys.exit("ERROR: --placeholder-image 는 /경로 또는 http(s):// 주소여야 한다")
+    if len(url) > 255 or re.search(r'[\s,"\\{}]', url):
+        sys.exit("ERROR: --placeholder-image 는 255자 이하, 공백 · 쉼표 · 따옴표 · 백슬래시 · 중괄호 없이")
+    return url
+
+
 class PgSink:
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, placeholder: str | None = None):
         try:
             import psycopg2
         except ImportError:
             sys.exit("ERROR: --copy 에는 psycopg2 가 필요합니다  (pip install psycopg2-binary)")
         self.conn = psycopg2.connect(dsn)
         self.conn.autocommit = False
+        self.placeholder = placeholder
 
     def scalar(self, sql: str, args=()):
         with self.conn.cursor() as cur:
@@ -536,8 +546,11 @@ class PgSink:
         plan.build(cats, subs, next_cat, next_sub)
 
         plan.color_ids = [r[0] for r in self.rows("SELECT color_id FROM product.product_color ORDER BY color_id")]
+        if not plan.color_ids and self.placeholder:
+            plan.color_ids = self.seed_colors()
         if not plan.color_ids:
-            sys.exit("ERROR: product.product_color 가 비어 있다 — 시드 배치 잡을 먼저 한 번 돌린다(색상 · 이미지 URL 을 만든다)")
+            sys.exit("ERROR: product.product_color 가 비어 있다 — 시드 배치 잡을 먼저 한 번 돌린다(색상 · 이미지 URL 을 만든다).\n"
+                     "       이미지 저장소(S3)가 없는 환경(데모)이면 --placeholder-image 로 색상을 시드 CSV 에서 넣는다")
 
         # 이미지는 시드 배치가 S3 에 올린 URL 을 대분류(이미지 풀)별로 재사용한다. 예전 --copy 는 CSV 의
         # 클래스패스 경로(images\food\…)를 그대로 넣어 화면에서 이미지가 전부 깨졌다.
@@ -550,9 +563,13 @@ class PgSink:
             if url:
                 found.setdefault(cname, set()).add(url)
         plan.images = {k: sorted(v) for k, v in found.items()}
+        if not plan.images and self.placeholder:
+            # 풀 하나 — Generator 는 대분류 풀이 없으면 첫 풀을 쓴다. SKU 마다 이 한 장.
+            print(f"  기존 상품 이미지 URL 이 없다 — 모든 SKU 에 자리 표시 이미지({self.placeholder})")
+            plan.images = {"placeholder": [self.placeholder]}
         if not plan.images:
             print("  ! 기존 상품 이미지 URL 이 없다 — 클래스패스 경로를 넣는다(화면에서 이미지가 보이지 않는다).\n"
-                  "    시드 배치 잡을 먼저 돌리면 그 URL 을 재사용한다.", file=sys.stderr)
+                  "    시드 배치 잡을 먼저 돌리면 그 URL 을 재사용한다. 저장소가 없으면 --placeholder-image.", file=sys.stderr)
             plan.images = classpath_images()
 
         with self.conn.cursor() as cur:
@@ -571,6 +588,25 @@ class PgSink:
         new_s = sum(s["new"] for s in plan.subcats)
         print(f"  카테고리 {len(plan.categories)}개(새로 {new_c}) · 소분류 {len(plan.subcats)}개(새로 {new_s}) · "
               f"색상 {len(plan.color_ids)}개 · 이미지 풀 {len(plan.images)}개")
+
+    def seed_colors(self) -> list[int]:
+        """시드 CSV 의 색상(509개)을 그대로 넣는다 — 견본 이미지는 자리 표시 이미지. 시드 배치 잡 없이 적재하는 길(데모).
+
+        🐛 예전: 이미지 저장소가 없는 데모 클러스터에서는 시드 배치 잡이 S3 쓰기 점검에서 멈추고, 이 생성기는 색상이
+           없어 멈췄다 — 상품을 넣을 길이 없었다(2026-10-17).
+        [JA] シード CSV の色をそのまま入れる(見本画像はプレースホルダー)。S3 のないデモではシードバッチも生成器も止まっていた。
+        """
+        _, colors = read_csv("product_colors.csv")
+        if not colors:
+            sys.exit("ERROR: product_colors.csv 가 비어 있다")
+        with self.conn.cursor() as cur:
+            for c in colors:
+                cur.execute("INSERT INTO product.product_color (color_id, color, colorimage, createdat, version) "
+                            "VALUES (%s, %s, %s, now(), 0) ON CONFLICT (color_id) DO NOTHING",
+                            (int(c["color_id"]), c["color"], self.placeholder))
+        self.conn.commit()
+        print(f"  색상 {len(colors)}개를 시드 CSV 에서 넣었다(견본 이미지 = 자리 표시)")
+        return [r[0] for r in self.rows("SELECT color_id FROM product.product_color ORDER BY color_id")]
 
     def resume_point(self, lo: int, hi: int):
         """[lo, hi] 범위에 이미 들어간 상품이 있으면 그 다음부터. 묶음은 한 트랜잭션이라 상품이 있으면 그 묶음은 온전하다."""
@@ -595,7 +631,8 @@ class PgSink:
             # 신원 열의 시퀀스를 넣은 id 뒤로 — 안 그러면 관리자가 상품을 등록하다 언젠가 id 가 부딪힌다.
             for table, col in (("product", "product_id"), ("product_sku", "skuproduct_id"),
                                ("product_size", "size_id"), ("product_subcategory", "proc_subcategory_id"),
-                               ("category", "category_id"), ("subcategory", "subcategory_id")):
+                               ("category", "category_id"), ("subcategory", "subcategory_id"),
+                               ("product_color", "color_id")):
                 cur.execute(f"SELECT pg_get_serial_sequence('product.{table}', '{col}')")
                 seq = cur.fetchone()[0]
                 if seq:
@@ -763,6 +800,9 @@ def main():
     ap.add_argument("--seed", type=int, default=42, help="난수 시드 — 재현 가능한 데이터셋")
     ap.add_argument("--resume", action="store_true", help="--copy: 이 범위에 이미 들어간 다음부터 잇는다")
     ap.add_argument("--purge", action="store_true", help="--copy: 이 범위(--id-offset, --products)의 생성 데이터를 지운다")
+    ap.add_argument("--placeholder-image", metavar="URL",
+                    help="--copy: 이미지 저장소가 없는 환경(데모)용 — 색상이 비어 있으면 시드 CSV 에서 넣고, "
+                         "기존 상품 이미지가 없으면 모든 SKU 이미지를 이 주소로(예: /logo512.png — 프론트가 내보내는 파일)")
     ap.add_argument("--estimate", action="store_true", help="행 수 · 용량만 보여 주고 끝낸다")
     ap.add_argument("--yes", action="store_true", help="백만 개 이상 · --purge 를 묻지 않고 진행")
     args = ap.parse_args()
@@ -772,8 +812,10 @@ def main():
         return
     if not args.out and not args.copy:
         ap.error("--out, --copy, --estimate 중 하나는 필요합니다")
-    if (args.resume or args.purge) and not args.copy:
-        ap.error("--resume · --purge 는 --copy 와 함께")
+    if (args.resume or args.purge or args.placeholder_image) and not args.copy:
+        ap.error("--resume · --purge · --placeholder-image 는 --copy 와 함께")
+    if args.placeholder_image:
+        check_placeholder(args.placeholder_image)
     if args.out and args.products > 200_000:
         print("  ! CSV + 배치 잡은 JPA 로 한 행씩 넣고 SKU 마다 이미지를 올린다 — 20만 개를 넘으면 --copy 를 쓴다", file=sys.stderr)
 
@@ -788,7 +830,7 @@ def main():
         sys.exit("\n백만 개 이상이다. 위 용량을 확인했으면 --yes 를 붙여 다시 실행한다.")
 
     plan = Plan(args.taxonomy)
-    sink = PgSink(args.copy) if args.copy else CsvSink(args.out)
+    sink = PgSink(args.copy, args.placeholder_image) if args.copy else CsvSink(args.out)
     print(f">>> 준비 ({args.taxonomy} 분류)")
     sink.prepare(plan, args.id_offset)
     if not plan.color_ids:
