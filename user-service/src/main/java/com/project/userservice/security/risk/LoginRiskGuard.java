@@ -17,6 +17,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -113,20 +114,40 @@ public class LoginRiskGuard {
 
     // ── 실패 기록 ─────────────────────────────────────────────────────────
 
+    static final Duration IP_WINDOW = Duration.ofMinutes(10);
+    static final Duration ACCOUNT_WINDOW = Duration.ofHours(1);
+    static final Duration GLOBAL_WINDOW = Duration.ofMinutes(5);
+
+    /**
+     * 세 기록(IP 집합 · 계정 집합 · 분 카운터)을 더하고 저마다의 창을 다시 건다 — 한 덩어리다.
+     *
+     * <p>🐛 예전에는 {@code SADD} 와 {@code EXPIRE} 가 따로였다 — 그 사이에 끊기면(파드 종료 · 커넥션 끊김) 만료 없는 집합이
+     * 남는다. 그 IP · 계정의 신호는 <b>영영 켜진 채</b>가 되어, 아무 일 없는 사용자에게 계속 확인 코드를 요구한다(Redis 메모리도
+     * 돌려받지 못한다). 셋 다 창을 매번 다시 거는 것은 예전과 같다 — 공격이 이어지는 동안 신호가 유지된다.
+     * KEYS[1]=IP 집합 KEYS[2]=계정 집합 KEYS[3]=분 카운터 · ARGV[1]=계정 hmac ARGV[2]=IP hmac ARGV[3..5]=각 창(ms)
+     */
+    // [JA] 3 つの記録を一度に。以前は SADD と EXPIRE が別で、間で切れると期限なしの集合が残り信号が永久に点いたままになった。
+    private static final DefaultRedisScript<Long> RECORD = new DefaultRedisScript<>("""
+            redis.call('SADD', KEYS[1], ARGV[1])
+            redis.call('PEXPIRE', KEYS[1], ARGV[3])
+            redis.call('SADD', KEYS[2], ARGV[2])
+            redis.call('PEXPIRE', KEYS[2], ARGV[4])
+            redis.call('INCR', KEYS[3])
+            redis.call('PEXPIRE', KEYS[3], ARGV[5])
+            return 1
+            """, Long.class);
+
     /** 비밀번호가 틀린 로그인 하나를 기록한다. 기록이 실패해도 로그인 응답은 바뀌지 않는다. */
     public void recordFailure(String email, String ip) {
         try {
             String acct = hmac(normalize(email));
             String src = hmac(ip == null ? "" : ip);
-            String ipKey = IP_KEY + src;
-            redis.opsForSet().add(ipKey, acct);
-            redis.expire(ipKey, Duration.ofMinutes(10));
-            String acctKey = ACCOUNT_KEY + acct;
-            redis.opsForSet().add(acctKey, src);
-            redis.expire(acctKey, Duration.ofHours(1));
-            String globalKey = GLOBAL_KEY + minute(0);
-            redis.opsForValue().increment(globalKey);
-            redis.expire(globalKey, Duration.ofMinutes(5));
+            redis.execute(RECORD,
+                    List.of(IP_KEY + src, ACCOUNT_KEY + acct, GLOBAL_KEY + minute(0)),
+                    acct, src,
+                    String.valueOf(IP_WINDOW.toMillis()),
+                    String.valueOf(ACCOUNT_WINDOW.toMillis()),
+                    String.valueOf(GLOBAL_WINDOW.toMillis()));
         } catch (RuntimeException e) {
             log.warn("로그인 실패 신호를 기록하지 못했다 — {}", e.getClass().getSimpleName());
         }
@@ -190,8 +211,7 @@ public class LoginRiskGuard {
      * KEYS[1]=대기 값 KEYS[2]=사용자 칸 · ARGV[1]=대기 값당 한도 ARGV[2]=사용자 한도 ARGV[3]=사용자 칸 수명(초)
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private static final org.springframework.data.redis.core.script.DefaultRedisScript<List<Long>> RESERVE =
-            new org.springframework.data.redis.core.script.DefaultRedisScript<>("""
+    private static final DefaultRedisScript<List<Long>> RESERVE = new DefaultRedisScript<>("""
                     if redis.call('EXISTS', KEYS[1]) == 0 then
                       return {}
                     end

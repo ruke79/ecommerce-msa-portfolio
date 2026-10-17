@@ -92,6 +92,31 @@ class LoginRiskGuardTest {
     }
 
     @Test
+    @DisplayName("🔴 기록한 세 키에는 반드시 만료가 붙는다 — 없으면 그 신호가 영영 켜진 채로 남는다")
+    void everyRecordedKeyExpires() {
+        guard.recordFailure("kim@example.com", "203.0.113.9");
+
+        var keys = template.keys("risk:*");
+        // IP 집합 · 계정 집합 · 분 카운터 셋.
+        assertThat(keys).hasSize(3);
+        // 🐛 SADD 와 EXPIRE 가 따로였을 때는 그 사이에 끊기면 만료 없는 집합이 남아, 아무 일 없는 사용자에게 계속 확인을 요구했다.
+        assertThat(keys).allSatisfy(k -> assertThat(template.getExpire(k))
+                .as("%s 의 TTL", k).isPositive());
+    }
+
+    @Test
+    @DisplayName("기록을 거듭하면 창을 다시 건다 — 공격이 이어지는 동안 신호가 유지된다")
+    void recordingAgainRefreshesTheWindow() {
+        guard.recordFailure("kim@example.com", "203.0.113.9");
+        String ipKey = template.keys("risk:ip:*").iterator().next();
+        template.expire(ipKey, java.time.Duration.ofSeconds(1));
+
+        guard.recordFailure("lee@example.com", "203.0.113.9");
+
+        assertThat(template.getExpire(ipKey)).isGreaterThan(60L);
+    }
+
+    @Test
     @DisplayName("🔒 Redis 에 이메일 · IP 원문이 없다 — 키도 값도 HMAC 뿐")
     void noRawPii() {
         guard.recordFailure("victim@example.com", "203.0.113.7");
