@@ -135,6 +135,59 @@ class LoginAttemptServiceTest {
     }
 
     @Test
+    @DisplayName("🔴 잠금은 저절로 풀린다 — 영구 잠금은 남의 계정을 잠그는 DoS 버튼이 된다")
+    void lockExpiresOnItsOwn() throws Exception {
+        // 창을 400ms 로 줄인 서비스 — 15분을 기다릴 수 없다(동작은 같다, 길이만 다르다).
+        LoginAttemptService shortWindow = new LoginAttemptService(template, 2, Duration.ofMillis(400));
+        shortWindow.reserveAttempt("kim@example.com");
+        shortWindow.reserveAttempt("kim@example.com");
+        assertThatThrownBy(() -> shortWindow.reserveAttempt("kim@example.com")).isInstanceOf(LockedException.class);
+
+        Thread.sleep(500);
+
+        // 🐛 잠금에 TTL 을 걸지 않으면(또는 만료를 보지 않으면) 계정은 고객센터에 전화할 때까지 열리지 않는다.
+        assertThatCode(() -> shortWindow.reserveAttempt("kim@example.com")).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("🔴 풀린 뒤에는 처음부터 — 한 번 더 틀렸다고 바로 다시 잠기지 않는다")
+    void counterRestartsAfterTheLock() throws Exception {
+        LoginAttemptService shortWindow = new LoginAttemptService(template, 2, Duration.ofMillis(400));
+        for (int i = 0; i < 2; i++) {
+            shortWindow.reserveAttempt("kim@example.com");
+        }
+        assertThatThrownBy(() -> shortWindow.reserveAttempt("kim@example.com")).isInstanceOf(LockedException.class);
+
+        Thread.sleep(500);
+
+        // 🐛 풀린 뒤에도 옛 카운터가 남아 있으면 한 번만 틀려도 바로 다시 잠긴다 — 사실상 영구 잠금이다. 지금은 두 가지가 그것을 막는다:
+        //    시도 키의 만료가 잠금보다 먼저 오고(둘 다 ARGV[1], 시도 키가 먼저 시작한다), 잠글 때 Lua 가 한 번 더 버린다(DEL).
+        for (int i = 0; i < 2; i++) {
+            final int attempt = i;
+            assertThatCode(() -> shortWindow.reserveAttempt("kim@example.com"))
+                    .as("풀린 뒤 %d 번째 시도", attempt + 1).doesNotThrowAnyException();
+        }
+        assertThatThrownBy(() -> shortWindow.reserveAttempt("kim@example.com")).isInstanceOf(LockedException.class);
+    }
+
+    @Test
+    @DisplayName("🔴 계정마다 따로 센다 — 한 사람이 잠겨도 다른 사람은 그대로 로그인한다")
+    void accountsAreCountedSeparately() {
+        for (int i = 0; i < 5; i++) {
+            service.reserveAttempt("kim@example.com");
+        }
+        assertThatThrownBy(() -> service.reserveAttempt("kim@example.com")).isInstanceOf(LockedException.class);
+
+        // 🐛 키에 계정 표지를 빼먹으면 모든 사용자가 카운터 하나를 나눠 쓴다 — 공격자 한 명이 전원을 잠근다.
+        for (int i = 0; i < 5; i++) {
+            final int attempt = i;
+            assertThatCode(() -> service.reserveAttempt("lee@example.com"))
+                    .as("lee 의 %d 번째 시도", attempt + 1).doesNotThrowAnyException();
+        }
+        assertThatThrownBy(() -> service.reserveAttempt("lee@example.com")).isInstanceOf(LockedException.class);
+    }
+
+    @Test
     @DisplayName("Redis 키에 이메일 원문이 없다")
     void keysDoNotHoldTheAddress() {
         service.reserveAttempt("kim@example.com");
