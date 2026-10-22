@@ -1611,6 +1611,16 @@ class ConfigurationGuardrailTest {
         String ops17 = Files.readString(repoRoot().resolve("ops/17-configure-alert-receivers.sh"), StandardCharsets.UTF_8);
         assertThat(ops17).contains("integration=\"discord\"").doesNotContain("integration=\"webhook\"")
                 .as("주소를 화면에 찍지 않는다 — 길이 · 앞부분만").doesNotContain("형식이 아닙니다: $url");
+        // 🐛 2026-10-20 운영: 주소 파일 전에 쌓인 실패 4건 때문에, Discord 에 시험 경보가 왔는데도 "전달 실패" 로 판정했다 — 시험 전 값과의 차이로
+        assertThat(ops17).as("도달 시험은 시험 전 누적값을 기준으로 차이만 본다").contains("read -r base_total base_failed")
+                .contains("failed=$((now_failed - base_failed))")
+                .as("시험 경보는 회차마다 새 그룹 — 같은 이름표면 repeat_interval 안이라 보내지 않는다").contains("\"service\": \"ops-17-$run_id\"");
+        // 전달 실패가 보이는 곳 — Prometheus 가 Alertmanager 를 긁고, 최근 실패에 경보(같은 길이라 ops/05 · Grafana 에서 본다)
+        for (String cfg : List.of("observability/prometheus.yml", "observability/prometheus.oci.yml")) {
+            assertThat(Files.readString(repoRoot().resolve(cfg), StandardCharsets.UTF_8)).as(cfg).contains("targets: [\"alertmanager:9093\"]");
+        }
+        assertThat(Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8))
+                .contains("alert: AlertDeliveryFailing").contains("increase(alertmanager_notifications_failed_total[15m])");
     }
 
     /**

@@ -68,7 +68,8 @@ if [[ "$MODE" == "configure" ]]; then
     for url in "$WEBHOOK_CRITICAL" "$WEBHOOK_WARNING"; do
         if [[ ! "$url" =~ ^https://(discord|discordapp)\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$ ]]; then
             echo "ERROR: Discord 웹후크 URL 형식이 아닙니다(길이 ${#url}, 앞부분 '${url:0:30}')" >&2
-            echo "       https://discord.com/api/webhooks/<숫자>/<토큰> 이어야 합니다 — 뒤에 /slack · ?wait= 를 붙이지 않습니다." >&2
+            # 예시 주소를 글자 그대로 적지 않는다 — 비밀 스캔(ops/20)이 웹후크 주소로 잡는다
+            echo "       Discord 의 '웹후크 URL 복사' 그대로(api/webhooks/<숫자>/<토큰>) — 뒤에 /slack · ?wait= 를 붙이지 않습니다." >&2
             exit 2
         fi
     done
@@ -173,12 +174,15 @@ if [[ "$MODE" == "test" || "$MODE" == "configure" ]]; then
         # 짧게 끝나도록 endsAt 을 가까운 미래로 둔다 — 남아서 계속 알림이 가면 곤란하다.
         ends="$(date -u -d '+2 minutes' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
                 || date -u -v+2M '+%Y-%m-%dT%H:%M:%SZ')"
+        # 회차마다 다른 이름표 — 🐛 2026-10-20 운영: 같은 이름표(service=ops-17)의 두 번째 시험은 첫 시험과 같은 경보로 묶여
+        #    repeat_interval(30분) 안이라 다시 보내지 않았다("전달 시도 자체가 없었다"). 그룹 키(alertname · service)가 새로우면 group_wait 뒤 바로 나간다.
+        run_id="$(date -u +%Y%m%dT%H%M%SZ)"
         payload=$(cat <<JSON
 [{
   "labels": {
     "alertname": "AlertPipelineTest",
     "severity": "critical",
-    "service": "ops-17"
+    "service": "ops-17-$run_id"
   },
   "annotations": {
     "summary": "경보 전달 경로 시험 — 이 메시지가 보이면 채널이 살아 있습니다",
@@ -188,6 +192,21 @@ if [[ "$MODE" == "test" || "$MODE" == "configure" ]]; then
 }]
 JSON
 )
+        # 전달 지표는 Alertmanager 가 뜬 뒤의 누적이다 — 이 시험 전의 값을 기준으로 차이만 본다.
+        # 🐛 2026-10-20 운영: 주소 파일을 만들기 전에 Alertmanager 를 새로 띄워 이미 울리던 경보 4건이 실패로 쌓였고,
+        #    시험 경보는 Discord 에 왔는데도 누적 실패 수 때문에 "전달 실패" 로 판정했다.
+        # [JA] 送信指標は起動後の累積 — この試験前の値を基準に差分だけを見る。
+        discord_counts() {   # "시도 실패" — 재기동 뒤 누적
+            local m; m="$(curl "${CURL_OPTS[@]}" "$ALERTMANAGER_URL/metrics" 2>/dev/null || echo '')"
+            awk '/^alertmanager_notifications_total\{.*integration="discord"/ {t+=$NF}
+                 /^alertmanager_notifications_failed_total\{.*integration="discord"/ {f+=$NF}
+                 END {printf "%d %d", t+0, f+0}' <<<"$m"
+        }
+        read -r base_total base_failed <<<"$(discord_counts)"
+        if [[ "$base_failed" -gt 0 ]]; then
+            note "이 시험 전에 쌓인 전달 실패 ${base_failed}건(시도 ${base_total}) — 판정에서 뺀다(주소 파일이 생기기 전의 것일 수 있다)"
+        fi
+
         if curl "${CURL_OPTS[@]}" -X POST -H 'Content-Type: application/json' \
                 -d "$payload" -o /dev/null "$ALERTMANAGER_URL/api/v2/alerts"; then
             ok "테스트 경보 전송"
@@ -210,16 +229,15 @@ JSON
         delivered=0; failed=0
         for _ in $(seq 1 12); do
             sleep 5
-            metrics="$(curl "${CURL_OPTS[@]}" "$ALERTMANAGER_URL/metrics" 2>/dev/null || echo '')"
-            failed=$(awk '/^alertmanager_notifications_failed_total\{.*integration="discord"/ {s+=$NF} END {printf "%d", s+0}' <<<"$metrics")
-            delivered=$(awk '/^alertmanager_notifications_total\{.*integration="discord"/ {s+=$NF} END {printf "%d", s+0}' <<<"$metrics")
+            read -r now_total now_failed <<<"$(discord_counts)"
+            delivered=$((now_total - base_total)); failed=$((now_failed - base_failed))
             [[ "$delivered" -gt 0 ]] && break
         done
 
         if [[ "$delivered" -gt 0 && "$failed" -eq 0 ]]; then
-            ok "Discord 전달 성공 (시도 $delivered · 실패 0) — 채널에 '경보 전달 경로 시험' 이 보여야 한다"
+            ok "Discord 전달 성공 (이 시험 동안 시도 $delivered · 실패 0) — 채널에 '경보 전달 경로 시험' 이 보여야 한다"
         elif [[ "$failed" -gt 0 ]]; then
-            bad "Discord 전달 실패 (시도 $delivered · 실패 $failed)"
+            bad "Discord 전달 실패 (이 시험 동안 시도 $delivered · 실패 $failed)"
             note "Alertmanager 로그에 원인이 있습니다:"
             note "  docker logs alertmanager 2>&1 | grep 'Notify for alerts failed'"
             note "가장 흔한 원인 두 가지:"

@@ -105,6 +105,8 @@ Notify for alerts failed ... open /etc/alertmanager/secrets/webhook-url-critical
 
 이제 수신은 **Discord**(`discord_configs` + `webhook_url_file`, Alertmanager 0.28.1 — 0.27 은 주소를 설정에 직접 적는 것만 받아 비밀이 커밋된다). `sudo ./ops/17-configure-alert-receivers.sh` 가 주소를 화면에 보이지 않게 묻고(명령줄 · 셸 기록에 남기지 않는다, 출력은 길이 · 앞부분만), 파일을 uid 65534 · 640 으로 둔 뒤 시험 경보로 discord 전달 지표까지 본다. `./ops/05` 가 파일과 전달 실패를 점검한다. 로컬 확인: 0.28.1 + 가짜 Discord 로 ops/17 `MODE=test` 9/9, embed 수신. 가드 B-96.
 
+운영 적용(2026-10-20): Discord 로 시험 경보와 실제 경보가 왔다(3건). 그런데 `ops/17` 이 "전달 실패(시도 6 · 실패 4)" 로 판정했다 — 주소 파일을 만들기 전에 Alertmanager 를 새로 띄워, 이미 울리던 경보가 실패로 쌓인 것까지 셌기 때문이다. 이제 도달 시험은 시험 전 누적값과의 차이만 보고, Prometheus 가 Alertmanager 를 긁어 최근 15분의 전달 실패에 경보 `AlertDeliveryFailing` 을 건다(같은 길이라 이 경보도 못 갈 수 있다 — `./ops/05` 의 "최근 15분 전달 실패" 로 본다).
+
 ## 2. 백업 스크립트는 있는데 돌고 있지 않았다
 
 `ops/08`·`ops/10`·`ops/09` 는 실제 사고를 되돌리는 것까지 검증했다([docs/15](15-backup-and-dr.ko.md)).

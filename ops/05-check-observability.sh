@@ -162,9 +162,20 @@ for f in webhook-url-critical webhook-url-warning; do
     fi
 done
 curl -sf "$AM_URL/metrics" | awk '/^alertmanager_notifications_(failed_)?total\{/ { split($1, a, "integration=\""); split(a[2], b, "\""); k = ($1 ~ /failed/ ? "실패" : "시도"); n[b[1] " " k] += $NF } END { for (x in n) if (n[x] > 0) printf "  %s %d\n", x, n[x] }' | sort || echo "  Alertmanager 지표 조회 실패"
-failed="$(curl -sf "$AM_URL/metrics" | awk '/^alertmanager_notifications_failed_total\{/ {s+=$NF} END {printf "%d", s+0}' || echo 0)"
-if [ "${failed:-0}" -gt 0 ]; then
-    echo "FAIL 전달 실패 $failed 건(재기동 뒤 누적) — docker logs alertmanager 2>&1 | grep 'Notify for alerts failed' | tail -3"; fail=1
+# 판정은 최근 15분의 실패로 — 위 수는 재기동 뒤 누적이라 주소 파일을 만들기 전의 실패까지 들어 있다(2026-10-20 운영).
+recent="$(curl -sf "$PROM_URL/api/v1/query" --data-urlencode 'query=sum(increase(alertmanager_notifications_failed_total[15m]))' \
+    | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else "-")' 2>/dev/null || echo "-")"
+if [ "$recent" = "-" ]; then
+    if ! curl -sf "$PROM_URL/api/v1/targets" | grep -q '"job":"alertmanager"'; then
+        # 설정 파일만 바뀌면 compose 의 up -d 는 컨테이너를 다시 만들지 않는다 — 옛 설정 그대로 돈다(2026-10-20 운영)
+        echo "FAIL Prometheus 에 alertmanager 작업이 없다 — 옛 설정으로 도는 중: docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d --force-recreate prometheus"; fail=1
+    else
+        echo "  (최근 15분 실패: alertmanager 지표가 아직 없다 — 긁기 시작한 지 얼마 안 됐다)"
+    fi
+elif [ "$recent" -gt 0 ]; then
+    echo "FAIL 최근 15분 전달 실패 $recent 건 — docker logs alertmanager 2>&1 | grep 'Notify for alerts failed' | tail -3"; fail=1
+else
+    echo "OK   최근 15분 전달 실패 0"
 fi
 
 echo

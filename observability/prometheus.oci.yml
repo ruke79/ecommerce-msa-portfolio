@@ -34,6 +34,12 @@ scrape_configs:
     static_configs:
       - targets: ["jaeger:8888"]
 
+  # 경보 전달 자신의 건강 — Discord 로 보낸 시도 · 실패(alert-rules.yml 의 AlertDeliveryFailing, docs/22 §1).
+  # 🐛 2026-10-20 전에는 긁지 않아 9-24 부터 전달 0건이었던 것을 아무 데서도 볼 수 없었다.
+  - job_name: "alertmanager"
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]

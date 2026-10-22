@@ -105,6 +105,8 @@ Notify for alerts failed ... open /etc/alertmanager/secrets/webhook-url-critical
 
 今は受信が **Discord**(`discord_configs` + `webhook_url_file`、Alertmanager 0.28.1 — 0.27 は URL を設定に直書きするしか受け付けず、秘密がコミットされる)。`sudo ./ops/17-configure-alert-receivers.sh` が URL を画面に見せずに尋ね(コマンドライン · シェル履歴に残さない、出力は長さ · 先頭だけ)、ファイルを uid 65534 · 640 にしてから試験アラートで discord の送信指標まで見る。`./ops/05` がファイルと送信失敗を点検する。ローカル確認: 0.28.1 + 偽 Discord で ops/17 `MODE=test` 9/9、embed 受信。ガード B-96。
 
+本番適用(2026-10-20): Discord に試験アラートと実際のアラートが届いた(3 件)。ところが `ops/17` は「送信失敗(試行 6 · 失敗 4)」と判定した — URL ファイルを作る前に Alertmanager を起動し直したので、すでに鳴っていたアラートが失敗として積もった分まで数えたためだ。今は到達試験が試験前の累積値との差だけを見て、Prometheus が Alertmanager を集めて直近 15 分の送信失敗にアラート `AlertDeliveryFailing` を掛ける(同じ道なのでこのアラートも届かないことがある — `./ops/05` の「直近 15 分の送信失敗」で見る)。
+
 ## 2. バックアップスクリプトはあるのに動いていなかった
 
 `ops/08`・`ops/10`・`ops/09` は実際の障害を巻き戻すところまで検証した([docs/15](15-backup-and-dr.md))。
