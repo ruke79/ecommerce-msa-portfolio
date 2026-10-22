@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MainHeader, TitleBlock } from '../styles/BaseStyle';
 import CreateRoomModal from './CreateRoomModal';
 import { useTranslation } from 'i18n/I18nProvider';
+import { FaPlus } from 'react-icons/fa';
 
 /**
  * 채팅방 목록 헤더 — 제목 · 방 만들기 · 검색.
@@ -46,7 +47,7 @@ const RoomListHeader = ({ changeSearch }) => {
             aria-label={t("chat.room.create")}
             onClick={() => setIsOpenCreateRoom(true)}
           >
-            <i className="fas fa-plus" aria-hidden="true" />
+            <FaPlus aria-hidden="true" />
           </button>
         </TitleBlock>
         <input

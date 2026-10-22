@@ -770,3 +770,21 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **남은 것**: 공유 서버 인증서(`tls-keystore`)는 여전히 손으로 — 825일이라 급하지 않지만, 같은 방식(Certificate + Reloader)으로
 옮길 수 있다. 그때는 Kafka·Redis·Postgres 클라이언트가 같은 파일을 쓰므로 인프라 쪽 재시작까지 함께 계획해야 한다.
 
+## 19. 브라우저 보안 헤더 · 외부 CSS — 프론트엔드 점검(2026-10-22)
+
+`manuscripts/보안-면접`(problem-solving 저장소)의 브라우저 쪽 문항(Q5 · Q9 · Q10 · Q25 ~ Q28 · Q33 · Q36)을 점검표로 frontend 를 봤다. 토큰(메모리 + `HttpOnly · Secure · SameSite=Lax` 리프레시 쿠키) · XSS 싱크(0건) · 열린 리다이렉트(역슬래시까지 거름) · 번들의 비밀(공개 id 뿐) · 소스맵(404)은 이미 기준을 지켰다. 빈 곳 둘을 메웠다.
+
+**보안 헤더가 하나도 없었다** — 결제 · 계정 · 관리자 화면을 남의 사이트가 투명한 iframe 에 넣는 클릭재킹(Q33)이 가능했다. 이제 frontend nginx 의 모든 응답에:
+
+| 헤더 | 값 | 강제? |
+|---|---|---|
+| `X-Frame-Options` · `Content-Security-Policy` | `DENY` · `frame-ancestors 'none'` | 강제 |
+| `Content-Security-Policy-Report-Only` | `default-src 'self'` · 스크립트는 자기 출처 + PortOne v1 · v2 · PayPal(`'unsafe-inline'` 없음) · `object-src 'none'` · `base-uri 'self'` | 보고만 |
+| `X-Content-Type-Options` · `Referrer-Policy` · `Permissions-Policy` · `Strict-Transport-Security` | `nosniff` · `strict-origin-when-cross-origin` · 카메라 · 마이크 · 위치 · USB 끔 · 1년(하위 도메인 제외) | 강제 |
+
+- CSP 를 보고만 하는 이유: 결제 SDK 와 MUI · emotion 의 인라인 스타일이 있어 처음부터 강제하면 결제 화면이 깨질 수 있다(Q26 — 나중에 넣는 CSP 는 report-only 로 위반부터). **배포 뒤 카드 · PayPal · 무통장까지 한 바퀴 돌려 브라우저 콘솔에 CSP 위반이 없으면** `Content-Security-Policy` 로 바꾼다.
+- ⚠️ nginx 는 location 안에 `add_header` 가 하나라도 있으면 server 의 것을 물려받지 않는다 — `/index.html` · `/static/` · `/healthz` 에도 같은 줄을 둔다(`nginxHeaders.test.js`). 실제 nginx 1.27 에 dist 를 올려 `/` · SPA 경로 · `/static/*.js` · 404 · `.map` 모두 일곱 개를 확인했다.
+
+**Font Awesome CSS 를 cdnjs 에서 SRI 없이 받았다** — 아이콘은 채팅의 셋뿐이었다. 같은 Font Awesome 5 아이콘을 `react-icons/fa`(SVG)로 바꿔 외부 출처를 없앴다(`indexHtml.test.js` — 외부 `link` · `script` 0, `fas fa-` 0).
+
+남은 것: CSP 강제 전환, 재설정 링크의 `?token=` 을 읽은 뒤 주소창에서 지우기, 택배 조회 주소의 송장 번호 인코딩, react-router v7 · jest 30 메이저 판 올림(남은 npm 권고 7건 — 개발 도구 · 이미 막은 것).

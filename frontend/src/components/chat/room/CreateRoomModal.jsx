@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import Modal from '../Modal';
 import { useCreateChatRoom, useFetchChatRooms } from 'hook/chatHooks';
 import { useTranslation } from 'i18n/I18nProvider';
+import { FaTimes } from 'react-icons/fa';
 
 const MAX_LEN = 20;
 
@@ -195,7 +196,7 @@ const CreateRoomModal = props => {
           <h4>{t("chat.room.create")}</h4>
           <p>{t("chat.room.name_limit", { max: MAX_LEN })}</p>
           <CancelIcon type="button" aria-label={t("chat.room.close")} onClick={onClose}>
-            <i className="fas fa-times" />
+            <FaTimes aria-hidden="true" />
           </CancelIcon>
         </Header>
 

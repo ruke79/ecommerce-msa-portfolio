@@ -769,3 +769,21 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 **残っているもの**: 共有サーバー証明書（`tls-keystore`）は依然として手作業だ — 825 日なので急ぎではないが、同じ方式（Certificate ＋ Reloader）に
 移せる。そのときは Kafka・Redis・Postgres のクライアントが同じファイルを使うので、インフラ側の再起動まで一緒に計画する必要がある。
 
+## 19. ブラウザのセキュリティヘッダー・外部 CSS — フロントエンド点検(2026-10-22)
+
+`manuscripts/보안-면접`(problem-solving リポジトリ)のブラウザ側の設問(Q5・Q9・Q10・Q25〜Q28・Q33・Q36)を点検表にして frontend を見た。トークン(メモリ + `HttpOnly・Secure・SameSite=Lax` のリフレッシュ Cookie)・XSS のシンク(0 件)・オープンリダイレクト(バックスラッシュまで除外)・バンドル内の秘密(公開 id のみ)・ソースマップ(404)はすでに基準を満たしていた。空いていた二つを埋めた。
+
+**セキュリティヘッダーが一つもなかった** — 決済・アカウント・管理画面を他サイトが透明な iframe に入れるクリックジャッキング(Q33)が可能だった。今は frontend nginx のすべての応答に:
+
+| ヘッダー | 値 | 強制? |
+|---|---|---|
+| `X-Frame-Options`・`Content-Security-Policy` | `DENY`・`frame-ancestors 'none'` | 強制 |
+| `Content-Security-Policy-Report-Only` | `default-src 'self'`・スクリプトは自オリジン + PortOne v1・v2・PayPal(`'unsafe-inline'` なし)・`object-src 'none'`・`base-uri 'self'` | 報告のみ |
+| `X-Content-Type-Options`・`Referrer-Policy`・`Permissions-Policy`・`Strict-Transport-Security` | `nosniff`・`strict-origin-when-cross-origin`・カメラ・マイク・位置・USB を無効・1 年(サブドメインは含めない) | 強制 |
+
+- CSP を報告のみにする理由: 決済 SDK と MUI・emotion のインラインスタイルがあり、最初から強制すると決済画面が壊れうる(Q26 — 後から入れる CSP は report-only で違反から集める)。**デプロイ後にカード・PayPal・銀行振込まで一通り回してブラウザのコンソールに CSP 違反がなければ** `Content-Security-Policy` に切り替える。
+- ⚠️ nginx は location に `add_header` が一つでもあると server の分を継承しない — `/index.html`・`/static/`・`/healthz` にも同じ行を置く(`nginxHeaders.test.js`)。実際の nginx 1.27 に dist を載せ、`/`・SPA の経路・`/static/*.js`・404・`.map` のすべてで 7 つを確認した。
+
+**Font Awesome の CSS を cdnjs から SRI なしで読んでいた** — アイコンはチャットの 3 つだけだった。同じ Font Awesome 5 のアイコンを `react-icons/fa`(SVG)に替え、外部オリジンをなくした(`indexHtml.test.js` — 外部の `link`・`script` 0、`fas fa-` 0)。
+
+残り: CSP の強制への切り替え、再設定リンクの `?token=` を読んだ後にアドレスバーから消す、配送照会 URL の送り状番号のエンコード、react-router v7・jest 30 のメジャー更新(残る npm 勧告 7 件 — 開発ツール・すでに防いだもの)。

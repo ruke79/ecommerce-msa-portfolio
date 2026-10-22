@@ -1,5 +1,6 @@
 import React from 'react';
 import styled from 'styled-components';
+import { FaAngleDown } from 'react-icons/fa';
 
 const BorderBlock = styled.div`
   position: relative;
@@ -29,7 +30,7 @@ const DownBtnWrapper = styled.div`
   bottom: 96px;
   right: 24px;
   z-index: 5;
-  & i {
+  & svg {
     width: 40px;
     height: 40px;
     padding: 10px;
@@ -58,7 +59,7 @@ export const DownBtn = props => {
     const { onDownClick } = props;
     return (
       <DownBtnWrapper onClick={onDownClick}>
-        <i className="fas fa-angle-down" />
+        <FaAngleDown aria-hidden="true" />
       </DownBtnWrapper>
     );
   };
