@@ -160,6 +160,14 @@ class LoadK6ScriptTest {
                 echo "kubectl $*" >> "$FAKE/kubectl.log"
                 case "$*" in
                   *"get configmap ecommerce-config"*) printf '%s' "${FAKE_URL-https://shop.lab}" ;;
+                  *"get pods -l app=gateway-server"*) printf '%s' "${FAKE_GW_PODS-gw-a
+                gw-b
+                }" ;;
+                  *"logs gw-"*"--previous"*) exit 1 ;;
+                  *"logs gw-a --tail=-1"*) printf '%s\n' "t1 WARN Fallback triggered. Exception: io.github.resilience4j.bulkhead.BulkheadFullException: Bulkhead 'catalogServiceCircuitBreaker' is full" \
+                      "t2 WARN Fallback triggered. Exception: io.github.resilience4j.bulkhead.BulkheadFullException: Bulkhead 'catalogServiceCircuitBreaker' is full" \
+                      "t3 INFO ok" "t4 WARN Fallback triggered. Exception: java.util.concurrent.TimeoutException: Did not observe" ;;
+                  *"logs gw-b --tail=-1"*) printf '%s\n' "t1 WARN Fallback triggered. Exception: io.github.resilience4j.bulkhead.BulkheadFullException: full" ;;
                   *"get deploy "*"-o jsonpath={.spec.replicas}"*) printf '2' ;;
                   *"requests.cpu}"*) printf '250m' ;;
                   *"requests.memory}"*) printf '512Mi' ;;
@@ -371,6 +379,46 @@ class LoadK6ScriptTest {
         Run bad = run(Map.of("GATEWAY", "https://shop.lab", "PROM", "http://obs-vm:9090", "PROM_ENV", "demo\"} or vector(9) #"), "browse");
         assertThat(bad.code()).isNotZero();
         assertThat(bad.out()).contains("PROM_ENV 는");
+    }
+
+    @Test
+    @DisplayName("🔴 게이트웨이 파드를 바꾸기 전에 로그를 남긴다 — limits · replicas(게이트웨이) · logs, 폴백 예외별 수 요약 · 0700 폴더")
+    void gatewayLogsAreSavedBeforePodsAreReplaced() throws Exception {
+        // 🐛 2026-10-18: limits default 의 롤링이 측정 때의 게이트웨이 파드를 지워, 503 10,281건의 폴백 로그를 셀 수 없었다
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path logs = tmp.resolve("gwlogs");
+        Run r = run(Map.of("GATEWAY_LOG_DIR", logs.toString()), "limits", "default");
+        assertThat(r.code()).as(r.out()).isZero();
+        String calls = read(tmp.resolve("kubectl.log"));
+        assertThat(calls.indexOf("logs gw-a --tail=-1")).as("로그가 먼저 — 그다음 롤링").isPositive()
+                .isLessThan(calls.indexOf("set env deploy/gateway-server"));
+        Path dir;
+        try (Stream<Path> st = Files.list(logs)) {
+            dir = st.filter(Files::isDirectory).findFirst().orElseThrow();
+        }
+        assertThat(dir.getFileName().toString()).endsWith("-limits-default");
+        assertThat(Files.getPosixFilePermissions(dir)).as("운영자만").isEqualTo(PosixFilePermissions.fromString("rwx------"));
+        assertThat(dir.resolve("gw-a.log.gz")).exists();
+        assertThat(dir.resolve("gw-b.log.gz")).exists();
+        assertThat(dir.resolve("gw-a.previous.log.gz")).as("재시작이 없으면 빈 파일을 두지 않는다").doesNotExist();
+        String summary = read(dir.resolve("summary.txt"));
+        assertThat(summary).contains("reason=limits-default").contains("pods=gw-a gw-b")
+                .containsPattern("== gw-a 줄 4 · 폴백 3")
+                .containsPattern("(?s)== 모든 파드.*3 io\\.github\\.resilience4j\\.bulkhead\\.BulkheadFullException.*1 java\\.util\\.concurrent\\.TimeoutException");
+        assertThat(r.out()).contains("게이트웨이 로그를 남겼다(limits-default, 파드 2개)").contains("BulkheadFullException");
+
+        Run reps = run(Map.of("GATEWAY_LOG_DIR", logs.toString()), "replicas", "default", "gateway-server");
+        assertThat(reps.out()).contains("게이트웨이 로그를 남겼다(replicas-default");
+        Run catOnly = run(Map.of("GATEWAY_LOG_DIR", logs.toString()), "replicas", "default", "catalog-service");
+        assertThat(catOnly.out()).as("게이트웨이를 바꾸지 않으면 남기지 않는다").doesNotContain("게이트웨이 로그를 남겼다");
+        Run manual = run(Map.of("GATEWAY_LOG_DIR", logs.toString()), "logs");
+        assertThat(manual.code()).as(manual.out()).isZero();
+        assertThat(manual.out()).contains("게이트웨이 로그를 남겼다(manual");
+        Run none = run(Map.of("GATEWAY_LOG_DIR", logs.toString(), "FAKE_GW_PODS", ""), "limits", "load");
+        assertThat(none.code()).as("파드가 없어도 명령은 계속").isZero();
+        assertThat(none.out()).contains("게이트웨이 파드가 없다");
+        Run prod = run(Map.of("GATEWAY_LOG_DIR", logs.toString(), "FAKE_URL", "https://www.ysyproject.com"), "logs");
+        assertThat(prod.code()).isNotZero();
     }
 
     @Test

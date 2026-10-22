@@ -28,6 +28,7 @@ import com.project.catalog_service.service.BannerService;
 import com.project.catalog_service.service.EventScheduler;
 import com.project.catalog_service.service.EventService;
 import com.project.catalog_service.service.HomeSectionService;
+import com.project.catalog_service.service.HomeViewCache;
 import com.project.catalog_service.service.ImageService.StorageStatus;
 import com.project.catalog_service.service.NoticeService;
 import com.project.catalog_service.service.ProductImportService;
@@ -53,6 +54,8 @@ public class ContentAdminController {
     private final BannerService bannerService;
     private final NoticeService noticeService;
     private final HomeSectionService homeSectionService;
+    /** 섹션을 바꾸면 이 파드의 첫 화면 캐시를 비운다(커밋 뒤 — 서비스 메서드가 돌아온 뒤). 다른 파드는 TTL(30초)로 맞춰진다. */
+    private final HomeViewCache homeView;
     private final ProductImportService productImportService;
     private final ProductService productService;
     private final EventService eventService;
@@ -157,7 +160,9 @@ public class ContentAdminController {
     @PostMapping("/home-sections")
     public ResponseEntity<?> createHomeSection(@Valid @RequestBody HomeSectionRequest request) {
         try {
-            return ResponseEntity.ok(homeSectionService.create(request));
+            HomeSectionAdminView created = homeSectionService.create(request);
+            homeView.invalidate();
+            return ResponseEntity.ok(created);
         } catch (IllegalArgumentException e) {
             // 없는 카테고리를 가리키면 400 이다. 저장을 허용하면 증상이 "홈에 그 섹션만
             // 안 나온다"로 나타나고, 어디가 틀렸는지 화면에서는 알 수 없다.
@@ -169,7 +174,9 @@ public class ContentAdminController {
     public ResponseEntity<?> updateHomeSection(@PathVariable("id") Long id,
             @Valid @RequestBody HomeSectionRequest request) {
         try {
-            return ResponseEntity.ok(homeSectionService.update(id, request));
+            HomeSectionAdminView updated = homeSectionService.update(id, request);
+            homeView.invalidate();
+            return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ContentController.message(e));
         }
@@ -179,6 +186,7 @@ public class ContentAdminController {
     public ResponseEntity<?> deleteHomeSection(@PathVariable("id") Long id) {
         try {
             homeSectionService.delete(id);
+            homeView.invalidate();
             return ResponseEntity.noContent().build();
         } catch (IllegalArgumentException e) {
             return notFound(e);

@@ -27,6 +27,8 @@
 #   ./ops/53-load-k6.sh replicas default [서비스…]   # 되돌린다(HPA 최소 · 최대는 k8s/70, HPA 없는 서비스는 demo 오버레이 값)
 #   ./ops/53-load-k6.sh replicas status        # 지금 레플리카 · HPA
 #
+#   ./ops/53-load-k6.sh logs                   # 게이트웨이 파드의 로그를 지금 남긴다(~/.ecommerce-msa/gateway-logs, 폴백 예외별 수) — limits · replicas 가 바꾸기 전에도
+#
 #   ./ops/53-load-k6.sh report                 # 결과 모아 보기: 모든 회차 한 줄씩 + 가장 최근 회차의 요약
 #   ./ops/53-load-k6.sh report <폴더|이름>...   # 그 회차들의 요약(엔드포인트별 응답 시간 · 실패율 · 조건)
 #   ./ops/53-load-k6.sh report all             # 모든 회차의 요약
@@ -69,11 +71,11 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|limits|pool|replicas|report) ;;
+    browse|order|spike|smoke|limits|pool|replicas|logs|report) ;;
     *) usage ;;
 esac
 
@@ -97,9 +99,53 @@ lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지>
     PUBLIC_URL="$url"
 }
 
+# ── 게이트웨이 로그 — 파드가 바뀌기 전에 ─────────────────────────────────
+#
+# 🐛 2026-10-18: 캐시 후 회차의 503 10,281건이 무엇인지(벌크헤드 · 회로 차단기 · 시간 초과) 폴백 로그로 세려 했는데 0 이었다 — 측정이 끝나고
+# 부른 `limits default` 의 롤링이 측정 때의 게이트웨이 파드를 지워 로그가 함께 사라졌다(지표로 벌크헤드임은 알았지만 예외 종류 · 메시지는 없었다).
+# 그래서 게이트웨이 파드를 바꾸는 명령(limits load · default, replicas 의 게이트웨이)은 바꾸기 **전에** 파드마다 로그 전체를 남긴다 — `logs` 로 언제든.
+# 폴백 로그(FallbackController: "Fallback triggered. Exception: <클래스>: …")를 예외별로 센 요약도 함께. 로그에는 토큰 · 이메일이 없지만(보안 경로 로그 규칙)
+# 운영자 기계의 0700 폴더에만 둔다.
+# [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
+GATEWAY_LOG_DIR="${GATEWAY_LOG_DIR:-$HOME/.ecommerce-msa/gateway-logs}"
+save_gateway_logs() {   # save_gateway_logs <이유>
+    local pods p dir f old
+    pods="$(kubectl -n "$APP_NS" get pods -l app=gateway-server -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+    if [ -z "$pods" ]; then
+        warn "게이트웨이 파드가 없다 — 로그를 남기지 않는다"
+        return 0
+    fi
+    dir="$GATEWAY_LOG_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$1"
+    old="$(umask)"; umask 077
+    mkdir -p "$dir"
+    for p in $pods; do
+        for f in "" previous; do   # 재시작한 컨테이너는 앞 로그도
+            kubectl -n "$APP_NS" logs "$p" ${f:+--previous} --tail=-1 --timestamps > "$dir/$p${f:+.$f}.log" 2>/dev/null || true
+            if [ -s "$dir/$p${f:+.$f}.log" ]; then gzip -f "$dir/$p${f:+.$f}.log"; else rm -f "$dir/$p${f:+.$f}.log"; fi
+        done
+    done
+    {
+        echo "reason=$1 saved_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) pods=$(echo $pods)"
+        for f in "$dir"/*.log.gz; do
+            [ -e "$f" ] || continue
+            echo "== $(basename "$f" .log.gz) 줄 $(gzip -dc "$f" | wc -l | tr -d ' ') · 폴백 $(gzip -dc "$f" | grep -c 'Fallback triggered' || true)"
+            gzip -dc "$f" | grep -o 'Fallback triggered\. Exception: [A-Za-z0-9_.$]*' | sed 's/.*Exception: //' | sort | uniq -c | sort -rn | sed 's/^/   /' || true
+        done
+        echo "== 모든 파드 — 폴백 예외별"
+        for f in "$dir"/*.log.gz; do [ -e "$f" ] && gzip -dc "$f"; done | grep -o 'Fallback triggered\. Exception: [A-Za-z0-9_.$]*' \
+            | sed 's/.*Exception: //' | sort | uniq -c | sort -rn | sed 's/^/   /' || true
+    } > "$dir/summary.txt"
+    umask "$old"
+    info "게이트웨이 로그를 남겼다($1, 파드 $(echo $pods | wc -w | tr -d ' ')개): $dir"
+    sed -n '/^== 모든 파드/,$p' "$dir/summary.txt"
+}
+
 cmd_limits() {
     lab_cluster_or_die "유입 제한"
     local url="$PUBLIC_URL"
+    case "${2:-status}" in
+        load|default) save_gateway_logs "limits-${2}" ;;
+    esac
     case "${2:-status}" in
         load)
             local r="${3:-2000}" b="${4:-}"
@@ -231,6 +277,10 @@ cmd_replicas() {
         [[ "$d" =~ ^[a-z]+(-[a-z]+)*$ ]] || die "서비스 이름이 이상하다: $d"
         kubectl -n "$APP_NS" get deploy "$d" >/dev/null 2>&1 || die "그런 Deployment 가 없다: $d"
     done
+    # 줄이면 파드가 지워진다(default 는 HPA 가 몇 분 뒤에) — 게이트웨이면 그 전에 로그를 남긴다
+    if [ "$action" != "status" ] && [[ " $svcs " == *" gateway-server "* ]]; then
+        save_gateway_logs "replicas-$action"
+    fi
     if [ "$action" = "status" ]; then
         for d in $svcs; do
             echo "$d 레플리카 $(kubectl -n "$APP_NS" get deploy "$d" -o jsonpath='{.spec.replicas}') · HPA(최소 최대) $(kubectl -n "$APP_NS" get hpa "$d" -o jsonpath='{.spec.minReplicas} {.spec.maxReplicas}' 2>/dev/null || echo 없음)"
@@ -308,6 +358,11 @@ sys.exit(0 if nodes and add_c <= free_c and add_m <= free_m else 3)
 }
 if [ "$SCENARIO" = "replicas" ]; then
     cmd_replicas "$@"
+    exit 0
+fi
+if [ "$SCENARIO" = "logs" ]; then
+    lab_cluster_or_die "게이트웨이 로그"
+    save_gateway_logs manual
     exit 0
 fi
 

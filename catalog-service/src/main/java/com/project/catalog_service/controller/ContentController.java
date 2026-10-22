@@ -22,7 +22,7 @@ import com.project.catalog_service.dto.ContentDtos.PagedNotices;
 import com.project.catalog_service.model.Event;
 import com.project.catalog_service.service.BannerService;
 import com.project.catalog_service.service.EventService;
-import com.project.catalog_service.service.HomeSectionService;
+import com.project.catalog_service.service.HomeViewCache;
 import com.project.catalog_service.service.NoticeService;
 import com.project.catalog_service.service.ProductService;
 
@@ -44,7 +44,8 @@ import lombok.RequiredArgsConstructor;
 public class ContentController {
 
     private final BannerService bannerService;
-    private final HomeSectionService homeSectionService;
+    /** 첫 화면 구성 — 파드 메모리에 잠깐(HomeViewCache). 재고는 아래에서 응답마다 반영한다. */
+    private final HomeViewCache homeView;
     private final NoticeService noticeService;
     private final EventService eventService;
     private final ProductService productService;
@@ -61,7 +62,7 @@ public class ContentController {
      */
     @GetMapping("/home")
     public HomeView home() {
-        HomeView home = homeSectionService.home();
+        HomeView home = homeView.get();
         if (home == null || home.sections() == null || home.sections().isEmpty()) {
             return home;
         }

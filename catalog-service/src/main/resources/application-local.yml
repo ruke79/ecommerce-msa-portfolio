@@ -178,6 +178,10 @@ spring:
 # 검색 색인에도 들어가지 않아, DB 스키마도 product 가 아니라 content 로 나눠 두었다
 # (V9__banner_notice.sql). 파드를 하나 더 늘리지 않으려고 여기에 얹었다.
 content:
+  home:
+    # 첫 화면 구성(섹션 · 섹션의 상품 목록)을 파드 메모리에 두는 시간(HomeViewCache). 재고 표시는 들지 않는다(응답마다 읽는다).
+    # 2026-10-18 측정: catalog 시간의 65% 가 홈이었다(요청당 27ms, 다른 경로의 9배 — docs/83 §5). 0 이면 끈다.
+    cache-ttl: ${CONTENT_HOME_CACHE_TTL:PT30S}
   banner:
     # 공개 목록이 한 번에 돌려주는 최대 건수. 배너가 실수로 100개 공개돼도 홈 화면이
     # 그걸 전부 받아 오지는 않게 한다.
