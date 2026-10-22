@@ -217,5 +217,6 @@ kubectl logs -n ecommerce -l job-name=backup-test-1 -f
 |---|---|
 | バックアップをクラスタの**外**へ (S3/GCS) | 🟡 ノードの外のコピーは別に置く — 別地域のコピーはまだない |
 | PVC サイズを実データ基準に | 🟠 50Gi はプレースホルダーだ。k3s の `local-path` はこのサイズを**強制せず、ノードのディスクをそのまま**使う — 保持日数 × バックアップサイズがノードの空きを超えると、ノードが DiskPressure で Pod を追い出す(2026-10-10 本番: ディスク空き 25G、DB 5.6G) |
+| クラスタ内 PostgreSQL の Pod 作り直し (2026-10-20) | 🔴 **本番未適用。** 以前のマニフェストは最初の Pod にしか証明書がない。実習クラスタで `rollout restart` の後、`could not load server certificate file` で起動できなかった。本番も同じマニフェスト(ops/13)なので、ノード再起動 · 退避 · `ACTION=setup ./ops/29`(PITR の再起動)のどれでも DB が止まる。直したマニフェスト(initContainer `copy-tls`、B-93)を先に適用する — 他のインフラを原本に戻さないよう postgres だけを: `kubectl -n postgres get secret pg-tls` を確認 → `kubectl diff -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres` → 同じ引数で `apply`。適用すると Pod が一度起動し直す(Recreate、1 分前後)— バックアップの時間帯(02 〜 06 UTC)を避け、直前に docs/72 §3 のバックアップ。すでに止まっていれば同じコマンドが復旧になる(データは PVC のまま)。 |
 | Alertmanager 高可用性 (クラスタモード) | 🟡 単一インスタンス |
 | アラート疲れの調整 | 🟡 実際の本番データを見ないと閾値を決められない |

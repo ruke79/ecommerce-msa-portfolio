@@ -79,23 +79,32 @@ metadata: { name: elasticsearch }
 ---
 # ── PostgreSQL ──────────────────────────────────────────────────────────────
 # 서비스 datasource 가 sslmode=require 이므로 SSL 을 켠다. 인증서는 ops/07 산출물.
-# init 스크립트가 ① 인증서를 postgres 소유 600 으로 복사(마운트 원본은 root 소유라 직접 못 읽음 —
-# ops/12 리허설에서 실측한 함정) ② postgresql.conf 에 ssl 설정 추가(명령행 -c 는 엔트리포인트의
-# **초기화용 임시 서버**에도 적용돼 인증서 복사 전에 죽는다 — 같은 리허설의 함정 ③)
-# ③ role 'product' + DB 8종 생성.
+# 인증서는 Deployment 의 initContainer(copy-tls)가 **파드가 뜰 때마다** postgres 소유 600 으로
+# /var/lib/postgresql/tls(emptyDir)에 복사한다 — 마운트 원본은 root 소유라 직접 못 읽는다(ops/12 리허설에서
+# 실측한 함정). init 스크립트는 ① postgresql.conf 에 ssl 설정 추가(명령행 -c 는 엔트리포인트의 **초기화용
+# 임시 서버**에도 적용돼 죽는다 — 같은 리허설의 함정 ③) ② role 'product' + DB 생성.
+#
+# 🐛 2026-10-20 실습 클러스터: 예전에는 이 init 스크립트가 인증서를 복사했다. init 스크립트는 **빈 PGDATA 에서
+#    한 번만** 돈다 — 그런데 복사본은 PVC 밖(컨테이너 파일 시스템)이고 postgresql.conf(PVC 안)는 그 경로를 계속
+#    가리킨다. 그래서 첫 파드만 떴고, 파드를 다시 만들면(rollout restart · 노드 재부팅 · 축출 · ops/29 setup)
+#    `FATAL: could not load server certificate file "/var/lib/postgresql/tls/tls.crt"` 로 CrashLoopBackOff 였다
+#    (ConfigurationGuardrailTest B-93).
+# [JA] 証明書は initContainer が起動のたびに emptyDir へ複製する。以前は初期化スクリプト(空の PGDATA で一度だけ)が
+#      PVC の外へ複製していたため、Pod を作り直すと証明書がなく起動できなかった。
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: pg-init
   namespace: postgres
+  # 운영에서 이 둘만 다시 적용할 때 쓴다(다른 인프라를 원본으로 되돌리지 않게 — docs/22 §4):
+  #   kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres
+  labels: { ecommerce.io/infra: postgres }
 data:
   00-init.sh: |
     #!/bin/bash
     set -e
-    mkdir -p /var/lib/postgresql/tls
-    cp /pg-tls/tls.crt /pg-tls/tls.key /var/lib/postgresql/tls/
-    chown postgres:postgres /var/lib/postgresql/tls/*
-    chmod 600 /var/lib/postgresql/tls/tls.key
+    # 인증서는 initContainer copy-tls 가 이미 놓았다(파드마다) — 여기서 복사하면 첫 파드에서만 있게 된다.
+    [ -r /var/lib/postgresql/tls/tls.key ] || { echo "인증서가 없다 — copy-tls initContainer 확인" >&2; exit 1; }
     cat >> "$PGDATA/postgresql.conf" <<'CONF'
     ssl = on
     ssl_cert_file = '/var/lib/postgresql/tls/tls.crt'
@@ -117,6 +126,7 @@ kind: Deployment
 metadata:
   name: postgres
   namespace: postgres
+  labels: { ecommerce.io/infra: postgres }
 spec:
   replicas: 1
   # ⚠️ Recreate 여야 한다. 기본값(RollingUpdate)은 새 파드를 먼저 띄우는데, 그러면 **두
@@ -128,6 +138,25 @@ spec:
   template:
     metadata: { labels: { app: postgres } }
     spec:
+      # postgresql.conf 의 ssl_cert_file · ssl_key_file 은 PGDATA 밖(/var/lib/postgresql/tls)이다 — 그 디렉터리를 파드가 뜰
+      # 때마다 채운다(위 pg-init 머리말의 🐛). 같은 이미지라 postgres 사용자(uid 70)가 있다.
+      # [JA] ssl の証明書パスは PGDATA の外 — Pod 起動のたびに initContainer が埋める。
+      initContainers:
+        - name: copy-tls
+          image: mirror.gcr.io/postgres:16-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              cp /pg-tls/tls.crt /pg-tls/tls.key /var/lib/postgresql/tls/
+              chown postgres:postgres /var/lib/postgresql/tls/tls.crt /var/lib/postgresql/tls/tls.key
+              chmod 600 /var/lib/postgresql/tls/tls.key
+          volumeMounts:
+            - { name: pg-tls, mountPath: /pg-tls, readOnly: true }
+            - { name: pg-tls-run, mountPath: /var/lib/postgresql/tls }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
       containers:
         - name: postgres
           image: mirror.gcr.io/postgres:16-alpine
@@ -139,7 +168,7 @@ spec:
           ports: [ { containerPort: 5432 } ]
           volumeMounts:
             - { name: data, mountPath: /var/lib/postgresql/data }
-            - { name: pg-tls, mountPath: /pg-tls, readOnly: true }
+            - { name: pg-tls-run, mountPath: /var/lib/postgresql/tls, readOnly: true }
             - { name: pg-init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
           readinessProbe:
             exec: { command: ["pg_isready", "-U", "postgres"] }
@@ -150,6 +179,7 @@ spec:
       volumes:
         - { name: data, persistentVolumeClaim: { claimName: pg-data } }
         - { name: pg-tls, secret: { secretName: pg-tls } }
+        - { name: pg-tls-run, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
         - { name: pg-init, configMap: { name: pg-init, defaultMode: 0755 } }
 ---
 apiVersion: v1

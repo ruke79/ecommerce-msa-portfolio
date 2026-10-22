@@ -1580,6 +1580,82 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-93: 클러스터 안 PostgreSQL 의 인증서 경로(postgresql.conf 의 {@code ssl_cert_file} · {@code ssl_key_file})는 파드가 뜰 때마다 채워진다.
+     *
+     * <p>pg-init 스크립트는 <b>빈 PGDATA 에서 한 번만</b> 돈다. 그 스크립트가 인증서를 PVC 밖(컨테이너 파일 시스템)으로 복사하고
+     * postgresql.conf(PVC 안)에 그 경로를 적었기 때문에, 첫 파드만 뜨고 파드를 다시 만들면 {@code FATAL: could not load server certificate
+     * file} 로 CrashLoopBackOff 였다(2026-10-20 실습 클러스터 rollout restart — 노드 재부팅 · 축출 · ops/29 setup 도 같다). 경로의 디렉터리는
+     * PGDATA 볼륨 안이거나, initContainer 가 같은 볼륨에 쓰는 마운트여야 한다.
+     *
+     * <p>[JA] 証明書パスは Pod 起動のたびに埋まること。初期化スクリプトは空の PGDATA で一度だけ動くので、PVC の外へ複製すると
+     * Pod の作り直しで起動できない。
+     */
+    @Test
+    @DisplayName("B-93: 클러스터 안 PostgreSQL 의 ssl 인증서 경로는 PGDATA 안이거나 initContainer 가 파드마다 채우는 볼륨")
+    @SuppressWarnings("unchecked")
+    void inClusterPostgresCertificatesSurvivePodRecreation() throws IOException {
+        Path infra = repoRoot().resolve("k8s/90-dev-infra.yaml");
+        if (!Files.exists(infra)) {
+            return;
+        }
+        String initScript = null;
+        Map<String, Object> podSpec = null;
+        for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(infra, StandardCharsets.UTF_8))) {
+            if (!(doc instanceof Map<?, ?> m)) {
+                continue;
+            }
+            Map<String, Object> meta = (Map<String, Object>) m.get("metadata");
+            String name = meta == null ? null : String.valueOf(meta.get("name"));
+            if ("ConfigMap".equals(m.get("kind")) && "pg-init".equals(name)) {
+                initScript = String.valueOf(((Map<String, Object>) m.get("data")).get("00-init.sh"));
+            }
+            if ("Deployment".equals(m.get("kind")) && "postgres".equals(name)) {
+                podSpec = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) m.get("spec"))
+                        .get("template")).get("spec");
+            }
+        }
+        assertThat(initScript).as("pg-init 00-init.sh").isNotNull();
+        assertThat(podSpec).as("postgres Deployment").isNotNull();
+
+        Matcher file = Pattern.compile("ssl_(?:cert|key)_file\\s*=\\s*'([^']+)'").matcher(initScript);
+        List<String> paths = new ArrayList<>();
+        while (file.find()) {
+            paths.add(file.group(1));
+        }
+        assertThat(paths).as("pg-init 이 적는 ssl 인증서 경로").hasSize(2);
+
+        List<Map<String, Object>> containers = (List<Map<String, Object>>) podSpec.get("containers");
+        Map<String, Object> postgres = containers.stream().filter(c -> "postgres".equals(c.get("name"))).findFirst().orElseThrow();
+        Map<String, String> mainMounts = new TreeMap<>();   // mountPath → volume
+        for (Map<String, Object> vm : (List<Map<String, Object>>) postgres.get("volumeMounts")) {
+            mainMounts.put(String.valueOf(vm.get("mountPath")), String.valueOf(vm.get("name")));
+        }
+        Set<String> initWritten = new HashSet<>();
+        for (Map<String, Object> ic : (List<Map<String, Object>>) podSpec.getOrDefault("initContainers", List.of())) {
+            for (Map<String, Object> vm : (List<Map<String, Object>>) ic.getOrDefault("volumeMounts", List.of())) {
+                if (!Boolean.TRUE.equals(vm.get("readOnly"))) {
+                    initWritten.add(String.valueOf(vm.get("name")));
+                }
+            }
+        }
+
+        List<String> lost = new ArrayList<>();
+        for (String path : paths) {
+            String dir = path.substring(0, path.lastIndexOf('/'));
+            String pgdata = "/var/lib/postgresql/data";
+            boolean inData = (dir + "/").startsWith(pgdata + "/") && "data".equals(mainMounts.get(pgdata));
+            String volume = mainMounts.get(dir);
+            boolean refilled = volume != null && initWritten.contains(volume);
+            if (!inData && !refilled) {
+                lost.add(path + " (디렉터리 " + dir + " 의 마운트: " + volume + ", initContainer 가 쓰는 볼륨: " + initWritten + ")");
+            }
+        }
+        assertThat(lost)
+                .as("파드를 다시 만들면 이 인증서가 없어 PostgreSQL 이 뜨지 못한다 — init 스크립트는 빈 PGDATA 에서 한 번만 돈다(B-93)")
+                .isEmpty();
+    }
+
+    /**
      * B-92: 컨슈머 그룹 id 를 두 모듈이 함께 쓰지 않는다 — {@code GROUP_ID_CONFIG} · {@code groupId} · 리스너 {@code id}(그룹이 된다).
      *
      * <p>같은 토픽을 같은 그룹으로 읽으면 두 서비스가 파티션을 나눠 가져 <b>서로의 메시지를 조용히 잃는다</b>. 토픽이 달라도 한쪽 배포가

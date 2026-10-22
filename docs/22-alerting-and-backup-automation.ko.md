@@ -217,5 +217,6 @@ kubectl logs -n ecommerce -l job-name=backup-test-1 -f
 |---|---|
 | 백업을 클러스터 **밖**으로 (S3/GCS) | 🟡 노드 밖 사본은 따로 둔다 — 다른 지역 사본은 아직 없다 |
 | PVC 크기를 실제 데이터 기준으로 | 🟠 50Gi 는 자리표시자다. k3s 의 `local-path` 는 이 크기를 **강제하지 않고 노드 디스크를 그대로** 쓴다 — 보관 일수 × 백업 크기가 노드의 여유를 넘으면 노드가 DiskPressure 로 파드를 내쫓는다(2026-10-10 운영: 디스크 여유 25G, DB 5.6G) |
+| 클러스터 안 PostgreSQL 파드 재생성 (2026-10-20) | 🔴 **운영 미적용.** 예전 매니페스트는 첫 파드에서만 인증서가 있다. 실습 클러스터에서 `rollout restart` 뒤 `could not load server certificate file` 로 뜨지 못했다. 운영도 같은 매니페스트(ops/13)이므로 노드 재부팅 · 축출 · `ACTION=setup ./ops/29`(PITR 재기동) 어느 것이든 DB 가 멈춘다. 고친 매니페스트(initContainer `copy-tls`, B-93)를 먼저 적용한다 — postgres 만, 다른 인프라를 원본으로 되돌리지 않게: `kubectl -n postgres get secret pg-tls` 확인 → `kubectl diff -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres` → 같은 인자로 `apply`. 적용하면 파드가 한 번 다시 뜬다(Recreate, 1분 안팎) — 백업 시간대(02 ~ 06 UTC)를 피하고, 직전에 docs/72 §3 백업. 이미 멈췄다면 같은 명령이 복구다(데이터는 PVC 그대로). |
 | Alertmanager 고가용성 (클러스터 모드) | 🟡 단일 인스턴스 |
 | 경보 피로도 조정 | 🟡 실제 운영 데이터를 봐야 임계값을 정할 수 있다 |
