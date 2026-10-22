@@ -90,7 +90,7 @@ USERS=500000 ./ops/48-bulk-users.sh load   # 人数を変える(status・purge �
 | 多重ログインの検知 | 同じユーザーで二つ目のセッションを開くと、一つ目が SSE で追い出される | 仮想ユーザー一人にデモユーザー一人 |
 | `LoginRiskGuard` | **失敗した**ログインを数える。一つの IP から 10 アカウントの失敗が続くと、未知の機器はメールのコードを求められる | 正しいパスワードだけを使う(`login-check` は 401 なら止まる) |
 | BCrypt の照合 | ログインごとに強度 10 の照合が一回(数十 ms の CPU) | ログイン数は CPU 予算として見る。同時接続数そのものとは別の指標 |
-| 新しい機器の通知 | 最初の機器では通知しない。二つ目の機器からは SECURITY_ALERT メール | 宛先は `.invalid` で、ラボは `MAIL_PROVIDER=logging`(docs/71 §7) |
+| 新しい機器の通知 | 最初の機器では通知しない。二つ目の機器からは SECURITY_ALERT メール | 宛先は `.invalid` で、ラボは `MAIL_PROVIDER=logging` |
 
 > ラボ(Cloudflare なし)ではゲートウェイが `CF-Connecting-IP` ヘッダーをそのまま信じるので、偽装して制限を避けられてしまう。負荷のためにそれを使わない。運用はトンネルの外から届かないことが前提だ(`CustomUserKeyResolver`)。
 

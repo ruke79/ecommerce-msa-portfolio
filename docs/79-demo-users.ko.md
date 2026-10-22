@@ -90,7 +90,7 @@ USERS=500000 ./ops/48-bulk-users.sh load   # 인원 바꾸기(status · purge �
 | 다중 로그인 감지 | 같은 사용자로 두 번째 세션을 열면 첫 세션이 SSE 로 쫓겨난다 | 가상 사용자 하나에 데모 사용자 하나 |
 | `LoginRiskGuard` | **실패한** 로그인을 센다. IP 하나에서 계정 10개가 실패하면 모르는 기기는 메일 코드를 요구받는다 | 맞는 비밀번호만 쓴다(`login-check` 는 401 이면 멈춘다) |
 | BCrypt 비교 | 로그인마다 강도 10 비교가 한 번(수십 ms CPU) | 로그인 수는 CPU 예산으로 본다. 동시 접속 수와는 다른 지표 |
-| 새 기기 알림 | 첫 기기는 알리지 않는다. 두 번째 기기부터 SECURITY_ALERT 메일 | 수신처가 `.invalid` 이고, 실습 환경은 `MAIL_PROVIDER=logging`(docs/71 §7) |
+| 새 기기 알림 | 첫 기기는 알리지 않는다. 두 번째 기기부터 SECURITY_ALERT 메일 | 수신처가 `.invalid` 이고, 실습 환경은 `MAIL_PROVIDER=logging` |
 
 > 실습 환경(Cloudflare 없음)에서는 게이트웨이가 `CF-Connecting-IP` 헤더를 그대로 믿으므로, 위조하면 제한을 피할 수 있다. 부하를 위해 그것을 쓰지 않는다. 운영은 터널 밖에서 닿지 않는 것이 전제다(`CustomUserKeyResolver`).
 
