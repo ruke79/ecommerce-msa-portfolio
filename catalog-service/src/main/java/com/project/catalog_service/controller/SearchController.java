@@ -96,7 +96,12 @@ public class SearchController {
         if (!isQueryTimeout(e)) {
             throw e;
         }
-        log.warn("검색 질의 시간 초과 — 503 ({})", e.getClass().getSimpleName());
+        if (hasCause(e, java.net.SocketTimeoutException.class)) {
+            // 질의 상한의 취소에도 답이 오지 않았다 — 연결의 상대가 사라졌다(PgJDBC 가 연결을 버리고 Hikari 가 풀에서 뺀다, SearchBulkhead)
+            log.warn("검색 연결 소켓 읽기 시간 초과 — 연결을 버리고 503 ({})", e.getClass().getSimpleName());
+        } else {
+            log.warn("검색 질의 시간 초과 — 503 ({})", e.getClass().getSimpleName());
+        }
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("검색이 오래 걸려 중단했습니다. 잠시 뒤 다시 시도해 주세요.");
     }
 
@@ -112,14 +117,29 @@ public class SearchController {
                 .body("검색 요청이 몰려 잠시 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
     }
 
-    /** 시간 상한으로 끝난 질의인가 — 번역 계층마다 예외 종류가 달라 원인 사슬을 본다(PostgreSQL 은 SQLSTATE 57014). */
+    /**
+     * 시간 상한으로 끝난 질의인가 — 번역 계층마다 예외 종류가 달라 원인 사슬을 본다(PostgreSQL 은 SQLSTATE 57014). 소켓 읽기 상한
+     * ({@link java.net.SocketTimeoutException} — 취소의 답도 오지 않은 죽은 연결)도 같다.
+     */
     public static boolean isQueryTimeout(Throwable e) {
+        if (hasCause(e, java.net.SocketTimeoutException.class)) {
+            return true;
+        }
         for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
             if (t instanceof org.springframework.dao.QueryTimeoutException
                     || t instanceof jakarta.persistence.QueryTimeoutException
                     || t instanceof org.hibernate.QueryTimeoutException
                     || t instanceof org.springframework.transaction.TransactionTimedOutException
                     || (t instanceof java.sql.SQLException sql && "57014".equals(sql.getSQLState()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasCause(Throwable e, Class<? extends Throwable> type) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (type.isInstance(t)) {
                 return true;
             }
         }

@@ -64,6 +64,22 @@ class CatalogDataSourcePoolsTest {
     }
 
     @Test
+    @DisplayName("🔴 두 풀 모두 소켓 읽기 상한(마지막 안전망) 900초 — 가장 긴 정상 질의(필터 메뉴 600초)보다 길다, DB_SOCKET_TIMEOUT_SECONDS")
+    void socketReadsAreBounded() {
+        // 🐛 2026-10-21 실습 8시간(docs/83 §2.8): 상대가 사라진 연결의 읽기가 끝나지 않아 검색 스레드 셋이 커넥션과 함께 몇 시간 묶였다
+        runner().run(ctx -> {
+            for (String name : new String[] { "dataDataSource", "metaDataSource" }) {
+                HikariDataSource ds = ctx.getBean(name, HikariDataSource.class);
+                assertThat(ds.getDataSourceProperties().getProperty("socketTimeout")).as(name).isEqualTo("900");
+                assertThat(Integer.parseInt(ds.getDataSourceProperties().getProperty("socketTimeout")))
+                        .as(name + " — FacetQueries 의 시간 상한 기본값보다 길게").isGreaterThan(600);
+            }
+        });
+        runner().withPropertyValues("DB_SOCKET_TIMEOUT_SECONDS=1200").run(ctx -> assertThat(
+                ctx.getBean("dataDataSource", HikariDataSource.class).getDataSourceProperties().getProperty("socketTimeout")).isEqualTo("1200"));
+    }
+
+    @Test
     @DisplayName("🔴 DB_POOL_SIZE 가 두 풀에 먹힌다 — ops/53 pool load 가 실제로 풀을 바꾼다")
     void poolSizeVariableApplies() {
         runner().withPropertyValues("DB_POOL_SIZE=8").run(ctx -> {

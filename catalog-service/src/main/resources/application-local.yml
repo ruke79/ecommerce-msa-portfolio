@@ -84,6 +84,12 @@ spring:
       # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
       leak-detection-threshold: 20000
       max-lifetime: 1200000
+      # 소켓 읽기의 마지막 안전망(초) — 🐛 2026-10-21 실습: 상대가 사라진 연결(RST 가 오지 않는다)의 읽기는 끝나지 않아, 검색 스레드 셋이
+      # 커넥션과 함께 몇 시간 묶였다(docs/83 §2.8). 질의 시간 상한의 취소는 새 연결로 가므로 이 경우를 풀지 못한다. 가장 긴 정상 질의
+      # (필터 메뉴 계산 catalog.facets.query-timeout-seconds 600초)보다 길게. 검색은 이보다 훨씬 짧게 따로 건다(SearchBulkhead).
+      # [JA] ソケット読み取りの最後の安全網(秒)。相手が消えた接続の読み取りは終わらない — 最長の正常な照会(600 秒)より長く。
+      data-source-properties:
+        socketTimeout: ${DB_SOCKET_TIMEOUT_SECONDS:900}
     url: jdbc:postgresql://localhost:5435/productdb?sslmode=require
     username: product
     password: ${LOCAL_DB_PASSWORD}
@@ -115,6 +121,9 @@ spring:
       # 커넥션 누수 감지 — 반납되지 않은 커넥션을 로그로 알린다.
       leak-detection-threshold: 20000
       max-lifetime: 1200000
+      # 소켓 읽기의 마지막 안전망(초) — datasource-data 의 주석
+      data-source-properties:
+        socketTimeout: ${DB_SOCKET_TIMEOUT_SECONDS:900}
     url: jdbc:postgresql://localhost:5435/metadb?sslmode=require
     username: product
     password: ${LOCAL_DB_PASSWORD}
