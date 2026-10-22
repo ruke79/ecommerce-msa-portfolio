@@ -25,6 +25,7 @@
 | `spike` | `browse` と同じ | 平常(最大の 10%)2 分 → 20 秒で最大(`RATE=200`)→ 3 分維持 → 引く → 3 分 | 失敗 < 2%、詳細 p99 3s |
 | `smoke` | 閲覧一回・注文一回(アカウント一つ) | — | チェック 100%・429 なし |
 | `mixed` | `browse` そのまま + ログインしたデモユーザーが毎秒 `REVIEW_RATE`(既定 1)回レビューを書く(画面と同じ multipart、`review_add`) | `browse` と同じ階段 · レビューはその間ずっと一定 | `browse` のもの + レビュー p95 3s |
+| `contention` | ログインしたデモユーザー: カート追加 → チェックアウト(回の前)→ **同じ瞬間に**注文 → 振込案内 → 一緒に取消 | `USERS`(50)人が在庫 `STOCK` 個の一つの SKU に `ROUNDS`(3)回集中する | 受け付けた注文 ≤ 在庫(回ごと)· その他の拒否 · エラー 0 · 失敗 < 1%(在庫不足の 400 を除く) |
 
 - **到着率(arrival-rate)で決める** — VU 数ではなくお客さまが来る速さ。VU 固定(閉じたモデル)は、サーバーが遅くなると負荷も一緒に減ってボトルネックを隠す。
 - **応答が JSON かを常に見る**(`not_json`)。デモのイングレスが API をフロントへ送っていたころ(2026-10-17 以前)は、すべての API が
@@ -114,6 +115,119 @@ user-service がその商品の平均評価を catalog に送り(`ReviewService.
 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse                # 基準 — 書き込みなし(flush-cache の後)
 PRODUCTS=1000000 RATE=50 REVIEW_RATE=1 ./ops/53-load-k6.sh mixed   # 同じ条件 + レビュー毎秒 1
 ./ops/53-load-k6.sh reviews default                                # 必ず戻す
+```
+
+### 2.3 在庫競合 — `contention`
+
+browse は読むだけ、order は客ごとにホームの複数商品から一つを買い、**同じ SKU に注文が集中したことがない**。ショッピングモールで最も危険な
+正確性の問題は売り越しだ — 在庫 20 個に注文 23 件が受け付けられると、三人の客からお金を受け取って物がない。
+
+- **何を見るか**: 在庫の仮押さえ(docs/59)は SKU 行をロックし「実在庫 − 生きている仮押さえ」を数える。同じ SKU に集中するとロック待ちが長くなり、
+  gRPC の期限(3 秒、`stock.grpc.deadline-ms`)を超えると order は**仮押さえなしで進める**(fail-open — `OrderStockHold.UNAVAILABLE`、
+  `order_stock_hold_total{result="unavailable"}`)。その道が負荷の下で開くか — 受け付けた注文(振込案内まで進んだもの)が回ごとに在庫以下かを
+  閾値にする。在庫不足の拒否(400「재고가 부족해 …」)は期待した結果なので失敗に数えない。
+- **一回**(`ROUNDS`、既定 3): 準備(カート情報 → カート追加 → チェックアウト)は回の前に、開始時刻に全 VU が一緒に注文 → 注文詳細 →
+  銀行振込案内、`HOLD_SECONDS`(20)後に一緒に振込取消 · 行の削除、`ROUND_GAP_SECONDS`(10)後に次の回。解放時刻の後に受け付けたものは
+  「遅れ」— 前の客が戻した在庫なので売り越しではない。
+- **在庫はホストで合わせる**: `./ops/53-load-k6.sh stock set <数> [商品 id]` — SKU が一つの商品(なければ選ぶ)の全サイズの数量を `<数>` に、
+  元の値は `~/.ecommerce-msa/stock/<id>.saved`(0700)に、キャッシュを消して実行行を教える。実習クラスタのみ。途中で切れた回の振込待ちが
+  残っていれば残数がその分少ない — `RELEASE_HELD=1` でその商品の生きている仮押さえを解放する。
+- **読み方**: report が回ごとに「받아짐 N = 재고 · ← 초과 판매 k · (덜 팔림 k)」と書く。売り越しや売れ残りがあれば、その時の
+  `order_stock_hold_total{result="unavailable"}` の増加 · catalog のロック待ち(「재고 예약 거절」· 期限切れのログ)を見る。
+- 偽サーバー(在庫をロックせずに数えるもの)で試した: ロックするサーバーは受け付け 19 · 20(在庫 20、解放後の 4 件は遅れ)、ロックしないサーバーは
+  22 · 21 → 閾値を超えた(exit 99)。
+
+```bash
+./ops/53-load-k6.sh stock set 20                                    # ホストで — 実行行を教える
+CONTENTION_PRODUCT=<id> STOCK=20 USERS=50 ./ops/53-load-k6.sh contention   # 負荷 VM で
+./ops/53-load-k6.sh stock restore <id>                              # 必ず戻す
+```
+
+### 2.4 注文履歴が大きい状態 — `ops/54-bulk-orders.sh`
+
+order · contention は注文表がほぼ空のまま計測した。デモユーザー(ops/48)ごとに**終わった注文**を積み、注文 · 明細 · 配送先が数百万行の
+状態を作る(`ops/tools/generate-demo-orders.py` — psql スクリプトを出し、ops/54 が PostgreSQL Pod に流し込む)。
+
+- 作るもの: 注文(購入確定 62% · 配達完了 12% · 取消 12% · 返金 6% · 決済完了 · 処理中 · 発送)、配送先のコピー(V25 — 注文が指す)、
+  明細 1 〜 3 行(商品 id は ops/44 の生成範囲 — `PRODUCTS` · `PRODUCT_ID_OFFSET`)。振込待ち · 決済前は作らない(振込待ちの上限
+  3 件 · 在庫の仮押さえに掛かる)。決済 · 配送 · クーポン · 在庫 · 読みモデル(saga-projection)· アウトボックスには何も書かない。
+- id は予約範囲(注文 · 配送先 8,000,000,000 〜、明細はその × 4 〜)、`tracking_id` は `demo-<注文 id>` — purge は範囲**かつ**その接頭辞だけを消す。
+  客ごとに注文 id の順 = 時間の順(自分の注文一覧は注文 id の降順)。再実行しても同じ(束ごとにシード固定 · ON CONFLICT)。
+- **実習クラスタでのみ** — 偽の注文が本番の売上 · 注文の集計を汚す(ops/48 は本番デモにも使うが、これは拒否する)。
+- 実測(ローカル PG16 コンテナ): 注文 20 万 · 明細 40 万で 46 秒、209MB(注文あたり約 1,100B)。既定(客 10 万 × 20 = 注文 200 万)なら約 2.2GB。
+- 🐛 この生成器で初めて見えたもの: **注文明細の `order_id` にインデックスがなかった** — 注文詳細の明細の読み取りが Parallel Seq Scan 27ms(明細 40 万、
+  明細数に比例)、注文 2 万件の purge が 9 分 20 秒(消した注文ごとに外部キーの検査が明細表全体を走査した — catalog V22 と同じ欠陥)。
+  order V28 がインデックスを足し、`ForeignKeyIndexMigrationTest`(order)がインデックスのない外部キーを防ぐ。
+
+```bash
+USERS=100000 ./ops/48-bulk-users.sh load                               # デモユーザー(なければ)
+USERS=100000 ORDERS_PER_USER=20 PRODUCTS=10000000 ./ops/54-bulk-orders.sh load   # 注文 200 万
+./ops/53-load-k6.sh order                                              # 負荷 VM で — 同じ条件で前後
+USERS=100000 ORDERS_PER_USER=20 ./ops/54-bulk-orders.sh purge          # 終わったら
+```
+
+### 2.5 データの形 — 偏り · 長い名前(`SKEW` · `LONG_NAMES`)
+
+生成器の既定の分布は最大の大分類が約 13%(1,000 万なら ~130 万)、名前は 40 字前後だ。実際の店は一つのカテゴリに集中したり名前が長かったり
+する — そのとき先に折れる所(そのカテゴリの件数 · フィルターメニュー · 深いページ、トライグラム GIN · 一覧応答の大きさ)を見るために形を変える。
+
+- `SKEW=0.5` — 商品の半分を一つの大分類に(既定は重みが最大のもの = books、`SKEW_CATEGORY=fashion` のように選ぶ)。0.5 ならそのカテゴリが
+  約 56%(残り半分の分け前まで)。
+- `LONG_NAMES=1` — 名前に修飾語 8 〜 12 個を足して 100 〜 180 字(name · slug 255 以内)。前の部分(ブランド · 形容詞 · 名詞 · モデル)はそのままで、
+  browse の名前検索語が引き続き合う。
+- **既定は以前と同じ商品だ** — 続きの投入(`--resume`)は束ごとに同じシードで作る。オプションを渡さなければ乱数を余分に使わない
+  (`CatalogGeneratorShapeTest` が既定 3,000 件の名前 · カテゴリの指紋を固定する)。続けるときは同じ値を渡す — 違えば前後の束の形が変わる。
+- 同じ商品数の既定の形の回と比べる(偏りは別のデータなので既存の 1,000 万に続けず、purge の後に新しく)。
+
+```bash
+PRODUCTS=10000000 ./ops/44-bulk-catalog.sh purge
+PRODUCTS=10000000 SKEW=0.5 ./ops/44-bulk-catalog.sh load            # 一つのカテゴリに ~560 万
+PRODUCTS=10000000 RATE=50 ./ops/53-load-k6.sh browse                 # 負荷 VM で — 既定の形の回と同じ条件
+```
+
+### 2.6 客の IP 複数 · 負荷 VM 複数 — `CLIENT_IPS` · `SPLIT`
+
+ゲートウェイの流入制限のキーはログインユーザー → `CF-Connecting-IP` → ソケットのアドレスだ(`CustomUserKeyResolver`)。本番は Cloudflare のエッジが
+`CF-Connecting-IP` を実際の客の IP で上書きするが、実習クラスタにはエッジがなく**すべての要求が Traefik Pod の IP 一つに見える** — 負荷 VM を
+増やしてもゲートウェイにとっては客一人だ(だからこれまで `limits load` で制限を上げる必要があった)。
+
+- `CLIENT_IPS=N` — VU ごとにテスト用の帯域(198.18.0.0/15、RFC 2544)のアドレスを `CF-Connecting-IP` に載せる。実習で本番と同じく客ごとにバケットが
+  できるので、**制限を上げずに**既定の制限(IP あたり毎秒 20 · バースト 40)が客の分布でどう働くかを測る。このとき開始前の制限の確認
+  (`limitsRaisedOrFail`)は飛ばす — 既定の制限そのままが目的だ。本番ではエッジが上書きして何も起きない(ops/53 は本番アドレスを拒否する)。
+- `SPLIT=i/n` — 負荷 VM 一台の CPU が足りないとき。全体の `RATE` を n で割り VM ごとに `RATE/n`、デモアカウント(`ID_OFFSET + (i−1) × USERS`)·
+  客の IP(`(i−1) × CLIENT_IPS` から)を重ねず、`START_AT=<UTC 時刻>` に一緒に始める。`STAGES` とは一緒に使わない。
+- 合わせる: 他の VM の結果フォルダをこの機械の `OUT` の下にコピーして `./ops/53-load-k6.sh report merge <フォルダ> <フォルダ>` — 要求 · エラーの数は足し、
+  失敗率は要求数で重み付け、**百分位は要約から合わせられない**ので VM のうち最も悪い値を書く(正確な合わせた百分位は `PROM_RW` で Prometheus から)。
+
+```bash
+CLIENT_IPS=500 RATE=50 PRODUCTS=10000000 ./ops/53-load-k6.sh browse        # 制限は既定のまま(limits default)
+# 負荷 VM 二台 — 同じ時刻に
+SPLIT=1/2 RATE=200 START_AT=2026-10-21T01:00:00Z CLIENT_IPS=500 ./ops/53-load-k6.sh browse   # VM 1
+SPLIT=2/2 RATE=200 START_AT=2026-10-21T01:00:00Z CLIENT_IPS=500 ./ops/53-load-k6.sh browse   # VM 2
+./ops/53-load-k6.sh report merge browse-…(VM 1) browse-…(VM 2)
+```
+
+### 2.7 Elasticsearch 検索 — `search es`
+
+これまで一覧 · 検索はすべて PostgreSQL だった(`SEARCH_ENGINE=postgres`)。ES はデモのインフラにあるが(k8s/90 · デモのインフラの ES 上書き、
+ヒープ 3g)エンジンは二つで決まる — `search.engine=es`(ES がこのデプロイにあるか、ConfigMap)とフラグ `catalog.search-engine`(検索語ごとに ES へ送る比率、
+k8s/15 は 0%、docs/74)。
+
+- `./ops/53-load-k6.sh search es` — 実習クラスタのみ。ES が起きているかを見て catalog に `SEARCH_ENGINE=es` を渡し、フラグファイルを切る
+  (`FEATURE_FLAGS_FILE` が空ならコードの既定 = ES があれば ES = 100%)。ConfigMap は触らない。ES Pod の中で索引(`product-alias`)の
+  文書数を数え、空なら再索引を案内する — 管理者アカウントで `POST /catalog-service/api/products/sync`(docs/13 §3、`ops/03` の 1 〜 4 段階 —
+  そのスクリプトの `RUN_K8S_PATCH` は `kubectl patch configmap` なので使わない)。
+- `search default` — 戻す。`SEARCH_ENGINE` は消して ConfigMap の値に、`FEATURE_FLAGS_FILE` は**消さずに**マニフェストの値で書き直す
+  (マニフェストに直接書かれた値なので、消すとフラグが永久に切れる — `LoadK6ScriptTest` が k8s/41 の値と比べる)。
+- ES は**検索語のある検索にだけ**使われる(`SearchEngineSelector` — 検索語がなければ PostgreSQL)。browse では `name_search` だけが変わるので
+  `NAME_SEARCH` を上げる。負荷 VM には kubectl がないので `ENGINE=es` で回の記録にエンジンを書く。
+- 1,000 万商品の索引は重い(nested を含む文書が数千万 — docs/19 §5.1)。まず 100 万で PostgreSQL の回と比べる。
+
+```bash
+./ops/53-load-k6.sh search es                                              # ホストで
+ENGINE=es NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse   # 負荷 VM で
+ENGINE=postgres NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse   # 同じ条件(search default の後)
+./ops/53-load-k6.sh search default                                         # 必ず戻す
 ```
 
 ## 3. 手順
@@ -263,7 +377,10 @@ loadgen のように kubectl のない機械の回は流入制限が「記録な
 | 2026-10-19 | `94fb8595`(評価修正前のイメージ) | mixed の基準をもう一度 — `PRODUCTS=1000000 RATE=50` · catalog · ゲートウェイ **3 固定**(`replicas load 3`) | 100 万 | 失敗 **0.00%**(5xx 0) — 閾値を通過 | 全体 27 / 33ms · p50 9 · home 14 / 20 · search 12 / 18 · search_deep 13 / 60 · name_search 16 / 22 · product_cold 31 / 38 | キャッシュが埋まった普段の形 — catalog サーバー p95 search 7ms · 詳細 27ms · コネクション待ち 0 · 保持 5 〜 6ms · CPU 10 〜 28%。前の基準(`135834Z`)の 5xx 196 は計測中に 2 → 3 で起きた Pod の分だった — 固定すれば 0 | — | (mixed の基準) |
 | 2026-10-19 | `94fb8595`(評価修正前のイメージ) | mixed をもう一度 — `REVIEW_RATE=1`、前の行と同じ条件(3 固定) | 100 万 | 失敗 **78.91%**(5xx 62,800 — 経路ごとに均等) — 崩れた | 全体 p95 **3,340** · p99 5,225ms · review_add p50 **2,216** · p95 4,157 | Pod を 3 つにしても同じ(2 つで 79.90%)— コネクション 15(5 × 3)がすべて埋まり、待ち 51 〜 71 · 取得まで 1.6 〜 2.7 秒 · 保持 400 〜 600ms(2 つのとき 300 〜 450 — DB を分け合う側が増えた) · CPU 6 〜 12%。Pod 数ではなくレビューごとにキャッシュを丸ごと消すことが原因だと確認 — 修正(`19803606`)はこのイメージにない | — | → 下の二行(修正のイメージ) |
 | 2026-10-19 | 評価修正のイメージ(`19803606` — 負荷マシンのコミット列は `94fb8595`) | mixed の基準 — デプロイ後 `PRODUCTS=1000000 RATE=50` · 3 固定 | 100 万 | 失敗 **0.00%**(5xx 0) — 閾値を通過 | 全体 27 / 32ms · p50 9 · home 13 / 21 · search 12 / 18 · search_deep 12 / 19 · name_search 15 / 20 · product_cold 31 / 39 | 修正前のイメージの基準(`145058Z`、27 / 33ms)と同じ — 書き込みがなければこの修正は何も変えない。catalog サーバー p95 search 7ms · 詳細 27ms · コネクション待ち 0 · CPU 9 〜 30%。その前の `153133Z`(exit=107) · mixed `155154Z`(exit=141)は最後まで行かなかった試みなので除く | — | (mixed の基準) |
-| 2026-10-19 | 評価修正のイメージ(`19803606`) | **mixed** — `REVIEW_RATE=1`、前の行と同じ条件(3 固定 · flush-cache の後) | 100 万 | 失敗 **0.02%**(5xx 13 — home 5 · product_cold 3 · banners 2 · search · search_deep · name_search 1 ずつ) · 送れなかった反復 34 · 最大 VU 89 — **閾値を通過** | 全体 28 / 60ms · p50 9 · search 13 / 37 · search_deep 12 / 48 · home 14 / 37 · product_cold 32 / 75 · **review_add 52(p50) / 66 / 551** · max 7.4 秒 | レビュー毎秒 1 件がもう catalog を止めない — 修正前の同じ条件 78.91%(p95 3,340 · コネクション待ち 51 〜 71)から、コネクション待ち 0 〜 2 · 保持 5 〜 6ms · 経路別サーバー p95 7 〜 28ms と基準の回と同じ形。レビューの書き込みは 52ms(catalog の呼び出しが商品一つのキャッシュだけを直す)。**残ったもの:20 秒の一回** — 01:15:14 〜 01:15:34 KST(16:15 UTC)Tomcat の忙しいスレッド 4 → 39 · コネクション使用中 14 · 待ち **22** · 取得まで 12 → 95ms · 保持 6 → 46ms · サーバー p95 home 1.0 · search 1.5 秒、その後すぐ元どおり。5xx 13 · max 7.4 秒 · 送れなかった反復 34 はこの区間の分と見る。レビューとは関係なく見える(レビューは最初から毎秒 1)。時刻が基準の回の開始(15:55:12 UTC)のちょうど 20 分後なのでコネクション寿命(`max-lifetime` 20 分)の一斉引退を疑ったが**違った** — `hikaricp_connections_creation_seconds_count`(30 秒の増加、16:13 〜 16:18)は 0 〜 4 でずっと均等で、16:15 に集まらない。postgres の定時チェックポイント(デモ `checkpoint_timeout=15min` — 16:00:24 · **16:15:24** · 16:30:24、この回の中ではこれ一つ)が同じ時に始まったが殺到が先だ — 16:15:14 の標本にすでに忙しいスレッド 39 · 待ち 22、チェックポイントは 10 秒後に始まり 252 秒かけてバッファ 1.3% だけを書いた。企画展スケジューラ(`EventScheduler` — 企画展の境目で `products` · `search_cache` など四つを丸ごと消す)でもない — catalog ログ(その後 61,923 行、INFO)にその時刻の企画展の開始 · 終了 · キャッシュ消去がない。**原因:同時に埋まった検索キャッシュが一緒に期限切れ** — 計測後の Redis の `search_cache` キー **48 個すべての期限が 17:15**(16:15 に一緒に埋め直され、その後一度もミスがなかった)。一度できた群れは毎時同じ秒に切れる — 最初の群れはキャッシュを丸ごと消した後(修正前の mixed `150532Z` が終わった 15:15 の 60 分後)。そして `sync` がなく、**あっても何もしていなかった** — Spring Data Redis 3.x の `RedisCache.get(key, loader)` はロックをライターに任せ、catalog のライターはロックしない側だ(本物の Redis で同じキーの同時ミス 16 → 計算 16 回、`CacheStampedeRedisTest`)— だから `SearchFilterFacets` の `sync = true` も名前だけだった | ① 寿命のばらつき — TTL のあるすべてのキャッシュ(products 30 分 · search_cache 60 分 · その他 10 分)をキーごとに最大 20% 短く(`RedisCacheConfig.jittered`):一周で群れがほどける ② キーごとに一度だけ計算 — マネージャが渡すキャッシュを `SingleFlightCache` で包み、`sync = true` の読み取りをキーごとにロック(Pod 内、別のキーは待たない、待つスレッドは DB コネクションを持たない) ③ `search_cache` · `products_by_category` に `sync = true`。同じキーの同時ミス 16 → 計算 1 回、Redis の実際の期限が 200 個で 6 分以上散る(`CacheStampedeRedisTest` · `SingleFlightCacheTest` · `RedisCacheResilienceTest` — 四つとも戻すと失敗) | (計測前 — 同じ条件の mixed で、群れができるよう flush-cache 直後に一回 · 60 分後に一回) |
+| 2026-10-19 | 評価修正のイメージ(`19803606`) | **mixed** — `REVIEW_RATE=1`、前の行と同じ条件(3 固定 · flush-cache の後) | 100 万 | 失敗 **0.02%**(5xx 13 — home 5 · product_cold 3 · banners 2 · search · search_deep · name_search 1 ずつ) · 送れなかった反復 34 · 最大 VU 89 — **閾値を通過** | 全体 28 / 60ms · p50 9 · search 13 / 37 · search_deep 12 / 48 · home 14 / 37 · product_cold 32 / 75 · **review_add 52(p50) / 66 / 551** · max 7.4 秒 | レビュー毎秒 1 件がもう catalog を止めない — 修正前の同じ条件 78.91%(p95 3,340 · コネクション待ち 51 〜 71)から、コネクション待ち 0 〜 2 · 保持 5 〜 6ms · 経路別サーバー p95 7 〜 28ms と基準の回と同じ形。レビューの書き込みは 52ms(catalog の呼び出しが商品一つのキャッシュだけを直す)。**残ったもの:20 秒の一回** — 01:15:14 〜 01:15:34 KST(16:15 UTC)Tomcat の忙しいスレッド 4 → 39 · コネクション使用中 14 · 待ち **22** · 取得まで 12 → 95ms · 保持 6 → 46ms · サーバー p95 home 1.0 · search 1.5 秒、その後すぐ元どおり。5xx 13 · max 7.4 秒 · 送れなかった反復 34 はこの区間の分と見る。レビューとは関係なく見える(レビューは最初から毎秒 1)。時刻が基準の回の開始(15:55:12 UTC)のちょうど 20 分後なのでコネクション寿命(`max-lifetime` 20 分)の一斉引退を疑ったが**違った** — `hikaricp_connections_creation_seconds_count`(30 秒の増加、16:13 〜 16:18)は 0 〜 4 でずっと均等で、16:15 に集まらない。postgres の定時チェックポイント(デモ `checkpoint_timeout=15min` — 16:00:24 · **16:15:24** · 16:30:24、この回の中ではこれ一つ)が同じ時に始まったが殺到が先だ — 16:15:14 の標本にすでに忙しいスレッド 39 · 待ち 22、チェックポイントは 10 秒後に始まり 252 秒かけてバッファ 1.3% だけを書いた。企画展スケジューラ(`EventScheduler` — 企画展の境目で `products` · `search_cache` など四つを丸ごと消す)でもない — catalog ログ(その後 61,923 行、INFO)にその時刻の企画展の開始 · 終了 · キャッシュ消去がない。**原因:同時に埋まった検索キャッシュが一緒に期限切れ** — 計測後の Redis の `search_cache` キー **48 個すべての期限が 17:15**(16:15 に一緒に埋め直され、その後一度もミスがなかった)。一度できた群れは毎時同じ秒に切れる — 最初の群れはキャッシュを丸ごと消した後(修正前の mixed `150532Z` が終わった 15:15 の 60 分後)。そして `sync` がなく、**あっても何もしていなかった** — Spring Data Redis 3.x の `RedisCache.get(key, loader)` はロックをライターに任せ、catalog のライターはロックしない側だ(本物の Redis で同じキーの同時ミス 16 → 計算 16 回、`CacheStampedeRedisTest`)— だから `SearchFilterFacets` の `sync = true` も名前だけだった | ① 寿命のばらつき — TTL のあるすべてのキャッシュ(products 30 分 · search_cache 60 分 · その他 10 分)をキーごとに最大 20% 短く(`RedisCacheConfig.jittered`):一周で群れがほどける ② キーごとに一度だけ計算 — マネージャが渡すキャッシュを `SingleFlightCache` で包み、`sync = true` の読み取りをキーごとにロック(Pod 内、別のキーは待たない、待つスレッドは DB コネクションを持たない) ③ `search_cache` · `products_by_category` に `sync = true`。同じキーの同時ミス 16 → 計算 1 回、Redis の実際の期限が 200 個で 6 分以上散る(`CacheStampedeRedisTest` · `SingleFlightCacheTest` · `RedisCacheResilienceTest` — 四つとも戻すと失敗) | flush-cache 直後の回で失敗 0.00% · p95 28 → 16ms · コネクション待ち 0(下の `082546Z`)— 60 分後の回は計測前 |
+| 2026-10-20 | 期限のばらつき · キーごとに一度だけ計算 · V22 のイメージ(`b2ebf3d0`) | **mixed** — `PRODUCTS=1000000 RATE=50 REVIEW_RATE=1`、前の行と同じ条件 · purge の後 100 万を再投入 · flush-cache の直後 | 100 万 | 失敗 **0.00%**(5xx 0 · 4xx 0) · 送れなかった反復 0 · 最大 VU 55 — 閾値を通過 | 全体 **16 / 40ms** · p50 9 · search 13 / 19 · search_deep 13 / 41 · name_search 16 / 26 · home 14 / 22 · product_cold 19 / 26 · review_add 46(p50) / 65 / 95 · max 1.7 秒 | 前の回(`160904Z` — 28 / 60ms · 5xx 13 · 20 秒の殺到一回)より均等。殺到は開始 30 秒だけ — キャッシュを消し再投入したばかりの DB で最初の計算が冷たい(サーバー p95 search 1.0 秒 · 保持 62ms、17:26:16 KST から元どおり)、その後 10 分間コネクション待ち 0 · 保持 3ms(前の回 5 〜 6) · 経路別サーバー p95 6 〜 14ms。その前の `081821Z`(exit=107、要求 19/秒)は最後まで行かなかった試みなので除く | — | (60 分後に同じ条件でもう一回 — 開始の群れが 60 分後に一緒に切れないか) |
+| 2026-10-20 | `b2ebf3d0` のイメージ | browse **基準** — `PRODUCTS=10000000 RATE=50`(広げない) · flush-cache の後 · レプリカ 3 | **1,000 万** | 失敗 **5.55%**(5xx 4,307 — 経路を選ばない: search 857 · search_deep 842 · banners 838 · home 823 · product_cold 772 · name_search 175、4xx 90 — product_cold) · 送れなかった反復 35 — 閾値を超えた | 全体 p50 9 · p95 16 · p99 641 · max 10.0 秒 · home p99 6.3 秒 | 失敗は**開始 2 分だけ**(18:47:27 〜 18:49:07 KST、catalog の要求は毎秒 7 〜 30): コネクション 15(5 × 3)が埋まり · 待ち 24 → 80 · **保持の平均 34.5 秒** · 取得まで 3.8 〜 5 秒 · サーバー p95 search 30 秒(クエリの時間制限) · banners 5.6 秒 — キャッシュ外の最初の計算が数十秒かかり、すべての経路が並んだ。18:49:17 から待ち 0 · サーバー p95 7 〜 20ms(100 万と同じ形)。疑い(**未確認**): `ops/44 load` は最後に ANALYZE だけで VACUUM をしない — visibility map が空で、V20 · V21 の件数(インデックスだけで読むはずのもの)が行ごとに表(8GB)を読み直す(最大のカテゴリ ~130 万)。100 万では表がメモリに収まり見えなかった。その前の `093132Z`(PRODUCTS=11000000、exit=107)は投入範囲(1,000 万)と違い、開始前の確認が止めた | — | → 下の行(VACUUM はすでに回っていた) |
+| 2026-10-20 | `b2ebf3d0` のイメージ | browse の基準をもう一度 — 前の行と同じ条件(前の回の 20 分後) | 1,000 万 | 失敗 **0.00%** — 閾値を通過 | 全体 15 / 22ms · p50 9 · home 13 / 18 · search 12 / 16 · search_deep 12 / 16 · name_search 15 / 20 · product_cold 21 / 25 | 開始区間の殺到がない — 最初の行からサーバー p95 search 6 · home 11ms · コネクション待ち 0 · 保持 3 〜 4ms、最後まで 100 万と同じ形。自動 VACUUM は前の回の前にすでに回っていた(09:18 〜 09:28 UTC、インデックスだけで読める割合 product 82% · sku 98% · size 91%)— VACUUM の仮説ではない。残る二つ(**未確認**): (ア)前の回は投入直後で表 21GB がメモリになく、最初の計算ごとにディスクを読んだ(今回は温まっていた) · (イ)今回は検索キャッシュ(60 分)が残っていた → **(ア)の側** — 回の前に flush-cache をし(268 個)、1 秒を超えるクエリの記録(`log_min_duration_statement = 1s`)が空だった: キャッシュが空でも DB のページがメモリにあれば 1,000 万の最初の計算は 1 秒以内だ。本番で同じ状況は DB の再起動 · ノードの再起動の直後 | — | (確定: DB 再起動 + ノードのファイルキャッシュ消去 + flush-cache の後にもう一度 — その時の遅いクエリで何を温めるか) |
 
 **spike 三回(2026-10-19)の読み。** 平常の 10 倍を 20 秒で受ける spike は、この実習クラスタでは HPA だけでは吸収できない。
 ① HPA の反応(CPU 指標 → 判断 → Pod 起動)がピーク後 ~65 秒、最大まで ~95 秒 — 3 分のピークの半分がその前に過ぎる。
@@ -311,6 +428,6 @@ loadgen のように kubectl のない機械の回は流入制限が「記録な
 ## 7. ガード
 
 - `LoadK6ScriptTest` — シナリオのすべての API パスを画面(frontend/src)も呼び、先頭のセグメントがゲートウェイのルートだ・JSON の検査・データ規模モードの id 範囲 = ops/44・検索語は生成器の名前に・その変数を k6 へ渡す(数字だけ)・本番アドレスの拒否・
-  パスワードは環境変数でだけ・k6 の終了コード(しきい値 99)を保つ・`limits` は本番クラスタで拒否。
+  パスワードは環境変数でだけ・k6 の終了コード(しきい値 99)を保つ・`limits` は本番クラスタで拒否・contention は回ごとに受け付けた注文 ≤ 在庫を閾値に、在庫不足の 400(本文が \uXXXX でも)を失敗に数えない・`stock` は実習クラスタでのみ、最初の値を残して戻す。
 - `RateLimiterPlacementTest` — 既定の制限は環境変数でだけ変わり、ログインの制限はそのまま、マニフェストにはその変数がない。
 - `DemoOverlayTest` — デモのイングレスがすべてのゲートウェイ接頭辞をゲートウェイへ(https・検証)。

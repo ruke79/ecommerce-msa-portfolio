@@ -5,7 +5,9 @@
 // 상태 코드만 보는 검사는 전부 "성공" 이었다.
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
+import { clientIp } from './clients.js';
 
 export const GATEWAY = (__ENV.GATEWAY || 'https://shop.lab').replace(/\/+$/, '');
 
@@ -38,6 +40,16 @@ export const BASE_HEADERS = {
   MultiLogin: 'false',
   'Accept-Language': 'ko',
 };
+
+// 손님 IP 흉내(docs/83 §2.6) — CLIENT_IPS 개를 VU 마다 돌려 쓴다. 다른 부하 VM 과는 CLIENT_IP_OFFSET 으로 겹치지 않는다(ops/53 SPLIT).
+export const CLIENT_IPS = Number(__ENV.CLIENT_IPS || 0);
+const CLIENT_IP_OFFSET = Number(__ENV.CLIENT_IP_OFFSET || 0);
+
+/** 이 VU 의 요청 머리 — 손님 IP 를 흉내 내면 CF-Connecting-IP 를 더한다(setup 은 VU 0 → 첫 주소). */
+export function baseHeaders() {
+  const ip = clientIp(exec.vu.idInTest, CLIENT_IPS, CLIENT_IP_OFFSET);
+  return ip ? Object.assign({}, BASE_HEADERS, { 'CF-Connecting-IP': ip }) : BASE_HEADERS;
+}
 
 /** 응답 하나를 판정한다 — 기대 상태 · JSON. 429 는 rate_limited 로. */
 export function ok(res, name, expected = 200) {
@@ -83,7 +95,8 @@ export function homeOrFail(res) {
  * [JA] 開始前に流入制限が上がっているかを確かめる。既定値のまま計測して 429 だけを測った(2026-10-18)。
  */
 export function limitsRaisedOrFail() {
-  if (__ENV.SCENARIO === 'smoke' || __ENV.ALLOW_RATE_LIMIT === '1') {
+  // 손님 IP 를 흉내 내면 제한은 손님마다다 — 기본 제한 그대로 재는 것이 목적이라 확인하지 않는다(docs/83 §2.6)
+  if (__ENV.SCENARIO === 'smoke' || __ENV.ALLOW_RATE_LIMIT === '1' || CLIENT_IPS > 0) {
     return;
   }
   const reqs = [];
@@ -107,11 +120,11 @@ export function json(res) {
 
 /** 인증 헤더 — 게이트웨이는 Bearer 를 먼저 본다(JwtAuthorizationGatewayFilterFactory). */
 export function authHeaders(access) {
-  return Object.assign({}, BASE_HEADERS, { Authorization: `Bearer ${access}` });
+  return Object.assign({}, baseHeaders(), { Authorization: `Bearer ${access}` });
 }
 
 export function get(path, params = {}) {
-  return http.get(`${GATEWAY}${path}`, Object.assign({ headers: BASE_HEADERS }, params));
+  return http.get(`${GATEWAY}${path}`, Object.assign({ headers: baseHeaders() }, params));
 }
 
 /** 데모 계정 이메일 — ops/48 과 같은 번호(7자리, 0부터). */
@@ -131,7 +144,7 @@ function cookieValue(res, name) {
  */
 export function login(email, password) {
   const res = http.post(`${GATEWAY}/user-service/api/auth/public/signin`, JSON.stringify({ email, password }),
-    { headers: BASE_HEADERS, jar: new http.CookieJar(), tags: { name: 'signin' } });
+    { headers: baseHeaders(), jar: new http.CookieJar(), tags: { name: 'signin' } });
   ok(res, 'signin');
   const access = res.headers['Access'] || res.headers['ACCESS'] || res.headers['access'];
   const body = json(res) || {};
@@ -169,7 +182,7 @@ export function loginSessions(password, users, offset) {
 export function refresh(session) {
   const jar = new http.CookieJar();
   jar.set(GATEWAY, 'REFRESH', session.refresh, { secure: true, http_only: true, path: '/' });
-  const res = http.get(`${GATEWAY}/user-service/api/token/refresh`, { headers: BASE_HEADERS, jar, tags: { name: 'token_refresh' } });
+  const res = http.get(`${GATEWAY}/user-service/api/token/refresh`, { headers: baseHeaders(), jar, tags: { name: 'token_refresh' } });
   ok(res, 'token_refresh');
   const access = res.headers['Access'] || res.headers['ACCESS'] || res.headers['access'];
   if (res.status !== 200 || !access) {

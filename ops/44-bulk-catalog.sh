@@ -27,6 +27,8 @@
 #   APP_NS=ecommerce SECRET=ecommerce-secrets SECRET_KEY=LOCAL_DB_PASSWORD
 #   REDIS_NS=redis REDIS_DEPLOY=redis
 #   STORAGE_DIR=/var/lib/rancher/k3s/storage   # local-path 가 PVC 를 두는 곳(디스크 여유를 여기서 잰다)
+#   SKEW=0  SKEW_CATEGORY=  LONG_NAMES=0   # 데이터 모양(docs/83 §2.5): 상품의 SKEW 비율을 한 대분류에(기본: 가중치가 가장 큰 것),
+#                        LONG_NAMES=1 이면 이름 100 ~ 180자. 이어 넣기는 같은 값으로(다르면 앞뒤 묶음의 모양이 달라진다)
 #   PLACEHOLDER_IMAGE=   # 비우면 시드 배치 잡이 만든 색상 · 이미지 URL 이 있어야 한다. 주면(/경로 · http(s)) 색상이 비었을 때
 #                        # 시드 CSV 에서 넣고 모든 SKU 이미지를 이 주소로 — 데모(S3 없음)는 프론트가 내보내는 /logo512.png
 #   FORCE=1   백업 시간대 · 디스크 경고를 무시     YES=1   purge 확인을 묻지 않음
@@ -197,6 +199,12 @@ cmd_load() {
     info "적재 — 끊기면 같은 명령을 다시 실행하면 이어서 넣는다"
     local extra=()
     [ -n "$PLACEHOLDER_IMAGE" ] && extra+=(--placeholder-image "$PLACEHOLDER_IMAGE")
+    if [ -n "${SKEW:-}" ] && [ "$SKEW" != "0" ]; then
+        [[ "$SKEW" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || die "SKEW 는 0 ~ 1 의 수"
+        extra+=(--skew "$SKEW")
+        [ -n "${SKEW_CATEGORY:-}" ] && extra+=(--skew-category "$SKEW_CATEGORY")
+    fi
+    [ "${LONG_NAMES:-0}" = "1" ] && extra+=(--long-names)
     run_gen_db --taxonomy "$TAXONOMY" --chunk "$CHUNK" --resume --yes ${extra[@]+"${extra[@]}"}
     flush_cache
     status

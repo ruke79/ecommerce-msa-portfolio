@@ -25,6 +25,7 @@
 | `spike` | `browse` 와 같다 | 평소(최고의 10%) 2분 → 20초 만에 최고(`RATE=200`) → 3분 유지 → 빠짐 → 3분 | 실패 < 2%, 상세 p99 3s |
 | `smoke` | 조회 한 번 · 주문 한 번(계정 하나) | — | 검사 100% · 429 없음 |
 | `mixed` | `browse` 그대로 + 로그인한 데모 사용자가 초당 `REVIEW_RATE`(기본 1) 번 리뷰 쓰기(화면과 같은 multipart, `review_add`) | `browse` 와 같은 계단 · 리뷰는 그동안 내내 일정하게 | `browse` 의 것 + 리뷰 p95 3s |
+| `contention` | 로그인한 데모 사용자: 담기 → 체크아웃(회차 전) → **같은 순간에** 주문 → 입금 안내 → 함께 취소 | `USERS`(50)명이 재고 `STOCK` 개인 한 SKU 에 `ROUNDS`(3)번 몰린다 | 받아진 주문 ≤ 재고(회차마다) · 그 밖의 거절 · 오류 0 · 실패 < 1%(재고 부족 400 제외) |
 
 - **도착률(arrival-rate)로 정한다** — VU 수가 아니라 손님이 오는 속도. VU 고정(닫힌 모델)은 서버가 느려지면 부하도 같이 줄어 병목을 숨긴다.
 - **응답이 JSON 인지 늘 본다**(`not_json`). 데모 인그레스가 API 를 프론트로 보내던 때(2026-10-17 전)는 모든 API 가
@@ -114,6 +115,119 @@ user-service 가 그 상품의 평균 별점을 catalog 에 보내고(`ReviewSer
 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse                # 기준 — 쓰기 없이(flush-cache 뒤)
 PRODUCTS=1000000 RATE=50 REVIEW_RATE=1 ./ops/53-load-k6.sh mixed   # 같은 조건 + 리뷰 초당 1
 ./ops/53-load-k6.sh reviews default                                # 꼭 되돌린다
+```
+
+### 2.3 재고 경합 — `contention`
+
+browse 는 읽기만, order 는 손님마다 홈의 여러 상품 중 하나를 사서 **같은 SKU 에 주문이 몰린 적이 없다**. 쇼핑몰에서 가장 위험한
+정확성 문제는 초과 판매다 — 재고 20개에 주문 23개가 받아지면 손님 셋에게 돈을 받고 물건이 없다.
+
+- **무엇을 보나**: 재고 예약(docs/59)은 SKU 행을 잠그고 "실물 − 살아 있는 예약" 을 센다. 같은 SKU 에 몰리면 잠금 대기가 길어지고,
+  gRPC 기한(3초, `stock.grpc.deadline-ms`)을 넘으면 order 는 **예약 없이 진행한다**(fail-open — `OrderStockHold.UNAVAILABLE`,
+  `order_stock_hold_total{result="unavailable"}`). 그 길이 부하 아래에서 열리는지 — 받아진 주문(입금 안내까지 간 것)이 회차마다
+  재고 이하인가가 임계값이다. 재고 부족 거절(400 "재고가 부족해 …")은 기대한 결과라 실패로 세지 않는다.
+- **한 회차**(`ROUNDS`, 기본 3): 준비(담기 정보 → 담기 → 체크아웃)는 회차 전에, 시작 시각에 모든 VU 가 함께 주문 → 주문 상세 →
+  무통장 입금 안내, `HOLD_SECONDS`(20) 뒤 함께 입금 취소 · 줄 빼기, `ROUND_GAP_SECONDS`(10) 뒤 다음 회차. 해제 시각 뒤에 받아진 것은
+  "늦음" — 앞 손님들이 돌려준 재고라 초과 판매가 아니다.
+- **재고는 호스트에서 맞춘다**: `./ops/53-load-k6.sh stock set <수> [상품 id]` — SKU 하나인 상품(없으면 고른다)의 모든 사이즈 수량을
+  `<수>` 로, 원래 값은 `~/.ecommerce-msa/stock/<id>.saved`(0700)에, 캐시를 비우고 실행 줄을 알려 준다. 실습 클러스터만.
+  중간에 끊긴 회차의 입금 대기가 남았으면 남은 수가 그만큼 적다 — `RELEASE_HELD=1` 로 그 상품의 살아 있는 예약을 푼다.
+- **읽는 법**: report 가 회차마다 "받아짐 N = 재고 · ← 초과 판매 k · (덜 팔림 k)" 로 적는다. 초과 판매나 덜 팔림이 있으면 그때의
+  `order_stock_hold_total{result="unavailable"}` 증가 · catalog 의 잠금 대기(`재고 예약 거절` · 기한 초과 로그)를 본다.
+- 가짜 서버(재고를 잠그지 않고 세는 것)로 시험했다: 잠그는 서버는 받아짐 19 · 20(재고 20, 해제 뒤 4건은 늦음), 잠그지 않는 서버는
+  22 · 21 → 임계값을 넘었다(exit 99).
+
+```bash
+./ops/53-load-k6.sh stock set 20                                    # 호스트에서 — 실행 줄을 알려 준다
+CONTENTION_PRODUCT=<id> STOCK=20 USERS=50 ./ops/53-load-k6.sh contention   # 부하 VM 에서
+./ops/53-load-k6.sh stock restore <id>                              # 꼭 되돌린다
+```
+
+### 2.4 주문 이력이 큰 상태 — `ops/54-bulk-orders.sh`
+
+order · contention 은 주문 표가 거의 빈 채로 쟀다. 데모 사용자(ops/48)마다 **끝난 주문**을 쌓아 주문 · 줄 · 배송지가 수백만 줄인
+상태를 만든다(`ops/tools/generate-demo-orders.py` — psql 스크립트를 내고 ops/54 가 PostgreSQL 파드에 흘려 넣는다).
+
+- 만드는 것: 주문(구매 확정 62% · 배송 완료 12% · 취소 12% · 환불 6% · 결제 완료 · 처리 중 · 발송), 배송지 사본(V25 — 주문이 가리킨다),
+  줄 1 ~ 3개(상품 id 는 ops/44 의 생성 범위 — `PRODUCTS` · `PRODUCT_ID_OFFSET`). 입금 대기 · 결제 전은 만들지 않는다(입금 대기 한도
+  3건 · 재고 예약에 걸린다). 결제 · 배송 · 쿠폰 · 재고 · 읽기 모델(saga-projection) · 아웃박스에는 아무것도 쓰지 않는다.
+- id 는 예약 범위(주문 · 배송지 8,000,000,000 ~, 줄은 그 × 4 ~), `tracking_id` 는 `demo-<주문 id>` — purge 는 범위 **그리고** 그 접두사만 지운다.
+  손님마다 주문 id 순 = 시간 순(내 주문 목록은 주문 id 내림차순). 다시 실행해도 같다(묶음마다 시드 고정 · ON CONFLICT).
+- **실습 클러스터에서만** — 가짜 주문이 운영의 매출 · 주문 집계를 더럽힌다(ops/48 은 운영 데모에도 쓰지만 이건 거절한다).
+- 실측(로컬 PG16 컨테이너): 주문 20만 · 줄 40만 46초, 209MB(주문당 약 1,100B). 기본(손님 10만 × 20 = 주문 200만)이면 약 2.2GB.
+- 🐛 이 생성기로 처음 드러난 것: **주문 줄의 `order_id` 에 인덱스가 없었다** — 주문 상세의 줄 조회가 Parallel Seq Scan 27ms(줄 40만,
+  줄 수에 비례), 주문 2만 개 purge 가 9분 20초(지운 주문마다 외래 키 검사가 줄 표 전체를 훑었다 — catalog V22 와 같은 결함).
+  order V28 이 인덱스를 더하고 `ForeignKeyIndexMigrationTest`(order)가 인덱스 없는 외래 키를 막는다.
+
+```bash
+USERS=100000 ./ops/48-bulk-users.sh load                               # 데모 사용자(없으면)
+USERS=100000 ORDERS_PER_USER=20 PRODUCTS=10000000 ./ops/54-bulk-orders.sh load   # 주문 200만
+./ops/53-load-k6.sh order                                              # 부하 VM 에서 — 같은 조건으로 전후
+USERS=100000 ORDERS_PER_USER=20 ./ops/54-bulk-orders.sh purge          # 끝나면
+```
+
+### 2.5 데이터 모양 — 쏠림 · 긴 이름(`SKEW` · `LONG_NAMES`)
+
+생성기의 기본 분포는 가장 큰 대분류가 약 13%(1,000만이면 ~130만), 이름 40자 안팎이다. 실제 상점은 한 카테고리에 몰리거나 이름이 길 수
+있다 — 그때 먼저 꺾이는 곳(그 카테고리의 개수 세기 · 필터 메뉴 · 깊은 쪽, 트라이그램 GIN · 목록 응답 크기)을 보려고 모양을 바꾼다.
+
+- `SKEW=0.5` — 상품의 절반을 한 대분류에(기본은 가중치가 가장 큰 것 = books, `SKEW_CATEGORY=fashion` 처럼 고른다). 0.5 면 그 카테고리가
+  약 56%(나머지 절반의 몫까지).
+- `LONG_NAMES=1` — 이름에 수식어 8 ~ 12개를 더해 100 ~ 180자(name · slug 255 안). 앞부분(브랜드 · 형용사 · 명사 · 모델)은 그대로라
+  browse 의 이름 검색어가 계속 맞는다.
+- **기본값은 예전과 같은 상품이다** — 이어 넣기(`--resume`)는 묶음마다 같은 시드로 만든다. 옵션을 주지 않으면 난수를 더 쓰지 않는다
+  (`CatalogGeneratorShapeTest` 가 기본 3,000개의 이름 · 카테고리 지문을 고정한다). 이어 넣을 때는 같은 값을 준다 — 다르면 앞뒤 묶음의 모양이 달라진다.
+- 같은 상품 수의 기본 모양 회차와 견준다(쏠림은 다른 데이터라 기존 1,000만 위에 이어 넣지 말고 purge 뒤 새로).
+
+```bash
+PRODUCTS=10000000 ./ops/44-bulk-catalog.sh purge
+PRODUCTS=10000000 SKEW=0.5 ./ops/44-bulk-catalog.sh load            # 한 카테고리에 ~560만
+PRODUCTS=10000000 RATE=50 ./ops/53-load-k6.sh browse                 # 부하 VM 에서 — 기본 모양 회차와 같은 조건
+```
+
+### 2.6 손님 IP 여럿 · 부하 VM 여러 대 — `CLIENT_IPS` · `SPLIT`
+
+게이트웨이의 유입 제한 키는 로그인 사용자 → `CF-Connecting-IP` → 소켓 주소다(`CustomUserKeyResolver`). 운영은 Cloudflare 엣지가
+`CF-Connecting-IP` 를 실제 손님 IP 로 덮어쓰지만, 실습 클러스터에는 엣지가 없어 **모든 요청이 Traefik 파드 IP 하나로 보인다** — 부하 VM 을
+늘려도 게이트웨이에게는 손님 하나다(그래서 지금까지 `limits load` 로 제한을 올려야 했다).
+
+- `CLIENT_IPS=N` — VU 마다 시험용 대역(198.18.0.0/15, RFC 2544)의 주소를 `CF-Connecting-IP` 에 싣는다. 실습에서 운영과 같이 손님마다 버킷이
+  생기므로 **제한을 올리지 않고** 기본 제한(IP 당 초당 20 · 버스트 40)이 손님 분포에서 어떻게 작동하는지 잰다. 이때 시작 전 제한 확인
+  (`limitsRaisedOrFail`)은 건너뛴다 — 기본 제한 그대로가 목적이다. 운영에서는 엣지가 덮어써 아무 일도 없다(ops/53 은 운영 주소를 거절한다).
+- `SPLIT=i/n` — 부하 VM 한 대의 CPU 가 모자랄 때. 전체 `RATE` 를 n 으로 나눠 VM 마다 `RATE/n`, 데모 계정(`ID_OFFSET + (i−1) × USERS`) ·
+  손님 IP(`(i−1) × CLIENT_IPS` 부터)를 겹치지 않게, `START_AT=<UTC 시각>` 에 함께 시작한다. `STAGES` 와는 함께 쓰지 않는다.
+- 합치기: 다른 VM 의 결과 폴더를 이 기계의 `OUT` 아래로 복사해 와서 `./ops/53-load-k6.sh report merge <폴더> <폴더>` — 요청 · 오류 수는 더하고
+  실패율은 요청 수로 가중, **백분위는 요약에서 합칠 수 없어** VM 중 가장 나쁜 값을 적는다(정확한 합친 백분위는 `PROM_RW` 로 Prometheus 에서).
+
+```bash
+CLIENT_IPS=500 RATE=50 PRODUCTS=10000000 ./ops/53-load-k6.sh browse        # 제한은 기본값 그대로(limits default)
+# 부하 VM 두 대 — 같은 시각에
+SPLIT=1/2 RATE=200 START_AT=2026-10-21T01:00:00Z CLIENT_IPS=500 ./ops/53-load-k6.sh browse   # VM 1
+SPLIT=2/2 RATE=200 START_AT=2026-10-21T01:00:00Z CLIENT_IPS=500 ./ops/53-load-k6.sh browse   # VM 2
+./ops/53-load-k6.sh report merge browse-…(VM 1) browse-…(VM 2)
+```
+
+### 2.7 Elasticsearch 검색 — `search es`
+
+지금까지 목록 · 검색은 모두 PostgreSQL 이었다(`SEARCH_ENGINE=postgres`). ES 는 데모 인프라에 있지만(k8s/90 · 데모 인프라의 ES 덧씌우기,
+힙 3g) 엔진은 둘이 정한다 — `search.engine=es`(ES 가 이 배포에 있는가, ConfigMap)와 플래그 `catalog.search-engine`(검색어마다 ES 로 보낼 비율,
+k8s/15 는 0%, docs/74).
+
+- `./ops/53-load-k6.sh search es` — 실습 클러스터만. ES 가 떠 있는지 보고 catalog 에 `SEARCH_ENGINE=es` 를 주고 플래그 파일을 끈다
+  (`FEATURE_FLAGS_FILE` 이 비면 코드의 기본값 = ES 가 있으면 ES = 100%). ConfigMap 은 건드리지 않는다. ES 파드 안에서 색인(`product-alias`)
+  문서 수를 세어, 비었으면 재색인을 안내한다 — 관리자 계정으로 `POST /catalog-service/api/products/sync`(docs/13 §3, `ops/03` 의 1 ~ 4단계 —
+  그 스크립트의 `RUN_K8S_PATCH` 는 `kubectl patch configmap` 이라 쓰지 않는다).
+- `search default` — 되돌린다. `SEARCH_ENGINE` 은 지워 ConfigMap 값으로, `FEATURE_FLAGS_FILE` 은 **지우지 않고** 매니페스트 값으로 다시 쓴다
+  (매니페스트에 직접 적힌 값이라 지우면 플래그가 영영 꺼진다 — `LoadK6ScriptTest` 가 k8s/41 의 값과 견준다).
+- ES 는 **검색어가 있는 검색에만** 쓰인다(`SearchEngineSelector` — 검색어가 없으면 PostgreSQL). browse 에서는 `name_search` 만 바뀌므로
+  `NAME_SEARCH` 를 올린다. 부하 VM 에는 kubectl 이 없어 `ENGINE=es` 로 회차 기록에 엔진을 적는다.
+- 1,000만 상품의 색인은 무겁다(nested 포함 문서가 수천만 — docs/19 §5.1). 먼저 100만에서 PostgreSQL 회차와 견준다.
+
+```bash
+./ops/53-load-k6.sh search es                                              # 호스트에서
+ENGINE=es NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse   # 부하 VM 에서
+ENGINE=postgres NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse   # 같은 조건(search default 뒤)
+./ops/53-load-k6.sh search default                                         # 꼭 되돌린다
 ```
 
 ## 3. 순서
@@ -263,7 +377,10 @@ loadgen 처럼 kubectl 이 없는 기계의 회차는 유입 제한이 "기록 �
 | 2026-10-19 | `94fb8595`(별점 수정 전 이미지) | mixed 의 기준 다시 — `PRODUCTS=1000000 RATE=50` · catalog · 게이트웨이 **3 고정**(`replicas load 3`) | 100만 | 실패 **0.00%**(5xx 0) — 임계값 통과 | 전체 27 / 33ms · p50 9 · home 14 / 20 · search 12 / 18 · search_deep 13 / 60 · name_search 16 / 22 · product_cold 31 / 38 | 캐시가 찬 평소 모양 — catalog 서버 p95 search 7ms · 상세 27ms · 커넥션 대기 0 · 쥔 시간 5 ~ 6ms · CPU 10 ~ 28%. 앞 기준(`135834Z`)의 5xx 196 은 측정 중 2 → 3 으로 뜬 파드 몫이었다 — 고정하면 0 | — | (mixed 의 기준) |
 | 2026-10-19 | `94fb8595`(별점 수정 전 이미지) | mixed 다시 — `REVIEW_RATE=1`, 앞 줄과 같은 조건(3 고정) | 100만 | 실패 **78.91%**(5xx 62,800 — 경로마다 고르게) — 무너짐 | 전체 p95 **3,340** · p99 5,225ms · review_add p50 **2,216** · p95 4,157 | 파드를 3개로 늘려도 같다(2개일 때 79.90%) — 커넥션 15개(5 × 3)가 다 차고 대기 51 ~ 71 · 받기까지 1.6 ~ 2.7초 · 쥔 시간 400 ~ 600ms(2개일 때 300 ~ 450 — DB 를 나눠 쓰는 쪽이 늘었다) · CPU 6 ~ 12%. 파드 수가 아니라 리뷰마다 캐시를 통째로 비우는 것이 원인임을 확인 — 수정(`19803606`)은 이 이미지에 없다 | — | → 아래 두 줄(수정 이미지) |
 | 2026-10-19 | 별점 수정 이미지(`19803606` — 부하 기계의 커밋 열은 `94fb8595`) | mixed 의 기준 — 배포 뒤 `PRODUCTS=1000000 RATE=50` · 3 고정 | 100만 | 실패 **0.00%**(5xx 0) — 임계값 통과 | 전체 27 / 32ms · p50 9 · home 13 / 21 · search 12 / 18 · search_deep 12 / 19 · name_search 15 / 20 · product_cold 31 / 39 | 수정 전 이미지의 기준(`145058Z`, 27 / 33ms)과 같다 — 쓰기가 없으면 이 수정은 아무것도 바꾸지 않는다. catalog 서버 p95 search 7ms · 상세 27ms · 커넥션 대기 0 · CPU 9 ~ 30%. 그 앞의 `153133Z`(exit=107) · mixed `155154Z`(exit=141)는 끝까지 가지 않은 시도라 뺀다 | — | (mixed 의 기준) |
-| 2026-10-19 | 별점 수정 이미지(`19803606`) | **mixed** — `REVIEW_RATE=1`, 앞 줄과 같은 조건(3 고정 · flush-cache 뒤) | 100만 | 실패 **0.02%**(5xx 13 — home 5 · product_cold 3 · banners 2 · search · search_deep · name_search 1씩) · 못 보낸 반복 34 · 최대 VU 89 — **임계값 통과** | 전체 28 / 60ms · p50 9 · search 13 / 37 · search_deep 12 / 48 · home 14 / 37 · product_cold 32 / 75 · **review_add 52(p50) / 66 / 551** · max 7.4초 | 리뷰 초당 1건이 더 이상 catalog 를 세우지 않는다 — 수정 전 같은 조건 78.91%(p95 3,340 · 커넥션 대기 51 ~ 71)에서, 커넥션 대기 0 ~ 2 · 쥔 시간 5 ~ 6ms · 경로별 서버 p95 7 ~ 28ms 로 기준 회차와 같은 모양. 리뷰 쓰기는 52ms(catalog 호출이 상품 하나의 캐시만 고친다). **남은 것: 20초짜리 한 번** — 01:15:14 ~ 01:15:34 KST(16:15 UTC) Tomcat 바쁜 스레드 4 → 39 · 커넥션 쓰는 중 14 · 대기 **22** · 받기까지 12 → 95ms · 쥔 시간 6 → 46ms · 서버 p95 home 1.0 · search 1.5초, 그 뒤 바로 원래대로. 5xx 13 · max 7.4초 · 못 보낸 반복 34 가 이 구간 몫으로 본다. 리뷰와 상관없이 보인다(리뷰는 처음부터 초당 1). 시각이 기준 회차 시작(15:55:12 UTC)의 정확히 20분 뒤라 커넥션 수명(`max-lifetime` 20분)의 한꺼번에 은퇴를 의심했으나 **아니었다** — `hikaricp_connections_creation_seconds_count`(30초 증가, 16:13 ~ 16:18)는 0 ~ 4 로 내내 고르고 16:15 에 몰리지 않는다. postgres 의 정시 체크포인트(데모 `checkpoint_timeout=15min` — 16:00:24 · **16:15:24** · 16:30:24, 이 회차 안에서는 이것 하나)가 같은 때 시작했지만 몰림이 먼저다 — 16:15:14 의 표본에 이미 바쁜 스레드 39 · 대기 22, 체크포인트는 10초 뒤 시작해 252초에 걸쳐 버퍼 1.3% 만 썼다. 기획전 스케줄러(`EventScheduler` — 기획전 경계에서 `products` · `search_cache` 등 넷을 통째로 비운다)도 아니다 — catalog 로그(그 뒤 61,923줄, INFO)에 그 시각의 기획전 시작 · 종료 · 캐시 비우기가 없다. **원인: 같은 때 채워진 검색 캐시가 함께 만료** — 측정 뒤 Redis 의 `search_cache` 키 **48개 모두 만료가 17:15**(16:15 에 함께 다시 채워져 그 뒤 한 번도 미스가 없었다). 한 번 생긴 무리는 매시간 같은 초에 만료된다 — 처음 무리는 캐시를 통째로 비운 뒤(수정 전 mixed `150532Z` 가 끝난 15:15 의 60분 뒤). 그리고 `sync` 가 없었고, **있어도 아무것도 하지 않았다** — Spring Data Redis 3.x 의 `RedisCache.get(key, loader)` 는 잠그는 일을 작성기에 맡기는데 catalog 의 작성기는 잠그지 않는 쪽이다(실제 Redis 에서 같은 키 동시 미스 16개 → 계산 16번, `CacheStampedeRedisTest`) — 그래서 `SearchFilterFacets` 의 `sync = true` 도 이름뿐이었다 | ① 수명 흩어짐 — TTL 이 있는 모든 캐시(products 30분 · search_cache 60분 · 그 밖 10분)가 키마다 최대 20% 짧게(`RedisCacheConfig.jittered`): 한 바퀴 만에 무리가 풀린다 ② 키마다 한 번 계산 — 매니저가 내주는 캐시를 `SingleFlightCache` 로 감싸 `sync = true` 읽기를 키마다 잠근다(파드 안, 다른 키는 기다리지 않는다, 기다리는 스레드는 DB 커넥션을 쥐지 않는다) ③ `search_cache` · `products_by_category` 에 `sync = true`. 같은 키 동시 미스 16개 → 계산 1번, Redis 의 실제 만료가 200개에 6분 넘게 흩어진다(`CacheStampedeRedisTest` · `SingleFlightCacheTest` · `RedisCacheResilienceTest` — 넷 모두 되돌리면 실패) | (측정 전 — 같은 조건 mixed 로, 무리가 생기게 flush-cache 직후 한 번 · 60분 뒤 한 번) |
+| 2026-10-19 | 별점 수정 이미지(`19803606`) | **mixed** — `REVIEW_RATE=1`, 앞 줄과 같은 조건(3 고정 · flush-cache 뒤) | 100만 | 실패 **0.02%**(5xx 13 — home 5 · product_cold 3 · banners 2 · search · search_deep · name_search 1씩) · 못 보낸 반복 34 · 최대 VU 89 — **임계값 통과** | 전체 28 / 60ms · p50 9 · search 13 / 37 · search_deep 12 / 48 · home 14 / 37 · product_cold 32 / 75 · **review_add 52(p50) / 66 / 551** · max 7.4초 | 리뷰 초당 1건이 더 이상 catalog 를 세우지 않는다 — 수정 전 같은 조건 78.91%(p95 3,340 · 커넥션 대기 51 ~ 71)에서, 커넥션 대기 0 ~ 2 · 쥔 시간 5 ~ 6ms · 경로별 서버 p95 7 ~ 28ms 로 기준 회차와 같은 모양. 리뷰 쓰기는 52ms(catalog 호출이 상품 하나의 캐시만 고친다). **남은 것: 20초짜리 한 번** — 01:15:14 ~ 01:15:34 KST(16:15 UTC) Tomcat 바쁜 스레드 4 → 39 · 커넥션 쓰는 중 14 · 대기 **22** · 받기까지 12 → 95ms · 쥔 시간 6 → 46ms · 서버 p95 home 1.0 · search 1.5초, 그 뒤 바로 원래대로. 5xx 13 · max 7.4초 · 못 보낸 반복 34 가 이 구간 몫으로 본다. 리뷰와 상관없이 보인다(리뷰는 처음부터 초당 1). 시각이 기준 회차 시작(15:55:12 UTC)의 정확히 20분 뒤라 커넥션 수명(`max-lifetime` 20분)의 한꺼번에 은퇴를 의심했으나 **아니었다** — `hikaricp_connections_creation_seconds_count`(30초 증가, 16:13 ~ 16:18)는 0 ~ 4 로 내내 고르고 16:15 에 몰리지 않는다. postgres 의 정시 체크포인트(데모 `checkpoint_timeout=15min` — 16:00:24 · **16:15:24** · 16:30:24, 이 회차 안에서는 이것 하나)가 같은 때 시작했지만 몰림이 먼저다 — 16:15:14 의 표본에 이미 바쁜 스레드 39 · 대기 22, 체크포인트는 10초 뒤 시작해 252초에 걸쳐 버퍼 1.3% 만 썼다. 기획전 스케줄러(`EventScheduler` — 기획전 경계에서 `products` · `search_cache` 등 넷을 통째로 비운다)도 아니다 — catalog 로그(그 뒤 61,923줄, INFO)에 그 시각의 기획전 시작 · 종료 · 캐시 비우기가 없다. **원인: 같은 때 채워진 검색 캐시가 함께 만료** — 측정 뒤 Redis 의 `search_cache` 키 **48개 모두 만료가 17:15**(16:15 에 함께 다시 채워져 그 뒤 한 번도 미스가 없었다). 한 번 생긴 무리는 매시간 같은 초에 만료된다 — 처음 무리는 캐시를 통째로 비운 뒤(수정 전 mixed `150532Z` 가 끝난 15:15 의 60분 뒤). 그리고 `sync` 가 없었고, **있어도 아무것도 하지 않았다** — Spring Data Redis 3.x 의 `RedisCache.get(key, loader)` 는 잠그는 일을 작성기에 맡기는데 catalog 의 작성기는 잠그지 않는 쪽이다(실제 Redis 에서 같은 키 동시 미스 16개 → 계산 16번, `CacheStampedeRedisTest`) — 그래서 `SearchFilterFacets` 의 `sync = true` 도 이름뿐이었다 | ① 수명 흩어짐 — TTL 이 있는 모든 캐시(products 30분 · search_cache 60분 · 그 밖 10분)가 키마다 최대 20% 짧게(`RedisCacheConfig.jittered`): 한 바퀴 만에 무리가 풀린다 ② 키마다 한 번 계산 — 매니저가 내주는 캐시를 `SingleFlightCache` 로 감싸 `sync = true` 읽기를 키마다 잠근다(파드 안, 다른 키는 기다리지 않는다, 기다리는 스레드는 DB 커넥션을 쥐지 않는다) ③ `search_cache` · `products_by_category` 에 `sync = true`. 같은 키 동시 미스 16개 → 계산 1번, Redis 의 실제 만료가 200개에 6분 넘게 흩어진다(`CacheStampedeRedisTest` · `SingleFlightCacheTest` · `RedisCacheResilienceTest` — 넷 모두 되돌리면 실패) | flush-cache 직후 회차 실패 0.00% · p95 28 → 16ms · 커넥션 대기 0(아래 `082546Z`) — 60분 뒤 회차는 측정 전 |
+| 2026-10-20 | 만료 흩어짐 · 키마다 한 번 계산 · V22 이미지(`b2ebf3d0`) | **mixed** — `PRODUCTS=1000000 RATE=50 REVIEW_RATE=1`, 앞 줄과 같은 조건 · purge 뒤 100만 다시 적재 · flush-cache 직후 | 100만 | 실패 **0.00%**(5xx 0 · 4xx 0) · 못 보낸 반복 0 · 최대 VU 55 — 임계값 통과 | 전체 **16 / 40ms** · p50 9 · search 13 / 19 · search_deep 13 / 41 · name_search 16 / 26 · home 14 / 22 · product_cold 19 / 26 · review_add 46(p50) / 65 / 95 · max 1.7초 | 앞 회차(`160904Z` — 28 / 60ms · 5xx 13 · 20초 몰림 한 번)보다 고르다. 몰림은 시작 30초뿐 — 캐시를 비우고 막 다시 적재한 DB 라 첫 계산이 차갑다(서버 p95 search 1.0초 · 쥔 시간 62ms, 17:26:16 KST 부터 원래대로), 그 뒤 10분 동안 커넥션 대기 0 · 쥔 시간 3ms(앞 회차 5 ~ 6) · 경로별 서버 p95 6 ~ 14ms. 그 앞의 `081821Z`(exit=107, 요청 19/초)는 끝까지 가지 않은 시도라 뺀다 | — | (60분 뒤 같은 조건 한 번 더 — 시작 무리가 60분 뒤 함께 만료되지 않는지) |
+| 2026-10-20 | `b2ebf3d0` 이미지 | browse **기준** — `PRODUCTS=10000000 RATE=50`(넓히지 않음) · flush-cache 뒤 · 레플리카 3 | **1,000만** | 실패 **5.55%**(5xx 4,307 — 경로를 가리지 않는다: search 857 · search_deep 842 · banners 838 · home 823 · product_cold 772 · name_search 175, 4xx 90 — product_cold) · 못 보낸 반복 35 — 임계값 넘음 | 전체 p50 9 · p95 16 · p99 641 · max 10.0초 · home p99 6.3초 | 실패는 **시작 2분뿐**(18:47:27 ~ 18:49:07 KST, catalog 요청 초당 7 ~ 30): 커넥션 15개(5 × 3) 다 참 · 대기 24 → 80 · **쥔 시간 평균 34.5초** · 받기까지 3.8 ~ 5초 · 서버 p95 search 30초(쿼리 시간 제한) · banners 5.6초 — 캐시 밖 첫 계산이 수십 초씩 걸려 모든 경로가 줄을 섰다. 18:49:17 부터 대기 0 · 서버 p95 7 ~ 20ms(100만과 같은 모양). 의심(**확인 전**): `ops/44 load` 는 끝에 ANALYZE 만 하고 VACUUM 을 하지 않는다 — visibility map 이 비어 V20 · V21 의 개수 세기(인덱스만 읽어야 할 것)가 줄마다 표(8GB)를 다시 읽는다(가장 큰 카테고리 ~130만). 100만에서는 표가 메모리에 들어가 보이지 않았다. 그 앞의 `093132Z`(PRODUCTS=11000000, exit=107)는 넣은 범위(1,000만)와 달라 시작 전 확인이 멈췄다 | — | → 아래 줄(VACUUM 은 이미 돌았다) |
+| 2026-10-20 | `b2ebf3d0` 이미지 | browse 기준 다시 — 앞 줄과 같은 조건(앞 회차 20분 뒤) | 1,000만 | 실패 **0.00%** — 임계값 통과 | 전체 15 / 22ms · p50 9 · home 13 / 18 · search 12 / 16 · search_deep 12 / 16 · name_search 15 / 20 · product_cold 21 / 25 | 시작 구간의 몰림이 없다 — 첫 줄부터 서버 p95 search 6 · home 11ms · 커넥션 대기 0 · 쥔 시간 3 ~ 4ms, 끝까지 100만과 같은 모양. 자동 VACUUM 은 앞 회차 전에 이미 돌았다(09:18 ~ 09:28 UTC, 인덱스만 읽을 수 있는 쪽 product 82% · sku 98% · size 91%) — VACUUM 가설은 아니다. 남은 둘(**확인 전**): (가) 앞 회차는 적재 직후 표 21GB 가 메모리에 없어 첫 계산마다 디스크를 읽었다(이번엔 데워져 있었다) · (나) 이번 회차는 검색 캐시(60분)가 남아 있었다 → **(가) 쪽** — 회차 전에 flush-cache 를 했고(268개) 1초 넘는 쿼리 기록(`log_min_duration_statement = 1s`)이 비었다: 캐시가 비어도 DB 페이지가 메모리에 있으면 1,000만의 첫 계산이 1초 안이다. 운영에서 같은 상황은 DB 재시작 · 노드 재부팅 직후 | — | (확정: DB 재시작 + 노드 파일 캐시 비우기 + flush-cache 뒤 다시 — 그때의 느린 쿼리로 무엇을 데울지) |
 
 **spike 세 회차(2026-10-19) 읽기.** 평소의 10배를 20초 만에 받는 spike 는 이 실습 클러스터에서 HPA 만으로 흡수되지 않는다.
 ① HPA 의 반응(CPU 지표 → 결정 → 파드 기동)이 정점 뒤 ~65초, 최대까지 ~95초 — 3분 정점의 절반이 그 전에 지나간다.
@@ -311,6 +428,6 @@ loadgen 처럼 kubectl 이 없는 기계의 회차는 유입 제한이 "기록 �
 ## 7. 가드
 
 - `LoadK6ScriptTest` — 시나리오의 모든 API 경로를 화면(frontend/src)도 부르고 첫 조각이 게이트웨이 라우트다 · JSON 검사 · 데이터 규모 모드의 id 범위 = ops/44 · 검색어는 생성기 이름에 · 그 변수를 k6 에 넘긴다(숫자만) · 운영 주소 거절 ·
-  비밀번호는 환경 변수로만 · k6 의 종료 코드(임계값 99)를 지킨다 · `limits` 는 운영 클러스터에서 거절.
+  비밀번호는 환경 변수로만 · k6 의 종료 코드(임계값 99)를 지킨다 · `limits` 는 운영 클러스터에서 거절 · contention 은 회차마다 받아진 주문 ≤ 재고를 임계값으로, 재고 부족 400(본문이 \uXXXX 여도)을 실패로 세지 않는다 · `stock` 은 실습 클러스터에서만, 처음 값을 남기고 되돌린다.
 - `RateLimiterPlacementTest` — 기본 제한은 환경 변수로만 바뀌고 로그인 제한은 그대로, 매니페스트에는 그 변수가 없다.
 - `DemoOverlayTest` — 데모 인그레스가 모든 게이트웨이 접두사를 게이트웨이로(https · 검증).

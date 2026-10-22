@@ -148,6 +148,12 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
             include 'ops/28-deploy.sh'
             include 'ops/07-issue-certificates.sh'
             include 'ops/45-multinode.sh'
+            // CatalogGeneratorShapeTest(docs/83 §2.5) · CatalogPlaceholderImageArgTest — 상품 생성기
+            include 'ops/tools/generate-catalog-data.py'
+            include 'ops/44-bulk-catalog.sh'
+            // BulkOrdersScriptTest(docs/83 §2.4) — 주문 이력 적재 · 그 생성기
+            include 'ops/54-bulk-orders.sh'
+            include 'ops/tools/generate-demo-orders.py'
             // ReadmeTestCountTest — README 의 테스트 수 두 표기
             include 'README.md'
             include 'README.ko.md'
@@ -162,6 +168,17 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
 tasks.matching { it.name == 'test' && it.project.name == 'user-service' }.configureEach {
     inputs.file(file("${rootDir}/ops/tools/generate-demo-users.py"))
         .withPropertyName('demoUserGenerator').withPathSensitivity(PathSensitivity.RELATIVE)
+}
+// 주문 이력 · 상품 생성기도 같다 — DemoOrderGeneratorIntegrationTest(docs/83 §2.4) · DemoCatalogSeedIntegrationTest 등이 모듈 밖의
+// 생성기를 돌린다(2026-10-20 실측: 주문 생성기의 변이 확인 둘이 모두 "통과" — 테스트가 다시 돌지 않았다).
+// [JA] 注文履歴 · 商品の生成器も同じ — 入力として宣言しないと変異確認が UP-TO-DATE で「通過」した。
+tasks.matching { it.name == 'test' && it.project.name == 'order-service' }.configureEach {
+    inputs.file(file("${rootDir}/ops/tools/generate-demo-orders.py"))
+        .withPropertyName('demoOrderGenerator').withPathSensitivity(PathSensitivity.RELATIVE)
+}
+tasks.matching { it.name == 'test' && it.project.name == 'catalog-service' }.configureEach {
+    inputs.file(file("${rootDir}/ops/tools/generate-catalog-data.py"))
+        .withPropertyName('catalogGenerator').withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 tasks.named('test') {

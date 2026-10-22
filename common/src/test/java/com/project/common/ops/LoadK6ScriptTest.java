@@ -302,6 +302,238 @@ class LoadK6ScriptTest {
                 .as("끄는 이름이 실제 설정과 같다(REVIEW_REQUIRE_PURCHASE → review.require-purchase)").contains("${review.require-purchase:true}");
     }
 
+    @Test
+    @DisplayName("🔴 contention — 모든 VU 가 같은 순간에 주문하고 함께 취소한다 · 받아진 주문 ≤ 재고(회차마다) · 재고 부족 400 은 실패가 아니다")
+    void contentionBuysTheSameSkuAtOnce() throws Exception {
+        String c = read(repoRoot().resolve("ops/k6/contention.js"));
+        assertThat(c).as("계정 하나 = VU 하나, 회차마다 한 번").contains("executor: 'per-vu-iterations'").contains("iterations: ROUNDS")
+                .as("초과 판매는 임계값").contains("perRound[`contention_accepted{round:${r}}`] = [`count<=${STOCK}`]")
+                .contains("contention_refused: ['count<1']").contains("contention_errors: ['count<1']")
+                .as("재고 부족 거절은 http_req_failed 에 넣지 않는다").contains("http.expectedStatuses(200, 400)")
+                .as("준비는 회차 전, 몰리는 것은 주문부터").containsSubsequence("'cart_save'", "waitUntil(w.start)", "'order_create'",
+                        "'bank_transfer_start'", "waitUntil(w.release)", "'bank_transfer_cancel'", "'cart_remove'")
+                .as("해제 뒤에 받아진 것은 늦음 — 남이 돌려준 재고").contains("(Date.now() <= w.release ? accepted : late)")
+                .as("재고는 stock set 이 맞춘다").contains("./ops/53-load-k6.sh stock set");
+        assertThat(read(repoRoot().resolve("order-service/src/main/java/com/project/order_service/service/OrderService.java")))
+                .as("재고 부족 문구가 분류의 근거와 같다").contains("\"재고가 부족해 주문하지 못했습니다: \"");
+
+        if (hasNode()) {
+            assertThat(node("contention-plan", """
+                    const a = s.roundWindow(1000, 0, 20, 10), b = s.roundWindow(1000, 2, 20, 10);
+                    console.log([a.start, a.release, b.start, b.release].join(','));
+                    console.log([s.classify(200, ''), s.classify(400, '{"message":"재고가 부족해 주문하지 못했습니다: 셔츠(M) 남은 수량 0개"}'),
+                      s.classify(400, '{"message":"입금 대기 주문이 너무 많습니다"}'), s.classify(503, ''), s.classify(0, null),
+                      s.classify(400, JSON.stringify({ message: '재고가 부족해' }).replace(/[\\u0080-\\uffff]/g,
+                        (ch) => '\\\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0')))].join(','));
+                    console.log(JSON.stringify([s.verdict(20, 23), s.verdict(20, 17), s.verdict(20, 20)]));
+                    """)).isEqualTo("""
+                    1000,21000,61000,81000
+                    ok,short,refused,error,error,short
+                    [{"oversold":3,"unsold":0},{"oversold":0,"unsold":3},{"oversold":0,"unsold":0}]""");
+        }
+
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(Map.of("GATEWAY", "https://shop.lab", "CONTENTION_PRODUCT", "1000123", "STOCK", "20", "ROUNDS", "2", "USERS", "50"), "contention");
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(read(tmp.resolve("k6.args"))).contains("CONTENTION_PRODUCT=1000123").contains("STOCK=20").contains("ROUNDS=2")
+                .contains("contention.js");
+        assertThat(read(tmp.resolve("k6.env"))).as("로그인한다 — 데모 비밀번호는 환경 변수로").contains("DEMO_PASSWORD=S3cret-demo-pw!9");
+        Run bad = run(Map.of("GATEWAY", "https://shop.lab", "CONTENTION_PRODUCT", "1;drop", "STOCK", "20"), "contention");
+        assertThat(bad.code()).isNotZero();
+        assertThat(bad.out()).contains("CONTENTION_PRODUCT 는 숫자");
+    }
+
+    @Test
+    @DisplayName("🔴 report — 재고 경합 회차는 회차마다 받아진 주문을 재고와 견준다(초과 판매 · 덜 팔림)")
+    void reportComparesAcceptedWithStock() throws Exception {
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Path run1 = Files.createDirectories(tmp.resolve("results").resolve("contention-20261020T100000Z"));
+        Files.writeString(run1.resolve("meta.txt"), """
+                scenario=contention
+                git=cccc3333
+                users=50 id_offset=0 rate=default stages=default duration=default
+                contention_product=1000123 stock=20 rounds=3 hold_seconds=20
+                exit=99
+                """);
+        Files.writeString(run1.resolve("summary.json"), """
+                {"metrics":{"http_reqs":{"count":900,"rate":10},"http_req_failed":{"value":0},
+                "contention_accepted{round:0}":{"count":20},"contention_accepted{round:1}":{"count":23},"contention_accepted{round:2}":{"count":18},
+                "contention_short_create{round:0}":{"count":30},"contention_short_create{round:1}":{"count":27},
+                "contention_late{round:2}":{"count":1},"contention_short_start":{"count":2},"contention_refused":{"count":0}}}
+                """);
+        Run rep = run(Map.of(), "report");
+        assertThat(rep.code()).as(rep.out()).isZero();
+        assertThat(rep.out()).contains("재고 경합: 상품 1000123 · 재고 20 · 사용자 50 · 회차 3")
+                .contains("회차 0: 받아짐 20 = 재고 · 재고 부족 거절 30 · 늦음 0")
+                .contains("회차 1: 받아짐 23 ← 초과 판매 3 · 재고 부족 거절 27")
+                .contains("회차 2: 받아짐 18 (덜 팔림 2) · 재고 부족 거절 0 · 늦음 1")
+                .contains("입금 안내에서의 재고 부족 2").contains("order_stock_hold_total");
+    }
+
+    @Test
+    @DisplayName("🔴 stock set · restore — 실습 클러스터에서만, SKU 하나인 상품의 수량을 맞추고 처음 값을 남겼다가 되돌린다")
+    void stockOnlyOnLabClusterAndRestorable() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path dir = tmp.resolve("stock");
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com", "STOCK_DIR", dir.toString()), "stock", "set", "20");
+        assertThat(prod.code()).isNotZero();
+        assertThat(prod.out()).contains("운영 클러스터다");
+        assertThat(tmp.resolve("kubectl.log")).satisfies(p -> assertThat(Files.exists(p) ? read(p) : "").doesNotContain("UPDATE"));
+
+        Run set = run(Map.of("STOCK_DIR", dir.toString()), "stock", "set", "20");
+        assertThat(set.code()).as(set.out()).isZero();
+        String log = read(tmp.resolve("kubectl.log"));
+        assertThat(log).as("상품을 고르지 않으면 SKU 하나인 것").contains("HAVING count(*) = 1")
+                .contains("UPDATE product.product_size s SET quantity = 20").contains("k.product_id = 1000123")
+                .doesNotContain("UPDATE product.stock_reservation");
+        assertThat(read(dir.resolve("1000123.saved"))).isEqualTo("11=7\n12=3\n");
+        assertThat(set.out()).contains("CONTENTION_PRODUCT=1000123 STOCK=20 USERS=50 ./ops/53-load-k6.sh contention")
+                .contains("stock restore 1000123");
+
+        Run held = run(Map.of("STOCK_DIR", dir.toString(), "FAKE_HELD", "3"), "stock", "set", "15", "1000123");
+        assertThat(held.out()).contains("살아 있는 예약이 3개");
+        assertThat(read(dir.resolve("1000123.saved"))).as("두 번 set 해도 처음 값").isEqualTo("11=7\n12=3\n");
+        Run release = run(Map.of("STOCK_DIR", dir.toString(), "FAKE_HELD", "3", "RELEASE_HELD", "1"), "stock", "set", "15", "1000123");
+        assertThat(release.code()).as(release.out()).isZero();
+        assertThat(read(tmp.resolve("kubectl.log"))).contains("UPDATE product.stock_reservation SET status = 'RELEASED'");
+
+        Run two = run(Map.of("STOCK_DIR", dir.toString(), "FAKE_SKUS", "2"), "stock", "set", "20", "1000999");
+        assertThat(two.code()).isNotZero();
+        assertThat(two.out()).contains("SKU 가 2개");
+        Run inject = run(Map.of("STOCK_DIR", dir.toString()), "stock", "set", "20", "1;drop table x");
+        assertThat(inject.code()).isNotZero();
+        assertThat(inject.out()).contains("상품 id 는 숫자");
+
+        Run back = run(Map.of("STOCK_DIR", dir.toString()), "stock", "restore", "1000123");
+        assertThat(back.code()).as(back.out()).isZero();
+        assertThat(read(tmp.resolve("kubectl.log"))).contains("SET quantity = 7 WHERE size_id = 11").contains("SET quantity = 3 WHERE size_id = 12");
+        assertThat(dir.resolve("1000123.saved")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("🔴 손님 IP 흉내 — VU 마다 CF-Connecting-IP(198.18.0.0/15) · 모든 요청 머리가 그것을 거친다 · 흉내 중에는 제한 확인을 건너뛴다")
+    void clientIpsReachEveryRequest() throws Exception {
+        String lib = read(repoRoot().resolve("ops/k6/lib.js"));
+        assertThat(lib).contains("export function baseHeaders()").contains("'CF-Connecting-IP': ip")
+                .as("흉내 중에는 기본 제한을 그대로 재는 것이 목적").contains("|| CLIENT_IPS > 0) {");
+        // BASE_HEADERS 를 직접 쓰는 줄은 정의 · baseHeaders() 본문 · 제한 확인(limit_probe)뿐 — 나머지 요청은 baseHeaders() 를 거친다
+        try (Stream<Path> files = Files.list(repoRoot().resolve("ops/k6"))) {
+            for (Path f : files.filter(x -> x.toString().endsWith(".js")).toList()) {
+                for (String line : read(f).split("\n")) {
+                    if (line.contains("BASE_HEADERS") && !line.contains("export const BASE_HEADERS = {")) {
+                        assertThat(line).as(f.getFileName() + " — 손님 IP 를 잃는다: " + line.trim())
+                                .containsAnyOf("limit_probe", "'CF-Connecting-IP': ip");
+                    }
+                }
+            }
+        }
+        assertThat(read(repoRoot().resolve("gateway-server/src/main/java/com/project/gatewayserver/resolver/CustomUserKeyResolver.java")))
+                .as("게이트웨이의 키가 이 머리를 읽는다").contains("\"CF-Connecting-IP\"");
+        if (hasNode()) {
+            assertThat(node("clients", """
+                    console.log([s.clientIp(1, 100), s.clientIp(100, 100), s.clientIp(101, 100), s.clientIp(258, 1000),
+                      s.clientIp(1, 100, 100), s.clientIp(5, 0)].join(','));
+                    console.log(JSON.stringify([s.splitPart('1/2'), s.splitPart('2/2'), s.splitPart('3/2'), s.splitPart('1/17'),
+                      s.splitPart('0/2'), s.splitPart('1;2')]));
+                    """)).isEqualTo("""
+                    198.18.0.0,198.18.0.99,198.18.0.0,198.18.1.1,198.18.0.100,
+                    [{"part":1,"of":2},{"part":2,"of":2},null,null,null,null]""");
+        }
+    }
+
+    @Test
+    @DisplayName("🔴 SPLIT=i/n — VM 마다 RATE/n · 계정과 손님 IP 를 겹치지 않게 · START_AT 까지 기다렸다 시작 · 잘못된 값은 k6 전에 거절")
+    void splitAcrossLoadVms() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(Map.of("GATEWAY", "https://shop.lab", "RATE", "100", "USERS", "50", "SPLIT", "2/2", "CLIENT_IPS", "200"), "browse");
+        assertThat(r.code()).as(r.out()).isZero();
+        String args = read(tmp.resolve("k6.args"));
+        assertThat(args).contains("RATE=50").contains("ID_OFFSET=50").contains("CLIENT_IPS=200").contains("CLIENT_IP_OFFSET=200")
+                .contains("SPLIT=2/2");
+        Run rep = run(Map.of(), "report");
+        assertThat(rep.out()).contains("부하 VM 나눔: 2/2 — 전체 도착률 100 중 이 VM 50").contains("손님 IP 흉내: 200개");
+
+        for (Map<String, String> bad : List.of(Map.of("SPLIT", "3/2", "RATE", "100"), Map.of("SPLIT", "1/2"),
+                Map.of("SPLIT", "1/3", "RATE", "100"), Map.of("SPLIT", "1/2", "RATE", "100", "STAGES", "1m:50"),
+                Map.of("CLIENT_IPS", "70000"), Map.of("START_AT", "2020-01-01T00:00:00Z"))) {
+            java.util.HashMap<String, String> env = new java.util.HashMap<>(bad);
+            env.put("GATEWAY", "https://shop.lab");
+            Files.deleteIfExists(tmp.resolve("k6.args"));
+            Run b = run(env, "browse");
+            assertThat(b.code()).as(bad.toString()).isNotZero();
+            assertThat(tmp.resolve("k6.args")).as("k6 를 부르기 전에 " + bad).doesNotExist();
+        }
+
+        String at = java.time.Instant.now().plusSeconds(3).truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString();
+        long t0 = System.nanoTime();
+        Run wait = run(Map.of("GATEWAY", "https://shop.lab", "START_AT", at), "browse");
+        assertThat(wait.code()).as(wait.out()).isZero();
+        assertThat(wait.out()).contains("START_AT " + at + " 까지 기다린다");
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0)).as("시작 시각까지 기다렸다").isGreaterThanOrEqualTo(1500);
+    }
+
+    @Test
+    @DisplayName("🔴 report merge — 횟수는 더하고 실패율은 요청 수로 가중, 백분위는 VM 중 가장 나쁜 값(합칠 수 없다고 적는다)")
+    void reportMergesSplitRuns() throws Exception {
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Path results = tmp.resolve("results");
+        String[][] vms = { { "browse-20261020T110000Z", "1/2", "1000", "0.01", "40", "90" }, { "browse-20261020T110001Z", "2/2", "3000", "0.03", "55", "120" } };
+        for (String[] v : vms) {
+            Path d = Files.createDirectories(results.resolve(v[0]));
+            Files.writeString(d.resolve("meta.txt"), "scenario=browse\ngit=dddd4444\nusers=50 id_offset=0 rate=50 stages=default duration=default\n"
+                    + "split=" + v[1] + " total_rate=100 start_at=2026-10-20T11:00:00Z\nexit=0\n");
+            Files.writeString(d.resolve("summary.json"), "{\"metrics\":{\"http_reqs\":{\"count\":" + v[2] + ",\"rate\":10},"
+                    + "\"http_req_failed\":{\"value\":" + v[3] + "},\"errors_5xx\":{\"count\":7},"
+                    + "\"http_req_duration\":{\"p(95)\":" + v[4] + ",\"p(99)\":" + v[5] + "}}}");
+        }
+        Run m = run(Map.of(), "report", "merge", vms[0][0], vms[1][0]);
+        assertThat(m.code()).as(m.out()).isZero();
+        assertThat(m.out()).contains("합계: 요청 4,000 (초당 20.0").as("(10 + 90) / 4000").contains("실패 2.50%").contains("5xx 14")
+                .contains("가장 나쁜 값 — 백분위는 요약에서 합칠 수 없다): 55 · 120ms").doesNotContain("겹치거나 없다");
+        Run one = run(Map.of(), "report", "merge", vms[0][0]);
+        assertThat(one.code()).isNotZero();
+        assertThat(one.out()).contains("둘 이상");
+    }
+
+    @Test
+    @DisplayName("🔴 search es · default — 실습 클러스터에서만, ConfigMap 은 그대로 · 되돌릴 때 플래그 파일 경로를 매니페스트 값으로 · ES 가 없으면 거절")
+    void searchSwitchOnlyOnLabCluster() throws Exception {
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com"), "search", "es");
+        assertThat(prod.code()).isNotZero();
+        assertThat(prod.out()).contains("운영 클러스터다");
+        assertThat(tmp.resolve("kubectl.log")).satisfies(p -> assertThat(Files.exists(p) ? read(p) : "").doesNotContain("set env"));
+
+        Run noEs = run(Map.of("FAKE_ES_READY", ""), "search", "es");
+        assertThat(noEs.code()).isNotZero();
+        assertThat(noEs.out()).contains("Elasticsearch 가 떠 있지 않다");
+        assertThat(read(tmp.resolve("kubectl.log"))).doesNotContain("set env");
+
+        Run es = run(Map.of(), "search", "es");
+        assertThat(es.code()).as(es.out()).isZero();
+        assertThat(read(tmp.resolve("kubectl.log"))).contains("set env deploy/catalog-service SEARCH_ENGINE=es FEATURE_FLAGS_FILE=")
+                .contains("rollout status deploy/catalog-service").doesNotContain("patch configmap");
+        assertThat(es.out()).as("색인이 비었으면 알린다").contains("색인(product-alias)이 비었다");
+        Run counted = run(Map.of("FAKE_ES_COUNT", "10000000"), "search", "es");
+        assertThat(counted.out()).contains("색인 문서 수: 10000000");
+
+        Run back = run(Map.of(), "search", "default");
+        assertThat(back.code()).as(back.out()).isZero();
+        String manifest = read(repoRoot().resolve("k8s/41-catalog-service.yaml"));
+        Matcher flagsFile = Pattern.compile("name: FEATURE_FLAGS_FILE\\s+value: \"([^\"]+)\"").matcher(manifest);
+        assertThat(flagsFile.find()).isTrue();
+        assertThat(read(tmp.resolve("kubectl.log"))).as("지우지 않고 매니페스트 값으로 — 지우면 플래그가 영영 꺼진다")
+                .contains("SEARCH_ENGINE- FEATURE_FLAGS_FILE=" + flagsFile.group(1));
+        assertThat(manifest).as("SEARCH_ENGINE 은 ConfigMap 에서만 — 지우면 그 값으로 돌아간다").doesNotContain("name: SEARCH_ENGINE");
+        assertThat(read(repoRoot().resolve("k8s/10-configmap.yaml"))).contains("SEARCH_ENGINE:");
+
+        Run label = run(Map.of("GATEWAY", "https://shop.lab", "ENGINE", "es"), "browse");
+        assertThat(label.code()).as(label.out()).isZero();
+        assertThat(run(Map.of(), "report").out()).contains("검색 엔진: es");
+        Run bad = run(Map.of("GATEWAY", "https://shop.lab", "ENGINE", "es; rm"), "browse");
+        assertThat(bad.code()).isNotZero();
+    }
+
     // ── ② 실행기 ──────────────────────────────────────────────────────────
 
     private record Run(int code, String out) {}
@@ -328,6 +560,13 @@ class LoadK6ScriptTest {
         exe(bin.resolve("kubectl"), """
                 echo "kubectl $*" >> "$FAKE/kubectl.log"
                 case "$*" in
+                  *"HAVING count(*) = 1"*) printf '1000123' ;;
+                  *"get deploy elasticsearch"*) printf '%s' "${FAKE_ES_READY-1}" ;;
+                  *"product-alias/_count"*) printf '{"count":%s}' "${FAKE_ES_COUNT:-0}" ;;
+                  *"count(*) FROM product.product_sku WHERE product_id"*) printf '%s' "${FAKE_SKUS:-1}" ;;
+                  *"s.size_id || '=' || s.quantity"*) printf '11=7\n12=3\n' ;;
+                  *"coalesce(sum(qty), 0)"*) printf '%s' "${FAKE_HELD:-0}" ;;
+                  *"'size ' || s.size_id"*) printf 'size 11 (S) 수량 20 · 예약 0\n' ;;
                   *"get configmap ecommerce-config"*) printf '%s' "${FAKE_URL-https://shop.lab}" ;;
                   *"get pods -l app=gateway-server"*) printf '%s' "${FAKE_GW_PODS-gw-a
                 gw-b

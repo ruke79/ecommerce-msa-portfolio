@@ -13,6 +13,16 @@
 #   ./ops/53-load-k6.sh spike                  # 조회를 짧게 몰아 HPA 가 늘어나는 동안의 오류를 본다
 #   ./ops/53-load-k6.sh smoke                  # 조회 · 주문을 한 번씩 — 본 측정 전에 경로 · 계정 · 데이터 · 인증서 확인
 #   ./ops/53-load-k6.sh mixed                  # browse + 로그인 사용자의 리뷰 쓰기(초당 REVIEW_RATE) — 리뷰마다 catalog 의 별점 갱신(docs/83 §2.2)
+#   ./ops/53-load-k6.sh contention             # 재고 경합: USERS 명이 재고 STOCK 개인 한 상품을 같은 순간에 주문 — 받아진 주문 ≤ STOCK(docs/83 §2.3)
+#
+#   ./ops/53-load-k6.sh stock set <수> [상품 id]   # 경합할 상품의 재고를 맞춘다(없으면 SKU 하나인 상품을 고른다) — 실습 클러스터만,
+#                                              # 원래 수량을 ~/.ecommerce-msa/stock/ 에 남기고 contention 의 실행 줄을 알려 준다
+#   ./ops/53-load-k6.sh stock show <상품 id>    # 사이즈마다 수량 · 살아 있는 예약
+#   ./ops/53-load-k6.sh stock restore <상품 id> # 원래 수량으로 되돌린다. 측정이 끝나면 꼭
+#
+#   ./ops/53-load-k6.sh search es              # 이름 검색을 Elasticsearch 로 100%(catalog 재시작) — 실습 클러스터만, ES 색인 문서 수를 센다
+#   ./ops/53-load-k6.sh search default         # 되돌린다(SEARCH_ENGINE = ConfigMap 값, 플래그 파일 다시). 측정이 끝나면 꼭
+#   ./ops/53-load-k6.sh search status          # 지금 엔진 · ES 상태 · 색인 문서 수
 #
 #   ./ops/53-load-k6.sh reviews open           # 리뷰의 '받은 상품만' 확인을 잠깐 끈다(user-service 재시작) — 실습 클러스터만, mixed 앞에
 #   ./ops/53-load-k6.sh reviews default        # 되돌린다(받은 상품만). 측정이 끝나면 꼭
@@ -39,6 +49,7 @@
 #   ./ops/53-load-k6.sh report                 # 결과 모아 보기: 모든 회차 한 줄씩 + 가장 최근 회차의 요약
 #   ./ops/53-load-k6.sh report <폴더|이름>...   # 그 회차들의 요약(엔드포인트별 응답 시간 · 실패율 · 조건)
 #   ./ops/53-load-k6.sh report all             # 모든 회차의 요약
+#   ./ops/53-load-k6.sh report merge <폴더>…    # 부하 VM 여러 대(SPLIT)의 같은 회차를 합쳐 본다(다른 VM 의 폴더를 이 기계로 복사해 와서)
 #
 #   RATE=200 ./ops/53-load-k6.sh browse        # 최고 도착률(초당 반복) 바꾸기
 #   STAGES="1m:50,3m:50,1m:0" ./ops/53-load-k6.sh order   # 단계를 직접(길이:목표 도착률, 쉼표로)
@@ -54,6 +65,11 @@
 #   PRODUCTS  PRODUCT_ID_OFFSET=1000000  DEEP_PAGES=50  NAME_SEARCH=0.2   # browse · spike 의 데이터 규모 모드(docs/83 §2.1)
 #   SPREAD=1  NAME_PAGES=50  FILTER_SEARCH=0   # 데이터 규모 모드에서 검색 조합을 넓혀 캐시 밖을 잰다(깊은 쪽 기본 1000) · 필터 검색 비율
 #   REVIEW_RATE=1                   # mixed 의 리뷰 쓰기(초당) — 계정은 USERS · ID_OFFSET 에서(리뷰 VU 수만큼 로그인)
+#   CONTENTION_PRODUCT  STOCK  ROUNDS=3  HOLD_SECONDS=20  ROUND_GAP_SECONDS=10   # contention(stock set 이 알려 준다, USERS 기본 50)
+#   RELEASE_HELD=1                  # stock set 이 그 상품의 살아 있는 예약도 푼다(중간에 끊긴 회차의 입금 대기)
+#   CLIENT_IPS=0                    # 손님 IP 흉내(docs/83 §2.6): VU 마다 CF-Connecting-IP(198.18.0.0/15) — 유입 제한이 손님마다(limits load 없이)
+#   ENGINE=es                       # 회차 기록에 검색 엔진을 적는다(부하 VM 에는 kubectl 이 없다 — search es 를 했으면)
+#   SPLIT=i/n  START_AT=<UTC 시각>   # 부하 VM n 대 중 i 번째: RATE(전체)를 n 으로 나누고 계정 · 손님 IP 를 겹치지 않게, START_AT 에 함께 시작
 #   OUT=./load-results              # 결과 폴더 — <시나리오>-<UTC 시각>/ 아래 summary.json · summary.txt · meta.txt
 #   PROM_RW=http://<obs-vm>:9090/api/v1/write   # 주면 k6 지표를 Prometheus 로도(그라파나에서 서버 지표와 같은 시간축)
 #   PROM=http://<obs-vm>:9090  PROM_ENV=demo     # 레플리카(시작 · 측정 중 최대 · 끝)를 Prometheus 에서 읽어 meta.txt 에(없으면 PROM_RW 에서)
@@ -80,11 +96,11 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { sed -n '2,65p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,81p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|mixed|limits|pool|replicas|reviews|logs|report) ;;
+    browse|order|spike|smoke|mixed|contention|limits|pool|replicas|reviews|stock|search|logs|report) ;;
     *) usage ;;
 esac
 
@@ -213,6 +229,152 @@ cmd_reviews() {
 }
 if [ "$SCENARIO" = "reviews" ]; then
     cmd_reviews "$@"
+    exit 0
+fi
+
+# ── 경합할 상품의 재고 — 측정하는 동안만 ──────────────────────────────────
+#
+# contention 은 재고가 작은 상품 하나에 손님을 몰아야 뜻이 있다(재고 100 에 손님 50 이면 경합이 아니다). 그 상품의 SKU 하나 · 모든 사이즈의
+# 수량을 <수> 로 맞추고 원래 값을 운영자 기계(0700)에 남긴다 — stock restore 가 되돌린다. 운영 클러스터는 거절한다.
+# 남은 수 = 수량 − 살아 있는 예약(docs/59) — 앞 회차가 중간에 끊겨 입금 대기가 남았으면 그만큼 적다(RELEASE_HELD=1 로 푼다).
+# [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
+PG_NS="${PG_NS:-postgres}"
+PG_DEPLOY="${PG_DEPLOY:-postgres}"
+PG_USER="${PG_USER:-product}"
+PG_DB="${PG_DB:-productdb}"
+STOCK_DIR="${STOCK_DIR:-$HOME/.ecommerce-msa/stock}"
+pg() {   # pg <SQL> — 값만(머리말 없이)
+    kubectl -n "$PG_NS" exec -i "deploy/$PG_DEPLOY" -- psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 -tA -c "$1"
+}
+stock_show() {   # stock_show <상품 id>
+    pg "SELECT 'size ' || s.size_id || ' (' || coalesce(nullif(s.size, ''), '-') || ') 수량 ' || s.quantity
+          || ' · 예약 ' || coalesce((SELECT sum(r.qty) FROM product.stock_reservation r WHERE r.product_id = k.product_id
+               AND r.color_id = k.color_id AND r.size = s.size AND r.status = 'HELD' AND r.expires_at > now()), 0)
+          FROM product.product_size s JOIN product.product_sku k ON k.skuproduct_id = s.skuproduct_id
+         WHERE k.product_id = $1 ORDER BY s.size_id"
+}
+cmd_stock() {
+    lab_cluster_or_die "재고"
+    local n pid skus held saved
+    case "${2:-}" in
+        set)
+            n="${3:-}"; pid="${4:-}"
+            [[ "$n" =~ ^[1-9][0-9]{0,3}$ ]] || die "수는 1 ~ 9999"
+            if [ -z "$pid" ]; then
+                pid="$(pg "SELECT p.product_id FROM product.product p JOIN product.product_sku k ON k.product_id = p.product_id
+                            WHERE p.status = 'ACTIVE' GROUP BY p.product_id HAVING count(*) = 1 ORDER BY p.product_id LIMIT 1")"
+                [ -n "$pid" ] || die "SKU 하나인 상품이 없다 — 상품 id 를 직접"
+            fi
+            [[ "$pid" =~ ^[1-9][0-9]*$ ]] || die "상품 id 는 숫자"
+            skus="$(pg "SELECT count(*) FROM product.product_sku WHERE product_id = $pid")"
+            [ "$skus" = "1" ] || die "상품 $pid 의 SKU 가 ${skus:-0}개 — 하나인 상품만(담기 · 장바구니가 같은 SKU 를 고르는 것이 확실하다)"
+            mkdir -p "$STOCK_DIR"; chmod 700 "$STOCK_DIR"
+            saved="$STOCK_DIR/$pid.saved"
+            if [ ! -f "$saved" ]; then   # 두 번 set 해도 처음 값을 지킨다
+                pg "SELECT s.size_id || '=' || s.quantity FROM product.product_size s
+                      JOIN product.product_sku k ON k.skuproduct_id = s.skuproduct_id WHERE k.product_id = $pid" > "$saved"
+            fi
+            pg "UPDATE product.product_size s SET quantity = $n FROM product.product_sku k
+                 WHERE s.skuproduct_id = k.skuproduct_id AND k.product_id = $pid" >/dev/null
+            held="$(pg "SELECT coalesce(sum(qty), 0) FROM product.stock_reservation
+                         WHERE product_id = $pid AND status = 'HELD' AND expires_at > now()")"
+            if [ "${held:-0}" != "0" ]; then
+                if [ "${RELEASE_HELD:-0}" = "1" ]; then
+                    pg "UPDATE product.stock_reservation SET status = 'RELEASED', updated_at = now()
+                         WHERE product_id = $pid AND status = 'HELD'" >/dev/null
+                    info "살아 있는 예약 ${held}개를 풀었다(RELEASE_HELD=1)"
+                else
+                    warn "살아 있는 예약이 ${held}개 — 남은 수는 $n − $held. 풀려면 RELEASE_HELD=1 로 다시"
+                fi
+            fi
+            "$HERE/44-bulk-catalog.sh" flush-cache >/dev/null 2>&1 || warn "캐시를 비우지 못했다 — ./ops/44-bulk-catalog.sh flush-cache"
+            info "상품 $pid 의 재고 → $n (원래 값: $saved)"
+            stock_show "$pid"
+            echo
+            echo "  부하 VM 에서:  CONTENTION_PRODUCT=$pid STOCK=$n USERS=50 ./ops/53-load-k6.sh contention"
+            echo "  끝나면:        ./ops/53-load-k6.sh stock restore $pid"
+            ;;
+        show)
+            pid="${3:-}"; [[ "$pid" =~ ^[1-9][0-9]*$ ]] || die "상품 id 는 숫자"
+            stock_show "$pid"
+            ;;
+        restore)
+            pid="${3:-}"; [[ "$pid" =~ ^[1-9][0-9]*$ ]] || die "상품 id 는 숫자"
+            saved="$STOCK_DIR/$pid.saved"
+            [ -f "$saved" ] || die "$saved 가 없다 — stock set 을 하지 않았거나 이미 되돌렸다"
+            local kv sid q
+            while IFS= read -r kv; do
+                sid="${kv%%=*}"; q="${kv#*=}"
+                [[ "$sid" =~ ^[0-9]+$ && "$q" =~ ^-?[0-9]+$ ]] || die "$saved 의 줄이 이상하다: $kv"
+                pg "UPDATE product.product_size SET quantity = $q WHERE size_id = $sid" >/dev/null
+            done < "$saved"
+            rm -f "$saved"
+            "$HERE/44-bulk-catalog.sh" flush-cache >/dev/null 2>&1 || warn "캐시를 비우지 못했다 — ./ops/44-bulk-catalog.sh flush-cache"
+            info "상품 $pid 의 재고를 되돌렸다"
+            stock_show "$pid"
+            ;;
+        *) usage ;;
+    esac
+}
+if [ "$SCENARIO" = "stock" ]; then
+    cmd_stock "$@"
+    exit 0
+fi
+
+# ── 검색 엔진 — 측정하는 동안만 ──────────────────────────────────────────
+#
+# 엔진은 둘이 정한다(SearchEngineSelector, docs/74): search.engine=es(ES 가 이 배포에 있는가 — SEARCH_ENGINE, ConfigMap)와
+# 플래그 catalog.search-engine(있다면 검색어마다 ES 로 보낼 비율 — k8s/15 는 0%). 측정하는 동안만 catalog 에 SEARCH_ENGINE=es 를 주고
+# 플래그 파일을 끈다(FEATURE_FLAGS_FILE 을 비우면 코드의 기본값 = ES 가 있으면 ES) — ConfigMap 은 건드리지 않는다(ops/28 --config-only 규칙).
+# 되돌릴 때 FEATURE_FLAGS_FILE 은 지우지 않고 매니페스트 값(k8s/41)으로 다시 쓴다 — 매니페스트에 직접 적힌 값이라 지우면 플래그가 영영 꺼진다.
+# ES 는 검색어가 있는 검색(name_search)에만 쓰인다 — 카테고리 목록 · 필터는 늘 PostgreSQL 이다. 운영 클러스터는 거절한다.
+# [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
+ES_NS="${ES_NS:-elasticsearch}"
+FLAGS_FILE_DEFAULT="/app/flags/flags.json"   # k8s/41-catalog-service.yaml 의 FEATURE_FLAGS_FILE(가드 LoadK6ScriptTest)
+es_count() {   # 별칭 product-alias 의 문서 수(없으면 빈 값) — ES 파드 안의 curl(데모는 보안을 끈 단일 노드, k8s/90)
+    kubectl -n "$ES_NS" exec deploy/elasticsearch -- curl -s --max-time 10 "http://localhost:9200/product-alias/_count" 2>/dev/null \
+        | python3 -I -c 'import json, sys
+try:
+    print(json.load(sys.stdin).get("count", ""))
+except Exception:
+    print("")' 2>/dev/null || true
+}
+es_ready() {
+    kubectl -n "$ES_NS" get deploy elasticsearch -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true
+}
+cmd_search() {
+    lab_cluster_or_die "검색 엔진"
+    local ready count
+    case "${2:-status}" in
+        es)
+            ready="$(es_ready)"
+            [ "${ready:-0}" -ge 1 ] 2>/dev/null || die "Elasticsearch 가 떠 있지 않다($ES_NS/elasticsearch ready=${ready:-0}) — 데모 인프라의 ES(k8s/90 · 데모 인프라의 ES 덧씌우기)부터"
+            info "이름 검색 → Elasticsearch 100%(catalog 재시작) — 끝나면 ./ops/53-load-k6.sh search default"
+            kubectl -n "$APP_NS" set env deploy/catalog-service SEARCH_ENGINE=es FEATURE_FLAGS_FILE= >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/catalog-service --timeout=600s
+            count="$(es_count)"
+            if [ -z "$count" ] || [ "$count" = "0" ]; then
+                warn "색인(product-alias)이 비었다 — 관리자 계정으로 POST /catalog-service/api/products/sync 를 한 번(docs/13 §3, ops/03 의 1 ~ 4단계 · RUN_K8S_PATCH 는 쓰지 않는다). 비어 있으면 ES 검색이 0건이다"
+            else
+                info "색인 문서 수: $count — 상품 수와 견준다(PRODUCTS=… ./ops/44-bulk-catalog.sh status)"
+            fi
+            echo "  부하 VM 에서: ENGINE=es NAME_SEARCH=0.5 PRODUCTS=… ./ops/53-load-k6.sh browse   (ES 는 검색어가 있는 검색만)"
+            ;;
+        default)
+            info "검색 엔진 → 기본값(SEARCH_ENGINE = ConfigMap, 플래그 파일 $FLAGS_FILE_DEFAULT)"
+            kubectl -n "$APP_NS" set env deploy/catalog-service SEARCH_ENGINE- FEATURE_FLAGS_FILE="$FLAGS_FILE_DEFAULT" >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/catalog-service --timeout=600s
+            ;;
+        status)
+            kubectl -n "$APP_NS" get deploy catalog-service -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+                | grep -E '^(SEARCH_ENGINE|FEATURE_FLAGS_FILE)=' || true
+            echo "elasticsearch ready=$(es_ready) · 색인 문서 수=$(es_count)"
+            ;;
+        *) usage ;;
+    esac
+}
+if [ "$SCENARIO" = "search" ]; then
+    cmd_search "$@"
     exit 0
 fi
 
@@ -534,6 +696,15 @@ def detail(d):
           f" · 상품 {m.get('products', '?')} · 임계값 {verdict(m)}")
     if "review_rate" in m:
         print(f"  리뷰 쓰기: 초당 {m['review_rate']} — 리뷰마다 catalog 의 별점 갱신(updateRating — 그 상품의 캐시만)")
+    if "contention_product" in m:
+        contention(m, summary(d))
+    if m.get("engine"):
+        print(f"  검색 엔진: {m['engine']}(ENGINE 으로 적음 — 이름 검색만 이 엔진, 카테고리 목록 · 필터는 PostgreSQL)")
+    if m.get("client_ips"):
+        print(f"  손님 IP 흉내: {m['client_ips']}개(CF-Connecting-IP 198.18.0.0/15, 시작 번호 {m.get('client_ip_offset', '0')}) — 유입 제한은 손님마다")
+    if m.get("split"):
+        print(f"  부하 VM 나눔: {m['split']} — 전체 도착률 {m.get('total_rate', '?')} 중 이 VM {m.get('rate', '?')}"
+              + (f" · 시작 {m['start_at']}" if m.get("start_at") else "") + " (report merge 로 합친다)")
     if m.get("spread") == "1" or m.get("filter_search", "0") not in ("0", ""):
         print(f"  검색 조합: 넓힘={m.get('spread', '0')} · 깊은 쪽 {m.get('deep_pages', '?')} · 이름 검색 쪽 {m.get('name_pages', '?')}"
               f" · 필터 검색 비율 {m.get('filter_search', '0')}")
@@ -586,13 +757,59 @@ def detail(d):
         if line.startswith("hpa "):
             print(f"  {line}")
 
+def contention(m, s):
+    """재고 경합 — 회차마다 받아진 주문 · 재고 부족 거절 · 늦음, 받아진 것이 재고를 넘으면 초과 판매."""
+    stock = int(m["stock"]) if m.get("stock", "").isdigit() else None
+    print(f"  재고 경합: 상품 {m.get('contention_product', '?')} · 재고 {m.get('stock', '?')} · 사용자 {m.get('users', '?')}"
+          f" · 회차 {m.get('rounds', '?')} · 붙잡는 시간 {m.get('hold_seconds', '?')}초")
+    cnt = lambda k: int((s.get(k) or {}).get("count") or 0)
+    for r in range(int(m["rounds"]) if m.get("rounds", "").isdigit() else 0):
+        a = cnt(f"contention_accepted{{round:{r}}}")
+        flag = "" if stock is None else (f" ← 초과 판매 {a - stock}" if a > stock else (f" (덜 팔림 {stock - a})" if a < stock else " = 재고"))
+        print(f"    회차 {r}: 받아짐 {a}{flag} · 재고 부족 거절 {cnt(f'contention_short_create{{round:{r}}}')}"
+              f" · 늦음 {cnt(f'contention_late{{round:{r}}}')}")
+    print(f"    입금 안내에서의 재고 부족 {cnt('contention_short_start')} · 그 밖의 거절 {cnt('contention_refused')} · 오류 {cnt('contention_errors')}"
+          "  (덜 팔리거나 초과면 order 의 order_stock_hold_total{result=\"unavailable\"} 를 본다 — 예약 없이 간 주문)")
+
 def resolve(x):
     name = os.path.basename(os.path.normpath(x))
     if name not in runs:
         sys.exit(f"그런 회차가 없다: {x} ({out})")
     return name
 
-if not picks:
+def merge(names):
+    """부하 VM 여러 대의 같은 회차 — 횟수는 더하고, 실패율은 요청 수로 가중, 백분위는 합칠 수 없어 VM 마다 · 가장 나쁜 값."""
+    if len(names) < 2:
+        sys.exit("report merge 에는 회차 폴더가 둘 이상 필요하다(다른 VM 의 폴더를 OUT 아래로 복사해 와서)")
+    rows = []
+    for d in names:
+        m, _ = meta(d)
+        rows.append((d, m, summary(d)))
+    print(" ".join([L("회차(VM)", 34), L("나눔", 6), R("요청", 9), R("요청/초", 8), R("실패", 7), R("p95", 7), R("p99", 7)]) + "  임계값")
+    reqs = rate = failed = 0
+    errs = {"5xx": 0, "4xx": 0, "응답 없음": 0, "429": 0}
+    for d, m, s in rows:
+        n = (s.get("http_reqs") or {}).get("count") or 0
+        f = ((s.get("http_req_failed") or {}).get("value") or 0) * n
+        reqs += n
+        rate += (s.get("http_reqs") or {}).get("rate") or 0
+        failed += f
+        for k, key in (("5xx", "errors_5xx"), ("4xx", "errors_4xx"), ("응답 없음", "errors_no_response"), ("429", "rate_limited")):
+            errs[k] += (s.get(key) or {}).get("count") or 0
+        dur = s.get("http_req_duration") or {}
+        print(" ".join([L(d, 34), L(m.get("split", "-"), 6), R(num(n), 9), R(num((s.get("http_reqs") or {}).get("rate"), 1), 8),
+                        R(pct(f / n if n else None), 7), R(num(dur.get("p(95)")), 7), R(num(dur.get("p(99)")), 7)]) + f"  {verdict(m)}")
+    worst = lambda k: max(((s.get("http_req_duration") or {}).get(k) or 0) for _, _, s in rows)
+    splits = sorted({m.get("split", "-") for _, m, _ in rows})
+    print(f"\n  합계: 요청 {num(reqs)} (초당 {num(rate, 1)} — 같은 시간에 돈 VM 의 합) · 실패 {pct(failed / reqs if reqs else None)}"
+          f" · 오류 " + " · ".join(f"{k} {num(v)}" for k, v in errs.items()))
+    print(f"  p95 · p99(VM 중 가장 나쁜 값 — 백분위는 요약에서 합칠 수 없다): {num(worst('p(95)'))} · {num(worst('p(99)'))}ms")
+    if len(splits) != len(rows) or "-" in splits:
+        print("  ⚠️  나눔 값(split)이 겹치거나 없다 — 같은 회차의 VM 들인지 확인(SPLIT=1/2 · 2/2 …)")
+
+if picks[:1] == ["merge"]:
+    merge([resolve(x) for x in picks[1:]])
+elif not picks:
     overview()
     detail(runs[-1])
 elif picks == ["all"]:
@@ -626,6 +843,28 @@ command -v "$K6" >/dev/null 2>&1 || die "k6 가 없다 — 설치(root 없이, �
 [[ "$USERS" =~ ^[1-9][0-9]*$ ]] || die "USERS 는 1 이상의 정수"
 [[ "$ID_OFFSET" =~ ^[0-9]+$ ]] || die "ID_OFFSET 은 0 이상의 정수"
 
+# 손님 IP 흉내 · 부하 VM 나누기(docs/83 §2.6) — 계산은 ops/k6/clients.js 와 같다
+[ -z "${ENGINE:-}" ] || [[ "$ENGINE" =~ ^(es|postgres)$ ]] || die "ENGINE 은 es 또는 postgres(회차 기록용 이름표)"
+CLIENT_IPS="${CLIENT_IPS:-0}"
+[[ "$CLIENT_IPS" =~ ^[0-9]+$ ]] && [ "$CLIENT_IPS" -le 65536 ] || die "CLIENT_IPS 는 0 ~ 65536"
+SPLIT_PART=1; SPLIT_OF=1; TOTAL_RATE="${RATE:-}"
+if [ -n "${SPLIT:-}" ]; then
+    [[ "$SPLIT" =~ ^([1-9][0-9]?)/([1-9][0-9]?)$ ]] || die "SPLIT 은 i/n (예 1/2)"
+    SPLIT_PART="${BASH_REMATCH[1]}"; SPLIT_OF="${BASH_REMATCH[2]}"
+    [ "$SPLIT_PART" -le "$SPLIT_OF" ] && [ "$SPLIT_OF" -le 16 ] || die "SPLIT 은 1 ≤ i ≤ n ≤ 16"
+    [ -z "${STAGES:-}" ] || die "SPLIT 은 STAGES 와 함께 쓰지 않는다 — 전체 RATE 로(VM 마다 RATE/n)"
+    [[ "${RATE:-}" =~ ^[1-9][0-9]*$ ]] || die "SPLIT 에는 전체 RATE(정수)가 필요하다 — VM 마다 RATE/n"
+    [ $(( RATE % SPLIT_OF )) -eq 0 ] || die "SPLIT 의 RATE($RATE)는 n($SPLIT_OF)으로 나누어떨어져야 한다"
+    RATE=$(( RATE / SPLIT_OF ))
+    ID_OFFSET=$(( ID_OFFSET + (SPLIT_PART - 1) * USERS ))   # 데모 계정을 VM 마다 따로(리프레시 토큰이 회전한다)
+fi
+CLIENT_IP_OFFSET=$(( (SPLIT_PART - 1) * CLIENT_IPS ))
+[ $(( CLIENT_IP_OFFSET + CLIENT_IPS )) -le 65536 ] || die "CLIENT_IPS × n 이 65536 을 넘는다"
+if [ -n "${START_AT:-}" ]; then
+    START_EPOCH="$(date -u -d "$START_AT" +%s 2>/dev/null)" || die "START_AT 을 읽지 못했다 — 예 2026-10-20T11:00:00Z"
+    [ "$START_EPOCH" -gt "$(date -u +%s)" ] || die "START_AT($START_AT)이 이미 지났다"
+fi
+
 # 인증서 — 검증을 끄지 않는다. 데모 CA 가 있으면 그것을 믿게 한다(k6 는 Go — SSL_CERT_FILE 을 읽는다).
 if [ -f "$CA_FILE" ]; then
     export SSL_CERT_FILE="$CA_FILE"
@@ -636,8 +875,8 @@ fi
 # smoke 는 계정 하나로 한 번
 [ "$SCENARIO" = "smoke" ] && USERS=1
 
-# 데모 비밀번호 — order · smoke · mixed 만. 길이만 알린다.
-if [ "$SCENARIO" = "order" ] || [ "$SCENARIO" = "smoke" ] || [ "$SCENARIO" = "mixed" ]; then
+# 데모 비밀번호 — 로그인하는 시나리오만. 길이만 알린다.
+if [ "$SCENARIO" = "order" ] || [ "$SCENARIO" = "smoke" ] || [ "$SCENARIO" = "mixed" ] || [ "$SCENARIO" = "contention" ]; then
     [ -f "$PASSWORD_FILE" ] || die "$PASSWORD_FILE 이 없다 — 먼저 USERS=$USERS ./ops/48-bulk-users.sh load"
     DEMO_PASSWORD="$(cat "$PASSWORD_FILE")"
     [ -n "$DEMO_PASSWORD" ] || die "$PASSWORD_FILE 이 비어 있다"
@@ -687,6 +926,10 @@ replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
     echo "products=${PRODUCTS:-홈 상품만} product_id_offset=${PRODUCT_ID_OFFSET:-1000000} deep_pages=${DEEP_PAGES:-default} name_search=${NAME_SEARCH:-default}"
     echo "spread=${SPREAD:-0} name_pages=${NAME_PAGES:-default} filter_search=${FILTER_SEARCH:-0}"
     [ "$SCENARIO" != "mixed" ] || echo "review_rate=${REVIEW_RATE:-1}"
+    [ "$CLIENT_IPS" = "0" ] || echo "client_ips=$CLIENT_IPS client_ip_offset=$CLIENT_IP_OFFSET"
+    [ -z "${ENGINE:-}" ] || echo "engine=$ENGINE"
+    [ "$SPLIT_OF" = "1" ] || echo "split=$SPLIT_PART/$SPLIT_OF total_rate=$TOTAL_RATE start_at=${START_AT:-}"
+    [ "$SCENARIO" != "contention" ] || echo "contention_product=${CONTENTION_PRODUCT:-?} stock=${STOCK:-?} rounds=${ROUNDS:-3} hold_seconds=${HOLD_SECONDS:-20}"
     if command -v kubectl >/dev/null 2>&1 && kubectl -n "$APP_NS" get deploy >/dev/null 2>&1; then
         echo "context=$(kubectl config current-context 2>/dev/null || echo '?')"
         kubectl -n "$APP_NS" get deploy -o jsonpath='{range .items[*]}deploy {.metadata.name} replicas={.spec.replicas} image={.spec.template.spec.containers[0].image}{"\n"}{end}' 2>/dev/null || true
@@ -708,7 +951,10 @@ args=(run --summary-export "$dir/summary.json"
 [ -n "${STAGES:-}" ] && args+=(-e STAGES="$STAGES")
 [ -n "${DURATION:-}" ] && args+=(-e DURATION="$DURATION")
 [ "${ALLOW_RATE_LIMIT:-}" = "1" ] && args+=(-e ALLOW_RATE_LIMIT=1)
-for v in PRODUCTS PRODUCT_ID_OFFSET DEEP_PAGES NAME_SEARCH SPREAD NAME_PAGES FILTER_SEARCH REVIEW_RATE; do
+[ "$CLIENT_IPS" -gt 0 ] && args+=(-e CLIENT_IPS="$CLIENT_IPS" -e CLIENT_IP_OFFSET="$CLIENT_IP_OFFSET")
+[ "$SPLIT_OF" -gt 1 ] && args+=(-e SPLIT="$SPLIT_PART/$SPLIT_OF")
+for v in PRODUCTS PRODUCT_ID_OFFSET DEEP_PAGES NAME_SEARCH SPREAD NAME_PAGES FILTER_SEARCH REVIEW_RATE \
+         CONTENTION_PRODUCT STOCK ROUNDS HOLD_SECONDS ROUND_GAP_SECONDS; do
     if [ -n "${!v:-}" ]; then
         [[ "${!v}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "$v 는 숫자"
         args+=(-e "$v=${!v}")
@@ -722,6 +968,10 @@ fi
 args+=("$K6_DIR/$SCENARIO.js")
 
 info "시나리오 $SCENARIO → $GATEWAY  (결과: $dir)"
+if [ -n "${START_EPOCH:-}" ]; then
+    info "START_AT $START_AT 까지 기다린다($(( START_EPOCH - $(date -u +%s) ))초) — 다른 부하 VM 과 함께 시작"
+    sleep $(( START_EPOCH - $(date -u +%s) ))
+fi
 # 종료 코드는 tee 가 아니라 k6 의 것 — 임계값(thresholds)을 넘으면 99
 t0="$(date +%s)"
 set +e

@@ -352,8 +352,13 @@ def popularity(rng: random.Random) -> int:
     return min(100_000, int(rng.paretovariate(1.25) * 4) - 4)
 
 
+# 긴 이름(--long-names)에 붙이는 말 — 이름 부분 일치(트라이그램 GIN) · 목록 응답의 크기가 실제 상점처럼 무거워진다(docs/83 §2.5)
+LONG_NAME_WORDS = ["Premium", "Edition", "Collection", "Series", "Limited", "Signature", "Professional", "Deluxe", "Essential",
+                   "Heritage", "Urban", "Outdoor", "Performance", "Comfort", "Seasonal", "Exclusive", "Original", "Advanced"]
+
+
 class Generator:
-    def __init__(self, plan: Plan, seed: int):
+    def __init__(self, plan: Plan, seed: int, skew: float = 0.0, skew_category: str | None = None, long_names: bool = False):
         self.plan = plan
         self.seed = seed
         if plan.taxonomy == "dept":
@@ -361,6 +366,21 @@ class Generator:
             for d in plan.depts:
                 self.weights.append(d["weight"])
         self.brands_cache: dict[int, list[str]] = {}
+        # 쏠림(--skew) — 상품의 그 비율을 한 대분류에. 0 이면 난수를 더 쓰지 않는다(예전 데이터와 같은 상품 — 이어 넣기가 맞는다).
+        self.skew = skew
+        self.long_names = long_names
+        self.skew_dept = None
+        if skew > 0:
+            if plan.taxonomy != "dept":
+                raise SystemExit("--skew 는 --taxonomy dept 에서만")
+            if skew_category:
+                hit = [d for d in plan.depts if d["category_name"].lower() == skew_category.lower()]
+                if not hit:
+                    raise SystemExit(f"--skew-category {skew_category!r} 가 없다 — "
+                                     + ", ".join(d["category_name"] for d in plan.depts))
+                self.skew_dept = hit[0]
+            else:
+                self.skew_dept = max(plan.depts, key=lambda d: d["weight"])
 
     def brands_for(self, cid: int, rng: random.Random) -> list[str]:
         # 대분류마다 브랜드 400개 — 브랜드 필터 · 집계의 카디널리티가 현실적이 된다.
@@ -409,13 +429,20 @@ class Generator:
         return out, (sku_id, size_id, link_id)
 
     def _dept_product(self, rng: random.Random, pid: int):
-        d = rng.choices(self.plan.depts, weights=self.weights)[0]
+        if self.skew > 0 and rng.random() < self.skew:
+            d = self.skew_dept
+        else:
+            d = rng.choices(self.plan.depts, weights=self.weights)[0]
         sc = rng.choice(d["subcats"])
         brand = rng.choice(self.brands_for(d["category_id"], rng))
         noun = rng.choice(sc["nouns"])
         adj = rng.choice(d["adjectives"])
         model = f"{rng.choice('ABCDEFGHJKLMNPRSTVXZ')}{rng.randrange(10, 999)}"
         name = f"{brand} {adj} {noun} {model}"
+        if self.long_names:
+            # 앞부분(브랜드 · 형용사 · 명사 · 모델)은 그대로 — 이름 검색어(browse 의 NAME_TERMS)가 계속 맞는다. 180자 안(name · slug 255)
+            name = (name + " " + " ".join(rng.sample(LONG_NAME_WORDS, rng.randint(8, 12)))
+                    + " - " + rng.choice(FEATURES))[:180].rstrip()
         lo, hi = sc["price"]
         # 가격은 로그 균등 — 싼 상품이 많고 비싼 상품이 적다
         price = round(lo * (hi / lo) ** rng.random(), 2)
@@ -816,9 +843,17 @@ def main():
     ap.add_argument("--placeholder-image", metavar="URL",
                     help="--copy: 이미지 저장소가 없는 환경(데모)용 — 색상이 비어 있으면 시드 CSV 에서 넣고, "
                          "기존 상품 이미지가 없으면 모든 SKU 이미지를 이 주소로(예: /logo512.png — 프론트가 내보내는 파일)")
+    ap.add_argument("--skew", type=float, default=0.0,
+                    help="상품의 이 비율(0 ~ 1)을 한 대분류에 몰아넣는다(docs/83 §2.5) — 이어 넣기(--resume)는 같은 값으로")
+    ap.add_argument("--skew-category", metavar="NAME", help="--skew 의 대분류 이름(기본: 가중치가 가장 큰 것)")
+    ap.add_argument("--long-names", action="store_true", help="이름에 수식어를 더해 100 ~ 180자로 — 이어 넣기는 같은 값으로")
     ap.add_argument("--estimate", action="store_true", help="행 수 · 용량만 보여 주고 끝낸다")
     ap.add_argument("--yes", action="store_true", help="백만 개 이상 · --purge 를 묻지 않고 진행")
     args = ap.parse_args()
+    if not 0.0 <= args.skew <= 1.0:
+        ap.error("--skew 는 0 ~ 1")
+    if args.skew_category and args.skew <= 0:
+        ap.error("--skew-category 는 --skew 와 함께")
 
     if args.estimate:
         estimate(args.products)
@@ -860,7 +895,7 @@ def main():
             pid, sku, size, link = last + 1, (s or lo - 1) + 1, (z or lo - 1) + 1, (l or lo - 1) + 1
             print(f"  이어서 — 상품 {start:,}개가 이미 있다. id {pid:,} 부터")
 
-    gen = Generator(plan, args.seed)
+    gen = Generator(plan, args.seed, args.skew, args.skew_category, args.long_names)
     t0 = time.time()
     rows = 0
     done = start
