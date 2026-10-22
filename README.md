@@ -15,7 +15,7 @@ Spring Cloud ベースのマイクロサービス EC サイトです。**実際�
 |---|---|
 | 構成 | Spring Boot アプリ **13 個**（ドメイン 10 + ゲートウェイ・Eureka・Config）+ React 18 SPA |
 | 運用 | OCI Ampere（arm64）単一ノード k3s · **インバウンドポート 0**（Cloudflare Tunnel）· サービス間 **mTLS**（サービスごとの証明書、cert-manager で自動更新） |
-| テスト | バックエンド **2,473 件** · フロントエンド **1,040 件** · 設定ガードレール **B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-101**（元に戻して失敗することを確認した回帰ガード） |
+| テスト | バックエンド **2,477 件** · フロントエンド **1,040 件** · 設定ガードレール **B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-101**（元に戻して失敗することを確認した回帰ガード） |
 | デプロイ | GitHub Actions — コミット SHA タグのイメージを**一度だけ**ビルド（amd64・arm64）→ 統合・受け入れテスト → **承認** → 本番ノードのランナーがデプロイ。スモーク失敗時は**自動ロールバック** |
 | 決済 | PayPal · Stripe · PortOne V1/V2 · 銀行振込 · バーチャル口座、部分返金 |
 | 多言語 | 韓国語 · 日本語（画面の文言 1,091 箇所、サーバー応答の文言 約 290 件） |
@@ -75,6 +75,20 @@ flowchart TB
 - **身元はゲートウェイが検証したトークンからだけ取る。** クライアントが送った `User-Id` などのヘッダーは消して書き直します。
   リクエスト本文の id・email は身元として使いません。
 - **可観測性** — OpenTelemetry（OTLP → OTel Collector → Jaeger · span_metrics）· Prometheus · Grafana · Alertmanager · Loki。OpenTelemetry デモと同じ構成で、ログの traceId · レイテンシグラフの点（exemplar）からトレースへ、トレースからログ · RED メトリクスへ往復できます。トレースに載る資格情報（URL のクエリ · JWT · メール）は保存前に Collector が消します（[docs/63](docs/63-opentelemetry.md)）。
+
+---
+
+## 観測 — トレースから作る RED ダッシュボード
+
+![Grafana — ecommerce-msa Tracing RED(span_metrics)](docs/images/tracing-red-dashboard.webp)
+
+実習クラスタに長時間の負荷(毎秒 ~210 リクエスト、2026-10-22)をかけた 6 時間です。サービスごとに指標を埋め込まず、**トレースのスパンから
+リクエスト率 · エラー率 · レイテンシ(RED)を作ります** — OpenTelemetry Collector の spanmetrics → Prometheus([docs/63](docs/63-opentelemetry.md))。
+
+- **リクエスト率** — ゲートウェイ · catalog が毎秒 211 で平らで、書き込みのサービス(注文 · 決済 · クーポン …)は毎秒 0.5 前後です
+- **エラー率** — サーバースパン基準で最大 0.03%(開始直後のウォームアップ)、その後は 0 付近です
+- **p95 レイテンシ** — 点(exemplar)をクリックすると、そのリクエストのトレースが Jaeger で開きます。エラー · 遅いトレース · お金が動いたトレースはすべて残します(テールサンプリング)
+- **Kafka の発行 · 消費** — 同じ画面でイベントの流れまで見られます
 
 ---
 
@@ -182,7 +196,7 @@ flowchart TB
 
 ## テストと品質の仕組み
 
-- **バックエンド 2,473 件** — 単体テストと実 JPA テスト（H2）です。CI の統合ステージでは、Testcontainers（PostgreSQL · Kafka · Redis など）と Saga の E2E がさらに走ります。
+- **バックエンド 2,477 件** — 単体テストと実 JPA テスト（H2）です。CI の統合ステージでは、Testcontainers（PostgreSQL · Kafka · Redis など）と Saga の E2E がさらに走ります。
 - **フロントエンド 1,040 件** — 画面の動作テストのほかに、コードの構造を検査するガードがあります。
   - 画面にハードコードされた文言がないか（構文木で探します）
   - import パスが webpack と jest で同じように解決されるか

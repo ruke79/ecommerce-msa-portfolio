@@ -15,7 +15,7 @@ Spring Cloud 기반 마이크로서비스 이커머스입니다. **실제로 운
 |---|---|
 | 구성 | Spring Boot 애플리케이션 **13개**(도메인 10 + 게이트웨이·Eureka·Config) + React 18 SPA |
 | 운영 | OCI Ampere(arm64) 단일 노드 k3s · **인바운드 포트 0개**(Cloudflare Tunnel) · 서비스 간 **mTLS**(서비스별 인증서, cert-manager 자동 갱신) |
-| 테스트 | 백엔드 **2,473개** · 프론트엔드 **1,040개** · 설정 가드레일 **B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-101**(되돌려서 실패하는지 확인한 회귀 가드) |
+| 테스트 | 백엔드 **2,477개** · 프론트엔드 **1,040개** · 설정 가드레일 **B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-101**(되돌려서 실패하는지 확인한 회귀 가드) |
 | 배포 | GitHub Actions — 커밋 SHA 태그 이미지를 **한 번만** 빌드(amd64·arm64) → 통합·인수 테스트 → **승인** → 운영 노드 러너가 배포, 스모크 실패 시 **자동 롤백** |
 | 결제 | PayPal · Stripe · 포트원 V1/V2 · 무통장입금 · 가상계좌, 부분 환불 |
 | 다국어 | 한국어 · 일본어(화면 문구 1,091곳, 서버 응답 문구 약 290개) |
@@ -74,6 +74,20 @@ flowchart TB
 - **신원은 게이트웨이가 검증한 토큰에서만.** 클라이언트가 보낸 `User-Id` 같은 헤더는 지우고 다시 씁니다.
   요청 본문의 id·email 은 신원으로 쓰지 않습니다.
 - **관측** — OpenTelemetry(OTLP → OTel Collector → Jaeger · span_metrics) · Prometheus · Grafana · Alertmanager · Loki. OpenTelemetry 데모와 같은 구성으로, 로그의 traceId · 지연 그래프의 점(exemplar)에서 추적으로, 추적에서 로그 · RED 지표로 왕복합니다. 추적에 실리는 자격 증명(URL 쿼리 · JWT · 이메일)은 저장 전에 Collector 가 지웁니다([docs/63](docs/63-opentelemetry.ko.md)).
+
+---
+
+## 관측 — 추적에서 뽑은 RED 대시보드
+
+![Grafana — ecommerce-msa Tracing RED(span_metrics)](docs/images/tracing-red-dashboard.webp)
+
+실습 클러스터에 장시간 부하(초당 ~210 요청, 2026-10-22)를 건 6시간입니다. 서비스마다 지표를 따로 심지 않고 **추적 스팬에서
+요청률 · 오류율 · 지연(RED)을 뽑습니다** — OpenTelemetry Collector 의 spanmetrics → Prometheus([docs/63](docs/63-opentelemetry.ko.md)).
+
+- **요청률** — 게이트웨이 · catalog 가 초당 211 로 평평하고, 쓰기 서비스(주문 · 결제 · 쿠폰 …)는 초당 0.5 안팎입니다
+- **오류율** — 서버 스팬 기준 최대 0.03%(시작 직후의 데움), 그 뒤로는 0 근처입니다
+- **p95 지연** — 점(exemplar)을 누르면 그 요청의 추적이 Jaeger 에서 열립니다. 오류 · 느린 추적 · 돈이 오간 추적은 모두 남깁니다(꼬리 샘플링)
+- **Kafka 발행 · 소비** — 같은 화면에서 이벤트 흐름까지 봅니다
 
 ---
 
@@ -181,7 +195,7 @@ flowchart TB
 
 ## 테스트와 품질 장치
 
-- **백엔드 2,473개** — 단위 테스트와 실제 JPA 테스트(H2)입니다. CI 통합 단계에서는 Testcontainers(PostgreSQL · Kafka · Redis 등)와 사가 E2E 가 더 돕니다.
+- **백엔드 2,477개** — 단위 테스트와 실제 JPA 테스트(H2)입니다. CI 통합 단계에서는 Testcontainers(PostgreSQL · Kafka · Redis 등)와 사가 E2E 가 더 돕니다.
 - **프론트엔드 1,040개** — 화면 동작 테스트 외에 코드 구조를 검사하는 가드가 있습니다.
   - 화면에 박힌 문구가 없는지(구문 트리로 찾습니다)
   - import 경로가 webpack 과 jest 에서 같게 풀리는지
