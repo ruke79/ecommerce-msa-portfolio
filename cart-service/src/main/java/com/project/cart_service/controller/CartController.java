@@ -43,6 +43,26 @@ public class CartController {
 
     private final CartService cartService;
 
+    /**
+     * 실패 응답 — 고칠 수 있는 요청({@code IllegalArgumentException}: 수량 범위 · catalog 가 모르는 상품 · 색상 · 사이즈)만 400,
+     * 나머지(DB 커넥션 대기 시간 초과 · catalog 호출 실패 …)는 503. 원인은 로그에 남긴다.
+     *
+     * <p>🐛 예전에는 담기 · 수량 · 빼기 · 체크아웃이 <b>어떤 예외든 400</b> 이었다. 2026-10-18 order 부하 측정(docs/83 §5)에서 정점에
+     * cart CPU 가 1 코어에 붙고 DB 커넥션 대기가 14 ~ 15 일 때 담기 실패 786건이 모두 400 으로 나갔다 — 서버가 버거운 것이 손님의
+     * 잘못된 요청으로 보였다(4xx 는 "다시 해도 소용없다" 는 뜻이고, 5xx 를 보는 경보 · 오류율에서도 빠진다).
+     *
+     * <p>[JA] 失敗の応答 — 直せる要求(IllegalArgumentException)だけ 400、それ以外(DB 接続待ちのタイムアウト · catalog 呼び出しの失敗)は 503。
+     * 以前はどの例外でも 400 で、負荷計測のピークで cart が詰まったときの失敗 786 件が「お客さまの誤った要求」に見えていた。
+     */
+    static ResponseEntity<MessageResponse> failure(String what, Long userId, RuntimeException e) {
+        if (e instanceof IllegalArgumentException) {
+            log.info("장바구니 {} 거절 userId={} — {}", what, userId, e.getMessage());
+            return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
+        }
+        log.warn("장바구니 {} 실패 userId={}", what, userId, e);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(new MessageResponse(ClientMessage.of(e)));
+    }
+
     
     
 
@@ -126,9 +146,7 @@ public class CartController {
         try {
             return ResponseEntity.ok(cartService.putItem(userId, item));
         } catch (RuntimeException e) {
-            // 원인을 남긴다 — 일반 문구("요청을 처리하지 못했습니다")만으로는 무엇이 실패했는지 알 수 없었다.
-            log.warn("장바구니 putItem 실패 userId={}", userId, e);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new MessageResponse(ClientMessage.of(e)));
+            return failure("putItem", userId, e);
         }
     }
 
@@ -144,9 +162,7 @@ public class CartController {
         try {
             return ResponseEntity.ok(cartService.setItemQty(userId, productId, colorId, size, qty));
         } catch (RuntimeException e) {
-            // 원인을 남긴다 — 일반 문구("요청을 처리하지 못했습니다")만으로는 무엇이 실패했는지 알 수 없었다.
-            log.warn("장바구니 setItemQty 실패 userId={}", userId, e);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new MessageResponse(ClientMessage.of(e)));
+            return failure("setItemQty", userId, e);
         }
     }
 
@@ -161,9 +177,7 @@ public class CartController {
         try {
             return ResponseEntity.ok(cartService.removeItem(userId, productId, colorId, size));
         } catch (RuntimeException e) {
-            // 원인을 남긴다 — 일반 문구("요청을 처리하지 못했습니다")만으로는 무엇이 실패했는지 알 수 없었다.
-            log.warn("장바구니 removeItem 실패 userId={}", userId, e);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new MessageResponse(ClientMessage.of(e)));
+            return failure("removeItem", userId, e);
         }
     }
 
@@ -176,8 +190,7 @@ public class CartController {
 
             return new ResponseEntity<>(result, HttpStatus.OK);
         } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new MessageResponse(ClientMessage.of(e)));
+            return failure("updateCart", null, e);
         }
 
     }
@@ -200,8 +213,7 @@ public class CartController {
 
                 return new ResponseEntity<>(response, HttpStatus.OK);
             } catch (RuntimeException e) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(new MessageResponse(ClientMessage.of(e)));
+                return failure("checkout", userId, e);
             }
 
     }

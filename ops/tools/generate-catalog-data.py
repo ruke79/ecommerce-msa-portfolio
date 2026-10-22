@@ -475,6 +475,13 @@ COLUMNS = {
 }
 
 
+# 빈 글자를 NULL 이 아니라 '' 로 넣을 열 — CSV COPY 는 따옴표 없는 빈 칸을 NULL 로 읽는다.
+# 🐛 단일 사이즈 상품("single")의 사이즈는 "" 인데 NULL 로 들어가, 장바구니 담기가 getSize().equals(...) 의 NPE 로 모두 실패했다
+#    (2026-10-18 order 부하 측정, docs/83 §5). 시드 배치(CSV → JPA)는 '' 로 넣는다 — 같은 모양으로.
+# [JA] 空文字を NULL ではなく '' で入れる列。CSV COPY は引用符なしの空欄を NULL と読み、単一サイズ商品のカート追加が NPE で全て失敗していた。
+NOT_NULL = {"product_size": ["size"]}
+
+
 def copy_rows(cur, table: str, rows) -> int:
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -483,7 +490,8 @@ def copy_rows(cur, table: str, rows) -> int:
         w.writerow(r)
         n += 1
     buf.seek(0)
-    cur.copy_expert(f"COPY product.{table} ({','.join(COLUMNS[table])}) FROM STDIN WITH CSV", buf)
+    force = f", FORCE_NOT_NULL ({','.join(NOT_NULL[table])})" if table in NOT_NULL else ""
+    cur.copy_expert(f"COPY product.{table} ({','.join(COLUMNS[table])}) FROM STDIN WITH (FORMAT csv{force})", buf)
     return n
 
 

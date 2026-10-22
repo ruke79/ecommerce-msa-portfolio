@@ -383,14 +383,14 @@ public class CartService {
     private static int sizeIndexOf(ProductDto product, int styleIndex, String size) {
         ProductSkuDto sku = product.getSkus().size() > styleIndex ? product.getSkus().get(styleIndex) : null;
         if (sku == null) {
-            throw new RuntimeException("Product SKU not found");
+            throw new IllegalArgumentException("Product SKU not found");
         }
         for (int i = 0; i < sku.getSizes().size(); i++) {
-            if (sku.getSizes().get(i).getSize().equals(size)) {
+            if (java.util.Objects.equals(normalize(sku.getSizes().get(i).getSize()), normalize(size))) {
                 return i;
             }
         }
-        throw new RuntimeException("Product size not found");
+        throw new IllegalArgumentException("Product size not found");
     }
 
     private Map<String, ProductInfoDto> fetchCartProductInfos(List<String> keys) {
@@ -910,7 +910,7 @@ public class CartService {
     private static ProductDto requireProduct(Map<String, ProductDto> products, String productId) {
         ProductDto product = products.get(productId);
         if (product == null) {
-            throw new RuntimeException("Product not found: " + productId);
+            throw new IllegalArgumentException("Product not found: " + productId);
         }
         return product;
     }
@@ -946,7 +946,7 @@ public class CartService {
         String key = CartProductInfoRequest.Item.key(p.getProductId(), styleIndex, sizeIndexOf(product, styleIndex, p.getSize()));
         ProductInfoDto found = cartInfos.get(key);
         if (found == null) {
-            throw new RuntimeException("Cart product info not found: " + key);
+            throw new IllegalArgumentException("Cart product info not found: " + key);
         }
         ProductInfoDto dto = found.toBuilder().build();
 
@@ -981,17 +981,22 @@ public class CartService {
      */
     private BigDecimal computeOriginalPriceFromSkusByStyleAndSize(List<ProductSkuDto> skus, int style, String size) {
         return skus.get(style).getSizes().stream()
-                .filter(i -> i.getSize().equals(size))
+                .filter(i -> java.util.Objects.equals(normalize(i.getSize()), normalize(size)))
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Product size not found")).getPrice();
     }
 
     /**
-     * SKU와 사이즈에 따른 가격을 반환합니다.
+     * SKU와 사이즈에 따른 가격을 반환합니다. 사이즈는 {@link #normalize} 로 비교한다 — 빈 사이즈(단일 사이즈 상품)는 null · "" 가 같다.
+     *
+     * <p>🐛 2026-10-18 order 부하 측정: 담기 실패 536건이 모두 여기의 {@code NullPointerException} 이었다. 사이즈가 하나뿐인 상품은
+     * 사이즈 이름이 비어 있고(시드 1,290줄 중 1,025줄), catalog DB 에는 {@code ''} 또는 NULL 로 있다(데모 생성기의 CSV COPY 는
+     * 빈 칸을 NULL 로 넣었다). NULL 인 상품은 {@code getSize().equals(...)} 에서 터져 <b>담기가 모두 실패</b>했다.
      */
+    // [JA] サイズは normalize で比較する — 単一サイズ商品の空のサイズ(null と "")は同じ。以前は NULL のサイズで NPE になり、カート追加が全て失敗した。
     private BigDecimal getPriceFromSkuBySize(ProductSkuDto sku, String size) {
         BigDecimal price = sku.getSizes().stream()
-                .filter(p -> p.getSize().equals(size))
+                .filter(p -> java.util.Objects.equals(normalize(p.getSize()), normalize(size)))
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Product size not found")).getPrice();
 

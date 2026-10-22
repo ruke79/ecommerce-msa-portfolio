@@ -183,6 +183,9 @@ class DemoCatalogSeedIntegrationTest {
         assertThat(count("SELECT count(*) FROM product.product WHERE product_id > " + OFFSET)).isEqualTo(PRODUCTS);
         assertThat(count("SELECT count(*) FROM product.product_sku WHERE images::text[] <> ARRAY['" + PLACEHOLDER + "']::text[]"))
                 .as("모든 SKU 이미지가 자리 표시 한 장 — 클래스패스 경로(images\\…)가 아니다").isZero();
+        // 단일 사이즈 상품의 빈 사이즈는 '' — NULL 이면 장바구니 담기가 NPE 로 모두 실패했다(2026-10-18, docs/83 §5)
+        assertThat(count("SELECT count(*) FROM product.product_size WHERE size IS NULL")).as("NULL 사이즈").isZero();
+        assertThat(count("SELECT count(*) FROM product.product_size WHERE size = ''")).as("단일 사이즈 상품이 있다").isPositive();
 
         HomeView home = homeSections.home();
         assertThat(home.sections()).as("V10 의 홈 섹션(fashion · books …)이 상품을 찾는다").isNotEmpty();

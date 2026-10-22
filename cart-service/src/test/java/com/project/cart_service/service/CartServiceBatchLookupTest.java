@@ -220,6 +220,7 @@ class CartServiceBatchLookupTest {
                 ProductInfoDto.builder().id("1").style(0).size("M").qty(1).build(),
                 ProductInfoDto.builder().id("3").style(0).size("M").qty(1).build())))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Product not found: 3");
+                .hasMessageContaining("Product not found: 3")
+                .as("catalog 가 모르는 상품은 요청 오류(400) — CartController.failure").isInstanceOf(IllegalArgumentException.class);
     }
 }
