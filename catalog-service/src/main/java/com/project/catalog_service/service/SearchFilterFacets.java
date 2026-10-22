@@ -44,6 +44,9 @@ import lombok.extern.slf4j.Slf4j;
  *       내주면서 뒤에서 다시 계산한다 — 만료 순간 요청이 질의를 기다리지 않는다.</li>
  *   <li>계산은 키마다 하나(파드 안), 실행기 스레드는 {@code catalog.facets.threads}(기본 1)개 — 메뉴 질의가 파드의 커넥션을 한 개 넘게
  *       쓰지 않는다. 질의 자체의 시간 상한은 {@link FacetQueries}(기본 600초).</li>
+ *   <li>그리고 <b>클러스터에서 한 파드만</b>({@link FacetRefreshClaim}) — 맡지 못한 파드는 옛 값을 그대로(없으면 메뉴 없이) 내주고, 새 값은 맡은
+ *       파드가 쓴다. 🐛 2026-10-21 실습: 오래된 순간을 모든 파드가 같이 보아 같은 DISTINCT 를 파드 셋이 동시에 돌렸다 — DB 가 느려져
+ *       home 까지 6초, 게이트웨이 503 1,472건(docs/83 §2.8). Redis 에 닿지 못하면 예전처럼 이 파드에서 계산한다.</li>
  *   <li>상품 쓰기의 {@code @CacheEvict}(ProductService)가 지우면 다음 요청이 다시 계산을 맡긴다.</li>
  * </ul>
  *
@@ -60,18 +63,33 @@ public class SearchFilterFacets {
     private final Duration refreshAfter;
     private final Duration waitBudget;
     private final Clock clock;
+    private final FacetRefreshClaim claim;
     private final Map<String, CompletableFuture<List<Object>>> inFlight = new ConcurrentHashMap<>();
+
+    /** 다른 파드가 이 메뉴를 계산하고 있다 — 이 파드는 계산하지 않는다(기다리던 요청은 메뉴 없이). */
+    static final class ClaimedElsewhere extends RuntimeException {
+        ClaimedElsewhere() {
+            super(null, null, false, false);
+        }
+    }
 
     @Autowired
     public SearchFilterFacets(FacetQueries queries, @Qualifier("redisCacheManager") CacheManager cacheManager,
             @Value("${catalog.facets.refresh-after:10m}") Duration refreshAfter,
             @Value("${catalog.facets.wait:1500ms}") Duration wait,
-            @Value("${catalog.facets.threads:1}") int threads) {
-        this(queries, cacheManager, newExecutor(threads), refreshAfter, wait, Clock.systemUTC());
+            @Value("${catalog.facets.threads:1}") int threads,
+            FacetRefreshClaim claim) {
+        this(queries, cacheManager, newExecutor(threads), refreshAfter, wait, Clock.systemUTC(), claim);
     }
 
     SearchFilterFacets(FacetQueries queries, CacheManager cacheManager, Executor executor, Duration refreshAfter, Duration wait,
             Clock clock) {
+        this(queries, cacheManager, executor, refreshAfter, wait, clock, FacetRefreshClaim.LOCAL);
+    }
+
+    SearchFilterFacets(FacetQueries queries, CacheManager cacheManager, Executor executor, Duration refreshAfter, Duration wait,
+            Clock clock, FacetRefreshClaim claim) {
+        this.claim = claim;
         this.queries = queries;
         this.cacheManager = cacheManager;
         this.executor = executor;
@@ -126,23 +144,36 @@ public class SearchFilterFacets {
     /** 캐시에 있으면 그 값(오래됐으면 뒤에서 다시 계산을 맡긴다), 없으면 진행 중인 계산. */
     CompletableFuture<List<Object>> lookup(String cacheName, String key, Supplier<? extends List<?>> loader) {
         Cache cache = cacheManager.getCache(cacheName);
-        FacetEntry hit = null;
-        if (cache != null) {
-            try {
-                hit = cache.get(key, FacetEntry.class);
-            } catch (RuntimeException e) {
-                // 옛 모양(목록 그대로 — 2026-10-20 전)이거나 Redis 오류 — 없는 것으로 보고 다시 만든다
-                log.debug("필터 메뉴 캐시 읽기 실패 — 다시 계산 cache={} ({})", cacheName, e.getClass().getSimpleName());
-            }
-        }
-        if (hit != null && hit.getValues() != null) {
-            if (clock.millis() - hit.getComputedAtMillis() >= refreshAfter.toMillis()) {
+        FacetEntry hit = read(cache, cacheName, key);
+        if (hit != null) {
+            if (stale(hit)) {
                 refresh(cache, cacheName, key, loader);
             }
             return CompletableFuture.completedFuture(hit.getValues());
         }
         return refresh(cache, cacheName, key, loader);
     }
+
+    private FacetEntry read(Cache cache, String cacheName, String key) {
+        if (cache == null) {
+            return null;
+        }
+        try {
+            FacetEntry hit = cache.get(key, FacetEntry.class);
+            return hit != null && hit.getValues() != null ? hit : null;
+        } catch (RuntimeException e) {
+            // 옛 모양(목록 그대로 — 2026-10-20 전)이거나 Redis 오류 — 없는 것으로 보고 다시 만든다
+            log.debug("필터 메뉴 캐시 읽기 실패 — 다시 계산 cache={} ({})", cacheName, e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private boolean stale(FacetEntry entry) {
+        return clock.millis() - entry.getComputedAtMillis() >= refreshAfter.toMillis();
+    }
+
+    /** 맡기를 확인하지 못해 이 파드에서 계산할 때의 표시 — 풀 것이 없다. */
+    private static final String LOCAL_TOKEN = new String("unclaimed");
 
     private CompletableFuture<List<Object>> refresh(Cache cache, String cacheName, String key, Supplier<? extends List<?>> loader) {
         String flightKey = cacheName + "::" + key;
@@ -153,7 +184,24 @@ public class SearchFilterFacets {
         }
         try {
             executor.execute(() -> {
+                String token = null;
                 try {
+                    try {
+                        token = claim.tryClaim(flightKey);
+                    } catch (RuntimeException e) {
+                        token = LOCAL_TOKEN;   // 맡기를 확인하지 못했다(Redis) — 메뉴가 없는 것보다 낫다, 예전처럼 이 파드에서
+                        log.debug("필터 메뉴 계산 맡기 실패 — 이 파드에서 계산 cache={} ({})", cacheName, e.getClass().getSimpleName());
+                    }
+                    if (token == null) {
+                        mine.completeExceptionally(new ClaimedElsewhere());   // 옛 값은 캐시에 그대로 · 새 값은 맡은 파드가 쓴다
+                        return;
+                    }
+                    // 맡기 직전에 다른 파드가 새로 써 두었으면 다시 하지 않는다
+                    FacetEntry fresh = read(cache, cacheName, key);
+                    if (fresh != null && !stale(fresh)) {
+                        mine.complete(fresh.getValues());
+                        return;
+                    }
                     ArrayList<Object> values = new ArrayList<>(loader.get());
                     if (cache != null) {
                         try {
@@ -168,6 +216,9 @@ public class SearchFilterFacets {
                     log.warn("필터 메뉴 계산 실패 cache={} ({})", cacheName, t.getClass().getSimpleName());
                     mine.completeExceptionally(t);
                 } finally {
+                    if (token != null && token != LOCAL_TOKEN) {
+                        claim.release(flightKey, token);
+                    }
                     inFlight.remove(flightKey, mine);
                 }
             });

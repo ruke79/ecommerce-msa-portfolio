@@ -1,4 +1,12 @@
 spring:
+  # Flyway 이력 표의 스키마를 product 로 고정한다. 🐛 2026-10-21(운영 백업으로 마이그레이션을 미리 올려 보다 드러남): 이 DB 의 소유 계정도
+  # 'product' 라 기본 search_path("$user", public)의 첫 스키마가 product 스키마가 생기는 순간 바뀐다. 빈 DB 에서는 첫 기동이 이력을
+  # public 에 쓰고, 다음 기동부터는 product 에서 이력을 찾지 못해 기준선을 다시 잡고 V1 부터 모두 다시 돌렸다(V10 첫 화면 구성이 두 벌 —
+  # 운영 productdb 에도 이력 표가 public(V5) · product(V18) 둘 남아 있다). 운영은 이미 product 를 쓰므로 이 값으로 바뀌는 것이 없다.
+  # [JA] Flyway の履歴表のスキーマを product に固定する。DB の所有ロールも product なので、既定の search_path の先頭スキーマが product
+  #      スキーマの作成で変わり、空の DB では 2 回目の起動が V1 からすべて再実行していた。本番はすでに product を使っている。
+  flyway:
+    default-schema: product
   profiles:
     active: local
     group:
