@@ -44,6 +44,9 @@ public class SearchController {
     // private final Job productIndexingJob;
     private final Map<String, Job> allJobs; // List<Job> 대신 Map<String, Job>을 사용하여 Job 이름으로 특정 Job을 주입
 
+    /** 첫 쪽의 필터 메뉴 — 결과 캐시 밖에서 붙인다(계산은 요청 밖, 기다림은 짧게 — SearchFilterFacets). */
+    private final com.project.catalog_service.service.SearchFilterFacets filterFacets;
+
     /** 이 검색을 ES 로 할지 — 기능 플래그(docs/74). 캐시 밖에서 정해 캐시 키에 넣는다. */
     private final com.project.catalog_service.service.SearchEngineSelector searchEngineSelector;
 
@@ -71,9 +74,44 @@ public class SearchController {
         // 캐시가 맞아도 매 요청 기록된다. [JA] エンジンはキャッシュの外で決める — ここで評価すればこのリクエストの
         // サーバースパンに変形が残り、キャッシュヒットでも毎回記録される。
         SearchResultDto dto = searchService.searchProducts(params, searchEngineSelector.select(params));
+        dto = filterFacets.attach(dto, params);
 
         return new ResponseEntity<>(withStock(dto), HttpStatus.OK);
 
+    }
+
+    /**
+     * 검색 질의가 시간 상한({@code catalog.search.query-timeout-seconds}, 기본 5초)에 걸렸다 — 503. 질의는 DB 에서 취소돼 커넥션이 바로 돌아간다.
+     *
+     * <p>🐛 2026-10-20 실습(상품 1,000만, docs/83 §2.8): 상한이 없어 필터 검색 하나가 75 ~ 195초 동안 커넥션을 쥐었다. 게이트웨이는 10초에
+     * 포기하지만 catalog 의 스레드와 커넥션은 질의가 끝날 때까지 묶여, 파드마다 5개뿐인 풀이 차자 home · banners 까지 5초 대기 끝에 5xx 였다
+     * (필터 검색 측정 실패 95.04%). 이제 비싼 검색만 실패하고 나머지는 산다.
+     *
+     * <p>[JA] 検索照会が時間上限に掛かった — 503。照会は DB で取り消され、接続はすぐ戻る。以前は上限がなく、一件が接続を 3 分握って全体が 5xx だった。
+     */
+    @org.springframework.web.bind.annotation.ExceptionHandler({
+            org.springframework.dao.DataAccessException.class, jakarta.persistence.PersistenceException.class,
+            org.springframework.transaction.TransactionException.class, org.hibernate.HibernateException.class })
+    public ResponseEntity<String> searchTimedOut(RuntimeException e) {
+        if (!isQueryTimeout(e)) {
+            throw e;
+        }
+        log.warn("검색 질의 시간 초과 — 503 ({})", e.getClass().getSimpleName());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("검색이 오래 걸려 중단했습니다. 잠시 뒤 다시 시도해 주세요.");
+    }
+
+    /** 시간 상한으로 끝난 질의인가 — 번역 계층마다 예외 종류가 달라 원인 사슬을 본다(PostgreSQL 은 SQLSTATE 57014). */
+    public static boolean isQueryTimeout(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof org.springframework.dao.QueryTimeoutException
+                    || t instanceof jakarta.persistence.QueryTimeoutException
+                    || t instanceof org.hibernate.QueryTimeoutException
+                    || t instanceof org.springframework.transaction.TransactionTimedOutException
+                    || (t instanceof java.sql.SQLException sql && "57014".equals(sql.getSQLState()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
 

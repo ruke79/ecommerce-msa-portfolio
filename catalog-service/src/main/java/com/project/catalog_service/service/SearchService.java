@@ -58,8 +58,8 @@ public class SearchService {
      */
     private final EventPricing eventPricing;
 
-    /** 첫 쪽의 필터 메뉴 — 따로 된 빈이라 캐시가 걸린다(같은 클래스 안 호출은 프록시를 거치지 않는다). */
-    private final SearchFilterFacets filterFacets;
+    // 첫 쪽의 필터 메뉴(브랜드 · 색상 · 사이즈 · 상세)는 여기서 만들지 않는다 — 결과 캐시 밖에서 SearchFilterFacets.attach 가 붙인다
+    // (SearchController). 🐛 2026-10-20 전에는 이 캐시된 계산 안에서 돌아 1,000만 상품에서 질의 하나가 1분 넘게 커넥션을 쥐었다.
 
     // @RequiredArgsConstructor가 있으므로 별도의 @Autowired 생성자는 필요 없습니다.
     // private final 필드들에 대한 생성자를 자동으로 생성합니다.
@@ -279,7 +279,7 @@ public class SearchService {
     }
 
     /** category 파라미터가 숫자 id면 Long으로, 이름이거나 비어있으면 null을 반환한다(이름 검색은 별도 경로). */
-    private Long parseCategoryId(String category) {
+    static Long parseCategoryId(String category) {
         if (category == null || category.isBlank()) {
             return null;
         }
@@ -316,6 +316,7 @@ public class SearchService {
      * 커넥션 대기 22 · 서버 p95 1.5초.
      */
     @Cacheable(value = "search_cache", cacheManager = "redisCacheManager", sync = true)
+    @Transactional(readOnly = true, timeoutString = "${catalog.search.query-timeout-seconds:5}")
     public SearchResultDto searchProducts(SearchParamsRequest params, SearchEngine engine) {
         // category는 숫자 id 또는 이름(name)일 수 있다. 숫자가 아니면 id로 파싱하지 않고 null 처리
         // (기존 Long.parseLong은 이름 검색 시 NumberFormatException → 500을 유발했다).
@@ -390,18 +391,18 @@ public class SearchService {
                 .product(productPage)
                 .totalProducts((int) totalProducts);
 
+        // 메뉴 넷(색상 · 사이즈 · 상세 · 브랜드)은 빈 목록으로 두고 SearchFilterFacets.attach 가 채운다 — 캐시된 이 결과에 넣으면
+        // 60분 동안 그 메뉴가 그대로고, 계산이 늦으면 검색 전체가 그만큼 늦다.
         if (params.isIncludeFilters()) {
-            List<String> brands = (categoryId != null) ? filterFacets.brands(categoryId)
-                                                     : filterFacets.brandsByCategoryName(params.getCategory());
             List<CategoryDto> categoryDtos = categoryRepository.findAll().stream().map(CategoryMapper::toDto).collect(Collectors.toList());
             List<SubCategoryDto> subCategoryDtos = subCategoryRepository.findAll().stream().map(SubcategoryMapper::toDto).collect(Collectors.toList());
 
             result.categories(categoryDtos)
                   .subCategories(subCategoryDtos)
-                  .colors(filterFacets.colors(categoryId))
-                  .sizes(filterFacets.sizes(categoryId))
-                  .details(filterFacets.details(categoryId))
-                  .brandsDB(brands);
+                  .colors(List.of())
+                  .sizes(List.of())
+                  .details(List.of())
+                  .brandsDB(List.of());
         } else {
             // null 이 아니라 빈 목록을 준다. 받는 쪽이 길이를 재거나 순회할 때
             // null 검사를 빠뜨려도 터지지 않는다.

@@ -35,7 +35,7 @@ import com.project.common.dto.catalog.request.SearchParamsRequest;
  * <p>[JA] 商品が 65,535 を超えるカテゴリの 1 ページ目の検索(フィルターメニュー込み)— 本物の PostgreSQL で。以前は IN の展開で例外だった。
  */
 @Tag("containers")
-@SpringBootTest
+@SpringBootTest(properties = "catalog.facets.wait=10s")
 @org.testcontainers.junit.jupiter.Testcontainers
 @DisplayName("필터 메뉴 — 상품 7만 개 카테고리 (65,535 바인드 변수 한도)")
 class SearchFilterFacetsScaleTest {
@@ -99,6 +99,9 @@ class SearchFilterFacetsScaleTest {
     private SearchService searchService;
 
     @Autowired
+    private SearchFilterFacets filterFacets;
+
+    @Autowired
     private org.springframework.data.redis.connection.RedisConnectionFactory redisConnectionFactory;
 
     /** SearchParamsRequest 는 protected 기본 생성자만 있다. */
@@ -151,7 +154,8 @@ class SearchFilterFacetsScaleTest {
         params.setPageSize(10);
         params.setIncludeFilters(true);
 
-        SearchResultDto result = searchService.searchProducts(params, SearchEngine.POSTGRES);
+        // 메뉴는 결과 캐시 밖에서 붙는다(SearchController 와 같은 순서) — 이 테스트는 기다림 상한을 넉넉히(10초) 준다
+        SearchResultDto result = filterFacets.attach(searchService.searchProducts(params, SearchEngine.POSTGRES), params);
 
         assertThat(result.getTotalProducts()).isEqualTo(PRODUCTS);
         assertThat(result.getProduct().getContent()).hasSize(10);

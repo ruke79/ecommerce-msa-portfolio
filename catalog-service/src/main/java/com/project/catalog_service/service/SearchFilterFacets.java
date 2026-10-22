@@ -1,80 +1,200 @@
 package com.project.catalog_service.service;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
-import org.springframework.cache.annotation.Cacheable;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import com.project.catalog_service.repository.jpa.data.ProductDetailsRepository;
-import com.project.catalog_service.repository.jpa.data.ProductRepository;
-import com.project.catalog_service.repository.jpa.data.ProductSkuRepository;
+import com.project.common.dto.catalog.request.SearchParamsRequest;
+import com.project.catalog_service.dto.SearchResultDto;
 import com.project.common.dto.ProductDetailsDto;
 
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
- * 검색 첫 쪽의 필터 메뉴(브랜드 · 색상 · 사이즈 · 상세) — 카테고리마다 중복 없는 값, 캐시(기본 10분).
+ * 검색 첫 쪽의 필터 메뉴(브랜드 · 색상 · 사이즈 · 상세) — 카테고리마다 중복 없는 값. <b>요청은 계산하지 않는다</b>: 캐시를 읽고, 없거나
+ * 오래됐으면 전용 실행기에 계산을 맡긴 뒤 짧게만 기다린다({@code catalog.facets.wait}, 기본 1.5초). 그 안에 못 끝나면 메뉴 없이 결과만 나간다.
  *
- * <p>🐛 2026-10-19 데이터 규모 측정(상품 100만, docs/83 §5)에서 실패 53.61% 였다. 예전 {@code SearchService} 는
+ * <p>🐛 2026-10-20 실습(상품 1,000만, docs/83 §2.8): 메뉴 질의가 요청 안에서 돌았다(사이즈 DISTINCT 76초 — 큰 카테고리의 SKU × 사이즈
+ * 전부를 조인한다). 캐시(8 ~ 10분)가 만료될 때마다 다시 돌며 커넥션을 몇 분씩 쥐었고, 파드마다 5개뿐인 풀이 차서 home · banners 까지
+ * 5초 대기 끝에 5xx 였다(넓힘 측정 실패 10.33%, 두 번째 붕괴가 첫 채움 9분 뒤). 메뉴는 검색 결과 캐시({@code search_cache}, 60분)에도
+ * 함께 들어 있어 오래 그대로였다 — 이제 결과 캐시에는 넣지 않고 매 요청 이 빈이 붙인다({@link #attach}).
+ *
  * <ul>
- *   <li>카테고리의 상품 id 를 <b>전부</b> 읽어 {@code IN (:ids)} 로 색상 · 사이즈 · 상세를 다시 물었다 — 바인드 변수가
- *       65,535 를 넘는 카테고리(fashion ~12만 · books ~13만 …)는 {@code PSQLException} 으로 그 검색이 매번 실패했다
- *       (catalog 로그 96건). 실패는 바깥 {@code search_cache} 에 남지 않아 요청마다 처음부터 다시 돌았다.</li>
- *   <li>브랜드는 DISTINCT 없이 상품마다 한 줄(~12만 문자열)이었다 — GC 가 초당 최대 690ms.</li>
- *   <li>이 메서드들의 {@code @Cacheable} 은 같은 클래스 안에서 직접 불러 프록시를 거치지 않았다 — 한 번도 캐시되지 않았다.</li>
+ *   <li>값과 계산 시각을 함께 둔다({@link FacetEntry}, 캐시 24시간). {@code catalog.facets.refresh-after}(기본 10분)가 지나면 옛 값을
+ *       내주면서 뒤에서 다시 계산한다 — 만료 순간 요청이 질의를 기다리지 않는다.</li>
+ *   <li>계산은 키마다 하나(파드 안), 실행기 스레드는 {@code catalog.facets.threads}(기본 1)개 — 메뉴 질의가 파드의 커넥션을 한 개 넘게
+ *       쓰지 않는다. 질의 자체의 시간 상한은 {@link FacetQueries}(기본 600초).</li>
+ *   <li>상품 쓰기의 {@code @CacheEvict}(ProductService)가 지우면 다음 요청이 다시 계산을 맡긴다.</li>
  * </ul>
- * 이제 값은 DB 안에서 조인 + DISTINCT 로 만들고(앱으로 id 를 가져오지 않는다), 따로 된 빈이라 캐시가 실제로 걸린다.
- * {@code sync = true} — 만료 순간 같은 카테고리를 여러 스레드가 함께 다시 만들지 않는다(파드 안에서). 🐛 2026-10-19 전에는 이름뿐이었다 —
- * Spring Data Redis 3.x 는 잠금을 캐시 작성기에 맡기고 이 서비스의 작성기는 잠그지 않는다. 이제 {@code SingleFlightCache} 가 키마다 잠근다.
- * 비우기는 상품 쓰기의 {@code @CacheEvict}(ProductService) 가 한다.
  *
- * <p>캐시 값은 {@link ArrayList} 다 — 캐시 직렬화기는 타입 이름을 남기므로 {@code List.of()} 의 내부 클래스는 읽을 수 없다.
- *
- * <p>[JA] 検索 1 ページ目のフィルターメニュー。以前は商品 id を全部読んで IN に展開し、65,535 を超えるカテゴリで毎回失敗していた。
- * ブランドは DISTINCT なしで、同じクラス内の直接呼び出しで @Cacheable も効いていなかった。DB 内の結合 + DISTINCT と別 Bean のキャッシュに。
+ * <p>[JA] 検索 1 ページ目のフィルターメニュー。リクエストは計算しない — キャッシュを読み、なければ専用実行器に任せて短く待つだけ。1,000 万商品で
+ * メニュー照会(76 秒)がリクエスト内で走り、キャッシュ満了のたびに接続を数分握ってプールが詰まり、home まで 5xx だった。
  */
+@Slf4j
 @Service
-@RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class SearchFilterFacets {
 
-    private final ProductRepository productRepository;
-    private final ProductSkuRepository productSkuRepository;
-    private final ProductDetailsRepository productDetailsRepository;
+    private final FacetQueries queries;
+    private final CacheManager cacheManager;
+    private final Executor executor;
+    private final Duration refreshAfter;
+    private final Duration waitBudget;
+    private final Clock clock;
+    private final Map<String, CompletableFuture<List<Object>>> inFlight = new ConcurrentHashMap<>();
 
-    @Cacheable(value = "brands_cache", key = "'id:' + #categoryId", cacheManager = "redisCacheManager", sync = true)
-    public List<String> brands(Long categoryId) {
-        return new ArrayList<>(productRepository.findDistinctBrandsByCategoryId(categoryId));
+    @Autowired
+    public SearchFilterFacets(FacetQueries queries, @Qualifier("redisCacheManager") CacheManager cacheManager,
+            @Value("${catalog.facets.refresh-after:10m}") Duration refreshAfter,
+            @Value("${catalog.facets.wait:1500ms}") Duration wait,
+            @Value("${catalog.facets.threads:1}") int threads) {
+        this(queries, cacheManager, newExecutor(threads), refreshAfter, wait, Clock.systemUTC());
     }
 
-    /** 카테고리를 이름으로 받은(또는 없는 — null 이면 전체) 검색의 브랜드. */
-    @Cacheable(value = "brands_cache", key = "'name:' + #categoryName", cacheManager = "redisCacheManager", sync = true)
-    public List<String> brandsByCategoryName(String categoryName) {
-        return new ArrayList<>(productRepository.findDistinctBrandsByCategoryName(categoryName));
+    SearchFilterFacets(FacetQueries queries, CacheManager cacheManager, Executor executor, Duration refreshAfter, Duration wait,
+            Clock clock) {
+        this.queries = queries;
+        this.cacheManager = cacheManager;
+        this.executor = executor;
+        this.refreshAfter = refreshAfter;
+        this.waitBudget = wait;
+        this.clock = clock;
     }
 
-    @Cacheable(value = "colors_cache", key = "#categoryId == null ? 'all' : #categoryId", cacheManager = "redisCacheManager", sync = true)
-    public List<String> colors(Long categoryId) {
-        return new ArrayList<>(categoryId == null ? productSkuRepository.findAllColors()
-                : productSkuRepository.findColorsByCategoryId(categoryId));
+    /** 데몬 스레드 · 대기열 상한 — 넘치면 그 계산은 다음 요청이 다시 맡긴다(메뉴만 비고 결과는 나간다). */
+    private static ExecutorService newExecutor(int threads) {
+        int n = Math.max(1, threads);
+        return new ThreadPoolExecutor(n, n, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(64), r -> {
+            Thread t = new Thread(r, "facet-refresh");
+            t.setDaemon(true);
+            return t;
+        }, new ThreadPoolExecutor.AbortPolicy());
     }
 
-    @Cacheable(value = "sizes_cache", key = "#categoryId == null ? 'all' : #categoryId", cacheManager = "redisCacheManager", sync = true)
-    public List<String> sizes(Long categoryId) {
-        return new ArrayList<>(categoryId == null ? productSkuRepository.findAllSizes()
-                : productSkuRepository.findSizesByCategoryId(categoryId));
-    }
-
-    @Cacheable(value = "details_cache", key = "#categoryId == null ? 'all' : #categoryId", cacheManager = "redisCacheManager", sync = true)
-    public List<ProductDetailsDto> details(Long categoryId) {
-        List<Object[]> rows = categoryId == null ? productDetailsRepository.findDistinctNameValues()
-                : productDetailsRepository.findDistinctNameValuesByCategoryId(categoryId);
-        List<ProductDetailsDto> out = new ArrayList<>(rows.size());
-        for (Object[] row : rows) {
-            out.add(ProductDetailsDto.builder().name((String) row[0]).value((String) row[1]).build());
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        if (executor instanceof ExecutorService es) {
+            es.shutdownNow();
         }
-        return out;
+    }
+
+    /**
+     * 첫 쪽 결과에 메뉴를 붙인 복사본. {@code includeFilters=false} 면 그대로. 네 가지를 먼저 모두 맡기고 한 기한(기본 1.5초) 안에서 모은다 —
+     * 하나씩 기다리면 최악이 네 배다.
+     */
+    public SearchResultDto attach(SearchResultDto dto, SearchParamsRequest params) {
+        if (dto == null || params == null || !params.isIncludeFilters()) {
+            return dto;
+        }
+        Long categoryId = SearchService.parseCategoryId(params.getCategory());
+        String all = categoryId == null ? "all" : String.valueOf(categoryId);
+        CompletableFuture<List<Object>> brands = categoryId != null
+                ? lookup("brands_cache", "id:" + categoryId, () -> queries.brands(categoryId))
+                : lookup("brands_cache", "name:" + params.getCategory(), () -> queries.brandsByCategoryName(params.getCategory()));
+        CompletableFuture<List<Object>> colors = lookup("colors_cache", all, () -> queries.colors(categoryId));
+        CompletableFuture<List<Object>> sizes = lookup("sizes_cache", all, () -> queries.sizes(categoryId));
+        CompletableFuture<List<Object>> details = lookup("details_cache", all, () -> queries.details(categoryId));
+
+        long deadline = System.nanoTime() + waitBudget.toNanos();
+        return dto.toBuilder()
+                .brandsDB(cast(await(brands, deadline)))
+                .colors(cast(await(colors, deadline)))
+                .sizes(cast(await(sizes, deadline)))
+                .details(SearchFilterFacets.<ProductDetailsDto>cast(await(details, deadline)))
+                .build();
+    }
+
+    /** 캐시에 있으면 그 값(오래됐으면 뒤에서 다시 계산을 맡긴다), 없으면 진행 중인 계산. */
+    CompletableFuture<List<Object>> lookup(String cacheName, String key, Supplier<? extends List<?>> loader) {
+        Cache cache = cacheManager.getCache(cacheName);
+        FacetEntry hit = null;
+        if (cache != null) {
+            try {
+                hit = cache.get(key, FacetEntry.class);
+            } catch (RuntimeException e) {
+                // 옛 모양(목록 그대로 — 2026-10-20 전)이거나 Redis 오류 — 없는 것으로 보고 다시 만든다
+                log.debug("필터 메뉴 캐시 읽기 실패 — 다시 계산 cache={} ({})", cacheName, e.getClass().getSimpleName());
+            }
+        }
+        if (hit != null && hit.getValues() != null) {
+            if (clock.millis() - hit.getComputedAtMillis() >= refreshAfter.toMillis()) {
+                refresh(cache, cacheName, key, loader);
+            }
+            return CompletableFuture.completedFuture(hit.getValues());
+        }
+        return refresh(cache, cacheName, key, loader);
+    }
+
+    private CompletableFuture<List<Object>> refresh(Cache cache, String cacheName, String key, Supplier<? extends List<?>> loader) {
+        String flightKey = cacheName + "::" + key;
+        CompletableFuture<List<Object>> mine = new CompletableFuture<>();
+        CompletableFuture<List<Object>> running = inFlight.putIfAbsent(flightKey, mine);
+        if (running != null) {
+            return running;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    ArrayList<Object> values = new ArrayList<>(loader.get());
+                    if (cache != null) {
+                        try {
+                            cache.put(key, new FacetEntry(values, clock.millis()));
+                        } catch (RuntimeException e) {
+                            log.warn("필터 메뉴 캐시 쓰기 실패 — 다음 요청이 다시 계산한다 cache={} ({})", cacheName, e.getClass().getSimpleName());
+                        }
+                    }
+                    mine.complete(values);
+                } catch (Throwable t) {
+                    // 옛 값이 있으면 캐시에 그대로 남는다 — 지우지 않는다
+                    log.warn("필터 메뉴 계산 실패 cache={} ({})", cacheName, t.getClass().getSimpleName());
+                    mine.completeExceptionally(t);
+                } finally {
+                    inFlight.remove(flightKey, mine);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            inFlight.remove(flightKey, mine);
+            log.warn("필터 메뉴 계산 대기열이 찼다 — 이번 요청은 메뉴 없이 cache={}", cacheName);
+            mine.completeExceptionally(e);
+        }
+        return mine;
+    }
+
+    private static List<Object> await(CompletableFuture<List<Object>> future, long deadlineNanos) {
+        try {
+            long left = Math.max(0, deadlineNanos - System.nanoTime());
+            return future.get(left, TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            return List.of();   // 계산은 계속된다 — 다음 요청이 캐시에서 받는다
+        } catch (ExecutionException e) {
+            return List.of();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> List<T> cast(List<Object> values) {
+        return new ArrayList<>((List<T>) (List<?>) values);
     }
 }

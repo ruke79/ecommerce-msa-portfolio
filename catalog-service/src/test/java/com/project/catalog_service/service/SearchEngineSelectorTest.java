@@ -141,7 +141,7 @@ class SearchEngineSelectorTest {
             queryFactory = qf;
             return new SearchService(mock(CategoryRepository.class), mock(SubcategoryRepository.class),
                     mock(ProductRepository.class), mock(ProductSkuRepository.class),
-                    qf, mock(EventPricing.class), mock(SearchFilterFacets.class));
+                    qf, mock(EventPricing.class));
         }
     }
 

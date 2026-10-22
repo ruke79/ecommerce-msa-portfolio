@@ -68,10 +68,9 @@ class SearchServiceUnitTest {
         // 기획전이 없으면 상시 할인 그대로 — 실제 EventPricing.effectiveDiscount 와 같은 규칙.
         when(eventPricing.effectiveDiscount(any(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenAnswer(i -> i.getArgument(1));
-        // 필터 메뉴는 따로 된 빈 — 여기서는 캐시 없이 저장소를 그대로 부른다(캐시는 SearchFilterFacetsScaleTest).
+        // 필터 메뉴는 이 계산 밖이다(SearchFilterFacets.attach — 컨트롤러가 붙인다).
         service = new SearchService(categoryRepository, subCategoryRepository,
-                productRepository, productSkuRepository, queryFactory,
-                eventPricing, new SearchFilterFacets(productRepository, productSkuRepository, productDetailsRepository));
+                productRepository, productSkuRepository, queryFactory, eventPricing);
 
         // querydsl 체이닝(빌더 패턴)은 RETURNS_SELF 로 체인을 그대로 흘려보낸다.
         countQuery = mock(JPAQuery.class, withSettings().defaultAnswer(Answers.RETURNS_SELF));
@@ -83,16 +82,8 @@ class SearchServiceUnitTest {
         when(queryFactory.selectFrom(any())).thenReturn(listQuery);
 
         when(eventPricing.rules()).thenReturn(new EventPricing.Rules(java.util.Map.of(), java.util.Map.of()));
-        when(productSkuRepository.findColorsByCategoryId(any())).thenReturn(Collections.emptyList());
-        when(productSkuRepository.findSizesByCategoryId(any())).thenReturn(Collections.emptyList());
-        when(productSkuRepository.findAllColors()).thenReturn(Collections.emptyList());
-        when(productSkuRepository.findAllSizes()).thenReturn(Collections.emptyList());
-        when(productRepository.findDistinctBrandsByCategoryName(any())).thenReturn(Collections.emptyList());
-        when(productRepository.findDistinctBrandsByCategoryId(any())).thenReturn(Collections.emptyList());
         when(categoryRepository.findAll()).thenReturn(Collections.emptyList());
         when(subCategoryRepository.findAll()).thenReturn(Collections.emptyList());
-        when(productDetailsRepository.findDistinctNameValues()).thenReturn(Collections.emptyList());
-        when(productDetailsRepository.findDistinctNameValuesByCategoryId(any())).thenReturn(Collections.emptyList());
     }
 
     @Test
@@ -127,7 +118,9 @@ class SearchServiceUnitTest {
         params.setCategory("shoes");
 
         assertThatCode(() -> service.searchProducts(params, SearchEngine.POSTGRES)).doesNotThrowAnyException();
-        verify(productRepository).findDistinctBrandsByCategoryName("shoes");
+        // 🔴 메뉴 질의는 캐시된 이 계산 안에서 돌지 않는다 — 1,000만 상품에서 1분 넘는 질의가 검색 응답 · 커넥션을 붙잡았다(2026-10-20)
+        verify(productRepository, org.mockito.Mockito.never()).findDistinctBrandsByCategoryName(any());
+        verify(productSkuRepository, org.mockito.Mockito.never()).findAllSizes();
     }
 
     @Test
@@ -339,8 +332,18 @@ class SearchServiceUnitTest {
         params.setPage(1);
         params.setPageSize(10);
         params.setCategory("123");
+        params.setIncludeFilters(true);
+        when(productRepository.findDistinctBrandsByCategoryId(123L)).thenReturn(Collections.emptyList());
+        when(productSkuRepository.findColorsByCategoryId(123L)).thenReturn(Collections.emptyList());
+        when(productSkuRepository.findSizesByCategoryId(123L)).thenReturn(Collections.emptyList());
+        when(productDetailsRepository.findDistinctNameValuesByCategoryId(123L)).thenReturn(Collections.emptyList());
 
-        service.searchProducts(params, SearchEngine.POSTGRES);
+        // 메뉴는 결과 밖에서 붙는다(SearchController 와 같은 순서) — 바로 실행하는 실행기로
+        SearchFilterFacets facets = new SearchFilterFacets(
+                new FacetQueries(productRepository, productSkuRepository, productDetailsRepository),
+                new org.springframework.cache.concurrent.ConcurrentMapCacheManager(), Runnable::run,
+                java.time.Duration.ofMinutes(10), java.time.Duration.ofSeconds(1), java.time.Clock.systemUTC());
+        facets.attach(service.searchProducts(params, SearchEngine.POSTGRES), params);
 
         verify(productRepository).findDistinctBrandsByCategoryId(123L);
         // 색상 · 사이즈 · 상세도 카테고리 조인 질의 — 상품 id 목록을 앱으로 가져와 IN 으로 보내지 않는다
