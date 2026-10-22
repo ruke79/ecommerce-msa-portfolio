@@ -118,12 +118,14 @@ k6 요약은 "얼마나 느렸나" 만 말한다. **왜** 는 같은 시간의 �
 
 | k6 에서 보이는 것 | 같이 볼 것 | 흔한 원인 |
 |---|---|---|
-| 어느 단계부터 p95 가 계단처럼 뛴다 | `hikaricp_connections_pending` · `tomcat_threads_busy_threads` | DB 커넥션 풀 고갈(풀 5 × 레플리카) · 스레드 포화 |
+| 어느 단계부터 p95 가 계단처럼 뛴다 | `hikaricp_connections_pending` · `tomcat_threads_busy_threads`(÷ `tomcat_threads_config_max_threads`) · 처리 중 요청 수 `http_server_requests_active_seconds_active_count` | DB 커넥션 풀 고갈(풀 5 × 레플리카) · 스레드 포화 |
 | 주문만 느리다 · 담기는 괜찮다 | order 의 gRPC 재고 예약 지연 · catalog 의 잠금 대기 | 같은 SKU 에 몰림(행 잠금) — 상품 수를 늘리면 풀리는지 |
 | 주문은 빠른데 뒤가 밀린다 | Kafka 컨슈머 지연 · `payment_outbox_event` STARTED 행 수 | 아웃박스 릴레이 · 컨슈머 처리량 |
 | `rate_limited` 가 는다 | 그 이름(`name` 태그) | 유입 제한 — 올리지 않았거나, 로그인한 한 손님의 버킷(초당 20) |
 | 급증 직후만 5xx | HPA 의 레플리카 · 새 파드의 Ready 시각 · PostgreSQL 연결 수 | 새 파드가 준비 전에 트래픽 · 커넥션 총합이 `max_connections` 근처(docs/19 §3) |
 | `http_req_failed` 가 0 인데 `checks` 가 낮다 | 실패한 검사 이름 | 400(재고 · 입금 대기 한도) — 데이터 상태 |
+
+> 🐛 `tomcat_threads_*` 는 Tomcat 의 MBean 레지스트리가 켜져야 나온다(Spring Boot 기본은 꺼짐) — 2026-10-18 실습에서 비어 있어 공통 설정(`application-common.yml`)에서 켰다(`TomcatMetricsConfigTest`). 그 전 이미지에서는 처리 중 요청 수로 본다. 게이트웨이(WebFlux)에는 Tomcat 지표가 없다.
 
 ## 5. 결과 기록
 

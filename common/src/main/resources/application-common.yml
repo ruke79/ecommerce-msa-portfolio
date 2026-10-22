@@ -188,6 +188,14 @@ spring:
     baseline-version: "0"
     locations: classpath:db/migration
 
+# Tomcat 스레드 지표(tomcat_threads_busy_threads · _current_threads · _config_max_threads)는 MBean 레지스트리가 켜져야 나온다
+# (Spring Boot 기본은 꺼짐). 🐛 부하 시험(docs/83 §4)이 이 지표로 스레드 포화를 보라고 했는데 2026-10-18 실습에서 비어 있었다.
+# WebFlux(게이트웨이)에는 Tomcat 이 없어 영향이 없다. [JA] Tomcat のスレッド指標は MBean レジストリが有効なときだけ出る(既定は無効)。
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true
+
 management:
   endpoints:
     web:

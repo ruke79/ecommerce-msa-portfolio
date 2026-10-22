@@ -118,12 +118,14 @@ k6 の要約は「どれだけ遅かったか」しか言わない。**なぜ**�
 
 | k6 で見えるもの | 一緒に見るもの | よくある原因 |
 |---|---|---|
-| ある段から p95 が階段のように跳ねる | `hikaricp_connections_pending`・`tomcat_threads_busy_threads` | DB コネクションプールの枯渇(プール 5 × レプリカ)・スレッドの飽和 |
+| ある段から p95 が階段のように跳ねる | `hikaricp_connections_pending`・`tomcat_threads_busy_threads`(÷ `tomcat_threads_config_max_threads`)・処理中のリクエスト数 `http_server_requests_active_seconds_active_count` | DB コネクションプールの枯渇(プール 5 × レプリカ)・スレッドの飽和 |
 | 注文だけが遅い・カート投入は大丈夫 | order の gRPC 在庫予約の遅延・catalog のロック待ち | 同じ SKU への集中(行ロック)— 商品数を増やすと解けるか |
 | 注文は速いが後ろが詰まる | Kafka コンシューマーの遅延・`payment_outbox_event` の STARTED 行数 | アウトボックスのリレー・コンシューマーの処理量 |
 | `rate_limited` が増える | その名前(`name` タグ) | 流入制限 — 上げていないか、ログインした一人のお客さまのバケット(毎秒 20) |
 | 急増の直後だけ 5xx | HPA のレプリカ・新しい Pod の Ready 時刻・PostgreSQL の接続数 | 新しい Pod が準備前にトラフィック・コネクション総数が `max_connections` 付近(docs/19 §3) |
 | `http_req_failed` は 0 なのに `checks` が低い | 失敗したチェックの名前 | 400(在庫・振込待ちの上限)— データの状態 |
+
+> 🐛 `tomcat_threads_*` は Tomcat の MBean レジストリが有効なときだけ出る(Spring Boot の既定は無効)— 2026-10-18 の実習で空だったので共通設定(`application-common.yml`)で有効にした(`TomcatMetricsConfigTest`)。それ以前のイメージでは処理中のリクエスト数で見る。ゲートウェイ(WebFlux)に Tomcat の指標はない。
 
 ## 5. 結果の記録
 
