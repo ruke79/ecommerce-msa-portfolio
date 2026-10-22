@@ -45,11 +45,12 @@ class RedisCacheResilienceTest {
     void ttlsAreSpread() {
         RedisCacheManager manager = new RedisCacheConfig(null).redisCacheManager(mock(RedisConnectionFactory.class));
         manager.afterPropertiesSet();
-        manager.getCache("colors_cache");   // 설정 맵에 없는 캐시 — 기본값(10분)으로 실행 중에 생긴다
+        manager.getCache("products_by_category");   // 설정 맵에 없는 캐시 — 기본값(10분)으로 실행 중에 생긴다
         Map<String, Duration> nominal = Map.of(
                 "products", RedisCacheConfig.PRODUCTS_TTL,
                 "search_cache", Duration.ofMinutes(60),
-                "colors_cache", Duration.ofMinutes(10));
+                "colors_cache", RedisCacheConfig.FACETS_TTL,
+                "products_by_category", Duration.ofMinutes(10));
         nominal.forEach((name, base) -> {
             var ttl = manager.getCacheConfigurations().get(name).getTtlFunction();
             Set<Long> seconds = new HashSet<>();
@@ -65,6 +66,25 @@ class RedisCacheResilienceTest {
             assertThat(max.minus(min)).as(name + " — 같은 초에 몰리지 않는다").isGreaterThan(base.dividedBy(10));
             assertThat(seconds).as(name).hasSizeGreaterThan(100);
         });
+    }
+
+    @Test
+    @DisplayName("🔴 필터 메뉴 캐시 넷은 다시 계산 시각(10분)보다 훨씬 오래 남는다 — 옛 값을 내주며 뒤에서 다시 계산할 수 있게(예전: 기본 10분)")
+    void facetCachesOutliveTheirRefresh() {
+        // 🐛 2026-10-20 ~ 21 실습 8시간: 기본 10분(흩어져 8 ~ 10분)이라 다시 계산할 때가 오기 전에 사라져, 카테고리마다 8 ~ 10분에 한 번
+        //    첫 쪽이 메뉴를 1.5초 기다린 뒤 빈 채로 나갔다(밤새 검색 p95 1,513ms)
+        RedisCacheManager manager = new RedisCacheConfig(null).redisCacheManager(mock(RedisConnectionFactory.class));
+        manager.afterPropertiesSet();
+        Duration refreshAfter = Duration.ofMinutes(10);   // catalog.facets.refresh-after 기본값
+        for (String name : java.util.List.of("brands_cache", "colors_cache", "sizes_cache", "details_cache")) {
+            var config = manager.getCacheConfigurations().get(name);
+            assertThat(config).as(name + " — 설정 맵에 있다(없으면 기본 10분)").isNotNull();
+            for (int i = 0; i < 200; i++) {
+                assertThat(config.getTtlFunction().getTimeToLive("k" + i, "v")).as(name)
+                        .isGreaterThanOrEqualTo(Duration.ofHours(12))
+                        .isGreaterThan(refreshAfter.multipliedBy(10));
+            }
+        }
     }
 
     @Test

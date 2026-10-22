@@ -19,7 +19,8 @@ export function between(lo, hi, rnd = Math.random) {
  */
 export function deepSearchPath(category, deepPages, rnd = Math.random) {
   const page = between(2, Math.max(2, deepPages), rnd);
-  return `${SEARCH}?category=${encodeURIComponent(category)}&page=${page}&pageSize=10`;
+  // 화면(browse.jsx)처럼 2쪽부터는 메뉴를 받지 않는다 — 🐛 2026-10-21 전에는 빠져 서버 기본값(true)으로 깊은 쪽도 메뉴를 붙여 기다렸다
+  return `${SEARCH}?category=${encodeURIComponent(category)}&page=${page}&pageSize=10&includeFilters=false`;
 }
 
 /** 이름 검색 — 1 ~ namePages 쪽(1 이면 늘 첫 쪽). 첫 쪽만 필터 메뉴를 함께 받는다. */

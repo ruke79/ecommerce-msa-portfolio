@@ -248,7 +248,27 @@ ENGINE=postgres NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh bro
 - **필터 메뉴는 요청 밖에서** — `SearchFilterFacets.attach` 가 결과 캐시 밖에서 메뉴를 붙인다. 캐시(`FacetEntry` — 값 + 계산 시각, 24시간)를 읽고, 없거나 10분(`catalog.facets.refresh-after`)이 지났으면 전용 실행기(`catalog.facets.threads`, 기본 1 — 파드마다 메뉴 질의는 커넥션 하나까지)에 맡긴다. 요청은 `catalog.facets.wait`(기본 1.5초)까지만 기다리고, 못 끝나면 그 메뉴만 비어서 나간다(다음 요청이 받는다). 오래된 값은 그대로 내주며 뒤에서 다시 계산한다. 메뉴 질의 자체의 상한은 `catalog.facets.query-timeout-seconds`(기본 600초 — `FacetQueries`).
 - 확인(`SearchFacetsTimeoutIntegrationTest`, 실제 PostgreSQL · Redis — 표를 잠가 끝나지 않는 질의를 만든다): 검색 503 이 3초 · 잠금을 기다리는 질의 0 · 풀리면 200, 메뉴 질의는 상한에서 취소, 메뉴 계산이 15초 걸려도 첫 쪽은 1.3초에 200(그 메뉴만 빔) · 끝나면 다음 요청이 Redis 에서 받는다. 되돌리면(상한 둘 · 503 · 기다림 · 붙이기) 모두 실패한다.
 
-남은 것: 필터 검색 자체(가격 · 사이즈 · 색상의 EXISTS + 개수)는 1,000만에서 여전히 상한을 넘는다 — 이제 503 으로 끊길 뿐이다. 개수 세기 상한(예: "10,000+")과 질의 모양은 다음 단계다. 같은 조건으로 다시 잰다.
+고친 뒤(같은 조건, catalog 이미지만 새로 — 측정기 커밋 열은 부하 VM 의 체크아웃이라 `b2ebf3d0` 그대로):
+
+| 회차 | 조건 | 실패 | 무엇 |
+|---|---|---|---|
+| `152705Z` | 1,000만 · 도착률 50 · `SPREAD=1` | **0.01%**(10.33 · 0.72%) | 커넥션 대기 내내 0 · 받는 시간 0 ~ 2ms, p95 26ms. 첫 1분 검색 p95 1.7초 = 메뉴 기다림 상한(1.5초)에 걸려 메뉴만 빈 첫 쪽, 5xx 4건은 이름 검색의 5초 상한 |
+| `145932Z` · `153851Z` | 1,000만 · 도착률 10 · `SPREAD=1 FILTER_SEARCH=1` | **17.70 · 21.48%**(95.04%) | 질의가 몇 분 매달리지는 않는다(커넥션을 쥔 시간 평균 ~1초). 그래도 필터 검색(개수 + 목록 1 ~ 4초)이 풀 15개를 늘 채워 대기 30 ~ 46 · 받는 데 2 ~ 3.5초 — product_cold 최대 5,033ms(= 커넥션 대기 상한 5초), home · banners 까지 5xx |
+
+3. **칸막이가 없었다.** 시간 상한은 질의 하나의 길이를 자를 뿐, 비싼 검색이 **몇 개나 동시에** 커넥션을 쥐는지는 막지 않는다. 그래서 **검색 격벽**(`SearchBulkhead`)을 더했다 — 파드마다 DB 를 쓰는 검색은 동시에 `catalog.search.bulkhead.max-concurrent`(기본 3), 그중 가격 · 색상 · 사이즈 필터 검색은 `…max-concurrent-filtered`(기본 2). 자리는 `…wait`(기본 200ms)까지만 기다리고, 못 얻으면 커넥션을 건드리지 않은 채 503 · `Retry-After: 2`("검색 요청이 몰려 잠시 받지 못했습니다"). 풀(5)의 나머지 둘은 home · banners · 상품 쪽 몫으로 늘 남고, 필터 없는 검색은 한 자리를 늘 쓴다. 자리는 캐시를 본 **뒤**, 트랜잭션(= 커넥션)을 열기 **전에** 얻는다 — `searchProducts` 는 `NOT_SUPPORTED` 이고 시간 상한 트랜잭션은 격벽 안의 `TransactionTemplate` 이 연다. 캐시가 맞는 검색은 자리를 쓰지 않고, 같은 검색의 동시 요청은 단일 계산(`sync = true`)이 하나로 모은 뒤라 한 자리다. 지표 `catalog_search_bulkhead_rejected_total{limit="all|filtered"}`.
+- 확인: `SearchBulkheadTest`(필터 둘 · 전체 셋 · 거절은 트랜잭션을 열지 않음 · 실패해도 자리 반환), `SearchFacetsTimeoutIntegrationTest`(실제 PostgreSQL — 표를 잠그고 필터 검색 여덟을 동시에: DB 에서 기다리는 것은 둘, 여섯은 바로 503 · `Retry-After`, 그동안 다른 요청은 커넥션을 1초 안에 받는다). 격벽을 무력화하면(자리 1000) 셋 모두 실패한다(DB 에 들어간 검색 3 · 거절 없음).
+- 측정에서 503 은 실패로 센다 — 이제 필터 검색이 몰리면 **필터 검색만** 503 이고 home · banners · 상품은 살아야 한다(엔드포인트별 5xx 로 본다).
+
+남은 것: 필터 검색 자체(가격 · 사이즈 · 색상의 EXISTS + 개수)는 1,000만에서 1 ~ 4초다. 개수 세기 상한(예: "1,000개 이상" — `count(*) from (… limit 1001)`)과 질의 모양은 다음 단계다. 같은 조건으로 다시 잰다.
+
+**8시간 오래 돌리기**(`mixed-20261020T162922Z`, 격벽 이미지 · 1,000만 · 넓힘 · 도착률 40 · 리뷰 초당 1, `STAGES=5m:40,8h:40,2m:0`): 요청 607만(초당 207.7) · 실패 **0.25%** · home p95 19ms · product_cold 37 · 리뷰 쓰기 98. 메모리는 차오르지 않았다(catalog 640Mi 안팎 / 한도 1Gi). 임계값을 넘은 것은 **검색 p95 1,513ms**(기준 1,200) 하나다.
+
+- **검색 p95 1.5초 = 메뉴 기다림 상한** — 🐛 필터 메뉴 캐시 넷(brands · colors · sizes · details)이 `RedisCacheConfig` 의 설정 맵에 없어 **기본 10분**(흩어져 8 ~ 10분)이었다. 이 절의 '캐시 24시간'은 적혀만 있었다. 다시 계산할 때(10분)가 오기 전에 값이 Redis 에서 사라져, 카테고리마다 8 ~ 10분에 한 번 첫 쪽이 메뉴 계산을 1.5초 기다린 뒤 빈 메뉴로 나갔다. 대기열이 찼다는 로그 · 계산 실패는 0이었다 — 앞서 `152705Z` 끝의 1.7초를 '다시 계산이 대기열에 몰려서'로 본 것은 틀렸고, 같은 원인(만료)이었다. 이제 `FACETS_TTL` 24시간(흩어짐 20%) — `RedisCacheResilienceTest.facetCachesOutliveTheirRefresh`(되돌리면 실패).
+- **측정기**: `deepSearchPath` 가 `includeFilters` 를 빼 서버 기본값(true)으로 깊은 쪽도 메뉴를 붙이고 기다렸다 — 화면(`browse.jsx`)은 2쪽부터 `false`. 이제 `includeFilters=false`(LoadK6ScriptTest). 이전 회차의 search_deep 응답 시간은 메뉴 기다림을 포함한다.
+- **5xx 15,191 의 내역**: 격벽 거절(`limit="all"`) 4,693 · 필터 0 — 깊은 쪽(넓힘 1,000쪽의 OFFSET)과 이름 검색. 나머지 약 10,500 은 **catalog 파드 하나의 JVM 충돌**(17:47:56 UTC, `SIGSEGV` · `LinkResolver::runtime_resolve_virtual_method`, Temurin 17.0.20.1, 종료 코드 134) 동안 — home · banners · product_cold 가 1,600 ~ 1,800건씩 고르게 실패했다. 게이트웨이가 Eureka 의 죽은 인스턴스로 몇 분 동안 보낸 것으로 보인다(확인 중). 충돌 기록(`/app/hs_err_pid7.log`)은 컨테이너와 함께 사라졌다.
+- **user-service 파드 하나가 CPU 한도(1000m)를 다 썼다** — 스레드 목록에서 `C2 CompilerThread0` 의 CPU 가 29,893초 / 파드 수명 31,121초(96%), 한 메서드(`FirstMatchingCompositeObservationHandler::onEvent`)를 컴파일 중이었다. JIT 컴파일러가 끝나지 않는 경우로 보인다(같은 컴파일이 계속되는지 확인 중). 다른 두 파드는 3m.
+
+⚠️ 로그를 셀 때 `kubectl logs -l <선택자>` 는 파드마다 **마지막 10줄만** 읽는다 — `--tail=-1` 을 붙인다(2026-10-20: '검색 질의 시간 초과' 3 · 'Connection is not available' 0 은 이 때문에 믿을 수 없었다).
 
 ## 3. 순서
 

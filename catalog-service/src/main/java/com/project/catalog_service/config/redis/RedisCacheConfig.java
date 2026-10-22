@@ -85,6 +85,20 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
     /** 상품 목록 · 상세 캐시(products)의 수명 — 쓰기마다 비우지만, 놓친 무효화(다른 파드의 할인 맵 등)도 이 시간 안에는 풀린다. */
     static final Duration PRODUCTS_TTL = Duration.ofMinutes(30);
 
+    /**
+     * 필터 메뉴 캐시(brands · colors · sizes · details)의 수명 — 값에 계산 시각이 있어 10분({@code catalog.facets.refresh-after})이 지나면
+     * 옛 값을 내주며 뒤에서 다시 계산한다({@code SearchFilterFacets}). 수명은 그보다 훨씬 길어야 그 '옛 값' 이 남아 있다.
+     *
+     * <p>🐛 2026-10-20 ~ 21 실습 8시간(1,000만 · 넓힘, docs/83 §2.8): 이 넷이 설정 맵에 없어 기본 10분(흩어져 8 ~ 10분)이었다. 다시 계산할
+     * 때(10분)가 오기 전에 Redis 에서 사라져, 카테고리마다 8 ~ 10분에 한 번 첫 쪽 검색이 메뉴 계산(1,000만에서 수십 초)을 1.5초 기다린 뒤
+     * 빈 메뉴로 나갔다 — 밤새 검색 p95 1,513ms. [JA] フィルターメニューのキャッシュの寿命 — 設定マップになく既定 10 分で、再計算の時刻より
+     * 先に Redis から消え、カテゴリごとに 8〜10 分に一度、1 ページ目がメニューを 1.5 秒待って空で返っていた。
+     */
+    static final Duration FACETS_TTL = Duration.ofHours(24);
+
+    /** 필터 메뉴 캐시 이름 — SearchFilterFacets 가 쓴다. */
+    static final java.util.List<String> FACET_CACHES = java.util.List.of("brands_cache", "colors_cache", "sizes_cache", "details_cache");
+
     /** 만료의 흩어짐 — 키마다 수명을 이만큼까지(비율) 줄인다. */
     static final double TTL_JITTER = 0.2;
 
@@ -195,6 +209,11 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
         cacheConfigurations.put("search_cache", redisCacheConfiguration(Duration.ofMinutes(60)));
 
         
+
+        // 필터 메뉴 넷 — 24시간(다시 계산은 값의 계산 시각으로 10분마다 뒤에서, FACETS_TTL)
+        for (String facets : FACET_CACHES) {
+            cacheConfigurations.put(facets, redisCacheConfiguration(FACETS_TTL));
+        }
 
         // `product_cache` 캐시 설정: 영구 보관
         cacheConfigurations.put("product_cache", permanentCacheConfig);

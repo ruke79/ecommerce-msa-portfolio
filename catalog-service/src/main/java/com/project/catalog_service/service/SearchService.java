@@ -58,6 +58,9 @@ public class SearchService {
      */
     private final EventPricing eventPricing;
 
+    /** 검색의 DB 작업 격벽 — 자리를 얻은 뒤에 시간 상한 트랜잭션을 연다(캐시가 맞으면 오지 않는다). */
+    private final SearchBulkhead searchBulkhead;
+
     // 첫 쪽의 필터 메뉴(브랜드 · 색상 · 사이즈 · 상세)는 여기서 만들지 않는다 — 결과 캐시 밖에서 SearchFilterFacets.attach 가 붙인다
     // (SearchController). 🐛 2026-10-20 전에는 이 캐시된 계산 안에서 돌아 1,000만 상품에서 질의 하나가 1분 넘게 커넥션을 쥐었다.
 
@@ -314,10 +317,18 @@ public class SearchService {
      * <p>{@code sync = true} — 만료 순간 같은 검색을 파드마다 한 번만 계산한다({@code SingleFlightCache}). 🐛 2026-10-19 mixed
      * {@code 160904Z}(docs/83 §5): 한꺼번에 채워진 키 48개가 같은 초에 만료되자 키마다 들어온 요청이 모두 DB 에서 다시 계산해 20초 동안
      * 커넥션 대기 22 · 서버 p95 1.5초.
+     *
+     * <p>트랜잭션(= 커넥션)은 여기서 열지 않는다({@code NOT_SUPPORTED}) — 캐시를 본 뒤 {@link SearchBulkhead} 가 자리를 얻고 나서 연다
+     * (읽기 전용 · 시간 상한 {@code catalog.search.query-timeout-seconds}). 🐛 2026-10-20 실습: 필터 검색이 커넥션을 1 ~ 4초씩 쥐어 풀이
+     * 늘 차고 home · 상품까지 5xx 였다. [JA] トランザクション(接続)はここでは開かない — 隔壁が席を得てから開く。
      */
     @Cacheable(value = "search_cache", cacheManager = "redisCacheManager", sync = true)
-    @Transactional(readOnly = true, timeoutString = "${catalog.search.query-timeout-seconds:5}")
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public SearchResultDto searchProducts(SearchParamsRequest params, SearchEngine engine) {
+        return searchBulkhead.run(hasSkuFilter(params), () -> search(params, engine));
+    }
+
+    private SearchResultDto search(SearchParamsRequest params, SearchEngine engine) {
         // category는 숫자 id 또는 이름(name)일 수 있다. 숫자가 아니면 id로 파싱하지 않고 null 처리
         // (기존 Long.parseLong은 이름 검색 시 NumberFormatException → 500을 유발했다).
         Long categoryId = parseCategoryId(params.getCategory());

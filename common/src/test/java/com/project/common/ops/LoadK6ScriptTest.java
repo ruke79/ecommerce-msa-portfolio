@@ -213,7 +213,8 @@ class LoadK6ScriptTest {
         assertThat(out)
                 .as("끄면(쪽 1) 이름 검색 조합은 검색어 수 그대로 — 예전 주소").contains("\"name1\":16")
                 .as("예전 이름 검색 주소").contains("\"oldName\":\"/catalog-service/api/search?search=Olive%20Oil&page=1&pageSize=10&includeFilters=true\"")
-                .as("예전 깊은 쪽 주소(includeFilters 없음)").contains("\"oldDeep\":\"/catalog-service/api/search?category=42&page=2&pageSize=10\"")
+                .as("깊은 쪽은 화면(browse.jsx)처럼 메뉴를 받지 않는다 — 🐛 2026-10-21 전에는 빠져 서버 기본값(true)으로 메뉴를 기다렸다")
+                .contains("\"oldDeep\":\"/catalog-service/api/search?category=42&page=2&pageSize=10&includeFilters=false\"")
                 .as("가격대 · 색상 · 사이즈는 범위 · 필터 메뉴 안").contains("\"bad\":0")
                 .contains("\"minPage\":1,\"maxPage\":50").contains("\"firstOnlyFilters\":true")
                 .as("필터 메뉴가 없으면 가격대만").contains("\"noFacets\":\"/catalog-service/api/search?category=c1&lowPrice=0&highPrice=20&page=1&pageSize=10&includeFilters=true\"");

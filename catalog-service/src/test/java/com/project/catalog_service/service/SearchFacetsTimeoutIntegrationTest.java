@@ -182,6 +182,47 @@ class SearchFacetsTimeoutIntegrationTest {
     }
 
     @Test
+    @DisplayName("🔴 필터 검색 여덟이 몰려도 DB 에 들어가는 것은 둘 — 나머지 여섯은 커넥션 없이 바로 503(Retry-After), 풀에는 다른 요청 몫이 남는다")
+    void filteredSearchesCannotDrainThePool() throws Exception {
+        // 🐛 2026-10-20 실습(필터 검색 비율 1): 필터 검색이 커넥션을 1 ~ 4초씩 쥐어 풀(파드마다 5)이 늘 찼고 home · 상품까지 5초 대기 끝에 5xx
+        Connection locked = lock("product.product");
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            List<java.util.concurrent.Future<MvcResult>> results = new java.util.ArrayList<>();
+            for (int i = 1; i <= 8; i++) {
+                String low = String.valueOf(i);   // 검색마다 다른 캐시 키 — 단일 계산으로 묶이지 않게
+                results.add(pool.submit(() -> mvc().perform(get("/api/search").param("category", String.valueOf(CATEGORY))
+                        .param("page", "1").param("pageSize", "10").param("includeFilters", "false").param("lowPrice", low))
+                        .andReturn()));
+            }
+            Thread.sleep(700);
+            assertThat(waitingOnLocks()).as("DB 에서 잠금을 기다리는(커넥션을 쥔) 필터 검색 — 상한 2").isEqualTo(2);
+            assertTimeoutPreemptively(Duration.ofSeconds(1), () -> jdbc.queryForObject("select 1", Integer.class),
+                    "다른 요청은 커넥션을 바로 받는다 — 격벽이 없으면 풀이 차서 기다린다");
+
+            int busy = 0;
+            int timedOut = 0;
+            for (var f : results) {
+                MvcResult r = f.get(20, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(r.getResponse().getStatus()).isEqualTo(503);
+                if ("2".equals(r.getResponse().getHeader("Retry-After"))) {
+                    busy++;
+                } else {
+                    timedOut++;
+                }
+            }
+            assertThat(busy).as("자리를 못 얻어 바로 돌아간 검색").isEqualTo(6);
+            assertThat(timedOut).as("들어간 둘은 시간 상한(2초)에서 취소").isEqualTo(2);
+        } finally {
+            locked.close();
+            pool.shutdownNow();
+        }
+        assertThat(mvc().perform(get("/api/search").param("category", String.valueOf(CATEGORY)).param("page", "1")
+                .param("pageSize", "10").param("includeFilters", "false").param("lowPrice", "1")).andReturn().getResponse().getStatus())
+                .as("풀리면 200").isEqualTo(200);
+    }
+
+    @Test
     @DisplayName("🔴 메뉴 질의가 상한(3초)에서 취소된다 — 백그라운드라도 커넥션을 영영 쥐지 않는다")
     void facetQueryHasItsOwnTimeout() throws Exception {
         Connection locked = lock("product.product_size");

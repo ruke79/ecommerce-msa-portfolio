@@ -70,7 +70,7 @@ class SearchServiceUnitTest {
                 .thenAnswer(i -> i.getArgument(1));
         // 필터 메뉴는 이 계산 밖이다(SearchFilterFacets.attach — 컨트롤러가 붙인다).
         service = new SearchService(categoryRepository, subCategoryRepository,
-                productRepository, productSkuRepository, queryFactory, eventPricing);
+                productRepository, productSkuRepository, queryFactory, eventPricing, SearchBulkheadTest.direct());
 
         // querydsl 체이닝(빌더 패턴)은 RETURNS_SELF 로 체인을 그대로 흘려보낸다.
         countQuery = mock(JPAQuery.class, withSettings().defaultAnswer(Answers.RETURNS_SELF));

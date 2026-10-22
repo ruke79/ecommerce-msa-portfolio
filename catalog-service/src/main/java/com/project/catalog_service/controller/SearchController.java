@@ -100,6 +100,18 @@ public class SearchController {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("검색이 오래 걸려 중단했습니다. 잠시 뒤 다시 시도해 주세요.");
     }
 
+    /**
+     * 검색 격벽이 찼다 — 커넥션을 잡기 전에 503 · {@code Retry-After: 2}. 비싼 검색이 몰려도 풀의 나머지는 home · 상품 쪽 몫으로 남는다
+     * ({@link com.project.catalog_service.service.SearchBulkhead}, docs/83 §2.8).
+     *
+     * <p>[JA] 検索の隔壁が満杯 — 接続を取る前に 503。高い検索が集中してもプールの残りは home・商品側に残る。
+     */
+    @org.springframework.web.bind.annotation.ExceptionHandler(com.project.catalog_service.service.SearchBulkhead.Busy.class)
+    public ResponseEntity<String> searchBusy(com.project.catalog_service.service.SearchBulkhead.Busy e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).header(org.springframework.http.HttpHeaders.RETRY_AFTER, "2")
+                .body("검색 요청이 몰려 잠시 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
+    }
+
     /** 시간 상한으로 끝난 질의인가 — 번역 계층마다 예외 종류가 달라 원인 사슬을 본다(PostgreSQL 은 SQLSTATE 57014). */
     public static boolean isQueryTimeout(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
