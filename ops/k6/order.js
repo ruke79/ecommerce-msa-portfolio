@@ -15,7 +15,7 @@ import http from 'k6/http';
 import { sleep, fail } from 'k6';
 import exec from 'k6/execution';
 import { Trend } from 'k6/metrics';
-import { GATEWAY, ok, json, homeOrFail, authHeaders, demoEmail, login, refresh, purchasable, categories, pick, rate, stages,
+import { GATEWAY, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, demoEmail, login, refresh, purchasable, categories, pick, rate, stages,
   idempotencyKey, FALLBACK_ADDRESS, get } from './lib.js';
 
 const USERS = Number(__ENV.USERS || 100);
@@ -51,6 +51,8 @@ export const options = {
     purchase_duration: ['p(95)<6000'],
     checks: ['rate>0.99'],
     not_json: ['count<1'],
+    ...errorThresholds(['signin', 'token_refresh', 'product', 'cart_info', 'cart_add', 'cart_save', 'checkout', 'address', 'order_create', 'order_detail',
+    'bank_transfer_start', 'bank_transfer_cancel', 'cart_remove']),
   },
   summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
 };
@@ -61,6 +63,7 @@ export function setup() {
     fail('DEMO_PASSWORD 가 없다 — ops/53 이 PASSWORD_FILE 에서 넘긴다');
   }
   const home = homeOrFail(get('/catalog-service/api/content/home', { tags: { name: 'home' } }));
+  limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀)
   const products = purchasable(home);
   if (!products.length) {
     fail('담을 수 있는 상품이 없다(SKU 하나 · 재고 5 이상) — 먼저 ops/44 load');

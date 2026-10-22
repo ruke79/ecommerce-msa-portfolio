@@ -11,7 +11,7 @@
 //   · NAME_SEARCH 비율만큼 이름 검색(name_search) — PostgreSQL 검색은 LIKE '%…%' 라 상품 수에 비례한다(docs/19 §6.1)
 // [JA] データ規模モード — ops/44 で入れた範囲全体から選ぶ(詳細はランダムな id、一覧は深いページ、名前検索を一定割合)。
 import { sleep, fail } from 'k6';
-import { get, ok, homeOrFail, purchasable, categories, pick, rate, stages } from './lib.js';
+import { get, ok, homeOrFail, limitsRaisedOrFail, errorThresholds, purchasable, categories, pick, rate, stages } from './lib.js';
 
 const PEAK = rate(100);
 
@@ -60,6 +60,7 @@ export const options = {
     'http_req_duration{name:name_search}': ['p(95)<3000'],
     checks: ['rate>0.99'],
     not_json: ['count<1'],
+    ...errorThresholds(['home', 'banners', 'search', 'search_deep', 'name_search', 'product', 'product_cold']),
   },
   summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
 };
@@ -70,6 +71,7 @@ let cats = null;
 
 export function setup() {
   const home = homeOrFail(get('/catalog-service/api/content/home', { tags: { name: 'home' } }));
+  limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀)
   const list = purchasable(home);
   if (!list.length) {
     fail('홈에 담을 수 있는 상품이 없다 — 먼저 PRODUCTS=1000 PLACEHOLDER_IMAGE=/logo512.png ./ops/44-bulk-catalog.sh load');

@@ -12,6 +12,25 @@ export const GATEWAY = (__ENV.GATEWAY || 'https://shop.lab').replace(/\/+$/, '')
 // 유입 제한(429)은 실패와 따로 센다 — 제한이 일한 것인지 서버가 못 버틴 것인지 나눠 읽는다(docs/19 §4).
 export const rateLimited = new Counter('rate_limited');
 export const notJson = new Counter('not_json');
+// 429 가 아닌 실패를 종류별로 센다 — 🐛 2026-10-18: 요약에 http_req_failed 비율만 남아 cart_add 의 실패 464건 · browse 의 1.06% 가
+// 5xx 인지(서버) 4xx 인지(데이터 · 요청) 시간 초과인지 알 수 없었다. 엔드포인트별 값은 errorThresholds 가 요약에 남긴다.
+// [JA] 429 以外の失敗を種類別に数える(5xx · 4xx · 応答なし)。
+export const errors5xx = new Counter('errors_5xx');
+export const errors4xx = new Counter('errors_4xx');
+export const noResponse = new Counter('errors_no_response');
+
+/**
+ * 엔드포인트별 오류 수를 요약(--summary-export)에 남기는 임계값 — 언제나 통과한다(count>=0). k6 는 임계값을 건 부분 지표만 요약에 쓴다.
+ * 시나리오의 thresholds 에 펼쳐 넣는다: { ..., ...errorThresholds(['home', ...]) }.
+ */
+export function errorThresholds(names) {
+  const t = {};
+  for (const n of names) {
+    t[`errors_5xx{name:${n}}`] = ['count>=0'];
+    t[`errors_4xx{name:${n}}`] = ['count>=0'];
+  }
+  return t;
+}
 
 export const BASE_HEADERS = {
   'Content-Type': 'application/json',
@@ -24,6 +43,12 @@ export const BASE_HEADERS = {
 export function ok(res, name, expected = 200) {
   if (res.status === 429) {
     rateLimited.add(1, { name });
+  } else if (res.status === 0) {
+    noResponse.add(1, { name });
+  } else if (res.status >= 500) {
+    errors5xx.add(1, { name });
+  } else if (res.status >= 400 && res.status !== expected) {
+    errors4xx.add(1, { name });
   }
   const type = String(res.headers['Content-Type'] || '');
   const isJson = type.includes('application/json');
@@ -47,6 +72,29 @@ export function homeOrFail(res) {
       + '게이트웨이 인그레스가 배포됐는지). 429 면 유입 제한 — 잠시 뒤 다시');
   }
   return res.json();
+}
+
+/**
+ * 시작 전 확인 — 게이트웨이 유입 제한을 올렸는가(ops/53 limits load). 비로그인 요청 60개를 한꺼번에 보내 429 가 하나라도 나오면 멈춘다.
+ * 🐛 2026-10-18 첫 측정: 제한이 기본값(초당 20 · 버스트 40)인 채 browse · order · spike 를 돌려, 비로그인 요청이 모두 Traefik IP
+ *    하나의 버킷을 나눠 썼다 — catalog 가 받은 요청은 정확히 초당 20 이었고 browse 실패 138,046건 중 137,981건이 429 였다.
+ *    서비스의 용량이 아니라 제한값을 잰 결과라 모두 버렸다. smoke 는 제한을 올리기 전에 도는 점검이라 건너뛴다.
+ *    제한 자체를 재려면 ALLOW_RATE_LIMIT=1.
+ * [JA] 開始前に流入制限が上がっているかを確かめる。既定値のまま計測して 429 だけを測った(2026-10-18)。
+ */
+export function limitsRaisedOrFail() {
+  if (__ENV.SCENARIO === 'smoke' || __ENV.ALLOW_RATE_LIMIT === '1') {
+    return;
+  }
+  const reqs = [];
+  for (let i = 0; i < 60; i++) {
+    reqs.push(['GET', `${GATEWAY}/catalog-service/api/content/banners`, null, { headers: BASE_HEADERS, tags: { name: 'limit_probe' } }]);
+  }
+  const limited = http.batch(reqs).filter((r) => r.status === 429).length;
+  if (limited > 0) {
+    fail(`게이트웨이 유입 제한이 기본값으로 보인다 — 비로그인 요청 60개 중 ${limited}개가 429. `
+      + '호스트에서 ./ops/53-load-k6.sh limits load 후 limits status 로 확인하고 다시(docs/83 §3). 제한 자체를 재려면 ALLOW_RATE_LIMIT=1');
+  }
 }
 
 export function json(res) {

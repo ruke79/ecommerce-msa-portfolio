@@ -4,7 +4,7 @@
 // 볼 것: 새 파드가 Ready 가 되기 전(readiness)에 트래픽을 받지 않는가, 커넥션 풀 총합이 DB 한도를 넘지 않는가(docs/19 §3 —
 // 예전에는 스케일아웃하는 순간 파드가 DB 연결을 못 얻어 기동에 실패했다). 같은 시간에 `kubectl -n ecommerce get hpa -w`.
 import { browse, setup as browseSetup } from './browse.js';
-import { rate, stages } from './lib.js';
+import { rate, stages, errorThresholds } from './lib.js';
 
 const PEAK = rate(200);
 const BASE = Math.max(1, Math.round(PEAK / 10));
@@ -31,6 +31,7 @@ export const options = {
     'http_req_duration{name:product}': ['p(99)<3000'],
     checks: ['rate>0.98'],
     not_json: ['count<1'],
+    ...errorThresholds(['home', 'banners', 'search', 'search_deep', 'name_search', 'product', 'product_cold']),
   },
   summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
 };

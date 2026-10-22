@@ -539,6 +539,25 @@ spring:
       #   password: 
 
 resilience4j:
+  # 동시 호출 상한(벌크헤드) — 회로 차단기 이름(라우트의 CircuitBreaker name)마다, 게이트웨이 파드마다 하나.
+  # 🐛 예전에는 이 항목이 없어 Spring Cloud CircuitBreaker 가 resilience4j-bulkhead 의 기본값(동시 25 · 대기 0)을 그대로 썼다 —
+  #    값이 왜 25 인지 아무도 정한 적이 없었다. 2026-10-18 부하 시험(docs/83 §5)에서 catalog 가 느려지자 26번째 호출부터 503 이었다.
+  #
+  # 값은 재서 정했다(같은 browse · catalog · 게이트웨이 레플리카 2 · 최고 요청 ~500/초):
+  #   · 25  — 실패 1.06%, p95 267ms · p99 506ms. catalog 바쁜 스레드 최대 46, DB 커넥션 대기 최대 30.
+  #   · 100 — 실패 1.71%, p95 814ms · p99 1,498ms. 바쁜 스레드 128, DB 대기 113, catalog p95 0.03 → 1.3초 — 그리고 결국 100 도 다 찼다.
+  #   catalog 는 CPU(1 코어)가 먼저 차는 서비스라, 상한을 올리면 처리량은 그대로고 catalog 안에 줄만 선다 — 지연이 늘수록 걸려 있는
+  #   호출이 늘어(리틀의 법칙: 동시 = 초당 요청 × 응답 시간) 더 큰 상한도 결국 넘친다. 그래서 상한은 "하류가 정상일 때의 응답 시간"으로 잡는다:
+  #   파드당 ~250/초 × 정상 응답 ~0.1초(p95 30ms 대의 몇 배) ≈ 25. 그보다 많이 걸려 있으면 하류가 밀리는 중이니 기다리게 하지 않고 바로 끊는다(대기 0).
+  #   용량이 모자라면 상한이 아니라 파드를 늘린다(레플리카 3: 실패 0.14%, docs/83 §5). 측정할 때는 GATEWAY_BULKHEAD_MAX_CONCURRENT 로 바꾼다.
+  # [JA] 同時呼び出し上限(バルクヘッド)。以前は未設定で既定値のままだった。測って決めた: 25 は失敗 1.06% · p95 267ms、100 は 1.71% · 814ms —
+  #      CPU が先に詰まる下流では上限を上げても列が延びるだけ。値 = Pod あたり ~250/秒 × 正常時の応答 ~0.1 秒 ≈ 25。足りなければ Pod を増やす。
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: ${GATEWAY_BULKHEAD_MAX_CONCURRENT:25}
+        max-wait-duration: 0ms
+
   timelimiter:
     configs:
       default:
