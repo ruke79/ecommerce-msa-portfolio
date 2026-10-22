@@ -1,0 +1,24 @@
+# 운영 노드(OCI) 덧씌우기 — 서비스 지표를 클러스터 안의 에이전트에게서 받는다 (docs/63 §5 "서비스 지표")
+# [JA] 本番ノード(OCI)の上書き — サービスの指標をクラスタ内のエージェントから受け取る
+#
+#   docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d
+#
+# ⚠️ 운영에서는 언제나 두 파일을 함께 준다. 기본 파일만으로 띄우면 prometheus 가 개발 PC 설정(host.docker.internal 타깃)으로
+#    돌아가 서비스 지표가 끊기고 ServiceDown 이 울린다(2026-10-20 전의 운영이 정확히 그랬다).
+#
+# 무엇이 다른가 — prometheus 하나뿐이다:
+#   · remote write 수신을 켠다 — k8s-overlays/external/metrics-agent.yaml 이 노드 IP:9090 으로 보낸다(추적이 노드 IP:4318 로 가는 것과 같은 길).
+#     수신은 9090 에 닿는 누구나 지표를 써 넣을 수 있다는 뜻이다 — 9090 은 VCN 보안 목록이 바깥을 막는다(22번만, 2026-10-20 확인).
+#     그래서 닿는 것은 이 노드와 클러스터 안의 파드뿐이다. 보안 목록에 9090 을 열지 않는다.
+#   · 설정은 observability/prometheus.oci.yml(개발 PC 타깃만 뺐다 — B-95 가 나머지가 같은지 본다).
+#   · command 는 목록 전체가 바뀐다 — 기본 파일의 인자를 모두 다시 적는다(빠뜨리면 보존 기간 · exemplar 가 조용히 바뀐다).
+services:
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --enable-feature=exemplar-storage
+      - --web.enable-remote-write-receiver
+    volumes:
+      # 같은 컨테이너 경로의 항목만 바뀐다 — 경보 규칙 · 데이터 볼륨은 기본 파일 그대로
+      - ./observability/prometheus.oci.yml:/etc/prometheus/prometheus.yml:ro

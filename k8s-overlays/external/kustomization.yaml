@@ -64,6 +64,7 @@ namespace: ecommerce
 
 resources:
   - ../prod          # prod 오버레이를 그대로 상속한다(디렉터리 베이스라 참조 가능)
+  - metrics-agent.yaml   # 서비스 지표 → 노드의 Prometheus(remote write, docs/63 §5 — B-95)
 
 # ── 레플리카 ───────────────────────────────────────────────────────────
 # prod 의 remove-replicas 패치가 HPA 대상에서 replicas 를 지워 전부 1이 되는데,

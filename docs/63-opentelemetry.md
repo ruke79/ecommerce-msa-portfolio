@@ -208,6 +208,34 @@ Collector がトレースのスパンが揃うまで（30 秒）保持してか�
 書けないので、`jaeger-data-init`（busybox）が一度だけ所有者を合わせて終わる。ローカルでエラートレースを1つ、`restart` ·
 コンテナ再作成の後に再照会し、どちらも 200 であることを確認した。
 
+**値の長さ上限（B-94）。** badger はタグの値で索引キーを作り、キーの上限は 65,000 バイトである。🐛 2026-10-19 本番で、catalog の「バインド変数 65,535 超過」エラースパンが SQL 原文（`?` 24 万個、約 1MB）をステータスメッセージと例外メッセージに載せてきた。Jaeger は `Key with size 965733 exceeded 65000 limit` でそのスパンを保存できず、失敗を繰り返すうちにメモリ上限（512m）に掛かって `OOMKilled` で止まった。一日近くトレースが途切れた。
+
+今は Collector の `transform/truncate` がスパン属性 · イベント属性 · リソース属性 · ステータスメッセージを 4,096 文字に切る。切るのはマスク（`redaction`）の**後**だ — 先に切ると、切れた JWT · メールアドレスの断片が正規表現をすり抜ける。エラーの原文はログ（Loki）にそのまま残る。
+
+ローカル（collector 0.160 + jaeger 2.20）で同じ大きさのスパンを送って確認した。切る前は保存 0 件で `exceeded 65000 limit` が 2 回、切った後は `db.statement` · `otel.status_description` が 4,096 文字で保存された。適用は `docker compose -f docker-compose-observability.yml up -d --force-recreate otel-collector`（定義が同じだと `up -d` だけでは起動し直さない）。
+
+**起動し直せなかった理由。** `restart: unless-stopped` なのに Jaeger は起動し直せなかった（`restartmanger wait error: failed to mount … snapshots/…`）。10-01 のディスク整理で `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs` を消したためだ。このディレクトリは k3s ではなく Docker（containerd イメージストア）のコンテナファイルシステムである。すでに動いていたコンテナは付いていたファイルシステムで 3 週間持ちこたえ、止まったものは作り直すこともできなかった。復旧は compose `down`（ボリューム維持）→ docker · containerd 停止 → そのディレクトリを横に移す → `pull` · `up -d`。ボリューム（トレース 7 日 · メトリクス · ログ）は `/var/lib/docker/volumes` なので無事だった。整理は `docker builder prune` · `docker image prune` までにする。
+
+**サービス指標 — クラスタ内エージェント（B-95）。** 🐛 2026-10-20 本番: ノードの Prometheus が開発 PC の設定（`observability/prometheus.yml` の `host.docker.internal:80xx`）で動いていた。k3s のサービスはクラスタ内にしかないので、過去 7 日の `max_over_time(up{job="spring-actuator"}[7d])` が 9 つすべて 0 だった。JVM · コネクションプール · HTTP の指標が一つもなく、それを見るアラート（`High5xxRate` · `HighP99Latency` · `JvmHeapNearLimit` · `CircuitBreakerOpen` …）は鳴れず、`ServiceDown` だけが鳴り続けていた。
+
+今は本番も実習と同じ道だ。
+- `k8s-overlays/external/metrics-agent.yaml`（本番の `local` · `oci` が継承）— エージェントモードの Prometheus が指標を出す 11 サービスを TLS 検証付きで集める（CA だけをマウント、SAN 内の名前）。
+- 送り先は **その Pod が載ったノードの IP:9090** だ。トレースがノード IP:4318 へ行くのと同じ道である。ノード IP はリポジトリに置けないので、initContainer が `HOST_IP`（downward API）で設定の雛形を埋める。空なら止まる。
+- ノードの Prometheus は `docker-compose-observability.oci.yml` を重ねて起動する。remote write の受信を有効にし、設定は `observability/prometheus.oci.yml`（開発 PC のターゲットだけを抜いた）だ。受信とは 9090 に届く誰もが書き込めるということだ。だから 9090 は VCN のセキュリティリストが塞ぐ（22 番のみ — 2026-10-20 確認、NSG なし）。セキュリティリストで 9090 を開けない。
+- 名前はそのまま（`job="spring-actuator"`、`service=<サービス>`）なので、ダッシュボード · アラートは変わらない。
+- 新アラート `ServiceMetricsMissing`（`absent(up{job="spring-actuator"})`、10 分）: エージェントが止まったり受信なしで起動したりすると `up` 自体が消え、`ServiceDown` は鳴れない。
+- ローカル確認（同じ v2.53.0）: 描画（空の `HOST_IP` は失敗）· `promtool check config`（エージェント · ノードの設定）· エージェント → 受信で `up=1` · `absent` 解消。`ops/05` は受信が無効のままエージェントがあれば FAIL にする。
+
+適用（イメージのデプロイとは別 — 次の ops/28 デプロイにもそのまま含まれる）:
+```bash
+cd ~/ecommerce-msa   # このコミット以降へ switch
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d prometheus   # 受信を有効化（指標ボリュームはそのまま）
+kubectl apply -f k8s-overlays/external/metrics-agent.yaml   # エージェントだけ — オーバーレイ全体を apply しない（古いイメージに新しいマニフェスト）
+kubectl -n ecommerce rollout status deploy/metrics-agent && kubectl -n ecommerce logs deploy/metrics-agent --since=5m | grep -ci error
+./ops/05-check-observability.sh   # 「サービス指標」に 11 個の up
+```
+⚠️ 本番では compose のコマンドごとに二つのファイルを一緒に渡す。既定のファイルだけで prometheus を作り直すと開発 PC の設定に戻る（`ServiceDown` · `ServiceMetricsMissing` が鳴る）。
+
 **アラート（`tracing-pipeline`）。** `OtelCollectorDown`（5分）· `TraceExportToJaegerFailing`（10分）· `TracesRefusedByCollector`（10分）·
 `TailSamplingDroppedTooEarly`（5分）。
 どこが切れてもサービスはエラーなしで動く — だから人が「トレースが見えない」と気づく前にアラートが先に鳴る必要がある。

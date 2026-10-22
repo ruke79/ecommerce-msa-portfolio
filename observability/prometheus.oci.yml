@@ -1,0 +1,39 @@
+# Prometheus 설정 — 운영 노드(OCI, k3s + 노드의 docker compose 관측 스택) 용 (docs/63 §5 "서비스 지표")
+# [JA] Prometheus 設定 — 本番ノード(OCI、k3s + ノードの docker compose 観測スタック)用
+#
+# observability/prometheus.yml(개발 PC — host.docker.internal 의 서비스를 긁는다)과 같고 spring-actuator 작업만 없다:
+# 서비스 지표는 클러스터 안의 에이전트(k8s-overlays/external/metrics-agent.yaml)가 remote write 로 넣는다 — 같은 이름
+# (job="spring-actuator", service=<서비스>)이라 대시보드 · 경보 규칙이 그대로 본다. 수신은 docker-compose-observability.oci.yml 이 켠다.
+# 🐛 2026-10-20 전에는 운영도 개발 PC 설정이라 7일 동안 서비스 지표가 0 이었다(ServiceDown 만 울렸다).
+# ConfigurationGuardrailTest B-95 가 나머지가 개발 PC 설정과 같은지 본다.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # 추적에서 뽑은 RED 지표(docs/63) — Collector 의 span_metrics 커넥터가 :8889 로 낸다.
+  # 서비스 이름은 service_name 라벨이다(job 은 이 작업 이름). OpenMetrics 로 긁어야 exemplar 가 온다 —
+  # Prometheus 기본 협상이 OpenMetrics 를 먼저 청한다.
+  - job_name: "otel-span-metrics"
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # 추적 파이프라인 자신의 건강 — 버린 스팬·내보내기 실패(alert-rules.yml 의 tracing-pipeline).
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector:8888"]
+  - job_name: "jaeger"
+    static_configs:
+      - targets: ["jaeger:8888"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

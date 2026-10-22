@@ -1580,6 +1580,148 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-96: 경보는 Discord 로 — 수신은 {@code discord_configs} 이고 주소는 파일({@code webhook_url_file})에서, Alertmanager 는 0.28 이상.
+     *
+     * <p>2026-10-20 운영: 비밀 파일이 한 번도 만들어지지 않아(9-24 부터 Docker 가 만든 빈 디렉터리) 경보가 0건 전달됐다. 게다가 수신이
+     * {@code webhook_configs}(Alertmanager 고유 JSON)라 ops/17 의 예시대로 Slack · Discord 주소를 넣어도 형식으로 거절됐을 것이다.
+     * 0.27 의 {@code discord_configs} 는 주소를 설정에 직접 적는 것만 받는다(비밀이 커밋된다) — 파일 읽기는 0.28 부터(amtool 로 확인).
+     * ops/17 의 도달 시험은 discord 전달 지표를 본다. 로컬에서 0.28.1 + 가짜 Discord 로 ops/17 MODE=test 가 9/9 · embed 수신.
+     *
+     * <p>[JA] アラートは Discord へ — discord_configs でファイルから URL を読む。0.27 は直書きのみ、ファイルは 0.28 から。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("B-96: Alertmanager 수신은 discord_configs + webhook_url_file(비밀은 파일) · 0.28 이상 · ops/17 은 discord 전달을 잰다")
+    void alertsGoToDiscordWithUrlFromFile() throws IOException {
+        Map<String, Object> am = new org.yaml.snakeyaml.Yaml().load(Files.readString(
+                repoRoot().resolve("observability/alertmanager.yml"), StandardCharsets.UTF_8));
+        List<Map<String, Object>> receivers = (List<Map<String, Object>>) am.get("receivers");
+        assertThat(receivers).extracting(r -> r.get("name")).contains("critical", "warning");
+        for (Map<String, Object> r : receivers) {
+            assertThat(r).as(r.get("name") + " — Alertmanager 고유 JSON 은 Discord 가 거절한다").containsOnlyKeys("name", "discord_configs");
+            for (Map<String, Object> c : (List<Map<String, Object>>) r.get("discord_configs")) {
+                assertThat(c).as("주소를 설정에 직접 적지 않는다(비밀이 커밋된다)").doesNotContainKey("webhook_url");
+                assertThat((String) c.get("webhook_url_file")).startsWith("/etc/alertmanager/secrets/webhook-url-");
+            }
+        }
+        Matcher image = Pattern.compile("image: prom/alertmanager:v0\\.(\\d+)\\.").matcher(
+                Files.readString(repoRoot().resolve("docker-compose-observability.yml"), StandardCharsets.UTF_8));
+        assertThat(image.find()).isTrue();
+        assertThat(Integer.parseInt(image.group(1))).as("discord_configs 의 webhook_url_file 은 0.28 부터").isGreaterThanOrEqualTo(28);
+        String ops17 = Files.readString(repoRoot().resolve("ops/17-configure-alert-receivers.sh"), StandardCharsets.UTF_8);
+        assertThat(ops17).contains("integration=\"discord\"").doesNotContain("integration=\"webhook\"")
+                .as("주소를 화면에 찍지 않는다 — 길이 · 앞부분만").doesNotContain("형식이 아닙니다: $url");
+    }
+
+    /**
+     * B-95: 운영의 서비스 지표 — 클러스터 안 에이전트가 긁어 노드의 Prometheus 로 remote write 한다(docs/63 §5 "서비스 지표").
+     *
+     * <p>2026-10-20 운영: 노드의 Prometheus 가 개발 PC 설정(host.docker.internal:80xx)이라 지난 7일 서비스 지표가 0 이었다 — JVM · 커넥션
+     * 풀 · HTTP 지표와 그 경보가 비어 있었고 ServiceDown 만 울렸다. 지키는 것: external 오버레이(운영 local · oci 가 상속)에 에이전트가 있다 ·
+     * 지표를 내는 서비스(빌드에 micrometer-registry-prometheus)를 정확히 긁는다 · TLS 를 검증한다(CA 만 마운트) · 보낼 곳은 initContainer 가
+     * 노드 IP 로 채운다 · 노드 쪽 덧씌우기가 수신을 켜고 기본 인자를 모두 다시 적는다 · 운영 설정은 개발 PC 타깃만 뺐다 · 지표가 통째로
+     * 없으면 경보(ServiceMetricsMissing — 그때 ServiceDown 은 울릴 수 없다). 로컬에서 같은 v2.53.0 으로 렌더 · promtool · 에이전트 →
+     * 수신(up=1, absent 해소)을 확인했다.
+     *
+     * <p>[JA] 本番のサービス指標 — クラスタ内のエージェントが集めてノードの Prometheus へ remote write する。以前は 7 日間 0 だった。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("B-95: 운영 서비스 지표 — external 의 에이전트가 지표 내는 서비스를 TLS 검증으로 긁어 노드 IP:9090 으로, 노드는 수신을 켠다")
+    void productionServiceMetricsFlowThroughInClusterAgent() throws IOException {
+        org.yaml.snakeyaml.Yaml yaml = new org.yaml.snakeyaml.Yaml();
+        Map<String, Object> kustomization = yaml.load(Files.readString(
+                repoRoot().resolve("k8s-overlays/external/kustomization.yaml"), StandardCharsets.UTF_8));
+        assertThat((List<String>) kustomization.get("resources")).as("운영(local · oci)이 상속하는 external 에 에이전트가 있다")
+                .contains("metrics-agent.yaml");
+
+        String agentFile = Files.readString(repoRoot().resolve("k8s-overlays/external/metrics-agent.yaml"), StandardCharsets.UTF_8);
+        Map<String, Map<String, Object>> docs = new TreeMap<>();
+        for (Object o : yaml.loadAll(agentFile)) {
+            Map<String, Object> d = (Map<String, Object>) o;
+            docs.put(d.get("kind") + "/" + ((Map<String, Object>) d.get("metadata")).get("name"), d);
+        }
+        assertThat(docs).containsKeys("Role/metrics-agent", "RoleBinding/metrics-agent", "Deployment/metrics-agent")
+                .doesNotContainKey("ClusterRole/metrics-agent");
+        String template = (String) ((Map<String, Object>) docs.get("ConfigMap/metrics-agent-config").get("data")).get("prometheus.yml.tmpl");
+        Map<String, Object> prom = yaml.load(template);
+        Map<String, Object> job = ((List<Map<String, Object>>) prom.get("scrape_configs")).get(0);
+        assertThat(job).containsEntry("job_name", "spring-actuator").containsEntry("scheme", "https")
+                .containsEntry("metrics_path", "/actuator/prometheus");
+        Map<String, Object> tls = (Map<String, Object>) job.get("tls_config");
+        assertThat(tls).as("검증을 끄지 않는다").doesNotContainKey("insecure_skip_verify");
+        assertThat((String) tls.get("server_name")).matches("[a-z0-9-]+\\.ecommerce\\.svc\\.cluster\\.local");
+
+        // 지표를 내는 서비스 = k8s 매니페스트가 있는 모듈 중 빌드에 micrometer-registry-prometheus 가 있는 것 — 정확히 그것들만 긁는다
+        Pattern keep = Pattern.compile(((List<Map<String, Object>>) job.get("relabel_configs")).stream()
+                .filter(r -> "keep".equals(r.get("action")) && String.valueOf(r.get("source_labels")).contains("pod_label_app"))
+                .map(r -> (String) r.get("regex")).findFirst().orElseThrow());
+        Set<String> services = new TreeSet<>();
+        Set<String> withRegistry = new TreeSet<>();
+        try (Stream<Path> modules = Files.list(repoRoot()); Stream<Path> manifests = Files.list(repoRoot().resolve("k8s"))) {
+            List<String> manifestNames = manifests.map(p -> p.getFileName().toString()).toList();
+            for (Path m : modules.filter(Files::isDirectory).toList()) {
+                String name = m.getFileName().toString();
+                if (!Files.exists(m.resolve("build.gradle")) || manifestNames.stream().noneMatch(f -> f.matches("\\d+-" + name + "\\.yaml"))) {
+                    continue;
+                }
+                services.add(name);
+                if (Files.readString(m.resolve("build.gradle"), StandardCharsets.UTF_8).contains("micrometer-registry-prometheus")) {
+                    withRegistry.add(name);
+                }
+            }
+        }
+        assertThat(withRegistry).as("지표를 내는 서비스가 너무 적다 — 빌드 파일을 못 읽었나").hasSizeGreaterThanOrEqualTo(10);
+        for (String svc : services) {
+            assertThat(keep.matcher(svc).matches())
+                    .as(withRegistry.contains(svc) ? "지표를 내는데 긁지 않는다: " + svc : "/actuator/prometheus 가 없는데 긁는다(up=0): " + svc)
+                    .isEqualTo(withRegistry.contains(svc));
+        }
+
+        // 보낼 곳 — 노드 IP:9090. 틀의 자리표시자를 initContainer 가 HOST_IP(downward API)로 채운다
+        String url = (String) ((List<Map<String, Object>>) prom.get("remote_write")).get(0).get("url");
+        assertThat(url).isEqualTo("http://__HOST_IP__:9090/api/v1/write");
+        Map<String, Object> pod = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) docs.get("Deployment/metrics-agent")
+                .get("spec")).get("template")).get("spec");
+        Map<String, Object> init = ((List<Map<String, Object>>) pod.get("initContainers")).get(0);
+        assertThat(String.valueOf(init.get("args"))).contains("s/__HOST_IP__/$HOST_IP/").contains("prometheus.yml.tmpl");
+        assertThat(String.valueOf(init.get("env"))).contains("HOST_IP").contains("status.hostIP");
+        Map<String, Object> agent = ((List<Map<String, Object>>) pod.get("containers")).get(0);
+        assertThat((List<String>) agent.get("args")).contains("--enable-feature=agent", "--config.file=/etc/prometheus/config/prometheus.yml");
+        Map<String, Object> tlsVolume = ((List<Map<String, Object>>) pod.get("volumes")).stream()
+                .filter(v -> "tls".equals(v.get("name"))).findFirst().orElseThrow();
+        assertThat((List<Map<String, Object>>) ((Map<String, Object>) tlsVolume.get("secret")).get("items"))
+                .as("tls-keystore 의 키스토어 · 비밀번호는 싣지 않는다").extracting(m -> m.get("key")).containsExactly("ca.crt");
+
+        // 노드 쪽 — 덧씌우기가 수신을 켜고 기본 인자를 모두 다시 적는다, 같은 판
+        Map<String, Object> base = (Map<String, Object>) ((Map<String, Object>) yaml.<Map<String, Object>>load(Files.readString(
+                repoRoot().resolve("docker-compose-observability.yml"), StandardCharsets.UTF_8)).get("services")).get("prometheus");
+        Map<String, Object> oci = (Map<String, Object>) ((Map<String, Object>) yaml.<Map<String, Object>>load(Files.readString(
+                repoRoot().resolve("docker-compose-observability.oci.yml"), StandardCharsets.UTF_8)).get("services")).get("prometheus");
+        assertThat((List<String>) oci.get("command")).containsAll((List<String>) base.get("command"))
+                .contains("--web.enable-remote-write-receiver");
+        assertThat((List<String>) oci.get("volumes")).contains("./observability/prometheus.oci.yml:/etc/prometheus/prometheus.yml:ro");
+        assertThat(((String) agent.get("image")).replaceFirst("^mirror\\.gcr\\.io/", "")).as("노드의 Prometheus 와 같은 판")
+                .isEqualTo(base.get("image"));
+
+        // 운영 설정 = 개발 PC 설정에서 spring-actuator 작업만 뺀 것
+        Map<String, Object> devCfg = yaml.load(Files.readString(repoRoot().resolve("observability/prometheus.yml"), StandardCharsets.UTF_8));
+        String ociText = Files.readString(repoRoot().resolve("observability/prometheus.oci.yml"), StandardCharsets.UTF_8);
+        Map<String, Object> ociCfg = yaml.load(ociText);
+        assertThat(ociText.replaceAll("(?m)^\\s*#.*$", "")).as("주석 밖에 개발 PC 타깃이 없다").doesNotContain("host.docker.internal");
+        List<Map<String, Object>> devJobs = new ArrayList<>((List<Map<String, Object>>) devCfg.get("scrape_configs"));
+        devJobs.removeIf(j -> "spring-actuator".equals(j.get("job_name")));
+        assertThat((List<Map<String, Object>>) ociCfg.get("scrape_configs")).as("서비스 지표만 에이전트가 넣는다 — 나머지 작업은 같다")
+                .isEqualTo(devJobs);
+        assertThat(ociCfg.get("alerting")).isEqualTo(devCfg.get("alerting")).isNotNull();
+        assertThat(ociCfg.get("rule_files")).isEqualTo(devCfg.get("rule_files"));
+
+        // 지표가 통째로 없을 때 — up 이 없으면 ServiceDown(up == 0)은 울릴 수 없다
+        String rules = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
+        assertThat(rules).contains("alert: ServiceMetricsMissing").contains("absent(up{job=\"spring-actuator\"})");
+    }
+
+    /**
      * B-93: 클러스터 안 PostgreSQL 의 인증서 경로(postgresql.conf 의 {@code ssl_cert_file} · {@code ssl_key_file})는 파드가 뜰 때마다 채워진다.
      *
      * <p>pg-init 스크립트는 <b>빈 PGDATA 에서 한 번만</b> 돈다. 그 스크립트가 인증서를 PVC 밖(컨테이너 파일 시스템)으로 복사하고
@@ -2709,6 +2851,62 @@ class ConfigurationGuardrailTest {
             offenders.add("docker-compose-observability.yml — Jaeger 의 /badger 가 볼륨에 붙어 있지 않다(재생성하면 사라진다)");
         }
         assertThat(offenders).isEmpty();
+    }
+
+    /**
+     * B-94: Collector 는 Jaeger 로 보내기 전에 스팬 속성 · 이벤트 속성 · 상태 메시지의 길이를 자른다 — 가린(redaction) 뒤에.
+     *
+     * <p>Jaeger 의 badger 는 태그 값으로 색인 키를 만들고 키 상한이 65,000 바이트다. 2026-10-19 운영에서 catalog 의 "바인드 변수
+     * 65,535 초과" 오류 스팬이 SQL 원문(`?` 24만 개, 약 1MB)을 상태 메시지 · 예외 메시지로 싣고 와 저장되지 못했고, Jaeger 가
+     * OOMKilled 로 하루 가까이 멈춰 추적이 끊겼다. 먼저 자르면 잘린 JWT · 이메일 조각이 가림 정규식을 빠져나가므로 순서도 본다.
+     * 로컬에서 같은 크기의 스팬을 보내 자르기 전에는 0건 저장 · "exceeded 65000 limit", 뒤에는 4096 자로 저장됨을 확인했다.
+     *
+     * <p>[JA] Collector は Jaeger へ送る前に属性・イベント属性・ステータスメッセージを切る — マスクの後で。巨大な SQL を載せた
+     * エラースパンが badger のキー上限を超え、Jaeger が OOMKilled した(2026-10-19 本番)。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("B-94: Collector 는 스팬 속성 · 이벤트 속성 · 상태 메시지를 badger 키 상한 아래로 자른다(가림 뒤에)")
+    void collectorTruncatesOversizedSpanValuesAfterRedaction() throws IOException {
+        Map<String, Object> collector = new org.yaml.snakeyaml.Yaml().load(Files.readString(
+                repoRoot().resolve("observability/otel-collector.yml"), StandardCharsets.UTF_8));
+        Map<String, Object> processorDefs = (Map<String, Object>) collector.get("processors");
+        Map<String, Map<String, List<String>>> pipelines = (Map<String, Map<String, List<String>>>)
+                ((Map<String, Object>) collector.get("service")).get("pipelines");
+        // 모든 추적이 지나는 파이프라인 — RED 를 세는 곳(B-72)이 곧 샘플링 파이프라인의 앞이다.
+        List<String> processors = pipelines.values().stream()
+                .filter(p -> p.getOrDefault("exporters", List.of()).stream().anyMatch(x -> x.startsWith("span_metrics")))
+                .findFirst().orElseThrow().getOrDefault("processors", List.of());
+        int redaction = processors.indexOf("redaction");
+        assertThat(redaction).as("가림(redaction) 이 추적 파이프라인에 있다").isNotNegative();
+
+        Pattern truncate = Pattern.compile("truncate_all\\(attributes,\\s*(\\d+)\\)");
+        Pattern status = Pattern.compile("set\\(status\\.message,\\s*Substring\\(status\\.message,\\s*0,\\s*(\\d+)\\)\\)");
+        int limit = 16_384;   // 키 = 서비스 + 태그 이름 + 값 ≤ 65,000 바이트 — 여러 바이트 글자를 감안해 넉넉히 아래로
+        Set<String> covered = new TreeSet<>();
+        for (int i = redaction + 1; i < processors.size(); i++) {
+            String name = processors.get(i);
+            if (!name.startsWith("transform") || !(processorDefs.get(name) instanceof Map<?, ?> def)) {
+                continue;
+            }
+            Object groups = def.get("trace_statements");
+            for (Map<String, Object> group : groups == null ? List.<Map<String, Object>>of() : (List<Map<String, Object>>) groups) {
+                String context = String.valueOf(group.get("context"));
+                for (Object st : (List<Object>) group.getOrDefault("statements", List.of())) {
+                    Matcher t = truncate.matcher(String.valueOf(st));
+                    if (t.find() && Integer.parseInt(t.group(1)) <= limit) {
+                        covered.add(context + ".attributes");
+                    }
+                    Matcher s = status.matcher(String.valueOf(st));
+                    if ("span".equals(context) && s.find() && Integer.parseInt(s.group(1)) <= limit) {
+                        covered.add("span.status.message");
+                    }
+                }
+            }
+        }
+        assertThat(covered)
+                .as("가림 뒤의 transform 이 자르는 것 — 빠지면 큰 오류 스팬이 Jaeger(badger)에 저장되지 못하고 Jaeger 가 멈춘다(B-94)")
+                .contains("span.attributes", "spanevent.attributes", "span.status.message");
     }
 
     /**

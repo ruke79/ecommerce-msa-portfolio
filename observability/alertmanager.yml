@@ -36,12 +36,16 @@ inhibit_rules:
     equal: [service]
 
 receivers:
+  # Discord 채널 웹훅(2026-10-20). 🐛 그 전에는 webhook_configs(Alertmanager 고유 JSON)였다 — Slack · Discord 의 웹훅 주소를 넣으면
+  # 받는 쪽이 형식(text · content 없음)을 거절해 전달이 실패한다. 파일(webhook_url_file)로 읽으려면 Alertmanager 0.28 이상이다
+  # (0.27 의 discord_configs 는 주소를 설정에 직접 적는 것만 받는다 — 비밀이 커밋된다).
+  # [JA] Discord のチャンネル Webhook。以前の webhook_configs は Slack · Discord に形式で拒否される。ファイル読みは 0.28 以上。
   - name: critical
-    webhook_configs:
-      - url_file: /etc/alertmanager/secrets/webhook-url-critical
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/webhook-url-critical
         send_resolved: true
 
   - name: warning
-    webhook_configs:
-      - url_file: /etc/alertmanager/secrets/webhook-url-warning
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/webhook-url-warning
         send_resolved: true

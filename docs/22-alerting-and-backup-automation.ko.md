@@ -99,6 +99,12 @@ Notify for alerts failed ... open /etc/alertmanager/secrets/webhook-url-critical
 
 이게 없었으면 "설정 끝났다"고 보고하고 넘어갔을 것이다.
 
+### 운영에서 한 번도 전달되지 않았다 (2026-10-20)
+
+`observability/secrets/` 가 없는 채로 관측 스택이 떠서 Docker 가 빈 디렉터리를 root 소유로 만들었다(2026-09-24). Alertmanager 는 파일 없이도 뜨고 알림을 보낼 때마다 실패한다 — **4주 동안 경보 0건 전달**, 재기동 뒤 153/153 실패(`read url_file: … no such file or directory`). 게다가 수신은 `webhook_configs`(Alertmanager 고유 JSON)라, 안내대로 Slack · Discord 주소를 넣었어도 형식으로 거절됐을 것이다.
+
+이제 수신은 **Discord**(`discord_configs` + `webhook_url_file`, Alertmanager 0.28.1 — 0.27 은 주소를 설정에 직접 적는 것만 받아 비밀이 커밋된다). `sudo ./ops/17-configure-alert-receivers.sh` 가 주소를 화면에 보이지 않게 묻고(명령줄 · 셸 기록에 남기지 않는다, 출력은 길이 · 앞부분만), 파일을 uid 65534 · 640 으로 둔 뒤 시험 경보로 discord 전달 지표까지 본다. `./ops/05` 가 파일과 전달 실패를 점검한다. 로컬 확인: 0.28.1 + 가짜 Discord 로 ops/17 `MODE=test` 9/9, embed 수신. 가드 B-96.
+
 ## 2. 백업 스크립트는 있는데 돌고 있지 않았다
 
 `ops/08`·`ops/10`·`ops/09` 는 실제 사고를 되돌리는 것까지 검증했다([docs/15](15-backup-and-dr.ko.md)).
@@ -217,6 +223,6 @@ kubectl logs -n ecommerce -l job-name=backup-test-1 -f
 |---|---|
 | 백업을 클러스터 **밖**으로 (S3/GCS) | 🟡 노드 밖 사본은 따로 둔다 — 다른 지역 사본은 아직 없다 |
 | PVC 크기를 실제 데이터 기준으로 | 🟠 50Gi 는 자리표시자다. k3s 의 `local-path` 는 이 크기를 **강제하지 않고 노드 디스크를 그대로** 쓴다 — 보관 일수 × 백업 크기가 노드의 여유를 넘으면 노드가 DiskPressure 로 파드를 내쫓는다(2026-10-10 운영: 디스크 여유 25G, DB 5.6G) |
-| 클러스터 안 PostgreSQL 파드 재생성 (2026-10-20) | 🔴 **운영 미적용.** 예전 매니페스트는 첫 파드에서만 인증서가 있다. 실습 클러스터에서 `rollout restart` 뒤 `could not load server certificate file` 로 뜨지 못했다. 운영도 같은 매니페스트(ops/13)이므로 노드 재부팅 · 축출 · `ACTION=setup ./ops/29`(PITR 재기동) 어느 것이든 DB 가 멈춘다. 고친 매니페스트(initContainer `copy-tls`, B-93)를 먼저 적용한다 — postgres 만, 다른 인프라를 원본으로 되돌리지 않게: `kubectl -n postgres get secret pg-tls` 확인 → `kubectl diff -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres` → 같은 인자로 `apply`. 적용하면 파드가 한 번 다시 뜬다(Recreate, 1분 안팎) — 백업 시간대(02 ~ 06 UTC)를 피하고, 직전에 docs/72 §3 백업. 이미 멈췄다면 같은 명령이 복구다(데이터는 PVC 그대로). |
+| 클러스터 안 PostgreSQL 파드 재생성 (2026-10-20) | ✅ **운영 적용 끝(2026-10-20 ~11:55 UTC, 아래 명령 — ssl on · mongodb 0/0 그대로).** 그 전의 사정: 예전 매니페스트는 첫 파드에서만 인증서가 있다. 실습 클러스터에서 `rollout restart` 뒤 `could not load server certificate file` 로 뜨지 못했다. 운영도 같은 매니페스트(ops/13)이므로 노드 재부팅 · 축출 · `ACTION=setup ./ops/29`(PITR 재기동) 어느 것이든 DB 가 멈춘다. 고친 매니페스트(initContainer `copy-tls`, B-93)를 먼저 적용한다 — postgres 만, 다른 인프라를 원본으로 되돌리지 않게: `kubectl -n postgres get secret pg-tls` 확인 → `kubectl diff -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres` → 같은 인자로 `apply`. 적용하면 파드가 한 번 다시 뜬다(Recreate, 1분 안팎) — 백업 시간대(02 ~ 06 UTC)를 피하고, 직전에 docs/72 §3 백업. 이미 멈췄다면 같은 명령이 복구다(데이터는 PVC 그대로). |
 | Alertmanager 고가용성 (클러스터 모드) | 🟡 단일 인스턴스 |
 | 경보 피로도 조정 | 🟡 실제 운영 데이터를 봐야 임계값을 정할 수 있다 |

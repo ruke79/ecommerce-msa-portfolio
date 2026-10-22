@@ -15,10 +15,12 @@
 #   ④ **테스트 경보를 실제로 밀어 넣어** 채널에 도착하는지 확인한다 — 이게 핵심이다.
 #      설정 파일이 그럴듯한 것과 알림이 도착하는 것은 다른 문제다.
 #
-# 사용법
-#   WEBHOOK_CRITICAL='https://hooks.slack.com/services/...' \
-#   WEBHOOK_WARNING='https://hooks.slack.com/services/...' \
-#     ./ops/17-configure-alert-receivers.sh
+# 채널은 Discord 다(2026-10-20 — observability/alertmanager.yml 의 discord_configs, Alertmanager 0.28+).
+# Discord: 서버 설정 → 연동 → 웹후크 → 새 웹후크 → 채널 고르기 → "웹후크 URL 복사".
+#
+# 사용법 — 주소를 명령줄에 적지 않는다(셸 기록 · ps 에 남는다). 비워 두면 묻는다(입력은 화면에 안 보인다):
+#   sudo ./ops/17-configure-alert-receivers.sh          # root 여야 비밀 파일을 Alertmanager(uid 65534)가 읽게 둘 수 있다
+#   (warning 채널을 따로 두려면 두 번째 질문에 다른 주소, 같은 채널이면 Enter)
 #
 #   MODE=verify ./ops/17-configure-alert-receivers.sh      # 설정만 점검 (URL 불필요)
 #   MODE=test   ./ops/17-configure-alert-receivers.sh      # 테스트 경보 발사
@@ -51,19 +53,32 @@ echo
 
 # ── ① 웹훅 URL 을 파일로 ──────────────────────────────────────────────────────
 if [[ "$MODE" == "configure" ]]; then
+    if [[ -z "${WEBHOOK_CRITICAL:-}" && -t 0 ]]; then
+        read -rsp "  critical 채널의 Discord 웹후크 URL: " WEBHOOK_CRITICAL; echo
+        read -rsp "  warning 채널의 Discord 웹후크 URL (같으면 Enter): " WEBHOOK_WARNING; echo
+    fi
     if [[ -z "${WEBHOOK_CRITICAL:-}" ]]; then
-        echo "ERROR: WEBHOOK_CRITICAL 이 필요합니다." >&2
-        echo "       Slack 이라면 Incoming Webhook URL, 그 외에는 POST 를 받는 아무 엔드포인트." >&2
-        echo "       WARNING 채널을 따로 두지 않으려면 WEBHOOK_WARNING 을 생략하세요(같은 값을 씁니다)." >&2
+        echo "ERROR: WEBHOOK_CRITICAL 이 필요합니다 — 터미널에서 실행하면 묻습니다." >&2
         exit 2
     fi
     WEBHOOK_WARNING="${WEBHOOK_WARNING:-$WEBHOOK_CRITICAL}"
 
+    # 🔒 주소 자체가 비밀이다 — 길이 · 앞부분만 찍는다.
+    # 🐛 2026-10-20 전에는 Slack 주소를 예로 들었는데 수신 설정이 webhook_configs(Alertmanager JSON)라 Slack · Discord 가 형식으로 거절했다.
     for url in "$WEBHOOK_CRITICAL" "$WEBHOOK_WARNING"; do
-        [[ "$url" =~ ^https?:// ]] || { echo "ERROR: 웹훅 URL 형식이 아닙니다: $url" >&2; exit 2; }
+        if [[ ! "$url" =~ ^https://(discord|discordapp)\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$ ]]; then
+            echo "ERROR: Discord 웹후크 URL 형식이 아닙니다(길이 ${#url}, 앞부분 '${url:0:30}')" >&2
+            echo "       https://discord.com/api/webhooks/<숫자>/<토큰> 이어야 합니다 — 뒤에 /slack · ?wait= 를 붙이지 않습니다." >&2
+            exit 2
+        fi
     done
 
     mkdir -p "$SECRET_DIR"
+    if [[ ! -w "$SECRET_DIR" ]]; then
+        # Docker 가 없는 디렉터리를 root 소유로 만들어 둔 경우(운영 2026-09-24)
+        echo "ERROR: $SECRET_DIR 에 쓸 수 없습니다(소유자 $(stat -c %U "$SECRET_DIR")) — sudo 로 다시 실행하세요." >&2
+        exit 2
+    fi
     printf '%s' "$WEBHOOK_CRITICAL" > "$SECRET_DIR/webhook-url-critical"
     printf '%s' "$WEBHOOK_WARNING"  > "$SECRET_DIR/webhook-url-warning"
 
@@ -76,8 +91,11 @@ if [[ "$MODE" == "configure" ]]; then
     chmod 640 "$SECRET_DIR"/webhook-url-*
     if [[ "$(id -u)" == "0" ]]; then
         chown "$ALERTMANAGER_UID:$ALERTMANAGER_UID" "$SECRET_DIR"/webhook-url-* 2>/dev/null || true
+        ok "웹후크 URL 을 $SECRET_DIR/ 에 기록 (640, uid $ALERTMANAGER_UID — critical 길이 ${#WEBHOOK_CRITICAL})"
+    else
+        bad "root 가 아니라 소유자를 uid $ALERTMANAGER_UID 로 바꾸지 못했다 — Alertmanager 가 읽지 못한다(permission denied)"
+        note "sudo chown $ALERTMANAGER_UID:$ALERTMANAGER_UID $SECRET_DIR/webhook-url-*  또는 sudo 로 다시 실행"
     fi
-    ok "웹훅 URL 을 $SECRET_DIR/ 에 기록 (640, uid $ALERTMANAGER_UID)"
 
     # gitignore 안전장치. 값이 커밋되면 채널이 공개되는 것과 같다.
     if git -C "$ROOT" check-ignore -q "$SECRET_DIR/webhook-url-critical" 2>/dev/null; then
@@ -141,7 +159,7 @@ if curl "${CURL_OPTS[@]}" -o /dev/null "$ALERTMANAGER_URL/-/healthy" 2>/dev/null
     fi
 else
     note "Alertmanager 가 응답하지 않아 런타임 점검은 건너뜁니다 ($ALERTMANAGER_URL)"
-    note "docker compose -f docker-compose-observability.yml up -d alertmanager"
+    note "docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d alertmanager"
 fi
 echo
 
@@ -193,15 +211,15 @@ JSON
         for _ in $(seq 1 12); do
             sleep 5
             metrics="$(curl "${CURL_OPTS[@]}" "$ALERTMANAGER_URL/metrics" 2>/dev/null || echo '')"
-            failed=$(awk '/^alertmanager_notifications_failed_total\{.*integration="webhook"/ {s+=$NF} END {printf "%d", s+0}' <<<"$metrics")
-            delivered=$(awk '/^alertmanager_notifications_total\{.*integration="webhook"/ {s+=$NF} END {printf "%d", s+0}' <<<"$metrics")
+            failed=$(awk '/^alertmanager_notifications_failed_total\{.*integration="discord"/ {s+=$NF} END {printf "%d", s+0}' <<<"$metrics")
+            delivered=$(awk '/^alertmanager_notifications_total\{.*integration="discord"/ {s+=$NF} END {printf "%d", s+0}' <<<"$metrics")
             [[ "$delivered" -gt 0 ]] && break
         done
 
         if [[ "$delivered" -gt 0 && "$failed" -eq 0 ]]; then
-            ok "웹훅 전달 성공 (시도 $delivered · 실패 0) — 채널이 실제로 메시지를 받았다"
+            ok "Discord 전달 성공 (시도 $delivered · 실패 0) — 채널에 '경보 전달 경로 시험' 이 보여야 한다"
         elif [[ "$failed" -gt 0 ]]; then
-            bad "웹훅 전달 실패 (시도 $delivered · 실패 $failed)"
+            bad "Discord 전달 실패 (시도 $delivered · 실패 $failed)"
             note "Alertmanager 로그에 원인이 있습니다:"
             note "  docker logs alertmanager 2>&1 | grep 'Notify for alerts failed'"
             note "가장 흔한 원인 두 가지:"

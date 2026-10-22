@@ -1,0 +1,185 @@
+# 서비스 지표 → 노드의 관측 스택(docker compose) — 클러스터 안의 Prometheus(에이전트 모드)가 긁어서 remote_write 로 보낸다
+# (docs/63 §5 "서비스 지표", 실습에서 먼저 검증한 것과 같은 모양).
+# [JA] サービスの指標 → ノードの観測スタック — クラスタ内の Prometheus(エージェントモード)が集めて remote_write で送る。
+#
+# 🐛 2026-10-20 운영: 노드의 Prometheus(observability/prometheus.yml)는 compose 시절 설정이라 host.docker.internal:80xx 를 긁는다.
+#    k3s 의 서비스는 클러스터 안에만 있어(ClusterIP, B-85 로 노드 포트도 없다) 지난 7일 up{job="spring-actuator"} 이 9개 모두 0 —
+#    JVM · 커넥션 풀 · HTTP 지표가 하나도 없었고, 그것을 보는 경보(High5xxRate · HighP99Latency · JvmHeapNearLimit …)는 울릴 수 없었으며
+#    ServiceDown 만 계속 울렸다.
+# [JA] 本番のノードの Prometheus は compose 時代の設定で、7 日間サービスの指標が一つもなかった(ServiceDown だけが鳴り続けた)。
+#
+# 왜 이 모양인가:
+#   · 긁기 · TLS 검증 · 권한은 실습의 에이전트와 같다 — ConfigurationGuardrailTest B-95.
+#   · 보낼 곳은 **이 파드가 뜬 노드의 IP:9090** — 서비스의 추적이 노드 IP:4318 로 가는 것과 같은 길이다. 노드 IP 는 저장소에 둘 수
+#     없으므로 initContainer 가 HOST_IP(downward API)로 설정 틀의 __HOST_IP__ 를 채운다. 노드의 Prometheus 는 수신을 켜고 띄운다
+#     (docker-compose-observability.oci.yml).
+#   · external_labels 를 붙이지 않는다 — 노드의 Prometheus 에는 이 클러스터의 지표만 있고, 대시보드 · 경보가 그 이름 그대로 본다.
+#   · 노드가 여럿이 되면 이 파드가 뜬 노드로만 간다 — 관측 스택이 한 노드뿐인 지금의 운영(단일 노드 k3s) 전제다.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metrics-agent
+  namespace: ecommerce
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: metrics-agent
+  namespace: ecommerce
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: metrics-agent
+  namespace: ecommerce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: metrics-agent
+subjects:
+  - kind: ServiceAccount
+    name: metrics-agent
+    namespace: ecommerce
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metrics-agent-config
+  namespace: ecommerce
+data:
+  # 틀 — __HOST_IP__ 는 initContainer 가 채운다
+  prometheus.yml.tmpl: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      # 이름은 노드 Prometheus 의 대시보드 · 경보 규칙과 같다(job="spring-actuator", service=<서비스>)
+      - job_name: spring-actuator
+        metrics_path: /actuator/prometheus
+        scheme: https
+        tls_config:
+          ca_file: /etc/prometheus/tls/ca.crt
+          server_name: metrics.ecommerce.svc.cluster.local
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ecommerce]
+        relabel_configs:
+          # /actuator/prometheus 가 있는 서비스만 — 빌드에 micrometer-registry-prometheus 가 있는 것(B-95 가 빌드 파일과 맞춘다).
+          # eureka-server · config-server 는 레지스트리가 없어 그 경로가 없다(실습에서 up=0 이었다, 2026-10-18).
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: (gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|chat-service|notification-service|delivery-service|saga-projection)
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Running
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_init]
+            regex: "true"
+            action: drop
+          # catalog 의 gRPC 포트(9095)는 HTTP 가 아니다
+          - source_labels: [__meta_kubernetes_pod_container_port_number]
+            regex: "9095"
+            action: drop
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+    remote_write:
+      - url: http://__HOST_IP__:9090/api/v1/write
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-agent
+  namespace: ecommerce
+  labels:
+    app: metrics-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-agent
+  template:
+    metadata:
+      labels:
+        app: metrics-agent
+    spec:
+      serviceAccountName: metrics-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      initContainers:
+        # 노드 IP 로 보낼 곳을 채운다. 비어 있으면 멈춘다(보낼 곳 없이 긁기만 하는 에이전트가 되지 않게).
+        # [JA] ノード IP で送り先を埋める。空なら止まる。
+        - name: render-config
+          image: mirror.gcr.io/prom/prometheus:v2.53.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              [ -n "$HOST_IP" ] || { echo "HOST_IP 가 비었다" >&2; exit 1; }
+              sed "s/__HOST_IP__/$HOST_IP/" /etc/prometheus/tmpl/prometheus.yml.tmpl > /etc/prometheus/config/prometheus.yml
+              grep -q "http://$HOST_IP:9090/api/v1/write" /etc/prometheus/config/prometheus.yml
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmpl, mountPath: /etc/prometheus/tmpl, readOnly: true }
+            - { name: config, mountPath: /etc/prometheus/config }
+      containers:
+        - name: prometheus
+          # 노드의 Prometheus 와 같은 판(docker-compose-observability.yml) — 레지스트리만 미러(90-dev-infra 와 같다)
+          image: mirror.gcr.io/prom/prometheus:v2.53.0
+          args:
+            - --config.file=/etc/prometheus/config/prometheus.yml
+            - --enable-feature=agent
+            - --storage.agent.path=/prometheus
+          ports:
+            - name: web
+              containerPort: 9090
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9090 }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus/config, readOnly: true }
+            - { name: tls, mountPath: /etc/prometheus/tls, readOnly: true }
+            - { name: wal, mountPath: /prometheus }
+      volumes:
+        - name: tmpl
+          configMap:
+            name: metrics-agent-config
+        - name: config
+          emptyDir: { sizeLimit: 1Mi }
+        # 공개 인증서(ca.crt)만 — tls-keystore 의 키스토어 · 비밀번호는 싣지 않는다
+        - name: tls
+          secret:
+            secretName: tls-keystore
+            items:
+              - { key: ca.crt, path: ca.crt }
+        - name: wal
+          emptyDir: { sizeLimit: 1Gi }

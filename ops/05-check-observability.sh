@@ -41,6 +41,28 @@ for t in d["data"]["activeTargets"]:
     print("  %-5s %-20s %s" % (t["health"], svc, t["scrapeUrl"]))' || { echo "  타깃 조회 실패"; fail=1; }
 
 echo
+echo "=== 서비스 지표 (운영: 클러스터 안 에이전트 → remote write, docs/63 §5) ==="
+# 에이전트가 보낸 것은 위 타깃 목록에 없다 — up 시계열로 본다. 노드의 Prometheus 가 수신 없이 떴으면(oci 덧씌우기 없이)
+# 에이전트의 쓰기가 모두 거절된다.
+receiver="$(curl -sf "$PROM_URL/api/v1/status/flags" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"].get("web.enable-remote-write-receiver","?"))' 2>/dev/null || echo "?")"
+agent=0
+command -v kubectl >/dev/null 2>&1 && kubectl -n ecommerce get deploy metrics-agent >/dev/null 2>&1 && agent=1
+if [ "$agent" = 1 ] && [ "$receiver" != "true" ]; then
+    echo "FAIL 클러스터에 metrics-agent 가 있는데 Prometheus 의 remote write 수신이 꺼져 있다(receiver=$receiver)"
+    echo "     → docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d prometheus"
+    fail=1
+else
+    echo "  remote write 수신: $receiver · 클러스터 에이전트: $([ "$agent" = 1 ] && echo 있음 || echo 없음/확인 불가)"
+fi
+curl -sf "$PROM_URL/api/v1/query" --data-urlencode 'query=up{job="spring-actuator"}' | python3 -c '
+import json,sys
+r=json.load(sys.stdin)["data"]["result"]
+if not r: print("  (spring-actuator 시계열 없음 — 경보 ServiceMetricsMissing)")
+for x in sorted(r, key=lambda x: x["metric"].get("service","")):
+    print("  %-5s %-22s %s" % ("up" if x["value"][1] == "1" else "down", x["metric"].get("service","?"), x["metric"].get("pod", x["metric"].get("instance",""))))' \
+    || { echo "  서비스 지표 조회 실패"; fail=1; }
+
+echo
 echo "=== 로드된 경보 규칙 ==="
 curl -sf "$PROM_URL/api/v1/rules" | python3 -c '
 import json,sys
@@ -129,8 +151,25 @@ else
 fi
 
 echo
+echo "=== 경보 전달 (Alertmanager → Discord, docs/22 §1) ==="
+# 수신 주소 파일이 없어도 Alertmanager 는 뜬다 — 보낼 때마다 실패할 뿐이다(🐛 운영 2026-09-24 ~ 10-20, 0건 전달).
+SECRET_DIR="${SECRET_DIR:-$(cd "$(dirname "$0")/.." && pwd)/observability/secrets}"
+for f in webhook-url-critical webhook-url-warning; do
+    if [ -s "$SECRET_DIR/$f" ] || sudo -n test -s "$SECRET_DIR/$f" 2>/dev/null; then
+        echo "OK   $f 있음"
+    else
+        echo "FAIL $f 없음 — 경보가 아무 데도 가지 않는다 → sudo ./ops/17-configure-alert-receivers.sh"; fail=1
+    fi
+done
+curl -sf "$AM_URL/metrics" | awk '/^alertmanager_notifications_(failed_)?total\{/ { split($1, a, "integration=\""); split(a[2], b, "\""); k = ($1 ~ /failed/ ? "실패" : "시도"); n[b[1] " " k] += $NF } END { for (x in n) if (n[x] > 0) printf "  %s %d\n", x, n[x] }' | sort || echo "  Alertmanager 지표 조회 실패"
+failed="$(curl -sf "$AM_URL/metrics" | awk '/^alertmanager_notifications_failed_total\{/ {s+=$NF} END {printf "%d", s+0}' || echo 0)"
+if [ "${failed:-0}" -gt 0 ]; then
+    echo "FAIL 전달 실패 $failed 건(재기동 뒤 누적) — docker logs alertmanager 2>&1 | grep 'Notify for alerts failed' | tail -3"; fail=1
+fi
+
+echo
 if [ "$fail" = "0" ]; then
-    echo "모든 점검 통과. 남은 것: observability/alertmanager.yml 의 receiver 를 실제 채널(Slack/웹훅)로 교체"
+    echo "모든 점검 통과."
 else
     echo "일부 점검 실패 — 위 FAIL 항목을 확인하세요"; exit 1
 fi

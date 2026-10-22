@@ -99,6 +99,12 @@ Notify for alerts failed ... open /etc/alertmanager/secrets/webhook-url-critical
 
 これがなければ「設定完了」と報告して済ませていただろう。
 
+### 本番で一度も届いていなかった (2026-10-20)
+
+`observability/secrets/` がないまま観測スタックが起動し、Docker が空のディレクトリを root 所有で作った(2026-09-24)。Alertmanager はファイルなしでも起動し、通知のたびに失敗する — **4 週間アラート 0 件**、再起動後 153/153 失敗(`read url_file: … no such file or directory`)。しかも受信は `webhook_configs`(Alertmanager 固有の JSON)で、案内どおり Slack · Discord の URL を入れても形式で拒否されていたはずだ。
+
+今は受信が **Discord**(`discord_configs` + `webhook_url_file`、Alertmanager 0.28.1 — 0.27 は URL を設定に直書きするしか受け付けず、秘密がコミットされる)。`sudo ./ops/17-configure-alert-receivers.sh` が URL を画面に見せずに尋ね(コマンドライン · シェル履歴に残さない、出力は長さ · 先頭だけ)、ファイルを uid 65534 · 640 にしてから試験アラートで discord の送信指標まで見る。`./ops/05` がファイルと送信失敗を点検する。ローカル確認: 0.28.1 + 偽 Discord で ops/17 `MODE=test` 9/9、embed 受信。ガード B-96。
+
 ## 2. バックアップスクリプトはあるのに動いていなかった
 
 `ops/08`・`ops/10`・`ops/09` は実際の障害を巻き戻すところまで検証した([docs/15](15-backup-and-dr.md))。
@@ -217,6 +223,6 @@ kubectl logs -n ecommerce -l job-name=backup-test-1 -f
 |---|---|
 | バックアップをクラスタの**外**へ (S3/GCS) | 🟡 ノードの外のコピーは別に置く — 別地域のコピーはまだない |
 | PVC サイズを実データ基準に | 🟠 50Gi はプレースホルダーだ。k3s の `local-path` はこのサイズを**強制せず、ノードのディスクをそのまま**使う — 保持日数 × バックアップサイズがノードの空きを超えると、ノードが DiskPressure で Pod を追い出す(2026-10-10 本番: ディスク空き 25G、DB 5.6G) |
-| クラスタ内 PostgreSQL の Pod 作り直し (2026-10-20) | 🔴 **本番未適用。** 以前のマニフェストは最初の Pod にしか証明書がない。実習クラスタで `rollout restart` の後、`could not load server certificate file` で起動できなかった。本番も同じマニフェスト(ops/13)なので、ノード再起動 · 退避 · `ACTION=setup ./ops/29`(PITR の再起動)のどれでも DB が止まる。直したマニフェスト(initContainer `copy-tls`、B-93)を先に適用する — 他のインフラを原本に戻さないよう postgres だけを: `kubectl -n postgres get secret pg-tls` を確認 → `kubectl diff -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres` → 同じ引数で `apply`。適用すると Pod が一度起動し直す(Recreate、1 分前後)— バックアップの時間帯(02 〜 06 UTC)を避け、直前に docs/72 §3 のバックアップ。すでに止まっていれば同じコマンドが復旧になる(データは PVC のまま)。 |
+| クラスタ内 PostgreSQL の Pod 作り直し (2026-10-20) | ✅ **本番適用済み(2026-10-20 ~11:55 UTC、下のコマンド — ssl on · mongodb 0/0 のまま)。** それまでの事情: 以前のマニフェストは最初の Pod にしか証明書がない。実習クラスタで `rollout restart` の後、`could not load server certificate file` で起動できなかった。本番も同じマニフェスト(ops/13)なので、ノード再起動 · 退避 · `ACTION=setup ./ops/29`(PITR の再起動)のどれでも DB が止まる。直したマニフェスト(initContainer `copy-tls`、B-93)を先に適用する — 他のインフラを原本に戻さないよう postgres だけを: `kubectl -n postgres get secret pg-tls` を確認 → `kubectl diff -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres` → 同じ引数で `apply`。適用すると Pod が一度起動し直す(Recreate、1 分前後)— バックアップの時間帯(02 〜 06 UTC)を避け、直前に docs/72 §3 のバックアップ。すでに止まっていれば同じコマンドが復旧になる(データは PVC のまま)。 |
 | Alertmanager 高可用性 (クラスタモード) | 🟡 単一インスタンス |
 | アラート疲れの調整 | 🟡 実際の本番データを見ないと閾値を決められない |

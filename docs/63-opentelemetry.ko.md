@@ -206,6 +206,34 @@ Collector 는 `memory_limiter`(200MiB)에서 받기를 멈춘다(서비스는 �
 지나면 badger 가 스스로 지운다. 이미지가 uid 10001 로 돌아 새 볼륨(root 소유)에 쓰지 못하므로, `jaeger-data-init`(busybox)이 한 번
 소유자를 맞추고 끝난다. 로컬에서 오류 추적 하나를 `restart` · 컨테이너 재생성 뒤에 다시 조회해 둘 다 200 인 것을 확인했다.
 
+**값 길이 상한(B-94).** badger 는 태그 값으로 색인 키를 만들고, 키 상한은 65,000 바이트다. 🐛 2026-10-19 운영에서 catalog 의 "바인드 변수 65,535 초과" 오류 스팬이 SQL 원문(`?` 24만 개, 약 1MB)을 상태 메시지와 예외 메시지로 싣고 왔다. Jaeger 는 `Key with size 965733 exceeded 65000 limit` 로 그 스팬을 저장하지 못했고, 실패를 되풀이하다 메모리 상한(512m)에 걸려 `OOMKilled` 로 멈췄다. 하루 가까이 추적이 끊겼다.
+
+이제 Collector 의 `transform/truncate` 가 스팬 속성 · 이벤트 속성 · 리소스 속성 · 상태 메시지를 4,096 자로 자른다. 자르는 것은 가림(`redaction`) **뒤**다 — 먼저 자르면 잘린 JWT · 이메일 조각이 정규식을 빠져나간다. 오류 원문은 로그(Loki)에 그대로 있다.
+
+로컬(collector 0.160 + jaeger 2.20)에서 같은 크기의 스팬을 보내 확인했다. 자르기 전에는 0건 저장에 `exceeded 65000 limit` 2회, 자른 뒤에는 `db.statement` · `otel.status_description` 4,096 자로 저장됐다. 적용은 `docker compose -f docker-compose-observability.yml up -d --force-recreate otel-collector` 로 한다(정의가 같으면 `up -d` 만으로는 다시 뜨지 않는다).
+
+**다시 뜨지 못한 이유.** `restart: unless-stopped` 인데 Jaeger 는 다시 뜨지 못했다(`restartmanger wait error: failed to mount … snapshots/…`). 10-01 의 디스크 정리에서 `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs` 를 지웠기 때문이다. 이 디렉터리는 k3s 가 아니라 Docker(containerd 이미지 저장소)의 컨테이너 파일 시스템이다. 이미 돌던 컨테이너는 붙어 있던 파일 시스템으로 3주를 버텼고, 멈춘 것은 다시 만들 수도 없었다. 복구는 compose `down`(볼륨 유지) → docker · containerd 정지 → 그 디렉터리를 옆으로 옮김 → `pull` · `up -d`. 볼륨(추적 7일 · 지표 · 로그)은 `/var/lib/docker/volumes` 라 그대로였다. 정리는 `docker builder prune` · `docker image prune` 까지만 한다.
+
+**서비스 지표 — 클러스터 안 에이전트(B-95).** 🐛 2026-10-20 운영: 노드의 Prometheus 가 개발 PC 설정(`observability/prometheus.yml` 의 `host.docker.internal:80xx`)으로 떠 있었다. k3s 의 서비스는 클러스터 안에만 있어 지난 7일 `max_over_time(up{job="spring-actuator"}[7d])` 이 9개 모두 0 이었다. JVM · 커넥션 풀 · HTTP 지표가 하나도 없었고, 그것을 보는 경보(`High5xxRate` · `HighP99Latency` · `JvmHeapNearLimit` · `CircuitBreakerOpen` …)는 울릴 수 없었으며, `ServiceDown` 만 계속 울렸다.
+
+이제 운영도 실습과 같은 길이다.
+- `k8s-overlays/external/metrics-agent.yaml`(운영 `local` · `oci` 가 상속) — 에이전트 모드 Prometheus 가 지표를 내는 서비스 11개를 TLS 검증으로 긁는다(CA 만 마운트, SAN 안 이름).
+- 보낼 곳은 **그 파드가 뜬 노드의 IP:9090** 이다. 추적이 노드 IP:4318 로 가는 것과 같은 길이다. 노드 IP 는 저장소에 둘 수 없어 initContainer 가 `HOST_IP`(downward API)로 설정 틀을 채운다. 비어 있으면 멈춘다.
+- 노드의 Prometheus 는 `docker-compose-observability.oci.yml` 을 덧씌워 띄운다. remote write 수신을 켜고, 설정은 `observability/prometheus.oci.yml`(개발 PC 타깃만 뺐다)이다. 수신은 9090 에 닿는 누구나 쓸 수 있다는 뜻이다. 그래서 9090 은 VCN 보안 목록이 막는다(22번만 — 2026-10-20 확인, NSG 없음). 보안 목록에 9090 을 열지 않는다.
+- 이름은 그대로(`job="spring-actuator"`, `service=<서비스>`)라 대시보드 · 경보가 바뀌지 않는다.
+- 새 경보 `ServiceMetricsMissing`(`absent(up{job="spring-actuator"})`, 10분): 에이전트가 멈추거나 수신 없이 떴으면 `up` 자체가 사라져 `ServiceDown` 은 울릴 수 없다.
+- 로컬 확인(같은 v2.53.0): 렌더(빈 `HOST_IP` 는 실패) · `promtool check config`(에이전트 · 노드 설정) · 에이전트 → 수신으로 `up=1` · `absent` 해소. `ops/05` 가 수신이 꺼진 채 에이전트가 있으면 FAIL 이다.
+
+적용(이미지 배포와 별개 — 다음 ops/28 배포에도 그대로 들어간다):
+```bash
+cd ~/ecommerce-msa   # 이 커밋 이후로 switch
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d prometheus   # 수신 켜기(지표 볼륨 그대로)
+kubectl apply -f k8s-overlays/external/metrics-agent.yaml   # 에이전트만 — 오버레이 전체를 apply 하지 않는다(옛 이미지에 새 매니페스트)
+kubectl -n ecommerce rollout status deploy/metrics-agent && kubectl -n ecommerce logs deploy/metrics-agent --since=5m | grep -ci error
+./ops/05-check-observability.sh   # "서비스 지표" 에 11개 up
+```
+⚠️ 운영에서는 compose 명령마다 두 파일을 함께 준다. 기본 파일만으로 prometheus 를 다시 만들면 개발 PC 설정으로 돌아간다(`ServiceDown` · `ServiceMetricsMissing` 이 울린다).
+
 **경보(`tracing-pipeline`).** `OtelCollectorDown`(5분) · `TraceExportToJaegerFailing`(10분) · `TracesRefusedByCollector`(10분) ·
 `TailSamplingDroppedTooEarly`(5분).
 어디가 끊겨도 서비스는 오류 없이 돈다 — 그래서 사람이 "추적이 안 보인다" 를 알아채기 전에 경보가 먼저 울려야 한다.

@@ -57,14 +57,17 @@ services:
     mem_limit: 512m
 
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    # 0.28 이상 — discord_configs 의 webhook_url_file(비밀을 파일로)이 0.28 에서 생겼다(observability/alertmanager.yml).
+    image: prom/alertmanager:v0.28.1
     container_name: alertmanager
     restart: unless-stopped
     volumes:
       - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       # 웹훅 URL 은 설정이 아니라 **비밀**이다(URL 을 아는 사람은 누구나 그 채널에 쓸 수 있다).
-      # 그래서 커밋되지 않는 파일로 마운트한다. 없으면 Alertmanager 가 기동에 실패한다 —
-      # 알림이 조용히 안 가는 것보다 낫다. 만드는 법: ./ops/17-configure-alert-receivers.sh
+      # 그래서 커밋되지 않는 파일로 마운트한다. 만드는 법: sudo ./ops/17-configure-alert-receivers.sh
+      # ⚠️ 파일이 없어도 Alertmanager 는 **뜬다** — 알림을 보낼 때마다 실패할 뿐이다. 디렉터리가 없으면 Docker 가 빈 디렉터리를
+      #    root 소유로 만든다. 🐛 운영이 2026-09-24 부터 10-20 까지 그 상태였다(경보 전달 0건, 재기동 뒤 153/153 실패).
+      #    ./ops/05 가 파일과 전달 실패를 점검한다.
       - ./observability/secrets:/etc/alertmanager/secrets:ro
     ports:
       - "9093:9093"

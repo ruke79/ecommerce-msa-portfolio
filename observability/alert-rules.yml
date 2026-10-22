@@ -11,6 +11,18 @@ groups:
           summary: "{{ $labels.service }} 다운"
           description: "{{ $labels.service }} ({{ $labels.instance }}) 가 2분째 스크레이프에 응답하지 않습니다."
 
+      # 서비스 지표가 통째로 없다 — 운영에서는 클러스터 안의 에이전트(k8s-overlays/external/metrics-agent.yaml)가 보내므로,
+      # 에이전트가 멈추거나 노드의 Prometheus 가 수신 없이(docker-compose-observability.oci.yml 없이) 떴으면 up 자체가 사라진다.
+      # 그때 ServiceDown(up == 0)은 울릴 수 없다 — 그래서 따로 본다(docs/63 §5, B-95).
+      # [JA] サービスの指標がまったくない — エージェント停止や受信なしで起動した Prometheus では up 自体が消え、ServiceDown は鳴れない。
+      - alert: ServiceMetricsMissing
+        expr: absent(up{job="spring-actuator"})
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "서비스 지표가 하나도 들어오지 않습니다"
+          description: "kubectl -n ecommerce get pods -l app=metrics-agent 와 그 로그(remote write 오류), 노드의 Prometheus 가 docker-compose-observability.oci.yml 과 함께 떴는지(--web.enable-remote-write-receiver) 확인하세요 (docs/63 §5)."
+
       - alert: CircuitBreakerOpen
         expr: resilience4j_circuitbreaker_state{state="open"} == 1
         for: 1m
