@@ -44,6 +44,16 @@ public class DeliveryStatusPublisher {
     /** 상태 이벤트를 보내지 못한 수 — Prometheus {@code delivery_status_publish_failed_total}. */
     public static final String FAILED_METRIC = "delivery.status.publish.failed";
 
+    /**
+     * 경보가 {@code increase()} 로 보는 계수기를 기동 때 0 으로 만든다(B-101) — 처음 늘 때 생기면 첫 값이 이미 1 이라 increase() 가
+     * 첫 사고를 0 으로 본다(2026-10-22 실습: FAILED 3건에도 OrderOutboxRowFailed 가 울리지 않았다).
+     * [JA] 警報が increase() で見るカウンターを起動時に 0 で作る — 初回の増加で生まれると最初の値が 1 で、increase() が初回を 0 と見る。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerAlertCounters() {
+        io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC);
+    }
+
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
 

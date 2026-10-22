@@ -1961,6 +1961,110 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-101: 경보가 {@code increase()} 로 보는 앱 계수기는 그 계수기를 정의한 클래스가 {@code registerAlertCounters} 로 기동 때 0 으로
+     * 만든다 — {@code @PostConstruct} 이거나, static 이면 다른 곳이 부른다.
+     *
+     * <p>Micrometer 계수기는 처음 {@code counter(...)} 를 부를 때 생긴다. 첫 사고에서 생기면 Prometheus 가 처음 보는 값이 이미 1 이라
+     * {@code increase(x[30m])} 는 0 — 그 사고의 경보가 울리지 않는다(파드가 다시 뜰 때마다 첫 건이 또 그렇다). 2026-10-22 실습
+     * 게임데이(kafka-pause)에서 order-status 행 3개가 FAILED 였는데 OrderOutboxRowFailed 가 오지 않아 드러났다 — 이중 결제 ·
+     * 쿠폰 이중 사용 · DLT 경보도 같은 모양이었다.
+     *
+     * <p>[JA] 警報が increase() で見るアプリのカウンターは、定義したクラスが registerAlertCounters で起動時に 0 で作る。初回の事故で
+     *      生まれると最初の値が 1 で increase() が 0 — 警報が鳴らない(実習 kafka-pause で OrderOutboxRowFailed が来なかった)。
+     */
+    @Test
+    @DisplayName("B-101: increase() 경보의 앱 계수기는 정의한 클래스가 기동 때 0 으로 만든다(registerAlertCounters) — 첫 사고도 울린다")
+    void alertCountersAreRegisteredAtZero() throws IOException {
+        String rules = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
+        java.util.Set<String> metrics = new java.util.TreeSet<>();
+        Matcher m = Pattern.compile("increase\\(([a-z_]+)_total[\\[{]").matcher(rules);
+        while (m.find()) {
+            metrics.add(m.group(1));
+        }
+        List<Path> sources = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path src = module.resolve("src/main/java");
+                if (Files.isDirectory(src)) {
+                    try (Stream<Path> files = Files.walk(src)) {
+                        files.filter(x -> x.toString().endsWith(".java")).forEach(sources::add);
+                    }
+                }
+            }
+        }
+        java.util.Map<Path, String> code = new java.util.HashMap<>();
+        for (Path p : sources) {
+            code.put(p, stripComments(Files.readString(p, StandardCharsets.UTF_8)));
+        }
+        List<String> offenders = new ArrayList<>();
+        int checked = 0;
+        for (String metric : metrics) {
+            String literal = "\"" + metric.replace('_', '.') + "\"";
+            List<Path> owners = code.entrySet().stream().filter(e -> e.getValue().contains(literal)).map(java.util.Map.Entry::getKey).toList();
+            if (owners.isEmpty()) {
+                continue;   // 앱 밖(alertmanager · otelcol · postgres exporter)의 지표
+            }
+            for (Path owner : owners) {
+                checked++;
+                String src = code.get(owner);
+                String cls = owner.getFileName().toString().replace(".java", "");
+                boolean onStart = Pattern.compile("@(jakarta\\.annotation\\.)?PostConstruct\\s+(public\\s+)?void registerAlertCounters\\(")
+                        .matcher(src).find();
+                boolean calledElsewhere = src.contains("static void registerAlertCounters(") && code.entrySet().stream()
+                        .anyMatch(e -> !e.getKey().equals(owner) && e.getValue().contains(cls + ".registerAlertCounters("));
+                if (!onStart && !calledElsewhere) {
+                    offenders.add(metric + "_total ← " + repoRoot().relativize(owner));
+                }
+            }
+        }
+        assertThat(checked).as("경보 규칙에서 앱 계수기를 찾지 못했다 — 규칙 모양이 바뀌었으면 이 가드를 고친다").isGreaterThanOrEqualTo(11);
+        assertThat(offenders)
+                .as("첫 사고에 생기는 계수기는 increase() 가 0 으로 본다 — 정의한 클래스에 @PostConstruct registerAlertCounters()(B-101)")
+                .isEmpty();
+    }
+
+    /**
+     * B-100: KafkaTemplate 으로 보내며 {@code KafkaException} 을 '다음에 다시' 로 잡는 곳은 <b>Spring 의</b>
+     * {@code org.springframework.kafka.KafkaException} 을 잡는다.
+     *
+     * <p>브로커가 없으면 메타데이터 대기(max.block.ms)가 끝난 순간 {@code KafkaTemplate.send()} 가 실패한 future 대신 Spring 의
+     * {@code KafkaException("Send failed")} 을 바로 던진다. apache 의 {@code org.apache.kafka.common.KafkaException} 만 잡으면 그 예외가
+     * 아웃박스 릴레이까지 올라가 영구 오류(FAILED)가 된다 — 2026-10-22 실습 게임데이(kafka-pause)에서 order-status 행 3개가 그렇게
+     * 굳었다(OrderStatusBrokerDownTest). 두 클래스는 이름만 같고 상속 관계가 없다.
+     *
+     * <p>[JA] KafkaTemplate で送り KafkaException を「次に再試行」で捕まえる所は Spring の KafkaException を捕まえる。ブローカーが
+     *      ないと send() が Spring の KafkaException を直接投げる — apache の方だけではリレーが FAILED にする(実習 kafka-pause)。
+     */
+    @Test
+    @DisplayName("B-100: KafkaTemplate 으로 보내는 곳이 KafkaException 을 잡으면 Spring 의 것 — apache 것만이면 브로커 정지가 FAILED 가 된다")
+    void kafkaTemplateSendersCatchSpringKafkaException() throws IOException {
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path src = module.resolve("src/main/java");
+                if (!Files.isDirectory(src)) {
+                    continue;
+                }
+                try (Stream<Path> files = Files.walk(src)) {
+                    for (Path java : files.filter(x -> x.toString().endsWith(".java")).toList()) {
+                        String code = stripComments(Files.readString(java, StandardCharsets.UTF_8));
+                        boolean sends = code.contains("KafkaTemplate") && code.contains(".send(");
+                        boolean catchesKafka = Pattern.compile("catch \\([^)]*KafkaException").matcher(code).find();
+                        boolean apacheOnly = code.contains("import org.apache.kafka.common.KafkaException;")
+                                && !code.contains("org.springframework.kafka.KafkaException");
+                        if (sends && catchesKafka && apacheOnly) {
+                            offenders.add(repoRoot().relativize(java).toString());
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(offenders)
+                .as("KafkaTemplate.send() 는 브로커가 없으면 Spring KafkaException 을 던진다 — org.springframework.kafka.KafkaException 도 잡는다(B-100)")
+                .isEmpty();
+    }
+
+    /**
      * B-88: Kafka 리스너 팩토리에 레코드 어댑터({@code setBatchToRecordAdapter})를 두지 않는다.
      *
      * <p>{@code DefaultBatchToRecordAdapter} 는 배치를 레코드 하나씩 리스너에 넘기면서 리스너의 예외를 <b>잡아</b> 생성자의 recoverer 에

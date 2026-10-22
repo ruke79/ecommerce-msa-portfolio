@@ -132,6 +132,19 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     /** 보낼 수 없어 FAILED 로 둔 행 수 — Prometheus {@code order_outbox_failed_total{type}}, 경보 OrderOutboxRowFailed. */
     public static final String FAILED_METRIC = "order.outbox.failed";
 
+    /**
+     * 경보가 {@code increase()} 로 보는 계수기를 기동 때 0 으로 만든다(B-101) — 처음 늘 때 생기면 첫 값이 이미 1 이라 increase() 가
+     * 첫 사고를 0 으로 본다(2026-10-22 실습: FAILED 3건에도 OrderOutboxRowFailed 가 울리지 않았다).
+     * [JA] 警報が increase() で見るカウンターを起動時に 0 で作る — 初回の増加で生まれると最初の値が 1 で、increase() が初回を 0 と見る。
+     */
+    @jakarta.annotation.PostConstruct
+    public void registerAlertCounters() {
+        for (String type : List.of("payment-request", PaymentOutboxHelper.ORDER_STATUS_EVENT,
+                PaymentOutboxHelper.PRODUCT_UPDATE_EVENT, PaymentOutboxHelper.CART_EMPTY_EVENT)) {
+            io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC, "type", type);
+        }
+    }
+
     /** @return 상태가 확정됐으면 true, 일시 실패라 다음 폴링에 다시 보내야 하면 false. 영구 오류는 예외 */
     private boolean relay(PaymentOutboxEvent outbox) {
         boolean settled;

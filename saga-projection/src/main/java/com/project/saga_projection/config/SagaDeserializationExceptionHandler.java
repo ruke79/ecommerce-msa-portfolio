@@ -45,6 +45,23 @@ public class SagaDeserializationExceptionHandler implements DeserializationExcep
 
     static final String METRIC = "saga.projection.deserialization.failures";
 
+    /**
+     * 경보가 {@code increase()} 로 보는 계수기를 토폴로지를 만들 때 입력 토픽마다 0 으로 만든다(B-101) — 처음 늘 때 생기면 첫 값이 이미 1 이라 increase() 가
+     * 첫 사고를 0 으로 본다(2026-10-22 실습: FAILED 3건에도 OrderOutboxRowFailed 가 울리지 않았다).
+     * [JA] 警報が increase() で見るカウンターを起動時に 0 で作る — 初回の増加で生まれると最初の値が 1 で、increase() が初回を 0 と見る。
+     */
+    public static void registerAlertCounters(java.util.Collection<String> topics) {
+        for (String topic : topics) {
+            for (String action : java.util.List.of("halted", "skipped")) {
+                Counter.builder(METRIC)
+                        .description("saga-projection 이 읽지 못한 입력 레코드 — skipped(건너뜀) · halted(멈춤)")
+                        .tag("topic", topic)
+                        .tag("action", action)
+                        .register(Metrics.globalRegistry);
+            }
+        }
+    }
+
     @Override
     public DeserializationHandlerResponse handle(ProcessorContext context, ConsumerRecord<byte[], byte[]> record,
             Exception exception) {

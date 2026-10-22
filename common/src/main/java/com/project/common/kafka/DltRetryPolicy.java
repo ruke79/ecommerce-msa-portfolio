@@ -22,6 +22,17 @@ public final class DltRetryPolicy {
     /** DLT 로 보낸 레코드 수 — Prometheus {@code kafka_dlt_records_total{topic}}. */
     public static final String DLT_METRIC = "kafka.dlt.records";
 
+    /**
+     * 경보가 {@code increase()} 로 보는 계수기를 기동이 끝날 때 리스너 토픽마다(DltAlertCountersAutoConfiguration) 0 으로 만든다(B-101) — 처음 늘 때 생기면 첫 값이 이미 1 이라 increase() 가
+     * 첫 사고를 0 으로 본다(2026-10-22 실습: FAILED 3건에도 OrderOutboxRowFailed 가 울리지 않았다).
+     * [JA] 警報が increase() で見るカウンターを起動時に 0 で作る — 初回の増加で生まれると最初の値が 1 で、increase() が初回を 0 と見る。
+     */
+    public static void registerAlertCounters(MeterRegistry meters, java.util.Collection<String> topics) {
+        for (String topic : topics) {
+            meters.counter(DLT_METRIC, "topic", topic);
+        }
+    }
+
     private DltRetryPolicy() {
     }
 

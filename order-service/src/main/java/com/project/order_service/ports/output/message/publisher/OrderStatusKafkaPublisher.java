@@ -67,7 +67,12 @@ public class OrderStatusKafkaPublisher {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
-        } catch (TimeoutException | ExecutionException | KafkaException e) {
+        } catch (TimeoutException | ExecutionException | KafkaException | org.springframework.kafka.KafkaException e) {
+            // 🐛 2026-10-22 실습 게임데이(kafka-pause): Kafka 가 꺼져 메타데이터 대기(max.block.ms)가 끝나면 KafkaTemplate 은 실패한 future 를
+            //    돌려주지 않고 Spring 의 KafkaException("Send failed") 을 send() 에서 바로 던진다. 여기는 apache 의 KafkaException 만 잡아
+            //    그 예외가 릴레이까지 올라가 '영구 오류' 로 FAILED — 주문 상태 이벤트 3건이 다시 보내지지 않았다(다른 발행기는 Spring 것을 잡는다).
+            // [JA] Kafka 停止でメタデータ待ちが切れると KafkaTemplate は send() で Spring の KafkaException を直接投げる。ここは apache の
+            //      KafkaException だけを捕まえていたのでリレーが恒久エラーとして FAILED にした — 注文状態イベントが再送されなかった。
             log.error("Failed to send OrderStatusChanged for order id: {} — will retry next poll. Error: {}",
                     event.getOrderId(), e.getMessage());
             return false;

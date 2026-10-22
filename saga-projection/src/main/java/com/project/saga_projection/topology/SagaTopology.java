@@ -90,6 +90,8 @@ public final class SagaTopology {
         this.stateTopic = stateTopic;
         this.orderStatusTopic = orderStatusTopic;
         this.timelineTopic = timelineTopic;
+        com.project.saga_projection.config.SagaDeserializationExceptionHandler.registerAlertCounters(
+                java.util.List.of(orderTopic, paymentTopic, orderStatusTopic));   // B-101 — 경보 SagaProjectionHalted · SagaProjectionSkippedRecords 가 첫 건부터 본다
         this.events = new SagaEvents(clock);
         this.clock = clock;
     }

@@ -24,6 +24,16 @@ public class PaymentResponseMessageListener {
     /** 한 쿠폰으로 두 주문이 할인을 받은 수 — Prometheus {@code coupon_double_use_total}, 경보 CouponDoubleUse. */
     public static final String DOUBLE_USE_METRIC = "coupon.double.use";
 
+    /**
+     * 경보가 {@code increase()} 로 보는 계수기를 기동 때 0 으로 만든다(B-101) — 처음 늘 때 생기면 첫 값이 이미 1 이라 increase() 가
+     * 첫 사고를 0 으로 본다(2026-10-22 실습: FAILED 3건에도 OrderOutboxRowFailed 가 울리지 않았다).
+     * [JA] 警報が increase() で見るカウンターを起動時に 0 で作る — 初回の増加で生まれると最初の値が 1 で、increase() が初回を 0 と見る。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerAlertCounters() {
+        io.micrometer.core.instrument.Metrics.counter(DOUBLE_USE_METRIC);
+    }
+
     @Transactional
     public void completeCoupon(PaymentResponse response) {
 

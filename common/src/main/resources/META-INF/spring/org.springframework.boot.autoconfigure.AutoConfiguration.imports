@@ -4,3 +4,4 @@ com.project.common.security.InternalCallerAutoConfiguration
 com.project.common.outbox.partition.OutboxPartitionAutoConfiguration
 com.project.common.featureflag.FeatureFlagAutoConfiguration
 com.project.common.feign.FeignResponseBodyAutoConfiguration
+com.project.common.kafka.DltAlertCountersAutoConfiguration
