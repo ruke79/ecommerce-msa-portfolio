@@ -59,6 +59,10 @@ docker compose -f docker-compose-observability.yml up -d
 **本番反映チェックリスト**:
 - DLT トピック（`product-update.DLT`、`payment.DLT`、`user-created.DLT`）の自動作成が無効なら事前に作成。
 - DLT への蓄積の監視（コンシューマーラグ/トピックサイズ）+ 再処理手順（内容を修正して元トピックに再発行）のランブック化。
+  - **再処理ツール(2026-10-22): `ops/56-dlt-replay.sh`**。`list <トピック>.DLT` は位置・キー・サイズ・元の位置・失敗したグループ・例外を示す(値は出力しない — 個人情報)。`replay <トピック>.DLT <パーティション> <オフセット>[-<終わり>]` は送らずに示すだけで、`APPLY=1` なら元のトピック・**元のパーティション**へ値・キー・ヘッダーをバイトのまま送る(DLT ヘッダーだけ外し `dlt-replayed-from` を足す)。
+  - Kafka Pod の中でその Pod の Java・kafka-clients で動く(`ops/tools/DltReplay.java`、単一ファイル)。
+  - コンソールツールでは無理 — 値を行単位の文字として扱い Avro の値が壊れる(実習ゲームデイ poison-message)。
+  - ⚠️ 元のトピックの**すべての**コンシューマーグループが再び受け取る — 各コンシューマーが eventId・処理台帳で除くかを先に見る(docs/12 §2)。テストは `DltReplayScriptTest`(cp-kafka 7.6.1)。
 - **残り4つのサービス（cart/coupon/pay/user）に同じパターンを展開** — この2つの実装がコピペ可能なテンプレートである。
 
 ## 4. 依然として残っているもの

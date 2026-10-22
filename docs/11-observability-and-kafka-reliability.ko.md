@@ -59,6 +59,10 @@ docker compose -f docker-compose-observability.yml up -d
 **운영 반영 체크리스트**:
 - DLT 토픽(`product-update.DLT`, `payment.DLT`, `user-created.DLT`) 자동 생성이 꺼져 있으면 사전 생성.
 - DLT 적재 모니터링(컨슈머 랙/토픽 크기) + 재처리 절차(내용 수정 후 원토픽 재발행) 런북화.
+  - **재처리 도구(2026-10-22): `ops/56-dlt-replay.sh`**. `list <토픽>.DLT` 는 자리 · 키 · 크기 · 원래 자리 · 실패한 그룹 · 예외를 보여 준다(값은 출력하지 않는다 — 개인정보). `replay <토픽>.DLT <파티션> <오프셋>[-<끝>]` 은 보내지 않고 보여 주기만 하고, `APPLY=1` 이면 원래 토픽 · **원래 파티션**으로 값 · 키 · 헤더를 바이트 그대로 보낸다(DLT 헤더만 빼고 `dlt-replayed-from` 을 더한다).
+  - Kafka 파드 안에서 그 파드의 Java · kafka-clients 로 돈다(`ops/tools/DltReplay.java`, 단일 파일).
+  - 콘솔 도구로는 안 된다 — 값을 줄 단위 글자로 다뤄 Avro 값이 깨진다(실습 게임데이 poison-message).
+  - ⚠️ 원래 토픽의 **모든** 컨슈머 그룹이 다시 받는다 — 각 컨슈머가 eventId · 처리 원장으로 거르는지 먼저 본다(docs/12 §2). 테스트는 `DltReplayScriptTest`(cp-kafka 7.6.1).
 - **나머지 4개 서비스(cart/coupon/pay/user)에 동일 패턴 확산** — 이 두 구현이 복붙 가능한 템플릿이다.
 
 ## 4. 여전히 남은 것
