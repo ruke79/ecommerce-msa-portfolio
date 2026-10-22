@@ -21,6 +21,7 @@ import org.springframework.beans.BeansException;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.data.domain.Page;
@@ -336,10 +337,26 @@ public class ProductService  {
                 .collect(Collectors.toList());
     }
     
-    // 상품 변경 시 검색/필터 관련 캐시(TTL 무효화만으로는 최대 60분 stale)를 즉시 무효화한다.
-    // 별점은 목록 · 상세(products)에도 보인다 — 🐛 예전에는 products 를 비우지 않아 별점이 영구 캐시에 옛 값으로 남았다.
-    @CacheEvict(value = {"products", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
-    @CachePut(value = "product", key = "#productId")
+    /**
+     * 별점 — user-service 가 리뷰가 바뀔 때마다(그리고 매일 평점 대사가 리뷰 있는 상품마다) 부른다.
+     *
+     * <p><b>그 상품의 캐시만</b> 맞춘다: id 상세(product)는 새 값으로 바꿔 넣고, slug 상세 · 이름 조회(products 의 'slug:' · 'name:')는
+     * 지운다. 목록 · 검색 · 카테고리 쪽(products 의 다른 키 · search_cache · products_by_category)의 별점은 만료(30 · 60분)까지 옛 값이고,
+     * "별점 N 이상" 필터도 그만큼 늦다 — 받아들인다. 필터 메뉴(colors · sizes · details · brands)는 별점과 상관없다.
+     *
+     * <p>🐛 2026-10-19 데이터 규모 측정(docs/83 §5 · §2.2): 예전에는 위 일곱 캐시를 {@code allEntries} 로 통째로 비웠다 — 리뷰 초당
+     * 1건에 홈 카드 · 목록 · 검색 · 메뉴가 늘 캐시 밖이 되어 모든 요청이 DB 커넥션을 기다렸고(대기 37 ~ 47, 받기까지 1 ~ 2초), 실패
+     * 0.25% → 79.90%. 그 전에는 반대로 products 를 비우지 않아 상세 별점이 영구 캐시에 옛 값으로 남았다 — 상세는 지금도 바로 맞는다.
+     *
+     * <p>[JA] 評価はその商品のキャッシュだけを合わせる(id の詳細は置き換え、slug · 名前の照会は消す)。一覧 · 検索の評価は期限(30 · 60 分)
+     * まで古い値。以前は七つのキャッシュを丸ごと消し、レビュー毎秒 1 件で失敗が 0.25% → 79.90% になった。
+     */
+    @Caching(
+            put = @CachePut(value = "product", key = "#productId"),
+            evict = {
+                    @CacheEvict(value = "products", key = "'slug:' + #result.slug", condition = "#result != null"),
+                    @CacheEvict(value = "products", key = "'name:' + #result.name", condition = "#result != null")
+            })
     public ProductDto updateRating(Long productId, float rating) {
         productRepository.updateRating(productId, rating);
         Product product = productRepository.findById(productId).orElseThrow();
@@ -347,7 +364,7 @@ public class ProductService  {
     }
 
     
-    @CacheEvict(value = {"products", "product", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"products", "product", "search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public List<ProductSku> load(List<ProductAddRequest> products, List<MultipartFile> images,
             List<MultipartFile> colorImages) throws IOException {
 
@@ -367,7 +384,7 @@ public class ProductService  {
     }
 
     
-    @CacheEvict(value = {"products", "product", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"products", "product", "search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public ProductSku load(ProductAddRequest request, MultipartFile images, MultipartFile colorImage)
             throws IOException {
         Product product = createOrFindProduct(request);
@@ -433,7 +450,7 @@ public class ProductService  {
     //    캐시를 <b>지운다</b> — 다음 조회가 새 변형까지 담아 다시 만든다(ProductCacheKeyTest).
     @org.springframework.cache.annotation.Caching(evict = {
             // products 도 — 🐛 예전에는 빠져 있어 새 상품이 홈 · 카테고리 목록에, 새 색상이 상세(slug)에 나오지 않았다.
-            @CacheEvict(value = {"products", "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true),
+            @CacheEvict(value = {"products", "search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true),
             @CacheEvict(value = "product", key = "#result.product.productId")
     })
     // ⚠️ 이 메서드는 예전에 세 가지 방식으로 조용히 잘못됐다. 전부 실배포에서 확인된
@@ -1205,7 +1222,7 @@ public class ProductService  {
     // A transactional public method that orchestrates the update
     @Transactional
     // 판매량/재고 변경(주문 성공 Kafka 소비 경로)도 검색 필터(재고·판매량 기반)에 영향 → 캐시 무효화.
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     // "product" 캐시는 ProductDto 를 담는다 — 여기 있던 @CachePut 은 ProductSku 를 넣으려 했다(자기 호출이라 실제로는 돌지 않았다).
     public ProductSku updateSoldValue(Long productId, String slug, String size, Long colorId, int qty) {
         Optional<ProductSku> optionalSku = productskuRepository
@@ -1257,7 +1274,7 @@ public class ProductService  {
     }
 
     @Transactional
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     // "product" 캐시에 ProductSize 를 넣으려던 @CachePut 을 지웠다(위와 같은 이유).
     public ProductSize updateProductSize_Qty(String slug, Long skuId, String size, int qty) {
         ProductSize productSize = getProductSizeModel(skuId, size);
@@ -1324,7 +1341,7 @@ public class ProductService  {
      * @return 바뀐 줄. 그런 사이즈가 없으면 null
      */
     @Transactional
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public StockRow setStock(Long sizeId, int quantity) {
         if (quantity < 0) {
             throw new IllegalArgumentException("재고는 0 이상이어야 합니다: " + quantity);
@@ -1390,7 +1407,7 @@ public class ProductService  {
     // 주문 성공 시 판매량/재고가 바뀌므로 검색/필터 캐시를 무효화한다.
     // (updateSoldValue/updateProductSize_Qty는 여기서 this로 자기호출되어 그쪽 애노테이션은 프록시를 타지 않으므로,
     //  실제 외부 진입점인 이 메서드에 무효화를 건다.)
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public StockApplyResult productUpdated(ProductUpdateRequest request) {
         return productUpdated(request, HeldQuantities.NONE);
     }
@@ -1400,7 +1417,7 @@ public class ProductService  {
      *             예약을 쓰므로 그것은 빼고 넘어온다(StockReservationService.heldByOthers).
      */
     @Transactional
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category"}, allEntries = true)
+    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public StockApplyResult productUpdated(ProductUpdateRequest request, HeldQuantities held) {
 
         ProductSize lastUpdated = null;

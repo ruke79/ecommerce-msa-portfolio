@@ -75,10 +75,20 @@ class LoadK6ScriptTest {
         }
     }
 
+    /** 화면의 경로 — 앞의 / 없이 부르는 곳도 있다(axios 기준 주소에 붙는다 — Review.jsx 의 `user-service/api/review/add/…`). */
+    private static final Pattern FRONTEND_PATH = Pattern.compile("[\"'`}]/?((?:[a-z]+-service|saga-projection)/[^\"'`?$]*)");
+
     private static TreeSet<String> frontendPaths() throws IOException {
+        TreeSet<String> out = new TreeSet<>();
         try (Stream<Path> s = Files.walk(repoRoot().resolve("frontend/src"))) {
-            return paths(s.filter(p -> p.toString().matches(".*\\.jsx?$") && !p.toString().matches(".*\\.test\\.jsx?$")));
+            s.filter(p -> p.toString().matches(".*\\.jsx?$") && !p.toString().matches(".*\\.test\\.jsx?$")).forEach(f -> {
+                Matcher m = FRONTEND_PATH.matcher(read(f));
+                while (m.find()) {
+                    out.add("/" + m.group(1));
+                }
+            });
         }
+        return out;
     }
 
     @Test
@@ -143,6 +153,153 @@ class LoadK6ScriptTest {
                     .contains(term.group(1));
         }
         assertThat(n).isGreaterThan(5);
+    }
+
+    /** ops/k6 의 순수 모듈 하나를 node 로 돌린다(ESM — .mjs 로 복사해 불러온다, 이름 s). 출력을 돌려준다. */
+    private String node(String body) throws Exception {
+        return node("spread", body);
+    }
+
+    private String node(String module, String body) throws Exception {
+        Path mod = tmp.resolve(module + ".mjs");
+        Files.copy(repoRoot().resolve("ops/k6/" + module + ".js"), mod, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Path script = tmp.resolve("check.mjs");
+        Files.writeString(script, "import * as s from './" + module + ".mjs';\n" + body, StandardCharsets.UTF_8);
+        Process p = new ProcessBuilder("node", script.toString()).directory(tmp.toFile()).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        assertThat(p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0).as(out).isTrue();
+        return out;
+    }
+
+    private static boolean hasNode() {
+        try {
+            return new ProcessBuilder("node", "--version").start().waitFor(20, TimeUnit.SECONDS);
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    @Test
+    @DisplayName("🔴 SPREAD — 검색 조합을 넓혀 캐시 밖을 잰다: 이름 검색은 쪽마다 다른 주소 · 필터 검색은 거의 겹치지 않는다 · 끄면 예전 주소 그대로")
+    void spreadWidensSearchCombinations() throws Exception {
+        // 🐛 2026-10-19 100만 회차(docs/83 §5): 조합이 카테고리 × 50쪽 · 이름 검색어 16개뿐이라 첫 1분 반 뒤로는 search_cache 에서 나왔다
+        assumeTrue(hasNode(), "node 가 없다");
+        String out = node("""
+                const terms = Array.from({ length: 16 }, (_, i) => 't' + i);
+                const draw = (n, f) => new Set(Array.from({ length: n }, f)).size;
+                const name1 = draw(3000, () => s.nameSearchPath(terms[Math.floor(Math.random() * 16)], 1));
+                const name50 = draw(3000, () => s.nameSearchPath(terms[Math.floor(Math.random() * 16)], 50));
+                const deep50 = draw(3000, () => s.deepSearchPath('c' + Math.floor(Math.random() * 6), 50));
+                const deep1000 = draw(3000, () => s.deepSearchPath('c' + Math.floor(Math.random() * 6), 1000));
+                const facets = { colors: ['Black', 'Navy Blue', '', null], sizes: ['M', '', 'XL'] };
+                const filters = Array.from({ length: 3000 }, () => s.filterSearchPath('c1', facets));
+                const bad = filters.filter((u) => {
+                  const q = new URLSearchParams(u.split('?')[1]);
+                  const low = Number(q.get('lowPrice')), high = Number(q.get('highPrice'));
+                  return !(low >= 0 && low <= 200 && high - low >= 20 && high - low <= 500)
+                    || (q.has('color') && !['Black', 'Navy Blue'].includes(q.get('color')))
+                    || (q.has('size') && !['M', 'XL'].includes(q.get('size')))
+                    || q.get('page') !== '1' || q.get('category') !== 'c1';
+                }).length;
+                const withColor = filters.filter((u) => u.includes('&color=')).length;
+                const pages = Array.from({ length: 3000 }, () => Number(new URLSearchParams(s.nameSearchPath('x', 50).split('?')[1]).get('page')));
+                const firstOnlyFilters = Array.from({ length: 500 }, () => s.nameSearchPath('x', 50))
+                  .every((u) => u.includes('&page=1&') === u.endsWith('includeFilters=true'));
+                console.log(JSON.stringify({ name1, name50, deep50, deep1000, filtersDistinct: new Set(filters).size, bad, withColor,
+                  minPage: Math.min(...pages), maxPage: Math.max(...pages), firstOnlyFilters,
+                  oldName: s.nameSearchPath('Olive Oil', 1), oldDeep: s.deepSearchPath('42', 2, () => 0.99),
+                  noFacets: s.filterSearchPath('c1', null, () => 0) }));
+                """);
+        assertThat(out)
+                .as("끄면(쪽 1) 이름 검색 조합은 검색어 수 그대로 — 예전 주소").contains("\"name1\":16")
+                .as("예전 이름 검색 주소").contains("\"oldName\":\"/catalog-service/api/search?search=Olive%20Oil&page=1&pageSize=10&includeFilters=true\"")
+                .as("예전 깊은 쪽 주소(includeFilters 없음)").contains("\"oldDeep\":\"/catalog-service/api/search?category=42&page=2&pageSize=10\"")
+                .as("가격대 · 색상 · 사이즈는 범위 · 필터 메뉴 안").contains("\"bad\":0")
+                .contains("\"minPage\":1,\"maxPage\":50").contains("\"firstOnlyFilters\":true")
+                .as("필터 메뉴가 없으면 가격대만").contains("\"noFacets\":\"/catalog-service/api/search?category=c1&lowPrice=0&highPrice=20&page=1&pageSize=10&includeFilters=true\"");
+        Matcher n = Pattern.compile("\"name50\":(\\d+),\"deep50\":(\\d+),\"deep1000\":(\\d+),\"filtersDistinct\":(\\d+),\"bad\":0,\"withColor\":(\\d+)").matcher(out);
+        assertThat(n.find()).as(out).isTrue();
+        assertThat(Integer.parseInt(n.group(1))).as("이름 검색 3,000번 — 16 × 50쪽 = 800 조합을 거의 다 쓴다").isGreaterThan(700);
+        assertThat(Integer.parseInt(n.group(2))).as("깊은 쪽 50 — 6 × 49 = 294 가 상한(예전 회차)").isLessThanOrEqualTo(294);
+        assertThat(Integer.parseInt(n.group(3))).as("깊은 쪽 1000 — 6 × 999 조합에 3,000번이면 기대 2,358(겹침은 생일 문제만큼)").isGreaterThan(2200);
+        assertThat(Integer.parseInt(n.group(4))).as("필터 검색 3,000번이 거의 겹치지 않는다").isGreaterThan(2900);
+        assertThat(Integer.parseInt(n.group(5))).as("색상은 절반쯤").isBetween(1200, 1800);
+
+        String browse = read(repoRoot().resolve("ops/k6/browse.js"));
+        assertThat(browse).as("SPREAD 의 기본값 — 깊은 쪽 1000 · 이름 검색 50쪽, 필터 검색은 주어야만")
+                .contains("__ENV.DEEP_PAGES || (SPREAD ? 1000 : SCALE ? 50 : 2)")
+                .contains("__ENV.NAME_PAGES || (SPREAD ? 50 : 1)")
+                .contains("__ENV.FILTER_SEARCH || 0")
+                .contains("nameSearchPath(pick(NAME_TERMS), NAME_PAGES)").contains("deepSearchPath(category, DEEP_PAGES)")
+                .contains("'http_req_duration{name:filter_search}'").contains("'filter_search', 'product'");
+        assertThat(read(repoRoot().resolve("ops/k6/spike.js"))).as("spike 도 엔드포인트별 오류 수에").contains("'filter_search', 'product'");
+    }
+
+    @Test
+    @DisplayName("🔴 mixed — browse 그대로 + 로그인 사용자의 리뷰 쓰기(화면과 같은 multipart) · 받은 상품만 확인이 켜져 있으면 시작 전에 멈춘다")
+    void mixedScenarioWritesReviewsWhileBrowsing() throws Exception {
+        // 리뷰마다 catalog 의 updateRating 이 불린다(예전에는 search_cache · 필터 메뉴 캐시를 통째로 비웠다) — 읽기만 하는 browse 는 이 경로를 지나지 않는다
+        String mixed = read(repoRoot().resolve("ops/k6/mixed.js"));
+        assertThat(mixed).as("browse 의 시나리오 · setup 을 그대로")
+                .contains("import { browse, setup as browseSetup, options as browseOptions, coldProductId, PRODUCTS } from './browse.js'")
+                .contains("browse: Object.assign({}, browseScenario, { exec: 'browse' })")
+                .as("리뷰는 일정한 도착률로 browse 가 도는 내내").contains("executor: 'constant-arrival-rate'").contains("rate: REVIEW_RATE")
+                .contains("duration: `${totalSeconds(browseScenario.stages)}s`")
+                .as("화면(Review.jsx)과 같은 모양 — multipart, 부분 review 는 JSON")
+                .contains("`${GATEWAY}/user-service/api/review/add/${encodeURIComponent(productId)}`")
+                .contains("{ review: http.file(JSON.stringify(body), 'review.json', 'application/json') }")
+                .contains("delete headers['Content-Type']")
+                .as("시작 전 확인").contains("probe.status === 403").contains("./ops/53-load-k6.sh reviews open")
+                .contains("loginSessions(password, REVIEW_VUS, ID_OFFSET)").contains("not_json: ['count<1']");
+        assertThat(read(repoRoot().resolve("ops/k6/lib.js")))
+                .as("order 와 같은 로그인").contains("export function loginSessions(password, users, offset)");
+        assertThat(read(repoRoot().resolve("ops/k6/order.js"))).contains("loginSessions(password, USERS, ID_OFFSET)");
+
+        // 엔드포인트별 오류 목록 = browse 의 목록 + 리뷰 · 로그인
+        Matcher b = Pattern.compile("errorThresholds\\(\\[(.*?)\\]\\)", Pattern.DOTALL).matcher(read(repoRoot().resolve("ops/k6/browse.js")));
+        assertThat(b.find()).isTrue();
+        Matcher names = Pattern.compile("BROWSE_NAMES = \\[(.*?)\\]", Pattern.DOTALL).matcher(mixed);
+        assertThat(names.find()).isTrue();
+        assertThat(matches(names.group(1), "'([a-z_]+)'")).as("browse 의 이름이 늘면 mixed 도").isEqualTo(matches(b.group(1), "'([a-z_]+)'"));
+        assertThat(mixed).contains("errorThresholds([...BROWSE_NAMES, 'review_add', 'signin', 'token_refresh'])");
+
+        if (hasNode()) {
+            assertThat(node("durations", "console.log(s.totalSeconds([{duration:'1m'},{duration:'2m'},{duration:'1m30s'},{duration:'30s'},{duration:'500ms'}]))"))
+                    .as("단계 합 — 1m + 2m + 1m30s + 30s + 0.5s").isEqualTo("301");
+        }
+
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(Map.of("GATEWAY", "https://shop.lab", "PRODUCTS", "1000000", "REVIEW_RATE", "2"), "mixed");
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(read(tmp.resolve("k6.args"))).contains("REVIEW_RATE=2").contains("mixed.js");
+        assertThat(read(tmp.resolve("k6.env"))).as("데모 비밀번호는 환경 변수로").contains("DEMO_PASSWORD=S3cret-demo-pw!9");
+        assertThat(r.out()).as("길이만").contains("비밀번호 16자").doesNotContain("S3cret");
+        Run rep = run(Map.of(), "report");
+        assertThat(rep.out()).contains("리뷰 쓰기: 초당 2");
+        Run bad = run(Map.of("GATEWAY", "https://shop.lab", "REVIEW_RATE", "1; rm -rf /"), "mixed");
+        assertThat(bad.code()).isNotZero();
+        assertThat(bad.out()).contains("REVIEW_RATE 는 숫자");
+    }
+
+    @Test
+    @DisplayName("🔴 reviews open · default — 실습 클러스터에서만 user-service 의 '받은 상품만' 확인을 끄고 되돌린다")
+    void reviewsSwitchOnlyOnLabCluster() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com"), "reviews", "open");
+        assertThat(prod.code()).isNotZero();
+        assertThat(prod.out()).contains("운영 클러스터다");
+        assertThat(tmp.resolve("kubectl.log")).as("운영에는 바꾸는 명령을 보내지 않는다").satisfies(p ->
+                assertThat(Files.exists(p) ? read(p) : "").doesNotContain("set env"));
+
+        Run open = run(Map.of(), "reviews", "open");
+        assertThat(open.code()).as(open.out()).isZero();
+        assertThat(read(tmp.resolve("kubectl.log"))).contains("set env deploy/user-service REVIEW_REQUIRE_PURCHASE=false")
+                .contains("rollout status deploy/user-service");
+        Run back = run(Map.of(), "reviews", "default");
+        assertThat(back.code()).as(back.out()).isZero();
+        assertThat(read(tmp.resolve("kubectl.log"))).contains("set env deploy/user-service REVIEW_REQUIRE_PURCHASE-");
+        assertThat(read(repoRoot().resolve("user-service/src/main/java/com/project/userservice/service/ReviewService.java")))
+                .as("끄는 이름이 실제 설정과 같다(REVIEW_REQUIRE_PURCHASE → review.require-purchase)").contains("${review.require-purchase:true}");
     }
 
     // ── ② 실행기 ──────────────────────────────────────────────────────────
@@ -260,14 +417,24 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 데이터 규모 변수(PRODUCTS · PRODUCT_ID_OFFSET · DEEP_PAGES · NAME_SEARCH)를 k6 에 넘기고 meta.txt 에 남긴다 · 숫자만")
     void scaleVariablesReachK6AndMeta() throws Exception {
         assumeTrue(posix(), "bash · POSIX 권한이 없다");
-        Run r = run(Map.of("GATEWAY", "https://shop.lab", "PRODUCTS", "1000000", "DEEP_PAGES", "200", "NAME_SEARCH", "0.3"), "browse");
+        Run r = run(Map.of("GATEWAY", "https://shop.lab", "PRODUCTS", "1000000", "DEEP_PAGES", "200", "NAME_SEARCH", "0.3",
+                "SPREAD", "1", "NAME_PAGES", "20", "FILTER_SEARCH", "0.1"), "browse");
         assertThat(r.code()).as(r.out()).isZero();
         assertThat(read(tmp.resolve("k6.args"))).contains("PRODUCTS=1000000").contains("DEEP_PAGES=200").contains("NAME_SEARCH=0.3")
+                .contains("SPREAD=1").contains("NAME_PAGES=20").contains("FILTER_SEARCH=0.1")
                 .doesNotContain("PRODUCT_ID_OFFSET=");
+        Path meta;
         try (Stream<Path> s = Files.walk(tmp.resolve("results"))) {
-            Path meta = s.filter(p -> p.getFileName().toString().equals("meta.txt")).findFirst().orElseThrow();
-            assertThat(read(meta)).contains("products=1000000").contains("deep_pages=200").contains("name_search=0.3");
+            meta = s.filter(p -> p.getFileName().toString().equals("meta.txt")).findFirst().orElseThrow();
+            assertThat(read(meta)).contains("products=1000000").contains("deep_pages=200").contains("name_search=0.3")
+                    .contains("spread=1 name_pages=20 filter_search=0.1");
         }
+        Run rep = run(Map.of(), "report");
+        assertThat(rep.out()).as("넓힌 회차는 캐시를 잰 회차와 견주지 않게 따로 보인다").contains("1000000·넓힘")
+                .contains("검색 조합: 넓힘=1 · 깊은 쪽 200 · 이름 검색 쪽 20 · 필터 검색 비율 0.1");
+        Run badSpread = run(Map.of("GATEWAY", "https://shop.lab", "PRODUCTS", "1000", "SPREAD", "yes"), "browse");
+        assertThat(badSpread.code()).isNotZero();
+        assertThat(badSpread.out()).contains("SPREAD 는 숫자");
         Run bad = run(Map.of("GATEWAY", "https://shop.lab", "PRODUCTS", "1e6; rm -rf /"), "browse");
         assertThat(bad.code()).isNotZero();
         assertThat(bad.out()).contains("PRODUCTS 는 숫자");

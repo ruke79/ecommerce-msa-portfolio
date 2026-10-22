@@ -72,12 +72,6 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
         @Query(value = "select exists(select 1 from product.product where slug = :slug)", nativeQuery = true)
         boolean slugTaken(@org.springframework.data.repository.query.Param("slug") String slug);
 
-        @Query(value = "select b.product_id from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryRegexp is null or a.category_name ILIKE :categoryRegexp)", nativeQuery = true)
-        public List<Long> findProductIDsByCategoryName(@Param("categoryRegexp") String categoryRegexp);
-
-        @Query(value = "select b.product_id from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryId is null or a.category_id = :categoryId)", nativeQuery = true)
-        public List<Long> findProductIDsByCategoryId(@Param("categoryId") Long categoryId);
-
         /**
          * 여러 카테고리의 상품을 <b>한 번에</b>. 기획전 할인 합성이 쓴다.
          *
@@ -90,13 +84,23 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
         @Query("select p.category.categoryId, p.productId from Product p where p.category.categoryId in :categoryIds")
         public List<Object[]> findProductIdsByCategoryIds(@Param("categoryIds") java.util.Collection<Long> categoryIds);
 
-        @Query(value = "select b.brand from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryId is null or a.category_id = :categoryId)", nativeQuery = true)
-        public List<String> findBrandsByCategoryId(@Param("categoryId") Long categoryId);
+        /**
+         * 필터 메뉴의 브랜드 — 카테고리 안에서 <b>중복 없이</b>.
+         *
+         * <p>🐛 2026-10-19 데이터 규모 측정(docs/83 §5): 예전 질의는 DISTINCT 없이 상품마다 한 줄이었다 — 100만 상품의 fashion 은
+         * 브랜드 문자열 ~12만 개를 읽어 화면이 중복을 지웠다(브랜드는 ~400개). 그리고 같은 메뉴의 색상 · 사이즈 · 상세는 상품 id 를
+         * 전부 읽어 {@code IN (:ids)} 로 다시 보냈다 — 바인드 변수 65,535 를 넘는 카테고리에서 PSQLException, 그 검색은 매번 실패했다.
+         * 이제 메뉴는 id 를 앱으로 가져오지 않고 DB 안에서 조인 + DISTINCT 로 만든다(SearchFilterFacets).
+         * [JA] フィルターメニューのブランド — カテゴリ内で重複なしに。以前は DISTINCT なしで商品ごとに一行だった。
+         */
+        @Query(value = "select distinct b.brand from product.product b where b.category_id = :categoryId", nativeQuery = true)
+        public List<String> findDistinctBrandsByCategoryId(@Param("categoryId") Long categoryId);
 
         // PostgreSQL does not support MATCH AGAINST.
         // We will use the ILIKE operator for case-insensitive pattern matching.
-        @Query(value = "select b.brand from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryRegexp is null or a.category_name ILIKE :categoryRegexp)", nativeQuery = true)
-        public List<String> findBrandsByCategoryName(@Param("categoryRegexp") String categoryRegexp);
+        /** 카테고리를 이름으로 받은 검색(또는 카테고리 없이 — null 이면 전체)의 브랜드, 중복 없이. */
+        @Query(value = "select distinct b.brand from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryRegexp is null or a.category_name ILIKE :categoryRegexp)", nativeQuery = true)
+        public List<String> findDistinctBrandsByCategoryName(@Param("categoryRegexp") String categoryRegexp);
 
         // Replaced MySQL's MATCH AGAINST with PostgreSQL's ILIKE and REGEXP_LIKE with
         // its equivalent

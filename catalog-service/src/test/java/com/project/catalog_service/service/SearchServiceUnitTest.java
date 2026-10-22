@@ -68,9 +68,10 @@ class SearchServiceUnitTest {
         // 기획전이 없으면 상시 할인 그대로 — 실제 EventPricing.effectiveDiscount 와 같은 규칙.
         when(eventPricing.effectiveDiscount(any(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenAnswer(i -> i.getArgument(1));
+        // 필터 메뉴는 따로 된 빈 — 여기서는 캐시 없이 저장소를 그대로 부른다(캐시는 SearchFilterFacetsScaleTest).
         service = new SearchService(categoryRepository, subCategoryRepository,
-                productRepository, productSkuRepository, productDetailsRepository, queryFactory,
-                eventPricing);
+                productRepository, productSkuRepository, queryFactory,
+                eventPricing, new SearchFilterFacets(productRepository, productSkuRepository, productDetailsRepository));
 
         // querydsl 체이닝(빌더 패턴)은 RETURNS_SELF 로 체인을 그대로 흘려보낸다.
         countQuery = mock(JPAQuery.class, withSettings().defaultAnswer(Answers.RETURNS_SELF));
@@ -81,18 +82,17 @@ class SearchServiceUnitTest {
         when(queryFactory.select(any(com.querydsl.core.types.Expression.class))).thenReturn(countQuery);
         when(queryFactory.selectFrom(any())).thenReturn(listQuery);
 
-        when(productSkuRepository.findProductIDBySizeAndPriceAndColor(any(), any(), any(), any()))
-                .thenReturn(Collections.emptyList());
-        when(productSkuRepository.findColorsByProductId(any())).thenReturn(Collections.emptyList());
-        when(productSkuRepository.findSizesByProductId(any())).thenReturn(Collections.emptyList());
-        when(productRepository.findBrandsByCategoryName(any())).thenReturn(Collections.emptyList());
-        when(productRepository.findBrandsByCategoryId(any())).thenReturn(Collections.emptyList());
-        when(productRepository.findProductIDsByCategoryId(any())).thenReturn(Collections.emptyList());
+        when(eventPricing.rules()).thenReturn(new EventPricing.Rules(java.util.Map.of(), java.util.Map.of()));
+        when(productSkuRepository.findColorsByCategoryId(any())).thenReturn(Collections.emptyList());
+        when(productSkuRepository.findSizesByCategoryId(any())).thenReturn(Collections.emptyList());
+        when(productSkuRepository.findAllColors()).thenReturn(Collections.emptyList());
+        when(productSkuRepository.findAllSizes()).thenReturn(Collections.emptyList());
+        when(productRepository.findDistinctBrandsByCategoryName(any())).thenReturn(Collections.emptyList());
+        when(productRepository.findDistinctBrandsByCategoryId(any())).thenReturn(Collections.emptyList());
         when(categoryRepository.findAll()).thenReturn(Collections.emptyList());
         when(subCategoryRepository.findAll()).thenReturn(Collections.emptyList());
-        when(productDetailsRepository.findDistinctAll()).thenReturn(Collections.emptyList());
-        when(productDetailsRepository.findDistinctAllByProductProductIdIn(any()))
-                .thenReturn(Collections.emptyList());
+        when(productDetailsRepository.findDistinctNameValues()).thenReturn(Collections.emptyList());
+        when(productDetailsRepository.findDistinctNameValuesByCategoryId(any())).thenReturn(Collections.emptyList());
     }
 
     @Test
@@ -127,7 +127,7 @@ class SearchServiceUnitTest {
         params.setCategory("shoes");
 
         assertThatCode(() -> service.searchProducts(params, SearchEngine.POSTGRES)).doesNotThrowAnyException();
-        verify(productRepository).findBrandsByCategoryName("shoes");
+        verify(productRepository).findDistinctBrandsByCategoryName("shoes");
     }
 
     @Test
@@ -215,19 +215,16 @@ class SearchServiceUnitTest {
         params.setPageSize(10);
         params.setLowPrice(new java.math.BigDecimal("500"));
 
-        // 이 가격대에 맞는 SKU 가 하나도 없다.
-        when(productSkuRepository.findProductIDBySizeAndPriceAndColor(any(), any(), any(), any()))
-                .thenReturn(Collections.emptyList());
-
         service.searchProducts(params, SearchEngine.POSTGRES);
 
-        // 조건이 사라지지 않았다 — 불가능 조건(productId = -1)이 들어가 있어야 한다.
+        // 조건이 사라지지 않았다 — SKU 조건(EXISTS)이 목록 · 개수의 WHERE 에 들어가 있다. 맞는 SKU 가 없으면 그 상품이 빠질 뿐이다
+        // (2026-10-19 까지는 후보 id 목록이었고, 빈 목록이면 productId = -1 을 넣었다 — 실제 DB 의 판정은 SearchSkuFilterScaleTest).
         org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
                 org.mockito.ArgumentCaptor.forClass(com.querydsl.core.types.Predicate.class);
         verify(listQuery).where(captor.capture());
 
-        org.assertj.core.api.Assertions.assertThat(captor.getValue().toString())
-                .contains("productId = -1");
+        org.assertj.core.api.Assertions.assertThat(jpql(captor.getValue()))
+                .contains("exists").contains("filterSize.price >= 500").doesNotContain("product.productId in");
     }
 
     /**
@@ -238,8 +235,16 @@ class SearchServiceUnitTest {
      */
     // ---------------------------------------------------------------- 가격 필터는 화면의 가격으로 (docs/40 §22)
 
-    private static Object[] row(long productId, String price, int discount) {
-        return new Object[] { productId, new java.math.BigDecimal(price), discount };
+    /** EXISTS 서브쿼리까지 펼친 JPQL — 상수는 값으로 바꿔 넣는다(Predicate.toString 은 서브쿼리를 그리지 않는다). */
+    private static String jpql(com.querydsl.core.types.Predicate p) {
+        com.querydsl.jpa.JPQLSerializer out = new com.querydsl.jpa.JPQLSerializer(com.querydsl.jpa.JPQLTemplates.DEFAULT);
+        out.handle(p);
+        String text = out.toString();
+        java.util.List<Object> constants = out.getConstants();
+        for (int i = constants.size(); i >= 1; i--) {
+            text = text.replace("?" + i, String.valueOf(constants.get(i - 1)));
+        }
+        return text;
     }
 
     private TestParams priceBetween(String low, String high) {
@@ -251,40 +256,42 @@ class SearchServiceUnitTest {
         return params;
     }
 
-    /** 🔴 카드에 $70(정가 $100, 30% 할인)으로 보이는 상품은 "$80 이하" 에 나와야 한다 — 예전에는 정가로 걸러 빠졌다. */
+    /**
+     * 할인가 계산은 이제 SQL 안이다 — 값의 판정(상시 30% · 기획전 · 겹침)은 실제 PostgreSQL 의 SearchSkuFilterScaleTest 가 본다.
+     * 여기서는 기획전 규칙이 <b>높은 율부터</b> CASE 로 실리는지(겹치면 높은 쪽 — EventPricing.refresh 의 규칙)만 본다.
+     */
     @Test
-    @DisplayName("🔴 가격 필터는 할인이 반영된 가격으로 거른다 — 화면에 보이는 가격")
-    void priceFilterUsesTheShownPrice() {
-        when(productSkuRepository.findPriceCandidates(any(), any(), any()))
-                .thenReturn(java.util.List.of(row(1L, "100.00", 30), row(2L, "85.00", 0)));
+    @DisplayName("🔴 기획전 규칙은 펼치지 않고 높은 율부터 CASE 로 — 상품 지정 · 카테고리 지정, 앱이 후보를 읽지 않는다")
+    void eventRulesGoIntoSqlHighestFirst() {
+        when(eventPricing.rules()).thenReturn(new EventPricing.Rules(java.util.Map.of(3L, 50, 4L, 10), java.util.Map.of(7L, 20)));
 
-        org.assertj.core.api.Assertions.assertThat(service.skuFilterIds(priceBetween(null, "80")))
-                .containsExactly(1L);
-        org.assertj.core.api.Assertions.assertThat(service.skuFilterIds(priceBetween("75", null)))
-                .containsExactly(2L);
+        String sql = jpql(service.skuFilter(priceBetween(null, "60")));
+
+        org.assertj.core.api.Assertions.assertThat(sql).contains("case when").contains("product.productId = 3")
+                .contains("product.category.categoryId = 7").contains("product.productId = 4")
+                .as("할인가 = 정가 × (100 − 큰 율) / 100").contains("round(filterSize.price * (100 - least(greatest(coalesce(filterSku.discount, 0), case when");
+        org.assertj.core.api.Assertions.assertThat(sql.indexOf("then 50")).as("높은 율부터").isLessThan(sql.indexOf("then 20"));
+        org.assertj.core.api.Assertions.assertThat(sql.indexOf("then 20")).isLessThan(sql.indexOf("then 10"));
+        org.mockito.Mockito.verifyNoInteractions(productSkuRepository);
     }
 
     @Test
-    @DisplayName("기획전 할인도 반영한다 — 상시 할인보다 크면 그쪽")
-    void priceFilterIncludesEventDiscount() {
-        when(eventPricing.effectiveDiscount(eq(3L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(50);
-        when(productSkuRepository.findPriceCandidates(any(), any(), any()))
-                .thenReturn(java.util.List.<Object[]>of(row(3L, "100.00", 10)));
-
-        org.assertj.core.api.Assertions.assertThat(service.skuFilterIds(priceBetween(null, "60")))
-                .containsExactly(3L);
+    @DisplayName("기획전이 없으면 율은 상수 0 — CASE 를 싣지 않는다")
+    void noEventRulesMeansConstantZero() {
+        String sql = jpql(service.skuFilter(priceBetween("10", "60")));
+        org.assertj.core.api.Assertions.assertThat(sql).doesNotContain("case when").contains("filterSize.price >= 10");
     }
 
     @Test
-    @DisplayName("가격을 고르지 않으면(사이즈·색상만) 예전 질의 그대로")
-    void sizeOnlyUsesThePlainQuery() {
-        TestParams params = priceBetween(null, null);
-        params.setSize("M");
-        when(productSkuRepository.findProductIDBySizeAndPriceAndColor(any(), any(), eq("^(M)"), any()))
-                .thenReturn(java.util.List.of(9L));
+    @DisplayName("가격을 고르지 않으면(사이즈·색상만) 가격식이 없다 — 색상만이면 사이즈 줄도 조인하지 않는다")
+    void sizeOrColorOnlyHasNoPriceExpression() {
+        TestParams size = priceBetween(null, null);
+        size.setSize("M");
+        org.assertj.core.api.Assertions.assertThat(jpql(service.skuFilter(size))).contains("filterSize.size").doesNotContain("round(");
 
-        org.assertj.core.api.Assertions.assertThat(service.skuFilterIds(params)).containsExactly(9L);
-        org.mockito.Mockito.verify(productSkuRepository, org.mockito.Mockito.never()).findPriceCandidates(any(), any(), any());
+        TestParams color = priceBetween(null, null);
+        color.setColor("Red");
+        org.assertj.core.api.Assertions.assertThat(jpql(service.skuFilter(color))).contains("filterColor.color").doesNotContain("filterSize");
     }
 
     @Test
@@ -294,10 +301,13 @@ class SearchServiceUnitTest {
         params.setPage(1);
         params.setPageSize(10);
 
+        org.assertj.core.api.Assertions.assertThat(service.skuFilter(params)).isNull();
         service.searchProducts(params, SearchEngine.POSTGRES);
 
-        org.mockito.Mockito.verify(productSkuRepository, org.mockito.Mockito.never())
-                .findProductIDBySizeAndPriceAndColor(any(), any(), any(), any());
+        org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
+                org.mockito.ArgumentCaptor.forClass(com.querydsl.core.types.Predicate.class);
+        verify(listQuery).where(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(String.valueOf(captor.getValue())).doesNotContain("exists");
     }
 
     /**
@@ -323,7 +333,7 @@ class SearchServiceUnitTest {
     }
 
     @Test
-    @DisplayName("category가 숫자면 id 경로(findBrandsByCategoryId)를 탄다")
+    @DisplayName("category가 숫자면 id 경로(findDistinctBrandsByCategoryId)를 탄다")
     void categoryById_usesIdPath() {
         TestParams params = new TestParams();
         params.setPage(1);
@@ -332,7 +342,11 @@ class SearchServiceUnitTest {
 
         service.searchProducts(params, SearchEngine.POSTGRES);
 
-        verify(productRepository).findBrandsByCategoryId(123L);
+        verify(productRepository).findDistinctBrandsByCategoryId(123L);
+        // 색상 · 사이즈 · 상세도 카테고리 조인 질의 — 상품 id 목록을 앱으로 가져와 IN 으로 보내지 않는다
+        verify(productSkuRepository).findColorsByCategoryId(123L);
+        verify(productSkuRepository).findSizesByCategoryId(123L);
+        verify(productDetailsRepository).findDistinctNameValuesByCategoryId(123L);
     }
 
     // ---------------------------------------------------------------- 다중 선택 값은 글자 그대로 (정규식 · LIKE 주입 없음)
@@ -350,23 +364,23 @@ class SearchServiceUnitTest {
     }
 
     @Test
-    @DisplayName("🔴 사이즈 · 색상 정규식은 메타문자를 모두 가둔다 — 익명 요청이 정규식을 고르지 못한다")
-    void prefixRegexEscapesMetacharacters() {
-        org.assertj.core.api.Assertions.assertThat(SearchService.prefixRegex(SearchService.filterValues("^XL|^M"))).isEqualTo("^(XL|M)");
-        org.assertj.core.api.Assertions.assertThat(SearchService.prefixRegex(SearchService.filterValues("(a+)+$")))
-                .isEqualTo("^(\\(a\\+\\)\\+\\$)");
-        org.assertj.core.api.Assertions.assertThat(SearchService.prefixRegex(java.util.List.of())).isNull();
+    @DisplayName("🔴 사이즈 · 색상은 값마다 앞부분 일치 LIKE — % · _ · 이스케이프 문자는 글자(익명 요청이 패턴을 고르지 못한다)")
+    void prefixLikesEscapeWildcards() {
+        org.assertj.core.api.Assertions.assertThat(SearchService.prefixLikes(SearchService.filterValues("^XL|^M"))).containsExactly("XL%", "M%");
+        org.assertj.core.api.Assertions.assertThat(SearchService.prefixLikes(SearchService.filterValues("^100%_a!")))
+                .containsExactly("100!%!_a!!%");
+        org.assertj.core.api.Assertions.assertThat(SearchService.prefixLikes(java.util.List.of())).isEmpty();
     }
 
     @Test
-    @DisplayName("🔴 사이즈 · 색상만 걸어도 가둔 정규식이 SQL 로 간다 — 들어온 문자열 그대로가 아니다")
-    void skuFilterSendsEscapedRegex() {
+    @DisplayName("🔴 사이즈 · 색상만 걸어도 가둔 패턴이 SQL 로 간다 — 들어온 문자열 그대로가 아니다")
+    void skuFilterSendsEscapedPattern() {
         TestParams params = priceBetween(null, null);
         params.setColor("^.*|^(");
 
-        service.skuFilterIds(params);
+        String sql = jpql(service.skuFilter(params));
 
-        verify(productSkuRepository).findProductIDBySizeAndPriceAndColor(any(), any(), eq(null), eq("^(\\.\\*|\\()"));
+        org.assertj.core.api.Assertions.assertThat(sql).contains(".*%").contains("(%").doesNotContain("~");
     }
 
     @Test

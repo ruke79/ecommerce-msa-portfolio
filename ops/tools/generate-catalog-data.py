@@ -669,9 +669,11 @@ class PgSink:
         """생성 범위만 지운다 — 자식부터. 큰 범위는 묶어서(긴 트랜잭션 하나로 WAL 이 폭증하지 않게)."""
         step = 200_000
         total = 0
+        started = time.monotonic()
         with self.conn.cursor() as cur:
             for a in range(lo, hi + 1, step):
                 b = min(hi, a + step - 1)
+                t0 = time.monotonic()
                 cur.execute("DELETE FROM product.product_size s USING product.product_sku k "
                             "WHERE s.skuproduct_id = k.skuproduct_id AND k.product_id BETWEEN %s AND %s", (a, b))
                 cur.execute("DELETE FROM product.product_sku WHERE product_id BETWEEN %s AND %s", (a, b))
@@ -679,6 +681,9 @@ class PgSink:
                 cur.execute("DELETE FROM product.product WHERE product_id BETWEEN %s AND %s", (a, b))
                 total += cur.rowcount
                 self.conn.commit()
+                # 묶음마다 찍는다 — 🐛 예전에는 끝날 때까지 아무것도 찍지 않아 멈춘 것과 구별되지 않았다(catalog V22 전에는 묶음 하나가 몇 시간)
+                print(f"  id {a:,} ~ {b:,} 지움 — 상품 {cur.rowcount:,}개 · {time.monotonic() - t0:.0f}초"
+                      f"(누적 {total:,}개 · {time.monotonic() - started:.0f}초)", flush=True)
         print(f"  상품 {total:,}개와 그 SKU · 사이즈 · 연결을 지웠다. 공간은 VACUUM 뒤에 재사용된다"
               f"(디스크로 돌려받으려면 VACUUM FULL — 표를 잠근다).")
         self.conn.close()

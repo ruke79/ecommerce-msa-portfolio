@@ -4,7 +4,7 @@
 // 응답이 JSON 인지 늘 본다 — 🐛 데모 인그레스가 API 를 프론트로 보내던 때(2026-10-17 전)는 모든 API 가 index.html 200 이라
 // 상태 코드만 보는 검사는 전부 "성공" 이었다.
 import http from 'k6/http';
-import { check, fail } from 'k6';
+import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 
 export const GATEWAY = (__ENV.GATEWAY || 'https://shop.lab').replace(/\/+$/, '');
@@ -139,6 +139,30 @@ export function login(email, password) {
     return { error: `${res.status} ${body.code || ''}`.trim() };
   }
   return { access, refresh: cookieValue(res, 'REFRESH'), device: cookieValue(res, 'DEVICE'), at: Date.now() };
+}
+
+/**
+ * 데모 계정 로그인 — setup() 에서 계정마다 한 번, 천천히(로그인 유입 제한 초당 1 · 버스트 10 — 바꿀 수 없다). 429 면 기다렸다가 같은 계정을
+ * 다시. 계정 하나는 VU 하나만 쓴다 — 리프레시 토큰이 회전해서 둘이 같이 갱신하면 늦은 쪽이 그 로그인을 끝낸다(RefreshTokenController).
+ */
+export function loginSessions(password, users, offset) {
+  const sessions = [];
+  for (let i = 0; i < users; i++) {
+    // 버스트 10 을 다 쓴 뒤로는 초당 1 보다 조금 느리게
+    if (i >= 9) {
+      sleep(1.1);
+    }
+    let s = login(demoEmail(offset + i), password);
+    for (let tries = 0; s.error && s.error.startsWith('429') && tries < 5; tries++) {
+      sleep(2);
+      s = login(demoEmail(offset + i), password);
+    }
+    if (s.error) {
+      fail(`로그인 실패 ${demoEmail(offset + i)}: ${s.error} — 계정이 있는지(ops/48 status) · 비밀번호 파일`);
+    }
+    sessions.push(s);
+  }
+  return sessions;
 }
 
 /** 토큰 갱신 — REFRESH 쿠키가 회전한다(같은 값을 두 번 쓰면 그 로그인이 끝난다). 한 계정은 한 VU 만 갱신한다. */

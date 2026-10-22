@@ -9,9 +9,14 @@
 //   · 상세는 그 범위의 무작위 상품 id(product_cold) — 홈에 나온 수십 개만 읽으면 늘 캐시에서 나와 데이터 크기가 보이지 않는다
 //   · 목록은 1 ~ DEEP_PAGES 쪽 중 무작위(search_deep) — OFFSET 이 커질수록 비용이 는다
 //   · NAME_SEARCH 비율만큼 이름 검색(name_search) — PostgreSQL 검색은 LIKE '%…%' 라 상품 수에 비례한다(docs/19 §6.1)
+//   · SPREAD=1 — 검색 조합을 넓혀 search_cache(60분)를 비껴간다: 깊은 쪽 기본 1000쪽 · 이름 검색 1 ~ NAME_PAGES(기본 50)쪽 ·
+//     FILTER_SEARCH 비율(기본 0 — 주면)만큼 가격대 · 색상 · 사이즈 필터 검색(filter_search). 🐛 그 전의 100만 회차는 첫 1분 반 뒤로
+//     검색이 모두 캐시에서 나와 데이터 비용이 보이지 않았다(docs/83 §5). 주소 만들기는 spread.js
 // [JA] データ規模モード — ops/44 で入れた範囲全体から選ぶ(詳細はランダムな id、一覧は深いページ、名前検索を一定割合)。
+//      SPREAD=1 は検索の組み合わせを広げてキャッシュ外を測る(FILTER_SEARCH で価格帯 · 色 · サイズのフィルター検索も)。
 import { sleep, fail } from 'k6';
-import { get, ok, homeOrFail, limitsRaisedOrFail, errorThresholds, purchasable, categories, pick, rate, stages } from './lib.js';
+import { get, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, purchasable, categories, pick, rate, stages } from './lib.js';
+import { deepSearchPath, nameSearchPath, filterSearchPath } from './spread.js';
 
 const PEAK = rate(100);
 
@@ -19,8 +24,11 @@ const PEAK = rate(100);
 export const PRODUCT_ID_OFFSET = Number(__ENV.PRODUCT_ID_OFFSET || 1000000);
 export const PRODUCTS = Number(__ENV.PRODUCTS || 0);
 const SCALE = PRODUCTS > 0;
-const DEEP_PAGES = Number(__ENV.DEEP_PAGES || (SCALE ? 50 : 2));
+export const SPREAD = __ENV.SPREAD === '1';
+const DEEP_PAGES = Number(__ENV.DEEP_PAGES || (SPREAD ? 1000 : SCALE ? 50 : 2));
 const NAME_SEARCH = Number(__ENV.NAME_SEARCH || (SCALE ? 0.2 : 0));
+const NAME_PAGES = Number(__ENV.NAME_PAGES || (SPREAD ? 50 : 1));
+const FILTER_SEARCH = Number(__ENV.FILTER_SEARCH || 0);
 // 생성기(dept 분류)의 상품 이름에 들어가는 명사 — ops/tools/generate-catalog-data.py TAXONOMY
 const NAME_TERMS = ['Hoodie', 'Laptop', 'Novel', 'Sofa', 'Earbuds', 'Backpack', 'Olive Oil', 'Sneakers', 'Blender', 'Serum',
   'Tablet', 'Desk', 'Cookbook', 'Jacket', 'Camera', 'Pillow'];
@@ -58,9 +66,10 @@ export const options = {
     'http_req_duration{name:product_cold}': ['p(95)<1500'],
     'http_req_duration{name:search_deep}': ['p(95)<2000'],
     'http_req_duration{name:name_search}': ['p(95)<3000'],
+    'http_req_duration{name:filter_search}': ['p(95)<3000'],
     checks: ['rate>0.99'],
     not_json: ['count<1'],
-    ...errorThresholds(['home', 'banners', 'search', 'search_deep', 'name_search', 'product', 'product_cold']),
+    ...errorThresholds(['home', 'banners', 'search', 'search_deep', 'name_search', 'filter_search', 'product', 'product_cold']),
   },
   summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
 };
@@ -76,6 +85,9 @@ export function setup() {
   if (!list.length) {
     fail('홈에 담을 수 있는 상품이 없다 — 먼저 PRODUCTS=1000 PLACEHOLDER_IMAGE=/logo512.png ./ops/44-bulk-catalog.sh load');
   }
+  if ((SPREAD || FILTER_SEARCH > 0) && !SCALE) {
+    fail('SPREAD · FILTER_SEARCH 는 데이터 규모 모드에서만 — PRODUCTS 를 함께 준다(docs/83 §2.1)');
+  }
   if (SCALE) {
     // 범위의 처음과 끝이 실제로 있는가 — 없으면 상세가 전부 400 이라 "느리다" 가 아니라 "없다" 를 재게 된다
     for (const id of [PRODUCT_ID_OFFSET + 1, PRODUCT_ID_OFFSET + PRODUCTS]) {
@@ -86,7 +98,13 @@ export function setup() {
       }
     }
   }
-  return { products: list, categories: categories(home) };
+  const cats = categories(home);
+  if (SCALE) {
+    // 조합 수 — 요청 수보다 크게 작으면 대부분 캐시에서 나온다(search_cache 60분 — 회차 사이에 ops/44 flush-cache)
+    console.log(`검색 조합: 깊은 쪽 ${cats.length} × ${Math.max(1, DEEP_PAGES - 1)} · 이름 검색 ${NAME_TERMS.length} × ${NAME_PAGES}`
+      + (FILTER_SEARCH > 0 ? ` · 필터 검색 비율 ${FILTER_SEARCH}(가격대 ${201 * 481}가지 × 색상 · 사이즈)` : ''));
+  }
+  return { products: list, categories: cats };
 }
 
 export function browse(data) {
@@ -99,12 +117,16 @@ export function browse(data) {
 
   if (cats.length) {
     const category = pick(cats);
-    ok(get(`/catalog-service/api/search?category=${encodeURIComponent(category)}&page=1&pageSize=10&includeFilters=true`,
-      { tags: { name: 'search' } }), 'search');
+    const first = get(`/catalog-service/api/search?category=${encodeURIComponent(category)}&page=1&pageSize=10&includeFilters=true`,
+      { tags: { name: 'search' } });
+    ok(first, 'search');
     if (SCALE) {
-      const page = 2 + Math.floor(Math.random() * Math.max(1, DEEP_PAGES - 1));
-      ok(get(`/catalog-service/api/search?category=${encodeURIComponent(category)}&page=${page}&pageSize=10`,
-        { tags: { name: 'search_deep' } }), 'search_deep');
+      ok(get(deepSearchPath(category, DEEP_PAGES), { tags: { name: 'search_deep' } }), 'search_deep');
+      if (FILTER_SEARCH > 0 && Math.random() < FILTER_SEARCH) {
+        // 화면처럼 첫 쪽의 필터 메뉴에서 고른다 — 첫 쪽이 실패했으면 가격대만
+        const facets = first.status === 200 ? json(first) : null;
+        ok(get(filterSearchPath(category, facets), { tags: { name: 'filter_search' } }), 'filter_search');
+      }
     } else {
       ok(get(`/catalog-service/api/search?category=${encodeURIComponent(category)}&page=2&pageSize=10`,
         { tags: { name: 'search' } }), 'search');
@@ -113,8 +135,7 @@ export function browse(data) {
   }
 
   if (NAME_SEARCH > 0 && Math.random() < NAME_SEARCH) {
-    ok(get(`/catalog-service/api/search?search=${encodeURIComponent(pick(NAME_TERMS))}&page=1&pageSize=10&includeFilters=true`,
-      { tags: { name: 'name_search' } }), 'name_search');
+    ok(get(nameSearchPath(pick(NAME_TERMS), NAME_PAGES), { tags: { name: 'name_search' } }), 'name_search');
   }
 
   if (SCALE) {

@@ -196,6 +196,8 @@ nginx の既存の `immutable` ルールが**意図どおりに**適用される
 - **価格フィルターも表示される価格で** — サーバーは定価で絞り込んでいた。キャンペーン割引はメモリ上のマップなので SQL は知らない。そこで SQL は
   常に真になる条件（割引価格 ≤ 定価なので「定価 ≥ 下限」）で候補を絞り、`SearchService.skuFilterIds` が候補ごとに
   `ProductService.discounted(정가, effectiveDiscount)` で正確に判定する。
+  → 2026-10-19 に判定を SQL の中へ移した(`SearchService.skuFilter` — EXISTS + キャンペーン規則の CASE、同じ式 · 同じ「高い方」の規則)。候補を
+  アプリに読む方式は商品 100 万で catalog をヒープ不足で倒した(docs/83 §5)。
 - **通貨表記は Intl で** — 画面ごとに `59.98$` ・ `USD59.98 $` ・ `$59.98` と手で付けていたものを `useMoney()` 一つに。ストアの
   通貨（ビルド引数 `REACT_APP_STORE_CURRENCY`）をアプリの言語のロケールで描画する — 韓国語なら `US$59.98`、日本語なら `$59.98`。請求通貨
   （PortOne の KRW など）は第 2 引数で渡す。決済・返金のように i18n Provider の外でテストされる画面でも使えるよう、言語がなければ

@@ -12,6 +12,11 @@
 #   ./ops/53-load-k6.sh order                  # 데모 사용자 로그인 → 장바구니 → 체크아웃 → 주문 → 무통장 입금 안내
 #   ./ops/53-load-k6.sh spike                  # 조회를 짧게 몰아 HPA 가 늘어나는 동안의 오류를 본다
 #   ./ops/53-load-k6.sh smoke                  # 조회 · 주문을 한 번씩 — 본 측정 전에 경로 · 계정 · 데이터 · 인증서 확인
+#   ./ops/53-load-k6.sh mixed                  # browse + 로그인 사용자의 리뷰 쓰기(초당 REVIEW_RATE) — 리뷰마다 catalog 의 별점 갱신(docs/83 §2.2)
+#
+#   ./ops/53-load-k6.sh reviews open           # 리뷰의 '받은 상품만' 확인을 잠깐 끈다(user-service 재시작) — 실습 클러스터만, mixed 앞에
+#   ./ops/53-load-k6.sh reviews default        # 되돌린다(받은 상품만). 측정이 끝나면 꼭
+#   ./ops/53-load-k6.sh reviews status         # 지금 값
 #
 #   ./ops/53-load-k6.sh limits load [초당 [버스트]]   # 게이트웨이 기본 유입 제한을 잠깐 올린다(기본 2000 · 4000) — 실습 클러스터만
 #   ./ops/53-load-k6.sh limits default         # 되돌린다(20 · 40). 측정이 끝나면 꼭 — 올린 채면 ops/06 스모크의 429 확인이 실패한다
@@ -47,6 +52,8 @@
 #   RATE · STAGES · DURATION        # 부하 모양(시나리오 기본값은 ops/k6/<시나리오>.js 맨 위)
 #   ALLOW_RATE_LIMIT=1              # 유입 제한을 올리지 않은 채 돌린다(제한 자체를 잴 때) — 없으면 시작 전 확인이 429 에서 멈춘다
 #   PRODUCTS  PRODUCT_ID_OFFSET=1000000  DEEP_PAGES=50  NAME_SEARCH=0.2   # browse · spike 의 데이터 규모 모드(docs/83 §2.1)
+#   SPREAD=1  NAME_PAGES=50  FILTER_SEARCH=0   # 데이터 규모 모드에서 검색 조합을 넓혀 캐시 밖을 잰다(깊은 쪽 기본 1000) · 필터 검색 비율
+#   REVIEW_RATE=1                   # mixed 의 리뷰 쓰기(초당) — 계정은 USERS · ID_OFFSET 에서(리뷰 VU 수만큼 로그인)
 #   OUT=./load-results              # 결과 폴더 — <시나리오>-<UTC 시각>/ 아래 summary.json · summary.txt · meta.txt
 #   PROM_RW=http://<obs-vm>:9090/api/v1/write   # 주면 k6 지표를 Prometheus 로도(그라파나에서 서버 지표와 같은 시간축)
 #   PROM=http://<obs-vm>:9090  PROM_ENV=demo     # 레플리카(시작 · 측정 중 최대 · 끝)를 Prometheus 에서 읽어 meta.txt 에(없으면 PROM_RW 에서)
@@ -73,11 +80,11 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,65p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|limits|pool|replicas|logs|report) ;;
+    browse|order|spike|smoke|mixed|limits|pool|replicas|reviews|logs|report) ;;
     *) usage ;;
 esac
 
@@ -174,6 +181,38 @@ cmd_limits() {
 }
 if [ "$SCENARIO" = "limits" ]; then
     cmd_limits "$@"
+    exit 0
+fi
+
+# ── 리뷰 자격 — 측정하는 동안만 ─────────────────────────────────────────
+#
+# 리뷰는 받은 상품만 쓸 수 있다(review.require-purchase, 기본 켬 — docs/57 §13). 데모 계정은 받은 상품이 없어 mixed 의 리뷰가 모두 403 이다.
+# 측정하는 동안만 끈다(REVIEW_REQUIRE_PURCHASE=false — 시연 환경을 위해 둔 스위치). user-service 가 다시 뜬다. 운영 클러스터는 거절한다.
+# [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
+cmd_reviews() {
+    lab_cluster_or_die "리뷰 자격"
+    case "${2:-status}" in
+        open)
+            info "리뷰 자격 확인 끔 — 데모 계정이 아무 상품에나 리뷰를 쓴다($PUBLIC_URL). 끝나면 ./ops/53-load-k6.sh reviews default"
+            kubectl -n "$APP_NS" set env deploy/user-service REVIEW_REQUIRE_PURCHASE=false >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/user-service --timeout=300s
+            ;;
+        default)
+            info "리뷰 자격 확인 → 기본값(받은 상품만)"
+            kubectl -n "$APP_NS" set env deploy/user-service REVIEW_REQUIRE_PURCHASE- >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/user-service --timeout=300s
+            ;;
+        status)
+            local cur
+            cur="$(kubectl -n "$APP_NS" get deploy user-service -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+                | grep '^REVIEW_REQUIRE_PURCHASE=' || true)"
+            if [ -n "$cur" ]; then echo "$cur"; else echo "기본값(받은 상품만)"; fi
+            ;;
+        *) usage ;;
+    esac
+}
+if [ "$SCENARIO" = "reviews" ]; then
+    cmd_reviews "$@"
     exit 0
 fi
 
@@ -469,6 +508,10 @@ def key_max(m, extra):   # 한 줄 표의 "catalog·gateway" 최대(없으면 -)
     _, r = replicas(m, extra)
     return "·".join(r[k][1 if len(r[k]) > 1 else 0] if k in r else "?" for k in KEY) if r else "-"
 
+def products(m):   # 검색 조합을 넓힌 회차(SPREAD=1)는 따로 보이게 — 같은 상품 수라도 캐시를 잰 회차와 견줄 수 없다
+    p = m.get("products", "?")
+    return f"{p}·넓힘" if m.get("spread") == "1" else p
+
 def verdict(m):
     return {"0": "통과", "99": "넘음"}.get(m.get("exit"), f"exit={m.get('exit', '?')}")
 
@@ -479,7 +522,7 @@ def overview():
         m, extra = meta(d)
         s = summary(d)
         dur = s.get("http_req_duration", {})
-        print(" ".join([L(d, 34), L(m.get("git", "?"), 9), R(m.get("rate", "?"), 6), R(m.get("products", "?")[:10], 10),
+        print(" ".join([L(d, 34), L(m.get("git", "?"), 9), R(m.get("rate", "?"), 6), R(products(m)[:10], 10),
                         R(num(s.get("http_reqs", {}).get("rate"), 1), 8), R(pct(s.get("http_req_failed", {}).get("value")), 7),
                         R(num(dur.get("p(95)")), 7), R(num(dur.get("p(99)")), 7), R(key_max(m, extra), 8)]) + f"  {verdict(m)}")
 
@@ -489,6 +532,11 @@ def detail(d):
     print(f"\n── {d} " + "─" * max(4, 60 - len(d)))
     print(f"  커밋 {m.get('git', '?')} · 도착률 {m.get('rate', '?')} · 단계 {m.get('stages', '?')} · 사용자 {m.get('users', '?')}"
           f" · 상품 {m.get('products', '?')} · 임계값 {verdict(m)}")
+    if "review_rate" in m:
+        print(f"  리뷰 쓰기: 초당 {m['review_rate']} — 리뷰마다 catalog 의 별점 갱신(updateRating — 그 상품의 캐시만)")
+    if m.get("spread") == "1" or m.get("filter_search", "0") not in ("0", ""):
+        print(f"  검색 조합: 넓힘={m.get('spread', '0')} · 깊은 쪽 {m.get('deep_pages', '?')} · 이름 검색 쪽 {m.get('name_pages', '?')}"
+              f" · 필터 검색 비율 {m.get('filter_search', '0')}")
     # 🐛 loadgen 에는 kubectl 이 없어 이 줄이 meta.txt 에 없다 — 없는 것을 "기본값" 으로 읽으면 안 된다
     if "db_pool" in m:
         print("  DB 커넥션 풀: " + (m["db_pool"] or "모두 기본값(5)"))
@@ -588,8 +636,8 @@ fi
 # smoke 는 계정 하나로 한 번
 [ "$SCENARIO" = "smoke" ] && USERS=1
 
-# 데모 비밀번호 — order · smoke 만. 길이만 알린다.
-if [ "$SCENARIO" = "order" ] || [ "$SCENARIO" = "smoke" ]; then
+# 데모 비밀번호 — order · smoke · mixed 만. 길이만 알린다.
+if [ "$SCENARIO" = "order" ] || [ "$SCENARIO" = "smoke" ] || [ "$SCENARIO" = "mixed" ]; then
     [ -f "$PASSWORD_FILE" ] || die "$PASSWORD_FILE 이 없다 — 먼저 USERS=$USERS ./ops/48-bulk-users.sh load"
     DEMO_PASSWORD="$(cat "$PASSWORD_FILE")"
     [ -n "$DEMO_PASSWORD" ] || die "$PASSWORD_FILE 이 비어 있다"
@@ -637,6 +685,8 @@ replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
     echo "git=$(git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null || echo '?')"
     echo "users=$USERS id_offset=$ID_OFFSET rate=${RATE:-default} stages=${STAGES:-default} duration=${DURATION:-default}"
     echo "products=${PRODUCTS:-홈 상품만} product_id_offset=${PRODUCT_ID_OFFSET:-1000000} deep_pages=${DEEP_PAGES:-default} name_search=${NAME_SEARCH:-default}"
+    echo "spread=${SPREAD:-0} name_pages=${NAME_PAGES:-default} filter_search=${FILTER_SEARCH:-0}"
+    [ "$SCENARIO" != "mixed" ] || echo "review_rate=${REVIEW_RATE:-1}"
     if command -v kubectl >/dev/null 2>&1 && kubectl -n "$APP_NS" get deploy >/dev/null 2>&1; then
         echo "context=$(kubectl config current-context 2>/dev/null || echo '?')"
         kubectl -n "$APP_NS" get deploy -o jsonpath='{range .items[*]}deploy {.metadata.name} replicas={.spec.replicas} image={.spec.template.spec.containers[0].image}{"\n"}{end}' 2>/dev/null || true
@@ -658,7 +708,7 @@ args=(run --summary-export "$dir/summary.json"
 [ -n "${STAGES:-}" ] && args+=(-e STAGES="$STAGES")
 [ -n "${DURATION:-}" ] && args+=(-e DURATION="$DURATION")
 [ "${ALLOW_RATE_LIMIT:-}" = "1" ] && args+=(-e ALLOW_RATE_LIMIT=1)
-for v in PRODUCTS PRODUCT_ID_OFFSET DEEP_PAGES NAME_SEARCH; do
+for v in PRODUCTS PRODUCT_ID_OFFSET DEEP_PAGES NAME_SEARCH SPREAD NAME_PAGES FILTER_SEARCH REVIEW_RATE; do
     if [ -n "${!v:-}" ]; then
         [[ "${!v}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "$v 는 숫자"
         args+=(-e "$v=${!v}")

@@ -372,7 +372,7 @@ class ProductServiceUnitTest {
         assertThat(evict).as("productUpdated에 @CacheEvict가 있어야 함").isNotNull();
         assertThat(evict.allEntries()).isTrue();
         assertThat(List.of(evict.value())).contains(
-                "search_cache", "colors_cache", "sizes_cache", "details_cache", "products_by_category");
+                "search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category");
 
         Method addProduct = ProductService.class.getMethod(
                 "addProduct",

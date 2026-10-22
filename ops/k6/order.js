@@ -15,7 +15,7 @@ import http from 'k6/http';
 import { sleep, fail } from 'k6';
 import exec from 'k6/execution';
 import { Trend } from 'k6/metrics';
-import { GATEWAY, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, demoEmail, login, refresh, purchasable, categories, pick, rate, stages,
+import { GATEWAY, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, loginSessions, refresh, purchasable, categories, pick, rate, stages,
   idempotencyKey, FALLBACK_ADDRESS, get } from './lib.js';
 
 const USERS = Number(__ENV.USERS || 100);
@@ -69,22 +69,7 @@ export function setup() {
     fail('담을 수 있는 상품이 없다(SKU 하나 · 재고 5 이상) — 먼저 ops/44 load');
   }
 
-  const sessions = [];
-  for (let i = 0; i < USERS; i++) {
-    // 버스트 10 을 다 쓴 뒤로는 초당 1 보다 조금 느리게 — 429 를 받으면 기다렸다가 같은 계정을 다시
-    if (i >= 9) {
-      sleep(1.1);
-    }
-    let s = login(demoEmail(ID_OFFSET + i), password);
-    for (let tries = 0; s.error && s.error.startsWith('429') && tries < 5; tries++) {
-      sleep(2);
-      s = login(demoEmail(ID_OFFSET + i), password);
-    }
-    if (s.error) {
-      fail(`로그인 실패 ${demoEmail(ID_OFFSET + i)}: ${s.error} — 계정이 있는지(ops/48 status) · 비밀번호 파일`);
-    }
-    sessions.push(s);
-  }
+  const sessions = loginSessions(password, USERS, ID_OFFSET);
   return { products, sessions, categories: categories(home) };
 }
 

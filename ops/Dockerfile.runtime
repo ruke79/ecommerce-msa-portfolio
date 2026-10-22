@@ -46,8 +46,20 @@ USER 1000
 
 ENV SPRING_PROFILES_ACTIVE=local
 
+# 최대 힙 = 컨테이너 메모리 한도의 이 비율.
+#
+# 🐛 2026-10-19 데이터 규모 측정(상품 100만, docs/83 §5): 이 값이 없어 JVM 기본값 **25%** 였다 — catalog(한도 1Gi)는 힙
+# 256MB(MaxHeapSize 268435456), 다른 서비스(768Mi)는 192MB. 100만 상품에서 catalog 가 `OutOfMemoryError: Java heap space` 로
+# GC 만 돌다 liveness 에 걸려 죽기를 되풀이했다(exit 137, 측정 실패 99%). 한도의 3/4 은 힙으로 쓰이지 않고 있었다.
+# 50% 인 이유: 768Mi 에서 힙 384MB + 비힙(메타스페이스 · 코드 캐시 · 스레드 스택 · 버퍼, Spring 서비스 ~250MB)이 한도 안에 든다.
+# 더 주면(65% 이상) 768Mi 서비스는 컨테이너 한도(OOMKilled)에 먼저 닿는다. 서비스마다 바꾸려면 JVM_MAX_RAM_PERCENTAGE.
+# JAVA_OPTS 가 뒤에 오므로 거기에 -XX:MaxRAMPercentage · -Xmx 를 주면 그쪽이 이긴다.
+# [JA] 最大ヒープ = コンテナのメモリ上限のこの割合。以前は未設定で JVM 既定の 25%(catalog 256MB)だった —
+#      100 万商品で catalog がヒープ不足で再起動を繰り返した。768Mi で非ヒープ込みで収まる 50%。
+ENV JVM_MAX_RAM_PERCENTAGE=50
+
 # CONFIG_SERVER_URL 이 비어 있으면 config server import 자체를 생략한다.
 # 빈 값으로 넘기면 Spring 이 빈 URL 로 접속을 시도하다 기동에 실패한다.
-ENTRYPOINT ["sh","-c","java ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
+ENTRYPOINT ["sh","-c","java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE} ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
 
 EXPOSE ${SERVICE_PORT}

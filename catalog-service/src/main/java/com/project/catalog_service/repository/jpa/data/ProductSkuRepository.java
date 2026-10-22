@@ -1,6 +1,5 @@
 package com.project.catalog_service.repository.jpa.data;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,53 +60,9 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
                         @Param("size") String size,
                         @Param("colorId") Long colorId);
 
-        /**
-         * 가격·사이즈·색상으로 상품 id 를 추린다.
-         *
-         * <h3>🐛 한쪽만 준 가격 범위가 <b>범위 전체를 무시하게</b> 했다</h3>
-         *
-         * <p>예전 조건은 이랬다:
-         *
-         * <pre>{@code (:low_price is null or :high_price is null) or b.price between :low_price and :high_price}</pre>
-         *
-         * <p>즉 <b>둘 중 하나라도 null 이면 가격 조건이 통째로 사라진다.</b> 화면의 "최소만
-         * 입력" · "500 이상" 은 상한이 없는 질의인데, 그때 가격 필터가 없는 것과 같아진다.
-         *
-         * <p>게다가 프론트가 빈 상한을 {@code 0} 으로 보내고 있어서(browse.jsx 의
-         * {@code Number("") || 0}) 실제로는 {@code between 500 and 0} 이 됐다 — 아무것도
-         * 맞지 않는다. 그리고 그 "아무것도 없음" 이 호출부에서 다시 <b>전체 상품</b>으로
-         * 뒤집혔다(SearchService 1번 조건). 사용자가 본 것은 "500 이상을 눌렀더니 전부 나온다"다.
-         *
-         * <p>두 경계를 <b>따로</b> 본다. 둘 다 null 이면 조건이 없는 것과 같아 기존 동작
-         * 그대로다.
-         */
-        @Query(value = "select distinct product_id from product.product_sku a " +
-                        "left join product.product_size b on a.skuproduct_id = b.skuproduct_id " +
-                        "left join product.product_color c on a.color_id = c.color_id " +
-                        "where (:low_price is null or b.price >= :low_price) " +
-                        "and (:high_price is null or b.price <= :high_price) " +
-                        "and (:size is null or b.size ~* :size) " +
-                        "and (:color is null or c.color ~* :color)", nativeQuery = true)
-        List<Long> findProductIDBySizeAndPriceAndColor(@Param("low_price") BigDecimal lowPrice,
-                        @Param("high_price") BigDecimal highPrice,
-                        @Param("size") String size, @Param("color") String color);
-
-        /**
-         * 가격 필터의 후보 — 상품 id·사이즈의 <b>정가</b>·SKU 의 상시 할인율. 최종 판정은 {@code SearchService} 가
-         * <b>화면에 보이는 가격</b>(기획전까지 합친 할인가)으로 한다(docs/40 §22).
-         *
-         * <p>🐛 예전에는 정가로 걸렀다 — 카드가 $70(정가 $100, 30% 할인)을 보여 주는데 "$80 이하" 에서 빠졌다. 기획전
-         * 할인은 메모리의 맵이라(EventPricing) SQL 이 알 수 없다. 그래서 SQL 은 <b>언제나 참인 조건</b>만 건다: 할인가는
-         * 정가를 넘지 않으므로 "할인가 ≥ 하한" 이면 "정가 ≥ 하한" 이다. 상한은 할인율을 알아야 해서 여기서 걸지 않는다.
-         */
-        @Query(value = "select a.product_id, b.price, a.discount from product.product_sku a " +
-                        "join product.product_size b on a.skuproduct_id = b.skuproduct_id " +
-                        "left join product.product_color c on a.color_id = c.color_id " +
-                        "where (:low_price is null or b.price >= :low_price) " +
-                        "and (:size is null or b.size ~* :size) " +
-                        "and (:color is null or c.color ~* :color)", nativeQuery = true)
-        List<Object[]> findPriceCandidates(@Param("low_price") BigDecimal lowPrice,
-                        @Param("size") String size, @Param("color") String color);
+        // 가격 · 사이즈 · 색상 필터는 SearchService.skuFilter 의 상관 서브쿼리(EXISTS)다 — 🐛 2026-10-19 까지는 여기의 두 질의
+        // (findProductIDBySizeAndPriceAndColor · findPriceCandidates)가 후보를 카테고리와 상관없이 전부 앱으로 읽었다(100만 상품에서
+        // 힙 부족, docs/83 §5). 두 경계를 따로 보는 규칙(한쪽만 준 가격 범위 — docs/40)은 skuFilter 가 그대로 지킨다.
 
         @Query(value = "select product_id from product.product_sku a " +
                         "left join product.product_size b on a.skuproduct_id = b.skuproduct_id " +
@@ -121,50 +76,31 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
                         @Param("size") String size, @Param("color") String color);
 
         /**
-         * 🐛 <b>카테고리를 고르면 검색이 500 이었다.</b>
+         * 필터 메뉴의 색상 — 한 카테고리 상품들의 SKU 색상, 중복 없이. 상품 id 를 앱으로 가져오지 않고 DB 안에서 조인한다.
          *
-         * <p>예전 SQL 은 {@code IN (SELECT unnest(CAST(:productIds AS BIGINT[])))} 였다. 그런데
-         * Hibernate 는 컬렉션 파라미터를 {@code (?, ?)} 로 펼치므로 PostgreSQL 은
-         * {@code CAST((1, 2) AS BIGINT[])} 를 받는다 — "cannot cast type record to bigint[]".
-         * 상품이 하나뿐이면 {@code CAST(1 AS BIGINT[])} 라 역시 실패한다. 빈 DB 에서는
-         * 목록이 비어 통과하므로 컨테이너 기동 테스트가 잡지 못했고, 운영에서 카테고리에
-         * 상품이 생기는 순간 터졌다.
-         *
-         * <p>{@code in (:productIds)} 면 Hibernate 의 확장이 곧 올바른 SQL 이다. 빈 목록은
-         * 호출부가 미리 거른다({@code SearchService.getColors}) — {@code in ()} 은 SQL 오류다.
-         * "전체" 는 {@link #findAllColors()} 다: 예전에는 {@code null} 을 넘겨 {@code unnest(NULL)}
-         * 이 됐고, 그건 <b>빈 목록</b>이라 카테고리 없는 화면의 색상 메뉴가 늘 비어 있었다.
+         * <p>🐛 2026-10-19 데이터 규모 측정(docs/83 §5): 예전에는 카테고리의 상품 id 를 <b>전부</b> 읽어 {@code in (:productIds)} 로
+         * 다시 보냈다 — Hibernate 가 목록을 바인드 변수로 펼쳐, 100만 상품에서 상품이 65,535 개를 넘는 카테고리(fashion · books …)는
+         * {@code PSQLException: PreparedStatement can have at most 65,535 parameters} 로 그 검색이 매번 실패했다.
+         * (그 전의 {@code unnest(CAST(:ids AS BIGINT[]))} 는 상품이 하나라도 있으면 실패했다 — "cannot cast type record to bigint[]".)
+         * "전체" 는 {@link #findAllColors()}.
+         * [JA] フィルターメニューの色 — 商品 id をアプリに持ち込まず DB 内で結合する。以前は id 全部を IN に展開し、65,535 を超えると失敗した。
          */
         @Query(value = "select distinct b.color from product.product_sku a " +
                         "inner join product.product_color b on a.color_id = b.color_id " +
-                        "where a.product_id in (:productIds)", nativeQuery = true)
-        List<String> findColorsByProductId(@Param("productIds") java.util.Collection<Long> productIds);
+                        "inner join product.product p on p.product_id = a.product_id " +
+                        "where p.category_id = :categoryId", nativeQuery = true)
+        List<String> findColorsByCategoryId(@Param("categoryId") Long categoryId);
 
         @Query(value = "select distinct b.color from product.product_sku a " +
                         "inner join product.product_color b on a.color_id = b.color_id", nativeQuery = true)
         List<String> findAllColors();
 
-        // @Query(value = "select distinct b.size from product.product_sku a " +
-        // "inner join product.product_size b on a.skuproduct_id = b.skuproduct_id " +
-        // "where a.product_id in :productIds and b.size <> '' and b.size is not null",
-        // nativeQuery = true)
-        /**
-         * 특정 상품 ID 목록에 해당하는 모든 SKU의 사이즈를 중복 없이 조회합니다.
-         * JPQL을 사용하여 엔티티 간의 관계를 탐색합니다.
-         * 
-         * @param productIds 조회할 상품 ID 목록
-         * @return 해당 상품들의 모든 사이즈 목록
-         */
-        // @Query("SELECT DISTINCT ps.size " +
-        // "FROM Product p " +
-        // "JOIN p.skus psg " + // Product(p)와 ProductSku(psg) 조인
-        // "JOIN psg.sizes ps " + // ProductSku(psg)와 ProductSize(ps) 조인
-        // "WHERE p.productId IN :productIds ")
-        /** {@link #findColorsByProductId} 와 같은 이유로 {@code in (:productIds)} 다. 빈 목록은 호출부가 거른다. */
+        /** 필터 메뉴의 사이즈 — {@link #findColorsByCategoryId} 와 같은 이유로 DB 안에서 조인한다. */
         @Query(value = "SELECT DISTINCT b.size FROM product.product_sku a " +
                         "INNER JOIN product.product_size b ON a.skuproduct_id = b.skuproduct_id " +
-                        "WHERE a.product_id in (:productIds)", nativeQuery = true)
-        List<String> findSizesByProductId(@Param("productIds") java.util.Collection<Long> productIds);
+                        "INNER JOIN product.product p ON p.product_id = a.product_id " +
+                        "WHERE p.category_id = :categoryId", nativeQuery = true)
+        List<String> findSizesByCategoryId(@Param("categoryId") Long categoryId);
 
         @Query(value = "SELECT DISTINCT b.size FROM product.product_sku a " +
                         "INNER JOIN product.product_size b ON a.skuproduct_id = b.skuproduct_id", nativeQuery = true)

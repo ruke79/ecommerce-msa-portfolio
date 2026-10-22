@@ -86,6 +86,9 @@ class CatalogServiceApplicationTests {
 	@Autowired
 	private com.project.catalog_service.repository.jpa.data.ProductSkuRepository productSkuRepository;
 
+	@Autowired
+	private com.project.catalog_service.repository.jpa.data.ProductDetailsRepository productDetailsRepository;
+
 	@Test
 	@DisplayName("애플리케이션 컨텍스트가 실제로 뜬다")
 	void contextLoads() {
@@ -98,14 +101,18 @@ class CatalogServiceApplicationTests {
 	 * 펼쳐 PostgreSQL 이 "cannot cast type record to bigint[]" 로 거절했다. 빈 목록은 통과하므로
 	 * 빈 DB 의 기동 테스트는 잡지 못했다 — 그래서 <b>비어 있지 않은 목록</b>으로 실행해 본다.
 	 * 데이터는 필요 없다: SQL 이 실행되기만 하면 된다(예전 SQL 은 파싱 단계에서 죽었다).
+	 * 2026-10-19: 메뉴는 이제 id 목록이 아니라 카테고리 조인이다(상품이 65,535 개를 넘으면 id 목록이 실패했다 —
+	 * {@code SearchFilterFacetsScaleTest}). 같은 뜻으로 그 SQL 이 실제 PostgreSQL 에서 실행되는지 본다.
 	 */
 	@Test
-	@DisplayName("색상·사이즈 메뉴 SQL 이 비어 있지 않은 id 목록으로 실행된다 (PostgreSQL)")
-	void colorAndSizeMenuQueriesRunWithIds() {
-		assertThat(productSkuRepository.findColorsByProductId(java.util.List.of(1L, 2L))).isEmpty();
-		assertThat(productSkuRepository.findSizesByProductId(java.util.List.of(1L))).isEmpty();
+	@DisplayName("색상·사이즈·상세 메뉴 SQL 이 PostgreSQL 에서 실행된다 (카테고리 조인)")
+	void colorAndSizeMenuQueriesRun() {
+		assertThat(productSkuRepository.findColorsByCategoryId(1L)).isEmpty();
+		assertThat(productSkuRepository.findSizesByCategoryId(1L)).isEmpty();
 		assertThat(productSkuRepository.findAllColors()).isEmpty();
 		assertThat(productSkuRepository.findAllSizes()).isEmpty();
+		assertThat(productDetailsRepository.findDistinctNameValuesByCategoryId(1L)).isEmpty();
+		assertThat(productDetailsRepository.findDistinctNameValues()).isEmpty();
 	}
 
 	@Test

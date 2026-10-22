@@ -56,7 +56,7 @@ PLACEHOLDER_IMAGE="${PLACEHOLDER_IMAGE:-}"
 # 상품당 표 + 인덱스 바이트 — 생성기의 MEASURED["bytes_per_product"] 와 같은 값(로컬 50만 개 실측)
 BYTES_PER_PRODUCT=2108
 # 카탈로그가 쓰는 캐시 이름(@Cacheable). 키는 "<이름>::<키>" 다.
-CACHES="products product products_by_category search_cache colors_cache sizes_cache details_cache"
+CACHES="products product products_by_category search_cache colors_cache sizes_cache details_cache brands_cache"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GEN="$HERE/tools/generate-catalog-data.py"

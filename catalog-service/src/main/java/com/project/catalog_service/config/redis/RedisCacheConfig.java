@@ -9,8 +9,11 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.cache.Cache;
+import org.springframework.data.redis.cache.BatchStrategies;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
@@ -35,6 +38,8 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Configuration
 @EnableCaching
@@ -79,6 +84,24 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
 
     /** 상품 목록 · 상세 캐시(products)의 수명 — 쓰기마다 비우지만, 놓친 무효화(다른 파드의 할인 맵 등)도 이 시간 안에는 풀린다. */
     static final Duration PRODUCTS_TTL = Duration.ofMinutes(30);
+
+    /** 만료의 흩어짐 — 키마다 수명을 이만큼까지(비율) 줄인다. */
+    static final double TTL_JITTER = 0.2;
+
+    /**
+     * 수명을 키마다 조금씩 다르게 — {@code base} 에서 최대 20% 를 무작위로 뺀다.
+     *
+     * <p>🐛 2026-10-19 데이터 규모 측정(docs/83 §5 · mixed {@code 160904Z}): 한꺼번에 채워진 키는 한꺼번에 만료된다. 캐시를 통째로
+     * 비운 뒤(flush-cache · 기획전 경계의 {@code EventScheduler} · 예전의 별점 갱신) 다시 채워진 {@code search_cache} 키 48개가 정확히
+     * 60분 뒤 같은 초에 만료돼 20초 동안 DB 로 몰렸고, 그때 다시 채워진 48개가 또 모두 17:15 에 만료될 참이었다 — 한 번 생긴 무리는
+     * 매시간 되풀이된다. 흩어 두면 한 바퀴 만에 무리가 풀린다.
+     * [JA] 一度に埋まったキーは一度に切れ、その群れは毎時繰り返す。キーごとに寿命を最大 20% 縮めて散らす。
+     */
+    static RedisCacheWriter.TtlFunction jittered(Duration base) {
+        long millis = base.toMillis();
+        long spread = (long) (millis * TTL_JITTER);
+        return (key, value) -> Duration.ofMillis(millis - ThreadLocalRandom.current().nextLong(spread + 1));
+    }
 
     private static boolean isSet(String value) {
         return value != null && !value.isBlank();
@@ -164,7 +187,7 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
         // 다른 파드의 할인 맵) 다음 쓰기까지 영원히 옛 값이었고, 공개 조회의 임의 slug 마다 키가 영구로 쌓였다. 이제 30분.
         // [JA] 以前は期限なしの永久キャッシュだった。無効化を一つ逃すと次の書き込みまで古いままで、任意の slug ごとにキーが永久に溜まった。
         cacheConfigurations.put("products", RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(PRODUCTS_TTL)
+                .entryTtl(jittered(PRODUCTS_TTL))
                 .disableCachingNullValues()
                 .serializeValuesWith(SerializationPair.fromSerializer(permanentValueSerializer())));
         
@@ -180,12 +203,22 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
         // allEntries 비우기는 SCAN 으로 — 🐛 기본은 KEYS 였다. 결제 차감 · 복원 한 건마다 캐시 다섯 개에 KEYS 가 돌았고, KEYS 는 공유
         // Redis(로그인 잠금 · 블랙리스트 · 유입 제한과 같이 쓴다)의 키 전체를 훑는 동안 Redis 를 막는다.
         // [JA] allEntries の消去は SCAN で。既定は KEYS で、共有 Redis 全体を走査する間ブロックしていた。
-        return RedisCacheManager.builder(org.springframework.data.redis.cache.RedisCacheWriter.nonLockingRedisCacheWriter(
-                        redisConnectionFactory, org.springframework.data.redis.cache.BatchStrategies.scan(500)))
-            .initialCacheNames(cacheConfigurations.keySet())
-            .withInitialCacheConfigurations(cacheConfigurations)
-            .cacheDefaults(redisCacheConfiguration(Duration.ofMinutes(10)).disableCachingNullValues())
-            .build();
+        // 잠그지 않는 작성기 + 키마다 한 번 계산(SingleFlightCache) — 잠그는 작성기는 캐시 이름 전체를 Redis 잠금 하나로 묶는다.
+        // 감싸기는 getCache 에서 한다: 안쪽 맵에는 RedisCache 를 그대로 두어야 getCacheConfigurations 가 깨지지 않는다.
+        // [JA] ロックしないライター + キーごとに一度だけ計算。包むのは getCache で — 内側のマップは RedisCache のまま。
+        return new RedisCacheManager(
+                RedisCacheWriter.nonLockingRedisCacheWriter(redisConnectionFactory, BatchStrategies.scan(500)),
+                redisCacheConfiguration(Duration.ofMinutes(10)).disableCachingNullValues(),
+                true,
+                cacheConfigurations) {
+            private final Map<String, Cache> singleFlight = new ConcurrentHashMap<>();
+
+            @Override
+            public Cache getCache(String name) {
+                Cache cache = super.getCache(name);
+                return cache == null ? null : singleFlight.computeIfAbsent(name, n -> new SingleFlightCache(cache));
+            }
+        };
     }
 
     /**
@@ -225,7 +258,7 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
     private RedisCacheConfiguration redisCacheConfiguration(Duration duration) {
         return RedisCacheConfiguration
                 .defaultCacheConfig()
-                .entryTtl(duration)
+                .entryTtl(jittered(duration))
                 .serializeValuesWith(SerializationPair.fromSerializer(cacheValueSerializer()));
     }
 

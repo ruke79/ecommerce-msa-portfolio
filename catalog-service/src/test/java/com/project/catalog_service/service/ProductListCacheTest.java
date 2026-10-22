@@ -160,9 +160,9 @@ class ProductListCacheTest {
     }
 
     @Test
-    @DisplayName("🔴 상품 · 색상 · 별점 · 일괄 등록 · 수정 · 상태 변경은 products 를 비운다")
+    @DisplayName("🔴 상품 · 색상 · 일괄 등록 · 수정 · 상태 변경은 products 를 비운다(별점은 그 상품만 — RatingCacheTest)")
     void productWritesEvictProducts() {
-        Set<String> writes = Set.of("addProduct", "load", "updateRating", "updateProduct", "updateStatus");
+        Set<String> writes = Set.of("addProduct", "load", "updateProduct", "updateStatus");
         int checked = 0;
         for (Method m : ProductService.class.getDeclaredMethods()) {
             if (writes.contains(m.getName()) && java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
@@ -170,7 +170,7 @@ class ProductListCacheTest {
                 checked++;
             }
         }
-        assertThat(checked).isGreaterThanOrEqualTo(6);   // load 는 둘
+        assertThat(checked).isGreaterThanOrEqualTo(5);   // load 는 둘
     }
 
     @Test

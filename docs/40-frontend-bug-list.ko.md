@@ -196,6 +196,8 @@ nginx 의 기존 `immutable` 규칙이 **의도대로** 걸린다. `HtmlWebPackP
 - **가격 필터도 보이는 가격으로** — 서버가 정가로 걸렀다. 기획전 할인은 메모리의 맵이라 SQL 이 모른다. 그래서 SQL 은
   언제나 참인 조건(할인가 ≤ 정가 이므로 "정가 ≥ 하한")으로 후보를 줄이고, `SearchService.skuFilterIds` 가 후보마다
   `ProductService.discounted(정가, effectiveDiscount)` 로 정확히 판정한다.
+  → 2026-10-19 판정을 SQL 안으로 옮겼다(`SearchService.skuFilter` — EXISTS + 기획전 규칙의 CASE, 같은 식 · 같은 "높은 쪽" 규칙). 후보를 앱으로
+  읽던 방식은 상품 100만에서 catalog 를 힙 부족으로 쓰러뜨렸다(docs/83 §5).
 - **통화 표기는 Intl 로** — 화면마다 `59.98$` · `USD59.98 $` · `$59.98` 로 손으로 붙이던 것을 `useMoney()` 하나로. 상점
   통화(빌드 인자 `REACT_APP_STORE_CURRENCY`)를 앱 언어의 로캘로 그린다 — 한국어 `US$59.98`, 일본어 `$59.98`. 청구 통화
   (포트원 KRW 등)는 두 번째 인자로 준다. 결제·환불처럼 i18n Provider 밖에서 테스트되는 화면도 쓸 수 있게 언어가 없으면

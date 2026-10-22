@@ -6,7 +6,8 @@ public final class SearchServiceFilters {
     private SearchServiceFilters() {
     }
 
-    public static String prefixRegex(String raw) {
-        return SearchService.prefixRegex(SearchService.filterValues(raw));
+    /** 사이즈 · 색상 값마다의 앞부분 일치 LIKE 패턴(이스케이프 {@code !}). */
+    public static java.util.List<String> prefixLikes(String raw) {
+        return SearchService.prefixLikes(SearchService.filterValues(raw));
     }
 }

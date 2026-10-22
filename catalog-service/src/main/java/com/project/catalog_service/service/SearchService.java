@@ -3,21 +3,20 @@ package com.project.catalog_service.service;
 import com.project.catalog_service.dto.SearchResultDto;
 
 import com.project.catalog_service.mapper.CategoryMapper;
-import com.project.catalog_service.mapper.ProductDetailsMapper;
 import com.project.catalog_service.mapper.ProductMapper;
 import com.project.catalog_service.mapper.SubcategoryMapper;
 import com.project.catalog_service.model.Product;
-import com.project.catalog_service.model.ProductDetails;
 import com.project.catalog_service.model.QProduct;
+import com.project.catalog_service.model.QProductColor;
 import com.project.catalog_service.model.QProductDetails;
+import com.project.catalog_service.model.QProductSize;
+import com.project.catalog_service.model.QProductSku;
 import com.project.catalog_service.model.QProductSubcategory;
 import com.project.catalog_service.repository.jpa.data.CategoryRepository;
-import com.project.catalog_service.repository.jpa.data.ProductDetailsRepository;
 import com.project.catalog_service.repository.jpa.data.ProductRepository;
 import com.project.catalog_service.repository.jpa.data.ProductSkuRepository;
 import com.project.catalog_service.repository.jpa.data.SubcategoryRepository;
 import com.project.common.dto.CategoryDto;
-import com.project.common.dto.ProductDetailsDto;
 import com.project.common.dto.ProductDto;
 import com.project.common.dto.SubCategoryDto;
 import com.project.common.dto.catalog.request.SearchParamsRequest;
@@ -49,7 +48,6 @@ public class SearchService {
     private final SubcategoryRepository subCategoryRepository;
     private final ProductRepository productRepository;
     private final ProductSkuRepository productSkuRepository;
-    private final ProductDetailsRepository productDetailsRepository;
     private final JPAQueryFactory queryFactory;
 
     /**
@@ -59,6 +57,9 @@ public class SearchService {
      * 보인다. 사용자는 목록에서 보고 들어왔는데 가격이 달라진 것을 본다.
      */
     private final EventPricing eventPricing;
+
+    /** 첫 쪽의 필터 메뉴 — 따로 된 빈이라 캐시가 걸린다(같은 클래스 안 호출은 프록시를 거치지 않는다). */
+    private final SearchFilterFacets filterFacets;
 
     // @RequiredArgsConstructor가 있으므로 별도의 @Autowired 생성자는 필요 없습니다.
     // private final 필드들에 대한 생성자를 자동으로 생성합니다.
@@ -85,44 +86,128 @@ public class SearchService {
     }
 
     /**
-     * 가격·사이즈·색상 중 하나라도 걸었는가.
-     *
-     * <p>걸지 않았으면 SKU 질의를 <b>돌리지 않는다.</b> 조건 없는 그 질의는 상품 전량의
-     * id 를 읽어 오는데, 그 결과는 "모든 상품" 이라 필터로서 아무 의미가 없다.
-     */
-    /**
-     * 가격·사이즈·색상 조건에 맞는 상품 id.
+     * 가격·사이즈·색상 조건 — 그 조건에 맞는 SKU(사이즈 줄)가 하나라도 있는 상품. 조건이 없으면 null(조건 없음).
      *
      * <p>가격은 <b>화면에 보이는 가격</b>으로 본다 — 사이즈 정가에 상시 할인과 기획전 할인 중 큰 쪽을 적용한 값
-     * (상품 화면·목록 카드·장바구니와 같은 {@link ProductService#discounted}). 🐛 예전에는 정가로 걸러, 카드에 $70 으로
-     * 보이는 상품이 "$80 이하" 에서 빠지고 "$90 이상" 에 나왔다(docs/40 §22).
+     * (상품 화면·목록 카드·장바구니와 같은 {@link ProductService#discounted} 의 식: {@code 정가 × (100 − 율) / 100}, 소수 2자리 반올림).
+     * 🐛 예전에는 정가로 걸러, 카드에 $70 으로 보이는 상품이 "$80 이하" 에서 빠지고 "$90 이상" 에 나왔다(docs/40 §22).
+     *
+     * <p>🐛 2026-10-19 데이터 규모 측정(상품 100만, docs/83 §5): 예전에는 조건에 맞는 후보를 <b>카테고리와 상관없이 전부</b> 앱으로
+     * 읽었다 — 가격대는 하한 이상인 사이즈 줄 전부(수백만 줄)를 읽어 할인가를 앱에서 따졌고, 맞는 상품 id 를 {@code IN (…)} 으로 다시
+     * 보냈다. 필터 검색을 초당 3번 섞자 catalog 3개가 20초 만에 {@code OutOfMemoryError: Java heap space} 로 쓰러졌다(실패 93.76%,
+     * 힙 512MB). 이제 상관 서브쿼리({@code EXISTS})로 DB 안에서 판정한다 — 바깥 질의의 카테고리 조건과 함께 돌고, 앱으로 오는 것은
+     * 그 쪽의 상품 10개와 개수뿐이다. 맞는 것이 없으면 0건이다("없음"이 "전부"로 뒤집히지 않는다).
+     *
+     * <p>기획전 할인은 SQL 이 모르는 메모리의 맵이라, 펼치기 전의 규칙({@link EventPricing#rules()} — 상품 지정 · 카테고리 지정)을
+     * 그 상품의 율을 고르는 CASE 로 싣는다. 높은 율부터 보므로 겹치면 높은 쪽 — {@code EventPricing.refresh} 와 같은 규칙이다.
+     * 사이즈 · 색상은 값마다 앞부분 일치(대소문자 무시, 글자 그대로 — {@link #likeLiteral}).
+     *
+     * <p>[JA] 価格 · サイズ · 色の条件 — 合う SKU が一つでもある商品。以前は候補をカテゴリに関係なく全部アプリに読み、合う id を IN で
+     *      送り直していた(100 万商品で catalog がヒープ不足で倒れた)。今は相関サブクエリ(EXISTS)で DB の中で判定する。
      */
-    List<Long> skuFilterIds(SearchParamsRequest params) {
+    com.querydsl.core.types.Predicate skuFilter(SearchParamsRequest params) {
+        if (!hasSkuFilter(params)) {
+            return null;
+        }
         java.math.BigDecimal low = params.getLowPrice();
         java.math.BigDecimal high = params.getHighPrice();
-        String size = prefixRegex(filterValues(params.getSize()));
-        String color = prefixRegex(filterValues(params.getColor()));
-        if (low == null && high == null) {
-            return productSkuRepository.findProductIDBySizeAndPriceAndColor(null, null, size, color);
+        List<String> sizes = filterValues(params.getSize());
+        List<String> colors = filterValues(params.getColor());
+        boolean priced = low != null || high != null;
+
+        QProduct product = QProduct.product;
+        QProductSku sku = new QProductSku("filterSku");
+        QProductSize size = new QProductSize("filterSize");
+        QProductColor color = new QProductColor("filterColor");
+        com.querydsl.jpa.JPQLQuery<Integer> sub = JPAExpressions.selectOne().from(sku);
+        BooleanBuilder where = new BooleanBuilder(sku.product.productId.eq(product.productId));
+        if (priced || !sizes.isEmpty()) {
+            sub.join(sku.sizes, size);
+            where.and(startsWithAny(size.size, sizes));
         }
-        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
-        for (Object[] row : productSkuRepository.findPriceCandidates(low, size, color)) {
-            if (row == null || row[0] == null || row[1] == null) {
-                continue;
+        if (!colors.isEmpty()) {
+            sub.join(sku.color, color);
+            where.and(startsWithAny(color.color, colors));
+        }
+        if (priced) {
+            com.querydsl.core.types.dsl.NumberExpression<java.math.BigDecimal> shown =
+                    shownPrice(size.price, sku.discount, eventRate(product));
+            if (low != null) {
+                // 할인가는 정가를 넘지 않는다 — 정가 조건은 늘 참이고, 할인가를 셈하기 전에 줄을 거른다
+                where.and(size.price.goe(low)).and(shown.goe(low));
             }
-            long productId = ((Number) row[0]).longValue();
-            java.math.BigDecimal listPrice = row[1] instanceof java.math.BigDecimal b ? b
-                    : new java.math.BigDecimal(row[1].toString());
-            int skuDiscount = row[2] == null ? 0 : ((Number) row[2]).intValue();
-            java.math.BigDecimal shown = ProductService.discounted(listPrice,
-                    eventPricing.effectiveDiscount(productId, skuDiscount));
-            if ((low == null || shown.compareTo(low) >= 0) && (high == null || shown.compareTo(high) <= 0)) {
-                ids.add(productId);
+            if (high != null) {
+                where.and(shown.loe(high));
             }
         }
-        return new java.util.ArrayList<>(ids);
+        return sub.where(where).exists();
     }
 
+    /** 화면의 할인가 — {@code round(정가 × (100 − least(greatest(상시, 기획전), 100)) / 100, 2)}(common Discount.apply 와 같은 값). */
+    private static com.querydsl.core.types.dsl.NumberExpression<java.math.BigDecimal> shownPrice(
+            com.querydsl.core.types.dsl.NumberPath<java.math.BigDecimal> price,
+            com.querydsl.core.types.dsl.NumberPath<Integer> skuDiscount,
+            com.querydsl.core.types.dsl.NumberExpression<Integer> eventRate) {
+        return com.querydsl.core.types.dsl.Expressions.numberTemplate(java.math.BigDecimal.class,
+                "round({0} * (100 - least(greatest(coalesce({1}, 0), {2}), 100)) / 100, 2)", price, skuDiscount, eventRate);
+    }
+
+    /**
+     * 그 상품의 기획전 할인율 — 상품 지정 · 카테고리 지정 중 높은 쪽, 없으면 0. 규칙이 없으면(대부분의 때) 상수 0.
+     * 상품 지정은 많아야 수천 건이고 카테고리 지정은 카테고리 수만큼이라 바인드 변수 한도(65,535) 안이다 — 펼친 맵을 싣지 않는 이유.
+     */
+    private com.querydsl.core.types.dsl.NumberExpression<Integer> eventRate(QProduct product) {
+        EventPricing.Rules rules = eventPricing.rules();
+        if (rules == null || rules.isEmpty()) {
+            return com.querydsl.core.types.dsl.Expressions.numberTemplate(Integer.class, "0");
+        }
+        java.util.TreeMap<Integer, List<Long>> productsByRate = new java.util.TreeMap<>(java.util.Comparator.reverseOrder());
+        java.util.TreeMap<Integer, List<Long>> categoriesByRate = new java.util.TreeMap<>(java.util.Comparator.reverseOrder());
+        rules.products().forEach((id, rate) -> productsByRate.computeIfAbsent(rate, r -> new ArrayList<>()).add(id));
+        rules.categories().forEach((id, rate) -> categoriesByRate.computeIfAbsent(rate, r -> new ArrayList<>()).add(id));
+        java.util.TreeSet<Integer> rates = new java.util.TreeSet<>(java.util.Comparator.reverseOrder());
+        rates.addAll(productsByRate.keySet());
+        rates.addAll(categoriesByRate.keySet());
+
+        com.querydsl.core.types.dsl.CaseBuilder.Cases<Integer, com.querydsl.core.types.dsl.NumberExpression<Integer>> cases = null;
+        for (Integer rate : rates) {
+            BooleanBuilder applies = new BooleanBuilder();
+            List<Long> ids = productsByRate.get(rate);
+            if (ids != null) {
+                applies.or(product.productId.in(ids));
+            }
+            List<Long> categoryIds = categoriesByRate.get(rate);
+            if (categoryIds != null) {
+                applies.or(product.category.categoryId.in(categoryIds));
+            }
+            cases = cases == null ? new com.querydsl.core.types.dsl.CaseBuilder().when(applies).then(rate) : cases.when(applies).then(rate);
+        }
+        return cases.otherwise(0);
+    }
+
+    /** 값 중 하나로 시작하면 참(대소문자 무시, 글자 그대로). 값이 없으면 null(조건 없음). */
+    private static com.querydsl.core.types.Predicate startsWithAny(com.querydsl.core.types.dsl.StringPath path, List<String> values) {
+        if (values.isEmpty()) {
+            return null;
+        }
+        BooleanBuilder any = new BooleanBuilder();
+        for (String v : prefixLikes(values)) {
+            any.or(path.likeIgnoreCase(v, '!'));
+        }
+        return any;
+    }
+
+    /** 앞부분 일치 LIKE 패턴 — {@code 값%}, 값 안의 {@code %} · {@code _} · {@code !} 는 글자({@link #likeLiteral}, 이스케이프 {@code !}). */
+    static List<String> prefixLikes(List<String> values) {
+        return values.stream().map(v -> likeLiteral(v) + "%").toList();
+    }
+
+    /**
+     * 가격·사이즈·색상 중 하나라도 걸었는가.
+     *
+     * <p>걸지 않았으면 SKU 조건을 <b>만들지 않는다.</b> 조건 없는 SKU 질의는 상품 전량을
+     * 훑는데, 그 결과는 "모든 상품" 이라 필터로서 아무 의미가 없다.
+     */
     private static boolean hasSkuFilter(SearchParamsRequest params) {
         return params.getLowPrice() != null
                 || params.getHighPrice() != null
@@ -169,29 +254,6 @@ public class SearchService {
         return List.copyOf(values);
     }
 
-    /**
-     * 값 목록 → PostgreSQL {@code ~*} 에 넘길 <b>앞부분 일치</b> 정규식 — 글자와 숫자가 아닌 것은 모두 {@code \} 로 가둔다
-     * (ARE 에서 영숫자가 아닌 글자 앞의 {@code \} 는 그 글자 자체다). 화면의 뜻({@code ^값})은 그대로다. 값이 없으면 null(조건 없음).
-     */
-    static String prefixRegex(List<String> values) {
-        if (values.isEmpty()) {
-            return null;
-        }
-        StringBuilder out = new StringBuilder("^(");
-        for (int i = 0; i < values.size(); i++) {
-            if (i > 0) {
-                out.append('|');
-            }
-            values.get(i).codePoints().forEach(cp -> {
-                if (!Character.isLetterOrDigit(cp)) {
-                    out.append('\\');
-                }
-                out.appendCodePoint(cp);
-            });
-        }
-        return out.append(')').toString();
-    }
-
     /** LIKE 의 {@code %} · {@code _} · 이스케이프 문자를 글자로 — 값 안의 {@code _} 가 "아무 한 글자" 가 되지 않게. */
     static String likeLiteral(String value) {
         return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
@@ -207,6 +269,13 @@ public class SearchService {
             any.or(path.likeIgnoreCase("%" + likeLiteral(v) + "%", '!'));
         }
         return any;
+    }
+
+    /** 스타일 · 소재 · 성별 중 하나라도 값이 있는가 — {@link #buildSearchPredicate} 의 5번 조건이 생기는가와 같다. */
+    static boolean hasDetailsFilter(SearchParamsRequest params) {
+        return !filterValues(params.getStyle()).isEmpty()
+                || !filterValues(params.getMaterial()).isEmpty()
+                || !filterValues(params.getGender()).isEmpty();
     }
 
     /** category 파라미터가 숫자 id면 Long으로, 이름이거나 비어있으면 null을 반환한다(이름 검색은 별도 경로). */
@@ -241,31 +310,40 @@ public class SearchService {
      *               동안 반대쪽 엔진의 결과가 나가고, 추적의 변형 태그와 실제 결과가 어긋난다.
      *               [JA] キャッシュキーに含まれる。同じ検索でも ES と LIKE の結果は違う。キーになければ比率を変えた後
      *               最大 60 分間、反対側のエンジンの結果が返り、トレースの変形タグと実際の結果が食い違う。
+     *
+     * <p>{@code sync = true} — 만료 순간 같은 검색을 파드마다 한 번만 계산한다({@code SingleFlightCache}). 🐛 2026-10-19 mixed
+     * {@code 160904Z}(docs/83 §5): 한꺼번에 채워진 키 48개가 같은 초에 만료되자 키마다 들어온 요청이 모두 DB 에서 다시 계산해 20초 동안
+     * 커넥션 대기 22 · 서버 p95 1.5초.
      */
-    @Cacheable(value = "search_cache", cacheManager = "redisCacheManager")
+    @Cacheable(value = "search_cache", cacheManager = "redisCacheManager", sync = true)
     public SearchResultDto searchProducts(SearchParamsRequest params, SearchEngine engine) {
         // category는 숫자 id 또는 이름(name)일 수 있다. 숫자가 아니면 id로 파싱하지 않고 null 처리
         // (기존 Long.parseLong은 이름 검색 시 NumberFormatException → 500을 유발했다).
         Long categoryId = parseCategoryId(params.getCategory());
 
-        // 1. SKU(가격·색상·사이즈) 필터를 **건 경우에만** 후보 id 를 구한다.
+        // 1. SKU(가격·색상·사이즈) 필터를 **건 경우에만** 조건(EXISTS)을 만든다 — null 은 "이 필터를 걸지 않았다"는 뜻이다.
         //
-        // 🔴 예전에는 조건이 없어도 매번 이 질의를 돌렸다. 조건이 없으면 상품 전량의 id 를
-        //    읽어 와서 그대로 `in (...)` 에 넣는 것이라, 상품이 늘수록 커지는 쓸모없는
-        //    풀스캔 + 거대한 IN 절이었다. null 은 "이 필터를 걸지 않았다"는 뜻이다.
-        List<Long> productIdsFromSku = hasSkuFilter(params) ? skuFilterIds(params) : null;
+        // 🔴 예전에는 조건이 없어도 매번 후보 id 질의를 돌렸다(상품 전량의 id 를 읽어 `in (...)` 에 넣었다).
+        //    건 경우에도 후보를 앱으로 읽었다 — 100만 상품에서 힙 부족(skuFilter 주석).
+        com.querydsl.core.types.Predicate skuFilter = skuFilter(params);
 
         // 2. Querydsl을 사용하여 모든 검색 조건(상품명, 브랜드, 상세 정보, 평점)을 조합하여 최종 상품 목록 조회
-        // 이때, productIdsFromSku는 IN 절로 활용됩니다.
+        // SKU 조건은 상관 서브쿼리(EXISTS)로 같은 WHERE 에 들어간다.
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
-        BooleanBuilder builder = buildSearchPredicate(params, categoryId, productIdsFromSku, engine);
+        BooleanBuilder builder = buildSearchPredicate(params, categoryId, skuFilter, engine);
 
-        long totalProducts = queryFactory.select(product.countDistinct())
-                .from(product)
-                .leftJoin(product.details, productDetails)
-                .where(builder)
-                .fetchOne();
+        // 상세(스타일 · 소재 · 성별) 필터가 있을 때만 상세 표를 조인한다 — 🐛 예전에는 늘 조인해 상품마다 상세 줄 수만큼 불린 뒤
+        // count(distinct) · select distinct 로 다시 접었다(100만 상품의 큰 카테고리에서 개수 세기가 그만큼 무거웠다). 결과는 같다.
+        // [JA] 詳細フィルターがあるときだけ詳細テーブルを結合する。以前は常に結合して distinct で畳み直していた。
+        boolean joinDetails = hasDetailsFilter(params);
+        com.querydsl.jpa.impl.JPAQuery<Long> countQuery = queryFactory
+                .select(joinDetails ? product.countDistinct() : product.count())
+                .from(product);
+        if (joinDetails) {
+            countQuery.leftJoin(product.details, productDetails);
+        }
+        long totalProducts = countQuery.where(builder).fetchOne();
 
         // page는 1-기반 입력. 0/음수 입력 시 PageRequest.of(-1,..)가 예외를 던지므로 안전하게 클램프.
         int safePage = Math.max(1, params.getPage()) - 1;
@@ -274,9 +352,11 @@ public class SearchService {
                 : Math.min(params.getPageSize(), MAX_PAGE_SIZE);
         Pageable pageRequest = createPageRequest(safePage, safeSize);
 
-        List<Product> products = queryFactory.selectFrom(product)
-                .distinct()
-                .leftJoin(product.details, productDetails)
+        com.querydsl.jpa.impl.JPAQuery<Product> listQuery = queryFactory.selectFrom(product);
+        if (joinDetails) {
+            listQuery.distinct().leftJoin(product.details, productDetails);
+        }
+        List<Product> products = listQuery
                 .where(builder)
                 // 🔒 순서를 고정한다 — 🐛 예전에는 ORDER BY 없이 OFFSET/LIMIT 이라, 무한 스크롤의 2페이지가 1페이지와 겹치거나
                 //    상품을 건너뛸 수 있었다(PostgreSQL 은 순서 없는 결과의 순서를 보장하지 않는다 — 계획 · 갱신에 따라 바뀐다).
@@ -311,16 +391,16 @@ public class SearchService {
                 .totalProducts((int) totalProducts);
 
         if (params.isIncludeFilters()) {
-            List<String> brands = (categoryId != null) ? productRepository.findBrandsByCategoryId(categoryId)
-                                                     : productRepository.findBrandsByCategoryName(params.getCategory());
+            List<String> brands = (categoryId != null) ? filterFacets.brands(categoryId)
+                                                     : filterFacets.brandsByCategoryName(params.getCategory());
             List<CategoryDto> categoryDtos = categoryRepository.findAll().stream().map(CategoryMapper::toDto).collect(Collectors.toList());
             List<SubCategoryDto> subCategoryDtos = subCategoryRepository.findAll().stream().map(SubcategoryMapper::toDto).collect(Collectors.toList());
 
             result.categories(categoryDtos)
                   .subCategories(subCategoryDtos)
-                  .colors(getColors(categoryId))
-                  .sizes(getSizes(categoryId))
-                  .details(getDetails(categoryId))
+                  .colors(filterFacets.colors(categoryId))
+                  .sizes(filterFacets.sizes(categoryId))
+                  .details(filterFacets.details(categoryId))
                   .brandsDB(brands);
         } else {
             // null 이 아니라 빈 목록을 준다. 받는 쪽이 길이를 재거나 순회할 때
@@ -337,13 +417,13 @@ public class SearchService {
         return result.build();
     }
 
-    private BooleanBuilder buildSearchPredicate(SearchParamsRequest params, Long categoryId, List<Long> productIdsFromSku,
+    private BooleanBuilder buildSearchPredicate(SearchParamsRequest params, Long categoryId, com.querydsl.core.types.Predicate skuFilter,
             SearchEngine engine) {
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
         BooleanBuilder builder = new BooleanBuilder();
 
-        // 1. productIds 조건 (SKU, Price, Color, Size 필터링 결과)
+        // 1. SKU 조건 (Price, Color, Size — skuFilter)
         //
         // 🔴 예전 조건은 `!= null && !isEmpty()` 였다. 즉 <b>필터가 아무것도 못 찾으면
         //    조건 자체를 버렸다</b> — "맞는 게 없다" 가 "제한이 없다" 로 뒤집힌다.
@@ -351,11 +431,10 @@ public class SearchService {
         //    없는 구간을 고르는 순간 <b>카탈로그 전체</b>가 돌아온다. 색상·사이즈도 같다.
         //
         //    null(필터를 걸지 않음)과 빈 목록(걸었는데 매칭 없음)을 반드시 갈라야 한다.
-        if (productIdsFromSku != null) {
-            builder.and(productIdsFromSku.isEmpty()
-                    // IN () 는 SQL 오류라 불가능 조건을 쓴다 — 아래 ES 경로와 같은 방식이다.
-                    ? product.productId.eq(-1L)
-                    : product.productId.in(productIdsFromSku));
+        //
+        //    지금은 EXISTS 라 맞는 SKU 가 없으면 그 상품이 빠질 뿐이다 — 조건이 사라질 수 없다(skuFilter).
+        if (skuFilter != null) {
+            builder.and(skuFilter);
         }
 
         // 2. categoryId 조건
@@ -441,45 +520,7 @@ public class SearchService {
         return builder;
     }
 
-    /**
-     * 필터 메뉴의 색상. 카테고리가 없으면 전체, 있으면 그 카테고리 상품들의 것.
-     *
-     * <p>빈 목록은 여기서 거른다 — 상품이 없는 카테고리에 {@code in ()} 을 보내면 SQL 오류다.
-     * (예전 {@code unnest(CAST(:ids AS BIGINT[]))} 는 반대로 상품이 <b>있을 때</b> 터졌다 —
-     * ProductSkuRepository 주석.)
-     */
-    @Cacheable(value = "colors_cache", key = "#categoryId", cacheManager = "redisCacheManager")
-    public List<String> getColors(Long categoryId) {
-        if (categoryId == null) {
-            return productSkuRepository.findAllColors();
-        }
-        List<Long> ids = productRepository.findProductIDsByCategoryId(categoryId);
-        return ids.isEmpty() ? List.of() : productSkuRepository.findColorsByProductId(ids);
-    }
-
-    @Cacheable(value = "sizes_cache", key = "#categoryId", cacheManager = "redisCacheManager")
-    public List<String> getSizes(Long categoryId) {
-        if (categoryId == null) {
-            return productSkuRepository.findAllSizes();
-        }
-        List<Long> ids = productRepository.findProductIDsByCategoryId(categoryId);
-        return ids.isEmpty() ? List.of() : productSkuRepository.findSizesByProductId(ids);
-    }
-    
-    @Cacheable(value = "details_cache", key = "#categoryId", cacheManager = "redisCacheManager")
-    public List<ProductDetailsDto> getDetails(Long categoryId) {
-        if (categoryId == null) {
-            return productDetailsRepository.findDistinctAll().stream()
-                    .map(ProductDetailsMapper::toDto)
-                    .collect(Collectors.toList());
-        }
-        List<Long> ids = productRepository.findProductIDsByCategoryId(categoryId);
-        return productDetailsRepository.findDistinctAllByProductProductIdIn(ids).stream()
-                .map(ProductDetailsMapper::toDto)
-                .collect(Collectors.toList());
-    }
-
-    @Cacheable(value = "products_by_category", key = "#category + '_' + #pageRequest.pageNumber", cacheManager = "redisCacheManager")
+    @Cacheable(value = "products_by_category", key = "#category + '_' + #pageRequest.pageNumber", cacheManager = "redisCacheManager", sync = true)
     public List<Product> findAllByCategory(Long category, Pageable pageRequest) {
 
         Page<Product> productPage = productRepository.findAllByCategory_CategoryId(category, pageRequest);

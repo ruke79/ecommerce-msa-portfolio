@@ -60,6 +60,29 @@ public class EventPricing {
      */
     private volatile Map<Long, Integer> discounts = Map.of();
 
+    /**
+     * 펼치기 전의 규칙 — 상품 지정 할인율 · 카테고리 지정 할인율. 검색의 가격 필터가 SQL 로 같은 할인을 계산하는 데 쓴다
+     * ({@code SearchService.skuFilter}).
+     *
+     * <p>🐛 2026-10-19 데이터 규모 측정(docs/83 §5): 가격 필터는 예전에 후보 SKU 를 <b>전부</b> 앱으로 읽어 이 맵으로 할인가를 따진 뒤
+     * 맞는 상품 id 를 {@code IN (…)} 으로 다시 보냈다 — 상품 100만에서 catalog 가 힙 부족으로 쓰러졌다. 펼친 맵(카테고리 대상이면
+     * 그 카테고리의 상품 전부)은 SQL 에 실을 수 없지만, 펼치기 전의 규칙은 카테고리 몇 개와 상품 지정 몇천 개다.
+     * {@code discounts} 와 같은 갱신에서 만든다(두 필드를 따로 바꾸므로 갱신하는 순간 한 요청이 둘을 엇갈려 볼 수 있다 — 필터만이다).
+     *
+     * <p>[JA] 展開前の規則(商品指定 · カテゴリ指定の割引率)。価格フィルターが SQL で同じ割引を計算するのに使う。以前は候補を全部アプリに読み
+     *      catalog がヒープ不足で倒れた。
+     */
+    private volatile Rules rules = Rules.NONE;
+
+    /** 펼치기 전의 기획전 할인 규칙 — productId → 율, categoryId → 율(각각 겹치면 높은 쪽). */
+    public record Rules(Map<Long, Integer> products, Map<Long, Integer> categories) {
+        static final Rules NONE = new Rules(Map.of(), Map.of());
+
+        public boolean isEmpty() {
+            return products.isEmpty() && categories.isEmpty();
+        }
+    }
+
     /** 진행 중인 기획전의 할인을 다시 읽는다. 스케줄러가 1분마다 부른다. */
     /**
      * 기동하면서 한 번 읽는다 — 첫 스케줄 실행(10초 뒤)을 기다리지 않는다. ProductService 가 이 빈을 받기 전에 끝나므로 기동 워밍업
@@ -85,7 +108,7 @@ public class EventPricing {
      */
     @Transactional(readOnly = true)
     public boolean refresh() {
-        Map<Long, Integer> next = new HashMap<>();
+        Map<Long, Integer> productRates = new HashMap<>();
 
         // 같은 상품이 여러 곳에 걸려 있으면 **높은 쪽**을 쓴다. 더하면(혹은 곱하면)
         // 아무도 의도하지 않은 깊은 할인이 나온다 — 30% 기획전 둘이 겹쳐 51% 가 되는
@@ -94,12 +117,15 @@ public class EventPricing {
         // 카테고리와 상품 지정이 겹칠 때도 같은 규칙이다. "카테고리 전체 20%, 그중 이
         // 상품만 40%" 가 자연스럽게 표현된다 — 순서를 신경 쓸 필요가 없다.
         for (Object[] row : eventRepository.activeProductDiscounts()) {
-            next.merge((Long) row[0], ((Number) row[1]).intValue(), Math::max);
+            productRates.merge((Long) row[0], ((Number) row[1]).intValue(), Math::max);
         }
-        expandCategories(next);
+        Map<Long, Integer> categoryRates = categoryRates();
+        Map<Long, Integer> next = new HashMap<>(productRates);
+        expandCategories(categoryRates, next);
 
         Map<Long, Integer> before = discounts;
         discounts = Map.copyOf(next);
+        rules = new Rules(Map.copyOf(productRates), Map.copyOf(categoryRates));
 
         boolean changed = !before.equals(discounts);
         if (changed) {
@@ -114,17 +140,10 @@ public class EventPricing {
      * <p>카테고리 수만큼 질의하지 않는다 — 한 번에 묶어 읽는다. 이 갱신은 1분마다
      * 반복되므로 왕복 수가 그대로 곱해진다.
      */
-    private void expandCategories(Map<Long, Integer> into) {
-        List<Object[]> categoryRows = eventRepository.activeCategoryDiscounts();
-        if (categoryRows.isEmpty()) {
+    private void expandCategories(Map<Long, Integer> byCategory, Map<Long, Integer> into) {
+        if (byCategory.isEmpty()) {
             return;
         }
-
-        Map<Long, Integer> byCategory = new HashMap<>();
-        for (Object[] row : categoryRows) {
-            byCategory.merge((Long) row[0], ((Number) row[1]).intValue(), Math::max);
-        }
-
         for (Object[] row : productRepository.findProductIdsByCategoryIds(byCategory.keySet())) {
             Long categoryId = (Long) row[0];
             Long productId = (Long) row[1];
@@ -133,6 +152,20 @@ public class EventPricing {
                 into.merge(productId, rate, Math::max);
             }
         }
+    }
+
+    /** 진행 중인 기획전의 카테고리 → 할인율(같은 카테고리가 여러 곳이면 높은 쪽). */
+    private Map<Long, Integer> categoryRates() {
+        Map<Long, Integer> byCategory = new HashMap<>();
+        for (Object[] row : eventRepository.activeCategoryDiscounts()) {
+            byCategory.merge((Long) row[0], ((Number) row[1]).intValue(), Math::max);
+        }
+        return byCategory;
+    }
+
+    /** 펼치기 전의 규칙 — 검색의 가격 필터용. */
+    public Rules rules() {
+        return rules;
     }
 
     /**

@@ -31,7 +31,7 @@ export const options = {
     'http_req_duration{name:product}': ['p(99)<3000'],
     checks: ['rate>0.98'],
     not_json: ['count<1'],
-    ...errorThresholds(['home', 'banners', 'search', 'search_deep', 'name_search', 'product', 'product_cold']),
+    ...errorThresholds(['home', 'banners', 'search', 'search_deep', 'name_search', 'filter_search', 'product', 'product_cold']),
   },
   summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
 };

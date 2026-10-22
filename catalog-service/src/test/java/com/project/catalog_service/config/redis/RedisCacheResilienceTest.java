@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
 
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,8 +34,48 @@ class RedisCacheResilienceTest {
         manager.afterPropertiesSet();
         var config = manager.getCacheConfigurations().get("products");
         assertThat(config).isNotNull();
-        assertThat(config.getTtlFunction().getTimeToLive(null, null)).isEqualTo(RedisCacheConfig.PRODUCTS_TTL);
+        assertThat(config.getTtlFunction().getTimeToLive(null, null))
+                .isLessThanOrEqualTo(RedisCacheConfig.PRODUCTS_TTL)
+                .isGreaterThanOrEqualTo(RedisCacheConfig.PRODUCTS_TTL.multipliedBy(8).dividedBy(10));
         assertThat(RedisCacheConfig.PRODUCTS_TTL).isGreaterThan(Duration.ZERO);
+    }
+
+    @Test
+    @DisplayName("🔴 수명은 키마다 흩어진다(최대 20% 짧게) — 한꺼번에 채워진 키가 같은 초에 만료되지 않는다(예전: search_cache 48개가 모두 17:15)")
+    void ttlsAreSpread() {
+        RedisCacheManager manager = new RedisCacheConfig(null).redisCacheManager(mock(RedisConnectionFactory.class));
+        manager.afterPropertiesSet();
+        manager.getCache("colors_cache");   // 설정 맵에 없는 캐시 — 기본값(10분)으로 실행 중에 생긴다
+        Map<String, Duration> nominal = Map.of(
+                "products", RedisCacheConfig.PRODUCTS_TTL,
+                "search_cache", Duration.ofMinutes(60),
+                "colors_cache", Duration.ofMinutes(10));
+        nominal.forEach((name, base) -> {
+            var ttl = manager.getCacheConfigurations().get(name).getTtlFunction();
+            Set<Long> seconds = new HashSet<>();
+            Duration min = base, max = Duration.ZERO;
+            for (int i = 0; i < 500; i++) {
+                Duration d = ttl.getTimeToLive("k" + i, "v");
+                seconds.add(d.toSeconds());
+                min = d.compareTo(min) < 0 ? d : min;
+                max = d.compareTo(max) > 0 ? d : max;
+            }
+            assertThat(max).as(name + " 최대").isLessThanOrEqualTo(base);
+            assertThat(min).as(name + " 최소").isGreaterThanOrEqualTo(base.multipliedBy(8).dividedBy(10));
+            assertThat(max.minus(min)).as(name + " — 같은 초에 몰리지 않는다").isGreaterThan(base.dividedBy(10));
+            assertThat(seconds).as(name).hasSizeGreaterThan(100);
+        });
+    }
+
+    @Test
+    @DisplayName("🔴 매니저가 내주는 캐시는 키마다 한 번 계산(SingleFlightCache) — 안쪽 설정 조회는 그대로")
+    void managerHandsOutSingleFlightCaches() {
+        RedisCacheManager manager = new RedisCacheConfig(null).redisCacheManager(mock(RedisConnectionFactory.class));
+        manager.afterPropertiesSet();
+        assertThat(manager.getCache("search_cache")).isInstanceOf(SingleFlightCache.class);
+        assertThat(manager.getCache("search_cache")).as("같은 감싸개 — 잠금을 함께 쓴다").isSameAs(manager.getCache("search_cache"));
+        assertThat(manager.getCache("anything_new")).as("실행 중 생기는 캐시도").isInstanceOf(SingleFlightCache.class);
+        assertThat(manager.getCacheConfigurations()).containsKeys("products", "search_cache");
     }
 
     @Test

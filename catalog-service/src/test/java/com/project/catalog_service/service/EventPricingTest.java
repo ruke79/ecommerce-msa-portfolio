@@ -415,4 +415,24 @@ class EventPricingTest {
         org.assertj.core.api.Assertions.assertThat(EventPricing.class.getDeclaredMethod("loadOnStartup")
                 .isAnnotationPresent(jakarta.annotation.PostConstruct.class)).isTrue();
     }
+
+    @Test
+    @DisplayName("🔴 펼치기 전의 규칙도 함께 갈아 끼운다 — 상품 지정 · 카테고리 지정, 겹치면 높은 쪽(검색의 가격 필터가 SQL 로 쓴다)")
+    void rulesKeepTheUnexpandedTargets() {
+        when(eventRepository.activeProductDiscounts()).thenReturn(List.of(new Object[] { 1L, 30 }, new Object[] { 1L, 40 }, new Object[] { 2L, 10 }));
+        when(eventRepository.activeCategoryDiscounts()).thenReturn(List.of(new Object[] { 7L, 20 }, new Object[] { 7L, 15 }));
+        when(productRepository.findProductIdsByCategoryIds(any())).thenReturn(List.<Object[]>of(new Object[] { 7L, 70L }, new Object[] { 7L, 71L }));
+
+        pricing.refresh();
+
+        assertThat(pricing.rules().products()).as("카테고리를 펼친 상품(70 · 71)은 들어가지 않는다").containsOnly(
+                java.util.Map.entry(1L, 40), java.util.Map.entry(2L, 10));
+        assertThat(pricing.rules().categories()).containsOnly(java.util.Map.entry(7L, 20));
+        assertThat(pricing.eventDiscountOf(70L)).as("화면 가격의 펼친 맵은 그대로").isEqualTo(20);
+
+        when(eventRepository.activeProductDiscounts()).thenReturn(List.of());
+        when(eventRepository.activeCategoryDiscounts()).thenReturn(List.of());
+        pricing.refresh();
+        assertThat(pricing.rules().isEmpty()).as("기획전이 끝나면 비운다").isTrue();
+    }
 }

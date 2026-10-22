@@ -140,8 +140,8 @@ class SearchEngineSelectorTest {
             org.mockito.Mockito.when(qf.selectFrom(org.mockito.ArgumentMatchers.any())).thenReturn(list);
             queryFactory = qf;
             return new SearchService(mock(CategoryRepository.class), mock(SubcategoryRepository.class),
-                    mock(ProductRepository.class), mock(ProductSkuRepository.class), mock(ProductDetailsRepository.class),
-                    qf, mock(EventPricing.class));
+                    mock(ProductRepository.class), mock(ProductSkuRepository.class),
+                    qf, mock(EventPricing.class), mock(SearchFilterFacets.class));
         }
     }
 

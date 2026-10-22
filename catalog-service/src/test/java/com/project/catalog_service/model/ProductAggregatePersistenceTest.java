@@ -184,13 +184,15 @@ class ProductAggregatePersistenceTest {
     }
 
     @Test
-    @DisplayName("🔴 검색 필터의 사이즈 · 색상 정규식은 PostgreSQL 에서 글자 그대로 앞부분만 맞춘다 — 메타문자로 500 이 나지 않는다")
-    void searchFilterRegexIsLiteralInPostgres() {
-        java.util.function.BiFunction<String, String, Boolean> matches = (value, raw) -> (Boolean) em
-                .createNativeQuery("select cast(:v as text) ~* cast(:re as text)")
-                .setParameter("v", value)
-                .setParameter("re", com.project.catalog_service.service.SearchServiceFilters.prefixRegex(raw))
-                .getSingleResult();
+    @DisplayName("🔴 검색 필터의 사이즈 · 색상은 PostgreSQL 에서 글자 그대로 앞부분만 맞춘다 — 메타문자로 500 이 나지 않는다")
+    void searchFilterPrefixIsLiteralInPostgres() {
+        // 2026-10-19: 정규식(~*) 대신 값마다 lower(x) LIKE lower('값%') ESCAPE '!' — Querydsl likeIgnoreCase 가 만드는 모양 그대로
+        java.util.function.BiFunction<String, String, Boolean> matches = (value, raw) -> com.project.catalog_service.service.SearchServiceFilters
+                .prefixLikes(raw).stream().anyMatch(p -> (Boolean) em
+                        .createNativeQuery("select lower(cast(:v as text)) like lower(cast(:p as text)) escape '!'")
+                        .setParameter("v", value)
+                        .setParameter("p", p)
+                        .getSingleResult());
 
         assertThat(matches.apply("XL", "^XL|^M")).isTrue();
         assertThat(matches.apply("m", "^XL|^M")).as("대소문자 무시").isTrue();
@@ -200,6 +202,8 @@ class ProductAggregatePersistenceTest {
         assertThat(matches.apply("A+B", "^A+B")).isTrue();
         assertThat(matches.apply("AAB", "^A+B")).isFalse();
         assertThat(matches.apply("검정 (무광)", "^검정 (무광)")).isTrue();
+        assertThat(matches.apply("100%_cotton", "^100%")).as("% · _ 도 글자").isTrue();
+        assertThat(matches.apply("1000", "^1_0")).as("_ 는 아무 한 글자가 아니다").isFalse();
     }
 
     @Autowired
