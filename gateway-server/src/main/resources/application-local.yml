@@ -138,6 +138,9 @@ spring:
                 max-idle-time: ${GATEWAY_POOL_MAX_IDLE:30s}
                 max-life-time: ${GATEWAY_POOL_MAX_LIFE:5m}
                 eviction-interval: 15s
+            # 연결 시간 상한 — 클러스터 안 연결은 몇 ms 다. 기본값(45초)이면 사라진 파드 IP 로의 연결이 회로 차단기의 10초를 먼저 다 써
+            # 아래 Retry(연결 실패만 다시 보낸다)가 돌 틈이 없다(docs/83 §2.8). [JA] 接続時間の上限 — 既定 45 秒では Retry が働く前に 10 秒を使い切る。
+            connect-timeout: ${GATEWAY_CONNECT_TIMEOUT_MS:2000}
 
           default-filters:
            - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials
@@ -246,6 +249,20 @@ spring:
                       redis-rate-limiter.replenishRate: 1
                       redis-rate-limiter.burstCapacity: 10
                       redis-rate-limiter.requestedTokens: 1
+                  # 🔴 연결 실패(파드가 죽어 포트가 닫힘 · 연결 시간 초과 · 경로 없음)만, GET 만, 다른 인스턴스로 두 번까지 다시 보낸다.
+                  #    응답 상태(5xx · 격벽 503)는 다시 보내지 않는다 — series · statuses 를 비운다(Retry 의 기본값은 5xx 전부라, 바쁘다고 답한
+                  #    서비스에 같은 요청을 두 배로 얹는다). 쓰기(POST 등)도 다시 보내지 않는다. 회로 차단기 안쪽(뒤)에 둔다 — 다시 보내 성공하면 성공으로 센다.
+                  #    🐛 2026-10-21 실습 8시간(docs/83 §2.8): catalog 파드 하나가 JVM 충돌로 죽고 다시 뜨는 동안 게이트웨이가 그 인스턴스로 계속 보내
+                  #    home · banners · 상품까지 5xx 였다(Eureka 는 죽은 인스턴스를 몇십 초 더 알린다). 라우트마다 하나(B-99, RouteRetryTest).
+                  #    [JA] 接続失敗だけ、GET だけ、別インスタンスへ 2 回まで送り直す。応答ステータス(5xx · 隔壁 503)は送り直さない。
+                  - &retry-connect
+                    name: Retry
+                    args:
+                      retries: 2
+                      methods: GET
+                      series: ""
+                      statuses: ""
+                      exceptions: java.net.ConnectException, java.net.NoRouteToHostException
             # 인증 없이 열리는 읽기 · 토큰 갱신 — 로그인용 강한 제한을 쓰지 않는다(🐛 예전에는 위 라우트에 있어, 상품 몇 개의 리뷰를
             # 보면 갱신이 429 를 받아 화면이 로그아웃시켰다).
             # [JA] 認証なしの読み取り · トークン更新 — ログイン用の強い制限は使わない。
@@ -268,6 +285,7 @@ spring:
                       redis-rate-limiter.replenishRate: ${GATEWAY_RATE_LIMIT_REPLENISH:20}
                       redis-rate-limiter.burstCapacity: ${GATEWAY_RATE_LIMIT_BURST:40}
                       redis-rate-limiter.requestedTokens: 1
+                  - *retry-connect
             - id: user-service-auth
               uri: lb://user-service
               predicates:
@@ -281,6 +299,7 @@ spring:
                   - RewritePath=/user-service/(?<segment>.*), /$\{segment}
                   - JwtAuthorization              
                   - *rate-default
+                  - *retry-connect
             
             # ── catalog 은 라우트가 **둘**이다. 읽기는 공개, 쓰기는 인증 ──────────
             #
@@ -319,6 +338,7 @@ spring:
                     args:
                       name: catalogServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: catalog-service-write
               uri: lb://catalog-service
@@ -335,6 +355,7 @@ spring:
                     args:
                       name: catalogServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: catalog-service
               uri: lb://catalog-service
@@ -348,6 +369,7 @@ spring:
                     args:
                       name: catalogServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: cart-service
               uri: lb://cart-service
@@ -362,6 +384,7 @@ spring:
                     args:
                       name: cartServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: coupon-service
               uri: lb://coupon-service
@@ -376,6 +399,7 @@ spring:
                     args:
                       name: couponServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
             - id: notification-service
               uri: lb://notification-service
               predicates:
@@ -389,6 +413,7 @@ spring:
                     args:
                       name: notificationServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
         
 
             - id: delivery-service
@@ -404,6 +429,7 @@ spring:
                     args:
                       name: deliveryServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
         
 
             # ── Stripe 웹훅 — 인증 없는 공개 경로 ───────────────────────────────
@@ -436,6 +462,7 @@ spring:
                     args:
                       name: orderServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: order-service-stripe-webhook
               uri: lb://order-service
@@ -451,6 +478,7 @@ spring:
                     args:
                       name: orderServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: order-service
               uri: lb://order-service
@@ -465,6 +493,7 @@ spring:
                     args:
                       name: orderServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             # 주문 진행 읽기 모델(docs/76) — saga-projection 의 대화형 조회. JwtAuthorization 이 User-Id 를 넣고,
             # 서비스가 주문의 customerId 와 대조한다(남의 주문은 404). 조회 전용(GET).
@@ -484,6 +513,7 @@ spring:
                     args:
                       name: sagaProjectionCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             - id: pay-service
               uri: lb://pay-service
@@ -498,6 +528,7 @@ spring:
                     args:
                       name: payServiceCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
             # chat-service-ws: WebSocket 핸드셰이크(장수명 커넥션)이므로 서킷브레이커를 적용하지 않는다.
             # (요청 지속시간이 곧 연결 지속시간이 되어 slow-call 로 오탐된다.)
@@ -530,6 +561,7 @@ spring:
                     args:
                       name: chatApiCircuitBreaker
                       fallbackUri: forward:/fallback
+                  - *retry-connect
 
 
       # rabbitmq:

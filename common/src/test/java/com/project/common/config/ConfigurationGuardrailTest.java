@@ -3557,4 +3557,70 @@ class ConfigurationGuardrailTest {
         assertThat(dirs).as("마이그레이션 디렉터리를 못 찾았다면 이 검사가 낡은 것이다").isGreaterThan(5);
         assertThat(offenders).as("같은 버전이 둘이면 Flyway 가 기동을 거부한다").isEmpty();
     }
+
+    /**
+     * B-97: JVM 충돌 기록은 파드가 사는 동안 남는 곳에 — 이미지는 {@code -XX:ErrorFile=/var/log/jvm/…} · 코어 덤프 끔, 자바 Deployment 는
+     * 모두 그 경로에 {@code emptyDir}(크기 상한)을 붙인다.
+     *
+     * <p>🐛 2026-10-21 실습 8시간(docs/83 §2.8): catalog 파드가 JVM 내부 SIGSEGV 로 죽었는데 기록이 컨테이너 파일 시스템(/app)에 있어
+     * 다시 뜨면서 사라졌다. hostPath 나 로그(Loki)가 아닌 이유 — 기록에 메모리 내용(토큰 · 이메일 조각)이 들어갈 수 있다.
+     *
+     * <p>[JA] JVM のクラッシュ記録は Pod が生きている間残る場所に — イメージは ErrorFile とコアダンプなし、Java の Deployment はすべて emptyDir。
+     */
+    @Test
+    @DisplayName("B-97: JVM 충돌 기록은 /var/log/jvm 의 emptyDir(컨테이너가 다시 떠도 남는다) · 코어 덤프 없음 — 자바 Deployment 모두")
+    void jvmCrashRecordsSurviveContainerRestart() throws IOException {
+        String dockerfile = Files.readString(repoRoot().resolve("ops/Dockerfile.runtime"), StandardCharsets.UTF_8);
+        assertThat(dockerfile).contains("-XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log").contains("-XX:-CreateCoredumpOnCrash");
+        List<String> checked = new ArrayList<>();
+        try (Stream<Path> files = Files.list(repoRoot().resolve("k8s"))) {
+            for (Path f : files.filter(x -> x.getFileName().toString().matches("(3[0-2]|4\\d)-.*\\.yaml")).sorted().toList()) {
+                for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(f, StandardCharsets.UTF_8))) {
+                    if (!(doc instanceof Map<?, ?> d) || !"Deployment".equals(d.get("kind"))) {
+                        continue;
+                    }
+                    Map<String, Object> pod = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) d.get("spec")).get("template")).get("spec");
+                    List<Map<String, Object>> containers = (List<Map<String, Object>>) pod.get("containers");
+                    for (Map<String, Object> c : containers) {
+                        List<Map<String, Object>> mounts = (List<Map<String, Object>>) c.getOrDefault("volumeMounts", List.of());
+                        Map<String, Object> mount = mounts.stream().filter(m -> "/var/log/jvm".equals(m.get("mountPath"))).findFirst().orElse(null);
+                        assertThat(mount).as(f.getFileName() + " " + c.get("name") + " — /var/log/jvm 마운트").isNotNull();
+                        Map<String, Object> volume = ((List<Map<String, Object>>) pod.get("volumes")).stream()
+                                .filter(v -> mount.get("name").equals(v.get("name"))).findFirst().orElseThrow();
+                        assertThat(volume).as(f.getFileName() + " — emptyDir 만(hostPath 는 노드에 남고 다른 파드가 읽는다)").containsKey("emptyDir");
+                        assertThat((Map<String, Object>) volume.get("emptyDir")).as(f.getFileName() + " — 크기 상한").containsKey("sizeLimit");
+                        checked.add(f.getFileName() + "/" + c.get("name"));
+                    }
+                }
+            }
+        }
+        assertThat(checked).as("자바 서비스 13개(eureka · gateway · config + 백엔드 10)").hasSize(13);
+    }
+
+    /**
+     * B-98: JRE 베이스 이미지는 정확한 판 + 다이제스트 하나 — {@code ops/Dockerfile.runtime} 에만 적고, 빌드 스크립트(ops/19 · ops/13)는 그 줄을
+     * 읽으며, E2E 기본값도 같다.
+     *
+     * <p>🐛 2026-10-21 실습 8시간(docs/83 §2.8): 떠다니는 태그(`17-jre-jammy`)라 빌드마다 그날의 최신 패치가 들어왔고(운영 b7c5053 도 17.0.20.1 — 2026-10-21 에야 알았다),
+     * JVM 충돌 · C2 컴파일 정지가 난 이미지에 어느 JVM 이 들었는지 저장소로는 알 수 없었다.
+     *
+     * <p>[JA] JRE ベースイメージは正確な版 + ダイジェスト一つ — Dockerfile.runtime にだけ書き、ビルドスクリプトはその行を読む。
+     */
+    @Test
+    @DisplayName("B-98: JRE 이미지는 정확한 판 + 다이제스트로 고정 · 한 곳(Dockerfile.runtime)에만 — 떠다니는 태그 금지")
+    void jreBaseImageIsPinnedInOnePlace() throws IOException {
+        String dockerfile = Files.readString(repoRoot().resolve("ops/Dockerfile.runtime"), StandardCharsets.UTF_8);
+        Matcher m = Pattern.compile("(?m)^ARG JRE_IMAGE=(\\S+)$").matcher(dockerfile);
+        assertThat(m.find()).isTrue();
+        String image = m.group(1);
+        assertThat(image).as("판(예: 17.0.20.1_1) + 멀티 아키텍처 다이제스트")
+                .matches("eclipse-temurin:\\d+\\.\\d+\\.\\d+(\\.\\d+)?_\\d+-jre-jammy@sha256:[0-9a-f]{64}");
+        for (String script : List.of("ops/19-build-images.sh", "ops/13-k3s-deploy.sh")) {
+            String body = Files.readString(repoRoot().resolve(script), StandardCharsets.UTF_8);
+            assertThat(body).as(script + " — 기본값은 Dockerfile.runtime 의 줄을 읽는다").contains("s/^ARG JRE_IMAGE=//p");
+            assertThat(body).as(script + " — 태그를 따로 적지 않는다").doesNotContainPattern("eclipse-temurin:\\d+[-.]");
+        }
+        String e2e = Files.readString(repoRoot().resolve("e2e-tests/src/test/java/com/project/e2e/SagaEndToEndTest.java"), StandardCharsets.UTF_8);
+        assertThat(e2e).as("E2E 기본 JRE 도 같은 판").contains("\"E2E_JRE_IMAGE\", \"" + image + "\"");
+    }
 }

@@ -48,7 +48,8 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-localhost:5000}"
 PLATFORM=""                     # 비우면 호스트 아키텍처
 OUTPUT=""                       # --push | --load
-JRE_IMAGE="${JRE_IMAGE:-eclipse-temurin:17-jre-jammy}"
+# 기본 JRE 는 ops/Dockerfile.runtime 의 고정값(정확한 판 + 다이제스트, B-98) — 두 곳에 따로 적지 않는다
+JRE_IMAGE="${JRE_IMAGE:-$(sed -n 's/^ARG JRE_IMAGE=//p' "$(dirname "$0")/Dockerfile.runtime")}"
 SKIP_GRADLE="${SKIP_GRADLE:-0}"
 ONLY=""
 
@@ -260,7 +261,7 @@ explain_failure() {
         warn "    docker run --privileged --rm tonistiigi/binfmt --install all"
     elif grep -qiE 'pull access denied|manifest unknown|not found|failed to resolve' "$BUILD_LOG"; then
         warn "베이스 이미지를 받지 못했습니다: $JRE_IMAGE"
-        warn "  레지스트리 미러를 쓰려면: JRE_IMAGE=mirror.gcr.io/library/eclipse-temurin:17-jre-jammy $0 ..."
+        warn "  레지스트리 미러를 쓰려면: JRE_IMAGE=mirror.gcr.io/library/${JRE_IMAGE#*/} $0 ...  (같은 판 · 다이제스트)"
     elif grep -qiE 'no space left on device' "$BUILD_LOG"; then
         warn "디스크가 찼습니다:  docker system prune -af  /  df -h"
     elif grep -qiE 'i/o timeout|TLS handshake|failed to dial|proxyconnect' "$BUILD_LOG"; then

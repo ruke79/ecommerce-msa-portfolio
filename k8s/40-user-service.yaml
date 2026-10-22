@@ -161,6 +161,10 @@ spec:
               valueFrom:
                 secretKeyRef: { name: ecommerce-secrets, key: OAUTH2_LINE_CLIENT_SECRET, optional: true }
           volumeMounts:
+            # 🔴 JVM 충돌 기록(hs_err) — 파드가 사는 동안 남는다(컨테이너가 다시 떠도). 꺼내기: docs/83 §2.8 · B-97
+            #    [JA] JVM のクラッシュ記録 — Pod が生きている間は残る(コンテナが再起動しても)。
+            - name: jvm-crash
+              mountPath: /var/log/jvm
             - name: tls-keystore
               mountPath: /app/resources
               readOnly: true
@@ -200,6 +204,10 @@ spec:
               scheme: HTTPS
             periodSeconds: 10
       volumes:
+        # 🔴 JVM 충돌 기록(ops/Dockerfile.runtime 의 -XX:ErrorFile) — 로그(Loki)로 보내지 않는다: 기록에 메모리 내용이 들어갈 수 있다
+        - name: jvm-crash
+          emptyDir:
+            sizeLimit: 64Mi
         - name: tls-keystore
           secret:
             secretName: tls-keystore

@@ -17,7 +17,15 @@
 # 빌드 컨텍스트는 **jar 가 있는 디렉터리**다(ops/19-build-images.sh 가 그렇게 넘긴다).
 # 저장소 전체를 컨텍스트로 보내면 수백 MB 를 매 서비스마다 전송하게 된다.
 
-ARG JRE_IMAGE=eclipse-temurin:17-jre-jammy
+# 🔴 JRE 는 정확한 판 + 다이제스트로 고정한다(B-98) — 바꾸는 것은 이 줄을 고치는 커밋이다. ops/19 · ops/13 은 이 줄을 읽는다.
+#
+# 🐛 2026-10-21 실습 8시간(docs/83 §2.8): 예전 `17-jre-jammy` 는 떠다니는 태그라 빌드할 때마다 그날의 최신 패치가 들어왔다
+#    (2026-10-10 에 빌드한 운영 b7c5053 도 이미 17.0.20.1 — Docker Hub 의 갱신 시각 10-17 은 태그를 다시 올린 때다). 그 밤 catalog 파드 하나가 JVM 내부 SIGSEGV 로 죽고 user-service 파드 하나는 C2 컴파일 하나가
+#    10시간 동안 한 코어를 다 썼다 — 그런데 어느 빌드에 어느 JVM 이 들어갔는지 저장소에 남아 있지 않았다.
+#    다이제스트는 멀티 아키텍처 목록(amd64 · arm64)의 것이라 플랫폼마다 그대로 쓰인다. 미러(mirror.gcr.io/library/…)도 같은 다이제스트다.
+# [JA] JRE は正確な版 + ダイジェストで固定する — 変えるのはこの行を直すコミット。以前の浮動タグはビルドのたびにその日の最新パッチが入り、
+#      どのビルドにどの JVM が入ったか記録に残らなかった(17.0.20.1 で SIGSEGV と C2 の 10 時間コンパイル)。
+ARG JRE_IMAGE=eclipse-temurin:17.0.20.1_1-jre-jammy@sha256:b3054a20e1a851574cdb1692dd0db5310c647e62214a2a7abecbec1b9e3ae8f1
 FROM ${JRE_IMAGE}
 
 ARG JAR_FILE
@@ -36,7 +44,9 @@ WORKDIR /app
 #
 # logs 디렉터리가 필요한 이유: 앱이 logging.file.path(./logs)에 쓴다. 없으면 uid 1000 이
 # 디렉터리를 만들지 못해 앱은 뜨지만 파일 로그가 조용히 사라진다 — 가장 나쁜 실패 방식이다.
-RUN mkdir -p /app/logs && chown -R 1000:1000 /app
+#
+# /var/log/jvm — JVM 충돌 기록(hs_err, 아래 -XX:ErrorFile). 매니페스트는 여기에 emptyDir 을 붙여 컨테이너가 다시 떠도 남게 한다(B-97).
+RUN mkdir -p /app/logs /var/log/jvm && chown -R 1000:1000 /app /var/log/jvm
 
 COPY --chown=1000:1000 ${JAR_FILE} app.jar
 
@@ -58,8 +68,14 @@ ENV SPRING_PROFILES_ACTIVE=local
 #      100 万商品で catalog がヒープ不足で再起動を繰り返した。768Mi で非ヒープ込みで収まる 50%。
 ENV JVM_MAX_RAM_PERCENTAGE=50
 
+# JVM 충돌 기록 — 🐛 2026-10-21 실습(docs/83 §2.8): catalog 파드가 SIGSEGV 로 죽었는데 기록(/app/hs_err_pid7.log)이 컨테이너와 함께
+# 사라져 원인을 볼 수 없었다. 이제 /var/log/jvm(매니페스트의 emptyDir — 파드가 사는 동안 남는다)에 쓴다. 로그(Loki)로는 보내지 않는다:
+# 기록에는 레지스터 근처의 메모리 내용(문자열 조각 — 토큰 · 이메일일 수 있다)이 들어간다. 코어 덤프(힙 전체 — 개인정보)는 만들지 않는다.
+# 둘 다 JAVA_OPTS 앞이라 서비스마다 뒤집을 수 있다(B-97). 꺼내기: kubectl -n ecommerce exec <파드> -- ls /var/log/jvm
+# [JA] JVM のクラッシュ記録 — 以前は記録がコンテナと一緒に消えた。/var/log/jvm(emptyDir — Pod が生きている間残る)に書く。Loki には
+#      送らない(メモリ内容が入る)。コアダンプ(ヒープ全体 — 個人情報)は作らない。
 # CONFIG_SERVER_URL 이 비어 있으면 config server import 자체를 생략한다.
 # 빈 값으로 넘기면 Spring 이 빈 URL 로 접속을 시도하다 기동에 실패한다.
-ENTRYPOINT ["sh","-c","java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE} ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
+ENTRYPOINT ["sh","-c","java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE} -XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log -XX:-CreateCoredumpOnCrash ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
 
 EXPOSE ${SERVICE_PORT}
