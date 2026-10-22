@@ -4,16 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
 
@@ -29,15 +32,23 @@ import org.springframework.core.io.ClassPathResource;
 @DisplayName("B-84: 게이트웨이 유입 제한 — 라우트마다 하나 · JWT 뒤 · Redis 타임아웃")
 class RateLimiterPlacementTest {
 
-    private static StandardEnvironment env() throws Exception {
+    private static StandardEnvironment env(Map<String, Object> overrides) throws Exception {
         StandardEnvironment env = new StandardEnvironment();
+        env.getPropertySources().addFirst(new MapPropertySource("overrides", overrides));
         new YamlPropertySourceLoader().load("application-local", new ClassPathResource("application-local.yml"))
                 .forEach(env.getPropertySources()::addLast);
         return env;
     }
 
     private static GatewayProperties gateway() throws Exception {
-        return new Binder(org.springframework.boot.context.properties.source.ConfigurationPropertySources.get(env()))
+        return gateway(Map.of());
+    }
+
+    /** 앱과 같이 ${…} 를 풀어 묶는다(환경 변수 · 기본값). */
+    private static GatewayProperties gateway(Map<String, Object> overrides) throws Exception {
+        StandardEnvironment env = env(overrides);
+        return new Binder(org.springframework.boot.context.properties.source.ConfigurationPropertySources.get(env),
+                new PropertySourcesPlaceholdersResolver(env))
                 .bind("spring.cloud.gateway.server.webflux", Bindable.of(GatewayProperties.class)).get();
     }
 
@@ -105,6 +116,34 @@ class RateLimiterPlacementTest {
                 .isEqualTo(2);
     }
 
+    @Test
+    @DisplayName("🔴 기본 제한(20/s · 버스트 40)은 환경 변수로만 바뀐다 — 실습 클러스터 용량 측정(docs/83). 로그인(1/s)은 그대로")
+    void defaultLimitIsOverridableButLoginIsNot() throws Exception {
+        GatewayProperties def = gateway();
+        GatewayProperties load = gateway(Map.of("GATEWAY_RATE_LIMIT_REPLENISH", "500", "GATEWAY_RATE_LIMIT_BURST", "1000"));
+        for (RouteDefinition r : def.getRoutes()) {
+            if (r.getId().equals("user-service-public")) {
+                continue;
+            }
+            assertThat(limiterArg(r, "redis-rate-limiter.replenishRate")).as("기본 " + r.getId()).isEqualTo("20");
+            assertThat(limiterArg(r, "redis-rate-limiter.burstCapacity")).as("기본 " + r.getId()).isEqualTo("40");
+            RouteDefinition changed = route(load, r.getId());
+            assertThat(limiterArg(changed, "redis-rate-limiter.replenishRate")).as("변수 " + r.getId()).isEqualTo("500");
+            assertThat(limiterArg(changed, "redis-rate-limiter.burstCapacity")).as("변수 " + r.getId()).isEqualTo("1000");
+        }
+        RouteDefinition login = route(load, "user-service-public");
+        assertThat(limiterArg(login, "redis-rate-limiter.replenishRate")).as("로그인은 변수와 상관없이").isEqualTo("1");
+        assertThat(limiterArg(login, "redis-rate-limiter.burstCapacity")).isEqualTo("10");
+        // 운영 · 데모 매니페스트는 이 변수를 두지 않는다 — 측정할 때만 손으로(docs/83 §3)
+        for (String f : List.of("k8s/10-configmap.yaml", "k8s/31-gateway-server.yaml",
+                "k8s-overlays/prod/kustomization.yaml")) {
+            java.nio.file.Path p = java.nio.file.Path.of("..").resolve(f);
+            if (java.nio.file.Files.exists(p)) {
+                assertThat(java.nio.file.Files.readString(p)).as(f).doesNotContain("GATEWAY_RATE_LIMIT_");
+            }
+        }
+    }
+
     private static String limiterArg(RouteDefinition r, String key) {
         return r.getFilters().stream().filter(f -> "RequestRateLimiter".equals(f.getName())).findFirst().orElseThrow()
                 .getArgs().get(key);
@@ -113,10 +152,10 @@ class RateLimiterPlacementTest {
     @Test
     @DisplayName("🔴 Redis 명령 타임아웃 ≤ 1초 — 기본 60초면 Redis 가 잠깐 끊겨도 모든 요청이 멈춘다(짧으면 fail-open)")
     void redisCommandsTimeOutQuickly() throws Exception {
-        Duration timeout = Binder.get(env()).bind("spring.data.redis.timeout", Duration.class)
+        Duration timeout = Binder.get(env(Map.of())).bind("spring.data.redis.timeout", Duration.class)
                 .orElseThrow(() -> new AssertionError("spring.data.redis.timeout 이 없다 — Lettuce 기본 60초"));
         assertThat(timeout).isLessThanOrEqualTo(Duration.ofSeconds(1));
-        assertThat(Binder.get(env()).bind("spring.data.redis.connect-timeout", Duration.class).get())
+        assertThat(Binder.get(env(Map.of())).bind("spring.data.redis.connect-timeout", Duration.class).get())
                 .isLessThanOrEqualTo(Duration.ofSeconds(2));
     }
 }

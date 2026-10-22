@@ -257,12 +257,16 @@ spring:
                   - RewritePath=/user-service/(?<segment>.*), /$\{segment}
                   # 기본 유입 제한(초당 20, 버스트 40) — 라우트마다 하나(B-84). 버킷 키는 CustomUserKeyResolver(로그인 사용자 → IP).
                   # JwtAuthorization 뒤에 두어 User-Id 가 들어간 뒤 돈다. 아래 라우트들은 *rate-default 로 같은 값을 쓴다.
+                  # 값은 환경 변수로 바꿀 수 있다(기본은 그대로) — 실습 클러스터의 용량 측정(docs/83)만. 터널이 없는 데모에서는 모든 비로그인
+                  # 요청이 Traefik 파드 하나의 IP 로 보여 버킷 하나(초당 20)를 나눠 쓴다 — 그대로면 부하 시험이 재는 것은 이 제한뿐이다.
+                  # 운영은 바꾸지 않는다. 로그인(위 라우트, 초당 1)은 바꿀 수 없다.
+                  # [JA] 値は環境変数で変えられる(既定は同じ)— 実習クラスタの容量測定だけ。本番は変えない。ログインの制限は変えられない。
                   - &rate-default
                     name: RequestRateLimiter
                     args:
                       key-resolver: "#{@userKeyResolver}"
-                      redis-rate-limiter.replenishRate: 20
-                      redis-rate-limiter.burstCapacity: 40
+                      redis-rate-limiter.replenishRate: ${GATEWAY_RATE_LIMIT_REPLENISH:20}
+                      redis-rate-limiter.burstCapacity: ${GATEWAY_RATE_LIMIT_BURST:40}
                       redis-rate-limiter.requestedTokens: 1
             - id: user-service-auth
               uri: lb://user-service

@@ -119,3 +119,6 @@ ops/frontend.env
 # Python 캐시 — ops/tools 의 스크립트를 import 하면 생긴다(2026-10-09 커밋에 딸려 들어갔던 것)
 __pycache__/
 *.pyc
+
+# 부하 시험 결과(ops/14 · ops/53) — 그때의 이미지 판 · 노드 이름이 들어 있다, 커밋하지 않는다
+load-results/

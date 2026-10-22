@@ -118,7 +118,7 @@ check_python() {
     need python3
     [ -f "$GEN" ] || die "$GEN 이 없다"
     python3 -c 'import psycopg2' 2>/dev/null \
-        || die "psycopg2 가 없다 — pip install --user psycopg2-binary 후 다시"
+        || die "psycopg2 가 없다 — Ubuntu 는 sudo apt-get install -y python3-psycopg2 (pip --user 는 24.04 에서 externally-managed 로 막힌다), 그 밖은 pip install --user psycopg2-binary"
 }
 
 check_window() {

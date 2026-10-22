@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
  * [JA] 外から入る道はトンネルだけ。LoadBalancer は servicelb 無効でも nodePort を受け、全ノードのポートが開いていた。
  */
 @DisplayName("B-82 · B-85: 터널이 게이트웨이로 보내는 경로 = 게이트웨이 라우트, 노드 포트를 여는 매니페스트 없음")
-class EdgeRoutingGuardTest {
+public class EdgeRoutingGuardTest {
 
     private static Path root() {
         Path cwd = Paths.get("").toAbsolutePath();
@@ -44,7 +44,7 @@ class EdgeRoutingGuardTest {
     }
 
     /** 게이트웨이 Path= 술어들의 첫 경로 조각(/user-service, /saga-projection …). */
-    static TreeSet<String> gatewayPrefixes() throws IOException {
+    public static TreeSet<String> gatewayPrefixes() throws IOException {
         String yml = Files.readString(root().resolve("gateway-server/src/main/resources/application-local.yml"))
                 .replaceAll("\\\\\\s*\\n\\s*", " ");
         TreeSet<String> out = new TreeSet<>();

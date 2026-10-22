@@ -146,6 +146,8 @@ CONCURRENCY="1 5 10 20 50" DURATION=15 ./ops/14-load-test.sh
 
 絶対的な数値は本番には移植できない。**同じマシンでコード変更の前後を比較** するときにだけ使うこと。
 
+> ログイン → カート → 注文のような書き込みの経路・到着率の階段・急増(HPA)は k6 シナリオで測る — `ops/53`、[docs/83](83-load-test.md)。
+
 
 ## 5. 大量データの生成 — `ops/tools/generate-catalog-data.py`
 

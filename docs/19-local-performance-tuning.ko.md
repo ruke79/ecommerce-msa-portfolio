@@ -146,6 +146,8 @@ CONCURRENCY="1 5 10 20 50" DURATION=15 ./ops/14-load-test.sh
 
 절대 수치는 운영에 이식되지 않는다. **같은 머신에서 코드 변경 전후를 비교**할 때만 쓸 것.
 
+> 로그인 → 장바구니 → 주문 같은 쓰기 경로 · 도착률 계단 · 급증(HPA)은 k6 시나리오로 잰다 — `ops/53`, [docs/83](83-load-test.ko.md).
+
 
 ## 5. 대량 데이터 생성 — `ops/tools/generate-catalog-data.py`
 
