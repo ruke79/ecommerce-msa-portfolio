@@ -477,18 +477,63 @@ EOF
 # 가장 새 파드의 기동 오류를 보여 준다 — 롤아웃 실패 직후, 자동 복귀로 그 파드가 사라지기 전에.
 # 전체 로그가 아니라 실패를 말하는 줄만: Spring 의 APPLICATION FAILED TO START 블록,
 # 예외의 Caused by, ERROR. DEBUG 폭포(LOG_LEVEL_SQL=debug 등) 속에서도 원인이 보이게.
+#
+# 🐛 예전: "가장 새 파드" 를 골랐다 — 이미지를 받는 중인 Pending 파드가 가장 새 것이면 로그가 없어 아무것도
+#    찍히지 않았고, 자동 복귀가 CrashLoop 파드를 지워 손으로도 볼 수 없었다(2026-10-17 데모, saga-projection
+#    재시작 6번 · Pending 3개). OOMKilled 는 로그에 원인이 없어 grep 으로는 영영 보이지 않았다.
+#    이제 재시작이 가장 많은 파드(같으면 가장 새 것)를 고르고, 노드 · 직전 종료 이유를 찍고,
+#    describe · 로그 · 이벤트를 파일로 남긴다(FAILED_POD_DIR, 기본 ~/.ecommerce-msa/failed-pods — 700).
+# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
+#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 show_startup_error() {   # show_startup_error <deployment>
-    local d="$1" pod
+    local d="$1" pod info node reason code image dir logs
+    # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
     pod=$(kubectl -n "$NS" get pods -l "app=$d" --sort-by=.metadata.creationTimestamp \
-        -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null)
+        -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | awk 'NF == 1 { r = 0; n = $1 } NF >= 2 { r = $1 + 0; n = $2 } NF && r >= best { best = r; name = n } END { print name }')
     [ -n "$pod" ] || return 0
-    printf '      ── %s 의 기동 오류 (새 파드 %s) ──\n' "$d" "$pod"
-    {
-        kubectl -n "$NS" logs "$pod" --tail=400 2>/dev/null
-        kubectl -n "$NS" logs "$pod" --tail=400 --previous 2>/dev/null
-    } | grep -E "APPLICATION FAILED TO START|Caused by:|\bERROR\b|Description:|Action:" \
+    printf '      ── %s 의 기동 오류 (파드 %s) ──\n' "$d" "$pod"
+    info=$(kubectl -n "$NS" get pod "$pod" \
+        -o jsonpath='{.spec.nodeName}{"|"}{.status.containerStatuses[0].lastState.terminated.reason}{"|"}{.status.containerStatuses[0].lastState.terminated.exitCode}{"|"}{.spec.containers[0].image}' 2>/dev/null)
+    IFS='|' read -r node reason code image <<<"$info"
+    printf '      노드 %s · 직전 종료 %s%s\n' "${node:-?}" "${reason:-없음}" "${code:+ (exit $code)}"
+    [ "$reason" = "OOMKilled" ] && printf '      → 메모리 한도 초과 — 로그에는 원인이 없습니다(resources.limits.memory 와 JVM 힙을 보세요)\n'
+
+    dir="${FAILED_POD_DIR:-$HOME/.ecommerce-msa/failed-pods}/$(date +%Y%m%d-%H%M%S)-$pod"
+    if (umask 077 && mkdir -p "$dir") 2>/dev/null; then
+        kubectl -n "$NS" describe pod "$pod" > "$dir/describe.txt" 2>&1
+        kubectl -n "$NS" logs "$pod" --tail=2000 > "$dir/current.log" 2>&1
+        kubectl -n "$NS" logs "$pod" --tail=2000 --previous > "$dir/previous.log" 2>&1
+        kubectl -n "$NS" get events --field-selector "involvedObject.name=$pod" \
+            --sort-by=.lastTimestamp > "$dir/events.txt" 2>&1
+    else
+        dir=""
+    fi
+    if [ -n "$dir" ]; then
+        logs=$(cat "$dir/current.log" "$dir/previous.log")
+    else
+        logs=$({ kubectl -n "$NS" logs "$pod" --tail=400; kubectl -n "$NS" logs "$pod" --tail=400 --previous; } 2>/dev/null)
+    fi
+    # JVM 이 Spring 전에 죽으면 "Error: …" 한 줄뿐이다 — ERROR · Caused by 로는 걸리지 않는다
+    printf '%s\n' "$logs" \
+      | grep -E "APPLICATION FAILED TO START|Caused by:|\bERROR\b|Description:|Action:|^Error: |jarfile|no main manifest" \
       | grep -vE "DEBUG|^\s*$" | tail -12 | sed 's/^/      /'
-    printf '      전체:  kubectl -n %s logs %s --previous | grep -B2 -A12 "APPLICATION FAILED"\n' "$NS" "$pod"
+    # 🐛 2026-10-18 데모: saga-projection 이 "Invalid or corrupt jarfile" 로 죽었는데 레지스트리 이미지의 jar 는 멀쩡했다
+    #    (해시가 빌드 결과와 같고, 노드의 다이제스트도 레지스트리와 같았다) — 그 노드가 풀어 둔 사본만 깨져 있었다.
+    #    같은 태그라 kubelet 은 다시 받지 않는다(IfNotPresent) — 그 노드에서 지워야 한다.
+    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
+    if printf '%s\n' "$logs" | grep -qE "Invalid or corrupt jarfile|Unable to access jarfile|no main manifest attribute"; then
+        printf '      → jar 를 열지 못했습니다. 레지스트리 이미지가 멀쩡해도 노드 %s 의 사본만 깨졌을 수 있습니다:\n' "${node:-?}"
+        printf '          확인(빌드 VM):  docker run --rm --entrypoint sha256sum <레지스트리>/%s /app/app.jar  ↔ build/libs 의 jar\n' "${image#*/}"
+        printf '          노드 %s 에서:  sudo k3s crictl ps -a -q --name %s | xargs -r sudo k3s crictl rm; sudo k3s crictl rmi %s\n' \
+            "${node:-?}" "$d" "${image:-<이미지>}"
+        printf '          그 뒤:  kubectl -n %s delete pod %s   (새 파드가 이미지를 다시 받는다)\n' "$NS" "$pod"
+    fi
+    if [ -n "$dir" ]; then
+        printf '      남김:  %s/{describe.txt,previous.log,current.log,events.txt} — 자동 복귀로 파드가 지워져도 남는다\n' "$dir"
+    else
+        printf '      전체:  kubectl -n %s logs %s --previous | grep -B2 -A12 "APPLICATION FAILED"\n' "$NS" "$pod"
+    fi
     printf '      (복귀 뒤 `kubectl logs deploy/%s` 는 **옛 파드** 라 이 오류가 보이지 않습니다)\n' "$d"
 }
 

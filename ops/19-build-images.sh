@@ -268,6 +268,49 @@ explain_failure() {
     fi
 }
 
+# 이미지에 넣을 jar 를 고르고, 실행할 수 있는 jar 인지 확인한다.
+#
+# 예전: `ls *.jar | head -1` 을 확인 없이 넣었다 — 잘린 jar · 이름순 첫 번째의 옛 판(…-0.0.1-SNAPSHOT.jar)이
+#    들어가도 빌드 · push · 레지스트리의 14개 확인이 모두 통과하고, 파드가 "Error: Invalid or corrupt jarfile
+#    /app/app.jar" 로 1초 만에 죽을 때(exit 1)에야 드러난다.
+#    (2026-10-18 데모의 saga-projection 이 그 증상이었지만, 그때 레지스트리 이미지의 jar 는 멀쩡했다 — 해시가
+#     빌드 결과와 같았다. 깨진 것은 한 노드가 풀어 둔 사본이었다 — ops/28 show_startup_error 의 안내. 이 확인은
+#     같은 증상의 빌드 쪽 원인을 push 전에 막는다.)
+#    이제 가장 새 jar 를 고르고, zip 이 온전한지(CRC) · MANIFEST 에 Main-Class 가 있는지 본 뒤에만 이미지를 만든다.
+# [JA] 以前は ls の先頭の jar を確認なしで入れていた。今は最新の jar を選び、zip の CRC と MANIFEST の Main-Class を
+#      確かめてからイメージを作る(2026-10-18 の症状はノード側の展開コピーの破損で、レジストリのイメージは正常だった)。
+pick_jar() {   # pick_jar <모듈> — jar 경로를 출력, 못 쓰면 이유를 stderr 에 쓰고 1
+    local m="$1" jar
+    jar=$(ls -t "$m"/build/libs/*.jar 2>/dev/null | grep -v plain | head -1 || true)
+    if [ -z "$jar" ]; then
+        echo "$m 의 jar 를 찾을 수 없습니다 (gradle 빌드가 필요합니다)" >&2
+        return 1
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        if ! python3 -I - "$jar" <<'PY'
+import sys, zipfile
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        bad = z.testzip()
+        if bad:
+            sys.exit(f"CRC 가 맞지 않는 항목: {bad}")
+        manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+except (zipfile.BadZipFile, KeyError, OSError, EOFError) as e:
+    sys.exit(f"zip 으로 읽히지 않는다: {e}")
+if "Main-Class:" not in manifest:
+    sys.exit("MANIFEST 에 Main-Class 가 없다 — 실행 jar(bootJar)가 아니다")
+PY
+        then
+            echo "$jar 를 실행할 수 없습니다 — 이 jar 로 만든 이미지는 'Invalid or corrupt jarfile' 로 죽습니다." >&2
+            echo "  디스크(df -h)를 확인하고 지운 뒤 다시 빌드하세요:  rm -f $m/build/libs/*.jar && $0 ... --only $m" >&2
+            return 1
+        fi
+    else
+        warn "python3 가 없어 $jar 가 온전한지 확인하지 못했습니다" >&2
+    fi
+    printf '%s\n' "$jar"
+}
+
 # 실행하고, 실패하면 **왜** 실패했는지 보여 준 뒤 죽는다.
 run_build() {  # run_build <설명> <명령...>
     local what="$1"; shift
@@ -417,8 +460,7 @@ for m in $SERVICES; do
     [ -d "$m" ] || { warn "$m 디렉터리 없음 — 건너뜀"; continue; }
     svc0=$(now)
 
-    jar=$(ls "$m"/build/libs/*.jar 2>/dev/null | grep -v plain | head -1 || true)
-    [ -n "$jar" ] || die "$m 의 jar 를 찾을 수 없습니다 (gradle 빌드가 필요합니다)"
+    jar=$(pick_jar "$m") || die "$m 의 jar 를 이미지에 넣을 수 없습니다(위)"
 
     port=$(grep -hoP '^\s*port:\s*\K\d+' "$m"/src/main/resources/application*.yml 2>/dev/null | head -1 || echo 8080)
 

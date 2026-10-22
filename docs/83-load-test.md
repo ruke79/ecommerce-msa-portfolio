@@ -110,12 +110,11 @@ RATE=200 ./ops/53-load-k6.sh spike          # 別の窓で kubectl -n ecommerce 
 
 **実行器の環境変数。** `GATEWAY`(既定 `https://shop.lab`)・`CA_FILE`(デモ CA — 検証を切らずにこれを信頼する、`SSL_CERT_FILE`)・
 `USERS`・`ID_OFFSET`(ops/48 と同じ番号)・`PASSWORD_FILE`(デモのパスワード — k6 の環境変数でだけ渡し、コマンドライン・結果ファイルにはない)・
-`RATE`・`STAGES`(`長さ:目標,…`)・`OUT`(結果フォルダー)・`PROM_RW`(k6 の指標を Prometheus へ — obs-vm の Prometheus が
-`--web.enable-remote-write-receiver` で起動している必要がある)。
+`RATE`・`STAGES`(`長さ:目標,…`)・`OUT`(結果フォルダー)・`PROM_RW`(k6 の指標を Prometheus へ — obs-vm を `docker-compose-observability.lab.yml` の上書きで起動すれば受ける)。
 
 ## 4. 読み方 — 何を一緒に見るか
 
-k6 の要約は「どれだけ遅かったか」しか言わない。**なぜ**は同じ時間のサーバーの指標にある(Grafana、obs-vm)。`PROM_RW` を渡すと k6 の指標が同じ時間軸に来る。
+k6 の要約は「どれだけ遅かったか」しか言わない。**なぜ**は同じ時間のサーバーの指標にある(Grafana、obs-vm)。サービスの指標はクラスタ内のエージェントが送る(それ以前はデモのサービスの指標が観測 VM になかった)。`PROM_RW` を渡すと k6 の指標も同じ時間軸に来る。
 
 | k6 で見えるもの | 一緒に見るもの | よくある原因 |
 |---|---|---|

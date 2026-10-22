@@ -110,12 +110,11 @@ RATE=200 ./ops/53-load-k6.sh spike          # 다른 창에서 kubectl -n ecomme
 
 **실행기 환경 변수.** `GATEWAY`(기본 `https://shop.lab`) · `CA_FILE`(데모 CA — 검증을 끄지 않고 이것을 믿는다, `SSL_CERT_FILE`) ·
 `USERS` · `ID_OFFSET`(ops/48 과 같은 번호) · `PASSWORD_FILE`(데모 비밀번호 — k6 의 환경 변수로만 넘기고 명령줄 · 결과 파일에 없다) ·
-`RATE` · `STAGES`(`길이:목표,…`) · `OUT`(결과 폴더) · `PROM_RW`(k6 지표를 Prometheus 로 — obs-vm 의 Prometheus 가
-`--web.enable-remote-write-receiver` 로 떠 있어야 한다).
+`RATE` · `STAGES`(`길이:목표,…`) · `OUT`(결과 폴더) · `PROM_RW`(k6 지표를 Prometheus 로 — obs-vm 를 `docker-compose-observability.lab.yml` 덧씌우기로 띄우면 받는다).
 
 ## 4. 읽는 법 — 무엇을 같이 보나
 
-k6 요약은 "얼마나 느렸나" 만 말한다. **왜** 는 같은 시간의 서버 지표에 있다(Grafana, obs-vm). `PROM_RW` 를 주면 k6 지표가 같은 시간축에 온다.
+k6 요약은 "얼마나 느렸나" 만 말한다. **왜** 는 같은 시간의 서버 지표에 있다(Grafana, obs-vm). 서비스 지표는 클러스터 안 에이전트가 보낸다(그 전에는 데모의 서비스 지표가 관측 VM 에 없었다). `PROM_RW` 를 주면 k6 지표도 같은 시간축에 온다.
 
 | k6 에서 보이는 것 | 같이 볼 것 | 흔한 원인 |
 |---|---|---|
