@@ -1,8 +1,6 @@
 package com.project.catalog_service.batch.config;
 
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -24,20 +22,10 @@ import javax.sql.DataSource;
                          transactionManagerRef = "metaTransactionManager")
 public class MetaDataSourceConfig {
 
-    @Bean(name = "metaDataSourceProperties")    
-    @ConfigurationProperties(prefix = "spring.datasource-meta")
-    public DataSourceProperties metaDataSourceProperties() {
-        return new DataSourceProperties();
-    }
-
-    @Bean(name = "metaDataSource")    
-    public DataSource metaDataSource() {
-        return metaDataSourceProperties().initializeDataSourceBuilder().build();
-    }
-
-    @Bean(name = "metaTransactionManager")    
-    public PlatformTransactionManager metaTransactionManager() {
-        return new DataSourceTransactionManager(metaDataSource());        
+    // 데이터소스(풀)는 CatalogDataSourcePools — yml 의 hikari.* 를 묶는 곳이 거기다
+    @Bean(name = "metaTransactionManager")
+    public PlatformTransactionManager metaTransactionManager(@Qualifier("metaDataSource") DataSource metaDataSource) {
+        return new DataSourceTransactionManager(metaDataSource);
     }
    
 }

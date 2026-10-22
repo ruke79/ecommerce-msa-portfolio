@@ -156,14 +156,19 @@ export function order(data) {
     return;
   }
 
-  ok(send('POST', '/order-service/api/order/payment/bank-transfer/start',
+  const awaiting = ok(send('POST', '/order-service/api/order/payment/bank-transfer/start',
     { trackingId, depositorName: '부하시험' }, 'bank_transfer_start'), 'bank_transfer_start');
   purchase.add(Date.now() - started);
 
   if (!KEEP) {
     // 손님이 입금하지 않고 취소 — 재고 예약을 풀고 입금 대기 한도(3건)를 비운다. 담은 줄도 뺀다(장바구니가 끝없이 길어지지 않게).
-    ok(send('POST', '/order-service/api/order/payment/bank-transfer/cancel', { trackingId }, 'bank_transfer_cancel'),
-      'bank_transfer_cancel');
+    // 취소는 입금 안내가 성공했을 때만 — 실패한 주문은 입금 대기가 아니라 취소도 400 이고, 한 번의 실패가 두 번 세어졌다
+    // (2026-10-18: 상한에 걸린 계정 하나가 start · cancel 을 함께 실패로 올렸다).
+    // [JA] 取消は振込案内が成功したときだけ — 失敗した注文は振込待ちではないので取消も 400 になり、一つの失敗が二回数えられた。
+    if (awaiting) {
+      ok(send('POST', '/order-service/api/order/payment/bank-transfer/cancel', { trackingId }, 'bank_transfer_cancel'),
+        'bank_transfer_cancel');
+    }
     const colorId = info.color && info.color.id;
     ok(send('DELETE', `/cart-service/api/cart/items?productId=${encodeURIComponent(p.id)}&colorId=${encodeURIComponent(colorId)}`
       + `&size=${encodeURIComponent(info.size || '')}`, null, 'cart_remove'), 'cart_remove');

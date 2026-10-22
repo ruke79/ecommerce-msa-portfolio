@@ -75,6 +75,8 @@ spring:
     # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
     # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
     hikari:
+      # 지표 hikaricp_*{pool=…} 에서 두 풀을 가른다. 2026-10-19 전에는 이 hikari.* 가 통째로 적용되지 않았다(CatalogDataSourcePools)
+      pool-name: catalog-data
       maximum-pool-size: ${DB_POOL_SIZE:5}
       minimum-idle: ${DB_POOL_MIN_IDLE:2}
       # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
@@ -105,6 +107,7 @@ spring:
     # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
     # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
     hikari:
+      pool-name: catalog-meta
       maximum-pool-size: ${DB_POOL_SIZE:5}
       minimum-idle: ${DB_POOL_MIN_IDLE:2}
       # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).

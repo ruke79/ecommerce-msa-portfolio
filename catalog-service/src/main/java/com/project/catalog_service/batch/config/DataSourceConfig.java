@@ -1,9 +1,8 @@
 package com.project.catalog_service.batch.config;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -46,27 +45,14 @@ public class DataSourceConfig {
         this.jpaProperties = jpaProperties;
     }
 
-    // Application Data(JPA)를 위한 DataSourceProperties 설정 추가
-    @Bean(name = "dataDataSourceProperties")
-    @ConfigurationProperties(prefix = "spring.datasource-data")
-    public DataSourceProperties dataDataSourceProperties() {
-        return new DataSourceProperties();
-    }
-
-    // Application Data(JPA)를 위한 DataSource 설정
-    @Bean(name = "dataDataSource")
-    @Primary
-    public DataSource dataDataSource() {
-        return dataDataSourceProperties().initializeDataSourceBuilder().build();
-    }
-
+    // 데이터소스(풀)는 CatalogDataSourcePools — yml 의 hikari.* 를 묶는 곳이 거기다
     @Bean(name = "entityManagerFactory")
     @Primary
-    public LocalContainerEntityManagerFactoryBean dataEntityManager() {
+    public LocalContainerEntityManagerFactoryBean dataEntityManager(@Qualifier("dataDataSource") DataSource dataDataSource) {
 
         LocalContainerEntityManagerFactoryBean em = new LocalContainerEntityManagerFactoryBean();
 
-        em.setDataSource(dataDataSource());
+        em.setDataSource(dataDataSource);
         em.setPackagesToScan(new String[]{"com.project.catalog_service.model"});
         em. setJpaVendorAdapter(new HibernateJpaVendorAdapter());
         em.setPersistenceUnitName("dataPersistenceUnit");

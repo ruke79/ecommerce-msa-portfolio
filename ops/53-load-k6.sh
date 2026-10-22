@@ -25,6 +25,8 @@
 #   ./ops/53-load-k6.sh replicas load [수 [서비스…]]  # 레플리카를 미리 늘린다(기본 3 · catalog-service gateway-server) — 실습 클러스터만,
 #                                              # HPA 최소값을 함께 올리고, 노드에 CPU · 메모리 요청 여유가 있는지 먼저 센다
 #   ./ops/53-load-k6.sh replicas default [서비스…]   # 되돌린다(HPA 최소 · 최대는 k8s/70, HPA 없는 서비스는 demo 오버레이 값)
+#   ./ops/53-load-k6.sh replicas max <수> [서비스…]   # HPA 최대만 올린다(최소 · 지금 레플리카 그대로 — 늘리는 것은 HPA) — spike 에서
+#                                              # HPA 가 따라가는 동안을 잴 때. 요청 여유는 최대까지 늘었을 때로 센다. 되돌리기는 replicas default
 #   ./ops/53-load-k6.sh replicas status        # 지금 레플리카 · HPA
 #
 #   ./ops/53-load-k6.sh logs                   # 게이트웨이 파드의 로그를 지금 남긴다(~/.ecommerce-msa/gateway-logs, 폴백 예외별 수) — limits · replicas 가 바꾸기 전에도
@@ -71,7 +73,7 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
@@ -269,6 +271,7 @@ cmd_replicas() {
     local action="${2:-status}" n svcs d
     case "$action" in
         load)    n="${3:-3}"; shift $(( $# < 3 ? $# : 3 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
+        max)     n="${3:-}"; shift $(( $# < 3 ? $# : 3 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
         default) shift $(( $# < 2 ? $# : 2 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
         status)  svcs="$REPLICA_DEFAULT_SVCS" ;;
         *) usage ;;
@@ -278,7 +281,7 @@ cmd_replicas() {
         kubectl -n "$APP_NS" get deploy "$d" >/dev/null 2>&1 || die "그런 Deployment 가 없다: $d"
     done
     # 줄이면 파드가 지워진다(default 는 HPA 가 몇 분 뒤에) — 게이트웨이면 그 전에 로그를 남긴다
-    if [ "$action" != "status" ] && [[ " $svcs " == *" gateway-server "* ]]; then
+    if [ "$action" != "status" ] && [ "$action" != "max" ] && [[ " $svcs " == *" gateway-server "* ]]; then
         save_gateway_logs "replicas-$action"
     fi
     if [ "$action" = "status" ]; then
@@ -302,8 +305,18 @@ cmd_replicas() {
         return 0
     fi
     [[ "$n" =~ ^[1-9]$ ]] || die "레플리카 수는 1 ~ 9"
+    if [ "$action" = "max" ]; then
+        # 최대만 — HPA 가 없으면 늘릴 주체가 없고, 최소보다 작은 최대는 HPA 가 거절한다
+        for d in $svcs; do
+            local mm
+            mm="$(kubectl -n "$APP_NS" get hpa "$d" -o jsonpath='{.spec.minReplicas} {.spec.maxReplicas}' 2>/dev/null || true)"
+            [ -n "$mm" ] || die "$d 에 HPA 가 없다 — max 는 HPA 의 최대만 바꾼다(레플리카를 정하려면 replicas load)"
+            [ "$n" -ge "${mm% *}" ] || die "$d 최대 $n 이 HPA 최소 ${mm% *} 보다 작다"
+        done
+    fi
 
     # 예산 — 늘릴 파드의 요청(CPU · 메모리) ≤ 스케줄 가능한 노드의 할당 가능 − 이미 잡힌 요청
+    # (max 는 HPA 가 최대까지 늘렸을 때 — 그때 Pending 이면 HPA 가 따라가는 것이 아니라 노드가 막는 것을 잰다)
     local need
     need="$(for d in $svcs; do
         printf '%s %s %s\n' "$(kubectl -n "$APP_NS" get deploy "$d" -o jsonpath='{.spec.replicas}')" \
@@ -340,6 +353,15 @@ sys.exit(0 if nodes and add_c <= free_c and add_m <= free_m else 3)
 ' "$n" "$need" || die "노드의 요청 여유가 모자라거나 읽지 못했다 — 늘린 파드가 Pending 으로 남는다(kubectl describe node 의 Allocated resources)"
     kubectl top nodes 2>/dev/null | sed 's/^/    /' || true
     echo "    (요청 여유와 별개로 노드의 실제 CPU 가 이미 높으면 늘려도 같은 코어를 나눠 쓴다 — 위 top 을 함께 본다)"
+
+    if [ "$action" = "max" ]; then
+        # [JA] HPA の最大だけ上げる(最小 · 今のレプリカはそのまま) — spike で HPA が追いつくまでを測る。
+        for d in $svcs; do
+            info "$d HPA 최대 → $n (최소 · 지금 레플리카 그대로 — 늘리는 것은 HPA, $PUBLIC_URL) — 끝나면 ./ops/53-load-k6.sh replicas default"
+            kubectl -n "$APP_NS" patch hpa "$d" --type merge -p "{\"spec\":{\"maxReplicas\":$n}}" >/dev/null
+        done
+        return 0
+    fi
 
     for d in $svcs; do
         local mm max

@@ -111,6 +111,18 @@ class LoadK6ScriptTest {
     }
 
     @Test
+    @DisplayName("🔴 order 는 입금 안내가 성공한 주문만 취소한다 — 실패한 주문의 취소는 400 이라 한 번의 실패가 두 번 세어졌다")
+    void orderCancelsOnlyAwaitingDeposit() throws IOException {
+        String order = read(repoRoot().resolve("ops/k6/order.js"));
+        Matcher start = Pattern.compile("const (\\w+) = ok\\(send\\('POST', '/order-service/api/order/payment/bank-transfer/start'")
+                .matcher(order);
+        assertThat(start.find()).as("입금 안내의 결과를 담는다").isTrue();
+        assertThat(order).as("취소는 그 결과가 참일 때만")
+                .containsPattern("if \\(" + start.group(1) + "\\) \\{\\s*ok\\(send\\('POST', '/order-service/api/order/payment/bank-transfer/cancel'");
+        assertThat(order.split("bank-transfer/cancel", -1)).as("취소를 부르는 곳은 하나").hasSize(2);
+    }
+
+    @Test
     @DisplayName("🔴 데이터 규모 모드의 id 범위 기본값 = ops/44 의 ID_OFFSET 기본값 · 이름 검색어는 생성기 상품 이름에 있다")
     void scaleModeMatchesTheCatalogGenerator() throws IOException {
         Matcher ops44 = Pattern.compile("ID_OFFSET=\"\\$\\{ID_OFFSET:-(\\d+)}\"").matcher(read(repoRoot().resolve("ops/44-bulk-catalog.sh")));
@@ -172,7 +184,7 @@ class LoadK6ScriptTest {
                   *"requests.cpu}"*) printf '250m' ;;
                   *"requests.memory}"*) printf '512Mi' ;;
                   *"get nodes,pods -A -o json"*) printf '%s' "${FAKE_CLUSTER}" ;;
-                  *"get hpa "*"{.spec.minReplicas} {.spec.maxReplicas}"*) printf '2 3' ;;
+                  *"get hpa "*"{.spec.minReplicas} {.spec.maxReplicas}"*) [ -n "${FAKE_NO_HPA:-}" ] || printf '2 3' ;;
                   *"get deploy gateway-server"*) printf '%s' "${FAKE_ENV:-}" ;;
                   *"get hpa catalog-service"*) printf '3' ;;
                   *"get hpa gateway-server"*) echo ok ;;
@@ -569,6 +581,41 @@ class LoadK6ScriptTest {
         assertThat(read(log)).as("k8s/70 의 최소 2 · 최대 3 으로")
                 .contains("patch hpa catalog-service --type merge -p {\"spec\":{\"minReplicas\":2,\"maxReplicas\":3}}")
                 .contains("patch hpa gateway-server --type merge -p {\"spec\":{\"minReplicas\":2,\"maxReplicas\":3}}");
+    }
+
+    @Test
+    @DisplayName("🔴 replicas max — HPA 최대만 올린다(최소 · 레플리카 그대로) · 최대까지 늘었을 때의 요청 여유를 센다 · HPA 가 없거나 최소보다 작으면 거절")
+    void replicasMaxRaisesOnlyHpaMax() throws Exception {
+        // 2026-10-19 spike: 게이트웨이가 HPA 최대 3 에서 CPU 100% — 'replicas load' 는 최소도 올려 HPA 가 따라가는 동안을 잴 수 없었다
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Path log = tmp.resolve("kubectl.log");
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com"), "replicas", "max", "6", "gateway-server");
+        assertThat(prod.code()).isNotZero();
+        assertThat(read(log)).doesNotContain("patch");
+
+        Files.delete(log);
+        Run max = run(Map.of(), "replicas", "max", "6", "gateway-server");
+        assertThat(max.code()).as(max.out()).isZero();
+        assertThat(max.out()).as("2 → 6 까지 늘었을 때 — 파드 4 × 250m")
+                .contains("요청 여유 CPU 1000m · 메모리 4096Mi / 더할 요청 CPU 1000m · 메모리 2048Mi");
+        assertThat(read(log))
+                .contains("patch hpa gateway-server --type merge -p {\"spec\":{\"maxReplicas\":6}}")
+                .as("최소 · 레플리카는 HPA 에 맡긴다").doesNotContain("\"minReplicas\"").doesNotContain(" scale ")
+                .as("파드를 지우지 않으니 로그를 남기지 않는다").doesNotContain("logs gw-");
+
+        Files.delete(log);
+        Run tight = run(Map.of(), "replicas", "max", "7", "gateway-server");
+        assertThat(tight.code()).as("파드 5 × 250m = 1250m > 1000m").isNotZero();
+        assertThat(tight.out()).contains("요청 여유가 모자라거나");
+        assertThat(read(log)).doesNotContain("patch");
+
+        Run noHpa = run(Map.of("FAKE_NO_HPA", "1"), "replicas", "max", "6", "gateway-server");
+        assertThat(noHpa.code()).isNotZero();
+        assertThat(noHpa.out()).contains("HPA 가 없다");
+        Run below = run(Map.of(), "replicas", "max", "1", "gateway-server");
+        assertThat(below.code()).isNotZero();
+        assertThat(below.out()).contains("HPA 최소 2 보다 작다");
+        assertThat(read(log)).doesNotContain("patch");
     }
 
     @Test
