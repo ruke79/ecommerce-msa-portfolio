@@ -809,12 +809,48 @@ check_identity_secrets() {
   먼저 발급하세요: ./ops/38-issue-service-identities.sh   (ops/07 의 CA 로, 값은 출력하지 않는다)"
 }
 
+# ---------------------------------------------------------------- 측정용 예외가 남아 있는가
+#
+# ops/53 은 부하 측정 동안 `kubectl set env` 로 게이트웨이 유입 제한(GATEWAY_RATE_LIMIT_*)과 DB 풀(DB_POOL_SIZE)을
+# 바꾼다. 매니페스트에 없는 env 는 apply 가 지우지 않아(3-way 병합) **배포를 지나 남는다.** 유입 제한이 올라간 채면
+# 스모크 3번(동시 70발 → 429)이 통과할 수 없다 — 멀쩡한 배포가 실패로 판정되고 자동 복귀하고, 복귀한 버전도 같은
+# 이유로 실패한다(2026-10-18 데모 a84e4acba5ff: 버스트 4000 이 남아 "429 미발생"). 그래서 적용하기 **전에** 멈춘다.
+# DB 풀은 스모크를 깨지 않으니 남아 있다고 알리기만 한다.
+# [JA] ops/53 の計測用の上書き(kubectl set env)は apply で消えず配備後も残る。流入制限が上がったままだとスモークの 429 確認が
+#      通らず、正常な配備が失敗と判定されて自動復帰する。適用前に止める(DB プールは警告のみ)。
+check_load_overrides() {
+    local d var found_limit=""
+    for d in $MANAGED_DEPLOYS; do
+        for var in $(kubectl -n "$NS" get deploy "$d" \
+                -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' 2>/dev/null \
+                | grep -E '^(GATEWAY_RATE_LIMIT_[A-Z_]+|DB_POOL_SIZE)$' || true); do
+            # 매니페스트가 선언한 값이면 측정용 예외가 아니다.
+            printf '%s\n' "$RENDERED" | grep -qE "^ *- name: $var\$" && continue
+            case "$var" in
+                GATEWAY_RATE_LIMIT_*) found_limit="$found_limit $d/$var" ;;
+                DB_POOL_SIZE) warn "$d 에 측정용 DB_POOL_SIZE 가 남아 있습니다(배포 뒤에도 남습니다) — 되돌리려면: ./ops/53-load-k6.sh pool default $d" ;;
+            esac
+        done
+    done
+    [ -n "$found_limit" ] || return 0
+    if [ "${NO_SMOKE:-0}" = "1" ]; then
+        warn "측정용 유입 제한이 남아 있습니다:$found_limit (NO_SMOKE=1 — 그대로 배포합니다)"
+        return 0
+    fi
+    die "측정용 유입 제한이 남아 있습니다:$found_limit
+  이대로면 스모크의 429 확인이 실패해 이 배포가 자동 복귀합니다. 먼저 되돌리세요:
+    ./ops/53-load-k6.sh limits default
+  (측정을 이어 가려면 배포한 뒤 다시: ./ops/53-load-k6.sh limits load)"
+}
+
 # ---------------------------------------------------------------- 실행
 
 # --config-only 는 지금 도는 이미지를 그대로 쓰므로 레지스트리 확인이 필요 없다
 # (태그가 레지스트리에서 지워졌어도 노드에는 남아 있다).
 [ "$CONFIG_ONLY" = "1" ] || verify_images
 check_identity_secrets
+# --config-only 는 스모크를 돌리지 않는다.
+[ "$CONFIG_ONLY" = "1" ] || check_load_overrides
 
 if [ "$CONFIG_ONLY" = "1" ]; then
     log "설정 반영 — $ENVIRONMENT (이미지 $VERSION 유지)"

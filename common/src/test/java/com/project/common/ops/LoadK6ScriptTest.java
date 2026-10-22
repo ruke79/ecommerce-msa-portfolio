@@ -177,6 +177,15 @@ class LoadK6ScriptTest {
                   *) : ;;
                 esac
                 """);
+        // 가짜 Prometheus 질의 API — 측정 중 최대(max_over_time)와 지금 값을 따로 돌려준다. FAKE_PROM_FAIL=1 이면 응답 없음
+        exe(bin.resolve("curl"), """
+                echo "curl $*" >> "$FAKE/curl.log"
+                [ "${FAKE_PROM_FAIL:-0}" = "1" ] && exit 7
+                case "$*" in
+                  *max_over_time*) printf '%s' "${FAKE_PROM_MAX:-}" ;;
+                  *) printf '%s' "${FAKE_PROM_UP:-}" ;;
+                esac
+                """);
         Path pw = tmp.resolve("pw");
         Files.writeString(pw, "S3cret-demo-pw!9");
         Path ca = tmp.resolve("ca.crt");
@@ -316,6 +325,52 @@ class LoadK6ScriptTest {
             assertThat(listed).as(scenario + " 의 엔드포인트별 오류 목록 = 부르는 이름").isEqualTo(used);
         }
         assertThat(read(repoRoot().resolve("ops/k6/spike.js"))).contains("...errorThresholds(");
+    }
+
+    private static String promVector(String... serviceCount) {
+        List<String> rows = new ArrayList<>();
+        for (int i = 0; i < serviceCount.length; i += 2) {
+            rows.add("{\"metric\":{\"service\":\"" + serviceCount[i] + "\"},\"value\":[1760000000,\"" + serviceCount[i + 1] + "\"]}");
+        }
+        return "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[" + String.join(",", rows) + "]}}";
+    }
+
+    @Test
+    @DisplayName("🔴 레플리카를 Prometheus 에서 — 시작 · 측정 중 최대 · 끝을 meta.txt 에, report 가 보인다(kubectl 없는 loadgen)")
+    void replicasFromPrometheusReachMetaAndReport() throws Exception {
+        // 🐛 2026-10-18: 0.17% 회차가 레플리카 2 인지 3 인지 meta.txt 로는 알 수 없었다 — HPA(2 ~ 3)가 측정 중에 늘리고, loadgen 에는 kubectl 이 없다
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Map<String, String> env = Map.of("GATEWAY", "https://shop.lab", "PROM_RW", "http://obs-vm:9090/api/v1/write",
+                "FAKE_PROM_UP", promVector("cart-service", "1", "catalog-service", "2", "gateway-server", "2"),
+                "FAKE_PROM_MAX", promVector("cart-service", "1", "catalog-service", "3", "gateway-server", "3"));
+        Run r = run(env, "browse");
+        assertThat(r.code()).as(r.out()).isZero();
+        String curl = read(tmp.resolve("curl.log"));
+        assertThat(curl).as("PROM_RW(…/api/v1/write) 에서 질의 주소를 만든다").contains("http://obs-vm:9090/api/v1/query")
+                .contains("up{environment=\"demo\"} == 1").contains("max_over_time(").contains("[60s:15s]");
+        Path meta;
+        try (Stream<Path> s = Files.walk(tmp.resolve("results"))) {
+            meta = s.filter(p -> p.getFileName().toString().equals("meta.txt")).findFirst().orElseThrow();
+        }
+        assertThat(read(meta)).contains("replicas_start=cart-service=1 catalog-service=2 gateway-server=2")
+                .contains("replicas_max=cart-service=1 catalog-service=3 gateway-server=3")
+                .contains("replicas_end=cart-service=1 catalog-service=2 gateway-server=2")
+                .contains("exit=0");
+
+        Run rep = run(Map.of(), "report");
+        assertThat(rep.code()).as(rep.out()).isZero();
+        assertThat(rep.out()).contains("레플리카(시작 → 측정 중 최대 → 끝): catalog-service 2 → 3 → 2 · gateway-server 2 → 3 → 2 · 나머지 1개는 1")
+                .containsPattern("browse-\\S+ .* 3·3  통과");
+
+        Files.delete(tmp.resolve("curl.log"));
+        Run down = run(Map.of("GATEWAY", "https://shop.lab", "PROM", "http://obs-vm:9090", "FAKE_PROM_FAIL", "1"), "browse");
+        assertThat(down.code()).as("Prometheus 가 없어도 측정은 k6 의 종료 코드로 끝난다").isZero();
+        assertThat(down.out()).contains("레플리카를 Prometheus(http://obs-vm:9090)에서 읽지 못했다");
+        assertThat(run(Map.of(), "report").out()).contains("레플리카: Prometheus(http://obs-vm:9090)에서 읽지 못했다");
+
+        Run bad = run(Map.of("GATEWAY", "https://shop.lab", "PROM", "http://obs-vm:9090", "PROM_ENV", "demo\"} or vector(9) #"), "browse");
+        assertThat(bad.code()).isNotZero();
+        assertThat(bad.out()).contains("PROM_ENV 는");
     }
 
     @Test

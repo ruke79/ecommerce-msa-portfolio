@@ -45,7 +45,8 @@
 #   PRODUCTS  PRODUCT_ID_OFFSET=1000000  DEEP_PAGES=50  NAME_SEARCH=0.2   # browse · spike 의 데이터 규모 모드(docs/83 §2.1)
 #   OUT=./load-results              # 결과 폴더 — <시나리오>-<UTC 시각>/ 아래 summary.json · summary.txt · meta.txt
 #   PROM_RW=http://<obs-vm>:9090/api/v1/write   # 주면 k6 지표를 Prometheus 로도(그라파나에서 서버 지표와 같은 시간축)
-#   K6=k6                           # k6 실행 파일(https://grafana.com/docs/k6/latest/set-up/install-k6/)
+#   PROM=http://<obs-vm>:9090  PROM_ENV=demo     # 레플리카(시작 · 측정 중 최대 · 끝)를 Prometheus 에서 읽어 meta.txt 에(없으면 PROM_RW 에서)
+#   K6=k6                          # k6 실행 파일(https://grafana.com/docs/k6/latest/set-up/install-k6/)
 #
 # 🔒 데모 계정은 모두 같은 비밀번호다 — 파일에서 읽어 k6 의 환경 변수로만 넘긴다(ps 에 보이는 명령줄 인자가 아니다).
 #    결과 파일에는 비밀번호 · 토큰을 쓰지 않는다.
@@ -68,7 +69,7 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
@@ -338,7 +339,7 @@ def meta(d):
             if line.startswith(("deploy ", "node ", "hpa ")):
                 extra.append(line)
                 continue
-            if line.startswith(("gateway_limits=", "db_pool=")):   # 값 안에 = 이 있다(이름=값 여럿)
+            if line.startswith(("gateway_limits=", "db_pool=", "replicas_")):   # 값 안에 = 이 있다(이름=값 여럿)
                 k, v = line.split("=", 1)
                 m[k] = v.strip()
                 continue
@@ -370,19 +371,40 @@ def num(x, digits=0):
 def pct(x):
     return "-" if x is None else f"{x * 100:.2f}%"
 
+KEY = ("catalog-service", "gateway-server")   # 측정에서 늘리는 둘 — 늘 보인다
+
+def counts(v):
+    return dict(x.split("=", 1) for x in (v or "").split() if "=" in x)
+
+def replicas(m, extra):
+    """서비스 → (시작, 최대, 끝). Prometheus(replicas_*) 가 없으면 kubectl 의 deploy 줄(시작만)."""
+    st, mx, en = (counts(m.get(k)) for k in ("replicas_start", "replicas_max", "replicas_end"))
+    if st or mx or en:
+        return "Prometheus", {s: (st.get(s, "?"), mx.get(s, "?"), en.get(s, "?")) for s in sorted({*st, *mx, *en})}
+    dep = {}
+    for line in extra:
+        mm = re.match(r"deploy (\S+) replicas=(\d+)", line)
+        if mm:
+            dep[mm.group(1)] = (mm.group(2),)
+    return ("kubectl", dep) if dep else (None, {})
+
+def key_max(m, extra):   # 한 줄 표의 "catalog·gateway" 최대(없으면 -)
+    _, r = replicas(m, extra)
+    return "·".join(r[k][1 if len(r[k]) > 1 else 0] if k in r else "?" for k in KEY) if r else "-"
+
 def verdict(m):
     return {"0": "통과", "99": "넘음"}.get(m.get("exit"), f"exit={m.get('exit', '?')}")
 
 def overview():
     print(" ".join([L("회차", 34), L("커밋", 9), R("도착률", 6), R("상품", 10), R("요청/초", 8), R("실패", 7),
-                    R("p95", 7), R("p99", 7)]) + "  임계값")
+                    R("p95", 7), R("p99", 7), R("레플리카", 8)]) + "  임계값")
     for d in runs:
-        m, _ = meta(d)
+        m, extra = meta(d)
         s = summary(d)
         dur = s.get("http_req_duration", {})
         print(" ".join([L(d, 34), L(m.get("git", "?"), 9), R(m.get("rate", "?"), 6), R(m.get("products", "?")[:10], 10),
                         R(num(s.get("http_reqs", {}).get("rate"), 1), 8), R(pct(s.get("http_req_failed", {}).get("value")), 7),
-                        R(num(dur.get("p(95)")), 7), R(num(dur.get("p(99)")), 7)]) + f"  {verdict(m)}")
+                        R(num(dur.get("p(95)")), 7), R(num(dur.get("p(99)")), 7), R(key_max(m, extra), 8)]) + f"  {verdict(m)}")
 
 def detail(d):
     m, extra = meta(d)
@@ -397,6 +419,20 @@ def detail(d):
         print("  게이트웨이 유입 제한: 기록 없음(이 기계에 kubectl 이 없다 — 429 가 0 이면 올라가 있었다)")
     else:
         print(f"  게이트웨이 유입 제한: {m['gateway_limits'] or '기본값(20 · 40)'}")
+    src, r = replicas(m, extra)
+    if src == "Prometheus":
+        shown = [s for s, v in r.items() if s in KEY or any(x != "1" for x in v)]
+        rest = len(r) - len(shown)
+        print("  레플리카(시작 → 측정 중 최대 → 끝): " + " · ".join(f"{s} {' → '.join(r[s])}" for s in shown)
+              + (f" · 나머지 {rest}개는 1" if rest else ""))
+    elif src == "kubectl":
+        shown = [s for s, v in r.items() if s in KEY or v[0] != "1"]
+        print("  레플리카(시작, kubectl — 측정 중 HPA 가 늘린 것은 모른다): " + " · ".join(f"{s} {r[s][0]}" for s in shown))
+    for k, v in m.items():
+        if k == "replicas_note":
+            print(f"  레플리카: {v}")
+    if src is None and "replicas_note" not in m:
+        print("  레플리카: 기록 없음(PROM=http://<obs-vm>:9090 을 주면 Prometheus 에서 읽는다)")
     if not s:
         print("  summary.json 이 없다 — k6 가 끝까지 돌지 못했다(summary.txt 를 본다)")
         return
@@ -488,6 +524,34 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 dir="$OUT/$SCENARIO-$stamp"
 mkdir -p "$dir"
 
+# 레플리카 — Prometheus 에서 읽는다. loadgen 에는 kubectl 이 없어 아래 deploy · hpa 줄이 비고, HPA 가 측정 중에 늘린 것은
+# kubectl 로도 시작 시점만 보인다(2026-10-18: 0.17% 회차가 레플리카 2 인지 3 인지 CSV 를 다시 뽑아야 알았다). 파드 수 = 그 서비스의
+# 살아 있는 스크레이프 대상 수(up == 1). 시작 · 측정 중 최대(15초 간격) · 끝을 남긴다.
+# [JA] レプリカ数を Prometheus から読む — loadgen には kubectl がなく、HPA が計測中に増やした数も残らなかった。開始 · 計測中の最大 · 終了。
+PROM="${PROM:-${PROM_RW:-}}"
+PROM="${PROM%/api/v1/write}"
+PROM_ENV="${PROM_ENV:-demo}"
+[[ "$PROM_ENV" =~ ^[a-z0-9-]+$ ]] || die "PROM_ENV 는 영소문자 · 숫자 · - 만"
+UP="count by (service) (up{environment=\"$PROM_ENV\"} == 1)"
+prom_counts() {   # prom_counts <PromQL> → "서비스=수 …" (응답이 없거나 결과가 비면 실패)
+    curl -fsS --max-time 10 -G "$PROM/api/v1/query" --data-urlencode "query=$1" 2>/dev/null | python3 -I -c '
+import json, sys
+r = json.load(sys.stdin)
+rows = sorted((x["metric"].get("service", "?"), round(float(x["value"][1]))) for x in r["data"]["result"]) if r.get("status") == "success" else []
+if not rows:
+    sys.exit(1)
+print(" ".join("%s=%d" % row for row in rows))'
+}
+replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
+    local v
+    if v="$(prom_counts "$2")"; then
+        echo "$1=$v"
+    else
+        warn "레플리카를 Prometheus($PROM)에서 읽지 못했다 — up{environment=\"$PROM_ENV\"} 가 있는지"
+        echo "replicas_note=Prometheus($PROM)에서 읽지 못했다($1)"
+    fi
+}
+
 # 그때의 조건 — 전후 비교의 근거. 비밀은 없다(이미지 판 · 레플리카 · 노드).
 {
     echo "scenario=$SCENARIO"
@@ -508,6 +572,7 @@ mkdir -p "$dir"
     else
         echo "kubectl=없음(클러스터 정보 없이)"
     fi
+    [ -z "$PROM" ] || replicas_line replicas_start "$UP"
 } > "$dir/meta.txt"
 
 args=(run --summary-export "$dir/summary.json"
@@ -531,10 +596,17 @@ args+=("$K6_DIR/$SCENARIO.js")
 
 info "시나리오 $SCENARIO → $GATEWAY  (결과: $dir)"
 # 종료 코드는 tee 가 아니라 k6 의 것 — 임계값(thresholds)을 넘으면 99
+t0="$(date +%s)"
 set +e
 "$K6" "${args[@]}" 2>&1 | tee "$dir/summary.txt"
 rc="${PIPESTATUS[0]}"
 set -e
+if [ -n "$PROM" ]; then
+    secs=$(( $(date +%s) - t0 + 30 ))   # 마지막 스크레이프까지
+    [ "$secs" -ge 60 ] || secs=60
+    { replicas_line replicas_max "max_over_time(($UP)[${secs}s:15s])"
+      replicas_line replicas_end "$UP"; } >> "$dir/meta.txt"
+fi
 echo "exit=$rc" >> "$dir/meta.txt"
 case "$rc" in
     0)  info "임계값 통과 — $dir" ;;
