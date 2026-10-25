@@ -2968,6 +2968,48 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-105: 서비스 메서드마다의 실행 시간 로그 애스펙트는 기본 끔 — {@code @ConditionalOnProperty(name = "EXECUTION_TIME_LOG_ENABLED",
+     * havingValue = "true")}(값이 없으면 빈이 없다), 매니페스트는 그 변수를 켜 두지 않는다.
+     *
+     * <p>2026-10-23 실습 CPU 프로파일(docs/83 §5): 일곱 서비스에 똑같이 있던 이 애스펙트가 서비스 패키지의 모든 메서드 호출마다 INFO 한 줄을
+     * 써 catalog CPU 의 7.9% 였다. 실행 시간은 추적(B-72) · HTTP 지표에 남는다.
+     *
+     * <p>[JA] サービスメソッドごとの実行時間ログのアスペクトは既定オフ — 全メソッド呼び出しで INFO を書き catalog CPU の 7.9% だった。
+     */
+    @Test
+    @DisplayName("B-105: 메서드마다의 실행 시간 로그(애스펙트)는 기본 끔 — EXECUTION_TIME_LOG_ENABLED=true 일 때만 빈이 생긴다")
+    void executionTimeLoggingAspectsAreOptIn() throws IOException {
+        List<String> offenders = new java.util.ArrayList<>();
+        int seen = 0;
+        try (Stream<Path> files = Files.walk(repoRoot(), 12)) {
+            for (Path f : files.filter(Files::isRegularFile)
+                    .filter(f -> f.toString().replace('\\', '/').matches(".*/src/main/java/.*\\.java"))
+                    .filter(f -> !f.toString().contains("/build/")).toList()) {
+                String src = Files.readString(f, StandardCharsets.UTF_8);
+                if (!src.contains("@Aspect") || !src.contains("executed in")) {
+                    continue;
+                }
+                seen++;
+                if (!src.contains("@ConditionalOnProperty(name = \"EXECUTION_TIME_LOG_ENABLED\", havingValue = \"true\")")
+                        || src.contains("matchIfMissing = true")) {
+                    offenders.add(repoRoot().relativize(f) + " — 기본으로 켜져 있다(모든 서비스 메서드 호출마다 로그 한 줄)");
+                }
+            }
+        }
+        for (String dir : List.of("k8s", "k8s-overlays")) {
+            try (Stream<Path> files = Files.walk(repoRoot().resolve(dir))) {
+                for (Path f : files.filter(Files::isRegularFile).filter(f -> f.toString().matches(".*\\.ya?ml")).toList()) {
+                    if (Files.readString(f, StandardCharsets.UTF_8).contains("EXECUTION_TIME_LOG_ENABLED")) {
+                        offenders.add(repoRoot().relativize(f) + " — 매니페스트가 실행 시간 로그를 켜 둔다");
+                    }
+                }
+            }
+        }
+        assertThat(seen).as("실행 시간 로그 애스펙트(일곱 서비스)").isGreaterThanOrEqualTo(7);
+        assertThat(offenders).isEmpty();
+    }
+
+    /**
      * B-104: Hikari 커넥션 누수 감지는 기본 끔 — 모든 서비스 yml 의 {@code leak-detection-threshold} 는 {@code ${DB_LEAK_DETECTION_MS:0}},
      * 매니페스트(k8s · 오버레이)는 그 변수를 켜 두지 않는다. 의심될 때만 그 파드에 잠깐 켠다.
      *
