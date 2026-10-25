@@ -11,6 +11,7 @@ import { useAuthContext } from "store/AuthContext";
 import { useFetchOrder } from "hook/hooks";
 import DeliveryTracker from "components/delivery/DeliveryTracker";
 import StripeReturn from "components/order/StripeReturn";
+import PortOneReturn from "components/order/PortOneReturn";
 import RefundButton from "components/order/RefundButton";
 import ConfirmPurchaseButton from "components/order/ConfirmPurchaseButton";
 import OrderProgress from "components/order/OrderProgress";
@@ -121,6 +122,9 @@ const OrderPage = () => {
                         ?stripe=success&session_id=… 가 남은 채 다시 떠서 확인 → 완료 →
                         새로고침이 무한히 반복됐다. 주문만 다시 읽는다. */}
                     <StripeReturn order={orderData} onPaid={startSettling} />
+                    {/* 포트원 V2 결제창이 리디렉션으로 끝나 돌아온 경우(모바일 등 — KG이니시스). 결제 id 하나로 확인하고,
+                        결제됐으면 확정을 기다린다 · 가상계좌 발급이면 주문만 다시 읽는다(PortOneReturn 주석). */}
+                    <PortOneReturn order={orderData} onConfirmed={onOrderChanged} />
                     { (orderData.orderStatus === "NOT_PROCESSED" || orderData.orderStatus === "UNPAID" ) && !settling
                     && (<Payment order={orderData} setOrder={onOrderChanged} setLoading={setLoading} profile={false} />)}
 

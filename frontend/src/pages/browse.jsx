@@ -244,8 +244,15 @@ const Browse = ({ }) => {
      * 않는다 — 카테고리를 고른다고 검색어·색상·브랜드가 지워지면 안 된다.
      */
     const filter = (changes) => {
-        applyFilter(searchParams, changes);
-        setSearchParams(searchParams);
+        // 🐛 2026-10-24 운영: "전체 해제하면 푸드만, 푸드를 누르면 책만" — 화면이 늘 **바로 앞 조건의 결과**를 그렸다. 예전에는
+        //    useSearchParams() 의 객체를 제자리에서 바꿨다. 그 객체는 지금 주소의 것이라, 이동(loader)이 끝나기 전 다시 그릴 때
+        //    queryKey 는 새 조건인데 initialData(useLoaderData)는 아직 앞 조건의 결과 — 새 키에 앞 결과가 담겨 staleTime 동안 그대로였다.
+        //    사본을 바꿔 넘긴다(browse.navigation.test.jsx).
+        // [JA] 以前は useSearchParams() のオブジェクトをその場で書き換えていた。遷移完了前の再描画でクエリキーは新条件、initialData は
+        //      前の条件の結果 — 新しいキーに前の結果が入った。コピーを書き換えて渡す。
+        const next = new URLSearchParams(searchParams);
+        applyFilter(next, changes);
+        setSearchParams(next);
     };
 
     const searchHandler = (search) => {

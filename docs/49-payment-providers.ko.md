@@ -436,6 +436,25 @@ V7 이 `total · total_before_discount · shipping_price · tax_price` 넷을 �
    주문 참조는 `customData` 로 실어 보낸다 — 서버가 포트원에 조회해서 거기서 읽는다.
    확인: 브라우저가 `/payment/portone/confirm` 뒤 "결제 완료", 콘솔 → 결제내역에 `PAID`,
    웹훅 로그에 200.
+   **리디렉션 복귀(2026-10-24)**: 모바일(그리고 일부 결제 수단은 PC 도)은 결제창을 iframe 이 아니라 페이지 이동으로
+   띄운다 — 그때 `redirectUrl` 이 없으면 "리디렉션 방식으로 결제창을 호출하려면 리디렉션 URL은 필수 입력입니다" 로 창이
+   열리지 않는다(운영 KG이니시스 채널에서 드러남). 화면은 이제 지금 주문 화면 주소(쿼리 · 해시 없이,
+   `portOneRedirectUrl`)를 싣고, 돌아오면 `PortOneReturn` 이 쿼리의 `paymentId` 하나로 같은 `/confirm` 을 부른다
+   (실패면 `code` · `message` — 확인하지 않고 이유만, 쿼리는 지운다). `forceRedirect` 는 켜지 않는다 — PC 의 iframe
+   은 예전처럼 반환값으로 끝난다. KG이니시스 PC 결제는 구매자 이름 · **전화번호** · 이메일이 필수라 전화번호는 그 주문의
+   배송지 것을 싣는다(모바일은 선택).
+   **구매자 이름(2026-10-24)**: 예전에는 `user.username` 을 실었는데 로그인 사용자 객체는 JWT 의 `{ email, userId, roles }`
+   뿐이라 이름이 언제나 비었다("이니시스 일본 결제의 경우 구매자 이름은 필수 입력입니다"). 이제 그 주문 배송지의
+   성 · 이름을 `fullName` 하나로(`portOneCustomer`) — 이 앱의 `firstname` 은 **성**이라 포트원의 `firstName`(이름) ·
+   `lastName`(성)으로 나누면 뒤바뀐다. 배송지에 이름이 없으면 이메일 앞부분.
+   ⚠️ **채널이 "KG이니시스 일본결제" 면** 통화는 **JPY 만**(`CURRENCY_JPY`)이고 결제 수단은 카드 · 편의점 · 간편결제다
+   (가상계좌 없음 — 화면은 청구 통화가 KRW 가 아니면 가상계좌를 숨기고 카드로 연다, `portOneSupportsVirtualAccount`; 편의점 결제는 구매자 후리가나가 필수인데 배송지에 그 칸이 없어 아직 없다). 국내 KG이니시스(KRW · 카드 · 가상계좌)와 다른 채널이다.
+   일본결제를 쓰면 `PORTONE_CURRENCY: "JPY"` 를 `k8s-overlays/local/patch-local-endpoints.yaml` 에 두고
+   `./ops/28-deploy.sh local --config-only --restart order-service` — 청구 통화는 주문을 만들 때 정해지므로 **새 주문**부터 JPY 다.
+   **상점 정보(CBT 유형 JPPG, 2026-10-24)**: 이 채널은 결제창에 `storeDetails`(상점명 · 가나 · 영문 · 약어 · 담당 · 이메일 ·
+   연락처 · 영업시간)가 모두 필수다. 상점명 · 연락처는 화면 코드(`util/portone.js` 의 `PORTONE_JP_STORE` — 「アマス」 ·
+   `Amasu` · `0810700000001`(숫자만) · 00:00 ~ 23:59), 이메일은 빌드 변수 `REACT_APP_PORTONE_STORE_EMAIL`(공개 값 — 저장소
+   Variables · `ops/frontend.env`). JPY 청구일 때만 싣는다. 결제 수단 문구는 일본결제 기준(「クレジットカード（KG イニシス · PortOne）」).
 
 > V1 과 달리 웹훅에 **서명이 있다**(`PortOneV2WebhookVerifier`, Standard Webhooks —
 > `webhook-id` · `webhook-timestamp` · `webhook-signature`, 키는 `whsec_` 뒤 base64 를

@@ -436,6 +436,24 @@ V7 が `total · total_before_discount · shipping_price · tax_price` の4つ�
    注文参照は `customData` に載せて送る — サーバーが PortOne に照会してそこから読む。
    確認: ブラウザが `/payment/portone/confirm` の後に「決済完了」、コンソール → 決済履歴に `PAID`、
    Webhook のログに 200。
+   **リダイレクトからの戻り（2026-10-24）**: モバイル（一部の決済手段は PC も）は決済画面を iframe ではなくページ遷移で
+   出す — そのとき `redirectUrl` がないと「リダイレクト方式で決済画面を呼び出すにはリダイレクト URL が必須です」で画面が
+   開かない（本番の KG イニシスチャネルで判明）。画面は今の注文画面の URL（クエリ · ハッシュなし、`portOneRedirectUrl`）を
+   載せ、戻ると `PortOneReturn` がクエリの `paymentId` 一つで同じ `/confirm` を呼ぶ（失敗なら `code` · `message` —
+   確認せず理由だけ、クエリは消す）。`forceRedirect` は付けない — PC の iframe は従来どおり戻り値で終わる。KG イニシスの
+   PC 決済は購入者の名前 · **電話番号** · メールが必須なので、電話番号はその注文の配送先のものを載せる（モバイルは任意）。
+   **購入者名（2026-10-24）**: 以前は `user.username` を載せていたが、ログイン利用者オブジェクトは JWT の `{ email, userId, roles }`
+   だけで名前は常に空だった（「イニシス日本決済の場合、購入者名は必須入力です」）。今はその注文の配送先の姓 · 名を `fullName`
+   一つで（`portOneCustomer`）— このアプリの `firstname` は**姓**なので、PortOne の `firstName`（名）· `lastName`（姓）に分けると
+   入れ替わる。配送先に名前がなければメールの前半。
+   ⚠️ **チャネルが「KG イニシス日本決済」なら**通貨は **JPY のみ**（`CURRENCY_JPY`）、決済手段はカード · コンビニ · 簡単決済
+   （バーチャル口座なし — 画面は請求通貨が KRW でなければバーチャル口座を隠してカードで開く、`portOneSupportsVirtualAccount`。コンビニ決済は購入者のフリガナが必須だが配送先にその欄がないのでまだない）。国内 KG イニシス（KRW · カード · バーチャル口座）とは
+   別のチャネル。日本決済を使うなら `PORTONE_CURRENCY: "JPY"` を `k8s-overlays/local/patch-local-endpoints.yaml` に置き
+   `./ops/28-deploy.sh local --config-only --restart order-service` — 請求通貨は注文作成時に決まるので**新しい注文**から JPY。
+   **店舗情報（CBT 種別 JPPG、2026-10-24）**: このチャネルは決済画面に `storeDetails`（店舗名 · カナ · 英字 · 略称 · 担当 · メール ·
+   連絡先 · 営業時間）がすべて必須。店舗名 · 連絡先は画面コード（`util/portone.js` の `PORTONE_JP_STORE` — 「アマス」 ·
+   `Amasu` · `0810700000001`（数字のみ）· 00:00 〜 23:59）、メールはビルド変数 `REACT_APP_PORTONE_STORE_EMAIL`（公開値 — リポジトリ
+   Variables · `ops/frontend.env`）。JPY 請求のときだけ載せる。決済手段の文言は日本決済基準（「クレジットカード（KG イニシス · PortOne）」）。
 
 > V1 と違い、Webhook に **署名がある**（`PortOneV2WebhookVerifier`、Standard Webhooks —
 > `webhook-id` · `webhook-timestamp` · `webhook-signature`、キーは `whsec_` の後ろの base64 を

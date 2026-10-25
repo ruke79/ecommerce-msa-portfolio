@@ -17,7 +17,11 @@ jest.mock("store/AuthContext", () => ({ useAuthContext: () => ({ user: { email: 
 jest.mock("util/api", () => ({ postRequest: jest.fn() }));
 jest.mock("util/portone", () => ({
     loadPortOne: jest.fn(), loadPortOneV2: jest.fn(), newPortOnePaymentId: () => "payment-1",
-    portOneVersion: () => "v1",
+    portOneVersion: jest.fn(() => "v1"),
+    portOneRedirectUrl: () => "https://shop.example/order/7",
+    portOneCustomer: jest.requireActual("util/portone").portOneCustomer,
+    portOneSupportsVirtualAccount: jest.requireActual("util/portone").portOneSupportsVirtualAccount,
+    portOneStoreDetails: jest.requireActual("util/portone").portOneStoreDetails,
 }));
 jest.mock("components/order/BankTransfer", () => () => null);
 
@@ -105,7 +109,7 @@ describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
         postRequest.mockRejectedValue({ response: { status: 400, data: { message: "재고가 부족해 결제를 시작하지 못했습니다: 바지(L) 품절. 장바구니에서 수량을 조정해 주세요." } } });
         render(<Payment order={order("portone")} setOrder={jest.fn()} setLoading={jest.fn()} />);
 
-        fireEvent.click(screen.getByRole("button", { name: /국내 결제/ }));
+        fireEvent.click(screen.getByRole("button", { name: /신용카드로 결제하기/ }));
 
         expect(await screen.findByRole("alert")).toHaveTextContent("바지(L) 품절");
         expect(loadPortOne).not.toHaveBeenCalled();
@@ -114,7 +118,88 @@ describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
 
     it("포트원 버튼도 처음부터 눌 수 있다", () => {
         render(<Payment order={order("portone")} setOrder={jest.fn()} setLoading={jest.fn()} />);
-        expect(screen.getByRole("button", { name: /국내 결제/ })).toBeEnabled();
+        expect(screen.getByRole("button", { name: /신용카드로 결제하기/ })).toBeEnabled();
+    });
+});
+
+/**
+ * 🐛 2026-10-24 운영(KG이니시스 V2): "리디렉션 방식으로 결제창을 호출하려면 리디렉션 URL은 필수 입력입니다" 로 결제창이 열리지
+ * 않았다. 모바일 등은 결제창을 페이지 이동으로 띄우므로 돌아올 주소가 있어야 하고, KG이니시스 PC 결제는 구매자 전화번호가 필수다.
+ *
+ * <p>[JA] KG イニシス V2 で「リダイレクト URL は必須」で決済画面が開かなかった。戻り先と購入者の電話番号を渡す。
+ */
+describe("주문 결제 화면 — 포트원 V2 결제창 요청", () => {
+    it("🔴 돌아올 주소(이 주문 화면)와 배송지의 구매자 이름 · 전화번호를 함께 보낸다", async () => {
+        const portone = require("util/portone");
+        portone.portOneVersion.mockReturnValue("v2");
+        const prev = process.env.REACT_APP_PORTONE_CHANNEL_KEY;
+        process.env.REACT_APP_PORTONE_CHANNEL_KEY = "channel-key-test";
+        const requestPayment = jest.fn().mockResolvedValue({ code: "FAILURE_TYPE_PG", message: "사용자가 결제를 취소하셨습니다" });
+        portone.loadPortOneV2.mockResolvedValue({ requestPayment });
+        postRequest.mockResolvedValue({ data: {} });
+        try {
+            render(<Payment order={{ ...order("portone"),
+                    shippingAddress: { firstname: "山田", lastname: "太郎", phoneNumber: "010-1234-5678" } }}
+                setOrder={jest.fn()} setLoading={jest.fn()} />);
+
+            fireEvent.click(screen.getByRole("button", { name: /신용카드로 결제하기/ }));
+
+            await waitFor(() => expect(requestPayment).toHaveBeenCalledTimes(1));
+            const req = requestPayment.mock.calls[0][0];
+            expect(req.redirectUrl).toBe("https://shop.example/order/7");
+            expect(req.forceRedirect).toBeUndefined();
+            expect(req.storeDetails).toBeUndefined();   // 상점 정보는 JPY(일본결제)만
+            // 🐛 이름이 언제나 비어 있었다 — 로그인 사용자 객체에는 이름이 없다(JWT). 배송지의 성 · 이름을 싣는다.
+            expect(req.customer).toEqual({ email: "u@example.com", fullName: "山田 太郎", phoneNumber: "010-1234-5678" });
+        } finally {
+            portone.portOneVersion.mockReturnValue("v1");
+            process.env.REACT_APP_PORTONE_CHANNEL_KEY = prev;
+        }
+    });
+});
+
+/**
+ * 🐛 2026-10-24: 운영 채널이 이니시스 일본결제(JPY 만 · 가상계좌 없음)다 — '가상계좌' 를 고르면 결제창이 열리지 않는다.
+ *
+ * <p>[JA] 本番チャネルはイニシス日本決済(JPY のみ · バーチャル口座なし)— 「バーチャル口座」を選ぶと決済画面が開かない。
+ */
+describe("주문 결제 화면 — 포트원 결제 수단은 청구 통화를 따른다", () => {
+    const jpy = { ...order("portone"), currency: "JPY", chargedAmount: 9000 };
+    const krw = { ...order("portone"), currency: "KRW", chargedAmount: 81000 };
+
+    it("🔴 JPY(이니시스 일본결제) — 가상계좌를 고를 수 없고 카드로 열며, 상점 정보를 싣는다", async () => {
+        const portone = require("util/portone");
+        portone.portOneVersion.mockReturnValue("v2");
+        const prev = process.env.REACT_APP_PORTONE_CHANNEL_KEY;
+        const prevEmail = process.env.REACT_APP_PORTONE_STORE_EMAIL;
+        process.env.REACT_APP_PORTONE_CHANNEL_KEY = "channel-key-test";
+        process.env.REACT_APP_PORTONE_STORE_EMAIL = "store@example.com";
+        const requestPayment = jest.fn().mockResolvedValue({ code: "FAILURE_TYPE_PG", message: "x" });
+        portone.loadPortOneV2.mockResolvedValue({ requestPayment });
+        postRequest.mockResolvedValue({ data: {} });
+        try {
+            render(<Payment order={jpy} setOrder={jest.fn()} setLoading={jest.fn()} />);
+            expect(screen.queryByRole("radio", { name: "가상계좌 (무통장입금)" })).not.toBeInTheDocument();
+
+            fireEvent.click(screen.getByRole("button", { name: /신용카드로 결제하기/ }));
+            await waitFor(() => expect(requestPayment).toHaveBeenCalledTimes(1));
+            expect(requestPayment.mock.calls[0][0]).toEqual(expect.objectContaining({
+                payMethod: "CARD", currency: "CURRENCY_JPY", totalAmount: 9000 }));
+            expect(requestPayment.mock.calls[0][0].virtualAccount).toBeUndefined();
+            // 🔴 이니시스 일본결제(JPPG)는 상점 정보가 필수 — 이메일은 빌드 변수에서.
+            expect(requestPayment.mock.calls[0][0].storeDetails).toEqual(expect.objectContaining({
+                storeName: "アマス", storeNameKana: "アマス", storeNameEn: "Amasu", phoneNumber: "0810700000001",
+                email: "store@example.com", openingHours: { open: "00:00", close: "23:59" } }));
+        } finally {
+            portone.portOneVersion.mockReturnValue("v1");
+            process.env.REACT_APP_PORTONE_CHANNEL_KEY = prev;
+            process.env.REACT_APP_PORTONE_STORE_EMAIL = prevEmail;
+        }
+    });
+
+    it("KRW(국내 채널) — 가상계좌를 고를 수 있다(예전 그대로)", () => {
+        render(<Payment order={krw} setOrder={jest.fn()} setLoading={jest.fn()} />);
+        expect(screen.getByRole("radio", { name: "가상계좌 (무통장입금)" })).toBeInTheDocument();
     });
 });
 

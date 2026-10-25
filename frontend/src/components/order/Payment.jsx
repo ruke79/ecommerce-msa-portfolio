@@ -5,7 +5,7 @@
 import { useReducer, useEffect, useState } from "react";
 import { cancelCart, emptyCart } from "../../redux/CartSlice";
 import { postRequest } from "util/api";
-import { loadPortOne, loadPortOneV2, newPortOnePaymentId, portOneVersion } from "util/portone";
+import { loadPortOne, loadPortOneV2, newPortOnePaymentId, portOneCustomer, portOneRedirectUrl, portOneStoreDetails, portOneSupportsVirtualAccount, portOneVersion } from "util/portone";
 import { portOneFailureText } from "util/portoneError";
 import { STORE_CURRENCY, amountString, chargeOf, portOneCurrencyCode } from "util/money";
 import { useMoney } from "hook/useMoney";
@@ -48,7 +48,11 @@ const Payment = ({ order, setLoading, setOrder }) => {
   const charge = chargeOf(order);
   // 포트원 결제수단: 카드 또는 가상계좌. 가상계좌는 결제창이 계좌를 발급하고 끝난다 —
   // 입금은 나중이고, 포트원이 입금을 보면 웹훅으로 알려 준다(docs/49 §11).
-  const [portOnePayMethod, setPortOnePayMethod] = useState("card");
+  const [chosenPortOnePayMethod, setPortOnePayMethod] = useState("card");
+  // 가상계좌는 국내(KRW) 채널에만 있다 — 이니시스 일본결제(JPY)는 카드 · 편의점 · 간편결제뿐이라 고를 수 없게 한다(카드 고정).
+  // [JA] バーチャル口座は国内(KRW)チャネルだけ — イニシス日本決済(JPY)には無いので選べない(カード固定)。
+  const vbankOffered = portOneSupportsVirtualAccount(charge.currency);
+  const portOnePayMethod = vbankOffered ? chosenPortOnePayMethod : "card";
   /**
    * 결제 진행 상태. 🐛 {@code loading: true} 로 시작하고, 되돌리는 곳이
    * {@code if (!order.trackingId)} 하나뿐이었다 — 실제 주문에는 trackingId 가 항상 있으니
@@ -405,6 +409,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
     try {
       const PortOne = await loadPortOneV2();
       const paymentId = newPortOnePaymentId();
+      const storeDetails = portOneStoreDetails(charge.currency, process.env.REACT_APP_PORTONE_STORE_EMAIL);
 
       const response = await PortOne.requestPayment({
         storeId,
@@ -420,10 +425,16 @@ const Payment = ({ order, setLoading, setOrder }) => {
         ...(portOnePayMethod === "vbank"
           ? { virtualAccount: { accountExpiry: { validHours: 48 } } }
           : {}),
-        customer: {
-          email: user.email,
-          fullName: user.username || user.nickname || undefined,
-        },
+        // KG이니시스 PC 결제 · 이니시스 일본결제는 구매자 이름이 필수다 — 이름 · 전화번호는 이 주문의 배송지에서(portOneCustomer).
+        // [JA] KG イニシス PC 決済 · イニシス日本決済は購入者名が必須 — 名前 · 電話番号はこの注文の配送先から。
+        customer: portOneCustomer(order, user),
+        // 이니시스 일본결제(JPPG)는 상점 정보가 필수다 — JPY 청구일 때만 싣는다(portOneStoreDetails).
+        // [JA] イニシス日本決済(JPPG)は店舗情報が必須 — JPY 請求のときだけ載せる。
+        ...(storeDetails ? { storeDetails } : {}),
+        // 모바일 등에서 결제창이 페이지 이동으로 열리면 끝난 뒤 이 주문 화면으로 돌아온다 — 확인은 PortOneReturn.
+        // PC 에서 iframe 으로 열리면 예전처럼 아래 반환값으로 끝난다(forceRedirect 를 켜지 않는다 — 두 흐름 모두).
+        // [JA] モバイル等でページ遷移になると、この注文画面へ戻る(確認は PortOneReturn)。PC の iframe は従来どおり戻り値で。
+        redirectUrl: portOneRedirectUrl(),
         // 🔒 서버가 포트원에 조회해서 읽는 값이다. 본문으로 보내는 것이 아니다.
         customData: JSON.stringify({ trackingId: order.trackingId }),
       });
@@ -580,6 +591,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
 
           {order.paymentMethod === "portone" && order.orderStatus !== "UNPAID" && (
             <div>
+              {vbankOffered && (
               <div className="mb-2 flex gap-4 text-sm text-slate-800">
                 <label className="flex items-center gap-1">
                   <input type="radio" name="portone-pay-method" value="card"
@@ -594,6 +606,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
                   {t("payment.portone.vbank")}
                 </label>
               </div>
+              )}
               <button
                 type="button"
                 onClick={onPortOneHandler}
