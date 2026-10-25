@@ -18,6 +18,15 @@ public class SearchParamsRequest implements Serializable{
 
     private String search;
 
+    /**
+     * 검색어는 받을 때 NFKC 로 맞춘다 — 전각 `ＴＳＨＩＲＴ` · 반각 `ｼｬﾂ` 가 `TSHIRT` · `シャツ` 와 같은 검색이 된다(캐시 키 · ES · DB 모두).
+     * 상품 이름 쪽은 DB 의 {@code product.search_key}(catalog V23)가 같은 NFKC 로 비교한다.
+     * [JA] 検索語は受け取り時に NFKC で揃える — 全角 · 半角カナが同じ検索になる(キャッシュキー · ES · DB すべて)。
+     */
+    public void setSearch(String search) {
+        this.search = com.project.common.text.Nfkc.searchKey(search);
+    }
+
     private String category;
 
     /**

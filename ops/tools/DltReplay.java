@@ -109,6 +109,30 @@ public class DltReplay {
         return t.length() <= max ? t : t.substring(0, max) + "…";
     }
 
+    /**
+     * 스택(헤더 exception-stacktrace)의 "Caused by:" 사슬에서 <b>클래스 이름만</b> — 겉에서 안쪽 순서, 맨 안쪽이 뿌리. 메시지는 버린다
+     * (주소 · 토큰이 섞일 수 있다). 2026-10-24 운영: 원인 줄이 리스너가 감싼 BatchListenerFailedException 이라 한 겹 더 봐야 했다.
+     * [JA] スタックの "Caused by:" の連鎖からクラス名だけ(外 → 内、最も内側が根本)。メッセージは捨てる。
+     */
+    static String causeChain(String stack) {
+        if (stack == null) {
+            return null;
+        }
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (String line : stack.split("\\R")) {
+            String t = line.trim();
+            if (t.startsWith("Caused by: ")) {
+                String rest = t.substring("Caused by: ".length());
+                int cut = rest.indexOf(':');
+                String name = (cut < 0 ? rest : rest.substring(0, cut)).trim();
+                if (name.matches("[\\w.$]+") && !names.contains(name)) {
+                    names.add(name);
+                }
+            }
+        }
+        return names.isEmpty() ? null : String.join(" → ", names);
+    }
+
     static void list(String bootstrap, String topic, int perPartition) {
         try (KafkaConsumer<byte[], byte[]> c = consumer(bootstrap)) {
             List<PartitionInfo> parts = c.partitionsFor(topic, Duration.ofSeconds(10));
@@ -149,6 +173,17 @@ public class DltReplay {
                                 header(r, REPLAYED_FROM) == null ? "" : "  (이미 한 번 다시 넣었던 것: " + header(r, REPLAYED_FROM) + ")"));
                         System.out.println("        예외 " + oneLine(header(r, DLT_PREFIX + "exception-fqcn"), 120) + ": "
                                 + oneLine(header(r, DLT_PREFIX + "exception-message"), 200));
+                        // 리스너 예외는 겉이 늘 ListenerExecutionFailedException("Listener method '…' threw exception")이라 위 줄로는
+                        // 원인을 모른다(2026-10-24 운영 order.DLT · payment.DLT). 원인은 클래스 이름만 — 메시지에는 주소 등이 섞일 수 있다.
+                        // [JA] リスナー例外の外側はいつも ListenerExecutionFailedException なので原因のクラス名も出す(メッセージは出さない)。
+                        String cause = header(r, DLT_PREFIX + "exception-cause-fqcn");
+                        if (cause != null) {
+                            System.out.println("        원인 " + oneLine(cause, 160));
+                        }
+                        String chain = causeChain(header(r, DLT_PREFIX + "exception-stacktrace"));
+                        if (chain != null) {
+                            System.out.println("        사슬 " + oneLine(chain, 400));
+                        }
                     }
                 }
             }

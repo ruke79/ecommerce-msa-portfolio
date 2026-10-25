@@ -343,7 +343,7 @@ public class AuthController {
     public ResponseEntity<?> resendVerificationEmail(@RequestBody Map<String, String> body,
             final HttpServletRequest request) {
 
-        final String email = body == null ? null : body.get("email");
+        final String email = body == null ? null : com.project.common.text.Nfkc.of(body.get("email")); // 가입 · 로그인과 같은 NFKC
         final GenericResponse sameAnswer = new GenericResponse(
                 "입력하신 주소로 확인 메일을 보냈습니다. 메일함(스팸함 포함)을 확인해 주세요.");
 
@@ -663,7 +663,7 @@ public class AuthController {
         final MessageResponse sameAnswer = new MessageResponse(
                 "입력하신 주소로 비밀번호 재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인해 주세요.");
 
-        final String email = body == null ? null : body.get("email");
+        final String email = body == null ? null : com.project.common.text.Nfkc.of(body.get("email")); // 가입 · 로그인과 같은 NFKC
         if (email == null || email.isBlank()) {
             return ResponseEntity.ok(sameAnswer);
         }

@@ -182,3 +182,23 @@ V2 `message`・`code`。国内 PG なのでたいてい韓国語で、こちら�
 
 テスト: `SimulatedCarrierTextsTest.koreaPostStatusWords`(アダプターの状態語をリフレクションで読んで全部 — アダプターに語を追加して
 カタログを忘れると失敗)、`ClientTextTest.listWithCommaInsideName`.
+
+## 14. 日本語入力の全角 · 半角 — 検索 · 識別用の値だけ NFKC (2026-10-24)
+
+日本語 IME は全角英数(`ＴＳＨＩＲＴ` · `１２３`) · 半角カナ(`ｼｬﾂ`) · 全角スペースを出しやすい。以前はどこも正規化しておらず、以下がすべて失敗していた。
+
+| 入力 | 以前 | 今 |
+|---|---|---|
+| 商品検索 `ｼｬﾂ` · `ＴシャツＢＡＳＩＣ` | `lower(name) LIKE` — 文字が違い 0 件 | 検索語は受け取り時に NFKC(`SearchParamsRequest.setSearch` — キャッシュキー · ES · DB が同じ文字)、名前は原文のまま比較にだけ DB 関数 `product.search_key`(`lower(normalize(…, NFKC))`、catalog V23)を両側に — 式インデックス `idx_product_name_search_key_trgm` |
+| メール `ｕｓｅｒ＠ｅｘａｍｐｌｅ．ｃｏｍ` | 登録は `@Email` が拒否、ログイン · 確認メール再送 · パスワード再設定は「ないアカウント」 | 受け取り時に NFKC(`SignupRequest` · `LoginRequest` · 二つの公開経路) — パスワードは変えない(文字そのものがパスワード) |
+| 郵便番号 · 電話番号 `１５０－０００１` | 全角のまま保存 | 住所録(`AddressDto`) · 注文の配送先(`OrderAddressDto`)でこの二つだけ NFKC — 名前 · 住所は客が書いたまま |
+| チャットルーム検索 `ＶＩＰ　ﾙｰﾑ` | 0 件 | 画面の比較キー `searchKey`(NFKC + 空白除去 + 小文字) |
+
+- **表示する文には使わない。** NFKC は文字を変える — `① → 1`、`㈱ → (株)`、`ﬁ → fi`。名前 · 住所 · レビュー · チャット · 商品名(表示)は原文。
+- 共通の道具: `common.text.Nfkc`(`of` = NFKC + 前後の空白、`searchKey` = さらに連続空白を一つに)。画面は `util/searchKey.js`。
+- 認証 SMS の電話番号は libphonenumber がすでに全角数字を読む — そのまま。
+- 検索語の `%` · `_` は文字になった(以前は `%` 一つがすべての商品に一致した)。
+- 残り: ES の `japanese_analyzer` に `cjk_width` フィルター(インデックスの作り直しが要る — 本番に ES はない)、contract リリースで V21 の `idx_product_name_trgm`(`lower(name)`)を削除。
+- デプロイ前の確認(0 であること — 保存済みのメールが NFKC と違えば、そのアカウントは新しいログイン経路で見つからない): `select count(*) from users.users where email <> normalize(email, NFKC)`。
+
+テスト: `NfkcTest` · `NfkcInputsTest`(common)、`EmailNfkcTest`(user)、`SearchNameNfkcTest`(catalog、コンテナ — 全角 · 半角検索 · 原文の名前 · `%` · 式インデックスの使用)、`searchKey.test.js`。どれも NFKC を外すと失敗する。

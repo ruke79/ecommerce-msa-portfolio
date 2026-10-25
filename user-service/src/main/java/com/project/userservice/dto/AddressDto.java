@@ -64,4 +64,14 @@ public class AddressDto {
         address.setZipCode(src.getZipCode());
         address.setActive(src.isActive());
     }
+
+    /** 우편번호 · 전화번호는 받을 때 NFKC — IME 의 전각 `１２３－４５６７` 이 `123-4567` 로(이름 · 주소는 손님이 쓴 그대로). */
+    // [JA] 郵便番号 · 電話番号は受け取り時に NFKC — IME の全角数字を半角に(名前 · 住所は客が書いたまま)。
+    public void setZipCode(String zipCode) {
+        this.zipCode = com.project.common.text.Nfkc.of(zipCode);
+    }
+
+    public void setPhoneNumber(String phoneNumber) {
+        this.phoneNumber = com.project.common.text.Nfkc.of(phoneNumber);
+    }
 }

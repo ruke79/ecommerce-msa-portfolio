@@ -109,6 +109,13 @@ class DltReplayScriptTest {
         h.add("kafka_dlt-original-consumer-group", "payment-request".getBytes(StandardCharsets.UTF_8));
         h.add("kafka_dlt-exception-fqcn", "org.springframework.kafka.support.serializer.DeserializationException".getBytes(StandardCharsets.UTF_8));
         h.add("kafka_dlt-exception-message", "failed to deserialize; Unknown magic byte!".getBytes(StandardCharsets.UTF_8));
+        h.add("kafka_dlt-exception-cause-fqcn", "feign.RetryableException".getBytes(StandardCharsets.UTF_8));
+        h.add("kafka_dlt-exception-stacktrace", ("org.springframework.kafka.listener.ListenerExecutionFailedException: Listener method threw\n"
+                + "\tat x.y.Z.m(Z.java:1)\n"
+                + "Caused by: org.springframework.kafka.listener.BatchListenerFailedException: order 알림 처리 실패\n"
+                + "\t... 3 more\n"
+                + "Caused by: feign.RetryableException: connect timed out executing GET https://user-service/api/user?email=buyer@example.com\n")
+                .getBytes(StandardCharsets.UTF_8));
         h.add("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".getBytes(StandardCharsets.UTF_8));
         Map<String, Object> props = clientProps();
         try (KafkaProducer<byte[], byte[]> p = new KafkaProducer<>(props, new ByteArraySerializer(), new ByteArraySerializer())) {
@@ -195,6 +202,9 @@ class DltReplayScriptTest {
         assertThat(r.code()).as(r.out()).isZero();
         assertThat(r.out()).contains("레코드 1건").contains("0:0").contains("키=order-7").contains("값=" + value.length + "바이트")
                 .contains("원래=" + t + "-2-7").contains("그룹=payment-request").contains("Unknown magic byte")
+                .contains("원인 feign.RetryableException")
+                .contains("사슬 org.springframework.kafka.listener.BatchListenerFailedException → feign.RetryableException")
+                .doesNotContain("buyer@example.com")
                 .doesNotContain("ADDR-SEOUL");
     }
 

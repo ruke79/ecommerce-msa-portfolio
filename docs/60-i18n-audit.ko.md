@@ -182,3 +182,23 @@ V2 `message`·`code`. 국내 PG 라 대개 한국어이고 우리가 고를 수 
 
 테스트: `SimulatedCarrierTextsTest.koreaPostStatusWords`(어댑터의 상태 낱말을 리플렉션으로 읽어 전부 — 어댑터에 낱말을 더하고
 카탈로그를 빠뜨리면 실패), `ClientTextTest.listWithCommaInsideName`.
+
+## 14. 일본어 입력의 전각 · 반각 — 찾기 · 식별용 값만 NFKC (2026-10-24)
+
+일본어 IME 는 전각 영숫자(`ＴＳＨＩＲＴ` · `１２３`) · 반각 카나(`ｼｬﾂ`) · 전각 공백을 쉽게 낸다. 예전에는 아무 곳도 정규화하지 않아 아래가 모두 실패했다.
+
+| 입력 | 예전 | 지금 |
+|---|---|---|
+| 상품 검색 `ｼｬﾂ` · `ＴシャツＢＡＳＩＣ` | `lower(name) LIKE` — 글자가 달라 0건 | 검색어는 받을 때 NFKC(`SearchParamsRequest.setSearch` — 캐시 키 · ES · DB 가 같은 글자), 이름은 원문 그대로 두고 비교만 DB 함수 `product.search_key`(`lower(normalize(…, NFKC))`, catalog V23) 를 양쪽에 — 식 인덱스 `idx_product_name_search_key_trgm` |
+| 이메일 `ｕｓｅｒ＠ｅｘａｍｐｌｅ．ｃｏｍ` | 가입은 `@Email` 거절, 로그인 · 가입 확인 재발송 · 비밀번호 찾기는 "없는 계정" | 받을 때 NFKC(`SignupRequest` · `LoginRequest` · 두 공개 경로) — 비밀번호는 바꾸지 않는다(글자 그대로가 비밀번호) |
+| 우편번호 · 전화번호 `１５０－０００１` | 전각 그대로 저장 | 주소록(`AddressDto`) · 주문 배송지(`OrderAddressDto`)에서 이 둘만 NFKC — 이름 · 주소는 손님이 쓴 그대로 |
+| 채팅방 검색 `ＶＩＰ　ﾙｰﾑ` | 0건 | 화면의 비교 키 `searchKey`(NFKC + 공백 제거 + 소문자) |
+
+- **보여 주는 글에는 쓰지 않는다.** NFKC 는 글자를 바꾼다 — `① → 1`, `㈱ → (株)`, `ﬁ → fi`. 이름 · 주소 · 리뷰 · 채팅 · 상품 이름(표시)은 원문.
+- 공통 도구: `common.text.Nfkc`(`of` = NFKC + 앞뒤 공백, `searchKey` = 거기에 연속 공백 하나로). 화면은 `util/searchKey.js`.
+- 인증 SMS 의 전화번호는 libphonenumber 가 이미 전각 숫자를 읽는다 — 그대로.
+- 검색어의 `%` · `_` 는 이제 글자다(예전에는 `%` 하나가 모든 상품을 맞혔다).
+- 남은 것: ES 의 `japanese_analyzer` 에 `cjk_width` 필터(색인을 다시 만들어야 한다 — 운영에는 ES 가 없다), contract 릴리스에서 V21 의 `idx_product_name_trgm`(`lower(name)`) 삭제.
+- 배포 전 확인(0 이어야 한다 — 이미 저장된 이메일이 NFKC 와 다르면 그 계정은 새 로그인 경로에서 찾지 못한다): `select count(*) from users.users where email <> normalize(email, NFKC)`.
+
+테스트: `NfkcTest` · `NfkcInputsTest`(common), `EmailNfkcTest`(user), `SearchNameNfkcTest`(catalog, 컨테이너 — 전각 · 반각 검색 · 원문 이름 · `%` · 식 인덱스 사용), `searchKey.test.js`. 모두 NFKC 를 빼면 실패한다.

@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { selectedRoom } from '../../../redux/ChatSelectors';
 import { selectRoom } from '../../../redux/ChatSlice';
 import ChatRoom from './ChatRoom';
+import { searchKey } from '../../../util/searchKey';
 
 
 const RoomContent = ({search, rooms}) => {
@@ -13,9 +14,9 @@ const RoomContent = ({search, rooms}) => {
      * 같은 정규식 메타문자를 한 글자만 쳐도 <b>RegExp 생성자가 예외를 던져 채팅 목록
      * 전체가 죽었다.</b> 검색은 "포함하는가"면 충분하다 — 정규식이 필요 없다.
      *
-     * <p>공백을 지우고 비교하는 규칙은 그대로 둔다("신상 문의"를 "신상문의"로 찾기 위한 것).
+     * <p>공백을 지우고 비교하는 규칙은 그대로 둔다("신상 문의"를 "신상문의"로 찾기 위한 것). 전각 · 반각 카나는 NFKC 로 맞춘다(searchKey).
      */
-    const normalize = (value) => String(value ?? '').replace(/\s/g, '').toLowerCase();
+    const normalize = searchKey;
 
     const needle = normalize(search);
 

@@ -262,6 +262,17 @@ public class SearchService {
         return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
 
+    /**
+     * 상품 이름에 검색어가 들어 있는가 — 양쪽을 DB 함수 {@code product.search_key}(NFKC + 소문자, catalog V23)로 맞춰 비교한다.
+     * 그 식 인덱스(idx_product_name_search_key_trgm)를 쓴다. 검색어의 {@code %} · {@code _} 는 글자로(예전에는 {@code %} 하나가 전부를 맞혔다).
+     * [JA] 商品名に検索語が含まれるか — 両側を product.search_key(NFKC + 小文字)で揃えて比較する(式インデックスを使う)。
+     */
+    static com.querydsl.core.types.Predicate nameMatches(com.querydsl.core.types.dsl.StringPath name, String search) {
+        return com.querydsl.core.types.dsl.Expressions.booleanTemplate(
+                "search_key({0}) like concat('%', search_key({1}), '%') escape '!'",
+                name, likeLiteral(search));
+    }
+
     /** 값 중 하나라도 포함하면 참. 값이 없으면 null(조건 없음). */
     private static com.querydsl.core.types.Predicate containsAny(com.querydsl.core.types.dsl.StringPath path, List<String> values) {
         if (values.isEmpty()) {
@@ -483,8 +494,10 @@ public class SearchService {
         if (params.getSearch() != null && !params.getSearch().isEmpty()) {
             List<Long> esIds = searchIdsViaEs(params.getSearch(), engine);
             if (esIds == null) {
-                // ES 비활성 또는 실패 → 기존 동작(선행 와일드카드 LIKE)
-                builder.and(product.name.likeIgnoreCase("%" + params.getSearch() + "%"));
+                // ES 비활성 또는 실패 → 선행 와일드카드 LIKE. 양쪽을 product.search_key(NFKC + 소문자, V23)로 비교한다 —
+                // 전각 · 반각으로 친 검색어가 원문 그대로 저장된 이름을 찾는다(검색어는 SearchParamsRequest 가 이미 NFKC).
+                // [JA] 両側を product.search_key(NFKC + 小文字)で比較 — 全角 · 半角の検索語が原文の名前を見つける。
+                builder.and(nameMatches(product.name, params.getSearch()));
             } else if (esIds.isEmpty()) {
                 // ES 가 "매칭 없음"이라고 답함 → 빈 결과 (IN () 는 SQL 오류이므로 불가능 조건 사용)
                 builder.and(product.productId.eq(-1L));
