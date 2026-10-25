@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -54,6 +55,12 @@ class SupportReplyNotifierTest {
         ReflectionTestUtils.setField(t, "status", SupportThreadStatus.ACTIVE);
         ReflectionTestUtils.setField(t, "agentId", AGENT);
         when(threads.findById(5L)).thenReturn(Optional.of(t));
+        SupportThread other = SupportThread.open(CUSTOMER, now);
+        ReflectionTestUtils.setField(other, "id", 6L);
+        ReflectionTestUtils.setField(other, "status", SupportThreadStatus.ACTIVE);
+        ReflectionTestUtils.setField(other, "agentId", AGENT);
+        when(threads.findById(6L)).thenReturn(Optional.of(other));
+        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
     }
 
     private static MessageDto msg(String id, Long sender) {
@@ -126,6 +133,33 @@ class SupportReplyNotifierTest {
         org.mockito.Mockito.reset(kafka);
         notifier.onMessage(msg("43", AGENT));
         verify(kafka).send(eq("support-reply"), eq("5"), any());
+    }
+
+    @Test
+    @DisplayName("🔴 비동기 발행 실패(브로커 거절 · 시간 초과)도 '보냈다' 로 세지 않는다 — 다음 답변은 다시 알린다")
+    void asyncFailureDoesNotThrottle() {
+        when(kafka.send(anyString(), anyString(), anyString()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("broker timeout")));
+        notifier.onMessage(msg("42", AGENT));
+        assertThat(notifier.trackedThreads()).isZero();
+
+        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+        notifier.onMessage(msg("43", AGENT));
+        verify(kafka, times(2)).send(eq("support-reply"), eq("5"), anyString());
+    }
+
+    @Test
+    @DisplayName("🔴 창이 지난 기록은 지운다 — 본 적 있는 상담 번호가 계속 쌓이지 않는다")
+    void expiredEntriesArePruned() {
+        notifier.onMessage(msg("42", AGENT));
+        assertThat(notifier.trackedThreads()).isEqualTo(1);
+
+        notifier.setClock(Clock.fixed(now.plusSeconds(61), ZoneOffset.UTC));
+        MessageDto later = msg("43", AGENT);
+        later.setRoomId("support-6");
+        notifier.onMessage(later);
+
+        assertThat(notifier.trackedThreads()).isEqualTo(1);   // 5번은 지워지고 6번만
     }
 
     @Test

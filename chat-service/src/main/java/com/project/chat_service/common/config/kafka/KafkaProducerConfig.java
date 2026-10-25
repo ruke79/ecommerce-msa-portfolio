@@ -52,6 +52,9 @@ public class KafkaProducerConfig {
 
         return factory;
     }
+    /** 브로커 메타데이터 · 버퍼를 기다리는 send() 의 상한(ms). */
+    static final long MAX_BLOCK_MS = 5_000L;
+
     // Kafka Producer 구성을 위한 설정값들을 포함한 맵을 반환하는 메서드
     @Bean
     public Map<String, Object> producerConfig() {
@@ -59,7 +62,16 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
                 .put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class)
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
-                .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)                                
+                .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)
+                // 클라이언트 기본값(멱등 → acks=all)과 같다 — 다른 모듈처럼 적어 둔다.
+                .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
+                .put(ProducerConfig.ACKS_CONFIG, "all")
+                // 🐛 예전: 기본 max.block.ms(60초). send() 는 STOMP 핸들러(@MessageMapping) 안에서 불린다 — 브로커가 흔들리면
+                //    clientInboundChannel 의 스레드(코어 × 2)가 메시지마다 60초씩 막혀 CONNECT · SUBSCRIBE · DISCONNECT 까지 멈췄다.
+                //    5초면 MessageProducer 가 동기 실패로 세고(ChatMessagePublishFailed) 보낸 사람에게 오류 프레임이 간다(pay PY6 과 같다).
+                // [JA] 以前は既定の max.block.ms(60 秒)。send() は STOMP ハンドラ内で呼ばれ、ブローカー不調時に受信チャネルの
+                //    スレッドが 60 秒ずつ塞がり CONNECT なども止まった。5 秒で同期失敗として数え、送信者にエラーフレームを返す。
+                .put(ProducerConfig.MAX_BLOCK_MS_CONFIG, MAX_BLOCK_MS)
                 .putAll(securityProps())
                 .build();
     }

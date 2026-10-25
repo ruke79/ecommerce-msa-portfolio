@@ -82,6 +82,8 @@ public class SupportReplyNotifier {
         if (previous != null && previous.plus(THROTTLE).isAfter(now)) {
             return;
         }
+        // 창이 지난 항목은 지운다 — 예전에는 파드 수명 동안 지금까지 본 모든 상담 번호가 쌓였다. 남는 것은 최근 60초에 알린 상담뿐.
+        lastSent.values().removeIf(sent -> !sent.plus(THROTTLE).isAfter(now));
         lastSent.put(threadId, now);
 
         Map<String, Object> event = new LinkedHashMap<>();
@@ -91,11 +93,28 @@ public class SupportReplyNotifier {
         event.put("senderName", message.getNickname());
         try {
             // 키 = 상담 번호 — 같은 상담의 알림은 한 파티션에서 순서대로(docs/38 §1.15).
-            kafkaTemplate.send(TOPIC, String.valueOf(threadId), objectMapper.writeValueAsString(event));
+            kafkaTemplate.send(TOPIC, String.valueOf(threadId), objectMapper.writeValueAsString(event))
+                    .whenComplete((result, ex) -> {
+                        // 🐛 예전: 결과를 보지 않아 브로커 거절 · 시간 초과(비동기)는 흔적이 없었고, '보냈다' 기록이 남아
+                        //    60초 동안 다음 답변의 알림도 막혔다. 동기 실패와 같이 기록을 지우고 남긴다.
+                        // [JA] 以前は結果を見ず、非同期の失敗は痕跡がなく、送信済み記録が残って 60 秒間次の通知も止まった。
+                        if (ex != null) {
+                            failed(threadId, now, ex);
+                        }
+                    });
         } catch (JsonProcessingException | RuntimeException e) {
             // 알림은 부가 기능이다 — 상담 메시지의 저장·전달을 되돌리지 않는다.
-            lastSent.remove(threadId, now);
-            log.warn("상담 답변 알림 발행 실패: threadId={} ({})", threadId, e.toString());
+            failed(threadId, now, e);
         }
+    }
+
+    private void failed(Long threadId, Instant now, Throwable e) {
+        lastSent.remove(threadId, now);
+        log.warn("상담 답변 알림 발행 실패: threadId={} ({})", threadId, e.getClass().getSimpleName());
+    }
+
+    /** 테스트용 — 알림 기록이 남은 상담 수. */
+    int trackedThreads() {
+        return lastSent.size();
     }
 }

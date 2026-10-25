@@ -63,11 +63,6 @@ public class TokenHandler {
         return JWT.decode(token).getExpiresAt().getTime();
     }
 
-    public String getUid(String token) {
-        DecodedJWT decodedJWT = JWT.decode(token);
-        return decodedJWT.getSubject();
-    }
-
     public boolean verifyToken(String token) {
         try {
             // 토큰 머리의 kid 로 키를 고른다 — 없으면 옛 토큰(legacy), 모르는 kid 는 거절(docs/68 §17).
@@ -90,18 +85,6 @@ public class TokenHandler {
         }
     }
 
-    /**
-     * "Bearer {token}" 헤더에서 토큰을 추출하고 서명/만료를 검증한 뒤 subject(email)를 반환한다.
-     * 검증되지 않은 getUid()의 결과를 신뢰용 식별자로 사용하지 않기 위한 유일한 진입점.
-     */
-    public String resolveVerifiedSubject(String authorizationHeader) {
-        String token = extractBearerToken(authorizationHeader);
-        if (token == null || !verifyToken(token)) {
-            throw ErrorCode.unauthorizedTokenException();
-        }
-        return getUid(token);
-    }
-
     public String extractBearerToken(String authorizationHeader) {
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             return null;
@@ -115,8 +98,9 @@ public class TokenHandler {
      * <p>chat-service 의 {@code chat_member.member_id} 는 user-service 의 userId 를 그대로
      * 쓴다(ChatMember 주석). 회원 행이 없어 즉석에서 만들어야 할 때 그 값이 필요하다.
      *
-     * <p>{@link #resolveVerifiedSubject} 와 같은 검증 경로를 지난다 — 검증하지 않은
-     * {@code JWT.decode} 결과를 신뢰용 식별자로 쓰지 않기 위해서다.
+     * <p>검증한 뒤에만 읽는다 — 검증하지 않은 {@code JWT.decode} 결과를 신뢰용 식별자로 쓰지 않기 위해서다.
+     * (예전의 subject(email) 판정 {@code resolveVerifiedSubject} · 검증 없이 subject 를 꺼내던 {@code getUid} 는
+     * 쓰는 곳이 없어 지웠다 — 채팅의 신원은 uid 다, docs/48 §6-⑥.)
      *
      * @return uid 클레임. 없거나 숫자가 아니면 null.
      */

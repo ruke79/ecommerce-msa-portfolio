@@ -21,7 +21,6 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.support.serializer.JsonDeserializer;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -61,16 +60,14 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConsumerFactory<String, MessageDto> consumerFactory() {
-                // 리스너(MessageConsumer)가 받는 타입은 MessageDto 다. 예전의 ChatMessage 선언은 __TypeId__ 헤더가 MessageDto 를
-        // 가리켜서만 동작했다 — Avro 는 헤더가 없으니 선언을 실제 타입으로 맞춘다.
-        JsonDeserializer<MessageDto> deserializer = new JsonDeserializer<>(MessageDto.class, true);
-        deserializer.addTrustedPackages("*");
+        // 리스너(MessageConsumer)가 받는 타입은 MessageDto 다. 값 역직렬화기는 아래 생성자에 인스턴스로 넘긴다 — 맵의
+        // VALUE_DESERIALIZER 는 그 인스턴스에 밀려 쓰이지 않으므로 두지 않는다(예전에는 쓰이지 않는 JsonDeserializer 가 있어
+        // JSON 으로 읽는다고 읽혔다). [JA] 値のデシリアライザはコンストラクタに渡す — マップの値は使われないので置かない。
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
                 .put(ConsumerConfig.GROUP_ID_CONFIG, "chat")
                 .put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment))
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
-                .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
                 .putAll(securityProps())
                 .build();
@@ -98,16 +95,18 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConsumerFactory<String, UserCreatedRequest> userCreatedConsumerFactory() {
-        // 헤더(__TypeId__)가 있으면 쓰고, 없으면 UserCreatedRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
-        JsonDeserializer<UserCreatedRequest> deserializer = new JsonDeserializer<>(UserCreatedRequest.class, true);
-        deserializer.addTrustedPackages("*");
+        // 값은 아래 생성자의 AvroDtoDeserializer 가 읽는다(Avro 또는 JSON) — 맵에는 두지 않는다(위 consumerFactory 와 같다).
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
                 .put(ConsumerConfig.GROUP_ID_CONFIG, "user-3")
                 .put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment))
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
-                .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 🐛 예전: latest — 바로 아래 탈퇴 그룹(earliest)과 반대였다. 그룹 오프셋이 만료되거나(7일 무활동) 새 클러스터에서
+                //    처음 뜨면 그 사이의 가입 이벤트를 건너뛰어, 그 회원은 접속 순간 임시 닉네임으로만 생기고 원본 값으로 채워지지
+                //    않았다(user-updated 는 이후 변경만 준다). 다시 읽어도 안전하다 — 있는 행은 applyProfile(시각 0)이 거른다.
+                // [JA] 以前は latest。オフセット失効や新クラスタでの初回起動時にその間の加入イベントを飛ばし、仮ニックネームのまま
+                //    残った。再読込は安全 — 既存行は applyProfile(時刻 0)が弾く。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .putAll(securityProps())
                 .build();
 
