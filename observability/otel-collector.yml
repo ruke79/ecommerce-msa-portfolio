@@ -152,18 +152,41 @@ processors:
       sampled_cache_size: 100000
       non_sampled_cache_size: 100000
     policies:
-      # 오류가 난 추적은 모두
-      # [JA] エラーが発生したトレースはすべて
+      # 오류가 난 추적 — 초당 스팬 상한까지(B-102). 예전에는 "모두" 였다: 2026-10-22 실습 용량 측정에서 오류가 117만 건
+      # 나자 그 추적이 모두 저장돼 Jaeger 볼륨이 12G 로 관측 VM 디스크(19G)를 채웠고, Jaeger 는 재시작을 되풀이하고
+      # Grafana 는 저장소에 쓰지 못했다 — 장애가 가장 클 때 관측이 먼저 멈춘다. 평소의 오류는 상한보다 훨씬 적어 전부
+      # 남고, 폭주 때는 초당 상한만큼 표본이 남는다. 오류 수 · 오류율은 샘플링 앞의 span_metrics 가 전부 센다(B-72) —
+      # 상한이 줄이는 것은 추적의 사본뿐이다. and 는 앞 조건이 아니면 바로 끝나므로 상한은 오류 추적만 센다.
+      # [JA] エラーのトレース — 毎秒スパン上限まで(B-102)。以前は「すべて」だった: 実習の容量測定でエラーが 117 万件出て
+      #      その全トレースが保存され、Jaeger のボリュームが観測 VM のディスクを埋めた — 障害が最も大きいときに観測が先に止まる。
+      #      エラー数 · エラー率はサンプリング前の span_metrics がすべて数える(B-72)。上限が減らすのはトレースの写しだけ。
       - name: errors
-        type: status_code
-        status_code:
-          status_codes: [ERROR]
-      # 느린 추적은 모두 — 지연 그래프에서 누를 가치가 있는 점(exemplar)은 대개 이쪽이다
-      # [JA] 遅いトレースはすべて — レイテンシグラフでクリックする価値のある点(exemplar)はたいていこちらである
+        type: and
+        and:
+          and_sub_policy:
+            - name: error-status
+              type: status_code
+              status_code:
+                status_codes: [ERROR]
+            - name: error-budget
+              type: rate_limiting
+              rate_limiting:
+                spans_per_second: ${env:TAIL_SAMPLING_ERROR_SPANS_PER_SEC:-200}
+      # 느린 추적 — 지연 그래프에서 누를 가치가 있는 점(exemplar)은 대개 이쪽이다. 이것도 초당 상한까지(B-102):
+      # 시스템이 무너지면 거의 모든 요청이 느려져(같은 측정에서 p95 6초) 오류와 같은 폭주가 된다.
+      # [JA] 遅いトレース — これも毎秒上限まで(B-102)。システムが崩れるとほぼすべてのリクエストが遅くなり、同じ暴走になる。
       - name: slow
-        type: latency
-        latency:
-          threshold_ms: ${env:TAIL_SAMPLING_SLOW_MS:-1000}
+        type: and
+        and:
+          and_sub_policy:
+            - name: slow-latency
+              type: latency
+              latency:
+                threshold_ms: ${env:TAIL_SAMPLING_SLOW_MS:-1000}
+            - name: slow-budget
+              type: rate_limiting
+              rate_limiting:
+                spans_per_second: ${env:TAIL_SAMPLING_SLOW_SPANS_PER_SEC:-100}
       # 돈이 오간 추적은 모두 — 주문 · 결제 · 배송. 둘러보기(상품 · 검색) 요청보다 훨씬 적고, 문의가 오면 봐야 한다
       # [JA] お金が動いたトレースはすべて — 注文・決済・配送。閲覧(商品・検索)リクエストよりずっと少なく、
       #      問い合わせが来たら見る必要がある

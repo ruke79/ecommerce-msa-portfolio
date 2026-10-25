@@ -137,18 +137,30 @@ spec:
             # (k3s 검증에서 exit 137 로 실측).
             failureThreshold: 60
             periodSeconds: 5
+          # 🔴 부하 중에 프로브가 늦다고 죽이지 않는다(B-103, 2026-10-22). 프로브는 손님 요청과 같은 Netty 이벤트 루프 ·
+          # 같은 1 코어로 응답한다 — 기본 상한(1초 · 3번)이면 CPU 가 찬 45초 만에 kubelet 이 살아 있는 파드를 죽인다.
+          # 실습 용량 측정(초당 ~1,500 요청, 게이트웨이 3개 = HPA 최대)에서 게이트웨이 p95 가 4 ~ 7초인 동안 한 파드가 8번
+          # 다시 시작했다 — 다시 뜨는 동안 남은 둘이 부하를 다 받아 더 막히는 악순환이다(docs/83 §5). liveness 는 교착처럼
+          # "응답을 아예 못 하는" 상태만 잡으면 된다: 5초 × 6번 = 90초 동안 한 번도 답하지 못할 때만 죽인다.
+          # readiness 도 1초면 포화된 셋이 함께 빠져 앞단(Traefik)이 모든 요청에 503 을 낸다 — 3초 × 3번.
+          # [JA] 負荷中にプローブが遅いだけで殺さない(B-103)。プローブは客のリクエストと同じイベントループ・同じ 1 コアで答える —
+          #      既定(1 秒 · 3 回)だと CPU が埋まった 45 秒で生きている Pod が再起動され、残りがさらに詰まる悪循環になった。
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
               port: 8000
               scheme: HTTPS
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
               port: 8000
               scheme: HTTPS
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
       volumes:
         # 🔴 JVM 충돌 기록(ops/Dockerfile.runtime 의 -XX:ErrorFile) — 로그(Loki)로 보내지 않는다: 기록에 메모리 내용이 들어갈 수 있다
         - name: jvm-crash

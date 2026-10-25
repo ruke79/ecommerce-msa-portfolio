@@ -2968,6 +2968,104 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-103: 부하를 앞에서 받는 서비스의 liveness 는 "응답을 아예 못 하는" 상태만 잡는다 — 프로브 상한 5초 이상 · 한 번도 답하지
+     * 못한 시간(주기 × 실패 횟수) 60초 이상. readiness 상한도 기본값(1초)보다 길다.
+     *
+     * <p>2026-10-22 실습 용량 측정(초당 ~1,500 요청, 게이트웨이 3개 = HPA 최대): 게이트웨이 p95 가 4 ~ 7초인 동안 한 파드가 8번
+     * 다시 시작했다. 프로브는 손님 요청과 같은 이벤트 루프 · 같은 1 코어로 답하므로 기본 상한(1초 · 3번)이면 CPU 가 찬 45초 만에
+     * 살아 있는 파드가 죽고, 다시 뜨는 동안 남은 파드가 부하를 다 받아 더 막힌다. 목록은 지금 게이트웨이뿐 — 다른 서비스도
+     * 같은 기본값이라, 같은 일을 확인하면 여기에 더한다.
+     *
+     * <p>[JA] 負荷を前で受けるサービスの liveness は「まったく答えられない」状態だけを捕まえる — 上限 5 秒以上 · 無応答 60 秒以上。
+     *      既定(1 秒 · 3 回)だと CPU 飽和の 45 秒で生きている Pod が再起動され、残りがさらに詰まった(2026-10-22 実習)。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("B-103: 게이트웨이의 liveness 는 부하 중 늦은 응답으로 죽이지 않는다(상한 ≥ 5초 · 무응답 ≥ 60초) · readiness 상한 > 1초")
+    void frontTierProbesTolerateSaturation() throws IOException {
+        Map<String, String> manifests = Map.of("gateway-server", "k8s/31-gateway-server.yaml");
+        for (Map.Entry<String, String> e : manifests.entrySet()) {
+            Map<String, Object> container = null;
+            for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(repoRoot().resolve(e.getValue()), StandardCharsets.UTF_8))) {
+                if (doc instanceof Map<?, ?> d && "Deployment".equals(d.get("kind"))) {
+                    Map<String, Object> spec = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) d.get("spec")).get("template")).get("spec");
+                    for (Map<String, Object> c : (List<Map<String, Object>>) spec.get("containers")) {
+                        if (e.getKey().equals(c.get("name"))) {
+                            container = c;
+                        }
+                    }
+                }
+            }
+            assertThat(container).as(e.getValue() + " 의 컨테이너 " + e.getKey()).isNotNull();
+            Map<String, Object> live = (Map<String, Object>) container.get("livenessProbe");
+            Map<String, Object> ready = (Map<String, Object>) container.get("readinessProbe");
+            int liveTimeout = ((Number) live.getOrDefault("timeoutSeconds", 1)).intValue();
+            int livePeriod = ((Number) live.getOrDefault("periodSeconds", 10)).intValue();
+            int liveFailures = ((Number) live.getOrDefault("failureThreshold", 3)).intValue();
+            assertThat(liveTimeout).as(e.getKey() + ": liveness 상한(초) — 기본 1초면 CPU 가 찬 동안 살아 있는 파드를 죽인다(B-103)")
+                    .isGreaterThanOrEqualTo(5);
+            assertThat(livePeriod * liveFailures).as(e.getKey() + ": liveness 가 죽이기까지 무응답 시간(주기 × 실패 횟수, 초)")
+                    .isGreaterThanOrEqualTo(60);
+            assertThat(String.valueOf(((Map<String, Object>) live.get("httpGet")).get("path")))
+                    .as(e.getKey() + ": liveness 는 외부 의존을 보지 않는 그룹").isEqualTo("/actuator/health/liveness");
+            assertThat(((Number) ready.getOrDefault("timeoutSeconds", 1)).intValue())
+                    .as(e.getKey() + ": readiness 상한(초) — 1초면 포화된 파드가 모두 빠져 앞단이 모든 요청에 503").isGreaterThan(1);
+        }
+    }
+
+    /**
+     * B-102: 꼬리 샘플링에서 "오류 추적" · "느린 추적" 을 남기는 정책은 초당 스팬 상한(rate_limiting)과 함께다 — 상한 없는
+     * {@code status_code} · {@code latency} 정책이 맨 위에 있으면 안 된다.
+     *
+     * <p>2026-10-22 실습 용량 측정: 오류가 117만 건 나자 그 추적이 모두 저장돼 Jaeger 볼륨이 12G 로 관측 VM 디스크(19G)를 채웠고,
+     * Jaeger 는 재시작을 되풀이하고 Grafana 는 저장소에 쓰지 못했다 — 장애가 가장 클 때 관측이 먼저 멈춘다. 시스템이 무너지면
+     * 거의 모든 요청이 느려지므로 느린 추적도 같다. 오류 수 · 오류율은 샘플링 앞의 span_metrics 가 전부 센다(B-72). 실제 Collector 로
+     * 남는 수를 세는 시험은 {@code TailSamplingBudgetTest}(컨테이너).
+     *
+     * <p>[JA] テールサンプリングで「エラー」·「遅い」トレースを残すポリシーは毎秒スパン上限(rate_limiting)と一緒 — 上限のない
+     *      status_code · latency ポリシーを最上位に置かない。エラーの嵐が Jaeger のディスクを埋めた(2026-10-22 実習)。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("B-102: 꼬리 샘플링의 오류 · 느린 추적 정책은 초당 스팬 상한과 함께다 — 오류 폭주가 추적 저장소를 채우지 않는다")
+    void tailSamplingErrorAndSlowPoliciesAreRateLimited() throws IOException {
+        Map<String, Object> collector = new org.yaml.snakeyaml.Yaml().load(Files.readString(
+                repoRoot().resolve("observability/otel-collector.yml"), StandardCharsets.UTF_8));
+        Map<String, Object> tail = (Map<String, Object>) ((Map<String, Object>) collector.get("processors")).get("tail_sampling");
+        List<Map<String, Object>> policies = (List<Map<String, Object>>) tail.get("policies");
+        Pattern envDefault = Pattern.compile("\\$\\{env:[A-Z_]+:-(\\d+)}|^(\\d+)$");
+        Set<String> capped = new TreeSet<>();
+        List<String> uncapped = new java.util.ArrayList<>();
+        for (Map<String, Object> policy : policies) {
+            String type = String.valueOf(policy.get("type"));
+            if (type.equals("status_code") || type.equals("latency")) {
+                uncapped.add(policy.get("name") + "(" + type + ")");
+                continue;
+            }
+            if (!type.equals("and")) {
+                continue;
+            }
+            List<Map<String, Object>> subs = (List<Map<String, Object>>) ((Map<String, Object>) policy.get("and")).get("and_sub_policy");
+            Set<String> subTypes = new TreeSet<>();
+            subs.forEach(sp -> subTypes.add(String.valueOf(sp.get("type"))));
+            if (!subTypes.contains("status_code") && !subTypes.contains("latency")) {
+                continue;
+            }
+            // 상한이 먼저 오면 and 가 그 자리에서 모든 추적의 몫을 쓴다 — 조건이 먼저, 상한은 마지막
+            assertThat(String.valueOf(subs.get(subs.size() - 1).get("type"))).as(policy.get("name") + ": 상한은 마지막 하위 정책")
+                    .isEqualTo("rate_limiting");
+            Object perSec = ((Map<String, Object>) subs.get(subs.size() - 1).get("rate_limiting")).get("spans_per_second");
+            Matcher m = envDefault.matcher(String.valueOf(perSec).trim());
+            assertThat(m.find()).as(policy.get("name") + ": spans_per_second 는 숫자 또는 ${env:X:-숫자} — " + perSec).isTrue();
+            int n = Integer.parseInt(m.group(1) != null ? m.group(1) : m.group(2));
+            assertThat(n).as(policy.get("name") + ": 초당 스팬 상한(기본값)").isBetween(1, 1000);
+            subTypes.stream().filter(t -> t.equals("status_code") || t.equals("latency")).forEach(capped::add);
+        }
+        assertThat(uncapped).as("상한 없는 오류 · 느린 추적 정책 — 장애 때 모든 추적을 남겨 저장소를 채운다(B-102)").isEmpty();
+        assertThat(capped).as("오류(status_code) · 느린 추적(latency) 정책이 상한과 함께 있다").containsExactly("latency", "status_code");
+    }
+
+    /**
      * B-94: Collector 는 Jaeger 로 보내기 전에 스팬 속성 · 이벤트 속성 · 상태 메시지의 길이를 자른다 — 가린(redaction) 뒤에.
      *
      * <p>Jaeger 의 badger 는 태그 값으로 색인 키를 만들고 키 상한이 65,000 바이트다. 2026-10-19 운영에서 catalog 의 "바인드 변수
