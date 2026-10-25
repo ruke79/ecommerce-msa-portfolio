@@ -288,8 +288,13 @@ public class CartService {
 
         Optional<Cart> optionalCart = cartRepository.findByUserId(userId);
         if (optionalCart.isEmpty()) {
-            log.info("Cart not found for user ID: {}", userId);
-            return null;
+            // 장바구니가 없으면 빈 목록 — null 이 아니다. 🐛 2026-10-24 운영: null 이면 200 에 본문이 비고, 화면(axios)은 그것을 빈
+            // 문자열로 받아 `(items ?? []).map` 에서 TypeError — 장바구니 화면이 오류 화면이 됐다. 장바구니 행이 없는 것은 흔하다:
+            // 처음 온 사용자, 주문 뒤(장바구니 비우기가 행을 지운다), 마지막 줄을 뺀 직후(removeItem 이 이 값을 돌려준다).
+            // [JA] カートがなければ空のリスト(null ではない)。null だと 200 で本文が空になり、画面はそれを空文字列として受けて
+            //      TypeError — カート画面がエラー画面になった。注文後 · 最後の行を消した直後など、カートの行がないのはよくある。
+            log.debug("Cart not found for user ID: {}", userId);
+            return List.of();
         }
 
         Cart cart = optionalCart.get();

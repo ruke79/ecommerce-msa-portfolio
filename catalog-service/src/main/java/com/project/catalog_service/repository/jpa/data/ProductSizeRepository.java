@@ -42,18 +42,37 @@ public interface ProductSizeRepository extends JpaRepository<ProductSize, Long> 
             org.springframework.data.domain.Pageable page);
 
     /**
-     * 상품들의 사이즈별 <b>지금</b> 수량 — {@code [size_id, quantity]}. 목록 카드의 재고 표시용(docs/59 §5).
+     * 상품들의 재고 표시에 쓰는 두 가지를 <b>한 질의</b>로 — 사이즈별 <b>지금</b> 수량과 옵션(색상 · 사이즈)별 살아 있는 예약 합
+     * (docs/59 §5). 행은 {@code [kind, size_id, product_id, color_id, size, n]}: {@code kind = 'L'} 이면 {@code size_id} · {@code n}
+     * (= 수량), {@code 'H'} 면 {@code product_id} · {@code color_id} · {@code size} · {@code n}(= 예약 합).
      *
      * <p>목록 DTO 는 캐시에서 온다 — 카테고리 목록 캐시({@code products}, 카테고리 키)는 만료가 없고 재고가 바뀌어도 비우지
      * 않는다. 그 수량으로 "품절" 을 그리면 언제 적 품절인지 모른다. 카드 한 페이지(수십 개)를 한 번에 읽는다.
+     *
+     * <p>🐛 2026-10-24 CPU 프로파일(docs/83 §5): 예전에는 이 둘을 따로 읽었다(지금 수량 · 예약 합 — 질의마다 제 트랜잭션 · DB 왕복).
+     * 목록 · 상세 응답마다 두 번이라 catalog CPU 의 20% 가 재고 표시였다(Hibernate · 드라이버 · DB 쪽 TLS). 이제 {@code UNION ALL}
+     * 하나 — 값은 두 질의를 합친 것과 같다({@code StockAvailabilityQueryTest} 가 예전 두 질의와 대조한다).
+     *
+     * <p>예약 쪽 {@code status = 'HELD'} 는 <b>리터럴</b>이다 — 부분 인덱스({@code WHERE status = 'HELD'})를 쓰려면 조건이 리터럴이어야
+     * 한다({@code StockReservationRepository#sumHeldByProducts} 와 같은 이유).
+     *
+     * <p>[JA] 在庫表示に使う二つ(サイズごとの現在数量 · オプションごとの有効な予約の合計)を一つの照会で。以前は別々に読み(照会ごとに
+     * トランザクション · DB 往復)、応答ごとに二回で catalog CPU の 20% だった。
      */
     @Query(value = """
-            select s.size_id, s.quantity
+            select 'L' as kind, s.size_id as size_id, cast(null as bigint) as product_id, cast(null as bigint) as color_id,
+                   cast(null as varchar) as size, cast(s.quantity as bigint) as n
               from product.product_size s
               join product.product_sku k on k.skuproduct_id = s.skuproduct_id
              where k.product_id in (:productIds)
+            union all
+            select 'H', null, r.product_id, r.color_id, r.size, sum(r.qty)
+              from product.stock_reservation r
+             where r.product_id in (:productIds) and r.status = 'HELD' and r.expires_at > :now
+             group by r.product_id, r.color_id, r.size
             """, nativeQuery = true)
-    java.util.List<Object[]> liveQuantities(@Param("productIds") java.util.Collection<Long> productIds);
+    java.util.List<Object[]> liveAndHeld(@Param("productIds") java.util.Collection<Long> productIds,
+            @Param("now") java.time.Instant now);
 
     /**
      * 상품들의 옵션(색상·사이즈)별 지금 수량과 상품 상태 — {@code [product_id, color_id, size, quantity, status]}. 장바구니

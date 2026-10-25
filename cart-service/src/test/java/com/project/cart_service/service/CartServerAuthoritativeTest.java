@@ -131,6 +131,14 @@ class CartServerAuthoritativeTest {
     }
 
     @Test
+    @DisplayName("🔴 장바구니가 없는 사용자(처음 · 주문 뒤)의 조회는 빈 목록 — null 이면 본문이 비어 장바구니 화면이 오류였다(2026-10-24 운영)")
+    void loadWithoutCartIsEmptyList() {
+        assertThat(stored[0]).isNull();
+
+        assertThat(service.loadCart(7L)).isNotNull().isEmpty();
+    }
+
+    @Test
     @DisplayName("담기 — 장바구니가 없으면 만들고, 색상은 SKU 에서(본문 무시), 응답은 지금 장바구니 전체")
     void putCreatesCartAndLine() {
         List<ProductInfoDto> now = service.putItem(7L, item("1", "M", 2));
@@ -191,7 +199,7 @@ class CartServerAuthoritativeTest {
 
         List<ProductInfoDto> now = service.removeItem(7L, 1L, 5L, "M");
         assertThat(stored[0]).isNull();
-        assertThat(now).isNull();                               // loadCart 와 같다 — 장바구니 없음
+        assertThat(now).as("마지막 줄을 뺀 응답 — 빈 목록(null 이면 본문이 비어 화면이 깨진다)").isNotNull().isEmpty();
 
         assertThat(service.removeItem(7L, 1L, 5L, "M")).isEmpty();
     }

@@ -60,8 +60,9 @@ class HomeCacheControllerTest {
     void homeComesFromCacheButStockIsLive() {
         when(sections.home()).thenReturn(new HomeView(List.of(
                 new HomeSectionView(1L, "신상", "grid", null, null, List.of(product("1", "11", 5))))));
-        when(sizes.liveQuantities(anyCollection()))
-                .thenReturn(List.<Object[]>of(new Object[] {11L, 4}), List.<Object[]>of(new Object[] {11L, 2}));
+        when(sizes.liveAndHeld(anyCollection(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.<Object[]>of(new Object[] {"L", 11L, null, null, null, 4L}),
+                        List.<Object[]>of(new Object[] {"L", 11L, null, null, null, 2L}));
         HomeViewCache cache = new HomeViewCache(sections, Duration.ofSeconds(30), new SimpleMeterRegistry());
         ContentController controller = new ContentController(null, cache, null, null, null,
                 new StockAvailability(reservations, sizes));
@@ -69,7 +70,7 @@ class HomeCacheControllerTest {
         assertThat(qty(controller.home())).isEqualTo(4);
         assertThat(qty(controller.home())).as("재고는 캐시되지 않는다").isEqualTo(2);
         verify(sections, times(1)).home();
-        verify(sizes, times(2)).liveQuantities(anyCollection());
+        verify(sizes, times(2)).liveAndHeld(anyCollection(), org.mockito.ArgumentMatchers.any());
         assertThat(qty(cache.get())).as("캐시에 담긴 원본은 고치지 않는다").isEqualTo(5);
     }
 

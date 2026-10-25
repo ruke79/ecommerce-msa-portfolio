@@ -156,3 +156,20 @@ describe("syncedFromServer · forgetOwner — 서버 장바구니의 사본", ()
     expect(state.ownerId).toBe("42");
   });
 });
+
+describe("서버가 배열이 아닌 것을 주면 — 빈 장바구니로(2026-10-24 운영)", () => {
+  /**
+   * 🐛 장바구니가 없을 때(주문 뒤 · 마지막 줄을 뺀 직후) 옛 서버는 200 + 빈 본문을 줬고, axios 는 그것을 ""로 받는다.
+   * `("" ?? []).map` 은 TypeError — 장바구니 화면이 "画面の表示中にエラーが発生しました" 였다.
+   */
+  test.each([["빈 본문(\"\")", ""], ["null", null], ["객체", { message: "x" }]])("syncedFromServer(%s) → 빈 목록", (_, items) => {
+    const state = reducer(undefined, syncedFromServer({ items, ownerId: "42" }));
+    expect(state.cartItems).toEqual([]);
+    expect(state.ownerId).toBe("42");
+  });
+
+  test("hydrateCart 도 같다", () => {
+    expect(reducer(undefined, hydrateCart("")).cartItems).toEqual([]);
+  });
+});
+

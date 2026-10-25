@@ -2,10 +2,12 @@ package com.project.catalog_service.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -38,7 +40,17 @@ class StockAvailabilityTest {
         sizes = mock(ProductSizeRepository.class);
         availability = new StockAvailability(reservations, sizes);
         when(reservations.sumHeldByProducts(anyCollection(), any())).thenReturn(List.of());
-        when(sizes.liveQuantities(anyCollection())).thenReturn(List.of());
+        when(sizes.liveAndHeld(anyCollection(), any())).thenReturn(List.of());
+    }
+
+    /** 합친 질의의 '지금 수량' 행. */
+    static Object[] live(long sizeId, int qty) {
+        return new Object[] {"L", sizeId, null, null, null, (long) qty};
+    }
+
+    /** 합친 질의의 '예약 합' 행. */
+    static Object[] held(long productId, long colorId, String size, long sum) {
+        return new Object[] {"H", null, productId, colorId, size, sum};
     }
 
     private static ProductDto product(String id, String colorId, ProductSizeDto... sizes) {
@@ -58,9 +70,8 @@ class StockAvailabilityTest {
     @DisplayName("🔴 목록 캐시의 수량을 믿지 않는다 — 지금 수량으로 바꾸고, 그 위에서 남의 예약을 뺀다")
     void liveThenHolds() {
         ProductDto cached = product("1", "5", size("11", "M", 9), size("12", "L", 0));
-        when(sizes.liveQuantities(anyCollection())).thenReturn(List.<Object[]>of(new Object[] {11L, 2}, new Object[] {12L, 4}));
-        when(reservations.sumHeldByProducts(anyCollection(), any()))
-                .thenReturn(List.<Object[]>of(new Object[] {1L, 5L, "M", 2L}, new Object[] {1L, 5L, "L", 1L}));
+        when(sizes.liveAndHeld(anyCollection(), any()))
+                .thenReturn(List.<Object[]>of(live(11L, 2), live(12L, 4), held(1L, 5L, "M", 2L), held(1L, 5L, "L", 1L)));
 
         ProductDto shown = availability.apply(List.of(cached)).get(0);
 
@@ -72,32 +83,33 @@ class StockAvailabilityTest {
     }
 
     @Test
-    @DisplayName("한 페이지는 한 번씩만 읽는다 — 상품마다 읽지 않는다")
+    @DisplayName("🔴 한 페이지는 한 질의로 — 지금 수량과 예약 합을 따로 읽지 않는다, 상품마다 읽지 않는다(docs/83 §5)")
     void onePerPage() {
         availability.apply(List.of(product("1", "5", size("11", "M", 1)), product("2", "6", size("21", "M", 1)),
                 product("3", "7", size("31", "M", 1))));
 
-        verify(sizes, times(1)).liveQuantities(List.of(1L, 2L, 3L).stream().collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)));
-        verify(reservations, times(1)).sumHeldByProducts(anyCollection(), any());
+        verify(sizes, times(1)).liveAndHeld(eq(List.of(1L, 2L, 3L).stream()
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new))), any());
+        verifyNoInteractions(reservations);
     }
 
     @Test
-    @DisplayName("지금 수량을 못 읽어도 예약은 뺀다 — 두 읽기는 따로 실패한다")
-    void liveFailsIndependently() {
-        when(sizes.liveQuantities(anyCollection())).thenThrow(new QueryTimeoutException("x"));
-        when(reservations.sumHeldByProducts(anyCollection(), any())).thenReturn(List.<Object[]>of(new Object[] {1L, 5L, "M", 1L}));
+    @DisplayName("상세 한 건도 한 질의로")
+    void detailIsOneQuery() {
+        when(sizes.liveAndHeld(anyCollection(), any())).thenReturn(List.<Object[]>of(live(11L, 4), held(1L, 5L, "M", 1L)));
 
-        ProductDto shown = availability.apply(List.of(product("1", "5", size("11", "M", 3)))).get(0);
+        ProductDto shown = availability.apply(product("1", "5", size("11", "M", 9)));
 
-        assertThat(sizeOf(shown, 0).getQuantity()).isEqualTo(2);
+        assertThat(sizeOf(shown, 0).getQuantity()).isEqualTo(3);
         assertThat(sizeOf(shown, 0).getOnHold()).isEqualTo(1);
+        verify(sizes, times(1)).liveAndHeld(anyCollection(), any());
+        verifyNoInteractions(reservations);
     }
 
     @Test
-    @DisplayName("둘 다 못 읽으면 캐시 그대로 — 같은 객체를 돌려준다")
-    void bothFail() {
-        when(sizes.liveQuantities(anyCollection())).thenThrow(new QueryTimeoutException("x"));
-        when(reservations.sumHeldByProducts(anyCollection(), any())).thenThrow(new QueryTimeoutException("y"));
+    @DisplayName("못 읽으면 캐시 그대로 — 같은 객체를 돌려준다(수량 · 예약 모두)")
+    void failsToCached() {
+        when(sizes.liveAndHeld(anyCollection(), any())).thenThrow(new QueryTimeoutException("x"));
         ProductDto cached = product("1", "5", size("11", "M", 3));
 
         assertThat(availability.apply(List.of(cached)).get(0)).isSameAs(cached);
@@ -108,7 +120,7 @@ class StockAvailabilityTest {
     void tolerant() {
         ProductDto odd = ProductDto.builder().id("x").build();
         ProductDto noSizes = ProductDto.builder().id("2").skus(List.of(ProductSkuDto.builder().build())).build();
-        when(sizes.liveQuantities(anyCollection())).thenReturn(List.<Object[]>of(new Object[] {99L, 1}));
+        when(sizes.liveAndHeld(anyCollection(), any())).thenReturn(List.<Object[]>of(live(99L, 1)));
 
         List<ProductDto> shown = availability.apply(List.of(odd, noSizes));
 

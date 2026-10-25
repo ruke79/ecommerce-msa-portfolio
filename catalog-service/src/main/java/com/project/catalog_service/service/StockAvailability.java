@@ -29,12 +29,13 @@ import lombok.extern.slf4j.Slf4j;
  * <p>상품 DTO 는 Redis 에 캐시된다 — 상세(slug 키), 검색 결과, 홈의 카테고리 목록. 예약은 분 단위로 생겼다 사라진다 — 캐시된
  * 값에 넣으면 예약이 풀려도 캐시가 바뀔 때까지 "0개" 가 남는다. 게다가 카테고리 목록 캐시는 만료가 없고 재고가 바뀌어도 비우지
  * 않아서, 그 안의 <b>실물 수량부터</b> 언제 적 것인지 모른다. 그래서 응답할 때마다 한 묶음(상세 하나, 목록 한 페이지)에 대해
- * 두 번 읽는다 — 사이즈별 지금 수량 한 번, 살아 있는 예약 합 한 번. 둘 다 인덱스 조회다(V14·V15). 캐시된 객체는 건드리지 않고
- * 복사본을 고친다 — 캐시가 메모리 캐시로 바뀌어도 빼기가 쌓이지 않게.
+ * 사이즈별 지금 수량과 살아 있는 예약 합을 <b>한 질의</b>로 읽는다({@code ProductSizeRepository#liveAndHeld} — 둘 다 인덱스 조회,
+ * V14·V15). 🐛 2026-10-24 프로파일(docs/83 §5): 예전에는 따로 두 번(질의마다 트랜잭션 · DB 왕복)이라 catalog CPU 의 20% 였다.
+ * 캐시된 객체는 건드리지 않고 복사본을 고친다 — 캐시가 메모리 캐시로 바뀌어도 빼기가 쌓이지 않게.
  *
  * <h3>실패하면</h3>
  *
- * <p>읽기가 실패하면 캐시의 값을 그대로 보여 준다(두 읽기는 따로 실패한다). 재고 표시 때문에 상품 화면이 깨지면 안 된다 — 주문
+ * <p>읽기가 실패하면 캐시의 값을 그대로 보여 준다(수량 · 예약 모두 — 한 질의라 함께 실패한다). 재고 표시 때문에 상품 화면이 깨지면 안 된다 — 주문
  * 단계의 예약이 어차피 정확히 거른다. 이 클래스는 트랜잭션 밖(컨트롤러)에서 부른다 — 트랜잭션 안에서 조회가 실패하면 삼켜도 그
  * 트랜잭션이 rollback-only 가 된다.
  *
@@ -126,7 +127,7 @@ public class StockAvailability {
         if (productIds == null || productIds.isEmpty()) {
             return new Snapshot(Map.of(), Map.of());
         }
-        return new Snapshot(live ? liveFor(productIds) : Map.of(), heldFor(productIds));
+        return live ? liveAndHeldFor(productIds) : new Snapshot(Map.of(), heldFor(productIds));
     }
 
     /** 상품 상세 한 건. */
@@ -281,16 +282,23 @@ public class StockAvailability {
         }
     }
 
-    Map<Long, Integer> liveFor(Collection<Long> productIds) {
+    /** 지금 수량과 예약 합 — 한 질의(한 트랜잭션 · 한 왕복). ／ [JA] 現在数量と予約の合計を一つの照会で。 */
+    Snapshot liveAndHeldFor(Collection<Long> productIds) {
         try {
             Map<Long, Integer> live = new HashMap<>();
-            for (Object[] row : sizes.liveQuantities(productIds)) {
-                live.put(((Number) row[0]).longValue(), ((Number) row[1]).intValue());
+            Map<Option, Integer> held = new HashMap<>();
+            for (Object[] row : sizes.liveAndHeld(productIds, Instant.now(clock))) {
+                int n = ((Number) row[5]).intValue();
+                if ("L".equals(String.valueOf(row[0]))) {
+                    live.put(((Number) row[1]).longValue(), n);
+                } else {
+                    held.put(new Option(((Number) row[2]).longValue(), ((Number) row[3]).longValue(), (String) row[4]), n);
+                }
             }
-            return live;
+            return new Snapshot(live, held);
         } catch (RuntimeException e) {
-            log.warn("지금 수량 조회 실패 — 캐시의 수량을 그대로 보여 준다 ({})", e.getClass().getSimpleName());
-            return Map.of();
+            log.warn("재고 조회 실패 — 캐시의 수량을 그대로 보여 준다 ({})", e.getClass().getSimpleName());
+            return new Snapshot(Map.of(), Map.of());
         }
     }
 

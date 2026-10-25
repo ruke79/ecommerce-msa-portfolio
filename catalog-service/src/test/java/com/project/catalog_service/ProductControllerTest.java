@@ -260,8 +260,8 @@ class ProductControllerTest {
                 com.project.common.dto.ProductSkuDto.builder().color(ProductColorDto.builder().id("5").build())
                         .sizes(List.of(m, l)).build())).build();
         when(productService.getProductsBySlug("tee")).thenReturn(Collections.singletonList(cached));
-        when(stockReservations.sumHeldByProducts(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(List.<Object[]>of(new Object[] {1L, 5L, "M", 2L}, new Object[] {1L, 5L, "L", 4L}));
+        when(productSizes.liveAndHeld(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.<Object[]>of(new Object[] {"H", null, 1L, 5L, "M", 2L}, new Object[] {"H", null, 1L, 5L, "L", 4L}));
 
         mockMvc.perform(get("/api/product/{slug}", "tee"))
                 .andExpect(status().isOk())
@@ -282,8 +282,8 @@ class ProductControllerTest {
                 com.project.common.dto.ProductSkuDto.builder().color(ProductColorDto.builder().id("5").build())
                         .sizes(List.of(com.project.common.dto.ProductSizeDto.builder().id("11").size("M").quantity(3).build())).build())).build();
         when(productService.getProductsBySlug("tee")).thenReturn(Collections.singletonList(cached));
-        when(productSizes.liveQuantities(org.mockito.ArgumentMatchers.anyCollection()))
-                .thenReturn(List.<Object[]>of(new Object[] {11L, 0}));
+        when(productSizes.liveAndHeld(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.<Object[]>of(new Object[] {"L", 11L, null, null, null, 0L}));
 
         mockMvc.perform(get("/api/product/{slug}", "tee"))
                 .andExpect(status().isOk())
@@ -291,13 +291,13 @@ class ProductControllerTest {
     }
 
     @Test
-    @DisplayName("예약 조회가 실패하면 실물 수량 그대로 — 상품 화면이 깨지지 않는다")
+    @DisplayName("재고 조회가 실패하면 캐시의 수량 그대로 — 상품 화면이 깨지지 않는다")
     void productDetailFailOpen() throws Exception {
         ProductDto cached = ProductDto.builder().id("1").slug("tee").skus(List.of(
                 com.project.common.dto.ProductSkuDto.builder().color(ProductColorDto.builder().id("5").build())
                         .sizes(List.of(com.project.common.dto.ProductSizeDto.builder().size("M").quantity(3).build())).build())).build();
         when(productService.getProductsBySlug("tee")).thenReturn(Collections.singletonList(cached));
-        when(stockReservations.sumHeldByProducts(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.any()))
+        when(productSizes.liveAndHeld(org.mockito.ArgumentMatchers.anyCollection(), org.mockito.ArgumentMatchers.any()))
                 .thenThrow(new org.springframework.dao.QueryTimeoutException("timeout"));
 
         mockMvc.perform(get("/api/product/{slug}", "tee"))

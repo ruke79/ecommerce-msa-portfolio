@@ -114,7 +114,7 @@
 
 - ~~一覧・詳細を開いた後にできた予約は画面に反映されない~~ → §9: 詳細は戻ってきたとき・1 分ごとに読み直す。一覧は react-query の
   ウィンドウフォーカス時の再取得(staleTime 60 秒経過後)で追従する。
-- 一覧のレスポンスごとに DB を二度読む(インデックス照会、1 ページ単位)。キャッシュは商品情報・価格のためのものとして残り、在庫だけがキャッシュを迂回する。
+- 一覧のレスポンスごとに DB を一度読む — 現在数量と予約の合計を一つの照会で(インデックス照会、1 ページ単位; 2026-10-24 以前は二度 — 負荷測定のプロファイルで catalog CPU の 20%、docs/83 §5)。キャッシュは商品情報・価格のためのものとして残り、在庫だけがキャッシュを迂回する。
 - 商品の**状態**(`SOLD_OUT` など)は依然としてキャッシュの値である — 状態は管理者が変更するときにキャッシュを更新する経路が別にある。
 - 先行する注文の予約を新しい注文に引き渡すのは**同じ顧客**基準である。新しい注文が別の理由で不足して拒否されても、前の注文の予約はすでに
   解放されている — 前の注文は決済できるが保証はない(決済画面がそう伝える)。
@@ -174,7 +174,7 @@
 | `BankTransferStockHoldTest`(4) | 入金開始時に延長・足りなければ拒否、キャンセル・期限切れ時に解放 |
 | `OrderSagaStockReleaseTest`(2) | Saga ロールバック時にコミット後に解放 |
 | `ProductControllerTest`(+3) | 詳細の残数 = 実在庫 − 予約・`onHold`、キャッシュされた DTO はそのまま、実在庫より多く確保されても 0、照会失敗なら実在庫のまま・`onHold` を載せない、カートのバッチは一度に読む |
-| `StockAvailabilityTest`(5)・`StockOnCardsControllerTest`(2)・`ProductControllerTest.productDetailUsesLiveQuantity` | キャッシュの数量の代わりに現在の数量 → その上で予約を引く、1 ページ・ホーム全体をそれぞれ一度だけ読む、二つの読み取りが別々に失敗、検索のページ情報はそのまま・キャッシュされた結果はそのまま |
+| `StockAvailabilityTest`(5)・`StockOnCardsControllerTest`(2)・`ProductControllerTest.productDetailUsesLiveQuantity` | キャッシュの数量の代わりに現在の数量 → その上で予約を引く、1 ページ・ホーム全体をそれぞれ一度だけ読む、一つの照会(一覧 · 詳細 · ホーム)· 読めなければキャッシュのまま、`StockAvailabilityQueryTest`(コンテナ — 合わせた照会 = 以前の二つの照会 · SQL 一つ)、検索のページ情報はそのまま・キャッシュされた結果はそのまま |
 | `ProductControllerTest.cartStock*`(2)・`CartSlice.test.js`(syncStock 3)・`CartPage.test.jsx`(5)・`util/stock.test.js`(カート 5) | カートの在庫 — 予約を引いた数量・状態、存在しないオプションは除外、形式エラー 400・読み取り失敗 503、入ってきたら一度に問い合わせて更新(失敗ならそのまま)、追加した数量・カートの状態はそのまま、項目別の案内、買えない項目があれば先に進まない |
 | `util/stock.test.js`(7)・`ProductCard.test.jsx`(+4) | カードのバッジ — 決済中は品切れではない、品切れ・残り N 個(サイズ合計)、十分ならなし、数量が分からなければ何も言わない |
 | `OrderCreateStockHoldTest.releasesEarlierHoldsBeforeHolding` | 新しい注文を確保する**前に**同じ顧客の先行する決済前注文の予約を解放する |

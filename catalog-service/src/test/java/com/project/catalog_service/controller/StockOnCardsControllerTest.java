@@ -60,8 +60,8 @@ class StockOnCardsControllerTest {
         when(homeSections.home()).thenReturn(new HomeView(List.of(
                 new HomeSectionView(1L, "신상", "grid", null, null, List.of(product("1", "11", 5))),
                 new HomeSectionView(2L, "인기", "swiper", null, null, List.of(product("1", "11", 5), product("2", "21", 5))))));
-        when(sizes.liveQuantities(anyCollection())).thenReturn(List.<Object[]>of(new Object[] {11L, 1}, new Object[] {21L, 0}));
-        when(reservations.sumHeldByProducts(anyCollection(), any())).thenReturn(List.<Object[]>of(new Object[] {1L, 5L, "M", 1L}));
+        when(sizes.liveAndHeld(anyCollection(), any())).thenReturn(List.<Object[]>of(new Object[] {"L", 11L, null, null, null, 1L},
+                new Object[] {"L", 21L, null, null, null, 0L}, new Object[] {"H", null, 1L, 5L, "M", 1L}));
         ContentController controller = new ContentController(null,
                 new HomeViewCache(homeSections, Duration.ZERO, new SimpleMeterRegistry()), null, null, null, availability);
 
@@ -71,8 +71,8 @@ class StockOnCardsControllerTest {
         assertThat(home.sections().get(0).products().get(0).getSkus().get(0).getSizes().get(0).getOnHold()).isEqualTo(1);
         assertThat(qty(home.sections().get(1).products().get(1))).isZero();
         assertThat(home.sections().get(1).title()).isEqualTo("인기");
-        verify(sizes, times(1)).liveQuantities(anyCollection());
-        verify(reservations, times(1)).sumHeldByProducts(anyCollection(), any());
+        verify(sizes, times(1)).liveAndHeld(anyCollection(), any());
+        org.mockito.Mockito.verifyNoInteractions(reservations);
     }
 
     @Test
@@ -83,8 +83,7 @@ class StockOnCardsControllerTest {
         SearchResultDto result = SearchResultDto.builder().totalProducts(41)
                 .product(new PageImpl<>(List.of(cached), PageRequest.of(2, 20), 41)).build();
         when(search.searchProducts(any(), any())).thenReturn(result);
-        when(sizes.liveQuantities(anyCollection())).thenReturn(List.<Object[]>of(new Object[] {11L, 2}));
-        when(reservations.sumHeldByProducts(anyCollection(), any())).thenReturn(List.of());
+        when(sizes.liveAndHeld(anyCollection(), any())).thenReturn(List.<Object[]>of(new Object[] {"L", 11L, null, null, null, 2L}));
         com.project.catalog_service.service.SearchFilterFacets facets = mock(com.project.catalog_service.service.SearchFilterFacets.class);
         when(facets.attach(any(), any())).thenAnswer(i -> i.getArgument(0));
         SearchController controller = new SearchController(search, availability, null, null, null, facets,

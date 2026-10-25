@@ -148,7 +148,7 @@ class CartPersistenceJpaTest {
         assertThat(later.get(0).getQty()).isEqualTo(4);
 
         inNewRequest(() -> service.removeItem(userId, 1L, 5L, "M"));
-        assertThat(inNewRequest(() -> service.loadCart(userId))).isNull();
+        assertThat(inNewRequest(() -> service.loadCart(userId))).as("장바구니가 없으면 빈 목록 — null 이면 본문이 비어 화면이 깨진다").isEmpty();
     }
 
     @Test

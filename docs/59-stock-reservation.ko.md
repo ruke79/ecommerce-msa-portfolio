@@ -114,7 +114,7 @@
 
 - ~~목록·상세를 연 뒤에 생긴 예약은 화면에 반영되지 않는다~~ → §9: 상세는 돌아올 때·1분마다 다시 읽는다. 목록은 react-query 의
   창 포커스 재조회(staleTime 60초가 지난 뒤)로 따라온다.
-- 목록 응답마다 DB 를 두 번 읽는다(인덱스 조회, 한 페이지 단위). 캐시는 상품 정보·가격을 위한 것으로 남고, 재고만 캐시를 건너뛴다.
+- 목록 응답마다 DB 를 한 번 읽는다 — 지금 수량과 예약 합을 한 질의로(인덱스 조회, 한 페이지 단위; 2026-10-24 전에는 두 번 — 부하 측정 프로파일에서 catalog CPU 의 20%, docs/83 §5). 캐시는 상품 정보·가격을 위한 것으로 남고, 재고만 캐시를 건너뛴다.
 - 상품 **상태**(`SOLD_OUT` 등)는 여전히 캐시의 값이다 — 상태는 관리자가 바꿀 때 캐시를 갱신하는 경로가 따로 있다.
 - 앞선 주문의 예약을 새 주문에 넘기는 것은 **같은 고객** 기준이다. 새 주문이 다른 이유로 모자라 거절돼도 앞 주문의 예약은 이미
   풀렸다 — 앞 주문은 결제할 수 있지만 보장이 없다(결제 화면이 그렇게 말한다).
@@ -174,7 +174,7 @@
 | `BankTransferStockHoldTest`(4) | 입금 시작 때 연장·모자라면 거절, 취소·만료 때 해제 |
 | `OrderSagaStockReleaseTest`(2) | 사가 롤백 때 커밋 뒤 해제 |
 | `ProductControllerTest`(+3) | 상세 남은 수량 = 실물 − 예약·`onHold`, 캐시된 DTO 는 그대로, 실물보다 많이 잡혀도 0, 조회 실패면 실물 그대로·`onHold` 를 싣지 않음, 장바구니 배치는 한 번에 읽는다 |
-| `StockAvailabilityTest`(5)·`StockOnCardsControllerTest`(2)·`ProductControllerTest.productDetailUsesLiveQuantity` | 캐시의 수량 대신 지금 수량 → 그 위에서 예약을 뺀다, 한 페이지·홈 전체를 한 번씩만 읽는다, 두 읽기가 따로 실패, 검색의 페이지 정보는 그대로·캐시된 결과는 그대로 |
+| `StockAvailabilityTest`(5)·`StockOnCardsControllerTest`(2)·`ProductControllerTest.productDetailUsesLiveQuantity` | 캐시의 수량 대신 지금 수량 → 그 위에서 예약을 뺀다, 한 페이지·홈 전체 · 상세를 한 질의로 읽는다, 못 읽으면 캐시 그대로, `StockAvailabilityQueryTest`(컨테이너 — 합친 질의 = 예전 두 질의 · SQL 하나), 검색의 페이지 정보는 그대로·캐시된 결과는 그대로 |
 | `ProductControllerTest.cartStock*`(2)·`CartSlice.test.js`(syncStock 3)·`CartPage.test.jsx`(5)·`util/stock.test.js`(장바구니 5) | 장바구니 재고 — 예약을 뺀 수량·상태, 없는 옵션은 빠짐, 형식 오류 400·읽기 실패 503, 들어오면 한 번에 묻고 갱신(실패면 그대로), 담은 수량·장바구니 상태는 그대로, 항목별 안내, 살 수 없는 항목이 있으면 넘어가지 않음 |
 | `util/stock.test.js`(7)·`ProductCard.test.jsx`(+4) | 카드 배지 — 결제 중은 품절이 아니다, 품절·N개 남음(사이즈 합), 넉넉하면 없음, 수량을 모르면 말하지 않음 |
 | `OrderCreateStockHoldTest.releasesEarlierHoldsBeforeHolding` | 새 주문을 잡기 **전에** 같은 고객의 앞선 결제 전 주문의 예약을 푼다 |

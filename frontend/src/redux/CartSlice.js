@@ -30,7 +30,10 @@ const initialState = {
  */
 const withStockOf = (previous, items) => {
     const byKey = new Map(previous.filter((i) => i.stockStatus !== undefined).map((i) => [cartStockKey(i), i]));
-    return (items ?? []).map((item) => {
+    // 배열이 아니면 빈 장바구니 — 🐛 2026-10-24 운영: 장바구니가 없을 때 옛 서버가 200 + 빈 본문을 줬고, axios 는 그것을 빈 문자열("")로
+    // 받는다. `"" ?? []` 는 "" 라 `.map` 에서 TypeError — 장바구니 화면 전체가 오류 화면이었다(주문 뒤 · 마지막 줄을 뺀 직후).
+    // 서버는 이제 빈 목록을 주지만(cart-service loadCart), 롤링 중의 옛 파드와 다른 모양의 응답에도 화면이 깨지지 않게 여기서 거른다.
+    return (Array.isArray(items) ? items : []).map((item) => {
         const before = byKey.get(cartStockKey(item));
         return before ? { ...item, quantity: before.quantity, onHold: before.onHold, stockStatus: before.stockStatus } : item;
     });
@@ -80,7 +83,7 @@ export const cartSlice = createSlice({
          * 서버가 돌려준 **지금 장바구니**(loadcart·담기·수량·삭제의 응답)로 바꾸고 주인을 적는다(docs/40 0-b).
          * 로그인한 사용자의 장바구니는 이 액션으로만 바뀐다 — 서버가 기준이다.
          *
-         * @param action.payload `{ items: [...] | null, ownerId }` — 서버는 장바구니가 없으면 null 을 준다
+         * @param action.payload `{ items: [...] | null, ownerId }` — 장바구니가 없으면 빈 목록(옛 서버는 빈 본문 — 배열이 아니면 빈 장바구니로 본다)
          */
         syncedFromServer(state, action) {
             const { items, ownerId } = action.payload ?? {};
