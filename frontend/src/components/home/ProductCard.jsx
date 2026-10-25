@@ -23,6 +23,10 @@ const STOCK_BADGE = {
 const pricesOf = (sku) => skuPriceRange(sku);
 
 /**
+ * ⚠️ 목록 응답(검색 · 첫 화면 · 기획전)은 카드가 읽는 필드만 온다 — 서버의 허용 목록(catalog `ProductCardResponses`):
+ *    id · name · slug · status · skus(id · images · discount · color · sizes 의 size · price · quantity · onHold).
+ *    여기서 새 필드를 읽으려면 그 목록에도 더한다(설명 · 분류 · 별점 등은 상품 상세에만 있다).
+ *
  * @param priceFilter 검색의 가격대 `{ low, high }`(비면 열림). 있으면 그 범위에 드는 스타일부터 보여 준다 — 필터는 어느 스타일이든
  *                    맞으면 상품을 주는데, 첫 스타일만 보여 주면 "$50~$100" 결과에 "$15" 카드가 섞여 보였다.
  */

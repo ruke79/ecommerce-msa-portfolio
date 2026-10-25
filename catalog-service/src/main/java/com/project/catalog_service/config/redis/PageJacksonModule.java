@@ -5,10 +5,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonDeserializer;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 
 import org.springframework.data.domain.PageImpl;
@@ -37,42 +36,82 @@ public class PageJacksonModule extends SimpleModule {
         addDeserializer(PageImpl.class, new PageImplDeserializer());
     }
 
-    private static class PageImplDeserializer extends JsonDeserializer<PageImpl<?>> {
+    /**
+     * 파서에서 바로 읽는다 — 트리를 만들지 않는다.
+     *
+     * <p>🐛 2026-10-24 CPU 프로파일(docs/83 §5, 게이트웨이 4 회차): 캐시 값 풀기(catalog CPU 11.7%)의 절반이 이 클래스 안이었다. 예전에는
+     * 페이지 전체를 {@code readTree} 로 트리로 만든 뒤 원소마다 {@code treeToValue} 로 다시 객체로 읽었다 — 검색 결과 바이트의 대부분인
+     * 상품 목록을 두 번 읽은 셈이다({@code SinglePassJsonRedisSerializer} 가 없앤 이중 읽기의 안쪽). 저장 모양 · 읽은 값은 같다
+     * (원소는 여전히 {@code @class} 로 복원) — 캐시를 비우지 않아도 된다.
+     *
+     * <p>[JA] パーサから直接読む — ツリーを作らない。以前はページ全体をツリーにしてから要素ごとに読み直していた(キャッシュ復元の半分)。
+     */
+    static class PageImplDeserializer extends JsonDeserializer<PageImpl<?>> {
 
         @Override
         @SuppressWarnings({"unchecked", "rawtypes"})
         public PageImpl<?> deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
-            ObjectMapper mapper = (ObjectMapper) p.getCodec();
-            JsonNode node = mapper.readTree(p);
-
             List<Object> content = new ArrayList<>();
-            JsonNode contentNode = node.get("content");
-            // 기본 타입 정보가 켜져 있으면 컬렉션은 배열에 프로퍼티를 넣을 수 없어
-            //   ["java.util.ArrayList", [ {...}, {...} ]]
-            // 형태의 wrapper array 로 직렬화된다. 그 경우 실제 원소 배열은 두 번째 항목이다.
-            if (contentNode != null && contentNode.isArray()
-                    && contentNode.size() == 2
-                    && contentNode.get(0).isTextual()
-                    && contentNode.get(1).isArray()) {
-                contentNode = contentNode.get(1);
+            int number = 0;
+            int size = 0;
+            Long total = null;
+
+            // @class 를 읽은 타입 역직렬화기가 넘기면 다음 필드 이름에, 타입 정보 없이 오면 '{' 에 서 있다
+            JsonToken t = p.currentToken();
+            if (t == JsonToken.START_OBJECT) {
+                t = p.nextToken();
             }
-            if (contentNode != null && contentNode.isArray()) {
-                for (JsonNode element : contentNode) {
-                    // 원소 타입은 직렬화 시 기록된 타입 정보(@class)로 복원된다.
-                    content.add(mapper.treeToValue(element, Object.class));
+            for (; t == JsonToken.FIELD_NAME; t = p.nextToken()) {
+                String name = p.currentName();
+                JsonToken value = p.nextToken();
+                boolean present = value != JsonToken.VALUE_NULL;
+                switch (name) {
+                    case "content" -> readContent(p, ctxt, content);
+                    case "number" -> number = present ? p.getValueAsInt() : 0;
+                    case "size" -> size = present ? p.getValueAsInt() : 0;
+                    case "totalElements" -> total = present ? p.getValueAsLong() : null;
+                    default -> p.skipChildren();   // pageable · sort · last … — 다시 셀 수 있는 값이다
                 }
             }
-
-            int number = node.hasNonNull("number") ? node.get("number").asInt() : 0;
-            int size = node.hasNonNull("size") ? node.get("size").asInt() : 0;
-            long total = node.hasNonNull("totalElements")
-                    ? node.get("totalElements").asLong()
-                    : content.size();
 
             // size 가 0이면 PageRequest.of 가 IllegalArgumentException 을 던지므로 보정한다.
             int pageSize = size > 0 ? size : Math.max(content.size(), 1);
 
-            return new PageImpl(content, PageRequest.of(number, pageSize), total);
+            return new PageImpl(content, PageRequest.of(number, pageSize), total != null ? total : content.size());
+        }
+
+        /**
+         * 기본 타입 정보가 켜져 있으면 컬렉션은 배열에 프로퍼티를 넣을 수 없어
+         *   ["java.util.ArrayList", [ {...}, {...} ]]
+         * 형태의 wrapper array 로 직렬화된다. 그 경우 실제 원소 배열은 두 번째 항목이다. 원소 타입은 직렬화 시 기록된 타입 정보(@class)로 복원된다.
+         */
+        private static void readContent(JsonParser p, DeserializationContext ctxt, List<Object> content) throws IOException {
+            if (p.currentToken() != JsonToken.START_ARRAY) {
+                p.skipChildren();
+                return;
+            }
+            JsonToken t = p.nextToken();
+            if (t == JsonToken.VALUE_STRING) {
+                String first = p.getText();
+                t = p.nextToken();
+                if (t == JsonToken.START_ARRAY) {
+                    readElements(p, ctxt, content, p.nextToken());
+                    // 바깥 배열의 끝까지(예전처럼 두 항목 모양만 wrapper 로 본다 — 그 뒤는 없다)
+                    for (t = p.nextToken(); t != JsonToken.END_ARRAY && t != null; t = p.nextToken()) {
+                        p.skipChildren();
+                    }
+                    return;
+                }
+                content.add(first);   // 문자열 원소의 평범한 배열
+            }
+            readElements(p, ctxt, content, t);
+        }
+
+        private static void readElements(JsonParser p, DeserializationContext ctxt, List<Object> content, JsonToken t)
+                throws IOException {
+            for (; t != JsonToken.END_ARRAY && t != null; t = p.nextToken()) {
+                content.add(t == JsonToken.VALUE_NULL ? null : ctxt.readValue(p, Object.class));
+            }
         }
     }
 }
