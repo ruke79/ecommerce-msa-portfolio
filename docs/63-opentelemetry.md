@@ -250,6 +250,17 @@ kubectl -n ecommerce rollout status deploy/metrics-agent && kubectl -n ecommerce
 ```
 ⚠️ 本番では compose のコマンドごとに二つのファイルを一緒に渡す。既定のファイルだけで prometheus を作り直すと開発 PC の設定に戻る（`ServiceDown` · `ServiceMetricsMissing` が鳴る）。
 
+**メモリ上限 — 溜まった分に合わせる（B-106）。** 🐛 2026-10-22 10 時（UTC）から約 30 時間、本番の Jaeger が起動直後に `OOMKilled` で落ちることを 1,760 回繰り返した（`TraceExportToJaegerFailing`、再起動 1,752 回 · エクスポート失敗 1,859 回）。暴走ではなかった — スパンは 1 日 42 万 〜 62 万といつもどおりで、それを 7 日保管して badger が 1.4G（ファイル 1,846 個）に育った。起動時にその索引を載せるだけで既定ファイルの 512m を超えた（`docker update --memory 1g` の直後でも 965MiB/1GiB）。溜まる量は保管期間 × 1 日のスパン数なので、時間が経てばまた超える — 今は `docker-compose-observability.oci.yml` が本番の jaeger を 2g にする（ノード 23Gi、空き 13Gi）。`docker update` はコンテナを作り直すと消えるので上書きファイルに書く。ガード B-106 が 1g 未満を防ぐ。1 日のスパンが増えたら（サービス · ポーラーの追加）上限も一緒に見る — `jaeger-data` ボリュームの大きさを `du -sh` で見ればよい。
+
+適用:
+```bash
+cd ~/ecommerce-msa   # このコミット以降へ switch
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d jaeger node-exporter prometheus
+docker inspect -f '{{.HostConfig.Memory}} {{.RestartCount}}' jaeger   # 2147483648 0
+docker stats --no-stream jaeger node-exporter
+```
+（`node-exporter` はバックアップ指標 — docs/22 §2「指標を読む所がなかった」。）
+
 **アラート（`tracing-pipeline`）。** `OtelCollectorDown`（5分）· `TraceExportToJaegerFailing`（10分）· `TracesRefusedByCollector`（10分）·
 `TailSamplingDroppedTooEarly`（5分）。
 どこが切れてもサービスはエラーなしで動く — だから人が「トレースが見えない」と気づく前にアラートが先に鳴る必要がある。

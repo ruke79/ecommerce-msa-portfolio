@@ -6,12 +6,13 @@
 # ⚠️ 운영에서는 언제나 두 파일을 함께 준다. 기본 파일만으로 띄우면 prometheus 가 개발 PC 설정(host.docker.internal 타깃)으로
 #    돌아가 서비스 지표가 끊기고 ServiceDown 이 울린다(2026-10-20 전의 운영이 정확히 그랬다).
 #
-# 무엇이 다른가 — prometheus 하나뿐이다:
+# 무엇이 다른가 — prometheus · jaeger 와 노드 전용 node-exporter:
 #   · remote write 수신을 켠다 — k8s-overlays/external/metrics-agent.yaml 이 노드 IP:9090 으로 보낸다(추적이 노드 IP:4318 로 가는 것과 같은 길).
 #     수신은 9090 에 닿는 누구나 지표를 써 넣을 수 있다는 뜻이다 — 9090 은 VCN 보안 목록이 바깥을 막는다(22번만, 2026-10-20 확인).
 #     그래서 닿는 것은 이 노드와 클러스터 안의 파드뿐이다. 보안 목록에 9090 을 열지 않는다.
 #   · 설정은 observability/prometheus.oci.yml(개발 PC 타깃만 뺐다 — B-95 가 나머지가 같은지 본다).
 #   · command 는 목록 전체가 바뀐다 — 기본 파일의 인자를 모두 다시 적는다(빠뜨리면 보존 기간 · exemplar 가 조용히 바뀐다).
+#   · jaeger 메모리 한도 2g(B-106) · node-exporter(textfile 만 — 백업 성공 시각을 Prometheus 로, B-106).
 services:
   prometheus:
     command:
@@ -22,3 +23,27 @@ services:
     volumes:
       # 같은 컨테이너 경로의 항목만 바뀐다 — 경보 규칙 · 데이터 볼륨은 기본 파일 그대로
       - ./observability/prometheus.oci.yml:/etc/prometheus/prometheus.yml:ro
+
+  # 🐛 2026-10-22 10시(UTC)부터 약 30시간, 운영 Jaeger 가 512m 한도로 뜨자마자 죽기를 1,760번 되풀이했다(TraceExportToJaegerFailing).
+  #    폭주가 아니었다 — 하루 42만 ~ 62만 스팬을 7일 보관하니 badger 가 1.4G(파일 1,846개)로 자랐고, 기동 때 그 색인을 올리는 데만
+  #    512m 를 넘었다(1g 로 올린 직후에도 965MiB). 쌓이는 양에 맞춰 2g(노드 23Gi, 여유 13Gi). docs/63 §5 · B-106.
+  #    [JA] 本番の Jaeger が 512m 上限で起動直後に落ち続けた(約 30 時間)。7 日分 1.4G の badger の索引を載せるだけで超えた — 2g。
+  jaeger:
+    mem_limit: 2g
+
+  # 노드의 textfile 지표 → Prometheus. 백업 CronJob(k8s/85)이 성공하면 노드의 /var/lib/node_exporter/{pg,mongo}_backup.prom 에
+  # 성공 시각을 쓰는데, 🐛 운영에는 그것을 읽는 node_exporter 가 없어 백업이 매일 성공해도 PostgresBackupMetricMissing 이 울렸고
+  # PostgresBackupStale(48시간 성공 없음)은 울릴 수 없었다(2026-10-23 확인). textfile 수집기만 켠다 — 노드 지표는 이번 목적 밖이다.
+  # 포트는 열지 않는다 — 같은 compose 망의 Prometheus 만 node-exporter:9100 을 긁는다(관측 포트는 공개하지 않는다).
+  # [JA] 本番にはバックアップ成功時刻の textfile を読む node_exporter がなかった。textfile コレクタだけ、ポートは開けない。
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    restart: unless-stopped
+    command:
+      - --collector.disable-defaults
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - /var/lib/node_exporter:/textfile:ro
+    mem_limit: 64m

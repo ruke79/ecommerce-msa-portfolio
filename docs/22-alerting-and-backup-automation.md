@@ -176,6 +176,25 @@ pg_basebackup: error: connection to server ... failed:
 
 **本番の実測(2026-10-11)**: DB 5.6G → `base.tar.gz` 821MB、`pg_wal.tar.gz` 17KB、約 3 分、接続は 1 回拒否された後に成功。ノードでの保持は 7 日(≈ 6GB — ディスクの空きが 20G 程度)、長期保管のコピーはノードの外に置きます。
 
+### 指標を読む所がなかった (2026-10-23)
+
+本番で `PostgresBackupMetricMissing` が鳴りました。バックアップは毎日成功していました(pg 2026-10-23 03:03:41Z・mongo 04:00、ノードの `/var/lib/node_exporter/{pg,mongo}_backup.prom` もありました)。ところがそのファイルを読んで Prometheus に渡す **node_exporter が本番ノードにありませんでした** — 上の権限問題を直したとき、ファイルが書かれるところまでしか確認していませんでした。指標がないので `absent(…)` のアラートは鳴り、肝心の `PostgresBackupStale`(48 時間成功なし)は **鳴りようがありませんでした** — バックアップが止まっても誰も気づかなかったはずです。
+
+今は `docker-compose-observability.oci.yml` が本番ノードに `node-exporter`(v1.8.2)を起動します。
+- textfile コレクタだけを有効にします(`--collector.disable-defaults --collector.textfile`) — ノードの CPU・ディスク指標は今回の目的の外で、有効にすると収集対象・アラートも一緒に増えます。
+- ノードの `/var/lib/node_exporter`(k8s/85 の hostPath と同じパス)を読み取り専用でマウントします。ファイルは 0644 なので node_exporter(nobody)が読めます。
+- ポートは公開しません — 同じ compose ネットワークの Prometheus だけが `node-exporter:9100` を取得します(`observability/prometheus.oci.yml` の `node-textfile` ジョブ、本番専用)。
+- ガード B-106: 正確なバージョン・textfile 引数・k8s/85 のパスを読み取り専用・`ports` なし・本番 Prometheus が取得する・アラートが見る名前をバックアップ Job が書く。同じバージョンでその引数を起動し、`ecommerce_pg_backup_last_success_timestamp` が出ることを確認しました。
+
+> 教訓: 「指標を書く」と「指標が見える」は別の話です。アラートの経路は **見る側(Prometheus のクエリ)で** 確認します — §1 の「受理された ≠ 届いた」と同じ形です。
+
+適用(docs/63 §5「メモリ上限」と同じコマンド)後の確認:
+```bash
+docker exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22node-textfile%22%7D'           # value 1
+docker exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=ecommerce_pg_backup_last_success_timestamp'  # 値がある
+```
+`PostgresBackupMetricMissing` は次の評価で解消します。
+
 ### 検証
 
 コンテナで三つのスクリプトをすべて実行した。

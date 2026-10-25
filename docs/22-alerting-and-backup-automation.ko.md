@@ -176,6 +176,25 @@ pg_basebackup: error: connection to server ... failed:
 
 **운영 실측(2026-10-11)**: DB 5.6G → `base.tar.gz` 821MB, `pg_wal.tar.gz` 17KB, 약 3분, 접속은 1회 거절 뒤 성공. 노드 보관은 7일(≈ 6GB — 디스크 여유가 20G 남짓), 오래 보관하는 사본은 노드 밖에 둔다.
 
+### 지표를 읽는 곳이 없었다 (2026-10-23)
+
+운영에 `PostgresBackupMetricMissing` 이 울렸다. 백업은 매일 성공하고 있었다(pg 2026-10-23 03:03:41Z · mongo 04:00, 노드의 `/var/lib/node_exporter/{pg,mongo}_backup.prom` 도 있었다). 그런데 그 파일을 읽어 Prometheus 에 넘기는 **node_exporter 가 운영 노드에 없었다** — 위의 권한 문제를 고치며 파일이 써지는 것까지만 확인했다. 지표가 없으니 `absent(…)` 경보는 울리고, 정작 지켜야 할 `PostgresBackupStale`(48시간 성공 없음)은 **울릴 수 없었다** — 백업이 멈춰도 아무도 몰랐을 것이다.
+
+이제 `docker-compose-observability.oci.yml` 이 운영 노드에 `node-exporter`(v1.8.2)를 띄운다.
+- textfile 수집기만 켠다(`--collector.disable-defaults --collector.textfile`) — 노드 CPU · 디스크 지표는 이번 목적 밖이고, 켜면 수집 대상 · 경보가 함께 늘어난다.
+- 노드의 `/var/lib/node_exporter`(k8s/85 의 hostPath 와 같은 경로)를 읽기 전용으로 붙인다. 파일은 0644 라 node_exporter(nobody)가 읽는다.
+- 포트는 열지 않는다 — 같은 compose 망의 Prometheus 만 `node-exporter:9100` 을 긁는다(`observability/prometheus.oci.yml` 의 `node-textfile` 작업, 운영 전용).
+- 가드 B-106: 정확한 판 · textfile 인자 · k8s/85 의 경로를 읽기 전용 · `ports` 없음 · 운영 Prometheus 가 긁는다 · 경보가 보는 이름을 백업 Job 이 쓴다. 같은 판으로 그 인자를 띄워 `ecommerce_pg_backup_last_success_timestamp` 가 나오는 것을 확인했다.
+
+> 교훈: "지표를 쓴다"와 "지표가 보인다"는 다른 얘기다. 경보 경로는 **보는 쪽(Prometheus 의 질의)에서** 확인한다 — §1 의 "수용됐다 ≠ 전달됐다" 와 같은 모양이다.
+
+적용(docs/63 §5 "메모리 한도" 와 한 명령) 뒤 확인:
+```bash
+docker exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22node-textfile%22%7D'           # value 1
+docker exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=ecommerce_pg_backup_last_success_timestamp'  # 값이 있다
+```
+`PostgresBackupMetricMissing` 은 다음 평가에서 풀린다.
+
 ### 검증
 
 컨테이너에서 세 스크립트를 전부 실행했다.

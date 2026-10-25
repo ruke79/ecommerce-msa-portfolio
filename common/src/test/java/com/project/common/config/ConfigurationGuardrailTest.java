@@ -1721,14 +1721,70 @@ class ConfigurationGuardrailTest {
         assertThat(ociText.replaceAll("(?m)^\\s*#.*$", "")).as("주석 밖에 개발 PC 타깃이 없다").doesNotContain("host.docker.internal");
         List<Map<String, Object>> devJobs = new ArrayList<>((List<Map<String, Object>>) devCfg.get("scrape_configs"));
         devJobs.removeIf(j -> "spring-actuator".equals(j.get("job_name")));
-        assertThat((List<Map<String, Object>>) ociCfg.get("scrape_configs")).as("서비스 지표만 에이전트가 넣는다 — 나머지 작업은 같다")
-                .isEqualTo(devJobs);
+        // 운영에만 있는 노드 textfile 작업(B-106 — 백업 성공 시각)은 빼고 비교한다
+        List<Map<String, Object>> ociJobs = new ArrayList<>((List<Map<String, Object>>) ociCfg.get("scrape_configs"));
+        ociJobs.removeIf(j -> "node-textfile".equals(j.get("job_name")));
+        assertThat(ociJobs).as("서비스 지표만 에이전트가 넣는다 — 나머지 작업은 같다").isEqualTo(devJobs);
         assertThat(ociCfg.get("alerting")).isEqualTo(devCfg.get("alerting")).isNotNull();
         assertThat(ociCfg.get("rule_files")).isEqualTo(devCfg.get("rule_files"));
 
         // 지표가 통째로 없을 때 — up 이 없으면 ServiceDown(up == 0)은 울릴 수 없다
         String rules = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
         assertThat(rules).contains("alert: ServiceMetricsMissing").contains("absent(up{job=\"spring-actuator\"})");
+    }
+
+    /**
+     * B-106: 운영 노드의 관측 덧씌우기 — Jaeger 메모리 한도는 쌓인 추적에 맞추고(≥ 1g), 백업 성공 시각(textfile)을 읽는 node_exporter 가 있다.
+     *
+     * <p>🐛 2026-10-22 10시(UTC)부터 약 30시간 운영 Jaeger 가 기본 파일의 512m 로 뜨자마자 OOM 으로 죽기를 1,760번 되풀이했다 — 하루 42만 ~
+     * 62만 스팬 7일치(badger 1.4G)의 색인을 올리는 데만 한도를 넘었다(1g 직후에도 965MiB). 같은 날 PostgresBackupMetricMissing: 백업 CronJob
+     * (k8s/85)은 매일 성공해 노드의 /var/lib/node_exporter 에 성공 시각을 썼지만 그것을 읽는 node_exporter 가 없었다 — PostgresBackupStale 은
+     * 울릴 수 없었다. 지키는 것: 덧씌우기의 jaeger 한도 · node-exporter(정확한 판 · textfile 수집기 · k8s/85 의 hostPath 를 읽기 전용 · 포트
+     * 공개 없음) · 운영 Prometheus 가 그것을 긁는다 · 경보 규칙이 보는 지표 이름을 백업 Job 이 쓴다. 같은 판(v1.8.2)으로 그 인자를 띄워
+     * {@code ecommerce_pg_backup_last_success_timestamp} 가 나오는 것을 확인했다.
+     *
+     * <p>[JA] 本番ノードの観測上書き — Jaeger のメモリ上限は溜まった追跡に合わせ(≥ 1g)、バックアップ成功時刻の textfile を読む
+     * node_exporter を置く(ポートは公開しない)。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("B-106: 운영 관측 덧씌우기 — jaeger 한도 ≥ 1g, node-exporter 가 백업 textfile 을 읽기 전용으로(포트 없음), Prometheus 가 긁는다")
+    void productionObservabilityOverlayKeepsJaegerAndBackupMetrics() throws IOException {
+        org.yaml.snakeyaml.Yaml yaml = new org.yaml.snakeyaml.Yaml();
+        Map<String, Object> services = (Map<String, Object>) yaml.<Map<String, Object>>load(Files.readString(
+                repoRoot().resolve("docker-compose-observability.oci.yml"), StandardCharsets.UTF_8)).get("services");
+
+        Map<String, Object> jaeger = (Map<String, Object>) services.get("jaeger");
+        assertThat(jaeger).as("덧씌우기에 jaeger 한도가 있다").isNotNull().containsKey("mem_limit");
+        Matcher limit = Pattern.compile("(\\d+)([mg])").matcher(String.valueOf(jaeger.get("mem_limit")));
+        assertThat(limit.matches()).as("mem_limit 형식(예: 2g)").isTrue();
+        long mib = Long.parseLong(limit.group(1)) * ("g".equals(limit.group(2)) ? 1024 : 1);
+        assertThat(mib).as("7일치 badger 색인을 올리려면 1g 이상 — 512m 는 기동 중 OOM 이었다").isGreaterThanOrEqualTo(1024);
+
+        Map<String, Object> exporter = (Map<String, Object>) services.get("node-exporter");
+        assertThat(exporter).as("백업 성공 시각을 읽는 node-exporter").isNotNull();
+        assertThat((String) exporter.get("image")).as("정확한 판").matches("prom/node-exporter:v\\d+\\.\\d+\\.\\d+");
+        assertThat(exporter).as("관측 포트는 공개하지 않는다 — 같은 compose 망의 Prometheus 만 긁는다").doesNotContainKeys("ports", "network_mode");
+        List<String> command = (List<String>) exporter.get("command");
+        assertThat(command).contains("--collector.textfile");
+        String dir = command.stream().filter(c -> c.startsWith("--collector.textfile.directory=")).findFirst().orElseThrow()
+                .substring("--collector.textfile.directory=".length());
+
+        // 백업 Job 이 쓰는 노드 경로(k8s/85 의 hostPath)를 읽기 전용으로, 수집기가 보는 경로에 붙인다
+        String backups = Files.readString(repoRoot().resolve("k8s/85-backup-cronjobs.yaml"), StandardCharsets.UTF_8);
+        Matcher hostPath = Pattern.compile("hostPath: \\{ path: (/var/lib/node_exporter)").matcher(backups);
+        assertThat(hostPath.find()).as("k8s/85 의 지표 hostPath").isTrue();
+        assertThat((List<String>) exporter.get("volumes")).contains(hostPath.group(1) + ":" + dir + ":ro");
+
+        String ociCfg = Files.readString(repoRoot().resolve("observability/prometheus.oci.yml"), StandardCharsets.UTF_8);
+        assertThat(ociCfg).as("운영 Prometheus 가 node-exporter 를 긁는다").contains("targets: [\"node-exporter:9100\"]");
+
+        // 경보 규칙이 보는 이름을 백업 Job 이 정확히 쓴다
+        String rules = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
+        for (String metric : List.of("ecommerce_pg_backup_last_success_timestamp", "ecommerce_mongo_backup_last_success_timestamp")) {
+            assertThat(rules).contains(metric);
+            assertThat(backups).as("k8s/85 가 쓴다: " + metric).contains(metric + " $(date -u +%s)");
+        }
     }
 
     /**

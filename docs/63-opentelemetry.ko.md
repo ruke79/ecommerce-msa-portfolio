@@ -248,6 +248,17 @@ kubectl -n ecommerce rollout status deploy/metrics-agent && kubectl -n ecommerce
 ```
 ⚠️ 운영에서는 compose 명령마다 두 파일을 함께 준다. 기본 파일만으로 prometheus 를 다시 만들면 개발 PC 설정으로 돌아간다(`ServiceDown` · `ServiceMetricsMissing` 이 울린다).
 
+**메모리 한도 — 쌓인 만큼(B-106).** 🐛 2026-10-22 10시(UTC)부터 약 30시간, 운영 Jaeger 가 뜨자마자 `OOMKilled` 로 죽기를 1,760번 되풀이했다(`TraceExportToJaegerFailing`, 재시작 1,752회 · 내보내기 실패 1,859회). 폭주가 아니었다 — 스팬은 하루 42만 ~ 62만으로 평소대로였고, 그것을 7일 보관하니 badger 가 1.4G(파일 1,846개)로 자랐다. 기동 때 그 색인을 올리는 데만 기본 파일의 512m 를 넘었다(`docker update --memory 1g` 직후에도 965MiB/1GiB). 쌓이는 양은 보관 기간 × 하루 스팬 수라 시간이 지나면 다시 넘는다 — 이제 `docker-compose-observability.oci.yml` 이 운영의 jaeger 를 2g 로 둔다(노드 23Gi, 여유 13Gi). `docker update` 는 컨테이너를 다시 만들면 사라지므로 덧씌우기에 적는다. 가드 B-106 이 1g 아래를 막는다. 하루 스팬이 늘면(서비스 · 폴러 추가) 한도도 함께 본다 — `du -sh` 로 `jaeger-data` 볼륨의 크기를 보면 된다.
+
+적용:
+```bash
+cd ~/ecommerce-msa   # 이 커밋 이후로 switch
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d jaeger node-exporter prometheus
+docker inspect -f '{{.HostConfig.Memory}} {{.RestartCount}}' jaeger   # 2147483648 0
+docker stats --no-stream jaeger node-exporter
+```
+(`node-exporter` 는 백업 지표 — docs/22 §2 "지표를 읽는 곳이 없었다".)
+
 **경보(`tracing-pipeline`).** `OtelCollectorDown`(5분) · `TraceExportToJaegerFailing`(10분) · `TracesRefusedByCollector`(10분) ·
 `TailSamplingDroppedTooEarly`(5분).
 어디가 끊겨도 서비스는 오류 없이 돈다 — 그래서 사람이 "추적이 안 보인다" 를 알아채기 전에 경보가 먼저 울려야 한다.
