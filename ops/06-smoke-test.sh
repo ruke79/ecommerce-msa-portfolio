@@ -129,15 +129,30 @@ echo "════ 3. 레이트리미터 실동작 (429 발생 확인) ═══
 # ⚠️ 반드시 **동시에** 쏴야 한다. 토큰버킷이 burst 40 + 초당 20 보충이므로, 순차 curl 은
 # (TLS 핸드셰이크 포함 요청당 수십 ms) 보충 속도를 못 이겨 429 가 한 번도 안 나온다 —
 # 스테이징 리허설에서 순차 70발이 전부 통과해 버리는 것을 실측했다.
-rl_out=$(mktemp)
-for _ in $(seq 1 70); do
-    "${CURL[@]}" -o /dev/null -w "%{http_code}\n" "$GATEWAY/catalog-service/api/category/categories" 2>/dev/null >> "$rl_out" &
-done
-wait
-codes=$(cat "$rl_out"); rm -f "$rl_out"
+# 🐛 2026-10-24 운영 배포: 막 뜬 게이트웨이에서 첫 70발이 모두 통과해 자동 복귀했다. Redis 명령 타임아웃(500ms)을 넘긴 유입
+#    제한 명령은 통과(fail-open)인데, 첫 명령들이 연결 · 스크립트 적재를 치렀다(게이트웨이는 이제 readiness 전에 데운다 —
+#    RateLimiterWarmup). 그래도 전 서비스가 한꺼번에 뜬 단일 노드는 느리다 — 429 가 없으면 3초 쉬고 **한 번만** 다시 쏜다.
+#    제한이 빠진 게이트웨이는 몇 번을 쏴도 429 가 없으므로 이 재시도가 그 결함을 가리지 않는다. 결과마다 코드별 수를 남긴다.
+# [JA] 起動直後の最初の 70 発がすべて通過して自動復帰した(Redis タイムアウト超過は通過)。429 がなければ 3 秒後に一度だけ撃ち直す。
+rl_burst() {
+    local out; out=$(mktemp)
+    for _ in $(seq 1 70); do
+        "${CURL[@]}" -o /dev/null -w "%{http_code}\n" "$GATEWAY/catalog-service/api/category/categories" 2>/dev/null >> "$out" &
+    done
+    wait
+    cat "$out"; rm -f "$out"
+}
+rl_summary() { sort | uniq -c | awk '{printf "%s×%s ", $2, $1}'; }
+codes=$(rl_burst)
 n429=$(echo "$codes" | grep -c '^429$')
-if [ "$n429" -gt 0 ]; then ok "레이트리미터 동작 (70회 중 429 ${n429}회)"
-else bad "429 미발생 — Redis 미연결이거나 RequestRateLimiter 미배선 가능성"; fi
+if [ "$n429" -eq 0 ]; then
+    echo "  … 첫 70발에 429 없음 ($(echo "$codes" | rl_summary)) — 3초 뒤 한 번 더"
+    sleep 3
+    codes=$(rl_burst)
+    n429=$(echo "$codes" | grep -c '^429$')
+fi
+if [ "$n429" -gt 0 ]; then ok "레이트리미터 동작 (70회 중 429 ${n429}회 — $(echo "$codes" | rl_summary))"
+else bad "429 미발생 ($(echo "$codes" | rl_summary)) — Redis 미연결이거나 RequestRateLimiter 미배선 가능성"; fi
 
 echo "════ 4. 서비스 디스커버리 ════"
 if [ -n "$EUREKA" ]; then
