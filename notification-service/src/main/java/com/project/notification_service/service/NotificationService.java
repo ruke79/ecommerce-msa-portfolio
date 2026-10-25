@@ -121,17 +121,24 @@ public class NotificationService {
             return;   // shouldSendEmail 이 이미 걸렀지만, 두 판정이 어긋나도 안전하게.
         }
 
+        // 🐛 2026-10-24 운영: 지역(region)은 전화번호를 인증해야 채워진다 — 인증하지 않은 사용자는 locale 이 null 이고,
+        //    예전에는 Locale.forLanguageTag(null) 이 NPE 를 던졌다. 이 줄이 아래 try 밖이라 알림 생성 자체가 실패해 주문 · 결제 ·
+        //    배송 · 쿠폰 안내가 모두 DLT 로 갔다(10-16 부터 order.DLT · payment.DLT 의 notification 그룹 8쌍). 지역을 모르면
+        //    제목은 그대로(한국어) — 메일 언어는 디스패처의 기본값. 메일 준비 전부를 try 안에 둔다(알림은 메일과 상관없이 만든다).
+        // [JA] 地域は電話番号の認証で入る — 未認証なら locale が null で Locale.forLanguageTag(null) が NPE、try の外だったので
+        //      通知の作成ごと失敗して注文 · 決済などの案内がすべて DLT に行った。地域が分からなければ件名はそのまま。
         String locale = localeOf(preference.getRegion());
-        Map<String, String> params = new HashMap<>();
-        if (title != null) {
-            // 제목은 한국어로 저장된다(NotificationTexts) — 일본 지역이면 메일에 넣기 전에 바꾼다(docs/60 §9).
-            params.put("subject", com.project.common.i18n.ClientText.localize(title, java.util.Locale.forLanguageTag(locale)));
-        }
-        if (url != null) {
-            params.put("url", url);
-        }
-
         try {
+            Map<String, String> params = new HashMap<>();
+            if (title != null) {
+                // 제목은 한국어로 저장된다(NotificationTexts) — 일본 지역이면 메일에 넣기 전에 바꾼다(docs/60 §9).
+                params.put("subject", com.project.common.i18n.ClientText.localize(title,
+                        locale == null ? null : java.util.Locale.forLanguageTag(locale)));
+            }
+            if (url != null) {
+                params.put("url", url);
+            }
+
             // 알림과 다른 멱등 키를 쓴다. 같은 값을 쓰면 두 테이블의 UNIQUE 가 서로를 막지는
             // 않지만, 로그와 운영 조회에서 "알림 id"와 "메일 id"가 같은 문자열을 가리켜 혼동된다.
             mailService.enqueue(
@@ -146,7 +153,7 @@ public class NotificationService {
                     locale);
         } catch (RuntimeException e) {
             log.warn("알림 메일을 큐에 넣지 못했습니다(알림 자체는 생성됨): recipientId={} type={} {}",
-                    recipientId, type, e.getMessage());
+                    recipientId, type, e.getClass().getSimpleName());   // 메시지에는 받는 주소가 섞일 수 있다(N-H2)
         }
     }
 
