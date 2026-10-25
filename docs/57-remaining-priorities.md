@@ -619,8 +619,30 @@ ops/12 · ops/13 も同じ方式。B-83（`JvmSslPasswordsTest`）がマニフ�
 パスワード変数があることを見る。
 
 **運用ですること。** デプロイだけで新しいログにはもう残らない。すでに残ったものは消えない — Loki の保持期間中は照会できる。パスワードが漏れたと
-みなして `LOCAL_KEY_STORE_PASSWORD` を変えるのが正しい（`ops/07` でストアを新しいパスワードで作り直して Secret を更新 → 全サービス再起動、サービス
-身元は `ops/38`）。それまでは Grafana · Loki へのアクセスを運用者だけにする（観測ポートはもともと公開しない）。
+みなして `LOCAL_KEY_STORE_PASSWORD` を変えるのが正しい。それまでは Grafana · Loki へのアクセスを運用者だけにする（観測ポートはもともと公開しない）。
+
+**交換 — `ops/59-rotate-store-password.sh`(2026-10-25)。** ops/07 で発行し直さない — CA が変わるとサービス身元(ops/38)· PostgreSQL の証明書 ·
+ブラウザの信頼まですべてやり直しになる。鍵と証明書はそのまま、ストアのパスワードだけ変える(`keytool -storepasswd` — PKCS12 は鍵のパスワードも
+一緒に変わり、トラストストアの信頼項目はそのまま。実測: 新しいパスワードで秘密鍵が取り出せ、古いパスワードでは開かない)。
+
+| 対象 | 何を |
+|---|---|
+| クラスタの Secret | 名前空間の `.p12` · `.jks` すべて(`tls-keystore` · `tls-id-<サービス>` …)— 一つでも今のパスワードで開かなければ何も変えない |
+| `ecommerce-secrets` | `LOCAL_KEY_STORE_PASSWORD` · `LOCAL_KEY_PASSWORD` · `KAFKA_SSL_*_PASSWORD` のうち**古い値と同じものだけ**(違う値はそのまま) |
+| この機械 | `certs/` のストア · `certs/certs.env` · `k8s/20-secret.yaml` — 後で適用し直しても古い値に戻らないように |
+| 再起動 | そのパスワードを読む Deployment だけ、**一つずつ**(ノード一つ — eureka · config を先に、gateway は最後) |
+| 戻し | 変える前の Secret の写し `<名前>-prerotate`(同じ名前空間、ラベル `ecommerce.io/store-password-rotation`)· ファイルの `-prerotate` |
+
+```bash
+./ops/59-rotate-store-password.sh            # check — ストアごとに開くか · 変えるキー · 再起動対象(値は出力しない)
+./ops/59-rotate-store-password.sh apply      # 交換 + 再起動('yes' を聞く)
+./ops/59-rotate-store-password.sh rollback   # 問題があれば — 写しで戻して再起動
+./ops/59-rotate-store-password.sh cleanup    # 一日ほど問題がなければ — 写しに古いパスワードがある
+```
+
+🔒 パスワードは引数 · ログ · 画面に出ない(keytool には 0600 のファイルで `-storepass:file`、出力は長さだけ)。ホストに keytool がなければ
+サービスと同じ JRE イメージ(B-98)を `docker run --network none` で使う。cert-manager(ops/39)が受け持つ身元(本番は `tls-id-*` 10 個 — 2026-10-25 の check)は次の更新から新しいパスワードで作る — だから `ecommerce-secrets` を**先に**変え(その間に cert-manager が作り直しても新しい値)、Secret のラベル · 注釈 · 所有者はそのまま残す(抜けると cert-manager が証明書を発行し直しうる — 写しには畳んで置き、戻すときに広げる)。
+偽の kubectl の上で本物の PKCS12 · JKS で試す(`StorePasswordRotationScriptTest` — 元に戻すと失敗するもの六つを確認)。
 
 ### Eureka 書き込み — 登録はそのサービス自身の証明書でのみ（2026-10-14、B-86）
 

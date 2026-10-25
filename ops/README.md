@@ -52,6 +52,7 @@
 | (56) | `56-dlt-replay.sh` | **DLT 再処理** — `list` で隔離されたレコードの位置・原因・失敗したグループを見て(値は出力しない)、`replay` で元のトピック・元のパーティションへバイトのまま戻す(既定は表示のみ、`APPLY=1`)。Kafka Pod 内で `tools/DltReplay.java` を実行 — docs/11 §3 |
 | (57) | `57-load-queue.sh` | **負荷キュー** — いま動いている k6 の回(長時間実行)が終わるのを待ち、決めておいた回を休憩を挟んで続けて流す(注文の書き込み経路の維持 · 閲覧の容量の階段)。閾値を超えた回(99)でも次へ進む、回の間に再起動 · 注文アウトボックスの数、最後に report · 測定用設定の戻し(kubectl のない loadgen ではホストのコマンドを残す)。`plan`・`run`・`status`・`stop` — docs/83 §3 | 🟡 負荷測定時 |
 | (58) | `58-cpu-profile.sh` | **負荷中の CPU プロファイル** — 決めた負荷(Prometheus のリクエスト/秒、`WHEN=rps:<サービス>:<数>`・`now`)に届いたら、サービスごとに最も古い Pod 一つへ async-profiler(itimer)を入れて nohup でサンプル(既定 catalog · ゲートウェイ、120 秒)。取得して表を三つ — まとまり(TLS · JSON · Netty · JDBC · Redis · GC · JIT …)· flat · inclusive。実習クラスタだけ(本番アドレスは拒否)、Pod 内に結果がなければ失敗 — docs/83 §4 | 🟡 負荷測定時 |
+| (59) | `59-rotate-store-password.sh` | **キーストア・トラストストアのパスワード交換** — 鍵・証明書はそのまま、Secret 内の `.p12` · `.jks` すべてを `keytool -storepasswd` で新しいパスワードに(一つでも今のパスワードで開かなければ止まる)、`ecommerce-secrets` の同じ値のキー · `certs/` · `20-secret.yaml` も、読む Deployment を一つずつ再起動。`check` · `apply` · `rollback`(写し `<Secret>-prerotate`)· `cleanup`、値は出力しない — docs/57 §16「ストアのパスワード」 | 🟠 パスワードが漏れたとき |
 | — | `tools/generate-catalog-data.py` | **負荷用カタログデータの生成** — 大型ショッピングモール型の分類(大分類 20 · 小分類 99)またはシードの増殖。チャンク単位の COPY で数千万件まで(`--resume` · `--purge`)、`--estimate` で容量を事前確認 — 商品あたり約 2.1KB を実測(docs/19 §5.1) | 🟡 チューニング時 |
 | — | `tools/hbm2flyway.py` | **スキーマベースラインの生成** — Hibernate が出力した DDL を冪等な Flyway マイグレーションに変換。手で書くと必ずずれるので機械変換する（docs/20 §3） | エンティティの大改編時 |
 

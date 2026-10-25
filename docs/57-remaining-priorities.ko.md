@@ -620,8 +620,30 @@ ops/12 · ops/13 도 같은 방식. B-83(`JvmSslPasswordsTest`)이 매니페스�
 비밀번호 변수가 있는지 본다.
 
 **운영에서 할 일.** 배포만으로 새 로그에는 더 남지 않는다. 이미 남은 것은 지워지지 않는다 — Loki 보관 기간 동안 조회된다. 비밀번호가 새었다고
-보고 `LOCAL_KEY_STORE_PASSWORD` 를 바꾸는 것이 맞다(`ops/07` 로 스토어를 새 비밀번호로 다시 만들고 Secret 갱신 → 전 서비스 재시작, 서비스
-신원은 `ops/38`). 그 전에는 Grafana · Loki 접근을 운영자로만 둔다(관측 포트는 원래 공개하지 않는다).
+보고 `LOCAL_KEY_STORE_PASSWORD` 를 바꾸는 것이 맞다. 그 전에는 Grafana · Loki 접근을 운영자로만 둔다(관측 포트는 원래 공개하지 않는다).
+
+**교체 — `ops/59-rotate-store-password.sh`(2026-10-25).** ops/07 로 다시 발급하지 않는다 — CA 가 바뀌면 서비스 신원(ops/38) · PostgreSQL
+인증서 · 브라우저 신뢰까지 모두 다시 해야 한다. 키와 인증서는 그대로 두고 스토어의 비밀번호만 바꾼다(`keytool -storepasswd` — PKCS12 는 키
+비밀번호도 함께 바뀌고 트러스트스토어의 신뢰 항목은 그대로; 실측: 새 비밀번호로 개인 키가 꺼내지고 옛 비밀번호로는 열리지 않는다).
+
+| 대상 | 무엇을 |
+|---|---|
+| 클러스터 Secret | 네임스페이스의 `.p12` · `.jks` 전부(`tls-keystore` · `tls-id-<서비스>` …) — 하나라도 지금 비밀번호로 열리지 않으면 아무것도 바꾸지 않는다 |
+| `ecommerce-secrets` | `LOCAL_KEY_STORE_PASSWORD` · `LOCAL_KEY_PASSWORD` · `KAFKA_SSL_*_PASSWORD` 중 **옛 값과 같은 것만**(다른 값은 그대로) |
+| 이 기계 | `certs/` 의 스토어 · `certs/certs.env` · `k8s/20-secret.yaml` — 나중에 다시 적용해도 옛 값으로 돌아가지 않게 |
+| 재시작 | 그 비밀번호를 읽는 Deployment 만, **하나씩**(노드 하나 — eureka · config 먼저, gateway 마지막) |
+| 되돌리기 | 바꾸기 전 Secret 의 사본 `<이름>-prerotate`(같은 네임스페이스, 표지 `ecommerce.io/store-password-rotation`) · 파일의 `-prerotate` |
+
+```bash
+./ops/59-rotate-store-password.sh            # check — 스토어마다 열리는지 · 바꿀 키 · 재시작 대상(값은 출력하지 않는다)
+./ops/59-rotate-store-password.sh apply      # 교체 + 재시작('yes' 를 묻는다)
+./ops/59-rotate-store-password.sh rollback   # 문제가 있으면 — 사본으로 되돌리고 재시작
+./ops/59-rotate-store-password.sh cleanup    # 하루쯤 이상이 없으면 — 사본에 옛 비밀번호가 있다
+```
+
+🔒 비밀번호는 인자 · 로그 · 화면에 나오지 않는다(keytool 은 0600 파일로 `-storepass:file`, 출력은 길이만). 호스트에 keytool 이 없으면 서비스와
+같은 JRE 이미지(B-98)를 `docker run --network none` 으로 쓴다. cert-manager(ops/39)가 맡은 신원(운영은 `tls-id-*` 10개 — 2026-10-25 check)은 다음 갱신부터 새 비밀번호로 만든다 — 그래서 `ecommerce-secrets` 를 **먼저** 바꾸고(그 사이 cert-manager 가 다시 만들어도 새 값), Secret 의 라벨 · 주석 · 소유자는 그대로 둔다(빠지면 cert-manager 가 인증서를 새로 발급할 수 있다 — 사본에는 접어서 두고 되돌릴 때 펼친다).
+가짜 kubectl 위에서 실제 PKCS12 · JKS 로 시험한다(`StorePasswordRotationScriptTest` — 되돌리면 실패하는 것 여섯 가지 확인).
 
 ### Eureka 쓰기 — 등록부는 그 서비스 자신의 인증서로만 (2026-10-14, B-86)
 
