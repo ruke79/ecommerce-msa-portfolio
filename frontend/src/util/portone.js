@@ -164,6 +164,11 @@ export function portOneReturnOf(searchParams) {
  * username を載せ、名前が常に空だった(イニシス日本決済 · 国内 PC とも必須)。名前は fullName 一つだけ — この アプリの firstname は
  * 姓で、ポートワンの firstName(名)と逆なので分けて送ると入れ替わる。
  */
+function digitsOnly(value) {
+    const d = String(value ?? "").replace(/\D/g, "");
+    return d || undefined;
+}
+
 export function portOneCustomer(order, user) {
     const a = order?.shippingAddress ?? {};
     const name = [a.firstname, a.lastname].map((v) => (v ?? "").trim()).filter(Boolean).join(" ");
@@ -171,7 +176,9 @@ export function portOneCustomer(order, user) {
     return {
         email: user?.email || undefined,
         fullName: name || emailLocal || undefined,
-        phoneNumber: a.phoneNumber || undefined,
+        // 전화번호는 숫자만 — 포트원 · 이니시스 일본결제의 예시가 숫자만이고(상점 연락처도 숫자만), 배송지에는 `090-1234-5678` ·
+        // `+81 90 …` 처럼 손님이 쓴 대로 들어 있다. [JA] 電話番号は数字のみ — 配送先には客が書いたとおり(ハイフン · +81)入っている。
+        phoneNumber: digitsOnly(a.phoneNumber),
     };
 }
 

@@ -256,13 +256,27 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
                         : trackingIdFromCustomData(payment.path("customData").asText("")));
     }
 
-    /** {@code customData} 는 우리가 넣은 JSON 문자열이다. 모양이 다르면 빈 문자열. */
+    /**
+     * {@code customData} 는 우리가 넣은 JSON 문자열이다. 모양이 다르면 빈 문자열.
+     *
+     * <p>🐛 2026-10-25 운영(포트원 CLI `payment view`): 저장된 값이 `"{\"trackingId\":…}"` — <b>두 번 감싼 문자열</b>이었다. 화면이
+     * {@code JSON.stringify} 한 문자열을 넘기고 SDK 가 그것을 한 번 더 문자열로 만든다. 한 겹만 풀면 글자 노드라 trackingId 가 없어
+     * 결제가 성공해도 주문 참조 없음으로 거부됐다. 화면은 이제 객체를 넘기고(SDK 가 한 번만 감싼다), 여기서는 이미 만들어진 결제를 위해
+     * 글자 노드면 한 겹 더 푼다(그 이상은 보지 않는다).
+     *
+     * <p>[JA] customData が二重にエンコードされた文字列だった(画面が JSON.stringify した文字列を渡し、SDK がもう一度文字列化)。
+     * 文字ノードならもう一段だけ解く。画面はオブジェクトを渡すよう直した。
+     */
     String trackingIdFromCustomData(String customData) {
         if (customData == null || customData.isBlank()) {
             return "";
         }
         try {
-            return objectMapper.readTree(customData).path("trackingId").asText("");
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(customData);
+            if (node.isTextual()) {
+                node = objectMapper.readTree(node.asText());
+            }
+            return node.path("trackingId").asText("");
         } catch (Exception e) {
             return "";
         }

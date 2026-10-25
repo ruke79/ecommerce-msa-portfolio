@@ -446,11 +446,14 @@ V7 이 `total · total_before_discount · shipping_price · tax_price` 넷을 �
    **구매자 이름(2026-10-24)**: 예전에는 `user.username` 을 실었는데 로그인 사용자 객체는 JWT 의 `{ email, userId, roles }`
    뿐이라 이름이 언제나 비었다("이니시스 일본 결제의 경우 구매자 이름은 필수 입력입니다"). 이제 그 주문 배송지의
    성 · 이름을 `fullName` 하나로(`portOneCustomer`) — 이 앱의 `firstname` 은 **성**이라 포트원의 `firstName`(이름) ·
-   `lastName`(성)으로 나누면 뒤바뀐다. 배송지에 이름이 없으면 이메일 앞부분.
+   `lastName`(성)으로 나누면 뒤바뀐다. 배송지에 이름이 없으면 이메일 앞부분. 전화번호는 숫자만(2026-10-25 — 포트원 예시 `01012341234`, 배송지의 하이픈 · 공백 · `+` 를 뺀다).
    ⚠️ **채널이 "KG이니시스 일본결제" 면** 통화는 **JPY 만**(`CURRENCY_JPY`)이고 결제 수단은 카드 · 편의점 · 간편결제다
    (가상계좌 없음 — 화면은 청구 통화가 KRW 가 아니면 가상계좌를 숨기고 카드로 연다, `portOneSupportsVirtualAccount`; 편의점 결제는 구매자 후리가나가 필수인데 배송지에 그 칸이 없어 아직 없다). 국내 KG이니시스(KRW · 카드 · 가상계좌)와 다른 채널이다.
+   ⚠️ **테스트 서버 `devcbt.inicis.com` 은 IP 허용 목록 방식이다(2026-10-25)** — 등록되지 않은 곳에서는 연결 자체가 시간 초과로 끝난다(운영에서 PC · OCI 모두 `curl` 15초 초과). 운영계 `cbt.inicis.com` 에는 이 제약이 없다. 출처: 이니시스 직접 연동 플러그인 [gnuboard/g7-plugin-sirsoft-pay_kginicis](https://github.com/gnuboard/g7-plugin-sirsoft-pay_kginicis) 의 README 와 `AdminCbtConnectivityCheckController`(포트원 문서에는 없다). 포트원 경유에서는 결제창(브라우저)이 devcbt 로 가므로 **시험하는 PC 의 공인 IP** 를, 승인은 포트원 서버가 하므로 그쪽 등록은 포트원 · 이니시스에 맡긴다 — 포트원 지원에 함께 요청한다.
    일본결제를 쓰면 `PORTONE_CURRENCY: "JPY"` 를 `k8s-overlays/local/patch-local-endpoints.yaml` 에 두고
    `./ops/28-deploy.sh local --config-only --restart order-service` — 청구 통화는 주문을 만들 때 정해지므로 **새 주문**부터 JPY 다.
+   🐛 **customData 두 번 감쌈(2026-10-25 — 포트원 CLI `payment view` 로 드러남)**: 화면이 `JSON.stringify` 한 문자열을 넘겨 SDK 가 한 번 더 감쌌다 — 포트원에 `"{\"trackingId\"…}"` 로 저장돼 서버(`trackingIdFromCustomData`)가 주문 참조를 찾지 못했다(결제가 성공해도 확인 · 웹훅이 거부). 화면은 객체를 넘기고, 서버는 글자 노드면 한 겹 더 푼다(이미 만들어진 결제).
+   ⏸ **보류(2026-10-25)**: 결제창이 이니시스 테스트 서버(`devcbt.inicis.com/cbtauth`)에서 연결 시간 초과(한국 PC · 일본 OCI 모두 `curl` 15초) — 포트원 문의 중. 체크아웃에서 포트원을 고를 수 없게 숨겼다(`checkout/Payment.jsx` 의 `HIDDEN_METHODS`). 결제 코드 · 서버 설정은 그대로라, 다시 열 때는 그 목록에서 `"portone"` 만 뺀다.
    **상점 정보(CBT 유형 JPPG, 2026-10-24)**: 이 채널은 결제창에 `storeDetails`(상점명 · 가나 · 영문 · 약어 · 담당 · 이메일 ·
    연락처 · 영업시간)가 모두 필수다. 상점명 · 연락처는 화면 코드(`util/portone.js` 의 `PORTONE_JP_STORE` — 「アマス」 ·
    `Amasu` · `0810700000001`(숫자만) · 00:00 ~ 23:59), 이메일은 빌드 변수 `REACT_APP_PORTONE_STORE_EMAIL`(공개 값 — 저장소

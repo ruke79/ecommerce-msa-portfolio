@@ -4,8 +4,24 @@ import { paymentMethods, paymentMethodDescription, paymentMethodName } from "./p
 //import credit_card from "assets/images/credit_card.png"; 
 //import cash from "assets/images/cash.png"; 
 
+/**
+ * ⏸ 포트원(KG이니시스 일본결제)은 고를 수 없게 숨겨 둔다 — 2026-10-25 보류.
+ *
+ * <p>이유: 운영에서 결제창을 열면 이니시스 테스트 인증 서버(`devcbt.inicis.com/cbtauth`)로 넘어간 뒤 연결 시간 초과로 화면이
+ * 깨진다. 한국 PC · 일본 OCI 두 곳 모두 `curl` 이 15초 안에 연결하지 못해 우리 쪽이 아니라 이니시스 쪽(서버 상태 또는 접속 허용 IP)으로
+ * 보고 포트원에 문의 중이다. 요청 자체(이름 · 전화 · 상점 정보 · JPY · 리디렉션)는 포트원 문서의 예시와 같은 모양이고 포트원이 받아들였다
+ * (docs/49 §6). 답이 와서 결제창이 열리면 아래 `HIDDEN_METHODS` 에서 "portone" 을 빼면 된다 — 결제 코드(order/Payment.jsx ·
+ * PortOneReturn · 서버의 확인 · 웹훅 · 환불)는 그대로 두었다. 이미 포트원으로 만든 주문의 결제 화면도 그대로다.
+ *
+ * <p>[JA] PortOne(KG イニシス日本決済)は選べないよう隠す — 2026-10-25 保留。決済画面がイニシスのテスト認証サーバーへ移った後に
+ * 接続タイムアウトになる(韓国 PC · 日本 OCI とも curl 15 秒で接続不可 — イニシス側とみて PortOne に問い合わせ中)。再開するときは
+ * HIDDEN_METHODS から "portone" を外す。決済コード(注文画面 · サーバーの確認 · Webhook · 返金)はそのまま。
+ */
+export const HIDDEN_METHODS = ["portone"];
+
 const PaymentCheckout = ({ paymentMethod, setPaymentMethod, profile }) => {
     const { t } = useTranslation();
+    const selectable = paymentMethods.filter((m) => !HIDDEN_METHODS.includes(m.id));
 
     return (
         <>
@@ -15,7 +31,7 @@ const PaymentCheckout = ({ paymentMethod, setPaymentMethod, profile }) => {
                 </h3>
             )}
             <div>
-                {paymentMethods.map((payment) => (
+                {selectable.map((payment) => (
                     
                     <div
                         key={payment.id}

@@ -52,7 +52,7 @@ class PortOneV2PaymentGatewayTest {
         return "{\"id\":\"payment-1\",\"status\":\"" + status + "\","
                 + "\"amount\":{\"total\":" + total + ",\"paid\":" + total + ",\"cancelled\":0},"
                 + "\"currency\":\"" + currency + "\","
-                + "\"customData\":" + (customData == null ? "null" : "\"" + customData.replace("\"", "\\\"") + "\"") + "}";
+                + "\"customData\":" + (customData == null ? "null" : "\"" + customData.replace("\\", "\\\\").replace("\"", "\\\"") + "\"") + "}";
     }
 
     @Test
@@ -89,6 +89,20 @@ class PortOneV2PaymentGatewayTest {
     void trackingIdFromCustomData() {
         server.expect(requestTo("https://api.portone.io/payments/payment-1"))
                 .andRespond(withSuccess(paidPayment("PAID", 5998, "KRW", "{\"trackingId\":\"track-9\"}"),
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(gateway.trackingIdOf("payment-1")).isEqualTo("track-9");
+    }
+
+    /**
+     * 🐛 2026-10-25 운영: 포트원이 돌려준 customData 가 `"{\"trackingId\":…}"`(두 번 감싼 문자열)였다 — 화면이 문자열로 넘기고 SDK 가
+     * 한 번 더 감쌌다. 예전에는 주문 참조 없음으로 거부해 결제가 성공해도 주문이 결제 전에 남았다.
+     */
+    @Test
+    @DisplayName("🔴 두 번 감싼 customData(이미 만들어진 결제)에서도 trackingId 를 읽는다")
+    void doubleEncodedCustomData() {
+        server.expect(requestTo("https://api.portone.io/payments/payment-1"))
+                .andRespond(withSuccess(paidPayment("PAID", 5998, "KRW", "\"{\\\"trackingId\\\":\\\"track-9\\\"}\""),
                         MediaType.APPLICATION_JSON));
 
         assertThat(gateway.trackingIdOf("payment-1")).isEqualTo("track-9");

@@ -75,7 +75,13 @@ describe("portOneCustomer", () => {
 
     it("🔴 이름은 배송지의 성 · 이름을 fullName 하나로 — firstName/lastName 은 보내지 않는다(뜻이 반대)", () => {
         expect(portOneCustomer({ shippingAddress: { firstname: " 山田 ", lastname: "太郎", phoneNumber: "090-1234-5678" } }, user))
-            .toEqual({ email: "buyer@example.com", fullName: "山田 太郎", phoneNumber: "090-1234-5678" });
+            .toEqual({ email: "buyer@example.com", fullName: "山田 太郎", phoneNumber: "09012345678" });
+    });
+
+    it("🔴 전화번호는 숫자만 — 하이픈 · 공백 · + 를 뺀다(포트원 예시 `01012341234`)", () => {
+        expect(portOneCustomer({ shippingAddress: { phoneNumber: "+81 90-1234-5678" } }, user).phoneNumber).toBe("819012345678");
+        expect(portOneCustomer({ shippingAddress: { phoneNumber: " - " } }, user).phoneNumber).toBeUndefined();
+        expect(portOneCustomer({ shippingAddress: {} }, user).phoneNumber).toBeUndefined();
     });
 
     it("배송지에 이름이 없으면(옛 주소) 이메일 앞부분 — 빈 이름으로 보내지 않는다", () => {

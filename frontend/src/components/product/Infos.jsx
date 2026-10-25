@@ -13,6 +13,7 @@ import AccoridanProduct from "./AccordianProduct";
 import RestockButton from "./RestockButton";
 import { useMoney } from "hook/useMoney";
 import { rangeText } from "util/priceText";
+import { styleHref } from "util/sizes";
 import api, { getRequest, putRequest, putCartItem } from "util/api";
 import { useDispatch, useSelector } from "react-redux";
 import { addToCart, emptyCart, syncedFromServer, updateCart } from "../../redux/CartSlice";
@@ -128,8 +129,10 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
     });
 
     
+    // 색상을 바꾸면 수량은 처음부터, 사이즈는 주소가 실어 온 것(새 색상에도 같은 사이즈가 있을 때 — styleHref)을 그대로.
+    // [JA] 色を変えたら数量は最初から、サイズは URL が運んだもの(新しい色にも同じサイズがあるとき)をそのまま。
     useEffect(() => {
-        setSize("");
+        setSize(sizeParam ?? "");
         setQty(1);
     }, [styleParam]);
 
@@ -298,7 +301,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
                                 onMouseLeave={() => setActiveImg("")}
                             >
                                 <Link
-                                    to={`/product/${product.slug}/?style=${i}`}
+                                    to={styleHref(product.slug, product.skus, styleParam, sizeParam, i)}
                                 >
                                     <img
                                         className="rounded-full object-cover h-11"

@@ -436,7 +436,10 @@ const Payment = ({ order, setLoading, setOrder }) => {
         // [JA] モバイル等でページ遷移になると、この注文画面へ戻る(確認は PortOneReturn)。PC の iframe は従来どおり戻り値で。
         redirectUrl: portOneRedirectUrl(),
         // 🔒 서버가 포트원에 조회해서 읽는 값이다. 본문으로 보내는 것이 아니다.
-        customData: JSON.stringify({ trackingId: order.trackingId }),
+        // 🐛 2026-10-25: 예전에는 JSON.stringify 한 문자열을 넘겨 SDK 가 한 번 더 감쌌다(포트원에 `"{\"trackingId\"…}"` 로 저장 —
+        //    서버가 주문을 찾지 못했다). 객체를 넘긴다 — SDK 가 한 번만 문자열로 만든다.
+        // [JA] 以前は JSON.stringify した文字列を渡し SDK が二重に包んだ。オブジェクトを渡す(SDK が一度だけ文字列化)。
+        customData: { trackingId: order.trackingId },
       });
 
       // V2 는 실패를 예외가 아니라 code 가 있는 응답으로 준다(사용자 취소 포함).

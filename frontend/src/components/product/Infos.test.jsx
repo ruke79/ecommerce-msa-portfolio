@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import Infos from "components/product/Infos";
 import { withI18n } from "i18n/testing";
@@ -209,5 +209,62 @@ describe("상품 정보 — 상품 번호(SKU)", () => {
     it("SKU 가 없으면 그 줄을 그리지 않는다", () => {
         renderAt(product());
         expect(screen.queryByTestId("product-sku")).not.toBeInTheDocument();
+    });
+});
+
+/**
+ * 🐛 2026-10-25 운영: 사이즈를 고르고 색상을 누르면 "사이즈를 선택해 주세요" 가 다시 나왔다 — 색상 링크가 `size` 를 버렸다.
+ * 새 색상에도 같은 이름의 사이즈가 있으면 그것을 실어 간다(번호는 색상마다 다를 수 있다).
+ *
+ * <p>[JA] サイズを選んで色を押すと「サイズを選択してください」が再び出た — 色のリンクが size を捨てていた。
+ */
+describe("상품 정보 — 색상을 바꿔도 고른 사이즈는 그대로", () => {
+    const twoColors = () => product({
+        colors: [{ id: "5", color: "black", colorImage: "b.png" }, { id: "6", color: "white", colorImage: "w.png" }],
+        skus: [
+            { images: ["b1"], sizes: [{ size: "S" }, { size: "M" }, { size: "L" }] },
+            { images: ["w1"], sizes: [{ size: "M" }, { size: "L" }] },   // 흰색에는 S 가 없다 — M 은 0 번
+        ],
+        sizes: [{ size: "S", quantity: 3 }, { size: "M", quantity: 3 }, { size: "L", quantity: 3 }],
+        quantity: 3, onHold: 0,
+    });
+    const colorLink = (alt) => screen.getByAltText(alt).closest("a").getAttribute("href");
+
+    it("🔴 검정 M(1번)을 고른 뒤 흰색 링크는 흰색의 M(0번)을 싣는다", () => {
+        renderAt(twoColors(), "/product/tee?style=0&size=1");
+        expect(colorLink("white")).toBe("/product/tee/?style=1&size=0");
+        expect(colorLink("black")).toBe("/product/tee/?style=0&size=1");
+    });
+
+    it("새 색상에 없는 사이즈(S)면 싣지 않는다 — 손님이 다시 고른다", () => {
+        renderAt(twoColors(), "/product/tee?style=0&size=0");
+        expect(colorLink("white")).toBe("/product/tee/?style=1");
+    });
+
+    it("🔴 색상을 누른 뒤 담기 — '사이즈를 먼저 선택해 주세요' 가 나오지 않는다", async () => {
+        getRequest.mockResolvedValue({ data: { id: "1", size: "M", quantity: 3, onHold: 0 } });
+        const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+        render(withI18n(
+            <QueryClientProvider client={client}>
+                <MemoryRouter initialEntries={["/product/tee?style=0&size=1"]}>
+                    <Routes>
+                        <Route path="/product/:slug" element={<Infos product={twoColors()} num_reviews={0} setActiveImg={jest.fn()} />} />
+                    </Routes>
+                </MemoryRouter>
+            </QueryClientProvider>
+        ));
+
+        fireEvent.click(screen.getByAltText("white"));
+        fireEvent.click(screen.getByRole("button", { name: /장바구니|카트|cart/i }));
+
+        // 사이즈 확인을 지나 담기 조회까지 갔다(예전에는 여기서 멈추고 오류를 띄웠다). 스타일 번호는 loader 가 다시 읽은 상품의 것이라
+        // 이 테스트(상품 고정)에서는 보지 않는다 — 사이즈는 주소가 실어 온 흰색의 0 번.
+        await waitFor(() => expect(getRequest).toHaveBeenCalledWith(expect.stringMatching(/&size=0$/)));
+        expect(screen.queryByText("사이즈를 먼저 선택해 주세요.")).toBeNull();
+    });
+
+    it("사이즈를 고르기 전이면 색상만", () => {
+        renderAt(twoColors(), "/product/tee?style=0");
+        expect(colorLink("white")).toBe("/product/tee/?style=1");
     });
 });

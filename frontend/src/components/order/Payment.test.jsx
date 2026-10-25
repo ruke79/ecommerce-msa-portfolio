@@ -149,8 +149,10 @@ describe("주문 결제 화면 — 포트원 V2 결제창 요청", () => {
             expect(req.redirectUrl).toBe("https://shop.example/order/7");
             expect(req.forceRedirect).toBeUndefined();
             expect(req.storeDetails).toBeUndefined();   // 상점 정보는 JPY(일본결제)만
+            // 🔴 customData 는 객체 — 문자열로 넘기면 SDK 가 한 번 더 감싸 서버가 주문을 찾지 못한다(2026-10-25 운영)
+            expect(req.customData).toEqual({ trackingId: "track-1" });
             // 🐛 이름이 언제나 비어 있었다 — 로그인 사용자 객체에는 이름이 없다(JWT). 배송지의 성 · 이름을 싣는다.
-            expect(req.customer).toEqual({ email: "u@example.com", fullName: "山田 太郎", phoneNumber: "010-1234-5678" });
+            expect(req.customer).toEqual({ email: "u@example.com", fullName: "山田 太郎", phoneNumber: "01012345678" });
         } finally {
             portone.portOneVersion.mockReturnValue("v1");
             process.env.REACT_APP_PORTONE_CHANNEL_KEY = prev;
