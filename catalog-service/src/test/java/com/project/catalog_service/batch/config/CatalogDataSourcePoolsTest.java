@@ -44,7 +44,7 @@ class CatalogDataSourcePoolsTest {
     }
 
     @Test
-    @DisplayName("🔴 기본값 — 최대 5 · 최소 2 · 대기 5초 · 누수 감지 20초 · 수명 20분 · 풀 이름(예전: 10 · 10 · 30초 · 없음)")
+    @DisplayName("🔴 기본값 — 최대 5 · 최소 2 · 대기 5초 · 누수 감지 끔(B-104) · 수명 20분 · 풀 이름(예전: 10 · 10 · 30초 · 없음)")
     void bindsHikariSettingsFromYaml() {
         runner().run(ctx -> {
             HikariDataSource data = ctx.getBean("dataDataSource", HikariDataSource.class);
@@ -55,11 +55,22 @@ class CatalogDataSourcePoolsTest {
                 assertThat(ds.getMaximumPoolSize()).as(ds.getJdbcUrl()).isEqualTo(5);
                 assertThat(ds.getMinimumIdle()).isEqualTo(2);
                 assertThat(ds.getConnectionTimeout()).isEqualTo(5_000);
-                assertThat(ds.getLeakDetectionThreshold()).isEqualTo(20_000);
+                // 누수 감지는 기본 끔 — 켜면 빌릴 때마다 스택 추적 예외(2026-10-23 프로파일 catalog CPU 3.9%, B-104)
+                assertThat(ds.getLeakDetectionThreshold()).isZero();
                 assertThat(ds.getMaxLifetime()).isEqualTo(1_200_000);
             }
             assertThat(data.getPoolName()).isEqualTo("catalog-data");
             assertThat(meta.getPoolName()).isEqualTo("catalog-meta");
+        });
+    }
+
+    @Test
+    @DisplayName("누수 감지는 의심될 때 DB_LEAK_DETECTION_MS 로 두 풀 모두 켠다")
+    void leakDetectionCanBeTurnedOn() {
+        runner().withPropertyValues("DB_LEAK_DETECTION_MS=20000").run(ctx -> {
+            for (String name : new String[] { "dataDataSource", "metaDataSource" }) {
+                assertThat(ctx.getBean(name, HikariDataSource.class).getLeakDetectionThreshold()).as(name).isEqualTo(20_000);
+            }
         });
     }
 

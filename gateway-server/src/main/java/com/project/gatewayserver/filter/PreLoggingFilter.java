@@ -14,9 +14,13 @@ public class PreLoggingFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        // RewritePath 필터가 실행되기 전의 원래 경로를 로깅
-        log.info("Original Request Path: {}", exchange.getRequest().getURI().getPath());
-        
+        // RewritePath 필터가 실행되기 전의 원래 경로를 로깅 — DEBUG. 🐛 2026-10-23 CPU 프로파일(docs/83 §5, ops/58): INFO 로
+        // 모든 요청에 한 줄씩(파드당 초당 ~500줄, 줄마다 가림 정규식) 쓰느라 게이트웨이 CPU 의 4.7% 를 썼다. 경로는 추적(B-72)에 남는다.
+        // [JA] 元のパスのログは DEBUG。INFO で全リクエストに一行ずつ書き、ゲートウェイ CPU の 4.7% を使っていた。パスはトレースに残る。
+        if (log.isDebugEnabled()) {
+            log.debug("Original Request Path: {}", exchange.getRequest().getURI().getPath());
+        }
+
         return chain.filter(exchange);
     }
 

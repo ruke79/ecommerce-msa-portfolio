@@ -31,7 +31,8 @@ spring:
         maximum-pool-size: ${DB_POOL_SIZE:5}
         minimum-idle: ${DB_POOL_MIN_IDLE:2}
         connection-timeout: 5000
-        leak-detection-threshold: 20000
+        # 누수 감지 — 기본 끔(B-104, 켜기: DB_LEAK_DETECTION_MS=20000)
+        leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}
         max-lifetime: 1200000
       url: jdbc:postgresql://localhost:5435/notificationdb?sslmode=require
       username: product

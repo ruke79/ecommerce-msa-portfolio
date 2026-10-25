@@ -501,6 +501,33 @@ loadgen のように kubectl のない機械の回は流入制限が「記録な
 - 開始 90 秒(HPA 2 → 3、デプロイ直後の Pod)に 503 が毎秒 ~95 · 隔壁 0 — 暖まる前の最初のリクエスト(10-22 browse の開始前確認の失敗と同じ形)。
 - 次の候補: Pod あたりの処理量 — catalog はリクエストあたりの CPU(ホーム · バナー · 検索 · 商品が一反復に四つ、検索は二回)、ゲートウェイはリクエストごとに TLS 二回(客 · catalog mTLS)· JWT · 流入制限の Redis 呼び出し。200 段で両サービスの CPU プロファイルを取り、どこに使っているかから見る(`ops/58-cpu-profile.sh`、§4)。
 
+**CPU プロファイル(2026-10-23 12:22 KST の回 — 3 · 3 固定 · capacity-steps、`ops/58-cpu-profile.sh`)の読み — どこに使っているか。** 指標は前の回と同じ: catalog は 200 段で CPU 1.00 · 成功 ~1,000/秒、ゲートウェイは 3 つが最初から暖まっていたので 300 段(1,500/秒)を p95 0.2 秒で越え、400 段へ上がる 13:03 に飽和した(昨日の 2 → 3 の回は 300 段で)— ゲートウェイ 3 つの天井 ~1,500 〜 1,600/秒。再起動 0(B-103)。サンプルは 200 段(ゲートウェイ 907/秒)と 300 段(1,346/秒)で 120 秒ずつ、下は 300 段(catalog サンプル 10,918 · ゲートウェイ 10,051 — 200 段もまとまりの比率はほぼ同じ)。
+
+| サービス | 塊 | 比率 | 何か → 直したもの |
+|---|---|---|---|
+| catalog | コントローラー別 | 検索 31% · ホーム 7.6% · 商品 6.4% · バナー 4.7% | 残りはリクエストごとの基本コスト(Tomcat · TLS · 指標) |
+| catalog | Redis キャッシュ値の復元 | **13.6%** | うち 5.2% は同じ JSON を二度読む分 — Spring Data Redis 3.5 の汎用シリアライザが `@class` を探すためにバイト全体をまず木として読む → **一度で読むシリアライザ**(`SinglePassJsonRedisSerializer`、保存形式はそのまま — キャッシュは消さない) |
+| catalog | 応答 JSON の書き出し | 17.6% | ホーム · バナーはメモリキャッシュにあっても毎回シリアライズ — 次の候補 |
+| catalog | Hikari のリーク検出 | **3.9%** | 接続を借りるたびにスタックトレース付きの例外一つ(`ProxyLeakTask`)→ **既定オフ**(B-104、九サービスすべて — 有効化は `DB_LEAK_DETECTION_MS=20000`) |
+| catalog | Redis 入出力 · ソケット書き込み | ~9% · 4.5% + 2.6% | Redis(Lettuce · Netty)· ゲートウェイへの TLS 応答 · PostgreSQL |
+| ゲートウェイ | リクエストごとの INFO ログ | **4.7%**(ログ全体 7.7%) | `PreLoggingFilter` の `Original Request Path` — 行ごとにマスキングの正規表現 → **DEBUG**(パスはトレースに残る) |
+| ゲートウェイ | リクエストごとの例外一つ | **2.6%** | ルートフィルターの `mutate()` が TLS 情報を複製するときに客のクライアント証明書を問い、無いので JDK が毎回 `SSLPeerUnverifiedException` を作り Spring が捨てる(spring-web 6.2.19)→ **問わない TLS 情報**(`NoPeerCertificateSslInfoFilter` — client-auth が無いか NONE のときだけ、https だけ) |
+| ゲートウェイ | ソケット send · recv · writev | ~12% | 実際の入出力 |
+| ゲートウェイ | 観測(指標 · トレース) | 7.7% | サンプリング 1.0 は B-72 — そのまま |
+
+三つの修正を合わせると catalog ~9% · ゲートウェイ ~7% の CPU が減る(同じ段で測り直して確かめる)。残る大きな分は catalog の応答シリアライズ · キャッシュ復元(Pod メモリのキャッシュを Redis の前に置けば両方減るが、商品を直した後ほかの Pod に数秒遅れて見える — 決めていない)。
+
+参考 — この表の塊を本で探す場所(章番号は版によって異なることがある — 目次の章 · 節の題で探すこと):
+
+| 本 | 章 · 節 | この表のどこにつながるか |
+|---|---|---|
+| *Java Performance* 第 2 版 — Scott Oaks (O'Reilly, 2020) | 10 章 Java Servers — JSON Processing | キャッシュ値の復元 · 応答 JSON の書き出し — マッパーの再利用、木として読んでから再びオブジェクトとして読むコスト(二重パース) |
+| 同書 | 12 章 Java SE API Tips — Exceptions · Logging | リーク検出 · TLS 証明書照会の例外 — 例外のコストの大半はスタックトレースの充填、スタックが深いほど高い · リクエストごとのログ |
+| 同書 | 11 章 Database Performance Best Practices | JDBC · 接続プール(リーク検出が借りるたびに何を作るかは HikariCP README の `leakDetectionThreshold` が正確) |
+| 同書 | 3 章 A Java Performance Toolbox | プロファイラ · サンプリング(`ops/58`、async-profiler itimer) |
+| *Systems Performance* 第 2 版 — Brendan Gregg (Addison-Wesley, 2020、O'Reilly ラーニング収録) | 5 章 Applications · 6 章 CPUs | CPU プロファイル · フレームグラフの読み方 — flat · inclusive · まとまり |
+| *Designing Data-Intensive Applications* — Martin Kleppmann (O'Reilly, 2017) | 4 章 Encoding and Evolution | キャッシュの保存形式を変えなかった理由 — ローリングデプロイ中に旧 · 新 Pod が互いに読む |
+
 **spike 三回(2026-10-19)の読み。** 平常の 10 倍を 20 秒で受ける spike は、この実習クラスタでは HPA だけでは吸収できない。
 ① HPA の反応(CPU 指標 → 判断 → Pod 起動)がピーク後 ~65 秒、最大まで ~95 秒 — 3 分のピークの半分がその前に過ぎる。
 ② 新しい JVM は準備でき次第自分の分を受けるが遅く、入った瞬間に全体の処理量を落とす(HPA 最大 6 の回の 30 秒)。

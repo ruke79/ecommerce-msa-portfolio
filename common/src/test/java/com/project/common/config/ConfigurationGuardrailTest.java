@@ -2968,6 +2968,49 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-104: Hikari 커넥션 누수 감지는 기본 끔 — 모든 서비스 yml 의 {@code leak-detection-threshold} 는 {@code ${DB_LEAK_DETECTION_MS:0}},
+     * 매니페스트(k8s · 오버레이)는 그 변수를 켜 두지 않는다. 의심될 때만 그 파드에 잠깐 켠다.
+     *
+     * <p>2026-10-23 실습 CPU 프로파일(capacity-steps 300 단계, ops/58 · docs/83 §5): catalog CPU 의 3.9% 가 누수 감지였다 — 켜 두면
+     * Hikari 는 커넥션을 빌릴 때마다 {@code ProxyLeakTask} 를 만들며 스택 추적을 담은 예외를 하나씩 만든다. 2026-10-19 에 아홉 서비스
+     * 모두 20초로 켰다. 끝나지 않는 읽기(죽은 연결)는 이제 소켓 상한이 끊는다(catalog {@code socketTimeout}).
+     *
+     * <p>[JA] Hikari のリーク検出は既定オフ — 有効だと接続を借りるたびにスタックトレース付きの例外を作る(catalog CPU の 3.9%)。
+     */
+    @Test
+    @DisplayName("B-104: Hikari 누수 감지는 기본 끔(${DB_LEAK_DETECTION_MS:0}) — 켜 두면 커넥션을 빌릴 때마다 예외 하나(catalog CPU 3.9%)")
+    void hikariLeakDetectionIsOffByDefault() throws IOException {
+        List<String> offenders = new java.util.ArrayList<>();
+        int seen = 0;
+        try (Stream<Path> files = Files.walk(repoRoot(), 6)) {
+            for (Path f : files.filter(Files::isRegularFile)
+                    .filter(f -> f.toString().replace('\\', '/').matches(".*/src/main/resources/[^/]*\\.ya?ml"))
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/node_modules/")).toList()) {
+                for (String line : Files.readAllLines(f, StandardCharsets.UTF_8)) {
+                    String t = line.strip();
+                    if (t.startsWith("leak-detection-threshold:")) {
+                        seen++;
+                        if (!t.equals("leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}")) {
+                            offenders.add(repoRoot().relativize(f) + " — " + t);
+                        }
+                    }
+                }
+            }
+        }
+        for (String dir : List.of("k8s", "k8s-overlays")) {
+            try (Stream<Path> files = Files.walk(repoRoot().resolve(dir))) {
+                for (Path f : files.filter(Files::isRegularFile).filter(f -> f.toString().matches(".*\\.ya?ml")).toList()) {
+                    if (Files.readString(f, StandardCharsets.UTF_8).contains("DB_LEAK_DETECTION_MS")) {
+                        offenders.add(repoRoot().relativize(f) + " — 매니페스트가 누수 감지를 켜 둔다");
+                    }
+                }
+            }
+        }
+        assertThat(seen).as("서비스 yml 의 누수 감지 줄(아홉 서비스 · catalog 는 풀 둘)").isGreaterThanOrEqualTo(10);
+        assertThat(offenders).isEmpty();
+    }
+
+    /**
      * B-103: 부하를 앞에서 받는 서비스의 liveness 는 "응답을 아예 못 하는" 상태만 잡는다 — 프로브 상한 5초 이상 · 한 번도 답하지
      * 못한 시간(주기 × 실패 횟수) 60초 이상. readiness 상한도 기본값(1초)보다 길다.
      *

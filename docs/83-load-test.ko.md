@@ -501,6 +501,33 @@ loadgen 처럼 kubectl 이 없는 기계의 회차는 유입 제한이 "기록 �
 - 시작 90초(HPA 2 → 3, 막 배포된 파드)에 503 이 초당 ~95 · 격벽 0 — 데워지기 전의 첫 요청(10-22 browse 의 시작 전 확인 실패와 같은 모양).
 - 다음 후보: 파드당 처리량 — catalog 는 요청당 CPU(첫 화면 · 배너 · 검색 · 상품이 한 반복에 넷, 검색 둘), 게이트웨이는 요청마다 TLS 두 번(손님 · catalog mTLS) · JWT · 유입 제한 Redis 호출. 200 단계에서 두 서비스의 CPU 프로파일을 떠 어디에 쓰는지부터 본다(`ops/58-cpu-profile.sh`, §4).
 
+**CPU 프로파일(2026-10-23 12:22 KST 회차 — 3 · 3 고정 · capacity-steps, `ops/58-cpu-profile.sh`) 읽기 — 어디에 쓰나.** 지표로는 앞 회차와 같다: catalog 는 200 단계에서 CPU 1.00 · 성공 ~1,000/초, 게이트웨이는 3개가 처음부터 데워져 있어 300 단계(1,500/초)를 p95 0.2초로 넘기고 400 단계로 오르는 13:03 에 포화됐다(어제 2 → 3 회차는 300 단계에서) — 게이트웨이 3개의 천장 ~1,500 ~ 1,600/초. 재시작 0(B-103). 표본은 200 단계(게이트웨이 907/초)와 300 단계(1,346/초)에서 120초씩, 아래는 300 단계(catalog 표본 10,918 · 게이트웨이 10,051 — 200 단계도 묶음 비율이 거의 같다).
+
+| 서비스 | 덩어리 | 비중 | 무엇인가 → 고친 것 |
+|---|---|---|---|
+| catalog | 컨트롤러별 | 검색 31% · 첫 화면 7.6% · 상품 6.4% · 배너 4.7% | 나머지는 요청마다의 기본 값(Tomcat · TLS · 지표) |
+| catalog | Redis 캐시 값 풀기 | **13.6%** | 그중 5.2% 는 같은 JSON 을 두 번 읽는 몫 — Spring Data Redis 3.5 의 범용 직렬화기가 `@class` 를 찾으려고 바이트 전체를 트리로 먼저 읽는다 → **한 번에 읽는 직렬화기**(`SinglePassJsonRedisSerializer`, 저장 모양 그대로 — 캐시를 비우지 않는다) |
+| catalog | 응답 JSON 쓰기 | 17.6% | 첫 화면 · 배너는 메모리 캐시에 있어도 매번 직렬화 — 다음 후보 |
+| catalog | Hikari 누수 감지 | **3.9%** | 커넥션을 빌릴 때마다 스택 추적 예외 하나(`ProxyLeakTask`) → **기본 끔**(B-104, 아홉 서비스 모두 — 켜기 `DB_LEAK_DETECTION_MS=20000`) |
+| catalog | Redis 입출력 · 소켓 쓰기 | ~9% · 4.5% + 2.6% | Redis(Lettuce · Netty) · 게이트웨이로의 TLS 응답 · PostgreSQL |
+| 게이트웨이 | 요청마다 INFO 로그 | **4.7%** (로그 전체 7.7%) | `PreLoggingFilter` 의 `Original Request Path` — 줄마다 가림 정규식 → **DEBUG**(경로는 추적에 남는다) |
+| 게이트웨이 | 요청마다 예외 하나 | **2.6%** | 라우트 필터의 `mutate()` 가 TLS 정보를 복사하며 손님의 클라이언트 인증서를 묻고, 없으니 JDK 가 `SSLPeerUnverifiedException` 을 매번 만들어 Spring 이 버린다(spring-web 6.2.19) → **묻지 않는 TLS 정보**(`NoPeerCertificateSslInfoFilter` — client-auth 가 없거나 NONE 일 때만, https 만) |
+| 게이트웨이 | 소켓 send · recv · writev | ~12% | 실제 입출력 |
+| 게이트웨이 | 관측(지표 · 추적) | 7.7% | 샘플링 1.0 은 B-72 — 그대로 |
+
+세 수정을 합치면 catalog ~9% · 게이트웨이 ~7% 의 CPU 가 빠진다(같은 단계를 다시 재 확인한다). 남은 큰 몫은 catalog 의 응답 직렬화 · 캐시 역직렬화(파드 메모리 캐시를 Redis 앞에 두면 둘 다 줄지만, 상품을 고친 뒤 다른 파드에 몇 초 늦게 보인다 — 정하지 않았다).
+
+참고 — 이 표의 덩어리를 책에서 찾을 곳(장 번호는 판에 따라 다를 수 있다 — 목차의 장 · 절 제목으로 찾을 것):
+
+| 책 | 장 · 절 | 이 표의 어디와 이어지나 |
+|---|---|---|
+| *Java Performance* 2판 — Scott Oaks (O'Reilly, 2020) | 10장 Java Servers — JSON Processing | 캐시 값 풀기 · 응답 JSON 쓰기 — 매퍼 재사용, 트리로 먼저 읽고 다시 객체로 읽는 비용(이중 파싱) |
+| 같은 책 | 12장 Java SE API Tips — Exceptions · Logging | 누수 감지 · TLS 인증서 조회의 예외 — 예외 비용의 대부분은 스택 추적 채우기, 스택이 깊을수록 비싸다 · 요청마다의 로그 |
+| 같은 책 | 11장 Database Performance Best Practices | JDBC · 커넥션 풀(누수 감지가 빌릴 때마다 무엇을 만드는지는 HikariCP README 의 `leakDetectionThreshold` 가 정확하다) |
+| 같은 책 | 3장 A Java Performance Toolbox | 프로파일러 · 표본 추출(`ops/58`, async-profiler itimer) |
+| *Systems Performance* 2판 — Brendan Gregg (Addison-Wesley, 2020, 오라일리 러닝 수록) | 5장 Applications · 6장 CPUs | CPU 프로파일 · 플레임 그래프 읽기 — flat · inclusive · 묶음 |
+| *Designing Data-Intensive Applications* — Martin Kleppmann (O'Reilly, 2017) | 4장 Encoding and Evolution | 캐시 저장 모양을 바꾸지 않은 이유 — 롤링 배포 중 옛 · 새 파드가 서로 읽는다 |
+
 **spike 세 회차(2026-10-19) 읽기.** 평소의 10배를 20초 만에 받는 spike 는 이 실습 클러스터에서 HPA 만으로 흡수되지 않는다.
 ① HPA 의 반응(CPU 지표 → 결정 → 파드 기동)이 정점 뒤 ~65초, 최대까지 ~95초 — 3분 정점의 절반이 그 전에 지나간다.
 ② 새 JVM 은 준비되자마자 제 몫을 받는데 느려서, 들어오는 순간 전체 처리량을 떨어뜨린다(HPA 최대 6 회차의 30초).

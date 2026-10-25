@@ -295,8 +295,37 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      * 商品照会が壊れる。以前は DTO 二つにだけ {@code @JsonIgnoreProperties} を付けていた — シリアライザで一度に防ぐ。
      */
     static GenericJackson2JsonRedisSerializer permanentValueSerializer() {
-        return new GenericJackson2JsonRedisSerializer()
+        return new SinglePassJsonRedisSerializer()
                 .configure(mapper -> mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES));
+    }
+
+    /**
+     * 캐시 값을 <b>한 번만</b> 읽는 {@link GenericJackson2JsonRedisSerializer} — 저장 모양 · 쓰기는 그대로, 읽기의 타입 판정만 바꾼다.
+     *
+     * <p>🐛 2026-10-23 CPU 프로파일(capacity-steps 300 단계, docs/83 §5 · ops/58): catalog CPU 의 13.6% 가 Redis 캐시 값을 객체로 푸는 데
+     * 쓰였고, 그중 5.2% 는 같은 JSON 을 한 번 더 읽는 몫이었다. Spring Data Redis 3.5 의 이 직렬화기는 {@code deserialize(bytes)} 에서
+     * 먼저 바이트 전체를 트리({@code readTree})로 읽어 {@code @class} 를 찾고, 그 타입으로 바이트를 처음부터 다시 읽는다
+     * ({@code resolveType} → {@code TypeResolver.resolveType}). 매퍼에 기본 타이핑이 켜져 있으면 {@code Object} 로 읽어도 Jackson 이
+     * {@code @class} 로 같은 타입을 고른다 — 그래서 타입 판정을 건너뛰고 {@code Object} 로 한 번에 읽는다. 저장 모양이 같아 배포 뒤 캐시를
+     * 비울 필요가 없다(옛 파드가 쓴 값을 새 파드가 그대로 읽는다 — {@code SinglePassJsonRedisSerializerTest}).
+     *
+     * <p>[JA] キャッシュ値を<b>一度だけ</b>読む。Spring Data Redis 3.5 はまずバイト全体を木として読んで {@code @class} を探し、その型で
+     * 最初から読み直していた(catalog CPU の 5.2%)。既定のタイピングがあれば {@code Object} で読んでも Jackson が {@code @class} で同じ型を
+     * 選ぶので、型の判定を飛ばして一度で読む。保存形式は同じ — デプロイ後にキャッシュを消す必要はない。
+     */
+    static class SinglePassJsonRedisSerializer extends GenericJackson2JsonRedisSerializer {
+        SinglePassJsonRedisSerializer() {
+            super();
+        }
+
+        SinglePassJsonRedisSerializer(ObjectMapper mapper) {
+            super(mapper);
+        }
+
+        @Override
+        protected com.fasterxml.jackson.databind.JavaType resolveType(byte[] source, Class<?> type) {
+            return getObjectMapper().getTypeFactory().constructType(type);
+        }
     }
 
     /**
@@ -305,7 +334,11 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      * 이것이 없으면 검색 캐시가 히트하는 순간 역직렬화에 실패해 500 이 된다(docs/16 B-27).
      */
     static GenericJackson2JsonRedisSerializer cacheValueSerializer() {
-        ObjectMapper mapper = new ObjectMapper();
+        return new SinglePassJsonRedisSerializer(cacheValueMapper(new ObjectMapper()));
+    }
+
+    /** {@link #cacheValueSerializer()} 의 매퍼 설정 — 테스트가 같은 설정을 다른 매퍼(세는 파서 공장)에 얹는다. */
+    static ObjectMapper cacheValueMapper(ObjectMapper mapper) {
         mapper.registerModule(new JavaTimeModule());
         mapper.registerModule(new PageJacksonModule());
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -316,6 +349,6 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
                 mapper.getPolymorphicTypeValidator(),
                 ObjectMapper.DefaultTyping.NON_FINAL,
                 "@class");
-        return new GenericJackson2JsonRedisSerializer(mapper);
+        return mapper;
     }
 }
