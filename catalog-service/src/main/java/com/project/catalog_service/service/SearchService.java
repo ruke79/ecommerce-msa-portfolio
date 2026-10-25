@@ -360,13 +360,6 @@ public class SearchService {
         // count(distinct) · select distinct 로 다시 접었다(100만 상품의 큰 카테고리에서 개수 세기가 그만큼 무거웠다). 결과는 같다.
         // [JA] 詳細フィルターがあるときだけ詳細テーブルを結合する。以前は常に結合して distinct で畳み直していた。
         boolean joinDetails = hasDetailsFilter(params);
-        com.querydsl.jpa.impl.JPAQuery<Long> countQuery = queryFactory
-                .select(joinDetails ? product.countDistinct() : product.count())
-                .from(product);
-        if (joinDetails) {
-            countQuery.leftJoin(product.details, productDetails);
-        }
-        long totalProducts = countQuery.where(builder).fetchOne();
 
         // page는 1-기반 입력. 0/음수 입력 시 PageRequest.of(-1,..)가 예외를 던지므로 안전하게 클램프.
         int safePage = Math.max(1, params.getPage()) - 1;
@@ -374,6 +367,29 @@ public class SearchService {
                 ? DEFAULT_PAGE_SIZE
                 : Math.min(params.getPageSize(), MAX_PAGE_SIZE);
         Pageable pageRequest = createPageRequest(safePage, safeSize);
+
+        /*
+         * 가격 · 색상 · 사이즈 필터(SKU 조건)가 있으면 개수를 끝까지 세지 않는다 — 한 쪽보다 하나 더 가져와 "더 있는가" 만 본다.
+         *
+         * 🐛 2026-10-25 운영(상품 200만 · 카테고리 16 에 55,395개): 개수 세기가 카테고리의 상품마다 EXISTS 를 돌려 42초 —
+         * 검색 상한 5초에 걸려 가격 필터는 하한 1 이든 4 든 늘 503 이었다(목록 10개는 맞는 것을 찾는 즉시 멈춰 빠르다).
+         * 화면은 이 수를 보여 주지 않고 무한 스크롤의 "더 있는가"(browse.jsx nextPageParam: 받은 수 < total)에만 쓴다 — 그래서
+         * 더 있으면 "받은 수 + 1"(하한), 없으면 정확한 수를 준다. 화면은 그대로 동작한다. 맞는 것이 아주 드문 조건은 여전히
+         * 카테고리를 끝까지 훑는다(상한 5초 → 503).
+         * [JA] SKU 条件があれば件数を最後まで数えない — 1 件多く取って「まだあるか」だけを見る。本番(200 万商品)で件数が 42 秒かかり
+         *      価格フィルターが常に 503 だった。画面はこの数を無限スクロールの継続判定にしか使わない — あれば「受け取った数 + 1」、なければ正確な数。
+         */
+        boolean exactCount = skuFilter == null;
+        long totalProducts = 0;
+        if (exactCount) {
+            com.querydsl.jpa.impl.JPAQuery<Long> countQuery = queryFactory
+                    .select(joinDetails ? product.countDistinct() : product.count())
+                    .from(product);
+            if (joinDetails) {
+                countQuery.leftJoin(product.details, productDetails);
+            }
+            totalProducts = countQuery.where(builder).fetchOne();
+        }
 
         com.querydsl.jpa.impl.JPAQuery<Product> listQuery = queryFactory.selectFrom(product);
         if (joinDetails) {
@@ -386,8 +402,15 @@ public class SearchService {
                 //    최신 등록 순. [JA] 順序を固定する — 以前は ORDER BY なしの OFFSET/LIMIT で、ページが重複 · 欠落し得た。
                 .orderBy(product.productId.desc())
                 .offset(pageRequest.getOffset())
-                .limit(pageRequest.getPageSize())
+                .limit(pageRequest.getPageSize() + (exactCount ? 0 : 1))
                 .fetch();
+        if (!exactCount) {
+            boolean more = products.size() > pageRequest.getPageSize();
+            if (more) {
+                products = products.subList(0, pageRequest.getPageSize());
+            }
+            totalProducts = pageRequest.getOffset() + products.size() + (more ? 1 : 0);
+        }
 
         List<ProductDto> pageContent = eventPricing.apply(products.stream()
                 .map(ProductMapper::toDto)

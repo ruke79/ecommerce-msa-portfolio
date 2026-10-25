@@ -173,16 +173,60 @@ class SearchSkuFilterScaleTest {
         return r.getProduct().getContent().stream().map(ProductDto::getId).map(Long::valueOf).sorted().toList();
     }
 
+    private SearchResultDto search(long category, String low, int page) {
+        Params params = new Params();
+        params.setCategory(String.valueOf(category));
+        params.setPage(page);
+        params.setPageSize(10);
+        params.setIncludeFilters(false);
+        params.setLowPrice(new BigDecimal(low));
+        return searchService.searchProducts(params, SearchEngine.POSTGRES);
+    }
+
     @Test
-    @DisplayName("🔴 7만 개 카테고리의 가격대 · 색상 · 사이즈 필터가 실패하지 않고 센다 — 예전: 후보를 전부 앱으로 읽어 IN (65,535 한도 · 힙)")
+    @DisplayName("🔴 7만 개 카테고리의 가격대 · 색상 · 사이즈 필터가 실패하지 않는다 — 예전: 후보를 전부 앱으로 읽어 IN (65,535 한도 · 힙)")
     void filtersOnHugeCategory() {
         SearchResultDto priced = search(BIG, "5", "20", null, null);
-        assertThat(priced.getTotalProducts()).isEqualTo(PRODUCTS);
         assertThat(priced.getProduct().getContent()).hasSize(10);
+        assertThat(priced.getTotalProducts()).as("더 있다 — 받은 수 + 1").isEqualTo(11);
 
-        assertThat(search(BIG, null, null, "^Red", null).getTotalProducts()).isEqualTo(PRODUCTS);
-        assertThat(search(BIG, "5", "20", "^red", "^m").getTotalProducts()).as("대소문자 무시").isEqualTo(PRODUCTS);
+        assertThat(search(BIG, null, null, "^Red", null).getProduct().getContent()).hasSize(10);
+        assertThat(search(BIG, "5", "20", "^red", "^m").getProduct().getContent()).as("대소문자 무시").hasSize(10);
         assertThat(search(BIG, "11", null, null, null).getTotalProducts()).as("맞는 것이 없으면 0 — 전부가 아니다").isZero();
+    }
+
+    /**
+     * 🐛 2026-10-25 운영(상품 200만 · 카테고리 하나에 55,395개): 필터 검색의 개수 세기가 상품마다 EXISTS 를 돌려 42초 — 검색 상한 5초에
+     * 걸려 가격 필터가 늘 503 이었다. 이제 필터 검색은 끝까지 세지 않고 한 쪽 + 1 만 가져온다. 화면(browse.jsx nextPageParam)은
+     * "받은 수 < total" 이면 다음 쪽을 부르므로, 더 있으면 받은 수 + 1, 마지막 쪽은 정확한 수여야 무한 스크롤이 이어지고 멈춘다.
+     *
+     * <p>[JA] 本番(200 万商品)でフィルター検索の件数が 42 秒かかり常に 503 だった。今は最後まで数えない — あれば「受け取った数 + 1」、
+     *      最後のページは正確な数。
+     */
+    @Test
+    @DisplayName("🔴 필터 검색은 끝까지 세지 않는다 — 더 있으면 받은 수 + 1, 마지막 쪽은 정확한 수")
+    void filterSearchDoesNotCountTheWholeCategory() {
+        SearchResultDto second = search(BIG, "5", 2);
+        assertThat(second.getProduct().getContent()).hasSize(10);
+        assertThat(second.getTotalProducts()).as("2쪽까지 20개 + 1").isEqualTo(21);
+        assertThat(second.getProduct().getTotalElements()).isEqualTo(21);
+
+        int last = PRODUCTS / 10;
+        SearchResultDto end = search(BIG, "5", last);
+        assertThat(end.getProduct().getContent()).hasSize(10);
+        assertThat(end.getTotalProducts()).as("마지막 쪽 — 정확히").isEqualTo(PRODUCTS);
+
+        SearchResultDto beyond = search(BIG, "5", last + 1);
+        assertThat(beyond.getProduct().getContent()).isEmpty();
+        assertThat(beyond.getTotalProducts()).isEqualTo(PRODUCTS);
+
+        // 필터가 없으면 예전처럼 정확히 센다(인덱스만 보는 개수 — 싸다)
+        Params plain = new Params();
+        plain.setCategory(String.valueOf(BIG));
+        plain.setPage(1);
+        plain.setPageSize(10);
+        plain.setIncludeFilters(false);
+        assertThat(searchService.searchProducts(plain, SearchEngine.POSTGRES).getTotalProducts()).isEqualTo(PRODUCTS);
     }
 
     @Test
