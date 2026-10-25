@@ -778,13 +778,13 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 | 헤더 | 값 | 강제? |
 |---|---|---|
-| `X-Frame-Options` · `Content-Security-Policy` | `DENY` · `frame-ancestors 'none'` | 강제 |
-| `Content-Security-Policy-Report-Only` | `default-src 'self'` · 스크립트는 자기 출처 + PortOne v1 · v2 · PayPal(`'unsafe-inline'` 없음) · `object-src 'none'` · `base-uri 'self'` | 보고만 |
+| `X-Frame-Options` | `DENY` | 강제 |
+| `Content-Security-Policy` | `default-src 'self'` · 스크립트는 자기 출처 + PortOne v1 · v2 · PayPal(`'unsafe-inline'` 없음) · `object-src 'none'` · `base-uri 'self'` · `frame-ancestors 'none'` | 강제(2026-10-25 — 그 전 사흘은 `frame-ancestors` 만 강제, 나머지는 `-Report-Only`) |
 | `X-Content-Type-Options` · `Referrer-Policy` · `Permissions-Policy` · `Strict-Transport-Security` | `nosniff` · `strict-origin-when-cross-origin` · 카메라 · 마이크 · 위치 · USB 끔 · 1년(하위 도메인 제외) | 강제 |
 
-- CSP 를 보고만 하는 이유: 결제 SDK 와 MUI · emotion 의 인라인 스타일이 있어 처음부터 강제하면 결제 화면이 깨질 수 있다(Q26 — 나중에 넣는 CSP 는 report-only 로 위반부터). **배포 뒤 카드 · PayPal · 무통장까지 한 바퀴 돌려 브라우저 콘솔에 CSP 위반이 없으면** `Content-Security-Policy` 로 바꾼다.
-- ⚠️ nginx 는 location 안에 `add_header` 가 하나라도 있으면 server 의 것을 물려받지 않는다 — `/index.html` · `/static/` · `/healthz` 에도 같은 줄을 둔다(`nginxHeaders.test.js`). 실제 nginx 1.27 에 dist 를 올려 `/` · SPA 경로 · `/static/*.js` · 404 · `.map` 모두 일곱 개를 확인했다.
+- CSP 를 보고만 하는 이유: 결제 SDK 와 MUI · emotion 의 인라인 스타일이 있어 처음부터 강제하면 결제 화면이 깨질 수 있다(Q26 — 나중에 넣는 CSP 는 report-only 로 위반부터). **배포 뒤 카드 · PayPal · 무통장까지 한 바퀴 돌려 브라우저 콘솔에 CSP 위반이 없으면** `Content-Security-Policy` 로 바꾼다. **2026-10-25 에 바꿨다** — 운영에서 카드 · PayPal · 무통장을 돌려 콘솔 위반 0. 포트원은 숨긴 채(`HIDDEN_METHODS`)라 다시 열 때 결제창까지 한 번 돌려 콘솔을 본다. 새 외부 스크립트 · 결제창 · API 출처는 정책에 먼저 더한다(빠지면 그 기능이 조용히 막히고 콘솔에만 보인다).
+- ⚠️ nginx 는 location 안에 `add_header` 가 하나라도 있으면 server 의 것을 물려받지 않는다 — `/index.html` · `/static/` · `/healthz` 에도 같은 줄을 둔다(`nginxHeaders.test.js`). 실제 nginx 1.27 에 dist 를 올려 `/` · SPA 경로 · `/static/*.js` · 404 · `.map` 모두 일곱 개를 확인했다(강제로 바꾼 뒤로는 여섯 — CSP 가 하나가 됐다).
 
 **Font Awesome CSS 를 cdnjs 에서 SRI 없이 받았다** — 아이콘은 채팅의 셋뿐이었다. 같은 Font Awesome 5 아이콘을 `react-icons/fa`(SVG)로 바꿔 외부 출처를 없앴다(`indexHtml.test.js` — 외부 `link` · `script` 0, `fas fa-` 0).
 
-남은 것: CSP 강제 전환, 재설정 링크의 `?token=` 을 읽은 뒤 주소창에서 지우기, 택배 조회 주소의 송장 번호 인코딩, react-router v7 · jest 30 메이저 판 올림(남은 npm 권고 7건 — 개발 도구 · 이미 막은 것).
+남은 것: 재설정 링크의 `?token=` 을 읽은 뒤 주소창에서 지우기, 택배 조회 주소의 송장 번호 인코딩, react-router v7 · jest 30 메이저 판 올림(남은 npm 권고 7건 — 개발 도구 · 이미 막은 것).

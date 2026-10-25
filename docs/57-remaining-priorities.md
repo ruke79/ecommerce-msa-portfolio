@@ -777,13 +777,13 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 | ヘッダー | 値 | 強制? |
 |---|---|---|
-| `X-Frame-Options`・`Content-Security-Policy` | `DENY`・`frame-ancestors 'none'` | 強制 |
-| `Content-Security-Policy-Report-Only` | `default-src 'self'`・スクリプトは自オリジン + PortOne v1・v2・PayPal(`'unsafe-inline'` なし)・`object-src 'none'`・`base-uri 'self'` | 報告のみ |
+| `X-Frame-Options` | `DENY` | 強制 |
+| `Content-Security-Policy` | `default-src 'self'`・スクリプトは自オリジン + PortOne v1・v2・PayPal(`'unsafe-inline'` なし)・`object-src 'none'`・`base-uri 'self'`・`frame-ancestors 'none'` | 強制(2026-10-25 — それまでの 3 日は `frame-ancestors` だけ強制、残りは `-Report-Only`) |
 | `X-Content-Type-Options`・`Referrer-Policy`・`Permissions-Policy`・`Strict-Transport-Security` | `nosniff`・`strict-origin-when-cross-origin`・カメラ・マイク・位置・USB を無効・1 年(サブドメインは含めない) | 強制 |
 
-- CSP を報告のみにする理由: 決済 SDK と MUI・emotion のインラインスタイルがあり、最初から強制すると決済画面が壊れうる(Q26 — 後から入れる CSP は report-only で違反から集める)。**デプロイ後にカード・PayPal・銀行振込まで一通り回してブラウザのコンソールに CSP 違反がなければ** `Content-Security-Policy` に切り替える。
-- ⚠️ nginx は location に `add_header` が一つでもあると server の分を継承しない — `/index.html`・`/static/`・`/healthz` にも同じ行を置く(`nginxHeaders.test.js`)。実際の nginx 1.27 に dist を載せ、`/`・SPA の経路・`/static/*.js`・404・`.map` のすべてで 7 つを確認した。
+- CSP を報告のみにする理由: 決済 SDK と MUI・emotion のインラインスタイルがあり、最初から強制すると決済画面が壊れうる(Q26 — 後から入れる CSP は report-only で違反から集める)。**デプロイ後にカード・PayPal・銀行振込まで一通り回してブラウザのコンソールに CSP 違反がなければ** `Content-Security-Policy` に切り替える。**2026-10-25 に切り替えた** — 本番でカード・PayPal・銀行振込を回してコンソールの違反 0。PortOne は隠したまま(`HIDDEN_METHODS`)なので、再び開くときに決済画面まで一度回してコンソールを見る。新しい外部スクリプト・決済画面・API のオリジンは先にポリシーへ足す(抜けるとその機能が黙って止まり、コンソールにだけ出る)。
+- ⚠️ nginx は location に `add_header` が一つでもあると server の分を継承しない — `/index.html`・`/static/`・`/healthz` にも同じ行を置く(`nginxHeaders.test.js`)。実際の nginx 1.27 に dist を載せ、`/`・SPA の経路・`/static/*.js`・404・`.map` のすべてで 7 つを確認した(強制への切り替えで 6 つ — CSP が一本になった)。
 
 **Font Awesome の CSS を cdnjs から SRI なしで読んでいた** — アイコンはチャットの 3 つだけだった。同じ Font Awesome 5 のアイコンを `react-icons/fa`(SVG)に替え、外部オリジンをなくした(`indexHtml.test.js` — 外部の `link`・`script` 0、`fas fa-` 0)。
 
-残り: CSP の強制への切り替え、再設定リンクの `?token=` を読んだ後にアドレスバーから消す、配送照会 URL の送り状番号のエンコード、react-router v7・jest 30 のメジャー更新(残る npm 勧告 7 件 — 開発ツール・すでに防いだもの)。
+残り: 再設定リンクの `?token=` を読んだ後にアドレスバーから消す、配送照会 URL の送り状番号のエンコード、react-router v7・jest 30 のメジャー更新(残る npm 勧告 7 件 — 開発ツール・すでに防いだもの)。

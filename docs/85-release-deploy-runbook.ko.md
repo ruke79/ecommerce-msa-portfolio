@@ -2,7 +2,7 @@
 
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
-> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포로 지금 운영은 **`6501d3fd8e60`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
+> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 의 두 번째 후속 배포로 지금 운영은 **`dc25b0f8a920`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
 
@@ -18,6 +18,7 @@
 | 스모크 | 2차 통과 — 게이트웨이 유입 제한 데우기 941ms |
 | 배포 직후 · 확인(§5 · §6) | 아웃박스 FAILED 0 · coupon-rollback · cart-empty DLT 0 · Redis 정리. 스키마 cart 7 · coupon 9 · order 28 · user 18 · catalog 22, 파드 재시작 0 · 메모리 4 ~ 501Mi, 게이트웨이 ClusterIP 8000, 보안 헤더 · font-awesome 0 · 목록 응답에 description 0 · LazyInitializationException 0, ops/05 모두 통과. payment.DLT · order.DLT 의 notification 그룹 6쌍은 배포 전(10-16 ~ 10-22) — 다시 보내지 않는다 |
 | 후속 배포(2026-10-24 UTC 저녁) | `6501d3fd8e60` — 알림 NPE(§7-2) · NFKC(catalog V23, [docs/60 §14](60-i18n-audit.ko.md)) · 포트원 일본결제(리디렉션 복귀 · 구매자 이름 · 상점 정보 · 문구, [docs/49 §6](49-payment-providers.ko.md)) · 상품 목록 필터. frontend 이미지 · 번들의 채널 키 · 상점 정보 확인, `/browse` 정상, payment.DLT · order.DLT 8건 그대로(최근 10:32 UTC — 배포 전) · coupon-rollback · cart-empty 0. 배포 뒤 Stripe 새 주문 → "주문 접수" 메일 도착 · payment.DLT 8건 그대로(알림 NPE 수정 확인). 포트원 카드 결제는 결제창이 이니시스 테스트 서버(`devcbt.inicis.com/cbtauth`)로 넘어간 뒤 연결 시간 초과 — PC · 운영 인스턴스 모두 `curl` 15초 초과라 이니시스 쪽(포트원에 문의) |
+| 후속 배포 2(2026-10-25 UTC 아침) | `dc25b0f8a920` — 포트원 `customData` 두 번 감쌈(order · frontend) · 체크아웃에서 포트원 숨김(`HIDDEN_METHODS`, 이니시스 회신까지) · 색상을 바꿔도 사이즈 유지 · 포트원 전화번호 숫자만([docs/49 §6](49-payment-providers.ko.md)). 마이그레이션 없음, 253초. 스모크 통과(429 11회), order-service · frontend 이미지 `dc25b0f8a920`, 체크아웃에 포트원 없음 · 색상을 바꿔도 사이즈 그대로, payment.DLT · order.DLT 8건 그대로(최근 2026-10-24 10:32 UTC — 배포 전). 되돌리기 대상 `6501d3fd8e60` |
 
 ## 1. 무엇이 바뀌나
 
@@ -252,7 +253,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 |---|---|---|
 | 배포 다음 날 | `SINCE=24h ./ops/37-check-mtls.sh` 의 ①-3 이 0 이면 `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + 백엔드 재시작 → ②-2 가 403 | docs/57 §16 "신원 헤더" |
 | 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` | docs/57 §16 "Eureka 쓰기" |
-| 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) | docs/57 §19 |
+| 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) — ✅ 2026-10-25 콘솔 위반 0(카드 · PayPal · 무통장), 코드 반영 · 다음 frontend 배포에 | docs/57 §19 |
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체(ops/07 + Secret + 전 서비스 재시작, 신원은 ops/38) — 옛 비밀번호가 지난 로그에 남아 있다 | docs/57 §16 "스토어 비밀번호" |
 | 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) | docs/72 §7 |
 | 배포 뒤 한 번 | 운영 b7c5053 기간에 경보 없이 지나갔을 수 있는 "파드마다 첫 건" — 로그의 '이중 결제' · DLT 토픽을 훑어본다 | B-101 |

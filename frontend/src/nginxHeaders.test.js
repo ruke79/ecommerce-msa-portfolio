@@ -46,7 +46,6 @@ const { server, locations } = parse(CONF);
 const REQUIRED = [
     "x-frame-options",
     "content-security-policy",
-    "content-security-policy-report-only",
     "x-content-type-options",
     "referrer-policy",
     "permissions-policy",
@@ -54,20 +53,33 @@ const REQUIRED = [
 ];
 
 describe("frontend nginx — 보안 헤더", () => {
-    it("🔒 server 에 일곱 가지 — 클릭재킹(DENY · frame-ancestors 'none')은 강제", () => {
+    it("🔒 server 에 여섯 가지 — 클릭재킹(DENY · frame-ancestors 'none')은 강제", () => {
         expect(Object.keys(server)).toEqual(expect.arrayContaining(REQUIRED));
         expect(server["x-frame-options"]).toBe("DENY");
         expect(server["content-security-policy"]).toContain("frame-ancestors 'none'");
         expect(server["x-content-type-options"]).toBe("nosniff");
     });
 
-    it("Report-Only CSP 는 스크립트에 'unsafe-inline' · 'unsafe-eval' 을 열지 않는다 · object-src 'none'", () => {
-        const policy = server["content-security-policy-report-only"];
+    it("CSP 는 스크립트에 'unsafe-inline' · 'unsafe-eval' 을 열지 않는다 · object-src 'none'", () => {
+        const policy = server["content-security-policy"];
         const scriptSrc = policy.split(";").map((d) => d.trim()).find((d) => d.startsWith("script-src"));
         expect(scriptSrc).toBeDefined();
         expect(scriptSrc).not.toMatch(/'unsafe-(inline|eval)'/);
         expect(policy).toContain("object-src 'none'");
         expect(policy).toContain("frame-ancestors 'none'");
+    });
+
+    /**
+     * 🔒 2026-10-25 강제로 바꿨다 — 사흘 동안 Report-Only 로 위반을 모으고, 운영에서 카드 · PayPal · 무통장을 돌려 콘솔 위반 0.
+     * 전체 정책이 강제 헤더에 있어야 한다: Report-Only 로 되돌리면(또는 강제 헤더가 frame-ancestors 만 남으면) 스크립트 출처
+     * 제한이 다시 '보고만' 이 된다. [JA] 2026-10-25 に強制へ。Report-Only へ戻ると script-src の制限がまた報告だけになる。
+     */
+    it("🔒 CSP 전체가 강제 — default-src · script-src 가 강제 헤더에 있고 Report-Only 는 어디에도 없다", () => {
+        const policy = server["content-security-policy"];
+        expect(policy).toContain("default-src 'self'");
+        expect(policy).toMatch(/script-src 'self' /);
+        expect(policy).toContain("frame-ancestors 'none'");
+        expect(CONF).not.toMatch(/Content-Security-Policy-Report-Only/i);
     });
 
     it("🔒 add_header 를 쓰는 location 은 모두 같은 보안 헤더를 다시 둔다 — nginx 는 물려주지 않는다", () => {
