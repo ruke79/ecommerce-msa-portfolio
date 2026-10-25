@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -167,7 +168,11 @@ class ChatStompIntegrationTest {
                     .imageUrl("").role(MemberRole.USER).build());
         }
         // 방은 서비스 API 로 만든다 — Redis 해시 저장과 참여자 등록까지 실제 경로를 탄다.
-        ChatRoomDto room = chatService.createChatRoom("통합테스트방-" + System.nanoTime(), USER_ID);
+        // 이름은 길이가 고정된 꼬리로(12자) — 예전 nanoTime 꼬리는 기계가 켜진 지 약 28시간이 넘으면 14자리가 되어
+        // 방 이름 상한(20자)을 넘었다: CI 러너에서만 6개가 모두 실패(2026-10-23 ~ 24), 막 켠 컨테이너에서는 통과.
+        // [JA] 名前は長さ固定の接尾辞で — nanoTime は起動後約 28 時間で 14 桁になり上限 20 字を超えた(CI だけ失敗)。
+        ChatRoomDto room = chatService.createChatRoom("통합방-" + UUID.randomUUID().toString().substring(0, 8), USER_ID);
+        assertThat(room.getName()).hasSizeLessThanOrEqualTo(ChatService.ROOM_NAME_MAX_LENGTH);
         roomId = room.getRoomId();
     }
 

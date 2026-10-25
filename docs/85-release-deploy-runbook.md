@@ -1,0 +1,243 @@
+# 85. まとめリリースのデプロイ・ランブック — 10-10 以降に溜まった修正を本番へ一度に
+
+**日本語** | [한국어](85-release-deploy-runbook.ko.md)
+
+> **状態(2026-10-24)** — 本番は **`b7c5053a45e8`**(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))です。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
+> **対象バージョン**はこの文書が入ったコミット以降の improve 最新コミットです(パイプライン緑、12 桁 SHA)。デプロイ前に §0 の表に書きます。
+> 戻せないマイグレーション(ROLLBACK-UNSAFE)はありません。そのため **自動復帰が有効なデプロイ**です。ただし user V18 は重複行を消すので、バックアップは必須です(§3)。
+
+## 0. 記録
+
+| 項目 | 値 |
+|---|---|
+| 対象バージョン(12 桁) | |
+| リハーサルの日付 · 結果 | 2026-10-24 06:42 UTC · 本番バックアップのコピー 03:00 UTC(783MB) · マイグレーション `c22cd7bb5990` — **九つのサービスが通過**(下記) |
+| 事前点検(§2)の日付 | 2026-10-24 本番 — 出発バージョンのまま、カート · バナー · 企画展 0、`pg_trgm` なし(V21 が作る) |
+| バックアップのフォルダー(§3) | |
+| デプロイ開始 · 終了 · 所要時間 | |
+| スモーク | |
+
+## 1. 何が変わるか
+
+### 1-1. スキーマ — すべて追加だけ(列 · 表 · インデックス)
+
+| サービス · DB | マイグレーション | すること | 戻し |
+|---|---|---|---|
+| cart · `cartdb` | V6 · V7 | 処理台帳 `cart.processed_event`(カートを空にする処理の冪等)· `processed_at` インデックス | イメージだけ |
+| catalog · `productdb` | V19 〜 V22 | `processed_at` インデックス、`product(category_id, product_id)`、**`pg_trgm` 拡張** + 有効な商品の部分インデックス二つ、外部キー列のインデックス四つ | イメージだけ |
+| coupon · `coupondb` | V6 〜 V9 | `used_order_id` · `payment_order_id` · `payment_until`(NULL 可の列)、`(user_id, status)` インデックス · 重複していた `idx_coupon` の削除、`processed_at` インデックス | イメージだけ |
+| order · `orderdb` | V26 〜 V28 | `create_key`(冪等キー)+ 部分ユニーク、`payment_attempt` · `payment_attempt_until`、`order_product(order_id)` インデックス | イメージだけ |
+| user · `userdb` | V17 · V18 | `scheduler_lock` 表、**レビュー · お気に入りの重複整理(行の削除)** + ユニーク | イメージだけ(消した行はバックアップから) |
+
+chat · pay · notification · delivery のスキーマはそのままです。最後のマイグレーションのコミットは 2026-10-20 で、2026-10-21 のリハーサル(本番のコピー)で九つのサービスがすべて通りました。そのとき catalog V18 → V22 が 19 秒、user V18 の重複は 0 でした。
+
+### 1-2. サービス間の契約 — 順序はあるが ops/28 は保証しない
+
+`ops/28` は 1 段目でゲートウェイを除く **すべてのサービスを一度に** 上げ、2 段目でゲートウェイを上げます。そのため「coupon · cart を order より先に」は守られません。単一ノードなのでローリングの窓は数分で、その間に起こり得ることは下のとおりです。**デプロイ直後(§5)の確認で代えます。**
+
+| 変わったもの | 窓の中で起こり得ること | デプロイ直後にすること |
+|---|---|---|
+| `coupon-rollback` Avro v2(orderId) | 旧 coupon Pod が v2 を読めず `coupon-rollback.DLT` へ | DLT を元のトピックへ送り直す(§5-2) |
+| `cart-empty` Avro v3(orderId) | 旧 cart Pod が読めず `cart-empty.DLT` へ | 同じ |
+| order アウトボックスの新しい行の種類 `product-update` · `cart-empty` · `order-status` | 旧 order Pod のリレーが知らない種類なので FAILED | `STARTED` に戻す(§5-1) |
+| クーポンの決済押さえ `/api/coupon/internal/payment-claim` | 旧 coupon が 404 → order は以前どおり通す | なし |
+| クーポン見積もりの本文(カート) | 旧 coupon は本文を無視して以前どおり読む | なし |
+| クーポンの `EXPIRED` 結果 | 旧 order が知らず「クーポンを確認できず」で止める(しばらく) | なし |
+| config-server の Bus 削除 + マニフェストのバス無効化 env の削除 | 旧イメージに新マニフェストだと health DOWN — イメージとマニフェストが同じデプロイなので起きない | なし |
+
+### 1-3. 動作が変わるもの(利用者 · 運用者が気づけるもの)
+
+- **カート**: カートのない利用者のエラー画面がなくなります。
+- **ログイン · アカウント**
+  - 管理者によるロック · 期限切れがパスワードとソーシャルログインも止めます。
+  - 2FA の有効化は最近のログインから 10 分以内だけです。
+  - ログイン失敗のロックは Redis に移しました。今ロックされているアカウントはデプロイで解除されます。
+  - 通知設定の変更が初めて DB に保存されます。以前変えたつもりの設定は既定値で見えます。
+- **登録確認メールのリンク · ソーシャルログインの開始**: 今は 404 で、デプロイで直ります。
+- **注文 · 決済**
+  - すでに決済された注文の二回目の決済を断ります。
+  - 注文ごとに決済画面は一つだけ開きます(別のタブは 10 分間断る)。
+  - 銀行振込の入金待ちは顧客あたり 3 件までです。
+  - チェックアウトの金額は catalog の現在の値に合わせ直します。
+- **商品一覧の応答**: カードのフィールドだけを載せます(説明などは詳細だけ)。トップの構成は Pod のメモリに 30 秒とどまります。一覧 · 検索カードの評価はキャッシュの期限(30 · 60 分)まで古い値です。
+- **フロントエンド**: セキュリティヘッダーが付きます(CSP は Report-Only)。Font Awesome CDN を外しました。
+- **ログ**
+  - サービスのメソッドごとの `executed in N ms` の行とゲートウェイのリクエストパスの INFO 行がなくなります。
+  - JVM 起動時にストアのパスワードがログに出ません(`JAVA_TOOL_OPTIONS` から外した)。
+- **メモリ**: JVM の最大ヒープがコンテナ上限の 25% → 50% です。
+
+## 2. 事前点検 — 本番 DB、読み取りのみ
+
+件数だけを見ます。利用者 id · メールは出力しません。
+
+```bash
+# 本番インスタンスで実行する — 実習クラスターではない(先に `hostname` · `kubectl config current-context` を見る)。
+# `!` を使わない — 対話の bash は二重引用符の中の `!~` を前のコマンドに置き換える(history expansion)。
+q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -v ON_ERROR_STOP=1 -c "$2"; }
+# 今適用されているバージョン — 出発点(cart 5 · catalog 18 · coupon 5 · order 25 · user 16)でなければ止める。
+# catalog の履歴は product スキーマにある(public の V5 は古い記録)。
+for db in cartdb coupondb orderdb userdb chatdb paydb notificationdb deliverydb; do
+  echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"
+done
+echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"
+
+# cart: 注文が止まるカートの行(数量 1 〜 1000 の外)— 0 であること(2026-10-21 本番 0)
+q cartdb "select count(*) from cart.cart_product where cart_id is not null and (qty < 1 or qty > 1000)"
+
+# catalog: バナー · 企画展のリンクが http(s) · '/…' の外なら画面が止める — 0 であること
+q productdb "select count(*) from content.banner where link_url is not null and link_url <> '' and not (link_url ~ '^(https?://|/)')"
+q productdb "select count(*) from content.event  where link_url is not null and link_url <> '' and not (link_url ~ '^(https?://|/)')"
+
+# catalog: pg_trgm を DB の所有者(product)が作れるか — すでにあればすぐ終わる
+q productdb "select extname from pg_extension where extname = 'pg_trgm'"
+```
+
+**リハーサル(推奨)**: その間に本番データが増えたので、最新の本番バックアップのコピーでもう一度回します。
+— そのコピーを載せた PostgreSQL で対象バージョンの Flyway を回し、九つのサービスが通る · ROLLBACK-UNSAFE なし · user V18 の重複数を見ます。
+
+**リハーサルの記録(2026-10-24、本番バックアップ 03:00 UTC)** — その後マイグレーションのファイルは変わっていないので、対象バージョンが `c22cd7bb5990` より後でもこの結果がそのまま当てはまります。
+
+| サービス · DB | バージョン | 所要時間 | 件数が変わった表 |
+|---|---|---|---|
+| cart · `cartdb` | V5 → V7 | 6.2 秒 | `cart.processed_event` 新しい表(0) |
+| catalog · `productdb` | V18 → V22 | 23.9 秒(Flyway 17.8 秒 — インデックス) | なし(履歴の表だけ) |
+| coupon · `coupondb` | V5 → V9 | 6.2 秒 | なし |
+| order · `orderdb` | V25 → V28 | 6.2 秒 | なし |
+| user · `userdb` | V16 → V18 | 6.2 秒 | `users.scheduler_lock` 新しい表(0) — **V18 が消した重複 0 行** |
+| chat · pay · notification · delivery | そのまま | 各 6 秒 | なし |
+
+- ROLLBACK-UNSAFE なし、失敗した履歴 0。6 秒台はほとんどが Flyway コンテナの起動です。
+- カートのない行 14 個(数量 0、2026-10-21 と同じ)は誰も読みません — 削除は任意。
+- productdb の `public.flyway_schema_history`(V5)は古い記録です — Flyway は `product` のものだけを見ます。
+
+## 3. デプロイ前の準備
+
+### 3-1. バックアップ — 必須
+
+user V18 が重複したレビュー · お気に入りの行を消します。毎日のバックアップ(03:00 UTC)とは別に、デプロイ直前にもう一つ取ります。コマンドは [docs/72 §3](72-model-refactor-deploy-runbook.md) のとおりです(物理 · 論理 · Mongo)。フォルダーは `~/backups/pre-<対象バージョン>-<時刻>` とし、§0 に書きます。
+
+### 3-2. トピック — `ops/02`
+
+```bash
+./ops/02-create-dlt-topics.sh
+```
+- `order-timeline` を **コンパクション** で作ります(docs/76 §3-1)。作らないとプロジェクションが delete ポリシーで自動作成し、保持期間の後にタイムラインが消えます。
+- saga-projection の入力トピック(`order` · `payment` · `order-status`)がなければ作ります。
+- 秘密を載せる `outgoing-mail` には短い保持を掛けます。
+
+### 3-3. サービスの身元 — `ops/38`
+
+```bash
+./ops/38-issue-service-identities.sh --only gateway-server   # 身元ヘッダーはゲートウェイの CN からだけ(docs/57 §16)
+./ops/38-issue-service-identities.sh --only config-server    # config-server の身元が新しくできた — なければ ops/28 が止まる
+```
+(cert-manager を使うなら ops/39。)
+
+### 3-4. 守ること
+
+- **対象バージョンのイメージが GHCR にあること。** CI がそのコミットのパイプラインを緑で終えたかを見ます — `ops/28` も最初の段でイメージの有無を確かめ、なければクラスタに触れる前に止まります。
+- デプロイ中は管理者の作業(商品 · クーポン · お知らせの編集)を止めます。旧 Pod と新 Pod が混ざっています。
+- ディスクの空きを確かめます。全サービスの新しいイメージを取得します: `df -h /`
+
+## 4. デプロイ
+
+インスタンスで手で行います(本番デプロイのランナー `oci-ampere` はまだありません — docs/72 §4-2)。
+
+```bash
+cd ~/ecommerce-msa
+git fetch origin main
+git switch --detach <対象バージョン>          # マニフェストもそのコミットのものに
+./ops/28-deploy.sh --report                  # 前回のデプロイの環境名(local)と直前のバージョン(b7c5053a45e8)を確認
+./ops/28-deploy.sh local <対象バージョン> --dry-run
+./ops/28-deploy.sh local <対象バージョン>
+```
+
+- 1 段目でゲートウェイを除くサービスがすべて起動する間に、各サービスが自分のマイグレーションを適用します。catalog のインデックス作成は本番の商品数で数秒です。
+- 2 段目でゲートウェイを上げ、スモーク(`ops/06`)を回します。スモークが失敗すれば `b7c5053a45e8` へ **自動復帰** します(§7)。
+- ゲートウェイの Service が LoadBalancer → ClusterIP に変わります(B-85)。外からはトンネルだけで入ります。
+
+## 5. デプロイ直後 — 10 分以内に
+
+### 5-1. アウトボックス — 旧リレーが FAILED を付けた新しい種類の行
+
+(`q` は §2 の関数です。)
+
+```bash
+q orderdb "SELECT event_type, count(*) FROM orders.payment_outbox_event WHERE outbox_status = 'FAILED' GROUP BY 1"
+q orderdb "UPDATE orders.payment_outbox_event SET outbox_status = 'STARTED'
+            WHERE event_type IN ('product-update', 'cart-empty', 'order-status') AND outbox_status = 'FAILED'"
+```
+送り直しても安全です。受け取る側(catalog · cart · saga-projection)が eventId で重複を弾きます。上の三種類以外の FAILED は今回のデプロイと無関係です — その行は `OrderOutboxRowFailed` アラートで別に見ます。
+
+### 5-2. DLT — ローリングの窓で旧 Pod が読めなかったメッセージ
+
+```bash
+for t in coupon-rollback.DLT cart-empty.DLT payment.DLT order.DLT; do ./ops/56-dlt-replay.sh list "$t"; done
+# パーティションごとの最近の件 — 位置 · キー · 元の位置 · 失敗したグループ · 例外。今回のデプロイ時刻のものだけを選ぶ。
+./ops/56-dlt-replay.sh replay coupon-rollback.DLT <パーティション> <オフセット|開始-終了>           # 何を送るかを見せるだけ
+APPLY=1 ./ops/56-dlt-replay.sh replay coupon-rollback.DLT <パーティション> <オフセット|開始-終了>   # 送る — バイトそのまま · 元のパーティション
+```
+コンソールツールで送り直しません(Avro が壊れる)。元のトピックの **すべてのコンシューマーグループ** がもう一度受け取ります。そのため送り直すのは、受け取る側が冪等な `coupon-rollback` · `cart-empty`(処理台帳 · eventId)だけです。`payment.DLT` · `order.DLT` は送り直さず、下のように原因ごとに処理します(決済応答を送り直すと別のグループがもう一度処理し得る — ops/56 のコメント)。
+- `payment.DLT` に delivery グループのレコードがあれば、その注文は配送が作られていません。管理者の配送復旧で埋めます(PAID · PROCESSING の注文だけ)。
+- `order.DLT`(決済要求)にレコードがあれば、その注文は決済が始まっていないか、決済されたのに注文が決済前です。アラート `OrderPaymentUnconfirmed` · order のログ「결제 대사」で注文を探し、決済事業者のコンソールと合わせます。
+
+### 5-3. Redis — 古い永続の商品キャッシュ
+
+products キャッシュは今は 30 分の期限 · キー接頭辞です。古い永続キーを一度消します(次の照会がまた埋める)。
+```bash
+kubectl -n redis exec deploy/redis -- sh -c 'export REDISCLI_AUTH="$REDIS_PASSWORD";
+  redis-cli --scan --pattern "products::*" | xargs -r -n 200 redis-cli del >/dev/null; echo done'
+```
+
+## 6. デプロイ後の確認
+
+### 6-1. スキーマ
+```bash
+for db in cartdb coupondb orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"
+# 期待: cart 7 · coupon 9 · order 28 · user 18 · catalog 22(chat · pay · notification · delivery はそのまま)
+```
+
+### 6-2. 画面 — 一周
+
+| 確認 | 期待 |
+|---|---|
+| カートのないアカウントでカートを開く → 商品を入れる → 最後の行を消す | エラー画面なしで「空」 |
+| `https://www.ysyproject.com/user-service/registrationConfirm?token=x` | 失敗画面へリダイレクト(404 ではない) |
+| ソーシャルログインの開始 | 事業者の画面へ行く |
+| 注文 → カード(テスト)· PayPal(サンドボックス)· 銀行振込 | 決済完了、注文詳細に「進行記録」(docs/76) |
+| 上の決済の間のブラウザ開発者ツールのコンソール | CSP 違反の報告がない(あればその出所をポリシーに足す — §8) |
+| トップ · 検索 · 企画展のカード | 写真 · 価格 · 割引 · 在庫バッジ · 色見本が以前どおり |
+
+### 6-3. コマンドで
+
+```bash
+kubectl -n ecommerce get pods                                         # 再起動 · OOMKilled なし
+kubectl -n ecommerce top pods                                         # ヒープ 50% — 上限に届くサービスは JVM_MAX_RAM_PERCENTAGE(例: 45)
+kubectl -n ecommerce get svc gateway-server                           # ClusterIP · ポート 8000 だけ
+curl -sI https://www.ysyproject.com/ | grep -iE 'x-frame-options|content-security-policy-report-only|strict-transport'
+curl -s https://www.ysyproject.com/ | grep -c font-awesome            # 0
+curl -s 'https://www.ysyproject.com/catalog-service/api/search?page=1&pageSize=1' | grep -c '"description"'   # 0 — 一覧はカードのフィールドだけ
+for d in order-service cart-service; do kubectl -n ecommerce logs deploy/$d --since=30m | grep -c LazyInitializationException; done   # 0
+kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -cE '검색 질의 시간 초과|검색 연결 소켓 읽기 시간 초과'    # 0(ログの文言は韓国語)
+./ops/05-check-observability.sh                                       # サービス指標 11 個 up · node-textfile up
+```
+
+## 7. 失敗したら
+
+- **スモーク失敗**: `ops/28` が `b7c5053a45e8` へ自動復帰します。マイグレーションはすべて追加だけなので旧イメージがそのまま起動します(リハーサルで確認)。復帰の後は新しい種類のアウトボックス行(§5-1)が旧リレーによって FAILED になります — もう一度上げるときに同じ UPDATE をします。
+- **一つのサービスだけ起動しない**(ローリングが止まる): 旧 Pod が動き続けます。`ops/28` が出した起動エラーを見て、直したイメージでもう一度デプロイします。
+- **user V18 で消した行が必要**: §3-1 の論理ダンプからその表だけを戻します。
+
+## 8. 数日後 — 観察を経た次の段階
+
+| いつ | すること | 根拠 |
+|---|---|---|
+| デプロイの翌日 | `SINCE=24h ./ops/37-check-mtls.sh` の ①-3 が 0 なら `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + バックエンドの再起動 → ②-2 が 403 | docs/57 §16「身元ヘッダー」 |
+| デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` | docs/57 §16「Eureka 書き込み」 |
+| 決済を一周した後 | CSP 違反がなければ frontend nginx の `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(次の frontend イメージ) | docs/57 §19 |
+| デプロイが安定した後 | `LOCAL_KEY_STORE_PASSWORD` の交換(ops/07 + Secret + 全サービスの再起動、身元は ops/38)— 古いパスワードが過去のログに残っている | docs/57 §16「ストアのパスワード」 |
+| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言) | docs/72 §7 |
+| デプロイ後に一度 | 本番 b7c5053 の期間にアラートなしで過ぎた可能性のある「Pod ごとの最初の一件」— ログの「이중 결제」· DLT トピックを見渡す | B-101 |
+
+デプロイが終わったら残作業の一覧の「次のデプロイと一緒に」の項目を「適用済み」に移し、この文書の一番上の状態に結果を書きます。
