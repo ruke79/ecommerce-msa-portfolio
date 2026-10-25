@@ -19,7 +19,7 @@ Spring Cloud ベースのマイクロサービス EC サイトです。**実際�
 | デプロイ | GitHub Actions — コミット SHA タグのイメージを**一度だけ**ビルド（amd64・arm64）→ 統合・受け入れテスト → **承認** → 本番ノードのランナーがデプロイ。スモーク失敗時は**自動ロールバック** |
 | 決済 | PayPal · Stripe · PortOne V1/V2 · 銀行振込 · バーチャル口座、部分返金 |
 | 多言語 | 韓国語 · 日本語（画面の文言 1,091 箇所、サーバー応答の文言 約 290 件） |
-| ドキュメント | 設計・障害分析 **62 本**（[docs/](docs/README.md)）· 運用スクリプト **39 本**（[ops/](ops/README.md)） |
+| ドキュメント | 設計・障害分析 **81 本**（[docs/](docs/README.md)）· 運用スクリプト **56 本**（[ops/](ops/README.md)） |
 
 ---
 
@@ -200,7 +200,7 @@ flowchart TB
 - **フロントエンド 1,073 件** — 画面の動作テストのほかに、コードの構造を検査するガードがあります。
   - 画面にハードコードされた文言がないか（構文木で探します）
   - import パスが webpack と jest で同じように解決されるか
-- **設定ガードレール（B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-99）** — 設定ファイルとコードを読み、「起動して初めてわかる欠陥」をビルドの段階で捕まえます。例:
+- **設定ガードレール（B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-106）** — 設定ファイルとコードを読み、「起動して初めてわかる欠陥」をビルドの段階で捕まえます。例:
   - 戻せないマイグレーションなのに `ROLLBACK-UNSAFE` の宣言がない
   - Feign が呼ぶ内部パスが mTLS の許可ルールにない
   - 証明書の更新後にサービスを再起動させるアノテーションが抜けている
@@ -211,10 +211,12 @@ flowchart TB
 ## 正直に — まだ足りないもの
 
 - **単一ノードです。** ノード 1 台の障害がそのまま全体の障害になります。コストを優先した判断です（[docs/23](docs/23-infrastructure-decision.md)）。
-- **バックアップがクラスタ内にあります。** PITR による復元は、実際に `DROP TABLE` を起こして戻せることを確認済みです。ただし、クラスタ外（オブジェクトストレージ）への保管と、バックアップ CronJob の常時稼働はまだです（[docs/15](docs/15-backup-and-dr.md)）。
-- **PayPal · PortOne は実際の API では検証できていません。** 応答フィールドの対応はドキュメントに基づいています。fail closed なので、対応が間違っていてもお金が漏れることはありません。
+- **バックアップは毎日回りますが、PITR はまだです。** PostgreSQL · MongoDB のバックアップ CronJob が毎日、復元訓練が毎週回り、ノード外の写しは別の機械が毎日取りに来ます（30 日）。PITR（WAL アーカイブ）とオブジェクトストレージへの保管はまだです（[docs/22 §2](docs/22-alerting-and-backup-automation.md) · [docs/15](docs/15-backup-and-dr.md)）。
+- **PortOne は決済画面まで届いていません。** Stripe · PayPal（サンドボックス）· 銀行振込は本番で一通り確認しました。PortOne（KG イニシス日本決済）はイニシスのテストサーバーにつながらず（IP 許可リスト — 問い合わせ中）、チェックアウトで隠しています（[docs/49 §6](docs/49-payment-providers.md)）。実際の API 応答を開いて、`customData` が二重に包まれる欠陥を見つけて直しました。fail closed なので、対応が間違っていてもお金が漏れることはありません。
+- **身元ヘッダー · Eureka 書き込みの判定はまだ observe です。** 一日分のログで食い違う呼び出しが 0 であることを見てから enforce に上げます（[docs/57 §16](docs/57-remaining-priorities.md)）。
+- **本番 DB には商品が 200 万件（デモデータ）あります。** フィルター検索の件数はなくしましたが、合う商品がごく少ない条件は一覧がカテゴリを最後まで走査して 503 になります（[docs/62 §20](docs/62-engineering-casebook.md)）。
 - **可観測性で残っているもの:** 観測経路の TLS 信頼設定と、トレースのサンプリング率（今は 1.0）の調整です。
-- **config-server には設定リポジトリを接続していません。** 接続するには、先に認証を付ける必要があります。管理エンドポイントは外部経路から除外しています。
+- **config-server には設定リポジトリを接続していません。** 設定 · 復号 API はパスワードなしでは拒否するようになりました。管理エンドポイントは外部経路から除外しています。
 
 全体の一覧と、閉じた項目の根拠は [docs/54 §10](docs/54-improvements-vs-practice.md) にあります（ドキュメントは韓国語です）。
 
@@ -222,13 +224,14 @@ flowchart TB
 
 ## ドキュメントの読み方
 
-1. [**docs/62 — 技術事例集**](docs/62-engineering-casebook.md): 重要な事例 17 件を、問題 · 対応 · 限界 · 改善点と、参考にしたオライリーの本でまとめました。
+1. [**docs/62 — 技術事例集**](docs/62-engineering-casebook.md): 重要な事例 20 件を、問題 · 対応 · 限界 · 改善点と、参考にしたオライリーの本でまとめました。
 2. [**docs/00 — 前後の総合索引**](docs/00-before-after.md): 見つけた問題と解決を 1 つの表で見られます。
 3. [**docs/54 — 改善点と実務の基準**](docs/54-improvements-vs-practice.md): 領域ごとに何が足りず、いまどうなっているか。それと教訓 10 項目。
 4. 関心のあるテーマ — 決済 [35](docs/35-payment-verification.md)・[49](docs/49-payment-providers.md) ·
    在庫 [59](docs/59-stock-reservation.md) · デプロイ [36](docs/36-deployment-pipeline.md)・[55](docs/55-zero-downtime-migrations.md) ·
    セキュリティ [27](docs/27-security-review.md)・[30](docs/30-git-history-secret-exposure.md) ·
-   可観測性 [11](docs/11-observability-and-kafka-reliability.md)・[51](docs/51-logging.md)・[63](docs/63-opentelemetry.md)
+   可観測性 [11](docs/11-observability-and-kafka-reliability.md)・[51](docs/51-logging.md)・[63](docs/63-opentelemetry.md) ·
+   負荷測定 [83](docs/83-load-test.md) · 本番リリース [85](docs/85-release-deploy-runbook.md)
 5. 全体の一覧 — [docs/README.md](docs/README.md)
 6. **コードを読むなら** — コードのコメントは韓国語で書かれていますが、中核のクラス 38 個には各コメントの直後に
    `[JA]` で始まる日本語訳を付けています。入口としては、アウトボックスと Kafka 越しのトレース
@@ -267,6 +270,7 @@ cd frontend && npm ci && npm test && npm start
 | 2025.01 〜 2025.03 | マイクロサービスへ移行 |
 | 2025.08 〜 2025.10 | Elasticsearch の導入、mTLS、マルチステージビルド |
 | 2025.10 〜 2026.09 | **信頼性 · セキュリティ · 運用 · 品質** — 上の主な事例。配送 · 通知 · カスタマーサポート · 在庫予約 · 多言語 · 決済手段の拡張、OCI への本番デプロイと CI/CD |
+| 2026.10 | **規模 · 運用** — 実習クラスタで商品 100 万 · 1,000 万の負荷測定とゲームデイ（[docs/83](docs/83-load-test.md)）、サービスごとのレビュー修正をまとめた本番の一括リリース（[docs/85](docs/85-release-deploy-runbook.md)）、日本語入力の NFKC · 日本決済、CSP の強制、ストアのパスワード交換ツール（ops/59） |
 
 ## ERD
 

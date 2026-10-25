@@ -36,6 +36,8 @@
 | 16 | テスト | モック（mock）テストは通ったのに、本番で保存・参照が壊れた | *Software Engineering at Google* |
 | 17 | フロントエンド | いいねが1から0に — 19桁の id を JS が丸めた | *JavaScript: The Definitive Guide* |
 | 18 | データモデル | コンパイルも通りテストも通るのに、データが間違っていた — モデル層の点検 | *Designing Data-Intensive Applications* |
+| 19 | イベント · 読み取りモデル | 状態は変わるのに「いつ・なぜ」はログだけだった — 状態変更イベントと読み取りモデル(CQRS) | *Designing Data-Intensive Applications* |
+| 20 | 性能 | 実習では 1 秒、本番の 200 万商品では 42 秒 — フィルター検索の件数 | *PostgreSQL: Up and Running* |
 
 ---
 
@@ -576,6 +578,32 @@
 
 ---
 
+## 20. 実習では 1 秒、本番の 200 万商品では 42 秒 — フィルター検索の件数
+
+**📖 参考書** — Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. (O'Reilly, 2017), 9 章 "Query Performance Tuning"。`EXPLAIN (ANALYZE, BUFFERS)` で実際の行数 · 繰り返し回数 · 読んだブロックを見て、計画ではなく**照会の形**を直す話です。
+
+**問題**
+- 本番画面 `/browse?category=16&price=4_` が「読み込めませんでした」でした(2026-10-25)。価格の下限が 1 でも 4 でも 5.3 秒で 503、ログは `57014 canceling statement` — 検索の上限 5 秒に掛かっていました。
+- 本番 DB には商品が **200 万**(カテゴリ 16 に 55,395 · SKU 340 万 · サイズ行 600 万 — デモデータ)ありました。文書は「本番の商品数なら 1 秒以内」と書いていました — 前提が違っていました。
+- 同じ形の `EXPLAIN ANALYZE`: 遅いのは一覧ではなく**件数**でした。商品ごとに「合うサイズ行があるか」(EXISTS — SKU インデックス → サイズインデックス)を **55,395 回**、1 回 2.3ms(ランダム読み 11 万ブロック)— 42.9 秒。インデックスは正しく使われ(統計も正確)、仕事そのものが大きかったのです。一覧の 10 件は新しい順に走査して合う 10 件が見つかり次第止まるので速い。
+
+**対応した内容**
+- 価格 · 色 · サイズの条件があれば件数を最後まで数えず、**1 ページ + 1 件**だけ取ります — まだあれば `totalProducts` = 受け取った数 + 1(下限)、最後のページは正確な数。
+- 画面がその数を何に使うかから見ました — 表示せず、無限スクロールの「まだあるか」(受け取った数 < total)にだけ使います。だから画面は変えていません。フィルターがない検索は従来どおり正確に数えます(インデックスだけの件数)。
+- 本物の PostgreSQL に 7 万件のカテゴリを入れたテスト — 1 ページ 11 · 2 ページ 21 · 最後のページ 70,000。従来どおり数えると 70,000 で失敗します。
+
+**限界**
+- 合うものがごく少ない条件(カテゴリの大半より高い下限)は一覧も最後まで走査します — やはり 503 です。
+- 正確な「N 件」を画面に出したくなったら、この方式は合いません。
+
+**改善できる点**
+- 商品ごとに画面価格の範囲(常時割引 · 企画展を反映)を前もって持つ列 — 割引が変わるたびに更新が要り、仕事が大きい。
+- 測定用のデータ規模を本番と合わせる — 実習の 100 万 · 1,000 万の測定(docs/83)はありましたが、本番 DB の実際の規模を確かめていませんでした。
+
+→ [docs/83 §2.8](83-load-test.md) · `SearchSkuFilterScaleTest`
+
+---
+
 ## 参考書一覧
 
 | 本 | 出版 | 事例 |
@@ -592,3 +620,4 @@
 | Charity Majors, Liz Fong-Jones, George Miranda, *Observability Engineering* | O'Reilly, 2022 | 15 |
 | Titus Winters, Tom Manshreck, Hyrum Wright, *Software Engineering at Google* | O'Reilly, 2020 | 16 |
 | David Flanagan, *JavaScript: The Definitive Guide*, 7th ed. | O'Reilly, 2020 | 17 |
+| Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. | O'Reilly, 2017 | 20 |

@@ -19,7 +19,7 @@ Spring Cloud 기반 마이크로서비스 이커머스입니다. **실제로 운
 | 배포 | GitHub Actions — 커밋 SHA 태그 이미지를 **한 번만** 빌드(amd64·arm64) → 통합·인수 테스트 → **승인** → 운영 노드 러너가 배포, 스모크 실패 시 **자동 롤백** |
 | 결제 | PayPal · Stripe · 포트원 V1/V2 · 무통장입금 · 가상계좌, 부분 환불 |
 | 다국어 | 한국어 · 일본어(화면 문구 1,091곳, 서버 응답 문구 약 290개) |
-| 문서 | 설계·장애 분석 **62편**([docs/](docs/README.ko.md)) · 운영 스크립트 **39개**([ops/](ops/README.ko.md)) |
+| 문서 | 설계·장애 분석 **81편**([docs/](docs/README.ko.md)) · 운영 스크립트 **56개**([ops/](ops/README.ko.md)) |
 
 ---
 
@@ -199,7 +199,7 @@ flowchart TB
 - **프론트엔드 1,073개** — 화면 동작 테스트 외에 코드 구조를 검사하는 가드가 있습니다.
   - 화면에 박힌 문구가 없는지(구문 트리로 찾습니다)
   - import 경로가 webpack 과 jest 에서 같게 풀리는지
-- **설정 가드레일(B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-99)** — 설정 파일과 코드를 읽어 "실행해야 드러나는 결함"을 빌드에서 잡습니다. 예:
+- **설정 가드레일(B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-106)** — 설정 파일과 코드를 읽어 "실행해야 드러나는 결함"을 빌드에서 잡습니다. 예:
   - 되돌릴 수 없는 마이그레이션인데 `ROLLBACK-UNSAFE` 선언이 없는 것
   - Feign 이 부르는 내부 경로가 mTLS 허용 규칙에 없는 것
   - 인증서 갱신 뒤 서비스를 재시작하게 하는 주석이 빠진 것
@@ -210,10 +210,12 @@ flowchart TB
 ## 정직하게 — 아직 부족한 것
 
 - **단일 노드입니다.** 노드 하나가 곧 전체 장애입니다. 비용 때문에 내린 결정입니다([docs/23](docs/23-infrastructure-decision.ko.md)).
-- **백업이 클러스터 안에 있습니다.** PITR 복원은 `DROP TABLE` 을 실제로 되돌려 검증했습니다. 하지만 클러스터 밖(오브젝트 스토리지) 보관과 백업 CronJob 상시 가동은 아직입니다([docs/15](docs/15-backup-and-dr.ko.md)).
-- **PayPal · 포트원은 실제 API 로 검증하지 못했습니다.** 응답 필드 매핑은 문서 기준입니다. fail closed 라서 매핑이 틀려도 돈이 새지는 않습니다.
+- **백업은 매일 돌지만 PITR 은 아직입니다.** PostgreSQL · MongoDB 백업 CronJob 이 매일, 복원 훈련이 매주 돌고, 노드 밖 사본은 다른 기계가 매일 받아 갑니다(30일). PITR(WAL 아카이빙)과 오브젝트 스토리지 보관은 아직입니다([docs/22 §2](docs/22-alerting-and-backup-automation.ko.md) · [docs/15](docs/15-backup-and-dr.ko.md)).
+- **포트원은 결제창까지 가지 못했습니다.** Stripe · PayPal(샌드박스) · 무통장은 운영에서 한 바퀴 확인했습니다. 포트원(KG이니시스 일본결제)은 이니시스 테스트 서버에 연결되지 않아(IP 허용 목록 — 문의 중) 체크아웃에서 숨겨 두었습니다([docs/49 §6](docs/49-payment-providers.ko.md)). 실제 API 응답을 열어 보다 `customData` 가 두 번 감싸이는 결함을 찾아 고쳤습니다. fail closed 라서 매핑이 틀려도 돈이 새지는 않습니다.
+- **신원 헤더 · Eureka 쓰기 판정은 아직 observe 입니다.** 하루치 로그에 어긋난 호출이 0 인 것을 본 뒤 enforce 로 올립니다([docs/57 §16](docs/57-remaining-priorities.ko.md)).
+- **운영 DB 에는 상품이 200만 개(데모 데이터) 있습니다.** 필터 검색의 개수 세기는 없앴지만, 맞는 상품이 아주 드문 조건은 목록이 카테고리를 끝까지 훑어 503 이 납니다([docs/62 §20](docs/62-engineering-casebook.ko.md)).
 - **관측 스택에 남은 것:** 관측 경로의 TLS 신뢰 설정과 추적 샘플링(지금 1.0) 조정입니다.
-- **config-server 에는 설정 저장소를 연결하지 않았습니다.** 연결하려면 인증을 먼저 붙여야 합니다. 관리 엔드포인트는 외부 경로에서 제외했습니다.
+- **config-server 에는 설정 저장소를 연결하지 않았습니다.** 설정 · 복호화 API 는 이제 비밀번호 없이는 거절합니다. 관리 엔드포인트는 외부 경로에서 제외했습니다.
 
 전체 목록과 닫힌 항목의 근거는 [docs/54 §10](docs/54-improvements-vs-practice.ko.md)에 있습니다.
 
@@ -221,13 +223,14 @@ flowchart TB
 
 ## 문서 읽는 순서
 
-1. [**docs/62 — 기술 사례집**](docs/62-engineering-casebook.ko.md): 중요한 사례 17개를 문제 · 처리 · 한계 · 개선할 점과 참고한 오라일리 책으로 정리했습니다.
+1. [**docs/62 — 기술 사례집**](docs/62-engineering-casebook.ko.md): 중요한 사례 20개를 문제 · 처리 · 한계 · 개선할 점과 참고한 오라일리 책으로 정리했습니다.
 2. [**docs/00 — 전/후 종합 색인**](docs/00-before-after.ko.md): 발견한 문제와 해결을 한 표로 봅니다.
 3. [**docs/54 — 개선 사항과 실무 기준**](docs/54-improvements-vs-practice.ko.md): 영역별로 무엇이 부족했고 지금은 어떤지, 그리고 교훈 10가지.
 4. 관심 있는 주제 — 결제 [35](docs/35-payment-verification.ko.md)·[49](docs/49-payment-providers.ko.md) ·
    재고 [59](docs/59-stock-reservation.ko.md) · 배포 [36](docs/36-deployment-pipeline.ko.md)·[55](docs/55-zero-downtime-migrations.ko.md) ·
    보안 [27](docs/27-security-review.ko.md)·[30](docs/30-git-history-secret-exposure.ko.md) ·
-   관측 [11](docs/11-observability-and-kafka-reliability.ko.md)·[51](docs/51-logging.ko.md)·[63](docs/63-opentelemetry.ko.md)
+   관측 [11](docs/11-observability-and-kafka-reliability.ko.md)·[51](docs/51-logging.ko.md)·[63](docs/63-opentelemetry.ko.md) ·
+   부하 측정 [83](docs/83-load-test.ko.md) · 운영 릴리스 [85](docs/85-release-deploy-runbook.ko.md)
 5. 전체 목록 — [docs/README.ko.md](docs/README.ko.md)
 6. **코드를 읽는다면** — 코드 주석은 한국어로 썼고, 핵심 클래스 38개에는 주석마다 바로 아래에 `[JA]` 로 시작하는
    일본어 번역을 붙였습니다. 입구로는 아웃박스와 Kafka 를 건너는 추적(`common/.../outbox/OutboxTraceContext.java`),
@@ -266,6 +269,7 @@ cd frontend && npm ci && npm test && npm start
 | 2025.01 ~ 2025.03 | 마이크로서비스로 전환 |
 | 2025.08 ~ 2025.10 | Elasticsearch 도입, mTLS, 멀티 스테이지 빌드 |
 | 2025.10 ~ 2026.09 | **신뢰성 · 보안 · 운영 · 품질** — 위의 핵심 사례들. 배송 · 알림 · 고객센터 · 재고 예약 · 다국어 · 결제수단 확장, OCI 운영 배포와 CI/CD |
+| 2026.10 | **규모 · 운영** — 실습 클러스터에서 상품 100만 · 1,000만 부하 측정과 게임데이([docs/83](docs/83-load-test.ko.md)), 서비스별 리뷰 수정을 모은 운영 묶음 릴리스([docs/85](docs/85-release-deploy-runbook.ko.md)), 일본어 입력 NFKC · 일본결제, CSP 강제, 스토어 비밀번호 교체 도구(ops/59) |
 
 ## ERD
 

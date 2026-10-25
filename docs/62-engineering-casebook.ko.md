@@ -36,6 +36,8 @@
 | 16 | 테스트 | 목(mock) 테스트는 통과했는데 운영에서 저장·조회가 깨졌다 | *Software Engineering at Google* |
 | 17 | 프론트엔드 | 좋아요가 1에서 0으로 — 19자리 id 를 JS 가 반올림했다 | *JavaScript: The Definitive Guide* |
 | 18 | 데이터 모델 | 컴파일되고 테스트도 통과하는데 데이터가 틀렸다 — 모델 계층 점검 | *Designing Data-Intensive Applications* |
+| 19 | 이벤트 · 읽기 모델 | 상태는 바뀌는데 "언제 · 왜" 는 로그뿐이었다 — 상태 변경 이벤트와 읽기 모델(CQRS) | *Designing Data-Intensive Applications* |
+| 20 | 성능 | 실습에서는 1초, 운영 200만 상품에서는 42초 — 필터 검색의 개수 세기 | *PostgreSQL: Up and Running* |
 
 ---
 
@@ -576,6 +578,32 @@
 
 ---
 
+## 20. 실습에서는 1초, 운영 200만 상품에서는 42초 — 필터 검색의 개수 세기
+
+**📖 참고서** — Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. (O'Reilly, 2017), 9장 "Query Performance Tuning". `EXPLAIN (ANALYZE, BUFFERS)` 로 실제 행 수 · 반복 횟수 · 읽은 블록을 보고, 계획이 아니라 **질의의 모양**을 고치는 이야기입니다.
+
+**문제**
+- 운영 화면 `/browse?category=16&price=4_` 가 "불러오지 못했습니다" 였습니다(2026-10-25). 가격 하한이 1 이든 4 든 5.3초에 503, 로그는 `57014 canceling statement` — 검색 상한 5초에 걸린 것이었습니다.
+- 운영 DB 에는 상품이 **200만**(카테고리 16 에 55,395 · SKU 340만 · 사이즈 줄 600만 — 데모 데이터)이 있었습니다. 문서는 "운영 상품 수에서는 1초 안" 이라고 적고 있었습니다 — 전제가 틀렸습니다.
+- 같은 모양의 `EXPLAIN ANALYZE`: 느린 것은 목록이 아니라 **개수**였습니다. 상품마다 "맞는 사이즈 줄이 있는가"(EXISTS — SKU 인덱스 → 사이즈 인덱스)를 **55,395번**, 한 번 2.3ms(임의 읽기 11만 블록) — 42.9초. 인덱스는 제대로 타고 있었고(통계도 정확), 일 자체가 컸습니다. 목록 10개는 최신 순으로 훑다 맞는 것 10개를 찾는 즉시 멈춰 빠릅니다.
+
+**처리한 내용**
+- 가격 · 색상 · 사이즈 조건이 있으면 개수를 끝까지 세지 않고 **한 쪽 + 1** 만 가져옵니다 — 더 있으면 `totalProducts` = 받은 수 + 1(하한), 마지막 쪽은 정확한 수.
+- 화면이 그 수를 어디에 쓰는지부터 봤습니다 — 표시하지 않고 무한 스크롤의 "더 있는가"(받은 수 < total)에만 씁니다. 그래서 화면은 바꾸지 않았습니다. 필터가 없는 검색은 예전처럼 정확히 셉니다(인덱스만 보는 개수).
+- 실제 PostgreSQL 에 7만 개 카테고리를 심은 테스트 — 1쪽 11 · 2쪽 21 · 마지막 쪽 70,000. 예전처럼 세면 70,000 으로 실패합니다.
+
+**한계**
+- 맞는 것이 아주 드문 조건(카테고리 대부분보다 비싼 하한)은 목록도 끝까지 훑습니다 — 여전히 503 입니다.
+- 정확한 "N 건" 을 화면에 보여 주고 싶어지면 이 방식은 맞지 않습니다.
+
+**개선할 점**
+- 상품마다 화면 가격의 범위(상시 할인 · 기획전 반영)를 미리 두는 열 — 할인이 바뀔 때 갱신해야 해서 일이 큽니다.
+- 측정용 데이터 규모를 운영과 맞춥니다 — 실습의 100만 · 1,000만 측정(docs/83)은 있었지만 운영 DB 의 실제 규모를 확인하지 않았습니다.
+
+→ [docs/83 §2.8](83-load-test.ko.md) · `SearchSkuFilterScaleTest`
+
+---
+
 ## 참고서 목록
 
 | 책 | 출판 | 사례 |
@@ -592,3 +620,4 @@
 | Charity Majors, Liz Fong-Jones, George Miranda, *Observability Engineering* | O'Reilly, 2022 | 15 |
 | Titus Winters, Tom Manshreck, Hyrum Wright, *Software Engineering at Google* | O'Reilly, 2020 | 16 |
 | David Flanagan, *JavaScript: The Definitive Guide*, 7th ed. | O'Reilly, 2020 | 17 |
+| Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. | O'Reilly, 2017 | 20 |
