@@ -257,8 +257,30 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` | docs/57 §16 "Eureka 쓰기" |
 | 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) — ✅ 2026-10-25 콘솔 위반 0(카드 · PayPal · 무통장) → `61f546a8b125` 로 강제 적용 끝(응답 헤더 확인) | docs/57 §19 |
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체 — `./ops/59-rotate-store-password.sh` check → apply(스토어 비밀번호만 · 키 그대로 · 하나씩 재시작) → 하루 뒤 cleanup. 옛 비밀번호가 지난 로그에 남아 있다 — ✅ 2026-10-25 10:21 UTC apply(스토어 27 · 사본 14 · 13개 재시작 0 · ops/37 403/200), cleanup 은 하루 뒤. ⚠️ 모든 파드가 다시 떠서 identity · Eureka enforce 의 24시간 창은 10-26 11시 UTC 부터 | docs/57 §16 "스토어 비밀번호" |
-| 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) | docs/72 §7 |
+| 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) — 락 대기열 주의는 §8-1 | docs/72 §7 |
 | 배포 뒤 한 번 | 운영 b7c5053 기간에 경보 없이 지나갔을 수 있는 "파드마다 첫 건" — 로그의 '이중 결제' · DLT 토픽을 훑어본다 | B-101 |
-| 판단 뒤(작업 여부를 정한 다음) | 드문 가격 필터 검색의 503 없애기 — 상품마다 화면 가격(상시 할인 · 기획전 적용)의 최저 · 최고를 열로 두고(사이즈 가격 · 할인 · 기획전이 바뀔 때 갱신) `(category_id, 최저가)` 인덱스로 후보를 먼저 좁힌다. 비용: 마이그레이션(열 · 인덱스 추가, 운영 200만 건 채우기) · 갱신 경로 · 테스트. 그 전까지는 맞는 상품이 아주 드문 가격대에서 5초 상한 503 — 화면은 "サーバーが一時的に応答していません" 안내(2026-10-26 운영 10분에 `검색 질의 시간 초과` 2건). 하한 > 상한 · 개수 세기는 `d837605d7902` 에서 이미 해결 | docs/83 §2.8 |
+| 판단 뒤(작업 여부를 정한 다음) | 드문 가격 필터 검색의 503 없애기 — 상품마다 화면 가격(상시 할인 · 기획전 적용)의 최저 · 최고를 열로 두고(사이즈 가격 · 할인 · 기획전이 바뀔 때 갱신) `(category_id, 최저가)` 인덱스로 후보를 먼저 좁힌다. 비용: 마이그레이션(열 · 인덱스 추가, 운영 200만 건 채우기) · 갱신 경로 · 테스트. 그 전까지는 맞는 상품이 아주 드문 가격대에서 5초 상한 503 — 화면은 "サーバーが一時的に応答していません" 안내(2026-10-26 운영 10분에 `검색 질의 시간 초과` 2건). 하한 > 상한 · 개수 세기는 `d837605d7902` 에서 이미 해결. 이행 계획 §8-1 | docs/83 §2.8 |
+
+### 8-1. 이행 계획 — 무정지 스키마 변경(위 "판단 뒤" · "1주일쯤 뒤" 행)
+
+근거: db_modeling 저장소 `sql-tuning-lab/docs/2003-오라일리-튜닝북-실습-매핑.md` 의 X-3(PostgreSQL 무정지 스키마 변경 — 1,000만 행 실측). 그 결론을 이 저장소의 두 작업에 맞춘 것이다.
+
+**가격 범위 열(드문 가격대 503)** — expand 만 하고 contract 는 없다.
+
+| 단계 | 무엇을 | X-3 근거 · 주의 |
+|---|---|---|
+| ① 열 추가 | catalog 새 마이그레이션: `product.product` 에 `min_price` · `max_price`(NULL 허용, 기본값 없음) | `ADD COLUMN` 은 카탈로그만 바꾼다(1,000만 행 35ms) — Flyway 로 그대로 |
+| ② 새 쓰기 | 상품 · 사이즈 가격 · 상시 할인 · 기획전이 바뀌는 곳에서 앱이 두 열을 함께 갱신 | X-3 의 트리거 이중 쓰기 대신 앱 코드 — 기획전 할인은 메모리의 규칙(`EventPricing`)이라 트리거로는 계산할 수 없다 |
+| ③ 채우기 | 200만 건을 1만 행 배치 UPDATE 로(ops 스크립트, 멱등 — NULL 인 행만) | 배치 1만에서 약 10만 행/초(X-3 ③) — 운영 장비는 더 느릴 수 있다. Flyway 안 한 트랜잭션으로 하지 않는다(기동 프로브 5분 · 거대한 dead tuple) |
+| ④ 정리 | 채운 직후 `VACUUM (PARALLEL 0, ANALYZE) product.product` | 대량 갱신 직후의 DDL 은 autovacuum 뒤에서 `deadlock_timeout`(1초)만큼 막힌다(X-3 ③ — 1,034ms → 44ms). `PARALLEL 0` 은 postgres 파드의 `/dev/shm` 64MB 때문(§0 후속 배포 4) |
+| ⑤ 인덱스 | `(category_id, min_price)` 를 `CREATE INDEX CONCURRENTLY` | 그 문장 하나만 담은 마이그레이션 + `V…sql.conf` 의 `executeInTransaction=false`(Flyway 11) — 일반 `CREATE INDEX` 는 만드는 동안 상품 쓰기를 막는다 |
+| ⑥ 검색 전환 | `SearchService` 가 가격 조건을 두 열로 먼저 좁히고, 기존 EXISTS 는 그 안에서만 | 열이 비어 있는 동안(③ 전)은 예전 경로 — 기능 플래그 또는 "NULL 이면 예전 조건" |
+
+**contract 릴리스(order · user 열 삭제)**
+
+- `DROP COLUMN` 은 카탈로그만 바꾸지만 잠깐 `ACCESS EXCLUSIVE` 를 잡는다. PostgreSQL 의 락 대기열은 FIFO — 그 표에 긴 질의가 있으면 DDL 이 기다리는 동안 뒤의 읽기 · 쓰기가 모두 DDL 뒤에 줄을 선다.
+- 짧은 `lock_timeout` + 재시도(gh-ost 방식)를 그대로 쓰지 않는다 — X-3 에서 29배 나빠졌다(실패한 시도마다 새 요청이 뒤에 쌓인다). 긴 질의가 없는 배포 창에 돌리고, 배포 직전 `pg_stat_activity` 에서 그 표의 오래 도는 질의가 없는지 본다.
+- `ALTER COLUMN … TYPE` 같은 재작성은 읽기까지 막는다(1,000만 행 7.8초 중 98%) — 이 두 릴리스에는 없다. 생기면 섀도 열 + 배치 채우기 + RENAME 으로 나누고, RENAME 은 이미 열린 연결에서(새 연결 비용이 cutover 시간의 거의 전부 — X-3 마지막 절).
+- 해당 없음: replica lag 쓰로틀(운영은 replica 없는 단일 PostgreSQL).
 
 배포가 끝나면 남은 일 목록의 "다음 배포에 함께" 항목들을 "적용 끝" 으로 옮기고, 이 문서 맨 위 상태에 결과를 적습니다.

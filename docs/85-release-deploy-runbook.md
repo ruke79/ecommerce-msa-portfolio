@@ -257,8 +257,30 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` | docs/57 §16「Eureka 書き込み」 |
 | 決済を一周した後 | CSP 違反がなければ frontend nginx の `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(次の frontend イメージ) — ✅ 2026-10-25 コンソールの違反 0(カード・PayPal・銀行振込)→ `61f546a8b125` で強制を適用済み(応答ヘッダーを確認) | docs/57 §19 |
 | デプロイが安定した後 | `LOCAL_KEY_STORE_PASSWORD` の交換 — `./ops/59-rotate-store-password.sh` check → apply(ストアのパスワードだけ · 鍵はそのまま · 一つずつ再起動)→ 一日後に cleanup。古いパスワードが過去のログに残っている — ✅ 2026-10-25 10:21 UTC apply(ストア 27 · 写し 14 · 13 個の再起動 0 · ops/37 403/200)、cleanup は一日後。⚠️ 全 Pod が起動し直したので identity · Eureka enforce の 24 時間の窓は 10-26 11 時 UTC から | docs/57 §16「ストアのパスワード」 |
-| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言) | docs/72 §7 |
+| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)— ロック待ち行列の注意は §8-1 | docs/72 §7 |
 | デプロイ後に一度 | 本番 b7c5053 の期間にアラートなしで過ぎた可能性のある「Pod ごとの最初の一件」— ログの「이중 결제」· DLT トピックを見渡す | B-101 |
-| 判断の後(作業するか決めてから) | まれな価格フィルター検索の 503 をなくす — 商品ごとに画面価格(常時割引 · 企画展を適用)の最低 · 最高を列に持ち(サイズの価格 · 割引 · 企画展が変わるときに更新)、`(category_id, 最低価格)` のインデックスで候補を先に絞る。コスト: マイグレーション(列 · インデックスの追加、本番 200 万件の埋め込み) · 更新経路 · テスト。それまでは合う商品がごく少ない価格帯で 5 秒上限の 503 — 画面は「サーバーが一時的に応答していません」の案内(2026-10-26 本番の 10 分で「검색 질의 시간 초과」2 件)。下限 > 上限 · 件数は `d837605d7902` で解決済み | docs/83 §2.8 |
+| 判断の後(作業するか決めてから) | まれな価格フィルター検索の 503 をなくす — 商品ごとに画面価格(常時割引 · 企画展を適用)の最低 · 最高を列に持ち(サイズの価格 · 割引 · 企画展が変わるときに更新)、`(category_id, 最低価格)` のインデックスで候補を先に絞る。コスト: マイグレーション(列 · インデックスの追加、本番 200 万件の埋め込み) · 更新経路 · テスト。それまでは合う商品がごく少ない価格帯で 5 秒上限の 503 — 画面は「サーバーが一時的に応答していません」の案内(2026-10-26 本番の 10 分で「검색 질의 시간 초과」2 件)。下限 > 上限 · 件数は `d837605d7902` で解決済み。移行計画は §8-1 | docs/83 §2.8 |
+
+### 8-1. 移行計画 — 無停止スキーマ変更(上の「判断の後」·「1 週間ほど後」の行)
+
+根拠: db_modeling リポジトリ `sql-tuning-lab/docs/2003-오라일리-튜닝북-실습-매핑.md` の X-3(PostgreSQL の無停止スキーマ変更 — 1,000 万行の実測)。その結論をこのリポジトリの二つの作業に当てはめたもの。
+
+**価格範囲の列(まれな価格帯の 503)** — expand のみで contract はない。
+
+| 段階 | 何を | X-3 の根拠 · 注意 |
+|---|---|---|
+| ① 列の追加 | catalog の新しいマイグレーション: `product.product` に `min_price` · `max_price`(NULL 許容、既定値なし) | `ADD COLUMN` はカタログだけを変える(1,000 万行で 35ms)— Flyway でそのまま |
+| ② 新しい書き込み | 商品 · サイズ価格 · 常時割引 · 企画展が変わる箇所でアプリが二つの列を一緒に更新 | X-3 のトリガー二重書き込みの代わりにアプリのコード — 企画展の割引はメモリ上の規則(`EventPricing`)でトリガーでは計算できない |
+| ③ 埋め込み | 200 万件を 1 万行のバッチ UPDATE で(ops スクリプト、冪等 — NULL の行だけ) | バッチ 1 万で約 10 万行/秒(X-3 ③)— 本番機はもっと遅いことがある。Flyway の一つのトランザクションでは行わない(起動プローブ 5 分 · 巨大な dead tuple) |
+| ④ 後片付け | 埋めた直後に `VACUUM (PARALLEL 0, ANALYZE) product.product` | 大量更新直後の DDL は autovacuum の後ろで `deadlock_timeout`(1 秒)だけ塞がれる(X-3 ③ — 1,034ms → 44ms)。`PARALLEL 0` は postgres Pod の `/dev/shm` 64MB のため(§0 続くデプロイ 4) |
+| ⑤ インデックス | `(category_id, min_price)` を `CREATE INDEX CONCURRENTLY` | その文一つだけのマイグレーション + `V…sql.conf` の `executeInTransaction=false`(Flyway 11)— 通常の `CREATE INDEX` は作成中に商品の書き込みを塞ぐ |
+| ⑥ 検索の切り替え | `SearchService` が価格条件を二つの列で先に絞り、既存の EXISTS はその中だけで | 列が空の間(③ の前)は従来の経路 — 機能フラグまたは「NULL なら従来の条件」 |
+
+**contract リリース(order · user の列削除)**
+
+- `DROP COLUMN` はカタログだけを変えるが、一瞬 `ACCESS EXCLUSIVE` を取る。PostgreSQL のロック待ち行列は FIFO — その表に長い照会があると、DDL が待つ間に後ろの読み書きがすべて DDL の後ろに並ぶ。
+- 短い `lock_timeout` + 再試行(gh-ost 方式)をそのまま使わない — X-3 では 29 倍悪化した(失敗した試行ごとに新しい要求が後ろに積もる)。長い照会のないデプロイの窓に回し、直前に `pg_stat_activity` でその表の長時間の照会がないか見る。
+- `ALTER COLUMN … TYPE` のような再書き込みは読み取りまで塞ぐ(1,000 万行で 7.8 秒のうち 98%)— この二つのリリースにはない。出てきたらシャドー列 + バッチ埋め込み + RENAME に分け、RENAME は既に開いた接続で(新しい接続のコストが cutover 時間のほぼ全部 — X-3 の最後の節)。
+- 該当なし: replica lag のスロットル(本番は replica のない単一 PostgreSQL)。
 
 デプロイが終わったら残作業の一覧の「次のデプロイと一緒に」の項目を「適用済み」に移し、この文書の一番上の状態に結果を書きます。
