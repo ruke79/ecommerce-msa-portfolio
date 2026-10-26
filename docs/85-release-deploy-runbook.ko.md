@@ -2,7 +2,7 @@
 
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
-> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 셋(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902`)으로 지금 운영은 **`d837605d7902`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
+> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)으로 지금 운영은 **`d68f0307e979`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
 
@@ -21,6 +21,7 @@
 | 후속 배포 2(2026-10-25 UTC 아침) | `dc25b0f8a920` — 포트원 `customData` 두 번 감쌈(order · frontend) · 체크아웃에서 포트원 숨김(`HIDDEN_METHODS`, 이니시스 회신까지) · 색상을 바꿔도 사이즈 유지 · 포트원 전화번호 숫자만([docs/49 §6](49-payment-providers.ko.md)). 마이그레이션 없음, 253초. 스모크 통과(429 11회), order-service · frontend 이미지 `dc25b0f8a920`, 체크아웃에 포트원 없음 · 색상을 바꿔도 사이즈 그대로, payment.DLT · order.DLT 8건 그대로(최근 2026-10-24 10:32 UTC — 배포 전). 되돌리기 대상 `6501d3fd8e60` |
 | 후속 배포 3(2026-10-25 UTC 낮) | `61f546a8b125` — 필터 검색은 개수를 끝까지 세지 않는다(catalog, [docs/83 §2.8](83-load-test.ko.md)) · chat 후속(프로듀서 막힘 상한 5초 · 상담 알림 비동기 실패 · `user-created` earliest) · CSP 강제(frontend, [docs/57 §19](57-remaining-priorities.ko.md)). 마이그레이션 없음, 252초. 스모크 통과(429 15회). `/browse?category=16&price=4_` 와 가격 하한을 1씩 바꿔도 지연 없이 목록(배포 전에는 모두 503 — 개수 세기 42초), 응답 헤더 `content-security-policy` 강제(Report-Only 없음). 되돌리기 대상 `dc25b0f8a920` |
 | 후속 배포 4(2026-10-26) | `d837605d7902` — 가격 하한 > 상한("4 ~ 0")은 DB 에 묻지 않고 0건 · 어떤 검색도 개수를 세지 않는다(하위 카테고리 lab equipment 가 늘 503 — 목록 16ms · 개수가 5초 넘음, [docs/83 §2.8](83-load-test.ko.md)). 마이그레이션 없음, 252초. 스모크 통과(429 19회). `subCategory=102` 200 · 0.35초(배포 전 503 · 5.7초), `category=16&lowPrice=4&highPrice=0` 200 · 0.99초. 배포 전 `VACUUM (PARALLEL 0, ANALYZE) product.product` · `product_subcategory`(병렬 VACUUM 은 `/dev/shm` 64MB 로 실패 — 파드에 shm 마운트 없음), 가시 페이지 97,679 / 97,715. 되돌리기 대상 `61f546a8b125` |
+| 후속 배포 5(2026-10-26) | `d68f0307e979` — 다른 카테고리의 하위를 고른 조합은 0건 확정(화면은 상위도 바꾸고, 서버는 DB 에 묻지 않는다 — [docs/83 §2.8](83-load-test.ko.md)) · 신원 헤더 enforce(ConfigMap) · Eureka `eureka.server.my-url`(자기 복제 없앰). 마이그레이션 없음. 스모크 통과. `ops/37`: 모드 · 규칙 · 신원 헤더 모두 enforce, ① · ①-2 · ①-3 0, ② 403/200, 인증서 없이 `User-Role: ROLE_ADMIN` 은 403(②-2). 되돌리기 대상 `d837605d7902` |
 
 ## 1. 무엇이 바뀌나
 
@@ -253,8 +254,8 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 
 | 언제 | 할 일 | 근거 |
 |---|---|---|
-| 배포 다음 날 | `SINCE=24h ./ops/37-check-mtls.sh` 의 ①-3 이 0 이면 `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + 백엔드 재시작 → ②-2 가 403 — ✅ 2026-10-26 ①-3 0(SINCE=24h) → ConfigMap enforce 커밋, 적용 대기 | docs/57 §16 "신원 헤더" |
-| 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1건(서버의 자기 복제 `peerreplication/batch` — `my-url` 로 고침, docs/57 §16), 그 이미지 배포 뒤 다시 하루 | docs/57 §16 "Eureka 쓰기" |
+| 배포 다음 날 | `SINCE=24h ./ops/37-check-mtls.sh` 의 ①-3 이 0 이면 `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + 백엔드 재시작 → ②-2 가 403 — ✅ 2026-10-26 ①-3 0(SINCE=24h) → ConfigMap enforce — 적용 끝(`d68f0307e979`, ②-2 403) | docs/57 §16 "신원 헤더" |
+| 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1건(서버의 자기 복제 `peerreplication/batch` — `my-url` 로 고침, docs/57 §16), 그 이미지(`d68f0307e979`, 2026-10-26) 배포 뒤 다시 하루 | docs/57 §16 "Eureka 쓰기" |
 | 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) — ✅ 2026-10-25 콘솔 위반 0(카드 · PayPal · 무통장) → `61f546a8b125` 로 강제 적용 끝(응답 헤더 확인) | docs/57 §19 |
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체 — `./ops/59-rotate-store-password.sh` check → apply(스토어 비밀번호만 · 키 그대로 · 하나씩 재시작) → 하루 뒤 cleanup. 옛 비밀번호가 지난 로그에 남아 있다 — ✅ 2026-10-25 10:21 UTC apply(스토어 27 · 사본 14 · 13개 재시작 0 · ops/37 403/200), cleanup 은 하루 뒤. ⚠️ 모든 파드가 다시 떠서 identity · Eureka enforce 의 24시간 창은 10-26 11시 UTC 부터 | docs/57 §16 "스토어 비밀번호" |
 | 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) — 락 대기열 주의는 §8-1 | docs/72 §7 |

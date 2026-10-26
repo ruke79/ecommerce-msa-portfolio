@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](85-release-deploy-runbook.ko.md)
 
-> **状態(2026-10-24)** — **デプロイ完了: 本番は `4415e498565c`** です(1 回目は §7-1)。同じ日の続くデプロイ(`6501d3fd8e60`)と 2026-10-25 · 26 の続くデプロイ三つ(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902`)で、今の本番は **`d837605d7902`** です(§0「続くデプロイ」)。残りは §8。以前の本番は `b7c5053a45e8`(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))でした。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
+> **状態(2026-10-24)** — **デプロイ完了: 本番は `4415e498565c`** です(1 回目は §7-1)。同じ日の続くデプロイ(`6501d3fd8e60`)と 2026-10-25 · 26 の続くデプロイ四つ(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)で、今の本番は **`d68f0307e979`** です(§0「続くデプロイ」)。残りは §8。以前の本番は `b7c5053a45e8`(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))でした。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
 > **対象バージョン**はこの文書が入ったコミット以降の improve 最新コミットです(パイプライン緑、12 桁 SHA)。デプロイ前に §0 の表に書きます。
 > 戻せないマイグレーション(ROLLBACK-UNSAFE)はありません。そのため **自動復帰が有効なデプロイ**です。ただし user V18 は重複行を消すので、バックアップは必須です(§3)。
 
@@ -21,6 +21,7 @@
 | 続くデプロイ 2(2026-10-25 UTC 朝) | `dc25b0f8a920` — PortOne `customData` の二重包み(order · frontend) · チェックアウトで PortOne を隠す(`HIDDEN_METHODS`、イニシスの回答まで) · 色を変えてもサイズを保つ · PortOne の電話番号は数字のみ([docs/49 §6](49-payment-providers.md))。マイグレーションなし、253 秒。スモーク通過(429 11 回)、order-service · frontend イメージ `dc25b0f8a920`、チェックアウトに PortOne なし · 色を変えてもサイズそのまま、payment.DLT · order.DLT は 8 件のまま(最新 2026-10-24 10:32 UTC — デプロイ前)。戻し先 `6501d3fd8e60` |
 | 続くデプロイ 3(2026-10-25 UTC 昼) | `61f546a8b125` — フィルター検索は件数を最後まで数えない(catalog、[docs/83 §2.8](83-load-test.md)) · chat の続き(プロデューサーのブロック上限 5 秒 · 相談通知の非同期失敗 · `user-created` earliest) · CSP の強制(frontend、[docs/57 §19](57-remaining-priorities.md))。マイグレーションなし、252 秒。スモーク通過(429 15 回)。`/browse?category=16&price=4_` も価格の下限を 1 ずつ変えても遅れなく一覧(デプロイ前はすべて 503 — 件数で 42 秒)、応答ヘッダー `content-security-policy` が強制(Report-Only なし)。戻し先 `dc25b0f8a920` |
 | 続くデプロイ 4(2026-10-26) | `d837605d7902` — 価格の下限 > 上限(「4 ~ 0」)は DB に聞かず 0 件 · どの検索も件数を数えない(サブカテゴリ lab equipment が常に 503 — 一覧 16ms · 件数が 5 秒超、[docs/83 §2.8](83-load-test.md))。マイグレーションなし、252 秒。スモーク通過(429 19 回)。`subCategory=102` 200 · 0.35 秒(デプロイ前 503 · 5.7 秒)、`category=16&lowPrice=4&highPrice=0` 200 · 0.99 秒。デプロイ前に `VACUUM (PARALLEL 0, ANALYZE) product.product` · `product_subcategory`(並列 VACUUM は `/dev/shm` 64MB で失敗 — Pod に shm のマウントなし)、可視ページ 97,679 / 97,715。戻し先 `61f546a8b125` |
+| 続くデプロイ 5(2026-10-26) | `d68f0307e979` — 別カテゴリのサブカテゴリを選んだ組み合わせは 0 件確定(画面は親も変え、サーバーは DB に聞かない — [docs/83 §2.8](83-load-test.md)) · 身元ヘッダー enforce(ConfigMap) · Eureka `eureka.server.my-url`(自己複製をなくす)。マイグレーションなし。スモーク通過。`ops/37`: モード · ルール · 身元ヘッダーすべて enforce、① · ①-2 · ①-3 0、② 403/200、証明書なしの `User-Role: ROLE_ADMIN` は 403(②-2)。戻し先 `d837605d7902` |
 
 ## 1. 何が変わるか
 
@@ -253,8 +254,8 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 
 | いつ | すること | 根拠 |
 |---|---|---|
-| デプロイの翌日 | `SINCE=24h ./ops/37-check-mtls.sh` の ①-3 が 0 なら `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + バックエンドの再起動 → ②-2 が 403 — ✅ 2026-10-26 ①-3 0(SINCE=24h)→ ConfigMap を enforce にコミット、適用待ち | docs/57 §16「身元ヘッダー」 |
-| デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1 件(サーバーの自己複製 `peerreplication/batch` — `my-url` で修正、docs/57 §16)、そのイメージのデプロイ後にもう一日 | docs/57 §16「Eureka 書き込み」 |
+| デプロイの翌日 | `SINCE=24h ./ops/37-check-mtls.sh` の ①-3 が 0 なら `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + バックエンドの再起動 → ②-2 が 403 — ✅ 2026-10-26 ①-3 0(SINCE=24h)→ ConfigMap を enforce — 適用済み(`d68f0307e979`、②-2 403) | docs/57 §16「身元ヘッダー」 |
+| デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1 件(サーバーの自己複製 `peerreplication/batch` — `my-url` で修正、docs/57 §16)、そのイメージ(`d68f0307e979`、2026-10-26)のデプロイ後にもう一日 | docs/57 §16「Eureka 書き込み」 |
 | 決済を一周した後 | CSP 違反がなければ frontend nginx の `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(次の frontend イメージ) — ✅ 2026-10-25 コンソールの違反 0(カード・PayPal・銀行振込)→ `61f546a8b125` で強制を適用済み(応答ヘッダーを確認) | docs/57 §19 |
 | デプロイが安定した後 | `LOCAL_KEY_STORE_PASSWORD` の交換 — `./ops/59-rotate-store-password.sh` check → apply(ストアのパスワードだけ · 鍵はそのまま · 一つずつ再起動)→ 一日後に cleanup。古いパスワードが過去のログに残っている — ✅ 2026-10-25 10:21 UTC apply(ストア 27 · 写し 14 · 13 個の再起動 0 · ops/37 403/200)、cleanup は一日後。⚠️ 全 Pod が起動し直したので identity · Eureka enforce の 24 時間の窓は 10-26 11 時 UTC から | docs/57 §16「ストアのパスワード」 |
 | 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)— ロック待ち行列の注意は §8-1 | docs/72 §7 |
