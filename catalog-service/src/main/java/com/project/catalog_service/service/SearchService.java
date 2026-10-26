@@ -376,17 +376,18 @@ public class SearchService {
         Pageable pageRequest = createPageRequest(safePage, safeSize);
 
         /*
-         * 가격 · 색상 · 사이즈 필터(SKU 조건)가 있으면 개수를 끝까지 세지 않는다 — 한 쪽보다 하나 더 가져와 "더 있는가" 만 본다.
+         * 개수를 끝까지 세지 않는다 — 한 쪽보다 하나 더 가져와 "더 있는가" 만 본다. 더 있으면 totalProducts = 받은 수 + 1(하한),
+         * 없으면 정확한 수. 화면은 이 수를 보여 주지 않고 무한 스크롤의 "더 있는가"(browse.jsx nextPageParam: 받은 수 < total)에만 쓴다.
          *
-         * 🐛 2026-10-25 운영(상품 200만 · 카테고리 16 에 55,395개): 개수 세기가 카테고리의 상품마다 EXISTS 를 돌려 42초 —
-         * 검색 상한 5초에 걸려 가격 필터는 하한 1 이든 4 든 늘 503 이었다(목록 10개는 맞는 것을 찾는 즉시 멈춰 빠르다).
-         * 화면은 이 수를 보여 주지 않고 무한 스크롤의 "더 있는가"(browse.jsx nextPageParam: 받은 수 < total)에만 쓴다 — 그래서
-         * 더 있으면 "받은 수 + 1"(하한), 없으면 정확한 수를 준다. 화면은 그대로 동작한다. 맞는 것이 아주 드문 조건은 여전히
-         * 카테고리를 끝까지 훑는다(상한 5초 → 503).
-         * [JA] SKU 条件があれば件数を最後まで数えない — 1 件多く取って「まだあるか」だけを見る。本番(200 万商品)で件数が 42 秒かかり
-         *      価格フィルターが常に 503 だった。画面はこの数を無限スクロールの継続判定にしか使わない — あれば「受け取った数 + 1」、なければ正確な数。
+         * 🐛 2026-10-25 운영(상품 200만 · 카테고리 16 에 55,395개): 가격 필터의 개수 세기가 카테고리의 상품마다 EXISTS 를 돌려 42초 —
+         * 검색 상한 5초에 걸려 늘 503 이었다. 그래서 SKU 조건이 있을 때만 세지 않게 했는데(61f546a8b125), 같은 날 하위 카테고리
+         * (lab equipment — 상품 6,073개)만 고른 검색도 늘 503 이었다: 목록 10개는 16ms 인데 개수가 200만 상품을 상품 번호 순으로
+         * 훑어 하위 카테고리 연결과 맞춰 봤다. 개수는 조건마다 계획이 달라 어느 조건이 안전한지 미리 알 수 없다 — 모든 검색에서 세지 않는다.
+         * 맞는 것이 아주 드문 조건은 목록도 끝까지 훑는다(상한 5초 → 503).
+         * [JA] 件数を最後まで数えない — 1 件多く取って「まだあるか」だけを見る。本番(200 万商品)で価格フィルターの件数が 42 秒、
+         *      同じ日にサブカテゴリだけの検索も件数で 5 秒を超えて常に 503 だった(一覧 10 件は 16ms)。条件ごとに計画が違い安全な条件を
+         *      前もって決められないので、すべての検索で数えない。
          */
-        boolean exactCount = skuFilter == null;
         long totalProducts = 0;
         /*
          * 🐛 2026-10-25 운영: 가격 칸이 "4 ~ 0"(하한 > 상한 — 상한 칸의 스피너를 누르면 빈 칸이 0 이 된다)이면 맞는 SKU 가 하나도 없어
@@ -395,15 +396,6 @@ public class SearchService {
          * [JA] 価格の下限 > 上限(「4 ~ 0」)は合う SKU がなく、一覧がカテゴリを最後まで走査して 503 だった。DB に聞かず 0 件。
          */
         boolean emptyPriceRange = emptyPriceRange(params);
-        if (exactCount && !emptyPriceRange) {
-            com.querydsl.jpa.impl.JPAQuery<Long> countQuery = queryFactory
-                    .select(joinDetails ? product.countDistinct() : product.count())
-                    .from(product);
-            if (joinDetails) {
-                countQuery.leftJoin(product.details, productDetails);
-            }
-            totalProducts = countQuery.where(builder).fetchOne();
-        }
 
         com.querydsl.jpa.impl.JPAQuery<Product> listQuery = queryFactory.selectFrom(product);
         if (joinDetails) {
@@ -416,15 +408,13 @@ public class SearchService {
                 //    최신 등록 순. [JA] 順序を固定する — 以前は ORDER BY なしの OFFSET/LIMIT で、ページが重複 · 欠落し得た。
                 .orderBy(product.productId.desc())
                 .offset(pageRequest.getOffset())
-                .limit(pageRequest.getPageSize() + (exactCount ? 0 : 1))
+                .limit(pageRequest.getPageSize() + 1)
                 .fetch();
-        if (!exactCount) {
-            boolean more = products.size() > pageRequest.getPageSize();
-            if (more) {
-                products = products.subList(0, pageRequest.getPageSize());
-            }
-            totalProducts = pageRequest.getOffset() + products.size() + (more ? 1 : 0);
+        boolean more = products.size() > pageRequest.getPageSize();
+        if (more) {
+            products = products.subList(0, pageRequest.getPageSize());
         }
+        totalProducts = pageRequest.getOffset() + products.size() + (more ? 1 : 0);
 
         List<ProductDto> pageContent = eventPricing.apply(products.stream()
                 .map(ProductMapper::toDto)

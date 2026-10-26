@@ -220,13 +220,16 @@ class SearchSkuFilterScaleTest {
         assertThat(beyond.getProduct().getContent()).isEmpty();
         assertThat(beyond.getTotalProducts()).isEqualTo(PRODUCTS);
 
-        // 필터가 없으면 예전처럼 정확히 센다(인덱스만 보는 개수 — 싸다)
+        // 필터가 없어도 같다 — 🐛 2026-10-25 운영: 하위 카테고리만 고른 검색의 개수가 200만 상품을 훑어 늘 503(목록은 16ms).
+        //    개수는 조건마다 계획이 달라 안전한 조건을 미리 알 수 없어 어떤 검색도 세지 않는다.
         Params plain = new Params();
         plain.setCategory(String.valueOf(BIG));
         plain.setPage(1);
         plain.setPageSize(10);
         plain.setIncludeFilters(false);
-        assertThat(searchService.searchProducts(plain, SearchEngine.POSTGRES).getTotalProducts()).isEqualTo(PRODUCTS);
+        assertThat(searchService.searchProducts(plain, SearchEngine.POSTGRES).getTotalProducts()).as("1쪽 10개 + 1").isEqualTo(11);
+        plain.setPage(last);
+        assertThat(searchService.searchProducts(plain, SearchEngine.POSTGRES).getTotalProducts()).as("마지막 쪽 — 정확히").isEqualTo(PRODUCTS);
     }
 
     @Test

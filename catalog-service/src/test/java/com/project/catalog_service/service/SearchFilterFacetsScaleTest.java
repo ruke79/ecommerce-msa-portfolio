@@ -157,7 +157,7 @@ class SearchFilterFacetsScaleTest {
         // 메뉴는 결과 캐시 밖에서 붙는다(SearchController 와 같은 순서) — 이 테스트는 기다림 상한을 넉넉히(10초) 준다
         SearchResultDto result = filterFacets.attach(searchService.searchProducts(params, SearchEngine.POSTGRES), params);
 
-        assertThat(result.getTotalProducts()).isEqualTo(PRODUCTS);
+        assertThat(result.getTotalProducts()).as("개수는 세지 않는다 — 10개 + 더 있음 1").isEqualTo(11);
         assertThat(result.getProduct().getContent()).hasSize(10);
         assertThat(result.getBrandsDB()).as("브랜드는 7종 — 상품마다 한 줄이 아니다")
                 .containsExactlyInAnyOrder("brand-0", "brand-1", "brand-2", "brand-3", "brand-4", "brand-5", "brand-6");

@@ -88,14 +88,14 @@ class SearchServiceUnitTest {
     }
 
     @Test
-    @DisplayName("page=0/pageSize=0 기본 요청이 500 없이 안전한 기본값(offset 0, limit 20)으로 클램프된다")
+    @DisplayName("page=0/pageSize=0 기본 요청이 500 없이 안전한 기본값(offset 0, 한 쪽 20 + 다음 쪽 확인 1)으로 클램프된다")
     void defaultPageParams_areClamped() {
         TestParams params = new TestParams(); // page=0, pageSize=0
 
         assertThatCode(() -> service.searchProducts(params, SearchEngine.POSTGRES)).doesNotThrowAnyException();
 
         verify(listQuery).offset(0L);
-        verify(listQuery).limit(20L);
+        verify(listQuery).limit(21L);
     }
 
     @Test
@@ -107,7 +107,7 @@ class SearchServiceUnitTest {
 
         service.searchProducts(params, SearchEngine.POSTGRES);
 
-        verify(listQuery).limit(100L);
+        verify(listQuery).limit(101L);
     }
 
     @Test
@@ -309,6 +309,34 @@ class SearchServiceUnitTest {
             org.assertj.core.api.Assertions.assertThat(result.getProduct().getContent()).isEmpty();
         }
         verify(listQuery, org.mockito.Mockito.never()).fetch();
+        verify(countQuery, org.mockito.Mockito.never()).fetchOne();
+    }
+
+    /**
+     * 🐛 2026-10-25 운영: 하위 카테고리(lab equipment — 상품 6,073개)만 고른 검색이 늘 503 — 목록 10개는 16ms 인데 개수 세기가
+     * 200만 상품을 상품 번호 순으로 훑었다. 이제 어떤 검색도 개수 질의를 돌리지 않고 한 쪽 + 1 로 "더 있는가" 만 본다.
+     */
+    @Test
+    @DisplayName("어떤 검색도 개수 질의를 돌리지 않는다 — 한 쪽 + 1 로 더 있는지만 본다")
+    void noSearchRunsACountQuery() {
+        java.util.List<com.project.catalog_service.model.Product> eleven = new java.util.ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            eleven.add(org.mockito.Mockito.mock(com.project.catalog_service.model.Product.class, Answers.RETURNS_DEEP_STUBS));
+        }
+        when(listQuery.fetch()).thenReturn(eleven);
+        when(eventPricing.apply(org.mockito.ArgumentMatchers.<java.util.List<com.project.common.dto.ProductDto>>any())).thenAnswer(i -> i.getArgument(0));
+        for (java.util.function.Consumer<TestParams> filter : java.util.List.<java.util.function.Consumer<TestParams>>of(
+                p -> { }, p -> p.setCategory("16"), p -> p.setSubCategory("102"), p -> p.setBrand("Acme"), p -> p.setRating(4f))) {
+            TestParams params = new TestParams();
+            params.setPage(2);
+            params.setPageSize(10);
+            filter.accept(params);
+
+            SearchResultDto result = service.searchProducts(params, SearchEngine.POSTGRES);
+
+            org.assertj.core.api.Assertions.assertThat(result.getProduct().getContent()).hasSize(10);
+            org.assertj.core.api.Assertions.assertThat(result.getTotalProducts()).isEqualTo(21);   // 앞 쪽 10 + 이 쪽 10 + 더 있음 1
+        }
         verify(countQuery, org.mockito.Mockito.never()).fetchOne();
     }
 
