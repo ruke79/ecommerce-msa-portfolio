@@ -84,7 +84,7 @@ const ParentCategory = ({ category, subCategories, categoryHandler, subCategoryH
                         return (
                             <h5
                                 key={sc.id ?? i}
-                                onClick={() => subCategoryHandler(sc.id)}
+                                onClick={() => subCategoryHandler(sc.id, category.id)}
                                 className={`${
                                     subCheck.active ? "font-semibold text-red-500" : ""
                                 } cursor-pointer flex items-center hover:font-semibold hover:text-yellow-500`}

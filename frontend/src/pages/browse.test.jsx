@@ -1,6 +1,7 @@
 import { render, act } from "@testing-library/react";
 import {
   applyFilter,
+  subCategoryChanges,
   buildSearchRequest,
   nextPageParam,
   sortProducts,
@@ -425,6 +426,29 @@ describe("applyFilter — 언급한 필터만 바꾼다", () => {
     applyFilter(p, { category: "3" });
     expect(p.get("category")).toBeNull();
     expect(p.get("subCategory")).toBe("31");
+  });
+
+  /** 🐛 2026-10-26 운영: 다른 상위의 하위를 누르면 하위만 바뀌어 AND 로 0건 → 서버가 카테고리를 끝까지 훑어 503. */
+  it("다른 상위의 하위를 누르면 상위도 그 하위의 상위로 바꾼다", () => {
+    const p = params({ category: "2" });                       // consumer electronics
+    applyFilter(p, subCategoryChanges(p, "55", "4"));           // food › dairy products
+    expect(p.get("category")).toBe("4");
+    expect(p.get("subCategory")).toBe("55");
+  });
+
+  it("상위가 없을 때 하위를 누르면 상위도 함께 고른다", () => {
+    const p = params({});
+    applyFilter(p, subCategoryChanges(p, "55", 4));
+    expect(p.get("category")).toBe("4");
+    expect(p.get("subCategory")).toBe("55");
+  });
+
+  it("같은 상위의 하위는 하위만 바꾸고, 다시 누르면 하위만 꺼진다", () => {
+    const p = params({ category: "4" });
+    applyFilter(p, subCategoryChanges(p, "55", "4"));
+    expect(p.toString()).toBe("category=4&subCategory=55");
+    applyFilter(p, subCategoryChanges(p, "55", "4"));
+    expect(p.toString()).toBe("category=4");
   });
 
   it("page 는 언제나 지운다 — 무한 스크롤에서는 URL 에 두지 않는다", () => {

@@ -50,7 +50,7 @@ describe("카테고리 필터 — 하위 카테고리", () => {
 
     fireEvent.click(openAndGet("러닝", { subCategoryHandler }));
 
-    expect(subCategoryHandler).toHaveBeenCalledWith("10");
+    expect(subCategoryHandler).toHaveBeenCalledWith("10", "1");   // 하위 id 와 그 상위 id — 다른 상위가 골라져 있으면 상위도 바꾼다
   });
 
   it("상위 카테고리를 누르면 그 id 로 필터를 건다", () => {

@@ -303,6 +303,7 @@ ENGINE=postgres NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh bro
 - 한계: 맞는 것이 아주 드문 조건(카테고리 대부분보다 비싼 하한 등)은 목록도 카테고리를 끝까지 훑는다 — 상한 5초 → 503 그대로. 상품마다 화면 가격 범위를 미리 두는 열(기획전 · 상시 할인이 바뀔 때 갱신)이 다음 단계.
 - 같은 날 배포 뒤: 가격 칸이 "4 ~ 0"(상한 칸의 스피너를 누르면 빈 칸이 0 이 된다)이면 하한을 1씩 올려도 늘 503 — 위 한계의 가장 나쁜 경우(맞는 것이 0)다. 하한 > 상한 · 음수 상한은 DB 에 묻지 않고 0건(`SearchService.emptyPriceRange`, `SearchServiceUnitTest`) — 화면은 "조건에 맞는 상품이 없습니다".
 - 같은 날: 하위 카테고리(lab equipment — 상품 6,073개)만 고른 검색도 늘 503(5.7초). `EXPLAIN ANALYZE` 로 목록 10개는 16.8ms(상품 번호 역순 + 하위 카테고리 인덱스의 Merge Semi Join, 1,903행에서 멈춤) — 남은 질의는 정확한 개수 하나였다. 개수는 조건마다 계획이 달라 어느 조건이 안전한지 미리 알 수 없어 **어떤 검색도 개수를 세지 않는다**(한 쪽 + 1 — 위의 SKU 조건과 같은 규칙, 검색마다 질의 하나가 준다). `SearchServiceUnitTest.noSearchRunsACountQuery`(조건 다섯에서 개수 질의 0 · 2쪽 21), 컨테이너 두 테스트의 필터 없는 개수도 11 · 마지막 쪽 정확히.
+- 다음 날(2026-10-26): 카테고리(consumer electronics)를 고른 채 옆 메뉴에서 **다른 카테고리의 하위**(food › dairy products)를 누르면 화면이 `subCategory` 만 바꿔 두 조건이 AND — 맞는 상품이 0 인데 목록 질의가 그 카테고리를 끝까지 훑어 5초 뒤 503("サーバーが一時的に応答していません", 카테고리 메뉴도 사라짐). 화면은 하위를 누르면 상위도 그 하위의 상위로 바꾸고(`browse.jsx subCategoryChanges` — 상위가 바뀔 때 하위를 지우는 규칙의 반대 방향), 서버는 다른 상위의 하위 · 없는 하위를 DB 에 묻지 않고 0건(`SearchService.subcategoryOutsideCategory`, 상위 id 는 `SubcategoryRepository.findParentCategoryId` 한 번 — 옛 화면 · 북마크 URL 대비).
 
 ## 3. 순서
 

@@ -211,6 +211,20 @@ public class SearchService {
      * <p>걸지 않았으면 SKU 조건을 <b>만들지 않는다.</b> 조건 없는 SKU 질의는 상품 전량을
      * 훑는데, 그 결과는 "모든 상품" 이라 필터로서 아무 의미가 없다.
      */
+    /**
+     * 하위 카테고리가 고른 카테고리에 속하지 않는다(없는 하위 포함) — 두 조건을 AND 로 묶으면 0건이 확실하다.
+     * 카테고리가 이름이거나 둘 중 하나가 없으면 묻지 않는다.
+     */
+    boolean subcategoryOutsideCategory(Long categoryId, SearchParamsRequest params) {
+        Long subCategoryId = parseCategoryId(params.getSubCategory());
+        if (categoryId == null || subCategoryId == null) {
+            return false;
+        }
+        return subCategoryRepository.findParentCategoryId(subCategoryId)
+                .map(parent -> !parent.equals(categoryId))
+                .orElse(true);
+    }
+
     /** 어떤 값도 들 수 없는 가격 범위 — 하한 > 상한, 또는 상한 < 0. */
     static boolean emptyPriceRange(SearchParamsRequest params) {
         java.math.BigDecimal low = params.getLowPrice();
@@ -395,13 +409,18 @@ public class SearchService {
          * 0건이다 — 화면은 "조건에 맞는 상품이 없습니다".
          * [JA] 価格の下限 > 上限(「4 ~ 0」)は合う SKU がなく、一覧がカテゴリを最後まで走査して 503 だった。DB に聞かず 0 件。
          */
-        boolean emptyPriceRange = emptyPriceRange(params);
+        //
+        // 🐛 2026-10-26 운영: 카테고리(consumer electronics)를 고른 채 옆 메뉴에서 다른 카테고리의 하위(food › dairy products)를
+        // 누르면 두 조건이 AND 로 묶여 맞는 상품이 0 — 목록 질의가 그 카테고리를 끝까지 훑어 5초 상한 503 이었다(화면은 고쳤다 —
+        // 하위를 누르면 그 상위로 바꾼다; 옛 화면 · 북마크 URL 은 그대로 온다). 이것도 DB 에 묻지 않고 0건이다.
+        // [JA] カテゴリを選んだまま別カテゴリのサブカテゴリを押すと AND で 0 件確定なのに一覧がカテゴリを最後まで走査して 503 だった。DB に聞かず 0 件。
+        boolean emptyResult = emptyPriceRange(params) || subcategoryOutsideCategory(categoryId, params);
 
         com.querydsl.jpa.impl.JPAQuery<Product> listQuery = queryFactory.selectFrom(product);
         if (joinDetails) {
             listQuery.distinct().leftJoin(product.details, productDetails);
         }
-        List<Product> products = emptyPriceRange ? List.of() : listQuery
+        List<Product> products = emptyResult ? List.of() : listQuery
                 .where(builder)
                 // 🔒 순서를 고정한다 — 🐛 예전에는 ORDER BY 없이 OFFSET/LIMIT 이라, 무한 스크롤의 2페이지가 1페이지와 겹치거나
                 //    상품을 건너뛸 수 있었다(PostgreSQL 은 순서 없는 결과의 순서를 보장하지 않는다 — 계획 · 갱신에 따라 바뀐다).

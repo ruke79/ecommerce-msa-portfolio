@@ -340,6 +340,50 @@ class SearchServiceUnitTest {
         verify(countQuery, org.mockito.Mockito.never()).fetchOne();
     }
 
+    /**
+     * 🐛 2026-10-26 운영: 카테고리(consumer electronics)를 고른 채 다른 카테고리의 하위(food › dairy products)를 누르면 AND 로 0건이
+     * 확실한데 목록 질의가 카테고리를 끝까지 훑어 5초 상한 503. 다른 상위의 하위 · 없는 하위는 DB 에 묻지 않고 0건.
+     */
+    @Test
+    @DisplayName("다른 카테고리의 하위 카테고리 · 없는 하위 카테고리는 DB 에 묻지 않고 0건")
+    void subcategoryOfAnotherCategorySkipsTheDatabase() {
+        when(subCategoryRepository.findParentCategoryId(55L)).thenReturn(java.util.Optional.of(4L));   // food › dairy
+        when(subCategoryRepository.findParentCategoryId(999L)).thenReturn(java.util.Optional.empty());
+        for (String sub : new String[] {"55", "999"}) {
+            TestParams params = new TestParams();
+            params.setPage(1);
+            params.setPageSize(10);
+            params.setCategory("2");                         // consumer electronics
+            params.setSubCategory(sub);
+
+            SearchResultDto result = service.searchProducts(params, SearchEngine.POSTGRES);
+
+            org.assertj.core.api.Assertions.assertThat(result.getTotalProducts()).as(sub).isZero();
+        }
+        verify(listQuery, org.mockito.Mockito.never()).fetch();
+    }
+
+    @Test
+    @DisplayName("같은 카테고리의 하위 · 하위만 고른 검색은 예전처럼 DB 에 묻는다")
+    void subcategoryOfTheSameCategoryStillQueries() {
+        when(subCategoryRepository.findParentCategoryId(102L)).thenReturn(java.util.Optional.of(20L));
+        TestParams same = new TestParams();
+        same.setPage(1);
+        same.setPageSize(10);
+        same.setCategory("20");
+        same.setSubCategory("102");
+        service.searchProducts(same, SearchEngine.POSTGRES);
+
+        TestParams subOnly = new TestParams();
+        subOnly.setPage(1);
+        subOnly.setPageSize(10);
+        subOnly.setSubCategory("102");
+        service.searchProducts(subOnly, SearchEngine.POSTGRES);
+
+        verify(listQuery, org.mockito.Mockito.times(2)).fetch();
+        verify(subCategoryRepository, org.mockito.Mockito.times(1)).findParentCategoryId(102L);   // 하위만이면 묻지 않는다
+    }
+
     @Test
     @DisplayName("하한 = 상한 · 0 ~ 0 · 한쪽만 있는 가격 범위는 예전처럼 DB 에 묻는다")
     void possiblePriceRangesStillQuery() {

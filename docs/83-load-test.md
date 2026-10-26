@@ -303,6 +303,7 @@ ENGINE=postgres NAME_SEARCH=0.5 PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh bro
 - 限界: 合うものがごく少ない条件(カテゴリの大半より高い下限など)は一覧もカテゴリを最後まで走査する — 上限 5 秒 → 503 のまま。商品ごとに画面価格の範囲を前もって持つ列(企画展 · 常時割引が変わるときに更新)が次の段階。
 - 同じ日のデプロイ後: 価格欄が「4 ~ 0」(上限欄のスピナーを押すと空欄が 0 になる)だと下限を 1 ずつ上げても常に 503 — 上の限界の最悪の場合(合うものが 0)。下限 > 上限 · 負の上限は DB に聞かず 0 件(`SearchService.emptyPriceRange`、`SearchServiceUnitTest`)— 画面は「条件に合う商品はありません」。
 - 同じ日: サブカテゴリ(lab equipment — 商品 6,073 件)だけの検索も常に 503(5.7 秒)。`EXPLAIN ANALYZE` で一覧 10 件は 16.8ms(商品番号の逆順 + サブカテゴリのインデックスの Merge Semi Join、1,903 行で止まる)— 残る照会は正確な件数一つだった。件数は条件ごとに計画が違い、どの条件が安全か前もって分からないので**どの検索も件数を数えない**(1 ページ + 1 件 — 上の SKU 条件と同じ規則、検索ごとに照会が一つ減る)。`SearchServiceUnitTest.noSearchRunsACountQuery`(条件五つで件数照会 0 · 2 ページ 21)、コンテナの二つのテストのフィルターなしの件数も 11 · 最後のページは正確。
+- 翌日(2026-10-26): カテゴリ(consumer electronics)を選んだまま横のメニューで**別カテゴリのサブカテゴリ**(food › dairy products)を押すと画面が `subCategory` だけを変えて二つの条件が AND — 合う商品は 0 なのに一覧の照会がそのカテゴリを最後まで走査して 5 秒後に 503(「サーバーが一時的に応答していません」、カテゴリのメニューも消える)。画面はサブカテゴリを押すと親もそのサブカテゴリの親に替え(`browse.jsx subCategoryChanges` — 親が変わるときにサブを消す規則の逆向き)、サーバーは別の親のサブ · 存在しないサブを DB に聞かず 0 件(`SearchService.subcategoryOutsideCategory`、親 id は `SubcategoryRepository.findParentCategoryId` 一回 — 古い画面 · ブックマーク URL への備え)。
 
 ## 3. 手順
 

@@ -90,6 +90,27 @@ const FILTER_PARAMS = [
  * @param {object} changes 바꿀 필터만 담은 객체
  * @returns {URLSearchParams} 같은 객체
  */
+/**
+ * 하위 카테고리를 눌렀을 때의 변경.
+ *
+ * <p>🐛 2026-10-26 운영: 카테고리(consumer electronics)를 고른 채 옆 메뉴에서 <b>다른 카테고리의 하위</b>(food › dairy products)를
+ * 누르면 `subCategory` 만 바뀌어 두 조건이 AND 로 묶였다 — 맞는 상품이 0 인데 서버가 카테고리를 끝까지 훑어 5초 뒤 503
+ * ("サーバーが一時的に応答していません"), 화면의 카테고리 메뉴까지 사라졌다. 이제 하위를 누르면 상위도 그 하위의 상위로 바꾼다
+ * (같은 상위면 하위만 — 다시 누르면 꺼진다). 상위가 바뀔 때 하위를 지우는 규칙(applyFilter)의 반대 방향이다.
+ *
+ * @param {URLSearchParams} searchParams 지금 URL
+ * @param {string|number} subCategory 누른 하위 id
+ * @param {string|number|undefined} parentCategory 그 하위의 상위 id
+ */
+export function subCategoryChanges(searchParams, subCategory, parentCategory) {
+    const changes = { subCategory };
+    if (parentCategory !== undefined && parentCategory !== null
+            && String(parentCategory) !== searchParams.get("category")) {
+        changes.category = parentCategory;
+    }
+    return changes;
+}
+
 export function applyFilter(searchParams, changes = {}) {
     const isEmptyValue = (v) =>
         v === null || v === "" || (typeof v === "object" && Object.keys(v).length === 0);
@@ -272,8 +293,8 @@ const Browse = ({ }) => {
      * 핸들러도, URL 파라미터도, 서버 쪽 조건도 없었다 — 기능이 어디에도 존재한 적이
      * 없다(ParentCategory 주석 참조).
      */
-    const subCategoryHandler = (subCategory) => {
-        filter({ subCategory });
+    const subCategoryHandler = (subCategory, parentCategory) => {
+        filter(subCategoryChanges(searchParams, subCategory, parentCategory));
     };
     const brandHandler = (brand) => {
         filter({ brand });

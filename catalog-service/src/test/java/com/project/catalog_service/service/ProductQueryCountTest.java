@@ -110,6 +110,27 @@ class ProductQueryCountTest {
         return emf.unwrap(SessionFactory.class).getStatistics();
     }
 
+    @Autowired
+    private com.project.catalog_service.repository.jpa.data.SubcategoryRepository subcategories;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    /**
+     * 검색이 "다른 상위의 하위" 조합을 DB 에 묻지 않게 쓰는 JPQL(SearchService.subcategoryOutsideCategory) — 실제 스키마에서
+     * 상위 id 를 돌려주고, 없는 하위는 비어 있다.
+     */
+    @Test
+    @DisplayName("하위 카테고리의 상위 id 조회 — 있으면 그 상위, 없으면 비어 있다")
+    void parentCategoryIdOfSubcategory() {
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager).executeWithoutResult(s -> {
+            em.createNativeQuery("insert into product.category (category_id, category_name, slug) values (9901, 'pq-cat', 'pq-cat')").executeUpdate();
+            em.createNativeQuery("insert into product.subcategory (subcategory_id, category_id, subcategory_name, slug) values (9902, 9901, 'pq-sub', 'pq-sub')").executeUpdate();
+        });
+        assertThat(subcategories.findParentCategoryId(9902L)).contains(9901L);
+        assertThat(subcategories.findParentCategoryId(-1L)).isEmpty();
+    }
+
     @Test
     @DisplayName("상품 20건 조회가 상품당 별도 쿼리를 내지 않는다")
     void listingDoesNotIssueOneQueryPerProduct() {

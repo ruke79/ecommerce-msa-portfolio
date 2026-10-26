@@ -25,6 +25,10 @@ public interface  SubcategoryRepository extends JpaRepository<Subcategory, Long>
     List<Subcategory> findBySubcategoryIdIn(List<Long> subcategoryName);    
     Subcategory findBySubcategoryNameAndCategory_CategoryId(String name, Long parent);
 
+    /** 하위 카테고리의 상위 카테고리 id — 검색이 "다른 상위의 하위" 조합을 DB 에 묻지 않게 한다(SearchService). */
+    @Query("SELECT s.category.categoryId FROM Subcategory s WHERE s.subcategoryId = :subcategoryId")
+    java.util.Optional<Long> findParentCategoryId(@org.springframework.data.repository.query.Param("subcategoryId") Long subcategoryId);
+
      // JPQL을 사용하여 Subcategory와 Category를 함께 조회합니다.
      // Subcategory를 조회할 때 연관된 Category 엔티티를 즉시 로딩하도록 쿼리를 수정합니다
     @Override
