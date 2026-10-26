@@ -259,5 +259,6 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체 — `./ops/59-rotate-store-password.sh` check → apply(스토어 비밀번호만 · 키 그대로 · 하나씩 재시작) → 하루 뒤 cleanup. 옛 비밀번호가 지난 로그에 남아 있다 — ✅ 2026-10-25 10:21 UTC apply(스토어 27 · 사본 14 · 13개 재시작 0 · ops/37 403/200), cleanup 은 하루 뒤. ⚠️ 모든 파드가 다시 떠서 identity · Eureka enforce 의 24시간 창은 10-26 11시 UTC 부터 | docs/57 §16 "스토어 비밀번호" |
 | 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) | docs/72 §7 |
 | 배포 뒤 한 번 | 운영 b7c5053 기간에 경보 없이 지나갔을 수 있는 "파드마다 첫 건" — 로그의 '이중 결제' · DLT 토픽을 훑어본다 | B-101 |
+| 판단 뒤(작업 여부를 정한 다음) | 드문 가격 필터 검색의 503 없애기 — 상품마다 화면 가격(상시 할인 · 기획전 적용)의 최저 · 최고를 열로 두고(사이즈 가격 · 할인 · 기획전이 바뀔 때 갱신) `(category_id, 최저가)` 인덱스로 후보를 먼저 좁힌다. 비용: 마이그레이션(열 · 인덱스 추가, 운영 200만 건 채우기) · 갱신 경로 · 테스트. 그 전까지는 맞는 상품이 아주 드문 가격대에서 5초 상한 503 — 화면은 "サーバーが一時的に応答していません" 안내(2026-10-26 운영 10분에 `검색 질의 시간 초과` 2건). 하한 > 상한 · 개수 세기는 `d837605d7902` 에서 이미 해결 | docs/83 §2.8 |
 
 배포가 끝나면 남은 일 목록의 "다음 배포에 함께" 항목들을 "적용 끝" 으로 옮기고, 이 문서 맨 위 상태에 결과를 적습니다.
