@@ -254,7 +254,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | いつ | すること | 根拠 |
 |---|---|---|
 | デプロイの翌日 | `SINCE=24h ./ops/37-check-mtls.sh` の ①-3 が 0 なら `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + バックエンドの再起動 → ②-2 が 403 — ✅ 2026-10-26 ①-3 0(SINCE=24h)→ ConfigMap を enforce にコミット、適用待ち | docs/57 §16「身元ヘッダー」 |
-| デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` | docs/57 §16「Eureka 書き込み」 |
+| デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1 件(サーバーの自己複製 `peerreplication/batch` — `my-url` で修正、docs/57 §16)、そのイメージのデプロイ後にもう一日 | docs/57 §16「Eureka 書き込み」 |
 | 決済を一周した後 | CSP 違反がなければ frontend nginx の `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(次の frontend イメージ) — ✅ 2026-10-25 コンソールの違反 0(カード・PayPal・銀行振込)→ `61f546a8b125` で強制を適用済み(応答ヘッダーを確認) | docs/57 §19 |
 | デプロイが安定した後 | `LOCAL_KEY_STORE_PASSWORD` の交換 — `./ops/59-rotate-store-password.sh` check → apply(ストアのパスワードだけ · 鍵はそのまま · 一つずつ再起動)→ 一日後に cleanup。古いパスワードが過去のログに残っている — ✅ 2026-10-25 10:21 UTC apply(ストア 27 · 写し 14 · 13 個の再起動 0 · ops/37 403/200)、cleanup は一日後。⚠️ 全 Pod が起動し直したので identity · Eureka enforce の 24 時間の窓は 10-26 11 時 UTC から | docs/57 §16「ストアのパスワード」 |
 | 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)— ロック待ち行列の注意は §8-1 | docs/72 §7 |

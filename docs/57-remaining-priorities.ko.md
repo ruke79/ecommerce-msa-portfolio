@@ -676,6 +676,11 @@ kubectl -n ecommerce logs deploy/eureka-server --since=24h | grep -c '\[eureka w
 ./ops/28-deploy.sh <환경> --config-only --restart eureka-server
 ```
 
+**운영 첫 판정(2026-10-26) — 서버가 자기 자신에게 복제하고 있었다.** 하루에 한 줄: `caller=(인증서 없음) POST app=/eureka/peerreplication/batch/`.
+피어 복제는 Eureka 서버만 보낸다 — 단독 서버인데 `eureka.server.my-url` 이 없어 `PeerEurekaNodes` 가 defaultZone 의 `https://localhost:8761/eureka/`
+를 파드 호스트 이름과 비교했고(다르다) 자기를 피어로 보아 등록 · 하트비트를 자기에게 복제했다(같은 줄은 파드마다 한 번만 남기므로 하루 한 줄). enforce
+였다면 그 복제가 모두 403. 고침: `my-url` 을 defaultZone 과 같게(`EurekaServerPropertiesTest` — 다르면 실패). 이 이미지가 뜬 뒤 다시 하루 0 을 보고 enforce.
+
 되돌리기: `EUREKA_WRITE_AUTH_MODE` 를 observe 로 같은 절차. 서버가 재시작해도 클라이언트는 30초 하트비트로 다시 등록한다.
 
 테스트: `RegistryWriteGuardTlsTest`(실제 TLS 로 띄운 Eureka 에 **실제 Eureka 클라이언트**가 공통 설정 그대로 등록 — 신원은 통과 · TLS 를 끈

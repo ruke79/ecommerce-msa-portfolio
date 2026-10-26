@@ -675,6 +675,11 @@ kubectl -n ecommerce logs deploy/eureka-server --since=24h | grep -c '\[eureka w
 ./ops/28-deploy.sh <環境> --config-only --restart eureka-server
 ```
 
+**本番の最初の判定(2026-10-26) — サーバーが自分自身に複製していた。** 一日一行: `caller=(인증서 없음) POST app=/eureka/peerreplication/batch/`。
+peer 複製は Eureka サーバーだけが送る — 単独サーバーなのに `eureka.server.my-url` がなく、`PeerEurekaNodes` が defaultZone の `https://localhost:8761/eureka/`
+を Pod のホスト名と比べ(違う)、自分を peer とみなして登録 · ハートビートを自分に複製していた(同じ行は Pod ごとに一度だけ残すので一日一行)。enforce
+ならその複製はすべて 403。修正: `my-url` を defaultZone と同じに(`EurekaServerPropertiesTest` — 違えば失敗)。このイメージが起動した後、改めて一日 0 を見て enforce。
+
 戻し: `EUREKA_WRITE_AUTH_MODE` を observe にして同じ手順。サーバーが再起動してもクライアントは 30 秒のハートビートで再登録する。
 
 テスト: `RegistryWriteGuardTlsTest`（実際の TLS で起動した Eureka に **実際の Eureka クライアント** が共通設定のまま登録 — 身元は通過 · TLS を切った

@@ -254,7 +254,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | 언제 | 할 일 | 근거 |
 |---|---|---|
 | 배포 다음 날 | `SINCE=24h ./ops/37-check-mtls.sh` 의 ①-3 이 0 이면 `INTERNAL_AUTH_IDENTITY_MODE=enforce` → `ops/28 --config-only` + 백엔드 재시작 → ②-2 가 403 — ✅ 2026-10-26 ①-3 0(SINCE=24h) → ConfigMap enforce 커밋, 적용 대기 | docs/57 §16 "신원 헤더" |
-| 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` | docs/57 §16 "Eureka 쓰기" |
+| 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1건(서버의 자기 복제 `peerreplication/batch` — `my-url` 로 고침, docs/57 §16), 그 이미지 배포 뒤 다시 하루 | docs/57 §16 "Eureka 쓰기" |
 | 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) — ✅ 2026-10-25 콘솔 위반 0(카드 · PayPal · 무통장) → `61f546a8b125` 로 강제 적용 끝(응답 헤더 확인) | docs/57 §19 |
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체 — `./ops/59-rotate-store-password.sh` check → apply(스토어 비밀번호만 · 키 그대로 · 하나씩 재시작) → 하루 뒤 cleanup. 옛 비밀번호가 지난 로그에 남아 있다 — ✅ 2026-10-25 10:21 UTC apply(스토어 27 · 사본 14 · 13개 재시작 0 · ops/37 403/200), cleanup 은 하루 뒤. ⚠️ 모든 파드가 다시 떠서 identity · Eureka enforce 의 24시간 창은 10-26 11시 UTC 부터 | docs/57 §16 "스토어 비밀번호" |
 | 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) — 락 대기열 주의는 §8-1 | docs/72 §7 |

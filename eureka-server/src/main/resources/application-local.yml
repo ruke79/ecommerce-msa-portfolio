@@ -25,6 +25,13 @@ eureka:
     # 오류 없이 무시됐다(EurekaServerPropertiesTest 가 이제 막는다). 피어 구성은 eureka.client.service-url.defaultZone 에 상대 노드를
     # 적어서 한다.
     peer-node-read-timeout-ms: 30000
+    # 이 서버 자신의 주소 — 아래 defaultZone 과 같아야 한다. 🐛 예전에는 없어서 PeerEurekaNodes 가 "localhost" 를 파드의 호스트 이름과
+    # 비교해(다르다) 자기 자신을 피어로 보고, 등록 · 하트비트를 `POST /eureka/peerreplication/batch/` 로 자기에게 복제했다 — 인증서 없이
+    # 와서 RegistryWriteGuard 가 [eureka write] 로 남겼고(운영 2026-10-26, 하루 1줄 — 같은 줄은 파드마다 한 번만 남긴다), enforce 면
+    # 그 복제가 모두 403 이 된다. my-url 이 있으면 그 URL 은 피어 목록에서 빠진다(PeerEurekaNodes.isThisMyUrl).
+    # [JA] このサーバー自身の URL — defaultZone と同じにする。以前はなく、自分を peer とみなして登録 · ハートビートを自分に複製していた
+    #      (証明書なしで [eureka write] に残り、enforce では 403)。my-url があればその URL は peer 一覧から外れる。
+    my-url: https://localhost:8761/eureka/
 
   client:
     # standalone — 자기에게 등록하지도, 등록부를 받아 가지도 않는다.
