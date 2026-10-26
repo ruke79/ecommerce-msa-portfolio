@@ -2,7 +2,7 @@
 
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
-> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 의 후속 배포 둘(`dc25b0f8a920` · `61f546a8b125`)로 지금 운영은 **`61f546a8b125`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
+> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 셋(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902`)으로 지금 운영은 **`d837605d7902`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
 
@@ -20,6 +20,7 @@
 | 후속 배포(2026-10-24 UTC 저녁) | `6501d3fd8e60` — 알림 NPE(§7-2) · NFKC(catalog V23, [docs/60 §14](60-i18n-audit.ko.md)) · 포트원 일본결제(리디렉션 복귀 · 구매자 이름 · 상점 정보 · 문구, [docs/49 §6](49-payment-providers.ko.md)) · 상품 목록 필터. frontend 이미지 · 번들의 채널 키 · 상점 정보 확인, `/browse` 정상, payment.DLT · order.DLT 8건 그대로(최근 10:32 UTC — 배포 전) · coupon-rollback · cart-empty 0. 배포 뒤 Stripe 새 주문 → "주문 접수" 메일 도착 · payment.DLT 8건 그대로(알림 NPE 수정 확인). 포트원 카드 결제는 결제창이 이니시스 테스트 서버(`devcbt.inicis.com/cbtauth`)로 넘어간 뒤 연결 시간 초과 — PC · 운영 인스턴스 모두 `curl` 15초 초과라 이니시스 쪽(포트원에 문의) |
 | 후속 배포 2(2026-10-25 UTC 아침) | `dc25b0f8a920` — 포트원 `customData` 두 번 감쌈(order · frontend) · 체크아웃에서 포트원 숨김(`HIDDEN_METHODS`, 이니시스 회신까지) · 색상을 바꿔도 사이즈 유지 · 포트원 전화번호 숫자만([docs/49 §6](49-payment-providers.ko.md)). 마이그레이션 없음, 253초. 스모크 통과(429 11회), order-service · frontend 이미지 `dc25b0f8a920`, 체크아웃에 포트원 없음 · 색상을 바꿔도 사이즈 그대로, payment.DLT · order.DLT 8건 그대로(최근 2026-10-24 10:32 UTC — 배포 전). 되돌리기 대상 `6501d3fd8e60` |
 | 후속 배포 3(2026-10-25 UTC 낮) | `61f546a8b125` — 필터 검색은 개수를 끝까지 세지 않는다(catalog, [docs/83 §2.8](83-load-test.ko.md)) · chat 후속(프로듀서 막힘 상한 5초 · 상담 알림 비동기 실패 · `user-created` earliest) · CSP 강제(frontend, [docs/57 §19](57-remaining-priorities.ko.md)). 마이그레이션 없음, 252초. 스모크 통과(429 15회). `/browse?category=16&price=4_` 와 가격 하한을 1씩 바꿔도 지연 없이 목록(배포 전에는 모두 503 — 개수 세기 42초), 응답 헤더 `content-security-policy` 강제(Report-Only 없음). 되돌리기 대상 `dc25b0f8a920` |
+| 후속 배포 4(2026-10-26) | `d837605d7902` — 가격 하한 > 상한("4 ~ 0")은 DB 에 묻지 않고 0건 · 어떤 검색도 개수를 세지 않는다(하위 카테고리 lab equipment 가 늘 503 — 목록 16ms · 개수가 5초 넘음, [docs/83 §2.8](83-load-test.ko.md)). 마이그레이션 없음, 252초. 스모크 통과(429 19회). `subCategory=102` 200 · 0.35초(배포 전 503 · 5.7초), `category=16&lowPrice=4&highPrice=0` 200 · 0.99초. 배포 전 `VACUUM (PARALLEL 0, ANALYZE) product.product` · `product_subcategory`(병렬 VACUUM 은 `/dev/shm` 64MB 로 실패 — 파드에 shm 마운트 없음), 가시 페이지 97,679 / 97,715. 되돌리기 대상 `61f546a8b125` |
 
 ## 1. 무엇이 바뀌나
 
