@@ -211,6 +211,13 @@ public class SearchService {
      * <p>걸지 않았으면 SKU 조건을 <b>만들지 않는다.</b> 조건 없는 SKU 질의는 상품 전량을
      * 훑는데, 그 결과는 "모든 상품" 이라 필터로서 아무 의미가 없다.
      */
+    /** 어떤 값도 들 수 없는 가격 범위 — 하한 > 상한, 또는 상한 < 0. */
+    static boolean emptyPriceRange(SearchParamsRequest params) {
+        java.math.BigDecimal low = params.getLowPrice();
+        java.math.BigDecimal high = params.getHighPrice();
+        return high != null && (high.signum() < 0 || (low != null && low.compareTo(high) > 0));
+    }
+
     private static boolean hasSkuFilter(SearchParamsRequest params) {
         return params.getLowPrice() != null
                 || params.getHighPrice() != null
@@ -381,7 +388,14 @@ public class SearchService {
          */
         boolean exactCount = skuFilter == null;
         long totalProducts = 0;
-        if (exactCount) {
+        /*
+         * 🐛 2026-10-25 운영: 가격 칸이 "4 ~ 0"(하한 > 상한 — 상한 칸의 스피너를 누르면 빈 칸이 0 이 된다)이면 맞는 SKU 가 하나도 없어
+         * 목록 질의가 카테고리의 상품을 끝까지 훑었다(55,395개 · 상한 5초 → 503, 하한을 1씩 올려도 같다). 그런 범위는 DB 에 묻지 않고
+         * 0건이다 — 화면은 "조건에 맞는 상품이 없습니다".
+         * [JA] 価格の下限 > 上限(「4 ~ 0」)は合う SKU がなく、一覧がカテゴリを最後まで走査して 503 だった。DB に聞かず 0 件。
+         */
+        boolean emptyPriceRange = emptyPriceRange(params);
+        if (exactCount && !emptyPriceRange) {
             com.querydsl.jpa.impl.JPAQuery<Long> countQuery = queryFactory
                     .select(joinDetails ? product.countDistinct() : product.count())
                     .from(product);
@@ -395,7 +409,7 @@ public class SearchService {
         if (joinDetails) {
             listQuery.distinct().leftJoin(product.details, productDetails);
         }
-        List<Product> products = listQuery
+        List<Product> products = emptyPriceRange ? List.of() : listQuery
                 .where(builder)
                 // 🔒 순서를 고정한다 — 🐛 예전에는 ORDER BY 없이 OFFSET/LIMIT 이라, 무한 스크롤의 2페이지가 1페이지와 겹치거나
                 //    상품을 건너뛸 수 있었다(PostgreSQL 은 순서 없는 결과의 순서를 보장하지 않는다 — 계획 · 갱신에 따라 바뀐다).

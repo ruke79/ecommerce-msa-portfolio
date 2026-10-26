@@ -25,6 +25,7 @@ import com.project.catalog_service.repository.jpa.data.ProductDetailsRepository;
 import com.project.catalog_service.repository.jpa.data.ProductRepository;
 import com.project.catalog_service.repository.jpa.data.ProductSkuRepository;
 import com.project.catalog_service.repository.jpa.data.SubcategoryRepository;
+import com.project.catalog_service.dto.SearchResultDto;
 import com.project.common.dto.catalog.request.SearchParamsRequest;
 import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
@@ -285,6 +286,45 @@ class SearchServiceUnitTest {
         TestParams color = priceBetween(null, null);
         color.setColor("Red");
         org.assertj.core.api.Assertions.assertThat(jpql(service.skuFilter(color))).contains("filterColor.color").doesNotContain("filterSize");
+    }
+
+    /**
+     * 🐛 2026-10-25 운영: 가격 "4 ~ 0"(하한 > 상한)은 맞는 SKU 가 없어 목록 질의가 카테고리의 상품을 끝까지 훑었다 — 5초 상한 503.
+     * 그런 범위는 DB 에 묻지 않고 0건이다. 같은 값(4 ~ 4) · 0 ~ 0 · 상한만은 예전처럼 묻는다.
+     */
+    @Test
+    @DisplayName("하한 > 상한 · 음수 상한의 가격 범위는 DB 에 묻지 않고 0건")
+    void emptyPriceRangeSkipsTheDatabase() {
+        for (String[] range : new String[][] {{"4", "0"}, {"100", "99.99"}, {null, "-1"}}) {
+            TestParams params = new TestParams();
+            params.setPage(1);
+            params.setPageSize(10);
+            params.setCategory("16");
+            params.setLowPrice(range[0] == null ? null : new java.math.BigDecimal(range[0]));
+            params.setHighPrice(new java.math.BigDecimal(range[1]));
+
+            SearchResultDto result = service.searchProducts(params, SearchEngine.POSTGRES);
+
+            org.assertj.core.api.Assertions.assertThat(result.getTotalProducts()).as(String.join("_", String.valueOf(range[0]), range[1])).isZero();
+            org.assertj.core.api.Assertions.assertThat(result.getProduct().getContent()).isEmpty();
+        }
+        verify(listQuery, org.mockito.Mockito.never()).fetch();
+        verify(countQuery, org.mockito.Mockito.never()).fetchOne();
+    }
+
+    @Test
+    @DisplayName("하한 = 상한 · 0 ~ 0 · 한쪽만 있는 가격 범위는 예전처럼 DB 에 묻는다")
+    void possiblePriceRangesStillQuery() {
+        for (String[] range : new String[][] {{"4", "4"}, {"0", "0"}, {"4", null}, {null, "4"}}) {
+            TestParams params = new TestParams();
+            params.setPage(1);
+            params.setPageSize(10);
+            params.setLowPrice(range[0] == null ? null : new java.math.BigDecimal(range[0]));
+            params.setHighPrice(range[1] == null ? null : new java.math.BigDecimal(range[1]));
+            org.assertj.core.api.Assertions.assertThat(SearchService.emptyPriceRange(params)).isFalse();
+            service.searchProducts(params, SearchEngine.POSTGRES);
+        }
+        verify(listQuery, org.mockito.Mockito.times(4)).fetch();
     }
 
     @Test
