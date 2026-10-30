@@ -92,7 +92,8 @@ data:
   # 만들 수 있었다(docs/57 §16 "Eureka 쓰기"). eureka-server 만 읽는다.
   #   observe: 어긋난 쓰기를 [eureka write] 로 남기고 통과 — 모든 서비스가 신원으로 뜬 뒤(ops/38 의 config-server 포함) 하루 0건을 보고
   #   enforce: 403. 올리기: 이 값을 바꾸고 ./ops/28-deploy.sh <env> --config-only --restart eureka-server. 되돌리기: observe 로 같은 절차.
-  EUREKA_WRITE_AUTH_MODE: "observe"
+  #   2026-10-30: 운영 [eureka write] 0건(--since=24h, my-url 적용 d68f0307e979 뒤) → enforce.
+  EUREKA_WRITE_AUTH_MODE: "enforce"
   #   gRPC(docs/66)도 같은 규칙을 쓴다 — gRPC 메서드의 HTTP/2 경로가 "/패키지.서비스/메서드" 라서 위 경로 앞부분 형식이 그대로 맞는다
   #   (/ecommerce.stock.v1.StockReservation/=order-service). proto 에 서비스를 더하면 여기에도 더한다(B-73 이 잡는다).
 
