@@ -77,25 +77,39 @@ V18 은 되돌릴 수 없고, V5 · V9 는 행을 지우고, 시각 보정은 �
 
 `ops/08` · `ops/10` 은 DB 에 밖에서 붙는 스크립트라 이 운영 구성에는 맞지 않습니다 — PostgreSQL 은 클러스터 안 pod(`postgres` 네임스페이스)이고 기본 `pg_hba` 가 원격 replication 을 막으며, MongoDB 는 **Atlas**(chat 의 `SPRING_DATA_MONGODB_CLIENT`, 클러스터 안 `mongodb` 는 0/0)입니다. 그래서 pod 안의 도구로 뜨고 서버로 받습니다. 비밀번호는 화면 · 파일에 나오지 않습니다(PostgreSQL 은 pod 안 로컬 접속, Atlas 는 Secret 을 임시 pod 의 환경변수로만).
 
-```bash
-B=~/backups/pre-<버전>-$(date -u +%Y%m%dT%H%M%SZ); mkdir -p "$B"; df -h ~ | tail -1
-kubectl -n postgres exec deploy/postgres -- pg_basebackup -U postgres -D - -Ft -X fetch --checkpoint=fast > "$B/pg-base.tar"
-tar -tf "$B/pg-base.tar" | grep -c backup_label
-kubectl -n postgres exec deploy/postgres -- pg_dumpall -U postgres | gzip > "$B/pg-all.sql.gz"
-gzip -t "$B/pg-all.sql.gz" && zcat "$B/pg-all.sql.gz" | tail -3
+⚠️ **인스턴스 안의 `tmux` 에서 돌립니다.** 덤프 중에 ssh 나 `kubectl exec` 스트림이 끊기면 pod 안의 `pg_dump` 는 받을 쪽이 없는 출력에 막힌 채 **트랜잭션을 연 채로 남습니다**(`idle in transaction` · 모든 표에 ACCESS SHARE) — 그 뒤의 `DROP COLUMN` · `ALTER TABLE` 이 그 뒤에 줄을 서고, 그 표의 요청이 모두 그 뒤에 선다. 덤프 파일은 그 DB 부터 빠진다(아래 2026-11-02 기록).
 
-kubectl -n ecommerce run mongo-backup --image=mirror.gcr.io/mongo:7 --restart=Never --overrides='{"spec":{"containers":[{"name":"mongo-backup","image":"mirror.gcr.io/mongo:7","command":["sleep","1800"],"env":[{"name":"MONGO_URI","valueFrom":{"secretKeyRef":{"name":"ecommerce-secrets","key":"SPRING_DATA_MONGODB_CLIENT"}}}]}]}}'
-kubectl -n ecommerce wait --for=condition=Ready pod/mongo-backup --timeout=180s
-kubectl -n ecommerce exec mongo-backup -- sh -c 'mongodump --uri="$MONGO_URI" --db=chat --archive --gzip --quiet' > "$B/mongo.archive.gz"
-gzip -t "$B/mongo.archive.gz" && ls -l "$B/mongo.archive.gz"
+```bash
+# ⚠️ 블록을 통째로 붙여 넣지 않는다 — 한 줄씩, 주석의 기대값을 보고 다음 줄로.
+tmux new -A -s backup          # 끊기면 다시 ssh 해서 같은 명령으로 붙는다 — B · V 가 그대로 남는다
+set -o pipefail
+newb(){ [[ "$V" =~ ^[A-Za-z0-9._-]+$ && "$V" != REPLACE_ME ]] || { echo "⛔ V 를 대상 버전으로: [$V]"; return 1; }; B=~/backups/pre-$V-$(date -u +%Y%m%dT%H%M%SZ) && mkdir -p "$B" && echo "B=$B"; }
+ok(){ [[ -d "$B" && "$B" == "$HOME/backups/pre-"?*-20*Z ]] || { echo "⛔ B 가 비었거나 잘못됨: [$B] — newb 부터"; return 1; }; }
+V=REPLACE_ME                   # 대상 버전으로 바꾼다(예: V=50ef7995e94d) — <…> 꺾쇠는 bash 가 리디렉션으로 읽는다
+newb && df -h ~ | tail -1      # B=/home/ubuntu/backups/pre-<V>-<시각> 을 보고 다음 줄로
+ok && kubectl -n postgres exec deploy/postgres -c postgres -- pg_basebackup -U postgres -D - -Ft -X fetch --checkpoint=fast > "$B/pg-base.tar"; echo "exit=$?"   # exit=0
+ok && tar -tf "$B/pg-base.tar" | grep -c backup_label                                   # 1
+ok && kubectl -n postgres exec deploy/postgres -c postgres -- pg_dumpall -U postgres | gzip > "$B/pg-all.sql.gz"; echo "exit=${PIPESTATUS[*]}"   # exit=0 0
+ok && gzip -t "$B/pg-all.sql.gz" && zcat "$B/pg-all.sql.gz" | tail -1                   # -- PostgreSQL database cluster dump complete
+kubectl -n postgres exec deploy/postgres -c postgres -- psql -U postgres -tAX -c "select count(*) from pg_stat_activity where application_name ~ '^pg_(dump|dumpall|basebackup)'"   # 0 — 멈춰 남은 덤프 없음(03:00 UTC 백업 창 밖에서 — 그 시각엔 CronJob 의 pg_dump 가 있다)
+
+ok && kubectl -n ecommerce run mongo-backup --image=mirror.gcr.io/mongo:7 --restart=Never --overrides='{"spec":{"containers":[{"name":"mongo-backup","image":"mirror.gcr.io/mongo:7","command":["sleep","1800"],"env":[{"name":"MONGO_URI","valueFrom":{"secretKeyRef":{"name":"ecommerce-secrets","key":"SPRING_DATA_MONGODB_CLIENT"}}}]}]}}'
+ok && kubectl -n ecommerce wait --for=condition=Ready pod/mongo-backup --timeout=180s
+ok && kubectl -n ecommerce exec mongo-backup -- sh -c 'mongodump --uri="$MONGO_URI" --db=chat --archive --gzip --quiet' > "$B/mongo.archive.gz"; echo "exit=$?"   # exit=0
+ok && gzip -t "$B/mongo.archive.gz" && ls -l "$B/mongo.archive.gz"
 kubectl -n ecommerce exec mongo-backup -- sh -c 'mongosh "$MONGO_URI" --quiet --eval "const d=db.getSiblingDB(\"chat\"); d.getCollectionNames().forEach(c => print(c + \": \" + d.getCollection(c).estimatedDocumentCount()))"'
-kubectl -n ecommerce delete pod mongo-backup
+kubectl -n ecommerce delete pod mongo-backup --ignore-not-found
+ls -l "$B"                     # 파일 셋, 0 바이트 없음
 ```
 
+- `ok` 는 `$B` 가 이번에 만든 `~/backups/pre-<V>-<시각>` 일 때만 다음 명령을 돌린다 — 비었거나(새 셸 · `unset`) 다른 경로면 아무것도 시작하지 않는다. 새 셸이면 `newb` 로 새 폴더를 만들거나, 이어서 할 때는 `B=$(ls -d ~/backups/pre-$V-* | tail -1)`.
+- **2026-11-02 기록(둘째)**: 같은 날 배포 전 백업에서 ① `B=~/backups/pre-<버전>-…` 를 그대로 실행해 `<버전>` 이 리디렉션으로 읽혀 `B=~/backups/pre-` 가 되고, 블록의 나머지가 그 폴더로 돌았다(`pg-base.tar` 4.8G · 덤프 둘 0 바이트). ② 지운 뒤 `unset B` 상태로 블록을 다시 붙여 경로가 `/pg-base.tar` 가 되어 쓰기가 거절됐지만, `pg_dumpall` 은 파드 안에서 시작돼 받을 쪽 없이 세션 2개가 남았다(`exit=141 1`) — 끊고 다시 떴다. 그래서 `V` · `newb` · `ok` 와 '한 줄씩' 을 더했다.
 - `kubectl exec` 에 `-t` 를 붙이지 않습니다 — 터미널 모드가 되면 바이너리 출력이 깨집니다.
 - 정상: `backup_label` 1, 덤프 끝에 `dump complete`, Mongo 는 컬렉션별 문서 수. 물리 백업(`pg-base.tar`)은 전체를 그 시점으로, 논리 덤프(`pg-all.sql.gz`)는 표 하나(예: 공지)를 되살릴 때 씁니다.
 - **2026-10-10 실측**: 전체 DB 4,767 MB → `pg-base.tar` 4.7G · `pg-all.sql.gz` 304M, Mongo `chat` 7건 · `auto_sequence` 1건(936바이트 — 작은 것이 정상). 서버 디스크 여유 30G 에서 약 25G.
 - 백업은 운영 디스크에 함께 있습니다 — 배포가 안정되면 다른 기계로 옮겨 둡니다. Atlas M0 에는 자동 백업이 없습니다.
+- 끝에 `dump complete` 가 없거나 `exit` 가 0 이 아니면, 또는 마지막 점검이 0 이 아니면: 백업 창(03:00 UTC · 월 05:00 복원 훈련) 밖에서 남은 덤프 세션을 끊고(`select pg_terminate_backend(pid) from pg_stat_activity where application_name ~ '^pg_(dump|dumpall|basebackup)'` — 덤프는 읽기만 해서 끊어도 잃는 것이 없다) 처음부터 다시 뜹니다. 그 폴더의 `pg-all.sql.gz` 는 쓰지 않습니다.
+- **2026-11-02 기록**: contract 릴리스([docs/85 §8-2](85-release-deploy-runbook.ko.md)) 사전 점검에서 orderdb 에 30초 넘는 트랜잭션 1 — `postgres` · `pg_dump` · `local` · `idle in transaction`(`ClientRead`) · **9일 2시간 57분**(2026-10-24 ~12:45 UTC, `6501d3fd8e60` 배포 전 수동 백업 무렵). 이 절의 `pg_dumpall` 이 연결이 끊긴 채 orderdb 에서 멈췄고, orders 표 전부에 ACCESS SHARE 를 쥐고 있었다 — 그대로 V29 를 돌렸으면 `DROP COLUMN` 뒤에서 주문 요청이 모두 멈췄다. 쓰기 없음(`backend_xid` 없음)이라 `pg_terminate_backend` 로 끊었다. 매일 03:00 의 `postgres-backup` CronJob 은 같은 ACCESS SHARE 라 부딪히지 않고 9일 모두 Complete. 9일 스냅숏의 영향(죽은 행)은 orders 표마다 수십 건뿐이었다. 그 날의 `pg-all.sql.gz` 는 orderdb 부터 빠졌다(pg_dumpall 은 DB 이름순). 그래서 `tmux` · `pipefail` · 마지막 점검을 더했다.
 
 ## 4. 배포
 

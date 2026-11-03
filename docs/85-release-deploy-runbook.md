@@ -310,11 +310,29 @@ date -u
 for db in orderdb userdb productdb; do
   echo "$db: $(q "$db" "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and xact_start < now() - interval '30 seconds'")"
 done
+# 2-1) 0 でなければ何か — 誰が · どの状態で · どれだけ(照会は最初の一語だけ)、そして消す表を持っているか
+q orderdb "select pid, usename, application_name, coalesce(host(client_addr),'local'), state,
+  date_trunc('second', now()-xact_start), upper(split_part(ltrim(query),' ',1)), backend_xid is not null as wrote
+  from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid()
+  and xact_start < now() - interval '30 seconds'"
+q orderdb "select c.relnamespace::regnamespace||'.'||c.relname, l.mode from pg_locks l join pg_class c on c.oid = l.relation
+  where c.relnamespace = 'orders'::regnamespace and l.pid in (select pid from pg_stat_activity
+  where datname = current_database() and pid <> pg_backend_pid() and xact_start < now() - interval '30 seconds')"
 # 3) 今のバージョン — order 28 · user 18 · catalog 23
 for db in orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
 echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"
 ```
-- バックアップ(必須): [docs/72 §3](72-model-refactor-deploy-runbook.md) のとおり、フォルダは `~/backups/pre-<対象バージョン>-<時刻>`。消した列の値はバックアップにだけ残ります。
+- 2-1 の判別(userdb は `users`、表ロックの照会のスキーマだけ変える):
+
+  | 見えるもの | 意味 | 対処 |
+  |---|---|---|
+  | `postgres` · `pg_dump`(または `pg_dumpall`)· `local` · `idle in transaction` | 接続が切れて止まった **手動バックアップ**(docs/72 §3 — 2026-11-02 に 9 日もののが一つ) | `wrote` が f なら `select pg_terminate_backend(<pid>)`。そのバックアップフォルダの `pg-all.sql.gz` はその DB から抜けている — 使わない |
+  | `PostgreSQL JDBC Driver` · サービス Pod のアドレス · `idle in transaction` | アプリのコネクションリーク | その pid を切り、どのサービスか(`kubectl get pods -A -o wide`)を記録して原因を探す |
+  | `active` · サービス Pod · SELECT | スケジューラなどの長い照会 | 終わるのを待つか切る — 繰り返すならその作業の時刻を避ける |
+  | 03:00 UTC ごろの `pg_dump` | CronJob のバックアップ(約 3 分) | 終わるのを待つ — 切らない |
+
+  表ロックの照会に消す列の表(`orders.orders` · `orders.order_address`、user は `users.users`)が出たら、そのままデプロイしない — `DROP COLUMN` がその後ろで待ち、その表の要求がすべてその後ろに並ぶ。
+- バックアップ(必須): [docs/72 §3](72-model-refactor-deploy-runbook.md) のとおり — `tmux` の中で、末尾の `dump complete` と残ったダンプのセッション 0 まで。フォルダは `~/backups/pre-<対象バージョン>-<時刻>`。消した列の値はバックアップにだけ残ります。
 
 **デプロイ** — §4 と同じです(`git switch --detach <対象バージョン>` → `./ops/28-deploy.sh local <対象バージョン>`)。`ops/28` はこの範囲の ROLLBACK-UNSAFE を知らせて**自動復帰を切ります** — スモークが失敗してもそのまま止まります。戻すときは `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh local --rollback`(直前の `d68f0307e979` は消した列を使わないのでそのまま起動する)。4415e498565c より古いイメージに戻すなら、V29 · V19 のファイルの ROLLBACK-UNSAFE の説明どおり列を先に戻します(値は戻らない — バックアップ)。
 

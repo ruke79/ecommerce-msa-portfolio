@@ -310,11 +310,29 @@ date -u
 for db in orderdb userdb productdb; do
   echo "$db: $(q "$db" "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and xact_start < now() - interval '30 seconds'")"
 done
+# 2-1) 0 이 아니면 무엇인지 — 누가 · 어떤 상태로 · 얼마나(질의는 첫 단어만), 그리고 지울 표를 쥐었는지
+q orderdb "select pid, usename, application_name, coalesce(host(client_addr),'local'), state,
+  date_trunc('second', now()-xact_start), upper(split_part(ltrim(query),' ',1)), backend_xid is not null as wrote
+  from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid()
+  and xact_start < now() - interval '30 seconds'"
+q orderdb "select c.relnamespace::regnamespace||'.'||c.relname, l.mode from pg_locks l join pg_class c on c.oid = l.relation
+  where c.relnamespace = 'orders'::regnamespace and l.pid in (select pid from pg_stat_activity
+  where datname = current_database() and pid <> pg_backend_pid() and xact_start < now() - interval '30 seconds')"
 # 3) 지금 버전 — order 28 · user 18 · catalog 23
 for db in orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
 echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"
 ```
-- 백업(필수): [docs/72 §3](72-model-refactor-deploy-runbook.ko.md#3-백업--필수) 그대로, 폴더는 `~/backups/pre-<대상 버전>-<시각>`. 지운 열의 값은 백업에만 남습니다.
+- 2-1 의 판별(userdb 는 `users`, 표 잠금 질의의 스키마만 바꾼다):
+
+  | 보이는 것 | 뜻 | 처리 |
+  |---|---|---|
+  | `postgres` · `pg_dump`(또는 `pg_dumpall`) · `local` · `idle in transaction` | 연결이 끊겨 멈춘 **수동 백업**(docs/72 §3 — 2026-11-02 에 9일짜리 하나) | `wrote` 가 f 면 `select pg_terminate_backend(<pid>)`. 그 백업 폴더의 `pg-all.sql.gz` 는 그 DB 부터 빠졌다 — 쓰지 않는다 |
+  | `PostgreSQL JDBC Driver` · 서비스 pod 주소 · `idle in transaction` | 앱의 커넥션 누수 | 그 pid 를 끊고, 어느 서비스인지(`kubectl get pods -A -o wide`) 기록해 원인을 찾는다 |
+  | `active` · 서비스 pod · SELECT | 스케줄러 등의 오래 도는 질의 | 끝나기를 기다리거나 끊는다 — 반복되면 그 작업 시각을 피한다 |
+  | 03:00 UTC 무렵의 `pg_dump` | CronJob 백업(약 3분) | 끝나기를 기다린다 — 끊지 않는다 |
+
+  표 잠금 질의에 지울 열의 표(`orders.orders` · `orders.order_address`, user 는 `users.users`)가 나오면 그대로 배포하지 않는다 — `DROP COLUMN` 이 그 뒤에서 기다리고, 그 표의 요청이 모두 그 뒤에 선다.
+- 백업(필수): [docs/72 §3](72-model-refactor-deploy-runbook.ko.md#3-백업--필수) 그대로 — `tmux` 안에서, 끝에 `dump complete` 와 남은 덤프 세션 0 까지. 폴더는 `~/backups/pre-<대상 버전>-<시각>`. 지운 열의 값은 백업에만 남습니다.
 
 **배포** — §4 와 같습니다(`git switch --detach <대상 버전>` → `./ops/28-deploy.sh local <대상 버전>`). `ops/28` 은 이 범위의 ROLLBACK-UNSAFE 를 알리고 **자동 복귀를 끕니다** — 스모크가 실패해도 그대로 멈춥니다. 되돌릴 때는 `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh local --rollback`(직전 `d68f0307e979` 는 지운 열을 쓰지 않아 그대로 뜬다). 4415e498565c 보다 옛 이미지로 가야 하면 V29 · V19 파일의 ROLLBACK-UNSAFE 설명대로 열을 먼저 되살립니다(값은 돌아오지 않는다 — 백업).
 

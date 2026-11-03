@@ -77,25 +77,39 @@ V18 は元に戻せず、V5・V9 は行を削除し、時刻の補正は Mongo �
 
 `ops/08`・`ops/10` は DB に外から接続するスクリプトなので、この本番構成には合いません — PostgreSQL はクラスタ内の Pod(`postgres` 名前空間)で既定の `pg_hba` がリモートの replication を拒否し、MongoDB は **Atlas**(chat の `SPRING_DATA_MONGODB_CLIENT`、クラスタ内の `mongodb` は 0/0)です。そこで Pod 内のツールで取得してサーバーに受け取ります。パスワードは画面・ファイルに出ません(PostgreSQL は Pod 内のローカル接続、Atlas は Secret を一時 Pod の環境変数にだけ渡す)。
 
-```bash
-B=~/backups/pre-<version>-$(date -u +%Y%m%dT%H%M%SZ); mkdir -p "$B"; df -h ~ | tail -1
-kubectl -n postgres exec deploy/postgres -- pg_basebackup -U postgres -D - -Ft -X fetch --checkpoint=fast > "$B/pg-base.tar"
-tar -tf "$B/pg-base.tar" | grep -c backup_label
-kubectl -n postgres exec deploy/postgres -- pg_dumpall -U postgres | gzip > "$B/pg-all.sql.gz"
-gzip -t "$B/pg-all.sql.gz" && zcat "$B/pg-all.sql.gz" | tail -3
+⚠️ **インスタンス内の `tmux` で流します。** ダンプ中に ssh や `kubectl exec` のストリームが切れると、Pod 内の `pg_dump` は受け手のない出力に詰まったまま **トランザクションを開いたまま残ります**(`idle in transaction` · 全表に ACCESS SHARE)— その後の `DROP COLUMN` · `ALTER TABLE` がその後ろに並び、その表の要求がすべてその後ろに並ぶ。ダンプファイルはその DB から抜ける(下の 2026-11-02 の記録)。
 
-kubectl -n ecommerce run mongo-backup --image=mirror.gcr.io/mongo:7 --restart=Never --overrides='{"spec":{"containers":[{"name":"mongo-backup","image":"mirror.gcr.io/mongo:7","command":["sleep","1800"],"env":[{"name":"MONGO_URI","valueFrom":{"secretKeyRef":{"name":"ecommerce-secrets","key":"SPRING_DATA_MONGODB_CLIENT"}}}]}]}}'
-kubectl -n ecommerce wait --for=condition=Ready pod/mongo-backup --timeout=180s
-kubectl -n ecommerce exec mongo-backup -- sh -c 'mongodump --uri="$MONGO_URI" --db=chat --archive --gzip --quiet' > "$B/mongo.archive.gz"
-gzip -t "$B/mongo.archive.gz" && ls -l "$B/mongo.archive.gz"
+```bash
+# ⚠️ ブロックをまとめて貼り付けない — 一行ずつ、コメントの期待値を見て次の行へ。
+tmux new -A -s backup          # 切れたら再び ssh して同じコマンドでつなぐ — B · V はそのまま残る
+set -o pipefail
+newb(){ [[ "$V" =~ ^[A-Za-z0-9._-]+$ && "$V" != REPLACE_ME ]] || { echo "⛔ V を対象バージョンに: [$V]"; return 1; }; B=~/backups/pre-$V-$(date -u +%Y%m%dT%H%M%SZ) && mkdir -p "$B" && echo "B=$B"; }
+ok(){ [[ -d "$B" && "$B" == "$HOME/backups/pre-"?*-20*Z ]] || { echo "⛔ B が空か不正: [$B] — newb から"; return 1; }; }
+V=REPLACE_ME                   # 対象バージョンに変える(例: V=50ef7995e94d)— <…> の山括弧は bash がリダイレクトとして読む
+newb && df -h ~ | tail -1      # B=/home/ubuntu/backups/pre-<V>-<時刻> を見て次の行へ
+ok && kubectl -n postgres exec deploy/postgres -c postgres -- pg_basebackup -U postgres -D - -Ft -X fetch --checkpoint=fast > "$B/pg-base.tar"; echo "exit=$?"   # exit=0
+ok && tar -tf "$B/pg-base.tar" | grep -c backup_label                                   # 1
+ok && kubectl -n postgres exec deploy/postgres -c postgres -- pg_dumpall -U postgres | gzip > "$B/pg-all.sql.gz"; echo "exit=${PIPESTATUS[*]}"   # exit=0 0
+ok && gzip -t "$B/pg-all.sql.gz" && zcat "$B/pg-all.sql.gz" | tail -1                   # -- PostgreSQL database cluster dump complete
+kubectl -n postgres exec deploy/postgres -c postgres -- psql -U postgres -tAX -c "select count(*) from pg_stat_activity where application_name ~ '^pg_(dump|dumpall|basebackup)'"   # 0 — 止まって残ったダンプなし(03:00 UTC のバックアップの窓の外で — その時刻は CronJob の pg_dump がいる)
+
+ok && kubectl -n ecommerce run mongo-backup --image=mirror.gcr.io/mongo:7 --restart=Never --overrides='{"spec":{"containers":[{"name":"mongo-backup","image":"mirror.gcr.io/mongo:7","command":["sleep","1800"],"env":[{"name":"MONGO_URI","valueFrom":{"secretKeyRef":{"name":"ecommerce-secrets","key":"SPRING_DATA_MONGODB_CLIENT"}}}]}]}}'
+ok && kubectl -n ecommerce wait --for=condition=Ready pod/mongo-backup --timeout=180s
+ok && kubectl -n ecommerce exec mongo-backup -- sh -c 'mongodump --uri="$MONGO_URI" --db=chat --archive --gzip --quiet' > "$B/mongo.archive.gz"; echo "exit=$?"   # exit=0
+ok && gzip -t "$B/mongo.archive.gz" && ls -l "$B/mongo.archive.gz"
 kubectl -n ecommerce exec mongo-backup -- sh -c 'mongosh "$MONGO_URI" --quiet --eval "const d=db.getSiblingDB(\"chat\"); d.getCollectionNames().forEach(c => print(c + \": \" + d.getCollection(c).estimatedDocumentCount()))"'
-kubectl -n ecommerce delete pod mongo-backup
+kubectl -n ecommerce delete pod mongo-backup --ignore-not-found
+ls -l "$B"                     # ファイル三つ、0 バイトなし
 ```
 
+- `ok` は `$B` が今回作った `~/backups/pre-<V>-<時刻>` のときだけ次のコマンドを流す — 空(新しいシェル · `unset`)か別のパスなら何も始めない。新しいシェルなら `newb` で新しいフォルダを作るか、続けるときは `B=$(ls -d ~/backups/pre-$V-* | tail -1)`。
+- **2026-11-02 の記録(二つ目)**: 同じ日のデプロイ前バックアップで ① `B=~/backups/pre-<バージョン>-…` をそのまま流し、`<バージョン>` がリダイレクトとして読まれて `B=~/backups/pre-` になり、ブロックの残りがそのフォルダに流れた(`pg-base.tar` 4.8G · ダンプ二つは 0 バイト)。② 消した後 `unset B` の状態でブロックを貼り直し、パスが `/pg-base.tar` になって書き込みは拒否されたが、`pg_dumpall` は Pod 内で始まり受け手なしでセッションが 2 つ残った(`exit=141 1`)— 切って取り直した。そこで `V` · `newb` · `ok` と「一行ずつ」を加えた。
 - `kubectl exec` に `-t` を付けません — 端末モードになるとバイナリ出力が壊れます。
 - 正常: `backup_label` が 1、ダンプの末尾に `dump complete`、Mongo はコレクションごとの文書数。物理バックアップ(`pg-base.tar`)は全体をその時点へ、論理ダンプ(`pg-all.sql.gz`)は表一つ(例: お知らせ)を戻すときに使います。
 - **2026-10-10 の実測**: DB 全体 4,767 MB → `pg-base.tar` 4.7G・`pg-all.sql.gz` 304M、Mongo は `chat` 7 件・`auto_sequence` 1 件(936 バイト — 小さいのが正常)。サーバーのディスク空きは 30G から約 25G。
 - バックアップは本番ディスクに同居しています — デプロイが安定したら別のマシンへ移します。Atlas M0 には自動バックアップがありません。
+- 末尾に `dump complete` がない、`exit` が 0 でない、または最後の点検が 0 でないとき: バックアップの窓(03:00 UTC · 月曜 05:00 の復元訓練)の外で残ったダンプのセッションを切り(`select pg_terminate_backend(pid) from pg_stat_activity where application_name ~ '^pg_(dump|dumpall|basebackup)'` — ダンプは読むだけなので切っても失うものはない)、最初から取り直します。そのフォルダの `pg-all.sql.gz` は使いません。
+- **2026-11-02 の記録**: contract リリース([docs/85 §8-2](85-release-deploy-runbook.md))の事前点検で orderdb に 30 秒を超えるトランザクションが 1 — `postgres` · `pg_dump` · `local` · `idle in transaction`(`ClientRead`)· **9 日 2 時間 57 分**(2026-10-24 ~12:45 UTC、`6501d3fd8e60` のデプロイ前の手動バックアップのころ)。この節の `pg_dumpall` が接続の切れたまま orderdb で止まり、orders の表すべてに ACCESS SHARE を持っていた — そのまま V29 を流していたら `DROP COLUMN` の後ろで注文の要求がすべて止まっていた。書き込みなし(`backend_xid` なし)なので `pg_terminate_backend` で切った。毎日 03:00 の `postgres-backup` CronJob は同じ ACCESS SHARE なのでぶつからず、9 日とも Complete。9 日間のスナップショットの影響(デッドタプル)は orders の表ごとに数十件だけだった。その日の `pg-all.sql.gz` は orderdb から抜けている(pg_dumpall は DB 名の順)。そこで `tmux` · `pipefail` · 最後の点検を加えた。
 
 ## 4. デプロイ
 
