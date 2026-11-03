@@ -1,0 +1,174 @@
+<!doctype html><html lang="ja"><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>ecommerce-msa AWS 数百万人規模の想定案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* docs/86 페이지와 같은 틀 — 설계 문서 한 단, 구성도는 본문 흐름 안. 색은 층(앱 · 데이터 · 관측 · 비밀 · 백업)을 구분 */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5a6475;
+  --line: #d6dae2;
+  --accent: #1f4fd1;
+  --accent-soft: #e6ecfb;
+  --warn: #a35a00;
+  --warn-soft: #fff1dd;
+  /* VLAN 케이블 색 */
+  --c-k8s: #2563eb;
+  --c-data: #e0620e;
+  --c-obs: #16884a;
+  --c-backup: #7c3aed;
+  --c-mgmt: #6b7280;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+    --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+    --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+  --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+  --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15.5px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+.page { max-width: 960px; margin: 0 auto; display: grid; gap: 56px; }
+.page > * { min-width: 0; }
+
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(1.75rem, 4vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.3em; max-width: 72ch; }
+li + li { margin-top: 4px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent); }
+
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 20px; }
+.section-head { display: grid; gap: 6px; border-top: 2px solid var(--fg); padding-top: 14px; }
+.sub { display: grid; gap: 12px; }
+
+header.top { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 0.9rem; }
+.meta span { font-family: var(--font-mono); }
+
+.premise { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.premise li::marker { color: var(--accent); }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.fact { background: var(--surface); padding: 16px; display: grid; gap: 2px; align-content: start; }
+.fact b { font-size: 1.7rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.fact small { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+@media (max-width: 640px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; line-height: 1.55; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 0.78rem; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.role { font-weight: 700; white-space: nowrap; }
+.src { display: block; color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; margin-top: 4px; }
+
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; }
+.note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.note p { max-width: none; }
+
+/* 랙 입면도 */
+.racks { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 720px) { .racks { grid-template-columns: minmax(0, 1fr); } }
+.rack { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 8px; }
+.rack-title { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; color: var(--muted); }
+.rack-body { border: 2px solid var(--fg); border-radius: 4px; padding: 6px; display: grid; gap: 3px; }
+.u { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 6px solid var(--c, var(--line)); border-radius: 3px; padding: 3px 8px; font-size: 0.82rem; line-height: 1.35; background: var(--bg); }
+.u.h2 { min-height: 46px; }
+.u.h3 { min-height: 66px; }
+.u .ru { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; }
+.u .spec { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; text-align: right; }
+.u.empty { border-style: dashed; border-left-width: 1px; color: var(--muted); justify-content: center; }
+.k8s { --c: var(--c-k8s); } .data { --c: var(--c-data); } .obs { --c: var(--c-obs); } .backup { --c: var(--c-backup); } .mgmt { --c: var(--c-mgmt); } .net { --c: var(--fg); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+.chip::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+
+/* 망 구성도 */
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+svg .box { fill: var(--bg); stroke: var(--fg); stroke-width: 1.3; }
+svg .box.soft { stroke: var(--line); }
+svg .lbl { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 700; }
+svg .sm { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+svg .wire { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .tunnel { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
+svg .egress { stroke: var(--warn); stroke-width: 1.6; stroke-dasharray: 3 4; fill: none; }
+svg .tl { fill: var(--accent); font-family: var(--font-mono); font-size: 11.5px; }
+svg .el { fill: var(--warn); font-family: var(--font-mono); font-size: 11.5px; }
+svg .vk8s { stroke: var(--c-k8s); } svg .vdata { stroke: var(--c-data); } svg .vobs { stroke: var(--c-obs); } svg .vbackup { stroke: var(--c-backup); } svg .vmgmt { stroke: var(--c-mgmt); }
+svg .vlan { fill: var(--bg); stroke-width: 2.5; }
+svg .arrow { fill: var(--muted); }
+
+ol.steps { display: grid; gap: 10px; padding-left: 1.4em; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }
+
+footer { color: var(--muted); font-size: 0.85rem; display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 16px; }
+footer p { max-width: none; }
+</style>
+
+<div class="page">
+<header class="top"><div class="eyebrow">設計レビュー · AWS 大規模運用</div><h1>ecommerce-msa — AWS で数百万人規模に</h1><p>今は OCI Ampere ノード一台で動く ecommerce-msa を AWS に移し、会員数百万人を受けるならどんな構成になるかを想定しました。リポジトリの構造と実測から出発し、自社データセンター版(<a href="86-self-hosted-datacenter.html">docs/86</a>)と対になります。</p><div class="meta"><div>基準リポジトリ <span>ruke79/ecommerce-msa @ 663f986f</span></div><div>作成 <span>2026-11-01</span></div><div>文書 <span>docs/87</span></div></div></header>
+<div class="premise"><h3>読む前に — この想定案の前提</h3><ul><li><b>リポジトリには目標トラフィックがありません。</b>会員 300 万 · 一日の訪問 30 万 · セールのピーク毎秒 5,000 〜 10,000 要求と仮定しました(§0)。</li><li><b>天井は実習の実測です。</b>12 コア · 24 スレッドのホストを VM が分け合う実習クラスタで、catalog の Pod 一つ(1 コア)が毎秒 ~350 件で頭打ちでした(docs/83)。絶対値ではなく方向です。</li><li><b>費用は仕様の仮定から出した見当</b>です。トラフィック · 画像転送量 · 予約割引で大きく変わります。</li></ul></div>
+<div class="facts"><div class="fact"><b>300 万</b><small>会員(MAU)— 一日の訪問 30 万</small></div><div class="fact"><b>10,000</b><small>毎秒の要求 — セールのピーク(平常 ~1,000)</small></div><div class="fact"><b>3 AZ</b><small>EKS · Aurora · MSK · ElastiCache すべて</small></div><div class="fact"><b>$1〜2 万</b><small>月の費用の見当(ソウル、オンデマンド)</small></div></div>
+<section id="s0"><div class="section-head"><div class="eyebrow">0 · 仮定</div><h2>トラフィックをどう数えたか</h2></div><div class="table-wrap"><table><thead><tr><th>項目</th><th>仮定</th><th>計算</th></tr></thead><tbody><tr><td class="role">会員(MAU)</td><td>300 万</td><td>—</td></tr><tr><td class="role">一日の訪問者(DAU)</td><td>30 万</td><td>会員の 10%</td></tr><tr><td class="role">一日の要求</td><td>約 900 万</td><td>訪問あたり要求 30</td></tr><tr><td class="role">平常のピーク</td><td><b>毎秒 約 1,000</b></td><td>ピーク時間に一日の 15%(毎時 135 万 = 毎秒 375)× 瞬間 3 倍</td></tr><tr><td class="role">セールのピーク</td><td><b>毎秒 5,000 〜 10,000</b></td><td>平常ピークの 5 〜 10 倍</td></tr></tbody></table></div><div class="note"><p><b>今の天井</b> — catalog の Pod 三つが成功毎秒 ~1,050 〜 1,100 で止まります(Pod あたり ~350、ボトルネックは catalog の CPU · JSON シリアライズ 22%、docs/83)。セールのピーク 10,000/秒をキャッシュなしで受けると catalog だけで ~30 Pod。CloudFront が読み取りの 80% を受ければ ~2,000/秒 · 6 Pod ほどに減ります — この想定案の中心はそれです。</p></div></section>
+<section id="s1"><div class="section-head"><div class="eyebrow">1 · 構成</div><h2>読み取りはエッジで、書き込みは 3 AZ のマネージドで</h2></div><div class="diagram" role="img" aria-label="VPC — 3 AZ">
+<svg viewBox="0 0 900 610" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box soft" x="320" y="10" width="260" height="38" rx="6"/><text class="lbl" x="450" y="34" text-anchor="middle">ユーザー · 決済 Webhook · OAuth</text>
+<path class="wire" d="M450 48 V68" marker-end="url(#ah)"/>
+<rect class="box" x="365" y="70" width="170" height="34" rx="6"/><text class="lbl" x="450" y="92" text-anchor="middle">Route 53</text>
+<path class="wire" d="M450 104 V124" marker-end="url(#ah)"/>
+<rect class="box" x="300" y="126" width="300" height="50" rx="6"/><text class="lbl" x="450" y="147" text-anchor="middle">CloudFront</text><text class="sm" x="450" y="166" text-anchor="middle">WAF · Shield · 読み取りキャッシュ 30 〜 60 秒</text>
+<path class="wire" d="M600 151 H678" marker-end="url(#ah)"/>
+<rect class="box" x="680" y="126" width="195" height="50" rx="6"/><text class="lbl" x="777" y="147" text-anchor="middle">S3</text><text class="sm" x="777" y="166" text-anchor="middle">フロントの静的ファイル · 商品画像</text>
+<rect class="box soft" x="25" y="126" width="200" height="50" rx="6"/><text class="lbl" x="125" y="147" text-anchor="middle">外部 API</text><text class="sm" x="125" y="166" text-anchor="middle">決済 · メール · OAuth · 配送</text>
+<path class="egress" d="M125 214 V178" marker-end="url(#ah)"/><text class="el" x="135" y="200">NAT · イグレス許可リスト</text>
+<rect class="box soft" x="15" y="214" width="870" height="326" rx="8"/><text class="sm" x="30" y="234">VPC — 3 AZ</text>
+<path class="wire" d="M450 176 V226" marker-end="url(#ah)"/>
+<rect class="box" x="360" y="228" width="180" height="32" rx="6"/><text class="lbl" x="450" y="249" text-anchor="middle">ALB</text>
+<path class="wire" d="M450 260 V272 H165 V284"/><path class="wire" d="M450 272 H735 V284"/><path class="wire" d="M450 272 V284"/>
+<rect class="vlan vk8s" x="40" y="286" width="250" height="92" rx="6"/><text class="lbl" x="165" y="310" text-anchor="middle">AZ-a</text><text class="sm" x="165" y="332" text-anchor="middle">EKS ノード(Karpenter)</text><text class="sm" x="165" y="352" text-anchor="middle">ゲートウェイ · サービス</text>
+<rect class="vlan vk8s" x="325" y="286" width="250" height="92" rx="6"/><text class="lbl" x="450" y="310" text-anchor="middle">AZ-b</text><text class="sm" x="450" y="332" text-anchor="middle">EKS ノード(Karpenter)</text><text class="sm" x="450" y="352" text-anchor="middle">ゲートウェイ · サービス</text>
+<rect class="vlan vk8s" x="610" y="286" width="250" height="92" rx="6"/><text class="lbl" x="735" y="310" text-anchor="middle">AZ-c</text><text class="sm" x="735" y="332" text-anchor="middle">EKS ノード(Karpenter)</text><text class="sm" x="735" y="352" text-anchor="middle">ゲートウェイ · サービス</text>
+<path class="wire" d="M450 378 V392 H115 V404"/><path class="wire" d="M450 392 H785 V404"/><path class="wire" d="M285 392 V404"/><path class="wire" d="M450 392 V404"/><path class="wire" d="M615 392 V404"/>
+<rect class="vlan vdata" x="35" y="406" width="160" height="116" rx="6"/><text class="lbl" x="115" y="432" text-anchor="middle">Aurora PG</text><text class="sm" x="115" y="456" text-anchor="middle">writer + 読み取りレプリカ</text><text class="sm" x="115" y="476" text-anchor="middle">Multi-AZ</text>
+<rect class="vlan vdata" x="205" y="406" width="160" height="116" rx="6"/><text class="lbl" x="285" y="432" text-anchor="middle">MSK</text><text class="sm" x="285" y="456" text-anchor="middle">ブローカー 3 · RF 3</text><text class="sm" x="285" y="476" text-anchor="middle">min.insync 2</text>
+<rect class="vlan vdata" x="375" y="406" width="150" height="116" rx="6"/><text class="lbl" x="450" y="432" text-anchor="middle">ElastiCache</text><text class="sm" x="450" y="456" text-anchor="middle">クラスタモード</text><text class="sm" x="450" y="476" text-anchor="middle">Multi-AZ</text>
+<rect class="vlan vdata" x="535" y="406" width="160" height="116" rx="6"/><text class="lbl" x="615" y="432" text-anchor="middle">OpenSearch</text><text class="sm" x="615" y="456" text-anchor="middle">商品検索 · ファセット</text><text class="sm" x="615" y="476" text-anchor="middle">3 AZ</text>
+<rect class="vlan vdata" x="705" y="406" width="160" height="116" rx="6"/><text class="lbl" x="785" y="432" text-anchor="middle">Mongo</text><text class="sm" x="785" y="456" text-anchor="middle">DocumentDB または</text><text class="sm" x="785" y="476" text-anchor="middle">Atlas on AWS(chat)</text>
+<rect class="vlan vmgmt" x="25" y="556" width="250" height="40" rx="6"/><text class="sm" x="150" y="581" text-anchor="middle">Secrets Manager · ECR(IRSA)</text>
+<rect class="vlan vobs" x="300" y="556" width="300" height="40" rx="6"/><text class="sm" x="450" y="581" text-anchor="middle">観測: Managed Prometheus · Grafana</text>
+<rect class="vlan vbackup" x="625" y="556" width="260" height="40" rx="6" stroke-dasharray="6 5"/><text class="sm" x="755" y="581" text-anchor="middle">別リージョン — スナップショット · バックアップだけ</text>
+</svg></div><p style="font-size:0.88rem;color:var(--muted)">点線は論理的な関係です — イグレスは NAT を経て許可リストだけ、別リージョンにはバックアップ · スナップショットだけを複製します。</p></section>
+<section id="s2"><div class="section-head"><div class="eyebrow">2 · 層ごと</div><h2>今と AWS</h2></div><div class="table-wrap"><table><thead><tr><th>層</th><th>今</th><th>AWS では</th><th>理由</th></tr></thead><tbody><tr><td class="role">入口</td><td>Cloudflare Tunnel</td><td><b>CloudFront + WAF + ALB</b>(Cloudflare を残しオリジンだけ ALB にしてもよい)</td><td>商品 · ホーム · 検索の GET をエッジでキャッシュ。流入制限の <code>CF-Connecting-IP</code> の信頼は <code>X-Forwarded-For</code> + ALB 基準に変える<span class="src">docs/86 §2-1 · CustomUserKeyResolver</span></td></tr><tr><td class="role">アプリ</td><td>k3s ノード 1 台</td><td><b>EKS 3 AZ</b> · Karpenter 自動増設 · セール前に事前増設</td><td>HPA 最大 3 は実習の大きさ — ピークに catalog 数十 Pod も可能であること<span class="src">k8s/70-autoscaling.yaml</span></td></tr><tr><td class="role">サービス発見</td><td>Eureka(1 個固定)</td><td><b>k8s Service DNS</b>(Spring Cloud Kubernetes かゲートウェイの静的ルート)</td><td>単一障害点で、書き込み判定(B-86)のような手間がかかる<span class="src">docs/21 · docs/57 §16</span></td></tr><tr><td class="role">DB</td><td>クラスタ内 PG</td><td><b>Aurora PostgreSQL</b> — サービスごとの DB はそのまま、読み取りレプリカは catalog · 注文照会用</td><td>フェイルオーバーは普通数十秒、PITR · スナップショットはマネージド。RDS Proxy はセッション状態(SET · プリペアドステートメント)を使うと接続が固定される — 測って使い、Flyway はプロキシを通さない</td></tr><tr><td class="role">検索</td><td>PG の <code>LIKE</code> · EXISTS(まれな条件で 503)</td><td><b>OpenSearch</b> — 既にあるフラグ <code>catalog.search-engine</code> を有効に</td><td>まれ · 0 件の組み合わせの 503 とファセット件数を根本から解く<span class="src">docs/74 · docs/85 §8</span></td></tr><tr><td class="role">メッセージ</td><td>Kafka ブローカー 1 · RF 1</td><td><b>MSK ブローカー 3+</b> · RF 3 · <code>min.insync.replicas=2</code> · トピック事前作成</td><td>アウトボックス · サガが Kafka に頼る — 最初に堅牢にすべき<span class="src">k8s/90-dev-infra.yaml · ops/02</span></td></tr><tr><td class="role">キャッシュ</td><td>Redis 1 台</td><td><b>ElastiCache クラスタモード · Multi-AZ</b></td><td>流入制限 · カート · ログインロックが使う。流入制限は fail-open なので障害時は素通り<span class="src">docs/85 §7-1</span></td></tr><tr><td class="role">chat</td><td>インメモリ STOMP(1 個固定)</td><td>Redis pub/sub のファンアウトか Amazon MQ のリレーに変えてから複数に</td><td>今の構造では増やせない<span class="src">docs/21</span></td></tr><tr><td class="role">画像 · フロント</td><td>S3 直接 · nginx Pod</td><td><b>S3 + CloudFront(OAC)</b>、フロントも S3 の静的配信</td><td>バイトをアプリ · 回線から外す</td></tr><tr><td class="role">秘密 · 身元</td><td>k8s Secret · 自前 CA の mTLS</td><td><b>Secrets Manager + IRSA</b>、mTLS は ACM Private CA かサービスメッシュ</td><td>ストアのパスワード交換(ops/59)のような手作業を減らす</td></tr><tr><td class="role">観測</td><td>ノード上の docker compose</td><td>Managed Prometheus · Grafana、ログは OpenSearch · CloudWatch、トレースは X-Ray · Tempo</td><td>障害時も見えるようクラスタの外に</td></tr><tr><td class="role">デプロイ</td><td><code>ops/28</code> の手作業</td><td>GitHub Actions(OIDC)→ ECR → Argo CD · カナリア(Argo Rollouts)</td><td>expand → contract · ROLLBACK-UNSAFE(B-54)の規則はそのまま</td></tr></tbody></table></div></section>
+<section id="s3"><div class="section-head"><div class="eyebrow">3 · 規模</div><h2>数百万人規模で変わる設計</h2></div><ol class="steps"><li><b>読み取りは前段で終わらせる。</b>商品一覧 · 詳細 · ホームを CloudFront で 30 〜 60 秒キャッシュし、在庫数は別の小さな API に分ける。今はカードの応答ごとに在庫を読み直す(<code>HomeViewCache</code> も在庫だけは応答ごと)。これだけで catalog の負荷が数分の一になる。</li><li><b>在庫の引き当てはホットスポットになる。</b>人気商品の行ロックに集中する — 予約を Redis(Lua)のような原子的な減算で先に受け、DB の確定は非同期にする構造を検討する。今の gRPC 在庫予約が出発点。</li><li><b>書き込み DB はサービスごとに一つの Aurora から始める。</b>注文数億件までは月ごとのパーティショニングで耐え、その先でシャーディングを考える。</li><li><b>セールのトラフィックは待ち行列で受ける。</b>ピーク 10 倍を常に用意すると高い — 入口の待ち行列(CloudFront + 仮想待合室)と Karpenter の事前増設。</li><li><b>マルチリージョンは最初からしない。</b>3 AZ で始め、バックアップ · スナップショットだけ別リージョンに複製する(RPO 5 分 · 復旧は数時間)。リージョン障害まで数分で切り替えるには Aurora Global Database · MSK の複製が要り、費用と複雑さが大きく跳ね上がる。</li></ol></section>
+<section id="s4"><div class="section-head"><div class="eyebrow">4 · 費用</div><h2>おおよその月額 — ソウル、オンデマンド</h2></div><div class="table-wrap"><table><thead><tr><th>項目</th><th>月</th></tr></thead><tbody><tr><td class="role">EKS ノード(平常 vCPU 64 〜 96、ピークに増やす)</td><td>$2,000 〜 4,000</td></tr><tr><td class="role">Aurora(writer + reader、r6g.xlarge 級の DB 複数)</td><td>$3,000 〜 6,000</td></tr><tr><td class="role">MSK(ブローカー 3)</td><td>~$1,500</td></tr><tr><td class="role">ElastiCache</td><td>~$800</td></tr><tr><td class="role">OpenSearch</td><td>~$1,500</td></tr><tr><td class="role">CloudFront · データ転送 · 観測</td><td>$1,000 〜 3,000</td></tr><tr><td class="role"><b>合計</b></td><td><b>約 $10,000 〜 20,000</b></td></tr></tbody></table></div><div class="note warn"><p>見当です — トラフィック · 画像転送量 · Savings Plans の割引で大きく変わります。確定は下の ② の測定の後で。</p></div></section>
+<section id="s5"><div class="section-head"><div class="eyebrow">5 · 順序</div><h2>何から</h2></div><ol class="steps"><li><b>リポジトリ作業</b> — docs/86 §3 の 1 〜 4(Kafka 3 · Redis Sentinel/クラスタ · Mongo RS · PG HA 前提)に加えて Eureka 撤去 · 在庫 API 分離 · <code>CF-Connecting-IP</code> 依存の除去。</li><li><b>ステージング EKS で <code>ops/53</code>(k6)</b>を使い毎秒 1,000 → 10,000 の段階を測る。</li><li>結果で <b>Pod · ノード · DB のサイズ</b>を確定する。</li><li><b>DMS で DB を複製</b>してから、短い書き込み停止の窓で切り替える。</li></ol></section>
+<footer><p>根拠はリポジトリ <span class="mono">ruke79/ecommerce-msa @ 663f986f</span>(2026-11-01)の文書 · マニフェスト · スクリプトです。各行の下の灰色の文字がその場所です。</p><p>トラフィック · 仕様 · 費用はリポジトリにない仮定で、実測から推定した出発点です。同じ内容の文書版: <a href="87-aws-at-scale.md">docs/87</a>。</p></footer>
+</div>
+</body></html>

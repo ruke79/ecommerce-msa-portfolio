@@ -1,0 +1,174 @@
+<!doctype html><html lang="ko"><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>ecommerce-msa AWS 수백만 명 규모 상정안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* docs/86 페이지와 같은 틀 — 설계 문서 한 단, 구성도는 본문 흐름 안. 색은 층(앱 · 데이터 · 관측 · 비밀 · 백업)을 구분 */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5a6475;
+  --line: #d6dae2;
+  --accent: #1f4fd1;
+  --accent-soft: #e6ecfb;
+  --warn: #a35a00;
+  --warn-soft: #fff1dd;
+  /* VLAN 케이블 색 */
+  --c-k8s: #2563eb;
+  --c-data: #e0620e;
+  --c-obs: #16884a;
+  --c-backup: #7c3aed;
+  --c-mgmt: #6b7280;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+    --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+    --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+  --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+  --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15.5px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+.page { max-width: 960px; margin: 0 auto; display: grid; gap: 56px; }
+.page > * { min-width: 0; }
+
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(1.75rem, 4vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.3em; max-width: 72ch; }
+li + li { margin-top: 4px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent); }
+
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 20px; }
+.section-head { display: grid; gap: 6px; border-top: 2px solid var(--fg); padding-top: 14px; }
+.sub { display: grid; gap: 12px; }
+
+header.top { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 0.9rem; }
+.meta span { font-family: var(--font-mono); }
+
+.premise { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.premise li::marker { color: var(--accent); }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.fact { background: var(--surface); padding: 16px; display: grid; gap: 2px; align-content: start; }
+.fact b { font-size: 1.7rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.fact small { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+@media (max-width: 640px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; line-height: 1.55; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 0.78rem; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.role { font-weight: 700; white-space: nowrap; }
+.src { display: block; color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; margin-top: 4px; }
+
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; }
+.note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.note p { max-width: none; }
+
+/* 랙 입면도 */
+.racks { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 720px) { .racks { grid-template-columns: minmax(0, 1fr); } }
+.rack { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 8px; }
+.rack-title { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; color: var(--muted); }
+.rack-body { border: 2px solid var(--fg); border-radius: 4px; padding: 6px; display: grid; gap: 3px; }
+.u { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 6px solid var(--c, var(--line)); border-radius: 3px; padding: 3px 8px; font-size: 0.82rem; line-height: 1.35; background: var(--bg); }
+.u.h2 { min-height: 46px; }
+.u.h3 { min-height: 66px; }
+.u .ru { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; }
+.u .spec { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; text-align: right; }
+.u.empty { border-style: dashed; border-left-width: 1px; color: var(--muted); justify-content: center; }
+.k8s { --c: var(--c-k8s); } .data { --c: var(--c-data); } .obs { --c: var(--c-obs); } .backup { --c: var(--c-backup); } .mgmt { --c: var(--c-mgmt); } .net { --c: var(--fg); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+.chip::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+
+/* 망 구성도 */
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+svg .box { fill: var(--bg); stroke: var(--fg); stroke-width: 1.3; }
+svg .box.soft { stroke: var(--line); }
+svg .lbl { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 700; }
+svg .sm { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+svg .wire { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .tunnel { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
+svg .egress { stroke: var(--warn); stroke-width: 1.6; stroke-dasharray: 3 4; fill: none; }
+svg .tl { fill: var(--accent); font-family: var(--font-mono); font-size: 11.5px; }
+svg .el { fill: var(--warn); font-family: var(--font-mono); font-size: 11.5px; }
+svg .vk8s { stroke: var(--c-k8s); } svg .vdata { stroke: var(--c-data); } svg .vobs { stroke: var(--c-obs); } svg .vbackup { stroke: var(--c-backup); } svg .vmgmt { stroke: var(--c-mgmt); }
+svg .vlan { fill: var(--bg); stroke-width: 2.5; }
+svg .arrow { fill: var(--muted); }
+
+ol.steps { display: grid; gap: 10px; padding-left: 1.4em; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }
+
+footer { color: var(--muted); font-size: 0.85rem; display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 16px; }
+footer p { max-width: none; }
+</style>
+
+<div class="page">
+<header class="top"><div class="eyebrow">설계 검토 · AWS 대규모 운영</div><h1>ecommerce-msa — AWS 에서 수백만 명 규모로</h1><p>지금 OCI Ampere 노드 한 대에서 도는 ecommerce-msa 를 AWS 로 옮겨 가입자 수백만 명을 받는다면 어떤 구성이 될지 상정했습니다. 레포의 구조와 실측에서 출발했고, 자체 데이터센터 판(<a href="86-self-hosted-datacenter.ko.html">docs/86</a>)과 짝입니다.</p><div class="meta"><div>기준 레포 <span>ruke79/ecommerce-msa @ 663f986f</span></div><div>작성 <span>2026-11-01</span></div><div>문서 <span>docs/87</span></div></div></header>
+<div class="premise"><h3>읽기 전에 — 이 상정안의 전제</h3><ul><li><b>레포에는 목표 트래픽이 없습니다.</b> 가입자 300만 · 하루 방문 30만 · 행사 피크 초당 5,000 ~ 10,000 요청으로 가정했습니다(§0).</li><li><b>천장은 실습 실측입니다.</b> 12코어 · 24스레드 호스트를 VM 들이 나눠 쓴 실습 클러스터에서 catalog 파드 하나(1코어)가 초당 ~350건에서 막혔습니다(docs/83). 절대 수치가 아니라 방향입니다.</li><li><b>비용은 사양 가정에서 나온 짐작</b>입니다. 트래픽 · 이미지 전송량 · 예약 할인으로 크게 달라집니다.</li></ul></div>
+<div class="facts"><div class="fact"><b>300만</b><small>가입자(MAU) — 하루 방문 30만</small></div><div class="fact"><b>10,000</b><small>초당 요청 — 행사 피크(평시 ~1,000)</small></div><div class="fact"><b>3 AZ</b><small>EKS · Aurora · MSK · ElastiCache 모두</small></div><div class="fact"><b>$1~2만</b><small>월 비용 짐작(서울, 온디맨드)</small></div></div>
+<section id="s0"><div class="section-head"><div class="eyebrow">0 · 가정</div><h2>트래픽을 어떻게 셌나</h2></div><div class="table-wrap"><table><thead><tr><th>항목</th><th>가정</th><th>계산</th></tr></thead><tbody><tr><td class="role">가입자(MAU)</td><td>300만</td><td>—</td></tr><tr><td class="role">하루 방문자(DAU)</td><td>30만</td><td>가입자의 10%</td></tr><tr><td class="role">하루 요청</td><td>약 900만</td><td>방문당 요청 30</td></tr><tr><td class="role">평시 피크</td><td><b>초당 약 1,000</b></td><td>피크 시간에 하루의 15%(시간당 135만 = 초당 375) × 순간 3배</td></tr><tr><td class="role">행사 피크</td><td><b>초당 5,000 ~ 10,000</b></td><td>평시 피크의 5 ~ 10배</td></tr></tbody></table></div><div class="note"><p><b>지금의 천장</b> — catalog 파드 셋이 성공 초당 ~1,050 ~ 1,100 에서 멈춥니다(파드당 ~350, 병목은 catalog CPU · JSON 직렬화 22%, docs/83). 행사 피크 10,000/초를 캐시 없이 받으면 catalog 만 ~30파드입니다. CloudFront 가 읽기의 80% 를 받으면 ~2,000/초 · 6파드 수준으로 줄어듭니다 — 이 상정안의 중심이 그것입니다.</p></div></section>
+<section id="s1"><div class="section-head"><div class="eyebrow">1 · 구성</div><h2>읽기는 엣지에서, 쓰기는 3 AZ 관리형으로</h2></div><div class="diagram" role="img" aria-label="VPC — 3 AZ">
+<svg viewBox="0 0 900 610" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box soft" x="320" y="10" width="260" height="38" rx="6"/><text class="lbl" x="450" y="34" text-anchor="middle">사용자 · 결제 웹훅 · OAuth</text>
+<path class="wire" d="M450 48 V68" marker-end="url(#ah)"/>
+<rect class="box" x="365" y="70" width="170" height="34" rx="6"/><text class="lbl" x="450" y="92" text-anchor="middle">Route 53</text>
+<path class="wire" d="M450 104 V124" marker-end="url(#ah)"/>
+<rect class="box" x="300" y="126" width="300" height="50" rx="6"/><text class="lbl" x="450" y="147" text-anchor="middle">CloudFront</text><text class="sm" x="450" y="166" text-anchor="middle">WAF · Shield · 읽기 캐시 30 ~ 60초</text>
+<path class="wire" d="M600 151 H678" marker-end="url(#ah)"/>
+<rect class="box" x="680" y="126" width="195" height="50" rx="6"/><text class="lbl" x="777" y="147" text-anchor="middle">S3</text><text class="sm" x="777" y="166" text-anchor="middle">프론트 정적 파일 · 상품 이미지</text>
+<rect class="box soft" x="25" y="126" width="200" height="50" rx="6"/><text class="lbl" x="125" y="147" text-anchor="middle">외부 API</text><text class="sm" x="125" y="166" text-anchor="middle">결제 · 메일 · OAuth · 택배</text>
+<path class="egress" d="M125 214 V178" marker-end="url(#ah)"/><text class="el" x="135" y="200">NAT · 이그레스 허용 목록</text>
+<rect class="box soft" x="15" y="214" width="870" height="326" rx="8"/><text class="sm" x="30" y="234">VPC — 3 AZ</text>
+<path class="wire" d="M450 176 V226" marker-end="url(#ah)"/>
+<rect class="box" x="360" y="228" width="180" height="32" rx="6"/><text class="lbl" x="450" y="249" text-anchor="middle">ALB</text>
+<path class="wire" d="M450 260 V272 H165 V284"/><path class="wire" d="M450 272 H735 V284"/><path class="wire" d="M450 272 V284"/>
+<rect class="vlan vk8s" x="40" y="286" width="250" height="92" rx="6"/><text class="lbl" x="165" y="310" text-anchor="middle">AZ-a</text><text class="sm" x="165" y="332" text-anchor="middle">EKS 노드(Karpenter)</text><text class="sm" x="165" y="352" text-anchor="middle">게이트웨이 · 서비스</text>
+<rect class="vlan vk8s" x="325" y="286" width="250" height="92" rx="6"/><text class="lbl" x="450" y="310" text-anchor="middle">AZ-b</text><text class="sm" x="450" y="332" text-anchor="middle">EKS 노드(Karpenter)</text><text class="sm" x="450" y="352" text-anchor="middle">게이트웨이 · 서비스</text>
+<rect class="vlan vk8s" x="610" y="286" width="250" height="92" rx="6"/><text class="lbl" x="735" y="310" text-anchor="middle">AZ-c</text><text class="sm" x="735" y="332" text-anchor="middle">EKS 노드(Karpenter)</text><text class="sm" x="735" y="352" text-anchor="middle">게이트웨이 · 서비스</text>
+<path class="wire" d="M450 378 V392 H115 V404"/><path class="wire" d="M450 392 H785 V404"/><path class="wire" d="M285 392 V404"/><path class="wire" d="M450 392 V404"/><path class="wire" d="M615 392 V404"/>
+<rect class="vlan vdata" x="35" y="406" width="160" height="116" rx="6"/><text class="lbl" x="115" y="432" text-anchor="middle">Aurora PG</text><text class="sm" x="115" y="456" text-anchor="middle">writer + 읽기 복제본</text><text class="sm" x="115" y="476" text-anchor="middle">Multi-AZ</text>
+<rect class="vlan vdata" x="205" y="406" width="160" height="116" rx="6"/><text class="lbl" x="285" y="432" text-anchor="middle">MSK</text><text class="sm" x="285" y="456" text-anchor="middle">브로커 3 · RF 3</text><text class="sm" x="285" y="476" text-anchor="middle">min.insync 2</text>
+<rect class="vlan vdata" x="375" y="406" width="150" height="116" rx="6"/><text class="lbl" x="450" y="432" text-anchor="middle">ElastiCache</text><text class="sm" x="450" y="456" text-anchor="middle">클러스터 모드</text><text class="sm" x="450" y="476" text-anchor="middle">Multi-AZ</text>
+<rect class="vlan vdata" x="535" y="406" width="160" height="116" rx="6"/><text class="lbl" x="615" y="432" text-anchor="middle">OpenSearch</text><text class="sm" x="615" y="456" text-anchor="middle">상품 검색 · 패싯</text><text class="sm" x="615" y="476" text-anchor="middle">3 AZ</text>
+<rect class="vlan vdata" x="705" y="406" width="160" height="116" rx="6"/><text class="lbl" x="785" y="432" text-anchor="middle">Mongo</text><text class="sm" x="785" y="456" text-anchor="middle">DocumentDB 또는</text><text class="sm" x="785" y="476" text-anchor="middle">Atlas on AWS(chat)</text>
+<rect class="vlan vmgmt" x="25" y="556" width="250" height="40" rx="6"/><text class="sm" x="150" y="581" text-anchor="middle">Secrets Manager · ECR (IRSA)</text>
+<rect class="vlan vobs" x="300" y="556" width="300" height="40" rx="6"/><text class="sm" x="450" y="581" text-anchor="middle">관측: Managed Prometheus · Grafana</text>
+<rect class="vlan vbackup" x="625" y="556" width="260" height="40" rx="6" stroke-dasharray="6 5"/><text class="sm" x="755" y="581" text-anchor="middle">다른 리전 — 스냅샷 · 백업만</text>
+</svg></div><p style="font-size:0.88rem;color:var(--muted)">점선은 논리 관계입니다 — 이그레스는 NAT 를 거쳐 허용 목록만, 다른 리전에는 백업 · 스냅샷만 복제합니다.</p></section>
+<section id="s2"><div class="section-head"><div class="eyebrow">2 · 층별</div><h2>지금과 AWS</h2></div><div class="table-wrap"><table><thead><tr><th>층</th><th>지금</th><th>AWS 에서</th><th>이유</th></tr></thead><tbody><tr><td class="role">진입</td><td>Cloudflare Tunnel</td><td><b>CloudFront + WAF + ALB</b>(Cloudflare 를 유지하고 오리진만 ALB 로 둬도 됨)</td><td>상품 · 홈 · 검색 GET 을 엣지에서 캐시. 유입 제한의 <code>CF-Connecting-IP</code> 신뢰는 <code>X-Forwarded-For</code> + ALB 기준으로 바꾼다<span class="src">docs/86 §2-1 · CustomUserKeyResolver</span></td></tr><tr><td class="role">앱</td><td>k3s 노드 1대</td><td><b>EKS 3 AZ</b> · Karpenter 자동 증설 · 행사 전 미리 늘리기</td><td>HPA 최대 3은 실습 크기 — 피크에 catalog 수십 파드도 되어야 한다<span class="src">k8s/70-autoscaling.yaml</span></td></tr><tr><td class="role">서비스 찾기</td><td>Eureka(1개 고정)</td><td><b>k8s Service DNS</b>(Spring Cloud Kubernetes 또는 게이트웨이 정적 라우트)</td><td>단일 장애점이고 쓰기 판정(B-86) 같은 손이 든다<span class="src">docs/21 · docs/57 §16</span></td></tr><tr><td class="role">DB</td><td>클러스터 안 PG</td><td><b>Aurora PostgreSQL</b> — 서비스별 DB 그대로, 읽기 복제본은 catalog · 주문 조회용</td><td>장애 조치는 보통 수십 초, PITR · 스냅샷은 관리형. RDS Proxy 는 세션 상태(SET · 준비된 문장)를 쓰면 연결이 고정된다 — 측정해서 쓰고 Flyway 는 프록시를 거치지 않는다</td></tr><tr><td class="role">검색</td><td>PG <code>LIKE</code> · EXISTS(드문 조건 503)</td><td><b>OpenSearch</b> — 이미 있는 플래그 <code>catalog.search-engine</code> 을 켠다</td><td>드문 · 0건 조합의 503 과 패싯 개수를 근본적으로 푼다<span class="src">docs/74 · docs/85 §8</span></td></tr><tr><td class="role">메시지</td><td>Kafka 브로커 1 · RF 1</td><td><b>MSK 브로커 3+</b> · RF 3 · <code>min.insync.replicas=2</code> · 토픽 미리 생성</td><td>아웃박스 · 사가가 Kafka 에 기댄다 — 가장 먼저 견고해져야 한다<span class="src">k8s/90-dev-infra.yaml · ops/02</span></td></tr><tr><td class="role">캐시</td><td>Redis 1대</td><td><b>ElastiCache 클러스터 모드 · Multi-AZ</b></td><td>유입 제한 · 장바구니 · 로그인 잠금이 쓴다. 유입 제한은 fail-open 이라 장애 때 통과된다<span class="src">docs/85 §7-1</span></td></tr><tr><td class="role">chat</td><td>인메모리 STOMP(1개 고정)</td><td>Redis pub/sub 팬아웃 또는 Amazon MQ 릴레이로 바꾼 뒤 여러 개</td><td>지금 구조로는 늘릴 수 없다<span class="src">docs/21</span></td></tr><tr><td class="role">이미지 · 프론트</td><td>S3 직접 · nginx 파드</td><td><b>S3 + CloudFront(OAC)</b>, 프론트도 S3 정적 배포</td><td>바이트를 앱 · 회선에서 뺀다</td></tr><tr><td class="role">비밀 · 신원</td><td>k8s Secret · 자체 CA mTLS</td><td><b>Secrets Manager + IRSA</b>, mTLS 는 ACM Private CA 또는 서비스 메시</td><td>스토어 비밀번호 교체(ops/59) 같은 수작업을 줄인다</td></tr><tr><td class="role">관측</td><td>노드 위 docker compose</td><td>Managed Prometheus · Grafana, 로그는 OpenSearch · CloudWatch, 추적은 X-Ray · Tempo</td><td>장애 때도 보이게 클러스터 밖에</td></tr><tr><td class="role">배포</td><td><code>ops/28</code> 손 배포</td><td>GitHub Actions(OIDC) → ECR → Argo CD · 카나리(Argo Rollouts)</td><td>expand → contract · ROLLBACK-UNSAFE(B-54) 규칙은 그대로</td></tr></tbody></table></div></section>
+<section id="s3"><div class="section-head"><div class="eyebrow">3 · 규모</div><h2>수백만 규모에서 바뀌는 설계</h2></div><ol class="steps"><li><b>읽기는 앞단에서 끝낸다.</b> 상품 목록 · 상세 · 홈을 CloudFront 에서 30 ~ 60초 캐시하고, 재고 수량은 별도의 작은 API 로 뺀다. 지금은 카드 응답마다 재고를 다시 읽는다(<code>HomeViewCache</code> 도 재고만은 응답마다). 이것만으로 catalog 부하가 몇 분의 1 로 준다.</li><li><b>재고 차감은 핫스팟이 된다.</b> 인기 상품의 행 잠금에 몰린다 — 예약을 Redis(Lua) 같은 원자 차감으로 먼저 받고 DB 확정은 비동기로 하는 구조를 검토한다. 지금의 gRPC 재고 예약이 출발점이다.</li><li><b>쓰기 DB 는 서비스마다 하나의 Aurora 로 시작한다.</b> 주문 수억 건까지는 월별 파티셔닝으로 버티고, 그 위로 가야 할 때 샤딩을 고민한다.</li><li><b>행사 트래픽은 대기열로 받는다.</b> 피크 10배를 늘 준비하면 비싸다 — 진입 대기열(CloudFront + 가상 대기실)과 Karpenter 사전 증설.</li><li><b>멀티 리전은 처음부터 하지 않는다.</b> 3 AZ 로 시작하고 백업 · 스냅샷만 다른 리전에 복제한다(RPO 5분 · 복구 몇 시간). 리전 장애까지 몇 분 안에 넘기려면 Aurora Global Database · MSK 복제가 필요하고 비용과 복잡도가 크게 뛴다.</li></ol></section>
+<section id="s4"><div class="section-head"><div class="eyebrow">4 · 비용</div><h2>대략의 월 비용 — 서울, 온디맨드</h2></div><div class="table-wrap"><table><thead><tr><th>항목</th><th>월</th></tr></thead><tbody><tr><td class="role">EKS 노드(평시 vCPU 64 ~ 96, 피크에 늘림)</td><td>$2,000 ~ 4,000</td></tr><tr><td class="role">Aurora(writer + reader, r6g.xlarge 급 여러 DB)</td><td>$3,000 ~ 6,000</td></tr><tr><td class="role">MSK(브로커 3)</td><td>~$1,500</td></tr><tr><td class="role">ElastiCache</td><td>~$800</td></tr><tr><td class="role">OpenSearch</td><td>~$1,500</td></tr><tr><td class="role">CloudFront · 데이터 전송 · 관측</td><td>$1,000 ~ 3,000</td></tr><tr><td class="role"><b>합계</b></td><td><b>약 $10,000 ~ 20,000</b></td></tr></tbody></table></div><div class="note warn"><p>짐작입니다 — 트래픽 · 이미지 전송량 · Savings Plans 할인으로 크게 달라집니다. 확정은 아래 ② 의 측정 뒤에 합니다.</p></div></section>
+<section id="s5"><div class="section-head"><div class="eyebrow">5 · 순서</div><h2>무엇부터</h2></div><ol class="steps"><li><b>레포 작업</b> — docs/86 §3 의 1 ~ 4(Kafka 3 · Redis Sentinel/클러스터 · Mongo RS · PG HA 전제)에 더해 Eureka 제거 · 재고 API 분리 · <code>CF-Connecting-IP</code> 의존 제거.</li><li><b>스테이징 EKS 에서 <code>ops/53</code>(k6)</b>으로 초당 1,000 → 10,000 단계를 잰다.</li><li>결과로 <b>파드 · 노드 · DB 크기</b>를 확정한다.</li><li><b>DMS 로 DB 를 복제</b>한 뒤 짧은 쓰기 정지 창에서 전환한다.</li></ol></section>
+<footer><p>근거는 레포 <span class="mono">ruke79/ecommerce-msa @ 663f986f</span>(2026-11-01)의 문서 · 매니페스트 · 스크립트입니다. 각 행 아래 회색 글씨가 그 위치입니다.</p><p>트래픽 · 사양 · 비용은 레포에 없는 가정이며, 실측에서 추정한 출발점입니다. 같은 내용의 문서판: <a href="87-aws-at-scale.ko.md">docs/87</a>.</p></footer>
+</div>
+</body></html>
