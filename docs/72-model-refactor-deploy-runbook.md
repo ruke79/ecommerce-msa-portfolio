@@ -153,3 +153,5 @@ ALTER TABLE orders.orders DROP COLUMN IF EXISTS tax_price;
 ```
 
 列の削除は破壊的な変更なので `-- ROLLBACK-UNSAFE:` の宣言が必要です(ガード B-54)。エンティティは既に二つの列を使っていないので、コードの変更はありません。
+
+→ 2026-10-31 コミット: order `V29__contract_order_address_order_id_tax_price.sql`(上の二文)、user V19(ログイン失敗ロックの旧列二つ)、catalog V24(旧名前インデックス — `DROP INDEX CONCURRENTLY`)。手順 · 確認は [docs/85 §8-2](85-release-deploy-runbook.md)。

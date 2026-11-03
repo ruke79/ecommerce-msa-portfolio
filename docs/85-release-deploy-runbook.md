@@ -258,7 +258,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1 件(サーバーの自己複製 `peerreplication/batch` — `my-url` で修正、docs/57 §16)、そのイメージ(`d68f0307e979`、2026-10-26)のデプロイ後にもう一日 — ✅ 2026-10-30 0 件 → ConfigMap を enforce — 適用済み(16:51 UTC `907b06ab` の `--config-only --restart eureka-server`: ログ `mode=ENFORCE (CA 읽음)` · 10 分の `[eureka write]` 0 · サービス Pod の再起動 0) | docs/57 §16「Eureka 書き込み」 |
 | 決済を一周した後 | CSP 違反がなければ frontend nginx の `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(次の frontend イメージ) — ✅ 2026-10-25 コンソールの違反 0(カード・PayPal・銀行振込)→ `61f546a8b125` で強制を適用済み(応答ヘッダーを確認) | docs/57 §19 |
 | デプロイが安定した後 | `LOCAL_KEY_STORE_PASSWORD` の交換 — `./ops/59-rotate-store-password.sh` check → apply(ストアのパスワードだけ · 鍵はそのまま · 一つずつ再起動)→ 一日後に cleanup。古いパスワードが過去のログに残っている — ✅ 2026-10-25 10:21 UTC apply(ストア 27 · 写し 14 · 13 個の再起動 0 · ops/37 403/200)、cleanup ✅ 2026-10-26(写し 21 個を削除 — Secret 14 · certs/ 6 · 20-secret.yaml)。⚠️ 全 Pod が起動し直したので identity · Eureka enforce の 24 時間の窓は 10-26 11 時 UTC から | docs/57 §16「ストアのパスワード」 |
-| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)— ロック待ち行列の注意は §8-1 | docs/72 §7 |
+| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)+ catalog の旧名前インデックス(V21 `idx_product_name_trgm`)の削除 — 2026-10-31 コミット(order V29 · user V19 · catalog V24)、適用待ち: 手順 §8-2 | docs/72 §7 |
 | デプロイ後に一度 | 本番 b7c5053 の期間にアラートなしで過ぎた可能性のある「Pod ごとの最初の一件」— ログの「이중 결제」· DLT トピックを見渡す | B-101 |
 | 判断の後(作業するか決めてから) | まれな価格フィルター検索の 503 をなくす — 商品ごとに画面価格(常時割引 · 企画展を適用)の最低 · 最高を列に持ち(サイズの価格 · 割引 · 企画展が変わるときに更新)、`(category_id, 最低価格)` のインデックスで候補を先に絞る。コスト: マイグレーション(列 · インデックスの追加、本番 200 万件の埋め込み) · 更新経路 · テスト。それまでは合う商品がごく少ない価格帯で 5 秒上限の 503 — 画面は「サーバーが一時的に応答していません」の案内(2026-10-26 本番の 10 分で「검색 질의 시간 초과」2 件)。下限 > 上限 · 件数は `d837605d7902` で解決済み。移行計画は §8-1 | docs/83 §2.8 |
 | 判断の後 | まれ · 0 件の組み合わせへの一般的な対策(2026-10-26 整理) — `LIMIT` で数行だけ取る計画は、合う行がまれだとカテゴリを最後まで走査する(5 秒上限 → 503)。知られた手法: ① あり得ない組み合わせは DB に聞かない(下限 > 上限 · 別の親のサブカテゴリ — `d837605d7902` · `d68f0307e979` で適用済み) ② ファセット件数 — フィルターメニューの値ごとに今の条件での件数を前もって計算し、0 件の値は薄く · 非表示(EC サイトの標準、今の `SearchFilterFacets` は値だけ) ③ 非正規化列 + 複合インデックス(上の行) ④ 転置インデックスの検索エンジン(ES — フラグ `catalog.search-engine`、ファセット件数も集計で一緒に) ⑤ 時間上限に達したら 503 ではなく見つかった分 + 「これ以上なし」(小さい変更 — ③ より先にできる)。PostgreSQL の補助手段(まれな側 — 連結表 `(subcategory_id, product_id)` — から始める、`CREATE STATISTICS`、部分インデックス)は ③ の代わりにならない。勧める順序 ⑤ → ③(または ④)→ ② | docs/83 §2.8 |
@@ -276,7 +276,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | ② 新しい書き込み | 商品 · サイズ価格 · 常時割引 · 企画展が変わる箇所でアプリが二つの列を一緒に更新 | X-3 のトリガー二重書き込みの代わりにアプリのコード — 企画展の割引はメモリ上の規則(`EventPricing`)でトリガーでは計算できない |
 | ③ 埋め込み | 200 万件を 1 万行のバッチ UPDATE で(ops スクリプト、冪等 — NULL の行だけ) | バッチ 1 万で約 10 万行/秒(X-3 ③)— 本番機はもっと遅いことがある。Flyway の一つのトランザクションでは行わない(起動プローブ 5 分 · 巨大な dead tuple) |
 | ④ 後片付け | 埋めた直後に `VACUUM (PARALLEL 0, ANALYZE) product.product` | 大量更新直後の DDL は autovacuum の後ろで `deadlock_timeout`(1 秒)だけ塞がれる(X-3 ③ — 1,034ms → 44ms)。`PARALLEL 0` は postgres Pod の `/dev/shm` 64MB のため(§0 続くデプロイ 4) |
-| ⑤ インデックス | `(category_id, min_price)` を `CREATE INDEX CONCURRENTLY` | その文一つだけのマイグレーション + `V…sql.conf` の `executeInTransaction=false`(Flyway 11)— 通常の `CREATE INDEX` は作成中に商品の書き込みを塞ぐ |
+| ⑤ インデックス | `(category_id, min_price)` を `CREATE INDEX CONCURRENTLY` | その文一つだけのマイグレーション — Flyway 11.7.2 は `CONCURRENTLY` を見分けてそのファイルをトランザクション外で流す(`.sql.conf` 不要 — catalog V24 · `ProductNameTrgmDropMigrationTest` で確認、2026-10-31)— 通常の `CREATE INDEX` は作成中に商品の書き込みを塞ぐ |
 | ⑥ 検索の切り替え | `SearchService` が価格条件を二つの列で先に絞り、既存の EXISTS はその中だけで | 列が空の間(③ の前)は従来の経路 — 機能フラグまたは「NULL なら従来の条件」 |
 
 **contract リリース(order · user の列削除)**
@@ -287,3 +287,46 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 - 該当なし: replica lag のスロットル(本番は replica のない単一 PostgreSQL)。
 
 デプロイが終わったら残作業の一覧の「次のデプロイと一緒に」の項目を「適用済み」に移し、この文書の一番上の状態に結果を書きます。
+
+### 8-2. contract リリース — 手順(2026-10-31 コミット)
+
+何を消すか — どれも今の本番イメージ(`d68f0307e979`)が使わないものです(4415e498565c まとめリリースから)。
+
+| サービス | マイグレーション | 消すもの | 戻し |
+|---|---|---|---|
+| order | V29 | `orders.order_address.order_id`(住所 → 注文の外部キー · `idx_order_address` も一緒に)· `orders.orders.tax_price` | ROLLBACK-UNSAFE — 4415e498565c 以降のイメージはそのまま起動する |
+| user | V19 | `users.users.lock_expires_at` · `failed_login_attempts`(ロックは Redis) | ROLLBACK-UNSAFE — 同じ |
+| catalog | V24 | `product.idx_product_name_trgm`(V21、`lower(name)` — 名前検索は V23 の search_key インデックス) | インデックスだけ — 戻しても起動する |
+
+catalog は `DROP INDEX CONCURRENTLY` です — 通常の `DROP INDEX` は商品表に ACCESS EXCLUSIVE を取り、フィルターメニューの計算(最大 600 秒)の後ろに並ぶとその間の商品の読み取りがすべて止まります。order · user の `DROP COLUMN` はカタログだけを変えますが一瞬 ACCESS EXCLUSIVE を取るので、その表に長く開いたトランザクションがないときに流します(§8-1 — 短い `lock_timeout` + 再試行は使わない)。
+
+**デプロイ前**
+
+```bash
+# 本番インスタンスで。q は §2 のもの。
+# 1) バックアップの窓を避ける — postgres-backup(03:00 UTC、約 3 分)の pg_dump は全表に ACCESS SHARE を持つ
+date -u
+# 2) 三つの DB で 30 秒を超えて開いているトランザクション — 0 であること(照会の原文は出さない)
+for db in orderdb userdb productdb; do
+  echo "$db: $(q "$db" "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and xact_start < now() - interval '30 seconds'")"
+done
+# 3) 今のバージョン — order 28 · user 18 · catalog 23
+for db in orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"
+```
+- バックアップ(必須): [docs/72 §3](72-model-refactor-deploy-runbook.md) のとおり、フォルダは `~/backups/pre-<対象バージョン>-<時刻>`。消した列の値はバックアップにだけ残ります。
+
+**デプロイ** — §4 と同じです(`git switch --detach <対象バージョン>` → `./ops/28-deploy.sh local <対象バージョン>`)。`ops/28` はこの範囲の ROLLBACK-UNSAFE を知らせて**自動復帰を切ります** — スモークが失敗してもそのまま止まります。戻すときは `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh local --rollback`(直前の `d68f0307e979` は消した列を使わないのでそのまま起動する)。4415e498565c より古いイメージに戻すなら、V29 · V19 のファイルの ROLLBACK-UNSAFE の説明どおり列を先に戻します(値は戻らない — バックアップ)。
+
+**デプロイ後**
+
+```bash
+for db in orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done   # 29 · 19
+echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"                 # 24
+q orderdb  "select count(*) from information_schema.columns where table_schema = 'orders' and ((table_name = 'orders' and column_name = 'tax_price') or (table_name = 'order_address' and column_name = 'order_id'))"   # 0
+q userdb   "select count(*) from information_schema.columns where table_schema = 'users' and table_name = 'users' and column_name in ('lock_expires_at', 'failed_login_attempts')"  # 0
+q productdb "select count(*) from pg_indexes where indexname = 'idx_product_name_trgm'"   # 0
+q productdb "select count(*) from pg_index x join pg_class i on i.oid = x.indexrelid where not x.indisvalid"   # 0 — CONCURRENTLY が残した無効インデックスなし
+kubectl -n ecommerce get pods   # 再起動 0
+```
+画面: 商品名の検索 · ログイン · 注文詳細が開けば OK です。

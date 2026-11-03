@@ -258,7 +258,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1건(서버의 자기 복제 `peerreplication/batch` — `my-url` 로 고침, docs/57 §16), 그 이미지(`d68f0307e979`, 2026-10-26) 배포 뒤 다시 하루 — ✅ 2026-10-30 0건 → ConfigMap enforce — 적용 끝(16:51 UTC `907b06ab` `--config-only --restart eureka-server`: 로그 `mode=ENFORCE (CA 읽음)` · 10분 `[eureka write]` 0 · 서비스 파드 재시작 0) | docs/57 §16 "Eureka 쓰기" |
 | 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) — ✅ 2026-10-25 콘솔 위반 0(카드 · PayPal · 무통장) → `61f546a8b125` 로 강제 적용 끝(응답 헤더 확인) | docs/57 §19 |
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체 — `./ops/59-rotate-store-password.sh` check → apply(스토어 비밀번호만 · 키 그대로 · 하나씩 재시작) → 하루 뒤 cleanup. 옛 비밀번호가 지난 로그에 남아 있다 — ✅ 2026-10-25 10:21 UTC apply(스토어 27 · 사본 14 · 13개 재시작 0 · ops/37 403/200), cleanup ✅ 2026-10-26(사본 21개 삭제 — Secret 14 · certs/ 6 · 20-secret.yaml). ⚠️ 모든 파드가 다시 떠서 identity · Eureka enforce 의 24시간 창은 10-26 11시 UTC 부터 | docs/57 §16 "스토어 비밀번호" |
-| 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) — 락 대기열 주의는 §8-1 | docs/72 §7 |
+| 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) + catalog 옛 이름 인덱스(V21 `idx_product_name_trgm`) 삭제 — 2026-10-31 커밋(order V29 · user V19 · catalog V24), 적용 대기: 절차 §8-2 | docs/72 §7 |
 | 배포 뒤 한 번 | 운영 b7c5053 기간에 경보 없이 지나갔을 수 있는 "파드마다 첫 건" — 로그의 '이중 결제' · DLT 토픽을 훑어본다 | B-101 |
 | 판단 뒤(작업 여부를 정한 다음) | 드문 가격 필터 검색의 503 없애기 — 상품마다 화면 가격(상시 할인 · 기획전 적용)의 최저 · 최고를 열로 두고(사이즈 가격 · 할인 · 기획전이 바뀔 때 갱신) `(category_id, 최저가)` 인덱스로 후보를 먼저 좁힌다. 비용: 마이그레이션(열 · 인덱스 추가, 운영 200만 건 채우기) · 갱신 경로 · 테스트. 그 전까지는 맞는 상품이 아주 드문 가격대에서 5초 상한 503 — 화면은 "サーバーが一時的に応答していません" 안내(2026-10-26 운영 10분에 `검색 질의 시간 초과` 2건). 하한 > 상한 · 개수 세기는 `d837605d7902` 에서 이미 해결. 이행 계획 §8-1 | docs/83 §2.8 |
 | 판단 뒤 | 드문 · 0건 조합의 일반 대책(2026-10-26 정리) — `LIMIT` 로 몇 줄만 받는 계획은 맞는 행이 드물면 카테고리를 끝까지 훑는다(5초 상한 → 503). 알려진 기법: ① 불가능한 조합은 DB 에 묻지 않는다(하한 > 상한 · 다른 상위의 하위 — `d837605d7902` · `d68f0307e979` 에서 적용 끝) ② 패싯 개수 — 필터 메뉴의 값마다 지금 조건에서의 건수를 미리 계산해 0건 값은 흐리게 · 숨김(쇼핑몰의 표준, 지금 `SearchFilterFacets` 는 값만) ③ 비정규화 열 + 복합 인덱스(위 행) ④ 역색인 검색 엔진(ES — 플래그 `catalog.search-engine`, 패싯 개수도 집계로 함께) ⑤ 시간 상한에 닿으면 503 대신 찾은 만큼 + "더 없음"(작은 변경 — ③ 전에 먼저 할 수 있다). PostgreSQL 보조 수단(드문 쪽 — 연결 표 `(subcategory_id, product_id)` — 에서 시작, `CREATE STATISTICS`, 부분 인덱스)은 ③ 을 대신하지 못한다. 권하는 순서 ⑤ → ③(또는 ④) → ② | docs/83 §2.8 |
@@ -276,7 +276,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | ② 새 쓰기 | 상품 · 사이즈 가격 · 상시 할인 · 기획전이 바뀌는 곳에서 앱이 두 열을 함께 갱신 | X-3 의 트리거 이중 쓰기 대신 앱 코드 — 기획전 할인은 메모리의 규칙(`EventPricing`)이라 트리거로는 계산할 수 없다 |
 | ③ 채우기 | 200만 건을 1만 행 배치 UPDATE 로(ops 스크립트, 멱등 — NULL 인 행만) | 배치 1만에서 약 10만 행/초(X-3 ③) — 운영 장비는 더 느릴 수 있다. Flyway 안 한 트랜잭션으로 하지 않는다(기동 프로브 5분 · 거대한 dead tuple) |
 | ④ 정리 | 채운 직후 `VACUUM (PARALLEL 0, ANALYZE) product.product` | 대량 갱신 직후의 DDL 은 autovacuum 뒤에서 `deadlock_timeout`(1초)만큼 막힌다(X-3 ③ — 1,034ms → 44ms). `PARALLEL 0` 은 postgres 파드의 `/dev/shm` 64MB 때문(§0 후속 배포 4) |
-| ⑤ 인덱스 | `(category_id, min_price)` 를 `CREATE INDEX CONCURRENTLY` | 그 문장 하나만 담은 마이그레이션 + `V…sql.conf` 의 `executeInTransaction=false`(Flyway 11) — 일반 `CREATE INDEX` 는 만드는 동안 상품 쓰기를 막는다 |
+| ⑤ 인덱스 | `(category_id, min_price)` 를 `CREATE INDEX CONCURRENTLY` | 그 문장 하나만 담은 마이그레이션 — Flyway 11.7.2 는 `CONCURRENTLY` 를 알아보고 그 파일을 트랜잭션 밖에서 돌린다(`.sql.conf` 불필요 — catalog V24 · `ProductNameTrgmDropMigrationTest` 로 확인, 2026-10-31) — 일반 `CREATE INDEX` 는 만드는 동안 상품 쓰기를 막는다 |
 | ⑥ 검색 전환 | `SearchService` 가 가격 조건을 두 열로 먼저 좁히고, 기존 EXISTS 는 그 안에서만 | 열이 비어 있는 동안(③ 전)은 예전 경로 — 기능 플래그 또는 "NULL 이면 예전 조건" |
 
 **contract 릴리스(order · user 열 삭제)**
@@ -287,3 +287,46 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 - 해당 없음: replica lag 쓰로틀(운영은 replica 없는 단일 PostgreSQL).
 
 배포가 끝나면 남은 일 목록의 "다음 배포에 함께" 항목들을 "적용 끝" 으로 옮기고, 이 문서 맨 위 상태에 결과를 적습니다.
+
+### 8-2. contract 릴리스 — 절차(2026-10-31 커밋)
+
+무엇을 지우나 — 모두 지금 운영 이미지(`d68f0307e979`)가 쓰지 않는 것입니다(4415e498565c 묶음 릴리스부터).
+
+| 서비스 | 마이그레이션 | 지우는 것 | 되돌리기 |
+|---|---|---|---|
+| order | V29 | `orders.order_address.order_id`(주소 → 주문 외래 키 · `idx_order_address` 가 함께) · `orders.orders.tax_price` | ROLLBACK-UNSAFE — 4415e498565c 뒤 이미지는 그대로 뜬다 |
+| user | V19 | `users.users.lock_expires_at` · `failed_login_attempts`(잠금은 Redis) | ROLLBACK-UNSAFE — 같다 |
+| catalog | V24 | `product.idx_product_name_trgm`(V21, `lower(name)` — 이름 검색은 V23 의 search_key 인덱스) | 인덱스만 — 되돌려도 뜬다 |
+
+catalog 는 `DROP INDEX CONCURRENTLY` 입니다 — 보통의 `DROP INDEX` 는 상품 표에 ACCESS EXCLUSIVE 를 잡아, 필터 메뉴 계산(최대 600초) 뒤에 줄을 서면 그동안 상품 읽기가 모두 멈춥니다. order · user 의 `DROP COLUMN` 은 카탈로그만 바꾸지만 잠깐 ACCESS EXCLUSIVE 를 잡으므로, 그 표에 오래 열린 트랜잭션이 없을 때 돌립니다(§8-1 — 짧은 `lock_timeout` + 재시도는 쓰지 않는다).
+
+**배포 전**
+
+```bash
+# 운영 인스턴스에서. q 는 §2 의 것.
+# 1) 백업 창을 피한다 — postgres-backup(03:00 UTC, 약 3분)의 pg_dump 는 모든 표에 ACCESS SHARE 를 쥔다
+date -u
+# 2) 세 DB 에 30초 넘게 열린 트랜잭션 — 0 이어야 한다(질의 원문은 출력하지 않는다)
+for db in orderdb userdb productdb; do
+  echo "$db: $(q "$db" "select count(*) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and xact_start < now() - interval '30 seconds'")"
+done
+# 3) 지금 버전 — order 28 · user 18 · catalog 23
+for db in orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"
+```
+- 백업(필수): [docs/72 §3](72-model-refactor-deploy-runbook.ko.md#3-백업--필수) 그대로, 폴더는 `~/backups/pre-<대상 버전>-<시각>`. 지운 열의 값은 백업에만 남습니다.
+
+**배포** — §4 와 같습니다(`git switch --detach <대상 버전>` → `./ops/28-deploy.sh local <대상 버전>`). `ops/28` 은 이 범위의 ROLLBACK-UNSAFE 를 알리고 **자동 복귀를 끕니다** — 스모크가 실패해도 그대로 멈춥니다. 되돌릴 때는 `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh local --rollback`(직전 `d68f0307e979` 는 지운 열을 쓰지 않아 그대로 뜬다). 4415e498565c 보다 옛 이미지로 가야 하면 V29 · V19 파일의 ROLLBACK-UNSAFE 설명대로 열을 먼저 되살립니다(값은 돌아오지 않는다 — 백업).
+
+**배포 후**
+
+```bash
+for db in orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done   # 29 · 19
+echo "productdb: $(q productdb 'SELECT max(version::int) FROM product.flyway_schema_history WHERE success')"                 # 24
+q orderdb  "select count(*) from information_schema.columns where table_schema = 'orders' and ((table_name = 'orders' and column_name = 'tax_price') or (table_name = 'order_address' and column_name = 'order_id'))"   # 0
+q userdb   "select count(*) from information_schema.columns where table_schema = 'users' and table_name = 'users' and column_name in ('lock_expires_at', 'failed_login_attempts')"  # 0
+q productdb "select count(*) from pg_indexes where indexname = 'idx_product_name_trgm'"   # 0
+q productdb "select count(*) from pg_index x join pg_class i on i.oid = x.indexrelid where not x.indisvalid"   # 0 — CONCURRENTLY 가 남긴 무효 인덱스 없음
+kubectl -n ecommerce get pods   # 재시작 0
+```
+화면: 상품 이름 검색 · 로그인 · 주문 상세가 열리면 됩니다.

@@ -121,7 +121,7 @@ public class Order extends BaseEntity {
 
     private String couponApplied;
 
-    // 세금 금액(taxPrice)은 없앴다 — 아무도 채우지 않아 늘 0 이었고, 화면은 그것을 "세금 무료" 로 보였다. 가격은 세금 포함이다(V25).
+    // 세금 금액(taxPrice)은 없앴다 — 아무도 채우지 않아 늘 0 이었고, 화면은 그것을 "세금 무료" 로 보였다. 가격은 세금 포함이다(V25 · 열은 V29 에서 지웠다).
 
 
     @Enumerated(EnumType.STRING)

@@ -277,9 +277,9 @@ class SagaEndToEndTest {
         try (Connection conn = adminConnection("orderdb"); Statement st = conn.createStatement()) {
             // 고객 사본(orders.customer)은 더 쓰지 않는다 — 주문의 customer_id 가 곧 토큰의 uid 다(docs/48 §6-①).
             st.execute("INSERT INTO orders.orders(order_id, customer_id, order_status, payment_method,"
-                    + " total, total_before_discount, shipping_price, tax_price, tracking_id,"
+                    + " total, total_before_discount, shipping_price, tracking_id,"
                     + " created_at, version)"
-                    + " VALUES (9100, 7, 'NOT_PROCESSED', 'PAYPAL', 59.98, 59.98, 5.00, 0.50,"
+                    + " VALUES (9100, 7, 'NOT_PROCESSED', 'PAYPAL', 59.98, 59.98, 5.00,"
                     + " 'trk-9100', now(), 0)");
             st.execute("INSERT INTO orders.order_product(order_product_id, order_id, product_id, qty,"
                     + " size, color_id, name, price, image, created_at, version)"

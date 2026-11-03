@@ -84,7 +84,8 @@ class ProductLiveIndexesMigrationTest {
             assertThat(plan(db, count)).as("V20 — 줄을 찾고도 표를 다시 읽는다").doesNotContain("Index Only Scan");
             assertThat(plan(db, name)).as("V20 — 이름 검색은 인덱스가 없다").doesNotContain("trgm");
 
-            flyway("latest").migrate();
+            // V21 까지 — 이름 검색의 lower(name) 인덱스는 V23(search_key)으로 바뀌고 V24(contract)에서 지운다(ProductNameTrgmDropMigrationTest)
+            flyway("21").migrate();
             exec(db, "vacuum analyze product.product");
 
             assertThat(plan(db, count)).as("개수 세기 — 살아 있는 상품의 인덱스만").contains("Index Only Scan using idx_product_category_live");

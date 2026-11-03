@@ -126,9 +126,9 @@ public class User extends BaseEntity{
     // ── 로그인 실패 잠금 ──────────────────────────────────────────────
     // 엔티티에 없다 — 횟수 · 잠금은 Redis(LoginAttemptService, 이메일 해시 열쇠)다. 🐛 V4 의 failed_login_attempts ·
     // lock_expires_at 열은 Redis 로 옮긴 뒤 아무도 읽지 않는데 필드와 "잠금 판정은 lockExpiresAt" 주석만 남아, 리뷰가 그 주석을
-    // 사실로 읽었다(UserLockFieldsTest). 열은 다음 contract 릴리스에서 지운다(failed_login_attempts 는 NOT NULL DEFAULT 0 이라
-    // 필드가 없어도 INSERT 가 된다).
-    // [JA] エンティティにない — 回数・ロックは Redis。V4 の列は誰も読まず、フィールドと古い注釈だけが残っていた。列は次の contract で削除。
+    // 사실로 읽었다(UserLockFieldsTest). 열은 contract 릴리스(V19)에서 지웠다(그 전까지 failed_login_attempts 는 NOT NULL DEFAULT 0 이라
+    // 필드가 없어도 INSERT 가 됐다).
+    // [JA] エンティティにない — 回数・ロックは Redis。V4 の列は誰も読まず、フィールドと古い注釈だけが残っていた。列は contract(V19)で削除した。
 
     // ── 회원 탈퇴 (V6) ────────────────────────────────────────────────
     // 상태를 boolean 이 아니라 시각으로 둔다. "언제 지워지는지"를 답할 수 있어야 화면이

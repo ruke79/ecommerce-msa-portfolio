@@ -153,3 +153,5 @@ ALTER TABLE orders.orders DROP COLUMN IF EXISTS tax_price;
 ```
 
 열 삭제는 파괴적 변경이라 `-- ROLLBACK-UNSAFE:` 선언이 필요합니다(가드 B-54). 엔티티는 이미 두 열을 쓰지 않으므로 코드 변경은 없습니다.
+
+→ 2026-10-31 커밋: order `V29__contract_order_address_order_id_tax_price.sql`(위 두 문장), user V19(로그인 실패 잠금의 옛 열 둘), catalog V24(옛 이름 인덱스 — `DROP INDEX CONCURRENTLY`). 절차 · 확인은 [docs/85 §8-2](85-release-deploy-runbook.ko.md).

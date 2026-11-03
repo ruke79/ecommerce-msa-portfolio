@@ -7,7 +7,7 @@
 
 무엇을 만드나(주문 하나당):
 
-  orders.order_address   배송지 사본 하나 — 주문이 가리킨다(V25: orders.order_address_id, 옛 열 order_id 는 비운다)
+  orders.order_address   배송지 사본 하나 — 주문이 가리킨다(V25: orders.order_address_id — 옛 열 order_id 는 V29 에서 지웠다)
   orders.orders          끝난 주문 — 상태는 구매 확정 · 배송 완료 · 취소 · 환불 · 결제 완료(입금 대기 · 결제 전은 만들지 않는다:
                          입금 대기 한도(3건)와 재고 예약에 걸린다)
   orders.order_product   줄 1 ~ 3개 — 상품 id 는 ops/44 의 생성 범위(--product-offset, --products)에서

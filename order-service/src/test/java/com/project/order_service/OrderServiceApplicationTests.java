@@ -159,33 +159,26 @@ class OrderServiceApplicationTests {
 	}
 
 	@Test
-	@DisplayName("주문은 주소를 한 방향으로만 가리킨다 — 주소의 order_id 는 비고, 세금 열은 기본값 0(V25)")
+	@DisplayName("주문은 주소를 한 방향으로만 가리킨다 — 주소 쪽 order_id · 세금 열은 없다(V25 expand → V29 contract)")
 	void orderPointsToAddressOneWay() throws Exception {
 		Long id = newOrderWithAddress();
 		long addressId = jdbcLong("select order_address_id from orders.orders where order_id = " + id);
 		assertThat(addressId).isPositive();
-		assertThat(jdbcLong("select count(*) from orders.order_address where order_address_id = " + addressId + " and order_id is null"))
-				.as("새 주소는 주문을 가리키지 않는다(외래 키는 주문 쪽 하나)").isEqualTo(1);
-		assertThat(jdbcLong("select tax_price from orders.orders where order_id = " + id)).isZero();
+		assertThat(jdbcLong("select count(*) from information_schema.columns where table_schema = 'orders' and "
+				+ "((table_name = 'order_address' and column_name = 'order_id') or (table_name = 'orders' and column_name = 'tax_price'))"))
+				.as("엔티티가 쓰지 않는 옛 열 둘은 V29 에서 지웠다 — 새 주소는 주문을 가리킬 수 없다(외래 키는 주문 쪽 하나)").isZero();
 	}
 
 	@Test
-	@DisplayName("결제 전 주문 버리기 — 새 모양(주문 → 주소)과 V25 전 모양(주소도 주문을 가리킴) 모두 주문 · 주소가 지워진다")
-	void discardRemovesOrderAndAddressInBothShapes() throws Exception {
+	@DisplayName("결제 전 주문 버리기 — 주문과 그 주소가 함께 지워진다(주문 → 주소)")
+	void discardRemovesOrderAndAddress() throws Exception {
 		Long fresh = newOrderWithAddress();
 		long freshAddress = jdbcLong("select order_address_id from orders.orders where order_id = " + fresh);
 
-		Long legacy = newOrderWithAddress();
-		long legacyAddress = jdbcLong("select order_address_id from orders.orders where order_id = " + legacy);
-		jdbc("update orders.order_address set order_id = " + legacy + " where order_address_id = " + legacyAddress);
-
 		assertThat(orderData.discardUnplaced(fresh)).isTrue();
-		assertThat(orderData.discardUnplaced(legacy)).isTrue();
 
-		for (long a : new long[] { freshAddress, legacyAddress }) {
-			assertThat(jdbcLong("select count(*) from orders.order_address where order_address_id = " + a)).isZero();
-		}
-		assertThat(jdbcLong("select count(*) from orders.orders where order_id in (" + fresh + ", " + legacy + ")")).isZero();
+		assertThat(jdbcLong("select count(*) from orders.order_address where order_address_id = " + freshAddress)).isZero();
+		assertThat(jdbcLong("select count(*) from orders.orders where order_id = " + fresh)).isZero();
 	}
 
 	@Test
