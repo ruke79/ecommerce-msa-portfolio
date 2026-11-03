@@ -410,6 +410,27 @@ class EventPricingTest {
     }
 
     @Test
+    @DisplayName("🔴 기동 때 읽기도 읽기 전용 트랜잭션 안에서 — @PostConstruct 는 프록시 밖이라 refresh() 의 @Transactional 이 적용되지 않는다(B-108)")
+    void startupLoadRunsInReadOnlyTransaction() {
+        when(eventRepository.activeCategoryDiscounts()).thenReturn(List.of());
+        when(eventRepository.activeProductDiscounts()).thenReturn(List.<Object[]>of(new Object[] { 7L, 25 }));
+        org.springframework.transaction.PlatformTransactionManager tm = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        org.springframework.transaction.TransactionStatus status = mock(org.springframework.transaction.TransactionStatus.class);
+        org.mockito.ArgumentCaptor<org.springframework.transaction.TransactionDefinition> def =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+        when(tm.getTransaction(def.capture())).thenReturn(status);
+
+        EventPricing fresh = new EventPricing(eventRepository, productRepository);
+        fresh.setTransactionManager(tm);
+        fresh.loadOnStartup();
+
+        assertThat(def.getAllValues()).as("트랜잭션 하나").hasSize(1);
+        assertThat(def.getValue().isReadOnly()).as("읽기 전용").isTrue();
+        verify(tm).commit(status);
+        assertThat(fresh.eventDiscountOf(7L)).isEqualTo(25);
+    }
+
+    @Test
     @DisplayName("기동 시 읽기는 @PostConstruct 다")
     void startupLoadIsAnInitCallback() throws Exception {
         org.assertj.core.api.Assertions.assertThat(EventPricing.class.getDeclaredMethod("loadOnStartup")

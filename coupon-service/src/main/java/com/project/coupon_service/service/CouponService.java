@@ -226,8 +226,7 @@ public class CouponService {
         return cart.getCartTotal() == null ? BigDecimal.ZERO : cart.getCartTotal();
     }
 
-    /** 이 쿠폰의 대상 id 집합. scope 가 ALL 이면 조회하지 않는다. */
-    @Transactional(readOnly = true)
+    /** 이 쿠폰의 대상 id 집합. scope 가 ALL 이면 조회하지 않는다. 같은 클래스에서만 불린다 — 트랜잭션은 부르는 쪽의 것(B-108). */
     Set<String> targetValues(Long couponId, CouponScope scope) {
         if (scope == CouponScope.ALL) {
             return Set.of();
@@ -765,7 +764,13 @@ public class CouponService {
     }
 
     
-    /** 이 사용자의 쓰지 않은 쿠폰. 사용자 id 로 바로 찾는다 — 예전에는 이메일로 user-service 에 id 를 물었다. */
+    /**
+     * 이 사용자의 쓰지 않은 쿠폰. 사용자 id 로 바로 찾는다 — 예전에는 이메일로 user-service 에 id 를 물었다.
+     *
+     * <p>읽기 전용 트랜잭션은 여기(컨트롤러가 부르는 입구)에 — 예전에는 안쪽 두 메서드에 붙어 자기 호출이라 적용되지 않았다(B-108).
+     * 쿠폰 목록과 쿠폰마다의 대상 조회가 커넥션 하나로 돈다. 원격 호출은 없다.
+     */
+    @Transactional(readOnly = true)
     public List<CouponDto> getCouponsNotUsed(Long userId) {
 
         if (null != userId) {
@@ -800,7 +805,7 @@ public class CouponService {
         return List.of();
     }
 
-    @Transactional(readOnly=true)
+    // 같은 클래스에서만 불린다(자기 호출) — 예전의 readOnly 는 적용된 적이 없다, 저장소 호출 하나(B-108).
     Coupon getCouponByNameAndUserIdAndCouponStatus(String couponName, Long userId, CouponStatus couponStatus) {
 
         Coupon coupon = couponRepository.findByNameAndUserIdAndCouponStatus(couponName, userId, couponStatus).orElse(null);
@@ -808,7 +813,7 @@ public class CouponService {
         return coupon;
     }
 
-    @Transactional(readOnly=true)
+    // 같은 클래스에서만 불린다 — 트랜잭션은 getCouponsNotUsed 의 것(B-108).
     List<Coupon> getCouponsByUserIdAndCouponStatus(Long userId, CouponStatus couponStatus) {
 
         List<Coupon> coupons = couponRepository.findByUserIdAndCouponStatus(userId, couponStatus).orElse(null);

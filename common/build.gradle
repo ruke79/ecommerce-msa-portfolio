@@ -84,6 +84,8 @@ dependencies {
 	// 이미 spring-tx 를 갖고 있다 — 위와 같은 이유로 compileOnly.
 	compileOnly 'org.springframework:spring-tx'
 	testImplementation 'org.springframework:spring-tx'
+	// B-108 TransactionalProxyGuardTest — 모든 서비스의 소스를 읽어 적용되지 않는 @Transactional 을 찾는다(테스트 전용).
+	testImplementation 'com.github.javaparser:javaparser-core:3.26.2'
 	// 아웃박스 파티션 잡의 지표(OutboxPartitionAutoConfiguration.Metrics). 파티션을 쓰는 모듈은 actuator 로 이미
 	// micrometer 를 갖고 있다 — 위와 같은 이유로 compileOnly(eureka·config-server 로 끌고 가지 않는다).
 	compileOnly 'io.micrometer:micrometer-core'

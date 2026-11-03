@@ -38,6 +38,7 @@
 | 18 | データモデル | コンパイルも通りテストも通るのに、データが間違っていた — モデル層の点検 | *Designing Data-Intensive Applications* |
 | 19 | イベント · 読み取りモデル | 状態は変わるのに「いつ・なぜ」はログだけだった — 状態変更イベントと読み取りモデル(CQRS) | *Designing Data-Intensive Applications* |
 | 20 | 性能 | 実習では 1 秒、本番の 200 万商品では 42 秒 — フィルター検索の件数 | *PostgreSQL: Up and Running* |
+| 21 | トランザクション | `@Transactional` が付いているのに一度も効いていなかった — private · `@PostConstruct` · 自己呼び出し | Spring Framework リファレンス(Data Access) |
 
 ---
 
@@ -601,6 +602,31 @@
 - 測定用のデータ規模を本番と合わせる — 実習の 100 万 · 1,000 万の測定(docs/83)はありましたが、本番 DB の実際の規模を確かめていませんでした。
 
 → [docs/83 §2.8](83-load-test.md) · `SearchSkuFilterScaleTest`
+
+---
+
+## 21. `@Transactional` が付いているのに一度も効いていなかった — private · `@PostConstruct` · 自己呼び出し
+
+**📖 参考** — Spring Framework リファレンス、Data Access › Transaction Management ›「Using `@Transactional`」。プロキシ方式では **外からプロキシを通って入った呼び出しだけ** を横取りするという注意(自己呼び出し · 初期化コールバック)を、そのままコード全体に当ててみました。
+
+**問題**
+- 2026-11-03、九つのサービスの `@Transactional` **312 か所** を JavaParser ですべて読みました(2026-10-25 に package-private の `@Transactional` が Spring 6 の CGLIB で動くことは確認済みで、残りはプロキシがまったく届かない場所でした)。
+- **private 6 か所**(cart の `getCartByUserId`、order の `OrderSaga` 五つ)— プロキシが横取りできません。**`@PostConstruct` 1 か所**(catalog の商品キャッシュのウォームアップ)— プロキシができる前に対象オブジェクトで直接呼ばれます。**受け側の設定を飛ばした自己呼び出し 9 か所** — 呼ぶ側にトランザクションがない、または NOT_SUPPORTED なのに、同じクラスの `@Transactional` メソッドを `foo()` で呼んでその設定が無視されていました(catalog 起動時の企画展割引の読み込み、coupon のクーポン一覧 · 見積もりの対象照会、pay のアウトボックス状態更新、cart のチェックアウト照会)。
+- データが狂った所はありませんでした — どれもリポジトリ呼び出し一つ(自分のトランザクションで動く)か、書き込みがすでに TransactionTemplate · 入口のトランザクションの中でした。危険は **読む人がトランザクションがあると信じること** です: そのメソッドに書き込みを一つ足すと原子性がないのに、コードはあるように見えます。
+
+**対処した内容**
+- 効果のなかったアノテーションは消し、「トランザクションは呼ぶ側のもの」と書きました(private 六つ、ウォームアップ — 開いていたらかえってコネクション一つをずっと握っていた、coupon の内側の照会三つ)。
+- トランザクションが必要な場所は **効く所へ** 移しました: catalog の `EventPricing.loadOnStartup` は読み取り専用の TransactionTemplate、coupon の `getCouponsNotUsed`(コントローラーが呼ぶ入口)に `readOnly`、pay の `updateOutboxStatus`(プロキシのメソッド参照で呼ばれる)に `@Transactional`。
+- ガード **B-108**(`TransactionalProxyGuardTest`)— 全サービスのソースを解析し、① private · static · final ② `@PostConstruct` ③ 呼ぶ側にトランザクションがない、または受け側が別の伝播(REQUIRES_NEW など)を望む自己呼び出しを防ぎます。TransactionTemplate(`execute` · `inTransaction`)に渡したラムダ内の呼び出しと、単に参加する場合(readOnly の違いだけ)は止めません。直す前のコードで流すと上の 16 か所をそのまま見つけます。
+
+**限界**
+- 同じクラスの中だけを見ます — 別の Bean を経由する呼び出し、`self` 注入、継承で入ってくる場合は見ません。
+- 名前 · 引数の数でメソッドを合わせます(型までは見ない)— 同名 · 同じ引数の数のオーバーロードがあれば最初のものとみなします。
+
+**改善点**
+- 呼ぶ側がすでにトランザクションの中にいる自己呼び出し(同じ設定 28 か所 · 受け側が readOnly だけ違う 11 か所 — 参加すると readOnly は無視される)はそのままにしました — 害はありませんが同じ誤解を招きうるので、そのクラスを直すときに一緒に整理します。
+
+→ `TransactionalProxyGuardTest`(B-108) · `EventPricingTest.startupLoadRunsInReadOnlyTransaction`
 
 ---
 

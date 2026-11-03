@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import com.project.catalog_service.model.Category;
 import com.project.catalog_service.model.Subcategory;
 import com.project.catalog_service.repository.jpa.data.CategoryRepository;
@@ -30,8 +29,11 @@ public class ProductWarmUpService {
      * 모든 카테고리/서브카테고리별 상품 목록을 순회하며 캐시를 미리 채웁니다 (Warm-up).
      * Redis에 플래그 키가 없으면 캐시를 생성하고, 있으면 건너뜁니다.
      */
+    // 트랜잭션 없음 — @PostConstruct 는 프록시가 생기기 전에 대상 객체에서 바로 불려 @Transactional 이 적용되지 않는다(B-108).
+    // 예전의 readOnly 는 한 번도 열리지 않았고, 열렸다면 워밍업 전체(카테고리 × 하위 카테고리) 동안 커넥션 하나를 쥐었다 —
+    // 저장소 호출 · productService(프록시)가 각자 짧게 연다.
+    // [JA] @PostConstruct はプロキシ前の対象で呼ばれ、@Transactional は効かない。以前の readOnly は一度も開かれていなかった。
     @PostConstruct
-    @Transactional(readOnly = true)
     public void warmUpProductCachesOnStartup() {
         // 1. Redis에 캐시 초기화 플래그가 있는지 확인
         Boolean isCacheInitialized = redisTemplate.hasKey(PRODUCT_CACHE_INITIALIZED_KEY);

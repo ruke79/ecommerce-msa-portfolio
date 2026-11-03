@@ -768,8 +768,12 @@ public class CartService {
 
     /**
      * 사용자 ID를 통해 카트를 조회합니다. 없으면 null을 반환합니다.
+     *
+     * <p>트랜잭션은 부르는 쪽의 것이다 — private 이라 프록시를 지나지 않는다(B-108). 예전의 {@code @Transactional(readOnly = true)}
+     * 는 한 번도 적용되지 않았다: NOT_SUPPORTED 경로(getCart · getCartForCheckout)에서는 저장소 호출 하나가 자기 트랜잭션으로 돌고,
+     * 줄 · 연관은 {@code findByUserId} 가 함께 읽는다.
+     * <p>[JA] トランザクションは呼び出し側のもの — private なのでプロキシを通らない。以前の readOnly は一度も効いていなかった。
      */
-    @Transactional(readOnly = true)
     private Cart getCartByUserId(long userId) {
         return cartRepository.findByUserId(userId).orElse(null);
     }

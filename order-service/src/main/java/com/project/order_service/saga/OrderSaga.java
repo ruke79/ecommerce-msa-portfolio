@@ -78,7 +78,7 @@ public class OrderSaga {
         this.statusChanger = statusChanger;
     }
 
-    @Transactional(readOnly = true)
+    // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
     private Order getOrderByOrderStatus(Long orderId, OrderStatus orderStatus) {
         log.debug("OrderSaga: Attempting to get order with ID {} and status {}", orderId, orderStatus);
         Optional<Order> order = orderRepository.findByOrderIdAndOrderStatus(orderId, orderStatus);
@@ -91,7 +91,7 @@ public class OrderSaga {
         return null;
     }
 
-    @Transactional(readOnly = true)
+    // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
     private List<OrderProduct> getOrderProductsByOrder(Long orderId) {
         log.debug("OrderSaga: Attempting to get order products for order ID {}", orderId);
         Optional<List<OrderProduct>> orderProductsOptional = orderProductRepository.findByOrder_OrderId(orderId); // 변수명 충돌 방지
@@ -138,7 +138,7 @@ public class OrderSaga {
         }
     }
 
-    @Transactional
+    // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
     private void publishProductStateUpdate(Long orderId) {
         log.debug("OrderSaga: Preparing to publish product state update for order ID {}.", orderId);
         List<OrderProduct> orderProducts = getOrderProductsByOrder(orderId);
@@ -185,7 +185,7 @@ public class OrderSaga {
      * 注文に含まれる行(商品・サイズ・色・数量)を載せて送り、cart-service はそれだけを取り除く。
      * 品目が空で届いた場合(旧い発行元)、cart-service は従来どおり全部空にする。
      */
-    @Transactional
+    // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
     private void publishCartEmptyState(Order order) {
         Long customerId = order.getCustomerId();
         log.debug("OrderSaga: Preparing to publish cart empty state for customer ID {}.", customerId);
@@ -211,7 +211,7 @@ public class OrderSaga {
         return request;
     }
 
-    @Transactional
+    // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
     private Order updateOrderStatus(Order order, OrderStatus orderStatus) {
         log.debug("OrderSaga: Updating order {} status from {} to {}.", order.getOrderId(), order.getOrderStatus(), orderStatus);
         if (orderStatus == OrderStatus.PAID) {

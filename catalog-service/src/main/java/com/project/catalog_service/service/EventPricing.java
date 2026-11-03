@@ -52,6 +52,17 @@ public class EventPricing {
      */
     private final ProductRepository productRepository;
 
+    /** 기동 때 한 번(loadOnStartup) 쓰는 읽기 전용 트랜잭션. 세터 — 생성자를 쓰는 테스트가 많다. */
+    private org.springframework.transaction.support.TransactionTemplate readOnlyTx;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        org.springframework.transaction.support.TransactionTemplate template =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        template.setReadOnly(true);
+        this.readOnlyTx = template;
+    }
+
     /**
      * productId → 기획전 할인율(퍼센트).
      *
@@ -96,7 +107,12 @@ public class EventPricing {
     @jakarta.annotation.PostConstruct
     void loadOnStartup() {
         try {
-            refresh();
+            // @PostConstruct 는 프록시 밖이라 refresh() 의 @Transactional 이 적용되지 않는다(자기 호출, B-108) — 스케줄러와 같은
+            // 읽기 전용 트랜잭션을 템플릿으로 연다(테스트처럼 관리자가 없으면 그대로).
+            // [JA] @PostConstruct はプロキシの外 — refresh() の @Transactional が効かないのでテンプレートで開く。
+            org.springframework.transaction.support.TransactionOperations tx = readOnlyTx != null ? readOnlyTx
+                    : org.springframework.transaction.support.TransactionOperations.withoutTransaction();
+            tx.execute(status -> refresh());
         } catch (RuntimeException e) {
             log.warn("기동 시 기획전 할인을 읽지 못했다 — 스케줄러가 다시 읽는다 ({})", e.getClass().getSimpleName());
         }

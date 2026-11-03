@@ -38,6 +38,7 @@
 | 18 | 데이터 모델 | 컴파일되고 테스트도 통과하는데 데이터가 틀렸다 — 모델 계층 점검 | *Designing Data-Intensive Applications* |
 | 19 | 이벤트 · 읽기 모델 | 상태는 바뀌는데 "언제 · 왜" 는 로그뿐이었다 — 상태 변경 이벤트와 읽기 모델(CQRS) | *Designing Data-Intensive Applications* |
 | 20 | 성능 | 실습에서는 1초, 운영 200만 상품에서는 42초 — 필터 검색의 개수 세기 | *PostgreSQL: Up and Running* |
+| 21 | 트랜잭션 | `@Transactional` 이 붙어 있는데 한 번도 적용되지 않았다 — private · `@PostConstruct` · 자기 호출 | Spring Framework 레퍼런스(Data Access) |
 
 ---
 
@@ -601,6 +602,31 @@
 - 측정용 데이터 규모를 운영과 맞춥니다 — 실습의 100만 · 1,000만 측정(docs/83)은 있었지만 운영 DB 의 실제 규모를 확인하지 않았습니다.
 
 → [docs/83 §2.8](83-load-test.ko.md) · `SearchSkuFilterScaleTest`
+
+---
+
+## 21. `@Transactional` 이 붙어 있는데 한 번도 적용되지 않았다 — private · `@PostConstruct` · 자기 호출
+
+**📖 참고** — Spring Framework 레퍼런스, Data Access › Transaction Management › "Using `@Transactional`". 프록시 방식에서는 **밖에서 프록시를 지나 들어온 호출만** 가로챈다는 주의(자기 호출 · 초기화 콜백)를 그대로 코드 전체에 대 봤습니다.
+
+**문제**
+- 2026-11-03, 아홉 서비스의 `@Transactional` **312곳**을 JavaParser 로 전부 읽었습니다(2026-10-25 에 package-private `@Transactional` 이 Spring 6 CGLIB 에서 동작하는 것은 확인했고, 남은 것은 프록시가 아예 닿지 않는 자리였습니다).
+- **private 6곳**(cart `getCartByUserId`, order `OrderSaga` 다섯) — 프록시가 가로챌 수 없습니다. **`@PostConstruct` 1곳**(catalog 상품 캐시 워밍업) — 프록시가 생기기 전에 대상 객체에서 바로 불립니다. **받는 쪽 설정을 건너뛴 자기 호출 9곳** — 부르는 쪽에 트랜잭션이 없거나 NOT_SUPPORTED 인데, 같은 클래스의 `@Transactional` 메서드를 `foo()` 로 불러 그 설정이 무시됐습니다(catalog 기동 때 기획전 할인 읽기, coupon 쿠폰 목록 · 견적의 대상 조회, pay 아웃박스 상태 갱신, cart 체크아웃 조회).
+- 데이터가 틀어진 곳은 없었습니다 — 모두 저장소 호출 하나(자기 트랜잭션으로 돈다)이거나, 쓰기가 이미 TransactionTemplate · 입구의 트랜잭션 안이었습니다. 위험은 **읽는 사람이 트랜잭션이 있다고 믿는 것**입니다: 그 메서드에 쓰기를 하나 더하면 원자성이 없는데 코드는 있는 것처럼 보입니다.
+
+**처리한 내용**
+- 효과가 없던 어노테이션은 지우고 "트랜잭션은 부르는 쪽의 것" 이라고 적었습니다(private 여섯, 워밍업 — 워밍업은 열렸다면 오히려 커넥션 하나를 내내 쥐었습니다, coupon 의 안쪽 조회 셋).
+- 트랜잭션이 필요한 자리는 **적용되는 곳으로** 옮겼습니다: catalog `EventPricing.loadOnStartup` 은 읽기 전용 TransactionTemplate, coupon `getCouponsNotUsed`(컨트롤러가 부르는 입구)에 `readOnly`, pay `updateOutboxStatus`(프록시의 메서드 참조로 불린다)에 `@Transactional`.
+- 가드 **B-108**(`TransactionalProxyGuardTest`) — 모든 서비스의 소스를 파싱해 ① private · static · final ② `@PostConstruct` ③ 부르는 쪽에 트랜잭션이 없거나 받는 쪽이 다른 전파(REQUIRES_NEW 등)를 원하는 자기 호출을 막습니다. TransactionTemplate(`execute` · `inTransaction`)에 넘긴 람다 안의 호출과, 그냥 합류하는 경우(readOnly 차이만)는 막지 않습니다. 고치기 전 코드로 돌리면 위 16곳을 그대로 찾습니다.
+
+**한계**
+- 같은 클래스 안만 봅니다 — 다른 빈을 거치는 호출, `self` 주입, 상속으로 들어오는 경우는 보지 않습니다.
+- 이름 · 인자 수로 메서드를 맞춥니다(타입까지는 보지 않는다) — 같은 이름 · 같은 인자 수의 오버로드가 있으면 첫 번째로 봅니다.
+
+**개선할 점**
+- 부르는 쪽이 이미 트랜잭션 안인 자기 호출(같은 설정 28곳 · 받는 쪽이 readOnly 만 다른 11곳 — 합류하면 readOnly 는 무시된다)은 그대로 뒀습니다 — 해롭지 않지만 같은 오해를 부를 수 있어, 그 클래스를 고칠 때 함께 정리합니다.
+
+→ `TransactionalProxyGuardTest`(B-108) · `EventPricingTest.startupLoadRunsInReadOnlyTransaction`
 
 ---
 

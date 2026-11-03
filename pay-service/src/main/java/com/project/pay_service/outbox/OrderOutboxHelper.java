@@ -107,6 +107,9 @@ public class OrderOutboxHelper {
         }
     }
 
+    // 트랜잭션은 이 입구에서 — PaymentService 가 프록시의 메서드 참조로 부른다. 예전에는 여기에 없고 안쪽 this.save() 에만 있어
+    // 자기 호출이라 적용되지 않았다(저장소 save 의 자체 트랜잭션으로만 돌았다, B-108).
+    @Transactional
     public void updateOutboxStatus(OrderOutboxEvent outboxEvent, OutboxStatus outboxStatus) {
         outboxEvent.setOutboxStatus(outboxStatus);
         this.save(outboxEvent);
