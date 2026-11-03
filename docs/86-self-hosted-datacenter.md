@@ -129,7 +129,7 @@ flowchart LR
 | 3 | Mongo 単一(本番は Atlas) | レプリカセット 3 |
 | 4 | PG はマネージド前提、WAL は同じボリューム | Patroni + VIP、WAL は別の機器へ。プーラーを使うなら transaction モード禁止(`ops/25` の警告) |
 | 5 | S3 クライアントにエンドポイントの上書きがない(`AmazonS3Config` — region だけ) | MinIO へ移すならコード修正(endpoint + path-style)。S3 を使い続けるなら不要 |
-| 6 | eureka · chat は必ず 1 個([docs/21](21-horizontal-scaling.md)) | 機器を増やしても単一障害点は残る |
+| 6 | eureka は必ず 1 個([docs/21](21-horizontal-scaling.md))— chat は 2026-11-01 に Redis のファンアウトで 1 〜 3(§2-1) | 機器を増やしても単一障害点は残る(eureka) |
 | 7 | actuator がアプリと同じポート(管理ポートの分離なし) | ネットワークで分けられない — ゲートウェイの遮断だけに頼る |
 | 8 | 本番イメージは Ampere(arm64)用 | x86 サーバーなら `ops/19 --platform linux/amd64` |
 

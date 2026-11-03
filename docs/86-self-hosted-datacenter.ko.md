@@ -129,7 +129,7 @@ flowchart LR
 | 3 | Mongo 단일(운영은 Atlas) | 레플리카 셋 3 |
 | 4 | PG 관리형 전제, WAL 은 같은 볼륨 | Patroni + VIP, WAL 은 다른 장비로. 풀러를 쓰면 transaction 모드 금지(`ops/25` 경고) |
 | 5 | S3 클라이언트에 엔드포인트 override 없음(`AmazonS3Config` — region 만) | MinIO 로 옮기면 코드 수정(endpoint + path-style). S3 를 계속 쓰면 불필요 |
-| 6 | eureka · chat 은 반드시 1개([docs/21](21-horizontal-scaling.ko.md)) | 장비를 늘려도 단일 장애점은 남는다 |
+| 6 | eureka 는 반드시 1개([docs/21](21-horizontal-scaling.ko.md)) — chat 은 2026-11-01 Redis 팬아웃으로 1 ~ 3(§2-1) | 장비를 늘려도 단일 장애점은 남는다(eureka) |
 | 7 | actuator 가 앱과 같은 포트(관리 포트 분리 없음) | 네트워크로 나눌 수 없다 — 게이트웨이 차단에만 기댄다 |
 | 8 | 운영 이미지는 Ampere(arm64)용 | x86 서버면 `ops/19 --platform linux/amd64` |
 

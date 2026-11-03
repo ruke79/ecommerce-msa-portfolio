@@ -606,12 +606,13 @@ class ConfigurationGuardrailTest {
                 .isEmpty();
     }
 
-    /** 파드에 상태를 두기 때문에 수평 확장하면 <b>기능이 깨지는</b> 서비스. docs/21 참조. */
+    /**
+     * 파드에 상태를 두기 때문에 수평 확장하면 <b>기능이 깨지는</b> 서비스. docs/21 참조.
+     * chat-service 는 2026-11-01 에 빠졌다 — 구독자에게 보내는 것을 Redis 팬아웃으로 모든 파드에 퍼뜨린다(StompFanout, B-107).
+     */
     private static final Map<String, String> SINGLETON_SERVICES = Map.of(
             "eureka-server",
-            "standalone 설정(register-with-eureka=false)이라 2개면 서로 모르는 레지스트리 두 개가 된다",
-            "chat-service",
-            "STOMP 브로커가 인메모리(enableSimpleBroker)라 다른 파드가 소비한 메시지를 구독자가 못 받는다");
+            "standalone 설정(register-with-eureka=false)이라 2개면 서로 모르는 레지스트리 두 개가 된다");
 
     @Test
     @DisplayName("B-34: 수평 확장이 불가능한 서비스는 레플리카 1 + HPA 대상 제외여야 한다")
@@ -651,8 +652,40 @@ class ConfigurationGuardrailTest {
 
         assertThat(offenders)
                 .as("이 서비스들을 늘리려면 먼저 상태를 파드 밖으로 빼야 한다 "
-                        + "(브로커 릴레이 / peer-aware Eureka). 그 전까지는 늘리면 조용히 깨진다")
+                        + "(peer-aware Eureka). 그 전까지는 늘리면 조용히 깨진다")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("B-107: chat 이 구독자에게 보내는 곳은 StompFanout 하나 — 직접 보내면 다른 파드의 구독자가 못 받는다")
+    void chatSendsToSubscribersOnlyThroughFanout() throws IOException {
+        // chat-service 는 여러 파드다(2026-11-01, docs/21 §2). 브로커는 여전히 파드마다의 인메모리(enableSimpleBroker)이고,
+        // Kafka 컨슈머 그룹은 메시지를 파드 하나에만 준다 — 그 파드가 SimpMessagingTemplate 으로 직접 보내면 그 파드에 붙은
+        // 사람만 받는다(파드 둘이면 절반이 조용히 못 받는다). 그래서 보내기는 StompFanout(Redis pub/sub → 모든 파드) 하나로.
+        // [JA] chat の購読者への送信は StompFanout だけ — 直接送ると別の Pod の購読者に届かない。
+        Path src = repoRoot().resolve("chat-service/src/main/java");
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> files = Files.walk(src)) {
+            for (Path f : files.filter(p -> p.toString().endsWith(".java")).sorted().toList()) {
+                if (f.getFileName().toString().equals("StompFanout.java")) {
+                    continue;
+                }
+                List<String> lines = Files.readAllLines(f, StandardCharsets.UTF_8);
+                for (int i = 0; i < lines.size(); i++) {
+                    String l = lines.get(i).strip();
+                    if (l.startsWith("//") || l.startsWith("*")) {
+                        continue;
+                    }
+                    if (l.matches(".*\\b(SimpMessageSendingOperations|SimpMessagingTemplate)\\b.*") && !l.startsWith("import ")
+                            || l.matches(".*\\.convertAndSend(ToUser)?\\s*\\(.*") && !l.contains("redis.")) {
+                        offenders.add(repoRoot().relativize(f) + ":" + (i + 1) + "  " + l);
+                    }
+                }
+            }
+        }
+        assertThat(offenders).as("구독자에게는 StompFanout.send(주소, 페이로드) 로 보낸다(chat-service/…/message/fanout)").isEmpty();
+        String config = Files.readString(src.resolve("com/project/chat_service/message/fanout/StompFanoutConfig.java"), StandardCharsets.UTF_8);
+        assertThat(config).as("받는 쪽은 스레드 하나로 — 기본 실행기는 메시지마다 스레드라 순서가 뒤섞인다").contains("setTaskExecutor(");
     }
 
     /** 베이스 매니페스트가 배포하는 서비스 = {@code image: REGISTRY_PLACEHOLDER/ecommerce-msa/<이름>}. */

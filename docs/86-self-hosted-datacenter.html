@@ -401,7 +401,7 @@ footer p { max-width: none; }
         <tr><td class="num">3</td><td>Mongo 単一(本番は Atlas)<span class="src">docs/23</span></td><td>レプリカセット 3</td></tr>
         <tr><td class="num">4</td><td>PG はマネージド前提、WAL は同じボリュームに<span class="src">docs/23 · ops/29</span></td><td>Patroni + VIP、WAL は別の機器へ。プーラーを使うならトランザクションモード禁止</td></tr>
         <tr><td class="num">5</td><td>S3 クライアントにエンドポイントの上書きがない(region だけ設定)<span class="src">catalog-service/…/AmazonS3Config.java</span></td><td>MinIO へ移すならコード修正(endpoint + path-style)。S3 を使い続けるなら不要</td></tr>
-        <tr><td class="num">6</td><td>eureka · chat は必ず 1 個<span class="src">docs/21</span></td><td>機器を増やしても単一障害点として残る</td></tr>
+        <tr><td class="num">6</td><td>eureka は必ず 1 個 — chat は 2026-11-01 に Redis のファンアウトで 1 〜 3<span class="src">docs/21 §2-1</span></td><td>機器を増やしても単一障害点として残る(eureka)</td></tr>
         <tr><td class="num">7</td><td>actuator がアプリと同じポート(管理ポートの分離は未実装)<span class="src">docs/57</span></td><td>ネットワークで分離できない。ゲートウェイの遮断だけに頼る</td></tr>
         <tr><td class="num">8</td><td>本番イメージは Ampere(arm64)用<span class="src">ops/19 · docs/71</span></td><td>x86 サーバーなら <code>ops/19 --platform linux/amd64</code> でビルド</td></tr>
       </tbody>

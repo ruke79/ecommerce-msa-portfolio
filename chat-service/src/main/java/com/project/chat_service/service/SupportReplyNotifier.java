@@ -5,9 +5,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +36,9 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>같은 상담에 {@link #THROTTLE} 안에 이미 보냈다 — 상담원이 세 줄로 나눠 답하면 알림도 세 통이 된다</li>
  * </ul>
  *
+ * <p>"이미 보냈다" 는 Redis 키 {@code chat:support-reply:<상담>}(SET NX · {@link #THROTTLE})로 정한다 — 파드가 여럿이라(docs/21 §2)
+ * 메모리에 두면 같은 상담의 답변을 서로 다른 파드가 소비할 때 알림이 파드 수만큼 갔다. Redis 에 닿지 못하면 예전처럼 이 파드의 메모리로.
+ *
  * <p>친구 채팅의 {@code chat} 토픽(Avro)에 수신자를 더하지 않은 이유: 필드를 더하면 스키마 버전과 이력, 한 릴리스
  * 동안의 옛 스키마 쓰기가 따라온다(docs/55). 상담 알림은 상담에만 있는 일이라 작은 토픽 하나로 뗀다.
  */
@@ -42,21 +48,31 @@ public class SupportReplyNotifier {
 
     public static final String TOPIC = "support-reply";
     static final Duration THROTTLE = Duration.ofSeconds(60);
+    static final String THROTTLE_KEY_PREFIX = "chat:support-reply:";
 
     private final SupportThreadRepository threads;
     private final SupportPresence presence;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final StringRedisTemplate redis;
     private final Map<Long, Instant> lastSent = new ConcurrentHashMap<>();
     private Clock clock = Clock.systemUTC();
 
+    /** 이 파드의 메모리로만 거르는 판(테스트 · Redis 없음). */
+    public SupportReplyNotifier(SupportThreadRepository threads, SupportPresence presence,
+            KafkaTemplate<String, String> kafkaTemplate, ObjectMapper objectMapper) {
+        this(threads, presence, kafkaTemplate, objectMapper, null);
+    }
+
+    @Autowired
     public SupportReplyNotifier(SupportThreadRepository threads, SupportPresence presence,
             @Qualifier("supportEventKafkaTemplate") KafkaTemplate<String, String> kafkaTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper, StringRedisTemplate redis) {
         this.threads = threads;
         this.presence = presence;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
+        this.redis = redis;
     }
 
     void setClock(Clock clock) {
@@ -78,13 +94,10 @@ public class SupportReplyNotifier {
             return;
         }
         Instant now = Instant.now(clock);
-        Instant previous = lastSent.get(threadId);
-        if (previous != null && previous.plus(THROTTLE).isAfter(now)) {
+        String token = claim(threadId, now);
+        if (token == null) {
             return;
         }
-        // 창이 지난 항목은 지운다 — 예전에는 파드 수명 동안 지금까지 본 모든 상담 번호가 쌓였다. 남는 것은 최근 60초에 알린 상담뿐.
-        lastSent.values().removeIf(sent -> !sent.plus(THROTTLE).isAfter(now));
-        lastSent.put(threadId, now);
 
         Map<String, Object> event = new LinkedHashMap<>();
         event.put("receiverId", customerId);
@@ -99,19 +112,56 @@ public class SupportReplyNotifier {
                         //    60초 동안 다음 답변의 알림도 막혔다. 동기 실패와 같이 기록을 지우고 남긴다.
                         // [JA] 以前は結果を見ず、非同期の失敗は痕跡がなく、送信済み記録が残って 60 秒間次の通知も止まった。
                         if (ex != null) {
-                            failed(threadId, now, ex);
+                            failed(threadId, now, token, ex);
                         }
                     });
         } catch (JsonProcessingException | RuntimeException e) {
             // 알림은 부가 기능이다 — 상담 메시지의 저장·전달을 되돌리지 않는다.
-            failed(threadId, now, e);
+            failed(threadId, now, token, e);
         }
     }
 
-    private void failed(Long threadId, Instant now, Throwable e) {
-        lastSent.remove(threadId, now);
+    /** 이 상담의 알림을 지금 보내도 되는가 — 되면 기록을 남기고 그 표(token)를, 창 안이면 null. */
+    private String claim(Long threadId, Instant now) {
+        if (redis != null) {
+            String token = UUID.randomUUID().toString();
+            try {
+                Boolean ok = redis.opsForValue().setIfAbsent(THROTTLE_KEY_PREFIX + threadId, token, THROTTLE);
+                return Boolean.TRUE.equals(ok) ? token : null;
+            } catch (RuntimeException e) {
+                log.debug("상담 알림 중복 억제 — Redis 에 닿지 못해 이 파드의 메모리로 ({})", e.getClass().getSimpleName());
+            }
+        }
+        Instant previous = lastSent.get(threadId);
+        if (previous != null && previous.plus(THROTTLE).isAfter(now)) {
+            return null;
+        }
+        // 창이 지난 항목은 지운다 — 예전에는 파드 수명 동안 지금까지 본 모든 상담 번호가 쌓였다. 남는 것은 최근 60초에 알린 상담뿐.
+        lastSent.values().removeIf(sent -> !sent.plus(THROTTLE).isAfter(now));
+        lastSent.put(threadId, now);
+        return LOCAL;
+    }
+
+    /** 메모리 판의 표 — Redis 의 표와 섞이지 않는다. */
+    private static final String LOCAL = "local";
+
+    private void failed(Long threadId, Instant now, String token, Throwable e) {
+        if (LOCAL.equals(token)) {
+            lastSent.remove(threadId, now);
+        } else if (redis != null) {
+            try {
+                // 내 표일 때만 지운다 — 그사이 창이 지나 다른 파드가 새로 잡은 기록을 지우지 않게.
+                redis.execute(RELEASE, java.util.List.of(THROTTLE_KEY_PREFIX + threadId), token);
+            } catch (RuntimeException re) {
+                log.debug("상담 알림 기록을 지우지 못했다 — {}초 뒤 풀린다", THROTTLE.toSeconds());
+            }
+        }
         log.warn("상담 답변 알림 발행 실패: threadId={} ({})", threadId, e.getClass().getSimpleName());
     }
+
+    private static final org.springframework.data.redis.core.script.RedisScript<Long> RELEASE =
+            new org.springframework.data.redis.core.script.DefaultRedisScript<>(
+                    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", Long.class);
 
     /** 테스트용 — 알림 기록이 남은 상담 수. */
     int trackedThreads() {

@@ -64,7 +64,7 @@ flowchart TB
 | 검색 | PG `LIKE` · EXISTS(드문 조건 503) | **OpenSearch** — 이미 있는 플래그 `catalog.search-engine` 을 켠다([docs/74](74-feature-flags.ko.md)) | 드문 · 0건 조합의 503 과 패싯 개수를 근본적으로 푼다([docs/85 §8](85-release-deploy-runbook.ko.md) ④) |
 | 메시지 | Kafka 브로커 1 · RF 1 | **MSK 브로커 3+(3 AZ)**, RF 3, `min.insync.replicas=2`, 토픽 미리 생성, 파티션은 처리량에 맞춰 | 아웃박스 · 사가가 Kafka 에 기댄다 — 가장 먼저 견고해져야 한다 |
 | 캐시 | Redis 1대 | **ElastiCache 클러스터 모드 · Multi-AZ** | 유입 제한 · 장바구니 · 로그인 잠금이 Redis 를 쓴다. 유입 제한은 fail-open 이라 장애 때 통과된다([docs/85 §7-1](85-release-deploy-runbook.ko.md)) |
-| chat | 인메모리 STOMP(1개 고정) | Redis pub/sub 팬아웃 또는 Amazon MQ 브로커 릴레이로 바꾼 뒤 여러 개 | 지금 구조로는 늘릴 수 없다([docs/21](21-horizontal-scaling.ko.md)) |
+| chat | 인메모리 STOMP + Redis 팬아웃(2026-11-01 — 1 ~ 3) | 그대로 — Redis 를 ElastiCache 로 | 이미 늘릴 수 있다([docs/21 §2-1](21-horizontal-scaling.ko.md)) |
 | 이미지 · 프론트 | S3 직접 · nginx 파드 | **S3 + CloudFront(OAC)**, 프론트도 S3 정적 배포 | 바이트를 앱 · 회선에서 뺀다 |
 | 비밀 · 신원 | k8s Secret, 자체 CA mTLS | **Secrets Manager + IRSA**, mTLS 는 ACM Private CA 또는 서비스 메시 | 스토어 비밀번호 교체(ops/59) 같은 수작업을 줄인다 |
 | 관측 | 노드 위 docker compose | Managed Prometheus · Grafana, 로그는 OpenSearch 나 CloudWatch, 추적은 X-Ray 또는 Tempo | 장애 때도 보이게 클러스터 밖에 |

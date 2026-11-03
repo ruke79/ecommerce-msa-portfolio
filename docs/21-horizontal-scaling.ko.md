@@ -90,12 +90,32 @@ AssertionError: 두 레플리카가 같은 아웃박스 이벤트를 집으면 �
 
 | 서비스 | 왜 안 되나 | 늘리려면 |
 |---|---|---|
-| **chat-service** | STOMP 브로커가 인메모리(`enableSimpleBroker`)다. 게다가 Kafka 컨슈머 그룹은 메시지를 파드 **하나에만** 준다. A 파드에 접속한 사용자는 B 파드가 소비한 메시지를 못 받는다 | 브로커 릴레이(RabbitMQ/ActiveMQ) 또는 Redis pub/sub 팬아웃 |
+| **chat-service** | STOMP 브로커가 인메모리(`enableSimpleBroker`)다. 게다가 Kafka 컨슈머 그룹은 메시지를 파드 **하나에만** 준다. A 파드에 접속한 사용자는 B 파드가 소비한 메시지를 못 받는다 | ✅ **2026-11-01 Redis pub/sub 팬아웃으로 풀었다 — §2-1** |
 | **eureka-server** | standalone 설정(`register-with-eureka: false`)이다. 2개면 서로를 모르는 **독립 레지스트리 두 개**가 되어, 어느 파드에 등록됐는지에 따라 디스커버리 결과가 갈린다 | peer-aware 설정 + 안정적 DNS(StatefulSet) |
 
 둘 다 **조용히** 깨진다. 파드는 Running 이고 로그도 깨끗한데 사용자만 메시지를 못 받는다.
 그래서 주석으로 남기는 것으로는 부족하다고 보고 가드레일 **B-34** 가 빌드에서 막는다 —
 레플리카가 1이 아니거나 HPA 대상에 들어가면 실패한다.
+
+### 2-1. chat — Redis 팬아웃으로 늘릴 수 있게 됐다 (2026-11-01)
+
+브로커는 그대로 파드마다의 인메모리(`enableSimpleBroker`)이고, 바꾼 것은 **뿌리는 경로** 하나다.
+
+| 무엇 | 예전(1개 고정) | 지금 |
+|---|---|---|
+| 친구 · 상담 메시지 | Kafka 를 소비한 파드가 자기 구독자에게만 `convertAndSend` | 소비한 파드가 Redis 채널 `chat:stomp-fanout` 에 한 번 싣고, **모든 파드**(자기 포함)가 받아 자기 구독자에게(`StompFanout`) |
+| 상담 데스크 알림 | 같은 방식 — 다른 파드의 상담원은 못 받음 | 같은 팬아웃 |
+| 저장 | 컨슈머 그룹 하나 — 메시지당 한 번 | 그대로(뿌리기만 바뀌었다 — 그룹을 파드마다 나누면 저장도 파드 수만큼 된다) |
+| 상담 presence(보고 있으면 답변 알림을 안 보냄) | 파드 메모리 | 메모리 + Redis 해시 `chat:support-presence:<파드>`(90초 수명 · 30초마다 갱신) — 다른 파드의 구독도 본다 |
+| 답변 알림 60초 억제 | 파드 메모리(파드마다 따로 세서 파드 수만큼 갈 수 있었다) | Redis `SET NX` `chat:support-reply:<상담>` |
+
+- **같은 JSON** — 페이로드는 STOMP 변환기(Spring Boot 의 ObjectMapper)로 만든 JSON 바이트를 그대로 싣고 그대로 보낸다. JSON 트리로 옮기면 시각의 숫자 표현이 바뀌었다(`StompFanoutTest` 가 잡았다).
+- **순서** — 받는 쪽은 스레드 하나로 차례대로 보낸다(`StompFanoutConfig`). 리스너 컨테이너의 기본 실행기는 메시지마다 스레드라 순서가 뒤섞인다(변이 확인: 300개 순서 시험이 실패).
+- **Redis 가 안 될 때** — 발행이 실패하면 소비한 파드의 구독자에게라도 보내고 센다(`chat_stomp_fanout_failed_total`, 경보 `ChatFanoutPublishFailed`). presence · 억제는 파드 메모리로 물러난다(틀려도 "알림 한 통 더" 쪽). pub/sub 은 최대 한 번 전달이라 구독이 잠깐 끊긴 파드는 그동안의 실시간 메시지를 놓친다 — 메시지는 먼저 저장되므로 다시 열면 이력에 있다.
+- **배치** — `k8s/46` 은 1 로 시작, HPA 1 ~ 3(`k8s/70`). 최소 1 인 이유: SockJS 의 WebSocket 밖 폴백(xhr)은 요청이 같은 파드로 가야 하는데 게이트웨이에 고정 세션이 없다 — 파드가 둘 이상이면 그 사용자는 재연결을 되풀이할 수 있다(WebSocket 으로 붙는 대부분은 무관).
+- **가드** — B-34 의 1개 고정 목록에서 chat-service 를 뺐다(eureka-server 만 남는다). 대신 **B-107**: chat 에서 구독자에게 보내는 곳은 `StompFanout` 하나(직접 `convertAndSend` · `SimpMessagingTemplate` 금지) · 받는 쪽은 스레드 하나 실행기.
+- **커넥션** — chat 도 최대 3 이 되어 최악 10 × 5 × 3 = **150**(예전 chat 1 고정일 때 140). `max_connections` 300 · 가드 B-32(≤ 200) 안이다.
+- **시험** — `ChatScaleOutRedisTest`(컨테이너, 실제 Redis 를 "파드" 둘이 같이 쓴다): 한 파드가 보낸 300개를 두 파드가 모두 순서대로, A 파드에서 보고 있으면 B 가 안다(해지 · 끊김 · 종료 · TTL), 같은 상담 답변을 두 파드가 소비해도 알림 한 통. 각각 되돌리면 실패하는 것을 확인했다.
 
 ## 3. 아직 남은 것 — 소비 측 멱등성
 
@@ -151,7 +171,7 @@ if (authorizationHeader != null) {
 | 서비스 | replicas | HPA |
 |---|---|---|
 | gateway-server, user, catalog, cart, order, pay, coupon, frontend | **2** | min 2 / max 3 |
-| chat-service | 1 (고정) | 대상 아님 |
+| chat-service | 1 | min 1 / max 3(2026-11-01 — §2-1) |
 | eureka-server | 1 (고정) | 대상 아님 |
 
 커넥션 총합은 가드레일 B-32 가 계속 검증한다 — HPA 최대치가 3 그대로이므로 산술은 변하지 않았다.
@@ -161,6 +181,6 @@ if (authorizationHeader != null) {
 | 항목 | 상태 |
 |---|---|
 | order·pay·cart·chat 의 멱등 원장 | 🟠 §3 |
-| chat 브로커 릴레이 (그 뒤 chat 확장) | 🟠 |
+| chat 브로커 릴레이 (그 뒤 chat 확장) | ✅ 2026-11-01 Redis 팬아웃(§2-1) |
 | peer-aware Eureka (또는 k8s 네이티브 디스커버리로 이전) | 🟡 |
 | 아웃박스 발행 지연·재시도 지표 | 🟡 현재는 로그만 |

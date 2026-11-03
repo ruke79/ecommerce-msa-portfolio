@@ -43,9 +43,12 @@ class WebSocketWiringTest {
                     bf.registerSingleton("chatMemberRepository", mock(ChatMemberRepository.class));
                     bf.registerSingleton("messageProducer", mock(MessageProducer.class));
                     bf.registerSingleton("sequenceGeneratorService", mock(SequenceGeneratorService.class));
-                    bf.registerSingleton("liveSessionRegistry", new LiveSessionRegistry(
-                            mock(org.springframework.data.redis.core.StringRedisTemplate.class)));
+                    org.springframework.data.redis.core.StringRedisTemplate redis =
+                            mock(org.springframework.data.redis.core.StringRedisTemplate.class);
+                    bf.registerSingleton("stringRedisTemplate", redis);
+                    bf.registerSingleton("liveSessionRegistry", new LiveSessionRegistry(redis));
                 })
+                .withBean(com.project.chat_service.message.fanout.StompFanout.class)
                 .withBean(SupportPresence.class)
                 .withBean(SupportDeskNotifier.class)
                 .withBean(SupportService.class)

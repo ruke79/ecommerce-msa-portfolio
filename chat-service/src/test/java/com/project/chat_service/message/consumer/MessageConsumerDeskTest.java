@@ -10,7 +10,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.messaging.simp.SimpMessageSendingOperations;
 
 import com.project.chat_service.dto.MessageDto;
 import com.project.chat_service.service.ChatService;
@@ -24,7 +23,7 @@ import com.project.common.constants.chat.MessageType;
 @DisplayName("MessageConsumer — 상담 데스크 알림")
 class MessageConsumerDeskTest {
 
-    @Mock SimpMessageSendingOperations template;
+    @Mock com.project.chat_service.message.fanout.StompFanout fanout;
     @Mock ChatService chatService;
     @Mock SupportDeskNotifier deskNotifier;
     @Mock com.project.chat_service.service.SupportReplyNotifier replyNotifier;
@@ -42,6 +41,7 @@ class MessageConsumerDeskTest {
         consumer.receiveMessage(message("support-5", MessageType.TEXT_TALK));
 
         verify(chatService).saveMessage(any());
+        verify(fanout).send(org.mockito.ArgumentMatchers.eq("/sub/chat/room/support-5"), any());
         verify(deskNotifier).notify(5L, SupportDeskNotifier.Kind.MESSAGE, 1001L);
         verify(replyNotifier).onMessage(any());
     }

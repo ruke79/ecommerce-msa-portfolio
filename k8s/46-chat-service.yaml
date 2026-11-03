@@ -9,10 +9,12 @@ metadata:
     # 신원 인증서가 갱신되면(cert-manager — k8s/96) 롤링 재시작 — 자바는 keystore 를 기동할 때만 읽는다. Reloader 가 없으면 아무 일도 없다.
     secret.reloader.stakater.com/reload: "tls-id-chat-service"
 spec:
-  # replicas 는 1 로 유지한다. STOMP 브로커가 **인메모리**이고(enableSimpleBroker),
-  # Kafka 컨슈머 그룹은 메시지를 파드 하나에만 준다. 2개로 올리면 A 파드에 접속한 사용자는
-  # B 파드가 소비한 메시지를 **받지 못한다**. 늘리려면 브로커 릴레이(RabbitMQ/ActiveMQ)나
-  # Redis pub/sub 팬아웃이 먼저다. HPA 대상에서도 빠져 있다(k8s/70-autoscaling.yaml).
+  # 여러 파드가 된다(2026-11-01, docs/21 §2). STOMP 브로커는 여전히 파드마다의 **인메모리**(enableSimpleBroker)이고
+  # Kafka 컨슈머 그룹은 메시지를 파드 하나에만 주지만, 소비한 파드가 Redis 채널(chat:stomp-fanout)에 한 번 싣고 모든 파드가
+  # 받아 자기 구독자에게 보낸다(StompFanout · 가드 B-107). 상담 presence · 답변 알림 중복 억제도 Redis 에 있다.
+  # 시작은 1, 늘리는 것은 HPA(k8s/70 — 1 ~ 3). ⚠️ SockJS 의 WebSocket 밖 폴백(xhr)은 요청이 같은 파드로 가야 해서, 파드가
+  # 둘 이상일 때 그 사용자는 재연결을 되풀이할 수 있다(게이트웨이에 고정 세션 없음 — WebSocket 으로 붙는 대부분은 무관).
+  # [JA] 複数 Pod 可。ブローカーは Pod ごとのインメモリのままだが、Redis のファンアウトですべての Pod の購読者に届く。
   replicas: 1
   selector:
     matchLabels:

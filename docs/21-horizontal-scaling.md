@@ -90,12 +90,32 @@ AssertionError: 두 레플리카가 같은 아웃박스 이벤트를 집으면 �
 
 | サービス | なぜ駄目か | 増やすには |
 |---|---|---|
-| **chat-service** | STOMP ブローカーがインメモリ（`enableSimpleBroker`）である。しかも Kafka コンシューマーグループはメッセージをポッド **1 つにだけ**渡す。A ポッドに接続したユーザーは、B ポッドが消費したメッセージを受け取れない | ブローカーリレー（RabbitMQ/ActiveMQ）または Redis pub/sub ファンアウト |
+| **chat-service** | STOMP ブローカーがインメモリ（`enableSimpleBroker`）である。しかも Kafka コンシューマーグループはメッセージをポッド **1 つにだけ**渡す。A ポッドに接続したユーザーは、B ポッドが消費したメッセージを受け取れない | ✅ **2026-11-01 Redis pub/sub のファンアウトで解決 — §2-1** |
 | **eureka-server** | standalone 設定（`register-with-eureka: false`）である。2 つにすると互いを知らない**独立したレジストリ 2 つ**になり、どのポッドに登録されたかによってディスカバリー結果が分かれる | peer-aware 設定 + 安定した DNS（StatefulSet） |
 
 どちらも**静かに**壊れる。ポッドは Running でログもきれいなのに、ユーザーだけがメッセージを受け取れない。
 そのためコメントで残すだけでは不十分と判断し、ガードレール **B-34** がビルドで止める —
 レプリカが 1 でないか、HPA の対象に入ると失敗する。
+
+### 2-1. chat — Redis のファンアウトで増やせるようになった(2026-11-01)
+
+ブローカーは Pod ごとのインメモリ(`enableSimpleBroker`)のままで、変えたのは**配る経路**だけ。
+
+| 何を | 以前(1 個固定) | 今 |
+|---|---|---|
+| 友だち · 相談のメッセージ | Kafka を消費した Pod が自分の購読者にだけ `convertAndSend` | 消費した Pod が Redis チャネル `chat:stomp-fanout` に一度載せ、**すべての Pod**(自分を含む)が受けて自分の購読者に(`StompFanout`) |
+| 相談デスクの通知 | 同じ方式 — 別の Pod の相談員には届かない | 同じファンアウト |
+| 保存 | コンシューマーグループ一つ — メッセージごとに一度 | そのまま(配るだけが変わった — グループを Pod ごとに分けると保存も Pod 数だけになる) |
+| 相談の presence(見ていれば返信通知を送らない) | Pod のメモリ | メモリ + Redis ハッシュ `chat:support-presence:<Pod>`(90 秒の寿命 · 30 秒ごとに更新)— 別の Pod の購読も見る |
+| 返信通知の 60 秒抑制 | Pod のメモリ(Pod ごとに数え、Pod 数だけ届きえた) | Redis の `SET NX` `chat:support-reply:<相談>` |
+
+- **同じ JSON** — ペイロードは STOMP の変換器(Spring Boot の ObjectMapper)で作った JSON のバイトをそのまま載せ、そのまま送る。JSON ツリーに移すと時刻の数値表現が変わった(`StompFanoutTest` が捕まえた)。
+- **順序** — 受ける側は一本のスレッドで順に送る(`StompFanoutConfig`)。リスナーコンテナの既定の実行器はメッセージごとにスレッドを立て、順序が崩れる(変異確認: 300 件の順序の試験が失敗)。
+- **Redis が駄目なとき** — 発行に失敗したら消費した Pod の購読者にだけでも送って数える(`chat_stomp_fanout_failed_total`、警報 `ChatFanoutPublishFailed`)。presence · 抑制は Pod のメモリに退く(間違えても「通知がもう一通」の側)。pub/sub は最大一回の配信なので、購読が一瞬切れた Pod はその間のリアルタイムのメッセージを取りこぼす — メッセージは先に保存されるので開き直せば履歴にある。
+- **配置** — `k8s/46` は 1 から、HPA 1 〜 3(`k8s/70`)。最小 1 の理由: SockJS の WebSocket 以外のフォールバック(xhr)はリクエストが同じ Pod に行く必要があるが、ゲートウェイに固定セッションがない — Pod が二つ以上だとそのユーザーは再接続を繰り返しうる(WebSocket でつながる大部分は無関係)。
+- **ガード** — B-34 の 1 個固定の一覧から chat-service を外した(eureka-server だけが残る)。代わりに **B-107**: chat で購読者に送る所は `StompFanout` 一つ(直接の `convertAndSend` · `SimpMessagingTemplate` は禁止)· 受ける側は一本のスレッドの実行器。
+- **接続数** — chat も最大 3 になり最悪 10 × 5 × 3 = **150**(以前の chat 1 固定のときは 140)。`max_connections` 300 · ガード B-32(≤ 200)の内側。
+- **試験** — `ChatScaleOutRedisTest`(コンテナ、実際の Redis を「Pod」二つが共有): 一つの Pod が送った 300 件を二つの Pod がすべて順に、A の Pod で見ていれば B が分かる(解除 · 切断 · 終了 · TTL)、同じ相談の返信を二つの Pod が消費しても通知は一通。それぞれ戻すと失敗することを確認した。
 
 ## 3. まだ残っていること — 消費側の冪等性
 
@@ -151,7 +171,7 @@ if (authorizationHeader != null) {
 | サービス | replicas | HPA |
 |---|---|---|
 | gateway-server, user, catalog, cart, order, pay, coupon, frontend | **2** | min 2 / max 3 |
-| chat-service | 1（固定） | 対象外 |
+| chat-service | 1 | min 1 / max 3(2026-11-01 — §2-1) |
 | eureka-server | 1（固定） | 対象外 |
 
 コネクションの総和はガードレール B-32 が引き続き検証する — HPA の最大値が 3 のままなので、計算は変わらない。
@@ -161,6 +181,6 @@ if (authorizationHeader != null) {
 | 項目 | 状態 |
 |---|---|
 | order・pay・cart・chat の冪等台帳 | 🟠 §3 |
-| chat ブローカーリレー（その後 chat を拡張） | 🟠 |
+| chat ブローカーリレー（その後 chat を拡張） | ✅ 2026-11-01 Redis のファンアウト(§2-1) |
 | peer-aware Eureka（または k8s ネイティブのディスカバリーへ移行） | 🟡 |
 | Outbox 発行の遅延・再試行メトリクス | 🟡 現在はログのみ |

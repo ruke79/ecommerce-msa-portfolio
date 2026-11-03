@@ -205,7 +205,7 @@ flowchart LR
 - **트리거**: chat-service를 2개 이상 인스턴스로 확장.
 - **전파**: 인메모리 SimpleBroker는 인스턴스 로컬 → 다른 인스턴스에 붙은 사용자에게 메시지 미전달.
 - **영향**: 채팅 파편화. (참고: 메시지는 Mongo Sink로 영속되지만 실시간 전달은 유실)
-- **현 완화**: 단일 인스턴스 전제. 확장 시 외부 브로커(Redis/RabbitMQ relay) 필요 → 로드맵.
+- **현 완화**: 단일 인스턴스 전제. 확장 시 외부 브로커(Redis/RabbitMQ relay) 필요 → 로드맵. → ✅ 2026-11-01 Redis pub/sub 팬아웃으로 풀었다(docs/21 §2-1).
 
 ### F-8. 상태 저장소 SPOF 🟠
 - **트리거**: 특정 서비스의 단일 PostgreSQL/MongoDB/ES 인스턴스 장애.

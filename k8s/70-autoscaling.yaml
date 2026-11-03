@@ -3,8 +3,6 @@
 # 전제: k3s는 metrics-server를 기본 내장하므로 HPA의 CPU 메트릭이 바로 동작한다.
 #
 # 제외 대상(의도적):
-#  - chat-service: 인메모리 SimpleBroker 기반 STOMP라 스케일아웃 시 인스턴스 간 메시지가
-#    전달되지 않는다(docs/03 F-7). 외부 브로커(Redis/RabbitMQ relay) 도입 전까지 1개 고정.
 #  - eureka-server: 다중 인스턴스는 peer-awareness 상호 설정이 선행돼야 하므로 HPA 부적합.
 #
 # PDB는 maxUnavailable: 1 로 설정한다 — 레플리카 1일 때는 노드 드레인을 막지 않고,
@@ -198,7 +196,7 @@ spec:
 # notification-service 는 수평 확장이 안전하다.
 #  · Kafka 컨슈머 그룹이 하나라 한 메시지는 한 파드만 받는다 (알림 중복 생성 없음)
 #  · SMS 발송은 FOR UPDATE SKIP LOCKED 로 선점한다 (같은 문자가 두 통 가지 않는다)
-# chat-service 와 반대다 — 그쪽은 브로드캐스트가 필요해 확장하면 조용히 깨진다(docs/21 §2).
+# chat-service 는 반대로 브로드캐스트가 필요하다 — 그쪽은 Redis 팬아웃으로 모든 파드에 퍼뜨린다(아래 chat-service, docs/21 §2).
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -246,3 +244,29 @@ metadata:
 spec:
   maxUnavailable: 1
   selector: { matchLabels: { app: delivery-service } }
+---
+# chat-service — 2026-11-01 부터 늘릴 수 있다(docs/21 §2). 예전에는 인메모리 STOMP 브로커 때문에 1개 고정(B-34)이었다.
+#  · 저장은 Kafka 컨슈머 그룹 하나에서 메시지당 한 번, 구독자에게는 Redis 채널로 모든 파드에(StompFanout · B-107)
+#  · 상담 presence · 답변 알림 60초 억제도 Redis(파드마다의 메모리가 아니다)
+# 최소 1 — SockJS 의 WebSocket 밖 폴백(xhr)은 같은 파드로 가야 해서, 부하가 없을 때는 하나로 둔다(k8s/46 주석).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chat-service
+  namespace: ecommerce
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: chat-service }
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: chat-service
+  namespace: ecommerce
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: chat-service } }
