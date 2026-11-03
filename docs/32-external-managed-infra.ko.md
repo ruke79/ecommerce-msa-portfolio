@@ -285,7 +285,7 @@ value: "jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/userdb?sslmode=requi
 | 키 | 왜 |
 |---|---|
 | `POSTGRES_HOST` / `POSTGRES_PORT` | 관리형 엔드포인트 |
-| `DB_POOL_SIZE: 3` | 10 데이터소스 × 3 × 레플리카 3 = 90. 기본값 5면 150이라 무료 티어 한도를 넘는다 |
+| `DB_POOL_SIZE: 3` | 10 데이터소스 × 3 × 레플리카 3 = 90. 기본값 5면 150이라 무료 티어 한도를 넘는다(단순 상한 — chat 은 1개 고정이라 정확히는 (9 × 3 + 1) × 5 = 140 와 같은 계산) |
 | `SPRING_DATA_REDIS_*` | 관리형으로 옮길 때만. 기본 구성은 클러스터 안 Redis 라 그대로 둔다(§6) |
 | `SPRING_DATA_REDIS_SSL_{TRUSTSTORE,KEYSTORE,CACERT}: ""` | **§4의 핵심.** 비워야 공개 CA 로 검증한다 |
 | `SPRING_DATA_MONGODB_{CACERT,KEYSTORE}: ""` | 같은 이유 |

@@ -2,7 +2,7 @@
 
 [日本語](09-postgresql-partitioning-sharding.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** `ddl-auto` 는 `validate` 로 바꿨습니다([docs/20](20-schema-ownership.ko.md)). 월 파티션 자동 생성은 pg_partman 대신 애플리케이션 잡으로 넣었습니다(2026-09-27, [docs/62 §3](62-engineering-casebook.ko.md)).
+> 🕰️ **상태(2026-09-27) — 일부 낡음.** `ddl-auto` 는 `validate` 로 바꿨습니다([docs/20](20-schema-ownership.ko.md)). 월 파티션 자동 생성은 pg_partman 대신 애플리케이션 잡으로 넣었습니다(2026-09-27, [docs/62 §3](62-engineering-casebook.ko.md)). 2026-11-01 정정 세 곳 — DB 는 지금 10개(§1.1 · §1.2), `metadb` 는 쓰이지 않는다(§1.1), catalog 를 파티셔닝에서 뺀 근거 '상품 250건' 은 낡았다(§4.1) — 페더레이션 관점의 정리는 [docs/88](88-federation-tradeoffs.ko.md).
 
 > 작성일: 2026-07-25
 > 대상: `userdb` / `productdb` / `metadb` / `cartdb` / `orderdb` / `paydb` / `coupondb` (+ chat)
@@ -27,7 +27,7 @@
 |---|---|---|
 | `userdb` | user-service | `users` |
 | `productdb` | catalog-service | `product` |
-| `metadb` | catalog-service (Spring Batch 메타데이터) | `BATCH_JOB_*` |
+| `metadb` | catalog-service (~~Spring Batch 메타데이터~~ — **쓰이지 않는다**, 2026-11-01 정정: JobRepository 는 `@Primary`(productdb)를 써서 배치 메타는 productdb 의 `meta` 스키마에 있다 — catalog V3 · [docs/16 §7](16-saga-e2e-and-observability-verification.ko.md). metadb 는 연결 풀만 차지한다) | ~~`BATCH_JOB_*`~~ |
 | `cartdb` | cart-service | `cart` |
 | `orderdb` | order-service | `orders` |
 | `paydb` | pay-service | `pay` |
@@ -45,7 +45,7 @@
 | 스키마 마이그레이션 도구 | ❌ **전무** (Hibernate `ddl-auto` 단독) |
 | 데이터 보존(retention)/아카이빙 정책 | ❌ 전무 |
 
-**핵심**: 논리적으로는 8개로 나뉘어 있지만 **물리적으로는 한 대의 PostgreSQL**입니다. 즉 buffer pool·WAL·CPU·디스크를 8개 서비스가 전부 공유하며, 이 한 대가 죽으면 전 서비스가 정지합니다([`docs/03` F-8](03-architecture-and-reliability.ko.md)).
+**핵심**: 논리적으로는 8개로 나뉘어 있지만(2026-11-01 기준 **10개** — `notificationdb` · `deliverydb` 가 더해졌다, k8s/90 pg-init) **물리적으로는 한 대의 PostgreSQL**입니다. 즉 buffer pool·WAL·CPU·디스크를 8개 서비스가 전부 공유하며, 이 한 대가 죽으면 전 서비스가 정지합니다([`docs/03` F-8](03-architecture-and-reliability.ko.md)).
 
 ### 1.3 유리한 조건 — PK가 TSID다 🎉
 
@@ -238,7 +238,7 @@ P0/P1이 브랜치에 **실제로 적용**되었습니다:
 | `coupon.coupon` | RANGE | `end_date` | 월 | 만료 쿠폰 일괄 정리 |
 | `metadb` `BATCH_JOB_*` | — | — | — | 파티셔닝 대신 **보존 배치**로 정리 |
 | `cart.cart` / `cart_product` | ❌ 안 함 | — | — | 유저당 1건, UPDATE/DELETE 순환 → **파티셔닝보다 autovacuum 튜닝이 답** |
-| catalog 전 테이블 | ❌ 안 함 | — | — | 상품 250건 수준의 **유한** 데이터. 파티셔닝은 순손해 |
+| catalog 전 테이블 | ❌ 안 함 | — | — | 상품 250건 수준의 **유한** 데이터. 파티셔닝은 순손해 — ⚠️ 2026-11-01 정정: 운영은 상품 **200만**(데모 데이터), 실습은 2,000만까지 간다. 그래도 파티셔닝이 답은 아니다 — 아픈 곳은 카테고리 안을 상품마다 EXISTS 로 훑는 질의 모양이고(docs/83 §2.8), 대책은 개수 세기 제거(적용) · 가격 범위 열 + 복합 인덱스(docs/85 §8-1) · 검색 엔진(`catalog.search-engine`)이다([docs/88 §1](88-federation-tradeoffs.ko.md)) |
 | `users.users`, `orders.customer`, `chat.member` | ❌ 안 함(현 단계) | — | — | 유한 증가. 샤딩 단계에서 재검토 |
 
 > **핵심 판단**: 지금 이 프로젝트에서 파티셔닝이 필요한 이유는 "데이터가 커서"가 아니라 **"지울 방법이 없어서"** 입니다. 그래서 아웃박스가 1순위입니다.

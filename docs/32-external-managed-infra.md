@@ -285,7 +285,7 @@ value: "jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/userdb?sslmode=requi
 | キー | なぜ |
 |---|---|
 | `POSTGRES_HOST` / `POSTGRES_PORT` | マネージドのエンドポイント |
-| `DB_POOL_SIZE: 3` | 10 データソース × 3 × レプリカ 3 = 90。デフォルトの 5 だと 150 になり、無料ティアの上限を超える |
+| `DB_POOL_SIZE: 3` | 10 データソース × 3 × レプリカ 3 = 90。デフォルトの 5 だと 150 になり、無料ティアの上限を超える(単純な上限 — chat は 1 個固定なので正確には (9 × 3 + 1) × 5 = 140 と同じ計算) |
 | `SPRING_DATA_REDIS_*` | マネージドに移すときだけ。デフォルト構成はクラスター内の Redis なのでそのままにする（§6） |
 | `SPRING_DATA_REDIS_SSL_{TRUSTSTORE,KEYSTORE,CACERT}: ""` | **§4 の核心。** 空にしてはじめて公開 CA で検証する |
 | `SPRING_DATA_MONGODB_{CACERT,KEYSTORE}: ""` | 同じ理由 |

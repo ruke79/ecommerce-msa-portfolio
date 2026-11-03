@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](09-postgresql-partitioning-sharding.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** `ddl-auto` は `validate` に変更しました（[docs/20](20-schema-ownership.md)）。月次パーティションの自動作成は、pg_partman の代わりにアプリケーションのジョブで入れました（2026-09-27、[docs/62 §3](62-engineering-casebook.md)）。
+> 🕰️ **状態（2026-09-27）— 一部古い。** `ddl-auto` は `validate` に変更しました（[docs/20](20-schema-ownership.md)）。月次パーティションの自動作成は、pg_partman の代わりにアプリケーションのジョブで入れました（2026-09-27、[docs/62 §3](62-engineering-casebook.md)）。2026-11-01 の訂正三か所 — DB は今 10 個(§1.1 · §1.2)、`metadb` は使われていない(§1.1)、catalog をパーティショニングから外した根拠「商品 250 件」は古い(§4.1)— フェデレーションの観点での整理は [docs/88](88-federation-tradeoffs.md)。
 
 > 作成日: 2026-07-25
 > 対象: `userdb` / `productdb` / `metadb` / `cartdb` / `orderdb` / `paydb` / `coupondb`（+ chat）
@@ -27,7 +27,7 @@
 |---|---|---|
 | `userdb` | user-service | `users` |
 | `productdb` | catalog-service | `product` |
-| `metadb` | catalog-service（Spring Batch メタデータ） | `BATCH_JOB_*` |
+| `metadb` | catalog-service（~~Spring Batch メタデータ~~ — **使われていない**、2026-11-01 訂正: JobRepository は `@Primary`(productdb)を使うので、バッチのメタは productdb の `meta` スキーマにある — catalog V3 · [docs/16 §7](16-saga-e2e-and-observability-verification.md)。metadb は接続プールを占めるだけ） | ~~`BATCH_JOB_*`~~ |
 | `cartdb` | cart-service | `cart` |
 | `orderdb` | order-service | `orders` |
 | `paydb` | pay-service | `pay` |
@@ -45,7 +45,7 @@
 | スキーママイグレーションツール | ❌ **皆無**（Hibernate の `ddl-auto` 単独） |
 | データ保持（retention）/アーカイブのポリシー | ❌ 皆無 |
 
-**要点**: 論理的には 8 個に分かれていますが、**物理的には 1 台の PostgreSQL** です。つまり buffer pool・WAL・CPU・ディスクを 8 つのサービスがすべて共有しており、この 1 台が落ちると全サービスが停止します（[`docs/03` F-8](03-architecture-and-reliability.md)）。
+**要点**: 論理的には 8 個に分かれていますが(2026-11-01 時点で **10 個** — `notificationdb` · `deliverydb` が増えた、k8s/90 の pg-init)、**物理的には 1 台の PostgreSQL** です。つまり buffer pool・WAL・CPU・ディスクを 8 つのサービスがすべて共有しており、この 1 台が落ちると全サービスが停止します（[`docs/03` F-8](03-architecture-and-reliability.md)）。
 
 ### 1.3 有利な条件 — PK が TSID である 🎉
 
@@ -238,7 +238,7 @@ P0/P1 がブランチに**実際に適用**されました:
 | `coupon.coupon` | RANGE | `end_date` | 月 | 期限切れクーポンの一括整理 |
 | `metadb` `BATCH_JOB_*` | — | — | — | パーティショニングの代わりに**保持バッチ**で整理 |
 | `cart.cart` / `cart_product` | ❌ しない | — | — | ユーザーごとに 1 件、UPDATE/DELETE の循環 → **パーティショニングより autovacuum のチューニングが答え** |
-| catalog の全テーブル | ❌ しない | — | — | 商品 250 件程度の**有限**なデータ。パーティショニングは純損失 |
+| catalog の全テーブル | ❌ しない | — | — | 商品 250 件程度の**有限**なデータ。パーティショニングは純損失 — ⚠️ 2026-11-01 訂正: 本番は商品 **200 万**(デモデータ)、実習は 2,000 万まで行く。それでもパーティショニングが答えではない — 痛いのはカテゴリ内を商品ごとに EXISTS で走査する照会の形で(docs/83 §2.8)、対策は件数数えの撤去(適用済み)· 価格範囲の列 + 複合インデックス(docs/85 §8-1)· 検索エンジン(`catalog.search-engine`)([docs/88 §1](88-federation-tradeoffs.md)) |
 | `users.users`, `orders.customer`, `chat.member` | ❌ しない（現段階） | — | — | 有限の増加。シャーディングの段階で再検討 |
 
 > **中核となる判断**: 今このプロジェクトでパーティショニングが必要な理由は、「データが大きいから」ではなく**「消す方法がないから」**です。だから Outbox が最優先です。
