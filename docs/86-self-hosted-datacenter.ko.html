@@ -1,0 +1,428 @@
+<!doctype html><html lang="ko"><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>ecommerce-msa 온프레미스 구성안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* 레이아웃: 설계 문서 한 단. 랙 입면도와 망 구성도가 본문 흐름 안에 들어간다. VLAN 은 패치 케이블 색으로 구분 */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5a6475;
+  --line: #d6dae2;
+  --accent: #1f4fd1;
+  --accent-soft: #e6ecfb;
+  --warn: #a35a00;
+  --warn-soft: #fff1dd;
+  /* VLAN 케이블 색 */
+  --c-k8s: #2563eb;
+  --c-data: #e0620e;
+  --c-obs: #16884a;
+  --c-backup: #7c3aed;
+  --c-mgmt: #6b7280;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+    --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+    --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+  --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+  --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15.5px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+.page { max-width: 960px; margin: 0 auto; display: grid; gap: 56px; }
+.page > * { min-width: 0; }
+
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(1.75rem, 4vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.3em; max-width: 72ch; }
+li + li { margin-top: 4px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent); }
+
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 20px; }
+.section-head { display: grid; gap: 6px; border-top: 2px solid var(--fg); padding-top: 14px; }
+.sub { display: grid; gap: 12px; }
+
+header.top { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 0.9rem; }
+.meta span { font-family: var(--font-mono); }
+
+.premise { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.premise li::marker { color: var(--accent); }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.fact { background: var(--surface); padding: 16px; display: grid; gap: 2px; align-content: start; }
+.fact b { font-size: 1.7rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.fact small { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+@media (max-width: 640px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; line-height: 1.55; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 0.78rem; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.role { font-weight: 700; white-space: nowrap; }
+.src { display: block; color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; margin-top: 4px; }
+
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; }
+.note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.note p { max-width: none; }
+
+/* 랙 입면도 */
+.racks { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 720px) { .racks { grid-template-columns: minmax(0, 1fr); } }
+.rack { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 8px; }
+.rack-title { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; color: var(--muted); }
+.rack-body { border: 2px solid var(--fg); border-radius: 4px; padding: 6px; display: grid; gap: 3px; }
+.u { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 6px solid var(--c, var(--line)); border-radius: 3px; padding: 3px 8px; font-size: 0.82rem; line-height: 1.35; background: var(--bg); }
+.u.h2 { min-height: 46px; }
+.u.h3 { min-height: 66px; }
+.u .ru { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; }
+.u .spec { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; text-align: right; }
+.u.empty { border-style: dashed; border-left-width: 1px; color: var(--muted); justify-content: center; }
+.k8s { --c: var(--c-k8s); } .data { --c: var(--c-data); } .obs { --c: var(--c-obs); } .backup { --c: var(--c-backup); } .mgmt { --c: var(--c-mgmt); } .net { --c: var(--fg); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+.chip::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+
+/* 망 구성도 */
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+svg .box { fill: var(--bg); stroke: var(--fg); stroke-width: 1.3; }
+svg .box.soft { stroke: var(--line); }
+svg .lbl { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 700; }
+svg .sm { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+svg .wire { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .tunnel { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
+svg .egress { stroke: var(--warn); stroke-width: 1.6; stroke-dasharray: 3 4; fill: none; }
+svg .tl { fill: var(--accent); font-family: var(--font-mono); font-size: 11.5px; }
+svg .el { fill: var(--warn); font-family: var(--font-mono); font-size: 11.5px; }
+svg .vk8s { stroke: var(--c-k8s); } svg .vdata { stroke: var(--c-data); } svg .vobs { stroke: var(--c-obs); } svg .vbackup { stroke: var(--c-backup); } svg .vmgmt { stroke: var(--c-mgmt); }
+svg .vlan { fill: var(--bg); stroke-width: 2.5; }
+svg .arrow { fill: var(--muted); }
+
+ol.steps { display: grid; gap: 10px; padding-left: 1.4em; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }
+
+footer { color: var(--muted); font-size: 0.85rem; display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 16px; }
+footer p { max-width: none; }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="eyebrow">설계 검토 · 자체 데이터센터 운영</div>
+  <h1>ecommerce-msa 온프레미스 구성안</h1>
+  <p>지금 OCI Ampere 노드 한 대와 Cloudflare Tunnel 로 돌고 있는 ecommerce-msa 를 자체 데이터센터로 옮길 때의 하드웨어와 네트워크 구성입니다. 레포의 실측값과 설계 결정에서 출발했습니다.</p>
+  <div class="meta">
+    <div>조사 <span>ecommerce-msa @ 8ebcc93 (2026-10-26)</span></div>
+    <div>근거 재확인 <span>50ef7995 (2026-11-01)</span></div>
+    <div>문서 <span>docs/86</span> · <a href="86-self-hosted-datacenter.html">日本語</a></div>
+  </div>
+</header>
+
+<div class="premise">
+  <h3>읽기 전에 — 이 구성안의 전제</h3>
+  <ul>
+    <li><b>레포에는 SLO 와 목표 트래픽이 없습니다.</b> 아래 사양은 레포 실측값에서 추정한 시작점이고, 실제 장비에서 다시 재서 조정해야 합니다.</li>
+    <li><b>실측값은 데스크톱 한 대 위의 VM 들이 CPU 를 나눠 쓴 실습 클러스터에서 나왔습니다.</b> 레포 문서(docs/83)도 절대 수치로 쓰지 말라고 적고 있습니다.</li>
+    <li><b>레포의 운영 결정은 PostgreSQL · MongoDB 를 관리형에 맡기는 것</b>입니다(docs/23). 자체 데이터센터에는 관리형이 없으므로 DB 이중화를 직접 해야 합니다. 이것이 지금과 가장 크게 달라지는 점입니다.</li>
+  </ul>
+</div>
+
+<div class="facts" aria-label="요약">
+  <div class="fact"><b>12대</b><small>서버 (컨트롤 플레인 3 · 워커 3 · 데이터 3 · 관측 · 백업 · CI)</small></div>
+  <div class="fact"><b>0개</b><small>인바운드 포트. Cloudflare Tunnel 을 유지할 때</small></div>
+  <div class="fact"><b>5개</b><small>VLAN (K8S · DATA · OBS · BACKUP · MGMT)</small></div>
+  <div class="fact"><b>8건</b><small>장비로 해결되지 않아 레포에서 먼저 고칠 것</small></div>
+</div>
+
+<!-- 1. 하드웨어 -->
+<section id="hardware">
+  <div class="section-head">
+    <div class="eyebrow">1 · 하드웨어</div>
+    <h2>권장 시작 구성 — 서버 12대</h2>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>역할</th><th>대수</th><th>사양 (대당)</th><th>근거</th></tr></thead>
+      <tbody>
+        <tr><td class="role"><span class="chip k8s">k3s 서버</span></td><td class="num">3</td><td>8코어 · 32GB · NVMe 2×960GB RAID1</td><td>etcd HA 는 3대가 필요합니다. taint 로 앱을 올리지 않습니다. 실습에서 부하 중 서버 노드가 리셋된 뒤 정한 원칙입니다.</td></tr>
+        <tr><td class="role"><span class="chip k8s">k3s 워커</span></td><td class="num">3</td><td>16코어 · 64GB · NVMe 2×960GB</td><td>앱 계층은 HPA 최대일 때 37파드, 요청 8.3코어 / 13Gi, <b>한도 34.5코어 / 26Gi</b>. 한 대가 죽어도 남은 두 대(32코어)가 한도를 받도록 잡았습니다.<span class="src">k8s/4x-*.yaml · k8s/70-autoscaling.yaml</span></td></tr>
+        <tr><td class="role"><span class="chip data">데이터</span></td><td class="num">3</td><td>32코어 · 128~256GB · NVMe <b>두 쌍</b> (PG 2×1.92TB · Kafka 2×1.92TB)</td><td>노드마다 PG(Patroni) · Kafka(KRaft) · Mongo(레플리카 셋) · Redis(Sentinel) 멤버를 하나씩 둡니다. k8s 밖 베어메탈에 둡니다.<span class="src">아래 «데이터 노드» 참고</span></td></tr>
+        <tr><td class="role"><span class="chip obs">관측</span></td><td class="num">1</td><td>16코어 · 64GB · SSD 4TB</td><td>부하 회차가 몰린 날 Jaeger 가 22GB 로 불어 실습 관측 VM 디스크를 채웠습니다. 클러스터와 떨어져 있어야 장애 때도 볼 수 있습니다.<span class="src">docs/84 · observability/</span></td></tr>
+        <tr><td class="role"><span class="chip backup">백업</span></td><td class="num">1</td><td>8코어 · 32GB · HDD 4×8TB RAID6 · <b>다른 방이나 다른 랙</b></td><td>WAL 을 계속 받아 RPO 5분 목표를 지킵니다. 데이터센터 밖 사본은 따로 하나 더 둡니다.<span class="src">docs/15 · docs/22</span></td></tr>
+        <tr><td class="role"><span class="chip mgmt">CI · 레지스트리</span></td><td class="num">1</td><td>16코어 · 64GB · 2TB</td><td>선택입니다. ghcr.io 와 GitHub 러너를 계속 쓰면 없어도 됩니다.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="racks">
+    <div class="rack" aria-label="주 랙 예시 배치">
+      <div class="rack-title"><span>랙 A · 주 랙 (예시 배치)</span><span class="mono">42U 중 22U</span></div>
+      <div class="rack-body">
+        <div class="u net"><span class="ru">U42</span><span>방화벽 #1</span><span class="spec">HA 쌍</span></div>
+        <div class="u net"><span class="ru">U41</span><span>방화벽 #2</span><span class="spec">HA 쌍</span></div>
+        <div class="u net"><span class="ru">U40</span><span>ToR 스위치 #1</span><span class="spec">25GbE · MLAG</span></div>
+        <div class="u net"><span class="ru">U39</span><span>ToR 스위치 #2</span><span class="spec">25GbE · MLAG</span></div>
+        <div class="u mgmt"><span class="ru">U38</span><span>OOB 스위치</span><span class="spec">1GbE · IPMI</span></div>
+        <div class="u k8s"><span class="ru">U37</span><span>k3s 서버 1</span><span class="spec">8c · 32G</span></div>
+        <div class="u k8s"><span class="ru">U36</span><span>k3s 서버 2</span><span class="spec">8c · 32G</span></div>
+        <div class="u k8s"><span class="ru">U35</span><span>k3s 서버 3</span><span class="spec">8c · 32G</span></div>
+        <div class="u k8s"><span class="ru">U34</span><span>워커 1</span><span class="spec">16c · 64G</span></div>
+        <div class="u k8s"><span class="ru">U33</span><span>워커 2</span><span class="spec">16c · 64G</span></div>
+        <div class="u k8s"><span class="ru">U32</span><span>워커 3</span><span class="spec">16c · 64G</span></div>
+        <div class="u data h2"><span class="ru">U30–31</span><span>데이터 1</span><span class="spec">32c · NVMe×4</span></div>
+        <div class="u data h2"><span class="ru">U28–29</span><span>데이터 2</span><span class="spec">32c · NVMe×4</span></div>
+        <div class="u data h2"><span class="ru">U26–27</span><span>데이터 3</span><span class="spec">32c · NVMe×4</span></div>
+        <div class="u obs"><span class="ru">U25</span><span>관측</span><span class="spec">16c · 4TB</span></div>
+        <div class="u mgmt"><span class="ru">U24</span><span>CI · 레지스트리</span><span class="spec">선택</span></div>
+        <div class="u empty"><span class="ru">…</span><span>여유 (워커 · 데이터 증설)</span><span class="spec"></span></div>
+        <div class="u net h3"><span class="ru">U1–3</span><span>UPS</span><span class="spec">A/B PDU</span></div>
+      </div>
+    </div>
+    <div class="rack" aria-label="별도 공간 배치">
+      <div class="rack-title"><span>다른 방 · 다른 랙</span><span class="mono">장애 영역 분리</span></div>
+      <div class="rack-body">
+        <div class="u backup h3"><span class="ru">U1–2</span><span>백업 서버</span><span class="spec">HDD 4×8TB</span></div>
+      </div>
+      <p style="font-size:0.88rem;color:var(--muted)">백업은 주 랙과 같은 전원 · 같은 방에 두지 않습니다. 레포도 "다른 장애 영역" 을 요구합니다(docs/15). 데이터센터 밖 사본(오프사이트)은 이것과 별개로 하나 더 둡니다.</p>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>데이터 노드를 이렇게 잡은 이유</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>항목</th><th>레포 실측 · 결정</th><th>그래서</th></tr></thead>
+        <tbody>
+          <tr><td class="role">용량</td><td>상품 2,108B · 주문 약 1,100B · 사용자 약 1,012B. 상품 2000만 ≈ 39GiB(적재 중 WAL 여유 59GiB 필요), 1억 ≈ 196GiB.<span class="src">docs/19 · docs/83 · docs/79</span></td><td>PG 용 NVMe 2×1.92TB RAID1 이면 1억 상품까지도 여유가 있습니다.</td></tr>
+          <tr><td class="role">메모리</td><td>운영(상품 200만)에서 필터 count 한 번이 랜덤 블록 읽기 11만 번, 42.9초. 그 개수 세기는 <code>d837605d7902</code> 에서 없앴지만, 드문 조건은 여전히 카테고리를 훑습니다.<span class="src">docs/83 §2.8 · docs/85 §8</span></td><td>작업 집합이 RAM 에 들어가야 합니다. PG 에 64GB 이상을 줍니다.</td></tr>
+          <tr><td class="role">커넥션</td><td>DB 를 쓰는 서비스 9개(catalog 는 데이터소스 2개) × 풀 5 × HPA 최대 3 → 최악 약 140. 실습 PG 는 <code>max_connections=300</code>. 부하 측정에서 커넥션 대기는 CPU 가 모자란 증상이었습니다 — 풀부터 키우지 않습니다.<span class="src">docs/83</span></td><td>풀러를 쓴다면 트랜잭션 모드는 금지입니다(<code>ops/25</code> 경고). HPA 최대를 올리면 이 계산부터 다시 합니다.</td></tr>
+          <tr><td class="role">디스크 분리</td><td>PG 와 Kafka 는 둘 다 fsync 가 많습니다.</td><td>같은 노드라도 NVMe 쌍은 따로 줍니다.</td></tr>
+          <tr><td class="role">k8s 밖에 두기</td><td><code>external</code> 오버레이가 이미 있어 ConfigMap 의 엔드포인트만 바꾸면 됩니다. 코드는 그대로입니다.<span class="src">docs/32 · k8s-overlays/external</span></td><td>k3s 업그레이드나 노드 장애가 데이터에 닿지 않고, VLAN 방화벽으로 접근을 강제할 수 있습니다.</td></tr>
+          <tr><td class="role">백업</td><td>DB 5.6GB → <code>base.tar.gz</code> 821MB(약 15%), 복원 1분 52초. WAL 아카이브는 지금 같은 볼륨에 쌓입니다.<span class="src">docs/22 · ops/29</span></td><td>pgBackRest 나 WAL-G 로 백업 서버에 WAL 을 계속 보냅니다. 돈이 걸린 데이터의 RPO 5분 목표 때문입니다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="note">
+    <p><b>더 작게 시작하려면</b> 32코어 · 256GB 서버 3대에 k3s(서버 겸 에이전트)와 데이터 VM 을 함께 올리는 방법도 있습니다. 비용은 약 1/3 이지만 서버 하나가 죽으면 앱과 DB 멤버를 동시에 잃습니다.</p>
+  </div>
+</section>
+
+<!-- 2. 네트워크 -->
+<section id="network">
+  <div class="section-head">
+    <div class="eyebrow">2 · 네트워크</div>
+    <h2>인바운드 포트 없이, VLAN 다섯 개로</h2>
+  </div>
+
+  <div class="diagram" role="img" aria-label="망 구성도: 사용자와 웹훅은 Cloudflare 엣지로 들어오고, 클러스터 안의 cloudflared 가 바깥으로 터널을 연다. ISP 두 회선, 방화벽 HA 쌍, ToR 스위치 쌍 아래에 VLAN 다섯 개가 있다.">
+    <svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <!-- 바깥 -->
+      <rect class="box soft" x="40" y="12" width="240" height="40" rx="6"/>
+      <text class="lbl" x="160" y="37" text-anchor="middle">사용자 · 결제 웹훅 · OAuth</text>
+      <rect class="box" x="40" y="80" width="240" height="44" rx="6"/>
+      <text class="lbl" x="160" y="100" text-anchor="middle">Cloudflare 엣지</text>
+      <text class="sm" x="160" y="116" text-anchor="middle">공개 TLS · 레이트 리미트 앞단</text>
+      <path class="wire" d="M160 52 V78" marker-end="url(#ah)"/>
+
+      <rect class="box soft" x="600" y="80" width="260" height="44" rx="6"/>
+      <text class="lbl" x="730" y="100" text-anchor="middle">외부 API</text>
+      <text class="sm" x="730" y="116" text-anchor="middle">결제 · SMTP · SMS · OAuth · S3 · ghcr</text>
+
+      <!-- ISP -->
+      <rect class="box" x="330" y="150" width="110" height="36" rx="6"/>
+      <text class="lbl" x="385" y="173" text-anchor="middle">ISP A</text>
+      <rect class="box" x="470" y="150" width="110" height="36" rx="6"/>
+      <text class="lbl" x="525" y="173" text-anchor="middle">ISP B</text>
+
+      <!-- 방화벽 -->
+      <rect class="box" x="330" y="222" width="250" height="40" rx="6"/>
+      <text class="lbl" x="455" y="247" text-anchor="middle">방화벽 HA 쌍</text>
+      <path class="wire" d="M385 186 V220"/>
+      <path class="wire" d="M525 186 V220"/>
+
+      <!-- 이그레스 -->
+      <path class="egress" d="M580 242 H700 V126" marker-end="url(#ah)"/>
+      <text class="el" x="712" y="200">이그레스 허용 목록만</text>
+
+      <!-- ToR -->
+      <rect class="box" x="290" y="300" width="330" height="40" rx="6"/>
+      <text class="lbl" x="455" y="320" text-anchor="middle">ToR 스위치 쌍 (MLAG)</text>
+      <text class="sm" x="455" y="335" text-anchor="middle">서버당 25GbE×2 LACP</text>
+      <path class="wire" d="M455 262 V298"/>
+
+      <!-- VLAN 배선 -->
+      <path class="wire" d="M455 340 V370 H115 V408"/>
+      <path class="wire" d="M455 370 H785 V408"/>
+      <path class="wire" d="M285 370 V408"/>
+      <path class="wire" d="M455 370 V408"/>
+      <path class="wire" d="M615 370 V408"/>
+
+      <!-- VLAN 상자 -->
+      <rect class="vlan vk8s" x="40" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="115" y="434" text-anchor="middle">K8S</text>
+      <text class="sm" x="115" y="456" text-anchor="middle">k3s 서버 ×3</text>
+      <text class="sm" x="115" y="474" text-anchor="middle">워커 ×3</text>
+      <text class="sm" x="115" y="492" text-anchor="middle">cloudflared ×2</text>
+
+      <rect class="vlan vdata" x="210" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="285" y="434" text-anchor="middle">DATA</text>
+      <text class="sm" x="285" y="456" text-anchor="middle">PG · Kafka</text>
+      <text class="sm" x="285" y="474" text-anchor="middle">Mongo · Redis</text>
+      <text class="sm" x="285" y="492" text-anchor="middle">각 3 멤버</text>
+
+      <rect class="vlan vobs" x="380" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="455" y="434" text-anchor="middle">OBS</text>
+      <text class="sm" x="455" y="456" text-anchor="middle">Prometheus · Loki</text>
+      <text class="sm" x="455" y="474" text-anchor="middle">Jaeger · Grafana</text>
+
+      <rect class="vlan vbackup" x="550" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="625" y="434" text-anchor="middle">BACKUP</text>
+      <text class="sm" x="625" y="456" text-anchor="middle">백업 서버</text>
+      <text class="sm" x="625" y="474" text-anchor="middle">(다른 방)</text>
+
+      <rect class="vlan vmgmt" x="720" y="410" width="140" height="96" rx="6"/>
+      <text class="lbl" x="790" y="434" text-anchor="middle">MGMT</text>
+      <text class="sm" x="790" y="456" text-anchor="middle">IPMI · 스위치</text>
+      <text class="sm" x="790" y="474" text-anchor="middle">VPN 배스천</text>
+
+      <!-- 터널 (논리 경로) -->
+      <path class="tunnel" d="M70 408 V126" marker-end="url(#ah)"/>
+      <text class="tl" x="82" y="250">터널: cloudflared →</text>
+      <text class="tl" x="82" y="266">엣지 (아웃바운드 7844)</text>
+    </svg>
+  </div>
+  <p style="font-size:0.88rem;color:var(--muted)">파란 점선은 논리 경로입니다. 실제 패킷은 방화벽과 ISP 를 거쳐 나갑니다. MGMT 는 실제로는 별도 OOB 스위치에 붙습니다.</p>
+
+  <div class="sub">
+    <h3>외부 진입 — Cloudflare Tunnel 을 그대로 유지하기를 권합니다</h3>
+    <ul>
+      <li>지금 구조가 <b>인바운드 포트 0개</b>입니다. cloudflared 2개가 서로 다른 노드에서 바깥으로 연결합니다.<span class="src">k8s-overlays/prod/cloudflared.yaml</span></li>
+      <li>결제 웹훅(Stripe, PortOne)과 OAuth 콜백도 이 터널로 들어옵니다. 그래서 공인 IP, DMZ, 외부용 TLS 인증서가 필요 없습니다.</li>
+      <li>데이터센터 방화벽은 cloudflared 의 아웃바운드 7844(TCP/UDP)만 열면 됩니다.</li>
+    </ul>
+    <div class="note warn">
+      <p><b>Cloudflare 를 빼고 자체 공인 IP · L4 LB 로 받는다면 코드도 바꿔야 합니다.</b> 레이트 리미터가 <code>CF-Connecting-IP</code> 를 "엣지가 덮어쓰므로 조작할 수 없다" 고 신뢰합니다(<code>CustomUserKeyResolver</code>). 터널이 없으면 이 헤더는 클라이언트가 마음대로 보낼 수 있습니다. 그 밖에 Ingress <code>host</code>, ACME 인증서, WAF 와 DDoS 대응이 새로 필요합니다.</p>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>내부 VLAN 과 허용 규칙</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>VLAN</th><th>구성원</th><th>들어오는 것만 허용</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip mgmt">MGMT/OOB</span></td><td>IPMI, 스위치 관리</td><td>VPN(배스천)에서만</td></tr>
+          <tr><td><span class="chip k8s">K8S</span></td><td>k3s 서버, 워커</td><td><code>6443</code> 은 MGMT 에서만. 노드끼리 플라넬 · <code>10250</code> · (서버끼리) <code>2379-2380</code></td></tr>
+          <tr><td><span class="chip data">DATA</span></td><td>PG, Kafka, Mongo, Redis</td><td>K8S 에서 <code>5432</code> · <code>9092</code>(SSL) · <code>27017</code> · <code>6379</code>/<code>26379</code>. 복제는 VLAN 안에서만</td></tr>
+          <tr><td><span class="chip obs">OBS</span></td><td>관측 서버</td><td>K8S · DATA 에서 <code>4318</code>(OTLP) · <code>9090</code>(remote-write) · Loki push. Grafana 는 VPN 에서</td></tr>
+          <tr><td><span class="chip backup">BACKUP</span></td><td>백업 서버</td><td>백업 서버가 DATA 로 SSH 를 거는 pull 방식(운영 노드에 자격증명을 두지 않는 방향)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><b>대역 충돌 주의.</b> 물리 대역을 k3s 기본값인 파드 <code>10.42.0.0/16</code> · 서비스 <code>10.43.0.0/16</code> 과 겹치지 않게 잡으십시오.</li>
+      <li><b>방화벽 규칙의 출발지는 노드 IP 입니다.</b> 파드가 클러스터 밖으로 나갈 때 노드 IP 로 SNAT 되므로, DATA 쪽 규칙은 "K8S VLAN → 포트" 로 쓰면 됩니다.</li>
+      <li><b>레포의 NetworkPolicy 에 기대지 마십시오.</b> 인그레스만 막고 이그레스는 열려 있습니다. 첫 적용(9-26)은 스스로 되돌렸고, 고친 확인 스크립트(<code>ops/35</code>)는 실제 클러스터에서 아직 돌려 보지 않았습니다(docs/57 §11). 경계 방화벽이 실제 방어선입니다.</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>이그레스 허용 목록</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>대상</th><th>주소</th><th>쓰는 곳</th></tr></thead>
+        <tbody>
+          <tr><td class="role">결제</td><td class="mono">api.stripe.com · api-m.paypal.com · api.iamport.kr · api.portone.io</td><td>order-service · pay-service</td></tr>
+          <tr><td class="role">메일 · SMS</td><td>SMTP <span class="mono">587</span> · SMS 업체(아직 미선정)</td><td>notification-service</td></tr>
+          <tr><td class="role">소셜 로그인</td><td>Google · GitHub · Facebook · Kakao · LINE</td><td>user-service</td></tr>
+          <tr><td class="role">이미지</td><td>AWS S3 <span class="mono">ap-northeast-2</span></td><td>catalog · user-service (브라우저는 S3 에서 직접 받음)</td></tr>
+          <tr><td class="role">기타</td><td class="mono">apis.data.go.kr · api.pwnedpasswords.com · ghcr.io · Cloudflare 7844</td><td>배송 추적(delivery) · 비밀번호 유출 확인(user) · 이미지 pull · 터널</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>대역폭과 지연</h3>
+    <ul>
+      <li><b>내부:</b> 앱 트래픽은 작습니다. 실습 천장이 성공 초당 약 1,400건인 작은 JSON 입니다(docs/83). 10GbE 로도 충분하고, 25GbE 는 복제와 백업 여유분입니다.</li>
+      <li><b>인터넷:</b> 가장 큰 변수는 이미지입니다. 지금은 브라우저가 S3 에서 직접 받으니 우리 회선을 타지 않습니다. 이미지를 MinIO 로 데이터센터 안에 들이면 이미지 바이트가 전부 우리 회선을 타므로, 회선은 그 기준으로 잡아야 합니다.</li>
+      <li><b>지연:</b> 요청 하나가 쿼리를 20번가량 날립니다. 왕복 30ms 면 600ms 가 됩니다(docs/32). 앱과 DB 는 같은 랙 · 같은 L2 에 두고, 동기 복제를 다른 사이트까지 늘리지 마십시오.</li>
+      <li><b>공통 인프라:</b> 내부 DNS 와 NTP 가 필요합니다. JWT, TOTP 2단계 인증, Kafka, 인증서가 모두 시계에 의존합니다. 전원은 이중 전원공급장치, A/B PDU, UPS 로 잡습니다.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 3. 레포 선행 과제 -->
+<section id="repo">
+  <div class="section-head">
+    <div class="eyebrow">3 · 레포에서 먼저 고칠 것</div>
+    <h2>장비를 늘려도 해결되지 않는 것</h2>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>현재 레포</th><th>자체 운영에서 필요한 것</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Kafka 브로커 1대, 복제 1, 주요 토픽 파티션 1(자동 생성)<span class="src">k8s/90-dev-infra.yaml · ops/02</span></td><td>브로커 3대, RF 3, <code>min.insync.replicas=2</code>, 토픽 미리 생성</td></tr>
+        <tr><td class="num">2</td><td>Redis 단일 (<code>SPRING_DATA_REDIS_HOST</code>)<span class="src">k8s/10-configmap.yaml</span></td><td>Sentinel 설정(<code>spring.data.redis.sentinel.*</code>)으로 전환</td></tr>
+        <tr><td class="num">3</td><td>Mongo 단일 (운영은 Atlas)<span class="src">docs/23</span></td><td>레플리카 셋 3</td></tr>
+        <tr><td class="num">4</td><td>PG 는 관리형 전제, WAL 은 같은 볼륨에<span class="src">docs/23 · ops/29</span></td><td>Patroni + VIP, WAL 은 다른 장비로. 풀러를 쓰면 트랜잭션 모드 금지</td></tr>
+        <tr><td class="num">5</td><td>S3 클라이언트에 엔드포인트 override 가 없음 (region 만 설정)<span class="src">catalog-service/…/AmazonS3Config.java</span></td><td>MinIO 로 옮기려면 코드 수정(endpoint + path-style). S3 를 계속 쓰면 불필요</td></tr>
+        <tr><td class="num">6</td><td>eureka · chat 은 반드시 1개<span class="src">docs/21</span></td><td>장비를 늘려도 단일 장애점으로 남음</td></tr>
+        <tr><td class="num">7</td><td>actuator 가 앱과 같은 포트 (별도 관리 포트 미구현)<span class="src">docs/57</span></td><td>네트워크로 분리할 수 없음. 게이트웨이 차단에만 의존</td></tr>
+        <tr><td class="num">8</td><td>운영 이미지는 Ampere(arm64)용<span class="src">ops/19 · docs/71</span></td><td>x86 서버라면 <code>ops/19 --platform linux/amd64</code> 로 빌드</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sub">
+    <h3>진행 순서</h3>
+    <ol class="steps">
+      <li>위 1~4번을 레포에서 먼저 고칩니다. 메시지 · 캐시 · 문서 저장소 · DB 의 이중화입니다.</li>
+      <li>실제 장비에서 <code>ops/53</code>(k6)으로 다시 잽니다. 실습 수치는 12코어 · 24스레드를 VM 들이 나눠 쓴 결과라, 전용 하드웨어에서는 천장이 달라집니다.</li>
+      <li>그 결과로 워커 대수와 HPA 최대치를 조정합니다. 지금의 최대 3은 실습 크기에 맞춘 값이고, 바꾸면 PG 커넥션 계산도 함께 다시 합니다.</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <p>근거는 <span class="mono">ecommerce-msa @ 8ebcc93</span>(2026-10-26)에서 조사하고 <span class="mono">50ef7995</span>(2026-11-01)에서 다시 확인한 문서 · 매니페스트 · 스크립트입니다. 각 행 아래 회색 글씨가 그 위치입니다. 같은 내용의 Markdown 판은 <a href="86-self-hosted-datacenter.ko.md">docs/86</a>.</p>
+  <p>서버 사양 · 랙 배치 · VLAN 구성은 레포에 없는 내용이며, 레포 실측값에서 추정한 시작점입니다.</p>
+</footer>
+
+</div>
+
+</body></html>

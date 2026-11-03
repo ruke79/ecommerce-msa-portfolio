@@ -1,0 +1,428 @@
+<!doctype html><html lang="ja"><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>ecommerce-msa オンプレミス構成案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* レイアウト: 設計文書の一段組み。ラック立面図と網構成図が本文の流れに入る。VLAN はパッチケーブルの色で区別 */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5a6475;
+  --line: #d6dae2;
+  --accent: #1f4fd1;
+  --accent-soft: #e6ecfb;
+  --warn: #a35a00;
+  --warn-soft: #fff1dd;
+  /* VLAN のケーブル色 */
+  --c-k8s: #2563eb;
+  --c-data: #e0620e;
+  --c-obs: #16884a;
+  --c-backup: #7c3aed;
+  --c-mgmt: #6b7280;
+  --font-body: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+    --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+    --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #181d26; --fg: #e4e8ef; --muted: #9aa4b5; --line: #2b3240;
+  --accent: #7ea2ff; --accent-soft: #1d2740; --warn: #f0a656; --warn-soft: #2e2214;
+  --c-k8s: #6b9bff; --c-data: #ff9a52; --c-obs: #4fcf87; --c-backup: #b18cff; --c-mgmt: #a0a8b6;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15.5px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+.page { max-width: 960px; margin: 0 auto; display: grid; gap: 56px; }
+.page > * { min-width: 0; }
+
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(1.75rem, 4vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.3em; max-width: 72ch; }
+li + li { margin-top: 4px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent); }
+
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 20px; }
+.section-head { display: grid; gap: 6px; border-top: 2px solid var(--fg); padding-top: 14px; }
+.sub { display: grid; gap: 12px; }
+
+header.top { display: grid; gap: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 0.9rem; }
+.meta span { font-family: var(--font-mono); }
+
+.premise { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.premise li::marker { color: var(--accent); }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.fact { background: var(--surface); padding: 16px; display: grid; gap: 2px; align-content: start; }
+.fact b { font-size: 1.7rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.fact small { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+@media (max-width: 640px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; line-height: 1.55; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 0.78rem; letter-spacing: 0.05em; color: var(--muted); font-weight: 500; background: var(--bg); white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.role { font-weight: 700; white-space: nowrap; }
+.src { display: block; color: var(--muted); font-family: var(--font-mono); font-size: 0.78rem; margin-top: 4px; }
+
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; }
+.note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.note p { max-width: none; }
+
+/* ラック立面図 */
+.racks { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 720px) { .racks { grid-template-columns: minmax(0, 1fr); } }
+.rack { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 8px; }
+.rack-title { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; color: var(--muted); }
+.rack-body { border: 2px solid var(--fg); border-radius: 4px; padding: 6px; display: grid; gap: 3px; }
+.u { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 6px solid var(--c, var(--line)); border-radius: 3px; padding: 3px 8px; font-size: 0.82rem; line-height: 1.35; background: var(--bg); }
+.u.h2 { min-height: 46px; }
+.u.h3 { min-height: 66px; }
+.u .ru { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; }
+.u .spec { font-family: var(--font-mono); color: var(--muted); font-size: 0.72rem; text-align: right; }
+.u.empty { border-style: dashed; border-left-width: 1px; color: var(--muted); justify-content: center; }
+.k8s { --c: var(--c-k8s); } .data { --c: var(--c-data); } .obs { --c: var(--c-obs); } .backup { --c: var(--c-backup); } .mgmt { --c: var(--c-mgmt); } .net { --c: var(--fg); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+.chip::before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+
+/* 網構成図 */
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+svg .box { fill: var(--bg); stroke: var(--fg); stroke-width: 1.3; }
+svg .box.soft { stroke: var(--line); }
+svg .lbl { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 700; }
+svg .sm { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+svg .wire { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .tunnel { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
+svg .egress { stroke: var(--warn); stroke-width: 1.6; stroke-dasharray: 3 4; fill: none; }
+svg .tl { fill: var(--accent); font-family: var(--font-mono); font-size: 11.5px; }
+svg .el { fill: var(--warn); font-family: var(--font-mono); font-size: 11.5px; }
+svg .vk8s { stroke: var(--c-k8s); } svg .vdata { stroke: var(--c-data); } svg .vobs { stroke: var(--c-obs); } svg .vbackup { stroke: var(--c-backup); } svg .vmgmt { stroke: var(--c-mgmt); }
+svg .vlan { fill: var(--bg); stroke-width: 2.5; }
+svg .arrow { fill: var(--muted); }
+
+ol.steps { display: grid; gap: 10px; padding-left: 1.4em; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }
+
+footer { color: var(--muted); font-size: 0.85rem; display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 16px; }
+footer p { max-width: none; }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="eyebrow">設計レビュー · 自社データセンターでの運用</div>
+  <h1>ecommerce-msa オンプレミス構成案</h1>
+  <p>今は OCI Ampere ノード一台と Cloudflare Tunnel で動いている ecommerce-msa を自社データセンターへ移すときのハードウェアとネットワークの構成です。リポジトリの実測値と設計判断から出発しました。</p>
+  <div class="meta">
+    <div>調査 <span>ecommerce-msa @ 8ebcc93 (2026-10-26)</span></div>
+    <div>根拠の再確認 <span>50ef7995 (2026-11-01)</span></div>
+    <div>文書 <span>docs/86</span> · <a href="86-self-hosted-datacenter.ko.html">한국어</a></div>
+  </div>
+</header>
+
+<div class="premise">
+  <h3>読む前に — この構成案の前提</h3>
+  <ul>
+    <li><b>リポジトリには SLO と目標トラフィックがありません。</b>以下の仕様はリポジトリの実測値から推定した出発点で、実機で測り直して調整する必要があります。</li>
+    <li><b>実測値は デスクトップ一台の上の VM が CPU を分け合う実習クラスタで得たものです。</b>リポジトリの文書(docs/83)も絶対値として使わないよう書いています。</li>
+    <li><b>リポジトリの運用判断は PostgreSQL · MongoDB をマネージドに任せること</b>です(docs/23)。自社データセンターにはマネージドがないので、DB の冗長化を自前で行う必要があります。これが今と最も大きく変わる点です。</li>
+  </ul>
+</div>
+
+<div class="facts" aria-label="要約">
+  <div class="fact"><b>12 台</b><small>サーバー(コントロールプレーン 3 · ワーカー 3 · データ 3 · 観測 · バックアップ · CI)</small></div>
+  <div class="fact"><b>0 個</b><small>インバウンドのポート。Cloudflare Tunnel を維持する場合</small></div>
+  <div class="fact"><b>5 個</b><small>VLAN (K8S · DATA · OBS · BACKUP · MGMT)</small></div>
+  <div class="fact"><b>8 件</b><small>機器では解決できず、先にリポジトリで直すこと</small></div>
+</div>
+
+<!-- 1. ハードウェア -->
+<section id="hardware">
+  <div class="section-head">
+    <div class="eyebrow">1 · ハードウェア</div>
+    <h2>推奨の出発構成 — サーバー 12 台</h2>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>役割</th><th>台数</th><th>仕様(一台あたり)</th><th>根拠</th></tr></thead>
+      <tbody>
+        <tr><td class="role"><span class="chip k8s">k3s サーバー</span></td><td class="num">3</td><td>8 コア · 32GB · NVMe 2×960GB RAID1</td><td>etcd の HA には 3 台が要ります。taint でアプリを載せません。実習で負荷中にサーバーノードがリセットした後に決めた原則です。</td></tr>
+        <tr><td class="role"><span class="chip k8s">k3s ワーカー</span></td><td class="num">3</td><td>16 コア · 64GB · NVMe 2×960GB</td><td>アプリ層は HPA 最大で 37 Pod、要求 8.3 コア / 13Gi、<b>上限 34.5 コア / 26Gi</b>。一台が落ちても残り二台(32 コア)が上限を受けられるようにしました。<span class="src">k8s/4x-*.yaml · k8s/70-autoscaling.yaml</span></td></tr>
+        <tr><td class="role"><span class="chip data">データ</span></td><td class="num">3</td><td>32 コア · 128〜256GB · NVMe <b>二組</b> (PG 2×1.92TB · Kafka 2×1.92TB)</td><td>ノードごとに PG(Patroni)· Kafka(KRaft)· Mongo(レプリカセット)· Redis(Sentinel)のメンバーを一つずつ置きます。k8s の外のベアメタルに置きます。<span class="src">下の「データノード」参照</span></td></tr>
+        <tr><td class="role"><span class="chip obs">観測</span></td><td class="num">1</td><td>16 コア · 64GB · SSD 4TB</td><td>負荷の回が集中した日に Jaeger が 22GB に膨らみ、実習の観測 VM のディスクを埋めました。クラスタから離しておけば障害時も見られます。<span class="src">docs/84 · observability/</span></td></tr>
+        <tr><td class="role"><span class="chip backup">バックアップ</span></td><td class="num">1</td><td>8 コア · 32GB · HDD 4×8TB RAID6 · <b>別の部屋か別のラック</b></td><td>WAL を受け続けて RPO 5 分の目標を守ります。データセンター外の写しは別にもう一つ置きます。<span class="src">docs/15 · docs/22</span></td></tr>
+        <tr><td class="role"><span class="chip mgmt">CI · レジストリ</span></td><td class="num">1</td><td>16 コア · 64GB · 2TB</td><td>任意です。ghcr.io と GitHub ランナーを使い続けるなら不要です。</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="racks">
+    <div class="rack" aria-label="主ラックの配置例">
+      <div class="rack-title"><span>ラック A · 主ラック(配置例)</span><span class="mono">42U 中 22U</span></div>
+      <div class="rack-body">
+        <div class="u net"><span class="ru">U42</span><span>ファイアウォール #1</span><span class="spec">HA 対</span></div>
+        <div class="u net"><span class="ru">U41</span><span>ファイアウォール #2</span><span class="spec">HA 対</span></div>
+        <div class="u net"><span class="ru">U40</span><span>ToR スイッチ #1</span><span class="spec">25GbE · MLAG</span></div>
+        <div class="u net"><span class="ru">U39</span><span>ToR スイッチ #2</span><span class="spec">25GbE · MLAG</span></div>
+        <div class="u mgmt"><span class="ru">U38</span><span>OOB スイッチ</span><span class="spec">1GbE · IPMI</span></div>
+        <div class="u k8s"><span class="ru">U37</span><span>k3s サーバー 1</span><span class="spec">8c · 32G</span></div>
+        <div class="u k8s"><span class="ru">U36</span><span>k3s サーバー 2</span><span class="spec">8c · 32G</span></div>
+        <div class="u k8s"><span class="ru">U35</span><span>k3s サーバー 3</span><span class="spec">8c · 32G</span></div>
+        <div class="u k8s"><span class="ru">U34</span><span>ワーカー 1</span><span class="spec">16c · 64G</span></div>
+        <div class="u k8s"><span class="ru">U33</span><span>ワーカー 2</span><span class="spec">16c · 64G</span></div>
+        <div class="u k8s"><span class="ru">U32</span><span>ワーカー 3</span><span class="spec">16c · 64G</span></div>
+        <div class="u data h2"><span class="ru">U30–31</span><span>データ 1</span><span class="spec">32c · NVMe×4</span></div>
+        <div class="u data h2"><span class="ru">U28–29</span><span>データ 2</span><span class="spec">32c · NVMe×4</span></div>
+        <div class="u data h2"><span class="ru">U26–27</span><span>データ 3</span><span class="spec">32c · NVMe×4</span></div>
+        <div class="u obs"><span class="ru">U25</span><span>観測</span><span class="spec">16c · 4TB</span></div>
+        <div class="u mgmt"><span class="ru">U24</span><span>CI · レジストリ</span><span class="spec">任意</span></div>
+        <div class="u empty"><span class="ru">…</span><span>空き(ワーカー · データの増設)</span><span class="spec"></span></div>
+        <div class="u net h3"><span class="ru">U1–3</span><span>UPS</span><span class="spec">A/B PDU</span></div>
+      </div>
+    </div>
+    <div class="rack" aria-label="別の場所の配置">
+      <div class="rack-title"><span>別の部屋 · 別のラック</span><span class="mono">障害領域の分離</span></div>
+      <div class="rack-body">
+        <div class="u backup h3"><span class="ru">U1–2</span><span>バックアップサーバー</span><span class="spec">HDD 4×8TB</span></div>
+      </div>
+      <p style="font-size:0.88rem;color:var(--muted)">バックアップは主ラックと同じ電源 · 同じ部屋に置きません。リポジトリも「別の障害領域」を求めています(docs/15)。データセンター外の写し(オフサイト)はこれとは別にもう一つ置きます。</p>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>データノードをこう決めた理由</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>項目</th><th>リポジトリの実測 · 判断</th><th>だから</th></tr></thead>
+        <tbody>
+          <tr><td class="role">容量</td><td>商品 2,108B · 注文約 1,100B · ユーザー約 1,012B。商品 2,000 万 ≈ 39GiB(投入中は WAL の余裕 59GiB が必要)、1 億 ≈ 196GiB。<span class="src">docs/19 · docs/83 · docs/79</span></td><td>PG 用の NVMe 2×1.92TB RAID1 なら 1 億商品でも余裕があります。</td></tr>
+          <tr><td class="role">メモリ</td><td>本番(商品 200 万)でフィルターの count 一回がランダムブロック読み 11 万回、42.9 秒。その件数数えは <code>d837605d7902</code> でなくしましたが、まれな条件は今もカテゴリを走査します。<span class="src">docs/83 §2.8 · docs/85 §8</span></td><td>作業集合が RAM に収まる必要があります。PG に 64GB 以上を与えます。</td></tr>
+          <tr><td class="role">接続</td><td>DB を使うサービス 9 個(catalog はデータソース 2 個)× プール 5 × HPA 最大 3 → 最悪約 140。実習の PG は <code>max_connections=300</code>。負荷測定で接続待ちは CPU 不足の症状でした — まずプールを増やすことはしません。<span class="src">docs/83</span></td><td>プーラーを使うならトランザクションモードは禁止です(<code>ops/25</code> の警告)。HPA の最大を上げたらこの計算からやり直します。</td></tr>
+          <tr><td class="role">ディスクの分離</td><td>PG と Kafka はどちらも fsync が多いです。</td><td>同じノードでも NVMe の組は分けます。</td></tr>
+          <tr><td class="role">k8s の外に置く</td><td><code>external</code> オーバーレイが既にあり、ConfigMap のエンドポイントを変えるだけです。コードはそのままです。<span class="src">docs/32 · k8s-overlays/external</span></td><td>k3s のアップグレードやノード障害がデータに及ばず、VLAN のファイアウォールでアクセスを強制できます。</td></tr>
+          <tr><td class="role">バックアップ</td><td>DB 5.6GB → <code>base.tar.gz</code> 821MB(約 15%)、復元 1 分 52 秒。WAL アーカイブは今は同じボリュームに溜まります。<span class="src">docs/22 · ops/29</span></td><td>pgBackRest か WAL-G でバックアップサーバーへ WAL を送り続けます。お金が絡むデータの RPO 5 分の目標のためです。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="note">
+    <p><b>もっと小さく始めるなら</b> 32 コア · 256GB のサーバー 3 台に k3s(サーバー兼エージェント)とデータ VM を同居させる方法もあります。費用は約 1/3 ですが、一台が落ちるとアプリと DB メンバーを同時に失います。</p>
+  </div>
+</section>
+
+<!-- 2. ネットワーク -->
+<section id="network">
+  <div class="section-head">
+    <div class="eyebrow">2 · ネットワーク</div>
+    <h2>インバウンドのポートなしで、VLAN 五つで</h2>
+  </div>
+
+  <div class="diagram" role="img" aria-label="網構成図: ユーザーと Webhook は Cloudflare エッジに入り、クラスタ内の cloudflared が外へトンネルを開く。ISP 二回線、ファイアウォール HA 対、ToR スイッチ対の下に VLAN が五つある。">
+    <svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <!-- 外 -->
+      <rect class="box soft" x="40" y="12" width="240" height="40" rx="6"/>
+      <text class="lbl" x="160" y="37" text-anchor="middle">ユーザー · 決済 Webhook · OAuth</text>
+      <rect class="box" x="40" y="80" width="240" height="44" rx="6"/>
+      <text class="lbl" x="160" y="100" text-anchor="middle">Cloudflare エッジ</text>
+      <text class="sm" x="160" y="116" text-anchor="middle">公開 TLS · 流入制限の前段</text>
+      <path class="wire" d="M160 52 V78" marker-end="url(#ah)"/>
+
+      <rect class="box soft" x="600" y="80" width="260" height="44" rx="6"/>
+      <text class="lbl" x="730" y="100" text-anchor="middle">外部 API</text>
+      <text class="sm" x="730" y="116" text-anchor="middle">決済 · SMTP · SMS · OAuth · S3 · ghcr</text>
+
+      <!-- ISP -->
+      <rect class="box" x="330" y="150" width="110" height="36" rx="6"/>
+      <text class="lbl" x="385" y="173" text-anchor="middle">ISP A</text>
+      <rect class="box" x="470" y="150" width="110" height="36" rx="6"/>
+      <text class="lbl" x="525" y="173" text-anchor="middle">ISP B</text>
+
+      <!-- ファイアウォール -->
+      <rect class="box" x="330" y="222" width="250" height="40" rx="6"/>
+      <text class="lbl" x="455" y="247" text-anchor="middle">ファイアウォール HA 対</text>
+      <path class="wire" d="M385 186 V220"/>
+      <path class="wire" d="M525 186 V220"/>
+
+      <!-- イグレス -->
+      <path class="egress" d="M580 242 H700 V126" marker-end="url(#ah)"/>
+      <text class="el" x="712" y="200">イグレス許可リストだけ</text>
+
+      <!-- ToR -->
+      <rect class="box" x="290" y="300" width="330" height="40" rx="6"/>
+      <text class="lbl" x="455" y="320" text-anchor="middle">ToR スイッチ対(MLAG)</text>
+      <text class="sm" x="455" y="335" text-anchor="middle">サーバーごとに 25GbE×2 LACP</text>
+      <path class="wire" d="M455 262 V298"/>
+
+      <!-- VLAN 配線 -->
+      <path class="wire" d="M455 340 V370 H115 V408"/>
+      <path class="wire" d="M455 370 H785 V408"/>
+      <path class="wire" d="M285 370 V408"/>
+      <path class="wire" d="M455 370 V408"/>
+      <path class="wire" d="M615 370 V408"/>
+
+      <!-- VLAN の箱 -->
+      <rect class="vlan vk8s" x="40" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="115" y="434" text-anchor="middle">K8S</text>
+      <text class="sm" x="115" y="456" text-anchor="middle">k3s サーバー ×3</text>
+      <text class="sm" x="115" y="474" text-anchor="middle">ワーカー ×3</text>
+      <text class="sm" x="115" y="492" text-anchor="middle">cloudflared ×2</text>
+
+      <rect class="vlan vdata" x="210" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="285" y="434" text-anchor="middle">DATA</text>
+      <text class="sm" x="285" y="456" text-anchor="middle">PG · Kafka</text>
+      <text class="sm" x="285" y="474" text-anchor="middle">Mongo · Redis</text>
+      <text class="sm" x="285" y="492" text-anchor="middle">各 3 メンバー</text>
+
+      <rect class="vlan vobs" x="380" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="455" y="434" text-anchor="middle">OBS</text>
+      <text class="sm" x="455" y="456" text-anchor="middle">Prometheus · Loki</text>
+      <text class="sm" x="455" y="474" text-anchor="middle">Jaeger · Grafana</text>
+
+      <rect class="vlan vbackup" x="550" y="410" width="150" height="96" rx="6"/>
+      <text class="lbl" x="625" y="434" text-anchor="middle">BACKUP</text>
+      <text class="sm" x="625" y="456" text-anchor="middle">バックアップサーバー</text>
+      <text class="sm" x="625" y="474" text-anchor="middle">(別の部屋)</text>
+
+      <rect class="vlan vmgmt" x="720" y="410" width="140" height="96" rx="6"/>
+      <text class="lbl" x="790" y="434" text-anchor="middle">MGMT</text>
+      <text class="sm" x="790" y="456" text-anchor="middle">IPMI · スイッチ</text>
+      <text class="sm" x="790" y="474" text-anchor="middle">VPN 踏み台</text>
+
+      <!-- トンネル(論理経路) -->
+      <path class="tunnel" d="M70 408 V126" marker-end="url(#ah)"/>
+      <text class="tl" x="82" y="250">トンネル: cloudflared →</text>
+      <text class="tl" x="82" y="266">エッジ(アウトバウンド 7844)</text>
+    </svg>
+  </div>
+  <p style="font-size:0.88rem;color:var(--muted)">青い点線は論理的な経路です。実際のパケットはファイアウォールと ISP を経て出ます。MGMT は実際には別の OOB スイッチにつながります。</p>
+
+  <div class="sub">
+    <h3>外部からの入口 — Cloudflare Tunnel をそのまま維持することを勧めます</h3>
+    <ul>
+      <li>今の構造は <b>インバウンドのポート 0 個</b>です。cloudflared 2 個が別々のノードから外へ接続します。<span class="src">k8s-overlays/prod/cloudflared.yaml</span></li>
+      <li>決済 Webhook(Stripe、PortOne)と OAuth のコールバックもこのトンネルで入ってきます。だから公開 IP、DMZ、外向きの TLS 証明書が要りません。</li>
+      <li>データセンターのファイアウォールは cloudflared のアウトバウンド 7844(TCP/UDP)だけを開ければ済みます。</li>
+    </ul>
+    <div class="note warn">
+      <p><b>Cloudflare を外して自前の公開 IP · L4 LB で受けるなら、コードも変える必要があります。</b>流入制限が <code>CF-Connecting-IP</code> を「エッジが上書きするので偽装できない」と信頼しています(<code>CustomUserKeyResolver</code>)。トンネルがなければ、このヘッダーはクライアントが自由に送れます。ほかに Ingress の <code>host</code>、ACME 証明書、WAF と DDoS 対策が新たに必要です。</p>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>内部 VLAN と許可ルール</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>VLAN</th><th>メンバー</th><th>受け入れるもの</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip mgmt">MGMT/OOB</span></td><td>IPMI、スイッチ管理</td><td>VPN(踏み台)からのみ</td></tr>
+          <tr><td><span class="chip k8s">K8S</span></td><td>k3s サーバー、ワーカー</td><td><code>6443</code> は MGMT からのみ。ノード間 flannel · <code>10250</code> · (サーバー間)<code>2379-2380</code></td></tr>
+          <tr><td><span class="chip data">DATA</span></td><td>PG, Kafka, Mongo, Redis</td><td>K8S から <code>5432</code> · <code>9092</code>(SSL) · <code>27017</code> · <code>6379</code>/<code>26379</code>。複製は VLAN 内のみ</td></tr>
+          <tr><td><span class="chip obs">OBS</span></td><td>観測サーバー</td><td>K8S · DATA から <code>4318</code>(OTLP) · <code>9090</code>(remote-write)· Loki push。Grafana は VPN から</td></tr>
+          <tr><td><span class="chip backup">BACKUP</span></td><td>バックアップサーバー</td><td>バックアップサーバーが DATA へ SSH する pull 方式(本番ノードに資格情報を置かない向き)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><b>帯域の衝突に注意。</b>物理の帯域を k3s 既定の Pod <code>10.42.0.0/16</code> · Service <code>10.43.0.0/16</code> と重ねないでください。</li>
+      <li><b>ファイアウォールのルールの送信元はノード IP です。</b>Pod がクラスタの外へ出るときはノード IP に SNAT されるので、DATA 側のルールは「K8S VLAN → ポート」で書けば済みます。</li>
+      <li><b>リポジトリの NetworkPolicy に頼らないでください。</b>イングレスだけを塞ぎ、イグレスは開いています。最初の適用(9-26)は自ら戻り、直した確認スクリプト(<code>ops/35</code>)は実クラスタでまだ回していません(docs/57 §11)。境界ファイアウォールが実際の防御線です。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>イグレス許可リスト</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>宛先</th><th>アドレス</th><th>使う箇所</th></tr></thead>
+        <tbody>
+          <tr><td class="role">決済</td><td class="mono">api.stripe.com · api-m.paypal.com · api.iamport.kr · api.portone.io</td><td>order-service · pay-service</td></tr>
+          <tr><td class="role">メール · SMS</td><td>SMTP <span class="mono">587</span> · SMS 業者(未選定)</td><td>notification-service</td></tr>
+          <tr><td class="role">ソーシャルログイン</td><td>Google · GitHub · Facebook · Kakao · LINE</td><td>user-service</td></tr>
+          <tr><td class="role">画像</td><td>AWS S3 <span class="mono">ap-northeast-2</span></td><td>catalog · user-service(ブラウザは S3 から直接取得)</td></tr>
+          <tr><td class="role">その他</td><td class="mono">apis.data.go.kr · api.pwnedpasswords.com · ghcr.io · Cloudflare 7844</td><td>配送追跡(delivery)· パスワード漏洩確認(user)· イメージ pull · トンネル</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>帯域と遅延</h3>
+    <ul>
+      <li><b>内部:</b>アプリのトラフィックは小さいです。実習の天井が成功毎秒約 1,400 件の小さな JSON です(docs/83)。10GbE でも足り、25GbE は複製とバックアップの余裕です。</li>
+      <li><b>インターネット:</b>最大の変数は画像です。今はブラウザが S3 から直接取るので自社回線を通りません。画像を MinIO でデータセンター内に入れると画像のバイトがすべて自社回線を通るので、回線はその基準で決める必要があります。</li>
+      <li><b>遅延:</b>一つの要求が照会を 20 回ほど送ります。往復 30ms なら 600ms になります(docs/32)。アプリと DB は同じラック · 同じ L2 に置き、同期複製を別サイトまで伸ばさないでください。</li>
+      <li><b>共通インフラ:</b>内部 DNS と NTP が必要です。JWT、TOTP 二段階認証、Kafka、証明書がすべて時計に依存します。電源は二重電源、A/B PDU、UPS で。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 3. リポジトリの先行課題 -->
+<section id="repo">
+  <div class="section-head">
+    <div class="eyebrow">3 · 先にリポジトリで直すこと</div>
+    <h2>機器を増やしても解決しないこと</h2>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>今のリポジトリ</th><th>自社運用で必要なもの</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Kafka ブローカー 1 台、複製 1、主要トピックのパーティション 1(自動作成)<span class="src">k8s/90-dev-infra.yaml · ops/02</span></td><td>ブローカー 3 台、RF 3、<code>min.insync.replicas=2</code>、トピックを事前作成</td></tr>
+        <tr><td class="num">2</td><td>Redis 単一(<code>SPRING_DATA_REDIS_HOST</code>)<span class="src">k8s/10-configmap.yaml</span></td><td>Sentinel 設定(<code>spring.data.redis.sentinel.*</code>)へ切り替え</td></tr>
+        <tr><td class="num">3</td><td>Mongo 単一(本番は Atlas)<span class="src">docs/23</span></td><td>レプリカセット 3</td></tr>
+        <tr><td class="num">4</td><td>PG はマネージド前提、WAL は同じボリュームに<span class="src">docs/23 · ops/29</span></td><td>Patroni + VIP、WAL は別の機器へ。プーラーを使うならトランザクションモード禁止</td></tr>
+        <tr><td class="num">5</td><td>S3 クライアントにエンドポイントの上書きがない(region だけ設定)<span class="src">catalog-service/…/AmazonS3Config.java</span></td><td>MinIO へ移すならコード修正(endpoint + path-style)。S3 を使い続けるなら不要</td></tr>
+        <tr><td class="num">6</td><td>eureka · chat は必ず 1 個<span class="src">docs/21</span></td><td>機器を増やしても単一障害点として残る</td></tr>
+        <tr><td class="num">7</td><td>actuator がアプリと同じポート(管理ポートの分離は未実装)<span class="src">docs/57</span></td><td>ネットワークで分離できない。ゲートウェイの遮断だけに頼る</td></tr>
+        <tr><td class="num">8</td><td>本番イメージは Ampere(arm64)用<span class="src">ops/19 · docs/71</span></td><td>x86 サーバーなら <code>ops/19 --platform linux/amd64</code> でビルド</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sub">
+    <h3>進める順序</h3>
+    <ol class="steps">
+      <li>上の 1〜4 を先にリポジトリで直します。メッセージ · キャッシュ · ドキュメントストア · DB の冗長化です。</li>
+      <li>実機で <code>ops/53</code>(k6)で測り直します。実習の数値は 12 コア · 24 スレッドを VM が分け合った結果なので、専用のハードウェアでは天井が変わります。</li>
+      <li>その結果でワーカーの台数と HPA の最大値を調整します。今の最大 3 は実習の大きさに合わせた値で、変えたら PG の接続数の計算もやり直します。</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <p>根拠は <span class="mono">ecommerce-msa @ 8ebcc93</span>(2026-10-26)で調べ、<span class="mono">50ef7995</span>(2026-11-01)で再確認した文書 · マニフェスト · スクリプトです。各行の下の灰色の文字がその場所です。同じ内容の Markdown 版は <a href="86-self-hosted-datacenter.md">docs/86</a>。</p>
+  <p>サーバーの仕様 · ラック配置 · VLAN 構成はリポジトリにない内容で、リポジトリの実測値から推定した出発点です。</p>
+</footer>
+
+</div>
+
+</body></html>
