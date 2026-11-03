@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](85-release-deploy-runbook.ko.md)
 
-> **状態(2026-10-24)** — **デプロイ完了: 本番は `4415e498565c`** です(1 回目は §7-1)。同じ日の続くデプロイ(`6501d3fd8e60`)と 2026-10-25 · 26 の続くデプロイ四つ(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)で、今の本番は **`d68f0307e979`** です(§0「続くデプロイ」)。残りは §8。以前の本番は `b7c5053a45e8`(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))でした。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
+> **状態(2026-10-24)** — **デプロイ完了: 本番は `4415e498565c`** です(1 回目は §7-1)。同じ日の続くデプロイ(`6501d3fd8e60`)と 2026-10-25 · 26 の続くデプロイ四つ(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)に続き、2026-11-03 の contract リリース(`7ef62043a98f` — §8-2)で、今の本番は **`7ef62043a98f`** です(§0「続くデプロイ」·「contract リリース」)。残りは §8。以前の本番は `b7c5053a45e8`(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))でした。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
 > **対象バージョン**はこの文書が入ったコミット以降の improve 最新コミットです(パイプライン緑、12 桁 SHA)。デプロイ前に §0 の表に書きます。
 > 戻せないマイグレーション(ROLLBACK-UNSAFE)はありません。そのため **自動復帰が有効なデプロイ**です。ただし user V18 は重複行を消すので、バックアップは必須です(§3)。
 
@@ -22,6 +22,7 @@
 | 続くデプロイ 3(2026-10-25 UTC 昼) | `61f546a8b125` — フィルター検索は件数を最後まで数えない(catalog、[docs/83 §2.8](83-load-test.md)) · chat の続き(プロデューサーのブロック上限 5 秒 · 相談通知の非同期失敗 · `user-created` earliest) · CSP の強制(frontend、[docs/57 §19](57-remaining-priorities.md))。マイグレーションなし、252 秒。スモーク通過(429 15 回)。`/browse?category=16&price=4_` も価格の下限を 1 ずつ変えても遅れなく一覧(デプロイ前はすべて 503 — 件数で 42 秒)、応答ヘッダー `content-security-policy` が強制(Report-Only なし)。戻し先 `dc25b0f8a920` |
 | 続くデプロイ 4(2026-10-26) | `d837605d7902` — 価格の下限 > 上限(「4 ~ 0」)は DB に聞かず 0 件 · どの検索も件数を数えない(サブカテゴリ lab equipment が常に 503 — 一覧 16ms · 件数が 5 秒超、[docs/83 §2.8](83-load-test.md))。マイグレーションなし、252 秒。スモーク通過(429 19 回)。`subCategory=102` 200 · 0.35 秒(デプロイ前 503 · 5.7 秒)、`category=16&lowPrice=4&highPrice=0` 200 · 0.99 秒。デプロイ前に `VACUUM (PARALLEL 0, ANALYZE) product.product` · `product_subcategory`(並列 VACUUM は `/dev/shm` 64MB で失敗 — Pod に shm のマウントなし)、可視ページ 97,679 / 97,715。戻し先 `61f546a8b125` |
 | 続くデプロイ 5(2026-10-26) | `d68f0307e979` — 別カテゴリのサブカテゴリを選んだ組み合わせは 0 件確定(画面は親も変え、サーバーは DB に聞かない — [docs/83 §2.8](83-load-test.md)) · 身元ヘッダー enforce(ConfigMap) · Eureka `eureka.server.my-url`(自己複製をなくす)。マイグレーションなし。スモーク通過。`ops/37`: モード · ルール · 身元ヘッダーすべて enforce、① · ①-2 · ①-3 0、② 403/200、証明書なしの `User-Role: ROLE_ADMIN` は 403(②-2)。戻し先 `d837605d7902` |
+| contract リリース(2026-11-03) | `7ef62043a98f` — order V29 · user V19 の列削除(ROLLBACK-UNSAFE — `ops/28` の自動復帰はオフ)· catalog V24 `DROP INDEX CONCURRENTLY` + chat の Redis ファンアウト([docs/21 §2-1](21-horizontal-scaling.md) — 本番は `local` なので `k8s/70` は適用されず · chat は 1 のまま)。最初の対象 `50ef7995e94d` は CI ランナーが止まっていた間にイメージが作られなかった — ランナーを立て直した後にビルドされた `7ef62043a98f`(リリース候補まで緑 · その間のコード変更は chat だけ)。事前点検: orderdb の 30 秒を超えるトランザクション 1 = 10-24 に接続の切れた手動 `pg_dumpall`(9 日 `idle in transaction` — 切った、[docs/72 §3](72-model-refactor-deploy-runbook.md))、その後三つの DB とも 0 · 出発 order 28 · user 18 · catalog 23。デプロイ後: order 29 · user 19 · catalog 24 · 消した列 0 · `idx_product_name_trgm` 0 · 無効インデックス 0 · 再起動 0、`PUBSUB NUMSUB chat:stomp-fanout` 1 · ファンアウト警告 0。戻し先 `d68f0307e979`(消した列を使わない — `FORCE_UNSAFE_ROLLBACK=1`) |
 
 ## 1. 何が変わるか
 
@@ -258,7 +259,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | デプロイの翌日 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` が 0 なら `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1 件(サーバーの自己複製 `peerreplication/batch` — `my-url` で修正、docs/57 §16)、そのイメージ(`d68f0307e979`、2026-10-26)のデプロイ後にもう一日 — ✅ 2026-10-30 0 件 → ConfigMap を enforce — 適用済み(16:51 UTC `907b06ab` の `--config-only --restart eureka-server`: ログ `mode=ENFORCE (CA 읽음)` · 10 分の `[eureka write]` 0 · サービス Pod の再起動 0) | docs/57 §16「Eureka 書き込み」 |
 | 決済を一周した後 | CSP 違反がなければ frontend nginx の `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(次の frontend イメージ) — ✅ 2026-10-25 コンソールの違反 0(カード・PayPal・銀行振込)→ `61f546a8b125` で強制を適用済み(応答ヘッダーを確認) | docs/57 §19 |
 | デプロイが安定した後 | `LOCAL_KEY_STORE_PASSWORD` の交換 — `./ops/59-rotate-store-password.sh` check → apply(ストアのパスワードだけ · 鍵はそのまま · 一つずつ再起動)→ 一日後に cleanup。古いパスワードが過去のログに残っている — ✅ 2026-10-25 10:21 UTC apply(ストア 27 · 写し 14 · 13 個の再起動 0 · ops/37 403/200)、cleanup ✅ 2026-10-26(写し 21 個を削除 — Secret 14 · certs/ 6 · 20-secret.yaml)。⚠️ 全 Pod が起動し直したので identity · Eureka enforce の 24 時間の窓は 10-26 11 時 UTC から | docs/57 §16「ストアのパスワード」 |
-| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)+ catalog の旧名前インデックス(V21 `idx_product_name_trgm`)の削除 — 2026-10-31 コミット(order V29 · user V19 · catalog V24)、適用待ち: 手順 §8-2 | docs/72 §7 |
+| 1 週間ほど後 | contract リリース: order の `order_address.order_id` · `orders.tax_price`、user の `lock_expires_at` · `failed_login_attempts` 列の削除(ROLLBACK-UNSAFE の宣言)+ catalog の旧名前インデックス(V21 `idx_product_name_trgm`)の削除 — 2026-10-31 コミット(order V29 · user V19 · catalog V24)、**適用済み 2026-11-03 `7ef62043a98f`**(§0): 手順 §8-2 | docs/72 §7 |
 | デプロイ後に一度 | 本番 b7c5053 の期間にアラートなしで過ぎた可能性のある「Pod ごとの最初の一件」— ログの「이중 결제」· DLT トピックを見渡す | B-101 |
 | 判断の後(作業するか決めてから) | まれな価格フィルター検索の 503 をなくす — 商品ごとに画面価格(常時割引 · 企画展を適用)の最低 · 最高を列に持ち(サイズの価格 · 割引 · 企画展が変わるときに更新)、`(category_id, 最低価格)` のインデックスで候補を先に絞る。コスト: マイグレーション(列 · インデックスの追加、本番 200 万件の埋め込み) · 更新経路 · テスト。それまでは合う商品がごく少ない価格帯で 5 秒上限の 503 — 画面は「サーバーが一時的に応答していません」の案内(2026-10-26 本番の 10 分で「검색 질의 시간 초과」2 件)。下限 > 上限 · 件数は `d837605d7902` で解決済み。移行計画は §8-1 | docs/83 §2.8 |
 | 判断の後 | まれ · 0 件の組み合わせへの一般的な対策(2026-10-26 整理) — `LIMIT` で数行だけ取る計画は、合う行がまれだとカテゴリを最後まで走査する(5 秒上限 → 503)。知られた手法: ① あり得ない組み合わせは DB に聞かない(下限 > 上限 · 別の親のサブカテゴリ — `d837605d7902` · `d68f0307e979` で適用済み) ② ファセット件数 — フィルターメニューの値ごとに今の条件での件数を前もって計算し、0 件の値は薄く · 非表示(EC サイトの標準、今の `SearchFilterFacets` は値だけ) ③ 非正規化列 + 複合インデックス(上の行) ④ 転置インデックスの検索エンジン(ES — フラグ `catalog.search-engine`、ファセット件数も集計で一緒に) ⑤ 時間上限に達したら 503 ではなく見つかった分 + 「これ以上なし」(小さい変更 — ③ より先にできる)。PostgreSQL の補助手段(まれな側 — 連結表 `(subcategory_id, product_id)` — から始める、`CREATE STATISTICS`、部分インデックス)は ③ の代わりにならない。勧める順序 ⑤ → ③(または ④)→ ② | docs/83 §2.8 |
@@ -288,7 +289,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 
 デプロイが終わったら残作業の一覧の「次のデプロイと一緒に」の項目を「適用済み」に移し、この文書の一番上の状態に結果を書きます。
 
-### 8-2. contract リリース — 手順(2026-10-31 コミット)
+### 8-2. contract リリース — 手順(2026-10-31 コミット · 適用済み 2026-11-03 `7ef62043a98f`)
 
 何を消すか — どれも今の本番イメージ(`d68f0307e979`)が使わないものです(4415e498565c まとめリリースから)。
 

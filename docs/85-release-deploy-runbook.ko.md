@@ -2,7 +2,7 @@
 
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
-> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)으로 지금 운영은 **`d68f0307e979`** 입니다(§0 "후속 배포"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
+> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)에 이어, 2026-11-03 contract 릴리스(`7ef62043a98f` — §8-2)로 지금 운영은 **`7ef62043a98f`** 입니다(§0 "후속 배포" · "contract 릴리스"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
 
@@ -22,6 +22,7 @@
 | 후속 배포 3(2026-10-25 UTC 낮) | `61f546a8b125` — 필터 검색은 개수를 끝까지 세지 않는다(catalog, [docs/83 §2.8](83-load-test.ko.md)) · chat 후속(프로듀서 막힘 상한 5초 · 상담 알림 비동기 실패 · `user-created` earliest) · CSP 강제(frontend, [docs/57 §19](57-remaining-priorities.ko.md)). 마이그레이션 없음, 252초. 스모크 통과(429 15회). `/browse?category=16&price=4_` 와 가격 하한을 1씩 바꿔도 지연 없이 목록(배포 전에는 모두 503 — 개수 세기 42초), 응답 헤더 `content-security-policy` 강제(Report-Only 없음). 되돌리기 대상 `dc25b0f8a920` |
 | 후속 배포 4(2026-10-26) | `d837605d7902` — 가격 하한 > 상한("4 ~ 0")은 DB 에 묻지 않고 0건 · 어떤 검색도 개수를 세지 않는다(하위 카테고리 lab equipment 가 늘 503 — 목록 16ms · 개수가 5초 넘음, [docs/83 §2.8](83-load-test.ko.md)). 마이그레이션 없음, 252초. 스모크 통과(429 19회). `subCategory=102` 200 · 0.35초(배포 전 503 · 5.7초), `category=16&lowPrice=4&highPrice=0` 200 · 0.99초. 배포 전 `VACUUM (PARALLEL 0, ANALYZE) product.product` · `product_subcategory`(병렬 VACUUM 은 `/dev/shm` 64MB 로 실패 — 파드에 shm 마운트 없음), 가시 페이지 97,679 / 97,715. 되돌리기 대상 `61f546a8b125` |
 | 후속 배포 5(2026-10-26) | `d68f0307e979` — 다른 카테고리의 하위를 고른 조합은 0건 확정(화면은 상위도 바꾸고, 서버는 DB 에 묻지 않는다 — [docs/83 §2.8](83-load-test.ko.md)) · 신원 헤더 enforce(ConfigMap) · Eureka `eureka.server.my-url`(자기 복제 없앰). 마이그레이션 없음. 스모크 통과. `ops/37`: 모드 · 규칙 · 신원 헤더 모두 enforce, ① · ①-2 · ①-3 0, ② 403/200, 인증서 없이 `User-Role: ROLE_ADMIN` 은 403(②-2). 되돌리기 대상 `d837605d7902` |
+| contract 릴리스(2026-11-03) | `7ef62043a98f` — order V29 · user V19 열 삭제(ROLLBACK-UNSAFE — `ops/28` 자동 복귀 꺼짐) · catalog V24 `DROP INDEX CONCURRENTLY` + chat Redis 팬아웃([docs/21 §2-1](21-horizontal-scaling.ko.md) — 운영은 `local` 이라 `k8s/70` 미적용 · chat 1개 그대로). 처음 대상 `50ef7995e94d` 는 CI 러너가 멈춰 있던 동안 이미지가 만들어지지 않았다 — 러너를 다시 띄운 뒤 빌드된 `7ef62043a98f`(릴리스 후보 초록 · 그 사이 코드 변경은 chat 뿐). 사전 점검: orderdb 의 30초 넘는 트랜잭션 1 = 10-24 연결이 끊긴 수동 `pg_dumpall`(9일 `idle in transaction` — 끊음, [docs/72 §3](72-model-refactor-deploy-runbook.ko.md)), 그 뒤 세 DB 0 · 출발 order 28 · user 18 · catalog 23. 배포 후: order 29 · user 19 · catalog 24 · 지운 열 0 · `idx_product_name_trgm` 0 · 무효 인덱스 0 · 재시작 0, `PUBSUB NUMSUB chat:stomp-fanout` 1 · 팬아웃 경고 0. 되돌리기 대상 `d68f0307e979`(지운 열을 쓰지 않는다 — `FORCE_UNSAFE_ROLLBACK=1`) |
 
 ## 1. 무엇이 바뀌나
 
@@ -258,7 +259,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 | 배포 다음 날 | `kubectl -n ecommerce logs deploy/eureka-server --since=24h \| grep -c '\[eureka write\]'` 가 0 이면 `EUREKA_WRITE_AUTH_MODE=enforce` → `--config-only --restart eureka-server` — 2026-10-26: 1건(서버의 자기 복제 `peerreplication/batch` — `my-url` 로 고침, docs/57 §16), 그 이미지(`d68f0307e979`, 2026-10-26) 배포 뒤 다시 하루 — ✅ 2026-10-30 0건 → ConfigMap enforce — 적용 끝(16:51 UTC `907b06ab` `--config-only --restart eureka-server`: 로그 `mode=ENFORCE (CA 읽음)` · 10분 `[eureka write]` 0 · 서비스 파드 재시작 0) | docs/57 §16 "Eureka 쓰기" |
 | 결제 한 바퀴 뒤 | CSP 위반이 없으면 frontend nginx 의 `Content-Security-Policy-Report-Only` → `Content-Security-Policy`(다음 frontend 이미지) — ✅ 2026-10-25 콘솔 위반 0(카드 · PayPal · 무통장) → `61f546a8b125` 로 강제 적용 끝(응답 헤더 확인) | docs/57 §19 |
 | 배포가 안정된 뒤 | `LOCAL_KEY_STORE_PASSWORD` 교체 — `./ops/59-rotate-store-password.sh` check → apply(스토어 비밀번호만 · 키 그대로 · 하나씩 재시작) → 하루 뒤 cleanup. 옛 비밀번호가 지난 로그에 남아 있다 — ✅ 2026-10-25 10:21 UTC apply(스토어 27 · 사본 14 · 13개 재시작 0 · ops/37 403/200), cleanup ✅ 2026-10-26(사본 21개 삭제 — Secret 14 · certs/ 6 · 20-secret.yaml). ⚠️ 모든 파드가 다시 떠서 identity · Eureka enforce 의 24시간 창은 10-26 11시 UTC 부터 | docs/57 §16 "스토어 비밀번호" |
-| 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) + catalog 옛 이름 인덱스(V21 `idx_product_name_trgm`) 삭제 — 2026-10-31 커밋(order V29 · user V19 · catalog V24), 적용 대기: 절차 §8-2 | docs/72 §7 |
+| 1주일쯤 뒤 | contract 릴리스: order `order_address.order_id` · `orders.tax_price`, user `lock_expires_at` · `failed_login_attempts` 열 삭제(ROLLBACK-UNSAFE 선언) + catalog 옛 이름 인덱스(V21 `idx_product_name_trgm`) 삭제 — 2026-10-31 커밋(order V29 · user V19 · catalog V24), **적용 끝 2026-11-03 `7ef62043a98f`**(§0): 절차 §8-2 | docs/72 §7 |
 | 배포 뒤 한 번 | 운영 b7c5053 기간에 경보 없이 지나갔을 수 있는 "파드마다 첫 건" — 로그의 '이중 결제' · DLT 토픽을 훑어본다 | B-101 |
 | 판단 뒤(작업 여부를 정한 다음) | 드문 가격 필터 검색의 503 없애기 — 상품마다 화면 가격(상시 할인 · 기획전 적용)의 최저 · 최고를 열로 두고(사이즈 가격 · 할인 · 기획전이 바뀔 때 갱신) `(category_id, 최저가)` 인덱스로 후보를 먼저 좁힌다. 비용: 마이그레이션(열 · 인덱스 추가, 운영 200만 건 채우기) · 갱신 경로 · 테스트. 그 전까지는 맞는 상품이 아주 드문 가격대에서 5초 상한 503 — 화면은 "サーバーが一時的に応答していません" 안내(2026-10-26 운영 10분에 `검색 질의 시간 초과` 2건). 하한 > 상한 · 개수 세기는 `d837605d7902` 에서 이미 해결. 이행 계획 §8-1 | docs/83 §2.8 |
 | 판단 뒤 | 드문 · 0건 조합의 일반 대책(2026-10-26 정리) — `LIMIT` 로 몇 줄만 받는 계획은 맞는 행이 드물면 카테고리를 끝까지 훑는다(5초 상한 → 503). 알려진 기법: ① 불가능한 조합은 DB 에 묻지 않는다(하한 > 상한 · 다른 상위의 하위 — `d837605d7902` · `d68f0307e979` 에서 적용 끝) ② 패싯 개수 — 필터 메뉴의 값마다 지금 조건에서의 건수를 미리 계산해 0건 값은 흐리게 · 숨김(쇼핑몰의 표준, 지금 `SearchFilterFacets` 는 값만) ③ 비정규화 열 + 복합 인덱스(위 행) ④ 역색인 검색 엔진(ES — 플래그 `catalog.search-engine`, 패싯 개수도 집계로 함께) ⑤ 시간 상한에 닿으면 503 대신 찾은 만큼 + "더 없음"(작은 변경 — ③ 전에 먼저 할 수 있다). PostgreSQL 보조 수단(드문 쪽 — 연결 표 `(subcategory_id, product_id)` — 에서 시작, `CREATE STATISTICS`, 부분 인덱스)은 ③ 을 대신하지 못한다. 권하는 순서 ⑤ → ③(또는 ④) → ② | docs/83 §2.8 |
@@ -288,7 +289,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 
 배포가 끝나면 남은 일 목록의 "다음 배포에 함께" 항목들을 "적용 끝" 으로 옮기고, 이 문서 맨 위 상태에 결과를 적습니다.
 
-### 8-2. contract 릴리스 — 절차(2026-10-31 커밋)
+### 8-2. contract 릴리스 — 절차(2026-10-31 커밋 · 적용 끝 2026-11-03 `7ef62043a98f`)
 
 무엇을 지우나 — 모두 지금 운영 이미지(`d68f0307e979`)가 쓰지 않는 것입니다(4415e498565c 묶음 릴리스부터).
 

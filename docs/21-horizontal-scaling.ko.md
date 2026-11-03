@@ -112,7 +112,7 @@ AssertionError: 두 레플리카가 같은 아웃박스 이벤트를 집으면 �
 - **같은 JSON** — 페이로드는 STOMP 변환기(Spring Boot 의 ObjectMapper)로 만든 JSON 바이트를 그대로 싣고 그대로 보낸다. JSON 트리로 옮기면 시각의 숫자 표현이 바뀌었다(`StompFanoutTest` 가 잡았다).
 - **순서** — 받는 쪽은 스레드 하나로 차례대로 보낸다(`StompFanoutConfig`). 리스너 컨테이너의 기본 실행기는 메시지마다 스레드라 순서가 뒤섞인다(변이 확인: 300개 순서 시험이 실패).
 - **Redis 가 안 될 때** — 발행이 실패하면 소비한 파드의 구독자에게라도 보내고 센다(`chat_stomp_fanout_failed_total`, 경보 `ChatFanoutPublishFailed`). presence · 억제는 파드 메모리로 물러난다(틀려도 "알림 한 통 더" 쪽). pub/sub 은 최대 한 번 전달이라 구독이 잠깐 끊긴 파드는 그동안의 실시간 메시지를 놓친다 — 메시지는 먼저 저장되므로 다시 열면 이력에 있다.
-- **배치** — `k8s/46` 은 1 로 시작, HPA 1 ~ 3(`k8s/70`). 최소 1 인 이유: SockJS 의 WebSocket 밖 폴백(xhr)은 요청이 같은 파드로 가야 하는데 게이트웨이에 고정 세션이 없다 — 파드가 둘 이상이면 그 사용자는 재연결을 되풀이할 수 있다(WebSocket 으로 붙는 대부분은 무관).
+- **배치** — `k8s/46` 은 1 로 시작, HPA 1 ~ 3(`k8s/70`). 최소 1 인 이유: SockJS 의 WebSocket 밖 폴백(xhr)은 요청이 같은 파드로 가야 하는데 게이트웨이에 고정 세션이 없다 — 파드가 둘 이상이면 그 사용자는 재연결을 되풀이할 수 있다(WebSocket 으로 붙는 대부분은 무관). 운영(OCI 단일 노드, `ops/28 local`)은 `k8s/70` 을 적용하지 않아 chat 은 1개 그대로다 — 2026-11-03 `7ef62043a98f` 로 팬아웃 코드만 들어갔다(`PUBSUB NUMSUB chat:stomp-fanout` 1). HPA 는 `prod` 환경이나 `APPLY_HPA=1` 일 때만.
 - **가드** — B-34 의 1개 고정 목록에서 chat-service 를 뺐다(eureka-server 만 남는다). 대신 **B-107**: chat 에서 구독자에게 보내는 곳은 `StompFanout` 하나(직접 `convertAndSend` · `SimpMessagingTemplate` 금지) · 받는 쪽은 스레드 하나 실행기.
 - **커넥션** — chat 도 최대 3 이 되어 최악 10 × 5 × 3 = **150**(예전 chat 1 고정일 때 140). `max_connections` 300 · 가드 B-32(≤ 200) 안이다.
 - **시험** — `ChatScaleOutRedisTest`(컨테이너, 실제 Redis 를 "파드" 둘이 같이 쓴다): 한 파드가 보낸 300개를 두 파드가 모두 순서대로, A 파드에서 보고 있으면 B 가 안다(해지 · 끊김 · 종료 · TTL), 같은 상담 답변을 두 파드가 소비해도 알림 한 통. 각각 되돌리면 실패하는 것을 확인했다.

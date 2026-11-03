@@ -112,7 +112,7 @@ AssertionError: 두 레플리카가 같은 아웃박스 이벤트를 집으면 �
 - **同じ JSON** — ペイロードは STOMP の変換器(Spring Boot の ObjectMapper)で作った JSON のバイトをそのまま載せ、そのまま送る。JSON ツリーに移すと時刻の数値表現が変わった(`StompFanoutTest` が捕まえた)。
 - **順序** — 受ける側は一本のスレッドで順に送る(`StompFanoutConfig`)。リスナーコンテナの既定の実行器はメッセージごとにスレッドを立て、順序が崩れる(変異確認: 300 件の順序の試験が失敗)。
 - **Redis が駄目なとき** — 発行に失敗したら消費した Pod の購読者にだけでも送って数える(`chat_stomp_fanout_failed_total`、警報 `ChatFanoutPublishFailed`)。presence · 抑制は Pod のメモリに退く(間違えても「通知がもう一通」の側)。pub/sub は最大一回の配信なので、購読が一瞬切れた Pod はその間のリアルタイムのメッセージを取りこぼす — メッセージは先に保存されるので開き直せば履歴にある。
-- **配置** — `k8s/46` は 1 から、HPA 1 〜 3(`k8s/70`)。最小 1 の理由: SockJS の WebSocket 以外のフォールバック(xhr)はリクエストが同じ Pod に行く必要があるが、ゲートウェイに固定セッションがない — Pod が二つ以上だとそのユーザーは再接続を繰り返しうる(WebSocket でつながる大部分は無関係)。
+- **配置** — `k8s/46` は 1 から、HPA 1 〜 3(`k8s/70`)。最小 1 の理由: SockJS の WebSocket 以外のフォールバック(xhr)はリクエストが同じ Pod に行く必要があるが、ゲートウェイに固定セッションがない — Pod が二つ以上だとそのユーザーは再接続を繰り返しうる(WebSocket でつながる大部分は無関係)。本番(OCI の単一ノード、`ops/28 local`)は `k8s/70` を適用しないので chat は 1 のまま — 2026-11-03 `7ef62043a98f` でファンアウトのコードだけが入った(`PUBSUB NUMSUB chat:stomp-fanout` 1)。HPA は `prod` 環境か `APPLY_HPA=1` のときだけ。
 - **ガード** — B-34 の 1 個固定の一覧から chat-service を外した(eureka-server だけが残る)。代わりに **B-107**: chat で購読者に送る所は `StompFanout` 一つ(直接の `convertAndSend` · `SimpMessagingTemplate` は禁止)· 受ける側は一本のスレッドの実行器。
 - **接続数** — chat も最大 3 になり最悪 10 × 5 × 3 = **150**(以前の chat 1 固定のときは 140)。`max_connections` 300 · ガード B-32(≤ 200)の内側。
 - **試験** — `ChatScaleOutRedisTest`(コンテナ、実際の Redis を「Pod」二つが共有): 一つの Pod が送った 300 件を二つの Pod がすべて順に、A の Pod で見ていれば B が分かる(解除 · 切断 · 終了 · TTL)、同じ相談の返信を二つの Pod が消費しても通知は一通。それぞれ戻すと失敗することを確認した。
