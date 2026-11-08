@@ -98,6 +98,7 @@
 | 86 | [자체 데이터센터 운영 — 하드웨어 · 네트워크 구성안](86-self-hosted-datacenter.ko.md) | 판단 자료(결정 아님) — 서버 약 12대(k3s 서버 3 · 워커 3 · 데이터 노드 3 · 관측 · 백업 · 선택 CI), 데이터 계층은 k8s 밖 베어메탈(Patroni · KRaft 3 · Mongo 레플리카 셋 · Redis Sentinel), Cloudflare Tunnel 유지(인바운드 0) · VLAN 다섯 · 이그레스 허용 목록, 하드웨어로 풀리지 않는 레포 작업 8가지와 순서 · 랙 배치도 · 망 구성도가 있는 페이지판 [86 HTML](86-self-hosted-datacenter.ko.html) | ✅ |
 | 87 | [AWS 에서 수백만 명 규모로 — 구성 상정안](87-aws-at-scale.ko.md) · [페이지판](87-aws-at-scale.ko.html) | 판단 자료(결정 아님) — 가입자 300만 · 행사 피크 초당 5,000 ~ 10,000 가정, 읽기는 CloudFront 에서 끝내기(catalog 파드당 ~350/초), EKS 3 AZ · Aurora · MSK · ElastiCache · OpenSearch(드문 필터 503), Eureka · chat 단일 해소, 설계 5가지 · 월 비용 짐작 · 순서(docs/86 §3 공통) | ✅ |
 | 88 | [페더레이션(기능 분할)의 네 가지 단점](88-federation-tradeoffs.ko.md) | 분석 기록 — 큰 표엔 무력(productdb · 드문 필터, 대책은 질의 모양 — 파티셔닝 · 복제본이 아님), 앱이 DB 를 고름(catalog `@Primary` · 안 쓰는 metadb), 조인 대신 호출 · 복제 · 사가 · 읽기 모델, 커넥션 140 · B-32, 다른 세션 분석의 정정 기록 | ✅ |
+| 89 | [단일 노드에서 수백만 명으로 — 단계별 이행 계획](89-scale-out-migration-plan.ko.md) | 판단 자료(결정 아님) — 86 · 87 의 목표까지 지금 노드 한 대에서 옮겨 가는 순서: 0 SLO · 측정 → 1 데이터 계층을 노드 밖으로(Kafka → Redis → PG → WAL) → 2 멀티 노드 · Eureka 제거 · 풀러 → 3 CDN · ES · 읽기 복제본 → 4 파티션 · 재고 핫스팟 → 5 운영 체계. 단계마다 들어가는 조건 · 무정지 순서 · 되돌리기, 새 클러스터에서 건너뛰는 `latest` 컨슈머 8곳 · `Cache-Control` 부재 · 시퀀스 | ✅ |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |
