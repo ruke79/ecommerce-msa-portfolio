@@ -161,4 +161,47 @@ class OrderDeliveryStatusServiceTest {
         when(orderRepository.findById(9L)).thenReturn(Optional.empty());
         assertThat(service.apply(9L, "DELIVERED", "DELIVERED")).isFalse();
     }
+
+    /** 메모리 원장 — 같은 키는 한 번만 true. */
+    private static ProcessedEventLedger memoryLedger() {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        return new ProcessedEventLedger() {
+            @Override
+            public boolean markFirst(String eventId) {
+                return seen.add(eventId);
+            }
+        };
+    }
+
+    /**
+     * 🐛 원장이 없을 때: 배송 취소(PAID 로 되돌림)는 "앞으로만" 밖이라, 관리자가 배송을 다시 만들어 PROCESSING 이 된 주문에 옛 배송의 취소가
+     * 다시 오면(재전달 · 새 그룹의 earliest 다시 읽기 — B-110) 주문이 PAID 로 돌아갔다. 새 배송의 상태는 배송 건 번호가 달라 걸러지지 않는다.
+     * [JA] 台帳がないとき、配送を作り直した注文に古い配送のキャンセルが再び来ると PAID に戻った。新しい配送は番号が違うので除かれない。
+     */
+    @Test
+    @DisplayName("🔴 옛 배송의 취소가 다시 와도 다시 만든 배송의 주문을 되돌리지 않는다 — 원장(배송 건 · 상태)")
+    void replayedCancelOfOldDeliveryIsIgnored() {
+        service.setLedger(memoryLedger());
+        Order order = order(OrderStatus.PROCESSING);
+
+        String oldCancel = OrderDeliveryStatusService.ledgerKey("3", "CANCELLED");
+        assertThat(service.apply(1L, "CANCELLED", "CANCELLED", oldCancel)).as("처음 — PAID 로").isTrue();
+        assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAID);
+
+        assertThat(service.apply(1L, "PENDING", "ORDERED", OrderDeliveryStatusService.ledgerKey("4", "PENDING")))
+                .as("다시 만든 배송(4) — 번호가 달라 반영").isTrue();
+        assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PROCESSING);
+
+        assertThat(service.apply(1L, "CANCELLED", "CANCELLED", oldCancel)).as("옛 배송(3)의 취소가 다시 — 건너뜀").isFalse();
+        assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PROCESSING);
+    }
+
+    @Test
+    @DisplayName("원장 키는 배송 건 · 상태 — 배송 건 번호나 상태가 없으면 null(원장 없이)")
+    void ledgerKeyIsPerDeliveryAndStatus() {
+        assertThat(OrderDeliveryStatusService.ledgerKey("3", "cancelled")).isEqualTo("delivery-status:3:CANCELLED");
+        assertThat(OrderDeliveryStatusService.ledgerKey("3", "PENDING")).isNotEqualTo(OrderDeliveryStatusService.ledgerKey("4", "PENDING"));
+        assertThat(OrderDeliveryStatusService.ledgerKey(null, "PENDING")).isNull();
+        assertThat(OrderDeliveryStatusService.ledgerKey("3", " ")).isNull();
+    }
 }

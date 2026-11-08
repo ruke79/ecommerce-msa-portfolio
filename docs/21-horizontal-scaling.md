@@ -119,15 +119,17 @@ AssertionError: 두 레플리카가 같은 아웃박스 이벤트를 집으면 �
 
 ## 3. まだ残っていること — 消費側の冪等性
 
-冪等台帳（`processed_event`）は **catalog-service と coupon-service にしか**ない。
-order・pay・cart・chat にはない。Kafka の再配信や Outbox の再発行が起きると:
+> 2026-11-07 更新: cart（V6 — cart-empty、2026-10-15）· order の配送状態（V30 — 配送番号 · 状態、2026-11-07）に台帳ができた。下の表はその更新を反映した。コンシューマーのオフセット既定が earliest になり（B-110、docs/89 §2-1）読み直しが増えうるので、この表がより重要になった。
+
+冪等台帳（`processed_event`）は最初 **catalog-service と coupon-service にしか**なかった。
+order・pay・cart・chat にはなかった。Kafka の再配信や Outbox の再発行が起きると:
 
 | サービス | 重複消費時 |
 |---|---|
 | pay-service | `UNIQUE(order_id, tracking_id)` が防いでくれる — §4 参照 |
-| order-service | 楽観ロック例外を NO-OP として吸収する（部分的） |
-| cart-service | 保護なし |
-| chat-service | 保護なし — 同じメッセージが 2 回保存されうる |
+| order-service | 決済応答: すでに PAID · 取消なら Saga が待機状態を見つけられず飛ばす。配送状態: **台帳（V30、2026-11-07）** — 同じ配送の同じ状態は一度だけ（前にしか進まない規則の外の配送キャンセルが再び来て注文を戻していたもの） |
+| cart-service | **台帳（V6、2026-10-15）** — cart-empty は注文ごとに一度。coupon-use · cart-rollback は合計の再計算なので冪等 |
+| chat-service | 同じ `_id`（送信側が決めた連番）で保存 — 同じ文書を書き直す。読み直した古いレコードは配信しない（2026-11-05） |
 
 pay と order はたまたま防御になっているが、**設計された防御ではない。** ロードマップに残す。
 
@@ -180,7 +182,7 @@ if (authorizationHeader != null) {
 
 | 項目 | 状態 |
 |---|---|
-| order・pay・cart・chat の冪等台帳 | 🟠 §3 |
+| order・pay・cart・chat の冪等台帳 | 🟡 §3 — cart（V6）· order の配送状態（V30）済み、pay は一意制約 · chat は同じ `_id` |
 | chat ブローカーリレー（その後 chat を拡張） | ✅ 2026-11-01 Redis のファンアウト(§2-1) |
 | peer-aware Eureka（または k8s ネイティブのディスカバリーへ移行） | 🟡 |
 | Outbox 発行の遅延・再試行メトリクス | 🟡 現在はログのみ |

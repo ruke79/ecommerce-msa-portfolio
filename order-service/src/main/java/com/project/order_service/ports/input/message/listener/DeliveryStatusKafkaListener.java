@@ -52,7 +52,10 @@ public class DeliveryStatusKafkaListener {
                     continue;
                 }
                 long orderId = orderIdNode.isNumber() ? orderIdNode.asLong() : Long.parseLong(orderIdNode.asText());
-                deliveryStatusService.apply(orderId, text(event, "status"), text(event, "stage"));
+                String status = text(event, "status");
+                // 원장(V30)은 배송 건 · 상태마다 — 같은 배송의 같은 상태가 다시 오면 건너뛴다(배송 취소의 재전달이 주문을 되돌리지 않게)
+                deliveryStatusService.apply(orderId, status, text(event, "stage"),
+                        OrderDeliveryStatusService.ledgerKey(text(event, "deliveryId"), status));
             } catch (OptimisticLockingFailureException e) {
                 // 다른 스레드가 같은 주문을 먼저 바꿨다. 다음 이벤트가 오면 다시 판정된다 — 재시도하지 않는다.
                 log.warn("배송 상태 반영 중 낙관적 락 충돌, 건너뜀: {}", abbreviate(raw));

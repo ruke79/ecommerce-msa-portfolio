@@ -29,12 +29,12 @@ class DeliveryStatusKafkaListenerTest {
             + "\"eventId\":\"delivery:889196209423729897:OUT_FOR_DELIVERY\"}";
 
     @Test
-    @DisplayName("orderId·status·stage 를 꺼내 서비스에 넘긴다 — 큰 TSID 도 정확히")
+    @DisplayName("orderId·status·stage 와 원장 키(배송 건 · 상태)를 서비스에 넘긴다 — 큰 TSID 도 정확히")
     void passesFieldsThrough() {
         OrderDeliveryStatusService service = mock(OrderDeliveryStatusService.class);
         new DeliveryStatusKafkaListener(service, new ObjectMapper(), com.project.common.outbox.OutboxTraceContext.NOOP).received(List.of(EVENT), null);
 
-        verify(service).apply(889196209423729897L, "OUT_FOR_DELIVERY", "IN_TRANSIT");
+        verify(service).apply(889196209423729897L, "OUT_FOR_DELIVERY", "IN_TRANSIT", "delivery-status:3:OUT_FOR_DELIVERY");
     }
 
     @Test
@@ -46,7 +46,7 @@ class DeliveryStatusKafkaListenerTest {
         assertThatThrownBy(() -> listener.received(List.of(EVENT, "not json"), null))
                 .isInstanceOf(BatchListenerFailedException.class)
                 .satisfies(e -> assertThat(((BatchListenerFailedException) e).getIndex()).isEqualTo(1));
-        verify(service).apply(anyLong(), eq("OUT_FOR_DELIVERY"), anyString());
+        verify(service).apply(anyLong(), eq("OUT_FOR_DELIVERY"), anyString(), anyString());
     }
 
     @Test
@@ -56,16 +56,26 @@ class DeliveryStatusKafkaListenerTest {
         new DeliveryStatusKafkaListener(service, new ObjectMapper(), com.project.common.outbox.OutboxTraceContext.NOOP)
                 .received(List.of("{\"status\":\"DELIVERED\",\"stage\":\"DELIVERED\"}"), null);
 
-        verify(service, never()).apply(anyLong(), anyString(), anyString());
+        verify(service, never()).apply(anyLong(), anyString(), anyString(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
     @DisplayName("낙관적 락 충돌은 재시도하지 않는다 — 다음 이벤트가 다시 판정한다")
     void optimisticLockIsSwallowed() {
         OrderDeliveryStatusService service = mock(OrderDeliveryStatusService.class);
-        when(service.apply(anyLong(), anyString(), anyString()))
+        when(service.apply(anyLong(), anyString(), anyString(), anyString()))
                 .thenThrow(new org.springframework.dao.OptimisticLockingFailureException("busy"));
 
         new DeliveryStatusKafkaListener(service, new ObjectMapper(), com.project.common.outbox.OutboxTraceContext.NOOP).received(List.of(EVENT), null);
+    }
+
+    @Test
+    @DisplayName("배송 건 번호가 없는 옛 이벤트는 원장 없이(키 null) — 예전 동작")
+    void noDeliveryIdMeansNoLedger() {
+        OrderDeliveryStatusService service = mock(OrderDeliveryStatusService.class);
+        new DeliveryStatusKafkaListener(service, new ObjectMapper(), com.project.common.outbox.OutboxTraceContext.NOOP)
+                .received(List.of("{\"orderId\":5,\"status\":\"DELIVERED\",\"stage\":\"DELIVERED\"}"), null);
+
+        verify(service).apply(5L, "DELIVERED", "DELIVERED", null);
     }
 }

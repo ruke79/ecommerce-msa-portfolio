@@ -119,15 +119,17 @@ AssertionError: 두 레플리카가 같은 아웃박스 이벤트를 집으면 �
 
 ## 3. 아직 남은 것 — 소비 측 멱등성
 
-멱등 원장(`processed_event`)은 **catalog-service 와 coupon-service 에만** 있다.
-order·pay·cart·chat 은 없다. Kafka 재전달이나 아웃박스 재발행이 나면:
+> 2026-11-07 갱신: cart(V6 — cart-empty, 2026-10-15) · order 배송 상태(V30 — 배송 건 · 상태, 2026-11-07)에 원장이 생겼다. 아래 표는 그 갱신을 반영했다. 컨슈머 오프셋 기본값이 earliest 가 되면서(B-110, docs/89 §2-1) 다시 읽기가 늘 수 있어 이 표가 더 중요해졌다.
+
+멱등 원장(`processed_event`)은 처음에 **catalog-service 와 coupon-service 에만** 있었다.
+order·pay·cart·chat 은 없었다. Kafka 재전달이나 아웃박스 재발행이 나면:
 
 | 서비스 | 중복 소비 시 |
 |---|---|
 | pay-service | `UNIQUE(order_id, tracking_id)` 가 막아 준다 — §4 참조 |
-| order-service | 낙관적 락 예외를 NO-OP 로 흡수한다(부분적) |
-| cart-service | 보호 없음 |
-| chat-service | 보호 없음 — 같은 메시지가 두 번 저장될 수 있다 |
+| order-service | 결제 응답: 이미 PAID · 취소면 사가가 대기 상태를 찾지 못해 건너뛴다. 배송 상태: **원장(V30, 2026-11-07)** — 같은 배송 건의 같은 상태는 한 번만(앞으로만 가는 규칙 밖의 배송 취소가 다시 와 주문을 되돌리던 것) |
+| cart-service | **원장(V6, 2026-10-15)** — cart-empty 는 주문마다 한 번. coupon-use · cart-rollback 은 총액 재계산이라 멱등 |
+| chat-service | 같은 `_id`(보낸 쪽이 정한 순번)로 저장 — 같은 문서를 다시 쓴다. 다시 읽은 옛 레코드는 뿌리지 않는다(2026-11-05) |
 
 pay 와 order 는 우연히 방어가 되지만 **설계된 방어는 아니다.** 로드맵에 남긴다.
 
@@ -180,7 +182,7 @@ if (authorizationHeader != null) {
 
 | 항목 | 상태 |
 |---|---|
-| order·pay·cart·chat 의 멱등 원장 | 🟠 §3 |
+| order·pay·cart·chat 의 멱등 원장 | 🟡 §3 — cart(V6) · order 배송 상태(V30) 끝, pay 는 유니크 · chat 은 같은 `_id` |
 | chat 브로커 릴레이 (그 뒤 chat 확장) | ✅ 2026-11-01 Redis 팬아웃(§2-1) |
 | peer-aware Eureka (또는 k8s 네이티브 디스커버리로 이전) | 🟡 |
 | 아웃박스 발행 지연·재시도 지표 | 🟡 현재는 로그만 |

@@ -70,6 +70,14 @@ public class OrderDeliveryStatusService {
         this.statusChanger = statusChanger;
     }
 
+    /** 처리 원장(V30) — 세터, statusChanger 와 같은 이유. 기본값은 원장 없음(단위 테스트). */
+    private ProcessedEventLedger ledger = ProcessedEventLedger.NONE;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setLedger(ProcessedEventLedger ledger) {
+        this.ledger = ledger;
+    }
+
     /** 배송 이벤트가 움직일 수 있는 주문 상태. 이 밖의 주문은 돈의 상태가 우선이다. */
     static final Set<OrderStatus> MOVABLE = EnumSet.of(OrderStatus.PAID, OrderStatus.PROCESSING, OrderStatus.DISPATCHED);
 
@@ -81,6 +89,24 @@ public class OrderDeliveryStatusService {
      */
     @Transactional
     public boolean apply(Long orderId, String deliveryStatus, String stage) {
+        return apply(orderId, deliveryStatus, stage, null);
+    }
+
+    /**
+     * 원장 키와 함께 — 같은 키를 이미 반영했으면 아무것도 하지 않는다(재전달 · 새 그룹의 다시 읽기).
+     *
+     * <p>키는 {@link #ledgerKey 배송 건 · 상태}다. 🐛 원장이 없을 때 "앞으로만 간다" 밖의 배송 취소가 다시 오면, 관리자가 배송을 다시 만들어
+     * PROCESSING 이 된 주문이 PAID 로 돌아갔다. 배송을 다시 만들면 배송 건 번호가 새로 생기므로 새 배송의 상태는 걸러지지 않는다.
+     * [JA] 台帳キー付き — 同じキーを反映済みなら何もしない。配送を作り直すと配送番号が新しくなるので、新しい配送の状態は除かれない。
+     *
+     * @param ledgerKey null 이면 원장을 쓰지 않는다(예전 동작 — 배송 건 번호가 없는 이벤트)
+     */
+    @Transactional
+    public boolean apply(Long orderId, String deliveryStatus, String stage, String ledgerKey) {
+        if (ledgerKey != null && !ledger.markFirst(ledgerKey)) {
+            log.info("이미 반영한 배송 상태, 건너뜀: orderId={} key={}", orderId, ledgerKey);
+            return false;
+        }
         if ("CANCELLED".equalsIgnoreCase(deliveryStatus == null ? "" : deliveryStatus.trim())) {
             return revertToPaidOnCancel(orderId);
         }
@@ -117,6 +143,18 @@ public class OrderDeliveryStatusService {
         cacheEvictor.evictOrderCaches(orderId, "delivery→" + target.get());
         log.info("배송 상태 반영: orderId={} {} → {} (delivery={})", orderId, current, target.get(), deliveryStatus);
         return true;
+    }
+
+    /**
+     * 원장 키 — 배송 건 · 상태. 발행자의 eventId({@code delivery:<주문>:<상태>})는 알림의 중복 거르기용이라 배송을 다시 만든 주문의 두 번째
+     * PENDING · CANCELLED 를 같은 값으로 본다 — 여기서는 쓰지 않는다. 배송 건 번호나 상태가 없으면 null(원장 없이 예전 동작).
+     * [JA] 台帳キー — 配送番号 · 状態。発行者の eventId は通知の重複除去用で、配送を作り直した注文の二度目を同じ値と見るので使わない。
+     */
+    public static String ledgerKey(String deliveryId, String deliveryStatus) {
+        if (deliveryId == null || deliveryId.isBlank() || deliveryStatus == null || deliveryStatus.isBlank()) {
+            return null;
+        }
+        return "delivery-status:" + deliveryId.trim() + ":" + deliveryStatus.trim().toUpperCase(java.util.Locale.ROOT);
     }
 
     /**
