@@ -879,6 +879,18 @@ path の不一致で Cookie が消えない）、`CsrfController`、`message/Out
 `MessageMongoEventListener`（chat）は `@Component` のないデッドコード; `deleteCartItem`（cart）は
 到達不能だが、合計金額で数量を掛けていない。
 
+**2026-11-05 再検討(cart)** — 上の #5 は `CouponUseMessageListener` だけが直っていた。合わせて直したもの:
+
+| # | 何 | 修正 | テスト |
+| --- | --- | --- | --- |
+| H1 | `cart_product.cart_id`(外部キー)にインデックスがない — カート読み込み(`findByUserId` の `@EntityGraph`: 画面 · チェックアウト · 追加 · 数量 · 削除 · リスナー三つ)が要求ごとに行テーブルを走査する。order V28 · catalog V22 と同じ欠陥 | cart **V8** `idx_cart_product_cart`(追加だけ)。使われない `idx_cart_product(_uid, name, size, style)` は contract リリースの削除候補 | `CartProductCartIdIndexMigrationTest`(コンテナ — V7 は Seq Scan、V8 後はインデックス) |
+| M1 | `CartRollbackMessageListener` — カートがないとログの次の行で NPE → `cart-rollback.DLT` · 警報(#5 の残り半分) | 飛ばす(coupon-use と同じ形) | `CartRollbackMessageListenerTest` |
+| L1 | 本文の `style` で直接 `List.get()` · 色なしの NPE · サイズなしの `RuntimeException` — `IllegalArgumentException` ではなく **503**(5xx 率 · 警報に入る) | `skuAt` · `requestColorId` で 400 | `CartServerAuthoritativeTest` |
+| L2 | コンシューマーグループ三つとも `latest` — オフセットがない間の cart-empty が消え、注文した物がカートに残る | `earliest`(cart-empty は台帳 V6、残りは合計の再計算なので冪等)。本番はグループがあるので変化なし | `CartKafkaOffsetResetTest` |
+| L3 | デッドコード — `paymentFailed*` ファクトリー(聞くリスナーなし)· `CartProductRepository.findByProductId` · `CouponUseConsumer.seq` | 削除 | — |
+
+残したもの: リクエスト一覧の上限(`CartRequest.products` — 画面の最大行数を決めてから)、`evictAfterCommit` の `isSynchronizationActive()` ガード(本番経路はすべてトランザクション内)。
+
 ### 2.6 common · gateway-server
 
 #### 🔴 ゲートウェイがたった今入れた身元ヘッダーを自ら消す — このレビュー最大の発見

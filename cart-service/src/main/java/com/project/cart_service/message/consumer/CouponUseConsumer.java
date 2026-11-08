@@ -16,7 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class CouponUseConsumer {
 
-    private static int seq = 0;
     
     private final CouponUseMessageListener userMessageListener;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */

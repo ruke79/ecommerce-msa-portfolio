@@ -931,7 +931,7 @@ public class CartService {
         ProductDto product = requireProduct(products, cartItem.getId());
         BigDecimal originalPrice = computeOriginalPriceFromSkusByStyleAndSize(
                 product.getSkus(), cartItem.getStyle(), cartItem.getSize());
-        BigDecimal price = discountedPrice(originalPrice, product.getSkus().get(cartItem.getStyle()).getDiscount());
+        BigDecimal price = discountedPrice(originalPrice, skuAt(product.getSkus(), cartItem.getStyle()).getDiscount());
 
         ProductInfoDto dto = cartItem.toBuilder().build();
         dto.setPriceBefore(originalPrice.toPlainString());
@@ -989,10 +989,10 @@ public class CartService {
      * 스타일과 사이즈에 따른 원가를 계산합니다.
      */
     private BigDecimal computeOriginalPriceFromSkusByStyleAndSize(List<ProductSkuDto> skus, int style, String size) {
-        return skus.get(style).getSizes().stream()
+        return skuAt(skus, style).getSizes().stream()
                 .filter(i -> java.util.Objects.equals(normalize(i.getSize()), normalize(size)))
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("Product size not found")).getPrice();
+                .orElseThrow(() -> new IllegalArgumentException("Product size not found")).getPrice();
     }
 
     /**
@@ -1007,9 +1007,37 @@ public class CartService {
         BigDecimal price = sku.getSizes().stream()
                 .filter(p -> java.util.Objects.equals(normalize(p.getSize()), normalize(size)))
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("Product size not found")).getPrice();
+                .orElseThrow(() -> new IllegalArgumentException("Product size not found")).getPrice();
 
         return discountedPrice(price, sku.getDiscount());
+    }
+
+    /**
+     * 요청의 스타일(SKU 목록 위치)이 가리키는 SKU — 범위 밖이면 고칠 수 있는 요청 오류(400).
+     *
+     * <p>🐛 예전: 본문의 {@code style} 로 바로 {@code List.get()} 해 {@code IndexOutOfBoundsException} 이 났다 — {@code
+     * IllegalArgumentException} 이 아니라 {@code CartController.failure()} 가 <b>503</b> 으로 내렸다. 낡은 화면 하나가 보낸 {@code
+     * style: 99} 가 서버 장애로 기록되고 5xx 오류율 · 경보에 들어갔다. 사이즈를 못 찾음도 같았다({@code RuntimeException}).
+     * [JA] リクエストの style が指す SKU — 範囲外なら直せる要求エラー(400)。以前は List.get() の IndexOutOfBounds で 503 になり、
+     *      古い画面一つが 5xx 率 · 警報に入った。サイズが見つからない場合も同じだった。
+     */
+    static ProductSkuDto skuAt(List<ProductSkuDto> skus, int style) {
+        if (skus == null || style < 0 || style >= skus.size()) {
+            throw new IllegalArgumentException("Product SKU not found");
+        }
+        return skus.get(style);
+    }
+
+    /** SKU 에 색상이 없을 때만 요청의 색상 — 없거나 숫자가 아니면 400(예전에는 NPE · NumberFormatException 이 503). */
+    private static long requestColorId(ProductInfoDto cartItem) {
+        if (cartItem.getColor() == null || cartItem.getColor().getId() == null) {
+            throw new IllegalArgumentException("Product color not found");
+        }
+        try {
+            return Long.parseLong(cartItem.getColor().getId());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Product color not found");
+        }
     }
 
     /**
@@ -1031,7 +1059,7 @@ public class CartService {
         ProductDto product = products.get(cartItem.getId());
 
         if (product != null) {
-            ProductSkuDto sku = product.getSkus().get(cartItem.getStyle());
+            ProductSkuDto sku = skuAt(product.getSkus(), cartItem.getStyle());
             BigDecimal price = getPriceFromSkuBySize(sku, cartItem.getSize());
 
             CartProduct cartProduct = CartProduct.builder()
@@ -1039,7 +1067,7 @@ public class CartService {
                     .colorId(sku.getColor() != null && sku.getColor().getId() != null
                             // 색상은 SKU(스타일)가 정한다 — 본문의 색상을 믿지 않는다(가격도 SKU 에서 온다)
                             ? Long.parseLong(sku.getColor().getId())
-                            : Long.parseLong(cartItem.getColor().getId()))
+                            : requestColorId(cartItem))
                     .style(cartItem.getStyle())
                     .productId(Long.parseLong(product.getId()))
                     .image(sku.getImages().get(0))

@@ -52,39 +52,16 @@ public class KafkaConsumerConfig {
     @Value("${kafka.url}")
     private String kafkaServerUrl;
 
-    @Bean
-    public ConsumerFactory<String, String> paymentFailedConsumerFactory() {
-        // 헤더(__TypeId__)가 있으면 쓰고, 없으면 String 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
-        JsonDeserializer<String> deserializer = new JsonDeserializer<>(String.class, true);
-        deserializer.addTrustedPackages("*");
+    // (예전의 paymentFailedConsumerFactory · paymentFailedListenerContainerFactory 는 지웠다 — payment-failed 를 듣는 리스너가 없었다.
+    //  결제 실패 보상은 cart-rollback 이 한다.)
 
-        Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
-                .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
-                .put(ConsumerConfig.GROUP_ID_CONFIG, "payment")
-                .put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment))
-                .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
-                .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
-                .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
-                .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
-                .putAll(securityProps())
-                .build();
-
-        return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
-                new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(deserializer));
-
-    }
-
-    @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, String> paymentFailedListenerContainerFactory() {
-        ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(paymentFailedConsumerFactory());
-        factory.getContainerProperties().setConsumerRebalanceListener(new LoggingRebalanceListener());
-        factory.setCommonErrorHandler(kafkaErrorHandler);
-        factory.getContainerProperties().setObservationEnabled(true);
-
-        return factory;
-    }
+    /**
+     * 오프셋이 없을 때(그룹이 처음 뜸 · 무활동 7일로 오프셋 만료) — 처음부터 읽는다.
+     * 🐛 예전: latest. 그 사이의 cart-empty 가 사라져 주문한 물건이 장바구니에 남았다. 다시 읽어도 안전하다 — cart-empty 는 처리 원장(V6)이
+     * 거르고, coupon-use · cart-rollback 은 총액을 다시 계산할 뿐이다. notification(N-M5) · delivery(D-M7) · chat 과 같다.
+     * [JA] オフセットがないとき — 最初から読む。以前は latest で、その間の cart-empty が消えて注文した物がカートに残った。読み直しても安全。
+     */
+    static final String AUTO_OFFSET_RESET = "earliest";
 
     @Bean
     ConcurrentKafkaListenerContainerFactory<String, CouponUseRequest> kafkaListenerContainerFactory() {
@@ -110,7 +87,7 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AUTO_OFFSET_RESET)
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();
@@ -146,7 +123,7 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                  .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AUTO_OFFSET_RESET)
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();
@@ -182,7 +159,7 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                  .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, AUTO_OFFSET_RESET)
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();

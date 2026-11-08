@@ -175,6 +175,22 @@ class CartServerAuthoritativeTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("상품을 찾을 수 없습니다.");
     }
 
+    /**
+     * 🐛 예전: 본문의 style 로 바로 {@code List.get()} — {@code IndexOutOfBoundsException} 은 IllegalArgumentException 이 아니라
+     * CartController.failure() 가 503 으로 내렸다(낡은 화면 하나가 5xx 오류율 · 경보에 들어갔다). 사이즈를 못 찾음도 RuntimeException 이었다.
+     * [JA] 以前は style で List.get() し IndexOutOfBounds が 503 になった。サイズが見つからない場合も同じ。今は 400(IllegalArgumentException)。
+     */
+    @Test
+    @DisplayName("🔴 범위 밖 style · 없는 사이즈는 고칠 수 있는 요청 오류(IllegalArgumentException → 400) — 예전에는 503")
+    void putRejectsBadStyleAndSizeAsClientErrors() {
+        ProductInfoDto farStyle = item("1", "M", 1).toBuilder().style(99).build();
+        ProductInfoDto negativeStyle = item("1", "M", 1).toBuilder().style(-1).build();
+
+        assertThatThrownBy(() -> service.putItem(7L, farStyle)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.putItem(7L, negativeStyle)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.putItem(7L, item("1", "XXL", 1))).isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     @DisplayName("수량 바꾸기 — 빈 사이즈도 같은 줄로 찾는다. 0 이면 뺀다")
     void setQtyAndZeroRemoves() {

@@ -879,6 +879,18 @@ path 불일치로 쿠키가 안 지워진다), `CsrfController`, `message/Outbox
 `MessageMongoEventListener`(chat) 는 `@Component` 가 없는 죽은 코드; `deleteCartItem`(cart) 은
 도달 불가인데 총액에서 수량을 곱하지 않는다.
 
+**2026-11-05 재검토(cart)** — 위 #5 는 `CouponUseMessageListener` 만 고쳐져 있었다. 함께 고친 것:
+
+| # | 무엇 | 고침 | 시험 |
+| --- | --- | --- | --- |
+| H1 | `cart_product.cart_id`(외래 키)에 인덱스가 없다 — 장바구니 읽기(`findByUserId` 의 `@EntityGraph`: 화면 · 체크아웃 · 담기 · 수량 · 빼기 · 리스너 셋)가 요청마다 줄 표를 훑는다. order V28 · catalog V22 와 같은 결함 | cart **V8** `idx_cart_product_cart`(더하기만). 쓰지 않는 `idx_cart_product(_uid, name, size, style)` 는 contract 릴리스의 삭제 후보 | `CartProductCartIdIndexMigrationTest`(컨테이너 — V7 은 Seq Scan, V8 뒤 인덱스) |
+| M1 | `CartRollbackMessageListener` — 장바구니가 없으면 로그 다음 줄 NPE → `cart-rollback.DLT` · 경보(#5 의 남은 절반) | 건너뛴다(coupon-use 와 같은 모양) | `CartRollbackMessageListenerTest` |
+| L1 | 본문의 `style` 로 바로 `List.get()` · 색상 없음 NPE · 사이즈 없음 `RuntimeException` — `IllegalArgumentException` 이 아니라 **503**(5xx 오류율 · 경보에 들어감) | `skuAt` · `requestColorId` 로 400 | `CartServerAuthoritativeTest` |
+| L2 | 세 컨슈머 그룹 모두 `latest` — 오프셋이 없던 사이의 cart-empty 가 사라져 주문한 물건이 장바구니에 남는다 | `earliest`(cart-empty 는 원장 V6, 나머지는 총액 재계산이라 멱등). 운영은 그룹이 있어 변화 없음 | `CartKafkaOffsetResetTest` |
+| L3 | 죽은 코드 — `paymentFailed*` 팩토리(듣는 리스너 없음) · `CartProductRepository.findByProductId` · `CouponUseConsumer.seq` | 삭제 | — |
+
+남긴 것: 요청 목록 상한(`CartRequest.products` — 화면의 최대 줄 수를 정한 뒤), `evictAfterCommit` 의 `isSynchronizationActive()` 가드(운영 경로는 모두 트랜잭션 안).
+
 ### 2.6 common · gateway-server
 
 #### 🔴 게이트웨이가 방금 넣은 신원 헤더를 스스로 지운다 — 이 리뷰의 최대 발견
