@@ -3999,4 +3999,64 @@ class ConfigurationGuardrailTest {
         String e2e = Files.readString(repoRoot().resolve("e2e-tests/src/test/java/com/project/e2e/SagaEndToEndTest.java"), StandardCharsets.UTF_8);
         assertThat(e2e).as("E2E 기본 JRE 도 같은 판").contains("\"E2E_JRE_IMAGE\", \"" + image + "\"");
     }
+
+    /**
+     * B-110: Kafka 컨슈머의 오프셋 기본값은 earliest — {@code latest} 는 이유가 적힌 허용 목록만.
+     *
+     * <p>오프셋이 없을 때(그룹이 처음 뜸 · 무활동 7일로 만료 · <b>새 Kafka 클러스터로 옮김</b>) {@code latest} 는 그 전에 들어온 메시지를 건너뛴다.
+     * 🐛 2026-11-05 까지 catalog(결제 확정 차감) · coupon 셋 · order 둘(결제 응답 · 배송 상태) · chat(메시지 저장)이 latest 라, 브로커를
+     * 옮기는 순간(docs/89 §2-1) 결제됐는데 결제 전인 주문 · 저장되지 않은 대화가 남을 수 있었다. 모두 다시 읽어도 안전하다(처리 원장 · 사가의
+     * 상태 확인 · 앞으로만 가는 전이 · 같은 _id 저장). Kafka 의 기본값이 latest 이므로 그룹을 두는 팩토리는 값을 늘 적는다.
+     * 허용: notification 의 접속 알림(presence) — 옛 접속을 다시 알리면 안 된다(N-M5).
+     *
+     * <p>[JA] Kafka コンシューマーのオフセット既定は earliest — latest は理由付きの許可リストだけ。オフセットがないとき latest はそれ以前の
+     * メッセージを飛ばす。新しいクラスターへ移す瞬間に「決済済みなのに未決済」が残りうった。
+     */
+    @Test
+    @DisplayName("B-110: 컨슈머 오프셋 기본값은 earliest — latest 는 허용 목록(접속 알림)만, 그룹을 두는 팩토리는 값을 늘 적는다")
+    void consumersReadFromTheStartWhenOffsetsAreMissing() throws IOException {
+        java.util.Set<String> allowedLatest = java.util.Set.of(
+                "notification-service/src/main/java/com/project/notification_service/listener/NotificationEventListener.java");
+        Pattern latest = Pattern.compile("AUTO_OFFSET_RESET_CONFIG\\s*,\\s*\"latest\"|auto\\.offset\\.reset\\s*=\\s*latest|auto-offset-reset:\\s*latest");
+        List<String> offenders = new ArrayList<>();
+        List<String> unset = new ArrayList<>();
+        int factories = 0;
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path main = module.resolve("src/main");
+                if (!Files.isDirectory(main)) {
+                    continue;
+                }
+                try (Stream<Path> files = Files.walk(main)) {
+                    for (Path f : files.filter(x -> x.toString().matches(".*\\.(java|ya?ml|properties)$")).toList()) {
+                        String rel = repoRoot().relativize(f).toString().replace('\\', '/');
+                        String text = Files.readString(f, StandardCharsets.UTF_8);
+                        String code = rel.endsWith(".java") ? stripComments(text) : text;
+                        if (latest.matcher(code).find() && !allowedLatest.contains(rel)) {
+                            offenders.add(rel);
+                        }
+                        if (rel.endsWith(".java")) {
+                            int groups = count(code, "ConsumerConfig.GROUP_ID_CONFIG");
+                            factories += groups;
+                            if (groups > count(code, "ConsumerConfig.AUTO_OFFSET_RESET_CONFIG")) {
+                                unset.add(rel);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(offenders).as("latest 는 그 전의 메시지를 건너뛴다 — earliest 로(다시 읽어도 안전한지 확인하고), 정말 필요하면 이유와 함께 허용 목록에(B-110)")
+                .isEmpty();
+        assertThat(unset).as("Kafka 기본값은 latest — 그룹을 두는 팩토리는 AUTO_OFFSET_RESET_CONFIG 를 적는다(B-110)").isEmpty();
+        assertThat(factories).as("검사한 컨슈머 팩토리가 있다").isGreaterThan(10);
+    }
+
+    private static int count(String text, String needle) {
+        int n = 0;
+        for (int i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length())) {
+            n++;
+        }
+        return n;
+    }
 }

@@ -74,7 +74,9 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment))
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면(그룹이 처음 뜸 · 무활동으로 만료 · 새 Kafka 클러스터) 처음부터 — 🐛 예전 latest 는 그 사이의 메시지를 건너뛰었다.
+                // 다시 읽어도 안전하다 — 결제 확정 차감은 eventId 처리 원장(processed_event)이 거른다. [JA] 最初から — 処理台帳が重複を除く(docs/89 §2-1)。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())

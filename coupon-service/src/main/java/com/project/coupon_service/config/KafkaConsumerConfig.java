@@ -81,7 +81,9 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면(그룹이 처음 뜸 · 무활동으로 만료 · 새 Kafka 클러스터) 처음부터 — 🐛 예전 latest 는 그 사이의 메시지를 건너뛰었다.
+                // 다시 읽어도 안전하다 — 가입 쿠폰은 같은 이름 · 사용자면 다시 만들지 않는다(CP4). [JA] 最初から — 同じ名前 · 利用者なら作り直さない(docs/89 §2-1)。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();
@@ -116,7 +118,9 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면(그룹이 처음 뜸 · 무활동으로 만료 · 새 Kafka 클러스터) 처음부터 — 🐛 예전 latest 는 그 사이의 메시지를 건너뛰었다.
+                // 다시 읽어도 안전하다 — 쿠폰 보상은 그 주문이 쓴 쿠폰만 되돌린다(used_order_id), 없으면 "되돌릴 것 없음". [JA] 最初から — その注文が使ったクーポンだけ戻す(docs/89 §2-1)。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();
@@ -151,7 +155,9 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면(그룹이 처음 뜸 · 무활동으로 만료 · 새 Kafka 클러스터) 처음부터 — 🐛 예전 latest 는 그 사이의 메시지를 건너뛰었다.
+                // 다시 읽어도 안전하다 — 결제 응답의 쿠폰 사용 처리는 eventId 처리 원장이 거른다. [JA] 最初から — 処理台帳が重複を除く(docs/89 §2-1)。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();

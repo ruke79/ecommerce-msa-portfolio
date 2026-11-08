@@ -2,7 +2,6 @@ package com.project.coupon_service.config;
 
 import com.project.common.kafka.avro.AvroDtoSerializer;
 import com.project.common.kafka.avro.CouponUseRequestAvroMapping;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import com.project.common.kafka.AggregateKeyPartitioner;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -53,9 +52,8 @@ public class KafkaProducerConfig {
                 // 트랜잭션 없음, 멱등만 — coupon-use 는 레코드 하나다(docs/38 §1.17)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
-                .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
-                .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
+                // (예전에 여기 있던 컨슈머 키 셋 — isolation.level · auto.offset.reset=latest · enable.auto.commit — 은 프로듀서가 쓰지 않아
+                //  기동마다 "supplied but are not used" 경고만 남겼다. 지웠다.)
                 .putAll(securityProps())
                 .build();
 

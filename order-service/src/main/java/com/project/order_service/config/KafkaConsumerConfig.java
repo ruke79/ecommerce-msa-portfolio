@@ -59,7 +59,9 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면(그룹이 처음 뜸 · 무활동으로 만료 · 새 Kafka 클러스터) 처음부터 — 🐛 예전 latest 는 그 사이의 메시지를 건너뛰었다.
+                // 다시 읽어도 안전하다 — 이미 PAID · 취소된 주문은 사가가 대기 상태를 찾지 못해 건너뛴다. 잃으면 "결제됐는데 결제 전" 이 남는다. [JA] 最初から — すでに確定済みなら Saga が飛ばす。失えば「決済済みなのに未決済」が残る(docs/89 §2-1)。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                  .putAll(securityProps())
                 .build();
@@ -107,7 +109,9 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면(그룹이 처음 뜸 · 무활동으로 만료 · 새 Kafka 클러스터) 처음부터 — 🐛 예전 latest 는 그 사이의 메시지를 건너뛰었다.
+                // 다시 읽어도 안전하다 — 배송 상태는 앞으로만 간다(isForward). 잃으면 주문이 DISPATCHED 에 머물러 자동 구매 확정이 안 된다. [JA] 最初から — 配送状態は前にしか進まない(docs/89 §2-1)。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
                 .build();

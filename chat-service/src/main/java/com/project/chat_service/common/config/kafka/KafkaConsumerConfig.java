@@ -68,7 +68,10 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.GROUP_ID_CONFIG, "chat")
                 .put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment))
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
-                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
+                // 오프셋이 없으면 처음부터 — 🐛 예전 latest 는 그룹이 처음 뜨거나 오프셋이 만료된 사이의 메시지를 저장하지 않고 건너뛰었다.
+                // 다시 읽은 옛 메시지는 저장만 하고 뿌리지 않는다(MessageConsumer.liveWindow, docs/89 §2-1).
+                // [JA] オフセットがなければ最初から。読み直した古いメッセージは保存だけで配信しない。
+                .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .putAll(securityProps())
                 .build();
 

@@ -24,7 +24,33 @@ public class MessageConsumer {
     private final com.project.chat_service.service.SupportReplyNotifier replyNotifier;
 
 
+    /**
+     * 뿌리기 · 알림을 하는 레코드의 나이 상한(기본 10분). 그보다 오래된 레코드는 <b>저장만</b> 한다.
+     *
+     * <p>이 그룹(chat)의 오프셋 기본값은 earliest 다(docs/89 §2-1) — 그룹이 처음 뜨거나(새 Kafka 클러스터) 오프셋이 만료되면 토픽 보존 안의
+     * 옛 메시지를 다시 읽는다. 저장은 멱등이다(_id 는 보낸 쪽이 정한 순번 — 같은 문서를 다시 쓴다). 하지만 지금 방에 있는 사람에게 며칠 전
+     * 메시지를 다시 뿌리거나 상담 데스크 · 고객에게 다시 알리면 안 된다. 🐛 예전에는 latest 라 그 사이의 메시지가 <b>저장되지 않고</b> 이력에서
+     * 사라졌다.
+     * [JA] 配信 · 通知をするレコードの年齢上限(既定 10 分)。それより古いレコードは保存だけ。グループは earliest なので、初回 · オフセット
+     *      失効時に古いメッセージを読み直す — 保存は冪等だが、今ルームにいる人へ数日前のメッセージを再配信 · 再通知してはいけない。
+     */
+    @org.springframework.beans.factory.annotation.Value("${chat.consumer.live-window:PT10M}")
+    private java.time.Duration liveWindow;
+
     @KafkaListener(topics = KafkaUtil.KAFKA_TOPIC, containerFactory = "kafkaListenerContainerFactory")
+    public void receiveMessage(MessageDto message,
+            @org.springframework.messaging.handler.annotation.Header(org.springframework.kafka.support.KafkaHeaders.RECEIVED_TIMESTAMP)
+            long recordTimestamp) {
+        java.time.Duration window = liveWindow == null ? java.time.Duration.ofMinutes(10) : liveWindow;
+        if (System.currentTimeMillis() - recordTimestamp > window.toMillis()) {
+            chatService.saveMessage(message);
+            log.info("오래된 채팅 레코드 — 저장만 하고 뿌리지 않는다: roomId={}, messageId={}", message.getRoomId(), message.getId());
+            return;
+        }
+        receiveMessage(message);
+    }
+
+    /** 지금 메시지 — 저장 · 뿌리기 · 상담 알림. */
     public void receiveMessage(MessageDto message) {
         // 🔒 메시지 전체를 찍지 않는다 — 예전엔 본문 · 닉네임까지 INFO 로 남겼다(상담 대화 포함). 식별자만.
         log.info("채팅 방으로 메시지 전송: roomId={}, messageId={}", message.getRoomId(), message.getId());
