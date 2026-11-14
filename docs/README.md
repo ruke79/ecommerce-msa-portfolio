@@ -99,6 +99,7 @@
 | 87 | [AWS で数百万人規模に — 構成の想定案](87-aws-at-scale.md) · [ページ版](87-aws-at-scale.html) | 判断資料(決定ではない)— 会員 300 万 · セールのピーク毎秒 5,000 〜 10,000 を仮定、読み取りは CloudFront で終わらせる(catalog の Pod あたり ~350/秒)、EKS 3 AZ · Aurora · MSK · ElastiCache · OpenSearch(まれなフィルターの 503)、Eureka · chat の単一の解消、設計 5 つ · 月額の見当 · 順序(docs/86 §3 と共通) | ✅ |
 | 88 | [フェデレーション(機能分割)の四つの欠点](88-federation-tradeoffs.md) | 分析の記録 — 大きな表には無力(productdb · まれなフィルター、対策は照会の形 — パーティショニング · レプリカではない)、アプリが DB を選ぶ(catalog の `@Primary` · 使われない metadb)、結合の代わりに呼び出し · 複製 · サガ · 読み取りモデル、接続数 140 · B-32、別セッションの分析の訂正記録 | ✅ |
 | 89 | [単一ノードから数百万人へ — 段階的な移行計画](89-scale-out-migration-plan.md) | 判断資料(決定ではない)— 86 · 87 の目標へ今のノード一台から移る順序: 0 SLO · 測定 → 1 データ層をノードの外へ(Kafka → Redis → PG → WAL)→ 2 マルチノード · Eureka 除去 · プーラー → 3 CDN · ES · 読み取りレプリカ → 4 パーティション · 在庫ホットスポット → 5 運用体制。段階ごとの入る条件 · 無停止手順 · 戻し方、新クラスターで飛ばされる `latest` コンシューマー 8 か所 · `Cache-Control` 不在 · シーケンス | ✅ |
+| 91 | [SLO と容量測定 — 移行段階 0](91-slo-and-capacity.md) | docs/89 段階 0 のリポジトリ側: SLO 二つ（catalog-read · order-create — 可用性 99.9% · 300ms / 1 秒、草案）を記録ルール · 多窓のバーンレート警報に（promtool テスト）、ヒストグラムに正確な 0.3 · 1.0 秒の境界、なかった Kafka コンシューマー遅延の指標（全コンシューマーファクトリー）、階段で天井を探す `ops/53 ceiling`（SLO が破れた階段で止まる · サービス別 Pod あたりリクエスト/秒 · CPU · 接続待ち · 遅延）。数字の確定 · 実測は残り | 🟡 |
 | 61 | [新サービス追加チェックリスト](61-adding-a-service.md) | 登録が必要な箇所すべてと、漏れると静かにおかしくなるもの | ✅ |
 | 31 | [環境分離 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.md) | kustomize オーバーレイ、arm64、インバウンドポート 0 | 🟡 |
 | 32 | [インフラの外部化](32-external-managed-infra.md) | マネージドの無料枠に出せるものと出せないもの | ✅ |

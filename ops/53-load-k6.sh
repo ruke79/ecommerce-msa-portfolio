@@ -51,6 +51,10 @@
 #   ./ops/53-load-k6.sh report all             # 모든 회차의 요약
 #   ./ops/53-load-k6.sh report merge <폴더>…    # 부하 VM 여러 대(SPLIT)의 같은 회차를 합쳐 본다(다른 VM 의 폴더를 이 기계로 복사해 와서)
 #
+#   ./ops/53-load-k6.sh ceiling browse         # 천장 찾기(docs/91 §4 · docs/89 단계 0): 도착률을 계단(CEILING_RATES)으로 올리며 계단마다 browse 를
+#                                              # 한 번씩 돌리고, SLO(p99 · 5xx 비율)가 깨지는 계단에서 멈춘다 → ceiling.md: 계단마다 요청/초 · p99 · 5xx ·
+#                                              # 서비스별 파드당 요청/초 · CPU · DB 커넥션 대기 · Kafka 지연 · 막힌 곳 후보. order · mixed 도 같다
+#
 #   RATE=200 ./ops/53-load-k6.sh browse        # 최고 도착률(초당 반복) 바꾸기
 #   STAGES="1m:50,3m:50,1m:0" ./ops/53-load-k6.sh order   # 단계를 직접(길이:목표 도착률, 쉼표로)
 #   PRODUCTS=1000000 RATE=50 ./ops/53-load-k6.sh browse   # 데이터 규모 모드 — ops/44 로 넣은 범위 전체에서 상세 · 깊은 쪽 · 이름 검색
@@ -74,6 +78,9 @@
 #   PROM_RW=http://<obs-vm>:9090/api/v1/write   # 주면 k6 지표를 Prometheus 로도(그라파나에서 서버 지표와 같은 시간축)
 #   PROM=http://<obs-vm>:9090  PROM_ENV=demo     # 레플리카(시작 · 측정 중 최대 · 끝)를 Prometheus 에서 읽어 meta.txt 에(없으면 PROM_RW 에서)
 #   K6=k6                          # k6 실행 파일(https://grafana.com/docs/k6/latest/set-up/install-k6/)
+#   CEILING_RATES=10,20,50,100,200,400  CEILING_HOLD=3m  CEILING_RAMP=30s   # ceiling 의 계단(초당 반복) · 계단마다 유지 · 올리는 시간
+#   CEILING_P99_MS  CEILING_MAX_5XX=0.001   # ceiling 의 SLO(docs/91 §2) — p99 기본은 browse · mixed 300(catalog-read, 전체 요청) · order 1000
+#                                  # (order-create — order_create 요청만). 5xx 비율은 가용성 99.9% 의 예산
 #
 # 🔒 데모 계정은 모두 같은 비밀번호다 — 파일에서 읽어 k6 의 환경 변수로만 넘긴다(ps 에 보이는 명령줄 인자가 아니다).
 #    결과 파일에는 비밀번호 · 토큰을 쓰지 않는다.
@@ -96,11 +103,11 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { sed -n '2,81p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 1; }   # 머리 주석 전체
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|mixed|contention|limits|pool|replicas|reviews|stock|search|logs|report) ;;
+    browse|order|spike|smoke|mixed|contention|limits|pool|replicas|reviews|stock|search|logs|report|ceiling) ;;
     *) usage ;;
 esac
 
@@ -823,6 +830,194 @@ PY
 }
 if [ "$SCENARIO" = "report" ]; then
     cmd_report "$@"
+    exit 0
+fi
+
+# ── 천장 찾기(docs/91 §4 · docs/89 단계 0) ────────────────────────────────────────
+#
+# 도착률을 계단으로 올리며 계단마다 이 스크립트를 한 번씩 다시 부른다(같은 검사 · 같은 meta.txt). 계단이 끝날 때마다 k6 요약으로 SLO 를
+# 보고(p99 · 5xx 비율 — 목표는 observability/alert-rules.yml 의 slo 그룹과 같다), Prometheus 가 있으면 그 계단 동안의 서버 쪽 숫자를
+# 남긴다: 서비스별 요청/초 · 파드 수(→ 파드당) · CPU · DB 커넥션 대기 · Kafka 컨슈머 지연. SLO 가 깨진 계단에서 멈춘다 — 그 앞 계단이 천장.
+# 부하기가 도착률을 못 맞추면(dropped_iterations) 서버가 아니라 부하기가 천장이라 멈춘다(부하 VM 을 늘린다 — SPLIT 은 ceiling 과 함께 쓰지 않는다).
+# [JA] 天井探し — 到着率を階段で上げ、階段ごとにこのスクリプトを一回ずつ呼ぶ。k6 の要約で SLO(p99 · 5xx)を見て、Prometheus があれば
+#      その間のサービス別リクエスト/秒 · Pod 数 · CPU · DB 接続待ち · Kafka 遅延を残す。SLO が破れた階段で止まる — その前が天井。
+cmd_ceiling() {
+    shift
+    local scenario="${1:-}"
+    case "$scenario" in
+        browse|mixed) : "${CEILING_P99_MS:=300}"; CEILING_METRIC="http_req_duration" ;;
+        order)        : "${CEILING_P99_MS:=1000}"; CEILING_METRIC="http_req_duration{name:order_create}" ;;
+        *) die "ceiling <browse|order|mixed> — 천장을 잴 시나리오" ;;
+    esac
+    [ -z "${STAGES:-}" ] || die "ceiling 은 STAGES 를 직접 만든다 — CEILING_RATES · CEILING_HOLD · CEILING_RAMP 로"
+    [ -z "${SPLIT:-}" ] || die "ceiling 은 SPLIT 과 함께 쓰지 않는다 — 계단마다 판정하려면 한 부하기의 요약이 전부여야 한다"
+    # 운영에는 걸지 않는다 — 계단마다 다시 부르는 쪽도 거절하지만, 폴더를 만들기 전에
+    case "$(printf '%s' "$GATEWAY" | sed -E 's#^[a-zA-Z]+://##; s#[/:].*$##' | tr 'A-Z' 'a-z')" in
+        ysyproject.com|*.ysyproject.com) die "운영 주소에는 부하를 걸지 않는다 — 실습 클러스터(GATEWAY=https://shop.lab)에서 잰다(docs/71 §1 · docs/91 §4)" ;;
+    esac
+    local rates="${CEILING_RATES:-10,20,50,100,200,400}" hold="${CEILING_HOLD:-3m}" ramp="${CEILING_RAMP:-30s}"
+    local max5xx="${CEILING_MAX_5XX:-0.001}"
+    [[ "$rates" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || die "CEILING_RATES 는 쉼표로 나눈 양의 정수(예 10,20,50)"
+    [[ "$hold" =~ ^[1-9][0-9]*[sm]$ ]] && [[ "$ramp" =~ ^[1-9][0-9]*[sm]$ ]] || die "CEILING_HOLD · CEILING_RAMP 는 30s · 3m 모양"
+    [[ "$CEILING_P99_MS" =~ ^[1-9][0-9]*$ ]] || die "CEILING_P99_MS 는 양의 정수(ms)"
+    [[ "$max5xx" =~ ^0(\.[0-9]+)?$ ]] || die "CEILING_MAX_5XX 는 0 ~ 1 미만의 비율(예 0.001)"
+    command -v python3 >/dev/null 2>&1 || die "python3 가 필요하다"
+
+    local stamp dir prev="" r t0 t1 step
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    dir="$OUT/ceiling-$scenario-$stamp"
+    mkdir -p "$dir/steps"
+    local prom="${PROM:-${PROM_RW:-}}"; prom="${prom%/api/v1/write}"
+    { echo "scenario=$scenario rates=$rates hold=$hold ramp=$ramp"
+      echo "slo_p99_ms=$CEILING_P99_MS slo_metric=$CEILING_METRIC slo_max_5xx=$max5xx"
+      echo "git=$(git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null || echo '?') prom=${prom:-없음} prom_env=${PROM_ENV:-demo}"; } > "$dir/ceiling.meta"
+    info "천장 찾기 $scenario — 계단 $rates (계단마다 $ramp 올리고 $hold 유지) · SLO p99 ≤ ${CEILING_P99_MS}ms · 5xx ≤ $max5xx (결과: $dir)"
+    [ -n "$prom" ] || warn "PROM 이 없다 — 서버 쪽 숫자(파드당 요청/초 · CPU · 커넥션 대기 · Kafka 지연) 없이 k6 쪽만 남긴다"
+
+    IFS=',' read -r -a steps <<< "$rates"
+    for r in "${steps[@]}"; do
+        if [ -n "$prev" ] && [ "$r" -le "$prev" ]; then die "CEILING_RATES 는 커지는 순서여야 한다($prev → $r)"; fi
+        prev="$r"
+        t0="$(date -u +%s)"
+        set +e
+        OUT="$dir/steps/$r" RATE="$r" STAGES="$ramp:$r,$hold:$r,10s:0" bash "$0" "$scenario" > "$dir/steps/$r.log" 2>&1
+        local rc=$?
+        set -e
+        t1="$(date -u +%s)"
+        step="$(ls -d "$dir/steps/$r/$scenario"-* 2>/dev/null | tail -1 || true)"
+        if [ -z "$step" ] || [ ! -f "$step/summary.json" ]; then
+            tail -5 "$dir/steps/$r.log" >&2 || true
+            die "계단 $r 이 요약 없이 끝났다(exit $rc) — $dir/steps/$r.log"
+        fi
+        echo "$r $t0 $t1 $rc $step" >> "$dir/steps.txt"
+        if ! ceiling_judge "$dir" "$r" "$step" "$t0" "$t1" "$prom" "$max5xx"; then
+            break
+        fi
+    done
+    ceiling_table "$dir"
+}
+
+# ceiling_judge <폴더> <계단> <회차 폴더> <시작> <끝> <PROM> <5xx 상한> — 한 줄을 ceiling.tsv 에. SLO 가 깨졌거나 부하기가 모자라면 1
+ceiling_judge() {
+    local dir="$1" r="$2" step="$3" t0="$4" t1="$5" prom="$6" max5xx="$7" w q
+    w=$(( t1 - t0 )); [ "$w" -ge 60 ] || w=60
+    : > "$dir/prom-$r.txt"
+    if [ -n "$prom" ]; then
+        local env="${PROM_ENV:-demo}"
+        for q in "rps|sum by (service) (rate(http_server_requests_seconds_count{environment=\"$env\"}[${w}s]))" \
+                 "pods|max_over_time((count by (service) (up{environment=\"$env\"} == 1))[${w}s:15s])" \
+                 "cpu|max by (service) (avg_over_time(process_cpu_usage{environment=\"$env\"}[${w}s]))" \
+                 "pending|max by (service) (max_over_time(hikaricp_connections_pending{environment=\"$env\"}[${w}s]))" \
+                 "lag|max by (service) (max_over_time(kafka_consumer_fetch_manager_records_lag_max{environment=\"$env\"}[${w}s]))"; do
+            printf '%s\t' "${q%%|*}" >> "$dir/prom-$r.txt"
+            curl -fsS --max-time 10 -G "$prom/api/v1/query" --data-urlencode "query=${q#*|}" --data-urlencode "time=$t1" 2>/dev/null \
+                | tr -d '\n' >> "$dir/prom-$r.txt" || true
+            echo >> "$dir/prom-$r.txt"
+        done
+    fi
+    python3 -I - "$dir" "$r" "$step" "$max5xx" "$CEILING_P99_MS" "$CEILING_METRIC" <<'PY'
+import json, re, sys
+d, r, step, max5xx, p99max, metric = sys.argv[1:7]
+s = json.load(open(f"{step}/summary.json", encoding="utf-8")).get("metrics", {})
+reqs = (s.get("http_reqs") or {}).get("count") or 0
+rps = (s.get("http_reqs") or {}).get("rate") or 0
+e5 = sum((v or {}).get("count") or 0 for k, v in s.items() if re.match(r"errors_5xx\{name:.+\}$", k))
+ratio5 = e5 / reqs if reqs else 0
+p99 = (s.get(metric) or {}).get("p(99)")
+dropped = (s.get("dropped_iterations") or {}).get("count") or 0
+iters = (s.get("iterations") or {}).get("count") or 0
+srv = {}
+try:
+    for line in open(f"{d}/prom-{r}.txt", encoding="utf-8"):
+        key, _, body = line.rstrip("\n").partition("\t")
+        try:
+            res = json.loads(body)["data"]["result"]
+        except Exception:
+            continue
+        for x in res:
+            v = float(x["value"][1])
+            if v == v:   # NaN 은 버린다
+                srv.setdefault(x["metric"].get("service", "?"), {})[key] = v
+except FileNotFoundError:
+    pass
+why = []
+if p99 is None:
+    why.append(f"{metric} 의 p(99) 가 요약에 없다")
+elif p99 > float(p99max):
+    why.append(f"p99 {p99:.0f}ms > {p99max}ms")
+if ratio5 > float(max5xx):
+    why.append(f"5xx {ratio5:.3%} > {float(max5xx):.3%}")
+short = iters and dropped / (iters + dropped) > 0.01
+if short:
+    why.append(f"부하기가 도착률을 못 맞췄다(dropped {dropped:.0f}) — 부하 VM 을 늘린다")
+# 막힌 곳 후보 — CPU 0.8 이상 · 커넥션 대기 > 0 · Kafka 지연 > 1000
+hints = []
+for name, v in sorted(srv.items()):
+    if v.get("cpu", 0) >= 0.8:
+        hints.append(f"{name} CPU {v['cpu']:.0%}")
+    if v.get("pending", 0) > 0:
+        hints.append(f"{name} 커넥션 대기 {v['pending']:.0f}")
+    if v.get("lag", 0) > 1000:
+        hints.append(f"{name} Kafka 지연 {v['lag']:.0f}")
+row = {"rate": int(r), "rps": rps, "p99": p99, "e5": ratio5, "ok": not why, "why": why, "hints": hints, "srv": srv,
+       "step": step.rsplit("/", 1)[-1], "short": bool(short)}
+with open(f"{d}/ceiling.jsonl", "a", encoding="utf-8") as f:
+    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+print(f">>> 계단 {r}: 요청/초 {rps:.1f} · p99 {('%.0f' % p99) if p99 is not None else '?'}ms · 5xx {ratio5:.3%} → "
+      + ("통과" if not why else "멈춤 — " + " · ".join(why)) + (("  (후보: " + ", ".join(hints) + ")") if hints else ""))
+sys.exit(0 if not why else 1)
+PY
+}
+
+# ceiling_table <폴더> — ceiling.md(계단마다 한 줄 + 서비스별 파드당 요청/초 · CPU · 대기 · 지연)
+ceiling_table() {
+    python3 -I - "$1" <<'PY'
+import json, sys
+d = sys.argv[1]
+meta = dict(kv.split("=", 1) for line in open(f"{d}/ceiling.meta", encoding="utf-8") for kv in line.split())
+rows = [json.loads(l) for l in open(f"{d}/ceiling.jsonl", encoding="utf-8")] if __import__("os").path.exists(f"{d}/ceiling.jsonl") else []
+passed = [x for x in rows if x["ok"]]
+last = rows[-1] if rows else None
+if not rows:
+    head = "계단을 하나도 돌리지 못했다"
+elif last["ok"]:
+    head = f"모든 계단 통과 — 천장은 {last['rate']} 보다 위다(CEILING_RATES 를 더 올린다)"
+elif last.get("short"):
+    head = f"부하기가 먼저 모자랐다 — 계단 {last['rate']} (서버 천장은 아직 모른다)"
+elif passed:
+    head = f"천장: 계단 {passed[-1]['rate']} 통과 · {last['rate']} 에서 SLO 깨짐 — 요청/초 {passed[-1]['rps']:.1f}"
+else:
+    head = f"첫 계단 {last['rate']} 부터 SLO 깨짐 — 더 낮은 계단부터(CEILING_RATES)"
+out = [f"# 천장 — {meta.get('scenario')} ({d.rsplit('/', 1)[-1]})", "",
+       f"- 커밋 `{meta.get('git')}` · 계단 {meta.get('rates')} · 계단마다 {meta.get('ramp')} 올림 + {meta.get('hold')} 유지",
+       f"- SLO: `{meta.get('slo_metric')}` p99 ≤ {meta.get('slo_p99_ms')}ms · 5xx ≤ {float(meta.get('slo_max_5xx', 0)):.2%} (docs/91 §2)",
+       f"- **{head}**", "",
+       "| 계단(초당 반복) | 요청/초 | p99 ms | 5xx | 판정 | 막힌 곳 후보 |", "|---:|---:|---:|---:|---|---|"]
+for x in rows:
+    out.append(f"| {x['rate']} | {x['rps']:.1f} | {('%.0f' % x['p99']) if x['p99'] is not None else '?'} | {x['e5']:.3%} | "
+               + ("통과" if x["ok"] else "❌ " + " · ".join(x["why"])) + f" | {', '.join(x['hints']) or '-'} |")
+svc = sorted({s for x in rows for s in x["srv"]})
+if svc:
+    out += ["", "## 서비스별(계단마다 — 그 계단 동안 평균 · 최대)", "",
+            "| 계단 | 서비스 | 파드 | 요청/초 | 파드당 요청/초 | CPU(평균) | 커넥션 대기(최대) | Kafka 지연(최대) |",
+            "|---:|---|---:|---:|---:|---:|---:|---:|"]
+    f = lambda v, fmt: (fmt % v) if v is not None else "-"
+    for x in rows:
+        for s in svc:
+            v = x["srv"].get(s)
+            if not v:
+                continue
+            pods = v.get("pods")
+            per = v["rps"] / pods if v.get("rps") is not None and pods else None
+            out.append(f"| {x['rate']} | {s} | {f(pods, '%.0f')} | {f(v.get('rps'), '%.1f')} | {f(per, '%.1f')} | "
+                       f"{f(v.get('cpu') * 100 if v.get('cpu') is not None else None, '%.0f%%')} | {f(v.get('pending'), '%.0f')} | {f(v.get('lag'), '%.0f')} |")
+out += ["", "> 실습 클러스터 기준 — 코어를 나눠 쓴 값이라 절대값으로 쓰지 않는다(docs/83). 표는 docs/91 §4 의 천장 표로 옮긴다."]
+open(f"{d}/ceiling.md", "w", encoding="utf-8").write("\n".join(out) + "\n")
+print("\n".join(out))
+PY
+}
+if [ "$SCENARIO" = "ceiling" ]; then
+    cmd_ceiling "$@"
     exit 0
 fi
 

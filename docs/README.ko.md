@@ -99,6 +99,7 @@
 | 87 | [AWS 에서 수백만 명 규모로 — 구성 상정안](87-aws-at-scale.ko.md) · [페이지판](87-aws-at-scale.ko.html) | 판단 자료(결정 아님) — 가입자 300만 · 행사 피크 초당 5,000 ~ 10,000 가정, 읽기는 CloudFront 에서 끝내기(catalog 파드당 ~350/초), EKS 3 AZ · Aurora · MSK · ElastiCache · OpenSearch(드문 필터 503), Eureka · chat 단일 해소, 설계 5가지 · 월 비용 짐작 · 순서(docs/86 §3 공통) | ✅ |
 | 88 | [페더레이션(기능 분할)의 네 가지 단점](88-federation-tradeoffs.ko.md) | 분석 기록 — 큰 표엔 무력(productdb · 드문 필터, 대책은 질의 모양 — 파티셔닝 · 복제본이 아님), 앱이 DB 를 고름(catalog `@Primary` · 안 쓰는 metadb), 조인 대신 호출 · 복제 · 사가 · 읽기 모델, 커넥션 140 · B-32, 다른 세션 분석의 정정 기록 | ✅ |
 | 89 | [단일 노드에서 수백만 명으로 — 단계별 이행 계획](89-scale-out-migration-plan.ko.md) | 판단 자료(결정 아님) — 86 · 87 의 목표까지 지금 노드 한 대에서 옮겨 가는 순서: 0 SLO · 측정 → 1 데이터 계층을 노드 밖으로(Kafka → Redis → PG → WAL) → 2 멀티 노드 · Eureka 제거 · 풀러 → 3 CDN · ES · 읽기 복제본 → 4 파티션 · 재고 핫스팟 → 5 운영 체계. 단계마다 들어가는 조건 · 무정지 순서 · 되돌리기, 새 클러스터에서 건너뛰는 `latest` 컨슈머 8곳 · `Cache-Control` 부재 · 시퀀스 | ✅ |
+| 91 | [SLO 와 용량 측정 — 이행 단계 0](91-slo-and-capacity.ko.md) | docs/89 단계 0 의 레포 쪽: SLO 둘(catalog-read · order-create — 가용성 99.9% · 300ms / 1초, 초안)을 기록 규칙 · 다중 창 소진율 경보로(promtool 시험), 히스토그램에 정확한 0.3 · 1.0 초 경계, 없던 Kafka 컨슈머 지연 지표(모든 컨슈머 팩토리), 계단으로 천장을 찾는 `ops/53 ceiling`(SLO 가 깨지는 계단에서 멈춤 · 서비스별 파드당 요청/초 · CPU · 커넥션 대기 · 지연). 숫자 확정 · 실측은 남음 | 🟡 |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |

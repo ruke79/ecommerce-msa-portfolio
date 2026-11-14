@@ -140,6 +140,9 @@ dependencies {
 	// api 로 두는 이유: 서비스 코드가 dev.openfeature.sdk.Client 를 직접 받는다.
 	api 'dev.openfeature:sdk:1.23.0'
 	testImplementation 'io.micrometer:micrometer-core'
+	// SLO 버킷 가드(SloRulesTest) — application-common.yml 의 slo 경계를 Boot 와 같은 필터로 묶어 Prometheus 출력의 le 를 본다.
+	testImplementation 'io.micrometer:micrometer-registry-prometheus'
+	testImplementation 'org.springframework.boot:spring-boot-actuator-autoconfigure'
 
 }
 

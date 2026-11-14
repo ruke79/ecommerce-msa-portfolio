@@ -1,0 +1,147 @@
+# promtool 단위 시험 — SLO 소진율 · 컨슈머 지연 경보(docs/91). 실행: SloRulesPromtoolTest(컨테이너) 또는
+#   docker run --rm -v "$PWD/observability:/o" --entrypoint promtool prom/prometheus:v2.53.0 test rules /o/tests/slo-rules.test.yml
+# 주석(annotations)은 alert-rules.yml 에서 만든 그대로다 — 경보 문구를 바꾸면 여기도 바꾼다.
+# [JA] promtool の単体テスト — SLO バーンレート · コンシューマー遅延の警報。
+rule_files:
+- ../alert-rules.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/search",status="200"}
+    values: 0+570x480
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/search",status="503"}
+    values: 0+30x480
+  - series: http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri="/api/search",status="200",le="0.3"}
+    values: 0+570x480
+  - series: http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri="/api/search",status="503",le="0.3"}
+    values: 0+30x480
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts: []
+  - eval_time: 70m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts:
+    - exp_labels:
+        slo: catalog-read
+        severity: critical
+      exp_annotations:
+        summary: SLO catalog-read — 5xx 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h 5%)
+        description: 30일 오류 예산의 2%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91
+          §2).
+  - eval_time: 7h
+    alertname: SloErrorBudgetBurnSlow
+    exp_alerts:
+    - exp_labels:
+        slo: catalog-read
+        severity: warning
+      exp_annotations:
+        summary: SLO catalog-read — 5xx 오류 예산을 6배 빠르기로 쓰고 있습니다(6h 5%)
+        description: 30일 오류 예산의 5%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91
+          §2).
+  - eval_time: 7h
+    alertname: SloLatencyBudgetBurnFast
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/search",status="200"}
+    values: 0+5997x120
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/search",status="500"}
+    values: 0+3x120
+  alert_rule_test:
+  - eval_time: 110m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts: []
+  - eval_time: 110m
+    alertname: SloErrorBudgetBurnSlow
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_count{service="order-service",method="POST",uri="/api/order/create",status="201"}
+    values: 0+0.4x120
+  - series: http_server_requests_seconds_count{service="order-service",method="POST",uri="/api/order/create",status="500"}
+    values: 0+0.2x120
+  alert_rule_test:
+  - eval_time: 110m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_count{service="order-service",method="POST",uri="/api/order/create",status="201"}
+    values: 0+60x120
+  - series: http_server_requests_seconds_bucket{service="order-service",method="POST",uri="/api/order/create",status="201",le="1.0"}
+    values: 0+30x120
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: SloLatencyBudgetBurnFast
+    exp_alerts:
+    - exp_labels:
+        slo: order-create
+        severity: critical
+      exp_annotations:
+        summary: SLO order-create — 느린 요청 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h 50%)
+        description: 30일 오류 예산의 2%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91
+          §2).
+  - eval_time: 70m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts: []
+  promql_expr_test:
+  - expr: slo:sli_slow:ratio_rate1h
+    eval_time: 70m
+    exp_samples:
+    - labels: slo:sli_slow:ratio_rate1h{slo="order-create"}
+      value: 0.5
+  - expr: slo:sli_error:ratio_rate1h
+    eval_time: 70m
+    exp_samples:
+    - labels: slo:sli_error:ratio_rate1h{slo="order-create"}
+      value: 0
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/admin/banners",status="500"}
+    values: 0+600x120
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/actuator/health",status="503"}
+    values: 0+600x120
+  promql_expr_test:
+  - expr: slo:requests:rate1h
+    eval_time: 70m
+    exp_samples: []
+- interval: 1m
+  input_series:
+  - series: kafka_consumer_fetch_manager_records_lag_max{service="order-service",topic="payment",client_id="consumer-order-1"}
+    values: 1500x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KafkaConsumerLagHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: KafkaConsumerLagHigh
+    exp_alerts:
+    - exp_labels:
+        service: order-service
+        topic: payment
+        severity: warning
+      exp_annotations:
+        summary: order-service 의 payment 컨슈머가 1500 건 뒤처져 있습니다
+        description: 컨슈머가 따라가지 못합니다. 그 서비스의 CPU · DB 커넥션 대기(hikaricp_connections_pending) · DLT 재시도(KafkaDeadLetterPublished)를 보고, 파티션 수가 병렬도의 천장인지(ops/02 PARTITIONS) 확인하세요 (docs/91 §3, docs/89 §5-1).
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_count{service="order-service",method="POST",uri="/api/order/create",status="201"}
+    values: 0+60x480
+  - series: http_server_requests_seconds_bucket{service="order-service",method="POST",uri="/api/order/create",status="201",le="1.0"}
+    values: 0+54x480
+  alert_rule_test:
+  - eval_time: 7h
+    alertname: SloLatencyBudgetBurnSlow
+    exp_alerts:
+    - exp_labels:
+        slo: order-create
+        severity: warning
+      exp_annotations:
+        summary: SLO order-create — 느린 요청 오류 예산을 6배 빠르기로 쓰고 있습니다(6h 10%)
+        description: 30일 오류 예산의 5%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91
+          §2).
+  - eval_time: 7h
+    alertname: SloLatencyBudgetBurnFast
+    exp_alerts: []

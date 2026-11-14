@@ -1,5 +1,5 @@
 # Prometheus 경보 규칙 — docs/03 부록 "관측 지표 체크리스트"의 실행형.
-# (컨슈머 랙/outbox 적체는 kafka exporter/커스텀 메트릭이 필요해 로드맵 — docs/12. 아웃박스 파티션은 outbox-health 그룹)
+# (컨슈머 지연은 kafka-consumer 그룹 — 2026-11-14 부터 지표가 있다, docs/91 §3. 아웃박스 파티션은 outbox-health 그룹)
 groups:
   - name: service-availability
     rules:
@@ -363,3 +363,176 @@ groups:
         annotations:
           summary: "MongoDB 백업은 성공했지만 사실상 비어 있습니다 ({{ $value }} bytes)"
           description: "백업이 제시간에 돌았고 무결성 검사도 통과했지만 담긴 것이 없습니다. MONGO_URI 가 가리키는 DB 와 애플리케이션이 쓰는 DB(spring.data.mongodb.name = chat)가 다른지 확인하세요. 배포 직후라 채팅 기록이 실제로 없는 경우라면 정상입니다."
+
+  # ── SLO(docs/91) ─────────────────────────────────────────────────────────────────────────────────
+  # 목표 숫자는 slo:objective:* 두 줄이 한 곳이다 — 경보는 그 값에서 오류 예산을 계산한다. 지연 경계(le)는
+  # application-common.yml 의 management.metrics.distribution.slo 버킷과 같아야 한다(가드 SloRulesTest).
+  # SLI 는 서비스 쪽 http.server.requests(게이트웨이 · 네트워크 시간은 빠진다 — 사용자 체감은 ops/53 의 k6 값).
+  # 오류 = 5xx 만(4xx 는 손님 쪽). 지연 = 경계를 넘은 요청 비율(5xx 포함).
+  # 경보는 다중 창 소진율(Google SRE workbook 5장): 빠름 1h · 5m 가 14.4 배(30일 예산의 2% 를 1시간에),
+  # 느림 6h · 30m 가 6 배(5% 를 6시간에). 요청이 적으면(1시간 평균 초당 0.03 = 시간당 약 100 미만) 울리지 않는다 —
+  # 운영처럼 손님이 적은 곳에서 한두 건의 실패가 예산을 다 쓴 것처럼 보이지 않게(그런 실패는 High5xxRate 가 본다).
+  # [JA] SLO — 目標値は slo:objective:* の二行だけ。遅延の境界(le)は application-common.yml の SLO バケットと同じ。
+  #      多窓のバーンレート(速い 1h·5m ×14.4、遅い 6h·30m ×6)。リクエストが少ないと鳴らない。
+  - name: slo
+    rules:
+      # catalog-read — 상품 · 검색 · 홈 GET(관리자 · 내부 · actuator 제외): 가용성 99.9% · 300ms 안 99%
+      - record: slo:objective:availability
+        expr: vector(0.999)
+        labels: { slo: catalog-read }
+      - record: slo:objective:latency
+        expr: vector(0.99)
+        labels: { slo: catalog-read, threshold_seconds: "0.3" }
+      - record: slo:sli_error:ratio_rate5m
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[5m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[5m]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[5m]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[5m]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_error:ratio_rate30m
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[30m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[30m]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_slow:ratio_rate30m
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[30m]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[30m]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_error:ratio_rate1h
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[1h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[1h]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[1h]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[1h]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_error:ratio_rate6h
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[6h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[6h]))
+        labels: { slo: catalog-read }
+      - record: slo:sli_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[6h]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[6h]))
+        labels: { slo: catalog-read }
+      - record: slo:requests:rate1h
+        expr: sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[1h]))
+        labels: { slo: catalog-read }
+      # order-create — 주문 생성 POST: 가용성 99.9% · 1000ms 안 99%
+      - record: slo:objective:availability
+        expr: vector(0.999)
+        labels: { slo: order-create }
+      - record: slo:objective:latency
+        expr: vector(0.99)
+        labels: { slo: order-create, threshold_seconds: "1.0" }
+      - record: slo:sli_error:ratio_rate5m
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create",status=~"5.."}[5m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[5m]))
+        labels: { slo: order-create }
+      - record: slo:sli_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="order-service",method="POST",uri=~"/?api/order/create",le="1.0"}[5m]))
+                / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[5m]))
+        labels: { slo: order-create }
+      - record: slo:sli_error:ratio_rate30m
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create",status=~"5.."}[30m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[30m]))
+        labels: { slo: order-create }
+      - record: slo:sli_slow:ratio_rate30m
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="order-service",method="POST",uri=~"/?api/order/create",le="1.0"}[30m]))
+                / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[30m]))
+        labels: { slo: order-create }
+      - record: slo:sli_error:ratio_rate1h
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create",status=~"5.."}[1h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
+        labels: { slo: order-create }
+      - record: slo:sli_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="order-service",method="POST",uri=~"/?api/order/create",le="1.0"}[1h]))
+                / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
+        labels: { slo: order-create }
+      - record: slo:sli_error:ratio_rate6h
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create",status=~"5.."}[6h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[6h]))
+        labels: { slo: order-create }
+      - record: slo:sli_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="order-service",method="POST",uri=~"/?api/order/create",le="1.0"}[6h]))
+                / sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[6h]))
+        labels: { slo: order-create }
+      - record: slo:requests:rate1h
+        expr: sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
+        labels: { slo: order-create }
+      - alert: SloErrorBudgetBurnFast
+        expr: |
+          (
+            slo:sli_error:ratio_rate1h > on (slo) (14.4 * (1 - slo:objective:availability))
+            and on (slo) slo:sli_error:ratio_rate5m > on (slo) (14.4 * (1 - slo:objective:availability))
+          )
+          and on (slo) slo:requests:rate1h > 0.03
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "SLO {{ $labels.slo }} — 5xx 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h {{ $value | humanizePercentage }})"
+          description: "30일 오류 예산의 2%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+      - alert: SloErrorBudgetBurnSlow
+        expr: |
+          (
+            slo:sli_error:ratio_rate6h > on (slo) (6 * (1 - slo:objective:availability))
+            and on (slo) slo:sli_error:ratio_rate30m > on (slo) (6 * (1 - slo:objective:availability))
+          )
+          and on (slo) slo:requests:rate1h > 0.03
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "SLO {{ $labels.slo }} — 5xx 오류 예산을 6배 빠르기로 쓰고 있습니다(6h {{ $value | humanizePercentage }})"
+          description: "30일 오류 예산의 5%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+      - alert: SloLatencyBudgetBurnFast
+        expr: |
+          (
+            slo:sli_slow:ratio_rate1h > on (slo) (14.4 * (1 - slo:objective:latency))
+            and on (slo) slo:sli_slow:ratio_rate5m > on (slo) (14.4 * (1 - slo:objective:latency))
+          )
+          and on (slo) slo:requests:rate1h > 0.03
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "SLO {{ $labels.slo }} — 느린 요청 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h {{ $value | humanizePercentage }})"
+          description: "30일 오류 예산의 2%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+      - alert: SloLatencyBudgetBurnSlow
+        expr: |
+          (
+            slo:sli_slow:ratio_rate6h > on (slo) (6 * (1 - slo:objective:latency))
+            and on (slo) slo:sli_slow:ratio_rate30m > on (slo) (6 * (1 - slo:objective:latency))
+          )
+          and on (slo) slo:requests:rate1h > 0.03
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "SLO {{ $labels.slo }} — 느린 요청 오류 예산을 6배 빠르기로 쓰고 있습니다(6h {{ $value | humanizePercentage }})"
+          description: "30일 오류 예산의 5%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+
+  # ── Kafka 컨슈머 지연(docs/91 §3) — 지표는 common 의 KafkaConsumerMetricsAutoConfiguration 이 모든 컨슈머 팩토리에 단다 ──
+  - name: kafka-consumer
+    rules:
+      - alert: KafkaConsumerLagHigh
+        # 파티션마다 가장 큰 지연(records-lag-max). 1,000 건이 10분 — 사가 · 알림이 그만큼 늦다. 부하 측정 중이면 그것이 결과다.
+        expr: max by (service, topic) (kafka_consumer_fetch_manager_records_lag_max) > 1000
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} 의 {{ $labels.topic }} 컨슈머가 {{ $value }} 건 뒤처져 있습니다"
+          description: "컨슈머가 따라가지 못합니다. 그 서비스의 CPU · DB 커넥션 대기(hikaricp_connections_pending) · DLT 재시도(KafkaDeadLetterPublished)를 보고, 파티션 수가 병렬도의 천장인지(ops/02 PARTITIONS) 확인하세요 (docs/91 §3, docs/89 §5-1)."

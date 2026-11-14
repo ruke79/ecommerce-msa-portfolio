@@ -554,7 +554,18 @@ class LoadK6ScriptTest {
         exe(bin.resolve("k6"), """
                 printf '%s\\n' "$@" > "$FAKE/k6.args"
                 { echo "DEMO_PASSWORD=${DEMO_PASSWORD:-}"; echo "SSL_CERT_FILE=${SSL_CERT_FILE:-}"; } > "$FAKE/k6.env"
-                for a in "$@"; do case "$a" in */summary.json) : ;; esac; done
+                echo "$*" >> "$FAKE/k6.calls"
+                # FAKE_SUMMARY=1 이면 요약을 쓴다(ceiling 시험) — p99 = 도착률 × FAKE_MS_PER_RATE, order_create 는 그 세 배,
+                # FAKE_5XX_FROM · FAKE_DROP_FROM 이상의 도착률에서 5xx 50건 · 버린 반복 500
+                out=""; prev=""; rate=0
+                for a in "$@"; do [ "$prev" = "--summary-export" ] && out="$a"; case "$a" in RATE=*) rate="${a#RATE=}" ;; esac; prev="$a"; done
+                if [ -n "${FAKE_SUMMARY:-}" ] && [ -n "$out" ]; then
+                  p99=$(( rate * ${FAKE_MS_PER_RATE:-1} )); e5=0; drop=0
+                  [ "$rate" -ge "${FAKE_5XX_FROM:-999999}" ] && e5=50
+                  [ "$rate" -ge "${FAKE_DROP_FROM:-999999}" ] && drop=500
+                  printf '{"metrics":{"http_reqs":{"count":10000,"rate":%d},"http_req_duration":{"p(95)":%d,"p(99)":%d},"http_req_duration{name:order_create}":{"p(99)":%d},"errors_5xx{name:product}":{"count":%d},"errors_4xx{name:product}":{"count":7},"iterations":{"count":5000},"dropped_iterations":{"count":%d}}}' \
+                    "$(( rate * 5 ))" "$p99" "$p99" "$(( p99 * 3 ))" "$e5" "$drop" > "$out"
+                fi
                 echo "k6 fake run"
                 exit "${K6_EXIT:-0}"
                 """);
@@ -1048,5 +1059,69 @@ class LoadK6ScriptTest {
 
         Run empty = run(Map.of("FAKE_URL", ""), "limits", "load");
         assertThat(empty.code()).as("어느 클러스터인지 모르면 바꾸지 않는다").isNotZero();
+    }
+
+    // ── ceiling — 천장 찾기(docs/91 §4) ─────────────────────────────────────────
+
+    private static final String PROM_ONE = "{\"status\":\"success\",\"data\":{\"result\":[{\"metric\":{\"service\":\"catalog-service\"},\"value\":[1,\"%s\"]}]}}";
+
+    private String ceilingMd() throws IOException {
+        try (Stream<Path> s = Files.list(tmp.resolve("results"))) {
+            Path d = s.filter(p -> p.getFileName().toString().startsWith("ceiling-")).findFirst().orElseThrow();
+            return Files.readString(d.resolve("ceiling.md"), StandardCharsets.UTF_8);
+        }
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling — 계단마다 한 번씩 돌리고 SLO(p99 300ms)가 깨진 계단에서 멈춘다 · 그 앞이 천장 · 서버 쪽 숫자와 막힌 곳 후보")
+    void ceilingStopsAtTheFirstStepThatBreaksTheSlo() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(Map.of("FAKE_SUMMARY", "1", "FAKE_MS_PER_RATE", "2", "CEILING_RATES", "10,50,100,200,400",
+                "PROM", "http://prom.lab:9090", "FAKE_PROM_UP", PROM_ONE.formatted("0.9"), "FAKE_PROM_MAX", PROM_ONE.formatted("3")),
+                "ceiling", "browse");
+        assertThat(r.code()).as(r.out()).isZero();
+        List<String> calls = Files.readAllLines(tmp.resolve("k6.calls"));
+        assertThat(calls).as("200 에서 멈춘다 — 400 은 돌리지 않는다").hasSize(4);
+        assertThat(calls.get(2)).contains("RATE=100", "STAGES=30s:100,3m:100,10s:0");
+        String md = ceilingMd();
+        assertThat(md).contains("천장: 계단 100 통과 · 200 에서 SLO 깨짐", "p99 400ms > 300ms")
+                .contains("| 100 | 500.0 | 200 | 0.000% | 통과 |")
+                .contains("catalog-service CPU 90%", "catalog-service 커넥션 대기 3")
+                .as("파드당 요청/초 = 0.9 / 3").contains("| 0.3 |");
+        assertThat(Files.readString(tmp.resolve("curl.log"))).contains("time=", "kafka_consumer_fetch_manager_records_lag_max",
+                "hikaricp_connections_pending");
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling — order 는 order_create 의 p99(1초)로, 5xx 비율 · 부하기 모자람도 멈춘다(부하기면 서버 천장은 모른다고 적는다)")
+    void ceilingJudgesOrderCreateAnd5xxAndLoadGenerator() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run order = run(Map.of("FAKE_SUMMARY", "1", "CEILING_RATES", "100,300,400"), "ceiling", "order");
+        assertThat(order.code()).as(order.out()).isZero();
+        assertThat(order.out()).contains("p99 1200ms > 1000ms");
+        assertThat(ceilingMd()).contains("천장: 계단 300 통과 · 400 에서 SLO 깨짐", "http_req_duration{name:order_create}");
+
+        Files.walk(tmp.resolve("results")).sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(java.io.File::delete);
+        Run e5 = run(Map.of("FAKE_SUMMARY", "1", "FAKE_5XX_FROM", "50", "CEILING_RATES", "10,50,100"), "ceiling", "browse");
+        assertThat(e5.out()).as("50 / 10000 = 0.5% > 0.1%").contains("5xx 0.500% > 0.100%");
+        assertThat(ceilingMd()).contains("천장: 계단 10 통과 · 50 에서 SLO 깨짐");
+
+        Files.walk(tmp.resolve("results")).sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(java.io.File::delete);
+        run(Map.of("FAKE_SUMMARY", "1", "FAKE_DROP_FROM", "50", "CEILING_RATES", "10,50,100"), "ceiling", "browse");
+        assertThat(ceilingMd()).contains("부하기가 먼저 모자랐다 — 계단 50");
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling — 운영 주소 · STAGES · SPLIT · 줄어드는 계단은 k6 전에 거절")
+    void ceilingRefusesBeforeK6() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        assertThat(run(Map.of("GATEWAY", "https://www.ysyproject.com"), "ceiling", "browse").out()).contains("운영 주소");
+        assertThat(run(Map.of("STAGES", "1m:10"), "ceiling", "browse").out()).contains("STAGES");
+        assertThat(run(Map.of("SPLIT", "1/2"), "ceiling", "browse").out()).contains("SPLIT");
+        assertThat(run(Map.of(), "ceiling", "spike").out()).contains("ceiling <browse|order|mixed>");
+        assertThat(tmp.resolve("k6.calls")).doesNotExist();
+        Run down = run(Map.of("FAKE_SUMMARY", "1", "CEILING_RATES", "50,20"), "ceiling", "browse");
+        assertThat(down.code()).isNotZero();
+        assertThat(down.out()).contains("커지는 순서");
     }
 }
