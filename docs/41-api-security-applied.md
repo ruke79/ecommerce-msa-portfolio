@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](41-api-security-applied.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** クーポン · カートの身元は `User-Id` ヘッダ、注文金額はサーバーが決め（86010e1）、サービス間 mTLS は適用されました。
+> 🕰️ **状態（2026-11-14）— 一部古い。** クーポン · カートの身元は `User-Email` ではなく `User-Id` ヘッダ、注文金額はサーバーが決め（86010e1 — シナリオ 10 の末尾の「10 番はまだ開いている」は終わった）、サービス間 mTLS は適用されました（サービスごとの証明書 + 身元ヘッダの enforce、2026-10-26 — [docs/57 §16](57-remaining-priorities.md)）。`RedisSessionManager` は今は実際の Redis です（第 9 章の残りを参照）。
 
 `ruke79/www-security`（『API Security in Action』の章別デモ + 脆弱性ラボ 17 種）の
 チェックリストを ecommerce-msa に一つずつ照らし合わせた。デモの結論は 2 行だ:
@@ -99,6 +99,8 @@ couponUseProducer.publish(CouponUseRequest.builder().userId(response.getUserId()
 
 残っているもの: 本当の失効が必要なら、`RedisSessionManager` を実際の Redis に移し、ゲートウェイが
 それを見る。今は 15 分がその価値の大部分を果たしている。
+
+> 🕰️ 2026-11-14: 半分は終わった — `RedisSessionManager` は実際の Redis（リフレッシュトークンの寿命の TTL、ポッド間で共有）に移した。ゲートウェイは今も署名 · 期限だけを見る（アクセストークン 15 分 — `jwtExpirationMs: 900000`）ので、発行済みアクセストークンの即時失効は今もない。
 
 ---
 

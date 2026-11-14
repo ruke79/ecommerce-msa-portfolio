@@ -306,6 +306,8 @@ FX_RATE_KRW: "1350"         # ストア通貨 1 単位 = 請求通貨でいく�
 FX_RATE_JPY: "150"
 ```
 
+> 🕰️ 今（2026-11-14）のリポジトリの `k8s/10-configmap.yaml` は `STRIPE_CURRENCY: "USD"` である（ほかの値は上と同じ）。上の `"JPY"` は日本の決済を試すときの値 — 環境の値はコミットしない `k8s-overlays/local/patch-local-endpoints.yaml` に置いて `--config-only` で反映する（PortOne 日本決済の `PORTONE_CURRENCY: "JPY"` も同じ、下の V2 の節）。
+
 **注文を作るとき**、その手段の通貨がストア通貨と異なれば、為替レートで請求額を決めて注文に
 保存する（V6: `currency · charged_amount · fx_rate`）。決済確認と返金は **その保存値** と
 照合する — その間に為替レートが変わっても「そのとき請求した金額」が基準だ。再計算すると、為替レートが
@@ -374,7 +376,7 @@ FX_RATE_JPY: "150"
 その切り捨てられた値から換算されていたので同じ誤差を引き継いでいた — 通貨の問題ではなく、それ以前の問題だった。
 
 V7 が `total · total_before_discount · shipping_price · tax_price` の4つを一緒に移す（1つの式で
-結ばれているので、1つだけ移すと画面の3行が合わない）。`OrderPricing` は今や切り捨てではなく、
+結ばれているので、1つだけ移すと画面の3行が合わない — 🕰️ その後、誰も埋めていなかった `tax_price` は contract リリースの order V29 で削除した、2026-11-03 適用）。`OrderPricing` は今や切り捨てではなく、
 ストア通貨の桁数で **四捨五入** する — カタログ価格はすでに小数第2位までなので、四捨五入が実際に
 起きるのはクーポンの割引率（59.98 × 10% = 5.998）だけであり、画面も同じ値をサーバーから受け取る。
 `OrderDto`・`AdminOrderSummaryDto` の金額も `BigDecimal` で、フロントは `{total}$` の代わりに

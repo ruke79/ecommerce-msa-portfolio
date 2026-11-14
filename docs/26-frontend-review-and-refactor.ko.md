@@ -2,7 +2,7 @@
 
 [日本語](26-frontend-review-and-refactor.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 프론트 테스트는 [docs/28](28-frontend-test-suite.ko.md) 에서 도입했습니다(지금 930건). 2FA 로그인 확인은 `/public/verify-2fa` 로 분리됐습니다.
+> 🕰️ **상태(2026-11-14) — 이전 기록.** 본문은 리뷰 당시의 글로 둡니다. 프론트 테스트는 [docs/28](28-frontend-test-suite.ko.md) 에서 도입했고 지금 1,076건(README)입니다. 2FA 로그인 확인은 대기 쿠키 + `/public/verify-2fa` 로 분리됐습니다(§5 의 🕰️, [docs/27 §12b](27-security-review.ko.md)). 끝난 "다음에 할 것" 은 맨 끝에 표시했습니다.
 
 `frontend/src` 전체(168개 파일, 약 15,500줄)를 읽고 **실제로 동작이 잘못된 것**을 찾아 고쳤다.
 이 문서는 무엇이 왜 잘못됐고 어떻게 고쳤는지를 하나씩 적는다.
@@ -502,6 +502,8 @@ iOS/Android 의 문자 자동입력을 받고, Enter 로 제출되며, "다른 �
 > 맞다. 그리고 이번에 추가한 **SMS 인증과 이 TOTP 2FA 는 아직 별개**다 — SMS 로 2FA 를
 > 하려면 백엔드에 SMS 기반 검증 경로를 하나 더 두어야 한다. 백엔드 변경이 필요해 이번
 > 범위에서는 하지 않았다.
+
+> 🕰️ 지금(2026-11-14): 등록과 로그인 확인은 나뉘었다 — 로그인 2단계는 `POST /api/auth/public/verify-2fa`(첫 단계가 심은 `PENDING_2FA` httpOnly 쿠키 + TOTP, 토큰당 5번 · 사용자당 15분에 5번), `/verify-2fa` 는 켜기 확인(`confirm2FASetup`)만 한다(`AuthController`). 위 코드처럼 액세스 토큰을 들고 기다리는 화면도 없어졌다 — 서버가 2단계 전에는 토큰을 주지 않는다(docs/27 §12b). SMS 를 두 번째 요소로 쓰는 경로는 여전히 없다 — 두 번째 요소는 TOTP 뿐이다(패스키는 따로 있는 로그인 방법, `PasskeyController`).
 
 ---
 
@@ -1440,20 +1442,24 @@ notification-service 의 SMS 인증을 쓰는 화면이 지금까지 어디에�
 **번들 크기** — `main.bundle.js` 가 1.97 MiB 다. 관리자 화면만 lazy 로딩되어 있고 나머지는
 전부 한 덩어리다. 라우트 단위 코드 스플리팅으로 크게 줄일 수 있지만 별도 작업이다.
 
+> 🕰️ 지금(2026-11-14): `util/loadFake.js` 는 지워졌다. `pages/forgot.jsx` 와 `redux/authSlice.js` 는 그대로 남아 있고 여전히 아무 데서도 import 하지 않는다. lazy 로딩은 관리자 화면 외에 공지 · 기획전 화면도(`App.jsx` 의 `lazy(...)` 17개).
+
 ---
 
 ## 다음에 할 것
 
 우선순위 순으로.
 
-1. **프론트엔드 테스트가 하나도 없다.** 이번에 고친 것 중 상당수(§10 의 TS 문법, §11 의
+1. ~~**프론트엔드 테스트가 하나도 없다.** 이번에 고친 것 중 상당수(§10 의 TS 문법, §11 의
    `disabled`, §12 의 할인 계산, §13 의 토글)는 **테스트가 한 줄만 있었어도 즉시 잡혔을**
    종류다. `@testing-library/react` 는 이미 devDependency 에 있다. 최소한 §12 의 `discounted`
-   같은 순수 함수부터 시작하면 비용 대비 효과가 크다.
+   같은 순수 함수부터 시작하면 비용 대비 효과가 크다.~~ → ✅ [docs/28](28-frontend-test-suite.ko.md)(지금 1,076건, CI 커밋 스테이지에서 실행).
 2. **§1·§5·§8 을 실제 환경에서 확인.** PayPal 결제, 2FA 로그인, 관리자 API 경로는 코드
    판단만으로 끝낼 수 없다.
-3. **게이트웨이의 `/admin` 권한 검사 확인.** §3 은 UI 가드만 고쳤다. 서버 쪽이 뚫려 있으면
-   아무 소용이 없다.
+3. ~~**게이트웨이의 `/admin` 권한 검사 확인.** §3 은 UI 가드만 고쳤다. 서버 쪽이 뚫려 있으면
+   아무 소용이 없다.~~ → ✅ 서버 쪽은 게이트웨이가 아니라 각 서비스가 게이트웨이의 `User-Role` 로 판정한다(`InternalCallGuard.isAdmin` · catalog `AdminWriteInterceptor` · user `/api/admin/**` 의 `hasRole("ADMIN")` — [docs/27 §5~6](27-security-review.ko.md)).
 4. **SMS 2FA 를 실제 로그인 경로에 연결.** 지금 2FA 는 TOTP 고, 이번에 만든 SMS 인증은
    번호 등록·알림 수신용이다. 둘을 잇는 백엔드 작업이 남아 있다.
 5. **인증 상태 이중화 정리** — `AuthContext` 와 `redux/authSlice` 중 하나로.
+
+> 🕰️ 2026-11-14: 4 · 5 는 그대로 열려 있다 — SMS 로 로그인 2단계를 하는 경로는 없고(두 번째 요소는 TOTP 뿐), `redux/authSlice.js` 는 스토어에 연결되지 않은 채 남아 있다.

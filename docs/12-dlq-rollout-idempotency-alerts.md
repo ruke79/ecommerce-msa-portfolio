@@ -2,7 +2,17 @@
 
 **日本語** | [한국어](12-dlq-rollout-idempotency-alerts.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** アラートは現在 14 種類で、受信チャネルも接続済みです（[docs/22](22-alerting-and-backup-automation.md)）。order は `user-created` の購読をやめました（[docs/48](48-user-replication-debt.md)）。
+> 🕰️ **状態（2026-11-14）— 2026-07-27 の記録。** 本文は当時の文章のまま残し、節ごとに 🕰️ で今を書きました。アラートは今 `observability/alert-rules.yml` に 44 個 · グループ 13 個で、Discord に届きます（B-96、[docs/22](22-alerting-and-backup-automation.md)）。order は `user-created` の購読をやめました（[docs/48](48-user-replication-debt.md)）。
+
+| 2026-07 のこの文書 | 今（2026-11-14） | どこ |
+|---|---|---|
+| DLT 設定は catalog · order ＋ 5 サービス | `KafkaDltConfig` は 9 サービス（cart · catalog · chat · coupon · delivery · notification · order · pay · user — user には `@KafkaListener` がない） | 各モジュールの `KafkaDltConfig` |
+| リトライはサービスごと | 共通の `DltRetryPolicy` — 一時的なエラーは 1 · 2 · 4 · 8 · 16 · 30 秒 … 10 回（約 3 分）、カウンター `kafka_dlt_records_total` · アラート `KafkaDeadLetterPublished`（起動時に 0 — B-101） | common · B-88 · B-101 |
+| DLT トピックの事前作成 8 個（＋ chat） | `ops/02-create-dlt-topics.sh` が 23 トピックの DLT を 14 日保存で作る | ops/02 の `TOPICS` |
+| 処理台帳は catalog 一つ | catalog · coupon · cart · order（配送状態、V30）＋ 30 日の掃除 `ProcessedEventPurger` | §2 |
+| アラート 5 種類 | 44 個 · グループ 13 個、Discord に配送 | `observability/alert-rules.yml` · docs/22 |
+| コンシューマラグ · DLT の滞留 · Outbox の滞留はロードマップ | `KafkaConsumerLagHigh`（2026-11-14、docs/91 §3）· `KafkaDeadLetterPublished` · `OrderOutboxRowFailed` · `PayOutboxRowFailed` · アウトボックスのパーティションのアラート（`outbox-health` グループ） | §3 の 🕰️ |
+| ダッシュボード一つ | `ecommerce-overview` · `tracing-red` の二つ | `observability/grafana/provisioning/dashboards/` |
 
 > 作成日: 2026-07-27 · docs/11 §4 で「残り」として明記した項目の適用記録
 
@@ -22,6 +32,8 @@ record モードのリスナーは、`BatchListenerFailedException` がなくて
 
 **本番反映時**: DLT トピックの事前作成リスト — `cart-rollback.DLT`、`cart-empty.DLT`、`coupon-use.DLT`、`payment.DLT`、`coupon-rollback.DLT`、`user-created.DLT`、`order.DLT`、`product-update.DLT`（＋ chat のトピック）。
 
+> 🕰️ 今: DLT 設定は 9 サービス（上の五つ ＋ catalog · order · delivery · notification）、Kafka を受けるのはそのうち 8 つ（user にはリスナーがない）。リトライは共通の `DltRetryPolicy`（一時的なエラーは約 3 分 · それ以外はすぐ DLT）。事前作成は手書きのリストではなく `ops/02-create-dlt-topics.sh` — 23 トピックの `.DLT` を 14 日保存で（登録確認リンクが流れる `outgoing-mail` は本トピック · DLT とも短く、docs/29 §5.3）。再処理は `ops/56-dlt-replay.sh`。
+
 ## 2. コンシューマ冪等性（G8） — 在庫の二重減算防止
 
 **お金が絡む経路（product-update → catalog の在庫減算）** に end-to-end で適用した。
@@ -36,6 +48,8 @@ Redis（SETNX）ではなく **DB テーブル** を選んだ理由: 処理履�
 
 **残りの展開対象**（同じパターンを適用可能、ドキュメント化のみ）: user-created の 3 コンシューマ（order/chat/coupon — 現在は email のユニーク制約が事実上の防御）、payment 応答（order — 楽観ロックの NO-OP が部分的に防御）、cart-empty/rollback。
 
+> 🕰️ 今: user-created のコンシューマは order が購読をやめ（docs/48）、chat（`user-3`）· coupon（`user-2`）の二つ — coupon は登録クーポンがすでにあれば再配信とみなしてスキップする（CP4）。cart-empty は ✅ cart V6 の処理台帳（`cart.processed_event`）。ほかに coupon は決済応答に `coupon.processed_event`、order は配送状態に `orders.processed_event`（V30）を使う。
+
 ## 3. アラートルール ＋ Alertmanager
 
 - `observability/alert-rules.yml`: **ServiceDown**（2m） · **CircuitBreakerOpen** · **High5xxRate**（>5%、5m） · **HighP99Latency**（>3s） · **JvmHeapNearLimit**（>90%）。
@@ -43,9 +57,13 @@ Redis（SETNX）ではなく **DB テーブル** を選んだ理由: 処理履�
 - p99 ルールのために `application-common.yml` で `percentiles-histogram.http.server.requests: true` を有効化（バケットを公開）。
 - 未対応（ロードマップ）: コンシューマラグ・DLT の滞留量（kafka exporter が必要）、Outbox の滞留（カスタムメトリクスが必要 — docs/03 付録）。
 
+> 🕰️ 今: アラートは 44 個 · グループ 13 個（サービス · リクエスト · JVM · 在庫/決済/DLT · 認証 · Saga · アウトボックス · アラート配送 · トレース · バックアップ · SLO · コンシューマ遅延）、受信はプレースホルダーではなく Discord（`discord_configs` ＋ `webhook_url_file`、B-96 · docs/22 §1）。ロードマップの三つは ✅: コンシューマラグ `KafkaConsumerLagHigh`（2026-11-14、docs/91 §3）、DLT の滞留 `KafkaDeadLetterPublished`（アプリのカウンター — kafka exporter なしで）、Outbox `OrderOutboxRowFailed` · `PayOutboxRowFailed` ＋ アウトボックスのパーティションのアラート（`outbox-health`）。
+
 ## 4. Grafana ダッシュボードのコード化
 
 `observability/grafana/provisioning/dashboards/` — provider ＋ `ecommerce-overview.json` をプロビジョニング: Service Up（スタット） · リクエストレート · 5xx 比率 · p99 · JVM ヒープ · サーキットブレーカーの状態。起動するとすぐ「ecommerce-msa」フォルダに表示される。
+
+> 🕰️ 今: ダッシュボードは `ecommerce-overview.json` · `tracing-red.json` の二つ（docs/63）。
 
 ## 検証
 

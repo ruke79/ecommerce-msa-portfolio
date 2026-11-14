@@ -2,6 +2,8 @@
 
 [日本語](68-refresh-token-rotation.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 모두 운영에 들어갔다.** §1 ~ §11 은 2026-10-01 커밋 `a813ae314f8c`(docs/72 사전 점검 때 이미 운영), §12 ~ §20 은 2026-10-10 `b7c5053a45e8`([docs/72](72-model-refactor-deploy-runbook.ko.md) — user V15 패스키 표). §6 의 "모두 한 번 다시 로그인" 은 그때 지나갔다. 로그인 5회 실패 잠금은 이제 Redis(`LoginAttemptService`)이고 옛 `lock_expires_at` 열은 contract 릴리스(user V19, 2026-11-03)에서 지웠다(§13 · §20 의 🕰️).
+>
 > 작성일: 2026-09-28 · 상태: ✅ 적용(배포 대기) · ⚠️ 배포 뒤 **모든 사용자가 한 번 다시 로그인**한다(§6)
 >
 > 관련: [51 로깅](51-logging.ko.md) · [57 남은 우선순위](57-remaining-priorities.ko.md) ·
@@ -359,6 +361,7 @@ Redis 덤프(백업 파일 · 잘못 열린 포트 · 스냅샷)가 새면 원�
   `account disabled`(프론트는 로그아웃). 끊는 단계가 실패해도 다음 갱신에서 끊긴다.
 - **로그인 5회 실패의 자동 잠금은 보지 않는다.** 그것은 다른 필드(`lockExpiresAt`)다 — 보면 공격자가 비밀번호를 일부러 틀려 정상 사용자의 다른
   기기 로그인까지 끊을 수 있다.
+  🕰️ 지금은 필드가 아니라 Redis 의 잠금 키(`LoginAttemptService` — `login:lock:` · `login:attempts:`, 2026-10-14)다. 갱신 경로가 그것을 보지 않는 것은 같다(`RefreshTokenController`). 옛 `lock_expires_at` · `failed_login_attempts` 열은 user V19(2026-11-03)에서 지웠다.
 
 **② 로그아웃 요청이 실패하면 화면이 로그인 상태로 남았다.** "로그아웃하지 못했습니다" 만 띄웠다 — 공용 PC 의 사용자는 로그아웃된 줄 알고 자리를 뜬다.
 
@@ -624,7 +627,7 @@ user-service 가 먼저 뜨면 공격 신호가 있을 때 정상 사용자가 �
 **화면.** 보안 설정의 "패스키"(추가 · 목록 · 삭제, 최근 로그인이 아니면 다시 로그인 안내), 로그인 화면의 "패스키로 로그인"(지원하지 않는 브라우저에는 버튼이 없다).
 기기 창을 닫은 것은 오류로 보이지 않는다. 통과하면 서버가 REFRESH 쿠키를 심고 전체 리로드 — 2FA 확인과 같은 끝이다.
 
-**운영.** 정지 · 탈퇴 계정은 패스키가 있어도 세션을 받지 못한다. 비밀번호 5회 실패 잠금(lockExpiresAt)은 패스키 로그인을 막지 않는다 —
+**운영.** 정지 · 탈퇴 계정은 패스키가 있어도 세션을 받지 못한다. 비밀번호 5회 실패 잠금(lockExpiresAt — 🕰️ 지금은 Redis 의 `LoginAttemptService`, 열은 user V19 에서 삭제)은 패스키 로그인을 막지 않는다 —
 그 잠금은 비밀번호 추측을 막는 것이고, 공격자가 주인을 잠가 버리는 수단이 되면 안 된다. 지표: `auth.passkey{event=registered|login|login_rejected,reason}`.
 배포 순서: notification-service(알림 문구) → user-service(V15).
 

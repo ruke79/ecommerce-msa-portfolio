@@ -2,7 +2,7 @@
 
 [日本語](27-security-review.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** §14 "서비스 간 인증 없음" 은 mTLS 로 해결했습니다([docs/57 §16](57-remaining-priorities.ko.md)). 맨 앞 요약표는 발견 당시의 기록으로 둡니다. 최신 열린 항목은 [docs/54 §10](54-improvements-vs-practice.ko.md).
+> 🕰️ **상태(2026-11-14) — 발견 당시의 기록(요약표 포함).** 그 뒤 바뀐 것은 절마다 🕰️ 로 적었습니다: 서비스 간 mTLS + 내부 경로 규칙 · 신원 헤더 판정은 운영에서 enforce(§9b · §14 — 신원 헤더 enforce 2026-10-26, [docs/57 §16](57-remaining-priorities.ko.md)), 유입 제한은 라우트마다 하나 · JWT 필터 뒤(§10, B-84), 로그인 잠금은 Redis(§13), 관리 엔드포인트는 게이트웨이에서 막고 config-server 는 비밀번호 뒤(§7~8 · §15). 최신 열린 항목은 [docs/54 §10](54-improvements-vs-practice.ko.md).
 
 인증·인가, 시크릿 관리, 노출된 관리 엔드포인트, 주입, 속도 제한을 프론트엔드와 전 서비스에
 대해 훑었다. **찾은 것 중 절반은 "권한 검사가 아예 없는" 종류**였다 — 잘못 구현된 게 아니라
@@ -272,6 +272,8 @@ include: gateway, refresh, health, beans, http, busrefresh, info, metrics, prome
 `refresh`/`busrefresh` 는 설정 리로드를 트리거하는 쓰기 엔드포인트라 원래는 인증 뒤에
 있어야 하지만, 운영 절차가 이것에 의존할 수 있어 이번에는 남기고 별도 과제로 뺐다.
 
+> 🕰️ 지금(2026-11-14): config-server 는 `CONFIG_SERVER_PASSWORD` 없이는 프로브 · `info` · `prometheus` 밖을 모두 401 로 거절한다(`ConfigServerSecurity`, 2026-10-15). 서비스의 `/<서비스>/actuator/**` 는 게이트웨이가 404 로 막고(`InternalEndpointBlockFilter`, docs/57 §7), 게이트웨이 자신의 `/actuator` 는 운영 터널이 게이트웨이로 보내지 않는다(서비스 접두사만 — `k8s-overlays/prod/cloudflared.yaml`, B-82). 게이트웨이 yml 의 노출 목록에는 `refresh, busrefresh` 가 아직 그대로다(버스 의존성은 없어 `busrefresh` 는 실제로 없다).
+
 ---
 
 ## 9. 🟠 이메일로 사용자를 조회하는 내부 API 가 외부에 열림
@@ -326,6 +328,8 @@ Feign 은 `Authorization` 만 전달하므로(각 서비스 `FeignConfig`) 내�
 > 원인이다 — 다음 단계는 게이트웨이에서 `/api/auth/user/{email,profile,name,id,segments}` 를 외부 라우팅에서
 > 제외하는 것이다.
 
+> 🕰️ 지금(2026-11-14): 라우팅에서 빼는 대신 **호출자 인증서**로 막는다 — ConfigMap `INTERNAL_AUTH_PATH_RULES` 가 이 경로들을 부를 수 있는 서비스를 정하고(`/api/auth/user/email/` · `/profile/` 은 `none`), 운영은 `INTERNAL_AUTH_MODE` · `INTERNAL_AUTH_RULES_MODE` · `INTERNAL_AUTH_IDENTITY_MODE` 모두 `enforce`(`k8s/10-configmap.yaml`, docs/57 §16). 경로 규칙의 내부 엔드포인트가 `InternalCallGuard.allowed` 를 거치는지는 `InternalEndpointGuardTest`(B-80)가 지킨다. `UserLookupGuardTest` 는 지금 9건.
+
 ---
 
 ## 10. 🟠 로그인 대입 공격이 사실상 무제한
@@ -370,6 +374,8 @@ default-filters:
 > 우회도 막혔으므로 급하지 않지만, 사용자 단위 제한을 진짜로 원한다면 속도 제한 필터를
 > 라우트 필터로 옮겨 JWT 필터 뒤에 두어야 한다. **이번에는 바꾸지 않았다** — 필터 순서
 > 변경은 전 라우트의 트래픽 제어에 영향을 주므로 부하 테스트와 함께 해야 한다.
+
+> 🕰️ 지금(2026-11-14): 옮겼다 — `default-filters` 의 전역 제한은 없어지고 유입 제한은 **라우트마다 하나**, 인증 라우트에서는 `JwtAuthorization` 뒤다(B-84, `RateLimiterPlacementTest`). 예전에는 로그인 라우트에 전역 + 라우트 제한 두 개가 같은 버킷에서 토큰을 두 개씩 썼다. 로그인 경로(`user-service-public`)는 그대로 초당 1 · 버스트 10. 신원 헤더 제거도 `default-filters` 의 `RemoveRequestHeader` 가 아니라 전역 필터 `IdentityHeaderScrubFilter` 가 한다 — `default-filters` 쪽은 JWT 필터 **뒤에** 돌아 검증된 신원까지 지웠다(B-53, gateway `application-local.yml` 주석).
 
 ---
 
@@ -476,6 +482,8 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 5회 제한, 1회용, 2FA 계정의 로그인 응답에 토큰·REFRESH 가 없다. `OAuth2SuccessHandlerTest` 는 대기 쿠키 값이
 액세스 토큰 생성기에서 나오지 않음을 고정한다. 프론트 `SignInPage.test`.
 
+> 🕰️ 2026-11-14: 토큰당 5번에 더해 **사용자당 15분에 5번**(비밀번호로 다시 로그인하면 대기 토큰의 5번이 새로 생겼다 — [docs/68 §15](68-refresh-token-rotation.ko.md)). 시도는 검증 전에 센다(`PendingTwoFactor.reserveAttempt`). `TwoFactorLoginTest` 는 지금 8건.
+
 > 실무 기준: 2FA 는 "두 번째 요소를 통과하기 전에는 **어떤 자격증명도 발급하지 않는다**" 가 전부다. 화면이 기다려
 > 주는 것은 보안이 아니라 UX 다. 대기 상태의 토큰은 용도를 분리(별도 키·audience)해 다른 검증기가 절대 받지 않게
 > 하고, 두 번째 요소는 시도 횟수를 제한한다(NIST SP 800-63B §5.2.2).
@@ -503,6 +511,8 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 ## 남은 과제 (이번에 고치지 않은 것)
 
 ### 13. ✅ 계정 잠금이 구현돼 있지 않다 — **해결됨**(`03422d0`: 5회 실패 → 15분 잠금, 자동 해제, `LoginAttemptService`)
+
+> 🕰️ 2026-11-14: 실패 횟수 · 잠금은 이제 Redis(`LoginAttemptService` — 시도를 비밀번호 검사 전에 Lua 한 번으로 센다, 키는 이메일 해시). 옛 DB 열 `lock_expires_at` · `failed_login_attempts` 는 contract 릴리스(user V19, 2026-11-03 운영 적용)에서 지웠다.
 
 > 아래는 발견 당시의 기록이다.
 
@@ -533,6 +543,7 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 - **방화벽 점검(`ops/11`)** 🔴 — 노출됐던 호스트가 git 히스토리에 남아 있고 되돌릴 수 없다.
 - **actuator 인증** — 이번에 노출 범위를 줄였지만, 남긴 엔드포인트(`refresh`, `busrefresh`,
   `prometheus`)도 인증 뒤에 두는 것이 맞다.
+  > 🕰️ 2026-11-14: 바깥에서는 닿지 않는다(§7~8 의 🕰️ — 게이트웨이 차단 · 터널 경로 · config-server 비밀번호). 게이트웨이 자신의 `refresh` 는 클러스터 안(같은 네임스페이스 · kube-system — `k8s/95`)에서는 여전히 인증 없이 열려 있다(게이트웨이에 Spring Security 가 없다).
 
 ---
 

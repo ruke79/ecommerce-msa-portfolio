@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](32-external-managed-infra.ko.md)
 
+> 🕰️ **状態(2026-11-14) — 検討の記録です。本番(OCI)は結局 MongoDB だけが外(Atlas — クラスタ内の mongodb は 0/0)で、PostgreSQL · Redis · Kafka はクラスタ内です。** PostgreSQL はもう `emptyDir` ではなく PVC(`pg-data`、local-path)· ssl(B-93)で、バックアップは `k8s/85` の CronJob(`postgres-backup` · `restore-drill`、[docs/22 §2](22-alerting-and-backup-automation.md))なので、§2 · §6 の「外部化する本当の理由(emptyDir)」はクラスタ内で解消した。`CREATE EXTENSION` は今は 1 件(catalog V21 `pg_trgm`、§1)。デプロイはオーバーレイへの直接の `apply -k` ではなく `ops/28-deploy.sh`(§5 · §8 のコマンドは初回 1 回用 — [docs/31](31-kustomize-oci-tunnel.md) §6)。
+
 背景: クラスターを軽くするため、OCI の無料 PostgreSQL（HeatWave/Autonomous）、Upstash Redis、
 Confluent Cloud の無料ティアへインフラを移す案を検討した。
 
@@ -30,6 +32,8 @@ Confluent Cloud の無料ティアへインフラを移す案を検討した。
 | Kafka | 21 個の設定クラス、トランザクショナル・プロデューサー、DLQ | トピックの自動作成・トランザクションのサポートが必要 |
 | Elasticsearch | `ops/03` が `korean_analyzer`（nori）の存在を検証 | **プラグインのインストールが必要** |
 | Kafka Connect | ルートの `*-outbox-connector-*.json` は **どのマニフェストにもない** | Outbox はアプリケーションのポーラーが回す（docs/21）。マネージドコネクタへの依存なし ✅ |
+
+> 🕰️ 2026-10-19 から `CREATE EXTENSION` が 1 件ある — catalog V21 の `pg_trgm`(DB 所有者 product が作る。別アカウントで Flyway を回すマネージドならデプロイ前に先に作る必要がある)。その拡張を使っていた `idx_product_name_trgm` は catalog V24(contract リリース、2026-11-03 適用)で消したが、V21 の文はそのまま(適用済みマイグレーションは直さない)。
 
 `SKIP LOCKED` が決定的だ。Outbox ポーラー、メールディスパッチャー（docs/29）、SMS ディスパッチャーはすべて
 「複数のレプリカが同じテーブルからそれぞれ別の行を取る」をこれで実装している。なければレプリカ
@@ -169,6 +173,8 @@ PostgreSQL・MongoDB は **200m / 512Mi** にすぎない（Redis は残す — 
   `emptyDir` だ。Pod が再起動するとデータが消える。無料ティアのインスタンスが再起動したら終わりだ
 - **バックアップ・PITR・アップグレードが provider の責任になる**（ただし §7 の代償を見よ）
 - ES・Kafka はどのみち残るので、ノードは依然としてステートフルだ — 完全な分離ではない
+
+> 🕰️ 今の `90-dev-infra.yaml` の PostgreSQL · Redis · Kafka · MongoDB · ES はすべて PVC(`pg-data` など)だ — Pod の再起動でデータは消えない。本番の PostgreSQL はこのクラスタ内 PG で(ノード再起動 · 退避でも再び立ち上がる — B-93、2026-10-20)、バックアップの PVC も同じノードのディスクなので、ノード外のコピーは別に置く(docs/22 §2)。
 
 ---
 
@@ -412,10 +418,10 @@ ops/25-provision-external-postgres.sh
 # 4) 残るインフラ（Kafka・ES）だけを立ち上げてデプロイ
 kubectl apply -f k8s/90-dev-infra.yaml
 kubectl -n postgres delete deploy postgres
-kubectl -n redis    delete deploy redis
+# kubectl -n redis delete deploy redis   ← 🕰️ 消さない — Redis はクラスタに残す(§6)
 kubectl -n mongodb  delete deploy mongodb
 
-kubectl apply -k k8s-overlays/external
+kubectl apply -k k8s-overlays/external   # 🕰️ 初回 1 回だけ — その後は ops/28-deploy.sh
 kubectl apply -f k8s/70-autoscaling.yaml
 
 # 5) OCI 1 台なら HPA を 1 に

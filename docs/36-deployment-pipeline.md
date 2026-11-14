@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](36-deployment-pipeline.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** B-54 ガード（ROLLBACK-UNSAFE）と `deploy-oci.yml` が入り、§5.2 と「デプロイステージがない」は解消されました。2026-10-05 からデプロイは手動実行だけで始まります（実行 = 承認、§6・B-75）。
+> 🕰️ **状態(2026-11-14) — §1 〜 §5 は 2026-08 のパイプライン改編の記録です。** B-54 ガード（ROLLBACK-UNSAFE）と `deploy-oci.yml` が入り、§5.2 と「デプロイステージがない」は解消されました。2026-10-05 からデプロイは手動実行だけで始まります（実行 = 承認、§6・B-75）。現在: 本番デプロイランナー(`oci-ampere`)はまだ登録していないので Actions → deploy はデプロイジョブで止まる — 実際のデプロイはインスタンスで対象コミットを `git switch --detach` してから `./ops/28-deploy.sh local <SHA12>`(本番バージョン `7ef62043a98f`、2026-11-03 — [docs/85](85-release-deploy-runbook.md))。§4 の「まだ確認できていない」二つはその後確認された。イメージは今 14 個(サービス 13 + frontend)。
 
 > 根拠文献: Jez Humble · David Farley, *Continuous Delivery: Reliable Software Releases
 > through Build, Test, and Deployment Automation* (Addison-Wesley, 2010).
@@ -359,6 +359,8 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<サービス>/setti
   `rollout status`、port-forward のフォールバック、自動復帰は **コード経路でしか** 検証されていない。
 - 最初のデプロイは、必ず `--dry-run` で何が変わるかを先に見ること。
 
+> 🕰️ その後どちらも確認された — §3.6 を解決し、2026-10-09 に #543 が発行済みイメージで受け入れステージを通ってリリース候補までグリーン(CI ランナー)、クラスタへのデプロイ · スモークゲート · 自動復帰は本番(OCI)で `ops/28` により何度も動いた(2026-10-24 の 1 回目はスモーク失敗で自動復帰 — [docs/85 §7-1](85-release-deploy-runbook.md))。
+
 マニフェストは実際に使うツールで検証すべきだということは、このリポジトリですでに高くついて学んだ
 （docs/33 §13 — PyYAML は重複キーを許すが、kustomize は拒否する）。そのため上の
 表の検証は、すべて実際のツールで行った。
@@ -376,6 +378,7 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<サービス>/setti
 > "It is usually not possible to [use blue-green with databases]"
 
 マネージド PostgreSQL 1 台（Neon 無料枠）を共有しているので、DB を 2 系統に分けられない。
+(🕰️ 今の本番 PostgreSQL は Neon ではなくクラスタ内の PG 1 台 — 2 系統に分けられないのは同じ。)
 カナリアは、サービス数（12 個）とノード数（1 台）を考えると今の規模では過剰だ。
 **規模が大きくなる前に導入する理由はないが、必要になる時点を逃すと手遅れになる。**
 
@@ -395,8 +398,8 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<サービス>/setti
 しかしそれを **強制する仕組みがない。** 破壊的なマイグレーションが 1 つ入った瞬間、
 `--rollback` が黙って危険になる。次の作業として適切なもの:
 
-- マイグレーションのレビュールール（DROP/RENAME/NOT NULL の追加を禁止）を CI のチェックに
-- 元に戻せないマイグレーションを含むバージョンはジャーナルに印を付け、`--rollback` が警告
+- ~~マイグレーションのレビュールール（DROP/RENAME/NOT NULL の追加を禁止）を CI のチェックに~~ → ✅ ガード B-54 — 破壊的マイグレーションはファイルに `-- ROLLBACK-UNSAFE: <理由と備え>` が必要(`ConfigurationGuardrailTest`)
+- ~~元に戻せないマイグレーションを含むバージョンはジャーナルに印を付け、`--rollback` が警告~~ → ✅ `ops/28` がデプロイ範囲の ROLLBACK-UNSAFE を探してそのデプロイの自動復帰を切り、`--rollback` は `FORCE_UNSAFE_ROLLBACK=1` のときだけ進む(列の削除は expand → contract の 2 リリース — [docs/85 §8-2](85-release-deploy-runbook.md))
 
 ### 5.3 ゲートウェイのトークン互換性
 
@@ -439,6 +442,8 @@ Java のビルドが 2 分 23 秒だ。コールドキャッシュの 6 分は�
 
 ## 6. CD — 承認後の自動デプロイ（OCI Ampere、セルフホステッドランナー）
 
+> 🕰️ 見出しの「承認後の自動デプロイ」は最初の設計 — 2026-10-05 から自動トリガーなしの手動実行だけ(下の 🔒 · B-75)。そして 2026-11-14 現在、本番デプロイランナー(`oci-ampere`)は登録していない(ops/40 待ち): gate は CI ランナーで通っても deploy ジョブがランナーを待って止まる。その間はインスタンスで手で — `git switch --detach <SHA>` → `./ops/28-deploy.sh local <SHA12>`(同じスクリプト · 同じ履歴)。
+
 これまで阻んでいたのはツールではなく **ネットワークポリシー** だった。OCI インスタンスは、インバウンドが制限された管理経路（SSH）1 つだけだ。
 選択肢は 3 つあり、3 つとも `ops/28-deploy.sh` をそのまま使う — 変わるのは「誰がそのスクリプトを実行するか」だけだ。
 
@@ -471,8 +476,8 @@ push(デフォルトブランチ) ─> deployment pipeline(build.yml) グリー�
 
 1. **GHCR パッケージの権限** — パッケージごとに Settings → Manage Actions access → このリポジトリに **Write**。（PAT で先に上げたパッケージはリポジトリに
    紐づいていないため、コミットステージのイメージ発行が `permission_denied: read_package` で失敗する。）
-2. **リポジトリの Variables**（Settings → Secrets and variables → Actions → Variables）— `ops/frontend.env` の `REACT_APP_*` 7 個（公開値）。
-   空だと gate がデプロイを止める（CI が作るフロントのイメージが壊れる）。必要に応じて `DEPLOY_REPO_DIR`（デフォルト `/home/ubuntu/ecommerce-msa`）・
+2. **リポジトリの Variables**（Settings → Secrets and variables → Actions → Variables）— `ops/frontend.env` の `REACT_APP_*` 8 個（公開値 — 2026-10-24 に `REACT_APP_PORTONE_STORE_EMAIL` が加わった）。
+   `REACT_APP_API_URL` · `REACT_APP_PAYPAL_CLIENT_ID` が空だと gate がデプロイを止める（CI が作るフロントのイメージが壊れる）。必要に応じて `DEPLOY_REPO_DIR`（デフォルト `/home/ubuntu/ecommerce-msa`）・
    `DEPLOY_ENV`（デフォルト `local`）。
 3. **Environment** — 別途作るものはない。`production` は初回の実行が作り、デプロイ履歴用である。非公開リポジトリではプランによって
    Settings に Environments メニューが表示されず、Required reviewers は Enterprise でしか使えない — 承認は手動実行で代える。
@@ -493,6 +498,8 @@ AWS インスタンス 2 台に docker compose で載せていた構成用のも
 ## 7. 実践的な使い方
 
 ### 普段のデプロイ
+
+> 🕰️ 下の例の環境引数 `prod` はコミットされたオーバーレイの名前。本番(OCI)の環境はコミットされない `local`(← external ← prod)なので `./ops/28-deploy.sh local <バージョン>`(deploy-oci.yml の `DEPLOY_ENV` の既定値も `local`)。HPA は `prod` でだけ適用される(それ以外は `APPLY_HPA=1`)。
 
 ```bash
 # 1. パイプラインがグリーンか確認し、リリース候補のバージョンを得る

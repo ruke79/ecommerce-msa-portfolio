@@ -2,7 +2,7 @@
 
 [日本語](15-backup-and-dr.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 백업 CronJob 은 생겼지만 `postgres-backup` · `restore-drill` 은 기본 `suspend: true` 입니다([docs/22](22-alerting-and-backup-automation.ko.md)). 클러스터 밖 보관은 아직입니다.
+> 🕰️ **상태(2026-11-14) — 2026-07-27 의 설계 · 2026-07-28 의 실측 기록.** 운영은 클러스터 안 CronJob(`k8s/85-backup-cronjobs.yaml`, 매니페스트 기본은 `suspend: true`)으로 돈다 — 2026-10-13 `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` 로 `postgres-backup`(매일 03:00 UTC) · `restore-drill`(월 05:00)을 켰고 `mongo-backup`(04:00, Atlas `chat`)은 원래 매일 돈다. 노드 밖 보관은 다른 기계가 매일 읽기 전용으로 받아 가 30일 둔다(2026-10-13 부터, 2026-11-05 에 보관 기계를 옮겼다 — docs/22 §2). **PITR(WAL 아카이빙)은 운영에 아직 켜지 않았다.** 지금의 절차는 [docs/22 §2](22-alerting-and-backup-automation.ko.md) · [docs/72 §3](72-model-refactor-deploy-runbook.ko.md).
 
 > 작성일: 2026-07-27
 > 배경: 최종 점검(G5)에서 "이번 작업에서 **한 번도 다루지 않은 영역**"으로 분류했던 항목.
@@ -143,6 +143,8 @@ Flyway 도입([docs/09 P0](09-postgresql-partitioning-sharding.ko.md)) 이후 �
    - `PostgresWalArchivingFailing` — archive_command 실패. 방치하면 `pg_wal` 이 디스크를 채워 DB 가 멈춘다
    - `MongoBackupStale`
    ops/08·10 의 `METRICS_DIR` 이 node_exporter textfile 지표를 쓴다.
+
+   > 🕰️ 지금: `backup-health` 는 다섯 개 — 위 넷 + `MongoBackupEmpty`(덤프가 1KB 미만). 운영 노드에서 `.prom` 을 읽는 node-exporter 는 2026-10-24 부터 돈다(B-106 — 그 전에는 없어 `PostgresBackupMetricMissing` · `PostgresBackupStale` 이 울릴 수 없었다).
 4. **RPO/RTO 를 문서가 아니라 훈련 결과로 검증한다.** → §0.1 에 실측값을 적었다. 운영 데이터로 다시 측정해 갱신할 것.
 
 ## 6. 도입 순서 — 현재 위치
@@ -160,3 +162,5 @@ Flyway 도입([docs/09 P0](09-postgresql-partitioning-sharding.ko.md)) 이후 �
 > ⚠️ **스크립트가 있다는 것과 백업이 돌고 있다는 것은 다르다.** 이 저장소 안에서 검증한 것은
 > *절차가 동작한다*는 사실이다. 여러분의 운영 DB 에 cron 을 걸고 `ACTION=check` 가 초록불인지
 > 확인하기 전까지, 실제 데이터는 여전히 백업되지 않은 상태다.
+
+> 🕰️ 지금(2026-11-14): 3단계 경보는 5종(§5). 운영 PostgreSQL 은 매일 백업 · 주간 복원 훈련이 돈다(2026-10-13 부터, 실측 821MB · 3분, 훈련 DB 9개 · 1분 52초 — docs/22 §2). 7단계(오브젝트 스토리지)는 그대로 남았고, 그 대신 노드 밖 보관은 다른 기계의 rsync 받기로 한다(docs/22 §2). PITR 은 운영에서 아직 꺼져 있다(`ACTION=setup ./ops/29` — 재기동 필요). 6단계는 그대로다.

@@ -109,7 +109,7 @@ TTL を延ばしたくなる誘惑が生まれる。
 
 ## 4. 残っていること
 
-- 文言が英語である（`User attempted to log in multiply, …`）。i18n の対象（docs/45）。
+- ~~文言が英語である（`User attempted to log in multiply, …`）。i18n の対象（docs/45）。~~ → ✅ サーバーが `code`（`multi_login`）も返し、画面の辞書が文言を選ぶ（`AuthLoginFilter.MULTI_LOGIN_CODE` · `util/loginResult.js` — [docs/45 §4-4](45-internationalization.md)）。英語の `message` はコードを知らないクライアントのために残した。
 - 以前のセッションを強制ログアウトさせる動作そのものが正しいポリシーかどうかは別の判断である。現在は
   「最後のログインが勝つ」であり、その判定がようやく**正確に**動作するようになった。
 

@@ -28,6 +28,8 @@
 期限超過 ──▶ catalog の期限切れジョブ(60秒)が HELD → RELEASED
 ```
 
+> 🕰️ 2026-11-14: 予約の呼び出しは今は伝送を選ぶ — `stock.rpc.transport`(`STOCK_RPC_TRANSPORT`) = `http`(既定、本番の ConfigMap も http) | `grpc`(gRPC 9095、[docs/66](66-grpc-stock-reservation.md))。そして「到達できない」と**要求の拒否**(HTTP 400 · gRPC `INVALID_ARGUMENT`)を分ける — 拒否は fail-open ではなく、その注文を削除して止める(`order_stock_hold_total{result="rejected"}`)。到達できない(期限切れを含む)は従来どおり予約なしで進むが、catalog が遅れて押さえた可能性があるので新しい注文の予約を一度解放する(`OrderService`、2026-10-15)。
+
 ## 3. catalog — 予約は在庫の持ち主が持つ
 
 `product.stock_reservation`(V14): `order_id`·`product_id`·`color_id`·`size`·`qty`·`status`(HELD|COMMITTED|RELEASED)·`expires_at`.
@@ -78,7 +80,7 @@
 | `onHold` は 0 なら**載せない**(`@JsonInclude(NON_DEFAULT)`) | `products` キャッシュのシリアライザは未知のフィールドで失敗する。キャッシュされた DTO では常に 0 なので JSON に現れない — このフィールドを知らない古い Pod がローリング中にキャッシュを読んでも壊れない。DTO に `ignoreUnknown` も付けた(次回のために) |
 | 確保数は**実在庫まで** | 管理者が在庫を減らして、実在庫より多く確保されていることがありうる。残数がマイナスにならない |
 | 🔒 管理者の一覧・編集(`/api/product/products`, `/product/edit/…`)では**引かない** | 引いた値を編集画面が受け取って保存すると、実在庫が減る |
-| 🐛 数量もキャッシュではなく**現在の値**(`size_id` で合わせる) | ホームカードの元になるカテゴリ一覧キャッシュ(`products`、カテゴリキー)は**有効期限がなく、在庫が変わってもクリアしない** — その中の実在庫数量からしていつのものか分からない。予約だけ引くと「昔の数量 − 今の予約」になる。一まとまり(詳細一つ、一覧 1 ページ、ホーム全体)について、サイズ別の現在数量を一度 + 予約合計を一度読む — 商品ごとには読まない。二つの読み取りは別々に失敗する(一方が読めなくても他方は反映) |
+| 🐛 数量もキャッシュではなく**現在の値**(`size_id` で合わせる) | ホームカードの元になるカテゴリ一覧キャッシュ(`products`、カテゴリキー)は**有効期限がなく、在庫が変わってもクリアしない**(🕰️ 2026-10-15 から 30 分 — それでも在庫は応答ごとに現在の値) — その中の実在庫数量からしていつのものか分からない。予約だけ引くと「昔の数量 − 今の予約」になる。一まとまり(詳細一つ、一覧 1 ページ、ホーム全体)について、サイズ別の現在数量を一度 + 予約合計を一度読む — 商品ごとには読まない。二つの読み取りは別々に失敗する(一方が読めなくても他方は反映) |
 | 外部キーインデックス(V15 — `product_sku.product_id`, `product_size.skuproduct_id`) | PostgreSQL は外部キーにインデックスを作らないが、基準スキーマ(V5)に抜けていた。現在数量の照会だけでなく、詳細の遅延ロード、差し引き・予約の SKU ロック照会(`findForStockUpdate`)もこの経路なので、すべてテーブル全体をスキャンしていた。PG16 で二つのインデックスを使うことを確認 |
 
 フロント(`components/product/Infos.jsx`):
@@ -135,7 +137,7 @@
 | `order.stock-hold.checkout-minutes` | `30` | 決済画面で確保しておく時間 |
 | `catalog.stock-reservation.expiry-check-ms` | `60000` | 期限切れジョブの周期 |
 
-- メトリクス: `order_stock_hold_total{result=held|short|unavailable|disabled}`。`short` は注文段階で防いだ過剰販売、
+- メトリクス: `order_stock_hold_total{result=held|short|unavailable|disabled}`(🕰️ 今は `rejected` も — §2 のメモ)。`short` は注文段階で防いだ過剰販売、
   `unavailable` は fail-open で通過した注文。
 - 現在確保されている在庫:
   ```sql
@@ -227,7 +229,7 @@
 **ガード**: `ProductSkuIdentityTest`(4) · `StockReservationServiceTest.sizelessOption` · `ReviewServiceTest.sizelessProductCanBeReviewed`·`fitRequiredWhenSized` · `ReviewCard.test.jsx`(2) ·
 `util/sizes.test.js`(3) · `Infos.test.jsx`(+4) · `Review.test.jsx`(+1) · `pages/Product.test.jsx`(+2).
 
-**デプロイ後に一度**: 商品キャッシュ(`product`・`products` は有効期限がない)に古い順序の SKU リストが残っていると、画面(キャッシュ)とカート追加(新たに
+**デプロイ後に一度**: 商品キャッシュ(`product`・`products` は有効期限がない — 🕰️ 2026-10-15 から `products` は 30 分、`RedisCacheConfig.PRODUCTS_TTL`)に古い順序の SKU リストが残っていると、画面(キャッシュ)とカート追加(新たに
 読む)のスタイルインデックスがずれることがある。catalog のキャッシュをクリアする(値は再び埋められる):
 
 ```bash

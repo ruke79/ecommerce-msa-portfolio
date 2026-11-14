@@ -198,7 +198,7 @@ V2 `message`·`code`. 국내 PG 라 대개 한국어이고 우리가 고를 수 
 - 공통 도구: `common.text.Nfkc`(`of` = NFKC + 앞뒤 공백, `searchKey` = 거기에 연속 공백 하나로). 화면은 `util/searchKey.js`.
 - 인증 SMS 의 전화번호는 libphonenumber 가 이미 전각 숫자를 읽는다 — 그대로.
 - 검색어의 `%` · `_` 는 이제 글자다(예전에는 `%` 하나가 모든 상품을 맞혔다).
-- 남은 것: ES 의 `japanese_analyzer` 에 `cjk_width` 필터(색인을 다시 만들어야 한다 — 운영에는 ES 가 없다), contract 릴리스에서 V21 의 `idx_product_name_trgm`(`lower(name)`) 삭제.
+- 남은 것: ES 의 `japanese_analyzer` 에 `cjk_width` 필터(색인을 다시 만들어야 한다 — 운영에는 ES 가 없다), ~~contract 릴리스에서 V21 의 `idx_product_name_trgm`(`lower(name)`) 삭제~~ → ✅ catalog V24(`DROP INDEX CONCURRENTLY`, 운영 적용 2026-11-03 `7ef62043a98f`, [docs/85 §8-2](85-release-deploy-runbook.ko.md)).
 - 배포 전 확인(0 이어야 한다 — 이미 저장된 이메일이 NFKC 와 다르면 그 계정은 새 로그인 경로에서 찾지 못한다): `select count(*) from users.users where email <> normalize(email, NFKC)`.
 
 테스트: `NfkcTest` · `NfkcInputsTest`(common), `EmailNfkcTest`(user), `SearchNameNfkcTest`(catalog, 컨테이너 — 전각 · 반각 검색 · 원문 이름 · `%` · 식 인덱스 사용), `searchKey.test.js`. 모두 NFKC 를 빼면 실패한다.

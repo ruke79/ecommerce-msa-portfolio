@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](65-size-level-sku.ko.md)
 
+> 🕰️ **状態(2026-11-14) — 本番適用済み — 2026-10-01 のコミット `a813ae314f8c` に catalog V17 · cart V4 · order V24 · delivery V4 · `ops/42` が入っており、2026-10-09 の事前点検で本番 Flyway はすでに catalog 17 · cart 4 · order 24 だった([docs/72](72-model-refactor-deploy-runbook.md))。** 下の「デプロイ待ち」は作成当時の状態です。
+>
 > 作成日: 2026-09-28 · 状態: ✅ 適用(デプロイ待ち)
 >
 > 関連: [59 決済前の在庫予約](59-stock-reservation.md) · [53 品切れと再入荷](53-restock-and-sold-out.md)

@@ -56,6 +56,8 @@
 | 3-8 | オートスケール（水平スケールが安全な場合のみ） | `k8s/70-autoscaling.yaml` | — |
 | 3-9 | オーバーレイのイメージ名一覧・リソースパッチ | `k8s-overlays/{external,oci,dev,prod}/kustomization.yaml`、本番の `k8s-overlays/local/`（gitignore — 手動で） | イメージタグが変わらない（古いイメージで起動する） |
 
+> 🕰️ 2026-11-14: 3-2 の必須要素が増えた — 基準ファイル（`48-delivery-service.yaml`）をコピーすれば一緒に来る。`EUREKA_CLIENT_TLS_ENABLED=true`（身元をマウントした Pod — B-86）、ストアのパスワードは `JAVA_TOOL_OPTIONS` ではなく `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD`（B-83）、JVM クラッシュ記録用の `/var/log/jvm` emptyDir（B-97）。イメージはモジュールの `Dockerfile` ではなく `ops/Dockerfile.runtime` ひとつで作る（B-90 — モジュールに `Dockerfile` を置くとガードが失敗する）。
+
 ## 4. データ・メッセージ
 
 | # | やること | どこ | 抜けると |
@@ -81,7 +83,7 @@
 | 6-1 | リリース候補イメージ一覧 | `.github/workflows/build.yml` の `release-candidate` → `services=` | 候補マニフェストから漏れる |
 | 6-2 | GHCR パッケージ権限 — 初回発行後にパッケージの Settings → Manage Actions access → このリポジトリに **Write** | GitHub | CI のイメージ発行が `permission_denied: read_package` |
 | 6-3 | ログ収集（ローカルの可観測性スタック） | `docker-compose-observability.yml` のログボリューム | Loki にログがない |
-| 6-4 | メトリクス・アラート — `/actuator/prometheus` のスクレイプ、必要なら `observability/alert-rules.yml` | 可観測性の設定 | 障害に気づかない |
+| 6-4 | メトリクス・アラート — `/actuator/prometheus` のスクレイプ、必要なら `observability/alert-rules.yml`。🕰️ 本番のメトリクスはクラスター内の `metrics-agent` が収集する（B-95）— そのファイルの `keep` 正規表現にサービス名を加える | 可観測性の設定 · `k8s-overlays/external/metrics-agent.yaml` | 障害に気づかない |
 | 6-5 | 分散トレーシング — Deployment に `HOST_IP`（downward API）の次に `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://$(HOST_IP):4318/v1/traces`（docs/63） | `k8s/4x-<서비스>.yaml` の `env` | トレースが Pod 自身（localhost）に行って静かに消える（B-59） |
 | 6-6 | ドキュメント — 設計（なぜ・何を信じ何を信じないか）、`docs/README.md` の目次 | `docs/` | — |
 

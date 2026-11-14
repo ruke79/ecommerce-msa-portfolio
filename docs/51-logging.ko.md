@@ -2,7 +2,7 @@
 
 [日本語](51-logging.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** §5 첫 항목(배치 리스너 추적)은 §4h 로 해소됐고, Loki 기반 경보 일부가 들어왔습니다.
+> 🕰️ **상태(2026-11-14) — 일부 낡음.** §5 첫 항목(배치 리스너 추적)은 §4h 로 해소됐고, Loki 기반 경보 일부(§4i)가 들어왔습니다. 추적 저장소는 Zipkin 이 아니라 OTel Collector → Jaeger 다([docs/63](63-opentelemetry.ko.md) — 본문의 "Zipkin" 은 Jaeger 로 읽는다). §4g 의 레코드 어댑터는 그 뒤 팩토리에서 지웠다(B-88).
 
 배경: 이 프로젝트의 로깅 기능이 ruke79/facebook 저장소의 로깅 기능보다 떨어지는지 평가하고,
 평가에서 나온 개선 1~4번을 순서대로 적용한다.
@@ -407,6 +407,8 @@ Spring Kafka 의 컨슈머 추적(`ContainerProperties.setObservationEnabled(tru
 **고친 것** — 리스너는 `@Headers Map` 전체를 받고 `OutboxTraceContext.recordHeaders(headers, i)` 로 i 번째 레코드의
 헤더를 꺼낸다. 배치 변환 헤더가 있으면 그 목록의 i 번째, 없으면 메시지 헤더 자체(레코드 어댑터)다.
 
+> 🕰️ 2026-10-15: 그 레코드 어댑터는 pay · order 팩토리에서 뺐다 — 리스너 예외를 삼켜 재시도 · DLT · 경보가 없었다(**B-88** 이 `setBatchToRecordAdapter` 를 막는다). 이제 모든 배치 리스너가 `BATCH_CONVERTED_HEADERS` 경로이고, `recordHeaders` 는 두 경우를 다 받으므로 그대로다.
+
 **가드** — 이번에는 **스프링이 만든 리스너 어댑터**를 통과시킨다.
 
 - `PaymentRequestListenerAdapterTraceTest`(pay) · `PaymentResponseListenerAdapterTraceTest`(order) — 운영의
@@ -423,6 +425,7 @@ Spring Kafka 의 컨슈머 추적(`ContainerProperties.setObservationEnabled(tru
 
 **배치 리스너 21개** — cart(장바구니 비우기·롤백, 쿠폰 사용), catalog(재고), chat(가입), coupon(결제 응답,
 쿠폰 롤백), delivery(결제 → 배송), notification(알림 8개·공지·기획전·메일 명령), order(가입, 배송 상태).
+(🕰️ order 의 가입(`user-created`) 구독은 그 뒤 없앴다 — 고객 사본이 필요 없다, [docs/48](48-user-replication-debt.ko.md) §6-①.)
 루프 본문은 그대로 두고 `try {` 한 줄만 스코프로 바꿨다:
 
 ```java
@@ -495,11 +498,13 @@ log.error/warn 중 "수동 … 필요" 문구가 전부 규칙의 정규식에 �
 
 ## 5. 남은 것
 
-- **사가 밖의 배치 리스너**는 아직 레코드 헤더로 추적을 이어받지 않는다(§4f) — 배송 생성·알림·장바구니
-  비우기·쿠폰 등. 컨슈머 팩토리 13개가 전부 배치라 `setObservationEnabled(true)` 는 어디서도 효과가 없다.
+- ~~**사가 밖의 배치 리스너**는 아직 레코드 헤더로 추적을 이어받지 않는다(§4f) — 배송 생성·알림·장바구니
+  비우기·쿠폰 등. 컨슈머 팩토리 13개가 전부 배치라 `setObservationEnabled(true)` 는 어디서도 효과가 없다.~~ → ✅ §4h(B-60b).
 - **관측 스택은 노드의 compose 다.** k3s 파드의 로그(§4c)와 추적(§4d)은 같은 노드의 compose 스택으로 간다.
   노드가 여럿이 되면 파드는 자기 노드의 Zipkin 으로 보내므로, 그때는 클러스터 안에 수집기를 두어야 한다.
+  🕰️ 지금(2026-11-14): 추적은 노드의 OTel Collector(:4318)로 간다(docs/63). 서비스 지표만 클러스터 안 `metrics-agent` 가 노드 Prometheus 로 remote write 한다(B-95) — 로그 · 추적은 여전히 노드의 compose 다.
 - **런타임 로그 레벨 변경**(actuator `loggers`)은 열지 않았다. 인증 없이 열면 facebook 쪽처럼 누구나 레벨을
   바꿀 수 있다 — 관리 포트 분리나 인증과 함께 해야 한다.
 - **로그 기반 경보**(ERROR 급증 등)와 로그 폭주 방어(초당 상한)는 이번 범위 밖이다.
+  🕰️ 그 뒤 들어온 로그 경보는 §4i 의 둘(`ManualActionRequired` · `ProductSoldOut`)뿐이다 — ERROR 급증 · 폭주 방어는 아직 없다.
 - **config-server** 는 common 을 쓰지 않아 마스킹·JSON 이 적용되지 않는다. 사용자 데이터를 다루지 않는다.

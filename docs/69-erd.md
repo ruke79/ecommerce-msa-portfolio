@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](69-erd.ko.md)
 
+> 🕰️ **状態(2026-11-14) — §2 のサービス別の図を今のマイグレーションで作り直した**(生成器 `ops/tools/gen-erd.py` の出力と同じ — `--check` は CI に組み込まれておらず、2026-09-28 以降ずれていた)。増えたもの: user `passkey_credential`(V15) · `scheduler_lock`(V17)、cart `processed_event`(V6)、order `create_key` · `payment_attempt` · `payment_attempt_until`(V26 · V27) · `processed_event`(V30 — 2026-11-07、本番 `7ef62043a98f` より後なのでまだデプロイ前)、coupon `used_order_id` · `payment_order_id` · `payment_until`(V6 · V7)。消えたもの(contract リリース、2026-11-03 本番): user `failed_login_attempts` · `lock_expires_at`(V19)、order `order_address.order_id` · `orders.tax_price`(V29)。
+>
 > 作成日: 2026-09-28 · 状態: ✅ · **サービス別の図はマイグレーションから自動生成**(`ops/tools/gen-erd.py`)
 >
 > 関連: [55 無停止移行](55-zero-downtime-migrations.md) · [65 サイズ単位の SKU](65-size-level-sku.md) · [59 決済前の在庫予約](59-stock-reservation.md)
@@ -146,6 +148,20 @@ erDiagram
         varchar outbox_status
         varchar trace_context
     }
+    passkey_credential {
+        bigint passkey_id PK
+        varchar credential_id UK
+        bigint user_id
+        varchar user_handle
+        bytea attested_credential_data
+        bigint sign_count
+        boolean uv_initialized
+        boolean backup_eligible
+        boolean backup_state
+        varchar transports
+        varchar name
+        timestamp last_used_at
+    }
     password_reset_token {
         bigint id PK
         bigint user_id FK, UK
@@ -177,6 +193,11 @@ erDiagram
     roles {
         bigint role_id PK
         varchar role_name
+    }
+    scheduler_lock {
+        varchar name PK
+        timestamptz locked_until
+        varchar locked_by
     }
     shipping_address {
         bigint shipping_address_id PK
@@ -211,8 +232,6 @@ erDiagram
         varchar image
         varchar sign_up_method
         varchar two_factor_secret
-        int failed_login_attempts
-        timestamp lock_expires_at
         timestamp withdrawal_requested_at
         timestamp withdrawn_at
         varchar withdrawal_reason
@@ -481,6 +500,10 @@ erDiagram
         jsonb payload
         varchar outbox_status
     }
+    processed_event {
+        varchar event_id PK
+        timestamp processed_at
+    }
     cart |o--o{ cart_product : "cart_id"
 ```
 <!-- /erd:cart -->
@@ -494,7 +517,6 @@ erDiagram
 erDiagram
     order_address {
         bigint order_address_id PK
-        bigint order_id FK, UK
         varchar address1
         varchar address2
         varchar city
@@ -537,7 +559,6 @@ erDiagram
         bigint order_address_id FK
         varchar tracking_id UK
         numeric shipping_price
-        numeric tax_price
         numeric total
         numeric total_before_discount
         bigint customer_id
@@ -569,6 +590,9 @@ erDiagram
         varchar shortage_event_id
         timestamp shortage_resolved_at
         timestamp stock_hold_until
+        varchar create_key
+        varchar payment_attempt
+        timestamp payment_attempt_until
     }
     payment_outbox_event {
         varchar id PK
@@ -580,10 +604,13 @@ erDiagram
         varchar outbox_status
         varchar trace_context
     }
+    processed_event {
+        varchar event_id PK
+        timestamp processed_at
+    }
     order_address |o--o{ orders : "order_address_id"
     orders ||--o{ order_product : "order_id"
     orders ||--o{ order_refund : "order_id"
-    orders ||--o| order_address : "order_id"
 ```
 <!-- /erd:order -->
 
@@ -632,6 +659,9 @@ erDiagram
         timestamp start_date
         varchar status
         varchar scope
+        bigint used_order_id
+        bigint payment_order_id
+        timestamp payment_until
     }
     coupon_target {
         bigint coupon_target_id PK

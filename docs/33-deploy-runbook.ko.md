@@ -2,7 +2,7 @@
 
 [日本語](33-deploy-runbook.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 프론트엔드는 CRA 가 아니라 webpack 5 입니다(`REACT_APP_*` 이름은 그대로). 평소 배포는 CI → 승인 → `ops/28` 입니다([docs/36 §6](36-deployment-pipeline.ko.md)).
+> 🕰️ **상태(2026-11-14) — 처음부터 올리는 순서의 기록(2026-08 ~ 09)입니다.** 프론트엔드는 CRA 가 아니라 webpack 5 입니다(`REACT_APP_*` 이름은 그대로). 운영(www.ysyproject.com)은 이 런북으로 올린 뒤 바뀌었다 — PostgreSQL 은 Neon(§2) 이 아니라 클러스터 안 PG(PVC · ssl, 백업 CronJob 켬), MongoDB 는 Atlas, 오버레이는 `local`(← external ← prod, §8). 두 번째 배포부터는 `ops/28-deploy.sh local <SHA12>` 하나이고, 배포는 수동 실행만(실행 = 승인, B-75) — 운영 배포 러너(`oci-ampere`)를 아직 등록하지 않아 지금은 인스턴스에서 대상 커밋을 `git switch --detach` 한 뒤 손으로 돌린다([docs/36 §6](36-deployment-pipeline.ko.md), 묶음 릴리스 절차는 [docs/85](85-release-deploy-runbook.ko.md)). §12 의 "§9 이후는 아직" 은 그 뒤 모두 끝났다.
 
 docs/31(오버레이·부트스트랩·터널)과 docs/32(인프라 외부화)가 **무엇을 왜 만들었는지**를
 설명한다면, 이 문서는 **그것들을 어떤 순서로 실행하는가**만 다룬다.
@@ -994,6 +994,8 @@ kustomize build k8s-overlays/external | grep -n REPLACE_ME
 external 에서는 그대로 두면 된다. 클러스터 안 PostgreSQL 을 쓴다면 `ACTION=check
 ./ops/08-backup-postgres.sh` 를 통과시킨 뒤 직접 켠다.
 
+> 🕰️ 켜는 것은 `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` 로만 한다 — `k8s/85` 를 그냥 `kubectl apply` 하면 매니페스트의 `suspend: true` 로 조용히 다시 꺼진다. 운영은 클러스터 안 PG 라 2026-10-13 에 `postgres-backup`(매일 03:00 UTC) · `restore-drill`(월 05:00)을 켰다([docs/22 §2](22-alerting-and-backup-automation.ko.md)).
+
 `mongo-backup` 만 자격증명을 넣어 살린다:
 
 ⚠️ **`read` 는 반드시 따로 한 줄로 실행한다.** 여러 줄을 한꺼번에 붙여넣으면 셸이
@@ -1138,6 +1140,8 @@ GitHub → 프로필 → Packages 에서 눈으로도 확인된다. `ops/19` 는
 **13개**를 만든다(`config-server` 는 배포 매니페스트에 없지만 이미지는 만들어진다 —
 올라가 있어도 정상이다).
 
+> 🕰️ 지금은 서비스 13개(saga-projection · config-server 포함) + frontend = **14개**이고, config-server 도 `k8s/32-config-server.yaml` 로 배포된다(`ops/19` 의 `SERVICES`).
+
 배포 후 실제 여유를 확인한다 — **계산과 노드의 현실은 실제로 달랐다**(추정 3,350m vs
 실측 3,980m). 매니페스트만 더하면 k3s 내장 파드와 cloudflared 레플리카가 빠진다:
 
@@ -1218,6 +1222,8 @@ HPA 를 아예 적용하지 않았다면 `kubectl scale deploy ...` 로 충분�
 | cloudflared | 2 레플리카 | **1** |
 | Elasticsearch | 띄운다 | **띄우지 않는다** (`SEARCH_ENGINE=postgres` 기본) |
 
+> 🕰️ JVM 힙의 "상한의 1/4(암묵)" 은 2026-10-19 전의 값이다 — 지금은 모든 백엔드 이미지가 `ops/Dockerfile.runtime` 의 `JVM_MAX_RAM_PERCENTAGE=50`(`-XX:MaxRAMPercentage=50`)으로 뜬다. oci 의 `JAVA_OPTS` 60 은 그 뒤에 붙어 그대로 이긴다.
+
 ⚠️ **레플리카 1에서는 이 저장소가 겪은 동시성 버그가 재현되지 않는다**(docs/31 §3).
 그건 `ops/12-staging-rehearsal.sh` 로 따로 확인한다.
 
@@ -1236,6 +1242,8 @@ kubectl -n ecommerce get pods -w
 ops/02-create-dlt-topics.sh --check     # 무엇을 쓸지 진단만
 ops/02-create-dlt-topics.sh             # DLT 9종 + order-saga-state(컴팩션)
 ```
+
+> 🕰️ 지금은 리스너 토픽 23개의 `.DLT` + 컴팩션 토픽 둘(`order-saga-state` · `order-timeline` — 주문 진행 타임라인, docs/76)이다(`ops/02` 의 `TOPICS` · `STATE_TOPICS`, 대조는 B-41 · B-38).
 
 (⚠️ 이 스크립트는 예전에 `kafka-topics.sh` 를 PATH·`KAFKA_BIN`·docker 중 하나에서만 찾아
 **k8s 에서는 동작하지 않았다.** 이 런북을 쓰다 발견해서 고쳤다.)
@@ -1432,7 +1440,7 @@ Windows 드라이브(DrvFs)에서는 (1) Windows 쪽 git 이 CRLF 로 다시 덮
 | **frontend** 만 `CreateContainerConfigError` (`non-numeric user`) | 이미지의 `USER` 가 이름이면 kubelet 이 `runAsNonRoot` 를 **판정할 수 없어** 거부한다. `Dockerfile.frontend-runtime` 을 `USER 1000` 으로 고쳤다(Java 이미지는 원래 숫자였다) — frontend 만 다시 빌드·push 하면 된다 |
 | **backup CronJob** 이 `CreateContainerConfigError` | `backup-credentials` Secret 이 없다. ⚠️ **external 구성에서 postgres-backup 은 아예 쓸 수 없다** — `pg_basebackup` 은 Neon 에 통하지 않는다(백업은 provider 책임). mongo-backup 은 반대로 **필요하다**(Atlas M0 는 백업이 없다). §8 참조 |
 | redis 파드가 **`CreateContainerConfigError`** | `redis-auth` Secret 이 없다. `90-dev-infra.yaml` 은 참조만 하고 만들지 않는다 — §8 의 생성 명령. 컨테이너를 만들기 **전에** 실패하므로 로그도 없다 |
-| `CrashLoopBackOff` + **`RedisConnectionException` · `Connection refused ...:6379`** | **redis Deployment 가 없다.** PG·Mongo 와 함께 지우기 쉽다 — §8 참조. Redis 를 쓰는 서비스가 **7개**(cart·catalog·chat·notification·order·pay·user)라 절반 이상이 죽는다. ⚠️ Service 는 남아 있어 **이름 해석과 ClusterIP 는 정상**이라 DNS 문제로 보이지 않는다: `kubectl -n redis get endpoints redis` 가 `<none>` 이면 확정 |
+| `CrashLoopBackOff` + **`RedisConnectionException` · `Connection refused ...:6379`** | **redis Deployment 가 없다.** PG·Mongo 와 함께 지우기 쉽다 — §8 참조. Redis 를 쓰는 서비스가 **8개**(cart·catalog·chat·delivery·gateway·notification·order·user — 🕰️ 2026-11 기준. pay 는 Redis 를 쓰지 않는다)라 절반 이상이 죽는다. ⚠️ Service 는 남아 있어 **이름 해석과 ClusterIP 는 정상**이라 DNS 문제로 보이지 않는다: `kubectl -n redis get endpoints redis` 가 `<none>` 이면 확정 |
 | 회원가입이 **400 `Error: Role is not found.`** | `users.roles` 테이블이 **비어 있다.** 역할을 심던 코드는 `SecurityConfig` 에서 주석 처리돼 있었고 마이그레이션도 넣지 않아, **깨끗한 DB 에서는 아무도 가입할 수 없었다** — 첫 사용자가 없으니 관리자도 만들 수 없다. `V3__seed_roles.sql` 이 ROLE_USER·ROLE_ADMIN 을 심는다. 이미 뜬 DB 라면 user-service 를 재시작해 Flyway 를 돌린다: `kubectl -n ecommerce rollout restart deploy/user-service` |
 | `CrashLoopBackOff` + **`password authentication failed for user 'product'`** (28P01) | `LOCAL_DB_PASSWORD` 가 `ops/25` 에 입력한 **product** 비밀번호와 다르다. ⚠️ 여기까지 왔다면 호스트·TLS·역할은 전부 맞은 것이다 — 비밀번호만 고치면 된다. §7 의 psql 확인 절차 |
 | `CrashLoopBackOff` + **`keystore password was incorrect`** | `LOCAL_KEY_STORE_PASSWORD` 가 `certs/certs.env` 의 값과 다르다. 파일 마운트는 정상이다(못 찾았으면 `KeyStore not exists` 였다). §7 의 patch 명령으로 넷을 한꺼번에 맞춘다 |
@@ -1457,6 +1465,8 @@ Windows 드라이브(DrvFs)에서는 (1) Windows 쪽 git 이 CRLF 로 다시 덮
 
 **§1~§8 은 실제 OCI Ampere(4 OCPU/24GB, Ubuntu 24.04, arm64)에서 끝까지 통과했다.**
 그 과정에서 이 문서가 여러 번 틀렸고, 틀린 것들은 아래 §13 에 남겼다. §9 이후는 아직이다.
+
+> 🕰️ 그 뒤(2026-09 ~): §9 터널 · §10 확인까지 끝나 운영 www.ysyproject.com 이 이 구성으로 돈다. `ops/06` 스모크는 `ops/28` 의 배포 게이트로 매 배포마다 돈다(2026-10-24 1차 시도가 스모크 실패로 자동 복귀 — [docs/85 §7-1](85-release-deploy-runbook.ko.md)). 아래 표는 2026-08 의 검증 기록이다.
 
 | 단계 | 상태 |
 |---|---|

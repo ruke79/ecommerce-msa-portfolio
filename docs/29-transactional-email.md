@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](29-transactional-email.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** user-service の Outbox は現在動作しています(c31791a)。ただしメールの発行はまだ Outbox を経由しません。
+> 🕰️ **状態（2026-11-14）— 一部古い。** user-service の Outbox は現在動作しています(`UserOutboxScheduler`)。ただしメールの発行はまだ Outbox を経由しません — §5.1 の窓はそのままです。バウンス処理(§5.2) · 受信拒否の画面(§5.4)もまだありません。`RedisSessionManager` は今は本当に Redis で、`users.email_verified` は読まれるカラムになりました(§7-2 · §7-3 の 🕰️)。
 
 分散メールサービス(別リポジトリ、System Design Interview Ch.23 の実装)の**送信側の半分**を
 このプロジェクトに移植した記録である。メールボックス・Cassandra・MinIO・Elasticsearch は持ち込んでいない —
@@ -271,6 +271,8 @@ user-service に Outbox があるにはある:
 あるので(`PaymentOutboxScheduler`, `OrderOutboxScheduler`)、それを手本に復活させればよい。
 今回の作業範囲外なので手を付けなかった。
 
+> 🕰️ 2026-11-14: Outbox は復活した — `UserOutboxScheduler`(`FOR UPDATE SKIP LOCKED`、発行をトランザクション内で同期的に待つ) · `UserOutboxHelper`(ユーザーイベント · 退会 · 複製の照合が使う)。メールは今もその経路ではない — `RegistrationListener` · `EmailService` が `OutgoingMailProducer.publish()`(トランザクション外の `send().get()`)を直接呼ぶので、上の発行失敗の窓は残っている。
+
 ### 5.2 バウンス処理がない
 
 `SENT` は「こちらの MTA が受け付けた」までしか意味しない。受信箱への到達は**バウンスメールとフィードバックループ**を
@@ -296,6 +298,8 @@ DLT(`outgoing-mail.DLT`)も同じである。`ops/02-create-dlt-topics.sh` が�
 `PATCH /api/notifications/preferences` が `emailEnabled` を受け取る。
 `notificationApi.updatePreferences(patch)` がそのまま通すので API は準備できているが、
 設定画面自体がまだない。
+
+> 🕰️ 2026-11-14: 画面はまだない(フロントで `updatePreferences` を呼ぶ箇所 0)。サーバー側は 2026-10-16 になってようやく設定の変更が実際に DB に保存されるようになった(それまでは 200 を返して保存していなかった — notification レビュー N-H1)。
 
 ---
 
@@ -475,6 +479,8 @@ INFO  c.p.n.config.MailConfig - 메일 발송기: smtp (실제 발송) from=…
 
 > 参考: `users.email_verified` カラムは**誰も読みも書きもしない死んだカラム**である。
 > 実際のフラグは `enabled` である。
+>
+> 🕰️ 2026-11-14: 今は読み書きされる — 確認リンク · ソーシャルログインが立て(`UserServiceImpl` · `CustomOAuth2UserService`)、同じアドレスのソーシャルログインを既存アカウントにつなぐかを `SocialAccountLinker` がこの値で決める。ログインを止めるフラグは今も `enabled` で、`APP_REQUIRE_EMAIL_VERIFICATION` の既定値もそのまま `false` だ。
 
 ---
 
@@ -535,6 +541,7 @@ if (passwordEncoder.matches(currPassword, user.getPassword())) {
 - リフレッシュトークンは Redis に **sessionId でのみ**保存されており、「このユーザーのすべてのセッション」を逆引きで
   探せない。
 - `RedisSessionManager` は名前に反して**インメモリの `HashMap`** なので、レプリカごとにばらばらに動く。
+  > 🕰️ 2026-11-14: 今は Redis だ(キー `login-session:` · TTL = リフレッシュトークンの寿命)。ただしこの記録は多重ログイン判断の根拠にすぎず、セッションを切るのは今も下の `password_changed_at` である。
 
 そこで `users.password_changed_at` を設け、**それより前に発行された**リフレッシュトークンを
 `RefreshTokenController` が拒否する — DB 一箇所だけを見るので、レプリカ数とは無関係である。

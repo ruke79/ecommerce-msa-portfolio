@@ -2,7 +2,7 @@
 
 [日本語](17-testing.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 테스트 수 · 가드 수 · CI 잡 구성은 작성 당시 값입니다. 지금은 백엔드 1,637 · 프론트 930 · B-1~69, CI 는 commit → integration · acceptance → release-candidate([docs/36](36-deployment-pipeline.ko.md)).
+> 🕰️ **상태(2026-11-14) — 2026-07-28 의 기록.** 테스트 수 · 가드 수 · CI 잡 구성은 작성 당시 값입니다. 지금은 백엔드 2,654 · 프론트 1,076 · 가드 B-1 ~ B-110(빠진 번호와 목록은 [README](../README.ko.md)), CI 는 commit · secrets → integration · acceptance → release-candidate + 주간 restore-drill([docs/36](36-deployment-pipeline.ko.md)).
 
 > 작성일: 2026-07-28
 > 배경: [docs/14](14-boot-test-findings.ko.md)·[docs/16](16-saga-e2e-and-observability-verification.ko.md)에서
@@ -74,6 +74,8 @@ Docker 가 없는 곳에서도 단위 테스트는 돌아야 하므로 통합 �
 | `데이터소스 × 풀크기 × 레플리카 ≤ max_connections` | B-32 — 산술적으로 넘치는 풀 설정. 부하가 걸린 뒤에야 드러난다 |
 | `ddl-auto` 는 `validate`/`none` 만 + 베이스라인 마이그레이션 존재 | B-33 — Hibernate 가 스키마를 소유하면 변경 이력이 없고, 운영 DB 에 검토 없는 DDL 이 나가며, **제약을 지우지 않는다**(docs/20) |
 | 확장 불가 서비스는 replicas 1 + HPA 제외 | B-34 — chat 은 인메모리 STOMP 브로커, eureka 는 standalone. 늘리면 **조용히** 깨진다: 파드는 Running 인데 사용자만 메시지를 못 받는다(docs/21 §2) |
+
+> 🕰️ 지금: B-34 의 1개 고정은 eureka 만이다 — chat 은 2026-11-01 에 빠졌다(구독자에게 보내는 것을 Redis 팬아웃 `StompFanout` 으로 모든 파드에, B-107 · docs/21 §2-1). 가드레일은 이 표의 15종에서 B-110 까지 늘었다.
 
 > 이 가드레일들은 **실제로 동작함을 확인했다.** `spring.application.name: common` 을 되돌려 넣자
 > 해당 테스트가 즉시 실패했다. 실패하지 않는 테스트는 테스트가 아니다.
@@ -175,6 +177,8 @@ Config data resource 'class path resource [kafka-secrets.properties]' does not e
 
 테스트 리포트는 실패 시에도 아티팩트로 업로드된다.
 
+> 🕰️ 지금: 잡은 `commit`(자바 `./gradlew build` · 프론트 단위 테스트 · 린트 · 이미지 발행) · `secrets`(ops/20 비밀 스캔) → `integration`(`-PwithContainers`, e2e 제외) · `acceptance`(`:e2e-tests:test` — 발행된 이미지로 사가 전 구간) → `release-candidate`, 그리고 주 1회 `restore-drill`(월 03:00 UTC). `unit` · `frontend` 잡은 `commit` 으로 합쳐졌다(docs/36).
+
 > 이 저장소의 테스트 스위트는 한때 **.gitignore 된 비밀 파일에 의존**해 새로 클론하면 통과할 수
 > 없는 상태였는데, 아무도 몰랐다 — 자동으로 돌려 보는 곳이 없었기 때문이다(docs/14 B-20).
 
@@ -195,6 +199,8 @@ export DOCKER_HOST=unix:///var/run/docker.sock
 > ⚠️ Spring Boot 3.4.1 이 고정하는 Testcontainers 1.20.4 는 docker-java 가 API 1.32 로 붙어
 > 최신 Docker Engine(29.x, 최소 1.40 요구)에서 `client version 1.32 is too old` 로 **컨테이너를 아예 못 띄운다.**
 > `testcontainers-bom:1.21.4` 로 올려 회피했다.
+
+> 🕰️ 지금: Spring Boot 는 3.5.16, `testcontainers-bom:1.21.4` 고정은 그대로다(루트 `build.gradle`).
 
 ## 6. 여전히 남은 공백
 

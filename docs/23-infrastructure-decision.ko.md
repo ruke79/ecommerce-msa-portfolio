@@ -2,7 +2,7 @@
 
 [日本語](23-infrastructure-decision.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 결정 자료입니다. 실제 결정은 PostgreSQL · MongoDB 관리형, Redis · Kafka 는 클러스터 안, Elasticsearch 는 운영에 두지 않음입니다([docs/32](32-external-managed-infra.ko.md)).
+> 🕰️ **상태(2026-11-14) — 결정 자료(기록).** 운영(OCI 단일 노드 k3s)은 결국 **MongoDB 만 관리형(Atlas — 클러스터 안 mongodb 는 0/0)이고 PostgreSQL · Redis · Kafka 는 클러스터 안**, Elasticsearch 는 운영에 두지 않았습니다([docs/32](32-external-managed-infra.ko.md)). PostgreSQL 의 백업 · 복원 훈련은 클러스터 안 CronJob(`k8s/85`, [docs/22 §2](22-alerting-and-backup-automation.ko.md))이 맡고, PITR 은 아직 켜지 않았습니다.
 
 > 이 문서는 권유가 아니라 **결정 자료**다. PostgreSQL·Kafka·Redis·MongoDB·Elasticsearch 를
 > 관리형으로 쓸지 클러스터 안에서 돌릴지에 따라 앞으로 만들 것이 완전히 달라지므로,
@@ -73,6 +73,8 @@ ES 버전마다 다시 만들어야 한다.**
 즉 **관리형을 고르면 보류 항목 하나가 저절로 해소된다.**
 
 한국어 검색이 이 서비스의 핵심 기능이라는 점을 감안하면 이 차이는 작지 않다.
+
+> 🕰️ 지금: 커스텀 이미지 없이 클러스터 ES(`k8s/90-dev-infra.yaml`)가 initContainer 로 `analysis-nori` · `analysis-kuromoji` 를 설치한다([docs/19 §5.2](19-local-performance-tuning.ko.md)). 분석 품질은 아직 확인 전이다.
 
 ## 4. Kafka — 겉보기보다 요구가 가볍다
 
@@ -147,3 +149,5 @@ Redisson 분산 락을 4개 서비스가 쓴다. 관리형(ElastiCache)도 자�
 - `ops/09` 복원 훈련 — 관리형이라고 복구가 검증되는 건 아니다
 - `ops/17` 경보 채널 — 인프라와 무관
 - chat-service·eureka-server 의 수평 확장 제약([docs/21 §2](21-horizontal-scaling.ko.md))
+
+> 🕰️ 지금(2026-11-14): chat 의 제약은 2026-11-01 Redis 팬아웃으로 풀려(docs/21 §2-1) 1개 고정은 eureka-server 만 남았다. `ops/17` 경보 채널은 Discord 로 적용 끝(2026-10-20, B-96 · docs/22 §1).

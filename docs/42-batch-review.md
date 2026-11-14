@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](42-batch-review.ko.md)
 
+> 🕰️ **状態（2026-11-14）— 2026-09-15 の記録。** その後変わったこと: インポートの同時実行ガードはポッド間のロック（Redis `ImportLock`）になり（§3.3）、本番のバックアップ CronJob は有効になっている（§2 k8s CronJob — 2026-10-13）。§1.2（CSV の id 依存）· §3.1（S3 がチャンクトランザクション内）· §3.2（耐障害性なし）はそのまま。スケジュールタスクはその後かなり増えた（冪等台帳の整理 `ProcessedEventPurger`、user の `SchedulerLease` を使う照合タスクなど）— 下の「8 個」の表は当時の一覧である。
+
 2026-09-15。「バッチにも問題がないか」を確認した結果である。2 種類を見た:
 
 1. **CSV 商品インポートジョブ**（Spring Batch、9 ステップ）— 運用者が手で押す一回限りの作業
@@ -120,6 +122,8 @@ categoryRepository.findById(item.getCategory_id())
 状態である（docs/ に書かれているとおり、動くことを確認してから有効にする）。現在バックアップは**動いていない** — PVC が
 唯一のコピーだという意味である。`ops/29` で PITR を有効にするのが次の順番である。
 
+> 🕰️ 2026-11-14: 本番は 2026-10-13 に `ACTION=cronjobs ./ops/29` で `postgres-backup`（毎日 03:00 UTC）· `restore-drill`（月 05:00）を有効にし、`mongo-backup` は最初から `suspend` ではない（毎日 04:00）。マニフェストの `suspend: true` は今も既定値なので、そのまま `kubectl apply` するとまた止まる — 適用は `ops/29` でのみ（[docs/22 §2](22-alerting-and-backup-automation.md)）。PITR（アーカイブ）はまだ。
+
 ---
 
 ## 3. 残っているもの（直していない）
@@ -153,6 +157,8 @@ categoryRepository.findById(item.getCategory_id())
 ただし**ほぼ同時に**押すと、両方が空のカタログを見て通過しうる。完全に防ぐには
 Postgres のアドバイザリーロック（`pg_try_advisory_lock`）に引き上げる必要がある。現在の本番（local オーバーレイ、
 レプリカ 1）では発生しない。
+
+> 🕰️ 2026-11-14: ✅ インポートはポッド間のロックに引き上げた — Postgres の代わりに Redis のキー `catalog:product-import:lock`（`SET NX`、2 時間のリース、`ImportLock`）、`AtomicBoolean` はポッド内のガードとして残った。ES 再索引（`POST /api/products/sync`）のガードは今も `AtomicBoolean`（ポッド 1 つ分）である。
 
 ---
 

@@ -2,7 +2,7 @@
 
 [日本語](31-kustomize-oci-tunnel.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** OCI 운영은 Cloudflare Tunnel 뒤에서 돌고 있습니다. 배포는 `ops/28` 과 `deploy-oci.yml` 입니다([docs/36](36-deployment-pipeline.ko.md)).
+> 🕰️ **상태(2026-11-14) — 본문은 2026-07 ~ 09 의 설계 기록입니다. OCI 운영은 Cloudflare Tunnel 뒤에서 돌고 있고(§5 의 "검증하지 않음" 둘은 그 뒤 실제로 돌았다), 배포는 `ops/28-deploy.sh local <버전>` 하나입니다([docs/36](36-deployment-pipeline.ko.md)).** 바뀐 것: 오버레이 사슬 끝에 커밋되지 않는 `local`(← `external` ← `prod`, 견본 `k8s-overlays/local.example`)이 붙었고 실습용 덧씌우기도 생겼다(§2). 첫 배포 뒤에는 오버레이에 `kubectl apply -k` 를 직접 하지 않는다 — 손으로 적은 `newTag` 로 전 서비스가 되돌아간다(§6). HPA 는 `ops/28` 이 `prod` 이거나 `APPLY_HPA=1` 일 때만 적용하고, chat-service 도 2026-11-01 부터 HPA(1 ~ 3)가 있다(§3).
 
 세 가지를 한 묶음으로 만들었다. 셋 다 "노트북에서만 돌던 것을 실제로 어딘가에 띄운다"는
 같은 목표를 향한다.
@@ -37,6 +37,8 @@ ALB + ACM 은 **EKS 로 옮길 때** 의미가 생긴다. 그때는 AWS Load Bal
 - **무료 플랜 업로드 100MB 제한.** 상품 이미지가 그보다 크면 413 이 나가는데,
   **애플리케이션 로그에는 아무것도 남지 않는다** — 엣지에서 잘리기 때문이다
 - 클러스터 안으로는 평문 HTTP 로 들어온다(터널 구간 자체는 암호화되어 있다)
+
+> 🕰️ 지금(2026-11-14): 평문 HTTP 는 프론트엔드 쪽(→ traefik:80)뿐이다. API 경로(`/<서비스>-service/…` · `/saga-projection/…`)는 cloudflared 가 게이트웨이로 바로 `https://gateway-server…:8000` 에 보낸다(게이트웨이가 스스로 TLS 종단, `noTLSVerify`) — `k8s-overlays/prod/cloudflared.yaml`, 경로 대조는 B-82.
 
 ---
 
@@ -126,6 +128,8 @@ HPA 가 관리하는 Deployment 에 `replicas` 가 남아 있으면 **매 `kubec
 `eureka-server`(피어 복제 미설정)와 `chat-service`(WebSocket 세션이 파드에 붙어 있다,
 docs/21)는 HPA 가 없으므로 replicas 를 남겨 둔다.
 
+> 🕰️ 2026-11-01 부터 chat-service 는 Redis 팬아웃(B-107)으로 늘릴 수 있고 `k8s/70-autoscaling.yaml` 에 HPA(최소 1 · 최대 3) · PDB 가 있다([docs/21 §2-1](21-horizontal-scaling.ko.md)). HPA 없는 고정 1개는 이제 eureka-server 뿐이다. prod 오버레이의 replicas 삭제 대상에는 chat-service 가 아직 없다(매니페스트 `replicas: 1` 이 HPA 최소와 같다).
+
 ### dev 를 1로 두면 못 잡는 버그가 있다
 
 이 저장소가 레플리카 2에서 겪은 문제들 — 아웃박스 폴러가 레플리카마다 같은 이벤트를 발행,
@@ -200,6 +204,8 @@ ssh ubuntu@<Ampere-IP>
 
 특히 `ops/23` 의 iptables 규칙은 **`--check` 로 먼저 진단만 돌려 보고** 적용하기를 권한다.
 
+> 🕰️ 그 뒤: `ops/23` · k3s · Cloudflare 터널 · 클러스터 배포는 모두 실제 OCI Ampere(운영 www.ysyproject.com)에서 돌고 있다 — 위 "검증하지 않음" 은 2026-07 의 기록이다. 배포 기록은 [docs/33](33-deploy-runbook.ko.md) · [docs/85](85-release-deploy-runbook.ko.md).
+
 ---
 
 ## 6. 순서
@@ -226,3 +232,5 @@ ops/24-cloudflare-tunnel.sh --status
 `ops/24` 는 **`kubectl apply -k k8s-overlays/prod` 뒤에** 돌려야 한다. ConfigMap
 (`cloudflared-config`)이 먼저 있어야 터널 ID 를 치환할 수 있다. 순서가 바뀌면 경고를 내고
 다시 실행하라고 알려 준다.
+
+> 🕰️ 위 `kubectl apply -k` · `apply -f k8s/70-autoscaling.yaml` 은 **아직 아무것도 배포되지 않은 클러스터의 최초 1회**에만 쓴다. 두 번째부터는 `./ops/28-deploy.sh <환경> <커밋SHA12자>`(설정만은 `--config-only`) — 오버레이의 `newTag` 는 손으로 적은 값이라 직접 apply 하면 전 서비스가 그 옛 태그로 돌아간다(각 오버레이 `kustomization.yaml` 머리 주석). HPA · PDB 는 `ops/28` 이 `prod` 에서만(그 밖은 `APPLY_HPA=1`), 백업 CronJob 은 `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` 로만 적용한다(그냥 apply 하면 `suspend: true` 로 다시 꺼진다).

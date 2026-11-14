@@ -4,6 +4,8 @@
 
 > 작성일: 2026-09-27 · 갱신: 2026-09-27(꼬리 샘플링 · 영구 저장) · 상태: ✅ 적용(배포 대기)
 >
+> 🕰️ **상태(2026-11-14) — 운영에 적용됐다.** 운영 노드의 관측 스택은 이 구성(Collector 0.160 · Jaeger 2.20)으로 돌고, §5 의 서비스 지표(B-95, 2026-10-20 — 11개 up)와 Jaeger 2g · node-exporter(B-106, 2026-10-24)도 적용 끝. 남은 것: 오류 · 느린 추적의 초당 상한(B-102)은 저장소에만 있고 운영 Collector 는 아직 다시 만들지 않았다(§5 의 메모). 운영의 compose 명령은 언제나 두 파일이다(§9 의 메모).
+>
 > 참고: [OpenTelemetry 데모](https://github.com/open-telemetry/opentelemetry-demo)(ruke79/kafka 의 `demo-kafka-guide/` 가
 > 그 위에서 작업한 것), ruke79/kafka 의 `compose.tracing.yaml` · `test/show-trace.sh`.
 
@@ -194,6 +196,7 @@ span_metrics 가 전부 세므로(아래) 상한이 줄이는 것은 추적의 �
 - 실측(Collector 0.160.0, 상한 50 스팬/초): 오류 추적 600 개가 한꺼번에 와도 100 개(버킷 두 배까지) · 느린 추적도 같다 ·
   상한 아래의 오류 10 개는 전부 · 결제 서비스의 오류 200 개도 전부(`TailSamplingBudgetTest`, 컨테이너 — 상한을 빼면 600 개 모두 남아 실패).
   폭주가 끝나면 바로 회복한다(4초 뒤의 오류 10 개가 전부 남는다 — 빚을 지지 않는다).
+- 🕰️ 2026-11-14: 운영 Collector 에는 아직 들어가지 않았다(이 커밋 이후로 switch 한 뒤 `docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d --force-recreate otel-collector`, 선택).
 - `and` 안에서 상한은 **마지막**이다 — 앞에 두면 모든 추적이 몫을 써서 오류가 굶는다(가드 B-102 가 순서와 기본값 1 ~ 1000 을 본다).
 - 🐛 시험에서 만난 함정: 결정 캐시(`decision_cache`)는 추적 id 의 **뒤 8바이트**를 키로 쓴다. 시험 id 를 일련번호로 만들었더니
   폭주 때 "버림" 으로 기억된 번호와 뒤의 평소 오류가 겹쳐 함께 버려졌다(상한 아래인데 0 ~ 1 개). 실제 id 는 무작위라 겹치지 않는다.
@@ -332,3 +335,5 @@ docker run --rm -v $PWD/observability/jaeger.yml:/c.yml jaegertracing/jaeger:<�
    `./ops/28-deploy.sh local <버전>`(또는 `--config-only` 로 매니페스트 먼저)로 올린다.
 4. 확인: `./ops/05-check-observability.sh` — 파드 → :4318 OK, Jaeger 에 서비스들이 보이는지. 주문 한 건을 넣고
    `./ops/41-show-trace.sh --longest`.
+
+> 🕰️ 2026-11-14: 첫 배포는 끝났다. 지금 운영에서는 1 의 compose 명령에 언제나 `-f docker-compose-observability.oci.yml` 을 함께 준다(B-95 · B-106 — 기본 파일만이면 Prometheus 가 개발 PC 설정, Jaeger 가 512m 로 돌아간다).

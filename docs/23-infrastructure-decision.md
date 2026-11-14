@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](23-infrastructure-decision.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** 決定のための資料です。実際の決定は PostgreSQL · MongoDB はマネージド、Redis · Kafka はクラスター内、Elasticsearch は本番に置かない、です（[docs/32](32-external-managed-infra.md)）。
+> 🕰️ **状態（2026-11-14）— 決定のための資料（記録）。** 本番（OCI 単一ノードの k3s）は結局 **MongoDB だけがマネージド（Atlas — クラスター内の mongodb は 0/0）で、PostgreSQL · Redis · Kafka はクラスター内**、Elasticsearch は本番に置きませんでした（[docs/32](32-external-managed-infra.md)）。PostgreSQL のバックアップ · 復元訓練はクラスター内の CronJob（`k8s/85`、[docs/22 §2](22-alerting-and-backup-automation.md)）が担い、PITR はまだ有効にしていません。
 
 > このドキュメントは勧誘ではなく **決定のための資料** である。PostgreSQL・Kafka・Redis・MongoDB・Elasticsearch を
 > マネージドで使うかクラスター内で動かすかによって、今後作るものがまったく変わるため、
@@ -73,6 +73,8 @@ ES のバージョンごとに作り直さなければならない。**
 つまり **マネージドを選べば保留項目が1つ自然に解消する。**
 
 韓国語検索がこのサービスの中核機能であることを考えると、この差は小さくない。
+
+> 🕰️ 今: カスタムイメージなしで、クラスターの ES（`k8s/90-dev-infra.yaml`）が initContainer で `analysis-nori` · `analysis-kuromoji` をインストールする（[docs/19 §5.2](19-local-performance-tuning.md)）。解析の品質はまだ確認していない。
 
 ## 4. Kafka — 見かけより要件が軽い
 
@@ -147,3 +149,5 @@ Redisson 分散ロックを4つのサービスが使う。マネージド（Elas
 - `ops/09` 復元訓練 — マネージドだからといって復旧が検証されるわけではない
 - `ops/17` アラートチャンネル — インフラと無関係
 - chat-service・eureka-server の水平スケーリングの制約（[docs/21 §2](21-horizontal-scaling.md)）
+
+> 🕰️ 今（2026-11-14）: chat の制約は 2026-11-01 に Redis のファンアウトで解消し（docs/21 §2-1）、1 個固定は eureka-server だけが残った。`ops/17` のアラートチャネルは Discord で適用済み（2026-10-20、B-96 · docs/22 §1）。

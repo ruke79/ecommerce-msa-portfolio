@@ -2,6 +2,8 @@
 
 [日本語](76-order-status-read-model.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 운영에 들어갔다(2026-10-24 `4415e498565c` 묶음 릴리스 — 배포 전 `ops/02` 로 `order-timeline` 컴팩션 토픽, [docs/85](85-release-deploy-runbook.ko.md)).** 그 뒤 고친 것: Kafka 가 멈춘 동안 `order-status` 행이 FAILED 로 굳던 것(B-100, §3-2 의 🕰️). 진실은 여전히 order 의 DB.
+>
 > **상태(2026-10-07)** — 구현 완료, 운영 배포 대기. 순서는 [docs/72](72-model-refactor-deploy-runbook.ko.md) → [docs/74](74-feature-flags.ko.md) → 이것.
 > 계기: "이벤트 소싱 · CQRS 가 적용돼 있나" 는 질문. 답은 "CQRS 는 두 곳(결제 사가 프로젝션 · ES 검색)에 부분적으로, 이벤트 소싱은 없다" 였고, 그 다음 한 걸음이 이 문서다.
 
@@ -106,6 +108,8 @@ UPDATE orders.payment_outbox_event SET outbox_status = 'STARTED'
 
 원칙대로라면 docs/49 §3 처럼 "읽는 쪽(릴레이 분기) 먼저, 쓰는 쪽 나중" 두 릴리스다. 이번에는 잃는 것이 읽기 모델뿐이고 복구가 UPDATE 한 줄이라 한 릴리스로 간다.
 
+> 🕰️ 2026-10-22 실습 게임데이(kafka-pause)에서 롤링 밖에서도 FAILED 가 생겼다 — 브로커가 없으면 `KafkaTemplate.send()` 가 Spring 의 `KafkaException` 을 바로 던지는데 `OrderStatusKafkaPublisher` 만 apache 의 것을 잡아, 릴레이가 영구 오류로 봤다. 이제 둘 다 잡는다(B-100, `OrderStatusBrokerDownTest`). 같은 날 경보 `OrderOutboxRowFailed` 도 오지 않았다 — 계수기가 첫 실패 때 생겨 `increase()` 가 0 이었다(B-101 — 이제 기동 때 0). 위 UPDATE 는 지금도 복구 쿼리다.
+
 ### 3-3. 배포 후 확인
 
 - order 로그: `주문 상태 변경: orderId=… NOT_PROCESSED → PAID (payment-saga)`, 릴레이 `OrderStatusChanged sent`.
@@ -135,7 +139,7 @@ UPDATE orders.payment_outbox_event SET outbox_status = 'STARTED'
 | 테스트 | 무엇을 막나 |
 |---|---|
 | `OrderStatusChangerTest`(order, 8) | 이벤트 모양 · 같은 상태는 이벤트 아님 · markPaid 시각 보존 · 생성 · 저장 전 주문 거부 · 아웃박스 행(event_type · 키 · 커밋 후 릴레이) → Avro(eventId = 행 id) · 스키마에 개인정보 없음 |
-| `OrderStatusRelayTest`(order, 1) | 릴레이의 `order-status` 분기 — 추적 문맥 아래에서 발행기로 |
+| `OrderStatusRelayTest`(order, 1 — 🕰️ 지금 4) · `OrderStatusBrokerDownTest`(order, 1 — B-100) | 릴레이의 `order-status` 분기 — 추적 문맥 아래에서 발행기로 |
 | `OrderTimelineReducerTest`(saga-projection, 5) | 순서 · eventId 중복 · 늦게 온 먼저 일어난 변경 · 같은 시각 · 상한 |
 | `SagaTopologyTest` +2 | order-status → 타임라인 저장소 · 출력 토픽(Avro), 사가 저장소는 그대로 |
 | `SagaQueryServiceTest` +4 | 두 저장소 합치기 · **남의 주문은 404** · customerId 모름도 404 · 내부 진단은 소유권 생략 |

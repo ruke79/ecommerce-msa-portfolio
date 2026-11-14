@@ -56,6 +56,8 @@
 | 3-8 | 오토스케일(수평 확장이 안전할 때만) | `k8s/70-autoscaling.yaml` | — |
 | 3-9 | 오버레이의 이미지 이름 목록·리소스 패치 | `k8s-overlays/{external,oci,dev,prod}/kustomization.yaml`, 운영의 `k8s-overlays/local/`(gitignore — 직접) | 이미지 태그가 안 바뀐다(옛 이미지로 뜬다) |
 
+> 🕰️ 2026-11-14: 3-2 의 필수 요소가 늘었다 — 기준 파일(`48-delivery-service.yaml`)을 복사하면 함께 온다. `EUREKA_CLIENT_TLS_ENABLED=true`(신원을 마운트한 파드 — B-86), 스토어 비밀번호는 `JAVA_TOOL_OPTIONS` 가 아니라 `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD`(B-83), JVM 충돌 기록용 `/var/log/jvm` emptyDir(B-97). 이미지는 모듈의 `Dockerfile` 이 아니라 `ops/Dockerfile.runtime` 하나로 만든다(B-90 — 모듈에 `Dockerfile` 을 두면 가드가 실패한다).
+
 ## 4. 데이터·메시지
 
 | # | 할 일 | 어디 | 빠지면 |
@@ -81,7 +83,7 @@
 | 6-1 | 릴리스 후보 이미지 목록 | `.github/workflows/build.yml` 의 `release-candidate` → `services=` | 후보 매니페스트에서 빠진다 |
 | 6-2 | GHCR 패키지 권한 — 첫 발행 뒤 패키지 Settings → Manage Actions access → 이 저장소 **Write** | GitHub | CI 이미지 발행이 `permission_denied: read_package` |
 | 6-3 | 로그 수집(로컬 관측 스택) | `docker-compose-observability.yml` 의 로그 볼륨 | Loki 에 로그가 없다 |
-| 6-4 | 메트릭·경보 — `/actuator/prometheus` 스크랩, 필요하면 `observability/alert-rules.yml` | 관측 설정 | 장애를 모른다 |
+| 6-4 | 메트릭·경보 — `/actuator/prometheus` 스크랩, 필요하면 `observability/alert-rules.yml`. 🕰️ 운영 지표는 클러스터 안 `metrics-agent` 가 긁는다(B-95) — 그 파일의 `keep` 정규식에 서비스 이름을 더한다 | 관측 설정 · `k8s-overlays/external/metrics-agent.yaml` | 장애를 모른다 |
 | 6-5 | 분산 추적 — Deployment 에 `HOST_IP`(downward API) 다음 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://$(HOST_IP):4318/v1/traces` (docs/63) | `k8s/4x-<서비스>.yaml` 의 `env` | 추적이 파드 자신(localhost)으로 가서 조용히 사라진다(B-59) |
 | 6-6 | 문서 — 설계(왜·무엇을 믿고 무엇을 안 믿나), `docs/README.md` 목차 | `docs/` | — |
 

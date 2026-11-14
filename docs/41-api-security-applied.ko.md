@@ -2,7 +2,7 @@
 
 [日本語](41-api-security-applied.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 쿠폰 · 장바구니 신원은 `User-Id` 헤더, 주문 금액은 서버가 정하고(86010e1), 서비스 간 mTLS 는 적용됐습니다.
+> 🕰️ **상태(2026-11-14) — 일부 낡음.** 쿠폰 · 장바구니 신원은 `User-Email` 이 아니라 `User-Id` 헤더, 주문 금액은 서버가 정하고(86010e1 — §시나리오 10 끝의 "10번은 아직 열려 있다" 는 끝났다), 서비스 간 mTLS 는 적용됐습니다(서비스별 인증서 + 신원 헤더 enforce, 2026-10-26 — [docs/57 §16](57-remaining-priorities.ko.md)). `RedisSessionManager` 는 이제 실제 Redis 입니다(§챕터 9 의 남은 것 참조).
 
 `ruke79/www-security`(『API Security in Action』 챕터별 데모 + 취약점 랩 17종)의
 체크리스트를 ecommerce-msa 에 하나씩 대조했다. 데모의 결론은 두 줄이다:
@@ -99,6 +99,8 @@ couponUseProducer.publish(CouponUseRequest.builder().userId(response.getUserId()
 
 남은 것: 진짜 폐기가 필요하면 `RedisSessionManager` 를 실제 Redis 로 옮기고 게이트웨이가
 그것을 본다. 지금은 15분이 그 값어치를 대부분 한다.
+
+> 🕰️ 2026-11-14: 절반 끝 — `RedisSessionManager` 는 실제 Redis(리프레시 토큰 수명의 TTL, 파드끼리 공유)로 옮겼다. 게이트웨이는 지금도 서명 · 만료만 본다(액세스 토큰 15분 — `jwtExpirationMs: 900000`), 그래서 발급된 액세스 토큰의 즉시 폐기는 여전히 없다.
 
 ---
 

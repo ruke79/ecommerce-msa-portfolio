@@ -2,7 +2,7 @@
 
 [日本語](29-transactional-email.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** user-service 아웃박스는 이제 동작합니다(c31791a). 다만 메일 발행은 아직 아웃박스를 거치지 않습니다.
+> 🕰️ **상태(2026-11-14) — 일부 낡음.** user-service 아웃박스는 이제 동작합니다(`UserOutboxScheduler`). 다만 메일 발행은 아직 아웃박스를 거치지 않습니다 — §5.1 의 창은 그대로입니다. 바운스 처리(§5.2) · 수신 거부 화면(§5.4)도 아직 없습니다. `RedisSessionManager` 는 이제 정말 Redis 이고 `users.email_verified` 는 읽히는 열이 됐습니다(§7-2 · §7-3 의 🕰️).
 
 분산 이메일 서비스(별도 저장소, System Design Interview Ch.23 구현체)의 **발신 절반**을
 이 프로젝트에 이식한 기록이다. 메일함·Cassandra·MinIO·Elasticsearch 는 넘어오지 않았다 —
@@ -271,6 +271,8 @@ user-service 에 아웃박스가 있긴 하다:
 있으므로(`PaymentOutboxScheduler`, `OrderOutboxScheduler`) 그것을 본떠 살리면 된다.
 이번 작업 범위 밖이라 손대지 않았다.
 
+> 🕰️ 2026-11-14: 아웃박스는 살아났다 — `UserOutboxScheduler`(`FOR UPDATE SKIP LOCKED`, 발행을 트랜잭션 안에서 동기로 기다림) · `UserOutboxHelper`(사용자 이벤트 · 탈퇴 · 복제 대사가 쓴다). 메일은 여전히 그 길이 아니다 — `RegistrationListener` · `EmailService` 가 `OutgoingMailProducer.publish()`(트랜잭션 밖 `send().get()`)를 바로 부르므로, 위의 발행 실패 창은 남아 있다.
+
 ### 5.2 바운스 처리가 없다
 
 `SENT` 는 "우리 MTA 가 접수했다"까지만 뜻한다. 수신함 도달은 **바운스 메일과 피드백 루프**를
@@ -296,6 +298,8 @@ DLT(`outgoing-mail.DLT`)도 같다. `ops/02-create-dlt-topics.sh` 가 둘 다 �
 `PATCH /api/notifications/preferences` 가 `emailEnabled` 를 받는다.
 `notificationApi.updatePreferences(patch)` 가 그대로 통과시키므로 API 는 준비돼 있지만,
 설정 화면 자체가 아직 없다.
+
+> 🕰️ 2026-11-14: 화면은 아직 없다(프론트에서 `updatePreferences` 를 부르는 곳 0). 서버 쪽은 2026-10-16 에야 설정 변경이 실제로 DB 에 저장되게 됐다(그 전에는 200 을 주고 저장하지 않았다 — notification 리뷰 N-H1).
 
 ---
 
@@ -475,6 +479,8 @@ INFO  c.p.n.config.MailConfig - 메일 발송기: smtp (실제 발송) from=…
 
 > 참고: `users.email_verified` 컬럼은 **아무도 읽지도 쓰지도 않는 죽은 컬럼**이다.
 > 실제 플래그는 `enabled` 다.
+>
+> 🕰️ 2026-11-14: 이제는 읽고 쓴다 — 확인 링크 · 소셜 로그인이 켜고(`UserServiceImpl` · `CustomOAuth2UserService`), 같은 주소의 소셜 로그인을 기존 계정에 이을지 `SocialAccountLinker` 가 이 값으로 정한다. 로그인을 막는 플래그는 여전히 `enabled` 이고, `APP_REQUIRE_EMAIL_VERIFICATION` 기본값도 그대로 `false` 다.
 
 ---
 
@@ -535,6 +541,7 @@ if (passwordEncoder.matches(currPassword, user.getPassword())) {
 - 리프레시 토큰은 Redis 에 **sessionId 로만** 저장돼 "이 사용자의 모든 세션" 을 뒤집어
   찾을 수 없다.
 - `RedisSessionManager` 는 이름과 달리 **인메모리 `HashMap`** 이라 레플리카마다 따로 논다.
+  > 🕰️ 2026-11-14: 지금은 Redis 다(키 `login-session:` · TTL = 리프레시 토큰 수명). 다만 이 기록은 다중 로그인 판단의 근거일 뿐이고, 세션을 끊는 것은 여전히 아래의 `password_changed_at` 이다.
 
 그래서 `users.password_changed_at` 을 두고, **그보다 먼저 발급된** 리프레시 토큰을
 `RefreshTokenController` 가 거절한다 — DB 한 곳만 보므로 레플리카 수와 무관하다.

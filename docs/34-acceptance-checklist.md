@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](34-acceptance-checklist.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** カート API は `PUT/PATCH/DELETE /api/cart/items` であり、`/api/pay/confirm` は存在しません。
+> 🕰️ **状態(2026-11-14) — 2026-08 にソースから抜き出した巡回経路です。エンドポイントの一部が変わりました。** カートの行の変更 · 削除は `PUT/PATCH/DELETE /api/cart/items`(`deleteItem/{id}` はない)、`/api/pay/confirm` は存在せず、決済の確定は order-service の `/api/order/payment/{paypal|stripe/confirm|portone/confirm}` · 銀行振込は `bank-transfer`、`/api/csrf-token` はない(user-service は CSRF を切っている — Cookie で身元を運ぶ要求はすべて POST · Cookie は `SameSite=Lax`、`SecurityConfig` のコメント)。トレースは Zipkin ではなく Jaeger([docs/63](63-opentelemetry.md))、chat は 2026-11-01 から複数 Pod に増やせる(§7)。§4 の SQL は今のテーブル · 列名に直した。テスト数は README を見る。
 
 このリポジトリには単体・統合テストが268個あり、その大部分は **実際に経験した障害を回帰テストとして
 固めたもの** である（docs/14 · 16）。ところが、まだ誰も確認していないことが1つある。
@@ -91,7 +91,7 @@ kubectl -n kafka exec deploy/kafka -- \
 | ☐ | パスワード再設定の2段階 | `forgot-password` → メール → `reset-password` |
 | ☐ | 2FA 有効化 → ログアウト → ログイン | `enable-2fa` → `verify-2fa` → ログインのレスポンスが `two_factor_required`（トークンなし）→ `public/verify-2fa`（待機クッキー）→ フルリロード後もログイン状態（REFRESH クッキーで復元） |
 | ☐ | トークンの更新（`GET /token/refresh`） | 期限切れ後もセッション維持 |
-| ☐ | CSRF トークン（`GET /api/csrf-token`） | フロントがこの値をヘッダーに載せないと書き込みリクエストが通らない |
+| ☐ | ~~CSRF トークン（`GET /api/csrf-token`）~~ | 🕰️ このエンドポイントはない — user-service は `csrf` を切っている(`SecurityConfig`)。飛ばす |
 
 ### ソーシャルログイン — PKCE · Pod 間の引き継ぎ（docs/27 付録 2）
 
@@ -231,9 +231,9 @@ curl -i https://shop.example.com/api/user/profile/address \
 | ☐ | 住所の登録・選択（`POST /api/user/profile/save_address`） | |
 | ☐ | クーポンの適用（`POST /api/coupon/applycoupon`） | |
 | ☐ | 注文の作成（`POST /api/order/create`） | |
-| ☐ | **在庫が正確に1回だけ減算される** | `select stock from product_sku where ...` を注文前後で比較。Saga の再配信時の二重減算が実際にあった |
+| ☐ | **在庫が正確に1回だけ減算される** | `select quantity from product.product_size where ...` を注文前後で比較(🕰️ 在庫はサイズ行の `quantity` — `product_sku` に在庫の列はない)。Saga の再配信時の二重減算が実際にあった |
 | ☐ | 決済（`POST /api/pay/confirm`） | |
-| ☐ | 注文状態が最後まで進む | `/order/:id` 画面 + `select status from orders` |
+| ☐ | 注文状態が最後まで進む | `/order/:id` 画面 + `select order_status from orders.orders` |
 | ☐ | カートが空になる | `cart-empty` イベントの経路 |
 
 ### 🔒 決済の偽造（docs/35）
@@ -266,12 +266,13 @@ curl -i -X POST https://shop.example.com/api/order/payment/paypal \
 ### 非同期経路 — 画面を見るだけではわからない
 
 ```sql
--- Outbox が滞っていないか（PENDING が溜まればポーラーが死んでいる）
-select status, count(*) from users.outbox_event_p group by status;
-select status, count(*) from orders.payment_outbox_event group by status;
+-- Outbox が滞っていないか（STARTED が溜まればポーラーが死んでいる）
+-- 🕰️ パーティション表(_p)は改名されて users.outbox_event · orders.payment_outbox_event になり、列は outbox_status(STARTED · COMPLETED · FAILED)
+select outbox_status, count(*) from users.outbox_event group by outbox_status;
+select outbox_status, count(*) from orders.payment_outbox_event group by outbox_status;
 ```
 
-- ☐ Outbox の `PENDING` が溜まり続けない
+- ☐ Outbox の `STARTED` が溜まり続けない · `FAILED` が 0(アラート `OrderOutboxRowFailed`)
 - ☐ コンシューマーグループの lag が 0 に収束する（§0 の ④番のウィンドウ）
 - ☐ **DLT が空である** — `kafka-console-consumer --topic order.DLT --from-beginning`。ここに何かあれば、それがそのままバグのリストだ
 
@@ -330,6 +331,8 @@ kubectl -n ecommerce set env deploy/notification-service NOTIFICATION_MAIL_PROVI
 
 > ⚠️ chat-service は **レプリカ 1 固定** である。WebSocket セッションが Pod に紐付いているので、増やすには
 > まずセッション共有が必要だ（docs/21）。Pod が再起動すると接続が切れるのは **正常** である。
+>
+> 🕰️ 2026-11-01 から固定ではない — 購読者への送信を Redis チャネル(`chat:stomp-fanout`)で全 Pod に広げる(`StompFanout`、B-107、[docs/21 §2-1](21-horizontal-scaling.md))、HPA 1 〜 3。Pod が 2 つ以上なら、別々の Pod に繋がった 2 つのブラウザー間の送受信も確認する。Pod の再起動で接続が切れるのは引き続き正常。
 
 ---
 
@@ -368,7 +371,7 @@ curl -s https://shop.example.com/actuator/env | head
 | ☐ | 認証番号の発行速度の制限 | 料金がかかる経路である |
 | ☐ | Prometheus のターゲットがすべて UP | `ops/05-check-observability.sh` |
 | ☐ | Grafana ダッシュボードにサービスごとに区別されて出る | すべて `common` にまとまるなら `spring.application.name` の問題（docs/14 B-22） |
-| ☐ | Zipkin で1つのリクエストが複数のサービスにまたがって見える | 注文を1つ入れて追跡 |
+| ☐ | Jaeger で1つのリクエストが複数のサービスにまたがって見える(🕰️ 以前は Zipkin — 今は OTel Collector → Jaeger、docs/63) | 注文を1つ入れて追跡 |
 | ☐ | アラートが実際に届く | `ops/17-configure-alert-receivers.sh` |
 
 ---

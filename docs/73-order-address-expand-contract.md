@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](73-order-address-expand-contract.ko.md)
 
+> 🕰️ **状態(2026-11-14) — 両方とも本番に入った。ただし R2 はこの文書の V26 ではなく order `V29__contract_order_address_order_id_tax_price.sql` として出た。** R1(V25)は 2026-10-10 の `b7c5053a45e8`(デプロイ後 order 25、[docs/72](72-model-refactor-deploy-runbook.md))。V26 の番号はその間に注文作成の冪等キー(`V26__order_create_key.sql`)が使い、contract ブランチは取り込まなかった。contract は 2026-10-31 に V29(`DROP COLUMN` 二つだけ — §5-2 の `DO` ブロックのガードはない)としてコミットし、2026-11-03 `7ef62043a98f` で適用(order 29 · 列 0、[docs/85 §8-2](85-release-deploy-runbook.md))。テストは `OrderAddressContractMigrationTest` ではなく `ContractColumnsMigrationTest`(コンテナ、1 件)。§5 · §6 の R2 は当時の計画として残す。
+>
 > **状態(2026-10-04)** — R1(V25、expand)はモデルリファクタリング 2 次とともに本番デプロイ待ち([docs/72](72-model-refactor-deploy-runbook.md))。
 > R2(V26、contract)は別ブランチに準備済みで、CI のコンテナテストを通過した — R1 が安定してから既定ブランチに取り込む。
 > 何をなぜ直したかは [docs/62 §18](62-engineering-casebook.md)、expand-contract の一般論と先行事例は [docs/55](55-zero-downtime-migrations.md) にある。
@@ -173,5 +175,5 @@ Spring なしで Flyway だけを、実際の PostgreSQL(Testcontainers)で動�
 
 ## 8. 残っていること
 
-- R1 のデプロイと安定の確認 → contract ブランチを既定ブランチの最新に rebase → 既定ブランチに取り込む → R2 のデプロイ。
-- R2 のデプロイ後、残作業の一覧から「次のリリース(contract)」を消す。
+- ~~R1 のデプロイと安定の確認 → contract ブランチを既定ブランチの最新に rebase → 既定ブランチに取り込む → R2 のデプロイ。~~ → ✅ R1 は 2026-10-10、R2 は V29 として 2026-11-03 に適用(上の状態バナー · [docs/85 §8-2](85-release-deploy-runbook.md))。
+- ~~R2 のデプロイ後、残作業の一覧から「次のリリース(contract)」を消す。~~ → ✅

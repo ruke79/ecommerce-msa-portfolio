@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](21-horizontal-scaling.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** §5 の決済リスナーの `Authorization` ヘッダー要求はなくなりました（Saga メッセージからトークンを除きました）。notification · delivery · saga-projection も `replicas: 2` です。
+> 🕰️ **状態（2026-11-14）— 一部古い。** §5 の決済リスナーの `Authorization` ヘッダー要求はなくなりました（Saga メッセージからトークンを除きました）。notification · delivery · saga-projection も `replicas: 2` です（§6 の 🕰️）。chat は 2026-11-01 に Redis のファンアウトで増やせるようになり（§2-1）、本番は chat 1 個のままです。
 
 > 背景: [docs/00 §10](00-before-after.md) が「全サービス `replicas: 1` — 再起動・ノード交換のたびに
 > そのままダウンタイム」を本番準備の障害として挙げた。ところが、数字を 2 に変えることが作業のすべてでは
@@ -178,6 +178,8 @@ if (authorizationHeader != null) {
 
 コネクションの総和はガードレール B-32 が引き続き検証する — HPA の最大値が 3 のままなので、計算は変わらない。
 
+> 🕰️ 今（2026-11-14）: 上の表に加えて notification · delivery は replicas 2 · HPA min 2 / max 3、saga-projection は replicas 2（HPA なし）、config-server は 1（`k8s/30` 〜 `k8s/49` · `k8s/70`）。本番（`ops/28 local`）は `k8s/70` を適用しない — HPA は `prod` か `APPLY_HPA=1` のときだけ。
+
 ## 7. 残りのロードマップ
 
 | 項目 | 状態 |
@@ -186,3 +188,5 @@ if (authorizationHeader != null) {
 | chat ブローカーリレー（その後 chat を拡張） | ✅ 2026-11-01 Redis のファンアウト(§2-1) |
 | peer-aware Eureka（または k8s ネイティブのディスカバリーへ移行） | 🟡 |
 | Outbox 発行の遅延・再試行メトリクス | 🟡 現在はログのみ |
+
+> 🕰️ 今（2026-11-14）: アウトボックスはログだけではない — 恒久エラーの行のカウンター `order_outbox_failed_total` · `pay_outbox_failed_total`（アラート `OrderOutboxRowFailed` · `PayOutboxRowFailed`）とパーティションのメトリクス · アラート（`outbox-health` グループ）がある。発行の**遅延**のメトリクスはまだない。

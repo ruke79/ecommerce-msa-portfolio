@@ -91,6 +91,8 @@
 Zipkin で `outbox relay payment-request` スパンと決済確認リクエストのスパンの間隔で確認できる
 （Outbox を渡ってもトレースはつながる — docs/51 §4e）。
 
+> 🕰️ 2026-11-14: トレースの保存先は Zipkin から OpenTelemetry Collector + **Jaeger** に変わった — 同じ 2 つのスパンを Jaeger で見る（[docs/63](63-opentelemetry.md)）。
+
 ## 6. オフにする方法
 
 ```yaml

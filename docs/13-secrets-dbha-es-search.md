@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](13-secrets-dbha-es-search.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** 漏えいした DB パスワードは、2026-09-25 に「どこでも通用しない」ことを確認してクローズしました（[docs/30 §6](30-git-history-secret-exposure.md)）。DB → ES はリアルタイム索引です。
+> 🕰️ **状態（2026-11-14）— 2026-07-27 の記録。** 漏えいした DB パスワードは、2026-09-25 に「どこでも通用しない」ことを確認してクローズしました（[docs/30 §6](30-git-history-secret-exposure.md)）。§3 の ES 検索は今、起動設定 `search.engine=es`（ES がこのデプロイにあるか）＋ 機能フラグ `catalog.search-engine` の比率で選びます（[docs/74](74-feature-flags.md)）。DB → ES は商品の保存ごとのリアルタイム索引（`ProductIndexService`）です。本番（OCI）は ES がないので PostgreSQL 検索のままです。
 
 > 作成日: 2026-07-27 · 最終点検で残った最後の 🔴 の塊 3 件の適用記録
 > **実行可能なスクリプト**: このドキュメントの運用手順は [`ops/`](../ops/README.md) にガード付きスクリプトとして用意されている。
@@ -72,6 +72,10 @@ db-host=<DB 호스트>
   2. `GET product-alias/_search` で索引／アナライザーを確認
   3. `search.engine=es` をデプロイ → 検索品質／レイテンシを比較 → 異常があればフラグを戻すだけで即座に復旧
 
+> 🕰️ 今: `search.engine=es` は「ES の Bean · 索引がある」ことだけを決め、検索ごとにどのエンジンへ行くかは機能フラグ `catalog.search-engine`（ConfigMap `feature-flags` — `k8s/15-feature-flags.yaml` ＋ `ops/28 --config-only`、再起動なしで比率で · `SearchEngineSelector`、docs/74）が決める。戻すのもその比率を 0 に。
+
 ### 残っているもの（後続）
 - 関連度の順序が Postgres のハイドレーションで保たれない（現在のソートは従来ロジック） — 順序の保持が必要なら、esIds の順序に基づく再ソートを追加。
 - category/subcategory など他のインデックスの明示的マッピング、`search_after` ページネーション、DB↔ES の増分同期（Outbox ベース、docs/07 R-C3）。
+
+> 🕰️ 今（2026-11-14）: 増分同期は商品の保存ごとの単件索引（`ProductIndexService` — 失敗しても保存は成功、次の sync で復旧）までが基本ブランチにある。関連度順の保持 · `search_after` · アウトボックスによる索引キュー（R-C3）はまだ基本ブランチにない — 検索全体を ES に移すロードマップ（R-C1 〜 R-C4）はES ロードマップのブランチ にだけある（そのブランチの docs/07 §5 — このブランチの [docs/07](07-catalog-search-improvements.md) は R-C1 〜 R-C6 の設計案まで、マージするかは判断待ち）。

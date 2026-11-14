@@ -2,7 +2,7 @@
 
 [日本語](35-payment-verification.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** `paypal_order_id` 대신 `(payment_provider, provider_payment_id)` 유니크(V18)가 재사용을 막고, 청구 통화는 주문에 저장합니다. 결제수단 확장은 [docs/49](49-payment-providers.ko.md).
+> 🕰️ **상태(2026-11-14) — 2026-08 의 기록입니다.** 재사용은 `paypal_order_id`(§2 의 V3) 대신 `(payment_provider, provider_payment_id)` 부분 유니크 `uk_order_provider_payment`(order V4)가 막고, V17 이 옛 값을 옮긴 뒤 V18 이 `paypal_order_id` 열과 그 인덱스를 지웠습니다. 청구 통화는 주문에 저장합니다(V6 `currency` · `charged_amount` · `fx_rate`). 결제수단(Stripe · 포트원 · 무통장) 확장과 환불은 [docs/49](49-payment-providers.ko.md) — §5 표의 일부는 그 뒤 바뀌었다.
 
 ## 어떻게 발견했나
 
@@ -201,6 +201,8 @@ PayPal 에 닿지 못했을 때(네트워크·토큰 발급 실패) "일단 통�
 | 부분 캡처 | 전액 캡처만 가정한다 |
 | 통화 하드코딩 | `paypal.currency` 하나뿐이다. 다통화 상점이 되면 주문마다 통화를 저장해야 한다 |
 | pay-service | 여전히 order-service 가 넘긴 값을 믿는다. 검증은 경계(order-service)에서 한 번만 한다 — 내부 서비스 간에는 그게 맞지만, 그 경계가 뚫리면 하류는 막지 못한다 |
+
+> 🕰️ 그 뒤(2026-11-14): **환불**은 서버가 제공자에 요청하는 관리자 환불이 생겼다(`POST /api/order/refund`, 부분 환불 V9 — PayPal 도 `RefundingGateway`). 다만 PayPal 콘솔에서 직접 한 환불 · 분쟁을 받는 PayPal 웹훅은 여전히 없다(웹훅은 Stripe · 포트원만). **통화**는 주문마다 저장한다(V6 — 상점 통화 `base-currency` 와 청구 통화를 나눈다).
 
 ## 6. 샌드박스로 테스트하기 (한국에서 결제가 안 될 때)
 

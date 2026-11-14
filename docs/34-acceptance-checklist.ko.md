@@ -2,7 +2,7 @@
 
 [日本語](34-acceptance-checklist.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 장바구니 API 는 `PUT/PATCH/DELETE /api/cart/items` 이고, `/api/pay/confirm` 은 없습니다.
+> 🕰️ **상태(2026-11-14) — 2026-08 에 소스에서 뽑은 순회 경로입니다. 엔드포인트 일부가 바뀌었습니다.** 장바구니 줄 변경 · 빼기는 `PUT/PATCH/DELETE /api/cart/items`(`deleteItem/{id}` 는 없다), `/api/pay/confirm` 은 없고 결제 확정은 order-service 의 `/api/order/payment/{paypal|stripe/confirm|portone/confirm}` · 무통장 `bank-transfer`, `/api/csrf-token` 은 없다(user-service 는 CSRF 를 끈다 — 쿠키로 신원을 싣는 요청은 모두 POST · 쿠키는 `SameSite=Lax`, `SecurityConfig` 주석). 추적은 Zipkin 이 아니라 Jaeger([docs/63](63-opentelemetry.ko.md)), chat 은 2026-11-01 부터 여러 파드로 늘릴 수 있다(§7). §4 의 SQL 은 지금 테이블 · 열 이름으로 고쳤다. 테스트 수는 README 를 본다.
 
 이 저장소는 단위·통합 테스트가 268개고, 그 대부분은 **실제로 겪은 장애를 회귀 테스트로
 굳힌 것**이다(docs/14 · 16). 그런데 아직 아무도 확인하지 않은 것이 하나 있다.
@@ -91,7 +91,7 @@ kubectl -n kafka exec deploy/kafka -- \
 | ☐ | 비밀번호 재설정 2단계 | `forgot-password` → 메일 → `reset-password` |
 | ☐ | 2FA 켜기 → 로그아웃 → 로그인 | `enable-2fa` → `verify-2fa` → 로그인 응답이 `two_factor_required`(토큰 없음) → `public/verify-2fa`(대기 쿠키) → 전체 리로드 뒤 로그인 상태(REFRESH 쿠키로 복구) |
 | ☐ | 토큰 갱신 (`GET /token/refresh`) | 만료 후에도 세션 유지 |
-| ☐ | CSRF 토큰 (`GET /api/csrf-token`) | 프론트가 이 값을 헤더에 실어야 쓰기 요청이 통과한다 |
+| ☐ | ~~CSRF 토큰 (`GET /api/csrf-token`)~~ | 🕰️ 이 엔드포인트는 없다 — user-service 는 `csrf` 를 끈다(`SecurityConfig`). 건너뛴다 |
 
 ### 소셜 로그인 — PKCE · 파드 간 이어받기 (docs/27 부록 2)
 
@@ -231,9 +231,9 @@ curl -i https://shop.example.com/api/user/profile/address \
 | ☐ | 주소 등록·선택 (`POST /api/user/profile/save_address`) | |
 | ☐ | 쿠폰 적용 (`POST /api/coupon/applycoupon`) | |
 | ☐ | 주문 생성 (`POST /api/order/create`) | |
-| ☐ | **재고가 정확히 1회 차감** | `select stock from product_sku where ...` 를 주문 전후로 비교. 사가 재전달 시 이중 차감이 실제로 있었다 |
+| ☐ | **재고가 정확히 1회 차감** | `select quantity from product.product_size where ...` 를 주문 전후로 비교(🕰️ 재고는 사이즈 줄의 `quantity` — `product_sku` 에는 재고 열이 없다). 사가 재전달 시 이중 차감이 실제로 있었다 |
 | ☐ | 결제 (`POST /api/pay/confirm`) | |
-| ☐ | 주문 상태가 최종까지 진행 | `/order/:id` 화면 + `select status from orders` |
+| ☐ | 주문 상태가 최종까지 진행 | `/order/:id` 화면 + `select order_status from orders.orders` |
 | ☐ | 장바구니가 비워짐 | `cart-empty` 이벤트 경로 |
 
 ### 🔒 결제 위조 (docs/35)
@@ -266,12 +266,13 @@ curl -i -X POST https://shop.example.com/api/order/payment/paypal \
 ### 비동기 경로 — 화면만 봐서는 알 수 없다
 
 ```sql
--- 아웃박스가 밀리지 않는가 (PENDING 이 쌓이면 폴러가 죽은 것)
-select status, count(*) from users.outbox_event_p group by status;
-select status, count(*) from orders.payment_outbox_event group by status;
+-- 아웃박스가 밀리지 않는가 (STARTED 가 쌓이면 폴러가 죽은 것)
+-- 🕰️ 파티션 표(_p)는 이름을 바꿔 users.outbox_event · orders.payment_outbox_event 가 되었고, 열은 outbox_status(STARTED · COMPLETED · FAILED)다
+select outbox_status, count(*) from users.outbox_event group by outbox_status;
+select outbox_status, count(*) from orders.payment_outbox_event group by outbox_status;
 ```
 
-- ☐ 아웃박스 `PENDING` 이 계속 쌓이지 않는다
+- ☐ 아웃박스 `STARTED` 가 계속 쌓이지 않는다 · `FAILED` 가 0 이다(경보 `OrderOutboxRowFailed`)
 - ☐ 컨슈머 그룹 lag 이 0 으로 수렴 (§0 의 ④번 창)
 - ☐ **DLT 가 비어 있다** — `kafka-console-consumer --topic order.DLT --from-beginning`. 여기에 뭔가 있으면 그게 곧 버그 목록이다
 
@@ -330,6 +331,8 @@ kubectl -n ecommerce set env deploy/notification-service NOTIFICATION_MAIL_PROVI
 
 > ⚠️ chat-service 는 **레플리카 1 고정**이다. WebSocket 세션이 파드에 붙어 있어 늘리려면
 > 세션 공유가 먼저다(docs/21). 파드가 재시작되면 연결이 끊기는 것이 **정상**이다.
+>
+> 🕰️ 2026-11-01 부터 고정이 아니다 — 구독자에게 보내기를 Redis 채널(`chat:stomp-fanout`)로 모든 파드에 퍼뜨린다(`StompFanout`, B-107, [docs/21 §2-1](21-horizontal-scaling.ko.md)), HPA 1 ~ 3. 파드가 둘 이상이면 서로 다른 파드에 붙은 두 브라우저 사이의 송수신도 확인한다. 파드 재시작 때 연결이 끊기는 것은 그대로 정상이다.
 
 ---
 
@@ -368,7 +371,7 @@ curl -s https://shop.example.com/actuator/env | head
 | ☐ | 인증번호 발급 속도 제한 | 요금이 걸린 경로다 |
 | ☐ | Prometheus 타깃 전부 UP | `ops/05-check-observability.sh` |
 | ☐ | Grafana 대시보드에 서비스별로 구분되어 나온다 | 전부 `common` 으로 뭉치면 `spring.application.name` 문제(docs/14 B-22) |
-| ☐ | Zipkin 에서 한 요청이 여러 서비스에 걸쳐 보인다 | 주문 하나를 넣고 추적 |
+| ☐ | Jaeger 에서 한 요청이 여러 서비스에 걸쳐 보인다(🕰️ 예전 Zipkin — 지금은 OTel Collector → Jaeger, docs/63) | 주문 하나를 넣고 추적 |
 | ☐ | 경보가 실제로 도달 | `ops/17-configure-alert-receivers.sh` |
 
 ---

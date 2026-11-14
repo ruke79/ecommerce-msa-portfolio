@@ -28,6 +28,8 @@
 기한 초과 ──▶ catalog 의 만료 잡(60초)이 HELD → RELEASED
 ```
 
+> 🕰️ 2026-11-14: 예약 호출은 이제 전송을 고른다 — `stock.rpc.transport`(`STOCK_RPC_TRANSPORT`) = `http`(기본, 운영 ConfigMap 도 http) | `grpc`(gRPC 9095, [docs/66](66-grpc-stock-reservation.ko.md)). 그리고 "닿지 못함" 과 **요청 거절**(HTTP 400 · gRPC `INVALID_ARGUMENT`)을 가른다 — 거절은 fail-open 이 아니라 그 주문을 지우고 막는다(`order_stock_hold_total{result="rejected"}`). 닿지 못함(기한 초과 포함)은 그대로 예약 없이 가되, catalog 가 늦게 잡았을 수 있어 새 주문의 예약을 한 번 푼다(`OrderService`, 2026-10-15).
+
 ## 3. catalog — 예약은 재고의 주인이 가진다
 
 `product.stock_reservation`(V14): `order_id`·`product_id`·`color_id`·`size`·`qty`·`status`(HELD|COMMITTED|RELEASED)·`expires_at`.
@@ -78,7 +80,7 @@
 | `onHold` 는 0 이면 **싣지 않는다**(`@JsonInclude(NON_DEFAULT)`) | `products` 캐시의 직렬화기는 모르는 필드에서 실패한다. 캐시된 DTO 에는 늘 0 이라 JSON 에 없다 — 이 필드를 모르는 옛 파드가 롤링 중에 캐시를 읽어도 깨지지 않는다. DTO 에 `ignoreUnknown` 도 붙였다(다음 번을 위해) |
 | 잡힌 수는 **실물까지만** | 관리자가 재고를 줄여 실물보다 많이 잡혀 있을 수 있다. 남은 수량이 음수가 되지 않는다 |
 | 🔒 관리자 목록·편집(`/api/product/products`, `/product/edit/…`)에는 **빼지 않는다** | 뺀 값을 편집 화면이 받아 저장하면 실물 재고가 줄어든다 |
-| 🐛 수량도 캐시가 아니라 **지금 값**(`size_id` 로 맞춘다) | 홈 카드가 오는 카테고리 목록 캐시(`products`, 카테고리 키)는 **만료가 없고 재고가 바뀌어도 비우지 않는다** — 그 안의 실물 수량부터 언제 적 것인지 모른다. 예약만 빼면 "옛날 수량 − 지금 예약" 이 된다. 한 묶음(상세 하나, 목록 한 페이지, 홈 전체)에 대해 사이즈별 지금 수량 한 번 + 예약 합 한 번을 읽는다 — 상품마다 읽지 않는다. 두 읽기는 따로 실패한다(하나를 못 읽어도 다른 하나는 반영) |
+| 🐛 수량도 캐시가 아니라 **지금 값**(`size_id` 로 맞춘다) | 홈 카드가 오는 카테고리 목록 캐시(`products`, 카테고리 키)는 **만료가 없고 재고가 바뀌어도 비우지 않는다**(🕰️ 2026-10-15 부터 30분 — 그래도 재고는 응답마다 지금 값) — 그 안의 실물 수량부터 언제 적 것인지 모른다. 예약만 빼면 "옛날 수량 − 지금 예약" 이 된다. 한 묶음(상세 하나, 목록 한 페이지, 홈 전체)에 대해 사이즈별 지금 수량 한 번 + 예약 합 한 번을 읽는다 — 상품마다 읽지 않는다. 두 읽기는 따로 실패한다(하나를 못 읽어도 다른 하나는 반영) |
 | 외래 키 인덱스(V15 — `product_sku.product_id`, `product_size.skuproduct_id`) | PostgreSQL 은 외래 키에 인덱스를 만들지 않는데 기준 스키마(V5)에 빠져 있었다. 지금 수량 조회뿐 아니라 상세의 지연 로딩, 차감·예약의 SKU 잠금 조회(`findForStockUpdate`)도 이 경로라 모두 표 전체를 훑고 있었다. PG16 에서 두 인덱스를 타는 것을 확인 |
 
 프론트(`components/product/Infos.jsx`):
@@ -135,7 +137,7 @@
 | `order.stock-hold.checkout-minutes` | `30` | 결제 화면에서 잡아 두는 시간 |
 | `catalog.stock-reservation.expiry-check-ms` | `60000` | 만료 잡 주기 |
 
-- 지표: `order_stock_hold_total{result=held|short|unavailable|disabled}`. `short` 는 주문 단계에서 막은 초과 판매,
+- 지표: `order_stock_hold_total{result=held|short|unavailable|disabled}`(🕰️ 지금은 `rejected` 도 — §2 의 메모). `short` 는 주문 단계에서 막은 초과 판매,
   `unavailable` 은 fail-open 으로 넘어간 주문.
 - 지금 잡혀 있는 재고:
   ```sql
@@ -227,7 +229,7 @@
 **가드**: `ProductSkuIdentityTest`(4) · `StockReservationServiceTest.sizelessOption` · `ReviewServiceTest.sizelessProductCanBeReviewed`·`fitRequiredWhenSized` · `ReviewCard.test.jsx`(2) ·
 `util/sizes.test.js`(3) · `Infos.test.jsx`(+4) · `Review.test.jsx`(+1) · `pages/Product.test.jsx`(+2).
 
-**배포 뒤 한 번**: 상품 캐시(`product`·`products` 는 만료가 없다)에 옛 순서의 SKU 목록이 남아 있으면, 화면(캐시)과 장바구니 담기(새로
+**배포 뒤 한 번**: 상품 캐시(`product`·`products` 는 만료가 없다 — 🕰️ 2026-10-15 부터 `products` 는 30분, `RedisCacheConfig.PRODUCTS_TTL`)에 옛 순서의 SKU 목록이 남아 있으면, 화면(캐시)과 장바구니 담기(새로
 읽음)의 스타일 인덱스가 어긋날 수 있다. catalog 캐시를 비운다(값은 다시 채워진다):
 
 ```bash

@@ -109,7 +109,7 @@ TTL 을 늘리고 싶은 유혹이 생긴다.
 
 ## 4. 남은 것
 
-- 문구가 영어다(`User attempted to log in multiply, …`). i18n 대상(docs/45).
+- ~~문구가 영어다(`User attempted to log in multiply, …`). i18n 대상(docs/45).~~ → ✅ 서버가 `code`(`multi_login`)를 함께 보내고 화면 사전이 문구를 고른다(`AuthLoginFilter.MULTI_LOGIN_CODE` · `util/loginResult.js` — [docs/45 §4-4](45-internationalization.ko.md)). 영어 `message` 는 코드를 모르는 클라이언트를 위해 남겼다.
 - 이전 세션을 강제 로그아웃시키는 동작 자체가 맞는 정책인지는 별도 판단이다. 지금은
   "마지막 로그인이 이긴다" 이고, 그 판정이 이제서야 **정확하게** 동작한다.
 

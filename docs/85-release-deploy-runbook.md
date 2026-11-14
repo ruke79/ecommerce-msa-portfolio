@@ -248,7 +248,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 
 - **何が**: `order.DLT` · `payment.DLT` に notification グループ(`notification-order` · `notification-payment`)が対で溜まった — 10-16 〜 10-22 に 6 組(b7c5053)、デプロイ後の Stripe 注文 2 件で 8 組。`ops/56 list` の原因の連鎖: `BatchListenerFailedException → NullPointerException`。
 - **なぜ**: 通知メールの件名を地域の言語に変える行が `Locale.forLanguageTag(locale)` だった。地域(`notification_preference.region`)は**電話番号を認証して**初めて入るので、未認証の利用者は `locale` が null → NPE。その行がメールの失敗を防ぐ try の外だったため、**通知の作成ごと**失敗した(メール受信をオンにした利用者の注文 · 決済 · 配送 · クーポン · 再入荷の案内すべて)。
-- **直したもの**: 地域が分からなければ件名はそのまま · メールの言語は既定、メールの準備すべてを try の中へ(通知はメールと関係なく作る)、警告ログは例外メッセージの代わりにクラス名(`NotificationMailLocaleTest` — 戻すと失敗)。次のデプロイに入る。
+- **直したもの**: 地域が分からなければ件名はそのまま · メールの言語は既定、メールの準備すべてを try の中へ(通知はメールと関係なく作る)、警告ログは例外メッセージの代わりにクラス名(`NotificationMailLocaleTest` — 戻すと失敗)。~~次のデプロイに入る。~~ → ✅ 同じ日に `6501d3fd8e60` で適用(§0「続くデプロイ」— 新しい注文の「注文受付」メールが届いた)。
 - **溜まった DLT**: 再送しない(元のトピックのすべてのグループが受け直す)。逃した案内は注文 8 件 — 必要なら管理者のお知らせで。
 
 ## 8. 数日後 — 観察を経た次の段階

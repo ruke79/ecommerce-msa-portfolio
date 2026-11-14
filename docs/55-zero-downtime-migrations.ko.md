@@ -25,6 +25,8 @@
 
 "다 굴러간 뒤" 는 새 파드가 전부 준비되고 옛 파드가 모두 내려간 뒤다. 가드는 **30분**으로 본다.
 
+> 🕰️ 지금(2026-11-14): R1 ~ R4 의 커밋은 모두 운영에 들어갔다(늦어도 2026-10-10 의 운영 `b7c5053a45e8` 에, 지금 운영은 `7ef62043a98f`). "R0 (운영 중)" 은 2026-09 의 상태다. **R5(C3)는 아직 만들지 않았다** — `common/src/main/resources/avro-history/` 에 `PaymentRequest-v1` · `-v2` · `-v3` 가 그대로 있다(14일 조건은 이미 지났다). 그 뒤의 expand → contract 는 contract 릴리스(order V29 · user V19, [docs/85 §8-2](85-release-deploy-runbook.ko.md))가 같은 원칙으로 했다.
+
 ---
 
 ## 1. 왜 여러 릴리스인가 — 이 클러스터의 배포가 가진 성질
@@ -265,6 +267,7 @@ R3 배포 날짜가 정해진 뒤, pay V6 의 적용 시각을 보는 14일 가�
 
 - **R1 배포 뒤 DLT 재처리** — `order`·`product-update`·`cart-empty`·`cart-rollback`·`coupon-use`·`chat`·`user-created`.
 - **C3** — v1·v2 이력 스키마와 pay 의 v2 대체 경로 삭제(R3 후 14일), 이어서 v3 이력(R4 후 14일). 14일 가드를 함께.
+  🕰️ 2026-11-14: 아직 열려 있다 — R3 · R4 는 늦어도 2026-10-10 에 운영에 들어가 시간 조건은 찼다.
 - ✅ **DTO ↔ Avro 필드 대조 테스트** — `AvroMappingContract`(common 의 test fixtures). 매핑마다 두 가지를 본다:
   **이름**(DTO 의 필드와 스키마의 필드, 목록 안 중첩 레코드까지)과 **왕복**(모든 필드를 기본값이 아닌 값 — 19자리 id,
   마지막 열거값, 밀리초까지의 시각 — 으로 채워 `toRecord → encoder → decoder → toDto` 를 돌리고 같은 값이 돌아오는가).

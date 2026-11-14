@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](40-frontend-bug-list.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** P0〜P2 はすべて修正しました（進捗表）。残っているのは chat ルートのヘッダーの順序（§バックエンドに引き渡すもの）です。
+> 🕰️ **状態（2026-11-14）— 過去の記録。** P0〜P2 はすべて修正しました（進捗表）。当時残っていた chat ルートのヘッダーの順序（§バックエンドに引き渡すもの）も直りました — 今は `JwtAuthorization` が `RemoveRequestHeader=Cookie` の前で、`RateLimiterPlacementTest` がその順序を守ります。
 
 2026-09-14、`frontend/src` 全体（約 18,000 行）を洗い出した結果である。デプロイされたサイトが初めて
 端から端まで動くようになった直後なので、**インフラ・バックエンドに隠れて見えなかった画面の問題**が今そのまま
@@ -513,6 +513,7 @@ id の値 `passowrd` も直した。参照する `htmlFor` がないので無害
   実際のパスである `/browse?category=<id>` に変えた（ハンバーガーメニューと同じアドレス）。
   サブカテゴリーは**わざとリンクにしていない** — サブカテゴリーで絞り込む経路がまだない。
   `// have error … i will fix this` の箇所にその事情を書いた。
+  > 🕰️ 2026-11-14: 今はサブカテゴリーで絞り込む経路がある — `/browse?subCategory=<id>`（フィルタメニュー · 検索 API）。パンくずのサブカテゴリーは今もリンクではない（`BreadCrumb.jsx` のコメントは昔の事情のまま）。
 - **`Maintenance`** — この画面は**ネットワークが切れたときに**表示される。ところが svgrepo.com の SVG を
   ランタイムに `<img src>` で取得していた。肝心なときに壊れた画像が表示され、外部の
   ドメインにこちらのユーザーの訪問が記録される。インライン SVG に変えてリクエストを 0 にした。
@@ -599,6 +600,7 @@ return `${splitDate[0].trim()}년 ${splitDate[1].trim()}월 ${splitDate[2].trim(
   `JwtAuthorization` の**前**にある。同じファイルの他のルートのコメントが「必ず後ろ」と明記して
   いる順序と逆である。今はブラウザがヘッダーでトークンを送っているので無害だが、Cookie の経路を使った瞬間に
   401 になる。
+  → ✅ 直した — 今は `JwtAuthorization` → `RemoveRequestHeader=Cookie` の順で、すべてのルートのその順序を gateway の `RateLimiterPlacementTest` が守る。
 - `chat-service-api` の `uri: lb:ws://` — REST のルートが ws スキームである。動いているなら偶然である。→ ✅ 2026-10-16 `lb://` に。動いていたのは偶然だった — Eureka のインスタンスが https を知らせ ws が無視されていた(知らせないディスカバリーでは GET 400 · POST 405、ChatRouteTlsTest · RouteMatchingTest)。
 
 ---

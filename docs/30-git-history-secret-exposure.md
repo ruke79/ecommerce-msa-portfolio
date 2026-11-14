@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](30-git-history-secret-exposure.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** §5 で推奨した CI でのシークレットスキャンは導入しました（[docs/57 §6](57-remaining-priorities.md)）。
+> 🕰️ **状態（2026-11-14）— 対応記録（2026-07 〜 09）。** §5 で推奨した CI でのシークレットスキャンは導入しました — `build.yml` の `secrets` ジョブが `ops/20 --head` と `--range`(今回入ったコミット)を回し、失敗するとリリース候補になりません（[docs/57 §6](57-remaining-priorities.md)）。リポジトリは非公開のままで、このチェックアウトの origin は `ruke79/ecommerce-msa` です。ソーシャルログインはその後コードに配線されました(§6 の 🕰️)。
 
 公開リポジトリの git 履歴に **生きているサードパーティの資格情報**が含まれているのを発見した。
 作業ツリーはすでにクリーンだったが（[docs/13](13-secrets-dbha-es-search.md)、[ops/01](../ops/README.md)）、
@@ -250,7 +250,7 @@ spring.mail.password=***REMOVED*** ... 残りの 3 つの塊がそのまま     
 | | |
 |---|---|
 | `ops/20 --head` | コミット前の点検用。現在のチェックアウトだけを走査するので速い |
-| CI | `.github/workflows` に `ops/20 --head` を追加すれば、新たな漏洩を PR の段階で止められる |
+| CI | `.github/workflows` に `ops/20 --head` を追加すれば、新たな漏洩を PR の段階で止められる — 🕰️ ✅ 追加した(`build.yml` の `secrets` ジョブ: `--head` + `--range`、失敗するとリリース候補への昇格が止まる) |
 | GitHub Push Protection | リポジトリの Settings → Code security → **Push protection** を有効にすると、GitHub がプッシュ自体を止める。無料の公開リポジトリもサポートしている |
 | `.gitignore` | `kafka-secrets.properties`、`k8s/20-secret.yaml`、`certs/`、`observability/secrets/` はすでに除外されている |
 | 設定規約 | すべての資格情報は `${ENV_VAR}` 参照のみ。リテラルは `k8s/20-secret.example.yaml` の `REPLACE_ME` プレースホルダーのみ |
@@ -286,6 +286,7 @@ spring.mail.password=***REMOVED*** ... 残りの 3 つの塊がそのまま     
 - [x] **GitHub OAuth シークレット** — **失効完了**（2026-08-02）。確認の結果、本番に配線されて
       いなかった — user-service の oauth2 設定はコメントアウト状態で、フロントにソーシャルログイン
       ボタンもない。失効で途切れる機能がないので、再発行も不要である
+      > 🕰️ 2026-11-14: その後ソーシャルログイン(Google · GitHub · Facebook · Kakao · LINE)がコードに入った。プロバイダーは Secret に資格情報(`OAUTH2_<プロバイダー>_CLIENT_ID` · `_SECRET`)があるときだけ有効になるので(`SocialClientRegistration`、`/public/oauth2/providers`)、GitHub を有効にするには新しく発行したシークレットを使う — 失効させた古い値は使われない。
 - [x] JWT 署名キー・DB パスワード — **実デプロイでは新たに生成した値を使っている**（2026-08 のデプロイ:
       JWT・pepper は openssl で生成、DB パスワードは ops/25 が新しいマネージド DB（Neon）に
       新たに設定）。漏洩した古い値はどこにも配線されていない
@@ -320,6 +321,7 @@ spring.mail.password=***REMOVED*** ... 残りの 3 つの塊がそのまま     
       **PR 参照 0 個** / 資格情報 0 件 / 報告された 2 コミットはどちらも存在しない
 - [ ] Push Protection の有効化（新リポジトリの Settings → Code security）
 - [ ] Topics・Homepage の復元、希望すればリポジトリ名を `ecommerce-msa` に変更
+      > 🕰️ 2026-11-14: このチェックアウトの origin は `ruke79/ecommerce-msa`(非公開)だ。Push Protection · Topics はリポジトリの設定なので、ここでは確認できなかった。
 
 ### 結末 — 実際に効いたのは何か
 
@@ -345,6 +347,8 @@ spring.mail.password=***REMOVED*** ... 残りの 3 つの塊がそのまま     
 
 整理スクリプトは準備済みで検証も済んでいるが、**プッシュはしていない。** force-push は元に戻せず、
 すべてのコミット SHA を変えるので、人が判断して実行すべきことである。
+
+> 🕰️ 上の段落は force-push の前に書いたものだ。その後、上のチェックリストのとおり force-push(2026-07-29) → 非公開化 → リポジトリの削除と再作成まで行った。
 
 ---
 

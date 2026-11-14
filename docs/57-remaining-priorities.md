@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](57-remaining-priorities.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** §11 の「サービス間の mTLS は依然としてない」は、同じドキュメントの §16 · §18 で解決しました。
+> 🕰️ **状態（2026-11-14）— 各節はその時の記録で、その後の本番適用は次のとおりです。** §11 の「サービス間の mTLS は依然としてない」は §16 · §18 で解決した。§16 の判定 4 つ — `INTERNAL_AUTH_MODE` · `_RULES_MODE` · `_IDENTITY_MODE` · `EUREKA_WRITE_AUTH_MODE` — はリポジトリの既定値（`k8s/10-configmap.yaml`）も本番も **enforce**（身元ヘッダー 2026-10-26 `d68f0307e979`、Eureka 書き込み 2026-10-30）。ストアのパスワード交換（ops/59）は 2026-10-25 に本番適用 · 10-26 にコピーを整理。§18 の Certificate は 10 → **12**（gateway-server · config-server の身元）。残りの作業は [docs/85 §8](85-release-deploy-runbook.md)。
 
 > 最初の優先事項リスト（過剰販売・通貨表示・Saga の遅延）を終えた後、docs/54 §10.1 に「オープン項目」として残っていた
 > もののうち **コードで閉じられるもの** を、深刻度・作業量の順に処理した記録である。1 節が 1 コミットだ。
@@ -594,6 +594,8 @@ kubectl -n ecommerce rollout restart deploy/<백엔드 열 개>
 
 戻し方: observe で同じ手順。`InternalCallerFilterTest`（身元ヘッダー 5 件）・`CheckMtlsScriptTest` が守る。
 
+> 🕰️ 2026-11-14: 4 段階目まで終わった — 本番 2026-10-26（`d68f0307e979`、`ops/37` ①-3 0 · ②-2 403）、リポジトリの既定値も `enforce`。パス規則にはその後 gRPC の在庫予約（`/ecommerce.stock.v1.StockReservation/=order-service`）が加わった。
+
 **enforce の前提と最後の防衛線 — ガード二つ（`InternalEndpointGuardTest`）。**
 
 - **B-81 — Feign は `User-Role` ・ `User-Email` を載せない。** enforce は内部サービスが送ったその二つを捨てる。今は載せる Feign が
@@ -620,6 +622,8 @@ ops/12 · ops/13 も同じ方式。B-83（`JvmSslPasswordsTest`）がマニフ�
 
 **運用ですること。** デプロイだけで新しいログにはもう残らない。すでに残ったものは消えない — Loki の保持期間中は照会できる。パスワードが漏れたと
 みなして `LOCAL_KEY_STORE_PASSWORD` を変えるのが正しい。それまでは Grafana · Loki へのアクセスを運用者だけにする（観測ポートはもともと公開しない）。
+
+> 🕰️ 2026-11-14: どちらも終わった — 新しいマニフェストは一括リリース（2026-10-24 `4415e498565c`）で、パスワード交換は下の ops/59 で 2026-10-25 に本番適用（ストア 27 · 再起動 0）、1 日後に cleanup。
 
 **交換 — `ops/59-rotate-store-password.sh`(2026-10-25)。** ops/07 で発行し直さない — CA が変わるとサービス身元(ops/38)· PostgreSQL の証明書 ·
 ブラウザの信頼まですべてやり直しになる。鍵と証明書はそのまま、ストアのパスワードだけ変える(`keytool -storepasswd` — PKCS12 は鍵のパスワードも
@@ -681,6 +685,8 @@ peer 複製は Eureka サーバーだけが送る — 単独サーバーなの�
 ならその複製はすべて 403。修正: `my-url` を defaultZone と同じに(`EurekaServerPropertiesTest` — 違えば失敗)。このイメージが起動した後、改めて一日 0 を見て enforce。
 
 戻し: `EUREKA_WRITE_AUTH_MODE` を observe にして同じ手順。サーバーが再起動してもクライアントは 30 秒のハートビートで再登録する。
+
+> 🕰️ 2026-11-14: `my-url` の修正は 2026-10-26 に本番へ入り、2026-10-30 に再び 1 日 0 件を確認して enforce に上げた（ログ `mode=ENFORCE (CA 읽음)` · 10 分間 `[eureka write]` 0 · 再起動 0）。
 
 テスト: `RegistryWriteGuardTlsTest`（実際の TLS で起動した Eureka に **実際の Eureka クライアント** が共通設定のまま登録 — 身元は通過 · TLS を切った
 クライアントは JVM キーストアがあっても証明書を出さず拒否 · 他サービスの証明書で他のアプリの登録を拒否 · 証明書なしの OUT_OF_SERVICE は 403 ·
@@ -789,6 +795,8 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 更新を練習するなら `./ops/39-cert-manager.sh renew order-service` — そのサービスだけが新しく発行され、再起動される。cert-manager が担当した
 後は、ops/38 はそのサービスに触れない（2 つが交互に上書きすると再起動が続く）。
+
+> 🕰️ 2026-11-14: k8s/96 の Certificate は今は **12 個** — §16 のゲートウェイ（`id-gateway-server`、2026-10-14）と config-server（`id-config-server`、Eureka 書き込み）が加わった。
 
 **ガード**: B-68 — バックエンドがマウントする身元 Secret ごとに、k8s/96 に同じ名前を発行する Certificate があり、その Deployment に Reloader の
 アノテーションがある（アノテーションを消すと失敗することを確認）。

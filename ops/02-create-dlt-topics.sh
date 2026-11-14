@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 운영 액션 ② — 토픽 사전 생성: DLT 9종(docs/12 §1) + 컴팩션 상태 토픽(docs/38 §1.17)
+# 운영 액션 ② — 토픽 사전 생성: DLT 23종(아래 TOPICS — docs/12 §1 의 2026-07 목록에서 늘었다) + 컴팩션 상태 토픽(docs/38 §1.17)
 #
 # 브로커가 auto.create.topics.enable=false 인 경우 DLT 발행이 실패하므로 미리 만든다.
 # (auto-create 가 켜져 있어도, 파티션/보존 정책을 명시적으로 관리하는 편이 안전하다)

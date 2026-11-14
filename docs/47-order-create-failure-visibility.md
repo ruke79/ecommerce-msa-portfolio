@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](47-order-create-failure-visibility.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** 顧客のバックフィルと `User-Email` ヘッダーはその後なくしました（[docs/48](48-user-replication-debt.md)）。
+> 🕰️ **状態（2026-11-14）— 過去の記録。** 顧客のバックフィルと `User-Email` ヘッダーはその後なくしました（[docs/48](48-user-replication-debt.md)）— 注文者はゲートウェイが書いた `User-Id` だけで、`orders.customer` テーブルは order V16 で削除しました（§5 の確認クエリ · 「顧客なし」の分岐はもう使いません）。§4 · §6 の 400/500 の区別とログ行（`주문 생성 거절` · `주문 생성 실패(예상치 못한 오류)`）は今もそのままです。
 
 `POST /api/order/create` が 400 を返した。order-service のログをその時刻で開いてみると
 **その時刻の行が一行もない。** Kafka のリバランスと eureka のハートビートだけである。

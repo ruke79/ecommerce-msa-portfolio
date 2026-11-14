@@ -2,7 +2,23 @@
 
 **日本語** | [한국어](37-transaction-boundary-audit.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** ① と #5 は適用しました。`CartService.saveCart` と `TrackingPoller.poll` は残っています。
+> 🕰️ **状態（2026-11-14）— 点検当時の記録。🔴 の 6 件はすべて直しました。** 本文の file:line ·「まだ実施していない」はその時の文として残します。今は下の表と [docs/62 §21](62-engineering-casebook.md)（`@Transactional` の整理、B-108）を見ます。
+
+| 当時（この文書） | 今（2026-11-14） | どこ |
+|---|---|---|
+| ① Feign タイムアウトが読まれない | `spring.cloud.openfeign.client.config.default` 3 秒 / 5 秒、古い接頭辞はガード B-37 | `application-common.yml` · `FeignTimeoutBindingTest` |
+| #1 `getOrders` がトランザクション内で色の Feign を N×M | 一覧 · 詳細のメソッドは `NOT_SUPPORTED` — 読み取りは `OrderDataService.load*` の短いトランザクション、色（catalog）はその外。order は `open-in-view: false`（B-87） | `OrderService` |
+| #2 `saveCart` が DELETE ロックを握ったまま商品ごとに Feign | `NOT_SUPPORTED` — catalog を先に呼び、保存だけ短い `inTransaction`。追加 · 数量 · チェックアウトも同じ形（B-87） | `CartService` |
+| #3 · #10 `ReviewService` の S3 · 評点 Feign | 外部呼び出し（購入確認 · S3 · 評点）はトランザクションの外、DB 区間だけ `TransactionTemplate` | `ReviewService` |
+| #4 `TrackingPoller.poll` — 最悪 200 秒のロック | 短いトランザクションで先取り + リース（`delivery.polling.lease-minutes`、10 分）→ 配送業者の呼び出しはトランザクションの外 → 箱ごとに反映（D-M1 · M2） | `TrackingPoller` |
+| #5 `createOrder` | ✅ この文書の時に適用（`OrderTransactionBoundaryTest`） | — |
+| #6 `VerificationService.issue` | トランザクションなし — コード保存はリポジトリの短いトランザクション、SMS は接続なしで（N-M4） | `VerificationService` |
+| #14 coupon `applyCoupon` · 空の catch | `NOT_SUPPORTED`（CP2）、`KafkaException` は警告ログに残す | `CouponService` · `CouponUseProducer` |
+| #15 delivery はコミット前に発行 | 状態イベントはコミット後に発行（`afterCommit`）· 失敗はアラート `DeliveryStatusPublishFailed`（D-M4）。Outbox テーブルは今もない | `DeliveryStatusPublisher` |
+| §4 user の Outbox は空のインターフェース · cart の `outbox/*` は死んだコード | user は `UserOutboxScheduler` · `UserOutboxHelper` で生かした（登録 · 情報変更 · 退会のイベント）。cart の `outbox/*` は消した | `user-service/.../message/` |
+| §4 · §6 ⑤ `private @Transactional` が無効 | 禁止 — `TransactionalProxyGuardTest`（B-108、private · static · final · `@PostConstruct` · 自己呼び出し） | docs/62 §21 |
+| §4 `REQUIRES_NEW` · `timeout=` 0 件 | `REQUIRES_NEW` は今も 0 件（使わない理由が `UserOutboxHelper` · `NotificationService` のコメントにある）。トランザクションの時間上限は catalog の 2 つだけ — フィルタメニュー（`FacetQueries`、600 秒）· 検索（`SearchBulkhead`、5 秒）。§6 ④ の PayPal `timeout = 20` は入れていない | — |
+| 残り | #21 chat `sendMessage` など（クラスレベル `@Transactional` の下で Mongo · Kafka だけ）、#16 catalog `addProduct` の S3 アップロード（クラスレベルのトランザクション内） | `ChatService` · `ProductService` |
 
 > 点検の問い: DB トランザクション中に外部 API を呼び出している箇所はあるか？ 全 Spring モジュールを対象に点検した。
 >

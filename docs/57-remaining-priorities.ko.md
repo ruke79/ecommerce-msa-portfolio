@@ -2,7 +2,7 @@
 
 [日本語](57-remaining-priorities.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** §11 의 "서비스 간 mTLS 는 여전히 없다" 는 같은 문서 §16 · §18 에서 해결했습니다.
+> 🕰️ **상태(2026-11-14) — 절마다 그때의 기록이고, 그 뒤 운영 적용은 아래와 같습니다.** §11 의 "서비스 간 mTLS 는 여전히 없다" 는 §16 · §18 에서 해결했다. §16 의 판정 넷 — `INTERNAL_AUTH_MODE` · `_RULES_MODE` · `_IDENTITY_MODE` · `EUREKA_WRITE_AUTH_MODE` — 은 저장소 기본값(`k8s/10-configmap.yaml`)과 운영 모두 **enforce**(신원 헤더 2026-10-26 `d68f0307e979`, Eureka 쓰기 2026-10-30). 스토어 비밀번호 교체(ops/59)는 2026-10-25 운영 적용 · 10-26 사본 정리. §18 의 Certificate 는 10 → **12**(gateway-server · config-server 신원). 남은 일은 [docs/85 §8](85-release-deploy-runbook.ko.md).
 
 > 처음 우선순위 목록(초과 판매·통화 표시·사가 지연)을 끝낸 뒤, docs/54 §10.1 에 "열린 항목" 으로 남아 있던
 > 것 중 **코드로 닫을 수 있는 것**을 심각도·작업량 순으로 처리한 기록이다. 절 하나가 커밋 하나다.
@@ -595,6 +595,8 @@ ecommerce 의 파드 하나(frontend · cloudflared · 백업 Job …)를 장악
 
 되돌리기: observe 로 같은 절차. `InternalCallerFilterTest`(신원 헤더 5개) · `CheckMtlsScriptTest` 가 지킨다.
 
+> 🕰️ 2026-11-14: 4단계까지 끝났다 — 운영 2026-10-26(`d68f0307e979`, `ops/37` ①-3 0 · ②-2 403), 저장소 기본값도 `enforce`. 경로 규칙에는 그 뒤 gRPC 재고 예약(`/ecommerce.stock.v1.StockReservation/=order-service`)이 더해졌다.
+
 **enforce 의 전제와 마지막 방어선 — 가드 두 개(`InternalEndpointGuardTest`).**
 
 - **B-81 — Feign 은 `User-Role` · `User-Email` 을 싣지 않는다.** enforce 는 내부 서비스가 보낸 그 둘을 버린다. 지금은 싣는 Feign 이
@@ -621,6 +623,8 @@ ops/12 · ops/13 도 같은 방식. B-83(`JvmSslPasswordsTest`)이 매니페스�
 
 **운영에서 할 일.** 배포만으로 새 로그에는 더 남지 않는다. 이미 남은 것은 지워지지 않는다 — Loki 보관 기간 동안 조회된다. 비밀번호가 새었다고
 보고 `LOCAL_KEY_STORE_PASSWORD` 를 바꾸는 것이 맞다. 그 전에는 Grafana · Loki 접근을 운영자로만 둔다(관측 포트는 원래 공개하지 않는다).
+
+> 🕰️ 2026-11-14: 둘 다 끝났다 — 새 매니페스트는 묶음 릴리스(2026-10-24 `4415e498565c`)로, 비밀번호 교체는 아래 ops/59 로 2026-10-25 운영 적용(스토어 27 · 재시작 0), 하루 뒤 cleanup.
 
 **교체 — `ops/59-rotate-store-password.sh`(2026-10-25).** ops/07 로 다시 발급하지 않는다 — CA 가 바뀌면 서비스 신원(ops/38) · PostgreSQL
 인증서 · 브라우저 신뢰까지 모두 다시 해야 한다. 키와 인증서는 그대로 두고 스토어의 비밀번호만 바꾼다(`keytool -storepasswd` — PKCS12 는 키
@@ -682,6 +686,8 @@ kubectl -n ecommerce logs deploy/eureka-server --since=24h | grep -c '\[eureka w
 였다면 그 복제가 모두 403. 고침: `my-url` 을 defaultZone 과 같게(`EurekaServerPropertiesTest` — 다르면 실패). 이 이미지가 뜬 뒤 다시 하루 0 을 보고 enforce.
 
 되돌리기: `EUREKA_WRITE_AUTH_MODE` 를 observe 로 같은 절차. 서버가 재시작해도 클라이언트는 30초 하트비트로 다시 등록한다.
+
+> 🕰️ 2026-11-14: `my-url` 고침은 2026-10-26 운영에 들어갔고, 2026-10-30 다시 하루 0건을 보고 enforce 로 올렸다(로그 `mode=ENFORCE (CA 읽음)` · 10분 `[eureka write]` 0 · 재시작 0).
 
 테스트: `RegistryWriteGuardTlsTest`(실제 TLS 로 띄운 Eureka 에 **실제 Eureka 클라이언트**가 공통 설정 그대로 등록 — 신원은 통과 · TLS 를 끈
 클라이언트는 JVM 키스토어가 있어도 인증서를 내지 않아 거절 · 다른 서비스 인증서로 남의 앱 등록 거절 · 인증서 없이 OUT_OF_SERVICE 403 ·
@@ -790,6 +796,8 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 갱신을 연습하려면 `./ops/39-cert-manager.sh renew order-service` — 그 서비스만 새로 발급되고 재시작된다. cert-manager 가 맡은
 뒤에는 ops/38 이 그 서비스를 건드리지 않는다(둘이 번갈아 덮으면 계속 재시작된다).
+
+> 🕰️ 2026-11-14: k8s/96 의 Certificate 는 이제 **12개** — §16 의 게이트웨이(`id-gateway-server`, 2026-10-14)와 config-server(`id-config-server`, Eureka 쓰기)가 더해졌다.
 
 **가드**: B-68 — 백엔드가 마운트하는 신원 Secret 마다 k8s/96 에 같은 이름을 발급하는 Certificate 가 있고, 그 Deployment 에 Reloader
 주석이 있다(주석을 지우면 실패하는 것을 확인).

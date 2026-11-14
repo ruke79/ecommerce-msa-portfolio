@@ -2,7 +2,17 @@
 
 [日本語](54-improvements-vs-practice.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** §10.1 의 "서비스별 신원은 다음 단계" · "대사 배치 미착수" · "인증서 하나 공유" 는 이후 해결했습니다([57 §16·§18](57-remaining-priorities.ko.md), c13f51f). 사례별 한계와 개선점은 [docs/62](62-engineering-casebook.ko.md).
+> 🕰️ **상태(2026-11-14) — 2026-09-25 의 정리. 본문은 그때의 "최종 상태" 로 두고, 그 뒤 바뀐 것만 아래 표에 적었습니다.** 사례별 한계와 개선점은 [docs/62](62-engineering-casebook.ko.md), 남은 일은 [docs/85 §8](85-release-deploy-runbook.ko.md).
+
+| 2026-09 의 이 문서 | 지금(2026-11-14) | 어디 |
+|---|---|---|
+| §1.3 · §10.2 계정 잠금 — DB 열(V4)로 5회/15분 | 같은 규칙을 **Redis**(Lua 한 번 — 시도는 비밀번호 검사 전에 센다, 열쇠는 이메일 해시). 옛 열 `lock_expires_at` · `failed_login_attempts` 는 user V19 로 삭제(contract 릴리스, 운영 적용 2026-11-03) | `LoginAttemptService` · docs/85 §8-2 |
+| §1.8 트러스트스토어를 `JAVA_TOOL_OPTIONS` 로 | 경로만 `JAVA_TOOL_OPTIONS`, 스토어 비밀번호는 `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD` 환경 변수(B-83 — JVM 이 그 변수를 기동마다 로그에 찍었다), 스토어 비밀번호도 교체(2026-10-25) | [docs/57 §16](57-remaining-priorities.ko.md) · `JvmSslPasswordsTest` |
+| §10.1 "서비스별 신원은 다음 단계" · "인증서 하나 공유" | 서비스별 신원 인증서(ops/38 · cert-manager ops/39), 신원 헤더 enforce(2026-10-26) · Eureka 쓰기 enforce(2026-10-30) | [docs/57 §16 · §18](57-remaining-priorities.ko.md) |
+| §10.1 config-server "저장소 미연결로 운영" | 그대로 미연결이지만, 이제 `CONFIG_SERVER_PASSWORD` 없이는 설정 · 복호화 API 를 모두 거절한다(2026-10-15) | `ConfigServerSecurity` |
+| §10.1 백업 "환경마다 사람이 켠다" | 운영은 2026-10-13 에 켰다(`postgres-backup` · `restore-drill`), 노드 밖 보관은 다른 기계가 끌어간다 | [docs/22 §2](22-alerting-and-backup-automation.ko.md) |
+| §10.1 대사 배치 "미착수" | 최근 것을 다시 보내는 대사 | [docs/57 §14](57-remaining-priorities.ko.md) |
+| §10.1 스크레이프 `insecure_skip_verify` · 샘플링 1.0 | 운영은 클러스터 안 `metrics-agent` 가 CA 로 검증해 노드 Prometheus 로(B-95, 로컬 `prometheus.yml` 만 skip). 샘플링은 낮추지 않고 **1.0 고정**(B-72) — Collector 의 꼬리 샘플링(B-102)이 고른다 | [docs/63 §5](63-opentelemetry.ko.md) |
 
 > 작성일: 2026-09-25 · 기준: 이 날짜의 브랜치 끝(사용자 복제 ⑤⑥, 2FA 서버 강제, 쿠폰 발급 권한까지 반영). 초안을 쓰며 코드에서 새로 찾은 🔴 두 건(§10.1 의 2FA·쿠폰 발급)은 같은 날 고쳤고, 해당 행은 §1 로 옮겼다.
 > 이 문서는 프로젝트 전체의 개선을 **최종 상태 기준**으로 다시 묶은 것이다. 중간에 고쳤다가 다시 바뀐 것은 마지막 모양만 적고,

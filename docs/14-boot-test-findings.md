@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](14-boot-test-findings.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** 起動テスト当時の記録です。ガードはその後 B-69 まで増えました。テスト戦略は [docs/17](17-testing.md)。
+> 🕰️ **状態（2026-11-14）— 2026-07-27 の記録。** 起動テスト当時の記録です。ガード（B-番号）はその後 B-110 まで増えました（`ConfigurationGuardrailTest` ほか）。下の「残る限界」はすべて解消しました（その節の 🕰️）。テスト戦略は [docs/17](17-testing.md)。
 
 > 作成日: 2026-07-27
 > 背景: それまでの作業ではコンパイル・単体テスト・SQL 実行までを検証しただけで、**アプリケーションを一度も起動したことがなかった。**
@@ -231,6 +231,8 @@ order-service の起動状態で実際に確認:
 - **Elasticsearch 未検証** — 検索フラグはデフォルト値 `postgres` で、ES 経路は依然として設計・スクリプトのレベルだ（docs/07、`ops/03-enable-es-search.sh`）。
 - **`@Disabled` で先送りしたコンテキストテスト 6 種**は、Testcontainers 導入までは空白として残る。
 - したがって次のステップは依然として**ステージングでのフルスタック起動 + Saga 1 件の通過**だ。
+
+> 🕰️ 今（2026-11-14）: 四つとも解消した — Saga の end-to-end は実際の Kafka で検証（[docs/16](16-saga-e2e-and-observability-verification.md)）、chat は Testcontainers の MongoDB で保存 · 照会を試験する（`ChatServiceIntegrationTest`）、ES 経路は `EsProductSearchServiceIntegrationTest`（コンテナ）、`@Disabled` だった `contextLoads()` は実際の PostgreSQL · Redis などのコンテナの上で動く起動試験（`*ApplicationTests`、`@Tag("containers")` — `./gradlew :<モジュール>:test -PwithContainers`）になった。本番の chat は MongoDB Atlas を使う。
 
 ## 後続: Saga・可観測性の実証で出たバグ 2 件（B-21 · B-22）
 

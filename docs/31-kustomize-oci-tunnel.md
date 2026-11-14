@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](31-kustomize-oci-tunnel.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** OCI の本番環境は Cloudflare Tunnel の背後で動いています。デプロイは `ops/28` と `deploy-oci.yml` です([docs/36](36-deployment-pipeline.md))。
+> 🕰️ **状態(2026-11-14) — 本文は 2026-07 〜 09 の設計記録です。OCI の本番は Cloudflare Tunnel の背後で動いており(§5 の「未検証」二つはその後実際に動いた)、デプロイは `ops/28-deploy.sh local <バージョン>` 一つです([docs/36](36-deployment-pipeline.md))。** 変わったこと: オーバーレイの連鎖の末尾にコミットされない `local`(← `external` ← `prod`、見本 `k8s-overlays/local.example`)が付き、実習用の上書きもできた(§2)。初回デプロイ後はオーバーレイに `kubectl apply -k` を直接しない — 手書きの `newTag` で全サービスが巻き戻る(§6)。HPA は `ops/28` が `prod` か `APPLY_HPA=1` のときだけ適用し、chat-service にも 2026-11-01 から HPA(1 〜 3)がある(§3)。
 
 三つを一つのまとまりとして作った。三つとも「ノートパソコンでしか動いていなかったものを実際にどこかで立ち上げる」という
 同じ目標に向かっている。
@@ -37,6 +37,8 @@ ALB + ACM は **EKS に移行するとき**に意味を持つ。そのときは 
 - **無料プランのアップロード 100MB 制限。** 商品画像がそれより大きいと 413 が返るが、
   **アプリケーションログには何も残らない** — エッジで切られるからだ
 - クラスタ内には平文 HTTP で入ってくる(トンネル区間自体は暗号化されている)
+
+> 🕰️ 現在(2026-11-14): 平文 HTTP はフロントエンド側(→ traefik:80)だけ。API の経路(`/<サービス>-service/…` · `/saga-projection/…`)は cloudflared がゲートウェイへ直接 `https://gateway-server…:8000` で送る(ゲートウェイ自身が TLS 終端、`noTLSVerify`)— `k8s-overlays/prod/cloudflared.yaml`、経路の照合は B-82。
 
 ---
 
@@ -126,6 +128,8 @@ HPA が管理する Deployment に `replicas` が残っていると、**`kubectl
 `eureka-server`(ピアレプリケーション未設定)と `chat-service`(WebSocket セッションが Pod に張り付いている、
 docs/21)は HPA がないので replicas を残しておく。
 
+> 🕰️ 2026-11-01 から chat-service は Redis ファンアウト(B-107)で増やせるようになり、`k8s/70-autoscaling.yaml` に HPA(最小 1 · 最大 3)· PDB がある([docs/21 §2-1](21-horizontal-scaling.md))。HPA なしの 1 個固定はもう eureka-server だけ。prod オーバーレイの replicas 削除対象にはまだ chat-service がない(マニフェストの `replicas: 1` が HPA の最小と同じ)。
+
 ### dev を 1 にすると捕まえられないバグがある
 
 このリポジトリがレプリカ 2 で経験した問題 — Outbox ポーラーがレプリカごとに同じイベントを発行、
@@ -200,6 +204,8 @@ ssh ubuntu@<Ampere-IP>
 
 特に `ops/23` の iptables ルールは **`--check` でまず診断だけ実行してから**適用することを勧める。
 
+> 🕰️ その後: `ops/23` · k3s · Cloudflare トンネル · クラスタへのデプロイはすべて実際の OCI Ampere(本番 www.ysyproject.com)で動いている — 上の「未検証」は 2026-07 の記録。デプロイの記録は [docs/33](33-deploy-runbook.md) · [docs/85](85-release-deploy-runbook.md)。
+
 ---
 
 ## 6. 手順
@@ -226,3 +232,5 @@ ops/24-cloudflare-tunnel.sh --status
 `ops/24` は **`kubectl apply -k k8s-overlays/prod` の後に**実行しなければならない。ConfigMap
 (`cloudflared-config`)が先に存在しないとトンネル ID を置換できない。順序が逆になると警告を出し、
 再実行するよう案内する。
+
+> 🕰️ 上の `kubectl apply -k` · `apply -f k8s/70-autoscaling.yaml` は**まだ何もデプロイされていないクラスタでの最初の 1 回**だけに使う。2 回目からは `./ops/28-deploy.sh <環境> <コミットSHA12桁>`(設定だけなら `--config-only`)— オーバーレイの `newTag` は手書きの値なので、直接 apply すると全サービスがその古いタグに戻る(各オーバーレイの `kustomization.yaml` 冒頭コメント)。HPA · PDB は `ops/28` が `prod` のときだけ(それ以外は `APPLY_HPA=1`)、バックアップ CronJob は `ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh` でだけ適用する(そのまま apply すると `suspend: true` で再び止まる)。

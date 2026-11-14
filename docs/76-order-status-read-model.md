@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](76-order-status-read-model.ko.md)
 
+> 🕰️ **状態(2026-11-14) — 本番に入った(2026-10-24 `4415e498565c` のまとめリリース — デプロイ前に `ops/02` で `order-timeline` のコンパクショントピック、[docs/85](85-release-deploy-runbook.md))。** その後直したこと: Kafka が止まっている間に `order-status` 行が FAILED で固まっていたこと(B-100、§3-2 の 🕰️)。真実は今も order の DB。
+>
 > **状態(2026-10-07)** — 実装完了、本番デプロイ待ち。順序は [docs/72](72-model-refactor-deploy-runbook.md) → [docs/74](74-feature-flags.md) → これ。
 > きっかけ: 「イベントソーシング・CQRS は適用されているか」という問い。答えは「CQRS は二箇所(決済サーガのプロジェクション・ES 検索)に部分的に、イベントソーシングは無い」であり、その次の一歩がこの文書である。
 
@@ -106,6 +108,8 @@ UPDATE orders.payment_outbox_event SET outbox_status = 'STARTED'
 
 原則どおりなら docs/49 §3 のように「読む側(リレーの分岐)を先に、書く側を後に」の二リリースである。今回は失うのが読み取りモデルだけで、復旧が UPDATE 一行なので一リリースで行く。
 
+> 🕰️ 2026-10-22 の実習ゲームデイ(kafka-pause)で、ローリングの外でも FAILED が出た — ブローカーがないと `KafkaTemplate.send()` が Spring の `KafkaException` を直接投げるのに、`OrderStatusKafkaPublisher` だけが apache のものを捕まえていて、リレーが恒久エラーとみなした。今は両方を捕まえる(B-100、`OrderStatusBrokerDownTest`)。同じ日にアラート `OrderOutboxRowFailed` も来なかった — カウンターが最初の失敗で生まれ `increase()` が 0 だった(B-101 — 今は起動時に 0)。上の UPDATE は今も復旧クエリである。
+
 ### 3-3. デプロイ後の確認
 
 - order のログ: `주문 상태 변경: orderId=… NOT_PROCESSED → PAID (payment-saga)`、リレー `OrderStatusChanged sent`。
@@ -135,7 +139,7 @@ UPDATE orders.payment_outbox_event SET outbox_status = 'STARTED'
 | テスト | 何を防ぐか |
 |---|---|
 | `OrderStatusChangerTest`(order、8) | イベントの形・同じ状態はイベントでない・markPaid の時刻保持・作成・保存前の注文を拒否・アウトボックス行(event_type・キー・コミット後リレー) → Avro(eventId = 行 id)・スキーマに個人情報なし |
-| `OrderStatusRelayTest`(order、1) | リレーの `order-status` 分岐 — トレース文脈の下で発行器へ |
+| `OrderStatusRelayTest`(order、1 — 🕰️ 今は 4) · `OrderStatusBrokerDownTest`(order、1 — B-100) | リレーの `order-status` 分岐 — トレース文脈の下で発行器へ |
 | `OrderTimelineReducerTest`(saga-projection、5) | 順序・eventId 重複・遅れて届いた先に起きた変更・同時刻・上限 |
 | `SagaTopologyTest` +2 | order-status → タイムラインストア・出力トピック(Avro)、サーガストアはそのまま |
 | `SagaQueryServiceTest` +4 | 二つのストアの合成・**他人の注文は 404**・customerId 不明も 404・内部診断は所有権を省略 |

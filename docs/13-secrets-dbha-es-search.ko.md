@@ -2,7 +2,7 @@
 
 [日本語](13-secrets-dbha-es-search.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 유출된 DB 비밀번호는 2026-09-25 에 "어디서도 통하지 않음" 을 확인해 종결했습니다([docs/30 §6](30-git-history-secret-exposure.ko.md)). DB → ES 는 실시간 색인입니다.
+> 🕰️ **상태(2026-11-14) — 2026-07-27 의 기록.** 유출된 DB 비밀번호는 2026-09-25 에 "어디서도 통하지 않음" 을 확인해 종결했습니다([docs/30 §6](30-git-history-secret-exposure.ko.md)). §3 의 ES 검색은 이제 기동 설정 `search.engine=es`(ES 가 이 배포에 있는가) + 기능 플래그 `catalog.search-engine` 비율로 고릅니다([docs/74](74-feature-flags.ko.md)); DB → ES 는 상품 저장마다 실시간 색인(`ProductIndexService`)입니다. 운영(OCI)은 ES 가 없어 PostgreSQL 검색 그대로입니다.
 
 > 작성일: 2026-07-27 · 최종 점검의 마지막 🔴 덩어리 3건 적용 기록
 > **실행형 스크립트**: 이 문서의 운영 절차들은 [`ops/`](../ops/README.ko.md) 에 가드된 스크립트로 준비되어 있다.
@@ -72,6 +72,10 @@ db-host=<DB 호스트>
   2. `GET product-alias/_search` 로 색인/애널라이저 확인
   3. `search.engine=es` 배포 → 검색 품질/지연 비교 → 이상 시 플래그만 되돌리면 즉시 원복
 
+> 🕰️ 지금: `search.engine=es` 는 "ES 빈 · 색인이 있다" 만 정하고, 검색마다 어느 엔진으로 갈지는 기능 플래그 `catalog.search-engine`(ConfigMap `feature-flags` — `k8s/15-feature-flags.yaml` + `ops/28 --config-only`, 재기동 없이 비율로 · `SearchEngineSelector`, docs/74)가 정한다. 되돌리기도 그 비율을 0 으로.
+
 ### 남은 것 (후속)
 - 관련도 순서가 Postgres 하이드레이션에서 보존되지 않음(현재 정렬은 기존 로직) — 정렬 보존 필요 시 esIds 순서 기반 재정렬 추가.
 - category/subcategory 등 다른 인덱스들의 명시적 매핑, `search_after` 페이지네이션, DB↔ES 증분 동기(outbox 기반, docs/07 R-C3).
+
+> 🕰️ 지금(2026-11-14): 증분 동기는 상품 저장마다의 단건 색인(`ProductIndexService` — 실패해도 저장은 성공, 다음 sync 로 복구)까지가 기본 브랜치에 있다. 관련도 순서 보존 · `search_after` · 아웃박스 기반 색인 큐(R-C3)는 아직 기본 브랜치에 없다 — 검색 전체를 ES 로 옮기는 로드맵(R-C1 ~ R-C4)은 ES 로드맵 브랜치 에만 있다(그 브랜치의 docs/07 §5 — 이 브랜치의 [docs/07](07-catalog-search-improvements.ko.md) 은 R-C1 ~ R-C6 설계안까지, 합칠지는 판단 대기).

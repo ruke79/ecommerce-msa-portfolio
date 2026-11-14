@@ -147,7 +147,7 @@ footer p { max-width: none; }
 <div class="premise">
   <h3>読む前に — この構成案の前提</h3>
   <ul>
-    <li><b>リポジトリには SLO と目標トラフィックがありません。</b>以下の仕様はリポジトリの実測値から推定した出発点で、実機で測り直して調整する必要があります。</li>
+    <li><b>SLO · スループット目標は 2026-11-14 に決めました(<a href="91-slo-and-capacity.md">docs/91</a> — SLO 四つ、段階 2 の終わりに毎秒 1,000 · 段階 3 の終わりに 5,000)。</b>これを書いたときはなかったので、以下の仕様はリポジトリの実測値から推定した出発点で、実機で測り直して調整する必要があります。</li>
     <li><b>実測値は デスクトップ一台の上の VM が CPU を分け合う実習クラスタで得たものです。</b>リポジトリの文書(docs/83)も絶対値として使わないよう書いています。</li>
     <li><b>リポジトリの運用判断は PostgreSQL · MongoDB をマネージドに任せること</b>です(docs/23)。自社データセンターにはマネージドがないので、DB の冗長化を自前で行う必要があります。これが今と最も大きく変わる点です。</li>
   </ul>
@@ -222,7 +222,7 @@ footer p { max-width: none; }
         <tbody>
           <tr><td class="role">容量</td><td>商品 2,108B · 注文約 1,100B · ユーザー約 1,012B。商品 2,000 万 ≈ 39GiB(投入中は WAL の余裕 59GiB が必要)、1 億 ≈ 196GiB。<span class="src">docs/19 · docs/83 · docs/79</span></td><td>PG 用の NVMe 2×1.92TB RAID1 なら 1 億商品でも余裕があります。</td></tr>
           <tr><td class="role">メモリ</td><td>本番(商品 200 万)でフィルターの count 一回がランダムブロック読み 11 万回、42.9 秒。その件数数えは <code>d837605d7902</code> でなくしましたが、まれな条件は今もカテゴリを走査します。<span class="src">docs/83 §2.8 · docs/85 §8</span></td><td>作業集合が RAM に収まる必要があります。PG に 64GB 以上を与えます。</td></tr>
-          <tr><td class="role">接続</td><td>DB を使うサービス 9 個(catalog はデータソース 2 個)× プール 5 × HPA 最大 3 → 最悪約 140。実習の PG は <code>max_connections=300</code>。負荷測定で接続待ちは CPU 不足の症状でした — まずプールを増やすことはしません。<span class="src">docs/83</span></td><td>プーラーを使うならトランザクションモードは禁止です(<code>ops/25</code> の警告)。HPA の最大を上げたらこの計算からやり直します。</td></tr>
+          <tr><td class="role">接続</td><td>DB を使うサービス 9 個(catalog はデータソース 2 個)× プール 5 × HPA 最大 3 → 最悪約 150(chat の HPA 1 〜 3 を含む、2026-11-01 から — それ以前は 140)。実習の PG は <code>max_connections=300</code>。負荷測定で接続待ちは CPU 不足の症状でした — まずプールを増やすことはしません。<span class="src">docs/83</span></td><td>プーラーを使うならトランザクションモードは禁止です(<code>ops/25</code> の警告)。HPA の最大を上げたらこの計算からやり直します。</td></tr>
           <tr><td class="role">ディスクの分離</td><td>PG と Kafka はどちらも fsync が多いです。</td><td>同じノードでも NVMe の組は分けます。</td></tr>
           <tr><td class="role">k8s の外に置く</td><td><code>external</code> オーバーレイが既にあり、ConfigMap のエンドポイントを変えるだけです。コードはそのままです。<span class="src">docs/32 · k8s-overlays/external</span></td><td>k3s のアップグレードやノード障害がデータに及ばず、VLAN のファイアウォールでアクセスを強制できます。</td></tr>
           <tr><td class="role">バックアップ</td><td>DB 5.6GB → <code>base.tar.gz</code> 821MB(約 15%)、復元 1 分 52 秒。WAL アーカイブは今は同じボリュームに溜まります。<span class="src">docs/22 · ops/29</span></td><td>pgBackRest か WAL-G でバックアップサーバーへ WAL を送り続けます。お金が絡むデータの RPO 5 分の目標のためです。</td></tr>

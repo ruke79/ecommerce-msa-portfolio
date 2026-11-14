@@ -2,6 +2,8 @@
 
 [日本語](73-order-address-expand-contract.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 둘 다 운영에 들어갔다. 다만 R2 는 이 문서의 V26 이 아니라 order `V29__contract_order_address_order_id_tax_price.sql` 로 나갔다.** R1(V25)은 2026-10-10 `b7c5053a45e8`(배포 후 order 25, [docs/72](72-model-refactor-deploy-runbook.ko.md)). V26 번호는 그 사이 주문 생성 멱등 키(`V26__order_create_key.sql`)가 썼고, contract 브랜치는 합치지 않았다. contract 는 2026-10-31 V29(두 `DROP COLUMN` 뿐 — §5-2 의 `DO` 블록 가드는 없다)로 커밋, 2026-11-03 `7ef62043a98f` 로 적용(order 29 · 열 0, [docs/85 §8-2](85-release-deploy-runbook.ko.md)). 시험은 `OrderAddressContractMigrationTest` 대신 `ContractColumnsMigrationTest`(컨테이너, 1건). §5 · §6 의 R2 는 그때의 계획으로 둔다.
+>
 > **상태(2026-10-04)** — R1(V25, expand)은 모델 리팩토링 2차와 함께 운영 배포 대기([docs/72](72-model-refactor-deploy-runbook.ko.md)).
 > R2(V26, contract)는 별도 브랜치에 준비돼 있고 CI 컨테이너 테스트를 통과했다 — R1 이 안정된 뒤 기본 브랜치에 합친다.
 > 무엇을 왜 고쳤는지는 [docs/62 §18](62-engineering-casebook.ko.md#18-컴파일되고-테스트도-통과하는데-데이터가-틀렸다--모델-계층-점검),
@@ -174,5 +176,5 @@ Spring 없이 Flyway 만, 실제 PostgreSQL(Testcontainers)에서. 테스트마�
 
 ## 8. 남은 것
 
-- R1 배포와 안정 확인 → contract 브랜치를 기본 브랜치 최신 위로 rebase → 기본 브랜치에 합친다 → R2 배포.
-- R2 배포 후 남은 일 목록에서 "다음 릴리스(contract)" 를 지운다.
+- ~~R1 배포와 안정 확인 → contract 브랜치를 기본 브랜치 최신 위로 rebase → 기본 브랜치에 합친다 → R2 배포.~~ → ✅ R1 2026-10-10, R2 는 V29 로 2026-11-03 적용(위 상태 배너 · [docs/85 §8-2](85-release-deploy-runbook.ko.md)).
+- ~~R2 배포 후 남은 일 목록에서 "다음 릴리스(contract)" 를 지운다.~~ → ✅

@@ -2,7 +2,23 @@
 
 [日本語](37-transaction-boundary-audit.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** ① 과 #5 는 적용했습니다. `CartService.saveCart` 와 `TrackingPoller.poll` 은 남아 있습니다.
+> 🕰️ **상태(2026-11-14) — 점검 당시의 기록. 🔴 여섯은 모두 고쳤습니다.** 본문의 file:line · "아직 하지 않음" 은 그때의 글로 둡니다. 지금은 아래 표와 [docs/62 §21](62-engineering-casebook.ko.md)(`@Transactional` 정리, B-108)을 봅니다.
+
+| 그때(이 문서) | 지금(2026-11-14) | 어디 |
+|---|---|---|
+| ① Feign 타임아웃이 읽히지 않음 | `spring.cloud.openfeign.client.config.default` 3초 / 5초, 옛 접두사는 가드 B-37 | `application-common.yml` · `FeignTimeoutBindingTest` |
+| #1 `getOrders` 가 트랜잭션 안에서 색상 Feign N×M | 목록 · 상세 메서드는 `NOT_SUPPORTED` — 읽기는 `OrderDataService.load*` 의 짧은 트랜잭션, 색상(catalog)은 그 밖. order 는 `open-in-view: false`(B-87) | `OrderService` |
+| #2 `saveCart` 가 DELETE 잠금을 쥔 채 상품마다 Feign | `NOT_SUPPORTED` — catalog 를 먼저 부르고 저장만 짧은 `inTransaction`. 담기 · 수량 · 체크아웃도 같은 모양(B-87) | `CartService` |
+| #3 · #10 `ReviewService` 의 S3 · 평점 Feign | 외부 호출(구매 확인 · S3 · 평점)은 트랜잭션 밖, DB 구간만 `TransactionTemplate` | `ReviewService` |
+| #4 `TrackingPoller.poll` — 최악 200초 잠금 | 짧은 트랜잭션으로 선점 + 리스(`delivery.polling.lease-minutes`, 10분) → 택배사 호출은 트랜잭션 밖 → 상자마다 반영(D-M1 · M2) | `TrackingPoller` |
+| #5 `createOrder` | ✅ 이 문서 때 적용(`OrderTransactionBoundaryTest`) | — |
+| #6 `VerificationService.issue` | 트랜잭션 없음 — 코드 저장은 리포지토리의 짧은 트랜잭션, SMS 는 커넥션 없이(N-M4) | `VerificationService` |
+| #14 coupon `applyCoupon` · 빈 catch | `NOT_SUPPORTED`(CP2), `KafkaException` 은 경고 로그로 남긴다 | `CouponService` · `CouponUseProducer` |
+| #15 delivery 는 커밋 전 발행 | 상태 이벤트는 커밋 뒤 발행(`afterCommit`) · 실패는 경보 `DeliveryStatusPublishFailed`(D-M4). 아웃박스 테이블은 여전히 없다 | `DeliveryStatusPublisher` |
+| §4 user 아웃박스는 빈 인터페이스 · cart `outbox/*` 는 죽은 코드 | user 는 `UserOutboxScheduler` · `UserOutboxHelper` 로 살렸다(가입 · 정보 변경 · 탈퇴 이벤트). cart 의 `outbox/*` 는 지웠다 | `user-service/.../message/` |
+| §4 · §6 ⑤ `private @Transactional` 이 무효 | 금지 — `TransactionalProxyGuardTest`(B-108, private · static · final · `@PostConstruct` · 자기 호출) | docs/62 §21 |
+| §4 `REQUIRES_NEW` · `timeout=` 0건 | `REQUIRES_NEW` 는 지금도 0건(쓰지 않는 이유가 `UserOutboxHelper` · `NotificationService` 주석에 있다). 트랜잭션 시간 상한은 catalog 둘뿐 — 필터 메뉴(`FacetQueries`, 600초) · 검색(`SearchBulkhead`, 5초). §6 ④ 의 PayPal `timeout = 20` 은 넣지 않았다 | — |
+| 남은 것 | #21 chat `sendMessage` 등(클래스 레벨 `@Transactional` 아래에서 Mongo · Kafka 만), #16 catalog `addProduct` 의 S3 업로드(클래스 레벨 트랜잭션 안) | `ChatService` · `ProductService` |
 
 > 점검 질문: DB 트랜잭션 안에서 외부 API 를 호출하는 곳이 있는가? 전체 스프링 모듈을 대상으로 점검했다.
 >

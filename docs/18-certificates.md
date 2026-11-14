@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](18-certificates.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** クライアント証明書は現在サービスごとです（CN = サービス名、`k8s/96`、cert-manager による自動更新 — [docs/57 §16・§18](57-remaining-priorities.md)）。サーバー証明書 `tls-keystore` はまだ共有です。
+> 🕰️ **状態（2026-11-14）— 2026-07-28 の記録。** クライアント証明書は現在サービスごとです（CN = サービス名、手動発行の `ops/38` または cert-manager の `ops/39` · `k8s/96` による自動更新 — [docs/57 §16・§18](57-remaining-priorities.md)）。サーバー証明書 `tls-keystore` はまだ共有です。残りは §7 の 🕰️。
 
 > 作成日: 2026-07-28
 > 関連: [ops/07-issue-certificates.sh](../ops/07-issue-certificates.sh) · [バックアップ/DR](15-backup-and-dr.md) · [シークレット/HA](13-secrets-dbha-es-search.md)
@@ -246,3 +246,9 @@ sudo ln -sf "$PWD/certs/renew-deploy-hook.sh" \
 - **個別のサービス証明書** — 今はすべてのサービスが SAN の多い**1 つの**証明書を共有している。
   本番ではサービスごとに別のアイデンティティを与えるほうがよい（`SANS=` でサービス別の発行が可能）。サービス間 mTLS（docs/57 §16）がこの証明書を
   クライアント証明書として使い始めたので、サービスごとに分ければ `internal-auth.allowed-subjects` で「どのサービスか」まで区別できる。
+
+> 🕰️ 今（2026-11-14）:
+> - ~~個別のサービス証明書~~ → ✅ クライアントのアイデンティティはサービスごとの Secret `tls-id-<サービス>`（`ops/38-issue-service-identities.sh`、cert-manager なら `ops/39-cert-manager.sh` ＋ `k8s/96-service-identities.yaml`）。アイデンティティヘッダーの判定は本番で enforce（2026-10-26、docs/57 §16）。サーバー証明書 `tls-keystore` は依然として共有。
+> - ~~証明書ローテーションの自動化（k8s）~~ → ✅ `k8s/96` の `Certificate` — 寿命 90 日 · 30 日前に新規発行 · Secret が変わると Reloader がローリング再起動（docs/57 §18）。
+> - ストアのパスワードは JVM オプションではなく `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD` 環境変数（B-83）、本番の値は 2026-10-25 に `ops/59-rotate-store-password.sh` で交換した（鍵 · 証明書はそのまま）。⚠️ `ops/07` で再発行すると CA が変わり、サービスのアイデンティティ · PostgreSQL の証明書までやり直しになる。
+> - HSM/KMS 連携はそのまま残っている。

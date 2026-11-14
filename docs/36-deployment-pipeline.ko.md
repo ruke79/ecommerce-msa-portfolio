@@ -2,7 +2,7 @@
 
 [日本語](36-deployment-pipeline.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** B-54 가드(ROLLBACK-UNSAFE)와 `deploy-oci.yml` 이 들어와 §5.2 와 "배포 스테이지가 없다" 는 해소됐습니다. 2026-10-05 부터 배포는 수동 실행으로만 시작됩니다(실행 = 승인, §6 · B-75).
+> 🕰️ **상태(2026-11-14) — §1 ~ §5 는 2026-08 파이프라인 개편의 기록입니다.** B-54 가드(ROLLBACK-UNSAFE)와 `deploy-oci.yml` 이 들어와 §5.2 와 "배포 스테이지가 없다" 는 해소됐습니다. 2026-10-05 부터 배포는 수동 실행으로만 시작됩니다(실행 = 승인, §6 · B-75). 지금: 운영 배포 러너(`oci-ampere`)는 아직 등록하지 않아 Actions → deploy 는 배포 잡에서 멈춘다 — 실제 배포는 인스턴스에서 대상 커밋을 `git switch --detach` 한 뒤 `./ops/28-deploy.sh local <SHA12>`(운영 버전 `7ef62043a98f`, 2026-11-03 — [docs/85](85-release-deploy-runbook.ko.md)). §4 의 "아직 확인하지 못했다" 둘은 그 뒤 확인됐다. 이미지는 지금 14개(서비스 13 + frontend).
 
 > 근거 문헌: Jez Humble · David Farley, *Continuous Delivery: Reliable Software Releases
 > through Build, Test, and Deployment Automation* (Addison-Wesley, 2010).
@@ -359,6 +359,8 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<서비스>/settings
   `rollout status`, port-forward 폴백, 자동 복귀는 **코드 경로로만** 검증됐다.
 - 첫 배포는 반드시 `--dry-run` 으로 무엇이 바뀌는지 먼저 볼 것.
 
+> 🕰️ 그 뒤 둘 다 확인됐다 — §3.6 을 풀고 2026-10-09 #543 이 발행된 이미지로 인수 스테이지를 지나 릴리스 후보까지 초록(CI 러너), 클러스터 배포 · 스모크 게이트 · 자동 복귀는 운영(OCI)에서 `ops/28` 로 여러 번 돌았다(2026-10-24 첫 시도는 스모크 실패로 자동 복귀 — [docs/85 §7-1](85-release-deploy-runbook.ko.md)).
+
 매니페스트는 실제로 쓰는 도구로 검증해야 한다는 것은 이 저장소에서 이미 비싸게 배웠다
 (docs/33 §13 — PyYAML 은 중복 키를 허용하지만 kustomize 는 거부한다). 그래서 위
 표의 검증은 전부 실제 도구로 했다.
@@ -376,6 +378,7 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<서비스>/settings
 > "It is usually not possible to [use blue-green with databases]"
 
 관리형 PostgreSQL 한 대(Neon 무료 티어)를 공유하므로 DB 를 두 벌로 나눌 수 없다.
+(🕰️ 지금 운영 PostgreSQL 은 Neon 이 아니라 클러스터 안 PG 한 대다 — 두 벌로 나눌 수 없는 것은 같다.)
 카나리는 서비스 수(12개)와 노드 수(1대)를 생각하면 지금 규모에서 과하다.
 **규모가 커지기 전에 도입할 이유는 없지만, 필요해지는 시점을 놓치면 늦다.**
 
@@ -395,8 +398,8 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<서비스>/settings
 하지만 그것을 **강제하는 장치가 없다.** 파괴적 마이그레이션이 하나 들어오는 순간
 `--rollback` 이 조용히 위험해진다. 다음 작업으로 적절한 것:
 
-- 마이그레이션 리뷰 규칙(DROP/RENAME/NOT NULL 추가 금지)을 CI 검사로
-- 되돌릴 수 없는 마이그레이션이 포함된 버전은 저널에 표시해 `--rollback` 이 경고
+- ~~마이그레이션 리뷰 규칙(DROP/RENAME/NOT NULL 추가 금지)을 CI 검사로~~ → ✅ 가드 B-54 — 파괴적 마이그레이션은 파일에 `-- ROLLBACK-UNSAFE: <이유와 대비책>` 이 있어야 한다(`ConfigurationGuardrailTest`)
+- ~~되돌릴 수 없는 마이그레이션이 포함된 버전은 저널에 표시해 `--rollback` 이 경고~~ → ✅ `ops/28` 이 배포 범위의 ROLLBACK-UNSAFE 를 찾아 그 배포의 자동 복귀를 끄고, `--rollback` 은 `FORCE_UNSAFE_ROLLBACK=1` 일 때만 간다(열 삭제는 expand → contract 두 릴리스 — [docs/85 §8-2](85-release-deploy-runbook.ko.md))
 
 ### 5.3 게이트웨이 토큰 호환성
 
@@ -439,6 +442,8 @@ github.com/users/<OWNER>/packages/container/ecommerce-msa%2F<서비스>/settings
 
 ## 6. CD — 승인 후 자동 배포 (OCI Ampere, 셀프호스티드 러너)
 
+> 🕰️ 제목의 "승인 후 자동 배포" 는 처음 설계다 — 2026-10-05 부터 자동 트리거 없이 수동 실행만(아래 🔒 · B-75). 그리고 2026-11-14 지금 운영 배포 러너(`oci-ampere`)는 등록하지 않았다(ops/40 대기): gate 는 CI 러너에서 통과해도 deploy 잡이 러너를 기다리다 멈춘다. 그동안은 인스턴스에서 손으로 — `git switch --detach <SHA>` → `./ops/28-deploy.sh local <SHA12>`(같은 스크립트 · 같은 이력).
+
 지금 막고 있던 것은 도구가 아니라 **네트워크 정책**이었다. OCI 인스턴스는 인바운드가 제한된 관리 경로(SSH) 하나뿐이다.
 선택지는 셋이었고, 셋 다 `ops/28-deploy.sh` 를 그대로 쓴다 — 바뀌는 것은 "누가 그 스크립트를 실행하는가"뿐이다.
 
@@ -471,8 +476,8 @@ push(기본 브랜치) ─> deployment pipeline(build.yml) 초록(릴리스 후�
 
 1. **GHCR 패키지 권한** — 패키지마다 Settings → Manage Actions access → 이 저장소 **Write**. (PAT 로 먼저 올린 패키지는 저장소에
    연결돼 있지 않아 커밋 스테이지의 이미지 발행이 `permission_denied: read_package` 로 실패한다.)
-2. **저장소 Variables**(Settings → Secrets and variables → Actions → Variables) — `ops/frontend.env` 의 `REACT_APP_*` 일곱 개(공개값).
-   비어 있으면 gate 가 배포를 멈춘다(CI 가 만든 프론트 이미지가 깨진다). 필요하면 `DEPLOY_REPO_DIR`(기본 `/home/ubuntu/ecommerce-msa`)·
+2. **저장소 Variables**(Settings → Secrets and variables → Actions → Variables) — `ops/frontend.env` 의 `REACT_APP_*` 여덟 개(공개값 — 2026-10-24 `REACT_APP_PORTONE_STORE_EMAIL` 이 더해졌다).
+   `REACT_APP_API_URL` · `REACT_APP_PAYPAL_CLIENT_ID` 가 비어 있으면 gate 가 배포를 멈춘다(CI 가 만든 프론트 이미지가 깨진다). 필요하면 `DEPLOY_REPO_DIR`(기본 `/home/ubuntu/ecommerce-msa`)·
    `DEPLOY_ENV`(기본 `local`).
 3. **Environment** — 따로 만들 것이 없다. `production` 은 첫 실행이 만들고 배포 이력용이다. 비공개 저장소는 요금제에 따라
    Settings 에 Environments 메뉴가 보이지 않고, Required reviewers 는 Enterprise 에서만 된다 — 승인은 수동 실행으로 대신한다.
@@ -493,6 +498,8 @@ AWS 인스턴스 두 대에 docker compose 로 올리던 구성용이다(설정 
 ## 7. 실전 사용법
 
 ### 평소 배포
+
+> 🕰️ 아래 예시의 환경 인자 `prod` 는 커밋된 오버레이 이름이다. 운영(OCI)의 환경은 커밋되지 않는 `local`(← external ← prod)이라 `./ops/28-deploy.sh local <버전>` 이다(deploy-oci.yml 의 `DEPLOY_ENV` 기본값도 `local`). HPA 는 `prod` 에서만 적용된다(그 밖은 `APPLY_HPA=1`).
 
 ```bash
 # 1. 파이프라인이 초록인지 확인하고 릴리스 후보 버전을 얻는다

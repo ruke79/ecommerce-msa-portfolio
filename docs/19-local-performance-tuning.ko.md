@@ -2,7 +2,7 @@
 
 [日本語](19-local-performance-tuning.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 수치만 낡음.** PostgreSQL 데이터소스는 지금 10개입니다(notification · delivery 추가). 풀 총합은 B-32 가 다시 셉니다.
+> 🕰️ **상태(2026-11-14) — 2026-07-28 의 기록(§5.1 · §5.2 는 2026-10-01).** PostgreSQL 데이터소스는 지금 10개입니다(notification · delivery 추가). 풀 총합은 B-32 가 다시 셉니다. 누수 감지 기본값 · 검색 엔진 전환 · §6 의 두 인덱스는 이후 바뀌었습니다(각 절의 🕰️). 큰 데이터에서의 부하 측정은 [docs/83](83-load-test.ko.md).
 
 > 작성일: 2026-07-28
 > 관련: [테스트 전략](17-testing.ko.md) · [파티셔닝](09-postgresql-partitioning-sharding.ko.md) · [ops/14](../ops/14-load-test.sh)
@@ -124,6 +124,8 @@ max_connections = 200
 
 `ConfigurationGuardrailTest` 의 B-32 가 `데이터소스 × 풀 × 레플리카 ≤ 200` 을 빌드마다 검사한다.
 데이터소스를 추가하거나 풀을 키우면 총합이 자동으로 다시 계산된다.
+
+> 🕰️ 지금: 누수 감지는 기본 **끔** — `leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}`(B-104 — 켜 두면 빌릴 때마다 예외 하나, catalog CPU 3.9%; 의심될 때만 그 서비스에 잠깐 20000). 나머지 값(풀 5 · 쉬는 연결 2 · 대기 5초 · 수명 20분)은 그대로다. catalog 의 직접 만든 두 데이터소스는 2026-10-19 까지 `hikari.*` 를 읽지 않아 Hikari 기본값이었다(`CatalogDataSourcePools`).
 
 ## 4. 부하 하네스 — `ops/14-load-test.sh`
 
@@ -292,6 +294,8 @@ kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins  
 
 비교할 때는 `SEARCH_ENGINE` 만 바꿔 같은 데이터로 잰다. 생성기는 DB 에만 넣으므로 ES 는 **넣은 뒤 재색인해야** 보인다.
 
+> 🕰️ 지금: `SEARCH_ENGINE=es` 는 "ES 가 이 배포에 있다" 만 정하고, 검색마다의 엔진은 기능 플래그 `catalog.search-engine` 의 비율(`k8s/15-feature-flags.yaml` + `ops/28 --config-only`, 재시작 없음)로 고른다([docs/74](74-feature-flags.ko.md)). 운영(OCI)은 ES 가 없다.
+
 ## 6. 실측 — 5만 상품에서의 실행계획
 
 적재 후 `EXPLAIN (ANALYZE)` 로 잰 결과. 이제 **인덱스 선택도**를 실제로 볼 수 있다.
@@ -321,12 +325,16 @@ B-tree 인덱스로는 해결되지 않는다. 선택지는 셋:
 
 **이 측정 없이는 "언젠가 느려질 것"이라는 추측이었다.** 이제 숫자가 있다.
 
+> 🕰️ 지금: 2번을 했다 — catalog V21 이 `pg_trgm` 확장 + 살아 있는 상품의 이름 GIN 을, V23 이 NFKC 비교용 `product.search_key(name)` 의 트라이그램 GIN 을 더했고(이름 검색은 양쪽을 `search_key` 로 비교), V24 가 쓰이지 않게 된 V21 의 `idx_product_name_trgm` 을 지웠다(운영 적용 2026-11-03).
+
 ### 6.2 카테고리 조인의 읽기 증폭
 
 커서 페이지네이션이 `product_id` 로 먼저 정렬한 뒤 카테고리로 거르므로, 21건을 돌려주려고
 120행을 읽는다(5.7배). 카테고리가 5개라 평균 5배인 셈 — 산술과 맞는다. 카테고리가 늘거나
 희소한 카테고리를 조회하면 증폭이 커진다. `(category_id, product_id DESC)` 복합 인덱스가
 정석 해법이나, 실제 트래픽의 카테고리 분포를 보고 결정할 일이라 여기서는 **측정만** 해 둔다.
+
+> 🕰️ 지금: catalog V20 이 `product(category_id, product_id)` 인덱스를, V21 이 살아 있는 상품만의 카테고리 부분 인덱스를 더했다(카테고리 개수 세기가 `idx_product` 를 통째로 훑던 것, docs/83 §2.8).
 
 ## 7. 아직 측정하지 않은 것 (정직하게)
 

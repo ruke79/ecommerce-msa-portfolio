@@ -2,7 +2,7 @@
 
 [日本語](21-horizontal-scaling.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** §5 의 결제 리스너 `Authorization` 헤더 요구는 없어졌습니다(사가 메시지에서 토큰을 뺐습니다). notification · delivery · saga-projection 도 `replicas: 2` 입니다.
+> 🕰️ **상태(2026-11-14) — 일부 낡음.** §5 의 결제 리스너 `Authorization` 헤더 요구는 없어졌습니다(사가 메시지에서 토큰을 뺐습니다). notification · delivery · saga-projection 도 `replicas: 2` 입니다(§6 의 🕰️). chat 은 2026-11-01 Redis 팬아웃으로 늘릴 수 있게 됐고(§2-1), 운영은 chat 1개 그대로입니다.
 
 > 배경: [docs/00 §10](00-before-after.ko.md) 이 "전 서비스 `replicas: 1` — 재시작·노드 교체마다
 > 그대로 다운타임"을 운영 준비의 걸림돌로 꼽았다. 그런데 숫자를 2로 바꾸는 것이 작업의 전부가
@@ -178,6 +178,8 @@ if (authorizationHeader != null) {
 
 커넥션 총합은 가드레일 B-32 가 계속 검증한다 — HPA 최대치가 3 그대로이므로 산술은 변하지 않았다.
 
+> 🕰️ 지금(2026-11-14): 위 표에 더해 notification · delivery 는 replicas 2 · HPA min 2 / max 3, saga-projection 은 replicas 2(HPA 없음), config-server 는 1(`k8s/30` ~ `k8s/49` · `k8s/70`). 운영(`ops/28 local`)은 `k8s/70` 을 적용하지 않는다 — HPA 는 `prod` 이나 `APPLY_HPA=1` 때만.
+
 ## 7. 남은 로드맵
 
 | 항목 | 상태 |
@@ -186,3 +188,5 @@ if (authorizationHeader != null) {
 | chat 브로커 릴레이 (그 뒤 chat 확장) | ✅ 2026-11-01 Redis 팬아웃(§2-1) |
 | peer-aware Eureka (또는 k8s 네이티브 디스커버리로 이전) | 🟡 |
 | 아웃박스 발행 지연·재시도 지표 | 🟡 현재는 로그만 |
+
+> 🕰️ 지금(2026-11-14): 아웃박스는 로그만이 아니다 — 영구 오류 행 계수기 `order_outbox_failed_total` · `pay_outbox_failed_total`(경보 `OrderOutboxRowFailed` · `PayOutboxRowFailed`)와 파티션 지표 · 경보(`outbox-health` 그룹)가 있다. 발행 **지연** 지표는 아직 없다.

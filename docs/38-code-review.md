@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](38-code-review.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** 点検当時の記録なので状態欄がありません。相当数がその後修正されました。最新のオープン項目は [docs/54 §10](54-improvements-vs-practice.md)、事例ごとの限界は [docs/62](62-engineering-casebook.md)。
+> 🕰️ **状態（2026-11-14）— 点検当時の記録。** 状態欄がなく、file:line はその時のものです。§1 の 🔴 はその後ほとんど直りました — 注文作成の cart 呼び出し（1.1、`CartServiceClient`）· 金額はサーバーが決める（1.2）· 割引式（1.5）· 他人のデータに届く経路（1.6 — プロフィール照会は `InternalCallGuard`、配送先は `user_id` 条件、クーポン · カートは `User-Id`、評点は 0 〜 5）· 認証番号のログ（1.7）· `delivery-status` のコンシューマー（1.8 — order `DeliveryStatusKafkaListener` · notification）· サイズ ↔ SKU（1.9）· 決済後の画面（1.10 — `useOrderSettling`）· カテゴリ作成 · `verify-2fa-login` の削除 · 決済済み注文の再決済の拒否（1.11）。最新のオープン項目は [docs/54 §10](54-improvements-vs-practice.md)、事例ごとの限界は [docs/62](62-engineering-casebook.md)。
 
 > 範囲: バックエンド全体と CDC 実装のコードレビュー。フロントエンドも楽観的更新とロールバックが抜けていて
 > 直すところが多いと見て、あわせて点検した。

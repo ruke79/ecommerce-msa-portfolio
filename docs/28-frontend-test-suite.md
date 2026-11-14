@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](28-frontend-test-suite.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** CRA を取り除いたので jest は直接依存です。テストは現在 930 件です。
+> 🕰️ **状態（2026-11-14）— 過去の記録。** CRA を取り除いたので jest(27.5.1) · babel-jest · jest-environment-jsdom は `package.json` の直接の devDependency です。テストは現在 1,076 件(README)で、CI のコミットステージで `npm test -- --ci` として実行されます。§6 の残りの作業のうち `AddShipping` · `LoginInput` は終わりました(§6 の 🕰️)。
 
 docs/26 の最後の節で「フロントエンドのテストが一つもない」ことを最優先課題に挙げた。このドキュメントは
 その作業の結果である。
@@ -122,6 +122,8 @@ const [field, meta] = useField(props);
 > 残っている箇所: `components/checkout/AddShipping.jsx`（入力 8 個）、`CreateProduct`、`CreateCategory`、
 > `CreateSubCategory`、`Summary`。同じ形だが state の構造がより絡み合っているため、今回の範囲では
 > 手を付けなかった。**AddShipping は配送先住所を受け取る画面なので優先度が高い** — §6 に残した。
+>
+> 🕰️ 2026-11-14: `AddShipping` は直した(§6 の 🕰️)。管理者フォーム 3 つはまだこの形だ。
 
 ---
 
@@ -202,6 +204,12 @@ Header → AuthContext → axios → ProductPage → Swiper まですべて引�
    今は「壊れていたもの ＋ 壊れたら痛いもの」を基準に増やしていくほうがよい。
 5. **E2E（Playwright）** — このドキュメントのテストはすべてコンポーネント単位だ。ゲートウェイを通る
    本物のフローはまだ検証されていない（docs/27 §検証範囲を参照）。
+
+> 🕰️ 2026-11-14:
+> - ~~1. `AddShipping.jsx`~~ → ✅ フォームの値の持ち主は Formik ひとつ — `enableReinitialize` なしで、編集する配送先が変わると `key` で再マウントする(`AddShipping.jsx`、`AddShipping.test.jsx`)。
+> - ~~3. `LoginInput` 自体~~ → ✅ 展開の順序を `{...props} {...field}` に逆にした — 呼び出し側の `onChange` が Formik を上書きできない。管理者フォームが使う `AdminInput` も同じ順序だ。
+> - 2. 管理者フォーム 3 種は今も開いている — `CreateProduct` · `CreateCategory` · `CreateSubCategory` はまだ `enableReinitialize` + ページの state を `initialValues` に渡している。`AdminInput` の順序が変わった今は呼び出し側の `onChange`(ページ state の更新)が呼ばれないので、送信時にページ state を読むこの 3 つは入力した値を送れない可能性がある(コードを読んだ判断 — 実行での確認前)。
+> - 5. ブラウザの E2E(Playwright)はまだない。サービスを実際に起動したサガ全区間は CI の受け入れステージ(`:e2e-tests`、発行されたイメージ)が回す — 画面は通らない。
 
 ---
 

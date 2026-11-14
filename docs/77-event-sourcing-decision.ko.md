@@ -68,6 +68,8 @@ Kleppmann 식으로 말하면 우리는 "로그를 진실로 삼는" 대신 "DB 
 
 `order-service/src/main` 에서 센 것:
 
+> 🕰️ 2026-10-07 의 셈이다. 지금(2026-11-14) `Order` 의 필드는 40(`createKey` · `paymentAttempt` · `paymentAttemptUntil` 이 2026-10-15 에 더해졌다 — order V26 · V27), `LocalDateTime` 은 `paymentAttemptUntil` 을 더해 10. 결정은 그대로다.
+
 | 항목 | 수 | 뜻 |
 |---|---|---|
 | `Order` 의 필드 | **37**(그중 `LocalDateTime` 9 — paid · delivered · completed · depositDeadline · stockHoldUntil · refunded · returnReceived · shortageResolved · stockRestored) | 상태 표가 이력 노릇을 하려고 시각 컬럼을 늘려 온 모양. 이것은 이벤트 소싱의 **신호**이기도 하다(§5) |
@@ -75,7 +77,7 @@ Kleppmann 식으로 말하면 우리는 "로그를 진실로 삼는" 대신 "DB 
 | `Order` 를 다루는 클래스 | **23** | 사가 · 결제 확인 · 환불 · 반품 · 무통장 · 가상계좌 · 배송 · 확정 · 재고 … |
 | `OrderRepository` 조회 메서드 | **21**(`@Query` 8) | 전부 프로젝션 위로 옮겨야 한다 — 이벤트 저장소는 기본 키 조회뿐[^rich-drawbacks] |
 | 주문을 읽는 GET | **8**(내부 3 — 구매 통계 · 배송지 · 구매 여부) | 같은 이유 |
-| `@Version` | **0** | 지금은 낙관적 잠금이 없다. 이벤트 소싱은 (집합체, 버전) 유니크로 이것을 강제한다[^rich-optimistic] — 가져가고 싶은 장점이지만, 별도로도 할 수 있다 |
+| `@Version` | **0** | 지금은 낙관적 잠금이 없다. 이벤트 소싱은 (집합체, 버전) 유니크로 이것을 강제한다[^rich-optimistic] — 가져가고 싶은 장점이지만, 별도로도 할 수 있다. 🕰️ 정정(2026-11-14): 틀린 셈이었다 — `Order` 는 `BaseEntity` 를 상속하고 거기에 `@Version`(열 `version`)이 있다(그때의 `b7c5053a45e8` 에도). 낙관적 잠금은 이미 있다(`Payment` 도 같은 `BaseEntity`) |
 
 반면 `pay-service` 의 `Payment` 는 필드 11개에 `payment.set*` 호출이 **0** — 이미 사실상 불변이다. 이벤트 소싱이 필요한 쪽은 Order 뿐이고, Order 가 가장 비싸다.
 
@@ -195,7 +197,7 @@ final class Order {
 
 - **감사 · 규제** — 결제 · 환불 이력을 증빙으로 내야 할 때. 타임라인(docs/76)은 읽기 모델이라 증빙이 아니다(재생으로 다시 만들 수 있지만 원본은 `orders` 표의 현재 상태뿐).
 - **과거 시점 재구성** 요구 — "환불 당시 주문이 어떤 상태였나" 를 분쟁에서 묻기 시작할 때(§2-1 ④).
-- **시각 컬럼이 계속 는다** — 지금 9개. 상태 표가 이력 노릇을 하려는 압력이 더 커지면 그것이 Richardson 의 "전통적 영속화의 문제"[^rich-trouble] 가 임계에 왔다는 뜻이다.
+- **시각 컬럼이 계속 는다** — 지금 9개(🕰️ 2026-11-14 에는 10개 — §3-2 의 🕰️). 상태 표가 이력 노릇을 하려는 압력이 더 커지면 그것이 Richardson 의 "전통적 영속화의 문제"[^rich-trouble] 가 임계에 왔다는 뜻이다.
 - **같은 이벤트의 소비자가 셋 이상** — 알림 · 분석 · 정산이 각자 주문 이력을 원할 때. 지금은 saga-projection 하나다.
 - **운영 체급** — 멀티 노드(docs/71)와 복제된 Kafka 가 생겨 이벤트 저장소 · 발행 채널의 내구성을 따로 말할 수 있을 때.
 

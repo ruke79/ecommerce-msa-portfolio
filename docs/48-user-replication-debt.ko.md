@@ -71,6 +71,8 @@ public void publish(UserCreatedRequest req) {
 | **chat** | `chat_member` (id·email·nickname·image) | 이메일 → 회원, **닉네임을 화면에 표시** | 채팅 진입 실패 | `createMissingMember` 로 즉석 생성 — ~~닉네임을 이메일 앞부분으로 추측~~ 임시 닉네임, 가입 이벤트가 채운다(§6-⑤) |
 | **coupon** | 없음 | — | **가입 쿠폰이 영영 안 나간다** | ❌ 대책 없음 |
 
+> 🕰️ 지금(2026-11-14) "지금 상태" 열: order 는 복제 · 백필을 모두 지웠다(§6-① — 테이블도 V16 에서 삭제), coupon 은 매일 대사 배치가 최근 7일의 가입 이벤트를 다시 보낸다(§6-③ `UserReplicationReconciler`).
+
 **coupon 이 제일 나쁘다.** order·chat 은 "행이 없네" 를 읽기 시점에 알아차릴 수 있지만,
 쿠폰은 **못 받았다는 사실 자체를 나중에 알 방법이 없다.** 읽기 폴백으로 고칠 수 없는
 종류의 누락이다 — 대사(reconciliation) 배치 말고는 답이 없다.
@@ -422,7 +424,7 @@ user-service `/user/segments` 의 `email` 파라미터를 지운다 → ✅ 지�
 
 ## 7. 스키마 지뢰 (같이 정리할 것)
 
-- **`uk_customer_nickname UNIQUE`, `uk_customer_username UNIQUE`** (`orders.customer`).
+- ✅ **`uk_customer_nickname UNIQUE`, `uk_customer_username UNIQUE`** (`orders.customer`) — 테이블째 없어졌다(order V16, §6 "전환 정리").
   **동명이인 두 명이면 두 번째 사용자의 복제가 실패한다.** 복제된 표시용 필드에 유니크
   제약을 거는 것은 원본의 제약을 복제본에 흉내 내는 것인데, 원본이 바뀌면 어긋난다.
 - ✅ **chat 의 닉네임 추측** — 고침(§6-⑤). `createMissingMember` 가 이메일 앞부분을 닉네임으로 썼고,

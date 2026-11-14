@@ -2,7 +2,7 @@
 
 [日本語](16-saga-e2e-and-observability-verification.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 경보 수신 채널 · 채팅 저장 · 배치 메타 스키마는 이후 해결됐습니다. 본문 끝의 "남은 것" 일부는 같은 문서 §4·§7 과 어긋납니다.
+> 🕰️ **상태(2026-11-14) — 2026-07-27 의 기록.** 경보 수신 채널(Discord, B-96) · 채팅 저장 · 배치 메타 스키마는 이후 해결됐습니다 — §6 표는 그때의 글이고 지금은 그 표 아래 🕰️ 를 봅니다. 추적은 Zipkin 에서 OpenTelemetry + Jaeger 로 바뀌었습니다([docs/63](63-opentelemetry.ko.md)).
 
 > 작성일: 2026-07-27
 > 배경: [docs/14](14-boot-test-findings.ko.md)까지는 "서비스가 뜬다"까지만 확인했고, **사가가 실제로 도는지**,
@@ -294,6 +294,8 @@ PostgreSQL → 배치 색인 → ES 인덱스 + alias(`product-alias`) → `EsPr
 | **Grafana 렌더링** | ⚠️ 부분 | 바이너리 배포 차단. 대시보드 질의 6개를 실제 Prometheus 에 실행해 대체 검증(§3.5). |
 | **Eureka 이름 충돌(B-22)** | ⚠️ 미확인 | Eureka 를 끄고 테스트했다. `spring.application.name` 이 전부 `common` 이었으므로 등록 충돌 가능성이 높으나 실측하지 않았다. |
 | **Spring Batch 메타 DB 소유권(B-25)** | ⚠️ 미해결 | 어느 DB 가 배치 메타를 가질지 결정 필요(§7). |
+
+> 🕰️ 지금(2026-11-14): 채팅 저장은 ✅ 소비자 측(`MessageConsumer`) 저장 + id upsert(§4 후속), Batch 메타는 ✅ productdb 의 `meta` 스키마(§7), B-22 는 ✅ 수정됐다. Grafana 는 대시보드 둘(`ecommerce-overview` · `tracing-red`)이 자동 등록된다. nori · kuromoji 는 클러스터 ES(`k8s/90-dev-infra.yaml`)가 플러그인을 설치하지만 **형태소 분석 품질은 여전히 미확인**이다(ES 검색 로드맵 — ES 로드맵 브랜치 — 의 남은 것).
 
 ## 7. 남은 결정 사항
 

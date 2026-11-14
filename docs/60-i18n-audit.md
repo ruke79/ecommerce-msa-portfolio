@@ -198,7 +198,7 @@ V2 `message`・`code`。国内 PG なのでたいてい韓国語で、こちら�
 - 共通の道具: `common.text.Nfkc`(`of` = NFKC + 前後の空白、`searchKey` = さらに連続空白を一つに)。画面は `util/searchKey.js`。
 - 認証 SMS の電話番号は libphonenumber がすでに全角数字を読む — そのまま。
 - 検索語の `%` · `_` は文字になった(以前は `%` 一つがすべての商品に一致した)。
-- 残り: ES の `japanese_analyzer` に `cjk_width` フィルター(インデックスの作り直しが要る — 本番に ES はない)、contract リリースで V21 の `idx_product_name_trgm`(`lower(name)`)を削除。
+- 残り: ES の `japanese_analyzer` に `cjk_width` フィルター(インデックスの作り直しが要る — 本番に ES はない)、~~contract リリースで V21 の `idx_product_name_trgm`(`lower(name)`)を削除~~ → ✅ catalog V24(`DROP INDEX CONCURRENTLY`、本番適用 2026-11-03 `7ef62043a98f`、[docs/85 §8-2](85-release-deploy-runbook.md))。
 - デプロイ前の確認(0 であること — 保存済みのメールが NFKC と違えば、そのアカウントは新しいログイン経路で見つからない): `select count(*) from users.users where email <> normalize(email, NFKC)`。
 
 テスト: `NfkcTest` · `NfkcInputsTest`(common)、`EmailNfkcTest`(user)、`SearchNameNfkcTest`(catalog、コンテナ — 全角 · 半角検索 · 原文の名前 · `%` · 式インデックスの使用)、`searchKey.test.js`。どれも NFKC を外すと失敗する。

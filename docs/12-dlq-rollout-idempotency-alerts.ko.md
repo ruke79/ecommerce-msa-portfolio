@@ -2,7 +2,17 @@
 
 [日本語](12-dlq-rollout-idempotency-alerts.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 경보는 지금 14종이고 수신 채널이 연결돼 있습니다([docs/22](22-alerting-and-backup-automation.ko.md)). order 는 `user-created` 구독을 끊었습니다([docs/48](48-user-replication-debt.ko.md)).
+> 🕰️ **상태(2026-11-14) — 2026-07-27 의 기록.** 본문은 그때의 글로 두고 절마다 🕰️ 로 지금을 적었습니다. 경보는 지금 `observability/alert-rules.yml` 에 44개 · 그룹 13개이고 Discord 로 전달됩니다(B-96, [docs/22](22-alerting-and-backup-automation.ko.md)). order 는 `user-created` 구독을 끊었습니다([docs/48](48-user-replication-debt.ko.md)).
+
+| 2026-07 의 이 문서 | 지금(2026-11-14) | 어디 |
+|---|---|---|
+| DLT 설정은 catalog · order + 5개 서비스 | `KafkaDltConfig` 9개 서비스(cart · catalog · chat · coupon · delivery · notification · order · pay · user — user 에는 `@KafkaListener` 가 없다) | 각 모듈 `KafkaDltConfig` |
+| 재시도는 서비스마다 | 공통 `DltRetryPolicy` — 일시 오류는 1 · 2 · 4 · 8 · 16 · 30초 … 10번(약 3분), 계수기 `kafka_dlt_records_total` · 경보 `KafkaDeadLetterPublished`(기동 때 0 — B-101) | common · B-88 · B-101 |
+| DLT 토픽 사전 생성 8개(+ chat) | `ops/02-create-dlt-topics.sh` 가 토픽 23개의 DLT 를 14일 보존으로 만든다 | ops/02 의 `TOPICS` |
+| 처리 원장은 catalog 하나 | catalog · coupon · cart · order(배송 상태, V30) + 30일 정리 `ProcessedEventPurger` | §2 |
+| 경보 5종 | 44개 · 그룹 13개, Discord 전달 | `observability/alert-rules.yml` · docs/22 |
+| 컨슈머 랙 · DLT 적재 · outbox 적체는 로드맵 | `KafkaConsumerLagHigh`(2026-11-14, docs/91 §3) · `KafkaDeadLetterPublished` · `OrderOutboxRowFailed` · `PayOutboxRowFailed` · 아웃박스 파티션 경보(`outbox-health` 그룹) | §3 의 🕰️ |
+| 대시보드 하나 | `ecommerce-overview` · `tracing-red` 둘 | `observability/grafana/provisioning/dashboards/` |
 
 > 작성일: 2026-07-27 · docs/11 §4에서 "남은 것"으로 명시했던 항목들의 적용 기록
 
@@ -22,6 +32,8 @@ record 모드 리스너는 `BatchListenerFailedException` 없이도 `DefaultErro
 
 **운영 반영 시**: DLT 토픽 사전 생성 목록 — `cart-rollback.DLT`, `cart-empty.DLT`, `coupon-use.DLT`, `payment.DLT`, `coupon-rollback.DLT`, `user-created.DLT`, `order.DLT`, `product-update.DLT` (+ chat 토픽).
 
+> 🕰️ 지금: DLT 설정은 9개 서비스(위 다섯 + catalog · order · delivery · notification), Kafka 를 받는 것은 그중 8개(user 는 리스너 없음). 재시도는 공통 `DltRetryPolicy`(일시 오류 약 3분 · 그 밖은 바로 DLT). 사전 생성은 손 목록이 아니라 `ops/02-create-dlt-topics.sh` — 토픽 23개의 `.DLT` 를 14일 보존으로(가입 확인 링크가 흐르는 `outgoing-mail` 은 본 토픽 · DLT 모두 짧게, docs/29 §5.3). 재처리는 `ops/56-dlt-replay.sh`.
+
 ## 2. 컨슈머 멱등성 (G8) — 재고 이중 차감 방지
 
 **돈이 걸린 경로(product-update → catalog 재고 차감)** 에 end-to-end 로 적용했다.
@@ -36,6 +48,8 @@ Redis(SETNX)가 아닌 **DB 테이블**을 택한 이유: 처리 이력 기록�
 
 **남은 확산 대상**(동일 패턴 적용 가능, 문서화만): user-created 3개 소비자(order/chat/coupon — 현재는 email 유니크 제약이 사실상 방어), payment 응답(order — 낙관적 락 NO-OP이 부분 방어), cart-empty/rollback.
 
+> 🕰️ 지금: user-created 소비자는 order 가 구독을 끊어(docs/48) chat(`user-3`) · coupon(`user-2`) 둘 — coupon 은 가입 쿠폰이 이미 있으면 재전달로 보고 건너뛴다(CP4). cart-empty 는 ✅ cart V6 처리 원장(`cart.processed_event`). 그 밖에 coupon 은 결제 응답에 `coupon.processed_event`, order 는 배송 상태에 `orders.processed_event`(V30)를 쓴다.
+
 ## 3. 경보 규칙 + Alertmanager
 
 - `observability/alert-rules.yml`: **ServiceDown**(2m) · **CircuitBreakerOpen** · **High5xxRate**(>5%, 5m) · **HighP99Latency**(>3s) · **JvmHeapNearLimit**(>90%).
@@ -43,9 +57,13 @@ Redis(SETNX)가 아닌 **DB 테이블**을 택한 이유: 처리 이력 기록�
 - p99 규칙을 위해 `application-common.yml`에 `percentiles-histogram.http.server.requests: true` 활성화(버킷 노출).
 - 미포함(로드맵): 컨슈머 랙·DLT 적재량(kafka exporter 필요), outbox 적체(커스텀 메트릭 필요 — docs/03 부록).
 
+> 🕰️ 지금: 경보는 44개 · 그룹 13개(서비스 · 요청 · JVM · 재고/결제/DLT · 인증 · 사가 · 아웃박스 · 경보 전달 · 추적 · 백업 · SLO · 컨슈머 지연), 수신은 플레이스홀더가 아니라 Discord(`discord_configs` + `webhook_url_file`, B-96 · docs/22 §1). 로드맵 셋은 ✅: 컨슈머 랙 `KafkaConsumerLagHigh`(2026-11-14, docs/91 §3), DLT 적재 `KafkaDeadLetterPublished`(앱 계수기 — kafka exporter 없이), outbox `OrderOutboxRowFailed` · `PayOutboxRowFailed` + 아웃박스 파티션 경보(`outbox-health`).
+
 ## 4. Grafana 대시보드 코드화
 
 `observability/grafana/provisioning/dashboards/` — provider + `ecommerce-overview.json` 프로비저닝: Service Up(스탯) · 요청률 · 5xx 비율 · p99 · JVM 힙 · 서킷브레이커 상태. 기동 즉시 "ecommerce-msa" 폴더에 나타난다.
+
+> 🕰️ 지금: 대시보드는 `ecommerce-overview.json` · `tracing-red.json` 둘(docs/63).
 
 ## 검증
 

@@ -306,6 +306,8 @@ FX_RATE_KRW: "1350"         # 상점 통화 1 단위 = 청구 통화 얼마
 FX_RATE_JPY: "150"
 ```
 
+> 🕰️ 지금(2026-11-14) 저장소의 `k8s/10-configmap.yaml` 은 `STRIPE_CURRENCY: "USD"` 다(나머지 값은 위와 같다). 위의 `"JPY"` 는 일본 결제를 시험할 때의 값 — 환경 값은 커밋하지 않는 `k8s-overlays/local/patch-local-endpoints.yaml` 에 두고 `--config-only` 로 올린다(포트원 일본결제의 `PORTONE_CURRENCY: "JPY"` 도 같다, 아래 V2 절).
+
 **주문을 만들 때** 그 수단의 통화가 상점 통화와 다르면 환율로 청구액을 정해 주문에
 저장한다(V6: `currency · charged_amount · fx_rate`). 결제 확인과 환불은 **그 저장값**과
 대조한다 — 그 사이 환율이 바뀌어도 "그때 청구한 금액" 이 기준이다. 재계산하면 환율이
@@ -374,7 +376,7 @@ FX_RATE_JPY: "150"
 그 잘린 값에서 환산됐으므로 같은 오차를 물려받았다 — 통화 문제가 아니라 그 이전의 문제였다.
 
 V7 이 `total · total_before_discount · shipping_price · tax_price` 넷을 함께 옮긴다(한 식으로
-묶여 있어 하나만 옮기면 화면의 세 줄이 맞지 않는다). `OrderPricing` 은 이제 버림이 아니라
+묶여 있어 하나만 옮기면 화면의 세 줄이 맞지 않는다 — 🕰️ 그 뒤 아무도 채우지 않던 `tax_price` 는 contract 릴리스의 order V29 에서 지웠다, 2026-11-03 적용). `OrderPricing` 은 이제 버림이 아니라
 상점 통화의 자릿수로 **반올림**한다 — 카탈로그 가격이 이미 둘째 자리까지라 반올림이 실제로
 일어나는 것은 쿠폰 할인율(59.98 × 10% = 5.998)뿐이고, 화면도 같은 값을 서버에서 받는다.
 `OrderDto`·`AdminOrderSummaryDto` 의 금액도 `BigDecimal` 이고, 프론트는 `{total}$` 대신

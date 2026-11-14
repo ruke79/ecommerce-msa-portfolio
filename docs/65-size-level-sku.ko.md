@@ -2,6 +2,8 @@
 
 [日本語](65-size-level-sku.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 운영 적용 끝 — 2026-10-01 커밋 `a813ae314f8c` 에 catalog V17 · cart V4 · order V24 · delivery V4 · `ops/42` 가 들어 있고, 2026-10-09 사전 점검에서 운영 Flyway 가 이미 catalog 17 · cart 4 · order 24 였다([docs/72](72-model-refactor-deploy-runbook.ko.md)).** 아래 "배포 대기" 는 작성 당시의 상태입니다.
+>
 > 작성일: 2026-09-28 · 상태: ✅ 적용(배포 대기)
 >
 > 관련: [59 결제 전 재고 예약](59-stock-reservation.ko.md) · [53 품절과 재입고](53-restock-and-sold-out.ko.md)

@@ -2,6 +2,8 @@
 
 [日本語](20-schema-ownership.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 전환 당시의 기록.** `validate` 기본값은 지금 PostgreSQL 을 쓰는 9개 서비스(cart · catalog · chat · coupon · delivery · notification · order · pay · user)에 있고 B-33 이 지킨다. 운영은 이 설정으로 떠 있다 — 남은 것의 지금은 §7 의 🕰️.
+
 > 이 문서는 "누가 스키마를 만드는가"를 Hibernate 에서 Flyway 로 옮긴 작업의 기록이다.
 > 관련: [docs/09](09-postgresql-partitioning-sharding.ko.md)(파티셔닝) · [docs/19 §5.1](19-local-performance-tuning.ko.md)(색상 매핑 오류)
 
@@ -186,3 +188,5 @@ PGURL=... SERVICE=catalog-service ./ops/15-schema-baseline-rehearsal.sh
 | 여러분의 운영 DB 에서 `ops/15` 실행 | 🔴 **운영 조치 필요** — 이 저장소에서는 확인할 수 없다 |
 | `flyway.baseline-on-migrate` 를 끄기 | 🟡 모든 환경이 이력을 갖게 된 뒤에 |
 | 마이그레이션 롤백(undo) 스크립트 | 🟡 Flyway Teams 기능. 지금은 복원(ops/09)이 롤백 경로다 |
+
+> 🕰️ 지금(2026-11-14): 운영은 `validate` 로 기동해 Flyway 이력을 쓰고 있다(2026-11-03 배포 뒤 order 29 · user 19 · catalog 24) — 첫 줄의 판정은 배포로 통과한 셈이다. `baseline-on-migrate: true` 는 그대로(`application-common.yml`). undo 는 여전히 없고, 그 대신 파괴적 마이그레이션은 `-- ROLLBACK-UNSAFE:` 표시(B-54 — `ops/28` 이 자동 복귀를 끈다) · 열 삭제는 expand → contract 두 릴리스 · 큰 배포 전에는 릴리스 런북의 마이그레이션 리허설을 한다(docs/85).

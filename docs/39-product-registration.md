@@ -199,6 +199,7 @@ curl -s https://www.ysyproject.com/catalog-service/api/content/admin/product-imp
   教えてくれる。
 - インポートのロックは **1 インスタンス基準** だ（メモリ）。単一ノードなのでここまでにしておく。レプリカを
   増やすなら Postgres のアドバイザリーロックに引き上げる必要がある。
+  > 🕰️ 2026-11-14: ✅ ポッド間のロックに引き上げた — Postgres の代わりに Redis のキー `catalog:product-import:lock`（`SET NX`、2 時間のリース · 自分の値のときだけ解放、`ImportLock`）。2026-10-24 のまとめリリースで本番に入った。
 - 商品の **編集・削除** 画面は、依然として一覧（`/admin/allproducts`）だけだ。
 
 ---

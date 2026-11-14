@@ -4,6 +4,8 @@
 
 > 作成日: 2026-09-27 · 更新: 2026-09-27（テールサンプリング · 永続保存）· 状態: ✅ 適用（デプロイ待ち）
 >
+> 🕰️ **状態（2026-11-14）— 本番に適用済み。** 本番ノードの観測スタックはこの構成（Collector 0.160 · Jaeger 2.20）で動いており、§5 のサービスメトリクス（B-95、2026-10-20 — 11 個 up）と Jaeger 2g · node-exporter（B-106、2026-10-24）も適用済み。残り: エラー · 遅いトレースの毎秒上限（B-102）はリポジトリにだけあり、本番の Collector はまだ作り直していない（§5 のメモ）。本番の compose コマンドは常に 2 ファイル（§9 のメモ）。
+>
 > 参考: [OpenTelemetry デモ](https://github.com/open-telemetry/opentelemetry-demo)（ruke79/kafka の `demo-kafka-guide/` は
 > その上で作業したもの）、ruke79/kafka の `compose.tracing.yaml` · `test/show-trace.sh`。
 
@@ -194,6 +196,7 @@ p95 6 秒）、遅いトレースも同じ暴走になる。いまは 2 つの�
 - 実測（Collector 0.160.0、上限 50 スパン/秒）: エラートレース 600 個が一度に来ても 100 個（バケットの 2 倍まで）· 遅いトレースも同じ ·
   上限以下のエラー 10 個はすべて · 決済サービスのエラー 200 個もすべて（`TailSamplingBudgetTest`、コンテナ — 上限を外すと 600 個すべて残り失敗）。
   暴走が終わればすぐ回復する（4 秒後のエラー 10 個がすべて残る — 借りを作らない）。
+- 🕰️ 2026-11-14: 本番の Collector にはまだ入っていない（このコミット以降に switch してから `docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d --force-recreate otel-collector`、任意）。
 - `and` の中で上限は **最後** — 前に置くとすべてのトレースが枠を使い、エラーが飢える（ガード B-102 が順序と既定値 1〜1000 を見る）。
 - 🐛 テストで出会った罠: 決定キャッシュ（`decision_cache`）はトレース id の **下位 8 バイト** をキーにする。テストの id を連番にしたら、
   暴走時に「捨てる」と記憶された番号と後の平常のエラーが重なって一緒に捨てられた（上限以下なのに 0〜1 個）。実際の id はランダムで重ならない。
@@ -334,3 +337,5 @@ docker run --rm -v $PWD/observability/jaeger.yml:/c.yml jaegertracing/jaeger:<�
    `./ops/28-deploy.sh local <バージョン>`（または `--config-only` でマニフェストを先に）で上げる。
 4. 確認: `./ops/05-check-observability.sh` — Pod → :4318 OK、Jaeger にサービスが見えるか。注文を1件入れて
    `./ops/41-show-trace.sh --longest`。
+
+> 🕰️ 2026-11-14: 最初のデプロイは終わった。今の本番では 1 の compose コマンドに常に `-f docker-compose-observability.oci.yml` を一緒に付ける（B-95 · B-106 — 基本ファイルだけだと Prometheus が開発 PC の設定に、Jaeger が 512m に戻る）。

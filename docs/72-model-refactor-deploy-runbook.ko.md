@@ -2,6 +2,8 @@
 
 [日本語](72-model-refactor-deploy-runbook.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 이 배포(`b7c5053a45e8`)는 2026-10-10 에 끝났고, §7 의 contract 릴리스도 2026-11-03 `7ef62043a98f` 로 운영에 들어갔습니다**(order 29 · user 19 · catalog 24 · 열 0 · 무효 인덱스 0, [docs/85 §8-2](85-release-deploy-runbook.ko.md)). 아래 "상태 · 배포 완료 · 사전 점검" 과 §1 ~ §6 은 그때의 기록입니다. §3 의 백업 명령은 지금도 배포 전 수동 백업 절차로 씁니다(2026-11-02 기록까지 반영). 지금 운영 버전 · 다음 배포는 docs/85 를 봅니다.
+>
 > **상태(2026-10-06)** — 대상 버전은 **`b7c5053a45e8`** 입니다(파이프라인 초록). `d7f87c9` 이후에 더해진 것은 user 의 유예 토큰 길이 검사(a906312), 문서, 배포 수동 실행 전환(B-75)뿐입니다. 기능 플래그(docs/74, `c291eba` 이후)는 **이 배포가 안정된 뒤 따로** 나갑니다 — 그래서 Run workflow 의 버전을 비우지 말고 이 SHA 를 넣습니다(비우면 기본 브랜치 최신 = 플래그까지 함께 나간다). 무엇을 왜 고쳤는지는 [docs/62 §18](62-engineering-casebook.ko.md#18-컴파일되고-테스트도-통과하는데-데이터가-틀렸다--모델-계층-점검), 배포 스크립트 자체는 [docs/36](36-deployment-pipeline.ko.md) · [docs/33](33-deploy-runbook.ko.md) 입니다.
 >
 > **배포 완료(2026-10-10)** — 인스턴스에서 `ops/28-deploy.sh local b7c5053a45e8` 로 손 배포, 328초, 스모크 통과(4 통과 · 0 실패 · 5 생략). 저장소에 운영 배포 러너(`oci-ampere`)가 없어 Actions 대신 손으로 했고, 작업 사본은 먼저 대상 커밋으로 `git switch --detach` 했습니다(Actions 도 대상 커밋을 체크아웃해 같은 스크립트를 돌린다 — 다른 커밋의 매니페스트가 섞이지 않게). 사가 E2E(결제)는 수동 확인 항목입니다.
@@ -108,6 +110,7 @@ ls -l "$B"                     # 파일 셋, 0 바이트 없음
 - 정상: `backup_label` 1, 덤프 끝에 `dump complete`, Mongo 는 컬렉션별 문서 수. 물리 백업(`pg-base.tar`)은 전체를 그 시점으로, 논리 덤프(`pg-all.sql.gz`)는 표 하나(예: 공지)를 되살릴 때 씁니다.
 - **2026-10-10 실측**: 전체 DB 4,767 MB → `pg-base.tar` 4.7G · `pg-all.sql.gz` 304M, Mongo `chat` 7건 · `auto_sequence` 1건(936바이트 — 작은 것이 정상). 서버 디스크 여유 30G 에서 약 25G.
 - 백업은 운영 디스크에 함께 있습니다 — 배포가 안정되면 다른 기계로 옮겨 둡니다. Atlas M0 에는 자동 백업이 없습니다.
+  🕰️ 2026-10-20: `pre-b7c5053-*` 는 노드 밖으로 옮기고 운영 디스크에서 지웠다. 매일의 자동 백업 · 노드 밖 받기는 [docs/22 §2](22-alerting-and-backup-automation.ko.md)(`k8s/85`).
 - 끝에 `dump complete` 가 없거나 `exit` 가 0 이 아니면, 또는 마지막 점검이 0 이 아니면: 백업 창(03:00 UTC · 월 05:00 복원 훈련) 밖에서 남은 덤프 세션을 끊고(`select pg_terminate_backend(pid) from pg_stat_activity where application_name ~ '^pg_(dump|dumpall|basebackup)'` — 덤프는 읽기만 해서 끊어도 잃는 것이 없다) 처음부터 다시 뜹니다. 그 폴더의 `pg-all.sql.gz` 는 쓰지 않습니다.
 - **2026-11-02 기록**: contract 릴리스([docs/85 §8-2](85-release-deploy-runbook.ko.md)) 사전 점검에서 orderdb 에 30초 넘는 트랜잭션 1 — `postgres` · `pg_dump` · `local` · `idle in transaction`(`ClientRead`) · **9일 2시간 57분**(2026-10-24 ~12:45 UTC, `6501d3fd8e60` 배포 전 수동 백업 무렵). 이 절의 `pg_dumpall` 이 연결이 끊긴 채 orderdb 에서 멈췄고, orders 표 전부에 ACCESS SHARE 를 쥐고 있었다 — 그대로 V29 를 돌렸으면 `DROP COLUMN` 뒤에서 주문 요청이 모두 멈췄다. 쓰기 없음(`backend_xid` 없음)이라 `pg_terminate_backend` 로 끊었다. 매일 03:00 의 `postgres-backup` CronJob 은 같은 ACCESS SHARE 라 부딪히지 않고 9일 모두 Complete. 9일 스냅숏의 영향(죽은 행)은 orders 표마다 수십 건뿐이었다. 그 날의 `pg-all.sql.gz` 는 orderdb 부터 빠졌다(pg_dumpall 은 DB 이름순). 그래서 `tmux` · `pipefail` · 마지막 점검을 더했다.
 
@@ -154,7 +157,7 @@ SELECT count(*) FROM pg_largeobject_metadata;
 ## 6. 실패하면 — 앞으로 고친다
 
 - 실패한 서비스는 옛 파드가 계속 돌고(롤링이 멈춘 상태), 성공한 서비스는 새 버전으로 남습니다. `ops/28` 이 새 파드의 기동 오류를 출력합니다 — 고친 이미지로 다시 배포합니다.
-- 꼭 되돌려야 하면 **스키마를 먼저** 되돌린 뒤에만: `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh prod --rollback`. V18 의 경우 공지 본문을 다시 대형 객체로 넣어야 합니다(§3 의 백업에서 복원하는 편이 간단합니다). 공지는 운영자만 쓰므로, 되돌리지 않고 공지 화면만 잠시 막히는 쪽이 대개 낫습니다.
+- 꼭 되돌려야 하면 **스키마를 먼저** 되돌린 뒤에만: `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh <환경> --rollback`(지난 배포와 같은 환경 — 운영은 `local`, §4-2). V18 의 경우 공지 본문을 다시 대형 객체로 넣어야 합니다(§3 의 백업에서 복원하는 편이 간단합니다). 공지는 운영자만 쓰므로, 되돌리지 않고 공지 화면만 잠시 막히는 쪽이 대개 낫습니다.
 
 ## 7. 다음 릴리스 — contract
 
@@ -169,3 +172,5 @@ ALTER TABLE orders.orders DROP COLUMN IF EXISTS tax_price;
 열 삭제는 파괴적 변경이라 `-- ROLLBACK-UNSAFE:` 선언이 필요합니다(가드 B-54). 엔티티는 이미 두 열을 쓰지 않으므로 코드 변경은 없습니다.
 
 → 2026-10-31 커밋: order `V29__contract_order_address_order_id_tax_price.sql`(위 두 문장), user V19(로그인 실패 잠금의 옛 열 둘), catalog V24(옛 이름 인덱스 — `DROP INDEX CONCURRENTLY`). 절차 · 확인은 [docs/85 §8-2](85-release-deploy-runbook.ko.md).
+
+→ ✅ 적용 끝(2026-11-03 `7ef62043a98f` — 처음 대상 `50ef7995e94d` 는 CI 러너가 꺼져 이미지가 없었다): 배포 후 order 29 · user 19 · catalog 24 · 열 0 · 무효 인덱스 0 · 재시작 0.

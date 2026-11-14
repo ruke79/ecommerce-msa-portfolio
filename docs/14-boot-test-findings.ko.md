@@ -2,7 +2,7 @@
 
 [日本語](14-boot-test-findings.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 기동 테스트 당시의 기록입니다. 가드는 이후 B-69 까지 늘었습니다. 테스트 전략은 [docs/17](17-testing.ko.md).
+> 🕰️ **상태(2026-11-14) — 2026-07-27 의 기록.** 기동 테스트 당시의 기록입니다. 가드(B-번호)는 이후 B-110 까지 늘었습니다(`ConfigurationGuardrailTest` 외). 아래 "남은 한계" 는 모두 풀렸습니다(그 절의 🕰️). 테스트 전략은 [docs/17](17-testing.ko.md).
 
 > 작성일: 2026-07-27
 > 배경: 그때까지의 작업은 컴파일·단위 테스트·SQL 실행까지만 검증했을 뿐 **애플리케이션을 한 번도 띄워본 적이 없었다.**
@@ -231,6 +231,8 @@ order-service 기동 상태에서 실제로 확인:
 - **Elasticsearch 미검증** — 검색 플래그는 기본값 `postgres` 이고 ES 경로는 여전히 설계·스크립트 수준이다(docs/07, `ops/03-enable-es-search.sh`).
 - **`@Disabled` 로 미룬 컨텍스트 테스트 6종**은 Testcontainers 도입 전까지 공백으로 남는다.
 - 따라서 다음 단계는 여전히 **스테이징에서 전체 스택 기동 + 사가 1건 통과**다.
+
+> 🕰️ 지금(2026-11-14): 넷 모두 풀렸다 — 사가 end-to-end 는 실제 Kafka 로 검증([docs/16](16-saga-e2e-and-observability-verification.ko.md)), chat 은 Testcontainers 의 MongoDB 로 저장 · 조회를 시험한다(`ChatServiceIntegrationTest`), ES 경로는 `EsProductSearchServiceIntegrationTest`(컨테이너), `@Disabled` 였던 `contextLoads()` 는 실제 PostgreSQL · Redis 등의 컨테이너 위에서 도는 기동 시험(`*ApplicationTests`, `@Tag("containers")` — `./gradlew :<모듈>:test -PwithContainers`)이 됐다. 운영 chat 은 MongoDB Atlas 를 쓴다.
 
 ## 후속: 사가·관측성 실증에서 나온 버그 2건 (B-21 · B-22)
 

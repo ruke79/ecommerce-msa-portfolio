@@ -2,7 +2,7 @@
 
 [日本語](18-certificates.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 클라이언트 인증서는 이제 서비스별입니다(CN = 서비스 이름, `k8s/96`, cert-manager 자동 갱신 — [docs/57 §16·§18](57-remaining-priorities.ko.md)). 서버 인증서 `tls-keystore` 는 아직 공유입니다.
+> 🕰️ **상태(2026-11-14) — 2026-07-28 의 기록.** 클라이언트 인증서는 이제 서비스별입니다(CN = 서비스 이름, 손 발급 `ops/38` 또는 cert-manager `ops/39` · `k8s/96` 자동 갱신 — [docs/57 §16·§18](57-remaining-priorities.ko.md)). 서버 인증서 `tls-keystore` 는 아직 공유입니다. 남은 것은 §7 의 🕰️.
 
 > 작성일: 2026-07-28
 > 관련: [ops/07-issue-certificates.sh](../ops/07-issue-certificates.sh) · [백업/DR](15-backup-and-dr.ko.md) · [시크릿/HA](13-secrets-dbha-es-search.ko.md)
@@ -246,3 +246,9 @@ sudo ln -sf "$PWD/certs/renew-deploy-hook.sh" \
 - **개별 서비스 인증서** — 지금은 모든 서비스가 SAN 이 넉넉한 **하나의** 인증서를 공유한다.
   운영에서는 서비스마다 별도 신원을 주는 편이 낫다(`SANS=` 로 서비스별 발급 가능). 서비스 간 mTLS(docs/57 §16)가 이 인증서를
   클라이언트 인증서로 쓰기 시작했으므로, 서비스별로 나누면 `internal-auth.allowed-subjects` 로 "어느 서비스인가" 까지 가를 수 있다.
+
+> 🕰️ 지금(2026-11-14):
+> - ~~개별 서비스 인증서~~ → ✅ 클라이언트 신원은 서비스마다 Secret `tls-id-<서비스>`(`ops/38-issue-service-identities.sh`, cert-manager 면 `ops/39-cert-manager.sh` + `k8s/96-service-identities.yaml`). 신원 헤더 판정은 운영에서 enforce(2026-10-26, docs/57 §16). 서버 인증서 `tls-keystore` 는 여전히 공유다.
+> - ~~인증서 로테이션 자동화(k8s)~~ → ✅ `k8s/96` 의 `Certificate` — 수명 90일 · 30일 전 새로 발급 · Secret 이 바뀌면 Reloader 가 롤링 재시작(docs/57 §18).
+> - 스토어 비밀번호는 JVM 옵션이 아니라 `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD` 환경 변수(B-83), 운영 값은 2026-10-25 `ops/59-rotate-store-password.sh` 로 교체했다(키 · 인증서는 그대로). ⚠️ `ops/07` 로 다시 발급하면 CA 가 바뀌어 서비스 신원 · PostgreSQL 인증서까지 다시 해야 한다.
+> - HSM/KMS 연동은 그대로 남았다.

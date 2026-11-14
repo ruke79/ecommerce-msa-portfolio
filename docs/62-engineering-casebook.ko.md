@@ -13,6 +13,8 @@
 > 장 번호는 판본에 따라 다르므로, 번호를 확신할 수 있는 책만 번호를 적고 나머지는 주제로 적었습니다.
 >
 > ⚠️ **한계**는 이 문서를 쓰는 시점에 코드와 설정에서 확인한 것입니다. 저장소 전체의 열린 항목 목록은 [docs/54 §10](54-improvements-vs-practice.ko.md)입니다.
+>
+> 🕰️ **상태(2026-11-14)** — 사례마다 "한계" 가운데 그 뒤 풀린 것은 그 자리에 🕰️ 로 적었습니다(§3 · §4 · §5 · §6 · §9 · §13 · §14 · §15 · §18 · §20). 지금 열린 일은 [docs/85 §8](85-release-deploy-runbook.ko.md).
 
 ## 목차
 
@@ -125,7 +127,7 @@
   - 지표 `outbox_partition_months_ahead` · `outbox_partition_default_rows` 와 경보 3개를 두었습니다. 설정을 빠뜨리면 가드 B-70 이 잡습니다.
   - ⚠️ 2026-10-12 점검에서 **경보 셋이 한 번도 울릴 수 없었던 것**을 찾았습니다. 지표가 `@ConditionalOnBean(MeterRegistry)` 로 걸려 있었는데, 이 자동 설정이 actuator 의 메트릭 자동 설정보다 먼저(알파벳순) 평가되어 늘 빠졌습니다. 그리고 `months_ahead` 는 점검에 성공했을 때의 값을 그대로 내서, 성공하면 늘 3, 실패하면 마지막 값에 멈춤, 한 번도 성공하지 못하면 NaN 이었습니다. 이제 `MeterBinder` 로 등록하고, 남은 달은 지금 시각 기준으로 매번 계산합니다(잡이 멈추면 달마다 1 씩 줄어듭니다). `last_success_seconds`(처음 값은 기동 시각) · 지표 없음(`absent`) 경보를 더했고, `Error` 한 번에 잡이 영구히 멈추던 것도 막았습니다(`OutboxPartitionMetricsTest` · `OutboxPartitionMaintainerTest`).
   - 실제 PostgreSQL 16 으로 검증했습니다(`OutboxPartitionMaintainerPostgresTest`).
-- 남은 것: 오래된 파티션의 폐기(보존 정책)는 사람이 합니다.
+- ~~남은 것: 오래된 파티션의 폐기(보존 정책)는 사람이 합니다.~~ → ✅ 2026-11-14 같은 잡이 지웁니다 — 보존 기간(`retentionMonths`, 기본 3달)보다 오래되고 끝나지 않은 행이 없는 달만 DETACH → DROP, 하나라도 남으면 그 달은 두고 경고([docs/09 §4.6](09-postgresql-partitioning-sharding.ko.md)).
 - 트래픽이 늘면 CDC 로 옮기는 것을 검토합니다.
 
 → [docs/21](21-horizontal-scaling.ko.md) · [docs/56](56-saga-latency.ko.md) · [docs/09](09-postgresql-partitioning-sharding.ko.md)
@@ -147,6 +149,7 @@
 
 **한계**
 - 멱등 원장은 **catalog 와 coupon 에만** 있습니다. 다른 컨슈머는 상태 전이 조건(이미 PAID 면 무시 등)에 기대고 있습니다.
+  - 🕰️ 2026-11-14: 원장은 이제 넷 — catalog · coupon · **cart**(V6 — `cart-empty`) · **order**(V30 — `delivery-status`), 30일 지난 행은 `ProcessedEventPurger` 가 지운다([docs/12 §2](12-dlq-rollout-idempotency-alerts.ko.md)). 그 밖은 여전히 상태 전이 조건이다.
 
 **개선할 점**
 - 부작용이 있는 컨슈머 전부에 원장이나 조건부 갱신을 적용하고, 이를 가드 테스트로 강제합니다.
@@ -172,6 +175,7 @@
 **한계**
 - delivery-service 에는 아웃박스가 없습니다.
 - `TrackingPoller.poll` 은 하나의 트랜잭션 안에서 외부 택배사를 호출합니다.
+  - 🕰️ 2026-10-15(D-M1 · M2): 폴러는 짧은 트랜잭션으로 선점 · 리스(`delivery.polling.lease-minutes`, 10분) → 택배사 호출은 트랜잭션 밖 → 반영은 상자마다. 아웃박스는 여전히 없고, 상태 이벤트는 커밋 뒤 발행 · 실패는 경보 `DeliveryStatusPublishFailed`(D-M4).
 
 **개선할 점**
 - delivery 발행을 아웃박스로 옮깁니다.
@@ -197,6 +201,7 @@
 **한계**
 - **Feign 서킷 브레이커가 적용돼 있지 않습니다**(`spring.cloud.openfeign.circuitbreaker` 없음). 게이트웨이 라우트에만 있습니다.
 - `CartService.saveCart` 는 여전히 `@Transactional` 안에서 Feign 을 부릅니다.
+  - 🕰️ 2026-10-15: `saveCart` 는 `NOT_SUPPORTED` — catalog 호출을 앞에서 하고 저장만 짧은 트랜잭션으로(order · cart · coupon 은 `open-in-view: false`, B-87). Feign 서킷 브레이커는 여전히 없다.
 
 **개선할 점**
 - Feign 에 Resilience4j 서킷 브레이커와 폴백을 붙입니다.
@@ -283,6 +288,7 @@
 - 서버 인증서(`tls-keystore`)는 여전히 서비스들이 공유하고, 손으로 관리합니다.
 - NetworkPolicy 는 들어오는 쪽(ingress)만 있고 나가는 쪽(egress) 규칙이 없습니다.
 - Prometheus 수집이 TLS 검증을 생략합니다.
+  - 🕰️ 2026-10-20: 운영은 클러스터 안 `metrics-agent` 가 CA 로 검증해 노드 Prometheus 로 보낸다(B-95). 생략은 로컬 개발의 `prometheus.yml` 뿐.
 
 **개선할 점**
 - 서버 인증서도 cert-manager 로 옮기고, egress 허용 목록과 Prometheus 의 CA 신뢰를 추가합니다.
@@ -390,6 +396,7 @@
   - 이미지 존재를 확인하고, 되돌릴 수 없는 마이그레이션을 검사합니다.
   - 스모크 게이트가 실패하면 직전 버전으로 자동 복귀하고, 배포 이력을 남깁니다.
 - 파이프라인이 초록이면 **사람이 승인한 뒤** 운영 노드의 셀프호스티드 러너가 같은 스크립트를 실행합니다.
+  - 🕰️ 2026-11-14: 이 저장소에는 운영 배포 러너(`oci-ampere`)가 아직 등록돼 있지 않다 — Actions → deploy 는 배포 잡에서 멈추고, 운영 배포는 인스턴스에서 대상 커밋으로 `git switch --detach` 한 뒤 같은 `ops/28` 을 손으로 돌린다.
 
 **한계**
 - 단일 노드라서 카나리나 블루-그린이 없습니다. 운영 오버레이는 HPA 를 적용하지 않습니다.
@@ -419,6 +426,7 @@
 **한계**
 - 백업이 클러스터 안의 PVC 에 있습니다. 클러스터가 사라지면 백업도 사라집니다.
 - `postgres-backup` 과 `restore-drill` 은 기본값이 `suspend: true` 라서 환경마다 사람이 켜야 합니다.
+  - 🕰️ 2026-11-14: 운영은 2026-10-13 에 켰다(`ACTION=cronjobs ./ops/29` — 매일 03:00 UTC · 월요일 복원 훈련). 노드 밖 보관은 다른 기계가 끌어가는 방식이다. 마지막 성공 시각 경보 `PostgresBackupStale` · `PostgresBackupMetricMissing` 은 2026-10-24 부터 동작한다(B-106, [docs/22 §2](22-alerting-and-backup-automation.ko.md)).
 
 **개선할 점** (이 저장소에서 가장 마지막 순위로 둔 항목입니다)
 - 오브젝트 스토리지로 보냅니다.
@@ -449,6 +457,7 @@
 - 샘플링 결정(30초) 뒤에 난 비동기 오류는 추적에 남지 않습니다(로그 · 지표에는 남습니다).
 - 추적 저장(badger)과 꼬리 샘플링은 노드 하나를 전제로 합니다.
 - 로그 기반의 ERROR 급증 경보가 없습니다.
+  - 🕰️ 2026-11-14: 꼬리 샘플링의 오류 · 느린 추적 정책에는 이제 상한이 있다(B-102 — 200 · 100 스팬/초). SLO 소진율 경보 넷(`SloErrorBudgetBurnFast` 등)이 생겼다([docs/91](91-slo-and-capacity.ko.md)). ERROR 급증 경보는 여전히 없다.
 - 관측 스택이 노드의 compose 로 돌고 있습니다.
 
 **개선할 점**
@@ -538,7 +547,7 @@
 - **가드** `EntityMappingGuardTest`(common) — to-one 은 `fetch = LAZY`, `@Lob` 금지.
 
 **한계**
-- **다음 릴리스(contract)**: `order_address.order_id` 와 그 외래 키 · 인덱스, `orders.tax_price` 열을 지웁니다 — 이번 버전이 안정된 뒤에(되돌린 옛 이미지는 그 열을 씁니다).
+- ~~**다음 릴리스(contract)**: `order_address.order_id` 와 그 외래 키 · 인덱스, `orders.tax_price` 열을 지웁니다 — 이번 버전이 안정된 뒤에(되돌린 옛 이미지는 그 열을 씁니다).~~ → ✅ order V29(ROLLBACK-UNSAFE), 운영 적용 2026-11-03 `7ef62043a98f`([docs/85 §8-2](85-release-deploy-runbook.ko.md)).
 - Redis 의 옛 방 해시는 남아 있습니다 — `DEL CHAT_ROOM` 으로 지워도 됩니다.
 - 공지 V18 은 되돌릴 수 없습니다 — 옛 이미지는 글 본문을 OID 로 읽다 실패합니다.
 
@@ -591,6 +600,7 @@
 **처리한 내용**
 - 가격 · 색상 · 사이즈 조건이 있으면 개수를 끝까지 세지 않고 **한 쪽 + 1** 만 가져옵니다 — 더 있으면 `totalProducts` = 받은 수 + 1(하한), 마지막 쪽은 정확한 수.
 - 화면이 그 수를 어디에 쓰는지부터 봤습니다 — 표시하지 않고 무한 스크롤의 "더 있는가"(받은 수 < total)에만 씁니다. 그래서 화면은 바꾸지 않았습니다. 필터가 없는 검색은 예전처럼 정확히 셉니다(인덱스만 보는 개수).
+  - 🕰️ 2026-10-26(`d837605d7902`): 하위 카테고리만 고른 검색도 정확한 개수가 5초를 넘어 늘 503 이었다 — 이제 **어떤 검색도** 개수를 세지 않는다(한 쪽 + 1). 하한 > 상한 · 다른 카테고리의 하위는 DB 에 묻지 않고 0건.
 - 실제 PostgreSQL 에 7만 개 카테고리를 심은 테스트 — 1쪽 11 · 2쪽 21 · 마지막 쪽 70,000. 예전처럼 세면 70,000 으로 실패합니다.
 
 **한계**

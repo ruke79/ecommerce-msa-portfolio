@@ -147,7 +147,7 @@ footer p { max-width: none; }
 <div class="premise">
   <h3>읽기 전에 — 이 구성안의 전제</h3>
   <ul>
-    <li><b>레포에는 SLO 와 목표 트래픽이 없습니다.</b> 아래 사양은 레포 실측값에서 추정한 시작점이고, 실제 장비에서 다시 재서 조정해야 합니다.</li>
+    <li><b>SLO · 처리량 목표는 2026-11-14 에 정했습니다(<a href="91-slo-and-capacity.ko.md">docs/91</a> — SLO 넷, 단계 2 끝 초당 1,000 · 단계 3 끝 5,000).</b> 이 글을 쓸 때는 없었으므로 아래 사양은 레포 실측값에서 추정한 시작점이고, 실제 장비에서 다시 재서 조정해야 합니다.</li>
     <li><b>실측값은 데스크톱 한 대 위의 VM 들이 CPU 를 나눠 쓴 실습 클러스터에서 나왔습니다.</b> 레포 문서(docs/83)도 절대 수치로 쓰지 말라고 적고 있습니다.</li>
     <li><b>레포의 운영 결정은 PostgreSQL · MongoDB 를 관리형에 맡기는 것</b>입니다(docs/23). 자체 데이터센터에는 관리형이 없으므로 DB 이중화를 직접 해야 합니다. 이것이 지금과 가장 크게 달라지는 점입니다.</li>
   </ul>
@@ -222,7 +222,7 @@ footer p { max-width: none; }
         <tbody>
           <tr><td class="role">용량</td><td>상품 2,108B · 주문 약 1,100B · 사용자 약 1,012B. 상품 2000만 ≈ 39GiB(적재 중 WAL 여유 59GiB 필요), 1억 ≈ 196GiB.<span class="src">docs/19 · docs/83 · docs/79</span></td><td>PG 용 NVMe 2×1.92TB RAID1 이면 1억 상품까지도 여유가 있습니다.</td></tr>
           <tr><td class="role">메모리</td><td>운영(상품 200만)에서 필터 count 한 번이 랜덤 블록 읽기 11만 번, 42.9초. 그 개수 세기는 <code>d837605d7902</code> 에서 없앴지만, 드문 조건은 여전히 카테고리를 훑습니다.<span class="src">docs/83 §2.8 · docs/85 §8</span></td><td>작업 집합이 RAM 에 들어가야 합니다. PG 에 64GB 이상을 줍니다.</td></tr>
-          <tr><td class="role">커넥션</td><td>DB 를 쓰는 서비스 9개(catalog 는 데이터소스 2개) × 풀 5 × HPA 최대 3 → 최악 약 140. 실습 PG 는 <code>max_connections=300</code>. 부하 측정에서 커넥션 대기는 CPU 가 모자란 증상이었습니다 — 풀부터 키우지 않습니다.<span class="src">docs/83</span></td><td>풀러를 쓴다면 트랜잭션 모드는 금지입니다(<code>ops/25</code> 경고). HPA 최대를 올리면 이 계산부터 다시 합니다.</td></tr>
+          <tr><td class="role">커넥션</td><td>DB 를 쓰는 서비스 9개(catalog 는 데이터소스 2개) × 풀 5 × HPA 최대 3 → 최악 약 150(chat HPA 1 ~ 3 포함, 2026-11-01 부터 — 그 전 140). 실습 PG 는 <code>max_connections=300</code>. 부하 측정에서 커넥션 대기는 CPU 가 모자란 증상이었습니다 — 풀부터 키우지 않습니다.<span class="src">docs/83</span></td><td>풀러를 쓴다면 트랜잭션 모드는 금지입니다(<code>ops/25</code> 경고). HPA 최대를 올리면 이 계산부터 다시 합니다.</td></tr>
           <tr><td class="role">디스크 분리</td><td>PG 와 Kafka 는 둘 다 fsync 가 많습니다.</td><td>같은 노드라도 NVMe 쌍은 따로 줍니다.</td></tr>
           <tr><td class="role">k8s 밖에 두기</td><td><code>external</code> 오버레이가 이미 있어 ConfigMap 의 엔드포인트만 바꾸면 됩니다. 코드는 그대로입니다.<span class="src">docs/32 · k8s-overlays/external</span></td><td>k3s 업그레이드나 노드 장애가 데이터에 닿지 않고, VLAN 방화벽으로 접근을 강제할 수 있습니다.</td></tr>
           <tr><td class="role">백업</td><td>DB 5.6GB → <code>base.tar.gz</code> 821MB(약 15%), 복원 1분 52초. WAL 아카이브는 지금 같은 볼륨에 쌓입니다.<span class="src">docs/22 · ops/29</span></td><td>pgBackRest 나 WAL-G 로 백업 서버에 WAL 을 계속 보냅니다. 돈이 걸린 데이터의 RPO 5분 목표 때문입니다.</td></tr>

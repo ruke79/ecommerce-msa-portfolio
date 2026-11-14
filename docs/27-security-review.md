@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](27-security-review.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** §14「サービス間の認証なし」は mTLS で解決しました（[docs/57 §16](57-remaining-priorities.md)）。冒頭の要約表は発見当時の記録として残します。最新の未解決項目は [docs/54 §10](54-improvements-vs-practice.md)。
+> 🕰️ **状態（2026-11-14）— 発見当時の記録（要約表を含む）。** その後変わったことは節ごとに 🕰️ で書きました: サービス間 mTLS + 内部パスのルール · アイデンティティヘッダーの判定は本番で enforce（§9b · §14 — アイデンティティヘッダーの enforce は 2026-10-26、[docs/57 §16](57-remaining-priorities.md)）、流入制限はルートごとに一つ · JWT フィルターの後ろ（§10、B-84）、ログインのロックは Redis（§13）、管理エンドポイントはゲートウェイで塞ぎ config-server はパスワードの後ろ（§7〜8 · §15）。最新の未解決項目は [docs/54 §10](54-improvements-vs-practice.md)。
 
 認証・認可、シークレット管理、露出した管理エンドポイント、インジェクション、レート制限を、フロントエンドと全サービスに
 ついて洗い出した。**見つかったものの半分は「権限チェックがまったくない」類** だった — 誤って実装されたのではなく、
@@ -272,6 +272,8 @@ include: gateway, refresh, health, beans, http, busrefresh, info, metrics, prome
 `refresh`/`busrefresh` は設定のリロードをトリガーする書き込みエンドポイントなので本来は認証の後ろに
 あるべきだが、運用手順がこれに依存している可能性があるため、今回は残して別の課題に切り出した。
 
+> 🕰️ 現在（2026-11-14）: config-server は `CONFIG_SERVER_PASSWORD` なしではプローブ · `info` · `prometheus` 以外をすべて 401 で拒否する（`ConfigServerSecurity`、2026-10-15）。サービスの `/<サービス>/actuator/**` はゲートウェイが 404 で塞ぎ（`InternalEndpointBlockFilter`、docs/57 §7）、ゲートウェイ自身の `/actuator` は本番のトンネルがゲートウェイへ送らない（サービスの接頭辞だけ — `k8s-overlays/prod/cloudflared.yaml`、B-82）。ゲートウェイ yml の公開リストには `refresh, busrefresh` がまだそのまま残っている（バスの依存関係はないので `busrefresh` は実際には存在しない）。
+
 ---
 
 ## 9. 🟠 メールアドレスでユーザーを照会する内部 API が外部に開いている
@@ -326,6 +328,8 @@ Feign は `Authorization` しか転送しないので（各サービスの `Feig
 > 原因だ — 次のステップは、ゲートウェイで `/api/auth/user/{email,profile,name,id,segments}` を外部ルーティングから
 > 除外することだ。
 
+> 🕰️ 現在（2026-11-14）: ルーティングから外す代わりに **呼び出し元の証明書** で塞ぐ — ConfigMap `INTERNAL_AUTH_PATH_RULES` がこれらのパスを呼べるサービスを決め（`/api/auth/user/email/` · `/profile/` は `none`）、本番は `INTERNAL_AUTH_MODE` · `INTERNAL_AUTH_RULES_MODE` · `INTERNAL_AUTH_IDENTITY_MODE` すべて `enforce`（`k8s/10-configmap.yaml`、docs/57 §16）。パスのルールの内部エンドポイントが `InternalCallGuard.allowed` を通るかは `InternalEndpointGuardTest`（B-80）が守る。`UserLookupGuardTest` は現在 9 件。
+
 ---
 
 ## 10. 🟠 ログインの総当たり攻撃が事実上無制限
@@ -370,6 +374,8 @@ default-filters:
 > 回避も塞がれたので急ぎではないが、ユーザー単位の制限を本当に望むなら、レート制限のフィルターを
 > ルートフィルターに移して JWT フィルターの後ろに置く必要がある。**今回は変えなかった** — フィルターの順序
 > 変更は全ルートのトラフィック制御に影響するため、負荷テストと一緒に行うべきだ。
+
+> 🕰️ 現在（2026-11-14）: 移した — `default-filters` の全体制限はなくなり、流入制限は **ルートごとに一つ**、認証ルートでは `JwtAuthorization` の後ろだ（B-84、`RateLimiterPlacementTest`）。以前はログインルートで全体 + ルートの二つの制限が同じバケットからトークンを二つずつ使っていた。ログイン経路（`user-service-public`）は変わらず毎秒 1 · バースト 10。アイデンティティヘッダーの除去も `default-filters` の `RemoveRequestHeader` ではなくグローバルフィルター `IdentityHeaderScrubFilter` が行う — `default-filters` 側は JWT フィルターの **後に** 動き、検証済みのアイデンティティまで消していた（B-53、gateway `application-local.yml` のコメント）。
 
 ---
 
@@ -476,6 +482,8 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 5 回の制限、1 回限り、2FA アカウントのログインレスポンスにトークン・REFRESH がない。`OAuth2SuccessHandlerTest` は、待機クッキーの値が
 アクセストークンの生成器から出てこないことを固定する。フロントの `SignInPage.test`。
 
+> 🕰️ 2026-11-14: トークンあたり 5 回に加えて **ユーザーあたり 15 分に 5 回**（パスワードで再ログインすると待機トークンの 5 回が新しく生まれていた — [docs/68 §15](68-refresh-token-rotation.md)）。試行は検証の前に数える（`PendingTwoFactor.reserveAttempt`）。`TwoFactorLoginTest` は現在 8 件。
+
 > 実務基準: 2FA は「2 つ目の要素を通過するまでは **いかなる資格情報も発行しない**」がすべてだ。画面が待って
 > くれるのはセキュリティではなく UX だ。待機状態のトークンは用途を分離し（別のキー・audience）、他の検証器が決して受け付けないように
 > し、2 つ目の要素は試行回数を制限する（NIST SP 800-63B §5.2.2）。
@@ -503,6 +511,8 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 ## 残っている課題（今回直さなかったもの）
 
 ### 13. ✅ アカウントロックが実装されていない — **解決済み**（`03422d0`: 5 回失敗 → 15 分ロック、自動解除、`LoginAttemptService`）
+
+> 🕰️ 2026-11-14: 失敗回数 · ロックは今は Redis（`LoginAttemptService` — 試行をパスワード検査の前に Lua 一回で数える、キーはメールのハッシュ）。古い DB 列 `lock_expires_at` · `failed_login_attempts` は contract リリース（user V19、2026-11-03 本番適用）で削除した。
 
 > 以下は発見当時の記録である。
 
@@ -533,6 +543,7 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 - **ファイアウォールの点検（`ops/11`）** 🔴 — 露出していたホストが git 履歴に残っており、元に戻せない。
 - **actuator の認証** — 今回露出範囲を減らしたが、残したエンドポイント（`refresh`、`busrefresh`、
   `prometheus`）も認証の後ろに置くのが正しい。
+  > 🕰️ 2026-11-14: 外からは届かない（§7〜8 の 🕰️ — ゲートウェイの遮断 · トンネルのパス · config-server のパスワード）。ゲートウェイ自身の `refresh` はクラスター内（同じ名前空間 · kube-system — `k8s/95`）では今も認証なしで開いている（ゲートウェイに Spring Security がない）。
 
 ---
 

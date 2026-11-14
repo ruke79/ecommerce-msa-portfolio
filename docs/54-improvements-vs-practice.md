@@ -2,7 +2,17 @@
 
 **日本語** | [한국어](54-improvements-vs-practice.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** §10.1 の「サービスごとのアイデンティティは次の段階」・「突合バッチ未着手」・「証明書を 1 つ共有」はその後解決しました（[57 §16·§18](57-remaining-priorities.md)、c13f51f）。事例ごとの限界と改善点は [docs/62](62-engineering-casebook.md)。
+> 🕰️ **状態（2026-11-14）— 2026-09-25 時点の整理。本文はその時の「最終状態」として残し、その後変わったものだけを下の表に書きました。** 事例ごとの限界と改善点は [docs/62](62-engineering-casebook.md)、残りの作業は [docs/85 §8](85-release-deploy-runbook.md)。
+
+| 2026-09 のこの文書 | 現在（2026-11-14） | どこ |
+|---|---|---|
+| §1.3 · §10.2 アカウントロック — DB 列（V4）で 5 回 / 15 分 | 同じ規則を **Redis** で（Lua 1 回 — 試行はパスワード検査の前に数える、キーはメールのハッシュ）。旧列 `lock_expires_at` · `failed_login_attempts` は user V19 で削除（contract リリース、本番適用 2026-11-03） | `LoginAttemptService` · docs/85 §8-2 |
+| §1.8 トラストストアを `JAVA_TOOL_OPTIONS` で | パスだけ `JAVA_TOOL_OPTIONS`、ストアのパスワードは環境変数 `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD`（B-83 — JVM がその変数を起動ごとにログへ出していた）、ストアのパスワードも交換済み（2026-10-25） | [docs/57 §16](57-remaining-priorities.md) · `JvmSslPasswordsTest` |
+| §10.1「サービスごとのアイデンティティは次の段階」・「証明書を 1 つ共有」 | サービスごとのアイデンティティ証明書（ops/38 · cert-manager は ops/39）、アイデンティティヘッダー enforce（2026-10-26）・Eureka 書き込み enforce（2026-10-30） | [docs/57 §16 · §18](57-remaining-priorities.md) |
+| §10.1 config-server「リポジトリ未接続で運用」 | 未接続のままだが、今は `CONFIG_SERVER_PASSWORD` なしでは設定 · 復号 API をすべて拒否する（2026-10-15） | `ConfigServerSecurity` |
+| §10.1 バックアップ「環境ごとに人が有効にする」 | 本番は 2026-10-13 に有効化（`postgres-backup` · `restore-drill`）、ノード外の保管は別の機械が取りに来る | [docs/22 §2](22-alerting-and-backup-automation.md) |
+| §10.1 突合バッチ「未着手」 | 最近のものを再送する突合 | [docs/57 §14](57-remaining-priorities.md) |
+| §10.1 スクレイプ `insecure_skip_verify` · サンプリング 1.0 | 本番はクラスター内の `metrics-agent` が CA で検証してノードの Prometheus へ（B-95、ローカルの `prometheus.yml` だけ skip）。サンプリングは下げず **1.0 固定**（B-72）— Collector のテールサンプリング（B-102）が選ぶ | [docs/63 §5](63-opentelemetry.md) |
 
 > 作成日: 2026-09-25 · 基準: この日付のブランチの先端（ユーザー複製 ⑤⑥、2FA のサーバー強制、クーポン発行権限まで反映）。草稿を書きながらコードで新たに見つけた 🔴 2 件（§10.1 の 2FA・クーポン発行）は同日に直し、該当行は §1 に移した。
 > この文書はプロジェクト全体の改善を **最終状態を基準に**まとめ直したものである。途中で直してからまた変わったものは最後の形だけを書き、

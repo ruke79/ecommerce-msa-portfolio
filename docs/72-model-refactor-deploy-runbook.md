@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](72-model-refactor-deploy-runbook.ko.md)
 
+> 🕰️ **状態(2026-11-14) — このデプロイ(`b7c5053a45e8`)は 2026-10-10 に終わり、§7 の contract リリースも 2026-11-03 `7ef62043a98f` で本番に入りました**(order 29 · user 19 · catalog 24 · 列 0 · 無効インデックス 0、[docs/85 §8-2](85-release-deploy-runbook.md))。下の「状態 · デプロイ完了 · 事前点検」と §1 ~ §6 は当時の記録です。§3 のバックアップコマンドは今もデプロイ前の手動バックアップ手順として使います(2026-11-02 の記録まで反映)。今の本番バージョン · 次のデプロイは docs/85 を見ます。
+>
 > **状態(2026-10-06)** — 対象バージョンは **`b7c5053a45e8`** です(パイプライン緑)。`d7f87c9` 以降に加わったのは user の猶予トークン長チェック(a906312)、文書、デプロイの手動実行化(B-75)だけです。機能フラグ(docs/74、`c291eba` 以降)は**このデプロイが安定した後に別途**出します — そのため Run workflow のバージョンを空にせずこの SHA を入れます(空にするとデフォルトブランチの最新 = フラグまで一緒に出る)。何をなぜ直したかは [docs/62 §18](62-engineering-casebook.md)、デプロイスクリプト自体は [docs/36](36-deployment-pipeline.md)・[docs/33](33-deploy-runbook.md) です。
 >
 > **デプロイ完了(2026-10-10)** — インスタンス上で `ops/28-deploy.sh local b7c5053a45e8` により手作業でデプロイ、328 秒、スモーク通過(4 通過・0 失敗・5 省略)。リポジトリに本番デプロイ用ランナー(`oci-ampere`)がないため Actions ではなく手作業で行い、作業コピーは先に対象コミットへ `git switch --detach` しました(Actions も対象コミットをチェックアウトして同じスクリプトを動かす — 別のコミットのマニフェストが混ざらないように)。サガ E2E(決済)は手動確認の項目です。
@@ -108,6 +110,7 @@ ls -l "$B"                     # ファイル三つ、0 バイトなし
 - 正常: `backup_label` が 1、ダンプの末尾に `dump complete`、Mongo はコレクションごとの文書数。物理バックアップ(`pg-base.tar`)は全体をその時点へ、論理ダンプ(`pg-all.sql.gz`)は表一つ(例: お知らせ)を戻すときに使います。
 - **2026-10-10 の実測**: DB 全体 4,767 MB → `pg-base.tar` 4.7G・`pg-all.sql.gz` 304M、Mongo は `chat` 7 件・`auto_sequence` 1 件(936 バイト — 小さいのが正常)。サーバーのディスク空きは 30G から約 25G。
 - バックアップは本番ディスクに同居しています — デプロイが安定したら別のマシンへ移します。Atlas M0 には自動バックアップがありません。
+  🕰️ 2026-10-20: `pre-b7c5053-*` はノードの外へ移し、本番ディスクから消した。毎日の自動バックアップ · ノード外への取得は [docs/22 §2](22-alerting-and-backup-automation.md)(`k8s/85`)。
 - 末尾に `dump complete` がない、`exit` が 0 でない、または最後の点検が 0 でないとき: バックアップの窓(03:00 UTC · 月曜 05:00 の復元訓練)の外で残ったダンプのセッションを切り(`select pg_terminate_backend(pid) from pg_stat_activity where application_name ~ '^pg_(dump|dumpall|basebackup)'` — ダンプは読むだけなので切っても失うものはない)、最初から取り直します。そのフォルダの `pg-all.sql.gz` は使いません。
 - **2026-11-02 の記録**: contract リリース([docs/85 §8-2](85-release-deploy-runbook.md))の事前点検で orderdb に 30 秒を超えるトランザクションが 1 — `postgres` · `pg_dump` · `local` · `idle in transaction`(`ClientRead`)· **9 日 2 時間 57 分**(2026-10-24 ~12:45 UTC、`6501d3fd8e60` のデプロイ前の手動バックアップのころ)。この節の `pg_dumpall` が接続の切れたまま orderdb で止まり、orders の表すべてに ACCESS SHARE を持っていた — そのまま V29 を流していたら `DROP COLUMN` の後ろで注文の要求がすべて止まっていた。書き込みなし(`backend_xid` なし)なので `pg_terminate_backend` で切った。毎日 03:00 の `postgres-backup` CronJob は同じ ACCESS SHARE なのでぶつからず、9 日とも Complete。9 日間のスナップショットの影響(デッドタプル)は orders の表ごとに数十件だけだった。その日の `pg-all.sql.gz` は orderdb から抜けている(pg_dumpall は DB 名の順)。そこで `tmux` · `pipefail` · 最後の点検を加えた。
 
@@ -154,7 +157,7 @@ SELECT count(*) FROM pg_largeobject_metadata;
 ## 6. 失敗したら — 前に進めて直す
 
 - 失敗したサービスは旧 Pod が動き続け(ローリングが止まった状態)、成功したサービスは新バージョンのまま残ります。`ops/28` が新しい Pod の起動エラーを出力します — 直したイメージで再デプロイします。
-- どうしても戻す必要があるなら、**スキーマを先に** 戻してからだけ: `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh prod --rollback`。V18 の場合はお知らせ本文を再びラージオブジェクトに入れる必要があります(§3 のバックアップから復元するほうが簡単です)。お知らせは運用者しか書かないので、戻さずにお知らせ画面だけが一時的に止まるほうが通常はましです。
+- どうしても戻す必要があるなら、**スキーマを先に** 戻してからだけ: `FORCE_UNSAFE_ROLLBACK=1 ./ops/28-deploy.sh <環境> --rollback`(前回のデプロイと同じ環境 — 本番は `local`、§4-2)。V18 の場合はお知らせ本文を再びラージオブジェクトに入れる必要があります(§3 のバックアップから復元するほうが簡単です)。お知らせは運用者しか書かないので、戻さずにお知らせ画面だけが一時的に止まるほうが通常はましです。
 
 ## 7. 次のリリース — contract
 
@@ -169,3 +172,5 @@ ALTER TABLE orders.orders DROP COLUMN IF EXISTS tax_price;
 列の削除は破壊的な変更なので `-- ROLLBACK-UNSAFE:` の宣言が必要です(ガード B-54)。エンティティは既に二つの列を使っていないので、コードの変更はありません。
 
 → 2026-10-31 コミット: order `V29__contract_order_address_order_id_tax_price.sql`(上の二文)、user V19(ログイン失敗ロックの旧列二つ)、catalog V24(旧名前インデックス — `DROP INDEX CONCURRENTLY`)。手順 · 確認は [docs/85 §8-2](85-release-deploy-runbook.md)。
+
+→ ✅ 適用済み(2026-11-03 `7ef62043a98f` — 最初の対象 `50ef7995e94d` は CI ランナーが止まっていてイメージがなかった): デプロイ後 order 29 · user 19 · catalog 24 · 列 0 · 無効インデックス 0 · 再起動 0。

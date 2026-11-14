@@ -2,6 +2,8 @@
 
 [日本語](66-grpc-stock-reservation.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — gRPC 서버(catalog 9095)는 운영에 들어갔다(2026-10-01 커밋 `a813ae314f8c` 에 이미 들어 있고, docs/72 의 사전 점검(2026-10-09) 때 운영이 그 버전). 전송은 지금도 `STOCK_RPC_TRANSPORT: "http"`(`k8s/10-configmap.yaml`) — gRPC 로의 전환(§6)과 측정(§10)은 하지 않았다.** 그 뒤 바뀐 것: 요청 거절은 더 이상 예약 없이 진행하지 않는다(§3), catalog 가 호출자의 기한으로 잠금 대기를 끊는다(§5), catalog 매니페스트는 2개 + HPA(§10).
+>
 > 작성일: 2026-09-28 · 상태: ✅ 적용(배포 대기 · 전송 기본값 http)
 >
 > 관련: [59 결제 전 재고 예약](59-stock-reservation.ko.md) · [57 §16 서비스 간 mTLS](57-remaining-priorities.ko.md) ·
@@ -78,6 +80,8 @@ order-service                                     catalog-service
 
 order 는 예외(상태 코드 무엇이든)를 HTTP 실패와 똑같이 **"catalog 에 닿지 못함" → 예약 없이 진행**으로 처리한다(결제 뒤 부족분 환불이 받는다 — docs/59).
 
+> 🕰️ 2026-10-15 부터(2026-10-24 운영): **요청 거절**(gRPC `INVALID_ARGUMENT` · HTTP 400 · 422)은 예약 없이 진행하지 않고 주문을 거절한다(`OrderStockHold.isRejection` → `REJECTED`, 계수기 `order_stock_hold_total{result="rejected"}`). 닿지 못함(기한 초과 포함)만 예약 없이 가되, catalog 가 뒤늦게 잡았을 수 있어 새 주문의 예약을 한 번 푼다(`OrderService` — 예전에는 그 유령 예약이 30분 동안 남았다).
+
 ## 4. 보안 — mTLS 와 호출자 판정
 
 **gRPC 포트는 서블릿 필터 밖이다.** `InternalCallerFilter` 는 Tomcat 앞에서만 돈다. 인터셉터가 없으면 클러스터 안의 아무 파드나 9095 로 재고를 잡을 수 있다 — HTTP 가 막아 둔 것을 옆문이 연다.
@@ -97,6 +101,8 @@ HTTP 의 읽기 제한은 **클라이언트만** 포기한다 — 서버는 끝�
 
 - 기본 3초(`STOCK_GRPC_DEADLINE_MS`) — Feign 읽기 제한(5초)보다 짧게. 결제 화면 앞에서 오래 붙잡지 않는다.
 - 테스트(`GrpcStockReservationPortTest.deadlinePropagatesAndOrderProceeds`)가 "order 는 UNAVAILABLE 로 진행 + catalog 쪽 Context 취소" 를 함께 확인한다.
+
+> 🕰️ 정정(2026-10-15): 위의 "Context 가 취소되어 더 붙잡지 않는다" 는 처음 구현에서는 사실이 아니었다 — 서버가 Context 를 보지 않아 기한이 지난 호출도 잠금을 기다렸다. 이제 `StockReservationGrpcService.remainingBudget` 이 남은 기한 − 200ms(최대 5초, 기한이 없으면 `StockReservationService.DEFAULT_LOCK_TIMEOUT` 5초)를 잠금 대기 상한으로 넘기고, 넘으면(55P03) `DEADLINE_EXCEEDED` 로 돌려준다(예약은 롤백). 시험은 `StockReservationGrpcServerTest` 의 `lockWaitIsBoundedByTheCallersDeadline` · `lockWaitClassification` · `remainingBudget`.
 
 ## 6. 전환 절차 (운영)
 
@@ -143,7 +149,7 @@ gRPC 는 네 끝이 맞아야 붙는다. 하나라도 어긋나면 **테스트�
 | 테스트 | 무엇을 |
 |---|---|
 | `InternalCallerGrpcInterceptorTest`(common, 7) | **실제 Netty · TLS** 위 판정 — 허용 서비스 통과 · 다른 서비스 PERMISSION_DENIED · 인증서 없음 UNAUTHENTICATED · 다른 CA 거절 · observe · rules-observe · off |
-| `StockReservationGrpcServerTest`(catalog, 6) | 운영 조립 그대로 — 같은 서비스 메서드 · 모자람은 결과 · 오류 매핑(내부 메시지 없음) · 경로 규칙 · **추적 부모-자식** · TLS 없으면 미기동 |
+| `StockReservationGrpcServerTest`(catalog, 6 — 🕰️ 지금 9: 잠금 대기 기한 셋, §5) | 운영 조립 그대로 — 같은 서비스 메서드 · 모자람은 결과 · 오류 매핑(내부 메시지 없음) · 경로 규칙 · **추적 부모-자식** · TLS 없으면 미기동 |
 | `GrpcStockReservationPortTest`(order, 5) | **HTTP ↔ gRPC 동등성**(잡힘 · 모자람) · **기한 전파** · 실패 상태 코드 · 스위치 |
 | 컨테이너 기동(catalog · order) | 실제 앱에서 서버가 뜨고(테스트는 포트 0), order 는 기본 http |
 | B-73 | §8 |
@@ -152,7 +158,7 @@ gRPC 는 네 끝이 맞아야 붙는다. 하나라도 어긋나면 **테스트�
 
 ## 10. 한계와 다음
 
-- **로드 밸런싱.** gRPC 는 HTTP/2 연결 하나를 오래 쓴다. ClusterIP Service 뒤에서는 연결이 **처음 붙은 파드에 고정**되어, catalog 를 여러 개로 늘려도 부하가 나뉘지 않는다. 지금은 1개라 문제가 없다. 늘릴 때는 headless Service + 클라이언트 `round_robin` 정책(또는 메시 · L7 프록시)이 필요하다.
+- **로드 밸런싱.** gRPC 는 HTTP/2 연결 하나를 오래 쓴다. ClusterIP Service 뒤에서는 연결이 **처음 붙은 파드에 고정**되어, catalog 를 여러 개로 늘려도 부하가 나뉘지 않는다. 지금은 1개라 문제가 없다(🕰️ 지금 매니페스트는 `replicas: 2`(`k8s/41`) + HPA(`k8s/70`) — 전송이 http 라 아직 문제가 아니지만, gRPC 로 바꾸기 전에 이 일을 먼저 한다). 늘릴 때는 headless Service + 클라이언트 `round_robin` 정책(또는 메시 · L7 프록시)이 필요하다.
 - **프로브.** k8s 프로브는 8081(actuator)만 본다. gRPC 서버가 안 뜬 경우(§4 enforce + TLS 없음)는 로그로만 드러난다 — gRPC health 서비스(`grpc.health.v1`)나 actuator 지표를 붙일 수 있다.
 - **인증서 갱신.** 서버 SslContext 는 기동 때 한 번 만든다. cert-manager 가 인증서를 갱신하면 Reloader 가 파드를 재시작하므로(k8s/41 주석) 지금은 맞다 — 재시작 없이 바꾸려면 키 매니저를 파일 감시로 바꿔야 한다.
 - **측정은 아직.** 전환 뒤 Jaeger · Prometheus 로 p50/p95 를 HTTP 와 비교해 여기에 적는다.

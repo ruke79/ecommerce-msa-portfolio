@@ -248,7 +248,7 @@ kubectl -n ecommerce logs deploy/catalog-service --since=30m --tail=-1 | grep -c
 
 - **무엇**: `order.DLT` · `payment.DLT` 에 notification 그룹(`notification-order` · `notification-payment`)이 쌍으로 쌓였다 — 10-16 ~ 10-22 에 6쌍(b7c5053), 배포 뒤 Stripe 주문 2건으로 8쌍. `ops/56 list` 의 원인 사슬: `BatchListenerFailedException → NullPointerException`.
 - **왜**: 알림 메일 제목을 지역 언어로 바꾸는 줄이 `Locale.forLanguageTag(locale)` 였다. 지역(`notification_preference.region`)은 **전화번호를 인증해야** 채워져서, 인증하지 않은 사용자는 `locale` 이 null → NPE. 그 줄이 메일 실패를 막는 try 밖이라 **알림 생성 전체**가 실패했다(메일 수신을 켠 사용자의 주문 · 결제 · 배송 · 쿠폰 · 재입고 안내 모두).
-- **고친 것**: 지역을 모르면 제목은 그대로 · 메일 언어는 기본값, 메일 준비 전부를 try 안으로(알림은 메일과 상관없이 만든다), 경고 로그에 예외 메시지 대신 클래스 이름(`NotificationMailLocaleTest` — 되돌리면 실패). 다음 배포에 들어간다.
+- **고친 것**: 지역을 모르면 제목은 그대로 · 메일 언어는 기본값, 메일 준비 전부를 try 안으로(알림은 메일과 상관없이 만든다), 경고 로그에 예외 메시지 대신 클래스 이름(`NotificationMailLocaleTest` — 되돌리면 실패). ~~다음 배포에 들어간다.~~ → ✅ 같은 날 `6501d3fd8e60` 으로 적용(§0 "후속 배포" — 새 주문의 "주문 접수" 메일 도착).
 - **쌓인 DLT**: 다시 보내지 않는다(원래 토픽의 모든 그룹이 다시 받는다). 놓친 안내는 주문 8건 — 필요하면 관리자 공지로.
 
 ## 8. 며칠 뒤 — 관찰을 거친 다음 단계

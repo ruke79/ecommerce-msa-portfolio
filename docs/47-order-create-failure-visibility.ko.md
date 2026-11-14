@@ -2,7 +2,7 @@
 
 [日本語](47-order-create-failure-visibility.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 고객 백필과 `User-Email` 헤더는 이후 없앴습니다([docs/48](48-user-replication-debt.ko.md)).
+> 🕰️ **상태(2026-11-14) — 이전 기록.** 고객 백필과 `User-Email` 헤더는 이후 없앴습니다([docs/48](48-user-replication-debt.ko.md)) — 주문자는 게이트웨이가 쓴 `User-Id` 하나이고, `orders.customer` 테이블은 order V16 에서 지웠습니다(§5 의 확인 쿼리 · "고객 없음" 갈래는 더 쓰지 않습니다). §4 · §6 의 400/500 구분과 로그 줄(`주문 생성 거절` · `주문 생성 실패(예상치 못한 오류)`)은 지금도 그대로입니다.
 
 `POST /api/order/create` 가 400 을 돌려줬다. order-service 로그를 그 시각으로 열어 보면
 **그 시각의 줄이 한 줄도 없다.** 카프카 리밸런스와 eureka 하트비트뿐이다.

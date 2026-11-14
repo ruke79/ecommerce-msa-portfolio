@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](19-local-performance-tuning.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 数値のみ古い。** PostgreSQL のデータソースは現在 10 個です（notification · delivery を追加）。プールの総和は B-32 が改めて数えます。
+> 🕰️ **状態（2026-11-14）— 2026-07-28 の記録（§5.1 · §5.2 は 2026-10-01）。** PostgreSQL のデータソースは現在 10 個です（notification · delivery を追加）。プールの総和は B-32 が改めて数えます。リーク検出の既定値 · 検索エンジンの切り替え · §6 の二つのインデックスはその後変わりました（各節の 🕰️）。大きなデータでの負荷測定は [docs/83](83-load-test.md)。
 
 > 作成日: 2026-07-28
 > 関連: [テスト戦略](17-testing.md) · [パーティショニング](09-postgresql-partitioning-sharding.md) · [ops/14](../ops/14-load-test.sh)
@@ -124,6 +124,8 @@ max_connections = 200
 
 `ConfigurationGuardrailTest` の B-32 が `データソース × プール × レプリカ ≤ 200` をビルドごとに検査する。
 データソースを追加したりプールを大きくしたりすると、総和が自動的に再計算される。
+
+> 🕰️ 今: リーク検出は既定で **オフ** — `leak-detection-threshold: ${DB_LEAK_DETECTION_MS:0}`（B-104 — オンにすると借りるたびに例外が一つ、catalog の CPU 3.9%。疑わしいときだけそのサービスに一時的に 20000）。ほかの値（プール 5 · アイドル 2 · 待ち 5 秒 · 寿命 20 分）はそのまま。catalog が自前で作る二つのデータソースは 2026-10-19 まで `hikari.*` を読まず、Hikari の既定値だった（`CatalogDataSourcePools`）。
 
 ## 4. 負荷ハーネス — `ops/14-load-test.sh`
 
@@ -292,6 +294,8 @@ kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins  
 
 比べるときは `SEARCH_ENGINE` だけを変えて同じデータで測る。生成器は DB にだけ入れるので、ES は**入れたあと再索引しないと**見えない。
 
+> 🕰️ 今: `SEARCH_ENGINE=es` は「ES がこのデプロイにある」ことだけを決め、検索ごとのエンジンは機能フラグ `catalog.search-engine` の比率（`k8s/15-feature-flags.yaml` ＋ `ops/28 --config-only`、再起動なし）で選ぶ（[docs/74](74-feature-flags.md)）。本番（OCI）には ES がない。
+
 ## 6. 実測 — 5 万商品での実行計画
 
 ロード後に `EXPLAIN (ANALYZE)` で測った結果。これで **インデックスの選択度** を実際に見られる。
@@ -321,12 +325,16 @@ B-tree インデックスでは解決しない。選択肢は 3 つ:
 
 **この測定がなければ「いつか遅くなるだろう」という推測だった。** 今は数字がある。
 
+> 🕰️ 今: 2 番を行った — catalog V21 が `pg_trgm` 拡張 ＋ 生きている商品の名前の GIN を、V23 が NFKC 比較用の `product.search_key(name)` のトライグラム GIN を追加し（名前検索は両側を `search_key` で比較）、V24 が使われなくなった V21 の `idx_product_name_trgm` を削除した（本番適用 2026-11-03）。
+
 ### 6.2 カテゴリ結合の読み取り増幅
 
 カーソルページネーションが `product_id` で先にソートしてからカテゴリで絞り込むため、21 件を返すのに
 120 行を読む（5.7 倍）。カテゴリが 5 個なので平均 5 倍という計算 — 算数と合う。カテゴリが増えたり
 まばらなカテゴリを照会したりすると、増幅は大きくなる。`(category_id, product_id DESC)` の複合インデックスが
 王道の解決策だが、実トラフィックのカテゴリ分布を見て決めることなので、ここでは **測定だけ** しておく。
+
+> 🕰️ 今: catalog V20 が `product(category_id, product_id)` インデックスを、V21 が生きている商品だけのカテゴリの部分インデックスを追加した（カテゴリの件数カウントが `idx_product` を丸ごと走査していたもの、docs/83 §2.8）。
 
 ## 7. まだ測定していないもの（正直に）
 

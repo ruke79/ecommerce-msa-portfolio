@@ -2,6 +2,8 @@
 
 **日本語** | [한국어](20-schema-ownership.ko.md)
 
+> 🕰️ **状態（2026-11-14）— 切り替え当時の記録。** `validate` の既定値は今 PostgreSQL を使う 9 サービス（cart · catalog · chat · coupon · delivery · notification · order · pay · user）にあり、B-33 が守る。本番はこの設定で動いている — 残りの今は §7 の 🕰️。
+
 > この文書は、「誰がスキーマを作るのか」を Hibernate から Flyway に移した作業の記録である。
 > 関連: [docs/09](09-postgresql-partitioning-sharding.md)（パーティショニング）· [docs/19 §5.1](19-local-performance-tuning.md)（カラーのマッピングエラー）
 
@@ -186,3 +188,5 @@ PGURL=... SERVICE=catalog-service ./ops/15-schema-baseline-rehearsal.sh
 | 皆さんの本番 DB で `ops/15` を実行 | 🔴 **運用対応が必要** — このリポジトリでは確認できない |
 | `flyway.baseline-on-migrate` を無効にする | 🟡 すべての環境が履歴を持つようになった後に |
 | マイグレーションのロールバック（undo）スクリプト | 🟡 Flyway Teams の機能。現在は復元（ops/09）がロールバック経路である |
+
+> 🕰️ 今（2026-11-14）: 本番は `validate` で起動して Flyway の履歴を使っている（2026-11-03 のデプロイ後 order 29 · user 19 · catalog 24）— 1 行目の判定はデプロイで通過したことになる。`baseline-on-migrate: true` はそのまま（`application-common.yml`）。undo は依然としてなく、代わりに破壊的なマイグレーションには `-- ROLLBACK-UNSAFE:` の表示（B-54 — `ops/28` が自動復帰を切る）· 列の削除は expand → contract の二リリース · 大きなデプロイの前にはリリースのランブックのマイグレーションのリハーサルを行う（docs/85）。

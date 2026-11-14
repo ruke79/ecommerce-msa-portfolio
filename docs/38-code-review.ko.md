@@ -2,7 +2,7 @@
 
 [日本語](38-code-review.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 점검 당시의 기록이라 상태 칸이 없습니다. 상당수가 이후 고쳐졌습니다. 최신 열린 항목은 [docs/54 §10](54-improvements-vs-practice.ko.md), 사례별 한계는 [docs/62](62-engineering-casebook.ko.md).
+> 🕰️ **상태(2026-11-14) — 점검 당시의 기록.** 상태 칸이 없고 file:line 은 그때의 것입니다. §1 의 🔴 는 그 뒤 대부분 고쳐졌습니다 — 주문 생성의 cart 호출(1.1, `CartServiceClient`) · 금액은 서버가 정함(1.2) · 할인식(1.5) · 남의 데이터 경로(1.6 — 프로필 조회는 `InternalCallGuard`, 배송지는 `user_id` 조건, 쿠폰 · 장바구니는 `User-Id`, 평점은 0 ~ 5) · 인증번호 로그(1.7) · `delivery-status` 소비자(1.8 — order `DeliveryStatusKafkaListener` · notification) · 사이즈 ↔ SKU(1.9) · 결제 뒤 화면(1.10 — `useOrderSettling`) · 카테고리 생성 · `verify-2fa-login` 삭제 · 이미 결제된 주문의 재결제 거절(1.11). 최신 열린 항목은 [docs/54 §10](54-improvements-vs-practice.ko.md), 사례별 한계는 [docs/62](62-engineering-casebook.ko.md).
 
 > 범위: 백엔드 전체와 CDC 구현의 코드 리뷰. 프론트엔드도 낙관적 업데이트와 롤백이 빠져 있어
 > 고칠 곳이 많을 것으로 보고 함께 점검했다.

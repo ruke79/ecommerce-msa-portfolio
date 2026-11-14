@@ -6,7 +6,7 @@
 
 | 사건 | 받는 사람 | 경로 | 이유 |
 |---|---|---|---|
-| **품절**(재고 있음 → 0) | 운영자 | 로그 `품절 발생` → Loki 경보 `ProductSoldOut`(warning) → Alertmanager 웹훅 | 재고를 채울 사람은 운영자다. 손님은 상품 화면의 "품절" 로 충분하다 |
+| **품절**(재고 있음 → 0) | 운영자 | 로그 `품절 발생` → Loki 경보 `ProductSoldOut`(warning) → Alertmanager → Discord(B-96) | 재고를 채울 사람은 운영자다. 손님은 상품 화면의 "품절" 로 충분하다 |
 | **재입고**(0 → 있음) | 그 옵션에 **신청한** 손님 | `product-stock`(RESTOCKED) → notification-service → `RESTOCK_AVAILABLE` 알림(앱·메일) | 손님이 부탁한 소식이다. 신청하지 않은 손님에게는 소음이다 |
 
 재고 복원 자체(환불·반품 입고)는 손님에게 알리지 않는다 — 가게 내부 사정이다. 손님에게 중요한 것은 "돈이
@@ -146,4 +146,4 @@ order    stock-shortage 소비 ─┬─ 줄마다 short_qty 적기(V21, 멱등 
 | `OrderRefundTest` | 🔴 부족분 환불은 돌아온 수로 세지 않는다(없는 재고를 복원하지 않게), 발송 뒤 부족분만 환불하면 반품 대기 아님 |
 | B-41 · B-61 | `stock-shortage` 가 DLT 목록에, "수동 … 필요" 문구 = 경보 문구 |
 
-catalog V10 과 order V21 은 PostgreSQL 16 에 두 번씩 적용해 확인했다(멱등, 부분 인덱스, 중복 키 거절).
+catalog V13 과 order V21 은 PostgreSQL 16 에 두 번씩 적용해 확인했다(멱등, 부분 인덱스, 중복 키 거절).

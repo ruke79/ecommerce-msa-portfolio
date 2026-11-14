@@ -91,6 +91,8 @@
 Zipkin 에서 `outbox relay payment-request` 스팬과 결제 확인 요청 스팬의 간격으로 확인할 수 있다
 (아웃박스를 건너도 추적이 이어진다 — docs/51 §4e).
 
+> 🕰️ 2026-11-14: 추적 저장소는 Zipkin 에서 OpenTelemetry Collector + **Jaeger** 로 바뀌었다 — 같은 두 스팬을 Jaeger 에서 본다([docs/63](63-opentelemetry.ko.md)).
+
 ## 6. 끄는 법
 
 ```yaml

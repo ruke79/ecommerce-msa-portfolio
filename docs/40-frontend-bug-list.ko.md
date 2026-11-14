@@ -2,7 +2,7 @@
 
 [日本語](40-frontend-bug-list.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** P0~P2 는 모두 고쳤습니다(진행표). 남은 것은 chat 라우트의 헤더 순서(§백엔드로 넘길 것)입니다.
+> 🕰️ **상태(2026-11-14) — 이전 기록.** P0~P2 는 모두 고쳤습니다(진행표). 그때 남았던 chat 라우트의 헤더 순서(§백엔드에 넘길 것)도 고쳐졌습니다 — 지금은 `JwtAuthorization` 이 `RemoveRequestHeader=Cookie` 앞이고 `RateLimiterPlacementTest` 가 그 순서를 지킵니다.
 
 2026-09-14, `frontend/src` 전체(약 18,000줄)를 훑은 결과다. 배포된 사이트가 처음으로
 끝에서 끝까지 살아난 직후라, **인프라·백엔드에 가려 보이지 않던 화면 문제**가 이제 그대로
@@ -513,6 +513,7 @@ id 값 `passowrd` 도 고쳤다. 참조하는 `htmlFor` 가 없어 무해했지�
   실제 경로인 `/browse?category=<id>` 로 바꿨다(햄버거 메뉴와 같은 주소).
   하위 카테고리는 **일부러 링크가 아니다** — 하위 카테고리로 거르는 경로가 아직 없다.
   `// have error … i will fix this` 자리에 그 사정을 적었다.
+  > 🕰️ 2026-11-14: 지금은 하위 카테고리로 거르는 경로가 있다 — `/browse?subCategory=<id>`(필터 메뉴 · 검색 API). 빵부스러기의 하위 카테고리는 여전히 링크가 아니다(`BreadCrumb.jsx` 주석은 옛 사정 그대로).
 - **`Maintenance`** — 이 화면은 **네트워크가 끊겼을 때** 뜬다. 그런데 svgrepo.com 의 SVG 를
   런타임에 `<img src>` 로 가져오고 있었다. 정작 필요한 순간에 깨진 이미지가 뜨고, 외부
   도메인에 우리 사용자의 방문이 기록된다. 인라인 SVG 로 바꿔 요청을 0 으로 만들었다.
@@ -599,6 +600,7 @@ return `${splitDate[0].trim()}년 ${splitDate[1].trim()}월 ${splitDate[2].trim(
   `JwtAuthorization` **앞**에 있다. 같은 파일의 다른 라우트 주석이 "반드시 뒤" 라고 못 박아
   둔 순서와 반대다. 지금은 브라우저가 헤더로 토큰을 보내 무해하지만, 쿠키 경로를 쓰는 순간
   401 이 난다.
+  → ✅ 고쳤다 — 지금은 `JwtAuthorization` → `RemoveRequestHeader=Cookie` 순서이고, 모든 라우트의 그 순서를 gateway `RateLimiterPlacementTest` 가 지킨다.
 - `chat-service-api` 의 `uri: lb:ws://` — REST 라우트가 ws 스킴이다. 동작한다면 우연이다. → ✅ 2026-10-16 `lb://` 로. 동작한 것은 우연이었다 — Eureka 인스턴스가 https 를 알려 ws 가 무시됐다(알리지 않는 디스커버리에서는 GET 400 · POST 405, ChatRouteTlsTest · RouteMatchingTest).
 
 ---

@@ -2,7 +2,7 @@
 
 [日本語](30-git-history-secret-exposure.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** §5 에서 권장한 CI 비밀 스캔은 도입했습니다([docs/57 §6](57-remaining-priorities.ko.md)).
+> 🕰️ **상태(2026-11-14) — 대응 기록(2026-07 ~ 09).** §5 에서 권장한 CI 비밀 스캔은 도입했습니다 — `build.yml` 의 `secrets` 잡이 `ops/20 --head` 와 `--range`(이번에 들어온 커밋)를 돌고, 실패하면 릴리스 후보가 되지 않습니다([docs/57 §6](57-remaining-priorities.ko.md)). 저장소는 비공개로 남아 있고, 이 체크아웃의 origin 은 `ruke79/ecommerce-msa` 입니다. 소셜 로그인은 그 뒤 코드에 배선됐습니다(§6 의 🕰️).
 
 공개 저장소의 git 이력에 **살아 있는 서드파티 자격증명**이 들어 있는 것을 발견했다.
 작업 트리는 이미 깨끗했지만([docs/13](13-secrets-dbha-es-search.ko.md), [ops/01](../ops/README.ko.md)),
@@ -250,7 +250,7 @@ spring.mail.password=***REMOVED*** ... 나머지 세 덩어리가 그대로     
 | | |
 |---|---|
 | `ops/20 --head` | 커밋 전 점검용. 현재 체크아웃만 훑어 빠르다 |
-| CI | `.github/workflows` 에 `ops/20 --head` 를 추가하면 새 유출을 PR 단계에서 막는다 |
+| CI | `.github/workflows` 에 `ops/20 --head` 를 추가하면 새 유출을 PR 단계에서 막는다 — 🕰️ ✅ 추가했다(`build.yml` 의 `secrets` 잡: `--head` + `--range`, 실패하면 릴리스 후보 승격이 막힌다) |
 | GitHub Push Protection | 저장소 Settings → Code security → **Push protection** 을 켜면 GitHub 이 푸시 자체를 막는다. 무료 공개 저장소도 지원한다 |
 | `.gitignore` | `kafka-secrets.properties`, `k8s/20-secret.yaml`, `certs/`, `observability/secrets/` 는 이미 제외돼 있다 |
 | 설정 규약 | 모든 자격증명은 `${ENV_VAR}` 참조로만. 리터럴은 `k8s/20-secret.example.yaml` 의 `REPLACE_ME` 플레이스홀더만 |
@@ -286,6 +286,7 @@ spring.mail.password=***REMOVED*** ... 나머지 세 덩어리가 그대로     
 - [x] **GitHub OAuth 시크릿** — **폐기 완료** (2026-08-02). 확인 결과 운영에 배선돼
       있지 않았다 — user-service 의 oauth2 설정은 주석 상태, 프론트에 소셜 로그인
       버튼 없음. 폐기로 끊기는 기능이 없어 재발급도 불필요하다
+      > 🕰️ 2026-11-14: 그 뒤 소셜 로그인(구글 · 깃허브 · 페이스북 · 카카오 · LINE)이 코드에 들어왔다. 프로바이더는 Secret 에 자격증명(`OAUTH2_<프로바이더>_CLIENT_ID` · `_SECRET`)이 있을 때만 켜지므로(`SocialClientRegistration`, `/public/oauth2/providers`), 깃허브를 켜려면 새로 발급한 시크릿을 쓴다 — 폐기한 옛 값은 쓰이지 않는다.
 - [x] JWT 서명 키 · DB 비밀번호 — **실배포는 새로 생성한 값을 쓴다** (2026-08 배포:
       JWT·pepper 는 openssl 로 생성, DB 비밀번호는 ops/25 가 새 관리형 DB(Neon)에
       새로 설정). 유출된 옛 값은 어디에도 배선돼 있지 않다
@@ -320,6 +321,7 @@ spring.mail.password=***REMOVED*** ... 나머지 세 덩어리가 그대로     
       **PR 참조 0개** / 자격증명 0건 / 신고된 두 커밋 모두 부존재
 - [ ] Push Protection 활성화 (새 저장소 Settings → Code security)
 - [ ] Topics · Homepage 복원, 원하면 저장소 이름을 `ecommerce-msa` 로 변경
+      > 🕰️ 2026-11-14: 이 체크아웃의 origin 은 `ruke79/ecommerce-msa`(비공개)다. Push Protection · Topics 는 저장소 설정이라 여기서 확인하지 못했다.
 
 ### 결말 — 무엇이 실제로 통했나
 
@@ -345,6 +347,8 @@ spring.mail.password=***REMOVED*** ... 나머지 세 덩어리가 그대로     
 
 정리 스크립트는 준비돼 있고 검증됐지만 **푸시는 하지 않았다.** force-push 는 되돌릴 수 없고
 모든 커밋 SHA 를 바꾸므로, 사람이 판단해 실행할 일이다.
+
+> 🕰️ 위 문단은 force-push 전에 쓴 것이다. 그 뒤 위 체크리스트대로 force-push(2026-07-29) → 비공개 전환 → 저장소 삭제 후 재생성까지 했다.
 
 ---
 

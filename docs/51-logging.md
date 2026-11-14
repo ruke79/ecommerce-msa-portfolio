@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](51-logging.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** §5 の最初の項目（バッチリスナーのトレース）は §4h で解消され、Loki ベースのアラートの一部が入りました。
+> 🕰️ **状態（2026-11-14）— 一部古い。** §5 の最初の項目（バッチリスナーのトレース）は §4h で解消され、Loki ベースのアラートの一部（§4i）が入りました。トレースの保存先は Zipkin ではなく OTel Collector → Jaeger（[docs/63](63-opentelemetry.md) — 本文の「Zipkin」は Jaeger と読む）。§4g のレコードアダプタはその後ファクトリから削除した（B-88）。
 
 背景: このプロジェクトのロギング機能が ruke79/facebook リポジトリのロギング機能より劣っているかを評価し、
 評価から出た改善 1〜4 番を順番に適用する。
@@ -407,6 +407,8 @@ Spring Kafka のコンシューマのトレース（`ContainerProperties.setObse
 **直したもの** — リスナーは `@Headers Map` 全体を受け取り、`OutboxTraceContext.recordHeaders(headers, i)` で i 番目のレコードの
 ヘッダを取り出す。バッチ変換ヘッダがあればその一覧の i 番目、なければメッセージヘッダそのもの（レコードアダプタ）だ。
 
+> 🕰️ 2026-10-15: そのレコードアダプタは pay · order のファクトリから外した — リスナーの例外を飲み込み、リトライ · DLT · アラートがなかった（**B-88** が `setBatchToRecordAdapter` を禁止する）。今はすべてのバッチリスナーが `BATCH_CONVERTED_HEADERS` の経路で、`recordHeaders` は両方を受けるのでそのまま。
+
 **ガード** — 今回は**Spring が作ったリスナーアダプタ**を通す。
 
 - `PaymentRequestListenerAdapterTraceTest`（pay）· `PaymentResponseListenerAdapterTraceTest`（order）— 本番の
@@ -423,6 +425,7 @@ Saga の 2 つのリスナー以外の消費は、すべて切り離された別
 
 **バッチリスナー 21 個** — cart（カートを空にする・ロールバック、クーポン使用）、catalog（在庫）、chat（登録）、coupon（決済レスポンス、
 クーポンのロールバック）、delivery（決済 → 配送）、notification（通知 8 個・お知らせ・特集・メールコマンド）、order（登録、配送状態）。
+（🕰️ order の登録（`user-created`）購読はその後なくした — 顧客のコピーが要らない、[docs/48](48-user-replication-debt.md) §6-①。）
 ループ本体はそのままにして、`try {` の 1 行だけをスコープに変えた:
 
 ```java
@@ -495,11 +498,13 @@ log.error/warn のうち "수동 … 필요" の文言がすべてルールの�
 
 ## 5. 残っているもの
 
-- **Saga 以外のバッチリスナー**はまだレコードヘッダでトレースを引き継いでいない（§4f）— 配送作成・通知・カートを
-  空にする処理・クーポンなど。コンシューマファクトリ 13 個がすべてバッチなので、`setObservationEnabled(true)` はどこでも効果がない。
+- ~~**Saga 以外のバッチリスナー**はまだレコードヘッダでトレースを引き継いでいない（§4f）— 配送作成・通知・カートを
+  空にする処理・クーポンなど。コンシューマファクトリ 13 個がすべてバッチなので、`setObservationEnabled(true)` はどこでも効果がない。~~ → ✅ §4h（B-60b）。
 - **可観測性スタックはノードの compose だ。** k3s Pod のログ（§4c）とトレース（§4d）は同じノードの compose スタックに行く。
   ノードが複数になると Pod は自分のノードの Zipkin に送るので、そのときはクラスタ内に収集器を置かなければならない。
+  🕰️ 今（2026-11-14）: トレースはノードの OTel Collector（:4318）に行く（docs/63）。サービスのメトリクスだけはクラスタ内の `metrics-agent` がノードの Prometheus に remote write する（B-95）— ログ · トレースは今もノードの compose だ。
 - **ランタイムのログレベル変更**（actuator `loggers`）は開放しなかった。認証なしで開くと、facebook 側のように誰でもレベルを
   変えられる — 管理ポートの分離や認証と一緒に行う必要がある。
 - **ログベースのアラート**（ERROR の急増など）とログ氾濫の防御（毎秒の上限）は今回の範囲外だ。
+  🕰️ その後入ったログのアラートは §4i の 2 つ（`ManualActionRequired` · `ProductSoldOut`）だけ — ERROR の急増 · 氾濫の防御はまだない。
 - **config-server** は common を使わないので、マスキング・JSON が適用されない。ユーザーデータを扱わない。

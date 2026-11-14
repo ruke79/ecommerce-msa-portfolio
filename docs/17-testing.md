@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](17-testing.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** テスト数 · ガード数 · CI ジョブ構成は執筆当時の値です。現在はバックエンド 1,637 · フロント 930 · B-1~69、CI は commit → integration · acceptance → release-candidate（[docs/36](36-deployment-pipeline.md)）。
+> 🕰️ **状態（2026-11-14）— 2026-07-28 の記録。** テスト数 · ガード数 · CI ジョブ構成は執筆当時の値です。現在はバックエンド 2,654 · フロント 1,076 · ガード B-1 〜 B-110（欠番と一覧は [README](../README.md)）、CI は commit · secrets → integration · acceptance → release-candidate ＋ 週次の restore-drill（[docs/36](36-deployment-pipeline.md)）。
 
 > 作成日: 2026-07-28
 > 背景: [docs/14](14-boot-test-findings.md)・[docs/16](16-saga-e2e-and-observability-verification.md) で
@@ -74,6 +74,8 @@ Docker がない場所でも単体テストは回るべきなので、統合テ�
 | `データソース × プールサイズ × レプリカ ≤ max_connections` | B-32 — 算術的にあふれるプール設定。負荷がかかって初めて表面化する |
 | `ddl-auto` は `validate`/`none` のみ + ベースラインマイグレーションの存在 | B-33 — Hibernate がスキーマを所有すると変更履歴がなく、本番 DB にレビューなしの DDL が流れ、**制約を削除しない**（docs/20） |
 | スケール不可能なサービスは replicas 1 + HPA 除外 | B-34 — chat はインメモリ STOMP ブローカー、eureka は standalone。増やすと **静かに** 壊れる: Pod は Running なのにユーザーだけがメッセージを受け取れない（docs/21 §2） |
+
+> 🕰️ 今: B-34 の 1 個固定は eureka だけ — chat は 2026-11-01 に外れた（購読者への送信を Redis のファンアウト `StompFanout` ですべての Pod に、B-107 · docs/21 §2-1）。ガードレールはこの表の 15 種から B-110 まで増えた。
 
 > これらのガードレールが **実際に機能することを確認した。** `spring.application.name: common` を戻して入れると
 > 該当テストがすぐに失敗した。失敗しないテストはテストではない。
@@ -175,6 +177,8 @@ Config data resource 'class path resource [kafka-secrets.properties]' does not e
 
 テストレポートは失敗時もアーティファクトとしてアップロードされる。
 
+> 🕰️ 今: ジョブは `commit`（Java の `./gradlew build` · フロントの単体テスト · lint · イメージ発行）· `secrets`（ops/20 のシークレットスキャン）→ `integration`（`-PwithContainers`、e2e を除く）· `acceptance`（`:e2e-tests:test` — 発行したイメージで Saga 全区間）→ `release-candidate`、そして週 1 回の `restore-drill`（月 03:00 UTC）。`unit` · `frontend` ジョブは `commit` にまとめられた（docs/36）。
+
 > このリポジトリのテストスイートは一時期 **.gitignore されたシークレットファイルに依存** しており、新たにクローンすると通過できない
 > 状態だったが、誰も知らなかった — 自動で回してみる場所がなかったからだ（docs/14 B-20）。
 
@@ -195,6 +199,8 @@ export DOCKER_HOST=unix:///var/run/docker.sock
 > ⚠️ Spring Boot 3.4.1 が固定する Testcontainers 1.20.4 は docker-java が API 1.32 で接続するため、
 > 最新の Docker Engine（29.x、最小 1.40 を要求）では `client version 1.32 is too old` で **コンテナをまったく起動できない。**
 > `testcontainers-bom:1.21.4` に上げて回避した。
+
+> 🕰️ 今: Spring Boot は 3.5.16、`testcontainers-bom:1.21.4` の固定はそのまま（ルートの `build.gradle`）。
 
 ## 6. 依然として残る空白
 

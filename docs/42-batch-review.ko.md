@@ -2,6 +2,8 @@
 
 [日本語](42-batch-review.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 2026-09-15 의 기록.** 그 뒤 바뀐 것: 임포트의 동시 실행 가드는 파드 사이 잠금(Redis `ImportLock`)이 됐고(§3.3), 운영 백업 CronJob 은 켜져 있다(§2 k8s CronJob — 2026-10-13). §1.2(CSV id 의존) · §3.1(S3 가 청크 트랜잭션 안) · §3.2(내결함성 없음)는 그대로다. 스케줄 작업은 그 뒤 많이 늘었다(멱등 원장 정리 `ProcessedEventPurger`, user 의 `SchedulerLease` 를 쓰는 대사 작업 등) — 아래 "8개" 표는 그때의 목록이다.
+
 2026-09-15. "배치도 문제가 없는지" 확인한 결과다. 두 종류를 봤다:
 
 1. **CSV 상품 임포트 잡**(스프링 배치, 9스텝) — 운영자가 손으로 누르는 일회성 작업
@@ -120,6 +122,8 @@ categoryRepository.findById(item.getCategory_id())
 상태다(docs/에 적힌 대로, 되는지 확인한 뒤 켠다). 현재 백업은 **돌지 않는다** — PVC 가
 유일한 사본이라는 뜻이다. `ops/29` 로 PITR 을 켜는 것이 다음 순서다.
 
+> 🕰️ 2026-11-14: 운영은 2026-10-13 `ACTION=cronjobs ./ops/29` 로 `postgres-backup`(매일 03:00 UTC) · `restore-drill`(월 05:00)을 켰고, `mongo-backup` 은 처음부터 `suspend` 가 아니다(매일 04:00). 매니페스트의 `suspend: true` 는 지금도 기본값이라 그냥 `kubectl apply` 하면 다시 꺼진다 — 적용은 `ops/29` 로만([docs/22 §2](22-alerting-and-backup-automation.ko.md)). PITR(아카이빙)은 아직이다.
+
 ---
 
 ## 3. 남은 것 (고치지 않았다)
@@ -153,6 +157,8 @@ categoryRepository.findById(item.getCategory_id())
 다만 **거의 동시에** 누르면 둘 다 빈 카탈로그를 보고 통과할 수 있다. 완전히 막으려면
 Postgres 어드바이저리 락(`pg_try_advisory_lock`)으로 올려야 한다. 현재 운영(local 오버레이,
 레플리카 1)에서는 발생하지 않는다.
+
+> 🕰️ 2026-11-14: ✅ 임포트는 파드 사이 잠금으로 올렸다 — Postgres 대신 Redis 키 `catalog:product-import:lock`(`SET NX`, 2시간 리스, `ImportLock`), `AtomicBoolean` 은 파드 안 가드로 남았다. ES 재색인(`POST /api/products/sync`)의 가드는 지금도 `AtomicBoolean`(파드 하나) 이다.
 
 ---
 

@@ -71,6 +71,8 @@ public void publish(UserCreatedRequest req) {
 | **chat** | `chat_member`（id・email・nickname・image） | メールアドレス → 会員、**ニックネームを画面に表示** | チャットへの入室失敗 | `createMissingMember` でその場で作成 — ~~ニックネームをメールアドレスの前半から推測~~ 仮のニックネーム、登録イベントが埋める（§6-⑤） |
 | **coupon** | なし | — | **登録クーポンが永遠に出ない** | ❌ 対策なし |
 
+> 🕰️ 今（2026-11-14）の「現在の状態」列: order はレプリケーション · バックフィルをすべて削除した（§6-① — テーブルも V16 で削除）、coupon は毎日の突合バッチが直近 7 日の登録イベントを再送する（§6-③ `UserReplicationReconciler`）。
+
 **coupon が最も悪い。** order・chat は「行がないな」を読み取り時点で気づけるが、
 クーポンは **受け取れなかったという事実そのものを後で知る方法がない。** 読み取り時のフォールバックでは直せない
 類の欠落だ — 突合（reconciliation）バッチ以外に答えはない。
@@ -422,7 +424,7 @@ user-service の `/user/segments` の `email` パラメーターを消す → �
 
 ## 7. スキーマの地雷（一緒に整理すべきもの）
 
-- **`uk_customer_nickname UNIQUE`、`uk_customer_username UNIQUE`**（`orders.customer`）。
+- ✅ **`uk_customer_nickname UNIQUE`、`uk_customer_username UNIQUE`**（`orders.customer`）— テーブルごとなくなった（order V16、§6「移行の後片付け」）。
   **同名の人が 2 人いると、2 人目のユーザーのレプリケーションが失敗する。** レプリケーションされた表示用のフィールドに一意
   制約をかけるのは、原本の制約をレプリカで真似ることだが、原本が変わればずれる。
 - ✅ **chat のニックネームの推測** — 修正済み（§6-⑤）。`createMissingMember` がメールアドレスの前半をニックネームに使っており、

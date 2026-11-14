@@ -2,6 +2,8 @@
 
 [日本語](74-feature-flags.md) | **한국어**
 
+> 🕰️ **상태(2026-11-14) — 1단계는 운영에 들어갔다(2026-10-24 `4415e498565c` 묶음 릴리스 — 전 서비스 이미지 + ConfigMap `feature-flags`, [docs/85](85-release-deploy-runbook.ko.md)).** 운영(OCI)은 지금도 ES 가 없어 동작 변화 없음(§5), 비중은 `["es", 0]` 그대로, 만료 2027-03-31. §9 의 "docs/72 먼저" 는 그대로 지켜졌다(b7c5053 은 2026-10-10). ES 검색 로드맵(ES 로드맵 브랜치, 2026-11-05 — improve 에 아직 없음)은 필터만 있는 검색도 플래그 비율에 넣는다(§2-4 의 "검색어가 없음" 줄이 바뀐다) — [docs/07 §5](07-catalog-search-improvements.ko.md).
+>
 > **상태(2026-10-06)** — 1단계 구현 완료, 운영 배포 대기. 운영(OCI)에는 Elasticsearch 가 없으므로 배포해도 동작은 그대로다
 > (플래그를 평가하지 않는다, §5). 비율을 올리려면 먼저 ES 를 띄워야 한다.
 > 계기: *Observability Engineering, 2nd Edition* 의 "배포(deploy)와 출시(release)를 떼어 놓고, 켠 쪽과 끈 쪽을 관측으로 비교하라".

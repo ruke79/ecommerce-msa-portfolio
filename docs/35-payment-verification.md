@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](35-payment-verification.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** `paypal_order_id` の代わりに `(payment_provider, provider_payment_id)` のユニーク制約（V18）が再利用を防ぎ、請求通貨は注文に保存します。決済手段の拡張は [docs/49](49-payment-providers.md)。
+> 🕰️ **状態(2026-11-14) — 2026-08 の記録です。** 再利用は `paypal_order_id`(§2 の V3)の代わりに `(payment_provider, provider_payment_id)` の部分ユニーク `uk_order_provider_payment`(order V4)が防ぎ、V17 が古い値を移したあと V18 が `paypal_order_id` 列とそのインデックスを消しました。請求通貨は注文に保存します(V6 `currency` · `charged_amount` · `fx_rate`)。決済手段(Stripe · ポートワン · 銀行振込)の拡張と返金は [docs/49](49-payment-providers.md) — §5 の表の一部はその後変わった。
 
 ## どうやって見つけたか
 
@@ -201,6 +201,8 @@ PayPal に届かなかったとき（ネットワーク・トークン発行の�
 | 部分キャプチャ | 全額キャプチャのみを前提とする |
 | 通貨のハードコーディング | `paypal.currency` 一つだけだ。多通貨ストアになれば、注文ごとに通貨を保存しなければならない |
 | pay-service | 依然として order-service が渡した値を信じる。検証は境界（order-service）で一度だけ行う — 内部サービス間ではそれが正しいが、その境界が破られれば下流は防げない |
+
+> 🕰️ その後(2026-11-14): **返金**はサーバーが提供者に要求する管理者返金ができた(`POST /api/order/refund`、部分返金 V9 — PayPal も `RefundingGateway`)。ただし PayPal のコンソールで直接行った返金 · 紛争を受ける PayPal の Webhook は今もない(Webhook は Stripe · ポートワンだけ)。**通貨**は注文ごとに保存する(V6 — ストア通貨 `base-currency` と請求通貨を分ける)。
 
 ## 6. サンドボックスでテストする（韓国で決済が通らないとき）
 

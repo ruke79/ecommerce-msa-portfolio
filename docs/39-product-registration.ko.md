@@ -199,6 +199,7 @@ curl -s https://www.ysyproject.com/catalog-service/api/content/admin/product-imp
   알려 준다.
 - 임포트 잠금은 **한 인스턴스 기준**이다(메모리). 단일 노드라 여기까지로 둔다. 레플리카를
   늘린다면 Postgres 어드바이저리 락으로 올려야 한다.
+  > 🕰️ 2026-11-14: ✅ 파드 사이 잠금으로 올렸다 — Postgres 대신 Redis 키 `catalog:product-import:lock`(`SET NX`, 2시간 리스 · 자기 값일 때만 풀기, `ImportLock`). 2026-10-24 묶음 릴리스로 운영에 들어갔다.
 - 상품 **수정·삭제** 화면은 여전히 목록(`/admin/allproducts`)뿐이다.
 
 ---
