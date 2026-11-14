@@ -50,7 +50,7 @@
 
 | # | 문서 | 내용 | 상태 |
 |---|---|---|---|
-| 11 | [관측성 스택과 Kafka DLQ](11-observability-and-kafka-reliability.ko.md) | Prometheus · Grafana · Zipkin, 레코드 단위 DLQ 의 첫 적용 | 🕰️ |
+| 11 | [관측성 스택과 Kafka DLQ](11-observability-and-kafka-reliability.ko.md) | Prometheus · Grafana · Zipkin, 레코드 단위 DLQ 의 첫 적용(2026-07 기록 — 맨 위 표에 지금: OTel + Jaeger · 경보 · DLQ 8개 서비스 · 멱등, 63 · 51 · 12 · 91) | 🕰️ |
 | 12 | [DLQ 확산 · 컨슈머 멱등성 · 경보](12-dlq-rollout-idempotency-alerts.ko.md) | 재고 이중 차감을 막는 멱등 원장, 경보 규칙, 대시보드 코드화 | 🕰️ |
 | 21 | [수평 확장](21-horizontal-scaling.ko.md) | 레플리카를 늘리자 아웃박스 이중 발행 — `SKIP LOCKED`, 늘리면 깨지는 서비스 | 🟡 |
 | 48 | [사용자 복제](48-user-replication-debt.ko.md) | 한 이벤트 · 세 소비자 · 세 가지 실패 → 복제 제거 · 아웃박스 · 대사 배치 | 🟡 |

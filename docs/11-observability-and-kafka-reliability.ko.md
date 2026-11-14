@@ -2,7 +2,21 @@
 
 [日本語](11-observability-and-kafka-reliability.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 이전 기록.** 대시보드 · Alertmanager · 프로듀서 쪽 추적 · DLQ 확산은 이후 끝났습니다([12](12-dlq-rollout-idempotency-alerts.ko.md) · [22](22-alerting-and-backup-automation.ko.md) · [51](51-logging.ko.md)).
+> 🕰️ **상태(2026-11-14) — 2026-07-27 의 기록. 여기 적힌 "남은 것" 은 모두 끝났고, 추적은 Zipkin 에서 OpenTelemetry + Jaeger 로 바뀌었습니다.** 본문(§1 ~ §4)은 그때의 글로 두고, 절마다 🕰️ 로 지금을 적었습니다. 지금의 구성은 [docs/63](63-opentelemetry.ko.md)(추적) · [docs/51](51-logging.ko.md)(로그) · [docs/12](12-dlq-rollout-idempotency-alerts.ko.md)(DLQ · 멱등 · 경보) · [docs/22](22-alerting-and-backup-automation.ko.md)(경보 전달) · [docs/91](91-slo-and-capacity.ko.md)(SLO · 컨슈머 지연)을 봅니다.
+
+| 2026-07 의 이 문서 | 지금(2026-11-14) | 어디 |
+|---|---|---|
+| 추적 저장소 Zipkin 3.4(인메모리) | **OTel Collector 0.160 → Jaeger 2.20**(badger, 7일). Collector 가 개인정보 가림 · 꼬리 샘플링(B-102) · 스팬 자르기(B-94)를 맡는다. Grafana 의 옛 Zipkin 데이터소스는 지우게 되어 있다 | docs/63 |
+| 서비스 쪽 `micrometer-tracing-bridge-brave` + `zipkin-reporter-brave` | `micrometer-tracing-bridge-otel` + OTLP(HTTP) — 서비스는 Collector 에만 보낸다 | 루트 `build.gradle` |
+| 샘플링 1.0 은 "운영에선 낮출 것" | **1.0 고정**(B-72) — 무엇을 남길지는 추적이 끝난 뒤 Collector 가 고른다 | `application-common.yml` |
+| Kafka 추적은 catalog · order 컨슈머만, 프로듀서는 아직 | 컨슈머는 Kafka 를 받는 8개 서비스 모두, 프로듀서는 모든 `KafkaTemplate`(공통 후처리기), 아웃박스 행에도 추적 문맥 | docs/51 §4d · `KafkaTemplateObservationPostProcessor` · `OutboxTraceContext` |
+| Grafana 대시보드 없음 | 대시보드 둘 자동 등록(`ecommerce-overview` · `tracing-red`), 지표 ↔ 추적 ↔ 로그 왕복 | `observability/grafana/provisioning/` |
+| 경보는 다음 단계 | Alertmanager 0.28.1 + 경보 규칙(서비스 · 요청 · JVM · 사가 · 아웃박스 · 백업 · 추적 · **SLO · 컨슈머 지연**), Discord 전달(B-96) | `observability/alert-rules.yml` · docs/22 · docs/91 |
+| 스크레이프는 `insecure_skip_verify` | 로컬 개발(`prometheus.yml`)만. 운영은 클러스터 안 에이전트가 CA 로 검증해 노드 Prometheus 로 보낸다(B-95) | `k8s-overlays/external/metrics-agent.yaml` |
+| DLQ 는 catalog · order 만, 백오프 3회 | Kafka 를 받는 8개 서비스(+ user 의 DLT 설정), 공통 정책 `DltRetryPolicy` — 일시 오류는 1 · 2 · 4 … 30초로 10번(약 3분), DLT 계수기 · 경보 `KafkaDeadLetterPublished`(기동 때 0 — B-101) · 재처리 `ops/56` | docs/12 |
+| G8 멱등성(eventId 없음) | eventId + 처리 원장(catalog · coupon · cart · order), 30일 정리(`ProcessedEventPurger`) | docs/12 §2 |
+| 로그 수집 없음 | Loki + Alloy, 로그 줄의 traceId → Jaeger | docs/51 §4 |
+| 컨슈머 랙 모니터링 | 2026-11-14 부터 지표 `kafka_consumer_fetch_manager_records_lag_max` · 경보 `KafkaConsumerLagHigh` | docs/91 §3 |
 
 > 작성일: 2026-07-27 · 해소 대상: 최종 점검의 G3(관측성 수집 스택 부재) · G4(분산 추적 부재) · G7(Kafka DLQ 부재)
 > 관련: [docs/03](03-architecture-and-reliability.ko.md) R-2/R-4, F-2 · [docs/10](10-quality-hardening.ko.md)
@@ -28,6 +42,8 @@ docker compose -f docker-compose-observability.yml up -d
 - 경보 규칙(Alertmanager)은 다음 단계. `docs/03` 부록의 지표 체크리스트가 규칙의 출발점이다.
 - k8s에서는 이 compose 대신 kube-prometheus-stack(Helm)을 권장(`k8s/README.md`).
 
+> 🕰️ 지금: 위 네 가지 한계는 모두 풀렸다 — 운영 스크레이프는 CA 검증(B-95), 대시보드 둘 자동 등록, Alertmanager · 경보 규칙(docs/12 §3 · docs/22), 운영은 kube-prometheus-stack 대신 노드의 compose(두 파일 — `docker-compose-observability.oci.yml`) + 클러스터 안 `metrics-agent`(docs/63 §5). Zipkin 은 Jaeger 로 바뀌었다(docs/63). 서비스는 이제 11개.
+
 ## 2. 분산 추적 (G4)
 
 **추가**:
@@ -37,6 +53,8 @@ docker compose -f docker-compose-observability.yml up -d
 - Kafka 경로 전파: 이번에 수정한 catalog/order 컨슈머 팩토리에 `setObservationEnabled(true)` 적용.
 
 효과: HTTP(게이트웨이→서비스, Feign)와 catalog/order Kafka 소비까지 **traceId 하나로 로그 연결 + Zipkin 타임라인 조회**. 남은 것: 나머지 서비스의 Kafka 컨슈머/프로듀서 observation 활성화(동일 한 줄 패턴), 커스텀 KafkaTemplate 프로듀서 측 전파.
+
+> 🕰️ 지금: Brave · Zipkin 은 `micrometer-tracing-bridge-otel` + OTLP 로 바뀌었다(Collector 주소는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` → `management.otlp.tracing.endpoint` — `ZIPKIN_ENDPOINT` 는 없다, docs/63 §2). 샘플링은 "낮출 것" 이 아니라 **1.0 고정**(B-72 — 꼬리 샘플링이 결과를 보고 고른다). 로그 패턴은 공통 `logback-spring.xml` 하나(`[traceId,spanId,userId]`). 남은 것 둘은 끝났다 — 컨슈머 observation 은 Kafka 를 받는 8개 서비스 모두, 프로듀서는 모든 `KafkaTemplate` 빈에 공통 후처리기(`KafkaTemplateObservationPostProcessor`, docs/51 §4d), 아웃박스 릴레이처럼 요청 밖에서 보내는 것은 행에 저장한 추적 문맥으로 잇는다(`OutboxTraceContext`).
 
 ## 3. Kafka DLQ — 레퍼런스 구현 (G7)
 
@@ -65,8 +83,14 @@ docker compose -f docker-compose-observability.yml up -d
   - ⚠️ 원래 토픽의 **모든** 컨슈머 그룹이 다시 받는다 — 각 컨슈머가 eventId · 처리 원장으로 거르는지 먼저 본다(docs/12 §2). 테스트는 `DltReplayScriptTest`(cp-kafka 7.6.1).
 - **나머지 4개 서비스(cart/coupon/pay/user)에 동일 패턴 확산** — 이 두 구현이 복붙 가능한 템플릿이다.
 
+> 🕰️ 지금: 확산은 끝났다 — Kafka 를 받는 8개 서비스(cart · catalog · chat · coupon · delivery · notification · order · pay)가 모두 배치 리스너 + 인덱스 보고 + `KafkaDltConfig`(user 도 DLT 설정은 있다 — 받는 리스너는 없다). 재시도는 "3회(1s×2)" 가 아니라 공통 `DltRetryPolicy`: 일시 오류(DB 일시 실패 · 잠금 등)는 1 · 2 · 4 · 8 · 16 · 30초 … 10번(약 3분), 그 밖은 바로 DLT. DLT 로 간 레코드는 계수기 `kafka_dlt_records_total{topic}`(기동 때 0 — B-101)와 경보 `KafkaDeadLetterPublished` 로 보인다. ⚠️ 2026-10-15 전에는 pay · order 팩토리의 레코드 어댑터가 예외를 삼켜 이 재시도 · DLT 가 돌지 않았다(B-88 — 이제 금지).
+
 ## 4. 여전히 남은 것
 
-- **G8 멱등성**: `ProductUpdateRequest` 등 이벤트 페이로드에 `eventId`가 없어 컨슈머 dedupe 불가. **이벤트 계약에 eventId 추가**(JSON 하위호환) 후 Redis SETNX/유니크 제약 dedupe — 계약 변경이라 별도 진행 필요.
-- Alertmanager 경보 규칙, Grafana 대시보드 코드화, 나머지 서비스 DLQ/observation 확산, 로그 수집(Loki/ELK).
-  > **2026-09 갱신.** 로그 수집은 Loki + Alloy 로 붙었다 — docs/51 §4. Kafka **프로듀서** 쪽 추적 전파는 아직이다.
+> 🕰️ **2026-11-14 — 아래 목록은 모두 끝났다.** 지금 남은 관측 일은 docs/91 §6(SLO 숫자 확정 · 천장 측정 · 게이트웨이 SLI · SLO 대시보드)에 있다.
+
+- ~~**G8 멱등성**: `ProductUpdateRequest` 등 이벤트 페이로드에 `eventId`가 없어 컨슈머 dedupe 불가.~~ → ✅ eventId + 처리 원장(catalog · coupon · cart · order 배송 상태), 30일 정리 `ProcessedEventPurger`(docs/12 §2).
+- ~~Alertmanager 경보 규칙~~ → ✅ docs/12 §3 · docs/22(Discord, B-96) · docs/91(SLO 소진율 · 컨슈머 지연).
+- ~~Grafana 대시보드 코드화~~ → ✅ `observability/grafana/provisioning/dashboards/`.
+- ~~나머지 서비스 DLQ/observation 확산~~ → ✅ Kafka 를 받는 8개 서비스 모두(§3 의 🕰️), 프로듀서 쪽 추적도(§2 의 🕰️ — 2026-09 갱신에 "아직" 이라 적었던 것).
+- ~~로그 수집(Loki/ELK)~~ → ✅ Loki + Alloy(docs/51 §4).

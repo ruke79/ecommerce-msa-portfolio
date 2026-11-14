@@ -50,7 +50,7 @@
 
 | # | ドキュメント | 内容 | 状態 |
 |---|---|---|---|
-| 11 | [可観測性スタックと Kafka DLQ](11-observability-and-kafka-reliability.md) | Prometheus · Grafana · Zipkin、レコード単位 DLQ の最初の適用 | 🕰️ |
+| 11 | [可観測性スタックと Kafka DLQ](11-observability-and-kafka-reliability.md) | Prometheus · Grafana · Zipkin、レコード単位 DLQ の最初の適用（2026-07 の記録 — 冒頭の表に今: OTel + Jaeger · 警報 · DLQ 8 サービス · 冪等、63 · 51 · 12 · 91） | 🕰️ |
 | 12 | [DLQ の展開 · コンシューマーの冪等性 · アラート](12-dlq-rollout-idempotency-alerts.md) | 在庫の二重引き当てを防ぐ冪等台帳、アラートルール、ダッシュボードのコード化 | 🕰️ |
 | 21 | [水平スケーリング](21-horizontal-scaling.md) | レプリカを増やしたら Outbox の二重発行 — `SKIP LOCKED`、増やすと壊れるサービス | 🟡 |
 | 48 | [ユーザーのレプリケーション](48-user-replication-debt.md) | 1 つのイベント · 3 つのコンシューマー · 3 種類の失敗 → レプリケーションの廃止 · Outbox · 突合バッチ | 🟡 |

@@ -2,7 +2,21 @@
 
 **日本語** | [한국어](11-observability-and-kafka-reliability.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 過去の記録。** ダッシュボード · Alertmanager · プロデューサー側のトレーシング · DLQ の展開はその後完了しました（[12](12-dlq-rollout-idempotency-alerts.md) · [22](22-alerting-and-backup-automation.md) · [51](51-logging.md)）。
+> 🕰️ **状態（2026-11-14）— 2026-07-27 の記録。ここに書かれた「残り」はすべて完了し、トレーシングは Zipkin から OpenTelemetry + Jaeger に変わりました。** 本文（§1 〜 §4）は当時の文章のまま残し、節ごとに 🕰️ で今を書きました。今の構成は [docs/63](63-opentelemetry.md)（トレース）· [docs/51](51-logging.md)（ログ）· [docs/12](12-dlq-rollout-idempotency-alerts.md)（DLQ · 冪等 · 警報）· [docs/22](22-alerting-and-backup-automation.md)（警報の配送）· [docs/91](91-slo-and-capacity.md)（SLO · コンシューマー遅延）を見てください。
+
+| 2026-07 のこの文書 | 今（2026-11-14） | どこ |
+|---|---|---|
+| トレースの保存先は Zipkin 3.4（インメモリ） | **OTel Collector 0.160 → Jaeger 2.20**（badger、7 日）。Collector が個人情報のマスク · テールサンプリング（B-102）· スパンの切り詰め（B-94）を受け持つ。Grafana の古い Zipkin データソースは削除する設定 | docs/63 |
+| サービス側 `micrometer-tracing-bridge-brave` + `zipkin-reporter-brave` | `micrometer-tracing-bridge-otel` + OTLP（HTTP）— サービスは Collector にだけ送る | ルートの `build.gradle` |
+| サンプリング 1.0 は「本番では下げること」 | **1.0 固定**（B-72）— 何を残すかはトレース完了後に Collector が選ぶ | `application-common.yml` |
+| Kafka のトレースは catalog · order のコンシューマーだけ、プロデューサーはまだ | コンシューマーは Kafka を受ける 8 サービスすべて、プロデューサーはすべての `KafkaTemplate`（共通の後処理）、アウトボックスの行にもトレース文脈 | docs/51 §4d · `KafkaTemplateObservationPostProcessor` · `OutboxTraceContext` |
+| Grafana ダッシュボードなし | ダッシュボード二つを自動登録（`ecommerce-overview` · `tracing-red`）、指標 ↔ トレース ↔ ログの往復 | `observability/grafana/provisioning/` |
+| 警報は次のステップ | Alertmanager 0.28.1 + 警報ルール（サービス · リクエスト · JVM · サガ · アウトボックス · バックアップ · トレース · **SLO · コンシューマー遅延**）、Discord へ配送（B-96） | `observability/alert-rules.yml` · docs/22 · docs/91 |
+| スクレイプは `insecure_skip_verify` | ローカル開発（`prometheus.yml`）だけ。本番はクラスター内のエージェントが CA で検証してノードの Prometheus へ送る（B-95） | `k8s-overlays/external/metrics-agent.yaml` |
+| DLQ は catalog · order だけ、バックオフ 3 回 | Kafka を受ける 8 サービス（+ user の DLT 設定）、共通ポリシー `DltRetryPolicy` — 一時的なエラーは 1 · 2 · 4 … 30 秒で 10 回（約 3 分）、DLT カウンター · 警報 `KafkaDeadLetterPublished`（起動時に 0 — B-101）· 再処理 `ops/56` | docs/12 |
+| G8 冪等性（eventId なし） | eventId + 処理台帳（catalog · coupon · cart · order）、30 日の整理（`ProcessedEventPurger`） | docs/12 §2 |
+| ログ収集なし | Loki + Alloy、ログ行の traceId → Jaeger | docs/51 §4 |
+| コンシューマーラグの監視 | 2026-11-14 から指標 `kafka_consumer_fetch_manager_records_lag_max` · 警報 `KafkaConsumerLagHigh` | docs/91 §3 |
 
 > 作成日: 2026-07-27 · 解消対象: 最終点検の G3（可観測性の収集スタック不在）· G4（分散トレーシング不在）· G7（Kafka DLQ 不在）
 > 関連: [docs/03](03-architecture-and-reliability.md) R-2/R-4, F-2 · [docs/10](10-quality-hardening.md)
@@ -28,6 +42,8 @@ docker compose -f docker-compose-observability.yml up -d
 - アラートルール（Alertmanager）は次のステップ。`docs/03` 付録のメトリクスチェックリストがルールの出発点である。
 - k8s ではこの compose の代わりに kube-prometheus-stack（Helm）を推奨（`k8s/README.md`）。
 
+> 🕰️ 今: 上の四つの限界はすべて解消した — 本番のスクレイプは CA で検証（B-95）、ダッシュボード二つを自動登録、Alertmanager · 警報ルール（docs/12 §3 · docs/22）、本番は kube-prometheus-stack ではなくノードの compose（二ファイル — `docker-compose-observability.oci.yml`）+ クラスター内の `metrics-agent`（docs/63 §5）。Zipkin は Jaeger に変わった（docs/63）。サービスは今 11 個。
+
 ## 2. 分散トレーシング (G4)
 
 **追加**:
@@ -37,6 +53,8 @@ docker compose -f docker-compose-observability.yml up -d
 - Kafka 経路の伝播: 今回修正した catalog/order のコンシューマーファクトリに `setObservationEnabled(true)` を適用。
 
 効果: HTTP（ゲートウェイ→サービス、Feign）と catalog/order の Kafka 消費まで **1つの traceId でログを接続 + Zipkin のタイムライン参照**。残っているもの: 残りのサービスの Kafka コンシューマー/プロデューサーの observation 有効化（同じ1行のパターン）、カスタム KafkaTemplate のプロデューサー側の伝播。
+
+> 🕰️ 今: Brave · Zipkin は `micrometer-tracing-bridge-otel` + OTLP に変わった（Collector のアドレスは `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` → `management.otlp.tracing.endpoint` — `ZIPKIN_ENDPOINT` はない、docs/63 §2）。サンプリングは「下げる」のではなく **1.0 固定**（B-72 — テールサンプリングが結果を見て選ぶ）。ログパターンは共通の `logback-spring.xml` 一つ（`[traceId,spanId,userId]`）。残っていた二つは完了 — コンシューマーの observation は Kafka を受ける 8 サービスすべて、プロデューサーはすべての `KafkaTemplate` Bean に共通の後処理（`KafkaTemplateObservationPostProcessor`、docs/51 §4d）、アウトボックスのリレーのようにリクエストの外で送るものは行に保存したトレース文脈でつなぐ（`OutboxTraceContext`）。
 
 ## 3. Kafka DLQ — リファレンス実装 (G7)
 
@@ -65,8 +83,14 @@ docker compose -f docker-compose-observability.yml up -d
   - ⚠️ 元のトピックの**すべての**コンシューマーグループが再び受け取る — 各コンシューマーが eventId・処理台帳で除くかを先に見る(docs/12 §2)。テストは `DltReplayScriptTest`(cp-kafka 7.6.1)。
 - **残り4つのサービス（cart/coupon/pay/user）に同じパターンを展開** — この2つの実装がコピペ可能なテンプレートである。
 
+> 🕰️ 今: 展開は完了 — Kafka を受ける 8 サービス（cart · catalog · chat · coupon · delivery · notification · order · pay）がすべてバッチリスナー + インデックスの報告 + `KafkaDltConfig`（user にも DLT の設定はある — 受けるリスナーはない）。リトライは「3 回（1s×2）」ではなく共通の `DltRetryPolicy`: 一時的なエラー（DB の一時的な失敗 · ロックなど）は 1 · 2 · 4 · 8 · 16 · 30 秒 … 10 回（約 3 分）、それ以外はすぐ DLT。DLT に行ったレコードはカウンター `kafka_dlt_records_total{topic}`（起動時に 0 — B-101）と警報 `KafkaDeadLetterPublished` で見える。⚠️ 2026-10-15 より前は pay · order のファクトリーのレコードアダプターが例外を飲み込み、このリトライ · DLT が動いていなかった（B-88 — 今は禁止）。
+
 ## 4. 依然として残っているもの
 
-- **G8 冪等性**: `ProductUpdateRequest` などのイベントペイロードに `eventId` がなく、コンシューマーで dedupe できない。**イベント契約に eventId を追加**（JSON 下位互換）したうえで Redis SETNX/ユニーク制約による dedupe — 契約変更なので別途進める必要がある。
-- Alertmanager のアラートルール、Grafana ダッシュボードのコード化、残りのサービスへの DLQ/observation 展開、ログ収集（Loki/ELK）。
-  > **2026-09 更新。** ログ収集は Loki + Alloy で導入された — docs/51 §4。Kafka **プロデューサー** 側のトレース伝播はまだである。
+> 🕰️ **2026-11-14 — 下の一覧はすべて完了した。** 今残っている観測の作業は docs/91 §6（SLO の数字の確定 · 天井の測定 · ゲートウェイの SLI · SLO ダッシュボード）にある。
+
+- ~~**G8 冪等性**: `ProductUpdateRequest` などのイベントペイロードに `eventId` がなく、コンシューマーで dedupe できない。~~ → ✅ eventId + 処理台帳（catalog · coupon · cart · order の配送状態）、30 日の整理 `ProcessedEventPurger`（docs/12 §2）。
+- ~~Alertmanager のアラートルール~~ → ✅ docs/12 §3 · docs/22（Discord、B-96）· docs/91（SLO バーンレート · コンシューマー遅延）。
+- ~~Grafana ダッシュボードのコード化~~ → ✅ `observability/grafana/provisioning/dashboards/`。
+- ~~残りのサービスへの DLQ/observation 展開~~ → ✅ Kafka を受ける 8 サービスすべて（§3 の 🕰️）、プロデューサー側のトレースも（§2 の 🕰️ — 2026-09 の更新で「まだ」と書いたもの）。
+- ~~ログ収集（Loki/ELK）~~ → ✅ Loki + Alloy（docs/51 §4）。
