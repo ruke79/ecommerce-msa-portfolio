@@ -1,0 +1,77 @@
+# promtool 단위 시험 — 14일 오류 예산(slo-budget 그룹: 절반 · 소진 경보, docs/91 §2-4). 지표는 10분 간격 15일, 평가는 slo-budget 그룹과 같은 5분 — 다르면 그룹 평가 순서가 흔들려 경보가 가끔 빠진다(2026-11-14 확인).
+# [JA] 14 日のエラーバジェット(半分 · 使い切り)の警報。
+rule_files:
+- ../alert-rules.yml
+evaluation_interval: 5m
+tests:
+- interval: 10m
+  input_series:
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/home",status="200"}
+    values: 0+5976x2200
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/home",status="503"}
+    values: 0+24x2200
+  - series: http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri="/api/content/home",status="200",le="0.3"}
+    values: 0+5976x2200
+  - series: http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri="/api/content/home",status="503",le="0.3"}
+    values: 0+24x2200
+  alert_rule_test:
+  - eval_time: 15d
+    alertname: SloErrorBudgetHalfSpent
+    exp_alerts:
+    - exp_labels:
+        slo: catalog-browse
+        budget: error
+        severity: warning
+      exp_annotations:
+        summary: SLO catalog-browse — 14일 error 예산의 80% 를 썼습니다
+        description: '정책(docs/91 §2-4): 큰 배포(스키마 변경 · 묶음 릴리스)는 원인을 고칠 때까지 미룹니다. slo:sli_*:ratio_rate6h 로 어느 날 썼는지 보고, 그 시간의 배포 · 사고 기록을 찾으세요.'
+  - eval_time: 15d
+    alertname: SloErrorBudgetExhausted
+    exp_alerts: []
+  - eval_time: 15d
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts: []
+- interval: 10m
+  input_series:
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/home",status="200"}
+    values: 0+5964x2200
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/home",status="503"}
+    values: 0+36x2200
+  - series: http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri="/api/content/home",status="200",le="0.3"}
+    values: 0+5964x2200
+  - series: http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri="/api/content/home",status="503",le="0.3"}
+    values: 0+36x2200
+  alert_rule_test:
+  - eval_time: 15d
+    alertname: SloErrorBudgetExhausted
+    exp_alerts:
+    - exp_labels:
+        slo: catalog-browse
+        budget: error
+        severity: critical
+      exp_annotations:
+        summary: SLO catalog-browse — 14일 error 예산을 다 썼습니다(120%)
+        description: '정책(docs/91 §2-4): 기능 배포를 멈추고 안정화 수정만 합니다. 이 상태가 되풀이되면 docs/89 단계 1(데이터 계층을 노드 밖으로)을 앞당기는 근거입니다.'
+  - eval_time: 15d
+    alertname: SloErrorBudgetHalfSpent
+    exp_alerts:
+    - exp_labels:
+        slo: catalog-browse
+        budget: error
+        severity: warning
+      exp_annotations:
+        summary: SLO catalog-browse — 14일 error 예산의 120% 를 썼습니다
+        description: '정책(docs/91 §2-4): 큰 배포(스키마 변경 · 묶음 릴리스)는 원인을 고칠 때까지 미룹니다. slo:sli_*:ratio_rate6h 로 어느 날 썼는지 보고, 그 시간의 배포 · 사고 기록을 찾으세요.'
+- interval: 10m
+  input_series:
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/home",status="200"}
+    values: 0+3x2200
+  - series: http_server_requests_seconds_count{service="catalog-service",method="GET",uri="/api/content/home",status="503"}
+    values: 0+3x2200
+  alert_rule_test:
+  - eval_time: 15d
+    alertname: SloErrorBudgetHalfSpent
+    exp_alerts: []
+  - eval_time: 15d
+    alertname: SloErrorBudgetExhausted
+    exp_alerts: []

@@ -47,3 +47,17 @@ services:
     volumes:
       - /var/lib/node_exporter:/textfile:ro
     mem_limit: 64m
+
+  # 바깥 탐침(docs/91 §2-6) — 이 노드에서 Cloudflare 를 거쳐 손님과 같은 주소(첫 화면 · 홈 API)를 연다. 서비스 쪽 지표가 보지 못하는
+  # 터널 · Cloudflare · 게이트웨이 · 프론트 장애를 SLO site-probe 와 경보 SiteProbeDown 으로. 노드가 통째로 죽으면 이것도 같이 죽는다 —
+  # 그 경우는 바깥 감시가 따로 필요하다. 포트는 열지 않는다 — 같은 compose 망의 Prometheus 만 blackbox-exporter:9115 를 부른다.
+  # [JA] 外部プローブ — このノードから Cloudflare 経由で客と同じアドレスを開く。ポートは公開しない。
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./observability/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    mem_limit: 64m

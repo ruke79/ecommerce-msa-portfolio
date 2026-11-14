@@ -1754,9 +1754,9 @@ class ConfigurationGuardrailTest {
         assertThat(ociText.replaceAll("(?m)^\\s*#.*$", "")).as("주석 밖에 개발 PC 타깃이 없다").doesNotContain("host.docker.internal");
         List<Map<String, Object>> devJobs = new ArrayList<>((List<Map<String, Object>>) devCfg.get("scrape_configs"));
         devJobs.removeIf(j -> "spring-actuator".equals(j.get("job_name")));
-        // 운영에만 있는 노드 textfile 작업(B-106 — 백업 성공 시각)은 빼고 비교한다
+        // 운영에만 있는 작업은 빼고 비교한다 — 노드 textfile(B-106 — 백업 성공 시각) · 바깥 탐침(docs/91 §2-6 — 운영 주소를 연다, SloRulesTest)
         List<Map<String, Object>> ociJobs = new ArrayList<>((List<Map<String, Object>>) ociCfg.get("scrape_configs"));
-        ociJobs.removeIf(j -> "node-textfile".equals(j.get("job_name")));
+        ociJobs.removeIf(j -> "node-textfile".equals(j.get("job_name")) || "site-probe".equals(j.get("job_name")));
         assertThat(ociJobs).as("서비스 지표만 에이전트가 넣는다 — 나머지 작업은 같다").isEqualTo(devJobs);
         assertThat(ociCfg.get("alerting")).isEqualTo(devCfg.get("alerting")).isNotNull();
         assertThat(ociCfg.get("rule_files")).isEqualTo(devCfg.get("rule_files"));

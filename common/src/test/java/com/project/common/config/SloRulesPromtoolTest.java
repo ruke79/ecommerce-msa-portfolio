@@ -38,7 +38,7 @@ class SloRulesPromtoolTest {
                 .withFileSystemBind(repoRoot().resolve("observability").toString(), "/o", BindMode.READ_ONLY)
                 .withCreateContainerCmdModifier(cmd -> cmd.withEntrypoint("promtool"))
                 .withCommand(args)
-                .withStartupCheckStrategy(new OneShotStartupCheckStrategy().withTimeout(Duration.ofMinutes(2)))) {
+                .withStartupCheckStrategy(new OneShotStartupCheckStrategy().withTimeout(Duration.ofMinutes(5)))) {
             c.start();
             return c.getLogs();
         }
@@ -54,5 +54,11 @@ class SloRulesPromtoolTest {
     @DisplayName("🔴 promtool test rules — 소진율 · 컨슈머 지연 경보가 울릴 때만 울린다")
     void burnRateAlertsFireOnlyWhenTheyShould() {
         assertThat(promtool("test", "rules", "/o/tests/slo-rules.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
+    }
+
+    @Test
+    @DisplayName("🔴 promtool test rules — 14일 예산: 80% 면 절반 경보만 · 120% 면 소진 · 요청이 적으면 조용(10분 간격 15일)")
+    void budgetAlertsFireOnlyWhenTheyShould() {
+        assertThat(promtool("test", "rules", "/o/tests/slo-budget.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
     }
 }

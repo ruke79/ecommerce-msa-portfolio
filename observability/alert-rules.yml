@@ -364,71 +364,145 @@ groups:
           summary: "MongoDB 백업은 성공했지만 사실상 비어 있습니다 ({{ $value }} bytes)"
           description: "백업이 제시간에 돌았고 무결성 검사도 통과했지만 담긴 것이 없습니다. MONGO_URI 가 가리키는 DB 와 애플리케이션이 쓰는 DB(spring.data.mongodb.name = chat)가 다른지 확인하세요. 배포 직후라 채팅 기록이 실제로 없는 경우라면 정상입니다."
 
+
+
+
   # ── SLO(docs/91) ─────────────────────────────────────────────────────────────────────────────────
-  # 목표 숫자는 slo:objective:* 두 줄이 한 곳이다 — 경보는 그 값에서 오류 예산을 계산한다. 지연 경계(le)는
-  # application-common.yml 의 management.metrics.distribution.slo 버킷과 같아야 한다(가드 SloRulesTest).
-  # SLI 는 서비스 쪽 http.server.requests(게이트웨이 · 네트워크 시간은 빠진다 — 사용자 체감은 ops/53 의 k6 값).
+  # SLO 넷(2026-11-14 정함 — docs/91 §2): 서비스 쪽 셋(catalog-browse · catalog-search · order-create) + 바깥 탐침(site-probe).
+  # 목표 숫자는 slo:objective:* 두 줄이 한 곳이다 — 경보는 그 값에서 오류 예산을 계산한다. 가용성은 노드 한 대인 지금의 값이고,
+  # docs/89 단계 1 · 2 를 마치면 주석의 목표로 올린다. 지연 경계(le)는 application-common.yml 의 management.metrics.distribution.slo
+  # 버킷과 같아야 한다(가드 SloRulesTest). 서비스 쪽 SLI 는 http.server.requests — 게이트웨이 · 망 시간은 빠진다(그것은 site-probe 가 본다).
   # 오류 = 5xx 만(4xx 는 손님 쪽). 지연 = 경계를 넘은 요청 비율(5xx 포함).
-  # 경보는 다중 창 소진율(Google SRE workbook 5장): 빠름 1h · 5m 가 14.4 배(30일 예산의 2% 를 1시간에),
-  # 느림 6h · 30m 가 6 배(5% 를 6시간에). 요청이 적으면(1시간 평균 초당 0.03 = 시간당 약 100 미만) 울리지 않는다 —
-  # 운영처럼 손님이 적은 곳에서 한두 건의 실패가 예산을 다 쓴 것처럼 보이지 않게(그런 실패는 High5xxRate 가 본다).
-  # [JA] SLO — 目標値は slo:objective:* の二行だけ。遅延の境界(le)は application-common.yml の SLO バケットと同じ。
-  #      多窓のバーンレート(速い 1h·5m ×14.4、遅い 6h·30m ×6)。リクエストが少ないと鳴らない。
+  # 소진율 경보(Google SRE workbook 5장): 빠름 1h · 5m 가 14.4 배, 느림 6h · 30m 가 6 배. 창은 14일이다 — 운영 Prometheus 보존이
+  # 15일이라 30일 예산을 셀 수 없다(docs/91 §2-4). 요청이 적으면(1시간 평균 초당 0.03 = 시간당 약 100 미만) 울리지 않는다.
+  # [JA] SLO 四つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
   - name: slo
     rules:
-      # catalog-read — 상품 · 검색 · 홈 GET(관리자 · 내부 · actuator 제외): 가용성 99.9% · 300ms 안 99%
+      # catalog-browse — 홈 · 상품 상세 · 배너 · 공지 · 기획전 GET(/api/search* · 관리자 · 내부 · actuator 제외): 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 300ms 안 99%
       - record: slo:objective:availability
-        expr: vector(0.999)
-        labels: { slo: catalog-read }
+        expr: vector(0.995)
+        labels: { slo: catalog-browse }
       - record: slo:objective:latency
         expr: vector(0.99)
-        labels: { slo: catalog-read, threshold_seconds: "0.3" }
+        labels: { slo: catalog-browse, threshold_seconds: "0.3" }
       - record: slo:sli_error:ratio_rate5m
         expr: |
-          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[5m])) or vector(0))
-            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[5m]))
-        labels: { slo: catalog-read }
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",status=~"5.."}[5m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[5m]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_slow:ratio_rate5m
         expr: |
-          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[5m]))
-                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[5m]))
-        labels: { slo: catalog-read }
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",le="0.3"}[5m]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[5m]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_error:ratio_rate30m
         expr: |
-          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[30m])) or vector(0))
-            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[30m]))
-        labels: { slo: catalog-read }
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",status=~"5.."}[30m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[30m]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_slow:ratio_rate30m
         expr: |
-          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[30m]))
-                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[30m]))
-        labels: { slo: catalog-read }
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",le="0.3"}[30m]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[30m]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_error:ratio_rate1h
         expr: |
-          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[1h])) or vector(0))
-            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[1h]))
-        labels: { slo: catalog-read }
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",status=~"5.."}[1h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[1h]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_slow:ratio_rate1h
         expr: |
-          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[1h]))
-                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[1h]))
-        labels: { slo: catalog-read }
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",le="0.3"}[1h]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[1h]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_error:ratio_rate6h
         expr: |
-          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",status=~"5.."}[6h])) or vector(0))
-            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[6h]))
-        labels: { slo: catalog-read }
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",status=~"5.."}[6h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[6h]))
+        labels: { slo: catalog-browse }
       - record: slo:sli_slow:ratio_rate6h
         expr: |
-          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*",le="0.3"}[6h]))
-                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[6h]))
-        labels: { slo: catalog-read }
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",le="0.3"}[6h]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[6h]))
+        labels: { slo: catalog-browse }
       - record: slo:requests:rate1h
-        expr: sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal).*"}[1h]))
-        labels: { slo: catalog-read }
-      # order-create — 주문 생성 POST: 가용성 99.9% · 1000ms 안 99%
+        expr: sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[1h]))
+        labels: { slo: catalog-browse }
+      - record: slo:requests:increase1h
+        expr: sum(increase(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[1h]))
+        labels: { slo: catalog-browse }
+      - record: slo:errors:increase1h
+        expr: sum(increase(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",status=~"5.."}[1h])) or vector(0)
+        labels: { slo: catalog-browse }
+      - record: slo:slow:increase1h
+        expr: |
+          sum(increase(http_server_requests_seconds_count{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*"}[1h]))
+            - sum(increase(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",le="0.3"}[1h]))
+        labels: { slo: catalog-browse }
+      # catalog-search — 카테고리 목록 · 필터 · 이름 검색 GET(/api/search*) — 드문 필터 조합의 5초 상한 503 은 ES 전까지 남는 한계(docs/83 §2.8): 가용성 99%(노드 한 대인 지금 — 목표 99.5%(ES 뒤 99.9%)) · 1000ms 안 95%
       - record: slo:objective:availability
-        expr: vector(0.999)
+        expr: vector(0.99)
+        labels: { slo: catalog-search }
+      - record: slo:objective:latency
+        expr: vector(0.95)
+        labels: { slo: catalog-search, threshold_seconds: "1.0" }
+      - record: slo:sli_error:ratio_rate5m
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*",status=~"5.."}[5m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[5m]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri=~"/?api/search.*",le="1.0"}[5m]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[5m]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_error:ratio_rate30m
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*",status=~"5.."}[30m])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[30m]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_slow:ratio_rate30m
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri=~"/?api/search.*",le="1.0"}[30m]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[30m]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_error:ratio_rate1h
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*",status=~"5.."}[1h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[1h]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri=~"/?api/search.*",le="1.0"}[1h]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[1h]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_error:ratio_rate6h
+        expr: |
+          (sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*",status=~"5.."}[6h])) or vector(0))
+            / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[6h]))
+        labels: { slo: catalog-search }
+      - record: slo:sli_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri=~"/?api/search.*",le="1.0"}[6h]))
+                / sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[6h]))
+        labels: { slo: catalog-search }
+      - record: slo:requests:rate1h
+        expr: sum(rate(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[1h]))
+        labels: { slo: catalog-search }
+      - record: slo:requests:increase1h
+        expr: sum(increase(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[1h]))
+        labels: { slo: catalog-search }
+      - record: slo:errors:increase1h
+        expr: sum(increase(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*",status=~"5.."}[1h])) or vector(0)
+        labels: { slo: catalog-search }
+      - record: slo:slow:increase1h
+        expr: |
+          sum(increase(http_server_requests_seconds_count{service="catalog-service",method="GET",uri=~"/?api/search.*"}[1h]))
+            - sum(increase(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri=~"/?api/search.*",le="1.0"}[1h]))
+        labels: { slo: catalog-search }
+      # order-create — 주문 생성 POST: 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 1000ms 안 99%
+      - record: slo:objective:availability
+        expr: vector(0.995)
         labels: { slo: order-create }
       - record: slo:objective:latency
         expr: vector(0.99)
@@ -476,6 +550,62 @@ groups:
       - record: slo:requests:rate1h
         expr: sum(rate(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
         labels: { slo: order-create }
+      - record: slo:requests:increase1h
+        expr: sum(increase(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
+        labels: { slo: order-create }
+      - record: slo:errors:increase1h
+        expr: sum(increase(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create",status=~"5.."}[1h])) or vector(0)
+        labels: { slo: order-create }
+      - record: slo:slow:increase1h
+        expr: |
+          sum(increase(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
+            - sum(increase(http_server_requests_seconds_bucket{service="order-service",method="POST",uri=~"/?api/order/create",le="1.0"}[1h]))
+        labels: { slo: order-create }
+      # site-probe — 바깥 탐침 — 운영 노드의 blackbox-exporter 가 Cloudflare 를 거쳐 첫 화면 · 홈 API 를 30초마다(docs/91 §2-6): 가용성 99.5%(지금 — 목표 99.9%) · 2000ms 안 99%
+      #   요청 = 탐침 한 번. 실패 = probe_success 0(연결 · TLS · 상태 코드 · 본문 확인 실패). 노드가 통째로 죽으면 탐침도 같이 죽는다 —
+      #   그 경우는 바깥 감시가 따로 필요하다(docs/91 §2-6).
+      - record: slo:objective:availability
+        expr: vector(0.995)
+        labels: { slo: site-probe }
+      - record: slo:objective:latency
+        expr: vector(0.99)
+        labels: { slo: site-probe, threshold_seconds: "2.0" }
+      - record: slo:sli_error:ratio_rate5m
+        expr: 1 - avg(avg_over_time(probe_success{job="site-probe"}[5m]))
+        labels: { slo: site-probe }
+      - record: slo:sli_slow:ratio_rate5m
+        expr: avg(avg_over_time((probe_duration_seconds{job="site-probe"} > bool 2.0)[5m:30s]))
+        labels: { slo: site-probe }
+      - record: slo:sli_error:ratio_rate30m
+        expr: 1 - avg(avg_over_time(probe_success{job="site-probe"}[30m]))
+        labels: { slo: site-probe }
+      - record: slo:sli_slow:ratio_rate30m
+        expr: avg(avg_over_time((probe_duration_seconds{job="site-probe"} > bool 2.0)[30m:30s]))
+        labels: { slo: site-probe }
+      - record: slo:sli_error:ratio_rate1h
+        expr: 1 - avg(avg_over_time(probe_success{job="site-probe"}[1h]))
+        labels: { slo: site-probe }
+      - record: slo:sli_slow:ratio_rate1h
+        expr: avg(avg_over_time((probe_duration_seconds{job="site-probe"} > bool 2.0)[1h:30s]))
+        labels: { slo: site-probe }
+      - record: slo:sli_error:ratio_rate6h
+        expr: 1 - avg(avg_over_time(probe_success{job="site-probe"}[6h]))
+        labels: { slo: site-probe }
+      - record: slo:sli_slow:ratio_rate6h
+        expr: avg(avg_over_time((probe_duration_seconds{job="site-probe"} > bool 2.0)[6h:30s]))
+        labels: { slo: site-probe }
+      - record: slo:requests:rate1h
+        expr: sum(count_over_time(probe_success{job="site-probe"}[1h])) / 3600
+        labels: { slo: site-probe }
+      - record: slo:requests:increase1h
+        expr: sum(count_over_time(probe_success{job="site-probe"}[1h]))
+        labels: { slo: site-probe }
+      - record: slo:errors:increase1h
+        expr: sum(count_over_time(probe_success{job="site-probe"}[1h])) - sum(sum_over_time(probe_success{job="site-probe"}[1h]))
+        labels: { slo: site-probe }
+      - record: slo:slow:increase1h
+        expr: sum(sum_over_time((probe_duration_seconds{job="site-probe"} > bool 2.0)[1h:30s]))
+        labels: { slo: site-probe }
       - alert: SloErrorBudgetBurnFast
         expr: |
           (
@@ -486,8 +616,8 @@ groups:
         for: 2m
         labels: { severity: critical }
         annotations:
-          summary: "SLO {{ $labels.slo }} — 5xx 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h {{ $value | humanizePercentage }})"
-          description: "30일 오류 예산의 2%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+          summary: "SLO {{ $labels.slo }} — 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h {{ $value | humanizePercentage }})"
+          description: "14일 오류 예산의 4%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
       - alert: SloErrorBudgetBurnSlow
         expr: |
           (
@@ -498,8 +628,8 @@ groups:
         for: 15m
         labels: { severity: warning }
         annotations:
-          summary: "SLO {{ $labels.slo }} — 5xx 오류 예산을 6배 빠르기로 쓰고 있습니다(6h {{ $value | humanizePercentage }})"
-          description: "30일 오류 예산의 5%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+          summary: "SLO {{ $labels.slo }} — 오류 예산을 6배 빠르기로 쓰고 있습니다(6h {{ $value | humanizePercentage }})"
+          description: "14일 오류 예산의 11%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
       - alert: SloLatencyBudgetBurnFast
         expr: |
           (
@@ -510,8 +640,8 @@ groups:
         for: 2m
         labels: { severity: critical }
         annotations:
-          summary: "SLO {{ $labels.slo }} — 느린 요청 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h {{ $value | humanizePercentage }})"
-          description: "30일 오류 예산의 2%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+          summary: "SLO {{ $labels.slo }} — 느린 요청 예산을 14.4배 빠르기로 쓰고 있습니다(1h {{ $value | humanizePercentage }})"
+          description: "14일 오류 예산의 4%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
       - alert: SloLatencyBudgetBurnSlow
         expr: |
           (
@@ -522,8 +652,49 @@ groups:
         for: 15m
         labels: { severity: warning }
         annotations:
-          summary: "SLO {{ $labels.slo }} — 느린 요청 오류 예산을 6배 빠르기로 쓰고 있습니다(6h {{ $value | humanizePercentage }})"
-          description: "30일 오류 예산의 5%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency)와 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+          summary: "SLO {{ $labels.slo }} — 느린 요청 예산을 6배 빠르기로 쓰고 있습니다(6h {{ $value | humanizePercentage }})"
+          description: "14일 오류 예산의 11%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+      - alert: SiteProbeDown
+        # 바깥 탐침 하나가 3분 연속 실패 — 손님이 그 주소를 열지 못한다. 서비스 쪽 지표가 멀쩡해도(터널 · Cloudflare · 게이트웨이 · 프론트) 울린다.
+        expr: probe_success{job="site-probe"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "바깥에서 {{ $labels.instance }} 를 열지 못합니다"
+          description: "운영 노드의 blackbox-exporter 가 Cloudflare 를 거쳐 3분 연속 실패했습니다. cloudflared 터널 · 게이트웨이 · frontend 파드와 인증서를 보세요. probe_http_status_code 로 상태 코드를, Cloudflare 의 403 · 챌린지면 봇 차단 설정을 확인하세요 (docs/91 §2-6)."
+
+  # ── 오류 예산(14일, docs/91 §2-4) — 무거운 sum_over_time 이라 5분마다. 예산 사용 = (나쁜 요청 / 전체) / (1 − 목표) ──────────────
+  #   정책: 50% 를 쓰면 큰 배포(스키마 변경 · 묶음 릴리스)를 원인을 고칠 때까지 미룬다, 100% 면 기능 배포를 멈추고 안정화만.
+  # [JA] エラーバジェット(14 日) — 50% で大きなデプロイを延期、100% で機能デプロイを止めて安定化だけ。
+  - name: slo-budget
+    interval: 5m
+    rules:
+      - record: slo:budget_used:ratio14d
+        expr: |
+          (sum_over_time(slo:errors:increase1h[14d]) / sum_over_time(slo:requests:increase1h[14d]))
+            / on (slo) (1 - slo:objective:availability)
+        labels: { budget: error }
+      - record: slo:budget_used:ratio14d
+        expr: |
+          (sum_over_time(slo:slow:increase1h[14d]) / sum_over_time(slo:requests:increase1h[14d]))
+            / on (slo) (1 - slo:objective:latency)
+        labels: { budget: latency }
+      - record: slo:requests:avg_rate14d
+        expr: avg_over_time(slo:requests:rate1h[14d])
+      - alert: SloErrorBudgetHalfSpent
+        expr: slo:budget_used:ratio14d >= 0.5 and on (slo) slo:requests:avg_rate14d > 0.03
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "SLO {{ $labels.slo }} — 14일 {{ $labels.budget }} 예산의 {{ $value | humanizePercentage }} 를 썼습니다"
+          description: "정책(docs/91 §2-4): 큰 배포(스키마 변경 · 묶음 릴리스)는 원인을 고칠 때까지 미룹니다. slo:sli_*:ratio_rate6h 로 어느 날 썼는지 보고, 그 시간의 배포 · 사고 기록을 찾으세요."
+      - alert: SloErrorBudgetExhausted
+        expr: slo:budget_used:ratio14d >= 1 and on (slo) slo:requests:avg_rate14d > 0.03
+        for: 1h
+        labels: { severity: critical }
+        annotations:
+          summary: "SLO {{ $labels.slo }} — 14일 {{ $labels.budget }} 예산을 다 썼습니다({{ $value | humanizePercentage }})"
+          description: "정책(docs/91 §2-4): 기능 배포를 멈추고 안정화 수정만 합니다. 이 상태가 되풀이되면 docs/89 단계 1(데이터 계층을 노드 밖으로)을 앞당기는 근거입니다."
 
   # ── Kafka 컨슈머 지연(docs/91 §3) — 지표는 common 의 KafkaConsumerMetricsAutoConfiguration 이 모든 컨슈머 팩토리에 단다 ──
   - name: kafka-consumer

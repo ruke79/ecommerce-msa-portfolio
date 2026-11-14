@@ -79,8 +79,9 @@
 #   PROM=http://<obs-vm>:9090  PROM_ENV=demo     # 레플리카(시작 · 측정 중 최대 · 끝)를 Prometheus 에서 읽어 meta.txt 에(없으면 PROM_RW 에서)
 #   K6=k6                          # k6 실행 파일(https://grafana.com/docs/k6/latest/set-up/install-k6/)
 #   CEILING_RATES=10,20,50,100,200,400  CEILING_HOLD=3m  CEILING_RAMP=30s   # ceiling 의 계단(초당 반복) · 계단마다 유지 · 올리는 시간
-#   CEILING_P99_MS  CEILING_MAX_5XX=0.001   # ceiling 의 SLO(docs/91 §2) — p99 기본은 browse · mixed 300(catalog-read, 전체 요청) · order 1000
-#                                  # (order-create — order_create 요청만). 5xx 비율은 가용성 99.9% 의 예산
+#   CEILING_P99_MS  CEILING_MAX_5XX=0.001   # ceiling 의 SLO(docs/91 §2) — p99 기본은 browse · mixed 300(catalog-browse 경계 — 목록 · 검색도
+#                                  # 이 기준이라 보수적) · order 1000(order-create — order_create 요청만). 5xx 비율은 목표 가용성 99.9% 의 예산
+#   CEILING_TARGET_RPS             # 처리량 목표(요청/초, docs/91 §2-5) — browse · mixed 기본 1000(평시 피크), order 는 없음. 천장과 견준다
 #
 # 🔒 데모 계정은 모두 같은 비밀번호다 — 파일에서 읽어 k6 의 환경 변수로만 넘긴다(ps 에 보이는 명령줄 인자가 아니다).
 #    결과 파일에는 비밀번호 · 토큰을 쓰지 않는다.
@@ -845,7 +846,7 @@ cmd_ceiling() {
     shift
     local scenario="${1:-}"
     case "$scenario" in
-        browse|mixed) : "${CEILING_P99_MS:=300}"; CEILING_METRIC="http_req_duration" ;;
+        browse|mixed) : "${CEILING_P99_MS:=300}"; CEILING_METRIC="http_req_duration"; : "${CEILING_TARGET_RPS:=1000}" ;;
         order)        : "${CEILING_P99_MS:=1000}"; CEILING_METRIC="http_req_duration{name:order_create}" ;;
         *) die "ceiling <browse|order|mixed> — 천장을 잴 시나리오" ;;
     esac
@@ -861,6 +862,7 @@ cmd_ceiling() {
     [[ "$hold" =~ ^[1-9][0-9]*[sm]$ ]] && [[ "$ramp" =~ ^[1-9][0-9]*[sm]$ ]] || die "CEILING_HOLD · CEILING_RAMP 는 30s · 3m 모양"
     [[ "$CEILING_P99_MS" =~ ^[1-9][0-9]*$ ]] || die "CEILING_P99_MS 는 양의 정수(ms)"
     [[ "$max5xx" =~ ^0(\.[0-9]+)?$ ]] || die "CEILING_MAX_5XX 는 0 ~ 1 미만의 비율(예 0.001)"
+    [ -z "${CEILING_TARGET_RPS:-}" ] || [[ "$CEILING_TARGET_RPS" =~ ^[1-9][0-9]*$ ]] || die "CEILING_TARGET_RPS 는 양의 정수(요청/초)"
     command -v python3 >/dev/null 2>&1 || die "python3 가 필요하다"
 
     local stamp dir prev="" r t0 t1 step
@@ -869,7 +871,7 @@ cmd_ceiling() {
     mkdir -p "$dir/steps"
     local prom="${PROM:-${PROM_RW:-}}"; prom="${prom%/api/v1/write}"
     { echo "scenario=$scenario rates=$rates hold=$hold ramp=$ramp"
-      echo "slo_p99_ms=$CEILING_P99_MS slo_metric=$CEILING_METRIC slo_max_5xx=$max5xx"
+      echo "slo_p99_ms=$CEILING_P99_MS slo_metric=$CEILING_METRIC slo_max_5xx=$max5xx target_rps=${CEILING_TARGET_RPS:-}"
       echo "git=$(git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null || echo '?') prom=${prom:-없음} prom_env=${PROM_ENV:-demo}"; } > "$dir/ceiling.meta"
     info "천장 찾기 $scenario — 계단 $rates (계단마다 $ramp 올리고 $hold 유지) · SLO p99 ≤ ${CEILING_P99_MS}ms · 5xx ≤ $max5xx (결과: $dir)"
     [ -n "$prom" ] || warn "PROM 이 없다 — 서버 쪽 숫자(파드당 요청/초 · CPU · 커넥션 대기 · Kafka 지연) 없이 k6 쪽만 남긴다"
@@ -991,7 +993,17 @@ else:
 out = [f"# 천장 — {meta.get('scenario')} ({d.rsplit('/', 1)[-1]})", "",
        f"- 커밋 `{meta.get('git')}` · 계단 {meta.get('rates')} · 계단마다 {meta.get('ramp')} 올림 + {meta.get('hold')} 유지",
        f"- SLO: `{meta.get('slo_metric')}` p99 ≤ {meta.get('slo_p99_ms')}ms · 5xx ≤ {float(meta.get('slo_max_5xx', 0)):.2%} (docs/91 §2)",
-       f"- **{head}**", "",
+       f"- **{head}**"]
+target = meta.get("target_rps")
+if target and rows:
+    best = passed[-1]["rps"] if passed else 0
+    if last["ok"]:
+        out.append(f"- 처리량 목표 {int(target):,} 요청/초(docs/91 §2-5): 마지막 계단까지 {best:.1f} — " + ("넘는다" if best >= int(target) else "아직 모른다(계단을 더 올린다)"))
+    elif last.get("short"):
+        out.append(f"- 처리량 목표 {int(target):,} 요청/초(docs/91 §2-5): 부하기가 먼저 모자라 견줄 수 없다")
+    else:
+        out.append(f"- 처리량 목표 {int(target):,} 요청/초(docs/91 §2-5): 천장 {best:.1f} — " + ("넘는다" if best >= int(target) else f"못 미친다(목표의 {best / int(target):.0%})"))
+out += ["",
        "| 계단(초당 반복) | 요청/초 | p99 ms | 5xx | 판정 | 막힌 곳 후보 |", "|---:|---:|---:|---:|---|---|"]
 for x in rows:
     out.append(f"| {x['rate']} | {x['rps']:.1f} | {('%.0f' % x['p99']) if x['p99'] is not None else '?'} | {x['e5']:.3%} | "

@@ -49,3 +49,24 @@ scrape_configs:
   - job_name: "node-textfile"
     static_configs:
       - targets: ["node-exporter:9100"]
+
+  # 바깥 탐침 — blackbox-exporter 가 Cloudflare 를 거쳐 손님과 같은 주소를 연다(SLO site-probe · 경보 SiteProbeDown, docs/91 §2-6). 운영 전용.
+  # 30초 — 대상 둘이면 시간당 240번이라 SLO 경보의 요청 하한(초당 0.03)을 넘는다.
+  # [JA] 外部プローブ — blackbox-exporter が Cloudflare 経由で客と同じアドレスを開く。本番だけ。
+  - job_name: "site-probe"
+    scrape_interval: 30s
+    metrics_path: /probe
+    static_configs:
+      - targets: ["https://www.ysyproject.com/"]
+        labels: { module: http_page }
+      - targets: ["https://www.ysyproject.com/catalog-service/api/content/home"]
+        labels: { module: http_api }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [module]
+        target_label: __param_module
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

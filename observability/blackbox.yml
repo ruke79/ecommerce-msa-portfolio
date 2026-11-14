@@ -1,0 +1,36 @@
+# 바깥 탐침(blackbox-exporter) 모듈 — 운영 노드에서 Cloudflare 를 거쳐 손님과 같은 주소를 연다(docs/91 §2-6, SLO site-probe).
+# 운영 덧씌우기(docker-compose-observability.oci.yml)의 blackbox-exporter 가 읽고, prometheus.oci.yml 의 site-probe 작업이 30초마다 부른다.
+# TLS 는 검증한다(insecure_skip_verify 를 쓰지 않는다 — 가드 SloRulesTest). 상태 코드만 보지 않고 본문까지 본다 —
+# Cloudflare 오류 화면 · 챌린지 페이지도 200 일 수 있다.
+# [JA] 外部プローブのモジュール — 本番ノードから Cloudflare 経由で客と同じアドレスを開く。TLS は検証し、本文まで見る。
+modules:
+  # 첫 화면 — SPA 의 index.html(frontend nginx). React 가 붙는 자리가 있어야 한다
+  http_page:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4
+      headers:
+        User-Agent: "ecommerce-msa site-probe (docs/91)"
+      fail_if_body_not_matches_regexp:
+        - '<div id="root">'
+  # 홈 API — 게이트웨이 → catalog(홈 구성은 파드 메모리 30초 캐시). JSON 이어야 한다(프론트로 새면 index.html 200 이다)
+  http_api:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4
+      headers:
+        User-Agent: "ecommerce-msa site-probe (docs/91)"
+        Accept: application/json
+      fail_if_header_not_matches:
+        - header: Content-Type
+          regexp: 'application/json'
+      fail_if_body_not_matches_regexp:
+        - '^\s*[\[{]'

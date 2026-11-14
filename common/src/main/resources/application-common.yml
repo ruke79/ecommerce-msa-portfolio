@@ -215,7 +215,7 @@ management:
       percentiles-histogram:
         http.server.requests: true
       # SLO 경계를 정확한 버킷으로 — 기본 히스토그램 버킷에는 0.3 · 1.0 이 없어 "300ms 안의 비율" 을 셀 수 없다.
-      # alert-rules.yml 의 slo 그룹이 le="0.3"(catalog-read) · le="1.0"(order-create)을 읽는다(docs/91 §2, 가드 SloRulesTest).
+      # alert-rules.yml 의 slo 그룹이 le="0.3"(catalog-browse) · le="1.0"(catalog-search · order-create)을 읽는다(docs/91 §2, 가드 SloRulesTest).
       # [JA] SLO の境界を正確なバケットに — 既定のバケットには 0.3 · 1.0 がなく「300ms 以内の割合」を数えられない。
       slo:
         http.server.requests: 300ms,1s

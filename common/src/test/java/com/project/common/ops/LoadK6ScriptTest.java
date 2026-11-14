@@ -1087,7 +1087,8 @@ class LoadK6ScriptTest {
         assertThat(md).contains("천장: 계단 100 통과 · 200 에서 SLO 깨짐", "p99 400ms > 300ms")
                 .contains("| 100 | 500.0 | 200 | 0.000% | 통과 |")
                 .contains("catalog-service CPU 90%", "catalog-service 커넥션 대기 3")
-                .as("파드당 요청/초 = 0.9 / 3").contains("| 0.3 |");
+                .as("파드당 요청/초 = 0.9 / 3").contains("| 0.3 |")
+                .as("처리량 목표(browse 기본 1,000)와 견준다").contains("처리량 목표 1,000 요청/초(docs/91 §2-5): 천장 500.0 — 못 미친다(목표의 50%)");
         assertThat(Files.readString(tmp.resolve("curl.log"))).contains("time=", "kafka_consumer_fetch_manager_records_lag_max",
                 "hikaricp_connections_pending");
     }
@@ -1099,12 +1100,13 @@ class LoadK6ScriptTest {
         Run order = run(Map.of("FAKE_SUMMARY", "1", "CEILING_RATES", "100,300,400"), "ceiling", "order");
         assertThat(order.code()).as(order.out()).isZero();
         assertThat(order.out()).contains("p99 1200ms > 1000ms");
-        assertThat(ceilingMd()).contains("천장: 계단 300 통과 · 400 에서 SLO 깨짐", "http_req_duration{name:order_create}");
+        assertThat(ceilingMd()).contains("천장: 계단 300 통과 · 400 에서 SLO 깨짐", "http_req_duration{name:order_create}")
+                .as("order 는 처리량 목표 기본값이 없다").doesNotContain("처리량 목표");
 
         Files.walk(tmp.resolve("results")).sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(java.io.File::delete);
-        Run e5 = run(Map.of("FAKE_SUMMARY", "1", "FAKE_5XX_FROM", "50", "CEILING_RATES", "10,50,100"), "ceiling", "browse");
+        Run e5 = run(Map.of("FAKE_SUMMARY", "1", "FAKE_5XX_FROM", "50", "CEILING_RATES", "10,50,100", "CEILING_TARGET_RPS", "40"), "ceiling", "browse");
         assertThat(e5.out()).as("50 / 10000 = 0.5% > 0.1%").contains("5xx 0.500% > 0.100%");
-        assertThat(ceilingMd()).contains("천장: 계단 10 통과 · 50 에서 SLO 깨짐");
+        assertThat(ceilingMd()).contains("천장: 계단 10 통과 · 50 에서 SLO 깨짐", "처리량 목표 40 요청/초(docs/91 §2-5): 천장 50.0 — 넘는다");
 
         Files.walk(tmp.resolve("results")).sorted(java.util.Comparator.reverseOrder()).map(Path::toFile).forEach(java.io.File::delete);
         run(Map.of("FAKE_SUMMARY", "1", "FAKE_DROP_FROM", "50", "CEILING_RATES", "10,50,100"), "ceiling", "browse");
