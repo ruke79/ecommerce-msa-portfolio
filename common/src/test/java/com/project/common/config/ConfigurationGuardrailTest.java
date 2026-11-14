@@ -4001,6 +4001,36 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-111: prod 오버레이가 replicas 를 지우는 Deployment = k8s/70 의 HPA 대상.
+     *
+     * <p>HPA 가 소유한 Deployment 에 replicas 가 남아 있으면 {@code kubectl apply} 마다 매니페스트 값으로 떨어졌다가 HPA 가 다시
+     * 올린다(그 사이가 장애다). 🐛 chat-service 는 2026-11-01 Redis 팬아웃(B-107)으로 HPA 1 ~ 3 이 생겼는데 이 목록에 들지 않아,
+     * 늘어난 상태에서 오버레이를 apply 하면 1 로 떨어져 접속 중인 STOMP 세션이 끊길 수 있었다(2026-11-14 문서 점검에서 발견 —
+     * 운영은 ops/28 local 이라 이 오버레이를 apply 하지 않아 실제로 나지는 않았다). 반대로 HPA 가 없는 것(eureka · saga-projection
+     * — 대기 복제본이 num.standby.replicas 와 짝)을 넣으면 replicas 가 기본값 1 이 된다.
+     *
+     * <p>[JA] prod オーバーレイが replicas を消す Deployment = k8s/70 の HPA 対象。chat に HPA ができたのにリストになかった。
+     */
+    @Test
+    @DisplayName("B-111: prod 오버레이의 replicas 제거 대상 = k8s/70 의 HPA 대상(빠지면 apply 마다 떨어지고, 더하면 기본값 1)")
+    void prodOverlayRemovesReplicasExactlyForHpaTargets() throws IOException {
+        Set<String> hpaTargets = new TreeSet<>();
+        Matcher m = Pattern.compile("scaleTargetRef:\\s*\\{[^}]*kind:\\s*Deployment,\\s*name:\\s*([a-z-]+)\\s*}")
+                .matcher(Files.readString(repoRoot().resolve("k8s/70-autoscaling.yaml"), StandardCharsets.UTF_8));
+        while (m.find()) {
+            hpaTargets.add(m.group(1));
+        }
+        assertThat(hpaTargets).as("k8s/70 의 HPA 대상").contains("chat-service", "catalog-service").doesNotContain("eureka-server");
+
+        String overlay = Files.readString(repoRoot().resolve("k8s-overlays/prod/kustomization.yaml"), StandardCharsets.UTF_8);
+        Matcher patch = Pattern.compile("- path: patch-remove-replicas\\.yaml\\s*\\n\\s*target:\\s*\\n\\s*kind: Deployment\\s*\\n\\s*name: \"([^\"]+)\"")
+                .matcher(overlay);
+        assertThat(patch.find()).as("prod 오버레이의 replicas 제거 패치").isTrue();
+        Set<String> removed = new TreeSet<>(Arrays.asList(patch.group(1).split("\\|")));
+        assertThat(removed).as("replicas 를 지우는 대상 = HPA 대상").isEqualTo(hpaTargets);
+    }
+
+    /**
      * B-110: Kafka 컨슈머의 오프셋 기본값은 earliest — {@code latest} 는 이유가 적힌 허용 목록만.
      *
      * <p>오프셋이 없을 때(그룹이 처음 뜸 · 무활동 7일로 만료 · <b>새 Kafka 클러스터로 옮김</b>) {@code latest} 는 그 전에 들어온 메시지를 건너뛴다.

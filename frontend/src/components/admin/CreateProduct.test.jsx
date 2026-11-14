@@ -214,4 +214,30 @@ describe("CreateProduct 제출", () => {
     );
     expect(postRequest).not.toHaveBeenCalled();
   });
+
+  // 🐛 2026-11-14: 위 시험들은 product 를 props 로 미리 채워 둬서, AdminInput 이 화면의 onChange(handleChange →
+  // setProduct)를 부르지 않던 것을 잡지 못했다 — 관리자가 타이핑한 이름 · 브랜드는 product 에 들어가지 않았다.
+  // 여기서는 product 를 실제 state 로 두고 입력란에 타이핑한 뒤, 나가는 JSON 파트를 본다.
+  it("타이핑한 상품 이름이 요청의 product 파트에 실린다(입력란 → handleChange → setProduct)", async () => {
+    postRequest.mockResolvedValue({ data: { sku: "SKU-1" } });
+    function Stateful() {
+      const [product, setProduct] = useState({ ...baseProduct, name: "" });
+      const [loading, setLoading] = useState(false);
+      const store = configureStore({ reducer: { dialog: dialogReducer } });
+      return (
+        <Provider store={store}>
+          <CreateProduct parents={[]} product={product} setProduct={setProduct} categories={[]} subs={[]}
+            images={[PNG, PNG, PNG]} setImages={jest.fn()} setColorImage={jest.fn()} colorImage=""
+            setLoading={setLoading} loading={loading} initialProduct={baseProduct} />
+        </Provider>
+      );
+    }
+    const { container } = render(withI18n(<Stateful />));
+    await userEvent.type(container.querySelector('input[name="name"]'), "타이핑한 상품 이름");
+    await submit();
+
+    await waitFor(() => expect(postRequest).toHaveBeenCalledTimes(1));
+    const json = JSON.parse(await readBlob(postRequest.mock.calls[0][1].get("product")));
+    expect(json.name).toBe("타이핑한 상품 이름");
+  });
 });

@@ -62,6 +62,8 @@ docs/35 の ①②③④ がすべて通過する。**ユニーク制約も本�
 
 ### 1.3 🔴 管理者の商品・カテゴリ登録画面が空の値を送る — 7 月の修正のリグレッション
 
+> 🕰️ ✅ **2026-11-14 に修正** — コードで確認した: カテゴリー追加は画面の状態 `name` が空のまま `slugify(undefined)` が例外を投げ、常に「追加失敗」だった。`AdminInput` が Formik と呼び出し側の `onChange` を両方呼ぶようにした(三画面を一度に)— テスト `CreateCategory.test.jsx` · `CreateProduct.test.jsx` は props で値を先に入れず、**タイプした後に出ていくリクエスト**を見る([docs/28 §6](28-frontend-test-suite.md))。単独の `CreateSubCategory` 画面(`pages/admin/SubCategory.jsx`)はどのルートにもつながっていない — 管理者画面のサブカテゴリーのフォームは `CreateCategory` の中の二つ目のフォームだ。
+
 docs/28 §2 が「入力文字の消失」を直そうとして `AdminInput` の展開順序を `{...props}` →
 `{...field}` に変えた（`AdminInput.jsx:22-23`、コミット `6f64410`）。Formik の `onChange` が勝つように
 なったこと自体は正しい。問題は 3 つの呼び出し元が **依然として自前の `useState` を送信** していることである:

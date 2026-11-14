@@ -32,9 +32,11 @@
 # 그래서 여기서는 필드를 **삭제**한다(JSON6902 remove). 초기 개수는 HPA 의 minReplicas 가
 # 정한다(k8s/70-autoscaling.yaml 에서 전부 min=2).
 #
-# eureka-server 와 chat-service 는 HPA 가 없으므로 replicas 를 남겨 둔다.
-#   · eureka-server  1대로 충분하다(피어 복제를 설정하지 않았다)
-#   · chat-service   WebSocket 세션이 파드에 붙어 있어 늘리려면 세션 공유가 먼저다(docs/21)
+# eureka-server 는 HPA 가 없으므로 replicas 를 남겨 둔다 — 1대로 충분하다(피어 복제를 설정하지 않았다).
+# chat-service 는 2026-11-01 Redis 팬아웃(B-107, docs/21 §2-1)으로 HPA 1 ~ 3 이 생겼다 — 그래서 지운다.
+#   🐛 2026-11-14 까지 아래 대상에서 빠져 있어, HPA 가 chat 을 늘린 상태에서 이 오버레이를 apply 하면 1 로
+#      떨어졌다(접속 중인 STOMP 세션이 끊긴다). 대상 목록 = k8s/70 의 HPA 대상 — 가드 B-111.
+# [JA] eureka-server だけ HPA がないので replicas を残す。chat-service は HPA ができたので消す(B-111 が一致を守る)。
 #
 # ── 왜 HPA·백업을 오버레이에 넣지 않는가 ────────────────────────────────
 #
@@ -111,4 +113,4 @@ patches:
   - path: patch-remove-replicas.yaml
     target:
       kind: Deployment
-      name: "gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|notification-service|delivery-service|frontend"
+      name: "gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|notification-service|delivery-service|chat-service|frontend"

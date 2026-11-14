@@ -123,7 +123,7 @@ const [field, meta] = useField(props);
 > `CreateSubCategory`, `Summary`. 같은 형태지만 상태 구조가 더 얽혀 있어 이번 범위에서
 > 손대지 않았다. **AddShipping 은 배송 주소를 받는 화면이라 우선순위가 높다** — §6 에 남겼다.
 >
-> 🕰️ 2026-11-14: `AddShipping` 은 고쳤다(§6 의 🕰️). 관리자 폼 셋은 아직 이 형태다.
+> 🕰️ 2026-11-14: `AddShipping` 은 고쳤다(§6 의 🕰️). 관리자 폼 셋도 이 형태 그대로였는데, 2026-11-14 에 `AdminInput` 쪽에서 고쳤다(§6 의 🕰️).
 
 ---
 
@@ -208,7 +208,7 @@ Header → AuthContext → axios → ProductPage → Swiper 까지 전부 끌고
 > 🕰️ 2026-11-14:
 > - ~~1. `AddShipping.jsx`~~ → ✅ 폼 값의 주인은 Formik 하나 — `enableReinitialize` 없이, 고칠 배송지가 바뀌면 `key` 로 다시 마운트한다(`AddShipping.jsx`, `AddShipping.test.jsx`).
 > - ~~3. `LoginInput` 자체~~ → ✅ 전개 순서를 `{...props} {...field}` 로 뒤집었다 — 호출부의 `onChange` 가 Formik 을 덮지 못한다. 관리자 폼이 쓰는 `AdminInput` 도 같은 순서다.
-> - 2. 관리자 폼 3종은 그대로 열려 있다 — `CreateProduct` · `CreateCategory` · `CreateSubCategory` 는 아직 `enableReinitialize` + 페이지 state 를 `initialValues` 로 넘긴다. `AdminInput` 의 순서가 바뀐 지금은 호출부의 `onChange`(페이지 state 갱신)가 불리지 않으므로, 제출 때 페이지 state 를 읽는 이 셋은 입력한 값을 보내지 못할 수 있다(코드를 읽은 판단 — 실행 확인 전).
+> - 2. 관리자 폼 3종은 그대로 열려 있다 — `CreateProduct` · `CreateCategory` · `CreateSubCategory` 는 아직 `enableReinitialize` + 페이지 state 를 `initialValues` 로 넘긴다. `AdminInput` 의 순서가 바뀐 지금은 호출부의 `onChange`(페이지 state 갱신)가 불리지 않으므로, 제출 때 페이지 state 를 읽는 이 셋은 입력한 값을 보내지 못할 수 있다(코드를 읽은 판단 — 실행 확인 전). → 🕰️ ✅ **2026-11-14 고침** — 실제로 그랬다(카테고리 추가는 `slugify(undefined)` 로 늘 "추가 실패", 상품 등록은 타이핑한 이름 · 브랜드가 `product` 에 들어가지 않았다). `AdminInput` 이 Formik 의 `onChange` 와 호출부의 `onChange` 를 **둘 다** 부른다 — 시험 `CreateCategory.test.jsx`(타이핑 → 요청, 상위를 고른 뒤에도 이름이 남는다) · `CreateProduct.test.jsx` 의 상태 있는 시험.
 > - 5. 브라우저 E2E(Playwright)는 아직 없다. 서비스를 실제로 띄운 사가 전 구간은 CI 인수 스테이지(`:e2e-tests`, 발행된 이미지)가 돈다 — 화면은 거치지 않는다.
 
 ---

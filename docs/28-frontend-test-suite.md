@@ -123,7 +123,7 @@ const [field, meta] = useField(props);
 > `CreateSubCategory`、`Summary`。同じ形だが state の構造がより絡み合っているため、今回の範囲では
 > 手を付けなかった。**AddShipping は配送先住所を受け取る画面なので優先度が高い** — §6 に残した。
 >
-> 🕰️ 2026-11-14: `AddShipping` は直した(§6 の 🕰️)。管理者フォーム 3 つはまだこの形だ。
+> 🕰️ 2026-11-14: `AddShipping` は直した(§6 の 🕰️)。管理者フォーム 3 つもこの形のままだったが、2026-11-14 に `AdminInput` 側で直した(§6 の 🕰️)。
 
 ---
 
@@ -208,7 +208,7 @@ Header → AuthContext → axios → ProductPage → Swiper まですべて引�
 > 🕰️ 2026-11-14:
 > - ~~1. `AddShipping.jsx`~~ → ✅ フォームの値の持ち主は Formik ひとつ — `enableReinitialize` なしで、編集する配送先が変わると `key` で再マウントする(`AddShipping.jsx`、`AddShipping.test.jsx`)。
 > - ~~3. `LoginInput` 自体~~ → ✅ 展開の順序を `{...props} {...field}` に逆にした — 呼び出し側の `onChange` が Formik を上書きできない。管理者フォームが使う `AdminInput` も同じ順序だ。
-> - 2. 管理者フォーム 3 種は今も開いている — `CreateProduct` · `CreateCategory` · `CreateSubCategory` はまだ `enableReinitialize` + ページの state を `initialValues` に渡している。`AdminInput` の順序が変わった今は呼び出し側の `onChange`(ページ state の更新)が呼ばれないので、送信時にページ state を読むこの 3 つは入力した値を送れない可能性がある(コードを読んだ判断 — 実行での確認前)。
+> - 2. 管理者フォーム 3 種は今も開いている — `CreateProduct` · `CreateCategory` · `CreateSubCategory` はまだ `enableReinitialize` + ページの state を `initialValues` に渡している。`AdminInput` の順序が変わった今は呼び出し側の `onChange`(ページ state の更新)が呼ばれないので、送信時にページ state を読むこの 3 つは入力した値を送れない可能性がある(コードを読んだ判断 — 実行での確認前)。 → 🕰️ ✅ **2026-11-14 に修正** — 実際にそうだった(カテゴリー追加は `slugify(undefined)` で常に「追加失敗」、商品登録はタイプした名前 · ブランドが `product` に入らなかった)。`AdminInput` が Formik の `onChange` と呼び出し側の `onChange` を**両方**呼ぶ — テスト `CreateCategory.test.jsx`(タイプ → リクエスト、親を選んだ後も名前が残る)· `CreateProduct.test.jsx` の状態を持つテスト。
 > - 5. ブラウザの E2E(Playwright)はまだない。サービスを実際に起動したサガ全区間は CI の受け入れステージ(`:e2e-tests`、発行されたイメージ)が回す — 画面は通らない。
 
 ---

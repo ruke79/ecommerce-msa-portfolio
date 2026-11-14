@@ -62,6 +62,8 @@ docs/35 의 ①②③④ 가 전부 통과한다. **유니크 제약도 진짜 �
 
 ### 1.3 🔴 관리자 상품·카테고리 등록 화면이 빈 값을 보낸다 — 7월 수정의 회귀
 
+> 🕰️ ✅ **2026-11-14 고침** — 코드로 확인했다: 카테고리 추가는 화면 상태 `name` 이 비어 `slugify(undefined)` 가 던져 늘 "추가 실패" 였다. `AdminInput` 이 Formik 과 호출부의 `onChange` 를 둘 다 부르게 했다(세 화면을 한 번에) — 시험 `CreateCategory.test.jsx` · `CreateProduct.test.jsx` 는 props 로 값을 미리 넣지 않고 **타이핑한 뒤 나가는 요청**을 본다([docs/28 §6](28-frontend-test-suite.ko.md)). 단독 `CreateSubCategory` 화면(`pages/admin/SubCategory.jsx`)은 어떤 라우트에도 연결돼 있지 않다 — 관리자 화면의 하위 카테고리 폼은 `CreateCategory` 안의 두 번째 폼이다.
+
 docs/28 §2 가 "입력 글자 유실"을 고치려고 `AdminInput` 의 전개 순서를 `{...props}` →
 `{...field}` 로 바꿨다(`AdminInput.jsx:22-23`, 커밋 `6f64410`). Formik 의 `onChange` 가 이기게
 된 것 자체는 맞다. 문제는 세 호출부가 **여전히 자기 `useState` 를 제출**한다는 것이다:
