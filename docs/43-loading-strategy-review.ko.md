@@ -381,6 +381,8 @@ public List<ProductDto> warmUpProductCaches(int pageSize) {
 
 지금 상품이 250개라 견디고 있다. 규모가 커지면:
 
+> 🕰️ 2026-11-14: 이 글을 쓸 때는 시드 250개였지만 지금 운영은 **상품 200만**(데모 데이터)이다 — 이 경로가 그대로였다면 아래가 실제로 났다. D2 는 커서 페이징 · 관리자 전용 경로로 고쳤다(§0 의 표, `2956937`; 한 쪽 상한 100 · 캐시하지 않음 — `ProductService.getProductsPage`).
+
 - 응답 JSON 이 수 MB → 게이트웨이 타임아웃, 브라우저 메모리
 - Redis 키 하나가 수십 MB → `maxmemory` 정책에 따라 다른 키를 밀어내거나 이 키가 evict 되어
   매번 전 카탈로그를 다시 조회

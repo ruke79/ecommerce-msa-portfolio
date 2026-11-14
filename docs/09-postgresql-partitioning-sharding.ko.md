@@ -2,7 +2,7 @@
 
 [日本語](09-postgresql-partitioning-sharding.md) | **한국어**
 
-> 🕰️ **상태(2026-11-14) — 로드맵(§6) 기준 P0 · P1 끝, P1.5 는 다른 방법으로, P2 부터는 [docs/89](89-scale-out-migration-plan.ko.md) 의 단계로 넘어갔다.** `ddl-auto` 는 `validate`([docs/20](20-schema-ownership.ko.md)). 미래 달 생성(2026-09-27)과 오래된 달 정리(2026-11-14)는 pg_partman 대신 애플리케이션 잡 `OutboxPartitionMaintainer` 가 한다(§4.6, [docs/62 §3](62-engineering-casebook.ko.md)). §1 · §2 · §4 · §5 는 2026-07 설계 당시의 글 — 지금 상태는 §1.2 의 오른쪽 열 · §3.1 · §6. 2026-11-01 정정 세 곳 — DB 는 지금 10개(§1.1 · §1.2), `metadb` 는 쓰이지 않는다(§1.1), catalog 를 파티셔닝에서 뺀 근거 '상품 250건' 은 낡았다(§4.1) — 페더레이션 관점의 정리는 [docs/88](88-federation-tradeoffs.ko.md).
+> 🕰️ **상태(2026-11-14) — 로드맵(§6) 기준 P0 · P1 끝, P1.5 는 다른 방법으로, P2 부터는 [docs/89](89-scale-out-migration-plan.ko.md) 의 단계로 넘어갔다.** `ddl-auto` 는 `validate`([docs/20](20-schema-ownership.ko.md)). 미래 달 생성(2026-09-27)과 오래된 달 정리(2026-11-14)는 pg_partman 대신 애플리케이션 잡 `OutboxPartitionMaintainer` 가 한다(§4.6, [docs/62 §3](62-engineering-casebook.ko.md)). §1 · §2 · §4 · §5 는 2026-07 설계 당시의 글 — 지금 상태는 §1.2 의 오른쪽 열 · §3.1 · §6. 2026-11-01 정정 세 곳 — DB 는 지금 10개(§1.1 · §1.2), `metadb` 는 쓰이지 않는다(§1.1), catalog 를 파티셔닝에서 뺀 근거 '상품 250건' 은 낡았다 — 2026-11-14 운영 상품 200만 기준으로 다시 썼다(§4.1 · §4.8 · §5.1 · §5.3) — 페더레이션 관점의 정리는 [docs/88](88-federation-tradeoffs.ko.md).
 
 > 작성일: 2026-07-25
 > 대상: `userdb` / `productdb` / `metadb` / `cartdb` / `orderdb` / `paydb` / `coupondb` (+ chat)
@@ -241,7 +241,7 @@ P0/P1이 브랜치에 **실제로 적용**되었습니다:
 | `coupon.coupon` | RANGE | `end_date` | 월 | 만료 쿠폰 일괄 정리 |
 | `metadb` `BATCH_JOB_*` | — | — | — | 파티셔닝 대신 **보존 배치**로 정리 |
 | `cart.cart` / `cart_product` | ❌ 안 함 | — | — | 유저당 1건, UPDATE/DELETE 순환 → **파티셔닝보다 autovacuum 튜닝이 답** |
-| catalog 전 테이블 | ❌ 안 함 | — | — | 상품 250건 수준의 **유한** 데이터. 파티셔닝은 순손해 — ⚠️ 2026-11-01 정정: 운영은 상품 **200만**(데모 데이터), 실습은 2,000만까지 간다. 그래도 파티셔닝이 답은 아니다 — 아픈 곳은 카테고리 안을 상품마다 EXISTS 로 훑는 질의 모양이고(docs/83 §2.8), 대책은 개수 세기 제거(적용) · 가격 범위 열 + 복합 인덱스(docs/85 §8-1) · 검색 엔진(`catalog.search-engine`)이다([docs/88 §1](88-federation-tradeoffs.ko.md)) |
+| catalog 전 테이블 | ❌ 안 함 | — | — | **운영 상품 200만**(2026-10 부터 — 데모 데이터: SKU 340만 · 사이즈 줄 600만, 표 + 인덱스는 상품당 약 2,108 B 로 **약 4 GiB 추정** — docs/83 §1), 실습은 1,000만 · 2,000만까지 쟀다. 그래도 파티셔닝하지 않는다 — ① 시간으로 지우는 데이터가 아니라 시간 RANGE 의 이점(`DROP` 정리)이 없다 ② 질의는 카테고리 · 가격 · 이름으로 찾는다 — 카테고리로 나눠도 아픈 곳은 **한 카테고리 안을 상품마다 EXISTS 로 끝까지 훑는 질의 모양**이라(카테고리 16 하나에 55,395 · 42.9초, docs/83 §2.8) 파티션 하나 안에서 똑같이 느리다 ③ 상품 · SKU · 사이즈를 같은 키로 나누려면 PK · 외래 키를 모두 바꿔야 한다(§4.2). 대책은 질의 모양 · 인덱스 · 검색 엔진: 개수 세기 제거(적용) · 가격 범위 열 + 복합 인덱스(docs/85 §8-1) · ES 로 검색 전체(`catalog.search-engine`, docs/07 §5)([docs/88 §1](88-federation-tradeoffs.ko.md)). 다시 볼 때: 메모리 밖(실습 1,000만 ≈ 20 GiB 에서 디스크 읽기가 섞였다 — docs/83 §1)이 되면 먼저 읽기 복제본 · ES(docs/89 단계 3) |
 | `users.users`, `orders.customer`, `chat.member` | ❌ 안 함(현 단계) | — | — | 유한 증가. 샤딩 단계에서 재검토 |
 
 > 🕰️ 아웃박스 네 줄의 주기는 **월** 로 했다(§3.1 · §4.6) — 일 · 주는 파티션 수가 너무 많고(§4.8), 행이 작아 한 달치도 가볍다. 토큰 두 줄은 파티셔닝 대신 매시간 삭제(`UnverifiedAccountCleanup`), `metadb` 는 쓰이지 않는다(§1.1).
@@ -431,7 +431,7 @@ ALTER PUBLICATION dbz_publication SET (publish_via_partition_root = true);
 - 파티션 간 조인/집계는 `enable_partitionwise_join`/`_aggregate`를 켜야 효율적 (기본 off)
 - 커넥션당 메모리·락 오버헤드 증가
 
-→ 그래서 위 표에서 `cart`, catalog 전 테이블을 **의도적으로 제외**했습니다. 이들은 파티셔닝보다 **autovacuum 튜닝**(`autovacuum_vacuum_scale_factor`를 테이블 단위로 낮추기)이 정답입니다.
+→ 그래서 위 표에서 `cart`, catalog 전 테이블을 **의도적으로 제외**했습니다. 이들은 파티셔닝보다 **autovacuum 튜닝**(`autovacuum_vacuum_scale_factor`를 테이블 단위로 낮추기)이 정답입니다. catalog 는 상품 200만에서도 같은 판단이다 — 이유는 §4.1 의 catalog 줄.
 
 ---
 
@@ -448,7 +448,7 @@ flowchart LR
     L1 --> L2 --> L3 --> L4
 ```
 
-> **수평 샤딩은 마지막 수단입니다.** 운영 복잡도가 급증하므로, 단일 노드의 수직 확장·읽기 복제본·파티셔닝으로 해결되는 동안에는 가지 않는 것이 맞습니다. 현재 이 프로젝트의 데이터 규모(상품 250건 수준)에서 **당장 필요한 것은 4단계가 아니라 2~3단계**입니다.
+> **수평 샤딩은 마지막 수단입니다.** 운영 복잡도가 급증하므로, 단일 노드의 수직 확장·읽기 복제본·파티셔닝으로 해결되는 동안에는 가지 않는 것이 맞습니다. 현재 이 프로젝트의 데이터 규모(가장 큰 productdb 가 상품 200만 · 약 4 GiB 추정 — 서버 한 대의 메모리에 들어가는 크기)에서 **당장 필요한 것은 4단계가 아니라 2~3단계**입니다. 샤딩을 부르는 것은 데이터 크기가 아니라 **한 서비스의 쓰기가 DB 한 대를 넘을 때**다(docs/89 §5-4) — catalog 는 쓰기가 관리자 · 재고 차감뿐이라 그 대상이 아니다.
 
 ### 5.2 2단계: 물리 분리 + 읽기 복제본
 
@@ -473,7 +473,7 @@ flowchart LR
 | order | `customer_id` | 🔴 어려움 | `order_product`/`order_address`에 비정규화 + `tracking_id` 전역 유일성 |
 | pay | `customer_id` | 🔴 어려움 | `UniqueOrderIdAndTrackingId` 처리 필요 |
 | user | `user_id` | 🔴 어려움 | email/username 전역 유일성 → 디렉터리 테이블 필요 |
-| catalog | ❌ 샤딩 안 함 | — | 유한·읽기중심·ES 전면. **복제본으로 충분**. IDENTITY PK라 샤딩 부적합 |
+| catalog | ❌ 샤딩 안 함 | — | 상품 200만(약 4 GiB 추정)이지만 읽기 중심(쓰기는 관리자 · 재고)이고 검색은 ES 로(docs/07 §5). **복제본 · 앞단 캐시로 충분**(docs/89 단계 3). IDENTITY PK라 샤딩 부적합 |
 | chat | ❌ (Postgres 부분) | — | 메시지는 MongoDB에 있음 → **Mongo 샤딩**이 대상 |
 
 ### 5.4 전역 유일성 해결 — 디렉터리 테이블
