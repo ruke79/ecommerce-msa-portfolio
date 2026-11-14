@@ -45,8 +45,10 @@ import org.slf4j.LoggerFactory;
  *   <li>PostgreSQL 이 아니면(테스트의 H2 등) 아무것도 하지 않는다. 파티션 테이블이 아니어도 건너뛴다.</li>
  * </ul>
  *
- * <p>지우지는 않는다. 오래된 파티션의 폐기(DETACH → DROP)는 보존 정책을 정한 뒤 사람이 한다 — 되돌릴 수 없는 일을
- * 잡이 조용히 하지 않게.
+ * <p><b>오래된 달은 지운다 — 보존 기간({@code retentionMonths}, 기본 3)보다 오래되고 끝나지 않은 행이 없을 때만</b>({@link #prune},
+ * docs/09 §4.6). 예전(2026-11-14 까지)에는 지우지 않았다 — 보존 정책을 정하기 전이라 사람이 하기로 했고, 아무도 하지 않아 V1 의
+ * 2026-07 부터 모든 달이 남았다. 끝나지 않은 행(STARTED · FAILED · 상태 없음)이 하나라도 있으면 그 달은 남기고 경고한다 — 아직
+ * 발행되지 않은 메시지다. {@code retentionMonths} 0 이면 지우지 않는다.
  *
  * <p>[JA] アウトボックスの月次パーティションを<b>数か月先の分まで前もって</b>作っておく (docs/09 §4.6 · docs/62 §3)。
  *
@@ -70,8 +72,9 @@ import org.slf4j.LoggerFactory;
  *   <li>PostgreSQL でなければ(テストの H2 など)何もしない。パーティションテーブルでない場合もスキップする。</li>
  * </ul>
  *
- * <p>削除はしない。古いパーティションの廃棄(DETACH → DROP)は保持ポリシーを決めたうえで人が行う — 取り返しのつかない操作を
- * ジョブが黙って行わないように。
+ * <p><b>古い月は消す — 保持期間({@code retentionMonths}、既定 3)より古く、終わっていない行がないときだけ</b>({@link #prune})。
+ * 以前は消さなかった(人がする予定だったが誰もせず、V1 の 2026-07 から全部残った)。終わっていない行(STARTED · FAILED · 状態なし)が
+ * 一つでもあればその月は残して警告する — まだ発行されていないメッセージである。{@code retentionMonths} 0 なら消さない。
  */
 public class OutboxPartitionMaintainer {
 
@@ -85,10 +88,19 @@ public class OutboxPartitionMaintainer {
     // [JA] DDL トランザクションのロック待ちの上限。
     static final String LOCK_TIMEOUT = "3s";
 
+    /** 보존 기간의 하한(달) — 지난달 · 그 전 달은 아직 릴레이 · 재시도 · 손 복구가 볼 수 있다. 0(끔)은 따로 받는다. */
+    // [JA] 保持期間の下限(月)— 先月 · 先々月はまだリレー · 再試行 · 手作業の復旧が見うる。0(オフ)は別に受け付ける。
+    static final int MIN_RETENTION_MONTHS = 2;
+
     private final DataSource dataSource;
     private final List<String> tables;
     private final int monthsAhead;
+    private final int retentionMonths;
     private final Clock clock;
+
+    /** 테이블마다 마지막 보존 점검에서 남아 있던 가장 오래된 달 — 지표 {@code outbox_partition_months_kept}. */
+    // [JA] テーブルごとに最後の保持点検で残っていた最も古い月。
+    private final Map<String, java.util.Optional<YearMonth>> oldestKept = new ConcurrentHashMap<>();
 
     /** 마지막 점검 결과 — 지표가 읽는다. 테이블 → 상태. */
     // [JA] 最後の点検結果 — メトリクスが読む。テーブル → 状態。
@@ -111,6 +123,21 @@ public class OutboxPartitionMaintainer {
      *                    [JA] 何か月先まで前もって用意するか。0 なら今月のみ。ジョブが何度か失敗しても耐えられるよう 3 がデフォルトである
      */
     public OutboxPartitionMaintainer(DataSource dataSource, List<String> tables, int monthsAhead, Clock clock) {
+        this(dataSource, tables, monthsAhead, 0, clock);
+    }
+
+    /**
+     * @param retentionMonths 이번 달 앞으로 몇 달을 남길까. 그보다 오래된 달은 끝나지 않은 행이 없으면 지운다. 0 이면 지우지 않는다,
+     *                        그 밖에는 {@link #MIN_RETENTION_MONTHS} 이상
+     *                        [JA] 今月より前を何か月残すか。それより古い月は終わっていない行がなければ消す。0 なら消さない
+     */
+    public OutboxPartitionMaintainer(DataSource dataSource, List<String> tables, int monthsAhead, int retentionMonths,
+            Clock clock) {
+        if (retentionMonths != 0 && retentionMonths < MIN_RETENTION_MONTHS) {
+            throw new IllegalStateException("outbox.partitions.retention-months 는 0(끔) 또는 " + MIN_RETENTION_MONTHS
+                    + " 이상: " + retentionMonths);
+        }
+        this.retentionMonths = retentionMonths;
         for (String t : tables) {
             if (!QUALIFIED.matcher(t).matches()) {
                 throw new IllegalStateException("outbox.partitions.tables 는 '스키마.테이블'(소문자) 이어야 한다: " + t);
@@ -172,6 +199,169 @@ public class OutboxPartitionMaintainer {
             } catch (SQLException | RuntimeException e) {
                 log.error("아웃박스 파티션 점검 실패. table={} — 다음 주기에 다시 한다: {}", table, e.getMessage());
             }
+            if (retentionMonths > 0) {
+                try {
+                    Prune p = prune(table);
+                    if (p != null) {
+                        log.info("아웃박스 파티션 보존. table={}, 남기는 달={}, 지움={}, 끝나지 않은 행이 있어 남김={}",
+                                table, retentionMonths, p.dropped(), p.keptUnfinished());
+                        if (!p.keptUnfinished().isEmpty()) {
+                            // 보존 기간이 지났는데 발행되지 않은 행이 있다 — FAILED 를 고치거나(docs/76 §3-2 등) 버릴지 사람이 정한다.
+                            // [JA] 保持期間を過ぎたのに発行されていない行がある — FAILED を直すか捨てるかは人が決める。
+                            log.warn("아웃박스 오래된 달에 끝나지 않은 행이 있어 지우지 않았다. table={}, partitions={} — docs/09 §4.6",
+                                    table, p.keptUnfinished());
+                        }
+                    }
+                } catch (SQLException | RuntimeException e) {
+                    log.error("아웃박스 파티션 보존 실패. table={} — 다음 주기에 다시 한다: {}", table, e.getMessage());
+                }
+            }
+        }
+    }
+
+    /** 보존 점검 결과 — 지운 파티션, 끝나지 않은 행이 있어 남긴 파티션, 그 뒤 남은 가장 오래된 달(없으면 null). */
+    // [JA] 保持点検の結果 — 消したパーティション、終わっていない行があって残したパーティション、その後に残った最も古い月。
+    public record Prune(List<String> dropped, List<String> keptUnfinished, YearMonth oldest) {
+    }
+
+    private static final Pattern BOUND = Pattern.compile("FROM \\('(\\d{4})-(\\d{2})-01[^']*'\\) TO \\('(\\d{4})-(\\d{2})-01[^']*'\\)");
+
+    /**
+     * 보존 기간보다 오래된 달의 파티션을 지운다 — 끝나지 않은 행(상태가 COMPLETED 가 아닌 것 · 상태 없음)이 없을 때만.
+     *
+     * <ul>
+     *   <li>대상은 이 잡이 만드는 모양({@code <테이블>_YYYY_MM}, 한 달 범위)이고 부모에 붙어 있는 것뿐 — DEFAULT · 다른 이름은 손대지 않는다.</li>
+     *   <li>파티션마다 한 트랜잭션: advisory lock · 잠금 3초 · 문장 30초 상한(만들기와 같다) → 끝나지 않은 행 확인 → DETACH → DROP.
+     *       {@code DETACH … CONCURRENTLY} 는 DEFAULT 파티션이 있는 테이블에 쓸 수 없고 트랜잭션 안에서도 못 쓴다 — 그래서 보통의 DETACH 를
+     *       한 트랜잭션에서 DROP 과 함께 한다. 부모에 잠깐 ACCESS EXCLUSIVE 가 걸린다(그 사이 아웃박스 쓰기가 기다린다 — 3초 상한).
+     *       두 단계 사이에서 멈추는 일(DETACH 된 채 남은 테이블)이 없다.</li>
+     *   <li>오래된 달의 행은 새로 생기지 않고(created_at), 상태는 COMPLETED 로만 간다 — 확인한 뒤 지우는 사이에 끝나지 않은 행이 생기지 않는다.</li>
+     * </ul>
+     *
+     * <p>[JA] 保持期間より古い月のパーティションを消す — 終わっていない行がないときだけ。このジョブが作る形のものだけが対象。
+     *      パーティションごとに一トランザクションで確認 → DETACH → DROP(CONCURRENTLY は DEFAULT があると使えない)。
+     *
+     * @return PostgreSQL 이 아니거나 파티션 테이블이 아니면 null
+     */
+    Prune prune(String table) throws SQLException {
+        String schema = table.substring(0, table.indexOf('.'));
+        String name = table.substring(table.indexOf('.') + 1);
+        YearMonth now = YearMonth.from(LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
+        YearMonth cutoff = now.minusMonths(retentionMonths);
+        List<String> dropped = new ArrayList<>();
+        List<String> kept = new ArrayList<>();
+        try (Connection c = dataSource.getConnection()) {
+            if (!"PostgreSQL".equalsIgnoreCase(c.getMetaData().getDatabaseProductName())) {
+                return null;
+            }
+            boolean auto = c.getAutoCommit();
+            c.setAutoCommit(false);
+            try {
+                if (!isPartitioned(c, schema, name)) {
+                    c.rollback();
+                    return null;
+                }
+                Map<String, YearMonth> months = monthlyPartitions(c, schema, name);
+                c.commit();
+                for (Map.Entry<String, YearMonth> e : new java.util.TreeMap<>(months).entrySet()) {
+                    if (!e.getValue().isBefore(cutoff)) {
+                        continue;
+                    }
+                    String part = e.getKey();
+                    try {
+                        lock(c, table);
+                        limitLockWait(c);
+                        if (!attached(c, schema, name, part)) {
+                            c.rollback();
+                            continue;
+                        }
+                        if (hasUnfinished(c, schema, part)) {
+                            c.rollback();
+                            kept.add(schema + "." + part);
+                            continue;
+                        }
+                        try (Statement st = c.createStatement()) {
+                            st.execute("ALTER TABLE " + schema + "." + quote(name) + " DETACH PARTITION " + schema + "." + quote(part));
+                            st.execute("DROP TABLE " + schema + "." + quote(part));
+                        }
+                        c.commit();
+                        dropped.add(schema + "." + part);
+                    } catch (SQLException | RuntimeException ex) {
+                        c.rollback();
+                        throw ex;
+                    }
+                }
+                YearMonth oldest = monthlyPartitions(c, schema, name).values().stream().min(YearMonth::compareTo).orElse(null);
+                c.commit();
+                oldestKept.put(table, java.util.Optional.ofNullable(oldest));
+                return new Prune(dropped, kept, oldest);
+            } catch (SQLException | RuntimeException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(auto);
+            }
+        }
+    }
+
+    /**
+     * 지금 기준 이번 달 앞으로 남아 있는 달 수 — 지표 {@code outbox_partition_months_kept}. 보존이 돌면 {@code retentionMonths} 이하로
+     * 유지된다(끝나지 않은 행이 있는 달이 남으면 더 크다). 보존을 끄거나 아직 한 번도 돌지 않았으면 NaN — 경보가 울리지 않는다.
+     * [JA] 今を基準に今月より前に残っている月の数。保持が回れば retentionMonths 以下に保たれる。オフ · 未実行なら NaN。
+     */
+    public double monthsKeptNow(String table) {
+        if (retentionMonths == 0) {
+            return Double.NaN;
+        }
+        java.util.Optional<YearMonth> oldest = oldestKept.get(table);
+        if (oldest == null) {
+            return Double.NaN;
+        }
+        if (oldest.isEmpty()) {
+            return 0;
+        }
+        YearMonth now = YearMonth.from(LocalDateTime.now(clock.withZone(ZoneOffset.UTC)));
+        return Math.max(0, ChronoUnit.MONTHS.between(oldest.get(), now));
+    }
+
+    public int retentionMonths() {
+        return retentionMonths;
+    }
+
+    /** 부모에 붙은, 이 잡의 모양({@code <테이블>_YYYY_MM} · 그 달 하나의 범위)인 파티션 → 그 달. */
+    // [JA] 親に付いた、このジョブの形のパーティション → その月。
+    private static Map<String, YearMonth> monthlyPartitions(Connection c, String schema, String table) throws SQLException {
+        Map<String, YearMonth> out = new java.util.HashMap<>();
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT ch.relname, pg_get_expr(ch.relpartbound, ch.oid) FROM pg_inherits i JOIN pg_class ch ON ch.oid = i.inhrelid "
+                        + "JOIN pg_class pa ON pa.oid = i.inhparent JOIN pg_namespace n ON n.oid = pa.relnamespace "
+                        + "WHERE n.nspname = ? AND pa.relname = ? AND ch.relispartition")) {
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    java.util.regex.Matcher m = BOUND.matcher(rs.getString(2) == null ? "" : rs.getString(2));
+                    if (!m.find()) {
+                        continue;   // DEFAULT · 다른 모양
+                    }
+                    YearMonth from = YearMonth.of(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
+                    YearMonth to = YearMonth.of(Integer.parseInt(m.group(3)), Integer.parseInt(m.group(4)));
+                    if (to.equals(from.plusMonths(1)) && rs.getString(1).equals(partitionName(table, from))) {
+                        out.put(rs.getString(1), from);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 끝나지 않은 행(COMPLETED 가 아닌 상태 · 상태 없음)이 있는가 — 하나만 찾으면 멈춘다. */
+    // [JA] 終わっていない行があるか — 一つ見つかれば止まる。
+    private static boolean hasUnfinished(Connection c, String schema, String part) throws SQLException {
+        try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT EXISTS (SELECT 1 FROM " + schema + "."
+                + quote(part) + " WHERE outbox_status IS DISTINCT FROM 'COMPLETED')")) {
+            rs.next();
+            return rs.getBoolean(1);
         }
     }
 

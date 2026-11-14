@@ -2,7 +2,7 @@
 
 **日本語** | [한국어](09-postgresql-partitioning-sharding.ko.md)
 
-> 🕰️ **状態（2026-09-27）— 一部古い。** `ddl-auto` は `validate` に変更しました（[docs/20](20-schema-ownership.md)）。月次パーティションの自動作成は、pg_partman の代わりにアプリケーションのジョブで入れました（2026-09-27、[docs/62 §3](62-engineering-casebook.md)）。2026-11-01 の訂正三か所 — DB は今 10 個(§1.1 · §1.2)、`metadb` は使われていない(§1.1)、catalog をパーティショニングから外した根拠「商品 250 件」は古い(§4.1)— フェデレーションの観点での整理は [docs/88](88-federation-tradeoffs.md)。
+> 🕰️ **状態（2026-11-14）— ロードマップ（§6）では P0 · P1 完了、P1.5 は別の方法で、P2 からは [docs/89](89-scale-out-migration-plan.md) の段階に移りました。** `ddl-auto` は `validate`（[docs/20](20-schema-ownership.md)）。未来の月の作成（2026-09-27）と古い月の整理（2026-11-14）は、pg_partman の代わりにアプリケーションのジョブ `OutboxPartitionMaintainer` が行います（§4.6、[docs/62 §3](62-engineering-casebook.md)）。§1 · §2 · §4 · §5 は 2026-07 の設計当時の文章です — 今の状態は §1.2 の右の列 · §3.1 · §6。2026-11-01 の訂正三か所 — DB は今 10 個(§1.1 · §1.2)、`metadb` は使われていない(§1.1)、catalog をパーティショニングから外した根拠「商品 250 件」は古い(§4.1)— フェデレーションの観点での整理は [docs/88](88-federation-tradeoffs.md)。
 
 > 作成日: 2026-07-25
 > 対象: `userdb` / `productdb` / `metadb` / `cartdb` / `orderdb` / `paydb` / `coupondb`（+ chat）
@@ -36,14 +36,14 @@
 
 ### 1.2 できていないこと
 
-| 項目 | 状態 |
-|---|---|
-| テーブルのパーティショニング（PostgreSQL declarative partitioning） | ❌ **皆無** |
-| 水平シャーディング（同一テーブルを複数ノードに分散） | ❌ 皆無 |
-| 読み取りレプリカ（read replica）/ 読み書き分離 | ❌ 皆無 |
-| 物理的分離 | ❌ **8 個の DB がすべて単一インスタンス（`localhost:5435`）** |
-| スキーママイグレーションツール | ❌ **皆無**（Hibernate の `ddl-auto` 単独） |
-| データ保持（retention）/アーカイブのポリシー | ❌ 皆無 |
+| 項目 | 状態（2026-07） | 今（2026-11-14） |
+|---|---|---|
+| テーブルのパーティショニング（PostgreSQL declarative partitioning） | ❌ **皆無** | ✅ Outbox 4 種の月次パーティション（§3.1）。注文などの大きな表はまだ — [docs/89 段階 4](89-scale-out-migration-plan.md#5-段階-4--書き込みの拡張) |
+| 水平シャーディング（同一テーブルを複数ノードに分散） | ❌ 皆無 | ❌ そのまま — 必要になったら docs/89 段階 4 |
+| 読み取りレプリカ（read replica）/ 読み書き分離 | ❌ 皆無 | ❌ そのまま — コードもデータソースを分けていない、[docs/89 段階 3](89-scale-out-migration-plan.md#4-段階-3--読みを前段へ) |
+| 物理的分離 | ❌ **8 個の DB がすべて単一インスタンス（`localhost:5435`）** | ❌ 10 個の DB がクラスター内の PostgreSQL 一台（k8s/90 `replicas: 1`）— [docs/89 段階 1](89-scale-out-migration-plan.md#2-段階-1--データ層をノードの外へ) |
+| スキーママイグレーションツール | ❌ **皆無**（Hibernate の `ddl-auto` 単独） | ✅ Flyway、全サービス `ddl-auto: ${DDL_AUTO:validate}`（[docs/20](20-schema-ownership.md)） |
+| データ保持（retention）/アーカイブのポリシー | ❌ 皆無 | ✅ Outbox の古い月を DROP（§4.6）· 冪等台帳 30 日（`ProcessedEventPurger`）· 期限切れトークンを毎時削除（`UnverifiedAccountCleanup`）· 終わったメール行 180 日。アーカイブ（コールド保管）はなし |
 
 **要点**: 論理的には 8 個に分かれていますが(2026-11-01 時点で **10 個** — `notificationdb` · `deliverydb` が増えた、k8s/90 の pg-init)、**物理的には 1 台の PostgreSQL** です。つまり buffer pool・WAL・CPU・ディスクを 8 つのサービスがすべて共有しており、この 1 台が落ちると全サービスが停止します（[`docs/03` F-8](03-architecture-and-reliability.md)）。
 
@@ -185,6 +185,8 @@ P0/P1 がブランチに**実際に適用**されました:
 | Outbox 4 種のパーティショニングマイグレーション | ✅ `V1__partition_*.sql`（order/pay/cart/user） |
 | catalog/coupon/chat のマイグレーション履歴を開始 | ✅ `V1__flyway_init.sql`（構造変更なし、V2 から実際の DDL） |
 
+> 🕰️ その後（2026-09）: 全サービスが `ddl-auto: ${DDL_AUTO:validate}` になりました（[docs/20](20-schema-ownership.md)）— 以下は 2026-07 当時の過渡期の説明です。
+
 **原案と変わった点 — `ddl-auto` は当面 `update` を維持（validate ではない）。**
 理由: `validate` では、全テーブルのベースラインスキーマがマイグレーションにないと空の DB で起動できません。実際の本番 DB なしで 35 個のテーブルのベースライン SQL を手で書くと、検証不能な不一致によって**すべての新規環境が起動に失敗**することになります。そこで過渡期の共存戦略を選びました:
 - **Flyway が作ったパーティションテーブル**はカラム構成がエンティティと一致 → `ddl-auto: update` はすでにあるテーブルに手を触れないので、安全に共存します。
@@ -211,6 +213,7 @@ P0/P1 がブランチに**実際に適用**されました:
 - リレー/CDC の正常動作を確認した後、`*_legacy` テーブルを DROP。
 - Debezium の publication が `dbz_publication` ではなくカスタム名であれば `publish_via_partition_root=true` を手動で適用し、コネクターの `table.include.list` の `public.*` スキーマ不一致（PG-6）を修正。
 - ~~月次パーティションの自動作成（`pg_partman`）の導入 — 現在は 2027-01 まで事前作成 + DEFAULT の安全網。~~ → ✅ アプリケーションのジョブ（common `OutboxPartitionAutoConfiguration`）で解決 — マネージド PostgreSQL では拡張が使えないことがあるため、拡張なしで実装した（[docs/62 §3](62-engineering-casebook.md)）。
+- ~~保持（古い月の `DETACH` → `DROP`）。~~ → ✅ 同じジョブ（2026-11-14、§4.6）。
 
 ---
 
@@ -240,6 +243,8 @@ P0/P1 がブランチに**実際に適用**されました:
 | `cart.cart` / `cart_product` | ❌ しない | — | — | ユーザーごとに 1 件、UPDATE/DELETE の循環 → **パーティショニングより autovacuum のチューニングが答え** |
 | catalog の全テーブル | ❌ しない | — | — | 商品 250 件程度の**有限**なデータ。パーティショニングは純損失 — ⚠️ 2026-11-01 訂正: 本番は商品 **200 万**(デモデータ)、実習は 2,000 万まで行く。それでもパーティショニングが答えではない — 痛いのはカテゴリ内を商品ごとに EXISTS で走査する照会の形で(docs/83 §2.8)、対策は件数数えの撤去(適用済み)· 価格範囲の列 + 複合インデックス(docs/85 §8-1)· 検索エンジン(`catalog.search-engine`)([docs/88 §1](88-federation-tradeoffs.md)) |
 | `users.users`, `orders.customer`, `chat.member` | ❌ しない（現段階） | — | — | 有限の増加。シャーディングの段階で再検討 |
+
+> 🕰️ Outbox 4 行の周期は**月**にしました（§3.1 · §4.6）— 日・週ではパーティション数が多すぎ（§4.8）、行が小さいので一か月分でも軽い。トークン 2 行はパーティショニングの代わりに毎時削除（`UnverifiedAccountCleanup`）、`metadb` は使われていません（§1.1）。
 
 > **中核となる判断**: 今このプロジェクトでパーティショニングが必要な理由は、「データが大きいから」ではなく**「消す方法がないから」**です。だから Outbox が最優先です。
 
@@ -383,30 +388,33 @@ ALTER INDEX idx_foo ATTACH PARTITION idx_foo_2026_07;                -- 全パ�
 
 ### 4.6 保持（retention）の自動化
 
+> ✅ **適用（2026-11-14）** — 原案（下の最後の pg_partman · 日単位）と違い、未来の月を作る同じジョブ（`common` の `OutboxPartitionMaintainer`、6 時間ごと）が古い月も消します。
+
+- **残す範囲** — 今月 + その前の `outbox.partitions.retention-months` か月（既定 3、`0` = 無効）。`1` は起動失敗で止めます: 先月末日に書いた行がまだリレーの再試行中かもしれないので、先月は常に残します。2026-11 なら 2026-08 から残り、2026-07 以前が対象です。
+- **消す条件** — その月のすべての行が `COMPLETED`。`STARTED` · `FAILED` · NULL が一つでもあればその月は残し、警告ログ「아웃박스 오래된 달에 끝나지 않은 행이 있어 지우지 않았다」— `FAILED` は復旧クエリ（docs/76 §3-2 の `UPDATE … SET outbox_status = 'STARTED'`）の対象なので、人が見る前には消しません。
+- **触るパーティション** — ジョブの命名規則（`<表>_YYYY_MM`）と一か月の境界が両方合うものだけ。DEFAULT と別の名前（手で付けた保管用パーティションなど）はそのまま — DEFAULT に残った昔の移行分（§3.1 の 2025-11 の行）も消しません。
+- **月ごとに一トランザクション** — 作成と同じ advisory ロック · `lock_timeout 3s` · `statement_timeout 30s` の中で再確認 → `DETACH PARTITION` → `DROP TABLE` → コミット。失敗すれば両方戻るので、「切り離しただけで残ったテーブル」はできません。
+
 ```sql
--- PG 14+ : ロックをほとんど取らずに切り離す
-ALTER TABLE orders.payment_outbox_event
-    DETACH PARTITION orders.payment_outbox_event_2026_06_25 CONCURRENTLY;
-DROP TABLE orders.payment_outbox_event_2026_06_25;
+-- ジョブが月ごとにすること（一トランザクション）
+SELECT pg_advisory_xact_lock(hashtext('outbox-partition:orders.payment_outbox_event'));
+SET LOCAL lock_timeout = '3s';
+SELECT EXISTS (SELECT 1 FROM orders.payment_outbox_event_2026_07
+                WHERE outbox_status IS DISTINCT FROM 'COMPLETED');   -- true なら戻して残す
+ALTER TABLE orders.payment_outbox_event DETACH PARTITION orders.payment_outbox_event_2026_07;
+DROP TABLE orders.payment_outbox_event_2026_07;
 ```
 
-> **二つの段階の間で止まると**、切り離された同じ名前のテーブルが残ります。将来のパーティションを作るジョブ(`common` の `OutboxPartitionMaintainer`)はその名前を「その月がある」とは見なしません — 親に付いたパーティションだけを数えます。付けも消しもせずにその点検を失敗として残すので(`last_success` アラート・減っていく `months_ahead`)、人がそのテーブルを確かめて `ATTACH` するか名前を変えるか削除すれば、次の周期に続きを作ります。ジョブの DDL はロックを 3 秒までしか待ちません(`lock_timeout`) — バックアップ(pg_dump)が DEFAULT を握っていると `ATTACH` がロック待ちの列に並んで後ろの INSERT まで止める代わりに、失敗して 6 時間後にやり直します。
+> **`DETACH … CONCURRENTLY` を使わない理由** — DEFAULT パーティションがある表には使えず（PostgreSQL の制約）、トランザクションの中でも使えません。通常の `DETACH` は親に強いロックを取りますが、3 秒の上限があるので INSERT を長く止めません — バックアップ（pg_dump）が表を握っていれば失敗し、6 時間後にやり直します。Outbox の一か月分は小さいので `DROP` はすぐ終わります。
+
+- **指標 · アラート** — `outbox_partition_months_kept`（残った最も古い月から今月までの月数、正常なら設定値）· `outbox_partition_retention_months`。アラート `OutboxPartitionRetentionStalled` — 残った月が設定 + 1 を超えたまま一日。たいてい終わっていない行のせいなので、上の警告ログの月を見ます。保持を無効にしたサービスは NaN なので鳴りません。
+- **テスト** — `OutboxPartitionMaintainerPostgresTest`（コンテナ）: 3 か月より外だけ消す · もう一度回しても同じ · 終わっていない行（`FAILED` · NULL · `STARTED`）がある月は残す → 終われば消す · 無効 · 別名のパーティションはそのまま。
+
+> **手で `DETACH` して `DROP` の前に止まると**、切り離された同じ名前のテーブルが残ります。将来のパーティションを作るジョブはその名前を「その月がある」とは見なしません — 親に付いたパーティションだけを数えます。付けも消しもせずにその点検を失敗として残すので（`last_success` アラート・減っていく `months_ahead`）、人がそのテーブルを確かめて `ATTACH` するか名前を変えるか削除すれば、次の周期に続きを作ります。ジョブの DDL はロックを 3 秒までしか待ちません（`lock_timeout`）— バックアップ（pg_dump）が DEFAULT を握っていると `ATTACH` がロック待ちの列に並んで後ろの INSERT まで止める代わりに、失敗して 6 時間後にやり直します。
 
 > 🐛 **cart・order ではこのジョブが一度も動いていませんでした(2026-10-14 発見)。** 二つのアプリ(と chat)は `com.project.common` を `@ComponentScan` で直接スキャンしますが、`@SpringBootApplication` が既定で掛ける `AutoConfigurationExcludeFilter` が抜けており、この自動設定がユーザー設定としてスキャンされ、条件(`@ConditionalOnBean(DataSource)`)が DataSource より先に評価されて丸ごと外れていました。pay・user はスキャンしないので正常でした。V1 が 2027-01 まで作ってあるので、まだ DEFAULT に入った行はありません。修正版をデプロイした後、`kubectl -n ecommerce logs deploy/order-service | grep "아웃박스 파티션"` に `아웃박스 파티션 잡: tables=[orders.payment_outbox_event]` と(30 秒後)`아웃박스 파티션 점검` が出るか確認します — cart も同じです(`OutboxPartitionComponentScanTest`)。
 
-パーティションの作成/削除は **`pg_partman`** で自動化することを推奨します（手動運用では「未来のパーティションを作り忘れて INSERT 失敗」が代表的な障害パターンです — 4.3 の DEFAULT パーティションがその安全網）。
-
-```sql
-SELECT partman.create_parent(
-    p_parent_table := 'orders.payment_outbox_event',
-    p_control      := 'created_at',
-    p_interval     := '1 day',
-    p_premake      := 7               -- 7 日分を事前に作成
-);
-UPDATE partman.part_config
-   SET retention = '7 days', retention_keep_table = false
- WHERE parent_table = 'orders.payment_outbox_event';
-```
+> 原案（2026-07）は `pg_partman` の `p_interval := '1 day'` · `retention = '7 days'` でした。マネージド PostgreSQL では拡張が使えないことがあり、日単位はパーティション数が多すぎるため（§4.8）、月単位 · 拡張なしのアプリのジョブに変えました（docs/62 §3）。
 
 ### 4.7 Debezium 連携時の必須設定
 
@@ -505,15 +513,17 @@ CREATE TABLE user_directory (
 
 | 段階 | 内容 | リスク | 前提 |
 |---|---|---|---|
-| **P0** | ✅ **適用済み（§3.1）** — Flyway の導入、catalog の `create-drop` を除去。（`validate` への切り替えだけは本番の pg_dump 後に実施） | 中 | — |
-| **P1** | ✅ **適用済み（§3.1）** — Outbox 4 種のパーティショニング（月単位）+ 部分インデックス。（`pg_partman` による自動化は本番反映時） | 低 | P0 |
-| **P1.5** | トークンテーブル 2 種（`expiry_date`）のパーティショニング、`metadb` のバッチ履歴の保持バッチ | 低 | P0 |
-| **P2** | 物理インスタンスの分離 + ストリーミングレプリケーション + 自動 failover | 中 | —（P0 とは無関係、並行可能） |
-| **P3** | 読み取りレプリカへのルーティング（カタログ/注文履歴）。read-your-writes の経路を特定 | 中 | P2 |
-| **P4** | `orders`/`order_product`/`order_address`/`payment` の月単位パーティショニング + `tracking_registry` | 高 | P0、P1 の経験 |
-| **P5** | （必要なら）水平シャーディング。coupon → cart → order/pay の順、Citus を優先的に検討 | 非常に高 | P4 + シャードキーの非正規化 |
+| **P0** | ✅ **完了** — Flyway の導入、catalog の `create-drop` を除去（§3.1）、全サービス `ddl-auto: ${DDL_AUTO:validate}`（[docs/20](20-schema-ownership.md)） | 中 | — |
+| **P1** | ✅ **完了** — Outbox 4 種のパーティショニング（月単位）+ 部分インデックス（2026-07、§3.1）、未来の月の作成ジョブ（2026-09-27）、古い月の整理（2026-11-14、§4.6）— pg_partman なし | 低 | P0 |
+| **P1.5** | 🟡 **別の方法で** — トークン 2 種はパーティショニングの代わりに期限切れを毎時削除（`UnverifiedAccountCleanup` — 行が少なくパーティションは要らない）、`metadb` は使われていないので該当なし（§1.1） | 低 | P0 |
+| **P2** | 物理インスタンスの分離 + ストリーミングレプリケーション + 自動 failover → **[docs/89 段階 1 §2-3](89-scale-out-migration-plan.md#2-3-postgresql--冗長化と移行)**（マネージドまたは冗長化 · 論理レプリケーションで移行 · シーケンス合わせ）。今はクラスター内の一台 | 中 | —（P0 とは無関係、並行可能） |
+| **P3** | 読み取りレプリカへのルーティング（カタログ/注文履歴）。read-your-writes の経路を特定 → **[docs/89 段階 3](89-scale-out-migration-plan.md#4-段階-3--読みを前段へ)** — その前に CDN キャッシュ · ES 検索が先 | 中 | P2 |
+| **P4** | `orders`/`order_product`/`order_address`/`payment` の月単位パーティショニング + `tracking_registry` → **[docs/89 段階 4 §5-3](89-scale-out-migration-plan.md#5-段階-4--書き込みの拡張)**。今は order V28 の `order_product(order_id)` インデックスだけ | 高 | P0、P1 の経験 |
+| **P5** | （必要なら）水平シャーディング。coupon → cart → order/pay の順、Citus を優先的に検討 → docs/89 段階 4 §5-4（一つのサービスの書き込みが DB 一台を超えたとき、そのサービスだけ） | 非常に高 | P4 + シャードキーの非正規化 |
 
 **P1 を最初の段階に置く理由**: Outbox は (a) 保持期間が短く移行なしで切り替え可能、(b) 無限増加がすでに進行中の実質的なリスク、(c) 失敗しても影響範囲がリレーに限定されるため、**最も安全にパーティショニングの運用経験を積める**テーブルです。
+
+**P2 からは [docs/89](89-scale-out-migration-plan.md) で続けます。** この文書はパーティショニング · シャーディングの設計（§4 · §5 の DDL · シャードキー分析）として残し、順序 · 入る条件 · 無停止手順 · 戻し方は docs/89 が受け持ちます — データ層をノードの外へ移すこと（P2）が大きな表のパーティショニング（P4）より先です。
 
 ---
 
@@ -521,8 +531,8 @@ CREATE TABLE user_directory (
 
 | # | シナリオ | トリガー → 影響 | 対応 |
 |---|---|---|---|
-| **F-10** | Outbox の無限増加によるディスクの枯渇 | 整理バッチの不在 → テーブル・インデックスの無限増加 → **DB インスタンス全体が書き込み不能**（8 個の DB を共有しているので全サービスが停止） | 即時: 古い `COMPLETED` を手動で削除 + `VACUUM FULL`（ロックに注意）。根本: P1 のパーティショニング + 保持 |
-| **F-11** | 未来のパーティションが未作成で INSERT が失敗 | `pg_partman` の停止/手動運用での漏れ → 境界外の `INSERT` が**エラー** → 注文/決済の作成失敗 | 予防: DEFAULT パーティション + premake の余裕 +「次のパーティションが存在するか」の監視アラート |
+| **F-10** | Outbox の無限増加によるディスクの枯渇 | 整理バッチの不在 → テーブル・インデックスの無限増加 → **DB インスタンス全体が書き込み不能**（8 個の DB を共有しているので全サービスが停止） | 即時: 古い `COMPLETED` を手動で削除 + `VACUUM FULL`（ロックに注意）。根本: P1 のパーティショニング + 保持（§4.6 — 適用済み） |
+| **F-11** | 未来のパーティションが未作成で INSERT が失敗 | 未来の月の作成ジョブの停止（2026-10-14 に cart · order で実際に — §4.6）→ DEFAULT がなければ境界外の `INSERT` が**エラー** → 注文/決済の作成失敗 | 予防（適用済み）: DEFAULT パーティション + 3 か月先まで + アラート `OutboxPartitionRunwayShort` · `MissingNextMonth` · `JobStale` · `RowsLandingInDefaultPartition` |
 | **F-12** | パーティションプルーニングの失敗による性能の急落 | パーティションキーのないクエリ（例: `findByOutboxStatus`）→ 全パーティションのスキャン | 予防: 部分インデックス、クエリに時間条件を強制、`EXPLAIN` でプルーニングを検証 |
 | **F-13** | レプリケーション遅延による read-your-writes 違反 | 注文直後の照会がレプリカへ →「注文がない」 | 予防: 書き込み直後の経路はプライマリに固定、`pg_stat_replication` の遅延アラート |
 | **F-14** | シャードの不均衡（hot shard） | 特定のユーザー/テナントへの偏り → 一つのシャードだけが飽和 | 予防: ハッシュ分散 + シャードごとの指標の監視、リバランスの計画 |
@@ -534,7 +544,8 @@ CREATE TABLE user_directory (
 | テーブル・インデックスのサイズ増加率 | `pg_total_relation_size()` | 週間増加率の急変 |
 | dead tuple の比率 | `pg_stat_user_tables.n_dead_tup` | 20% 超過 |
 | Outbox の `STARTED` の滞留 | `count(*) where outbox_status='STARTED'` | N 件が M 分継続（[`docs/03`](03-architecture-and-reliability.md)） |
-| 次のパーティションの有無 | `pg_class`/`partman.part_config` | 余裕のあるパーティション < 2 |
+| 次のパーティションの有無 | `outbox_partition_months_ahead`（ジョブの指標） | 余裕のあるパーティション < 2（`OutboxPartitionRunwayShort`） |
+| 古い月の整理 | `outbox_partition_months_kept` − `outbox_partition_retention_months` | > 1 が一日（`OutboxPartitionRetentionStalled`） |
 | レプリケーション遅延 | `pg_stat_replication.replay_lag` | 閾値超過 |
 | autovacuum の実行履歴 | `pg_stat_user_tables.last_autovacuum` | 長時間未実行 |
 
@@ -542,11 +553,11 @@ CREATE TABLE user_directory (
 
 ## 9. まとめ — 今すぐやるべきこと
 
-1. **Flyway の導入 + `ddl-auto: validate`** — これなしでは何も始められません（P0）。
-2. **Outbox 4 種を日単位の RANGE パーティショニング + 保持ポリシー** — 現在進行中の実質的なリスクを取り除きます（P1）。
-3. **PostgreSQL の物理分離 + レプリケーション** — SPOF の除去（P2）。
+1. ~~**Flyway の導入 + `ddl-auto: validate`** — これなしでは何も始められません（P0）。~~ ✅ 完了。
+2. ~~**Outbox 4 種を日単位の RANGE パーティショニング + 保持ポリシー** — 現在進行中の実質的なリスクを取り除きます（P1）。~~ ✅ 完了 — 月単位 · 作成も整理もアプリのジョブ（§4.6）。
+3. **PostgreSQL の物理分離 + レプリケーション** — SPOF の除去（P2）。→ [docs/89 段階 1](89-scale-out-migration-plan.md#2-段階-1--データ層をノードの外へ) で Kafka · Redis と一緒に。
 
 水平シャーディングは**今は必要ありません**。ただし、その時が来たときに高くつかないよう、今のうちにやっておけることがあります:
-- 子テーブルにシャードキー（`user_id`/`customer_id`）の**非正規化カラムを事前に追加**しておく（PG-4）
-- catalog の `IDENTITY` を TSID に移行することを検討
+- 子テーブルにシャードキー（`user_id`/`customer_id`）の**非正規化カラムを事前に追加**しておく（PG-4）— まだ（2026-11-14）
+- catalog の `IDENTITY` を TSID に移行することを検討 — まだ、`Product` は `GenerationType.IDENTITY`
 - 新しい UNIQUE 制約を作るときは、**常にテナントキーを含める**（coupon が良い例）

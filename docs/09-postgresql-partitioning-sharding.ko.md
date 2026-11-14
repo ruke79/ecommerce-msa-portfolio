@@ -2,7 +2,7 @@
 
 [日本語](09-postgresql-partitioning-sharding.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** `ddl-auto` 는 `validate` 로 바꿨습니다([docs/20](20-schema-ownership.ko.md)). 월 파티션 자동 생성은 pg_partman 대신 애플리케이션 잡으로 넣었습니다(2026-09-27, [docs/62 §3](62-engineering-casebook.ko.md)). 2026-11-01 정정 세 곳 — DB 는 지금 10개(§1.1 · §1.2), `metadb` 는 쓰이지 않는다(§1.1), catalog 를 파티셔닝에서 뺀 근거 '상품 250건' 은 낡았다(§4.1) — 페더레이션 관점의 정리는 [docs/88](88-federation-tradeoffs.ko.md).
+> 🕰️ **상태(2026-11-14) — 로드맵(§6) 기준 P0 · P1 끝, P1.5 는 다른 방법으로, P2 부터는 [docs/89](89-scale-out-migration-plan.ko.md) 의 단계로 넘어갔다.** `ddl-auto` 는 `validate`([docs/20](20-schema-ownership.ko.md)). 미래 달 생성(2026-09-27)과 오래된 달 정리(2026-11-14)는 pg_partman 대신 애플리케이션 잡 `OutboxPartitionMaintainer` 가 한다(§4.6, [docs/62 §3](62-engineering-casebook.ko.md)). §1 · §2 · §4 · §5 는 2026-07 설계 당시의 글 — 지금 상태는 §1.2 의 오른쪽 열 · §3.1 · §6. 2026-11-01 정정 세 곳 — DB 는 지금 10개(§1.1 · §1.2), `metadb` 는 쓰이지 않는다(§1.1), catalog 를 파티셔닝에서 뺀 근거 '상품 250건' 은 낡았다(§4.1) — 페더레이션 관점의 정리는 [docs/88](88-federation-tradeoffs.ko.md).
 
 > 작성일: 2026-07-25
 > 대상: `userdb` / `productdb` / `metadb` / `cartdb` / `orderdb` / `paydb` / `coupondb` (+ chat)
@@ -36,14 +36,14 @@
 
 ### 1.2 되어 있지 않은 것
 
-| 항목 | 상태 |
-|---|---|
-| 테이블 파티셔닝 (PostgreSQL declarative partitioning) | ❌ **전무** |
-| 수평 샤딩 (동일 테이블을 여러 노드로 분산) | ❌ 전무 |
-| 읽기 복제본(read replica) / 읽기-쓰기 분리 | ❌ 전무 |
-| 물리적 분리 | ❌ **8개 DB가 전부 단일 인스턴스(`localhost:5435`)** |
-| 스키마 마이그레이션 도구 | ❌ **전무** (Hibernate `ddl-auto` 단독) |
-| 데이터 보존(retention)/아카이빙 정책 | ❌ 전무 |
+| 항목 | 상태(2026-07) | 지금(2026-11-14) |
+|---|---|---|
+| 테이블 파티셔닝 (PostgreSQL declarative partitioning) | ❌ **전무** | ✅ 아웃박스 4종 월 파티션(§3.1). 주문 등 큰 표는 아직 — [docs/89 단계 4](89-scale-out-migration-plan.ko.md#5-단계-4--쓰기-확장) |
+| 수평 샤딩 (동일 테이블을 여러 노드로 분산) | ❌ 전무 | ❌ 그대로 — 필요해질 때 docs/89 단계 4 |
+| 읽기 복제본(read replica) / 읽기-쓰기 분리 | ❌ 전무 | ❌ 그대로 — 코드도 데이터소스를 나누지 않는다, [docs/89 단계 3](89-scale-out-migration-plan.ko.md#4-단계-3--읽기를-앞단으로) |
+| 물리적 분리 | ❌ **8개 DB가 전부 단일 인스턴스(`localhost:5435`)** | ❌ 10개 DB 가 클러스터 안 PostgreSQL 한 대(k8s/90 `replicas: 1`) — [docs/89 단계 1](89-scale-out-migration-plan.ko.md#2-단계-1--데이터-계층을-노드-밖으로) |
+| 스키마 마이그레이션 도구 | ❌ **전무** (Hibernate `ddl-auto` 단독) | ✅ Flyway, 모든 서비스 `ddl-auto: ${DDL_AUTO:validate}`([docs/20](20-schema-ownership.ko.md)) |
+| 데이터 보존(retention)/아카이빙 정책 | ❌ 전무 | ✅ 아웃박스 오래된 달 DROP(§4.6) · 멱등 원장 30일(`ProcessedEventPurger`) · 만료 토큰 매시간 삭제(`UnverifiedAccountCleanup`) · 끝난 메일 행 180일. 아카이빙(콜드 보관)은 없음 |
 
 **핵심**: 논리적으로는 8개로 나뉘어 있지만(2026-11-01 기준 **10개** — `notificationdb` · `deliverydb` 가 더해졌다, k8s/90 pg-init) **물리적으로는 한 대의 PostgreSQL**입니다. 즉 buffer pool·WAL·CPU·디스크를 8개 서비스가 전부 공유하며, 이 한 대가 죽으면 전 서비스가 정지합니다([`docs/03` F-8](03-architecture-and-reliability.ko.md)).
 
@@ -185,6 +185,8 @@ P0/P1이 브랜치에 **실제로 적용**되었습니다:
 | 아웃박스 4종 파티셔닝 마이그레이션 | ✅ `V1__partition_*.sql` (order/pay/cart/user) |
 | catalog/coupon/chat 마이그레이션 이력 시작 | ✅ `V1__flyway_init.sql` (구조 변경 없음, V2부터 실 DDL) |
 
+> 🕰️ 그 뒤(2026-09): 모든 서비스가 `ddl-auto: ${DDL_AUTO:validate}` 로 바뀌었다([docs/20](20-schema-ownership.ko.md)) — 아래는 2026-07 당시의 과도기 설명이다.
+
 **원안과 달라진 점 — `ddl-auto`는 당분간 `update` 유지 (validate 아님).**
 이유: `validate`는 전 테이블의 베이스라인 스키마가 마이그레이션에 있어야 빈 DB에서도 기동이 됩니다. 실제 운영 DB 없이 35개 테이블의 베이스라인 SQL을 손으로 쓰면 검증 불가능한 불일치로 **모든 신규 환경이 기동 실패**하게 됩니다. 그래서 과도기 공존 전략을 택했습니다:
 - **Flyway가 만든 파티션 테이블**은 컬럼 구성이 엔티티와 일치 → `ddl-auto: update`는 이미 있는 테이블을 건드리지 않으므로 안전하게 공존합니다.
@@ -211,6 +213,7 @@ P0/P1이 브랜치에 **실제로 적용**되었습니다:
 - 릴레이/CDC 정상 동작 확인 후 `*_legacy` 테이블 DROP.
 - Debezium publication이 `dbz_publication`이 아닌 커스텀 이름이면 `publish_via_partition_root=true`를 수동 적용, 커넥터 `table.include.list`의 `public.*` 스키마 불일치(PG-6) 수정.
 - ~~월 파티션 자동 생성(`pg_partman`) 도입 — 현재는 2027-01까지 선생성 + DEFAULT 안전망.~~ → ✅ 애플리케이션 잡(common `OutboxPartitionAutoConfiguration`)으로 해결 — 관리형 PostgreSQL 에서 확장을 못 쓸 수 있어 확장 없이 했다([docs/62 §3](62-engineering-casebook.ko.md)).
+- ~~보존(오래된 달 `DETACH` → `DROP`).~~ → ✅ 같은 잡(2026-11-14, §4.6).
 
 ---
 
@@ -240,6 +243,8 @@ P0/P1이 브랜치에 **실제로 적용**되었습니다:
 | `cart.cart` / `cart_product` | ❌ 안 함 | — | — | 유저당 1건, UPDATE/DELETE 순환 → **파티셔닝보다 autovacuum 튜닝이 답** |
 | catalog 전 테이블 | ❌ 안 함 | — | — | 상품 250건 수준의 **유한** 데이터. 파티셔닝은 순손해 — ⚠️ 2026-11-01 정정: 운영은 상품 **200만**(데모 데이터), 실습은 2,000만까지 간다. 그래도 파티셔닝이 답은 아니다 — 아픈 곳은 카테고리 안을 상품마다 EXISTS 로 훑는 질의 모양이고(docs/83 §2.8), 대책은 개수 세기 제거(적용) · 가격 범위 열 + 복합 인덱스(docs/85 §8-1) · 검색 엔진(`catalog.search-engine`)이다([docs/88 §1](88-federation-tradeoffs.ko.md)) |
 | `users.users`, `orders.customer`, `chat.member` | ❌ 안 함(현 단계) | — | — | 유한 증가. 샤딩 단계에서 재검토 |
+
+> 🕰️ 아웃박스 네 줄의 주기는 **월** 로 했다(§3.1 · §4.6) — 일 · 주는 파티션 수가 너무 많고(§4.8), 행이 작아 한 달치도 가볍다. 토큰 두 줄은 파티셔닝 대신 매시간 삭제(`UnverifiedAccountCleanup`), `metadb` 는 쓰이지 않는다(§1.1).
 
 > **핵심 판단**: 지금 이 프로젝트에서 파티셔닝이 필요한 이유는 "데이터가 커서"가 아니라 **"지울 방법이 없어서"** 입니다. 그래서 아웃박스가 1순위입니다.
 
@@ -383,30 +388,33 @@ ALTER INDEX idx_foo ATTACH PARTITION idx_foo_2026_07;                -- 전 파�
 
 ### 4.6 보존(retention) 자동화
 
+> ✅ **적용(2026-11-14)** — 원안(아래 끝의 pg_partman · 일 단위)과 달리 미래 달을 만드는 같은 잡(`common` 의 `OutboxPartitionMaintainer`, 6시간마다)이 오래된 달도 지운다.
+
+- **남기는 범위** — 이번 달 + 앞의 `outbox.partitions.retention-months` 달(기본 3, `0` = 끔). `1` 은 기동 실패로 막는다: 지난달 말일에 쓴 행이 아직 릴레이 재시도 중일 수 있어 지난달은 늘 남긴다. 2026-11 이면 2026-08 부터 남고 2026-07 이전이 대상이다.
+- **지우는 조건** — 그 달의 모든 행이 `COMPLETED`. `STARTED` · `FAILED` · NULL 이 하나라도 있으면 그 달은 남기고 경고 로그 "아웃박스 오래된 달에 끝나지 않은 행이 있어 지우지 않았다" — `FAILED` 는 복구 쿼리(docs/76 §3-2 의 `UPDATE … SET outbox_status = 'STARTED'`)의 대상이라 사람이 보기 전에는 지우지 않는다.
+- **건드리는 파티션** — 잡의 이름 규칙(`<표>_YYYY_MM`)과 한 달 경계가 둘 다 맞는 것만. DEFAULT 와 다른 이름(손으로 붙인 보관 파티션 등)은 그대로 — DEFAULT 에 남은 옛 이관분(§3.1 의 2025-11 행)도 지우지 않는다.
+- **달마다 한 트랜잭션** — 만들기와 같은 advisory 잠금 · `lock_timeout 3s` · `statement_timeout 30s` 안에서 다시 확인 → `DETACH PARTITION` → `DROP TABLE` → 커밋. 실패하면 둘 다 되돌려지므로 "분리만 되고 남은 테이블" 이 생기지 않는다.
+
 ```sql
--- PG 14+ : 락을 거의 잡지 않고 분리
-ALTER TABLE orders.payment_outbox_event
-    DETACH PARTITION orders.payment_outbox_event_2026_06_25 CONCURRENTLY;
-DROP TABLE orders.payment_outbox_event_2026_06_25;
+-- 잡이 달마다 하는 일(한 트랜잭션)
+SELECT pg_advisory_xact_lock(hashtext('outbox-partition:orders.payment_outbox_event'));
+SET LOCAL lock_timeout = '3s';
+SELECT EXISTS (SELECT 1 FROM orders.payment_outbox_event_2026_07
+                WHERE outbox_status IS DISTINCT FROM 'COMPLETED');   -- true 면 되돌리고 남긴다
+ALTER TABLE orders.payment_outbox_event DETACH PARTITION orders.payment_outbox_event_2026_07;
+DROP TABLE orders.payment_outbox_event_2026_07;
 ```
 
-> **두 단계 사이에서 멈추면** 분리된 같은 이름의 테이블이 남습니다. 미래 파티션을 만드는 잡(`common` 의 `OutboxPartitionMaintainer`)은 그 이름을 "그 달이 있다" 로 보지 않습니다 — 부모에 붙은 파티션만 셉니다. 붙이지도 지우지도 않고 그 점검을 실패로 남기므로(`last_success` 경보 · 줄어드는 `months_ahead`), 사람이 그 테이블을 확인해 `ATTACH` 하거나 이름을 바꾸거나 지우면 다음 주기에 이어서 만듭니다. 잡의 DDL 은 잠금을 3초까지만 기다립니다(`lock_timeout`) — 백업(pg_dump)이 DEFAULT 를 쥐고 있으면 `ATTACH` 가 잠금 줄에 서서 뒤의 INSERT 까지 막는 대신, 실패하고 6시간 뒤 다시 합니다.
+> **`DETACH … CONCURRENTLY` 를 쓰지 않는 이유** — DEFAULT 파티션이 있는 표에는 쓸 수 없고(PostgreSQL 의 제약), 트랜잭션 안에서도 못 쓴다. 일반 `DETACH` 는 부모에 강한 잠금을 잡지만 3초 상한이라 INSERT 를 오래 막지 않는다 — 백업(pg_dump)이 표를 쥐고 있으면 실패하고 6시간 뒤 다시 한다. 아웃박스의 한 달치는 작아 `DROP` 은 바로 끝난다.
+
+- **지표 · 경보** — `outbox_partition_months_kept`(남은 가장 오래된 달부터 이번 달까지의 달 수, 정상이면 설정값) · `outbox_partition_retention_months`. 경보 `OutboxPartitionRetentionStalled` — 남은 달이 설정 + 1 을 넘은 채 하루. 대개 끝나지 않은 행 때문이니 위 경고 로그의 달을 본다. 보존을 끈 서비스는 NaN 이라 울리지 않는다.
+- **시험** — `OutboxPartitionMaintainerPostgresTest`(컨테이너): 3달 밖만 지움 · 다시 돌려도 그대로 · 끝나지 않은 행(`FAILED` · NULL · `STARTED`)이 있는 달은 남김 → 끝나면 지움 · 끔 · 다른 이름 파티션은 그대로.
+
+> **손으로 `DETACH` 했다가 `DROP` 전에 멈추면** 분리된 같은 이름의 테이블이 남습니다. 미래 파티션을 만드는 잡은 그 이름을 "그 달이 있다" 로 보지 않습니다 — 부모에 붙은 파티션만 셉니다. 붙이지도 지우지도 않고 그 점검을 실패로 남기므로(`last_success` 경보 · 줄어드는 `months_ahead`), 사람이 그 테이블을 확인해 `ATTACH` 하거나 이름을 바꾸거나 지우면 다음 주기에 이어서 만듭니다. 잡의 DDL 은 잠금을 3초까지만 기다립니다(`lock_timeout`) — 백업(pg_dump)이 DEFAULT 를 쥐고 있으면 `ATTACH` 가 잠금 줄에 서서 뒤의 INSERT 까지 막는 대신, 실패하고 6시간 뒤 다시 합니다.
 
 > 🐛 **cart · order 에서는 이 잡이 한 번도 돌지 않았습니다(2026-10-14 발견).** 두 앱(과 chat)은 `com.project.common` 을 `@ComponentScan` 으로 직접 스캔하는데, `@SpringBootApplication` 이 기본으로 거는 `AutoConfigurationExcludeFilter` 가 빠져 있어 이 자동 설정이 사용자 설정처럼 스캔되고 조건(`@ConditionalOnBean(DataSource)`)이 DataSource 보다 먼저 평가돼 통째로 빠졌습니다. pay · user 는 스캔하지 않아 정상이었습니다. V1 이 2027-01 까지 만들어 두어 아직 DEFAULT 로 간 행은 없습니다. 고친 버전을 배포한 뒤 `kubectl -n ecommerce logs deploy/order-service | grep "아웃박스 파티션"` 에 `아웃박스 파티션 잡: tables=[orders.payment_outbox_event]` 와(30초 뒤) `아웃박스 파티션 점검` 이 나오는지 봅니다 — cart 도 같습니다(`OutboxPartitionComponentScanTest`).
 
-파티션 생성/삭제는 **`pg_partman`** 으로 자동화하는 것을 권장합니다(수동 운영 시 "미래 파티션 생성을 깜빡해 INSERT 실패"가 대표적 장애 유형입니다 — 4.3의 DEFAULT 파티션이 그 안전망).
-
-```sql
-SELECT partman.create_parent(
-    p_parent_table := 'orders.payment_outbox_event',
-    p_control      := 'created_at',
-    p_interval     := '1 day',
-    p_premake      := 7               -- 7일치 미리 생성
-);
-UPDATE partman.part_config
-   SET retention = '7 days', retention_keep_table = false
- WHERE parent_table = 'orders.payment_outbox_event';
-```
+> 원안(2026-07)은 `pg_partman` 의 `p_interval := '1 day'` · `retention = '7 days'` 였다. 관리형 PostgreSQL 에서 확장을 못 쓸 수 있고 일 단위는 파티션 수가 너무 많아(§4.8), 월 단위 · 확장 없는 앱 잡으로 바꿨다(docs/62 §3).
 
 ### 4.7 Debezium 연동 시 필수 설정
 
@@ -505,15 +513,17 @@ CREATE TABLE user_directory (
 
 | 단계 | 내용 | 위험 | 선행 |
 |---|---|---|---|
-| **P0** | ✅ **적용됨(§3.1)** — Flyway 도입, catalog `create-drop` 제거. (`validate` 전환만 운영 pg_dump 후 진행) | 중 | — |
-| **P1** | ✅ **적용됨(§3.1)** — 아웃박스 4종 파티셔닝(월 단위) + 부분 인덱스. (`pg_partman` 자동화는 운영 반영 시) | 낮음 | P0 |
-| **P1.5** | 토큰 테이블 2종(`expiry_date`) 파티셔닝, `metadb` 배치 이력 보존 배치 | 낮음 | P0 |
-| **P2** | 물리 인스턴스 분리 + 스트리밍 복제 + 자동 failover | 중 | — (P0 무관, 병행 가능) |
-| **P3** | 읽기 복제본 라우팅(카탈로그/주문이력). read-your-writes 경로 식별 | 중 | P2 |
-| **P4** | `orders`/`order_product`/`order_address`/`payment` 월 단위 파티셔닝 + `tracking_registry` | 높음 | P0, P1 경험 |
-| **P5** | (필요 시) 수평 샤딩. coupon → cart → order/pay 순, Citus 우선 검토 | 매우 높음 | P4 + 샤드 키 비정규화 |
+| **P0** | ✅ **끝** — Flyway 도입, catalog `create-drop` 제거(§3.1), 모든 서비스 `ddl-auto: ${DDL_AUTO:validate}`([docs/20](20-schema-ownership.ko.md)) | 중 | — |
+| **P1** | ✅ **끝** — 아웃박스 4종 파티셔닝(월 단위) + 부분 인덱스(2026-07, §3.1), 미래 달 생성 잡(2026-09-27), 오래된 달 정리(2026-11-14, §4.6) — pg_partman 없이 | 낮음 | P0 |
+| **P1.5** | 🟡 **다른 방법으로** — 토큰 2종은 파티셔닝 대신 만료분 매시간 삭제(`UnverifiedAccountCleanup` — 행이 적어 파티션이 필요 없다), `metadb` 는 쓰이지 않아 해당 없음(§1.1) | 낮음 | P0 |
+| **P2** | 물리 인스턴스 분리 + 스트리밍 복제 + 자동 failover → **[docs/89 단계 1 §2-3](89-scale-out-migration-plan.ko.md#2-3-postgresql--이중화와-이전)**(관리형 또는 이중화 · 논리 복제로 이전 · 시퀀스 맞추기). 지금은 클러스터 안 한 대 | 중 | — (P0 무관, 병행 가능) |
+| **P3** | 읽기 복제본 라우팅(카탈로그/주문이력). read-your-writes 경로 식별 → **[docs/89 단계 3](89-scale-out-migration-plan.ko.md#4-단계-3--읽기를-앞단으로)** — 그 앞에 CDN 캐시 · ES 검색이 먼저 | 중 | P2 |
+| **P4** | `orders`/`order_product`/`order_address`/`payment` 월 단위 파티셔닝 + `tracking_registry` → **[docs/89 단계 4 §5-3](89-scale-out-migration-plan.ko.md#5-단계-4--쓰기-확장)**. 지금은 order V28 의 `order_product(order_id)` 인덱스만 | 높음 | P0, P1 경험 |
+| **P5** | (필요 시) 수평 샤딩. coupon → cart → order/pay 순, Citus 우선 검토 → docs/89 단계 4 §5-4(한 서비스의 쓰기가 DB 한 대를 넘을 때 그 서비스만) | 매우 높음 | P4 + 샤드 키 비정규화 |
 
 **P1을 첫 단계로 두는 이유**: 아웃박스는 (a) 보존기간이 짧아 이관 없이 전환 가능, (b) 무한 증가가 이미 진행 중인 실질 위험, (c) 실패해도 영향 범위가 릴레이로 국한되어 **가장 안전하게 파티셔닝 운영 경험을 쌓을 수 있는** 테이블입니다.
+
+**P2 부터는 [docs/89](89-scale-out-migration-plan.ko.md) 에서 이어 간다.** 이 문서는 파티셔닝 · 샤딩의 설계(§4 · §5 의 DDL · 샤드 키 분석)로 남고, 순서 · 들어가는 조건 · 무정지 절차 · 되돌리기는 docs/89 가 맡는다 — 데이터 계층을 노드 밖으로 옮기는 것(P2)이 큰 표의 파티셔닝(P4)보다 먼저다.
 
 ---
 
@@ -521,8 +531,8 @@ CREATE TABLE user_directory (
 
 | # | 시나리오 | 트리거 → 영향 | 대응 |
 |---|---|---|---|
-| **F-10** | 아웃박스 무한 증가로 디스크 고갈 | 정리 배치 부재 → 테이블·인덱스 무한 증가 → **DB 인스턴스 전체 쓰기 불가**(8개 DB 공유이므로 전 서비스 정지) | 즉시: 오래된 `COMPLETED` 수동 삭제 + `VACUUM FULL`(락 주의). 근본: P1 파티셔닝 + 보존 |
-| **F-11** | 미래 파티션 미생성으로 INSERT 실패 | `pg_partman` 정지/수동 운영 누락 → 경계 밖 `INSERT`가 **에러** → 주문/결제 생성 실패 | 예방: DEFAULT 파티션 + premake 여유 + "다음 파티션 존재" 모니터링 경보 |
+| **F-10** | 아웃박스 무한 증가로 디스크 고갈 | 정리 배치 부재 → 테이블·인덱스 무한 증가 → **DB 인스턴스 전체 쓰기 불가**(8개 DB 공유이므로 전 서비스 정지) | 즉시: 오래된 `COMPLETED` 수동 삭제 + `VACUUM FULL`(락 주의). 근본: P1 파티셔닝 + 보존(§4.6 — 적용) |
+| **F-11** | 미래 파티션 미생성으로 INSERT 실패 | 미래 달 생성 잡 정지(2026-10-14 cart · order 에서 실제로 — §4.6) → DEFAULT 가 없으면 경계 밖 `INSERT`가 **에러** → 주문/결제 생성 실패 | 예방(적용): DEFAULT 파티션 + 3달 앞까지 + 경보 `OutboxPartitionRunwayShort` · `MissingNextMonth` · `JobStale` · `RowsLandingInDefaultPartition` |
 | **F-12** | 파티션 프루닝 실패로 성능 급락 | 파티션 키 없는 쿼리(예: `findByOutboxStatus`) → 전 파티션 스캔 | 예방: 부분 인덱스, 쿼리에 시간 조건 강제, `EXPLAIN`으로 프루닝 검증 |
 | **F-13** | 복제 지연으로 read-your-writes 위반 | 주문 직후 조회가 복제본으로 → "주문이 없음" | 예방: 쓰기 직후 경로는 프라이머리 고정, `pg_stat_replication` 지연 경보 |
 | **F-14** | 샤드 불균형(hot shard) | 특정 사용자/테넌트 편중 → 한 샤드만 포화 | 예방: 해시 분산 + 샤드별 지표 모니터링, 리밸런싱 계획 |
@@ -534,7 +544,8 @@ CREATE TABLE user_directory (
 | 테이블·인덱스 크기 증가율 | `pg_total_relation_size()` | 주간 증가율 급변 |
 | dead tuple 비율 | `pg_stat_user_tables.n_dead_tup` | 20% 초과 |
 | 아웃박스 `STARTED` 적체 | `count(*) where outbox_status='STARTED'` | N건 M분 지속([`docs/03`](03-architecture-and-reliability.ko.md)) |
-| 다음 파티션 존재 여부 | `pg_class`/`partman.part_config` | 여유 파티션 < 2 |
+| 다음 파티션 존재 여부 | `outbox_partition_months_ahead`(잡 지표) | 여유 파티션 < 2(`OutboxPartitionRunwayShort`) |
+| 오래된 달 정리 | `outbox_partition_months_kept` − `outbox_partition_retention_months` | > 1 이 하루(`OutboxPartitionRetentionStalled`) |
 | 복제 지연 | `pg_stat_replication.replay_lag` | 임계 초과 |
 | autovacuum 실행 이력 | `pg_stat_user_tables.last_autovacuum` | 장시간 미실행 |
 
@@ -542,11 +553,11 @@ CREATE TABLE user_directory (
 
 ## 9. 요약 — 지금 당장 해야 할 것
 
-1. **Flyway 도입 + `ddl-auto: validate`** — 이것 없이는 아무것도 시작할 수 없습니다(P0).
-2. **아웃박스 4종을 일 단위 RANGE 파티셔닝 + 보존 정책** — 현재 진행 중인 실질 위험을 제거합니다(P1).
-3. **PostgreSQL 물리 분리 + 복제** — SPOF 제거(P2).
+1. ~~**Flyway 도입 + `ddl-auto: validate`** — 이것 없이는 아무것도 시작할 수 없습니다(P0).~~ ✅ 끝.
+2. ~~**아웃박스 4종을 일 단위 RANGE 파티셔닝 + 보존 정책** — 현재 진행 중인 실질 위험을 제거합니다(P1).~~ ✅ 끝 — 월 단위 · 생성과 정리 모두 앱 잡(§4.6).
+3. **PostgreSQL 물리 분리 + 복제** — SPOF 제거(P2). → [docs/89 단계 1](89-scale-out-migration-plan.ko.md#2-단계-1--데이터-계층을-노드-밖으로) 에서 Kafka · Redis 와 함께.
 
 수평 샤딩은 **지금 필요하지 않습니다**. 다만 그때가 왔을 때 비싸지지 않도록, 지금 미리 해둘 수 있는 것들이 있습니다:
-- 자식 테이블에 샤드 키(`user_id`/`customer_id`) **비정규화 컬럼을 미리 추가**해 두기(PG-4)
-- catalog의 `IDENTITY`를 TSID로 이관 검토
+- 자식 테이블에 샤드 키(`user_id`/`customer_id`) **비정규화 컬럼을 미리 추가**해 두기(PG-4) — 아직(2026-11-14)
+- catalog의 `IDENTITY`를 TSID로 이관 검토 — 아직, `Product` 는 `GenerationType.IDENTITY`
 - 신규 UNIQUE 제약을 만들 때 **항상 테넌트 키를 포함**시키기(coupon이 좋은 예)

@@ -42,6 +42,18 @@ class OutboxPartitionMaintainerTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("🔴 보존 기간은 0(끔) 또는 2달 이상 — 지난달을 지우는 설정은 기동에서 거절한다 · 끄거나 아직 안 돌았으면 지표는 NaN")
+    void retentionIsOffOrAtLeastTwoMonths() {
+        assertThatThrownBy(() -> new OutboxPartitionMaintainer(null, List.of("orders.t"), 3, 1, Clock.systemUTC()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("retention-months");
+        OutboxPartitionMaintainer off = new OutboxPartitionMaintainer(null, List.of("orders.t"), 3, 0, Clock.systemUTC());
+        assertThat(off.retentionMonths()).isZero();
+        assertThat(off.monthsKeptNow("orders.t")).isNaN();
+        assertThat(new OutboxPartitionMaintainer(null, List.of("orders.t"), 3, 2, Clock.systemUTC()).monthsKeptNow("orders.t"))
+                .as("아직 한 번도 돌지 않았다").isNaN();
+    }
+
     /** 테스트가 시각을 옮길 수 있는 시계. */
     static final class MutableClock extends Clock {
         private Instant now;

@@ -33,6 +33,7 @@ import lombok.extern.slf4j.Slf4j;
  *   partitions:
  *     tables: orders.payment_outbox_event
  *     months-ahead: 3        # 기본 3 — 이번 달 + 3 달
+ *     retention-months: 3    # 기본 3 — 이번 달 앞으로 3 달을 남기고 그보다 오래된 달은 끝나지 않은 행이 없으면 지운다. 0 이면 끔(최소 2)
  *     interval: PT6H         # 기본 6 시간. 기동 30 초 뒤 첫 실행 — ISO-8601 기간만(6h 는 기동 실패)
  *     enabled: false         # 잡을 끄는 키는 이것이다(tables 에 false 를 쓰지 않는다). 지표는 남아 하루 뒤
  *                            # last_success 경보가 울린다 — 파티션을 아무도 만들지 않는다는 뜻이므로 의도된 것
@@ -49,6 +50,7 @@ import lombok.extern.slf4j.Slf4j;
  *   partitions:
  *     tables: orders.payment_outbox_event
  *     months-ahead: 3        # デフォルト 3 — 今月 + 3 か月
+ *     retention-months: 3    # デフォルト 3 — 今月より前の 3 か月を残し、それより古い月は終わっていない行がなければ消す。0 でオフ(最小 2)
  *     interval: PT6H         # デフォルト 6 時間。起動 30 秒後に初回実行 — ISO-8601 の期間のみ(6h は起動失敗)
  *     enabled: false         # ジョブを止めるキーはこれ(tables に false を書かない)。指標は残り、1 日後に
  *                            # last_success のアラートが鳴る — 誰もパーティションを作らないという意味なので意図どおり
@@ -67,9 +69,12 @@ public class OutboxPartitionAutoConfiguration {
     @Bean
     OutboxPartitionMaintainer outboxPartitionMaintainer(DataSource dataSource,
             @Value("${outbox.partitions.tables}") String tables,
-            @Value("${outbox.partitions.months-ahead:3}") int monthsAhead) {
+            @Value("${outbox.partitions.months-ahead:3}") int monthsAhead,
+            // 이번 달 앞으로 남길 달 수 — 그보다 오래되고 끝나지 않은 행이 없는 달은 지운다(docs/09 §4.6). 0 이면 지우지 않는다.
+            // [JA] 今月より前に残す月数 — それより古く終わっていない行がない月は消す。0 なら消さない。
+            @Value("${outbox.partitions.retention-months:3}") int retentionMonths) {
         List<String> list = Arrays.stream(tables.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
-        return new OutboxPartitionMaintainer(dataSource, list, monthsAhead, Clock.systemUTC());
+        return new OutboxPartitionMaintainer(dataSource, list, monthsAhead, retentionMonths, Clock.systemUTC());
     }
 
     @Bean
@@ -159,6 +164,14 @@ public class OutboxPartitionAutoConfiguration {
                     Gauge.builder("outbox.partition.default.rows", maintainer, m -> m.defaultRows(table))
                             .tag("table", table)
                             .description("아웃박스 DEFAULT 파티션의 행 수 — 0 이어야 한다")
+                            .register(registry);
+                    Gauge.builder("outbox.partition.months.kept", maintainer, m -> m.monthsKeptNow(table))
+                            .tag("table", table)
+                            .description("이번 달 앞으로 남아 있는 아웃박스 월 파티션 수 — 보존이 돌면 retention 이하(끔 · 미실행은 NaN)")
+                            .register(registry);
+                    Gauge.builder("outbox.partition.retention.months", maintainer, m -> m.retentionMonths())
+                            .tag("table", table)
+                            .description("아웃박스 파티션 보존 설정(달) — 0 이면 지우지 않는다")
                             .register(registry);
                     Gauge.builder("outbox.partition.last.success.seconds", maintainer, m -> m.lastSuccessEpochSeconds(table))
                             .tag("table", table)

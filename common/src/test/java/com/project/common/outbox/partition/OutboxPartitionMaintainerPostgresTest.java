@@ -236,6 +236,91 @@ class OutboxPartitionMaintainerPostgresTest {
         }
     }
 
+    /** 2026-07 ~ 2026-11 의 월 파티션 — V1 이 만든 모양. */
+    private static void monthsFromJuly() throws SQLException {
+        for (int m = 7; m <= 12; m++) {
+            String from = String.format("2026-%02d-01", m);
+            String to = m == 12 ? "2027-01-01" : String.format("2026-%02d-01", m + 1);
+            exec(String.format("CREATE TABLE orders.payment_outbox_event_2026_%02d PARTITION OF orders.payment_outbox_event"
+                    + " FOR VALUES FROM ('%s') TO ('%s')", m, from, to));
+        }
+    }
+
+    private static OutboxPartitionMaintainer keeping(String instant, int retentionMonths) {
+        return new OutboxPartitionMaintainer(ds, List.of("orders.payment_outbox_event"), 3, retentionMonths,
+                Clock.fixed(Instant.parse(instant), ZoneOffset.UTC));
+    }
+
+    /**
+     * 🐛 2026-11-14 까지 오래된 달을 지우는 곳이 없었다 — "보존 정책을 정한 뒤 사람이 한다" 로 남겨 V1 의 2026-07 부터 모든 달이 쌓였다
+     * (docs/09 PG-1 "지울 방법이 없다" 의 남은 절반). [JA] 古い月を消す所がなく、V1 の 2026-07 から全部溜まっていた。
+     */
+    @Test
+    @DisplayName("🔴 보존: 이번 달 앞으로 3달을 남기고 그보다 오래된 달(모두 COMPLETED)은 지운다 — 남긴 달 · DEFAULT 의 행은 그대로")
+    void dropsMonthsOlderThanRetention() throws SQLException {
+        monthsFromJuly();
+        insert("jul", "2026-07-10 00:00:00");
+        insert("aug", "2026-08-10 00:00:00");
+        insert("old-default", "2026-05-01 00:00:00");
+        exec("UPDATE orders.payment_outbox_event SET outbox_status = 'COMPLETED'");
+
+        OutboxPartitionMaintainer m = keeping("2026-11-14T00:00:00Z", 3);
+        OutboxPartitionMaintainer.Prune p = m.prune("orders.payment_outbox_event");
+
+        assertThat(p.dropped()).containsExactly("orders.payment_outbox_event_2026_07");
+        assertThat(p.keptUnfinished()).isEmpty();
+        assertThat(p.oldest()).isEqualTo(java.time.YearMonth.of(2026, 8));
+        assertThat(partitions()).doesNotContain("payment_outbox_event_2026_07")
+                .contains("payment_outbox_event_2026_08", "payment_outbox_event_2026_11", "payment_outbox_event_default");
+        assertThat(query("SELECT count(*) FROM pg_class WHERE relname = 'payment_outbox_event_2026_07'"))
+                .as("DETACH 된 채 남지 않는다 — 한 트랜잭션에서 DROP").isEqualTo("0");
+        assertThat(where("aug")).isEqualTo("payment_outbox_event_2026_08");
+        assertThat(where("old-default")).as("DEFAULT 는 손대지 않는다").isEqualTo("payment_outbox_event_default");
+        assertThat(m.monthsKeptNow("orders.payment_outbox_event")).isEqualTo(3.0);
+
+        assertThat(m.prune("orders.payment_outbox_event").dropped()).as("다시 돌려도 같다").isEmpty();
+    }
+
+    @Test
+    @DisplayName("🔴 보존: 끝나지 않은 행(STARTED · FAILED · 상태 없음)이 하나라도 있는 오래된 달은 지우지 않는다 — 발행되지 않은 메시지")
+    void keepsOldMonthsWithUnfinishedRows() throws SQLException {
+        monthsFromJuly();
+        insert("jul-failed", "2026-07-10 00:00:00");
+        insert("aug-null", "2026-08-03 00:00:00");
+        insert("sep-started", "2026-09-03 00:00:00");
+        exec("UPDATE orders.payment_outbox_event SET outbox_status = 'FAILED' WHERE id = 'jul-failed'",
+                "UPDATE orders.payment_outbox_event SET outbox_status = NULL WHERE id = 'aug-null'");
+
+        OutboxPartitionMaintainer.Prune p = keeping("2027-01-14T00:00:00Z", 3).prune("orders.payment_outbox_event");
+
+        assertThat(p.dropped()).isEmpty();
+        assertThat(p.keptUnfinished()).containsExactly("orders.payment_outbox_event_2026_07",
+                "orders.payment_outbox_event_2026_08", "orders.payment_outbox_event_2026_09");
+        assertThat(where("jul-failed")).isEqualTo("payment_outbox_event_2026_07");
+
+        exec("UPDATE orders.payment_outbox_event SET outbox_status = 'COMPLETED'");
+        assertThat(keeping("2027-01-14T00:00:00Z", 3).prune("orders.payment_outbox_event").dropped())
+                .as("끝나면 다음 회차에 지운다").containsExactly("orders.payment_outbox_event_2026_07",
+                        "orders.payment_outbox_event_2026_08", "orders.payment_outbox_event_2026_09");
+    }
+
+    @Test
+    @DisplayName("보존: 0 이면 지우지 않는다(runOnce) · 이 잡의 모양이 아닌 파티션(이름 · 범위가 다름)은 손대지 않는다")
+    void retentionOffAndForeignPartitionsAreLeftAlone() throws SQLException {
+        monthsFromJuly();
+        exec("CREATE TABLE orders.payment_outbox_event_archive PARTITION OF orders.payment_outbox_event"
+                + " FOR VALUES FROM ('2025-01-01') TO ('2025-07-01')");
+        exec("UPDATE orders.payment_outbox_event SET outbox_status = 'COMPLETED'");
+
+        keeping("2027-03-14T00:00:00Z", 0).runOnce();
+        assertThat(partitions()).contains("payment_outbox_event_2026_07", "payment_outbox_event_archive");
+
+        OutboxPartitionMaintainer.Prune p = keeping("2027-03-14T00:00:00Z", 3).prune("orders.payment_outbox_event");
+        assertThat(p.dropped()).doesNotContain("orders.payment_outbox_event_archive")
+                .contains("orders.payment_outbox_event_2026_07", "orders.payment_outbox_event_2026_11");
+        assertThat(partitions()).contains("payment_outbox_event_archive", "payment_outbox_event_2026_12");
+    }
+
     private static void insert(String id, String createdAt) throws SQLException {
         exec("INSERT INTO orders.payment_outbox_event (id, aggregate_id, aggregate_type, event_type, payload,"
                 + " outbox_status, created_at, trace_context) VALUES ('" + id + "', 'agg', 'ORDER', 'E', '{}',"

@@ -244,6 +244,16 @@ groups:
           summary: "아웃박스 행이 DEFAULT 파티션에 쌓이고 있습니다 ({{ $labels.table }})"
           description: "그 달의 파티션이 없는 동안 들어온 행입니다. 파티션 잡이 다음 실행에서 옮깁니다. 이 값은 마지막으로 성공한 점검의 것이라 잡이 실패하는 동안에는 늘지 않습니다 — 그 경우는 OutboxPartitionJobStale 이 잡습니다."
 
+      - alert: OutboxPartitionRetentionStalled
+        # 이번 달 앞으로 남은 월 파티션 수 − 보존 설정(기본 3). 보존이 돌면 0 이하 — 2 이상이면 두 달 넘게 오래된 달을 지우지 못했다.
+        # 보존을 끈 서비스(retention 0)는 months_kept 가 NaN 이라 울리지 않는다(docs/09 §4.6).
+        expr: max by (service, table) (outbox_partition_months_kept) - max by (service, table) (outbox_partition_retention_months) > 1
+        for: 1d
+        labels: { severity: warning }
+        annotations:
+          summary: "아웃박스 오래된 파티션을 지우지 못하고 있습니다 — 보존보다 {{ $value }}달 더 남음 ({{ $labels.table }})"
+          description: "로그의 '오래된 달에 끝나지 않은 행이 있어 지우지 않았다'(STARTED · FAILED 행 — 발행되지 않은 메시지, 고치거나 버릴지 사람이 정한다) 또는 '아웃박스 파티션 보존 실패'(잠금 3초 · 문장 30초 상한)를 확인하세요 (docs/09 §4.6)."
+
   # 추적 파이프라인(docs/63) — 서비스 → OTel Collector → Jaeger · span_metrics. 어디가 끊겨도 서비스는 오류 없이 돈다
   # (OTLP 내보내기는 실패한 배치를 버리고 계속 간다). 그래서 "추적이 안 보인다" 를 사람이 먼저 알아채기 전에 여기서 잡는다.
   # Collector 지표 이름은 버전에 따라 _total 이 붙기도 해서 둘 다 받는다.

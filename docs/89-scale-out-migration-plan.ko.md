@@ -114,7 +114,7 @@
 
 1. **파티션 수 · 컨슈머 동시성** — 주문 이벤트의 키는 주문 번호(`OrderCompletedKafkaPublisher` 등)라 같은 주문의 순서는 파티션 안에서 지켜진다. ⚠️ **파티션 수를 늘리면 키 → 파티션 대응이 바뀐다** — 진행 중인 주문의 이벤트가 다른 파티션으로 가 순서가 깨질 수 있다. 지연 0 인 창에서 늘리거나, 새 토픽을 만들어 옮긴다. 상태 토픽(`order-saga-state` · `order-timeline`)은 order 토픽과 같은 수로(`ops/02 STATE_PARTITIONS`).
 2. **재고 핫스팟** — 인기 상품의 행 잠금에 주문이 몰린다(docs/87 §3-2). gRPC 재고 예약(docs/66)을 출발점으로 원자 차감(Redis Lua 등)을 먼저 받고 DB 확정은 비동기로. 결제 확정 차감은 이미 아웃박스(`product-update`) · 멱등(eventId)이다.
-3. **큰 표** — 아웃박스는 이미 월별 파티션(order · pay · user · cart `V1__partition_*`). 주문 · 주문 줄은 수억 건 전에 같은 방식으로. 열 · 인덱스 변경은 docs/85 §8-1(expand → contract · `CREATE INDEX CONCURRENTLY` · `VACUUM (PARALLEL 0)`), 외래 키 열의 인덱스는 order V28 · catalog V22 · cart V8 의 점검을 다른 서비스에도.
+3. **큰 표** — 아웃박스는 이미 월별 파티션(order · pay · user · cart `V1__partition_*`) · 오래된 달 자동 정리(2026-11-14, [docs/09 §4.6](09-postgresql-partitioning-sharding.ko.md)). 주문 · 주문 줄은 수억 건 전에 같은 방식으로(docs/09 §4.4 의 DDL · 로드맵 P4). 열 · 인덱스 변경은 docs/85 §8-1(expand → contract · `CREATE INDEX CONCURRENTLY` · `VACUUM (PARALLEL 0)`), 외래 키 열의 인덱스는 order V28 · catalog V22 · cart V8 의 점검을 다른 서비스에도.
 4. **샤딩은 그 뒤** — 서비스마다 DB 는 이미 기능 분할이다(docs/88). 한 서비스의 쓰기가 DB 한 대를 넘을 때 그 서비스만 키(고객 · 주문)로 나눈다.
 
 ---
@@ -134,7 +134,7 @@
 
 | 이미 있는 것 | 어디까지 | 늘릴 때 다시 볼 것 |
 |---|---|---|
-| 아웃박스(월별 파티션) · 사가 | 브로커가 바뀌어도 메시지를 지킨다 | 릴레이의 처리량 · 파티션 보존(오래된 달 정리) |
+| 아웃박스(월별 파티션) · 사가 | 브로커가 바뀌어도 메시지를 지킨다 | 릴레이의 처리량. 오래된 달 정리는 잡이 한다(docs/09 §4.6 — 3달, 끝나지 않은 행이 있는 달은 남김) |
 | 멱등 원장(catalog · coupon · cart · order 배송 상태 · `ProcessedEventPurger`) | 재전달 · 오프셋 재설정에 안전 | 원장이 없는 그룹(§2-1) |
 | 기능 플래그(docs/74) | 검색 엔진 비율 · 되돌리기 재시작 없음 | 플래그 만료(B-76) |
 | 검색 격벽 · 시간 상한(docs/83 §2.8) | DB 를 쓰는 검색이 풀을 다 먹지 않는다 | 풀 크기를 바꾸면 격벽 수도 |

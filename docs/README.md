@@ -63,7 +63,7 @@
 | 20 | [スキーマの所有権](20-schema-ownership.md) | `ddl-auto: update` → Flyway + `validate`、空 DB · レガシー DB の両方で検証 | ✅ |
 | 69 | [ERD — 実際のスキーマ](69-erd.md) | 壊れた画像添付の代わりに、マイグレーションを適用した DB から自動生成(Mermaid)、サービス間の論理参照の概要、`ops/tools/gen-erd.py --check` | ✅ |
 | 55 | [無停止マイグレーション](55-zero-downtime-migrations.md) | expand-contract、デプロイトレイン、自ら止まるマイグレーション | ✅ |
-| 09 | [PostgreSQL パーティショニング · シャーディング](09-postgresql-partitioning-sharding.md) | Outbox の月次パーティションとシャーディングの段階設計（DDL 付き） | 🟡 |
+| 09 | [PostgreSQL パーティショニング · シャーディング](09-postgresql-partitioning-sharding.md) | Outbox の月次パーティション · 古い月の自動整理とシャーディングの段階設計（DDL 付き）— P0 · P1 完了、P2 からは 89 | 🟡 |
 | 15 | [バックアップ · 災害復旧](15-backup-and-dr.md) | 等級別の RPO/RTO、PITR — `DROP TABLE` を実際に巻き戻して検証 | 🟡 |
 | 22 | [アラート配信とバックアップの自動化](22-alerting-and-backup-automation.md) | 受信者がプレースホルダーでアラートがどこにも届かなかった件、バックアップ CronJob | ✅ |
 | 42 | [バッチの点検](42-batch-review.md) | 冪等でないのに再実行されるインポートジョブ、スケジュールタスク 8 個のレプリカ安全性 | ✅ |

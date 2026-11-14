@@ -63,7 +63,7 @@
 | 20 | [스키마 소유권](20-schema-ownership.ko.md) | `ddl-auto: update` → Flyway + `validate`, 빈 DB · 레거시 DB 양쪽 검증 | ✅ |
 | 69 | [ERD — 실제 스키마](69-erd.ko.md) | 깨진 이미지 첨부 대신 마이그레이션을 적용한 DB 에서 자동 생성(Mermaid), 서비스 사이 논리 참조 개요, `ops/tools/gen-erd.py --check` | ✅ |
 | 55 | [무중단 마이그레이션](55-zero-downtime-migrations.ko.md) | expand-contract, 배포 열차, 스스로 멈추는 마이그레이션 | ✅ |
-| 09 | [PostgreSQL 파티셔닝 · 샤딩](09-postgresql-partitioning-sharding.ko.md) | 아웃박스 월 파티션과 샤딩 단계 설계(DDL 포함) | 🟡 |
+| 09 | [PostgreSQL 파티셔닝 · 샤딩](09-postgresql-partitioning-sharding.ko.md) | 아웃박스 월 파티션 · 오래된 달 자동 정리와 샤딩 단계 설계(DDL 포함) — P0 · P1 끝, P2 부터는 89 | 🟡 |
 | 15 | [백업 · 재해복구](15-backup-and-dr.ko.md) | 등급별 RPO/RTO, PITR — `DROP TABLE` 을 실제로 되돌려 검증 | 🟡 |
 | 22 | [경보 전달과 백업 자동화](22-alerting-and-backup-automation.ko.md) | 수신자가 플레이스홀더라 경보가 어디로도 가지 않던 것, 백업 CronJob | ✅ |
 | 42 | [배치 점검](42-batch-review.ko.md) | 멱등하지 않은데 재실행되는 임포트 잡, 스케줄 작업 8개의 레플리카 안전성 | ✅ |
