@@ -51,6 +51,12 @@
 #   ./ops/53-load-k6.sh report all             # 모든 회차의 요약
 #   ./ops/53-load-k6.sh report merge <폴더>…    # 부하 VM 여러 대(SPLIT)의 같은 회차를 합쳐 본다(다른 VM 의 폴더를 이 기계로 복사해 와서)
 #
+#   운영 읽기 천장(docs/91 §4-2) — 운영 노드에서, 클러스터 안 k6 Job(ops/tools/k6-job.sh)이 게이트웨이로 바로(Cloudflare 를 거치지 않는다):
+#     PROD_READONLY=1 K6=ops/tools/k6-job.sh GATEWAY=https://gateway-server.ecommerce.svc.cluster.local:8000 CLIENT_IPS=2000 \
+#       PROM=http://localhost:9090 CEILING_RATES=5,10,20,40,80 ./ops/53-load-k6.sh ceiling browse
+#     운영 클러스터(APP_PUBLIC_URL 이 운영 주소)에서는 이 모드로만 돈다: browse 만 · 클러스터 안 주소 · 손님 IP 흉내 ·
+#     도착률 ≤ PROD_MAX_RATE · 백업 시간대(02:45 ~ 05:15 UTC) 거절 · 측정 동안 Alertmanager 묵음(끝나면 푼다)
+#
 #   ./ops/53-load-k6.sh ceiling browse         # 천장 찾기(docs/91 §4 · docs/89 단계 0): 도착률을 계단(CEILING_RATES)으로 올리며 계단마다 browse 를
 #                                              # 한 번씩 돌리고, SLO(p99 · 5xx 비율)가 깨지는 계단에서 멈춘다 → ceiling.md: 계단마다 요청/초 · p99 · 5xx ·
 #                                              # 서비스별 파드당 요청/초 · CPU · DB 커넥션 대기 · Kafka 지연 · 막힌 곳 후보. order · mixed 도 같다
@@ -77,7 +83,9 @@
 #   OUT=./load-results              # 결과 폴더 — <시나리오>-<UTC 시각>/ 아래 summary.json · summary.txt · meta.txt
 #   PROM_RW=http://<obs-vm>:9090/api/v1/write   # 주면 k6 지표를 Prometheus 로도(그라파나에서 서버 지표와 같은 시간축)
 #   PROM=http://<obs-vm>:9090  PROM_ENV=demo     # 레플리카(시작 · 측정 중 최대 · 끝)를 Prometheus 에서 읽어 meta.txt 에(없으면 PROM_RW 에서)
-#   K6=k6                          # k6 실행 파일(https://grafana.com/docs/k6/latest/set-up/install-k6/)
+#   K6=k6                          # k6 실행 파일(https://grafana.com/docs/k6/latest/set-up/install-k6/) — 클러스터 안 Job 으로는 K6=ops/tools/k6-job.sh
+#   PROD_READONLY=1  PROD_MAX_RATE=200  ALERTMANAGER=http://localhost:9093  SILENCED=1   # 운영 읽기 천장(위) — SILENCED=1 은 묵음을 손으로 걸었을 때만
+#   PROM_MATCH='environment="demo"'   # 서버 지표 선택자(기본은 PROM_ENV 로, 운영 읽기에서는 job="spring-actuator" — 운영 지표에는 environment 라벨이 없다)
 #   CEILING_RATES=10,20,50,100,200,400  CEILING_HOLD=3m  CEILING_RAMP=30s   # ceiling 의 계단(초당 반복) · 계단마다 유지 · 올리는 시간
 #   CEILING_P99_MS  CEILING_MAX_5XX=0.001   # ceiling 의 SLO(docs/91 §2) — p99 기본은 browse · mixed 300(catalog-browse 경계 — 목록 · 검색도
 #                                  # 이 기준이라 보수적) · order 1000(order-create — order_create 요청만). 5xx 비율은 목표 가용성 99.9% 의 예산
@@ -130,6 +138,83 @@ lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지>
         "") die "APP_PUBLIC_URL 이 비어 있다 — 실습 클러스터(데모 오버레이)인지 확인할 수 없다" ;;
     esac
     PUBLIC_URL="$url"
+}
+
+# ── 운영 읽기 천장(docs/91 §4-2) ─────────────────────────────────────────────
+#
+# 운영 클러스터에는 읽기만, 클러스터 안에서, 상한을 두고. 운영 노드는 한 대라(데이터 계층까지) 천장을 넘기면 사이트 전체가 같이 느려진다 —
+# 그래서 계단은 낮게 시작하고 SLO 가 깨지는 첫 계단에서 멈추는 ceiling 으로 잰다. 쓰기 시나리오(order · mixed · contention)는 운영
+# 데이터(주문 · 재고 · 쿠폰)를 남기므로 거절한다. Cloudflare 를 거치면 엣지가 CF-Connecting-IP 를 덮어써 한 IP 의 유입 제한(초당 20)만 잰다 —
+# 클러스터 안에서 게이트웨이로 바로 보내고 손님 IP 흉내(CLIENT_IPS)로 버킷을 나눈다(운영 제한 설정은 바꾸지 않는다).
+# [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
+cluster_public_url() {   # 지금 kubectl 컨텍스트의 APP_PUBLIC_URL(못 읽으면 빈 값)
+    command -v kubectl >/dev/null 2>&1 || return 0
+    kubectl -n "$APP_NS" get configmap ecommerce-config -o jsonpath='{.data.APP_PUBLIC_URL}' 2>/dev/null || true
+}
+is_prod_url() { case "${1:-}" in *ysyproject.com*) return 0 ;; esac; return 1; }
+
+prod_readonly_guard() {   # prod_readonly_guard <시나리오> <이번에 걸 최고 도착률>
+    local scenario="$1" rate="$2" host hhmm
+    [ "${PROD_READONLY:-}" = "1" ] || die "운영 클러스터다 — 부하는 PROD_READONLY=1 의 읽기 천장으로만(docs/91 §4-2)"
+    [ "$scenario" = "browse" ] || die "운영에서는 browse(읽기)만 — $scenario 는 운영 데이터(주문 · 재고 · 쿠폰 · 리뷰)를 남긴다"
+    host="$(printf '%s' "$GATEWAY" | sed -E 's#^[a-zA-Z]+://##; s#[/:].*$##' | tr 'A-Z' 'a-z')"
+    case "$host" in
+        gateway-server|gateway-server.*.svc|gateway-server.*.svc.cluster.local) ;;
+        *) die "운영 읽기는 클러스터 안 게이트웨이로만(GATEWAY=https://gateway-server.$APP_NS.svc.cluster.local:8000) — 지금 $host. Cloudflare 를 거치면 한 IP 의 유입 제한만 잰다" ;;
+    esac
+    [ "$(basename "$K6")" = "k6-job.sh" ] || die "운영 읽기는 클러스터 안 Job 으로(K6=ops/tools/k6-job.sh) — 노드에서는 클러스터 주소가 풀리지 않고, 노드의 k6 는 서버와 CPU 를 다툰다"
+    [[ "${CLIENT_IPS:-0}" =~ ^[0-9]+$ ]] && [ "${CLIENT_IPS:-0}" -ge 100 ] \
+        || die "운영 읽기는 손님 IP 흉내로(CLIENT_IPS ≥ 100) — 운영 유입 제한(초당 20 / IP)을 바꾸지 않는다"
+    [[ "$rate" =~ ^[1-9][0-9]*$ ]] || die "운영 읽기는 도착률을 정수로 정한다(RATE 또는 CEILING_RATES)"
+    [ "$rate" -le "${PROD_MAX_RATE:-200}" ] || die "도착률 $rate > PROD_MAX_RATE(${PROD_MAX_RATE:-200}) — 운영은 한 대다, 상한을 올리려면 PROD_MAX_RATE 로 명시"
+    hhmm="${UTC_HHMM:-$(date -u +%H%M)}"
+    if [ "$((10#$hhmm))" -ge 245 ] && [ "$((10#$hhmm))" -le 515 ]; then
+        die "백업 · 정리 시간대(02:45 ~ 05:15 UTC — postgres-backup 03:00 · mongo 04:00 · 원장 정리 04:40 ~)다 — 피해서 다시"
+    fi
+}
+
+# Alertmanager 묵음 — 측정 동안만. 만들면 PROD_SILENCE_ID, 끝나면(EXIT) 푼다. 못 만들면 SILENCED=1(손으로 걸었다) 없이는 멈춘다.
+PROD_SILENCE_ID=""
+prod_silence_start() {   # prod_silence_start <분>
+    local minutes="$1" am="${ALERTMANAGER:-http://localhost:9093}" body
+    body="$(python3 -I -c '
+import json, sys, datetime
+m = int(sys.argv[1]); now = datetime.datetime.now(datetime.timezone.utc)
+print(json.dumps({"matchers": [{"name": "alertname", "isRegex": True, "isEqual": True,
+    "value": "Slo.*|SiteProbeDown|High5xxRate|HighP99Latency|KafkaConsumerLagHigh|CircuitBreakerOpen"}],
+    "startsAt": now.isoformat(), "endsAt": (now + datetime.timedelta(minutes=m)).isoformat(),
+    "createdBy": "ops/53 prod-readonly", "comment": "운영 읽기 천장 측정(docs/91 §4-2)"}))' "$minutes")"
+    PROD_SILENCE_ID="$(curl -fsS --max-time 10 -X POST -H 'Content-Type: application/json' -d "$body" "$am/api/v2/silences" 2>/dev/null \
+        | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("silenceID",""))' 2>/dev/null || true)"
+    if [ -n "$PROD_SILENCE_ID" ]; then
+        info "Alertmanager 묵음 $PROD_SILENCE_ID — ${minutes}분(SLO · 탐침 · 5xx · p99 · 지연 · 회로), 끝나면 푼다"
+        trap prod_silence_end EXIT
+    elif [ "${SILENCED:-}" = "1" ]; then
+        warn "Alertmanager($am)에 묵음을 만들지 못했다 — SILENCED=1(손으로 걸었다)로 진행"
+    else
+        die "Alertmanager($am)에 묵음을 만들지 못했다 — 운영 노드에서 ALERTMANAGER=http://localhost:9093, 또는 손으로 걸고 SILENCED=1"
+    fi
+}
+prod_silence_end() {
+    [ -n "$PROD_SILENCE_ID" ] || return 0
+    curl -fsS --max-time 10 -X DELETE "${ALERTMANAGER:-http://localhost:9093}/api/v2/silence/$PROD_SILENCE_ID" >/dev/null 2>&1 \
+        && info "묵음 $PROD_SILENCE_ID 를 풀었다" || warn "묵음 $PROD_SILENCE_ID 를 풀지 못했다 — Alertmanager 화면에서 Expire"
+    PROD_SILENCE_ID=""
+}
+
+# 서버 지표 선택자 — 실습은 environment 라벨, 운영 노드의 Prometheus 는 environment 가 없다(metrics-agent 가 붙이지 않는다)
+prom_match() {
+    if [ -z "${PROM_MATCH:-}" ]; then
+        if [ "${PROD_READONLY:-}" = "1" ]; then PROM_MATCH='job="spring-actuator"'; else PROM_MATCH="environment=\"${PROM_ENV:-demo}\""; fi
+    fi
+    [[ "$PROM_MATCH" =~ ^[a-z_]+=\"[a-z0-9_.-]+\"$ ]] || die "PROM_MATCH 는 라벨=\"값\" 하나(예 job=\"spring-actuator\")"
+}
+
+prod_confirm() {   # 운영이다 — YES=1 이 아니면 묻는다
+    [ "${YES:-}" = "1" ] && return 0
+    [ -t 0 ] || die "운영 부하 — 확인할 터미널이 없다. YES=1 로 명시"
+    local a; read -r -p "  운영 클러스터에 읽기 부하를 건다($1). 진행할까? [y/N] " a
+    [[ "$a" =~ ^[yY]$ ]] || die "그만둔다"
 }
 
 # ── 게이트웨이 로그 — 파드가 바뀌기 전에 ─────────────────────────────────
@@ -859,6 +944,13 @@ cmd_ceiling() {
     local rates="${CEILING_RATES:-10,20,50,100,200,400}" hold="${CEILING_HOLD:-3m}" ramp="${CEILING_RAMP:-30s}"
     local max5xx="${CEILING_MAX_5XX:-0.001}"
     [[ "$rates" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || die "CEILING_RATES 는 쉼표로 나눈 양의 정수(예 10,20,50)"
+    local prod_url; prod_url="$(cluster_public_url)"
+    if is_prod_url "$prod_url" || [ "${PROD_READONLY:-}" = "1" ]; then
+        prod_readonly_guard "$scenario" "${rates##*,}"
+        local n_steps; n_steps="$(tr ',' '\n' <<< "$rates" | wc -l)"
+        prod_confirm "ceiling $scenario · 계단 $rates"
+        prod_silence_start $(( n_steps * 5 + 30 ))
+    fi
     [[ "$hold" =~ ^[1-9][0-9]*[sm]$ ]] && [[ "$ramp" =~ ^[1-9][0-9]*[sm]$ ]] || die "CEILING_HOLD · CEILING_RAMP 는 30s · 3m 모양"
     [[ "$CEILING_P99_MS" =~ ^[1-9][0-9]*$ ]] || die "CEILING_P99_MS 는 양의 정수(ms)"
     [[ "$max5xx" =~ ^0(\.[0-9]+)?$ ]] || die "CEILING_MAX_5XX 는 0 ~ 1 미만의 비율(예 0.001)"
@@ -882,7 +974,7 @@ cmd_ceiling() {
         prev="$r"
         t0="$(date -u +%s)"
         set +e
-        OUT="$dir/steps/$r" RATE="$r" STAGES="$ramp:$r,$hold:$r,10s:0" bash "$0" "$scenario" > "$dir/steps/$r.log" 2>&1
+        CEILING_STEP=1 OUT="$dir/steps/$r" RATE="$r" STAGES="$ramp:$r,$hold:$r,10s:0" bash "$0" "$scenario" > "$dir/steps/$r.log" 2>&1
         local rc=$?
         set -e
         t1="$(date -u +%s)"
@@ -905,12 +997,13 @@ ceiling_judge() {
     w=$(( t1 - t0 )); [ "$w" -ge 60 ] || w=60
     : > "$dir/prom-$r.txt"
     if [ -n "$prom" ]; then
-        local env="${PROM_ENV:-demo}"
-        for q in "rps|sum by (service) (rate(http_server_requests_seconds_count{environment=\"$env\"}[${w}s]))" \
-                 "pods|max_over_time((count by (service) (up{environment=\"$env\"} == 1))[${w}s:15s])" \
-                 "cpu|max by (service) (avg_over_time(process_cpu_usage{environment=\"$env\"}[${w}s]))" \
-                 "pending|max by (service) (max_over_time(hikaricp_connections_pending{environment=\"$env\"}[${w}s]))" \
-                 "lag|max by (service) (max_over_time(kafka_consumer_fetch_manager_records_lag_max{environment=\"$env\"}[${w}s]))"; do
+        prom_match
+        local sel="$PROM_MATCH"
+        for q in "rps|sum by (service) (rate(http_server_requests_seconds_count{$sel}[${w}s]))" \
+                 "pods|max_over_time((count by (service) (up{$sel} == 1))[${w}s:15s])" \
+                 "cpu|max by (service) (avg_over_time(process_cpu_usage{$sel}[${w}s]))" \
+                 "pending|max by (service) (max_over_time(hikaricp_connections_pending{$sel}[${w}s]))" \
+                 "lag|max by (service) (max_over_time(kafka_consumer_fetch_manager_records_lag_max{$sel}[${w}s]))"; do
             printf '%s\t' "${q%%|*}" >> "$dir/prom-$r.txt"
             curl -fsS --max-time 10 -G "$prom/api/v1/query" --data-urlencode "query=${q#*|}" --data-urlencode "time=$t1" 2>/dev/null \
                 | tr -d '\n' >> "$dir/prom-$r.txt" || true
@@ -1065,6 +1158,19 @@ if [ -n "${SPLIT:-}" ]; then
     RATE=$(( RATE / SPLIT_OF ))
     ID_OFFSET=$(( ID_OFFSET + (SPLIT_PART - 1) * USERS ))   # 데모 계정을 VM 마다 따로(리프레시 토큰이 회전한다)
 fi
+# 운영 클러스터 — 읽기 천장 모드로만(docs/91 §4-2)
+RUN_PUBLIC_URL="$(cluster_public_url)"
+if is_prod_url "$RUN_PUBLIC_URL" || [ "${PROD_READONLY:-}" = "1" ]; then
+    if [ "${CEILING_STEP:-}" != "1" ]; then
+        [ -z "${STAGES:-}" ] || die "운영 읽기는 STAGES 를 받지 않는다 — RATE 로(또는 ceiling 으로)"
+        [ -z "${SPLIT:-}" ] || die "운영 읽기는 SPLIT 과 함께 쓰지 않는다"
+    fi
+    prod_readonly_guard "$SCENARIO" "${RATE:-}"
+    if [ "${CEILING_STEP:-}" != "1" ]; then
+        prod_confirm "$SCENARIO · 도착률 $RATE"
+        prod_silence_start 45
+    fi
+fi
 CLIENT_IP_OFFSET=$(( (SPLIT_PART - 1) * CLIENT_IPS ))
 [ $(( CLIENT_IP_OFFSET + CLIENT_IPS )) -le 65536 ] || die "CLIENT_IPS × n 이 65536 을 넘는다"
 if [ -n "${START_AT:-}" ]; then
@@ -1103,7 +1209,8 @@ PROM="${PROM:-${PROM_RW:-}}"
 PROM="${PROM%/api/v1/write}"
 PROM_ENV="${PROM_ENV:-demo}"
 [[ "$PROM_ENV" =~ ^[a-z0-9-]+$ ]] || die "PROM_ENV 는 영소문자 · 숫자 · - 만"
-UP="count by (service) (up{environment=\"$PROM_ENV\"} == 1)"
+prom_match   # PROM_MATCH
+UP="count by (service) (up{$PROM_MATCH} == 1)"
 prom_counts() {   # prom_counts <PromQL> → "서비스=수 …" (응답이 없거나 결과가 비면 실패)
     curl -fsS --max-time 10 -G "$PROM/api/v1/query" --data-urlencode "query=$1" 2>/dev/null | python3 -I -c '
 import json, sys
@@ -1118,7 +1225,7 @@ replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
     if v="$(prom_counts "$2")"; then
         echo "$1=$v"
     else
-        warn "레플리카를 Prometheus($PROM)에서 읽지 못했다 — up{environment=\"$PROM_ENV\"} 가 있는지"
+        warn "레플리카를 Prometheus($PROM)에서 읽지 못했다 — up{$PROM_MATCH} 가 있는지"
         echo "replicas_note=Prometheus($PROM)에서 읽지 못했다($1)"
     fi
 }

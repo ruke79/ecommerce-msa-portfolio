@@ -569,6 +569,7 @@ class LoadK6ScriptTest {
                 echo "k6 fake run"
                 exit "${K6_EXIT:-0}"
                 """);
+        Files.copy(bin.resolve("k6"), bin.resolve("k6-job.sh"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         exe(bin.resolve("kubectl"), """
                 echo "kubectl $*" >> "$FAKE/kubectl.log"
                 case "$*" in
@@ -608,6 +609,10 @@ class LoadK6ScriptTest {
         // 가짜 Prometheus 질의 API — 측정 중 최대(max_over_time)와 지금 값을 따로 돌려준다. FAKE_PROM_FAIL=1 이면 응답 없음
         exe(bin.resolve("curl"), """
                 echo "curl $*" >> "$FAKE/curl.log"
+                case "$*" in
+                  *"/api/v2/silences"*) [ "${FAKE_SILENCE_FAIL:-0}" = "1" ] && exit 7; printf '{"silenceID":"sil-1"}'; exit 0 ;;
+                  *"/api/v2/silence/"*) exit 0 ;;
+                esac
                 [ "${FAKE_PROM_FAIL:-0}" = "1" ] && exit 7
                 case "$*" in
                   *max_over_time*) printf '%s' "${FAKE_PROM_MAX:-}" ;;
@@ -1125,5 +1130,123 @@ class LoadK6ScriptTest {
         Run down = run(Map.of("FAKE_SUMMARY", "1", "CEILING_RATES", "50,20"), "ceiling", "browse");
         assertThat(down.code()).isNotZero();
         assertThat(down.out()).contains("커지는 순서");
+    }
+
+    // ── 운영 읽기 천장(docs/91 §4-2) ─────────────────────────────────────────
+
+    private static final String PROD = "https://www.ysyproject.com";
+    private static final String IN_CLUSTER = "https://gateway-server.ecommerce.svc.cluster.local:8000";
+
+    private Map<String, String> prodReadonly(String... extra) {
+        Map<String, String> env = new java.util.HashMap<>(Map.of("FAKE_URL", PROD, "PROD_READONLY", "1",
+                "K6", tmp.resolve("bin/k6-job.sh").toString(), "GATEWAY", IN_CLUSTER, "CLIENT_IPS", "2000",
+                "YES", "1", "UTC_HHMM", "1200", "ALERTMANAGER", "http://am.test:9093"));
+        for (int i = 0; i + 1 < extra.length; i += 2) {
+            env.put(extra[i], extra[i + 1]);
+        }
+        return env;
+    }
+
+    @Test
+    @DisplayName("🔴 운영 클러스터 — PROD_READONLY 없이 · 쓰기 시나리오 · 바깥 주소 · 노드 k6 · 흉내 없음 · 상한 초과 · 백업 시간대 · STAGES 는 k6 전에 거절")
+    void productionClusterRefusesAnythingButReadonlyBrowse() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        assertThat(run(Map.of("FAKE_URL", PROD, "GATEWAY", IN_CLUSTER, "RATE", "10"), "browse").out()).contains("PROD_READONLY=1");
+        assertThat(run(prodReadonly("RATE", "10"), "order").out()).contains("browse(읽기)만");
+        assertThat(run(prodReadonly("RATE", "10", "GATEWAY", "https://shop.lab"), "browse").out()).contains("클러스터 안 게이트웨이로만");
+        assertThat(run(prodReadonly("RATE", "10", "K6", "k6"), "browse").out()).contains("K6=ops/tools/k6-job.sh");
+        assertThat(run(prodReadonly("RATE", "10", "CLIENT_IPS", "0"), "browse").out()).contains("CLIENT_IPS ≥ 100");
+        assertThat(run(prodReadonly("RATE", "500"), "browse").out()).contains("PROD_MAX_RATE");
+        assertThat(run(prodReadonly("RATE", "10", "UTC_HHMM", "0330"), "browse").out()).contains("백업 · 정리 시간대");
+        assertThat(run(prodReadonly("RATE", "10", "STAGES", "1m:10"), "browse").out()).contains("STAGES 를 받지 않는다");
+        assertThat(run(prodReadonly("CEILING_RATES", "10,400"), "ceiling", "browse").out()).contains("PROD_MAX_RATE");
+        assertThat(tmp.resolve("k6.calls")).as("거절은 모두 k6 전에").doesNotExist();
+    }
+
+    @Test
+    @DisplayName("🔴 운영 읽기 천장 — 묵음을 한 번 걸고 끝나면 푼다 · 계단마다 클러스터 안 Job · 서버 지표는 job=\"spring-actuator\"(운영에는 environment 라벨이 없다)")
+    void productionReadonlyCeilingSilencesAndUsesJobSelector() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(prodReadonly("CEILING_RATES", "10,50,100", "FAKE_SUMMARY", "1", "FAKE_MS_PER_RATE", "2",
+                "PROM", "http://localhost:9090", "FAKE_PROM_UP", PROM_ONE.formatted("0.9"), "FAKE_PROM_MAX", PROM_ONE.formatted("3")),
+                "ceiling", "browse");
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(Files.readAllLines(tmp.resolve("k6.calls"))).hasSize(3);
+        String curl = Files.readString(tmp.resolve("curl.log"));
+        assertThat(curl).contains("-X POST", "http://am.test:9093/api/v2/silences", "-X DELETE", "http://am.test:9093/api/v2/silence/sil-1");
+        assertThat(curl.split("/api/v2/silences", -1)).as("묵음은 ceiling 이 한 번만(계단마다가 아니다)").hasSize(2);
+        assertThat(curl).contains("job=\"spring-actuator\"").doesNotContain("environment=");
+        assertThat(ceilingMd()).contains("모든 계단 통과");
+    }
+
+    @Test
+    @DisplayName("🔴 운영 읽기 — 묵음을 못 만들면 멈춘다(SILENCED=1 이면 손으로 건 것으로 보고 진행) · 보통 회차도 묵음을 건다")
+    void productionReadonlyNeedsSilence() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run refused = run(prodReadonly("RATE", "20", "FAKE_SILENCE_FAIL", "1"), "browse");
+        assertThat(refused.code()).isNotZero();
+        assertThat(refused.out()).contains("묵음을 만들지 못했다");
+        assertThat(tmp.resolve("k6.calls")).doesNotExist();
+
+        Run manual = run(prodReadonly("RATE", "20", "FAKE_SILENCE_FAIL", "1", "SILENCED", "1"), "browse");
+        assertThat(manual.code()).as(manual.out()).isZero();
+        Run auto = run(prodReadonly("RATE", "20"), "browse");
+        assertThat(auto.code()).as(auto.out()).isZero();
+        assertThat(Files.readString(tmp.resolve("curl.log"))).contains("/api/v2/silences", "/api/v2/silence/sil-1");
+    }
+
+    // ── k6-job.sh — k6 를 클러스터 안 Job 으로 ──────────────────────────────────
+
+    private Run k6Job(Map<String, String> env, String... args) throws Exception {
+        Path bin = Files.createDirectories(tmp.resolve("jobbin"));
+        exe(bin.resolve("kubectl"), """
+                echo "kubectl $*" >> "$FAKE/kubectl.log"
+                case "$*" in
+                  *"apply -f -"*) cat > "$FAKE/job.yaml" ;;
+                  *"get pods -l job-name"*) printf 'k6-pod-1' ;;
+                  *"jsonpath={.status.phase}"*) printf 'Succeeded' ;;
+                  *"logs -f k6-pod-1"*) printf 'running\n=====K6-SUMMARY-BEGIN=====\n{"metrics":{"http_reqs":{"count":3}}}\n\n=====K6-SUMMARY-END=====\n' ;;
+                  *"exitCode"*) printf '%s' "${FAKE_RC:-0}" ;;
+                esac
+                """);
+        List<String> cmd = new ArrayList<>(List.of("bash", repoRoot().resolve("ops/tools/k6-job.sh").toString()));
+        cmd.addAll(List.of(args));
+        ProcessBuilder pb = new ProcessBuilder(cmd).directory(tmp.toFile()).redirectErrorStream(true);
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        pb.environment().put("FAKE", tmp.toString());
+        pb.environment().remove("DEMO_PASSWORD");
+        pb.environment().putAll(env);
+        Process p = pb.start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(p.waitFor(60, TimeUnit.SECONDS)).isTrue();
+        return new Run(p.exitValue(), out);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("🔴 k6-job.sh — 같은 인자로 Job 을 띄워 요약을 돌려준다: 판 고정 이미지 · 공개 CA(ca.crt)만 · 비루트 · 종료 코드는 k6 의 것 · 끝나면 지운다 · 비밀은 거절")
+    void k6JobRunsTheScenarioInsideTheCluster() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path summary = tmp.resolve("out/summary.json");
+        Run r = k6Job(Map.of("FAKE_RC", "99"), "run", "--summary-export", summary.toString(),
+                "-e", "GATEWAY=" + IN_CLUSTER, "-e", "CLIENT_IPS=2000", repoRoot().resolve("ops/k6/browse.js").toString());
+        assertThat(r.code()).as(r.out()).isEqualTo(99);
+        assertThat(Files.readString(summary)).contains("\"http_reqs\"");
+
+        Map<String, Object> job = new org.yaml.snakeyaml.Yaml().load(Files.readString(tmp.resolve("job.yaml")));
+        Map<String, Object> pod = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) job.get("spec")).get("template")).get("spec");
+        Map<String, Object> c = ((List<Map<String, Object>>) pod.get("containers")).get(0);
+        assertThat((String) c.get("image")).matches("grafana/k6:\\d+\\.\\d+\\.\\d+");
+        assertThat((List<String>) c.get("args")).containsSequence("k6", "run", "--summary-export", "/out/summary.json")
+                .contains("GATEWAY=" + IN_CLUSTER, "/scripts/browse.js");
+        assertThat(String.valueOf(pod.get("volumes"))).contains("tls-keystore", "ca.crt").doesNotContain("keystore.p12", "password");
+        assertThat(String.valueOf(pod.get("securityContext"))).contains("runAsNonRoot=true");
+        assertThat(String.valueOf(c.get("env"))).contains("SSL_CERT_FILE");
+        String kubectl = Files.readString(tmp.resolve("kubectl.log"));
+        assertThat(kubectl).contains("create configmap", "--from-file=lib.js=", "--from-file=browse.js=", "delete job", "delete configmap");
+
+        Run secret = k6Job(Map.of("DEMO_PASSWORD", "S3cret-demo-pw!9"), "run", repoRoot().resolve("ops/k6/browse.js").toString());
+        assertThat(secret.code()).isNotZero();
+        assertThat(secret.out()).contains("비밀").doesNotContain("S3cret-demo-pw!9");
     }
 }

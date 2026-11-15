@@ -180,6 +180,35 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 참고로 지금까지의 실습 회차에서 catalog 파드 하나는 ~350 요청/초, 병목은 CPU(JSON 직렬화)였습니다(docs/83 · docs/89 §0 #9) — 그때는 SLO 없이 "임계값 통과" 로 판정했습니다. 실습 클러스터의 절대값은 코어를 나눠 쓴 값이라 크기 산정에는 비율 · 병목의 순서만 씁니다(docs/83).
 
+### 4-2. 운영 읽기 천장(2026-11-15 — 준비 끝, 실행은 운영 노드에서)
+
+실습 클러스터의 수치는 코어를 나눠 쓴 값이라 비율로만 쓴다. **지금 운영이 SLO 안에서 초당 몇 요청을 받나**는 운영 노드에서만 나온다 — 그래서 읽기(비회원 browse)만, 클러스터 안에서, 상한을 두고 잰다.
+
+| 무엇 | 왜 |
+|---|---|
+| **browse 만** | order · mixed · contention 은 주문 · 재고 · 쿠폰 · 리뷰를 운영 DB 에 남긴다. 대량 사용자(`ops/48`)도 필요 없다 |
+| **클러스터 안에서 게이트웨이로 바로**(`https://gateway-server.ecommerce.svc.cluster.local:8000`) | Cloudflare 를 거치면 엣지가 `CF-Connecting-IP` 를 덮어써 한 IP 의 유입 제한(초당 20)만 잰다. 클러스터 안에서는 게이트웨이가 그 헤더를 믿으므로 **손님 IP 흉내(`CLIENT_IPS`)로 버킷이 나뉜다** — 운영 제한 설정을 바꾸지 않는다 |
+| **k6 를 Job 으로**(`K6=ops/tools/k6-job.sh`) | 노드에서는 클러스터 주소가 풀리지 않는다. Job 은 `grafana/k6:0.54.0`(arm64 있음) · CPU 1 · 1Gi, 시나리오는 ConfigMap, TLS 는 `tls-keystore` 의 공개 CA(`ca.crt`)만으로 검증. 같은 네임스페이스라 NetworkPolicy(k8s/95)도 연다 |
+| **상한** | 도착률 ≤ `PROD_MAX_RATE`(기본 200 반복/초), SLO 가 깨지는 첫 계단에서 멈춘다(ceiling) |
+| **시간** | 02:45 ~ 05:15 UTC(백업 03:00 · Mongo 04:00 · 원장 정리 04:40 ~)는 거절. 손님이 가장 적은 시간에 |
+| **경보** | 측정 동안 Alertmanager 묵음(SLO · 탐침 · 5xx · p99 · 지연 · 회로 차단기)을 스스로 걸고 끝나면 푼다. 못 걸면 멈춘다(손으로 걸었으면 `SILENCED=1`) |
+| **서버 지표** | 운영 Prometheus(노드 `localhost:9090`)에는 `environment` 라벨이 없다 — 선택자는 `job="spring-actuator"`(`PROM_MATCH` 로 바꿀 수 있다) |
+
+```bash
+# 운영 노드에서 — 저장소를 측정할 커밋으로 맞춘 뒤(git switch --detach <SHA>), kubectl 컨텍스트는 운영
+PROD_READONLY=1 K6=ops/tools/k6-job.sh \
+GATEWAY=https://gateway-server.ecommerce.svc.cluster.local:8000 CLIENT_IPS=2000 \
+PROM=http://localhost:9090 ALERTMANAGER=http://localhost:9093 \
+CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
+  ./ops/53-load-k6.sh ceiling browse
+./ops/53-load-k6.sh report        # 결과: load-results/ceiling-browse-<시각>/ceiling.md
+```
+
+- 운영 클러스터(ConfigMap 의 `APP_PUBLIC_URL` 이 운영 주소)에서는 **이 모드로만** 돈다 — `PROD_READONLY=1` 이 없거나 위 조건 하나라도 어기면 k6 를 부르기 전에 멈춘다. 보통 회차(`RATE=` 하나)도 같은 조건이고 묵음을 건다.
+- 데이터 규모 모드로 캐시 밖까지 보려면 `PRODUCTS=<운영 상품 수> PRODUCT_ID_OFFSET=<첫 id>`(운영은 데모 생성기의 200만 — id 범위를 먼저 확인) · `SPREAD=1`. 없으면 홈에 나온 상품만 읽어 대부분 캐시에서 나온다 — 그것도 "운영의 읽기 천장" 의 한 면이다.
+- 해석: k6 Job 은 서버와 같은 노드의 CPU 1 개를 쓴다 — 천장은 그만큼 보수적이다(ceiling.md 의 서비스별 CPU 로 본다). 터널 · Cloudflare 시간은 빠진다(그것은 `site-probe` 가 본다).
+- 시험: `LoadK6ScriptTest` — 운영에서 거절 8가지 · 묵음을 한 번 걸고 푼다 · 지표 선택자 · 묵음 실패 · `k6-job.sh`(판 고정 · 공개 CA 만 · 비루트 · 종료 코드 · 정리 · 비밀 거절). 변이 확인 5가지.
+
 ---
 
 ## 5. 적용 · 확인
@@ -199,7 +228,7 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 ## 6. 남은 것
 
-1. **천장 측정** — 실습 클러스터에서 `ceiling browse` · `ceiling order` 를 돌려 §4-1 을 채운다. 그 표가 docs/89 단계 2 · 3 · 4 의 크기를 정한다.
+1. **천장 측정** — 실습 클러스터에서 `ceiling browse` · `ceiling order` 를 돌려 §4-1 을 채운다. 운영의 읽기 천장은 §4-2(준비 끝 — 운영 노드에서 실행). 그 표가 docs/89 단계 2 · 3 · 4 의 크기를 정한다.
 2. **노드 밖 감시** — 노드가 통째로 죽으면 지금의 경보는 아무것도 울리지 않는다(§2-6). Cloudflare Health Checks 나 외부 가동 감시 서비스 하나를 두는 것은 계정 · 비용 판단이라 아직 하지 않았다.
 3. **예산 창 30일** — 보존을 31일로 올릴지(디스크 확인 뒤, §2-4).
 4. **목표 값으로 올리기** — docs/89 단계 1 · 2 를 마치면 `slo:objective:availability` 를 주석의 목표로.

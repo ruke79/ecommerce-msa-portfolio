@@ -180,6 +180,35 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 参考までに、これまでの実習の回では catalog の Pod 一つが約 350 リクエスト/秒、ボトルネックは CPU（JSON シリアライズ）でした（docs/83 · docs/89 §0 #9）— そのときは SLO なしで「しきい値通過」で判定していました。実習クラスターの絶対値はコアを分け合った値なので、大きさの見積もりには比率 · ボトルネックの順序だけを使います（docs/83）。
 
+### 4-2. 本番の読み取り天井（2026-11-15 — 準備済み、実行は本番ノードで）
+
+実習クラスターの数値はコアを分け合った値なので比率としてだけ使う。**今の本番が SLO 内で毎秒何リクエストを受けられるか**は本番ノードでしか出ない — だから読み取り（非会員の browse）だけを、クラスター内から、上限を付けて測る。
+
+| 何を | なぜ |
+|---|---|
+| **browse だけ** | order · mixed · contention は注文 · 在庫 · クーポン · レビューを本番 DB に残す。大量ユーザー（`ops/48`）も要らない |
+| **クラスター内からゲートウェイへ直接**（`https://gateway-server.ecommerce.svc.cluster.local:8000`） | Cloudflare を通るとエッジが `CF-Connecting-IP` を上書きし、一つの IP の流入制限（毎秒 20）だけを測ることになる。クラスター内ではゲートウェイがそのヘッダーを信じるので、**客の IP の模倣（`CLIENT_IPS`）でバケットが分かれる** — 本番の制限設定は変えない |
+| **k6 を Job で**（`K6=ops/tools/k6-job.sh`） | ノードからはクラスターのアドレスが引けない。Job は `grafana/k6:0.54.0`（arm64 あり）· CPU 1 · 1Gi、シナリオは ConfigMap、TLS は `tls-keystore` の公開 CA（`ca.crt`）だけで検証。同じネームスペースなので NetworkPolicy（k8s/95）も通す |
+| **上限** | 到着率 ≤ `PROD_MAX_RATE`（既定 200 反復/秒）、SLO が破れた最初の階段で止まる（ceiling） |
+| **時間** | 02:45 〜 05:15 UTC（バックアップ 03:00 · Mongo 04:00 · 台帳の整理 04:40 〜）は拒否。客が一番少ない時間に |
+| **警報** | 計測の間 Alertmanager のサイレンス（SLO · プローブ · 5xx · p99 · 遅延 · サーキットブレーカー）を自分で掛け、終わったら外す。掛けられなければ止まる（手で掛けたなら `SILENCED=1`） |
+| **サーバー指標** | 本番の Prometheus（ノードの `localhost:9090`）には `environment` ラベルがない — セレクターは `job="spring-actuator"`（`PROM_MATCH` で変えられる） |
+
+```bash
+# 本番ノードで — リポジトリを計測するコミットに合わせてから（git switch --detach <SHA>）、kubectl のコンテキストは本番
+PROD_READONLY=1 K6=ops/tools/k6-job.sh \
+GATEWAY=https://gateway-server.ecommerce.svc.cluster.local:8000 CLIENT_IPS=2000 \
+PROM=http://localhost:9090 ALERTMANAGER=http://localhost:9093 \
+CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
+  ./ops/53-load-k6.sh ceiling browse
+./ops/53-load-k6.sh report        # 結果: load-results/ceiling-browse-<時刻>/ceiling.md
+```
+
+- 本番クラスター（ConfigMap の `APP_PUBLIC_URL` が本番アドレス）では**このモードでしか**動かない — `PROD_READONLY=1` がないか、上の条件を一つでも破ると k6 を呼ぶ前に止まる。通常の回（`RATE=` 一つ）も同じ条件で、サイレンスを掛ける。
+- データ規模モードでキャッシュの外まで見るには `PRODUCTS=<本番の商品数> PRODUCT_ID_OFFSET=<最初の id>`（本番はデモ生成器の 200 万 — id の範囲を先に確認）· `SPREAD=1`。なければホームに出た商品だけを読み、ほとんどキャッシュから出る — それも「本番の読み取り天井」の一面だ。
+- 解釈: k6 Job はサーバーと同じノードの CPU 1 つを使う — 天井はその分保守的だ（ceiling.md のサービス別 CPU で見る）。トンネル · Cloudflare の時間は入らない（それは `site-probe` が見る）。
+- テスト: `LoadK6ScriptTest` — 本番での拒否 8 種 · サイレンスを一度掛けて外す · 指標のセレクター · サイレンス失敗 · `k6-job.sh`（版固定 · 公開 CA だけ · 非 root · 終了コード · 後片付け · 秘密の拒否）。変異の確認 5 種。
+
 ---
 
 ## 5. 適用 · 確認
@@ -199,7 +228,7 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 ## 6. 残り
 
-1. **天井の測定** — 実習クラスターで `ceiling browse` · `ceiling order` を回して §4-1 を埋める。その表が docs/89 段階 2 · 3 · 4 の大きさを決める。
+1. **天井の測定** — 実習クラスターで `ceiling browse` · `ceiling order` を回して §4-1 を埋める。本番の読み取り天井は §4-2（準備済み — 本番ノードで実行）。その表が docs/89 段階 2 · 3 · 4 の大きさを決める。
 2. **ノード外の監視** — ノードが丸ごと落ちると今の警報は何も鳴らない（§2-6）。Cloudflare Health Checks や外部の稼働監視サービスを一つ置くのはアカウント · 費用の判断なので、まだしていない。
 3. **バジェットの窓を 30 日に** — 保持を 31 日に上げるか（ディスクを確認した後、§2-4）。
 4. **目標値に上げる** — docs/89 段階 1 · 2 を終えたら `slo:objective:availability` をコメントの目標に。
