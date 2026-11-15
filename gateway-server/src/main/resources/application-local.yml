@@ -103,6 +103,13 @@ spring:
       # 기동 때 옮겨 읽어 주지만(경고) 다음 메이저에서 빠진다 — 여기로 옮겼다(docs/61).
       server:
         webflux:
+          # 라우트마다의 요청 타이머 spring.cloud.gateway.requests(routeId · httpStatusCode · httpMethod · outcome) — 4.3 은 기본 꺼짐이라
+          # 지금까지 게이트웨이 쪽 지표는 라우트를 몰랐다. SLO `gateway`(docs/91 §2-7)가 이것을 읽는다 — 회로 차단 폴백(/fallback 503)
+          # · 연결 실패 · 다운스트림 시간 초과는 서비스 쪽 http.server.requests 에 남지 않는다. 경계 버킷은 application-common.yml.
+          # path 태그(path-tags)는 켜지 않는다 — 요청 경로마다 시계열이 생긴다.
+          # [JA] ルートごとのタイマー(4.3 は既定で無効)。SLO gateway が読む — フォールバック 503 · 接続失敗はサービス側の指標に残らない。
+          metrics:
+            enabled: true
           httpclient:
             ssl:
                 # 예전에는 true 로 고정돼 있었다. 그 한 줄이 게이트웨이의 다운스트림 TLS 검증을

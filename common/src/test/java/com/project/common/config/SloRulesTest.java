@@ -60,18 +60,27 @@ class SloRulesTest {
         return Binder.get(env).bind("management.metrics", MetricsProperties.class).orElseGet(MetricsProperties::new);
     }
 
+    private static final String HTTP_TIMER = "http.server.requests";
+    /** Spring Cloud Gateway 의 라우트 타이머(GatewayMetricsFilter — {@code spring.cloud.gateway.server.webflux.metrics.enabled}). */
+    private static final String GATEWAY_TIMER = "spring.cloud.gateway.requests";
+
     /** http.server.requests 타이머 하나를 기록하고 Prometheus 출력의 le 값을 모은다. */
     private static Set<String> exposedBuckets(MetricsProperties props) {
+        return exposedBuckets(props, HTTP_TIMER, "method", "GET", "uri", "/api/search", "status", "200");
+    }
+
+    /** 그 이름의 타이머 하나를 기록하고 Prometheus 출력의 le 값을 모은다. props 가 null 이면 기본 히스토그램(percentiles-histogram)만. */
+    private static Set<String> exposedBuckets(MetricsProperties props, String timer, String... tags) {
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         if (props != null) {
             registry.config().meterFilter(new PropertiesMeterFilter(props));
         }
-        Timer.Builder b = Timer.builder("http.server.requests").tags("method", "GET", "uri", "/api/search", "status", "200");
+        Timer.Builder b = Timer.builder(timer).tags(tags);
         if (props == null) {
             b.publishPercentileHistogram();
         }
         b.register(registry).record(Duration.ofMillis(120));
-        Matcher m = Pattern.compile("http_server_requests_seconds_bucket\\{.*?le=\"([^\"]+)\"").matcher(registry.scrape());
+        Matcher m = Pattern.compile(timer.replace('.', '_') + "_seconds_bucket\\{.*?le=\"([^\"]+)\"").matcher(registry.scrape());
         Set<String> out = new TreeSet<>();
         while (m.find()) {
             out.add(m.group(1));
@@ -100,10 +109,14 @@ class SloRulesTest {
         Set<String> withSlo = exposedBuckets(commonMetricsProperties());
         assertThat(withSlo).as("application-common.yml 의 management.metrics.distribution.slo").contains("0.3", "1.0");
         assertThat(exposedBuckets(null)).as("기본 히스토그램 버킷만 — 그래서 slo 설정이 필요하다").doesNotContain("0.3", "1.0");
+        // 게이트웨이 라우트 타이머 — SLO gateway 의 2초 경계. percentiles-histogram 은 켜지 않으므로 slo 경계가 유일한 버킷이다
+        Set<String> gateway = exposedBuckets(commonMetricsProperties(), GATEWAY_TIMER, "routeId", "catalog-service", "httpStatusCode", "200");
+        assertThat(gateway).as("application-common.yml 의 slo." + GATEWAY_TIMER).contains("2.0");
+        assertThat(gateway).as("라우트 타이머에는 경계 버킷만(+Inf 포함) — 백분위 히스토그램을 켜면 라우트 × 상태마다 70여 개").hasSizeLessThanOrEqualTo(4);
     }
 
-    /** 서비스 쪽 SLO(http.server.requests) — 지연 경계가 버킷(le)이다. site-probe 는 탐침 시간(probe_duration_seconds)이라 따로. */
-    private static final Set<String> HTTP_SLOS = Set.of("catalog-browse", "catalog-search", "order-create");
+    /** 히스토그램 SLO(http.server.requests · gateway 라우트 타이머) — 지연 경계가 버킷(le)이다. site-probe 는 탐침 시간(probe_duration_seconds)이라 따로. */
+    private static final Set<String> HTTP_SLOS = Set.of("catalog-browse", "catalog-search", "order-create", "gateway");
 
     @SuppressWarnings("unchecked")
     private static String label(Map<String, Object> r, String key) {
@@ -113,17 +126,21 @@ class SloRulesTest {
     @Test
     @DisplayName("🔴 slo 그룹이 읽는 경계(le)는 모두 노출되는 버킷이다 · SLO 마다 지연 목표의 threshold_seconds 가 그 SLO 의 지연 SLI 에 있다")
     void ruleBoundariesMatchExposedBuckets() throws IOException {
-        Set<String> exposed = exposedBuckets(commonMetricsProperties());
         List<Map<String, Object>> rules = group("slo");
-        Set<String> used = new TreeSet<>();
-        for (Map<String, Object> r : rules) {
-            Matcher m = Pattern.compile("le=\"([^\"]+)\"").matcher(String.valueOf(r.get("expr")));
-            while (m.find()) {
-                used.add(m.group(1));
+        Map<String, Set<String>> exposedByTimer = Map.of(
+                HTTP_TIMER, exposedBuckets(commonMetricsProperties()),
+                GATEWAY_TIMER, exposedBuckets(commonMetricsProperties(), GATEWAY_TIMER, "routeId", "catalog-service", "httpStatusCode", "200"));
+        exposedByTimer.forEach((timer, exposed) -> {
+            Set<String> used = new TreeSet<>();
+            for (Map<String, Object> r : rules) {
+                Matcher m = Pattern.compile(Pattern.quote(timer.replace('.', '_')) + "_seconds_bucket\\{[^}]*le=\"([^\"]+)\"").matcher(String.valueOf(r.get("expr")));
+                while (m.find()) {
+                    used.add(m.group(1));
+                }
             }
-        }
-        assertThat(used).isNotEmpty();
-        assertThat(exposed).as("규칙의 le 가 실제 버킷에 없으면 지연 SLI 가 빈다").containsAll(used);
+            assertThat(used).as(timer + " 의 경계를 읽는 규칙").isNotEmpty();
+            assertThat(exposed).as(timer + " — 규칙의 le 가 실제 버킷에 없으면 지연 SLI 가 빈다").containsAll(used);
+        });
 
         for (Map<String, Object> objective : rules.stream().filter(r -> "slo:objective:latency".equals(r.get("record"))).toList()) {
             String slo = label(objective, "slo");
@@ -137,11 +154,11 @@ class SloRulesTest {
     }
 
     @Test
-    @DisplayName("🔴 SLO 넷(browse · search · order-create · site-probe)마다 목표 둘 · 창 넷의 SLI · 요청 수 · 예산용 증가분, 소진율 경보 넷은 목표에서 예산을 계산하고 요청이 적으면 울리지 않는다")
+    @DisplayName("🔴 SLO 다섯(browse · search · order-create · gateway · site-probe)마다 목표 둘 · 창 넷의 SLI · 요청 수 · 예산용 증가분, 소진율 경보 넷은 목표에서 예산을 계산하고 요청이 적으면 울리지 않는다")
     void everySloHasObjectivesSlisAndBurnAlerts() throws IOException {
         List<Map<String, Object>> rules = group("slo");
         Set<String> names = slos(rules, "slo:objective:availability");
-        assertThat(names).containsExactlyInAnyOrder("catalog-browse", "catalog-search", "order-create", "site-probe");
+        assertThat(names).containsExactlyInAnyOrder("catalog-browse", "catalog-search", "order-create", "gateway", "site-probe");
         for (String r : List.of("slo:objective:latency", "slo:requests:rate1h", "slo:requests:increase1h", "slo:errors:increase1h", "slo:slow:increase1h")) {
             assertThat(slos(rules, r)).as(r).isEqualTo(names);
         }
@@ -218,6 +235,115 @@ class SloRulesTest {
         // 규칙은 이 작업 이름으로 탐침을 읽는다
         assertThat(Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8))
                 .contains("probe_success{job=\"site-probe\"}");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> at(Map<String, Object> m, String... path) {
+        Map<String, Object> cur = m;
+        for (String p : path) {
+            cur = cur == null ? null : (Map<String, Object>) cur.get(p);
+        }
+        return cur;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("🔴 SLO gateway — 게이트웨이가 라우트 타이머를 켠다(4.3 기본 꺼짐), 규칙이 빼는 라우트는 게이트웨이에 있는 SockJS · WebSocket 라우트뿐이다")
+    void gatewaySliIsWired() throws IOException {
+        Map<String, Object> gw = null;
+        for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(
+                repoRoot().resolve("gateway-server/src/main/resources/application-local.yml"), StandardCharsets.UTF_8))) {
+            if (doc instanceof Map<?, ?> m && at((Map<String, Object>) m, "spring", "cloud", "gateway", "server", "webflux") != null) {
+                gw = at((Map<String, Object>) m, "spring", "cloud", "gateway", "server", "webflux");
+            }
+        }
+        assertThat(gw).as("게이트웨이 설정 spring.cloud.gateway.server.webflux").isNotNull();
+        // 꺼져 있으면 spring_cloud_gateway_requests_seconds 가 없어 SLO gateway 의 SLI 가 조용히 빈다(경보는 요청 하한에 걸려 울리지 않는다)
+        assertThat(at(gw, "metrics")).as("spring.cloud.gateway.server.webflux.metrics").isNotNull()
+                .containsEntry("enabled", true).doesNotContainKey("path-tags");
+
+        Map<String, String> pathById = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> route : (List<Map<String, Object>>) gw.get("routes")) {
+            String path = ((List<Object>) route.get("predicates")).stream().map(String::valueOf)
+                    .filter(p -> p.startsWith("Path=")).findFirst().orElse("");
+            pathById.put((String) route.get("id"), path);
+        }
+        List<Map<String, Object>> rules = group("slo");
+        Set<String> excluded = new TreeSet<>();
+        for (Map<String, Object> r : rules) {
+            if (!"gateway".equals(label(r, "slo")) || !String.valueOf(r.get("expr")).contains("spring_cloud_gateway_requests_seconds")) {
+                continue;
+            }
+            String expr = String.valueOf(r.get("expr"));
+            assertThat(expr).as(r.get("record") + " — 게이트웨이 서비스의 라우트 타이머만").contains("service=\"gateway-server\"");
+            Matcher m = Pattern.compile("routeId!=\"([^\"]+)\"").matcher(expr);
+            while (m.find()) {
+                excluded.add(m.group(1));
+            }
+        }
+        // 라우트 이름을 바꾸면 빼던 라우트가 조용히 SLO 에 들어온다(SockJS 스트리밍은 연결이 끝날 때까지 한 요청 — 지연 예산을 다 쓴다)
+        assertThat(excluded).as("규칙이 빼는 라우트").isNotEmpty();
+        assertThat(pathById).as("빼는 라우트는 게이트웨이에 있다").containsKeys(excluded.toArray(String[]::new));
+        assertThat(excluded).as("빼는 것은 SockJS · WebSocket(/chat-service/chat/**) 라우트만 — 나머지는 모두 SLO 안")
+                .allMatch(id -> pathById.get(id).contains("/chat-service/chat/"));
+        assertThat(pathById.entrySet().stream().filter(e -> e.getValue().contains("/chat-service/chat/")).map(Map.Entry::getKey))
+                .as("SockJS · WebSocket 라우트는 모두 뺀다").allMatch(excluded::contains);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("🔴 SLO 대시보드 — 패널이 읽는 slo:* 기록 · 경보 이름은 alert-rules.yml 에 있고, 데이터소스는 프로비저닝된 uid(prometheus)다")
+    void dashboardReadsExistingRules() throws IOException {
+        String rulesText = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
+        Set<String> records = new TreeSet<>();
+        Set<String> alertNames = new TreeSet<>();
+        Map<String, Object> all = new org.yaml.snakeyaml.Yaml().load(rulesText);
+        for (Map<String, Object> g : (List<Map<String, Object>>) all.get("groups")) {
+            for (Map<String, Object> r : (List<Map<String, Object>>) g.get("rules")) {
+                if (r.containsKey("record")) {
+                    records.add((String) r.get("record"));
+                } else {
+                    alertNames.add((String) r.get("alert"));
+                }
+            }
+        }
+        // JSON 은 YAML 의 부분집합 — snakeyaml 로 읽는다
+        Map<String, Object> dash = new org.yaml.snakeyaml.Yaml().load(Files.readString(
+                repoRoot().resolve("observability/grafana/provisioning/dashboards/slo.json"), StandardCharsets.UTF_8));
+        assertThat(dash).containsEntry("uid", "slo");
+        List<Map<String, Object>> panels = (List<Map<String, Object>>) dash.get("panels");
+        List<String> exprs = new java.util.ArrayList<>();
+        for (Map<String, Object> p : panels) {
+            if ("row".equals(p.get("type"))) {
+                continue;
+            }
+            assertThat(String.valueOf(p.get("datasource"))).as("패널 " + p.get("title")).contains("uid=prometheus");
+            for (Map<String, Object> t : (List<Map<String, Object>>) p.get("targets")) {
+                exprs.add((String) t.get("expr"));
+            }
+        }
+        assertThat(exprs).as("대시보드 쿼리").hasSizeGreaterThan(10);
+        Set<String> usedRecords = new TreeSet<>();
+        Set<String> usedAlerts = new TreeSet<>();
+        for (String e : exprs) {
+            Matcher m = Pattern.compile("slo:[a-z_0-9]+:[a-z_0-9]+").matcher(e);
+            while (m.find()) {
+                usedRecords.add(m.group());
+            }
+            Matcher a = Pattern.compile("alertname=~\"([^\"]+)\"").matcher(e);
+            while (a.find()) {
+                for (String alt : a.group(1).split("\\|")) {
+                    usedAlerts.add(alt);
+                }
+            }
+        }
+        assertThat(records).as("대시보드가 읽는 기록 규칙 — 이름을 바꾸면 패널이 빈다").containsAll(usedRecords);
+        assertThat(usedRecords).contains("slo:budget_used:ratio14d", "slo:sli_error:ratio_rate1h", "slo:sli_slow:ratio_rate1h", "slo:objective:availability");
+        for (String a : usedAlerts) {
+            assertThat(alertNames.stream().anyMatch(n -> n.matches(a))).as("대시보드의 경보 이름 " + a).isTrue();
+        }
+        // 변수 slo 는 목표 기록에서 — SLO 를 더하면 저절로 나온다
+        assertThat(String.valueOf(dash.get("templating"))).contains("label_values(slo:objective:availability, slo)");
     }
 
     @Test

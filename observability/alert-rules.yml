@@ -368,14 +368,16 @@ groups:
 
 
   # ── SLO(docs/91) ─────────────────────────────────────────────────────────────────────────────────
-  # SLO 넷(2026-11-14 정함 — docs/91 §2): 서비스 쪽 셋(catalog-browse · catalog-search · order-create) + 바깥 탐침(site-probe).
+  # SLO 다섯(2026-11-14 정함 — docs/91 §2, gateway 는 2026-11-15): 서비스 쪽 셋(catalog-browse · catalog-search · order-create) + 게이트웨이(gateway)
+  # + 바깥 탐침(site-probe).
   # 목표 숫자는 slo:objective:* 두 줄이 한 곳이다 — 경보는 그 값에서 오류 예산을 계산한다. 가용성은 노드 한 대인 지금의 값이고,
   # docs/89 단계 1 · 2 를 마치면 주석의 목표로 올린다. 지연 경계(le)는 application-common.yml 의 management.metrics.distribution.slo
-  # 버킷과 같아야 한다(가드 SloRulesTest). 서비스 쪽 SLI 는 http.server.requests — 게이트웨이 · 망 시간은 빠진다(그것은 site-probe 가 본다).
+  # 버킷과 같아야 한다(가드 SloRulesTest). 서비스 쪽 SLI 는 http.server.requests — 게이트웨이 · 망 시간은 빠진다(게이트웨이는 gateway,
+  # Cloudflare · 터널 · 망은 site-probe 가 본다).
   # 오류 = 5xx 만(4xx 는 손님 쪽). 지연 = 경계를 넘은 요청 비율(5xx 포함).
   # 소진율 경보(Google SRE workbook 5장): 빠름 1h · 5m 가 14.4 배, 느림 6h · 30m 가 6 배. 창은 14일이다 — 운영 Prometheus 보존이
   # 15일이라 30일 예산을 셀 수 없다(docs/91 §2-4). 요청이 적으면(1시간 평균 초당 0.03 = 시간당 약 100 미만) 울리지 않는다.
-  # [JA] SLO 四つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
+  # [JA] SLO 五つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
   - name: slo
     rules:
       # catalog-browse — 홈 · 상품 상세 · 배너 · 공지 · 기획전 GET(/api/search* · 관리자 · 내부 · actuator 제외): 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 300ms 안 99%
@@ -561,6 +563,70 @@ groups:
           sum(increase(http_server_requests_seconds_count{service="order-service",method="POST",uri=~"/?api/order/create"}[1h]))
             - sum(increase(http_server_requests_seconds_bucket{service="order-service",method="POST",uri=~"/?api/order/create",le="1.0"}[1h]))
         labels: { slo: order-create }
+      # gateway — 게이트웨이를 지난 모든 라우트(spring.cloud.gateway.requests, chat-service-ws 제외 — SockJS 스트리밍 · WebSocket 은 연결이 끝날 때까지 한 요청): 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 2000ms 안 99%
+      #   서비스 쪽 SLO 가 보지 못하는 것 — 회로 차단 폴백(/fallback 503) · 연결 실패 · 다운스트림 시간 초과(504) · 게이트웨이 자신의 지연(JWT · 유입 제한).
+      #   경계가 2초인 것은 모든 라우트를 한 SLO 로 보기 때문이다 — catalog-search 는 5% 가 1초를 넘어도 되므로 1초 경계면 검색이 많은 날 예산을 먹는다.
+      #   유입 제한 429 · 인증 401 은 4xx 라 예산에서 빠진다(docs/91 §2-7).
+      - record: slo:objective:availability
+        expr: vector(0.995)
+        labels: { slo: gateway }
+      - record: slo:objective:latency
+        expr: vector(0.99)
+        labels: { slo: gateway, threshold_seconds: "2.0" }
+      - record: slo:sli_error:ratio_rate5m
+        expr: |
+          (sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws",httpStatusCode=~"5.."}[5m])) or vector(0))
+            / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[5m]))
+        labels: { slo: gateway }
+      - record: slo:sli_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId!="chat-service-ws",le="2.0"}[5m]))
+                / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[5m]))
+        labels: { slo: gateway }
+      - record: slo:sli_error:ratio_rate30m
+        expr: |
+          (sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws",httpStatusCode=~"5.."}[30m])) or vector(0))
+            / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[30m]))
+        labels: { slo: gateway }
+      - record: slo:sli_slow:ratio_rate30m
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId!="chat-service-ws",le="2.0"}[30m]))
+                / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[30m]))
+        labels: { slo: gateway }
+      - record: slo:sli_error:ratio_rate1h
+        expr: |
+          (sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws",httpStatusCode=~"5.."}[1h])) or vector(0))
+            / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[1h]))
+        labels: { slo: gateway }
+      - record: slo:sli_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId!="chat-service-ws",le="2.0"}[1h]))
+                / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[1h]))
+        labels: { slo: gateway }
+      - record: slo:sli_error:ratio_rate6h
+        expr: |
+          (sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws",httpStatusCode=~"5.."}[6h])) or vector(0))
+            / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[6h]))
+        labels: { slo: gateway }
+      - record: slo:sli_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId!="chat-service-ws",le="2.0"}[6h]))
+                / sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[6h]))
+        labels: { slo: gateway }
+      - record: slo:requests:rate1h
+        expr: sum(rate(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[1h]))
+        labels: { slo: gateway }
+      - record: slo:requests:increase1h
+        expr: sum(increase(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[1h]))
+        labels: { slo: gateway }
+      - record: slo:errors:increase1h
+        expr: sum(increase(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws",httpStatusCode=~"5.."}[1h])) or vector(0)
+        labels: { slo: gateway }
+      - record: slo:slow:increase1h
+        expr: |
+          sum(increase(spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId!="chat-service-ws"}[1h]))
+            - sum(increase(spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId!="chat-service-ws",le="2.0"}[1h]))
+        labels: { slo: gateway }
       # site-probe — 바깥 탐침 — 운영 노드의 blackbox-exporter 가 Cloudflare 를 거쳐 첫 화면 · 홈 API 를 30초마다(docs/91 §2-6): 가용성 99.5%(지금 — 목표 99.9%) · 2000ms 안 99%
       #   요청 = 탐침 한 번. 실패 = probe_success 0(연결 · TLS · 상태 코드 · 본문 확인 실패). 노드가 통째로 죽으면 탐침도 같이 죽는다 —
       #   그 경우는 바깥 감시가 따로 필요하다(docs/91 §2-6).

@@ -217,8 +217,12 @@ management:
       # SLO 경계를 정확한 버킷으로 — 기본 히스토그램 버킷에는 0.3 · 1.0 이 없어 "300ms 안의 비율" 을 셀 수 없다.
       # alert-rules.yml 의 slo 그룹이 le="0.3"(catalog-browse) · le="1.0"(catalog-search · order-create)을 읽는다(docs/91 §2, 가드 SloRulesTest).
       # [JA] SLO の境界を正確なバケットに — 既定のバケットには 0.3 · 1.0 がなく「300ms 以内の割合」を数えられない。
+      # spring.cloud.gateway.requests — 게이트웨이 라우트 타이머(SLO gateway, le="2.0"). percentiles-histogram 은 켜지 않는다 — 라우트 ×
+      # 상태 코드마다 버킷 70여 개가 되어, 경계 셋(+Inf)만 둔다. 다른 서비스에는 이 타이머가 없어 아무것도 늘지 않는다.
+      # [JA] ゲートウェイのルートタイマーは境界三つだけ(パーセンタイル用ヒストグラムは付けない — 系列が増えすぎる)。
       slo:
         http.server.requests: 300ms,1s
+        spring.cloud.gateway.requests: 300ms,1s,2s
   # 분산 추적 — OpenTelemetry(docs/63). 서비스는 OTLP(HTTP)로 **OTel Collector** 에만 보낸다. 어디에 저장할지
   # (Jaeger), 추적에서 지표를 뽑을지(spanmetrics), 무엇을 지울지(개인정보)는 Collector 가 정한다 — 서비스는 모른다.
   # 서비스는 전부 보낸다(1.0). 무엇을 남길지는 Collector 의 꼬리 샘플링이 추적이 끝난 뒤에 고른다(docs/63 §5) —

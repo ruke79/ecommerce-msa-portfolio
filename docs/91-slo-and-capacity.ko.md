@@ -3,18 +3,22 @@
 [日本語](91-slo-and-capacity.md) | **한국어**
 
 > 📝 **상태(2026-11-14) — SLO · 예산 규칙 · 처리량 목표를 정해 적용, 실측은 남음.** [docs/89](89-scale-out-migration-plan.ko.md) 단계 0(목표와 측정)의 레포 쪽 작업입니다. SLO 넷(§2)을 기록 규칙 · 소진율 경보로, 14일 오류 예산과 그 규칙(§2-4), 단계별 처리량 목표(§2-5), 손님 쪽 길을 보는 바깥 탐침(§2-6), 컨슈머 지연 지표(§3), 천장을 재는 `ops/53 ceiling`(§4). 남은 것은 실습 클러스터에서의 천장 측정과 노드 밖 감시입니다(§6).
+>
+> 📝 **2026-11-15 추가 — 다섯 번째 SLO `gateway`(§2-7)와 Grafana SLO 대시보드(§2-8).** 게이트웨이의 라우트 타이머(`spring.cloud.gateway.requests`)는 Spring Cloud Gateway 4.3 에서 기본 꺼짐이라 지금까지 없었습니다 — 회로 차단 폴백 503 · 연결 실패 · 다운스트림 시간 초과는 어느 지표에도 세어지지 않았습니다. 다음 배포(gateway 이미지 + common)부터 나옵니다.
 
 ## 0. 요약
 
 | | 무엇 | 어디 |
 |---|---|---|
-| SLO 넷 | `catalog-browse`(홈 · 상세) · `catalog-search`(목록 · 필터 · 이름 검색) · `order-create`(주문 생성) · `site-probe`(바깥 탐침) — 지금(노드 한 대)의 값과 단계 1 · 2 뒤의 목표 | `observability/alert-rules.yml` 의 `slo` 그룹 |
+| SLO 다섯 | `catalog-browse`(홈 · 상세) · `catalog-search`(목록 · 필터 · 이름 검색) · `order-create`(주문 생성) · `gateway`(게이트웨이를 지난 모든 라우트) · `site-probe`(바깥 탐침) — 지금(노드 한 대)의 값과 단계 1 · 2 뒤의 목표 | `observability/alert-rules.yml` 의 `slo` 그룹 |
+| 게이트웨이 라우트 타이머 | `spring.cloud.gateway.requests`(routeId · httpStatusCode) — **4.3 은 기본 꺼짐이라 없었다**, 경계 버킷 0.3 · 1 · 2초만 | gateway `application-local.yml` 의 `spring.cloud.gateway.server.webflux.metrics` · `application-common.yml` |
 | 지연 경계 버킷 | 히스토그램에 **정확한** 0.3 · 1.0 초 경계 — 기본 버킷에는 없어 "300ms 안의 비율" 을 셀 수 없었다 | `application-common.yml` 의 `management.metrics.distribution.slo` |
 | 소진율 경보 | 다중 창 넷 — 빠름(1h · 5m, 14.4배, critical) · 느림(6h · 30m, 6배, warning), 요청이 적으면 울리지 않음 | `slo` 그룹 · promtool 시험 |
 | 14일 오류 예산 | 예산 사용률 · 절반(warning) · 소진(critical) 경보와 그때의 규칙 | `slo-budget` 그룹 |
 | 처리량 목표 | 단계 2 끝 초당 1,000 · 단계 3 끝 초당 5,000 | §2-5 · `ops/53 ceiling` 의 `CEILING_TARGET_RPS` |
 | 바깥 탐침 | 운영 노드의 blackbox-exporter 가 Cloudflare 를 거쳐 첫 화면 · 홈 API 를 30초마다, 경보 `SiteProbeDown` | `docker-compose-observability.oci.yml` · `observability/blackbox.yml` · `prometheus.oci.yml` |
 | 컨슈머 지연 | **지금까지 지표가 없었다** — 모든 컨슈머 팩토리에 Micrometer 리스너, 경보 `KafkaConsumerLagHigh` | common `KafkaConsumerMetricsAutoConfiguration` · `kafka-consumer` 그룹 |
+| SLO 대시보드 | Grafana `ecommerce-msa SLO` — 남은 예산 · 소진율 · 게이트웨이 라우트 · 탐침 · 컨슈머 지연 | `observability/grafana/provisioning/dashboards/slo.json`(§2-8) |
 | 천장 재기 | 도착률 계단마다 SLO 를 보고 깨지는 계단에서 멈춘다 — 서비스별 파드당 요청/초 · CPU · DB 커넥션 대기 · Kafka 지연, 처리량 목표와 견줌 | `./ops/53-load-k6.sh ceiling browse|order|mixed` |
 
 ---
@@ -27,6 +31,7 @@ docs/89 는 "숫자 없이 다음 단계를 고르면 장비 · 관리형의 크
 - **p99 300ms 를 셀 수 없었다.** `percentiles-histogram` 의 기본 버킷에는 0.3 · 1.0 초 경계가 없어 `le="0.3"` 시계열이 없다(`SloRulesTest` 가 확인) — "300ms 안의 비율" 은 근삿값(`histogram_quantile`)으로만 나왔다.
 - **컨슈머 지연 지표가 없었다.** Spring Boot 는 자기 자동 설정의 컨슈머 팩토리에만 Micrometer 리스너를 다는데, 이 레포의 서비스는 모두 팩토리를 직접 만든다(`KafkaConsumerConfig` · `KafkaDltConfig`).
 - **서비스 쪽 지표는 손님 쪽 길을 보지 않는다** — Cloudflare · 터널 · 게이트웨이 · 프론트가 막혀도 catalog 의 5xx 는 0 이다.
+- **게이트웨이는 라우트를 몰랐다**(2026-11-15 발견) — Spring Cloud Gateway 4.3 은 라우트 타이머가 기본 꺼짐이고, 게이트웨이의 `http.server.requests` 는 라우트 요청의 `uri` 가 모두 `UNKNOWN` 이다. 회로 차단 폴백(`/fallback` 503) · 연결 실패 · 다운스트림 시간 초과는 백엔드에 닿지 않으므로 서비스 쪽 지표에도 없다.
 - **`ops/53` 은 한 번에 한 모양의 부하**를 걸었다 — 천장을 찾으려면 사람이 도착률을 바꿔 가며 여러 번 돌리고 Grafana 에서 숫자를 옮겨 적어야 했다.
 
 ---
@@ -38,19 +43,20 @@ docs/89 는 "숫자 없이 다음 단계를 고르면 장비 · 관리형의 크
 | `catalog-browse` | catalog GET — 홈 · 상품 상세 · 배너 · 공지 · 기획전(`/api/search*` · 관리자 · 내부 · actuator 제외) | **99.5% → 99.9%** | **99% 가 300ms 안** | 실측 p99 22 ~ 25ms(1,000만 상품, 캐시 밖 상세 포함) — 운영 장비 · 캐시 밖까지 여유 |
 | `catalog-search` | catalog GET `/api/search*` — 카테고리 목록 · 필터 · 이름 검색 | **99.0% → 99.5%**(ES 뒤 99.9%) | **95% 가 1초 안** | 필터 조합을 넓힌 8시간 회차 p95 1,513ms · 운영 200만의 드문 필터 조합은 5초 상한 503(docs/83 §2.8) — ES 전까지 남는 한계 |
 | `order-create` | order `POST /api/order/create` | **99.5% → 99.9%** | **99% 가 1초 안** | 실측 p99 113ms(초당 5건 55분) — 재고 경합 · 쿠폰 · 장바구니 호출의 여유 |
+| `gateway` | 게이트웨이를 지난 모든 라우트(`chat-service-ws` 제외, §2-7) | **99.5% → 99.9%** | **99% 가 2초 안** | 서비스 쪽이 못 보는 폴백 503 · 연결 실패 · 504 · 게이트웨이 자신의 시간(JWT · 유입 제한). 경계 2초는 모든 라우트를 한 SLO 로 보기 때문(검색은 5% 가 1초를 넘어도 된다) |
 | `site-probe` | 바깥 탐침 — 첫 화면 · 홈 API(§2-6) | **99.5% → 99.9%** | **99% 가 2초 안** | Cloudflare · 터널 · 게이트웨이 · 프론트까지 한 번에 |
 
 - **지금 → 목표**: 지금은 PostgreSQL · Redis · Kafka 가 `replicas: 1` 이고 노드가 한 대라(docs/89 §0) 노드 재부팅 · PG 파드 재생성 하나가 곧 전체 정지입니다. 99.9%(14일에 약 20분)는 유지보수 한 번에 예산을 다 씁니다 — 처음부터 걸면 첫 달부터 "예산 없음" 으로 시작합니다. 99.5%(14일에 약 1.7시간)는 노드 한 대에서 지킬 수 있는 선입니다. docs/89 단계 1 · 2 를 마치면 목표 값으로 올립니다(규칙 주석에 적었습니다).
 - **검색을 따로 둔 이유**: 카테고리 목록 화면도 `/api/search` 를 씁니다. 드문 필터 조합의 503 은 이미 알려진 한계인데, 한 SLO 에 섞으면 그것이 **상품 · 홈의 예산까지 먹습니다**. 검색의 지연 목표는 꼬리가 길어 99% 가 아니라 95% 입니다(경계 1초는 이미 있는 버킷).
 - **오류는 5xx 만**입니다. 4xx 는 손님 쪽(잘못된 요청 · 재고 부족 · 남의 자원 · 유입 제한 429)이라 예산에서 뺍니다.
-- **서비스 쪽 SLO 의 지연은 서비스 쪽 시간**입니다(`http.server.requests`). 게이트웨이 · Cloudflare · 망 시간은 `site-probe` 가 봅니다.
+- **서비스 쪽 SLO 의 지연은 서비스 쪽 시간**입니다(`http.server.requests`). 게이트웨이의 시간 · 폴백은 `gateway` 가, Cloudflare · 터널 · 망 시간은 `site-probe` 가 봅니다.
 - **숫자를 바꾸는 곳은 한 곳**: `alert-rules.yml` 의 `slo:objective:availability` · `slo:objective:latency` 두 줄(SLO 마다). 규칙은 생성해서 붙였으므로 SLO 를 더하거나 선택자를 바꿀 때는 같은 모양으로 넷(창) × 둘(SLI) 을 함께 고칩니다. 지연 **경계**를 바꾸면 `application-common.yml` 의 `slo` 버킷 · 규칙의 `le` · `ops/53` 의 `CEILING_P99_MS` 기본값도 — 가드 `SloRulesTest` 가 맞춰 봅니다.
 
 ### 2-1. 기록 규칙
 
 SLO 마다, 창 넷(5m · 30m · 1h · 6h)마다:
 
-| 기록 이름 | 서비스 쪽 SLO | `site-probe` |
+| 기록 이름 | 서비스 쪽 SLO · `gateway` | `site-probe` |
 |---|---|---|
 | `slo:sli_error:ratio_rate<창>` | 5xx / 전체 — 5xx 가 없으면 0(`or vector(0)`) | 1 − 탐침 성공 비율 |
 | `slo:sli_slow:ratio_rate<창>` | 1 − (경계 안 / 전체) — 5xx 도 센다 | 탐침 시간 > 2초 인 비율 |
@@ -70,11 +76,12 @@ SLO 마다, 창 넷(5m · 30m · 1h · 6h)마다:
 
 ### 2-3. 시험
 
-- `observability/tests/slo-rules.test.yml`(promtool, 1분 간격): browse 10% 5xx 에서 빠름 · 느림 · 2분 안에는 아직 · 0.05% 는 예산 안 · 초당 0.01 이면 33% 실패여도 조용 · 주문 절반이 1초를 넘으면 지연 빠름, 10% 면 지연 느림만 · 관리자 · actuator 는 어디에도, `/api/search` 는 search 에만 · search 40% 가 1초를 넘으면 지연 느림만 · search 8% 5xx 는 search 의 느림만(browse 의 예산은 0) · 탐침 하나가 실패하면 `SiteProbeDown`(3분) 과 site-probe 빠름 · 탐침 실패 비율 값 · 탐침이 3초면 지연 빠름 · 컨슈머 지연 1,500 이 10분.
+- `observability/tests/slo-rules.test.yml`(promtool, 1분 간격): browse 10% 5xx 에서 빠름 · 느림 · 2분 안에는 아직 · 0.05% 는 예산 안 · 초당 0.01 이면 33% 실패여도 조용 · 주문 절반이 1초를 넘으면 지연 빠름, 10% 면 지연 느림만 · 관리자 · actuator 는 어디에도, `/api/search` 는 search 에만 · search 40% 가 1초를 넘으면 지연 느림만 · search 8% 5xx 는 search 의 느림만(browse 의 예산은 0) · 탐침 하나가 실패하면 `SiteProbeDown`(3분) 과 site-probe 빠름 · 탐침 실패 비율 값 · 탐침이 3초면 지연 빠름 · 컨슈머 지연 1,500 이 10분 · gateway: 폴백 503 10% 면 gateway 의 오류 빠름 · `chat-service-ws` 가 2초를 넘어도 지연 예산은 0 · 429 · 401 이 절반이어도 조용 · 10% 가 2초를 넘으면 지연 느림만.
 - `observability/tests/slo-budget.test.yml`(promtool, 지표 10분 간격 15일 · 평가는 그룹과 같은 5분 — 다르면 그룹 평가 순서가 흔들려 경보가 가끔 빠졌다): 0.4% 5xx 가 15일이면 예산 80% — 절반만, 0.6% 면 120% — 소진(절반도), 요청이 적으면 조용.
 - 실행: `SloRulesPromtoolTest`(컨테이너 — 운영과 같은 `prom/prometheus:v2.53.0`, Docker Hub 가 막히면 `PROMETHEUS_IMAGE=mirror.gcr.io/prom/prometheus:v2.53.0`).
-- `SloRulesTest` — 버킷 `le="0.3"` · `le="1.0"` 이 노출되는지(기본 버킷만으로는 없다), SLO 마다 목표의 경계를 그 SLO 의 지연 SLI 가 읽는지, SLO 넷의 목표 · SLI · 증가분 · 경보, browse 가 검색을 빼는지, 14일 창 < 운영 Prometheus 보존, 탐침 배선(판 · 포트 없음 · TLS 검증 · 운영 주소 · 모듈 · 30초).
-- 변이 확인: 요청 하한 제거 · 경계 `le` · `or vector(0)` 제거 · 관리자 경로 포함 · 검색을 browse 에 · 절반 기준 0.9 · 예산 하한 제거 · 탐침 실패율 뒤집기 · `SiteProbeDown` 의 `for` 제거 → promtool 시험 실패, yml 경계 250ms · 탐침에 포트 → `SloRulesTest` 실패.
+- `SloRulesTest` — 버킷 `le="0.3"` · `le="1.0"` 이 노출되는지(기본 버킷만으로는 없다), SLO 마다 목표의 경계를 그 SLO 의 지연 SLI 가 읽는지, SLO 넷의 목표 · SLI · 증가분 · 경보, browse 가 검색을 빼는지, 14일 창 < 운영 Prometheus 보존, 탐침 배선(판 · 포트 없음 · TLS 검증 · 운영 주소 · 모듈 · 30초), gateway(라우트 타이머의 `le="2.0"` 버킷 · 경계 버킷만 · 게이트웨이 설정의 `metrics.enabled` · 규칙이 빼는 라우트가 게이트웨이에 있는 SockJS · WebSocket 라우트뿐인지), 대시보드(읽는 기록 규칙 · 경보 이름이 alert-rules.yml 에 있는지).
+- gateway `GatewayRouteMetricsTest` — 실제 게이트웨이 컨텍스트로 가짜 catalog 의 200 · 503 을 지나 보내고, `spring.cloud.gateway.requests{routeId, httpStatusCode}` 와 2초 버킷이 생기는지.
+- 변이 확인: 요청 하한 제거 · 경계 `le` · `or vector(0)` 제거 · 관리자 경로 포함 · 검색을 browse 에 · 절반 기준 0.9 · 예산 하한 제거 · 탐침 실패율 뒤집기 · `SiteProbeDown` 의 `for` 제거 → promtool 시험 실패, yml 경계 250ms · 탐침에 포트 → `SloRulesTest` 실패. gateway(2026-11-15): 빼는 라우트 제거 · 4xx 를 오류로 → promtool 실패, `metrics.enabled: false` · 게이트웨이 버킷 줄 삭제 · 빼는 라우트 이름 틀림 · 규칙 `le` 1.5 → `SloRulesTest` 실패, `metrics.enabled: false` · 버킷 줄 삭제 → `GatewayRouteMetricsTest` 실패.
 
 ### 2-4. 14일 오류 예산과 규칙
 
@@ -103,6 +110,21 @@ SLO 마다, 창 넷(5m · 30m · 1h · 6h)마다:
 - 대상 둘 — `https://www.ysyproject.com/`(모듈 `http_page`: 200 · TLS · 본문에 `<div id="root">`), `https://www.ysyproject.com/catalog-service/api/content/home`(모듈 `http_api`: 200 · `Content-Type: application/json` · 본문이 JSON). 상태 코드만 보면 Cloudflare 오류 · 챌린지 화면이나 프론트로 샌 API(index.html 200)도 성공이 된다. TLS 는 검증한다.
 - 경보 `SiteProbeDown` — 대상 하나가 3분 연속 실패(critical). 소진율 경보는 `slo="site-probe"` 로 같은 규칙을 탄다.
 - ⚠️ **한계**: 탐침은 운영 노드에서 나간다 — **노드가 통째로 죽으면 Prometheus · Alertmanager · 탐침이 함께 죽어 아무것도 울리지 않는다.** 그 경우는 노드 밖 감시(Cloudflare Health Checks · 외부 가동 감시 서비스 등)가 따로 필요하다(§6). 또 Cloudflare 의 봇 차단이 탐침을 막으면 403 · 챌린지로 실패한다 — `probe_http_status_code` 를 보고, 그러면 그 경로를 봇 규칙에서 뺀다.
+
+### 2-7. 게이트웨이(`gateway`)
+
+- **SLI**: `spring_cloud_gateway_requests_seconds{service="gateway-server", routeId!="chat-service-ws"}` — 게이트웨이의 `GatewayMetricsFilter` 가 라우트를 지난 요청마다 남긴다(태그 `routeId` · `routeUri` · `httpStatusCode` · `httpMethod` · `outcome`). 오류는 `httpStatusCode=~"5.."`, 지연은 `le="2.0"` 을 넘은 비율.
+- **켜기**: `spring.cloud.gateway.server.webflux.metrics.enabled: true`(gateway `application-local.yml` — 4.3 은 기본 false). path 태그는 켜지 않는다(요청 경로마다 시계열). 버킷은 `application-common.yml` 의 `slo` 에 `spring.cloud.gateway.requests: 300ms,1s,2s` — **percentiles-histogram 은 켜지 않는다**(라우트 × 상태 코드 × 메서드마다 버킷 70여 개가 된다). 그래서 이 타이머로는 p99 를 근사할 수 없다 — 라우트별 p99 는 서비스 쪽 `http_server_requests` 와 Jaeger 로 본다.
+- **보는 것**: 서비스 쪽 SLO 가 못 보는 것 — 회로 차단 폴백(`/fallback` 503, 격벽 · 회로 열림 · 10초 시간 상한), 연결 실패(Retry 를 다 쓴 뒤), 다운스트림 시간 초과, 게이트웨이 자신의 시간(JWT 검사 · 유입 제한의 Redis). 범위는 모든 라우트 — 장바구니 · 쿠폰 · 사용자 · 결제 웹훅까지 처음으로 SLO 안에 들어온다.
+- **뺀 것**: `chat-service-ws`(`/chat-service/chat/**` — SockJS 의 xhr-streaming · WebSocket 은 연결이 끝날 때까지 한 요청이라 지연 예산을 다 쓴다). 가드 `SloRulesTest` 가 빼는 라우트가 게이트웨이에 있고 그 경로인지 본다 — 라우트 이름을 바꾸면 조용히 SLO 에 들어오지 않게. 4xx(유입 제한 429 · 인증 401 · 403)는 다른 SLO 처럼 예산 밖.
+- **경계 2초 · 99%**: 모든 라우트를 한 SLO 로 보므로 가장 느슨한 서비스 SLO 에 맞췄다 — `catalog-search` 는 5% 가 1초를 넘어도 되므로 1초 경계면 검색이 많은 날 게이트웨이 예산을 먹는다. 가용성은 다른 SLO 와 같이 지금 99.5% → 목표 99.9%.
+- **겹침**: 백엔드의 5xx 는 서비스 쪽 SLO 와 `gateway` 에 함께 센다(같은 사고에 경보 둘). 경보 묶음(`slo` 라벨)이 달라 둘 다 오지만, `gateway` 에만 오면 원인이 게이트웨이 쪽(폴백 · 연결 · 시간 상한)이다.
+
+### 2-8. 대시보드(Grafana `ecommerce-msa SLO`)
+
+- 파일 `observability/grafana/provisioning/dashboards/slo.json`(uid `slo`, 폴더 `ecommerce-msa`) — 관측 스택의 Grafana 가 프로비저닝으로 읽는다. 변수 `slo`(`label_values(slo:objective:availability, slo)`, 여럿 · 전체).
+- 패널: 14일 오류 · 지연 예산 남음(stat — 50% 노랑 · 0 빨강, 규칙 §2-4), 목표 · 1시간 평균 요청(경보 하한 0.03), 오류 · 지연 소진율(1h · 5m 를 예산으로 나눈 값 — 14.4 · 6 선), 6시간 오류 · 느림 비율(예산을 어느 날 썼나), 울리는 SLO · 탐침 · 컨슈머 경보 표, 게이트웨이 라우트별 요청 · 5xx 비율 · 2초 넘은 비율 · 2xx 밖 상태 코드, 탐침 성공 · 시간 · 상태 코드, 서비스 · 토픽별 컨슈머 지연.
+- 패널은 기록 규칙(`slo:*`)을 읽는다 — 규칙 이름을 바꾸면 패널이 빈다. 가드 `SloRulesTest` 가 대시보드가 읽는 `slo:*` 이름 · 경보 이름이 alert-rules.yml 에 있는지 본다. 2026-11-15 에 Prometheus v2.53.0 · Grafana 11.1.0 으로 쿼리 20개가 모두 오류 없이 도는 것과 프로비저닝을 확인했다(가짜 지표).
 
 ---
 
@@ -147,7 +169,8 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 ## 5. 적용 · 확인
 
-- **이미지**: 버킷 · 컨슈머 지표는 common 이라 다음 배포의 모든 백엔드 이미지에 들어갑니다(동작 변화 없음 — 지표만 늘어난다. 버킷은 `http.server.requests` 시계열마다 둘).
+- **이미지**: 버킷 · 컨슈머 지표는 common 이라 다음 배포의 모든 백엔드 이미지에 들어갑니다(동작 변화 없음 — 지표만 늘어난다. 버킷은 `http.server.requests` 시계열마다 둘). 게이트웨이 라우트 타이머(§2-7)는 gateway 이미지 — 라우트 × 상태 코드 × 메서드마다 시계열 여섯(버킷 넷 · count · sum).
+- **대시보드**(§2-8): Grafana 의 파일 프로비저닝은 폴더를 주기적으로 다시 읽으므로(기본 10초) 이 커밋 이후로 switch 하면 나타난다 — 재시작은 필요 없다. 보이지 않으면 `docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml restart grafana`.
 - **관측 스택**(운영 노드, 두 파일): `docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d blackbox-exporter prometheus` — 탐침 컨테이너가 새로 뜨고 Prometheus 가 새 규칙 · 작업을 읽습니다.
 - **확인**(Prometheus):
   - `probe_success{job="site-probe"}` 두 줄이 1 — 0 이면 `probe_http_status_code` 로 이유(403 이면 Cloudflare 봇 차단, §2-6)
@@ -155,6 +178,7 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
   - `slo:sli_error:ratio_rate1h` 에 SLO 넷(손님이 없으면 서비스 쪽 지연 SLI 는 비어 있을 수 있다)
   - 15분 뒤 `slo:budget_used:ratio14d`(처음에는 데이터가 짧아 크게 흔들린다 — 14일이 쌓이기 전 절반 경보는 요청 하한이 막는다)
   - `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` 에 Kafka 를 쓰는 서비스
+  - 배포 뒤 `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` 에 라우트들 · `slo:sli_error:ratio_rate1h{slo="gateway"}`
 
 ---
 
@@ -164,4 +188,4 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 2. **노드 밖 감시** — 노드가 통째로 죽으면 지금의 경보는 아무것도 울리지 않는다(§2-6). Cloudflare Health Checks 나 외부 가동 감시 서비스 하나를 두는 것은 계정 · 비용 판단이라 아직 하지 않았다.
 3. **예산 창 30일** — 보존을 31일로 올릴지(디스크 확인 뒤, §2-4).
 4. **목표 값으로 올리기** — docs/89 단계 1 · 2 를 마치면 `slo:objective:availability` 를 주석의 목표로.
-5. **대시보드** — SLO 패널(남은 예산 · 소진율 · 탐침)은 Grafana 에 아직 없다.
+5. ~~**대시보드**~~ — 끝(2026-11-15, §2-8). 게이트웨이 SLI 도(§2-7).

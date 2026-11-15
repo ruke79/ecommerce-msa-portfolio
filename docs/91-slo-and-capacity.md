@@ -3,18 +3,22 @@
 **日本語** | [한국어](91-slo-and-capacity.ko.md)
 
 > 📝 **状態（2026-11-14）— SLO · バジェットの規則 · スループット目標を決めて適用、実測は残り。** [docs/89](89-scale-out-migration-plan.md) 段階 0（目標と測定）のリポジトリ側の作業です。SLO 四つ（§2）を記録ルール · バーンレート警報に、14 日のエラーバジェットとその規則（§2-4）、段階別のスループット目標（§2-5）、客側の経路を見る外部プローブ（§2-6）、コンシューマー遅延の指標（§3）、天井を測る `ops/53 ceiling`（§4）。残るのは実習クラスターでの天井測定とノード外の監視です（§6）。
+>
+> 📝 **2026-11-15 追加 — 五つ目の SLO `gateway`（§2-7）と Grafana の SLO ダッシュボード（§2-8）。** ゲートウェイのルートタイマー（`spring.cloud.gateway.requests`）は Spring Cloud Gateway 4.3 で既定で無効なので、これまでありませんでした — サーキットブレーカーのフォールバック 503 · 接続失敗 · 下流のタイムアウトはどの指標にも数えられていませんでした。次のデプロイ（gateway イメージ + common）から出ます。
 
 ## 0. 要約
 
 | | 何を | どこ |
 |---|---|---|
-| SLO 四つ | `catalog-browse`（ホーム · 詳細）· `catalog-search`（一覧 · フィルター · 名前検索）· `order-create`（注文作成）· `site-probe`（外部プローブ）— 今（ノード一台）の値と段階 1 · 2 後の目標 | `observability/alert-rules.yml` の `slo` グループ |
+| SLO 五つ | `catalog-browse`（ホーム · 詳細）· `catalog-search`（一覧 · フィルター · 名前検索）· `order-create`（注文作成）· `gateway`（ゲートウェイを通るすべてのルート）· `site-probe`（外部プローブ）— 今（ノード一台）の値と段階 1 · 2 後の目標 | `observability/alert-rules.yml` の `slo` グループ |
+| ゲートウェイのルートタイマー | `spring.cloud.gateway.requests`（routeId · httpStatusCode）— **4.3 は既定で無効なのでなかった**、境界バケットは 0.3 · 1 · 2 秒だけ | gateway `application-local.yml` の `spring.cloud.gateway.server.webflux.metrics` · `application-common.yml` |
 | 遅延の境界バケット | ヒストグラムに**正確な** 0.3 · 1.0 秒の境界 — 既定のバケットにはなく「300ms 以内の割合」を数えられなかった | `application-common.yml` の `management.metrics.distribution.slo` |
 | バーンレート警報 | 多窓の四つ — 速い（1h · 5m、14.4 倍、critical）· 遅い（6h · 30m、6 倍、warning）、リクエストが少なければ鳴らない | `slo` グループ · promtool テスト |
 | 14 日のエラーバジェット | バジェット使用率 · 半分（warning）· 使い切り（critical）の警報とそのときの規則 | `slo-budget` グループ |
 | スループット目標 | 段階 2 の終わりに毎秒 1,000 · 段階 3 の終わりに毎秒 5,000 | §2-5 · `ops/53 ceiling` の `CEILING_TARGET_RPS` |
 | 外部プローブ | 本番ノードの blackbox-exporter が Cloudflare 経由で最初の画面 · ホーム API を 30 秒ごとに、警報 `SiteProbeDown` | `docker-compose-observability.oci.yml` · `observability/blackbox.yml` · `prometheus.oci.yml` |
 | コンシューマー遅延 | **これまで指標がなかった** — すべてのコンシューマーファクトリーに Micrometer リスナー、警報 `KafkaConsumerLagHigh` | common `KafkaConsumerMetricsAutoConfiguration` · `kafka-consumer` グループ |
+| SLO ダッシュボード | Grafana `ecommerce-msa SLO` — 残りのバジェット · バーンレート · ゲートウェイのルート · プローブ · コンシューマー遅延 | `observability/grafana/provisioning/dashboards/slo.json`（§2-8） |
 | 天井の測定 | 到着率の階段ごとに SLO を見て、破れた階段で止まる — サービス別の Pod あたりリクエスト/秒 · CPU · DB 接続待ち · Kafka 遅延、スループット目標と比べる | `./ops/53-load-k6.sh ceiling browse|order|mixed` |
 
 ---
@@ -27,6 +31,7 @@ docs/89 は「数字なしで次の段階を選ぶと、機材 · マネージ�
 - **p99 300ms を数えられなかった。** `percentiles-histogram` の既定のバケットには 0.3 · 1.0 秒の境界がなく、`le="0.3"` の時系列がない（`SloRulesTest` が確認）—「300ms 以内の割合」は近似値（`histogram_quantile`）でしか出なかった。
 - **コンシューマー遅延の指標がなかった。** Spring Boot は自分の自動設定のコンシューマーファクトリーにだけ Micrometer リスナーを付けるが、このリポジトリのサービスはすべてファクトリーを自前で作る（`KafkaConsumerConfig` · `KafkaDltConfig`）。
 - **サービス側の指標は客側の経路を見ない** — Cloudflare · トンネル · ゲートウェイ · フロントが詰まっても catalog の 5xx は 0 だ。
+- **ゲートウェイはルートを知らなかった**（2026-11-15 に発見）— Spring Cloud Gateway 4.3 はルートタイマーが既定で無効で、ゲートウェイの `http.server.requests` はルートのリクエストの `uri` がすべて `UNKNOWN` だ。サーキットブレーカーのフォールバック（`/fallback` 503）· 接続失敗 · 下流のタイムアウトはバックエンドに届かないので、サービス側の指標にもない。
 - **`ops/53` は一度に一つの形の負荷**をかけていた — 天井を探すには、人が到着率を変えながら何度も回し、Grafana で数字を書き写す必要があった。
 
 ---
@@ -38,19 +43,20 @@ docs/89 は「数字なしで次の段階を選ぶと、機材 · マネージ�
 | `catalog-browse` | catalog の GET — ホーム · 商品詳細 · バナー · お知らせ · 企画展（`/api/search*` · 管理者 · 内部 · actuator を除く） | **99.5% → 99.9%** | **99% が 300ms 以内** | 実測 p99 22 〜 25ms（商品 1,000 万、キャッシュ外の詳細を含む）— 本番の機材 · キャッシュ外まで余裕 |
 | `catalog-search` | catalog の GET `/api/search*` — カテゴリー一覧 · フィルター · 名前検索 | **99.0% → 99.5%**（ES 後 99.9%） | **95% が 1 秒以内** | フィルターの組み合わせを広げた 8 時間の回で p95 1,513ms · 本番 200 万のまれなフィルターの組み合わせは 5 秒上限で 503（docs/83 §2.8）— ES まで残る限界 |
 | `order-create` | order の `POST /api/order/create` | **99.5% → 99.9%** | **99% が 1 秒以内** | 実測 p99 113ms（毎秒 5 件 55 分）— 在庫の競合 · クーポン · カート呼び出しの余裕 |
+| `gateway` | ゲートウェイを通るすべてのルート（`chat-service-ws` を除く、§2-7） | **99.5% → 99.9%** | **99% が 2 秒以内** | サービス側が見られないフォールバック 503 · 接続失敗 · 504 · ゲートウェイ自身の時間（JWT · 流入制限）。境界 2 秒はすべてのルートを一つの SLO で見るため（検索は 5% が 1 秒を超えてよい） |
 | `site-probe` | 外部プローブ — 最初の画面 · ホーム API（§2-6） | **99.5% → 99.9%** | **99% が 2 秒以内** | Cloudflare · トンネル · ゲートウェイ · フロントまで一度に |
 
 - **今 → 目標**: 今は PostgreSQL · Redis · Kafka が `replicas: 1` でノードが一台なので（docs/89 §0）、ノードの再起動 · PG Pod の作り直し一つがそのまま全停止です。99.9%（14 日で約 20 分）はメンテナンス一回でバジェットを使い切ります — 最初から掛けると初月から「バジェットなし」で始まります。99.5%（14 日で約 1.7 時間）はノード一台で守れる線です。docs/89 段階 1 · 2 を終えたら目標値に上げます（ルールのコメントに書きました）。
 - **検索を分けた理由**: カテゴリー一覧の画面も `/api/search` を使います。まれなフィルターの組み合わせの 503 は既知の限界ですが、一つの SLO に混ぜると、それが**商品 · ホームのバジェットまで食います**。検索の遅延目標はテールが長いので 99% ではなく 95% です（境界の 1 秒はすでにあるバケット）。
 - **エラーは 5xx だけ**です。4xx は客側（誤ったリクエスト · 在庫不足 · 他人のリソース · 流入制限の 429）なのでバジェットから外します。
-- **サービス側 SLO の遅延はサービス側の時間**です（`http.server.requests`）。ゲートウェイ · Cloudflare · 回線の時間は `site-probe` が見ます。
+- **サービス側 SLO の遅延はサービス側の時間**です（`http.server.requests`）。ゲートウェイの時間 · フォールバックは `gateway` が、Cloudflare · トンネル · 回線の時間は `site-probe` が見ます。
 - **数字を変える場所は一か所**: `alert-rules.yml` の `slo:objective:availability` · `slo:objective:latency` の二行（SLO ごと）。ルールは生成して貼ったので、SLO を足したりセレクターを変えたりするときは同じ形で四つ（窓）× 二つ（SLI）を一緒に直します。遅延の**境界**を変えるときは `application-common.yml` の `slo` バケット · ルールの `le` · `ops/53` の `CEILING_P99_MS` の既定値も — ガード `SloRulesTest` が照合します。
 
 ### 2-1. 記録ルール
 
 SLO ごと、窓四つ（5m · 30m · 1h · 6h）ごとに:
 
-| 記録名 | サービス側 SLO | `site-probe` |
+| 記録名 | サービス側 SLO · `gateway` | `site-probe` |
 |---|---|---|
 | `slo:sli_error:ratio_rate<窓>` | 5xx / 全体 — 5xx がなければ 0（`or vector(0)`） | 1 − プローブ成功の割合 |
 | `slo:sli_slow:ratio_rate<窓>` | 1 −（境界以内 / 全体）— 5xx も数える | プローブ時間 > 2 秒の割合 |
@@ -70,11 +76,12 @@ SLO ごと、窓四つ（5m · 30m · 1h · 6h）ごとに:
 
 ### 2-3. テスト
 
-- `observability/tests/slo-rules.test.yml`（promtool、1 分間隔）: browse 10% の 5xx で速い · 遅い · 2 分以内はまだ · 0.05% はバジェット内 · 毎秒 0.01 なら 33% 失敗でも静か · 注文の半分が 1 秒を超えると遅延の速い、10% なら遅延の遅いだけ · 管理者 · actuator はどこにも入らず、`/api/search` は search だけ · search の 40% が 1 秒を超えると遅延の遅いだけ · search 8% の 5xx は search の遅いだけ（browse のバジェットは 0）· プローブ一つが失敗すると `SiteProbeDown`（3 分）と site-probe の速い · プローブ失敗割合の値 · プローブが 3 秒なら遅延の速い · コンシューマー遅延 1,500 が 10 分。
+- `observability/tests/slo-rules.test.yml`（promtool、1 分間隔）: browse 10% の 5xx で速い · 遅い · 2 分以内はまだ · 0.05% はバジェット内 · 毎秒 0.01 なら 33% 失敗でも静か · 注文の半分が 1 秒を超えると遅延の速い、10% なら遅延の遅いだけ · 管理者 · actuator はどこにも入らず、`/api/search` は search だけ · search の 40% が 1 秒を超えると遅延の遅いだけ · search 8% の 5xx は search の遅いだけ（browse のバジェットは 0）· プローブ一つが失敗すると `SiteProbeDown`（3 分）と site-probe の速い · プローブ失敗割合の値 · プローブが 3 秒なら遅延の速い · コンシューマー遅延 1,500 が 10 分 · gateway: フォールバック 503 が 10% なら gateway のエラーの速い · `chat-service-ws` が 2 秒を超えても遅延バジェットは 0 · 429 · 401 が半分でも静か · 10% が 2 秒を超えると遅延の遅いだけ。
 - `observability/tests/slo-budget.test.yml`（promtool、指標は 10 分間隔 15 日 · 評価はグループと同じ 5 分 — 違うとグループの評価順が揺れて警報がときどき抜けた）: 0.4% の 5xx が 15 日ならバジェット 80% — 半分だけ、0.6% なら 120% — 使い切り（半分も）、リクエストが少なければ静か。
 - 実行: `SloRulesPromtoolTest`（コンテナ — 本番と同じ `prom/prometheus:v2.53.0`。Docker Hub が塞がっていれば `PROMETHEUS_IMAGE=mirror.gcr.io/prom/prometheus:v2.53.0`）。
-- `SloRulesTest` — バケット `le="0.3"` · `le="1.0"` が公開されるか（既定のバケットだけではない）、SLO ごとに目標の境界をその SLO の遅延 SLI が読むか、SLO 四つの目標 · SLI · 増分 · 警報、browse が検索を外しているか、14 日の窓 < 本番 Prometheus の保持、プローブの配線（版 · ポートなし · TLS 検証 · 本番アドレス · モジュール · 30 秒）。
-- 変異の確認: リクエスト下限の削除 · 境界 `le` · `or vector(0)` の削除 · 管理者経路を含める · 検索を browse に · 半分の基準を 0.9 に · バジェットの下限の削除 · プローブ失敗割合の反転 · `SiteProbeDown` の `for` の削除 → promtool テストが失敗、yml の境界 250ms · プローブにポート → `SloRulesTest` が失敗。
+- `SloRulesTest` — バケット `le="0.3"` · `le="1.0"` が公開されるか（既定のバケットだけではない）、SLO ごとに目標の境界をその SLO の遅延 SLI が読むか、SLO 四つの目標 · SLI · 増分 · 警報、browse が検索を外しているか、14 日の窓 < 本番 Prometheus の保持、プローブの配線（版 · ポートなし · TLS 検証 · 本番アドレス · モジュール · 30 秒）、gateway（ルートタイマーの `le="2.0"` バケット · 境界バケットだけ · ゲートウェイ設定の `metrics.enabled` · ルールが外すルートがゲートウェイにある SockJS · WebSocket のルートだけか）、ダッシュボード（読む記録ルール · 警報名が alert-rules.yml にあるか）。
+- gateway `GatewayRouteMetricsTest` — 実際のゲートウェイのコンテキストで偽の catalog の 200 · 503 を通し、`spring.cloud.gateway.requests{routeId, httpStatusCode}` と 2 秒のバケットができるか。
+- 変異の確認: リクエスト下限の削除 · 境界 `le` · `or vector(0)` の削除 · 管理者経路を含める · 検索を browse に · 半分の基準を 0.9 に · バジェットの下限の削除 · プローブ失敗割合の反転 · `SiteProbeDown` の `for` の削除 → promtool テストが失敗、yml の境界 250ms · プローブにポート → `SloRulesTest` が失敗。gateway（2026-11-15）: 外すルートの削除 · 4xx をエラーに → promtool が失敗、`metrics.enabled: false` · ゲートウェイのバケット行の削除 · 外すルート名の誤り · ルールの `le` 1.5 → `SloRulesTest` が失敗、`metrics.enabled: false` · バケット行の削除 → `GatewayRouteMetricsTest` が失敗。
 
 ### 2-4. 14 日のエラーバジェットと規則
 
@@ -103,6 +110,21 @@ SLO ごと、窓四つ（5m · 30m · 1h · 6h）ごとに:
 - 対象は二つ — `https://www.ysyproject.com/`（モジュール `http_page`: 200 · TLS · 本文に `<div id="root">`）、`https://www.ysyproject.com/catalog-service/api/content/home`（モジュール `http_api`: 200 · `Content-Type: application/json` · 本文が JSON）。状態コードだけを見ると、Cloudflare のエラー · チャレンジ画面やフロントに漏れた API（index.html 200）も成功になる。TLS は検証する。
 - 警報 `SiteProbeDown` — 対象一つが 3 分連続で失敗（critical）。バーンレート警報は `slo="site-probe"` で同じルールに乗る。
 - ⚠️ **限界**: プローブは本番ノードから出る — **ノードが丸ごと落ちると Prometheus · Alertmanager · プローブが一緒に落ちて何も鳴らない。** その場合はノード外の監視（Cloudflare Health Checks · 外部の稼働監視サービスなど）が別に要る（§6）。また Cloudflare のボット対策がプローブを止めると 403 · チャレンジで失敗する — `probe_http_status_code` を見て、そうならその経路をボットのルールから外す。
+
+### 2-7. ゲートウェイ（`gateway`）
+
+- **SLI**: `spring_cloud_gateway_requests_seconds{service="gateway-server", routeId!="chat-service-ws"}` — ゲートウェイの `GatewayMetricsFilter` がルートを通ったリクエストごとに残す（タグ `routeId` · `routeUri` · `httpStatusCode` · `httpMethod` · `outcome`）。エラーは `httpStatusCode=~"5.."`、遅延は `le="2.0"` を超えた割合。
+- **有効化**: `spring.cloud.gateway.server.webflux.metrics.enabled: true`（gateway `application-local.yml` — 4.3 は既定 false）。path タグは有効にしない（リクエスト経路ごとに時系列）。バケットは `application-common.yml` の `slo` に `spring.cloud.gateway.requests: 300ms,1s,2s` — **percentiles-histogram は有効にしない**（ルート × 状態コード × メソッドごとにバケット 70 余りになる）。そのためこのタイマーでは p99 を近似できない — ルート別の p99 はサービス側の `http_server_requests` と Jaeger で見る。
+- **見るもの**: サービス側 SLO が見られないもの — サーキットブレーカーのフォールバック（`/fallback` 503、バルクヘッド · 回路オープン · 10 秒の時間上限）、接続失敗（Retry を使い切った後）、下流のタイムアウト、ゲートウェイ自身の時間（JWT 検査 · 流入制限の Redis）。範囲はすべてのルート — カート · クーポン · ユーザー · 決済 Webhook まで初めて SLO に入る。
+- **外したもの**: `chat-service-ws`（`/chat-service/chat/**` — SockJS の xhr-streaming · WebSocket は接続が終わるまで一つのリクエストなので遅延バジェットを使い切る）。ガード `SloRulesTest` が、外すルートがゲートウェイにありその経路かを見る — ルート名を変えたとき黙って SLO に入らないように。4xx（流入制限 429 · 認証 401 · 403）はほかの SLO と同じくバジェットの外。
+- **境界 2 秒 · 99%**: すべてのルートを一つの SLO で見るので、いちばん緩いサービス SLO に合わせた — `catalog-search` は 5% が 1 秒を超えてよいので、1 秒の境界だと検索の多い日にゲートウェイのバジェットを食う。可用性はほかの SLO と同じく今 99.5% → 目標 99.9%。
+- **重なり**: バックエンドの 5xx はサービス側 SLO と `gateway` の両方で数える（同じ事故に警報二つ）。警報の束（`slo` ラベル）が違うので両方届くが、`gateway` にだけ届くなら原因はゲートウェイ側（フォールバック · 接続 · 時間上限）だ。
+
+### 2-8. ダッシュボード（Grafana `ecommerce-msa SLO`）
+
+- ファイル `observability/grafana/provisioning/dashboards/slo.json`（uid `slo`、フォルダー `ecommerce-msa`）— 観測スタックの Grafana がプロビジョニングで読む。変数 `slo`（`label_values(slo:objective:availability, slo)`、複数 · すべて）。
+- パネル: 14 日のエラー · 遅延バジェットの残り（stat — 50% で黄 · 0 で赤、規則は §2-4）、目標 · 1 時間平均のリクエスト（警報の下限 0.03）、エラー · 遅延のバーンレート（1h · 5m をバジェットで割った値 — 14.4 · 6 の線）、6 時間のエラー · 遅い割合（バジェットをどの日に使ったか）、鳴っている SLO · プローブ · コンシューマーの警報の表、ゲートウェイのルート別リクエスト · 5xx 割合 · 2 秒を超えた割合 · 2xx 以外の状態コード、プローブの成功 · 時間 · 状態コード、サービス · トピック別のコンシューマー遅延。
+- パネルは記録ルール（`slo:*`）を読む — ルール名を変えるとパネルが空になる。ガード `SloRulesTest` が、ダッシュボードの読む `slo:*` の名前 · 警報名が alert-rules.yml にあるかを見る。2026-11-15 に Prometheus v2.53.0 · Grafana 11.1.0 でクエリ 20 個がすべてエラーなく回ることとプロビジョニングを確認した（偽の指標）。
 
 ---
 
@@ -147,7 +169,8 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 ## 5. 適用 · 確認
 
-- **イメージ**: バケット · コンシューマー指標は common なので、次のデプロイのすべてのバックエンドイメージに入ります（動作の変化なし — 指標が増えるだけ。バケットは `http.server.requests` の時系列ごとに二つ）。
+- **イメージ**: バケット · コンシューマー指標は common なので、次のデプロイのすべてのバックエンドイメージに入ります（動作の変化なし — 指標が増えるだけ。バケットは `http.server.requests` の時系列ごとに二つ）。ゲートウェイのルートタイマー（§2-7）は gateway イメージ — ルート × 状態コード × メソッドごとに時系列六つ（バケット四つ · count · sum）。
+- **ダッシュボード**（§2-8）: Grafana のファイルプロビジョニングはフォルダーを定期的に読み直すので（既定 10 秒）、このコミット以降に switch すれば現れる — 再起動は要らない。見えなければ `docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml restart grafana`。
 - **観測スタック**（本番ノード、二ファイル）: `docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d blackbox-exporter prometheus` — プローブのコンテナが新しく立ち、Prometheus が新しいルール · ジョブを読みます。
 - **確認**（Prometheus）:
   - `probe_success{job="site-probe"}` の二行が 1 — 0 なら `probe_http_status_code` で理由（403 なら Cloudflare のボット対策、§2-6）
@@ -155,6 +178,7 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
   - `slo:sli_error:ratio_rate1h` に SLO 四つ（客がいなければサービス側の遅延 SLI は空のことがある）
   - 15 分後に `slo:budget_used:ratio14d`（最初はデータが短く大きく揺れる — 14 日たまる前の半分の警報はリクエストの下限が止める）
   - `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` に Kafka を使うサービス
+  - デプロイ後 `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` にルート · `slo:sli_error:ratio_rate1h{slo="gateway"}`
 
 ---
 
@@ -164,4 +188,4 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 2. **ノード外の監視** — ノードが丸ごと落ちると今の警報は何も鳴らない（§2-6）。Cloudflare Health Checks や外部の稼働監視サービスを一つ置くのはアカウント · 費用の判断なので、まだしていない。
 3. **バジェットの窓を 30 日に** — 保持を 31 日に上げるか（ディスクを確認した後、§2-4）。
 4. **目標値に上げる** — docs/89 段階 1 · 2 を終えたら `slo:objective:availability` をコメントの目標に。
-5. **ダッシュボード** — SLO のパネル（残りのバジェット · バーンレート · プローブ）は Grafana にまだない。
+5. ~~**ダッシュボード**~~ — 済み（2026-11-15、§2-8）。ゲートウェイの SLI も（§2-7）。

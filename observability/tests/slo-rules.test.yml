@@ -1,8 +1,8 @@
-# promtool 단위 시험 — SLO 넷(catalog-browse · catalog-search · order-create · site-probe) 소진율 · 탐침 · 컨슈머 지연 경보(docs/91).
+# promtool 단위 시험 — SLO 다섯(catalog-browse · catalog-search · order-create · gateway · site-probe) 소진율 · 탐침 · 컨슈머 지연 경보(docs/91).
 # 14일 예산 경보는 slo-budget.test.yml(평가 간격이 달라 따로). 실행: SloRulesPromtoolTest(컨테이너) 또는
 #   docker run --rm -v "$PWD/observability:/o" --entrypoint promtool prom/prometheus:v2.53.0 test rules /o/tests/slo-rules.test.yml
 # 주석(annotations)은 alert-rules.yml 에서 만든 그대로다 — 경보 문구를 바꾸면 여기도 바꾼다.
-# [JA] promtool の単体テスト — SLO 四つのバーンレート · 外部プローブ · コンシューマー遅延。
+# [JA] promtool の単体テスト — SLO 五つのバーンレート · 外部プローブ · コンシューマー遅延。
 rule_files:
 - ../alert-rules.yml
 evaluation_interval: 1m
@@ -266,3 +266,67 @@ tests:
       exp_annotations:
         summary: order-service 의 payment 컨슈머가 1500 건 뒤처져 있습니다
         description: 컨슈머가 따라가지 못합니다. 그 서비스의 CPU · DB 커넥션 대기(hikaricp_connections_pending) · DLT 재시도(KafkaDeadLetterPublished)를 보고, 파티션 수가 병렬도의 천장인지(ops/02 PARTITIONS) 확인하세요 (docs/91 §3, docs/89 §5-1).
+# gateway — 회로 차단 폴백 503 이 10%: 오류 빠름은 gateway 에. chat-service-ws(SockJS · WebSocket — 연결이 끝날 때까지 한 요청)는 2초를 넘어도 지연 예산을 쓰지 않는다
+- interval: 1m
+  input_series:
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="catalog-service",httpMethod="GET",httpStatusCode="200"}
+    values: 0+540x120
+  - series: spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId="catalog-service",httpMethod="GET",httpStatusCode="200",le="2.0"}
+    values: 0+540x120
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="catalog-service",httpMethod="GET",httpStatusCode="503"}
+    values: 0+60x120
+  - series: spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId="catalog-service",httpMethod="GET",httpStatusCode="503",le="2.0"}
+    values: 0+60x120
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="chat-service-ws",httpMethod="GET",httpStatusCode="200"}
+    values: 0+300x120
+  - series: spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId="chat-service-ws",httpMethod="GET",httpStatusCode="200",le="2.0"}
+    values: 0+0x120
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts:
+    - exp_labels:
+        slo: gateway
+        severity: critical
+      exp_annotations:
+        summary: "SLO gateway — 오류 예산을 14.4배 빠르기로 쓰고 있습니다(1h 10%)"
+        description: "14일 오류 예산의 4%를 1시간에 쓰는 빠르기입니다. 1h 과 5m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+  - eval_time: 70m
+    alertname: SloLatencyBudgetBurnFast
+    exp_alerts: []
+# gateway — 유입 제한 429 · 인증 401 이 절반이어도 오류 예산은 쓰지 않는다(4xx 는 손님 쪽)
+- interval: 1m
+  input_series:
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="catalog-service",httpMethod="GET",httpStatusCode="200"}
+    values: 0+300x120
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="catalog-service",httpMethod="GET",httpStatusCode="429"}
+    values: 0+200x120
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="user-service-auth",httpMethod="GET",httpStatusCode="401"}
+    values: 0+100x120
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: SloErrorBudgetBurnFast
+    exp_alerts: []
+  - eval_time: 110m
+    alertname: SloErrorBudgetBurnSlow
+    exp_alerts: []
+# gateway — 10% 가 2초를 넘으면 지연 느림만(빠름은 14.4% 부터)
+- interval: 1m
+  input_series:
+  - series: spring_cloud_gateway_requests_seconds_count{service="gateway-server",routeId="order-service",httpMethod="GET",httpStatusCode="200"}
+    values: 0+100x480
+  - series: spring_cloud_gateway_requests_seconds_bucket{service="gateway-server",routeId="order-service",httpMethod="GET",httpStatusCode="200",le="2.0"}
+    values: 0+90x480
+  alert_rule_test:
+  - eval_time: 7h
+    alertname: SloLatencyBudgetBurnSlow
+    exp_alerts:
+    - exp_labels:
+        slo: gateway
+        severity: warning
+      exp_annotations:
+        summary: "SLO gateway — 느린 요청 예산을 6배 빠르기로 쓰고 있습니다(6h 10%)"
+        description: "14일 오류 예산의 11%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
+  - eval_time: 7h
+    alertname: SloLatencyBudgetBurnFast
+    exp_alerts: []
