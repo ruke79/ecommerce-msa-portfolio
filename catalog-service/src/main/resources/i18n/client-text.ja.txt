@@ -181,3 +181,7 @@ slug 충돌이 100회를 넘었습니다: {}
 
 content.home.cache-ttl 은 0 이상이어야 한다: {}
 = -
+
+# ── 앞단 캐시 설정(EdgeCacheHeaders — 기동 실패, 운영자용) ─────────────
+catalog.edge-cache: s-maxage 는 0 보다 커야 하고 stale-while-revalidate 는 0 이상
+= -

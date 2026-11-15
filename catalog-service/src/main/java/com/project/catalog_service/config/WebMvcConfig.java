@@ -19,9 +19,13 @@ import lombok.RequiredArgsConstructor;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final AdminWriteInterceptor adminWriteInterceptor;
+    private final EdgeCacheHeaders edgeCacheHeaders;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // 앞단 캐시 기본값(no-store) — 관리자 검사보다 먼저, 401 · 403 응답에도 붙게(docs/91 §2-9)
+        registry.addInterceptor(edgeCacheHeaders)
+                .addPathPatterns("/api/**");
         registry.addInterceptor(adminWriteInterceptor)
                 .addPathPatterns("/api/**")
                 // actuator 는 API 가 아니고, 프로브가 GET 만 쓰지만 명시적으로 뺀다.

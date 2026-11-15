@@ -107,7 +107,7 @@ SLO 마다, 창 넷(5m · 30m · 1h · 6h)마다:
 ### 2-6. 바깥 탐침(`site-probe`)
 
 - 운영 노드의 관측 덧씌우기(`docker-compose-observability.oci.yml`)에 `blackbox-exporter`(v0.25.0, 포트 공개 없음), 운영 Prometheus 의 작업 `site-probe` 가 30초마다 부른다(`prometheus.oci.yml` — 개발 PC 설정에는 없다, B-95 비교에서 뺐다).
-- 대상 둘 — `https://www.ysyproject.com/`(모듈 `http_page`: 200 · TLS · 본문에 `<div id="root">`), `https://www.ysyproject.com/catalog-service/api/content/home`(모듈 `http_api`: 200 · `Content-Type: application/json` · 본문이 JSON). 상태 코드만 보면 Cloudflare 오류 · 챌린지 화면이나 프론트로 샌 API(index.html 200)도 성공이 된다. TLS 는 검증한다.
+- 대상 둘 — `https://www.ysyproject.com/`(모듈 `http_page`: 200 · TLS · 본문에 `<div id="root">`), `https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe`(모듈 `http_api`: 200 · `Content-Type: application/json` · 본문이 JSON). 상태 코드만 보면 Cloudflare 오류 · 챌린지 화면이나 프론트로 샌 API(index.html 200)도 성공이 된다. TLS 는 검증한다.
 - 경보 `SiteProbeDown` — 대상 하나가 3분 연속 실패(critical). 소진율 경보는 `slo="site-probe"` 로 같은 규칙을 탄다.
 - ⚠️ **한계**: 탐침은 운영 노드에서 나간다 — **노드가 통째로 죽으면 Prometheus · Alertmanager · 탐침이 함께 죽어 아무것도 울리지 않는다.** 그 경우는 노드 밖 감시(Cloudflare Health Checks · 외부 가동 감시 서비스 등)가 따로 필요하다(§6). 또 Cloudflare 의 봇 차단이 탐침을 막으면 403 · 챌린지로 실패한다 — `probe_http_status_code` 를 보고, 그러면 그 경로를 봇 규칙에서 뺀다.
 
@@ -125,6 +125,21 @@ SLO 마다, 창 넷(5m · 30m · 1h · 6h)마다:
 - 파일 `observability/grafana/provisioning/dashboards/slo.json`(uid `slo`, 폴더 `ecommerce-msa`) — 관측 스택의 Grafana 가 프로비저닝으로 읽는다. 변수 `slo`(`label_values(slo:objective:availability, slo)`, 여럿 · 전체).
 - 패널: 14일 오류 · 지연 예산 남음(stat — 50% 노랑 · 0 빨강, 규칙 §2-4), 목표 · 1시간 평균 요청(경보 하한 0.03), 오류 · 지연 소진율(1h · 5m 를 예산으로 나눈 값 — 14.4 · 6 선), 6시간 오류 · 느림 비율(예산을 어느 날 썼나), 울리는 SLO · 탐침 · 컨슈머 경보 표, 게이트웨이 라우트별 요청 · 5xx 비율 · 2초 넘은 비율 · 2xx 밖 상태 코드, 탐침 성공 · 시간 · 상태 코드, 서비스 · 토픽별 컨슈머 지연.
 - 패널은 기록 규칙(`slo:*`)을 읽는다 — 규칙 이름을 바꾸면 패널이 빈다. 가드 `SloRulesTest` 가 대시보드가 읽는 `slo:*` 이름 · 경보 이름이 alert-rules.yml 에 있는지 본다. 2026-11-15 에 Prometheus v2.53.0 · Grafana 11.1.0 으로 쿼리 20개가 모두 오류 없이 도는 것과 프로비저닝을 확인했다(가짜 지표).
+
+### 2-9. 앞단 캐시(CDN) — 서버가 표시하고 Cloudflare 는 따르기만(2026-11-15)
+
+- **왜 여기서**: 처리량 목표(§2-5)의 단계 3(초당 5,000)은 읽기의 대부분을 앞단이 받는다는 전제다(docs/89 §4). 사이트는 이미 Cloudflare 뒤라 CDN 을 따로 붙일 필요는 없다 — 막고 있던 것은 **원본이 아무 표시도 하지 않는다**는 것이었다(정적 파일 `/static/` 만 1년 `immutable`).
+- **표시**(catalog `EdgeCacheHeaders`): catalog 의 모든 API 응답은 기본 `Cache-Control: no-store`, 아래 공개 GET 이 **200** 으로 답할 때만 `public, max-age=0, s-maxage=30, stale-while-revalidate=30`.
+  - 대상 열넷(게이트웨이 재작성 뒤 경로): `/api/content/{home, banners, notices, notices/{id}, events, events/{slug}}` · `/api/category/{categories, product/allsubcategories, product/subcategories}` · `/api/product/{frontpage, products, {slug}}` · `/api/search` · `/api/search/category`. 모두 `User-Id` · 쿠키 · 언어를 보지 않는다(가드가 컨트롤러 시그니처로 본다).
+  - 빼는 것: 서비스 사이 조회(`/api/{id}` · `products/info` · `cart/*` · `stock` · `color*`), 관리자(`/api/content/admin/**`), 내부(`/api/internal/**`), 기획전 쿠폰 제안, POST, 오류(드문 필터 503 을 30초 동안 모두에게 주지 않게), `probe` 쿼리가 붙은 요청.
+  - `max-age=0` — 브라우저는 지금처럼 매번 받는다(관리자가 고친 것 · 재고가 새로고침에 바로 보인다). `s-maxage=30` — 앞단만 30초(첫 화면 파드 메모리 캐시 `HomeViewCache` 와 같은 크기). 재고 표시는 그만큼 늦을 수 있다 — 주문 · 결제는 서버가 재고를 다시 본다.
+  - 끄기: `catalog.edge-cache.enabled=false`(모두 no-store), 수명은 `catalog.edge-cache.s-maxage` · `stale-while-revalidate`.
+- **Cloudflare 규칙**(배포 뒤 · 사용자 작업 — docs/85 §9-4): Cache Rules 하나 — 호스트 `www.ysyproject.com` 이고 경로가 `/catalog-service/api/` 로 시작하면 "Eligible for cache", Edge TTL 은 "원본의 Cache-Control 을 따르고 없으면 우회", Browser TTL 은 원본을 따름. 규칙을 끄면 바로 원래대로.
+- **SLO 에 주는 영향**
+  - 캐시에서 나간 응답은 서비스 쪽 SLI(`http_server_requests`)와 `gateway` SLI 에 남지 않는다 — 규칙을 켠 뒤 그 SLI 는 "캐시를 지나친 요청" 만 본다(요청 수가 줄어 요청 하한 0.03 아래로 갈 수 있다).
+  - 바깥 탐침의 API 대상은 `?probe=site-probe` 로 캐시를 지나친다 — 쿼리가 다르면 앞단의 캐시 키도 다르고, 원본은 그 요청에 no-store 를 단다. 빼면 원본이 죽어도 캐시의 200 으로 탐침이 성공한다(가드가 대상의 `probe=` 를 본다).
+  - `stale-while-revalidate` — 만료 직후에는 옛 응답을 주며 뒤에서 새로 받는다. 원본이 잠깐 느려도 손님은 기다리지 않는다.
+- **시험**: catalog `EdgeCacheHeadersTest`(7) — 목록 GET 200 은 public 한 줄, 목록 밖 · POST · 오류 · 탐침 · 본문 없는 응답은 no-store, 끄면 no-store, 수명 설정, **목록의 경로가 실제 GET 이고 그 핸들러가 헤더 · 쿠키 · 요청 객체 · Principal · Locale 을 읽지 않음**, 관리자 · 내부 · 재고 · 장바구니 · 서비스 조회는 목록 밖, `WebMvcConfig` 등록. `SloRulesTest` — API 탐침 대상의 `probe=`. 변이 확인: 재고를 목록에 · 오류도 public · 탐침도 public · 기본 no-store 제거 · 등록 제거 · POST 도 public → `EdgeCacheHeadersTest` 실패, 탐침 대상의 `?probe=` 제거 → `SloRulesTest` 실패.
 
 ---
 
@@ -189,3 +204,4 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 3. **예산 창 30일** — 보존을 31일로 올릴지(디스크 확인 뒤, §2-4).
 4. **목표 값으로 올리기** — docs/89 단계 1 · 2 를 마치면 `slo:objective:availability` 를 주석의 목표로.
 5. ~~**대시보드**~~ — 끝(2026-11-15, §2-8). 게이트웨이 SLI 도(§2-7).
+6. **앞단 캐시 규칙 켜기** — 서버 표시는 끝(§2-9). 배포 뒤 Cloudflare 규칙을 켜고 `cf-cache-status: HIT` 를 본다(docs/85 §9-4).

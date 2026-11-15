@@ -232,6 +232,11 @@ class SloRulesTest {
             assertThat(modules).as("작업이 부르는 모듈이 blackbox.yml 에 있다").containsKey((String) ((Map<String, Object>) sc.get("labels")).get("module"));
         });
         assertThat(String.valueOf(job.get("relabel_configs"))).contains("__param_target", "__param_module", "blackbox-exporter:9115");
+        // API 대상은 앞단 캐시를 지나친다 — catalog 의 EdgeCacheHeaders 가 probe 쿼리에는 no-store(docs/91 §2-9). 빼면 원본이 죽어도
+        // 앞단 캐시의 200 으로 탐침이 성공한다
+        List<String> apiTargets = statics.stream().flatMap(sc -> ((List<String>) sc.get("targets")).stream())
+                .filter(t -> t.contains("/api/")).toList();
+        assertThat(apiTargets).as("API 탐침 대상").isNotEmpty().allMatch(t -> t.matches(".*[?&]probe=[^&]+.*"));
         // 규칙은 이 작업 이름으로 탐침을 읽는다
         assertThat(Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8))
                 .contains("probe_success{job=\"site-probe\"}");

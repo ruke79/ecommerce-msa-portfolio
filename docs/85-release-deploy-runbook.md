@@ -3,6 +3,8 @@
 **日本語** | [한국어](85-release-deploy-runbook.ko.md)
 
 > **状態(2026-10-24)** — **デプロイ完了: 本番は `4415e498565c`** です(1 回目は §7-1)。同じ日の続くデプロイ(`6501d3fd8e60`)と 2026-10-25 · 26 の続くデプロイ四つ(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)に続き、2026-11-03 の contract リリース(`7ef62043a98f` — §8-2)で、今の本番は **`7ef62043a98f`** です(§0「続くデプロイ」·「contract リリース」)。残りは §8。以前の本番は `b7c5053a45e8`(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))でした。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
+> 📝 **次のリリース（2026-11-17 予定 — SLO 段階 0 · 前段キャッシュの印 · 待ち項目）の点検表は §9** です。
+>
 > **対象バージョン**はこの文書が入ったコミット以降の improve 最新コミットです(パイプライン緑、12 桁 SHA)。デプロイ前に §0 の表に書きます。
 > 戻せないマイグレーション(ROLLBACK-UNSAFE)はありません。そのため **自動復帰が有効なデプロイ**です。ただし user V18 は重複行を消すので、バックアップは必須です(§3)。
 
@@ -349,3 +351,83 @@ q productdb "select count(*) from pg_index x join pg_class i on i.oid = x.indexr
 kubectl -n ecommerce get pods   # 再起動 0
 ```
 画面: 商品名の検索 · ログイン · 注文詳細が開けば OK です。
+
+---
+
+## 9. 次のリリース（2026-11-17 予定）— SLO 段階 0 · 待ち項目の点検表
+
+> **対象**: improve の最新コミットのうちパイプラインが緑のもの（12 桁、§0 の表に書く）。2026-11-15 時点の待ち項目は下の表すべてです。**戻せないマイグレーションはありません**（cart V8 · order V30 とも追加だけ）— 自動復帰が有効なデプロイです。ただしアウトボックスの保持が最初の周期で **2026-07 のパーティションを消します**（§9-2 ③）。
+
+### 9-1. 載るもの
+
+| 項目 | イメージ | 変わること | 根拠 |
+|---|---|---|---|
+| SLO の指標 | すべてのバックエンド（common） | `http.server.requests` に 0.3 · 1 秒のバケット、すべてのコンシューマーファクトリーに遅延の指標 — 動作の変化なし | docs/91 §2 · §3 |
+| SLO `gateway` | gateway | ルートタイマー `spring.cloud.gateway.requests`（0.3 · 1 · 2 秒のバケット） | docs/91 §2-7 |
+| 前段キャッシュの印 | catalog | すべての API 応答に `Cache-Control` — 公開 GET 十四の 200 だけ `public, max-age=0, s-maxage=30, …`、ほかは `no-store`。Cloudflare の規則を有効にするまでは動作の変化なし | docs/91 §2-9 |
+| アウトボックスの保持 | order · pay · cart · user（common） | 今月 + 前 3 か月だけ残し、すべて COMPLETED の月を DETACH → DROP | docs/09 §4.6 |
+| cart の再検討 | cart | V8 インデックス、cart-rollback の NPE、範囲外 style は 400 | docs/38 §2.5 |
+| オフセット earliest | catalog · coupon · order · chat | グループがある本番では変化なし、order V30 の処理台帳 | docs/89 §2-1 · B-110 |
+| 管理者フォーム | frontend | 商品 · カテゴリーの登録が入力した値を送る | `AdminInput.jsx` |
+
+### 9-2. デプロイ前
+
+```bash
+# ① ゲート — 対象コミットの CI がリリース候補まで緑
+# ② 長いトランザクション 0 · 03:00 UTC のバックアップ窓を避ける（§8-2 の 2-1）
+q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -v ON_ERROR_STOP=1 -c "$2"; }
+for db in cartdb orderdb paydb userdb productdb coupondb; do echo "$db: $(q "$db" "select count(*) from pg_stat_activity where state <> 'idle' and xact_start < now() - interval '30 seconds'")"; done
+# ③ アウトボックス 2026-07 — すべて COMPLETED ならデプロイ後の最初の周期（起動 30 秒後）に消える。残すならそのサービスに OUTBOX_PARTITIONS_RETENTION_MONTHS=0
+q orderdb "select coalesce(outbox_status,'NULL'), count(*) from orders.payment_outbox_event_2026_07 group by 1"
+q paydb   "select coalesce(outbox_status,'NULL'), count(*) from pay.order_outbox_event_2026_07 group by 1"
+q cartdb  "select coalesce(outbox_status,'NULL'), count(*) from cart.outbox_event_2026_07 group by 1"
+q userdb  "select coalesce(outbox_status,'NULL'), count(*) from users.outbox_event_2026_07 group by 1"
+```
+
+④ バックアップ — docs/72 §3（tmux で一行ずつ、残ったダンプ 0 を確認）。期待するスキーマ: cart 7 → 8 · order 29 → 30。
+
+### 9-3. デプロイと直後の確認
+
+```bash
+git switch --detach <SHA> && ./ops/28-deploy.sh local <SHA>
+for db in cartdb coupondb orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+# 期待: cart 8 · coupon 9 · order 30 · user 19（catalog 24 はそのまま）
+kubectl -n ecommerce get pods                                                        # 再起動 0
+for d in order-service pay-service cart-service user-service; do echo "$d: $(kubectl -n ecommerce logs deploy/$d --since=10m | grep '아웃박스 파티션 보존' | tail -2)"; done
+./ops/56-dlt-replay.sh list | grep -E 'cart-rollback|order\.DLT|payment\.DLT'      # デプロイ前より増えない
+# 前段キャッシュの印 — 規則を有効にする前なので cf-cache-status は DYNAMIC が正しい
+curl -sI https://www.ysyproject.com/catalog-service/api/content/home | grep -iE '^cache-control|cf-cache-status'     # public, max-age=0, s-maxage=30, …
+curl -sI 'https://www.ysyproject.com/catalog-service/api/content/home?probe=x' | grep -i '^cache-control'          # no-store
+curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -i '^cache-control'                   # no-store
+```
+
+**観測スタック**（本番ノード、いつも二ファイル）— 新しいルール（slo 五つ · slo-budget · kafka-consumer · `OutboxPartitionRetentionStalled` · `ChatFanoutPublishFailed`）· プローブ · ダッシュボード:
+
+```bash
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d blackbox-exporter prometheus
+# ダッシュボードは Grafana がファイルを読み直す（約 10 秒）。見えなければ同じ二ファイルで restart grafana
+```
+
+Prometheus で: `probe_success{job="site-probe"}` が二つとも 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` にルート · `count by (slo) (slo:sli_error:ratio_rate1h)` が五つ · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)`。Grafana の `ecommerce-msa SLO` が開く。
+
+**画面**: 管理者でカテゴリー一つ · 商品一つを実際に登録する（以前は「追加失敗」）。ホーム · 商品詳細 · 検索 · カート · 注文を一巡。
+
+**ディスク**（バジェット窓 30 日の判断 — docs/91 §2-4）: `df -h /` · `docker system df -v | grep -i prometheus` を docs/91 に書く。
+
+### 9-4. Cloudflare のキャッシュ規則 — 一、二日安定を見てから（利用者の作業）
+
+1. Caching → Cache Rules → 新しい規則: **ホスト** `www.ysyproject.com` かつ **URI パスが `/catalog-service/api/` で始まる** →「Eligible for cache」、**Edge TTL**:「Use cache-control header if present, bypass cache if not」、**Browser TTL**: オリジンに従う。
+2. 確認:
+
+```bash
+U=https://www.ysyproject.com/catalog-service/api/content/home
+curl -sI $U | grep -i cf-cache-status; sleep 2; curl -sI $U | grep -i cf-cache-status     # MISS → HIT
+curl -sI "$U?probe=x" | grep -i cf-cache-status                                            # HIT ではない（BYPASS · DYNAMIC）
+curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -i cf-cache-status   # HIT ではない
+```
+
+3. 一日後: catalog の `http_server_requests` のリクエスト数が減る、`probe_success` は 1 のまま、SLO ダッシュボードの catalog のリクエストが下限（毎秒 0.03）を下回っていないか。おかしければ**規則を止める**（すぐ元どおり）— サーバー側で止めるのは `catalog.edge-cache.enabled=false`。
+
+### 9-5. 終わったら
+
+§0 の表に新しい本番バージョンを書く（適用済みに）。

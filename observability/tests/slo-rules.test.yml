@@ -186,9 +186,9 @@ tests:
     values: 1x120
   - series: probe_duration_seconds{job="site-probe",instance="https://www.ysyproject.com/"}
     values: 0.4x120
-  - series: probe_success{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home"}
+  - series: probe_success{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe"}
     values: 1x50 0x70
-  - series: probe_duration_seconds{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home"}
+  - series: probe_duration_seconds{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe"}
     values: 0.4x120
   alert_rule_test:
   - eval_time: 52m
@@ -199,10 +199,10 @@ tests:
     exp_alerts:
     - exp_labels:
         job: site-probe
-        instance: https://www.ysyproject.com/catalog-service/api/content/home
+        instance: https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe
         severity: critical
       exp_annotations:
-        summary: 바깥에서 https://www.ysyproject.com/catalog-service/api/content/home 를 열지 못합니다
+        summary: 바깥에서 https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe 를 열지 못합니다
         description: 운영 노드의 blackbox-exporter 가 Cloudflare 를 거쳐 3분 연속 실패했습니다. cloudflared 터널 · 게이트웨이 · frontend 파드와 인증서를 보세요. probe_http_status_code 로 상태 코드를, Cloudflare 의 403 · 챌린지면 봇 차단 설정을 확인하세요 (docs/91
           §2-6).
   - eval_time: 115m
@@ -227,9 +227,9 @@ tests:
     values: 1x120
   - series: probe_duration_seconds{job="site-probe",instance="https://www.ysyproject.com/"}
     values: 0.4x120
-  - series: probe_success{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home"}
+  - series: probe_success{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe"}
     values: 1x120
-  - series: probe_duration_seconds{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home"}
+  - series: probe_duration_seconds{job="site-probe",instance="https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe"}
     values: 3x120
   alert_rule_test:
   - eval_time: 70m

@@ -107,7 +107,7 @@ SLO ごと、窓四つ（5m · 30m · 1h · 6h）ごとに:
 ### 2-6. 外部プローブ（`site-probe`）
 
 - 本番ノードの観測の上書き（`docker-compose-observability.oci.yml`）に `blackbox-exporter`（v0.25.0、ポート公開なし）、本番 Prometheus のジョブ `site-probe` が 30 秒ごとに呼ぶ（`prometheus.oci.yml` — 開発 PC の設定にはない、B-95 の比較から外した）。
-- 対象は二つ — `https://www.ysyproject.com/`（モジュール `http_page`: 200 · TLS · 本文に `<div id="root">`）、`https://www.ysyproject.com/catalog-service/api/content/home`（モジュール `http_api`: 200 · `Content-Type: application/json` · 本文が JSON）。状態コードだけを見ると、Cloudflare のエラー · チャレンジ画面やフロントに漏れた API（index.html 200）も成功になる。TLS は検証する。
+- 対象は二つ — `https://www.ysyproject.com/`（モジュール `http_page`: 200 · TLS · 本文に `<div id="root">`）、`https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe`（モジュール `http_api`: 200 · `Content-Type: application/json` · 本文が JSON）。状態コードだけを見ると、Cloudflare のエラー · チャレンジ画面やフロントに漏れた API（index.html 200）も成功になる。TLS は検証する。
 - 警報 `SiteProbeDown` — 対象一つが 3 分連続で失敗（critical）。バーンレート警報は `slo="site-probe"` で同じルールに乗る。
 - ⚠️ **限界**: プローブは本番ノードから出る — **ノードが丸ごと落ちると Prometheus · Alertmanager · プローブが一緒に落ちて何も鳴らない。** その場合はノード外の監視（Cloudflare Health Checks · 外部の稼働監視サービスなど）が別に要る（§6）。また Cloudflare のボット対策がプローブを止めると 403 · チャレンジで失敗する — `probe_http_status_code` を見て、そうならその経路をボットのルールから外す。
 
@@ -125,6 +125,21 @@ SLO ごと、窓四つ（5m · 30m · 1h · 6h）ごとに:
 - ファイル `observability/grafana/provisioning/dashboards/slo.json`（uid `slo`、フォルダー `ecommerce-msa`）— 観測スタックの Grafana がプロビジョニングで読む。変数 `slo`（`label_values(slo:objective:availability, slo)`、複数 · すべて）。
 - パネル: 14 日のエラー · 遅延バジェットの残り（stat — 50% で黄 · 0 で赤、規則は §2-4）、目標 · 1 時間平均のリクエスト（警報の下限 0.03）、エラー · 遅延のバーンレート（1h · 5m をバジェットで割った値 — 14.4 · 6 の線）、6 時間のエラー · 遅い割合（バジェットをどの日に使ったか）、鳴っている SLO · プローブ · コンシューマーの警報の表、ゲートウェイのルート別リクエスト · 5xx 割合 · 2 秒を超えた割合 · 2xx 以外の状態コード、プローブの成功 · 時間 · 状態コード、サービス · トピック別のコンシューマー遅延。
 - パネルは記録ルール（`slo:*`）を読む — ルール名を変えるとパネルが空になる。ガード `SloRulesTest` が、ダッシュボードの読む `slo:*` の名前 · 警報名が alert-rules.yml にあるかを見る。2026-11-15 に Prometheus v2.53.0 · Grafana 11.1.0 でクエリ 20 個がすべてエラーなく回ることとプロビジョニングを確認した（偽の指標）。
+
+### 2-9. 前段キャッシュ（CDN）— サーバーが印を付け、Cloudflare は従うだけ（2026-11-15）
+
+- **なぜここで**: スループット目標（§2-5）の段階 3（毎秒 5,000）は、読みの大半を前段が受ける前提だ（docs/89 §4）。サイトはすでに Cloudflare の後ろなので CDN を別に付ける必要はない — 止めていたのは**オリジンが何の印も付けていない**ことだった（静的ファイル `/static/` だけ 1 年 `immutable`）。
+- **印**（catalog `EdgeCacheHeaders`）: catalog のすべての API 応答は既定で `Cache-Control: no-store`、下の公開 GET が **200** で答えるときだけ `public, max-age=0, s-maxage=30, stale-while-revalidate=30`。
+  - 対象は十四（ゲートウェイの書き換え後の経路）: `/api/content/{home, banners, notices, notices/{id}, events, events/{slug}}` · `/api/category/{categories, product/allsubcategories, product/subcategories}` · `/api/product/{frontpage, products, {slug}}` · `/api/search` · `/api/search/category`。どれも `User-Id` · Cookie · 言語を見ない（ガードがコントローラーのシグネチャで見る）。
+  - 外すもの: サービス間の照会（`/api/{id}` · `products/info` · `cart/*` · `stock` · `color*`）、管理者（`/api/content/admin/**`）、内部（`/api/internal/**`）、企画展のクーポン提案、POST、エラー（まれなフィルターの 503 を 30 秒間みんなに返さないように）、`probe` クエリ付きのリクエスト。
+  - `max-age=0` — ブラウザーはこれまでどおり毎回取得する（管理者の修正 · 在庫が再読み込みですぐ見える）。`s-maxage=30` — 前段だけ 30 秒（最初の画面の Pod メモリーキャッシュ `HomeViewCache` と同じ大きさ）。在庫表示はその分遅れることがある — 注文 · 決済はサーバーが在庫を見直す。
+  - 止める: `catalog.edge-cache.enabled=false`（すべて no-store）、寿命は `catalog.edge-cache.s-maxage` · `stale-while-revalidate`。
+- **Cloudflare の規則**（デプロイ後 · 利用者の作業 — docs/85 §9-4）: Cache Rules を一つ — ホストが `www.ysyproject.com` で経路が `/catalog-service/api/` で始まれば「Eligible for cache」、Edge TTL は「オリジンの Cache-Control に従い、なければバイパス」、Browser TTL はオリジンに従う。規則を止めればすぐ元どおり。
+- **SLO への影響**
+  - キャッシュから出た応答はサービス側 SLI（`http_server_requests`）と `gateway` SLI に残らない — 規則を有効にした後、その SLI は「キャッシュを通り過ぎたリクエスト」だけを見る（リクエスト数が減り、リクエストの下限 0.03 を下回ることがある）。
+  - 外部プローブの API 対象は `?probe=site-probe` でキャッシュを通り過ぎる — クエリが違えば前段のキャッシュキーも違い、オリジンはそのリクエストに no-store を付ける。外すとオリジンが落ちてもキャッシュの 200 でプローブが成功する（ガードが対象の `probe=` を見る）。
+  - `stale-while-revalidate` — 期限切れ直後は古い応答を返しながら裏で取り直す。オリジンが少し遅くても客は待たない。
+- **テスト**: catalog `EdgeCacheHeadersTest`（7）— 一覧の GET 200 は public 一行、一覧外 · POST · エラー · プローブ · 本文のない応答は no-store、止めれば no-store、寿命の設定、**一覧の経路が実在する GET で、そのハンドラーがヘッダー · Cookie · リクエストオブジェクト · Principal · Locale を読まないこと**、管理者 · 内部 · 在庫 · カート · サービス照会は一覧外、`WebMvcConfig` の登録。`SloRulesTest` — API プローブ対象の `probe=`。変異の確認: 在庫を一覧に · エラーも public · プローブも public · 既定の no-store を削除 · 登録を削除 · POST も public → `EdgeCacheHeadersTest` が失敗、プローブ対象の `?probe=` を削除 → `SloRulesTest` が失敗。
 
 ---
 
@@ -189,3 +204,4 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 3. **バジェットの窓を 30 日に** — 保持を 31 日に上げるか（ディスクを確認した後、§2-4）。
 4. **目標値に上げる** — docs/89 段階 1 · 2 を終えたら `slo:objective:availability` をコメントの目標に。
 5. ~~**ダッシュボード**~~ — 済み（2026-11-15、§2-8）。ゲートウェイの SLI も（§2-7）。
+6. **前段キャッシュの規則を有効にする** — サーバー側の印は済み（§2-9）。デプロイ後に Cloudflare の規則を有効にし、`cf-cache-status: HIT` を見る（docs/85 §9-4）。

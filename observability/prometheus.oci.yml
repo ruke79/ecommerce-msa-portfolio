@@ -59,7 +59,9 @@ scrape_configs:
     static_configs:
       - targets: ["https://www.ysyproject.com/"]
         labels: { module: http_page }
-      - targets: ["https://www.ysyproject.com/catalog-service/api/content/home"]
+      # ?probe= — catalog 가 이 요청에는 no-store 를 단다(EdgeCacheHeaders). 쿼리가 다르면 앞단의 캐시 키도 달라, 캐시 규칙을 켠 뒤에도
+      # 탐침은 늘 원본까지 간다 — 빼면 원본이 죽어도 앞단 캐시가 200 을 줘 탐침이 성공한다(docs/91 §2-9).
+      - targets: ["https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe"]
         labels: { module: http_api }
     relabel_configs:
       - source_labels: [__address__]

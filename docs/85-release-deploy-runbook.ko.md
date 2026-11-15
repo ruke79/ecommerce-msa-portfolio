@@ -3,6 +3,8 @@
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
 > **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)에 이어, 2026-11-03 contract 릴리스(`7ef62043a98f` — §8-2)로 지금 운영은 **`7ef62043a98f`** 입니다(§0 "후속 배포" · "contract 릴리스"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
+> 📝 **다음 릴리스(2026-11-17 예정 — SLO 단계 0 · 앞단 캐시 표시 · 대기 항목) 점검표는 §9** 입니다.
+>
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
 
@@ -349,3 +351,83 @@ q productdb "select count(*) from pg_index x join pg_class i on i.oid = x.indexr
 kubectl -n ecommerce get pods   # 재시작 0
 ```
 화면: 상품 이름 검색 · 로그인 · 주문 상세가 열리면 됩니다.
+
+---
+
+## 9. 다음 릴리스(2026-11-17 예정) — SLO 단계 0 · 대기 항목 점검표
+
+> **대상**: improve 최신 커밋 중 파이프라인이 초록인 것(12자리, §0 표에 적는다). 2026-11-15 기준 대기 항목은 아래 표 전부입니다. **되돌릴 수 없는 마이그레이션은 없습니다**(cart V8 · order V30 모두 더하기만) — 자동 복귀가 켜진 배포입니다. 단, 아웃박스 보존이 첫 주기에 **2026-07 파티션을 지웁니다**(§9-2 ③).
+
+### 9-1. 실리는 것
+
+| 항목 | 이미지 | 바뀌는 것 | 근거 |
+|---|---|---|---|
+| SLO 지표 | 모든 백엔드(common) | `http.server.requests` 에 0.3 · 1초 버킷, 모든 컨슈머 팩토리에 지연 지표 — 동작 변화 없음 | docs/91 §2 · §3 |
+| SLO `gateway` | gateway | 라우트 타이머 `spring.cloud.gateway.requests`(0.3 · 1 · 2초 버킷) | docs/91 §2-7 |
+| 앞단 캐시 표시 | catalog | 모든 API 응답에 `Cache-Control` — 공개 GET 열넷의 200 만 `public, max-age=0, s-maxage=30, …`, 나머지 `no-store`. Cloudflare 규칙을 켜기 전에는 동작 변화 없음 | docs/91 §2-9 |
+| 아웃박스 보존 | order · pay · cart · user(common) | 이번 달 + 앞 3달만 남기고 모두 COMPLETED 인 달을 DETACH → DROP | docs/09 §4.6 |
+| cart 재검토 | cart | V8 인덱스, cart-rollback NPE, 범위 밖 style 400 | docs/38 §2.5 |
+| 오프셋 earliest | catalog · coupon · order · chat | 그룹이 있는 운영에서는 변화 없음, order V30 처리 원장 | docs/89 §2-1 · B-110 |
+| 관리자 폼 | frontend | 상품 · 카테고리 등록이 타이핑한 값을 보낸다 | `AdminInput.jsx` |
+
+### 9-2. 배포 전
+
+```bash
+# ① 게이트 — 대상 커밋의 CI 가 릴리스 후보까지 초록
+# ② 긴 트랜잭션 0 · 03:00 UTC 백업 창을 피한다(§8-2 의 2-1)
+q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -v ON_ERROR_STOP=1 -c "$2"; }
+for db in cartdb orderdb paydb userdb productdb coupondb; do echo "$db: $(q "$db" "select count(*) from pg_stat_activity where state <> 'idle' and xact_start < now() - interval '30 seconds'")"; done
+# ③ 아웃박스 2026-07 — 모두 COMPLETED 면 배포 뒤 첫 주기(기동 30초 뒤)에 지워진다. 남기려면 그 서비스에 OUTBOX_PARTITIONS_RETENTION_MONTHS=0
+q orderdb "select coalesce(outbox_status,'NULL'), count(*) from orders.payment_outbox_event_2026_07 group by 1"
+q paydb   "select coalesce(outbox_status,'NULL'), count(*) from pay.order_outbox_event_2026_07 group by 1"
+q cartdb  "select coalesce(outbox_status,'NULL'), count(*) from cart.outbox_event_2026_07 group by 1"
+q userdb  "select coalesce(outbox_status,'NULL'), count(*) from users.outbox_event_2026_07 group by 1"
+```
+
+④ 백업 — docs/72 §3(tmux 한 줄씩, 남은 덤프 0 확인). 기대 스키마: cart 7 → 8 · order 29 → 30.
+
+### 9-3. 배포와 직후 확인
+
+```bash
+git switch --detach <SHA> && ./ops/28-deploy.sh local <SHA>
+for db in cartdb coupondb orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+# 기대: cart 8 · coupon 9 · order 30 · user 19 (catalog 24 그대로)
+kubectl -n ecommerce get pods                                                        # 재시작 0
+for d in order-service pay-service cart-service user-service; do echo "$d: $(kubectl -n ecommerce logs deploy/$d --since=10m | grep '아웃박스 파티션 보존' | tail -2)"; done
+./ops/56-dlt-replay.sh list | grep -E 'cart-rollback|order\.DLT|payment\.DLT'      # 배포 전보다 늘지 않는다
+# 앞단 캐시 표시 — 규칙을 켜기 전이라 cf-cache-status 는 DYNAMIC 이 맞다
+curl -sI https://www.ysyproject.com/catalog-service/api/content/home | grep -iE '^cache-control|cf-cache-status'     # public, max-age=0, s-maxage=30, …
+curl -sI 'https://www.ysyproject.com/catalog-service/api/content/home?probe=x' | grep -i '^cache-control'          # no-store
+curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -i '^cache-control'                   # no-store
+```
+
+**관측 스택**(운영 노드, 언제나 두 파일) — 새 규칙(slo 다섯 · slo-budget · kafka-consumer · `OutboxPartitionRetentionStalled` · `ChatFanoutPublishFailed`) · 탐침 · 대시보드:
+
+```bash
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d blackbox-exporter prometheus
+# 대시보드는 Grafana 가 파일을 다시 읽는다(약 10초). 안 보이면 같은 두 파일로 restart grafana
+```
+
+Prometheus 에서: `probe_success{job="site-probe"}` 둘 다 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` 에 라우트들 · `count by (slo) (slo:sli_error:ratio_rate1h)` 다섯 · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)`. Grafana 의 `ecommerce-msa SLO` 가 열린다.
+
+**화면**: 관리자로 카테고리 하나 · 상품 하나를 실제로 등록한다(예전에는 '추가 실패'). 홈 · 상품 상세 · 검색 · 장바구니 · 주문 한 바퀴.
+
+**디스크**(예산 창 30일 판단 — docs/91 §2-4): `df -h /` · `docker system df -v | grep -i prometheus` 를 docs/91 에 적는다.
+
+### 9-4. Cloudflare 캐시 규칙 — 하루 이틀 안정을 본 뒤(사용자 작업)
+
+1. Caching → Cache Rules → 새 규칙: **호스트** `www.ysyproject.com` 그리고 **URI 경로가 `/catalog-service/api/` 로 시작** → "Eligible for cache", **Edge TTL**: "Use cache-control header if present, bypass cache if not", **Browser TTL**: 원본을 따름.
+2. 확인:
+
+```bash
+U=https://www.ysyproject.com/catalog-service/api/content/home
+curl -sI $U | grep -i cf-cache-status; sleep 2; curl -sI $U | grep -i cf-cache-status     # MISS → HIT
+curl -sI "$U?probe=x" | grep -i cf-cache-status                                            # HIT 가 아니다(BYPASS · DYNAMIC)
+curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -i cf-cache-status   # HIT 가 아니다
+```
+
+3. 하루 뒤: catalog 의 `http_server_requests` 요청 수 감소, `probe_success` 1 그대로, SLO 대시보드의 catalog 요청이 하한(초당 0.03) 아래로 가지 않았는지. 이상하면 **규칙을 끈다**(즉시 원래대로) — 서버 쪽 끄기는 `catalog.edge-cache.enabled=false`.
+
+### 9-5. 끝나면
+
+§0 표에 새 운영 버전을 적는다(적용 끝으로).
