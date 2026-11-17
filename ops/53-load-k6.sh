@@ -59,7 +59,7 @@
 #
 #   ./ops/53-load-k6.sh ceiling browse         # 천장 찾기(docs/91 §4 · docs/89 단계 0): 도착률을 계단(CEILING_RATES)으로 올리며 계단마다 browse 를
 #                                              # 한 번씩 돌리고, SLO(p99 · 5xx 비율)가 깨지는 계단에서 멈춘다 → ceiling.md: 계단마다 요청/초 · p99 · 5xx ·
-#                                              # 서비스별 파드당 요청/초 · CPU · DB 커넥션 대기 · Kafka 지연 · 막힌 곳 후보. order · mixed 도 같다
+#                                              # 서비스별 파드당 요청/초 · CPU · DB 커넥션 대기 · Kafka 지연 · GC(종류 · 부담 · 정지 · 할당 · GC 뒤 힙) · 막힌 곳 후보. order · mixed 도 같다
 #
 #   RATE=200 ./ops/53-load-k6.sh browse        # 최고 도착률(초당 반복) 바꾸기
 #   STAGES="1m:50,3m:50,1m:0" ./ops/53-load-k6.sh order   # 단계를 직접(길이:목표 도착률, 쉼표로)
@@ -90,6 +90,7 @@
 #   CEILING_P99_MS  CEILING_MAX_5XX=0.001   # ceiling 의 SLO(docs/91 §2) — p99 기본은 browse · mixed 300(catalog-browse 경계 — 목록 · 검색도
 #                                  # 이 기준이라 보수적) · order 1000(order-create — order_create 요청만). 5xx 비율은 목표 가용성 99.9% 의 예산
 #   CEILING_TARGET_RPS             # 처리량 목표(요청/초, docs/91 §2-5) — browse · mixed 기본 1000(평시 피크), order 는 없음. 천장과 견준다
+#   CEILING_GC_OVERHEAD=0.10       # 막힌 곳 후보로 적는 GC 부담(jvm_gc_overhead, 0 ~ 1) — 1 코어 파드는 SerialGC(docs/91 §4-3)
 #
 # 🔒 데모 계정은 모두 같은 비밀번호다 — 파일에서 읽어 k6 의 환경 변수로만 넘긴다(ps 에 보이는 명령줄 인자가 아니다).
 #    결과 파일에는 비밀번호 · 토큰을 쓰지 않는다.
@@ -955,6 +956,7 @@ cmd_ceiling() {
     [[ "$CEILING_P99_MS" =~ ^[1-9][0-9]*$ ]] || die "CEILING_P99_MS 는 양의 정수(ms)"
     [[ "$max5xx" =~ ^0(\.[0-9]+)?$ ]] || die "CEILING_MAX_5XX 는 0 ~ 1 미만의 비율(예 0.001)"
     [ -z "${CEILING_TARGET_RPS:-}" ] || [[ "$CEILING_TARGET_RPS" =~ ^[1-9][0-9]*$ ]] || die "CEILING_TARGET_RPS 는 양의 정수(요청/초)"
+    [[ "${CEILING_GC_OVERHEAD:-0.10}" =~ ^0\.[0-9]*[1-9][0-9]*$ ]] || die "CEILING_GC_OVERHEAD 는 0 과 1 사이 소수(예 0.10)"
     command -v python3 >/dev/null 2>&1 || die "python3 가 필요하다"
 
     local stamp dir prev="" r t0 t1 step
@@ -1003,16 +1005,23 @@ ceiling_judge() {
                  "pods|max_over_time((count by (service) (up{$sel} == 1))[${w}s:15s])" \
                  "cpu|max by (service) (avg_over_time(process_cpu_usage{$sel}[${w}s]))" \
                  "pending|max by (service) (max_over_time(hikaricp_connections_pending{$sel}[${w}s]))" \
-                 "lag|max by (service) (max_over_time(kafka_consumer_fetch_manager_records_lag_max{$sel}[${w}s]))"; do
+                 "lag|max by (service) (max_over_time(kafka_consumer_fetch_manager_records_lag_max{$sel}[${w}s]))" \
+                 "gc|max by (service) (max_over_time(jvm_gc_overhead{$sel}[${w}s]))" \
+                 "pause|max by (service) (max_over_time(jvm_gc_pause_seconds_max{$sel}[${w}s]))" \
+                 "alloc|sum by (service) (rate(jvm_gc_memory_allocated_bytes_total{$sel}[${w}s]))" \
+                 "oldgen|max by (service) (max_over_time(jvm_memory_usage_after_gc{$sel,area=\"heap\",pool=\"long-lived\"}[${w}s]))" \
+                 "gctype|count by (service, gc) (jvm_gc_pause_seconds_count{$sel})"; do
             printf '%s\t' "${q%%|*}" >> "$dir/prom-$r.txt"
             curl -fsS --max-time 10 -G "$prom/api/v1/query" --data-urlencode "query=${q#*|}" --data-urlencode "time=$t1" 2>/dev/null \
                 | tr -d '\n' >> "$dir/prom-$r.txt" || true
             echo >> "$dir/prom-$r.txt"
         done
     fi
-    python3 -I - "$dir" "$r" "$step" "$max5xx" "$CEILING_P99_MS" "$CEILING_METRIC" <<'PY'
+    python3 -I - "$dir" "$r" "$step" "$max5xx" "$CEILING_P99_MS" "$CEILING_METRIC" "${CEILING_GC_OVERHEAD:-0.10}" <<'PY'
 import json, re, sys
-d, r, step, max5xx, p99max, metric = sys.argv[1:7]
+d, r, step, max5xx, p99max, metric, gcmax = sys.argv[1:8]
+# GC 종류 — jvm_gc_pause 의 gc 라벨에서(1 코어 파드는 JVM 이 SerialGC 를 고른다, docs/91 §4-3)
+GC_KIND = (("G1 ", "G1"), ("Copy", "Serial"), ("MarkSweepCompact", "Serial"), ("PS ", "Parallel"), ("ZGC", "ZGC"), ("Shenandoah", "Shenandoah"))
 s = json.load(open(f"{step}/summary.json", encoding="utf-8")).get("metrics", {})
 reqs = (s.get("http_reqs") or {}).get("count") or 0
 rps = (s.get("http_reqs") or {}).get("rate") or 0
@@ -1030,9 +1039,17 @@ try:
         except Exception:
             continue
         for x in res:
+            name = x["metric"].get("service", "?")
+            if key == "gctype":
+                gc = x["metric"].get("gc", "")
+                kind = next((k for p, k in GC_KIND if gc.startswith(p)), gc or "?")
+                kinds = srv.setdefault(name, {}).setdefault("gctype", [])
+                if kind not in kinds:
+                    kinds.append(kind)
+                continue
             v = float(x["value"][1])
             if v == v:   # NaN 은 버린다
-                srv.setdefault(x["metric"].get("service", "?"), {})[key] = v
+                srv.setdefault(name, {})[key] = v
 except FileNotFoundError:
     pass
 why = []
@@ -1045,7 +1062,8 @@ if ratio5 > float(max5xx):
 short = iters and dropped / (iters + dropped) > 0.01
 if short:
     why.append(f"부하기가 도착률을 못 맞췄다(dropped {dropped:.0f}) — 부하 VM 을 늘린다")
-# 막힌 곳 후보 — CPU 0.8 이상 · 커넥션 대기 > 0 · Kafka 지연 > 1000
+# 막힌 곳 후보 — CPU 0.8 이상 · 커넥션 대기 > 0 · Kafka 지연 > 1000 · GC 부담 ≥ CEILING_GC_OVERHEAD(0.10) · GC 뒤 힙 ≥ 90%
+# (GC 부담은 JVM 의 GC 정지 시간 ÷ 지난 5분 — 계단이 짧으면 앞 계단의 몫이 섞인다. GC 뒤 힙은 오래 사는 영역의 사용 비율)
 hints = []
 for name, v in sorted(srv.items()):
     if v.get("cpu", 0) >= 0.8:
@@ -1054,6 +1072,10 @@ for name, v in sorted(srv.items()):
         hints.append(f"{name} 커넥션 대기 {v['pending']:.0f}")
     if v.get("lag", 0) > 1000:
         hints.append(f"{name} Kafka 지연 {v['lag']:.0f}")
+    if v.get("gc", 0) >= float(gcmax):
+        hints.append(f"{name} GC 부담 {v['gc']:.0%}")
+    if v.get("oldgen", 0) >= 0.9:
+        hints.append(f"{name} GC 뒤 힙 {v['oldgen']:.0%}")
 row = {"rate": int(r), "rps": rps, "p99": p99, "e5": ratio5, "ok": not why, "why": why, "hints": hints, "srv": srv,
        "step": step.rsplit("/", 1)[-1], "short": bool(short)}
 with open(f"{d}/ceiling.jsonl", "a", encoding="utf-8") as f:
@@ -1104,8 +1126,9 @@ for x in rows:
 svc = sorted({s for x in rows for s in x["srv"]})
 if svc:
     out += ["", "## 서비스별(계단마다 — 그 계단 동안 평균 · 최대)", "",
-            "| 계단 | 서비스 | 파드 | 요청/초 | 파드당 요청/초 | CPU(평균) | 커넥션 대기(최대) | Kafka 지연(최대) |",
-            "|---:|---|---:|---:|---:|---:|---:|---:|"]
+            "| 계단 | 서비스 | 파드 | 요청/초 | 파드당 요청/초 | CPU(평균) | 커넥션 대기(최대) | Kafka 지연(최대) "
+            "| GC | GC 부담(최대) | GC 정지(최대 ms) | 파드당 할당 MB/s | GC 뒤 힙(최대) |",
+            "|---:|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|"]
     f = lambda v, fmt: (fmt % v) if v is not None else "-"
     for x in rows:
         for s in svc:
@@ -1114,8 +1137,12 @@ if svc:
                 continue
             pods = v.get("pods")
             per = v["rps"] / pods if v.get("rps") is not None and pods else None
+            alloc = v["alloc"] / pods / 1048576 if v.get("alloc") is not None and pods else None
+            pct = lambda k: v[k] * 100 if v.get(k) is not None else None
             out.append(f"| {x['rate']} | {s} | {f(pods, '%.0f')} | {f(v.get('rps'), '%.1f')} | {f(per, '%.1f')} | "
-                       f"{f(v.get('cpu') * 100 if v.get('cpu') is not None else None, '%.0f%%')} | {f(v.get('pending'), '%.0f')} | {f(v.get('lag'), '%.0f')} |")
+                       f"{f(pct('cpu'), '%.0f%%')} | {f(v.get('pending'), '%.0f')} | {f(v.get('lag'), '%.0f')} | "
+                       f"{' · '.join(v.get('gctype') or []) or '-'} | {f(pct('gc'), '%.1f%%')} | "
+                       f"{f(v['pause'] * 1000 if v.get('pause') is not None else None, '%.0f')} | {f(alloc, '%.1f')} | {f(pct('oldgen'), '%.0f%%')} |")
 out += ["", "> 실습 클러스터 기준 — 코어를 나눠 쓴 값이라 절대값으로 쓰지 않는다(docs/83). 표는 docs/91 §4 의 천장 표로 옮긴다."]
 open(f"{d}/ceiling.md", "w", encoding="utf-8").write("\n".join(out) + "\n")
 print("\n".join(out))

@@ -352,12 +352,13 @@ class SloRulesTest {
     }
 
     @Test
-    @DisplayName("🔴 promtool 시험이 slo · slo-budget · kafka-consumer 그룹의 모든 경보를 다룬다")
+    @DisplayName("🔴 promtool 시험이 slo · slo-budget · kafka-consumer · jvm-health 그룹의 모든 경보를 다룬다")
     void promtoolTestCoversEveryAlert() throws IOException {
         String test = Files.readString(repoRoot().resolve("observability/tests/slo-rules.test.yml"), StandardCharsets.UTF_8)
-                + Files.readString(repoRoot().resolve("observability/tests/slo-budget.test.yml"), StandardCharsets.UTF_8);
+                + Files.readString(repoRoot().resolve("observability/tests/slo-budget.test.yml"), StandardCharsets.UTF_8)
+                + Files.readString(repoRoot().resolve("observability/tests/jvm-rules.test.yml"), StandardCharsets.UTF_8);
         assertThat(test).contains("../alert-rules.yml");
-        for (String g : List.of("slo", "slo-budget", "kafka-consumer")) {
+        for (String g : List.of("slo", "slo-budget", "kafka-consumer", "jvm-health")) {
             group(g).stream().filter(r -> r.containsKey("alert")).map(r -> (String) r.get("alert"))
                     .forEach(a -> assertThat(test).as("promtool 시험의 " + a).contains("alertname: " + a));
         }

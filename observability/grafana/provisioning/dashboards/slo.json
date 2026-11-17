@@ -557,7 +557,7 @@
     {
       "id": 11,
       "type": "table",
-      "title": "울리는 SLO · 탐침 · 컨슈머 경보",
+      "title": "울리는 SLO · 탐침 · 컨슈머 · GC 경보",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -579,7 +579,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "ALERTS{alertstate=\"firing\",alertname=~\"Slo.*|SiteProbeDown|KafkaConsumerLagHigh\"}",
+          "expr": "ALERTS{alertstate=\"firing\",alertname=~\"Slo.*|SiteProbeDown|KafkaConsumerLagHigh|JvmGcOverheadHigh|JvmHeapAfterGcHigh\"}",
           "legendFormat": "",
           "format": "table",
           "instant": true
@@ -949,6 +949,223 @@
         }
       ],
       "description": "1,000 건이 10분이면 KafkaConsumerLagHigh. 부하 측정 중이면 그것이 결과다."
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "JVM · GC (docs/91 §4-3)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "GC 종류(서비스별)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count by (service, gc) (jvm_gc_pause_seconds_count)",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "Copy · MarkSweepCompact = SerialGC(1 코어 파드에서 JVM 이 고른다), G1 Young · Old = G1. 운영 배포 뒤 처음 볼 것(docs/91 §4-3).",
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "GC 부담(지난 5분 중 GC 정지 비율)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 61,
+        "w": 9,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (service) (jvm_gc_overhead)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "description": "10% 를 10분 넘으면 JvmGcOverheadHigh. 실습 포화 단계에서 게이트웨이 파드 하나가 12 ~ 17% 였다(docs/83)."
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "GC 뒤 힙(오래 사는 영역)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 15,
+        "y": 61,
+        "w": 9,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (service) (jvm_memory_usage_after_gc{area=\"heap\",pool=\"long-lived\"})",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "description": "GC 를 마친 뒤 남는 비율 — 늘기만 하면 누수, 90% 가 15분이면 JvmHeapAfterGcHigh."
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "GC 정지 최대(서비스별)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 69,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (service) (jvm_gc_pause_seconds_max)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "description": "SerialGC 는 정지 동안 요청을 받지 않는다 — 이 값이 그대로 꼬리 지연(p99)에 더해진다."
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "파드당 할당 속도",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 69,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (service) (rate(jvm_gc_memory_allocated_bytes_total[5m])) / count by (service) (up{job=\"spring-actuator\"} == 1)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "description": "요청 하나가 쓰레기를 얼마나 만드나 — 요청/초로 나누면 요청당 할당. 늘면 GC 부담이 따라 는다(할당 프로파일 ops/58)."
     }
   ]
 }

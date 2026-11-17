@@ -615,6 +615,11 @@ class LoadK6ScriptTest {
                 esac
                 [ "${FAKE_PROM_FAIL:-0}" = "1" ] && exit 7
                 case "$*" in
+                  *jvm_gc_overhead*) printf '%s' "${FAKE_PROM_GC:-}" ;;
+                  *jvm_gc_pause_seconds_max*) printf '%s' "${FAKE_PROM_PAUSE:-}" ;;
+                  *jvm_gc_memory_allocated*) printf '%s' "${FAKE_PROM_ALLOC:-}" ;;
+                  *jvm_memory_usage_after_gc*) printf '%s' "${FAKE_PROM_OLDGEN:-}" ;;
+                  *jvm_gc_pause_seconds_count*) printf '%s' "${FAKE_PROM_GCTYPE:-}" ;;
                   *max_over_time*) printf '%s' "${FAKE_PROM_MAX:-}" ;;
                   *) printf '%s' "${FAKE_PROM_UP:-}" ;;
                 esac
@@ -1096,6 +1101,49 @@ class LoadK6ScriptTest {
                 .as("처리량 목표(browse 기본 1,000)와 견준다").contains("처리량 목표 1,000 요청/초(docs/91 §2-5): 천장 500.0 — 못 미친다(목표의 50%)");
         assertThat(Files.readString(tmp.resolve("curl.log"))).contains("time=", "kafka_consumer_fetch_manager_records_lag_max",
                 "hikaricp_connections_pending");
+    }
+
+    /** catalog 의 GC 종류 — jvm_gc_pause 의 gc 라벨 둘(SerialGC: 젊은 세대 Copy · 늙은 세대 MarkSweepCompact). */
+    private static final String PROM_GC_KINDS = "{\"status\":\"success\",\"data\":{\"result\":["
+            + "{\"metric\":{\"service\":\"catalog-service\",\"gc\":\"Copy\"},\"value\":[1,\"40\"]},"
+            + "{\"metric\":{\"service\":\"catalog-service\",\"gc\":\"MarkSweepCompact\"},\"value\":[1,\"2\"]}]}}";
+
+    private Map<String, String> gcProm(String overhead) {
+        return Map.ofEntries(Map.entry("FAKE_SUMMARY", "1"), Map.entry("FAKE_MS_PER_RATE", "2"), Map.entry("CEILING_RATES", "10,50,100,200"),
+                Map.entry("PROM", "http://prom.lab:9090"), Map.entry("FAKE_PROM_UP", PROM_ONE.formatted("0.9")),
+                Map.entry("FAKE_PROM_MAX", PROM_ONE.formatted("3")), Map.entry("FAKE_PROM_GC", PROM_ONE.formatted(overhead)),
+                Map.entry("FAKE_PROM_PAUSE", PROM_ONE.formatted("0.25")), Map.entry("FAKE_PROM_ALLOC", PROM_ONE.formatted("52428800")),
+                Map.entry("FAKE_PROM_OLDGEN", PROM_ONE.formatted("0.93")), Map.entry("FAKE_PROM_GCTYPE", PROM_GC_KINDS));
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling — 서비스별 표에 GC(종류 · 부담 · 정지 · 파드당 할당 · GC 뒤 힙), 막힌 곳 후보에 GC 부담 ≥ 10% · GC 뒤 힙 ≥ 90% (docs/91 §4-3)")
+    void ceilingReportsGcPerService() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(gcProm("0.12"), "ceiling", "browse");
+        assertThat(r.code()).as(r.out()).isZero();
+        String md = ceilingMd();
+        assertThat(md).contains("catalog-service GC 부담 12%", "catalog-service GC 뒤 힙 93%")
+                .contains("| GC | GC 부담(최대) | GC 정지(최대 ms) | 파드당 할당 MB/s | GC 뒤 힙(최대) |")
+                .as("Copy · MarkSweepCompact → Serial 하나, 50 MiB/s ÷ 파드 3 = 16.7, 정지 0.25초 = 250ms")
+                .contains("| Serial | 12.0% | 250 | 16.7 | 93% |");
+        assertThat(Files.readString(tmp.resolve("curl.log"))).contains("jvm_gc_overhead", "jvm_gc_pause_seconds_max",
+                "jvm_gc_memory_allocated_bytes_total", "pool=\"long-lived\"", "count by (service, gc) (jvm_gc_pause_seconds_count");
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling — GC 부담 후보의 문턱은 CEILING_GC_OVERHEAD(0 ~ 1 사이 소수만)")
+    void ceilingGcOverheadThresholdIsConfigurable() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Map<String, String> env = new java.util.HashMap<>(gcProm("0.12"));
+        env.put("CEILING_GC_OVERHEAD", "0.20");
+        Run r = run(env, "ceiling", "browse");
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(ceilingMd()).doesNotContain("GC 부담 12%").contains("GC 뒤 힙 93%");
+        env.put("CEILING_GC_OVERHEAD", "12");
+        Run bad = run(env, "ceiling", "browse");
+        assertThat(bad.code()).isNotZero();
+        assertThat(bad.out()).contains("CEILING_GC_OVERHEAD 는 0 과 1 사이 소수");
     }
 
     @Test

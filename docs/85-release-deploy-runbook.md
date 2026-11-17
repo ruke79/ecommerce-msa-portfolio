@@ -408,7 +408,7 @@ docker compose -f docker-compose-observability.yml -f docker-compose-observabili
 # ダッシュボードは Grafana がファイルを読み直す（約 10 秒）。見えなければ同じ二ファイルで restart grafana
 ```
 
-Prometheus で: `probe_success{job="site-probe"}` が二つとも 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` にルート · `count by (slo) (slo:sli_error:ratio_rate1h)` が五つ · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)`。Grafana の `ecommerce-msa SLO` が開く。
+Prometheus で: `probe_success{job="site-probe"}` が二つとも 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` にルート · `count by (slo) (slo:sli_error:ratio_rate1h)` が五つ · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` · GC の種類 `count by (service, gc) (jvm_gc_pause_seconds_count)`（Copy · MarkSweepCompact なら SerialGC — 結果を docs/91 §4-3 に書く）。Grafana の `ecommerce-msa SLO` が開く（JVM · GC 行を含む）。
 
 **画面**: 管理者でカテゴリー一つ · 商品一つを実際に登録する（以前は「追加失敗」）。ホーム · 商品詳細 · 検索 · カート · 注文を一巡。
 

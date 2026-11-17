@@ -408,7 +408,7 @@ docker compose -f docker-compose-observability.yml -f docker-compose-observabili
 # 대시보드는 Grafana 가 파일을 다시 읽는다(약 10초). 안 보이면 같은 두 파일로 restart grafana
 ```
 
-Prometheus 에서: `probe_success{job="site-probe"}` 둘 다 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` 에 라우트들 · `count by (slo) (slo:sli_error:ratio_rate1h)` 다섯 · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)`. Grafana 의 `ecommerce-msa SLO` 가 열린다.
+Prometheus 에서: `probe_success{job="site-probe"}` 둘 다 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` 에 라우트들 · `count by (slo) (slo:sli_error:ratio_rate1h)` 다섯 · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` · GC 종류 `count by (service, gc) (jvm_gc_pause_seconds_count)`(Copy · MarkSweepCompact 면 SerialGC — 결과를 docs/91 §4-3 에 적는다). Grafana 의 `ecommerce-msa SLO` 가 열린다(JVM · GC 줄 포함).
 
 **화면**: 관리자로 카테고리 하나 · 상품 하나를 실제로 등록한다(예전에는 '추가 실패'). 홈 · 상품 상세 · 검색 · 장바구니 · 주문 한 바퀴.
 

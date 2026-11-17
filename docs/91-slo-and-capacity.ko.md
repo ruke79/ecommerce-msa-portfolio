@@ -209,6 +209,18 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - 해석: k6 Job 은 서버와 같은 노드의 CPU 1 개를 쓴다 — 천장은 그만큼 보수적이다(ceiling.md 의 서비스별 CPU 로 본다). 터널 · Cloudflare 시간은 빠진다(그것은 `site-probe` 가 본다).
 - 시험: `LoadK6ScriptTest` — 운영에서 거절 8가지 · 묵음을 한 번 걸고 푼다 · 지표 선택자 · 묵음 실패 · `k6-job.sh`(판 고정 · 공개 CA 만 · 비루트 · 종료 코드 · 정리 · 비밀 거절). 변이 확인 5가지.
 
+### 4-3. GC — 측정 배선(2026-11-15)
+
+- **왜**: 문서에 GC 측정 계획이 없었다(docs/19 의 "GC 튜닝 — 지속 부하가 필요" 한 줄). 실습 포화 단계에서 게이트웨이 파드 하나가 GC 부담 12 ~ 17% 였다는 관측(docs/83)은 Grafana 에서 손으로 본 것이고, `ops/53` 에는 GC 지표가 하나도 없었다.
+- **파드가 쓰는 GC**: 매니페스트의 CPU 한도는 1 코어 · 메모리 768Mi(catalog 1Gi)다. **JDK 17 은 코어가 2 미만이면 G1 대신 SerialGC 를 고른다**(같은 조건으로 확인 — 1 코어 · 768Mi → SerialGC · 힙 384MB, 1Gi → SerialGC · 512MB, 2 코어 → G1). `k8s-overlays/oci`(2 OCPU 용)는 `-XX:+UseSerialGC` 를 명시한다. SerialGC 는 한 스레드가 전부 멈추고 치우므로 GC 정지가 그대로 꼬리 지연에 더해진다. 운영이 어느 쪽인지는 배포 뒤 `count by (service, gc) (jvm_gc_pause_seconds_count)` 로 본다 — `gc` 가 `Copy` · `MarkSweepCompact` 면 Serial, `G1 …` 이면 G1.
+- **지표**(Micrometer 가 이미 낸다 — 코드 변경 없음): `jvm_gc_overhead`(지난 5분 중 GC 정지 비율, 0 ~ 1) · `jvm_gc_pause_seconds_{count,sum,max}`(라벨 `gc` · `action` · `cause`) · `jvm_gc_memory_allocated_bytes_total`(할당) · `jvm_memory_usage_after_gc{area="heap",pool="long-lived"}`(GC 뒤 오래 사는 영역의 사용 비율).
+- **`ops/53 ceiling`**: 서비스별 표에 **GC 종류 · GC 부담(최대) · GC 정지(최대 ms) · 파드당 할당 MB/s · GC 뒤 힙(최대)** 열, 막힌 곳 후보에 **GC 부담 ≥ `CEILING_GC_OVERHEAD`(0.10)** · **GC 뒤 힙 ≥ 90%**. GC 부담은 지난 5분 창이라 계단(유지 3분)이 짧으면 앞 계단의 몫이 섞인다 — 경계 계단은 `CEILING_HOLD=5m` 로 다시 잰다.
+- **경보**(`jvm-health` 그룹): `JvmGcOverheadHigh`(서비스의 GC 부담 > 10% 가 10분) · `JvmHeapAfterGcHigh`(GC 뒤 힙 > 90% 가 15분 — 쓰는 중의 힙을 보는 `JvmHeapNearLimit` 와 달리 GC 직전의 쓰레기를 세지 않는다).
+- **대시보드**: `ecommerce-msa SLO` 의 "JVM · GC" 줄 — GC 종류 표 · GC 부담 · GC 뒤 힙 · 정지 최대 · 파드당 할당 속도. 경보 표에 두 경보도.
+- **GC 로그**(켜지 않는다 — 필요할 때 그 서비스만): `JAVA_OPTS` 에 `-Xlog:gc*:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m` — `/var/log/jvm` 은 이미 emptyDir(B-97)이라 컨테이너가 다시 떠도 남는다. 꺼내기는 `kubectl -n ecommerce cp <파드>:/var/log/jvm/gc.log ./gc.log`.
+- **시험**: `LoadK6ScriptTest` +2(GC 열 · 후보 — Copy · MarkSweepCompact 를 Serial 로, 할당 ÷ 파드 · 문턱 설정과 검사), promtool `observability/tests/jvm-rules.test.yml`(GC 부담 10분 전은 조용 · 지나면 울림 · 잠깐 튄 GC 는 조용 · GC 뒤 힙 15분 · 기존 `JvmHeapNearLimit` 도), `SloRulesTest` 가 `jvm-health` 의 모든 경보가 promtool 시험에 있는지 본다. 변이 확인: GC 후보 · 종류 매핑 · 문턱 검사 · 문턱 무시 · GC 뒤 힙 후보 제거 → `LoadK6ScriptTest` 실패, 경보 문턱 0.2 · `for` 1분 · GC 뒤 힙 0.99 → promtool 실패, 경보 이름 바꿈 → `SloRulesTest` 실패.
+- **다음**(로드맵): ① 배포 뒤 운영의 GC 종류 · 힙 · 평시 GC 부담을 이 절에 적는다 → ② 실습 천장(§4-1)에서 계단마다 GC 열로 "CPU 냐 GC 냐" 를 가른다 → ③ 천장의 80% 고정 부하로 게이트웨이 · catalog 의 Serial(1 코어) · Parallel(1 코어) · G1(2 코어) · 힙 50/60/70% 를 견준다(p99 · 파드 CPU 당 처리량 · GC 부담 · 정지 최대, 할당이 많은 곳은 `ops/58` 의 할당 모드) — 게이트웨이 한 파드만 튀던 GC 부담(docs/83)도 여기서 → ④ JDK 21 의 Generational ZGC 는 jdk21-build 브랜치를 합칠 때.
+
 ---
 
 ## 5. 적용 · 확인
@@ -223,6 +235,7 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
   - 15분 뒤 `slo:budget_used:ratio14d`(처음에는 데이터가 짧아 크게 흔들린다 — 14일이 쌓이기 전 절반 경보는 요청 하한이 막는다)
   - `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` 에 Kafka 를 쓰는 서비스
   - 배포 뒤 `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` 에 라우트들 · `slo:sli_error:ratio_rate1h{slo="gateway"}`
+  - GC(§4-3): `count by (service, gc) (jvm_gc_pause_seconds_count)`(Serial 인지 G1 인지) · `max by (service) (jvm_memory_max_bytes{area="heap"})` · `max by (service) (jvm_gc_overhead)` 를 §4-3 에 적는다
 
 ---
 
@@ -234,3 +247,4 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 4. **목표 값으로 올리기** — docs/89 단계 1 · 2 를 마치면 `slo:objective:availability` 를 주석의 목표로.
 5. ~~**대시보드**~~ — 끝(2026-11-15, §2-8). 게이트웨이 SLI 도(§2-7).
 6. **앞단 캐시 규칙 켜기** — 서버 표시는 끝(§2-9). 배포 뒤 Cloudflare 규칙을 켜고 `cf-cache-status: HIT` 를 본다(docs/85 §9-4).
+7. **GC** — 측정 배선은 끝(§4-3). 운영의 GC 종류 기록 → 천장 표의 GC 열 → GC 비교 실험(§4-3 '다음').

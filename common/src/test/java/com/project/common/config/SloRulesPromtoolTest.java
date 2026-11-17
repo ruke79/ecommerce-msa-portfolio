@@ -57,6 +57,12 @@ class SloRulesPromtoolTest {
     }
 
     @Test
+    @DisplayName("🔴 promtool test rules — JVM: GC 부담 10% 가 10분 · GC 뒤 힙 90% 가 15분 · 힙 90%(잠깐 튄 GC 는 조용, docs/91 §4-3)")
+    void jvmAlertsFireOnlyWhenTheyShould() {
+        assertThat(promtool("test", "rules", "/o/tests/jvm-rules.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
+    }
+
+    @Test
     @DisplayName("🔴 promtool test rules — 14일 예산: 80% 면 절반 경보만 · 120% 면 소진 · 요청이 적으면 조용(10분 간격 15일)")
     void budgetAlertsFireOnlyWhenTheyShould() {
         assertThat(promtool("test", "rules", "/o/tests/slo-budget.test.yml")).contains("SUCCESS").doesNotContain("FAILED");

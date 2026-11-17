@@ -209,6 +209,18 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - 解釈: k6 Job はサーバーと同じノードの CPU 1 つを使う — 天井はその分保守的だ（ceiling.md のサービス別 CPU で見る）。トンネル · Cloudflare の時間は入らない（それは `site-probe` が見る）。
 - テスト: `LoadK6ScriptTest` — 本番での拒否 8 種 · サイレンスを一度掛けて外す · 指標のセレクター · サイレンス失敗 · `k6-job.sh`（版固定 · 公開 CA だけ · 非 root · 終了コード · 後片付け · 秘密の拒否）。変異の確認 5 種。
 
+### 4-3. GC — 測定の配線（2026-11-15）
+
+- **なぜ**: 文書に GC の測定計画がなかった（docs/19 の「GC チューニング — 持続的な負荷が必要」の一行）。実習の飽和段階でゲートウェイの Pod 一つが GC 負担 12 〜 17% だったという観測（docs/83）は Grafana で手で見たもので、`ops/53` には GC の指標が一つもなかった。
+- **Pod が使う GC**: マニフェストの CPU 上限は 1 コア · メモリー 768Mi（catalog 1Gi）。**JDK 17 はコアが 2 未満だと G1 ではなく SerialGC を選ぶ**（同じ条件で確認 — 1 コア · 768Mi → SerialGC · ヒープ 384MB、1Gi → SerialGC · 512MB、2 コア → G1）。`k8s-overlays/oci`（2 OCPU 用）は `-XX:+UseSerialGC` を明示している。SerialGC は一つのスレッドが全部止めて片付けるので、GC の停止がそのままテール遅延に足される。本番がどちらかはデプロイ後に `count by (service, gc) (jvm_gc_pause_seconds_count)` で見る — `gc` が `Copy` · `MarkSweepCompact` なら Serial、`G1 …` なら G1。
+- **指標**（Micrometer がすでに出している — コード変更なし）: `jvm_gc_overhead`（直近 5 分のうち GC 停止の割合、0 〜 1）· `jvm_gc_pause_seconds_{count,sum,max}`（ラベル `gc` · `action` · `cause`）· `jvm_gc_memory_allocated_bytes_total`（割り当て）· `jvm_memory_usage_after_gc{area="heap",pool="long-lived"}`（GC 後の長寿命領域の使用率）。
+- **`ops/53 ceiling`**: サービス別の表に **GC の種類 · GC 負担（最大）· GC 停止（最大 ms）· Pod あたり割り当て MB/s · GC 後のヒープ（最大）** の列、詰まり候補に **GC 負担 ≥ `CEILING_GC_OVERHEAD`（0.10）** · **GC 後のヒープ ≥ 90%**。GC 負担は直近 5 分の窓なので、階段（維持 3 分）が短いと前の階段の分が混ざる — 境目の階段は `CEILING_HOLD=5m` で測り直す。
+- **警報**（`jvm-health` グループ）: `JvmGcOverheadHigh`（サービスの GC 負担 > 10% が 10 分）· `JvmHeapAfterGcHigh`（GC 後のヒープ > 90% が 15 分 — 使用中のヒープを見る `JvmHeapNearLimit` と違い、GC 直前のゴミを数えない）。
+- **ダッシュボード**: `ecommerce-msa SLO` の「JVM · GC」行 — GC の種類の表 · GC 負担 · GC 後のヒープ · 停止の最大 · Pod あたりの割り当て速度。警報の表に二つの警報も。
+- **GC ログ**（有効にしない — 必要なときにそのサービスだけ）: `JAVA_OPTS` に `-Xlog:gc*:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m` — `/var/log/jvm` はすでに emptyDir（B-97）なのでコンテナが立ち直っても残る。取り出しは `kubectl -n ecommerce cp <Pod>:/var/log/jvm/gc.log ./gc.log`。
+- **テスト**: `LoadK6ScriptTest` +2（GC の列 · 候補 — Copy · MarkSweepCompact を Serial に、割り当て ÷ Pod · しきい値の設定と検査）、promtool `observability/tests/jvm-rules.test.yml`（GC 負担 10 分前は静か · 過ぎれば鳴る · 一瞬跳ねた GC は静か · GC 後のヒープ 15 分 · 既存の `JvmHeapNearLimit` も）、`SloRulesTest` が `jvm-health` のすべての警報が promtool テストにあるかを見る。変異の確認: GC 候補 · 種類の対応 · しきい値の検査 · しきい値の無視 · GC 後ヒープ候補の削除 → `LoadK6ScriptTest` が失敗、警報のしきい値 0.2 · `for` 1 分 · GC 後ヒープ 0.99 → promtool が失敗、警報名の変更 → `SloRulesTest` が失敗。
+- **次**（ロードマップ）: ① デプロイ後に本番の GC の種類 · ヒープ · 平常時の GC 負担をこの節に書く → ② 実習の天井（§4-1）で階段ごとに GC の列から「CPU か GC か」を分ける → ③ 天井の 80% の固定負荷で、ゲートウェイ · catalog の Serial（1 コア）· Parallel（1 コア）· G1（2 コア）· ヒープ 50/60/70% を比べる（p99 · Pod の CPU あたりのスループット · GC 負担 · 停止の最大、割り当ての多い所は `ops/58` の割り当てモード）— ゲートウェイの Pod 一つだけ跳ねた GC 負担（docs/83）もここで → ④ JDK 21 の Generational ZGC は jdk21-build ブランチを取り込むときに。
+
 ---
 
 ## 5. 適用 · 確認
@@ -223,6 +235,7 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
   - 15 分後に `slo:budget_used:ratio14d`（最初はデータが短く大きく揺れる — 14 日たまる前の半分の警報はリクエストの下限が止める）
   - `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` に Kafka を使うサービス
   - デプロイ後 `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` にルート · `slo:sli_error:ratio_rate1h{slo="gateway"}`
+  - GC（§4-3）: `count by (service, gc) (jvm_gc_pause_seconds_count)`（Serial か G1 か）· `max by (service) (jvm_memory_max_bytes{area="heap"})` · `max by (service) (jvm_gc_overhead)` を §4-3 に書く
 
 ---
 
@@ -234,3 +247,4 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 4. **目標値に上げる** — docs/89 段階 1 · 2 を終えたら `slo:objective:availability` をコメントの目標に。
 5. ~~**ダッシュボード**~~ — 済み（2026-11-15、§2-8）。ゲートウェイの SLI も（§2-7）。
 6. **前段キャッシュの規則を有効にする** — サーバー側の印は済み（§2-9）。デプロイ後に Cloudflare の規則を有効にし、`cf-cache-status: HIT` を見る（docs/85 §9-4）。
+7. **GC** — 測定の配線は済み（§4-3）。本番の GC の種類の記録 → 天井の表の GC 列 → GC の比較実験（§4-3「次」）。
