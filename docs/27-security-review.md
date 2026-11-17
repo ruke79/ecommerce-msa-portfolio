@@ -273,6 +273,8 @@ include: gateway, refresh, health, beans, http, busrefresh, info, metrics, prome
 あるべきだが、運用手順がこれに依存している可能性があるため、今回は残して別の課題に切り出した。
 
 > 🕰️ 現在（2026-11-14）: config-server は `CONFIG_SERVER_PASSWORD` なしではプローブ · `info` · `prometheus` 以外をすべて 401 で拒否する（`ConfigServerSecurity`、2026-10-15）。サービスの `/<サービス>/actuator/**` はゲートウェイが 404 で塞ぎ（`InternalEndpointBlockFilter`、docs/57 §7）、ゲートウェイ自身の `/actuator` は本番のトンネルがゲートウェイへ送らない（サービスの接頭辞だけ — `k8s-overlays/prod/cloudflared.yaml`、B-82）。ゲートウェイ yml の公開リストには `refresh, busrefresh` がまだそのまま残っている（バスの依存関係はないので `busrefresh` は実際には存在しない）。
+>
+> 🕰️ 2026-11-17 訂正: その `refresh, busrefresh` は**実際には公開されていなかった**。ゲートウェイは `spring.config.import` で `application-common.yml` を読み、import された側が import した側より優先するので共通のリスト（`prometheus, health, info, metrics`）が使われていた — 実際に起動すると `POST /actuator/refresh` は 404（`ActuatorExposureTest`）。死んだ行は消し、公開リストのどこにも書き込み · 秘密のエンドポイントを入れられないようにガード **B-112** を足した。
 
 ---
 
@@ -543,7 +545,7 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 - **ファイアウォールの点検（`ops/11`）** 🔴 — 露出していたホストが git 履歴に残っており、元に戻せない。
 - **actuator の認証** — 今回露出範囲を減らしたが、残したエンドポイント（`refresh`、`busrefresh`、
   `prometheus`）も認証の後ろに置くのが正しい。
-  > 🕰️ 2026-11-14: 外からは届かない（§7〜8 の 🕰️ — ゲートウェイの遮断 · トンネルのパス · config-server のパスワード）。ゲートウェイ自身の `refresh` はクラスター内（同じ名前空間 · kube-system — `k8s/95`）では今も認証なしで開いている（ゲートウェイに Spring Security がない）。
+  > 🕰️ 2026-11-14: 外からは届かない（§7〜8 の 🕰️ — ゲートウェイの遮断 · トンネルのパス · config-server のパスワード）。~~ゲートウェイ自身の `refresh` はクラスター内（同じ名前空間 · kube-system — `k8s/95`）では今も認証なしで開いている（ゲートウェイに Spring Security がない）。~~ → 🕰️ 2026-11-17 訂正: 開いていなかった — 共通のリストが優先し `refresh` は 404 だった（§8 の 🕰️、B-112）。
 
 ---
 

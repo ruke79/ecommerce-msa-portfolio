@@ -4001,6 +4001,78 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-112: actuator 웹 노출은 읽기 넷(health · info · metrics · prometheus)만 — 모든 모듈의 설정 파일과 매니페스트 · compose 의 환경 변수.
+     *
+     * <p>서비스 앞에는 게이트웨이의 404(InternalEndpointBlockFilter, docs/57 §7)와 터널 경로(B-82)가 있지만, 클러스터 안에서는 파드에
+     * 바로 닿는다(같은 네임스페이스 · kube-system — k8s/95). 게이트웨이 · 대부분의 서비스에는 actuator 를 지키는 인증이 없다.
+     * 그래서 {@code refresh}(POST 로 설정 다시 읽기) · {@code gateway}(POST 로 라우트 추가) · {@code env} · {@code configprops} ·
+     * {@code heapdump} · {@code loggers} 는 넣지 않는다. 2026-11-17: 게이트웨이 yml 에 {@code …, refresh, busrefresh} 가 남아 있었지만
+     * {@code spring.config.import} 로 읽은 application-common.yml 이 우선해 실제로는 노출되지 않았다(죽은 설정 — 지웠다). 그 동작은
+     * 게이트웨이의 {@code ActuatorExposureTest} 가 실제 기동으로 지킨다. 이 가드는 공통 목록을 포함해 어디에 넣어도 걸린다.
+     *
+     * <p>[JA] actuator の Web 公開は読み取りの四つだけ。クラスター内からは認証なしで届くので、refresh などの書き込み・秘密を出すものは入れない。
+     */
+    @Test
+    @DisplayName("B-112: actuator 웹 노출은 health · info · metrics · prometheus 만(설정 파일 · 매니페스트 env) — refresh 등 쓰기 · 비밀 노출 금지")
+    void actuatorWebExposureIsReadOnly() throws IOException {
+        Set<String> allowed = Set.of("health", "info", "metrics", "prometheus");
+        Pattern yml = Pattern.compile("(?m)^([ \\t]*)exposure:[ \\t]*\\n(?:\\1[ \\t]+#.*\\n|[ \\t]*\\n)*\\1[ \\t]+include:[ \\t]*(.+)$");
+        Pattern props = Pattern.compile("(?m)^\\s*management\\.endpoints\\.web\\.exposure\\.include\\s*[=:]\\s*(.+)$");
+        Pattern env = Pattern.compile("MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE");
+        List<String> offenders = new ArrayList<>();
+        int checked = 0;
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path resources = module.resolve("src/main/resources");
+                if (!Files.isDirectory(resources)) {
+                    continue;
+                }
+                try (Stream<Path> files = Files.walk(resources)) {
+                    for (Path f : files.filter(x -> x.toString().matches(".*\\.(ya?ml|properties)$")).toList()) {
+                        String rel = repoRoot().relativize(f).toString().replace('\\', '/');
+                        String text = Files.readString(f, StandardCharsets.UTF_8);
+                        List<String> values = new ArrayList<>();
+                        Matcher y = yml.matcher(text);
+                        while (y.find()) {
+                            values.add(y.group(2));
+                        }
+                        Matcher p = props.matcher(text);
+                        while (p.find()) {
+                            values.add(p.group(1));
+                        }
+                        for (String v : values) {
+                            checked++;
+                            for (String id : v.replaceAll("#.*$", "").replaceAll("[\"'\\[\\]]", "").split(",")) {
+                                if (!id.isBlank() && !allowed.contains(id.strip())) {
+                                    offenders.add(rel + ": " + id.strip());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (String dir : List.of("k8s", "k8s-overlays")) {
+            try (Stream<Path> files = Files.walk(repoRoot().resolve(dir))) {
+                for (Path f : files.filter(x -> x.toString().matches(".*\\.ya?ml$")).toList()) {
+                    if (env.matcher(Files.readString(f, StandardCharsets.UTF_8)).find()) {
+                        offenders.add(repoRoot().relativize(f) + ": MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE");
+                    }
+                }
+            }
+        }
+        try (Stream<Path> files = Files.list(repoRoot())) {
+            for (Path f : files.filter(x -> x.getFileName().toString().matches("docker-compose.*\\.ya?ml")).toList()) {
+                if (env.matcher(Files.readString(f, StandardCharsets.UTF_8)).find()) {
+                    offenders.add(f.getFileName() + ": MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE");
+                }
+            }
+        }
+        assertThat(offenders).as("actuator 웹 노출은 읽기 넷만 — 클러스터 안에서는 인증 없이 닿는다(B-112, docs/27 §8)").isEmpty();
+        assertThat(checked).as("검사한 노출 목록(application-common.yml)").isGreaterThanOrEqualTo(1);
+    }
+
+    /**
      * B-111: prod 오버레이가 replicas 를 지우는 Deployment = k8s/70 의 HPA 대상.
      *
      * <p>HPA 가 소유한 Deployment 에 replicas 가 남아 있으면 {@code kubectl apply} 마다 매니페스트 값으로 떨어졌다가 HPA 가 다시

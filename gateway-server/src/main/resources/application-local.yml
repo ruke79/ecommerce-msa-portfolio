@@ -642,16 +642,13 @@ management:
     gateway:
       # enabled 는 Boot 3.4 부터 사용 중단 — access 로
       access: unrestricted
-  endpoints:
-    web:
-      exposure:
-        # 🔒 `gateway` 와 `beans` 를 뺐다.
-        #   · gateway → 라우트 목록 조회뿐 아니라 **POST 로 라우트를 추가·삭제**할 수 있다.
-        #     인증 없이 열려 있으면 트래픽을 임의의 목적지로 돌릴 수 있는 셈이다.
-        #   · beans   → 빈 이름과 클래스 전체를 노출해 내부 구조를 그대로 알려준다.
-        #   · refresh/busrefresh 는 설정 리로드를 트리거하는 쓰기 엔드포인트다. 운영상
-        #     필요하면 남기되 반드시 인증 뒤에 두어야 한다 — 지금은 남겨 두고 별도 과제로 뺀다.
-        include: health, info, metrics, prometheus, refresh, busrefresh
+  # 노출 목록(management.endpoints.web.exposure.include)은 여기 두지 않는다 — 위 spring.config.import 로 읽는
+  # application-common.yml 의 것(prometheus, health, info, metrics)이 쓰인다. 가져온 파일이 가져오는 파일보다 우선하므로
+  # 여기 적어도 무시된다(B-112, 2026-11-17 확인 — ActuatorExposureTest).
+  #   · 2026-11-17 까지 여기 남아 있던 `…, refresh, busrefresh` 는 실제로는 노출되지 않았다 — POST /actuator/refresh 는 404(죽은 설정).
+  #   · gateway(POST 로 라우트 추가 · 삭제) · beans · refresh(POST 로 설정 다시 읽기) 는 넣지 않는다 — 게이트웨이에는
+  #     Spring Security 가 없어 클러스터 안(k8s/95)에서는 인증 없이 닿는다. 공통 목록을 바꿀 때도 같다(가드 B-112).
+  #   [JA] 公開リストは application-common.yml のもの(import した側より優先)— ここに書いても無視される。refresh などは入れない。
 
     
     

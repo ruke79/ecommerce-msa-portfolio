@@ -273,6 +273,8 @@ include: gateway, refresh, health, beans, http, busrefresh, info, metrics, prome
 있어야 하지만, 운영 절차가 이것에 의존할 수 있어 이번에는 남기고 별도 과제로 뺐다.
 
 > 🕰️ 지금(2026-11-14): config-server 는 `CONFIG_SERVER_PASSWORD` 없이는 프로브 · `info` · `prometheus` 밖을 모두 401 로 거절한다(`ConfigServerSecurity`, 2026-10-15). 서비스의 `/<서비스>/actuator/**` 는 게이트웨이가 404 로 막고(`InternalEndpointBlockFilter`, docs/57 §7), 게이트웨이 자신의 `/actuator` 는 운영 터널이 게이트웨이로 보내지 않는다(서비스 접두사만 — `k8s-overlays/prod/cloudflared.yaml`, B-82). 게이트웨이 yml 의 노출 목록에는 `refresh, busrefresh` 가 아직 그대로다(버스 의존성은 없어 `busrefresh` 는 실제로 없다).
+>
+> 🕰️ 2026-11-17 정정: 그 `refresh, busrefresh` 는 **실제로는 노출되지 않았다**. 게이트웨이는 `spring.config.import` 로 `application-common.yml` 을 읽고, 가져온 파일이 가져오는 파일보다 우선하므로 공통 목록(`prometheus, health, info, metrics`)이 쓰였다 — 실제로 띄워 보면 `POST /actuator/refresh` 는 404(`ActuatorExposureTest`). 죽은 줄은 지웠고, 노출 목록 어디에도 쓰기 · 비밀 엔드포인트를 넣지 못하게 가드 **B-112** 를 더했다.
 
 ---
 
@@ -543,7 +545,7 @@ roles: decodedToken.roles ? decodedToken.roles.split(",") : []
 - **방화벽 점검(`ops/11`)** 🔴 — 노출됐던 호스트가 git 히스토리에 남아 있고 되돌릴 수 없다.
 - **actuator 인증** — 이번에 노출 범위를 줄였지만, 남긴 엔드포인트(`refresh`, `busrefresh`,
   `prometheus`)도 인증 뒤에 두는 것이 맞다.
-  > 🕰️ 2026-11-14: 바깥에서는 닿지 않는다(§7~8 의 🕰️ — 게이트웨이 차단 · 터널 경로 · config-server 비밀번호). 게이트웨이 자신의 `refresh` 는 클러스터 안(같은 네임스페이스 · kube-system — `k8s/95`)에서는 여전히 인증 없이 열려 있다(게이트웨이에 Spring Security 가 없다).
+  > 🕰️ 2026-11-14: 바깥에서는 닿지 않는다(§7~8 의 🕰️ — 게이트웨이 차단 · 터널 경로 · config-server 비밀번호). ~~게이트웨이 자신의 `refresh` 는 클러스터 안(같은 네임스페이스 · kube-system — `k8s/95`)에서는 여전히 인증 없이 열려 있다(게이트웨이에 Spring Security 가 없다).~~ → 🕰️ 2026-11-17 정정: 열려 있지 않았다 — 공통 목록이 우선해 `refresh` 는 404 였다(§8 의 🕰️, B-112).
 
 ---
 
