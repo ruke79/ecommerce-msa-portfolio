@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | ① 負荷なしですぐ | JVM がコンテナー上限を見て選んだもの — GC · ヒープ · スレッド · ForkJoin 並列度 · コードキャッシュ | `ops/60-jvm-facts.sh`（新）· Prometheus 一回 | F-1 〜 F-6（§2） | 6 — すべてすぐ可能 |
 | ② 負荷中 | 天井の階段の遅延 · CPU か GC か · CPU の使い道 · 割り当て · 待ち · メモリー · リバランス | `ops/53 ceiling`（GC 列）· `ops/58` · `vmstat` · PromQL | L-1 〜 L-12（§3） | 12 — すべてすぐ可能（二つはツールの動作確認が要る） |
-| ③ 比較実験 | 変数を一つだけ替えて同じ負荷で — GC · ヒープ · CPU 上限 · 暖機 · レプリカ · プール · 起動 | `ops/53`（`replicas` · `pool` · `STAGES`）· 新ツール | X-1 〜 X-14（§4） | 14 — すぐ可能 4 · 新ツールが必要 10 |
+| ③ 比較実験 | 変数を一つだけ替えて同じ負荷で — GC · ヒープ · CPU 上限 · 暖機 · レプリカ · プール · 起動 | `ops/53`（`replicas` · `pool` · `jvm` · `STAGES`）· 新ツール | X-1 〜 X-14（§4） | 14 — すぐ可能 8 · 新ツールが必要 6 |
 | 該当なし | このシステムに対象がない、またはすでに反映済み | — | N-1 〜 N-12（§4-4） | 書籍シナリオ 29 個 |
 
 - 書籍の表記: **JP** = Scott Oaks *Java Performance* 第 2 版の測定シナリオ（S2-1 … S11-3、30 個）、**OC** = Evans · Gough *Optimizing Cloud Native Java* 第 2 版の測定シナリオ（1-1 … 15-3 · A-1 … B-3、48 個）。78 個すべてが下のどれか一行（または該当なし）に入っている — 索引は §4-5。
@@ -115,7 +115,7 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 - **負荷**: 天井（§5 の L-1）の 80% で固定 — `RATE=<r> STAGES="1m:<r>,10m:<r>,30s:0" ./ops/53-load-k6.sh browse`（RATE は最も高い段階と同じに — docs/83 §3）。暖機は `smoke` と 1 分の段階。
 - **繰り返し**: 基準 · 対象を**交互に** 5 回以上（JP S2-1 · OC 2-1）。片方をまとめて測ると、ホストの状態が変わったとき片方だけが損をする。
 - **判定**: 前もって決める — p99 · Pod の CPU あたりのスループット（リクエスト/秒 ÷ 使ったコア）· GC 負担 · GC 停止の最大。Welch の t 検定で p < 0.1 かつ差が 10% 以上のとき「違う」。そうでなければ「結論なし」（同じ、ではない）。計算は標準ライブラリーの python 数行（JP S2-1 のもの）で足りるがリポジトリにない → 新ツール（§6）。
-- **測定用の例外**: 設定を変えるのは `ops/53` のモード（`limits` · `pool` · `replicas`）だけ — 実習クラスターの判定 · 戻し · デプロイ前の点検（`ops/28 check_load_overrides`）が付いている。**`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 上限を手で `kubectl set env` しない** — そのモードはまだない（設定は `ops/28` だけで、測定用の例外は `ops/53` のモードだけで）。
+- **測定用の例外**: 設定を変えるのは `ops/53` のモード（`limits` · `pool` · `replicas` · `jvm`）だけ — 実習クラスターの判定 · 戻し · デプロイ前の点検（`ops/28 check_load_overrides`）が付いている。**`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 上限を手で `kubectl set env` しない** — `ops/53 jvm`（2026-11-17）でだけ変える: 元の値（JAVA_OPTS · ヒープ比率 · CPU 上限）を Deployment の注釈 `ecommerce.io/jvm-measure` に書いて一回のロールアウトで変え、`jvm default` がその値で戻す。もう一度 `load` すると元の値の上に新しく（重ねない）。残っていれば `ops/28` がデプロイ前に知らせる（設定は `ops/28` だけで、測定用の例外は `ops/53` のモードだけで）。変えた後に JVM が本当にそう選んだかは `ops/60-jvm-facts.sh <サービス>`。
 
 ### 4-2. すぐ可能なもの
 
@@ -125,16 +125,16 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 | X-7 | JP S9-1（アムダール） | catalog · gateway | レプリカ N | `./ops/53-load-k6.sh replicas load <N> catalog-service gateway-server` → `ceiling browse` → `replicas default` | 倍数 k = N/N₀ のときの天井の比 S。直列の割合 F ≈ (k/S − 1)/(k − 1)。docs/83では catalog 3 → 4 で +13% — ホストのコアを分け合っただけだった。エージェントが二つの今は L-2 の `st` も書く |
 | X-8 | JP S10-1 の延長 | catalog | DB プール 5 → 10 | `./ops/53-load-k6.sh pool load 10` → `ceiling browse` → `pool default`（DB 接続の予算はスクリプトが先に数える） | `hikaricp_connections_pending` が 0 になり天井が上がればプールがボトルネック。CPU が先に埋まれば（2026-10-18 のように）プールではない |
 | X-10 | OC B-3 | catalog | データの形 · 流入の形 | `SKEW=0.5` · `LONG_NAMES=1` で `ops/44` を入れ直す（docs/83 §2.5）/ `spike` | 同じ商品数の既定の形の回と比べる。先に折れる場所（件数カウント · フィルターメニュー · 深いページ · 応答の大きさ）が変わるか |
+| X-2 | JP S5-2、OC 5-1 — docs/91 ロードマップ ③ | gateway · catalog | 1 コアでの GC: Serial（今）· Parallel · G1 | `./ops/53-load-k6.sh jvm load gateway-server catalog-service gc=parallel`（次の回は `gc=g1`、基準は `gc=serial`）→ §4-1 の固定負荷 → 終わったら `jvm default` | 書籍: 1 コア · CPU を使い切る仕事は Serial が最速で、G1 はバックグラウンドスレッドが計算を奪う。応答型（CPU 50%）では G1 の p99 が低かった。ここでは 80% 負荷なのでスループットは Serial ≥ 他、p99 は未定 — それを測る。ヒープは固定（同じ `MaxRAMPercentage`） |
+| X-3 | JP S6-3 · S6-2、OC 5-2 | gateway · catalog | CPU 上限 1 → 2 コア（G1 になる）、そして 2 コアで ZGC · Shenandoah | `jvm load gateway-server catalog-service cpu=2`（JVM が自分で G1）· `cpu=2 gc=z` · `cpu=2 gc=shenandoah`、比較対象の「1 コア二つ」は `replicas load 2`。上限だけを変えるので要求の予算はそのまま — ノードの実際の CPU は `kubectl top nodes`。G1 の巨大オブジェクトは `gclog=1` のログで | 問いは「1 コアの Pod 二つ vs 2 コアの Pod 一つ」— 同じ総コアで天井 · p99 · 停止の最大。G1 なら `-Xlog:gc+humongous` で巨大オブジェクト（リージョン 1MB なら 512KB 以上）· IHOP の並行モード失敗もいっしょに見る |
+| X-4 | OC 8-2、JP S7-2 | catalog（1Gi）· 768Mi のサービス一つ | ヒープ比率 50 · 60 · 70% | `jvm load catalog-service heap=60` · `heap=70`（65 以上ならスクリプトが警告）— メモリ上限はそのまま | GC 負担 · GC 後ヒープが下がり `OOMKilled`（`kubectl get pods` の lastState）が 0 なら上げる根拠。イメージのコメントは「65% 以上なら 768Mi のサービスはコンテナー上限に先に届く」— 測定はない、これで確かめる。データは 100 万（2026-10-19 に 25% で catalog がヒープ不足を繰り返した条件、docs/83 §5）。ヒープの OOM はそのスレッドだけを終わらせ JVM は生きる（JP S7-2）— 今は `ExitOnOutOfMemoryError` がなく、liveness が殺した |
+| X-5 | JP S5-3、OC 10-3 · 5-3 | gateway（GC 負担が跳ねた Pod、docs/83） | GC ログを有効に | `jvm load gateway-server gclog=1` — `-Xlog:gc*,safepoint:file=/var/log/jvm/gc.log:…`（一つのファイル、3 個 × 10MB でローテーション）→ `kubectl -n ecommerce cp <Pod>:/var/log/jvm/gc.log ./gc.log`（emptyDir — Pod を消す前に） | 指標（5 分窓 · 最大）とログの停止イベントを同じ時刻に並べ、窓が隠した偏り（毎分 1 件 vs 最後の 0.1 秒に 60 件）があるか。セーフポイントへの到達時間が GC 停止より長ければ GC ではなく止まるのが遅いスレッド |
 
 ### 4-3. 新ツールが必要なもの
 
 | 行 | 書籍シナリオ | 対象 | 替える変数 | 今ないもの | 判定（方向 · 比率） |
 |---|---|---|---|---|---|
 | X-1 | JP S2-1、OC 2-1 | すべての比較 | — （判定の方法） | 回のまとまりの比較 — `ops/53 report` が複数回の p99 · スループットを集めて Welch の p を出すもの | §4-1 の規則 |
-| X-2 | JP S5-2、OC 5-1 — docs/91 ロードマップ ③ | gateway · catalog | 1 コアでの GC: Serial（今）· Parallel · G1 | `JAVA_OPTS` を実習でだけ変えて戻す `ops/53` のモード（§6 の 3-1） | 書籍: 1 コア · CPU を使い切る仕事は Serial が最速で、G1 はバックグラウンドスレッドが計算を奪う。応答型（CPU 50%）では G1 の p99 が低かった。ここでは 80% 負荷なのでスループットは Serial ≥ 他、p99 は未定 — それを測る。ヒープは固定（同じ `MaxRAMPercentage`） |
-| X-3 | JP S6-3 · S6-2、OC 5-2 | gateway · catalog | CPU 上限 1 → 2 コア（G1 になる）、そして 2 コアで ZGC · Shenandoah | CPU 上限を変える測定モード — ノードの要求の余裕の計算は `replicas` のものを使う | 問いは「1 コアの Pod 二つ vs 2 コアの Pod 一つ」— 同じ総コアで天井 · p99 · 停止の最大。G1 なら `-Xlog:gc+humongous` で巨大オブジェクト（リージョン 1MB なら 512KB 以上）· IHOP の並行モード失敗もいっしょに見る |
-| X-4 | OC 8-2、JP S7-2 | catalog（1Gi）· 768Mi のサービス一つ | ヒープ比率 50 · 60 · 70% | `JVM_MAX_RAM_PERCENTAGE` を変える測定モード | GC 負担 · GC 後ヒープが下がり `OOMKilled`（`kubectl get pods` の lastState）が 0 なら上げる根拠。イメージのコメントは「65% 以上なら 768Mi のサービスはコンテナー上限に先に届く」— 測定はない、これで確かめる。データは 100 万（2026-10-19 に 25% で catalog がヒープ不足を繰り返した条件、docs/83 §5）。ヒープの OOM はそのスレッドだけを終わらせ JVM は生きる（JP S7-2）— 今は `ExitOnOutOfMemoryError` がなく、liveness が殺した |
-| X-5 | JP S5-3、OC 10-3 · 5-3 | gateway（GC 負担が跳ねた Pod、docs/83） | GC ログを有効に | 同じ測定モードで `-Xlog:gc*:file=/var/log/jvm/gc.log:…`（docs/91 §4-3 の行 — `/var/log/jvm` は emptyDir）、セーフポイントは `-Xlog:safepoint` | 指標（5 分窓 · 最大）とログの停止イベントを同じ時刻に並べ、窓が隠した偏り（毎分 1 件 vs 最後の 0.1 秒に 60 件）があるか。セーフポイントへの到達時間が GC 停止より長ければ GC ではなく止まるのが遅いスレッド |
 | X-9 | OC 6-2 · 8-3 | すべてのサービス | 起動: CDS/AppCDS · ベースイメージ | イメージを替えてビルド（`ops/Dockerfile.runtime` の一行 — B-98） | 基準線は今も読める: `application_ready_time_seconds`（サービス別）。startupProbe の予算 5 分 · HPA の遅れ（docs/83 spike）と比べて起動が縮む比率 |
 | X-11 | OC 2-3 | browse · order | 応答の種類別の遅延 | k6 の要約をステータスコード別に — 今はエンドポイント（`name`）別だけなので、隔壁の速い 503 が全体の p99 を押し下げる | 2xx だけの p99 と全体の p99 を並べる。天井の判定は 5xx ≤ 0.1% で切るので、天井の階段では差が小さいはず |
 | X-12 | JP S10-3 | user-service · coupon | `ObjectMapper` を呼び出しごとに作る vs 一つ | ログイン · トークン更新の k6 シナリオ（ログインは IP あたり毎秒 1 — `CLIENT_IPS` で分ける） | コードの事実（grep）: `AuthLoginFilter`（ログイン成功 · 失敗の応答ごと）· `RefreshTokenController` · `JwtAuthEntryPoint`（401 ごと）· `RedisOAuth2AuthorizationRequestRepository` · `CouponService`（メールアドレスで発行）が呼び出しごとに `new ObjectMapper()`。変えるかはこの測定の後 — `ops/58` でその経路の Jackson 初期化の分が見えたら |
@@ -228,7 +228,11 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 | X-7 | — | N₀ → N | — | — | — | — | — | — |
 | X-8 | — | プール 5 → 10 | — | — | — | — | — | — |
 | X-10 | — | 既定 → SKEW/LONG_NAMES | — | — | — | — | — | — |
-| X-2 〜 X-5 · X-9 · X-11 〜 X-14 | — | （新ツールの後） | — | — | — | — | — | — |
+| X-2 | — | Serial → Parallel · G1 | — | — | — | — | — | — |
+| X-3 | — | 1 コア二つ → 2 コア一つ（G1 · Z · Shenandoah） | — | — | — | — | — | — |
+| X-4 | — | ヒープ 50 → 60 · 70% | — | — | — | — | — | — |
+| X-5 | — | GC ログ（指標の窓 vs イベント） | — | — | — | — | — | — |
+| X-9 · X-11 〜 X-14 | — | （新ツールの後） | — | — | — | — | — | — |
 
 ---
 
@@ -236,8 +240,8 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 
 1. **実習クラスターを起こす**（§1）— agent1 の `K3S_URL` の確認から。観測スタック（`PROM`）がどこにあるか、k6 をどこで動かすかを決める。なければ ② のサーバー側の列が空になる。
 2. **① → ② の実行** — `ops/60` で §5-1、`ceiling browse` · `ceiling order` · `ops/58` で §5-2 と docs/91 §4-1。`EVENT=alloc` · `lock` は、まず一度表が出るかから（L-4 · L-5）。
-3. **新ツール**（③ の 10 行が待っている）:
-   1. `ops/53` の JVM 測定モード — `JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 上限を実習でだけ変えて戻す（`limits` · `pool` と同じ形: 本番拒否 · 戻し · `ops/28 check_load_overrides` にその変数を追加 · テスト）。X-2 · X-3 · X-4 · X-5 と L-11 の cooperative 比較（`KAFKA_REBALANCE_PROTOCOL`）がこれ一つで解ける。
+3. **新ツール**（③ の 6 行が待っている）:
+   1. ~~`ops/53` の JVM 測定モード~~ → ✅ 2026-11-17 `ops/53 jvm load|default|status`（本番拒否 · 元の値は注釈 · 一回のロールアウト · `ops/28` の警告 · テスト `LoadK6ScriptTest` +3 · `DeployLoadOverrideScriptTest` +1、変異の確認 5 種）。X-2 〜 X-5 は §4-2 へ移った。L-11 の cooperative 比較（`KAFKA_REBALANCE_PROTOCOL`）はこのモードの外なので残る。
    2. 回のまとまりの比較（Welch）— X-1。
    3. k6: ステータスコード別の遅延（X-11）、ログイン · トークン更新のシナリオ（X-12）。
    4. 一括書き込みの測定（X-13）、イメージの比較（X-9 · X-14）。

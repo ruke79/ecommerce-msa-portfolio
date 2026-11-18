@@ -220,6 +220,7 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - **GC 로그**(켜지 않는다 — 필요할 때 그 서비스만): `JAVA_OPTS` 에 `-Xlog:gc*:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m` — `/var/log/jvm` 은 이미 emptyDir(B-97)이라 컨테이너가 다시 떠도 남는다. 꺼내기는 `kubectl -n ecommerce cp <파드>:/var/log/jvm/gc.log ./gc.log`.
 - **시험**: `LoadK6ScriptTest` +2(GC 열 · 후보 — Copy · MarkSweepCompact 를 Serial 로, 할당 ÷ 파드 · 문턱 설정과 검사), promtool `observability/tests/jvm-rules.test.yml`(GC 부담 10분 전은 조용 · 지나면 울림 · 잠깐 튄 GC 는 조용 · GC 뒤 힙 15분 · 기존 `JvmHeapNearLimit` 도), `SloRulesTest` 가 `jvm-health` 의 모든 경보가 promtool 시험에 있는지 본다. 변이 확인: GC 후보 · 종류 매핑 · 문턱 검사 · 문턱 무시 · GC 뒤 힙 후보 제거 → `LoadK6ScriptTest` 실패, 경보 문턱 0.2 · `for` 1분 · GC 뒤 힙 0.99 → promtool 실패, 경보 이름 바꿈 → `SloRulesTest` 실패.
 - **다음**(로드맵): ① 배포 뒤 운영의 GC 종류 · 힙 · 평시 GC 부담을 이 절에 적는다 → ② 실습 천장(§4-1)에서 계단마다 GC 열로 "CPU 냐 GC 냐" 를 가른다 → ③ 천장의 80% 고정 부하로 게이트웨이 · catalog 의 Serial(1 코어) · Parallel(1 코어) · G1(2 코어) · 힙 50/60/70% 를 견준다(p99 · 파드 CPU 당 처리량 · GC 부담 · 정지 최대, 할당이 많은 곳은 `ops/58` 의 할당 모드) — 게이트웨이 한 파드만 튀던 GC 부담(docs/83)도 여기서 → ④ JDK 21 의 Generational ZGC 는 jdk21-build 브랜치를 합칠 때.
+- **도구**(2026-11-17): 로드맵 ① 은 `ops/60-jvm-facts.sh`(파드마다 JVM 이 고른 GC · 힙 · 스레드), ③ 의 설정 변경은 `./ops/53-load-k6.sh jvm load <서비스…> gc=… heap=… cpu=… gclog=1` → `jvm default`(원래 값을 Deployment 주석에 두고 되돌린다 — 손으로 `kubectl set env` 하지 않는다). 시나리오 · 판정은 [docs/92](92-jvm-measurement-scenarios.ko.md) §4-2 X-2 ~ X-5.
 
 ---
 

@@ -573,6 +573,7 @@ class LoadK6ScriptTest {
         exe(bin.resolve("kubectl"), """
                 echo "kubectl $*" >> "$FAKE/kubectl.log"
                 case "$*" in
+                  *"get deploy "*" -o json") [ -f "$FAKE/deploy.json" ] && cat "$FAKE/deploy.json" ;;
                   *"HAVING count(*) = 1"*) printf '1000123' ;;
                   *"get deploy elasticsearch"*) printf '%s' "${FAKE_ES_READY-1}" ;;
                   *"product-alias/_count"*) printf '{"count":%s}' "${FAKE_ES_COUNT:-0}" ;;
@@ -950,6 +951,100 @@ class LoadK6ScriptTest {
         Run back = run(Map.of(), "pool", "default");
         assertThat(back.code()).as(back.out()).isZero();
         assertThat(read(log)).contains("set env deploy/catalog-service DB_POOL_SIZE-");
+    }
+
+    /** 가짜 kubectl 이 {@code get deploy <d> -o json} 에 돌려줄 Deployment — 주석(원래 값)이 있으면 측정 중. */
+    private void deployJson(String javaOpts, String heap, String cpu, String annotation) throws IOException {
+        String env = (javaOpts == null ? "" : "{\"name\":\"JAVA_OPTS\",\"value\":\"" + javaOpts + "\"},")
+                + (heap == null ? "" : "{\"name\":\"JVM_MAX_RAM_PERCENTAGE\",\"value\":\"" + heap + "\"},")
+                + "{\"name\":\"DB_PASSWORD\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"x\",\"key\":\"y\"}}}";
+        String ann = annotation == null ? "{}" : "{\"ecommerce.io/jvm-measure\":\"" + annotation + "\"}";
+        Files.writeString(tmp.resolve("deploy.json"), """
+                {"metadata":{"annotations":%s},"spec":{"template":{"spec":{"containers":[{"env":[%s],
+                 "resources":{"limits":{"cpu":"%s","memory":"768Mi"}}}]}}}}""".formatted(ann, env, cpu));
+    }
+
+    private static String b64(String s) {
+        return java.util.Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    @DisplayName("🔴 JVM 측정 설정 — 운영은 거절, 원래 값을 주석에 먼저 적고 한 번의 롤아웃(pause → GC · 힙 · CPU · GC 로그 → resume)")
+    void jvmLoadRecordsOriginalsAndChangesInOneRollout() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path log = tmp.resolve("kubectl.log");
+        deployJson("-XX:+UseSerialGC -Dfoo=1", null, "1000m", null);
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com"), "jvm", "load", "catalog-service", "gc=g1");
+        assertThat(prod.code()).isNotZero();
+        assertThat(prod.out()).contains("운영 클러스터").contains("JVM 설정");
+        assertThat(read(log)).doesNotContain("set env").doesNotContain("annotate");
+
+        Files.delete(log);
+        Run load = run(Map.of(), "jvm", "load", "catalog-service", "gc=g1", "heap=60", "cpu=2", "gclog=1");
+        assertThat(load.code()).as(load.out()).isZero();
+        List<String> calls = read(log).lines().filter(l -> !l.contains(" get ")).toList();
+        String ann = "ecommerce.io/jvm-measure=java_opts=" + b64("-XX:+UseSerialGC -Dfoo=1") + ";heap=-;cpu=1000m";
+        assertThat(calls).as(String.join("\n", calls)).containsSubsequence(
+                "kubectl -n ecommerce annotate --overwrite deploy/catalog-service " + ann,
+                "kubectl -n ecommerce rollout pause deploy/catalog-service",
+                "kubectl -n ecommerce set env deploy/catalog-service JAVA_OPTS=-Dfoo=1 -XX:+UseG1GC "
+                        + "-Xlog:gc*,safepoint:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m",
+                "kubectl -n ecommerce set env deploy/catalog-service JVM_MAX_RAM_PERCENTAGE=60",
+                "kubectl -n ecommerce set resources deploy/catalog-service --limits=cpu=2",
+                "kubectl -n ecommerce rollout resume deploy/catalog-service",
+                "kubectl -n ecommerce rollout status deploy/catalog-service --timeout=600s");
+        assertThat(load.out()).contains("./ops/60-jvm-facts.sh catalog-service").contains("jvm default catalog-service");
+    }
+
+    @Test
+    @DisplayName("🔴 JVM 측정 설정 — 다시 load 하면 주석의 원래 값 위에(겹쳐 쌓지 않는다), default 는 원래 값으로 되돌리고 주석을 지운다")
+    void jvmReloadUsesOriginalsAndDefaultRestores() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path log = tmp.resolve("kubectl.log");
+        String orig = "java_opts=" + b64("-XX:+UseSerialGC -Dfoo=1") + ";heap=-;cpu=1000m";
+        deployJson("-Dfoo=1 -XX:+UseG1GC", "60", "2", orig);   // 지금은 G1 · 60% · 2 코어로 측정 중
+        Run again = run(Map.of(), "jvm", "load", "catalog-service", "heap=70");
+        assertThat(again.code()).as(again.out()).isZero();
+        assertThat(again.out()).contains("65% 이상");
+        assertThat(read(log)).as("G1 은 원래 값이 아니다 — 남기지 않는다")
+                .contains("annotate --overwrite deploy/catalog-service ecommerce.io/jvm-measure=" + orig)
+                .contains("set env deploy/catalog-service JAVA_OPTS=-XX:+UseSerialGC -Dfoo=1\n")
+                .contains("set env deploy/catalog-service JVM_MAX_RAM_PERCENTAGE=70")
+                .contains("set resources deploy/catalog-service --limits=cpu=1000m");
+
+        Files.delete(log);
+        Run back = run(Map.of(), "jvm", "default", "catalog-service");
+        assertThat(back.code()).as(back.out()).isZero();
+        assertThat(read(log).lines().filter(l -> !l.contains(" get ")).toList()).containsSubsequence(
+                "kubectl -n ecommerce rollout pause deploy/catalog-service",
+                "kubectl -n ecommerce set env deploy/catalog-service JAVA_OPTS=-XX:+UseSerialGC -Dfoo=1",
+                "kubectl -n ecommerce set env deploy/catalog-service JVM_MAX_RAM_PERCENTAGE-",
+                "kubectl -n ecommerce set resources deploy/catalog-service --limits=cpu=1000m",
+                "kubectl -n ecommerce rollout resume deploy/catalog-service",
+                "kubectl -n ecommerce annotate deploy/catalog-service ecommerce.io/jvm-measure-");
+
+        Files.delete(log);
+        deployJson(null, null, "1000m", null);
+        Run none = run(Map.of(), "jvm", "default", "catalog-service");
+        assertThat(none.code()).as(none.out()).isZero();
+        assertThat(none.out()).contains("측정용 JVM 설정 없음");
+        assertThat(read(log)).doesNotContain("set env").doesNotContain("annotate");
+    }
+
+    @Test
+    @DisplayName("JVM 측정 설정 — 값 검사(gc 종류 · 힙 25 ~ 75 · cpu · 모르는 키 · 바꿀 것 없음)는 아무것도 바꾸기 전에")
+    void jvmValuesAreCheckedBeforeAnyChange() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path log = tmp.resolve("kubectl.log");
+        deployJson("", null, "1000m", null);
+        for (String[] bad : new String[][] {
+                {"gc=cms", "gc 는"}, {"heap=90", "heap 은 25 ~ 75"}, {"cpu=8", "cpu 는"}, {"gclog=yes", "gclog 는"},
+                {"xmx=1g", "모르는 설정"}, {"catalog-service", "바꿀 것이 없다"}}) {
+            Run r = run(Map.of(), "jvm", "load", "catalog-service", bad[0]);
+            assertThat(r.code()).as(bad[0]).isNotZero();
+            assertThat(r.out()).as(bad[0]).contains(bad[1]);
+        }
+        assertThat(read(log)).doesNotContain("set env").doesNotContain("annotate").doesNotContain("rollout pause");
     }
 
     /** 노드 둘 — agent(4 코어 · 8Gi, 파드 요청 usedCpuMillis · 4Gi)와 데이터 노드(NoSchedule 테인트, 비어 있음 — 세면 안 된다). */

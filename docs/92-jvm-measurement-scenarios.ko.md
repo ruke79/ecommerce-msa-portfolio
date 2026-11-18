@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | ① 부하 없이 바로 | JVM 이 컨테이너 한도를 보고 고른 것 — GC · 힙 · 스레드 · ForkJoin 병렬도 · 코드 캐시 | `ops/60-jvm-facts.sh`(새) · Prometheus 한 번 | F-1 ~ F-6(§2) | 6 — 모두 바로 가능 |
 | ② 부하 중 | 천장 계단의 지연 · CPU 냐 GC 냐 · 어디에 CPU · 할당 · 대기 · 메모리 · 리밸런스 | `ops/53 ceiling`(GC 열) · `ops/58` · `vmstat` · PromQL | L-1 ~ L-12(§3) | 12 — 모두 바로 가능(둘은 도구 동작 확인 필요) |
-| ③ 비교 실험 | 변수 하나만 바꿔 같은 부하로 — GC · 힙 · CPU 한도 · 데움 · 레플리카 · 풀 · 기동 | `ops/53`(`replicas` · `pool` · `STAGES`) · 새 도구 | X-1 ~ X-14(§4) | 14 — 바로 가능 4 · 새 도구 필요 10 |
+| ③ 비교 실험 | 변수 하나만 바꿔 같은 부하로 — GC · 힙 · CPU 한도 · 데움 · 레플리카 · 풀 · 기동 | `ops/53`(`replicas` · `pool` · `jvm` · `STAGES`) · 새 도구 | X-1 ~ X-14(§4) | 14 — 바로 가능 8 · 새 도구 필요 6 |
 | 해당 없음 | 이 시스템에 그 대상이 없거나 이미 반영됨 | — | N-1 ~ N-12(§4-4) | 책 시나리오 29개 |
 
 - 책 표기: **JP** = Scott Oaks *Java Performance* 2판의 측정 시나리오(S2-1 … S11-3, 30개), **OC** = Evans · Gough *Optimizing Cloud Native Java* 2판의 측정 시나리오(1-1 … 15-3 · A-1 … B-3, 48개). 78개 모두 아래 어느 한 행(또는 해당 없음)에 들어 있다 — 색인은 §4-5.
@@ -115,7 +115,7 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 - **부하**: 천장(§5 의 L-1)의 80% 고정 — `RATE=<r> STAGES="1m:<r>,10m:<r>,30s:0" ./ops/53-load-k6.sh browse`(RATE 는 가장 높은 단계와 같게 — docs/83 §3). 데움은 `smoke` 와 1분 단계.
 - **반복**: 기준 · 대상을 **번갈아** 5회 이상(JP S2-1 · OC 2-1). 한쪽을 몰아서 재면 호스트 상태가 바뀔 때 한쪽만 손해를 본다.
 - **판정**: 미리 정한다 — p99 · 파드 CPU 당 처리량(요청/초 ÷ 쓴 코어) · GC 부담 · GC 정지 최대. Welch t-검정 p < 0.1 이고 차이가 10% 이상이어야 "다르다". 아니면 "결론 없음"(같다가 아니다). 계산은 표준 라이브러리 python 몇 줄(JP S2-1 의 것)이면 되지만 저장소에 없다 → 새 도구(§6).
-- **측정용 예외**: 설정을 바꾸는 것은 `ops/53` 의 모드(`limits` · `pool` · `replicas`)만 — 실습 클러스터 판정 · 되돌리기 · 배포 전 점검(`ops/28 check_load_overrides`)이 붙어 있다. **`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 한도를 손으로 `kubectl set env` 하지 않는다** — 그런 모드가 아직 없다(설정은 `ops/28` 로만, 측정용 예외는 `ops/53` 의 모드로만).
+- **측정용 예외**: 설정을 바꾸는 것은 `ops/53` 의 모드(`limits` · `pool` · `replicas` · `jvm`)만 — 실습 클러스터 판정 · 되돌리기 · 배포 전 점검(`ops/28 check_load_overrides`)이 붙어 있다. **`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 한도를 손으로 `kubectl set env` 하지 않는다** — `ops/53 jvm`(2026-11-17)으로만 바꾼다: 원래 값(JAVA_OPTS · 힙 비율 · CPU 한도)을 Deployment 주석 `ecommerce.io/jvm-measure` 에 적고 한 번의 롤아웃으로 바꾸며, `jvm default` 가 그 값으로 되돌린다. 다시 `load` 하면 원래 값 위에 새로(겹쳐 쌓지 않는다). 남아 있으면 `ops/28` 이 배포 전에 알린다(설정은 `ops/28` 로만, 측정용 예외는 `ops/53` 의 모드로만). 바꾼 뒤 JVM 이 정말 그렇게 골랐는지는 `ops/60-jvm-facts.sh <서비스>`.
 
 ### 4-2. 바로 가능한 것
 
@@ -125,16 +125,16 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 | X-7 | JP S9-1(암달) | catalog · gateway | 레플리카 N | `./ops/53-load-k6.sh replicas load <N> catalog-service gateway-server` → `ceiling browse` → `replicas default` | 배수 k = N/N₀ 일 때 천장 비 S. 직렬 비율 F ≈ (k/S − 1)/(k − 1). docs/83에서는 catalog 3 → 4 에 +13% — 호스트 코어를 나눌 뿐이었다. 에이전트가 둘인 지금은 L-2 의 `st` 를 같이 적는다 |
 | X-8 | JP S10-1 의 연장 | catalog | DB 풀 5 → 10 | `./ops/53-load-k6.sh pool load 10` → `ceiling browse` → `pool default`(DB 연결 예산은 스크립트가 먼저 센다) | `hikaricp_connections_pending` 이 0 으로 가고 천장이 오르면 풀이 병목. CPU 가 먼저 차면(2026-10-18 처럼) 풀은 아니다 |
 | X-10 | OC B-3 | catalog | 데이터 모양 · 유입 모양 | `SKEW=0.5` · `LONG_NAMES=1` 로 `ops/44` 다시 넣기(docs/83 §2.5) / `spike` | 같은 상품 수의 기본 모양 회차와 견준다. 먼저 꺾이는 곳(개수 세기 · 필터 메뉴 · 깊은 쪽 · 응답 크기)이 바뀌는지 |
+| X-2 | JP S5-2, OC 5-1 — docs/91 로드맵 ③ | gateway · catalog | 1 코어에서 GC: Serial(지금) · Parallel · G1 | `./ops/53-load-k6.sh jvm load gateway-server catalog-service gc=parallel`(다음 회차 `gc=g1`, 기준 `gc=serial`) → §4-1 고정 부하 → 끝나면 `jvm default` | 책: 1 코어 · CPU 를 다 쓰는 일은 Serial 이 가장 빠르고 G1 은 백그라운드 스레드가 계산을 빼앗는다, 응답형(CPU 50%)은 G1 의 p99 가 낮았다. 여기서는 80% 부하라 처리량은 Serial ≥ 나머지, p99 는 결론 미정 — 그것을 잰다. 힙은 고정(같은 `MaxRAMPercentage`) |
+| X-3 | JP S6-3 · S6-2, OC 5-2 | gateway · catalog | CPU 한도 1 → 2 코어(G1 이 된다), 그리고 2 코어에서 ZGC · Shenandoah | `jvm load gateway-server catalog-service cpu=2`(JVM 이 스스로 G1) · `cpu=2 gc=z` · `cpu=2 gc=shenandoah`, 비교 대상 "1 코어 둘" 은 `replicas load 2`. 한도만 바꾸므로 요청 예산은 그대로 — 노드의 실제 CPU 는 `kubectl top nodes`. G1 거대 객체는 `gclog=1` 의 로그에서 | 질문은 "1 코어 파드 둘 vs 2 코어 파드 하나" — 같은 총 코어에서 천장 · p99 · 정지 최대. G1 이면 `-Xlog:gc+humongous` 로 거대 객체(리전 1MB 면 512KB 이상) · IHOP 동시 모드 실패를 함께 본다 |
+| X-4 | OC 8-2, JP S7-2 | catalog(1Gi) · 768Mi 서비스 하나 | 힙 비율 50 · 60 · 70% | `jvm load catalog-service heap=60` · `heap=70`(65 이상이면 스크립트가 경고) — 메모리 한도는 그대로 | GC 부담 · GC 뒤 힙이 줄고 `OOMKilled`(`kubectl get pods` 의 lastState)가 0 이면 올릴 근거. 이미지 주석은 "65% 이상이면 768Mi 서비스는 컨테이너 한도에 먼저 닿는다" — 측정은 없다, 이것으로 확인. 데이터는 100만(2026-10-19 에 25% 로 catalog 가 힙 부족을 되풀이한 조건, docs/83 §5). 힙 OOM 은 그 스레드만 끝내고 JVM 은 산다(JP S7-2) — 지금은 `ExitOnOutOfMemoryError` 가 없어 liveness 가 죽였다 |
+| X-5 | JP S5-3, OC 10-3 · 5-3 | gateway(GC 부담이 튀던 파드, docs/83) | GC 로그 켜기 | `jvm load gateway-server gclog=1` — `-Xlog:gc*,safepoint:file=/var/log/jvm/gc.log:…`(한 파일, 3개 × 10MB 회전) → `kubectl -n ecommerce cp <파드>:/var/log/jvm/gc.log ./gc.log`(emptyDir — 파드를 지우기 전에) | 지표(5분 창 · 최대)와 로그의 정지 사건을 같은 시각에 놓아, 창이 숨긴 몰림(분당 1건 vs 마지막 0.1초에 60건)이 있는지. 세이프포인트 도착 시간이 GC 정지보다 길면 GC 가 아니라 늦게 멈추는 스레드 |
 
 ### 4-3. 새 도구가 필요한 것
 
 | 행 | 책 시나리오 | 대상 | 바꿀 변수 | 지금 없는 것 | 판정(방향 · 비율) |
 |---|---|---|---|---|---|
 | X-1 | JP S2-1, OC 2-1 | 모든 비교 | — (판정 방법) | 회차 묶음 비교 — `ops/53 report` 가 회차 여럿의 p99 · 처리량을 모아 Welch p 를 내는 것 | §4-1 의 규칙 |
-| X-2 | JP S5-2, OC 5-1 — docs/91 로드맵 ③ | gateway · catalog | 1 코어에서 GC: Serial(지금) · Parallel · G1 | `JAVA_OPTS` 를 실습에서만 바꾸고 되돌리는 `ops/53` 모드(§6 의 3-1) | 책: 1 코어 · CPU 를 다 쓰는 일은 Serial 이 가장 빠르고 G1 은 백그라운드 스레드가 계산을 빼앗는다, 응답형(CPU 50%)은 G1 의 p99 가 낮았다. 여기서는 80% 부하라 처리량은 Serial ≥ 나머지, p99 는 결론 미정 — 그것을 잰다. 힙은 고정(같은 `MaxRAMPercentage`) |
-| X-3 | JP S6-3 · S6-2, OC 5-2 | gateway · catalog | CPU 한도 1 → 2 코어(G1 이 된다), 그리고 2 코어에서 ZGC · Shenandoah | CPU 한도를 바꾸는 측정 모드 — 노드 요청 여유 계산은 `replicas` 의 것을 쓴다 | 질문은 "1 코어 파드 둘 vs 2 코어 파드 하나" — 같은 총 코어에서 천장 · p99 · 정지 최대. G1 이면 `-Xlog:gc+humongous` 로 거대 객체(리전 1MB 면 512KB 이상) · IHOP 동시 모드 실패를 함께 본다 |
-| X-4 | OC 8-2, JP S7-2 | catalog(1Gi) · 768Mi 서비스 하나 | 힙 비율 50 · 60 · 70% | `JVM_MAX_RAM_PERCENTAGE` 를 바꾸는 측정 모드 | GC 부담 · GC 뒤 힙이 줄고 `OOMKilled`(`kubectl get pods` 의 lastState)가 0 이면 올릴 근거. 이미지 주석은 "65% 이상이면 768Mi 서비스는 컨테이너 한도에 먼저 닿는다" — 측정은 없다, 이것으로 확인. 데이터는 100만(2026-10-19 에 25% 로 catalog 가 힙 부족을 되풀이한 조건, docs/83 §5). 힙 OOM 은 그 스레드만 끝내고 JVM 은 산다(JP S7-2) — 지금은 `ExitOnOutOfMemoryError` 가 없어 liveness 가 죽였다 |
-| X-5 | JP S5-3, OC 10-3 · 5-3 | gateway(GC 부담이 튀던 파드, docs/83) | GC 로그 켜기 | 같은 측정 모드로 `-Xlog:gc*:file=/var/log/jvm/gc.log:…`(docs/91 §4-3 의 줄 — `/var/log/jvm` 은 emptyDir), 세이프포인트는 `-Xlog:safepoint` | 지표(5분 창 · 최대)와 로그의 정지 사건을 같은 시각에 놓아, 창이 숨긴 몰림(분당 1건 vs 마지막 0.1초에 60건)이 있는지. 세이프포인트 도착 시간이 GC 정지보다 길면 GC 가 아니라 늦게 멈추는 스레드 |
 | X-9 | OC 6-2 · 8-3 | 모든 서비스 | 기동: CDS/AppCDS · 기본 이미지 | 이미지를 바꿔 빌드(`ops/Dockerfile.runtime` 한 줄 — B-98) | 기준선은 지금도 읽힌다: `application_ready_time_seconds`(서비스별). startupProbe 예산 5분 · HPA 의 늦음(docs/83 spike)과 견줘 기동이 줄어드는 비율 |
 | X-11 | OC 2-3 | browse · order | 응답 범주별 지연 | k6 요약을 상태 코드별로 — 지금은 엔드포인트(`name`)별뿐이라 격벽의 빠른 503 이 전체 p99 를 끌어내린다 | 2xx 만의 p99 와 전체 p99 를 나란히. 천장 판정은 5xx ≤ 0.1% 로 끊으니 천장 계단에서는 차이가 작아야 한다 |
 | X-12 | JP S10-3 | user-service · coupon | `ObjectMapper` 를 요청마다 만들기 vs 하나 | 로그인 · 토큰 갱신 k6 시나리오(로그인은 IP 당 초당 1 — `CLIENT_IPS` 로 나눈다) | 코드 사실(grep): `AuthLoginFilter`(로그인 성공 · 실패 응답마다) · `RefreshTokenController` · `JwtAuthEntryPoint`(401 마다) · `RedisOAuth2AuthorizationRequestRepository` · `CouponService`(이메일로 발급) 가 호출마다 `new ObjectMapper()`. 바꿀지는 이 측정 뒤 — `ops/58` 에서 그 경로의 Jackson 초기화 몫이 보이면 |
@@ -228,7 +228,11 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 | X-7 | — | N₀ → N | — | — | — | — | — | — |
 | X-8 | — | 풀 5 → 10 | — | — | — | — | — | — |
 | X-10 | — | 기본 → SKEW/LONG_NAMES | — | — | — | — | — | — |
-| X-2 ~ X-5 · X-9 · X-11 ~ X-14 | — | (새 도구 뒤) | — | — | — | — | — | — |
+| X-2 | — | Serial → Parallel · G1 | — | — | — | — | — | — |
+| X-3 | — | 1 코어 둘 → 2 코어 하나(G1 · Z · Shenandoah) | — | — | — | — | — | — |
+| X-4 | — | 힙 50 → 60 · 70% | — | — | — | — | — | — |
+| X-5 | — | GC 로그(지표 창 vs 사건) | — | — | — | — | — | — |
+| X-9 · X-11 ~ X-14 | — | (새 도구 뒤) | — | — | — | — | — | — |
 
 ---
 
@@ -236,8 +240,8 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 
 1. **실습 클러스터 깨우기**(§1) — agent1 의 `K3S_URL` 확인부터. 관측 스택(`PROM`)이 어디 있는지, k6 를 어디서 돌릴지 정한다. 없으면 ② 의 서버 쪽 열이 빈다.
 2. **① → ② 실행** — `ops/60` 으로 §5-1, `ceiling browse` · `ceiling order` · `ops/58` 로 §5-2 와 docs/91 §4-1. `EVENT=alloc` · `lock` 은 처음 한 번 표가 나오는지부터(L-4 · L-5).
-3. **새 도구**(③ 의 10행이 기다린다):
-   1. `ops/53` 의 JVM 측정 모드 — `JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 한도를 실습에서만 바꾸고 되돌린다(`limits` · `pool` 과 같은 꼴: 운영 거절 · 되돌리기 · `ops/28 check_load_overrides` 에 그 변수 추가 · 시험). X-2 · X-3 · X-4 · X-5 와 L-11 의 cooperative 비교(`KAFKA_REBALANCE_PROTOCOL`)가 이것 하나로 풀린다.
+3. **새 도구**(③ 의 6행이 기다린다):
+   1. ~~`ops/53` 의 JVM 측정 모드~~ → ✅ 2026-11-17 `ops/53 jvm load|default|status`(운영 거절 · 원래 값은 주석 · 한 번의 롤아웃 · `ops/28` 경고 · 시험 `LoadK6ScriptTest` +3 · `DeployLoadOverrideScriptTest` +1, 변이 확인 5가지). X-2 ~ X-5 가 §4-2 로 옮겨졌다. L-11 의 cooperative 비교(`KAFKA_REBALANCE_PROTOCOL`)는 이 모드 밖이라 남는다.
    2. 회차 묶음 비교(Welch) — X-1.
    3. k6: 상태 코드별 지연(X-11), 로그인 · 토큰 갱신 시나리오(X-12).
    4. 일괄 쓰기 측정(X-13), 이미지 비교(X-9 · X-14).

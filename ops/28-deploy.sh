@@ -817,10 +817,14 @@ check_identity_secrets() {
 # 이유로 실패한다(2026-10-18 데모 a84e4acba5ff: 버스트 4000 이 남아 "429 미발생"). 그래서 적용하기 **전에** 멈춘다.
 # DB 풀은 스모크를 깨지 않으니 남아 있다고 알리기만 한다.
 # [JA] ops/53 の計測用の上書き(kubectl set env)は apply で消えず配備後も残る。流入制限が上がったままだとスモークの 429 確認が
-#      通らず、正常な配備が失敗と判定されて自動復帰する。適用前に止める(DB プールは警告のみ)。
+#      通らず、正常な配備が失敗と判定されて自動復帰する。適用前に止める(DB プール · JVM 計測設定は警告のみ)。
 check_load_overrides() {
-    local d var found_limit=""
+    local d var jvm found_limit=""
     for d in $MANAGED_DEPLOYS; do
+        # ops/53 jvm load(docs/92 §4-3) — 원래 값을 적어 둔 주석이 있으면 측정용 JVM 설정이 걸려 있다. apply 는 CPU 한도만 매니페스트로
+        # 되돌리고 JAVA_OPTS · JVM_MAX_RAM_PERCENTAGE 는 남긴다(스모크는 깨지지 않으니 알리기만).
+        jvm="$(kubectl -n "$NS" get deploy "$d" -o jsonpath='{.metadata.annotations.ecommerce\.io/jvm-measure}' 2>/dev/null || true)"
+        [ -z "$jvm" ] || warn "$d 에 측정용 JVM 설정이 남아 있습니다(GC · 힙 비율 · GC 로그 — 배포 뒤에도 남습니다) — 되돌리려면: ./ops/53-load-k6.sh jvm default $d"
         for var in $(kubectl -n "$NS" get deploy "$d" \
                 -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' 2>/dev/null \
                 | grep -E '^(GATEWAY_RATE_LIMIT_[A-Z_]+|DB_POOL_SIZE)$' || true); do

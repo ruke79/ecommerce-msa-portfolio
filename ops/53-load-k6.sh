@@ -44,6 +44,13 @@
 #                                              # HPA 가 따라가는 동안을 잴 때. 요청 여유는 최대까지 늘었을 때로 센다. 되돌리기는 replicas default
 #   ./ops/53-load-k6.sh replicas status        # 지금 레플리카 · HPA
 #
+#   ./ops/53-load-k6.sh jvm load [서비스…] [gc=serial|parallel|g1|z|shenandoah] [heap=25~75] [cpu=1|2|1500m …] [gclog=1]
+#                                              # JVM 측정용 설정을 잠깐(docs/92 §4-3 X-2 ~ X-5) — 실습 클러스터만. 기본 서비스 catalog-service
+#                                              # gateway-server. 원래 값(JAVA_OPTS · JVM_MAX_RAM_PERCENTAGE · CPU 한도)을 Deployment 주석에 적어 두고
+#                                              # 바꾼다(한 번의 롤아웃). 다시 load 하면 원래 값 위에 새로 — 겹쳐 쌓지 않는다. 확인은 ops/60-jvm-facts.sh
+#   ./ops/53-load-k6.sh jvm default [서비스…]   # 주석의 원래 값으로 되돌리고 주석을 지운다. 측정이 끝나면 꼭(ops/28 이 남은 것을 알린다)
+#   ./ops/53-load-k6.sh jvm status             # 측정용 JVM 설정이 걸린 서비스와 지금 값
+#
 #   ./ops/53-load-k6.sh logs                   # 게이트웨이 파드의 로그를 지금 남긴다(~/.ecommerce-msa/gateway-logs, 폴백 예외별 수) — limits · replicas 가 바꾸기 전에도
 #
 #   ./ops/53-load-k6.sh report                 # 결과 모아 보기: 모든 회차 한 줄씩 + 가장 최근 회차의 요약
@@ -117,7 +124,7 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|mixed|contention|limits|pool|replicas|reviews|stock|search|logs|report|ceiling) ;;
+    browse|order|spike|smoke|mixed|contention|limits|pool|replicas|jvm|reviews|stock|search|logs|report|ceiling) ;;
     *) usage ;;
 esac
 
@@ -675,6 +682,121 @@ sys.exit(0 if nodes and add_c <= free_c and add_m <= free_m else 3)
 }
 if [ "$SCENARIO" = "replicas" ]; then
     cmd_replicas "$@"
+    exit 0
+fi
+
+# ── JVM 설정 — 측정하는 동안만(docs/92 §4-3) ─────────────────────────────────
+#
+# 책 두 권의 비교 실험(GC 종류 · CPU 한도 · 힙 비율 · GC 로그)은 JAVA_OPTS · JVM_MAX_RAM_PERCENTAGE · CPU 한도를 바꿔야 한다. 손으로
+# `kubectl set env` 하면 원래 값을 잃고, 배포(ops/28)의 apply 는 env 를 지우지 않아 남는다 — 그래서 이 모드로만. 바꾸기 전에 원래 값을
+# Deployment 주석 ecommerce.io/jvm-measure 에 적고(JAVA_OPTS 는 base64 — 공백 · 따옴표), default 가 그 값으로 되돌린다. 롤아웃은 한 번
+# (pause → 바꾸기 → resume). 1 코어(지금 한도)면 JDK 17 은 Serial 을 고른다 — gc= 는 그 선택을 뒤집고, cpu=2 는 JVM 이 스스로 G1 로
+# 간다(docs/91 §4-3). 메모리 한도는 바꾸지 않는다(heap= 은 그 안의 비율만).
+# [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
+JVM_ANNOTATION="ecommerce.io/jvm-measure"
+JVM_GC_LOG="-Xlog:gc*,safepoint:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m"
+jvm_state() {   # jvm_state <deploy> → 네 줄: JAVA_OPTS(base64 · 없으면 -) · 힙 비율 · CPU 한도 · 주석
+    kubectl -n "$APP_NS" get deploy "$1" -o json 2>/dev/null | python3 -I -c '
+import base64, json, sys
+d = json.load(sys.stdin); c = d["spec"]["template"]["spec"]["containers"][0]
+env = {e["name"]: e.get("value", "") for e in c.get("env") or [] if "valueFrom" not in e}
+print(base64.b64encode(env.get("JAVA_OPTS", "").encode()).decode() or "-")
+print(env.get("JVM_MAX_RAM_PERCENTAGE") or "-")
+print(((c.get("resources") or {}).get("limits") or {}).get("cpu") or "-")
+print((d["metadata"].get("annotations") or {}).get("ecommerce.io/jvm-measure") or "-")'
+}
+jvm_field() { tr ';' '\n' <<<"$1" | sed -n "s/^$2=//p"; }   # jvm_field <주석> <이름>
+b64d() { [ "$1" = "-" ] && return 0; printf '%s' "$1" | base64 -d; }
+jvm_apply() {   # jvm_apply <deploy> <JAVA_OPTS|""> <힙|-> <cpu|-> — 한 번의 롤아웃
+    local d="$1" opts="$2" heap="$3" cpu="$4"
+    kubectl -n "$APP_NS" rollout pause "deploy/$d" >/dev/null
+    if [ -n "$opts" ]; then kubectl -n "$APP_NS" set env "deploy/$d" "JAVA_OPTS=$opts" >/dev/null
+    else kubectl -n "$APP_NS" set env "deploy/$d" JAVA_OPTS- >/dev/null; fi
+    if [ "$heap" != "-" ]; then kubectl -n "$APP_NS" set env "deploy/$d" "JVM_MAX_RAM_PERCENTAGE=$heap" >/dev/null
+    else kubectl -n "$APP_NS" set env "deploy/$d" JVM_MAX_RAM_PERCENTAGE- >/dev/null; fi
+    [ "$cpu" = "-" ] || kubectl -n "$APP_NS" set resources "deploy/$d" --limits="cpu=$cpu" >/dev/null
+    kubectl -n "$APP_NS" rollout resume "deploy/$d" >/dev/null
+}
+cmd_jvm() {
+    lab_cluster_or_die "JVM 설정"
+    local action="${2:-status}" gc="" heap="" cpu="" gclog="" svcs="" a d
+    case "$action" in load|default|status) ;; *) usage ;; esac
+    shift $(( $# < 2 ? $# : 2 ))
+    for a in "$@"; do
+        case "$a" in
+            gc=*)    gc="${a#gc=}" ;;
+            heap=*)  heap="${a#heap=}" ;;
+            cpu=*)   cpu="${a#cpu=}" ;;
+            gclog=*) gclog="${a#gclog=}" ;;
+            *=*)     die "모르는 설정: $a (gc= · heap= · cpu= · gclog=)" ;;
+            *)       svcs="$svcs $a" ;;
+        esac
+    done
+    if [ "$action" = "status" ]; then
+        kubectl -n "$APP_NS" get deploy -o name 2>/dev/null | sed 's#.*/##' | while read -r d; do
+            local st ann
+            st="$(jvm_state "$d")"; ann="$(sed -n 4p <<<"$st")"
+            [ "$ann" = "-" ] && continue
+            echo "$d 측정용 JVM 설정: JAVA_OPTS='$(b64d "$(sed -n 1p <<<"$st")")' JVM_MAX_RAM_PERCENTAGE=$(sed -n 2p <<<"$st") cpu=$(sed -n 3p <<<"$st") (원래: heap=$(jvm_field "$ann" heap) cpu=$(jvm_field "$ann" cpu))"
+        done
+        echo "(목록에 없는 서비스는 매니페스트 값 — 되돌리기: ./ops/53-load-k6.sh jvm default <서비스>)"
+        return 0
+    fi
+    svcs="${svcs# }"; svcs="${svcs:-$REPLICA_DEFAULT_SVCS}"
+    for d in $svcs; do
+        [[ "$d" =~ ^[a-z]+(-[a-z]+)*$ ]] || die "서비스 이름이 이상하다: $d"
+        kubectl -n "$APP_NS" get deploy "$d" >/dev/null 2>&1 || die "그런 Deployment 가 없다: $d"
+    done
+    if [ "$action" = "load" ]; then
+        [ -n "$gc$heap$cpu$gclog" ] || die "바꿀 것이 없다 — gc= · heap= · cpu= · gclog=1 중 하나 이상"
+        [ -z "$gc" ] || [[ "$gc" =~ ^(serial|parallel|g1|z|shenandoah)$ ]] || die "gc 는 serial · parallel · g1 · z · shenandoah"
+        [ -z "$heap" ] || { [[ "$heap" =~ ^[0-9]+$ ]] && [ "$heap" -ge 25 ] && [ "$heap" -le 75 ]; } || die "heap 은 25 ~ 75(%)"
+        [ -z "$cpu" ] || [[ "$cpu" =~ ^([1-4]|[1-9][0-9]{2,3}m)$ ]] || die "cpu 는 1 ~ 4 또는 밀리코어(예 1500m)"
+        [ -z "$gclog" ] || [[ "$gclog" =~ ^[01]$ ]] || die "gclog 는 0 · 1"
+        [ -z "$heap" ] || [ "$heap" -lt 65 ] || warn "heap=$heap — 이미지 주석: 65% 이상이면 768Mi 서비스는 컨테이너 한도(OOMKilled)에 먼저 닿을 수 있다. 측정 뒤 kubectl get pods 의 재시작 · lastState 를 본다"
+    fi
+    [[ " $svcs " == *" gateway-server "* ]] && save_gateway_logs "jvm-$action"
+    for d in $svcs; do
+        local st ann o_opts o_heap o_cpu opts
+        st="$(jvm_state "$d")" || die "$d 의 지금 설정을 읽지 못했다"
+        [ "$(wc -l <<<"$st")" -ge 4 ] || die "$d 의 지금 설정을 읽지 못했다"
+        ann="$(sed -n 4p <<<"$st")"
+        if [ "$action" = "default" ]; then
+            if [ "$ann" = "-" ]; then info "$d 측정용 JVM 설정 없음 — 그대로"; continue; fi
+            o_opts="$(b64d "$(jvm_field "$ann" java_opts)")"; o_heap="$(jvm_field "$ann" heap)"; o_cpu="$(jvm_field "$ann" cpu)"
+            info "$d JVM 설정 → 원래 값(JAVA_OPTS='${o_opts}' heap=$o_heap cpu=$o_cpu) — 파드가 다시 뜬다"
+            jvm_apply "$d" "$o_opts" "${o_heap:--}" "${o_cpu:--}"
+            kubectl -n "$APP_NS" annotate "deploy/$d" "$JVM_ANNOTATION-" >/dev/null
+            continue
+        fi
+        # 원래 값 — 이미 측정 중이면 주석의 것(겹쳐 쌓지 않는다)
+        if [ "$ann" = "-" ]; then
+            ann="java_opts=$(sed -n 1p <<<"$st");heap=$(sed -n 2p <<<"$st");cpu=$(sed -n 3p <<<"$st")"
+        fi
+        o_opts="$(b64d "$(jvm_field "$ann" java_opts)")"; o_heap="$(jvm_field "$ann" heap)"; o_cpu="$(jvm_field "$ann" cpu)"
+        opts="$o_opts"
+        if [ -n "$gc" ]; then
+            opts="$(tr ' ' '\n' <<<"$opts" | { grep -vE '^-XX:[+-]Use[A-Za-z]*GC$' || true; } | tr '\n' ' ')"
+            case "$gc" in
+                serial) opts="$opts -XX:+UseSerialGC" ;; parallel) opts="$opts -XX:+UseParallelGC" ;; g1) opts="$opts -XX:+UseG1GC" ;;
+                z) opts="$opts -XX:+UseZGC" ;; shenandoah) opts="$opts -XX:+UseShenandoahGC" ;;
+            esac
+        fi
+        [ "$gclog" = "1" ] && opts="$opts $JVM_GC_LOG"
+        opts="$(sed -E 's/^ +| +$//g; s/ +/ /g' <<<"$opts")"
+        kubectl -n "$APP_NS" annotate --overwrite "deploy/$d" "$JVM_ANNOTATION=$ann" >/dev/null
+        info "$d JVM 측정 설정: JAVA_OPTS='$opts' heap=${heap:-$o_heap} cpu=${cpu:-$o_cpu} ($PUBLIC_URL) — 끝나면 ./ops/53-load-k6.sh jvm default $d"
+        jvm_apply "$d" "$opts" "${heap:-$o_heap}" "${cpu:-$o_cpu}"
+    done
+    for d in $svcs; do kubectl -n "$APP_NS" rollout status "deploy/$d" --timeout=600s; done
+    if [ "$action" = "load" ]; then
+        [ -z "$cpu" ] || info "CPU 한도만 바뀐다(요청은 그대로 — 스케줄 예산은 그대로다). 노드의 실제 CPU 는 kubectl top nodes 로 함께 본다"
+        [ "$gclog" != "1" ] || info "GC 로그: kubectl -n $APP_NS cp <파드>:/var/log/jvm/gc.log ./gc.log (emptyDir — 파드를 지우기 전에)"
+        info "JVM 이 정말 그렇게 골랐는지: ./ops/60-jvm-facts.sh $svcs — 새 파드는 처음 1분이 데움이다(JIT · 캐시), smoke 한 번 뒤에 잰다"
+    fi
+}
+if [ "$SCENARIO" = "jvm" ]; then
+    cmd_jvm "$@"
     exit 0
 fi
 if [ "$SCENARIO" = "logs" ]; then
@@ -1279,6 +1401,8 @@ replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
             | tr ' ' '\n' | grep '^GATEWAY_RATE_LIMIT_' | tr '\n' ' ' || true)"
         echo "db_pool=$(kubectl -n "$APP_NS" get deploy -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.spec.template.spec.containers[0].env[?(@.name=="DB_POOL_SIZE")].value}{" "}{end}' 2>/dev/null \
             | tr ' ' '\n' | grep -E '=[0-9]+$' | tr '\n' ' ' || true)"
+        echo "jvm_measure=$(kubectl -n "$APP_NS" get deploy -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.metadata.annotations.ecommerce\.io/jvm-measure}{" "}{end}' 2>/dev/null \
+            | tr ' ' '\n' | grep -F '|java_opts=' | cut -d'|' -f1 | tr '\n' ' ' || true)"
         kubectl -n "$APP_NS" get hpa --no-headers 2>/dev/null | awk '{print "hpa", $1, $3, $4, $5, $6}' || true
     else
         echo "kubectl=없음(클러스터 정보 없이)"

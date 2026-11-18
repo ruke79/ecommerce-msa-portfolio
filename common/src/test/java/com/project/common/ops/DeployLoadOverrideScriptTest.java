@@ -42,6 +42,8 @@ class DeployLoadOverrideScriptTest {
             #!/usr/bin/env bash
             a="$*"
             case "$a" in
+              *"-o jsonpath={.metadata.annotations.ecommerce"*"jvm-measure}"*)
+                case "$a" in *" catalog-service "*) printf '%s' "${CATALOG_JVM:-}" ;; esac ;;
               *"get deploy gateway-server -o jsonpath"*) printf '%b' "$GATEWAY_ENV" ;;
               *"get deploy catalog-service -o jsonpath"*) printf '%b' "$CATALOG_ENV" ;;
               *) echo "unexpected: $a" >&2; exit 1 ;;
@@ -51,6 +53,10 @@ class DeployLoadOverrideScriptTest {
     private record Run(int code, String out) {}
 
     private Run run(String gatewayEnv, String catalogEnv, String rendered, boolean noSmoke) throws Exception {
+        return run(gatewayEnv, catalogEnv, rendered, noSmoke, "");
+    }
+
+    private Run run(String gatewayEnv, String catalogEnv, String rendered, boolean noSmoke, String catalogJvm) throws Exception {
         Path bin = Files.createDirectories(tmp.resolve("bin"));
         Path kubectl = bin.resolve("kubectl");
         Files.writeString(kubectl, FAKE_KUBECTL);
@@ -66,6 +72,7 @@ class DeployLoadOverrideScriptTest {
         pb.environment().put("CATALOG_ENV", catalogEnv);
         pb.environment().put("RENDERED", rendered);
         pb.environment().put("NO_SMOKE", noSmoke ? "1" : "0");
+        pb.environment().put("CATALOG_JVM", catalogJvm);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertThat(p.waitFor(60, TimeUnit.SECONDS)).isTrue();
@@ -115,6 +122,21 @@ class DeployLoadOverrideScriptTest {
 
         Run noSmoke = run("GATEWAY_RATE_LIMIT_BURST\\n", "", RENDERED, true);
         assertThat(noSmoke.out()).as(noSmoke.out()).contains("NO_SMOKE=1").contains("continue rc=0");
+    }
+
+    @Test
+    @DisplayName("ops/53 jvm load 의 측정용 JVM 설정(주석)이 남아 있으면 되돌리는 명령을 알린다 — 멈추지는 않는다(스모크는 깨지지 않는다)")
+    void jvmMeasureOverrideWarns() throws Exception {
+        assumeTrue(bashAvailable(), "bash 가 없다");
+        Run left = run("SPRING_PROFILES_ACTIVE\\n", "", RENDERED, false, "java_opts=-;heap=-;cpu=1000m");
+        assertThat(left.out()).as(left.out())
+                .contains("./ops/53-load-k6.sh jvm default catalog-service")
+                .contains("continue rc=0")
+                .doesNotContain("jvm default gateway-server")
+                .doesNotContain("unexpected:");
+
+        Run clean = run("SPRING_PROFILES_ACTIVE\\n", "", RENDERED, false, "");
+        assertThat(clean.out()).as(clean.out()).doesNotContain("jvm default").contains("continue rc=0");
     }
 
     @Test

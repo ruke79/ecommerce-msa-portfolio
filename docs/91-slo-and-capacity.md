@@ -220,6 +220,7 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - **GC ログ**（有効にしない — 必要なときにそのサービスだけ）: `JAVA_OPTS` に `-Xlog:gc*:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m` — `/var/log/jvm` はすでに emptyDir（B-97）なのでコンテナが立ち直っても残る。取り出しは `kubectl -n ecommerce cp <Pod>:/var/log/jvm/gc.log ./gc.log`。
 - **テスト**: `LoadK6ScriptTest` +2（GC の列 · 候補 — Copy · MarkSweepCompact を Serial に、割り当て ÷ Pod · しきい値の設定と検査）、promtool `observability/tests/jvm-rules.test.yml`（GC 負担 10 分前は静か · 過ぎれば鳴る · 一瞬跳ねた GC は静か · GC 後のヒープ 15 分 · 既存の `JvmHeapNearLimit` も）、`SloRulesTest` が `jvm-health` のすべての警報が promtool テストにあるかを見る。変異の確認: GC 候補 · 種類の対応 · しきい値の検査 · しきい値の無視 · GC 後ヒープ候補の削除 → `LoadK6ScriptTest` が失敗、警報のしきい値 0.2 · `for` 1 分 · GC 後ヒープ 0.99 → promtool が失敗、警報名の変更 → `SloRulesTest` が失敗。
 - **次**（ロードマップ）: ① デプロイ後に本番の GC の種類 · ヒープ · 平常時の GC 負担をこの節に書く → ② 実習の天井（§4-1）で階段ごとに GC の列から「CPU か GC か」を分ける → ③ 天井の 80% の固定負荷で、ゲートウェイ · catalog の Serial（1 コア）· Parallel（1 コア）· G1（2 コア）· ヒープ 50/60/70% を比べる（p99 · Pod の CPU あたりのスループット · GC 負担 · 停止の最大、割り当ての多い所は `ops/58` の割り当てモード）— ゲートウェイの Pod 一つだけ跳ねた GC 負担（docs/83）もここで → ④ JDK 21 の Generational ZGC は jdk21-build ブランチを取り込むときに。
+- **ツール**（2026-11-17）: ロードマップ ① は `ops/60-jvm-facts.sh`（Pod ごとに JVM が選んだ GC · ヒープ · スレッド）、③ の設定変更は `./ops/53-load-k6.sh jvm load <サービス…> gc=… heap=… cpu=… gclog=1` → `jvm default`（元の値を Deployment の注釈に置いて戻す — 手で `kubectl set env` しない）。シナリオ · 判定は [docs/92](92-jvm-measurement-scenarios.md) §4-2 X-2 〜 X-5。
 
 ---
 
