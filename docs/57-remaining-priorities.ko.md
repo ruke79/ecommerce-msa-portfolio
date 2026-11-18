@@ -823,3 +823,26 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **Font Awesome CSS 를 cdnjs 에서 SRI 없이 받았다** — 아이콘은 채팅의 셋뿐이었다. 같은 Font Awesome 5 아이콘을 `react-icons/fa`(SVG)로 바꿔 외부 출처를 없앴다(`indexHtml.test.js` — 외부 `link` · `script` 0, `fas fa-` 0).
 
 남은 것: 재설정 링크의 `?token=` 을 읽은 뒤 주소창에서 지우기, 택배 조회 주소의 송장 번호 인코딩, react-router v7 · jest 30 메이저 판 올림(남은 npm 권고 7건 — 개발 도구 · 이미 막은 것).
+
+## 20. JRE 보안 수정 — CVE-2026-114938("Java4Shell") · 10월 CPU(2026-11-18)
+
+**무엇**: 2026-11-17 공개된 java.util.Base64 디코더의 메모리 손상(보도 기준 CVSS 8.1 — 조작한 Base64 입력으로 JVM 이 죽고, 원격 코드 실행 가능성이 거론된다; 2026-11-17 기준 실제 악용 확인은 없다는 보도). 영향 JDK 17 · 21 · 25 · 27, 고친 판 17.0.21.1 · 21.0.13.1 · 25.0.5.1 · 27.0.1.1. 같은 날 Oracle 의 JSSE 경보 CVE-2026-91403(보도 기준 9.1)도 17.0.21 을 영향 판으로 든다.
+⚠️ 근거는 보도 · 검색 요약이다 — Oracle · CISA 원문은 이 환경에서 열리지 않았다(403 · DNS). 배포 전에 원문으로 판과 우회책을 한 번 더 확인한다.
+
+**우리 쪽**: 런타임 이미지는 `eclipse-temurin:17.0.20.1`(B-98 고정)이었다 — 10월 CPU(17.0.21, 보안 수정 55)보다도 앞이다. 외부 입력을 java.util.Base64 로 디코딩하는 곳이 있다:
+
+| 경로 | 입력 | 인증 |
+|---|---|---|
+| `PortOneV2WebhookVerifier` | 웹훅 서명 헤더 | 전 |
+| `PasskeyService`(`Base64.getUrlDecoder`) | 패스키 등록 · 로그인 응답 | 전(로그인) |
+| `GraceTokenCipher` | 2FA 대기 토큰 | 전(2단계) |
+| Spring Security 기본 인증(config-server) | `Authorization` 헤더 | 클러스터 안 |
+
+게이트웨이의 JWT(jjwt 0.12)와 Jackson 의 byte[] 는 자기 Base64 구현을 쓴다고 알고 있다 — 확인은 하지 않았다.
+
+**한 것**(이미지를 다시 빌드해 배포해야 들어간다):
+1. JRE → `eclipse-temurin:17.0.21_9-jre-jammy@sha256:aa638138…`(10월 CPU, amd64 · arm64 목록 — Docker Hub API 기준). 11월 수정판(17.0.21.1)의 Temurin 이미지는 2026-11-18 에 아직 없다.
+2. 엔트리포인트에 `-XX:-UseBASE64Intrinsics` — 보도된 우회책(내장 함수를 끄면 Base64 가 순수 자바로 돈다 — 요청마다 수백 바이트라 차이는 없다고 본다, 측정은 안 했다). JDK 17.0.20.1 에서 옵션이 받아들여지고 Base64 가 정상인 것만 확인했다.
+3. 가드 **B-113**: JRE 가 수정판 아래면 엔트리포인트에 그 옵션(JAVA_OPTS 앞), 매니페스트 · 오버레이 · 스크립트 어디에도 `+UseBASE64Intrinsics` 없음. 수정판으로 올리면 옵션을 요구하지 않는다.
+
+**남은 것**: ① 배포 — 이미지는 CI 가 만든다 → 릴리스 후보 초록 → Actions → deploy(docs/85). 배포 뒤 `kubectl -n ecommerce exec deploy/catalog-service -- sh -c 'java -version 2>&1 | grep -v JAVA_TOOL_OPTIONS'` 가 17.0.21 · `ps` 의 명령줄에 `-XX:-UseBASE64Intrinsics`. ② Temurin 17.0.21.1 이 나오면 JRE 줄을 그 판으로 · 옵션 삭제(B-113 이 허락한다) · 다시 배포 — CVE-2026-91403(JSSE)은 그것으로만 닫힌다. ③ jdk21-build 브랜치는 21 판(수정판 21.0.13.1)으로 같은 일. ④ CI 러너 · 개발 PC 의 JDK 는 외부 입력을 받지 않아 급하지 않다.

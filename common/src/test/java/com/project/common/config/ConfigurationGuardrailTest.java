@@ -4001,6 +4001,50 @@ class ConfigurationGuardrailTest {
     }
 
     /**
+     * B-113: JRE 가 CVE-2026-114938 을 고친 판이 아니면 엔트리포인트가 {@code -XX:-UseBASE64Intrinsics} 를 준다 — 그리고 어디서도 다시 켜지 않는다.
+     *
+     * <p>2026-11-17 공개된 java.util.Base64 디코더의 메모리 손상("Java4Shell" — 보도 기준 CVSS 8.1, JDK 17 · 21 · 25 · 27, 고친 판 17.0.21.1 ·
+     * 21.0.13.1 · 25.0.5.1 · 27.0.1.1). 이 시스템은 인증 전 외부 입력을 java.util.Base64 로 디코딩한다(포트원 웹훅 서명 헤더 · 패스키 응답 ·
+     * 2FA 대기 토큰). 2026-11-18 에 Temurin 의 고친 판 이미지가 아직 없어 보도된 우회책(내장 함수 끄기)을 둔다. JRE 를 고친 판으로 올리면
+     * 이 가드는 옵션을 요구하지 않는다 — 그때 옵션을 뺀다(남겨도 해는 없다, Base64 가 순수 자바로 돈다).
+     *
+     * <p>[JA] JRE が CVE-2026-114938 の修正版でなければエントリーポイントが内蔵関数を切る — どこでも再び有効にしない。修正版に上げたら外せる。
+     */
+    @Test
+    @DisplayName("B-113: JRE 가 CVE-2026-114938 수정판(17.0.21.1 · 21.0.13.1 …) 아래면 -XX:-UseBASE64Intrinsics — 매니페스트 · 스크립트에서 다시 켜지 않는다")
+    void base64IntrinsicsStayOffUntilTheJreIsFixed() throws IOException {
+        String dockerfile = Files.readString(repoRoot().resolve("ops/Dockerfile.runtime"), StandardCharsets.UTF_8);
+        Matcher m = Pattern.compile("(?m)^ARG JRE_IMAGE=eclipse-temurin:(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?_").matcher(dockerfile);
+        assertThat(m.find()).as("JRE 판을 읽는다(B-98 의 모양)").isTrue();
+        int[] v = {Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)),
+                m.group(4) == null ? 0 : Integer.parseInt(m.group(4))};
+        // 판마다 첫 수정판(보도 · 2026-11-17 CPU). 모르는 판은 고쳐지지 않은 것으로 본다.
+        Map<Integer, int[]> fixed = Map.of(17, new int[] {17, 0, 21, 1}, 21, new int[] {21, 0, 13, 1},
+                25, new int[] {25, 0, 5, 1}, 27, new int[] {27, 0, 1, 1});
+        int[] f = fixed.get(v[0]);
+        boolean patched = f != null && Arrays.compare(v, f) >= 0;
+        String entry = dockerfile.lines().filter(l -> l.startsWith("ENTRYPOINT")).findFirst().orElse("");
+        if (!patched) {
+            assertThat(entry).as("JRE " + v[0] + "." + v[1] + "." + v[2] + "." + v[3]
+                    + " 는 CVE-2026-114938 수정판 아래 — 엔트리포인트에 -XX:-UseBASE64Intrinsics(B-113)").contains("-XX:-UseBASE64Intrinsics");
+            assertThat(entry.indexOf("-XX:-UseBASE64Intrinsics")).as("JAVA_OPTS 앞(다른 기본 옵션과 같은 자리)")
+                    .isLessThan(entry.indexOf("${JAVA_OPTS}"));
+        }
+        // 어디서도 다시 켜지 않는다 — 매니페스트 · 오버레이 · 운영 스크립트 · compose
+        List<String> offenders = new ArrayList<>();
+        for (String dir : List.of("k8s", "k8s-overlays", "ops")) {
+            try (Stream<Path> files = Files.walk(repoRoot().resolve(dir))) {
+                for (Path f2 : files.filter(Files::isRegularFile).filter(x -> x.toString().matches(".*\\.(ya?ml|sh|py)$")).toList()) {
+                    if (Files.readString(f2, StandardCharsets.UTF_8).contains("+UseBASE64Intrinsics")) {
+                        offenders.add(repoRoot().relativize(f2).toString());
+                    }
+                }
+            }
+        }
+        assertThat(offenders).as("Base64 내장 함수를 다시 켜는 곳(B-113)").isEmpty();
+    }
+
+    /**
      * B-112: actuator 웹 노출은 읽기 넷(health · info · metrics · prometheus)만 — 모든 모듈의 설정 파일과 매니페스트 · compose 의 환경 변수.
      *
      * <p>서비스 앞에는 게이트웨이의 404(InternalEndpointBlockFilter, docs/57 §7)와 터널 경로(B-82)가 있지만, 클러스터 안에서는 파드에

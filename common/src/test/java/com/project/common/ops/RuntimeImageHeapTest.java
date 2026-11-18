@@ -78,7 +78,9 @@ class RuntimeImageHeapTest {
     void entrypointPassesHeapPercentage() throws Exception {
         List<String> def = javaArgs(Map.of());
         assertThat(def).as("이미지 기본값").startsWith("-XX:MaxRAMPercentage=50",
-                "-XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log", "-XX:-CreateCoredumpOnCrash", "-jar", "/app/app.jar");
+                "-XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log", "-XX:-CreateCoredumpOnCrash",
+                "-XX:-UseBASE64Intrinsics",   // CVE-2026-114938 우회 — JRE 가 수정판이 되면 빠질 수 있다(B-113)
+                "-jar", "/app/app.jar");
 
         List<String> withOpts = javaArgs(Map.of("JAVA_OPTS", "-Xmx700m -Dfoo=bar"));
         assertThat(withOpts.indexOf("-Xmx700m")).as("JAVA_OPTS 가 뒤 — 같은 옵션이면 뒤가 이긴다")

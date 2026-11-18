@@ -25,7 +25,10 @@
 #    다이제스트는 멀티 아키텍처 목록(amd64 · arm64)의 것이라 플랫폼마다 그대로 쓰인다. 미러(mirror.gcr.io/library/…)도 같은 다이제스트다.
 # [JA] JRE は正確な版 + ダイジェストで固定する — 変えるのはこの行を直すコミット。以前の浮動タグはビルドのたびにその日の最新パッチが入り、
 #      どのビルドにどの JVM が入ったか記録に残らなかった(17.0.20.1 で SIGSEGV と C2 の 10 時間コンパイル)。
-ARG JRE_IMAGE=eclipse-temurin:17.0.20.1_1-jre-jammy@sha256:b3054a20e1a851574cdb1692dd0db5310c647e62214a2a7abecbec1b9e3ae8f1
+# 2026-11-18: 17.0.20.1 → 17.0.21_9(2026-10 CPU — 이 판까지의 보안 수정). 11월 수정판(17.0.21.1, CVE-2026-114938 · CVE-2026-91403)은
+#    Temurin 이미지가 아직 없다(Docker Hub, 2026-11-18) — 나오면 이 줄을 그 판으로, 그때 아래 ENTRYPOINT 의 -XX:-UseBASE64Intrinsics 를 뺀다(B-113).
+# [JA] 2026-11-18: 10 月 CPU の 17.0.21_9 へ。11 月の修正版(17.0.21.1)は Temurin のイメージがまだない — 出たらこの行を更新し、下の回避フラグを外す。
+ARG JRE_IMAGE=eclipse-temurin:17.0.21_9-jre-jammy@sha256:aa6381384f8db99762fa7d0d3c2b5de58874e5f12c96df4c13a1455376ae0ed1
 FROM ${JRE_IMAGE}
 
 ARG JAR_FILE
@@ -74,8 +77,16 @@ ENV JVM_MAX_RAM_PERCENTAGE=50
 # 둘 다 JAVA_OPTS 앞이라 서비스마다 뒤집을 수 있다(B-97). 꺼내기: kubectl -n ecommerce exec <파드> -- ls /var/log/jvm
 # [JA] JVM のクラッシュ記録 — 以前は記録がコンテナと一緒に消えた。/var/log/jvm(emptyDir — Pod が生きている間残る)に書く。Loki には
 #      送らない(メモリ内容が入る)。コアダンプ(ヒープ全体 — 個人情報)は作らない。
+# 🔴 -XX:-UseBASE64Intrinsics — CVE-2026-114938("Java4Shell", 2026-11-17 공개 · 보도 기준 CVSS 8.1): java.util.Base64 디코더의 메모리 손상.
+#    JDK 17 은 17.0.21.1 에서 고쳐졌다(보도 — Oracle · CISA 원문은 이 환경에서 열지 못했다). 그 판의 Temurin 이미지가 나오기 전까지
+#    보도된 우회책인 하드웨어 가속(내장 함수) 끄기를 둔다. 이 시스템은 외부 입력을 java.util.Base64 로 디코딩한다 —
+#    포트원 웹훅 서명 헤더(PortOneV2WebhookVerifier, 인증 전), 패스키 응답(PasskeyService), 2FA 대기 토큰(GraceTokenCipher).
+#    대가는 Base64 디코딩이 순수 자바로 도는 것뿐이다(요청마다 수백 바이트 — 측정할 만한 차이가 아니다). JAVA_OPTS 앞이라 서비스마다
+#    뒤집을 수 있지만 뒤집지 않는다 — 가드 B-113 이 JRE 가 고쳐진 판이 될 때까지 이 옵션을 지킨다.
+# [JA] CVE-2026-114938(Base64 デコーダーのメモリ破損)の回避 — 修正版(17.0.21.1)の Temurin イメージが出るまで内蔵関数を切る。
+#      外部入力を java.util.Base64 でデコードする経路がある(PortOne の Webhook 署名 · パスキー · 2FA 待ちトークン)。
 # CONFIG_SERVER_URL 이 비어 있으면 config server import 자체를 생략한다.
 # 빈 값으로 넘기면 Spring 이 빈 URL 로 접속을 시도하다 기동에 실패한다.
-ENTRYPOINT ["sh","-c","java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE} -XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log -XX:-CreateCoredumpOnCrash ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
+ENTRYPOINT ["sh","-c","java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE} -XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log -XX:-CreateCoredumpOnCrash -XX:-UseBASE64Intrinsics ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]
 
 EXPOSE ${SERVICE_PORT}

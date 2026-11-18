@@ -107,7 +107,7 @@ class SagaEndToEndTest {
      * Dockerfile 안의 FROM 은 데몬이 직접 받아오므로 Testcontainers 의 이미지 치환이 적용되지 않는다.
      */
     private static final String BASE_IMAGE = System.getenv().getOrDefault(
-            "E2E_JRE_IMAGE", "eclipse-temurin:17.0.20.1_1-jre-jammy@sha256:b3054a20e1a851574cdb1692dd0db5310c647e62214a2a7abecbec1b9e3ae8f1");
+            "E2E_JRE_IMAGE", "eclipse-temurin:17.0.21_9-jre-jammy@sha256:aa6381384f8db99762fa7d0d3c2b5de58874e5f12c96df4c13a1455376ae0ed1");
 
     /**
      * 파이프라인이 이미 만들어 레지스트리에 올린 이미지를 쓸 때의 접두사.
