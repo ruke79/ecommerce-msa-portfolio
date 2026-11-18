@@ -221,6 +221,17 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - **시험**: `LoadK6ScriptTest` +2(GC 열 · 후보 — Copy · MarkSweepCompact 를 Serial 로, 할당 ÷ 파드 · 문턱 설정과 검사), promtool `observability/tests/jvm-rules.test.yml`(GC 부담 10분 전은 조용 · 지나면 울림 · 잠깐 튄 GC 는 조용 · GC 뒤 힙 15분 · 기존 `JvmHeapNearLimit` 도), `SloRulesTest` 가 `jvm-health` 의 모든 경보가 promtool 시험에 있는지 본다. 변이 확인: GC 후보 · 종류 매핑 · 문턱 검사 · 문턱 무시 · GC 뒤 힙 후보 제거 → `LoadK6ScriptTest` 실패, 경보 문턱 0.2 · `for` 1분 · GC 뒤 힙 0.99 → promtool 실패, 경보 이름 바꿈 → `SloRulesTest` 실패.
 - **다음**(로드맵): ① 배포 뒤 운영의 GC 종류 · 힙 · 평시 GC 부담을 이 절에 적는다 → ② 실습 천장(§4-1)에서 계단마다 GC 열로 "CPU 냐 GC 냐" 를 가른다 → ③ 천장의 80% 고정 부하로 게이트웨이 · catalog 의 Serial(1 코어) · Parallel(1 코어) · G1(2 코어) · 힙 50/60/70% 를 견준다(p99 · 파드 CPU 당 처리량 · GC 부담 · 정지 최대, 할당이 많은 곳은 `ops/58` 의 할당 모드) — 게이트웨이 한 파드만 튀던 GC 부담(docs/83)도 여기서 → ④ JDK 21 의 Generational ZGC 는 jdk21-build 브랜치를 합칠 때.
 - **도구**(2026-11-17): 로드맵 ① 은 `ops/60-jvm-facts.sh`(파드마다 JVM 이 고른 GC · 힙 · 스레드), ③ 의 설정 변경은 `./ops/53-load-k6.sh jvm load <서비스…> gc=… heap=… cpu=… gclog=1` → `jvm default`(원래 값을 Deployment 주석에 두고 되돌린다 — 손으로 `kubectl set env` 하지 않는다). 시나리오 · 판정은 [docs/92](92-jvm-measurement-scenarios.ko.md) §4-2 X-2 ~ X-5.
+- **운영 기준값 — 로드맵 ①(2026-11-17, 도구 준비 · 값은 운영 노드에서 실행한 뒤)**: 한 번 찍은 `jvm_gc_overhead` 는 "지난 5분" 이라 평시가 아니다 — 며칠의 평균 · 최대를 본다. `ops/61-gc-baseline.sh` 는 Prometheus 를 **읽기만** 하는 도구(파드 · 클러스터에 아무것도 하지 않는다)라 운영 노드에서 그대로 돈다:
+
+  ```bash
+  PROM=http://localhost:9090 ./ops/61-gc-baseline.sh
+  ```
+
+  창은 기본 7일(`WINDOW=24h` 등, 보존 15일이라 14d 까지), 선택자는 `MATCH`(기본 `job="spring-actuator"` — ops/53 의 `PROM_MATCH` 와 같다). 결과 `~/.ecommerce-msa/gc-baseline/<시각>/gc-baseline.md`(표) · `raw/<열>.json`(응답 그대로). 열: GC 종류(파드마다 다르면 '섞임') · 최대 힙 · GC 부담 평균 / 최대 · GC 정지 최대 · 파드당 GC 횟수/분 · 파드당 할당 MB/s · 요청당 할당 KB · GC 뒤 힙 최대, '눈여겨볼 것' 에 GC 부담 최대 ≥ 10%(경보 문턱) · GC 뒤 힙 ≥ 90% · 정지 ≥ 500ms. GC 종류는 `ALLOW_PROD=1 ./ops/60-jvm-facts.sh`(docs/92 F-4)의 사실 표와 같아야 한다. 시험 `GcBaselineScriptTest`(+4 — 표 계산 · 섞임 · 창과 선택자 · 입력 검사 · 실패 종료; 변이 확인: 파드 나눗셈 · Serial 매핑 · 창 상한 · 선택자 검사 · 전부 실패 종료 · 문턱).
+
+  | 날짜 · 창 · 운영 커밋 | 서비스 | 파드 | GC | 최대 힙 | GC 부담 평균 / 최대 | 정지 최대 ms | 파드당 할당 MB/s | 요청당 할당 KB | GC 뒤 힙 최대 | 메모 |
+  |---|---|---:|---|---:|---:|---:|---:|---:|---:|---|
+  | — | (실행하면 `gc-baseline.md` 의 줄을 옮긴다) | | | | | | | | | |
 
 ---
 
@@ -248,4 +259,4 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 4. **목표 값으로 올리기** — docs/89 단계 1 · 2 를 마치면 `slo:objective:availability` 를 주석의 목표로.
 5. ~~**대시보드**~~ — 끝(2026-11-15, §2-8). 게이트웨이 SLI 도(§2-7).
 6. **앞단 캐시 규칙 켜기** — 서버 표시는 끝(§2-9). 배포 뒤 Cloudflare 규칙을 켜고 `cf-cache-status: HIT` 를 본다(docs/85 §9-4).
-7. **GC** — 측정 배선은 끝(§4-3). 운영의 GC 종류 기록 → 천장 표의 GC 열 → GC 비교 실험(§4-3 '다음').
+7. **GC** — 측정 배선은 끝(§4-3). 운영의 GC 종류 기록(`ops/61` 준비 끝 — 운영 노드에서 실행) → 천장 표의 GC 열 → GC 비교 실험(§4-3 '다음').

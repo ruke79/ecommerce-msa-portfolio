@@ -75,7 +75,7 @@ ALLOW_PROD=1 ./ops/60-jvm-facts.sh catalog-service     # 本番 — 空いてい
 | F-3 | JP S9-2、OC 13-2 | ForkJoin 並列度 — `ops/60`。コード: `parallelStream` · `.parallel()` · `CompletableFuture.supplyAsync/runAsync` · `commonPool` の使用 0 件（grep、テスト外）。非同期はすべて自前の実行器（`SearchFilterFacets` · `AsyncMailConfig` · `StompFanoutConfig` など） | 並列度 1 · 使用箇所 0 なら「共通プールはこのシステムのボトルネックではない」。ライブラリー内の使用は確認できず | すぐ可能 |
 | F-4 | OC B-2 | 実習 ↔ 本番が同じ決定をするか — 二つのクラスターで `ops/60`（本番は `ALLOW_PROD=1`） | GC · ヒープ · 見えた CPU が同じなら実習の**比率**を本番に持ち込める。アーキテクチャー（実習 amd64 · 本番 arm64）は違う — JIT のコードが違うので絶対値は持ち込まない | すぐ可能 |
 | F-5 | OC 3-1 · B-1 | 有効にしているスイッチの点検 — `raw/<サービス>.txt` で出所が `{command line}` の行 | 理由を言えないスイッチがないこと（今明示しているのは `MaxRAMPercentage` · `ErrorFile` · `-CreateCoredumpOnCrash`、oci は `UseSerialGC`） | すぐ可能 |
-| F-6 | JP S5-1（指標で突き合わせる）— docs/91 §4-3 ロードマップ ① | 今の GC の種類 · ヒープ · 平常時の GC 負担 — `count by (service, gc) (jvm_gc_pause_seconds_count)` · `max by (service) (jvm_memory_max_bytes{area="heap"})` · `max by (service) (jvm_gc_overhead)` | `gc` が `Copy` · `MarkSweepCompact` なら Serial — F-1 と同じであること。本番の値は docs/91 §4-3 に書く | すぐ可能 |
+| F-6 | JP S5-1（指標で突き合わせる）— docs/91 §4-3 ロードマップ ① | 今の GC の種類 · ヒープ · 平常時の GC 負担 — `count by (service, gc) (jvm_gc_pause_seconds_count)` · `max by (service) (jvm_memory_max_bytes{area="heap"})` · `max by (service) (jvm_gc_overhead)` | `gc` が `Copy` · `MarkSweepCompact` なら Serial — F-1 と同じであること。本番の値は docs/91 §4-3 に書く — 数日分の平均 · 最大は `PROM=http://localhost:9090 ./ops/61-gc-baseline.sh`（読むだけ、既定 7 日） | すぐ可能 |
 
 ---
 
@@ -200,6 +200,8 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 | — | gateway-server | — | — | — | — | — | — | （予想 Serial · 384M · 1 · 2 · 1） |
 | — | 残り 11 個 | — | — | — | — | — | — | （予想 上と同じ） |
 | — | 本番（F-4） | — | — | — | — | — | — | |
+
+本番の平常時の GC（F-6 — GC 負担 · 停止 · 割り当て · GC 後ヒープ、数日分）は `ops/61-gc-baseline.sh` の表を docs/91 §4-3「本番の基準値」に — ここの GC 列と同じ種類かを見る。
 
 ### 5-2. ② 負荷中
 

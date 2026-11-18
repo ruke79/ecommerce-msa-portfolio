@@ -75,7 +75,7 @@ ALLOW_PROD=1 ./ops/60-jvm-facts.sh catalog-service     # 운영 — 한가한 �
 | F-3 | JP S9-2, OC 13-2 | ForkJoin 병렬도 — `ops/60`. 코드: `parallelStream` · `.parallel()` · `CompletableFuture.supplyAsync/runAsync` · `commonPool` 사용 0건(grep, 테스트 밖). 비동기는 모두 자기 실행기(`SearchFilterFacets` · `AsyncMailConfig` · `StompFanoutConfig` 등) | 병렬도 1 · 사용처 0 이면 "공통 풀은 이 시스템의 병목이 아니다". 라이브러리 안의 사용은 확인 못 함 | 바로 가능 |
 | F-4 | OC B-2 | 실습 ↔ 운영이 같은 결정을 하나 — 두 클러스터에서 `ops/60`(운영은 `ALLOW_PROD=1`) | GC · 힙 · 본 CPU 가 같으면 실습의 **비율**을 운영에 옮길 수 있다. 아키텍처(실습 amd64 · 운영 arm64)는 다르다 — JIT 코드가 달라 절대값은 옮기지 않는다 | 바로 가능 |
 | F-5 | OC 3-1 · B-1 | 켜 둔 스위치 점검 — `raw/<서비스>.txt` 에서 출처가 `{command line}` 인 줄 | 이유를 댈 수 없는 스위치가 없어야 한다(지금 명시는 `MaxRAMPercentage` · `ErrorFile` · `-CreateCoredumpOnCrash`, oci 는 `UseSerialGC`) | 바로 가능 |
-| F-6 | JP S5-1(지표로 맞춰 보기) — docs/91 §4-3 로드맵 ① | 지금 GC 종류 · 힙 · 평시 GC 부담 — `count by (service, gc) (jvm_gc_pause_seconds_count)` · `max by (service) (jvm_memory_max_bytes{area="heap"})` · `max by (service) (jvm_gc_overhead)` | `gc` 가 `Copy` · `MarkSweepCompact` 면 Serial — F-1 과 같아야 한다. 운영 값은 docs/91 §4-3 에 적는다 | 바로 가능 |
+| F-6 | JP S5-1(지표로 맞춰 보기) — docs/91 §4-3 로드맵 ① | 지금 GC 종류 · 힙 · 평시 GC 부담 — `count by (service, gc) (jvm_gc_pause_seconds_count)` · `max by (service) (jvm_memory_max_bytes{area="heap"})` · `max by (service) (jvm_gc_overhead)` | `gc` 가 `Copy` · `MarkSweepCompact` 면 Serial — F-1 과 같아야 한다. 운영 값은 docs/91 §4-3 에 적는다 — 며칠의 평균 · 최대는 `PROM=http://localhost:9090 ./ops/61-gc-baseline.sh`(읽기만, 기본 7일) | 바로 가능 |
 
 ---
 
@@ -200,6 +200,8 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 | — | gateway-server | — | — | — | — | — | — | (예상 Serial · 384M · 1 · 2 · 1) |
 | — | 나머지 11개 | — | — | — | — | — | — | (예상 위와 같음) |
 | — | 운영(F-4) | — | — | — | — | — | — | |
+
+운영의 평시 GC(F-6 — GC 부담 · 정지 · 할당 · GC 뒤 힙, 며칠)는 `ops/61-gc-baseline.sh` 의 표를 docs/91 §4-3 '운영 기준값' 에 — 여기 GC 열과 같은 종류인지 본다.
 
 ### 5-2. ② 부하 중
 

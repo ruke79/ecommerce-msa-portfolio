@@ -221,6 +221,17 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - **テスト**: `LoadK6ScriptTest` +2（GC の列 · 候補 — Copy · MarkSweepCompact を Serial に、割り当て ÷ Pod · しきい値の設定と検査）、promtool `observability/tests/jvm-rules.test.yml`（GC 負担 10 分前は静か · 過ぎれば鳴る · 一瞬跳ねた GC は静か · GC 後のヒープ 15 分 · 既存の `JvmHeapNearLimit` も）、`SloRulesTest` が `jvm-health` のすべての警報が promtool テストにあるかを見る。変異の確認: GC 候補 · 種類の対応 · しきい値の検査 · しきい値の無視 · GC 後ヒープ候補の削除 → `LoadK6ScriptTest` が失敗、警報のしきい値 0.2 · `for` 1 分 · GC 後ヒープ 0.99 → promtool が失敗、警報名の変更 → `SloRulesTest` が失敗。
 - **次**（ロードマップ）: ① デプロイ後に本番の GC の種類 · ヒープ · 平常時の GC 負担をこの節に書く → ② 実習の天井（§4-1）で階段ごとに GC の列から「CPU か GC か」を分ける → ③ 天井の 80% の固定負荷で、ゲートウェイ · catalog の Serial（1 コア）· Parallel（1 コア）· G1（2 コア）· ヒープ 50/60/70% を比べる（p99 · Pod の CPU あたりのスループット · GC 負担 · 停止の最大、割り当ての多い所は `ops/58` の割り当てモード）— ゲートウェイの Pod 一つだけ跳ねた GC 負担（docs/83）もここで → ④ JDK 21 の Generational ZGC は jdk21-build ブランチを取り込むときに。
 - **ツール**（2026-11-17）: ロードマップ ① は `ops/60-jvm-facts.sh`（Pod ごとに JVM が選んだ GC · ヒープ · スレッド）、③ の設定変更は `./ops/53-load-k6.sh jvm load <サービス…> gc=… heap=… cpu=… gclog=1` → `jvm default`（元の値を Deployment の注釈に置いて戻す — 手で `kubectl set env` しない）。シナリオ · 判定は [docs/92](92-jvm-measurement-scenarios.md) §4-2 X-2 〜 X-5。
+- **本番の基準値 — ロードマップ ①（2026-11-17、ツール準備 · 値は本番ノードで実行した後）**: 一度取った `jvm_gc_overhead` は「直近 5 分」なので平常時ではない — 数日分の平均 · 最大を見る。`ops/61-gc-baseline.sh` は Prometheus を**読むだけ**のツール（Pod · クラスターに何もしない）なので、本番ノードでそのまま動かす:
+
+  ```bash
+  PROM=http://localhost:9090 ./ops/61-gc-baseline.sh
+  ```
+
+  窓は既定 7 日（`WINDOW=24h` など、保持 15 日なので 14d まで）、選択子は `MATCH`（既定 `job="spring-actuator"` — ops/53 の `PROM_MATCH` と同じ）。結果 `~/.ecommerce-msa/gc-baseline/<時刻>/gc-baseline.md`（表）· `raw/<列>.json`（応答そのまま）。列: GC の種類（Pod ごとに違えば「混在」）· 最大ヒープ · GC 負担の平均 / 最大 · GC 停止の最大 · Pod あたり GC 回数/分 · Pod あたり割り当て MB/s · リクエストあたり割り当て KB · GC 後ヒープの最大、「注目点」に GC 負担の最大 ≥ 10%（警報のしきい値）· GC 後ヒープ ≥ 90% · 停止 ≥ 500ms。GC の種類は `ALLOW_PROD=1 ./ops/60-jvm-facts.sh`（docs/92 F-4）の事実表と同じであること。テスト `GcBaselineScriptTest`（+4 — 表の計算 · 混在 · 窓と選択子 · 入力検査 · 失敗時の終了; 変異の確認: Pod での割り算 · Serial の対応 · 窓の上限 · 選択子の検査 · 全失敗の終了 · しきい値）。
+
+  | 日付 · 窓 · 本番コミット | サービス | Pod | GC | 最大ヒープ | GC 負担 平均 / 最大 | 停止 最大 ms | Pod あたり割り当て MB/s | リクエストあたり割り当て KB | GC 後ヒープ 最大 | メモ |
+  |---|---|---:|---|---:|---:|---:|---:|---:|---:|---|
+  | — | （実行したら `gc-baseline.md` の行を移す） | | | | | | | | | |
 
 ---
 
@@ -248,4 +259,4 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 4. **目標値に上げる** — docs/89 段階 1 · 2 を終えたら `slo:objective:availability` をコメントの目標に。
 5. ~~**ダッシュボード**~~ — 済み（2026-11-15、§2-8）。ゲートウェイの SLI も（§2-7）。
 6. **前段キャッシュの規則を有効にする** — サーバー側の印は済み（§2-9）。デプロイ後に Cloudflare の規則を有効にし、`cf-cache-status: HIT` を見る（docs/85 §9-4）。
-7. **GC** — 測定の配線は済み（§4-3）。本番の GC の種類の記録 → 天井の表の GC 列 → GC の比較実験（§4-3「次」）。
+7. **GC** — 測定の配線は済み（§4-3）。本番の GC の種類の記録（`ops/61` 準備済み — 本番ノードで実行）→ 天井の表の GC 列 → GC の比較実験（§4-3「次」）。
