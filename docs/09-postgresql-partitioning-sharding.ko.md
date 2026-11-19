@@ -388,6 +388,13 @@ ALTER INDEX idx_foo ATTACH PARTITION idx_foo_2026_07;                -- 전 파�
 
 ### 4.6 보존(retention) 자동화
 
+> **판정은 로그가 아니라 지표로 한다(2026-11-19 운영).** 보존 로그(`아웃박스 파티션 보존 …`)는 order · pay · cart 에만
+> 보였고 user-service 에는 한 줄도 없었습니다. 그런데 게이지 **`outbox_partition_months_ahead` 는 네 서비스 모두 3**,
+> `outbox_partition_last_success_seconds` 도 모두 기동 뒤 갱신 — **잡은 user-service 에서도 정상으로 돌았습니다**
+> (userdb 에는 2026_07 이 없어 지울 것이 없었고, `prune()` 은 그 경우에도 기록을 남기므로 로그가 있어야 했습니다).
+> 원인은 그 서비스 콘솔에 **`com.project.common` 로거의 줄이 0**(order 는 11)인 것 — 로깅 설정은 같은데 공통 모듈의
+> 로그만 안 보입니다. 그러니 이 잡이 도는지는 **세 게이지**로 보고, 로그가 없다고 해서 안 돈다고 단정하지 않습니다.
+
 > ✅ **적용(2026-11-14)** — 원안(아래 끝의 pg_partman · 일 단위)과 달리 미래 달을 만드는 같은 잡(`common` 의 `OutboxPartitionMaintainer`, 6시간마다)이 오래된 달도 지운다.
 
 - **남기는 범위** — 이번 달 + 앞의 `outbox.partitions.retention-months` 달(기본 3, `0` = 끔). `1` 은 기동 실패로 막는다: 지난달 말일에 쓴 행이 아직 릴레이 재시도 중일 수 있어 지난달은 늘 남긴다. 2026-11 이면 2026-08 부터 남고 2026-07 이전이 대상이다.

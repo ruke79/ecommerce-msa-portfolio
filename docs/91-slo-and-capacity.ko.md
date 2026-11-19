@@ -221,6 +221,10 @@ CEILING_RATES=5,10,20,40,80,160 CEILING_HOLD=2m \
 - **시험**: `LoadK6ScriptTest` +2(GC 열 · 후보 — Copy · MarkSweepCompact 를 Serial 로, 할당 ÷ 파드 · 문턱 설정과 검사), promtool `observability/tests/jvm-rules.test.yml`(GC 부담 10분 전은 조용 · 지나면 울림 · 잠깐 튄 GC 는 조용 · GC 뒤 힙 15분 · 기존 `JvmHeapNearLimit` 도), `SloRulesTest` 가 `jvm-health` 의 모든 경보가 promtool 시험에 있는지 본다. 변이 확인: GC 후보 · 종류 매핑 · 문턱 검사 · 문턱 무시 · GC 뒤 힙 후보 제거 → `LoadK6ScriptTest` 실패, 경보 문턱 0.2 · `for` 1분 · GC 뒤 힙 0.99 → promtool 실패, 경보 이름 바꿈 → `SloRulesTest` 실패.
 - **다음**(로드맵): ① 배포 뒤 운영의 GC 종류 · 힙 · 평시 GC 부담을 이 절에 적는다 → ② 실습 천장(§4-1)에서 계단마다 GC 열로 "CPU 냐 GC 냐" 를 가른다 → ③ 천장의 80% 고정 부하로 게이트웨이 · catalog 의 Serial(1 코어) · Parallel(1 코어) · G1(2 코어) · 힙 50/60/70% 를 견준다(p99 · 파드 CPU 당 처리량 · GC 부담 · 정지 최대, 할당이 많은 곳은 `ops/58` 의 할당 모드) — 게이트웨이 한 파드만 튀던 GC 부담(docs/83)도 여기서 → ④ JDK 21 의 Generational ZGC 는 jdk21-build 브랜치를 합칠 때.
 - **도구**(2026-11-17): 로드맵 ① 은 `ops/60-jvm-facts.sh`(파드마다 JVM 이 고른 GC · 힙 · 스레드), ③ 의 설정 변경은 `./ops/53-load-k6.sh jvm load <서비스…> gc=… heap=… cpu=… gclog=1` → `jvm default`(원래 값을 Deployment 주석에 두고 되돌린다 — 손으로 `kubectl set env` 하지 않는다). 시나리오 · 판정은 [docs/92](92-jvm-measurement-scenarios.ko.md) §4-2 X-2 ~ X-5.
+- **운영 GC 종류 — 실측 끝(2026-11-19, `64b7c7a38cb2` 배포 뒤)**: `count by (service, gc) (jvm_gc_pause_seconds_count)` 가
+  모든 서비스에서 **`Copy`** 입니다 — 즉 **SerialGC**(`Copy` + `MarkSweepCompact` 가 Serial 의 두 수집기 이름). 1 코어 ·
+  768Mi 파드에서 JVM 이 Serial 을 고른다는 §4-3 의 전제가 운영에서 확인됐습니다. 디스크는 `/` 75%(25G 여유) — 예산 창을
+  30일로 늘리는 판단(§2-4)의 근거 값입니다. 다음은 `ops/61-gc-baseline.sh` 로 며칠 평균 · 최대를 받아 이 표를 채우는 것.
 - **운영 기준값 — 로드맵 ①(2026-11-17, 도구 준비 · 값은 운영 노드에서 실행한 뒤)**: 한 번 찍은 `jvm_gc_overhead` 는 "지난 5분" 이라 평시가 아니다 — 며칠의 평균 · 최대를 본다. `ops/61-gc-baseline.sh` 는 Prometheus 를 **읽기만** 하는 도구(파드 · 클러스터에 아무것도 하지 않는다)라 운영 노드에서 그대로 돈다:
 
   ```bash

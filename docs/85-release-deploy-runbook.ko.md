@@ -412,9 +412,28 @@ curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -
 **관측 스택**(운영 노드, 언제나 두 파일) — 새 규칙(slo 다섯 · slo-budget · kafka-consumer · `OutboxPartitionRetentionStalled` · `ChatFanoutPublishFailed`) · 탐침 · 대시보드:
 
 ```bash
-docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d blackbox-exporter prometheus
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d --force-recreate blackbox-exporter prometheus
 # 대시보드는 Grafana 가 파일을 다시 읽는다(약 10초). 안 보이면 같은 두 파일로 restart grafana
 ```
+
+🔴 **`--force-recreate` 를 빼면 아무 일도 일어나지 않습니다**(2026-11-19 에 걸렸습니다). 바뀐 것은 마운트된
+`alert-rules.yml` · `prometheus.oci.yml` · `blackbox.yml` 뿐이라 compose 는 컨테이너를 그대로 둡니다 — `docker ps` 가
+**`prometheus Up 3 weeks`** 로 나오면 그 컨테이너는 **3주 전 설정**으로 돌고 있습니다. 그리고 이 Prometheus 는
+`/-/reload` 가 막혀 있습니다(`Lifecycle API is not enabled`) — 다시 읽히는 방법은 **다시 만드는 것뿐**입니다.
+증상은 "지표는 들어오는데 `slo:` 기록 규칙과 `site-probe` 가 빈 결과" 이고, 그러면 **SLO 경보 · 예산 경보 ·
+`SiteProbeDown` · `OutboxPartitionRetentionStalled` · `ChatFanoutPublishFailed` 가 모두 꺼진 상태**입니다.
+
+2026-11-19 `64b7c7a38cb2` 배포 뒤 실측(다시 만든 다음):
+
+| 확인 | 값 |
+|---|---|
+| `count(http_server_requests_seconds_bucket{le="0.3"})` | 37 — 새 버킷 들어옴 |
+| 게이트웨이 라우트 지표 | `catalog-service` · `user-service-public-read` · `user-service-public` — **처음으로 0 이 아니다**(docs/91 §2-7) |
+| `count by (slo) (slo:sli_error:ratio_rate1h)` | 다섯(catalog-browse · catalog-search · gateway · order-create · site-probe) |
+| `probe_success{job="site-probe"}` | 1 · 1(사이트 · catalog API) |
+| 컨슈머 지연 | cart · saga-projection · notification · delivery · coupon … |
+| GC 종류 | **`Copy` = SerialGC**(1 코어 파드의 예상대로 — docs/91 §4-3) |
+| 디스크 | `/` 75%(72G/96G, 25G 여유) — 배포로 약 6G 늘었다 |
 
 Prometheus 에서: `probe_success{job="site-probe"}` 둘 다 1 · `count(http_server_requests_seconds_bucket{le="0.3"}) > 0` · `count by (routeId) (spring_cloud_gateway_requests_seconds_bucket{le="2.0"})` 에 라우트들 · `count by (slo) (slo:sli_error:ratio_rate1h)` 다섯 · `count by (service) (kafka_consumer_fetch_manager_records_lag_max)` · GC 종류 `count by (service, gc) (jvm_gc_pause_seconds_count)`(Copy · MarkSweepCompact 면 SerialGC — 결과를 docs/91 §4-3 에 적는다). Grafana 의 `ecommerce-msa SLO` 가 열린다(JVM · GC 줄 포함).
 
