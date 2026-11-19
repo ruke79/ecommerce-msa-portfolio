@@ -2,6 +2,7 @@ package com.project.userservice.message.producer;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -65,7 +66,7 @@ public class UserLifecycleProducer {
     /** 키 = 사용자 id — 같은 사용자의 created·updated·deleted 가 한 파티션에서 순서대로 읽힌다. */
     public void publish(String topic, String userId, String json) {
         try {
-            kafkaTemplate.send(topic, userId, json).get(publishTimeoutMs, TimeUnit.MILLISECONDS);
+            send(topic, userId, json).get(publishTimeoutMs, TimeUnit.MILLISECONDS);
             log.info("{} 발행: userId={}", topic, userId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -74,5 +75,14 @@ public class UserLifecycleProducer {
             // 이름·이미지 값은 남기지 않는다. userId 로 충분히 추적된다.
             throw new IllegalStateException(topic + " 발행 실패: userId=" + userId, e);
         }
+    }
+
+    /**
+     * 보내기만 하고 결과(ack)는 돌려준다 — 아웃박스 폴러가 묶음을 모두 보낸 뒤 함께 기다린다(UserCreatedProducer#send 와 같다).
+     *
+     * <p>[JA] 送るだけで結果(ack)を返す — アウトボックスのポーラーがバッチをすべて送ってからまとめて待つ。
+     */
+    public CompletableFuture<?> send(String topic, String userId, String json) {
+        return kafkaTemplate.send(topic, userId, json);
     }
 }

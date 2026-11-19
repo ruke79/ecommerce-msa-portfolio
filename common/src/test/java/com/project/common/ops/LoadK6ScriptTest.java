@@ -955,7 +955,7 @@ class LoadK6ScriptTest {
     }
 
     @Test
-    @DisplayName("🔴 outbox — 운영은 거절 · 실습에서는 user-service 폴러의 간격만 줄이고(묶음 ≤ 200 — 트랜잭션 하나가 잠금을 쥔다) 되돌린다 · 기본값 = 설정 파일")
+    @DisplayName("🔴 outbox — 운영은 거절 · 실습에서는 user-service 폴러의 간격만 줄이고(묶음 ≤ 1000 — 묶음 하나가 트랜잭션 하나의 잠금 · 실패 범위) 되돌린다 · 기본값 = 설정 파일")
     void outboxPollerOnlyOnLabClusterAndBatchCapped() throws Exception {
         assumeTrue(posix(), "bash · POSIX 권한이 없다");
         Path log = tmp.resolve("kubectl.log");
@@ -971,9 +971,9 @@ class LoadK6ScriptTest {
                 .contains("rollout status deploy/user-service");
 
         Files.delete(log);
-        Run big = run(Map.of(), "outbox", "load", "1000", "10000");
+        Run big = run(Map.of(), "outbox", "load", "1000", "1001");
         assertThat(big.code()).isNotZero();
-        assertThat(big.out()).contains("묶음은 1 ~ 200");
+        assertThat(big.out()).contains("묶음은 1 ~ 1000");
         assertThat(read(log)).as("값 검사는 바꾸기 전에").doesNotContain("set env");
         for (String bad : new String[] {"100", "20000", "1s"}) {
             Run r = run(Map.of(), "outbox", "load", bad);

@@ -115,12 +115,14 @@ class UserLifecycleOutboxTest {
         OutboxEvent updated = new OutboxEvent("42", "User", UserLifecycleProducer.UPDATED, "{\"userId\":42}");
         OutboxEvent deleted = new OutboxEvent("42", "User", UserLifecycleProducer.DELETED, "{\"userId\":42}");
         when(repository.claimPending(any(Integer.class))).thenReturn(List.of(updated, deleted));
+        org.mockito.Mockito.doReturn(java.util.concurrent.CompletableFuture.completedFuture(null))
+                .when(lifecycle).send(any(), any(), any());
 
         scheduler.processOutboxMessage();
 
-        verify(lifecycle).publish(UserLifecycleProducer.UPDATED, "42", "{\"userId\":42}");
-        verify(lifecycle).publish(UserLifecycleProducer.DELETED, "42", "{\"userId\":42}");
-        verify(created, never()).publish(any());
+        verify(lifecycle).send(UserLifecycleProducer.UPDATED, "42", "{\"userId\":42}");
+        verify(lifecycle).send(UserLifecycleProducer.DELETED, "42", "{\"userId\":42}");
+        verify(created, never()).send(any());
         assertThat(updated.getOutboxStatus().name()).isEqualTo("COMPLETED");
         assertThat(deleted.getOutboxStatus().name()).isEqualTo("COMPLETED");
     }
@@ -130,7 +132,7 @@ class UserLifecycleOutboxTest {
     void relayMarksFailure() {
         UserLifecycleProducer lifecycle = mock(UserLifecycleProducer.class);
         org.mockito.Mockito.doThrow(new IllegalStateException("broker down"))
-                .when(lifecycle).publish(eq(UserLifecycleProducer.UPDATED), any(), any());
+                .when(lifecycle).send(eq(UserLifecycleProducer.UPDATED), any(), any());
         UserOutboxScheduler scheduler = new UserOutboxScheduler(repository, mock(UserCreatedProducer.class), lifecycle,
                 objectMapper, OutboxTraceContext.NOOP);
         OutboxEvent updated = new OutboxEvent("42", "User", UserLifecycleProducer.UPDATED, "{}");

@@ -85,7 +85,8 @@ USERS=500000 ./ops/48-bulk-users.sh load   # 인원 바꾸기(status · purge �
 - `user-created` 는 user-service 의 폴러가 보낸다. **레플리카당 10초에 100건**이다(`app.outbox.batch-size=100`, `fixed-delay-ms=10000`).
   - 레플리카 하나면 10만 명에 약 2.8시간, 둘(`FOR UPDATE SKIP LOCKED` 로 나눠 가진다)이면 약 1.4시간.
 - **실습 환경에서 빨리 흘리려면** `./ops/53-load-k6.sh outbox load [간격ms [묶음]]`(기본 1000ms · 100 — 10배) → 다 나가면 `outbox default`. 남은 양 · 시간은 `outbox status`(2026-11-20).
-  - 줄이는 것은 **쉬는 간격**이고 묶음은 200 까지만 받는다. 폴러는 묶음 하나를 트랜잭션 하나로 잠근 채 한 건씩 브로커 ack 를 기다린다(건마다 상한 10초) — 묶음이 크면 DB 커넥션 · 잠금 · VACUUM 을 그만큼 오래 쥐고, 브로커가 죽으면 묶음 × 10초 동안 끝나지 않으며 그 묶음 전체가 FAILED 나 재발행이 된다(예전 안내의 `APP_OUTBOX_BATCH_SIZE: "1000"` 은 그 길이를 10배로 만들었다).
+  - 줄이는 것은 주로 **쉬는 간격**이고 묶음은 1000 까지만 받는다. 폴러는 묶음 하나를 트랜잭션 하나로 잠그고, **모두 보낸 뒤 ack 를 함께** 기다린다(2026-11-20, `UserOutboxScheduler`) — 트랜잭션은 왕복 한 번, 브로커가 죽어도 기한(`publish-timeout-ms` 10초) 한 번이다. 묶음 상한은 한 트랜잭션이 잠그는 행 · 메모리 · 실패 범위(브로커가 죽으면 그 묶음 전체가 FAILED) 때문이다.
+  - 🐛 그 전에는 한 건씩 보내고 기다렸다 — 트랜잭션이 묶음 × 왕복, 브로커가 죽으면 묶음 × 10초(100건 ≈ 17분, 1만 건 ≈ 28시간) 동안 DB 커넥션(풀 5) · 잠금 · VACUUM 을 쥐었다. 예전 안내의 `APP_OUTBOX_BATCH_SIZE: "1000"` 은 그 길이를 10배로 만들었다. 같은 사용자의 이벤트(가입 → 변경)는 앞 이벤트의 ack 뒤에 보내 순서를 지키고, 보내기가 바로 실패하면(브로커에 닿지 못함) 그 행만 FAILED · 나머지는 STARTED 로 다음 주기에 간다. 시험 `UserOutboxBatchRelayTest` · `UserOutboxRelayKafkaTest`(컨테이너 — 브로커를 멈추면 100건이 기한 1초 한 번에 끝난다).
   - 흘리는 동안은 측정하지 않는다 — coupon · chat 컨슈머도 같이 바쁘다. 운영 클러스터에서는 거절한다.
 - 발행에 실패한 행은 `FAILED` 로 남고 **자동으로 다시 시도하지 않는다**(UserOutboxScheduler). `./ops/48-bulk-users.sh retry-failed` 가 데모 범위의 것만 `STARTED` 로 돌린다.
 - `status` 에서 "쿠폰 수 · 채팅 회원 수 = 사용자 수" 가 되면 복제본까지 끝난 것이다.

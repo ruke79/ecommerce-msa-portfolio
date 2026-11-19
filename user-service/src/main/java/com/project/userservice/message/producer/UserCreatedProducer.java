@@ -1,5 +1,6 @@
 package com.project.userservice.message.producer;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import lombok.RequiredArgsConstructor;
@@ -73,10 +74,7 @@ public class UserCreatedProducer {
     public void publish(UserCreatedRequest userCreatedRequest) {
         Long userId = userCreatedRequest.getUserId();
         try {
-            // 키 = 사용자 id — 소비자 셋(order·coupon·chat)이 같은 사용자의 이벤트를 같은
-            // 파티션에서 본다(docs/38 §1.15).
-            kafkaTemplate.send(TOPIC, String.valueOf(userId), userCreatedRequest)
-                    .get(publishTimeoutMs, TimeUnit.MILLISECONDS);
+            send(userCreatedRequest).get(publishTimeoutMs, TimeUnit.MILLISECONDS);
             log.info("user-created 발행: userId={}", userId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -85,5 +83,19 @@ public class UserCreatedProducer {
             // 이메일·이름은 남기지 않는다. userId 로 충분히 추적된다.
             throw new IllegalStateException("user-created 발행 실패: userId=" + userId, e);
         }
+    }
+
+    /**
+     * 보내기만 하고 결과(ack)는 돌려준다 — 아웃박스 폴러가 묶음을 <b>모두 보낸 뒤 함께</b> 기다린다
+     * ({@code UserOutboxScheduler}, docs/79 §4). 한 건씩 기다리면 폴러의 트랜잭션이 묶음 × 왕복(브로커가 죽으면 묶음 × 상한)이었다.
+     *
+     * <p>[JA] 送るだけで結果(ack)を返す — アウトボックスのポーラーがバッチを<b>すべて送ってからまとめて</b>待つ。
+     *
+     * @throws RuntimeException 보내기 자체가 바로 실패하면(브로커 메타데이터를 받지 못함 · 직렬화) — 호출자가 그 행을 FAILED 로
+     */
+    public CompletableFuture<?> send(UserCreatedRequest userCreatedRequest) {
+        // 키 = 사용자 id — 소비자 셋(order·coupon·chat)이 같은 사용자의 이벤트를 같은
+        // 파티션에서 본다(docs/38 §1.15).
+        return kafkaTemplate.send(TOPIC, String.valueOf(userCreatedRequest.getUserId()), userCreatedRequest);
     }
 }
