@@ -237,6 +237,8 @@ sudo ln -sf "$PWD/certs/renew-deploy-hook.sh" \
 **이미 공개된 이력은 되돌릴 수 없으니**, 그 호스트의 방화벽 점검은 여전히 필요하다
 ([docs/13 §1](13-secrets-dbha-es-search.ko.md)).
 
+> 🕰️ 2026-11-19: 그 호스트는 더 쓰지 않아 점검은 해당 없음이 됐다(docs/00 §10 · docs/23 §9).
+
 ## 7. 남은 것
 
 - **HSM/KMS 연동** — 개인키가 여전히 디스크에 평문으로 있다. 운영에서는 cert-manager +

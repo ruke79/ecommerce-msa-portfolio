@@ -142,12 +142,15 @@ Redisson 분산 락을 4개 서비스가 쓴다. 관리형(ElastiCache)도 자�
 
 ## 9. 결정과 무관하게 남는 것
 
-어느 쪽을 골라도 이것들은 그대로다:
+어느 쪽을 골라도 이것들은 그대로다. 🕰️ 2026-11-19 — 대부분 이미 끝났다:
 
-- `ops/01` DB 비밀번호 로테이션, `ops/11` 방화벽 점검 — 🔴 여전히 최우선
-- `ops/15` 스키마 베이스라인 리허설 — `validate` 배포 전 필수
-- `ops/09` 복원 훈련 — 관리형이라고 복구가 검증되는 건 아니다
-- `ops/17` 경보 채널 — 인프라와 무관
-- chat-service·eureka-server 의 수평 확장 제약([docs/21 §2](21-horizontal-scaling.ko.md))
+| 항목 | 지금 |
+|---|---|
+| ~~`ops/01` DB 비밀번호 로테이션~~ | ✅ 종결(2026-09-25) — 유출된 값이 운영 PostgreSQL · Redis · 어느 Secret 에서도 통하지 않음을 로그인으로 확인했다. 운영은 배포 때 새로 만든 값을 쓰고 있었다([docs/27 §15](27-security-review.ko.md)) |
+| ~~`ops/11` 방화벽 점검~~ | ✅ 해당 없음 — 노출됐던 호스트(커넥터 JSON 에 있던 옛 DB 호스트)는 더 쓰지 않는다([docs/00 §10](00-before-after.ko.md)). 지금 운영은 인바운드 포트 0(Cloudflare Tunnel), VCN 보안 목록은 22번만(2026-10-20 확인), 매니페스트에 LoadBalancer · NodePort 없음(B-85) |
+| ~~`ops/15` 스키마 베이스라인 리허설~~ | ✅ 운영은 `validate` 로 기동해 Flyway 이력을 쓴다 — 배포가 통과한 것이 그 판정이다([docs/20 §7](20-schema-ownership.ko.md)). 큰 배포 전에는 운영 백업 사본에 마이그레이션을 미리 돌려 본다 |
+| `ops/09` 복원 훈련 | ✅ 자동 — 운영 클러스터 안 CronJob `restore-drill`(매주 월 05:00 UTC, 2026-10-13 부터 — 첫 회 DB 9 · 테이블 110 · 1분 52초, [docs/22 §2](22-alerting-and-backup-automation.ko.md)). 관리형 DB 로 옮기면 그쪽 복원 경로로 다시 세워야 한다 — 이 항목만은 결정과 함께 바뀐다 |
+| ~~`ops/17` 경보 채널~~ | ✅ Discord 로 적용 끝(2026-10-20, B-96 · [docs/22 §1](22-alerting-and-backup-automation.ko.md)) |
+| 수평 확장 제약([docs/21 §2](21-horizontal-scaling.ko.md)) | 🟡 chat-service 는 2026-11-01 Redis 팬아웃으로 풀렸다(docs/21 §2-1). 1개 고정은 eureka-server 만 남았다(B-34) |
 
-> 🕰️ 지금(2026-11-14): chat 의 제약은 2026-11-01 Redis 팬아웃으로 풀려(docs/21 §2-1) 1개 고정은 eureka-server 만 남았다. `ops/17` 경보 채널은 Discord 로 적용 끝(2026-10-20, B-96 · docs/22 §1).
+남은 것은 eureka-server 의 1개 고정과, DB 를 옮길 때 복원 훈련을 새로 세우는 일이다.
