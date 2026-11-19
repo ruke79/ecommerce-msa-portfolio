@@ -152,6 +152,28 @@ class SopsSecretsScriptTest {
     }
 
     @Test
+    @DisplayName("keygen <파일> — 보관용 키를 그 이름으로(0600) · 이 기계의 키는 그대로 · 그 키로 풀린다 · 디렉터리는 거절")
+    void keygenWritesNamedFile() throws Exception {
+        Path offline = tmp.resolve("vault/offline-backup.txt");
+        Run k = run("k1.txt", Map.of(), "keygen", offline.toString());
+        assertThat(k.code()).as(k.out()).isZero();
+        assertThat(Files.getPosixFilePermissions(offline)).isEqualTo(PosixFilePermissions.fromString("rw-------"));
+        assertThat(k.out()).contains("SOPS_AGE_KEY_FILE=" + offline);
+        String pubOffline = k.out().lines().filter(l -> l.startsWith("age1")).findFirst().orElseThrow();
+        assertThat(pubOffline).isNotEqualTo(pub1);
+        // 이 기계의 키(k1)는 바뀌지 않았다 — 같은 공개 키
+        assertThat(lastLine(run("keygen").out())).isEqualTo(pub1);
+
+        run("init", pub1, pubOffline);
+        assertThat(run("encrypt").code()).isZero();
+        assertThat(run("vault/offline-backup.txt", Map.of(), "check").out()).contains("풀린다");
+
+        Run dir = run("k1.txt", Map.of(), "keygen", tmp.resolve("vault").toString());
+        assertThat(dir.code()).isNotZero();
+        assertThat(dir.out()).contains("디렉터리");
+    }
+
+    @Test
     @DisplayName("받는 사람에서 빼면(updatekeys) 그 키로는 더 풀리지 않는다")
     void updatekeysRemovesRecipient() throws Exception {
         run("init", pub1, pub2);

@@ -9,7 +9,9 @@
 # 왜 SOPS + age 인가(Vault · Sealed Secrets 가 아니라): 운영자 한 명 · 노드 한 대 — 서버 없이 파일 하나, 클러스터 키 백업 의무 없음.
 #
 # 사용:
-#   ./ops/62-secrets-sops.sh keygen                 # 이 기계의 age 키를 만든다(있으면 그대로) — 공개 키만 출력
+#   ./ops/62-secrets-sops.sh keygen [<파일>]        # age 키를 만든다(있으면 그대로) — 공개 키만 출력. 파일을 주면 그 이름으로:
+#                                                    보관용(오프라인) · 다른 기계용 키를 이 기계의 키와 따로 만든다
+#                                                    (예: keygen ~/age-offline.txt → 옮긴 뒤 이 기계에서는 지운다)
 #   ./ops/62-secrets-sops.sh init <age1…> [<age1…>] # .sops.yaml 의 받는 사람(공개 키)을 정한다 — 운영 노드 · 작업 PC · 보관용 하나씩
 #   ./ops/62-secrets-sops.sh encrypt                # 평문 → 암호문(왕복 확인 뒤 바꾼다)
 #   ./ops/62-secrets-sops.sh check                  # 암호문이 모두 암호화됐는지 · 풀리는지 · 예시와 키 이름이 같은지 · 평문과 같은지
@@ -73,6 +75,11 @@ plain_not_tracked() {
 
 cmd_keygen() {
     need age-keygen "age 를 설치한다(apt install age)"
+    # 🐛 2026-11-19 사용자 지적: 파일 이름이 SOPS_AGE_KEY_FILE(기본 ~/.config/sops/age/keys.txt) 하나로 고정이라 보관용 키를 따로 만들
+    #    수 없었다. 인자로 받는다 — 이 기계가 쓰는 키(SOPS_AGE_KEY_FILE)는 건드리지 않는다.
+    # [JA] ファイル名を引数で受け取る — 保管用の鍵を別に作れなかった。この機械の鍵は触らない。
+    local KEY_FILE="${1:-$KEY_FILE}"
+    if [ -d "$KEY_FILE" ]; then die "$KEY_FILE 은 디렉터리다 — 파일 이름을 준다(예: $KEY_FILE/age-offline.txt)"; fi
     if [ -f "$KEY_FILE" ]; then
         echo "ℹ️  이미 있다: $KEY_FILE"
     else
@@ -82,6 +89,9 @@ cmd_keygen() {
     fi
     echo "공개 키(받는 사람으로 init 에 넘긴다):"
     age-keygen -y "$KEY_FILE"
+    if [ "$KEY_FILE" != "$SOPS_AGE_KEY_FILE" ]; then
+        echo "ℹ️  이 파일로 풀려면: SOPS_AGE_KEY_FILE=$KEY_FILE ./ops/62-secrets-sops.sh check — 보관용이면 옮긴 뒤 이 기계에서는 지운다"
+    fi
 }
 
 cmd_init() {
@@ -203,7 +213,7 @@ cmd_updatekeys() {
 }
 
 case "${1:-}" in
-  keygen)     cmd_keygen ;;
+  keygen)     shift; cmd_keygen "$@" ;;
   init)       shift; cmd_init "$@" ;;
   encrypt)    cmd_encrypt ;;
   check)      cmd_check ;;

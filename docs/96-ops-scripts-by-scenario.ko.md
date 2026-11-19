@@ -195,6 +195,7 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 
 ```bash
 ./ops/62-secrets-sops.sh keygen                      # 기계마다 한 번 — 공개 키만 출력(개인 키는 ~/.config/sops/age/keys.txt)
+./ops/62-secrets-sops.sh keygen ~/age-offline-backup.txt   # 보관용 키는 이름을 주어 따로 — 오프라인으로 옮긴 뒤 지운다
 ./ops/62-secrets-sops.sh init age1…노드 age1…PC age1…보관   # 받는 사람 — .sops.yaml(공개 키라 커밋)
 ./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(왕복 확인 뒤) → 커밋
 ./ops/62-secrets-sops.sh check                       # 값이 모두 암호문 · 풀리는가 · 예시와 키 이름 · 평문과 같은가

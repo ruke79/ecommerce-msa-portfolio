@@ -920,7 +920,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **정한 것**: SOPS + age. Vault 는 서버 하나를 더 운영해야 하고, Sealed Secrets 는 클러스터 키를 따로 백업해야 한다 — 운영자 한 명 · 노드 한 대에는 파일 하나가 맞다. 값(`stringData` · `data`)만 암호화하므로 `kind` · 이름 · **키 이름은 평문**이라 커밋 diff 에서 "무엇이 바뀌었는지" 는 보이고 값은 안 보인다.
 
 **한 것**:
-- `ops/62-secrets-sops.sh` — `keygen`(이 기계의 age 키, 공개 키만 출력) · `init <age1…>`(받는 사람) · `encrypt`(왕복 확인 뒤에만 암호문을 바꾼다) · `check`(값이 모두 암호문 · 이 기계의 키로 풀리나 · 예시와 키 이름 · 평문과 같은가 — 값 대신 sha256 앞 12자로 비교) · `apply`(평문 파일 없이 파이프로 `kubectl apply`) · `decrypt`(0600, 다른 평문은 덮어쓰지 않는다 — `FORCE=1`) · `updatekeys`. 어떤 경로도 값을 출력하지 않는다.
+- `ops/62-secrets-sops.sh` — `keygen [<파일>]`(age 키, 공개 키만 출력 — 파일을 주면 그 이름으로: 보관용 · 다른 기계용 키를 이 기계의 키와 따로) · `init <age1…>`(받는 사람) · `encrypt`(왕복 확인 뒤에만 암호문을 바꾼다) · `check`(값이 모두 암호문 · 이 기계의 키로 풀리나 · 예시와 키 이름 · 평문과 같은가 — 값 대신 sha256 앞 12자로 비교) · `apply`(평문 파일 없이 파이프로 `kubectl apply`) · `decrypt`(0600, 다른 평문은 덮어쓰지 않는다 — `FORCE=1`) · `updatekeys`. 어떤 경로도 값을 출력하지 않는다.
 - `.sops.yaml` — 그 파일만 · 값만 암호화. 받는 사람은 자리표시(`age1REPLACE_ME`)로 커밋 — 자리표시인 동안 `encrypt` 는 거절한다.
 - 암호문 `k8s/20-secret.enc.yaml` 은 `.gitignore`(`k8s/20-secret.yaml*`)에 걸리지 않는다 — 커밋한다. 포트폴리오(공개)에는 옮기지 않는다(`.sops.yaml` 도).
 - 받는 사람은 셋을 권한다 — 운영 노드 · 작업 PC · 오프라인 보관(종이 · 비밀번호 관리자). 개인 키를 모두 잃으면 암호문은 풀 수 없다.
@@ -930,7 +930,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 **처음 한 번**(운영 노드에서 — 평문이 있는 곳):
 1. sops · age 설치(age 는 `apt install age`, sops 는 릴리스 바이너리 + 체크섬).
-2. 운영 노드 · 작업 PC · 보관용 키마다 `./ops/62-secrets-sops.sh keygen` → 공개 키 셋을 모아 `init age1… age1… age1…`.
+2. 운영 노드 · 작업 PC 는 각자 `./ops/62-secrets-sops.sh keygen`, 보관용은 이름을 주어 `keygen ~/age-offline-backup.txt`(옮긴 뒤 그 기계에서는 지운다) → 공개 키 셋을 모아 `init age1… age1… age1…`.
 3. `encrypt` → `check` → `git add k8s/20-secret.enc.yaml .sops.yaml` → 커밋 · push(값은 암호문).
 4. 그 뒤로는 평문 대신 암호문이 원본 — 바꿀 때는 `decrypt` → 고치기 → `encrypt` → 커밋, 적용은 `apply`. ops/27 · 46 · 59 처럼 평문을 읽는 스크립트는 `decrypt` 로 평문을 만든 뒤 돌린다.
 

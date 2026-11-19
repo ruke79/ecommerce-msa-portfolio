@@ -919,7 +919,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 **決めたこと**: SOPS + age。Vault はサーバーをもう一つ運用する必要があり、Sealed Secrets はクラスタの鍵を別途バックアップしなければならない — 運用者一人 · ノード一台にはファイル一つが合う。値（`stringData` · `data`）だけを暗号化するので `kind` · 名前 · **キー名は平文**で、コミットの diff で「何が変わったか」は見え、値は見えない。
 
 **したこと**:
-- `ops/62-secrets-sops.sh` — `keygen`（この機械の age 鍵、公開鍵だけ出力）· `init <age1…>`（受け取る人）· `encrypt`（往復確認の後にだけ暗号文を替える）· `check`（値がすべて暗号文 · この機械の鍵で復号できるか · 例とキー名 · 平文と同じか — 値の代わりに sha256 の先頭 12 文字で比較）· `apply`（平文ファイルなしでパイプで `kubectl apply`）· `decrypt`（0600、違う平文は上書きしない — `FORCE=1`）· `updatekeys`。どの経路も値を出力しない。
+- `ops/62-secrets-sops.sh` — `keygen [<ファイル>]`（age 鍵、公開鍵だけ出力 — ファイルを渡すとその名前で: 保管用 · 別の機械用の鍵をこの機械の鍵と別に）· `init <age1…>`（受け取る人）· `encrypt`（往復確認の後にだけ暗号文を替える）· `check`（値がすべて暗号文 · この機械の鍵で復号できるか · 例とキー名 · 平文と同じか — 値の代わりに sha256 の先頭 12 文字で比較）· `apply`（平文ファイルなしでパイプで `kubectl apply`）· `decrypt`（0600、違う平文は上書きしない — `FORCE=1`）· `updatekeys`。どの経路も値を出力しない。
 - `.sops.yaml` — そのファイルだけ · 値だけを暗号化。受け取る人はプレースホルダー（`age1REPLACE_ME`）でコミット — プレースホルダーの間 `encrypt` は拒否する。
 - 暗号文 `k8s/20-secret.enc.yaml` は `.gitignore`（`k8s/20-secret.yaml*`）にかからない — コミットする。ポートフォリオ（公開）には移さない（`.sops.yaml` も）。
 - 受け取る人は三つを勧める — 本番ノード · 作業 PC · オフライン保管（紙 · パスワード管理）。秘密鍵をすべて失うと暗号文は復号できない。
@@ -929,7 +929,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 **最初の一回**（本番ノードで — 平文がある所）:
 1. sops · age をインストール（age は `apt install age`、sops はリリースのバイナリ + チェックサム）。
-2. 本番ノード · 作業 PC · 保管用の鍵ごとに `./ops/62-secrets-sops.sh keygen` → 公開鍵三つを集めて `init age1… age1… age1…`。
+2. 本番ノード · 作業 PC はそれぞれ `./ops/62-secrets-sops.sh keygen`、保管用は名前を渡して `keygen ~/age-offline-backup.txt`（移した後その機械では消す）→ 公開鍵三つを集めて `init age1… age1… age1…`。
 3. `encrypt` → `check` → `git add k8s/20-secret.enc.yaml .sops.yaml` → コミット · push（値は暗号文）。
 4. その後は平文ではなく暗号文が原本 — 変えるときは `decrypt` → 修正 → `encrypt` → コミット、適用は `apply`。ops/27 · 46 · 59 のように平文を読むスクリプトは `decrypt` で平文を作ってから回す。
 

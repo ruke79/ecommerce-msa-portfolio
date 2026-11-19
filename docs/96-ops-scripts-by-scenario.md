@@ -195,6 +195,7 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 
 ```bash
 ./ops/62-secrets-sops.sh keygen                      # 機械ごとに一度 — 公開鍵だけを出力(秘密鍵は ~/.config/sops/age/keys.txt)
+./ops/62-secrets-sops.sh keygen ~/age-offline-backup.txt   # 保管用の鍵は名前を渡して別に — オフラインへ移した後に消す
 ./ops/62-secrets-sops.sh init age1…ノード age1…PC age1…保管   # 受け取る人 — .sops.yaml(公開鍵なのでコミット)
 ./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(往復確認の後) → コミット
 ./ops/62-secrets-sops.sh check                       # 値がすべて暗号文 · 復号できるか · 例とキー名 · 平文と同じか
