@@ -17,7 +17,7 @@
 | 5 分 | [62 技術事例集](62-engineering-casebook.md) — 重要な事例 18 個を、問題 · 対処 · 限界と参考書で |
 | 15 分 | 上に加えて [00 Before/After 総合索引](00-before-after.md) → [54 改善の総まとめと実務基準](54-improvements-vs-practice.md) |
 | テーマ別 | 下の表から関心のある領域を選びます |
-| 運用者 | [33 デプロイ Runbook](33-deploy-runbook.md) → [36 デプロイパイプライン](36-deployment-pipeline.md) → [34 受け入れチェックリスト](34-acceptance-checklist.md) → [運用スクリプト](../ops/README.md) |
+| 運用者 | [33 デプロイ Runbook](33-deploy-runbook.md) → [36 デプロイパイプライン](36-deployment-pipeline.md) → [34 受け入れチェックリスト](34-acceptance-checklist.md) → [96 運用スクリプト — シナリオ別](96-ops-scripts-by-scenario.md) · [運用スクリプト一覧](../ops/README.md) |
 | 開発者 | [61 新サービス追加チェックリスト](61-adding-a-service.md) → [17 テスト戦略](17-testing.md) → [55 無停止マイグレーション](55-zero-downtime-migrations.md) |
 
 ---
@@ -101,6 +101,7 @@
 | 89 | [単一ノードから数百万人へ — 段階的な移行計画](89-scale-out-migration-plan.md) | 判断資料(決定ではない)— 86 · 87 の目標へ今のノード一台から移る順序: 0 SLO · 測定 → 1 データ層をノードの外へ(Kafka → Redis → PG → WAL)→ 2 マルチノード · Eureka 除去 · プーラー → 3 CDN · ES · 読み取りレプリカ → 4 パーティション · 在庫ホットスポット → 5 運用体制。段階ごとの入る条件 · 無停止手順 · 戻し方、新クラスターで飛ばされる `latest` コンシューマー 8 か所 · `Cache-Control` 不在 · シーケンス | ✅ |
 | 91 | [SLO と容量測定 — 移行段階 0](91-slo-and-capacity.md) | docs/89 段階 0 のリポジトリ側: SLO 五つ（catalog-browse · catalog-search · order-create · ゲートウェイの全ルート gateway · 外部プローブ site-probe — 今 99.5%（検索 99%）→ 目標 99.9%）を記録ルール · 多窓のバーンレート警報に（promtool テスト）、14 日のエラーバジェットと規則（半分 · 使い切りの警報）、スループット目標（毎秒 1,000 → 5,000）、blackbox-exporter のプローブ、正確な 0.3 · 1.0 秒のバケット、なかった Kafka コンシューマー遅延の指標、階段で天井を探す `ops/53 ceiling`、Grafana の SLO ダッシュボード（slo.json）。実測 · ノード外の監視は残り | 🟡 |
 | 92 | [JVM 測定シナリオ — 性能書二冊をこのシステムに](92-jvm-measurement-scenarios.md) | 計画（測定前）— Java Performance 第 2 版 · Optimizing Cloud Native Java 第 2 版の測定シナリオ 78 個をこのシステムに: ① 負荷なしで `ops/60-jvm-facts.sh`（Pod ごとに JVM が選んだ GC · ヒープ · JIT スレッド · コードキャッシュ · ForkJoin 並列度 — 1 コアなら Serial）② 負荷中に `ops/53 ceiling`（GC 列）· `ops/58`（CPU · 割り当て · ロック）· vmstat ③ 変数一つの比較（GC · ヒープ比率 · CPU 上限 · 暖機 · レプリカ · プール）、該当なし 29 個は理由とともに。実習クラスターの起こす順序 · 時計の確認、新ツールが必要な 10 行 | 🟡 |
+| 96 | [運用スクリプト — シナリオ別の使い方](96-ops-scripts-by-scenario.md) | `ops/` のスクリプトを番号ではなく作業(初回構築 · デプロイ · マイグレーション · バックアップ · 秘密の交換 · 漏えい · セキュリティ境界 · 障害 · 負荷 · 実習)でまとめ、順序とコマンドを · 実習チェックリスト(まだ実クラスタで動かしていないスクリプト) · 番号 → シナリオの付録 | ✅ |
 | 61 | [新サービス追加チェックリスト](61-adding-a-service.md) | 登録が必要な箇所すべてと、漏れると静かにおかしくなるもの | ✅ |
 | 31 | [環境分離 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.md) | kustomize オーバーレイ、arm64、インバウンドポート 0 | 🟡 |
 | 32 | [インフラの外部化](32-external-managed-infra.md) | マネージドの無料枠に出せるものと出せないもの | ✅ |

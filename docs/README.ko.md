@@ -17,7 +17,7 @@
 | 5분 | [62 기술 사례집](62-engineering-casebook.ko.md) — 중요한 사례 18개를 문제 · 처리 · 한계와 참고서로 |
 | 15분 | 위에 더해 [00 전/후 종합 색인](00-before-after.ko.md) → [54 개선 총정리와 실무 기준](54-improvements-vs-practice.ko.md) |
 | 주제별 | 아래 표에서 관심 영역을 고릅니다 |
-| 운영자 | [33 배포 런북](33-deploy-runbook.ko.md) → [36 배포 파이프라인](36-deployment-pipeline.ko.md) → [34 인수 체크리스트](34-acceptance-checklist.ko.md) → [운영 스크립트](../ops/README.ko.md) |
+| 운영자 | [33 배포 런북](33-deploy-runbook.ko.md) → [36 배포 파이프라인](36-deployment-pipeline.ko.md) → [34 인수 체크리스트](34-acceptance-checklist.ko.md) → [96 운영 스크립트 — 시나리오별](96-ops-scripts-by-scenario.ko.md) · [운영 스크립트 목록](../ops/README.ko.md) |
 | 개발자 | [61 새 서비스 추가 체크리스트](61-adding-a-service.ko.md) → [17 테스트 전략](17-testing.ko.md) → [55 무중단 마이그레이션](55-zero-downtime-migrations.ko.md) |
 
 ---
@@ -101,6 +101,7 @@
 | 89 | [단일 노드에서 수백만 명으로 — 단계별 이행 계획](89-scale-out-migration-plan.ko.md) | 판단 자료(결정 아님) — 86 · 87 의 목표까지 지금 노드 한 대에서 옮겨 가는 순서: 0 SLO · 측정 → 1 데이터 계층을 노드 밖으로(Kafka → Redis → PG → WAL) → 2 멀티 노드 · Eureka 제거 · 풀러 → 3 CDN · ES · 읽기 복제본 → 4 파티션 · 재고 핫스팟 → 5 운영 체계. 단계마다 들어가는 조건 · 무정지 순서 · 되돌리기, 새 클러스터에서 건너뛰는 `latest` 컨슈머 8곳 · `Cache-Control` 부재 · 시퀀스 | ✅ |
 | 91 | [SLO 와 용량 측정 — 이행 단계 0](91-slo-and-capacity.ko.md) | docs/89 단계 0 의 레포 쪽: SLO 다섯(catalog-browse · catalog-search · order-create · 게이트웨이 모든 라우트 gateway · 바깥 탐침 site-probe — 지금 99.5%(검색 99%) → 목표 99.9%)을 기록 규칙 · 다중 창 소진율 경보로(promtool 시험), 14일 오류 예산과 규칙(절반 · 소진 경보), 처리량 목표(초당 1,000 → 5,000), blackbox-exporter 탐침, 정확한 0.3 · 1.0 초 버킷, 없던 Kafka 컨슈머 지연 지표, 계단으로 천장을 찾는 `ops/53 ceiling`, Grafana SLO 대시보드(slo.json). 실측 · 노드 밖 감시는 남음 | 🟡 |
 | 92 | [JVM 측정 시나리오 — 성능 책 두 권을 이 시스템에](92-jvm-measurement-scenarios.ko.md) | 계획(측정 전) — Java Performance 2판 · Optimizing Cloud Native Java 2판의 측정 시나리오 78개를 이 시스템에: ① 부하 없이 `ops/60-jvm-facts.sh`(파드마다 JVM 이 고른 GC · 힙 · JIT 스레드 · 코드 캐시 · ForkJoin 병렬도 — 1 코어면 Serial) ② 부하 중 `ops/53 ceiling`(GC 열) · `ops/58`(CPU · 할당 · 락) · vmstat ③ 변수 하나의 비교(GC · 힙 비율 · CPU 한도 · 데움 · 레플리카 · 풀), 해당 없음 29개는 이유와 함께. 실습 클러스터 깨우는 순서 · 시계 확인, 새 도구 필요 10행 | 🟡 |
+| 96 | [운영 스크립트 — 시나리오별 사용법](96-ops-scripts-by-scenario.ko.md) | `ops/` 의 스크립트를 번호가 아니라 할 일(처음 세우기 · 배포 · 마이그레이션 · 백업 · 비밀 교체 · 유출 · 보안 경계 · 장애 · 부하 · 실습)로 묶어 순서와 명령을 · 실습 점검표(아직 실제 클러스터에서 돌리지 않은 스크립트) · 번호 → 시나리오 부록 | ✅ |
 | 61 | [새 서비스 추가 체크리스트](61-adding-a-service.ko.md) | 등록해야 하는 곳 전부와 빠지면 조용히 틀어지는 것 | ✅ |
 | 31 | [환경 분리 · OCI Ampere · Cloudflare Tunnel](31-kustomize-oci-tunnel.ko.md) | kustomize 오버레이, arm64, 인바운드 포트 0 | 🟡 |
 | 32 | [인프라 외부화](32-external-managed-infra.ko.md) | 관리형 무료 티어로 뺄 수 있는 것과 없는 것 | ✅ |
