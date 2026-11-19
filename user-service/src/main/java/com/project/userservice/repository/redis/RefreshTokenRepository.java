@@ -212,7 +212,7 @@ public class RefreshTokenRepository {
 
     /**
      * 긴 연결(채팅 WebSocket · 알림 SSE)도 끊는다 — "지금 이전에 발급된 이 사용자의 액세스 토큰은 긴 연결에 못 쓴다" 를 적고
-     * 알린다(common {@code SessionRevocation}, docs/68 §9). HTTP 요청은 여기에 영향을 받지 않는다 — 게이트웨이는 서명만 본다.
+     * 알린다(common {@code SessionRevocation}, docs/68 §9). 게이트웨이도 같은 값으로 HTTP 요청의 옛 토큰을 401 로 거절한다(docs/57 §22).
      */
     // [JA] 長い接続も切る — 「今より前に発行されたこのユーザーのアクセストークンは長い接続に使えない」を書いて知らせる。
     public void cutoffLiveSessions(Long userId) {

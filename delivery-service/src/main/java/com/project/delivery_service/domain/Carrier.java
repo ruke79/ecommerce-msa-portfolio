@@ -63,12 +63,34 @@ public class Carrier implements Persistable<String> {
         this.supportsTracking = supportsTracking;
     }
 
-    /** 송장번호를 끼운 조회 URL. 템플릿이 없으면 null. */
+    /**
+     * 송장번호를 끼운 조회 URL. 템플릿이 없으면 null.
+     *
+     * <p>송장번호는 퍼센트 인코딩해 끼운다(RFC 3986 의 비예약 문자 {@code A-Z a-z 0-9 - . _ ~} 밖은 모두, docs/57 §22).
+     * 🐛 예전에는 글자 그대로 넣어, 관리자가 등록한 송장번호의 {@code &} · {@code #} · {@code /} · 공백이 고객 화면 링크의
+     * 쿼리 · 경로를 바꿨다(예: {@code 123&sid2=…} 로 다른 매개변수를 끼우거나 {@code #} 뒤를 잘라 다른 화면으로).
+     * [JA] 送り状番号はパーセントエンコードして埋め込む。以前はそのまま入れ、& · # · / · 空白がリンクのクエリ · パスを変えた。
+     */
     public String trackingUrlFor(String trackingNumber) {
         if (trackingUrl == null || trackingNumber == null) {
             return null;
         }
-        return trackingUrl.replace("{trackingNumber}", trackingNumber);
+        return trackingUrl.replace("{trackingNumber}", encodeUnreserved(trackingNumber));
+    }
+
+    private static String encodeUnreserved(String value) {
+        StringBuilder out = new StringBuilder(value.length());
+        for (byte b : value.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            char c = (char) (b & 0xFF);
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == '-' || c == '.' || c == '_' || c == '~') {
+                out.append(c);
+            } else {
+                out.append('%').append(Character.toUpperCase(Character.forDigit((b >> 4) & 0xF, 16)))
+                        .append(Character.toUpperCase(Character.forDigit(b & 0xF, 16)));
+            }
+        }
+        return out.toString();
     }
 
     // ── 왜 Persistable 을 구현하는가 ────────────────────────────────────────

@@ -221,6 +221,24 @@ describe("SignInPage", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/", { replace: true });
   });
 
+  /** 🔴 유출 비밀번호로 로그인하면 들어가되 바꾸기를 권한다(docs/57 §22) — 권고가 없으면 띄우지 않는다. */
+  it("passwordAdvice=breached 면 로그인하고 비밀번호 변경을 권한다", async () => {
+    jest.spyOn(api, "post").mockResolvedValue({
+      headers: { access: "token-abc" },
+      data: { message: "ok", code: "login_success", passwordAdvice: "breached" },
+    });
+    mockDecode.mockReturnValue({
+      sub: "a@example.com", uid: 7, role: "ROLE_USER", is2faEnabled: false, exp: 1,
+    });
+
+    renderPage();
+    await submitCredentials();
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalled());
+    expect(mockToastError).toHaveBeenCalledWith(
+      expect.stringContaining("유출된 비밀번호 목록"), expect.objectContaining({ id: "passwordBreached" }));
+  });
+
   /**
    * 🐛 회귀 대상: 로그인 후 **무조건 홈**이었다(`navigate('/')`).
    *
@@ -386,6 +404,40 @@ describe("SignInPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "인증 앱 대신 문자로 받기" }));
     expect(screen.getByRole("button", { name: "문자로 인증번호 받기" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "인증 앱 코드 입력하기" })).toBeInTheDocument();
+  });
+
+  /** 🔴 복구 코드(docs/57 §22) — 서버가 "복구 코드 있음" 을 알려 주면 그 길을 보여 주고, 코드는 method=recovery 로 보낸다. */
+  it("복구 코드가 있으면 '복구 코드 사용' — 코드는 method=recovery 로", async () => {
+    jest.spyOn(api, "get").mockResolvedValue({ data: { totp: true, sms: false, recovery: true } });
+    const post = jest.spyOn(api, "post")
+      .mockResolvedValueOnce(twoFactorRequired)
+      .mockResolvedValueOnce({ data: { message: "ok" } });
+    delete window.location;
+    window.location = { href: "" };
+
+    renderPage();
+    await submitCredentials();
+
+    await userEvent.click(await screen.findByRole("button", { name: /복구 코드 사용/ }));
+    expect(screen.getByText(/적어 둔 복구 코드/)).toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: /^확인/ });
+    await userEvent.type(screen.getByLabelText("복구 코드"), "abcde-fgh2");
+    expect(confirm).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("복구 코드"), "3");
+    await userEvent.click(confirm);
+    await waitFor(() => expect(post.mock.calls[1][0])
+      .toContain("/api/auth/public/verify-2fa?code=ABCDE-FGH23&method=recovery"));
+  });
+
+  it("복구 코드가 없으면 그 길을 보여 주지 않는다", async () => {
+    jest.spyOn(api, "get").mockResolvedValue({ data: { totp: true, sms: false, recovery: false } });
+    jest.spyOn(api, "post").mockResolvedValueOnce(twoFactorRequired);
+
+    renderPage();
+    await submitCredentials();
+
+    expect(await screen.findByText("인증 앱에 표시된 6자리 코드를 입력해 주세요.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /복구 코드 사용/ })).not.toBeInTheDocument();
   });
 
   /**

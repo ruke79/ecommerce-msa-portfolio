@@ -52,6 +52,7 @@ class WithdrawalServiceTest {
     private com.project.userservice.service.RefreshTokenService refreshTokenService;
     private com.project.userservice.repository.jpa.KnownDeviceRepository knownDeviceRepository;
     private com.project.userservice.repository.jpa.PasskeyCredentialRepository passkeyCredentialRepository;
+    private com.project.userservice.repository.jpa.TwoFactorRecoveryCodeRepository recoveryCodeRepository;
     private com.project.userservice.repository.jpa.NotificationRepository notificationRepository;
     private WithdrawalService service;
     private com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
@@ -72,6 +73,7 @@ class WithdrawalServiceTest {
         when(refreshTokenService.authTimeOf(any(), any())).thenReturn(java.util.OptionalLong.empty());
         knownDeviceRepository = mock(com.project.userservice.repository.jpa.KnownDeviceRepository.class);
         passkeyCredentialRepository = mock(com.project.userservice.repository.jpa.PasskeyCredentialRepository.class);
+        recoveryCodeRepository = mock(com.project.userservice.repository.jpa.TwoFactorRecoveryCodeRepository.class);
         notificationRepository = mock(com.project.userservice.repository.jpa.NotificationRepository.class);
         currentPasswordGuard = mock(com.project.userservice.security.CurrentPasswordGuard.class);
 
@@ -82,7 +84,8 @@ class WithdrawalServiceTest {
         service = new WithdrawalService(userRepository, shippingAddressRepository,
                 wishItemRepository, verificationTokenRepository, passwordResetTokenRepository,
                 reviewLikeRepository, passwordEncoder, outboxHelper, refreshTokenService,
-                knownDeviceRepository, passkeyCredentialRepository, notificationRepository, currentPasswordGuard);
+                knownDeviceRepository, passkeyCredentialRepository, recoveryCodeRepository, notificationRepository,
+                currentPasswordGuard);
         ReflectionTestUtils.setField(service, "grace", Duration.ofDays(7));
     }
 
@@ -269,6 +272,7 @@ class WithdrawalServiceTest {
 
         verify(knownDeviceRepository).deleteByUserId(USER_ID);
         verify(passkeyCredentialRepository).deleteByUserId(USER_ID);
+        verify(recoveryCodeRepository).deleteByUserId(USER_ID);
         verify(notificationRepository).deleteByOwners(
                 java.util.List.of(String.valueOf(USER_ID), "tester@example.com"));
         assertThat(user.getWithdrawalReason()).isNull();

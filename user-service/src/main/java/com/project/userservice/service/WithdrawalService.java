@@ -65,6 +65,7 @@ public class WithdrawalService {
     private final RefreshTokenService refreshTokenService;
     private final com.project.userservice.repository.jpa.KnownDeviceRepository knownDeviceRepository;
     private final com.project.userservice.repository.jpa.PasskeyCredentialRepository passkeyCredentialRepository;
+    private final com.project.userservice.repository.jpa.TwoFactorRecoveryCodeRepository recoveryCodeRepository;
     private final com.project.userservice.repository.jpa.NotificationRepository notificationRepository;
     /** 현재 비밀번호의 시도 제한 — 비밀번호 변경과 같은 칸(사용자마다 15분에 5번). */
     private final com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
@@ -168,6 +169,7 @@ public class WithdrawalService {
         // [JA] 以前は端末 · パスキー · 通知(実メール · セッション id)が残り、退会後も元のアドレスが出てきた。
         knownDeviceRepository.deleteByUserId(userId);
         passkeyCredentialRepository.deleteByUserId(userId);
+        recoveryCodeRepository.deleteByUserId(userId);   // 2단계 인증 복구 코드(해시뿐이지만 남길 이유가 없다, docs/57 §22)
         notificationRepository.deleteByOwners(originalEmail == null
                 ? java.util.List.of(String.valueOf(userId))
                 : java.util.List.of(String.valueOf(userId), originalEmail));

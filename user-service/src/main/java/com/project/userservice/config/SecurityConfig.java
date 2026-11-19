@@ -108,6 +108,7 @@ public class SecurityConfig {
         private final com.project.userservice.security.service.CustomOidcUserService customOidcUserService;
         private final CustomClientRegistrationRepository customClientRegistrationRepository;
         private final OAuth2SuccessHandler oAuth2SuccessHandler;
+        private final com.project.userservice.security.password.LoginPasswordAdvisor loginPasswordAdvisor;
         private final OAuth2FailureHandler oAuth2FailureHandler;
 
         private final UserCreatedProducer userCreatedProducer;
@@ -307,6 +308,7 @@ public class SecurityConfig {
                                 deviceRecognitionService, securityAlertProducer, redisSessionManager,
                                 pendingTwoFactor, loginRiskGuard, emailService);
                 loginFilter.setFilterProcessesUrl("/api/auth/public/signin");
+                loginFilter.setPasswordAdvisor(loginPasswordAdvisor);
                 http.addFilterAt(loginFilter, UsernamePasswordAuthenticationFilter.class);
 
                 http.sessionManagement(

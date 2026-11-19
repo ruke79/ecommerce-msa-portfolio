@@ -162,6 +162,14 @@ public final class NotificationTexts {
     public static final String PASSKEY_REMOVED_BODY =
             "이 계정의 패스키 하나가 삭제되었습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
 
+    /** 2단계 인증 복구 코드 — 새로 만듦 · 로그인에 씀(user-service docs/57 §22). */
+    public static final String RECOVERY_CODES_CREATED_TITLE = "2단계 인증 복구 코드를 새로 만들었습니다";
+    public static final String RECOVERY_CODES_CREATED_BODY =
+            "이전 복구 코드는 더 이상 쓸 수 없습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
+    public static final String RECOVERY_CODE_USED_TITLE = "복구 코드로 로그인했습니다";
+    public static final String RECOVERY_CODE_USED_BODY =
+            "2단계 인증 대신 복구 코드 하나가 쓰였습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
+
     /** 프로바이더 표시 이름 — 사용자에게는 registrationId(google · kakao)가 아니라 서비스 이름을 보여 준다. */
     static String providerLabel(String provider) {
         return switch (provider) {
@@ -214,6 +222,7 @@ public final class NotificationTexts {
             SOCIAL_LINKED_TITLE, socialLinkedBody("{}"), socialLinkedBody(null),
             UNPROVEN_PASSWORD_CLEARED_TITLE, UNPROVEN_PASSWORD_CLEARED_BODY,
             PASSKEY_ADDED_TITLE, PASSKEY_ADDED_BODY, PASSKEY_REMOVED_TITLE, PASSKEY_REMOVED_BODY,
+            RECOVERY_CODES_CREATED_TITLE, RECOVERY_CODES_CREATED_BODY, RECOVERY_CODE_USED_TITLE, RECOVERY_CODE_USED_BODY,
             SUPPORT_REPLY_TITLE, SUPPORT_REPLY_BODY, chatTitle(null), chatTitle("{}"), CHAT_BODY,
             friendOnlineTitle("{}"), friendOnlineTitle(null), FRIEND_ONLINE_BODY,
             RESTOCK_TITLE, restockBody("{}", "{}"), restockBody(RESTOCK_FALLBACK_PRODUCT, "{}"));

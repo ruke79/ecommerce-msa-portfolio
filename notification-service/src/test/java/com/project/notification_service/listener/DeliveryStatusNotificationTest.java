@@ -418,6 +418,17 @@ class DeliveryStatusNotificationTest {
     }
 
     @Test
+    @DisplayName("🔴 복구 코드 만듦 · 씀은 그 사건의 문구로 — 새 기기 문구로 떨어지지 않는다(user-service docs/57 §22)")
+    void recoveryCodeAlertsHaveTheirOwnText() {
+        listener.onSecurityAlert(List.of(securityEvent(",\"alert\":\"recovery-codes-created\"")), null);
+        assertThat(captureTitle().getValue()).isEqualTo("2단계 인증 복구 코드를 새로 만들었습니다");
+
+        org.mockito.Mockito.clearInvocations(notificationService);
+        listener.onSecurityAlert(List.of(securityEvent(",\"alert\":\"recovery-code-used\"")), null);
+        assertThat(captureTitle().getValue()).isEqualTo("복구 코드로 로그인했습니다");
+    }
+
+    @Test
     @DisplayName("alert 가 없는 예전 이벤트는 그대로 새 기기 로그인이다")
     void missingAlertMeansNewDevice() {
         listener.onSecurityAlert(List.of(securityEvent(",\"alert\":\"something-else\"")), null);

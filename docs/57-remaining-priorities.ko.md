@@ -823,7 +823,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 **Font Awesome CSS 를 cdnjs 에서 SRI 없이 받았다** — 아이콘은 채팅의 셋뿐이었다. 같은 Font Awesome 5 아이콘을 `react-icons/fa`(SVG)로 바꿔 외부 출처를 없앴다(`indexHtml.test.js` — 외부 `link` · `script` 0, `fas fa-` 0).
 
-남은 것: 재설정 링크의 `?token=` 을 읽은 뒤 주소창에서 지우기, 택배 조회 주소의 송장 번호 인코딩, react-router v7 · jest 30 메이저 판 올림(남은 npm 권고 7건 — 개발 도구 · 이미 막은 것).
+남은 것: ~~재설정 링크의 `?token=` 을 읽은 뒤 주소창에서 지우기, 택배 조회 주소의 송장 번호 인코딩~~(2026-11-19 끝 — §22), react-router v7 · jest 30 메이저 판 올림(남은 npm 권고 7건 — 개발 도구 · 이미 막은 것).
 
 ## 20. JRE 보안 수정 — CVE-2026-114938("Java4Shell") · 10월 CPU(2026-11-18)
 
@@ -863,3 +863,26 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 3. 가드 **B-114**: 세 곳이 같은 `nginx:<판>-alpine@sha256:…`(태그만 금지), 판은 1.30.7 · 1.31.9 이상(1.30 아래 갈래는 거절), `nginx.conf` 는 HTTP/1.1 만(`http2` · `quic` · `http3` · `resolver` · `mail` 없음 — 켤 까닭 없이 그 코드 경로를 열지 않는다). 변이 확인: 1.27 태그 · 세 곳 1.30.6 · 세 곳 1.31.8 · 한 곳만 다른 판 · `http2 on` → 실패.
 
 **남은 것**: 배포 — 다음 배포(docs/85 §9)에 함께, 급하면 frontend 만(Actions → deploy). 배포 뒤 `curl -sI https://www.ysyproject.com/` 는 Cloudflare 가 `Server` 를 바꾸므로 판은 파드에서 본다: `kubectl -n ecommerce exec deploy/frontend -- nginx -v` 가 1.30.7. 선택: `server_tokens off`(안쪽 응답의 `Server: nginx/1.30.7` 판 표시 — 바깥은 Cloudflare 가 가린다).
+
+## 22. 보안 남은 일 정리 — 토큰 즉시 폐기 · 복구 코드 · Kafka 신뢰 패키지 외(2026-11-19)
+
+"모든 문서를 통틀은 남은 일" 의 보안 칸 가운데 코드로 끝낼 수 있는 일곱을 했다. 하지 않은 것과 그 까닭은 아래 **남은 것**.
+
+| # | 무엇이 문제였나 | 한 것 | 시험(변이 확인) |
+|---|---|---|---|
+| 1 | **훔친 액세스 토큰이 로그인 해제 뒤에도 최대 15분** — 게이트웨이는 서명 · 만료만 봤다("모든 기기에서 로그아웃" · 비밀번호 변경 · 재설정 · 관리자 잠금 · 탈퇴 · 리프레시 재사용 감지 뒤에도, docs/68 §7 은 "충분하다" 로 두었다) | 게이트웨이가 user-service 가 이미 쓰던 `auth:cutoff:<uid>`(긴 연결용, docs/68 §9)를 읽어 그보다 이른 `iat` 는 401(`JwtAuthorizationGatewayFilterFactory#sessionStillValid`). 인증 요청마다 Redis GET 하나 · 상한 300ms(`GATEWAY_SESSION_CUTOFF_TIMEOUT`), 느리거나 실패하면 통과(만료가 15분 상한), 끄기 `GATEWAY_SESSION_CUTOFF_ENABLED=false`. 화면 문구 "최대 15분 안에" → "곧바로" | gateway `JwtSessionCutoffTest` 4(이른 토큰 401 · 뒤 토큰 통과 · 기록 없음 · Redis 실패/무응답 통과 — 확인을 빼면 실패) |
+| 2 | **2단계 인증 복구 수단이 없다** — 인증 앱을 지우거나 번호를 바꾸면(SMS 는 켤 때의 번호에 묶인다) 비밀번호를 알아도 못 들어온다. 비밀번호 재설정은 2단계 인증을 풀지 않는다 | 복구 코드 10개(`RecoveryCodes`, user V21 `two_factor_recovery_code`): 31글자 × 10자리 · 원문은 만들 때 응답에만(`no-store`), DB 에는 HMAC(파생 키 — `auth.recovery-code.pepper`, 없으면 JWT 비밀; 바꾸면 모든 코드 무효) · 한 번만(쓰지 않은 행만 UPDATE) · 시도는 TOTP · SMS 와 같은 칸 · 만들기 · 쓰기는 주인에게 알림(`recovery-codes-created` · `recovery-code-used`) · 마지막 수단을 끄면 지움 · 탈퇴 때 지움. 만들기는 최근 로그인(10분) 필요. 로그인 2단계에 "복구 코드 사용", 보안 화면에 만들기 · 남은 수 | user `RecoveryCodesTest` 5 · `RecoveryCodeLoginTest` 5 · `RecoveryCodeMigrationTest`(컨테이너) · notification `DeliveryStatusNotificationTest` +1 · 프론트 `RecoveryCodes.test.jsx` 3 · `SignInPage.test.jsx` +2 |
+| 3 | **Kafka JSON 역직렬화가 `addTrustedPackages("*")`**(10곳) — 컨슈머가 헤더(`__TypeId__`)를 따르므로 토픽에 쓸 수 있는 누구든 헤더 하나로 클래스패스의 아무 클래스나 만들게 할 수 있었다(Jackson 가젯의 입구) | 메시지 DTO 패키지(`com.project.common.message.dto.*`)만 — `KafkaTrustedPackages.trustMessageDtos`. 가드 **B-115**(`"*"` 금지 · 헬퍼 10곳 이상) | common `KafkaTrustedPackagesTest` 2 · 가드 1 |
+| 4 | **소셜 로그인은 새 기기를 보지 않았다** — 소셜 계정을 가져간 사람은 "새로운 기기에서 로그인" 알림 없이 들어왔다(docs/44 §4) | `OAuth2SuccessHandler` 가 비밀번호 로그인과 같은 자리(본인 확인 뒤 · 2FA 앞)에서 기기를 기록하고 처음 보는 기기면 알린다. 실패해도 로그인은 계속 | user `OAuth2SuccessHandlerTest` +2 |
+| 5 | **로그인 때는 유출 비밀번호를 보지 않았다** — 가입 · 변경 · 재설정에서만(docs/68 §18). 그 뒤 샌 비밀번호를 쓰는 사람은 알 길이 없었다 | `LoginPasswordAdvisor`: 비밀번호가 **맞은 뒤에만** HIBP(k-익명성) · 흔한 목록을 보고, 걸리면 응답 `passwordAdvice: "breached"` → 화면이 변경을 권한다(**막지 않는다**). "괜찮음" 은 7일 기억(`auth:pw-ok:<uid>`, 해시도 두지 않는다 — 바꾼 비밀번호는 이미 변경 경로에서 통과했다), 확인 못 함은 1시간. 끄기 `auth.breached-password.login-check.enabled=false` | user `LoginPasswordAdvisorTest` 4 · `LoginPasswordAdviceFilterTest` 3(틀린 비밀번호로는 묻지 않는다) · `SignInPage.test.jsx` +1 |
+| 6 | **재설정 링크의 토큰이 주소창 · 방문 기록에 남았다**(docs/57 §19) | 처음 읽은 값을 붙잡고 `history.replaceState` 로 `?token=` 만 지운다 | `ResetPasswordPage.test.jsx` +1 |
+| 7 | **택배 조회 링크에 송장 번호를 글자 그대로 넣었다** — `&` · `#` · `/` 가 링크의 쿼리 · 경로를 바꿨다 | RFC 3986 비예약 문자 밖은 퍼센트 인코딩(`Carrier.trackingUrlFor`) | delivery `CarrierTrackingUrlTest` 3 |
+
+**배포 순서**: notification(새 알림 두 종류 — 옛 notification 은 "새 기기" 문구로 떨어진다)을 user 보다 먼저, user(V21 — 새 표 하나, 되돌리기 안전) · gateway · frontend · 공통 이미지(cart · catalog · coupon · order · pay — 신뢰 패키지). 게이트웨이와 user-service 는 같은 Redis(`REDIS_HOST`, db 0)를 봐야 한다 — 다르면 해제 시각을 못 읽어 예전처럼 15분. 배포 뒤: "모든 기기에서 로그아웃" 뒤 다른 브라우저의 다음 요청이 401 인지, 로그 `로그인 비밀번호가 유출` 수 · 지표 `auth_breached_password_login_advised_total`.
+
+**남은 것(코드만으로는 끝나지 않는다)**:
+- NetworkPolicy egress 허용 목록 — 결제사 · SMS · 메일 · 택배사 · HIBP · DNS 목록을 정한 뒤(잘못 막으면 결제가 멈춘다).
+- 공유 서버 인증서 `tls-keystore`(825일)를 서비스별로 · cert-manager + Reloader(§18), 비밀 관리 도구(SOPS · Sealed Secrets · Vault)와 정기 회전, 개인 키 HSM/KMS — 운영 장비 · 비용 판단.
+- 관리 포트 분리(`management.server.port`) — 프로브 · metrics-agent · 매니페스트 13개를 함께 바꾸는 배포 작업.
+- react-router v7 · jest 30 메이저 판 올림 — 화면 전체 회귀가 필요한 별도 작업.
+- 같은 전화번호를 두 계정이 쓰는 것 — 막을지(가족 공용 번호)부터 정할 일.

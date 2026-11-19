@@ -2,7 +2,8 @@ package com.project.common.security;
 
 /**
  * 긴 연결(채팅 WebSocket · 알림 SSE)을 로그인 해제에 묶는 약속 — user-service 가 쓰고 chat-service · user-service SSE 가 읽는다
- * (user-service docs/68 §9).
+ * (user-service docs/68 §9). 2026-11-19 부터 게이트웨이도 같은 값으로 HTTP 요청의 옛 액세스 토큰을 401 로 거절한다
+ * ({@code JwtAuthorizationGatewayFilterFactory#sessionStillValid}, docs/57 §22).
  *
  * <h3>왜 필요한가</h3>
  *
@@ -26,7 +27,7 @@ package com.project.common.security;
 //      ② ログイン解除時は cutoff を書いて CHANNEL で知らせ、受け手は即座に閉じ、それ以前に発行されたトークンを拒否する。
 public final class SessionRevocation {
 
-    /** 이 사용자의 액세스 토큰 중 {@code iat} 가 이 값(epoch 초)보다 이른 것은 긴 연결에 쓸 수 없다. TTL = 액세스 토큰 수명. */
+    /** 이 사용자의 액세스 토큰 중 {@code iat} 가 이 값(epoch 초)보다 이른 것은 긴 연결 · HTTP(게이트웨이) 모두 쓸 수 없다. TTL = 액세스 토큰 수명. */
     public static final String CUTOFF_KEY_PREFIX = "auth:cutoff:";
 
     /** 로그인 해제 알림 채널(Redis pub/sub). 본문은 사용자 id 숫자 하나 — 토큰 · 이메일은 싣지 않는다. */

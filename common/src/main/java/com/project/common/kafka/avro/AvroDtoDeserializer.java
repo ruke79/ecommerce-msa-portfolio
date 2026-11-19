@@ -41,7 +41,7 @@ public class AvroDtoDeserializer<D> implements Deserializer<D> {
         this.decoder = mapping.decoder();
         // 헤더(__TypeId__)가 있으면 쓰고 없으면 dtoType — 컨슈머 설정들과 같은 규칙(docs/38 §5 A3).
         this.json = new JsonDeserializer<>(mapping.dtoType(), true);
-        this.json.addTrustedPackages("*");
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(this.json);  // B-115: "*" 금지 — 메시지 DTO 패키지만
     }
 
     @Override

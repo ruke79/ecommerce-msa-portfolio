@@ -14,6 +14,7 @@ import AccountWithdrawal from "components/profile/AccountWithdrawal";
 import LoginDevices from "components/profile/LoginDevices";
 import Passkeys from "components/profile/Passkeys";
 import SmsTwoFactor from "components/profile/SmsTwoFactor";
+import RecoveryCodes from "components/profile/RecoveryCodes";
 import SignOutEverywhere from "components/profile/SignOutEverywhere";
 import toast from "react-hot-toast";
 import tokenUtil from "util/tokenUtil";
@@ -177,6 +178,9 @@ const Security = () => {
                     {/* SMS 2단계 인증 — 위에서 인증한 번호로 받는다(user-service docs/24 §10). 예전에는 notification 의
                         설정에 "2단계 인증" 값만 있고 로그인이 그것을 읽지 않았다. */}
                     <SmsTwoFactor />
+
+                    {/* 복구 코드 — 인증 앱 · 휴대폰을 잃었을 때(docs/57 §22). 2단계 인증이 켜져 있을 때만 보인다. */}
+                    <RecoveryCodes />
 
                     {/* 로그인 기기. "새로운 기기에서 로그인되었습니다" 알림을 받은
                         사용자가 갈 곳이다 — 알림만 있고 확인할 화면이 없으면 정말

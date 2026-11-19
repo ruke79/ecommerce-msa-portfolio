@@ -47,6 +47,8 @@ class OAuth2SuccessHandlerTest {
     @Mock private UserRepository userRepository;
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
+    @Mock private com.project.userservice.service.DeviceRecognitionService deviceRecognitionService;
+    @Mock private com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
 
     @InjectMocks private OAuth2SuccessHandler handler;
 
@@ -82,6 +84,49 @@ class OAuth2SuccessHandlerTest {
                     return c;
                 });
         when(jwtUtils.refreshTokenLifetime()).thenReturn(java.time.Duration.ofDays(1));
+    }
+
+    private static final com.project.userservice.model.KnownDevice DEVICE =
+            com.project.userservice.model.KnownDevice.builder().userId(42L).label("Chrome").build();
+
+    private void deviceIs(boolean newDevice) {
+        when(deviceRecognitionService.recognize(eq(42L), any(), any(), any())).thenReturn(
+                new com.project.userservice.service.DeviceRecognitionService.Recognition(DEVICE, "device-token", newDevice));
+        RefreshToken token = mock(RefreshToken.class);
+        when(token.getToken()).thenReturn("refresh-token");
+        when(refreshTokenService.createRefreshToken(42L)).thenReturn(token);
+    }
+
+    /**
+     * 🔴 소셜 로그인도 새 기기면 알린다(docs/57 §22 · docs/44 §4) — 🐛 예전에는 기기를 보지 않아 소셜 계정을 가져간 사람이
+     * 알림 없이 들어왔다. 2FA 계정도 알린다(본인 확인은 이미 끝났다 — 비밀번호 경로와 같은 자리).
+     */
+    @Test
+    @DisplayName("🔴 새 기기: 기기 쿠키를 심고 새 기기 알림을 보낸다 — 2FA 계정도")
+    void newDeviceIsRecordedAndAlerted() throws Exception {
+        deviceIs(true);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, auth("kim@example.com"));
+        assertEquals("device-token", response.getCookie(com.project.userservice.security.DeviceIdentity.COOKIE_NAME).getValue());
+        verify(securityAlertProducer).publishNewDevice(42L, "kim@example.com", DEVICE);
+
+        user.setTwoFactorEnabled(true);
+        when(pendingTwoFactor.issue(42L)).thenReturn("pending-token");
+        handler.onAuthenticationSuccess(new MockHttpServletRequest(), new MockHttpServletResponse(), auth("kim@example.com"));
+        verify(securityAlertProducer, times(2)).publishNewDevice(42L, "kim@example.com", DEVICE);
+    }
+
+    @Test
+    @DisplayName("아는 기기 · 첫 기기는 알리지 않고, 기록이 실패해도 로그인은 계속한다")
+    void knownDeviceIsQuietAndFailureDoesNotBlock() throws Exception {
+        deviceIs(false);
+        handler.onAuthenticationSuccess(new MockHttpServletRequest(), new MockHttpServletResponse(), auth("kim@example.com"));
+        verify(securityAlertProducer, never()).publishNewDevice(anyLong(), anyString(), any());
+
+        when(deviceRecognitionService.recognize(eq(42L), any(), any(), any())).thenThrow(new IllegalStateException("db"));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, auth("kim@example.com"));
+        assertNotNull(response.getCookie("REFRESH"));
     }
 
     @Test

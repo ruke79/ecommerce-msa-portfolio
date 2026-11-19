@@ -39,6 +39,9 @@ public class NotificationEventListener {
     static final String ALERT_2FA_DISABLED = "2fa-disabled";
     // 로그인 보안 2차(user-service docs/68 §15) — SecurityAlertProducer 의 같은 이름 상수와 값이 같아야 한다.
     static final String ALERT_2FA_FAILURES = "2fa-failures";
+    /** 2단계 인증 복구 코드 — 새로 만듦 · 로그인에 씀(user-service SecurityAlertProducer 와 같은 값). */
+    static final String ALERT_RECOVERY_CODES_CREATED = "recovery-codes-created";
+    static final String ALERT_RECOVERY_CODE_USED = "recovery-code-used";
     static final String ALERT_PASSWORD_RESET = "password-reset";
     static final String ALERT_SOCIAL_LINKED = "social-linked";
     static final String ALERT_UNPROVEN_PASSWORD_CLEARED = "unproven-password-cleared";
@@ -431,6 +434,12 @@ public class NotificationEventListener {
                 } else if (ALERT_PASSKEY_REMOVED.equals(alert)) {
                     title = NotificationTexts.PASSKEY_REMOVED_TITLE;
                     body = NotificationTexts.PASSKEY_REMOVED_BODY;
+                } else if (ALERT_RECOVERY_CODES_CREATED.equals(alert)) {
+                    title = NotificationTexts.RECOVERY_CODES_CREATED_TITLE;
+                    body = NotificationTexts.RECOVERY_CODES_CREATED_BODY;
+                } else if (ALERT_RECOVERY_CODE_USED.equals(alert)) {
+                    title = NotificationTexts.RECOVERY_CODE_USED_TITLE;
+                    body = NotificationTexts.RECOVERY_CODE_USED_BODY;
                 } else {
                     title = NotificationTexts.SECURITY_TITLE;
                     body = NotificationTexts.securityBody(textOf(event, "deviceLabel"), textOf(event, "maskedIp"));

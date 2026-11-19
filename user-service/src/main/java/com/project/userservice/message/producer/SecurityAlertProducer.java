@@ -158,6 +158,9 @@ public class SecurityAlertProducer {
     /** 패스키를 새로 등록했다 · 지웠다(docs/68 §20) — 본인이 한 일이 아니면 누군가 세션을 쓰고 있다. */
     public static final String ALERT_PASSKEY_ADDED = "passkey-added";
     public static final String ALERT_PASSKEY_REMOVED = "passkey-removed";
+    /** 2단계 인증 복구 코드를 새로 만들었다 · 로그인에 썼다(docs/57 §22) — notification 의 같은 이름 상수와 짝. */
+    public static final String ALERT_RECOVERY_CODES_CREATED = "recovery-codes-created";
+    public static final String ALERT_RECOVERY_CODE_USED = "recovery-code-used";
 
     /**
      * 2단계 인증을 켜거나 껐다고 알린다(docs/68 §14). 본인이 한 일이 아니면 세션을 누군가 쓰고 있다는 신호다 — 수신 설정과 무관하게 나간다.

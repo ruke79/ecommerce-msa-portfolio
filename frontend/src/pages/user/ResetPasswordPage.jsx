@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import BrandMark from "components/common/BrandMark";
@@ -25,9 +25,24 @@ const MIN_LENGTH = 6;
 
 const ResetPasswordPage = () => {
     const [searchParams] = useSearchParams();
-    const token = searchParams.get("token");
+    // 처음 읽은 값을 붙잡아 둔다 — 아래에서 주소창의 토큰을 지운다. [JA] 最初の値を保持する(下でアドレスバーから消す)。
+    const [token] = useState(() => searchParams.get("token"));
     const navigate = useNavigate();
     const { t } = useTranslation();
+
+    /**
+     * 주소창 · 방문 기록에서 토큰을 지운다(docs/57 §22). 🐛 예전에는 {@code ?token=…} 이 남아 같은 기기를 쓰는 사람이 방문 기록에서,
+     * 화면 공유 · 스크린샷에서 아직 쓰지 않은 재설정 자격증명(계정을 가져갈 수 있다)을 볼 수 있었다.
+     * 라우터는 replaceState 를 듣지 않으므로 화면은 그대로다.
+     * [JA] アドレスバー · 履歴からトークンを消す。以前は ?token=… が残り、未使用の再設定資格情報が履歴やスクリーンショットから見えた。
+     */
+    useEffect(() => {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has("token")) {
+            url.searchParams.delete("token");
+            window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+        }
+    }, []);
 
     const [password, setPassword] = useState("");
     const [confirm, setConfirm] = useState("");

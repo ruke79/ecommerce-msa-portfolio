@@ -63,6 +63,19 @@ public class JwtAuthorizationGatewayFilterFactory
     @Value("${spring.app.jwtAcceptLegacy:true}")
     private boolean jwtAcceptLegacy = true;
 
+    /**
+     * 로그인 해제 시각 확인(docs/68 §7 · docs/57 §22) — 끄면 예전처럼 서명 · 만료만 본다. [JA] ログイン解除時刻の確認 — 切ると以前どおり。
+     */
+    @Value("${gateway.session-cutoff.enabled:true}")
+    private boolean sessionCutoffEnabled = true;
+
+    /** Redis 조회 상한 — 넘으면 막지 않고 보낸다(유입 제한과 같은 1초 아래, B-84). [JA] Redis 照会の上限 — 超えたら通す。 */
+    @Value("${gateway.session-cutoff.timeout:300ms}")
+    private java.time.Duration sessionCutoffTimeout = java.time.Duration.ofMillis(300);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.data.redis.core.ReactiveStringRedisTemplate redis;
+
     private volatile String ringSource;
     private volatile com.project.common.security.JwtKeyRing ring;
 
@@ -132,8 +145,42 @@ public class JwtAuthorizationGatewayFilterFactory
             if (role != null) {
                 mutated.header("User-Role", role.toString());
             }
-            return chain.filter(exchange.mutate().request(mutated.build()).build());
+            ServerWebExchange forwarded = exchange.mutate().request(mutated.build()).build();
+            return sessionStillValid(uid, claims).flatMap(valid -> valid
+                    ? chain.filter(forwarded)
+                    : unauthorized(exchange, "session revoked", relogin(exchange)));
         };
+    }
+
+    /**
+     * 로그인 해제 뒤의 액세스 토큰을 거절한다 — {@code auth:cutoff:<uid>}(user-service 가 "모든 기기에서 로그아웃" · 비밀번호 변경 ·
+     * 재설정 · 관리자 잠금 · 탈퇴 · 리프레시 재사용 감지 때 쓴다) 보다 이른 {@code iat} 는 401.
+     *
+     * <p>🐛 예전에는 게이트웨이가 서명 · 만료만 봐서, 훔친 액세스 토큰은 그 사건들 뒤에도 수명(최대 15분)까지 주문 · 결제 · 개인정보 API 에
+     * 통했다(docs/68 §7 — "15분이면 충분" 이라 두었던 것). 긴 연결(채팅 · 알림)은 이미 같은 값으로 즉시 끊었다(docs/68 §9).
+     * 비용: 인증 요청마다 Redis GET 하나(키가 없으면 빈 값 — 대부분). Redis 가 느리거나 죽으면 막지 않는다 — 전체 장애로 키우지 않고,
+     * 만료가 여전히 15분 상한을 건다. 이 기기의 새 토큰(재발급 · 갱신)은 iat ≥ 해제 시각이라 통한다.
+     *
+     * <p>[JA] ログイン解除後のアクセストークンを拒否する — auth:cutoff より早い iat は 401。以前は署名 · 期限だけで、盗まれたトークンが
+     * 最大 15 分通った。Redis が遅い · 落ちているときは通す(全体障害にしない、期限が 15 分の上限)。
+     */
+    Mono<Boolean> sessionStillValid(Long uid, Claims claims) {
+        if (!sessionCutoffEnabled || redis == null) {
+            return Mono.just(true);
+        }
+        java.util.Date issuedAt = claims.getIssuedAt();
+        if (issuedAt == null) {
+            return Mono.just(true);   // iat 없는 토큰은 만들지 않는다(JwtUtils) — 모르는 모양 때문에 모두를 막지 않는다
+        }
+        long iat = issuedAt.getTime() / 1000;
+        return redis.opsForValue().get(com.project.common.security.SessionRevocation.cutoffKey(uid))
+                .map(cutoff -> com.project.common.security.SessionRevocation.allowed(cutoff, iat))
+                .defaultIfEmpty(true)
+                .timeout(sessionCutoffTimeout)
+                .onErrorResume(e -> {
+                    log.debug("로그인 해제 시각을 읽지 못해 통과 — {}", e.getClass().getSimpleName());
+                    return Mono.just(true);
+                });
     }
 
     private static String bearer(ServerHttpRequest request) {

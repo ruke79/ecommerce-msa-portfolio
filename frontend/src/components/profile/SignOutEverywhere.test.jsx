@@ -11,7 +11,7 @@ jest.mock("util/api");
  * 모든 기기에서 로그아웃(user-service docs/68 §8).
  *
  * <p>알림을 받은 사용자가 실제로 다른 기기를 끊을 수 있는 곳이다. 이 기기도 로그아웃되므로 두 번 누르게 하고,
- * 결과(다른 기기는 최대 15분 안에)를 정직하게 말한다.
+ * 결과(다른 기기도 곧바로)를 정직하게 말한다.
  */
 describe("모든 기기에서 로그아웃", () => {
   afterEach(() => jest.clearAllMocks());
@@ -25,12 +25,15 @@ describe("모든 기기에서 로그아웃", () => {
     expect(screen.getByText(/이 기기를 포함한/)).toBeInTheDocument();
   });
 
-  /** 🔴 "즉시" 라고 쓰면 거짓말이다 — 다른 기기의 액세스 토큰은 수명까지 유효하다. */
+  /**
+   * 다른 기기가 언제 끊기는지 정직하게 말한다 — 게이트웨이가 해제 시각 전의 토큰을 거절하므로 곧바로(docs/57 §22).
+   * 예전 "최대 15분 안에" 는 게이트웨이가 서명만 보던 때의 문구다.
+   */
   it("다른 기기가 언제 끊기는지 정직하게 말한다", async () => {
     render(withI18n(<SignOutEverywhere />));
     await userEvent.click(screen.getByRole("button", { name: "모든 기기에서 로그아웃" }));
 
-    expect(screen.getByText(/최대 15분 안에/)).toBeInTheDocument();
+    expect(screen.getByText(/다른 기기도 곧바로/)).toBeInTheDocument();
   });
 
   it("확인하면 끊고, 이 기기를 로그아웃시킨다", async () => {

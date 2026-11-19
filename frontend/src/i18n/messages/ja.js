@@ -84,6 +84,7 @@ const ja = {
     // ログイン成功後にサーバーがコードで知らせる結果。サーバーは表示言語を知らないため
     // 文言はここで選ぶ(LoginResponse のコメント参照)。
     "auth.signin.result.login_success": "ログインしました。",
+    "auth.signin.password_breached": "このパスワードは他のサイトで漏えいしたパスワードの一覧にあります。マイページ › セキュリティでパスワードを変更してください。",
     "auth.signin.result.multi_login":
         "他の端末でログインしていたため、以前の接続を終了しました。",
 

@@ -477,9 +477,8 @@ public class UserServiceImpl implements UserService {
      * 남는다 — 비밀번호를 바꾼 의미가 사라진다.
      *
      * <p>{@code passwordChangedAt} 보다 <b>먼저 발급된</b> 리프레시 토큰이 거절되는 방식이다
-     * ({@code RefreshTokenController}). 액세스 토큰은 서명만으로 검증되므로 남은 수명
-     * (기본 15분) 동안은 살아 있다 — 그 뒤 갱신이 막혀 로그아웃된다. 완전한 즉시 차단은
-     * 모든 요청마다 DB 를 보는 구조라야 가능하고, 그 비용은 이 서비스에 맞지 않는다.
+     * ({@code RefreshTokenController}). 이미 가진 액세스 토큰은 호출부의 {@code revokeAll} 이 쓰는
+     * 로그인 해제 시각으로 게이트웨이가 곧바로 거절한다(2026-11-19, docs/57 §22 — 그 전에는 남은 수명 15분 동안 살아 있었다).
      */
     /** 가입과 같은 길이(SignupRequest @Size(min = 6, max = 40)). */
     static final int PASSWORD_MIN = 6;

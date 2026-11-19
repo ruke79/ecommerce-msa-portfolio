@@ -64,6 +64,8 @@ public class AuthController {
 
     /** 로그인 2단계의 두 번째 수단 — SMS(docs/24 §10). */
     private final com.project.userservice.security.SmsTwoFactor smsTwoFactor;
+    /** 2단계 인증 복구 코드(docs/57 §22). */
+    private final com.project.userservice.security.recovery.RecoveryCodes recoveryCodes;
 
     /** 위험 기반 로그인의 메일 확인(docs/68 §19). */
     private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
@@ -96,9 +98,11 @@ public class AuthController {
             com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard,
             com.project.userservice.service.DeviceRecognitionService deviceRecognitionService,
             com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer,
-            com.project.userservice.security.SmsTwoFactor smsTwoFactor
+            com.project.userservice.security.SmsTwoFactor smsTwoFactor,
+            com.project.userservice.security.recovery.RecoveryCodes recoveryCodes
             ) {
         this.smsTwoFactor = smsTwoFactor;
+        this.recoveryCodes = recoveryCodes;
         this.segmentService = segmentService;
         this.pendingTwoFactor = pendingTwoFactor;
         this.loginRiskGuard = loginRiskGuard;
@@ -181,7 +185,9 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요."));
         }
-        return ResponseEntity.ok(Map.of("totp", user.isTwoFactorEnabled(), "sms", user.isSmsTwoFactorEnabled()));
+        // recovery — 쓰지 않은 복구 코드가 있는가(개수는 싣지 않는다, docs/57 §22).
+        return ResponseEntity.ok(Map.of("totp", user.isTwoFactorEnabled(), "sms", user.isSmsTwoFactorEnabled(),
+                "recovery", recoveryCodes != null && recoveryCodes.remaining(user.getUserId()) > 0));
     }
 
     /**
@@ -228,9 +234,10 @@ public class AuthController {
             HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response) {
 
         String pending = pendingCookie(request);
-        // 수단 — totp(기본, 옛 화면) · sms(docs/24 §10). 모르는 값은 TOTP 로 읽지 않는다.
+        // 수단 — totp(기본, 옛 화면) · sms(docs/24 §10) · recovery(복구 코드, docs/57 §22). 모르는 값은 TOTP 로 읽지 않는다.
         boolean sms = "sms".equals(method);
-        if (!sms && !"totp".equals(method)) {
+        boolean recovery = "recovery".equals(method);
+        if (!sms && !recovery && !"totp".equals(method)) {
             return ResponseEntity.badRequest().body(Map.of("message", "알 수 없는 인증 수단입니다."));
         }
         // 만료(5분)·위조·부재·시도 초과를 구분해 알려주지 않는다 — 어차피 처음부터 다시 하면 된다.
@@ -241,14 +248,19 @@ public class AuthController {
         User user = userId == null ? null : userRepository.findById(userId).orElse(null);
         // 코드를 받는 사이(최대 5분) 막힌 계정이면 세션을 주지 않는다 — 🐛 예전에는 계정 상태를 보지 않았다.
         // 그 수단이 켜져 있어야 한다 — SMS 만 켠 계정에 TOTP 로, TOTP 만 켠 계정에 SMS 로 들어오지 못한다.
-        if (user == null || !(sms ? user.isSmsTwoFactorEnabled() : user.isTwoFactorEnabled()) || !user.canSignIn()) {
+        // 복구 코드는 어느 수단이든 켜져 있으면 쓸 수 있다(그 수단을 잃었을 때 쓰는 것이다).
+        boolean methodOn = recovery ? user != null && user.requiresTwoFactor()
+                : user != null && (sms ? user.isSmsTwoFactorEnabled() : user.isTwoFactorEnabled());
+        if (user == null || !methodOn || !user.canSignIn()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
         }
 
         // 사용자별 한도(docs/68 §15) — 대기 토큰의 5번은 비밀번호로 다시 로그인하면 새로 생겼다. 막혔으면 맞는 코드도 받지 않는다.
         // 두 수단이 같은 칸을 쓴다(SmsTwoFactor) — 수단을 바꿔 가며 한도를 두 배로 쓰지 못한다.
         // [JA] ユーザー単位の上限 — 待機トークンの 5 回は再ログインで新しく生まれていた。止まっていれば正しいコードも受けない。
-        UserService.TwoFactorChange checked = sms
+        UserService.TwoFactorChange checked = recovery
+                ? recoveryCodes.verifyLogin(user, code)
+                : sms
                 ? smsTwoFactor.verifyLogin(user, code)
                 : (code != null && code.matches("\\d{6}")
                         ? userService.verifyLoginTwoFactor(user.getUserId(), Integer.parseInt(code))
@@ -848,7 +860,37 @@ public class AuthController {
     @PostMapping("/disable-2fa")
     public ResponseEntity<String> disable2FA(@RequestParam int code) {
         Long userId = authUtil.loggedInUserId();
-        return twoFactorResponse(userService.disable2FA(userId, code), "2FA disabled");
+        UserService.TwoFactorChange result = userService.disable2FA(userId, code);
+        forgetRecoveryCodesIfOff(result, userId);
+        return twoFactorResponse(result, "2FA disabled");
+    }
+
+    /** 마지막 수단을 껐으면 복구 코드도 지운다 — 다시 켰을 때 옛 코드가 되살아나지 않게(docs/57 §22). */
+    private void forgetRecoveryCodesIfOff(UserService.TwoFactorChange result, Long userId) {
+        if (result == UserService.TwoFactorChange.OK && recoveryCodes != null) {
+            userRepository.findById(userId).ifPresent(recoveryCodes::forgetIfNoTwoFactor);
+        }
+    }
+
+    /**
+     * 2단계 인증 복구 코드를 새로 만든다(docs/57 §22) — 옛 코드는 모두 무효, 원문은 이 응답에만. 최근 로그인 필요(훔친 세션으로 코드를
+     * 받아 가 2단계 인증을 건너뛰지 못하게 — 켜기와 같은 창). 2단계 인증이 하나도 켜져 있지 않으면 409.
+     * [JA] リカバリーコードを新しく作る — 古いコードは全て無効、原文はこの応答だけ。直近のログインが必要。2FA がなければ 409。
+     */
+    @PostMapping("/2fa/recovery-codes")
+    public ResponseEntity<?> regenerateRecoveryCodes(
+            @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {
+        if (!recentlyAuthenticated(refresh)) {
+            return twoFactorReauthRequired();
+        }
+        User user = authUtil.loggedInUser();
+        if (user == null || !user.requiresTwoFactor()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("code", "two_factor_off",
+                    "message", "2단계 인증을 먼저 켜 주세요."));
+        }
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(Map.of("codes", recoveryCodes.regenerate(user)));
     }
 
     @PostMapping("/verify-2fa")
@@ -913,7 +955,10 @@ public class AuthController {
     // [JA] SMS 手段を無効にする — 有効化時の番号で受けた今のコードが必要。
     @PostMapping("/sms-2fa/disable")
     public ResponseEntity<String> disableSmsTwoFactor(@RequestParam String code) {
-        return twoFactorResponse(smsTwoFactor.disable(authUtil.loggedInUserId(), code), "SMS 2FA disabled");
+        Long userId = authUtil.loggedInUserId();
+        UserService.TwoFactorChange result = smsTwoFactor.disable(userId, code);
+        forgetRecoveryCodesIfOff(result, userId);
+        return twoFactorResponse(result, "SMS 2FA disabled");
     }
 
     @GetMapping("/user/2fa-status")
@@ -921,8 +966,10 @@ public class AuthController {
         User user = authUtil.loggedInUser();
         if (user != null) {
             // smsEnabled — 두 번째 수단(docs/24 §10). is2faEnabled 는 예전 그대로 TOTP 다(옛 화면이 읽는다).
+            // recoveryCodesRemaining — 쓰지 않은 복구 코드 수(docs/57 §22).
             return ResponseEntity.ok().body(Map.of("is2faEnabled", user.isTwoFactorEnabled(),
-                    "smsEnabled", user.isSmsTwoFactorEnabled()));
+                    "smsEnabled", user.isSmsTwoFactorEnabled(),
+                    "recoveryCodesRemaining", recoveryCodes == null ? 0 : recoveryCodes.remaining(user.getUserId())));
         } else {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(StatusMessages.USER_NOT_FOUND);

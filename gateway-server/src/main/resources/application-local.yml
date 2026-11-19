@@ -577,6 +577,14 @@ spring:
       #   username: 
       #   password: 
 
+# 로그인 해제 뒤의 액세스 토큰을 HTTP 에서도 바로 401(JwtAuthorizationGatewayFilterFactory#sessionStillValid, docs/57 §22) —
+# user-service 가 쓰는 auth:cutoff:<uid> 보다 이른 iat 를 거절한다. Redis 가 이 상한을 넘기거나 실패하면 막지 않는다(만료가 15분 상한).
+# [JA] ログイン解除後のアクセストークンを HTTP でもすぐ 401。Redis が上限を超える · 失敗するときは通す。
+gateway:
+  session-cutoff:
+    enabled: ${GATEWAY_SESSION_CUTOFF_ENABLED:true}
+    timeout: ${GATEWAY_SESSION_CUTOFF_TIMEOUT:300ms}
+
 resilience4j:
   # 동시 호출 상한(벌크헤드) — 회로 차단기 이름(라우트의 CircuitBreaker name)마다, 게이트웨이 파드마다 하나.
   # 🐛 예전에는 이 항목이 없어 Spring Cloud CircuitBreaker 가 resilience4j-bulkhead 의 기본값(동시 25 · 대기 0)을 그대로 썼다 —

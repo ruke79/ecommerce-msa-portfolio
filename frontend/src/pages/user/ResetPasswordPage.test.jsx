@@ -45,6 +45,25 @@ describe("비밀번호 재설정 화면", () => {
      * 🔴 토큰을 <b>바디로</b> 보낸다. 쿼리스트링은 nginx 액세스 로그·프록시·브라우저
      * 히스토리에 남는데, 이 토큰은 그 자체로 계정을 가져갈 수 있는 자격증명이다.
      */
+    /**
+     * 🔴 주소창 · 방문 기록에서 토큰을 지운다(docs/57 §22) — 지운 뒤에도 보내는 값은 처음 읽은 토큰이다.
+     * [JA] アドレスバー · 履歴からトークンを消す — 消した後も送るのは最初に読んだトークン。
+     */
+    it("🔴 주소창의 토큰을 지우고, 지운 뒤에도 처음 토큰으로 보낸다", async () => {
+        window.history.pushState({}, "", "/reset-password?token=TOK&lang=ja");
+        renderAt("?token=TOK");
+
+        expect(window.location.search).toBe("?lang=ja");
+        await fill("newpw123");
+        await waitFor(() =>
+            expect(postRequest).toHaveBeenCalledWith(
+                "/user-service/api/auth/public/reset-password",
+                { token: "TOK", newPassword: "newpw123" }
+            )
+        );
+        window.history.pushState({}, "", "/");
+    });
+
     it("🔴 주소의 토큰을 바디에 담아 보낸다", async () => {
         renderAt("?token=TOK");
 

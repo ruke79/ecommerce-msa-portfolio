@@ -52,7 +52,7 @@ public class KafkaConsumerConfig {
     public ConsumerFactory<String, PaymentRequest> paymentRequestConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 PaymentRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
         JsonDeserializer<PaymentRequest> deserializer = new JsonDeserializer<>(PaymentRequest.class, true);
-        deserializer.addTrustedPackages("*");
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)

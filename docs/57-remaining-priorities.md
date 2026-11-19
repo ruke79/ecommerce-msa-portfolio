@@ -822,7 +822,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 **Font Awesome の CSS を cdnjs から SRI なしで読んでいた** — アイコンはチャットの 3 つだけだった。同じ Font Awesome 5 のアイコンを `react-icons/fa`(SVG)に替え、外部オリジンをなくした(`indexHtml.test.js` — 外部の `link`・`script` 0、`fas fa-` 0)。
 
-残り: 再設定リンクの `?token=` を読んだ後にアドレスバーから消す、配送照会 URL の送り状番号のエンコード、react-router v7・jest 30 のメジャー更新(残る npm 勧告 7 件 — 開発ツール・すでに防いだもの)。
+残り: ~~再設定リンクの `?token=` を読んだ後にアドレスバーから消す、配送照会 URL の送り状番号のエンコード~~(2026-11-19 完了 — §22)、react-router v7・jest 30 のメジャー更新(残る npm 勧告 7 件 — 開発ツール・すでに防いだもの)。
 
 ## 20. JRE のセキュリティ修正 — CVE-2026-114938（「Java4Shell」）· 10 月 CPU（2026-11-18）
 
@@ -862,3 +862,26 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 3. ガード **B-114**: 三か所が同じ `nginx:<版>-alpine@sha256:…`（タグだけは禁止）、版は 1.30.7 · 1.31.9 以上（1.30 より前の系列は拒否）、`nginx.conf` は HTTP/1.1 だけ（`http2` · `quic` · `http3` · `resolver` · `mail` なし — 理由なくそのコードの経路を開かない）。変異の確認: 1.27 タグ · 三か所 1.30.6 · 三か所 1.31.8 · 一か所だけ違う版 · `http2 on` → 失敗。
 
 **残り**: デプロイ — 次のデプロイ（docs/85 §9）と一緒に、急ぐなら frontend だけ（Actions → deploy）。デプロイ後、`curl -sI https://www.ysyproject.com/` は Cloudflare が `Server` を書き換えるので版は Pod で見る: `kubectl -n ecommerce exec deploy/frontend -- nginx -v` が 1.30.7。任意: `server_tokens off`（内側の応答の `Server: nginx/1.30.7` の版表示 — 外は Cloudflare が隠す）。
+
+## 22. セキュリティの残りの整理 — トークンの即時失効 · リカバリーコード · Kafka 信頼パッケージほか（2026-11-19）
+
+「すべての文書を通した残りの作業」のセキュリティ欄のうち、コードで終えられる七つを行った。しなかったものとその理由は下の **残り**。
+
+| # | 何が問題だったか | したこと | テスト（変異確認） |
+|---|---|---|---|
+| 1 | **盗まれたアクセストークンがログイン解除後も最大 15 分** — ゲートウェイは署名 · 期限だけを見ていた（「すべての端末からログアウト」· パスワード変更 · 再設定 · 管理者ロック · 退会 · リフレッシュ再利用検知の後も。docs/68 §7 は「十分」としていた） | ゲートウェイが user-service の書いていた `auth:cutoff:<uid>`（長い接続用、docs/68 §9）を読み、それより早い `iat` は 401（`JwtAuthorizationGatewayFilterFactory#sessionStillValid`）。認証リクエストごとに Redis GET 一つ · 上限 300ms（`GATEWAY_SESSION_CUTOFF_TIMEOUT`）、遅い · 失敗なら通す（期限が 15 分の上限）、無効化 `GATEWAY_SESSION_CUTOFF_ENABLED=false`。画面の文言「最大 15 分以内」→「すぐに」 | gateway `JwtSessionCutoffTest` 4（早いトークン 401 · 後のトークンは通過 · 記録なし · Redis 失敗/無応答は通過 — 確認を外すと失敗） |
+| 2 | **二段階認証の復旧手段がない** — 認証アプリを消すか番号を変えると（SMS は有効化時の番号に結束）、パスワードを知っていても入れない。パスワード再設定は二段階認証を解かない | リカバリーコード 10 個（`RecoveryCodes`、user V21 `two_factor_recovery_code`）: 31 文字 × 10 桁 · 原文は作成時の応答だけ（`no-store`）、DB には HMAC（派生鍵 — `auth.recovery-code.pepper`、なければ JWT 秘密。変えると全コード無効）· 一度だけ（未使用の行だけ UPDATE）· 試行は TOTP · SMS と同じ枠 · 作成 · 使用は持ち主に通知（`recovery-codes-created` · `recovery-code-used`）· 最後の手段を無効にすると削除 · 退会時に削除。作成には直近のログイン（10 分）が必要。ログイン二段階目に「リカバリーコードを使う」、セキュリティ画面に作成 · 残り数 | user `RecoveryCodesTest` 5 · `RecoveryCodeLoginTest` 5 · `RecoveryCodeMigrationTest`（コンテナ）· notification `DeliveryStatusNotificationTest` +1 · フロント `RecoveryCodes.test.jsx` 3 · `SignInPage.test.jsx` +2 |
+| 3 | **Kafka JSON デシリアライズが `addTrustedPackages("*")`**（10 か所）— コンシューマーがヘッダー（`__TypeId__`）に従うので、トピックに書ける誰でもヘッダー一つでクラスパス上の任意のクラスを作らせられた（Jackson ガジェットの入口） | メッセージ DTO パッケージ（`com.project.common.message.dto.*`）だけ — `KafkaTrustedPackages.trustMessageDtos`。ガード **B-115**（`"*"` 禁止 · ヘルパー 10 か所以上） | common `KafkaTrustedPackagesTest` 2 · ガード 1 |
+| 4 | **ソーシャルログインは新しい端末を見ていなかった** — ソーシャルアカウントを奪った人は「新しい端末からのログイン」通知なしに入れた（docs/44 §4） | `OAuth2SuccessHandler` がパスワードログインと同じ位置（本人確認の後 · 2FA の前）で端末を記録し、初めての端末なら知らせる。失敗してもログインは続く | user `OAuth2SuccessHandlerTest` +2 |
+| 5 | **ログイン時には漏えいパスワードを見ていなかった** — 登録 · 変更 · 再設定だけ（docs/68 §18）。その後に漏れたパスワードを使う人は知る術がなかった | `LoginPasswordAdvisor`: パスワードが**合った後だけ** HIBP（k-匿名性）· ありふれた一覧を見て、該当すれば応答 `passwordAdvice: "breached"` → 画面が変更を勧める（**止めない**）。「問題なし」は 7 日記憶（`auth:pw-ok:<uid>`、ハッシュも置かない — 変えたパスワードは変更経路で通過済み）、確認できないときは 1 時間。無効化 `auth.breached-password.login-check.enabled=false` | user `LoginPasswordAdvisorTest` 4 · `LoginPasswordAdviceFilterTest` 3（間違ったパスワードでは問い合わせない）· `SignInPage.test.jsx` +1 |
+| 6 | **再設定リンクのトークンがアドレスバー · 履歴に残った**（docs/57 §19） | 最初に読んだ値を保持し、`history.replaceState` で `?token=` だけ消す | `ResetPasswordPage.test.jsx` +1 |
+| 7 | **配送追跡リンクに送り状番号をそのまま入れていた** — `&` · `#` · `/` がリンクのクエリ · パスを変えた | RFC 3986 の非予約文字以外はパーセントエンコード（`Carrier.trackingUrlFor`） | delivery `CarrierTrackingUrlTest` 3 |
+
+**デプロイ順**: notification（新しい通知二種類 — 古い notification は「新しい端末」の文言に落ちる）を user より先に、user（V21 — 新しい表一つ、戻しても安全）· gateway · frontend · 共通イメージ（cart · catalog · coupon · order · pay — 信頼パッケージ）。ゲートウェイと user-service は同じ Redis（`REDIS_HOST`、db 0）を見る必要がある — 違えば解除時刻を読めず以前どおり 15 分。デプロイ後: 「すべての端末からログアウト」の後、別のブラウザの次のリクエストが 401 か、ログ `로그인 비밀번호가 유출` の数 · 指標 `auth_breached_password_login_advised_total`。
+
+**残り（コードだけでは終わらない）**:
+- NetworkPolicy の egress 許可リスト — 決済 · SMS · メール · 配送会社 · HIBP · DNS の一覧を決めてから（誤って止めると決済が止まる）。
+- 共有サーバー証明書 `tls-keystore`（825 日）をサービスごとに · cert-manager + Reloader（§18）、秘密管理ツール（SOPS · Sealed Secrets · Vault）と定期ローテーション、秘密鍵の HSM/KMS — 本番機材 · コストの判断。
+- 管理ポートの分離（`management.server.port`）— プローブ · metrics-agent · マニフェスト 13 個を一緒に変えるデプロイ作業。
+- react-router v7 · jest 30 のメジャーアップ — 画面全体の回帰が必要な別作業。
+- 同じ電話番号を二つのアカウントが使うこと — 止めるか（家族共用の番号）から決めること。

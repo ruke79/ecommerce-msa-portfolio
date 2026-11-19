@@ -72,7 +72,7 @@ public class KafkaConsumerConfig {
     public ConsumerFactory<String, UserCreatedRequest> userCreatedConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 UserCreatedRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
         JsonDeserializer<UserCreatedRequest> deserializer = new JsonDeserializer<>(UserCreatedRequest.class, true);
-        deserializer.addTrustedPackages("*");
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -109,7 +109,7 @@ public class KafkaConsumerConfig {
     public ConsumerFactory<String, CouponRollbackRequest> couponRollbackConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 CouponRollbackRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
         JsonDeserializer<CouponRollbackRequest> deserializer = new JsonDeserializer<>(CouponRollbackRequest.class, true);
-        deserializer.addTrustedPackages("*");
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -146,7 +146,7 @@ public class KafkaConsumerConfig {
     public ConsumerFactory<String, PaymentResponse> paymentResponseConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 PaymentResponse 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
         JsonDeserializer<PaymentResponse> deserializer = new JsonDeserializer<>(PaymentResponse.class, true);
-        deserializer.addTrustedPackages("*");
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)

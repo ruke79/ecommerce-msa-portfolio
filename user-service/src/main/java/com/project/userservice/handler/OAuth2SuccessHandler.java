@@ -49,6 +49,8 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
     private final UserRepository userRepository;
     private final RefreshTokenService refreshTokenService;
     private final com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
+    private final com.project.userservice.service.DeviceRecognitionService deviceRecognitionService;
+    private final com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -82,6 +84,11 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             return;
         }
 
+        // 기기를 기록하고 처음 보는 기기면 알린다 — 비밀번호 로그인(AuthLoginFilter)과 같은 자리(본인 확인 뒤 · 2FA 앞).
+        // 🐛 예전에는 소셜 로그인이 기기를 보지 않아, 소셜 계정을 가져간 사람은 "새로운 기기에서 로그인" 알림 없이 들어왔다(docs/44 §4 ·
+        //    docs/57 §22). [JA] 端末を記録し、初めての端末なら知らせる — 以前はソーシャルログインが端末を見ず、新しい端末の通知がなかった。
+        recordDevice(request, response, user);
+
         if (user.requiresTwoFactor()) {   // TOTP 든 SMS 든(docs/24 §10)
             // 2FA 계정은 여기서 세션을 주지 않는다 — 주면 소셜 버튼이 2FA 우회로가 된다.
             // 대신 5분짜리 보류 토큰을 httpOnly 쿠키로 심고 2FA 입력 화면으로 보낸다.
@@ -107,5 +114,24 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
 
         log.info("소셜 로그인 성공. userId={}, method={}", user.getUserId(), user.getSignUpMethod());
         response.sendRedirect(frontendUrl);
+    }
+
+    /** 기록도 알림도 로그인의 성공 조건이 아니다 — 실패하면 남기고 계속한다(AuthLoginFilter#recordDevice 와 같다). */
+    private void recordDevice(HttpServletRequest request, HttpServletResponse response, User user) {
+        try {
+            var recognition = deviceRecognitionService.recognize(user.getUserId(),
+                    com.project.userservice.security.DeviceIdentity.tokenFrom(request),
+                    request.getHeader("User-Agent"), com.project.userservice.security.DeviceIdentity.clientIp(request));
+            if (recognition.cookieToken() != null) {
+                response.addCookie(jwtUtils.createCookie(com.project.userservice.security.DeviceIdentity.COOKIE_NAME,
+                        recognition.cookieToken(),
+                        java.time.Duration.ofSeconds(com.project.userservice.security.DeviceIdentity.COOKIE_MAX_AGE_SECONDS)));
+            }
+            if (recognition.shouldAlert()) {
+                securityAlertProducer.publishNewDevice(user.getUserId(), user.getEmail(), recognition.device());
+            }
+        } catch (RuntimeException e) {
+            log.error("기기 기록에 실패했습니다 — 로그인은 계속합니다: {}", e.getClass().getSimpleName());
+        }
     }
 }

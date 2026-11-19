@@ -69,6 +69,16 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
     private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
     private final com.project.userservice.service.EmailService emailService;
 
+    /** 로그인 비밀번호 권고(docs/57 §22) — 없으면(시험 · 옛 구성) 권하지 않는다. [JA] ログイン時のパスワード勧告。 */
+    private com.project.userservice.security.password.LoginPasswordAdvisor passwordAdvisor;
+
+    public void setPasswordAdvisor(com.project.userservice.security.password.LoginPasswordAdvisor passwordAdvisor) {
+        this.passwordAdvisor = passwordAdvisor;
+    }
+
+    /** 권고 결과를 성공 처리로 넘긴다 — 비밀번호 원문은 싣지 않는다. [JA] 勧告の結果だけを渡す(パスワードは載せない)。 */
+    static final String ADVICE_ATTR = AuthLoginFilter.class.getName() + ".passwordAdvice";
+
     /** 실패 처리에서 이메일을 다시 읽을 수 없어(본문은 한 번만 읽힌다) 요청 속성에 둔다 — 응답 · 로그에는 싣지 않는다. */
     static final String EMAIL_ATTR = AuthLoginFilter.class.getName() + ".email";
 
@@ -145,6 +155,10 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
                 new UsernamePasswordAuthenticationToken(email, password));
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
+        // 비밀번호가 맞은 뒤에만 — 틀린 비밀번호로 외부 API 를 부르게 하지 않는다. 원문은 이 메서드 밖으로 나가지 않는다.
+        if (passwordAdvisor != null && authentication.getPrincipal() instanceof UserDetailsImpl principal) {
+            request.setAttribute(ADVICE_ATTR, passwordAdvisor.adviceFor(principal.getId(), password));
+        }
         return authentication;
     }
 
@@ -261,6 +275,9 @@ public class AuthLoginFilter extends UsernamePasswordAuthenticationFilter {
 
         
         LoginResponse loginInfo = new LoginResponse(userDetails.getUsername(), roles, message, code);
+        if (request.getAttribute(ADVICE_ATTR) instanceof String advice) {
+            loginInfo.setPasswordAdvice(advice);
+        }
         
         
         // 새 기기 로그인 감지. **토큰을 내보내기 전에** 한다 — 쿠키를 응답에 실어야 하고,

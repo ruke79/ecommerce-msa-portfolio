@@ -4284,6 +4284,43 @@ class ConfigurationGuardrailTest {
         assertThat(factories).as("검사한 컨슈머 팩토리가 있다").isGreaterThan(10);
     }
 
+    /**
+     * B-115: Kafka JSON 역직렬화의 신뢰 패키지에 {@code "*"} 금지 — 메시지 DTO 패키지만({@code KafkaTrustedPackages}).
+     *
+     * <p>🐛 2026-11-19 까지 10곳이 {@code addTrustedPackages("*")} 였다. 컨슈머가 헤더({@code __TypeId__})를 따르므로 토픽에 쓸 수 있는
+     * 누구든 헤더 하나로 클래스패스의 아무 클래스나 만들게 할 수 있었다(Jackson 가젯의 입구, docs/57 §22).
+     *
+     * <p>[JA] Kafka JSON デシリアライズの信頼パッケージに "*" 禁止 — メッセージ DTO パッケージだけ。
+     */
+    @Test
+    @DisplayName("B-115: Kafka JSON 역직렬화의 신뢰 패키지에 \"*\" 금지 — 메시지 DTO 패키지만(KafkaTrustedPackages)")
+    void kafkaJsonTrustsOnlyMessageDtoPackages() throws IOException {
+        Pattern wildcard = Pattern.compile("addTrustedPackages\\(\\s*\"\\*\"\\s*\\)|trusted[.-]packages\\s*[:=]\\s*[\"']?\\*");
+        List<String> offenders = new ArrayList<>();
+        int trusted = 0;
+        try (Stream<Path> modules = Files.list(repoRoot())) {
+            for (Path module : modules.filter(Files::isDirectory).toList()) {
+                Path main = module.resolve("src/main");
+                if (!Files.isDirectory(main)) {
+                    continue;
+                }
+                try (Stream<Path> files = Files.walk(main)) {
+                    for (Path f : files.filter(x -> x.toString().matches(".*\\.(java|ya?ml|properties)$")).toList()) {
+                        String rel = repoRoot().relativize(f).toString().replace('\\', '/');
+                        String text = Files.readString(f, StandardCharsets.UTF_8);
+                        String code = rel.endsWith(".java") ? stripComments(text) : text;
+                        if (wildcard.matcher(code).find()) {
+                            offenders.add(rel);
+                        }
+                        trusted += count(code, "KafkaTrustedPackages.trustMessageDtos(");
+                    }
+                }
+            }
+        }
+        assertThat(offenders).as("\"*\" 는 헤더 하나로 아무 클래스나 만들게 한다 — KafkaTrustedPackages.trustMessageDtos 로(B-115)").isEmpty();
+        assertThat(trusted).as("메시지 DTO 패키지만 믿는 역직렬화기가 있다").isGreaterThanOrEqualTo(10);
+    }
+
     private static int count(String text, String needle) {
         int n = 0;
         for (int i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length())) {

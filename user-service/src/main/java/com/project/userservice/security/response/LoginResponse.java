@@ -29,7 +29,6 @@ import java.util.List;
  */
 @Setter
 @Getter
-@AllArgsConstructor
 public class LoginResponse {
 
     private String email;
@@ -45,4 +44,18 @@ public class LoginResponse {
      * @see com.project.userservice.security.AuthLoginFilter#MULTI_LOGIN_CODE
      */
     private String code;
+
+    /**
+     * 비밀번호 권고 — {@code breached} 면 이 비밀번호가 유출 · 흔한 목록에 있다(로그인은 됐다, 화면이 변경을 권한다). 없으면 빠진다.
+     * [JA] パスワードの勧告 — breached なら漏えい · ありふれた一覧にある(ログインは成功、画面が変更を勧める)。
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String passwordAdvice;
+
+    public LoginResponse(String email, List<String> roles, String message, String code) {
+        this.email = email;
+        this.roles = roles;
+        this.message = message;
+        this.code = code;
+    }
 }

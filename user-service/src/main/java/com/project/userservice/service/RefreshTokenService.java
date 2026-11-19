@@ -252,13 +252,14 @@ public class RefreshTokenService {
     /**
      * 모든 기기에서 로그아웃 — 이 사용자의 모든 로그인 묶음을 끊는다(docs/68 §8).
      *
-     * <p>끊긴 기기는 <b>다음 갱신에서</b> 로그인 화면으로 간다. 이미 가진 액세스 토큰은 수명(15분)까지 유효하다 —
-     * 게이트웨이는 서명만 보고 저장소를 보지 않는다(무상태 JWT 의 값). 그래서 "최대 15분 안에" 가 정직한 약속이다.
+     * <p>끊긴 기기는 곧바로 로그인 화면으로 간다 — 게이트웨이가 {@code cutoffLiveSessions} 의 해제 시각보다 먼저 발급된 액세스
+     * 토큰을 401 로 거절하고, 갱신은 묶음이 끊겨 실패한다(2026-11-19, docs/57 §22 — 그 전에는 게이트웨이가 서명만 봐서 "최대 15분 안에"
+     * 였다). Redis 장애 때만 예전처럼 액세스 토큰 수명까지다.
      *
      * @return 끊은 묶음 수(이미 끝난 것은 세지 않는다)
      */
     // [JA] すべての端末からログアウト — このユーザーの全ファミリーを切る。切られた端末は次の更新でログイン画面へ。
-    //      手元のアクセストークンは寿命(15 分)まで有効(ゲートウェイは署名だけを見る)。
+    //      手元のアクセストークンもゲートウェイが解除時刻で即座に拒否する(以前は寿命 15 分まで有効だった)。
     public int revokeAll(Long userId) {
         int revoked = 0;
         for (String familyId : refreshTokenRepository.userFamilies(userId)) {
@@ -268,7 +269,7 @@ public class RefreshTokenService {
             }
         }
         refreshTokenRepository.deleteUserFamilies(userId);
-        // 열려 있는 채팅 · 알림 연결은 지금 닫는다(docs/68 §9) — HTTP 는 최대 15분, 긴 연결은 즉시.
+        // 해제 시각을 적는다 — 게이트웨이(HTTP)와 채팅 · 알림 연결(docs/68 §9) 모두 그 전 토큰을 곧바로 거절한다.
         refreshTokenRepository.cutoffLiveSessions(userId);
         meters.counter(LOGOUT_ALL_METRIC).increment();
         log.info("[auth] 모든 기기에서 로그아웃 — userId={} 끊은 로그인={}", userId, revoked);

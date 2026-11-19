@@ -145,7 +145,7 @@ Kafka 소비가 밀리고, 전송 실패를 컨슈머 재시도로 처리하면 
 | ③ | 친구 접속 이벤트 발행 | 🔴 | 받는 쪽(`NotificationEventListener` 의 `user-presence`, `latest` 허용 목록 B-110)만 있다. 보내는 코드가 어디에도 없다 | chat 의 STOMP CONNECT 에서 친구마다 한 건(`watcherId`) — 친구 관계가 어느 서비스에 있는지 먼저 확인, 재접속 폭주 억제(예: Redis `SET NX` 사용자당 10분) |
 | ④ | 알림 설정 화면 | 🔴 | API(`GET · PATCH /api/notifications/preferences`)와 프론트 함수(`getPreferences` · `updatePreferences`)는 있지만 **부르는 화면이 없다** | 보안 화면이나 프로필에 SMS 수신 · 메일 수신 토글 + "보안 알림은 끌 수 없다"(§4). i18n ko · ja, 토글 뒤 PATCH 본문을 보는 시험 |
 | ⑤ | 인증 앱(TOTP) 켜기 화면 | 🔴 | `enable-2fa` · `verify-2fa` · `disable-2fa` API 는 있지만 **프론트에 켜는 화면이 없다**(프로필은 상태만 보인다) | QR · 확인 코드 · 끄기 화면 — SMS 수단(§10)의 `SmsTwoFactor` 와 같은 자리 |
-| ⑥ | 2단계 인증 복구 | 🟠 | 복구 코드 없음, 관리자 초기화 경로 없음. 번호를 바꾸면 SMS 수단은 멈춘다(§10 — 일부러) | 복구 코드(한 번씩 쓰는 10개, 해시 저장) 또는 본인 확인 뒤 관리자 초기화(감사 로그) — 지금은 SMS 만 켠 사용자가 번호를 잃으면 들어올 길이 없다 |
+| ⑥ | 2단계 인증 복구 | ✅ 복구 코드(2026-11-19, docs/57 §22) · 🟡 관리자 초기화 | 복구 코드 10개(HMAC 저장 · 1회용 · 만들기 · 쓰기 알림, user V21) — 로그인 2단계의 "복구 코드 사용". 관리자 초기화 경로는 아직 없다 | 코드도 잃은 사람: 본인 확인 뒤 관리자 초기화(감사 로그) — 절차부터 정할 일 |
 | ⑦ | 옛 열 `notification_preference.two_factor_enabled` | 🟡 | 로그인이 읽은 적 없는 값 — 이제 쓰지도 받지도 않는다(§10). NOT NULL(기본값 없음)이라 필드만 남겨 false 를 쓴다 | contract 릴리스에서 DROP(expand → contract) |
 | ⑧ | 광고성 문자 | ❌ | 의도적 제외 | 사전 수신동의 · (광고) 표기 · 야간 발송 제한이 법으로 요구된다(정보통신망법) |
 

@@ -153,7 +153,8 @@ const SignInPage = () => {
     // 2단계 인증의 수단 — 서버가 대기 쿠키의 주인이 켠 것을 알려 준다(user-service docs/24 §10). "totp"(인증 앱) · "sms"(등록 휴대폰).
     // 둘 다 켰으면 고를 수 있다(앱을 잃어버렸을 때의 길). 물어보지 못하면 예전처럼 인증 앱만.
     // [JA] 二段階認証の手段 — サーバーが待機 Cookie の持ち主が有効にしたものを返す。両方なら選べる。聞けなければ従来どおりアプリのみ。
-    const [methods, setMethods] = useState({ totp: true, sms: false });
+    // recovery — 쓰지 않은 복구 코드가 있다(docs/57 §22). 인증 앱 · 휴대폰을 잃었을 때의 길.
+    const [methods, setMethods] = useState({ totp: true, sms: false, recovery: false });
     const [twoFactorMethod, setTwoFactorMethod] = useState("totp");
     const [smsSentTo, setSmsSentTo] = useState("");
     const [smsSending, setSmsSending] = useState(false);
@@ -168,7 +169,7 @@ const SignInPage = () => {
                 if (!alive || !data) {
                     return;
                 }
-                const next = { totp: Boolean(data.totp), sms: Boolean(data.sms) };
+                const next = { totp: Boolean(data.totp), sms: Boolean(data.sms), recovery: Boolean(data.recovery) };
                 setMethods(next);
                 // SMS 만 켰으면 처음부터 SMS — 인증 앱 칸을 보여 주면 없는 앱을 찾게 된다.
                 setTwoFactorMethod(next.totp ? "totp" : "sms");
@@ -193,6 +194,11 @@ const SignInPage = () => {
             setSmsSending(false);
         }
     };
+
+    // 복구 코드는 XXXXX-XXXXX(하이픈 · 공백 · 소문자는 서버가 무시한다). 인증 앱 · SMS 는 6자리 숫자.
+    // [JA] リカバリーコードは XXXXX-XXXXX(ハイフン · 空白 · 小文字はサーバーが無視)。アプリ · SMS は 6 桁。
+    const recoveryMode = checkMode === "totp" && twoFactorMethod === "recovery";
+    const codeReady = recoveryMode ? code2fa.replace(/[-\s]/g, "").length === 10 : code2fa.length === 6;
 
     const switchTwoFactorMethod = (next) => {
         setTwoFactorMethod(next);
@@ -316,6 +322,11 @@ const SignInPage = () => {
         //updateToken(accessToken);
         navigate(redirectTo, { replace: true });
         toast.success(loginResultMessage(response.data, t));
+        // 이 비밀번호가 유출 · 흔한 목록에 있다 — 로그인은 됐고, 바꾸기를 권한다(docs/57 §22, LoginPasswordAdvisor).
+        // [JA] このパスワードは漏えい · ありふれた一覧にある — ログインは成功、変更を勧める。
+        if (response.data?.passwordAdvice === "breached") {
+            toast.error(t("auth.signin.password_breached"), { id: "passwordBreached", duration: 15000 });
+        }
 
     };
 
@@ -346,6 +357,8 @@ const SignInPage = () => {
                         <p className="text-sm text-slate-600">
                             {checkMode === "email"
                                 ? t("user.signin.check.hint")
+                                : recoveryMode
+                                    ? t("user.signin.2fa.recovery_hint")
                                 : twoFactorMethod === "sms"
                                     ? (smsSentTo
                                         ? t("user.signin.2fa.sms_sent", { phone: smsSentTo })
@@ -364,19 +377,23 @@ const SignInPage = () => {
                         )}
                         <input
                             type="text"
-                            inputMode="numeric"
-                            autoComplete="one-time-code"
-                            maxLength={6}
+                            inputMode={recoveryMode ? "text" : "numeric"}
+                            autoComplete={recoveryMode ? "off" : "one-time-code"}
+                            maxLength={recoveryMode ? 11 : 6}
                             value={code2fa}
                             autoFocus
-                            onChange={(e) => setCode2fa(e.target.value.replace(/\D/g, ""))}
+                            onChange={(e) => setCode2fa(recoveryMode
+                                ? e.target.value.toUpperCase().replace(/[^0-9A-Z-]/g, "")
+                                : e.target.value.replace(/\D/g, ""))}
                             onKeyDown={(e) => {
-                                if (e.key === "Enter" && code2fa.length === 6 && !verifying) {
+                                if (e.key === "Enter" && codeReady && !verifying) {
                                     verify2faHandler();
                                 }
                             }}
-                            className="w-full tracking-[0.5em] text-center text-2xl border rounded py-2"
-                            aria-label={t("user.signin.2fa.code_label")}
+                            className={recoveryMode
+                                ? "w-full font-mono text-center text-xl border rounded py-2"
+                                : "w-full tracking-[0.5em] text-center text-2xl border rounded py-2"}
+                            aria-label={t(recoveryMode ? "user.signin.2fa.recovery_label" : "user.signin.2fa.code_label")}
                         />
                         {twoFactorError && (
                             <p className="text-red-500 text-sm" role="alert">{twoFactorError}</p>
@@ -384,7 +401,7 @@ const SignInPage = () => {
                         <ButtonInput
                             type="button"
                             text={verifying ? t("user.signin.2fa.verifying") : t("user.signin.2fa.confirm")}
-                            disabled={verifying || code2fa.length !== 6}
+                            disabled={verifying || !codeReady}
                             onClick={verify2faHandler}
                         />
                         <button
@@ -406,7 +423,16 @@ const SignInPage = () => {
                         >
                             {t("user.signin.2fa.other_account")}
                         </button>
-                        {checkMode === "totp" && methods.totp && methods.sms && (
+                        {checkMode === "totp" && methods.recovery && (
+                            <button
+                                type="button"
+                                className="text-xs text-blue-500 hover:underline"
+                                onClick={() => switchTwoFactorMethod(recoveryMode ? (methods.totp ? "totp" : "sms") : "recovery")}
+                            >
+                                {recoveryMode ? t("user.signin.2fa.recovery_back") : t("user.signin.2fa.use_recovery")}
+                            </button>
+                        )}
+                        {checkMode === "totp" && !recoveryMode && methods.totp && methods.sms && (
                             <button
                                 type="button"
                                 className="text-xs text-blue-500 hover:underline"
