@@ -36,7 +36,8 @@
 | 開発中にいくつかのサービスだけすぐ上げる | 31 · 33 | §3-4 |
 | DB マイグレーションを確認 · 直す | 32 · 15 | §4 |
 | バックアップ · 復元を整える · 確かめる | 29 · 08 · 09 · 10 | §5 |
-| パスワード · 鍵 · 証明書を替える | 01 · 36 · 46 · 59 · 07 · 38 · 39 · 27 | §6 |
+| パスワード · 鍵 · 証明書を替える | 01 · 36 · 46 · 59 · 07 · 38 · 39 · 27 → 62(暗号文の更新) | §6 |
+| 本番 Secret を暗号化してリポジトリに置く · 適用する | 62 | §6-4 |
 | 秘密が git に漏れたらしい | 20 → 34 → (失効 · 再発行) → 21 / 22 | §6-3 |
 | セキュリティ境界が実際に塞いでいるか見る | 11 · 35 · 37 · 27 | §7 |
 | 障害 — 何が壊れたかを探す | 05 · 41 · 56 · 32 · 27 · promote-replica | §8 |
@@ -190,12 +191,25 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 
 21 · 22 は force-push ですべての SHA を変え、元に戻せません。GitHub は古いオブジェクトを SHA で残すため、Support への GC 依頼まで必要です。
 
+### 6-4. 本番 Secret を暗号文でリポジトリに（SOPS + age、[docs/57 §24](57-remaining-priorities.md)）
+
+```bash
+./ops/62-secrets-sops.sh keygen                      # 機械ごとに一度 — 公開鍵だけを出力(秘密鍵は ~/.config/sops/age/keys.txt)
+./ops/62-secrets-sops.sh init age1…ノード age1…PC age1…保管   # 受け取る人 — .sops.yaml(公開鍵なのでコミット)
+./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(往復確認の後) → コミット
+./ops/62-secrets-sops.sh check                       # 値がすべて暗号文 · 復号できるか · 例とキー名 · 平文と同じか
+./ops/62-secrets-sops.sh apply                       # 平文ファイルなしで直接 kubectl apply
+```
+
+§6-1 で値を替えた後は `encrypt`(平文がなければ `decrypt` → 修正 → `encrypt`)。受け取る人を替えたら `updatekeys` — 外した人が値を見たことがあれば値そのものを §6-1 で交換します。
+
 ## 7. セキュリティ境界が実際に塞いでいるか
 
 | スクリプト | 見るもの |
 |---|---|
 | `11-check-db-exposure.sh` | DB ポートが外から開いていないか |
 | `35-network-policy.sh check` · `apply` · `remove` | NetworkPolicy — 許可されるべき流れはつながり、塞ぐべきものは塞がるか。`apply` は間違っていれば自分で戻す |
+| `35-network-policy.sh egress-check` · `egress-apply` · `egress-remove` | 外向きの接続(k8s/97 — 2 グループ、IP 一覧なし、[docs/57 §23](57-remaining-priorities.md))。`egress-render` はノード IP を展開したマニフェストの出力のみ、`egress-apply` も塞がれば戻す |
 | `37-check-mtls.sh` | ② 証明書の有無で 403/200、① `[mTLS observe]` · ①-2 `[mTLS rule]` · ①-3 `[mTLS identity]` が 0 か — **0 でなければ enforce に上げない** |
 | `27-check-secret-drift.sh` | Secret と実サーバーの資格情報がずれていないか |
 
@@ -339,6 +353,7 @@ CATALOG_URL=https://<catalog>:8081 ES_URL=https://<es>:9200 ./ops/03-enable-es-s
 | 57 · 58 | load-queue · cpu-profile | §9-2 |
 | 59 | rotate-store-password | §6 |
 | 60 · 61 | jvm-facts · gc-baseline | §9-4 |
+| 62 | secrets-sops | §6-4 |
 | — | promote-replica | §5 · §8 |
 | tools | `k6-job.sh` §9-3 · `generate-*.py`(44 · 48 · 54 が呼ぶ) · `DltReplay.java`(56 が呼ぶ) · `gen-erd.py` · `hbm2flyway.py`(文書 · 移行ツール) | |
 

@@ -912,3 +912,26 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **순서**: 실습 클러스터 `egress-apply` → 결제(카드 · PayPal) · 메일 · 소셜 로그인 · 이미지 업로드 · 채팅 · 택배 조회를 한 바퀴 → 운영 노드에서 `egress-apply`(되돌리기는 `egress-remove`). 운영은 하이브리드 원격 노드(docs/71)가 있으면 노드 IP 가 둘 — 스크립트가 둘 다 펼친다.
 
 **2단계(남은 것)**: metrics-agent · cloudflared · 백업 CronJob 의 정책, public 그룹의 포트 좁히기(443 · 465/587 · 27017 등), 바깥 주소별 허용(도메인 단위가 필요해지면 Cilium 등 — 노드가 늘 때 함께 판단).
+
+## 24. 운영 Secret 을 암호문으로 저장소에 — SOPS + age(2026-11-19)
+
+**문제**: 운영 값은 평문 `k8s/20-secret.yaml`(gitignore) 하나뿐이고, 그 파일이 운영 노드 · 작업 PC 에 흩어져 있었다. 어느 것이 최신인지, 언제 무엇을 바꿨는지 남지 않았다(어긋남은 ops/27 이 사후에 찾았다). 디스크를 잃으면 값도 잃는다.
+
+**정한 것**: SOPS + age. Vault 는 서버 하나를 더 운영해야 하고, Sealed Secrets 는 클러스터 키를 따로 백업해야 한다 — 운영자 한 명 · 노드 한 대에는 파일 하나가 맞다. 값(`stringData` · `data`)만 암호화하므로 `kind` · 이름 · **키 이름은 평문**이라 커밋 diff 에서 "무엇이 바뀌었는지" 는 보이고 값은 안 보인다.
+
+**한 것**:
+- `ops/62-secrets-sops.sh` — `keygen`(이 기계의 age 키, 공개 키만 출력) · `init <age1…>`(받는 사람) · `encrypt`(왕복 확인 뒤에만 암호문을 바꾼다) · `check`(값이 모두 암호문 · 이 기계의 키로 풀리나 · 예시와 키 이름 · 평문과 같은가 — 값 대신 sha256 앞 12자로 비교) · `apply`(평문 파일 없이 파이프로 `kubectl apply`) · `decrypt`(0600, 다른 평문은 덮어쓰지 않는다 — `FORCE=1`) · `updatekeys`. 어떤 경로도 값을 출력하지 않는다.
+- `.sops.yaml` — 그 파일만 · 값만 암호화. 받는 사람은 자리표시(`age1REPLACE_ME`)로 커밋 — 자리표시인 동안 `encrypt` 는 거절한다.
+- 암호문 `k8s/20-secret.enc.yaml` 은 `.gitignore`(`k8s/20-secret.yaml*`)에 걸리지 않는다 — 커밋한다. 포트폴리오(공개)에는 옮기지 않는다(`.sops.yaml` 도).
+- 받는 사람은 셋을 권한다 — 운영 노드 · 작업 PC · 오프라인 보관(종이 · 비밀번호 관리자). 개인 키를 모두 잃으면 암호문은 풀 수 없다.
+
+**확인**: 실제 sops 3.9.4(공식 릴리스 · 체크섬 확인) · age 로 `SopsSecretsScriptTest` 6 — 값은 모두 암호문(평문 값 없음, 키 이름은 보임) · 두 받는 사람 모두 풀림 · 자리표시 · 잘못된 키 거절 · 암호문에 평문 한 줄이 섞이면 그 키 이름만 대고 실패(값은 말하지 않는다) · 다른 평문을 덮어쓰지 않음 · `updatekeys` 로 뺀 키는 못 푼다 · `apply` 는 평문 파일을 만들지 않는다. sops · age 가 PATH 에 없으면 건너뛴다(CI) — 그때도 가드 **B-118**(`SopsSecretGuardTest` 4: `.sops.yaml` 의 대상 · `encrypted_regex` · 받는 사람 모양, 커밋된 암호문의 값이 모두 `ENC[…]`(빈 값 제외), `.gitignore` 가 평문은 막고 암호문은 막지 않음, 포트폴리오 제외)이 돈다. 변이: 자리표시 검사 · 키 이름 읽기 · 덮어쓰기 막기 · 파이프 apply(평문 파일로 바꾸면 멈춘다)를 빼면 각각 실패, `.gitignore` 가 암호문까지 막거나 `encrypted_regex` 를 넓히면 가드가 실패.
+🐛 만들면서 잡은 것: sops 는 YAML 을 네 칸 들여쓰기로 다시 쓴다 — 처음의 키 이름 읽기(두 칸만)는 암호문의 "평문 섞임" 검사에서 **아무 줄도 보지 않고 통과**했다(실제 sops 로 돌려 드러남). 빈 값(`""`)은 sops 가 암호화하지 않는다(숨길 것이 없다 — 누출로 세지 않는다). `diff` 가 다르면 1 을 돌려 `pipefail` 아래서 스크립트가 **말없이** 끝났다.
+
+**처음 한 번**(운영 노드에서 — 평문이 있는 곳):
+1. sops · age 설치(age 는 `apt install age`, sops 는 릴리스 바이너리 + 체크섬).
+2. 운영 노드 · 작업 PC · 보관용 키마다 `./ops/62-secrets-sops.sh keygen` → 공개 키 셋을 모아 `init age1… age1… age1…`.
+3. `encrypt` → `check` → `git add k8s/20-secret.enc.yaml .sops.yaml` → 커밋 · push(값은 암호문).
+4. 그 뒤로는 평문 대신 암호문이 원본 — 바꿀 때는 `decrypt` → 고치기 → `encrypt` → 커밋, 적용은 `apply`. ops/27 · 46 · 59 처럼 평문을 읽는 스크립트는 `decrypt` 로 평문을 만든 뒤 돌린다.
+
+**남은 것**: ops/28 이 배포 때 암호문과 클러스터 Secret 의 어긋남을 경고하기, 정기 교체 점검표(분기 — DB · Redis · JWT · 스토어 비밀번호), 오프라인 보관 키의 복구 훈련.

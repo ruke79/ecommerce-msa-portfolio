@@ -36,7 +36,8 @@
 | 개발 중 서비스 몇 개만 바로 올린다 | 31 · 33 | §3-4 |
 | DB 마이그레이션을 확인 · 고친다 | 32 · 15 | §4 |
 | 백업 · 복원을 갖춘다 · 확인한다 | 29 · 08 · 09 · 10 | §5 |
-| 비밀번호 · 키 · 인증서를 바꾼다 | 01 · 36 · 46 · 59 · 07 · 38 · 39 · 27 | §6 |
+| 비밀번호 · 키 · 인증서를 바꾼다 | 01 · 36 · 46 · 59 · 07 · 38 · 39 · 27 → 62(암호문 갱신) | §6 |
+| 운영 Secret 을 암호화해 저장소에 둔다 · 적용한다 | 62 | §6-4 |
 | 비밀이 git 에 샌 것 같다 | 20 → 34 → (폐기 · 재발급) → 21 / 22 | §6-3 |
 | 보안 경계가 실제로 막는지 본다 | 11 · 35 · 37 · 27 | §7 |
 | 장애 — 무엇이 깨졌는지 찾는다 | 05 · 41 · 56 · 32 · 27 · promote-replica | §8 |
@@ -190,12 +191,25 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 
 21 · 22 는 force-push 로 모든 SHA 를 바꾸고 되돌릴 수 없습니다. GitHub 은 옛 객체를 SHA 로 남기므로 Support 에 GC 요청까지 필요합니다.
 
+### 6-4. 운영 Secret 을 암호문으로 저장소에(SOPS + age, [docs/57 §24](57-remaining-priorities.ko.md))
+
+```bash
+./ops/62-secrets-sops.sh keygen                      # 기계마다 한 번 — 공개 키만 출력(개인 키는 ~/.config/sops/age/keys.txt)
+./ops/62-secrets-sops.sh init age1…노드 age1…PC age1…보관   # 받는 사람 — .sops.yaml(공개 키라 커밋)
+./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(왕복 확인 뒤) → 커밋
+./ops/62-secrets-sops.sh check                       # 값이 모두 암호문 · 풀리는가 · 예시와 키 이름 · 평문과 같은가
+./ops/62-secrets-sops.sh apply                       # 평문 파일 없이 바로 kubectl apply
+```
+
+§6-1 로 값을 바꾼 뒤에는 `encrypt`(또는 평문이 없으면 `decrypt` → 고치기 → `encrypt`). 받는 사람을 바꾸면 `updatekeys` — 뺀 사람이 값을 본 적이 있으면 값 자체를 §6-1 로 교체합니다.
+
 ## 7. 보안 경계가 실제로 막는지
 
 | 스크립트 | 보는 것 |
 |---|---|
 | `11-check-db-exposure.sh` | DB 포트가 바깥에서 열려 있지 않은가 |
 | `35-network-policy.sh check` · `apply` · `remove` | NetworkPolicy — 허용돼야 할 흐름은 붙고 막혀야 할 것은 막히나. `apply` 는 틀리면 스스로 되돌린다 |
+| `35-network-policy.sh egress-check` · `egress-apply` · `egress-remove` | 나가는 연결(k8s/97 — 두 그룹, IP 목록 없음, [docs/57 §23](57-remaining-priorities.ko.md)). `egress-render` 는 노드 IP 를 펼친 매니페스트 출력만, `egress-apply` 도 막히면 되돌린다 |
 | `37-check-mtls.sh` | ② 인증서 유무로 403/200, ① `[mTLS observe]` · ①-2 `[mTLS rule]` · ①-3 `[mTLS identity]` 가 0 인가 — **0 이어야 enforce 로 올린다** |
 | `27-check-secret-drift.sh` | Secret 과 실제 서버의 자격증명이 어긋나지 않았나 |
 
@@ -339,6 +353,7 @@ CATALOG_URL=https://<catalog>:8081 ES_URL=https://<es>:9200 ./ops/03-enable-es-s
 | 57 · 58 | load-queue · cpu-profile | §9-2 |
 | 59 | rotate-store-password | §6 |
 | 60 · 61 | jvm-facts · gc-baseline | §9-4 |
+| 62 | secrets-sops | §6-4 |
 | — | promote-replica | §5 · §8 |
 | tools | `k6-job.sh` §9-3 · `generate-*.py`(44 · 48 · 54 가 부름) · `DltReplay.java`(56 이 부름) · `gen-erd.py` · `hbm2flyway.py`(문서 · 이행 도구) | |
 
