@@ -130,6 +130,35 @@ public class EdgeRoutingGuardTest {
     }
 
     @Test
+    @DisplayName("Ingress 클래스는 spec.ingressClassName(traefik)으로만 — 폐기된 kubernetes.io/ingress.class 어노테이션 없음")
+    void ingressClassIsTheSpecField() throws IOException {
+        List<String> found = new ArrayList<>();
+        int ingresses = 0;
+        for (String dir : List.of("k8s", "k8s-overlays")) {
+            try (Stream<Path> walk = Files.walk(root().resolve(dir))) {
+                for (Path f : walk.filter(x -> x.toString().matches(".*\\.ya?ml$")).sorted().toList()) {
+                    String rel = root().relativize(f).toString();
+                    for (String doc : Files.readString(f).split("(?m)^---\\s*$")) {
+                        String code = doc.replaceAll("(?m)#.*$", "");
+                        if (code.contains("kubernetes.io/ingress.class")) {
+                            found.add(rel + ": kubernetes.io/ingress.class 어노테이션 — spec.ingressClassName 으로");
+                        }
+                        // 온전한 Ingress(rules 가 있는 것)만 — 오버레이 패치(tls 만)는 원본의 클래스를 물려받는다
+                        if (code.matches("(?s).*(?m:^kind:\\s*Ingress\\s*$).*") && code.matches("(?s).*(?m:^  rules:).*")) {
+                            ingresses++;
+                            if (!code.matches("(?s).*(?m:^  ingressClassName:\\s*traefik\\s*$).*")) {
+                                found.add(rel + ": spec.ingressClassName: traefik 없음");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(ingresses).as("Ingress 를 읽었다(k8s/60 · 데모 게이트웨이)").isGreaterThanOrEqualTo(2);
+        assertThat(found).as("apply 마다 폐기 경고 — 둘 다 있고 값이 다르면 생성이 거절된다").isEmpty();
+    }
+
+    @Test
     @DisplayName("B-85 판별 — 주석 · ClusterIP 는 통과, LoadBalancer · NodePort · nodePort · hostPort · hostNetwork 는 걸린다")
     void nodeExposureDetection() {
         assertThat(nodeExposures("""

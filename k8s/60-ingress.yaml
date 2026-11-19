@@ -11,8 +11,7 @@ kind: Ingress
 metadata:
   name: ecommerce-frontend
   namespace: ecommerce
-  annotations:
-    kubernetes.io/ingress.class: traefik
+# 클래스는 spec.ingressClassName 하나로 — kubernetes.io/ingress.class 어노테이션은 폐기(apply 마다 경고). 2026-11-19 에 뺐다.
 spec:
   ingressClassName: traefik
   rules:
