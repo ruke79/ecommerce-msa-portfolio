@@ -13,6 +13,12 @@
 #   ./ops/48-bulk-users.sh status                   # 데모 사용자 · 배송지 · 이벤트(STARTED/COMPLETED/FAILED) · 쿠폰 · 채팅 복제본
 #   ./ops/48-bulk-users.sh retry-failed             # 발행 실패(FAILED)로 멈춘 데모 user-created 를 다시 STARTED 로
 #   GATEWAY=https://<게이트웨이> ./ops/48-bulk-users.sh login-check   # 표본 몇 명이 실제로 로그인되는지(초당 1회 — 로그인 제한)
+#     GATEWAY 는 $GATEWAY/user-service/api/auth/public/signin 이 게이트웨이에 닿는 주소(docs/79 §0):
+#       운영(권장)  GATEWAY=https://www.ysyproject.com — 터널이 /user-service/… 를 게이트웨이로, 인증서 정상(403 이면 Cloudflare 봇 차단 → 아래)
+#       운영 노드   kubectl -n ecommerce port-forward svc/gateway-server 8000:8000 뒤 GATEWAY=https://localhost:8000 INSECURE=1
+#                   (게이트웨이는 ClusterIP · 8000 · 내부 CA 인증서 — 이름이 localhost 와 맞지 않는다)
+#       실습        그 클러스터의 게이트웨이 인그레스 주소(자체 서명이면 INSECURE=1)
+#     [JA] GATEWAY は signin がゲートウェイに届くアドレス — 本番は公開アドレス、ノード内は port-forward + INSECURE=1
 #   ./ops/48-bulk-users.sh purge                    # 데모 사용자 · 그 흔적 · 쿠폰 · 채팅 복제본만 지운다
 #
 #   USERS=500000 ./ops/48-bulk-users.sh load        # 개수 바꾸기(purge · status 도 같은 값으로)
@@ -23,7 +29,7 @@
 #   PASSWORD_FILE=~/.ecommerce-msa/demo-users.password   # 데모 비밀번호(0600, 저장소 밖). 없으면 무작위로 만든다
 #   DEMO_PASSWORD=…        # 직접 정하려면(파일 대신). 화면에는 길이만 나온다
 #   NO_ADDRESSES=1  NO_EVENTS=1   # 배송지 · user-created 를 빼기(이벤트를 빼면 쿠폰 · 채팅 복제본이 없다 — docs/47)
-#   SAMPLE=5  INSECURE=0          # login-check 표본 수 · 자체 서명 인증서 허용(실습 클러스터만)
+#   SAMPLE=5  INSECURE=0          # login-check 표본 수 · 인증서 검사 끄기(실습 클러스터의 자체 서명 · 운영 노드의 localhost port-forward 만 — 공개 주소에는 쓰지 않는다)
 #   FORCE=1   백업 시간대(03:00~05:00 UTC) 경고를 무시     YES=1   확인을 묻지 않음
 #
 # 🔒 데모 계정은 모두 같은 비밀번호다. 공개 사이트(운영)에 만들면 그 비밀번호 하나로 수만 계정에 들어갈 수 있다 — 운영

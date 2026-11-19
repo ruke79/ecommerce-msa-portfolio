@@ -18,6 +18,16 @@ GATEWAY=https://<게이트웨이> ./ops/48-bulk-users.sh login-check   # 표본�
 USERS=500000 ./ops/48-bulk-users.sh load   # 인원 바꾸기(status · purge 도 같은 값으로)
 ```
 
+`login-check` 의 `GATEWAY` 는 `$GATEWAY/user-service/api/auth/public/signin` 이 게이트웨이에 닿는 주소다.
+
+| 어디서 | `GATEWAY` | 비고 |
+|---|---|---|
+| 운영(권장) | `https://www.ysyproject.com` | 터널이 `/user-service/…` 를 게이트웨이로 보낸다 — 인증서가 정상이라 `INSECURE` 없이. 403 이면 Cloudflare 봇 차단일 수 있다 → 아래 줄 |
+| 운영 노드 안 | `https://localhost:8000` + `INSECURE=1` | 먼저 `kubectl -n ecommerce port-forward svc/gateway-server 8000:8000`(게이트웨이는 ClusterIP · 8000 · 내부 CA 인증서라 이름이 맞지 않는다) |
+| 실습 클러스터 | 그 클러스터의 게이트웨이 인그레스 주소 | 자체 서명이면 `INSECURE=1` |
+
+표본마다 1.2초 간격(게이트웨이의 로그인 제한 — 같은 IP 초당 1회)이라 한 IP 에서 보내도 걸리지 않는다. 200 = 로그인됨, 401 = 비밀번호 파일이 `load` 때와 다름, 429 = 로그인 제한.
+
 한 사람당 만드는 것:
 
 | 표 | 내용 |

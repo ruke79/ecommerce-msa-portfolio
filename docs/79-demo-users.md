@@ -18,6 +18,16 @@ GATEWAY=https://<ゲートウェイ> ./ops/48-bulk-users.sh login-check   # 標�
 USERS=500000 ./ops/48-bulk-users.sh load   # 人数を変える(status・purge も同じ値で)
 ```
 
+`login-check` の `GATEWAY` は、`$GATEWAY/user-service/api/auth/public/signin` がゲートウェイに届くアドレス。
+
+| どこから | `GATEWAY` | 備考 |
+|---|---|---|
+| 本番(推奨) | `https://www.ysyproject.com` | トンネルが `/user-service/…` をゲートウェイへ送る — 証明書が正常なので `INSECURE` なしで。403 なら Cloudflare のボット遮断の可能性 → 下の行 |
+| 本番ノードの中 | `https://localhost:8000` + `INSECURE=1` | 先に `kubectl -n ecommerce port-forward svc/gateway-server 8000:8000`(ゲートウェイは ClusterIP · 8000 · 内部 CA の証明書なので名前が合わない) |
+| 実習クラスター | そのクラスターのゲートウェイのイングレスのアドレス | 自己署名なら `INSECURE=1` |
+
+標本ごとに 1.2 秒間隔(ゲートウェイのログイン制限 — 同じ IP で毎秒 1 回)なので、一つの IP から送っても引っかからない。200 = ログイン成功、401 = パスワードファイルが `load` のときと違う、429 = ログイン制限。
+
 一人あたり作るもの:
 
 | 表 | 内容 |
