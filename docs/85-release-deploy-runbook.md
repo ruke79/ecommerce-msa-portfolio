@@ -369,6 +369,7 @@ kubectl -n ecommerce get pods   # 再起動 0
 | cart の再検討 | cart | V8 インデックス、cart-rollback の NPE、範囲外 style は 400 | docs/38 §2.5 |
 | オフセット earliest | catalog · coupon · order · chat | グループがある本番では変化なし、order V30 の処理台帳 | docs/89 §2-1 · B-110 |
 | 管理者フォーム | frontend | 商品 · カテゴリーの登録が入力した値を送る | `AdminInput.jsx` |
+| **JRE セキュリティ修正** | **全バックエンド** | JRE `17.0.20.1` → `17.0.21_9`(10 月 CPU)+ エントリポイントに `-XX:-UseBASE64Intrinsics`(CVE-2026-114938 の回避)— 動作変化なし、ガード B-113 | docs/57 §20 |
 
 ### 9-2. デプロイ前
 
@@ -391,6 +392,9 @@ q userdb  "select coalesce(outbox_status,'NULL'), count(*) from users.outbox_eve
 ```bash
 git switch --detach <SHA> && ./ops/28-deploy.sh local <SHA>
 for db in cartdb coupondb orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+# JRE の版 · 回避オプション — 全バックエンドが 17.0.21、コマンドラインに -XX:-UseBASE64Intrinsics (docs/57 §20 · B-113)
+kubectl -n ecommerce exec deploy/order-service -- java -version 2>&1 | head -1
+for d in order-service catalog-service gateway-server; do printf '%s: ' "$d"; kubectl -n ecommerce exec deploy/$d -- sh -c 'tr "\0" " " < /proc/1/cmdline' | grep -o '\-XX:-UseBASE64Intrinsics' || echo "なし — B-113 違反"; done
 # 期待: cart 8 · coupon 9 · order 30 · user 19（catalog 24 はそのまま）
 kubectl -n ecommerce get pods                                                        # 再起動 0
 for d in order-service pay-service cart-service user-service; do echo "$d: $(kubectl -n ecommerce logs deploy/$d --since=10m | grep '아웃박스 파티션 보존' | tail -2)"; done
