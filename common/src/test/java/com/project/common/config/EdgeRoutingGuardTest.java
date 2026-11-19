@@ -154,7 +154,10 @@ public class EdgeRoutingGuardTest {
                 }
             }
         }
-        assertThat(ingresses).as("Ingress 를 읽었다(k8s/60 · 데모 게이트웨이)").isGreaterThanOrEqualTo(2);
+        // 데모 게이트웨이 Ingress 는 데모 오버레이가 있는 저장소에만 있다(포트폴리오에는 없다 — 2026-11-19)
+        // [JA] デモのゲートウェイ Ingress はデモオーバーレイがあるリポジトリにだけある。
+        int expected = Files.exists(root().resolve("k8s-overlays").resolve("demo").resolve("gateway-ingress.yaml")) ? 2 : 1;
+        assertThat(ingresses).as("Ingress 를 읽었다(k8s/60 · 데모 게이트웨이)").isGreaterThanOrEqualTo(expected);
         assertThat(found).as("apply 마다 폐기 경고 — 둘 다 있고 값이 다르면 생성이 거절된다").isEmpty();
     }
 
