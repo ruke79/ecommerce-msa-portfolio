@@ -250,3 +250,14 @@ logging:
 
 
 
+# Elasticsearch health 지표 — ES 를 **띄운 환경에서만** 켠다.
+# 운영(OCI)에는 ES 가 없는데(docs/74 기능 플래그 1단계 — 비율은 ES 를 띄운 뒤에) Boot 가 스타터만 보고 지표를 만들어,
+# /actuator/health 가 영구히 DOWN(503) 이었다(2026-11-19 확인 — 파드는 Ready: 프로브는 liveness · readiness 그룹만 본다).
+# 영구 DOWN 은 "신호가 죽은 것" 이다 — DB 가 정말 끊겨도 같은 503 이라 그 엔드포인트로 사고를 구분할 수 없다.
+# ES 를 띄우면 MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED=true 로 켠다(가드 B-116).
+# [JA] Elasticsearch の health インジケーターは ES を立てた環境でだけ有効にする — 本番に ES はなく、/actuator/health が
+#      恒久的に DOWN になって「信号が死ぬ」ため。ES を立てたら環境変数で有効化する。
+management:
+  health:
+    elasticsearch:
+      enabled: ${MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED:false}

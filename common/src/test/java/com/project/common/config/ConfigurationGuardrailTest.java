@@ -3,6 +3,7 @@ package com.project.common.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -4079,6 +4080,54 @@ class ConfigurationGuardrailTest {
         assertThat(conf).as("frontend/nginx.conf — HTTP/1.1 만(B-114)")
                 .doesNotContainPattern("\\bhttp2\\b").doesNotContainPattern("\\b(quic|http3)\\b")
                 .doesNotContainPattern("(?m)^\\s*resolver\\s").doesNotContainPattern("(?m)^\\s*mail\\s*\\{");
+    }
+
+    /**
+     * B-116: Elasticsearch 스타터를 쓰는 모듈은 {@code management.health.elasticsearch.enabled} 를 **명시**하고 기본값은 꺼짐이다.
+     *
+     * <p>Boot 는 스타터가 클래스패스에 있으면 ES health 지표를 자동으로 만든다. 운영(OCI)에는 ES 가 없어서(docs/74 — 기능 플래그
+     * 1단계, 비율은 ES 를 띄운 뒤) 그 지표가 늘 실패하고 {@code /actuator/health} 가 **영구히 DOWN(503)** 이었다(2026-11-19 확인).
+     * 파드는 Ready 였다 — 컨테이너 프로브는 {@code liveness} · {@code readiness} 그룹만 보기 때문이다. 문제는 가용성이 아니라
+     * **신호가 죽는 것**이다: DB 가 정말 끊겨도 같은 503 이라 그 엔드포인트로 사고를 구분할 수 없다. ES 를 띄운 환경에서는
+     * 환경 변수로 켠다.
+     *
+     * <p>[JA] ES スターターを使うモジュールは health インジケーターを明示的に（既定はオフ）— ES のない環境で /actuator/health が
+     * 恒久的に DOWN になり、信号として使えなくなるため。
+     */
+    @Test
+    @DisplayName("B-116: ES 스타터를 쓰는 모듈은 management.health.elasticsearch.enabled 를 명시 · 기본값 꺼짐 — 영구 DOWN 금지")
+    void elasticsearchHealthIndicatorIsOffWhereElasticsearchIsNotDeployed() throws IOException {
+        Pattern enabled = Pattern.compile(
+                "(?m)^[ \\t]*elasticsearch:[ \\t]*\\n(?:[ \\t]*#.*\\n|[ \\t]*\\n)*[ \\t]+enabled:[ \\t]*(\\S+)");
+        List<Path> gradles;
+        try (Stream<Path> walk = Files.walk(repoRoot(), 2)) {
+            gradles = walk.filter(x -> x.getFileName().toString().equals("build.gradle")).toList();
+        }
+        int checked = 0;
+        for (Path gradle : gradles) {
+            if (!Files.readString(gradle, StandardCharsets.UTF_8).contains("spring-boot-starter-data-elasticsearch")) {
+                continue;
+            }
+            Path dir = gradle.getParent();
+            List<Path> ymls;
+            try (Stream<Path> walk = Files.walk(dir.resolve("src/main/resources"), 1)) {
+                ymls = walk.filter(x -> x.getFileName().toString().matches("application.*\\.yml")).toList();
+            }
+            String joined = String.join("\n", ymls.stream().map(x -> {
+                try {
+                    return Files.readString(x, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }).toList());
+            Matcher m = enabled.matcher(joined);
+            assertThat(m.find()).as(dir.getFileName()
+                    + " — ES 스타터를 쓰는 모듈은 management.health.elasticsearch.enabled 를 적는다(B-116)").isTrue();
+            assertThat(m.group(1)).as(dir.getFileName() + " — 기본값은 꺼짐(환경 변수로만 켠다, B-116)")
+                    .matches("(false|\\$\\{[A-Z0-9_]+:false\\})");
+            checked++;
+        }
+        assertThat(checked).as("ES 스타터를 쓰는 모듈이 하나는 있어야 이 가드가 의미 있다").isPositive();
     }
 
     /**
