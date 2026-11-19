@@ -254,6 +254,12 @@ public class NotificationService {
         return preference;
     }
 
+    /** 설정 변경의 결과 — 바꿨거나, 이 경로가 받지 않는 키가 있어 아무것도 바꾸지 않았다. */
+    public sealed interface PreferenceUpdate {
+        record Updated(NotificationPreference preference) implements PreferenceUpdate {}
+        record Rejected(String reason) implements PreferenceUpdate {}
+    }
+
     /**
      * 알림 설정을 바꾼다 — 한 트랜잭션에서 읽고 고치고 저장한다. 들어온 키만 바꾼다.
      *
@@ -261,18 +267,19 @@ public class NotificationService {
      * 세터는 트랜잭션 밖이었다 — open-in-view 는 트랜잭션 밖의 변경을 flush 하지 않으므로 응답은 200 과 새 값인데 DB 는 그대로였다
      * ("알림을 껐는데 계속 온다 · 새로 고치면 되돌아간다", 2단계 인증 켜기도). 테스트가 없었다(PreferenceUpdateTest).
      *
-     * <p>2단계 인증을 켜려는데 인증된 번호가 없으면 아무것도 바꾸지 않고 빈 값(→ 409) — 일부만 저장된 채 실패를 돌려주지 않는다.
+     * <p>🐛 {@code twoFactorEnabled} 는 받지 않는다(docs/24 §10). 예전에는 여기서 켜면 저장은 됐지만 <b>로그인은 그 값을 읽지 않았다</b> —
+     * 로그인 2단계는 user-service 의 것이라, 켠 사용자는 보호받는다고 믿었지만 비밀번호만으로 들어올 수 있었다. 이제 SMS 2단계 인증은
+     * user-service 의 {@code /api/auth/sms-2fa/*} 가 켜고 끈다(코드 확인 · 최근 로그인 · 번호 결속). 그 키가 오면 아무것도 바꾸지 않고
+     * 거절한다 — 일부만 저장한 채 성공처럼 보이지 않게.
      */
-    // [JA] 通知設定を変える — 一つのトランザクションで読み・直し・保存する。以前はコントローラーがトランザクションの外でセッターを呼び、
-    //      200 と新しい値を返すのに DB は元のままだった。二段階認証を番号なしで有効にしようとしたら何も変えず空(409)。
+    // [JA] 通知設定を変える — 一つのトランザクションで読み・直し・保存する。twoFactorEnabled は受けない — 以前はここで有効にしても
+    //      ログインがその値を読まず、守られていると信じた利用者がパスワードだけで入られた。SMS 二段階認証は user-service が持つ。
     @Transactional
-    public java.util.Optional<NotificationPreference> updatePreferences(Long userId, String email,
-            java.util.Map<String, Boolean> changes) {
-        NotificationPreference preference = preferenceOf(userId, email);
-        boolean wantTwoFactor = Boolean.TRUE.equals(changes.get("twoFactorEnabled"));
-        if (changes.containsKey("twoFactorEnabled") && wantTwoFactor && !preference.isPhoneVerified()) {
-            return java.util.Optional.empty();
+    public PreferenceUpdate updatePreferences(Long userId, String email, java.util.Map<String, Boolean> changes) {
+        if (changes.containsKey("twoFactorEnabled")) {
+            return new PreferenceUpdate.Rejected("2단계 인증은 보안 설정에서 켜고 끕니다.");
         }
+        NotificationPreference preference = preferenceOf(userId, email);
         if (changes.containsKey("smsEnabled")) {
             preference.setSmsEnabled(Boolean.TRUE.equals(changes.get("smsEnabled")));
         }
@@ -281,10 +288,7 @@ public class NotificationService {
             // 막으면 계정에 못 들어간다(MailKind#isTransactional).
             preference.setEmailEnabled(Boolean.TRUE.equals(changes.get("emailEnabled")));
         }
-        if (changes.containsKey("twoFactorEnabled")) {
-            preference.enableTwoFactor(wantTwoFactor);
-        }
-        return java.util.Optional.of(preference);
+        return new PreferenceUpdate.Updated(preference);
     }
 
     /**

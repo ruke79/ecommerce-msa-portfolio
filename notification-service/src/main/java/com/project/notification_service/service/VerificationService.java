@@ -118,6 +118,15 @@ public class VerificationService {
         }
         String e164 = normalized.get();
         Region region = PhoneNumbers.regionOfE164(e164).orElse(defaultRegion);
+        return issueTo(e164, region, userId, PhoneVerification.Purpose.PHONE);
+    }
+
+    /**
+     * 발급의 공통 몸통 — 속도 제한 · 코드 생성 · 저장 · 발송. 번호 등록과 로그인 2단계 인증이 같은 제한(번호 · 계정 · 전체)을 함께 쓴다:
+     * 로그인 코드를 따로 세면 비밀번호를 아는 공격자가 그 칸으로 요금을 쓰게 된다.
+     * [JA] 発行の共通部 — レート制限 · コード生成 · 保存 · 送信。番号登録とログイン二段階認証が同じ制限を共有する。
+     */
+    private IssueResult issueTo(String e164, Region region, Long userId, PhoneVerification.Purpose purpose) {
 
         // ── 속도 제한 ────────────────────────────────────────────────────────
         String cooldownKey = "sms:cooldown:" + e164;
@@ -164,7 +173,7 @@ public class VerificationService {
         // SecureRandom 이어야 한다. java.util.Random 은 seed 를 알면 다음 값이 예측된다.
         String code = String.format("%06d", random.nextInt(1_000_000));
 
-        verificationRepository.save(new PhoneVerification(e164, userId, hash(code)));
+        verificationRepository.save(new PhoneVerification(e164, userId, hash(code), purpose));
 
         String text = SmsTemplates.verificationCode(region, code);
         SmsResult result = smsSender.send(e164, text);
@@ -178,7 +187,7 @@ public class VerificationService {
         }
 
         // ⚠️ 코드는 절대 로그에 남기지 않는다. 로그를 볼 수 있는 사람이 남의 인증을 통과할 수 있다.
-        log.info("인증번호 발급: phone={} userId={}", PhoneNumbers.mask(e164), userId);
+        log.info("인증번호 발급: phone={} userId={} purpose={}", PhoneNumbers.mask(e164), userId, purpose);
 
         return new IssueResult.Sent(PhoneNumbers.mask(e164), PhoneVerification.TTL_MINUTES);
     }
@@ -233,6 +242,132 @@ public class VerificationService {
 
         log.info("인증 성공: phone={} userId={}", PhoneNumbers.mask(e164), verification.getUserId());
         return new VerifyResult.Verified(e164);
+    }
+
+    // ── 로그인 2단계 인증(SMS) — user-service 가 내부 호출로만 부른다(docs/24 §10) ─────────────────────
+
+    /** 2단계 인증 코드 발송의 결과. user-service 는 {@code result} 로만 갈린다(응답은 늘 200 — 내부 호출의 실패와 섞이지 않게). */
+    public enum TwoFactorResult {
+        /** 보냈다. */
+        SENT,
+        /** 맞았다 — 코드는 소비됐다. */
+        VERIFIED,
+        /** 틀렸다(남은 시도가 있으면 같은 코드로 다시). */
+        INVALID,
+        /** 살아 있는 코드가 없다(만료 · 소진 · 보낸 적 없음) — 다시 받는다. */
+        EXPIRED,
+        /** 인증된 번호가 없다. */
+        NO_PHONE,
+        /** 등록된 번호가 2단계 인증을 켤 때의 번호와 다르다 — 그 번호로는 보내지도 받지도 않는다. */
+        PHONE_CHANGED,
+        /** 발송 제한(쿨다운 · 일일 한도). */
+        TOO_MANY,
+        /** 발송 실패(공급자 오류). */
+        FAILED
+    }
+
+    /**
+     * @param result      결과
+     * @param maskedPhone 보낸 번호(마스킹) — 화면이 "어디로 갔는지" 보여 준다
+     * @param binding     지금 등록된 번호의 결속값 — 켤 때 user-service 가 저장하고, 그 뒤로는 이것이 맞을 때만 보낸다
+     * @param ttlMinutes  코드 유효 시간
+     * @param retryAfterSeconds TOO_MANY 일 때 다시 요청할 수 있기까지
+     * @param attemptsLeft INVALID 일 때 남은 시도
+     */
+    public record TwoFactorOutcome(TwoFactorResult result, String maskedPhone, String binding, int ttlMinutes,
+            long retryAfterSeconds, int attemptsLeft) {
+
+        static TwoFactorOutcome of(TwoFactorResult result) {
+            return new TwoFactorOutcome(result, null, null, 0, 0, 0);
+        }
+    }
+
+    /**
+     * 로그인 2단계 인증 코드를 <b>등록된(인증을 마친) 번호로</b> 보낸다 — 번호를 요청에서 받지 않는다.
+     *
+     * <p>🔒 {@code binding} 이 있으면 지금 등록된 번호의 결속값과 같을 때만 보낸다. 2단계 인증을 켠 뒤 세션만 가진 사람(공용 PC ·
+     * 탈취한 쿠키)이 보안 화면에서 번호를 <b>자기 번호로</b> 바꾸면, 로그인 코드가 그 사람에게 가 2단계 인증이 그 사람 것이 된다.
+     * 켤 때의 번호에 묶어 두면 번호를 바꾸는 순간 SMS 수단은 멈추고(PHONE_CHANGED), 다시 켜려면 최근 로그인이 필요하다(user-service).
+     * {@code binding} 이 없으면 켜는 중이다 — 지금 등록된 번호로 보내고 그 결속값을 돌려준다.
+     *
+     * <p>[JA] ログイン二段階認証のコードを登録済みの番号へ送る(番号はリクエストから受けない)。binding があれば今の番号の結束値と
+     *      一致するときだけ送る — 有効化後にセッションだけを持つ者が番号を自分のものに変えると、コードがその人へ行くため。
+     */
+    public TwoFactorOutcome sendTwoFactor(Long userId, String binding) {
+        Optional<NotificationPreference> preference = preferenceRepository.findByUserId(userId);
+        if (preference.isEmpty() || !preference.get().isPhoneVerified() || preference.get().getPhoneE164() == null) {
+            return TwoFactorOutcome.of(TwoFactorResult.NO_PHONE);
+        }
+        String e164 = preference.get().getPhoneE164();
+        String current = bindingOf(e164);
+        if (binding != null && !constantTimeEquals(current, binding)) {
+            log.info("2단계 인증 SMS 거부 — 등록 번호가 켤 때와 다르다: userId={}", userId);
+            return TwoFactorOutcome.of(TwoFactorResult.PHONE_CHANGED);
+        }
+        Region region = PhoneNumbers.regionOfE164(e164).orElse(Region.KR);
+        IssueResult issued = issueTo(e164, region, userId, PhoneVerification.Purpose.LOGIN_2FA);
+        if (issued instanceof IssueResult.Sent sent) {
+            return new TwoFactorOutcome(TwoFactorResult.SENT, sent.maskedPhone(), current, sent.ttlMinutes(), 0, 0);
+        }
+        if (issued instanceof IssueResult.TooMany tooMany) {
+            return new TwoFactorOutcome(TwoFactorResult.TOO_MANY, null, null, 0, tooMany.retryAfterSeconds(), 0);
+        }
+        return TwoFactorOutcome.of(TwoFactorResult.FAILED);
+    }
+
+    /**
+     * 로그인 2단계 인증 코드를 확인한다 — 이 사용자에게 지금 등록된 번호로 보낸 가장 최근 LOGIN_2FA 코드만 본다(등록 코드는 아니다).
+     * 맞으면 소비하고 결속값을 돌려준다(켤 때 user-service 가 저장한다). 시도 · 만료 · 1회용은 번호 등록 코드와 같다.
+     *
+     * <p>[JA] ログイン二段階認証のコードを確認する — このユーザーに今の番号で送った最新の LOGIN_2FA コードだけを見る。
+     */
+    @Transactional
+    public TwoFactorOutcome verifyTwoFactor(Long userId, String binding, String code) {
+        if (code == null || !code.matches("\\d{6}")) {
+            return TwoFactorOutcome.of(TwoFactorResult.INVALID);
+        }
+        Optional<NotificationPreference> preference = preferenceRepository.findByUserId(userId);
+        if (preference.isEmpty() || !preference.get().isPhoneVerified() || preference.get().getPhoneE164() == null) {
+            return TwoFactorOutcome.of(TwoFactorResult.NO_PHONE);
+        }
+        String e164 = preference.get().getPhoneE164();
+        String current = bindingOf(e164);
+        if (binding != null && !constantTimeEquals(current, binding)) {
+            return TwoFactorOutcome.of(TwoFactorResult.PHONE_CHANGED);
+        }
+        Optional<PhoneVerification> found = verificationRepository
+                .findLatestTwoFactorForUpdate(userId, e164, org.springframework.data.domain.PageRequest.of(0, 1))
+                .stream().findFirst();
+        if (found.isEmpty() || !found.get().isUsable()) {
+            return TwoFactorOutcome.of(TwoFactorResult.EXPIRED);
+        }
+        PhoneVerification verification = found.get();
+        if (!constantTimeEquals(hash(code), verification.getCodeHash())) {
+            verification.recordFailedAttempt();
+            int left = Math.max(0, PhoneVerification.MAX_ATTEMPTS - verification.getAttempts());
+            log.info("2단계 인증 SMS 코드 불일치: userId={} 남은시도={}", userId, left);
+            return new TwoFactorOutcome(left > 0 ? TwoFactorResult.INVALID : TwoFactorResult.EXPIRED,
+                    null, null, 0, 0, left);
+        }
+        verification.consume();
+        log.info("2단계 인증 SMS 통과: userId={}", userId);
+        return new TwoFactorOutcome(TwoFactorResult.VERIFIED, PhoneNumbers.mask(e164), current, 0, 0, 0);
+    }
+
+    /**
+     * 번호의 결속값 — HMAC-SHA256(pepper, 번호). user-service 는 번호 대신 이것을 저장한다: 번호를 두 서비스에 복제하지 않고,
+     * pepper 없이는 결속값에서 번호를 되짚지 못한다(번호는 경우의 수가 작아 그냥 SHA-256 이면 표로 역산된다).
+     * [JA] 番号の結束値 — HMAC-SHA256(pepper, 番号)。user-service は番号の代わりにこれを保存する。
+     */
+    String bindingOf(String e164) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(
+                    ("2fa-phone:" + pepper).getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(e164.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException("HmacSHA256 을 사용할 수 없습니다", e);
+        }
     }
 
     /** 하루짜리 카운터를 하나 올린다. 첫 증가에만 만료를 건다. null(파이프라인·트랜잭션 안에서만 온다)이면 0. */

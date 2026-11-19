@@ -65,6 +65,8 @@ describe("SignInPage", () => {
     // 테스트마다 초기화한다. 남아 있으면 앞 테스트가 정한 리다이렉트 대상이
     // 뒤 테스트로 새어 나간다.
     global.__mockLocationState = undefined;
+    // 2단계 화면이 수단을 묻는다(docs/24 §10) — 기본은 "인증 앱만"(물어보지 못한 것과 같다).
+    jest.spyOn(api, "get").mockResolvedValue({ data: { totp: true, sms: false } });
   });
 
   afterEach(() => {
@@ -345,6 +347,45 @@ describe("SignInPage", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("인증 코드가 올바르지 않습니다");
     expect(mockLogin).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 SMS 수단(user-service docs/24 §10) — 서버가 알려 준 수단만 보여 주고, 확인 요청에 수단을 싣는다(서버는 켜진 수단만 받는다).
+   */
+  it("SMS 만 켠 계정: 처음부터 SMS — 받기를 누르면 마스킹 번호, 코드는 method=sms 로", async () => {
+    jest.spyOn(api, "get").mockResolvedValue({ data: { totp: false, sms: true } });
+    const post = jest.spyOn(api, "post")
+      .mockResolvedValueOnce(twoFactorRequired)
+      .mockResolvedValueOnce({ data: { maskedPhone: "+8210****5678", ttlMinutes: 5 } })
+      .mockResolvedValueOnce({ data: { message: "ok" } });
+    delete window.location;
+    window.location = { href: "" };
+
+    renderPage();
+    await submitCredentials();
+
+    await userEvent.click(await screen.findByRole("button", { name: "문자로 인증번호 받기" }));
+    expect(post.mock.calls[1][0]).toBe("/user-service/api/auth/public/2fa/sms");
+    expect(await screen.findByText(/\+8210\*\*\*\*5678 로 인증번호를 보냈습니다/)).toBeInTheDocument();
+    // 인증 앱이 없으니 앱으로 바꾸는 길도 없다
+    expect(screen.queryByRole("button", { name: "인증 앱 코드 입력하기" })).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("인증 코드"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: /^확인/ }));
+    await waitFor(() => expect(post.mock.calls[2][0]).toContain("/api/auth/public/verify-2fa?code=123456&method=sms"));
+  });
+
+  it("두 수단을 켠 계정: 인증 앱이 기본, 문자로 바꿀 수 있다", async () => {
+    jest.spyOn(api, "get").mockResolvedValue({ data: { totp: true, sms: true } });
+    jest.spyOn(api, "post").mockResolvedValueOnce(twoFactorRequired);
+
+    renderPage();
+    await submitCredentials();
+
+    expect(await screen.findByText("인증 앱에 표시된 6자리 코드를 입력해 주세요.")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "인증 앱 대신 문자로 받기" }));
+    expect(screen.getByRole("button", { name: "문자로 인증번호 받기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "인증 앱 코드 입력하기" })).toBeInTheDocument();
   });
 
   /**

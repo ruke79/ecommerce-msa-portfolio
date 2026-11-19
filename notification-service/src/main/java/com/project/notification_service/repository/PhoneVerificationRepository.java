@@ -23,9 +23,33 @@ public interface PhoneVerificationRepository extends JpaRepository<PhoneVerifica
      * [JA] 検証用 — 最新の有効なコードをロックして読む。以前はロックなしで読み attempts+1 を書いたため、同時リクエストで 5 回制限が消えていた。
      */
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
-    @Query("select v from PhoneVerification v where v.phoneE164 = :phone and v.consumed = false order by v.createdAt desc")
+    @Query("select v from PhoneVerification v where v.phoneE164 = :phone and v.consumed = false"
+            + " and v.purpose = :purpose order by v.createdAt desc")
     java.util.List<PhoneVerification> findLatestForUpdate(@Param("phone") String phoneE164,
+            @Param("purpose") PhoneVerification.Purpose purpose,
             org.springframework.data.domain.Pageable page);
+
+    /** 번호 등록용 — 로그인 2단계 인증 코드(LOGIN_2FA)는 보지 않는다(V12). */
+    default java.util.List<PhoneVerification> findLatestForUpdate(String phoneE164,
+            org.springframework.data.domain.Pageable page) {
+        return findLatestForUpdate(phoneE164, PhoneVerification.Purpose.PHONE, page);
+    }
+
+    /**
+     * 로그인 2단계 인증 — 이 사용자에게 이 번호로 보낸 가장 최근의 살아 있는 코드를 잠그고 읽는다. 등록 코드(PHONE)는 보지 않는다.
+     * [JA] ログイン二段階認証 — このユーザーにこの番号で送った最新の有効なコードをロックして読む。登録コードは見ない。
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select v from PhoneVerification v where v.userId = :userId and v.phoneE164 = :phone and v.consumed = false"
+            + " and v.purpose = :purpose order by v.createdAt desc")
+    java.util.List<PhoneVerification> findLatestForUserForUpdate(@Param("userId") Long userId,
+            @Param("phone") String phoneE164, @Param("purpose") PhoneVerification.Purpose purpose,
+            org.springframework.data.domain.Pageable page);
+
+    default java.util.List<PhoneVerification> findLatestTwoFactorForUpdate(Long userId, String phoneE164,
+            org.springframework.data.domain.Pageable page) {
+        return findLatestForUserForUpdate(userId, phoneE164, PhoneVerification.Purpose.LOGIN_2FA, page);
+    }
 
     /** 만료된 코드 정리. 개인정보를 필요 이상으로 들고 있지 않기 위해서이기도 하다. */
     @Modifying

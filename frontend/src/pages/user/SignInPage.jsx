@@ -150,6 +150,55 @@ const SignInPage = () => {
     const [checkMode, setCheckMode] = useState("totp");
     const [verifying, setVerifying] = useState(false);
     const [twoFactorError, setTwoFactorError] = useState("");
+    // 2단계 인증의 수단 — 서버가 대기 쿠키의 주인이 켠 것을 알려 준다(user-service docs/24 §10). "totp"(인증 앱) · "sms"(등록 휴대폰).
+    // 둘 다 켰으면 고를 수 있다(앱을 잃어버렸을 때의 길). 물어보지 못하면 예전처럼 인증 앱만.
+    // [JA] 二段階認証の手段 — サーバーが待機 Cookie の持ち主が有効にしたものを返す。両方なら選べる。聞けなければ従来どおりアプリのみ。
+    const [methods, setMethods] = useState({ totp: true, sms: false });
+    const [twoFactorMethod, setTwoFactorMethod] = useState("totp");
+    const [smsSentTo, setSmsSentTo] = useState("");
+    const [smsSending, setSmsSending] = useState(false);
+
+    useEffect(() => {
+        if (step !== 2 || checkMode !== "totp") {
+            return undefined;
+        }
+        let alive = true;
+        api.get("/user-service/api/auth/public/2fa/methods")
+            .then(({ data }) => {
+                if (!alive || !data) {
+                    return;
+                }
+                const next = { totp: Boolean(data.totp), sms: Boolean(data.sms) };
+                setMethods(next);
+                // SMS 만 켰으면 처음부터 SMS — 인증 앱 칸을 보여 주면 없는 앱을 찾게 된다.
+                setTwoFactorMethod(next.totp ? "totp" : "sms");
+            })
+            .catch(() => {});
+        return () => {
+            alive = false;
+        };
+    }, [step, checkMode]);
+
+    const sendSmsHandler = async () => {
+        setSmsSending(true);
+        setTwoFactorError("");
+        try {
+            const { data } = await api.post(isOauth2fa
+                ? "/user-service/api/auth/public/oauth2/2fa/sms"
+                : "/user-service/api/auth/public/2fa/sms");
+            setSmsSentTo(data?.maskedPhone ?? "");
+        } catch (error) {
+            setTwoFactorError(error?.response?.data?.message ?? t("user.signin.2fa.sms_failed"));
+        } finally {
+            setSmsSending(false);
+        }
+    };
+
+    const switchTwoFactorMethod = (next) => {
+        setTwoFactorMethod(next);
+        setCode2fa("");
+        setTwoFactorError("");
+    };
 
     const { mutate, isPending } = useMutation({
         mutationFn: signin,
@@ -229,7 +278,9 @@ const SignInPage = () => {
             const path = checkMode === "email"
                 ? "/user-service/api/auth/public/verify-login-check"
                 : "/user-service/api/auth/public/verify-2fa";
-            await api.post(`${path}?code=${encodeURIComponent(code2fa)}`);
+            // 수단을 함께 보낸다 — 서버는 그 수단이 켜져 있어야만 받는다(SMS 만 켠 계정에 앱 코드로 들어오지 못한다).
+            const method = checkMode === "email" ? "" : `&method=${twoFactorMethod}`;
+            await api.post(`${path}?code=${encodeURIComponent(code2fa)}${method}`);
             window.location.href = isOauth2fa ? "/" : redirectTo;
         } catch (error) {
             setTwoFactorError(
@@ -293,8 +344,24 @@ const SignInPage = () => {
                             {t(checkMode === "email" ? "user.signin.check.title" : "user.signin.2fa.title")}
                         </h3>
                         <p className="text-sm text-slate-600">
-                            {t(checkMode === "email" ? "user.signin.check.hint" : "user.signin.2fa.hint")}
+                            {checkMode === "email"
+                                ? t("user.signin.check.hint")
+                                : twoFactorMethod === "sms"
+                                    ? (smsSentTo
+                                        ? t("user.signin.2fa.sms_sent", { phone: smsSentTo })
+                                        : t("user.signin.2fa.sms_hint"))
+                                    : t("user.signin.2fa.hint")}
                         </p>
+                        {checkMode === "totp" && twoFactorMethod === "sms" && (
+                            <button
+                                type="button"
+                                className="text-sm text-blue-600 hover:underline self-start disabled:opacity-50"
+                                disabled={smsSending}
+                                onClick={sendSmsHandler}
+                            >
+                                {smsSentTo ? t("user.signin.2fa.sms_resend") : t("user.signin.2fa.sms_send")}
+                            </button>
+                        )}
                         <input
                             type="text"
                             inputMode="numeric"
@@ -339,6 +406,15 @@ const SignInPage = () => {
                         >
                             {t("user.signin.2fa.other_account")}
                         </button>
+                        {checkMode === "totp" && methods.totp && methods.sms && (
+                            <button
+                                type="button"
+                                className="text-xs text-blue-500 hover:underline"
+                                onClick={() => switchTwoFactorMethod(twoFactorMethod === "sms" ? "totp" : "sms")}
+                            >
+                                {twoFactorMethod === "sms" ? t("user.signin.2fa.use_app") : t("user.signin.2fa.use_sms")}
+                            </button>
+                        )}
                     </div>
                 ) : (
                 <div className="flex flex-col p-4 my-4 bg-white rounded border space-y-4">

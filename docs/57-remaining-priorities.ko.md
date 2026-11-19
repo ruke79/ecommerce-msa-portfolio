@@ -540,6 +540,7 @@ Secret 모양은 cert-manager 의 Certificate(`keystores.pkcs12`)가 만드는 �
 | `/api/auth/user/segments` | coupon-service | 기획전 쿠폰 |
 | `/api/auth/user/id` | coupon·order·chat | 쿠폰 발급(chat·order 는 선언만) |
 | `/api/auth/user/email/` · `/profile/` | none | 관리자만(게이트웨이) |
+| `/api/notifications/internal/two-factor` | user-service | 로그인 2단계 인증의 SMS 발송 · 확인(docs/24 §10 — 관리자도 게이트웨이로는 못 부른다) |
 
 게이트웨이·saga-projection 은 내부 API 를 부르지 않는다(Feign 없음). 처음 보는 (호출 서비스, 경로) 짝은 `[mTLS caller]` 로 한 번
 남는다 — `./ops/37-check-mtls.sh --callers` 가 모아 보여 준다.

@@ -81,7 +81,11 @@ public interface UserService {
     void disable2FA(Long userId);
 
     /** 로그인 중의 2FA 변경 결과(docs/68 §14). */
-    enum TwoFactorChange { OK, INVALID_CODE, TOO_MANY_ATTEMPTS, ALREADY_ENABLED, NOT_ENABLED }
+    /*
+     * NO_PHONE · PHONE_CHANGED · UNAVAILABLE 은 SMS 수단에서만 나온다(docs/24 §10) — 인증된 번호가 없다 · 켤 때의 번호와 다르다 ·
+     * notification 에 닿지 못했다(그때는 통과시키지 않는다).
+     */
+    enum TwoFactorChange { OK, INVALID_CODE, TOO_MANY_ATTEMPTS, ALREADY_ENABLED, NOT_ENABLED, NO_PHONE, PHONE_CHANGED, UNAVAILABLE }
 
     /** 설정 시작 — 이미 켜져 있으면 비밀을 바꾸지 않는다(끄고 다시 켠다). */
     TwoFactorChange start2FASetup(Long userId);

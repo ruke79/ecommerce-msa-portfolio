@@ -62,6 +62,9 @@ public class AuthController {
     /** 2FA 대기 토큰 — 첫 단계는 통과했고 코드 확인이 남은 상태(비밀번호·소셜 공통). */
     private final com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
 
+    /** 로그인 2단계의 두 번째 수단 — SMS(docs/24 §10). */
+    private final com.project.userservice.security.SmsTwoFactor smsTwoFactor;
+
     /** 위험 기반 로그인의 메일 확인(docs/68 §19). */
     private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
     private final com.project.userservice.service.DeviceRecognitionService deviceRecognitionService;
@@ -92,8 +95,10 @@ public class AuthController {
             com.project.userservice.security.PendingTwoFactor pendingTwoFactor,
             com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard,
             com.project.userservice.service.DeviceRecognitionService deviceRecognitionService,
-            com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer
+            com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer,
+            com.project.userservice.security.SmsTwoFactor smsTwoFactor
             ) {
+        this.smsTwoFactor = smsTwoFactor;
         this.segmentService = segmentService;
         this.pendingTwoFactor = pendingTwoFactor;
         this.loginRiskGuard = loginRiskGuard;
@@ -150,10 +155,8 @@ public class AuthController {
      *
      * <p>{@code /public/oauth2/verify-2fa} 는 소셜 경로만 있던 때의 이름이다 — 배포 중인 옛 화면을 위해 남긴다.
      */
-    @PostMapping({"/public/verify-2fa", "/public/oauth2/verify-2fa"})
-    public ResponseEntity<?> verifyPendingTwoFactor(@RequestParam int code,
-            HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response) {
-
+    /** 대기 쿠키(PENDING_2FA) 값 — 없으면 null. */
+    private static String pendingCookie(HttpServletRequest request) {
         String pending = null;
         if (request.getCookies() != null) {
             for (jakarta.servlet.http.Cookie c : request.getCookies()) {
@@ -162,6 +165,74 @@ public class AuthController {
                 }
             }
         }
+        return pending;
+    }
+
+    /**
+     * 로그인 2단계 화면이 보여 줄 수단 — 대기 쿠키의 주인이 켠 것(docs/24 §10). 시도를 세지 않는다. 대기 토큰을 가진 사람(비밀번호 ·
+     * 소셜을 방금 통과한 사람)에게만 답한다 — 번호는 싣지 않는다(SMS 를 보낼 때 마스킹해서 준다).
+     * [JA] ログイン二段階画面が見せる手段 — 待機 Cookie の持ち主が有効にしたもの。試行は数えない。番号は載せない。
+     */
+    @GetMapping("/public/2fa/methods")
+    public ResponseEntity<?> pendingTwoFactorMethods(HttpServletRequest request) {
+        Long userId = pendingTwoFactor.peekUserId(pendingCookie(request)).orElse(null);
+        User user = userId == null ? null : userRepository.findById(userId).orElse(null);
+        if (user == null || !user.requiresTwoFactor() || !user.canSignIn()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("message", "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요."));
+        }
+        return ResponseEntity.ok(Map.of("totp", user.isTwoFactorEnabled(), "sms", user.isSmsTwoFactorEnabled()));
+    }
+
+    /**
+     * 로그인 2단계 — SMS 로 코드를 받는다(docs/24 §10). 등록 번호로만 간다(번호를 받지 않는다). 대기 토큰 하나로 {@code 3} 번까지,
+     * 번호 · 계정 · 전체 일일 한도는 notification 이 따로 센다.
+     * [JA] ログイン二段階目 — SMS でコードを受ける。登録番号へのみ。待機トークン一つで 3 回まで。
+     */
+    @PostMapping({"/public/2fa/sms", "/public/oauth2/2fa/sms"})
+    public ResponseEntity<?> sendPendingTwoFactorSms(HttpServletRequest request) {
+        final String expired = "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요.";
+        String pending = pendingCookie(request);
+        Long userId = pendingTwoFactor.peekUserId(pending).orElse(null);
+        User user = userId == null ? null : userRepository.findById(userId).orElse(null);
+        if (user == null || !user.isSmsTwoFactorEnabled() || !user.canSignIn()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
+        }
+        if (!pendingTwoFactor.reserveSmsSend(pending)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("message", "인증번호를 너무 많이 요청했습니다. 로그인을 다시 시작해 주세요."));
+        }
+        return smsSentResponse(smsTwoFactor.send(user));
+    }
+
+    private static ResponseEntity<?> smsSentResponse(com.project.userservice.security.SmsTwoFactor.Sent sent) {
+        return switch (sent.status()) {
+            case SENT -> ResponseEntity.ok(Map.of("maskedPhone", String.valueOf(sent.maskedPhone()),
+                    "ttlMinutes", sent.ttlMinutes()));
+            case TOO_MANY -> ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(org.springframework.http.HttpHeaders.RETRY_AFTER, String.valueOf(sent.retryAfterSeconds()))
+                    .body(Map.of("message", "잠시 후 다시 요청해 주세요.", "retryAfterSeconds", sent.retryAfterSeconds()));
+            case NO_PHONE -> ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("code", "no_phone", "message", "인증된 휴대폰 번호가 없습니다."));
+            case PHONE_CHANGED -> ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("code", "phone_changed",
+                            "message", "휴대폰 번호가 2단계 인증을 켤 때와 다릅니다. 다른 인증 수단을 쓰거나 고객센터에 문의해 주세요."));
+            case UNAVAILABLE -> ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "인증번호를 보내지 못했습니다. 잠시 후 다시 시도해 주세요."));
+        };
+    }
+
+    @PostMapping({"/public/verify-2fa", "/public/oauth2/verify-2fa"})
+    public ResponseEntity<?> verifyPendingTwoFactor(@RequestParam String code,
+            @RequestParam(name = "method", defaultValue = "totp") String method,
+            HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response) {
+
+        String pending = pendingCookie(request);
+        // 수단 — totp(기본, 옛 화면) · sms(docs/24 §10). 모르는 값은 TOTP 로 읽지 않는다.
+        boolean sms = "sms".equals(method);
+        if (!sms && !"totp".equals(method)) {
+            return ResponseEntity.badRequest().body(Map.of("message", "알 수 없는 인증 수단입니다."));
+        }
         // 만료(5분)·위조·부재·시도 초과를 구분해 알려주지 않는다 — 어차피 처음부터 다시 하면 된다.
         final String expired = "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요.";
         // 🔒 시도는 검증 **전에** 센다 — 동시에 보낸 코드가 모두 "아직 0번" 을 읽고 전부 검증되던 것을 막는다(PendingTwoFactor 주석).
@@ -169,13 +240,28 @@ public class AuthController {
         Long userId = attempt == null ? null : attempt.userId();
         User user = userId == null ? null : userRepository.findById(userId).orElse(null);
         // 코드를 받는 사이(최대 5분) 막힌 계정이면 세션을 주지 않는다 — 🐛 예전에는 계정 상태를 보지 않았다.
-        if (user == null || !user.isTwoFactorEnabled() || !user.canSignIn()) {
+        // 그 수단이 켜져 있어야 한다 — SMS 만 켠 계정에 TOTP 로, TOTP 만 켠 계정에 SMS 로 들어오지 못한다.
+        if (user == null || !(sms ? user.isSmsTwoFactorEnabled() : user.isTwoFactorEnabled()) || !user.canSignIn()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
         }
 
         // 사용자별 한도(docs/68 §15) — 대기 토큰의 5번은 비밀번호로 다시 로그인하면 새로 생겼다. 막혔으면 맞는 코드도 받지 않는다.
+        // 두 수단이 같은 칸을 쓴다(SmsTwoFactor) — 수단을 바꿔 가며 한도를 두 배로 쓰지 못한다.
         // [JA] ユーザー単位の上限 — 待機トークンの 5 回は再ログインで新しく生まれていた。止まっていれば正しいコードも受けない。
-        UserService.TwoFactorChange checked = userService.verifyLoginTwoFactor(user.getUserId(), code);
+        UserService.TwoFactorChange checked = sms
+                ? smsTwoFactor.verifyLogin(user, code)
+                : (code != null && code.matches("\\d{6}")
+                        ? userService.verifyLoginTwoFactor(user.getUserId(), Integer.parseInt(code))
+                        : UserService.TwoFactorChange.INVALID_CODE);
+        if (checked == UserService.TwoFactorChange.UNAVAILABLE) {
+            // notification 에 닿지 못했다 — 통과시키지 않는다. 대기 토큰은 남긴다(다시 시도하거나 다른 수단으로).
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "인증번호를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."));
+        }
+        if (checked == UserService.TwoFactorChange.PHONE_CHANGED || checked == UserService.TwoFactorChange.NO_PHONE) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("code", "phone_changed",
+                    "message", "휴대폰 번호가 2단계 인증을 켤 때와 다릅니다. 다른 인증 수단을 쓰거나 고객센터에 문의해 주세요."));
+        }
         if (checked == UserService.TwoFactorChange.TOO_MANY_ATTEMPTS) {
             pendingTwoFactor.consume(pending);
             response.addCookie(jwtUtils.createCookie(
@@ -783,14 +869,60 @@ public class AuthController {
             case TOO_MANY_ATTEMPTS -> ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body("Too many attempts");
             case ALREADY_ENABLED -> ResponseEntity.status(HttpStatus.CONFLICT).body("2FA already enabled");
             case NOT_ENABLED -> ResponseEntity.status(HttpStatus.CONFLICT).body("2FA is not enabled");
+            case NO_PHONE -> ResponseEntity.status(HttpStatus.CONFLICT).body("no_phone");
+            case PHONE_CHANGED -> ResponseEntity.status(HttpStatus.CONFLICT).body("phone_changed");
+            case UNAVAILABLE -> ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("unavailable");
         };
+    }
+
+    // ── 2단계 인증 — SMS 수단 켜기 · 끄기(docs/24 §10) ─────────────────────────────────────────────
+
+    /**
+     * SMS 코드를 받는다 — 꺼져 있으면 켜기 위해(지금 등록된 번호로, 최근 로그인 필요), 켜져 있으면 끄기 확인용(켤 때의 번호로).
+     * [JA] SMS コードを受ける — 無効なら有効化のため(今の登録番号、直近ログイン必要)、有効なら無効化の確認用(有効化時の番号)。
+     */
+    @PostMapping("/sms-2fa/code")
+    public ResponseEntity<?> sendSmsTwoFactorCode(
+            @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {
+        User user = authUtil.loggedInUser();
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        if (user.isSmsTwoFactorEnabled()) {
+            return smsSentResponse(smsTwoFactor.send(user));
+        }
+        // 켜기 — 훔친 세션으로 자기 번호를 등록해 2단계 인증을 가져가지 못하게 TOTP 켜기와 같은 "최근 로그인" 창(docs/68 §14).
+        if (!recentlyAuthenticated(refresh)) {
+            return twoFactorReauthRequired();
+        }
+        return smsSentResponse(smsTwoFactor.sendForEnrollment(user));
+    }
+
+    /** SMS 수단을 켠다 — 지금 등록 번호로 받은 코드 + 최근 로그인. 켜지면 주인에게 알린다. */
+    // [JA] SMS 手段を有効にする — 今の登録番号で受けたコード + 直近のログイン。
+    @PostMapping("/sms-2fa/enable")
+    public ResponseEntity<String> enableSmsTwoFactor(@RequestParam String code,
+            @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {
+        if (!recentlyAuthenticated(refresh)) {
+            return twoFactorReauthRequired();
+        }
+        return twoFactorResponse(smsTwoFactor.enable(authUtil.loggedInUserId(), code), "SMS 2FA enabled");
+    }
+
+    /** SMS 수단을 끈다 — 켤 때의 번호로 받은 지금 코드가 맞아야 한다(docs/68 §14 와 같은 생각). */
+    // [JA] SMS 手段を無効にする — 有効化時の番号で受けた今のコードが必要。
+    @PostMapping("/sms-2fa/disable")
+    public ResponseEntity<String> disableSmsTwoFactor(@RequestParam String code) {
+        return twoFactorResponse(smsTwoFactor.disable(authUtil.loggedInUserId(), code), "SMS 2FA disabled");
     }
 
     @GetMapping("/user/2fa-status")
     public ResponseEntity<?> get2FAStatus() {
         User user = authUtil.loggedInUser();
         if (user != null) {
-            return ResponseEntity.ok().body(Map.of("is2faEnabled", user.isTwoFactorEnabled()));
+            // smsEnabled — 두 번째 수단(docs/24 §10). is2faEnabled 는 예전 그대로 TOTP 다(옛 화면이 읽는다).
+            return ResponseEntity.ok().body(Map.of("is2faEnabled", user.isTwoFactorEnabled(),
+                    "smsEnabled", user.isSmsTwoFactorEnabled()));
         } else {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(StatusMessages.USER_NOT_FOUND);

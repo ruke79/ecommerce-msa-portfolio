@@ -132,4 +132,32 @@ class PendingTwoFactorTest {
         Optional<PendingTwoFactor.Attempt> first = pending.reserveAttempt(yours);
         assertThat(first).get().extracting(PendingTwoFactor.Attempt::userId).isEqualTo(8L);
     }
+
+    @Test
+    @DisplayName("🔴 SMS 발송은 대기 토큰 하나로 세 번까지 — 비밀번호만 아는 사람이 문자를 쏟아내지 못한다(docs/24 §10)")
+    void smsSendsArePerTokenCapped() {
+        String token = pending.issue(7L);
+        for (int i = 0; i < PendingTwoFactor.MAX_SMS_SENDS; i++) {
+            assertThat(pending.reserveSmsSend(token)).isTrue();
+        }
+        assertThat(pending.reserveSmsSend(token)).isFalse();
+        assertThat(pending.reserveSmsSend(pending.issue(7L))).as("새 로그인은 새 몫").isTrue();
+        assertThat(pending.reserveSmsSend("forged")).isFalse();
+        assertThat(template.keys("2fa:pending-sms:*")).isNotEmpty()
+                .allSatisfy(k -> assertThat(template.getExpire(k)).as("몫에는 만료가 있다 — " + k).isPositive());
+    }
+
+    @Test
+    @DisplayName("주인 보기(peek)는 시도를 세지 않고, 태운 토큰은 비어 있다")
+    void peekDoesNotCountAndBurnedIsEmpty() {
+        String token = pending.issue(7L);
+        for (int i = 0; i < 10; i++) {
+            assertThat(pending.peekUserId(token)).contains(7L);
+        }
+        assertThat(pending.reserveAttempt(token)).as("peek 열 번 뒤에도 첫 시도").get()
+                .extracting(PendingTwoFactor.Attempt::moreAfterThis).isEqualTo(true);
+        pending.consume(token);
+        assertThat(pending.peekUserId(token)).isEmpty();
+        assertThat(pending.peekUserId("forged")).isEmpty();
+    }
 }

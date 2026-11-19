@@ -89,11 +89,35 @@ class NotificationServiceApplicationTests {
         assertThat(saved.isSmsEnabled()).as("smsEnabled").isTrue();
         assertThat(saved.isEmailEnabled()).as("emailEnabled").isFalse();
 
-        // 인증된 번호 없이 2단계 인증 켜기 → 409, 함께 보낸 다른 변경도 저장하지 않는다
+        // 2단계 인증은 이 경로에서 받지 않는다(docs/24 §10 — user-service 의 것) → 400, 함께 보낸 다른 변경도 저장하지 않는다
         var rejected = notificationController.updatePreferences(userId, "pref@example.com",
                 java.util.Map.of("twoFactorEnabled", true, "emailEnabled", true));
-        assertThat(rejected.getStatusCode().value()).isEqualTo(409);
+        assertThat(rejected.getStatusCode().value()).isEqualTo(400);
         assertThat(preferenceRepository.findByUserId(userId).orElseThrow().isEmailEnabled()).isFalse();
+    }
+
+    @Autowired
+    private com.project.notification_service.repository.PhoneVerificationRepository verificationRepository;
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional
+    @DisplayName("🔴 V12: 번호 등록 검증은 로그인 2단계 인증 코드(LOGIN_2FA)를 보지 않고, 2단계 인증은 등록 코드를 보지 않는다")
+    void verificationPurposesDoNotMix() {
+        String phone = "+819012340000";
+        var page = org.springframework.data.domain.PageRequest.of(0, 1);
+        var phoneCode = verificationRepository.save(new com.project.notification_service.domain.PhoneVerification(
+                phone, 77L, "h-phone"));
+        var loginCode = verificationRepository.save(new com.project.notification_service.domain.PhoneVerification(
+                phone, 77L, "h-login", com.project.notification_service.domain.PhoneVerification.Purpose.LOGIN_2FA));
+
+        assertThat(verificationRepository.findLatestForUpdate(phone, page))
+                .as("로그인 코드가 더 최근이어도 등록 검증은 등록 코드").extracting("codeHash").containsExactly("h-phone");
+        assertThat(verificationRepository.findLatestTwoFactorForUpdate(77L, phone, page))
+                .extracting("codeHash").containsExactly("h-login");
+        assertThat(verificationRepository.findLatestTwoFactorForUpdate(78L, phone, page))
+                .as("다른 사용자의 로그인 코드는 보지 않는다").isEmpty();
+        assertThat(phoneCode.getPurpose()).isEqualTo(com.project.notification_service.domain.PhoneVerification.Purpose.PHONE);
+        assertThat(loginCode.getVerificationId()).isNotNull();
     }
 
     @Test

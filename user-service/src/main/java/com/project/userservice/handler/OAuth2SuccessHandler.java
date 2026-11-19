@@ -82,7 +82,7 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             return;
         }
 
-        if (user.isTwoFactorEnabled()) {
+        if (user.requiresTwoFactor()) {   // TOTP 든 SMS 든(docs/24 §10)
             // 2FA 계정은 여기서 세션을 주지 않는다 — 주면 소셜 버튼이 2FA 우회로가 된다.
             // 대신 5분짜리 보류 토큰을 httpOnly 쿠키로 심고 2FA 입력 화면으로 보낸다.
             // 코드 확인(/api/auth/public/oauth2/verify-2fa)이 통과해야 REFRESH 가 발급된다.

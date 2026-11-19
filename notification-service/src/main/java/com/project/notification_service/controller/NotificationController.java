@@ -189,7 +189,7 @@ public class NotificationController {
     }
 
     @PatchMapping("/preferences")
-    public ResponseEntity<PreferenceResponse> updatePreferences(
+    public ResponseEntity<?> updatePreferences(
             @RequestHeader(value = "User-Id", required = false) Long userId,
             @RequestHeader(value = "User-Email", required = false) String userEmail,
             @RequestBody Map<String, Boolean> body) {
@@ -197,10 +197,13 @@ public class NotificationController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         // 바꾸기 · 저장은 서비스의 한 트랜잭션에서(🐛 예전에는 여기서 세터를 불러 저장되지 않았다 — NotificationService.updatePreferences).
-        // 인증된 번호 없이 2단계 인증을 켜려 하면 409 — 켜지면 본인도 로그인하지 못한다.
-        return notificationService.updatePreferences(userId, userEmail, body)
-                .map(p -> ResponseEntity.ok(PreferenceResponse.from(p)))
-                .orElseGet(() -> ResponseEntity.status(HttpStatus.CONFLICT).build());
+        // 2단계 인증(twoFactorEnabled)은 여기서 받지 않는다 — 400, 다른 키도 저장하지 않는다(docs/24 §10).
+        NotificationService.PreferenceUpdate result = notificationService.updatePreferences(userId, userEmail, body);
+        if (result instanceof NotificationService.PreferenceUpdate.Rejected r) {
+            return ResponseEntity.badRequest().body(Map.of("message", r.reason()));
+        }
+        return ResponseEntity.ok(PreferenceResponse.from(
+                ((NotificationService.PreferenceUpdate.Updated) result).preference()));
     }
 
     // ── SMS 인증 (번호 등록 · 2단계 인증) ──────────────────────────────────────

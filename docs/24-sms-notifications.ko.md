@@ -2,7 +2,8 @@
 
 [日本語](24-sms-notifications.md) | **한국어**
 
-> 🕰️ **상태(2026-09-27) — 일부 낡음.** 인증 SMS 는 번호당 제한 외에 계정당 · 전체 일일 상한도 있습니다([docs/57 §10](57-remaining-priorities.ko.md)).
+> 🕰️ **상태(2026-11-19) — SMS 2단계 인증을 로그인에 붙였다(§10), 남은 일은 §9 에 모았다.** 2026-09-27: 인증 SMS 는 번호당 제한 외에 계정당 · 전체 일일 상한도 있습니다([docs/57 §10](57-remaining-priorities.ko.md)).
+> ⚠️ 운영의 발송기는 아직 `logging`(실제 문자 없음)이라 휴대폰 인증 · SMS 2단계 인증 모두 **코드가 도착하지 않아 켤 수 없다** — 공급자를 연결하는 날(§9 ①)부터 쓰인다.
 
 > 새 기능. 주문·결제·채팅·친구접속 등의 이벤트를 알림으로 만들고, 그중 중요한 것만 SMS 로
 > 내보낸다. 한국(+82)·일본(+81) 번호를 지원하며, SMS 기반 2단계 인증도 같은 경로를 쓴다.
@@ -133,12 +134,73 @@ Kafka 소비가 밀리고, 전송 실패를 컨슈머 재시도로 처리하면 
 | 전체 스위트 | ✅ **157건 / 실패 0 / 스킵 0** (13개 모듈) |
 | 프론트 프로덕션 빌드 | ✅ 오류 0 |
 
-## 9. 남은 것
+## 9. 남은 것 — 총정리(2026-11-19)
 
-| 항목 | 상태 |
-|---|---|
-| 실제 공급자 연결 (CoolSMS/알리고/Twilio 등) | 🔴 계정·발신번호 등록이 필요하다 — 설정만 바꾸면 된다 |
-| 전달 리포트(DLR) 웹훅 | 🟠 지금은 "공급자가 접수함"까지만 안다. 단말 도달 여부는 미확인 |
-| 친구 접속 이벤트 발행 | 🟠 컨슈머는 있으나 `user-presence` 토픽을 발행하는 쪽이 아직 없다 |
-| 알림 설정 화면 | 🟡 API 는 있고 화면은 종·인증 UI 만 |
-| 광고성 문자 | ❌ 의도적 제외 — 사전 수신동의·(광고) 표기·야간 발송 제한이 법으로 요구된다(정보통신망법) |
+2026-09 의 표는 "설정만 바꾸면 된다" · "API 는 있다" 처럼 실제보다 낙관적이었다. 코드를 다시 읽고 고쳐 적는다. 위에서부터 할 순서다.
+
+| # | 항목 | 상태 | 지금 코드 | 남은 일 |
+|---|---|---|---|---|
+| ① | 실제 공급자 연결(CoolSMS · 알리고 · NHN Cloud / Twilio 등) | 🔴 | `HttpSmsSender` 는 **고정 헤더 하나 + 평평한 JSON POST** 만 안다. CoolSMS 는 요청마다 HMAC 서명(날짜 · salt), Twilio 는 form 인코딩 + Basic 인증, 알리고는 form 필드 인증이라 **설정만으로는 대개 안 맞는다** | 공급자를 고르고(한국은 발신번호 사전 등록 — 전기통신사업법), 그 API 모양의 어댑터 하나 + 가짜 HTTP 서버 시험(2xx 접수 · 4xx 영구 · 5xx 재시도). 키는 `k8s/20-secret.yaml` 에만. 이것이 끝나야 휴대폰 인증 · SMS 2단계 인증 · 알림 문자가 실제로 나간다 |
+| ② | 전달 리포트(DLR) 웹훅 | 🔴 | 없음 — `SmsStatus` 는 `SENT`(공급자 접수)에서 멈춘다 | ① 뒤에. 서명 검증은 공급자마다 다르다. 공개 경로가 생기므로 게이트웨이 라우트 · 터널 경로(B-82) · 서명 검증 · `DELIVERED`/`UNDELIVERED` 상태(Flyway) |
+| ③ | 친구 접속 이벤트 발행 | 🔴 | 받는 쪽(`NotificationEventListener` 의 `user-presence`, `latest` 허용 목록 B-110)만 있다. 보내는 코드가 어디에도 없다 | chat 의 STOMP CONNECT 에서 친구마다 한 건(`watcherId`) — 친구 관계가 어느 서비스에 있는지 먼저 확인, 재접속 폭주 억제(예: Redis `SET NX` 사용자당 10분) |
+| ④ | 알림 설정 화면 | 🔴 | API(`GET · PATCH /api/notifications/preferences`)와 프론트 함수(`getPreferences` · `updatePreferences`)는 있지만 **부르는 화면이 없다** | 보안 화면이나 프로필에 SMS 수신 · 메일 수신 토글 + "보안 알림은 끌 수 없다"(§4). i18n ko · ja, 토글 뒤 PATCH 본문을 보는 시험 |
+| ⑤ | 인증 앱(TOTP) 켜기 화면 | 🔴 | `enable-2fa` · `verify-2fa` · `disable-2fa` API 는 있지만 **프론트에 켜는 화면이 없다**(프로필은 상태만 보인다) | QR · 확인 코드 · 끄기 화면 — SMS 수단(§10)의 `SmsTwoFactor` 와 같은 자리 |
+| ⑥ | 2단계 인증 복구 | 🟠 | 복구 코드 없음, 관리자 초기화 경로 없음. 번호를 바꾸면 SMS 수단은 멈춘다(§10 — 일부러) | 복구 코드(한 번씩 쓰는 10개, 해시 저장) 또는 본인 확인 뒤 관리자 초기화(감사 로그) — 지금은 SMS 만 켠 사용자가 번호를 잃으면 들어올 길이 없다 |
+| ⑦ | 옛 열 `notification_preference.two_factor_enabled` | 🟡 | 로그인이 읽은 적 없는 값 — 이제 쓰지도 받지도 않는다(§10). NOT NULL(기본값 없음)이라 필드만 남겨 false 를 쓴다 | contract 릴리스에서 DROP(expand → contract) |
+| ⑧ | 광고성 문자 | ❌ | 의도적 제외 | 사전 수신동의 · (광고) 표기 · 야간 발송 제한이 법으로 요구된다(정보통신망법) |
+
+배포에 함께 갈 것(SMS 2단계 인증, §10): notification V12 · user V20(둘 다 열 더하기만), ConfigMap 의 경로 규칙
+`/api/notifications/internal/two-factor=user-service` · `FEIGN_NOTIFICATION_URL`. notification 을 user 보다 먼저 올린다 — 옛
+notification 은 새 내부 경로가 404 라 user 는 "닿지 못함"(503)으로 막는다(통과시키지 않는다). 아무도 켜지 않은 상태로 들어가므로
+기존 로그인에는 영향이 없다.
+
+## 10. SMS 2단계 인증 — 두 번째 수단(2026-11-19)
+
+🐛 **예전에는 이름만 있었다.** notification 의 알림 설정에 `twoFactorEnabled` 가 있고 PATCH 로 켜져 저장도 됐지만(2026-10-16 N-H1
+수정 뒤), **로그인(user-service)은 그 값을 읽지 않았다.** 로그인의 2단계는 TOTP(`users.is_two_factor_enabled`) 뿐이라, SMS 를 켠
+사용자는 보호받는다고 믿었지만 비밀번호만으로 들어올 수 있었다. 화면에 그 토글이 없어 실제로 켠 사람은 없었을 것이다.
+
+**어디에 무엇이 있나**
+
+| | user-service | notification-service |
+|---|---|---|
+| 켜 둠 여부 | `users.sms_two_factor_enabled`(V20) | — (옛 `two_factor_enabled` 는 받지 않는다, PATCH 400) |
+| 번호 | 결속값만 `sms_two_factor_binding` = HMAC-SHA256(pepper, 번호) | 등록 · 인증된 번호(E.164) |
+| 코드 | — | `phone_verification`(해시 · 5분 · 5회 · 1회용), V12 의 `purpose = LOGIN_2FA` |
+| 시도 한도 | TOTP 와 **같은** 사용자별 칸(`TotpReplayGuard`, 15분 5회) | 코드당 5회 |
+| 발송 한도 | 대기 토큰당 3번 | 번호 60초 · 번호 하루 10 · 계정 하루 10 · 전체 하루 상한(§6) |
+
+켜 둠 여부를 user-service 에 둔 이유: 로그인이 거기에 있다. notification 에 두면 로그인마다 그쪽에 물어야 하고, 닿지 않을 때
+"모두 막기"(가용성) 와 "모두 통과"(우회) 중 하나를 골라야 한다. 지금은 SMS 를 켠 계정만 notification 을 부른다.
+
+**흐름**
+
+1. 켜기(보안 화면 `SmsTwoFactor`): `POST /api/auth/sms-2fa/code` — **최근 로그인 10분**(TOTP 켜기 · 패스키와 같은 창) → 지금 등록된
+   번호로 6자리 → `POST /api/auth/sms-2fa/enable?code=` → 맞으면 notification 이 돌려준 결속값과 함께 저장, 주인에게 보안 알림.
+2. 로그인: 비밀번호(또는 소셜) → 대기 쿠키(`PENDING_2FA`) → 화면이 `GET /api/auth/public/2fa/methods` 로 수단을 묻는다 →
+   SMS 면 `POST /api/auth/public/2fa/sms`(대기 토큰당 3번) → `POST /api/auth/public/verify-2fa?code=&method=sms`.
+   두 수단을 켰으면 화면에서 고른다(앱을 잃어버렸을 때의 길).
+3. 끄기: 켤 때의 번호로 받은 지금 코드가 맞아야 한다(TOTP 끄기와 같은 생각, docs/68 §14).
+
+**지키는 것**
+
+- **수단마다 켜져 있어야 한다** — SMS 만 켠 계정에 `method=totp` 로, TOTP 만 켠 계정에 `method=sms` 로 들어오지 못한다(401).
+- **번호를 요청에서 받지 않는다** — notification 은 등록된 번호로만 보낸다. 내부 경로는 경로 규칙(mTLS)으로 user-service 만, 그리고
+  게이트웨이를 거친 요청은 **관리자라도** 403(`InternalCallGuard.allowed` 는 관리자를 통과시키지만 관리자 토큰으로 남의 로그인 코드를
+  보내고 맞춰 볼 이유가 없다).
+- **켤 때의 번호에 묶는다** — 그 뒤 보안 화면에서 번호를 바꾸면(세션만 가진 사람도 할 수 있다) 결속값이 달라 notification 이 보내지도
+  확인하지도 않는다(`PHONE_CHANGED`, 409). 다시 켜려면 최근 로그인 + 새 번호의 코드. 대가: 번호를 바꾼 본인도 SMS 로 못 들어온다(§9 ⑥).
+- **닿지 못하면 막는다** — notification 장애 · 공급자 실패는 `UNAVAILABLE`(503) — 통과가 아니다. 대기 토큰은 남겨 다시 시도하거나
+  다른 수단으로.
+- **용도를 나눈다**(V12) — 번호 등록 검증은 "그 번호로 발급된 가장 최근 코드" 를 본다. 로그인 코드가 같은 번호로 나가면 그것이 최근
+  코드가 되어 등록 화면의 코드를 무효로 만들거나, 거꾸로 등록 코드가 로그인에 쓰일 수 있었다.
+- 코드는 쿼리가 아니라 본문으로(URL 은 접근 로그 · 추적에 남는다), 요청 레코드의 `toString` 에 코드 · 결속값이 없다.
+
+**한계** — SMS 는 SIM 스와프 · 문자 가로채기에 약하다. 인증 앱이나 패스키가 더 강하다 — SMS 는 그것을 쓰지 못하는 사람과 앱을
+잃어버렸을 때의 두 번째 길이다.
+
+**시험** — notification `TwoFactorSmsTest`(등록 번호 · 결속 · 1회용 · 5회 · 관리자도 403) · `NotificationServiceApplicationTests`
+(컨테이너 — V12 용도 분리, PATCH 400), user `SmsTwoFactorTest`(SMS 만 켠 계정도 2단계 · 결속값 · 닿지 못하면 막기 · 한도 공유) ·
+`SmsLoginTwoFactorTest`(수단마다 · 503 · 409 · 대기 토큰당 3번) · `PendingTwoFactorTest`(컨테이너 — 발송 몫 · peek) ·
+`SmsTwoFactorColumnsMigrationTest`(컨테이너 — V19 행에 V20), 프론트 `SignInPage.test.jsx` · `SmsTwoFactor.test.jsx`.
+되돌리면 실패하는지 다섯 자리에서 확인했다(UserDetails 의 2단계 판정 · 게이트웨이 거절 · 번호 결속 · 수단 확인 · 닿지 못함).

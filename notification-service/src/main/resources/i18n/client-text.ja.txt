@@ -52,6 +52,13 @@ productId 와 size 가 필요합니다.
 SHA-256 을 사용할 수 없습니다
 = SHA-256を使用できません。
 
+HmacSHA256 을 사용할 수 없습니다
+= HmacSHA256を使用できません。
+
+# ── 알림 설정(NotificationService.updatePreferences — 2단계 인증은 user-service, docs/24 §10) ─────
+2단계 인증은 보안 설정에서 켜고 끕니다.
+= 二段階認証はセキュリティ設定で有効・無効を切り替えます。
+
 # ── 운영자용: 메일·SMS 발송기 설정 검증(MailConfig·SmsConfig·Placeholders) ──────────────
 notification.mail.provider=smtp 이지만 spring.mail.host 가 비어 있습니다.
 = -

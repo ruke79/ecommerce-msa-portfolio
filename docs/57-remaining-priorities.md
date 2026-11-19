@@ -540,6 +540,7 @@ Secret の形は cert-manager の Certificate（`keystores.pkcs12`）が作る�
 | `/api/auth/user/segments` | coupon-service | 特集クーポン |
 | `/api/auth/user/id` | coupon・order・chat | クーポン発行（chat・order は宣言のみ） |
 | `/api/auth/user/email/` · `/profile/` | none | 管理者のみ（ゲートウェイ） |
+| `/api/notifications/internal/two-factor` | user-service | ログイン二段階認証の SMS 送信 · 確認(docs/24 §10 — 管理者もゲートウェイ経由では呼べない) |
 
 ゲートウェイ・saga-projection は内部 API を呼ばない（Feign なし）。初めて見る（呼び出しサービス、パス）の組は `[mTLS caller]` として 1 回
 残る — `./ops/37-check-mtls.sh --callers` が集めて表示する。

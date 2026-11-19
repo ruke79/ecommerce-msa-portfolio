@@ -5,6 +5,8 @@ import java.time.ZoneOffset;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -84,7 +86,28 @@ public class PhoneVerification {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    /**
+     * 무엇을 위한 코드인가(V12). 번호 등록 코드와 로그인 2단계 인증 코드는 서로의 검증에 쓰이지 않는다 — 같은 번호로 둘이 나가도
+     * "가장 최근 코드" 를 용도마다 따로 찾는다.
+     * [JA] 何のためのコードか。番号登録とログイン二段階認証のコードは互いの検証に使えない。
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "purpose", nullable = false, length = 16)
+    private Purpose purpose;
+
+    public enum Purpose {
+        /** 번호 등록 · 변경(보안 화면의 휴대폰 인증). */
+        PHONE,
+        /** 로그인 2단계 인증 · 그 켜기/끄기 — user-service 가 내부 호출로만 요청한다. */
+        LOGIN_2FA
+    }
+
     public PhoneVerification(String phoneE164, Long userId, String codeHash) {
+        this(phoneE164, userId, codeHash, Purpose.PHONE);
+    }
+
+    public PhoneVerification(String phoneE164, Long userId, String codeHash, Purpose purpose) {
+        this.purpose = purpose;
         this.phoneE164 = phoneE164;
         this.userId = userId;
         this.codeHash = codeHash;

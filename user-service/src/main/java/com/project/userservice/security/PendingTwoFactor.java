@@ -147,6 +147,43 @@ public class PendingTwoFactor {
         }
     }
 
+    /**
+     * 이 대기 토큰의 주인 — 시도를 세지 않고 본다(로그인 화면이 "어떤 수단을 보여 줄까" 를 묻는다). 이미 탔거나 시도를 다 쓴 토큰은 비어 있다.
+     * [JA] この待機トークンの持ち主 — 試行を数えずに見る(ログイン画面がどの手段を見せるかを聞く)。燃えた · 使い切ったトークンは空。
+     */
+    public Optional<Long> peekUserId(String token) {
+        Claims claims = parse(token);
+        if (claims == null) {
+            return Optional.empty();
+        }
+        String used = redis.opsForValue().get(KEY_PREFIX + claims.getId());
+        if (used != null && Long.parseLong(used) >= MAX_ATTEMPTS) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Long.parseLong(claims.getSubject()));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** 대기 토큰 하나로 SMS 를 보낼 수 있는 횟수 — 재전송 두 번까지. 비밀번호를 아는 사람이 문자를 쏟아내지 못하게(요금은 우리가 낸다). */
+    static final int MAX_SMS_SENDS = 3;
+    private static final String SMS_KEY_PREFIX = "2fa:pending-sms:";
+
+    /**
+     * SMS 발송 한 번을 이 대기 토큰의 몫에서 센다 — 넘었으면 false. 번호 · 계정 · 전체 한도는 notification 이 따로 센다(docs/57 §10).
+     * [JA] SMS 送信一回をこの待機トークンの枠で数える — 超えたら false。番号 · アカウント · 全体の上限は notification が別に数える。
+     */
+    public boolean reserveSmsSend(String token) {
+        Claims claims = parse(token);
+        if (claims == null) {
+            return false;
+        }
+        Long n = redis.execute(RESERVE, List.of(SMS_KEY_PREFIX + claims.getId()), String.valueOf(TTL_MS));
+        return n != null && n <= MAX_SMS_SENDS;
+    }
+
     private Claims parse(String token) {
         if (token == null || token.isBlank()) {
             return null;

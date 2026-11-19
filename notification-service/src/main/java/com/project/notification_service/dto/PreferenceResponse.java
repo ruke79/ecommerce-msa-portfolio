@@ -16,8 +16,7 @@ public record PreferenceResponse(
         boolean phoneVerified,
         boolean smsEnabled,
         String email,
-        boolean emailEnabled,
-        boolean twoFactorEnabled) {
+        boolean emailEnabled) {
 
     public static PreferenceResponse from(NotificationPreference p) {
         return new PreferenceResponse(
@@ -26,7 +25,6 @@ public record PreferenceResponse(
                 p.isPhoneVerified(),
                 p.isSmsEnabled(),
                 p.getEmail() == null ? null : EmailAddresses.mask(p.getEmail()),
-                p.isEmailEnabled(),
-                p.isTwoFactorEnabled());
+                p.isEmailEnabled());
     }
 }

@@ -108,6 +108,29 @@ public class User extends BaseEntity{
     private String twoFactorSecret;
     @Builder.Default
     private boolean isTwoFactorEnabled = false;
+
+    /**
+     * 로그인 2단계 인증의 두 번째 수단 — 등록된 휴대폰으로 받는 6자리(V20, docs/24 §10). TOTP 와 함께 켤 수 있고, 둘 다 켜져 있으면
+     * 로그인 화면에서 고른다(앱을 잃어버렸을 때의 길).
+     * [JA] ログイン二段階認証の二つ目の手段 — 登録済みの携帯電話で受ける 6 桁。TOTP と併用でき、両方有効ならログイン画面で選ぶ。
+     */
+    @Builder.Default
+    private boolean smsTwoFactorEnabled = false;
+
+    /**
+     * 켤 때의 번호 결속값 — notification 이 준 HMAC(번호). 번호를 이 서비스에 복제하지 않는다. 지금 등록 번호의 결속값과 다르면 SMS
+     * 수단은 멈춘다(세션만 가진 사람이 번호를 자기 것으로 바꿔 코드를 받지 못하게). 응답에 싣지 않는다.
+     * [JA] 有効化時の番号の結束値 — notification が返す HMAC(番号)。番号は複製しない。応答に載せない。
+     */
+    @JsonIgnore
+    @jakarta.persistence.Column(length = 64)
+    private String smsTwoFactorBinding;
+
+    /** 로그인에 2단계가 필요한가 — 수단(TOTP · SMS) 중 하나라도 켜져 있으면. */
+    // [JA] ログインに二段階目が必要か — 手段(TOTP · SMS)のどれか一つでも有効なら。
+    public boolean requiresTwoFactor() {
+        return isTwoFactorEnabled || smsTwoFactorEnabled;
+    }
     private String signUpMethod;
 
     /**

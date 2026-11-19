@@ -126,7 +126,7 @@
 | 25 | [배송 서비스 설계](25-delivery-service-design.ko.md) | 분할 · 국제 배송, 택배사 어댑터, 상태별 폴링 | 🟡 |
 | 58 | [고객센터 채팅](58-customer-support-chat.ko.md) | 역할 하나로 상담원, 상담 스레드, 서버가 강제하는 권한, 1:1 화면 · 문의 유형 · 만족도 · 내부 메모 · 반납 | ✅ |
 | 29 | [트랜잭션 메일](29-transactional-email.ko.md) | 발신 파이프라인을 notification-service 로, 확인 링크는 자격증명 | 🟡 |
-| 24 | [SMS 알림 · 2단계 인증](24-sms-notifications.ko.md) | 한국 · 일본 번호, 중복 발송 3중 방어, 인증번호 남용 방지 | 🟡 |
+| 24 | [SMS 알림 · 2단계 인증](24-sms-notifications.ko.md) | 한국 · 일본 번호, 중복 발송 3중 방어, 인증번호 남용 방지, SMS 2단계 인증(§10) · 남은 일 총정리(§9) | 🟡 |
 | 44 | [공지 · 알림 · 이벤트](44-notice-notification-event-gap.ko.md) | 이미 있는 것과 실제로 빠진 것 | 🟡 |
 | 39 | [상품 등록 절차](39-product-registration.ko.md) | 첫 화면에 상품이 나오기까지 | ✅ |
 | 45 | [다국어(일본어)](45-internationalization.ko.md) | 의존성 없는 i18n, 1차 범위 | 🟡 |

@@ -62,7 +62,8 @@ public class UserDetailsImpl implements UserDetails {
                 user.getUsername(),
                 user.getEmail(),
                 user.getPassword(),
-                user.isTwoFactorEnabled(),
+                // 로그인 2단계가 필요한가 — TOTP 든 SMS 든(docs/24 §10). 🐛 SMS 를 이 값에 넣지 않으면 SMS 만 켠 계정은 비밀번호로 끝난다.
+                user.requiresTwoFactor(),
                 user.isEnabled(),
                 List.of(authority) // Wrapping the single authority in a list
         );

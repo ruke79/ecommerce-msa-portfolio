@@ -65,6 +65,9 @@ feign:
   # 등급 배치가 구매 집계를 가져오는 곳(CustomerTierService). 배치 전용이라
   # 사용자 요청 경로에는 들어가지 않는다 — 주문 서비스가 죽어도 로그인·쿠폰은 돈다.
   order-url: ${FEIGN_ORDER_URL:https://localhost:8084}
+  # 로그인 2단계 인증의 SMS 수단(docs/24 §10) — 코드 발송 · 확인. 사용자 요청 경로(로그인)에 들어가지만 SMS 를 켠 계정만 부른다 —
+  # notification 이 죽으면 그 계정은 TOTP(켜져 있으면)로만 들어온다. 다른 계정의 로그인은 이 호출이 없다.
+  notification-url: ${FEIGN_NOTIFICATION_URL:https://localhost:8188}
   # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
   # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
   # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.

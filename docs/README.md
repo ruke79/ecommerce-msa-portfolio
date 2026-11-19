@@ -126,7 +126,7 @@
 | 25 | [配送サービスの設計](25-delivery-service-design.md) | 分割 · 国際配送、配送業者アダプター、状態別のポーリング | 🟡 |
 | 58 | [カスタマーサポートチャット](58-customer-support-chat.md) | ロール 1 つで相談員に、相談スレッド、サーバーが強制する権限、1対1画面 · 問い合わせ種別 · 満足度 · 内部メモ · 返却 | ✅ |
 | 29 | [トランザクションメール](29-transactional-email.md) | 送信パイプラインを notification-service へ、確認リンクは資格情報 | 🟡 |
-| 24 | [SMS 通知 · 2 段階認証](24-sms-notifications.md) | 韓国 · 日本の番号、重複送信の三重防御、認証番号の濫用防止 | 🟡 |
+| 24 | [SMS 通知 · 2 段階認証](24-sms-notifications.md) | 韓国 · 日本の番号、重複送信の三重防御、認証番号の濫用防止、SMS 2 段階認証（§10）· 残り総まとめ（§9） | 🟡 |
 | 44 | [お知らせ · 通知 · イベント](44-notice-notification-event-gap.md) | すでにあるものと実際に欠けているもの | 🟡 |
 | 39 | [商品登録の手順](39-product-registration.md) | 最初の画面に商品が表示されるまで | ✅ |
 | 45 | [多言語対応（日本語）](45-internationalization.md) | 依存関係のない i18n、第 1 次の範囲 | 🟡 |

@@ -71,7 +71,12 @@ public class NotificationPreference {
     @Column(name = "email_enabled", nullable = false)
     private boolean emailEnabled;
 
-    /** 로그인 시 SMS 2단계 인증을 요구할지. */
+    /**
+     * ⚠️ 쓰지 않는 옛 값 — 로그인은 이것을 읽은 적이 없다(docs/24 §10). SMS 2단계 인증은 user-service 의
+     * {@code users.sms_two_factor_enabled} 가 갖는다. 열이 NOT NULL(기본값 없음)이라 필드는 남겨 새 행에 false 를 쓴다 — 지우려면
+     * expand → contract 두 릴리스.
+     * [JA] 使わない旧値 — ログインはこれを読んだことがない。列が NOT NULL(既定値なし)なのでフィールドは残し false を書く。
+     */
     @Column(name = "two_factor_enabled", nullable = false)
     private boolean twoFactorEnabled;
 
@@ -127,20 +132,6 @@ public class NotificationPreference {
     public void setSmsEnabled(boolean enabled) {
         this.smsEnabled = enabled;
         touch();
-    }
-
-    /**
-     * 2FA 를 켠다. 인증된 번호가 없으면 켤 수 없다 — 켜는 순간 본인도 로그인하지 못한다.
-     *
-     * @return 실제로 켜졌는지
-     */
-    public boolean enableTwoFactor(boolean enabled) {
-        if (enabled && !phoneVerified) {
-            return false;
-        }
-        this.twoFactorEnabled = enabled;
-        touch();
-        return true;
     }
 
     /**

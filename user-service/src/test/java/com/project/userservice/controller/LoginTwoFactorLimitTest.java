@@ -79,7 +79,7 @@ class LoginTwoFactorLimitTest {
     void lockedUserGets429() {
         when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.TOO_MANY_ATTEMPTS);
 
-        ResponseEntity<?> r = controller.verifyPendingTwoFactor(123456, request, response);
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor("123456", "totp", request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(429);
         assertThat(((Map<?, ?>) r.getBody()).get("message").toString()).contains("너무 많이");
@@ -92,7 +92,7 @@ class LoginTwoFactorLimitTest {
     void wrongCodeIs401() {
         when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.INVALID_CODE);
 
-        ResponseEntity<?> r = controller.verifyPendingTwoFactor(111111, request, response);
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor("111111", "totp", request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(401);
         assertThat(((Map<?, ?>) r.getBody()).get("message").toString()).contains("올바르지 않습니다");
@@ -108,7 +108,7 @@ class LoginTwoFactorLimitTest {
                 .thenReturn(Optional.of(new PendingTwoFactor.Attempt(7L, false)));
         when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.INVALID_CODE);
 
-        ResponseEntity<?> r = controller.verifyPendingTwoFactor(111111, request, response);
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor("111111", "totp", request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(401);
         assertThat(((Map<?, ?>) r.getBody()).get("message").toString()).contains("다시 시작");
@@ -119,7 +119,7 @@ class LoginTwoFactorLimitTest {
     void usedUpTokenNeverReachesVerification() {
         when(pendingTwoFactor.reserveAttempt("pending")).thenReturn(Optional.empty());
 
-        ResponseEntity<?> r = controller.verifyPendingTwoFactor(123456, request, response);
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor("123456", "totp", request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(401);
         verify(userService, never()).verifyLoginTwoFactor(anyLong(), anyInt());
@@ -131,7 +131,7 @@ class LoginTwoFactorLimitTest {
     void rightCodeIssuesSession() {
         when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.OK);
 
-        ResponseEntity<?> r = controller.verifyPendingTwoFactor(123456, request, response);
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor("123456", "totp", request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(200);
         verify(userService).verifyLoginTwoFactor(7L, 123456);
@@ -145,7 +145,7 @@ class LoginTwoFactorLimitTest {
         user.setAccountNonLocked(false);
         when(userService.verifyLoginTwoFactor(eq(7L), anyInt())).thenReturn(TwoFactorChange.OK);
 
-        ResponseEntity<?> r = controller.verifyPendingTwoFactor(123456, request, response);
+        ResponseEntity<?> r = controller.verifyPendingTwoFactor("123456", "totp", request, response);
 
         assertThat(r.getStatusCode().value()).isEqualTo(401);
         verify(refreshTokenService, never()).createRefreshToken(anyLong());
