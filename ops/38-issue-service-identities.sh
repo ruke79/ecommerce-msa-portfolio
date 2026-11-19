@@ -90,6 +90,14 @@ fi
     || die "$CA_DIR/ca.crt·ca.key 가 없습니다 — ops/07 이 만든 CA 디렉터리를 CA_DIR=… 로 주세요(서비스 인증서와 같은 CA 여야 한다)"
 
 # 클러스터가 믿는 CA 와 같은가 — 다른 CA 로 발급하면 판정 필터가 "다른 CA" 로 읽어 모든 내부 호출이 외부가 된다.
+# 읽지 못한 까닭을 나눠 말한다 — 닿지 못함 · Secret 없음 · ca.crt 키 없음(2026-11-19 실습: 하나로 뭉친 문구로는 무엇을 할지 몰랐다).
+# [JA] 読めなかった理由を分けて出す — 接続不可 · Secret なし · ca.crt キーなし。
+kubectl get --raw /readyz >/dev/null 2>&1 \
+    || die "클러스터에 닿지 못했습니다(컨텍스트: $(kubectl config current-context 2>/dev/null || echo 없음)) — KUBECONFIG 를 확인"
+kubectl -n "$NS" get secret tls-keystore >/dev/null 2>&1 \
+    || die "$NS/tls-keystore Secret 이 없습니다 — 서비스 인증서(ops/07 의 k8s-tls-keystore.secret.yaml)를 먼저 적용"
+kubectl -n "$NS" get secret tls-keystore -o jsonpath='{.data.ca\.crt}' 2>/dev/null | grep -q . \
+    || die "$NS/tls-keystore 에 ca.crt 키가 없습니다 — ops/07 을 EMIT_K8S=1 로 다시 만든 k8s-tls-keystore.secret.yaml 을 적용"
 cluster_ca=$(kubectl -n "$NS" get secret tls-keystore -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d 2>/dev/null \
     | openssl x509 -noout -fingerprint -sha256 2>/dev/null) || true
 local_ca=$(openssl x509 -in "$CA_DIR/ca.crt" -noout -fingerprint -sha256)
