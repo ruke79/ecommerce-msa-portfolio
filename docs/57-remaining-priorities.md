@@ -845,3 +845,19 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 3. ガード **B-113**: JRE が修正版より前ならエントリーポイントにそのオプション（JAVA_OPTS の前）、マニフェスト · オーバーレイ · スクリプトのどこにも `+UseBASE64Intrinsics` がない。修正版に上げればオプションを求めない。
 
 **残り**: ① デプロイ — イメージは CI が作る → リリース候補が緑 → Actions → deploy（docs/85）。デプロイ後 `kubectl -n ecommerce exec deploy/catalog-service -- sh -c 'java -version 2>&1 | grep -v JAVA_TOOL_OPTIONS'` が 17.0.21 · `ps` のコマンドラインに `-XX:-UseBASE64Intrinsics`。② Temurin 17.0.21.1 が出たら JRE の行をその版に · オプション削除（B-113 が許す）· 再デプロイ — CVE-2026-91403（JSSE）はそれでしか閉じない。③ jdk21-build ブランチは 21 の版（修正版 21.0.13.1）で同じこと。④ CI ランナー · 開発 PC の JDK は外部入力を受けないので急がない。
+
+---
+
+## 21. フロントの nginx のセキュリティ修正 — 「NGINX2Root」（CVE-2026-123007 ほか四つ、2026-11-19）
+
+**何か**: 2026-11-18 に公開された nginx の脆弱性群。中心は CVE-2026-123007 — HTTP/2 処理のメモリー破損による認証なしのリモートコード実行（F5 基準 CVSS 9.2、公開 PoC あり; 1.9.5 からあったコード）。同じ群に HTTP/2 の use-after-free（CVE-2026-123633）· HTTP/3 · resolver · mail モジュールの脆弱性。影響 1.9.5 〜 1.30.6 · 1.31.0 〜 1.31.8、修正版 **1.30.7（stable）· 1.31.9（mainline）**。HTTP/2 を切ると HTTP/2 の二件だけが塞がる。
+⚠️ 根拠は報道 · セキュリティ企業の記事（Qualys · Upwind · The Hacker News など — 版の範囲が記事ごとに少し違う）。F5 の告知の原文はこの環境では確かめていない。
+
+**こちら側**: フロントのイメージは `nginx:1.27-alpine` だった — 影響範囲内で、1.27 の系列はサポートが終わり修正版が出ない。ただし `frontend/nginx.conf` は `listen 8080`（HTTP/1.1）だけで `http2` · `quic` · `resolver` · `mail` がない。客の HTTP/2 は Cloudflare が受け、内側は cloudflared → traefik → frontend が HTTP/1.1 なので、中心の HTTP/2 の経路は外から届かなかったと見る。本番ノードに他の nginx コンテナーはない（2026-11-19 `docker ps` 0 件）。リポジトリで nginx を使うのは二つの Dockerfile と `ops/18`（SSE テスト）だけ。
+
+**したこと**（frontend イメージを作り直してデプロイして初めて入る）:
+1. `nginx:1.30.7-alpine@sha256:bef15473…`（マルチアーキテクチャーの一覧 — Docker Hub API 基準）— `frontend/Dockerfile` · `ops/Dockerfile.frontend-runtime` · `ops/18-test-nginx-sse.sh`。
+2. 確認: そのイメージで実際の `nginx.conf`（テンプレート置換込み）の `nginx -t` が通る · セキュリティヘッダー七行がそのまま · SPA の経路が 200、`ops/18`（SSE のバッファリング · envsubst フィルター · gzip の対照群）8/8 通過。
+3. ガード **B-114**: 三か所が同じ `nginx:<版>-alpine@sha256:…`（タグだけは禁止）、版は 1.30.7 · 1.31.9 以上（1.30 より前の系列は拒否）、`nginx.conf` は HTTP/1.1 だけ（`http2` · `quic` · `http3` · `resolver` · `mail` なし — 理由なくそのコードの経路を開かない）。変異の確認: 1.27 タグ · 三か所 1.30.6 · 三か所 1.31.8 · 一か所だけ違う版 · `http2 on` → 失敗。
+
+**残り**: デプロイ — 次のデプロイ（docs/85 §9）と一緒に、急ぐなら frontend だけ（Actions → deploy）。デプロイ後、`curl -sI https://www.ysyproject.com/` は Cloudflare が `Server` を書き換えるので版は Pod で見る: `kubectl -n ecommerce exec deploy/frontend -- nginx -v` が 1.30.7。任意: `server_tokens off`（内側の応答の `Server: nginx/1.30.7` の版表示 — 外は Cloudflare が隠す）。

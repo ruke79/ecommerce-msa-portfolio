@@ -370,6 +370,7 @@ kubectl -n ecommerce get pods   # 再起動 0
 | オフセット earliest | catalog · coupon · order · chat | グループがある本番では変化なし、order V30 の処理台帳 | docs/89 §2-1 · B-110 |
 | 管理者フォーム | frontend | 商品 · カテゴリーの登録が入力した値を送る | `AdminInput.jsx` |
 | **JRE セキュリティ修正** | **全バックエンド** | JRE `17.0.20.1` → `17.0.21_9`(10 月 CPU)+ エントリポイントに `-XX:-UseBASE64Intrinsics`(CVE-2026-114938 の回避)— 動作変化なし、ガード B-113 | docs/57 §20 |
+| **nginx セキュリティ修正** | **frontend** | `nginx:1.27-alpine` → `1.30.7-alpine@sha256`（NGINX2Root · CVE-2026-123007）— 設定はそのまま · 動作の変化なし、ガード B-114 | docs/57 §21 |
 
 ### 9-2. デプロイ前
 
@@ -395,6 +396,7 @@ for db in cartdb coupondb orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(ve
 # JRE の版 · 回避オプション — 全バックエンドが 17.0.21、コマンドラインに -XX:-UseBASE64Intrinsics (docs/57 §20 · B-113)
 kubectl -n ecommerce exec deploy/order-service -- java -version 2>&1 | head -1
 for d in order-service catalog-service gateway-server; do printf '%s: ' "$d"; kubectl -n ecommerce exec deploy/$d -- sh -c 'tr "\0" " " < /proc/1/cmdline' | grep -o '\-XX:-UseBASE64Intrinsics' || echo "なし — B-113 違反"; done
+kubectl -n ecommerce exec deploy/frontend -- nginx -v 2>&1                          # nginx/1.30.7 (docs/57 §21 · B-114)
 # 期待: cart 8 · coupon 9 · order 30 · user 19（catalog 24 はそのまま）
 kubectl -n ecommerce get pods                                                        # 再起動 0
 for d in order-service pay-service cart-service user-service; do echo "$d: $(kubectl -n ecommerce logs deploy/$d --since=10m | grep '아웃박스 파티션 보존' | tail -2)"; done

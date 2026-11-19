@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -18,6 +19,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
@@ -4042,6 +4044,41 @@ class ConfigurationGuardrailTest {
             }
         }
         assertThat(offenders).as("Base64 내장 함수를 다시 켜는 곳(B-113)").isEmpty();
+    }
+
+    /**
+     * B-114: 프론트 nginx 이미지는 정확한 판 + 다이제스트, 세 곳(두 Dockerfile · ops/18 시험)이 같은 줄이고, 2026-11-18 공개된
+     * 'NGINX2Root'(CVE-2026-123007 HTTP/2 원격 코드 실행 외 넷) 수정판 아래로 내려가지 않는다 — 1.30 갈래는 1.30.7, 1.31 갈래는 1.31.9 부터,
+     * 1.30 아래 갈래는 지원이 끝나 수정판이 없다(예전 1.27). 그리고 프론트 nginx 는 HTTP/1.1 만 듣는다 — 손님의 HTTP/2 · 3 은 Cloudflare 가
+     * 받고 안쪽(cloudflared → traefik → frontend)은 HTTP/1.1 이라, 켤 까닭 없이 그 코드 경로를 열지 않는다(resolver · mail 도 쓰지 않는다).
+     *
+     * <p>[JA] フロントの nginx イメージは正確な版 + ダイジェスト、三か所同じ行、NGINX2Root の修正版未満に戻さない。HTTP/1.1 だけを聞く。
+     */
+    @Test
+    @DisplayName("B-114: 프론트 nginx 는 NGINX2Root 수정판(1.30.7 · 1.31.9) 이상 · 다이제스트 고정 · 세 곳 같은 줄, nginx.conf 는 HTTP/1.1 만")
+    void frontendNginxStaysOnAPatchedRelease() throws IOException {
+        Pattern ref = Pattern.compile("nginx:(\\d+)\\.(\\d+)\\.(\\d+)-alpine@sha256:[0-9a-f]{64}");
+        Map<String, String> images = new LinkedHashMap<>();
+        for (String file : List.of("frontend/Dockerfile", "ops/Dockerfile.frontend-runtime", "ops/18-test-nginx-sse.sh")) {
+            String body = Files.readString(repoRoot().resolve(file), StandardCharsets.UTF_8);
+            assertThat(body).as(file + " — 태그만(1.27-alpine 같은) 쓰지 않는다").doesNotContainPattern("nginx:[0-9.]+-alpine(?!@sha256)[\"\\s]");
+            Matcher m = ref.matcher(body);
+            assertThat(m.find()).as(file + " — nginx:<판>-alpine@sha256:<다이제스트>").isTrue();
+            images.put(file, m.group());
+            int major = Integer.parseInt(m.group(1));
+            int minor = Integer.parseInt(m.group(2));
+            int patch = Integer.parseInt(m.group(3));
+            boolean patched = major > 1 || minor >= 32 || (minor == 31 && patch >= 9) || (minor == 30 && patch >= 7);
+            assertThat(patched).as(file + " — nginx " + major + "." + minor + "." + patch
+                    + " 는 CVE-2026-123007 (NGINX2Root) 수정판 아래 — 1.30.7 · 1.31.9 이상(B-114)").isTrue();
+        }
+        assertThat(new HashSet<>(images.values())).as("세 곳이 같은 이미지 " + images).hasSize(1);
+
+        String conf = Files.readString(repoRoot().resolve("frontend/nginx.conf"), StandardCharsets.UTF_8)
+                .lines().map(l -> l.replaceFirst("#.*", "")).collect(Collectors.joining("\n"));
+        assertThat(conf).as("frontend/nginx.conf — HTTP/1.1 만(B-114)")
+                .doesNotContainPattern("\\bhttp2\\b").doesNotContainPattern("\\b(quic|http3)\\b")
+                .doesNotContainPattern("(?m)^\\s*resolver\\s").doesNotContainPattern("(?m)^\\s*mail\\s*\\{");
     }
 
     /**

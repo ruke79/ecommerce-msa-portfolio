@@ -10,7 +10,7 @@
 #    이 이미지에서 런타임 환경변수로 바꿀 수 없다(ops/19-build-images.sh 가 빌드 전에 넣는다).
 #    GATEWAY_URL 만 예외로, nginx 템플릿이 기동 시 치환한다.
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30.7-alpine@sha256:bef154735288bc38d99fac41ae63730684bcc661503673a04a0f9bc526ba8598
 
 # 빌드 컨텍스트는 frontend/ 다. dist/ 는 미리 만들어져 있어야 한다.
 COPY dist /usr/share/nginx/html

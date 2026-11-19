@@ -370,6 +370,7 @@ kubectl -n ecommerce get pods   # 재시작 0
 | 오프셋 earliest | catalog · coupon · order · chat | 그룹이 있는 운영에서는 변화 없음, order V30 처리 원장 | docs/89 §2-1 · B-110 |
 | 관리자 폼 | frontend | 상품 · 카테고리 등록이 타이핑한 값을 보낸다 | `AdminInput.jsx` |
 | **JRE 보안 수정** | **모든 백엔드** | JRE `17.0.20.1` → `17.0.21_9`(10월 CPU) + 엔트리포인트 `-XX:-UseBASE64Intrinsics`(CVE-2026-114938 우회) — 동작 변화 없음, 가드 B-113 | docs/57 §20 |
+| **nginx 보안 수정** | **frontend** | `nginx:1.27-alpine` → `1.30.7-alpine@sha256`(NGINX2Root · CVE-2026-123007) — 설정 그대로 · 동작 변화 없음, 가드 B-114 | docs/57 §21 |
 
 ### 9-2. 배포 전
 
@@ -395,6 +396,7 @@ for db in cartdb coupondb orderdb userdb; do echo "$db: $(q "$db" 'SELECT max(ve
 # JRE 판 · 우회 옵션 — 모든 백엔드가 17.0.21, 명령줄에 -XX:-UseBASE64Intrinsics (docs/57 §20 · B-113)
 kubectl -n ecommerce exec deploy/order-service -- java -version 2>&1 | head -1
 for d in order-service catalog-service gateway-server; do printf '%s: ' "$d"; kubectl -n ecommerce exec deploy/$d -- sh -c 'tr "\0" " " < /proc/1/cmdline' | grep -o '\-XX:-UseBASE64Intrinsics' || echo "없음 — B-113 위반"; done
+kubectl -n ecommerce exec deploy/frontend -- nginx -v 2>&1                          # nginx/1.30.7 (docs/57 §21 · B-114)
 # 기대: cart 8 · coupon 9 · order 30 · user 19 (catalog 24 그대로)
 kubectl -n ecommerce get pods                                                        # 재시작 0
 for d in order-service pay-service cart-service user-service; do echo "$d: $(kubectl -n ecommerce logs deploy/$d --since=10m | grep '아웃박스 파티션 보존' | tail -2)"; done

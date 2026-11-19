@@ -34,7 +34,7 @@ RUN printf 'REACT_APP_API_URL=%s\nREACT_APP_PROFILE=%s\nPUBLIC_URL=%s\nREACT_APP
     && npm run build
 
 # ---- 런타임 이미지: 정적 파일을 nginx로 서빙 ----
-FROM nginx:1.27-alpine
+FROM nginx:1.30.7-alpine@sha256:bef154735288bc38d99fac41ae63730684bcc661503673a04a0f9bc526ba8598
 COPY --from=builder /app/dist /usr/share/nginx/html
 # nginx.conf 를 **템플릿**으로 넣는다. 공식 엔트리포인트가 기동 시 envsubst 로 치환한다.
 # conf.d 로 바로 넣으면 ${GATEWAY_URL} 이 그대로 남아 nginx 가 기동에 실패한다.

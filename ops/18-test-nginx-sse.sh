@@ -24,7 +24,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.27-alpine}"
+NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.30.7-alpine@sha256:bef154735288bc38d99fac41ae63730684bcc661503673a04a0f9bc526ba8598}"
 PY_IMAGE="${PY_IMAGE:-python:3.12-alpine}"
 NET="sse-test-net"
 WORK="$(mktemp -d)"

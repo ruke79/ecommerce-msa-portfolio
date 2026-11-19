@@ -846,3 +846,19 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 3. 가드 **B-113**: JRE 가 수정판 아래면 엔트리포인트에 그 옵션(JAVA_OPTS 앞), 매니페스트 · 오버레이 · 스크립트 어디에도 `+UseBASE64Intrinsics` 없음. 수정판으로 올리면 옵션을 요구하지 않는다.
 
 **남은 것**: ① 배포 — 이미지는 CI 가 만든다 → 릴리스 후보 초록 → Actions → deploy(docs/85). 배포 뒤 `kubectl -n ecommerce exec deploy/catalog-service -- sh -c 'java -version 2>&1 | grep -v JAVA_TOOL_OPTIONS'` 가 17.0.21 · `ps` 의 명령줄에 `-XX:-UseBASE64Intrinsics`. ② Temurin 17.0.21.1 이 나오면 JRE 줄을 그 판으로 · 옵션 삭제(B-113 이 허락한다) · 다시 배포 — CVE-2026-91403(JSSE)은 그것으로만 닫힌다. ③ jdk21-build 브랜치는 21 판(수정판 21.0.13.1)으로 같은 일. ④ CI 러너 · 개발 PC 의 JDK 는 외부 입력을 받지 않아 급하지 않다.
+
+---
+
+## 21. 프론트 nginx 보안 수정 — "NGINX2Root"(CVE-2026-123007 외 넷, 2026-11-19)
+
+**무엇**: 2026-11-18 공개된 nginx 취약점 묶음. 중심은 CVE-2026-123007 — HTTP/2 처리의 메모리 손상으로 인증 없는 원격 코드 실행(F5 기준 CVSS 9.2, 공개 PoC 있음; 1.9.5 부터 들어 있던 코드). 같은 묶음에 HTTP/2 use-after-free(CVE-2026-123633) · HTTP/3 · resolver · mail 모듈 취약점. 영향 1.9.5 ~ 1.30.6 · 1.31.0 ~ 1.31.8, 고친 판 **1.30.7(stable) · 1.31.9(mainline)**. HTTP/2 를 끄면 HTTP/2 두 건만 막힌다.
+⚠️ 근거는 보도 · 보안 업체 글이다(Qualys · Upwind · The Hacker News 등 — 판 범위가 글마다 조금 다르다). F5 공지 원문은 이 환경에서 확인하지 않았다.
+
+**우리 쪽**: 프론트 이미지가 `nginx:1.27-alpine` 이었다 — 영향 범위 안이고, 1.27 갈래는 지원이 끝나 수정판이 나오지 않는다. 다만 `frontend/nginx.conf` 는 `listen 8080`(HTTP/1.1)뿐이고 `http2` · `quic` · `resolver` · `mail` 이 없다. 손님의 HTTP/2 는 Cloudflare 가 받고 안쪽은 cloudflared → traefik → frontend 가 HTTP/1.1 이라, 핵심 HTTP/2 경로는 바깥에서 닿지 않았다고 본다. 운영 노드에 다른 nginx 컨테이너는 없다(2026-11-19 `docker ps` 0건). 저장소에서 nginx 를 쓰는 곳은 두 Dockerfile 과 `ops/18`(SSE 시험)뿐.
+
+**한 것**(frontend 이미지를 다시 빌드해 배포해야 들어간다):
+1. `nginx:1.30.7-alpine@sha256:bef15473…`(다중 아키텍처 목록 — Docker Hub API 기준) — `frontend/Dockerfile` · `ops/Dockerfile.frontend-runtime` · `ops/18-test-nginx-sse.sh`.
+2. 확인: 그 이미지로 실제 `nginx.conf`(템플릿 치환 포함) `nginx -t` 통과 · 보안 헤더 일곱 줄 그대로 · SPA 경로 200, `ops/18`(SSE 버퍼링 · envsubst 필터 · gzip 대조군) 8/8 통과.
+3. 가드 **B-114**: 세 곳이 같은 `nginx:<판>-alpine@sha256:…`(태그만 금지), 판은 1.30.7 · 1.31.9 이상(1.30 아래 갈래는 거절), `nginx.conf` 는 HTTP/1.1 만(`http2` · `quic` · `http3` · `resolver` · `mail` 없음 — 켤 까닭 없이 그 코드 경로를 열지 않는다). 변이 확인: 1.27 태그 · 세 곳 1.30.6 · 세 곳 1.31.8 · 한 곳만 다른 판 · `http2 on` → 실패.
+
+**남은 것**: 배포 — 다음 배포(docs/85 §9)에 함께, 급하면 frontend 만(Actions → deploy). 배포 뒤 `curl -sI https://www.ysyproject.com/` 는 Cloudflare 가 `Server` 를 바꾸므로 판은 파드에서 본다: `kubectl -n ecommerce exec deploy/frontend -- nginx -v` 가 1.30.7. 선택: `server_tokens off`(안쪽 응답의 `Server: nginx/1.30.7` 판 표시 — 바깥은 Cloudflare 가 가린다).
