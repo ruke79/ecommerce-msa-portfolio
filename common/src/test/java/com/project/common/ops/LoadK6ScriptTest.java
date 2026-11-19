@@ -955,7 +955,12 @@ class LoadK6ScriptTest {
 
     /** 가짜 kubectl 이 {@code get deploy <d> -o json} 에 돌려줄 Deployment — 주석(원래 값)이 있으면 측정 중. */
     private void deployJson(String javaOpts, String heap, String cpu, String annotation) throws IOException {
+        deployJson(javaOpts, heap, cpu, annotation, null);
+    }
+
+    private void deployJson(String javaOpts, String heap, String cpu, String annotation, String vt) throws IOException {
         String env = (javaOpts == null ? "" : "{\"name\":\"JAVA_OPTS\",\"value\":\"" + javaOpts + "\"},")
+                + (vt == null ? "" : "{\"name\":\"VIRTUAL_THREADS_ENABLED\",\"value\":\"" + vt + "\"},")
                 + (heap == null ? "" : "{\"name\":\"JVM_MAX_RAM_PERCENTAGE\",\"value\":\"" + heap + "\"},")
                 + "{\"name\":\"DB_PASSWORD\",\"valueFrom\":{\"secretKeyRef\":{\"name\":\"x\",\"key\":\"y\"}}}";
         String ann = annotation == null ? "{}" : "{\"ecommerce.io/jvm-measure\":\"" + annotation + "\"}";
@@ -983,7 +988,7 @@ class LoadK6ScriptTest {
         Run load = run(Map.of(), "jvm", "load", "catalog-service", "gc=g1", "heap=60", "cpu=2", "gclog=1");
         assertThat(load.code()).as(load.out()).isZero();
         List<String> calls = read(log).lines().filter(l -> !l.contains(" get ")).toList();
-        String ann = "ecommerce.io/jvm-measure=java_opts=" + b64("-XX:+UseSerialGC -Dfoo=1") + ";heap=-;cpu=1000m";
+        String ann = "ecommerce.io/jvm-measure=java_opts=" + b64("-XX:+UseSerialGC -Dfoo=1") + ";heap=-;cpu=1000m;vt=-";
         assertThat(calls).as(String.join("\n", calls)).containsSubsequence(
                 "kubectl -n ecommerce annotate --overwrite deploy/catalog-service " + ann,
                 "kubectl -n ecommerce rollout pause deploy/catalog-service",
@@ -1032,13 +1037,42 @@ class LoadK6ScriptTest {
     }
 
     @Test
+    @DisplayName("🔴 가상 스레드 스위치 — vt=1 은 VIRTUAL_THREADS_ENABLED=true · pinning=1 은 -Djdk.tracePinnedThreads=short, 원래 값(없음 · false)으로 되돌린다")
+    void jvmVirtualThreadSwitchIsRecordedAndRestored() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path log = tmp.resolve("kubectl.log");
+        deployJson("-Dfoo=1", null, "1000m", null, "false");   // jdk21-build 의 비교 회차: 지금 꺼 둔 상태
+        Run on = run(Map.of(), "jvm", "load", "catalog-service", "vt=1", "pinning=1");
+        assertThat(on.code()).as(on.out()).isZero();
+        assertThat(read(log))
+                .contains("annotate --overwrite deploy/catalog-service ecommerce.io/jvm-measure=java_opts=" + b64("-Dfoo=1") + ";heap=-;cpu=1000m;vt=false")
+                .contains("set env deploy/catalog-service JAVA_OPTS=-Dfoo=1 -Djdk.tracePinnedThreads=short")
+                .contains("set env deploy/catalog-service VIRTUAL_THREADS_ENABLED=true");
+        assertThat(on.out()).contains("JDK 21 이미지").contains("monitors:");
+
+        Files.delete(log);
+        deployJson("-Dfoo=1 -Djdk.tracePinnedThreads=short", null, "1000m",
+                "java_opts=" + b64("-Dfoo=1") + ";heap=-;cpu=1000m;vt=false", "true");
+        Run back = run(Map.of(), "jvm", "default", "catalog-service");
+        assertThat(back.code()).as(back.out()).isZero();
+        assertThat(read(log)).contains("set env deploy/catalog-service JAVA_OPTS=-Dfoo=1\n")
+                .contains("set env deploy/catalog-service VIRTUAL_THREADS_ENABLED=false");
+
+        Files.delete(log);
+        deployJson("-Dfoo=1", null, "1000m", "java_opts=" + b64("-Dfoo=1") + ";heap=-;cpu=1000m;vt=-", "true");
+        Run unset = run(Map.of(), "jvm", "default", "catalog-service");
+        assertThat(unset.code()).as(unset.out()).isZero();
+        assertThat(read(log)).as("원래 없던 변수는 지운다(이미지 · 설정의 기본값으로)").contains("set env deploy/catalog-service VIRTUAL_THREADS_ENABLED-");
+    }
+
+    @Test
     @DisplayName("JVM 측정 설정 — 값 검사(gc 종류 · 힙 25 ~ 75 · cpu · 모르는 키 · 바꿀 것 없음)는 아무것도 바꾸기 전에")
     void jvmValuesAreCheckedBeforeAnyChange() throws Exception {
         assumeTrue(posix(), "bash · POSIX 권한이 없다");
         Path log = tmp.resolve("kubectl.log");
         deployJson("", null, "1000m", null);
         for (String[] bad : new String[][] {
-                {"gc=cms", "gc 는"}, {"heap=90", "heap 은 25 ~ 75"}, {"cpu=8", "cpu 는"}, {"gclog=yes", "gclog 는"},
+                {"gc=cms", "gc 는"}, {"heap=90", "heap 은 25 ~ 75"}, {"cpu=8", "cpu 는"}, {"gclog=yes", "gclog 는"}, {"vt=2", "vt 는 0 · 1"}, {"pinning=yes", "pinning 은"},
                 {"xmx=1g", "모르는 설정"}, {"catalog-service", "바꿀 것이 없다"}}) {
             Run r = run(Map.of(), "jvm", "load", "catalog-service", bad[0]);
             assertThat(r.code()).as(bad[0]).isNotZero();

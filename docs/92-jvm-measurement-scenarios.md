@@ -139,7 +139,7 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 | X-11 | OC 2-3 | browse · order | 応答の種類別の遅延 | k6 の要約をステータスコード別に — 今はエンドポイント（`name`）別だけなので、隔壁の速い 503 が全体の p99 を押し下げる | 2xx だけの p99 と全体の p99 を並べる。天井の判定は 5xx ≤ 0.1% で切るので、天井の階段では差が小さいはず |
 | X-12 | JP S10-3 | user-service · coupon | `ObjectMapper` を呼び出しごとに作る vs 一つ | ログイン · トークン更新の k6 シナリオ（ログインは IP あたり毎秒 1 — `CLIENT_IPS` で分ける） | コードの事実（grep）: `AuthLoginFilter`（ログイン成功 · 失敗の応答ごと）· `RefreshTokenController` · `JwtAuthEntryPoint`（401 ごと）· `RedisOAuth2AuthorizationRequestRepository` · `CouponService`（メールアドレスで発行）が呼び出しごとに `new ObjectMapper()`。変えるかはこの測定の後 — `ops/58` でその経路の Jackson 初期化の分が見えたら |
 | X-13 | JP S11-1 | catalog | JDBC バッチ（`hibernate.jdbc.batch_size` — 設定なし、grep） | アプリ経路の一括書き込みの測定（商品一括登録 `ProductImportService`）— `ops/44` は生成器で入れるのでアプリ経路ではない | 同じ件数でバッチの有無 · コミットの境界を分けて時間の比。書籍: 利得の大半は呼び出し回数を減らしたこと、コミット回数の差は雑音 |
-| X-14 | OC 13-1 · 3-2、JP S6-3（世代別 ZGC）— docs/91 ロードマップ ④ | 全体 | JDK 21 | jdk21-build ブランチのイメージ | 世代別 ZGC（2 コア以上で）、仮想スレッド（今の使用 0 — grep）、`ops/58` の動的アタッチが JDK 21 で警告を一行出すか（JEP 451） |
+| X-14 | OC 13-1 · 3-2、JP S6-3（世代別 ZGC）— docs/91 ロードマップ ④ | 全体（仮想スレッドは order の経路 — catalog · order · cart） | JDK 21 · 仮想スレッド | jdk21-build ブランチのイメージを手で（`ops/19`、CI はデフォルトブランチだけ発行）— 2026-11-19 そのブランチで仮想スレッドを有効にした（`VIRTUAL_THREADS_ENABLED`、pinning 四か所を修正、そのブランチの docs/75 §5）。比較は三本: このブランチのイメージ（JDK 17）/ JDK 21 `jvm load … vt=0` / `vt=1 pinning=1` | A ↔ B は JDK の版、B ↔ C は仮想スレッド。見るもの: 天井 · p99 · CPU あたりの処理量 · Hikari の待ち（Tomcat の 200 の上限がなくなると増えうる）· GC 後ヒープ · ログの `monitors:`（pinning）。世代別 ZGC（2 コア以上）、`ops/58` の動的アタッチの警告（JEP 451） |
 
 ### 4-4. 該当なし — 理由
 

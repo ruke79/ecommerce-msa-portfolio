@@ -139,7 +139,7 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 | X-11 | OC 2-3 | browse · order | 응답 범주별 지연 | k6 요약을 상태 코드별로 — 지금은 엔드포인트(`name`)별뿐이라 격벽의 빠른 503 이 전체 p99 를 끌어내린다 | 2xx 만의 p99 와 전체 p99 를 나란히. 천장 판정은 5xx ≤ 0.1% 로 끊으니 천장 계단에서는 차이가 작아야 한다 |
 | X-12 | JP S10-3 | user-service · coupon | `ObjectMapper` 를 요청마다 만들기 vs 하나 | 로그인 · 토큰 갱신 k6 시나리오(로그인은 IP 당 초당 1 — `CLIENT_IPS` 로 나눈다) | 코드 사실(grep): `AuthLoginFilter`(로그인 성공 · 실패 응답마다) · `RefreshTokenController` · `JwtAuthEntryPoint`(401 마다) · `RedisOAuth2AuthorizationRequestRepository` · `CouponService`(이메일로 발급) 가 호출마다 `new ObjectMapper()`. 바꿀지는 이 측정 뒤 — `ops/58` 에서 그 경로의 Jackson 초기화 몫이 보이면 |
 | X-13 | JP S11-1 | catalog | JDBC 배치(`hibernate.jdbc.batch_size` — 설정 없음, grep) | 앱 경로의 일괄 쓰기 측정(상품 일괄 등록 `ProductImportService`) — `ops/44` 는 생성기로 넣어 앱 경로가 아니다 | 같은 건수에서 배치 유무 · 커밋 경계를 나눠 시간 비. 책: 이득의 대부분은 호출 수를 줄인 것, 커밋 수의 차이는 잡음 |
-| X-14 | OC 13-1 · 3-2, JP S6-3(세대형 ZGC) — docs/91 로드맵 ④ | 전체 | JDK 21 | jdk21-build 브랜치 이미지 | 세대형 ZGC(2 코어 이상에서), 가상 스레드(지금 사용 0 — grep), `ops/58` 의 동적 부착이 JDK 21 에서 경고 한 줄을 내는지(JEP 451) |
+| X-14 | OC 13-1 · 3-2, JP S6-3(세대형 ZGC) — docs/91 로드맵 ④ | 전체(가상 스레드는 order 경로 — catalog · order · cart) | JDK 21 · 가상 스레드 | jdk21-build 브랜치 이미지를 손으로(`ops/19`, CI 는 기본 브랜치만 발행) — 2026-11-19 그 브랜치에서 가상 스레드를 켰다(`VIRTUAL_THREADS_ENABLED`, pinning 넷 수정, 그 브랜치 docs/75 §5). 비교는 세 갈래: 이 브랜치 이미지(JDK 17) / JDK 21 `jvm load … vt=0` / `vt=1 pinning=1` | A ↔ B 는 JDK 판, B ↔ C 는 가상 스레드. 볼 것: 천장 · p99 · CPU 당 처리량 · Hikari 대기(Tomcat 200 상한이 사라지면 늘 수 있다) · GC 뒤 힙 · 로그의 `monitors:`(pinning). 세대형 ZGC(2 코어 이상), `ops/58` 의 동적 부착 경고(JEP 451) |
 
 ### 4-4. 해당 없음 — 이유
 
