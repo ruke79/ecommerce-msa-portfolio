@@ -84,8 +84,9 @@ USERS=500000 ./ops/48-bulk-users.sh load   # 인원 바꾸기(status · purge �
 
 - `user-created` 는 user-service 의 폴러가 보낸다. **레플리카당 10초에 100건**이다(`app.outbox.batch-size=100`, `fixed-delay-ms=10000`).
   - 레플리카 하나면 10만 명에 약 2.8시간, 둘(`FOR UPDATE SKIP LOCKED` 로 나눠 가진다)이면 약 1.4시간.
-- **실습 환경에서 빨리 흘리려면** ConfigMap 에 `APP_OUTBOX_BATCH_SIZE: "1000"` 을 넣고 `./ops/28-deploy.sh <환경> --config-only --restart user-service` 를 돌린다. 10배가 된다.
-  - 끝나면 되돌린다. 운영에서는 배치를 키우면 트랜잭션 하나가 잠금을 오래 쥔다.
+- **실습 환경에서 빨리 흘리려면** `./ops/53-load-k6.sh outbox load [간격ms [묶음]]`(기본 1000ms · 100 — 10배) → 다 나가면 `outbox default`. 남은 양 · 시간은 `outbox status`(2026-11-20).
+  - 줄이는 것은 **쉬는 간격**이고 묶음은 200 까지만 받는다. 폴러는 묶음 하나를 트랜잭션 하나로 잠근 채 한 건씩 브로커 ack 를 기다린다(건마다 상한 10초) — 묶음이 크면 DB 커넥션 · 잠금 · VACUUM 을 그만큼 오래 쥐고, 브로커가 죽으면 묶음 × 10초 동안 끝나지 않으며 그 묶음 전체가 FAILED 나 재발행이 된다(예전 안내의 `APP_OUTBOX_BATCH_SIZE: "1000"` 은 그 길이를 10배로 만들었다).
+  - 흘리는 동안은 측정하지 않는다 — coupon · chat 컨슈머도 같이 바쁘다. 운영 클러스터에서는 거절한다.
 - 발행에 실패한 행은 `FAILED` 로 남고 **자동으로 다시 시도하지 않는다**(UserOutboxScheduler). `./ops/48-bulk-users.sh retry-failed` 가 데모 범위의 것만 `STARTED` 로 돌린다.
 - `status` 에서 "쿠폰 수 · 채팅 회원 수 = 사용자 수" 가 되면 복제본까지 끝난 것이다.
 - `NO_EVENTS=1` 로 넣으면 복제본이 생기지 않는다. 쿠폰이 없고, 채팅은 처음 쓸 때 임시 닉네임으로 만든다(docs/47 과 같은 상태). 데모에는 권하지 않는다.

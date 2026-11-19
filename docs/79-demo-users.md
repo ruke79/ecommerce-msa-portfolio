@@ -84,8 +84,9 @@ USERS=500000 ./ops/48-bulk-users.sh load   # 人数を変える(status・purge �
 
 - `user-created` は user-service のポーラーが送る。**レプリカあたり 10 秒に 100 件**(`app.outbox.batch-size=100`、`fixed-delay-ms=10000`)。
   - レプリカ 1 つなら 10 万人で約 2.8 時間、2 つ(`FOR UPDATE SKIP LOCKED` で分け合う)なら約 1.4 時間。
-- **ラボで早く流すなら** ConfigMap に `APP_OUTBOX_BATCH_SIZE: "1000"` を入れ、`./ops/28-deploy.sh <環境> --config-only --restart user-service` を実行する。10 倍になる。
-  - 終わったら元に戻す。運用ではバッチを大きくすると、一つのトランザクションがロックを長く持つ。
+- **ラボで早く流すなら** `./ops/53-load-k6.sh outbox load [間隔ms [バッチ]]`(既定 1000ms・100 — 10 倍)→ 流れ切ったら `outbox default`。残りの量・時間は `outbox status`(2026-11-20)。
+  - 縮めるのは**休む間隔**で、バッチは 200 までしか受けない。ポーラーはバッチ一つを一つのトランザクションでロックしたまま、1 件ずつブローカーの ack を待つ(1 件あたり上限 10 秒)— バッチが大きいと DB コネクション・ロック・VACUUM をその分長く握り、ブローカーが落ちるとバッチ × 10 秒終わらず、そのバッチ全体が FAILED か再送になる(以前の案内の `APP_OUTBOX_BATCH_SIZE: "1000"` はその長さを 10 倍にしていた)。
+  - 流している間は計測しない — coupon・chat のコンシューマーも同時に忙しい。運用クラスタでは拒否する。
 - 送信に失敗した行は `FAILED` で残り、**自動では再試行しない**(UserOutboxScheduler)。`./ops/48-bulk-users.sh retry-failed` が、デモ範囲の行だけを `STARTED` に戻す。
 - `status` で「クーポン数・チャット会員数 = ユーザー数」になれば、複製まで終わったということだ。
 - `NO_EVENTS=1` で入れると複製はできない。クーポンなし、チャットは初回使用時に仮のニックネームで作られる(docs/47 と同じ状態)。デモには勧めない。

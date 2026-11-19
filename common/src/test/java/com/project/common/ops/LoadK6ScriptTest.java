@@ -600,6 +600,7 @@ class LoadK6ScriptTest {
                   *"get hpa gateway-server"*) echo ok ;;
                   *"show max_connections"*) printf '%s\n' "${FAKE_MAX-300}" ;;
                   *"pg_stat_activity"*) printf '%s\n' "${FAKE_USED:-120}" ;;
+                  *"users.outbox_event"*) printf 'STARTED %s\nFAILED %s\n' "${FAKE_OUTBOX_STARTED:-0}" "${FAKE_OUTBOX_FAILED:-0}" ;;
                   *"get deploy catalog-service -o jsonpath"*) printf '%s' "${FAKE_POOL:-}" ;;
                   *"get deploy catalog-service"*) echo ok ;;
                   *"get deploy"*) echo "" ;;
@@ -951,6 +952,50 @@ class LoadK6ScriptTest {
         Run back = run(Map.of(), "pool", "default");
         assertThat(back.code()).as(back.out()).isZero();
         assertThat(read(log)).contains("set env deploy/catalog-service DB_POOL_SIZE-");
+    }
+
+    @Test
+    @DisplayName("🔴 outbox — 운영은 거절 · 실습에서는 user-service 폴러의 간격만 줄이고(묶음 ≤ 200 — 트랜잭션 하나가 잠금을 쥔다) 되돌린다 · 기본값 = 설정 파일")
+    void outboxPollerOnlyOnLabClusterAndBatchCapped() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path log = tmp.resolve("kubectl.log");
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com"), "outbox", "load");
+        assertThat(prod.code()).isNotZero();
+        assertThat(prod.out()).contains("운영 클러스터").contains("아웃박스 폴러");
+        assertThat(read(log)).doesNotContain("set env");
+
+        Files.delete(log);
+        Run load = run(Map.of(), "outbox", "load");
+        assertThat(load.code()).as(load.out()).isZero();
+        assertThat(read(log)).contains("set env deploy/user-service APP_OUTBOX_FIXED_DELAY_MS=1000 APP_OUTBOX_BATCH_SIZE=100")
+                .contains("rollout status deploy/user-service");
+
+        Files.delete(log);
+        Run big = run(Map.of(), "outbox", "load", "1000", "10000");
+        assertThat(big.code()).isNotZero();
+        assertThat(big.out()).contains("묶음은 1 ~ 200");
+        assertThat(read(log)).as("값 검사는 바꾸기 전에").doesNotContain("set env");
+        for (String bad : new String[] {"100", "20000", "1s"}) {
+            Run r = run(Map.of(), "outbox", "load", bad);
+            assertThat(r.code()).as(bad).isNotZero();
+            assertThat(r.out()).contains("간격은 200 ~ 10000 ms");
+        }
+
+        Run status = run(Map.of("FAKE_OUTBOX_STARTED", "3000000", "FAKE_OUTBOX_FAILED", "7"), "outbox", "status");
+        assertThat(status.code()).as(status.out()).isZero();
+        assertThat(status.out()).contains("간격 10000ms(기본) · 묶음 100(기본)").contains("STARTED 3000000 · FAILED 7")
+                .as("300만 건 · 10초 · 100 · 레플리카 2 → 2,500분").contains("약 2500분").contains("retry-failed");
+
+        Files.delete(log);
+        Run back = run(Map.of(), "outbox", "default");
+        assertThat(back.code()).as(back.out()).isZero();
+        assertThat(read(log)).contains("set env deploy/user-service APP_OUTBOX_FIXED_DELAY_MS- APP_OUTBOX_BATCH_SIZE-");
+
+        String yml = read(repoRoot().resolve("user-service/src/main/resources/application-local.yml"));
+        String script = read(repoRoot().resolve("ops/53-load-k6.sh"));
+        assertThat(yml).as("되돌린 뒤의 값 = 스크립트가 말하는 기본값")
+                .contains("${APP_OUTBOX_FIXED_DELAY_MS:10000}").contains("${APP_OUTBOX_BATCH_SIZE:100}");
+        assertThat(script).contains("OUTBOX_DEFAULT_DELAY_MS=10000").contains("OUTBOX_DEFAULT_BATCH=100");
     }
 
     /** 가짜 kubectl 이 {@code get deploy <d> -o json} 에 돌려줄 Deployment — 주석(원래 값)이 있으면 측정 중. */

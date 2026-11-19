@@ -37,6 +37,11 @@
 #   ./ops/53-load-k6.sh pool default [서비스]   # 되돌린다(DB_POOL_SIZE 없음 = 5)
 #   ./ops/53-load-k6.sh pool status            # 지금 값(서비스마다)
 #
+#   ./ops/53-load-k6.sh outbox load [간격ms [묶음]]   # user-service 아웃박스 폴러를 잠깐 빠르게(기본 1000ms · 묶음 100) — 실습 클러스터만,
+#                                              # ops/48 로 넣은 데모 사용자의 user-created 를 빨리 흘린다(docs/79 §4). 파드가 다시 뜬다
+#   ./ops/53-load-k6.sh outbox default         # 되돌린다(10000ms · 100). 다 나간 뒤에 — 흘리는 동안은 측정하지 않는다
+#   ./ops/53-load-k6.sh outbox status          # 지금 값 · 밀린 user-created(STARTED · FAILED) · 지금 속도로 남은 시간
+#
 #   ./ops/53-load-k6.sh replicas load [수 [서비스…]]  # 레플리카를 미리 늘린다(기본 3 · catalog-service gateway-server) — 실습 클러스터만,
 #                                              # HPA 최소값을 함께 올리고, 노드에 CPU · 메모리 요청 여유가 있는지 먼저 센다
 #   ./ops/53-load-k6.sh replicas default [서비스…]   # 되돌린다(HPA 최소 · 최대는 k8s/70, HPA 없는 서비스는 demo 오버레이 값)
@@ -124,7 +129,7 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|mixed|contention|limits|pool|replicas|jvm|reviews|stock|search|logs|report|ceiling) ;;
+    browse|order|spike|smoke|mixed|contention|limits|pool|outbox|replicas|jvm|reviews|stock|search|logs|report|ceiling) ;;
     *) usage ;;
 esac
 
@@ -419,6 +424,75 @@ cmd_stock() {
 }
 if [ "$SCENARIO" = "stock" ]; then
     cmd_stock "$@"
+    exit 0
+fi
+
+# ── user-service 아웃박스 폴러 — 데모 사용자를 흘리는 동안만 ─────────────────────
+#
+# ops/48 은 사용자 행과 user-created 아웃박스 행을 SQL 로 넣는다 — 커밋 직후 릴레이(relay-on-commit)를 거치지 않아 폴러만 보낸다.
+# 폴러는 레플리카당 10초에 100건(UserOutboxScheduler)이라 10만 명이면 약 2.8시간, 300만 명이면 약 83시간이다(docs/79 §4).
+# 줄이는 것은 **쉬는 간격**이다 — 묶음은 키우지 않는다: 폴러는 트랜잭션 하나에서 행을 잠그고(FOR UPDATE SKIP LOCKED) 한 건씩 브로커 ack 를
+# 기다린다(건마다 상한 publish-timeout-ms 10초). 묶음이 크면 그 트랜잭션이 묶음만큼 길어진다 — DB 커넥션(풀 5) · 잠금 · VACUUM 을 쥐고,
+# 브로커가 죽으면 묶음 × 10초(1만 건이면 약 28시간) 동안 끝나지 않으며, 그 묶음 전체가 FAILED(자동 재시도 없음)나 재발행이 된다.
+# 그래서 묶음은 200 이하, 간격은 200ms 이상(더 짧으면 빈 조회만 는다). 운영 클러스터는 거절한다.
+# [JA] 計測用に user-service のアウトボックスのポーラー間隔だけを縮める。バッチは大きくしない(1 トランザクションでロックし 1 件ずつ ack を待つ)。本番クラスタでは拒否する。
+OUTBOX_DEFAULT_DELAY_MS=10000   # user-service application-local.yml 의 APP_OUTBOX_FIXED_DELAY_MS 기본값(가드 LoadK6ScriptTest)
+OUTBOX_DEFAULT_BATCH=100        # 같은 파일의 APP_OUTBOX_BATCH_SIZE 기본값
+outbox_env() {   # outbox_env <이름> → user-service Deployment 에 적힌 값(없으면 빈 값)
+    kubectl -n "$APP_NS" get deploy user-service -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name==\"$1\")].value}" 2>/dev/null || true
+}
+outbox_backlog() {   # 밀린 user-created — "상태 건수" 줄(못 읽으면 빈 값)
+    kubectl -n "$PG_NS" exec -i "deploy/$PG_DEPLOY" -- psql -X -U "$PG_USER" -d "${USER_DB:-userdb}" -v ON_ERROR_STOP=1 -tA -F ' ' -c \
+        "SELECT outbox_status, count(*) FROM users.outbox_event WHERE event_type = 'user-created' AND outbox_status IN ('STARTED', 'FAILED') GROUP BY 1 ORDER BY 1" \
+        2>/dev/null || true
+}
+cmd_outbox() {
+    lab_cluster_or_die "아웃박스 폴러"
+    local action="${2:-status}" delay batch reps
+    case "$action" in
+        load)
+            delay="${3:-1000}"; batch="${4:-$OUTBOX_DEFAULT_BATCH}"
+            [[ "$delay" =~ ^[1-9][0-9]*$ ]] && [ "$delay" -ge 200 ] && [ "$delay" -le "$OUTBOX_DEFAULT_DELAY_MS" ] \
+                || die "간격은 200 ~ $OUTBOX_DEFAULT_DELAY_MS ms — 더 짧으면 빈 조회만 는다"
+            [[ "$batch" =~ ^[1-9][0-9]*$ ]] && [ "$batch" -le 200 ] \
+                || die "묶음은 1 ~ 200 — 폴러는 묶음 하나를 트랜잭션 하나로 잠근 채 한 건씩 ack 를 기다린다(브로커가 죽으면 묶음 × 10초). 빨리 하려면 간격을 줄인다"
+            reps="$(kubectl -n "$APP_NS" get deploy user-service -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+            [[ "$reps" =~ ^[0-9]+$ ]] || reps=1
+            info "user-service 아웃박스 폴러: ${delay}ms 마다 묶음 $batch (기본 ${OUTBOX_DEFAULT_DELAY_MS}ms · $OUTBOX_DEFAULT_BATCH, $PUBLIC_URL) — 파드가 다시 뜬다"
+            info "  최대 속도 ≈ 레플리카 $reps × $batch 건 / (${delay}ms + 발행 시간) — 한 건씩 ack 를 기다리므로 실제는 그보다 느리다"
+            kubectl -n "$APP_NS" set env deploy/user-service APP_OUTBOX_FIXED_DELAY_MS="$delay" APP_OUTBOX_BATCH_SIZE="$batch" >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/user-service --timeout=300s
+            echo "  다 나갔는지:  ./ops/53-load-k6.sh outbox status   (또는 ./ops/48-bulk-users.sh status — 쿠폰 · 채팅 회원 수 = 사용자 수)"
+            echo "  끝나면:       ./ops/53-load-k6.sh outbox default   — 흘리는 동안은 측정하지 않는다(coupon · chat 컨슈머도 같이 바쁘다)"
+            ;;
+        default)
+            info "user-service 아웃박스 폴러 → 기본값(${OUTBOX_DEFAULT_DELAY_MS}ms · 묶음 $OUTBOX_DEFAULT_BATCH) — 파드가 다시 뜬다"
+            kubectl -n "$APP_NS" set env deploy/user-service APP_OUTBOX_FIXED_DELAY_MS- APP_OUTBOX_BATCH_SIZE- >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/user-service --timeout=300s
+            ;;
+        status)
+            local d b started=0 failed=0 st n
+            d="$(outbox_env APP_OUTBOX_FIXED_DELAY_MS)"; b="$(outbox_env APP_OUTBOX_BATCH_SIZE)"
+            echo "폴러: 간격 ${d:-$OUTBOX_DEFAULT_DELAY_MS}ms$([ -n "$d" ] || echo '(기본)') · 묶음 ${b:-$OUTBOX_DEFAULT_BATCH}$([ -n "$b" ] || echo '(기본)')"
+            while read -r st n; do
+                case "$st" in STARTED) started="$n" ;; FAILED) failed="$n" ;; esac
+            done < <(outbox_backlog)
+            reps="$(kubectl -n "$APP_NS" get deploy user-service -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+            [[ "$reps" =~ ^[1-9][0-9]*$ ]] || reps=1
+            echo "밀린 user-created: STARTED $started · FAILED $failed"
+            if [ "$started" -gt 0 ] 2>/dev/null; then
+                # 쉬는 간격만 센 하한 — 한 건씩 ack 를 기다리는 시간은 빠져 있다
+                echo "  지금 설정으로 남은 시간 ≥ 약 $(( started * ${d:-$OUTBOX_DEFAULT_DELAY_MS} / (${b:-$OUTBOX_DEFAULT_BATCH} * reps) / 60000 ))분(레플리카 $reps, 발행 시간 제외)"
+            fi
+            [ "$failed" -gt 0 ] 2>/dev/null && echo "  FAILED 는 다시 보내지 않는다 — 데모 범위는 ./ops/48-bulk-users.sh retry-failed"
+            [ -n "$d$b" ] && echo "  측정 전에 되돌린다: ./ops/53-load-k6.sh outbox default"
+            return 0
+            ;;
+        *) usage ;;
+    esac
+}
+if [ "$SCENARIO" = "outbox" ]; then
+    cmd_outbox "$@"
     exit 0
 fi
 
