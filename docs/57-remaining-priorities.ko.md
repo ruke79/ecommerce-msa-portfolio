@@ -352,7 +352,7 @@ exit 2(정책은 남긴다). 판정 로직은 가짜 kubectl 로 확인했고, *
 
 - 서비스끼리의 인증(mTLS·서비스 토큰)은 여전히 없다 — ecommerce 안의 파드 하나가 뚫리면 내부 API 는 열려 있다. 다음 단계는
   내부 API 에 서비스 토큰(또는 서비스 메시)이다.
-- 나가는 연결 허용 목록(egress)은 외부 API 목록을 확정한 뒤에.
+- 나가는 연결 허용 목록(egress)은 외부 API 목록을 확정한 뒤에. → 🕰️ 2026-11-19: IP 목록 없이 할 수 있는 1단계를 했다(§23).
 
 ## 12. 심층 방어 정리 — springdoc 끄기 · dist.zip · Redis 비밀번호 분리
 
@@ -881,8 +881,34 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **배포 순서**: notification(새 알림 두 종류 — 옛 notification 은 "새 기기" 문구로 떨어진다)을 user 보다 먼저, user(V21 — 새 표 하나, 되돌리기 안전) · gateway · frontend · 공통 이미지(cart · catalog · coupon · order · pay — 신뢰 패키지). 게이트웨이와 user-service 는 같은 Redis(`REDIS_HOST`, db 0)를 봐야 한다 — 다르면 해제 시각을 못 읽어 예전처럼 15분. 배포 뒤: "모든 기기에서 로그아웃" 뒤 다른 브라우저의 다음 요청이 401 인지, 로그 `로그인 비밀번호가 유출` 수 · 지표 `auth_breached_password_login_advised_total`.
 
 **남은 것(코드만으로는 끝나지 않는다)**:
-- NetworkPolicy egress 허용 목록 — 결제사 · SMS · 메일 · 택배사 · HIBP · DNS 목록을 정한 뒤(잘못 막으면 결제가 멈춘다).
+- NetworkPolicy egress 허용 목록 — 결제사 · SMS · 메일 · 택배사 · HIBP · DNS 목록을 정한 뒤(잘못 막으면 결제가 멈춘다). → 🕰️ 1단계는 §23(IP 목록 없이).
 - 공유 서버 인증서 `tls-keystore`(825일)를 서비스별로 · cert-manager + Reloader(§18), 비밀 관리 도구(SOPS · Sealed Secrets · Vault)와 정기 회전, 개인 키 HSM/KMS — 운영 장비 · 비용 판단.
 - 관리 포트 분리(`management.server.port`) — 프로브 · metrics-agent · 매니페스트 13개를 함께 바꾸는 배포 작업.
 - react-router v7 · jest 30 메이저 판 올림 — 화면 전체 회귀가 필요한 별도 작업.
 - 같은 전화번호를 두 계정이 쓰는 것 — 막을지(가족 공용 번호)부터 정할 일.
+
+## 23. 나가는 연결(egress) 1단계 — IP 목록 없이(2026-11-19)
+
+**문제**: 들어오는 연결은 §11 로 막았지만 나가는 연결은 모두 열려 있었다. 서비스 하나에 SSRF · 원격 코드 실행이 생기면 그 파드에서 클라우드 메타데이터(`169.254.169.254` — 자격증명) · 노드의 다른 포트(kubelet · SSH · 관측 스택) · 같은 VCN 의 장비에 닿고, 바깥으로 데이터를 내보낼 수 있다. 다만 NetworkPolicy 는 도메인이 아니라 IP 로만 고르고, 결제사 · Atlas · Gmail · S3 의 IP 는 바뀐다 — IP 허용 목록은 언젠가 결제를 멈춘다(§22).
+
+**한 것** — `k8s/97-network-policy-egress.yaml`(정책 둘, kustomization 밖):
+
+| 그룹 | 서비스 | 나갈 수 있는 곳 |
+|---|---|---|
+| 클러스터 안만(`egress-cluster-only`) | eureka · gateway · cart · coupon · pay · saga-projection · frontend | 같은 네임스페이스 · 인프라 네임스페이스(postgres · redis · kafka · mongodb · elasticsearch) · kube-dns(53) · 노드의 OTLP 수집기(4318) |
+| 바깥 필요(`egress-public-no-private`) | user(OAuth · HIBP · 본인인증) · catalog(S3) · order(Stripe · PayPal · 포트원 · 환율) · notification(SMTP · SMS) · delivery(택배사) · chat(Atlas) · config-server(설정 Git) | 위 + 인터넷 — 단 `10/8` · `172.16/12` · `192.168/16` · `169.254/16`(메타데이터) · `100.64/10` · `127/8` 은 닫는다 |
+
+정책 밖(예전처럼 다 열림): metrics-agent(노드 9090 · API 서버) · cloudflared · 백업 CronJob — 각자 노드 · 바깥이 필요하고 손님 요청을 받지 않는다(2단계에서).
+
+**적용은 `ops/35-network-policy.sh egress-apply` 로만**:
+1. 사전 점검 — '클러스터 안만' 그룹이 쓰는 PostgreSQL · Redis · Kafka 주소(ConfigMap `ecommerce-config`)가 모두 `*.svc.cluster.local` 인지. external 오버레이처럼 Neon · Upstash · Confluent 로 뺀 환경이면 **적용하지 않는다**(그 그룹이 DB 에 못 닿는다).
+2. 매니페스트의 `__NODE_IP__` 줄을 노드 InternalIP 마다 펼친다(파드의 `HOST_IP` = 추적을 보내는 곳). 원본을 그대로 `kubectl apply` 하면 CIDR 이 틀려 API 서버가 거절한다 — 일부러.
+3. 적용 **전**에 두 그룹 이름의 두드리기 파드(`netpol-probe-internal` · `-public`, 같은 정책을 받는다)로 흐름을 기록하고, 적용 **뒤** 다시 두드린다 — 허용: DNS · 게이트웨이 · user · PostgreSQL · Redis · Kafka · 노드:4318(public 은 + `api.stripe.com:443` · `1.1.1.1:443`), 차단: 메타데이터 · 노드:10250(internal 은 + 바깥 둘). 허용이 하나라도 막히면 **스스로 지운다**, 막혀야 할 것이 하나라도 열려 있으면 경고 종료(2, 지우지 않는다), 정책 전에도 닫혀 있던 것은 판정에서 뺀다.
+
+**확인**: 렌더한 매니페스트는 k3s v1.30.6 API 서버의 server dry-run 을 통과(원본은 `__NODE_IP__/32` 로 거절) · 가짜 kubectl 로 판단 여섯(`EgressPolicyScriptTest` — 적용 · 되돌리기 · 외부 DB 거절 · 집행 안 됨 · 일부만 집행 · 전부터 닫힌 것; 되돌리기 · 사전 점검 · IP 펼치기 · 일부 집행을 빼면 각각 실패) · 가드 **B-117**(`EgressPolicyGuardTest` 4 — ecommerce Deployment 는 정확히 한 그룹, '클러스터 안만' 그룹의 코드 · 설정 · frontend nginx 에 바깥 주소 없음, 예외 대역 · 0.0.0.0/0 없음, 노드 자리표시 · kustomization 밖; 그룹에서 빼기 · catalog 를 안쪽에 넣기 · 169.254 빼기 · IP 손으로 적기는 각각 실패). ⚠️ **실제 집행(kube-router)은 보지 못했다** — 이 환경의 docker 안 k3s 는 파드를 띄우지 못했다(중첩 runc). 실습 클러스터에서 먼저 `egress-apply` 를 돌린다.
+
+🕰️ **2026-11-19 첫 실습 시도**: registry-vm(이미지 빌드 VM)에서 돌려 "ConfigMap 에서 백엔드 주소를 읽지 못했다" 로 멈췄다 — 그 셸의 kubectl 이 실습 클러스터를 가리키지 않은 것으로 보인다(스크립트가 오류를 삼켜 까닭을 말하지 않았다). 이제 사전 점검이 **클러스터에 닿지 못함(지금 컨텍스트와 kubectl 오류 첫 줄) · ConfigMap 없음 · 키가 비어 있음**을 나눠 말한다(`EgressPolicyScriptTest` +1). 실습 클러스터의 kubeconfig 가 있는 곳(서버 노드 · kubectl 을 쓰는 PC)에서 돌린다.
+
+**순서**: 실습 클러스터 `egress-apply` → 결제(카드 · PayPal) · 메일 · 소셜 로그인 · 이미지 업로드 · 채팅 · 택배 조회를 한 바퀴 → 운영 노드에서 `egress-apply`(되돌리기는 `egress-remove`). 운영은 하이브리드 원격 노드(docs/71)가 있으면 노드 IP 가 둘 — 스크립트가 둘 다 펼친다.
+
+**2단계(남은 것)**: metrics-agent · cloudflared · 백업 CronJob 의 정책, public 그룹의 포트 좁히기(443 · 465/587 · 27017 등), 바깥 주소별 허용(도메인 단위가 필요해지면 Cilium 등 — 노드가 늘 때 함께 판단).

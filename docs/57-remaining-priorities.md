@@ -352,7 +352,7 @@ exit 2（ポリシーは残す）。判定ロジックは偽の kubectl で確�
 
 - サービス同士の認証（mTLS・サービストークン）は依然としてない — ecommerce 内の Pod 一つが破られれば内部 API は開いている。次の段階は
   内部 API へのサービストークン（またはサービスメッシュ）だ。
-- 出ていく接続の許可リスト（egress）は、外部 API のリストを確定した後で。
+- 出ていく接続の許可リスト（egress）は、外部 API のリストを確定した後で。→ 🕰️ 2026-11-19: IP リストなしでできる第 1 段階を行った（§23）。
 
 ## 12. 多層防御の整理 — springdoc のオフ · dist.zip · Redis パスワードの分離
 
@@ -880,8 +880,34 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 **デプロイ順**: notification（新しい通知二種類 — 古い notification は「新しい端末」の文言に落ちる）を user より先に、user（V21 — 新しい表一つ、戻しても安全）· gateway · frontend · 共通イメージ（cart · catalog · coupon · order · pay — 信頼パッケージ）。ゲートウェイと user-service は同じ Redis（`REDIS_HOST`、db 0）を見る必要がある — 違えば解除時刻を読めず以前どおり 15 分。デプロイ後: 「すべての端末からログアウト」の後、別のブラウザの次のリクエストが 401 か、ログ `로그인 비밀번호가 유출` の数 · 指標 `auth_breached_password_login_advised_total`。
 
 **残り（コードだけでは終わらない）**:
-- NetworkPolicy の egress 許可リスト — 決済 · SMS · メール · 配送会社 · HIBP · DNS の一覧を決めてから（誤って止めると決済が止まる）。
+- NetworkPolicy の egress 許可リスト — 決済 · SMS · メール · 配送会社 · HIBP · DNS の一覧を決めてから（誤って止めると決済が止まる）。 → 🕰️ 第 1 段階は §23（IP リストなし）。
 - 共有サーバー証明書 `tls-keystore`（825 日）をサービスごとに · cert-manager + Reloader（§18）、秘密管理ツール（SOPS · Sealed Secrets · Vault）と定期ローテーション、秘密鍵の HSM/KMS — 本番機材 · コストの判断。
 - 管理ポートの分離（`management.server.port`）— プローブ · metrics-agent · マニフェスト 13 個を一緒に変えるデプロイ作業。
 - react-router v7 · jest 30 のメジャーアップ — 画面全体の回帰が必要な別作業。
 - 同じ電話番号を二つのアカウントが使うこと — 止めるか（家族共用の番号）から決めること。
+
+## 23. 外向き接続（egress）の第 1 段階 — IP リストなしで（2026-11-19）
+
+**問題**: 受信は §11 で塞いだが、外向きの接続はすべて開いていた。サービス一つに SSRF · リモートコード実行があれば、その Pod からクラウドのメタデータ（`169.254.169.254` — 資格情報）· ノードの他のポート（kubelet · SSH · 観測スタック）· 同じ VCN の機器に届き、外へデータを出せる。ただし NetworkPolicy はドメインではなく IP でしか選べず、決済 · Atlas · Gmail · S3 の IP は変わる — IP の許可リストはいつか決済を止める（§22）。
+
+**したこと** — `k8s/97-network-policy-egress.yaml`（ポリシー二つ、kustomization の外）:
+
+| グループ | サービス | 出られる先 |
+|---|---|---|
+| クラスタ内のみ（`egress-cluster-only`） | eureka · gateway · cart · coupon · pay · saga-projection · frontend | 同じネームスペース · インフラのネームスペース（postgres · redis · kafka · mongodb · elasticsearch）· kube-dns（53）· ノードの OTLP 収集器（4318） |
+| 外部が必要（`egress-public-no-private`） | user（OAuth · HIBP · 本人認証）· catalog（S3）· order（Stripe · PayPal · ポートワン · 為替）· notification（SMTP · SMS）· delivery（配送会社）· chat（Atlas）· config-server（設定 Git） | 上 + インターネット — ただし `10/8` · `172.16/12` · `192.168/16` · `169.254/16`（メタデータ）· `100.64/10` · `127/8` は閉じる |
+
+ポリシーの外（以前どおり全開）: metrics-agent（ノード 9090 · API サーバー）· cloudflared · バックアップ CronJob — それぞれノード · 外部が必要で、客のリクエストを受けない（第 2 段階で）。
+
+**適用は `ops/35-network-policy.sh egress-apply` だけで**:
+1. 事前点検 — 「クラスタ内のみ」グループが使う PostgreSQL · Redis · Kafka のアドレス（ConfigMap `ecommerce-config`）がすべて `*.svc.cluster.local` か。external オーバーレイのように Neon · Upstash · Confluent に出した環境なら**適用しない**（そのグループが DB に届かない）。
+2. マニフェストの `__NODE_IP__` の行をノードの InternalIP ごとに展開する（Pod の `HOST_IP` = トレースの送り先）。原本をそのまま `kubectl apply` すると CIDR が誤りで API サーバーが拒否する — 意図的。
+3. 適用**前**に二つのグループ名の確認用 Pod（`netpol-probe-internal` · `-public`、同じポリシーを受ける）で流れを記録し、適用**後**にもう一度叩く — 許可: DNS · ゲートウェイ · user · PostgreSQL · Redis · Kafka · ノード:4318（public は + `api.stripe.com:443` · `1.1.1.1:443`）、遮断: メタデータ · ノード:10250（internal は + 外部二つ）。許可が一つでも塞がれば**自分で消す**、塞がるべきものが一つでも開いていれば警告終了（2、消さない）、ポリシー前から閉じていたものは判定から除く。
+
+**確認**: 展開したマニフェストは k3s v1.30.6 の API サーバーの server dry-run を通過（原本は `__NODE_IP__/32` で拒否）· 偽の kubectl で判断六つ（`EgressPolicyScriptTest` — 適用 · 戻し · 外部 DB の拒否 · 未執行 · 一部だけ執行 · 前から閉じていたもの。戻し · 事前点検 · IP 展開 · 一部執行の判定を外すとそれぞれ失敗）· ガード **B-117**（`EgressPolicyGuardTest` 4 — ecommerce の Deployment はちょうど一つのグループ、「クラスタ内のみ」グループのコード · 設定 · frontend の nginx に外部アドレスなし、除外帯域 · 0.0.0.0/0 なし、ノードのプレースホルダー · kustomization の外。グループから外す · catalog を内側に入れる · 169.254 を外す · IP を手書きするとそれぞれ失敗）。⚠️ **実際の執行（kube-router）は見ていない** — この環境の docker 内 k3s は Pod を起動できなかった（入れ子の runc）。実習クラスタで先に `egress-apply` を回す。
+
+🕰️ **2026-11-19 最初の実習**: registry-vm（イメージビルド VM）で回して「ConfigMap からバックエンドのアドレスを読めなかった」で止まった — そのシェルの kubectl が実習クラスタを指していなかったとみられる（スクリプトがエラーを握りつぶし理由を言わなかった）。今は事前点検が**クラスタに届かない（今のコンテキストと kubectl エラーの最初の行）· ConfigMap なし · キーが空**を分けて言う（`EgressPolicyScriptTest` +1）。実習クラスタの kubeconfig がある所（サーバーノード · kubectl を使う PC）で回す。
+
+**順序**: 実習クラスタで `egress-apply` → 決済（カード · PayPal）· メール · ソーシャルログイン · 画像アップロード · チャット · 配送照会を一巡 → 本番ノードで `egress-apply`（戻すのは `egress-remove`）。本番にハイブリッドのリモートノード（docs/71）があればノード IP は二つ — スクリプトが両方を展開する。
+
+**第 2 段階（残り）**: metrics-agent · cloudflared · バックアップ CronJob のポリシー、public グループのポート絞り込み（443 · 465/587 · 27017 など）、外部アドレスごとの許可（ドメイン単位が必要になれば Cilium など — ノードが増えるときに一緒に判断）。

@@ -1,0 +1,99 @@
+# 네트워크 정책 — 나가는(egress) 연결 1단계 (docs/57 §23)
+# [JA] ネットワークポリシー — 外向き(egress)接続の第 1 段階。
+#
+# ⚠️ kustomization.yaml 에 넣지 않았다 — **ops/35-network-policy.sh egress-apply** 로만 적용한다. 그 스크립트가
+#    ① 아래 `__NODE_IP__` 줄을 노드마다 펼치고(그대로 apply 하면 CIDR 이 틀려 거절된다 — 일부러),
+#    ② "바깥이 필요 없는" 그룹의 백엔드(PostgreSQL · Redis · Kafka)가 정말 클러스터 안인지 ConfigMap 으로 확인하고
+#       (external 오버레이는 PostgreSQL 을 Neon 같은 바깥으로 뺄 수 있다 — 그 환경에서는 적용하지 않는다),
+#    ③ 적용 뒤 허용 · 차단 흐름을 두드려 보고, 허용돼야 할 흐름이 하나라도 막히면 스스로 되돌린다.
+#
+# 왜 IP 허용 목록이 아닌가: NetworkPolicy 는 도메인이 아니라 IP 대역으로만 고른다. 결제사 · MongoDB Atlas · Gmail · S3 의 IP 는
+# 자주 바뀐다 — IP 로 적은 허용 목록은 언젠가 결제를 멈춘다. 도메인 단위(Cilium 등)는 노드 한 대인 지금 과하다(docs/57 §22).
+# 그래서 IP 를 몰라도 효과가 큰 두 가지만 한다:
+#
+#   1) 바깥 API 를 전혀 부르지 않는 서비스 — **클러스터 밖으로 나가지 못한다.** 그 서비스에 SSRF · 원격 코드 실행이 생겨도
+#      데이터를 밖으로 내보내거나 밖에서 도구를 받아 오지 못한다. (코드에 바깥 주소가 생기면 가드가 잡는다 — EgressPolicyGuardTest)
+#   2) 바깥이 필요한 서비스 — 인터넷은 열되 **사설 대역 · 링크 로컬(169.254.169.254 클라우드 메타데이터) · CGNAT** 은 닫는다.
+#      SSRF 로 노드의 다른 포트(SSH · kubelet · 관측 스택) · 클라우드 자격증명 · 같은 VCN 의 다른 장비에 닿는 길이 막힌다.
+#
+# 두 그룹 모두 여는 것: 같은 네임스페이스(서비스끼리 Eureka · Feign · Kafka 대신 HTTP), 인프라 네임스페이스(postgres · redis ·
+# kafka · mongodb · elasticsearch), kube-system 의 DNS(53), 노드의 OTLP 수집기(4318 — 추적을 노드의 관측 스택으로 보낸다, docs/63).
+#
+# 고르지 않는 파드(정책 밖 — 예전처럼 다 열림): metrics-agent(노드 9090 · API 서버) · cloudflared(Cloudflare) · 백업 CronJob
+# (mongo-backup 은 Atlas) — 각자 바깥 · 노드가 필요하고 손님 요청을 직접 받지 않는다. 2단계에서 본다.
+#
+# 시험용 이름: netpol-probe-internal · netpol-probe-public 은 ops/35 가 띄우는 두드리기 파드다(같은 정책을 받게).
+
+# ── 1) 바깥이 필요 없는 서비스 — 클러스터 안 · 노드 수집기만 ─────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-cluster-only
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ eureka-server, gateway-server, cart-service, coupon-service, pay-service, saga-projection, frontend,
+                  netpol-probe-internal ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - podSelector: {}
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - { key: kubernetes.io/metadata.name, operator: In, values: [ postgres, redis, kafka, mongodb, elasticsearch ] }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다
+      ports:
+        - { protocol: TCP, port: 4318 }
+---
+# ── 2) 바깥이 필요한 서비스 — 인터넷은 열되 사설 · 링크 로컬 · CGNAT 은 닫는다 ─────────────────
+#   user(OAuth · HIBP · 포트원 본인인증) · catalog(S3) · order(Stripe · PayPal · 포트원 · 환율) · notification(SMTP · SMS) ·
+#   delivery(택배사) · chat(MongoDB Atlas) · config-server(설정 Git 저장소)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-public-no-private
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ user-service, catalog-service, order-service, notification-service, delivery-service, chat-service,
+                  config-server, netpol-probe-public ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - podSelector: {}
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - { key: kubernetes.io/metadata.name, operator: In, values: [ postgres, redis, kafka, mongodb, elasticsearch ] }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다
+      ports:
+        - { protocol: TCP, port: 4318 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8 ]

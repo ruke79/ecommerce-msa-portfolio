@@ -234,7 +234,7 @@ Cloudflare 터널(`k8s-overlays/prod/cloudflared.yaml`)이 `https://gateway-serv
 
 - ~~HorizontalPodAutoscaler, PodDisruptionBudget~~ → `70-autoscaling.yaml`로 추가됨.
   chat-service는 인메모리 STOMP 브로커라 스케일아웃 제외(docs/03 F-7), eureka는 peer-awareness 설정 선행 필요로 제외.
-- ~~NetworkPolicy로 네임스페이스 간 트래픽 제한~~ → `95-network-policy.yaml`(들어오는 연결만). kustomization 밖 — `ops/35-network-policy.sh apply` 로 확인하며 적용(docs/57 §11).
+- ~~NetworkPolicy로 네임스페이스 간 트래픽 제한~~ → `95-network-policy.yaml`(들어오는 연결만). kustomization 밖 — `ops/35-network-policy.sh apply` 로 확인하며 적용(docs/57 §11). 나가는 연결 1단계는 `97-network-policy-egress.yaml` — `ops/35-network-policy.sh egress-apply` 로만(노드 IP 를 펼치고 · 백엔드가 클러스터 안인지 보고 · 막히면 되돌린다, docs/57 §23).
 - 인프라(Kafka/Postgres/Redis/Mongo/ES)까지 StatefulSet/Operator로 클러스터 내 편입
 - 게이트웨이 앞단 TLS passthrough Ingress(공인 인증서 사용 시)
 - Secret을 평문 대신 Sealed Secrets / External Secrets Operator로 관리
