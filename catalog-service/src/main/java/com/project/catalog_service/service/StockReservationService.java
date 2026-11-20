@@ -103,6 +103,7 @@ public class StockReservationService {
     }
 
     /** 잠금 대기 기본 상한 — 기한을 모르는 호출(HTTP)에도. */
+    // [JA] ロック待ちの既定の上限 — 期限が分からない呼び出し(HTTP)にも適用する。
     public static final Duration DEFAULT_LOCK_TIMEOUT = Duration.ofSeconds(5);
 
     /**
@@ -123,7 +124,10 @@ public class StockReservationService {
      *                    🐛 예전에는 상한이 없어, order 가 3초 기한으로 포기한 뒤에도 인기 상품의 잠금을 기다리며 커넥션(풀 5)을 쥐었다.
      *                    그 사이 같은 주문의 취소가 먼저 돌면 아직 커밋되지 않은 예약을 보지 못해 0건을 풀고, 뒤늦게 커밋된 HELD 가
      *                    TTL 동안 유령으로 남았다.
-     *                    [JA] SKU ロックを待つ上限 — gRPC は呼び出し側の残り期限で渡す。以前は上限がなく、order が諦めた後も待ち続けた。
+     *                    [JA] SKU ロックを待つ上限 — gRPC は呼び出し側の残り期限で渡す。
+     *                    🐛 以前は上限がなく、order が 3 秒の期限で諦めた後も、人気商品のロックを待ちながらコネクション
+     *                    (プール 5)を握り続けていた。その間に同じ注文の取消が先に走ると、まだコミットされていない仮押さえが
+     *                    見えずに 0 件を解放し、遅れてコミットされた HELD が TTL の間ずっと幽霊として残った。
      */
     @Transactional
     public StockReservationResult reserve(StockReservationRequest request, Duration lockTimeout) {

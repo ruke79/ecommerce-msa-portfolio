@@ -26,10 +26,35 @@ import com.project.common.constants.PaymentProvider;
  * 갖고 있고, <b>새 제공자는 그 규칙을 자동으로 상속한다.</b> 결제수단을 추가하는 일은
  * 이제 이 인터페이스를 구현하고 {@link com.project.common.constants.PaymentProvider} 에
  * 값을 더하는 것이 전부다.
+ *
+ * <p>[JA] 決済プロバイダーの<b>ポート</b>。
+ *
+ * <h3>[JA] このインターフェースができた理由</h3>
+ *
+ * <p>[JA] 以前は決済確認が {@code OrderDataService.persisitPaypalPayment} という一つのメソッドの中にあり、
+ * そこには<b>二種類のものが混ざっていた</b>:
+ *
+ * <ul>
+ *   <li><b>PayPal だけに当てはまるもの</b> — PayPal REST で注文を照会し、status が
+ *       {@code COMPLETED} かどうかを見る</li>
+ *   <li><b>すべての決済に当てはまるもの</b> — 確認された金額を<b>DB の注文合計</b>と突き合わせ、
+ *       通貨を突き合わせ、その決済参照が既に別の注文に使われていないかを防ぎ、決済アウトボックスに
+ *       書く(docs/35 の四つの規則)</li>
+ * </ul>
+ *
+ * <p>[JA] 二つが混ざっていると、<b>決済手段を一つ追加するたびに下の規則が複製される。</b>そして
+ * 複製のどれか一つで金額の突き合わせが抜けると、その手段でだけ支払いなしに注文が完了してしまう —
+ * 元の欠陥はまさにそういう形だった。
+ *
+ * <p>[JA] そこで上側だけをこのポートに切り出した。下側は {@link PaymentRecordingService} 一つが
+ * 持ち、<b>新しいプロバイダーはその規則を自動的に引き継ぐ。</b>決済手段の追加は、今では
+ * このインターフェースを実装して {@link com.project.common.constants.PaymentProvider} に
+ * 値を足すだけである。
  */
 public interface PaymentGateway {
 
     /** 이 게이트웨이가 담당하는 제공자. 레지스트리가 이 값으로 고른다. */
+    // [JA] このゲートウェイが担当するプロバイダー。レジストリはこの値で選ぶ。
     PaymentProvider provider();
 
     /**
@@ -39,6 +64,12 @@ public interface PaymentGateway {
      * @throws PaymentVerificationException 확인 자체가 불가능했을 때(네트워크·인증 등).
      *         <b>"결제되지 않았다"는 예외가 아니라</b> {@code completed=false} 로 돌려준다 —
      *         둘은 다른 사실이고, 호출자가 다른 문구를 보여 준다.
+     *
+     * <p>[JA] ブラウザが報告した決済参照を<b>プロバイダーに直接問い合わせて</b>確認する。
+     * {@code providerPaymentId} は信頼しない値(PayPal の注文 id · Stripe のセッション id など)。
+     * 確認そのものができなかったとき(ネットワーク · 認証など)は {@link PaymentVerificationException} を投げる。
+     * <b>「支払われていない」は例外ではなく</b> {@code completed=false} で返す — 二つは別の事実であり、
+     * 呼び出し側が別の文言を表示する。
      */
     VerifiedPayment verify(String providerPaymentId);
 }
