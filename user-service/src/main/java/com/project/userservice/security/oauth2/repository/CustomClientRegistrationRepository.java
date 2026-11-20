@@ -17,6 +17,12 @@ import com.project.userservice.security.oauth2.SocialClientRegistration;
  * 배포가 그렇다 — 에서 그대로 쓰면 user-service 가 기동조차 못 한다. 그래서 목록이
  * 비어 있으면 "아무것도 못 찾는" 레포지토리로 대체한다. oauth2Login 필터는 뜨지만
  * 어떤 provider 경로도 매칭되지 않으므로 무해하다.
+ *
+ * <p>[JA] 設定されたプロバイダーだけを入れるレジストリ。
+ * ⚠️ {@link InMemoryClientRegistrationRepository} は空のリストを拒否する(IllegalArgumentException)。ソーシャルログインを
+ * 一つも設定していないデプロイ — これまでのすべてのデプロイがそうである — でそのまま使うと user-service が起動すらできない。
+ * そのためリストが空なら「何も見つけない」リポジトリで代替する。oauth2Login フィルターは立ち上がるが、どの provider の
+ * 経路もマッチしないので無害である。
  */
 @Configuration
 public class CustomClientRegistrationRepository {
@@ -32,6 +38,13 @@ public class CustomClientRegistrationRepository {
      * 쪽(로그인 필터)이 <b>서로 다른 레지스트리를 보게 된다.</b> 지금 등록 내용이 정적이라
      * 결과는 같지만, 나중에 등록을 동적으로 바꾸는 순간 "인가는 됐는데 토큰 교환이
      * 실패한다"는 형태로 나타난다. 원인을 찾기 어려운 부류라 미리 막는다.
+     *
+     * <p>[JA] ⚠️ インスタンスを一つに固定する。
+     * 以前は呼ぶたびに {@code new InMemoryClientRegistrationRepository(...)} を返していた。呼び出し側が一つのときは問題なかったが、
+     * PKCE リゾルバーが加わってこのメソッドを呼ぶ場所が二つになった — 認可リクエストを作る側(リゾルバー)とコールバックで
+     * トークンを交換する側(ログインフィルター)が互いに別のレジストリを見ることになる。今は登録内容が静的なので結果は同じだが、
+     * 後で登録を動的に変えた瞬間に「認可はできたのにトークン交換が失敗する」という形で現れる。原因を突き止めにくい部類なので
+     * あらかじめ防ぐ。
      */
     private final ClientRegistrationRepository repository;
 
@@ -47,6 +60,7 @@ public class CustomClientRegistrationRepository {
     }
 
     /** 프론트엔드가 버튼을 그릴 때 쓴다 — /api/auth/public/oauth2/providers */
+    // [JA] フロントエンドがボタンを描くときに使う — /api/auth/public/oauth2/providers
     public List<String> enabledProviders() {
         return registrations.stream().map(ClientRegistration::getRegistrationId).toList();
     }

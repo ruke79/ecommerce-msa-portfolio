@@ -23,6 +23,7 @@ public class ProductUpdateMessageListener {
     private final com.project.catalog_service.service.StockReservationService stockReservations;
 
     /** 결제 확정 차감의 eventId 는 {@code order-<주문 id>} 다(OrderSaga.publishProductStateUpdate). 아니면 null. */
+    // [JA] 決済確定による減算の eventId は order-<注文 id> である(OrderSaga.publishProductStateUpdate)。そうでなければ null。
     static Long orderIdOf(String eventId) {
         if (eventId == null || !eventId.startsWith("order-")) {
             return null;
@@ -40,6 +41,8 @@ public class ProductUpdateMessageListener {
         // 멱등성 (docs/11 §4 G8): Kafka at-least-once 재전달/사가 재실행으로 같은 주문의
         // 재고 차감이 두 번 들어와도 한 번만 반영한다. eventId 가 null 이면(구버전 생산자)
         // 기존 동작 그대로 처리한다(하위호환).
+        // [JA] 冪等性(docs/11 §4 G8): Kafka の at-least-once 再配信やサーガ再実行で同じ注文の
+        //      在庫減算が二度来ても一度だけ反映する。eventId が null なら(旧バージョンの生産者)既存の動作のまま処理する(後方互換)。
         String eventId = request.getEventId();
         if (eventId != null && processedEventRepository.existsById(eventId)) {
             log.info("Duplicate product-update event '{}' — already processed, skipping", eventId);
@@ -48,17 +51,22 @@ public class ProductUpdateMessageListener {
 
         // 결제 전 재고 예약(docs/59): 결제 확정 차감은 <b>다른</b> 주문이 잡아 둔 수를 쓸 수 없고, 자기 주문의 예약은 쓴다.
         // 복원(restock)은 예약과 무관하다.
+        // [JA] 決済前の在庫予約(docs/59): 決済確定の減算は他の注文が確保した数を使えず、自分の注文の予約は使う。
+        //      復元(restock)は予約と無関係。
         Long orderId = request.isRestock() ? null : orderIdOf(eventId);
         ProductService.StockApplyResult result = request.isRestock()
                 ? productService.productUpdated(request)
                 : productService.productUpdated(request, stockReservations.heldByOthers(orderId));
         if (orderId != null) {
             // 같은 트랜잭션 — 차감이 롤백되면 확정도 롤백된다.
+            // [JA] 同じトランザクション — 減算がロールバックされれば確定もロールバックされる。
             stockReservations.commit(orderId);
         }
 
         // 🔴 예전에는 여기서 로그 한 줄("Product could not be updated")로 끝났다 — 결제된 주문이 재고 없이
         //    진행되고 아무도 몰랐다. 모자란 수를 같은 트랜잭션으로 아웃박스에 적는다 → order 가 자동 환불(docs/53).
+        // [JA] 🔴 以前はここでログ一行("Product could not be updated")で終わっていた — 決済済みの注文が在庫なしで
+        //      進み、誰も気づかなかった。不足数を同じトランザクションでアウトボックスに記録する → order が自動返金する(docs/53)。
         if (!request.isRestock() && result.hasShortage()) {
             stockShortageRecorder.record(eventId, result.shortages());
         }
@@ -66,6 +74,8 @@ public class ProductUpdateMessageListener {
         if (eventId != null) {
             // 재고 변경과 같은 트랜잭션으로 기록 → 둘 다 반영되거나 둘 다 롤백(원자성).
             // 동시 중복(희귀)은 PK 충돌로 전체 롤백 → 재전달 시 existsById 로 스킵된다.
+            // [JA] 在庫変更と同じトランザクションで記録 → 両方反映されるか両方ロールバック(原子性)。
+            //      同時重複(まれ)は PK 衝突で全体ロールバック → 再配信時に existsById でスキップされる。
             processedEventRepository.save(new ProcessedEvent(eventId));
         }
         log.info("Product is updated");

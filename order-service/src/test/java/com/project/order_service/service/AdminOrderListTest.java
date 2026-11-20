@@ -32,6 +32,7 @@ import com.project.order_service.repository.jpa.OrderAddressRepository;
 import com.project.order_service.repository.jpa.OrderRepository;
 
 /** 관리자 주문 목록 — 환불 화면이 읽는 것. */
+// [JA] 管理者の注文一覧 — 返金画面が読むもの。
 @DisplayName("관리자 주문 목록")
 class AdminOrderListTest {
 
@@ -90,6 +91,7 @@ class AdminOrderListTest {
     }
 
     /** 반품 대기는 OrderStatus 가 아니라 플래그다 — 상태 자리의 가짜 이름 하나로 고른다. */
+    // [JA] 返品待ちは OrderStatus ではなくフラグである — 状態の位置にある偽の名前一つで選ぶ。
     @Test
     @DisplayName("AWAITING_RETURN 은 반품 대기 플래그로 거른다")
     void awaitingReturnFilter() {
@@ -107,6 +109,7 @@ class AdminOrderListTest {
     }
 
     /** 모르는 상태를 조용히 전체로 바꾸면 "필터가 안 먹는다" 가 된다(docs/50). 거부한다. */
+    // [JA] 未知の状態を黙って全体に変えると「フィルターが効かない」になる(docs/50)。拒否する。
     @Test
     @DisplayName("모르는 상태 이름은 거부한다 — 조용히 전체를 주지 않는다")
     void unknownStatusIsRejected() {

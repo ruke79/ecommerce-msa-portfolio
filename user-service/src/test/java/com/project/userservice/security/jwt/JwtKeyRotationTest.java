@@ -26,6 +26,9 @@ import io.jsonwebtoken.Jwts;
  * 🔴 JWT 서명 키를 바꿔도 아무도 로그아웃되지 않는다(docs/68 §17).
  *
  * <p>🐛 예전: 키가 하나라 바꾸는 순간 그 전의 모든 토큰이 서명 불일치 — 전원 로그아웃이었다.
+ *
+ * <p>[JA] 🔴 JWT 署名鍵を替えても誰もログアウトされない(docs/68 §17)。
+ * 🐛 以前: 鍵が一つなので替えた瞬間にそれ以前のすべてのトークンが署名不一致 — 全員ログアウトだった。
  */
 @DisplayName("JWT 키 교체 — 추가 · 전환 · 은퇴")
 class JwtKeyRotationTest {
@@ -55,6 +58,7 @@ class JwtKeyRotationTest {
     }
 
     /** 이 변경 전에 발급된 토큰 — 머리에 kid 가 없다. */
+    // [JA] この変更前に発行されたトークン — ヘッダーに kid がない。
     private static String preRingToken() {
         return Jwts.builder().subject("a@example.com").claim("uid", 7L).claim("tokenType", "access")
                 .issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + 60_000))
@@ -124,6 +128,7 @@ class JwtKeyRotationTest {
                 .expiration(new Date(System.currentTimeMillis() + 60_000))
                 .signWith(new SecretKeySpec(LEGACY.getBytes(StandardCharsets.UTF_8), "HmacSHA256")).compact();
         // 서명 불일치는 예전부터 예외(SignatureException)로 올라간다 — 호출하는 필터가 거절로 다룬다. 통과만 하지 않으면 된다.
+        // [JA] 署名不一致は以前から例外(SignatureException)として上がる — 呼び出し側のフィルターが拒否として扱う。通過さえしなければよい。
         JwtUtils j = jwt("k2=" + K2, "k2", true);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> j.validateJwtToken(mislabeled))
                 .isInstanceOf(io.jsonwebtoken.security.SignatureException.class);

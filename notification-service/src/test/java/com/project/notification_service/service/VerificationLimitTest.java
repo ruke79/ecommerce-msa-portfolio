@@ -28,6 +28,10 @@ import com.project.notification_service.sms.SmsSender;
  * 🔒 인증 SMS 발송 제한 — 번호당만이 아니라 <b>계정당·전체</b>로도 (docs/57 §10).
  *
  * <p>🐛 번호 단위 제한뿐이라 번호를 바꿔 가며 요청하면 계정 하나로 사실상 무제한 실발송을 할 수 있었다. 요금은 우리가 낸다.
+ *
+ * <p>[JA] 🔒 認証 SMS の送信制限 — 番号ごとだけでなく<b>アカウントごと・全体</b>でも(docs/57 §10)。🐛
+ * 番号単位の制限だけだったので、番号を変えながら要求すればアカウント一つで事実上無制限の実送信ができた。
+ * 料金は我々が払う。
  */
 @DisplayName("인증 SMS 발송 제한")
 class VerificationLimitTest {
@@ -43,7 +47,7 @@ class VerificationLimitTest {
         redis = mock(StringRedisTemplate.class);
         ValueOperations<String, String> ops = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(ops);
-        when(redis.getExpire(anyString())).thenReturn(-2L);   // 쿨다운 없음 — 제한만 본다
+        when(redis.getExpire(anyString())).thenReturn(-2L);   // 쿨다운 없음 — 제한만 본다 ／ [JA] クールダウンなし — 制限だけを見る
         when(ops.setIfAbsent(anyString(), anyString(), org.mockito.ArgumentMatchers.any(java.time.Duration.class))).thenReturn(true);
         when(ops.increment(anyString())).thenAnswer(inv -> counters.merge(inv.getArgument(0), 1L, Long::sum));
         sender = mock(SmsSender.class);

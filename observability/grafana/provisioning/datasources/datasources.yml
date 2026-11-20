@@ -8,9 +8,17 @@
 #   서로를 uid 로 가리키므로 uid 를 고정한다.
 #
 # ⚠️ 이 파일의 $ 는 Grafana 가 환경변수로 해석한다. Grafana 변수(${__value.raw} 등)는 $$ 로 적는다.
+# [JA] Grafana データソースの自動プロビジョニング — 起動直後から Prometheus/Jaeger/Loki 接続済みの状態で始まる。
+#      指標・トレース・ログの往復(docs/51 §4, docs/63) — OpenTelemetry デモと同じ連携だ: Loki のログ行 → traceId
+#      を押すと Jaeger のそのリクエスト(derivedFields)、Jaeger のスパン → "Logs for this span"
+#      を押すとそのリクエストのログ(tracesToLogsV2)、Jaeger のスパン → そのサービス・スパンの RED 指標(tracesToMetrics
+#      — span_metrics)、Prometheus の点 → その遅延を生んだトレース(exemplarTraceIdDestinations)。互いを uid で指すので
+#      uid を固定する。
+#      ⚠️ このファイルの $ は Grafana が環境変数として解釈する。Grafana 変数(${__value.raw} など)は $$ と書く。
 apiVersion: 1
 
 # 예전 이름의 데이터소스를 지운다(Zipkin → Jaeger). 남겨 두면 없는 zipkin:9411 을 가리키는 항목이 목록에 남는다.
+# [JA] 旧名のデータソースを消す(Zipkin → Jaeger)。残すと存在しない zipkin:9411 を指す項目が一覧に残る。
 deleteDatasources:
   - name: Zipkin
     orgId: 1
@@ -25,6 +33,8 @@ datasources:
     jsonData:
       # 지연 그래프의 점(exemplar) → Jaeger 의 그 추적. Spring 의 http_server_requests 와 span_metrics 가
       # 모두 trace_id 라는 이름으로 싣는다.
+      # [JA] 遅延グラフの点(exemplar) → Jaeger のそのトレース。Spring の http_server_requests と span_metrics
+      #      がどちらも trace_id という名前で載せる。
       exemplarTraceIdDestinations:
         - name: trace_id
           datasourceUid: jaeger
@@ -39,13 +49,18 @@ datasources:
       tracesToLogsV2:
         datasourceUid: loki
         # 스팬 앞뒤로 조금 넓게 — 비동기 작업(메일·재색인)의 로그가 스팬 끝보다 늦게 찍힌다.
+        # [JA] スパンの前後を少し広めに — 非同期処理(メール・再インデックス)のログはスパン終了より遅れて出る。
         spanStartTimeShift: "-1m"
         spanEndTimeShift: "5m"
         customQuery: true
         # traceId 는 라벨이 아니라 줄 안의 값이다(라벨로 두면 요청마다 스트림이 생긴다). 줄 필터(|=)라
         # 로컬의 JSON 파일(job=ecommerce)과 k3s 파드의 텍스트 줄(job=ecommerce-k3s) 모두에서 찾는다.
+        # [JA] traceId はラベルではなく行内の値だ(ラベルにするとリクエストごとにストリームができる)。行フィルタ(|=)
+        #      なので、ローカルの JSON ファイル(job=ecommerce)と k3s Pod のテキスト行(job=ecommerce-k3s)
+        #      の両方から探す。
         query: '{job=~"ecommerce.*"} |= "$${__trace.traceId}"'
       # 스팬 → 그 서비스 · 스팬 이름의 호출률 · 오류율 · p95(span_metrics 커넥터가 만든 지표)
+      # [JA] スパン → そのサービス・スパン名の呼び出し率・エラー率・p95(span_metrics コネクタが作った指標)
       tracesToMetrics:
         datasourceUid: prometheus
         spanStartTimeShift: "-10m"
@@ -73,12 +88,15 @@ datasources:
       derivedFields:
         # OpenTelemetry 의 traceId 는 32자리 소문자 16진수다(Brave 시절의 16자리도 받는다 — 옛 로그).
         # JSON 줄의 "traceId":"…" 에서 뽑는다.
+        # [JA] OpenTelemetry の traceId は 32 桁の小文字 16 進数だ(Brave 時代の 16 桁も受け付ける — 古いログ)。JSON
+        #      行の "traceId":"…" から抜き出す。
         - name: traceId
           matcherRegex: '"traceId":"([0-9a-f]{16,32})"'
           datasourceUid: jaeger
           url: "$${__value.raw}"
           urlDisplayLabel: "Jaeger 에서 보기"
         # k3s 파드의 텍스트 줄: "… [traceId,spanId,userId] LEVEL …"
+        # [JA] k3s Pod のテキスト行: "… [traceId,spanId,userId] LEVEL …"
         - name: traceId (text)
           matcherRegex: '\] \[([0-9a-f]{16,32}),'
           datasourceUid: jaeger

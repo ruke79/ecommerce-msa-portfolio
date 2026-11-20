@@ -8,6 +8,7 @@ server:
 
 frontend:
     # 소셜 로그인 완료 후 돌아갈 주소. 운영에서는 공개 도메인과 같다(단일 출처 구성).
+    # [JA] ソーシャルログイン完了後に戻るアドレス。運用では公開ドメインと同じ(単一オリジン構成)。
     url: ${FRONTEND_URL:${APP_PUBLIC_URL:https://localhost:3000}}
 
 # ── 소셜 로그인 (선택) ────────────────────────────────────────────────
@@ -16,6 +17,9 @@ frontend:
 # 소셜 로그인 버튼 자체가 표시되지 않는다 — 켜는 법은 docs/33 §7 참조.
 # ⚠️ 프로바이더 콘솔의 redirect URI 는 정확히 이 형태여야 한다:
 #     {APP_PUBLIC_URL}/user-service/login/oauth2/code/{google|github|facebook|kakao|line}
+# [JA] ── ソーシャルログイン(任意) ──
+#      資格情報が**あるプロバイダだけ**登録される(SocialClientRegistration)。全部空にするとソーシャルログインボタン自体が表示されない — 有効化の方法は docs/33 §7 参照。
+#      ⚠️ プロバイダのコンソールの redirect URI は正確にこの形でなければならない(上の {APP_PUBLIC_URL}/user-service/login/oauth2/code/... )。
 oauth2:
     google:
         client-id: ${OAUTH2_GOOGLE_CLIENT_ID:}
@@ -27,10 +31,12 @@ oauth2:
         client-id: ${OAUTH2_FACEBOOK_CLIENT_ID:}
         client-secret: ${OAUTH2_FACEBOOK_CLIENT_SECRET:}
     # 카카오: client-id = 앱의 REST API 키, client-secret = [보안] Client Secret(사용함으로 켤 것)
+    # [JA] カカオ: client-id = アプリの REST API キー、client-secret = [セキュリティ] Client Secret(使用するに切り替えること)
     kakao:
         client-id: ${OAUTH2_KAKAO_CLIENT_ID:}
         client-secret: ${OAUTH2_KAKAO_CLIENT_SECRET:}
     # LINE: client-id = 채널 ID, client-secret = 채널 시크릿. 이메일 주소 권한 승인이 있어야 로그인된다
+    # [JA] LINE: client-id = チャネル ID、client-secret = チャネルシークレット。メールアドレス権限の承認がないとログインできない
     line:
         client-id: ${OAUTH2_LINE_CLIENT_ID:}
         client-secret: ${OAUTH2_LINE_CLIENT_SECRET:}
@@ -44,6 +50,10 @@ oauth2:
 #
 # 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
 # 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+# [JA] Kafka 接続設定は common/application-common.yml が所有する。
+#      ここには開発者 PC の絶対パスがそのまま埋め込まれていた(上の trust-store-location)。そのパスは他のどのマシンにも存在しないので、このブロックは protocol: "SSL" を有効にしたまま
+#      存在しないストアを指していた。ローカルブローカーが PLAINTEXT なので黙って通っていただけ。
+#      今は KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 環境変数で注入する。ファイルは ops/07-issue-certificates.sh が作り、certs.env を source すれば値が埋まる(docs/18)。
 
 cloud:
   aws:
@@ -61,16 +71,23 @@ feign:
   # 서비스 간 Feign 호출 대상. 기존에는 어디에도 정의돼 있지 않아
   # @FeignClient(url="${feign.*-url}") 해석 실패로 기동 자체가 불가능했다.
   # 환경변수(FEIGN_*_URL, k8s ConfigMap)로 오버라이드 가능.
+  # [JA] サービス間 Feign 呼び出しの宛先。以前はどこにも定義されておらず @FeignClient(url="${feign.*-url}") の解決失敗で起動自体ができなかった。
+  #      環境変数(FEIGN_*_URL, k8s ConfigMap)で上書き可能。
   catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
   # 등급 배치가 구매 집계를 가져오는 곳(CustomerTierService). 배치 전용이라
   # 사용자 요청 경로에는 들어가지 않는다 — 주문 서비스가 죽어도 로그인·쿠폰은 돈다.
+  # [JA] 等級バッチが購入集計を取ってくる先(CustomerTierService)。バッチ専用なのでユーザーリクエスト経路には入らない — 注文サービスが死んでもログイン・クーポンは動く。
   order-url: ${FEIGN_ORDER_URL:https://localhost:8084}
   # 로그인 2단계 인증의 SMS 수단(docs/24 §10) — 코드 발송 · 확인. 사용자 요청 경로(로그인)에 들어가지만 SMS 를 켠 계정만 부른다 —
   # notification 이 죽으면 그 계정은 TOTP(켜져 있으면)로만 들어온다. 다른 계정의 로그인은 이 호출이 없다.
+  # [JA] ログイン二段階認証の SMS 手段(docs/24 §10) — コード送信 · 確認。ユーザーリクエスト経路(ログイン)に入るが SMS を有効にしたアカウントだけが呼ぶ —
+  #      notification が死ねばそのアカウントは TOTP(有効なら)でしか入れない。他のアカウントのログインにはこの呼び出しがない。
   notification-url: ${FEIGN_NOTIFICATION_URL:https://localhost:8188}
   # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
   # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
   # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.
+  # [JA] タイムアウトはここに置かない — common/application-common.yml の spring.cloud.openfeign.client.config.default が全サービス唯一の定義である(docs/37 §2.1)。
+  #      以前ここにあった feign.client.config.* は OpenFeign 4.x が読まないキーだった。
 
  
 eureka:
@@ -99,10 +116,14 @@ spring:
       # 늦게 뜬 파드가 통째로 기동 실패한다.
       # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
       # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+      # [JA] コネクションプールの算定(docs/19)。既定値 10 のままだとデータソース 8 個 × 10 = 80 コネクションで、HPA でレプリカが 2 個になるだけで 160 となり
+      #      PostgreSQL 既定の max_connections(100)を**算術的に超える**。そのときの症状は「遅くなる」ではなく 'FATAL: sorry, too many clients already' — 後から起動したポッドが丸ごと起動失敗する。
+      #      5 × 8 データソース × 3 レプリカ = 120。max_connections は 200 に上げること(docs/19 §3)。プールは大きいほど速いわけではない — コネクションごとに DB 側のプロセスが一つ付く。
       hikari:
         maximum-pool-size: ${DB_POOL_SIZE:5}
         minimum-idle: ${DB_POOL_MIN_IDLE:2}
         # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+        # [JA] プール枯渇を黙って待たず早く失敗させる(既定の 30 秒はリクエストスレッドを縛る)。
         connection-timeout: 5000
         # 커넥션 누수 감지 — 기본 끔(0). 켜면 커넥션을 빌릴 때마다 스택 추적 예외를 하나씩 만든다(2026-10-23 프로파일: catalog CPU 의 3.9%,
         # docs/83 §5 · B-104). 의심될 때만 DB_LEAK_DETECTION_MS=20000 으로 켠다. [JA] リーク検出は既定オフ — 借りるたびに例外を作る。
@@ -138,6 +159,7 @@ spring:
             cacert : ${LOCAL_CACERT_PATH}
             # 코드(RedisCacheConfig)가 요구하는 키. 기존에는 cert/key 라는 다른 이름만 있어
             # "Could not resolve placeholder spring.data.redis.ssl.keystore" 로 기동 불가였다.
+            # [JA] コード(RedisCacheConfig)が要求するキー。以前は cert/key という別名しかなく "Could not resolve placeholder spring.data.redis.ssl.keystore" で起動不可だった。
             keystore : ${LOCAL_KEY_STORE_PATH:}
             truststore : ${LOCAL_TRUST_STORE_PATH:}
             cert : ${LOCAL_CRT_PATH}
@@ -157,6 +179,7 @@ spring:
        jwtRefreshCookieName: user-refresh-cookie
        jwtSecret: ${JWT_SECRET_KEY}
        # 서명 키 링(docs/68 §17) — 비워 두면 JWT_SECRET_KEY 하나(kid "legacy"). 교체는 ops/46. 세 서비스(user · gateway · chat)가 같은 값이어야 한다.
+       # [JA] 署名キーリング(docs/68 §17) — 空にすると JWT_SECRET_KEY 一つ(kid "legacy")。ローテーションは ops/46。三つのサービス(user · gateway · chat)が同じ値でなければならない。
        jwtSigningKeys: ${JWT_SIGNING_KEYS:}
        jwtActiveKid: ${JWT_ACTIVE_KID:}
        jwtAcceptLegacy: ${JWT_ACCEPT_LEGACY:true}
@@ -171,9 +194,15 @@ spring:
        #
        # 사용자 체감은 없다 — TokenRefresher 가 만료 10초 전에 리프레시 쿠키(14일)로 조용히
        # 갱신한다. 리프레시 토큰은 서버가 관리하므로 로그아웃 시 진짜로 무효화된다.
+       # [JA] アクセストークン 15 分。以前は 2 時間だった。
+       #      このシステムの JWT は**失効させられない。** ゲートウェイは署名だけ検証し(introspection なし)、RedisSessionManager は名前と違ってインメモリの HashMap で、それを読む
+       #      isRequestAuthorized は呼ばれる箇所がない。つまりログアウトしても、アカウントが奪われても、発行済みアクセストークンは期限まで有効である。そういうトークンの唯一の防御は**短い寿命**だ
+       #      (www-security デモ ch9「自己エンコードトークンはローカル検証だけでは失効を反映できない → 寿命を短く + refresh で補う」)。
+       #      ユーザーの体感はない — TokenRefresher が期限 10 秒前にリフレッシュクッキー(14 日)で静かに更新する。リフレッシュトークンはサーバが管理するのでログアウト時に本当に無効化される。
        jwtExpirationMs: 900000
        jwtRefreshExpirationMs: 1209600000
        # 로그인의 절대 수명(최초 로그인부터, 갱신해도 늘지 않는다) — 30일(docs/68 §12)
+       # [JA] ログインの絶対寿命(最初のログインから、更新しても延びない) — 30 日(docs/68 §12)
        jwtRefreshAbsoluteMs: ${JWT_REFRESH_ABSOLUTE_MS:2592000000}
 
     # spring.mail.* 설정을 뺐다. user-service 는 더 이상 SMTP 를 직접 호출하지 않고
@@ -182,6 +211,9 @@ spring:
     #
     # 남겨 두면 안 되는 이유가 하나 더 있다: 위 블록은 ${MAIL_HOST} 를 기본값 없이 참조했다.
     # 그 환경변수가 없는 환경에서 누가 이 값을 읽는 코드를 다시 넣으면 기동이 실패한다.
+    # [JA] spring.mail.* 設定を外した。user-service はもう SMTP を直接呼ばず outgoing-mail トピックに要求を入れるだけ — 送信は notification-service が行う(docs/29)。
+    #      SMTP 接続情報はそちらの application-local.yml と k8s/47 に移した。
+    #      残してはいけない理由がもう一つある: 上のブロックは ${MAIL_HOST} を既定値なしで参照していた。その環境変数がない環境で誰かがこの値を読むコードを再び入れると起動が失敗する。
 
     security:    
       require-ssl: true
@@ -197,6 +229,7 @@ logging:
   level:
     root: info
     # 모든 스케줄링 관련 로그를 INFO 이상으로만 기록합니다.
+    # [JA] スケジューリング関連のログはすべて INFO 以上だけ記録する。
     org.springframework.scheduling: WARN    
     com.project.userservice: ${LOG_LEVEL_APP:info}
     org.springframework.jdbc: ${LOG_LEVEL_SQL:warn}
@@ -206,21 +239,28 @@ logging:
 
   file:
     path: ./logs
-    name: ${logging.file.path}/user_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+    name: ${logging.file.path}/user_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51) ／ [JA] JSON 一行ずつ — common の logback-spring.xml が書く(docs/51)
   # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
   # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+  # [JA] 出力パターンは common の logback-spring.xml が決める — メッセージ・例外を %mask で包んで機微情報を隠す。ここに logging.pattern を置いても使われない(ガード B-57)。
 
 # 회원가입 확인 메일 관련 설정.
+# [JA] 会員登録確認メール関連の設定。
 app:
   # 확인 링크에 넣을 백엔드 공개 주소. 환경마다 다르므로 반드시 주입한다.
+  # [JA] 確認リンクに入れるバックエンドの公開アドレス。環境ごとに違うので必ず注入する。
   public-url: ${APP_PUBLIC_URL:https://localhost:8000}
 
   # ── 2FA(TOTP) 비밀 저장 암호화 (docs/70) ────────────────────────────────
+  # [JA] ── 2FA(TOTP)秘密の保存暗号化(docs/70) ──
   totp:
     # base64 32바이트(openssl rand -base64 32). 비우면 JWT 비밀에서 파생한 키로 암호화한다 — 새 비밀 없이 배포할 수 있지만
     # JWT 비밀을 교체하면 그 암호문을 풀 수 없다. 교체 전에 이 값을 넣고 한 번 배포하면 기동 백필이 전용 키로 다시 잠근다.
+    # [JA] base64 32 バイト(openssl rand -base64 32)。空にすると JWT 秘密から派生した鍵で暗号化する — 新しい秘密なしでデプロイできるが、
+    #      JWT 秘密をローテーションするとその暗号文を復号できない。ローテーション前にこの値を入れて一度デプロイすれば起動時バックフィルが専用鍵で暗号化し直す。
     encryption-key: ${TOTP_ENCRYPTION_KEY:}
     # 기동할 때 평문 · 옛 키 암호문을 지금 키로 맞춘다(TotpSecretBackfill). 멱등이다.
+    # [JA] 起動時に平文 · 旧鍵の暗号文を現在の鍵に揃える(TotpSecretBackfill)。冪等である。
     backfill-enabled: ${APP_TOTP_BACKFILL_ENABLED:true}
 
   # ── 아웃박스 릴레이 (UserOutboxScheduler) ──────────────────────────────
@@ -228,30 +268,42 @@ app:
   # user-created 이벤트는 인증 확정과 **같은 트랜잭션**으로 users.outbox_event 에
   # 적히고, 이 폴러가 읽어서 카프카로 보낸다(docs/48 ②). 예전에는 트랜잭션 밖에서
   # kafkaTemplate.send 한 줄이었고, 실패해도 아무 데도 남지 않았다(docs/47).
+  # [JA] ── アウトボックスリレー(UserOutboxScheduler) ──
+  #      user-created イベントは認証確定と**同じトランザクション**で users.outbox_event に書かれ、このポーラーが読んで Kafka へ送る(docs/48 ②)。
+  #      以前はトランザクション外の kafkaTemplate.send 一行で、失敗してもどこにも残らなかった(docs/47)。
   outbox:
     # 한 번에 선점(FOR UPDATE SKIP LOCKED)할 행 수. user-service 는 replicas: 2 이므로
     # 제한이 없으면 한 레플리카가 전부 잠가 다른 쪽이 논다.
+    # [JA] 一度に先取り(FOR UPDATE SKIP LOCKED)する行数。user-service は replicas: 2 なので、制限がないと一つのレプリカが全部ロックしてもう一方が遊ぶ。
     batch-size: ${APP_OUTBOX_BATCH_SIZE:100}
     # 폴러는 안전망이다 — 행이 커밋되면 곧바로 한 번 릴레이한다(relay-on-commit, docs/56 §9). 이 간격은
     # 즉시 릴레이가 놓친 것(커밋 직후 종료·실행기 거절)을 되줍는 주기다. 더 짧게 잡으면 빈 조회만 늘어난다.
+    # [JA] ポーラーは安全網である — 行がコミットされるとすぐ一度リレーする(relay-on-commit, docs/56 §9)。この間隔は即時リレーが取りこぼしたもの(コミット直後の終了・実行器の拒否)を拾い直す周期だ。もっと短くすると空の検索が増えるだけ。
     fixed-delay-ms: ${APP_OUTBOX_FIXED_DELAY_MS:10000}
     initial-delay-ms: ${APP_OUTBOX_INITIAL_DELAY_MS:3000}
     # false 면 즉시 릴레이를 끄고 폴러만 남는다 — 가입 뒤 채팅 회원·가입 쿠폰이 다시 최대 10초 늦는다.
+    # [JA] false なら即時リレーを切りポーラーだけが残る — 登録後のチャット会員・登録クーポンが再び最大 10 秒遅れる。
     relay-on-commit: ${APP_OUTBOX_RELAY_ON_COMMIT:true}
     # 브로커 ack 대기 시간. 무한정 기다리면 그 배치가 잠금을 쥔 채 멈춘다.
+    # [JA] ブローカー ack の待ち時間。無制限に待つとそのバッチがロックを握ったまま止まる。
     publish-timeout-ms: ${APP_OUTBOX_PUBLISH_TIMEOUT_MS:10000}
   # 보내는 사람 주소는 notification-service 가 갖는다(notification.mail.from) — 메일을 실제로
   # 만드는 쪽에 있어야 SPF/DKIM 정렬과 함께 관리된다.
+  # [JA] 送信者アドレスは notification-service が持つ(notification.mail.from) — メールを実際に作る側にあってこそ SPF/DKIM の整合と一緒に管理される。
   verification:
     # 확인 토큰 유효 기간(ISO-8601). 예전 코드는 3분이었다 — 메일 배달 지연만으로도
     # 만료되어 상당수 가입자가 링크를 눌러도 실패했다.
+    # [JA] 確認トークンの有効期間(ISO-8601)。以前のコードは 3 分だった — メール配達の遅延だけで期限切れになり、多くの登録者がリンクを押しても失敗した。
     token-ttl: ${APP_VERIFICATION_TTL:PT24H}
 
     # ── 미인증 계정·만료 토큰 정리 (UnverifiedAccountCleanup) ────────────
+    # [JA] ── 未認証アカウント・期限切れトークンの片付け(UnverifiedAccountCleanup) ──
     cleanup:
       # 만료 토큰 정리. 해가 없으므로 기본으로 켠다 — 끄면 토큰 테이블이 무한히 자란다.
       # 확인 토큰은 **이미 활성화된 계정의 것만** 지운다(비활성 계정의 토큰은 아래 판정의
       # 유일한 근거다). 비밀번호 재설정 토큰은 만료된 것을 모두 지운다.
+      # [JA] 期限切れトークンの片付け。害がないので既定で有効 — 無効にするとトークンテーブルが無限に育つ。
+      #      確認トークンは**既に有効化されたアカウントのものだけ**消す(無効アカウントのトークンは下の判定の唯一の根拠)。パスワード再設定トークンは期限切れのものをすべて消す。
       enabled: ${APP_VERIFICATION_CLEANUP_ENABLED:true}
 
       # 계정 삭제. **되돌릴 수 없으므로 기본은 꺼짐.**
@@ -261,13 +313,18 @@ app:
       #
       # ⚠️ 인증 게이트(require-email-verification)가 꺼져 있으면 켤 이유가 없다. 그때는
       #    모든 계정이 활성으로 만들어져 삭제 대상이 아예 생기지 않는다.
+      # [JA] アカウント削除。**戻せないので既定は無効。**
+      #      無効の間は「消していたら何件だったか」だけがログに残る。有効にする前にその数で影響範囲を確認すること — 予想と違えば有効にしてはならないということだ。
+      #      ⚠️ 認証ゲート(require-email-verification)が無効なら有効にする理由がない。そのときはすべてのアカウントが有効で作られ削除対象がそもそも生じない。
       delete-accounts: ${APP_VERIFICATION_CLEANUP_DELETE_ACCOUNTS:false}
 
       # 토큰이 만료된 뒤 이만큼 더 기다린 계정만 지운다. 만료 직후 지우면 확인 메일
       # 재발송으로 복구하려던 사용자를 잘라 낸다.
+      # [JA] トークンが期限切れになってからさらにこれだけ待ったアカウントだけ消す。期限直後に消すと確認メールの再送で復旧しようとしたユーザーを切り捨てる。
       grace: ${APP_VERIFICATION_CLEANUP_GRACE:P7D}
 
       # 한 번에 처리할 계정 수. 트랜잭션을 짧게 유지한다(계정마다 독립 트랜잭션이다).
+      # [JA] 一度に処理するアカウント数。トランザクションを短く保つ(アカウントごとに独立したトランザクション)。
       batch-size: ${APP_VERIFICATION_CLEANUP_BATCH_SIZE:200}
 
       interval-ms: ${APP_VERIFICATION_CLEANUP_INTERVAL_MS:3600000}
@@ -292,9 +349,17 @@ app:
     #
     # 잠긴 계정은 DB 에서 열 수 있다(비상 탈출구):
     #   UPDATE users.users SET enabled = true WHERE email = '...';
+    # [JA] 登録直後のアカウントを**無効状態で**作るかどうか。
+    #      ⚠️ 既定値が false なのは安全だからではなく、**メールが実際に出ない環境で有効にすると誰もログインできないから**である。notification-service の既定の送信器は
+    #      logging(送信しない)なので、その状態でこの値を true にすると登録はできるのに認証メールが来ずアカウントが永久にロックされる。
+    #      実際のデプロイでこの値がなかった間に何が起きたか: User エンティティの enabled 既定値が true なので登録即有効化され、確認リンクを押さなくてもログインできた。
+    #      つまりメール認証のコードは存在するが**何も止めていなかった** — 他人のメールで登録してもそのまま使えた。
+    #      有効化の順序(docs/33 §7): 1) local オーバーレイの patch-mail.yaml で MAIL_PROVIDER=smtp を有効にする 2) 実際にメールが来るか登録一回で確認する 3) その次に APP_REQUIRE_EMAIL_VERIFICATION=true。
+    #      ロックされたアカウントは DB で開けられる(非常口): 上の UPDATE 文。
     require-email-verification: ${APP_REQUIRE_EMAIL_VERIFICATION:false}
 
   # ── 회원 탈퇴 (WithdrawalService / WithdrawalProcessor) ──────────────────
+  # [JA] ── 会員退会(WithdrawalService / WithdrawalProcessor) ──
   withdrawal:
     # 탈퇴 신청부터 최종 처리까지 기다리는 기간(ISO-8601).
     #
@@ -304,15 +369,21 @@ app:
     # 유예 기간 동안 계정은 평소처럼 쓸 수 있다. 잠그면 취소할 방법이 사라지기 때문이다
     # (취소 링크를 메일로 보내는 별도 경로를 만들지 않는 한). 화면이 상태를 조회해
     # "N일 뒤 삭제됩니다 / 취소하기"를 띄운다.
+    # [JA] 退会申請から最終処理まで待つ期間(ISO-8601)。
+    #      この値はサービスとバッチが**一緒に**見る。画面に見せる「残り N 日」もここから出るので、片方だけ変えられる構造ではない。
+    #      猶予期間中アカウントは普段通り使える。ロックすると取り消す方法がなくなるからだ(取り消しリンクをメールで送る別経路を作らない限り)。画面が状態を照会して「N 日後に削除されます / 取り消す」を表示する。
     grace: ${APP_WITHDRAWAL_GRACE:P7D}
 
     processor:
       # **기본으로 켠다.** 미인증 계정 정리(위)가 기본 꺼짐인 것과 다른데, 그쪽은 우리가
       # 지우겠다고 판단하는 계정이라 켜기 전에 영향 범위를 봐야 한다. 여기는 본인이
       # 요청했고 유예 기간까지 지난 계정이다 — 끄면 탈퇴 신청이 영원히 처리되지 않는다.
+      # [JA] **既定で有効にする。** 未認証アカウントの片付け(上)が既定無効なのと違うが、あちらはこちらが消すと判断するアカウントなので有効化前に影響範囲を見る必要がある。
+      #      こちらは本人が要求し猶予期間まで過ぎたアカウントだ — 無効にすると退会申請が永遠に処理されない。
       enabled: ${APP_WITHDRAWAL_PROCESSOR_ENABLED:true}
 
       # 한 번에 처리할 계정 수. 계정마다 독립 트랜잭션이라 하나가 실패해도 나머지는 진행된다.
+      # [JA] 一度に処理するアカウント数。アカウントごとに独立したトランザクションなので一つが失敗しても残りは進む。
       batch-size: ${APP_WITHDRAWAL_PROCESSOR_BATCH_SIZE:200}
 
       interval-ms: ${APP_WITHDRAWAL_PROCESSOR_INTERVAL_MS:3600000}
@@ -320,6 +391,8 @@ app:
 
 # 아웃박스 월 파티션을 미리 만든다(common OutboxPartitionAutoConfiguration, docs/09 §4.6).
 # V1 마이그레이션이 만든 파티션은 2027-01 까지다 — 이 잡이 없으면 그 뒤로는 모든 행이 DEFAULT 로 간다.
+# [JA] アウトボックスの月パーティションを前もって作る(common OutboxPartitionAutoConfiguration, docs/09 §4.6)。
+#      V1 マイグレーションが作ったパーティションは 2027-01 まで — このジョブがなければその後はすべての行が DEFAULT に行く。
 outbox:
   partitions:
     tables: users.outbox_event

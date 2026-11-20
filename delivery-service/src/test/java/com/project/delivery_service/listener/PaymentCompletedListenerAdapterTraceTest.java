@@ -46,6 +46,11 @@ import com.project.common.tracing.OtelTestTracing;
  * 변환기가 {@code BATCH_CONVERTED_HEADERS} 로 레코드별 헤더를 넘긴다. 이 테스트는 뒤쪽을 운영 설정 그대로
  * 본다: 운영 {@link KafkaConsumerConfig} 로 {@code @KafkaListener} 를 등록하고(자동 시작만 끈다), 서로 다른
  * 추적의 레코드 두 건을 <b>한 배치로</b> 넣어 각 레코드가 자기 추적 안에서 처리되는지 확인한다.
+ *
+ * <p>[JA] 決済 → 配送作成が決済のトレースに付くか — <b>レコードアダプターのない普通のバッチファクトリ</b>の代表である(docs/51 §4h)。
+ * サガのリスナー二つ(pay・order)はレコードアダプターなのでレコードヘッダが来て、残りのバッチリスナーは Spring のバッチ変換器が
+ * {@code BATCH_CONVERTED_HEADERS} でレコード別のヘッダを渡す。このテストは後者を運用設定のまま見る: 運用の {@link KafkaConsumerConfig} で
+ * {@code @KafkaListener} を登録し(自動起動だけ切る)、異なるトレースのレコード二件を<b>一つのバッチで</b>入れて、各レコードが自分のトレースの中で処理されるかを確認する。
  */
 @DisplayName("delivery-service — 배치 안의 레코드마다 자기 추적을 이어받는다")
 class PaymentCompletedListenerAdapterTraceTest {
@@ -95,6 +100,7 @@ class PaymentCompletedListenerAdapterTraceTest {
         @Bean
         OutboxTraceContext outboxTraceContext() {
             // 운영과 같은 OpenTelemetry 브리지 · W3C 전파(docs/63) — traceparent 를 그대로 읽는다.
+            // [JA] 運用と同じ OpenTelemetry ブリッジ・W3C 伝播(docs/63) — traceparent をそのまま読む。
             tracing = new OtelTestTracing();
             tracer = tracing.tracer();
             io.micrometer.tracing.propagation.Propagator propagator = tracing.propagator();
@@ -102,6 +108,7 @@ class PaymentCompletedListenerAdapterTraceTest {
         }
 
         /** 브로커 없이 — 컨테이너를 만들되 시작하지 않는다. 팩토리 설정은 운영 그대로다. */
+        // [JA] ブローカーなしで — コンテナを作るが起動しない。ファクトリ設定は運用のままである。
         @Bean
         static BeanPostProcessor noAutoStartup() {
             return new BeanPostProcessor() {

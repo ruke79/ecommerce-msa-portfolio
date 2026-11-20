@@ -7,10 +7,12 @@ const { refreshDelayMs, MIN_REFRESH_DELAY_MS } = require("util/TokenRefresher");
 /**
  * 🔴 선제 갱신 시점 — 이 PC 의 시계를 믿지 않는다(docs/68 §12).
  * 예전에는 PC 시계가 15분 이상 앞서 있으면 막 받은 토큰도 만료로 보여 갱신이 끝없이 돌았다.
+ *
+ * <p>[JA] 🔴 先行更新のタイミング — この PC の時計を信用しない(docs/68 §12)。以前は PC の時計が 15分以上進んでいると、受け取ったばかりのトークンも期限切れに見えて更新が無限に回った。
  */
 describe("refreshDelayMs — 시계가 틀린 PC", () => {
   const iat = 1_700_000_000;
-  const exp = iat + 15 * 60;   // 15분짜리 액세스 토큰
+  const exp = iat + 15 * 60;   // 15분짜리 액세스 토큰 ／ [JA] 15分のアクセストークン
 
   beforeEach(() => mockDecode.mockReturnValue({ iat, exp }));
 

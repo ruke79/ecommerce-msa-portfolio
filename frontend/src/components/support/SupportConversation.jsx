@@ -8,10 +8,13 @@ import { localizeChatName, localizeChatNotice } from "util/chatNotice";
 import { Avatar } from "components/support/supportUi";
 
 /** 한 번에 보낼 수 있는 글자 수 — 서버 메시지 본문의 상한과 맞춘다. */
+// [JA] 一度に送れる文字数 — サーバーのメッセージ本文の上限と合わせる。
 export const MAX_MESSAGE_LENGTH = 1000;
 /** 같은 사람이 이 시간 안에 이어 보낸 말은 한 묶음으로(이름 · 동그라미는 첫 말에만). */
+// [JA] 同じ人がこの時間内に続けて送った発言はひとまとまりに(名前・丸は最初の発言にだけ)。
 const GROUP_GAP_MS = 5 * 60 * 1000;
 /** 바닥에서 이만큼 안이면 "바닥에 있다" — 새 메시지가 오면 따라 내려간다. */
+// [JA] 底からこの距離以内なら「底にいる」 — 新しいメッセージが来たら追って下がる。
 const STICK_PX = 80;
 
 const dayKey = (value) => {
@@ -33,6 +36,14 @@ const ms = (value) => parseServerDate(value)?.getTime() ?? 0;
  * <p>"내 메시지인가" 는 senderId 를 <b>문자열로</b> 비교한다 — 회원 id 는 19자리 TSID 라 숫자로 바꾸면 끝자리가 뭉개진다.
  *
  * <p>⚠️ 떠 있는 요소는 이 카드 안에서만 뜬다({@code isolate} — z-index 가 헤더 메뉴 위로 새지 않는다).
+ *
+ * <p>[JA] 相談チャット画面 — 顧客画面と相談デスクが共用する(docs/58 §11)。
+ * 日付が変われば区切り線、同じ人が続けて話せばひとまとまり(時刻はまとまりの最後の発言に)。
+ * 底を見ているときだけ新着メッセージを追って下がる。上を読んでいる最中なら「新着メッセージ N」通知だけ出す — 読んでいた場所が飛ばないように。
+ * 「以前の会話をもっと見る」の後も読んでいた位置を保つ(上に付いた分だけスクロールを移す)。
+ * 相談員にはクイック返信(quickReplies)を入力欄に入れる一覧がある。
+ * 「自分のメッセージか」は senderId を <b>文字列で</b> 比較する — 会員 id は 19 桁の TSID なので数値にすると下位桁が潰れる。
+ * ⚠️ 浮かぶ要素はこのカードの中でだけ浮かぶ({@code isolate} — z-index がヘッダーメニューの上に漏れない)。
  */
 export default function SupportConversation({
     messages, myId, canSend, readOnlyHint, onSend, hasMore, onLoadMore, isConnected, quickReplies, emptyHint,
@@ -64,12 +75,13 @@ export default function SupportConversation({
     };
 
     // 새 메시지(끝에 붙은 것) — 바닥이면 따라가고, 아니면 알림 수를 센다. 내가 보낸 것은 언제나 따라간다.
+    // [JA] 新着メッセージ(末尾に付いたもの) — 底なら追い、そうでなければ通知数を数える。自分が送ったものは常に追う。
     useLayoutEffect(() => {
         const last = messages[messages.length - 1];
         if (!last || last.id === lastId.current) return;
         const first = lastId.current === null;
         lastId.current = last.id;
-        if (prependFrom.current !== null) return;   // 위에 붙은 것(더 보기) — 아래 효과가 자리를 맞춘다
+        if (prependFrom.current !== null) return;   // 위에 붙은 것(더 보기) — 아래 효과가 자리를 맞춘다 ／ [JA] 上に付いたもの(もっと見る) — 下の effect が位置を合わせる
         if (first || atBottom.current || isMine(last)) {
             scrollToBottom();
         } else {
@@ -78,6 +90,7 @@ export default function SupportConversation({
     }, [messages, isMine, scrollToBottom]);
 
     // "더 보기" — 위에 붙은 높이만큼 내려 읽던 자리를 지킨다.
+    // [JA] 「もっと見る」 — 上に付いた高さ分下げて読んでいた位置を保つ。
     useLayoutEffect(() => {
         const el = listRef.current;
         if (el && prependFrom.current !== null) {
@@ -92,6 +105,7 @@ export default function SupportConversation({
             await onLoadMore?.();
         } finally {
             // 더 온 것이 없으면(오류 · 빈 페이지) 표시만 지운다.
+            // [JA] 追加が無ければ(エラー・空ページ)表示だけ消す。
             setTimeout(() => { prependFrom.current = null; }, 0);
         }
     };
@@ -264,6 +278,7 @@ SupportConversation.propTypes = {
     onLoadMore: PropTypes.func,
     isConnected: PropTypes.bool,
     /** 상담원 빠른 답변 — [{ key, label, text }] */
+    // [JA] 相談員のクイック返信 — [{ key, label, text }]
     quickReplies: PropTypes.arrayOf(PropTypes.shape({ key: PropTypes.string, label: PropTypes.string, text: PropTypes.string })),
     emptyHint: PropTypes.string,
 };

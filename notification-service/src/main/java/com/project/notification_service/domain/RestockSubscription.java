@@ -22,6 +22,11 @@ import lombok.AllArgsConstructor;
  * <p>색상 없는 상품은 {@code colorId = 0}({@link #NO_COLOR}) 이다 — null 이면 UNIQUE 가 같은 신청 둘을 막지 못한다.
  * 알린 뒤에는 {@code notifiedAt} 이 찍히고 더는 알리지 않는다. 다시 신청하면 그 행을 지우고 새로 만든다 —
  * 알림 키가 신청 id({@code restock:<id>}) 라 새 id 여야 다음 재입고도 알린다.
+ *
+ * <p>[JA] 「このオプションが再入荷したら知らせてください」 — 品切れのオプション(商品・色・サイズ)に対する再入荷通知の申し込み(docs/53)。
+ * 色のない商品は {@code colorId = 0}({@link #NO_COLOR})である — null だと UNIQUE が同じ申し込み二つを防げない。
+ * 知らせた後は {@code notifiedAt} が記録され、以後は知らせない。再び申し込むとその行を消して新しく作る —
+ * 通知キーが申し込み id({@code restock:<id>})なので、新しい id でないと次の再入荷も知らせられない。
  */
 @Entity
 @Getter
@@ -51,6 +56,7 @@ public class RestockSubscription {
     private String size;
 
     /** 알림 문구용 — 신청할 때 화면이 보낸 이름. 알림을 만들 때는 재입고 이벤트의 이름을 먼저 쓴다. */
+    // [JA] 通知文言用 — 申し込み時に画面が送った名前。通知を作るときは再入荷イベントの名前を先に使う。
     @Column(name = "product_name")
     private String productName;
 

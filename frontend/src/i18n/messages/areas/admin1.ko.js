@@ -5,11 +5,18 @@
  * 같은 키가 두 파일에 있으면 i18n.test.jsx 가 실패한다.
  *
  * <p>문구 안의 {@code <b>…</b>} 는 화면이 굵은 글씨로 바꿔 그린다(Events.jsx 의 bold). HTML 로 넣는 것이 아니다.
+ *
+ * <p>[JA] 韓国語文言 — 領域 "admin1"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ko.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
+ * 文言中の {@code <b>…</b>} は画面が太字に置き換えて描く(Events.jsx の bold)。HTML として入れるのではない。
  */
 const admin1 = {
     // ── 관리자: 환불 (pages/admin/Refunds.jsx) ─────────────────────────────
+    // [JA] ── 管理者: 返金 (pages/admin/Refunds.jsx) ──
     "admin.refunds.title": "환불 관리",
     // 상태 필터 — 값(OrderStatus 이름)은 서버로 그대로 가고 이름표만 번역한다.
+    // [JA] 状態フィルター — 値(OrderStatus 名)はサーバーへそのまま行き、ラベルだけ翻訳する。
     "admin.refunds.status.all": "전체",
     "admin.refunds.status.paid": "결제 완료",
     "admin.refunds.status.unpaid": "입금 대기 (무통장)",
@@ -42,6 +49,7 @@ const admin1 = {
     "admin.refunds.charged": "청구 {{amount}}",
     "admin.refunds.refunded_amount": "환불 −{{amount}}",
     // 품목 한 줄의 괄호 안 — "티셔츠 · M ×3 (재고 부족 2, 환불 2)"
+    // [JA] 品目一行の括弧内 — 「Tシャツ · M ×3 (在庫不足 2、返金 2)」
     "admin.refunds.item.short": "재고 부족 {{count}}",
     "admin.refunds.item.refunded": "환불 {{count}}",
     "admin.refunds.item.returned": "입고 {{count}}",
@@ -57,6 +65,7 @@ const admin1 = {
     "admin.refunds.restocked_at": "재고 복원 {{date}}",
     "admin.refunds.deposit.confirm": "입금 확인",
     // {{amount}} 자리는 화면이 굵은 금액으로 채운다.
+    // [JA] {{amount}} の場所は画面が太字の金額で埋める。
     "admin.refunds.deposit.prompt": "{{amount}} 이(가) 통장에 들어왔는지 확인했습니까? 확인하면 결제 완료로 바뀌고 재고가 나갑니다. 금액이 다르면 확인하지 말고 고객에게 연락하세요.",
     "admin.refunds.deposit.reference": "입금 참조",
     "admin.refunds.deposit.reference_placeholder": "은행 거래 참조 (선택)",
@@ -70,6 +79,7 @@ const admin1 = {
     "admin.refunds.receive.restock_hint": "재고 복원 (파손·오염이면 끈다)",
     "admin.refunds.receive.submit": "입고 확정",
     // {{amount}} 자리는 화면이 굵은 금액으로 채운다.
+    // [JA] {{amount}} の場所は画面が太字の金額で埋める。
     "admin.refunds.refund.prompt": "고른 수량만큼 {{provider}} 으로 돌려줍니다 (전부 고르면 남은 전액 {{amount}}). 발송된 주문이면 반품 회수는 따로 챙겨야 합니다.",
     "admin.refunds.refund.default_provider": "결제수단",
     "admin.refunds.refund.qty": "환불 수량",
@@ -80,6 +90,7 @@ const admin1 = {
     "admin.refunds.next": "다음",
 
     // ── 관리자: 기획전 (pages/admin/Events.jsx) ───────────────────────────
+    // [JA] ── 管理者: 企画展 (pages/admin/Events.jsx) ──
     "admin.events.title": "기획전 관리",
     "admin.events.intro": "할인율은 기획전에만 저장되고 상품 조회 시 합성됩니다. 상품의 상시 할인을 덮어쓰지 않으므로, 기획전을 종료하거나 삭제하면 가격이 원래대로 돌아옵니다. 시작·종료는 서버가 시각에 맞춰 처리합니다.",
     "admin.events.status.draft": "초안",
@@ -145,6 +156,7 @@ const admin1 = {
     "admin.events.empty": "등록된 기획전이 없습니다",
 
     // ── 관리자: 배송 (pages/admin/Deliveries.jsx) ─────────────────────────
+    // [JA] ── 管理者: 配送 (pages/admin/Deliveries.jsx) ──
     "admin.deliveries.title": "배송 관리",
     "admin.deliveries.error.load": "배송 목록을 불러오지 못했습니다.",
     "admin.deliveries.error.need_tracking": "택배사와 송장번호를 입력하세요.",
@@ -179,6 +191,7 @@ const admin1 = {
     "admin.deliveries.register": "등록",
 
     // ── 관리자: 홈 섹션 (pages/admin/HomeSections.jsx) ───────────────────
+    // [JA] ── 管理者: ホームセクション (pages/admin/HomeSections.jsx) ──
     "admin.home_sections.title": "홈 섹션 관리",
     "admin.home_sections.error.load": "홈 섹션 목록을 불러오지 못했습니다.",
     "admin.home_sections.error.save": "저장하지 못했습니다.",

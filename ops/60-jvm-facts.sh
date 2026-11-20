@@ -25,7 +25,21 @@
 #
 # 운영 클러스터(APP_PUBLIC_URL 이 운영 주소)는 ALLOW_PROD=1 일 때만 — 두 번째 JVM 은 `-version` 만 하고 끝나지만(힙은 예약만,
 # 실제로 쓰는 메모리는 수십 MB) 768Mi 한도의 파드 안에서 잠깐 함께 산다. 서비스 하나씩, 한가한 시간에.
-# [JA] 本番は ALLOW_PROD=1 のときだけ — 二つ目の JVM は -version だけで終わるが、768Mi 上限の Pod の中で一瞬いっしょに動く。
+# [JA] 性能本二冊(Java Performance 第 2 版・Optimizing Cloud Native Java 第 2 版)の計測シナリオのうち「負荷なしですぐ確認できるもの」を
+#      このシステムの Pod に適用する。JVM はコンテナの上限(CPU・メモリ)を見て GC・ヒープ・スレッド数を自分で決める(エルゴノミクス) —
+#      マニフェストに書かれた値ではなくその結果が性能を決める。例: CPU 上限 1 コアなら JDK 17 は G1 の代わりに SerialGC(docs/91 §4-3)。
+#      方法: サービスごとに最も長く動いている Running Pod 一つで、そのコンテナの上限・イメージ・環境変数のまま二つ目の JVM を
+#      `-XX:+PrintFlagsFinal -XshowSettings:system -version` で起動する — 同じ入力ならエルゴノミクスも同じ(動いている JVM には接続しない;
+#      JRE イメージなので jcmd がない)。エントリーポイント(ops/Dockerfile.runtime)と同じ -XX:MaxRAMPercentage と JAVA_OPTS を与えるが、
+#      ファイルに書いたり接続したりするオプション(-Xlog・JFR・エージェント・ダンプのパス)は除く — 動いている JVM の gc.log を上書きしないように。
+#      表の列: サービス・Pod・ノード・CPU/メモリ上限・JVM が見た CPU・見たメモリ・cgroup・GC・最大ヒープ・初期ヒープ・GC スレッド(並列/並行)・
+#      JIT コンパイラスレッド・コードキャッシュ・圧縮 oop・ForkJoin 共通プールの並列度(= 見た CPU − 1、最小 1 — JDK の規則で計算)・JDK 版。
+#      結果: OUT/jvm-facts.md(表 + 読み方)・OUT/raw/<サービス>.txt(JVM の出力そのまま — 秘密はない: JAVA_TOOL_OPTIONS はストアのパスだけ、B-83)。
+#      使い方: 引数なし = バックエンド 13 個(Pod のないサービスは「Pod なし」の行)、サービス名を並べるとそれだけ、ALLOW_PROD=1 で本番 —
+#      Pod の中に JVM を一つ数秒余分に起動する(下記)。環境変数(既定値): NS=ecommerce・OUT=~/.ecommerce-msa/jvm-facts/<UTC 時刻>・
+#      ALLOW_PROD=0・KUBECTL=kubectl(テストが差し替える)。
+#      本番クラスタ(APP_PUBLIC_URL が本番アドレス)は ALLOW_PROD=1 のときだけ — 二つ目の JVM は `-version` だけで終わるが(ヒープは予約だけ、
+#      実際に使うメモリは数十 MB)、768Mi 上限の Pod の中で一瞬いっしょに動く。サービス一つずつ、暇な時間に。
 set -uo pipefail
 
 KUBECTL="${KUBECTL:-kubectl}"
@@ -44,6 +58,7 @@ for s in "${SERVICES[@]}"; do [[ "$s" =~ ^[a-z][a-z0-9-]*$ ]] || die "서비스 
 command -v "$KUBECTL" >/dev/null 2>&1 || die "kubectl 이 필요하다 — kubectl 이 있는 호스트에서 돌린다"
 
 # ── 어느 클러스터인가 ───────────────────────────────────────────────────
+# [JA] ── どのクラスタか ──
 url="$(k get configmap ecommerce-config -o jsonpath='{.data.APP_PUBLIC_URL}' 2>/dev/null)" \
     || die "ecommerce-config 를 읽지 못했다 — kubectl 컨텍스트 · NS 를 확인한다"
 case "$url" in
@@ -54,13 +69,14 @@ case "$url" in
 esac
 mkdir -p "$OUT/raw" || die "결과 폴더를 만들지 못했다: $OUT"
 
-pick() {   # 가장 오래된 Running 파드(HPA 가 늘려도 남는다 — ops/58 과 같다)
+pick() {   # 가장 오래된 Running 파드(HPA 가 늘려도 남는다 — ops/58 과 같다) ／ [JA] 最も古い Running Pod(HPA が増やしても残る — ops/58 と同じ)
     k get pods -l "app=$1" --field-selector=status.phase=Running \
         --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
 limit() { k get pod "$1" -o jsonpath="{.spec.containers[0].resources.limits.$2}" 2>/dev/null; }
 
 # 파드 안에서 — 엔트리포인트와 같은 입력, 파일에 쓰거나 붙는 옵션만 뺀다(작은따옴표: 변수는 파드 안에서 풀린다)
+# [JA] Pod 内で — エントリポイントと同じ入力、ファイルに書く・アタッチするオプションだけ除く(シングルクォート: 変数は Pod 内で展開される)
 # shellcheck disable=SC2016
 PROBE='opts=""; for o in ${JAVA_OPTS:-}; do case "$o" in -Xlog*|-XX:StartFlightRecording*|-XX:FlightRecorderOptions*|-javaagent*|-agentlib*|-agentpath*|-XX:ErrorFile*|-XX:HeapDumpPath*|-XX:+HeapDumpOnOutOfMemoryError|-Xloggc*) ;; *) opts="$opts $o" ;; esac; done
 exec java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE:-25} $opts -XX:-CreateCoredumpOnCrash -XX:+PrintFlagsFinal -XshowSettings:system -version 2>&1'
@@ -87,6 +103,7 @@ for s in "${SERVICES[@]}"; do
     [ "$gc" = "ZGC" ] && [ "$(flag "$raw" ZGenerational)" = "true" ] && gc="ZGC(세대)"
     seen_cpu="$(setting "$raw" "Effective CPU Count")"
     # cgroup 지표가 없는 곳(컨테이너 밖 등)에서는 -XshowSettings:system 이 CPU 수를 안 적는다 — 명시한 ActiveProcessorCount 가 있으면 그것
+    # [JA] cgroup 指標がない所(コンテナ外など)では -XshowSettings:system が CPU 数を書かない — 明示した ActiveProcessorCount があればそれ
     if ! [[ "$seen_cpu" =~ ^[0-9]+$ ]]; then apc="$(flag "$raw" ActiveProcessorCount)"; [[ "$apc" =~ ^[1-9][0-9]*$ ]] && seen_cpu="$apc"; fi
     seen_mem="$(setting "$raw" "Memory Limit")"
     provider="$(setting "$raw" "Provider")"

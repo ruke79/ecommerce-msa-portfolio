@@ -23,6 +23,7 @@ import javax.sql.DataSource;
 public class MetaDataSourceConfig {
 
     // 데이터소스(풀)는 CatalogDataSourcePools — yml 의 hikari.* 를 묶는 곳이 거기다
+    // [JA] データソース(プール)は CatalogDataSourcePools — yml の hikari.* を束ねる場所がそこである
     @Bean(name = "metaTransactionManager")
     public PlatformTransactionManager metaTransactionManager(@Qualifier("metaDataSource") DataSource metaDataSource) {
         return new DataSourceTransactionManager(metaDataSource);

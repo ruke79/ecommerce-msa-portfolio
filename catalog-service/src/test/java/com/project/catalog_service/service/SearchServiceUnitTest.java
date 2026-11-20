@@ -37,6 +37,12 @@ import com.querydsl.jpa.impl.JPAQueryFactory;
  *  - page=0(기본값)일 때 PageRequest.of(-1, ...) → IllegalArgumentException(500)
  *  - pageSize 무제한 → deep pagination/대량 조회 DoS
  *  - category에 이름(문자열)이 오면 Long.parseLong → NumberFormatException(500)
+ *
+ * <p>[JA] 検索パラメータ防御ロジックの回帰テスト(docs/06 CAT-3, CAT-4)。
+ * 既存バグ:
+ * - page=0(デフォルト)のとき PageRequest.of(-1, ...) → IllegalArgumentException(500)
+ * - pageSize 無制限 → deep pagination/大量照会による DoS
+ * - category に名前(文字列)が来ると Long.parseLong → NumberFormatException(500)
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -58,6 +64,7 @@ class SearchServiceUnitTest {
     JPAQuery listQuery;
 
     /** SearchParamsRequest 는 protected 기본 생성자만 있어 테스트용 하위 클래스로 생성한다. */
+    // [JA] SearchParamsRequest には protected のデフォルトコンストラクタしかないため、テスト用サブクラスで生成する。
     static class TestParams extends SearchParamsRequest {
         TestParams() { super(); }
     }
@@ -67,13 +74,16 @@ class SearchServiceUnitTest {
     void setUp() {
         eventPricing = mock(EventPricing.class);
         // 기획전이 없으면 상시 할인 그대로 — 실제 EventPricing.effectiveDiscount 와 같은 규칙.
+        // [JA] 企画展がなければ常時割引そのまま — 実際の EventPricing.effectiveDiscount と同じ規則。
         when(eventPricing.effectiveDiscount(any(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenAnswer(i -> i.getArgument(1));
         // 필터 메뉴는 이 계산 밖이다(SearchFilterFacets.attach — 컨트롤러가 붙인다).
+        // [JA] フィルタメニューはこの計算の外である(SearchFilterFacets.attach — コントローラが付ける)。
         service = new SearchService(categoryRepository, subCategoryRepository,
                 productRepository, productSkuRepository, queryFactory, eventPricing, SearchBulkheadTest.direct());
 
         // querydsl 체이닝(빌더 패턴)은 RETURNS_SELF 로 체인을 그대로 흘려보낸다.
+        // [JA] querydsl のチェーン(ビルダーパターン)は RETURNS_SELF でチェーンをそのまま流す。
         countQuery = mock(JPAQuery.class, withSettings().defaultAnswer(Answers.RETURNS_SELF));
         when(countQuery.fetchOne()).thenReturn(0L);
         listQuery = mock(JPAQuery.class, withSettings().defaultAnswer(Answers.RETURNS_SELF));
@@ -120,6 +130,7 @@ class SearchServiceUnitTest {
 
         assertThatCode(() -> service.searchProducts(params, SearchEngine.POSTGRES)).doesNotThrowAnyException();
         // 🔴 메뉴 질의는 캐시된 이 계산 안에서 돌지 않는다 — 1,000만 상품에서 1분 넘는 질의가 검색 응답 · 커넥션을 붙잡았다(2026-10-20)
+        // [JA] 🔴 メニュークエリはキャッシュされたこの計算の中では走らない — 1,000 万商品で 1 分を超えるクエリが検索応答・コネクションを掴んでいた(2026-10-20)
         verify(productRepository, org.mockito.Mockito.never()).findDistinctBrandsByCategoryName(any());
         verify(productSkuRepository, org.mockito.Mockito.never()).findAllSizes();
     }
@@ -165,6 +176,9 @@ class SearchServiceUnitTest {
      *
      * <p>예전에는 빈이 있으면 무조건 ES 였다. 기능 플래그로 일부 검색만 ES 로 보내려면 이 분기가 엔진을 따라야
      * 한다 — 따르지 않으면 플래그를 0% 로 내려도 모든 검색이 ES 로 가고, 추적의 변형 태그(postgres)는 거짓말이 된다.
+     *
+     * <p>[JA] 🔴 ES がこのデプロイにあっても(Bean が存在)、この検索のエンジンが POSTGRES なら ES を呼ばない(docs/74)。
+     * <p>以前は Bean があれば無条件に ES だった。機能フラグで一部の検索だけ ES に送るにはこの分岐がエンジンに従わなければならない — 従わないとフラグを 0% に下げてもすべての検索が ES に行き、トレースのバリアントタグ(postgres)は嘘になる。
      */
     @Test
     @DisplayName("🔴 ES 빈이 있어도 엔진이 POSTGRES 면 LIKE 경로로 간다 (기능 플래그 docs/74)")
@@ -200,6 +214,11 @@ class SearchServiceUnitTest {
      * <p>여기서 보는 것은 <b>질의가 실행됐다</b>는 사실이 아니라 <b>필터를 건 요청이
      * 빈 결과를 냈을 때 무엇이 나오는가</b> 다. 목 JPAQuery 로는 최종 SQL 을 볼 수 없으므로
      * BooleanBuilder 를 직접 만들어 확인한다.
+     *
+     * <p>[JA] 🔴 回帰対象: <b>合うものが一つもないとカタログ全体が出ていた。</b>
+     * <p>以前の条件は {@code if (ids != null && !ids.isEmpty())} だった。価格・色・サイズフィルタが何も見つけられないとその条件を<b>丸ごと捨てる</b> — 「合うものがない」が「制限がない」に反転する。
+     * <p>画面ではこう見える: 価格帯を絞るほど商品が減っていき、合うものがない区間を選んだ瞬間に<b>全商品</b>が返ってくる。「価格フィルタが動かない」という報告の半分がこれである(残り半分はフロントが空の上限を 0 で送っていたもの)。
+     * <p>ここで見るのは<b>クエリが実行された</b>事実ではなく、<b>フィルタをかけたリクエストが空の結果を出したときに何が出るか</b>である。モックの JPAQuery では最終 SQL を見られないので BooleanBuilder を直接作って確認する。
      */
     @Test
     @DisplayName("🔴 가격 필터가 아무것도 못 찾으면 '전체'가 아니라 '없음'이다")
@@ -213,6 +232,8 @@ class SearchServiceUnitTest {
 
         // 조건이 사라지지 않았다 — SKU 조건(EXISTS)이 목록 · 개수의 WHERE 에 들어가 있다. 맞는 SKU 가 없으면 그 상품이 빠질 뿐이다
         // (2026-10-19 까지는 후보 id 목록이었고, 빈 목록이면 productId = -1 을 넣었다 — 실제 DB 의 판정은 SearchSkuFilterScaleTest).
+        // [JA] 条件が消えていない — SKU 条件(EXISTS)が一覧・件数の WHERE に入っている。合う SKU がなければその商品が抜けるだけである
+        //      (2026-10-19 までは候補 id リストで、空リストなら productId = -1 を入れていた — 実 DB での判定は SearchSkuFilterScaleTest)。
         org.mockito.ArgumentCaptor<com.querydsl.core.types.Predicate> captor =
                 org.mockito.ArgumentCaptor.forClass(com.querydsl.core.types.Predicate.class);
         verify(listQuery).where(captor.capture());
@@ -226,10 +247,15 @@ class SearchServiceUnitTest {
      *
      * <p>조건 없는 그 질의는 상품 전량의 id 를 읽어 오는데, 결과가 "모든 상품" 이라
      * 필터로서 의미가 없다. 그런데도 매 요청 풀스캔 + 거대한 IN 절이 붙었다.
+     *
+     * <p>[JA] 価格・色・サイズを一つもかけていなければそのクエリを<b>実行しない。</b>
+     * <p>条件なしのそのクエリは全商品の id を読んでくるが、結果が「全商品」なのでフィルタとして意味がない。それなのに毎リクエストフルスキャン + 巨大な IN 句が付いていた。
      */
     // ---------------------------------------------------------------- 가격 필터는 화면의 가격으로 (docs/40 §22)
+    // [JA] ---- 価格フィルタは画面の価格で (docs/40 §22)
 
     /** EXISTS 서브쿼리까지 펼친 JPQL — 상수는 값으로 바꿔 넣는다(Predicate.toString 은 서브쿼리를 그리지 않는다). */
+    // [JA] EXISTS サブクエリまで展開した JPQL — 定数は値に置き換える(Predicate.toString はサブクエリを描かない)。
     private static String jpql(com.querydsl.core.types.Predicate p) {
         com.querydsl.jpa.JPQLSerializer out = new com.querydsl.jpa.JPQLSerializer(com.querydsl.jpa.JPQLTemplates.DEFAULT);
         out.handle(p);
@@ -253,6 +279,9 @@ class SearchServiceUnitTest {
     /**
      * 할인가 계산은 이제 SQL 안이다 — 값의 판정(상시 30% · 기획전 · 겹침)은 실제 PostgreSQL 의 SearchSkuFilterScaleTest 가 본다.
      * 여기서는 기획전 규칙이 <b>높은 율부터</b> CASE 로 실리는지(겹치면 높은 쪽 — EventPricing.refresh 의 규칙)만 본다.
+     *
+     * <p>[JA] 割引価格の計算は今は SQL の中である — 値の判定(常時 30%・企画展・重複)は実 PostgreSQL の SearchSkuFilterScaleTest が見る。
+     * ここでは企画展規則が<b>高い率から</b> CASE で載るか(重なれば高い方 — EventPricing.refresh の規則)だけを見る。
      */
     @Test
     @DisplayName("🔴 기획전 규칙은 펼치지 않고 높은 율부터 CASE 로 — 상품 지정 · 카테고리 지정, 앱이 후보를 읽지 않는다")
@@ -291,6 +320,9 @@ class SearchServiceUnitTest {
     /**
      * 🐛 2026-10-25 운영: 가격 "4 ~ 0"(하한 > 상한)은 맞는 SKU 가 없어 목록 질의가 카테고리의 상품을 끝까지 훑었다 — 5초 상한 503.
      * 그런 범위는 DB 에 묻지 않고 0건이다. 같은 값(4 ~ 4) · 0 ~ 0 · 상한만은 예전처럼 묻는다.
+     *
+     * <p>[JA] 🐛 2026-10-25 本番: 価格「4 ~ 0」(下限 > 上限)は合う SKU がなく、一覧クエリがカテゴリの商品を最後まで走査した — 5 秒上限で 503。
+     * そのような範囲は DB に問い合わせず 0 件である。同じ値(4 ~ 4)・0 ~ 0・上限のみは従来どおり問い合わせる。
      */
     @Test
     @DisplayName("하한 > 상한 · 음수 상한의 가격 범위는 DB 에 묻지 않고 0건")
@@ -315,6 +347,8 @@ class SearchServiceUnitTest {
     /**
      * 🐛 2026-10-25 운영: 하위 카테고리(lab equipment — 상품 6,073개)만 고른 검색이 늘 503 — 목록 10개는 16ms 인데 개수 세기가
      * 200만 상품을 상품 번호 순으로 훑었다. 이제 어떤 검색도 개수 질의를 돌리지 않고 한 쪽 + 1 로 "더 있는가" 만 본다.
+     *
+     * <p>[JA] 🐛 2026-10-25 本番: サブカテゴリ(lab equipment — 商品 6,073 個)だけを選んだ検索が常に 503 — 一覧 10 件は 16ms なのに件数カウントが 200 万商品を商品番号順に走査した。今はどの検索も件数クエリを実行せず、1 ページ + 1 で「まだあるか」だけを見る。
      */
     @Test
     @DisplayName("어떤 검색도 개수 질의를 돌리지 않는다 — 한 쪽 + 1 로 더 있는지만 본다")
@@ -335,7 +369,7 @@ class SearchServiceUnitTest {
             SearchResultDto result = service.searchProducts(params, SearchEngine.POSTGRES);
 
             org.assertj.core.api.Assertions.assertThat(result.getProduct().getContent()).hasSize(10);
-            org.assertj.core.api.Assertions.assertThat(result.getTotalProducts()).isEqualTo(21);   // 앞 쪽 10 + 이 쪽 10 + 더 있음 1
+            org.assertj.core.api.Assertions.assertThat(result.getTotalProducts()).isEqualTo(21);   // 앞 쪽 10 + 이 쪽 10 + 더 있음 1 ／ [JA] 前ページ 10 + このページ 10 + まだある 1
         }
         verify(countQuery, org.mockito.Mockito.never()).fetchOne();
     }
@@ -343,6 +377,8 @@ class SearchServiceUnitTest {
     /**
      * 🐛 2026-10-26 운영: 카테고리(consumer electronics)를 고른 채 다른 카테고리의 하위(food › dairy products)를 누르면 AND 로 0건이
      * 확실한데 목록 질의가 카테고리를 끝까지 훑어 5초 상한 503. 다른 상위의 하위 · 없는 하위는 DB 에 묻지 않고 0건.
+     *
+     * <p>[JA] 🐛 2026-10-26 本番: カテゴリ(consumer electronics)を選んだまま別カテゴリのサブカテゴリ(food › dairy products)を押すと AND で 0 件が確実なのに、一覧クエリがカテゴリを最後まで走査して 5 秒上限で 503。別の親のサブカテゴリ・存在しないサブカテゴリは DB に問い合わせず 0 件。
      */
     @Test
     @DisplayName("다른 카테고리의 하위 카테고리 · 없는 하위 카테고리는 DB 에 묻지 않고 0건")
@@ -381,7 +417,7 @@ class SearchServiceUnitTest {
         service.searchProducts(subOnly, SearchEngine.POSTGRES);
 
         verify(listQuery, org.mockito.Mockito.times(2)).fetch();
-        verify(subCategoryRepository, org.mockito.Mockito.times(1)).findParentCategoryId(102L);   // 하위만이면 묻지 않는다
+        verify(subCategoryRepository, org.mockito.Mockito.times(1)).findParentCategoryId(102L);   // 하위만이면 묻지 않는다 ／ [JA] サブカテゴリだけなら問い合わせない
     }
 
     @Test
@@ -418,6 +454,8 @@ class SearchServiceUnitTest {
     /**
      * 🐛 {@code shipping} 은 <b>받기만 하고 한 번도 쓰이지 않았다.</b> 화면의 "무료배송"
      * 체크박스는 URL 을 바꾸고 요청에도 실려 갔지만 검색 조건에는 들어간 적이 없다.
+     *
+     * <p>[JA] 🐛 {@code shipping} は<b>受け取るだけで一度も使われなかった。</b>画面の「送料無料」チェックボックスは URL を変えリクエストにも載っていたが、検索条件に入ったことはない。
      */
     @Test
     @DisplayName("🔴 무료배송 조건이 실제로 질의에 들어간다")
@@ -451,6 +489,7 @@ class SearchServiceUnitTest {
         when(productDetailsRepository.findDistinctNameValuesByCategoryId(123L)).thenReturn(Collections.emptyList());
 
         // 메뉴는 결과 밖에서 붙는다(SearchController 와 같은 순서) — 바로 실행하는 실행기로
+        // [JA] メニューは結果の外で付く(SearchController と同じ順序) — 即時実行のエグゼキュータで
         SearchFilterFacets facets = new SearchFilterFacets(
                 new FacetQueries(productRepository, productSkuRepository, productDetailsRepository),
                 new org.springframework.cache.concurrent.ConcurrentMapCacheManager(), Runnable::run,
@@ -459,12 +498,14 @@ class SearchServiceUnitTest {
 
         verify(productRepository).findDistinctBrandsByCategoryId(123L);
         // 색상 · 사이즈 · 상세도 카테고리 조인 질의 — 상품 id 목록을 앱으로 가져와 IN 으로 보내지 않는다
+        // [JA] 色・サイズ・詳細もカテゴリ結合クエリ — 商品 id リストをアプリに持ってきて IN で送らない
         verify(productSkuRepository).findColorsByCategoryId(123L);
         verify(productSkuRepository).findSizesByCategoryId(123L);
         verify(productDetailsRepository).findDistinctNameValuesByCategoryId(123L);
     }
 
     // ---------------------------------------------------------------- 다중 선택 값은 글자 그대로 (정규식 · LIKE 주입 없음)
+    // [JA] ---- 複数選択の値は文字どおり(正規表現・LIKE インジェクションなし)
 
     @Test
     @DisplayName("🔴 화면의 ^a|^b 는 값 목록으로 — 빈 값 · 너무 긴 값은 버리고, 개수는 상한까지")

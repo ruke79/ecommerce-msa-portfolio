@@ -34,6 +34,11 @@ import com.project.order_service.repository.jpa.OrderRepository;
  *
  * <p>여기 고정하는 것은 <b>언제</b> 보내는가(물건이 창고에 있을 때만)와 <b>무엇을</b>
  * 보내는가(같은 항목, restock=true, 키 restock-&lt;id&gt;), 그리고 <b>한 번만</b> 보내는가다.
+ *
+ * <p>[JA] 在庫復元 — 決済時に送った差し引きの逆。
+ *
+ * <p>ここで固定するのは<b>いつ</b>送るか(品物が倉庫にあるときだけ)と<b>何を</b>送るか(同じ項目、restock=true、
+ * キー restock-&lt;id&gt;)、そして<b>一度だけ</b>送るかである。
  */
 @DisplayName("재고 복원")
 class OrderSagaRestockTest {
@@ -54,6 +59,7 @@ class OrderSagaRestockTest {
                 mock(com.project.order_service.service.OrderCacheEvictor.class));
 
         // 발송 전 전액 환불 뒤의 모습: 전 수량이 환불됐고 "돌아온 것" 으로 세어져 있다.
+        // [JA] 発送前の全額返金後の姿: 全数量が返金され「戻ったもの」として数えられている。
         when(orderProductRepository.findByOrder_OrderId(1L)).thenReturn(Optional.of(List.of(
                 OrderProduct.builder().orderProductId(101L).productId(10L).qty(2).size("M").colorId(5L)
                         .refundedQty(2).returnedQty(2).build(),
@@ -64,6 +70,7 @@ class OrderSagaRestockTest {
     }
 
     /** 발송된 뒤 환불된 주문: 환불됐지만 아직 안 돌아왔다 — 보낼 것이 없다. */
+    // [JA] 発送後に返金された注文: 返金されたがまだ戻っていない — 送るものがない。
     private void linesStillOut() {
         when(orderProductRepository.findByOrder_OrderId(1L)).thenReturn(Optional.of(List.of(
                 OrderProduct.builder().orderProductId(101L).productId(10L).qty(2).size("M").colorId(5L)
@@ -99,6 +106,7 @@ class OrderSagaRestockTest {
     }
 
     /** 🔴 물건이 밖에 있는데 재고를 늘리면 없는 물건을 판다. */
+    // [JA] 🔴 品物が外にあるのに在庫を増やすと、ない品物を売ってしまう。
     @Test
     @DisplayName("🔴 발송된 뒤의 환불은 재고를 돌려주지 않는다 — 반품 입고 때")
     void refundAfterDispatchWaitsForReturn() {
@@ -108,21 +116,25 @@ class OrderSagaRestockTest {
 
         verify(outbox, never()).saveEventOutbox(any(), any(), any());
         verify(orderRepository, never()).markStockRestored(anyLong(), any());
-        verify(couponPublisher).publish(any(CouponRollbackRequest.class));   // 쿠폰은 돌려준다
+        verify(couponPublisher).publish(any(CouponRollbackRequest.class));   // 쿠폰은 돌려준다 ／ [JA] クーポンは返す
     }
 
     /** 부분 반품: 돌아온 만큼만, 이미 되돌린 수와 폐기는 빼고. */
+    // [JA] 部分返品: 戻った分だけ、既に戻した数と廃棄は除いて。
     @Test
     @DisplayName("부분 반품 뒤 restock 은 돌아왔지만 아직 처리되지 않은 수량만 보낸다")
     void restockSendsOnlyPendingUnits() {
         when(orderProductRepository.findByOrder_OrderId(1L)).thenReturn(Optional.of(List.of(
                 // 2개 중 1개 돌아옴, 아직 안 되돌림 → 1
+                // [JA] 2 個のうち 1 個が戻り、まだ戻していない → 1
                 OrderProduct.builder().orderProductId(101L).productId(10L).qty(2).size("M").colorId(5L)
                         .refundedQty(2).returnedQty(1).build(),
                 // 3개 돌아옴, 1개는 이미 되돌렸고 1개는 폐기 → 1
+                // [JA] 3 個戻り、1 個は既に戻し、1 個は廃棄 → 1
                 OrderProduct.builder().orderProductId(102L).productId(11L).qty(3).size("L").colorId(6L)
                         .refundedQty(3).returnedQty(3).restockedQty(1).discardedQty(1).build(),
                 // 다 돌아왔고 다 되돌림 → 0 (실리지 않는다)
+                // [JA] 全部戻り、全部戻した → 0(載らない)
                 OrderProduct.builder().orderProductId(103L).productId(12L).qty(1).size("S").colorId(7L)
                         .refundedQty(1).returnedQty(1).restockedQty(1).build())));
 
@@ -137,6 +149,7 @@ class OrderSagaRestockTest {
         assertThat(sent.getOrderProducts().get(1).getProductId()).isEqualTo(11L);
         assertThat(sent.getOrderProducts().get(1).getQty()).isEqualTo(1);
         // 누적: 이미 2 되돌렸고 이번에 2 → u4. 같은 상태에서 다시 불리면 같은 키(재시도가 접힌다).
+        // [JA] 累積: 既に 2 戻し、今回 2 → u4。同じ状態で再び呼ばれれば同じキー(再試行がまとめられる)。
         assertThat(sent.getEventId()).isEqualTo("restock-1-u4");
         verify(orderProductRepository).addRestocked(101L, 1);
         verify(orderProductRepository).addRestocked(102L, 1);
@@ -144,6 +157,7 @@ class OrderSagaRestockTest {
     }
 
     /** 🔴 두 번 보내면 재고가 두 번 는다. 품목 카운터가 먼저 막고, catalog 의 eventId 가 두 번째로 막는다. */
+    // [JA] 🔴 二度送ると在庫が二度増える。品目カウンターが先に止め、catalog の eventId が二番目に止める。
     @Test
     @DisplayName("🔴 이미 다 되돌린 주문은 다시 보내지 않는다")
     void alreadyRestockedIsSkipped() {
@@ -160,6 +174,7 @@ class OrderSagaRestockTest {
     }
 
     /** 일부만 환불된 주문은 여전히 그 쿠폰으로 산 주문이다 — 돌려주면 두 번 쓰게 된다. */
+    // [JA] 一部だけ返金された注文は依然としてそのクーポンで買った注文である — 返すと二度使えてしまう。
     @Test
     @DisplayName("부분 환불에는 쿠폰을 돌려주지 않는다 — 전액이 다 돌아갔을 때만")
     void couponIsRestoredOnlyWhenFullyRefunded() {
@@ -169,16 +184,17 @@ class OrderSagaRestockTest {
         saga.compensateRefund(partial);
 
         verify(couponPublisher, never()).publish(any(CouponRollbackRequest.class));
-        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), any(), any());   // 재고는 카운터대로 돌려준다
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), any(), any());   // 재고는 카운터대로 돌려준다 ／ [JA] 在庫はカウンターどおりに戻す
     }
 
     /** 아웃박스 행을 먼저 쓴다 — 그것이 실패했는데 DB 가 "돌려줬다" 가 되면 안 된다(같은 트랜잭션이라 둘 다 없다). */
+    // [JA] アウトボックス行を先に書く — それが失敗したのに DB が「戻した」になってはならない(同じトランザクションなので両方ない)。
     @Test
     @DisplayName("아웃박스 쓰기가 실패하면 표시하지 않는다 — 다음 호출이 다시 보낸다")
     void publishFailureLeavesNoMark() {
         doThrow(new RuntimeException("db down")).when(outbox).saveEventOutbox(any(), any(), any());
 
-        saga.restock(refunded(false));   // 예외는 삼킨다 — 환불은 이미 반영됐다
+        saga.restock(refunded(false));   // 예외는 삼킨다 — 환불은 이미 반영됐다 ／ [JA] 例外は握りつぶす — 返金は既に反映された
 
         verify(orderRepository, never()).markStockRestored(anyLong(), any());
         verify(orderProductRepository, never()).addRestocked(anyLong(), org.mockito.ArgumentMatchers.anyInt());
@@ -196,6 +212,7 @@ class OrderSagaRestockTest {
     }
 
     /** 🔴 행과 표시는 한 트랜잭션 — 표시가 일부 실패하면(동시 입고) 아웃박스 행째 롤백한다. 보내면 실제보다 많이 돌려준다. */
+    // [JA] 🔴 行と印は一つのトランザクション — 印が一部失敗したら(同時入庫)アウトボックス行ごとロールバックする。送ると実際より多く戻してしまう。
     @Test
     @DisplayName("🔴 재고 복원은 한 트랜잭션 — 정상이면 커밋, 표시가 일부 실패하면 롤백(아웃박스 행도 없다)")
     void restockIsOneTransaction() {
@@ -209,7 +226,7 @@ class OrderSagaRestockTest {
 
         when(orderProductRepository.addRestocked(eq(102L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(0);
         org.mockito.Mockito.clearInvocations(orderRepository);
-        saga.restock(refunded(false));   // 예외는 삼킨다
+        saga.restock(refunded(false));   // 예외는 삼킨다 ／ [JA] 例外は握りつぶす
         verify(tm).rollback(status);
         verify(orderRepository, never()).markStockRestored(anyLong(), any());
     }

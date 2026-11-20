@@ -15,6 +15,11 @@ import jakarta.servlet.http.Cookie;
  * <p>여기가 틀리면 <b>조용히</b> 틀린다 — 알림이 안 나가거나(계정이 털려도 모른다),
  * 매번 나가거나(소음이 되어 진짜 경고까지 무시된다), 남의 IP 가 필요 이상으로 노출된다.
  * 셋 다 예외도 로그도 없이 일어난다.
+ *
+ * <p>[JA] 機器識別に使う純粋な計算。
+ * ここが間違うと<b>静かに</b>間違う — 通知が出ないか(アカウントが乗っ取られても気づかない)、
+ * 毎回出るか(ノイズになって本物の警告まで無視される)、他人の IP が必要以上に露出する。
+ * 三つとも例外もログもなく起きる。
  */
 @DisplayName("기기 식별")
 class DeviceIdentityTest {
@@ -30,6 +35,7 @@ class DeviceIdentityTest {
         }
 
         /** 쿠키 값이라 URL 안전 문자만 써야 한다. `+` `/` `=` 가 섞이면 값이 잘린다. */
+        // [JA] クッキー値なので URL セーフな文字だけを使わなければならない。`+` `/` `=` が混ざると値が切れる。
         @Test
         @DisplayName("쿠키에 그대로 담을 수 있는 문자만 쓴다")
         void tokenIsCookieSafe() {
@@ -40,12 +46,16 @@ class DeviceIdentityTest {
         @DisplayName("추측하기 어려울 만큼 길다")
         void tokenIsLongEnough() {
             // 32바이트 → base64url 43자.
+            // [JA] 32 バイト → base64url 43 文字。
             assertThat(DeviceIdentity.newToken().length()).isGreaterThanOrEqualTo(40);
         }
 
         /**
          * 🔒 이 값은 인증 수단이 아니지만 <b>보안 알림을 끌 수 있는 값</b>이다. DB 가
          * 새더라도 그 능력이 함께 새지 않게 해시만 저장한다.
+         *
+         * <p>[JA] 🔒 この値は認証手段ではないが<b>セキュリティ通知を止められる値</b>である。DB が漏れても
+         * その能力まで一緒に漏れないよう、ハッシュだけを保存する。
          */
         @Test
         @DisplayName("해시는 원문을 담지 않는다")
@@ -116,6 +126,10 @@ class DeviceIdentityTest {
      *
      * <p>원문을 저장하지 않는 이유: 지문 가치가 있는 값이고(확장·버전까지 담긴다),
      * 사용자에게 필요한 것은 "어느 브라우저, 어느 운영체제였나" 뿐이다.
+     *
+     * <p>[JA] User-Agent → 表示用ラベル。
+     * 原文を保存しない理由: フィンガープリントとしての価値がある値であり(拡張・バージョンまで含む)、
+     * ユーザーに必要なのは「どのブラウザ、どの OS だったか」だけである。
      */
     @Nested
     @DisplayName("기기 라벨")
@@ -136,6 +150,9 @@ class DeviceIdentityTest {
         /**
          * 🔴 순서가 중요하다. Edge 의 UA 에는 "Chrome" 이 들어 있어서, Chrome 을 먼저
          * 보면 모든 Edge 가 Chrome 으로 보인다 — 사용자는 자기 기기를 못 알아본다.
+         *
+         * <p>[JA] 🔴 順序が重要である。Edge の UA には "Chrome" が含まれるので、Chrome を先に見ると
+         * すべての Edge が Chrome に見える — ユーザーは自分の機器を見分けられない。
          */
         @Test
         @DisplayName("Edge 를 Chrome 으로 읽지 않는다 — Edge 의 UA 에 Chrome 이 들어 있다")
@@ -185,6 +202,7 @@ class DeviceIdentityTest {
         }
 
         /** 모르는 UA 때문에 목록에 빈 줄이 생기면 안 된다. */
+        // [JA] 未知の UA のせいで一覧に空行ができてはならない。
         @Test
         @DisplayName("모르는 UA 도 읽을 수 있는 문자열을 준다")
         void unknownUaStillGetsALabel() {
@@ -199,6 +217,7 @@ class DeviceIdentityTest {
         }
 
         /** label 컬럼은 varchar(120) 이다. 넘치면 insert 가 통째로 실패한다. */
+        // [JA] label カラムは varchar(120) である。あふれると insert がまるごと失敗する。
         @Test
         @DisplayName("컬럼 길이를 넘지 않는다")
         void labelFitsTheColumn() {
@@ -212,6 +231,10 @@ class DeviceIdentityTest {
      * <p>전체를 보여 주면 사용자 자신에게도, 그 화면을 어깨 너머로 보는 사람에게도 필요
      * 이상의 정보가 된다. 가린 값만으로도 "집에서 들어온 것 같다 / 모르는 곳이다" 는
      * 판단이 된다.
+     *
+     * <p>[JA] IP マスキング。
+     * 全体を見せると、ユーザー本人にも、その画面を肩越しに見る人にも必要以上の情報になる。
+     * 隠した値だけでも「自宅から入ったようだ / 知らない場所だ」という判断はできる。
      */
     @Nested
     @DisplayName("IP 마스킹")
@@ -237,6 +260,7 @@ class DeviceIdentityTest {
         }
 
         /** 형식을 모르겠으면 통째로 가린다 — 반쯤 아는 값을 흘리는 것보다 낫다. */
+        // [JA] 形式が分からなければまるごと隠す — 半分分かる値を漏らすよりよい。
         @Test
         @DisplayName("형식을 모르면 통째로 가린다")
         void unknownFormatIsFullyMasked() {
@@ -257,6 +281,7 @@ class DeviceIdentityTest {
     class ClientIp {
 
         /** 게이트웨이를 거치면 getRemoteAddr() 은 게이트웨이의 주소다. */
+        // [JA] ゲートウェイを経由すると getRemoteAddr() はゲートウェイのアドレスである。
         @Test
         @DisplayName("X-Forwarded-For 의 첫 항목을 쓴다 — 클라이언트에 가장 가까운 값")
         void prefersForwardedFor() {

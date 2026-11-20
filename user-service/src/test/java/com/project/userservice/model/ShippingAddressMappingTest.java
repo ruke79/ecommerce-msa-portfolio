@@ -26,6 +26,14 @@ import com.project.userservice.dto.AddressDto;
  * <p>매핑을 {@link ShippingAddress#from} 하나로 모았다. 이 테스트는 <b>그 하나가
  * 빠짐없이 옮기는지</b>를 리플렉션으로 확인한다 — 필드가 늘어났는데 매핑을 안 고치면
  * 여기서 먼저 막힌다.
+ *
+ * <p>[JA] 配送先マッピングは<b>一か所</b>にだけあるべきである(docs/43 B5)。
+ * <b>何が問題だったか:</b> {@code AddressService.saveShippingAddress} がビルダーで全フィールドを埋めた<b>直後</b>に
+ * {@code deepCopyShippingAddress} で同じフィールドを再び上書きしていた。単なる重複に見えるが罠が一つある —
+ * 後で<b>ビルダーにだけ</b>フィールドを足すと deepCopy がそのフィールドを {@code null} で上書きする。コンパイルも通り、
+ * そのフィールドを見ないテストはすべて通る。新しく入れた住所項目が一つ静かに消える形である。
+ * マッピングを {@link ShippingAddress#from} 一つにまとめた。このテストは<b>その一つが漏れなく写すか</b>をリフレクションで確認する —
+ * フィールドが増えたのにマッピングを直さなければ、ここで先に止まる。
  */
 @DisplayName("배송지 매핑")
 class ShippingAddressMappingTest {
@@ -36,6 +44,11 @@ class ShippingAddressMappingTest {
      * <p>id 는 DB 가 만들고, user 는 서비스가 붙이고, 감사 필드는 JPA 가 채운다.
      * 여기에 이름을 추가하는 것은 "이 필드는 DTO 에서 오지 않는다" 는 선언이므로,
      * 새 주소 항목을 넣으면서 무심코 여기 적는 일이 없어야 한다.
+     *
+     * <p>[JA] マッピング対象ではないフィールド。
+     * id は DB が作り、user はサービスが付け、監査フィールドは JPA が埋める。
+     * ここに名前を足すのは「このフィールドは DTO から来ない」という宣言なので、
+     * 新しい住所項目を入れるついでにうっかりここへ書くことがあってはならない。
      */
     private static final Set<String> NOT_FROM_DTO = Set.of(
             "shippingAddressId", "user", "version", "createdAt", "createdBy", "updatedAt", "updatedBy");
@@ -78,6 +91,11 @@ class ShippingAddressMappingTest {
      * <p>엔티티에 주소 필드를 하나 추가하고 {@link ShippingAddress#from} 을 고치지 않으면
      * 그 필드는 비어 있는 채로 남는다. 필드 이름을 외워 두는 대신 리플렉션으로 훑어서,
      * <b>새 필드가 생기는 순간</b> 여기가 먼저 빨개지게 한다.
+     *
+     * <p>[JA] 🔴 このテストが罠を防ぐ。
+     * エンティティに住所フィールドを一つ足して {@link ShippingAddress#from} を直さなければ、
+     * そのフィールドは空のまま残る。フィールド名を覚えておく代わりにリフレクションで走査し、
+     * <b>新しいフィールドができた瞬間</b>にここが先に赤くなるようにする。
      */
     @Test
     @DisplayName("매핑에서 빠진 필드가 있으면 여기서 막힌다")
@@ -92,6 +110,7 @@ class ShippingAddressMappingTest {
             field.setAccessible(true);
             Object value = field.get(address);
             // 채워진 DTO 로 만들었으므로 어느 필드도 비어 있으면 안 된다.
+            // [JA] 埋めた DTO から作ったので、どのフィールドも空であってはならない。
             if (value == null || Boolean.FALSE.equals(value) || "".equals(value)) {
                 dropped.add(field.getName());
             }
@@ -107,12 +126,16 @@ class ShippingAddressMappingTest {
      * 수정 경로도 같은 목록을 쓴다 — {@code from} 이 {@code applyFrom} 을 부르므로 위 검사가
      * 둘을 함께 덮는다. 여기서는 {@code applyFrom} 이 <b>기본 배송지 여부를 건드리지 않는다</b>
      * 는 것만 따로 고정한다. 폼이 active 를 실어 보내도 기본 배송지는 selectShipAddress 만 바꾼다.
+     *
+     * <p>[JA] 更新経路も同じリストを使う — {@code from} が {@code applyFrom} を呼ぶので、上の検査が両方をまとめてカバーする。
+     * ここでは {@code applyFrom} が<b>デフォルト配送先かどうかに触れない</b>ことだけを別に固定する。
+     * フォームが active を載せて送っても、デフォルト配送先を変えるのは selectShipAddress だけである。
      */
     @Test
     @DisplayName("applyFrom 은 주소 값만 덮고 기본 배송지 여부는 그대로 둔다")
     void applyFromLeavesTheDefaultFlagAlone() {
         ShippingAddress address = ShippingAddress.builder().active(false).build();
-        AddressDto dto = filledDto();   // active=true 가 실려 있다
+        AddressDto dto = filledDto();   // active=true 가 실려 있다 ／ [JA] active=true が載っている
 
         address.applyFrom(dto);
 
@@ -125,6 +148,10 @@ class ShippingAddressMappingTest {
      * 매핑이 두 벌이 되는 것을 막는다. 예전의 {@code deepCopyShippingAddress} 처럼
      * "이미 만들어진 엔티티에 같은 필드를 다시 쓰는" 메서드가 생기면 빌더와 짝을 맞춰야
      * 하고, 한쪽만 고치는 날 값이 사라진다.
+     *
+     * <p>[JA] マッピングが二重になるのを防ぐ。以前の {@code deepCopyShippingAddress} のように
+     * 「既に作られたエンティティに同じフィールドを書き直す」メソッドができるとビルダーと対を合わせる必要があり、
+     * 片方だけ直した日に値が消える。
      */
     @Test
     @DisplayName("엔티티에 남은 매핑 메서드는 from 하나뿐이다")

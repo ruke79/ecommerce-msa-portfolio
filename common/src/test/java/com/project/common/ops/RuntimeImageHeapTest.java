@@ -26,7 +26,9 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>🐛 2026-10-19 데이터 규모 측정(상품 100만, docs/83 §5): 힙 설정이 없어 JVM 기본 25% — catalog(1Gi)는 256MB 로
  * {@code OutOfMemoryError: Java heap space} 를 내며 재시작을 되풀이했다(측정 실패 99%).
  *
- * <p>[JA] バックエンドのランタイムイメージは最大ヒープをコンテナ上限の 50% で起動する — 実際に sh -c で展開して確かめる。
+ * <p>[JA] バックエンドのランタイムイメージ(ops/Dockerfile.runtime)は最大ヒープをコンテナ上限の 50% で起動する — 実際に {@code sh -c} で展開して確かめる。
+ * 🐛 2026-10-19 データ規模計測(商品 100 万、docs/83 §5): ヒープ設定がなく JVM 既定の 25% — catalog(1Gi)は 256MB で
+ * {@code OutOfMemoryError: Java heap space} を出して再起動を繰り返した(計測失敗 99%)。
  */
 @DisplayName("런타임 이미지 — 최대 힙은 한도의 50% (JVM 기본 25% 아님)")
 class RuntimeImageHeapTest {
@@ -44,6 +46,7 @@ class RuntimeImageHeapTest {
     }
 
     /** ENTRYPOINT ["sh","-c","…"] 의 셸 명령. */
+    // [JA] ENTRYPOINT ["sh","-c","…"] のシェルコマンド。
     private static String entrypointCommand(String dockerfile) {
         Matcher m = Pattern.compile("(?m)^ENTRYPOINT \\[\"sh\",\"-c\",\"(.*)\"\\]\\s*$").matcher(dockerfile);
         assertThat(m.find()).as("ENTRYPOINT [\"sh\",\"-c\",…]").isTrue();
@@ -51,6 +54,7 @@ class RuntimeImageHeapTest {
     }
 
     /** 가짜 java(인자를 한 줄에 하나씩 남긴다)로 ENTRYPOINT 를 이미지의 ENV 와 함께 돌린다. */
+    // [JA] 偽の java(引数を 1 行に一つずつ残す)で ENTRYPOINT をイメージの ENV と一緒に動かす。
     private List<String> javaArgs(Map<String, String> env) throws Exception {
         assumeTrue(Files.isExecutable(Path.of("/bin/sh")), "sh 가 없다");
         String df = dockerfile();
@@ -64,9 +68,9 @@ class RuntimeImageHeapTest {
         pb.environment().put("FAKE_OUT", tmp.resolve("args").toString());
         Matcher e = Pattern.compile("(?m)^ENV (\\w+)=(\\S+)\\s*$").matcher(df);
         while (e.find()) {
-            pb.environment().put(e.group(1), e.group(2));   // 이미지의 기본값
+            pb.environment().put(e.group(1), e.group(2));   // 이미지의 기본값 ／ [JA] イメージのデフォルト値
         }
-        pb.environment().putAll(env);                         // 매니페스트가 주는 값
+        pb.environment().putAll(env);                         // 매니페스트가 주는 값 ／ [JA] マニフェストが与える値
         Process p = pb.start();
         p.getInputStream().readAllBytes();
         assertThat(p.waitFor(30, TimeUnit.SECONDS)).isTrue();
@@ -79,7 +83,7 @@ class RuntimeImageHeapTest {
         List<String> def = javaArgs(Map.of());
         assertThat(def).as("이미지 기본값").startsWith("-XX:MaxRAMPercentage=50",
                 "-XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log", "-XX:-CreateCoredumpOnCrash",
-                "-XX:-UseBASE64Intrinsics",   // CVE-2026-114938 우회 — JRE 가 수정판이 되면 빠질 수 있다(B-113)
+                "-XX:-UseBASE64Intrinsics",   // CVE-2026-114938 우회 — JRE 가 수정판이 되면 빠질 수 있다(B-113) ／ [JA] CVE-2026-114938 の回避 — JRE が修正版になれば外せる(B-113)
                 "-jar", "/app/app.jar");
 
         List<String> withOpts = javaArgs(Map.of("JAVA_OPTS", "-Xmx700m -Dfoo=bar"));
@@ -94,6 +98,8 @@ class RuntimeImageHeapTest {
     void crashRecordGoesToTheMountedDirectoryWithoutCoreDump() throws Exception {
         // 🐛 2026-10-21 실습 8시간(docs/83 §2.8): catalog 파드가 SIGSEGV(LinkResolver::runtime_resolve_virtual_method)로 죽었는데
         //    기록 /app/hs_err_pid7.log 가 컨테이너와 함께 사라졌다 — 어디서 죽었는지 볼 수 없었다
+        // [JA] 🐛 2026-10-21 実習 8 時間(docs/83 §2.8): catalog ポッドが SIGSEGV(LinkResolver::runtime_resolve_virtual_method)で死んだのに、
+        //         記録 /app/hs_err_pid7.log がコンテナとともに消えた — どこで死んだのか見られなかった
         List<String> args = javaArgs(Map.of());
         String errorFile = args.stream().filter(a -> a.startsWith("-XX:ErrorFile=")).findFirst().orElseThrow();
         assertThat(errorFile).isEqualTo("-XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log");
@@ -102,6 +108,7 @@ class RuntimeImageHeapTest {
                 .contains("mkdir -p /app/logs /var/log/jvm && chown -R 1000:1000 /app /var/log/jvm");
 
         // 같은 두 옵션(경로만 임시 디렉터리)으로 실제 JVM 을 죽인다 — Unsafe 로 주소 0 에 쓴다
+        // [JA] 同じ 2 つのオプション(パスだけ一時ディレクトリ)で実際の JVM を殺す — Unsafe でアドレス 0 に書く
         Path crashDir = Files.createDirectories(tmp.resolve("jvm"));
         Path work = Files.createDirectories(tmp.resolve("work"));
         Path src = work.resolve("Crash.java");

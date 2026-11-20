@@ -24,6 +24,11 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
  *
  * <p>예전에는 테스트마다 Brave 추적기를 손으로 조립했다(운영도 Brave 였다). 운영을 OpenTelemetry 로 옮기면서(docs/63)
  * 테스트가 다른 추적기로 돌면 "테스트는 초록, 운영은 헤더가 안 이어짐" 이 될 수 있어 같은 브리지로 맞췄다.
+ *
+ * <p>[JA] トレーシングテスト用 — <b>運用と同じ</b> OpenTelemetry ブリッジ(Micrometer Tracing OTel)と W3C 伝播。
+ * 終わった span はエクスポートせずメモリに集める({@link #finishedSpans()})。テストごとに新しく作って {@link #close()} する。
+ * 以前はテストごとに Brave トレーサーを手で組み立てていた(運用も Brave だった)。運用を OpenTelemetry に移すにあたり(docs/63)、
+ * テストが別のトレーサーで動くと「テストは緑、運用はヘッダーがつながらない」になり得るので、同じブリッジに揃えた。
  */
 public final class OtelTestTracing implements AutoCloseable {
 
@@ -52,6 +57,7 @@ public final class OtelTestTracing implements AutoCloseable {
     }
 
     /** 끝난 span(이름 · traceId · 부모). */
+    // [JA] 終わった span(名前 · traceId · 親)。
     public List<SpanData> finishedSpans() {
         return exporter.getFinishedSpanItems();
     }

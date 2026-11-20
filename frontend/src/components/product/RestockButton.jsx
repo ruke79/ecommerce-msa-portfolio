@@ -7,6 +7,7 @@ import { fetchRestockSubscriptions, subscribeRestock, unsubscribeRestock } from 
 import { useAuthContext } from "../../store/AuthContext";
 
 /** 색상 id 비교 — 서버는 색상 없는 상품을 null 로 돌려주고, 화면의 id 는 문자열일 수 있다. */
+// [JA] 色 id の比較 — サーバーは色のない商品を null で返し、画面の id は文字列のことがある。
 export const sameColor = (a, b) =>
     (a === null || a === undefined || a === "" ? null : String(a))
     === (b === null || b === undefined || b === "" ? null : String(b));
@@ -17,6 +18,11 @@ export const sameColor = (a, b) =>
  * <p>선택한 사이즈가 품절일 때만 보인다. 누르면 notification-service 에 신청을 걸고, 다시 누르면 거둔다. 재고가
  * 0 에서 다시 생기면(환불·반품 입고·운영자가 채움) catalog 가 알리고 알림이 온다 — 한 번 알린 신청은 끝난다.
  * 로그인하지 않았으면 로그인으로 보낸다(신원은 토큰에서만 온다).
+ *
+ * <p>[JA] 品切れオプションの「再入荷通知を受け取る」(docs/53)。
+ * 選択したサイズが品切れのときだけ見える。押すと notification-service に申請を登録し、もう一度押すと取り下げる。在庫が
+ * 0 から再び生じると(返金・返品入庫・運営者の補充)catalog が知らせ通知が来る — 一度通知した申請は終わる。
+ * ログインしていなければログインへ送る(身元はトークンからのみ来る)。
  */
 const RestockButton = ({ product, colorId, size, soldOut }) => {
     const { token } = useAuthContext();

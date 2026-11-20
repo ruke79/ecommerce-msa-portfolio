@@ -15,7 +15,10 @@ import lombok.extern.slf4j.Slf4j;
  * 적고, 만료됐거나 빈 자리만 가져간다. 시각은 DB 의 {@code now()} 로 — 파드끼리 시계가 어긋나도 된다. 작업이 끝나면 푼다.
  * 파드가 도중에 죽으면 임대는 만료 시각에 저절로 풀린다.
  *
- * <p>[JA] 予約ジョブの実行リース。DB 接続を握らない — 行に「いつまで · 誰が」を書き、期限切れか空きだけを取る。時刻は DB の now()。
+ * <p>[JA] 予約ジョブの実行リース — レプリカが複数でも一回分は一つの Pod だけが回る(V17 {@code users.scheduler_lock})。
+ * DB 接続を握らない(advisory lock はその接続をジョブの間ずっと持つ必要があり、プール 5 個のうち一つを縛る)。行一つに「いつまで · 誰が」を書き、
+ * 期限切れか空きの場合だけ取る。時刻は DB の {@code now()} で — Pod 同士の時計がずれてもよい。ジョブが終われば解放する。
+ * Pod が途中で死ねば、リースは満了時刻に自然に解ける。
  */
 @Slf4j
 @Component
@@ -24,6 +27,7 @@ public class SchedulerLease {
     private final JdbcTemplate jdbc;
 
     /** 이 파드의 표지 — 파드 이름(HOSTNAME) + 난수. 풀 때 남의 임대를 풀지 않게. */
+    // [JA] このポッドの印 — ポッド名(HOSTNAME) + 乱数。解放時に他人のリースを解放しないように。
     private final String owner;
 
     public SchedulerLease(JdbcTemplate jdbc) {
@@ -34,6 +38,7 @@ public class SchedulerLease {
     }
 
     /** 임대를 잡았으면 {@code true}. 다른 파드가 쥐고 있으면(만료 전) {@code false}. */
+    // [JA] リースを取れたら true。別のポッドが握っていれば(期限前) false。
     public boolean tryAcquire(String name, Duration lease) {
         int rows = jdbc.update("INSERT INTO users.scheduler_lock (name, locked_until, locked_by) "
                         + "VALUES (?, now() + (? * interval '1 second'), ?) "
@@ -44,6 +49,7 @@ public class SchedulerLease {
     }
 
     /** 내가 잡은 임대만 푼다. */
+    // [JA] 自分が取ったリースだけ解放する。
     public void release(String name) {
         int rows = jdbc.update("UPDATE users.scheduler_lock SET locked_until = now() WHERE name = ? AND locked_by = ?",
                 name, owner);

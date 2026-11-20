@@ -67,7 +67,7 @@ import com.project.userservice.security.service.UserDetailsServiceImpl;
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Transactional(propagation = Propagation.NOT_SUPPORTED)   // 생성기가 커밋한 행을 그대로 읽는다
+@Transactional(propagation = Propagation.NOT_SUPPORTED)   // 생성기가 커밋한 행을 그대로 읽는다 ／ [JA] ジェネレーターがコミットした行をそのまま読む
 @DisplayName("데모 사용자 생성기 — 앱의 로그인 판정을 통과하는 계정 (docs/79)")
 class DemoUserGeneratorIntegrationTest {
 
@@ -85,6 +85,7 @@ class DemoUserGeneratorIntegrationTest {
     }
 
     /** 앱 전체가 아니라 JPA 만 — 사용자 리포지토리와 엔티티. 앱 클래스의 감사(auditAwareImpl) · Feign 은 끌어오지 않는다. */
+    // [JA] アプリ全体ではなく JPA だけ — ユーザーリポジトリとエンティティ。アプリクラスの監査(auditAwareImpl)・Feign は引き込まない。
     @Configuration
     @EnableAutoConfiguration
     @EntityScan(basePackages = "com.project.userservice.model")
@@ -110,6 +111,7 @@ class DemoUserGeneratorIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         // 운영과 같은 판정 — 잠금 기록만 가짜(Redis 없이). 잠기지 않은 상태를 돌려준다.
+        // [JA] 運用と同じ判定 — ロック記録だけ偽物(Redis なし)。ロックされていない状態を返す。
         provider = new CustomAuthenticationProvider(new UserDetailsServiceImpl(users), new BCryptPasswordEncoder(),
                 Mockito.mock(LoginAttemptService.class));
         sql("DELETE FROM users.known_device; DELETE FROM users.outbox_event; DELETE FROM users.shipping_address; "
@@ -117,8 +119,10 @@ class DemoUserGeneratorIntegrationTest {
     }
 
     // ── 실행 도우미 ────────────────────────────────────────────────────────
+    // [JA] ── 実行ヘルパー ──
 
     /** 생성기를 돌려 나온 SQL 을 컨테이너의 psql 로 — ops/48 의 load 와 같은 경로(stdin 대신 파일). */
+    // [JA] ジェネレーターを回して出た SQL をコンテナの psql へ — ops/48 の load と同じ経路(stdin の代わりにファイル)。
     private static void load(String... args) throws Exception {
         List<String> cmd = new ArrayList<>(List.of("python3", "-I",
                 repoRoot().resolve("ops/tools/generate-demo-users.py").toString()));
@@ -161,6 +165,7 @@ class DemoUserGeneratorIntegrationTest {
     }
 
     /** 운영의 UserDetailsServiceImpl 은 @Transactional 프록시 안에서 돈다 — 같은 조건으로(역할은 LAZY). */
+    // [JA] 運用の UserDetailsServiceImpl は @Transactional プロキシの中で動く — 同じ条件で(ロールは LAZY)。
     private Authentication signIn(String email, String password) {
         return new org.springframework.transaction.support.TransactionTemplate(tx)
                 .execute(s -> provider.authenticate(new UsernamePasswordAuthenticationToken(email, password)));
@@ -175,6 +180,7 @@ class DemoUserGeneratorIntegrationTest {
     }
 
     // ── 테스트 ────────────────────────────────────────────────────────────
+    // [JA] ── テスト ──
 
     @Test
     @DisplayName("🔴 만든 계정은 운영의 로그인 판정(CustomAuthenticationProvider)을 통과하고 ROLE_USER 다 — 틀린 비밀번호는 거절")
@@ -189,6 +195,7 @@ class DemoUserGeneratorIntegrationTest {
                 .isInstanceOf(BadCredentialsException.class);
 
         // Hibernate(validate)로 읽힌다 — 2FA 꺼짐, 가입일은 재조정기 창(7일) 밖.
+        // [JA] Hibernate(validate)で読める — 2FA オフ、登録日は再調整器の窓(7 日)の外。
         User u = users.findByEmail("demo0000003@demo.invalid").orElseThrow();
         assertThat(u.getUserId()).isEqualTo(OFFSET + 3);
         assertThat(u.isTwoFactorEnabled()).isFalse();
@@ -233,6 +240,7 @@ class DemoUserGeneratorIntegrationTest {
     void purgeRemovesOnlyDemoUsers() throws Exception {
         loadAll();
         // 범위 안이지만 데모 도메인이 아닌 사용자(범위를 잘못 준 경우) · 범위 밖 사용자 · 데모 사용자의 로그인 흔적
+        // [JA] 範囲内だがデモドメインではないユーザー(範囲を誤って与えた場合)・範囲外のユーザー・デモユーザーのログイン痕跡
         sql("INSERT INTO users.users (user_id, username, email, enabled, email_verified, account_non_expired, "
                 + "account_non_locked, credentials_non_expired, is_two_factor_enabled, created_at) VALUES "
                 + "(" + (OFFSET + 100) + ", 'realinside', 'real@example.com', true, true, true, true, true, false, now()), "
@@ -240,6 +248,7 @@ class DemoUserGeneratorIntegrationTest {
         sql("INSERT INTO users.known_device (user_id, token_hash, first_seen_at, last_seen_at) VALUES ("
                 + (OFFSET + 1) + ", repeat('a', 64), now(), now())");
         // purge 범위를 일부러 넓게 — 진짜 사용자(OFFSET+100)가 그 안에 든다.
+        // [JA] purge の範囲をわざと広く — 本物のユーザー(OFFSET+100)がその中に入る。
         load("--users", "1000", "--purge");
 
         assertThat(count("SELECT count(*) FROM users.users WHERE email LIKE '%@demo.invalid'")).isZero();

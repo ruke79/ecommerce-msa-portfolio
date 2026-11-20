@@ -16,10 +16,15 @@ import com.project.delivery_service.domain.DeliveryStatus;
  * {@code i18n/client-text.ja.txt} 에 있고, 빠진 것은 {@code SimulatedCarrierTextsTest} 가 잡는다.
  *
  * <p>실제 택배사(우체국)의 문구는 택배사가 보낸 <b>데이터</b>라 여기에 없다 — 카탈로그에 없으면 원문 그대로 나간다.
+ *
+ * <p>[JA] テスト配送(シミュレーター)が履歴に残す文言 (docs/60 §10)。
+ * <p><b>保存は韓国語のまま</b>だ。場所は履歴の重複除去キー({@code DeliveryEvent.dedupKey})の一部なので、言語によって違う形で保存すると同じイベントが二回溜まる。代わりに照会応答を作るとき({@code DeliveryResponse})画面の言語に変える — その翻訳は {@code i18n/client-text.ja.txt} にあり、抜けは {@code SimulatedCarrierTextsTest} が捕まえる。
+ * <p>実際の宅配業者(郵便局)の文言は宅配業者が送った<b>データ</b>なのでここにはない — カタログになければ原文のまま出る。
  */
 public final class SimulatedCarrierTexts {
 
     /** 단계마다 지나는 곳. 마지막 곳에서 멈춘다. */
+    // [JA] 段階ごとに通る場所。最後の場所で止まる。
     static final List<String> PLACES = List.of(
             "서울강남", "서울물류센터", "대전허브", "인천세관", "부산물류센터", "수원", "수원");
 
@@ -41,9 +46,11 @@ public final class SimulatedCarrierTexts {
     }
 
     /** 이 서비스가 만드는 택배사 이름(V3 시드의 name_ko). 화면의 "택배사" 칸에 그대로 나간다. */
+    // [JA] このサービスが作る宅配業者名(V3 シードの name_ko)。画面の「宅配業者」欄にそのまま出る。
     static final List<String> CARRIER_NAMES = List.of("우체국택배", "테스트배송", "CJ대한통운", "한진택배", "롯데택배");
 
     /** 번역이 있어야 하는 문구 전부 — 검사용. */
+    // [JA] 翻訳が必要な文言すべて — 検査用。
     public static final List<String> FORMATS;
 
     static {

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import com.project.userservice.security.risk.LoginRiskGuard.Signal;
 
 /** 결정 규칙 — 아는 기기면 통과, 처음 보는 기기는 공격 신호가 있을 때만 메일 확인(docs/68 §19). 막지는 않는다. */
+// [JA] 決定ルール — 既知の機器なら通過、初めて見る機器は攻撃シグナルがあるときだけメール確認(docs/68 §19)。ブロックはしない。
 @DisplayName("위험 기반 로그인 — 결정 규칙")
 class LoginRiskDecisionTest {
 

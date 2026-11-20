@@ -1,6 +1,7 @@
 package com.project.catalog_service.grpc;
 
 /** 다른 패키지의 테스트(컨테이너)가 잠금 대기 판정을 쓰기 위한 다리. */
+// [JA] 別パッケージのテスト(コンテナ)がロック待ちの判定を使うための橋渡し。
 public final class StockReservationGrpcServiceAccess {
 
     private StockReservationGrpcServiceAccess() {

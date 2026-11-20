@@ -15,6 +15,7 @@ const Payment = () => {
     const {user} = useAuthContext();
 
     // user.defaultPaymentMethod 는 JWT 에서 만든 user 에 없는 필드다(checkout.jsx 주석 참조).
+    // [JA] user.defaultPaymentMethod は JWT から作った user にないフィールドである(checkout.jsx のコメント参照)。
     const [dbPM, setDbPM] = useState("");
     const [paymentMethod, setPaymentMethod] = useState("");
     const [error, setErorr] = useState("");

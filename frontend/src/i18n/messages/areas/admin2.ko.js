@@ -6,9 +6,16 @@
  *
  * <p>⚠️ 영어 값이 섞여 있다 — 사이드바·상품 등록 폼은 원래 영어로 쓰여 있었고, 한국어 화면에서 보이던 글자를 그대로
  * 옮겼다(기존 테스트가 그 글자로 찾는다). 한국어로 다듬을 때는 테스트도 함께 고친다.
+ *
+ * <p>[JA] 韓国語文言 — 領域 "admin2"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ko.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
+ * ⚠️ 英語の値が混ざっている — サイドバー・商品登録フォームは元々英語で書かれており、韓国語画面で見えていた文字をそのまま
+ * 移した(既存テストがその文字で探す)。韓国語に整えるときはテストも一緒に直す。
  */
 const admin2 = {
     // ── 사이드바 ────────────────────────────────────────────────────────
+    // [JA] ── サイドバー ──
     "admin.sidebar.home": "홈",
     "admin.sidebar.product_management": "상품 관리",
     "admin.sidebar.category": "카테고리",
@@ -28,6 +35,7 @@ const admin2 = {
     "admin.sidebar.settings": "설정",
 
     // ── 이미지 저장소 상태 ─────────────────────────────────────────────
+    // [JA] ── 画像ストレージの状態 ──
     "admin.storage.unknown_title": "이미지 저장소 상태를 확인하지 못했습니다.",
     "admin.storage.unknown_detail":
         "저장소가 정상이라는 뜻은 아닙니다. 등록이 이미지 업로드에서 실패할 수 있으니, 긴 폼을 채우기 전에 catalog-service 로그를 한 번 확인하세요.",
@@ -45,6 +53,7 @@ const admin2 = {
         "k8s Secret(ecommerce-secrets)의 AMAZON_ACCESS_KEY / AMAZON_SECRET_KEY / AMAZON_BUCKET_NAME / AMAZON_REGION 을 확인한 뒤 catalog-service 를 다시 띄우세요.",
 
     // ── 카테고리 등록 ──────────────────────────────────────────────────
+    // [JA] ── カテゴリ登録 ──
     "admin.category.load_failed": "카테고리를 불러오지 못했습니다.",
     "admin.category.load_sub_failed": "하위 카테고리를 불러오지 못했습니다.",
     "admin.category.name_required": "카테고리 이름을 입력해 주세요.",
@@ -66,6 +75,7 @@ const admin2 = {
     "admin.category.sub_row": "카테고리: {{parent}} 하위 카테고리: {{name}}",
 
     // ── 상품 등록 폼 ───────────────────────────────────────────────────
+    // [JA] ── 商品登録フォーム ──
     "admin.product_form.title": "상품 등록",
     "admin.product_form.name_required": "상품 이름을 입력해 주세요.",
     "admin.product_form.name_length": "상품 이름은 10~300자여야 합니다.",
@@ -134,6 +144,7 @@ const admin2 = {
     "admin.product_form.dialog_ok": "확인",
 
     // ── 상품 등록 화면(Index) ──────────────────────────────────────────
+    // [JA] ── 商品登録画面(Index) ──
     "admin.index.rate_limited": "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.",
     "admin.index.load_products_failed": "상품 목록을 불러오지 못했습니다.",
     "admin.index.load_parent_failed": "부모 상품 정보를 불러오지 못했습니다.",
@@ -141,6 +152,7 @@ const admin2 = {
     "admin.index.close": "닫기",
 
     // ── 상품 목록 ──────────────────────────────────────────────────────
+    // [JA] ── 商品一覧 ──
     "admin.products.title": "전체 상품",
     "admin.products.badge.sold_out": "품절",
     "admin.products.badge.deleted": "삭제됨",
@@ -172,6 +184,7 @@ const admin2 = {
     "admin.products.empty": "등록된 상품이 없습니다.",
 
     // ── 배너 관리 ──────────────────────────────────────────────────────
+    // [JA] ── バナー管理 ──
     "admin.banners.title": "배너 관리",
     "admin.banners.load_failed": "배너 목록을 불러오지 못했습니다.",
     "admin.banners.save_failed": "저장하지 못했습니다.",
@@ -200,6 +213,7 @@ const admin2 = {
     "admin.banners.delete": "삭제",
 
     // ── 전체 알림 ──────────────────────────────────────────────────────
+    // [JA] ── 全体通知 ──
     "admin.broadcasts.title": "전체 알림",
     "admin.broadcasts.intro_before": "모든 로그인 사용자의 알림 목록에 나타납니다. 공지사항 글은 ",
     "admin.broadcasts.intro_link": "공지 관리",
@@ -229,6 +243,7 @@ const admin2 = {
     "admin.broadcasts.empty": "보낸 전체 알림이 없습니다",
 
     // ── 공지 관리 ──────────────────────────────────────────────────────
+    // [JA] ── お知らせ管理 ──
     "admin.notices.title": "공지 관리",
     "admin.notices.load_failed": "공지 목록을 불러오지 못했습니다.",
     "admin.notices.save_failed": "저장하지 못했습니다.",
@@ -250,6 +265,7 @@ const admin2 = {
     "admin.notices.delete": "삭제",
 
     // ── CSV 일괄 상품 등록 ─────────────────────────────────────────────
+    // [JA] ── CSV 一括商品登録 ──
     "admin.import.title": "CSV 일괄 상품 등록",
     "admin.import.intro":
         "애플리케이션에 포함된 CSV 로 카테고리·상품·SKU·이미지를 한 번에 넣습니다. 초기 데이터 투입용입니다 — 이미 상품이 있는 상태에서 실행하면 중복됩니다.",
@@ -278,6 +294,7 @@ const admin2 = {
     "admin.import.col.skipped": "건너뜀",
 
     // ── 재고 관리 ──────────────────────────────────────────────────────
+    // [JA] ── 在庫管理 ──
     "admin.stock.title": "재고 관리",
     "admin.stock.load_failed": "재고 목록을 불러오지 못했습니다.",
     "admin.stock.invalid_quantity": "재고는 0 이상의 정수로 입력하세요.",

@@ -22,6 +22,11 @@ import lombok.Setter;
  * <p>🔒 <b>여기 담긴 금액·결제 상태·이메일은 서버가 읽지 않는다.</b> 브라우저가 그 값을
  * 정하게 두는 것이 docs/35 결함의 출발점이었다. 서버가 읽는 것은 {@code trackingId} 와
  * 결제 참조뿐이고, 나머지는 전부 제공자에게 다시 물어 확인한다.
+ *
+ * <p>[JA] 決済関連のリクエスト本文。
+ * ⚠️ 名前は {@code Paypal…} だが Stripe の経路も使う — 入るのは「どの注文のどの決済参照」だけでプロバイダーに依存しないからである。名前は次の整理で変える。
+ * 🔒 <b>ここに入った金額 · 決済状態 · メールアドレスはサーバーが読まない。</b>ブラウザにその値を決めさせたことが docs/35 の欠陥の出発点だった。
+ * サーバーが読むのは {@code trackingId} と決済参照だけで、残りはすべてプロバイダーに改めて問い合わせて確認する。
  */
 public class PaypalPaymentRequest {
 
@@ -33,7 +38,7 @@ public class PaypalPaymentRequest {
 
     private String paypalOrderId;
 
-    /** 제공자 중립 결제 참조 — Stripe 는 Checkout 세션 id 를 여기 담는다. */
+    /** 제공자 중립 결제 참조 — Stripe 는 Checkout 세션 id 를 여기 담는다. ／ [JA] プロバイダー中立の決済参照 — Stripe は Checkout セッション id をここに入れる。 */
     private String providerPaymentId;
 
     private String orderStatus;

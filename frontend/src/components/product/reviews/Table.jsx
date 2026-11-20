@@ -29,6 +29,7 @@ const Table = ({ reviews, allSizes, colors, onLikeChange }) => {
                   * React 가 서로 다른 리뷰를 같은 요소로 취급해, 좋아요 상태(각 카드의
                   * pending 플래그)가 엉뚱한 카드에 남는다.
                   */}
+                {/* [JA] key は reviewId である。配列のインデックスを使うと、ページをめくったりリストが変わったときに React が別々のレビューを同じ要素として扱い、いいねの状態(各カードの pending フラグ)が違うカードに残る。 */}
                 {_DATA.currentData().map((review, i) => (
                     <ReviewCard
                         review={review}

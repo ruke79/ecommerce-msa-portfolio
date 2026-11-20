@@ -39,6 +39,11 @@ import com.project.notification_service.repository.NotificationPreferenceReposit
  * <p>이 구분이 흐려지면 두 방향 모두로 망가진다. 일시적 실패를 FAILED 로 적으면 그 메일은
  * 다시는 나가지 않아 사용자가 가입을 완료할 수 없고, 영구 실패를 계속 재시도하면 하드 바운스가
  * 쌓여 발신 도메인이 스팸으로 분류된다. 그래서 여기가 이 채널에서 가장 중요한 로직이다.
+ *
+ * <p>[JA] メールディスパッチャ — <b>一時失敗と恒久失敗を分ける地点</b>。この区別が曖昧になると両方向に壊れる。
+ * 一時失敗を FAILED と記録するとそのメールは二度と出ずユーザーが登録を完了できず、
+ * 恒久失敗を再試行し続けるとハードバウンスが溜まって送信ドメインがスパムに分類される。
+ * だからここがこのチャネルで最も重要なロジックだ。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -52,6 +57,7 @@ class MailDispatcherTest {
     private MailDispatcher dispatcher;
 
     /** 결과를 미리 정해 두고, 무엇을 보냈는지 기록하는 발송기. */
+    // [JA] 結果を前もって決めておき、何を送ったかを記録する送信器。
     static class RecordingSender implements MailSender {
         final List<String> subjects = new ArrayList<>();
         final List<String> bodies = new ArrayList<>();
@@ -125,6 +131,7 @@ class MailDispatcherTest {
         assertThat(m.getStatus()).isEqualTo(MailStatus.RETRYABLE);
         assertThat(m.getAttempts()).isEqualTo(1);
         // 다음 시도에 보낼 내용이 필요하므로 링크는 남아 있어야 한다.
+        // [JA] 次の試行で送る内容が必要なのでリンクは残っているべきだ。
         assertThat(m.rawParams()).isNotNull();
     }
 
@@ -137,6 +144,12 @@ class MailDispatcherTest {
      *
      * <p>{@code nextAttemptAt} 이 미래여야 선점 질의가 이 행을 건너뛴다. null 로 되돌아가면
      * 즉시 다시 집히므로 여기서 잡힌다.
+     *
+     * <p>[JA] 🔴 <b>このファイルで最も重要なテストだ。</b>上限(5 回)だけで間隔がなく、ディスパッチャが 5
+     * 秒ごとに同じ行を拾い直して再試行が<b>20 秒で</b>尽きた。運用ログがその証拠だ — 04:12:10 から 04:12:
+     * 30 まで五回。グレイリスティングは数分待たないと解けないので、上限を 5
+     * にした理由がまるごと無効だった。{@code nextAttemptAt} が未来であってこそ先取りクエリがこの行を飛ば
+     * す。null に戻ると即座に拾い直されるのでここで捕まる。
      */
     @Test
     @DisplayName("🔴 일시적 실패는 다음 시도 시각을 미래로 미룬다 — 없으면 5초 뒤 또 집힌다")
@@ -154,6 +167,7 @@ class MailDispatcherTest {
     }
 
     /** 실패가 거듭될수록 더 오래 기다린다 — 원인이 오래 갈수록 때리는 횟수를 줄인다. */
+    // [JA] 失敗が重なるほど長く待つ — 原因が長引くほど叩く回数を減らす。
     @Test
     @DisplayName("재시도가 거듭될수록 간격이 벌어진다")
     void 간격이_벌어진다() {
@@ -172,6 +186,9 @@ class MailDispatcherTest {
     /**
      * 🐛 포기할 때 {@code recordAttempt} 를 한 번 더 불러 <b>한 번의 발송이 두 번으로</b>
      * 기록됐다. 나중에 "몇 번 시도했나"를 보는 사람에게는 상한을 넘긴 것으로 보인다.
+     *
+     * <p>[JA] 🐛 諦めるときに {@code recordAttempt} をもう一度呼び、<b>一回の送信が二回と</b>記録された。
+     * 後で「何回試したか」を見る人には上限を超えたように見える。
      */
     @Test
     @DisplayName("🐛 포기할 때 시도 횟수를 두 번 세지 않는다")
@@ -189,6 +206,7 @@ class MailDispatcherTest {
     }
 
     /** 끝난 행에 예약 시각이 남아 있으면 "언제 다시 보내지나"를 묻게 만든다. 답은 '안 보낸다'다. */
+    // [JA] 終わった行に予約時刻が残っていると「いつまた送られるのか」と問わせることになる。答えは「送らない」だ。
     @Test
     @DisplayName("종료된 행에는 다음 시도 시각이 남지 않는다")
     void 종료시_예약_해제() {
@@ -207,6 +225,9 @@ class MailDispatcherTest {
     /**
      * 🔴 선점 질의에 "시각이 됐는가" 를 넣으면서 <b>지금 시각을 넘기는 것</b>을 빠뜨리면
      * 아무것도 발송되지 않는다. 디스패처가 실제로 시각을 넘기는지 고정한다.
+     *
+     * <p>[JA] 🔴 先取りクエリに「時刻になったか」を入れる際に<b>現在時刻を渡すこと</b>を漏らすと何も送信されない。
+     * ディスパッチャが実際に時刻を渡すかを固定する。
      */
     @Test
     @DisplayName("선점 질의에 현재 시각을 넘긴다")
@@ -244,7 +265,7 @@ class MailDispatcherTest {
     void 상한_도달() {
         MailMessage m = message(MailKind.REGISTRATION_CONFIRM, "{\"confirmationUrl\":\"https://x.example/c\"}");
         m.recordAttempt(MailStatus.RETRYABLE, "1");
-        m.recordAttempt(MailStatus.RETRYABLE, "2");   // 다음 시도가 3회째 = 상한
+        m.recordAttempt(MailStatus.RETRYABLE, "2");   // 다음 시도가 3회째 = 상한 ／ [JA] 次の試行が 3 回目 = 上限
         claimReturns(m);
         sender.next = MailResult.retryable("smtp 421");
 
@@ -265,6 +286,7 @@ class MailDispatcherTest {
         dispatcher.dispatch();
 
         // 두 번째는 손대지 않고 다음 주기로 넘긴다.
+        // [JA] 二つ目は手を付けず次の周期に回す。
         assertThat(sender.subjects).hasSize(1);
         assertThat(second.getAttempts()).isZero();
         assertThat(second.getStatus()).isEqualTo(MailStatus.PENDING);
@@ -305,6 +327,7 @@ class MailDispatcherTest {
         dispatcher.dispatch();
 
         // locale 은 "ko" 였지만 설정이 JP 이므로 일본어로 나가야 한다.
+        // [JA] locale は "ko" だったが設定が JP なので日本語で出るべきだ。
         assertThat(sender.subjects.get(0)).contains("ご注文");
     }
 
@@ -359,6 +382,7 @@ class MailDispatcherTest {
     }
 
     /** {@code Map.of()} 를 쓰지 않는 이유: 값이 null 일 수 있는 자리를 그대로 다루기 위해서다. */
+    // [JA] {@code Map.of()} を使わない理由: 値が null になりうる箇所をそのまま扱うためだ。
     @SuppressWarnings("unused")
     private static Map<String, String> params(String k, String v) {
         return v == null ? Map.of() : Map.of(k, v);

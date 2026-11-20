@@ -23,6 +23,15 @@ import com.project.order_service.config.redis.RedisCacheConfig;
  *
  * <p>Redis 없이 본다: 연결 팩토리를 mock 으로 두고, 트랜잭션 동기화가 켜진 동안 비우기가
  * Redis 에 <b>손대지 않는지</b>(= 커밋 뒤로 미뤄졌는지) 확인한다.
+ *
+ * <p>[JA] 🐛 決済されたのに詳細が NOT_PROCESSED のまま残り、決済ボタンが再び表示された(docs/25 §11.12)。
+ *
+ * <p>サガは状態を変えたトランザクションの<b>中で</b>キャッシュを消していた。
+ * コミット前の隙間に入った照会が旧状態を再びキャッシュに入れると、そのまま 30 分残った。
+ * トランザクション内の消去は<b>コミット後に</b>起きなければならない。
+ *
+ * <p>Redis なしで見る: 接続ファクトリーを mock にし、トランザクション同期が有効な間、消去が Redis
+ * に<b>触れないか</b>(= コミット後に延期されたか)を確認する。
  */
 @DisplayName("order-service — 주문 캐시 비우기는 커밋 뒤에")
 class RedisCacheTransactionAwareTest {
@@ -51,7 +60,7 @@ class RedisCacheTransactionAwareTest {
         Cache order = manager.getCache("order");
         order.clear();                       // @CacheEvict(allEntries = true)
         order.evict("key");
-        order.put("key", "NOT_PROCESSED");   // 커밋 전 틈에 읽은 옛 상태
+        order.put("key", "NOT_PROCESSED");   // 커밋 전 틈에 읽은 옛 상태 ／ [JA] コミット前の隙間に読んだ旧状態
 
         verifyNoInteractions(factory);
         assertThat(TransactionSynchronizationManager.getSynchronizations())

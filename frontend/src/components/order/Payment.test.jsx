@@ -4,9 +4,11 @@ import Payment from "components/order/Payment";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 // PayPal 버튼은 그리지 않고 받은 콜백만 남긴다 — createOrder 를 직접 불러 본다.
+// [JA] PayPal ボタンは描かず、受け取ったコールバックだけ残す — createOrder を直接呼んでみる。
 let mockPaypalProps = null;
 jest.mock("@paypal/react-paypal-js", () => ({
     PayPalButtons: (props) => { mockPaypalProps = props; return null; },
@@ -35,6 +37,7 @@ const order = (paymentMethod) => ({
 let assign;
 beforeAll(() => {
     // jsdom 의 location 은 실제로 이동하려 든다 — 이동 대신 기록한다.
+    // [JA] jsdom の location は実際に移動しようとする — 移動の代わりに記録する。
     const original = window.location;
     delete window.location;
     window.location = { ...original, assign: jest.fn(), reload: jest.fn() };
@@ -46,6 +49,10 @@ beforeEach(() => jest.clearAllMocks());
  * 🐛 결제 상태가 {@code loading: true} 로 시작해 되돌아오지 않았다. Stripe·포트원 버튼은
  * 그 값으로 비활성화되므로 <b>처음부터 "이동 중…" 인 채 눌리지 않았다.</b> PayPal 은 SDK
  * 의 isPending 을 보므로 멀쩡했고, 그래서 오래 묻혀 있었다.
+ *
+ * <p>[JA] 🐛 決済状態が {@code loading: true} で始まり戻らなかった。Stripe・ポートワンのボタンは
+ * その値で無効化されるので <b>最初から「移動中…」のまま押せなかった。</b> PayPal は SDK
+ * の isPending を見るので無事で、そのため長く埋もれていた。
  */
 describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
     it("Stripe 버튼은 처음부터 눌 수 있고, 누르면 세션을 만들어 그 주소로 이동한다", async () => {
@@ -64,6 +71,7 @@ describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
     });
 
     /** 실패는 보여야 한다 — 버튼이 돌아오고 서버의 이유가 그 아래 뜬다. */
+    // [JA] 失敗は見えなければならない — ボタンが戻りサーバーの理由がその下に出る。
     it("세션 생성이 거절되면 이유를 보여 주고 버튼을 되돌린다", async () => {
         postRequest.mockRejectedValue({ response: { data: { message: "Stripe 결제가 설정되지 않았습니다." } } });
         render(<Payment order={order("stripe")} setOrder={jest.fn()} setLoading={jest.fn()} />);
@@ -76,6 +84,7 @@ describe("주문 결제 화면 — Stripe · 포트원 버튼", () => {
     });
 
     /** 🔴 결제창을 열기 직전 예약을 새로 잡는다(docs/59 §8) — 모자라면 결제창(세션)을 열지 않고 이유를 보여 준다. */
+    // [JA] 🔴 決済ウィンドウを開く直前に予約を取り直す(docs/59 §8) — 足りなければ決済ウィンドウ(セッション)を開かず理由を見せる。
     it("🔴 재고가 모자라면 Stripe 세션을 만들지 않고 이유를 보여 준다", async () => {
         postRequest.mockImplementation((url) => url.includes("/payment/stock-hold/")
             ? Promise.reject({ response: { status: 400, data: { message: "재고가 부족해 결제를 시작하지 못했습니다: 티셔츠(M) 품절. 장바구니에서 수량을 조정해 주세요." } } })
@@ -148,10 +157,12 @@ describe("주문 결제 화면 — 포트원 V2 결제창 요청", () => {
             const req = requestPayment.mock.calls[0][0];
             expect(req.redirectUrl).toBe("https://shop.example/order/7");
             expect(req.forceRedirect).toBeUndefined();
-            expect(req.storeDetails).toBeUndefined();   // 상점 정보는 JPY(일본결제)만
+            expect(req.storeDetails).toBeUndefined();   // 상점 정보는 JPY(일본결제)만 ／ [JA] ストア情報は JPY(日本決済)のみ
             // 🔴 customData 는 객체 — 문자열로 넘기면 SDK 가 한 번 더 감싸 서버가 주문을 찾지 못한다(2026-10-25 운영)
+            // [JA] 🔴 customData はオブジェクト — 文字列で渡すと SDK がもう一度包みサーバーが注文を見つけられない(2026-10-25 運用)
             expect(req.customData).toEqual({ trackingId: "track-1" });
             // 🐛 이름이 언제나 비어 있었다 — 로그인 사용자 객체에는 이름이 없다(JWT). 배송지의 성 · 이름을 싣는다.
+            // [JA] 🐛 名前が常に空だった — ログインユーザーのオブジェクトには名前がない(JWT)。配送先の姓・名を載せる。
             expect(req.customer).toEqual({ email: "u@example.com", fullName: "山田 太郎", phoneNumber: "01012345678" });
         } finally {
             portone.portOneVersion.mockReturnValue("v1");
@@ -189,6 +200,7 @@ describe("주문 결제 화면 — 포트원 결제 수단은 청구 통화를 �
                 payMethod: "CARD", currency: "CURRENCY_JPY", totalAmount: 9000 }));
             expect(requestPayment.mock.calls[0][0].virtualAccount).toBeUndefined();
             // 🔴 이니시스 일본결제(JPPG)는 상점 정보가 필수 — 이메일은 빌드 변수에서.
+            // [JA] 🔴 イニシス日本決済(JPPG)はストア情報が必須 — メールはビルド変数から。
             expect(requestPayment.mock.calls[0][0].storeDetails).toEqual(expect.objectContaining({
                 storeName: "アマス", storeNameKana: "アマス", storeNameEn: "Amasu", phoneNumber: "0810700000001",
                 email: "store@example.com", openingHours: { open: "00:00", close: "23:59" } }));
@@ -208,6 +220,9 @@ describe("주문 결제 화면 — 포트원 결제 수단은 청구 통화를 �
 /**
  * 🔴 PayPal 도 결제창을 열기 전에 결제 시작(재고 예약 갱신 · 쿠폰 잡기, coupon V7)을 거친다. 예전에는 PayPal 만 이 단계를 건너뛰어
  * 같은 쿠폰으로 다른 주문이 결제 중이어도 PayPal 창이 열렸다.
+ *
+ * <p>[JA] 🔴 PayPal も決済ウィンドウを開く前に決済開始(在庫予約更新・クーポン確保、coupon V7)を経る。以前は PayPal だけこの段階を飛ばし
+ * 同じクーポンで別の注文が決済中でも PayPal ウィンドウが開いた。
  */
 describe("주문 결제 화면 — PayPal 결제 시작", () => {
     const actions = () => ({ order: { create: jest.fn().mockResolvedValue("PP-ORDER-1") } });
@@ -238,6 +253,9 @@ describe("주문 결제 화면 — PayPal 결제 시작", () => {
 /**
  * 🔴 결제 시작에 창마다의 시도 키를 싣는다(order V27) — 같은 탭에서 다시 누르면 같은 키(다시 열 수 있다), 다른 탭은 다른 키(서버가
  * 거절한다). 예전에는 두 탭에서 같은 주문을 둘 다 결제할 수 있었다.
+ *
+ * <p>[JA] 🔴 決済開始にウィンドウごとの試行キーを載せる(order V27) — 同じタブで押し直すと同じキー(開き直せる)、別タブは別キー(サーバーが
+ * 拒否する)。以前は二つのタブで同じ注文を両方決済できた。
  */
 describe("주문 결제 화면 — 결제 시도 키", () => {
     const keyOf = (call) => call[3].headers["Payment-Attempt"];

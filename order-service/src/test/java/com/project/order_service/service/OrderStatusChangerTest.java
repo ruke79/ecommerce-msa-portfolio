@@ -109,6 +109,7 @@ class OrderStatusChangerTest {
     }
 
     // ---------------------------------------------------------------- 아웃박스 행 → Avro 이벤트
+    // [JA] アウトボックス行 → Avro イベント
 
     @Test
     @DisplayName("🔴 아웃박스 행은 event_type=order-status · 키 = 주문 id 로 들어가고, 릴레이가 행 id 를 eventId 로 하는 Avro 로 바꾼다")
@@ -129,7 +130,7 @@ class OrderStatusChangerTest {
         assertThat(row.getValue().getAggregateType()).isEqualTo("Order");
         assertThat(row.getValue().getAggregateId()).isEqualTo("42");
         assertThat(row.getValue().getOutboxStatus()).isEqualTo(OutboxStatus.STARTED);
-        verify(trigger).afterCommit();   // 커밋 뒤 바로 릴레이 — 폴링(최대 10초)을 기다리지 않는다
+        verify(trigger).afterCommit();   // 커밋 뒤 바로 릴레이 — 폴링(최대 10초)을 기다리지 않는다 ／ [JA] コミット後すぐリレー — ポーリング(最大 10 秒)を待たない
 
         OrderStatusChanged event = new OrderStatusKafkaPublisher(mapper, null).toEvent(row.getValue());
         assertThat(event.getEventId()).isEqualTo(row.getValue().getId());
@@ -140,6 +141,7 @@ class OrderStatusChangerTest {
         assertThat(event.getSource()).isEqualTo("customer");
         assertThat(event.getOccurredAt()).isNotNull();
         // 개인정보 없음 — 이벤트 스키마에 그런 필드가 아예 없다
+        // [JA] 個人情報なし — イベントスキーマにそんなフィールドがそもそもない
         assertThat(OrderStatusChanged.getClassSchema().getFields()).extracting(f -> f.name())
                 .doesNotContain("email", "address", "token", "authorizationToken");
     }

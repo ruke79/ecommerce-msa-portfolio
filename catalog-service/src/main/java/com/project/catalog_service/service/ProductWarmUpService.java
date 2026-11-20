@@ -20,14 +20,18 @@ public class ProductWarmUpService {
     private final ProductService productService;
     private final CategoryRepository categoryRepository;
     private final SubcategoryRepository subcategoryRepository;
-    private final RedisTemplate<String, Object> redisTemplate; // RedisTemplate 주입 추가
+    private final RedisTemplate<String, Object> redisTemplate; // RedisTemplate 주입 추가 ／ [JA] RedisTemplate の注入を追加
 
     // 캐시 생성 여부를 확인하기 위한 고유한 플래그 키
+    // [JA] キャッシュ生成済みかを確認するための固有のフラグキー
     private static final String PRODUCT_CACHE_INITIALIZED_KEY = "product:cache:initialized";
 
     /**
      * 모든 카테고리/서브카테고리별 상품 목록을 순회하며 캐시를 미리 채웁니다 (Warm-up).
      * Redis에 플래그 키가 없으면 캐시를 생성하고, 있으면 건너뜁니다.
+     *
+     * <p>[JA] すべてのカテゴリ/サブカテゴリ別の商品一覧を回ってキャッシュを事前に満たす(Warm-up)。
+     * Redis にフラグキーがなければキャッシュを作り、あればスキップする。
      */
     // 트랜잭션 없음 — @PostConstruct 는 프록시가 생기기 전에 대상 객체에서 바로 불려 @Transactional 이 적용되지 않는다(B-108).
     // 예전의 readOnly 는 한 번도 열리지 않았고, 열렸다면 워밍업 전체(카테고리 × 하위 카테고리) 동안 커넥션 하나를 쥐었다 —
@@ -36,16 +40,18 @@ public class ProductWarmUpService {
     @PostConstruct
     public void warmUpProductCachesOnStartup() {
         // 1. Redis에 캐시 초기화 플래그가 있는지 확인
+        // [JA] 1. Redis にキャッシュ初期化フラグがあるか確認
         Boolean isCacheInitialized = redisTemplate.hasKey(PRODUCT_CACHE_INITIALIZED_KEY);
         
         if (Boolean.TRUE.equals(isCacheInitialized)) {
             log.info("Product cache already exists in Redis. Skipping warm-up.");
-            return; // 캐시가 있으면 메서드 실행을 중단
+            return; // 캐시가 있으면 메서드 실행을 중단 ／ [JA] キャッシュがあればメソッドの実行を中断
         }
 
         log.info("Starting to warm up product caches...");
 
         // 2. 캐시가 없으므로 캐시 생성 로직 실행
+        // [JA] 2. キャッシュがないのでキャッシュ生成ロジックを実行
         List<Category> allCategories = categoryRepository.findAll();
         for (Category category : allCategories) {
             List<Subcategory> allSubcategories = subcategoryRepository.findByCategory(category);
@@ -56,6 +62,7 @@ public class ProductWarmUpService {
         }
         
         // 3. 캐시 생성 완료 후, 다음 재시작을 위해 플래그 키 저장
+        // [JA] 3. キャッシュ生成の完了後、次の再起動のためにフラグキーを保存
         redisTemplate.opsForValue().set(PRODUCT_CACHE_INITIALIZED_KEY, "true");
         
         log.info("Product cache warm-up completed and flag set in Redis.");

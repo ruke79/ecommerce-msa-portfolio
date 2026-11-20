@@ -12,8 +12,16 @@
 //   · SPREAD=1 — 검색 조합을 넓혀 search_cache(60분)를 비껴간다: 깊은 쪽 기본 1000쪽 · 이름 검색 1 ~ NAME_PAGES(기본 50)쪽 ·
 //     FILTER_SEARCH 비율(기본 0 — 주면)만큼 가격대 · 색상 · 사이즈 필터 검색(filter_search). 🐛 그 전의 100만 회차는 첫 1분 반 뒤로
 //     검색이 모두 캐시에서 나와 데이터 비용이 보이지 않았다(docs/83 §5). 주소 만들기는 spread.js
-// [JA] データ規模モード — ops/44 で入れた範囲全体から選ぶ(詳細はランダムな id、一覧は深いページ、名前検索を一定割合)。
-//      SPREAD=1 は検索の組み合わせを広げてキャッシュ外を測る(FILTER_SEARCH で価格帯 · 色 · サイズのフィルター検索も)。
+// [JA] 到着率を階段状に上げる(ramping-arrival-rate) — どの段で p95・エラーが折れるかが結果である。
+//      ⚠️ 非ログインの要求は IP 一つの流入制限バケット(既定で毎秒 20)を分け合う — デモではすべて Traefik Pod の IP に見える。容量を
+//      測るには先に ./ops/53-load-k6.sh limits load(docs/83 §3)。そのままだと rate_limited が増え、それが結果になる。
+//      データ規模モード(PRODUCTS を与えると、docs/83 §2.1) — ops/44 で入れた範囲全体から選ぶ:
+//        · 詳細はその範囲のランダムな商品 id(product_cold) — ホームに出た数十個だけを読むと常にキャッシュから出てデータの大きさが見えない
+//        · 一覧は 1 ~ DEEP_PAGES ページのうちランダム(search_deep) — OFFSET が大きいほどコストが増える
+//        · NAME_SEARCH の割合だけ名前検索(name_search) — PostgreSQL の検索は LIKE '%…%' なので商品数に比例する(docs/19 §6.1)
+//        · SPREAD=1 — 検索の組み合わせを広げて search_cache(60 分)を避ける: 深いページは既定 1000 ページ・名前検索は 1 ~ NAME_PAGES
+//          (既定 50)ページ・FILTER_SEARCH の割合(既定 0 — 与えれば)だけ価格帯・色・サイズのフィルター検索(filter_search)。🐛 それ以前の
+//          100 万の回は最初の 1 分半以降、検索がすべてキャッシュから出てデータのコストが見えなかった(docs/83 §5)。アドレス生成は spread.js
 import { sleep, fail } from 'k6';
 import { get, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, purchasable, categories, pick, rate, stages } from './lib.js';
 import { deepSearchPath, nameSearchPath, filterSearchPath } from './spread.js';
@@ -21,6 +29,7 @@ import { deepSearchPath, nameSearchPath, filterSearchPath } from './spread.js';
 const PEAK = rate(100);
 
 // ops/44 의 기본 ID_OFFSET(1000000)과 같다 — 생성기는 ID_OFFSET+1 ~ ID_OFFSET+PRODUCTS 에 넣는다(가드 LoadK6ScriptTest)
+// [JA] ops/44 の既定の ID_OFFSET(1000000)と同じ — 生成器は ID_OFFSET+1 〜 ID_OFFSET+PRODUCTS に入れる(ガード LoadK6ScriptTest)
 export const PRODUCT_ID_OFFSET = Number(__ENV.PRODUCT_ID_OFFSET || 1000000);
 export const PRODUCTS = Number(__ENV.PRODUCTS || 0);
 const SCALE = PRODUCTS > 0;
@@ -30,10 +39,12 @@ const NAME_SEARCH = Number(__ENV.NAME_SEARCH || (SCALE ? 0.2 : 0));
 const NAME_PAGES = Number(__ENV.NAME_PAGES || (SPREAD ? 50 : 1));
 const FILTER_SEARCH = Number(__ENV.FILTER_SEARCH || 0);
 // 생성기(dept 분류)의 상품 이름에 들어가는 명사 — ops/tools/generate-catalog-data.py TAXONOMY
+// [JA] 生成器(dept 分類)の商品名に入る名詞 — ops/tools/generate-catalog-data.py TAXONOMY
 const NAME_TERMS = ['Hoodie', 'Laptop', 'Novel', 'Sofa', 'Earbuds', 'Backpack', 'Olive Oil', 'Sneakers', 'Blender', 'Serum',
   'Tablet', 'Desk', 'Cookbook', 'Jacket', 'Camera', 'Pillow'];
 
 /** 데이터 규모 모드의 상품 id — 문자열(TSID 와 같이 브라우저로는 문자열). 상세는 숫자 id 로도 열린다(ProductController). */
+// [JA] データ規模モードの商品 id — 文字列(TSID と同様にブラウザへは文字列)。詳細は数値 id でも開ける(ProductController)。
 export function coldProductId() {
   return String(PRODUCT_ID_OFFSET + 1 + Math.floor(Math.random() * PRODUCTS));
 }
@@ -63,6 +74,7 @@ export const options = {
     'http_req_duration{name:search}': ['p(95)<1200'],
     'http_req_duration{name:product}': ['p(95)<800'],
     // 데이터 규모 모드에서만 나온다 — 상품 수마다 같은 도착률로 비교하는 것이 목적이라 임계값은 넉넉하게(넘으면 표에 적는다)
+    // [JA] データ規模モードでだけ出る — 商品数ごとに同じ到着率で比べるのが目的なので閾値は緩めに(超えたら表に書く)
     'http_req_duration{name:product_cold}': ['p(95)<1500'],
     'http_req_duration{name:search_deep}': ['p(95)<2000'],
     'http_req_duration{name:name_search}': ['p(95)<3000'],
@@ -75,12 +87,13 @@ export const options = {
 };
 
 // 상품 · 카테고리 목록은 VU 마다 한 번 — 홈을 매번 다시 읽지만 고르는 목록은 처음 것으로(목록이 바뀌어도 상세는 slug 로 열린다).
+// [JA] 商品 · カテゴリ一覧は VU ごとに一度 — ホームは毎回読み直すが選ぶ一覧は最初のもので(一覧が変わっても詳細は slug で開ける)。
 let products = null;
 let cats = null;
 
 export function setup() {
   const home = homeOrFail(get('/catalog-service/api/content/home', { tags: { name: 'home' } }));
-  limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀)
+  limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀) ／ [JA] 流入制限を上げていなければここで止まる(smoke は飛ばす)
   const list = purchasable(home);
   if (!list.length) {
     fail('홈에 담을 수 있는 상품이 없다 — 먼저 PRODUCTS=1000 PLACEHOLDER_IMAGE=/logo512.png ./ops/44-bulk-catalog.sh load');
@@ -90,6 +103,7 @@ export function setup() {
   }
   if (SCALE) {
     // 범위의 처음과 끝이 실제로 있는가 — 없으면 상세가 전부 400 이라 "느리다" 가 아니라 "없다" 를 재게 된다
+    // [JA] 範囲の最初と最後が実際にあるか — なければ詳細がすべて 400 で、「遅い」ではなく「ない」を測ることになる
     for (const id of [PRODUCT_ID_OFFSET + 1, PRODUCT_ID_OFFSET + PRODUCTS]) {
       const res = get(`/catalog-service/api/product/${id}`, { tags: { name: 'product_cold' } });
       if (res.status !== 200) {
@@ -101,6 +115,7 @@ export function setup() {
   const cats = categories(home);
   if (SCALE) {
     // 조합 수 — 요청 수보다 크게 작으면 대부분 캐시에서 나온다(search_cache 60분 — 회차 사이에 ops/44 flush-cache)
+    // [JA] 組み合わせ数 — リクエスト数よりずっと小さいと大半がキャッシュから出る(search_cache 60 分 — 回の間に ops/44 flush-cache)
     console.log(`검색 조합: 깊은 쪽 ${cats.length} × ${Math.max(1, DEEP_PAGES - 1)} · 이름 검색 ${NAME_TERMS.length} × ${NAME_PAGES}`
       + (FILTER_SEARCH > 0 ? ` · 필터 검색 비율 ${FILTER_SEARCH}(가격대 ${201 * 481}가지 × 색상 · 사이즈)` : ''));
   }
@@ -124,6 +139,7 @@ export function browse(data) {
       ok(get(deepSearchPath(category, DEEP_PAGES), { tags: { name: 'search_deep' } }), 'search_deep');
       if (FILTER_SEARCH > 0 && Math.random() < FILTER_SEARCH) {
         // 화면처럼 첫 쪽의 필터 메뉴에서 고른다 — 첫 쪽이 실패했으면 가격대만
+        // [JA] 画面のように最初のページのフィルターメニューから選ぶ — 最初のページが失敗していたら価格帯だけ
         const facets = first.status === 200 ? json(first) : null;
         ok(get(filterSearchPath(category, facets), { tags: { name: 'filter_search' } }), 'filter_search');
       }

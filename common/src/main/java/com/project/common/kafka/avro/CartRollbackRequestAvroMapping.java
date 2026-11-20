@@ -37,6 +37,7 @@ public class CartRollbackRequestAvroMapping implements AvroMapping<com.project.c
     @Override
     public BinaryMessageDecoder<com.project.common.avro.CartRollbackRequest> decoder() {
         // v1(authorizationToken 있음)으로 쓴 레코드도 읽는다 — 배포 도중 옛 프로듀서가 쓴 것(AvroSchemaHistory).
+        // [JA] v1(authorizationToken あり)で書いたレコードも読む — デプロイ途中に古いプロデューサーが書いたもの(AvroSchemaHistory)。
         return com.project.common.avro.CartRollbackRequest.createDecoder(AvroSchemaHistory.store(AvroSchemaHistory.CART_ROLLBACK));
     }
 }

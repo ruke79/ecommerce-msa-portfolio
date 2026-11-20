@@ -70,6 +70,7 @@ class UserOutboxRelayKafkaTest {
         UserLifecycleProducer lifecycle = new UserLifecycleProducer(base,
                 new StaticListableBeanFactory().getBeanProvider(io.micrometer.observation.ObservationRegistry.class));
         // 운영과 같은 직렬화(Avro 단일 객체 인코딩 — KafkaProducerConfig#userCreatedProducerFactory)
+        // [JA] 運用と同じシリアライズ(Avro 単一オブジェクトエンコーディング — KafkaProducerConfig#userCreatedProducerFactory)
         KafkaTemplate<String, UserCreatedRequest> createdTemplate = new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(base,
                 new StringSerializer(), new AvroDtoSerializer<>(new UserCreatedRequestAvroMapping())));
         scheduler = new UserOutboxScheduler(repository, new UserCreatedProducer(createdTemplate), lifecycle,
@@ -119,6 +120,7 @@ class UserOutboxRelayKafkaTest {
         List<OutboxEvent> batch = signupsAndUpdates(100, 7_000_000_000L);
         when(repository.claimPending(any(Integer.class))).thenReturn(batch);
         // 운영 기본 기한(10초) — 새 브로커의 첫 발행은 토픽 자동 생성 · 메타데이터 받기로 1초를 넘는다
+        // [JA] 運用既定の期限(10 秒) — 新しいブローカーの最初の発行はトピック自動作成 · メタデータ取得で 1 秒を超える
         scheduler.setPublishTimeoutMs(10_000);
 
         scheduler.processOutboxMessage();
@@ -134,7 +136,7 @@ class UserOutboxRelayKafkaTest {
     void pausedBrokerCostsOneDeadline() {
         List<OutboxEvent> batch = signupsAndUpdates(50, 7_000_001_000L);
         when(repository.claimPending(any(Integer.class))).thenReturn(batch);
-        scheduler.setPublishTimeoutMs(1_000);   // 메타데이터는 앞 시험이 받아 두었다 — 보내기는 막히지 않고 ack 만 오지 않는다
+        scheduler.setPublishTimeoutMs(1_000);   // 메타데이터는 앞 시험이 받아 두었다 — 보내기는 막히지 않고 ack 만 오지 않는다 ／ [JA] メタデータは前の試験が取得済み — 送信は塞がらず ack だけが来ない
         String id = KAFKA.getContainerId();
         KAFKA.getDockerClient().pauseContainerCmd(id).exec();
         try {
@@ -143,6 +145,7 @@ class UserOutboxRelayKafkaTest {
             long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
 
             // 같은 사용자의 변경은 가입의 ack 를 기다린다 — 그 기다림도 같은 기한 안이다(묶음 전체의 기한은 하나)
+            // [JA] 同じユーザーの変更は登録の ack を待つ — その待ちも同じ期限内である(まとまり全体の期限は一つ)
             assertThat(ms).as("트랜잭션 길이 ≈ 기한 1초 한 번").isLessThan(5_000);
             assertThat(batch).extracting(e -> e.getOutboxStatus().name()).containsOnly("FAILED");
         } finally {

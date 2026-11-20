@@ -25,6 +25,15 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>{@code eventId} 는 {@code order-completed:<orderId>} 다. 같은 주문의 확정은 한 번뿐이므로
  * 재전달돼도 알림은 하나다(notification 의 sourceEventId 가 UNIQUE).
+ *
+ * <p>[JA] 購入確定を {@code order-completed} トピックで知らせる (docs/25 §12)。
+ * 聞く側は notification-service 一つ — 「購入が確定しました」通知。特に<b>自動
+ * 確定</b>は顧客が何も押していないのに注文状態が変わることなので、知らせなければ
+ * 後で注文履歴を開いて初めて気づく。
+ * DB トランザクションの中では呼ばない。呼び出し側({@code OrderPurchaseConfirmationService})が
+ * コミットの後に呼ぶ — コミットが失敗したのに通知だけ出ると「確定した」は嘘になる。
+ * {@code eventId} は {@code order-completed:<orderId>} である。同じ注文の確定は一度だけなので
+ * 再配信されても通知は一つ(notification の sourceEventId が UNIQUE)。
  */
 @Slf4j
 @Component
@@ -60,6 +69,7 @@ public class OrderCompletedKafkaPublisher {
                             log.info("구매 확정 이벤트 발행: orderId={} auto={}", order.getOrderId(), order.isAutoCompleted());
                         } else {
                             // 알림이 하나 빠질 뿐 주문 상태는 이미 확정됐다. 여기서 던지면 안 된다.
+                            // [JA] 通知が一つ抜けるだけで、注文状態は既に確定している。ここで投げてはならない。
                             log.error("구매 확정 이벤트 발행 실패: orderId={}", order.getOrderId(), ex);
                         }
                     });

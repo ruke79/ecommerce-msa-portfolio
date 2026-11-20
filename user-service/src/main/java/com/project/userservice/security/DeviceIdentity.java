@@ -15,10 +15,15 @@ import jakarta.servlet.http.HttpServletRequest;
  * <p>서비스에서 떼어 둔 이유: 이 셋은 요청도 DB 도 필요 없는 문자열 변환이고, 틀리면
  * <b>조용히</b> 틀린다(알림이 안 나가거나, 매번 나가거나, 남의 IP 가 노출되거나).
  * 독립적으로 표를 만들어 고정할 수 있게 한다.
+ *
+ * <p>[JA] 端末識別に使う純粋な計算 — トークン生成・ハッシュ化、ラベル抽出、IP マスキング。
+ * サービスから切り離した理由: この三つはリクエストも DB も要らない文字列変換で、間違うと静かに間違う(通知が出ない、
+ * 毎回出る、他人の IP が露出する)。独立して表を作って固定できるようにする。
  */
 public final class DeviceIdentity {
 
     /** 기기 쿠키 이름. */
+    // [JA] 端末 Cookie の名前。
     public static final String COOKIE_NAME = "DEVICE";
 
     /**
@@ -27,6 +32,10 @@ public final class DeviceIdentity {
      * <p>짧으면 그만큼 자주 만료돼 "새 기기" 알림이 나간다. 이 쿠키는 인증 수단이 아니라
      * <b>기억</b>이므로 오래 살아도 위험이 늘지 않는다. 반대로 영구(무한)로 두지 않는
      * 이유는 공용 PC 에 남긴 흔적이 영영 남지 않게 하기 위해서다.
+     *
+     * <p>[JA] Cookie の寿命 — 1 年。
+     * 短いとその分頻繁に期限が切れて「新しい端末」通知が出る。この Cookie は認証手段ではなく記憶なので、長く生きても
+     * リスクは増えない。逆に永久(無期限)にしない理由は、共用 PC に残した痕跡が永遠に残らないようにするためである。
      */
     public static final int COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 
@@ -36,6 +45,7 @@ public final class DeviceIdentity {
     }
 
     /** 새 기기 토큰. 32바이트 난수 — 추측할 수 없어야 한다(그 이유는 KnownDevice 주석). */
+    // [JA] 新しい端末トークン。32 バイトの乱数 — 推測できてはならない(その理由は KnownDevice のコメント)。
     public static String newToken() {
         byte[] bytes = new byte[32];
         RANDOM.nextBytes(bytes);
@@ -43,6 +53,7 @@ public final class DeviceIdentity {
     }
 
     /** 저장용 해시. 원문은 쿠키에만 있고 DB 에는 이 값만 들어간다. */
+    // [JA] 保存用ハッシュ。原文は Cookie にだけあり、DB にはこの値だけが入る。
     public static String hash(String token) {
         if (token == null || token.isBlank()) {
             return null;
@@ -59,11 +70,14 @@ public final class DeviceIdentity {
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 은 JDK 표준이라 여기 올 수 없다. 올 수 있다면 기기 인식이 통째로
             // 불가능한 것이므로 감추지 않는다.
+            // [JA] SHA-256 は JDK 標準なのでここには来ない。来るとすれば端末認識が丸ごと
+            //      不可能ということなので隠さない。
             throw new IllegalStateException("SHA-256 을 쓸 수 없습니다", e);
         }
     }
 
     /** 요청에 실려 온 기기 쿠키. 없으면 null. */
+    // [JA] リクエストに載ってきた端末 Cookie。なければ null。
     public static String tokenFrom(HttpServletRequest request) {
         Cookie[] cookies = request == null ? null : request.getCookies();
         if (cookies == null) {
@@ -87,6 +101,11 @@ public final class DeviceIdentity {
      *
      * <p>순서가 중요하다 — Edge 의 UA 에는 "Chrome" 이, Chrome 의 UA 에는 "Safari" 가
      * 들어 있다. 좁은 것부터 본다.
+     *
+     * <p>[JA] User-Agent から "Chrome · Windows" のような表示用文字列を作る。
+     * 原文をそのまま保存しない理由: User-Agent はフィンガープリントとしての価値がある値で(拡張・バージョンまで含む)、
+     * ユーザーに必要なのは「どのブラウザ、どの OS だったか」だけである。必要な分だけ残す。
+     * 順序が重要である — Edge の UA には "Chrome" が、Chrome の UA には "Safari" が入っている。狭いものから見る。
      */
     public static String label(String userAgent) {
         if (userAgent == null || userAgent.isBlank()) {
@@ -140,6 +159,12 @@ public final class DeviceIdentity {
      * <p>⚠️ 이 값은 <b>표시 전용</b>이다. {@code X-Forwarded-For} 는 클라이언트가 위조할
      * 수 있으므로(게이트웨이의 {@code CustomUserKeyResolver} 가 같은 이유로 무시한다)
      * 어떤 판정에도 쓰지 않는다. 새 기기인지는 쿠키가 정한다.
+     *
+     * <p>[JA] 表示用 IP。
+     * 最後のオクテットを隠す。全体を見せるとユーザー自身にも、その画面を肩越しに見る人にも必要以上の情報になる。
+     * "203.0.113.xxx" だけでも「家から入ったようだ / 知らない場所だ」という判断はできる。
+     * ⚠️ この値は表示専用である。{@code X-Forwarded-For} はクライアントが偽造できるので(ゲートウェイの
+     * {@code CustomUserKeyResolver} も同じ理由で無視する)どの判定にも使わない。新しい端末かどうかは Cookie が決める。
      */
     public static String maskIp(String ip) {
         if (ip == null || ip.isBlank()) {
@@ -148,6 +173,7 @@ public final class DeviceIdentity {
         String trimmed = ip.trim();
 
         // IPv6 — 앞 두 그룹만 남긴다. 그 이상은 특정 회선을 가리킬 수 있다.
+        // [JA] IPv6 — 先頭の 2 グループだけを残す。それ以上は特定の回線を指しうる。
         if (trimmed.contains(":")) {
             String[] groups = trimmed.split(":");
             if (groups.length >= 2) {
@@ -161,6 +187,7 @@ public final class DeviceIdentity {
             return octets[0] + "." + octets[1] + "." + octets[2] + ".xxx";
         }
         // 형식을 모르겠으면 통째로 가린다 — 반쯤 아는 값을 흘리는 것보다 낫다.
+        // [JA] 形式が分からなければ丸ごと隠す — 半分分かる値を漏らすよりよい。
         return "xxx";
     }
 
@@ -174,6 +201,13 @@ public final class DeviceIdentity {
      * 알림 문구에만 들어가고 어떤 판정에도 쓰이지 않기 때문이다 — 위조해 봤자 자기
      * 알림의 IP 표시를 바꾸는 것뿐이다. 레이트리밋처럼 <b>판정에 쓰는 곳에서는 절대
      * 이렇게 하면 안 된다</b>(게이트웨이가 그래서 이 헤더를 버린다).
+     *
+     * <p>[JA] リクエストのクライアント IP(原文)。
+     * ゲートウェイを経由すると {@code getRemoteAddr()} はゲートウェイのアドレスである。そこで {@code X-Forwarded-For} の
+     * 先頭項目(クライアントに最も近い値)を使う。
+     * 🔒 その値はクライアントが偽造できる。それでも使う理由は、この値が通知文言にだけ入りどの判定にも使われないからである —
+     * 偽造しても自分の通知の IP 表示を変えるだけである。レートリミットのように判定に使う場所では絶対にこうしてはならない
+     * (ゲートウェイがそのためこのヘッダーを捨てる)。
      */
     public static String clientIp(HttpServletRequest request) {
         if (request == null) {
@@ -194,6 +228,7 @@ public final class DeviceIdentity {
     }
 
     /** Cloudflare 엣지가 실제 접속 IP 로 덮어쓰는 헤더 — 클라이언트가 같은 이름을 보내도 엣지에서 교체된다(게이트웨이 CustomUserKeyResolver 와 같다). */
+    // [JA] Cloudflare エッジが実際の接続 IP で上書きするヘッダー — クライアントが同じ名前を送ってもエッジで置き換えられる(ゲートウェイの CustomUserKeyResolver と同じ)。
     static final String CF_CONNECTING_IP = "CF-Connecting-IP";
 
     /**

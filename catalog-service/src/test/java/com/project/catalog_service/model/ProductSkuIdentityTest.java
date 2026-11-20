@@ -15,6 +15,8 @@ import jakarta.persistence.OrderBy;
 /**
  * SKU·사이즈는 <b>인덱스</b>로 주고받는다(?style=1&amp;size=0, 장바구니의 style) — 순서와 같음이 흔들리면 같은 인덱스가 경로마다
  * 다른 행을 가리킨다.
+ *
+ * <p>[JA] SKU・サイズは<b>インデックス</b>でやり取りする(?style=1&amp;size=0、カートの style) — 順序と等価性が揺らぐと、同じインデックスが経路ごとに別の行を指す。
  */
 @DisplayName("ProductSku — 같음과 순서")
 class ProductSkuIdentityTest {

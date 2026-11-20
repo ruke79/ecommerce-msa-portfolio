@@ -29,6 +29,13 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>(알림 쪽에도 {@code eventId} 기반 중복 제거가 있지만 그건 최종 방어선이다. 카프카에
  * 나간 뒤에 거르는 것보다 발행 자체를 한 번만 하는 편이 싸다.)
+ *
+ * <p>[JA] 企画展を時刻に合わせて開始・終了させる。
+ * なぜスケジューラなのか。「金曜 0 時から」を人がその時刻にボタンを押して運用すると必ず取りこぼす。バナー(Banner.isVisibleAt)は照会時に判定すれば十分だったが、
+ * 企画展は違う — 開始時に通知が出なければならず、それは誰かが時刻を見ていてこそ可能だ。
+ * インスタンスが二つならスケジューラも二つだ。両方が「開始時期になった」を見て両方が通知を発行すると、ユーザーに同じ企画展が二度表示される。
+ * EventRepository.transition は where status = 'SCHEDULED' の条件付き UPDATE なので、先に着いた一つだけが 1 を受け取る。その一つだけが発行する。
+ * (通知側にも eventId ベースの重複排除があるが、それは最終防衛線だ。Kafka に出た後でふるうより、発行自体を一度だけにするほうが安い。)
  */
 @Slf4j
 @Component
@@ -41,6 +48,10 @@ public class EventScheduler {
      * <p>1분이면 충분한 이유: 기획전의 경계는 사람이 정한 시각이고 초 단위 정확도를
      * 요구하지 않는다. 더 중요한 것은 <b>모든 화면이 같은 값을 본다</b>는 것이고, 그건
      * {@link EventPricing} 의 맵을 같은 주기로 갱신해 보장한다.
+     *
+     * <p>[JA] 確認周期。
+     * 1 分で十分な理由: 企画展の境界は人が決めた時刻で、秒単位の正確さは求められない。より重要なのはすべての画面が同じ値を見ることで、
+     * それは EventPricing のマップを同じ周期で更新して保証する。
      */
     static final long INTERVAL_MS = 60_000L;
 
@@ -50,6 +61,10 @@ public class EventScheduler {
      * <p>할인은 조회할 때 합성되지만 그 결과가 Redis 에 들어간다. 비우지 않으면 기획전이
      * 끝난 뒤에도 TTL 이 지날 때까지 할인가가 보이고 — 더 나쁘게 — 그 가격으로 장바구니에
      * 담긴다. 상태 전환은 하루에 몇 번뿐이라 전체 비우기로 충분하다.
+     *
+     * <p>[JA] 企画展の状態が変わるときに空にする商品キャッシュ。
+     * 割引は照会時に合成されるが、その結果が Redis に入る。空にしないと企画展終了後も TTL が切れるまで割引価格が見え — さらに悪いことに —
+     * その価格でカートに入る。状態遷移は一日に数回だけなので、全体を空にすれば十分だ。
      */
     static final List<String> PRODUCT_CACHES =
             List.of("products", "product", "search_cache", "products_by_category");
@@ -65,17 +80,24 @@ public class EventScheduler {
      * <p>{@code fixedDelay} 다({@code fixedRate} 가 아니다) — 한 번의 실행이 길어졌을 때
      * 다음 실행이 겹쳐 들어오면 같은 기획전을 두 번 처리하려 든다. 조건부 UPDATE 가 막긴
      * 하지만, 겹치지 않게 두는 편이 낫다.
+     *
+     * <p>[JA] 開始すべきものを開始し、終了すべきものを終了する。
+     * fixedDelay である(fixedRate ではない) — 一回の実行が長引いたとき次の実行が重なって入ると、同じ企画展を二度処理しようとする。
+     * 条件付き UPDATE が防ぐとはいえ、重ならないようにしておくほうがよい。
      */
     @Scheduled(fixedDelay = INTERVAL_MS, initialDelay = 10_000L)
     public void tick() {
         try {
             // 상태 전환은 EventService 가 한다 — 같은 빈 안에서 부르면 @Transactional 이
             // 프록시를 지나지 않아 조용히 무시된다(EventService.advanceDueEvents 주석).
+            // [JA] 状態遷移は EventService が行う — 同じ Bean の中で呼ぶと @Transactional がプロキシを通らず黙って無視される(EventService.advanceDueEvents のコメント)。
             Advanced advanced = eventService.advanceDueEvents(LocalDateTime.now());
 
             // 할인 맵을 **먼저** 갱신한다. 캐시를 비운 뒤에 갱신하면 그 사이에 들어온
             // 요청이 DB 를 다시 읽으면서 옛 할인 맵을 얹어, 방금 비운 캐시에 틀린 값을
             // 다시 채워 넣는다.
+            // [JA] 割引マップを先に更新する。キャッシュを空にした後で更新すると、その間に来たリクエストが DB を読み直しながら古い割引マップを上乗せし、
+            //      今空にしたキャッシュに誤った値を再び詰め込む。
             boolean pricesChanged = eventPricing.refresh();
 
             // 상태 전환이 없어도 할인 맵이 바뀌었으면 비운다 — 🐛 예전에는 전환만 봤다. 관리자가 진행 중인 기획전의 대상 · 할인율을
@@ -88,11 +110,13 @@ public class EventScheduler {
 
             // 시작 알림은 캐시까지 정리한 뒤에 보낸다. 알림을 보고 바로 들어온 사용자가
             // 옛 가격을 보면 안 된다.
+            // [JA] 開始通知はキャッシュまで整理した後に送る。通知を見てすぐ入ってきたユーザーが古い価格を見てはいけない。
             advanced.started().forEach(eventStartedProducer::publish);
 
         } catch (Exception e) {
             // 스케줄러 스레드에서 예외가 올라가면 이후 실행이 멈춘다. 기획전 하나 때문에
             // 전체 일정이 죽으면 안 된다.
+            // [JA] スケジューラのスレッドで例外が上がると以降の実行が止まる。企画展一つのせいで全体の日程が死んではならない。
             log.error("기획전 스케줄러 실행 실패: {}", e.getMessage(), e);
         }
     }
@@ -103,6 +127,10 @@ public class EventScheduler {
      * <p>{@code @CacheEvict} 를 쓰지 않고 직접 부르는 이유: 이 메서드는 같은 빈 안에서
      * 불린다. 자기 호출은 프록시를 지나지 않으므로 애노테이션이 동작하지 않는다 —
      * 캐시가 비워지지 않는데 예외도 나지 않는, 조용히 틀리는 조합이다.
+     *
+     * <p>[JA] 商品キャッシュを空にする。
+     * @CacheEvict を使わず直接呼ぶ理由: このメソッドは同じ Bean の中から呼ばれる。自己呼び出しはプロキシを通らないのでアノテーションが動かない —
+     * キャッシュが空にならないのに例外も出ない、黙って間違う組み合わせだ。
      */
     void evictProductCaches() {
         for (String name : PRODUCT_CACHES) {
@@ -120,6 +148,9 @@ public class EventScheduler {
      * <p>{@code @CacheEvict} 로 캐시를 비우고 할인 맵을 다시 읽는다. 이게 없으면 관리자는
      * 저장한 뒤 최대 1분 동안 자기 변경이 반영되지 않는 것을 보고 저장이 실패했다고
      * 생각한다.
+     *
+     * <p>[JA] 管理者が企画展を直したときに即座に反映する。
+     * @CacheEvict でキャッシュを空にし、割引マップを読み直す。これがないと管理者は保存後最大 1 分間、自分の変更が反映されないのを見て保存に失敗したと思う。
      */
     @CacheEvict(value = {"products", "product", "search_cache", "products_by_category"},
                 allEntries = true)

@@ -14,6 +14,8 @@ public class LocalDateTimeUtil {
 
     /**
     * @title 날짜를 분리해 배열로 반환
+    *
+    * <p>[JA] 日付を分割して配列で返す
     **/
     public static Integer[] toArray(LocalDateTime localDateTime) {
         if (localDateTime == null) {

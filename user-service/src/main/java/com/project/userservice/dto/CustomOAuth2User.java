@@ -24,6 +24,7 @@ public class CustomOAuth2User implements OAuth2User {
     }
 
     /** {@link CustomOidcUser} 가 이미 확정된 신원을 그대로 물려받을 때 쓴다. */
+    // [JA] {@link CustomOidcUser} が既に確定した身元をそのまま引き継ぐときに使う。
     protected CustomOAuth2User(CustomOAuth2User resolved) {
         this(resolved.oAuth2Response, resolved.role);
     }
@@ -67,6 +68,10 @@ public class CustomOAuth2User implements OAuth2User {
      * findByEmail 에 넘기고 있었다 — "google 12345" 는 이메일이 아니라서 **모든 소셜
      * 로그인이 user_not_found 로 끝났다.** 이름과 내용이 어긋난 접근자가 만든 버그라,
      * 이메일은 이메일이라고 부른다.
+     *
+     * <p>[JA] 成功ハンドラがユーザーレコードを探すキー。以前のハンドラは getUsername() の結果を findByEmail に渡していた —
+     * "google 12345" はメールではないので**すべてのソーシャルログインが user_not_found で終わった。**
+     * 名前と内容が食い違うアクセサが生んだバグなので、メールはメールと呼ぶ。
      */
     public String getEmail() {
         return oAuth2Response.getEmail();

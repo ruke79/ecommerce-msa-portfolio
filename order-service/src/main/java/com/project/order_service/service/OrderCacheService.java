@@ -53,7 +53,9 @@ public class OrderCacheService {
     private final OrderDataService orderDataService;
     /**
      * 조회 화면의 색상 — <b>트랜잭션 밖에서만</b> 부른다(아래 조회들은 @Transactional 이 없다). 🐛 예전에는 OrderDataService 가 읽기
-     * 트랜잭션 안에서 불러, catalog 가 느리면 그동안 DB 커넥션(풀 5개)을 쥐고 기다렸다. [JA] 色は必ずトランザクションの外で呼ぶ。
+     * 트랜잭션 안에서 불러, catalog 가 느리면 그동안 DB 커넥션(풀 5개)을 쥐고 기다렸다.
+     * [JA] 照会画面の色 — <b>トランザクションの外でだけ</b>呼ぶ(下の照会には @Transactional がない)。🐛 以前は OrderDataService が
+     * 読み取りトランザクションの中で呼んでいたので、catalog が遅いとその間 DB コネクション(プール 5 個)を握って待っていた。
      */
     private final CatalogServiceClient catalogServiceClient;
 
@@ -67,6 +69,7 @@ public class OrderCacheService {
     }
     
     // @Cacheable: customerId를 키로 사용하여 주문 목록을 캐시합니다.
+    // [JA] @Cacheable: customerId をキーとして注文一覧をキャッシュする。
     @Cacheable(value = "orders", key = "#customerId")
     @Transactional(readOnly = true)
     public List<Order> getOrdersByCustomerId(Long customerId) {
@@ -79,6 +82,11 @@ public class OrderCacheService {
      * <p>⚠️ <b>여기서부터 트랜잭션이다.</b> 장바구니와 금액은 이미 정해진 값으로 받는다 —
      * 원격 호출은 {@code OrderService.createOrder} 가 트랜잭션 밖에서 끝냈다(docs/37 #5).
      * 이 자리에 Feign 호출을 다시 넣으면 DB 커넥션을 쥔 채 다른 서비스를 기다리게 된다.
+     *
+     * <p>[JA] 新しい注文の保存 + 関連キャッシュの無効化。
+     * ⚠️ <b>ここからトランザクションである。</b>カートと金額は既に決まった値で受け取る —
+     * リモート呼び出しは {@code OrderService.createOrder} がトランザクションの外で済ませた(docs/37 #5)。
+     * この場所に Feign 呼び出しを再び入れると、DB コネクションを握ったまま他のサービスを待つことになる。
      */
     @Transactional
     @CacheEvict(value = {"orders"}, allEntries = true)
@@ -88,6 +96,7 @@ public class OrderCacheService {
     }
 
     /** 멱등 키를 실은 주문 생성(V26). 같은 고객 · 같은 키가 동시에 오면 늦은 쪽의 커밋이 유니크 제약으로 실패한다. */
+    // [JA] 冪等キーを載せた注文作成(V26)。同じ顧客 · 同じキーが同時に来ると、遅い側のコミットがユニーク制約で失敗する。
     @Transactional
     @CacheEvict(value = {"orders"}, allEntries = true)
     public Order createOrder(OrderRequest request, CartDto latestCart, OrderPricing.Amounts amounts,
@@ -101,12 +110,14 @@ public class OrderCacheService {
     }
 
     // 키에 요청자 id 가 들어가는 이유: 소유권 검사가 결과를 가른다 — 남의 요청이 내 캐시 항목을 받으면 안 된다.
+    // [JA] キーに要求者 id が入る理由: 所有権チェックが結果を分ける — 他人のリクエストが自分のキャッシュ項目を受け取ってはならない。
     @Cacheable(value = "order", key = "{#orderId, #requesterId, #filter}")
     public OrderDto getOrder(Long orderId, Long requesterId, String filter) {
        return toView(orderDataService.loadOrder(orderId, requesterId, filter));
     }
 
     /** 색상은 목록 전체에 한 번 — 예전에는 주문마다 catalog 를 불렀다(트랜잭션 안에서 N 번). */
+    // [JA] 色は一覧全体で一度 — 以前は注文ごとに catalog を呼んでいた(トランザクションの中で N 回)。
     @Cacheable(value = "orderList", key = "{#customerId, #filter}")
     public List<OrderDto> getOrders(Long customerId, String filter) {
         List<Order> orders = orderDataService.loadOrders(customerId, filter);
@@ -129,24 +140,39 @@ public class OrderCacheService {
      * 없고(스크롤 한 번에 새 키가 하나씩 생긴다), 주문 목록은 방금 한 주문이 보여야 하는
      * 화면이다. 바로 위 {@code orderList} 캐시가 {@code {email, filter}} 하나로 <b>전체
      * 목록</b>을 담고 있던 것이 원래 문제의 일부이기도 하다.
+     *
+     * <p>[JA] 注文一覧 — カーソルページング。
+     * <b>ここだけ @Cacheable がない。</b>カーソルとフィルタの組み合わせごとにキーが分かれてヒット率がほとんど
+     * なく(スクロール一回ごとに新しいキーが一つずつできる)、注文一覧は今した注文が見えなければならない
+     * 画面である。すぐ上の {@code orderList} キャッシュが {@code {email, filter}} 一つで<b>一覧全体</b>を
+     * 抱えていたことが元の問題の一部でもある。
      */
     public Page<OrderDto> getOrdersPage(Long customerId, String filter, Long cursor, int size) {
         return toView(orderDataService.loadOrdersPage(customerId, filter, cursor, size));
     }
 
          // 페이지별로 주문 목록을 조회하는 새로운 메서드
+         // [JA] ページごとに注文一覧を照会する新しいメソッド
     @Cacheable(value = "ordersPage", key = "{#customerId, #page, #size}")
     public Page<OrderDto> getOrdersByCustomerIdWithPagination(Long customerId, int page, int size) {
         return toView(orderDataService.loadOrdersByCustomerIdWithPagination(customerId, page, size));
     }
 
         // --- 점진적 로딩(커서 기반 페이징) 메서드 추가 ---
+        // [JA] --- 段階的ロード(カーソルベースのページング)メソッド追加 ---
     /**
      * 고객 ID로 주문 목록을 커서 기반으로 조회합니다 (점진적 로딩).
+     *
+     * <p>[JA] 顧客 ID で注文一覧をカーソルベースで照会する (段階的ロード)。
+     *
      * @param customerId 조회할 고객의 ID
+     *                   [JA] 照会する顧客の ID
      * @param cursorId 마지막으로 조회한 주문의 ID (첫 페이지 조회 시 null)
+     *                 [JA] 最後に照会した注文の ID (最初のページの照会時は null)
      * @param size 페이지당 주문 개수
+     *             [JA] ページあたりの注文数
      * @return OrderDto 목록과 다음 커서 ID
+     *         [JA] OrderDto 一覧と次のカーソル ID
      */
     @Cacheable(value = "ordersCursor", key = "{#customerId, #cursorId, #size}")
     public Page<OrderDto> getOrdersByCustomerIdWithCursor(Long customerId, Long cursorId, int size) {
@@ -156,12 +182,19 @@ public class OrderCacheService {
 
     // 결제 완료 처리 메서드
     // @CacheEvict: 결제 완료 시, 관련 캐시(orders, orderList)를 무효화합니다.
+    // [JA] 決済完了処理メソッド
+    //      @CacheEvict: 決済完了時、関連キャッシュ(orders, orderList)を無効化する。
     /**
      * 확인된 결제를 반영한다 — 제공자와 무관하게. 규칙은 OrderDataService 가 갖는다.
      *
      * <p>캐시를 비우는 범위가 넓은 이유: 결제가 반영되면 주문 상태가 바뀌고, 목록·상세·
      * 페이지 캐시가 모두 옛 상태를 들고 있다. 결제했는데 화면이 미결제로 보이면
      * 사용자는 다시 결제한다.
+     *
+     * <p>[JA] 確認された決済を反映する — プロバイダに関係なく。ルールは OrderDataService が持つ。
+     * キャッシュを空にする範囲が広い理由: 決済が反映されると注文状態が変わり、一覧・詳細・
+     * ページキャッシュがすべて古い状態を持っている。決済したのに画面が未決済に見えると
+     * ユーザーは再び決済する。
      */
     @Transactional
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"},
@@ -172,30 +205,36 @@ public class OrderCacheService {
     }
 
     /** 주문 취소. 목록·상세 캐시가 옛 상태를 계속 보여 주면 취소가 안 된 것처럼 보인다. */
+    // [JA] 注文取消。一覧・詳細キャッシュが古い状態を見せ続けると、取消できていないように見える。
     @Transactional
     /** 추적 번호로 주문 — 캐시 없이(방금 바뀐 상태를 봐야 한다). */
+    // [JA] 追跡番号で注文 — キャッシュなしで(今変わった状態を見なければならない)。
     public Order getOrderByTrackingId(String trackingId) {
         return orderDataService.getOrderByTrackingId(trackingId);
     }
 
     /** 재고가 모자라 성립하지 않은 주문을 지운다(docs/59). */
+    // [JA] 在庫が足りず成立しなかった注文を消す(docs/59)。
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
     public boolean discardUnplaced(Long orderId) {
         return orderDataService.discardUnplaced(orderId);
     }
 
     /** 결제 시작 — 이 주문의 결제창을 하나로(V27). 화면에 보이는 값이 아니라 캐시를 비우지 않는다. */
+    // [JA] 決済開始 — この注文の決済画面を一つに(V27)。画面に見える値ではないのでキャッシュを空にしない。
     public void startPaymentAttempt(String trackingId, String attempt, java.time.Duration window) {
         orderDataService.startPaymentAttempt(trackingId, attempt, window);
     }
 
     /** 재고 예약의 만료 시각(docs/59). */
+    // [JA] 在庫予約の期限時刻(docs/59)。
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
     public void recordStockHold(Long orderId, java.time.LocalDateTime holdUntil) {
         orderDataService.recordStockHold(orderId, holdUntil);
     }
 
     /** 같은 고객의 앞선 결제 전 주문의 예약을 새 주문에 넘긴다(docs/59 §4). */
+    // [JA] 同じ顧客の先行する決済前注文の予約を新しい注文に引き継ぐ(docs/59 §4)。
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
     public java.util.List<Long> supersedeStockHolds(Long customerId, Long keepOrderId, java.time.LocalDateTime now) {
         return orderDataService.supersedeStockHolds(customerId, keepOrderId, now);
@@ -209,6 +248,9 @@ public class OrderCacheService {
     /**
      * 관리자 목록. <b>캐시하지 않는다</b> — 환불 직후 관리자가 보는 화면이 옛 상태를
      * 보여 주면 같은 주문을 또 환불하려 든다(서버는 멱등하지만 화면이 거짓말한다).
+     *
+     * <p>[JA] 管理者一覧。<b>キャッシュしない</b> — 返金直後に管理者が見る画面が古い状態を
+     * 見せると同じ注文をまた返金しようとする(サーバは冪等だが画面が嘘をつく)。
      */
     @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<com.project.common.dto.order.AdminOrderSummaryDto>
@@ -217,6 +259,7 @@ public class OrderCacheService {
     }
 
     /** 환불. 규칙은 OrderDataService 가 갖는다. 캐시를 비우는 이유는 결제 반영과 같다. */
+    // [JA] 返金。ルールは OrderDataService が持つ。キャッシュを空にする理由は決済反映と同じ。
     @Transactional
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
     public com.project.order_service.model.Order refundOrder(String trackingId, Long requesterId,
@@ -226,6 +269,7 @@ public class OrderCacheService {
     }
 
     // ── 무통장입금 (docs/49 §11) — 상태가 바뀌므로 결제 반영과 같은 범위를 비운다 ──
+    // [JA] ── 銀行振込 (docs/49 §11) — 状態が変わるので決済反映と同じ範囲を空にする ──
 
     @Transactional
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
@@ -260,6 +304,7 @@ public class OrderCacheService {
     }
 
     /** 반품 입고. 고객 상세가 "반품 접수 중" 을 보여 주므로 상세 캐시를 비운다. */
+    // [JA] 返品入庫。顧客の詳細が「返品受付中」を見せるので詳細キャッシュを空にする。
     @Transactional
     @CacheEvict(value = {"orders", "orderList", "order", "ordersPage", "ordersCursor"}, allEntries = true)
     public com.project.order_service.model.Order receiveReturn(String trackingId, boolean restock,

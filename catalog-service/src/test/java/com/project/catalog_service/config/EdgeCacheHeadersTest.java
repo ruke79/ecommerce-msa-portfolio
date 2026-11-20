@@ -47,6 +47,7 @@ class EdgeCacheHeadersTest {
     private static final String PUBLIC = "public, max-age=0, s-maxage=30, stale-while-revalidate=30";
 
     /** 경로만 흉내 낸 컨트롤러 — 실제 목록 경로와 목록 밖 경로, 오류 응답. */
+    // [JA] パスだけ真似たコントローラ — 実際の一覧のパスと一覧外のパス、エラー応答。
     @RestController
     static class Fake {
         @GetMapping("/api/content/home")
@@ -74,6 +75,7 @@ class EdgeCacheHeadersTest {
         ResponseEntity<?> postSearch() { return ResponseEntity.ok(Map.of()); }
 
         /** 본문 없이 끝나는 응답 — 본문 advice 를 거치지 않으므로 인터셉터의 기본값만 남는다. */
+        // [JA] 本文なしで終わる応答 — 本文の advice を通らないので、インターセプタの既定値だけが残る。
         @GetMapping("/api/search/category")
         void raw(jakarta.servlet.http.HttpServletResponse response) { response.setStatus(204); }
     }
@@ -115,6 +117,7 @@ class EdgeCacheHeadersTest {
         }
         assertThat(cacheControl(mvc.perform(post("/api/search")).andReturn())).containsExactly("no-store");
         // 본문 advice 를 거치지 않는 응답(예외 처리 · 직접 쓴 상태 코드)은 인터셉터의 기본값이 지킨다 — 목록의 경로여도
+        // [JA] 本文の advice を通らない応答(例外処理・直接書いたステータスコード)はインターセプタの既定値が守る — 一覧のパスであっても
         assertThat(cacheControl(mvc.perform(get("/api/search/category")).andReturn())).containsExactly("no-store");
     }
 
@@ -150,8 +153,10 @@ class EdgeCacheHeadersTest {
     }
 
     // ── 목록이 실제 컨트롤러와 맞는가 ─────────────────────────────────────────────────────────────
+    // [JA] ── 一覧が実際のコントローラと合っているか ──
 
     /** catalog 컨트롤러의 GET 엔드포인트: 경로 → 메서드. */
+    // [JA] catalog コントローラの GET エンドポイント: パス → メソッド。
     private static Map<String, Method> realGetEndpoints() throws Exception {
         ClassPathScanningCandidateComponentProvider scanner = new ClassPathScanningCandidateComponentProvider(false);
         scanner.addIncludeFilter(new AnnotationTypeFilter(RestController.class));

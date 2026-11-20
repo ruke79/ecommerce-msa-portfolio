@@ -14,6 +14,12 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>없으면 없는 대로 — 404(아직 이벤트가 없다 · 옛 주문) · 503(프로젝션 준비 중)은 오류가 아니다. 주문 상세는
  * 이 컴포넌트 없이도 완전하므로 **아무것도 그리지 않는다.** 로딩도 보여 주지 않는다 — 깜빡임만 더한다.
+ *
+ * <p>[JA] 注文の進行記録 — 状態がいつ・何によって変わったか(docs/76)。
+ * 注文詳細(order-service の DB)ではなく **読み取りモデル**(saga-projection が状態変更イベントを畳んだもの)から読む。
+ * そのため注文詳細と数秒ずれることがある — 状態の変化を見たら読み直し、サーバーが「待機レプリカが答えた」(stale)と言えばそう伝える。
+ * 無ければ無いまま — 404(まだイベントがない・古い注文)・503(プロジェクション準備中)はエラーではない。注文詳細は
+ * このコンポーネントなしでも完全なので **何も描かない。** ローディングも出さない — ちらつきが増えるだけだ。
  */
 export default function OrderTimeline({ orderId, orderStatus }) {
     const { t } = useTranslation();
@@ -27,6 +33,7 @@ export default function OrderTimeline({ orderId, orderStatus }) {
             .catch(() => { if (alive) setView(null); });
         return () => { alive = false; };
         // orderStatus 가 바뀌면(결제 확인 · 배송 · 확정) 기록도 늘었을 것이다 — 그때 다시 읽는다.
+        // [JA] orderStatus が変われば(決済確認・配送・確定)記録も増えたはずだ — そのとき読み直す。
     }, [orderId, orderStatus]);
 
     const entries = view?.timeline ?? [];
@@ -53,6 +60,7 @@ export default function OrderTimeline({ orderId, orderStatus }) {
 }
 
 /** 출처 코드 → 이름. 모르는 코드(서버에 새 출처가 생겼다)는 코드 그대로 — 빈칸보다 낫다(statusLabel 과 같은 규칙). */
+// [JA] 出所コード → 名前。知らないコード(サーバーに新しい出所ができた)はコードのまま — 空欄よりましだ(statusLabel と同じ規則)。
 export function sourceLabel(t, source) {
     if (!source) return "";
     const key = `order.timeline.source.${source}`;

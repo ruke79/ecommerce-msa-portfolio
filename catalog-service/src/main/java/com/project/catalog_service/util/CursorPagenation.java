@@ -8,7 +8,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 public class CursorPagenation<T> {
 
-    private final List<T> items; // 현재 스크롤의 요소 + 다음 스크롤의 요소 1개 (다음 스크롤이 있는지 확인을 위한)
+    private final List<T> items; // 현재 스크롤의 요소 + 다음 스크롤의 요소 1개 (다음 스크롤이 있는지 확인을 위한) ／ [JA] 現在のスクロールの要素 + 次のスクロールの要素 1 個(次のスクロールがあるか確認するため)
     private final int countPerScroll;
 
     public static <T> CursorPagenation<T> of(List<T> itemList, int size) {

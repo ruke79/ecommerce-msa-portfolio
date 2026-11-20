@@ -27,6 +27,7 @@ class GlobalFilterOrderTest {
 
         assertThat(orders).as("같은 order 면 상대 순서가 보장되지 않는다").doesNotHaveDuplicates().isSorted();
         // 라우트 필터는 목록 위치 + 1(1 부터) · 내장 NettyWriteResponseFilter 는 -1 — 그보다 한참 앞
+        // [JA] ルートフィルターは一覧の位置 + 1(1 から) · 組み込みの NettyWriteResponseFilter は -1 — それよりずっと前
         assertThat(orders).allSatisfy(o -> assertThat(o).isLessThan(Ordered.HIGHEST_PRECEDENCE + 1000));
     }
 }

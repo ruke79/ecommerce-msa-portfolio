@@ -58,6 +58,7 @@ class InternalEndpointGuardTest {
     }
 
     /** 모든 모듈의 src/main/java 아래 .java — node_modules · build 는 걷지 않는다. */
+    // [JA] 全モジュールの src/main/java 配下の .java — node_modules · build はたどらない。
     static List<Path> mainSources() {
         List<Path> out = new ArrayList<>();
         try (Stream<Path> modules = Files.list(root())) {
@@ -73,6 +74,7 @@ class InternalEndpointGuardTest {
     }
 
     /** 주석을 지운 소스 — 주석 속 예시(@RequestHeader("User-Email") 등)에 속지 않게. 문자열 속 "lb://" 는 공백 뒤가 아니라 남는다. */
+    // [JA] コメントを消したソース — コメント内の例(@RequestHeader("User-Email") など)にだまされないように。文字列内の "lb://" は空白の後ではないので残る。
     static String code(String src) {
         String noBlock = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL).matcher(src).replaceAll(" ");
         return noBlock.replaceAll("(?m)(^|\\s)//.*$", "$1");
@@ -87,6 +89,7 @@ class InternalEndpointGuardTest {
     }
 
     /** 규칙의 HTTP 경로 앞부분들(gRPC 는 InternalCallerFilter 가 직접 막아 컨트롤러가 없다). */
+    // [JA] ルールの HTTP パスの前方部分(gRPC は InternalCallerFilter が直接止めるのでコントローラーがない)。
     static List<String> rulePrefixes() {
         String cm = read(root().resolve("k8s/10-configmap.yaml"));
         Matcher m = Pattern.compile("INTERNAL_AUTH_PATH_RULES:\\s*\"([^\"]+)\"").matcher(cm);
@@ -102,6 +105,7 @@ class InternalEndpointGuardTest {
     }
 
     /** 매핑 애너테이션 괄호 안에서 경로들만 — value/path 의 문자열(배열이면 전부), 없으면 "". */
+    // [JA] マッピングアノテーションの括弧内からパスだけ — value/path の文字列(配列なら全部)、なければ ""。
     static List<String> paths(String args) {
         if (args == null || args.isBlank()) {
             return List.of("");
@@ -113,7 +117,7 @@ class InternalEndpointGuardTest {
         } else if (a.startsWith("\"")) {
             part = a.substring(0, a.indexOf('"', 1) + 1);
         } else {
-            return List.of("");   // produces = ... 만 있다
+            return List.of("");   // produces = ... 만 있다 ／ [JA] produces = ... だけがある
         }
         List<String> out = new ArrayList<>();
         Matcher m = LITERAL.matcher(part);
@@ -129,6 +133,7 @@ class InternalEndpointGuardTest {
     }
 
     /** 모든 서비스의 컨트롤러 엔드포인트와 그 메서드 본문(다음 매핑 애너테이션까지). */
+    // [JA] 全サービスのコントローラーのエンドポイントとそのメソッド本文(次のマッピングアノテーションまで)。
     static List<Endpoint> endpoints() {
         List<Endpoint> out = new ArrayList<>();
         mainSources().forEach(p -> {
@@ -148,7 +153,7 @@ class InternalEndpointGuardTest {
             List<String> args = new ArrayList<>();
             while (mm.find()) {
                 if (mm.start() < classAt) {
-                    continue;   // 클래스의 @RequestMapping
+                    continue;   // 클래스의 @RequestMapping ／ [JA] クラスの @RequestMapping
                 }
                 spans.add(new int[] {mm.start(), mm.end()});
                 args.add(mm.group(3));
@@ -179,6 +184,7 @@ class InternalEndpointGuardTest {
         assertThat(code("a // @GetMapping(\"/x\")\n/* @RequestHeader(\"User-Role\") */ b \"lb://svc\""))
                 .doesNotContain("@GetMapping", "User-Role").contains("lb://svc");
         // 실제 소스에서 알려진 내부 엔드포인트를 찾는다 — 파서가 아무것도 못 찾으면 아래 두 테스트가 헛돈다.
+        // [JA] 実際のソースから既知の内部エンドポイントを探す — パーサーが何も見つけられなければ下の 2 テストが空回りする。
         assertThat(endpoints()).extracting(Endpoint::path)
                 .contains("/api/order/internal/purchase-stats", "/api/auth/user/emails", "/api/internal/stock/reservations");
     }
@@ -239,6 +245,7 @@ class InternalEndpointGuardTest {
                 .as("Feign 이 역할 · 이메일 헤더를 싣는다 — identity enforce 가 그것을 버린다(docs/57 §16). 받는 쪽이 User-Id 로 조회하게 한다")
                 .isEmpty();
         // 대신할 수 있는 것은 User-Id 뿐 — 그 길이 실제로 쓰이고 있다(장바구니 조회).
+        // [JA] 代わりになるのは User-Id だけ — その経路が実際に使われている(カート照会)。
         assertThat(read(root().resolve("order-service/src/main/java/com/project/order_service/client/CartServiceClient.java")))
                 .contains("@RequestHeader(\"User-Id\")");
     }

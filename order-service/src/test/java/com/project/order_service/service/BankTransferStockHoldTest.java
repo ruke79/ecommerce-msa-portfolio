@@ -26,6 +26,8 @@ import com.project.order_service.stock.OrderStockHold;
 
 /**
  * 무통장 입금 — 입금 기한까지 재고를 잡고, 모자라면 입금 안내를 내지 않는다 (docs/59).
+ *
+ * <p>[JA] 銀行振込 — 入金期限まで在庫を確保し、足りなければ入金案内を出さない(docs/59)。
  */
 @DisplayName("BankTransferService — 재고 예약")
 class BankTransferStockHoldTest {

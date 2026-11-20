@@ -26,14 +26,21 @@ import org.junit.jupiter.api.Test;
  * <p>🐛 실제로 그랬다: 주문 진행 타임라인(docs/76)의 {@code /saga-projection/...} 이 터널 정규식에 없었다. B-49 는 프론트 경로와
  * 게이트웨이를 대조하지만 그 목록도 {@code *-service} 뿐이라 이 경로를 보지 않았다.
  *
- * <p>[JA] 外(Cloudflare トンネル)がゲートウェイへ送るパス = ゲートウェイがルーティングするパス。トンネルを忘れるとエラーではなく
- * HTML 200 が返り、サーバーログにも残らない。saga-projection が実際に抜けていた。
+ * <p>[JA] B-82: 外(Cloudflare トンネル)がゲートウェイへ送るパス = ゲートウェイがルーティングするパス。
+ * 本番トンネル(k8s-overlays/prod/cloudflared.yaml)は正規表現に合うパスだけをゲートウェイへ送り、残りは traefik → フロント nginx へ
+ * 送る。nginx は知らないパスに {@code index.html} 200 を返す(SPA の try_files)。そのためゲートウェイにルートを足してトンネルを
+ * 忘れると<b>エラーではなく HTML 200</b> が返り、ゲートウェイまで来ないのでサーバーログにも残らない。
+ * 🐛 実際にそうなった: 注文進行タイムライン(docs/76)の {@code /saga-projection/...} がトンネルの正規表現になかった。B-49 はフロントの
+ * パスとゲートウェイを照合するが、そのリストも {@code *-service} だけなのでこのパスを見ていなかった。
  *
  * <p>B-85: 바깥으로 들어오는 길은 터널 하나뿐 — 매니페스트(k8s/ · k8s-overlays/)에 노드 포트를 여는 것(Service
  * {@code type: LoadBalancer · NodePort}, {@code nodePort} · {@code hostPort} · {@code hostNetwork: true})이 없다.
  * 🐛 게이트웨이 Service 가 LoadBalancer 였다 — 운영은 {@code --disable servicelb} 라 외부 IP 는 없었지만 LoadBalancer 는
  * nodePort 를 함께 받아 모든 노드의 30000 번대 포트가 게이트웨이로 열려 있었다.
- * [JA] 外から入る道はトンネルだけ。LoadBalancer は servicelb 無効でも nodePort を受け、全ノードのポートが開いていた。
+ * [JA] B-85: 外から入る道はトンネル一つだけ — マニフェスト(k8s/ · k8s-overlays/)にノードのポートを開くもの(Service
+ * {@code type: LoadBalancer · NodePort}、{@code nodePort} · {@code hostPort} · {@code hostNetwork: true})がない。
+ * 🐛 ゲートウェイの Service が LoadBalancer だった — 本番は {@code --disable servicelb} なので外部 IP はなかったが、LoadBalancer は
+ * nodePort も一緒に受け、全ノードの 30000 番台のポートがゲートウェイへ開いていた。
  */
 @DisplayName("B-82 · B-85: 터널이 게이트웨이로 보내는 경로 = 게이트웨이 라우트, 노드 포트를 여는 매니페스트 없음")
 public class EdgeRoutingGuardTest {
@@ -44,6 +51,7 @@ public class EdgeRoutingGuardTest {
     }
 
     /** 게이트웨이 Path= 술어들의 첫 경로 조각(/user-service, /saga-projection …). */
+    // [JA] ゲートウェイの Path= 述語の最初のパス断片(/user-service, /saga-projection …)。
     public static TreeSet<String> gatewayPrefixes() throws IOException {
         String yml = Files.readString(root().resolve("gateway-server/src/main/resources/application-local.yml"))
                 .replaceAll("\\\\\\s*\\n\\s*", " ");
@@ -61,6 +69,7 @@ public class EdgeRoutingGuardTest {
     }
 
     /** 터널에서 게이트웨이로 가는 규칙들의 path 정규식. */
+    // [JA] トンネルからゲートウェイへ行くルールの path 正規表現。
     static List<Pattern> tunnelToGateway(String cloudflared) {
         List<Pattern> out = new ArrayList<>();
         Matcher rule = Pattern.compile("-\\s*path:\\s*(\\S+)\\s*\\n\\s*service:\\s*https?://gateway-server[^\\s]*").matcher(cloudflared);
@@ -95,10 +104,12 @@ public class EdgeRoutingGuardTest {
     }
 
     /** 노드(호스트)의 포트를 바깥으로 여는 매니페스트 키 — 주석을 뗀 줄에서 찾는다. */
+    // [JA] ノード(ホスト)のポートを外に開くマニフェストのキー — コメントを外した行で探す。
     static final Pattern NODE_EXPOSURE = Pattern.compile(
             "^\\s*(?:-\\s*)?(?:type:\\s*[\"']?(?:LoadBalancer|NodePort)\\b|nodePort:|hostPort:|hostNetwork:\\s*true\\b)");
 
     /** 한 파일에서 노드 포트를 여는 줄들(주석 제외). */
+    // [JA] 一つのファイルでノードポートを開く行(コメント除外)。
     static List<String> nodeExposures(String yaml) {
         List<String> out = new ArrayList<>();
         for (String line : yaml.split("\\R")) {
@@ -144,6 +155,7 @@ public class EdgeRoutingGuardTest {
                             found.add(rel + ": kubernetes.io/ingress.class 어노테이션 — spec.ingressClassName 으로");
                         }
                         // 온전한 Ingress(rules 가 있는 것)만 — 오버레이 패치(tls 만)는 원본의 클래스를 물려받는다
+                        // [JA] 完全な Ingress(rules のあるもの)だけ — オーバーレイのパッチ(tls だけ)は元のクラスを受け継ぐ
                         if (code.matches("(?s).*(?m:^kind:\\s*Ingress\\s*$).*") && code.matches("(?s).*(?m:^  rules:).*")) {
                             ingresses++;
                             if (!code.matches("(?s).*(?m:^  ingressClassName:\\s*traefik\\s*$).*")) {

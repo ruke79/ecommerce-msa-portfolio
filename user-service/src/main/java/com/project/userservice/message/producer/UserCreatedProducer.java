@@ -46,6 +46,19 @@ import com.project.common.message.dto.request.UserCreatedRequest;
  * <p>무엇을 보낼지는 <b>아웃박스가 정한다</b>({@code UserOutboxScheduler}). 여기는 그
  * 한 건을 보내고 <b>성공했는지 확실히 말해 주는</b> 일만 맡는다 — 그래서 동기다.
  * 비동기로 두면 폴러가 상태를 확정할 수 없고, 같은 문제가 한 겹 아래로 옮겨 갈 뿐이다.
+ *
+ * <p>[JA] 登録が確定したユーザーを他のサービスに通知する。
+ * このイベントを受けて chat-service は {@code chat_member} 行を作り、coupon-service は登録お祝いクーポンを発行する。
+ * この 1 行が失敗すると、そのユーザーはチャットに入れずクーポンも受け取れない。(order-service はもう購読しない —
+ * 注文者 id はトークンの uid である、docs/48 §6-①。)
+ * 🐛 以前は失敗してもどこにも残らなかった。誤りは二つあった。dual-write — {@code @Transactional} が付いていても
+ * Kafka 発行はそのトランザクションに参加しない。アカウントはコミットされ、イベントは届かないことがある。
+ * 結果を見ない — {@code send} は非同期で future を返してすぐ終わる。シリアライズ失敗・ブローカー拒否・
+ * タイムアウトのどれが起きてもログ 1 行ない。実際にその結果を見た: {@code user-created} トピックが丸ごと空なのに
+ * (offset 0, lag 0)アカウントは無事で、そのユーザーは注文ボタンを押すと 400 を受けた(docs/47)。
+ * 今このクラスは「送る」だけをする。何を送るかはアウトボックスが決める({@code UserOutboxScheduler})。ここはその
+ * 1 件を送り、成功したかどうかを確実に返す役目だけを担う — だから同期である。非同期にするとポーラーが状態を
+ * 確定できず、同じ問題が一段下に移るだけである。
  */
 @Slf4j
 @Component
@@ -53,6 +66,7 @@ import com.project.common.message.dto.request.UserCreatedRequest;
 public class UserCreatedProducer {
 
     /** 토픽 이름이자 아웃박스의 {@code event_type}. 나중에 CDC EventRouter 로 옮겨도 그대로 쓰인다. */
+    // [JA] トピック名であり、アウトボックスの {@code event_type}。後で CDC EventRouter に移してもそのまま使われる。
     public static final String TOPIC = "user-created";
 
     private final KafkaTemplate<String, UserCreatedRequest> kafkaTemplate;
@@ -62,6 +76,10 @@ public class UserCreatedProducer {
      *
      * <p>무한정 기다리면 안 된다 — 폴러가 트랜잭션을 연 채 잠금을 쥐고 있다. 여기서
      * 막히면 그 배치 전체가 멈추고 다른 레플리카도 그 행을 볼 수 없다.
+     *
+     * <p>[JA] ブローカーの ack を待つ時間。
+     * 無制限に待ってはならない — ポーラーはトランザクションを開いたままロックを持っている。ここで詰まると
+     * そのバッチ全体が止まり、他のレプリカもその行を見られない。
      */
     @Value("${app.outbox.publish-timeout-ms:10000}")
     private long publishTimeoutMs;
@@ -69,7 +87,10 @@ public class UserCreatedProducer {
     /**
      * 한 건을 보내고 <b>끝날 때까지 기다린다.</b>
      *
+     * <p>[JA] 1 件を送り、終わるまで待つ。
+     *
      * @throws RuntimeException 발행에 실패하면. 호출자가 그 행을 FAILED 로 남긴다.
+     *     [JA] 発行に失敗した場合。呼び出し側がその行を FAILED として残す。
      */
     public void publish(UserCreatedRequest userCreatedRequest) {
         Long userId = userCreatedRequest.getUserId();
@@ -81,6 +102,7 @@ public class UserCreatedProducer {
             throw new IllegalStateException("user-created 발행이 중단됐다: userId=" + userId, e);
         } catch (Exception e) {
             // 이메일·이름은 남기지 않는다. userId 로 충분히 추적된다.
+            // [JA] メールアドレス・名前は残さない。userId で十分に追跡できる。
             throw new IllegalStateException("user-created 발행 실패: userId=" + userId, e);
         }
     }
@@ -89,13 +111,17 @@ public class UserCreatedProducer {
      * 보내기만 하고 결과(ack)는 돌려준다 — 아웃박스 폴러가 묶음을 <b>모두 보낸 뒤 함께</b> 기다린다
      * ({@code UserOutboxScheduler}, docs/79 §4). 한 건씩 기다리면 폴러의 트랜잭션이 묶음 × 왕복(브로커가 죽으면 묶음 × 상한)이었다.
      *
-     * <p>[JA] 送るだけで結果(ack)を返す — アウトボックスのポーラーがバッチを<b>すべて送ってからまとめて</b>待つ。
+     * <p>[JA] 送るだけで結果(ack)を返す — アウトボックスのポーラーがバッチを<b>すべて送ってからまとめて</b>待つ
+     * ({@code UserOutboxScheduler}, docs/79 §4)。一件ずつ待つと、ポーラーのトランザクションがバッチ × 往復(ブローカーが死ぬとバッチ × 上限)だった。
+     * 送信自体がすぐ失敗したとき(ブローカーのメタデータを受け取れない · 直列化)は RuntimeException — 呼び出し側がその行を FAILED にする。
      *
      * @throws RuntimeException 보내기 자체가 바로 실패하면(브로커 메타데이터를 받지 못함 · 직렬화) — 호출자가 그 행을 FAILED 로
      */
     public CompletableFuture<?> send(UserCreatedRequest userCreatedRequest) {
         // 키 = 사용자 id — 소비자 셋(order·coupon·chat)이 같은 사용자의 이벤트를 같은
         // 파티션에서 본다(docs/38 §1.15).
+        // [JA] キー = ユーザー id — 3 つのコンシューマー(order・coupon・chat)が同じユーザーのイベントを同じ
+        //      パーティションで見る(docs/38 §1.15)。
         return kafkaTemplate.send(TOPIC, String.valueOf(userCreatedRequest.getUserId()), userCreatedRequest);
     }
 }

@@ -8,14 +8,24 @@
 #
 # ⚠️ 문구가 곧 계약이다. 코드의 log.error/warn 문구와 아래 정규식이 어긋나면 경보가 조용히 안 온다 —
 #    ConfigurationGuardrailTest B-61 이 "수동 … 필요" 문구가 전부 MANUAL_ACTION_REGEX 에 걸리는지 본다.
+# [JA] Loki のログ警報ルール — 指標のない「人が手を入れるべきこと」をログで捕まえる(docs/51 §4i)。
+#      Loki ruler が 1 分ごとに評価して既存の Alertmanager へ送る — 受け取るチャネルは Prometheus
+#      の警報と同じだ(observability/alertmanager.yml、severity で critical/warning が分かれる)。
+#      パス: docker-compose-observability.yml がこのディレクトリを /etc/loki/rules/fake に付ける。auth_enabled:false
+#      の Loki のテナント名が "fake" なので、その下になければ読まれない。
+#      ⚠️ 文言がすなわち契約だ。コードの log.error/warn の文言と下の正規表現がずれると警報が黙って来ない —
+#      ConfigurationGuardrailTest B-61 が「手動 … 必要」の文言がすべて MANUAL_ACTION_REGEX にかかるかを見る。
 groups:
   - name: manual-action
     interval: 1m
     rules:
       # 돈·재고가 이미 움직였는데 뒤따를 일이 실패했다 — 재고 복원·쿠폰 복원 발행 실패, 환불액·통화
       # 불일치, 취소된 주문에 도착한 결제. 자동 재시도가 없어 사람이 맞춰야 한다.
+      # [JA] お金・在庫がすでに動いたのに後続の処理が失敗した — 在庫復元・クーポン復元の発行失敗、
+      #      返金額・通貨の不一致、取り消された注文に届いた決済。自動再試行がないので人が合わせる必要がある。
       - alert: ManualActionRequired
         # MANUAL_ACTION_REGEX: 수동 (확인|환불)이? 필요
+        # [JA] MANUAL_ACTION_REGEX: 「手動(確認|返金)が必要」に相当する韓国語の文言
         expr: |
           sum by (service) (count_over_time({job=~"ecommerce.*"} |~ "수동 (확인|환불)이? 필요" [5m])) > 0
         labels: { severity: critical }
@@ -31,8 +41,11 @@ groups:
     rules:
       # 판매 중인 옵션의 재고가 0 이 됐다 — catalog-service 가 재고를 차감하다 0 을 만들 때 한 번 찍는다
       # (StockTransitions, docs/53). 재고를 채우면 재입고 알림을 신청한 손님에게 알림이 간다.
+      # [JA] 販売中のオプションの在庫が 0 になった — catalog-service が在庫を減算して 0
+      #      にしたときに一度出す(StockTransitions, docs/53)。在庫を補充すると再入荷通知を申し込んだ客に通知が行く。
       - alert: ProductSoldOut
         # SOLD_OUT_MARKER: 품절 발생
+        # [JA] SOLD_OUT_MARKER: 「品切れ発生」に相当する韓国語の文言
         expr: |
           sum by (service) (count_over_time({job=~"ecommerce.*", service="catalog-service"} |= "품절 발생" [5m])) > 0
         labels: { severity: warning }

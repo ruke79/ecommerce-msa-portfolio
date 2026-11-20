@@ -11,6 +11,10 @@ import org.apache.avro.specific.SpecificRecord;
  * <p>{@link AvroMappings} 가 "DTO 소비자"용(토픽 → DTO 변환)이라면 이것은 "문자열 소비자"용이다.
  * 새 토픽을 Avro 로 옮기면 여기 한 줄을 더한다 — {@code AvroWiringGuardrailTest} 가 스키마 파일과
  * 대조한다.
+ *
+ * <p>[JA] トピック → スキーマデコーダー。スキーマがある<b>すべての</b>トピックである — DTO が common にあってもなくても。
+ * {@link AvroMappings} が「DTO コンシューマー」用(トピック → DTO 変換)なら、これは「文字列コンシューマー」用である。新しいトピックを Avro に移したらここに一行足す —
+ * {@code AvroWiringGuardrailTest} がスキーマファイルと突き合わせる。
  */
 public final class AvroDecoders {
 
@@ -36,11 +40,14 @@ public final class AvroDecoders {
                         AvroSchemaHistory.store(AvroSchemaHistory.COUPON_ROLLBACK))),
                 Map.entry("outgoing-mail", com.project.common.avro.OutgoingMailRequest.getDecoder()),
                 // 옛 스키마(v1·v2)로 쓴 레코드도 읽는다 — 배포 도중 옛 chat 파드가 쓴 것(AvroSchemaHistory).
+                // [JA] 古いスキーマ(v1 · v2)で書いたレコードも読む — デプロイ途中に古い chat ポッドが書いたもの(AvroSchemaHistory)。
                 Map.entry("chat", com.project.common.avro.ChatMessage.createDecoder(
                         AvroSchemaHistory.store(AvroSchemaHistory.CHAT_MESSAGE))),
                 // saga-projection(Kafka Streams)의 출력. DTO 가 없다 — 스키마가 곧 읽기 모델이다(docs/38 §1.17).
+                // [JA] saga-projection(Kafka Streams)の出力。DTO がない — スキーマがそのまま読み取りモデルである(docs/38 §1.17)。
                 Map.entry("order-saga-state", com.project.common.avro.OrderSagaState.getDecoder()),
                 // 주문 상태 변경(order-service 아웃박스 → 릴레이)과 그것을 접은 진행 타임라인(saga-projection, docs/76).
+                // [JA] 注文状態変更(order-service のアウトボックス → リレー)と、それを畳んだ進行タイムライン(saga-projection, docs/76)。
                 Map.entry("order-status", com.project.common.avro.OrderStatusChanged.getDecoder()),
                 Map.entry("order-timeline", com.project.common.avro.OrderTimeline.getDecoder()));
     }

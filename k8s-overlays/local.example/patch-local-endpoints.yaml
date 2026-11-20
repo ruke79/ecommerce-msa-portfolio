@@ -2,6 +2,7 @@
 #
 # 비밀은 여기 두지 않는다 — 비밀번호·접속 문자열은 k8s/20-secret.yaml 이 담당한다.
 # 여기 들어가는 것은 식별자뿐이다.
+# [JA] この環境にだけあるエンドポイント。**コミットされない。** 秘密はここに置かない — パスワード · 接続文字列は k8s/20-secret.yaml が担う。ここに入るのは識別子だけだ。
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,6 +17,10 @@ data:
   #    `user:password@`, `:5432`, `/dbname`, `?sslmode=` 가 들어가면 안 된다.
   # ⚠️ Neon 은 **와일드카드 DNS** 라 오타가 나도 이름은 해석된다. `dig` 로는 검증되지
   #    않는다 — psql 로 실제 붙어 봐야 한다(ops/25 가 마지막에 그걸 한다).
+  # [JA] ── PostgreSQL(Neon など)── ⚠️ **プーラー(-pooler)ではない**アドレスを使う。プーラーはトランザクションモードなのでサーバー側の prepared statement が壊れる
+  #      (`prepared statement "S_1" already exists`)。⚠️ コンソールの接続 URI をそのまま貼らないこと — ホストだけを切り出す。`postgresql://`、
+  #      `user:password@`、`:5432`、`/dbname`、`?sslmode=` が入ってはならない。⚠️ Neon は**ワイルドカード DNS** なのでタイプミスしても名前は解決される。`dig` では検証できず
+  #      psql で実際に接続してみる必要がある(ops/25 が最後にそれをする)。
   POSTGRES_HOST: "REPLACE_ME_your_neon_host"
   POSTGRES_PORT: "5432"
 
@@ -23,6 +28,8 @@ data:
   #
   # 메일의 인증 링크·비밀번호 재설정 링크가 이 값으로 만들어진다. 틀리면 메일은
   # 정상적으로 발송되고 링크만 죽는다 — 사용자만 알고 로그에는 안 남는다.
+  # [JA] ── 公開ドメイン ── メールの認証リンク · パスワード再設定リンクがこの値で作られる。間違えるとメールは
+  #      正常に送られリンクだけが死ぬ — ユーザーだけが知りログには残らない。
   APP_PUBLIC_URL: "https://REPLACE_ME_your_domain"
 
   # ── 결제수단 스위치 (docs/49 §6) ─────────────────────────────────────────
@@ -40,6 +47,12 @@ data:
   # BANK_TRANSFER_HOLDER: "예시상점"
   # PAYPAL_ENV: "sandbox"             # live 면 프론트의 REACT_APP_PAYPAL_CLIENT_ID 도 라이브 것
   # LOG_LEVEL_SQL: "warn"             # debug 로 두면 스케줄러 폴링이 로그를 덮는다
+  # [JA] ── 決済手段スイッチ(docs/49 §6)── 🔴 k8s/10-configmap.yaml を直接直さないこと。そのファイルはリポジトリのものなので pull · rebase
+  #      のたびに戻り(実際に経験した)、同じキーを二度書くと kustomize が "mapping key already defined" で止まる。このパッチの data は configmap の同じキーを
+  #      **上書きする** — 有効にするものだけをここに書く。秘密(キー · シークレット)は k8s/20-secret.yaml。
+  #      各行: STRIPE_ENABLED は STRIPE_SECRET_KEY · STRIPE_WEBHOOK_SECRET が必要。PORTONE_ENABLED は v1: PORTONE_API_KEY/SECRET · v2: PORTONE_V2_* が必要。
+  #      PORTONE_VERSION はコンソールに imp… がなく store-… だけ見えるなら "v2"。BANK_TRANSFER_* は客に見せる店舗口座 — 秘密ではない。
+  #      PAYPAL_ENV が live ならフロントの REACT_APP_PAYPAL_CLIENT_ID もライブのもの。LOG_LEVEL_SQL を debug にするとスケジューラーのポーリングがログを覆う。
 
   # ── 배송 시뮬레이터 (docs/25 §11) ─────────────────────────────────────────
   #
@@ -50,3 +63,6 @@ data:
   # DELIVERY_SIMULATED_ENABLED: "true"
   # DELIVERY_SIMULATED_STEP_MS: "60000"   # 1분마다 한 단계
   # DELIVERY_POLL_INTERVAL_MS: "20000"    # 폴링 주기도 그에 맞춰
+  # [JA] ── 配送シミュレーター(docs/25 §11)── 実際の宅配業者なしに 決済→配送→追跡→通知→注文 DISPATCHED/DELIVERED を最後まで回してみる。
+  #      管理画面(/admin/delivery)で宅配業者「テスト配送」(SIMULATED)、送り状番号 SIM… で登録すると STEP_MS ごとに一段階ずつ進む(SIMEXC 例外、SIMFAIL 配達失敗後成功、SIMINTL 通関)。
+  #      STEP_MS 60000 は 1 分ごとに一段階、POLL_INTERVAL_MS はポーリング周期もそれに合わせる。

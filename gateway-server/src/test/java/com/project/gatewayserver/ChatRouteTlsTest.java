@@ -75,6 +75,7 @@ class ChatRouteTlsTest {
             io.netty.handler.ssl.SslContext serverTls = SslContextBuilder.forServer(kmf).build();
 
             // chat-service 대역 — TLS 로만 받는다(운영 8086 과 같다)
+            // [JA] chat-service の代役 — TLS でのみ受ける(本番 8086 と同じ)
             CHAT = HttpServer.create().host("127.0.0.1").port(0)
                     .secure(spec -> spec.sslContext(serverTls))
                     .route(r -> r
@@ -109,9 +110,11 @@ class ChatRouteTlsTest {
         NettyServerTest.properties(registry);
         registry.add("JWT_SECRET_KEY", () -> SECRET);
         // 게이트웨이 HTTP 클라이언트가 이 인증서만 더 신뢰한다(운영은 JVM 트러스트스토어 = 사설 CA). 검증은 끄지 않는다.
+        // [JA] ゲートウェイの HTTP クライアントがこの証明書だけを追加で信頼する(本番は JVM トラストストア = 私設 CA)。検証は切らない。
         registry.add("spring.cloud.gateway.server.webflux.httpclient.ssl.trusted-x509-certificates[0]",
                 () -> "file:" + DIR.resolve("chat.crt"));
         // 운영의 Eureka 등록처럼 secure 인스턴스(https)
+        // [JA] 本番の Eureka 登録のように secure インスタンス(https)
         registry.add("spring.cloud.discovery.client.simple.instances.chat-service[0].uri",
                 () -> "https://127.0.0.1:" + CHAT.port());
     }

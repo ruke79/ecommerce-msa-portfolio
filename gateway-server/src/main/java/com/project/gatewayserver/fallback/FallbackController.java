@@ -30,6 +30,13 @@ import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
  * 이 적혀 있다 — 설정은 이미 알고 있었고 이 코드만 몰랐다.
  *
  * <p>둘 다 본다. 어느 쪽이든 사용자에게는 같은 사실("늦어서 끊었다")이다.
+ *
+ * <p>[JA] サーキットブレーカーのフォールバック。<b>⚠️ タイムアウト判定にクラスが二つある。</b> 以前は Spring Cloud Gateway の {@link TimeoutException} だけを見ていた。
+ * ところがこのゲートウェイで実際に起きるタイムアウトは Resilience4j TimeLimiter が投げる {@link java.util.concurrent.TimeoutException}(Reactor の実装)である。
+ * 別のクラスなので {@code instanceof} が一致せず、<b>すべてのタイムアウトがデフォルト分岐に落ちて</b> 503「内部サーバーエラー」にまとめられた。
+ * その一行のせいで診断が三往復した。実例: {@code /api/content/home} がポッド直接呼び出しでは 0.3 秒で 200 なのに、ゲートウェイ経由では 503「内部サーバーエラー」が出た。
+ * 504「時間が超過しました」なら最初の画面で原因が見えたはずだ。ゲートウェイ設定の {@code record-exceptions} にも {@code java.util.concurrent.TimeoutException} が書かれている —
+ * 設定は既に知っていて、このコードだけが知らなかった。両方を見る。どちらでもユーザーにとっては同じ事実(「遅いので切った」)である。
  */
 @RestController
 @Slf4j
@@ -38,13 +45,16 @@ public class FallbackController {
     @RequestMapping("/fallback")
     public Mono<ResponseEntity<String>> fallback(ServerWebExchange exchange) {
         // CircuitBreaker에서 발생한 예외를 가져옵니다.
+        // [JA] CircuitBreaker で発生した例外を取得する。
         Throwable exception = exchange.getAttribute(ServerWebExchangeUtils.CIRCUITBREAKER_EXECUTION_EXCEPTION_ATTR);
         String errorMessage = GatewayText.pick(exchange, "내부 서버 오류가 발생했습니다. 관리자에게 문의해 주세요.", "内部サーバーエラーが発生しました。管理者にお問い合わせください。");
         HttpStatus status = HttpStatus.SERVICE_UNAVAILABLE;
 
         // 예외 종류에 따라 로그와 응답 메시지를 다르게 처리합니다.
+        // [JA] 例外の種類に応じてログと応答メッセージを変える。
         if (exception != null) {
             // 예외 타입도 함께 남긴다. 메시지만으로는 어느 계층에서 끊겼는지 알 수 없다.
+            // [JA] 例外の型も一緒に残す。メッセージだけではどの層で切れたか分からない。
             log.warn("Fallback triggered. Exception: {}: {}",
                     exception.getClass().getName(), exception.getMessage());
 
@@ -68,6 +78,8 @@ public class FallbackController {
     /**
      * 타임아웃인가. 두 계층을 모두 본다 — 게이트웨이 자체 타임아웃과 Resilience4j
      * TimeLimiter 의 타임아웃은 이름만 같고 클래스가 다르다(클래스 주석 참조).
+     *
+     * <p>[JA] タイムアウトか。二つの層を両方見る — ゲートウェイ自体のタイムアウトと Resilience4j TimeLimiter のタイムアウトは名前が同じだけでクラスが違う(クラスコメント参照)。
      */
     static boolean isTimeout(Throwable exception) {
         return exception instanceof TimeoutException

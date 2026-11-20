@@ -32,6 +32,9 @@ import com.project.chat_service.repository.redis.ChatRoomRepository;
  * <p>🐛 예전에는 Redis 해시에서 읽었다. 방은 DB 에도 저장되는데, Redis 가 비워지면(재시작·
  * 다른 인스턴스) DB 에 멀쩡히 있는 방이 목록에서 사라졌다. 진실은 한 곳 — 트랜잭션이 있는
  * DB — 이어야 한다.
+ *
+ * <p>[JA] チャットルーム一覧の出所は<b>DB</b>である。
+ * <p>🐛 以前は Redis ハッシュから読んでいた。ルームは DB にも保存されるが、Redis が空になると(再起動・別インスタンス)DB にちゃんとあるルームが一覧から消えた。真実は一か所 — トランザクションのある DB — でなければならない。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -52,6 +55,7 @@ class ChatServiceRoomListTest {
     @InjectMocks ChatService service;
 
     /** 🔴 Redis 가 비어 있어도 DB 의 방은 보인다. */
+    // [JA] 🔴 Redis が空でも DB のルームは見える。
     @Test
     @DisplayName("🔴 Redis 가 비어 있어도 DB 의 방이 목록에 나온다")
     void listComesFromTheDatabase() {
@@ -61,6 +65,6 @@ class ChatServiceRoomListTest {
         List<ChatRoom> rooms = service.fildAllRooms();
 
         assertThat(rooms).extracting(ChatRoom::getRoomName).containsExactly("test1", "test2");
-        org.mockito.Mockito.verifyNoInteractions(chatRoomRepository);   // Redis 에는 방이 없다(사본을 없앴다)
+        org.mockito.Mockito.verifyNoInteractions(chatRoomRepository);   // Redis 에는 방이 없다(사본을 없앴다) ／ [JA] Redis にはルームがない(コピーをなくした)
     }
 }

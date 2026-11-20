@@ -17,6 +17,14 @@ package com.project.common.dto.order;
  * @param lifetimeOrderCount 가입 이후 결제된 주문 수 — 기간 제한 없음
  * @param recentOrderCount  최근 기간 안에 결제된 주문 수
  * @param recentAmount      최근 기간 안에 결제된 금액 합계
+ *
+ * <p>[JA] 一顧客の購入集計。
+ * order-service が等級算定用に出す<b>唯一の</b>形である。注文を一件一件渡さない理由は単純 — 等級付けに必要なのは合計であって明細ではなく、
+ * 注文履歴は配送先 · 連絡先 · 商品まで付いてくる<b>機微なデータ</b>である。不要なものをサービス境界の外へ出さない。
+ * 金額は {@code long} — ストア通貨の<b>整数単位</b>(USD ならドル)。注文の {@code total} は V7 から小数第 2 位まであるが、等級の区間はドル単位なので
+ * 合計を整数に切り捨てる(クエリの {@code cast(... as Long)})。数千件を足すと {@code int} の範囲を超えうるので {@code long} である。
+ * パラメータ: customerId 顧客 ID(= user-service の userId)、lifetimeOrderCount 登録以降に決済された注文数(期間制限なし)、
+ * recentOrderCount 直近期間内に決済された注文数、recentAmount 直近期間内に決済された金額の合計。
  */
 public record PurchaseStatDto(
         Long customerId,

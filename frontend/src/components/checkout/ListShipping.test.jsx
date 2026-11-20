@@ -6,6 +6,7 @@ import { deleteAddress, selectShippingAddress } from "util/api";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("util/api", () => ({
@@ -24,6 +25,9 @@ const address = {
 /**
  * 배송지 카드의 버튼들. 지금까지 등록·삭제만 있었다 — 나라 하나를 잘못 골랐으면 지우고
  * 다시 넣어야 했고, 그러면 기본 배송지 표시도 함께 사라졌다.
+ *
+ * <p>[JA] 配送先カードのボタン。これまでは登録 · 削除しかなかった — 国一つを誤って選んだら消して
+ * 入れ直すしかなく、そうすると既定の配送先の表示も一緒に消えた。
  */
 describe("ListShipping", () => {
   beforeEach(() => jest.clearAllMocks());

@@ -24,6 +24,15 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>전체 알림은 <b>모든 사용자에게</b> 보이는 글이다. 일반 사용자가 발송할 수 있으면
  * 사이트 전체에 대고 아무 문구나 띄울 수 있다.
+ *
+ * <p>[JA] {@code /api/notifications/admin/**} 以下を管理者専用に塞ぐ。
+ * このサービスには Spring Security がない — 認証はゲートウェイの JwtAuthorization が済ませ、検証済みの身元を
+ * {@code User-Id}/{@code User-Role} ヘッダーで渡す。ゲートウェイが外部リクエストのこのヘッダーを先に消して自分の値で
+ * 埋めるので(IdentityHeaderScrubFilter)、ゲートウェイを経たリクエストでは偽造できない。ここではそのロールで認可だけを判定する。
+ * なぜコントローラー内で検査しないか: catalog-service でまさにその形の穴を経験した — 検査コードをメソッドごとに入れる方式は、
+ * 新しいエンドポイントを足すときに一行忘れた瞬間、そのエンドポイントだけが静かに無防備になる。<b>パス規則がそのまま認可規則</b>なら
+ * 忘れようがない: 管理者用ならこのプレフィックスの下に置き、そうでなければ置かない。
+ * 全体通知は<b>全ユーザーに</b>見える文章である。一般ユーザーが送信できると、サイト全体に任意の文言を出せてしまう。
  */
 @Slf4j
 @Component
@@ -34,6 +43,7 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
     static final String ADMIN = "ROLE_ADMIN";
 
     /** 이 접두사 아래는 메서드와 무관하게(읽기까지) 관리자 전용이다. */
+    // [JA] このプレフィックス以下はメソッドに関係なく(読み取りも)管理者専用である。
     static final String ADMIN_PREFIX = "/api/notifications/admin";
 
     @Override
@@ -47,6 +57,8 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
 
         // preflight 는 신원 헤더를 달고 오지 않는다. 여기서 막으면 브라우저가 본 요청을
         // 보내지도 못한다.
+        // [JA] preflight は身元ヘッダーを付けて来ない。ここで塞ぐとブラウザが本リクエストを
+        //      送ることすらできない。
         if ("OPTIONS".equals(request.getMethod())) {
             return true;
         }
@@ -54,6 +66,7 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
         String userId = request.getHeader(USER_HEADER);
         if (userId == null || userId.isBlank()) {
             // 게이트웨이를 안 거쳤거나 라우트가 깨졌다. 정상이라면 나올 수 없는 분기다.
+            // [JA] ゲートウェイを経ていないかルートが壊れている。正常ならあり得ない分岐である。
             log.warn("관리자 경로에 신원 헤더가 없다 — 게이트웨이를 거치지 않았다. {} {}",
                     request.getMethod(), path);
             return reject(response, HttpStatus.UNAUTHORIZED, "로그인이 필요한 서비스입니다.");
@@ -61,6 +74,7 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
 
         if (!ADMIN.equals(request.getHeader(ROLE_HEADER))) {
             // 역할 문자열은 클레임 그대로라 로그에 남기지 않는다. 사실만 남긴다.
+            // [JA] ロール文字列はクレームそのままなのでログに残さない。事実だけを残す。
             log.warn("관리자 아님 — 거부. {} {} (userId={})", request.getMethod(), path, userId);
             return reject(response, HttpStatus.FORBIDDEN, "관리자 권한이 필요합니다.");
         }
@@ -69,6 +83,7 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
     }
 
     /** 디코딩 · {@code ;…} 제거 · {@code //} 정리를 하는 Spring 의 기본 설정 — 컨트롤러를 고르는 쪽과 같은 경로를 본다. */
+    // [JA] デコード · {@code ;…} 除去 · {@code //} 整理を行う Spring の既定設定 — コントローラーを選ぶ側と同じパスを見る。
     private static final org.springframework.web.util.UrlPathHelper PATHS = new org.springframework.web.util.UrlPathHelper();
 
     /**
@@ -88,6 +103,7 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
     }
 
     /** 두 번째 확인 — 이미 골라진 핸들러의 패턴이 관리자 경로인가(경로 정규화가 Spring 과 어긋나도 막히게). */
+    // [JA] 二つ目の確認 — 既に選ばれたハンドラーのパターンが管理者パスか(パスの正規化が Spring とずれても塞がるように)。
     private static boolean matchedAdminPattern(HttpServletRequest request) {
         Object pattern = request.getAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
         return pattern != null && pattern.toString().startsWith(ADMIN_PREFIX);
@@ -99,6 +115,7 @@ public class AdminOnlyInterceptor implements HandlerInterceptor {
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
         // 응답을 직접 쓰므로 ClientTextResponseAdvice 를 거치지 않는다 — 여기서 요청 언어로(docs/60 §4).
+        // [JA] レスポンスを直接書くので ClientTextResponseAdvice を経由しない — ここでリクエストの言語にする(docs/60 §4)。
         response.getWriter().write("{\"message\":\"" + com.project.common.i18n.ClientText.localize(message) + "\"}");
         return false;
     }

@@ -15,6 +15,7 @@ public class TrackingRejectedException extends RuntimeException {
     }
 
     /** 관리자 화면에 보여 줄 고정 문구 — 이 클래스가 만든 문장뿐이다(외부 예외 메시지가 아니다). */
+    // [JA] 管理画面に見せる固定文言 — このクラスが作った文だけである(外部例外のメッセージではない)。
     public String reason() {
         return reason;
     }

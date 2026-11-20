@@ -121,6 +121,7 @@ class SearchEngineSelectorTest {
     }
 
     // ---------------------------------------------------------------- 캐시 키
+    // [JA] ---- キャッシュキー
 
     @Configuration
     @EnableCaching
@@ -148,6 +149,8 @@ class SearchEngineSelectorTest {
     /**
      * 🔴 같은 검색이라도 엔진이 다르면 <b>다른 캐시 항목</b>이다. 키에 엔진이 없으면 비율을 바꾼 뒤 최대 60분 동안
      * 반대쪽 엔진의 결과가 나가고, 추적의 변형 태그와 실제 결과가 어긋난다.
+     *
+     * <p>[JA] 🔴 同じ検索でもエンジンが違えば<b>別のキャッシュ項目</b>である。キーにエンジンがないと、比率を変えた後最大 60 分間反対側のエンジンの結果が返り、トレースのバリアントタグと実際の結果が食い違う。
      */
     @Test
     @DisplayName("🔴 검색 캐시 키에 엔진이 들어간다 — 엔진이 바뀌면 캐시가 맞지 않는다")
@@ -161,6 +164,7 @@ class SearchEngineSelectorTest {
             svc.searchProducts(p, SearchEngine.ES);
 
             // 처음 한 번 + 엔진이 바뀐 한 번 = 2. 같은 엔진의 두 번째는 캐시에서 나온다.
+            // [JA] 最初の 1 回 + エンジンが変わった 1 回 = 2。同じエンジンの 2 回目はキャッシュから返る。
             org.mockito.Mockito.verify(CacheConfig.queryFactory, org.mockito.Mockito.times(2))
                     .selectFrom(org.mockito.ArgumentMatchers.any());
         }

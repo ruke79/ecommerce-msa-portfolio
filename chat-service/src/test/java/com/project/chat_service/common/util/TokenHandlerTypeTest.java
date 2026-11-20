@@ -15,6 +15,8 @@ import com.auth0.jwt.algorithms.Algorithm;
 
 /**
  * 🔒 액세스 토큰만 받는다 — 같은 키로 서명된 리프레시 토큰(14일)으로 STOMP·API 에 붙지 못하게(user-service JwtUtils.TOKEN_TYPE_CLAIM).
+ *
+ * <p>[JA] 🔒 アクセストークンだけを受け付ける — 同じ鍵で署名されたリフレッシュトークン(14 日)で STOMP・API に接続できないように(user-service JwtUtils.TOKEN_TYPE_CLAIM)。
  */
 @DisplayName("chat 토큰 검증 — 종류")
 class TokenHandlerTypeTest {

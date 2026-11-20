@@ -35,6 +35,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * 목록 카드(홈·검색)의 재고 — 캐시된 목록에 응답 직전 지금 수량과 예약을 반영한다 (docs/59 §5).
+ *
+ * <p>[JA] 一覧カード(ホーム・検索)の在庫 — キャッシュされた一覧に、応答直前にいまの数量と予約を反映する(docs/59 §5)。
  */
 @DisplayName("목록 카드의 재고 — 홈·검색")
 class StockOnCardsControllerTest {

@@ -3,12 +3,18 @@
  *
  * <p>영역마다 파일을 나눈 이유: 한 파일(ko.js)에 모두 모으면 여러 사람이 동시에 고칠 때 늘 충돌한다. 합치는 곳은 ../ko.js 이고,
  * 같은 키가 두 파일에 있으면 i18n.test.jsx 가 실패한다.
+ *
+ * <p>[JA] 韓国語文言 — 領域 "shop"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ko.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
  */
 const shop = {
     // ── 상품 상세 — 비슷한 상품
+    // [JA] ── 商品詳細 — 似た商品
     "product.similar.title": "비슷한 상품",
 
     // ── 상품 상세 — 리뷰 목록
+    // [JA] ── 商品詳細 — レビュー一覧
     "product.review.title": "고객 리뷰 ({{count}})",
     "product.review.average": "평균 별점",
     "product.review.none": "아직 리뷰가 없습니다.",
@@ -21,6 +27,7 @@ const shop = {
     "product.review.like.count": "좋아요 {{count}}",
 
     // ── 상품 상세 — 리뷰 걸러 보기·정렬(TableHeader). 값은 코드라 번역하지 않고 이름표만 번역한다.
+    // [JA] ── 商品詳細 — レビューの絞り込み・並べ替え(TableHeader)。値はコードなので翻訳せずラベルだけ翻訳する。
     "product.review.filter.all": "전체",
     "product.review.filter.stars": "별 {{count}}개",
     "product.review.filter.all_styles": "모든 스타일",
@@ -29,6 +36,7 @@ const shop = {
     "product.review.order.oldest": "오래된순",
 
     // ── 상품 상세 — 리뷰 쓰기. label·select 의 끝은 Select/TableSelect 의 text 값(size·style·fit·rating·order)이다.
+    // [JA] ── 商品詳細 — レビュー作成。label・select の末尾は Select/TableSelect の text 値(size・style・fit・rating・order)だ。
     "product.review.label.size": "사이즈",
     "product.review.label.style": "스타일",
     "product.review.label.fit": "착용감",
@@ -68,6 +76,7 @@ const shop = {
     "product.review.error.review": "리뷰 내용을 입력해 주세요.",
 
     // ── 상품 목록 — 왼쪽 필터. 성별 값(Men 등)은 서버로 가는 질의 값이라 번역하지 않고 이름표만 번역한다.
+    // [JA] ── 商品一覧 — 左フィルター。性別の値(Men など)はサーバーへ行くクエリ値なので翻訳せずラベルだけ翻訳する。
     "browse.filter.clear_all": "전체 해제 ({{count}})",
     "browse.filter.category": "카테고리",
     "browse.filter.sizes": "사이즈",
@@ -81,18 +90,21 @@ const shop = {
     "browse.filter.gender.unisex": "남녀공용",
 
     // ── 상품 목록 — 결과
+    // [JA] ── 商品一覧 — 結果
     "browse.list.empty": "조건에 맞는 상품이 없습니다.",
     "browse.list.load_more_failed": "상품을 더 불러오지 못했습니다.",
     "browse.list.retry": "다시 시도",
     "browse.list.end": "상품 {{count}}개를 모두 보셨습니다.",
 
     // ── 장바구니 화면
+    // [JA] ── カート画面
     "cart.page.title": "장바구니",
     "cart.page.save_failed": "장바구니를 저장하지 못했습니다. 다시 시도해 주세요.",
     "cart.page.update_failed": "장바구니를 바꾸지 못했습니다. 다시 시도해 주세요.",
     "cart.page.remove": "장바구니에서 빼기",
 
     // ── 기획전
+    // [JA] ── 企画展
     "event.title": "기획전",
     "event.loading": "불러오는 중…",
     "event.load_failed": "기획전을 불러오지 못했습니다.",

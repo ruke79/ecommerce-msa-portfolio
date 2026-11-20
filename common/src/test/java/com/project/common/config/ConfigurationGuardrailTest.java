@@ -37,10 +37,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 리뷰로는 거의 걸러지지 않으므로 빌드가 대신 지키게 한다.
  *
  * <p>각 테스트는 실제로 발생했던 장애 하나씩에 대응한다.
+ *
+ * <p>[JA] 設定ファイルに対するガードレールテスト。このリポジトリで最も高くついたバグはコードではなく<b>設定</b>にあり、
+ * どれも「コンパイルも通り単体テストも通るが、実行すると死ぬ」種類だった(docs/14, docs/16)。
+ * レビューではほとんど拾えないので、ビルドに代わりに守らせる。各テストは実際に起きた障害一つずつに対応する。
  */
 class ConfigurationGuardrailTest {
 
     /** common 모듈 기준으로 저장소 루트를 찾는다(Gradle 테스트의 작업 디렉터리는 모듈 디렉터리). */
+    // [JA] common モジュールを基準にリポジトリルートを探す(Gradle テストの作業ディレクトリはモジュールディレクトリ)。
     private static Path repoRoot() {
         Path cwd = Paths.get("").toAbsolutePath();
         return cwd.getFileName().toString().equals("common") ? cwd.getParent() : cwd;
@@ -69,6 +74,8 @@ class ConfigurationGuardrailTest {
     void profileSpecificFilesMustNotActivateProfiles() throws IOException {
         // Spring Boot 2.4+ 는 application-<profile>.yml 안의 spring.profiles.active 를 금지하고
         // InvalidConfigDataPropertyException 으로 **기동을 즉시 중단**한다. 9개 서비스가 이 상태였다.
+        // [JA] Spring Boot 2.4+ は application-<profile>.yml 内の spring.profiles.active を禁止し、
+        //      InvalidConfigDataPropertyException で**起動を即座に中断**する。9 サービスがこの状態だった。
         List<String> offenders = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
             for (String line : Files.readAllLines(yml, StandardCharsets.UTF_8)) {
@@ -78,6 +85,7 @@ class ConfigurationGuardrailTest {
                 }
                 if (stripped.startsWith("active:") || stripped.matches("^profiles:\\s*$")) {
                     // 'active:' 는 profiles 블록 아래에서만 의미가 있다. 주석이 아닌 선언만 잡는다.
+                    // [JA] 'active:' は profiles ブロックの下でのみ意味がある。コメントではない宣言だけを拾う。
                     if (stripped.startsWith("active:")) {
                         offenders.add(repoRoot().relativize(yml) + " → " + stripped);
                     }
@@ -95,6 +103,8 @@ class ConfigurationGuardrailTest {
         // application-common.yml 은 모든 서비스가 import 한다. 여기에 이름을 두면 각 서비스가
         // 선언한 이름을 덮어써, 모든 서비스가 스스로를 'common' 이라고 보고하게 된다.
         // 그 결과 분산 추적(Jaeger)이 한 덩어리로 뭉개지고 Eureka 등록까지 위험해진다.
+        // [JA] application-common.yml は全サービスが import する。ここに名前を置くと各サービスが宣言した名前を上書きし、
+        //      全サービスが自分を 'common' と報告することになる。その結果、分散トレーシング(Jaeger)が一塊に潰れ、Eureka 登録まで危うくなる。
         Path shared = repoRoot().resolve("common/src/main/resources/application-common.yml");
         assertThat(shared).exists();
 
@@ -116,6 +126,8 @@ class ConfigurationGuardrailTest {
         // @Setting(settingPath=...) 은 settings **본문**을 기대한다. 최상위에 "settings" 로 한 번
         // 더 감싸면 ES 가 index.settings.analysis... 라는 설정을 받고
         // unknown setting 오류로 **인덱스 생성 자체가 실패**한다.
+        // [JA] @Setting(settingPath=...) は settings の**本文**を期待する。トップレベルを "settings" でもう一度包むと、
+        //      ES は index.settings.analysis... という設定を受け取り、unknown setting エラーで**インデックス作成自体が失敗**する。
         Path settings = repoRoot().resolve("common/src/main/resources/es/es-settings.json");
         assertThat(settings).exists();
 
@@ -138,6 +150,7 @@ class ConfigurationGuardrailTest {
                 .path("analysis").path("analyzer");
 
         // ProductDocument 등이 @Field(analyzer = ...) 로 참조하는 이름들.
+        // [JA] ProductDocument などが @Field(analyzer = ...) で参照する名前。
         assertThat(analyzers.has("korean_analyzer")).isTrue();
         assertThat(analyzers.has("japanese_analyzer")).isTrue();
 
@@ -168,6 +181,8 @@ class ConfigurationGuardrailTest {
         // chat-service 가 PostgreSQL URL 에 MySQLDialect 를 쓰고 있었다. Hibernate 가 MySQL DDL
         // ("engine=", "auto_increment")을 만들어 보내 **모든 테이블 생성이 실패**했고, 그 실패는
         // WARN 으로만 남아 테이블 없이 서비스가 떠 있는 상태가 됐다.
+        // [JA] chat-service が PostgreSQL URL に MySQLDialect を使っていた。Hibernate が MySQL の DDL("engine=", "auto_increment")を
+        //      生成して送り、**全テーブルの作成が失敗**した。その失敗は WARN としてしか残らず、テーブルなしでサービスが起動している状態になった。
         List<String> offenders = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
             String content = Files.readString(yml, StandardCharsets.UTF_8);
@@ -190,9 +205,12 @@ class ConfigurationGuardrailTest {
     void environmentVariableNamesMustNotContainKnownTypos() throws IOException {
         // ${LOCAL_KEY_STOE_PASSWORD} — 'STORE' 의 R 이 빠져 있었다. @Value 가 기본값 없이 읽어
         // 'Could not resolve placeholder' 로 chat-service 가 아예 뜨지 않았다.
+        // [JA] ${LOCAL_KEY_STOE_PASSWORD} — 'STORE' の R が抜けていた。@Value がデフォルト値なしで読み、
+        //      'Could not resolve placeholder' で chat-service がまったく起動しなかった。
         List<String> offenders = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
             // 주석은 제외한다 — 수정 이력을 설명하느라 옛 이름을 인용하는 경우가 있다.
+            // [JA] コメントは除外する — 修正履歴の説明のために古い名前を引用することがある。
             boolean hasTypo = Files.readAllLines(yml, StandardCharsets.UTF_8).stream()
                     .map(String::strip)
                     .filter(l -> !l.startsWith("#"))
@@ -211,14 +229,18 @@ class ConfigurationGuardrailTest {
         // 그 경로는 원저자의 윈도우 PC 에만 존재한다 — 다른 어떤 머신에서도, 컨테이너에서도
         // 존재하지 않는 파일을 가리킨 채 protocol: "SSL" 이 켜져 있었다.
         // 인증서 파일은 ops/07-issue-certificates.sh 가 만들고 환경변수로 주입한다(docs/18).
+        // [JA] 7 サービスが Kafka トラストストアを file:E:/github/... で指していた。そのパスは原作者の Windows PC にしか存在しない —
+        //      他のどのマシンでもコンテナでも存在しないファイルを指したまま protocol: "SSL" が有効だった。
+        //      証明書ファイルは ops/07-issue-certificates.sh が作り、環境変数で注入する(docs/18)。
         List<String> offenders = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
             for (String line : Files.readAllLines(yml, StandardCharsets.UTF_8)) {
                 String stripped = line.strip();
                 if (stripped.startsWith("#")) {
-                    continue; // 옛 경로를 인용하는 설명 주석은 허용한다
+                    continue; // 옛 경로를 인용하는 설명 주석은 허용한다 ／ [JA] 古いパスを引用する説明コメントは許容する
                 }
                 // 윈도우 드라이브 문자(E:/...) 또는 홈 디렉터리 절대 경로
+                // [JA] Windows のドライブ文字(E:/...)またはホームディレクトリの絶対パス
                 if (stripped.matches(".*\\b[A-Za-z]:[/\\\\].*") || stripped.contains("/home/")
                         || stripped.contains("/Users/")) {
                     offenders.add(repoRoot().relativize(yml) + " → " + stripped);
@@ -236,6 +258,8 @@ class ConfigurationGuardrailTest {
         // 19개 Kafka 설정 클래스가 ssl.keystore.type 을 "JKS" 로 박아 놓고, 정작 스토어 경로는
         // .p12(PKCS12) 파일을 가리켰다. SSL 을 실제로 켜는 순간 'Invalid keystore format' 으로
         // 죽는 조합인데, 로컬 브로커가 PLAINTEXT 라 아무도 밟아 보지 못했다.
+        // [JA] 19 個の Kafka 設定クラスが ssl.keystore.type を "JKS" に固定しておきながら、ストアのパスは .p12(PKCS12)ファイルを指していた。
+        //      SSL を実際に有効にした瞬間 'Invalid keystore format' で死ぬ組み合わせだが、ローカルブローカーが PLAINTEXT なので誰も踏まなかった。
         List<String> offenders = new ArrayList<>();
         Path root = repoRoot();
         try (Stream<Path> paths = Files.walk(root)) {
@@ -248,6 +272,7 @@ class ConfigurationGuardrailTest {
                     continue;
                 }
                 // 줄바꿈이 낀 경우도 있어 개행을 접어서 본다.
+                // [JA] 改行が挟まる場合もあるので、改行を畳んで見る。
                 String folded = content.replaceAll("\\s+", " ");
                 if (folded.contains("SSL_KEYSTORE_TYPE_CONFIG, \"")
                         || folded.contains("SSL_TRUSTSTORE_TYPE_CONFIG, \"")) {
@@ -271,6 +296,10 @@ class ConfigurationGuardrailTest {
         // 증상이 스크립트 내용과 무관해서 원인을 찾기 어렵고, 한 파일을 고쳐도 그것이 호출하는
         // 다음 스크립트에서 똑같이 막힌다(ops/13 → ops/07 에서 실측). .gitattributes 가 이걸
         // 막지만, 규칙이 지워지거나 파일이 CRLF 인 채로 커밋되면 다시 돌아온다.
+        // [JA] Windows の git は core.autocrlf=true がデフォルトで、チェックアウト時に LF を CRLF に変える。
+        //      すると `#!/usr/bin/env bash` が `bash\r` を探すことになり、実行自体ができない(/usr/bin/env: ‘bash\r’: No such file or directory)。
+        //      症状がスクリプトの内容と無関係で原因を探しにくく、一つ直してもそれが呼ぶ次のスクリプトで同じく詰まる(ops/13 → ops/07 で実測)。
+        //      .gitattributes がこれを防ぐが、ルールが消されたりファイルが CRLF のままコミットされたりすると再発する。
         List<String> offenders = new ArrayList<>();
         Path root = repoRoot();
         try (Stream<Path> paths = Files.walk(root)) {
@@ -290,6 +319,7 @@ class ConfigurationGuardrailTest {
                 .isEmpty();
 
         // 규칙 자체가 사라지면 다음 Windows 체크아웃에서 전부 되돌아간다.
+        // [JA] ルール自体が消えると、次の Windows チェックアウトで全部元に戻る。
         assertThat(Files.readString(root.resolve(".gitattributes"), StandardCharsets.UTF_8))
                 .as(".gitattributes 가 셸 스크립트의 줄바꿈을 LF 로 고정해야 한다")
                 .contains("*.sh")
@@ -303,6 +333,9 @@ class ConfigurationGuardrailTest {
         // **값이 비어 있어도 무조건 넣는다**는 점이었다 — PLAINTEXT 에서는 무해하지만 프로토콜을
         // SSL/SASL_SSL 로 바꾸는 순간 ssl.truststore.location="" 을 열려다 죽는다(docs/32 §4).
         // 이제 KafkaSecuritySettings 만 이 키들을 만든다. 다시 흩어지면 여기서 막는다.
+        // [JA] 24 個の Kafka 設定クラスが SSL の 6 行をそのまま複製していた。複製そのものより悪いのは**値が空でも無条件に入れる**点だった —
+        //      PLAINTEXT では無害だが、プロトコルを SSL/SASL_SSL に変えた瞬間 ssl.truststore.location="" を開こうとして死ぬ(docs/32 §4)。
+        //      今は KafkaSecuritySettings だけがこれらのキーを作る。再び散らばればここで止める。
         List<String> offenders = new ArrayList<>();
         Path root = repoRoot();
         Path helper = root.resolve("common/src/main/java/com/project/common/config/KafkaSecuritySettings.java");
@@ -332,6 +365,10 @@ class ConfigurationGuardrailTest {
         // requirepass 가 걸린 Redis(운영 표준) 앞에서 해당 서비스만 WRONGPASS 로 기동이 죽거나
         // 레이트리미터가 조용히 무력화된다 — 셋 다 스테이징 리허설(ops/12)에서 실측으로 잡혔다.
         // 규칙: REDIS_PASSWORD 를 읽되, 다른 서비스들처럼 LOCAL_DB_PASSWORD 로 폴백해야 한다.
+        // [JA] gateway・order・cart の 3 サービスが Redis パスワードを ${REDIS_PASSWORD:}(空のデフォルト)にしていたか、まったく読んでいなかった。
+        //      パスワードなしの開発 Redis ではまったく表に出ず、requirepass のかかった Redis(運用の標準)の前で該当サービスだけが WRONGPASS で起動に失敗するか、
+        //      レートリミッターが黙って無力化される — 3 つともステージングのリハーサル(ops/12)で実測で見つかった。
+        //      ルール: REDIS_PASSWORD を読みつつ、他のサービスと同じく LOCAL_DB_PASSWORD にフォールバックすること。
         List<String> offenders = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
             for (String line : Files.readAllLines(yml, StandardCharsets.UTF_8)) {
@@ -361,6 +398,12 @@ class ConfigurationGuardrailTest {
         // 설정을 바꿨다고 믿었는데 안 읽히고 있던 것 — 이 부류의 결함은 리뷰로는 절대 안 잡힌다.
         // 옛 접두사가 어디든 다시 나타나면 여기서 막는다. 값 자체의 바인딩은 cart-service 의
         // FeignTimeoutBindingTest 가 실제 yml 을 읽어 검증한다.
+        // [JA] すべての yml が `feign.client.config.default.readTimeout: 5000` を持ち、文書(docs/02, docs/03)も「readTimeout 5s で無限待ちを遮断」と書いていた。
+        //      ところがそのキーは Spring Cloud 2022.0(OpenFeign 4.x)から `spring.cloud.openfeign.*` に変わっており、**誰も読んでいなかった。**
+        //      フォールバックも警告もない。実際の適用値は Feign のデフォルトである接続 10 秒 / 読み取り 60 秒だった
+        //      (docs/37 §2.1 — FeignClientProperties の定数プールと feign-core Request$Options のバイトコードで確認)。
+        //      設定を変えたと信じていたのに読まれていなかった — この種の欠陥はレビューでは決して見つからない。
+        //      古い接頭辞がどこかに再び現れればここで止める。値自体のバインディングは cart-service の FeignTimeoutBindingTest が実際の yml を読んで検証する。
         List<String> offenders = new ArrayList<>();
         List<Path> ymls = new ArrayList<>(serviceApplicationYmls());
         ymls.add(repoRoot().resolve("common/src/main/resources/application-common.yml"));
@@ -369,6 +412,8 @@ class ConfigurationGuardrailTest {
             List<String> lines = Files.readAllLines(yml, StandardCharsets.UTF_8);
             // 최상위 `feign:` 아래에 `client:` 가 있으면 옛 접두사다. (`feign.*-url` 은 이 저장소의
             // 자체 키라 최상위 feign: 자체는 허용한다 — 문제는 그 아래의 client.config 다.)
+            // [JA] トップレベルの `feign:` の下に `client:` があれば古い接頭辞である(`feign.*-url` はこのリポジトリ独自のキーなので
+            //      トップレベルの feign: 自体は許容する — 問題はその下の client.config だ)。
             boolean underTopLevelFeign = false;
             for (int i = 0; i < lines.size(); i++) {
                 String line = lines.get(i);
@@ -380,7 +425,7 @@ class ConfigurationGuardrailTest {
                     continue;
                 }
                 if (!line.isBlank() && !line.startsWith(" ")) {
-                    underTopLevelFeign = false;   // 다른 최상위 키로 넘어감
+                    underTopLevelFeign = false;   // 다른 최상위 키로 넘어감 ／ [JA] 別のトップレベルキーへ移った
                 }
                 if (underTopLevelFeign && line.matches("^\\s+client:\\s*$")) {
                     offenders.add(repoRoot().relativize(yml) + ":" + (i + 1));
@@ -393,6 +438,8 @@ class ConfigurationGuardrailTest {
 
         // 그리고 새 접두사가 공유 설정에 **실제로** 있어야 한다. 옛 것을 지우기만 하고 새 것을
         // 안 넣으면 타임아웃이 다시 60초로 돌아간다 — 이 테스트가 통과하면서 그 상태가 되면 안 된다.
+        // [JA] そして新しい接頭辞が共有設定に**実際に**なければならない。古いものを消すだけで新しいものを入れなければ、
+        //      タイムアウトが再び 60 秒に戻る — このテストが通ったままその状態になってはならない。
         Path shared = repoRoot().resolve("common/src/main/resources/application-common.yml");
         String common = Files.readString(shared, StandardCharsets.UTF_8);
         assertThat(common)
@@ -406,10 +453,14 @@ class ConfigurationGuardrailTest {
     void kafkaSslPropertiesMustComeFromSharedConfig() throws IOException {
         // 각 서비스가 kafka.ssl.* 을 다시 선언하면, 환경변수 주입이 어느 파일에 걸리는지
         // 추적이 불가능해진다. 실제로 그렇게 갈라져 있던 탓에 KAFKA_SSL_* 주입이 죽어 있었다.
+        // [JA] 各サービスが kafka.ssl.* を再宣言すると、環境変数の注入がどのファイルに効くのか追跡できなくなる。
+        //      実際にそうやって分かれていたせいで KAFKA_SSL_* の注入が死んでいた。
         Path shared = repoRoot().resolve("common/src/main/resources/application-common.yml");
         String sharedContent = Files.readString(shared, StandardCharsets.UTF_8);
         // 자바 @Value 가 읽는 네 개의 위치/비밀번호 키와 두 개의 형식 키가 모두 있어야
         // 어떤 서비스에서도 'Could not resolve placeholder' 가 나지 않는다.
+        // [JA] Java の @Value が読む 4 つの場所/パスワードキーと 2 つの形式キーがすべてあって初めて、
+        //      どのサービスでも 'Could not resolve placeholder' が出ない。
         assertThat(sharedContent)
                 .contains("trust-store-location:")
                 .contains("trust-store-password:")
@@ -443,10 +494,13 @@ class ConfigurationGuardrailTest {
         // 실제로 AMAZON_ACCESS_KEY 4종이 어느 매니페스트에도 없어, S3 를 쓰는 두 서비스
         // (user·catalog)만 k3s 배포에서 CrashLoop 였다 — 나머지 7개는 멀쩡해서 원인이
         // 서비스별 문제로 보였다(docs/19). 배포 전에 빌드가 잡는다.
+        // [JA] ${VAR} にデフォルト値がないと Spring は 'Could not resolve placeholder' で**起動を拒否**する。
+        //      実際に AMAZON_ACCESS_KEY 4 種がどのマニフェストにもなく、S3 を使う 2 サービス(user・catalog)だけが k3s デプロイで CrashLoop だった —
+        //      残り 7 つは正常だったので、原因がサービスごとの問題に見えた(docs/19)。デプロイ前にビルドが捕まえる。
         Path root = repoRoot();
         Path k8s = root.resolve("k8s");
         if (!Files.isDirectory(k8s)) {
-            return;   // 매니페스트가 없는 체크아웃에서는 검사할 것이 없다
+            return;   // 매니페스트가 없는 체크아웃에서는 검사할 것이 없다 ／ [JA] マニフェストのないチェックアウトでは検査するものがない
         }
 
         Set<String> provided = new HashSet<>();
@@ -456,6 +510,9 @@ class ConfigurationGuardrailTest {
                 // 매니페스트가 변수를 선언하는 두 가지 형태를 모두 읽는다:
                 //   ConfigMap/Secret 의 키   →  "  VAR: value"
                 //   Deployment 의 env 항목   →  "- name: VAR"
+                // [JA] マニフェストが変数を宣言する 2 つの形をどちらも読む:
+                //        ConfigMap/Secret のキー   →  "  VAR: value"
+                //        Deployment の env 項目     →  "- name: VAR"
                 for (Pattern p : List.of(Pattern.compile("^\\s*([A-Z][A-Z0-9_]{2,}):", Pattern.MULTILINE),
                                          Pattern.compile("name:\\s*([A-Z][A-Z0-9_]{2,})"))) {
                     Matcher matcher = p.matcher(text);
@@ -472,6 +529,7 @@ class ConfigurationGuardrailTest {
                 continue;
             }
             // 기본값이 없는 ${VAR} 만 — ${VAR:기본값} 은 없어도 뜬다.
+            // [JA] デフォルト値のない ${VAR} だけ — ${VAR:デフォルト値} はなくても起動する。
             Matcher required = Pattern.compile("\\$\\{([A-Z][A-Z0-9_]+)}")
                     .matcher(Files.readString(yml, StandardCharsets.UTF_8));
             while (required.find()) {
@@ -494,6 +552,10 @@ class ConfigurationGuardrailTest {
         // 데이터소스 수 × 풀 크기 × 레플리카 수가 서버의 max_connections 를 넘는 순간
         // 늦게 뜬 파드가 'FATAL: sorry, too many clients already' 로 기동조차 못 한다.
         // 기본값(10)을 그대로 두면 8 × 10 × 3 = 240 으로 기본 한도 100 을 두 배 넘게 초과했다.
+        // [JA] プールサイズはサービス一つだけを見ると常に妥当に見える。問題は**合計**だ:
+        //      データソース数 × プールサイズ × レプリカ数がサーバーの max_connections を超えた瞬間、
+        //      遅れて起動したポッドが 'FATAL: sorry, too many clients already' で起動すらできない。
+        //      デフォルト(10)のままだと 8 × 10 × 3 = 240 で、デフォルト上限 100 を 2 倍以上超えていた。
         int datasources = 0;
         List<String> unsized = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
@@ -522,6 +584,7 @@ class ConfigurationGuardrailTest {
                 .isEmpty();
 
         // 선언된 기본 풀 크기를 읽어 총합을 계산한다.
+        // [JA] 宣言されたデフォルトのプールサイズを読んで合計を計算する。
         int poolSize = Integer.parseInt(
                 Pattern.compile("maximum-pool-size:\\s*\\$\\{DB_POOL_SIZE:(\\d+)}")
                         .matcher(Files.readString(
@@ -530,7 +593,7 @@ class ConfigurationGuardrailTest {
                         .results().findFirst().orElseThrow().group(1));
 
         int maxReplicas = 3;   // k8s/70-autoscaling.yaml
-        int serverLimit = 200; // docs/19 §3 이 요구하는 max_connections (기본 100 에서 상향)
+        int serverLimit = 200; // docs/19 §3 이 요구하는 max_connections (기본 100 에서 상향) ／ [JA] docs/19 §3 が要求する max_connections(デフォルト 100 から引き上げ)
         int total = datasources * poolSize * maxReplicas;
 
         assertThat(total)
@@ -549,6 +612,11 @@ class ConfigurationGuardrailTest {
         //   · 제약을 **지우지 않는다** — 잘못 걸린 UNIQUE 가 영원히 남았고, 그래서
         //     엔티티를 고친 뒤에도 V4 마이그레이션을 따로 써야 했다
         // 되돌아오기 쉬운 설정이라(한 줄이면 된다) 빌드가 막는다.
+        // [JA] `ddl-auto: update` は 3 つが同時に問題だった(docs/20):
+        //        · スキーマ変更が履歴に残らない
+        //        · 運用 DB にレビューもロールバック計画もない DDL が流れる
+        //        · 制約を**消さない** — 誤って付いた UNIQUE が永遠に残り、エンティティを直した後も V4 マイグレーションを別に書く必要があった
+        //      戻りやすい設定なので(1 行で済む)ビルドが止める。
         Pattern ddlAuto = Pattern.compile("ddl-auto:\\s*(\\S+)");
         List<String> offenders = new ArrayList<>();
         Path root = repoRoot();
@@ -565,6 +633,8 @@ class ConfigurationGuardrailTest {
                 }
                 // ${DDL_AUTO:validate} 처럼 주입 가능한 형태도 **기본값**으로 판정한다 —
                 // 운영에서 환경변수로 덮어쓰는 것은 의도적 행위이고, 위험한 것은 커밋된 기본값이다.
+                // [JA] ${DDL_AUTO:validate} のような注入可能な形も**デフォルト値**で判定する —
+                //      運用で環境変数により上書きするのは意図的な行為であり、危険なのはコミットされたデフォルト値だ。
                 String value = m.group(1);
                 Matcher def = Pattern.compile("\\$\\{[^:}]+:([^}]*)}").matcher(value);
                 String effective = def.matches() ? def.group(1) : value;
@@ -582,6 +652,8 @@ class ConfigurationGuardrailTest {
 
         // 마이그레이션이 실제로 존재하는지도 본다 — validate 만 켜고 베이스라인이 없으면
         // 빈 DB 에서 'Schema-validation: missing table' 로 기동조차 못 한다.
+        // [JA] マイグレーションが実際に存在するかも見る — validate だけ有効にしてベースラインがないと、
+        //      空の DB で 'Schema-validation: missing table' となり起動すらできない。
         List<String> missingBaseline = new ArrayList<>();
         for (Path yml : serviceApplicationYmls()) {
             if (!yml.getFileName().toString().equals("application-local.yml")) {
@@ -612,6 +684,9 @@ class ConfigurationGuardrailTest {
     /**
      * 파드에 상태를 두기 때문에 수평 확장하면 <b>기능이 깨지는</b> 서비스. docs/21 참조.
      * chat-service 는 2026-11-01 에 빠졌다 — 구독자에게 보내는 것을 Redis 팬아웃으로 모든 파드에 퍼뜨린다(StompFanout, B-107).
+     *
+     * <p>[JA] ポッドに状態を持つため、水平スケールすると<b>機能が壊れる</b>サービス。docs/21 参照。
+     * chat-service は 2026-11-01 に外れた — 購読者への送信を Redis ファンアウトで全ポッドに広げる(StompFanout, B-107)。
      */
     private static final Map<String, String> SINGLETON_SERVICES = Map.of(
             "eureka-server",
@@ -623,6 +698,9 @@ class ConfigurationGuardrailTest {
         // 숫자를 1에서 2로 바꾸는 건 한 줄이고, 리뷰에서 "왜 여기만 1이지?" 하며 통과되기 쉽다.
         // 그런데 이 둘은 늘리는 순간 **조용히** 깨진다 — 파드는 정상이고 로그도 깨끗한데
         // 사용자가 채팅을 못 받거나, 디스커버리가 파드마다 다르게 보인다. 빌드가 막는다.
+        // [JA] 数字を 1 から 2 に変えるのは 1 行で、レビューで「なぜここだけ 1 なのか」と言いつつ通りやすい。
+        //      しかしこの 2 つは増やした瞬間**黙って**壊れる — ポッドは正常でログもきれいなのに、
+        //      ユーザーがチャットを受け取れなかったり、ディスカバリーがポッドごとに違って見えたりする。ビルドが止める。
         Path k8s = repoRoot().resolve("k8s");
         List<String> offenders = new ArrayList<>();
 
@@ -634,6 +712,7 @@ class ConfigurationGuardrailTest {
 
                     if (manifest.getFileName().toString().contains(service)) {
                         // 주석이 아닌 replicas 선언만 본다.
+                        // [JA] コメントではない replicas 宣言だけを見る。
                         content.lines().map(String::strip)
                                 .filter(l -> !l.startsWith("#") && l.startsWith("replicas:"))
                                 .forEach(l -> {
@@ -645,6 +724,7 @@ class ConfigurationGuardrailTest {
                     }
 
                     // HPA 는 파일 이름과 무관하게 어디에나 있을 수 있다.
+                    // [JA] HPA はファイル名と無関係にどこにでもあり得る。
                     if (content.contains("HorizontalPodAutoscaler")
                             && content.contains("kind: Deployment, name: " + service)) {
                         offenders.add(service + ": HPA 대상 — " + entry.getValue());
@@ -665,7 +745,9 @@ class ConfigurationGuardrailTest {
         // chat-service 는 여러 파드다(2026-11-01, docs/21 §2). 브로커는 여전히 파드마다의 인메모리(enableSimpleBroker)이고,
         // Kafka 컨슈머 그룹은 메시지를 파드 하나에만 준다 — 그 파드가 SimpMessagingTemplate 으로 직접 보내면 그 파드에 붙은
         // 사람만 받는다(파드 둘이면 절반이 조용히 못 받는다). 그래서 보내기는 StompFanout(Redis pub/sub → 모든 파드) 하나로.
-        // [JA] chat の購読者への送信は StompFanout だけ — 直接送ると別の Pod の購読者に届かない。
+        // [JA] chat-service は複数 Pod である(2026-11-01, docs/21 §2)。ブローカーは依然として Pod ごとのインメモリ(enableSimpleBroker)で、
+        //      Kafka コンシューマーグループはメッセージを一つの Pod にしか渡さない — その Pod が SimpMessagingTemplate で直接送ると、その Pod に
+        //      つながった人だけが受け取る(Pod 二つなら半分が黙って受け取れない)。だから送信は StompFanout(Redis pub/sub → 全 Pod)一つに。
         Path src = repoRoot().resolve("chat-service/src/main/java");
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> files = Files.walk(src)) {
@@ -692,6 +774,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** 베이스 매니페스트가 배포하는 서비스 = {@code image: REGISTRY_PLACEHOLDER/ecommerce-msa/<이름>}. */
+    // [JA] ベースマニフェストがデプロイするサービス = {@code image: REGISTRY_PLACEHOLDER/ecommerce-msa/<名前>}。
     private static Set<String> baseServiceImages() throws IOException {
         Path k8s = repoRoot().resolve("k8s");
         Set<String> names = new HashSet<>();
@@ -720,6 +803,13 @@ class ConfigurationGuardrailTest {
         //                        "왜 스케줄이 안 되지"로 보이지 saga-projection 문제로 보이지 않는다.
         //
         // 실제로 saga-projection 을 더할 때 다섯 자리 중 네 자리를 빠뜨렸다(docs/38 §1.17).
+        // [JA] サービスを一つ足す作業はファイル 1 つ(k8s/4x-*.yaml)では終わらない。オーバーレイごとに**名前を手で列挙した**箇所があり、
+        //      漏らしたときの症状が箇所ごとに違う:
+        //        images: の漏れ      → REGISTRY_PLACEHOLDER がそのまま残り ImagePullBackOff。
+        //                              ops/28 はデプロイ前にレジストリを確認する段階で死ぬ(まだ騒がしい方だ)。
+        //        リソースパッチの漏れ → **静かだ。** ベースの 250m/384Mi がそのまま適用され、2 OCPU のマシンではその 1 つのせいで
+        //                              他のポッドが Pending になる。「なぜスケジュールされないのか」に見え、saga-projection の問題には見えない。
+        //      実際に saga-projection を足したとき、5 箇所中 4 箇所を漏らした(docs/38 §1.17)。
         Set<String> services = baseServiceImages();
         assertThat(services).as("베이스가 배포하는 서비스").contains("gateway-server", "order-service");
 
@@ -737,6 +827,8 @@ class ConfigurationGuardrailTest {
 
                 // ① images: 를 선언하는 오버레이는 **전부** 열거해야 한다. 상속만 하는
                 //    오버레이(external·oci)는 images 블록이 없으므로 검사 대상이 아니다.
+                // [JA] ① images: を宣言するオーバーレイは**すべて**列挙しなければならない。継承だけのオーバーレイ(external・oci)は
+                //         images ブロックがないので検査対象ではない。
                 if (body.contains("\nimages:")) {
                     Matcher declared = Pattern.compile("^\\s*-\\s*name:\\s*\\S*ecommerce-msa/([a-z0-9-]+)\\s*$",
                             Pattern.MULTILINE).matcher(body);
@@ -753,6 +845,8 @@ class ConfigurationGuardrailTest {
 
                 // ② 자원을 깎는 오버레이(external·oci)는 frontend 를 뺀 자바 서비스 전부를
                 //    정규식에 담아야 한다. frontend 는 nginx 라 따로 다룬다.
+                // [JA] ② リソースを削るオーバーレイ(external・oci)は、frontend を除く Java サービス全部を正規表現に含めなければならない。
+                //         frontend は nginx なので別に扱う。
                 if (overlay.equals("external") || overlay.equals("oci")) {
                     for (String svc : services) {
                         if (!svc.equals("frontend") && !body.contains(svc)) {
@@ -776,6 +870,9 @@ class ConfigurationGuardrailTest {
         // 실패가 났을 때만 동작하기 때문이다. 그러다 정말 poison message 가 하나 들어오면 없는
         // 토픽에 쓰려다 실패하고 그 파티션이 막힌다 — DLQ 를 도입한 이유였던 바로 그 장애다
         // (docs/03 F-2). outgoing-mail·user-presence 가 실제로 그렇게 빠져 있었다.
+        // [JA] DLT のないトピックは**普段は何の症状もない。** DeadLetterPublishingRecoverer は処理失敗が起きたときだけ動くからだ。
+        //      そこへ本当に poison message が一つ入ると、存在しないトピックに書こうとして失敗し、そのパーティションが詰まる —
+        //      DLQ を導入した理由そのものの障害だ(docs/03 F-2)。outgoing-mail・user-presence が実際にそうやって漏れていた。
         Path script = repoRoot().resolve("ops/02-create-dlt-topics.sh");
         assertThat(script).exists();
 
@@ -811,6 +908,10 @@ class ConfigurationGuardrailTest {
         //
         // 특히 이름이 kafkaListenerContainerFactory 인 빈은 containerFactory 를 지정하지 않은
         // 리스너의 **기본값**이라 조용히 선택된다. coupon-service 가 정확히 그 상태였다.
+        // [JA] DLT トピックを作っておくだけでは足りない。コンテナファクトリーがエラーハンドラーを付けないと、そのトピックの DLT は
+        //      **作っただけで誰も使わない。** 失敗したレコードは隔離されず、無限リトライでパーティションを塞ぐ。
+        //      特に名前が kafkaListenerContainerFactory の Bean は、containerFactory を指定しないリスナーの**デフォルト**なので黙って選ばれる。
+        //      coupon-service がまさにその状態だった。
         List<String> offenders = new ArrayList<>();
 
         try (Stream<Path> paths = Files.walk(repoRoot())) {
@@ -821,6 +922,7 @@ class ConfigurationGuardrailTest {
                     .toList()) {
                 String rel = repoRoot().relativize(p).toString();
                 // @Bean 단위로 자른다. 마지막 조각까지 포함해야 파일 끝의 팩토리를 놓치지 않는다.
+                // [JA] @Bean 単位で切る。最後の断片まで含めないと、ファイル末尾のファクトリーを見落とす。
                 String[] beans = Files.readString(p, StandardCharsets.UTF_8).split("\n    @Bean");
                 for (int i = 1; i < beans.length; i++) {
                     Matcher factory = Pattern.compile("ConcurrentKafkaListenerContainerFactory<[^>]*>\\s+(\\w+)\\s*\\(")
@@ -838,6 +940,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** {@code @KafkaListener(... topics = "x" ...)} 의 토픽 리터럴. 주석 처리된 리스너는 세지 않는다. */
+    // [JA] {@code @KafkaListener(... topics = "x" ...)} のトピックリテラル。コメントアウトされたリスナーは数えない。
     private static Set<String> listenerTopics(String source) {
         String live = source.lines()
                 .filter(l -> !l.strip().startsWith("//") && !l.strip().startsWith("*"))
@@ -855,6 +958,7 @@ class ConfigurationGuardrailTest {
                 break;
             }
             // 괄호 균형을 맞춰 애노테이션 본문만 잘라낸다 — properties = {...} 같은 중첩이 있다.
+            // [JA] 括弧の釣り合いを取ってアノテーション本文だけを切り出す — properties = {...} のような入れ子がある。
             int depth = 0;
             int end = open;
             while (end < live.length()) {
@@ -884,6 +988,10 @@ class ConfigurationGuardrailTest {
         // 멀쩡하다. 증상이 그 서비스 안에 있는 것처럼 보여서 엉뚱한 곳을 뒤지게 된다.
         // 게다가 init 스크립트는 **빈 PGDATA 에서 한 번만** 돌기 때문에, 고쳐도 파드를 다시
         // 만들지 않으면 반영되지 않는다 — 두 번 헷갈리는 종류다.
+        // [JA] 90-dev-infra の init スクリプトは DB 名を**手で列挙する**。サービスを足すときここを漏らすと、
+        //      そのサービスだけ `FATAL: database "notificationdb" does not exist` で死に、残りは正常だ。
+        //      症状がそのサービスの中にあるように見えるので、見当違いの場所を探すことになる。
+        //      しかも init スクリプトは**空の PGDATA で一度だけ**走るので、直してもポッドを作り直さないと反映されない — 二度迷う種類だ。
         Path infra = repoRoot().resolve("k8s/90-dev-infra.yaml");
         if (!Files.exists(infra)) {
             return;
@@ -922,14 +1030,20 @@ class ConfigurationGuardrailTest {
         // 그래서 ops/02 가 만드는데, 그 스크립트는 토픽 이름을 **자기 기본값으로** 들고 있다.
         // 앱의 이름을 바꾸고 스크립트를 안 고치면 둘 다 조용히 어긋난다: 앱은 자기가 자동 생성한
         // delete 토픽에 쓰고, 스크립트는 아무도 안 쓰는 토픽을 컴팩션으로 만든다. 둘 다 성공으로 보인다.
+        // [JA] saga-projection の出力トピックは**コンパクションでなければならない**。Streams はシンクトピックを作らないので、
+        //      誰も作らなければブローカーが delete ポリシーで自動生成し、症状は retention が過ぎてから現れる — 過去の注文の状態が黙って消える(docs/38 §1.17)。
+        //      そこで ops/02 が作るが、そのスクリプトはトピック名を**自分のデフォルト値として**持っている。
+        //      アプリの名前を変えてスクリプトを直さないと、両方が黙ってずれる: アプリは自分が自動生成した delete トピックに書き、
+        //      スクリプトは誰も書かないトピックをコンパクションで作る。どちらも成功に見える。
         Path yml = repoRoot().resolve("saga-projection/src/main/resources/application-local.yml");
         Path script = repoRoot().resolve("ops/02-create-dlt-topics.sh");
         if (!Files.exists(yml)) {
-            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다
+            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다 ／ [JA] モジュールのないチェックアウトでは検査するものがない
         }
         assertThat(script).as("컴팩션 토픽을 만드는 스크립트").exists();
 
         // 'state-dir:' 이 아니라 'state:' 만 — topics 블록의 값이다. timeline 은 주문 진행 타임라인(docs/76).
+        // [JA] 'state-dir:' ではなく 'state:' だけ — topics ブロックの値だ。timeline は注文進行タイムライン(docs/76)。
         String ymlText = Files.readString(yml, StandardCharsets.UTF_8);
         String scriptText = Files.readString(script, StandardCharsets.UTF_8);
         Matcher defaults = Pattern.compile("STATE_TOPICS=\"\\$\\{STATE_TOPICS:-([^}]+)\\}\"").matcher(scriptText);
@@ -959,6 +1073,10 @@ class ConfigurationGuardrailTest {
         //
         // 이 가드레일이 지키는 것은 "매니페스트의 프로브 예산을 늘릴 때 스크립트도 같이
         // 늘린다"는 규칙이다. 한쪽만 바꾸면 조용히 예전 상태로 돌아간다.
+        // [JA] 両者が**同じ**だと、正常な起動がタイムアウトと競合して負ける。すると ops/28 は失敗と判定して自動復帰させ、
+        //      旧 ReplicaSet のポッドが再び Running になるので、運用者はデプロイが成功したと誤解する — 失敗が成功に見える組み合わせで特に悪い。
+        //      実際に経験した: デフォルト 300 秒 vs startupProbe 60×5 秒=300 秒。マイグレーション 4 つを一度に回す初回デプロイで user-service がこうしてロールバックされた。
+        //      このガードレールが守るのは「マニフェストのプローブ予算を増やすときはスクリプトも一緒に増やす」というルールだ。片方だけ変えると黙って以前の状態に戻る。
         Path script = repoRoot().resolve("ops/28-deploy.sh");
         assertThat(script).as("배포 스크립트").exists();
 
@@ -978,6 +1096,7 @@ class ConfigurationGuardrailTest {
                 }
                 // startupProbe 블록 안의 값만 본다. 뒤따르는 liveness/readiness 의
                 // periodSeconds 를 집으면 예산이 엉뚱해진다.
+                // [JA] startupProbe ブロック内の値だけを見る。後に続く liveness/readiness の periodSeconds を拾うと予算がおかしくなる。
                 String block = body.substring(at, Math.min(body.length(), at + 700));
                 Matcher ft = Pattern.compile("failureThreshold:\\s*(\\d+)").matcher(block);
                 Matcher ps = Pattern.compile("periodSeconds:\\s*(\\d+)").matcher(block);
@@ -1010,16 +1129,21 @@ class ConfigurationGuardrailTest {
         // 즉 어디에도 증상이 없다.
         //
         // 플레이스홀더 방식을 쓰는 이유는 yml 주석 참조(환경변수 이름 매핑이 하이픈을 지운다).
+        // [JA] config-server の設定値は application-local.yml で `${CONFIG_GIT_URI:デフォルト値}` の形で受け取る。
+        //      マニフェストの env 名とそのプレースホルダー名がずれると注入が丸ごと無視され、**デフォルト値(REPLACE_ME)が黙って勝つ** —
+        //      ポッドは正常に起動し、クライアントは SPRING_CONFIG_IMPORT が optional: なので失敗をログに残すだけだ。つまりどこにも症状がない。
+        //      プレースホルダー方式を使う理由は yml のコメント参照(環境変数名のマッピングがハイフンを消す)。
         Path manifest = repoRoot().resolve("k8s/32-config-server.yaml");
         Path yml = repoRoot().resolve("config-server/src/main/resources/application-local.yml");
         if (!Files.exists(yml)) {
-            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다
+            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다 ／ [JA] モジュールのないチェックアウトでは検査するものがない
         }
         assertThat(manifest).as("config-server 매니페스트").exists();
 
         String ymlBody = Files.readString(yml, StandardCharsets.UTF_8);
 
         // 주석 처리된 예시(`# - name: ...`)는 첫 글자가 '-' 가 아니라 걸리지 않는다.
+        // [JA] コメントアウトされた例(`# - name: ...`)は先頭文字が '-' ではないので引っかからない。
         Matcher env = Pattern.compile("^\\s*-\\s*name:\\s*(CONFIG_[A-Z0-9_]+)\\s*$", Pattern.MULTILINE)
                 .matcher(Files.readString(manifest, StandardCharsets.UTF_8));
 
@@ -1054,14 +1178,20 @@ class ConfigurationGuardrailTest {
         // "Did not observe any item or terminal signal within 1000ms in 'circuitBreaker'".
         //
         // 값을 지우거나 블록을 통째로 옮기면 **아무 오류 없이** 1초로 돌아간다. 그래서 검사한다.
+        // [JA] Resilience4j の TimeLimiter は timeout-duration を書かないと**1 秒**で動く。その 1 秒は JVM サービス呼び出しにはあまりに短い —
+        //      Eureka でインスタンスを選び、TLS を結び、JPA クエリまで回る時間だ。
+        //      実際の事故: /api/content/home がポッド直接呼び出しでは 0.3 秒で 200 なのに、ゲートウェイ経由では全部 503 だった。
+        //      原因はゲートウェイのログにだけ残っていた — "Did not observe any item or terminal signal within 1000ms in 'circuitBreaker'"。
+        //      値を消したりブロックを丸ごと移したりすると**何のエラーもなく** 1 秒に戻る。だから検査する。
         Path yml = repoRoot().resolve("gateway-server/src/main/resources/application-local.yml");
         if (!Files.exists(yml)) {
-            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다
+            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다 ／ [JA] モジュールのないチェックアウトでは検査するものがない
         }
 
         String body = Files.readString(yml, StandardCharsets.UTF_8);
 
         // 주석(`# timeout-duration: ...`)은 세지 않는다 — 주석은 설정이 아니다.
+        // [JA] コメント(`# timeout-duration: ...`)は数えない — コメントは設定ではない。
         Matcher declared = Pattern.compile("^\\s*timeout-duration:\\s*\\S+", Pattern.MULTILINE)
                 .matcher(body);
 
@@ -1084,12 +1214,19 @@ class ConfigurationGuardrailTest {
         //
         // 조사할 때는 환경변수로 올린다(LOG_LEVEL_APP / LOG_LEVEL_SQL / ...).
         // 기본값이 운영값이어야 하고, 그 반대가 아니다.
+        // [JA] 以前は 12 モジュール**すべて**でこのブロックが DEBUG だった — 自分たちのパッケージはもちろん org.hibernate.SQL まで。
+        //      運用ですべての SQL が 1 行ずつ出力されていたということだ。コストは 2 箇所で現れた:
+        //        · 起動が遅くなる。catalog-service の起動に 195 秒かかり、単一ノードで startupProbe の予算(300 秒)を脅かした。実際にロールアウトが止まった。
+        //        · 肝心の障害時に原因の行を探しにくい。DEBUG に埋もれて。
+        //      調査するときは環境変数で上げる(LOG_LEVEL_APP / LOG_LEVEL_SQL / ...)。デフォルト値が運用値であるべきで、その逆ではない。
         Pattern hardcoded = Pattern.compile(
                 "^[ \\t]*(?:org|com|io|net)\\.[A-Za-z0-9_.]*:[ \\t]*(?:DEBUG|debug|TRACE|trace)[ \\t]*$",
                 Pattern.MULTILINE);
 
         // ⚠️ application-local.yml 만 보지 않는다. 프로파일이 하나 늘어나는 순간 이 가드가
         //    조용히 눈이 멀기 때문이다. resources 바로 아래의 application*.yml 을 전부 본다.
+        // [JA] ⚠️ application-local.yml だけを見ない。プロファイルが一つ増えた瞬間このガードが黙って盲目になるからだ。
+        //         resources 直下の application*.yml を全部見る。
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> modules = Files.list(repoRoot())) {
             for (Path module : modules.filter(Files::isDirectory).sorted().toList()) {
@@ -1131,6 +1268,12 @@ class ConfigurationGuardrailTest {
         //
         // 안내문에 명령을 적을 일은 계속 있다. 그러니 규칙은 하나다: 따옴표 없는 heredoc
         // 안에서 백틱은 \` 로 쓴다. ops/22 는 이미 그렇게 하고 있었다.
+        // [JA] ops/19 の「次のステップ」案内文は $TAG を置換するために `cat <<EOF` で(引用符なしで)開かれていた。その中の 1 行がこうだった:
+        //          ⚠️ ... `kubectl apply -f k8s/` 는 더 이상 쓸 수 없다.
+        //      引用符なしの heredoc ではバッククォートは**コマンド置換**だ。そのためこの案内文はビルドのたびに実際に kubectl apply -f k8s/ を実行していた —
+        //      HPA を復活させ、オーバーレイなしで base マニフェストを適用して直前のデプロイを 1.0.0 に戻した。ジャーナルに 5 回連続 fail が記録された事故の根だ。
+        //      しかもそのコマンドの stdout が案内文の真ん中に挟まって出てきたので、ログを読む人は「誰がこれを打ったのか」と人を疑った(docs/39 §7.6)。
+        //      案内文にコマンドを書くことは今後もある。だからルールは一つ: 引用符なしの heredoc の中ではバッククォートを \` と書く。ops/22 はすでにそうしていた。
         Pattern open = Pattern.compile("<<-?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$");
         List<String> offenders = new ArrayList<>();
 
@@ -1142,6 +1285,7 @@ class ConfigurationGuardrailTest {
                     String line = lines.get(i);
                     if (terminator == null) {
                         // 따옴표로 연 heredoc(<<'EOF', <<"EOF")은 치환이 없으므로 대상이 아니다.
+                        // [JA] 引用符で開いた heredoc(<<'EOF', <<"EOF")は置換がないので対象外。
                         Matcher m = open.matcher(line);
                         if (m.find() && !line.contains("<<'") && !line.contains("<<\"")
                                 && !line.contains("<<-'") && !line.contains("<<-\"")) {
@@ -1154,6 +1298,7 @@ class ConfigurationGuardrailTest {
                         continue;
                     }
                     // 이스케이프되지 않은 백틱 = 백슬래시가 앞에 없는 백틱
+                    // [JA] エスケープされていないバッククォート = 前にバックスラッシュのないバッククォート
                     if (Pattern.compile("(?<!\\\\)`").matcher(line).find()) {
                         offenders.add(repoRoot().relativize(script) + ":" + (i + 1) + "  " + line.strip());
                     }
@@ -1178,10 +1323,14 @@ class ConfigurationGuardrailTest {
         //
         // 스킴이 어긋나도 오류 메시지는 "게이트웨이가 UP 이 아니다"로 나온다. 즉 증상이
         // 원인을 가린다. 그래서 검사한다.
+        // [JA] gateway-server は自分で TLS を終端する(server.ssl.key-store, ポート 8000)。ところが ops/28 のポートフォワード経路は
+        //      `http://localhost:18000` をスモークの対象にしていた。Tomcat は平文リクエストに 400 "This combination of host and port requires TLS" を返すので
+        //      **スモークの全項目が失敗**した — 何をデプロイしてもゲートを通れず、毎回自動復帰が走った。ジャーナルに ok が 1 行もなかった理由だ。
+        //      スキームがずれてもエラーメッセージは「ゲートウェイが UP ではない」と出る。つまり症状が原因を隠す。だから検査する。
         Path gatewayYml = repoRoot().resolve("gateway-server/src/main/resources/application-local.yml");
         Path deploy = repoRoot().resolve("ops/28-deploy.sh");
         if (!Files.exists(gatewayYml) || !Files.exists(deploy)) {
-            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다
+            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다 ／ [JA] モジュールのないチェックアウトでは検査するものがない
         }
 
         String gatewayBody = Files.readString(gatewayYml, StandardCharsets.UTF_8);
@@ -1189,10 +1338,11 @@ class ConfigurationGuardrailTest {
                 .compile("^\\s*key-store:\\s*\\S+", Pattern.MULTILINE)
                 .matcher(gatewayBody).find();
         if (!gatewayTerminatesTls) {
-            return;   // 평문 게이트웨이라면 http 대상이 맞다
+            return;   // 평문 게이트웨이라면 http 대상이 맞다 ／ [JA] 平文のゲートウェイなら http の対象が正しい
         }
 
         // 주석은 제외한다 — 주석 안의 http:// 는 설명이지 설정이 아니다.
+        // [JA] コメントは除外する — コメント内の http:// は説明であって設定ではない。
         List<String> offenders = Files.readAllLines(deploy, StandardCharsets.UTF_8).stream()
                 .filter(line -> !line.strip().startsWith("#"))
                 .filter(line -> line.contains("SMOKE_TARGET=") && line.contains("http://"))
@@ -1215,13 +1365,18 @@ class ConfigurationGuardrailTest {
         // 이런 어긋남은 **배포를 막지 않는다.** 증상이 "알림만 안 온다" 처럼 한 기능에만
         // 나타나고, 서버 로그에는 아무것도 남지 않는다(게이트웨이에서 끝나므로).
         // 그래서 사람이 그 화면을 열어 보기 전까지 아무도 모른다.
+        // [JA] 実際の事故: フロントは `/user-service/api/sse` を呼ぶのに、ゲートウェイの述語は `/user-service/sse` だった。
+        //      どのルートにもかからず 404 — たとえかかっても RewritePath が `/sse` に変えるのにコントローラーは `/api/sse` なので、また 404 だった。
+        //      こうしたずれは**デプロイを止めない。** 症状が「通知だけ来ない」のように一機能にだけ現れ、サーバーログには何も残らない(ゲートウェイで終わるため)。
+        //      だから人がその画面を開いてみるまで誰も気づかない。
         Path yml = repoRoot().resolve("gateway-server/src/main/resources/application-local.yml");
         Path frontend = repoRoot().resolve("frontend/src");
         if (!Files.exists(yml) || !Files.exists(frontend)) {
-            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다
+            return;   // 모듈이 없는 체크아웃에서는 검사할 것이 없다 ／ [JA] モジュールのないチェックアウトでは検査するものがない
         }
 
         // 게이트웨이 술어 수집. Path= 는 `\` 로 여러 줄에 걸쳐 쓰이므로 먼저 펼친다.
+        // [JA] ゲートウェイ述語の収集。Path= は `\` で複数行にわたって書かれるので先に展開する。
         String body = Files.readString(yml, StandardCharsets.UTF_8)
                 .replaceAll("\\\\\\s*\\n\\s*", " ");
         List<Pattern> routes = new ArrayList<>();
@@ -1241,6 +1396,9 @@ class ConfigurationGuardrailTest {
         // ⚠️ 맨 앞의 `${API_BASE}` 같은 보간 하나는 허용해야 한다. 실제로 SSE 호출이
         //    `` `${API_BASE}/user-service/api/sse` `` 형태라, 이걸 제외하면 이 가드가 잡아야 할
         //    바로 그 버그를 놓친다(처음 작성했을 때 실제로 놓쳤다).
+        // [JA] フロントの**静的**パスだけを見る。パスの途中に値が挟まるものはここでは判定できない。
+        //      ⚠️ 先頭の `${API_BASE}` のような補間一つは許容しなければならない。実際に SSE 呼び出しが
+        //         `` `${API_BASE}/user-service/api/sse` `` の形なので、これを除外するとこのガードが捕まえるべきまさにそのバグを見逃す(最初に書いたとき実際に見逃した)。
         Pattern literal = Pattern.compile(
                 "[\"'`](?:\\$\\{[^}]*\\})?"
                         + "(/(?:(?:user|catalog|cart|order|pay|coupon|chat|notification|delivery)-service|saga-projection)"
@@ -1279,6 +1437,10 @@ class ConfigurationGuardrailTest {
         // 누가 application-prod.yml 을 추가하거나 SPRING_PROFILES_ACTIVE 를 바꾸면 위 셋은
         // 여전히 초록불이면서 아무것도 지키지 않게 된다 — 가드가 있다는 사실이 오히려
         // 해롭다. 그래서 전제 자체를 검사한다.
+        // [JA] B-45(ゲートウェイのタイムアウト)・B-48(スモークのスキーム)・B-49(ルート)はどれも `application-local.yml` を読む。
+        //      それが**実際にデプロイされるプロファイル**だという前提に立っているが、その前提はコードのどこにも書かれていない。
+        //      誰かが application-prod.yml を追加したり SPRING_PROFILES_ACTIVE を変えたりすると、上の 3 つは緑のままで何も守らなくなる —
+        //      ガードがあるという事実がかえって有害だ。だから前提そのものを検査する。
         Path configmap = repoRoot().resolve("k8s/10-configmap.yaml");
         if (!Files.exists(configmap)) {
             return;
@@ -1296,6 +1458,7 @@ class ConfigurationGuardrailTest {
                 .isEqualTo("local");
 
         // 게이트웨이에 다른 프로파일 파일이 생겼다면 라우트가 그쪽에도 있을 수 있다.
+        // [JA] ゲートウェイに別のプロファイルファイルができたなら、ルートがそちらにもあり得る。
         try (Stream<Path> ymls = Files.list(repoRoot().resolve("gateway-server/src/main/resources"))) {
             List<String> others = ymls.map(p -> p.getFileName().toString())
                     .filter(n -> n.startsWith("application-") && n.endsWith(".yml"))
@@ -1323,6 +1486,12 @@ class ConfigurationGuardrailTest {
         //     SDK Validation error: 'Expected client-id to be passed'
         //
         // 값은 ops/19 에 넘긴다. 주석으로 설명하는 줄은 여기 걸리지 않는다(첫 글자가 #).
+        // [JA] CRA は `npm run build` のときに process.env.REACT_APP_* を**文字列リテラルに置換**してバンドルに埋め込む。
+        //      フロントエンドイメージは nginx が静的ファイルを配信するだけなので、ポッドに環境変数を入れても読むプロセスがない。
+        //      そのためマニフェストにある REACT_APP_* は**動作しない値**なのに、あると「埋めたから大丈夫だろう」と思ってしまう。
+        //      実際に 20-secret.example.yaml に REACT_APP_PAYPAL_CLIENT_ID があり、それを埋めてデプロイした後、決済画面でだけこう壊れた:
+        //          SDK Validation error: 'Expected client-id to be passed'
+        //      値は ops/19 に渡す。コメントで説明する行はここには引っかからない(先頭文字が #)。
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> manifests = Files.list(repoRoot().resolve("k8s"))) {
             for (Path manifest : manifests.filter(f -> f.toString().endsWith(".yaml")).sorted().toList()) {
@@ -1368,6 +1537,19 @@ class ConfigurationGuardrailTest {
         // 안전한 형태는 통과시킨다:
         //   · `authorizationHeader != null ? "present" : "absent"` — 리터럴만 나간다
         //   · 주석 안의 예시 — 실행되지 않는다(이 주석 자체가 그렇다)
+        // [JA] NotificationController にこんな 2 行があった:
+        //          log.info("Request Authorization Header: {}", accessToken);
+        //          log.info("토큰에서 추출한 Session ID: {}", sessionId);   // 実はトークン全文だった
+        //      どちらも**有効なアクセストークンを平文で**残す。ログを読める人なら誰でも、期限切れまでそのユーザーになりすませる。
+        //      しかも SSE は接続のたびに出力され、トークン更新のたびにまた出力されるので(TokenRefresher が期限 10 秒前に更新する)すぐに溜まる。
+        //      ログ収集基盤に出てしまえば回収する手段もない。
+        //      2 行目は名前まで間違っていてより危険だった — "Session ID" と書かれているので、レビューで誰もトークンだと思わない。
+        //      だから**名前ではなく値の出所**で止める。
+        //      ルール: **資格情報が入る名前**がログ引数に渡されたら失敗。フォーマット文字列に何と書かれているかは見ない —
+        //      上の 2 行目が示すように説明は間違い得るが、値の出所は間違わない。
+        //      安全な形は通す:
+        //        · `authorizationHeader != null ? "present" : "absent"` — リテラルだけが出る
+        //        · コメント内の例 — 実行されない(このコメント自体がそうだ)
         Pattern logCall = Pattern.compile(
                 "log\\.(?:trace|debug|info|warn|error)\\s*\\(([^;]*)\\)\\s*;", Pattern.DOTALL);
         Pattern credentialArg = Pattern.compile(
@@ -1386,8 +1568,10 @@ class ConfigurationGuardrailTest {
                 Matcher call = logCall.matcher(src);
                 while (call.find()) {
                     // ① 문자열 리터럴을 지운다 — 포맷 문자열은 검사 대상이 아니다.
+                    // [JA] ① 文字列リテラルを消す — フォーマット文字列は検査対象ではない。
                     String args = call.group(1).replaceAll("\"(?:[^\"\\\\]|\\\\.)*\"", "\"\"");
                     // ② 양쪽 가지가 리터럴인 null 검사 삼항식은 값이 새지 않는다. 지운다.
+                    // [JA] ② 両方の枝がリテラルである null チェックの三項式は値が漏れない。消す。
                     args = args.replaceAll(
                             "[A-Za-z0-9_.]+\\s*[!=]=\\s*null\\s*\\?\\s*\"\"\\s*:\\s*\"\"", "\"\"");
 
@@ -1438,6 +1622,18 @@ class ConfigurationGuardrailTest {
         // 다만 **전역 필터**로 해야 한다 — GlobalFilter 는 자기 order 를 그대로 쓰므로
         // HIGHEST_PRECEDENCE 면 라우트 필터(order 1부터)보다 반드시 앞이고, 필터 개수나
         // 나열 순서에 기대지 않는다.
+        // [JA] このガードが存在する理由は**順序に関する誤った思い込み**一つだ。
+        //      default-filters にこう書かれていた: RemoveRequestHeader=User-Id / User-Email / User-Role。
+        //      横のコメントは「default-filters はルートフィルターより先に実行されるので、ここで消した後 JwtAuthorization が検証済みの値を入れ直す順序になる」と断言していた。逆だった。
+        //      spring-cloud-gateway-server 4.2 の RouteDefinitionRouteLocator を見ると:
+        //        · loadGatewayFilters は各フィルターを**そのリスト内のインデックス+1**で包む — new OrderedGatewayFilter(filter, i + 1)
+        //        · getFilters は default-filters を先に入れ(order 1,2,3,4,5)、**ルートフィルターを再び 1 から**入れた後 AnnotationAwareOrderComparator で並べ替える
+        //      そのため JwtAuthorization(ルート 1 番 → order 1)が User-Id を入れた直後に、RemoveRequestHeader=User-Id(デフォルト 2 番 → order 2)がそれを消していた。
+        //      これは静かな全面障害だった。検証済みの身元が下位サービスに**一つも**届かず、JwtAuthorization の付いた全ルートが 401 を受けた。
+        //      なのにゲートウェイのログにはフィルターが正常に呼ばれ、ルートも正しくマッチしたと記録される — どこを見ても正常に見える。
+        //      管理画面ではバナー呼び出し一つが 401 を 2 回受けてアプリ全体がログアウトし、症状は「管理ページがログイン画面に弾かれる」だった。
+        //      消すこと自体は必要だ(外部から User-Role: ROLE_ADMIN を送れば権限昇格になる)。ただし**グローバルフィルター**でやるべきだ —
+        //      GlobalFilter は自分の order をそのまま使うので、HIGHEST_PRECEDENCE ならルートフィルター(order 1 から)より必ず前になり、フィルターの数や並び順に依存しない。
         Path gatewayYaml = repoRoot()
                 .resolve("gateway-server/src/main/resources/application-local.yml");
         List<String> lines = Files.readAllLines(gatewayYaml, StandardCharsets.UTF_8);
@@ -1455,6 +1651,7 @@ class ConfigurationGuardrailTest {
                 continue;
             }
             // 목록을 벗어나면(주석이 아닌, '-' 로 시작하지 않는 줄) 구간 종료.
+            // [JA] リストを抜けたら(コメントでなく '-' で始まらない行)区間終了。
             if (inDefaultFilters && !stripped.isEmpty() && !stripped.startsWith("-")) {
                 inDefaultFilters = false;
             }
@@ -1473,6 +1670,8 @@ class ConfigurationGuardrailTest {
 
         // 지우는 일이 **사라지는** 것도 막아야 한다. 위 줄만 지우고 전역 필터를 안 두면
         // 헤더 한 줄로 관리자를 사칭할 수 있게 된다 — 가드가 오히려 구멍을 만드는 셈이다.
+        // [JA] 消す処理が**なくなる**ことも防がなければならない。上の行だけ消してグローバルフィルターを置かないと、
+        //      ヘッダー 1 行で管理者になりすませるようになる — ガードがかえって穴を作ることになる。
         Path scrubber = repoRoot().resolve(
                 "gateway-server/src/main/java/com/project/gatewayserver/filter/IdentityHeaderScrubFilter.java");
         assertThat(scrubber)
@@ -1519,11 +1718,24 @@ class ConfigurationGuardrailTest {
         //    그 넷은 **아웃박스 파티셔닝 전환**(V1)이고 이미 운영에 적용돼 있다. 파일을
         //    건드릴 수 없으므로 여기 예외로 적는다 — 예외의 이유는 아래 주석이 기록이다.
         //    새 마이그레이션은 파일에 표시를 달면 되므로 이 목록이 늘어날 일은 없어야 한다.
+        // [JA] `ops/28 --rollback` は**イメージだけ**を戻す。スキーマは進んだまま残る。
+        //      そのため、あるデプロイがカラムを消したり名前を変えたりすると、戻した旧イメージは Hibernate の `ddl-auto: validate` で起動できない —
+        //      "Schema-validation: missing column"。**安全網があると信じた瞬間にそれがない。**このリポジトリはその種の事故をすでに経験した
+        //      (スモークゲートが http/https のせいで永遠に失敗し、すべてのデプロイが自動復帰していた件、docs/39 §7)。
+        //      かといって削除を禁止はできない。expand-contract では最終的に消す — ただし**コードがそれをもう読まないバージョンがデプロイされ安定した次のリリース**で。
+        //      静的検査はリリースを知らないので、禁止の代わりに**宣言**を求める: ファイルに -- ROLLBACK-UNSAFE: <理由と備え> の 1 行を書かせる。
+        //      そうすれば作成者が一度立ち止まって考え、後で戻しが詰まったときに grep 一回で原因を見つけられる。
+        //      ⚠️ **すでに適用されたマイグレーションファイルは直せない。** Flyway はファイル内容でチェックサムを計算するので、コメント 1 行を足すだけで
+        //         次の起動時に "Migration checksum mismatch" でそのサービスが起動できない。このガードを書きながら既存の違反 4 件に説明を付けようとして、危うくそのまま障害を作るところだった。
+        //         その 4 件は**アウトボックスのパーティショニング移行**(V1)で、すでに運用に適用されている。ファイルに触れられないのでここに例外として書く —
+        //         例外の理由は下のコメントが記録だ。新しいマイグレーションはファイルに印を付ければよいので、このリストが増えることはないはずだ。
         Set<String> alreadyApplied = Set.of(
                 // 평범한 테이블을 파티션 테이블로 바꾼다(기존 테이블 → _legacy, 새 파티션
                 // 테이블이 그 이름을 물려받는다). 이름은 그대로라 옛 이미지의 validate 는
                 // 통과하지만, 되돌려도 **데이터 배치**는 합쳐지지 않는다. 아웃박스는 발행이
                 // 끝나면 버려도 되는 데이터라 이미지만 되돌리면 충분하다.
+                // [JA] 普通のテーブルをパーティションテーブルに変える(既存テーブル → _legacy、新しいパーティションテーブルがその名前を受け継ぐ)。
+                //      名前はそのままなので旧イメージの validate は通るが、戻しても**データの配置**は統合されない。アウトボックスは発行が終われば捨ててよいデータなので、イメージだけ戻せば十分だ。
                 "user-service/src/main/resources/db/migration/V1__partition_outbox_event.sql",
                 "cart-service/src/main/resources/db/migration/V1__partition_outbox_event.sql",
                 "order-service/src/main/resources/db/migration/V1__partition_payment_outbox_event.sql",
@@ -1532,6 +1744,8 @@ class ConfigurationGuardrailTest {
         // `ALTER COLUMN … TYPE` 도 든다(order-service V7 에서 배웠다): integer → numeric 으로
         // 바꾸면 옛 이미지의 int 필드가 validate 에서 "wrong column type" 으로 죽는다.
         // 컬럼은 그대로 있는데 되돌리기가 막히는 경우라 눈에 덜 띈다.
+        // [JA] `ALTER COLUMN … TYPE` も入る(order-service V7 で学んだ): integer → numeric に変えると、旧イメージの int フィールドが validate で "wrong column type" で死ぬ。
+        //      カラムはそのままなのに戻しが詰まるケースなので目立ちにくい。
         Pattern destructive = Pattern.compile(
                 "(?i)^\\s*(alter\\s+table\\s+\\S+\\s+(drop\\s+column|drop\\s+constraint|rename)"
                         + "|drop\\s+(table|schema)\\b"
@@ -1550,18 +1764,21 @@ class ConfigurationGuardrailTest {
                 }
                 String body = Files.readString(sql, StandardCharsets.UTF_8);
                 if (body.contains("ROLLBACK-UNSAFE")) {
-                    continue;   // 선언했다 — 통과
+                    continue;   // 선언했다 — 통과 ／ [JA] 宣言した — 通過
                 }
                 List<String> lines = body.lines().toList();
                 for (int i = 0; i < lines.size(); i++) {
                     String line = lines.get(i);
                     // SQL 주석은 검사하지 않는다. 마이그레이션 파일은 설명이 길고, 그 안에
                     // "나중에 DROP TABLE ... 로 정리" 같은 안내가 흔하다.
+                    // [JA] SQL コメントは検査しない。マイグレーションファイルは説明が長く、その中に「後で DROP TABLE ... で整理」のような案内がよくある。
                     if (line.strip().startsWith("--")) {
                         continue;
                     }
                     // varchar 를 넓히기만 하는 것은 옛 이미지의 validate 가 통과한다(길이는 보지 않는다) — 되돌리기를 막을 이유가 없다.
                     // 다만 넓히기인지는 정적으로 알 수 없으니 파일에 `-- ROLLBACK-SAFE: <이유>` 로 선언하게 한다(user V14).
+                    // [JA] varchar を広げるだけなら旧イメージの validate は通る(長さは見ない) — 戻しを止める理由がない。
+                    //      ただし広げるだけかどうかは静的には分からないので、ファイルに `-- ROLLBACK-SAFE: <理由>` で宣言させる(user V14)。
                     if (body.contains("ROLLBACK-SAFE:")
                             && line.matches("(?i)^\\s*alter\\s+table\\s+\\S+\\s+alter\\s+column\\s+\\S+\\s+type\\s+varchar\\s*\\(\\d+\\)\\s*;?\\s*$")) {
                         continue;
@@ -1589,10 +1806,14 @@ class ConfigurationGuardrailTest {
         //    reviewers 가 승인 게이트라고 적혀 있었다. 그러나 비공개 저장소는 Free · Pro · Team 요금제에서 Required reviewers 를
         //    쓸 수 없다 — `production` 은 첫 실행이 만든 빈 Environment 였고, 러너가 온라인이었다면 사전 점검 · 백업 없이
         //    되돌릴 수 없는 마이그레이션이 나갈 뻔했다(2026-10-05). 그래서 트리거를 수동 실행 하나로 묶는다.
-        // [JA] 非公開リポジトリでは承認ゲートが無いため、デプロイは手動実行だけで始まるようにする。
+        // [JA] 🐛 deploy-oci.yml はパイプラインが緑になると(workflow_run)自動で動き、Environment `production` の Required reviewers が
+        //      承認ゲートだと書かれていた。しかし非公開リポジトリは Free · Pro · Team プランで Required reviewers を使えない — `production` は
+        //      初回実行が作った空の Environment で、ランナーがオンラインだったら事前点検 · バックアップなしで元に戻せないマイグレーションが
+        //      出ていくところだった(2026-10-05)。だからトリガーを手動実行一つに絞る。
         String wf = Files.readString(repoRoot().resolve(".github/workflows/deploy-oci.yml"), StandardCharsets.UTF_8);
 
         // 최상위 `on:` 블록의 트리거 이름(두 칸 들여쓴 키)만 모은다
+        // [JA] トップレベル `on:` ブロックのトリガー名(2 スペースインデントのキー)だけを集める
         Set<String> triggers = new java.util.LinkedHashSet<>();
         boolean inOn = false;
         for (String line : wf.lines().toList()) {
@@ -1601,7 +1822,7 @@ class ConfigurationGuardrailTest {
                 continue;
             }
             if (inOn && line.matches("^\\S.*")) {
-                break;   // 다음 최상위 키
+                break;   // 다음 최상위 키 ／ [JA] 次のトップレベルキー
             }
             Matcher key = Pattern.compile("^  ([A-Za-z_]+):").matcher(line);
             if (inOn && key.find()) {
@@ -1623,7 +1844,12 @@ class ConfigurationGuardrailTest {
      * 0.27 의 {@code discord_configs} 는 주소를 설정에 직접 적는 것만 받는다(비밀이 커밋된다) — 파일 읽기는 0.28 부터(amtool 로 확인).
      * ops/17 의 도달 시험은 discord 전달 지표를 본다. 로컬에서 0.28.1 + 가짜 Discord 로 ops/17 MODE=test 가 9/9 · embed 수신.
      *
-     * <p>[JA] アラートは Discord へ — discord_configs でファイルから URL を読む。0.27 は直書きのみ、ファイルは 0.28 から。
+     * <p>[JA] B-96: アラートは Discord へ — 受信は {@code discord_configs} で、URL はファイル({@code webhook_url_file})から。Alertmanager は 0.28 以上。
+     *
+     * <p>[JA] 2026-10-20 本番: 秘密ファイルが一度も作られず(9-24 から Docker が作った空ディレクトリ)アラートが 0 件配送だった。しかも受信が
+     * {@code webhook_configs}(Alertmanager 固有の JSON)なので、ops/17 の例どおり Slack · Discord の URL を入れても形式で拒否されていたはずだ。
+     * 0.27 の {@code discord_configs} は URL を設定に直接書くことしか受け付けない(秘密がコミットされる)— ファイル読み取りは 0.28 から(amtool で確認)。
+     * ops/17 の到達試験は discord 配送の指標を見る。ローカルで 0.28.1 + 偽 Discord で ops/17 MODE=test が 9/9 · embed 受信。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -1648,10 +1874,12 @@ class ConfigurationGuardrailTest {
         assertThat(ops17).contains("integration=\"discord\"").doesNotContain("integration=\"webhook\"")
                 .as("주소를 화면에 찍지 않는다 — 길이 · 앞부분만").doesNotContain("형식이 아닙니다: $url");
         // 🐛 2026-10-20 운영: 주소 파일 전에 쌓인 실패 4건 때문에, Discord 에 시험 경보가 왔는데도 "전달 실패" 로 판정했다 — 시험 전 값과의 차이로
+        // [JA] 🐛 2026-10-20 運用: アドレスファイル以前に溜まった失敗 4 件のせいで、Discord に試験アラートが届いたのに「配信失敗」と判定した — 試験前の値との差で
         assertThat(ops17).as("도달 시험은 시험 전 누적값을 기준으로 차이만 본다").contains("read -r base_total base_failed")
                 .contains("failed=$((now_failed - base_failed))")
                 .as("시험 경보는 회차마다 새 그룹 — 같은 이름표면 repeat_interval 안이라 보내지 않는다").contains("\"service\": \"ops-17-$run_id\"");
         // 전달 실패가 보이는 곳 — Prometheus 가 Alertmanager 를 긁고, 최근 실패에 경보(같은 길이라 ops/05 · Grafana 에서 본다)
+        // [JA] 配信失敗が見える場所 — Prometheus が Alertmanager をスクレイプし、直近の失敗にアラート(同じ経路なので ops/05 · Grafana で見る)
         for (String cfg : List.of("observability/prometheus.yml", "observability/prometheus.oci.yml")) {
             assertThat(Files.readString(repoRoot().resolve(cfg), StandardCharsets.UTF_8)).as(cfg).contains("targets: [\"alertmanager:9093\"]");
         }
@@ -1669,7 +1897,14 @@ class ConfigurationGuardrailTest {
      * 없으면 경보(ServiceMetricsMissing — 그때 ServiceDown 은 울릴 수 없다). 로컬에서 같은 v2.53.0 으로 렌더 · promtool · 에이전트 →
      * 수신(up=1, absent 해소)을 확인했다.
      *
-     * <p>[JA] 本番のサービス指標 — クラスタ内のエージェントが集めてノードの Prometheus へ remote write する。以前は 7 日間 0 だった。
+     * <p>[JA] B-95: 本番のサービス指標 — クラスター内のエージェントが収集してノードの Prometheus へ remote write する(docs/63 §5「サービス指標」)。
+     *
+     * <p>[JA] 2026-10-20 本番: ノードの Prometheus が開発 PC 設定(host.docker.internal:80xx)で、過去 7 日サービス指標が 0 だった — JVM · 接続
+     * プール · HTTP 指標とそのアラートが空で、ServiceDown だけが鳴った。守るもの: external オーバーレイ(本番 local · oci が継承)にエージェントがある ·
+     * 指標を出すサービス(ビルドに micrometer-registry-prometheus)を正確に収集する · TLS を検証する(CA だけマウント)· 送り先は initContainer が
+     * ノード IP で埋める · ノード側の上書きが受信を有効にし既定の引数をすべて書き直す · 本番設定は開発 PC のターゲットだけ外した · 指標が丸ごと
+     * なければアラート(ServiceMetricsMissing — そのとき ServiceDown は鳴れない)。ローカルで同じ v2.53.0 でレンダー · promtool · エージェント →
+     * 受信(up=1、absent 解消)を確認した。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -1699,6 +1934,7 @@ class ConfigurationGuardrailTest {
         assertThat((String) tls.get("server_name")).matches("[a-z0-9-]+\\.ecommerce\\.svc\\.cluster\\.local");
 
         // 지표를 내는 서비스 = k8s 매니페스트가 있는 모듈 중 빌드에 micrometer-registry-prometheus 가 있는 것 — 정확히 그것들만 긁는다
+        // [JA] メトリクスを出すサービス = k8s マニフェストのあるモジュールのうち、ビルドに micrometer-registry-prometheus があるもの — 正確にそれらだけをスクレイプする
         Pattern keep = Pattern.compile(((List<Map<String, Object>>) job.get("relabel_configs")).stream()
                 .filter(r -> "keep".equals(r.get("action")) && String.valueOf(r.get("source_labels")).contains("pod_label_app"))
                 .map(r -> (String) r.get("regex")).findFirst().orElseThrow());
@@ -1725,6 +1961,7 @@ class ConfigurationGuardrailTest {
         }
 
         // 보낼 곳 — 노드 IP:9090. 틀의 자리표시자를 initContainer 가 HOST_IP(downward API)로 채운다
+        // [JA] 送り先 — ノード IP:9090。テンプレートのプレースホルダーを initContainer が HOST_IP(downward API)で埋める
         String url = (String) ((List<Map<String, Object>>) prom.get("remote_write")).get(0).get("url");
         assertThat(url).isEqualTo("http://__HOST_IP__:9090/api/v1/write");
         Map<String, Object> pod = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) docs.get("Deployment/metrics-agent")
@@ -1740,6 +1977,7 @@ class ConfigurationGuardrailTest {
                 .as("tls-keystore 의 키스토어 · 비밀번호는 싣지 않는다").extracting(m -> m.get("key")).containsExactly("ca.crt");
 
         // 노드 쪽 — 덧씌우기가 수신을 켜고 기본 인자를 모두 다시 적는다, 같은 판
+        // [JA] ノード側 — オーバーライドが受信を有効にし、デフォルト引数をすべて書き直す、同じバージョン
         Map<String, Object> base = (Map<String, Object>) ((Map<String, Object>) yaml.<Map<String, Object>>load(Files.readString(
                 repoRoot().resolve("docker-compose-observability.yml"), StandardCharsets.UTF_8)).get("services")).get("prometheus");
         Map<String, Object> oci = (Map<String, Object>) ((Map<String, Object>) yaml.<Map<String, Object>>load(Files.readString(
@@ -1751,6 +1989,7 @@ class ConfigurationGuardrailTest {
                 .isEqualTo(base.get("image"));
 
         // 운영 설정 = 개발 PC 설정에서 spring-actuator 작업만 뺀 것
+        // [JA] 運用設定 = 開発 PC の設定から spring-actuator ジョブだけを抜いたもの
         Map<String, Object> devCfg = yaml.load(Files.readString(repoRoot().resolve("observability/prometheus.yml"), StandardCharsets.UTF_8));
         String ociText = Files.readString(repoRoot().resolve("observability/prometheus.oci.yml"), StandardCharsets.UTF_8);
         Map<String, Object> ociCfg = yaml.load(ociText);
@@ -1758,6 +1997,7 @@ class ConfigurationGuardrailTest {
         List<Map<String, Object>> devJobs = new ArrayList<>((List<Map<String, Object>>) devCfg.get("scrape_configs"));
         devJobs.removeIf(j -> "spring-actuator".equals(j.get("job_name")));
         // 운영에만 있는 작업은 빼고 비교한다 — 노드 textfile(B-106 — 백업 성공 시각) · 바깥 탐침(docs/91 §2-6 — 운영 주소를 연다, SloRulesTest)
+        // [JA] 運用にしかないジョブは除いて比較する — ノード textfile(B-106 — バックアップ成功時刻)· 外部プローブ(docs/91 §2-6 — 運用アドレスを開く、SloRulesTest)
         List<Map<String, Object>> ociJobs = new ArrayList<>((List<Map<String, Object>>) ociCfg.get("scrape_configs"));
         ociJobs.removeIf(j -> "node-textfile".equals(j.get("job_name")) || "site-probe".equals(j.get("job_name")));
         assertThat(ociJobs).as("서비스 지표만 에이전트가 넣는다 — 나머지 작업은 같다").isEqualTo(devJobs);
@@ -1765,6 +2005,7 @@ class ConfigurationGuardrailTest {
         assertThat(ociCfg.get("rule_files")).isEqualTo(devCfg.get("rule_files"));
 
         // 지표가 통째로 없을 때 — up 이 없으면 ServiceDown(up == 0)은 울릴 수 없다
+        // [JA] メトリクスが丸ごとないとき — up がなければ ServiceDown(up == 0)は鳴りようがない
         String rules = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
         assertThat(rules).contains("alert: ServiceMetricsMissing").contains("absent(up{job=\"spring-actuator\"})");
     }
@@ -1779,8 +2020,15 @@ class ConfigurationGuardrailTest {
      * 공개 없음) · 운영 Prometheus 가 그것을 긁는다 · 경보 규칙이 보는 지표 이름을 백업 Job 이 쓴다. 같은 판(v1.8.2)으로 그 인자를 띄워
      * {@code ecommerce_pg_backup_last_success_timestamp} 가 나오는 것을 확인했다.
      *
-     * <p>[JA] 本番ノードの観測上書き — Jaeger のメモリ上限は溜まった追跡に合わせ(≥ 1g)、バックアップ成功時刻の textfile を読む
-     * node_exporter を置く(ポートは公開しない)。
+     * <p>[JA] B-106: 本番ノードの観測上書き — Jaeger のメモリ上限は溜まった追跡に合わせ(≥ 1g)、バックアップ成功時刻(textfile)を読む
+     * node_exporter がある。
+     *
+     * <p>[JA] 🐛 2026-10-22 10 時(UTC)から約 30 時間、本番 Jaeger が既定ファイルの 512m で起動するやいなや OOM で死ぬのを 1,760 回繰り返した —
+     * 一日 42 万 ~ 62 万スパン 7 日分(badger 1.4G)のインデックスを載せるだけで上限を超えた(1g 直後でも 965MiB)。同じ日 PostgresBackupMetricMissing:
+     * バックアップ CronJob(k8s/85)は毎日成功してノードの /var/lib/node_exporter に成功時刻を書いていたが、それを読む node_exporter がなかった —
+     * PostgresBackupStale は鳴れなかった。守るもの: 上書きの jaeger 上限 · node-exporter(正確な版 · textfile コレクター · k8s/85 の hostPath を
+     * 読み取り専用 · ポート公開なし)· 本番 Prometheus がそれを収集する · アラートルールが見る指標名をバックアップ Job が書く。同じ版(v1.8.2)で
+     * その引数で起動し {@code ecommerce_pg_backup_last_success_timestamp} が出ることを確認した。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -1807,6 +2055,7 @@ class ConfigurationGuardrailTest {
                 .substring("--collector.textfile.directory=".length());
 
         // 백업 Job 이 쓰는 노드 경로(k8s/85 의 hostPath)를 읽기 전용으로, 수집기가 보는 경로에 붙인다
+        // [JA] バックアップ Job が書くノードのパス(k8s/85 の hostPath)を読み取り専用で、コレクターが見るパスにマウントする
         String backups = Files.readString(repoRoot().resolve("k8s/85-backup-cronjobs.yaml"), StandardCharsets.UTF_8);
         Matcher hostPath = Pattern.compile("hostPath: \\{ path: (/var/lib/node_exporter)").matcher(backups);
         assertThat(hostPath.find()).as("k8s/85 의 지표 hostPath").isTrue();
@@ -1816,6 +2065,7 @@ class ConfigurationGuardrailTest {
         assertThat(ociCfg).as("운영 Prometheus 가 node-exporter 를 긁는다").contains("targets: [\"node-exporter:9100\"]");
 
         // 경보 규칙이 보는 이름을 백업 Job 이 정확히 쓴다
+        // [JA] アラートルールが見る名前をバックアップ Job が正確に書く
         String rules = Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8);
         for (String metric : List.of("ecommerce_pg_backup_last_success_timestamp", "ecommerce_mongo_backup_last_success_timestamp")) {
             assertThat(rules).contains(metric);
@@ -1831,8 +2081,12 @@ class ConfigurationGuardrailTest {
      * file} 로 CrashLoopBackOff 였다(2026-10-20 실습 클러스터 rollout restart — 노드 재부팅 · 축출 · ops/29 setup 도 같다). 경로의 디렉터리는
      * PGDATA 볼륨 안이거나, initContainer 가 같은 볼륨에 쓰는 마운트여야 한다.
      *
-     * <p>[JA] 証明書パスは Pod 起動のたびに埋まること。初期化スクリプトは空の PGDATA で一度だけ動くので、PVC の外へ複製すると
-     * Pod の作り直しで起動できない。
+     * <p>[JA] B-93: クラスター内 PostgreSQL の証明書パス(postgresql.conf の {@code ssl_cert_file} · {@code ssl_key_file})は Pod 起動のたびに埋まること。
+     *
+     * <p>[JA] pg-init スクリプトは<b>空の PGDATA で一度だけ</b>動く。そのスクリプトが証明書を PVC の外(コンテナのファイルシステム)へ複製し、
+     * postgresql.conf(PVC の中)にそのパスを書いていたので、最初の Pod だけが起動し、Pod を作り直すと {@code FATAL: could not load server
+     * certificate file} で CrashLoopBackOff だった(2026-10-20 実習クラスターの rollout restart — ノード再起動 · 退避 · ops/29 setup も同じ)。
+     * パスのディレクトリは PGDATA ボリュームの中か、initContainer が同じボリュームに書くマウントでなければならない。
      */
     @Test
     @DisplayName("B-93: 클러스터 안 PostgreSQL 의 ssl 인증서 경로는 PGDATA 안이거나 initContainer 가 파드마다 채우는 볼륨")
@@ -1907,8 +2161,12 @@ class ConfigurationGuardrailTest {
      * 있었다(2026-10-16 삭제). {@code coupon} 은 이미 운영에 있는 두 그룹이라(cart {@code coupon-use} · coupon {@code coupon-rollback} —
      * 토픽이 달라 재조정만 엮인다) 남긴다 — 이름을 바꾸면 오프셋이 처음부터라 따로 배포한다.
      *
-     * <p>[JA] コンシューマーグループ id を二つのモジュールで共有しない。同じトピックなら互いのメッセージを黙って失い、違っても片方の
-     * デプロイがもう片方を再調整する。
+     * <p>[JA] B-92: コンシューマーグループ id を二つのモジュールで共有しない — {@code GROUP_ID_CONFIG} · {@code groupId} · リスナー {@code id}(グループになる)。
+     *
+     * <p>[JA] 同じトピックを同じグループで読むと二つのサービスがパーティションを分け合い、<b>互いのメッセージを黙って失う</b>。トピックが違っても
+     * 片方のデプロイがもう片方のコンシューマーを再調整する。chat · user-service に使われていないファクトリが notification-service のグループ
+     * {@code notification} であった(2026-10-16 削除)。{@code coupon} はすでに本番にある二つのグループなので(cart {@code coupon-use} · coupon
+     * {@code coupon-rollback} — トピックが違い再調整だけが絡む)残す — 名前を変えるとオフセットが最初からになるので別にデプロイする。
      */
     @Test
     @DisplayName("B-92: 컨슈머 그룹 id 는 모듈마다 따로다(알려진 coupon 하나 빼고)")
@@ -1956,7 +2214,7 @@ class ConfigurationGuardrailTest {
     void configServerServesTls() throws IOException {
         Path yml = repoRoot().resolve("config-server/src/main/resources/application-local.yml");
         if (!Files.exists(yml)) {
-            return;   // 모듈이 없는 체크아웃
+            return;   // 모듈이 없는 체크아웃 ／ [JA] モジュールのないチェックアウト
         }
         String configMap = Files.readString(repoRoot().resolve("k8s/10-configmap.yaml"), StandardCharsets.UTF_8);
         assertThat(configMap).as("클라이언트가 https 로 오지 않는다면 이 검사가 낡은 것이다")
@@ -1972,7 +2230,7 @@ class ConfigurationGuardrailTest {
             }
         }
         if (ssl instanceof Map<?, ?> block && block.get("key-store") != null) {
-            return;   // yml 이 TLS 를 켠다
+            return;   // yml 이 TLS 를 켠다 ／ [JA] yml が TLS を有効にする
         }
         String manifest = Files.readString(repoRoot().resolve("k8s/32-config-server.yaml"), StandardCharsets.UTF_8);
         List<String> missing = new ArrayList<>();
@@ -2022,8 +2280,12 @@ class ConfigurationGuardrailTest {
      * gateway 의 {@code src/main/resources/bootstrap.yml} 과 모듈 9곳의 루트 사본이 그랬다(pay 의 사본은 이름까지 order-service 였다,
      * 2026-10-15 삭제). 설정은 {@code application*.yml} 에 둔다.
      *
-     * <p>[JA] 読まれない bootstrap.yml を置かない。spring-cloud-starter-bootstrap がなければ読まれず、モジュール直下の写しはクラスパスの
-     * 外。あると設定が生きていると誤解される。
+     * <p>[JA] B-89: 読まれない {@code bootstrap.yml} を置かない。
+     *
+     * <p>[JA] Boot 2.4 以降 {@code bootstrap.yml} は {@code spring-cloud-starter-bootstrap} があるときだけ読まれる。モジュール直下の写しはそもそも
+     * クラスパスの外だ。それなのにファイルがあると、読む人はその設定({@code spring.cloud.config.uri} など)が生きていると信じる — eureka ·
+     * gateway の {@code src/main/resources/bootstrap.yml} とモジュール 9 か所の直下の写しがそうだった(pay の写しは名前まで order-service だった、
+     * 2026-10-15 削除)。設定は {@code application*.yml} に置く。
      */
     @Test
     @DisplayName("B-89: bootstrap.yml 은 spring-cloud-starter-bootstrap 이 있는 모듈의 src/main/resources 에만")
@@ -2094,7 +2356,7 @@ class ConfigurationGuardrailTest {
             String literal = "\"" + metric.replace('_', '.') + "\"";
             List<Path> owners = code.entrySet().stream().filter(e -> e.getValue().contains(literal)).map(java.util.Map.Entry::getKey).toList();
             if (owners.isEmpty()) {
-                continue;   // 앱 밖(alertmanager · otelcol · postgres exporter)의 지표
+                continue;   // 앱 밖(alertmanager · otelcol · postgres exporter)의 지표 ／ [JA] アプリ外(alertmanager · otelcol · postgres exporter)のメトリクス
             }
             for (Path owner : owners) {
                 checked++;
@@ -2200,8 +2462,12 @@ class ConfigurationGuardrailTest {
      * 막았다. 끈 뒤에는 트랜잭션 밖에서 쓰는 엔티티를 조회가 연관과 함께 읽는다(@EntityGraph — OrderRepository.findByTrackingId ·
      * CartRepository.findByUserId).
      *
-     * <p>[JA] order · cart は open-in-view を切る。既定(オン)ではリクエスト中ずっと接続を持ち、トランザクション外の遠隔呼び出しも
-     * 接続を持ったまま待つ。
+     * <p>[JA] B-87: order · cart · coupon は open-in-view を切る(coupon は 2026-10-15 CP2)。
+     *
+     * <p>[JA] Spring の既定値(オン)ではリクエスト中ずっと EntityManager が生きていて、最初の照会で取った DB 接続をリクエストが終わるまで放さない —
+     * トランザクションの外に出した遠隔呼び出し(catalog · coupon · 決済プロバイダー)も接続を握ったまま待つ。プールが 5 個なので、遅い catalog
+     * 一つが他のリクエストまで止めた。切った後は、トランザクションの外で使うエンティティを照会が関連と一緒に読む(@EntityGraph —
+     * OrderRepository.findByTrackingId · CartRepository.findByUserId)。
      */
     @Test
     @DisplayName("B-87: order · cart · coupon 의 spring.jpa.open-in-view 는 false")
@@ -2236,6 +2502,7 @@ class ConfigurationGuardrailTest {
             return;
         }
         // statusChanger.markPaid(...) 는 바로 그 변경기 호출이다 — 제외
+        // [JA] statusChanger.markPaid(...) はまさにその変更器の呼び出しだ — 除外
         Pattern call = Pattern.compile("(?<!statusChanger)\\.(setOrderStatus|markPaid)\\(");
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> files = Files.walk(src)) {
@@ -2273,9 +2540,20 @@ class ConfigurationGuardrailTest {
      *   <li>베이스 kustomization 에 들어 있다</li>
      * </ol>
      *
-     * <p>[JA] 機能フラグ(docs/74) — 定義ファイル・コード・マニフェストが噛み合い、使い終わったフラグが溜まらない。フラグごとに
-     * owner ・ expires が必要で、期限切れはこのガードが赤くなる。コードが参照するキーは定義ファイルに、定義ファイルの
-     * フラグはコードにある。catalog は ConfigMap を<b>ディレクトリとして</b>マウントする(subPath は更新されない)。
+     * <p>[JA] B-76: 機能フラグ(docs/74)— 定義ファイル · コード · マニフェストが噛み合い、使い終わったフラグが溜まらない。
+     *
+     * <ol>
+     *   <li>[JA] {@code k8s/15-feature-flags.yaml} の {@code flags.json} がサービスの読む形式どおりに読める — 誤っているとサービスは
+     *       警告一行だけ残して<b>直前の定義</b>を使うので、直したものが本番に黙って反映されない</li>
+     *   <li>フラグごとに {@code metadata.owner} · {@code metadata.expires}、そして期限が過ぎていない。フラグは負債だ —
+     *       日付がなければ誰も消さない。期限が切れるとこのガードが赤くなる: コードと一緒に消すか日付を延ばす</li>
+     *   <li>OpenFeature を使うコードの {@code static final String …FLAG… = "キー"} が定義ファイルにある — なければすべての評価が
+     *       FLAG_NOT_FOUND でコードの既定値になり、比率を上げても何も起きない</li>
+     *   <li>定義ファイルのフラグをコードが使う — 誰も読まないフラグは消したコードの痕跡だ</li>
+     *   <li>catalog は ConfigMap を<b>ディレクトリとして</b>マウントし、{@code FEATURE_FLAGS_FILE} がその中を指す —
+     *       subPath マウントは ConfigMap が変わっても更新されない(再起動しないと反映されない = フラグの意味がない)</li>
+     *   <li>ベースの kustomization に入っている</li>
+     * </ol>
      */
     @Test
     @DisplayName("B-76: 기능 플래그 — 정의 파일이 읽히고, owner · 만료일이 있고, 코드 · 마운트와 맞는다")
@@ -2315,7 +2593,7 @@ class ConfigurationGuardrailTest {
             for (Path java : sources) {
                 String code = stripComments(Files.readString(java, StandardCharsets.UTF_8));
                 if (!code.contains("import dev.openfeature.sdk.")) {
-                    continue;   // OpenFeature 를 쓰는 파일만 — 다른 …FLAG 상수(예: 마이그레이션 표식)는 기능 플래그가 아니다
+                    continue;   // OpenFeature 를 쓰는 파일만 — 다른 …FLAG 상수(예: 마이그레이션 표식)는 기능 플래그가 아니다 ／ [JA] OpenFeature を使うファイルだけ — 他の …FLAG 定数(例: マイグレーションの印)は機能フラグではない
                 }
                 Matcher m = constant.matcher(code);
                 while (m.find()) {
@@ -2331,6 +2609,7 @@ class ConfigurationGuardrailTest {
 
         String catalog = Files.readString(root.resolve("k8s/41-catalog-service.yaml"), StandardCharsets.UTF_8);
         // volumeMounts 의 항목(매니페스트에서 volumes 보다 앞에 온다) — 다음 "- " 항목 전까지가 그 항목의 키들이다.
+        // [JA] volumeMounts の項目(マニフェストで volumes より前に来る) — 次の "- " 項目までがその項目のキーだ。
         Matcher mount = Pattern.compile("- name: feature-flags\\n((?: +(?!- )\\S.*\\n)*)").matcher(catalog);
         Matcher mountPath = mount.find() ? Pattern.compile("mountPath: (\\S+)").matcher(mount.group(1)) : null;
         if (mountPath == null || !mountPath.find()) {
@@ -2359,6 +2638,9 @@ class ConfigurationGuardrailTest {
      * 그 자체로 가드를 깨뜨린다(이 가드를 쓰면서 실제로 겪었다).
      *
      * <p>문자열 리터럴 안의 {@code //} 를 주석으로 착각하지 않도록 리터럴을 먼저 건너뛴다.
+     *
+     * <p>[JA] コメントを消す — コメント内のコード例まで違反として拾うと、事故を記録したコメントがそれ自体でガードを壊す(このガードを書きながら実際に経験した)。
+     * 文字列リテラル内の {@code //} をコメントと誤認しないよう、リテラルを先に読み飛ばす。
      */
     private static String stripComments(String src) {
         StringBuilder out = new StringBuilder(src.length());
@@ -2388,6 +2670,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** 로그 한 줄로 줄여 실패 메시지를 읽을 만하게 만든다. */
+    // [JA] ログ 1 行に縮めて、失敗メッセージを読めるものにする。
     private static String oneLine(String snippet) {
         String flat = snippet.replaceAll("\\s+", " ").strip();
         return flat.length() > 120 ? flat.substring(0, 117) + "…" : flat;
@@ -2400,6 +2683,10 @@ class ConfigurationGuardrailTest {
      * {@code /chat-service/chat/**} 는 {@code /chat-service/chat} 에도 걸린다.
      * PathPatternParser 로 실측해 확인했다. 이걸 모르고 {@code **} → {@code .*} 로만 옮기면
      * 멀쩡한 경로를 오탐으로 잡는다(STOMP 브로커 URL 이 정확히 그 모양이다).
+     *
+     * <p>[JA] Spring の {@code PathPattern} 述語を正規表現に移す。
+     * ⚠️ 末尾が {@code /**} のパターンは<b>親パス自体にもマッチする</b> — {@code /chat-service/chat/**} は {@code /chat-service/chat} にもかかる。
+     * PathPatternParser で実測して確認した。これを知らずに {@code **} → {@code .*} とだけ移すと、正常なパスを誤検知する(STOMP ブローカー URL がまさにその形だ)。
      */
     private static Pattern toRegex(String pathPattern) {
         String pattern = pathPattern;
@@ -2423,6 +2710,7 @@ class ConfigurationGuardrailTest {
     }
 
     /* ── B-55: enum 컬럼의 CHECK 제약 ─────────────────────────────────────── */
+    // [JA] ── B-55: enum カラムの CHECK 制約 ──
 
     /**
      * 🐛 <b>Stripe 결제가 영원히 NOT_PROCESSED 였다.</b>
@@ -2438,13 +2726,26 @@ class ConfigurationGuardrailTest {
      * <p>컴파일도, 단위 테스트도, 컨테이너 기동 테스트도 이걸 못 잡는다 — 값이 실제로 저장돼야
      * 드러난다. 그래서 소스를 대조한다: 엔티티의 문자열 enum 컬럼마다, 마이그레이션이 마지막으로
      * 정의한 CHECK 목록이 자바 enum 의 모든 상수를 담고 있어야 한다.
+     *
+     * <p>[JA] 🐛 <b>Stripe 決済が永遠に NOT_PROCESSED だった。</b>
+     * ベースラインは hbm2ddl の産物なので、{@code @Enumerated(STRING)} カラムごとにその時点の enum 値で
+     * {@code check (payment_type in ('PAYPAL','CREDIT_CARD','CASH'))} が埋め込まれている。その後 enum に STRIPE・PORTONE を足したが制約はそのままだった。
+     * Hibernate の {@code validate} は CHECK を見ないので起動は正常で、その値が<b>初めて保存される瞬間</b>に pay-service が
+     * {@code violates check constraint "payment_payment_type_check"} で死んだ — サーガの応答が途切れ、注文が確定しなかった(docs/49 §8)。
+     * {@code orders.order_status} の REFUNDED も同じ状態で、最初の全額返金で爆発するところだった。
+     * コンパイルも単体テストもコンテナ起動テストもこれを捕まえられない — 値が実際に保存されて初めて表に出る。そこでソースを突き合わせる:
+     * エンティティの文字列 enum カラムごとに、マイグレーションが最後に定義した CHECK のリストが Java enum の全定数を含んでいなければならない。
      */
     /**
      * 일부러 enum 보다 좁게 건 CHECK. 여기 적힌 값은 그 컬럼에 <b>저장될 수 없는 것이 설계</b>다 —
      * 코드가 그 값을 쓰지 않는다는 뜻이지, 제약이 낡았다는 뜻이 아니다. 새로 더할 때는 이유를 적을 것.
+     *
+     * <p>[JA] わざと enum より狭くかけた CHECK。ここに書かれた値はそのカラムに<b>保存できないのが設計</b>だ —
+     * コードがその値を書かないという意味であって、制約が古いという意味ではない。新しく足すときは理由を書くこと。
      */
     private static final Map<String, Set<String>> NARROWER_BY_DESIGN = Map.of(
             // 쿠폰 대상 행은 카테고리·상품에만 있다. 범위 ALL 은 대상 행 자체가 없다(CouponTarget 주석).
+            // [JA] クーポン対象の行はカテゴリ・商品にのみある。範囲 ALL は対象行自体がない(CouponTarget のコメント)。
             "coupon-service:coupon_target.target_type", Set.of("ALL"));
 
     @Test
@@ -2466,7 +2767,7 @@ class ConfigurationGuardrailTest {
                 for (EnumColumn col : enumColumnsIn(java)) {
                     Set<String> values = allowed.get(col.table() + "." + col.column());
                     if (values == null) {
-                        continue;   // 그 컬럼에는 CHECK 가 없다 — 막을 것이 없다
+                        continue;   // 그 컬럼에는 CHECK 가 없다 — 막을 것이 없다 ／ [JA] そのカラムには CHECK がない — 止めるものがない
                     }
                     Set<String> constants = enumConstants(col.enumType(), java, common);
                     if (constants == null) {
@@ -2507,6 +2808,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** 엔티티의 {@code @Enumerated(EnumType.STRING)} 컬럼 — (테이블, 컬럼, enum 형). */
+    // [JA] エンティティの {@code @Enumerated(EnumType.STRING)} カラム — (テーブル、カラム、enum 型)。
     private static List<EnumColumn> enumColumnsIn(Path javaRoot) throws IOException {
         Pattern tableName = Pattern.compile("@Table\\s*\\([^)]*?name\\s*=\\s*\"([^\"]+)\"");
         Pattern enumerated = Pattern.compile("@Enumerated\\s*\\(\\s*(?:value\\s*=\\s*)?EnumType\\.STRING\\s*\\)");
@@ -2531,6 +2833,7 @@ class ConfigurationGuardrailTest {
                     }
                     String column = null;
                     // @Column 이 @Enumerated 앞에 올 수도 있다 — 직전 필드 선언(;)을 넘지 않는 범위에서.
+                    // [JA] @Column が @Enumerated の前に来ることもある — 直前のフィールド宣言(;)を越えない範囲で。
                     for (int j = i - 1; j >= Math.max(0, i - 3) && !lines[j].contains(";"); j--) {
                         Matcher c = columnName.matcher(lines[j]);
                         if (c.find()) {
@@ -2558,6 +2861,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** 자바 enum 의 상수 이름들. 소스에서 읽는다 — 서비스 모듈은 테스트 클래스패스에 없다. */
+    // [JA] Java enum の定数名。ソースから読む — サービスモジュールはテストのクラスパスにない。
     private static Set<String> enumConstants(String simpleName, Path... roots) throws IOException {
         for (Path rootDir : roots) {
             Path source;
@@ -2591,6 +2895,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** 괄호·중괄호·문자열 밖에서 처음 나오는 {@code target} 의 위치. 없으면 -1. */
+    // [JA] 括弧・波括弧・文字列の外で最初に出てくる {@code target} の位置。なければ -1。
     private static int indexAtDepthZero(String text, char target) {
         int depth = 0;
         boolean inString = false;
@@ -2625,6 +2930,9 @@ class ConfigurationGuardrailTest {
     /**
      * 마이그레이션이 정의한 {@code check (<col> in (...))} — 버전 순으로 읽어 <b>마지막 정의</b>가
      * 남는다. 키는 {@code table.column}(스키마 없이, 소문자).
+     *
+     * <p>[JA] マイグレーションが定義した {@code check (<col> in (...))} — バージョン順に読み、<b>最後の定義</b>が残る。
+     * キーは {@code table.column}(スキーマなし、小文字)。
      */
     private static Map<String, Set<String>> checkConstraintsIn(Path migrations) throws IOException {
         List<Path> files;
@@ -2672,6 +2980,7 @@ class ConfigurationGuardrailTest {
     }
 
     /** {@code V2_1__x.sql} → [2, 1]. Flyway 와 같은 순서로 비교한다. */
+    // [JA] {@code V2_1__x.sql} → [2, 1]。Flyway と同じ順序で比較する。
     private static List<Integer> migrationVersion(Path file) {
         String name = file.getFileName().toString();
         String version = name.substring(1, name.indexOf("__"));
@@ -2683,6 +2992,7 @@ class ConfigurationGuardrailTest {
     }
 
     /* ── B-56: 오버레이 직접 적용 사고 ───────────────────────────────────── */
+    // [JA] ── B-56: オーバーレイ直接適用の事故 ──
 
     /**
      * 🐛 <b>프론트엔드가 몇 주 전 버전으로 돌아갔다.</b>
@@ -2700,6 +3010,15 @@ class ConfigurationGuardrailTest {
      *
      * <p>태그를 고정하지 않는 오버레이({@code external}·{@code oci})는 대상이 아니다. 그쪽은
      * 부모의 태그를 그대로 물려받으므로 직접 apply 해도 되돌릴 태그가 없다.
+     *
+     * <p>[JA] 🐛 <b>フロントエンドが数週間前のバージョンに戻った。</b>
+     * 設定 1 行を反映しようと {@code kubectl apply -k k8s-overlays/local} を打った。ところがそのオーバーレイの {@code images:} には
+     * 手書きの {@code newTag} が埋め込まれていて、apply は<b>全サービスをその古いタグに戻した。</b>デプロイが失敗したのでもロールバックが走ったのでもない —
+     * ファイルに書かれたとおりに適用されただけなのに、症状は「デプロイがおかしい」として現れ、原因を探すのに長くかかった。
+     * {@code ops/28-deploy.sh} はデプロイするバージョン({@code --config-only} のときはクラスターから読んだ現在のバージョン)でタグを上書きした
+     * 一時オーバーレイを作って適用するので、この事故がない。だから<b>タグを固定したオーバーレイにはその警告が付いていなければならない。</b>
+     * 警告がなければ次の人が同じコマンドを打つ — 実際に文書がそう案内していた。
+     * タグを固定しないオーバーレイ({@code external}·{@code oci})は対象外。そちらは親のタグをそのまま受け継ぐので、直接 apply しても戻すタグがない。
      */
     @Test
     @DisplayName("B-56: 태그를 고정한 오버레이는 직접 apply 하지 말라고 적어야 한다 — 옛 버전으로 되돌린다")
@@ -2713,6 +3032,7 @@ class ConfigurationGuardrailTest {
             for (Path dir : dirs.filter(Files::isDirectory).sorted().toList()) {
                 Path kustomization = dir.resolve("kustomization.yaml");
                 // local/ 은 각자의 것이라 커밋되지 않는다 — 검사 대상은 저장소가 소유한 파일뿐이다.
+                // [JA] local/ は各自のものでコミットされない — 検査対象はリポジトリが所有するファイルだけだ。
                 if (!Files.exists(kustomization) || dir.getFileName().toString().equals("local")) {
                     continue;
                 }
@@ -2735,6 +3055,9 @@ class ConfigurationGuardrailTest {
     /**
      * 설정만 반영하는 길이 실제로 존재해야 한다. 없으면 사람은 결국 {@code apply -k} 로 돌아간다 —
      * B-56 의 경고문은 "그럼 어떻게 하라는 것이냐"에 답할 수 있을 때만 지켜진다.
+     *
+     * <p>[JA] 設定だけを反映する手段が実際に存在しなければならない。なければ人は結局 {@code apply -k} に戻る —
+     * B-56 の警告文は「ではどうしろというのか」に答えられるときだけ守られる。
      */
     @Test
     @DisplayName("B-56b: ops/28 은 이미지를 건드리지 않고 설정만 반영하는 경로를 제공해야 한다")
@@ -2746,13 +3069,16 @@ class ConfigurationGuardrailTest {
         assertThat(text).as("--config-only 옵션 파싱").contains("--config-only)");
         assertThat(text).as("--restart 옵션 파싱").contains("--restart)");
         // 버전을 사람이 적게 하면 그 순간 옛 태그가 다시 들어온다. 클러스터에서 읽어야 한다.
+        // [JA] バージョンを人に書かせると、その瞬間に古いタグが再び入ってくる。クラスターから読まなければならない。
         assertThat(text).as("--config-only 는 현재 버전을 클러스터에서 읽는다")
                 .contains("VERSION=\"$CURRENT_VERSION\"");
     }
 
     /* ── B-57: 공통 로그 설정과 마스킹 (docs/51) ─────────────────────────── */
+    // [JA] ── B-57: 共通ログ設定とマスキング (docs/51) ──
 
     /** common 모듈을 의존하는 모듈 — 공통 logback-spring.xml 이 적용되는 곳. */
+    // [JA] common モジュールに依存するモジュール — 共通 logback-spring.xml が適用される場所。
     private static List<Path> modulesUsingCommon() throws IOException {
         List<Path> modules = new ArrayList<>();
         try (Stream<Path> dirs = Files.list(repoRoot())) {
@@ -2778,6 +3104,12 @@ class ConfigurationGuardrailTest {
      * <p>공통 설정이 패턴을 정하므로 서비스 yml 의 {@code logging.pattern.*} 도 막는다. 두면 쓰이지
      * 않는데 고친 사람은 바뀌었다고 믿는다. 레벨({@code logging.level})과 파일 이름
      * ({@code logging.file.name})은 그대로 서비스가 정한다.
+     *
+     * <p>[JA] 🔒 サービスが自前の logback 設定を置くと<b>そちらが勝つ</b> — 共通設定のマスキングが丸ごと抜け、メール・電話・トークンが再び平文で出力される。
+     * eureka-server が実際にその状態だった(自前の logback-spring.xml が Netflix ロガーを DEBUG に固定し、運用用と称したファイルは名前が
+     * {@code logback-psring-prd.xml} とタイポで誰も読んでいなかった)。
+     * 共通設定がパターンを決めるので、サービス yml の {@code logging.pattern.*} も止める。置いても使われないのに、直した人は変わったと信じる。
+     * レベル({@code logging.level})とファイル名({@code logging.file.name})はこれまでどおりサービスが決める。
      */
     @Test
     @DisplayName("B-57: common 을 쓰는 서비스는 자기 logback 설정도 logging.pattern 도 두지 않는다 — 마스킹이 빠진다")
@@ -2806,6 +3138,7 @@ class ConfigurationGuardrailTest {
                         }
                         // 공통 설정은 logging.file.name 에 JSON 을 쓴다. .log 로 두면 이름과 내용이 다르고
                         // 수집기(Alloy, */logs/*.json)가 읽지 않는다.
+                        // [JA] 共通設定は logging.file.name に JSON を書く。.log にすると名前と中身が食い違い、コレクター(Alloy, */logs/*.json)が読まない。
                         Matcher file = Pattern.compile("(?m)^[ \\t]+name:\\s*(\\$\\{logging\\.file\\.path}[^\\s#]*)").matcher(yml);
                         while (file.find()) {
                             if (!file.group(1).endsWith(".json")) {
@@ -2822,6 +3155,9 @@ class ConfigurationGuardrailTest {
     /**
      * 공통 설정의 모든 텍스트 패턴은 메시지와 예외를 {@code %mask} 로 감싸야 한다. 새 appender 를
      * 더하면서 {@code %msg} 를 그대로 쓰면 그 출력으로만 평문이 샌다.
+     *
+     * <p>[JA] 共通設定のすべてのテキストパターンは、メッセージと例外を {@code %mask} で包まなければならない。
+     * 新しい appender を足すときに {@code %msg} をそのまま使うと、その出力からだけ平文が漏れる。
      */
     @Test
     @DisplayName("B-57b: 공통 logback 설정의 모든 출력은 마스킹을 지난다 — %mask(%msg)·%mask(%wEx)")
@@ -2834,6 +3170,7 @@ class ConfigurationGuardrailTest {
                 .contains("com.project.common.logging.MaskingPatternConverter");
 
         // 패턴 값(<pattern>…</pattern> 와 property value="…")을 모두 모은다.
+        // [JA] パターン値(<pattern>…</pattern> と property value="…")をすべて集める。
         List<String> patterns = new ArrayList<>();
         Matcher m = Pattern.compile("<pattern>(.*?)</pattern>|value=\"([^\"]*%(?:msg|m|message)\\b[^\"]*)\"", Pattern.DOTALL)
                 .matcher(xml);
@@ -2843,10 +3180,12 @@ class ConfigurationGuardrailTest {
         assertThat(patterns).as("텍스트 패턴").isNotEmpty();
         for (String p : patterns) {
             if (p.startsWith("${")) {
-                continue;   // 위에서 검사한 property 를 가리킨다
+                continue;   // 위에서 검사한 property 를 가리킨다 ／ [JA] 上で検査した property を指す
             }
             // 복합 변환자 바로 뒤의 % 는 글자로 찍힌다 — "%mask(%msg)%n" 이면 줄바꿈 대신 "%n" 이 나오고
             // 모든 줄이 한 줄로 붙는다(운영에서 실제로 그랬다). 빈 옵션 {} 로 닫아야 한다.
+            // [JA] 複合変換子の直後の % は文字として出力される — "%mask(%msg)%n" だと改行の代わりに "%n" が出て、
+            //      すべての行が 1 行につながる(運用で実際にそうなった)。空のオプション {} で閉じる必要がある。
             assertThat(p).as("%mask(...) 바로 뒤에 % 가 오면 글자로 찍힌다 — {} 로 닫을 것: " + p)
                     .doesNotContainPattern("%mask\\([^)]*\\)%");
             String bare = p.replaceAll("%mask\\(%(?:msg|wEx|ex)\\)(?:\\{\\})?", "");
@@ -2857,6 +3196,7 @@ class ConfigurationGuardrailTest {
         }
 
         // JSON 인코더가 있다면 전부 마스커를 달아야 한다(docs/51 3단계).
+        // [JA] JSON エンコーダーがあるなら、すべてにマスカーを付けなければならない(docs/51 3 段階)。
         int encoders = xml.split("LogstashEncoder", -1).length - 1;
         int maskers = xml.split("com.project.common.logging.SensitiveValueMasker", -1).length - 1;
         assertThat(maskers).as("LogstashEncoder 마다 SensitiveValueMasker").isEqualTo(encoders);
@@ -2866,6 +3206,10 @@ class ConfigurationGuardrailTest {
      * 로그 수집기(Alloy)는 저장소 전체가 아니라 모듈마다 {@code logs} 디렉터리만 읽기 전용으로 붙인다
      * (루트를 통째로 붙이면 gitignore 된 비밀 파일까지 컨테이너에 보인다). 그래서 서비스를 하나 더하면
      * compose 에도 한 줄을 더해야 한다 — 잊으면 그 서비스의 로그만 Grafana 에 <b>조용히</b> 없다.
+     *
+     * <p>[JA] ログコレクター(Alloy)はリポジトリ全体ではなく、モジュールごとの {@code logs} ディレクトリだけを読み取り専用でマウントする
+     * (ルートを丸ごとマウントすると gitignore された秘密ファイルまでコンテナから見える)。そのためサービスを一つ足したら
+     * compose にも 1 行足さなければならない — 忘れるとそのサービスのログだけが Grafana に<b>黙って</b>ない。
      */
     @Test
     @DisplayName("B-58: 로그를 쓰는 모든 모듈의 logs 디렉터리가 Alloy 에 읽기 전용으로 붙어 있다")
@@ -2901,11 +3245,18 @@ class ConfigurationGuardrailTest {
      * <b>파드 자신</b>이라, 설정을 안 넣으면 추적은 조용히 버려진다 — 오류도 없다(Zipkin 시절 :9411 에서 실제로 겪었다).
      * 그래서 공통 설정을 쓰는 서비스의 Deployment 는 노드 IP 를 downward API 로 받아({@code status.hostIP}) 그 노드의
      * Collector 로 보내야 한다. {@code $(HOST_IP)} 는 <b>앞에 정의된</b> 변수만 풀리므로 순서도 본다.
+     *
+     * <p>[JA] k3s ポッドのトレースはノードの OTel Collector に届かなければならない(docs/51 §4d, docs/63)。
+     * {@code management.otlp.tracing.endpoint} のデフォルト {@code localhost:4318} はポッド内では<b>ポッド自身</b>なので、
+     * 設定を入れないとトレースは黙って捨てられる — エラーもない(Zipkin 時代の :9411 で実際に経験した)。
+     * そこで共通設定を使うサービスの Deployment は、ノード IP を downward API で受け取り({@code status.hostIP})そのノードの Collector に送らなければならない。
+     * {@code $(HOST_IP)} は<b>前に定義された</b>変数しか展開されないので順序も見る。
      */
     @Test
     @DisplayName("B-59: 서비스 Deployment 는 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT 를 노드 IP 로 받는다 — 기본값 localhost 는 파드 자신이다")
     void servicesSendTracesToTheNodeCollector() throws IOException {
         // 공통 설정(application-common.yml)을 쓰지 않는 것 — 추적을 보낼 이유가 없다(하트비트 소음).
+        // [JA] 共通設定(application-common.yml)を使わないもの — トレースを送る理由がない(ハートビートのノイズ)。
         Set<String> exempt = Set.of("discovery-service", "config-server");
         List<String> offenders = new ArrayList<>();
         int checked = 0;
@@ -2943,6 +3294,11 @@ class ConfigurationGuardrailTest {
      * 추적만 조용히 사라지고, 전파 형식이 섞이면 서비스 사이에서 추적이 끊긴다. 또 공유 설정의 자리표시자 이름과
      * 매니페스트의 환경 변수 이름이 어긋나면 파드는 기본값(localhost)으로 보낸다. 관측 스택 쪽은 Collector 의 OTLP
      * 포트가 파드에서 닿아야 하고(루프백이면 안 된다), Jaeger UI 는 루프백에만 있어야 한다(공개 금지).
+     *
+     * <p>[JA] トレースは OTLP → Collector の一本道だけだ(docs/63)。
+     * Brave · Zipkin から OpenTelemetry に移した。半分戻ると(一つのサービスだけ Brave 依存 · zipkin 設定)そのサービスのトレースだけが黙って消え、
+     * 伝播形式が混ざるとサービス間でトレースが途切れる。また共有設定のプレースホルダー名とマニフェストの環境変数名がずれると、ポッドはデフォルト(localhost)に送る。
+     * 観測スタック側は Collector の OTLP ポートがポッドから届かなければならず(ループバックではいけない)、Jaeger UI はループバックにだけあるべきだ(公開禁止)。
      */
     @Test
     @DisplayName("B-71: 추적은 OTLP → Collector 한 길 — Brave·Zipkin 잔재 없음, 자리표시자 = 매니페스트 변수, 포트 노출 범위")
@@ -2995,6 +3351,14 @@ class ConfigurationGuardrailTest {
      *       호출 수는 10% 로 줄고 오류율은 몇 배로 부풀려진다 — 대시보드도 경보도 거짓말을 한다.</li>
      *   <li>서비스의 머리 샘플링은 1.0 이어야 한다. 낮추면 Collector 가 보기도 전에 버려져 오류 추적이 사라진다.</li>
      *   <li>Jaeger 저장은 볼륨에 남는 badger 다 — 메모리로 되돌리면 재시작마다 추적이 사라진다.</li>
+     * </ul>
+     *
+     * <p>[JA] テールサンプリングと RED メトリクスの順序、そしてトレースの保管(docs/63 §5)。
+     * <ul>
+     *   <li>span_metrics はサンプリング<b>前</b>のスパン全部で数える。サンプリングの後ろに移すと正常リクエストは 10% だけ、エラーは全部残り、
+     *       呼び出し数は 10% に減ってエラー率は何倍にも膨らむ — ダッシュボードもアラートも嘘をつく。</li>
+     *   <li>サービスのヘッドサンプリングは 1.0 でなければならない。下げると Collector が見る前に捨てられ、エラーのトレースが消える。</li>
+     *   <li>Jaeger の保存はボリュームに残る badger だ — メモリに戻すと再起動のたびにトレースが消える。</li>
      * </ul>
      */
     @Test
@@ -3066,7 +3430,11 @@ class ConfigurationGuardrailTest {
      * <p>2026-10-23 실습 CPU 프로파일(docs/83 §5): 일곱 서비스에 똑같이 있던 이 애스펙트가 서비스 패키지의 모든 메서드 호출마다 INFO 한 줄을
      * 써 catalog CPU 의 7.9% 였다. 실행 시간은 추적(B-72) · HTTP 지표에 남는다.
      *
-     * <p>[JA] サービスメソッドごとの実行時間ログのアスペクトは既定オフ — 全メソッド呼び出しで INFO を書き catalog CPU の 7.9% だった。
+     * <p>[JA] B-105: サービスメソッドごとの実行時間ログのアスペクトは既定オフ — {@code @ConditionalOnProperty(name = "EXECUTION_TIME_LOG_ENABLED",
+     * havingValue = "true")}(値がなければ Bean がない)、マニフェストはその変数をオンにしておかない。
+     *
+     * <p>[JA] 2026-10-23 実習 CPU プロファイル(docs/83 §5): 七つのサービスに同じようにあったこのアスペクトが、サービスパッケージの全メソッド
+     * 呼び出しごとに INFO を一行書き、catalog CPU の 7.9% だった。実行時間は追跡(B-72)· HTTP 指標に残る。
      */
     @Test
     @DisplayName("B-105: 메서드마다의 실행 시간 로그(애스펙트)는 기본 끔 — EXECUTION_TIME_LOG_ENABLED=true 일 때만 빈이 생긴다")
@@ -3109,7 +3477,12 @@ class ConfigurationGuardrailTest {
      * Hikari 는 커넥션을 빌릴 때마다 {@code ProxyLeakTask} 를 만들며 스택 추적을 담은 예외를 하나씩 만든다. 2026-10-19 에 아홉 서비스
      * 모두 20초로 켰다. 끝나지 않는 읽기(죽은 연결)는 이제 소켓 상한이 끊는다(catalog {@code socketTimeout}).
      *
-     * <p>[JA] Hikari のリーク検出は既定オフ — 有効だと接続を借りるたびにスタックトレース付きの例外を作る(catalog CPU の 3.9%)。
+     * <p>[JA] B-104: Hikari の接続リーク検出は既定オフ — 全サービス yml の {@code leak-detection-threshold} は {@code ${DB_LEAK_DETECTION_MS:0}}、
+     * マニフェスト(k8s · オーバーレイ)はその変数をオンにしておかない。疑わしいときだけその Pod で一時的に有効にする。
+     *
+     * <p>[JA] 2026-10-23 実習 CPU プロファイル(capacity-steps 300 段階、ops/58 · docs/83 §5): catalog CPU の 3.9% がリーク検出だった — 有効だと
+     * Hikari は接続を借りるたびに {@code ProxyLeakTask} を作り、スタックトレースを含む例外を一つずつ作る。2026-10-19 に九つのサービス
+     * すべてで 20 秒に設定していた。終わらない読み取り(死んだ接続)は今はソケット上限が切る(catalog {@code socketTimeout})。
      */
     @Test
     @DisplayName("B-104: Hikari 누수 감지는 기본 끔(${DB_LEAK_DETECTION_MS:0}) — 켜 두면 커넥션을 빌릴 때마다 예외 하나(catalog CPU 3.9%)")
@@ -3229,6 +3602,7 @@ class ConfigurationGuardrailTest {
                 continue;
             }
             // 상한이 먼저 오면 and 가 그 자리에서 모든 추적의 몫을 쓴다 — 조건이 먼저, 상한은 마지막
+            // [JA] 上限が先に来ると and がその場ですべてのトレースの枠を使い切る — 条件が先、上限は最後
             assertThat(String.valueOf(subs.get(subs.size() - 1).get("type"))).as(policy.get("name") + ": 상한은 마지막 하위 정책")
                     .isEqualTo("rate_limiting");
             Object perSec = ((Map<String, Object>) subs.get(subs.size() - 1).get("rate_limiting")).get("spans_per_second");
@@ -3263,6 +3637,7 @@ class ConfigurationGuardrailTest {
         Map<String, Map<String, List<String>>> pipelines = (Map<String, Map<String, List<String>>>)
                 ((Map<String, Object>) collector.get("service")).get("pipelines");
         // 모든 추적이 지나는 파이프라인 — RED 를 세는 곳(B-72)이 곧 샘플링 파이프라인의 앞이다.
+        // [JA] すべてのトレースが通るパイプライン — RED を数える場所(B-72)がそのままサンプリングパイプラインの前だ。
         List<String> processors = pipelines.values().stream()
                 .filter(p -> p.getOrDefault("exporters", List.of()).stream().anyMatch(x -> x.startsWith("span_metrics")))
                 .findFirst().orElseThrow().getOrDefault("processors", List.of());
@@ -3271,7 +3646,7 @@ class ConfigurationGuardrailTest {
 
         Pattern truncate = Pattern.compile("truncate_all\\(attributes,\\s*(\\d+)\\)");
         Pattern status = Pattern.compile("set\\(status\\.message,\\s*Substring\\(status\\.message,\\s*0,\\s*(\\d+)\\)\\)");
-        int limit = 16_384;   // 키 = 서비스 + 태그 이름 + 값 ≤ 65,000 바이트 — 여러 바이트 글자를 감안해 넉넉히 아래로
+        int limit = 16_384;   // 키 = 서비스 + 태그 이름 + 값 ≤ 65,000 바이트 — 여러 바이트 글자를 감안해 넉넉히 아래로 ／ [JA] キー = サービス + タグ名 + 値 ≤ 65,000 バイト — マルチバイト文字を考慮して余裕を持って下に
         Set<String> covered = new TreeSet<>();
         for (int i = redaction + 1; i < processors.size(); i++) {
             String name = processors.get(i);
@@ -3309,6 +3684,16 @@ class ConfigurationGuardrailTest {
      *   <li>order 가 부르는 대상(STOCK_GRPC_TARGET)이 그 Service 와 포트를 가리킨다.</li>
      *   <li>전송 스위치(STOCK_RPC_TRANSPORT)가 http · grpc 중 하나다 — 그 밖의 값이면 order 가 뜨지 않는다.</li>
      * </ol>
+     *
+     * <p>[JA] B-73: gRPC は 4 つの端が合って初めてつながる(docs/66) — 一つでもずれると<b>テストは全部緑のまま</b>運用でだけ切れる
+     * (単体テストは in-process · 任意ポートで動く)。
+     * <ol>
+     *   <li>proto のサービスごとに {@code INTERNAL_AUTH_PATH_RULES} に "/パッケージ.サービス/" ルールがある — なければルールが enforce された瞬間、
+     *       そのサービスをどの内部サービスでも呼べてしまう(最長前方一致ルールがなければ許可主体だけを見る)。</li>
+     *   <li>catalog が開く gRPC ポート(StockGrpcServerConfig のデフォルト)が Deployment の containerPort と Service のポートにある。</li>
+     *   <li>order が呼ぶ対象(STOCK_GRPC_TARGET)がその Service とポートを指す。</li>
+     *   <li>転送スイッチ(STOCK_RPC_TRANSPORT)が http · grpc のいずれかだ — それ以外の値だと order が起動しない。</li>
+     * </ol>
      */
     @Test
     @DisplayName("B-73: gRPC — proto 서비스마다 경로 규칙, 서버 포트 = 매니페스트 포트 = 호출 대상, 전송 스위치 값")
@@ -3317,6 +3702,7 @@ class ConfigurationGuardrailTest {
         List<String> offenders = new ArrayList<>();
 
         // ① proto 서비스 ↔ 경로 규칙
+        // [JA] ① proto サービス ↔ パスルール
         Matcher rules = Pattern.compile("INTERNAL_AUTH_PATH_RULES:\\s*\"([^\"]*)\"").matcher(cm);
         assertThat(rules.find()).isTrue();
         Set<String> rulePrefixes = new java.util.HashSet<>();
@@ -3342,6 +3728,7 @@ class ConfigurationGuardrailTest {
         assertThat(services).as("proto 서비스를 하나도 못 찾았다면 이 검사가 낡은 것이다").isPositive();
 
         // ② 서버 포트 ↔ 매니페스트
+        // [JA] ② サーバーポート ↔ マニフェスト
         String config = Files.readString(repoRoot().resolve(
                 "catalog-service/src/main/java/com/project/catalog_service/grpc/StockGrpcServerConfig.java"), StandardCharsets.UTF_8);
         Matcher portDefault = Pattern.compile("stock\\.grpc\\.server\\.port:(\\d+)").matcher(config);
@@ -3356,6 +3743,7 @@ class ConfigurationGuardrailTest {
         }
 
         // ③ 호출 대상
+        // [JA] ③ 呼び出し対象
         Matcher target = Pattern.compile("STOCK_GRPC_TARGET:\\s*\"([^\"]*)\"").matcher(cm);
         if (!target.find() || !target.group(1).equals("dns:///catalog-service.ecommerce.svc.cluster.local:" + port)) {
             offenders.add("STOCK_GRPC_TARGET 이 catalog-service Service 의 " + port + " 를 가리키지 않는다"
@@ -3363,6 +3751,7 @@ class ConfigurationGuardrailTest {
         }
 
         // ④ 전송 스위치
+        // [JA] ④ 転送スイッチ
         Matcher transport = Pattern.compile("STOCK_RPC_TRANSPORT:\\s*\"([^\"]*)\"").matcher(cm);
         if (!transport.find() || !Set.of("http", "grpc").contains(transport.group(1))) {
             offenders.add("STOCK_RPC_TRANSPORT 는 http · grpc 중 하나여야 한다(그 밖이면 order 가 뜨지 않는다)");
@@ -3375,6 +3764,10 @@ class ConfigurationGuardrailTest {
      * 아웃박스를 건너는 추적 (docs/51 §4e). 세 아웃박스 모두 <b>네 끝</b>이 있어야 이어진다 —
      * 컬럼(마이그레이션), 엔티티 필드, 쓰는 쪽의 {@code capture()}, 릴레이의 {@code resume(...)}.
      * 하나라도 빠지면 오류 없이 추적만 조용히 끊긴다.
+     *
+     * <p>[JA] アウトボックスをまたぐトレース(docs/51 §4e)。3 つのアウトボックスすべてに<b>4 つの端</b>があって初めてつながる —
+     * カラム(マイグレーション)、エンティティのフィールド、書く側の {@code capture()}、リレーの {@code resume(...)}。
+     * 一つでも欠けると、エラーなしにトレースだけが黙って途切れる。
      */
     @Test
     @DisplayName("B-60: 아웃박스는 행에 추적 문맥을 남기고, 릴레이는 그 문맥 아래에서 보낸다")
@@ -3426,6 +3819,8 @@ class ConfigurationGuardrailTest {
 
         // 사가 경로의 배치 리스너는 레코드마다 헤더로 추적을 이어받아야 한다 — 배치 리스너에는 컨슈머 추적이
         // 걸리지 않아, 이어받지 않으면 그 안에서 쓴 아웃박스 행이 빈 문맥을 남긴다(docs/51 §4f).
+        // [JA] サーガ経路のバッチリスナーはレコードごとにヘッダーでトレースを引き継がなければならない — バッチリスナーにはコンシューマーのトレースがかからないので、
+        //      引き継がないとその中で書いたアウトボックス行が空のコンテキストを残す(docs/51 §4f)。
         for (String listener : List.of(
                 "pay-service/src/main/java/com/project/pay_service/ports/input/message/listener/PaymentRequestKafkaListener.java",
                 "order-service/src/main/java/com/project/order_service/ports/input/message/listener/PaymentResponseKafkaListener.java")) {
@@ -3435,6 +3830,8 @@ class ConfigurationGuardrailTest {
             }
             // 🐛 배치 변환 헤더만 찾으면 레코드 어댑터(setBatchToRecordAdapter) 팩토리에서는 늘 null 이다 —
             //    운영에서 이어받기가 아무것도 하지 않았다(docs/51 §4g). 두 모양을 다 받는 recordHeaders 로.
+            // [JA] 🐛 バッチ変換ヘッダーだけを探すと、レコードアダプター(setBatchToRecordAdapter)のファクトリーでは常に null だ —
+            //         運用で引き継ぎが何もしていなかった(docs/51 §4g)。両方の形を受ける recordHeaders で。
             if (!code.contains("OutboxTraceContext.recordHeaders(")) {
                 missing.add(listener + " — 헤더는 @Headers 전체에서 recordHeaders(...) 로 꺼낸다(레코드 어댑터면 배치 헤더가 없다)");
             }
@@ -3449,11 +3846,17 @@ class ConfigurationGuardrailTest {
      * ({@code recordHeaders(} 로 헤더를 꺼내 {@code openFrom(}/{@code continueFrom(} 으로 감싼다). 레코드 단위
      * 리스너는 팩토리의 {@code setObservationEnabled(true)} 가 이어받으므로 아래 목록에만 둔다. 새 리스너가
      * 이것을 빠뜨리면 그 리스너 안의 로그·아웃박스 행이 따로 떨어진 추적이 된다.
+     *
+     * <p>[JA] B-60b: すべての Kafka リスナーが送信側のトレースを引き継ぐ(docs/51 §4h)。
+     * バッチリスナーには Spring のコンシューマートレースがかからない — リスナーがレコードごとにヘッダーから引き継がなければならない
+     * ({@code recordHeaders(} でヘッダーを取り出し {@code openFrom(}/{@code continueFrom(} で包む)。レコード単位のリスナーはファクトリーの
+     * {@code setObservationEnabled(true)} が引き継ぐので下のリストにだけ置く。新しいリスナーがこれを漏らすと、そのリスナー内のログ・アウトボックス行が切り離されたトレースになる。
      */
     @Test
     @DisplayName("B-60b: 모든 @KafkaListener 는 레코드마다 추적을 이어받는다 (배치) — 레코드 단위는 팩토리 옵저베이션")
     void everyKafkaListenerContinuesTheSendersTrace() throws IOException {
         // 레코드 단위 팩토리(setBatchListener 가 없거나 false)의 리스너 — 스프링 옵저베이션이 이어받는다.
+        // [JA] レコード単位ファクトリー(setBatchListener がないか false)のリスナー — Spring のオブザベーションが引き継ぐ。
         Set<String> recordLevel = Set.of(
                 "chat-service/src/main/java/com/project/chat_service/message/consumer/MessageConsumer.java",
                 "coupon-service/src/main/java/com/project/coupon_service/message/consumer/UserCreatedConsumer.java");
@@ -3504,6 +3907,11 @@ class ConfigurationGuardrailTest {
      * <b>조용히</b> 안 온다 — 평소엔 아무 증상이 없다가 정말 필요한 날 모른다. 코드의 log.error/warn 문구 중
      * "수동" 과 "필요" 가 함께 있는 것은 전부 규칙 파일의 {@code MANUAL_ACTION_REGEX} 에 걸려야 하고, 그
      * 정규식은 규칙의 expr 에 그대로 있어야 하며, compose 가 규칙 디렉터리를 테넌트 경로에 붙여야 한다.
+     *
+     * <p>[JA] B-61:「人が手を入れるべき作業」のログ文言が Loki アラートの正規表現に引っかかる(docs/51 §4i)。
+     * アラートはログ文言を正規表現で探す。誰かが「수동 확인 필요」を「수동으로 확인 바람」に変えるとアラートが<b>黙って</b>来なくなる —
+     * 普段は何の症状もなく、本当に必要な日に気づかない。コードの log.error/warn の文言のうち「수동」と「필요」が一緒にあるものはすべて
+     * ルールファイルの {@code MANUAL_ACTION_REGEX} にかかる必要があり、その正規表現はルールの expr にそのままあるべきで、compose がルールディレクトリをテナントのパスにマウントしなければならない。
      */
     @Test
     @DisplayName("B-61: '수동 … 필요' 로그 문구가 전부 Loki 경보 규칙에 걸린다")
@@ -3545,6 +3953,7 @@ class ConfigurationGuardrailTest {
         assertThat(unmatched).isEmpty();
 
         // 품절 경보는 catalog 의 StockEventProducer.SOLD_OUT_MARKER 문구로 찾는다(docs/53).
+        // [JA] 品切れアラートは catalog の StockEventProducer.SOLD_OUT_MARKER の文言で探す(docs/53)。
         Matcher soldOut = Pattern.compile("# SOLD_OUT_MARKER: (.+)").matcher(rules);
         assertThat(soldOut.find()).as("규칙 파일에 SOLD_OUT_MARKER 주석").isTrue();
         String marker = soldOut.group(1).trim();
@@ -3578,6 +3987,11 @@ class ConfigurationGuardrailTest {
      * ({@code RedisRateLimiter})는 설정을 <b>라우트 id 로</b> 저장하므로, 같은 id 의 다른 라우트(전역 기본값 20/s)가
      * 로그인 경로의 강한 제한(1/s, 버스트 10)을 덮을 수 있었다. 무차별 대입 방어가 설정 한 줄로 사라지는 모양이고,
      * 평소에는 아무 증상이 없다.
+     *
+     * <p>[JA] B-62: ゲートウェイのルート id は一意だ(docs/57 §4)。
+     * 🐛 {@code user-service} が 2 回宣言されていた — 認証前のパス(ログイン・登録)と認証パス。レートリミッター({@code RedisRateLimiter})は
+     * 設定を<b>ルート id で</b>保存するので、同じ id の別ルート(グローバルデフォルト 20/s)がログインパスの強い制限(1/s, バースト 10)を上書きし得た。
+     * 総当たり攻撃の防御が設定 1 行で消える形で、普段は何の症状もない。
      */
     @Test
     @DisplayName("B-62: 게이트웨이 라우트 id 가 파일 안에서 겹치지 않는다")
@@ -3612,6 +4026,11 @@ class ConfigurationGuardrailTest {
      * <p>🐛 켜져 있었다. Eureka 의 서비스마다 {@code /ORDER-SERVICE/**} 같은 라우트가 생기는데 JWT 필터가 없고, 전역 필터가 신원
      * 헤더를 지우므로 하위 서비스에는 "헤더 없음 = 내부 호출" 로 닿는다 — {@code InternalCallGuard.allowed} 가 통과시키는 모양이다.
      * 밖에서 닿지 않은 것은 터널이 소문자 접두사만 넘기기 때문이었다(설정 한 줄에 기댄 방어).
+     *
+     * <p>[JA] B-64: ゲートウェイの自動ルート(discovery locator)は無効だ(docs/57 §9)。
+     * 🐛 有効になっていた。Eureka のサービスごとに {@code /ORDER-SERVICE/**} のようなルートができるが JWT フィルターがなく、
+     * グローバルフィルターが身元ヘッダーを消すので、下位サービスには「ヘッダーなし = 内部呼び出し」として届く — {@code InternalCallGuard.allowed} が通す形だ。
+     * 外から届かなかったのは、トンネルが小文字の接頭辞しか渡さないからだった(設定 1 行に頼った防御)。
      */
     @Test
     @DisplayName("B-64: 게이트웨이 discovery locator 가 켜져 있지 않다")
@@ -3637,6 +4056,11 @@ class ConfigurationGuardrailTest {
      * <p>🐛 {@code UserLifecycleProducer} 가 운영용·테스트용 생성자 둘을 갖고 어느 쪽에도 표시가 없었다. 스프링은 기본 생성자를
      * 찾다 "No default constructor found" 로 user-service 기동에 실패했다 — 단위 테스트는 생성자를 직접 불러 모두 초록이었고,
      * 컨텍스트 기동 테스트는 Docker 가 있어야 돌아 CI 에서 건너뛰었다. 배포하는 순간에야 드러났다(docs/57 §17).
+     *
+     * <p>[JA] B-65: Spring Bean にコンストラクターが 2 つ以上あれば、一つに {@code @Autowired} があるか、引数なしのコンストラクターがなければならない。
+     * 🐛 {@code UserLifecycleProducer} が運用用・テスト用の 2 つのコンストラクターを持ち、どちらにも印がなかった。Spring はデフォルトコンストラクターを探して
+     * "No default constructor found" で user-service の起動に失敗した — 単体テストはコンストラクターを直接呼んで全部緑で、
+     * コンテキスト起動テストは Docker がないと動かないので CI で飛ばされていた。デプロイした瞬間に初めて表に出た(docs/57 §17)。
      */
     @Test
     @DisplayName("B-65: 생성자가 여럿인 빈은 @Autowired 로 하나를 고른다")
@@ -3685,6 +4109,11 @@ class ConfigurationGuardrailTest {
      * <p>규칙은 사람이 적는 값이다. Feign 호출을 더하거나 다른 서비스로 옮기고 규칙을 잊으면, 규칙이 enforce 인 순간 그 호출이 403 으로
      * 끊긴다 — 테스트는 모두 초록인 채로(단위 테스트는 필터를 거치지 않는다). 규칙 대상 경로(내부 전용)를 부르는 Feign 메서드마다
      * 호출하는 모듈이 가장 긴 앞부분 규칙의 목록에 있는지 본다(docs/57 §16).
+     *
+     * <p>[JA] B-67: サービスが Feign で呼ぶ内部パスは、ConfigMap のパスルール(INTERNAL_AUTH_PATH_RULES)がそのサービスを許可している。
+     * ルールは人が書く値だ。Feign 呼び出しを足したり別サービスに移したりしてルールを忘れると、ルールが enforce になった瞬間その呼び出しが 403 で切れる —
+     * テストは全部緑のまま(単体テストはフィルターを通らない)。ルール対象パス(内部専用)を呼ぶ Feign メソッドごとに、
+     * 呼び出し元モジュールが最長前方一致ルールのリストにあるかを見る(docs/57 §16)。
      */
     @Test
     @DisplayName("B-67: Feign 이 부르는 내부 경로는 경로 규칙이 그 호출 서비스를 허용한다 — 규칙은 enforce")
@@ -3739,6 +4168,10 @@ class ConfigurationGuardrailTest {
      *
      * <p>하나라도 빠지면: Certificate 가 없으면 그 서비스만 손으로 만든 1년짜리 인증서로 남아 어느 날 만료되고, Reloader 주석이 없으면
      * 갱신된 인증서를 파드가 읽지 않아 옛 인증서가 만료되는 날 그 서비스의 호출만 끊긴다(docs/57 §18).
+     *
+     * <p>[JA] B-68: バックエンドがマウントする身元 Secret(tls-id-*)ごとに、cert-manager の Certificate(k8s/96)が同じ名前で発行し、その Deployment に Reloader のアノテーションがある。
+     * 一つでも欠けると: Certificate がなければそのサービスだけ手作りの 1 年証明書のまま残っていつか期限切れになり、Reloader のアノテーションがなければ
+     * 更新された証明書をポッドが読まず、古い証明書が切れる日にそのサービスの呼び出しだけが途切れる(docs/57 §18)。
      */
     @Test
     @DisplayName("B-68: 신원 Secret 마다 Certificate 와 Reloader 주석이 있다")
@@ -3772,6 +4205,10 @@ class ConfigurationGuardrailTest {
      * <p>🐛 order-service 가 {@code .productId(Long.parseLong(p.getId()))} 로 주문 품목을 만들었다. 줄 id 는 TSID 라 어느 상품도
      * 가리키지 않았고, 재고 예약이 모든 주문을 "품절" 로 막았다(그 전에는 결제 뒤 차감이 전량 부족 → 자동 환불). 상품 id 는
      * {@code getProductId()} 다(docs/59 §10).
+     *
+     * <p>[JA] B-66: カート行({@code CartProductDto})の {@code id} は<b>カート行の</b> id だ — 商品 id の代わりに使わない。
+     * 🐛 order-service が {@code .productId(Long.parseLong(p.getId()))} で注文品目を作っていた。行 id は TSID でどの商品も指さず、
+     * 在庫予約がすべての注文を「品切れ」で止めた(その前は決済後の差し引きが全量不足 → 自動返金)。商品 id は {@code getProductId()} だ(docs/59 §10)。
      */
     @Test
     @DisplayName("B-66: 장바구니 줄 id 를 상품 id 로 쓰지 않는다")
@@ -3805,6 +4242,11 @@ class ConfigurationGuardrailTest {
      * <p>🐛 user-service 의 {@code Review} 가 {@code @SuperBuilder} 만 있고 인자 없는 생성자가 없었다. JPA 는 DB 에서 읽은 행으로
      * 엔티티를 만들 때 그 생성자를 쓴다 — 쓰기(빌더로 만들어 저장)는 되고 <b>읽기</b>가 실패한다. 단위 테스트는 엔티티를 빌더로
      * 만들어 목에 넣으므로 모두 초록이었고, 운영에서 상품에 첫 리뷰가 저장되는 순간 그 상품의 리뷰 목록이 400 이 됐다.
+     *
+     * <p>[JA] B-69: すべての JPA エンティティに引数なしのコンストラクターがある({@code @NoArgsConstructor} または手書きの {@code Foo()})。
+     * 🐛 user-service の {@code Review} が {@code @SuperBuilder} だけで引数なしのコンストラクターがなかった。JPA は DB から読んだ行でエンティティを作るときそのコンストラクターを使う —
+     * 書き込み(ビルダーで作って保存)はできて<b>読み込み</b>が失敗する。単体テストはエンティティをビルダーで作ってモックに入れるので全部緑で、
+     * 運用で商品に最初のレビューが保存された瞬間、その商品のレビュー一覧が 400 になった。
      */
     @Test
     @DisplayName("B-69: 모든 @Entity 에 인자 없는 생성자가 있다")
@@ -3828,6 +4270,8 @@ class ConfigurationGuardrailTest {
                 boolean explicit = Pattern.compile("\\b" + cls + "\\s*\\(\\s*\\)\\s*\\{").matcher(src).find();
                 // 생성자를 하나도 선언하지 않았으면 자바가 기본 생성자를 만든다(chat 의 Alarm). 문제는 다른 생성자가 있을 때다 —
                 // 직접 쓴 것이든 Lombok 이 만든 것이든(@Builder·@SuperBuilder·@AllArgsConstructor·@RequiredArgsConstructor).
+                // [JA] コンストラクターを一つも宣言していなければ Java がデフォルトコンストラクターを作る(chat の Alarm)。問題は他のコンストラクターがあるときだ —
+                //      手書きでも Lombok が作ったものでも(@Builder・@SuperBuilder・@AllArgsConstructor・@RequiredArgsConstructor)。
                 boolean otherCtor = Pattern.compile("@(Builder|SuperBuilder|AllArgsConstructor|RequiredArgsConstructor)\\b").matcher(src).find()
                         || Pattern.compile("(?m)^\\s*(public|protected|private)?\\s*" + cls + "\\s*\\(\\s*[^)\\s]").matcher(src).find();
                 if (otherCtor && !lombok && !explicit) {
@@ -3845,6 +4289,10 @@ class ConfigurationGuardrailTest {
      * <p>🐛 아웃박스 파티션은 V1 마이그레이션이 2027-01 까지만 만들었고 그 뒤를 만드는 장치가 없었다 — 2027-02 부터 모든 행이
      * DEFAULT 로 가고, 에러는 나지 않는다. 잡(common {@code OutboxPartitionAutoConfiguration})을 만들었어도, 새 파티션 테이블을
      * 더하면서 설정을 빠뜨리면 같은 일이 그 테이블에서 다시 일어난다.
+     *
+     * <p>[JA] B-70: 月次パーティションテーブルを作るサービスは、そのテーブルをパーティションジョブ({@code outbox.partitions.tables})に登録する。
+     * 🐛 アウトボックスのパーティションは V1 マイグレーションが 2027-01 までしか作らず、その先を作る仕組みがなかった — 2027-02 からすべての行が DEFAULT に行き、エラーは出ない。
+     * ジョブ(common {@code OutboxPartitionAutoConfiguration})を作っても、新しいパーティションテーブルを足すときに設定を漏らすと同じことがそのテーブルで再び起きる。
      */
     @Test
     @DisplayName("B-70: 파티션 테이블을 만드는 서비스는 outbox.partitions.tables 에 그 테이블을 둔다")
@@ -3900,6 +4348,11 @@ class ConfigurationGuardrailTest {
      * <p>🐛 catalog 에 {@code V10__home_section.sql} 이 이미 있는데 재고 부족 아웃박스를 {@code V10__stock_shortage_outbox.sql}
      * 로 더했다(49a10fa). Flyway 는 같은 버전이 둘이면 <b>기동을 거부한다</b>("Found more than one migration with version 10") —
      * 단위 테스트는 Flyway 를 돌리지 않아 모두 초록이었고, 배포하는 순간 catalog 가 뜨지 않는다. V13 으로 옮겼다(docs/59 §0).
+     *
+     * <p>[JA] B-63: 一つのサービスの Flyway バージョン番号は重複しない。
+     * 🐛 catalog に {@code V10__home_section.sql} がすでにあるのに、在庫不足アウトボックスを {@code V10__stock_shortage_outbox.sql} で足した(49a10fa)。
+     * Flyway は同じバージョンが 2 つあると<b>起動を拒否する</b>("Found more than one migration with version 10") —
+     * 単体テストは Flyway を動かさないので全部緑で、デプロイした瞬間 catalog が起動しない。V13 に移した(docs/59 §0)。
      */
     @Test
     @DisplayName("B-63: 서비스마다 Flyway 마이그레이션 버전이 유일하다")
@@ -3921,6 +4374,7 @@ class ConfigurationGuardrailTest {
                         Matcher m = version.matcher(f.getFileName().toString());
                         if (m.matches()) {
                             // Flyway 는 1_1 과 1.1 을 같은 버전으로 본다.
+                            // [JA] Flyway は 1_1 と 1.1 を同じバージョンとみなす。
                             String v = m.group(1).replace('_', '.').replaceAll("(\\.0+)+$", "");
                             byVersion.computeIfAbsent(v, k -> new ArrayList<>()).add(f.getFileName().toString());
                         }
@@ -3983,7 +4437,12 @@ class ConfigurationGuardrailTest {
      * <p>🐛 2026-10-21 실습 8시간(docs/83 §2.8): 떠다니는 태그(`17-jre-jammy`)라 빌드마다 그날의 최신 패치가 들어왔고(운영 b7c5053 도 17.0.20.1 — 2026-10-21 에야 알았다),
      * JVM 충돌 · C2 컴파일 정지가 난 이미지에 어느 JVM 이 들었는지 저장소로는 알 수 없었다.
      *
-     * <p>[JA] JRE ベースイメージは正確な版 + ダイジェスト一つ — Dockerfile.runtime にだけ書き、ビルドスクリプトはその行を読む。
+     * <p>[JA] B-98: JRE ベースイメージは正確な版 + ダイジェスト一つ — {@code ops/Dockerfile.runtime} にだけ書き、ビルドスクリプト(ops/19 · ops/13)は
+     * その行を読み、E2E の既定値も同じ。
+     *
+     * <p>[JA] 🐛 2026-10-21 実習 8 時間(docs/83 §2.8): 浮動タグ(`17-jre-jammy`)なのでビルドごとにその日の最新パッチが入り(本番 b7c5053 も
+     * 17.0.20.1 — 2026-10-21 にやっと分かった)、JVM クラッシュ · C2 コンパイル停止が起きたイメージにどの JVM が入っていたかリポジトリからは
+     * 分からなかった。
      */
     @Test
     @DisplayName("B-98: JRE 이미지는 정확한 판 + 다이제스트로 고정 · 한 곳(Dockerfile.runtime)에만 — 떠다니는 태그 금지")
@@ -4011,7 +4470,14 @@ class ConfigurationGuardrailTest {
      * 2FA 대기 토큰). 2026-11-18 에 Temurin 의 고친 판 이미지가 아직 없어 보도된 우회책(내장 함수 끄기)을 둔다. JRE 를 고친 판으로 올리면
      * 이 가드는 옵션을 요구하지 않는다 — 그때 옵션을 뺀다(남겨도 해는 없다, Base64 가 순수 자바로 돈다).
      *
-     * <p>[JA] JRE が CVE-2026-114938 の修正版でなければエントリーポイントが内蔵関数を切る — どこでも再び有効にしない。修正版に上げたら外せる。
+     * <p>[JA] B-113: JRE が CVE-2026-114938 を修正した版でなければ、エントリーポイントが {@code -XX:-UseBASE64Intrinsics} を渡す — そしてどこでも
+     * 再び有効にしない。
+     *
+     * <p>[JA] 2026-11-17 公開の java.util.Base64 デコーダーのメモリ破損("Java4Shell" — 報道ベースで CVSS 8.1、JDK 17 · 21 · 25 · 27、修正版
+     * 17.0.21.1 · 21.0.13.1 · 25.0.5.1 · 27.0.1.1)。このシステムは認証前の外部入力を java.util.Base64 でデコードする(ポートワン Webhook 署名
+     * ヘッダー · パスキー応答 · 2FA 待機トークン)。2026-11-18 時点で Temurin の修正版イメージがまだないので、報道された回避策(組み込み関数を
+     * 切る)を置く。JRE を修正版に上げるとこのガードはオプションを要求しない — そのときオプションを外す(残しても害はない、Base64 が純粋な
+     * Java で動く)。
      */
     @Test
     @DisplayName("B-113: JRE 가 CVE-2026-114938 수정판(17.0.21.1 · 21.0.13.1 …) 아래면 -XX:-UseBASE64Intrinsics — 매니페스트 · 스크립트에서 다시 켜지 않는다")
@@ -4022,6 +4488,7 @@ class ConfigurationGuardrailTest {
         int[] v = {Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)),
                 m.group(4) == null ? 0 : Integer.parseInt(m.group(4))};
         // 판마다 첫 수정판(보도 · 2026-11-17 CPU). 모르는 판은 고쳐지지 않은 것으로 본다.
+        // [JA] バージョンごとの最初の修正版(報道 · 2026-11-17 CPU)。知らないバージョンは修正されていないものとみなす。
         Map<Integer, int[]> fixed = Map.of(17, new int[] {17, 0, 21, 1}, 21, new int[] {21, 0, 13, 1},
                 25, new int[] {25, 0, 5, 1}, 27, new int[] {27, 0, 1, 1});
         int[] f = fixed.get(v[0]);
@@ -4034,6 +4501,7 @@ class ConfigurationGuardrailTest {
                     .isLessThan(entry.indexOf("${JAVA_OPTS}"));
         }
         // 어디서도 다시 켜지 않는다 — 매니페스트 · 오버레이 · 운영 스크립트 · compose
+        // [JA] どこでも再び有効にしない — マニフェスト · オーバーレイ · 運用スクリプト · compose
         List<String> offenders = new ArrayList<>();
         for (String dir : List.of("k8s", "k8s-overlays", "ops")) {
             try (Stream<Path> files = Files.walk(repoRoot().resolve(dir))) {
@@ -4053,7 +4521,11 @@ class ConfigurationGuardrailTest {
      * 1.30 아래 갈래는 지원이 끝나 수정판이 없다(예전 1.27). 그리고 프론트 nginx 는 HTTP/1.1 만 듣는다 — 손님의 HTTP/2 · 3 은 Cloudflare 가
      * 받고 안쪽(cloudflared → traefik → frontend)은 HTTP/1.1 이라, 켤 까닭 없이 그 코드 경로를 열지 않는다(resolver · mail 도 쓰지 않는다).
      *
-     * <p>[JA] フロントの nginx イメージは正確な版 + ダイジェスト、三か所同じ行、NGINX2Root の修正版未満に戻さない。HTTP/1.1 だけを聞く。
+     * <p>[JA] B-114: フロントの nginx イメージは正確な版 + ダイジェスト、三か所(二つの Dockerfile · ops/18 試験)が同じ行で、2026-11-18 公開の
+     * 'NGINX2Root'(CVE-2026-123007 HTTP/2 リモートコード実行ほか四つ)の修正版未満に戻らない — 1.30 系は 1.30.7、1.31 系は 1.31.9 から、
+     * 1.30 未満の系はサポートが終わって修正版がない(以前は 1.27)。そしてフロントの nginx は HTTP/1.1 だけを聞く — 客の HTTP/2 · 3 は
+     * Cloudflare が受け、内側(cloudflared → traefik → frontend)は HTTP/1.1 なので、有効にする理由なくそのコードパスを開かない
+     * (resolver · mail も使わない)。
      */
     @Test
     @DisplayName("B-114: 프론트 nginx 는 NGINX2Root 수정판(1.30.7 · 1.31.9) 이상 · 다이제스트 고정 · 세 곳 같은 줄, nginx.conf 는 HTTP/1.1 만")
@@ -4091,8 +4563,13 @@ class ConfigurationGuardrailTest {
      * **신호가 죽는 것**이다: DB 가 정말 끊겨도 같은 503 이라 그 엔드포인트로 사고를 구분할 수 없다. ES 를 띄운 환경에서는
      * 환경 변수로 켠다.
      *
-     * <p>[JA] ES スターターを使うモジュールは health インジケーターを明示的に（既定はオフ）— ES のない環境で /actuator/health が
-     * 恒久的に DOWN になり、信号として使えなくなるため。
+     * <p>[JA] B-116: Elasticsearch スターターを使うモジュールは {@code management.health.elasticsearch.enabled} を**明示**し、既定値はオフである。
+     *
+     * <p>[JA] Boot はスターターがクラスパスにあると ES の health インジケーターを自動で作る。本番(OCI)には ES がないため(docs/74 — 機能フラグ
+     * 第 1 段階、比率は ES を立ち上げてから)そのインジケーターが常に失敗し、{@code /actuator/health} が**恒久的に DOWN(503)**だった
+     * (2026-11-19 確認)。Pod は Ready だった — コンテナのプローブは {@code liveness} · {@code readiness} グループしか見ないからだ。問題は
+     * 可用性ではなく**信号が死ぬこと**である: DB が本当に切れても同じ 503 なので、そのエンドポイントで障害を区別できない。ES を立ち上げた
+     * 環境では環境変数で有効にする。
      */
     @Test
     @DisplayName("B-116: ES 스타터를 쓰는 모듈은 management.health.elasticsearch.enabled 를 명시 · 기본값 꺼짐 — 영구 DOWN 금지")
@@ -4140,7 +4617,15 @@ class ConfigurationGuardrailTest {
      * {@code spring.config.import} 로 읽은 application-common.yml 이 우선해 실제로는 노출되지 않았다(죽은 설정 — 지웠다). 그 동작은
      * 게이트웨이의 {@code ActuatorExposureTest} 가 실제 기동으로 지킨다. 이 가드는 공통 목록을 포함해 어디에 넣어도 걸린다.
      *
-     * <p>[JA] actuator の Web 公開は読み取りの四つだけ。クラスター内からは認証なしで届くので、refresh などの書き込み・秘密を出すものは入れない。
+     * <p>[JA] B-112: actuator の Web 公開は読み取りの四つ(health · info · metrics · prometheus)だけ — 全モジュールの設定ファイルと
+     * マニフェスト · compose の環境変数。
+     *
+     * <p>[JA] サービスの前にはゲートウェイの 404(InternalEndpointBlockFilter, docs/57 §7)とトンネルの経路(B-82)があるが、クラスター内では
+     * Pod に直接届く(同じ名前空間 · kube-system — k8s/95)。ゲートウェイ · 大半のサービスには actuator を守る認証がない。
+     * そのため {@code refresh}(POST で設定を読み直す)· {@code gateway}(POST でルート追加)· {@code env} · {@code configprops} ·
+     * {@code heapdump} · {@code loggers} は入れない。2026-11-17: ゲートウェイ yml に {@code …, refresh, busrefresh} が残っていたが、
+     * {@code spring.config.import} で読んだ application-common.yml が優先して実際には公開されていなかった(死んだ設定 — 消した)。その動作は
+     * ゲートウェイの {@code ActuatorExposureTest} が実際の起動で守る。このガードは共通リストを含め、どこに入れても引っかかる。
      */
     @Test
     @DisplayName("B-112: actuator 웹 노출은 health · info · metrics · prometheus 만(설정 파일 · 매니페스트 env) — refresh 등 쓰기 · 비밀 노출 금지")
@@ -4211,7 +4696,13 @@ class ConfigurationGuardrailTest {
      * 운영은 ops/28 local 이라 이 오버레이를 apply 하지 않아 실제로 나지는 않았다). 반대로 HPA 가 없는 것(eureka · saga-projection
      * — 대기 복제본이 num.standby.replicas 와 짝)을 넣으면 replicas 가 기본값 1 이 된다.
      *
-     * <p>[JA] prod オーバーレイが replicas を消す Deployment = k8s/70 の HPA 対象。chat に HPA ができたのにリストになかった。
+     * <p>[JA] B-111: prod オーバーレイが replicas を消す Deployment = k8s/70 の HPA 対象。
+     *
+     * <p>[JA] HPA が所有する Deployment に replicas が残っていると、{@code kubectl apply} のたびにマニフェストの値に落ちてから HPA がまた
+     * 上げる(その間が障害だ)。🐛 chat-service は 2026-11-01 の Redis ファンアウト(B-107)で HPA 1 ~ 3 ができたのにこのリストに入っておらず、
+     * 増えた状態でオーバーレイを apply すると 1 に落ちて接続中の STOMP セッションが切れうった(2026-11-14 文書点検で発見 — 本番は
+     * ops/28 local でこのオーバーレイを apply しないため実際には起きなかった)。逆に HPA のないもの(eureka · saga-projection — 待機
+     * レプリカが num.standby.replicas と対)を入れると replicas が既定値 1 になる。
      */
     @Test
     @DisplayName("B-111: prod 오버레이의 replicas 제거 대상 = k8s/70 의 HPA 대상(빠지면 apply 마다 떨어지고, 더하면 기본값 1)")
@@ -4241,8 +4732,13 @@ class ConfigurationGuardrailTest {
      * 상태 확인 · 앞으로만 가는 전이 · 같은 _id 저장). Kafka 의 기본값이 latest 이므로 그룹을 두는 팩토리는 값을 늘 적는다.
      * 허용: notification 의 접속 알림(presence) — 옛 접속을 다시 알리면 안 된다(N-M5).
      *
-     * <p>[JA] Kafka コンシューマーのオフセット既定は earliest — latest は理由付きの許可リストだけ。オフセットがないとき latest はそれ以前の
-     * メッセージを飛ばす。新しいクラスターへ移す瞬間に「決済済みなのに未決済」が残りうった。
+     * <p>[JA] B-110: Kafka コンシューマーのオフセット既定値は earliest — {@code latest} は理由が書かれた許可リストだけ。
+     *
+     * <p>[JA] オフセットがないとき(グループの初回起動 · 無活動 7 日で失効 · <b>新しい Kafka クラスターへ移行</b>){@code latest} はそれ以前に
+     * 来たメッセージを飛ばす。🐛 2026-11-05 まで catalog(決済確定の在庫減算)· coupon 三つ · order 二つ(決済応答 · 配送状態)·
+     * chat(メッセージ保存)が latest で、ブローカーを移す瞬間(docs/89 §2-1)に決済済みなのに決済前の注文 · 保存されない会話が残りえた。
+     * どれも読み直しても安全だ(処理台帳 · サガの状態確認 · 前にだけ進む遷移 · 同じ _id の保存)。Kafka の既定値が latest なので、
+     * グループを置くファクトリは値を常に書く。許可: notification の接続通知(presence)— 古い接続を再通知してはならない(N-M5)。
      */
     @Test
     @DisplayName("B-110: 컨슈머 오프셋 기본값은 earliest — latest 는 허용 목록(접속 알림)만, 그룹을 두는 팩토리는 값을 늘 적는다")
@@ -4290,7 +4786,10 @@ class ConfigurationGuardrailTest {
      * <p>🐛 2026-11-19 까지 10곳이 {@code addTrustedPackages("*")} 였다. 컨슈머가 헤더({@code __TypeId__})를 따르므로 토픽에 쓸 수 있는
      * 누구든 헤더 하나로 클래스패스의 아무 클래스나 만들게 할 수 있었다(Jackson 가젯의 입구, docs/57 §22).
      *
-     * <p>[JA] Kafka JSON デシリアライズの信頼パッケージに "*" 禁止 — メッセージ DTO パッケージだけ。
+     * <p>[JA] B-115: Kafka JSON デシリアライズの信頼パッケージに {@code "*"} 禁止 — メッセージ DTO パッケージだけ({@code KafkaTrustedPackages})。
+     *
+     * <p>[JA] 🐛 2026-11-19 まで 10 か所が {@code addTrustedPackages("*")} だった。コンシューマーがヘッダー({@code __TypeId__})に従うので、
+     * トピックに書ける誰でもヘッダー一つでクラスパスの任意のクラスを作らせることができた(Jackson ガジェットの入口、docs/57 §22)。
      */
     @Test
     @DisplayName("B-115: Kafka JSON 역직렬화의 신뢰 패키지에 \"*\" 금지 — 메시지 DTO 패키지만(KafkaTrustedPackages)")

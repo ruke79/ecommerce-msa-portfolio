@@ -50,7 +50,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class InternalCallerGrpcInterceptor implements ServerInterceptor {
 
-    /** 통과한 호출의 서비스 이름(인증서 CN). mode=off 이거나 observe 에서 인증서 없이 통과했으면 비어 있다. */
+    /** 통과한 호출의 서비스 이름(인증서 CN). mode=off 이거나 observe 에서 인증서 없이 통과했으면 비어 있다. ／ [JA] 通過した呼び出しのサービス名(証明書 CN)。mode=off か、observe で証明書なしで通過した場合は空である。 */
     public static final Context.Key<String> CALLER = Context.key("internal-caller");
 
     private final InternalCallerFilter policy;
@@ -95,7 +95,7 @@ public class InternalCallerGrpcInterceptor implements ServerInterceptor {
         };
     }
 
-    /** TLS 세션이 받은 클라이언트 인증서 체인. 평문 연결이거나 인증서를 내지 않았으면 null. */
+    /** TLS 세션이 받은 클라이언트 인증서 체인. 평문 연결이거나 인증서를 내지 않았으면 null. ／ [JA] TLS セッションが受け取ったクライアント証明書チェーン。平文接続か証明書を出さなかった場合は null。 */
     static X509Certificate[] peerChain(SSLSession session) {
         if (session == null) {
             return null;
@@ -111,7 +111,7 @@ public class InternalCallerGrpcInterceptor implements ServerInterceptor {
             }
             return chain;
         } catch (SSLPeerUnverifiedException e) {
-            return null;   // 클라이언트 인증서를 내지 않았다(clientAuth=OPTIONAL)
+            return null;   // 클라이언트 인증서를 내지 않았다(clientAuth=OPTIONAL) ／ [JA] クライアント証明書を出さなかった(clientAuth=OPTIONAL)
         }
     }
 }

@@ -32,6 +32,14 @@ import com.project.order_service.config.FeignConfig;
  *
  * <p>그래서 파라미터를 지운다. 여기서 {@code @RequestHeader("Authorization")} 으로 다시
  * 선언하면 인터셉터와 겹쳐 같은 헤더가 두 번 간다.
+ *
+ * <p>[JA] マイクロサービス間の呼び出しのための FeignClient
+ * 🔒 トークンが URL に入っていた: 4 つのメソッドすべてが {@code @RequestParam("Authorization") String token} だった。すると
+ * アクセストークンが <b>クエリ文字列</b> に載る。URL はどこにでも残る — アクセスログ、プロキシ、例外メッセージ、Referer。実際に
+ * 兄弟クライアント({@link CartServiceClient})でその結果を見た: Feign の例外メッセージに <b>アクセストークン全文</b> が出力され、それが運用ログに残った。
+ * しかも <b>何の役にも立っていなかった。</b> {@link FeignConfig} のインターセプターが受けたリクエストの {@code Authorization} <b>ヘッダー</b>
+ * を引き継ぐので認証はそれで済む。受ける側の {@code /api/auth/user/id} はこのパラメーターを読みもしない。
+ * そこでパラメーターを消す。ここで {@code @RequestHeader("Authorization")} として宣言し直すとインターセプターと重なり同じヘッダーが二度送られる。
  */
 @Component
 @FeignClient(name="user-service", url="${feign.user-url}", configuration = FeignConfig.class)
@@ -45,6 +53,11 @@ public interface UserServiceClient {
     * ({@code AuthController.findUserByEmail}) — 그러니 이 호출에 {@code User-Role} 을
     * 실어 보내면 <b>관리자가 아니라는 이유로 403</b> 이 된다. 인터셉터가 그 헤더를
     * 전달하지 않는 것은 의도된 것이다.
+    *
+    * <p>[JA] メールでユーザーを探す。
+    * ⚠️ ゲートウェイを通らない <b>サービス間の直接呼び出し</b> なので {@code User-Role} ヘッダーが付かない。受ける側はそれを
+    * 「内部呼び出し」の根拠にする({@code AuthController.findUserByEmail}) — だからこの呼び出しに {@code User-Role} を載せると
+    * <b>管理者でないという理由で 403</b> になる。インターセプターがそのヘッダーを渡さないのは意図したものだ。
     */
    @GetMapping("api/auth/user/id")
    public ResponseEntity<?> findUserByEmail(@RequestParam("email") String email);
@@ -52,6 +65,9 @@ public interface UserServiceClient {
    /**
     * id 여럿 → 이메일({@code {"<id>": "<email>"}}). 관리자 주문 목록의 표시용이다 — 고객 사본을 없애면서 옮겨 왔다
     * (docs/48 §6-①). user-service 쪽은 내부 전용(신원 헤더가 있으면 관리자만).
+    *
+    * <p>[JA] id 複数 → メール({@code {"<id>": "<email>"}})。管理者の注文一覧の表示用だ — 顧客のコピーをなくすときに移してきた
+    * (docs/48 §6-①)。user-service 側は内部専用(身元ヘッダーがあれば管理者だけ)。
     */
    @GetMapping("api/auth/user/emails")
    java.util.Map<String, String> findEmailsByIds(@RequestParam("ids") java.util.List<Long> ids);

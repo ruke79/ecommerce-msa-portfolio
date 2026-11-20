@@ -15,6 +15,16 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>여기서 가장 중요한 것은 사과 문구가 아니라 <b>재발송 폼</b>이다. 만료는 정상적으로
  * 일어나는 일이고(링크는 24시간), 그때 사용자가 스스로 빠져나올 수 있어야 한다.
+ *
+ * <p>[JA] 登録確認リンクが通らなかったとき。
+ *
+ * <p>🐛 <b>この画面がなかった。</b> {@code RegistrationController} は失敗時に
+ * {@code {frontendUrl}/verification-failed?reason=…} へリダイレクトするが、フロントにその
+ * ルートがなかったので、リンクを遅れて押したユーザーは<b>ルーターのエラー画面</b>を見た。何が
+ * おかしいのかも、何をすればよいのかもわからなかった。
+ *
+ * <p>ここで最も重要なのはお詫びの文言ではなく<b>再送フォーム</b>である。失効は普通に
+ * 起こること(リンクは 24 時間)であり、そのときユーザーが自力で抜け出せなければならない。
  */
 
 /**
@@ -22,6 +32,11 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>문구가 아니라 <b>키</b>를 담는다. 문구를 직접 담으면 이 상수가 모듈 로드 시점에
  * 한 번만 평가돼 <b>언어를 바꿔도 바뀌지 않는다.</b>
+ *
+ * <p>[JA] サーバーが付けて送る理由コード → 文言キー。
+ *
+ * <p>文言ではなく<b>キー</b>を持つ。文言を直接持つと、この定数はモジュール読み込み時に
+ * 一度だけ評価され、<b>言語を切り替えても変わらない。</b>
  */
 const REASON_KEYS = {
     expired: "auth.verify_failed.expired",
@@ -35,6 +50,7 @@ const VerificationFailedPage = () => {
     const { t } = useTranslation();
 
     // 모르는 값이 와도 화면이 비지 않게 한다 — 서버가 코드를 늘릴 수 있다.
+    // [JA] 未知の値が来ても画面が空にならないようにする — サーバーがコードを増やすことがある。
     const prefix = REASON_KEYS[searchParams.get("reason")] ?? FALLBACK_KEY;
 
     useDocumentTitle(t("auth.verify_failed.doc_title"));

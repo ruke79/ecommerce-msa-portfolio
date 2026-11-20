@@ -67,6 +67,7 @@ public class AdminController {
     }
 
     /** 역할 목록 — 이름과 id 만(id 는 문자열, 브라우저의 숫자 정밀도). */
+    // [JA] ロール一覧 — 名前と id だけ(id は文字列、ブラウザの数値精度のため)。
     record RoleView(String roleId, String roleName) {
     }
 
@@ -105,6 +106,7 @@ public class AdminController {
     }
 
     /** 관리자가 정하는 새 비밀번호 — 본문으로만 받는다. */
+    // [JA] 管理者が決める新しいパスワード — 本文でだけ受け取る。
     record AdminPasswordRequest(@jakarta.validation.constraints.NotBlank String password) {
     }
 
@@ -132,6 +134,7 @@ public class AdminController {
     // @RequestPart("product") ProductRequest request,
     // @RequestPart("images") MultipartFile[] images,
     // @RequestPart("colorImage") MultipartFile colorImage) throws IOException {
+    // [JA] DB に画像を保存するとき(以下はコメントアウトされた旧コード)
 
     // Product product = productRepository.findByName(request.getName());
 

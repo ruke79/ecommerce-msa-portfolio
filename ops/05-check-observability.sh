@@ -5,6 +5,10 @@
 #   PROM_URL=http://localhost:9090 AM_URL=http://localhost:9093
 #   GRAFANA_URL=http://localhost:3001 JAEGER_URL=http://localhost:16686 OTELCOL_HEALTH_URL=http://localhost:13133
 #   LOKI_URL=http://localhost:3100 ALLOY_URL=http://localhost:12345
+# [JA] 運用アクション ⑤ — 観測スタック起動後の状態点検(docs/11 §1, docs/12 §3)
+#
+#      使い方: ./ops/05-check-observability.sh
+#        PROM_URL · AM_URL · GRAFANA_URL · JAEGER_URL · OTELCOL_HEALTH_URL · LOKI_URL · ALLOY_URL で各 URL を上書きできる
 set -euo pipefail
 
 PROM_URL="${PROM_URL:-http://localhost:9090}"
@@ -17,6 +21,8 @@ ALLOY_URL="${ALLOY_URL:-http://localhost:12345}"
 fail=0
 # ⚠️ 아래 python3 -c 조각에는 f-string 을 쓰지 않는다. 바깥이 작은따옴표라 안에서 \" 로 적게 되는데,
 #    f-string 식 안의 역슬래시는 Python 3.12 미만에서 SyntaxError 다(서버의 python3 에서 실제로 났다).
+# [JA] ⚠️ 下の python3 -c の断片には f-string を使わない。外側がシングルクォートなので中では \" と書くことになるが、
+#         f-string の式の中のバックスラッシュは Python 3.12 未満で SyntaxError になる(サーバーの python3 で実際に起きた)。
 
 check() { # name, url
     if curl -sSf -o /dev/null --max-time 5 "$2"; then echo "OK   $1"; else echo "FAIL $1 ($2)"; fail=1; fi
@@ -44,6 +50,8 @@ echo
 echo "=== 서비스 지표 (운영: 클러스터 안 에이전트 → remote write, docs/63 §5) ==="
 # 에이전트가 보낸 것은 위 타깃 목록에 없다 — up 시계열로 본다. 노드의 Prometheus 가 수신 없이 떴으면(oci 덧씌우기 없이)
 # 에이전트의 쓰기가 모두 거절된다.
+# [JA] エージェントが送ったものは上のターゲット一覧にない — up 時系列で見る。ノードの Prometheus が受信なしで起動していたら(oci 上書きなしで)
+#      エージェントの書き込みはすべて拒否される。
 receiver="$(curl -sf "$PROM_URL/api/v1/status/flags" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"].get("web.enable-remote-write-receiver","?"))' 2>/dev/null || echo "?")"
 agent=0
 command -v kubectl >/dev/null 2>&1 && kubectl -n ecommerce get deploy metrics-agent >/dev/null 2>&1 && agent=1
@@ -77,6 +85,8 @@ echo
 echo "=== Loki 에 들어온 서비스 로그 (docs/51 §4) ==="
 # 비어 있으면: k3s 라면 Alloy 가 /var/log/pods 를 읽는지(docker compose ... logs alloy),
 #              로컬이라면 서비스를 모듈 디렉터리에서 띄웠는지(<모듈>/logs/*.json) 본다.
+# [JA] 空なら: k3s なら Alloy が /var/log/pods を読んでいるか(docker compose ... logs alloy)、
+#              ローカルならサービスをモジュールディレクトリから起動したか(<モジュール>/logs/*.json)を見る。
 curl -sf -G "$LOKI_URL/loki/api/v1/label/service/values" | python3 -c '
 import json,sys
 d=json.load(sys.stdin).get("data") or []
@@ -86,6 +96,8 @@ echo
 echo "=== Loki 로그 경보 규칙 (docs/51 §4i) ==="
 # 비어 있으면: observability/loki-rules 가 /etc/loki/rules/fake 에 붙었는지(compose), loki-config.yml 의
 #              ruler 블록이 있는지. 경보 상태는 inactive/pending/firing 이다.
+# [JA] 空なら: observability/loki-rules が /etc/loki/rules/fake にマウントされているか(compose)、loki-config.yml に
+#              ruler ブロックがあるか。アラートの状態は inactive/pending/firing である。
 curl -sf "$LOKI_URL/prometheus/api/v1/rules" | python3 -c '
 import json,sys
 groups=(json.load(sys.stdin).get("data") or {}).get("groups") or []
@@ -100,11 +112,13 @@ if missing:
 echo
 echo "=== 추적 파이프라인 (docs/63) ==="
 # 서비스 → Collector → Jaeger · span_metrics. 어느 한 곳이 끊겨도 서비스는 오류 없이 돈다 — 그래서 여기서 본다.
+# [JA] サービス → Collector → Jaeger · span_metrics。どこか一か所が切れてもサービスはエラーなく動く — だからここで見る。
 curl -sf "$JAEGER_URL/api/services" | python3 -c '
 import json,sys
 d=[s for s in (json.load(sys.stdin).get("data") or []) if s != "jaeger"]
 print("  Jaeger 에 추적을 보낸 서비스: " + (", ".join(sorted(d)) if d else "아직 없음 — 서비스가 OTLP 로 보내는지(아래 파드 점검) 본다"))' || { echo "  Jaeger 조회 실패"; fail=1; }
 # Collector 가 받은 · 거절한 · 못 내보낸 스팬(지난 1시간). 거절은 memory_limiter, 실패는 Jaeger 쪽 문제다.
+# [JA] Collector が受け取った · 拒否した · 送り出せなかったスパン(直近 1 時間)。拒否は memory_limiter、失敗は Jaeger 側の問題である。
 for m in receiver_accepted receiver_refused exporter_send_failed; do
     curl -sf -G "$PROM_URL/api/v1/query" \
         --data-urlencode "query=sum(increase({__name__=~\"otelcol_${m}_spans(_total)?\"}[1h]))" \
@@ -115,6 +129,7 @@ print("  %-22s %8.0f  (지난 1시간)" % (os.environ["M"], float(r[0]["value"][
         || { echo "  Collector 지표 조회 실패($m)"; fail=1; }
 done
 # 꼬리 샘플링(docs/63 §5) — Jaeger 에 남긴 추적 / 버린 추적. 오류 · 느린 요청 · 주문/결제/배송은 모두, 나머지는 10%.
+# [JA] テールサンプリング(docs/63 §5) — Jaeger に残したトレース / 捨てたトレース。エラー · 遅いリクエスト · 注文/決済/配送はすべて、残りは 10%。
 curl -sf -G "$PROM_URL/api/v1/query" \
     --data-urlencode 'query=sum by (sampled) (increase({__name__=~"otelcol_processor_tail_sampling_global_count_traces_sampled(_total)?"}[1h]))' \
     | python3 -c '
@@ -135,6 +150,9 @@ echo "=== k3s 파드 → 노드의 OTel Collector (docs/51 §4d, docs/63) ==="
 # 서비스 파드는 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://<노드 IP>:4318/v1/traces 로 추적을 보낸다. 방화벽이
 # 막으면 오류 없이 조용히 버려지므로 파드 안에서 직접 보내 본다 — 빈 요청({})은 스팬 0개라 저장되지 않는다.
 # (GET 은 405 라 쓸 수 없다.) kubectl 이 없으면(로컬 PC) 건너뛴다.
+# [JA] サービス Pod は OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://<ノード IP>:4318/v1/traces でトレースを送る。ファイアウォールが
+#      塞ぐとエラーなしに静かに捨てられるので、Pod の中から直接送ってみる — 空リクエスト({})はスパン 0 個なので保存されない。
+#      (GET は 405 なので使えない。)kubectl がなければ(ローカル PC)飛ばす。
 if command -v kubectl >/dev/null 2>&1 && kubectl get ns ecommerce >/dev/null 2>&1; then
     NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
     if kubectl -n ecommerce run otlp-probe --rm -i --restart=Never --quiet --image=busybox:1.36 \
@@ -153,6 +171,7 @@ fi
 echo
 echo "=== 경보 전달 (Alertmanager → Discord, docs/22 §1) ==="
 # 수신 주소 파일이 없어도 Alertmanager 는 뜬다 — 보낼 때마다 실패할 뿐이다(🐛 운영 2026-09-24 ~ 10-20, 0건 전달).
+# [JA] 受信先アドレスのファイルがなくても Alertmanager は起動する — 送るたびに失敗するだけだ(🐛 運用 2026-09-24 〜 10-20、配信 0 件)。
 SECRET_DIR="${SECRET_DIR:-$(cd "$(dirname "$0")/.." && pwd)/observability/secrets}"
 for f in webhook-url-critical webhook-url-warning; do
     if [ -s "$SECRET_DIR/$f" ] || sudo -n test -s "$SECRET_DIR/$f" 2>/dev/null; then
@@ -163,11 +182,13 @@ for f in webhook-url-critical webhook-url-warning; do
 done
 curl -sf "$AM_URL/metrics" | awk '/^alertmanager_notifications_(failed_)?total\{/ { split($1, a, "integration=\""); split(a[2], b, "\""); k = ($1 ~ /failed/ ? "실패" : "시도"); n[b[1] " " k] += $NF } END { for (x in n) if (n[x] > 0) printf "  %s %d\n", x, n[x] }' | sort || echo "  Alertmanager 지표 조회 실패"
 # 판정은 최근 15분의 실패로 — 위 수는 재기동 뒤 누적이라 주소 파일을 만들기 전의 실패까지 들어 있다(2026-10-20 운영).
+# [JA] 判定は直近 15 分の失敗で — 上の数は再起動後の累積なので、アドレスファイルを作る前の失敗まで入っている(2026-10-20 運用)。
 recent="$(curl -sf "$PROM_URL/api/v1/query" --data-urlencode 'query=sum(increase(alertmanager_notifications_failed_total[15m]))' \
     | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else "-")' 2>/dev/null || echo "-")"
 if [ "$recent" = "-" ]; then
     if ! curl -sf "$PROM_URL/api/v1/targets" | grep -q '"job":"alertmanager"'; then
         # 설정 파일만 바뀌면 compose 의 up -d 는 컨테이너를 다시 만들지 않는다 — 옛 설정 그대로 돈다(2026-10-20 운영)
+        # [JA] 設定ファイルだけ変わっても compose の up -d はコンテナを作り直さない — 古い設定のまま動く(2026-10-20 運用)
         echo "FAIL Prometheus 에 alertmanager 작업이 없다 — 옛 설정으로 도는 중: docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml up -d --force-recreate prometheus"; fail=1
     else
         echo "  (최근 15분 실패: alertmanager 지표가 아직 없다 — 긁기 시작한 지 얼마 안 됐다)"

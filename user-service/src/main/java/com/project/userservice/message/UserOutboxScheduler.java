@@ -63,6 +63,24 @@ import lombok.extern.slf4j.Slf4j;
  * 복구는 대사 배치의 몫이다(docs/48 ③). 지금은 <b>보이게 하는 것</b>까지가 목표다. 보내기가 처음부터 바로
  * 실패하면(브로커에 닿지 못함) 그 한 건만 FAILED 이고 나머지는 STARTED 로 다음 주기에 간다
  * ({@link #processOutboxMessage()}, 2026-11-20).
+ *
+ * <p>[JA] アウトボックスに書かれたユーザーイベントを Kafka へ送り出すポーラー。
+ * {@link OutboxScheduler} インターフェースはこのリポジトリに<b>実装なしで</b>置かれていた。これがその実装だ。
+ * 設計は order-service の {@code PaymentOutboxScheduler} と同じ — 同じ問題を二度違うやり方で解く理由はない。
+ * レプリカが二つでも安全でなければならない: user-service は {@code replicas: 2} だ。二つを守ってはじめて重複発行がない。
+ * 1) <b>先取りして読む</b> — {@code FOR UPDATE SKIP LOCKED}。ロックなしで読むと二つのレプリカが同じ行を見る。
+ * 2) <b>発行をこのトランザクション内で同期的に待つ。</b>非同期にすると状態を変えるコールバックが<b>コミット後に</b>動き、
+ * その間行はまだ STARTED なのにロックは外れている — その隙に別のレプリカが拾っていく。
+ * order-service のアウトボックスがまさにこの二つを破っていて、決済リクエストが二回出る可能性があった(docs/21)。
+ * それでも重複は残る — それは消費側の役目だ: Kafka は at-least-once である。発行には成功したのにコミット直前に落ちるとその行は
+ * STARTED のまま残り、次の周期に再び出る。ここで除くのは<b>レプリカのせいで生じる</b>重複だけだ。三つのコンシューマは既に
+ * これを前提に作られている — order・chat は {@code DataIntegrityViolationException} を流し、coupon は重複発行を防ぐ。
+ * 失敗を消さない: 発行が失敗したら {@code FAILED} として残す。消すと<b>何が送られなかったか分からない</b> —
+ * 黙って消えることがこの事態全体の原因だった(docs/47)。残っていれば数えられ、手作業でもバッチでも再送できる。
+ * ⚠️ FAILED は<b>自動で再試行しない。</b>ブローカーが送信途中で落ちるとその周期に送った束は期限(publish-timeout-ms)後に
+ * FAILED になるが、それを戻し続けると無限ループに近い。復旧は突合バッチの役目だ(docs/48 ③)。今は<b>見えるようにする</b>ところまでが
+ * 目標だ。送信が最初からすぐ失敗したら(ブローカーに届かない)その一件だけが FAILED で、残りは STARTED のまま次の周期に行く
+ * ({@link #processOutboxMessage()}、2026-11-20)。
  */
 @Slf4j
 @Component
@@ -72,6 +90,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
     private final OutboxEventRepository outboxEventRepository;
     private final UserCreatedProducer userCreatedProducer;
     /** 프로필 변경·탈퇴(docs/48 §6-⑤). */
+    // [JA] プロフィール変更・退会(docs/48 §6-⑤)。
     private final com.project.userservice.message.producer.UserLifecycleProducer lifecycleProducer;
     private final ObjectMapper objectMapper;
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
@@ -81,6 +100,9 @@ public class UserOutboxScheduler implements OutboxScheduler {
      *
      * <p>제한이 없으면 한 레플리카가 밀린 이벤트를 전부 잠가 나머지가 놀고, 트랜잭션도
      * 그만큼 길어진다.
+     *
+     * <p>[JA] 一度に先取りする行数。
+     * 制限がないと一つのレプリカが溜まったイベントを全部ロックして残りが遊び、トランザクションもその分長くなる。
      */
     @Value("${app.outbox.batch-size:100}")
     private int batchSize;
@@ -118,9 +140,21 @@ public class UserOutboxScheduler implements OutboxScheduler {
      *       다시 집는다. 예전에는 건마다 메타데이터 대기(max.block)를 되풀이하고 묶음 전체를 FAILED 로 굳혔다.</li>
      * </ul>
      *
-     * <p>[JA] 確保したバッチを<b>すべて送ってからまとめて</b>待つ。以前は 1 件ずつ送って待ち、トランザクションがバッチ × 往復
-     *      (ブローカー停止時はバッチ × 上限)だった。状態はコミット前に決め、同じユーザーの順序を守り、送信が即失敗したら残りは送らず
-     *      STARTED のまま次の周期へ。
+     * <p>[JA] 確保したバッチを<b>すべて送ってからまとめて</b>待つ(docs/79 §4)。
+     *
+     * <p>🐛 以前: 1 件ずつ送って待っていた。トランザクション(行ロック · DB コネクション一つ)がバッチ × 往復で、ブローカーが死ぬと
+     * バッチ × 上限(100 件 × 10 秒 ≈ 17 分)の間終わらなかった。バッチを大きくして速く流すこともできなかった(1 万件なら約 28 時間)。
+     * 今は送信だけを先に行い(プロデューサーがまとめて送る)、一度の期限の中で ack を集める — トランザクションは往復一回 · 最悪でも上限一回である。
+     *
+     * <p>守ること:
+     * <ul>
+     *   <li><b>状態はコミット前に決める</b> — 待つのは依然としてこのトランザクションの中である。非同期コールバックで状態を変えると、
+     *       コミット後の隙に別のレプリカが同じ行を拾う(上のクラスコメント)。</li>
+     *   <li><b>同じユーザーの順序</b> — user-created と user-updated · deleted は別のプロデューサーなので、一緒に送ると順序が入れ替わる
+     *       ことがある。同じ aggregate の前のイベントがまだ ack 前なら、それを先に待ってから送る。</li>
+     *   <li><b>送信が即失敗したら(ブローカーに届かない)</b>その行だけ FAILED、残りは送らず STARTED のままにする — 次の周期が
+     *       また拾う。以前は 1 件ごとにメタデータ待ち(max.block)を繰り返し、バッチ全体を FAILED で固めていた。</li>
+     * </ul>
      */
     @Override
     @Transactional
@@ -135,6 +169,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
         log.debug("아웃박스 선점: {}건", claimed.size());
 
         // ① 보내기 — ack 는 기다리지 않는다(같은 사용자의 앞 이벤트만 기다린다)
+        // [JA] ① 送る — ack は待たない(同じユーザーの前のイベントだけを待つ)
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(publishTimeoutMs);
         List<InFlight> inFlight = new ArrayList<>(claimed.size());
         Map<String, CompletableFuture<?>> lastByAggregate = new HashMap<>();
@@ -143,7 +178,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
         boolean unreachable = false;
         for (OutboxEvent event : claimed) {
             if (unreachable) {
-                deferred++;   // STARTED 그대로 — 다음 주기
+                deferred++;   // STARTED 그대로 — 다음 주기 ／ [JA] STARTED のまま — 次の周期
                 continue;
             }
             CompletableFuture<?> before = lastByAggregate.get(event.getAggregateId());
@@ -160,6 +195,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
                 continue;
             } catch (org.apache.kafka.common.errors.SerializationException e) {
                 // 그 행의 값 탓이다 — 브로커는 멀쩡할 수 있으니 묶음을 멈추지 않는다
+                // [JA] その行の値のせいだ — ブローカーは健全かもしれないので束を止めない
                 log.error("아웃박스 발행 실패(직렬화): id={} type={}", event.getId(), event.getEventType(), e);
                 event.markFailed();
                 failed++;
@@ -178,6 +214,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
         }
 
         // ② 함께 기다리기 — 묶음 전체가 한 번의 기한 안에서
+        // [JA] ② まとめて待つ — 束全体が一回の期限内で
         int sent = 0;
         for (InFlight f : inFlight) {
             if (awaitQuietly(f.future(), deadline)) {
@@ -191,6 +228,8 @@ public class UserOutboxScheduler implements OutboxScheduler {
 
         // 선점한 행은 관리 상태다 — 더티 체킹으로 상태가 커밋된다. save 를 부르면
         // 그 엔티티는 isNew()=false 라 merge 로 가고, 같은 일을 한 번 더 한다.
+        // [JA] 先取りした行は管理状態だ — ダーティチェックで状態がコミットされる。save を呼ぶと
+        //      そのエンティティは isNew()=false なので merge に行き、同じことをもう一度する。
         if (failed > 0) {
             log.error("아웃박스 발행 실패 {}건 — FAILED 로 남긴다(자동 재시도하지 않는다)", failed);
         }
@@ -203,6 +242,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
     private record InFlight(OutboxEvent event, CompletableFuture<?> future) {}
 
     /** 보낼 수 없는 행(모르는 종류 · 깨진 페이로드) — 브로커 탓이 아니므로 묶음을 멈추지 않는다. */
+    // [JA] 送れない行(未知の種別 · 壊れたペイロード) — ブローカーのせいではないので束を止めない。
     private static final class UnsendableEvent extends RuntimeException {
         UnsendableEvent(String message, Throwable cause) {
             super(message, cause, false, false);
@@ -210,6 +250,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
     }
 
     /** @return 기한 안에 성공했으면 true */
+    // [JA] @return 期限内に成功したら true
     private boolean awaitQuietly(CompletableFuture<?> future, long deadlineNanos) {
         long left = deadlineNanos - System.nanoTime();
         try {
@@ -228,17 +269,21 @@ public class UserOutboxScheduler implements OutboxScheduler {
     }
 
     /** 보내기만 한다. 결과는 돌려준다. */
+    // [JA] 送るだけ。結果は返す。
     private CompletableFuture<?> send(OutboxEvent event) {
         String type = event.getEventType();
         if (com.project.userservice.message.producer.UserLifecycleProducer.UPDATED.equals(type)
                 || com.project.userservice.message.producer.UserLifecycleProducer.DELETED.equals(type)) {
             // 페이로드는 이미 JSON 문자열이다 — 그대로 보낸다. 행을 쓴 요청의 추적 아래에서(docs/51 §4e).
+            // [JA] ペイロードは既に JSON 文字列だ — そのまま送る。行を書いたリクエストの追跡の下で(docs/51 §4e)。
             return outboxTraceContext.resume(event.getTraceContext(), "outbox relay " + type,
                     () -> lifecycleProducer.send(type, event.getAggregateId(), event.getPayload()));
         }
         if (!UserCreatedProducer.TOPIC.equals(type)) {
             // 모르는 종류를 조용히 흘려보내면 그 행은 영원히 STARTED 로 남아 매 주기마다
             // 다시 선점된다. FAILED 로 못 박아 눈에 띄게 한다.
+            // [JA] 未知の種別を黙って流すとその行は永遠に STARTED のまま残り、毎周期
+            //      再び先取りされる。FAILED に固定して目に付くようにする。
             throw new UnsendableEvent("아웃박스에 모르는 event_type 이 있다", null);
         }
         UserCreatedRequest dto;
@@ -248,6 +293,7 @@ public class UserOutboxScheduler implements OutboxScheduler {
             throw new UnsendableEvent("페이로드를 읽지 못했다: " + e.getClass().getSimpleName(), e);
         }
         // 가입 확인 요청의 추적 문맥 아래에서 보낸다(docs/51 §4e).
+        // [JA] 登録確認リクエストの追跡コンテキストの下で送る(docs/51 §4e)。
         return outboxTraceContext.resume(event.getTraceContext(), "outbox relay user-created",
                 () -> userCreatedProducer.send(dto));
     }

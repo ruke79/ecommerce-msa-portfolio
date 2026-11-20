@@ -13,11 +13,16 @@ import org.junit.jupiter.params.provider.ValueSource;
  * <p>두 방향을 다 고정한다. <b>가려야 할 것을 가린다</b> — 그리고 <b>운영자가 봐야 할 것은
  * 건드리지 않는다.</b> 주문 번호나 추적 ID 를 오탐으로 가리면 장애를 추적할 수 없다. 아래
  * "건드리지 않는다" 의 입력은 이 저장소의 실제 로그 모양에서 가져왔다.
+ *
+ * <p>[JA] ログマスキングのルール。
+ * 両方向を固定する。<b>隠すべきものを隠す</b> — そして<b>運用者が見るべきものには触れない。</b>注文番号やトレース ID を誤検知で隠すと障害を追跡できない。
+ * 下の「触れない」の入力はこのリポジトリの実際のログの形から持ってきた。
  */
 @DisplayName("SensitiveDataMasker")
 class SensitiveDataMaskerTest {
 
     /** 🐛 cart-service 에 실제로 있던 줄이다 — 이메일이 그대로 찍혔다. */
+    // [JA] 🐛 cart-service に実際にあった行だ — メールアドレスがそのまま出力されていた。
     @Test
     @DisplayName("🔴 이메일은 첫 글자와 도메인만 남는다 — cart·order·user 의 평문 이메일 로그")
     void email() {
@@ -52,6 +57,7 @@ class SensitiveDataMaskerTest {
     @DisplayName("🔴 토큰 — Bearer 헤더, JWT, key=value·JSON 의 비밀값")
     void tokens() {
         // 헤더 이름이 붙으면 key=value 규칙이 "Bearer" 까지 가린다 — 더 가려질 뿐 새지는 않는다.
+        // [JA] ヘッダー名が付くと key=value のルールが "Bearer" まで隠す — より多く隠れるだけで漏れはしない。
         assertThat(SensitiveDataMasker.mask("Authorization: Bearer abcdefghijklmnop"))
                 .isEqualTo("Authorization: **** ****")
                 .doesNotContain("abcdefghijklmnop");
@@ -77,6 +83,9 @@ class SensitiveDataMaskerTest {
      * 🔴 오탐 금지. 이 저장소의 로그에 실제로 나오는 모양들이다 — 18~19자리 TSID 주문 번호,
      * UUID 추적 ID(사가 trackingId), 금액, 시각, epoch 밀리초, Kafka 주소, 송장번호, traceId.
      * 하나라도 가려지면 장애 때 로그로 주문을 찾을 수 없다.
+     *
+     * <p>[JA] 🔴 誤検知禁止。このリポジトリのログに実際に出る形だ — 18~19 桁の TSID 注文番号、UUID のトレース ID(サーガの trackingId)、金額、時刻、
+     * epoch ミリ秒、Kafka アドレス、送り状番号、traceId。一つでも隠れると障害時にログで注文を探せない。
      */
     @ParameterizedTest
     @ValueSource(strings = {
@@ -97,6 +106,7 @@ class SensitiveDataMaskerTest {
     }
 
     /** 여섯 자리 숫자를 인증번호로 알아볼 수 없다 — 그래서 인증번호는 애초에 로그로 넘기지 않는다. */
+    // [JA] 6 桁の数字を認証番号と見分けられない — だから認証番号はそもそもログに渡さない。
     @Test
     @DisplayName("인증번호는 여기서 막지 못한다 — 로그로 넘기지 않는 것이 규칙이다(LoggingSmsSender)")
     void cannotRecognizeVerificationCodes() {

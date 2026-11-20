@@ -16,6 +16,8 @@ jest.mock("api/notificationApi");
 
 // jest.mock 은 파일 최상단으로 호이스팅되므로 팩토리가 바깥 변수를 참조할 수 없다.
 // `mock` 접두사가 붙은 이름만 예외로 허용된다.
+// [JA] jest.mock はファイルの先頭へ巻き上げられるので、ファクトリーが外側の変数を参照できない。
+//      `mock` 接頭辞の付いた名前だけ例外として許される。
 const mockNavigate = jest.fn();
 jest.mock("react-router-dom", () => ({ useNavigate: () => mockNavigate }));
 
@@ -29,6 +31,9 @@ const items = [
 /**
  * 전체 알림(공지·관리자 안내). 목록은 개인 알림과 **합쳐서** 내려오지만 읽음·삭제
  * 엔드포인트가 다르다 — 그 갈림을 결정하는 것이 scope 다.
+ *
+ * <p>[JA] 全体通知(お知らせ · 管理者案内)。一覧は個人通知と **合わせて** 返ってくるが既読 · 削除の
+ * エンドポイントが違う — その分岐を決めるのが scope である。
  */
 const broadcast = {
   id: 99, type: "NOTICE_PUBLISHED", title: "시스템 점검 안내", content: "02시부터 점검합니다",
@@ -40,6 +45,7 @@ describe("NotificationBell", () => {
     fetchUnreadCount.mockResolvedValue(2);
     fetchNotifications.mockResolvedValue(items);
     // 자동 목은 undefined 를 돌려준다 — 실제 구현과 같은 판정을 쓰게 해 둔다.
+    // [JA] 自動モックは undefined を返す — 実際の実装と同じ判定を使わせておく。
     isBroadcast.mockImplementation((item) => item?.scope === "BROADCAST");
   });
 
@@ -74,6 +80,7 @@ describe("NotificationBell", () => {
 
   it("does not fetch the list until the dropdown is opened", async () => {
     // 목록까지 주기적으로 받아오면 알림이 쌓일수록 헤더 하나 때문에 트래픽이 는다.
+    // [JA] 一覧まで周期的に取得すると通知が溜まるほどヘッダー一つのためにトラフィックが増える。
     render(withI18n(<NotificationBell isAuthenticated />));
     await screen.findByText("2");
 
@@ -107,6 +114,7 @@ describe("NotificationBell", () => {
     await userEvent.click(await screen.findByText("주문 완료"));
 
     // id 가 아니라 항목 자체를 넘긴다 — 읽음 경로가 scope 로 갈린다.
+    // [JA] id ではなく項目そのものを渡す — 既読の経路が scope で分かれる。
     await waitFor(() =>
       expect(markNotificationRead).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }))
     );
@@ -125,6 +133,7 @@ describe("NotificationBell", () => {
       expect(deleteNotification).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }))
     );
     // stopPropagation 이 없으면 삭제가 항목 클릭(이동)으로 번진다.
+    // [JA] stopPropagation がないと削除が項目クリック(遷移)へ波及する。
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
@@ -150,6 +159,7 @@ describe("NotificationBell", () => {
 
   it("keeps the header usable when the count request fails", async () => {
     // 배지 하나 때문에 헤더 전체가 죽으면 안 된다.
+    // [JA] バッジ一つのためにヘッダー全体が落ちてはならない。
     fetchUnreadCount.mockRejectedValue(new Error("500"));
 
     render(withI18n(<NotificationBell isAuthenticated />));
@@ -163,6 +173,11 @@ describe("NotificationBell", () => {
    * 목록은 개인 알림과 합쳐서 내려오지만 읽음·삭제 엔드포인트가 다르다. 종은 각 항목의
    * scope 를 그대로 API 층까지 들고 가야 한다 — id 만 넘기면 전체 알림이 개인 알림 경로로
    * 가서 404 가 되거나, 우연히 같은 id 의 남의 개인 알림을 건드린다.
+   *
+   * <p>[JA] 全体通知(お知らせ · 管理者案内)。
+   * 一覧は個人通知と合わせて返ってくるが既読 · 削除のエンドポイントが違う。ベルは各項目の
+   * scope をそのまま API 層まで持っていく必要がある — id だけ渡すと全体通知が個人通知の経路へ
+   * 行って 404 になるか、偶然同じ id の他人の個人通知に触れる。
    */
   describe("전체 알림", () => {
     beforeEach(() => {
@@ -217,6 +232,9 @@ describe("NotificationBell", () => {
     /**
      * 두 테이블의 id 는 서로 독립이다. 부딪히면 React 가 두 항목을 같은 것으로 보고
      * 하나만 그린다 — 개인 알림이 공지에 가려 사라진다.
+     *
+     * <p>[JA] 二つのテーブルの id は互いに独立である。ぶつかると React が二つの項目を同じものとみなし
+     * 一つだけ描く — 個人通知がお知らせに隠れて消える。
      */
     it("keeps both rows when a personal id collides with a broadcast id", async () => {
       fetchNotifications.mockResolvedValue([
@@ -232,6 +250,7 @@ describe("NotificationBell", () => {
     });
 
     /** 같은 id 라도 읽음 처리가 서로에게 번지면 안 된다. */
+    // [JA] 同じ id でも既読処理が互いに波及してはならない。
     it("does not mark the colliding personal item read when the broadcast is clicked", async () => {
       markNotificationRead.mockResolvedValue();
       fetchNotifications.mockResolvedValue([
@@ -245,6 +264,7 @@ describe("NotificationBell", () => {
 
       await waitFor(() => expect(markNotificationRead).toHaveBeenCalledTimes(1));
       // 개인 알림은 여전히 안 읽음이라 다시 누르면 한 번 더 호출된다.
+      // [JA] 個人通知は依然として未読なので、もう一度押すともう一度呼ばれる。
       await userEvent.click(screen.getByText("주문 완료"));
       await waitFor(() => expect(markNotificationRead).toHaveBeenCalledTimes(2));
     });

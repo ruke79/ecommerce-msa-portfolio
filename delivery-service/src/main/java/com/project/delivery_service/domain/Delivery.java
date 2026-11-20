@@ -35,6 +35,10 @@ import lombok.NoArgsConstructor;
  *
  * <p>배송지가 여기 있는 것이 중요하다 — 상자가 나뉘어도 목적지는 하나이므로, 주소 변경은
  * 한 번에 모든 상자에 적용된다.
+ *
+ * <p>[JA] 注文 1 件の配送全体 — <b>箱をまとめるコンテナ</b>。
+ * <p>追跡情報(送り状番号・状態・履歴)はここではなく {@link Shipment} にある。一つの注文が複数の箱に分かれると送り状番号も宅配業者も到着日も箱ごとに違うからだ(分割配送)。このエンティティが所有するのは<b>注文単位で一つしかないもの</b>: 受取人、配送先、そして箱の状態から派生する全体の進捗。
+ * <p>配送先がここにあることが重要だ — 箱が分かれても目的地は一つなので、住所変更は一度にすべての箱に適用される。
  */
 @Entity
 @Getter
@@ -58,6 +62,9 @@ public class Delivery {
      *
      * <p>재주문은 <b>새 주문</b>이므로 새 Delivery 가 생긴다 — 취소된 배송을 재사용하지
      * 않는다. 재사용하면 취소 이력과 새 배송 이력이 한 행에 뒤섞인다.
+     *
+     * <p>[JA] 注文あたり配送 1 件。分割は {@link Shipment} で表現するのでこの制約は維持される。
+     * <p>再注文は<b>新しい注文</b>なので新しい Delivery ができる — 取り消された配送を再利用しない。再利用すると取消履歴と新しい配送履歴が一行に混ざる。
      */
     @Column(name = "order_id", nullable = false, unique = true)
     private Long orderId;
@@ -70,6 +77,9 @@ public class Delivery {
      *
      * <p>고객 화면에 "취소하신 주문 #123 의 재주문입니다"를 보여줄 수 있고, 같은 주소로
      * 재배송하려다 또 실패하는 패턴(주소 오류 등)을 찾을 수 있다.
+     *
+     * <p>[JA] この注文がどの注文の再注文か。取消後の再注文フローで埋まる。
+     * <p>顧客画面に「取り消された注文 #123 の再注文です」と表示でき、同じ住所へ再配送しようとしてまた失敗するパターン(住所誤りなど)を見つけられる。
      */
     @Column(name = "reordered_from_order_id")
     private Long reorderedFromOrderId;
@@ -82,6 +92,11 @@ public class Delivery {
     // 필드 구성은 국제 배송을 염두에 둔다. 한국식 (시/도 + 시/군/구) 만 가정하면 미국·일본
     // 주소가 들어오지 못한다. line1/line2 + city + state + postalCode + country 는
     // 대부분의 국가를 담을 수 있는 최소 공통 형태다.
+    // [JA] ── 受取人スナップショット ──
+    //      OrderAddress を参照せず**コピー**する。ユーザーが配送中にプロフィールの住所を変えても、既に出発した荷物の目的地は変わらない。
+    //      参照にすると後で照会したとき現在の住所が出て事実と食い違い、紛争資料としての価値が失われる(docs/25 §3.1)。
+    //      フィールド構成は国際配送を念頭に置く。韓国式(市/道 + 市/郡/区)だけを想定すると米国・日本の住所が入らない。
+    //      line1/line2 + city + state + postalCode + country は大半の国を収められる最小共通形だ。
 
     @Column(name = "recipient_name", nullable = false, length = 80)
     private String recipientName;
@@ -105,6 +120,7 @@ public class Delivery {
     private String state;
 
     /** ISO 3166-1 alpha-2. 국제 배송 판정과 통관 필요 여부의 근거다. */
+    // [JA] ISO 3166-1 alpha-2。国際配送判定と通関要否の根拠。
     @Column(name = "country", nullable = false, length = 2)
     private String country;
 
@@ -141,6 +157,9 @@ public class Delivery {
         // ⚠️ 폼은 우편번호를 30자까지 받는데 이 컬럼은 12자다 — country 와 **같은 종류**의
         //    사고가 여기 하나 더 남아 있었다. 길이를 맞추는 쪽을 택한다: 잘린 우편번호는
         //    관리자 화면에 보이고 발송 전에 고칠 수 있지만, 배송이 안 생기면 아무도 모른다.
+        // [JA] ⚠️ フォームは郵便番号を 30 文字まで受け付けるがこのカラムは 12 文字だ — country と**同じ種類**の
+        //      事故がここにもう一つ残っていた。長さを合わせる方を選ぶ: 切られた郵便番号は
+        //      管理画面に見えて発送前に直せるが、配送ができなければ誰も気づかない。
         this.postalCode = fit("postalCode", postalCode, 12);
         this.addressLine1 = fit("addressLine1", addressLine1, 200);
         this.addressLine2 = fit("addressLine2", addressLine2, 200);
@@ -155,10 +174,19 @@ public class Delivery {
         //
         //    이름이든 코드든 여기서 코드로 바꾼다. 알아보지 못하면 발송국으로 본다 —
         //    통관 단계가 어긋나는 것이 배송이 아예 안 생기는 것보다 낫다.
+        // [JA] 🐛 以前は `country.toUpperCase()` だった。住所フォームは国を**名前**で保存するが
+        //      (SingularSelect が option.name を値に使う)このカラムは varchar(2) なので、
+        //      "Korea, Republic of" が入った瞬間に配送作成が丸ごと落ちた(value too long for type character varying(2))。
+        //      その例外は配送一つではなく**決済イベント**を DLT へ送り、画面には
+        //      「配送準備中」だけが残って原因が見えなかった(docs/25 §11.5)。
+        //      名前でもコードでもここでコードに変える。判別できなければ発送国とみなす —
+        //      通関段階がずれる方が配送がまったくできないよりましだ。
         this.country = CountryCodes.toAlpha2OrDefault(country, "KR");
         this.deliveryMemo = fit("deliveryMemo", deliveryMemo, 200);
         // UTC 로 통일한다 — Asia/Seoul 하드코딩이 아웃박스 파티션 키를 어긋나게 했던 것과
         // 같은 실수를 반복하지 않는다(B-21). 표시 시점의 변환은 프론트엔드가 한다.
+        // [JA] UTC に統一する — Asia/Seoul のハードコードがアウトボックスのパーティションキーをずらしたのと
+        //      同じ過ちを繰り返さない(B-21)。表示時点の変換はフロントエンドが行う。
         this.createdAt = LocalDateTime.now(ZoneOffset.UTC);
         this.updatedAt = this.createdAt;
     }
@@ -176,6 +204,11 @@ public class Delivery {
      * <b>보이는 잘못이 보이지 않는 누락보다 낫다.</b> 경고 로그에 어느 칸인지 남는다.
      *
      * <p>값 자체는 찍지 않는다 — 수취인 이름·연락처·주소는 개인정보다.
+     *
+     * <p>[JA] カラム長に合わせる。溢れたら<b>切り詰めて警告を残す</b>。<b>なぜ切るのか — 例外を投げない理由。</b>
+     * <p>これらの値は決済イベントの処理中に保存される。一つの欄が長くて例外になると、そのレコードはリトライの末に DLT へ行き<b>配送は永遠に作られない。</b>画面には「配送準備中」だけが残り誰も原因が分からない — 国名一つで実際にそうなった。
+     * <p>切られた値は管理者の配送画面にそのまま見え、発送前なら住所変更で直せる。<b>見える誤りの方が見えない欠落よりましだ。</b>警告ログにどの欄かが残る。
+     * <p>値自体は出力しない — 受取人の名前・連絡先・住所は個人情報だ。
      */
     private static String fit(String field, String value, int max) {
         if (value == null || value.length() <= max) {
@@ -186,6 +219,7 @@ public class Delivery {
     }
 
     /** 판매국 기준 국제 배송인가. 통관 단계가 끼는지를 가른다. */
+    // [JA] 販売国基準で国際配送か。通関段階が挟まるかを分ける。
     public boolean isInternational(String originCountry) {
         return !this.country.equalsIgnoreCase(originCountry);
     }
@@ -204,6 +238,10 @@ public class Delivery {
      * 따르면) 아직 안 온 물건이 있는데 "배달완료"가 되어 사용자가 신고할 수 없게 된다.
      *
      * <p>단, 예외 상태인 상자가 하나라도 있으면 그걸 우선한다 — 문제는 묻히면 안 된다.
+     *
+     * <p>[JA] 全体の進捗 — <b>最も遅れている箱</b>に従う。
+     * <p>3 個中 2 個が到着しても注文はまだ完了ではない。逆にすると(最も進んだ箱に従うと)まだ届いていない品物があるのに「配達完了」になり、ユーザーが申告できなくなる。
+     * <p>ただし例外状態の箱が一つでもあればそれを優先する — 問題は埋もれてはならない。
      */
     public DeliveryStatus overallStatus() {
         if (shipments.isEmpty()) {
@@ -215,6 +253,7 @@ public class Delivery {
             return DeliveryStatus.CANCELLED;
         }
         // 예외를 먼저 본다.
+        // [JA] 例外を先に見る。
         for (Shipment s : shipments) {
             if (s.getStatus().stage() == DeliveryStatus.Stage.EXCEPTION) {
                 return s.getStatus();
@@ -223,12 +262,14 @@ public class Delivery {
         return shipments.stream()
                 .map(Shipment::getStatus)
                 // 취소된 상자는 진행도 계산에서 뺀다 (재주문으로 대체됐을 수 있다).
+                // [JA] 取り消された箱は進捗計算から外す (再注文で置き換えられた可能性がある)。
                 .filter(s -> s != DeliveryStatus.CANCELLED)
                 .min(Comparator.comparingInt(Enum::ordinal))
                 .orElse(DeliveryStatus.CANCELLED);
     }
 
     /** 전체 예상 도착일 — 가장 늦게 오는 상자 기준. 사용자가 알고 싶은 것은 "언제 다 오나"다. */
+    // [JA] 全体の到着予定日 — 最も遅く届く箱基準。ユーザーが知りたいのは「いつ全部届くか」だ。
     public LocalDateTime overallEstimatedAt() {
         return shipments.stream()
                 .map(Shipment::getEstimatedAt)
@@ -242,9 +283,13 @@ public class Delivery {
      *
      * <p><b>상자가 하나라도 발송됐으면 불가</b>다. 일부만 바꾸면 같은 주문의 물건이 서로 다른
      * 곳으로 가고, 그 상태는 어떤 화면으로도 설명할 수 없다.
+     *
+     * <p>[JA] 配送先を変えられる状態か。
+     * <p><b>箱が一つでも発送されていれば不可</b>だ。一部だけ変えると同じ注文の品物が別々の場所へ行き、その状態はどの画面でも説明できない。
      */
     public boolean canChangeAddress() {
         // 빈 스트림의 allMatch 는 true 다 — 상자가 아직 없으면(송장 등록 전) 당연히 변경 가능하다.
+        // [JA] 空ストリームの allMatch は true だ — 箱がまだなければ(送り状登録前)当然変更可能だ。
         return shipments.stream().allMatch(s -> s.getStatus().isBeforeDispatch());
     }
 
@@ -252,6 +297,8 @@ public class Delivery {
      * 배송지를 변경한다. 이력을 남기고 새 주소를 적용한다.
      *
      * @return 변경 이력. 변경할 수 없는 상태면 null
+     *
+     * <p>[JA] 配送先を変更する。履歴を残して新しい住所を適用する。@return 変更履歴。変更できない状態なら null
      */
     public AddressChange changeAddress(Long changedBy, String recipientName, String recipientPhone,
                                        String postalCode, String addressLine1, String addressLine2,
@@ -271,6 +318,7 @@ public class Delivery {
         this.state = state;
         if (country != null) {
             // 생성 때와 같은 규칙이다. 주소 변경도 폼에서 오므로 같은 이름이 들어온다.
+            // [JA] 作成時と同じ規則だ。住所変更もフォームから来るので同じ名前が入ってくる。
             this.country = CountryCodes.toAlpha2OrDefault(country, this.country);
         }
         this.deliveryMemo = deliveryMemo;
@@ -282,6 +330,7 @@ public class Delivery {
     }
 
     /** 발송 전 취소. 모든 상자가 발송 전이어야 한다. */
+    // [JA] 発送前の取消。すべての箱が発送前でなければならない。
     public boolean cancel() {
         if (shipments.isEmpty()) {
             touch();
@@ -296,6 +345,7 @@ public class Delivery {
     }
 
     /** 이력·표시용 한 줄 주소. */
+    // [JA] 履歴・表示用の一行住所。
     public String formattedAddress() {
         StringBuilder sb = new StringBuilder();
         if (postalCode != null) {

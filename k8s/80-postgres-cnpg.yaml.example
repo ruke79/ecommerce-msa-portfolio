@@ -13,19 +13,30 @@
 #
 # CNPG 는 스트리밍 복제 구성·자동 failover(승격)·rw/ro 서비스 라우팅을 오퍼레이터가
 # 자동으로 관리한다 — docker-compose-postgres-ha.yml 의 수동 절차의 k8s 완성형.
+# [JA] k8s 環境の PostgreSQL HA — CloudNativePG(CNPG)の例(docs/09 P2、docs/13 §2)
+#      ⚠️ .example 拡張子の理由: CNPG オペレーター(CRD)がインストールされていないと apply が失敗するので、
+#         `kubectl apply -f k8s/` の一括適用から外れるようにした。使うには:
+#        1) オペレーターをインストール(上の kubectl apply --server-side)
+#        2) このファイルを 80-postgres-cnpg.yaml にコピーして値を直してから apply
+#        3) サービスの POSTGRES_HOST を下の rw/ro サービスに切り替え:
+#           - 書き込み(および read-your-writes 経路): ecommerce-pg-rw.ecommerce.svc.cluster.local
+#           - 読み取り専用:                          ecommerce-pg-ro.ecommerce.svc.cluster.local
+#      CNPG はストリーミングレプリケーション構成・自動 failover(昇格)・rw/ro サービスルーティングをオペレーターが
+#      自動で管理する — docker-compose-postgres-ha.yml の手動手順の k8s 完成形。
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: ecommerce-pg
   namespace: ecommerce
 spec:
-  instances: 3            # 프라이머리 1 + 스탠바이 2 (자동 failover)
+  instances: 3            # 프라이머리 1 + 스탠바이 2 (자동 failover) ／ [JA] プライマリ 1 + スタンバイ 2(自動 failover)
   imageName: ghcr.io/cloudnative-pg/postgresql:16
   primaryUpdateStrategy: unsupervised
 
   storage:
     size: 20Gi
     # storageClass: local-path   # k3s 기본 StorageClass
+    # [JA] k3s のデフォルト StorageClass
 
   postgresql:
     parameters:
@@ -39,6 +50,8 @@ spec:
         name: ecommerce-pg-credentials   # kubectl create secret generic ... --from-literal=username=product --from-literal=password=...
       # 나머지 DB(cartdb productdb metadb coupondb orderdb paydb chatdb)는
       # 초기화 후 psql 로 생성하거나 postInitSQL 로 추가:
+      # [JA] 残りの DB(cartdb productdb metadb coupondb orderdb paydb chatdb)は
+      #      初期化後に psql で作るか postInitSQL で追加:
       postInitSQL:
         - CREATE DATABASE cartdb OWNER product;
         - CREATE DATABASE productdb OWNER product;

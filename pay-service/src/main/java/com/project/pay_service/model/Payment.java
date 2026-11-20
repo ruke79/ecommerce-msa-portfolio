@@ -38,6 +38,7 @@ import lombok.experimental.SuperBuilder;
                 @UniqueConstraint(name="UniqueOrderIdAndTrackingId", columnNames = {"orderId", "trackingId"})                
      },indexes = {
         // 결제는 추적 id 로 찾는다(findByTrackingId) — 예전 idx_payment(orderId, …)는 그 조회에 쓰이지 않았다(V7).
+        // [JA] 決済は追跡 id で探す(findByTrackingId) — 以前の idx_payment(orderId, …)はその照会に使われなかった(V7)。
         @Index(columnList = "trackingId", name = "idx_payment_tracking"),
         @Index(columnList = "paymentProvider, providerPaymentId", name = "idx_payment_provider_ref") })
 public class Payment extends BaseEntity{
@@ -51,12 +52,17 @@ public class Payment extends BaseEntity{
      *
      * <p>예전에는 PayPal 참조만 {@code paypal_order_id} 에 적었다 — Stripe·포트원·무통장 결제는 "어느 결제인가" 가 이
      * 서비스에 남지 않았다. 그 컬럼은 V5 가 옮기고 V6 가 한 번 더 옮긴 뒤 지웠다(docs/49 §3).
+     *
+     * <p>[JA] 決済を確認した提供元 — PAYPAL · STRIPE · PORTONE · BANK_TRANSFER (V5)。
+     * 以前は PayPal の参照だけを {@code paypal_order_id} に記録していた — Stripe・PortOne・銀行振込の決済は「どの決済か」が
+     * このサービスに残らなかった。そのカラムは V5 が移し、V6 がもう一度移したあと削除した(docs/49 §3)。
      */
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private PaymentProvider paymentProvider;
 
     /** 제공자가 확인해 준 결제 참조 — PayPal 이면 PayPal 주문 ID, Stripe 면 Checkout 세션 ID. */
+    // [JA] 提供元が確認した決済参照 — PayPal なら PayPal 注文 ID、Stripe なら Checkout セッション ID。
     private String providerPaymentId;
 
     private Long orderId;    
@@ -68,6 +74,7 @@ public class Payment extends BaseEntity{
     private String trackingId;
     
     /** 결제 시각 — 요청에서 옮겨 온다(PaymentService.persistPayment). */
+    // [JA] 決済時刻 — リクエストから移してくる(PaymentService.persistPayment)。
     private LocalDateTime paymentCreatedAt;
 
     /**
@@ -92,7 +99,11 @@ public class Payment extends BaseEntity{
      * 역전됐을 때(CANCELED 뒤에 옛 COMPLETED 가 도착) 결제가 되살아난다. 이 메서드는
      * 이미 CANCELED 면 아무것도 하지 않는다.
      *
+     * <p>[JA] 返金の反映 — {@code COMPLETED → CANCELED} の一方向だけである。
+     * setter を開かない理由: 状態遷移がどの方向にも可能になると、再配信の順序が逆転したとき
+     * (CANCELED のあとに古い COMPLETED が届く)決済が生き返る。このメソッドは既に CANCELED なら何もしない。
      * @return 상태가 바뀌었는가
+     *     [JA] 状態が変わったか
      */
     public boolean markCanceled() {
         if (paymentStatus == PaymentStatus.CANCELED) {

@@ -16,6 +16,12 @@ const MAX_LEN = 20;
  * 밑변에 가로로 꽉 차게 그려졌다 — 360px 짜리 대화상자와 아무 상관없는 위치에.
  *
  * 대화상자 하나로 합친다. 높이도 고정(450px)이 아니라 내용에 맞춘다.
+ *
+ * <p>[JA] 🐛 確認 · キャンセルボタンがモーダルの外、画面の一番下に貼り付いていた。
+ * 以前の `FooterWrapper` は `position: fixed; bottom: 0; left: 0; width: 100%` だった。
+ * しかし `Modal` のコンテナも `position: fixed` で画面中央に浮いており、Footer はその中の兄弟だった。
+ * fixed はビューポートを基準にするのでボタン行だけが離れて画面の下辺に横いっぱいに描かれた — 360px の対話ボックスとは無関係の位置に。
+ * 対話ボックス一つにまとめる。高さも固定(450px)ではなく内容に合わせる。
  */
 const Dialog = styled.div`
   width: 360px;
@@ -171,6 +177,11 @@ const CreateRoomModal = props => {
    *     방은 없다"로만 보였다.
    *
    * 성공한 뒤에 닫는다. 실패하면 열어 둔 채로 이유를 보여준다.
+   *
+   * <p>[JA] 🐛 以前の `onConfirmed` はリクエストを送るとすぐに一覧を再読み込みしてモーダルを閉じた。そのため
+   * · 部屋がまだ作られる前に一覧を受け直して新しい部屋が見えず、
+   * · サーバーが失敗しても(500)画面には何の表示もなかった。ユーザーには「モーダルが閉じて部屋はない」としか見えなかった。
+   * 成功してから閉じる。失敗したら開いたまま理由を見せる。
    */
   const onConfirmed = async () => {
     if (!canSubmit) return;
@@ -181,6 +192,7 @@ const CreateRoomModal = props => {
       onClose();
     } catch (e) {
       // error 로 화면에 표시된다. 모달은 닫지 않는다.
+      // [JA] error として画面に表示される。モーダルは閉じない。
     }
   };
 
@@ -232,6 +244,8 @@ const CreateRoomModal = props => {
             * 예전에는 `isCanSubmit={true}` 로 **항상** 활성화돼 있었다. 이름을 비운 채
             * 확인을 누르면 이름이 빈 방이 만들어졌다.
             */}
+          {/* [JA] 以前は `isCanSubmit={true}` で **常に** 有効だった。名前を空にしたまま
+              確認を押すと名前が空の部屋が作られた。 */}
           <button type="button" className="confirm" onClick={onConfirmed} disabled={!canSubmit}>
             {isPending ? t("chat.room.creating") : t("chat.room.confirm")}
           </button>

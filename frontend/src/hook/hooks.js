@@ -28,6 +28,17 @@ export function useReRenderer() {
  *
  * <p>의존성에서 `ref` 도 뺐다. useRef 가 돌려주는 객체는 항상 같은 참조라 의존성으로서
  * 의미가 없고, 있으면 "ref 가 바뀌면 다시 붙는다"는 잘못된 인상을 준다.
+ *
+ * <p>[JA] 監視対象が画面に入ったら次のページを読み込む。
+ * <b>以前のコードは動いたことがない。</b> 最初の行が `useRef < HTMLDivElement > (null)` だったが、
+ * これは TypeScript のジェネリック構文を .js ファイルにそのまま貼り付けたものだ。JS パーサーはこれを
+ * ジェネリックではなく <b>比較演算二回</b>として読む — `(useRef < HTMLDivElement) > (null)`。
+ * そのため ref には DOM 参照ではなく <b>ブーリアン false</b> が入った。結果として
+ * `ref.current` は常に undefined で IntersectionObserver が作られず、この ref を
+ * 実際の要素に付けると React が "Function components cannot be given refs" で落ちる。
+ * 無限スクロールが静かに死んでいた。
+ * 依存配列から `ref` も外した。useRef が返すオブジェクトは常に同じ参照なので依存としての
+ * 意味がなく、あると「ref が変われば付け直す」という誤った印象を与える。
  */
 export function useInfiniteScroll({ hasNextPage, fetchNextPage }) {
 
@@ -61,6 +72,9 @@ export const useLogout = (isMultipleLogin = false) => {
       // 예전에는 `api.defaults.headers.post["MultiLogin"]` 을 여기서 바꿨다. 그건 axios
       // 인스턴스의 **전역 기본값**이라, 로그아웃 한 번이 이후 모든 POST 요청의 헤더를
       // 바꿔 놓고 되돌리지 않았다. 이 요청에만 필요한 헤더는 이 요청에만 싣는다.
+      // [JA] 以前は `api.defaults.headers.post["MultiLogin"]` をここで変えていた。それは axios
+      //      インスタンスの **グローバルデフォルト**なので、一度のログアウトが以降のすべての POST リクエストのヘッダーを
+      //      変えたまま戻さなかった。このリクエストにだけ必要なヘッダーはこのリクエストにだけ載せる。
       postRequest('/user-service/api/auth/logout', null, undefined, {
         headers: { MultiLogin: isMultipleLogin ? "true" : "false" },
       }),
@@ -90,6 +104,7 @@ export const useLogout = (isMultipleLogin = false) => {
 
 
 /** 리뷰 목록을 다시 읽는 주기 — 다른 사람이 누른 좋아요·새 리뷰가 보이게. 탭이 보일 때만 돈다. */
+// [JA] レビュー一覧を読み直す周期 — 他の人が押したいいね・新しいレビューが見えるように。タブが見えているときだけ回る。
 export const REVIEWS_REFRESH_MS = 30_000;
 
 export const useFetchReviews = (productId) => {
@@ -104,9 +119,13 @@ export const useFetchReviews = (productId) => {
     // 예전에는 페이지를 열 때 한 번만 읽었다 — 다른 사람이 누른 좋아요는 새로고침해야 보였다. 좋아요 수는 몇 초 늦어도 되는
     // 값이라 푸시(SSE) 대신 주기적으로 다시 읽는다. 탭이 가려져 있으면 쉬고(refetchIntervalInBackground 기본 false),
     // 돌아오면 바로 읽는다(refetchOnWindowFocus).
+    // [JA] 以前はページを開いたとき一度だけ読んでいた — 他の人が押したいいねはリロードしないと見えなかった。いいね数は数秒遅れてもよい
+    //      値なのでプッシュ(SSE)ではなく定期的に読み直す。タブが隠れていれば休み(refetchIntervalInBackground のデフォルト false)、
+    //      戻ればすぐ読む(refetchOnWindowFocus)。
     refetchInterval: REVIEWS_REFRESH_MS,
     refetchOnWindowFocus: true,
     // 이 주기적 읽기가 실패해도 알림을 띄우지 않는다 — 30초마다 "새로 읽지 못했습니다" 가 뜬다. 가진 목록을 그대로 둔다.
+    // [JA] この定期読み込みが失敗しても通知を出さない — 30 秒ごとに「読み直せませんでした」が出てしまう。持っている一覧をそのままにする。
     meta: { silentRefetch: true },
   });
 
@@ -257,6 +276,8 @@ export const useFetchOrder = (orderId, email) => {
     isError,
     // 결제·환불 뒤 주문을 다시 읽는다. window.location.reload() 대신 — 전체 새로고침은
     // 주소의 쿼리(?stripe=success…)까지 다시 태워 확인 요청이 반복된다(StripeReturn 주석).
+    // [JA] 決済・返金後に注文を読み直す。window.location.reload() の代わりに — 全体リロードは
+    //      アドレスのクエリ(?stripe=success…)まで再び乗せ確認リクエストが繰り返される(StripeReturn のコメント)。
     refetchOrder: refetch,
   };
 };

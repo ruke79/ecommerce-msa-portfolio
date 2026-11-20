@@ -35,8 +35,25 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>트랜잭션을 두지 않는다 — 원격 호출(타임아웃 수 초) 동안 DB 커넥션을 쥐지 않게. 쓰기는 리포지토리의 짧은 트랜잭션이다.
  *
- * <p>[JA] ログイン二段階認証の二つ目の手段 — SMS。有効かどうかと番号の結束値はここ(users V20)、番号 · コード · 送信制限は notification。
- *      試行は TOTP と同じユーザー単位の枠で数える。有効化時の番号に結束する。notification に届かなければ止める(通さない)。
+ * <p>[JA] ログイン二段階認証の<b>二つ目の手段 — SMS</b>(docs/24 §10)。
+ *
+ * <h3>[JA] 何がどこにあるか</h3>
+ * <ul>
+ *   <li>有効かどうか · 有効化時の番号の結束値 — ここ(users V20)。ログインがこのサービスにあるので、ログインのたびに他のサービスに問い合わせない。</li>
+ *   <li>番号 · コード(ハッシュ · 5 分 · 5 回 · 1 回限り)· 送信制限 — notification(登録番号にだけ送る、番号をリクエストから受け取らない)。</li>
+ * </ul>
+ *
+ * <h3>[JA] 守るもの</h3>
+ * <ul>
+ *   <li><b>試行は TOTP と同じユーザー単位の枠で数える</b>({@link TotpReplayGuard#reserveAttempt})— 手段を替えながら上限を二倍に
+ *       使えない。上限に達すると TOTP と同様に持ち主に知らせる(パスワードが漏れた兆候)。</li>
+ *   <li><b>有効化時の番号に結束する</b> — その後セキュリティ画面で番号を変えると(セッションだけ持つ人でもできる)SMS 手段は止まる
+ *       ({@link TwoFactorChange#PHONE_CHANGED})。再び有効にするには最近のログイン + 新しい番号で受け取ったコードが必要だ。</li>
+ *   <li><b>notification に届かなければ止める</b>({@link TwoFactorChange#UNAVAILABLE})— 通さない。他のアカウントのログインはこの
+ *       呼び出しがないので影響がなく、TOTP も有効にしたアカウントはそれで入れる。</li>
+ * </ul>
+ *
+ * <p>[JA] トランザクションを置かない — 遠隔呼び出し(タイムアウト数秒)の間 DB 接続を握らないように。書き込みはリポジトリの短いトランザクションだ。
  */
 @Slf4j
 @Component
@@ -49,12 +66,16 @@ public class SmsTwoFactor {
     private final SecurityAlertProducer securityAlertProducer;
 
     /** 발송의 결과. */
+    // [JA] 送信の結果。
     public enum SendStatus { SENT, NO_PHONE, PHONE_CHANGED, TOO_MANY, UNAVAILABLE }
 
     /**
      * @param maskedPhone       보낸 번호(마스킹)
+     *     [JA] 送った番号(マスキング)
      * @param ttlMinutes        코드 유효 시간
+     *     [JA] コードの有効時間
      * @param retryAfterSeconds TOO_MANY 일 때 다시 요청할 수 있기까지
+     *     [JA] TOO_MANY のとき再要求できるまで
      */
     public record Sent(SendStatus status, String maskedPhone, int ttlMinutes, long retryAfterSeconds) {
 
@@ -96,7 +117,7 @@ public class SmsTwoFactor {
             case "NO_PHONE" -> Sent.of(SendStatus.NO_PHONE);
             case "PHONE_CHANGED" -> Sent.of(SendStatus.PHONE_CHANGED);
             case "TOO_MANY" -> new Sent(SendStatus.TOO_MANY, null, 0, response.retryAfterSeconds());
-            default -> Sent.of(SendStatus.UNAVAILABLE);   // FAILED(공급자 오류) · 모르는 값
+            default -> Sent.of(SendStatus.UNAVAILABLE);   // FAILED(공급자 오류) · 모르는 값 ／ [JA] FAILED(プロバイダーエラー)・未知の値
         };
     }
 
@@ -129,6 +150,7 @@ public class SmsTwoFactor {
         }
         if (checked.binding() == null || checked.binding().isBlank()) {
             // 맞았다는데 결속값이 없다 — 켜면 그 뒤로 번호 검사 없이 보내게 된다. 켜지 않는다.
+            // [JA] 合ったというのに結束値がない — 有効にするとその後は番号チェックなしで送ることになる。有効にしない。
             log.error("2단계 인증 SMS 켜기 — 결속값 없는 통과 응답: userId={}", userId);
             return TwoFactorChange.UNAVAILABLE;
         }
@@ -168,6 +190,7 @@ public class SmsTwoFactor {
     private Checked check(User user, String binding, String code) {
         Long userId = user.getUserId();
         // 형식이 틀린 입력도 시도로 센다 — 세지 않으면 형식 검사가 한도 밖의 오라클이 된다(그럴 일은 없지만 셈을 한 곳에 둔다).
+        // [JA] 形式の誤った入力も試行として数える — 数えないと形式チェックが上限外のオラクルになる(そうなることはないが、数えるのは一か所に置く)。
         long attempt = attempts.reserveAttempt(userId);
         if (attempt > attempts.maxFailures()) {
             return new Checked(TwoFactorChange.TOO_MANY_ATTEMPTS, null);

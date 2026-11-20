@@ -36,18 +36,35 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>실제 응답과 어긋나면 {@link #toVerified} 하나만 고치면 된다</b> — V1 과 같은 이유로
  * 매핑을 한 곳에 모았다. docs/49 §8 의 "실제 API 로 검증하지 못했다" 는 여기도 해당한다.
+ *
+ * <p>[JA] PortOne <b>V2</b> アダプタ — {@code api.portone.io}。
+ * <b>V1 との違い</b>:
+ * <b>認証</b>: トークン交換がない。毎リクエストに {@code Authorization: PortOne {API_SECRET}}。
+ * <b>決済参照</b>: PortOne が発行する {@code imp_uid} ではなく<b>当方が決める {@code paymentId}</b> である。
+ * ブラウザが決済画面を開く時に決め、照会・取消・Webhook がすべてその値で来る。
+ * <b>注文参照</b>: {@code merchant_uid} がない。代わりに決済リクエストに載せた {@code customData}(文字列)を
+ * PortOne が保管して照会応答で返す — そこに {@code trackingId} を入れる。
+ * <b>失敗応答</b>: V1 は HTTP 200 に {@code code != 0} だったが、V2 は<b>HTTP 4xx</b> + {@code {type, message}} である。
+ * RestClient が例外に変えるので catch で捕まえる。
+ * <b>Webhook</b>: Standard Webhooks の署名がある({@link PortOneV2WebhookVerifier})。
+ * <b>実際の応答とずれたら {@link #toVerified} 一つだけ直せばよい</b> — V1 と同じ理由で
+ * マッピングを一か所に集めた。docs/49 §8 の「実際の API で検証できていない」はここにも当てはまる。
  */
 @Slf4j
 public class PortOneV2PaymentGateway implements PortOneGateway {
 
     /** 결제 완료 상태. 나머지(READY · FAILED · CANCELLED · PARTIAL_CANCELLED …)는 미완료다. */
+    // [JA] 決済完了の状態。残り(READY · FAILED · CANCELLED · PARTIAL_CANCELLED …)は未完了である。
     static final String PAID = "PAID";
 
     /** 결제 완료 웹훅. 다른 종류(Ready · Cancelled · Failed …)는 무시한다. */
+    // [JA] 決済完了 Webhook。別の種類(Ready · Cancelled · Failed …)は無視する。
     static final String WEBHOOK_PAID = "Transaction.Paid";
     /** 가상계좌 발급 웹훅 — 무통장입금 상태 기계의 "입금 안내" 가 PG 에서 만들어졌다. */
+    // [JA] 仮想口座発行 Webhook — 銀行振込の状態機械の「入金案内」が PG で作られた。
     static final String WEBHOOK_VA_ISSUED = "Transaction.VirtualAccountIssued";
     /** V2 가 "가상계좌가 발급됐고 아직 입금 전" 이라고 말하는 값. */
+    // [JA] V2 が「仮想口座が発行され、まだ入金前」と言う値。
     static final String VA_ISSUED = "VIRTUAL_ACCOUNT_ISSUED";
 
     private final RestClient http;
@@ -104,6 +121,12 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
      *
      * <p>실제 API 로는 검증하지 못했다(docs/49 §8). 모양이 다르면 여기와
      * {@code PortOneV2PaymentGatewayTest} 의 본문을 함께 고친다.
+     *
+     * <p>[JA] 発行された仮想口座 — {@code status=VIRTUAL_ACCOUNT_ISSUED} の時だけ。口座は
+     * {@code method}(type {@code PaymentMethodVirtualAccount})の中にある: {@code bank}(コード) ·
+     * {@code accountNumber} · {@code remitteeName} · {@code expiredAt}(RFC 3339)。
+     * 実際の API では検証できていない(docs/49 §8)。形が違えばここと
+     * {@code PortOneV2PaymentGatewayTest} の本文を一緒に直す。
      */
     @Override
     public Optional<VirtualAccount> virtualAccountOf(String paymentId) {
@@ -141,22 +164,32 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
      * <p>{@code amount} 를 명시한다(전액이지만 얼마인지는 DB 가 정한다). 응답의
      * {@code cancellation.status} 는 {@code SUCCEEDED} 또는 {@code REQUESTED}(PG 가 비동기로
      * 처리) — 둘 다 받아들여진 것이다. {@code FAILED} 만 거절이다.
+     *
+     * <p>[JA] 返金 — {@code POST /payments/{paymentId}/cancel}。
+     * {@code amount} を明示する(全額だが、いくらかは DB が決める)。応答の
+     * {@code cancellation.status} は {@code SUCCEEDED} または {@code REQUESTED}(PG が非同期で
+     * 処理) — どちらも受け付けられたものである。{@code FAILED} だけが拒絶である。
      */
     @Override
     public RefundResult refund(String paymentId, BigDecimal amount, String currency, String reason,
-            String refundKey) {   // 포트원 V2 취소에는 멱등 헤더가 없다 — 키는 쓰지 않는다
+            String refundKey) {   // 포트원 V2 취소에는 멱등 헤더가 없다 — 키는 쓰지 않는다 ／ [JA] PortOne V2 の取消には冪等ヘッダがない — キーは使わない
         return refund(paymentId, amount, currency, reason, refundKey, null);
     }
 
     /**
      * 포트원 V2 취소. 멱등 헤더가 없으니 {@code currentCancellableAmount}(취소 직전 잔액, 우리 기록)를 함께 보낸다 — 포트원
      * 잔액과 다르면 거절되므로, 앞선 시도가 성공했는데 우리 쪽이 실패로 끝나 다시 보낸 환불은 두 번 나가지 않는다.
+     *
+     * <p>[JA] PortOne V2 の取消。冪等ヘッダがないので {@code currentCancellableAmount}(取消直前の残高、当方の記録)を一緒に送る — PortOne の
+     * 残高と違えば拒絶されるので、先の試行が成功したのに当方が失敗で終わって再送した返金は二度出ていかない。
      */
     @Override
     public RefundResult refund(String paymentId, BigDecimal amount, String currency, String reason,
             String refundKey, BigDecimal refundableBefore) {
         // 금액은 통화 자릿수의 plain 숫자로(KRW 80000, USD 59.98). BigDecimal 을 Jackson 에
         // 맡기면 9E+3 같은 지수 표기가 나올 수 있다. 사유는 JSON 문자열로 이스케이프한다.
+        // [JA] 金額は通貨の桁数の plain な数値で(KRW 80000、USD 59.98)。BigDecimal を Jackson に
+        //      任せると 9E+3 のような指数表記が出ることがある。理由は JSON 文字列としてエスケープする。
         String body;
         try {
             body = "{\"amount\":"
@@ -181,6 +214,8 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
         } catch (RestClientException e) {
             // PAYMENT_ALREADY_CANCELLED · CANCEL_AMOUNT_EXCEEDS_CANCELLABLE_AMOUNT 등이 4xx 로 온다.
             // ⚠️ paymentId 는 로그에 남겨도 된다. 시크릿은 절대 안 된다.
+            // [JA] PAYMENT_ALREADY_CANCELLED · CANCEL_AMOUNT_EXCEEDS_CANCELLABLE_AMOUNT などが 4xx で来る。
+            //      ⚠️ paymentId はログに残してよい。シークレットは絶対にだめ。
             throw new PaymentVerificationException("포트원 환불 요청 실패: " + paymentId + " — " + brief(e), e);
         }
         if (response == null) {
@@ -204,10 +239,12 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
                 status,
                 new BigDecimal(total.asText("0")),
                 // 취소 응답에는 통화가 없다. 결제 통화가 곧 환불 통화다 — 호출자가 넘긴 값을 돌려준다.
+                // [JA] 取消応答には通貨がない。決済通貨がそのまま返金通貨である — 呼び出し側が渡した値を返す。
                 currency == null ? "" : currency.toUpperCase());
     }
 
     // ------------------------------------------------------------------ 조회
+    // [JA] 照会
 
     private JsonNode fetchPayment(String paymentId) {
         JsonNode body;
@@ -220,6 +257,7 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
                     .body(JsonNode.class);
         } catch (RestClientException e) {
             // PAYMENT_NOT_FOUND 는 404 로 온다 — 존재하지 않는 paymentId 를 지어내면 그렇게 된다.
+            // [JA] PAYMENT_NOT_FOUND は 404 で来る — 存在しない paymentId をでっち上げるとそうなる。
             throw new PaymentVerificationException("포트원 결제 조회 실패: " + paymentId + " — " + brief(e), e);
         }
         if (body == null) {
@@ -234,6 +272,11 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
      * <p>{@code amount.total} 이 결제 요청 금액, {@code amount.paid} 가 실제 승인액이다.
      * 둘이 다를 수 있는 것은 부분 취소 뒤뿐이고 그때는 status 가 PAID 가 아니다. 대조는
      * <b>total</b> 로 한다 — "얼마짜리 결제였나" 가 주문 총액과 맞아야 하는 값이다.
+     *
+     * <p>[JA] PortOne V2 応答 → プロバイダ中立の結果。
+     * {@code amount.total} が決済リクエスト金額、{@code amount.paid} が実際の承認額である。
+     * 二つが異なりうるのは部分取消の後だけで、その時 status は PAID ではない。照合は
+     * <b>total</b> で行う — 「いくらの決済だったか」が注文総額と合わなければならない値である。
      */
     private VerifiedPayment toVerified(String paymentId, JsonNode payment) {
         String status = payment.path("status").asText("");
@@ -283,6 +326,7 @@ public class PortOneV2PaymentGateway implements PortOneGateway {
     }
 
     /** 예외 메시지의 앞부분만 — 4xx 본문에 {type, message} 가 실려 오고, 그게 원인을 말해 준다. */
+    // [JA] 例外メッセージの先頭部分だけ — 4xx 本文に {type, message} が載ってきて、それが原因を教えてくれる。
     private static String brief(Exception e) {
         String m = e.getMessage() == null ? "" : e.getMessage();
         return m.length() > 200 ? m.substring(0, 200) : m;

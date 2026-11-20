@@ -26,6 +26,8 @@ import com.project.notification_service.repository.RestockSubscriptionRepository
 
 /**
  * 재입고 알림 신청과 발송 (docs/53).
+ *
+ * <p>[JA] 再入荷通知の申し込みと送信(docs/53)。
  */
 @DisplayName("RestockSubscriptionService — 재입고 알림")
 class RestockSubscriptionServiceTest {

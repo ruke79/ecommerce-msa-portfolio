@@ -40,6 +40,7 @@ class ProductRepositoryTest {
     private ProductDetailsRepository productDetailRepository;
 
     // 테스트에 사용할 공통 엔티티 변수
+    // [JA] テストで使う共通エンティティ変数
     private Category category1, category2;
     private Subcategory subcategory1, subcategory2,subcategory3;
     private Product product1, product2;
@@ -47,12 +48,14 @@ class ProductRepositoryTest {
     @BeforeEach
     void setUp() {
         // 테스트 데이터 정리
+        // [JA] テストデータの整理
         productRepository.deleteAllInBatch();
         categoryRepository.deleteAllInBatch();
         subcategoryRepository.deleteAllInBatch();
         productDetailRepository.deleteAllInBatch();
 
         // 카테고리, 서브카테고리 저장
+        // [JA] カテゴリ、サブカテゴリの保存
         category1 = categoryRepository.save(Category.builder().categoryName("fashion").slug("fashion").build());
         category2 = categoryRepository.save(Category.builder().categoryName("electronics").slug("electronics").build());
         subcategory1 = subcategoryRepository.save(Subcategory.builder().subcategoryName("men's clothing")
@@ -64,6 +67,7 @@ class ProductRepositoryTest {
 
 
         // 상품 데이터 생성 및 저장
+        // [JA] 商品データの作成と保存
         product1 = Product.builder()
                 .name("Laptop Pro")
                 .description("Powerful laptop for professionals.")
@@ -83,6 +87,7 @@ class ProductRepositoryTest {
                 .build();
 
         // 상품에 서브카테고리 추가
+        // [JA] 商品にサブカテゴリを追加
         Set<ProductSubcategory> subcategories2 = new HashSet<>();
         subcategories2.add(ProductSubcategory.builder().product(product1).subcategory(subcategory2).build());
         Set<ProductSubcategory> subcategories3 = new HashSet<>();
@@ -91,20 +96,24 @@ class ProductRepositoryTest {
         
 
         // 상품 저장
+        // [JA] 商品の保存
         product1 = productRepository.save(product1);
         product2 = productRepository.save(product2);
 
         // 상품 상세 정보 저장 (양방향 관계 설정)
         // ProductDetails를 Product의 details Set에 추가하고, ProductDetails에 Product 참조 설정
+        // [JA] 商品詳細情報の保存(双方向関係の設定)。ProductDetails を Product の details Set に追加し、ProductDetails に Product の参照を設定する。
         ProductDetails detail1 = ProductDetails.builder().name("material").value("aluminum").product(product1).build();
         ProductDetails detail2 = ProductDetails.builder().name("style").value("sleek").product(product2).build();
         ProductDetails detail3 = ProductDetails.builder().name("gender").value("unisex").product(product2).build();
 
         // Product 엔티티의 details Set에 ProductDetails 추가
+        // [JA] Product エンティティの details Set に ProductDetails を追加
         product1.setDetails(new HashSet<>(Arrays.asList(detail1)));
         product2.setDetails(new HashSet<>(Arrays.asList(detail2, detail3)));
 
         // ProductDetails 저장
+        // [JA] ProductDetails の保存
         productDetailRepository.saveAll(Arrays.asList(detail1, detail2, detail3));
     }
 
@@ -116,6 +125,7 @@ class ProductRepositoryTest {
     //     for (long i = 1; i <= 200; i++) {
     //         productIds.add(i);
     //     }
+    // [JA] (コメントアウトされたテスト: 商品 ID リストで商品を照会するテスト)
 
     //     float rating = 4.0f;
 
@@ -136,6 +146,7 @@ class ProductRepositoryTest {
     //     // Given
     //     String name = "Laptop";
     //     Float rating = 4.0f;
+    // [JA] (コメントアウトされたテスト: 名前と評価で商品を照会するテスト)
 
     //     List<Long> productIds = new ArrayList<>();
     //     for (long i = 1; i <= 200; i++) {
@@ -158,6 +169,7 @@ class ProductRepositoryTest {
     //     // Given
     //     String name = "Laptop";
     //     Long categoryId = category2.getCategoryId();
+    // [JA] (コメントアウトされたテスト: 商品の総数を照会するテスト)
 
     //     float rating = 4.0f;
 

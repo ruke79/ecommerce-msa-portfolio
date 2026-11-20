@@ -13,6 +13,10 @@ import org.springframework.mock.web.MockHttpServletResponse;
  * <p>배경: 이 서비스의 쓰기 API 전체(상품 등록·카테고리 생성·배치 잡 기동)가 무인증으로
  * 배포됐고, 사이트가 공개된 뒤에도 그 상태였다. 유일한 @PreAuthorize 는 주석 처리돼
  * 있었다. 이 테스트는 "쓰기는 기본이 관리자"라는 계약이 다시 조용히 풀리는 것을 막는다.
+ *
+ * <p>[JA] 書き込み認可の回帰テスト。
+ * <p>背景: このサービスの書き込み API 全体(商品登録・カテゴリ作成・バッチジョブ起動)が無認証で配備され、サイト公開後もその状態だった。唯一の @PreAuthorize はコメントアウトされていた。
+ * このテストは「書き込みは既定で管理者」という契約が再び黙って緩むのを防ぐ。
  */
 class AdminWriteInterceptorTest {
 
@@ -84,18 +88,21 @@ class AdminWriteInterceptorTest {
     @DisplayName("콘텐츠 관리 경로는 GET 도 관리자 전용 — 비공개 배너·초안 공지가 그 아래 있다")
     void contentAdminReadsRequireAdmin() throws Exception {
         // 로그인하지 않은 조회: 401. 쓰기만 막았다면 이 요청이 그냥 통과했다.
+        // [JA] ログインしていない照会: 401。書き込みだけ塞いでいたら、このリクエストはそのまま通っていた。
         MockHttpServletResponse anonymous = new MockHttpServletResponse();
         assertFalse(interceptor.preHandle(
                 req("GET", "/api/content/admin/banners", null, null), anonymous, null));
         assertEquals(401, anonymous.getStatus());
 
         // 로그인한 일반 사용자의 조회: 403.
+        // [JA] ログインした一般ユーザーの照会: 403。
         MockHttpServletResponse user = new MockHttpServletResponse();
         assertFalse(interceptor.preHandle(
                 req("GET", "/api/content/admin/notices", "42", "ROLE_USER"), user, null));
         assertEquals(403, user.getStatus());
 
         // 관리자는 통과.
+        // [JA] 管理者は通過。
         assertTrue(interceptor.preHandle(
                 req("GET", "/api/content/admin/banners", "1", "ROLE_ADMIN"),
                 new MockHttpServletResponse(), null));
@@ -144,6 +151,8 @@ class AdminWriteInterceptorTest {
     /**
      * 🐛 판정이 디코딩 전 원문 URI 의 앞부분만 봤다 — 핸들러 매칭은 디코딩하고 {@code ;…} 를 떼므로, 인코딩한 경로는 관리자 화면에
      * 닿으면서 "공개 읽기" 로 통과했다.
+     *
+     * <p>[JA] 🐛 判定がデコード前の元の URI の先頭だけを見ていた — ハンドラのマッチングはデコードし {@code ;…} を外すので、エンコードしたパスは管理者画面に届きながら「公開読み取り」として通っていた。
      */
     @Test
     @DisplayName("🔴 인코딩 · ;매개변수 · 겹슬래시로 적은 관리자 경로도 관리자 전용 — 일반 사용자의 GET 은 403")

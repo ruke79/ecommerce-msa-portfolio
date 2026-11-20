@@ -2,6 +2,8 @@
  * 가격 범위를 한 줄로 — "US$70.00" 또는 "US$70.00 – US$84.00". {@code money} 는 useMoney 가 돌려준 함수.
  *
  * <p>할인이 있으면 범위는 <b>할인가</b>다(skuPriceRange). 정가는 줄을 그어 따로 보여 준다.
+ *
+ * <p>[JA] 価格範囲を一行で — "US$70.00" または "US$70.00 – US$84.00"。{@code money} は useMoney が返した関数。割引があれば範囲は<b>割引価格</b>である(skuPriceRange)。定価は取り消し線を引いて別に見せる。
  */
 export function rangeText(range, money) {
     if (!range) return "";
@@ -9,6 +11,7 @@ export function rangeText(range, money) {
 }
 
 /** 정가 범위 — 할인이 있을 때 줄 그어 보여 준다. */
+// [JA] 定価の範囲 — 割引があるとき取り消し線を引いて見せる。
 export function rangeBeforeText(range, money) {
     if (!range) return "";
     return range.minBefore === range.maxBefore

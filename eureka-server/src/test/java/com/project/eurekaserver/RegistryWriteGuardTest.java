@@ -19,6 +19,7 @@ import org.springframework.web.util.UrlPathHelper;
 class RegistryWriteGuardTest {
 
     /** 인증서 없는 요청을 통과시켜 본다 — 다음 필터로 넘어갔으면 true. */
+    // [JA] 証明書のないリクエストを通してみる — 次のフィルタに進んだら true。
     private static boolean passes(RegistryWriteGuard.Mode mode, String method, String uri) throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest(method, uri);
         MockHttpServletResponse res = new MockHttpServletResponse();

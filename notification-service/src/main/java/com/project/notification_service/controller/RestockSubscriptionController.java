@@ -28,6 +28,10 @@ import lombok.RequiredArgsConstructor;
  *   <li>{@code POST {productId, colorId, size, productName, productSlug}} — 신청(이미 있으면 그대로 200)</li>
  *   <li>{@code DELETE ?productId=&colorId=&size=} — 거두기(없으면 404)</li>
  * </ul>
+ *
+ * <p>[JA] 再入荷通知の申し込み(docs/53)。身元はゲートウェイがトークンから取り出して付けた {@code User-Id} である — 本文のユーザー値は
+ * 受け取らない。GET はこの商品に掛けたオプション一覧(商品画面のボタン状態)、POST は申し込み(既にあればそのまま 200)、
+ * DELETE は取り下げ(なければ 404)。
  */
 @RestController
 @RequestMapping("/api/notifications/restock-subscriptions")
@@ -90,6 +94,7 @@ public class RestockSubscriptionController {
     }
 
     /** 저장은 색상 없음을 0 으로 한다 — 화면에는 null 로 돌려준다. */
+    // [JA] 保存は色なしを 0 にする — 画面には null で返す。
     private static Long colorOut(Long colorId) {
         return colorId == null || colorId == RestockSubscription.NO_COLOR ? null : colorId;
     }

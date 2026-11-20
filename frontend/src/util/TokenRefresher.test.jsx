@@ -44,6 +44,7 @@ const TokenRefresher = require("util/TokenRefresher").default;
 const { REFRESH_URL } = require("util/TokenRefresher");
 
 /** 마지막으로 등록된 응답 인터셉터의 오류 핸들러. */
+// [JA] 最後に登録されたレスポンスインターセプターのエラーハンドラ。
 const onError = () => interceptors.response[interceptors.response.length - 1][1];
 
 const axiosError = (status, { url = "/some-service/api/thing", data, _retry } = {}) => ({
@@ -59,6 +60,14 @@ const axiosError = (status, { url = "/some-service/api/thing", data, _retry } = 
  * storage-health 호출 하나가 세션을 날렸다.
  *
  * 그리고 어떤 500 이든 홈으로 보냈고, 503 은 로그아웃까지 했다.
+ *
+ * <p>[JA] 🐛 回帰対象: **付随的なリクエスト一つがアプリ全体をログアウトさせる。**
+ *
+ * <p>インターセプターは 401 を受けたリクエストが更新後の再試行でも 401 なら無条件に `logout()` していた。
+ * 実際に `/admin/product` がログイン画面に弾かれた原因がこれだった — 画面上部のバナーの
+ * storage-health 呼び出し一つがセッションを飛ばした。
+ *
+ * <p>さらにどんな 500 でもホームへ送り、503 ではログアウトまでしていた。
  */
 describe("TokenRefresher — 언제 세션을 끝내는가", () => {
   beforeEach(() => {
@@ -79,6 +88,7 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
   });
 
   // ── 개별 요청의 401 ─────────────────────────────────────────────────────
+  // [JA] ── 個別リクエストの 401 ──
 
   it("🔴 갱신 후에도 401 이면 그 요청만 실패시킨다 — 로그아웃하지 않는다", async () => {
     const error = axiosError(401, { _retry: true, url: "/catalog-service/api/content/admin/storage-health" });
@@ -87,6 +97,8 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
 
     // 세션은 살아 있어야 한다. 갱신은 성공했으므로 토큰이 무효한 것이 아니라,
     // 그 엔드포인트가 이 사용자에게 닫혀 있는 것이다(사실상 403).
+    // [JA] セッションは生きていなければならない。更新は成功したのでトークンが無効なのではなく、
+    //      そのエンドポイントがこのユーザーに閉じているのである(事実上の 403)。
     expect(mockLogout).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
@@ -102,6 +114,7 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
     expect(mockGetRequest).toHaveBeenCalledWith(REFRESH_URL);
     expect(mockLogin).toHaveBeenCalled();
     // 재시도 요청은 새 토큰을 단다.
+    // [JA] 再試行リクエストは新しいトークンを付ける。
     expect(mockApi).toHaveBeenCalledWith(
       expect.objectContaining({
         _retry: true,
@@ -112,9 +125,11 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
   });
 
   // ── 갱신 자체의 실패 = 진짜 세션 종료 ───────────────────────────────────
+  // [JA] ── 更新そのものの失敗 = 本当のセッション終了 ──
 
   it("갱신이 200 이 아니면 로그아웃한다 — 세션이 진짜로 끝난 경우다", async () => {
     // 204 = 리프레시 토큰이 아예 없다.
+    // [JA] 204 = リフレッシュトークンがそもそもない。
     mockGetRequest.mockResolvedValue({ status: 204 });
 
     await expect(onError()(axiosError(401))).rejects.toThrow();
@@ -149,10 +164,14 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
   });
 
   // ── 서버 오류 ───────────────────────────────────────────────────────────
+  // [JA] ── サーバーエラー ──
 
   /**
    * 🐛 예전에는 어떤 500 이든 홈으로 보냈다. 사용자는 자기가 무엇을 하다 튕겼는지 알 수
    * 없었고 작성 중이던 폼도 함께 사라졌다.
+   *
+   * <p>[JA] 🐛 以前はどんな 500 でもホームへ送っていた。ユーザーは自分が何をしていて弾かれたのか
+   * わからず、入力中のフォームも一緒に消えた。
    */
   it("🔴 500 은 홈으로 보내지 않고 호출부로 돌려준다", async () => {
     const error = axiosError(500);
@@ -167,6 +186,10 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
    * 🐛 503 은 서비스가 잠시 뜨지 않았다는 뜻이다(서킷 브레이커·파드 재시작).
    * 사용자의 세션과는 아무 상관이 없는데 로그아웃까지 했다 — 배포 중에 503 하나를
    * 만난 사용자가 장바구니에서 쫓겨났다.
+   *
+   * <p>[JA] 🐛 503 はサービスが一時的に立ち上がっていないという意味である(サーキットブレーカー・Pod 再起動)。
+   * ユーザーのセッションとは何の関係もないのにログアウトまでしていた — デプロイ中に 503 を一つ
+   * 受けたユーザーがカートから追い出された。
    */
   it("🔴 503 은 로그아웃하지 않는다", async () => {
     const error = axiosError(503);
@@ -187,6 +210,7 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
   });
 
   // ── 갱신 요청 자신은 인터셉터가 손대지 않는다 ───────────────────────────
+  // [JA] ── 更新リクエスト自身にはインターセプターが手を出さない ──
 
   /**
    * 🔴 교착 방지. 갱신 요청이 401 을 받으면 401 분기로 들어가는데 그때 isRefreshing 은
@@ -194,14 +218,22 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
    * 깨우지 않는 프라미스를 기다린다. 큐를 깨우는 코드는 바깥 await 가 끝나야 도는데
    * 그 await 가 방금 큐에 들어간 그 프라미스다 — 영원히 멈추고 isRefreshing 이 true 로
    * 굳어서 **그 뒤 모든 401 요청이 같은 큐에서 멈춘다.**
+   *
+   * <p>[JA] 🔴 デッドロック防止。更新リクエストが 401 を受けると 401 分岐に入るが、そのとき isRefreshing は
+   * すでに true なので、「別のリクエストが更新中」の経路に乗りキューに自分自身を入れたあと、誰も
+   * 起こさないプロミスを待つ。キューを起こすコードは外側の await が終わらないと回らないが、
+   * その await こそ今キューに入ったそのプロミスである — 永遠に止まり isRefreshing が true のまま
+   * 固まって **以後すべての 401 リクエストが同じキューで止まる。**
    */
   it("갱신 요청의 401 은 즉시 거절한다 — 큐에서 멈추지 않는다", async () => {
     const error = axiosError(401, { url: REFRESH_URL });
 
     // 멈추지 않고 거절되는 것 자체가 검증 대상이다.
+    // [JA] 止まらずに拒否されること自体が検証対象である。
     await expect(onError()(error)).rejects.toBe(error);
 
     // 갱신을 또 부르지 않는다(재귀 방지).
+    // [JA] 更新を再び呼ばない(再帰防止)。
     expect(mockGetRequest).not.toHaveBeenCalled();
   });
 
@@ -213,6 +245,7 @@ describe("TokenRefresher — 언제 세션을 끝내는가", () => {
   });
 
   // ── 요청 인터셉터 ───────────────────────────────────────────────────────
+  // [JA] ── リクエストインターセプター ──
 
   it("토큰이 있으면 Authorization 헤더를 단다", async () => {
     const [ok] = interceptors.request[interceptors.request.length - 1];

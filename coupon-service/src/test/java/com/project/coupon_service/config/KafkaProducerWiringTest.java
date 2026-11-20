@@ -35,16 +35,23 @@ import com.project.coupon_service.message.producer.CouponIssuedProducer;
  * <p>이 테스트는 그 틈을 메운다. {@link ApplicationContextRunner} 는 <b>브로커도 Docker 도
  * 없이</b> 설정 클래스만으로 컨텍스트를 띄운다 — {@code DefaultKafkaProducerFactory} 는
  * 생성 시점에 접속하지 않기 때문에 가능하다.
+ *
+ * <p>[JA] 🐛 <b>coupon-service が運用で起動に失敗した。</b>{@code CouponIssuedProducer} は JSON 文字列を発行するので {@code KafkaTemplate<String, String>} を注入されるが、設定には Avro 用の {@code KafkaTemplate<String, CouponUseRequest>} 一つしかなかった。Spring はジェネリクスまで見て候補を絞るので合う Bean が一つもないと判断する。Boot の自動設定も助けない — {@code KafkaAutoConfiguration} はユーザー定義の {@code KafkaTemplate} が一つでもあれば丸ごと退く({@code @ConditionalOnMissingBean})。
+ * <p><b>なぜ既存のテストが捕まえられなかったか。</b>単体テストは {@code KafkaTemplate} をモックで入れるので配線を検証しない。配線を検証する {@code CouponServiceApplicationTests} は {@code @Tag("containers")} なので {@code ./gradlew test} から<b>除外される</b>(Docker のない環境のための意図した分離)。そのためコンパイルもテストもすべて通ったままデプロイされ、ポッドが CrashLoopBackOff に入って初めて分かった。
+ * <p>このテストはその隙間を埋める。{@link ApplicationContextRunner} は<b>ブローカーも Docker もなしで</b>設定クラスだけでコンテキストを起動する — {@code DefaultKafkaProducerFactory} は生成時点で接続しないので可能だ。
  */
 @DisplayName("coupon-service Kafka 프로듀서 배선")
 class KafkaProducerWiringTest {
 
     /** 실제 설정과 같은 조건: kafka.url 은 기본값이 없어 반드시 주어져야 한다. */
+    // [JA] 実際の設定と同じ条件: kafka.url はデフォルト値がないので必ず与えなければならない。
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withPropertyValues("kafka.url=localhost:9092");
 
     /**
      * 🔴 이 파일의 핵심. 운영에서 난 실패를 그대로 재현한다 — 빈이 없으면 여기서 터진다.
+     *
+     * <p>[JA] 🔴 このファイルの核心。運用で起きた失敗をそのまま再現する — Bean がなければここで落ちる。
      */
     @Test
     @DisplayName("🔴 CouponIssuedProducer 가 실제로 주입된다 — 운영 기동 실패의 재현")
@@ -63,6 +70,8 @@ class KafkaProducerWiringTest {
      * 제네릭이 맞아야 한다. {@code KafkaTemplate} 이 하나 있다고 되는 것이 아니다 —
      * 스프링은 {@code <String, String>} 과 {@code <String, CouponUseRequest>} 를 다른 타입으로
      * 본다. 바로 그것 때문에 Avro 템플릿이 있어도 "빈을 찾을 수 없다" 가 됐다.
+     *
+     * <p>[JA] ジェネリクスが合わなければならない。{@code KafkaTemplate} が一つあればよいわけではない — Spring は {@code <String, String>} と {@code <String, CouponUseRequest>} を別の型とみなす。まさにそのせいで Avro テンプレートがあっても「Bean が見つからない」になった。
      */
     @Test
     @DisplayName("문자열 값을 쓰는 KafkaTemplate 이 해결된다 — Avro 템플릿으로는 대체되지 않는다")
@@ -83,6 +92,8 @@ class KafkaProducerWiringTest {
      * 값 직렬화가 {@code JsonSerializer} 면 이미 JSON 인 문자열이 <b>한 번 더 따옴표로
      * 감싸져</b> 나간다. 컨슈머(notification-service)는 그것을 파싱하지 못하고, 알림은 조용히
      * 사라진다 — 기동은 멀쩡하므로 더 찾기 어렵다.
+     *
+     * <p>[JA] 値のシリアライザーが {@code JsonSerializer} だと、既に JSON の文字列が<b>もう一度引用符で包まれて</b>出ていく。コンシューマー(notification-service)はそれをパースできず通知は静かに消える — 起動は正常なのでより見つけにくい。
      */
     @Test
     @DisplayName("문자열 템플릿의 값 직렬화가 StringSerializer 다 — JSON 이 이중 인코딩되면 안 된다")
@@ -97,6 +108,7 @@ class KafkaProducerWiringTest {
     }
 
     /** Avro 경로는 그대로 살아 있어야 한다 — 문자열 템플릿을 더하면서 깨뜨리지 않았는지. */
+    // [JA] Avro の経路はそのまま生きていなければならない — 文字列テンプレートを足すときに壊していないか。
     @Test
     @DisplayName("쿠폰 사용(Avro) 템플릿은 그대로 있다")
     void avroTemplateStillExists() {

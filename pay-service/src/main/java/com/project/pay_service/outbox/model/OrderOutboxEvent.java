@@ -63,6 +63,9 @@ public class OrderOutboxEvent implements Persistable<String> {
     /**
      * 행을 쓴 순간의 추적 문맥(전파 헤더). 릴레이가 이것으로 스팬을 되살린 채 보내 요청 → 사가가
      * 하나의 추적으로 이어진다(docs/51 §4e, OutboxTraceContext). 없으면 예전처럼 보낸다.
+     *
+     * <p>[JA] 行を書いた瞬間の追跡コンテキスト(伝播ヘッダー)。リレーがこれでスパンを復元したまま送り、リクエスト → サガが
+     * 一つのトレースにつながる(docs/51 §4e、OutboxTraceContext)。なければ以前どおり送る。
      */
     @Column(name = "trace_context", length = 512)
     private String traceContext;
@@ -79,6 +82,11 @@ public class OrderOutboxEvent implements Persistable<String> {
         // order_outbox_event 의 **파티션 키**이므로(docs/09), 월말 9시간 동안 생성된 이벤트가
         // 다음 달 파티션으로 들어가 보존/DETACH 작업이 엉뚱한 행을 건드리게 된다.
         // 나머지 컬럼과 같은 시계를 쓴다. 운영에서는 JVM·DB 를 UTC 로 맞출 것.
+        // [JA] ハードコードされた Asia/Seoul のせいで、同じ出来事なのに pay.payment.created_at(JPA 監査 =
+        //      JVM 既定の時計)とこのカラムが 9 時間ずれていた(docs/14 B-21)。このカラムは
+        //      order_outbox_event の**パーティションキー**なので(docs/09)、月末の 9 時間に生成されたイベントが
+        //      翌月のパーティションに入り、保存/DETACH 作業が見当違いの行に触れることになる。
+        //      他のカラムと同じ時計を使う。運用では JVM・DB を UTC に揃えること。
         this.createdAt = LocalDateTime.now();
     }
 
@@ -95,6 +103,16 @@ public class OrderOutboxEvent implements Persistable<String> {
     // 플래그가 "저장됐으면 true" 방향인 이유는 기본값 false 가 곧 "새 것"이라 Lombok 이
     // 필드 초기화를 어떻게 다루든 안전한 쪽으로 떨어지기 때문이다. 불러온 엔티티는
     // @PostLoad 가 true 로 되돌리므로 스케줄러의 상태 변경은 그대로 UPDATE 로 간다.
+    // [JA] ── なぜ Persistable を実装するのか ──
+    //      id をコンストラクタで UUID として**直接割り当てる**ので、save() の時点で id が null ではない。
+    //      SimpleJpaRepository はそれだけを見て「既存の行」と判断し persist() ではなく merge() を選び、
+    //      merge は対象を探すため先に SELECT を投げる — **新しいアウトボックスイベントごとに必ず空振りの SELECT が一回**出ていた。
+    //      決済一件ごとに掛け算される経路である。
+    //      性能より悪い点: merge は同じ id が既にコミット済みなら PK 衝突ではなく **UPDATE** で黙って通る。
+    //      挿入失敗を期待するコードがあれば、その期待は成り立たない。
+    //      フラグが「保存済みなら true」の向きなのは、既定値 false がそのまま「新規」なので、Lombok が
+    //      フィールド初期化をどう扱っても安全側に倒れるからだ。読み込んだエンティティは
+    //      @PostLoad が true に戻すので、スケジューラの状態変更はそのまま UPDATE になる。
     @Transient
     private boolean persisted;
 

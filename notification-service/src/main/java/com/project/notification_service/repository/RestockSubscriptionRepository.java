@@ -14,9 +14,11 @@ public interface RestockSubscriptionRepository extends JpaRepository<RestockSubs
             String size);
 
     /** 상품 화면 — 이 손님이 이 상품에 걸어 둔, 아직 알리지 않은 신청. */
+    // [JA] 商品画面 — この客がこの商品にかけた、まだ通知していない申し込み。
     List<RestockSubscription> findByUserIdAndProductIdAndNotifiedAtIsNull(Long userId, Long productId);
 
     /** 재입고가 왔다 — 이 옵션의 아직 알리지 않은 신청(부분 인덱스 idx_restock_pending). */
+    // [JA] 再入荷が来た — このオプションのまだ通知していない申し込み(部分インデックス idx_restock_pending)。
     List<RestockSubscription> findByProductIdAndColorIdAndSizeAndNotifiedAtIsNullOrderBySubscriptionId(
             Long productId, Long colorId, String size, Pageable page);
 

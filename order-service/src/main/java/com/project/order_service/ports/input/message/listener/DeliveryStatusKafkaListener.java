@@ -25,6 +25,15 @@ import lombok.extern.slf4j.Slf4j;
  * <p>페이로드는 JSON 이다: {@code deliveryId, orderId, customerId, status, stage,
  * worthNotifying, occurredAt, eventId}. DTO 로 묶지 않고 필요한 셋만 꺼낸다 — 배송
  * 서비스가 필드를 더해도 여기가 죽지 않는다(notification-service 와 같은 판단).
+ *
+ * <p>[JA] {@code delivery-status} トピック → 注文状態。
+ * delivery-service の {@code DeliveryStatusPublisher} は最初から「order-service が
+ * DISPATCHED/DELIVERED を反映する」と書いて発行していたが、<b>聞く側がいなかった</b>
+ * (docs/25 §9 の 6 段階)。notification-service が同じトピックを通知用に聞き、ここでは
+ * 注文状態用に聞く — グループが違うので互いに邪魔しない。
+ * ペイロードは JSON である: {@code deliveryId, orderId, customerId, status, stage,
+ * worthNotifying, occurredAt, eventId}。DTO にまとめず必要な三つだけ取り出す — 配送
+ * サービスがフィールドを足してもここが落ちない(notification-service と同じ判断)。
  */
 @Slf4j
 @Component
@@ -34,12 +43,14 @@ public class DeliveryStatusKafkaListener {
     private final OrderDeliveryStatusService deliveryStatusService;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id = "order-delivery-status", topics = "delivery-status",
                    containerFactory = "deliveryStatusListenerContainerFactory")
     public void received(List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマのトレースがかからない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             String raw = messages.get(i);
@@ -54,13 +65,16 @@ public class DeliveryStatusKafkaListener {
                 long orderId = orderIdNode.isNumber() ? orderIdNode.asLong() : Long.parseLong(orderIdNode.asText());
                 String status = text(event, "status");
                 // 원장(V30)은 배송 건 · 상태마다 — 같은 배송의 같은 상태가 다시 오면 건너뛴다(배송 취소의 재전달이 주문을 되돌리지 않게)
+                // [JA] 台帳(V30)は配送 · 状態ごと — 同じ配送の同じ状態が再び来たらスキップする(配送取消の再配信が注文を戻さないように)
                 deliveryStatusService.apply(orderId, status, text(event, "stage"),
                         OrderDeliveryStatusService.ledgerKey(text(event, "deliveryId"), status));
             } catch (OptimisticLockingFailureException e) {
                 // 다른 스레드가 같은 주문을 먼저 바꿨다. 다음 이벤트가 오면 다시 판정된다 — 재시도하지 않는다.
+                // [JA] 別のスレッドが同じ注文を先に変えた。次のイベントが来れば再判定される — 再試行しない。
                 log.warn("배송 상태 반영 중 낙관적 락 충돌, 건너뜀: {}", abbreviate(raw));
             } catch (Exception e) {
                 // 이 레코드만 delivery-status.DLT 로, 앞의 성공분은 커밋된다(docs/11 §3).
+                // [JA] このレコードだけ delivery-status.DLT へ、前の成功分はコミットされる(docs/11 §3)。
                 throw new BatchListenerFailedException("delivery-status 처리 실패", e, i);
             }
         }

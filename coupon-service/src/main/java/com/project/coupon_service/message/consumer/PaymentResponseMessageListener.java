@@ -22,6 +22,7 @@ public class PaymentResponseMessageListener {
     private final ProcessedEventRepository processedEventRepository;
 
     /** 한 쿠폰으로 두 주문이 할인을 받은 수 — Prometheus {@code coupon_double_use_total}, 경보 CouponDoubleUse. */
+    // [JA] 一つのクーポンで二つの注文が割引を受けた回数 — Prometheus {@code coupon_double_use_total}、アラート CouponDoubleUse。
     public static final String DOUBLE_USE_METRIC = "coupon.double.use";
 
     /**
@@ -39,6 +40,8 @@ public class PaymentResponseMessageListener {
 
         // 쿠폰을 쓴 결제 완료만 — 실패 · 취소(환불)는 이 토픽에도 온다. 환불 때의 쿠폰 복원은 사가가 따로 한다(OrderSaga).
         // 🐛 예전: 쿠폰이 없는 결제(대부분)도 아래까지 내려가 null 을 받고 예외 → 재시도 3번 뒤 DLT 로 쌓였다.
+        // [JA] クーポンを使った決済完了のみ — 失敗 · 取消(返金)もこのトピックに来る。返金時のクーポン復元はサーガが別途行う(OrderSaga)。
+        //      🐛 以前: クーポンのない決済(大半)も下まで降りて null を受け取り例外 → 3 回リトライ後 DLT に溜まっていた。
         if (response.getPaymentStatus() != PaymentStatus.COMPLETED
                 || response.getCouponName() == null || response.getCouponName().isBlank()) {
             return;
@@ -46,6 +49,8 @@ public class PaymentResponseMessageListener {
 
         // 멱등성 (docs/12 §2). Kafka 는 at-least-once 라 같은 결제 응답이 다시 올 수 있다.
         // 결제 1건당 쿠폰 사용은 1회여야 하므로 paymentId 가 자연 멱등 키다.
+        // [JA] 冪等性 (docs/12 §2)。Kafka は at-least-once なので同じ決済応答が再び来ることがある。
+        //      決済 1 件あたりクーポン使用は 1 回であるべきなので paymentId が自然な冪等キーだ。
         String eventId = response.getPaymentId() != null ? "payment-" + response.getPaymentId() : null;
         if (eventId != null && processedEventRepository.existsById(eventId)) {
             log.info("Duplicate payment event '{}' — coupon already processed, skipping", eventId);
@@ -69,6 +74,7 @@ public class PaymentResponseMessageListener {
         }
         if (eventId != null) {
             // 쿠폰 상태 변경과 같은 트랜잭션에 기록 → 둘 다 반영되거나 둘 다 롤백(원자성).
+            // [JA] クーポン状態の変更と同じトランザクションに記録 → 両方反映されるか両方ロールバック(原子性)。
             processedEventRepository.save(new ProcessedEvent(eventId));
         }
     }

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import com.project.chat_service.dto.MessageDto;
 
 /** 상담 스레드 · 메시지 모델의 작은 규칙들(모델 리팩토링 ⑤). */
+// [JA] 相談スレッド・メッセージモデルの小さな規則(モデルリファクタリング ⑤)。
 class SupportThreadModelTest {
 
     @Test
@@ -34,6 +35,7 @@ class SupportThreadModelTest {
     void previewDoesNotSplitSurrogatePair() {
         SupportThread t = SupportThread.open(1L, Instant.EPOCH);
         // 199번째 char 가 이모지의 앞 절반이 되도록 — char 로 자르면 짝 잃은 서로게이트가 남는다.
+        // [JA] 199 番目の char が絵文字の前半になるように — char で切ると対を失ったサロゲートが残る。
         String text = "a".repeat(SupportThread.PREVIEW_LENGTH - 2) + "😀" + "b".repeat(10);
 
         t.recordMessage(text, true, Instant.EPOCH);

@@ -61,12 +61,26 @@ import reactor.core.publisher.Mono;
  *
  * <p>⚠️ 이 헤더들을 {@code default-filters} 로 되돌리지 말 것.
  * {@code ConfigurationGuardrailTest} B-53 이 막는다.
+ *
+ * <p>[JA] クライアントが直接送った身元ヘッダーを<b>すべてのリクエストで最初に</b>消す。身元はゲートウェイだけが主張できなければならない。
+ * {@code User-Role: ROLE_ADMIN} 一行をそのまま送って下位サービスがそのまま信じれば、ヘッダー一行がそのまま権限昇格になる。
+ * <b>なぜ default-filters ではなく GlobalFilter か</b>: 以前はこの仕事を application-local.yml の {@code default-filters}(RemoveRequestHeader=User-Id 等)でしていた。
+ * その横には「default-filters はルートフィルターより<b>先に</b>実行されるので、ここで消した後 JwtAuthorization が検証済みの値を入れ直す順序になる」というコメントがあった。
+ * <b>その前提が誤りだった。</b> Spring Cloud Gateway 4.2 の {@code RouteDefinitionRouteLocator} では、{@code loadGatewayFilters} が各フィルターを<b>その一覧内のインデックス+1</b>で包み
+ * ({@code new OrderedGatewayFilter(filter, i + 1)})、{@code getFilters} は default-filters を先に入れ(order 1,2,3,4,5)、<b>ルートフィルターを再び 1 から</b>入れた後ソートする。
+ * そのため実際の順序は、order 1 に Dedupe(デフォルト)と JwtAuthorization(ルート、User-Id を入れる)、order 2 に RemoveRequestHeader=User-Id(今入れたものを消す)、3 · 4 に User-Email · User-Role の削除となる。
+ * 結果: <b>検証済みの身元が下位サービスに一つも届かなかった。</b> JwtAuthorization が付いた<b>すべての</b>ルートがそうだった。症状は各サービスで「ログインが必要です」(401)として現れ、
+ * ゲートウェイのログにはフィルターが正常に呼ばれたと出ていたので原因がまったく見えなかった。管理画面はバナー呼び出し一つが 401 を二度受けてアプリ全体がログアウトされた。
+ * GlobalFilter はルートフィルターと一緒にソートされるが自分の {@code getOrder()} をそのまま使う。{@code HIGHEST_PRECEDENCE} ならルートフィルター(order 1 から)より必ず前である —
+ * フィルターの数や並び順に頼らない。それがこのクラスが存在する理由だ。
+ * ⚠️ これらのヘッダーを {@code default-filters} に戻さないこと。{@code ConfigurationGuardrailTest} B-53 が防ぐ。
  */
 @Slf4j
 @Component
 public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
 
     /** 로그 · 내부 엔드포인트 차단 다음 — 순서는 {@link PreLoggingFilter#ORDER} 의 주석. 라우트 필터(1 부터)보다 한참 앞이다. */
+    // [JA] ログ · 内部エンドポイント遮断の次 — 順序は {@link PreLoggingFilter#ORDER} のコメント。ルートフィルター(1 から)よりずっと前である。
     public static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 20;
 
     /**
@@ -76,6 +90,10 @@ public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
      * {@code CustomUserKeyResolver} 가 {@code X-User-Id} 를 읽었다 — 즉 <b>아무도 넣지 않는
      * 헤더를 하위 코드가 믿는 일</b>이 실제로 있었다. 신원처럼 보이는 이름은 들어오는 족족
      * 지워 두면, 나중에 누가 어느 이름으로 읽든 클라이언트 값은 도달하지 않는다.
+     *
+     * <p>[JA] ゲートウェイだけが設定できるヘッダー。JwtAuthorization が検証後に入れ直す。{@code X-} 変種も消す。ゲートウェイはその名前を使わないが、以前の
+     * {@code CustomUserKeyResolver} が {@code X-User-Id} を読んでいた — つまり<b>誰も入れないヘッダーを下位コードが信じること</b>が実際にあった。
+     * 身元らしく見える名前は入ってくるたびに消しておけば、後で誰がどの名前で読んでもクライアントの値は届かない。
      */
     static final List<String> IDENTITY_HEADERS = List.of(
             "User-Id", "User-Email", "User-Role",
@@ -91,6 +109,7 @@ public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
         }
 
         // 값은 남기지 않는다 — 사칭 시도의 내용을 로그에 옮겨 적을 이유가 없다.
+        // [JA] 値は残さない — なりすまし試行の内容をログに書き写す理由はない。
         log.warn("외부에서 신원 헤더가 들어왔다 — 지운다. path={}", exchange.getRequest().getURI().getPath());
 
         return chain.filter(exchange.mutate()
@@ -103,6 +122,7 @@ public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
     @Override
     public int getOrder() {
         // 라우트 필터보다 먼저. 특히 JwtAuthorization(라우트 필터라 order 1 부터)보다 먼저여야 한다.
+        // [JA] ルートフィルターより先に。特に JwtAuthorization(ルートフィルターなので order 1 から)より先でなければならない。
         return ORDER;
     }
 }

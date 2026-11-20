@@ -17,6 +17,12 @@ import org.junit.jupiter.api.Test;
  *   <li><b>보내야 하는 것을 막는다.</b> 사용자가 방금 요청한 비밀번호 재설정 메일이 수신 거부
  *       설정으로 차단되면, 사용자는 스스로 계정에 못 들어간다.</li>
  * </ul>
+ *
+ * <p>[JA] 「この通知をメールで送るか」のポリシー。二つのミスを防ぐことが目的だ。<b>送ってはいけないものを送る</b> —
+ * チャットメッセージごとにメールを送ると、活発な会話一つでメールボックスが数十通で埋まる。
+ * ユーザーにはスパムで、受信サーバーが我々をスパム送信者と学習するので正常なメールまで迷惑メールフォルダへ
+ * 行く。<b>送るべきものを止める</b> — ユーザーがたった今要求したパスワード再設定メールが受信拒否設定で遮断
+ * されると、ユーザーは自分でアカウントに入れなくなる。
  */
 @DisplayName("메일 채널 정책")
 class MailChannelPolicyTest {
@@ -49,11 +55,13 @@ class MailChannelPolicyTest {
     @DisplayName("🔒 가입 확인·비밀번호 재설정은 수신 거부로 막을 수 없다")
     void 트랜잭션_메일() {
         // 본인이 방금 요청한 메일이다. 이걸 수신 거부로 막으면 계정에 못 들어간다.
+        // [JA] 本人がたった今要求したメールだ。これを受信拒否で止めるとアカウントに入れない。
         assertThat(MailKind.REGISTRATION_CONFIRM.isTransactional()).isTrue();
         assertThat(MailKind.PASSWORD_RESET.isTransactional()).isTrue();
         assertThat(MailKind.LOGIN_CHALLENGE.isTransactional()).isTrue();
 
         // 알림성 메일은 끌 수 있어야 한다.
+        // [JA] お知らせ系のメールはオフにできるべきだ。
         assertThat(MailKind.ORDER_PLACED.isTransactional()).isFalse();
         assertThat(MailKind.SECURITY_ALERT.isTransactional()).isFalse();
     }
@@ -73,6 +81,8 @@ class MailChannelPolicyTest {
 
         // SMS 는 건당 과금이라 SHIPPING_UPDATED 가 기본 꺼짐이지만, 메일은 비용이 없으므로
         // 그런 선별이 필요 없다.
+        // [JA] SMS は一通ごとの課金なので SHIPPING_UPDATED が既定オフだが、メールはコストがないのでそうした選別は要らな
+        //      い。
         assertThat(p.shouldSendEmail(NotificationType.SHIPPING_UPDATED)).isTrue();
         assertThat(p.shouldSendSms(NotificationType.SHIPPING_UPDATED)).isFalse();
     }

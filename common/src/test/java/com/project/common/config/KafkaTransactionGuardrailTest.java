@@ -26,6 +26,12 @@ import org.junit.jupiter.api.Test;
  * 되지만, 좀비 프로듀서는 영원히 펜싱되지 않고 브로커에는 다시는 안 쓰일 트랜잭션 상태가 쌓인다 —
  * 즉 <b>설정이 걸려 있다고 믿지만 그 설정이 주는 보장은 없는</b> 상태다. 반대로 접두사가 같은
  * id 를 두 팩토리(또는 두 서비스)가 쓰면 서로를 펜싱해 'ProducerFencedException' 이 난다.
+ *
+ * <p>[JA] トランザクショナルプロデューサーの {@code transactional.id} のルールを守る(docs/38 §1.17)。
+ * {@code transactional.id} は「このプロデューサーの次の化身」を識別する値なので、<b>再起動の間で同じでなければ</b>フェンシングにならない。
+ * 起動のたびに {@code UUID.randomUUID()} を入れると、コンパイルも起動も正常でトランザクションも動くが、ゾンビプロデューサーは永遠にフェンシングされず、
+ * ブローカーには二度と使われないトランザクション状態が溜まる — つまり<b>設定がかかっていると信じているが、その設定が与える保証はない</b>状態だ。
+ * 逆に接頭辞が同じ id を 2 つのファクトリー(または 2 つのサービス)が使うと、互いをフェンシングして 'ProducerFencedException' が出る。
  */
 @DisplayName("Kafka 가드레일 · transactional.id 는 안정적이고 유일해야 한다")
 class KafkaTransactionGuardrailTest {
@@ -62,6 +68,7 @@ class KafkaTransactionGuardrailTest {
                         continue;
                     }
                     // 설정을 **빼는** 줄은 규칙 밖이다(트랜잭션을 쓰지 않겠다는 뜻).
+                    // [JA] 設定を**外す**行はルールの対象外だ(トランザクションを使わないという意味)。
                     if (line.contains(".remove(")) {
                         continue;
                     }
@@ -88,6 +95,7 @@ class KafkaTransactionGuardrailTest {
                 .as("transactional.id 는 재시작 사이에 같아야 펜싱이 되고, 프로듀서마다 달라야 서로를 펜싱하지 않는다")
                 .isEmpty();
         // 규칙이 실제로 무언가를 검사하고 있는지 — 트랜잭셔널 프로듀서가 하나도 없으면 이 테스트는 공허하다.
+        // [JA] ルールが実際に何かを検査しているか — トランザクショナルプロデューサーが一つもなければこのテストは空虚だ。
         assertThat(prefixOwners).as("order-service 의 사가 보상 프로듀서 넷").hasSizeGreaterThanOrEqualTo(4);
     }
 }

@@ -22,6 +22,12 @@ import org.apache.kafka.common.serialization.Serializer;
  * 토픽을 그대로 읽을 수 있다(docs/38 §1.16·§1.17).
  *
  * @param <R> 생성 클래스. {@code R.getEncoder()} / {@code R.getDecoder()} 를 넘긴다.
+ *
+ * <p>[JA] 生成された {@link SpecificRecord} をそのまま載せる Kafka Streams 用の {@link Serde} — 単一オブジェクトエンコーディング。
+ * {@link AvroDtoSerializer} 系は DTO↔レコード変換を抱える(リスナーが DTO を受け取り続けるように)。一方 Streams トポロジーの<b>状態</b>(変更ログ · リパーティション
+ * トピック · 状態ストア · プロジェクション出力)はドメイン DTO ではなくスキーマが真実なので、レコードを直接載せる。形式は同じ: {@code C3 01} + フィンガープリント + 本文、
+ * だから文字列コンシューマーの {@link AvroJsonTextDeserializer} や他サービスのハイブリッドデシリアライザーが出力トピックをそのまま読める(docs/38 §1.16 · §1.17)。
+ * R は生成クラス。{@code R.getEncoder()} / {@code R.getDecoder()} を渡す。
  */
 public final class AvroSpecificSerde<R extends SpecificRecord> implements Serde<R> {
 
@@ -36,6 +42,7 @@ public final class AvroSpecificSerde<R extends SpecificRecord> implements Serde<
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         // 설정할 것이 없다 — 스키마가 코드에 있다.
+        // [JA] 設定するものはない — スキーマがコードにある。
     }
 
     @Override

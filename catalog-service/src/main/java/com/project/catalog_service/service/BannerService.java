@@ -28,6 +28,8 @@ public class BannerService {
     /**
      * 한 번에 내려보내는 최대 배너 수. 실수로 100개가 공개돼도 홈 화면이 그걸 전부
      * 받아 오지는 않게 한다.
+     *
+     * <p>[JA] 一度に返す最大バナー数。誤って 100 個が公開されても、ホーム画面がそれを全部受け取ってこないようにする。
      */
     @Value("${content.banner.max-visible:10}")
     private int maxVisible;
@@ -54,6 +56,7 @@ public class BannerService {
                 .linkUrl(com.project.catalog_service.util.SafeLinks.check(request.linkUrl()))
                 .sortOrder(request.sortOrder() == null ? 0 : request.sortOrder())
                 // 기본은 비공개다. 만들자마자 첫 화면에 뜨면 작업 중인 배너가 노출된다.
+                // [JA] デフォルトは非公開。作った途端に最初の画面に出ると、作業中のバナーが露出する。
                 .published(Boolean.TRUE.equals(request.published()))
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
@@ -79,6 +82,7 @@ public class BannerService {
             banner.setPublished(request.published());
         }
         // 기간은 null 을 "제한 없음"으로 되돌리는 의미가 있으므로 그대로 덮어쓴다.
+        // [JA] 期間は null で「制限なし」に戻す意味があるので、そのまま上書きする。
         banner.setStartsAt(request.startsAt());
         banner.setEndsAt(request.endsAt());
 

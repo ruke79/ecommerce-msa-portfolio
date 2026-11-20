@@ -54,8 +54,13 @@ import com.project.userservice.service.impl.UserServiceImpl;
  * {@link AnnotationTransactionAttributeSource} — 클래스 · 메서드의 {@code @Transactional} 을 그대로 읽는다)로 감싸 부른다. 메서드의
  * {@code NOT_SUPPORTED} 를 지우면 클래스의 REQUIRED 가 다시 감싸 실패한다.
  *
- * <p>[JA] パスワードを決める 4 経路は漏えい確認(HIBP)をトランザクションの外で行い、保存はトランザクション内で行う。実際の Spring
- * トランザクションプロキシで包んで呼ぶ。
+ * <p>[JA] パスワードを決める四経路(登録 · 本人変更 · 再設定 · 管理者変更)は漏えい確認(HIBP — 外部呼び出し、最大 2 秒)を<b>トランザクションの外で</b>
+ * 行い、保存はトランザクション内で行う。
+ * 🐛 以前: クラスの {@code @Transactional} がメソッド全体を包み、HIBP を待つ間 DB 接続(プール 5 個)を握っていた。HIBP が遅い日には登録数件で、
+ * 同じプールを使うログイン · 照会まで接続を待った。
+ * 本番と同じ判定を見るため、サービスを<b>実際の Spring トランザクションプロキシ</b>({@link TransactionInterceptor} +
+ * {@link AnnotationTransactionAttributeSource} — クラス · メソッドの {@code @Transactional} をそのまま読む)で包んで呼ぶ。メソッドの
+ * {@code NOT_SUPPORTED} を消すとクラスの REQUIRED が再び包み、失敗する。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -78,9 +83,11 @@ class PasswordPolicyOutsideTransactionTest {
     @InjectMocks private UserServiceImpl target;
 
     /** 운영처럼 @Transactional 을 해석하는 프록시 — 같은 트랜잭션 관리자. */
+    // [JA] 運用のように @Transactional を解釈するプロキシ — 同じトランザクションマネージャー。
     private UserService service;
 
     /** 유출 확인 · 저장이 불렸을 때 트랜잭션이 열려 있었나. */
+    // [JA] 漏洩確認・保存が呼ばれたときトランザクションが開いていたか。
     private final List<Boolean> hibpInTx = new ArrayList<>();
     private final List<Boolean> saveInTx = new ArrayList<>();
 

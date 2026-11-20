@@ -35,9 +35,20 @@ import lombok.extern.slf4j.Slf4j;
  * {@code [eureka write]} 로 남기고 통과) · enforce(403). 경로는 Spring MVC 와 같게 디코딩 · {@code ;…} 제거 뒤에 본다
  * ({@code /eureka/apps/ORDER%2DSERVICE} 로 앱 이름 비교를 비껴가지 못하게).
  *
- * <p>[JA] Eureka の登録を変えるリクエストは、そのサービス自身の証明書でのみ受け付ける。以前は名前空間内のポッド一つから
- * OUT_OF_SERVICE 指定や偽インスタンス登録ができ、lb:// の呼び出しが 503 になったり偽の宛先へ流れたりした。読み取りはそのまま、
- * 書き込みは内部 CA が署名した証明書の CN がパスのアプリ名と一致すること。
+ * <p>[JA] Eureka の登録簿を変えるリクエストは<b>そのサービス自身の証明書</b>でのみ受け付ける(docs/57 §16「Eureka 書き込み」)。
+ *
+ * <p>[JA] 以前: Eureka はクライアント証明書を見ていなかった。ecommerce 名前空間のポッド一つが破られただけで
+ * {@code PUT /eureka/apps/ORDER-SERVICE/<id>/status?value=OUT_OF_SERVICE} 一行で order-service の全インスタンスが一覧から
+ * 外れ(ゲートウェイ · Feign の {@code lb://} が宛先を失って 503)、{@code POST /eureka/apps/ORDER-SERVICE} で偽のインスタンスを
+ * 差し込むとサービス間呼び出しがそちらへ流れた。サービス間 mTLS(§16)はバックエンド同士の呼び出しだけを守っていた。
+ *
+ * <p>[JA] 判定: 読み取り(GET · HEAD · OPTIONS)はそのまま通す。書き込み(登録 · ハートビート · 状態 · メタデータ · 取り消し)は内部 CA が署名したクライアント
+ * 証明書の CN がパスのアプリ名と同じでなければならない(大文字小文字は無視 — Eureka のアプリ名は {@code spring.application.name} を大文字で使う)。
+ * {@code /eureka/apps/} 以外の書き込み(ピア複製 · ASG)はこの単独 Eureka に来ることがないので enforce で拒否する。
+ *
+ * <p>[JA] モード {@code eureka-guard.write-mode}(ConfigMap {@code EUREKA_WRITE_AUTH_MODE}): off(既定) · observe(食い違う書き込みを
+ * {@code [eureka write]} として残して通す) · enforce(403)。パスは Spring MVC と同じくデコード · {@code ;…} 除去の後に見る
+ * ({@code /eureka/apps/ORDER%2DSERVICE} でアプリ名の比較をすり抜けられないように)。
  */
 @Slf4j
 public class RegistryWriteGuard extends OncePerRequestFilter {
@@ -82,6 +93,7 @@ public class RegistryWriteGuard extends OncePerRequestFilter {
             return;
         }
         // 인스턴스 id(호스트 · IP 가 든다)는 남기지 않는다 — 누가 어느 앱에 무엇을 했는지만.
+        // [JA] インスタンス id(ホスト・IP が入る)は残さない — 誰がどのアプリに何をしたかだけ。
         String key = (caller == null ? "-" : caller) + " " + request.getMethod() + " " + (app == null ? path : app);
         if (seen.size() < MAX_SEEN && seen.add(key)) {
             log.warn("[eureka write] {} — caller={} {} app={} ({})", why, caller == null ? "(인증서 없음)" : caller,
@@ -96,12 +108,14 @@ public class RegistryWriteGuard extends OncePerRequestFilter {
     }
 
     /** {@code /eureka/apps/{APP}…} 의 앱 이름, 그 밖의 쓰기 경로면 null. */
+    // [JA] {@code /eureka/apps/{APP}…} のアプリ名、それ以外の書き込みパスなら null。
     static String targetApp(String path) {
         Matcher m = APP.matcher(path);
         return m.matches() ? m.group(1) : null;
     }
 
     /** 이 쓰기를 받을 수 없는 이유, 받을 수 있으면 null. */
+    // [JA] この書き込みを受けられない理由、受けられるなら null。
     static String violation(String caller, String app) {
         if (caller == null) {
             return "내부 CA 인증서 없이 등록부를 바꾸려 했다";
@@ -117,6 +131,7 @@ public class RegistryWriteGuard extends OncePerRequestFilter {
     }
 
     /** enforce 로 거절한 쓰기 수(기동 뒤 누적). */
+    // [JA] enforce で拒否した書き込みの数(起動後の累計)。
     long rejected() {
         return rejected.get();
     }

@@ -19,6 +19,9 @@ public interface DeliveryRepository extends JpaRepository<Delivery, Long> {
      * 송장을 기다리는 배송 — 상자 중 하나라도 송장 없이 {@code PENDING} 인 것. 오래된 것부터.
      *
      * <p>{@code distinct} 는 상자가 여럿일 때 같은 배송이 두 줄로 나오지 않게 한다.
+     *
+     * <p>[JA] 送り状を待っている配送 — 箱のうち一つでも送り状なしで {@code PENDING} のもの。古い順。
+     * {@code distinct} は箱が複数あるとき同じ配送が二行で出ないようにする。
      */
     @Query("""
            select distinct d from Delivery d

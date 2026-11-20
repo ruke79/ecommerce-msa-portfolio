@@ -29,6 +29,9 @@ import ch.qos.logback.core.read.ListAppender;
  * 무제한이라, 깃허브가 응답하지 않으면 그 로그인 스레드가 끝없이 묶였다.
  *
  * <p>[JA] GitHub メールフォールバックの 2 点 — ログに宛先が残らず、呼び出しが無限に縛られない。
+ * 🐛 以前: 例外の原文をそのまま出していた({@code e.getMessage()})— GitHub の応答本文 · リクエスト URL に混じったメールアドレスが
+ * ログ · Loki に残った(notification の N-H2 と同じ欠陥)。そして {@code new RestTemplate()} の既定ファクトリーはタイムアウトが
+ * 無制限なので、GitHub が応答しないとそのログインスレッドが際限なく縛られた。
  */
 @DisplayName("깃허브 이메일 폴백 — 로그 · 타임아웃")
 class GithubEmailFallbackTest {
@@ -63,6 +66,7 @@ class GithubEmailFallbackTest {
     @DisplayName("🔴 조회가 실패해도 로그에 주소 원문이 남지 않는다 — 예외 종류만")
     void failureLogsTheExceptionTypeOnly() {
         // 예외 원문에 주소가 섞인 상황을 그대로 만든다 — 깃허브 응답 본문 · URL 에 흔히 들어간다.
+        // [JA] 例外の原文にアドレスが混ざった状況をそのまま作る — GitHub の応答本文・URL によく入っている。
         service.rest = new RestTemplate() {
             @Override
             public <T> org.springframework.http.ResponseEntity<T> exchange(
@@ -83,6 +87,7 @@ class GithubEmailFallbackTest {
     @DisplayName("🔴 응답하지 않는 상대에게 묶이지 않는다 — 기본 RestTemplate 은 타임아웃이 무제한이다")
     void theCallTimesOut() throws IOException {
         // 받아만 놓고 아무것도 돌려주지 않는 서버 — 읽기 타임아웃이 없으면 영원히 기다린다.
+        // [JA] 受け付けるだけで何も返さないサーバー — 読み取りタイムアウトがなければ永遠に待つ。
         try (ServerSocket silent = new ServerSocket(0)) {
             String url = "http://127.0.0.1:" + silent.getLocalPort() + "/user/emails";
             RestTemplate rest = service.rest;

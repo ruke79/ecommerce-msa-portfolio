@@ -40,6 +40,13 @@ import com.project.catalog_service.document.ProductDocument;
  *
  * <p>⚠️ nori/kuromoji 플러그인은 배포처가 막혀 설치할 수 없어, 이 테스트는 기본 애널라이저로
  * <b>배선(색인→질의→결과)</b>만 검증한다. 한국어 형태소 분석 품질은 별도 검증이 필요하다.
+ *
+ * <p>[JA] Elasticsearch 検索経路の統合テスト。
+ * <p>この経路は<b>一度も動いたことがなかった。</b>実際の ES を付けてみて初めて、独立した欠陥 4 件が順に明らかになった(docs/16 §5):
+ * B-25 Spring Batch のメタスキーマ未作成 → 索引ジョブ自体が回らない、B-26 es-settings.json の重複した {@code settings} ラッパー → インデックス作成失敗、
+ * B-26 リーダーの {@code MultipleBagFetchException} → 索引ステップが毎回失敗、B-27 {@code Page} キャッシュのデシリアライズ不可 → 二回目の検索から 500。
+ * <p>ここでは索引バッチ全体ではなく<b>検索サービスがインデックスを正しく照会するか</b>を固定する。バッチ経路は B-25 が設計判断として残っているので別課題である。
+ * <p>⚠️ nori/kuromoji プラグインは配布元が塞がれていてインストールできないので、このテストは既定のアナライザで<b>配線(索引→クエリ→結果)</b>だけを検証する。韓国語の形態素解析の品質は別途検証が必要である。
  */
 @Tag("containers")
 @Testcontainers
@@ -99,6 +106,7 @@ class EsProductSearchServiceIntegrationTest {
         registry.add("management.tracing.enabled", () -> false);
         registry.add("server.ssl.enabled", () -> false);
         // 이 테스트의 관심사 밖인 외부 자격증명은 더미로 채운다.
+        // [JA] このテストの関心外である外部の資格情報はダミーで埋める。
         registry.add("AMAZON_ACCESS_KEY", () -> "dummy");
         registry.add("AMAZON_SECRET_KEY", () -> "dummy");
         registry.add("AMAZON_BUCKET_NAME", () -> "dummy");
@@ -135,6 +143,7 @@ class EsProductSearchServiceIntegrationTest {
 
         elasticsearchOperations.indexOps(IndexCoordinates.of(INDEX)).refresh();
         // 검색 서비스는 배치가 롤오버하는 alias 를 조회한다. 테스트 인덱스에 alias 를 건다.
+        // [JA] 検索サービスはバッチがロールオーバーする alias を照会する。テスト用インデックスに alias を張る。
         if (!elasticsearchOperations.indexOps(IndexCoordinates.of(ALIAS)).exists()) {
             elasticsearchOperations.indexOps(IndexCoordinates.of(INDEX))
                     .alias(new org.springframework.data.elasticsearch.core.index.AliasActions()
@@ -146,6 +155,7 @@ class EsProductSearchServiceIntegrationTest {
 
     private ProductDocument product(String id, String name, String brand) {
         // ProductDocument 는 @Builder 만 제공한다(세터 없음).
+        // [JA] ProductDocument は @Builder だけを提供する(setter なし)。
         return ProductDocument.builder()
                 .productId(id)
                 .name(name)

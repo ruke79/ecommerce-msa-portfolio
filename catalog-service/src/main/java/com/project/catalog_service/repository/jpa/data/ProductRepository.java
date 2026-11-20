@@ -26,6 +26,8 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
         // --- 낙관적 잠금 적용 예제 ---
         // 낙관적 잠금은 엔티티의 @Version 필드만 있으면 자동으로 동작하지만, 명시적으로 락 모드를 지정할 수도 있습니다.
         //@Lock(LockModeType.OPTIMISTIC)
+        // [JA] --- 楽観ロックの適用例 ---
+        //      楽観ロックはエンティティに @Version フィールドがあれば自動で動作するが、明示的にロックモードを指定することもできる。
         List<Product> findBySlug(String slug);
 
         public List<Product> findByName(String name);
@@ -53,6 +55,11 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
          *
          * <p>정렬 기준이 id 내림차순인 이유: TSID 는 시간 순으로 증가하므로 최신 등록이
          * 먼저 온다. 관리자가 방금 올린 상품을 찾는 것이 가장 흔한 용도다.
+         *
+         * <p>[JA] カテゴリの区別なく全体を id の降順で — 管理者一覧のカーソルページング用。
+         * 既存のカーソルメソッドはどちらもカテゴリが必須で「全商品」を走査できなかった。そのため管理画面は warmUpProductCaches を経由して
+         * カタログ全体を一つの配列で受け取っていた(そしてその結果が Redis のキー一つに丸ごと入っていた)。
+         * 並び順が id の降順である理由: TSID は時間順に増えるので最新の登録が先に来る。管理者が今上げた商品を探すのが最もよくある用途だ。
          */
         public Page<Product> findAllByOrderByProductIdDesc(Pageable page);
 
@@ -68,6 +75,10 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
          * 이 slug 를 쓰는 행이 있는가 — <b>삭제(DELETED)된 상품까지.</b> 엔티티의 {@code @SQLRestriction} 을 거치지 않으려고 네이티브다.
          * 🐛 {@code findBySlug} 로 보면 삭제한 상품의 slug 가 비어 보이는데 유니크 인덱스(V6 uq_product_slug)는 그 행에도 걸려,
          * 삭제한 상품과 같은 이름으로 다시 등록하면 500 이었다.
+         *
+         * <p>[JA] この slug を使う行があるか — 削除(DELETED)された商品まで含めて。エンティティの @SQLRestriction を通らないようネイティブクエリにする。
+         * 🐛 findBySlug で見ると削除した商品の slug は空いているように見えるが、ユニークインデックス(V6 uq_product_slug)はその行にもかかるため、
+         * 削除した商品と同じ名前で再登録すると 500 だった。
          */
         @Query(value = "select exists(select 1 from product.product where slug = :slug)", nativeQuery = true)
         boolean slugTaken(@org.springframework.data.repository.query.Param("slug") String slug);
@@ -80,6 +91,10 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
          *
          * <p>{@code (categoryId, productId)} 를 함께 돌려주는 이유: 카테고리별로 할인율이
          * 다르므로 어느 카테고리에서 온 상품인지 알아야 한다.
+         *
+         * <p>[JA] 複数カテゴリの商品を一度に。企画展の割引合成が使う。
+         * カテゴリごとに上の単件クエリを呼ぶと進行中の企画展のカテゴリ数だけ往復になり、それが 1 分ごとに繰り返される。
+         * (categoryId, productId) を一緒に返す理由: カテゴリごとに割引率が違うので、どのカテゴリから来た商品か分かる必要がある。
          */
         @Query("select p.category.categoryId, p.productId from Product p where p.category.categoryId in :categoryIds")
         public List<Object[]> findProductIdsByCategoryIds(@Param("categoryIds") java.util.Collection<Long> categoryIds);
@@ -91,7 +106,11 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
          * 브랜드 문자열 ~12만 개를 읽어 화면이 중복을 지웠다(브랜드는 ~400개). 그리고 같은 메뉴의 색상 · 사이즈 · 상세는 상품 id 를
          * 전부 읽어 {@code IN (:ids)} 로 다시 보냈다 — 바인드 변수 65,535 를 넘는 카테고리에서 PSQLException, 그 검색은 매번 실패했다.
          * 이제 메뉴는 id 를 앱으로 가져오지 않고 DB 안에서 조인 + DISTINCT 로 만든다(SearchFilterFacets).
-         * [JA] フィルターメニューのブランド — カテゴリ内で重複なしに。以前は DISTINCT なしで商品ごとに一行だった。
+         * [JA] フィルターメニューのブランド — カテゴリ内で<b>重複なしに</b>。
+         * 🐛 2026-10-19 データ規模測定(docs/83 §5): 以前のクエリは DISTINCT なしで商品ごとに一行だった — 100 万商品の fashion は
+         * ブランド文字列 ~12 万個を読み、画面が重複を消していた(ブランドは ~400 個)。そして同じメニューの色 · サイズ · 詳細は商品 id を
+         * 全部読んで {@code IN (:ids)} で送り直していた — バインド変数 65,535 を超えるカテゴリで PSQLException、その検索は毎回失敗した。
+         * 今はメニューは id をアプリへ持ってこず、DB の中で結合 + DISTINCT で作る(SearchFilterFacets)。
          */
         @Query(value = "select distinct b.brand from product.product b where b.category_id = :categoryId", nativeQuery = true)
         public List<String> findDistinctBrandsByCategoryId(@Param("categoryId") Long categoryId);
@@ -99,6 +118,7 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
         // PostgreSQL does not support MATCH AGAINST.
         // We will use the ILIKE operator for case-insensitive pattern matching.
         /** 카테고리를 이름으로 받은 검색(또는 카테고리 없이 — null 이면 전체)의 브랜드, 중복 없이. */
+        // [JA] カテゴリを名前で受けた検索(またはカテゴリなし — null なら全体)のブランド、重複なし。
         @Query(value = "select distinct b.brand from product.category a inner join product.product b on a.category_id = b.category_id and (:categoryRegexp is null or a.category_name ILIKE :categoryRegexp)", nativeQuery = true)
         public List<String> findDistinctBrandsByCategoryName(@Param("categoryRegexp") String categoryRegexp);
 
@@ -146,6 +166,7 @@ public interface ProductRepository extends JpaRepository<Product, Long>, Queryds
     //                     @Param("style") String style, @Param("brand") String brand, @Param("material") String material,
     //                     @Param("gender") String gender, @Param("rating") float rating,
     //                     @Param("productIds") List<Long> productIds);
+    // [JA] (コメントアウトされた旧クエリ。韓国語部分: 「unnest 使用」)
 }
 
 // // MySQL Version 8.0+ supports full-text search with REGEXP

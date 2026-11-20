@@ -44,6 +44,7 @@ class ConfigServerSecurityTest {
                     .andExpect(status().isUnauthorized());
             mvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
             // 전체 health 는 이 테스트 환경에서 DOWN(503)일 수 있다(Eureka · 디스크 등) — 인증이 막지 않는 것만 본다.
+            // [JA] 全体の health はこのテスト環境では DOWN(503)になり得る(Eureka · ディスク等) — 認証が止めないことだけを見る。
             mvc.perform(get("/actuator/health")).andExpect(result -> org.assertj.core.api.Assertions
                     .assertThat(result.getResponse().getStatus()).isNotIn(401, 403));
             mvc.perform(get("/actuator/prometheus")).andExpect(result -> org.assertj.core.api.Assertions
@@ -66,13 +67,14 @@ class ConfigServerSecurityTest {
             mvc.perform(post("/decrypt").content("x").with(httpBasic(ConfigServerSecurity.USER, "wrong")))
                     .andExpect(status().isUnauthorized());
             // 인증은 통과한다 — 키가 없어 복호화 자체는 실패하지만(4xx/5xx) 401 · 403 은 아니다.
+            // [JA] 認証は通過する — 鍵がないので復号自体は失敗するが(4xx/5xx)、401 · 403 ではない。
             mvc.perform(post("/decrypt").content("x").with(httpBasic(ConfigServerSecurity.USER, "s3cret-for-test")))
                     .andExpect(result -> {
                         int code = result.getResponse().getStatus();
                         org.assertj.core.api.Assertions.assertThat(code).isNotIn(401, 403);
                     });
             mvc.perform(get("/actuator/env").with(httpBasic(ConfigServerSecurity.USER, "s3cret-for-test")))
-                    .andExpect(status().isNotFound());   // 노출 목록 밖(health · info · prometheus 만)
+                    .andExpect(status().isNotFound());   // 노출 목록 밖(health · info · prometheus 만) ／ [JA] 公開リスト外(health · info · prometheus のみ)
         }
     }
 }

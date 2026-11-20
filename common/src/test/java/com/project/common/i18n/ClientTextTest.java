@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 서버 문구를 요청 언어로 (docs/60 §4).
+ *
+ * <p>[JA] サーバーの文言をリクエストの言語で(docs/60 §4)。
  */
 @DisplayName("ClientText — 서버 문구 번역")
 class ClientTextTest {
@@ -94,6 +96,7 @@ class ClientTextTest {
         ClientText.reset();
         try {
             // 실제 카탈로그(common 의 client-text.ja.txt)의 문구로
+            // [JA] 実際のカタログ(common の client-text.ja.txt)の文言で
             String ko = "요청 값이 올바르지 않습니다.";
             var map = (java.util.Map<?, ?>) ClientTextResponseAdvice.localizeBody(java.util.Map.of("message", ko, "id", 1));
             assertThat(map.get("message")).isNotEqualTo(ko);

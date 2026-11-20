@@ -55,6 +55,25 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>이미 COMPLETED 면 그대로 돌려준다 — 두 번 누르거나, 자동 확정과 손님의 클릭이 겹쳐도
  * 두 번째는 아무 일도 하지 않는다. 이벤트도 커밋 뒤에만 나간다.
+ *
+ * <p>[JA] 購入確定 — {@code DELIVERED → COMPLETED}、注文の最後の遷移 (docs/25 §12)。
+ * <b>空いていた場所</b>: {@code OrderStatus.COMPLETED} は宣言だけあって<b>その値を入れるコードがリポジトリのどこにも
+ * なかった。</b>PROCESSING・DISPATCHED・DELIVERED が空だったこと({@code OrderDeliveryStatusService})
+ * と同じ形である。配達完了が終わりで、注文はそこで永遠に止まった。
+ * <b>二つの経路</b>: <b>顧客が押す</b> — {@link #confirmByCustomer}。配達完了した<b>自分の</b>注文だけ。
+ * 他人の注文なら 403 ではなく<b>404</b> である(番号を舐めて存在有無を知られないように、
+ * {@code OrderDataService.getOrder} と同じルール)。
+ * <b>期限が過ぎたら自動で</b> — {@link #autoConfirmSweep}。配達完了の後
+ * {@code order.auto-confirm.days}(デフォルト 7 日)が過ぎた注文を 1 時間ごとに舐める。顧客が
+ * 何も押さない場合がほとんどなので、こちらが実際の多数である。{@code autoCompleted} を
+ * true で残し、画面が「自動で確定されました」と言えるようにする。
+ * <b>確定が変えるもの</b>: 注文状態と時刻だけである。返金は確定後も管理者経路(返品入庫)で開いている —
+ * {@code SHIPPED_STATUSES} に COMPLETED が入っている。顧客の直接返金は配達完了時点で
+ * 既に閉じているので({@code SELF_SERVICE_REFUNDABLE})、確定が新たに閉じる扉はない。つまり
+ * 確定は<b>「受け取って問題ない」という顧客の言葉</b>であり、売上集計({@code PAID_STATUSES})には
+ * 配達完了と同じく計上される。
+ * <b>冪等</b>: 既に COMPLETED ならそのまま返す — 二回押したり、自動確定と顧客のクリックが重なっても
+ * 二回目は何もしない。イベントもコミットの後にだけ出る。
  */
 @Slf4j
 @Service
@@ -93,6 +112,7 @@ public class OrderPurchaseConfirmationService {
     }
 
     /** 자동 확정까지의 날 수 — 화면이 "N일 뒤 자동 확정" 이라고 말할 때 쓴다. */
+    // [JA] 自動確定までの日数 — 画面が「N 日後に自動確定」と言う時に使う。
     public int autoConfirmDays() {
         return autoDays;
     }
@@ -104,8 +124,12 @@ public class OrderPurchaseConfirmationService {
     /**
      * 손님이 구매를 확정한다.
      *
+     * <p>[JA] 顧客が購入を確定する。
+     *
      * @throws OrderNotFoundException 주문이 없거나 요청자의 것이 아니다 → 404
+     *                                [JA] 注文がないか要求者のものではない → 404
      * @throws OrderDomainException   배달 완료 상태가 아니다 → 400
+     *                                [JA] 配達完了状態ではない → 400
      */
     @Transactional
     public Order confirmByCustomer(Long orderId, Long requesterId) {
@@ -115,7 +139,7 @@ public class OrderPurchaseConfirmationService {
             throw new OrderNotFoundException("주문을 찾을 수 없습니다.");
         }
         if (order.getOrderStatus() == OrderStatus.COMPLETED) {
-            return order;   // 이미 확정됐다 — 두 번 눌렀거나 자동 확정과 겹쳤다.
+            return order;   // 이미 확정됐다 — 두 번 눌렀거나 자동 확정과 겹쳤다. ／ [JA] 既に確定した — 二回押したか自動確定と重なった。
         }
         if (order.getOrderStatus() != OrderStatus.DELIVERED) {
             throw new OrderDomainException(
@@ -130,6 +154,10 @@ public class OrderPurchaseConfirmationService {
      *
      * <p>한 번에 {@code batch-size} 건까지다 — 밀린 주문이 많아도 한 트랜잭션이 커지지 않게.
      * 남은 것은 다음 주기에 이어서 한다.
+     *
+     * <p>[JA] 期限が過ぎた配達完了の注文を自動確定する。1 時間ごと。起動直後の 2 分は待つ。
+     * 一度に {@code batch-size} 件まで — 溜まった注文が多くても一つのトランザクションが大きくならないように。
+     * 残りは次の周期に続けて行う。
      */
     @Scheduled(fixedDelayString = "${order.auto-confirm.check-ms:3600000}", initialDelay = 120000)
     @Transactional
@@ -142,7 +170,9 @@ public class OrderPurchaseConfirmationService {
 
     /**
      * @param now 기준 시각(UTC). {@code now − days} 이전에 배달 완료된 주문이 대상이다.
+     *            [JA] 基準時刻(UTC)。{@code now − days} より前に配達完了した注文が対象である。
      * @return 확정한 건수
+     *         [JA] 確定した件数
      */
     int autoConfirmDue(LocalDateTime now) {
         if (!autoEnabled) {
@@ -169,6 +199,7 @@ public class OrderPurchaseConfirmationService {
     }
 
     /** 트랜잭션 안이면 커밋 뒤에, 아니면(테스트) 바로. 커밋이 안 됐는데 알림만 나가면 안 된다. */
+    // [JA] トランザクションの中ならコミットの後に、そうでなければ(テスト)すぐに。コミットされていないのに通知だけ出てはならない。
     private static void afterCommit(Runnable action) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -183,6 +214,7 @@ public class OrderPurchaseConfirmationService {
     }
 
     /** 컨트롤러가 응답에 넣을 값 — 없으면 비어 있다. */
+    // [JA] コントローラが応答に入れる値 — なければ空である。
     public static Optional<LocalDateTime> completedAt(Order order) {
         return Optional.ofNullable(order.getCompletedAt());
     }

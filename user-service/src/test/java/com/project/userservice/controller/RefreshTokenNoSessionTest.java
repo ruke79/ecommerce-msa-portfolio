@@ -36,6 +36,10 @@ import jakarta.servlet.http.Cookie;
  * "쿠키가 하나도 없으면 204, 있는데 리프레시만 없으면 400" 이었는데, 운영에서는 쿠키가
  * 하나도 없는 요청이 거의 없다(Cloudflare 쿠키, 로그아웃 뒤 남은 쿠키). 그래서 방문자
  * 전원이 400 을 받았다. 세션이 없는 것은 오류가 아니다 — 204 다.
+ *
+ * <p>[JA] 🐛 <b>ログイン前の初回ロードのたびにコンソールに 400 "refresh token null" が出ていた。</b>
+ * <p>フロントは最初の画面を描く前に必ず再発行を呼ぶ(再読み込み後のセッション復旧)。サーバは「クッキーが一つもなければ 204、あるのにリフレッシュだけなければ 400」だったが、
+ * 運用ではクッキーが一つもないリクエストはほとんどない(Cloudflare クッキー、ログアウト後に残ったクッキー)。だから訪問者全員が 400 を受けていた。セッションがないのはエラーではない — 204 だ。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -56,6 +60,7 @@ class RefreshTokenNoSessionTest {
         request = new MockHttpServletRequest("GET", "/api/token/refresh");
         response = new MockHttpServletResponse();
         // createCookie 는 진짜 것과 같은 모양으로 — 지우는 쿠키의 속성을 검사한다.
+        // [JA] createCookie は本物と同じ形で — 削除するクッキーの属性を検査する。
         when(jwtUtils.createCookie(anyString(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(java.time.Duration.ZERO)))
                 .thenAnswer(inv -> {
                     Cookie c = new Cookie(inv.getArgument(0), null);
@@ -76,6 +81,7 @@ class RefreshTokenNoSessionTest {
     }
 
     /** 🔴 핵심 — 예전에는 여기가 400 이었다. 다른 쿠키(Cloudflare 등)는 세션과 무관하다. */
+    // [JA] 🔴 核心 — 以前はここが 400 だった。他のクッキー(Cloudflare など)はセッションと無関係である。
     @Test
     @DisplayName("다른 쿠키만 있고 리프레시 쿠키가 없어도 204 — 400 이 아니다")
     void otherCookiesButNoRefresh() throws Exception {
@@ -96,6 +102,7 @@ class RefreshTokenNoSessionTest {
     }
 
     /** 만료는 400 그대로(프론트가 문구로 구분한다) — 대신 쿠키를 지워 다음 로딩부터 204 가 되게. */
+    // [JA] 期限切れは 400 のまま(フロントが文言で区別する) — 代わりにクッキーを消して次のロードから 204 になるように。
     @Test
     @DisplayName("만료된 리프레시 쿠키는 400 'refresh token expired' 이고 쿠키를 지운다")
     void expiredCookieIsClearedAnd400() throws Exception {

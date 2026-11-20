@@ -41,20 +41,39 @@ import lombok.extern.slf4j.Slf4j;
  *       다시 열면 이력에 있다.</li>
  * </ul>
  *
- * <p>[JA] 購読者への STOMP メッセージをすべての chat Pod に広げる(Redis pub/sub のファンアウト)。以前はインメモリのブローカーと
- * コンシューマーグループのせいで Pod が二つだと別の Pod の購読者に届かず、replicas 1 固定だった。保存は一度だけのまま、配る経路だけ変える。
+ * <p>[JA] 購読者への STOMP メッセージを<b>すべての chat Pod</b> に広げる — Redis pub/sub のファンアウト(docs/21 §2)。
+ *
+ * <p>[JA] 以前: ブローカーがインメモリ({@code enableSimpleBroker})で購読は各 Pod のメモリにしかなく、Kafka コンシューマーグループはメッセージを
+ * Pod <b>一つだけ</b>に渡す。Pod が二つだと A に繋いだ利用者は B が消費したメッセージを受け取れなかった — だから replicas 1 固定(B-34)だった。
+ * 今は消費した Pod が {@link #CHANNEL} に一度発行し、すべての Pod(自分自身を含む)が受けてそれぞれの購読者へ送る。
+ * 保存はそのままコンシューマーグループ一つで一度だけ行う(MessageConsumer) — 配る経路だけが変わる。
+ *
+ * <ul>
+ *   <li>[JA] <b>形式はそのまま</b> — ペイロードを STOMP 変換器({@code brokerMessageConverter} — Spring Boot がアプリの ObjectMapper を掛ける)の
+ *       ObjectMapper で <b>JSON 文字列</b>にして載せ、受けた Pod はそのバイトをそのまま({@code application/json})送る。JSON ツリーで
+ *       運ぶと数値表現が変わる(時刻 {@code 1793491200.000000000} → {@code 1.7934912E9} — StompFanoutTest が捕まえた)。</li>
+ *   <li>[JA] <b>順序</b> — 受ける側はスレッド一つで順番に送る({@link StompFanoutConfig})。同じルームのメッセージは Kafka キー(ルーム)で既に
+ *       順番に消費され、Redis は一つの接続の発行順に配信する。</li>
+ *   <li>[JA] <b>Redis に載せられなければ、この Pod の購読者にだけでも</b>送る(Pod が一つのときは以前と同じ) — 他の Pod の購読者はそのメッセージを
+ *       リアルタイムでは逃す(履歴にはある)。カウンター {@value #FAILED_METRIC} · 警報 {@code ChatFanoutPublishFailed}。</li>
+ *   <li>[JA] Redis pub/sub は最大一回の配信である — 購読接続が一瞬切れた Pod はその間のリアルタイムメッセージを逃す。メッセージは先に保存されるので
+ *       開き直せば履歴にある。</li>
+ * </ul>
  */
 @Slf4j
 @Component
 public class StompFanout {
 
     /** 모든 chat 파드가 구독하는 Redis 채널. */
+    // [JA] すべての chat Pod が購読する Redis チャネル。
     public static final String CHANNEL = "chat:stomp-fanout";
 
     /** Redis 에 싣지 못해 이 파드의 구독자에게만 보낸 수 — 경보 {@code ChatFanoutPublishFailed}. */
+    // [JA] Redis に載せられずこの Pod の購読者にだけ送った数 — アラート {@code ChatFanoutPublishFailed}。
     public static final String FAILED_METRIC = "chat.stomp.fanout.failed";
 
     /** 받은 메시지를 보낼 수 있는 주소 — SimpleBroker 의 접두사. 다른 주소는 버린다. */
+    // [JA] 受信したメッセージを送れる宛先 — SimpleBroker の接頭辞。他の宛先は捨てる。
     static final String BROKER_PREFIX = "/sub/";
 
     private final StringRedisTemplate redis;
@@ -78,6 +97,7 @@ public class StompFanout {
     }
 
     /** STOMP 변환기가 쓰는 ObjectMapper — 구독자가 받는 JSON 을 예전과 같게. 없으면(테스트) 모듈을 찾은 기본값. */
+    // [JA] STOMP コンバータが使う ObjectMapper — 購読者が受け取る JSON を以前と同じにする。なければ(テスト)モジュールを探したデフォルト値。
     static ObjectMapper stompObjectMapper(CompositeMessageConverter brokerConverter) {
         if (brokerConverter != null) {
             for (var c : brokerConverter.getConverters()) {
@@ -90,6 +110,7 @@ public class StompFanout {
     }
 
     /** 모든 파드의 {@code destination} 구독자에게 보낸다. 실패는 호출자에게 올리지 않는다(저장은 이미 끝났다). */
+    // [JA] すべての Pod の {@code destination} 購読者に送る。失敗は呼び出し元に上げない(保存はすでに終わっている)。
     public void send(String destination, Object payload) {
         String body;
         String envelope;
@@ -101,6 +122,7 @@ public class StompFanout {
             envelope = mapper.writeValueAsString(e);
         } catch (Exception e) {
             // 직렬화가 안 되는 페이로드면 예전처럼 변환기에 맡긴다(실패도 예전과 같다)
+            // [JA] シリアライズできないペイロードなら以前どおりコンバータに任せる(失敗も以前と同じ)
             log.warn("STOMP 팬아웃 직렬화 실패 — 이 파드에만 보낸다: destination={} ({})", destination, e.getClass().getSimpleName());
             try {
                 template.convertAndSend(destination, payload);
@@ -120,6 +142,7 @@ public class StompFanout {
     }
 
     /** Redis 에서 받은 봉투 하나 — 이 파드의 구독자에게 보낸다. 어떤 실패도 리스너 밖으로 내보내지 않는다. */
+    // [JA] Redis から受け取った封筒一つ — この Pod の購読者に送る。どんな失敗もリスナーの外に出さない。
     void onEnvelope(byte[] raw) {
         try {
             JsonNode e = mapper.readTree(new String(raw, StandardCharsets.UTF_8));
@@ -136,6 +159,7 @@ public class StompFanout {
     }
 
     /** 이미 JSON 인 바이트를 그대로 — 변환기를 다시 거치지 않는다(직접 보내기와 같은 바이트 · {@code application/json}). */
+    // [JA] すでに JSON のバイトをそのまま — コンバータを再度通さない(直接送信と同じバイト・{@code application/json})。
     private void deliverLocally(String destination, String json) {
         try {
             template.send(destination, MessageBuilder.withPayload(json.getBytes(StandardCharsets.UTF_8))

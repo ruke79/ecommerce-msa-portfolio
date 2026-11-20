@@ -28,6 +28,10 @@ const EMPTY = {
 // 초까지 붙여 내려오므로 잘라 준다. 반대로 보낼 때 빈 문자열은 null 이어야 한다 —
 // ""를 그대로 보내면 역직렬화에서 400 이 나고, null 은 "제한 없음"을 뜻한다.
 // 그리고 입력칸은 현지 시각, 서버는 UTC 다 — 양쪽 모두 변환한다(util/datetime).
+// [JA] <input type="datetime-local"> は "YYYY-MM-DDTHH:mm" しか受け付けない。サーバーの LocalDateTime は
+//      秒まで付けて返ってくるので切り落とす。逆に送るときは空文字列を null にしなければならない —
+//      "" をそのまま送るとデシリアライズで 400 になり、null は「制限なし」を意味する。
+//      そして入力欄は現地時刻、サーバーは UTC である — 両方向とも変換する(util/datetime)。
 const toInput = serverToLocalInput;
 const toPayload = localInputToServer;
 
@@ -40,6 +44,10 @@ const toPayload = localInputToServer;
  *
  * <p>목록의 <b>노출</b>·<b>카테고리</b> 두 칸이 "왜 홈에 안 나오지"의 답이다:
  * 기간 밖이거나 비공개면 노출이 X, 가리키는 카테고리가 사라졌으면 카테고리가 X 다.
+ *
+ * <p>[JA] ホームセクション管理。最初の画面に何をどの順で見せるかを決める。以前はこれがフロントのコードだった
+ * ({@code CategoryProducts.jsx} の {@code category="fashion"} 5 行)。企画展一つ載せるのにデプロイが必要で、カテゴリ名がずれるとエラーなしにその行だけ消えた。
+ * 一覧の<b>表示</b>・<b>カテゴリ</b>の 2 列が「なぜホームに出ない?」の答えである: 期間外か非公開なら表示が X、指すカテゴリが消えていればカテゴリが X になる。
  */
 const HomeSections = () => {
     const { t } = useTranslation();
@@ -93,6 +101,8 @@ const HomeSections = () => {
                 ...form,
                 // CATEGORY 섹션에 서브카테고리가 남아 있으면 화면에는 안 보이지만
                 // 저장은 된다 — 나중에 kind 를 바꿨을 때 엉뚱한 값이 되살아난다.
+                // [JA] CATEGORY セクションにサブカテゴリが残っていると、画面には見えないが
+                //      保存はされる — 後で kind を変えたときに見当違いの値が蘇る。
                 subcategoryName: form.kind === "SUBCATEGORY" ? form.subcategoryName : "",
                 itemLimit: Number(form.itemLimit),
                 sortOrder: Number(form.sortOrder),
@@ -128,6 +138,7 @@ const HomeSections = () => {
     };
 
     // 목록 응답이 편집에 필요한 필드를 모두 갖고 있어서 상세 조회가 없다.
+    // [JA] 一覧の応答が編集に必要なフィールドをすべて持っているので詳細照会はない。
     const startEdit = (section) => {
         setError("");
         setEditingId(section.id);

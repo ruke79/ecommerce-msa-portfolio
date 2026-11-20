@@ -72,6 +72,7 @@ class KafkaDltPolicyTest {
         DefaultErrorHandler handler = handler(meters);
 
         // 재시도할 수 없는 예외(ClassCastException)는 바로 DLT 로 간다
+        // [JA] 再試行できない例外(ClassCastException)はすぐ DLT へ行く
         handler.handleOne(new ClassCastException("poison"), new ConsumerRecord<>("order", 0, 0L, "k", "v"),
                 mock(Consumer.class), mock(MessageListenerContainer.class));
 

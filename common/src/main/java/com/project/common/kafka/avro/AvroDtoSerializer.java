@@ -14,6 +14,10 @@ import org.apache.avro.specific.SpecificRecord;
  * <p>Kafka 의 {@code Serializer} 는 보통 클래스 이름으로 등록해 무인자 생성되지만, 이 직렬화기는
  * 매핑을 안고 있어야 하므로 <b>인스턴스</b>로 {@code DefaultKafkaProducerFactory} 에 넘긴다 —
  * 이 저장소의 역직렬화기들이 이미 그렇게 등록돼 있다.
+ *
+ * <p>[JA] DTO を Avro 単一オブジェクトエンコーディングで書く。ヘッダーなし、レジストリなし — フィンガープリントはレコードの中にある。
+ * Kafka の {@code Serializer} は通常クラス名で登録され引数なしで生成されるが、このシリアライザーはマッピングを抱えている必要があるので<b>インスタンス</b>で
+ * {@code DefaultKafkaProducerFactory} に渡す — このリポジトリのデシリアライザーはすでにそう登録されている。
  */
 public class AvroDtoSerializer<D> implements Serializer<D> {
 

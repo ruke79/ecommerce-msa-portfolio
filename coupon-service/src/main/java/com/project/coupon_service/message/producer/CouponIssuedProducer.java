@@ -36,6 +36,11 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>(정석은 아웃박스다 — 쿠폰 저장과 이벤트 발행을 한 트랜잭션에 묶는 것. 이 서비스에
  * outbox 테이블을 두는 별도 작업이고, delivery-service 도 같은 이유로 직접 발행한다.)
+ *
+ * <p>[JA] クーポンが発行された事実を知らせる。🐛 <b>これまでこのイベントがなかった。</b>{@code NotificationType.COUPON_ISSUED} はメール件名・SMS 文言・メール種別マッピング・受信設定ポリシーがすべて揃っていたのに、<b>その通知を生み出す側がなかった。</b>登録するとクーポンが発行されるが、ユーザーは決済画面に行って初めてそれを知った。
+ * <p>配送通知({@code delivery-status})と同じ形に合わせる — 通知サービスが既にその形を読める({@code customerId} = 受信者、{@code eventId} = 再配信されても通知が一つだけになる安定したキー)。
+ * <p><b>発行失敗は発行を取り消さない。</b>クーポンは既に DB に保存され、それが真実だ。通知を送れなかったからとクーポンを取り消すと「受け取るべきクーポンがない」側になり、その方がはるかに悪い。失敗はログに残す。
+ * <p>(正攻法はアウトボックス — クーポン保存とイベント発行を一つのトランザクションに束ねること。このサービスに outbox テーブルを置く別作業で、delivery-service も同じ理由で直接発行している。)
  */
 @Slf4j
 @Component
@@ -56,6 +61,9 @@ public class CouponIssuedProducer {
      * <p>이름을 명시하는 이유: 이 설정에는 Avro 용
      * {@code KafkaTemplate<String, CouponUseRequest>} 도 있다. 지금은 제네릭이 달라 타입만으로도
      * 갈리지만, 문자열 템플릿이 하나 더 생기면 그때는 <b>이름 없이는 갈리지 않는다.</b>
+     *
+     * <p>[JA] ⚠️ コンストラクターを直接書く。{@code @RequiredArgsConstructor} では {@link Qualifier} をコンストラクター引数に移せないからだ(Lombok の {@code copyableAnnotations} 設定が必要だが、このリポジトリには {@code lombok.config} がない)。catalog-service の {@code EventStartedProducer} も同じ理由で同じ形だ。
+     * <p>名前を明示する理由: この設定には Avro 用 {@code KafkaTemplate<String, CouponUseRequest>} もある。今はジェネリクスが違うので型だけでも区別できるが、文字列テンプレートがもう一つできたら<b>名前なしでは区別できない。</b>
      */
     public CouponIssuedProducer(
             @Qualifier("couponEventKafkaTemplate") KafkaTemplate<String, String> kafkaTemplate,
@@ -78,6 +86,7 @@ public class CouponIssuedProducer {
             event.put("endDate", coupon.getEndDate() == null ? null : coupon.getEndDate().toString());
             event.put("occurredAt", LocalDateTime.now().toString());
             // 쿠폰 하나당 알림 하나. 재전달돼도 sourceEventId 가 UNIQUE 라 중복되지 않는다.
+            // [JA] クーポン一つにつき通知一つ。再配信されても sourceEventId が UNIQUE なので重複しない。
             event.put("eventId", "coupon:" + coupon.getCouponId());
 
             Long couponId = coupon.getCouponId();
@@ -96,6 +105,7 @@ public class CouponIssuedProducer {
 
         } catch (Exception e) {
             // 쿠폰은 이미 저장됐다. 알림만 못 나간 것이라 되돌리지 않는다.
+            // [JA] クーポンは既に保存された。通知だけが出なかったので取り消さない。
             log.error("쿠폰 발급 발행 실패: couponId={} — 알림이 나가지 않는다: {}",
                     coupon.getCouponId(), e.getMessage());
         }

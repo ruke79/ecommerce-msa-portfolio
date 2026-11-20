@@ -31,7 +31,9 @@ import com.project.common.dto.catalog.request.SearchParamsRequest;
  * <p>🐛 2026-10-19 mixed {@code 160904Z}(docs/83 §5): 같은 초에 만료된 검색 키 48개마다 들어온 요청이 모두 DB 로 갔다 —
  * {@code sync = true} 는 Spring Data Redis 3.x 의 잠그지 않는 작성기에서 아무것도 하지 않았다(실제 Redis 로는 {@code CacheStampedeRedisTest}).
  *
- * <p>[JA] キーごとに一度だけ計算 — 同じキーの同時ミスは一つのスレッドだけが計算し、別のキーは互いに待たない。
+ * <p>[JA] キーごとに一度だけ計算(SingleFlightCache)— 同じキーの同時ミスは一つのスレッドだけが計算し、別のキーは互いに待たない。
+ * 🐛 2026-10-19 mixed {@code 160904Z}(docs/83 §5): 同じ秒に期限切れになった検索キー 48 個ごとに来たリクエストがすべて DB へ行った —
+ * {@code sync = true} は Spring Data Redis 3.x のロックしない writer では何もしていなかった(実際の Redis では {@code CacheStampedeRedisTest})。
  */
 @DisplayName("키마다 한 번 계산 — SingleFlightCache")
 class SingleFlightCacheTest {
@@ -44,6 +46,7 @@ class SingleFlightCacheTest {
     }
 
     /** 모든 스레드가 함께 출발해 같은 캐시의 get(key, loader) 를 부른다. */
+    // [JA] すべてのスレッドが一斉に出発し、同じキャッシュの get(key, loader) を呼ぶ。
     private List<Object> race(Cache cache, int threads, java.util.function.IntFunction<Object> key, java.util.concurrent.Callable<Object> loader)
             throws Exception {
         CountDownLatch start = new CountDownLatch(1);

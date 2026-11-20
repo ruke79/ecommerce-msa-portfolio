@@ -49,7 +49,11 @@ import reactor.netty.http.server.HttpServer;
  * 인스턴스로 계속 보냈다 — 그 몫(1/3)의 home · banners · 상품이 회로 차단기 fallback 503 이었다. 이 테스트는 실제 라우트(application-local.yml)에
  * 살아 있는 인스턴스 하나와 닫힌 포트 하나를 붙인다(라운드 로빈이라 두 번에 한 번은 닫힌 쪽).
  *
- * <p>[JA] バックエンドのインスタンス一つが死んでも GET は別インスタンスへ送り直す — 接続失敗だけ、GET だけ、応答ステータスは送り直さない。
+ * <p>[JA] B-99: バックエンドのインスタンス一つが死んでも(ポートが閉じる)GET は別インスタンスへ送り直す — 接続失敗だけ、GET だけ、
+ * 応答ステータスでは送り直さない。
+ * 🐛 2026-10-21 実習 8 時間(docs/83 §2.8): catalog Pod 一つが JVM クラッシュ(SIGSEGV)で死んで再起動する間、ゲートウェイが Eureka に残って
+ * いるそのインスタンスへ送り続けた — その分(1/3)の home · banners · 商品がサーキットブレーカーの fallback 503 だった。このテストは実際のルート
+ * (application-local.yml)に生きたインスタンス一つと閉じたポート一つを付ける(ラウンドロビンなので二回に一回は閉じた側)。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -62,6 +66,7 @@ class RouteRetryTest {
     private static final AtomicInteger WRITES = new AtomicInteger();
 
     /** catalog-service 대역 — 살아 있는 인스턴스. */
+    // [JA] catalog-service の代役 — 生きているインスタンス。
     private static final DisposableServer LIVE = HttpServer.create().host("127.0.0.1").port(0)
             .route(r -> r
                     .get("/api/content/home", (req, res) -> {
@@ -69,6 +74,7 @@ class RouteRetryTest {
                         return res.sendString(Mono.just("home"));
                     })
                     // 격벽이 찬 catalog 처럼 503 — 이것은 다시 보내면 안 된다(바쁜 서비스에 같은 요청을 얹는다)
+                    // [JA] バルクヘッドが満杯の catalog のような 503 — これは再送してはならない(忙しいサービスに同じリクエストを載せる)
                     .get("/api/busy", (req, res) -> {
                         BUSY.incrementAndGet();
                         return res.status(503).sendString(Mono.just("busy"));
@@ -80,6 +86,7 @@ class RouteRetryTest {
             .bindNow();
 
     /** 죽은 인스턴스 — 잡았다 놓은 포트(연결 거부, 파드가 다시 뜨는 동안과 같다). */
+    // [JA] 死んだインスタンス — 掴んで放したポート(接続拒否、ポッドが再起動している間と同じ)。
     private static final int DEAD = freePort();
 
     private static int freePort() {
@@ -162,6 +169,7 @@ class RouteRetryTest {
     }
 
     // ── 설정 가드: 라우트마다 하나 · 마지막(회로 차단기 안쪽) · GET · 연결 실패만 ─────────────────────────────
+    // [JA] ── 設定ガード: ルートごとに一つ · 最後(サーキットブレーカーの内側) · GET · 接続失敗のみ ──
 
     private static GatewayProperties gateway() throws Exception {
         StandardEnvironment env = new StandardEnvironment();

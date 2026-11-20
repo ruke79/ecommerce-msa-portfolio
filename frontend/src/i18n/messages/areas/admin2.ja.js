@@ -3,9 +3,14 @@
  *
  * <p>영역마다 파일을 나눈 이유: 한 파일(ko.js)에 모두 모으면 여러 사람이 동시에 고칠 때 늘 충돌한다. 합치는 곳은 ../ja.js 이고,
  * 같은 키가 두 파일에 있으면 i18n.test.jsx 가 실패한다.
+ *
+ * <p>[JA] 日本語文言 — 領域 "admin2"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ja.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
  */
 const admin2 = {
     // ── 사이드바 ────────────────────────────────────────────────────────
+    // [JA] ── サイドバー ──
     "admin.sidebar.home": "ホーム",
     "admin.sidebar.product_management": "商品管理",
     "admin.sidebar.category": "カテゴリ",
@@ -25,6 +30,7 @@ const admin2 = {
     "admin.sidebar.settings": "設定",
 
     // ── 이미지 저장소 상태 ─────────────────────────────────────────────
+    // [JA] ── 画像ストレージの状態 ──
     "admin.storage.unknown_title": "画像ストレージの状態を確認できませんでした。",
     "admin.storage.unknown_detail":
         "ストレージが正常であるという意味ではありません。画像のアップロードで登録に失敗する可能性があるため、長いフォームを入力する前に catalog-service のログを一度確認してください。",
@@ -42,6 +48,7 @@ const admin2 = {
         "k8s Secret（ecommerce-secrets）の AMAZON_ACCESS_KEY / AMAZON_SECRET_KEY / AMAZON_BUCKET_NAME / AMAZON_REGION を確認してから、catalog-service を再起動してください。",
 
     // ── 카테고리 등록 ──────────────────────────────────────────────────
+    // [JA] ── カテゴリ登録 ──
     "admin.category.load_failed": "カテゴリを読み込めませんでした。",
     "admin.category.load_sub_failed": "サブカテゴリを読み込めませんでした。",
     "admin.category.name_required": "カテゴリ名は必須です。",
@@ -63,6 +70,7 @@ const admin2 = {
     "admin.category.sub_row": "カテゴリ：{{parent}}　サブカテゴリ：{{name}}",
 
     // ── 상품 등록 폼 ───────────────────────────────────────────────────
+    // [JA] ── 商品登録フォーム ──
     "admin.product_form.title": "商品の登録",
     "admin.product_form.name_required": "商品名を入力してください。",
     "admin.product_form.name_length": "商品名は10～300文字で入力してください。",
@@ -131,6 +139,7 @@ const admin2 = {
     "admin.product_form.dialog_ok": "OK",
 
     // ── 상품 등록 화면(Index) ──────────────────────────────────────────
+    // [JA] ── 商品登録画面(Index) ──
     "admin.index.rate_limited": "リクエストが多すぎます。しばらくしてから再度お試しください。",
     "admin.index.load_products_failed": "商品一覧を読み込めませんでした。",
     "admin.index.load_parent_failed": "親商品の情報を読み込めませんでした。",
@@ -138,6 +147,7 @@ const admin2 = {
     "admin.index.close": "閉じる",
 
     // ── 상품 목록 ──────────────────────────────────────────────────────
+    // [JA] ── 商品一覧 ──
     "admin.products.title": "全商品",
     "admin.products.badge.sold_out": "品切れ",
     "admin.products.badge.deleted": "削除済み",
@@ -169,6 +179,7 @@ const admin2 = {
     "admin.products.empty": "登録されている商品はありません。",
 
     // ── 배너 관리 ──────────────────────────────────────────────────────
+    // [JA] ── バナー管理 ──
     "admin.banners.title": "バナー管理",
     "admin.banners.load_failed": "バナー一覧を読み込めませんでした。",
     "admin.banners.save_failed": "保存できませんでした。",
@@ -197,6 +208,7 @@ const admin2 = {
     "admin.banners.delete": "削除",
 
     // ── 전체 알림 ──────────────────────────────────────────────────────
+    // [JA] ── 全体通知 ──
     "admin.broadcasts.title": "一斉通知",
     "admin.broadcasts.intro_before": "ログイン中のすべてのユーザーの通知一覧に表示されます。お知らせ記事は",
     "admin.broadcasts.intro_link": "お知らせ管理",
@@ -226,6 +238,7 @@ const admin2 = {
     "admin.broadcasts.empty": "送信した一斉通知はありません",
 
     // ── 공지 관리 ──────────────────────────────────────────────────────
+    // [JA] ── お知らせ管理 ──
     "admin.notices.title": "お知らせ管理",
     "admin.notices.load_failed": "お知らせ一覧を読み込めませんでした。",
     "admin.notices.save_failed": "保存できませんでした。",
@@ -247,6 +260,7 @@ const admin2 = {
     "admin.notices.delete": "削除",
 
     // ── CSV 일괄 상품 등록 ─────────────────────────────────────────────
+    // [JA] ── CSV 一括商品登録 ──
     "admin.import.title": "CSV 商品一括登録",
     "admin.import.intro":
         "アプリケーションに同梱された CSV で、カテゴリ・商品・SKU・画像を一度に登録します。初期データ投入用です。すでに商品がある状態で実行すると重複します。",
@@ -275,6 +289,7 @@ const admin2 = {
     "admin.import.col.skipped": "スキップ",
 
     // ── 재고 관리 ──────────────────────────────────────────────────────
+    // [JA] ── 在庫管理 ──
     "admin.stock.title": "在庫管理",
     "admin.stock.load_failed": "在庫一覧を読み込めませんでした。",
     "admin.stock.invalid_quantity": "在庫数は0以上の整数で入力してください。",

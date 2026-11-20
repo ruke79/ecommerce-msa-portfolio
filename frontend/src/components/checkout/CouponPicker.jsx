@@ -18,6 +18,16 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>가진 것을 보여주고 고르게 한다. 만료된 쿠폰은 <b>목록에서 감추지 않고</b> 흐리게 둔다 —
  * 감추면 "쿠폰이 있었는데 사라졌다"가 되고 만료됐다는 것을 알 방법이 없다.
+ *
+ * <p>[JA] 保有クーポンの選択。
+ * 以前は自由入力欄一つだった。しかしこのサービスには「コードを入力してクーポンを受け取る」という概念がない —
+ * クーポンはユーザーごとの行として発行され、適用はその行の名前で探す。つまり入力欄に入れて通る値は
+ * すでに持っているクーポンの名前を文字どおりに合わせたものだけだった。ユーザーは自分のクーポン名を知る方法がなかった。
+ * そのため実際には画面が一覧の最初のクーポンを自動で適用していた。クーポンが一枚だけならそれなりに動いたが、
+ * · 複数枚ならユーザーが選べず(常に最初)、
+ * · 制約(カテゴリー · 商品)ができた今はカートに合わないクーポンが自動で適用され「クーポンを入れたのに割引が 0 円」で終わりうる。
+ * 持っているものを見せて選ばせる。期限切れクーポンは一覧から隠さず薄く残す —
+ * 隠すと「クーポンがあったのに消えた」になり、期限切れだと知る方法がない。
  */
 const CouponPicker = ({ coupons, selected, onSelect, disabled }) => {
     const { t } = useTranslation();
@@ -74,6 +84,7 @@ const CouponPicker = ({ coupons, selected, onSelect, disabled }) => {
             })}
 
             {/* 고른 쿠폰을 되돌릴 방법이 있어야 한다. 라디오는 한번 고르면 해제가 안 된다. */}
+            {/* [JA] 選んだクーポンを取り消す方法が必要である。ラジオは一度選ぶと解除できない。 */}
             <label
                 className={`flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition
                     ${!selected ? "border-amazon-orange bg-amber-50" : "border-slate-300 hover:border-amazon-blue_light"}`}
@@ -98,6 +109,10 @@ const CouponPicker = ({ coupons, selected, onSelect, disabled }) => {
  * <p>대상의 <b>이름</b>(카테고리명·상품명)까지 보여주려면 목록을 그릴 때마다 catalog 를
  * 한 번 더 조회해야 한다. 지금은 범위만 표시하고, 실제로 얼마가 깎였는지는 적용 후
  * 응답(eligibleSubtotal·discountAmount)으로 정확히 알려준다.
+ *
+ * <p>[JA] 「このクーポンがどこに適用されるか」を一目で。
+ * 対象の名前(カテゴリー名 · 商品名)まで見せるには一覧を描くたびに catalog をもう一度照会する必要がある。
+ * 今は範囲だけ表示し、実際にいくら引かれたかは適用後の応答(eligibleSubtotal · discountAmount)で正確に知らせる。
  */
 const ScopeBadge = ({ scope, count }) => {
     const { t } = useTranslation();
@@ -118,6 +133,7 @@ function formatPeriod(endDate, t) {
         return t("checkout.coupon_picker.no_limit");
     }
     // 서버는 LocalDateTime.toString() 을 준다(2026-06-15T12:00). 날짜만 쓴다.
+    // [JA] サーバーは LocalDateTime.toString() を返す(2026-06-15T12:00)。日付だけ使う。
     return t("checkout.coupon_picker.until", { date: String(endDate).slice(0, 10) });
 }
 

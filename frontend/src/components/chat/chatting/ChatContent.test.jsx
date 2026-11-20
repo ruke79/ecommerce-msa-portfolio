@@ -12,7 +12,7 @@ jest.mock("store/AuthContext", () => ({
     useAuthContext: () => ({ user: { email: "me@example.com", userId: "1234567890123456789" } }),
 }));
 
-const T0 = Date.UTC(2026, 8, 18, 6, 24, 5); // 2026-09-18 06:24:05Z (금요일)
+const T0 = Date.UTC(2026, 8, 18, 6, 24, 5); // 2026-09-18 06:24:05Z (금요일) ／ [JA] 2026-09-18 06:24:05Z(金曜日)
 
 const msg = (over = {}) => ({
     id: "m1",
@@ -31,6 +31,10 @@ const renderChat = (list) => render(withI18n(<ChatContent chattingList={list} />
  *
  * <p>원인은 날짜 구분선을 만들 때 {@code toLocaleDateString()} 의 결과를 {@code '.'}
  * 로 쪼갠 것이다. 점으로 나뉘는 로케일은 {@code ko-KR} 뿐이다.
+ *
+ * <p>[JA] ユーザー報告: 「チャットルームを作ってチャットを入力したら Cannot read properties of undefined (reading 'trim')」 —
+ * その後 ErrorBoundary 画面(「画面の描画中にエラーが発生しました」)から抜け出せなかった。
+ * 原因は日付区切り線を作るときに toLocaleDateString() の結果を '.' で分割したことである。点で分かれるロケールは ko-KR だけである。
  */
 describe("ChatContent — 날짜 구분선", () => {
     let langBackup;
@@ -46,6 +50,9 @@ describe("ChatContent — 날짜 구분선", () => {
     /**
      * 🔴 회귀 대상. 첫 메시지는 <b>반드시</b> 날짜 구분선을 만든다(이전 메시지가 없으면
      * "날짜가 바뀌었다" 로 본다). 그래서 방을 만들고 첫 메시지를 보내는 순간이 재현 조건이다.
+     *
+     * <p>[JA] 🔴 回帰対象。最初のメッセージは必ず日付区切り線を作る(前のメッセージがなければ「日付が変わった」とみなす)。
+     * だから部屋を作って最初のメッセージを送る瞬間が再現条件である。
      */
     it("🔴 영어 로케일에서 첫 메시지를 그려도 죽지 않는다", () => {
         document.documentElement.lang = "en";
@@ -71,6 +78,9 @@ describe("ChatContent — 날짜 구분선", () => {
      * 🔴 createdAt 이 없는 메시지. 발신자의 회원 복제 행이 없으면 서버가 시각 없이 보내던
      * 경로가 있었다(ChatService.sendMessage 의 `if (member != null)`). 화면은 말풍선만
      * 그리고 넘어가야 한다 — 시각이 없다고 대화 전체가 사라지면 안 된다.
+     *
+     * <p>[JA] 🔴 createdAt のないメッセージ。送信者の会員複製行がなければサーバーが時刻なしで送っていた経路があった
+     * (ChatService.sendMessage の `if (member != null)`)。画面は吹き出しだけ描いて進まなければならない — 時刻がないからと会話全体が消えてはならない。
      */
     it("🔴 createdAt 이 없어도 말풍선은 그린다", () => {
         expect(() => renderChat([msg({ createdAt: undefined, id: undefined })])).not.toThrow();
@@ -106,6 +116,8 @@ describe("날짜·시각 도우미", () => {
     /**
      * 🔴 로케일마다 다른 문자열이 <b>같은 코드</b>에서 나온다 — 쪼개서 조립하지 않기
      * 때문이다. 이것이 "en 에서 죽지 않는다" 의 원리다.
+     *
+     * <p>[JA] 🔴 ロケールごとに違う文字列が同じコードから出る — 分割して組み立てないからである。これが「en で落ちない」の原理である。
      */
     it("🔴 형식을 요청하지, 문자열을 쪼개지 않는다", () => {
         const d = new Date(T0);

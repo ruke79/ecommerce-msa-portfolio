@@ -43,6 +43,7 @@ public class TotpSecretBackfill implements ApplicationRunner {
     }
 
     /** @return 다시 쓴 행 수 */
+    // [JA] @return 書き直した行数
     public int migrate() {
         List<Object[]> rows = jdbc.query(
                 "select user_id, two_factor_secret from users.users where two_factor_secret is not null",
@@ -57,10 +58,11 @@ public class TotpSecretBackfill implements ApplicationRunner {
             try {
                 String sealed = cipher.encrypt(cipher.decrypt(stored));
                 // 그 사이 다른 레플리카 · 사용자가 바꿨으면 덮지 않는다(읽은 값과 같을 때만)
+                // [JA] その間に別のレプリカ・ユーザーが変えていたら上書きしない(読んだ値と同じときだけ)
                 changed += jdbc.update("update users.users set two_factor_secret = ? where user_id = ? and two_factor_secret = ?",
                         sealed, row[0], stored);
             } catch (IllegalStateException e) {
-                failed++;   // 풀 수 없는 값 — 그대로 둔다. 사용자 id 만 남긴다
+                failed++;   // 풀 수 없는 값 — 그대로 둔다. 사용자 id 만 남긴다 ／ [JA] 復号できない値 — そのままにする。ユーザー id だけを残す
                 log.error("2FA 비밀을 다시 암호화하지 못했다 — userId={} ({})", row[0], e.getMessage());
             }
         }

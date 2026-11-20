@@ -43,6 +43,8 @@ const listItem = async (name) => {
 
 /**
  * 상담 데스크 (docs/58 §9 · §11).
+ *
+ * <p>[JA] 相談デスク(docs/58 §9 · §11)。
  */
 describe("Desk — 상담 데스크", () => {
     beforeEach(() => {
@@ -100,6 +102,7 @@ describe("Desk — 상담 데스크", () => {
     });
 
     // ── 거르기 ────────────────────────────────────────────────────────
+    // [JA] ── 絞り込み ────────────────────────────────────────────────────────
 
     it("유형으로 거르면 서버에 유형을 넘겨 읽는다", async () => {
         renderDesk();
@@ -123,6 +126,7 @@ describe("Desk — 상담 데스크", () => {
     });
 
     // ── 상담원 도구 ──────────────────────────────────────────────────
+    // [JA] ── 相談員ツール ──────────────────────────────────────────────────
 
     it("빠른 답변 — 고르면 고객 이름이 들어간 문장이 입력칸에 들어간다(바로 보내지 않는다)", async () => {
         getSupportDesk.mockImplementation((view) => Promise.resolve(view === "MINE" ? [MINE] : []));
@@ -208,6 +212,7 @@ describe("Desk — 상담 데스크", () => {
     });
 
     // ── 실시간 알림(docs/58 §9) ─────────────────────────────────────────
+    // [JA] ── リアルタイム通知(docs/58 §9) ─────────────────────────────────────────
 
     const push = (event) => act(() => { mockStomp.handlers["/sub/support/desk"]({ body: JSON.stringify(event) }); });
 
@@ -258,13 +263,13 @@ describe("Desk — 상담 데스크", () => {
         await listItem("홍길동");
         await waitFor(() => expect(screen.getByTestId("badge-MINE")).toBeInTheDocument());
 
-        push({ threadId: "8", kind: "MESSAGE", senderId: "2001" });   // 나
-        push({ threadId: "77", kind: "MESSAGE", senderId: "1077" });  // 내 담당이 아님
+        push({ threadId: "8", kind: "MESSAGE", senderId: "2001" });   // 나 ／ [JA] 自分
+        push({ threadId: "77", kind: "MESSAGE", senderId: "1077" });  // 내 담당이 아님 ／ [JA] 自分の担当ではない
         expect(toast).not.toHaveBeenCalled();
 
         await userEvent.click(screen.getByRole("tab", { name: /내 담당/ }));
         await userEvent.click(await listItem("김철수"));
-        push({ threadId: "8", kind: "MESSAGE", senderId: "1003" });   // 보고 있는 상담
+        push({ threadId: "8", kind: "MESSAGE", senderId: "1003" });   // 보고 있는 상담 ／ [JA] 見ている相談
         expect(toast).not.toHaveBeenCalled();
     });
 

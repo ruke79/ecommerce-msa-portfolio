@@ -32,7 +32,11 @@ import org.junit.jupiter.params.provider.ValueSource;
  * 화면이 주소를 바꿨는데 시나리오만 옛 주소를 치면 404 · 400 을 재게 된다. ② 실행기는 운영에 걸지 않고, 비밀번호를 명령줄에 올리지 않고,
  * 유입 제한을 운영 클러스터에서 바꾸지 않는다. k6 · kubectl 은 가짜 명령으로 바꿔 돌린다(bash · POSIX 가 없으면 건너뛴다).
  *
- * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
+ * <p>[JA] k6 負荷シナリオ(ops/k6) · 実行器(ops/53-load-k6.sh) — docs/83。
+ *
+ * <p>[JA] 二つを守る。① シナリオが呼ぶアドレスは<b>画面が呼ぶアドレス</b>である(frontend/src に同じパスがあり、最初の区切りはゲートウェイのルート) —
+ * 画面がアドレスを変えたのにシナリオだけ古いアドレスを叩くと 404 · 400 を測ることになる。② 実行器は本番に掛けず、パスワードをコマンドラインに載せず、
+ * 流入制限を本番クラスタで変えない。k6 · kubectl は偽のコマンドに替えて実行する(bash · POSIX がなければスキップ)。
  */
 @DisplayName("ops/53 · ops/k6 — 부하 시나리오와 실행기 (docs/83)")
 class LoadK6ScriptTest {
@@ -54,8 +58,10 @@ class LoadK6ScriptTest {
     }
 
     // ── ① 시나리오의 주소 = 화면의 주소 ───────────────────────────────────
+    // [JA] ── ① シナリオのアドレス = 画面のアドレス ──
 
     /** 문자열 · 템플릿 리터럴 안의 API 경로(`${GATEWAY}/…` 포함) — 첫 `${` · `?` 앞까지. */
+    // [JA] 文字列 · テンプレートリテラル内の API パス(`${GATEWAY}/…` を含む) — 最初の `${` · `?` の手前まで。
     private static final Pattern API_PATH = Pattern.compile("[\"'`}](/(?:[a-z]+-service|saga-projection)/[^\"'`?$]*)");
 
     private static TreeSet<String> paths(Stream<Path> files) {
@@ -76,6 +82,7 @@ class LoadK6ScriptTest {
     }
 
     /** 화면의 경로 — 앞의 / 없이 부르는 곳도 있다(axios 기준 주소에 붙는다 — Review.jsx 의 `user-service/api/review/add/…`). */
+    // [JA] 画面のパス — 先頭の / なしで呼ぶ場所もある(axios の基準アドレスに付く — Review.jsx の `user-service/api/review/add/…`)。
     private static final Pattern FRONTEND_PATH = Pattern.compile("[\"'`}]/?((?:[a-z]+-service|saga-projection)/[^\"'`?$]*)");
 
     private static TreeSet<String> frontendPaths() throws IOException {
@@ -117,6 +124,7 @@ class LoadK6ScriptTest {
         assertThat(read(repoRoot().resolve("ops/k6/browse.js"))).contains("homeOrFail(");
         assertThat(read(repoRoot().resolve("ops/k6/order.js"))).contains("homeOrFail(")
                 // 계정 하나는 VU 하나 — 리프레시 토큰이 회전한다
+                // [JA] アカウント一つは VU 一つ — リフレッシュトークンがローテーションする
                 .contains("maxVUs: USERS").contains("'Idempotency-Key': idempotencyKey()").contains("paymentMethod: 'cash'");
     }
 
@@ -156,6 +164,7 @@ class LoadK6ScriptTest {
     }
 
     /** ops/k6 의 순수 모듈 하나를 node 로 돌린다(ESM — .mjs 로 복사해 불러온다, 이름 s). 출력을 돌려준다. */
+    // [JA] ops/k6 の純粋なモジュール一つを node で動かす(ESM — .mjs にコピーして読み込む、名前 s)。出力を返す。
     private String node(String body) throws Exception {
         return node("spread", body);
     }
@@ -183,6 +192,7 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 SPREAD — 검색 조합을 넓혀 캐시 밖을 잰다: 이름 검색은 쪽마다 다른 주소 · 필터 검색은 거의 겹치지 않는다 · 끄면 예전 주소 그대로")
     void spreadWidensSearchCombinations() throws Exception {
         // 🐛 2026-10-19 100만 회차(docs/83 §5): 조합이 카테고리 × 50쪽 · 이름 검색어 16개뿐이라 첫 1분 반 뒤로는 search_cache 에서 나왔다
+        // [JA] 🐛 2026-10-19 100 万回目(docs/83 §5): 組み合わせがカテゴリ × 50 ページ · 名前の検索語 16 個だけで、最初の 1 分半以降は search_cache から出ていた
         assumeTrue(hasNode(), "node 가 없다");
         String out = node("""
                 const terms = Array.from({ length: 16 }, (_, i) => 't' + i);
@@ -240,6 +250,7 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 mixed — browse 그대로 + 로그인 사용자의 리뷰 쓰기(화면과 같은 multipart) · 받은 상품만 확인이 켜져 있으면 시작 전에 멈춘다")
     void mixedScenarioWritesReviewsWhileBrowsing() throws Exception {
         // 리뷰마다 catalog 의 updateRating 이 불린다(예전에는 search_cache · 필터 메뉴 캐시를 통째로 비웠다) — 읽기만 하는 browse 는 이 경로를 지나지 않는다
+        // [JA] レビューごとに catalog の updateRating が呼ばれる(以前は search_cache · フィルターメニューのキャッシュを丸ごと空にしていた) — 読むだけの browse はこの経路を通らない
         String mixed = read(repoRoot().resolve("ops/k6/mixed.js"));
         assertThat(mixed).as("browse 의 시나리오 · setup 을 그대로")
                 .contains("import { browse, setup as browseSetup, options as browseOptions, coldProductId, PRODUCTS } from './browse.js'")
@@ -257,6 +268,7 @@ class LoadK6ScriptTest {
         assertThat(read(repoRoot().resolve("ops/k6/order.js"))).contains("loginSessions(password, USERS, ID_OFFSET)");
 
         // 엔드포인트별 오류 목록 = browse 의 목록 + 리뷰 · 로그인
+        // [JA] エンドポイント別のエラー一覧 = browse の一覧 + レビュー · ログイン
         Matcher b = Pattern.compile("errorThresholds\\(\\[(.*?)\\]\\)", Pattern.DOTALL).matcher(read(repoRoot().resolve("ops/k6/browse.js")));
         assertThat(b.find()).isTrue();
         Matcher names = Pattern.compile("BROWSE_NAMES = \\[(.*?)\\]", Pattern.DOTALL).matcher(mixed);
@@ -418,6 +430,7 @@ class LoadK6ScriptTest {
         assertThat(lib).contains("export function baseHeaders()").contains("'CF-Connecting-IP': ip")
                 .as("흉내 중에는 기본 제한을 그대로 재는 것이 목적").contains("|| CLIENT_IPS > 0) {");
         // BASE_HEADERS 를 직접 쓰는 줄은 정의 · baseHeaders() 본문 · 제한 확인(limit_probe)뿐 — 나머지 요청은 baseHeaders() 를 거친다
+        // [JA] BASE_HEADERS を直接使う行は定義 · baseHeaders() の本文 · 制限確認(limit_probe)だけ — 残りのリクエストは baseHeaders() を通る
         try (Stream<Path> files = Files.list(repoRoot().resolve("ops/k6"))) {
             for (Path f : files.filter(x -> x.toString().endsWith(".js")).toList()) {
                 for (String line : read(f).split("\n")) {
@@ -536,6 +549,7 @@ class LoadK6ScriptTest {
     }
 
     // ── ② 실행기 ──────────────────────────────────────────────────────────
+    // [JA] ── ② 実行器 ──
 
     private record Run(int code, String out) {}
 
@@ -549,6 +563,7 @@ class LoadK6ScriptTest {
     }
 
     /** 가짜 k6(인자 · 환경을 남기고 K6_EXIT 로 끝난다) · 가짜 kubectl(APP_PUBLIC_URL · 호출을 남긴다)로 ops/53 을 돌린다. */
+    // [JA] 偽の k6(引数 · 環境を残して K6_EXIT で終わる) · 偽の kubectl(APP_PUBLIC_URL · 呼び出しを残す)で ops/53 を動かす。
     private Run run(Map<String, String> env, String... args) throws Exception {
         Path bin = Files.createDirectories(tmp.resolve("bin"));
         exe(bin.resolve("k6"), """
@@ -609,6 +624,7 @@ class LoadK6ScriptTest {
                 esac
                 """);
         // 가짜 Prometheus 질의 API — 측정 중 최대(max_over_time)와 지금 값을 따로 돌려준다. FAKE_PROM_FAIL=1 이면 응답 없음
+        // [JA] 偽の Prometheus 照会 API — 測定中の最大(max_over_time)と現在値を別々に返す。FAKE_PROM_FAIL=1 なら応答なし
         exe(bin.resolve("curl"), """
                 echo "curl $*" >> "$FAKE/curl.log"
                 case "$*" in
@@ -720,6 +736,7 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 측정 시나리오(browse · spike · order)는 시작 전에 유입 제한을 올렸는지 본다 — smoke 는 건너뛰고, ALLOW_RATE_LIMIT=1 은 ops/53 이 넘긴다")
     void scenariosRefuseToMeasureTheDefaultRateLimit() throws Exception {
         // 🐛 2026-10-18 첫 측정: 제한이 기본값(초당 20)인 채 돌아 browse 실패의 99.95% 가 429 — 서비스가 아니라 제한값을 쟀다
+        // [JA] 🐛 2026-10-18 初回測定: 制限がデフォルト(毎秒 20)のまま走り、browse の失敗の 99.95% が 429 — サービスではなく制限値を測っていた
         String lib = read(repoRoot().resolve("ops/k6/lib.js"));
         Matcher fn = Pattern.compile("export function limitsRaisedOrFail\\(\\) \\{(.*?)\\n\\}", Pattern.DOTALL).matcher(lib);
         assertThat(fn.find()).as("lib.js 에 limitsRaisedOrFail").isTrue();
@@ -756,12 +773,13 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 429 가 아닌 실패를 5xx · 4xx · 응답 없음으로 센다 — 시나리오가 부르는 모든 이름이 엔드포인트별 오류 목록에 있다")
     void nonRateLimitFailuresAreCountedPerEndpoint() throws Exception {
         // 🐛 2026-10-18: 요약에 실패율만 남아 cart_add 의 실패 464건 · browse 의 1.06% 가 무엇인지 알 수 없었다
+        // [JA] 🐛 2026-10-18: 要約に失敗率だけが残り、cart_add の失敗 464 件 · browse の 1.06% が何なのか分からなかった
         String lib = read(repoRoot().resolve("ops/k6/lib.js"));
         Matcher ok = Pattern.compile("export function ok\\(res, name, expected = 200\\) \\{(.*?)\\n\\}", Pattern.DOTALL).matcher(lib);
         assertThat(ok.find()).isTrue();
         assertThat(ok.group(1)).contains("errors5xx.add(1, { name })").contains("errors4xx.add(1, { name })")
                 .contains("noResponse.add(1, { name })").contains("res.status === 0").contains("res.status >= 500");
-        TreeSet<String> libNames = matches(lib, "ok\\(res, '([a-z_]+)'\\)");   // signin · token_refresh — order 의 setup 이 부른다
+        TreeSet<String> libNames = matches(lib, "ok\\(res, '([a-z_]+)'\\)");   // signin · token_refresh — order 의 setup 이 부른다 ／ [JA] signin · token_refresh — order の setup が呼ぶ
         for (String scenario : List.of("browse", "order")) {
             String js = read(repoRoot().resolve("ops/k6/" + scenario + ".js"));
             TreeSet<String> used = matches(js, "(?:\\)|ok\\(\\w+),\\s*'([a-z_]+)'\\)");
@@ -789,6 +807,7 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 레플리카를 Prometheus 에서 — 시작 · 측정 중 최대 · 끝을 meta.txt 에, report 가 보인다(kubectl 없는 loadgen)")
     void replicasFromPrometheusReachMetaAndReport() throws Exception {
         // 🐛 2026-10-18: 0.17% 회차가 레플리카 2 인지 3 인지 meta.txt 로는 알 수 없었다 — HPA(2 ~ 3)가 측정 중에 늘리고, loadgen 에는 kubectl 이 없다
+        // [JA] 🐛 2026-10-18: 0.17% の回がレプリカ 2 なのか 3 なのか meta.txt では分からなかった — HPA(2 ~ 3)が測定中に増やし、loadgen には kubectl がない
         assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
         Map<String, String> env = Map.of("GATEWAY", "https://shop.lab", "PROM_RW", "http://obs-vm:9090/api/v1/write",
                 "FAKE_PROM_UP", promVector("cart-service", "1", "catalog-service", "2", "gateway-server", "2"),
@@ -827,6 +846,7 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 게이트웨이 파드를 바꾸기 전에 로그를 남긴다 — limits · replicas(게이트웨이) · logs, 폴백 예외별 수 요약 · 0700 폴더")
     void gatewayLogsAreSavedBeforePodsAreReplaced() throws Exception {
         // 🐛 2026-10-18: limits default 의 롤링이 측정 때의 게이트웨이 파드를 지워, 503 10,281건의 폴백 로그를 셀 수 없었다
+        // [JA] 🐛 2026-10-18: limits default のローリングが測定時のゲートウェイポッドを消し、503 10,281 件のフォールバックログを数えられなかった
         assumeTrue(posix(), "bash · POSIX 권한이 없다");
         Path logs = tmp.resolve("gwlogs");
         Run r = run(Map.of("GATEWAY_LOG_DIR", logs.toString()), "limits", "default");
@@ -869,6 +889,7 @@ class LoadK6ScriptTest {
         assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
         Path results = tmp.resolve("results");
         // 이름순(browse < order)과 시각순이 반대 — 가장 최근은 browse 다
+        // [JA] 名前順(browse < order)と時刻順が逆 — 最新は browse だ
         Path order = Files.createDirectories(results.resolve("order-20261018T110000Z"));
         Files.writeString(order.resolve("meta.txt"), "scenario=order\ngit=aaaa1111\nusers=200 id_offset=0 rate=20 stages=default duration=default\nexit=99\n");
         Path browse = Files.createDirectories(results.resolve("browse-20261018T120000Z"));
@@ -999,6 +1020,7 @@ class LoadK6ScriptTest {
     }
 
     /** 가짜 kubectl 이 {@code get deploy <d> -o json} 에 돌려줄 Deployment — 주석(원래 값)이 있으면 측정 중. */
+    // [JA] 偽の kubectl が {@code get deploy <d> -o json} に返す Deployment — アノテーション(元の値)があれば測定中。
     private void deployJson(String javaOpts, String heap, String cpu, String annotation) throws IOException {
         deployJson(javaOpts, heap, cpu, annotation, null);
     }
@@ -1052,7 +1074,7 @@ class LoadK6ScriptTest {
         assumeTrue(posix(), "bash · POSIX 권한이 없다");
         Path log = tmp.resolve("kubectl.log");
         String orig = "java_opts=" + b64("-XX:+UseSerialGC -Dfoo=1") + ";heap=-;cpu=1000m";
-        deployJson("-Dfoo=1 -XX:+UseG1GC", "60", "2", orig);   // 지금은 G1 · 60% · 2 코어로 측정 중
+        deployJson("-Dfoo=1 -XX:+UseG1GC", "60", "2", orig);   // 지금은 G1 · 60% · 2 코어로 측정 중 ／ [JA] 今は G1 · 60% · 2 コアで測定中
         Run again = run(Map.of(), "jvm", "load", "catalog-service", "heap=70");
         assertThat(again.code()).as(again.out()).isZero();
         assertThat(again.out()).contains("65% 이상");
@@ -1086,7 +1108,7 @@ class LoadK6ScriptTest {
     void jvmVirtualThreadSwitchIsRecordedAndRestored() throws Exception {
         assumeTrue(posix(), "bash · POSIX 권한이 없다");
         Path log = tmp.resolve("kubectl.log");
-        deployJson("-Dfoo=1", null, "1000m", null, "false");   // jdk21-build 의 비교 회차: 지금 꺼 둔 상태
+        deployJson("-Dfoo=1", null, "1000m", null, "false");   // jdk21-build 의 비교 회차: 지금 꺼 둔 상태 ／ [JA] jdk21-build の比較回: 今はオフにした状態
         Run on = run(Map.of(), "jvm", "load", "catalog-service", "vt=1", "pinning=1");
         assertThat(on.code()).as(on.out()).isZero();
         assertThat(read(log))
@@ -1127,6 +1149,7 @@ class LoadK6ScriptTest {
     }
 
     /** 노드 둘 — agent(4 코어 · 8Gi, 파드 요청 usedCpuMillis · 4Gi)와 데이터 노드(NoSchedule 테인트, 비어 있음 — 세면 안 된다). */
+    // [JA] ノード 2 つ — agent(4 コア · 8Gi、ポッド要求 usedCpuMillis · 4Gi)とデータノード(NoSchedule テイント、空 — 数えてはいけない)。
     private static String cluster(int usedCpuMillis) {
         return """
                 {"items":[
@@ -1189,6 +1212,7 @@ class LoadK6ScriptTest {
     @DisplayName("🔴 replicas max — HPA 최대만 올린다(최소 · 레플리카 그대로) · 최대까지 늘었을 때의 요청 여유를 센다 · HPA 가 없거나 최소보다 작으면 거절")
     void replicasMaxRaisesOnlyHpaMax() throws Exception {
         // 2026-10-19 spike: 게이트웨이가 HPA 최대 3 에서 CPU 100% — 'replicas load' 는 최소도 올려 HPA 가 따라가는 동안을 잴 수 없었다
+        // [JA] 2026-10-19 spike: ゲートウェイが HPA 最大 3 で CPU 100% — 'replicas load' は最小も上げるので、HPA が追従する間を測れなかった
         assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
         Path log = tmp.resolve("kubectl.log");
         Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com"), "replicas", "max", "6", "gateway-server");
@@ -1246,6 +1270,7 @@ class LoadK6ScriptTest {
     }
 
     // ── ceiling — 천장 찾기(docs/91 §4) ─────────────────────────────────────────
+    // [JA] ── ceiling — 天井探し(docs/91 §4) ──
 
     private static final String PROM_ONE = "{\"status\":\"success\",\"data\":{\"result\":[{\"metric\":{\"service\":\"catalog-service\"},\"value\":[1,\"%s\"]}]}}";
 
@@ -1278,6 +1303,7 @@ class LoadK6ScriptTest {
     }
 
     /** catalog 의 GC 종류 — jvm_gc_pause 의 gc 라벨 둘(SerialGC: 젊은 세대 Copy · 늙은 세대 MarkSweepCompact). */
+    // [JA] catalog の GC の種類 — jvm_gc_pause の gc ラベル 2 つ(SerialGC: 若い世代 Copy · 古い世代 MarkSweepCompact)。
     private static final String PROM_GC_KINDS = "{\"status\":\"success\",\"data\":{\"result\":["
             + "{\"metric\":{\"service\":\"catalog-service\",\"gc\":\"Copy\"},\"value\":[1,\"40\"]},"
             + "{\"metric\":{\"service\":\"catalog-service\",\"gc\":\"MarkSweepCompact\"},\"value\":[1,\"2\"]}]}}";
@@ -1355,6 +1381,7 @@ class LoadK6ScriptTest {
     }
 
     // ── 운영 읽기 천장(docs/91 §4-2) ─────────────────────────────────────────
+    // [JA] ── 運用の読み取り天井(docs/91 §4-2) ──
 
     private static final String PROD = "https://www.ysyproject.com";
     private static final String IN_CLUSTER = "https://gateway-server.ecommerce.svc.cluster.local:8000";
@@ -1418,6 +1445,7 @@ class LoadK6ScriptTest {
     }
 
     // ── k6-job.sh — k6 를 클러스터 안 Job 으로 ──────────────────────────────────
+    // [JA] ── k6-job.sh — k6 をクラスター内の Job で ──
 
     private Run k6Job(Map<String, String> env, String... args) throws Exception {
         Path bin = Files.createDirectories(tmp.resolve("jobbin"));

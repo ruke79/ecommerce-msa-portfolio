@@ -3,9 +3,11 @@ import { retryNetworkErrors, rootRelative, throwWithoutData, queryClient } from 
 /**
  * 조회 실패의 처리 — 그려 둔 화면을 오류 화면으로 덮지 않는다.
  * 🐛 주문 화면이 결제 확정을 기다리며 다시 읽다 한 번 끊기면 "問題が発生しました / Network Error" 로 통째로 바뀌었다.
+ *
+ * <p>[JA] 照会失敗の処理 — 描いた画面をエラー画面で覆わない。🐛 注文画面が決済確定を待って再読込中に一度切れると "問題が発生しました / Network Error" に丸ごと変わっていた。
  */
 describe("조회 실패 정책", () => {
-    const networkError = { message: "Network Error" };          // 응답 없음
+    const networkError = { message: "Network Error" };          // 응답 없음 ／ [JA] 応答なし
     const serverError = { response: { status: 400 } };
 
     test("🔴 그려 둔 데이터가 있으면 오류 화면으로 올리지 않는다(알림만)", () => {
@@ -32,6 +34,7 @@ describe("조회 실패 정책", () => {
 
 
 /** 🐛 상품 화면에서 카테고리로 가면 검색이 `/product/catalog-service/...` 로 나가 결과가 비었다. */
+// [JA] 🐛 商品画面からカテゴリへ行くと検索が `/product/catalog-service/...` に出て結果が空だった。
 describe("요청 경로는 사이트 루트 기준", () => {
     test("🔴 맨 앞 / 를 빠뜨린 경로를 루트 기준으로", () => {
         expect(rootRelative("catalog-service/api/search")).toBe("/catalog-service/api/search");

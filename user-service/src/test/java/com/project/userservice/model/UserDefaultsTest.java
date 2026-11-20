@@ -13,6 +13,11 @@ import com.project.common.constants.event.CustomerTier;
  * <p>🐛 Lombok {@code @Builder.Default} 는 필드 초기값을 빌더 · 생성된 무인자 생성자로 <b>옮긴다</b> — 손으로 쓴 생성자에는 남지 않는다.
  * 가입 경로(UserServiceImpl · CustomOAuth2UserService)는 {@code new User(이름, 이메일[, 비밀번호])} 로 만들어서
  * tier 가 null 로 INSERT 됐다 — V9 가 tier 를 NOT NULL 로 만든 뒤로 가입이 DB 에서 거절된다.
+ *
+ * <p>[JA] 🔴 手書きのコンストラクタもフィールドのデフォルト値を持つ。
+ * 🐛 Lombok の {@code @Builder.Default} はフィールド初期値をビルダー・生成された引数なしコンストラクタへ<b>移す</b> — 手書きのコンストラクタには残らない。
+ * 登録経路(UserServiceImpl・CustomOAuth2UserService)は {@code new User(名前, メール[, パスワード])} で作るので、
+ * tier が null で INSERT された — V9 が tier を NOT NULL にして以降、登録が DB で拒否される。
  */
 @DisplayName("User — 생성자 기본값")
 class UserDefaultsTest {

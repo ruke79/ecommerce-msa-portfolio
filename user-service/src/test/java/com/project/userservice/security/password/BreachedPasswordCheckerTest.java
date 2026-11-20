@@ -15,6 +15,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * 🔴 유출 비밀번호 검사 — 앞 5글자만 보내고(k-익명성), 유출 · 흔한 비밀번호는 거절, API 가 안 되면 막지 않는다(docs/68 §18).
+ *
+ * <p>[JA] 🔴 漏洩パスワード検査 — 先頭 5 文字だけを送り(k-匿名性)、漏洩・ありふれたパスワードは拒否、API が使えなければ止めない(docs/68 §18)。
  */
 @DisplayName("유출 비밀번호 검사")
 class BreachedPasswordCheckerTest {

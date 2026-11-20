@@ -9,6 +9,7 @@ import com.project.userservice.service.impl.TotpServiceImpl;
 import com.warrenstrange.googleauth.GoogleAuthenticator;
 
 /** 코드가 맞는 시간 구간 — 재사용 판정의 기준(docs/68 §14). */
+// [JA] コードが合う時間区間 — 再利用判定の基準(docs/68 §14)。
 @DisplayName("TOTP — 코드가 맞는 시간 구간")
 class TotpMatchedStepTest {
 

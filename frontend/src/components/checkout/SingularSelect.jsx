@@ -26,8 +26,10 @@ const SingularSelect = ({data, handleChange, placeholder, ...rest}) => {
                 {/* 🐛 key={option.id} 였다. countries 항목은 {name, code} 라 id 가 없어서
                     약 250개 전부 key 가 undefined 였다 — React 가 목록 항목을 구분하지
                     못하고, 개발 콘솔에는 매 렌더마다 경고가 찍혔다. */}
+                {/* [JA] 🐛 key={option.id} だった。countries の項目は {name, code} で id がないため、約 250 件すべての key が undefined だった — React がリスト項目を区別できず、開発コンソールには描画のたびに警告が出ていた。 */}
                 {/* 값은 나라 코드, 보이는 것은 화면 언어의 이름(util/country · docs/60 §11).
                     예전에는 영어 이름이 값이라 일본어 화면에서도 목록·저장값이 영어였다. */}
+                {/* [JA] 値は国コード、表示は画面言語での名前(util/country · docs/60 §11)。以前は英語名が値だったため、日本語画面でもリスト・保存値が英語だった。 */}
                 {data.map((option) => (
                     <MenuItem key={option.code ?? option.name} value={option.code ?? option.name}>
                         {option.name}

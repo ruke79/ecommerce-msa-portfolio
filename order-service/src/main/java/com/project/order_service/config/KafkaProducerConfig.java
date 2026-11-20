@@ -41,6 +41,9 @@ public class KafkaProducerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} の一か所で作る。
+     * 以前はこのクラスごとに同じ 6 行を複製し、値が空でもそのまま入れていたので、SSL を有効にした瞬間に空のパスで落ちる組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -60,6 +63,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)                
                 // 트랜잭션 없음, 멱등만 — 아웃박스 릴레이는 레코드 하나를 보내고 ack 뒤에 COMPLETED 를 찍는다. 트랜잭션은 DB 커밋 뒤에 커밋되므로 오히려 유실 창을 만들었다(docs/38 §1.17)
+                // [JA] トランザクションなし、冪等だけ — アウトボックスリレーはレコード 1 つを送り ack の後に COMPLETED を記録する。トランザクションは DB コミットの後にコミットされるので、かえって消失の窓を作っていた(docs/38 §1.17)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
                 .putAll(securityProps())
@@ -70,6 +74,7 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, PaymentRequest> paymentRequestProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(producerConfigurations(),
                 new StringSerializer(), new AvroDtoSerializer<>(new PaymentRequestAvroMapping()));
 
@@ -106,6 +111,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)                
                 // 안정적인 id — 파드 재시작 시 이전 화신을 펜싱한다. 두 토픽을 한 트랜잭션으로 보내는 사가 보상용(docs/38 §1.17)
+                // [JA] 安定した id — Pod 再起動時に以前のインスタンスをフェンシングする。2 つのトピックを 1 トランザクションで送るサーガ補償用(docs/38 §1.17)
                 .put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, KafkaTransactionalIds.stable("order-saga-coupon-rollback"))
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .putAll(securityProps())
@@ -116,6 +122,7 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, CouponRollbackRequest> couponRollbackProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(couponRollbackConfigurations(),
                 new StringSerializer(), new AvroDtoSerializer<>(new CouponRollbackRequestAvroMapping()));
 
@@ -134,6 +141,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)                
                 // 안정적인 id — 파드 재시작 시 이전 화신을 펜싱한다. 두 토픽을 한 트랜잭션으로 보내는 사가 보상용(docs/38 §1.17)
+                // [JA] 安定した id — Pod 再起動時に以前のインスタンスをフェンシングする。2 つのトピックを 1 トランザクションで送るサーガ補償用(docs/38 §1.17)
                 .put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, KafkaTransactionalIds.stable("order-saga-cart-rollback"))
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .putAll(securityProps())
@@ -143,6 +151,7 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, CartRollbackRequest> cartRollbackProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(cartRollbackConfigurations(),
                 new StringSerializer(), new AvroDtoSerializer<>(new CartRollbackRequestAvroMapping()));
 
@@ -161,6 +170,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)                
                 // 안정적인 id — 파드 재시작 시 이전 화신을 펜싱한다. 두 토픽을 한 트랜잭션으로 보내는 사가 보상용(docs/38 §1.17)
+                // [JA] 安定した id — Pod 再起動時に以前のインスタンスをフェンシングする。2 つのトピックを 1 トランザクションで送るサーガ補償用(docs/38 §1.17)
                 .put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, KafkaTransactionalIds.stable("order-saga-product-update"))
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .putAll(securityProps())
@@ -171,6 +181,7 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, ProductUpdateRequest> productUpdateProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(ProductUpdateConfigurations(),
                 new StringSerializer(), new AvroDtoSerializer<>(new ProductUpdateRequestAvroMapping()));
 
@@ -189,6 +200,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)                
                 // 안정적인 id — 파드 재시작 시 이전 화신을 펜싱한다. 두 토픽을 한 트랜잭션으로 보내는 사가 보상용(docs/38 §1.17)
+                // [JA] 安定した id — Pod 再起動時に以前のインスタンスをフェンシングする。2 つのトピックを 1 トランザクションで送るサーガ補償用(docs/38 §1.17)
                 .put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, KafkaTransactionalIds.stable("order-saga-cart-empty"))
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .putAll(securityProps())
@@ -199,6 +211,7 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, CartEmptyRequest> cartEmptyProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(cartEmptyConfigurations(),
                 new StringSerializer(), new AvroDtoSerializer<>(new CartEmptyRequestAvroMapping()));
 
@@ -226,6 +239,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class)                
                 // 트랜잭션 없음, 멱등만 — 위와 같다(docs/38 §1.17)
+                // [JA] トランザクションなし、冪等だけ — 上と同じ(docs/38 §1.17)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
                 .putAll(securityProps())
@@ -238,6 +252,9 @@ public class KafkaProducerConfig {
      *
      * <p>{@code delivery-status} 와 같은 모양이다: DTO 없이 문자열로 보내고 notification-service
      * 가 필드 이름으로 읽는다.
+     *
+     * <p>[JA] 購入確定イベント({@code order-completed}, docs/25 §12) — JSON 文字列。
+     * {@code delivery-status} と同じ形だ: DTO なしで文字列で送り、notification-service がフィールド名で読む。
      */
     @Bean
     public ProducerFactory<String, String> orderCompletedProducerFactory() {
@@ -252,6 +269,9 @@ public class KafkaProducerConfig {
     /**
      * 환불 이벤트({@code order-refunded}, docs/49 §10) — JSON 문자열. 구매 확정과 같은 모양이다.
      * 트랜잭션 프로듀서가 아니다 — 환불은 HTTP 요청에서 커밋이 끝난 뒤 보낸다.
+     *
+     * <p>[JA] 返金イベント({@code order-refunded}, docs/49 §10) — JSON 文字列。購入確定と同じ形だ。
+     * トランザクションプロデューサーではない — 返金は HTTP リクエストでコミットが終わった後に送る。
      */
     @Bean
     public ProducerFactory<String, String> orderRefundedProducerFactory() {

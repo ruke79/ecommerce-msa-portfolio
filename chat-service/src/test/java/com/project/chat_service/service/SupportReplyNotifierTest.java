@@ -32,6 +32,8 @@ import com.project.common.constants.chat.MessageType;
 
 /**
  * 상담원 답변 → 고객 알림 (docs/58 §10).
+ *
+ * <p>[JA] 相談員の返信 → 顧客への通知 (docs/58 §10)。
  */
 @DisplayName("SupportReplyNotifier — 상담원 답변 알림")
 class SupportReplyNotifierTest {
@@ -159,7 +161,7 @@ class SupportReplyNotifierTest {
         later.setRoomId("support-6");
         notifier.onMessage(later);
 
-        assertThat(notifier.trackedThreads()).isEqualTo(1);   // 5번은 지워지고 6번만
+        assertThat(notifier.trackedThreads()).isEqualTo(1);   // 5번은 지워지고 6번만 ／ [JA] 5 番は消え 6 番だけ
     }
 
     @Test

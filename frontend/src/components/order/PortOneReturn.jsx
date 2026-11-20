@@ -43,6 +43,7 @@ const PortOneReturn = ({ order, onConfirmed }) => {
         };
 
         // 실패(사용자 취소 포함) — 확인할 것이 없다. PG 문구는 화면 언어로(util/portoneError).
+        // [JA] 失敗(ユーザーキャンセルを含む) — 確認するものがない。PG の文言は画面の言語で(util/portoneError)。
         if (returned.code !== undefined) {
             setMessage(portOneFailureText(t, lang, returned));
             setState("declined");
@@ -58,12 +59,14 @@ const PortOneReturn = ({ order, onConfirmed }) => {
             .then((res) => {
                 clearQuery();
                 // 가상계좌는 발급만 됐다 — UNPAID(입금 대기). 입금 안내는 주문을 다시 읽으면 결제 칸이 보여 준다.
+                // [JA] 仮想口座は発行されただけだ — UNPAID(入金待ち)。入金案内は注文を読み直すと決済欄が見せる。
                 const status = res?.data?.orderStatus === "UNPAID" ? "UNPAID" : "PAID";
                 setState(status === "PAID" ? "done" : "idle");
                 onConfirmed?.({ orderStatus: status });
             })
             .catch((error) => {
                 // 실패해도 결제가 사라진 것은 아니다 — 웹훅이 뒤늦게 반영할 수 있다.
+                // [JA] 失敗しても決済が消えたわけではない — ウェブフックが遅れて反映しうる。
                 console.error("PortOne redirect confirm error: ", error);
                 clearQuery();
                 setState("failed");

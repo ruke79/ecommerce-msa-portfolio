@@ -60,6 +60,7 @@ class CatalogGeneratorShapeTest {
     }
 
     /** products.csv 의 (이름, 카테고리 id) — 이름은 따옴표 안의 쉼표가 있을 수 있어 csv 규칙대로 읽는다. */
+    // [JA] products.csv の (名前、カテゴリ id) — 名前は引用符内にカンマがあり得るので csv のルールどおりに読む。
     private List<String[]> products(String dir) throws Exception {
         List<String[]> out = new ArrayList<>();
         List<String> lines = Files.readAllLines(tmp.resolve(dir).resolve("products.csv"));
@@ -72,7 +73,7 @@ class CatalogGeneratorShapeTest {
                 f.add(m.group(1) != null ? m.group(1).replace("\"\"", "\"") : m.group(2));
                 pos = m.end() + 1;
             }
-            out.add(new String[] { f.get(1), f.get(5) });   // name, category_id(HEADERS 순서)
+            out.add(new String[] { f.get(1), f.get(5) });   // name, category_id(HEADERS 순서) ／ [JA] name, category_id(HEADERS の順)
         }
         return out;
     }
@@ -99,6 +100,8 @@ class CatalogGeneratorShapeTest {
         assertThat(topShare(rows, top(rows))).as("기본 분포 — 가장 큰 대분류도 2할 아래").isLessThan(0.2);
         // 2026-10-20(쏠림 · 긴 이름을 더하기 전)의 기본 상품 3,000개의 이름 · 카테고리 지문 — 날짜는 오늘 기준이라 뺀다.
         // 바뀌면 이미 넣은 데이터에 이어 넣은 묶음이 다른 상품이 된다. 일부러 바꿨다면 이 값을 새로 적고 docs/83 §2.5 에 남긴다.
+        // [JA] 2026-10-20(偏り · 長い名前を足す前)のデフォルト商品 3,000 個の名前 · カテゴリのフィンガープリント — 日付は今日基準なので除く。
+        //      変わると、すでに入れたデータに追加で入れたまとまりが別の商品になる。わざと変えたならこの値を書き直し、docs/83 §2.5 に残す。
         StringBuilder s = new StringBuilder();
         rows.forEach(r -> s.append(r[0]).append('\t').append(r[1]).append('\n'));
         String sha = java.util.HexFormat.of().formatHex(
@@ -137,6 +140,7 @@ class CatalogGeneratorShapeTest {
         assertThat(avg).isGreaterThan(100);
         assertThat(rows).allSatisfy(r -> assertThat(r[0].length()).isLessThanOrEqualTo(180));
         // 이름 검색어는 k6 의 browse 가 쓴다 — k6 도구가 없는 브랜치(cdc · jdk)에서는 그 부분만 건너뛴다
+        // [JA] 名前の検索語は k6 の browse が使う — k6 ツールのないブランチ(cdc · jdk)ではその部分だけ飛ばす
         Path browse = repoRoot().resolve("ops/k6/browse.js");
         if (!Files.exists(browse)) {
             return;

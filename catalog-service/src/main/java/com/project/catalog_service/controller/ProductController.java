@@ -50,6 +50,7 @@ public class ProductController {
     private final ProductService productService;
     private final ProductImportService productImportService;
     /** 손님에게 보이는 남은 수량에서 결제 전 예약을 뺀다(docs/59 §5). 관리자 목록·편집에는 쓰지 않는다. */
+    // [JA] 客に見える残数から決済前の予約を引く(docs/59 §5)。管理者の一覧・編集には使わない。
     private final com.project.catalog_service.service.StockAvailability stockAvailability;
 
     /**
@@ -62,6 +63,14 @@ public class ProductController {
      *
      * <p>진행 상황은 {@code GET /api/content/admin/product-import} 로 묻는다.
      * 새 화면은 그쪽(관리자 접두사 아래)을 쓰고, 이 경로는 기존 호출자를 위해 남긴다.
+     *
+     * <p>[JA] CSV 一括登録 — 旧パス。
+     *      以前はここで {@code jobLauncher.run} をリクエストスレッドでそのまま回していた。
+     *      Boot 既定のランチャーは同期なので応答はジョブが終わってから出て、画像 60 枚を上げるこのジョブは
+     *      ゲートウェイのタイムアウトに先にかかった — 管理者は 504 を見てもう一度押し、商品を
+     *      2 組作った。今は {@link ProductImportService} が非同期で回し、重複を防ぐ。
+     *      進捗は {@code GET /api/content/admin/product-import} で問い合わせる。
+     *      新しい画面はそちら(管理者接頭辞の下)を使い、このパスは既存の呼び出し元のために残す。
      */
     @PostMapping("/products/load")
     public ResponseEntity<?> syncProducts(
@@ -73,7 +82,7 @@ public class ProductController {
     ResponseEntity<?> loadProductsinFrontPage() {
 
         try {
-            List<ProductDto> response = productService.warmUpProductCaches(4); // 페이지 크기를 4으로 설정
+            List<ProductDto> response = productService.warmUpProductCaches(4); // 페이지 크기를 4으로 설정 ／ [JA] ページサイズを 4 に設定
 
             return new ResponseEntity<>(response, HttpStatus.OK);
 
@@ -89,7 +98,7 @@ public class ProductController {
     ResponseEntity<?> getProducts() {
 
         try {
-            List<ProductDto> response = productService.warmUpProductCaches(20); // 페이지 크기를 20으로 설정
+            List<ProductDto> response = productService.warmUpProductCaches(20); // 페이지 크기를 20으로 설정 ／ [JA] ページサイズを 20 に設定
 
             return new ResponseEntity<>(response, HttpStatus.OK);
 
@@ -108,6 +117,7 @@ public class ProductController {
         try {
            
             // 상한 — 🐛 공개 경로라 pageSize=1000000 이면 카테고리 전체를 읽어 캐시에 넣었고, 크기마다 키가 새로 생겼다.
+            // [JA] 上限 — 🐛 公開パスなので pageSize=1000000 だとカテゴリ全体を読んでキャッシュに入れ、サイズごとにキーが新しくできた。
             int size = Math.max(1, Math.min(pageSize, ProductService.MAX_PUBLIC_PAGE_SIZE));
             List<ProductDto> response = productService.getProductsByCategory(category, Long.parseLong(cursorId), size);
            
@@ -136,6 +146,7 @@ public class ProductController {
    
 
     /** 한 요청에 담을 수 있는 id 수. 장바구니는 수십 개 단위다 — 그 이상은 잘못된 호출이다. */
+    // [JA] 1 リクエストに入れられる id の数。カートは数十個単位である — それ以上は誤った呼び出しである。
     public static final int MAX_BATCH_IDS = 100;
 
     /**
@@ -144,6 +155,11 @@ public class ProductController {
      * <p>cart-service 가 장바구니 항목마다 {@code /api/{productId}} 를 직렬로 부르던 것을
      * 대체한다. 찾지 못한 id 는 목록에서 빠질 뿐 실패가 아니다 — 부분 성공을 200 으로 돌려주고
      * 호출자가 id 로 대조한다. 빈 목록이나 상한 초과는 400 이다.
+     *
+     * <p>[JA] 複数の商品を一度に — {@code GET /api/products/info?ids=1&ids=2}。
+     *      cart-service がカート項目ごとに {@code /api/{productId}} を直列に呼んでいたものを
+     *      置き換える。見つからない id は一覧から抜けるだけで失敗ではない — 部分成功を 200 で返し、
+     *      呼び出し元が id で突き合わせる。空の一覧や上限超過は 400 である。
      */
     @GetMapping("/products/info")
     public ResponseEntity<?> getProductsInfo(@RequestParam("ids") List<Long> ids) {
@@ -164,6 +180,8 @@ public class ProductController {
             List<ProductDto> dto = productService.getProductsBySlug(slug);
             // slug 로 못 찾았고 숫자면 상품 id 로 본다 — 장바구니·체크아웃·주문 품목은 slug 를 모르고 상품 id 만 안다.
             // 🐛 체크아웃은 이름을 slug 자리에 넣었다("Italian-Olive-Oil") — 이름과 slug 가 다른 상품은 전부 "상품 없음" 400.
+            // [JA] slug で見つからず数字なら商品 id とみなす — カート・チェックアウト・注文品目は slug を知らず商品 id だけを知っている。
+            //      🐛 チェックアウトは名前を slug の位置に入れていた("Italian-Olive-Oil") — 名前と slug が違う商品はすべて「商品なし」400。
             if (dto.isEmpty() && slug.chars().allMatch(Character::isDigit) && !slug.isEmpty() && slug.length() < 19) {
                 dto = productService.getProductsByIds(List.of(Long.parseLong(slug)));
             }
@@ -185,6 +203,8 @@ public class ProductController {
                     productService.getCartProductInfo(Long.parseLong(product_id), style, size));
             // 🐛 null(품절로 내림·없는 상품·없는 스타일)이 200 빈 본문으로 나갔다. 화면은 수량이 없으니 "모자라지 않다" 로
             //    읽고 그대로 장바구니에 담았다 — 관리자가 품절 처리한 상품이 담겼다.
+            // [JA] 🐛 null(品切れで取り下げ・存在しない商品・存在しないスタイル)が 200 の空本文で出ていた。画面は数量がないので「足りている」と
+            //         読み、そのままカートに入れた — 管理者が品切れ処理した商品が入った。
             if (dto == null) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(new MessageResponse(StatusMessages.PRODUCT_NOT_AVAILABLE));
@@ -206,6 +226,13 @@ public class ProductController {
      * GET 인 이유는 {@code CartProductInfoRequest} 참조 — 서비스 간 호출에는 {@code User-Id} 가
      * 없어 POST 는 {@code AdminWriteInterceptor} 에 막힌다. 응답은 {@code Map<key, ProductInfoDto>}
      * 이고 못 찾은 항목은 맵에서 빠질 뿐 200 이다. 빈 목록·상한 초과·형식 오류는 400.
+     *
+     * <p>[JA] カート項目複数の(商品, スタイル, サイズ)情報を一度に —
+     *      {@code GET /api/cart/info?items=1:0:0&items=2:1:0}。
+     *      {@code GET /api/cart/{productId}?style=&size=} を項目ごとに呼んでいたものの代替である。
+     *      GET である理由は {@code CartProductInfoRequest} 参照 — サービス間呼び出しには {@code User-Id} が
+     *      ないので POST は {@code AdminWriteInterceptor} に阻まれる。応答は {@code Map<key, ProductInfoDto>}
+     *      で、見つからない項目はマップから抜けるだけで 200 である。空の一覧・上限超過・形式エラーは 400。
      */
     @GetMapping("/cart/info")
     public ResponseEntity<?> getCartProductsInfo(@RequestParam("items") List<String> items) {
@@ -225,6 +252,7 @@ public class ProductController {
             return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
         }
         // 트랜잭션(getCartProductsInfo) 이 끝난 뒤에 뺀다 — StockAvailability 참조.
+        // [JA] トランザクション(getCartProductsInfo)が終わった後に引く — StockAvailability 参照。
         return ResponseEntity.ok(stockAvailability.apply(productService.getCartProductsInfo(parsed)));
     }
 
@@ -235,6 +263,12 @@ public class ProductController {
      * 응답은 {@code {키: {quantity, onHold, status}}} 이고 {@code quantity} 는 다른 주문의 결제 전 예약을 뺀 값이다(docs/59 §5).
      * 없는 옵션은 맵에서 빠진다. 형식 오류·상한 초과는 400, 재고를 읽지 못하면 <b>503</b> — 빈 맵(=모두 없음)과 구분돼야
      * 화면이 가진 값을 지우지 않는다.
+     *
+     * <p>[JA] カート項目の今の在庫 — {@code GET /api/stock?items=1:5:M&items=2:6:270}(商品id:色id:サイズ)。
+     *      カート画面は追加時に受け取った数量を持っている — 数日前の値かもしれない。画面に入るとき・戻るときにこれで見直す。
+     *      応答は {@code {キー: {quantity, onHold, status}}} で、{@code quantity} は他の注文の決済前予約を引いた値である(docs/59 §5)。
+     *      存在しないオプションはマップから抜ける。形式エラー・上限超過は 400、在庫を読めなければ <b>503</b> — 空のマップ(=すべてなし)と区別されてこそ
+     *      画面が持っている値を消さない。
      */
     @GetMapping("/stock")
     public ResponseEntity<?> getStock(@RequestParam("items") List<String> items) {
@@ -259,6 +293,9 @@ public class ProductController {
     /**
      * 색상 여러 개를 한 번에 — {@code GET /api/colors/info?ids=1&ids=2}. 주문 상품·장바구니
      * 항목마다 {@code /api/color/{id}} 를 부르던 것의 대체다. 못 찾은 id 는 빠질 뿐 200.
+     *
+     * <p>[JA] 色の複数件を一度に — {@code GET /api/colors/info?ids=1&ids=2}。注文商品・カート
+     *      項目ごとに {@code /api/color/{id}} を呼んでいたものの代替である。見つからない id は抜けるだけで 200。
      */
     @GetMapping("/colors/info")
     public ResponseEntity<?> getColorsInfo(@RequestParam("ids") List<Long> ids) {
@@ -300,6 +337,9 @@ public class ProductController {
             // 엔티티를 그대로 직렬화하지 않는다 — 지연 프록시가 터질 수 있고, 화면의
             // 다음 단계(색상 변형 이어서 등록)에 필요한 productId 는 @JsonBackReference
             // 에 잘려 응답에 없었다. 필요한 값만 명시적으로 준다.
+            // [JA] エンティティをそのままシリアライズしない — 遅延プロキシが爆発しうるし、画面の
+            //      次の段階(色バリエーションの続き登録)に必要な productId は @JsonBackReference
+            //      で切られて応答になかった。必要な値だけを明示的に返す。
             Product owner = skuProject.getProduct();
             return new ResponseEntity<>(new com.project.common.dto.catalog.response.ProductCreatedResponse(
                     skuProject.getSku(),
@@ -310,6 +350,9 @@ public class ProductController {
             // 잘못된 입력(없는 카테고리·숫자 아닌 배송비·이미지 누락…)은 전부 이 예외로
             // 온다. 예전에는 서비스가 null 을 돌려줘 **200 OK + 빈 본문**이 나갔다 —
             // 화면은 "등록 완료"를 띄우는데 실제로는 아무것도 안 만들어진 상태였다.
+            // [JA] 誤った入力(存在しないカテゴリ・数字でない送料・画像の欠落…)はすべてこの例外で
+            //      来る。以前はサービスが null を返して **200 OK + 空本文** が出ていた —
+            //      画面は「登録完了」を出すのに、実際には何も作られていない状態だった。
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new MessageResponse(ClientMessage.of(e)));
         } catch (IOException e) {
@@ -322,6 +365,7 @@ public class ProductController {
     
 
     // ── 수정·상태·삭제 — 전부 쓰기 메서드라 AdminWriteInterceptor 가 관리자만 통과시킨다 ──
+    // [JA] ── 修正・状態・削除 — すべて書き込みメソッドなので AdminWriteInterceptor が管理者だけを通す ──
 
     @org.springframework.web.bind.annotation.PutMapping("/product/{productId}")
     ResponseEntity<?> updateProduct(
@@ -335,6 +379,7 @@ public class ProductController {
     }
 
     /** 품절(SOLD_OUT)·복귀(ACTIVE). DELETED 도 받지만 아래 DELETE 가 의도를 더 잘 드러낸다. */
+    // [JA] 品切れ(SOLD_OUT)・復帰(ACTIVE)。DELETED も受け付けるが、下の DELETE のほうが意図をよく表す。
     @org.springframework.web.bind.annotation.PatchMapping("/product/{productId}/status")
     ResponseEntity<?> updateProductStatus(
             @org.springframework.web.bind.annotation.PathVariable Long productId,
@@ -349,6 +394,9 @@ public class ProductController {
     /**
      * 소프트 삭제. 행은 남지만(SKU·주문 이력·리뷰가 참조한다) 모든 조회에서 사라진다.
      * ⚠️ 애플리케이션에서는 되돌릴 수 없다 — V8 마이그레이션 주석의 SQL 로만 복구된다.
+     *
+     * <p>[JA] ソフト削除。行は残るが(SKU・注文履歴・レビューが参照する)すべての照会から消える。
+     *      ⚠️ アプリケーションでは戻せない — V8 マイグレーションのコメントの SQL でのみ復旧できる。
      */
     @org.springframework.web.bind.annotation.DeleteMapping("/product/{productId}")
     ResponseEntity<?> deleteProduct(@org.springframework.web.bind.annotation.PathVariable Long productId) {
@@ -383,6 +431,9 @@ public class ProductController {
     /**
      * 별점 — 내부 전용(AdminWriteInterceptor). user-service 가 리뷰 평균을 보낸다. 범위를 벗어나거나 NaN 이면 거절한다 —
      * 예전 user-service 는 빈 목록을 나눠 NaN 을 보낸 적이 있다(ReviewService.publishRating 주석).
+     *
+     * <p>[JA] 星評価 — 内部専用(AdminWriteInterceptor)。user-service がレビュー平均を送る。範囲外または NaN なら拒否する —
+     *      以前の user-service は空の一覧で割って NaN を送ったことがある(ReviewService.publishRating のコメント)。
      */
     @PutMapping("/product/rating")
     public ResponseEntity<?> updateRating(@RequestParam("id") Long id, @RequestParam("rating") float rating) {

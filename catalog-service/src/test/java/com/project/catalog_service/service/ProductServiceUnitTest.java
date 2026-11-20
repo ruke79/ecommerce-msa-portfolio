@@ -47,6 +47,9 @@ import com.project.common.message.dto.request.ProductUpdateRequest;
  * 배경(docs/06 CAT-13): 기존 코드는 for 루프 안에서 return 하여 주문의 첫 항목만
  * 재고가 반영되고 나머지 항목은 조용히 누락되는 버그가 있었다.
  * 이 테스트는 "모든 주문 항목이 처리된다"를 고정한다.
+ *
+ * <p>[JA] 注文成功 Kafka 消費経路(productUpdated)の在庫/販売数反映の回帰テスト。
+ * 背景(docs/06 CAT-13): 既存コードは for ループ内で return しており、注文の最初の項目だけ在庫が反映され残りの項目は黙って漏れるバグがあった。このテストは「すべての注文項目が処理される」ことを固定する。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -63,8 +66,11 @@ class ProductServiceUnitTest {
     @Mock com.project.catalog_service.service.ProductIndexService productIndexService;
     // 기획전 할인 합성. 이 테스트들은 할인을 다루지 않지만 생성자에 필요하다 —
     // 합성 규칙 자체는 EventPricingTest 가 본다.
+    // [JA] 企画展割引の合成。これらのテストは割引を扱わないがコンストラクタに必要である —
+    //      合成規則自体は EventPricingTest が見る。
     @Mock EventPricing eventPricing;
     // 품절·재입고 알림(docs/53). 전이 판정 자체는 StockEventProducerTest 가 본다 — 여기서는 호출만.
+    // [JA] 品切れ・再入荷通知(docs/53)。遷移判定自体は StockEventProducerTest が見る — ここでは呼び出しだけ。
     @Mock com.project.catalog_service.message.producer.StockEventProducer stockEvents;
 
     ProductService service;
@@ -105,6 +111,7 @@ class ProductServiceUnitTest {
         assertThat(service.productUpdated(requestWithItems(3)).hasShortage()).isFalse();
 
         // 핵심 검증: 3개 항목 전부 판매량/재고 갱신이 호출되어야 한다 (기존 버그: 1회만 호출)
+        // [JA] 核心検証: 3 項目すべての販売数/在庫更新が呼ばれなければならない(既存バグ: 1 回だけ呼ばれた)
         verify(service, times(3)).updateSoldValue(anyLong(), anyString(), anyString(), anyLong(), anyInt());
         verify(service, times(3)).updateProductSize_Qty(anyString(), anyLong(), anyString(), anyInt());
     }
@@ -112,6 +119,8 @@ class ProductServiceUnitTest {
     /**
      * 재고 복원(환불·반품 입고)은 같은 경로를 부호만 바꿔 탄다 — 수량이 돌아오고 판매량이
      * 빠진다. 경로가 둘이면 한쪽만 고쳐지는 날이 온다(CAT-13).
+     *
+     * <p>[JA] 在庫復元(返金・返品入庫)は同じ経路を符号だけ変えて通る — 数量が戻り販売数が減る。経路が二つあると片方だけ直される日が来る(CAT-13)。
      */
     @Test
     @DisplayName("productUpdated: restock=true 면 같은 항목을 음수로 — 수량이 돌아오고 판매량이 빠진다")
@@ -138,6 +147,7 @@ class ProductServiceUnitTest {
     }
 
     // ---------------------------------------------------------------- 잠금 순서
+    // [JA] ---- ロック順序
 
     private void twoProducts() {
         for (long id : new long[] {1L, 2L}) {
@@ -157,6 +167,8 @@ class ProductServiceUnitTest {
     /**
      * 🐛 차감 · 복원은 주문 줄 순서대로 SKU 를 잠갔다(예약만 정렬했다) — [B, A] 주문과 [A, B] 주문이 겹치면 교착(40P01), 끊긴
      * 결제 확정 차감은 재시도를 다 쓰면 DLT 로 갔다. 예약과 같은 (상품, 색상, 사이즈) 순서로 잠근다.
+     *
+     * <p>[JA] 🐛 減算・復元は注文行の順序で SKU をロックしていた(予約だけソートしていた) — [B, A] 注文と [A, B] 注文が重なるとデッドロック(40P01)、切れた決済確定の減算はリトライを使い切ると DLT に行った。予約と同じ(商品、色、サイズ)順でロックする。
      */
     @Test
     @DisplayName("🔴 결제 확정 차감은 줄 순서와 무관하게 (상품, 색상, 사이즈) 순서로 잠근다 — 예약과 같은 순서")
@@ -191,6 +203,7 @@ class ProductServiceUnitTest {
     }
 
     // ---------------------------------------------------------------- 초과 판매 (docs/53)
+    // [JA] ---- 過剰販売 (docs/53)
 
     private Product product() {
         Product product = mock(Product.class);
@@ -215,6 +228,8 @@ class ProductServiceUnitTest {
     /**
      * 🔴 핵심 — 3개 주문에 1개 남았다. 1개만 배정하고 2개를 모자란 것으로 돌려준다. 판매량도 1만 오른다(예전에는
      * 판매량이 수량 확인 전에 3 올랐고, 수량 차감은 조용히 실패했다).
+     *
+     * <p>[JA] 🔴 核心 — 3 個の注文に 1 個残っている。1 個だけ割り当て 2 個を不足分として返す。販売数も 1 だけ増える(以前は数量確認の前に販売数が 3 増え、数量減算は黙って失敗した)。
      */
     @Test
     @DisplayName("🔴 모자라면 있는 만큼만 배정하고 나머지를 부족으로 돌려준다 — 판매량도 배정한 만큼만")
@@ -293,6 +308,7 @@ class ProductServiceUnitTest {
     }
 
     /** 실제 산술 — 복원은 수량을 더하고, 판매량은 0 아래로 내려가지 않는다. */
+    // [JA] 実際の算術 — 復元は数量を足し、販売数は 0 未満にならない。
     @Test
     @DisplayName("updateSoldValue/updateProductSize_Qty: 음수 델타는 수량을 늘리고 판매량은 0 에서 멈춘다")
     void negativeDelta_restoresQuantityAndClampsSold() {
@@ -313,6 +329,7 @@ class ProductServiceUnitTest {
     }
 
     /** 재고가 바뀔 때마다 그 전·후 수량과 옵션 정보로 알린다 — 0 을 건넜는지는 받는 쪽이 판정한다. */
+    // [JA] 在庫が変わるたびにその前・後の数量とオプション情報で通知する — 0 をまたいだかは受け手が判定する。
     @Test
     @DisplayName("재고 변경은 전·후 수량과 옵션(상품·색상·사이즈)으로 품절·재입고 판정에 넘어간다 (docs/53)")
     void stockChangesAreHandedToTransitions() {
@@ -324,7 +341,7 @@ class ProductServiceUnitTest {
         when(productSizeRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         doReturn(List.of()).when(service).refreshProductsCache(anyString());
 
-        service.updateProductSize_Qty("tee", 10L, "M", 1);   // 주문 1개 → 0
+        service.updateProductSize_Qty("tee", 10L, "M", 1);   // 주문 1개 → 0 ／ [JA] 注文 1 個 → 0
 
         verify(stockEvents).onQuantityChanged(
                 new com.project.catalog_service.message.producer.StockEventProducer.Variant(10L, "tee", "티셔츠", 3L, "black", "M"),
@@ -366,6 +383,7 @@ class ProductServiceUnitTest {
     @DisplayName("productUpdated/addProduct: 검색·필터 캐시 무효화(@CacheEvict) 계약 유지 (CAT-2/CAT-12 회귀 방지)")
     void cacheEvictionContract_onWriteEntryPoints() throws Exception {
         // 자기호출(self-invocation) 때문에 evict는 외부 진입점 메서드에 붙어 있어야 한다.
+        // [JA] 自己呼び出し(self-invocation)のため evict は外部エントリポイントのメソッドに付いていなければならない。
         Method productUpdated = ProductService.class.getMethod(
                 "productUpdated", ProductUpdateRequest.class);
         CacheEvict evict = productUpdated.getAnnotation(CacheEvict.class);
@@ -380,6 +398,7 @@ class ProductServiceUnitTest {
                 List.class,
                 org.springframework.web.multipart.MultipartFile.class);
         // 부모 상품의 "product" 캐시도 함께 지우므로 @Caching 안에 둘이 있다(ProductCacheKeyTest).
+        // [JA] 親商品の "product" キャッシュも一緒に消すので @Caching の中に二つある(ProductCacheKeyTest)。
         org.springframework.cache.annotation.Caching caching =
                 addProduct.getAnnotation(org.springframework.cache.annotation.Caching.class);
         assertThat(caching).as("addProduct에 @Caching(evict = …) 가 있어야 함").isNotNull();

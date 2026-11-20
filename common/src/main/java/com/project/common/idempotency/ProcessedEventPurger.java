@@ -33,15 +33,26 @@ import org.slf4j.LoggerFactory;
  * <p>기준 시각은 {@code clock} 의 지역 시간이다 — 원장의 {@code processed_at} 은 {@code LocalDateTime.now()}(JVM 기본 시간대) 또는
  * DB {@code now()}(드라이버가 세션 시간대를 JVM 기본으로 맞춘다)로 적힌다.
  *
- * <p>[JA] コンシューマ冪等台帳の掃除 — 保存期間を過ぎた行を少しずつ削除する。台帳が防ぐのは同じイベントの再到着で、その期間は決まっている
- * (元トピック 7 日、DLT 14 日から元トピックへ戻すとさらに 7 日)。保存は 22 日未満にならず、batchSize 行ずつ文ごとにコミットし、一回は
- * maxBatches 回で止まる。表名は {@code <スキーマ>.processed_event} の形だけを受け付ける(SQL にそのまま入るため)。
+ * <p>[JA] コンシューマ冪等台帳({@code <スキーマ>.processed_event})の掃除 — 保存期間を過ぎた行を少しずつ削除する(docs/12 §2「保存」)。
+ * <p>[JA] <b>なぜ。</b> 台帳は処理したイベントごとに一行残すが(coupon · catalog · cart)、マイグレーションのコメントが「定期的に掃除してよい」と
+ * 書いただけで消す所がなく、永久に溜まっていた。台帳が防ぐのは<b>同じイベントが再び来ること</b>で、再び来うる期間は決まっている:
+ * 元トピックの保存(7 日)、そして DLT(14 日)から元トピックへ送り直せばそこでさらに 7 日。それより古い行は何も防がない。
+ * <p>[JA] <b>安全装置。</b>
+ * <ul>
+ *   <li>[JA] 保存は {@link #MIN_RETENTION}(22 日 = DLT 14 日 + 元トピック 7 日 + 1 日)未満にならない — 設定を書き誤っても、再び来うる
+ *       イベントの行は残る。</li>
+ *   <li>[JA] 一度に {@code batchSize} 行ずつ、文ごとにコミットする — ロック · WAL を短くする。一回は {@code maxBatches} 回で止まる。</li>
+ *   <li>[JA] Pod が複数でも同じ条件の DELETE なので重なっても害はない(遅い方は 0 行)。</li>
+ *   <li>[JA] 表名は {@code <スキーマ>.processed_event} の形だけを受け付ける — SQL にそのまま入るためである。</li>
+ * </ul>
+ * <p>[JA] 基準時刻は {@code clock} のローカル時間である — 台帳の {@code processed_at} は {@code LocalDateTime.now()}(JVM 既定のタイムゾーン)
+ * または DB の {@code now()}(ドライバがセッションのタイムゾーンを JVM 既定に合わせる)で書かれる。
  */
 public final class ProcessedEventPurger {
 
     private static final Logger log = LoggerFactory.getLogger(ProcessedEventPurger.class);
 
-    /** DLT 보존 14일(ops/02) + 원래 토픽 보존 7일 + 하루. 이보다 짧으면 DLT 에서 되돌린 이벤트가 원장을 지나 두 번 반영될 수 있다. */
+    /** DLT 보존 14일(ops/02) + 원래 토픽 보존 7일 + 하루. 이보다 짧으면 DLT 에서 되돌린 이벤트가 원장을 지나 두 번 반영될 수 있다. ／ [JA] DLT 保持 14 日(ops/02) + 元トピック保持 7 日 + 1 日。これより短いと DLT から戻したイベントが台帳を過ぎて二重に反映されうる。 */
     public static final Duration MIN_RETENTION = Duration.ofDays(22);
 
     private static final Pattern TABLE = Pattern.compile("[a-z_]+\\.processed_event");
@@ -77,12 +88,12 @@ public final class ProcessedEventPurger {
         this.clock = clock;
     }
 
-    /** 실제로 쓰는 보존 기간(하한을 적용한 뒤). */
+    /** 실제로 쓰는 보존 기간(하한을 적용한 뒤). ／ [JA] 実際に使う保持期間(下限を適用した後)。 */
     public Duration retention() {
         return retention;
     }
 
-    /** @return 지운 줄 수. */
+    /** @return 지운 줄 수. ／ [JA] 削除した行数。 */
     public long purge() throws SQLException {
         Timestamp cutoff = Timestamp.valueOf(LocalDateTime.now(clock).minus(retention));
         long total = 0;

@@ -31,6 +31,17 @@
 # dev 를 1로 두는 것은 자원 때문이다. 다만 그 결과 **dev 에서는 그 부류의 버그가 절대
 # 재현되지 않는다**는 점을 알고 있어야 한다. 동시성 문제를 확인하려면 prod 오버레이나
 # ops/12-staging-rehearsal.sh 를 써야 한다.
+# [JA] dev オーバーレイ — ノート PC 一台ですべて動かす(kubectl apply -k k8s-overlays/dev)。
+#      🔴 **上の apply は初回デプロイでだけ使う。** 下の `images:` の `newTag` は手で書いた値なのですぐ古くなる。デプロイ後にこのファイルをそのまま apply すると全サービスが**その古いタグに
+#      戻る** — 失敗でもロールバックでもなく書かれたとおりに適用されたもので、症状は「デプロイがおかしい」としか見えない(実際にフロントエンドが数週間前のバージョンに戻った)。
+#      二回目からは ops/28-deploy.sh dev <コミット SHA 12 桁>(デプロイ)、--config-only(設定のみ、イメージ維持)、--config-only --restart <deploy>(値を読ませるには再起動)。
+#      ops/28 はデプロイするバージョン(またはクラスターから読んだ現在のバージョン)でタグを上書きして適用する。
+#      ── prod と何が違うか ── レプリカ: すべて 1(下の §replicas 参照)。リソース: 要求を大きく下げる(24GB の MacBook で 12 サービス + インフラ 5 種が一緒に立つ)。
+#      インフラ: Kafka/PG/Redis/Mongo/ES をクラスター内に立てる(90-dev-infra、下記参照)。HPA: なし(metrics-server がなければ HPA は <unknown> で止まっているだけ)。バックアップ CronJob: なし。
+#      ── なぜレプリカ 1 か(単に「開発だから」ではない)── このリポジトリはレプリカを 2 に上げたとき黙って壊れるバグをいくつも経験した(docs/21):
+#      アウトボックスのポーラーがレプリカごとに同じイベントを発行し、SMS · メールのディスパッチャーもロックがなければ同じ行を二度掴んだ。それは**prod で捕まえるべき問題**で、だから prod オーバーレイは 2 以上を維持する。
+#      dev を 1 にするのは資源のためだ。ただしその結果**dev ではその種のバグが決して再現しない**ことを知っておく必要がある。並行性の問題を確かめるには prod オーバーレイか
+#      ops/12-staging-rehearsal.sh を使う。
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -45,8 +56,11 @@ namespace: ecommerce
 #    보통은 매니페스트를 k8s/base/ 로 옮겨 해결하지만, 이 저장소는 ops/13·README·docs 등
 #    50곳 가까이가 `k8s/40-user-service.yaml` 같은 경로를 직접 참조한다. 그걸 전부 고치는
 #    비용이 더 크다고 봤다. 오버레이만 밖으로 빼면 참조는 하나도 건드리지 않아도 된다.
+# [JA] ⚠️ オーバーレイが k8s/ の**外に**ある理由。kustomize はベースのルート内にオーバーレイがあると循環とみなして拒否する(cycle detected: …)。
+#      普通はマニフェストを k8s/base/ に移して解決するが、このリポジトリは ops/13 · README · docs など 50 か所近くが `k8s/40-user-service.yaml` のようなパスを直接参照している。
+#      それをすべて直すコストの方が大きいと判断した。オーバーレイだけ外に出せば参照は一つも触らなくてよい。
 resources:
-  - ../../k8s               # 베이스 (k8s/kustomization.yaml)
+  - ../../k8s               # 베이스 (k8s/kustomization.yaml) ／ [JA] ベース(k8s/kustomization.yaml)
 
 # ⚠️ 90-dev-infra.yaml 은 여기 없다. kustomize 는 오버레이 밖의 **낱개 파일**을 참조하지
 #    못하고(디렉터리 베이스만 가능), 그 파일을 위해 별도 kustomization 루트를 하나 더 만드는
@@ -55,9 +69,12 @@ resources:
 #
 #      kubectl apply -f k8s/90-dev-infra.yaml
 #      kubectl apply -k k8s-overlays/dev
+# [JA] ⚠️ 90-dev-infra.yaml はここにない。kustomize はオーバーレイ外の**単独ファイル**を参照できず(ディレクトリベースのみ可能)、そのファイルのために別の kustomization ルートを
+#      もう一つ作るのは得るものに比べて複雑だ。dev インフラは今も ops/13-k3s-deploy.sh が直接適用しているのでそのままにする(90-dev-infra を apply -f してから overlays/dev を apply -k)。
 
 # ── 레플리카 ───────────────────────────────────────────────────────────
 # 베이스에 replicas 가 적혀 있으므로 여기서 덮어쓴다. HPA 가 없으니 충돌하지 않는다.
+# [JA] ── レプリカ ── ベースに replicas が書かれているのでここで上書きする。HPA がないので衝突しない。
 replicas:
   - name: gateway-server
     count: 1
@@ -78,6 +95,7 @@ replicas:
   - name: delivery-service
     count: 1
   # 노트북 한 대에서는 대기 복제본이 의미가 없다 — 활성 1개만.
+  # [JA] ノート PC 一台ではスタンバイ複製に意味がない — アクティブ 1 個だけ。
   - name: saga-projection
     count: 1
   - name: frontend
@@ -86,6 +104,8 @@ replicas:
 # ── 이미지 ─────────────────────────────────────────────────────────────
 # ops/13-k3s-deploy.sh 가 이미지를 k3s 안으로 직접 넣는 방식과 맞춘다(레지스트리 없음).
 # newTag 를 바꾸려면 여기만 고치면 된다.
+# [JA] ── イメージ ── ops/13-k3s-deploy.sh がイメージを k3s 内に直接入れる方式に合わせる(レジストリなし)。
+#      newTag を変えるにはここだけ直せばよい。
 images:
   - name: REGISTRY_PLACEHOLDER/ecommerce-msa/eureka-server
     newName: ecommerce-msa/eureka-server
@@ -136,16 +156,23 @@ patches:
   # ⚠️ requests 만 낮추고 limits 는 그대로 둔다. requests 는 스케줄러가 "자리를 잡아 두는"
   #    값이라 낮추면 더 많이 뜨고, limits 는 실제로 쓸 수 있는 상한이라 낮추면 JVM 이
   #    OOMKilled 된다. 둘을 같이 낮추는 것이 흔한 실수다.
+  # [JA] 要求量を下げてノート PC 一台にすべて収まるようにする。
+  #      ⚠️ requests だけ下げて limits はそのままにする。requests はスケジューラーが「場所を確保しておく」値なので下げるとより多く立ち、limits は実際に使える上限なので下げると JVM が
+  #      OOMKilled される。両方一緒に下げるのはよくある間違いだ。
   - path: patch-dev-resources.yaml
     target:
       kind: Deployment
       # ⚠️ 이름 정규식으로 애플리케이션 서비스만 고른다. `kind: Deployment` 만 쓰면
       #    90-dev-infra 의 Kafka/PG/ES 까지 같이 줄어들어 인프라가 뜨지 못한다.
       #    ES 는 특히 메모리가 부족하면 부트스트랩 체크에서 바로 죽는다.
+      # [JA] ⚠️ 名前の正規表現でアプリケーションサービスだけを選ぶ。`kind: Deployment` だけを使うと
+      #      90-dev-infra の Kafka/PG/ES まで一緒に縮んでインフラが立ち上がれない。ES は特にメモリが足りないとブートストラップチェックですぐ死ぬ。
       name: "eureka-server|gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|chat-service|notification-service|delivery-service|saga-projection|config-server|frontend"
 
   # 개발에서는 이미지가 로컬에 이미 있다(ops/13 이 k3s 로 임포트한다).
   # Always 로 두면 레지스트리를 찾다 ImagePullBackOff 가 된다.
+  # [JA] 開発ではイメージがローカルに既にある(ops/13 が k3s にインポートする)。
+  #      Always にするとレジストリを探して ImagePullBackOff になる。
   - path: patch-dev-imagepull.yaml
     target:
       kind: Deployment

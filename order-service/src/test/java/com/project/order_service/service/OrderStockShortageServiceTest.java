@@ -34,6 +34,8 @@ import com.project.order_service.service.OrderStockShortageService.Outcome;
 
 /**
  * 재고 부족 보상 — 적고, 자동 환불하고, 못 하면 넘긴다 (docs/53 §초과 판매).
+ *
+ * <p>[JA] 在庫不足の補償 — 記録し、自動返金し、できなければ引き継ぐ(docs/53 §過剰販売)。
  */
 @DisplayName("재고 부족 보상")
 class OrderStockShortageServiceTest {
@@ -74,6 +76,7 @@ class OrderStockShortageServiceTest {
     }
 
     /** 🔴 핵심 — 3개 중 2개가 모자랐다. 2개를 적고 2개만큼 자동 환불한다. 모자라지 않은 품목은 건드리지 않는다. */
+    // [JA] 🔴 核心 — 3 個のうち 2 個が足りなかった。2 個を記録し、2 個分だけ自動返金する。足りている品目には触れない。
     @Test
     @DisplayName("🔴 모자란 수를 품목에 적고 그만큼 자동 환불한다 — 관리자 권한의 기존 환불 경로로")
     void recordsAndRefunds() {
@@ -95,7 +98,7 @@ class OrderStockShortageServiceTest {
     void aResolvedDuplicateIsIgnored() {
         service.apply(1L, EVENT, List.of(new Line(10L, 5L, "M", 2)));
         order.setShortageResolvedAt(java.time.LocalDateTime.now());
-        tee.setRefundedQty(2);   // 첫 환불이 반영된 상태
+        tee.setRefundedQty(2);   // 첫 환불이 반영된 상태 ／ [JA] 最初の返金が反映された状態
 
         Outcome again = service.apply(1L, EVENT, List.of(new Line(10L, 5L, "M", 2)));
 
@@ -106,6 +109,8 @@ class OrderStockShortageServiceTest {
 
     /**
      * 환불이 실패하면 예외 — Kafka 가 다시 전달한다. 그때는 적는 단계를 건너뛰고 환불만 다시 한다(두 번 적지 않는다).
+     *
+     * <p>[JA] 返金が失敗したら例外 — Kafka が再配信する。そのときは記録段階を飛ばして返金だけをやり直す(二度記録しない)。
      */
     @Test
     @DisplayName("🔴 환불이 실패하면 던지고, 다시 전달되면 적지 않고 환불만 다시 한다")
@@ -124,6 +129,7 @@ class OrderStockShortageServiceTest {
     }
 
     /** 무통장입금은 게이트웨이가 언제나 "받아들였다" 고 답한다 — 자동으로 부르면 돈은 안 갔는데 환불로 적힌다. */
+    // [JA] 銀行振込はゲートウェイが常に「受け付けた」と答える — 自動で呼ぶとお金は送られていないのに返金として記録される。
     @Test
     @DisplayName("🔒 무통장입금 주문은 자동 환불하지 않고 운영자에게 넘긴다 — 부족은 적는다")
     void bankTransferGoesToAHuman() {

@@ -33,6 +33,8 @@ public class KafkaConsumerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka セキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} 一か所で作る。以前はクラスごとに同じ 6 行を複製しており、値が空でもそのまま入れるので、SSL を有効にした瞬間に空のパスで死ぬ組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -42,6 +44,7 @@ public class KafkaConsumerConfig {
     }
 
     // 재시도+DLT 격리 (KafkaDltConfig, docs/11 §3) — poison message 파티션 블로킹 방지
+    // [JA] リトライ + DLT 隔離(KafkaDltConfig, docs/11 §3) — poison message によるパーティションのブロッキング防止
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.kafka.listener.DefaultErrorHandler kafkaErrorHandler;
 
@@ -78,6 +81,7 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 MessageDto 로 — 리스너(MessageConsumer)가 받는 타입이다(docs/38 §1.16).
+                        // [JA] Avro または JSON を MessageDto に — リスナー(MessageConsumer)が受け取る型である(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new ChatMessageAvroMapping())));
     }
     // 🐛 예전: 여기에 쓰는 곳 없는 알림 팩토리(kafkaNotificationContainerFactory)가 있었다. 그룹 id 가 "notification" —
@@ -99,6 +103,7 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, UserCreatedRequest> userCreatedConsumerFactory() {
         // 값은 아래 생성자의 AvroDtoDeserializer 가 읽는다(Avro 또는 JSON) — 맵에는 두지 않는다(위 consumerFactory 와 같다).
+        // [JA] 値は下のコンストラクタの AvroDtoDeserializer が読む(Avro または JSON) — マップには置かない(上の consumerFactory と同じ)。
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
                 .put(ConsumerConfig.GROUP_ID_CONFIG, "user-3")
@@ -119,6 +124,10 @@ public class KafkaConsumerConfig {
                         //    **모든 가입 이벤트가 역직렬화에서 실패해 DLT 로 갔다** — 채팅 회원은 접속 순간 즉석으로만
                         //    생겼고(ChatService.createMissingMember), 닉네임·사진은 한 번도 원본 값이 아니었다.
                         //    Avro 또는 JSON 을 같은 DTO 로 읽는다 — coupon 과 같다(docs/38 §1.16, docs/48 §6-⑤).
+                        // [JA] 🐛 user-service は user-created を Avro で書く(459126e)。ここだけ JsonDeserializer のまま残っていて
+                        //      **すべての加入イベントがデシリアライズで失敗し DLT に行っていた** — チャット会員は接続の瞬間に即席でのみ
+                        //      作られ(ChatService.createMissingMember)、ニックネーム・写真は一度も元の値ではなかった。
+                        //      Avro または JSON を同じ DTO で読む — coupon と同じ(docs/38 §1.16, docs/48 §6-⑤)。
                         new AvroDtoDeserializer<>(new com.project.common.kafka.avro.UserCreatedRequestAvroMapping())));
     }
 
@@ -127,6 +136,8 @@ public class KafkaConsumerConfig {
      * 리스너가 필드 이름으로 읽는다. 컨슈머 그룹은 리스너의 {@code id} 가 된다(chat-user-updated·chat-user-deleted —
      * {@code @KafkaListener} 의 id 가 그룹을 덮어쓴다). user-created 와 그룹이 나뉘어 있어 한쪽의 DLT 격리·재처리가
      * 다른 쪽의 오프셋을 건드리지 않는다. 아래 GROUP_ID 는 id 없이 이 팩토리를 쓰는 리스너의 기본값일 뿐이다.
+     *
+     * <p>[JA] {@code user-updated}・{@code user-deleted} — 原本のプロフィール変更・退会(docs/48 §6-⑤)。値は JSON 文字列でリスナーがフィールド名で読む。コンシューマグループはリスナーの {@code id} になる(chat-user-updated・chat-user-deleted — {@code @KafkaListener} の id がグループを上書きする)。user-created とグループが分かれているので、一方の DLT 隔離・再処理がもう一方のオフセットに触れない。下の GROUP_ID は id なしでこのファクトリを使うリスナーのデフォルト値にすぎない。
      */
     @Bean
     ConcurrentKafkaListenerContainerFactory<String, String> userLifecycleContainerFactory() {
@@ -148,6 +159,7 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class)
                 // 탈퇴는 놓치면 안 된다 — 이 그룹이 처음 뜨기 전에 쌓인 것부터 읽는다. 처리는 멱등하다.
+                // [JA] 退会は取りこぼしてはならない — このグループが初めて立ち上がる前に溜まったものから読む。処理は冪等である。
                 .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .putAll(securityProps())
                 .build();

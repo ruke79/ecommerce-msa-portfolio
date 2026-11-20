@@ -43,6 +43,9 @@ import jakarta.servlet.http.Cookie;
  * 🔴 위험 기반 로그인의 메일 확인 엔드포인트(docs/68 §19).
  *
  * <p>통과한 브라우저만 세션 · "아는 기기" 가 된다. 틀림 · 만료 · 막힌 계정은 세션을 주지 않는다.
+ *
+ * <p>[JA] 🔴 リスクベースログインのメール確認エンドポイント(docs/68 §19)。
+ * <p>通過したブラウザだけがセッション ·「既知の機器」になる。誤り · 期限切れ · 止められたアカウントにはセッションを与えない。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -71,6 +74,7 @@ class LoginCheckVerifyTest {
         user.setAccountNonLocked(true);
         when(userRepository.findById(7L)).thenReturn(Optional.of(user));
         // 쿠키는 이름과 수명만 본다 — 수명 0 이면 지우는 쿠키다.
+        // [JA] クッキーは名前と寿命だけ見る — 寿命 0 なら削除するクッキーだ。
         when(jwtUtils.createCookie(any(), any(), any())).thenAnswer(inv -> {
             Cookie c = new Cookie(inv.getArgument(0), inv.getArgument(1) == null ? "" : inv.getArgument(1));
             c.setMaxAge((int) ((Duration) inv.getArgument(2)).getSeconds());

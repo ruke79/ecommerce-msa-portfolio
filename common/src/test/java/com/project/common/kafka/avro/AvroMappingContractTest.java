@@ -14,11 +14,16 @@ import org.junit.jupiter.api.Test;
  *
  * <p>토픽 목록은 {@link AvroMappings#byTopic()} 에서 온다 — 새 토픽을 Avro 로 옮기면 자동으로 여기 들어온다.
  * chat 의 매핑은 chat-service 에 있어 그쪽 테스트({@code ChatMessageAvroContractTest})가 같은 검사를 한다.
+ *
+ * <p>[JA] すべてのトピックの DTO ↔ Avro マッピングがフィールドを失わない(docs/55 §7-7, {@link AvroMappingContract})。
+ * トピックのリストは {@link AvroMappings#byTopic()} から来る — 新しいトピックを Avro に移すと自動的にここに入る。
+ * chat のマッピングは chat-service にあり、そちらのテスト({@code ChatMessageAvroContractTest})が同じ検査をする。
  */
 @DisplayName("DTO ↔ Avro 매핑 계약")
 class AvroMappingContractTest {
 
     /** 일부러 싣지 않는 필드 — 토픽 → (경로 → 이유). 이유 없는 제외는 검사가 거절한다. */
+    // [JA] わざと載せないフィールド — トピック → (パス → 理由)。理由のない除外は検査が拒否する。
     private static final Map<String, Map<String, String>> IGNORED = Map.of();
 
     @Test
@@ -33,6 +38,9 @@ class AvroMappingContractTest {
     /**
      * 검사가 실제로 잡는가 — 결제 요청의 옛 버그를 다시 만든다. 스키마 v2 에는 제공자 필드가 없었고, 매핑은 조용히
      * 버렸다(docs/49 §3). 여기서는 매핑이 {@code providerPaymentId} 를 옮기지 않는 모양으로 흉내 낸다.
+     *
+     * <p>[JA] 検査が実際に捕まえるか — 決済リクエストの古いバグを再現する。スキーマ v2 にはプロバイダーのフィールドがなく、マッピングは黙って捨てていた(docs/49 §3)。
+     * ここではマッピングが {@code providerPaymentId} を移さない形で模倣する。
      */
     @Test
     @DisplayName("매핑이 필드 하나를 옮기지 않으면 잡는다 — 결제 요청의 옛 버그")
@@ -75,11 +83,12 @@ class AvroMappingContractTest {
     }
 
     /** DTO 에 필드를 더하고 스키마를 잊은 경우 — 이름 대조가 잡는다. */
+    // [JA] DTO にフィールドを足してスキーマを忘れた場合 — 名前の突き合わせが捕まえる。
     static class RollbackWithExtra {
         Long userId;
         String couponName;
         Long orderId;
-        String providerRef;   // 스키마(CouponRollbackRequest)에 없다
+        String providerRef;   // 스키마(CouponRollbackRequest)에 없다 ／ [JA] スキーマ(CouponRollbackRequest)にない
     }
 
     @Test
@@ -120,6 +129,7 @@ class AvroMappingContractTest {
         assertThat(AvroMappingContract.verify(mapping, Map.of()))
                 .anySatisfy(p -> assertThat(p).contains("RollbackWithExtra.providerRef").contains("DTO 에만"));
         // 일부러 싣지 않는 것이라면 이유와 함께 제외한다.
+        // [JA] わざと載せないのであれば、理由とともに除外する。
         assertThat(AvroMappingContract.verify(mapping,
                 Map.of("RollbackWithExtra.providerRef", "예시 — 이 필드는 이 서비스 안에서만 쓴다"))).isEmpty();
     }

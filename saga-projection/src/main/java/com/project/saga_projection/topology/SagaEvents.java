@@ -17,6 +17,12 @@ import com.project.common.message.dto.response.PaymentResponse;
  * <p>요청 델타는 {@code requestCount=1, responseCount=0}, 응답 델타는 그 반대다. 리듀서는 이 둘로
  * 종류를 구분한다. 토큰({@code authorizationToken})은 <b>싣지 않는다</b> — 프로젝션은 조회 API 로
  * 노출되므로 자격증명이 들어가면 안 된다.
+ *
+ * <p>[JA] 入力レコード一つを状態<b>デルタ</b>に変える。リクエストと応答を同じ型にして二つのストリームを合わせ、
+ * 一つの集約に畳み込むためだ — デルタも {@link OrderSagaState} である(スキーマ一つで済む)。
+ * リクエストのデルタは {@code requestCount=1, responseCount=0}、応答のデルタはその逆。リデューサーはこの二つで
+ * 種類を区別する。トークン({@code authorizationToken})は<b>載せない</b> — プロジェクションは照会 API で
+ * 公開されるので資格情報が入ってはならない。
  */
 public final class SagaEvents {
 
@@ -60,6 +66,7 @@ public final class SagaEvents {
     }
 
     /** 응답의 결제 상태 → 단계. 상태가 비어 있으면 FAILED — pay 는 종료 상태만 보내므로 빈 값은 그 자체가 이상이다. */
+    // [JA] 応答の決済状態 → 段階。状態が空なら FAILED — pay は終了状態だけを送るので、空の値はそれ自体が異常である。
     static SagaPhase phaseOf(PaymentStatus status) {
         if (status == null) {
             return SagaPhase.FAILED;

@@ -18,6 +18,12 @@ import java.util.Map;
  * 그때는 null 을 돌려주고, {@code CustomOAuth2UserService} 가 {@code email_required} 로 거절한다.
  *
  * <p>검증 여부({@link #isEmailVerified()})는 파서가 판정하지 않고 드러내기만 한다 — 거절은 서비스가 한다(구글과 같은 자리).
+ *
+ * <p>[JA] Kakao {@code GET https://kapi.kakao.com/v2/user/me} の応答。
+ * ⚠️ フィールドが Google・GitHub のように最上位になく {@code kakao_account} の下にある。そして同意していない項目はキー自体が
+ * 抜ける — メール同意を拒否したかアプリにメールの同意項目が設定されていなければ {@code email} がない。そのときは null を返し、
+ * {@code CustomOAuth2UserService} が {@code email_required} で拒否する。
+ * 検証済みかどうか({@link #isEmailVerified()})はパーサーが判定せず示すだけである — 拒否はサービスが行う(Google と同じ場所)。
  */
 public class KakaoResponse implements OAuth2Response {
 
@@ -49,6 +55,10 @@ public class KakaoResponse implements OAuth2Response {
      * 카카오가 이 주소를 "유효하고 인증된" 것으로 보는가. 둘 다 true 여야 한다 — {@code is_email_valid=false} 는 다른 계정에
      * 넘어간(재사용된) 주소, {@code is_email_verified=false} 는 소유 확인을 하지 않은 주소다. 어느 쪽이든 그 주소로 기존
      * 계정에 연결하면 남의 계정을 가져갈 수 있다.
+     *
+     * <p>[JA] Kakao がこのアドレスを「有効で認証済み」と見ているか。両方 true でなければならない — {@code is_email_valid=false} は別の
+     * アカウントに移った(再利用された)アドレス、{@code is_email_verified=false} は所有確認をしていないアドレスである。どちらでも
+     * そのアドレスで既存アカウントに連携すると他人のアカウントを奪える。
      */
     public boolean isEmailVerified() {
         return Boolean.TRUE.equals(account.get("is_email_valid"))
@@ -58,6 +68,7 @@ public class KakaoResponse implements OAuth2Response {
     @Override
     public String getName() {
         // 닉네임 동의는 선택일 수 있다 — kakao_account.profile → properties → 이메일 앞부분 순으로.
+        // [JA] ニックネームの同意は任意のことがある — kakao_account.profile → properties → メールアドレスの前半の順で。
         Object nickname = asMap(account.get("profile")).get("nickname");
         if (nickname == null) {
             nickname = asMap(attribute.get("properties")).get("nickname");

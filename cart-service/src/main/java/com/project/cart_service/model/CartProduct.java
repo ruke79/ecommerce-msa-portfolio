@@ -53,6 +53,9 @@ public class CartProduct extends BaseEntity {
     /**
      * 이 줄의 SKU — 사이즈 한 줄의 재고 단위 코드(catalog V17). 식별자가 아니라 기록이다: 줄은 여전히
      * (상품, 색상, 사이즈 이름)으로 찾는다. 담을 때 catalog 가 준 값을 적고, 주문 품목이 그대로 가져간다(V4).
+     *
+     * <p>[JA] この行の SKU — サイズ 1 行の在庫単位コード(catalog V17)。識別子ではなく記録である: 行は依然として
+     *      (商品, 色, サイズ名)で探す。追加時に catalog がくれた値を書き、注文品目がそのまま持っていく(V4)。
      */
     @Column(name = "sku_code", length = 96)
     private String skuCode;
@@ -82,6 +85,8 @@ public class CartProduct extends BaseEntity {
 
     /**
      * 체크아웃에 고른 줄인가 — 주문(/checkout)은 고른 줄로만 만든다. 체크아웃이 줄을 지우지 않고 이 표시만 바꾼다(V3).
+     *
+     * <p>[JA] チェックアウトで選んだ行か — 注文(/checkout)は選んだ行だけで作る。チェックアウトは行を消さずにこの印だけを変える(V3)。
      */
     @Builder.Default
     @Column(nullable = false)

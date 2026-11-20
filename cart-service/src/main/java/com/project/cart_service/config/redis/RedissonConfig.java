@@ -41,10 +41,11 @@ import java.util.Optional;
 import java.util.function.Predicate;
 
 @Configuration
-@EnableCaching // 캐시 기능을 활성화합니다.
+@EnableCaching // 캐시 기능을 활성화합니다. ／ [JA] キャッシュ機能を有効にする。
 public class RedissonConfig {
 
     // Redis 서버의 비밀번호를 주입받습니다.
+    // [JA] Redis サーバーのパスワードを注入する。
     @Value("${spring.data.redis.password}")
     private String password;
 
@@ -76,6 +77,9 @@ public class RedissonConfig {
                 // 스킴은 SSL 사용 여부를 따라가야 한다. rediss:// 로 고정돼 있으면
                 // ssl.enabled=false 인 평문 Redis 에 TLS 핸드셰이크를 시도해
                 // SslHandshakeTimeoutException 으로 기동이 실패한다(docs/14 B-14).
+                // [JA] スキームは SSL 使用有無に従うべきである。rediss:// に固定されていると
+                //      ssl.enabled=false の平文 Redis に TLS ハンドシェイクを試み、
+                //      SslHandshakeTimeoutException で起動が失敗する(docs/14 B-14)。
                 .setAddress((useSsl ? "rediss://" : "redis://") + host + ":" + port)
                 .setPassword(password);
 
@@ -86,6 +90,11 @@ public class RedissonConfig {
                 //    클라이언트 인증서는 아예 없다. 예전 코드는 빈 문자열을 그대로 File 로 감싸
                 //    `new File("")` → 현재 작업 디렉터리 URL 을 트러스트스토어로 넘겼고,
                 //    ssl.enabled 를 켜는 순간 keystore 로딩 실패로 기동이 죽었다(docs/32 §4).
+                // [JA] ⚠️ パスが空なら **何も設定しない** — JVM 既定のトラストストアを使う。
+                //         マネージド Redis(Upstash など)は公開 CA 発行の証明書で TLS + パスワード認証であり、
+                //         クライアント証明書はそもそもない。以前のコードは空文字列をそのまま File で包み、
+                //         `new File("")` → 現在の作業ディレクトリの URL をトラストストアとして渡していたため、
+                //         ssl.enabled を有効にした瞬間に keystore の読み込み失敗で起動が死んだ(docs/32 §4)。
                 if (isSet(truststoreFileLocation)) {
                     URL truststoreUrl = new File(truststoreFileLocation).toURI().toURL();
                     config.useSingleServer().setSslTruststore(truststoreUrl);
@@ -109,6 +118,7 @@ public class RedissonConfig {
 
 
     // ObjectMapper를 주입받아 RedisTemplate을 설정합니다.
+    // [JA] ObjectMapper を注入して RedisTemplate を設定する。
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedissonClient redissonClient, 
      @Qualifier("cacheObjectMapper") ObjectMapper cacheObjectMapper) {       
@@ -116,17 +126,21 @@ public class RedissonConfig {
         RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
 
         // RedissonConnectionFactory를 사용하도록 설정합니다.
+        // [JA] RedissonConnectionFactory を使うよう設定する。
         redisTemplate.setConnectionFactory(new RedissonConnectionFactory(redissonClient));
 
         // ObjectMapper를 사용하는 Jackson2JsonRedisSerializer를 생성합니다.
+        // [JA] ObjectMapper を使う Jackson2JsonRedisSerializer を生成する。
         Jackson2JsonRedisSerializer<Object> jsonSerializer = new Jackson2JsonRedisSerializer<>(cacheObjectMapper, Object.class);
         
 
         // Key와 Hash Key는 String으로 직렬화
+        // [JA] Key と Hash Key は String でシリアライズ
         redisTemplate.setKeySerializer(new StringRedisSerializer());
         redisTemplate.setHashKeySerializer(new StringRedisSerializer());
 
         // Value와 Hash Value는 설정된 ObjectMapper를 사용하는 JSON 직렬화기로 설정합니다.
+        // [JA] Value と Hash Value は設定済みの ObjectMapper を使う JSON シリアライザにする。
         redisTemplate.setValueSerializer(jsonSerializer);
         redisTemplate.setHashValueSerializer(jsonSerializer);
 

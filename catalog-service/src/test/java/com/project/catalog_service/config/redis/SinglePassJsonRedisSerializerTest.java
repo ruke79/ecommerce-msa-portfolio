@@ -29,7 +29,9 @@ import com.project.common.dto.ProductSkuDto;
  * <p>둘을 지킨다. ① 한 번만 읽는다 — 파서를 몇 번 여는지 센다(Spring Data Redis 기본은 타입을 찾느라 두 번). ② 저장 모양 · 읽은 값이
  * 예전 직렬화기와 같다 — 옛 파드가 쓴 캐시를 새 파드가 그대로 읽고(그 반대도), 그래서 배포 뒤 캐시를 비우지 않아도 된다.
  *
- * <p>[JA] キャッシュ値を一度だけ読む。パーサを開く回数を数え、保存形式と読んだ値が以前のシリアライザと同じことを確かめる。
+ * <p>[JA] キャッシュ値を一度だけ読む — docs/83 §5(2026-10-23 CPU プロファイル: キャッシュ復元 13.6%、そのうち同じ JSON を読み直す分 5.2%)。
+ * 二つを守る。① 一度だけ読む — パーサを何回開くかを数える(Spring Data Redis の既定は型を探すために二回)。② 保存形式 · 読んだ値が
+ * 以前のシリアライザと同じ — 旧 Pod が書いたキャッシュを新 Pod がそのまま読み(逆も)、そのためデプロイ後にキャッシュを空けなくてよい。
  */
 @DisplayName("캐시 값 직렬화기 — 한 번만 읽고, 예전 직렬화기와 서로 읽는다")
 class SinglePassJsonRedisSerializerTest {
@@ -37,6 +39,7 @@ class SinglePassJsonRedisSerializerTest {
     private static final ObjectMapper PLAIN = new ObjectMapper();
 
     /** 바이트로 파서를 열 때마다 센다 — 값 읽기와 타입 찾기의 트리 읽기가 모두 여기를 지난다(공개 createParser 의 모든 겹침이 이리 온다). */
+    // [JA] バイト列でパーサを開くたびに数える — 値の読み取りと型探しのツリー読み取りがすべてここを通る(公開 createParser のすべてのオーバーロードがここに来る)。
     static final class CountingFactory extends JsonFactory {
         final AtomicInteger opened = new AtomicInteger();
 
@@ -55,6 +58,7 @@ class SinglePassJsonRedisSerializerTest {
     }
 
     /** search_cache 에 실제로 들어가는 모양 — 상품 쪽(Page) · 메뉴 목록. */
+    // [JA] search_cache に実際に入る形 — 商品側(Page)・メニュー一覧。
     private static SearchResultDto searchResult() {
         return SearchResultDto.builder()
                 .product(new PageImpl<>(new ArrayList<>(List.of(product("1"), product("2"))), PageRequest.of(0, 20), 2))
@@ -104,6 +108,7 @@ class SinglePassJsonRedisSerializerTest {
             Object readByOld = old.deserialize(byOld);
             assertThat(readByNow).as("읽은 타입 — %s", p[2].getClass().getSimpleName()).hasSameClassAs(readByOld);
             // 읽은 값을 다시 써서 비교한다 — DTO 에 equals 가 없어도 모든 필드를 본다
+            // [JA] 読んだ値を書き戻して比べる — DTO に equals がなくても全フィールドを見る
             assertThat(PLAIN.readTree(old.serialize(readByNow))).isEqualTo(PLAIN.readTree(old.serialize(readByOld)));
         }
     }

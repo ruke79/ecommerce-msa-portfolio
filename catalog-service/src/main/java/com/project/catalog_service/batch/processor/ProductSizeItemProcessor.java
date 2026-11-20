@@ -28,7 +28,7 @@ public class ProductSizeItemProcessor implements ItemProcessor<ProductSizeCsvDto
             .quantity(item.getQuantity())
             .price(new BigDecimal(item.getPrice()))
             .sku(sku)
-            .version(0L) // 초기 버전 설정
+            .version(0L) // 초기 버전 설정 ／ [JA] 初期バージョン設定
             .build();
     }
 }

@@ -35,7 +35,12 @@ import com.project.common.dto.catalog.request.SearchParamsRequest;
  * <p>🐛 2026-10-20 실습(상품 1,000만): 메뉴 질의(사이즈 DISTINCT 76초)가 검색 요청 안에서 돌아 커넥션을 쥐었고, 캐시 만료마다 다시 돌아
  * 풀이 차서 home 까지 5xx 였다. 캐시 관리자는 이름만 같은 메모리 캐시(운영은 Redis — 왕복은 SearchFacetsTimeoutIntegrationTest).
  *
- * <p>[JA] フィルターメニュー — リクエストは計算しない、キーごとに一度、古ければ古い値を返しつつ裏で計算し直す。
+ * <p>[JA] フィルターメニュー — リクエストは計算しない(キャッシュを読み、なければ実行器に任せて短くだけ待つ)、キーごとに一度、古ければ古い値を
+ * 返しつつ裏で計算し直す。
+ *
+ * <p>[JA] 🐛 2026-10-20 実習(商品 1,000 万): メニュークエリ(サイズ DISTINCT 76 秒)が検索リクエストの中で動いて接続を握り、キャッシュの期限切れの
+ * たびにまた動いてプールが埋まり、home まで 5xx だった。キャッシュマネージャーは名前だけ同じメモリキャッシュ(本番は Redis — 往復は
+ * SearchFacetsTimeoutIntegrationTest)。
  */
 @DisplayName("필터 메뉴 — 요청 밖에서 계산 · 키마다 한 번 · 오래되면 뒤에서")
 class SearchFilterFacetsCacheTest {
@@ -65,6 +70,7 @@ class SearchFilterFacetsCacheTest {
     }
 
     /** 바로 실행하는 실행기 · 바꿀 수 있는 시계 — 순서를 정해 두고 본다. */
+    // [JA] 即時実行するエグゼキュータ・変更可能な時計 — 順序を決めておいて見る。
     private static SearchFilterFacets facets(FacetQueries q, ConcurrentMapCacheManager caches, AtomicLong now) {
         Clock clock = new Clock() {
             @Override public ZoneOffset getZone() { return ZoneOffset.UTC; }
@@ -120,7 +126,7 @@ class SearchFilterFacetsCacheTest {
         verify(q, times(1)).sizes(7L);
 
         now.addAndGet(Duration.ofMinutes(2).toMillis());
-        facets.attach(empty(), new Params("7"));   // 11분 — 다시 계산을 맡긴다(이 실행기는 바로 돈다)
+        facets.attach(empty(), new Params("7"));   // 11분 — 다시 계산을 맡긴다(이 실행기는 바로 돈다) ／ [JA] 11 分 — 再計算を任せる(このエグゼキュータは即時に走る)
         verify(q, times(2)).sizes(7L);
         assertThat(facets.attach(empty(), new Params("7")).getSizes()).containsExactly("M", "XL");
     }
@@ -176,7 +182,7 @@ class SearchFilterFacetsCacheTest {
         assertThat(facets.attach(empty(), new Params("7")).getSizes()).containsExactly("M");
         assertThat(facets.attach(empty(), new Params("7")).getSizes()).as("실패 뒤에도 옛 값").containsExactly("M");
 
-        caches.getCache("colors_cache").put("7", new ArrayList<>(List.of("Old")));   // 2026-10-20 전의 모양
+        caches.getCache("colors_cache").put("7", new ArrayList<>(List.of("Old")));   // 2026-10-20 전의 모양 ／ [JA] 2026-10-20 以前の形
         assertThat(facets.attach(empty(), new Params("7")).getColors()).containsExactly("Red");
     }
 

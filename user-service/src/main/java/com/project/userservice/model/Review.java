@@ -30,6 +30,11 @@ import lombok.experimental.SuperBuilder;
  * 🐛 인자 없는 생성자가 없었다({@code @SuperBuilder} 만). JPA 는 DB 에서 읽은 행으로 엔티티를 만들 때 그 생성자를 쓴다 — 쓰기(빌더로
  * 만들어 저장)는 되고 <b>읽기</b>가 전부 실패했다. 상품에 첫 리뷰가 저장되는 순간부터 그 상품의 리뷰 목록이 400
  * ("리뷰를 불러오지 못했습니다")이 됐고, 같은 상품에 리뷰를 다시 쓰거나 고치는 것도 막혔다(B-69).
+ *
+ * <p>[JA] 🐛 引数なしコンストラクタがなかった({@code @SuperBuilder} のみ)。JPA は DB から読んだ行でエンティティを作るときに
+ * そのコンストラクタを使う — 書き込み(ビルダーで作って保存)はでき、読み込みが全部失敗した。商品に最初のレビューが
+ * 保存された瞬間からその商品のレビュー一覧が 400(「レビューを読み込めませんでした」)になり、同じ商品にレビューを
+ * 書き直したり修正したりすることも塞がれた(B-69)。
  */
 @Setter
 @Entity
@@ -37,6 +42,7 @@ import lombok.experimental.SuperBuilder;
 @SuperBuilder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 // 인덱스는 Flyway 가 소유한다 — 예전 @Index(rating, review, size, fit)는 쓰는 쿼리가 없었고, 긴 리뷰를 B-tree 한도로 막았다(V16).
+// [JA] インデックスは Flyway が所有する — 以前の @Index(rating, review, size, fit) は使うクエリがなく、長いレビューを B-tree の上限で弾いていた(V16)。
 @Table(name="review", schema="users",
          indexes = {
           @Index(columnList = "product_id", name = "idx_review_product") }
@@ -52,6 +58,7 @@ public class Review extends BaseEntity{
     private float rating = 0F;
 
     /** 화면·서버 검증(ReviewService.validate)이 2,000자까지 받는다 — 컬럼은 255자였다(V14). */
+    // [JA] 画面・サーバー検証(ReviewService.validate)は 2,000 文字まで受ける — カラムは 255 文字だった(V14)。
     @Column(length = 2000)
     private String review;
 

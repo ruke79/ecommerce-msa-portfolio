@@ -10,12 +10,18 @@ import jakarta.validation.constraints.Size;
  *                       다른 각본을 보려면 SIMFAIL-·SIMEXC-·SIMINTL- 로 직접 적는다
  * @param sequenceNo 어느 상자인가. null 이면 송장이 없는 첫 상자에 붙이고, 그런 상자도 없으면
  *                   <b>새 상자를 만든다</b> — 분할 배송이 이 경로로 생긴다
+ *
+ * <p>[JA] 送り状登録(販売者・物流)。
+ * trackingNumber: 送り状番号。テスト宅配業者(SIMULATED)なら空でもよい — {@code SIM-<注文>-<箱>} を作る(正常進行のシナリオ)。
+ * 別のシナリオを見るには SIMFAIL-・SIMEXC-・SIMINTL- で直接書く。
+ * sequenceNo: どの箱か。null なら送り状のない最初の箱に付け、そのような箱もなければ<b>新しい箱を作る</b> — 分割配送はこの経路で生じる。
  */
 public record RegisterTrackingRequest(
         @NotBlank @Size(max = 30) String carrierCode,
         @Size(max = 60) String trackingNumber,
         Integer sequenceNo,
         /** 국제 배송의 개인통관고유부호. 개인정보이므로 응답에는 마스킹해서 내려간다. */
+        // [JA] 国際配送の個人通関固有符号。個人情報なので応答ではマスキングして返す。
         @Size(max = 40) String customsClearanceNo,
         @Size(max = 40) String customsDeclarationNo) {
 }

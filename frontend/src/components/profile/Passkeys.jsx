@@ -20,6 +20,7 @@ const Passkeys = () => {
     const [name, setName] = useState("");
     const [busy, setBusy] = useState(false);
     // 문구가 아니라 문구 키를 담는다 — 그릴 때 지금 언어로 바꾼다.
+    // [JA] 文言ではなく文言キーを入れる — 描くときに今の言語に置き換える。
     const [messageKey, setMessageKey] = useState("");
     const [error, setError] = useState(false);
     const supported = isPasskeySupported();
@@ -56,6 +57,7 @@ const Passkeys = () => {
                 setMessageKey("profile.passkeys.reauth");
             } else if (e?.name === "InvalidStateError") {
                 // excludeCredentials 에 걸렸다 — 이 기기에는 이미 이 계정의 패스키가 있다.
+                // [JA] excludeCredentials に引っかかった — この端末には既にこのアカウントのパスキーがある。
                 setMessageKey("profile.passkeys.already");
             } else {
                 setMessageKey("profile.passkeys.add_failed");

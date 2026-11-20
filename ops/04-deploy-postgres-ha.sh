@@ -5,6 +5,12 @@
 #   POSTGRES_PASSWORD=... REPLICATION_PASSWORD=... ./ops/04-deploy-postgres-ha.sh
 #   DRY_RUN=1 → 명령만 출력
 # 승격(failover)은 별도의 ops/promote-replica.sh 사용.
+# [JA] 運用アクション ④ — PostgreSQL プライマリ-レプリカの配備 + 検証(docs/13 §2)
+#
+#      使い方:
+#        POSTGRES_PASSWORD=... REPLICATION_PASSWORD=... ./ops/04-deploy-postgres-ha.sh
+#        DRY_RUN=1 → コマンドだけ出力
+#      昇格(failover)は別の ops/promote-replica.sh を使う。
 set -euo pipefail
 
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 필요}"

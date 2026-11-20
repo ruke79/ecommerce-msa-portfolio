@@ -50,6 +50,7 @@ public class LiveSessionRegistry {
     private final Map<String, ScheduledFuture<?>> deadlines = new ConcurrentHashMap<>();
 
     /** 닫기 예약 — 하는 일이 작아 스레드 하나면 된다. 데몬이라 종료를 붙잡지 않는다. */
+    // [JA] クローズ予約 — 仕事が小さいのでスレッド一つで足りる。デーモンなので終了を妨げない。
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "ws-token-expiry");
         t.setDaemon(true);
@@ -61,6 +62,7 @@ public class LiveSessionRegistry {
     }
 
     /** WebSocket 처리기에 씌운다 — 연결 · 끊김을 안다(WebSocketConfiguration). */
+    // [JA] WebSocket ハンドラに被せる — 接続・切断を知る(WebSocketConfiguration)。
     public WebSocketHandler decorate(WebSocketHandler handler) {
         return new WebSocketHandlerDecorator(handler) {
             @Override
@@ -80,6 +82,9 @@ public class LiveSessionRegistry {
     /**
      * 이 토큰으로 CONNECT 해도 되는가 — 로그인 해제 시각 이전에 발급된 토큰은 안 된다.
      * Redis 를 읽지 못하면 막지 않는다 — 만료 묶기가 여전히 상한(최대 15분)을 건다. Redis 장애로 채팅 전체를 멈추지 않는다.
+     *
+     * <p>[JA] このトークンで CONNECT してよいか — ログアウト時刻より前に発行されたトークンは不可。
+     * Redis を読めなければ止めない — 有効期限の束縛が依然として上限(最大 15 分)をかける。Redis 障害でチャット全体を止めない。
      */
     public boolean allowed(Long userId, long issuedAtEpochSec) {
         try {
@@ -91,6 +96,7 @@ public class LiveSessionRegistry {
     }
 
     /** CONNECT 가 통과했다 — 이 세션의 주인과 토큰 만료를 적고, 만료에 닫기를 예약한다. */
+    // [JA] CONNECT が通った — このセッションの主とトークン有効期限を記録し、期限にクローズを予約する。
     public void bind(String sessionId, Long userId, long expiresAtEpochMs) {
         if (sessionId == null) {
             return;
@@ -105,6 +111,7 @@ public class LiveSessionRegistry {
     }
 
     /** 로그인 해제 — 이 사용자의 연결을 모두 닫는다. */
+    // [JA] ログアウト — このユーザーの接続をすべて閉じる。
     public int closeUser(Long userId) {
         int closed = 0;
         for (Map.Entry<String, Long> e : owners.entrySet()) {
@@ -119,6 +126,7 @@ public class LiveSessionRegistry {
     }
 
     /** 열려 있는 연결 수(관측 · 테스트). */
+    // [JA] 開いている接続数(観測・テスト)。
     public int size() {
         return sessions.size();
     }

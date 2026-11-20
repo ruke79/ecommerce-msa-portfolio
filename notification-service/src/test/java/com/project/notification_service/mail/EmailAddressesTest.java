@@ -11,6 +11,11 @@ import org.junit.jupiter.api.Test;
  * <p>여기서 잘못 거부하면 정당한 사용자가 메일을 못 받고, 잘못 통과시키면 하드 바운스가 쌓여
  * 발신 도메인 평판이 떨어진다. 둘 중 <b>잘못 거부하는 쪽이 더 나쁘다</b> — 사용자가 가입을
  * 완료할 수 없게 되고, 그건 우리 쪽에서는 보이지도 않기 때문이다.
+ *
+ * <p>[JA] メールアドレス検証 — <b>拒否は保守的に、マスキングは確実に</b>。
+ * ここで誤って拒否すると正当なユーザーがメールを受け取れず、誤って通すとハードバウンスが溜まって送信ドメイ
+ * ンの評判が落ちる。二つのうち<b>誤って拒否するほうが悪い</b> — ユーザーが登録を完了できなくなり、
+ * それは我々の側からは見えもしないからだ。
  */
 @DisplayName("메일 주소")
 class EmailAddressesTest {
@@ -29,6 +34,8 @@ class EmailAddressesTest {
     void 플러스_태그() {
         // 정규식을 좁게 짜면 여기서 걸린다. 실제로 흔한 주소이고, 이걸 막으면
         // "가입은 됐는데 메일이 안 온다"가 된다.
+        // [JA] 正規表現を狭く書くとここで引っかかる。実際によくあるアドレスで、
+        //      これを止めると「登録はできたのにメールが来ない」になる。
         assertThat(EmailAddresses.isValid("user+shop@gmail.com")).isTrue();
     }
 
@@ -45,11 +52,11 @@ class EmailAddressesTest {
         assertThat(EmailAddresses.isValid(null)).isFalse();
         assertThat(EmailAddresses.isValid("")).isFalse();
         assertThat(EmailAddresses.isValid("   ")).isFalse();
-        assertThat(EmailAddresses.isValid("alice")).isFalse();          // @ 없음
-        assertThat(EmailAddresses.isValid("alice@")).isFalse();         // 도메인 없음
-        assertThat(EmailAddresses.isValid("@example.com")).isFalse();   // 로컬 없음
-        assertThat(EmailAddresses.isValid("alice@example")).isFalse();  // 점 없음
-        assertThat(EmailAddresses.isValid("alice bob@example.com")).isFalse(); // 공백
+        assertThat(EmailAddresses.isValid("alice")).isFalse();          // @ 없음 ／ [JA] @ なし
+        assertThat(EmailAddresses.isValid("alice@")).isFalse();         // 도메인 없음 ／ [JA] ドメインなし
+        assertThat(EmailAddresses.isValid("@example.com")).isFalse();   // 로컬 없음 ／ [JA] ローカル部なし
+        assertThat(EmailAddresses.isValid("alice@example")).isFalse();  // 점 없음 ／ [JA] ドットなし
+        assertThat(EmailAddresses.isValid("alice bob@example.com")).isFalse(); // 공백 ／ [JA] 空白
     }
 
     @Test
@@ -58,6 +65,7 @@ class EmailAddressesTest {
         String tooLong = "a".repeat(320) + "@example.com";
         assertThat(EmailAddresses.isValid(tooLong)).isFalse();
         // 컬럼이 이 길이보다 짧으면 유효한 주소가 잘려 저장되고, 메일이 엉뚱한 곳으로 간다.
+        // [JA] カラムがこの長さより短いと有効なアドレスが切れて保存され、メールがまったく別の所へ行く。
         assertThat(EmailAddresses.MAX_LENGTH).isEqualTo(320);
     }
 

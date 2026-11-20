@@ -37,6 +37,7 @@ class DltTopicsScriptTest {
     }
 
     /** ops/02 를 DRY_RUN 으로 — 브로커 없이 낼 명령만 본다. */
+    // [JA] ops/02 を DRY_RUN で — ブローカーなしで出すコマンドだけを見る。
     private String dryRun(boolean skipState) throws Exception {
         assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"), "POSIX 가 없다");
         Path bin = Files.createDirectories(tmp.resolve("bin"));

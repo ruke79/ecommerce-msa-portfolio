@@ -20,10 +20,17 @@ import { deliveryStatusLabel } from "util/statusLabel";
  * <p>시뮬레이터 택배사(SIMULATED)는 송장번호가 SIM 으로 시작하면 정해진 각본대로 진행한다
  * (SIMEXC 예외, SIMFAIL 배달 실패 뒤 성공, SIMINTL 통관). 실제 택배사가 없는 환경에서
  * 전 경로를 돌려 보는 용도다.
+ *
+ * <p>[JA] 管理者配送 — 送り状を待つ配送に宅配業者と送り状番号を付ける。決済が終わると delivery-service が配送を作り(PENDING)注文は PROCESSING になる。
+ * その次は人が行う: 商品を梱包して宅配業者に渡し、<b>ここで送り状を登録</b>する。その瞬間からサーバーが宅配業者をポーリングし、注文は
+ * DISPATCHED → DELIVERED へ進む。この画面がなければ注文は永遠に「処理中」に留まる。登録後は一覧を<b>サーバーから読み直す</b> — 返金画面と同じ理由で、
+ * サーバーが拒否したのに画面だけ変わる状況を作らない。シミュレーター宅配業者(SIMULATED)は送り状番号が SIM で始まると決まったシナリオどおりに進む
+ * (SIMEXC 例外、SIMFAIL 配達失敗後に成功、SIMINTL 通関)。実際の宅配業者がない環境で全経路を回してみる用途である。
  */
 const formatDate = (value) => formatDateTime(value, "-");
 
 // 배송의 나라는 alpha-2 코드다 — 화면 언어의 이름으로.
+// [JA] 配送の国は alpha-2 コードである — 画面の言語の名前で表示する。
 const addressLine = (a, lang) => {
     if (!a) return "-";
     const bits = [a.postalCode ? `[${a.postalCode}]` : null, a.line1, a.line2, a.city, a.state, a.country ? countryName(a.country, lang) : null];
@@ -37,10 +44,10 @@ const Deliveries = () => {
     const [carriers, setCarriers] = useState([]);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
-    const [editing, setEditing] = useState(null);        // orderId — 송장 입력 중
+    const [editing, setEditing] = useState(null);        // orderId — 송장 입력 중 ／ [JA] orderId — 送り状入力中
     const [carrierCode, setCarrierCode] = useState("");
     const [trackingNumber, setTrackingNumber] = useState("");
-    const [backfillId, setBackfillId] = useState("");    // 배송이 없는 주문의 주문 번호
+    const [backfillId, setBackfillId] = useState("");    // 배송이 없는 주문의 주문 번호 ／ [JA] 配送のない注文の注文番号
     const [notice, setNotice] = useState("");
 
     const load = useCallback(async () => {
@@ -75,6 +82,7 @@ const Deliveries = () => {
         if (busy) return;
         const number = trackingNumber.trim();
         // 테스트 택배사는 번호를 비워도 된다 — 서버가 SIM-<주문>-<상자> 를 만든다.
+        // [JA] テスト宅配業者は番号を空にしてもよい — サーバーが SIM-<注文>-<箱> を作る。
         if (!carrierCode || (!number && carrierCode !== "SIMULATED")) {
             setError(t("admin.deliveries.error.need_tracking"));
             return;
@@ -99,6 +107,9 @@ const Deliveries = () => {
      * 정상 경로는 결제 이벤트가 만든다. 그 경로가 막혀 있던 동안 결제된 주문들이 배송 없이
      * 남았는데(docs/25 §11.5), 그 주문은 이 목록에 **아예 나타나지 않는다** — 배송이 없으니까.
      * 고칠 화면이 없으면 영영 못 고친다. 그래서 주문 번호로 직접 만든다.
+     *
+     * <p>[JA] 決済は済んだが配送がない注文を手でつなぐ。正常な経路は決済イベントが作る。その経路が詰まっていた間に決済された注文が配送なしで
+     * 残ったが(docs/25 §11.5)、その注文はこの一覧に**まったく現れない** — 配送がないのだから。直す画面がなければ永遠に直せない。だから注文番号で直接作る。
      */
     const backfill = async () => {
         const id = backfillId.trim();
@@ -124,11 +135,13 @@ const Deliveries = () => {
     };
 
     /** 송장 없는 상자가 하나라도 있으면 등록 대상이다. 취소된 배송은 아니다. */
+    // [JA] 送り状のない箱が一つでもあれば登録対象である。キャンセルされた配送は対象外。
     const canRegister = (row) => row.delivery.status !== "CANCELLED"
         && (row.delivery.shipments ?? []).some((s) => !s.trackingNumber && s.status === "PENDING");
 
     const itemLines = (row) => (row.delivery.shipments ?? []).flatMap((s) => s.items ?? [])
         // 창고는 이름이 아니라 SKU 로 집는다 — 포장 목록에 코드를 함께(catalog V17 → 주문 품목 → 배송)
+        // [JA] 倉庫は名前ではなく SKU でピッキングする — 梱包リストにコードを併記(catalog V17 → 注文品目 → 配送)
         .map((i) => `${i.productName ?? "-"}${i.skuCode ? ` [${i.skuCode}]` : ""} ×${i.quantity}`);
 
     return (
@@ -139,6 +152,7 @@ const Deliveries = () => {
             {notice && <p className="mb-4 text-emerald-700" role="status">{notice}</p>}
 
             {/* 결제는 됐는데 배송이 없는 주문 — 목록에 뜨지 않으므로 번호로 찾아 만든다. */}
+            {/* [JA] 決済は済んだが配送がない注文 — 一覧に出ないので番号で探して作る。 */}
             <div className="mb-4 flex flex-wrap items-end gap-3 rounded border border-slate-200 bg-slate-50 p-3">
                 <label className="block">
                     <span className="text-sm text-slate-700">{t("admin.deliveries.backfill.label")}</span>

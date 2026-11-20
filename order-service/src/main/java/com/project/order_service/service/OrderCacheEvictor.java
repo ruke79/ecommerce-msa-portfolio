@@ -25,6 +25,19 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>별도 빈인 이유: {@code @CacheEvict} 는 프록시를 거쳐야 듣는다(같은 클래스 안의 호출은
  * 무시된다). 그리고 사가가 {@code OrderCacheService} 를 들면 순환 의존이 된다.
+ *
+ * <p>[JA] 注文キャッシュを空にする — 注文状態を {@code OrderCacheService} の外で変える側が呼ぶ。
+ * <b>🐛 一覧は PAID、詳細は NOT_PROCESSED</b>:
+ * 注文詳細({@code order} キャッシュ、60 分)は Redis から出る。ところが決済応答を受けて状態を
+ * PAID に変えるのはサーガ({@code OrderSaga})で、サーガはキャッシュを空にしていなかった。一覧(カーソル照会、
+ * キャッシュなし)は PAID なのに詳細は 1 時間 NOT_PROCESSED だった。その上で:
+ * 決済確認後に確定を待つ画面が同じ詳細を 14 回読み直しても常に古い値 — 期限を
+ * 過ぎて「確定が遅れている」と言った(実際には既に PAID)。
+ * 詳細が未決済に見えるので決済ボタンが再び出て、押すと「既に決済された注文です」。
+ * 状態を変える所は必ずここを呼ぶ。範囲が広い理由は {@code OrderCacheService}
+ * の他の書き込みと同じ — 一つの状態が一覧・詳細・ページキャッシュのすべてに入っている。
+ * 別 Bean である理由: {@code @CacheEvict} はプロキシを通らないと効かない(同じクラス内の呼び出しは
+ * 無視される)。そしてサーガが {@code OrderCacheService} を持つと循環依存になる。
  */
 @Slf4j
 @Component

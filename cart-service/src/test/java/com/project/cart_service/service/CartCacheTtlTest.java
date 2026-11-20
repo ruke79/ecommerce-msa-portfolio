@@ -75,6 +75,7 @@ class CartCacheTtlTest {
         when(cartRepository.findByUserId(7L)).thenAnswer(i -> Optional.ofNullable(stored[0]));
         when(cartRepository.save(any(Cart.class))).thenAnswer(i -> stored[0] = i.getArgument(0));
         // 처음 담기 — 없을 때만 만든다(CartRepository.insertIfAbsent, V5)
+        // [JA] 最初の追加 — ないときだけ作る(CartRepository.insertIfAbsent, V5)
         when(cartRepository.insertIfAbsent(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenAnswer(i -> {
                     if (stored[0] != null) {
@@ -85,6 +86,7 @@ class CartCacheTtlTest {
                 });
 
         // 상품 1 — 스타일 둘(검정 5, 흰색 6). 스타일마다 사이즈 줄의 SKU 가 다르다.
+        // [JA] 商品 1 — スタイル 2 つ(黒 5、白 6)。スタイルごとにサイズ行の SKU が違う。
         when(catalog.getProductsInfo(anyList())).thenAnswer(i -> ResponseEntity.ok(List.of(ProductDto.builder()
                 .id("1").name("러닝화").shipping("0")
                 .skus(List.of(style(5L, "RUN-BLK"), style(6L, "RUN-WHT")))
@@ -103,6 +105,7 @@ class CartCacheTtlTest {
     }
 
     /** 저장된 줄처럼 id 를 붙인다 — 목 저장소는 TSID 를 매기지 않는다(캐시 DTO 는 줄 id 를 싣는다). */
+    // [JA] 保存された行のように id を付ける — モックリポジトリは TSID を振らない(キャッシュ DTO は行 id を載せる)。
     private void persisted() {
         long id = 100;
         for (CartProduct line : stored[0].getCartProducts()) {
@@ -131,6 +134,9 @@ class CartCacheTtlTest {
     /**
      * 🔴 바꾼 뒤에는 커밋 뒤 캐시를 <b>지운다</b> — 다시 만들지 않는다. 예전에는 afterCommit 에서 새 DTO 를 만들었고 그 변환이 catalog 를
      * 불렀다: afterCommit 은 트랜잭션 자원을 정리하기 전이라 DB 커넥션을 쥔 채 기다렸다(B-87). 옛 값도 남지 않는다.
+     *
+     * <p>[JA] 🔴 変更後はコミット後にキャッシュを <b>消す</b> — 作り直さない。以前は afterCommit で新しい DTO を作り、その変換が catalog を
+     *      呼んでいた: afterCommit はトランザクション資源を片付ける前なので DB コネクションを握ったまま待っていた(B-87)。古い値も残らない。
      */
     @org.junit.jupiter.api.Test
     @org.junit.jupiter.api.DisplayName("🔴 바꾼 뒤 커밋되면 캐시를 지운다 — 커밋 뒤에는 catalog 를 부르지 않는다(커넥션을 쥔 채 기다리지 않는다)")

@@ -19,10 +19,13 @@ public interface VerificationTokenRepository extends JpaRepository<VerificationT
     // --- 비관적 잠금 적용 ---
     // 토큰의 유효성을 검증하고 사용 상태를 변경할 때, 락을 걸어 이중 사용을 막습니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
+    //      トークンの有効性を検証して使用状態を変えるとき、ロックをかけて二重使用を防ぐ。
     VerificationToken findByToken(String token);
     
     // --- 낙관적 잠금 적용 ---
     //@Lock(LockModeType.OPTIMISTIC)
+    // [JA] --- 楽観ロックの適用 ---
     VerificationToken findByUser(User user);
 
     Stream<VerificationToken> findAllByExpiryDateLessThan(Date now);
@@ -40,6 +43,11 @@ public interface VerificationTokenRepository extends JpaRepository<VerificationT
      * 그래서 "비활성 계정 + 남아 있는 토큰"은 곧 "한 번도 인증하지 않았다"는 뜻이다.
      * 만료 시각을 기준으로 삼는 이유는 재발송이 같은 행의 만료를 갱신하기 때문이다
      * ({@code createVerificationTokenForUser}) — 최근에 재발송을 요청한 사람은 자동으로 빠진다.
+     *
+     * <p>[JA] 最後まで認証しなかったアカウント — 整理対象の候補。
+     * 認証に成功すると {@code validateAndGetUser} がアカウントを有効化しトークンを消す。だから「無効アカウント + 残っている
+     * トークン」はそのまま「一度も認証していない」という意味である。有効期限を基準にする理由は、再送が同じ行の有効期限を
+     * 更新するからである({@code createVerificationTokenForUser}) — 最近再送を求めた人は自動的に外れる。
      */
     @Query("select t from VerificationToken t join t.user u "
             + "where u.enabled = false and t.expiryDate < :cutoff "
@@ -53,6 +61,11 @@ public interface VerificationTokenRepository extends JpaRepository<VerificationT
      * 의 <b>유일한 판단 근거</b>라서, 유예 기간이 끝나기 전에 지워 버리면 그 계정은 영원히
      * 후보에 오르지 않고 남는다. 지금 대부분의 만료 토큰은 인증 게이트가 꺼져 있던 동안
      * 만들어진 것들이다(계정은 활성, 링크는 안 누름).
+     *
+     * <p>[JA] 期限切れで、かつすでに有効化されたアカウントのトークンだけを消す。
+     * ⚠️ 期限切れトークンを全部消してはならない。無効アカウントのトークンは上の {@link #findStaleUnverified} の唯一の判断
+     * 根拠なので、猶予期間が終わる前に消してしまうとそのアカウントは永遠に候補に上がらず残る。今ある期限切れトークンの
+     * 大半は、認証ゲートがオフだった間に作られたものである(アカウントは有効、リンクは押していない)。
      */
     @Modifying
     @Query("delete from VerificationToken t where t.expiryDate <= :now "
@@ -60,6 +73,7 @@ public interface VerificationTokenRepository extends JpaRepository<VerificationT
     int deleteExpiredOfEnabledUsers(@Param("now") Date now);
 
     /** 회원 탈퇴 최종 처리용. */
+    // [JA] 会員退会の最終処理用。
     @org.springframework.transaction.annotation.Transactional
     @Modifying(clearAutomatically = true)
     @Query("delete from VerificationToken t where t.user.userId = :userId")

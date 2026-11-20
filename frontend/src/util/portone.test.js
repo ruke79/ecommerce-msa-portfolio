@@ -6,6 +6,10 @@ import { newPortOnePaymentId, portOneCustomer, portOneRedirectUrl, portOneReturn
  * <p>V1(imp… 식별코드)과 V2(store-… Store ID)는 SDK·전역·파라미터가 전부 다르다.
  * 어느 쪽으로 빌드됐는지는 <b>빌드 인자가 말한다</b> — Store ID 가 있으면 V2, 아니면
  * 식별코드가 있을 때 V1. 둘 다 있으면 V2 다(신규 계정은 V2 뿐이고, V1 값은 남은 것이다).
+ *
+ * <p>[JA] PortOne バージョンの選択。V1(imp… 識別コード)と V2(store-… Store ID)は SDK · グローバル · パラメータがすべて異なる。
+ * どちらでビルドされたかは<b>ビルド引数が決める</b> — Store ID があれば V2、なければ識別コードがあるとき V1。
+ * 両方あれば V2 である(新規アカウントは V2 のみで、V1 の値は残っているだけだ)。
  */
 describe("portOneVersion", () => {
     it("Store ID 가 있으면 V2", () => {
@@ -29,6 +33,7 @@ describe("portOneVersion", () => {
 });
 
 /** V2 결제 id — 시도마다 새 값이어야 한다(같은 id 로 두 번 결제할 수 없다). */
+// [JA] V2 決済 id — 試行ごとに新しい値でなければならない(同じ id で二度決済できない)。
 describe("newPortOnePaymentId", () => {
     it("payment- 로 시작하고 매번 다르다", () => {
         const a = newPortOnePaymentId();

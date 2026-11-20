@@ -20,6 +20,18 @@ import { useTranslation } from "i18n/I18nProvider";
  *   <li><b>"Contact Us" 가 `#` 였다.</b> 이 앱에는 문의 페이지가 없다. 갈 곳이 없는 버튼을
  *       두는 것보다, 지금 실제로 도움이 되는 <b>다시 시도</b>를 두는 편이 낫다.</li>
  * </ul>
+ *
+ * <p>[JA] サーバーに届かなかったときに見せる画面。
+ * `ErrorPage` がネットワークエラー(`ERR_NETWORK`)に出会ったときここに来る。つまりこの画面が出る瞬間は
+ * ネットワークがすでに悪いときである — その事実が下の二つの修正の理由である。
+ * 🐛 直したもの:
+ * ・外部画像を実行時に読み込んでいた。svgrepo.com の SVG を `<img src>` で取っていたが、ネットワークが切れて出た画面が
+ * またネットワークを必要とした。そのため肝心のときに壊れた画像が出た。しかも外部ドメインにこちらのユーザーの訪問が
+ * そのまま記録される。インライン SVG に替えた — リクエストは 0 である。
+ * ・`<a href="#"><button>` の入れ子。アンカーの中にボタンを入れるのは無効な HTML で、スクリーンリーダーは何を読むべきか
+ * 分からない。クリックはアンカーとボタンの両方で起き、`#` へ移動しながら同時に navigate が走る。
+ * ・"Contact Us" が `#` だった。このアプリには問い合わせページがない。行き先のないボタンを置くより、
+ * 今実際に役立つ「再試行」を置く方がよい。
  */
 const Maintenance = () => {
     const { t } = useTranslation();
@@ -29,6 +41,7 @@ const Maintenance = () => {
         <div className="bg-gray-100 dark:bg-gray-800">
             <div className="min-h-screen flex flex-col justify-center items-center px-4">
                 {/* 인라인 SVG — 이 화면은 네트워크가 나쁠 때 뜬다. 추가 요청이 없어야 한다. */}
+                {/* [JA] インライン SVG — この画面はネットワークが悪いときに出る。追加のリクエストがあってはならない。 */}
                 <svg
                     className="mb-8 h-32 w-32 text-gray-400 dark:text-gray-500"
                     viewBox="0 0 24 24"

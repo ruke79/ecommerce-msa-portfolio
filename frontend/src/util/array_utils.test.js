@@ -6,6 +6,12 @@ import { compareArrays, filterArray, removeDublicates, randomize } from "util/ar
  * 두 가지가 틀렸다 — 원본 배열을 제자리에서 뒤섞었고(로더가 준 데이터나 redux 상태까지
  * 순서가 바뀐다), 무작위 비교자는 정렬 알고리즘의 일관성 전제를 깨서 특정 순열이 훨씬 자주
  * 나온다. 지금은 복사본에 Fisher–Yates 를 돌린다.
+ *
+ * <p>[JA] 🐛 回帰対象: `randomize` が `array.sort(() => 0.5 - Math.random())` だった。
+ *
+ * <p>二点が間違っていた — 元の配列をインプレースでかき混ぜ(ローダーが渡したデータや redux の状態まで
+ * 順序が変わる)、ランダムな比較関数はソートアルゴリズムの一貫性の前提を破って特定の順列がはるかに頻繁に
+ * 出る。いまはコピーに対して Fisher–Yates を回す。
  */
 describe("randomize", () => {
   it("does not mutate the caller's array", () => {
@@ -15,6 +21,7 @@ describe("randomize", () => {
     randomize(source);
 
     // 이것이 핵심 회귀 검사다. sort 기반 구현에서는 실패한다.
+    // [JA] これが核心の回帰検査である。sort ベースの実装では失敗する。
     expect(source).toEqual(snapshot);
   });
 
@@ -34,6 +41,8 @@ describe("randomize", () => {
   it("reaches more than one arrangement over many runs", () => {
     // 편향 자체를 통계적으로 증명하려는 게 아니다. "사실상 안 섞인다"는 명백한 고장만
     // 잡는다 — 4원소 배열을 200번 섞었는데 순열이 하나뿐이면 그건 셔플이 아니다.
+    // [JA] 偏りそのものを統計的に証明しようというのではない。「事実上混ざらない」という明白な故障だけを
+    //      捕まえる — 4 要素の配列を 200 回シャッフルして順列が一つしかなければ、それはシャッフルではない。
     const seen = new Set();
     for (let i = 0; i < 200; i++) {
       seen.add(randomize([1, 2, 3, 4]).join(","));

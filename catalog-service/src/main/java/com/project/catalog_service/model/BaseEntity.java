@@ -26,7 +26,7 @@ import lombok.experimental.SuperBuilder;
 @Getter
 @Setter
 @MappedSuperclass
-@SuperBuilder // @Builder 대신 @SuperBuilder 사용
+@SuperBuilder // @Builder 대신 @SuperBuilder 사용 ／ [JA] @Builder の代わりに @SuperBuilder を使う
 @NoArgsConstructor
 @AllArgsConstructor
 public class BaseEntity {

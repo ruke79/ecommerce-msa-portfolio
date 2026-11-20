@@ -21,6 +21,12 @@ const formatDate = (value) => formatDateTime(value, "-");
  *
  * <p><b>기간.</b> 시작을 비우면 즉시, 종료를 비우면 만료 없음이다. 점검 예고처럼 지나면
  * 의미가 없는 안내는 종료를 넣어 두는 편이 낫다 — 사용자가 하나하나 지우게 하지 않는다.
+ *
+ * <p>[JA] 全体通知の管理。お知らせ管理(/admin/notice)との違い: お知らせは<b>読む記事</b>であり、一覧と詳細画面があり、公開するとその記事を指す
+ * 全体通知が自動で出る。ここで送るのは記事のない<b>案内</b>である — 「本日 02 時からメンテナンスします」の一行のように、残しておく文書ではなく
+ * 今目に留まるべき文。だからこの画面ではお知らせを作れない。二つの経路を一画面にまとめると「記事も作って通知も送るか?」という選択が毎回生じ、
+ * どちらがユーザーにどう見えるかがぼやける。期間: 開始を空にすると即時、終了を空にすると期限なし。メンテナンス予告のように過ぎれば
+ * 意味のない案内は終了を入れておくほうがよい — ユーザーに一つずつ消させない。
  */
 const Broadcasts = () => {
     const { t } = useTranslation();
@@ -50,6 +56,9 @@ const Broadcasts = () => {
         // 끝이 시작보다 앞서면 아무에게도 보이지 않는 알림이 만들어진다. 서버는 이것을
         // 막지 않는다(기간 판정은 조회 쪽이라 저장은 성공한다) — 여기서 걸러야 관리자가
         // "보냈는데 왜 안 보이지?" 를 겪지 않는다.
+        // [JA] 終了が開始より前だと、誰にも見えない通知ができてしまう。サーバーはこれを
+        //      防がない(期間判定は参照側なので保存は成功する)— ここで弾かないと管理者が
+        //      「送ったのになぜ見えない?」に遭遇する。
         if (form.startsAt && form.endsAt && form.endsAt <= form.startsAt) {
             setError(t("admin.broadcasts.end_before_start"));
             return;
@@ -59,6 +68,7 @@ const Broadcasts = () => {
         setError("");
         try {
             // 입력칸은 현지 시각, 서버는 UTC — 보낼 때 바꾼다(util/datetime).
+            // [JA] 入力欄は現地時刻、サーバーは UTC — 送るときに変換する(util/datetime)。
             await createBroadcast({
                 ...form,
                 startsAt: localInputToServer(form.startsAt),
@@ -91,6 +101,7 @@ const Broadcasts = () => {
             <h1 className="mb-2 text-2xl font-bold">{t("admin.broadcasts.title")}</h1>
             <p className="mb-6 text-sm text-slate-500">
                 {/* 가운데 굵은 글자 때문에 문장을 셋으로 나눈다. 띄어쓰기는 사전 값에 들어 있다(일본어는 띄우지 않는다). */}
+                {/* [JA] 中央の太字のために文を三つに分ける。スペースは辞書の値に含まれている(日本語はスペースを入れない)。 */}
                 {t("admin.broadcasts.intro_before")}
                 <span className="font-semibold">{t("admin.broadcasts.intro_link")}</span>
                 {t("admin.broadcasts.intro_after")}
@@ -188,6 +199,7 @@ const Broadcasts = () => {
                             </td>
                             {/* 시작·종료 두 칸만 보여 주면 예약분과 만료분을 헷갈린다.
                                 "지금 보이는가"는 서버가 계산해서 내려 준다. */}
+                            {/* [JA] 開始・終了の二欄だけを見せると予約分と期限切れ分を取り違える。「今見えているか」はサーバーが計算して返す。 */}
                             <td className={item.active ? "text-green-700" : "text-slate-400"}>
                                 {item.active ? t("admin.broadcasts.active") : t("admin.broadcasts.inactive")}
                             </td>

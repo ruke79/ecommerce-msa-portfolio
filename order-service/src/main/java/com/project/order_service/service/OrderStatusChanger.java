@@ -44,11 +44,14 @@ import lombok.extern.slf4j.Slf4j;
 public class OrderStatusChanger {
 
     /** 아웃박스 행에 남기는 내용 — 릴레이가 Avro {@code OrderStatusChanged} 로 바꿔 보낸다(eventId 는 행 id). */
+    // [JA] アウトボックス行に残す内容 — リレーが Avro {@code OrderStatusChanged} に変えて送る(eventId は行
+    //      id)。
     public record Payload(long orderId, Long customerId, String previousStatus, String status, String source,
             Instant occurredAt) {
     }
 
     /** 이벤트를 남기는 쪽. 운영은 아웃박스, 테스트 기본값은 아무것도 안 함. */
+    // [JA] イベントを残す側。運用はアウトボックス、テストの既定は何もしない。
     @FunctionalInterface
     public interface Recorder {
         void record(Payload payload);
@@ -68,6 +71,7 @@ public class OrderStatusChanger {
     }
 
     /** 이벤트를 남기지 않는 변경기 — 세터 주입 전의 기본값(단위 테스트). */
+    // [JA] イベントを残さない変更器 — セッター注入前の既定値(単体テスト)。
     public static OrderStatusChanger withoutEvents() {
         return new OrderStatusChanger(p -> { }, Clock.systemUTC());
     }
@@ -75,8 +79,12 @@ public class OrderStatusChanger {
     /**
      * 상태를 바꾼다. 같은 상태면 아무것도 하지 않는다(이벤트도 없다).
      *
+     * <p>[JA] 状態を変える。同じ状態なら何もしない(イベントもない)。
+     *
      * @param source 무엇이 바꿨나 — payment-saga · delivery · customer · admin · bank-transfer · auto-confirm · expiry …
+     *        [JA] 何が変えたか — payment-saga · delivery · customer · admin · bank-transfer · auto-confirm · expiry …
      * @return 실제로 바뀌었으면 true
+     *        [JA] 実際に変わったら true
      */
     public boolean change(Order order, OrderStatus to, String source) {
         OrderStatus from = order.getOrderStatus();
@@ -89,6 +97,7 @@ public class OrderStatusChanger {
     }
 
     /** 결제 확인 — 상태 PAID 와 결제 시각을 함께({@link Order#markPaid}). 이미 PAID 면 이벤트 없음. */
+    // [JA] 決済確認 — 状態 PAID と決済時刻を一緒に({@link Order#markPaid})。既に PAID ならイベントなし。
     public boolean markPaid(Order order, LocalDateTime at, String source) {
         OrderStatus from = order.getOrderStatus();
         order.markPaid(at);
@@ -100,6 +109,7 @@ public class OrderStatusChanger {
     }
 
     /** 주문이 생겼다 — 이전 상태 없음. 타임라인의 첫 항목이다. 저장 뒤(주문 id 가 있어야 한다) 부른다. */
+    // [JA] 注文ができた — 以前の状態なし。タイムラインの最初の項目である。保存後(注文 id が必要)に呼ぶ。
     public void created(Order order) {
         record(order, null, "created");
     }
@@ -107,6 +117,7 @@ public class OrderStatusChanger {
     private void record(Order order, OrderStatus from, String source) {
         if (order.getOrderId() == null) {
             // 저장 전 주문에는 id 가 없다 — 이벤트를 남길 수 없다. 호출 순서의 버그라 조용히 넘기지 않는다.
+            // [JA] 保存前の注文には id がない — イベントを残せない。呼び出し順のバグなので黙って見過ごさない。
             throw new IllegalStateException("주문 id 가 없어 상태 변경 이벤트를 남길 수 없다 — 저장 뒤에 바꿀 것: " + source);
         }
         Payload payload = new Payload(order.getOrderId(), order.getCustomerId(),

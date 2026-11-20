@@ -45,6 +45,13 @@ import lombok.NoArgsConstructor;
  *
  * <p>상자가 하나뿐인 흔한 경우에도 Shipment 는 하나 생긴다. 특수 케이스를 따로 두지 않는
  * 편이 화면·로직 양쪽에서 단순하다.
+ *
+ * <p>[JA] 配送の箱 1 個 — <b>追跡の単位</b>。
+ * このエンティティが存在する理由は<b>分割配送</b>である。一つの注文の商品が別々の倉庫にあったり、かさばって分けて出たりすると、
+ * 送り状番号も宅配業者も到着日も箱ごとに異なる。追跡情報を注文に直接付けるとこのケースを表現できない —
+ * Amazon が一つの注文を「パッケージ 1/2」「パッケージ 2/2」に分けて見せる理由である。
+ * そのため階層は Delivery(注文 1 件の配送全体)→ Shipment[](箱 = 送り状番号 = 追跡単位)→ ShipmentItem[](この箱に何が入っているか)・DeliveryEvent[](宅配業者のスキャン履歴)となる。
+ * 箱が一つだけのよくあるケースでも Shipment は一つ作られる。特殊ケースを別に設けない方が画面・ロジックの両方で単純である。
  */
 @Entity
 @Getter
@@ -52,11 +59,13 @@ import lombok.NoArgsConstructor;
 @Table(name = "shipment", schema = "delivery",
        uniqueConstraints = {
            // 같은 택배사 안에서 송장번호는 유일하다. 오타로 남의 배송을 덮어쓰는 것을 막는다.
+           // [JA] 同じ宅配業者の中で送り状番号は一意である。入力ミスで他人の配送を上書きするのを防ぐ。
            @UniqueConstraint(name = "uk_shipment_tracking",
                              columnNames = {"carrier_code", "tracking_number"})
        },
        indexes = {
            // 폴링 대상 조회. 없으면 배송이 쌓일수록 스케줄러가 전체 스캔을 한다.
+           // [JA] ポーリング対象の照会用。なければ配送が溜まるほどスケジューラが全件スキャンする。
            @Index(name = "idx_shipment_poll", columnList = "next_poll_at"),
            @Index(name = "idx_shipment_delivery", columnList = "delivery_id")
        })
@@ -72,6 +81,7 @@ public class Shipment {
     private Delivery delivery;
 
     /** 화면의 "패키지 1/2". 1부터 시작한다. */
+    // [JA] 画面の「パッケージ 1/2」。1 から始まる。
     @Column(name = "sequence_no", nullable = false)
     private int sequenceNo;
 
@@ -86,6 +96,7 @@ public class Shipment {
     private DeliveryStatus status;
 
     /** 택배사가 알려준 예상 도착일. 상자마다 다를 수 있다. */
+    // [JA] 宅配業者が知らせた到着予定日。箱ごとに異なり得る。
     @Column(name = "estimated_at")
     private LocalDateTime estimatedAt;
 
@@ -96,10 +107,14 @@ public class Shipment {
     private LocalDateTime deliveredAt;
 
     // ── 국제 배송 ────────────────────────────────────────────────────────────
+    // [JA] ── 国際配送 ──
 
     /**
      * 국제 배송인가. 목적지 국가만으로 판단하지 않는 이유는, 같은 국가 안에서도
      * 보세구역 경유 등 통관이 끼는 경우가 있고 택배사 서비스가 국내/국제로 나뉘기 때문이다.
+     *
+     * <p>[JA] 国際配送か。宛先の国だけで判断しない理由は、同じ国の中でも保税地域経由など通関が挟まる場合があり、
+     * 宅配業者のサービスが国内/国際に分かれているためである。
      */
     @Column(name = "international", nullable = false)
     private boolean international;
@@ -109,17 +124,24 @@ public class Shipment {
      *
      * <p>⚠️ 개인정보다. 응답에 그대로 실으면 안 되고(마스킹해서 내려준다), 통관이 끝나면
      * 보관할 이유가 없다. 여기 두는 것은 통관 진행 중 재제출 요구에 대응하기 위해서다.
+     *
+     * <p>[JA] 個人通関固有符号。韓国に入る個人輸入の通関に<b>法的に必要</b>である。
+     * ⚠️ 個人情報である。応答にそのまま載せてはならず(マスキングして返す)、通関が終われば保管する理由がない。
+     * ここに置くのは、通関進行中の再提出要求に対応するためである。
      */
     @Column(name = "customs_clearance_no", length = 40)
     private String customsClearanceNo;
 
     /** 통관 신고번호. 사용자가 관세청에서 직접 조회할 때 쓴다. */
+    // [JA] 通関申告番号。ユーザーが関税庁で直接照会するときに使う。
     @Column(name = "customs_declaration_no", length = 40)
     private String customsDeclarationNo;
 
     // ── 폴링 제어 ────────────────────────────────────────────────────────────
+    // [JA] ── ポーリング制御 ──
 
     /** 다음 조회 예정 시각. null 이면 조회하지 않는다(송장 없음 또는 종료된 배송). */
+    // [JA] 次回照会予定時刻。null なら照会しない(送り状なし、または終了した配送)。
     @Column(name = "next_poll_at")
     private LocalDateTime nextPollAt;
 
@@ -127,6 +149,7 @@ public class Shipment {
     private LocalDateTime lastSyncedAt;
 
     /** 연속 실패 횟수. 백오프의 근거이자 "이 배송만 계속 실패한다"의 신호다. */
+    // [JA] 連続失敗回数。バックオフの根拠であり、「この配送だけ失敗し続ける」のシグナルでもある。
     @Column(name = "poll_failures", nullable = false)
     private int pollFailures;
 
@@ -160,6 +183,9 @@ public class Shipment {
      * 송장번호를 등록한다. 이 시점부터 폴링이 시작된다.
      *
      * <p>추적을 지원하지 않는 택배사면 폴링하지 않는다 — 호출해 봐야 응답이 없다.
+     *
+     * <p>[JA] 送り状番号を登録する。この時点からポーリングが始まる。
+     * 追跡に対応しない宅配業者ならポーリングしない — 呼んでも応答がない。
      */
     public void assignTracking(String carrierCode, String trackingNumber, boolean supportsTracking) {
         this.carrierCode = carrierCode;
@@ -168,6 +194,7 @@ public class Shipment {
         this.dispatchedAt = LocalDateTime.now(ZoneOffset.UTC);
         this.pollFailures = 0;
         // 즉시 한 번 조회한다. 등록 직후 사용자가 화면을 보는 경우가 많다.
+        // [JA] すぐに一度照会する。登録直後にユーザーが画面を見ることが多い。
         this.nextPollAt = supportsTracking ? LocalDateTime.now(ZoneOffset.UTC) : null;
         touch();
     }
@@ -177,6 +204,9 @@ public class Shipment {
      *
      * @return 실제로 바뀌었으면 true. 폴링마다 이벤트를 발행하면 3시간마다 알림이 가므로,
      *         <b>바뀐 경우에만</b> 발행하기 위해 필요하다.
+     *
+     * <p>[JA] 状態を進める。
+     * 戻り値: 実際に変わったら true。ポーリングのたびにイベントを発行すると 3 時間ごとに通知が行くので、<b>変わった場合だけ</b>発行するために必要である。
      */
     public boolean advanceTo(DeliveryStatus next, LocalDateTime occurredAt) {
         if (next == null || !next.isProgressFrom(this.status)) {
@@ -192,6 +222,7 @@ public class Shipment {
     }
 
     /** 발송 전 취소. 이미 움직이는 물건은 취소가 아니라 반품이다. */
+    // [JA] 発送前のキャンセル。すでに動いている品物はキャンセルではなく返品である。
     public boolean cancel() {
         if (!status.isBeforeDispatch()) {
             return false;
@@ -218,9 +249,13 @@ public class Shipment {
     }
 
     /** 조회에 성공했다. 실패 카운터를 지우고 다음 주기를 잡는다. */
+    // [JA] 照会に成功した。失敗カウンタを消し、次の周期を設定する。
     /**
      * 폴러가 이 상자를 가져갔다 — 조회를 마칠 때까지 다른 파드가 다시 가져가지 않도록 다음 조회 시각을 잠시 미룬다(리스).
      * 조회 결과를 반영하면 {@link #recordSyncSuccess} · {@link #recordSyncFailure} 가 제 시각으로 다시 잡는다.
+     *
+     * <p>[JA] ポーラーがこの箱を取った — 照会を終えるまで他のポッドが再び取らないよう、次回照会時刻をしばらく先送りする(リース)。
+     * 照会結果を反映すると {@link #recordSyncSuccess} ・ {@link #recordSyncFailure} が本来の時刻に設定し直す。
      */
     public void leaseUntil(LocalDateTime until) {
         if (this.nextPollAt != null) {
@@ -241,6 +276,11 @@ public class Shipment {
      * 뛰었다 — 집화·이동·배달 출발과 그 알림이 전부 사라졌다.
      *
      * @param cap 택배사의 갱신 주기. null 이면 기본 주기만 쓴다
+     *
+     * <p>[JA] 照会に成功した — 宅配業者が知らせた更新周期({@code cap})があれば、それと状態別の既定周期のうち<b>短い方</b>で次の照会を設定する。
+     * 🐛 上限がないときは受付(INFO_RECEIVED)後 6 時間待っていた。シミュレーターは 1 分ごとに段階を進めるのに、6 時間後に一度問うと
+     * 履歴全体が一度に来てすぐ配達完了に飛んだ — 集荷・輸送・配達出発とその通知がすべて消えた。
+     * cap: 宅配業者の更新周期。null なら既定周期だけを使う。
      */
     public void recordSyncSuccess(Duration cap) {
         this.lastSyncedAt = LocalDateTime.now(ZoneOffset.UTC);
@@ -255,6 +295,10 @@ public class Shipment {
      * <p>택배사 API 가 죽었을 때 같은 주기로 계속 때리면 복구를 방해하고 우리 쿼터만 태운다.
      * 상한(12시간)을 두는 이유는, 무한히 물러서면 복구된 뒤에도 한참 뒤에야 다시 조회하기
      * 때문이다.
+     *
+     * <p>[JA] 照会に失敗した。指数バックオフで引き下がる。
+     * 宅配業者の API が落ちているときに同じ周期で叩き続けると復旧を妨げ、こちらのクォータだけを燃やす。
+     * 上限(12 時間)を置く理由は、無限に引き下がると復旧後もずっと後になってからしか再照会しないためである。
      */
     public void recordSyncFailure() {
         this.pollFailures += 1;
@@ -271,6 +315,8 @@ public class Shipment {
         Duration interval = status.pollInterval();
         // 종료된 배송은 더 조회하지 않는다. 이게 쿼터 낭비의 가장 큰 원인이다. 상한이 있어도
         // 끝난 배송을 되살리지는 않는다 — 상한은 줄이는 데만 쓴다.
+        // [JA] 終了した配送はもう照会しない。これがクォータ浪費の最大の原因である。上限があっても
+        //      終わった配送を生き返らせはしない — 上限は短くするためだけに使う。
         if (interval == null || trackingNumber == null) {
             this.nextPollAt = null;
             return;

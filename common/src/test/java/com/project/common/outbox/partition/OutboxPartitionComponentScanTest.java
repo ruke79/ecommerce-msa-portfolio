@@ -36,6 +36,7 @@ import io.micrometer.core.instrument.binder.MeterBinder;
 class OutboxPartitionComponentScanTest {
 
     /** 세 앱이 지금 다는 스캔 — TypeExcludeFilter + AutoConfigurationExcludeFilter. 테스트 클래스(이 파일)는 스캔에서 뺀다. */
+    // [JA] 3 つのアプリが今付けているスキャン — TypeExcludeFilter + AutoConfigurationExcludeFilter。テストクラス(このファイル)はスキャンから除く。
     @Configuration(proxyBeanMethods = false)
     @ComponentScan(basePackageClasses = OutboxPartitionAutoConfiguration.class, excludeFilters = {
             @ComponentScan.Filter(type = FilterType.CUSTOM, classes = TypeExcludeFilter.class),
@@ -45,6 +46,7 @@ class OutboxPartitionComponentScanTest {
     }
 
     /** 예전 스캔 — TypeExcludeFilter 만. */
+    // [JA] 以前のスキャン — TypeExcludeFilter だけ。
     @Configuration(proxyBeanMethods = false)
     @ComponentScan(basePackageClasses = OutboxPartitionAutoConfiguration.class, excludeFilters = {
             @ComponentScan.Filter(type = FilterType.CUSTOM, classes = TypeExcludeFilter.class),
@@ -55,6 +57,9 @@ class OutboxPartitionComponentScanTest {
     /**
      * 앱처럼 DataSource 를 <b>자동 설정</b>이 만든다(사용자 빈이 아니다 — 그래야 스캔된 자동 설정의 조건이 DataSource 보다 먼저
      * 평가되는 실제 순서가 재현된다). 잡은 1시간 뒤에야 DB 에 붙으므로 가짜로 충분하다.
+     *
+     * <p>[JA] アプリと同様に DataSource を<b>自動設定</b>が作る(ユーザー Bean ではない — そうして初めて、スキャンされた自動設定の条件が DataSource より先に
+     * 評価される実際の順序が再現される)。ジョブは 1 時間後にようやく DB につながるので偽物で十分だ。
      */
     @AutoConfiguration(before = OutboxPartitionAutoConfiguration.class)
     static class FakeDataSourceAutoConfiguration {
@@ -92,6 +97,9 @@ class OutboxPartitionComponentScanTest {
     /**
      * 🔴 실제 앱 — {@code com.project.common} 을 스캔하는 {@code @ComponentScan} 은 AutoConfigurationExcludeFilter 를 함께 단다. 앱 기동
      * 테스트(OrderServiceApplicationTests 등)는 컨테이너가 있어야 돌아, 단위 테스트 단계에서도 여기서 막는다.
+     *
+     * <p>[JA] 🔴 実際のアプリ — {@code com.project.common} をスキャンする {@code @ComponentScan} は AutoConfigurationExcludeFilter を一緒に付ける。
+     * アプリ起動テスト(OrderServiceApplicationTests など)はコンテナがないと動かないので、単体テストの段階でもここで止める。
      */
     @Test
     @DisplayName("🔴 common 을 스캔하는 앱은 모두 AutoConfigurationExcludeFilter 를 단다")

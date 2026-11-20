@@ -35,6 +35,8 @@ beforeEach(() => {
 
 /**
  * 리뷰 쓰기·지우기 — 내 리뷰가 없을 때 삭제가 "성공" 으로 뜨던 것, 오류에 화면이 죽던 것, 스타일 그림이 비던 것.
+ *
+ * <p>[JA] レビューの作成・削除 — 自分のレビューがないとき削除が「成功」と出ていたこと、エラーで画面が落ちていたこと、スタイル画像が空だったこと。
  */
 describe("리뷰 작성 폼", () => {
     it("🔴 내 리뷰가 없으면 삭제 버튼이 없다", () => {
@@ -76,12 +78,13 @@ describe("리뷰 작성 폼", () => {
         fireEvent.click(screen.getByTestId("review-select-fit"));
         fireEvent.click(screen.getByRole("option", { name: "정사이즈" }));
         fireEvent.change(screen.getByPlaceholderText("리뷰를 작성해 주세요..."), { target: { value: "좋아요" } });
-        fireEvent.click(screen.getAllByRole("radio")[9]);   // 별 5개
+        fireEvent.click(screen.getAllByRole("radio")[9]);   // 별 5개 ／ [JA] 星 5 つ
         fireEvent.click(screen.getByRole("button", { name: "리뷰 등록" }));
 
         await waitFor(() => expect(postRequest).toHaveBeenCalled());
         const form = postRequest.mock.calls[0][1];
         // jsdom 의 Blob 에는 text() 가 없다 — FileReader 로 읽는다
+        // [JA] jsdom の Blob には text() がない — FileReader で読む
         const text = await new Promise((resolve) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);

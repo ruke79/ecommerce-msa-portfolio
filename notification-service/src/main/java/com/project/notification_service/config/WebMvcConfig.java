@@ -12,6 +12,11 @@ import lombok.RequiredArgsConstructor;
  * <p>여기서 경로를 좁히지 않는다 — 인터셉터가 스스로 관리자 접두사만 거른다. 경로 목록을
  * 두 곳에서 관리하면 새 컨트롤러가 생길 때 둘 다 고쳐야 하고, 잊으면 그 엔드포인트만
  * 조용히 무방비가 된다(catalog-service 의 WebMvcConfig 와 같은 이유).
+ *
+ * <p>[JA] {@link AdminOnlyInterceptor} をすべての API パスに掛ける。
+ * ここでパスを絞らない — インターセプターが自ら管理者プレフィックスだけを選り分ける。パス一覧を二か所で管理すると、
+ * 新しいコントローラーができたときに両方直す必要があり、忘れるとそのエンドポイントだけが静かに無防備になる
+ * (catalog-service の WebMvcConfig と同じ理由)。
  */
 @Configuration
 @RequiredArgsConstructor
@@ -24,6 +29,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(adminOnlyInterceptor)
                 .addPathPatterns("/api/**")
                 // actuator 는 API 가 아니고 프로브가 쓴다.
+                // [JA] actuator は API ではなくプローブが使う。
                 .excludePathPatterns("/actuator/**");
     }
 }

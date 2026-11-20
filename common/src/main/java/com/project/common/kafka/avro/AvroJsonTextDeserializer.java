@@ -18,12 +18,17 @@ import org.apache.kafka.common.serialization.Deserializer;
  *
  * <p>DTO 가 필요 없다 — 스키마에서 생성된 클래스만으로 JSON 을 만든다. 그래서 chat 처럼 DTO 가
  * common 밖에 있는 토픽도 여기서 읽을 수 있다.
+ *
+ * <p>[JA] 値を <b>JSON 文字列</b>で受け取るコンシューマー用 — delivery · notification は {@code List<String>} を受け取り {@code JsonNode} でフィールドをいくつか取り出して使う。
+ * 彼らに Avro バイトをそのまま渡すと壊れるので、トピックにデコーダーがあり Avro ならレコードを普通の JSON に変え({@link SpecificRecordJson})、そうでなければバイトを
+ * 文字列のまま返す。コンシューマーのコードは触らない。
+ * DTO は不要 — スキーマから生成されたクラスだけで JSON を作る。だから chat のように DTO が common の外にあるトピックもここで読める。
  */
 public class AvroJsonTextDeserializer implements Deserializer<String> {
 
     private final Map<String, BinaryMessageDecoder<? extends SpecificRecord>> byTopic;
 
-    /** 토픽 → 디코더. 기본은 {@link AvroDecoders#byTopic()} — 스키마가 있는 모든 토픽. */
+    /** 토픽 → 디코더. 기본은 {@link AvroDecoders#byTopic()} — 스키마가 있는 모든 토픽. ／ [JA] トピック → デコーダー。デフォルトは {@link AvroDecoders#byTopic()} — スキーマがあるすべてのトピック。 */
     public AvroJsonTextDeserializer() {
         this(AvroDecoders.byTopic());
     }

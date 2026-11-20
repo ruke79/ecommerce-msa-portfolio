@@ -45,8 +45,15 @@ import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
  *   <li>인증서 없이 OUT_OF_SERVICE 를 지정하지 못한다 · 읽기는 그대로 된다</li>
  * </ul>
  *
- * <p>[JA] 実際の TLS で起動した Eureka に実際の Eureka クライアントが登録してみる。クライアント設定はサービスが使う
- * application-common.yml そのまま。JVM キーストアだけでは Eureka クライアントは証明書を出さないことも確かめる。
+ * <p>[JA] 実際の TLS で起動した Eureka(client-auth=want、書き込み判定 enforce)に<b>実際の Eureka クライアント</b>が登録してみる —
+ * クライアント設定はサービスが使う {@code application-common.yml} そのまま(docs/57 §16 "Eureka 書き込み")。確かめること:
+ * <ul>
+ *   <li>身元証明書(CN=user-service)を出した user-service は登録される</li>
+ *   <li>🐛 JVM キーストアだけがあり {@code eureka.client.tls} が無効のクライアントは証明書を<b>出さない</b> — 同じ JVM キーストアで JDK の
+ *       既定の接続(Feign と同じ経路)は証明書を出す。だから共通設定にクライアント TLS を別に置く</li>
+ *   <li>別サービスの証明書(CN=cart-service)で user-service を登録できない</li>
+ *   <li>証明書なしで OUT_OF_SERVICE を指定できない · 読み取りはそのままできる</li>
+ * </ul>
  */
 @DisplayName("Eureka 쓰기 판정 — 실제 TLS · 실제 Eureka 클라이언트")
 class RegistryWriteGuardTlsTest {
@@ -72,6 +79,7 @@ class RegistryWriteGuardTlsTest {
         leaf("cart-service", "cart-service");
 
         // JDK 기본 SSLContext(= Feign)가 읽는 JVM 키스토어 — 운영 매니페스트의 -Djavax.net.ssl.keyStore 와 같은 자리.
+        // [JA] JDK 既定の SSLContext(= Feign)が読む JVM キーストア — 運用マニフェストの -Djavax.net.ssl.keyStore と同じ位置。
         setProp("javax.net.ssl.keyStore", dir.resolve("user-service.p12").toString());
         setProp("javax.net.ssl.keyStorePassword", PW);
         setProp("javax.net.ssl.keyStoreType", "PKCS12");
@@ -98,6 +106,7 @@ class RegistryWriteGuardTlsTest {
                 "--LOCAL_CACERT_PATH=" + dir.resolve("ca.crt"),
                 "--eureka-guard.write-mode=enforce",
                 // 운영 ConfigMap 그대로 — 서비스 간 내부 API 판정은 enforce 다(Eureka 에서는 꺼져야 한다).
+                // [JA] 運用の ConfigMap そのまま — サービス間内部 API の判定は enforce である(Eureka ではオフでなければならない)。
                 "--internal-auth.mode=enforce",
                 "--internal-auth.allowed-subjects=user-service");
         port = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
@@ -114,6 +123,7 @@ class RegistryWriteGuardTlsTest {
     }
 
     // ── 도우미 ───────────────────────────────────────────────────────────
+    // [JA] ── ヘルパー ──
 
     private static void setProp(String k, String v) {
         if (System.getProperty(k) == null) {
@@ -133,6 +143,7 @@ class RegistryWriteGuardTlsTest {
     }
 
     /** 내부 CA 가 서명한 키스토어(이름.p12, 별칭 이름) — 사슬에 CA 를 함께 넣는다(cert-manager 의 keystore.p12 와 같은 모양). */
+    // [JA] 内部 CA が署名したキーストア(名前.p12、エイリアスは名前) — チェーンに CA を一緒に入れる(cert-manager の keystore.p12 と同じ形)。
     private static void leaf(String name, String cn) throws Exception {
         keytool("-genkeypair", "-alias", name, "-keyalg", "RSA", "-keysize", "2048", "-dname", "CN=" + cn,
                 "-validity", "2", "-keystore", name + ".p12", "-storepass", PW, "-storetype", "PKCS12");
@@ -145,11 +156,13 @@ class RegistryWriteGuardTlsTest {
     }
 
     /** 클라이언트 쪽 애플리케이션 — @Configuration 을 붙이지 않는다(서버 · 다른 테스트의 컴포넌트 스캔에 걸리지 않게). */
+    // [JA] クライアント側のアプリケーション — @Configuration を付けない(サーバー・他のテストのコンポーネントスキャンに引っかからないように)。
     @EnableAutoConfiguration
     static class Client {
     }
 
     /** 서비스와 같은 공통 설정(application-common.yml)으로 Eureka 클라이언트를 띄워 기동 중에 등록시킨다. 등록이 거절되면 기동이 실패한다. */
+    // [JA] サービスと同じ共通設定(application-common.yml)で Eureka クライアントを起動し、起動中に登録させる。登録が拒否されると起動が失敗する。
     private static ConfigurableApplicationContext client(String app, boolean tls, String keyStore) {
         List<String> args = new ArrayList<>(List.of(
                 "--spring.config.import=classpath:application-common.yml",
@@ -158,6 +171,8 @@ class RegistryWriteGuardTlsTest {
                 "--eureka.client.fetch-registry=false",
                 // 서비스의 클래스패스에는 Jersey 가 없어 RestTemplate(HttpClient 5) 전송을 쓴다. 이 모듈에는 서버용 Jersey 가 있으므로
                 // 서비스와 같은 전송이 되게 끈다.
+                // [JA] サービスのクラスパスには Jersey がなく RestTemplate(HttpClient 5)の転送を使う。このモジュールにはサーバー用の Jersey があるので、
+                //      サービスと同じ転送になるようにオフにする。
                 "--eureka.client.jersey.enabled=false",
                 "--eureka.client.should-enforce-registration-at-init=true",
                 "--eureka.instance.instance-id=" + app + ":test",
@@ -182,6 +197,7 @@ class RegistryWriteGuardTlsTest {
     }
 
     /** CA 만 믿고 클라이언트 인증서는 내지 않는 HTTP 클라이언트. */
+    // [JA] CA だけを信頼し、クライアント証明書は出さない HTTP クライアント。
     private static HttpClient noCertClient() throws Exception {
         KeyStore trust = KeyStore.getInstance("PKCS12");
         try (var in = new FileInputStream(dir.resolve("truststore.p12").toFile())) {
@@ -195,6 +211,7 @@ class RegistryWriteGuardTlsTest {
     }
 
     // ── 확인 ─────────────────────────────────────────────────────────────
+    // [JA] ── 確認 ──
 
     @Test
     @DisplayName("🔴 신원 인증서(CN=user-service)를 내는 공통 설정의 클라이언트는 등록된다")
@@ -210,6 +227,7 @@ class RegistryWriteGuardTlsTest {
     @DisplayName("🐛 eureka.client.tls 가 꺼진 클라이언트는 JVM 키스토어가 있어도 인증서를 내지 않아 거절된다 — JDK 기본 연결은 낸다")
     void jvmKeystoreIsNotUsedByEurekaClient() throws Exception {
         // 같은 JVM 키스토어로 JDK 기본 SSLContext(Feign 의 길)는 클라이언트 인증서를 낸다 — 쓰기가 통과해 404(없는 인스턴스)까지 간다.
+        // [JA] 同じ JVM キーストアで JDK 既定の SSLContext(Feign の経路)はクライアント証明書を出す — 書き込みが通過して 404(存在しないインスタンス)まで行く。
         var conn = (HttpsURLConnection) URI.create("https://localhost:" + port
                 + "/eureka/apps/USER-SERVICE/nobody/status?value=UP").toURL().openConnection();
         conn.setRequestMethod("PUT");
@@ -217,6 +235,7 @@ class RegistryWriteGuardTlsTest {
         conn.disconnect();
 
         // Eureka 클라이언트(HttpClient 5)는 같은 JVM 에서 인증서를 내지 않는다 → 판정이 거절 → 등록 실패로 기동 실패.
+        // [JA] Eureka クライアント(HttpClient 5)は同じ JVM で証明書を出さない → 判定が拒否 → 登録失敗で起動失敗。
         long before = rejected();
         assertThatThrownBy(() -> client("coupon-service", false, null).close())
                 .isInstanceOf(RuntimeException.class);
@@ -252,6 +271,7 @@ class RegistryWriteGuardTlsTest {
     @DisplayName("🔒 판정은 Jersey 가 보는 앱 이름(디코딩 · ;… 제거 뒤)으로 한다 — 인코딩해도 자기 앱은 자기 앱, 남의 앱은 남의 앱")
     void encodedPathIsJudgedAsJerseySeesIt() throws Exception {
         // JDK 기본 연결은 JVM 키스토어(CN=user-service)를 낸다.
+        // [JA] JDK 既定の接続は JVM キーストア(CN=user-service)を出す。
         assertThat(put("/eureka/apps/USER%2DSERVICE;v=1/nobody/status?value=UP"))
                 .as("자기 앱을 인코딩해 적어도 자기 앱 — 판정을 지나 Eureka 가 없는 인스턴스라 답한다").isNotEqualTo(403);
         assertThat(put("/eureka/apps/ORDER%2DSERVICE/nobody/status?value=OUT_OF_SERVICE"))
@@ -276,6 +296,7 @@ class RegistryWriteGuardTlsTest {
     }
 
     /** KeyManagerFactory 가 키스토어를 읽는지 — 테스트 자료가 틀려서 통과하는 일이 없게. */
+    // [JA] KeyManagerFactory がキーストアを読むか — テスト資材が間違っていて通過することがないように。
     @Test
     @DisplayName("테스트 자료: 신원 키스토어에 키가 있다")
     void fixtureHasKey() throws Exception {

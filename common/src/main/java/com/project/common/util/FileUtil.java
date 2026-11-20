@@ -41,6 +41,12 @@ public class FileUtil {
      *
      * <p>기본값은 바꾸지 않는다 — 다른 호출부가 생겼을 때 조용히 경로가 달라지는 것보다,
      * 접두사를 필요로 하는 쪽이 명시하는 편이 낫다.
+     *
+     * <p>[JA] 拡張子を検査し S3 キーを作る。
+     * {@code baseDirectory} を受け取る理由: バケットの<b>公開読み取りポリシーが接頭辞に掛かっている</b>(Resource が arn:aws:s3:::&lt;バケット&gt;/images/*)。
+     * ところがこのクラスのデフォルトは {@code "image"}(単数)なので、そのまま使うとキーが {@code image/…} になり<b>アップロードは成功するのにブラウザで 403</b> になる。
+     * 一括インポートが上げる画像は CSV のパス({@code images/food/Image_2.jpg})をそのままキーに使うのでポリシーに合い、だからそちらだけ正しく見えていた。
+     * デフォルトは変えない — 他の呼び出し側ができたときに静かにパスが変わるより、接頭辞を必要とする側が明示する方がよい。
      */
     public static String getFilePath(MultipartFile file, String filename, String baseDirectory) {
         String original = file.getOriginalFilename();
@@ -48,6 +54,8 @@ public class FileUtil {
 
         // 예전에는 Objects.requireNonNull(getOriginalFilename()) 이었다. 파일명이 없는
         // 업로드는 드물지만 가능하고, 그때 NullPointerException 이 500 으로 나갔다.
+        // [JA] 以前は Objects.requireNonNull(getOriginalFilename()) だった。ファイル名のないアップロードはまれだがありえて、
+        //      そのとき NullPointerException が 500 で出ていた。
         if (extension == null || !isValidFileType(extension)) {
             throw ErrorCode.throwUnSupportedFile();
         }
@@ -59,7 +67,7 @@ public class FileUtil {
         return prefix + filename + "." + extension.toLowerCase();
     }
 
-    /** 확장자 비교는 대소문자를 가리지 않는다 — 카메라가 {@code .JPG} 로 주는 경우가 흔하다. */
+    /** 확장자 비교는 대소문자를 가리지 않는다 — 카메라가 {@code .JPG} 로 주는 경우가 흔하다. ／ [JA] 拡張子の比較は大文字小文字を区別しない — カメラが {@code .JPG} で出すことはよくある。 */
     private static boolean isValidFileType(String extension) {
         String normalized = extension.toLowerCase();
         return Arrays.stream(FileType.values())

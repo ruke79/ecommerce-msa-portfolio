@@ -19,6 +19,11 @@ import com.project.order_service.payment.fx.FxRateSource;
  * <p>여기서 고정하는 것은 두 가지다: <b>환율 없이 조용히 청구하지 않는다</b>(59 USD 가
  * 59 KRW 가 되는 사고), 그리고 <b>소수 자릿수는 통화가 정한다</b>(JPY 에 ×100 하면
  * 100배, "1500.00" 은 PayPal 이 거절).
+ *
+ * <p>[JA] 決済手段ごとの通貨。
+ *
+ * <p>ここで固定するのは二つ: <b>レートなしで黙って請求しない</b>(59 USD が 59 KRW になる事故)、
+ * そして<b>小数桁は通貨が決める</b>(JPY に ×100 すると 100 倍、"1500.00" は PayPal が拒否)。
  */
 @DisplayName("결제수단별 통화")
 class PaymentCurrencyPolicyTest {
@@ -61,6 +66,7 @@ class PaymentCurrencyPolicyTest {
     }
 
     /** 🔴 환율이 없으면 실패해야 한다. 조용히 1 로 두면 59 USD 주문이 59 JPY 로 청구된다. */
+    // [JA] 🔴 レートがなければ失敗すべきである。黙って 1 にすると 59 USD の注文が 59 JPY で請求される。
     @Test
     @DisplayName("🔴 환율이 없는 통화로는 청구를 만들지 않는다")
     void missingRateFails() {
@@ -94,6 +100,7 @@ class PaymentCurrencyPolicyTest {
     }
 
     /** 🔴 JPY·KRW 는 0, USD 는 2 — 여기서 틀리면 Stripe 에 100배를 보낸다. */
+    // [JA] 🔴 JPY・KRW は 0、USD は 2 — ここを誤ると Stripe に 100 倍を送る。
     @Test
     @DisplayName("🔴 최소 단위는 통화가 정한다 — JPY 1500 은 1500, USD 59.98 은 5998")
     void minorUnits() {
@@ -110,6 +117,7 @@ class PaymentCurrencyPolicyTest {
     }
 
     // ── 실시간 환율 ──────────────────────────────────────────────────────────
+    // [JA] ── リアルタイム為替レート ──
 
     private static FxRateSource live(Map<String, String> rates) {
         return (base, quote) -> Optional.ofNullable(rates.get(quote)).map(BigDecimal::new);
@@ -128,12 +136,13 @@ class PaymentCurrencyPolicyTest {
     }
 
     /** 🔴 통화 코드 혼동·데이터 사고로 청구액이 열 배가 되는 것을 막는 마지막 줄. */
+    // [JA] 🔴 通貨コードの混同・データ事故で請求額が十倍になるのを防ぐ最後の線。
     @Test
     @DisplayName("🔴 고정값과 너무 다르면 실시간 값을 버리고 고정값을 쓴다")
     void deviationGuardFallsBackToFixed() {
         PaymentCurrencyPolicy p = policy();
         p.getFx().setMaxDeviationPercent(new BigDecimal("30"));
-        p.setLiveRates(live(Map.of("KRW", "13500")));   // 고정 1350 의 10배
+        p.setLiveRates(live(Map.of("KRW", "13500")));   // 고정 1350 의 10배 ／ [JA] 固定 1350 の 10 倍
 
         assertThat(p.quote(59, PaymentProvider.PORTONE).rate()).isEqualByComparingTo("1350");
     }
@@ -158,6 +167,7 @@ class PaymentCurrencyPolicyTest {
     }
 
     /** 포트 계약은 "실패 = empty" 지만, 구현이 어겨도 주문 생성이 죽어서는 안 된다. */
+    // [JA] ポート契約は「失敗 = empty」だが、実装が破っても注文作成が死んではならない。
     @Test
     @DisplayName("실시간 출처가 예외를 던져도 고정값으로 간다")
     void liveExceptionFallsBackToFixed() {
@@ -194,6 +204,7 @@ class PaymentCurrencyPolicyTest {
     }
 
     /** PayPal 은 JPY 에 소수를 거절한다(DECIMALS_NOT_SUPPORTED). */
+    // [JA] PayPal は JPY の小数を拒否する(DECIMALS_NOT_SUPPORTED)。
     @Test
     @DisplayName("PayPal 문자열 — USD \"59.98\", JPY \"1500\", 지수 표기 없음")
     void paypalPlain() {

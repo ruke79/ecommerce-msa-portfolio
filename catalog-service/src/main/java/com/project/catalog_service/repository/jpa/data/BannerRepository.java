@@ -23,6 +23,11 @@ public interface BannerRepository extends JpaRepository<Banner, Long> {
      *
      * <p>{@link Banner#isVisibleAt} 과 <b>같은 판정</b>이어야 한다. 두 곳에 있는 규칙이라
      * 테스트로 묶어 두었다(ContentServiceTest).
+     *
+     * <p>[JA] 今表示されるバナー。
+     * 期間判定をアプリケーションではなくクエリで行う理由: 全部読んできてから絞ると、終了した企画展のバナーが数百個たまったときにそれを全部メモリに載せる。
+     * 表示件数の上限(content.banner.max-visible)も DB が切るほうが安い。
+     * Banner#isVisibleAt と同じ判定でなければならない。二か所にある規則なのでテストで結び付けておいた(ContentServiceTest)。
      */
     @Query("select b from Banner b where b.published = true "
             + "and (b.startsAt is null or b.startsAt <= :now) "
@@ -31,5 +36,6 @@ public interface BannerRepository extends JpaRepository<Banner, Long> {
     List<Banner> findVisible(@Param("now") LocalDateTime now, Pageable pageable);
 
     /** 관리자 목록 — 비공개·기간 지난 것까지 전부. */
+    // [JA] 管理者一覧 — 非公開・期間切れのものまで全部。
     List<Banner> findAllByOrderBySortOrderAscBannerIdAsc();
 }

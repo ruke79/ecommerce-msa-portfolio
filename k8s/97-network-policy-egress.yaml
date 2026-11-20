@@ -25,6 +25,7 @@
 # 시험용 이름: netpol-probe-internal · netpol-probe-public 은 ops/35 가 띄우는 두드리기 파드다(같은 정책을 받게).
 
 # ── 1) 바깥이 필요 없는 서비스 — 클러스터 안 · 노드 수집기만 ─────────────────────────────────
+# [JA] ── 1) 外部が不要なサービス — クラスター内 · ノードの収集器のみ ──
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -54,13 +55,16 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다 ／ [JA] ops/35 がノードごとに展開する
       ports:
         - { protocol: TCP, port: 4318 }
 ---
 # ── 2) 바깥이 필요한 서비스 — 인터넷은 열되 사설 · 링크 로컬 · CGNAT 은 닫는다 ─────────────────
 #   user(OAuth · HIBP · 포트원 본인인증) · catalog(S3) · order(Stripe · PayPal · 포트원 · 환율) · notification(SMTP · SMS) ·
 #   delivery(택배사) · chat(MongoDB Atlas) · config-server(설정 Git 저장소)
+# [JA] ── 2) 外部が必要なサービス — インターネットは開けるがプライベート · リンクローカル · CGNAT は閉じる ──
+#        user(OAuth · HIBP · PortOne 本人認証) · catalog(S3) · order(Stripe · PayPal · PortOne · 為替) · notification(SMTP · SMS) ·
+#        delivery(宅配会社) · chat(MongoDB Atlas) · config-server(設定 Git リポジトリ)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -90,7 +94,7 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다 ／ [JA] ops/35 がノードごとに展開する
       ports:
         - { protocol: TCP, port: 4318 }
     - to:

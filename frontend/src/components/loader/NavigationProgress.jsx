@@ -29,6 +29,18 @@ import { useTranslation } from "i18n/I18nProvider";
  * 화면이 불안해 보인다. 사람이 "느리다" 고 느끼기 시작하는 지점 언저리에서만 나타난다.
  *
  * <p>{@code submitting} 도 함께 본다 — form 제출(useFetcher/Form)도 같은 기다림이다.
+ *
+ * <p>[JA] ルーターが次の画面を準備する間、上部に細いバーを描く。
+ * 🔴 なぜ必要か: このアプリの画面遷移は loader が終わってから起きる。react-router のデータルーターは
+ * ローダーが応答するまで URL も変えず前の画面をそのまま置く。そのため `/browse` でフィルターを押すと応答が来るまで
+ * 何の反応もない — ユーザーはクリックが効いたのか分からずもう一度押す。
+ * なぜ全画面スピナーではないか: このアプリにはすでに全画面オーバーレイ(`DotLoaderSpinner`)があるが、呼び出し側のほとんどで
+ * コメントアウトされている。理由がある — 画面を覆うと前の内容が消え、少し掛かる遷移でも画面がちらつき読んでいたものを失う。
+ * そのため皆オフにし、結果的に何の表示もない状態が残った。
+ * バーは覆わない。前の画面はそのまま読め、何かが進行中だという事実だけを伝える。YouTube · GitHub が同じ理由で同じものを使う。
+ * ⏱️ 200ms 待ってから見せる: キャッシュされた遷移は数十 ms で終わる。そのときバーを出すとちらつきだけが残り、かえって
+ * 画面が不安定に見える。人が「遅い」と感じ始めるあたりでだけ現れる。
+ * submitting も一緒に見る — form の送信(useFetcher/Form)も同じ待ちである。
  */
 const NavigationProgress = () => {
     const { t } = useTranslation();
@@ -55,6 +67,8 @@ const NavigationProgress = () => {
         <div
             // role="status" + aria-live 로 스크린리더에도 알린다. 막대만 그리면
             // 눈으로 보는 사람에게만 전달된다.
+            // [JA] role="status" + aria-live でスクリーンリーダーにも知らせる。バーだけ描くと
+            //      目で見る人にしか伝わらない。
             role="status"
             aria-live="polite"
             className="fixed top-0 left-0 right-0 z-50 h-1 overflow-hidden bg-transparent"

@@ -36,6 +36,8 @@ beforeEach(() => jest.clearAllMocks());
 
 /**
  * 장바구니 화면은 들어올 때 담아 둔 항목의 **지금** 재고를 새로 본다 (docs/59 §5).
+ *
+ * <p>[JA] カート画面は入るときに、入れておいた項目の **今の** 在庫を改めて見る(docs/59 §5)。
  */
 describe("장바구니 — 지금 재고", () => {
     it("🔴 들어오면 항목들의 재고를 한 번에 묻고, 받은 값으로 장바구니를 갱신한다", async () => {
@@ -71,7 +73,7 @@ describe("장바구니 — 지금 재고", () => {
         getCartStock.mockReturnValue(new Promise(() => {}));
         renderPage([line({ id: "1", qty: 3, quantity: 2 })]);
 
-        fireEvent.click(screen.getAllByRole("checkbox")[0]);          // 전체 선택
+        fireEvent.click(screen.getAllByRole("checkbox")[0]);          // 전체 선택 ／ [JA] 全選択
         fireEvent.click(screen.getByRole("button", { name: "주문서로 이동" }));
 
         expect(await screen.findByRole("alert")).toHaveTextContent("지금 재고로 주문할 수 없는 상품이 있습니다: 상품1");
@@ -92,6 +94,7 @@ describe("장바구니 — 지금 재고", () => {
 });
 
 /** 🔴 제목("Shopping Cart")과 저장 실패 문구가 박혀 있었다 — 일본어로 그려 봐야 드러난다. */
+// [JA] 🔴 タイトル("Shopping Cart")と保存失敗の文言が埋め込まれていた — 日本語で描いてみると分かる。
 describe("장바구니 — 일본어", () => {
     it("제목이 일본어다", () => {
         getCartStock.mockReturnValue(new Promise(() => {}));

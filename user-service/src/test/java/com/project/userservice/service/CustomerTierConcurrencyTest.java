@@ -94,11 +94,11 @@ class CustomerTierConcurrencyTest {
         assertThat(podA.tryAcquire("customer-tier", Duration.ofHours(2))).isTrue();
         assertThat(podB.tryAcquire("customer-tier", Duration.ofHours(2))).isFalse();
 
-        podB.release("customer-tier");   // 남의 임대는 풀지 못한다
+        podB.release("customer-tier");   // 남의 임대는 풀지 못한다 ／ [JA] 他人のリースは解放できない
         assertThat(podB.tryAcquire("customer-tier", Duration.ofHours(2))).isFalse();
 
         podA.release("customer-tier");
-        assertThat(podB.tryAcquire("customer-tier", Duration.ofSeconds(0))).isTrue();   // 길이 0 = 곧바로 만료
+        assertThat(podB.tryAcquire("customer-tier", Duration.ofSeconds(0))).isTrue();   // 길이 0 = 곧바로 만료 ／ [JA] 長さ 0 = 即座に期限切れ
         assertThat(podA.tryAcquire("customer-tier", Duration.ofHours(2))).isTrue();
     }
 
@@ -116,6 +116,7 @@ class CustomerTierConcurrencyTest {
         assertThat(((Number) row.get("recent_paid_amount")).longValue()).isEqualTo(900_000);
 
         // 새 회차의 강등은 이 행을 손대지 않은 행으로 읽지 않는다
+        // [JA] 新しい回の降格はこの行を未処理の行として読まない
         assertThat(users.demoteStale(newer, newer.plusMinutes(1))).isZero();
         assertThat(jdbc.queryForObject("SELECT tier FROM users.users WHERE user_id = ?", String.class, USER)).isEqualTo("VIP");
     }

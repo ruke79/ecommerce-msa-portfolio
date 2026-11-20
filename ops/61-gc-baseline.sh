@@ -45,6 +45,7 @@ sel="$MATCH"
 mkdir -p "$OUT/raw" || die "결과 폴더를 만들지 못했다: $OUT"
 
 # 열 이름 | PromQL — 모두 그 순간(now)의 즉시 질의, 창은 [WINDOW]
+# [JA] 列名 | PromQL — すべてその瞬間(now)の即時クエリ、窓は [WINDOW]
 QUERIES=(
   "pods|count by (service) (up{$sel} == 1)"
   "gctype|count by (service, gc) (jvm_gc_pause_seconds_count{$sel})"
@@ -88,7 +89,7 @@ for key in ("pods", "gctype", "heap", "gc_avg", "gc_max", "pause_max", "gc_per_m
                 kinds.append(kind)
             continue
         v = float(x["value"][1])
-        if v == v:   # NaN 은 버린다
+        if v == v:   # NaN 은 버린다 ／ [JA] NaN は捨てる
             srv.setdefault(name, {})[key] = v
 
 f = lambda v, fmt: (fmt % v) if v is not None else "-"

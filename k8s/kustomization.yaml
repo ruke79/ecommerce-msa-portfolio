@@ -27,6 +27,32 @@
 #   85-backup-cronjobs.yaml     운영 전용 → prod 오버레이
 #   90-dev-infra.yaml           Kafka/PG/Redis/Mongo/ES 를 클러스터 안에 띄운다 → dev 전용
 #   80-postgres-cnpg.yaml.example  예시 파일
+# [JA] 共通ベース — 環境に無関係なものだけ。
+#      
+#      ⚠️ このファイルができたことで `kubectl apply -f k8s/` はもう使えない。
+#         kubectl がこのファイルをリソースとして読もうとして失敗する。代わりに:
+#      
+#           kubectl apply -k k8s/overlays/dev
+#           kubectl apply -k k8s/overlays/prod
+#      
+#         個別ファイルの適用(`kubectl apply -f k8s/40-user-service.yaml`)はそのままできる。
+#         ops/13-k3s-deploy.sh も個別ファイルを適用するので影響を受けない。
+#      
+#      ── なぜ base を k8s/ 直下に置くのか ──
+#      
+#      kustomize は **kustomization ディレクトリ外のファイルを参照できない**(セキュリティ制約)。
+#      `k8s/base/kustomization.yaml` で `../40-user-service.yaml` を使うと拒否される(上のエラー)。
+#      マニフェストを全部 `k8s/base/` に移せば解決するが、ops/13・ドキュメント・README が参照する
+#      パスが全部壊れる。その代償の方が大きいと判断した。
+#      
+#      ── ここにないものとその理由 ──
+#      
+#        20-secret.example.yaml      REPLACE_ME のプレースホルダー。実際の Secret(20-secret.yaml)は
+#                                    gitignore されていてクラスターに別途入れる(docs/13)
+#        70-autoscaling.yaml         HPA は metrics-server が必要 → prod オーバーレイのみ
+#        85-backup-cronjobs.yaml     運用専用 → prod オーバーレイ
+#        90-dev-infra.yaml           Kafka/PG/Redis/Mongo/ES をクラスター内に立てる → dev 専用
+#        80-postgres-cnpg.yaml.example  例示ファイル
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -54,3 +80,4 @@ resources:
   - 60-ingress.yaml
 
 # 이미지 태그는 오버레이가 정한다(images: 항목). 베이스는 매니페스트에 적힌 값을 그대로 둔다.
+# [JA] イメージタグはオーバーレイが決める(images: 項目)。ベースはマニフェストに書かれた値をそのまま置く。

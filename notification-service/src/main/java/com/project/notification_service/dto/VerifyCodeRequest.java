@@ -8,5 +8,6 @@ public record VerifyCodeRequest(
         @NotBlank @Size(max = 30) String phone,
         @Size(max = 2) String region,
         // 6자리 숫자만. 형식이 틀린 입력은 DB 조회까지 갈 이유가 없다.
+        // [JA] 6 桁の数字のみ。形式が違う入力は DB 照会まで行く理由がない。
         @NotBlank @Pattern(regexp = "\\d{6}", message = "인증번호는 6자리 숫자입니다") String code) {
 }

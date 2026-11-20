@@ -28,6 +28,10 @@ import jakarta.persistence.PersistenceContext;
  *
  * <p>🐛 예전: ① Q&A cascade 가 MERGE 뿐이라 새 상품의 Q&A 가 조용히 빠졌다. ② 저장된 상품의 상세를
  * {@code setDetails(new HashSet<>())} 로 갈아 끼우면 flush 가 "orphan deletion 컬렉션" 예외로 거절됐다 — 변형 등록이 늘 500.
+ *
+ * <p>[JA] 🔴 商品の集約(詳細・Q&A)が実際の PostgreSQL に正しく保存される。
+ * <p>🐛 以前: ① Q&A の cascade が MERGE だけで、新しい商品の Q&A が黙って抜けていた。② 保存済み商品の詳細を {@code setDetails(new HashSet<>())} で差し替えると、
+ * flush が「orphan deletion コレクション」例外で拒否した — バリエーション登録が常に 500。
  */
 @Tag("containers")
 @Testcontainers
@@ -167,6 +171,7 @@ class ProductAggregatePersistenceTest {
     private com.project.catalog_service.repository.jpa.data.ProductRepository productRepository;
 
     /** 🐛 삭제한 상품의 slug 를 findBySlug 는 못 보지만 유니크 인덱스(V6)는 본다 — 같은 이름으로 다시 등록하면 500 이었다. */
+    // [JA] 🐛 削除した商品の slug を findBySlug は見られないがユニークインデックス(V6)は見る — 同じ名前で再登録すると 500 だった。
     @Test
     @DisplayName("🔴 slugTaken 은 삭제(DELETED)된 상품의 slug 도 쓴 것으로 본다 — findBySlug 와 다르게")
     void slugTakenSeesDeletedProducts() {
@@ -187,6 +192,7 @@ class ProductAggregatePersistenceTest {
     @DisplayName("🔴 검색 필터의 사이즈 · 색상은 PostgreSQL 에서 글자 그대로 앞부분만 맞춘다 — 메타문자로 500 이 나지 않는다")
     void searchFilterPrefixIsLiteralInPostgres() {
         // 2026-10-19: 정규식(~*) 대신 값마다 lower(x) LIKE lower('값%') ESCAPE '!' — Querydsl likeIgnoreCase 가 만드는 모양 그대로
+        // [JA] 2026-10-19: 正規表現(~*)の代わりに値ごとに lower(x) LIKE lower('値%') ESCAPE '!' — Querydsl likeIgnoreCase が作る形そのまま
         java.util.function.BiFunction<String, String, Boolean> matches = (value, raw) -> com.project.catalog_service.service.SearchServiceFilters
                 .prefixLikes(raw).stream().anyMatch(p -> (Boolean) em
                         .createNativeQuery("select lower(cast(:v as text)) like lower(cast(:p as text)) escape '!'")

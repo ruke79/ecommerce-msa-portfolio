@@ -18,13 +18,21 @@ import org.apache.avro.message.SchemaStore;
  * <p>규칙: 스키마를 바꾸면 <b>바꾸기 전 파일</b>을 {@code avro-history/<이름>-v<n>.avsc} 로 복사하고, 그 토픽의
  * 매핑과 {@link AvroDecoders} 가 {@code createDecoder(store(...))} 를 쓰게 한다. 옛 스키마를 지우는 것은 그 스키마로
  * 쓴 레코드가 토픽 보존 기간을 지나 사라진 뒤다.
+ *
+ * <p>[JA] 古い書き込みスキーマ — スキーマを変えた後も古いプロデューサーが書いたレコードを読むため。
+ * 単一オブジェクトエンコーディングのレコードには書き込みスキーマの<b>フィンガープリント</b>が付く({@link AvroWire})。生成クラスのデフォルトデコーダーは自分の
+ * スキーマのフィンガープリントしか知らないので、フィールドを一つ足しただけでも<b>デプロイ途中に古いポッドが書いたレコードをすべて読めない</b> — デシリアライズ失敗で
+ * DLT に行く。レジストリがないので古いスキーマを {@code resources/avro-history/} に残し、デコーダーの {@link SchemaStore} に登録する。読むときは Avro のスキーマ解決
+ * (writer → reader)が新しいフィールドを default で埋める。
+ * 規則: スキーマを変えたら<b>変える前のファイル</b>を {@code avro-history/<名前>-v<n>.avsc} にコピーし、そのトピックのマッピングと {@link AvroDecoders} が
+ * {@code createDecoder(store(...))} を使うようにする。古いスキーマを消すのは、そのスキーマで書いたレコードがトピック保持期間を過ぎて消えた後である。
  */
 public final class AvroSchemaHistory {
 
     private AvroSchemaHistory() {
     }
 
-    /** 클래스패스의 옛 스키마들을 담은 저장소. 하나라도 없거나 깨졌으면 기동 단계에서 실패한다. */
+    /** 클래스패스의 옛 스키마들을 담은 저장소. 하나라도 없거나 깨졌으면 기동 단계에서 실패한다. ／ [JA] クラスパスの古いスキーマを入れたストア。一つでもなかったり壊れていたりすれば起動段階で失敗する。 */
     public static SchemaStore.Cache store(String... resources) {
         SchemaStore.Cache store = new SchemaStore.Cache();
         for (String resource : resources) {
@@ -40,7 +48,7 @@ public final class AvroSchemaHistory {
         return store;
     }
 
-    /** 옛 스키마 하나 — 전환 릴리스 동안 옛 작성 스키마로 쓸 때, 그리고 옛 소비자를 흉내 내는 테스트에서. */
+    /** 옛 스키마 하나 — 전환 릴리스 동안 옛 작성 스키마로 쓸 때, 그리고 옛 소비자를 흉내 내는 테스트에서. ／ [JA] 古いスキーマ一つ — 移行リリースの間に古い書き込みスキーマで書くとき、そして古いコンシューマーを模倣するテストで。 */
     public static Schema schema(String resource) {
         try (InputStream in = AvroSchemaHistory.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
@@ -52,19 +60,19 @@ public final class AvroSchemaHistory {
         }
     }
 
-    /** chat 토픽의 옛 스키마 — v1 은 senderId 가 없고 발신자를 email 로 나타냈다. v2 는 둘 다 있었다. */
+    /** chat 토픽의 옛 스키마 — v1 은 senderId 가 없고 발신자를 email 로 나타냈다. v2 는 둘 다 있었다. ／ [JA] chat トピックの古いスキーマ — v1 は senderId がなく送信者を email で表していた。v2 は両方あった。 */
     public static final String[] CHAT_MESSAGE = {
             "avro-history/ChatMessage-v1.avsc", "avro-history/ChatMessage-v2.avsc" };
 
-    /** user-created 토픽의 옛 스키마 — v1 은 email 이 있었다. */
+    /** user-created 토픽의 옛 스키마 — v1 은 email 이 있었다. ／ [JA] user-created トピックの古いスキーマ — v1 は email があった。 */
     public static final String[] USER_CREATED = { "avro-history/UserCreatedRequest-v1.avsc" };
 
-    /** cart-empty·cart-rollback·coupon-use 의 옛 스키마 — v1 은 사용자 액세스 토큰(authorizationToken)을 실었다. */
+    /** cart-empty·cart-rollback·coupon-use 의 옛 스키마 — v1 은 사용자 액세스 토큰(authorizationToken)을 실었다. ／ [JA] cart-empty · cart-rollback · coupon-use の古いスキーマ — v1 は利用者のアクセストークン(authorizationToken)を載せていた。 */
     public static final String[] CART_EMPTY = { "avro-history/CartEmptyRequest-v1.avsc", "avro-history/CartEmptyRequest-v2.avsc" };
     public static final String[] CART_ROLLBACK = { "avro-history/CartRollbackRequest-v1.avsc" };
     public static final String[] COUPON_USE = { "avro-history/CouponUseRequest-v1.avsc" };
 
-    /** coupon-rollback 의 옛 스키마 — v1 은 orderId 가 없었다(어느 주문의 보상인지 몰라 아무 주문이 쓴 쿠폰이나 되돌렸다). */
+    /** coupon-rollback 의 옛 스키마 — v1 은 orderId 가 없었다(어느 주문의 보상인지 몰라 아무 주문이 쓴 쿠폰이나 되돌렸다). ／ [JA] coupon-rollback の古いスキーマ — v1 は orderId がなかった(どの注文の補償か分からず、どの注文が使ったクーポンでも戻していた)。 */
     public static final String[] COUPON_ROLLBACK = { "avro-history/CouponRollbackRequest-v1.avsc" };
 
     /**
@@ -75,6 +83,11 @@ public final class AvroSchemaHistory {
      * <p>v4(paypalOrderId 제거)는 앞 릴리스(C1)가 "다음 스키마" 로 디코더에 먼저 넣었다 — 필드를 빼면 뒤 필드의 위치가
      * 밀려 "새 클래스를 옛 작성 스키마로 쓴다" 가 통하지 않기 때문이다(docs/49 §3). v1·v2 는 DLT 보존 기간(14일)이 지나면
      * 지운다(C3).
+     *
+     * <p>[JA] order トピックの古いスキーマ — v1 は利用者のアクセストークンを載せていた。v2 はプロバイダー中立のフィールド(paymentProvider · providerPaymentId)がなかった。
+     * v3 は古い PayPal 専用の paypalOrderId があった。product-update の v1 もトークンを載せていた(タイポ autorizationToken)。
+     * v4(paypalOrderId 削除)は前のリリース(C1)が「次のスキーマ」としてデコーダーに先に入れた — フィールドを抜くと後ろのフィールドの位置がずれ、
+     * 「新しいクラスを古い書き込みスキーマで書く」が通じないからである(docs/49 §3)。v1 · v2 は DLT 保持期間(14 日)が過ぎたら消す(C3)。
      */
     public static final String[] PAYMENT_REQUEST = {
             "avro-history/PaymentRequest-v1.avsc", "avro-history/PaymentRequest-v2.avsc",

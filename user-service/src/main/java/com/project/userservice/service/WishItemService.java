@@ -49,6 +49,8 @@ public class WishItemService {
                 Optional<WishItem> existed = user.getWishLists().stream()
                         // 🐛 예전 `==` — 박싱된 Long 끼리는 참조 비교라 -128~127 만 같았다. 상품 id 128 부터는 중복을 못 잡아 같은 찜이 계속 쌓였다.
                         // 🐛 style 이 NULL 인 옛 행이 있으면 x.getStyle().equals 에서 NPE → 400 이었다 — Objects.equals.
+                        // [JA] 🐛 以前の `==` — ボクシングされた Long 同士は参照比較なので -128~127 だけが等しかった。商品 id 128 からは重複を捕まえられず同じお気に入りが積もり続けた。
+                        //      🐛 style が NULL の古い行があると x.getStyle().equals で NPE → 400 だった — Objects.equals。
                         .filter(x -> id.equals(x.getProductId()) && java.util.Objects.equals(x.getStyle(), request.getStyle()))
                         .findFirst();
 

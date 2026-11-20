@@ -39,7 +39,10 @@ import com.project.common.dto.ProductSkuDto;
  * <p>지키는 것: ① 목록 세 응답에서 상품은 허용 목록만(설명 · 상세 · 문답 · 분류 · 사이즈 코드가 없다). ② 화면(ProductCard · stock ·
  * pricing)과 k6(purchasable)가 읽는 필드는 남는다. ③ 상품 상세 등 다른 응답은 전체 그대로. ④ 설정이 실제 Jackson 변환기에 건다.
  *
- * <p>[JA] 商品一覧の応答はカードが読むフィールドだけ。画面と k6 が読むフィールドは残り、商品詳細など他の応答は全体のまま。
+ * <p>[JA] 商品一覧の応答(検索 · トップ画面 · 企画展)はカードが読むフィールドだけ — docs/83 §5(2026-10-24 プロファイル: 応答 JSON の書き込み
+ * 17.6%、送る量がコスト)。
+ * 守ること: ① 一覧の三つの応答で商品は許可リストだけ(説明 · 詳細 · Q&A · 分類 · サイズコードがない)。② 画面(ProductCard · stock ·
+ * pricing)と k6(purchasable)が読むフィールドは残る。③ 商品詳細など他の応答は全体のまま。④ 設定が実際の Jackson 変換器に掛かる。
  */
 @DisplayName("상품 목록 응답 — 카드 필드만, 상세는 그대로")
 class ProductCardResponsesTest {
@@ -82,6 +85,7 @@ class ProductCardResponsesTest {
     }
 
     /** 상품 하나가 카드 필드만 — 그리고 화면 · k6 가 읽는 값은 그대로. */
+    // [JA] 商品一つがカードのフィールドだけ — そして画面・k6 が読む値はそのまま。
     private static void assertCard(JsonNode p, String id) {
         assertThat(keys(p)).as("상품 — 허용 목록만").containsExactlyInAnyOrder("id", "name", "slug", "status", "skus");
         assertThat(p.get("id").asText()).isEqualTo(id);

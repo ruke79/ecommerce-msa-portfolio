@@ -6,6 +6,7 @@ import StripeReturn from "components/order/StripeReturn";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("util/api", () => ({ postRequest: jest.fn() }));
@@ -17,6 +18,10 @@ const order = { trackingId: "track-1" };
  * 주문 페이지의 모양을 흉내 낸다 — onPaid 가 화면을 "다시 뜨게" 한다(예전에는
  * window.location.reload 였다). key 를 바꿔 StripeReturn 을 다시 마운트하면, 그 순간의
  * 주소에 아직 ?stripe=success 가 남아 있는지가 그대로 드러난다.
+ *
+ * <p>[JA] 注文ページの形を真似る — onPaid が画面を「再表示」させる(以前は
+ * window.location.reload だった)。key を変えて StripeReturn を再マウントすると、その瞬間の
+ * アドレスにまだ ?stripe=success が残っているかがそのまま表れる。
  */
 function Page() {
     const [gen, setGen] = useState(0);
@@ -42,6 +47,10 @@ beforeEach(() => jest.clearAllMocks());
  * 🐛 "결제를 확인하는 중 → 결제가 완료되었습니다 → 새로고침" 이 무한히 반복됐다.
  * 쿼리를 finally 에서 지웠는데 then 의 onPaid(= reload)가 먼저 실행돼, 세션 id 가 남은
  * 주소로 다시 떴기 때문이다.
+ *
+ * <p>[JA] 🐛 「決済を確認中 → 決済が完了しました → リロード」が無限に繰り返された。
+ * クエリを finally で消していたが then の onPaid(= reload)が先に実行され、セッション id が残った
+ * アドレスで再表示されたからだ。
  */
 describe("StripeReturn — 복귀 확인", () => {
     it("확인 요청은 세션 id 하나만 보내고, 성공하면 완료를 보여 준다", async () => {
@@ -64,11 +73,11 @@ describe("StripeReturn — 복귀 확인", () => {
         postRequest.mockResolvedValue({ data: {} });
         renderAt("/order/7?stripe=success&session_id=cs_test_1");
 
-        await waitFor(() => expect(screen.getByTestId("gen")).toHaveTextContent("1"));   // onPaid 가 불렸다
-        expect(screen.getByTestId("search")).toHaveTextContent("");                      // 주소에서 세션 id 가 사라졌다
+        await waitFor(() => expect(screen.getByTestId("gen")).toHaveTextContent("1"));   // onPaid 가 불렸다 ／ [JA] onPaid が呼ばれた
+        expect(screen.getByTestId("search")).toHaveTextContent("");                      // 주소에서 세션 id 가 사라졌다 ／ [JA] アドレスからセッション id が消えた
         await new Promise((r) => setTimeout(r, 20));
         expect(postRequest).toHaveBeenCalledTimes(1);
-        expect(screen.getByTestId("gen")).toHaveTextContent("1");                        // 더 돌지 않는다
+        expect(screen.getByTestId("gen")).toHaveTextContent("1");                        // 더 돌지 않는다 ／ [JA] それ以上回らない
     });
 
     it("확인이 거절돼도 쿼리를 지우고, 웹훅이 반영할 수 있다고 말한다", async () => {
@@ -77,10 +86,11 @@ describe("StripeReturn — 복귀 확인", () => {
 
         expect(await screen.findByRole("alert")).toHaveTextContent("세션을 찾을 수 없습니다.");
         expect(screen.getByTestId("search")).toHaveTextContent("");
-        expect(screen.getByTestId("gen")).toHaveTextContent("0");                        // 실패에는 onPaid 없음
+        expect(screen.getByTestId("gen")).toHaveTextContent("0");                        // 실패에는 onPaid 없음 ／ [JA] 失敗には onPaid なし
     });
 
     /** 확정·환불된 뒤에는 띠를 내린다 — 새로고침 없이 주문만 다시 읽으므로 로컬 상태가 남아 있다. */
+    // [JA] 確定・返金後は帯を下ろす — リロードなしで注文だけ読み直すのでローカル状態が残っている。
     it("주문이 확정되거나 환불되면 아무것도 그리지 않는다", async () => {
         postRequest.mockResolvedValue({ data: {} });
         const { rerender, container } = render(

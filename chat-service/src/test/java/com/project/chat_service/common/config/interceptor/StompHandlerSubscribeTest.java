@@ -41,6 +41,10 @@ import com.project.chat_service.service.ChatService;
  * <p>그런데 참여자 등록은 <b>기록</b>이지 권한 검사가 아니다 — 구독 자체는 누구에게도 막혀
  * 있지 않다. 기록에 실패하면 서버 로그에 남기고 구독은 통과시킨다. 인증 실패
  * (토큰 없음·roomId 없음)는 <b>그대로 거절</b>한다.
+ *
+ * <p>[JA] 購読フレームは<b>記録の失敗では死なない。</b>
+ * <p><b>🐛 回帰対象</b>: {@code preSend} が参加者登録中の例外をそのまま投げていた。インバウンドチャネルで投げた例外は STOMP ERROR フレームになり、画面には内部事情を語る {@code Failed to send message to ExecutorSubscribableChannel[clientInboundChannel]} しか見えない。そのルームには<b>永遠に入れない。</b>
+ * <p>しかし参加者登録は<b>記録</b>であって権限検査ではない — 購読自体は誰にも塞がれていない。記録に失敗すればサーバログに残して購読は通す。認証失敗(トークンなし・roomId なし)は<b>そのまま拒否</b>する。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -70,6 +74,7 @@ class StompHandlerSubscribeTest {
         accessor.setSessionId("sess-1");
         accessor.setSessionAttributes(sessionAttributes);
         // 실제 클라이언트(ChatArea)처럼 구독 주소와 roomId 헤더를 함께 싣는다 — 권한은 주소로 판정한다(docs/58).
+        // [JA] 実際のクライアント(ChatArea)のように購読宛先と roomId ヘッダを一緒に載せる — 権限は宛先で判定する(docs/58)。
         accessor.setDestination("/sub/chat/room/" + (roomId != null ? roomId : "room-1"));
         if (roomId != null) {
             accessor.setNativeHeader("roomId", roomId);
@@ -86,6 +91,7 @@ class StompHandlerSubscribeTest {
     }
 
     /** 🔴 핵심 — 등록이 터져도 구독은 살아서 지나간다. */
+    // [JA] 🔴 核心 — 登録が失敗しても購読は生きて通過する。
     @Test
     @DisplayName("🔴 참여자 등록이 실패해도 구독 프레임은 통과한다")
     void bookkeepingFailureDoesNotKillTheSubscription() {
@@ -106,6 +112,7 @@ class StompHandlerSubscribeTest {
     }
 
     /** 신원은 uid 하나다(docs/48 §6-⑥) — 예전처럼 이메일만 있는 세션은 신원이 없는 것이다. */
+    // [JA] 身元は uid 一つである(docs/48 §6-⑥) — 以前のようにメールだけのセッションは身元がないのと同じである。
     @Test
     @DisplayName("🔒 userId 가 없는 세션은 거절한다 — 이메일만으로는 들어오지 못한다")
     void emailOnlySessionIsRejected() {
@@ -117,6 +124,7 @@ class StompHandlerSubscribeTest {
     }
 
     /** 인증은 여전히 막는다 — 기록 실패와 신원 없음은 다른 문제다. */
+    // [JA] 認証は依然として止める — 記録の失敗と身元なしは別の問題である。
     @Test
     @DisplayName("roomId 가 없으면 거절한다")
     void missingRoomIdIsRejected() {
@@ -125,6 +133,7 @@ class StompHandlerSubscribeTest {
     }
 
     /** 🔒 CONNECT — uid 없는 토큰은 서명이 맞아도 받지 않는다. 세션에 이메일도 담지 않는다. */
+    // [JA] 🔒 CONNECT — uid のないトークンは署名が正しくても受け付けない。セッションにメールも入れない。
     @Test
     @DisplayName("🔒 CONNECT: uid 없는 토큰은 거절, 세션에는 userId 만 담는다")
     void connectStoresOnlyUserId() {
@@ -157,6 +166,7 @@ class StompHandlerSubscribeTest {
     }
 
     // ── 연결을 토큰 수명 · 로그인 해제에 묶기(user-service docs/68 §9) ──────────────────
+    // [JA] ── 接続をトークン寿命・ログアウトに結び付ける(user-service docs/68 §9) ──
 
     @Test
     @DisplayName("🔴 CONNECT 는 토큰 만료에 닫기를 예약한다 — 예전에는 끊길 때까지 살아 있었다")

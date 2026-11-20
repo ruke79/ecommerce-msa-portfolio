@@ -38,6 +38,9 @@ import jakarta.servlet.http.Cookie;
  * 🔴 비밀번호를 바꾸면 다른 기기는 끊기고 <b>이 기기는 이어진다</b>(docs/68 §14).
  *
  * <p>🐛 예전: 응답은 "다른 기기에서는 다시 로그인" 이었지만 이 기기도 몇 분 뒤 튕겼다 — 새 토큰을 주지 않았다.
+ *
+ * <p>[JA] 🔴 パスワードを変えると他の機器は切れ<b>この機器は続く</b>(docs/68 §14)。
+ * <p>🐛 以前: 応答は「他の機器では再ログイン」だったがこの機器も数分後に弾かれた — 新しいトークンを渡していなかった。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)

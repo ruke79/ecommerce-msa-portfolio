@@ -28,15 +28,26 @@ import org.junit.jupiter.api.Test;
  * <p>실제로 이 규칙은 전체 알림을 붙이면서 한 번 깨졌다. 나머지 엔티티는 전부
  * {@code LocalDateTime.now(ZoneOffset.UTC)} 인데 새로 추가한 네 파일만 맨손
  * {@code now()} 였다.
+ *
+ * <p>[JA] このサービスの時刻はすべて UTC でなければならない(B-21)。<b>なぜ通知サービスで特に問題になるのか。</b>一
+ * 覧は個人通知と全体通知を<b>合わせて</b> {@code createdAt} で並べる。
+ * 片方だけシステムのタイムゾーンで付けられると、サーバーが KST のときそちらが常に 9 時間未来になり、
+ * いつも一番上に付く。しかも画面はサーバー時刻を UTC と見て現地時刻に変えるので(NotificationBell の
+ * RelativeTime)、その通知は永遠に「たった今」と表示される。どちらも例外は出ない —
+ * コードは平然と動き順序だけが狂う。だからここで固定する。実際にこの規則は全体通知を付けたときに一度壊れ
+ * た。残りのエンティティはすべて {@code LocalDateTime.now(ZoneOffset.UTC)} なのに、
+ * 新しく追加した四ファイルだけが素の {@code now()} だった。
  */
 @DisplayName("시각은 UTC")
 class UtcClockGuardrailTest {
 
     /** 인자 없는 {@code LocalDateTime.now()} — 시스템 시간대를 쓴다. */
+    // [JA] 引数なしの {@code LocalDateTime.now()} — システムのタイムゾーンを使う。
     private static final Pattern BARE_NOW =
             Pattern.compile("\\bLocalDateTime\\s*\\.\\s*now\\s*\\(\\s*\\)");
 
     /** 블록/줄 주석 안의 예시 코드는 규칙 대상이 아니다. */
+    // [JA] ブロック/行コメント内の例示コードは規則の対象ではない。
     private static final Pattern COMMENTS =
             Pattern.compile("/\\*.*?\\*/|//[^\\n]*", Pattern.DOTALL);
 

@@ -6,9 +6,16 @@
  *
  * <p>⚠️ 영어로 남아 있던 문구("Cart"·"*First Name"·"Save Address" 등)는 한국어 화면에서 지금 보이는 글자를
  * 그대로 옮겼다 — 테스트가 그 글자로 요소를 찾는다. 한국어로 다듬는 것은 테스트와 함께 따로 한다.
+ *
+ * <p>[JA] 韓国語文言 — 領域 "order"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ko.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
+ * ⚠️ 英語で残っていた文言("Cart"・"*First Name"・"Save Address" など)は韓国語画面で今見えている文字を
+ * そのまま移した — テストがその文字で要素を探す。韓国語に整えるのはテストと一緒に別途行う。
  */
 const order = {
     // ── 결제 화면(checkout) — 배송지 ─────────────────────────────────────
+    // [JA] ── 決済画面(checkout) — 配送先 ──
     "checkout.address.section_title": "배송 정보",
     "checkout.address.loading": "배송지를 불러오는 중…",
     "checkout.address.editing": "배송지를 수정하고 있습니다 — {{firstname}} {{lastname}}, {{address}}",
@@ -55,6 +62,7 @@ const order = {
     "checkout.address.error.country_max": "국가는 40자를 넘을 수 없습니다.",
 
     // ── 결제 화면 — 장바구니 요약 · 결제수단 · 쿠폰 ──────────────────────
+    // [JA] ── 決済画面 — カート要約・決済手段・クーポン ──
     "checkout.cart.title": "장바구니",
     "checkout.cart.one_item": "1개",
     "checkout.cart.items": "{{count}}개",
@@ -73,6 +81,7 @@ const order = {
     "checkout.coupon_picker.until": "{{date}}까지",
 
     // ── 결제수단(checkout/paymentMethods) — 상표(PayPal·Stripe)는 이름을 번역하지 않는다 ──
+    // [JA] ── 決済手段(checkout/paymentMethods) — 商標(PayPal・Stripe)は名前を翻訳しない ──
     "payment.method.paypal.description": "PayPal 계정이 없어도 신용카드·체크카드로 결제할 수 있습니다.",
     "payment.method.stripe.description": "카드 결제. Stripe 결제 페이지로 이동했다가 돌아옵니다.",
     "payment.method.portone.name": "신용카드 (KG이니시스 · 포트원)",
@@ -83,6 +92,7 @@ const order = {
     "payment.method.cash.description": "주문 뒤 안내받은 계좌로 기한 안에 입금하면, 확인 후 결제가 완료됩니다.",
 
     // ── 주문 상세의 결제(order/Payment) ─────────────────────────────────
+    // [JA] ── 注文詳細の決済(order/Payment) ──
     "payment.title": "결제",
     "payment.paypal_loading": "불러오는 중…",
     "payment.charge_amount": "결제 금액",
@@ -105,6 +115,7 @@ const order = {
     "payment.error.channel_key_missing": "포트원 채널 키(REACT_APP_PORTONE_CHANNEL_KEY)가 설정되지 않았습니다.",
     "payment.error.not_completed": "결제가 완료되지 않았습니다.",
     // 포트원 결제창의 실패 — PG 문구를 알아보고 다시 말한다(util/portoneError · docs/60 §12)
+    // [JA] ポートワン決済ウィンドウの失敗 — PG の文言を判別して言い直す(util/portoneError · docs/60 §12)
     "payment.portone.error.canceled": "결제를 취소했습니다. 다시 결제하려면 버튼을 눌러 주세요.",
     "payment.portone.error.timeout": "결제 시간이 초과되었습니다. 다시 시도해 주세요.",
     "payment.portone.error.insufficient": "잔액이 부족하거나 카드 한도를 넘었습니다. 다른 카드나 결제 수단을 이용해 주세요.",
@@ -113,6 +124,7 @@ const order = {
     "payment.portone.error.generic_code": "결제사에서 결제를 완료하지 못했습니다. (오류 코드: {{code}})",
 
     // ── 무통장입금 · 가상계좌(order/BankTransfer) ────────────────────────
+    // [JA] ── 銀行振込・仮想口座(order/BankTransfer) ──
     "bank_transfer.intro": "입금자명을 적고 안내를 받으세요. 안내에 적힌 계좌로 기한 안에 입금하면 확인 뒤 결제가 완료됩니다.",
     "bank_transfer.depositor": "입금자명",
     "bank_transfer.depositor_placeholder": "입금자명 (통장에 찍힐 이름)",
@@ -136,6 +148,7 @@ const order = {
     "bank_transfer.error.cancel": "취소하지 못했습니다.",
 
     // ── 주문 상세(pages/order) ──────────────────────────────────────────
+    // [JA] ── 注文詳細(pages/order) ──
     "order.detail.title": "주문 상세",
     "order.detail.processing": "처리 중…",
     "order.detail.back": "돌아가기",
@@ -144,16 +157,19 @@ const order = {
     "order.customer.billing_address": "청구지",
 
     // ── 결제 전 재고 예약(order/StockHoldNotice) ─────────────────────────
+    // [JA] ── 決済前の在庫予約(order/StockHoldNotice) ──
     "stock_hold.before": "주문하신 상품의 재고를",
     "stock_hold.after": "까지 잡아 두었습니다. 이 시간 안에 결제해 주세요.",
     "stock_hold.expired": "재고 보관 시간({{time}})이 지났습니다. 지금 결제할 수는 있지만 재고가 보장되지 않습니다 — 결제 뒤 재고가 모자라면 모자란 수량만큼 환불됩니다.",
 
     // ── Stripe 복귀(order/StripeReturn) ─────────────────────────────────
+    // [JA] ── Stripe 復帰(order/StripeReturn) ──
     "stripe_return.canceled": "결제를 취소했습니다. 다시 시도할 수 있습니다.",
     "stripe_return.confirming": "결제를 확인하는 중입니다…",
     "stripe_return.confirmed": "결제가 확인됐습니다.",
 
     // ── 구매 확정(order/ConfirmPurchaseButton) ───────────────────────────
+    // [JA] ── 購入確定(order/ConfirmPurchaseButton) ──
     "purchase_confirm.completed": "구매가 확정된 주문입니다.",
     "purchase_confirm.completed_at": "확정 시각: {{time}}",
     "purchase_confirm.auto": "배송 완료 후 확정 기한이 지나 자동으로 확정되었습니다.",
@@ -167,6 +183,7 @@ const order = {
     "purchase_confirm.failed": "구매 확정을 처리하지 못했습니다.",
 
     // ── 환불(order/RefundButton · ItemQtyPicker) ─────────────────────────
+    // [JA] ── 返金(order/RefundButton · ItemQtyPicker) ──
     "refund.done": "환불이 완료된 주문입니다.",
     "refund.reference": "환불 참조: {{id}}",
     "refund.awaiting_return": "반품 접수 중 — 상품이 도착하면 처리가 마무리됩니다.",
@@ -190,6 +207,7 @@ const order = {
     "refund.qty_remaining": "(남은 {{count}})",
 
     // ── 배송 추적(delivery/DeliveryTracker) ──────────────────────────────
+    // [JA] ── 配送追跡(delivery/DeliveryTracker) ──
     "delivery.stage.ordered": "주문 완료",
     "delivery.stage.shipped": "발송",
     "delivery.stage.in_transit": "배송 중",

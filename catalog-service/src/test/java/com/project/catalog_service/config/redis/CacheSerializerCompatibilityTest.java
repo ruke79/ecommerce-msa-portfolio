@@ -45,6 +45,7 @@ class CacheSerializerCompatibilityTest {
     }
 
     /** 맨 위 객체와 skus[0] 에 모르는 필드를 더한다(기본 타이핑의 [타입, [요소…]] 모양을 따라). */
+    // [JA] 最上位のオブジェクトと skus[0] に未知のフィールドを足す(既定のタイピングの [型, [要素…]] の形に従って)。
     private static byte[] withFieldsFromNextRelease(byte[] stored) throws Exception {
         ObjectNode tree = (ObjectNode) PLAIN.readTree(stored);
         tree.put("addedInNextRelease", "x");

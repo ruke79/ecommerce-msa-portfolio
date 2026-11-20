@@ -13,6 +13,19 @@
 #   ACTION=restore RESTORE_FROM=/var/backups/mongo/20260728T031500Z TARGET_URI=... ./ops/10-backup-mongo.sh
 #   VERIFY=0 ...        # 복원 검증 생략 (빠르지만 권장하지 않음)
 #   DRY_RUN=1 ...
+# [JA] 運用アクション ⑩ — MongoDB バックアップ + 復元検証(docs/15 §3、C3 等級)
+#
+#      対象: chat-service の会話記録。損失許容(RPO) 24 時間、復旧目標(RTO) 8 時間 — C1(金銭)より
+#            緩いが **再生成できない** データである。Elasticsearch のインデックスのように作り直せない。
+#
+#      このスクリプトはバックアップだけをしない。取ったダンプを **空のインスタンスに実際に復元してドキュメント数を照合** する。
+#      復元してみていないダンプはバックアップではない(ops/09 と同じ原則)。
+#
+#      使い方:
+#        MONGO_URI='mongodb://…' BACKUP_ROOT=/var/backups/mongo ./ops/10-backup-mongo.sh
+#        ACTION=restore RESTORE_FROM=/var/backups/mongo/20260728T031500Z TARGET_URI=... ./ops/10-backup-mongo.sh
+#        VERIFY=0 ...        # 復元検証を省略(速いが推奨しない)
+#        DRY_RUN=1 ...
 set -euo pipefail
 
 ACTION="${ACTION:-backup}"          # backup | restore
@@ -24,6 +37,7 @@ VERIFY="${VERIFY:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 METRICS_DIR="${METRICS_DIR:-}"
 # 검증용 임시 인스턴스. docker 가 없으면 VERIFY=0 으로 두고 별도 환경에서 확인해야 한다.
+# [JA] 検証用の一時インスタンス。docker がなければ VERIFY=0 にして別の環境で確認する必要がある。
 MONGO_IMAGE="${MONGO_IMAGE:-${TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX:-}mongo:7}"
 
 RESTORE_FROM="${RESTORE_FROM:-}"
@@ -39,6 +53,7 @@ command -v mongorestore >/dev/null || die "mongorestore 가 필요합니다"
 
 mongo_count() {
     # mongosh 가 없는 환경도 있어 --eval 결과를 최소한으로 파싱한다.
+    # [JA] mongosh がない環境もあるので、--eval の結果を最小限にパースする。
     local uri="$1" db="$2"
     mongosh "$uri" --quiet --eval \
         "db.getSiblingDB('$db').getCollectionNames().reduce((n,c)=>n+db.getSiblingDB('$db')[c].countDocuments({}),0)" \
@@ -67,6 +82,7 @@ do_restore() {
     [ -d "$RESTORE_FROM" ] || die "$RESTORE_FROM 이 없습니다"
 
     # 복원은 되돌릴 수 없다. 운영 URI 로 실수 실행하는 사고를 막는다.
+    # [JA] 復元は元に戻せない。運用 URI で誤って実行する事故を防ぐ。
     if [ "$DRY_RUN" != "1" ]; then
         printf '대상: %s\n' "$(printf '%s' "$TARGET_URI" | sed -E 's#://[^@]*@#://***@#')"
         read -r -p "이 인스턴스의 '$DB_NAME' 데이터를 덮어씁니다. 계속할까요? (yes 입력): " ok
@@ -79,6 +95,7 @@ do_restore() {
 if [ "$ACTION" = "restore" ]; then do_restore; exit 0; fi
 
 # ---------------------------------------------------------------- 백업
+# [JA] バックアップ
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 target="$BACKUP_ROOT/$stamp"
@@ -88,6 +105,9 @@ run "mkdir -p '$target'"
 # --oplog: 덤프 도중의 변경을 oplog 로 함께 받아 **시점 일관성**을 확보한다.
 #          없으면 컬렉션마다 다른 시각의 스냅샷이 섞여, 복원된 대화가 앞뒤가 안 맞을 수 있다.
 #          (단독 인스턴스에는 oplog 가 없으므로 실패하면 --oplog 없이 재시도한다)
+# [JA] --oplog: ダンプ中の変更を oplog で一緒に受け取り **時点の一貫性** を確保する。
+#               なければコレクションごとに違う時刻のスナップショットが混ざり、復元した会話の前後が合わないことがある。
+#               (単独インスタンスには oplog がないので、失敗したら --oplog なしで再試行する)
 if ! run "mongodump --uri='$MONGO_URI' --db='$DB_NAME' --gzip --oplog --out='$target' 2>/dev/null"; then
     info "oplog 를 쓸 수 없습니다(레플리카셋이 아님) — 시점 일관성 없이 덤프합니다"
     info "  → 운영에서는 레플리카셋 구성을 권장합니다(docs/15 §3)"
@@ -101,6 +121,7 @@ files="$(find "$target" -name '*.bson.gz' | wc -l)"
 [ "$files" -gt 0 ] || die "bson 파일이 하나도 없습니다 — 덤프가 비었습니다"
 info "컬렉션 ${files}개, 크기 $(du -sh "$target" | cut -f1)"
 # gzip 무결성. 손상된 덤프를 '성공'으로 기록하면 정작 필요할 때 못 쓴다.
+# [JA] gzip の整合性。壊れたダンプを「成功」と記録すると、肝心なときに使えない。
 find "$target" -name '*.gz' -exec gzip -t {} \; || die "덤프가 손상되었습니다"
 info "gzip 무결성 OK"
 
@@ -108,6 +129,7 @@ SOURCE_DOCS="$(mongo_count "$MONGO_URI" "$DB_NAME")"
 info "원본 문서 수: ${SOURCE_DOCS:-확인불가}"
 
 # ---------------------------------------------------------------- 복원 검증
+# [JA] 復元検証
 
 if [ "$VERIFY" = "1" ] && command -v docker >/dev/null 2>&1; then
     log "3/4  빈 인스턴스에 실제로 복원해 대조"
@@ -138,6 +160,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 정리
+# [JA] 整理
 
 log "4/4  보존 기간(${RETENTION_DAYS}일) 정리"
 find "$BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d -mtime "+$RETENTION_DAYS" -exec rm -rf {} + 2>/dev/null || true

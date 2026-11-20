@@ -22,6 +22,9 @@ public interface BroadcastNotificationRepository extends JpaRepository<Broadcast
      *
      * <p>사용자 목록({@link #visibleFor})과 달리 기간으로 거르지 않는다. 관리자는 아직
      * 시작되지 않은 안내와 이미 끝난 안내를 봐야 한다: 안 보이는 것을 고칠 수는 없다.
+     *
+     * <p>[JA] 管理者一覧 — 予約分・期限切れ分まですべて。ユーザー一覧({@link #visibleFor})と違い期間で絞らない。
+     * 管理者はまだ始まっていない案内とすでに終わった案内も見る必要がある: 見えないものは直せない。
      */
     List<BroadcastNotification> findAllByOrderByStartsAtDesc(Pageable pageable);
 
@@ -38,6 +41,11 @@ public interface BroadcastNotificationRepository extends JpaRepository<Broadcast
      *
      * <p>읽음 여부는 여기서 거르지 않는다 — 읽은 공지도 목록에는 남아야 한다
      * (개인 알림과 같다).
+     *
+     * <p>[JA] この人に今見せるべき全体通知。条件を<b>クエリで</b>判定する — Java
+     * で絞ると有効でないお知らせまで全部読んでから捨てることになる。(1) 開始済みでまだ終わっていない (2)
+     * この人が片付けていない({@code dismissed})。既読かどうかはここでは絞らない —
+     * 読んだお知らせも一覧には残るべきだ(個人通知と同じ)。
      */
     @Query("""
             select b from BroadcastNotification b
@@ -59,6 +67,9 @@ public interface BroadcastNotificationRepository extends JpaRepository<Broadcast
      *
      * <p>"읽음 행이 없으면 안 읽은 것"이다 — 공지를 올릴 때 사용자 수만큼 행을 만들지
      * 않기 때문에(BroadcastNotification 주석) 이렇게 센다.
+     *
+     * <p>[JA] 未読の全体通知数。「既読行がなければ未読」である — お知らせを出すときにユーザー数分の行を作らないた
+     * め(BroadcastNotification のコメント)、こう数える。
      */
     @Query("""
             select count(b) from BroadcastNotification b
@@ -73,6 +84,7 @@ public interface BroadcastNotificationRepository extends JpaRepository<Broadcast
     long countUnreadFor(@Param("recipientId") Long recipientId, @Param("now") LocalDateTime now);
 
     /** 읽음 처리 대상 — 지금 유효하고 아직 읽지 않은 것. */
+    // [JA] 既読処理の対象 — 今有効でまだ読んでいないもの。
     @Query("""
             select b.broadcastId from BroadcastNotification b
              where b.startsAt <= :now

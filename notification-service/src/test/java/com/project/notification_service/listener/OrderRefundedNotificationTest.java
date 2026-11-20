@@ -24,6 +24,10 @@ import com.project.notification_service.service.NotificationService;
  *
  * <p>"환불 완료" 는 결제 응답(CANCELED)에서만 나왔고, 결제는 전액이 다 돌아갔을 때만 취소된다.
  * order-service 가 환불 한 건마다 {@code order-refunded} 를 보내고, 여기서는 <b>부분</b> 환불만 알린다.
+ *
+ * <p>[JA] 🐛 部分返金には通知がなかった(docs/49 §10)。「返金完了」は決済応答(CANCELED)からしか出ず、
+ * 決済は全額が戻ったときだけ取り消される。order-service が返金一件ごとに {@code order-refunded} を送り、
+ * ここでは<b>部分</b>返金だけを知らせる。
  */
 @DisplayName("notification-service — 부분 환불 알림")
 class OrderRefundedNotificationTest {

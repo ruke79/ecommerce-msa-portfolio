@@ -13,9 +13,12 @@ public interface ProductQARepository extends JpaRepository<ProductQA, Long> {
     // --- 비관적 잠금 적용 ---
     // Q&A를 수정하는 동안 다른 트랜잭션이 해당 데이터를 수정하지 못하게 락을 겁니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
+    //      Q&A を更新している間、他のトランザクションがそのデータを更新できないようロックをかける。
     Optional<ProductQA> findById(Long id);
     
     // --- 낙관적 잠금 적용 ---
     //@Lock(LockModeType.OPTIMISTIC)
+    // [JA] --- 楽観ロックの適用 ---
     Optional<ProductQA> findByQuestion(String question);
 }

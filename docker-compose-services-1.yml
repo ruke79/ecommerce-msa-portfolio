@@ -1,6 +1,7 @@
 version: '3.8'
 
 # 공통 앵커: 재시작 정책. 각 서비스는 healthcheck/mem_limit/cpus를 개별 지정한다.
+# [JA] 共通アンカー: 再起動ポリシー。各サービスは healthcheck/mem_limit/cpus を個別に指定する。
 x-restart-policy: &restart-policy
   restart: unless-stopped
 
@@ -59,6 +60,7 @@ services:
       - SERVER_SSL_KEY_PASSWORD=
       - SERVER_SSL_KEY_STORE_ALIAS=
       # (주의) 다른 서비스는 https 로 eureka/config에 접속하는데 cart만 http 였음 → https 로 통일
+      # [JA] (注意) 他のサービスは https で eureka/config に接続するのに cart だけ http だった → https に統一
       - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=https://  :8761/eureka
       - SPRING_CONFIG_IMPORT=optional:configserver:https://  :8888
       - LOGGING_LEVEL_ROOT=INFO

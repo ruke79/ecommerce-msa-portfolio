@@ -22,11 +22,15 @@ scrape_configs:
   # 추적에서 뽑은 RED 지표(docs/63) — Collector 의 span_metrics 커넥터가 :8889 로 낸다.
   # 서비스 이름은 service_name 라벨이다(job 은 이 작업 이름). OpenMetrics 로 긁어야 exemplar 가 온다 —
   # Prometheus 기본 협상이 OpenMetrics 를 먼저 청한다.
+  # [JA] トレースから抜き出した RED 指標(docs/63) — Collector の span_metrics コネクタが :8889 で出す。サービス名は
+  #      service_name ラベルだ(job はこのジョブ名)。OpenMetrics で収集してこそ exemplar が来る — Prometheus
+  #      の既定のネゴシエーションが OpenMetrics を先に要求する。
   - job_name: "otel-span-metrics"
     static_configs:
       - targets: ["otel-collector:8889"]
 
   # 추적 파이프라인 자신의 건강 — 버린 스팬·내보내기 실패(alert-rules.yml 의 tracing-pipeline).
+  # [JA] トレースパイプライン自身の健全性 — 捨てたスパン・エクスポート失敗(alert-rules.yml の tracing-pipeline)。
   - job_name: "otel-collector"
     static_configs:
       - targets: ["otel-collector:8888"]
@@ -36,6 +40,8 @@ scrape_configs:
 
   # 경보 전달 자신의 건강 — Discord 로 보낸 시도 · 실패(alert-rules.yml 의 AlertDeliveryFailing, docs/22 §1).
   # 🐛 2026-10-20 전에는 긁지 않아 9-24 부터 전달 0건이었던 것을 아무 데서도 볼 수 없었다.
+  # [JA] 警報配信自身の健全性 — Discord へ送った試行・失敗(alert-rules.yml の AlertDeliveryFailing, docs/22 §1)。
+  #      🐛 2026-10-20 より前は収集しておらず、9-24 から配信 0 件だったことをどこからも見られなかった。
   - job_name: "alertmanager"
     static_configs:
       - targets: ["alertmanager:9093"]
@@ -61,6 +67,9 @@ scrape_configs:
         labels: { module: http_page }
       # ?probe= — catalog 가 이 요청에는 no-store 를 단다(EdgeCacheHeaders). 쿼리가 다르면 앞단의 캐시 키도 달라, 캐시 규칙을 켠 뒤에도
       # 탐침은 늘 원본까지 간다 — 빼면 원본이 죽어도 앞단 캐시가 200 을 줘 탐침이 성공한다(docs/91 §2-9).
+      # [JA] ?probe= — catalog がこのリクエストには no-store を付ける(EdgeCacheHeaders)。
+      #      クエリが違えば前段のキャッシュキーも違うので、キャッシュルールを有効にした後もプローブは常にオリジンまで行
+      #      く — 外すとオリジンが死んでも前段のキャッシュが 200 を返してプローブが成功する(docs/91 §2-9)。
       - targets: ["https://www.ysyproject.com/catalog-service/api/content/home?probe=site-probe"]
         labels: { module: http_api }
     relabel_configs:

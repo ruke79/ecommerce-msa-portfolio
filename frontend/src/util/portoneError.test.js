@@ -3,6 +3,7 @@ import ko from "i18n/messages/ko";
 import ja from "i18n/messages/ja";
 
 /** 사전 한 벌로 t 를 흉내 낸다 — {{code}} 만 채운다. */
+// [JA] 辞書一式で t を真似る — {{code}} だけを埋める。
 const tFor = (dict) => (key, vars = {}) =>
   (dict[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
 
@@ -10,6 +11,8 @@ const tFor = (dict) => (key, vars = {}) =>
  * 포트원 결제창의 실패 문구 (docs/60 §12).
  *
  * <p>PG 가 쓴 문구(대개 한국어)를 그대로 띄우면 일본어 화면에 한국어가 나온다. 알아보고 사전 문구로.
+ *
+ * <p>[JA] PortOne 決済画面の失敗文言(docs/60 §12)。PG が書いた文言(大抵韓国語)をそのまま出すと日本語画面に韓国語が出る。判別して辞書の文言にする。
  */
 describe("util/portoneError", () => {
   it.each([

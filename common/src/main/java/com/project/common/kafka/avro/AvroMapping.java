@@ -14,6 +14,11 @@ import org.apache.avro.specific.SpecificRecord;
  *
  * @param <D> 도메인 DTO
  * @param <R> 스키마에서 생성된 SpecificRecord
+ *
+ * <p>[JA] DTO 一つと Avro レコード一つの間の変換。
+ * <b>なぜリスナーが Avro クラスではなく DTO を受け取り続けるのか。</b>シリアライザー · デシリアライザーがこの変換を抱えているので、リスナーとサービスは以前の DTO の
+ * ままである。ワイヤーだけが Avro に変わる。Avro 生成クラスをドメインコードまで持ち込むと、スキーマを変えるたびにサービスコードが揺れ、生成クラスの
+ * {@code CharSequence} · {@code Instant} のような表現がドメインに漏れ出す。D はドメイン DTO、R はスキーマから生成された SpecificRecord。
  */
 public interface AvroMapping<D, R extends SpecificRecord> {
 
@@ -23,13 +28,16 @@ public interface AvroMapping<D, R extends SpecificRecord> {
 
     D toDto(R record);
 
-    /** 생성 클래스의 {@code getEncoder()} — 단일 객체 인코딩(마커 + 지문 + 본문). */
+    /** 생성 클래스의 {@code getEncoder()} — 단일 객체 인코딩(마커 + 지문 + 본문). ／ [JA] 生成クラスの {@code getEncoder()} — 単一オブジェクトエンコーディング(マーカー + フィンガープリント + 本文)。 */
     BinaryMessageEncoder<R> encoder();
 
     /**
      * 생성 클래스의 {@code getDecoder()} 또는 {@code createDecoder(SchemaStore)}. 기본 디코더는 자기
      * 스키마의 지문만 안다. 옛 스키마로 쓰인 레코드를 읽으려면 {@code SchemaStore} 에 옛 스키마를
      * 등록한 디코더를 돌려주면 된다 — 진화의 핵심이다.
+     *
+     * <p>[JA] 生成クラスの {@code getDecoder()} または {@code createDecoder(SchemaStore)}。デフォルトのデコーダーは自分のスキーマのフィンガープリントしか知らない。
+     * 古いスキーマで書かれたレコードを読むには、{@code SchemaStore} に古いスキーマを登録したデコーダーを返せばよい — 進化の核心である。
      */
     BinaryMessageDecoder<R> decoder();
 }

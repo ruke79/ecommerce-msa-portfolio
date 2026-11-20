@@ -38,6 +38,8 @@ import com.project.order_service.stock.OrderStockHold;
 
 /**
  * 주문 생성 때 재고를 잡는다 (docs/59).
+ *
+ * <p>[JA] 注文作成時に在庫を確保する(docs/59)。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -111,6 +113,7 @@ class OrderCreateStockHoldTest {
         assertThat(service.createOrder(new OrderRequest(), 7L)).isSameAs(created);
         verify(cache, never()).discardUnplaced(anyLong());
         // 기한 초과면 catalog 가 뒤늦게 잡았을 수 있다 — 새 주문이라 한 번 풀어 둔다(유령 예약 방지)
+        // [JA] 期限超過なら catalog が遅れて確保したかもしれない — 新しい注文なので一度解放しておく(幽霊予約の防止)
         verify(stockHold).release(77L);
     }
 
@@ -152,6 +155,7 @@ class OrderCreateStockHoldTest {
     }
 
     // ---------------------------------------------------------------- 멱등 키 (V26)
+    // [JA] 冪等キー(V26)
 
     @Test
     @DisplayName("🔴 같은 멱등 키로 다시 오면 새 주문을 만들지 않고 이미 만든 주문을 돌려준다 — 장바구니 · 재고도 건드리지 않는다")

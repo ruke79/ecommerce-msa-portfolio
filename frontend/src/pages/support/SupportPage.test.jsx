@@ -12,6 +12,7 @@ jest.mock("util/api");
 jest.mock("store/AuthContext", () => ({ useAuthContext: () => ({ user: { userId: "1001" } }) }));
 
 // STOMP 는 흉내 낸다 — 구독 콜백을 붙잡아 서버가 보낸 것처럼 부르고, 보낸 프레임을 기록한다.
+// [JA] STOMP は模倣する — 購読のコールバックを捕まえてサーバーが送ったかのように呼び、送ったフレームを記録する。
 const mockStomp = { handlers: {}, sent: [] };
 jest.mock("util/stompProvider", () => ({
     useStomp: () => ({
@@ -29,6 +30,8 @@ const deliver = (msg) => act(() => { mockStomp.handlers["/sub/chat/room/support-
 
 /**
  * 1:1 고객 상담 — 고객 화면 (docs/58 §11).
+ *
+ * <p>[JA] 1:1 顧客相談 — 顧客画面(docs/58 §11)。
  */
 describe("SupportRoom — 고객 상담 화면", () => {
     beforeEach(() => {
@@ -41,6 +44,7 @@ describe("SupportRoom — 고객 상담 화면", () => {
     afterEach(() => jest.clearAllMocks());
 
     // ── 시작 · 대기 ──────────────────────────────────────────────────
+    // [JA] ── 開始 · 待機 ──────────────────────────────────────────────────
 
     it("열린 상담이 없으면 문의 유형을 고르고 시작한다 — 고른 유형으로 열리고 대기 순번이 보인다", async () => {
         getMySupportThread.mockResolvedValue(null);
@@ -122,10 +126,12 @@ describe("SupportRoom — 고객 상담 화면", () => {
     });
 
     // ── 대화 ─────────────────────────────────────────────────────────
+    // [JA] ── 会話 ─────────────────────────────────────────────────────────
 
     it("내 메시지와 상담원 메시지를 구분한다 — senderId 는 문자열로 비교한다", async () => {
         getMySupportThread.mockResolvedValue(ACTIVE);
         // 서버는 최신부터 준다.
+        // [JA] サーバーは最新から返す。
         getSupportMessages.mockResolvedValue([
             { id: "3", type: "TEXT_TALK", content: "확인해 보겠습니다", senderId: "2001", nickname: "민지", createdAt: 1790000060000 },
             { id: "2", type: "TEXT_TALK", content: "배송이 안 와요", senderId: "1001", nickname: "나", createdAt: 1790000000000 },
@@ -137,6 +143,7 @@ describe("SupportRoom — 고객 상담 화면", () => {
         expect(mine.closest("li")).toHaveAttribute("data-kind", "mine");
         expect(theirs.closest("li")).toHaveAttribute("data-kind", "theirs");
         // 오래된 것이 위에 온다.
+        // [JA] 古いものが上に来る。
         expect(mine.compareDocumentPosition(theirs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
@@ -165,6 +172,7 @@ describe("SupportRoom — 고객 상담 화면", () => {
     });
 
     // ── 종료 · 평가 ──────────────────────────────────────────────────
+    // [JA] ── 終了 · 評価 ──────────────────────────────────────────────────
 
     it("상담을 종료하면 입력창이 사라지고 평가 · '새로 문의하기' 가 보인다", async () => {
         getMySupportThread.mockResolvedValue(ACTIVE);
@@ -179,7 +187,7 @@ describe("SupportRoom — 고객 상담 화면", () => {
         expect(screen.getAllByRole("button", { name: "새로 문의하기" }).length).toBeGreaterThan(0);
         expect(screen.queryByRole("textbox", { name: "메시지를 입력하세요" })).not.toBeInTheDocument();
         expect(screen.getByText(/상담이 종료되었습니다/)).toBeInTheDocument();
-        expect(getMySupportHistory).toHaveBeenCalledTimes(2);   // 지난 상담 목록도 다시 읽는다
+        expect(getMySupportHistory).toHaveBeenCalledTimes(2);   // 지난 상담 목록도 다시 읽는다 ／ [JA] 過去の相談一覧も読み直す
     });
 
     it("별점과 한 줄 의견을 한 번 남긴다 — 보내면 감사 문구로 바뀐다", async () => {
@@ -216,6 +224,7 @@ describe("SupportRoom — 고객 상담 화면", () => {
     });
 
     // ── 지난 상담 ────────────────────────────────────────────────────
+    // [JA] ── 過去の相談 ────────────────────────────────────────────────────
 
     it("지난 상담을 누르면 그때의 대화를 읽기 전용으로 보고, 돌아올 수 있다", async () => {
         getMySupportThread.mockResolvedValue(null);
@@ -246,6 +255,7 @@ describe("SupportRoom — 고객 상담 화면", () => {
     });
 
     // ── 그 밖 ────────────────────────────────────────────────────────
+    // [JA] ── その他 ────────────────────────────────────────────────────────
 
     it("일본어로도 그린다", async () => {
         getMySupportThread.mockResolvedValue(null);

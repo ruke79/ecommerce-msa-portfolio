@@ -4,7 +4,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
 	 // Redisson
-    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능
+    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능 ／ [JA] 最新の安定版に変更可能
 	
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
@@ -20,10 +20,11 @@ dependencies {
 	implementation 'io.micrometer:micrometer-registry-prometheus'
 
 	// springfox는 Spring Boot 3 비호환(사장)이라 springdoc으로 교체
+	// [JA] springfox は Spring Boot 3 非対応(開発終了)なので springdoc に置き換え
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
 
 	
-	implementation 'com.auth0:java-jwt:3.19.4'   // 토큰 검증은 이것만 쓴다 — 쓰지 않던 jjwt 0.9.1·0.11.5 를 지웠다
+	implementation 'com.auth0:java-jwt:3.19.4'   // 토큰 검증은 이것만 쓴다 — 쓰지 않던 jjwt 0.9.1·0.11.5 를 지웠다 ／ [JA] トークン検証はこれだけを使う — 使っていなかった jjwt 0.9.1・0.11.5 を削除した
 
 	implementation 'org.springframework.kafka:spring-kafka'
 
@@ -33,6 +34,7 @@ dependencies {
 	
 	runtimeOnly 'org.postgresql:postgresql'
 	// 스키마 마이그레이션: 파티셔닝 등 Hibernate ddl-auto가 만들 수 없는 DDL은 Flyway가 소유한다 (docs/09 P0)
+	// [JA] スキーママイグレーション: パーティショニングなど Hibernate ddl-auto が作れない DDL は Flyway が所有する(docs/09 P0)
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'		
 	//runtimeOnly 'com.mysql:mysql-connector-j'

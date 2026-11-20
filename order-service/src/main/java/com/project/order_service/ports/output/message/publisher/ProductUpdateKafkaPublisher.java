@@ -47,10 +47,12 @@ public class ProductUpdateKafkaPublisher {
     private long publishTimeoutMs = 5000;
 
     /** @return 상태가 확정됐으면 true, 일시 실패라 다음 폴링에서 다시 시도해야 하면 false */
+    // [JA] 状態が確定したら true、一時的な失敗で次のポーリングで再試行すべきなら false
     public boolean publish(PaymentOutboxEvent outboxEvent, BiConsumer<PaymentOutboxEvent, OutboxStatus> outboxCallback) {
         ProductUpdateRequest request = read(outboxEvent);
         try {
             // 트랜잭션 프로듀서 — 릴레이의 DB 트랜잭션에는 Kafka 트랜잭션이 없으므로 이 한 번을 감싸 보낸다(TransactionalSends).
+            // [JA] トランザクショナルプロデューサ — リレーの DB トランザクションには Kafka トランザクションがないので、この一回を包んで送る(TransactionalSends)。
             SendResult<String, ProductUpdateRequest> result = com.project.common.kafka.TransactionalSends
                     .run(kafkaTemplate, ops -> ops.send(TOPIC, request.getEventId(), request))
                     .get(publishTimeoutMs, TimeUnit.MILLISECONDS);
@@ -68,6 +70,7 @@ public class ProductUpdateKafkaPublisher {
     }
 
     /** 행 → 메시지. 페이로드가 깨졌으면 재시도해도 같다 — 예외로 FAILED 가 되게 둔다. */
+    // [JA] 行 → メッセージ。ペイロードが壊れていれば再試行しても同じ — 例外で FAILED になるようにしておく。
     ProductUpdateRequest read(PaymentOutboxEvent outboxEvent) {
         try {
             return objectMapper.readValue(outboxEvent.getPayload(), ProductUpdateRequest.class);

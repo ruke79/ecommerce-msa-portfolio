@@ -111,6 +111,7 @@ class KeysetProductReaderTest {
     @BeforeEach
     void seed() {
         // 상품 23개(그중 하나는 DELETED) — 각 SKU 2개 · SKU 마다 사이즈 2개 · 소분류 1개
+        // [JA] 商品 23 個(うち一つは DELETED) — 各 SKU 2 個・SKU ごとにサイズ 2 個・小分類 1 個
         jdbc.update("DELETE FROM product.product_size WHERE size_id >= ?", BASE);
         jdbc.update("DELETE FROM product.product_sku WHERE skuproduct_id >= ?", BASE);
         jdbc.update("DELETE FROM product.product_subcategory WHERE proc_subcategory_id >= ?", BASE);
@@ -190,7 +191,7 @@ class KeysetProductReaderTest {
         reader.close();
         assertThat(p).isNotNull();
 
-        ProductDocument doc = ProductDocumentMapper.toDocument(p);   // 세션 없이 — LazyInitializationException 이면 실패
+        ProductDocument doc = ProductDocumentMapper.toDocument(p);   // 세션 없이 — LazyInitializationException 이면 실패 ／ [JA] セッションなしで — LazyInitializationException なら失敗
 
         assertThat(doc.getCategory()).isEqualTo("toys & games");
         assertThat(doc.getSubcategories()).extracting(ProductDocument.ProductSubcategoryDocument::getName).containsExactly("board games");

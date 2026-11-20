@@ -49,26 +49,36 @@ import lombok.extern.slf4j.Slf4j;
 public class RefreshTokenService {
 
     /** 회전의 결과. 새 토큰은 ROTATED · GRACE 일 때만 있다. */
+    // [JA] ローテーションの結果。新トークンは ROTATED · GRACE のときだけある。
     public enum Kind {
         /** 이 요청이 회전했다 — 새 토큰 */
+        // [JA] このリクエストがローテーションした — 新トークン
         ROTATED,
         /** 동시 갱신 — 다른 요청이 방금 발급한 새 토큰을 돌려준다 */
+        // [JA] 同時更新 — 別のリクエストが今発行した新トークンを返す
         GRACE,
         /** 이미 회전된 토큰이 다시 왔다 — 묶음을 끊었다 */
+        // [JA] 既にローテーション済みのトークンがまた来た — 系列を切った
         REUSED,
         /** 끊긴 묶음의 토큰 */
+        // [JA] 切られた系列のトークン
         REVOKED,
         /** 회전 이전에 발급된 토큰(fam 없음) — 다시 로그인 */
+        // [JA] ローテーション以前に発行されたトークン(fam なし) — 再ログイン
         LEGACY,
         /** 최초 로그인부터 절대 수명(30일)이 지났다 — 다시 로그인(docs/68 §12) */
+        // [JA] 最初のログインから絶対寿命(30 日)が過ぎた — 再ログイン(docs/68 §12)
         SESSION_ENDED,
         /** 저장된 값과 다르다 · 다른 요청이 회전 중인데 기다려도 끝나지 않았다 */
+        // [JA] 保存値と違う · 別のリクエストがローテーション中で待っても終わらなかった
         REJECTED
     }
 
     /** 계수기 — Prometheus 에서는 {@code auth_refresh_total{result}}. {@code reused} 는 경보(RefreshTokenReuseDetected). */
+    // [JA] カウンタ — Prometheus では auth_refresh_total{result}。reused はアラート(RefreshTokenReuseDetected)。
     static final String METRIC = "auth.refresh";
     /** 모든 기기에서 로그아웃 횟수 — Prometheus {@code auth_logout_all_total}. */
+    // [JA] 全機器からのログアウト回数 — Prometheus auth_logout_all_total。
     static final String LOGOUT_ALL_METRIC = "auth.logout.all";
 
     /**
@@ -123,6 +133,7 @@ public class RefreshTokenService {
     }
 
     /** 새 로그인 — 새 묶음. 끝난 묶음을 사용자 색인에서 치운다(로그인은 드물어 여기서 해도 싸다). */
+    // [JA] 新規ログイン — 新しい系列。終わった系列をユーザー索引から片付ける(ログインは稀なのでここでやっても安い)。
     public RefreshToken createRefreshToken(Long userId) {
         refreshTokenRepository.pruneUserFamilies(userId);
         return createRefreshToken(userId, UUID.randomUUID().toString(), System.currentTimeMillis() / 1000);
@@ -131,7 +142,10 @@ public class RefreshTokenService {
     /**
      * 같은 묶음으로 발급하고, 묶음의 지금 세션으로 적는다.
      *
+     * <p>[JA] 同じ系列で発行し、系列の現在のセッションとして書く。
+     *
      * @param authTimeEpochSec 최초 로그인 시각 — 회전할 때는 받은 토큰의 값을 이어받는다(절대 수명, docs/68 §12)
+     *     [JA] 最初のログイン時刻 — ローテーション時は受け取ったトークンの値を引き継ぐ(絶対寿命、docs/68 §12)
      */
     public RefreshToken createRefreshToken(Long userId, String familyId, long authTimeEpochSec) {
         User user = userRepository.findById(userId)
@@ -149,10 +163,15 @@ public class RefreshTokenService {
     /**
      * 갱신 — 받은 토큰을 회전한다. 서명 · 만료 · 종류 · 비밀번호 변경 확인은 호출자(컨트롤러)가 먼저 했다.
      *
+     * <p>[JA] 更新 — 受け取ったトークンをローテーションする。署名 · 期限 · 種類 · パスワード変更の確認は呼び出し側(コントローラ)が先に済ませた。
+     *
      * @param presented 쿠키로 받은 리프레시 토큰(서명 확인됨)
+     *     [JA] クッキーで受け取ったリフレッシュトークン(署名確認済み)
      * @param userId    토큰 주인
+     *     [JA] トークンの持ち主
      */
     // 트랜잭션 밖에서 — 유예를 기다리는 동안 DB 커넥션을 붙잡지 않는다(회전 판단은 Redis 에서 끝난다).
+    // [JA] トランザクションの外で — 猶予を待つ間 DB コネクションを掴まない(ローテーションの判断は Redis で終わる)。
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public Rotation rotate(String presented, Long userId) {
         String familyId = jwtUtils.getFamilyIdFromJwtToken(presented);
@@ -176,23 +195,28 @@ public class RefreshTokenService {
         if (r == 1L) {
             RefreshToken next = createRefreshToken(userId, familyId, authTime);
             // 유예 키에는 새 토큰의 암호문을 둔다 — 해시는 되돌릴 수 없어 두 번째 탭에 줄 수 없고, 원문은 두지 않는다(§10).
+            // [JA] 猶予キーには新トークンの暗号文を置く — ハッシュは元に戻せず二つ目のタブに渡せないし、原文は置かない(§10)。
             refreshTokenRepository.completeGrace(sessionId, graceCipher.seal(sessionId, next.getToken()), graceMs);
             return outcome(Kind.ROTATED, next.getToken(), userId);
         }
         if (r == -1L) {
             // 같은 세션 키에 다른 값 — 정상 흐름에서는 생기지 않는다(세션 id 는 토큰마다 새로 만든다). 끊지 않고 거절만.
+            // [JA] 同じセッションキーに別の値 — 正常な流れでは起きない(セッション id はトークンごとに新しく作る)。切らずに拒否だけ。
             return outcome(Kind.REJECTED, null, userId);
         }
 
         // 키가 없다 — 방금 다른 요청이 회전했거나(유예), 이미 쓴 토큰이 다시 왔다(재사용).
+        // [JA] キーがない — 今別のリクエストがローテーションしたか(猶予)、使用済みトークンがまた来た(再利用)。
         String grace = awaitGrace(sessionId);
         if (grace != null && !RefreshTokenRepository.PENDING.equals(grace)) {
             String same = graceCipher.open(sessionId, grace);
             // 풀리지 않는다 = 위변조 · 다른 세션의 값 · 키가 바뀌었다. 재사용 증거는 아니다 — 끊지 않고 거절만.
+            // [JA] 復号できない = 改ざん · 別セッションの値 · キーが変わった。再利用の証拠ではない — 切らずに拒否だけ。
             return same == null ? outcome(Kind.REJECTED, null, userId) : outcome(Kind.GRACE, same, userId);
         }
         if (RefreshTokenRepository.PENDING.equals(grace)) {
             // 다른 요청이 회전 중인데 기다려도 끝나지 않았다 — 도둑이라고 단정할 근거가 없다. 끊지 않는다.
+            // [JA] 別のリクエストがローテーション中で待っても終わらなかった — 盗人と断定する根拠がない。切らない。
             return outcome(Kind.REJECTED, null, userId);
         }
         // "모든 기기에서 로그아웃" 과 부딪힌 경우 — 그쪽이 방금 이 묶음을 끊어 키가 사라진 것이다. 재사용이 아니다(알림 없음).
@@ -203,6 +227,8 @@ public class RefreshTokenService {
         refreshTokenRepository.revokeFamily(familyId);
         // 열려 있는 채팅 · 알림 연결도 끊는다 — 도둑이 이미 붙어 있으면 토큰 만료(최대 15분)까지 메시지를 받는다. 사용자 단위라 같은
         // 사람의 다른 기기도 닫히지만, 그 기기는 로그인이 살아 있어 갱신 뒤 조용히 다시 붙는다(docs/68 §9).
+        // [JA] 開いているチャット · 通知接続も切る — 盗人が既に繋いでいればトークン期限(最大 15 分)までメッセージを受け取る。ユーザー単位なので
+        //      同じ人の他の機器も閉じるが、その機器はログインが生きているので更新後に静かに繋ぎ直す(docs/68 §9)。
         refreshTokenRepository.cutoffLiveSessions(userId);
         // 계정 주인에게 알린다(앱 · 메일 · SMS, 수신 설정과 무관) — "로그인이 풀렸다" 를 보고 비밀번호를 바꾸게.
         // 주소는 DB 에서 — 토큰의 subject 를 믿지 않는다. 발행 실패는 응답을 바꾸지 않는다(프로듀서가 삼킨다).
@@ -236,11 +262,13 @@ public class RefreshTokenService {
             return java.util.OptionalLong.of(jwtUtils.getAuthTimeFromJwtToken(presented));
         } catch (RuntimeException e) {
             // 깨진 · 만료된 토큰 — 재인증 근거가 아니다.
+            // [JA] 壊れた · 期限切れのトークン — 再認証の根拠ではない。
             return java.util.OptionalLong.empty();
         }
     }
 
     /** 로그아웃 — 그 토큰의 묶음 전체를 끊는다(회전 이전 토큰이면 그 키만). */
+    // [JA] ログアウト — そのトークンの系列全体を切る(ローテーション以前のトークンならそのキーだけ)。
     public void revoke(String presented) {
         String familyId = jwtUtils.getFamilyIdFromJwtToken(presented);
         if (familyId != null && !familyId.isBlank()) {
@@ -270,6 +298,7 @@ public class RefreshTokenService {
         }
         refreshTokenRepository.deleteUserFamilies(userId);
         // 해제 시각을 적는다 — 게이트웨이(HTTP)와 채팅 · 알림 연결(docs/68 §9) 모두 그 전 토큰을 곧바로 거절한다.
+        // [JA] 解除時刻を書く — ゲートウェイ(HTTP)とチャット · 通知接続(docs/68 §9)の両方がそれ以前のトークンを即座に拒否する。
         refreshTokenRepository.cutoffLiveSessions(userId);
         meters.counter(LOGOUT_ALL_METRIC).increment();
         log.info("[auth] 모든 기기에서 로그아웃 — userId={} 끊은 로그인={}", userId, revoked);
@@ -277,6 +306,7 @@ public class RefreshTokenService {
     }
 
     /** 유예 키가 PENDING 이면 새 토큰이 적힐 때까지 잠깐 기다린다(회전한 요청은 보통 수십 ms 안에 끝난다). */
+    // [JA] 猶予キーが PENDING なら新トークンが書かれるまで少し待つ(ローテーションしたリクエストは普通数十 ms で終わる)。
     private String awaitGrace(String sessionId) {
         String grace = refreshTokenRepository.grace(sessionId);
         long deadline = System.currentTimeMillis() + pendingWaitMs;
@@ -296,6 +326,7 @@ public class RefreshTokenService {
         meters.counter(METRIC, "result", kind.name().toLowerCase(java.util.Locale.ROOT)).increment();
         if (kind == Kind.REUSED) {
             // 토큰 · 이메일은 남기지 않는다 — 사용자 id 만(docs/51).
+            // [JA] トークン · メールは残さない — ユーザー id だけ(docs/51)。
             log.warn("[auth] 리프레시 토큰 재사용 감지 — 묶음을 끊었다(탈취 의심). userId={}", userId);
         } else if (kind == Kind.REVOKED || kind == Kind.REJECTED) {
             log.info("[auth] 리프레시 토큰 거절 — {} userId={}", kind, userId);

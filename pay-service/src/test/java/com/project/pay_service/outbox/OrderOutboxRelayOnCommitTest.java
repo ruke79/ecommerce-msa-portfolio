@@ -25,6 +25,9 @@ import com.project.pay_service.outbox.repository.jpa.OrderOutboxRepository;
  * 결제 응답 행을 쓰면 커밋 직후 릴레이를 예약한다 (docs/56).
  *
  * <p>결제 사가의 두 번째 폴링 대기다 — 예전에는 결제 응답이 다음 폴링(최대 10초)까지 DB 에 있었다.
+ *
+ * <p>[JA] 決済応答の行を書くとコミット直後にリレーを予約する (docs/56)。
+ * 決済サガの二つ目のポーリング待ちである — 以前は決済応答が次のポーリング(最大 10 秒)まで DB にあった。
  */
 @DisplayName("pay-service — 결제 응답 아웃박스의 즉시 릴레이")
 class OrderOutboxRelayOnCommitTest {

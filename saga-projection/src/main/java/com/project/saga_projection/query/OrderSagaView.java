@@ -19,7 +19,12 @@ import com.project.common.avro.OrderTimelineEntry;
  * @param timeline    발생 순서. 비어 있을 수 있다
  * @param stale       이 인스턴스가 활성 태스크가 아니라 대기 복제본에서 답했다 — 변경 로그만큼 늦을 수 있다
  *
- * <p>[JA] 決済サーガの状態と注文進行タイムライン(docs/76)を合わせた応答。どちらか一方だけのこともある。
+ * <p>[JA] {@code GET /api/saga/{orderId}} の応答 — 決済サーガの状態と注文進行タイムライン(docs/76)を合わせたもの。Avro 生成クラスを
+ * そのまま JSON で出すと {@code schema} · {@code specificData} のような内部フィールドが漏れるので、普通のレコードに移す。
+ * どちらか一方だけのこともある — サーガ状態だけ(古い注文、状態イベント導入前)またはタイムラインだけ(決済要求がまだ出ていない
+ * 直後)。ない方は null · 空リストである。
+ * phase: 決済サーガの段階、サーガ状態がなければ null。orderStatus: 現在の注文状態(タイムラインの最後)、タイムラインがなければ null。
+ * timeline: 発生順、空のこともある。stale: このインスタンスがアクティブタスクではなく待機レプリカから答えた — 変更ログの分だけ遅れ得る。
  */
 public record OrderSagaView(
         long orderId,
@@ -39,6 +44,7 @@ public record OrderSagaView(
         boolean stale) {
 
     /** 상태 변경 하나. eventId 는 내지 않는다 — 화면에 쓸 일이 없고 아웃박스 행 id 를 밖에 알릴 이유도 없다. */
+    // [JA] 状態変更一つ。eventId は出さない — 画面で使うことがなく、アウトボックス行 id を外に知らせる理由もない。
     public record TimelineEntry(String previousStatus, String status, String source, Instant occurredAt) {
         static TimelineEntry of(OrderTimelineEntry e) {
             return new TimelineEntry(e.getPreviousStatus(), e.getStatus(), e.getSource(), e.getOccurredAt());

@@ -72,8 +72,12 @@ class DeliveryStatusLedgerIntegrationTest {
         // PayPal 검증은 자격증명이 없으면 **기동을 거부한다**(PaypalConfig — 의도된 fail closed).
         // 테스트에는 시크릿이 없으므로 명시적으로 끈다. 이 한 줄이 필요하다는 사실 자체가
         // 기본값이 안전한 쪽으로 잡혀 있다는 증거다(docs/35).
+        // [JA] PayPal 検証は資格情報がなければ**起動を拒否する**(PaypalConfig — 意図した fail closed)。
+        //      テストにはシークレットがないので明示的に切る。この 1 行が必要だという事実そのものが、
+        //      既定値が安全側に設定されている証拠である(docs/35)。
         registry.add("paypal.verification.mode", () -> "disabled");
         // 스케줄러가 배경에서 돌며 행을 가져가면 이 테스트가 불안정해진다.
+        // [JA] スケジューラーがバックグラウンドで回って行を取っていくと、このテストが不安定になる。
         registry.add("order-service.outbox-scheduler-fixed-rate", () -> 3_600_000);
         registry.add("order-service.outbox-scheduler-initial-delay", () -> 3_600_000);
         registry.add("order-service.outbox-relay-on-commit", () -> false);

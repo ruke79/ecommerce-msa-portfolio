@@ -18,6 +18,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>기동 시점에 무엇이 붙었는지 로그로 남긴다. 설정 때문에 게이트웨이가 하나 빠져도
  * 증상은 "그 결제수단만 안 된다"라서, 그 사실이 <b>기동 로그에 보여야</b> 한다.
+ *
+ * <p>[JA] プロバイダ → ゲートウェイ。
+ * Spring が見つけた {@link PaymentGateway} Bean を集め、{@code provider()} で索引する。
+ * そのため新しい決済手段を足す側は<b>ここを直さない</b> — Bean を一つ作ればよい。
+ * 起動時に何が登録されたかをログに残す。設定のせいでゲートウェイが一つ抜けても、
+ * 症状は「その決済手段だけ動かない」なので、その事実が<b>起動ログに見えなければならない</b>。
  */
 @Slf4j
 @Component
@@ -31,6 +37,7 @@ public class PaymentGateways {
             PaymentGateway previous = byProvider.put(gateway.provider(), gateway);
             if (previous != null) {
                 // 같은 제공자에 둘이 등록되면 어느 쪽이 이겼는지 알 수 없다. 설정 실수다.
+                // [JA] 同じプロバイダに二つ登録されると、どちらが勝ったか分からない。設定ミスである。
                 throw new IllegalStateException(
                         "결제 게이트웨이가 중복 등록됐습니다: " + gateway.provider()
                                 + " (" + previous.getClass().getSimpleName()
@@ -44,6 +51,9 @@ public class PaymentGateways {
      * @throws PaymentVerificationException 그 제공자를 다룰 수 없을 때. 조용히 null 을
      *         돌려주면 호출부에서 NPE 가 나고 원인이 한 겹 묻힌다 — 이 저장소가 이미
      *         겪은 실패다(docs/47).
+     *                                      [JA] そのプロバイダを扱えない時。黙って null を返すと
+     *                                           呼び出し側で NPE になり、原因が一枚埋もれる — このリポジトリが既に
+     *                                           経験した失敗である(docs/47)。
      */
     public PaymentGateway require(PaymentProvider provider) {
         PaymentGateway gateway = (provider == null) ? null : byProvider.get(provider);
@@ -55,7 +65,9 @@ public class PaymentGateways {
     }
 
     /** 호스팅 결제 페이지를 여는 제공자인지. 아니면 시작 단계가 없다(PayPal 처럼). */
+    // [JA] ホスト型決済ページを開くプロバイダか。そうでなければ開始段階がない(PayPal のように)。
     /** 환불할 수 있는 게이트웨이. 환불 API 가 없는 제공자면 이유를 달고 거부한다. */
+    // [JA] 返金できるゲートウェイ。返金 API のないプロバイダなら理由を付けて拒否する。
     public RefundingGateway requireRefunding(PaymentProvider provider) {
         PaymentGateway gateway = require(provider);
         if (!(gateway instanceof RefundingGateway refunding)) {

@@ -6,7 +6,10 @@
 #    k3s 의 서비스는 클러스터 안에만 있어(ClusterIP, B-85 로 노드 포트도 없다) 지난 7일 up{job="spring-actuator"} 이 9개 모두 0 —
 #    JVM · 커넥션 풀 · HTTP 지표가 하나도 없었고, 그것을 보는 경보(High5xxRate · HighP99Latency · JvmHeapNearLimit …)는 울릴 수 없었으며
 #    ServiceDown 만 계속 울렸다.
-# [JA] 本番のノードの Prometheus は compose 時代の設定で、7 日間サービスの指標が一つもなかった(ServiceDown だけが鳴り続けた)。
+# [JA] 🐛 2026-10-20 本番: ノードの Prometheus(observability/prometheus.yml)は compose 時代の設定で、host.docker.internal:80xx を収集していた。
+#      k3s のサービスはクラスター内にしかなく(ClusterIP、B-85 によりノードポートもない)、過去 7 日間 up{job="spring-actuator"} は 9 個すべて 0 —
+#      JVM・コネクションプール・HTTP の指標が一つもなく、それを見るアラート(High5xxRate・HighP99Latency・JvmHeapNearLimit …)は鳴りようがなく、
+#      ServiceDown だけが鳴り続けた。
 #
 # 왜 이 모양인가:
 #   · 긁기 · TLS 검증 · 권한은 실습의 에이전트와 같다 — ConfigurationGuardrailTest B-95.
@@ -52,11 +55,13 @@ metadata:
   namespace: ecommerce
 data:
   # 틀 — __HOST_IP__ 는 initContainer 가 채운다
+  # [JA] ひな形 — __HOST_IP__ は initContainer が埋める
   prometheus.yml.tmpl: |
     global:
       scrape_interval: 15s
     scrape_configs:
       # 이름은 노드 Prometheus 의 대시보드 · 경보 규칙과 같다(job="spring-actuator", service=<서비스>)
+      # [JA] 名前はノード Prometheus のダッシュボード・アラートルールと同じだ(job="spring-actuator", service=<サービス>)。
       - job_name: spring-actuator
         metrics_path: /actuator/prometheus
         scheme: https
@@ -70,6 +75,7 @@ data:
         relabel_configs:
           # /actuator/prometheus 가 있는 서비스만 — 빌드에 micrometer-registry-prometheus 가 있는 것(B-95 가 빌드 파일과 맞춘다).
           # eureka-server · config-server 는 레지스트리가 없어 그 경로가 없다(실습에서 up=0 이었다, 2026-10-18).
+          # [JA] /actuator/prometheus があるサービスだけ — ビルドに micrometer-registry-prometheus があるもの(B-95 がビルドファイルと突き合わせる)。eureka-server・config-server はレジストリがなくそのパスがない(実習で up=0 だった、2026-10-18)。
           - source_labels: [__meta_kubernetes_pod_label_app]
             regex: (gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|chat-service|notification-service|delivery-service|saga-projection)
             action: keep
@@ -80,6 +86,7 @@ data:
             regex: "true"
             action: drop
           # catalog 의 gRPC 포트(9095)는 HTTP 가 아니다
+          # [JA] catalog の gRPC ポート(9095)は HTTP ではない。
           - source_labels: [__meta_kubernetes_pod_container_port_number]
             regex: "9095"
             action: drop
@@ -144,6 +151,7 @@ spec:
       containers:
         - name: prometheus
           # 노드의 Prometheus 와 같은 판(docker-compose-observability.yml) — 레지스트리만 미러(90-dev-infra 와 같다)
+          # [JA] ノードの Prometheus と同じバージョン(docker-compose-observability.yml) — レジストリだけミラー(90-dev-infra と同じ)
           image: mirror.gcr.io/prom/prometheus:v2.53.0
           args:
             - --config.file=/etc/prometheus/config/prometheus.yml
@@ -176,6 +184,7 @@ spec:
         - name: config
           emptyDir: { sizeLimit: 1Mi }
         # 공개 인증서(ca.crt)만 — tls-keystore 의 키스토어 · 비밀번호는 싣지 않는다
+        # [JA] 公開証明書(ca.crt)だけ — tls-keystore のキーストア · パスワードは載せない
         - name: tls
           secret:
             secretName: tls-keystore

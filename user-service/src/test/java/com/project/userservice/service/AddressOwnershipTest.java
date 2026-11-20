@@ -34,6 +34,13 @@ import com.project.userservice.repository.jpa.UserRepository;
  * <p><b>② 기본 배송지를 전 테이블에서 찾았다.</b> {@code findByActive(true)} 에는
  * {@code user_id} 조건이 없어, 전체에 active 가 하나뿐일 때 그것이 남의 것이면
  * 남의 기본 배송지를 꺼 버렸다.
+ *
+ * <p>[JA] 配送先は<b>本人のものにだけ</b>届かなければならない。
+ * 🔴 回帰対象は二つ。
+ * <b>① 削除に所有権検査がなかった(IDOR)。</b>{@code findById(addressId)} でテーブル全体から探した後、所有者を照合せずに消していた。
+ * コレクションから外す {@code remove} は他人のものなら黙って通り過ぎ、次の行の {@code delete} がそのまま実行された。
+ * <b>② デフォルト配送先をテーブル全体から探していた。</b>{@code findByActive(true)} には {@code user_id} 条件がなく、
+ * 全体で active が一つだけのとき、それが他人のものなら他人のデフォルト配送先を解除してしまった。
  */
 class AddressOwnershipTest {
 
@@ -70,12 +77,14 @@ class AddressOwnershipTest {
     }
 
     // ── ① 삭제 ──────────────────────────────────────────────────────────────
+    // [JA] ── ① 削除 ──
 
     @Test
     @DisplayName("🔴 남의 배송지는 지울 수 없다 — 예전에는 id 만 알면 지워졌다")
     void cannotDeleteSomeoneElsesAddress() {
         when(userRepository.findByUsername("me@example.com")).thenReturn(Optional.of(me()));
         // 내 것 중에서 찾으므로 비어 있다. (예전 코드는 findById 로 전체에서 찾아 왔다.)
+        // [JA] 自分のものの中から探すので空である。(以前のコードは findById で全体から探してきていた。)
         when(shippingAddressRepository.findByShippingAddressIdAndUser_UserId(
                 VICTIM_ADDRESS_ID, ME)).thenReturn(Optional.empty());
 
@@ -84,6 +93,7 @@ class AddressOwnershipTest {
                 .isInstanceOf(AccessDeniedException.class);
 
         // 무엇보다 **지우지 않았다**는 것이 핵심이다.
+        // [JA] 何より**消さなかった**ことが核心である。
         verify(shippingAddressRepository, never()).delete(any());
     }
 
@@ -98,6 +108,7 @@ class AddressOwnershipTest {
                 .isInstanceOf(AccessDeniedException.class);
 
         // 전체 테이블을 뒤지는 findById 로 되돌아가지 못하게 고정한다.
+        // [JA] テーブル全体を探す findById に戻れないよう固定する。
         verify(shippingAddressRepository).findByShippingAddressIdAndUser_UserId(eq(5L), eq(ME));
         verify(shippingAddressRepository, never()).findById(anyLong());
     }
@@ -124,19 +135,21 @@ class AddressOwnershipTest {
         when(userRepository.findByUsername("me@example.com")).thenReturn(Optional.of(me()));
 
         // 예전에는 Long.parseLong 이 NumberFormatException 을 그대로 올려보냈다.
+        // [JA] 以前は Long.parseLong が NumberFormatException をそのまま上げていた。
         service.deleteShippingAddress("me@example.com", "abc");
 
         verify(shippingAddressRepository, never()).delete(any());
     }
 
     // ── ③ 수정 ──────────────────────────────────────────────────────────────
+    // [JA] ── ③ 更新 ──
 
     private static com.project.userservice.dto.AddressDto changes() {
         var dto = new com.project.userservice.dto.AddressDto();
         dto.setFirstname("길동"); dto.setLastname("홍"); dto.setPhoneNumber("010-0000-0000");
         dto.setAddress1("전남 목포시 삼학동 702호"); dto.setCity("목포시"); dto.setState("전라남도");
         dto.setZipCode("58700"); dto.setCountry("Korea, Republic of");
-        dto.setActive(true);   // 폼이 이 값을 실어 보내도 무시돼야 한다
+        dto.setActive(true);   // 폼이 이 값을 실어 보내도 무시돼야 한다 ／ [JA] フォームがこの値を載せて送っても無視されなければならない
         return dto;
     }
 
@@ -156,6 +169,7 @@ class AddressOwnershipTest {
     }
 
     /** 나라를 잘못 골라 KP 로 저장된 주소를 고치는 경우 — 실제 사례다(docs/25 §11.9). */
+    // [JA] 国を誤って選び KP で保存された住所を直す場合 — 実際の事例である(docs/25 §11.9)。
     @Test
     @DisplayName("내 배송지는 값이 바뀌고, 기본 배송지 여부는 그대로다")
     void updatesOwnAddressButNotTheDefaultFlag() {
@@ -173,6 +187,7 @@ class AddressOwnershipTest {
         assertThat(mine.getAddress1()).isEqualTo("전남 목포시 삼학동 702호");
         assertThat(mine.getFirstname()).isEqualTo("길동");
         // 폼이 active=true 를 보내도 기본 배송지는 selectShipAddress 만 바꾼다.
+        // [JA] フォームが active=true を送っても、デフォルト配送先を変えるのは selectShipAddress だけである。
         assertThat(mine.isActive()).isFalse();
         assertThat(result.getId()).isEqualTo("5");
         assertThat(result.getCountry()).isEqualTo("Korea, Republic of");
@@ -189,6 +204,7 @@ class AddressOwnershipTest {
     }
 
     // ── ② 기본 배송지 ───────────────────────────────────────────────────────
+    // [JA] ── ② デフォルト配送先 ──
 
     @Test
     @DisplayName("🔴 기본 배송지를 끌 때 내 것만 본다 — 예전에는 전 테이블에서 찾았다")
@@ -211,6 +227,7 @@ class AddressOwnershipTest {
         assertThat(mine.isActive()).isTrue();
 
         // user_id 없는 전역 조회로 되돌아가지 못하게 고정한다.
+        // [JA] user_id のないグローバル照会に戻れないよう固定する。
         verify(shippingAddressRepository).findByUser_UserIdAndActiveTrue(ME);
     }
 
@@ -222,6 +239,7 @@ class AddressOwnershipTest {
                 VICTIM_ADDRESS_ID, ME)).thenReturn(Optional.empty());
 
         // 🐛 예전: null → 200 빈 본문이었다(화면은 성공으로 읽었다). 이제 404 — 남의 것인지 없는 것인지는 말하지 않는다.
+        // [JA] 🐛 以前: null → 200 の空本文だった(画面は成功と読んだ)。今は 404 — 他人のものか存在しないのかは言わない。
         org.assertj.core.api.Assertions.assertThatThrownBy(
                 () -> service.selectShipAddress("me@example.com", VICTIM_ADDRESS_ID.toString()))
                 .isInstanceOf(java.util.NoSuchElementException.class).hasMessage("배송지를 찾을 수 없습니다.");
@@ -246,6 +264,8 @@ class AddressOwnershipTest {
 
         // 자기 자신을 끄고 켜면 결과는 같지만, 그 사이에 잠깐 기본 배송지가 없는 상태가
         // 생긴다. filter 로 걸러 아예 건드리지 않는다.
+        // [JA] 自分自身をオフにしてオンにすると結果は同じだが、その間に一瞬デフォルト配送先がない状態が
+        //      生じる。filter で除外してまったく触れない。
         assertThat(mine.isActive()).isTrue();
     }
 
@@ -263,6 +283,7 @@ class AddressOwnershipTest {
     }
 
     /** 🐛 예전: try/catch(RuntimeException) 로 감싸 DB 장애까지 빈 목록으로 삼켰다 — 결제 화면이 "배송지가 없습니다" 를 보였다. */
+    // [JA] 🐛 以前: try/catch(RuntimeException) で包み、DB 障害まで空リストとして飲み込んでいた — 決済画面が「配送先がありません」を表示した。
     @Test
     @DisplayName("🔴 배송지 조회의 DB 오류는 빈 목록이 아니라 오류로 — 없는 사용자만 빈 목록")
     void addressListDoesNotSwallowDbErrors() {

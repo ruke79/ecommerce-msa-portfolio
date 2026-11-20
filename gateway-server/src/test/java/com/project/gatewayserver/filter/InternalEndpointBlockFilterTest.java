@@ -18,6 +18,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * 🔒 서비스의 actuator·API 명세를 게이트웨이 밖으로 내보내지 않는다 (docs/57 §7).
+ *
+ * <p>[JA] 🔒 サービスの actuator · API 仕様をゲートウェイの外に出さない(docs/57 §7)。
  */
 @DisplayName("InternalEndpointBlockFilter — 관리·문서 엔드포인트 차단")
 class InternalEndpointBlockFilterTest {
@@ -48,7 +50,7 @@ class InternalEndpointBlockFilterTest {
         assertThat(InternalEndpointBlockFilter.isBlocked("/catalog-service/api/product/1")).isFalse();
         assertThat(InternalEndpointBlockFilter.isBlocked("/catalog-service/api/actuator-like-name")).isFalse();
         assertThat(InternalEndpointBlockFilter.isBlocked("/user-service/api/auth/public/signin")).isFalse();
-        assertThat(InternalEndpointBlockFilter.isBlocked("/actuator/prometheus")).isFalse();   // 게이트웨이 자신 — Prometheus 가 긁는다
+        assertThat(InternalEndpointBlockFilter.isBlocked("/actuator/prometheus")).isFalse();   // 게이트웨이 자신 — Prometheus 가 긁는다 ／ [JA] ゲートウェイ自身 — Prometheus がスクレイプする
         assertThat(InternalEndpointBlockFilter.isBlocked("/catalog-service")).isFalse();
     }
 

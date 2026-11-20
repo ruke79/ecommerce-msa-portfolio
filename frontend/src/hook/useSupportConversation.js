@@ -4,12 +4,15 @@ import { getSupportMessages } from "util/api";
 import { useStomp } from "util/stompProvider";
 
 /** 서버가 한 번에 주는 기록의 수. 하나 더(21개) 오면 더 있다는 뜻이다(ChatService.getRoomMessagesByCurser). */
+// [JA] サーバーが一度に返す記録の数。一つ多く(21 件)来たらまだあるという意味だ(ChatService.getRoomMessagesByCurser)。
 export const SUPPORT_PAGE_SIZE = 20;
 
 /** 안내 메시지(연결·종료) — 서버가 팀 명의로, 발신자 없이 보낸다(SupportService.announce). */
+// [JA] 案内メッセージ(接続・終了) — サーバーがチーム名義で、送信者なしで送る(SupportService.announce)。
 export const isNotice = (m) => m?.type === "TEXT_ENTER" || m?.type === "TEXT_LEAVE" || m?.senderId == null;
 
 /** 서버는 최신부터(내림차순) 준다. 화면은 오래된 것부터 그린다. */
+// [JA] サーバーは最新から(降順)返す。画面は古いものから描く。
 function splitPage(page) {
     const list = Array.isArray(page) ? page : [];
     return { items: list.slice(0, SUPPORT_PAGE_SIZE).reverse(), more: list.length > SUPPORT_PAGE_SIZE };
@@ -31,6 +34,13 @@ function merge(prev, incoming) {
  * @param thread   상담 스레드(threadId·roomId). 없으면 아무것도 하지 않는다
  * @param onNotice  연결·종료 안내가 왔을 때 — 화면은 스레드 상태를 다시 읽는다
  * @param onMessage 실시간으로 메시지가 올 때마다(안내 포함) — 화면이 "새 답변" 표시에 쓴다
+ *
+ * <p>[JA] 相談スレッドひとつの会話(docs/58)。
+ * 記録は REST({@code /threads/{id}/messages} — 本人・相談員のみ)、リアルタイムは STOMP で受ける。購読アドレスは
+ * {@code /sub/chat/room/support-<id>} でサーバーが <b>アドレスで</b> 権限を見る。送信は友達チャットと同じ
+ * {@code /pub/chat/message} だ — 送信者はサーバーがセッションから決めるので載せない。
+ * 引数: thread は相談スレッド(threadId・roomId)、無ければ何もしない。onNotice は接続・終了案内が来たとき — 画面はスレッド状態を読み直す。
+ * onMessage はリアルタイムでメッセージが来るたび(案内含む) — 画面が「新しい返答」表示に使う。
  */
 export function useSupportConversation(thread, { onNotice, onMessage } = {}) {
     const { isConnected, subscribe, sendMessage } = useStomp();
@@ -58,6 +68,7 @@ export function useSupportConversation(thread, { onNotice, onMessage } = {}) {
                 if (cancelled) return;
                 const { items, more } = splitPage(page);
                 // 기록을 읽는 사이 실시간으로 먼저 온 것이 있을 수 있다 — 합친다.
+                // [JA] 記録を読む間にリアルタイムで先に来たものがあるかもしれない — 合わせる。
                 setMessages((prev) => merge(items, prev));
                 setHasMore(more);
             })

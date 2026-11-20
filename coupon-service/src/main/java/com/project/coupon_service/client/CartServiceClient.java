@@ -24,6 +24,10 @@ import com.project.coupon_service.config.FeignConfig;
  *
  * <p>넣는 값은 <b>게이트웨이가 검증한 신원에서 구한 것</b>이지 요청 본문에서 온 값이 아니다. 본문의 값을 그대로
  * 흘려보내면 남의 장바구니를 읽게 된다.
+ *
+ * <p>[JA] カートを<b>サーバー側で</b>読むためのクライアント。制約付きクーポンは「カートにどの商品が入っているか」を知らないと判定できない。その一覧をクライアントに送らせてはならない — 対象商品が入っていると<b>主張</b>されればそのまま信じてしまう。ゲートウェイが検証した身元でカートを直接読む。
+ * <p>{@code User-Id} を明示的に載せる(以前は {@code User-Email} — cart の身元が id に変わった, docs/48 §6-⑥)。{@link FeignConfig} のインターセプターは {@code Authorization} だけを渡し身元ヘッダーは渡さない。Feign 呼び出しはゲートウェイを通らずサービスへ直接行く({@code FEIGN_CART_URL} はクラスター内部アドレス)ので、ゲートウェイが入れていた身元ヘッダーがこの経路にはない — 呼ぶ側が入れる必要がある。
+ * <p>入れる値は<b>ゲートウェイが検証した身元から求めたもの</b>であり、リクエスト本文の値ではない。本文の値をそのまま流すと他人のカートを読むことになる。
  */
 @FeignClient(name = "cart-service", url = "${feign.cart-url}", configuration = FeignConfig.class)
 public interface CartServiceClient {

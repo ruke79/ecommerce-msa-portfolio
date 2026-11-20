@@ -13,6 +13,9 @@ import ch.qos.logback.core.pattern.CompositeConverter;
  *
  * <p>메시지뿐 아니라 <b>예외</b>도 감싼다. 예외 메시지에 이메일·토큰이 섞이는 일이 흔하다
  * (예: "User not found: a@b.com").
+ *
+ * <p>[JA] テキストパターン用のマスキング — {@code %mask(...)} で囲んだ区間を {@link SensitiveDataMasker} で濾す。
+ * メッセージだけでなく<b>例外</b>も囲む。例外メッセージにメールアドレス · トークンが混ざるのはよくあることである(例: "User not found: a@b.com")。
  */
 public class MaskingPatternConverter extends CompositeConverter<ILoggingEvent> {
 

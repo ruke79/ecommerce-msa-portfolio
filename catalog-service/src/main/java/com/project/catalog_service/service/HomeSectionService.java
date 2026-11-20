@@ -30,6 +30,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>여기서는 <b>섹션이 정의를 갖고</b>, 섹션마다 필요한 만큼만 조회해 그룹핑한 채로
  * 내려보낸다. 조회 자체는 기존 {@code ProductService} 의 캐시된 메서드를 그대로 쓴다.
+ *
+ * <p>[JA] ホーム画面の構成。
+ * 以前はここがキャッシュウォーミングの関数だった。/api/product/frontpage が warmUpProductCaches(4) を呼び、その副産物をホームのデータとして使っていた。
+ * 名前のとおりその関数はキャッシュを温める用途で、ホームが必要とするもの(何をどの順で見せるか)は何も知らない。そのためカテゴリ × サブカテゴリを全部回り、
+ * 結果を一つの配列に平坦化して返していた — フロントが分け直す必要があり、レスポンスはカテゴリ数に比例して大きくなった。
+ * ここではセクションが定義を持ち、セクションごとに必要な分だけ照会してグルーピングしたまま返す。照会自体は既存の ProductService のキャッシュされたメソッドをそのまま使う。
  */
 @Slf4j
 @Service
@@ -38,6 +44,7 @@ import lombok.extern.slf4j.Slf4j;
 public class HomeSectionService {
 
     /** {@code getProductsByCategory} 는 커서가 음수면 "처음부터"를 뜻한다(null 이면 NPE). */
+    // [JA] getProductsByCategory はカーソルが負なら「最初から」を意味する(null だと NPE)。
     private static final long FROM_START = -1L;
 
     private final HomeSectionRepository sectionRepository;
@@ -45,6 +52,7 @@ public class HomeSectionService {
     private final ProductService productService;
 
     // ── 공개 ────────────────────────────────────────────────────────────
+    // [JA] ── 公開 ──
 
     /**
      * 첫 화면 전체.
@@ -53,6 +61,11 @@ public class HomeSectionService {
      * 카테고리 하나가 지워졌다고 빈 페이지가 되면 안 된다. 실패한 섹션은 빠지고 로그만 남는다.
      *
      * <p>상품이 하나도 없는 섹션도 뺀다 — 제목만 있고 아래가 빈 줄은 고장처럼 보인다.
+     *
+     * <p>[JA] 最初の画面全体。
+     * セクション一つが失敗してもホーム全体を落とさない。最初の画面はサイトの顔なので、カテゴリが一つ消されたからといって空のページになってはいけない。
+     * 失敗したセクションは抜け、ログだけが残る。
+     * 商品が一つもないセクションも外す — タイトルだけあって下が空の行は故障のように見える。
      */
     public HomeView home() {
         LocalDateTime now = LocalDateTime.now();
@@ -80,6 +93,7 @@ public class HomeSectionService {
     }
 
     /** "더 보기"가 갈 곳 — 탐색 화면이 쓰는 id. 문자열(TSID)이고, 모르면 null. */
+    // [JA] 「もっと見る」の行き先 — 探索画面が使う id。文字列(TSID)で、分からなければ null。
     private record Link(String categoryId, String subcategoryId) {
         static final Link NONE = new Link(null, null);
     }
@@ -90,6 +104,10 @@ public class HomeSectionService {
      * <p>링크를 못 만드는 것은 상품을 못 그리는 것보다 가벼운 실패다 — 여기서 무엇이
      * 잘못돼도 섹션은 그대로 내보내고 링크만 비운다(프론트는 그때 전체 목록으로 보낸다).
      * 하위 카테고리를 찾지 못하면 카테고리까지만 건다.
+     *
+     * <p>[JA] セクションのカテゴリ・サブカテゴリの名前を探索画面の id に変える。
+     * リンクを作れないのは商品を描けないより軽い失敗だ — ここで何がおかしくてもセクションはそのまま出し、リンクだけ空にする(フロントはそのとき全件一覧へ送る)。
+     * サブカテゴリが見つからなければカテゴリまでだけリンクする。
      */
     private Link linkOf(HomeSection section) {
         try {
@@ -117,6 +135,7 @@ public class HomeSectionService {
         if (section.isSubcategorySection()) {
             // 페이지 0 부터. 캐시 키에 pageSize 가 들어가므로 limit 이 다른 섹션끼리
             // 서로의 결과를 덮어쓰지 않는다(ProductService 의 해당 주석 참조).
+            // [JA] ページ 0 から。キャッシュキーに pageSize が入るので、limit の異なるセクション同士が互いの結果を上書きしない(ProductService の該当コメント参照)。
             return productService.getProductsByCategoryAndSubcategory(
                     section.getCategoryName(), section.getSubcategoryName(), 0, section.getItemLimit());
         }
@@ -125,6 +144,7 @@ public class HomeSectionService {
     }
 
     // ── 관리자 ──────────────────────────────────────────────────────────
+    // [JA] ── 管理者 ──
 
     public List<HomeSectionAdminView> all() {
         LocalDateTime now = LocalDateTime.now();
@@ -146,6 +166,7 @@ public class HomeSectionService {
                 .itemLimit(request.itemLimit() == null ? 10 : request.itemLimit())
                 .sortOrder(request.sortOrder() == null ? 0 : request.sortOrder())
                 // 기본은 비공개다. 만들자마자 첫 화면에 뜨면 작업 중인 섹션이 노출된다.
+                // [JA] デフォルトは非公開。作った途端に最初の画面に出ると、作業中のセクションが露出する。
                 .published(Boolean.TRUE.equals(request.published()))
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
@@ -178,6 +199,7 @@ public class HomeSectionService {
             section.setPublished(request.published());
         }
         // 기간은 null 이 "제한 없음"을 뜻하므로 그대로 덮어쓴다.
+        // [JA] 期間は null が「制限なし」を意味するので、そのまま上書きする。
         section.setStartsAt(request.startsAt());
         section.setEndsAt(request.endsAt());
 
@@ -200,6 +222,10 @@ public class HomeSectionService {
      * <p>오타를 여기서 잡지 않으면 증상이 "홈에 그 섹션만 안 나온다"로 나타난다 —
      * 어디가 틀렸는지 화면에서는 알 수 없다. 반대로 <b>저장 뒤에</b> 카테고리가 사라지는
      * 경우는 막지 않는다(그때는 섹션이 조용히 빠지고 어드민 목록이 알려 준다).
+     *
+     * <p>[JA] 保存時点でカテゴリの存在を確認する。
+     * タイプミスをここで捕まえないと、症状が「ホームにそのセクションだけ出ない」として現れる — どこが間違っているのか画面からは分からない。
+     * 逆に保存後にカテゴリが消える場合は防がない(そのときはセクションが黙って抜け、管理画面の一覧が知らせる)。
      */
     private void requireCategory(String categoryName) {
         if (!categoryExists(categoryName)) {

@@ -20,11 +20,13 @@ import lombok.extern.slf4j.Slf4j;
 public interface ImportLock {
 
     /** 잠금을 잡았으면 true. */
+    // [JA] ロックを取れたら true。
     boolean tryAcquire();
 
     void release();
 
     /** 한 파드 안에서만(테스트 · 로컬). */
+    // [JA] 一つのポッド内だけ(テスト・ローカル)。
     ImportLock LOCAL = new ImportLock() {
         @Override
         public boolean tryAcquire() {
@@ -37,6 +39,7 @@ public interface ImportLock {
     };
 
     /** 임포트 한 번의 상한 — 이보다 오래 걸리는 임포트는 없다(실측 수 분). 죽은 파드의 잠금도 이 뒤에 풀린다. */
+    // [JA] インポート一回の上限 — これより長くかかるインポートはない(実測数分)。死んだポッドのロックもこの後に解ける。
     Duration LEASE = Duration.ofHours(2);
 
     @Slf4j

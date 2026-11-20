@@ -32,6 +32,12 @@ import com.project.order_service.ports.output.message.publisher.PaymentRequestKa
  * <p>행을 쓰는 순간(결제 확인 요청)의 추적 문맥을 행에 남기고, 스케줄러가 그 문맥 아래에서 보낸다.
  * 실제 추적기(OpenTelemetry)로 헤더가 이어지는 것은 common 의 {@code OutboxTraceContextTest} 가 보고, 여기서는
  * <b>이 서비스가 그 두 끝을 제자리에서 부르는가</b>를 본다.
+ *
+ * <p>[JA] 決済アウトボックスをまたぐトレース(docs/51 §4e)。
+ *
+ * <p>行を書く瞬間(決済確認リクエスト)のトレースコンテキストを行に残し、スケジューラーがそのコンテキストの下で送る。
+ * 実際のトレーサー(OpenTelemetry)でヘッダーがつながることは common の {@code
+ * OutboxTraceContextTest} が見て、ここでは<b>このサービスがその両端を所定の場所で呼ぶか</b>を見る。
  */
 @DisplayName("order-service — 결제 아웃박스의 추적 문맥")
 class PaymentOutboxTraceTest {
@@ -66,12 +72,13 @@ class PaymentOutboxTraceTest {
     }
 
     /** 같은 save() 가 릴레이의 상태 갱신에도 쓰인다. 그때 남기면 스케줄러의 문맥으로 덮어쓴다. */
+    // [JA] 同じ save() がリレーの状態更新にも使われる。そのとき残すとスケジューラーのコンテキストで上書きしてしまう。
     @Test
     @DisplayName("🔴 릴레이가 상태를 바꿀 때는 덮어쓰지 않는다 — 불러온 행은 새 행이 아니다")
     void statusUpdateDoesNotOverwrite() {
         PaymentOutboxEvent loaded = newRow();
         loaded.setTraceContext(REQUEST_CONTEXT);
-        ReflectionTestUtils.setField(loaded, "persisted", true);   // @PostLoad 가 하는 일
+        ReflectionTestUtils.setField(loaded, "persisted", true);   // @PostLoad 가 하는 일 ／ [JA] @PostLoad がすること
         when(traceContext.capture()).thenReturn("traceparent=00-ffffffffffffffffffffffffffffffff-1111111111111111-01\n");
 
         loaded.setOutboxStatus(OutboxStatus.COMPLETED);
@@ -91,6 +98,7 @@ class PaymentOutboxTraceTest {
         PaymentRequestKafkaPublisher publisher = mock(PaymentRequestKafkaPublisher.class);
         when(publisher.publish(eq(row), any())).thenReturn(true);
         // resume 은 받은 일을 그대로 실행한다 — 문맥을 되살리는 부분은 common 에서 검증했다.
+        // [JA] resume は受け取った処理をそのまま実行する — コンテキストを復元する部分は common で検証した。
         when(traceContext.resume(anyString(), anyString(), any(Supplier.class)))
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
 

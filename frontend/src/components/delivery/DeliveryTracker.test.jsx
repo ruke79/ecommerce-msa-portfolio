@@ -6,6 +6,7 @@ import { fetchDeliveryByOrder, cancelDelivery } from "api/deliveryApi";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("api/deliveryApi");
@@ -39,6 +40,7 @@ describe("DeliveryTracker", () => {
 
   it("shows a preparing message when no delivery exists yet", async () => {
     // 결제 직후에는 아직 배송 레코드가 없다. 이건 오류가 아니라 정상 상태다.
+    // [JA] 決済直後にはまだ配送レコードがない。これはエラーではなく正常な状態である。
     fetchDeliveryByOrder.mockRejectedValue(new Error("404"));
 
     render(<DeliveryTracker orderId={1} />);
@@ -49,6 +51,9 @@ describe("DeliveryTracker", () => {
   /**
    * 🐛 송장을 막 등록하면 첫 조회 전이라 예상 도착일이 없다. 그때 헤드라인이 무조건
    * "배송 준비 중" 이라, 진행 바는 "발송" 을 가리키는데 글은 준비 중이라고 했다.
+   *
+   * <p>[JA] 🐛 送り状を登録したばかりだと最初の照会前で到着予定日がない。そのとき見出しが無条件に
+   * 「配送準備中」で、進行バーは「発送」を指すのに文は準備中と言っていた。
    */
   it("🔴 예상 도착일이 없으면 단계로 말한다 — 발송 뒤에 '배송 준비 중' 이라고 하지 않는다", async () => {
     fetchDeliveryByOrder.mockResolvedValue({
@@ -74,6 +79,9 @@ describe("DeliveryTracker", () => {
   /**
    * 🐛 처음 한 번만 읽었다. 시뮬레이터가 단계를 밟아도, 배달이 끝나도 화면은 그대로였고
    * 새로고침해야 보였다. 끝나지 않은 배송은 주기적으로 읽고, 끝나면 멈춘다.
+   *
+   * <p>[JA] 🐛 最初に一度だけ読んでいた。シミュレーターが段階を進めても、配達が終わっても画面はそのままで
+   * 再読み込みしないと見えなかった。終わっていない配送は周期的に読み、終わったら止める。
    */
   it("🔴 진행 중인 배송은 주기적으로 다시 읽고, 배달이 끝나면 멈춘다", async () => {
     jest.useFakeTimers();
@@ -91,6 +99,7 @@ describe("DeliveryTracker", () => {
       expect(await screen.findByText(/배달이 완료되었습니다/)).toBeInTheDocument();
 
       // 끝난 배송은 더 읽지 않는다 — 택배사 API 쿼터와 같은 이유로 화면도 조용해야 한다.
+      // [JA] 終わった配送はもう読まない — 宅配業者 API のクォータと同じ理由で画面も静かであるべきだ。
       await act(async () => { jest.advanceTimersByTime(POLL_MS * 3); });
       expect(fetchDeliveryByOrder).toHaveBeenCalledTimes(2);
     } finally {
@@ -119,6 +128,9 @@ describe("DeliveryTracker", () => {
   /**
    * 🐛 송장이 등록되면 여기는 "발송되었습니다" 로 바뀌는데 주문 진행 띠·환불 안내는 새로고침해야
    * 바뀌었다. 주문은 react-query 가 들고 있고 아무도 다시 읽으라고 하지 않았다.
+   *
+   * <p>[JA] 🐛 送り状が登録されるとここは「発送されました」に変わるのに、注文の進行バー · 返金案内は再読み込みしないと
+   * 変わらなかった。注文は react-query が持っていて誰も読み直せと言わなかった。
    */
   it("🔴 주기 읽기에서 배송 상태가 바뀌면 onStatusChange 를 새 배송과 함께 부른다 — 첫 읽기·같은 상태는 아니다", async () => {
     jest.useFakeTimers();
@@ -132,10 +144,10 @@ describe("DeliveryTracker", () => {
 
       render(<DeliveryTracker orderId={1} onStatusChange={onStatusChange} />);
       await screen.findByLabelText("배송 진행 상황");
-      expect(onStatusChange).not.toHaveBeenCalled();          // 첫 읽기는 변화가 아니다
+      expect(onStatusChange).not.toHaveBeenCalled();          // 첫 읽기는 변화가 아니다 ／ [JA] 最初の読み込みは変化ではない
 
       await act(async () => { jest.advanceTimersByTime(POLL_MS); });
-      expect(onStatusChange).not.toHaveBeenCalled();          // 같은 상태
+      expect(onStatusChange).not.toHaveBeenCalled();          // 같은 상태 ／ [JA] 同じ状態
 
       await act(async () => { jest.advanceTimersByTime(POLL_MS); });
       expect(onStatusChange).toHaveBeenCalledTimes(1);
@@ -190,6 +202,7 @@ describe("DeliveryTracker", () => {
 
     const bar = await screen.findByLabelText("배송 진행 상황");
     // 국내 배송은 4단계. 내부 상태(IN_TRANSIT 등)를 그대로 노출하지 않는다.
+    // [JA] 国内配送は 4 段階。内部状態(IN_TRANSIT など)をそのまま出さない。
     expect(bar.querySelectorAll("li")).toHaveLength(4);
     expect(bar.textContent).not.toContain("IN_TRANSIT");
   });
@@ -224,6 +237,7 @@ describe("DeliveryTracker", () => {
 
   it("hides the progress bar when the delivery is cancelled", async () => {
     // 진행 바만 그리면 문제 상태가 묻힌다.
+    // [JA] 進行バーだけ描くと問題状態が埋もれる。
     fetchDeliveryByOrder.mockResolvedValue({ ...domestic, stage: "CANCELLED" });
 
     render(<DeliveryTracker orderId={1} />);
@@ -260,6 +274,10 @@ describe("DeliveryTracker", () => {
    * 🐛 배송을 취소해도 주문은 DISPATCHED 그대로였고 "배송이 시작된 주문은 환불할 수 없습니다"
    * 가 그대로 떠 있었다. 서버가 주문을 PAID 로 되돌리는 것은 Kafka 왕복 뒤라, 주문 화면이
    * 다시 읽어야 안다 — 그 신호가 onCancelled 다.
+   *
+   * <p>[JA] 🐛 配送をキャンセルしても注文は DISPATCHED のままで「配送が始まった注文は返金できません」が
+   * そのまま出ていた。サーバーが注文を PAID に戻すのは Kafka の往復の後なので、注文画面が
+   * 読み直して初めて分かる — その合図が onCancelled である。
    */
   it("🔴 취소가 받아들여지면 onCancelled 를 한 번 부른다 — 주문 화면이 다시 읽도록", async () => {
     fetchDeliveryByOrder
@@ -309,6 +327,7 @@ describe("DeliveryTracker", () => {
     await userEvent.click(await screen.findByRole("button", { name: "배송 취소" }));
 
     // 최초 1회 + 취소 후 1회
+    // [JA] 最初の 1 回 + キャンセル後の 1 回
     await waitFor(() => expect(fetchDeliveryByOrder).toHaveBeenCalledTimes(2));
   });
 
@@ -334,8 +353,9 @@ describe("DeliveryTracker", () => {
   });
 
   /** 요일은 Intl 이 언어에 맞춰 준다 — 예전에는 한국어 요일 배열이 박혀 있었다. */
+  // [JA] 曜日は Intl が言語に合わせてくれる — 以前は韓国語の曜日配列が埋め込まれていた。
   it("예상 도착일을 한국어로 말한다", async () => {
-    fetchDeliveryByOrder.mockResolvedValue(domestic);   // 2026-08-01 은 토요일
+    fetchDeliveryByOrder.mockResolvedValue(domestic);   // 2026-08-01 은 토요일 ／ [JA] 2026-08-01 は土曜日
 
     render(<DeliveryTracker orderId={1} />);
 
@@ -344,6 +364,7 @@ describe("DeliveryTracker", () => {
 });
 
 /** 🔴 일본어 화면에 한국어가 남으면 안 된다 — 한국어 테스트는 하드코딩이어도 통과한다. */
+// [JA] 🔴 日本語画面に韓国語が残ってはならない — 韓国語のテストはハードコードでも通る。
 describe("DeliveryTracker (일본어)", () => {
   afterEach(() => jest.clearAllMocks());
 

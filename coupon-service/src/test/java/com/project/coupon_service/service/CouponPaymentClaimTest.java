@@ -149,6 +149,7 @@ class CouponPaymentClaimTest {
     }
 
     /** 🔴 결제하는 지금 사용 기간 밖이면 잡지 않는다 — 예전에는 주문 생성 때만 봐서 만료된 쿠폰 할인으로 결제됐다. */
+    // [JA] 🔴 決済する今が使用期間外なら押さえない — 以前は注文作成時だけ見ていたので期限切れクーポンの割引で決済された。
     @Test
     @DisplayName("🔴 결제 시작 때 만료됐으면 EXPIRED — 잡지 않는다(아직 시작 전도)")
     void expiredAtPaymentIsRefused() {

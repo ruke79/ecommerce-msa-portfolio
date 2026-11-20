@@ -32,12 +32,22 @@ import lombok.Setter;
  * 장바구니가 정한다. 다만 이 필드는 금액이 아니고 다른 클라이언트가 보내고 있을 수 있어
  * 받기만 하고 버린다 — Jackson 이 모르는 필드를 무시하므로 지워도 요청은 깨지지 않지만,
  * 금액만큼 급하지 않다.
+ *
+ * <p>[JA] 注文作成リクエスト。
+ * 🔴 ここに金額フィールドがないのはミスではない: 以前は {@code total} と {@code totalBeforeDiscount} があり、サーバーはその値を<b>そのまま保存していた。</b>
+ * その値はブラウザが計算したものである({@code Summary.jsx}: {@code total: totalAfterDiscount || cart.cartTotal})。
+ * PayPal の検証があるから大丈夫とは言えなかった。その検証は決済額と<b>DB の注文総額</b>が同じかだけを見る。総額自体がブラウザから来たので、DevTools で
+ * {@code total: 1} を送り 1 ドルを決済すれば検証は正常に通った(docs/40 #10)。
+ * 今は金額をサーバーが決める — カート総額は cart-service がカタログ価格で計算した値を使い、割引額は coupon-service に改めて問い合わせる
+ * ({@code OrderDataService.priceOrder})。フィールドを残して「読まない」とコメントだけ付けたら、次の人が「ここに total がある」と言ってまた使う。消すのが唯一確実な方法である。
+ * 同じ理由で {@code products} も<b>読まない。</b>何を注文したかはサーバーが読んだカートが決める。ただしこのフィールドは金額ではなく、他のクライアントが送っている
+ * 可能性があるので受け取るだけで捨てる — Jackson は未知のフィールドを無視するので消してもリクエストは壊れないが、金額ほど急ぎではない。
  */
 @Setter
 @Getter
 public class OrderRequest {
 
-    /** ⚠️ 읽지 않는다. 주문 품목은 서버가 읽은 장바구니가 정한다. */
+    /** ⚠️ 읽지 않는다. 주문 품목은 서버가 읽은 장바구니가 정한다. ／ [JA] ⚠️ 読まない。注文品目はサーバーが読んだカートが決める。 */
     private List<CartProductDto> products;
 
     /** 없으면 서비스가 "배송지를 선택해 주세요." 로 거절한다(@NotNull 이 아니다 — 그 문구를 지킨다). 있으면 안을 검증한다. */
@@ -46,8 +56,9 @@ public class OrderRequest {
     private OrderAddressDto shippingAddress;
     private String paymentMethod;
 
-    /** 적용할 쿠폰 이름. 할인 <b>금액</b>은 여기서 받지 않고 coupon-service 에 물어본다. */
+    /** 적용할 쿠폰 이름. 할인 <b>금액</b>은 여기서 받지 않고 coupon-service 에 물어본다. ／ [JA] 適用するクーポン名。割引<b>金額</b>はここで受け取らず coupon-service に問い合わせる。 */
     private String couponApplied;
 
     // 신원 필드(email)는 없다 — 주문자는 게이트웨이가 검증한 User-Id 다. 옛 클라이언트가 보내도 Jackson 이 버린다.
+    // [JA] 身元フィールド(email)はない — 注文者はゲートウェイが検証した User-Id である。古いクライアントが送っても Jackson が捨てる。
 }

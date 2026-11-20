@@ -24,6 +24,13 @@ import {
  *  - 추가 네트워크 요청이 없다 — 알림 목록은 스크롤할 때마다 여러 개가 한꺼번에 그려진다
  *
  * 색은 의미를 담는다. 결제 실패·보안은 빨강 계열로 눈에 먼저 들어오게 한다.
+ *
+ * <p>[JA] 通知の種類ごとのアイコン。
+ * ビットマップ画像の代わりにアイコンフォント(react-icons、すでに依存にある)を使う:
+ * - 解像度に関係なく鮮明である(Retina 用の @2x ファイルを別に管理する必要がない)
+ * - 色を CSS で変えられるのでダークモード · 既読状態にそのまま対応する
+ * - 追加のネットワークリクエストがない — 通知一覧はスクロールするたびに多数が一度に描かれる
+ * 色は意味を持つ。決済失敗 · セキュリティは赤系で先に目に入るようにする。
  */
 const ICONS = {
   ORDER_PLACED:      { Icon: IoBagCheckOutline,           tone: "brand"  },
@@ -32,14 +39,17 @@ const ICONS = {
   PAYMENT_REFUNDED:  { Icon: IoWalletOutline,             tone: "info"   },
   SHIPPING_UPDATED:  { Icon: IoCubeOutline,               tone: "brand"  },
   // 구매 확정(docs/25 §12) — 주문의 마무리. 대개 자동이라 "끝났다" 가 한눈에 보여야 한다.
+  // [JA] 購入確定(docs/25 §12) — 注文の締めくくり。たいてい自動なので「終わった」が一目で見えなければならない。
   ORDER_COMPLETED:   { Icon: IoCheckmarkDoneCircleOutline, tone: "ok"     },
   // 재입고(docs/53) — 손님이 신청한 소식이다. "다시 살 수 있다" 가 먼저 보여야 한다.
+  // [JA] 再入荷(docs/53) — 客が申し込んだ知らせである。「また買える」が先に見えなければならない。
   RESTOCK_AVAILABLE: { Icon: IoRefreshCircleOutline,       tone: "accent" },
   CHAT_MESSAGE:      { Icon: IoChatbubbleEllipsesOutline, tone: "info"   },
   FRIEND_ONLINE:     { Icon: IoPersonAddOutline,          tone: "ok"     },
   COUPON_ISSUED:     { Icon: IoTicketOutline,             tone: "accent" },
   SECURITY_ALERT:    { Icon: IoShieldCheckmarkOutline,    tone: "danger" },
   // 전체 알림. 나에게만 온 것이 아니라는 점이 한눈에 드러나야 한다.
+  // [JA] 全体通知。自分だけに来たものではないことが一目で分からなければならない。
   NOTICE_PUBLISHED:  { Icon: IoInformationCircleOutline,  tone: "info"   },
   ANNOUNCEMENT:      { Icon: IoMegaphoneOutline,          tone: "accent" },
 };

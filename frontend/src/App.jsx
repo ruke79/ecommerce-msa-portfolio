@@ -41,6 +41,7 @@ import CartSync from "components/cart/CartSync";
 import I18nProvider, { useTranslation } from "i18n/I18nProvider";
 
 // 코드 스플리팅을 적용할 컴포넌트들을 lazy loading으로 변경합니다.
+// [JA] コード分割を適用するコンポーネントを lazy loading に変更する。
 const DashboardLayout = lazy(() => import('./components/admin/DashboardLayout'));
 const Categories = lazy(() => import('./pages/admin/Category'));
 const AdminProduct = lazy(() => import('./pages/admin/Index'));
@@ -67,6 +68,7 @@ const initialOptions = {
 };
 
 /** 지연 로딩 화면이 뜨기 전의 자리 — 문구는 지금 언어로 그린다. */
+// [JA] 遅延ロード画面が出る前のプレースホルダ — 文言は現在の言語で描く。
 const RouteFallback = ({ admin = false }) => {
   const { t } = useTranslation();
   return <div>{t(admin ? "app.loading_admin" : "app.loading")}</div>;
@@ -76,13 +78,16 @@ const ErrorBoundaryLayout = () => (
   <ErrorBoundary FallbackComponent={ErrorFallback}>
     {/* 언어(I18nProvider)는 App 맨 바깥으로 옮겼다 — 이 오류 경계의 대체 화면(ErrorFallback)과
         라우터 오류 화면(ErrorPage)도 번역 대상이라, 둘보다 바깥에 있어야 한다. */}
+    {/* [JA] 言語(I18nProvider)は App の一番外側に移した — このエラー境界の代替画面(ErrorFallback)とルーターのエラー画面(ErrorPage)も翻訳対象なので、両者より外側になければならない。 */}
     <ContextProvider>
       <TokenRefresher />
       {/* 로그인·로그아웃 때 장바구니를 서버와 맞춘다 — 서버가 장바구니의 기준이다(docs/40 0-b). */}
+      {/* [JA] ログイン・ログアウト時にカートをサーバーと合わせる — サーバーがカートの基準である(docs/40 0-b)。 */}
       <CartSync />
       {/* 실시간 알림(SSE). 주석 처리돼 있어서 다른 기기에서 로그인해 세션이 밀려나도
           이 탭은 계속 로그인 상태로 남아 있었다. 재연결이 영구히 멈추던 버그를 고친
           뒤 다시 켠다(util/Notification.js). */}
+      {/* [JA] リアルタイム通知(SSE)。コメントアウトされていたので、別の端末でログインしてセッションが押し出されてもこのタブはログイン状態のまま残っていた。再接続が永久に止まるバグを直した後に再び有効にする(util/Notification.js)。 */}
       <Notification />
       <Outlet />
     </ContextProvider>
@@ -101,6 +106,13 @@ const ErrorBoundaryLayout = () => (
  * 즉 <b>증상 없이 잠복해 있었다.</b> 위에 Provider 가 하나만 늘어도 터진다.
  *
  * <p>모듈 최상위로 올린다. 라우트 정의는 상수이므로 한 번만 만들면 된다.
+ *
+ * <p>[JA] 🐛 `createBrowserRouter` をコンポーネントの**中で**呼んでいた。
+ * この関数はルーターのインスタンスを作る — 履歴の購読、ローダーの状態、スクロール復元位置を持つ**生きたオブジェクト**である。
+ * レンダーのたびに新しく作るとその状態が丸ごと捨てられ、新しいルーターが最初から始まる。`AppRouter` が再レンダーされた瞬間、
+ * 進行中だったローダーが切れ、スクロール復元が初期化される。
+ * 今は `AppRouter` に prop も state もないので実際に再レンダーされることは稀だった — つまり<b>症状なしに潜伏していた。</b> 上に Provider が一つ増えるだけで弾ける。
+ * モジュールの最上位に上げる。ルート定義は定数なので一度作ればよい。
  */
 const router = createBrowserRouter([
     {
@@ -122,21 +134,35 @@ const router = createBrowserRouter([
             // 그 링크는 라우터 오류 화면으로 갔고 — 비밀번호를 잊은 사용자는 계정을
             // 되찾을 방법이 아예 없었다. ForgotPage 는 만들어져 있었는데 아무도
             // 연결하지 않았다.
+            // [JA] ログイン画面の "Forgot your password?" がここに来る。ルートがなかったので
+            //      そのリンクはルーターのエラー画面に行き — パスワードを忘れたユーザーはアカウントを
+            //      取り戻す方法がまったくなかった。ForgotPage は作られていたのに誰も
+            //      つないでいなかった。
             { path: 'forgot', element: <ForgotPage /> },
             // 고객센터 채팅(docs/58) — 고객 ↔ 고객지원팀. 친구 채팅(/chat)과 따로다.
+            // [JA] カスタマーセンターのチャット(docs/58) — 顧客 ↔ サポートチーム。友達チャット(/chat)とは別である。
             { path: 'support', element: <ProtectedRoute><SupportPage /></ProtectedRoute> },
             // 상담 데스크 — 상담원(ROLE_SUPPORT)·관리자. 서버도 같은 규칙을 강제한다.
+            // [JA] 相談デスク — 相談員(ROLE_SUPPORT)・管理者。サーバーも同じ規則を強制する。
             { path: 'support/desk', element: <ProtectedRoute supportOnly><SupportDesk /></ProtectedRoute> },
             // user-service 의 RegistrationController 가 인증 실패 시 여기로 리다이렉트한다
             // (`/verification-failed?reason=expired|invalid`). 라우트가 없어서 그 리다이렉트는
             // **라우터 오류 화면**으로 떨어졌고 — 링크를 늦게 누른 사용자는 무엇이 잘못됐는지도,
             // 무엇을 하면 되는지도 알 수 없었다. /forgot 과 똑같은 종류의 구멍이다.
+            // [JA] user-service の RegistrationController が認証失敗時にここへリダイレクトする
+            //      (`/verification-failed?reason=expired|invalid`)。ルートがなかったのでそのリダイレクトは
+            //      **ルーターのエラー画面**に落ち — リンクを遅れて押したユーザーは何が悪かったのかも、
+            //      何をすればよいのかも分からなかった。/forgot とまったく同じ種類の穴である。
             { path: 'verification-failed', element: <VerificationFailedPage /> },
             // 재설정 메일의 링크가 여기로 온다. 라우트가 없어서 그 링크는 라우터 오류
             // 화면으로 떨어졌고 — 비밀번호 찾기는 처음부터 끝까지 동작한 적이 없다.
+            // [JA] 再設定メールのリンクがここに来る。ルートがなかったのでそのリンクはルーターのエラー
+            //      画面に落ち — パスワード再設定は最初から最後まで動いたことがない。
             { path: 'reset-password', element: <ResetPasswordPage /> },
             // 커뮤니티 채팅(여러 사람의 단체 대화방) — 보존한다. 고객 상담은 /support(1:1)다.
             // 예전에는 헤더 없는 전체 화면이라 안쪽의 fixed 요소들이 헤더 메뉴와 겹쳤다 — 이제 사이트 레이아웃 안의 카드다.
+            // [JA] コミュニティチャット(複数人のグループ会話ルーム) — 維持する。顧客相談は /support(1:1)である。
+            //      以前はヘッダのない全画面だったので内側の fixed 要素がヘッダメニューと重なった — 今はサイトレイアウト内のカードである。
             {
               path: 'chat',
               element: <ProtectedRoute><ChatPage /></ProtectedRoute>,
@@ -184,6 +210,7 @@ const router = createBrowserRouter([
           loader: browseLoader,
         },
         // 공지사항. 로그인 없이 열린다 — 점검·정책 안내는 비회원도 봐야 한다.
+        // [JA] お知らせ。ログインなしで開く — 点検・ポリシーの案内は非会員も見る必要がある。
         {
           path: '/notice',
           element: <Suspense fallback={<RouteFallback />}><NoticeList /></Suspense>,
@@ -194,6 +221,8 @@ const router = createBrowserRouter([
         },
         // 기획전도 로그인 없이 열린다 — 세일을 보려고 가입해야 하면 아무도 안 본다.
         // 진행 중인 것만 서버가 내려준다(초안·예약분은 404).
+        // [JA] 企画展もログインなしで開く — セールを見るのに会員登録が必要なら誰も見ない。
+        //      進行中のものだけをサーバーが返す(下書き・予約分は 404)。
         {
           path: '/event',
           element: <Suspense fallback={<RouteFallback />}><EventList /></Suspense>,
@@ -218,6 +247,9 @@ const router = createBrowserRouter([
         // 관리자 페이지. 지연 로딩(Suspense)과 **권한 가드**를 함께 건다.
         // 예전에는 가드가 없어서, 로그인하지 않은 사람도 /admin/product 를 주소창에 직접
         // 치면 관리자 화면이 그대로 그려졌다. 부모에 한 번 걸면 자식 라우트까지 함께 막힌다.
+        // [JA] 管理者ページ。遅延ロード(Suspense)と**権限ガード**を一緒に掛ける。
+        //      以前はガードがなく、ログインしていない人も /admin/product をアドレスバーに直接
+        //      打つと管理画面がそのまま描かれた。親に一度掛ければ子ルートまで一緒に塞がれる。
         {
           path: '/admin',
           element: (
@@ -242,6 +274,8 @@ const router = createBrowserRouter([
               // loader는 lazy loading과 함께 사용될 수 없습니다.
               // 필요하다면 컴포넌트 내부에서 데이터를 페칭하는 방식으로 변경해야 합니다.
               // loader:loaderProducts
+              // [JA] loader は lazy loading と一緒に使えない。
+              //      必要ならコンポーネント内部でデータをフェッチする方式に変える必要がある。
             }
           ]
         }
@@ -254,6 +288,8 @@ const AppRouter = () => <RouterProvider router={router} />;
 function App() {
   // 언어는 인증보다, 그리고 오류 화면보다 바깥이다 — 로그인하지 않은 사람도 일본어로 볼 수 있어야 하고,
   // 로그인 화면·오류 화면 자체가 번역 대상이다.
+  // [JA] 言語は認証より、そしてエラー画面より外側である — ログインしていない人も日本語で見られなければならず、
+  //      ログイン画面・エラー画面そのものが翻訳対象である。
   return (
     <I18nProvider>
       <div>

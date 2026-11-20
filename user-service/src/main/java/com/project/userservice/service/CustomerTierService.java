@@ -36,6 +36,13 @@ import lombok.extern.slf4j.Slf4j;
  * 그대로 두고, 강등은 <b>하지 않는다.</b> 절반만 받은 목록으로 강등을 돌리면 아직 받지
  * 못한 구간의 고객이 전부 일반 등급으로 떨어진다 — 통신 장애 하나로 전 고객 등급이
  * 날아가는 사고다. 다음 회차가 정상적으로 끝나면 저절로 맞춰진다.
+ *
+ * <p>[JA] 等級算定バッチ。
+ * <p>order-service から顧客別の購入集計をカーソルでなめながら、各人の等級と購入履歴を users テーブルに書く。最後に今回の回に現れなかった等級保有者を一般に下げる。
+ * <p>🔴 <b>なぜ回の開始時刻を先に押さえるか:</b> 降格は「今回触らなかった行」を選ぶ方式(tierComputedAt &lt; startedAt)。基準時刻を<b>最後に</b>読むと、
+ * バッチ中に更新した行が全部その時刻より過去になり<b>今昇格させた人まで降格される</b>。だから開始時刻を最初に一度取り、最後までその値を使う。
+ * <p><b>失敗したとき:</b> 途中で order-service 呼び出しが失敗したら<b>そこで止まる。</b> 既に更新した人はそのままにし、降格は<b>しない。</b>
+ * 半分だけ受け取った一覧で降格を回すと、まだ受け取っていない区間の顧客が全員一般等級に落ちる — 通信障害一つで全顧客の等級が飛ぶ事故である。次の回が正常に終われば自然に揃う。
  */
 @Slf4j
 @Service
@@ -48,6 +55,9 @@ public class CustomerTierService {
      * <p>무한 루프 방지장치다. 커서가 어떤 이유로든 전진하지 않으면 이 배치는 영원히
      * 돈다 — 야간에, 아무도 보지 않는 동안. 상한이 있으면 최악의 경우에도 로그 한 줄을
      * 남기고 끝난다.
+     *
+     * <p>[JA] 一回でなめる最大顧客数。
+     * <p>無限ループ防止装置である。カーソルが何らかの理由で進まなければこのバッチは永遠に回る — 夜間、誰も見ていない間に。上限があれば最悪でもログ一行を残して終わる。
      */
     static final int MAX_CUSTOMERS_PER_RUN = 200_000;
 
@@ -58,7 +68,10 @@ public class CustomerTierService {
     /**
      * 전 고객의 등급을 다시 매긴다.
      *
+     * <p>[JA] 全顧客の等級を付け直す。
+     *
      * @return 갱신한 사람 수와 강등한 사람 수
+     *     [JA] 更新した人数と降格した人数
      */
     public Result recalculateAll() {
         LocalDateTime startedAt = LocalDateTime.now(ZoneOffset.UTC);
@@ -75,6 +88,7 @@ public class CustomerTierService {
             if (seen >= MAX_CUSTOMERS_PER_RUN) {
                 // 상한에 걸렸다 = 아직 안 본 고객이 남았다. 실패와 똑같이 다룬다 —
                 // 여기서 강등을 돌리면 못 본 구간이 통째로 일반 등급이 된다.
+                // [JA] 上限に達した = まだ見ていない顧客が残っている。失敗と同じに扱う — ここで降格を回すと見ていない区間が丸ごと一般等級になる。
                 log.warn("등급 배치 중단 — 한 회차 상한({})에 도달했다. batch-size 를 올려야 한다.",
                         MAX_CUSTOMERS_PER_RUN);
                 return new Result(updated, 0, false);
@@ -83,6 +97,7 @@ public class CustomerTierService {
             List<PurchaseStatDto> page = fetch(months, cursor, size);
             if (page == null) {
                 // 호출 실패. 강등하지 않고 멈춘다 — 위 주석 참조.
+                // [JA] 呼び出し失敗。降格せずに止まる — 上のコメント参照。
                 log.warn("등급 배치 중단 — 구매 집계를 가져오지 못했다. 처리한 고객={}", seen);
                 return new Result(updated, 0, false);
             }
@@ -109,6 +124,10 @@ public class CustomerTierService {
             //
             // 빈 페이지를 받을 때까지 간다. 하루 한 번 도는 배치에서 요청 한 번 더 보내는
             // 값으로, 두 서비스 사이의 숫자 약속에 기대는 일을 통째로 없앤다.
+            // [JA] 🔴「受け取った行が要求サイズより少なければ終わり」という近道を使わない。
+            //      order-service は応答一つのサイズに独自の上限(500)があり、それより大きい size を要求すると**黙って切って**返す。すると最初のページから
+            //      「足りないから終わり」と読まれ、まだ見てもいない残りの顧客が全員降格される。向こうの上限とこちらの設定が黙ってずれた瞬間に起きる種類のバグである。
+            //      空ページを受け取るまで進む。一日一回のバッチでリクエストを一回多く送る代償で、二つのサービス間の数の約束に頼ることを丸ごとなくす。
         }
 
         if (!drained) {
@@ -126,6 +145,10 @@ public class CustomerTierService {
      * <p>{@code updateTier} 가 0 을 돌려주는 것은 정상이다 — order-service 에는 주문이
      * 있는데 user-service 에는 그 계정이 없는 경우(탈퇴 후 익명화, 테스트 데이터)다.
      * 예외로 만들지 않는다. 한 건 때문에 배치 전체를 멈출 이유가 없다.
+     *
+     * <p>[JA] 集計一件を等級に変えて保存する。
+     * <p>updateTier が 0 を返すのは正常 — order-service には注文があるのに user-service にはそのアカウントがない場合(退会後の匿名化、テストデータ)。
+     * 例外にしない。一件のためにバッチ全体を止める理由はない。
      */
     private int apply(PurchaseStatDto stat, LocalDateTime computedAt) {
         CustomerTier tier = tierProperties.tierFor(stat.recentAmount());
@@ -134,6 +157,7 @@ public class CustomerTierService {
     }
 
     /** 실패는 {@code null} 이다. 빈 목록(=끝)과 구분해야 강등 여부가 갈린다. */
+    // [JA] 失敗は null。空の一覧(=終わり)と区別しないと降格するかどうかが分かれない。
     private List<PurchaseStatDto> fetch(int months, long cursor, int size) {
         try {
             Map<String, List<PurchaseStatDto>> body =
@@ -152,9 +176,14 @@ public class CustomerTierService {
     /**
      * 한 회차의 결과.
      *
+     * <p>[JA] 一回の結果。
+     *
      * @param updated   등급·구매 이력을 갱신한 사람 수
+     *     [JA] 等級・購入履歴を更新した人数
      * @param demoted   일반 등급으로 내린 사람 수
+     *     [JA] 一般等級に下げた人数
      * @param completed 끝까지 돌았는가. {@code false} 면 강등을 건너뛴 것이다.
+     *     [JA] 最後まで回ったか。false なら降格を飛ばしたということ。
      */
     public record Result(int updated, int demoted, boolean completed) {
     }

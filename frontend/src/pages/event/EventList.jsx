@@ -23,6 +23,9 @@ const formatRange = (startsAt, endsAt) => {
  *
  * <p>대상 상품은 여기서 받지 않는다. 목록 화면은 배너와 제목만 그리는데 기획전마다 상품
  * 수백 개를 실어 보내면 응답만 커지고 쓰이지 않는다(서버의 EventView).
+ *
+ * <p>[JA] 進行中の企画展一覧。下書きと予約分はサーバーが返さない — 準備中のセールの名前と開始時期が事前に漏れてはならない。
+ * 対象商品はここでは受け取らない。一覧画面はバナーとタイトルだけを描くのに、企画展ごとに商品数百個を載せて送ると応答が大きくなるだけで使われない(サーバーの EventView)。
  */
 const EventList = () => {
     const { t } = useTranslation();
@@ -45,6 +48,7 @@ const EventList = () => {
 
             {loading && <p className="text-slate-500">{t("event.loading")}</p>}
             {/* 오류 문구는 그릴 때 번역한다 — 언어를 바꿔도 따라간다. */}
+            {/* [JA] エラー文言は描画時に翻訳する — 言語を変えても追従する。 */}
             {error && <p className="text-red-600">{t("event.load_failed")}</p>}
 
             {!loading && !error && events.length === 0 && (
@@ -61,6 +65,7 @@ const EventList = () => {
                                     alt=""
                                     /* 배너는 장식이다 — 제목이 바로 아래 글자로 있으므로
                                        같은 내용을 스크린리더에 두 번 읽히지 않는다. */
+                                    /* [JA] バナーは装飾である — タイトルがすぐ下に文字であるので、同じ内容をスクリーンリーダーに二度読ませない。 */
                                     className="aspect-[5/2] w-full object-cover"
                                     loading="lazy"
                                 />

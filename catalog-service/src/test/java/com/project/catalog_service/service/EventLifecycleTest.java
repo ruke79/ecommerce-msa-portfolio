@@ -41,6 +41,10 @@ import com.project.catalog_service.service.EventService.Advanced;
  * 지우면 할인이 조용히 사라지고 기록도 안 남는다. 끝난 기획전을 고치면 아무 효과가 없는데
  * 관리자는 저장이 됐다고 본다. 인스턴스가 둘일 때 시작 알림이 두 번 나가면 모든 사용자가
  * 같은 알림을 두 개 받는다.
+ *
+ * <p>[JA] 企画展のライフサイクル — 確定・開始・終了。
+ * <p>ここで守るのは大部分が<b>取り返しのつかない誤りを防ぐ規則</b>である。進行中のセールを消すと割引が黙って消え、記録も残らない。終わった企画展を直しても何の効果もないのに、
+ * 管理者は保存できたと見る。インスタンスが二つのとき開始通知が二回出ると、すべてのユーザーが同じ通知を二つ受け取る。
  */
 @DisplayName("기획전 생명주기")
 class EventLifecycleTest {
@@ -61,9 +65,11 @@ class EventLifecycleTest {
     }
 
     /** 이 id 의 상품이 존재한다고 해 둔다 — 대상 검증이 통과해야 한다. */
+    // [JA] この id の商品が存在することにしておく — 対象の検証が通らなければならない。
     private void productsExist(Long... ids) {
         // @SuperBuilder 는 와일드카드 타입의 빌더를 돌려준다. 타입 증인을 명시하지 않으면
         // List<capture of ? extends Product> 가 되어 thenReturn 이 받지 못한다.
+        // [JA] @SuperBuilder はワイルドカード型のビルダーを返す。型ウィットネスを明示しないと List<capture of ? extends Product> になり、thenReturn が受け取れない。
         List<Product> products = java.util.Arrays.stream(ids)
                 .<Product>map(id -> Product.builder().productId(id).build())
                 .toList();
@@ -77,6 +83,7 @@ class EventLifecycleTest {
     }
 
     /** 제목만 정하고 나머지는 비운 요청 — 여러 테스트가 각자 조금씩만 바꿔 쓴다. */
+    // [JA] タイトルだけ決めて残りは空にしたリクエスト — 複数のテストがそれぞれ少しずつだけ変えて使う。
     private static EventRequest minimal(String title) {
         return new EventRequest(title, null, null, null, null, null, null, null,
                 List.of(), List.of(), null, null, null, null);
@@ -111,17 +118,20 @@ class EventLifecycleTest {
             EventAdminView view = service.create(request(true, new EventProductRequest(42L, 30)));
 
             // ACTIVE 가 아니다 — 시작 시각이 오기 전에 할인이 걸리면 안 된다.
+            // [JA] ACTIVE ではない — 開始時刻が来る前に割引がかかってはならない。
             assertThat(view.status()).isEqualTo("SCHEDULED");
         }
 
         /**
          * 없는 상품을 그냥 저장하면 증상이 "그 상품만 할인이 안 걸린다"로 나타나는데,
          * 화면의 대상 목록에는 멀쩡히 들어 있어 무엇이 틀렸는지 알 수 없다.
+         *
+         * <p>[JA] 存在しない商品をそのまま保存すると症状は「その商品だけ割引がかからない」として現れるが、画面の対象一覧には問題なく入っているので、何が間違っているか分からない。
          */
         @Test
         @DisplayName("없는 상품이 대상에 있으면 거절한다")
         void rejectsUnknownProducts() {
-            productsExist(42L);   // 99 는 없다
+            productsExist(42L);   // 99 는 없다 ／ [JA] 99 は存在しない
 
             assertThatThrownBy(() -> service.create(
                     request(true, new EventProductRequest(42L, 30), new EventProductRequest(99L, 30))))
@@ -139,6 +149,7 @@ class EventLifecycleTest {
 
             assertThat(view.products()).hasSize(1);
             // 뒤에 온 값을 쓴다 — 화면에서 고친 값이 뒤에 온다.
+            // [JA] 後から来た値を使う — 画面で直した値が後から来る。
             assertThat(view.products().get(0).discountRate()).isEqualTo(50);
         }
 
@@ -169,6 +180,8 @@ class EventLifecycleTest {
         /**
          * 제목이 한글이면 slugify 후 남는 글자가 없다. 빈 slug 는 {@code /event/} 가 되어
          * 목록 경로와 충돌한다.
+         *
+         * <p>[JA] タイトルがハングルだと slugify 後に残る文字がない。空の slug は {@code /event/} となり、一覧のパスと衝突する。
          */
         @Test
         @DisplayName("한글 제목이어도 빈 slug 가 나오지 않는다")
@@ -196,6 +209,8 @@ class EventLifecycleTest {
         /**
          * 끝난 기획전의 할인율을 바꾸는 것은 아무 효과가 없는 동작이다(할인은 ACTIVE 일
          * 때만 합성된다). 저장을 허용하면 관리자는 가격이 왜 안 바뀌는지 알 수 없다.
+         *
+         * <p>[JA] 終わった企画展の割引率を変えるのは何の効果もない操作である(割引は ACTIVE のときだけ合成される)。保存を許すと、管理者はなぜ価格が変わらないのか分からない。
          */
         @Test
         @DisplayName("끝난 기획전은 고칠 수 없다")
@@ -208,6 +223,8 @@ class EventLifecycleTest {
 
         /**
          * 진행 중인 기획전의 배너 이미지만 고치는 요청이 그것을 취소시키면 안 된다.
+         *
+         * <p>[JA] 進行中の企画展のバナー画像だけを直すリクエストが、それをキャンセルさせてはならない。
          */
         @Test
         @DisplayName("publish 를 생략한 수정은 상태를 바꾸지 않는다")
@@ -222,6 +239,8 @@ class EventLifecycleTest {
 
         /**
          * SCHEDULED 로 되돌리면 스케줄러가 다시 시작시키며 시작 알림이 한 번 더 나간다.
+         *
+         * <p>[JA] SCHEDULED に戻すとスケジューラが再び開始させ、開始通知がもう一度出る。
          */
         @Test
         @DisplayName("진행 중인 것을 다시 확정해도 예약으로 되돌아가지 않는다")
@@ -246,6 +265,8 @@ class EventLifecycleTest {
 
         /**
          * publish=false 로 진행 중인 것을 끄면 진행 기록이 사라진다. 종료는 endNow() 다.
+         *
+         * <p>[JA] publish=false で進行中のものを止めると進行記録が消える。終了は endNow() である。
          */
         @Test
         @DisplayName("진행 중인 것은 publish=false 로 꺼지지 않는다 — 그건 '종료'다")
@@ -279,6 +300,8 @@ class EventLifecycleTest {
         /**
          * 진행 중인 것을 지우면 할인이 조용히 사라지고, "어제 30% 였는데요" 라는 문의에
          * 답할 근거도 없어진다.
+         *
+         * <p>[JA] 進行中のものを消すと割引が黙って消え、「昨日は 30% だったのですが」という問い合わせに答える根拠もなくなる。
          */
         @Test
         @DisplayName("진행 중인 기획전은 지울 수 없다")
@@ -309,6 +332,8 @@ class EventLifecycleTest {
         /**
          * 403 을 주면 "그 slug 에 기획전이 있긴 하다"가 새어 나가, 준비 중인 기획전의
          * 이름과 시작 시점을 미리 알 수 있다.
+         *
+         * <p>[JA] 403 を返すと「その slug に企画展はある」ことが漏れ、準備中の企画展の名前と開始時点を事前に知れてしまう。
          */
         @Test
         @DisplayName("예약된 기획전은 404 다 — 준비 중인 세일의 존재가 새면 안 된다")
@@ -366,6 +391,9 @@ class EventLifecycleTest {
          * 🔴 인스턴스가 둘이면 스케줄러도 둘이다. 조건부 UPDATE 가 0 을 돌려준다는 것은
          * "다른 인스턴스가 먼저 바꿨다"는 뜻이고, 그쪽이 알린다. 여기서도 알리면 모든
          * 사용자가 같은 알림을 두 개 받는다.
+         *
+         * <p>[JA] 🔴 インスタンスが二つならスケジューラも二つである。条件付き UPDATE が 0 を返すのは「別のインスタンスが先に変えた」という意味で、そちらが通知する。
+         * ここでも通知すると、すべてのユーザーが同じ通知を二つ受け取る。
          */
         @Test
         @DisplayName("다른 인스턴스가 먼저 시작시켰으면 알리지 않는다")
@@ -383,6 +411,8 @@ class EventLifecycleTest {
         /**
          * 종료도 캐시를 비워야 한다. 빠뜨리면 기획전이 끝난 뒤에도 캐시에 남은 할인가가
          * TTL 이 지날 때까지 보이고, <b>그 가격으로 장바구니에 담긴다.</b>
+         *
+         * <p>[JA] 終了もキャッシュを空にしなければならない。漏らすと企画展が終わった後もキャッシュに残った割引価格が TTL が過ぎるまで見え、<b>その価格でカートに入る。</b>
          */
         @Test
         @DisplayName("종료만 있어도 '바뀐 것이 있다'로 친다 — 캐시를 비워야 한다")
@@ -424,6 +454,7 @@ class EventLifecycleTest {
             verify(cache, never()).clear();
             // 상태가 안 바뀌어도 할인 맵은 갱신한다 — 다른 인스턴스가 바꾼 것과 관리자가
             // 고친 대상 상품이 여기서 반영된다.
+            // [JA] 状態が変わらなくても割引マップは更新する — 別のインスタンスが変えたものと、管理者が直した対象商品がここで反映される。
             verify(pricing).refresh();
         }
 
@@ -464,6 +495,8 @@ class EventLifecycleTest {
         /**
          * 스케줄러 스레드에서 예외가 올라가면 <b>이후 실행이 멈춘다.</b> 기획전 하나 때문에
          * 전체 일정이 죽으면, 그 뒤의 모든 세일이 시작되지 않는다.
+         *
+         * <p>[JA] スケジューラスレッドで例外が上がると<b>以降の実行が止まる。</b>企画展一つのせいで全体のスケジュールが死ぬと、その後のすべてのセールが始まらない。
          */
         @Test
         @DisplayName("전환에 실패해도 스케줄러가 죽지 않는다")
@@ -475,6 +508,7 @@ class EventLifecycleTest {
             new EventScheduler(eventService, mock(EventPricing.class),
                     mock(EventStartedProducer.class), cacheManager).tick();
             // 예외가 밖으로 나오지 않으면 통과다.
+            // [JA] 例外が外に出なければ合格である。
         }
     }
 }

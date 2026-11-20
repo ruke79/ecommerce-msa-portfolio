@@ -73,6 +73,7 @@ class TwoFactorSmsTest {
     }
 
     /** 실제 해시로 저장된 코드 하나 — 발송을 거쳐 만든다(해시 함수를 테스트에 복제하지 않는다). */
+    // [JA] 実際のハッシュで保存されたコード一つ — 送信を経て作る(ハッシュ関数をテストに複製しない)。
     private PhoneVerification sentCode(Long userId) {
         ArgumentCaptor<PhoneVerification> saved = ArgumentCaptor.forClass(PhoneVerification.class);
         ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
@@ -105,6 +106,7 @@ class TwoFactorSmsTest {
         assertThat(binding).hasSize(64).doesNotContain("1012345678");
 
         // 세션만 가진 사람이 번호를 자기 것으로 바꿨다
+        // [JA] セッションだけを持つ人が番号を自分のものに変えた
         registered(7L, "+821099998888");
         assertThat(service.sendTwoFactor(7L, binding).result()).isEqualTo(TwoFactorResult.PHONE_CHANGED);
         assertThat(service.verifyTwoFactor(7L, binding, "123456").result()).isEqualTo(TwoFactorResult.PHONE_CHANGED);

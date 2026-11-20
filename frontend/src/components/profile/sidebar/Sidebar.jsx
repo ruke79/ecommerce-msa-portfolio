@@ -8,6 +8,11 @@ import { displayName } from "util/userDisplay";
  * 사용자 객체에 <b>없는 필드</b>다(util/jwtUser.js 의 toUser 는 email·userId·roles 만
  * 만든다). 그래서 아바타는 깨진 이미지가 되고 이름 자리는 빈 칸이었다 —
  * "My Profile 화면에 아무것도 안 보인다"의 절반이 이것이다.
+ *
+ * <p>[JA] 🐛 以前は `data.image` と `data.username` をそのまま読んでいた。どちらも JWT から作った
+ * ユーザーオブジェクトに <b>無いフィールド</b>だ(util/jwtUser.js の toUser は email・userId・roles だけ
+ * 作る)。そのためアバターは壊れた画像になり名前の場所は空欄だった —
+ * 「My Profile 画面に何も見えない」の半分がこれだ。
  */
 const Sidebar = ({ data }) => {
     return (

@@ -43,6 +43,12 @@ public class PasswordResetToken {
      * 가져간다 — DB 덤프 한 번이 곧 계정 탈취 수단이었다.
      *
      * <p>원문은 메일 링크로 나간 뒤 서버 어디에도 남지 않는다.
+     *
+     * <p>[JA] 原文ではなく SHA-256 ハッシュが入る。
+     * 🔒 以前は原文をそのまま保存していた。{@link VerificationToken} は同じ種類の値をハッシュだけで持ち、その理由を
+     * コメントに書いていたのに、より強いトークンであるこちらには適用されていなかった。登録確認リンクはアカウントを
+     * 有効化するだけだが、再設定リンクはアカウントを丸ごと奪う — DB ダンプ 1 回がそのままアカウント乗っ取りの手段だった。
+     * 原文はメールのリンクとして出た後、サーバーのどこにも残らない。
      */
     @Column(nullable = false, unique = true)
     private String token;
@@ -57,6 +63,7 @@ public class PasswordResetToken {
     private User user;
 
     /** @param rawToken 원문. 저장은 해시로 한다 — 호출자가 해싱을 기억할 필요가 없게 한다. */
+    // [JA] @param rawToken 原文。保存はハッシュで行う — 呼び出し側がハッシュ化を覚えておく必要がないようにする。
     public PasswordResetToken(String rawToken, Instant expiryDate, User user) {
         this.token = hash(rawToken);
         this.expiryDate = expiryDate;
@@ -69,6 +76,11 @@ public class PasswordResetToken {
      * <p>{@link VerificationToken#hash} 와 같은 이유로 솔트·페퍼가 없다: 값이
      * {@code UUID.randomUUID()} 라 122비트 엔트로피이고, 그만큼이면 사전 계산이 불가능하다.
      * (6자리 SMS 코드처럼 후보가 100만 개뿐인 값이라면 페퍼가 필요하다.)
+     *
+     * <p>[JA] 原文トークンを照会・比較用のハッシュに変える。保存するときも探すときも必ずこれを通る。
+     * {@link VerificationToken#hash} と同じ理由でソルト・ペッパーがない: 値が {@code UUID.randomUUID()} なので 122 ビットの
+     * エントロピーがあり、それだけあれば事前計算は不可能である。(6 桁の SMS コードのように候補が 100 万個しかない値なら
+     * ペッパーが必要である。)
      */
     public static String hash(final String rawToken) {
         try {
@@ -77,6 +89,7 @@ public class PasswordResetToken {
                     digest.digest(rawToken.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 은 모든 JVM 이 반드시 제공한다. 여기 오면 실행 환경이 깨진 것이다.
+            // [JA] SHA-256 はすべての JVM が必ず提供する。ここに来たら実行環境が壊れている。
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
@@ -87,6 +100,11 @@ public class PasswordResetToken {
      * <p>🔒 예전에는 요청할 때마다 새 행을 넣고 이전 것을 그대로 뒀다. 열 번 누르면
      * 24시간짜리 유효 링크가 열 개 살아 있었다. {@code used} 도 함께 되돌린다 — 되돌리지
      * 않으면 이미 쓴 행을 재사용했을 때 새 링크가 곧바로 "이미 사용됨" 이 된다.
+     *
+     * <p>[JA] 同じ行を再利用して新しいリンクを発行する — ユーザーあたりトークンが一つだけ生きている状態を保つ。
+     * 🔒 以前はリクエストのたびに新しい行を入れ、前のものをそのまま残していた。10 回押すと 24 時間有効なリンクが
+     * 10 個生きていた。{@code used} も一緒に戻す — 戻さないと、使用済みの行を再利用したとき新しいリンクがすぐに
+     * 「使用済み」になる。
      */
     public void refresh(final String rawToken, final Instant expiryDate) {
         this.token = hash(rawToken);
@@ -97,6 +115,9 @@ public class PasswordResetToken {
     /**
      * ⚠️ 해시라 해도 토큰 값을 로그에 남기지 않는다. 해시를 아는 사람은 DB 를 조회해
      * 그 행이 누구 것인지 알 수 있고, 무엇보다 여기 찍을 이유가 없다.
+     *
+     * <p>[JA] ⚠️ ハッシュであってもトークン値をログに残さない。ハッシュを知る人は DB を照会してその行が誰のものか
+     * 分かるし、何よりここに出す理由がない。
      */
     @Override
     public String toString() {
@@ -104,6 +125,7 @@ public class PasswordResetToken {
     }
 
     /** 링크를 썼다 — 한 번만 쓰인다. */
+    // [JA] リンクを使った — 一度だけ使われる。
     public void markUsed() {
         this.used = true;
     }

@@ -17,6 +17,8 @@ const ChatWrapper = styled.div`
 
 // 시각(.time)은 말풍선 끝에 붙인다(right/left: calc(100% + 6px)). 예전에는 -70px 고정이라 "오후 10:46" 처럼
 // 70px 보다 긴 시각이 말풍선을 덮었다.
+// [JA] 時刻(.time)は吹き出しの端に付ける(right/left: calc(100% + 6px))。以前は -70px 固定で、「오후 10:46」のように
+//      70px より長い時刻が吹き出しを覆っていた。
 const RightBlock = styled.div`
   flex: 1;
   text-align: right;  

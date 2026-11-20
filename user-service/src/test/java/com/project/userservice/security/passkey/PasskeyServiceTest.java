@@ -33,6 +33,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * 🔴 패스키 — 실제 서명으로 등록 · 로그인하고, 공격의 모양마다 거절되는지 본다(docs/68 §20).
  *
  * <p>저장소 · Redis 는 메모리 흉내, 서명 검증은 진짜(webauthn4j + {@link SoftwareAuthenticator}).
+ *
+ * <p>[JA] 🔴 パスキー — 実際の署名で登録・ログインし、攻撃の形ごとに拒否されるかを見る(docs/68 §20)。
+ * リポジトリ・Redis はメモリ上の模倣、署名検証は本物(webauthn4j + {@link SoftwareAuthenticator})。
  */
 @DisplayName("패스키 — 등록 · 로그인 · 거절")
 class PasskeyServiceTest {
@@ -150,6 +153,7 @@ class PasskeyServiceTest {
     @DisplayName("🔴 재전송 — 같은 서명은 두 번 통과하지 못하고, 옛 서명은 새 challenge 로도 통과하지 못한다(동기화 패스키 — 서명 횟수 0)")
     void replayRejected() throws Exception {
         // 서명 횟수가 늘 0 인 동기화 패스키 — 복제 검사가 건너뛰어지므로 재전송을 막는 것은 challenge 의 일회성뿐이다.
+        // [JA] 署名回数が常に 0 の同期パスキー — 複製検査がスキップされるので、再送を防ぐのは challenge の一回性だけである。
         SoftwareAuthenticator device = device();
         device.counterless = true;
         PasskeyCredential saved = enroll(device);

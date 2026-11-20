@@ -60,6 +60,9 @@ public class PaymentOutboxEvent implements Persistable<String> {
     /**
      * 행을 쓴 순간의 추적 문맥(전파 헤더). 릴레이가 이것으로 스팬을 되살린 채 보내 요청 → 사가가
      * 하나의 추적으로 이어진다(docs/51 §4e, OutboxTraceContext). 없으면 예전처럼 보낸다.
+     *
+     * <p>[JA] 行を書いた瞬間のトレースコンテキスト(伝播ヘッダー)。リレーがこれでスパンを復元したまま送り、リクエスト → サーガが
+     * 1 つのトレースにつながる(docs/51 §4e, OutboxTraceContext)。なければ以前どおり送る。
      */
     @Column(name = "trace_context", length = 512)
     private String traceContext;
@@ -75,6 +78,10 @@ public class PaymentOutboxEvent implements Persistable<String> {
         // 이 컬럼이 9시간 어긋났다(docs/14 B-21). 이 컬럼은 payment_outbox_event 의
         // **파티션 키**이므로(docs/09) 월 경계에서 이벤트가 잘못된 파티션에 들어간다.
         // 나머지 컬럼과 같은 시계를 쓴다. 운영에서는 JVM·DB 를 UTC 로 맞출 것.
+        // [JA] ハードコードされた Asia/Seoul のせいで同じ出来事なのに orders テーブル(JPA 監査 = JVM 既定の時計)と
+        //      このカラムが 9 時間ずれていた(docs/14 B-21)。このカラムは payment_outbox_event の
+        //      **パーティションキー** なので(docs/09)月の境界でイベントが誤ったパーティションに入る。
+        //      他のカラムと同じ時計を使う。運用では JVM・DB を UTC に揃えること。
         this.createdAt = LocalDateTime.now();
     }
 
@@ -94,6 +101,15 @@ public class PaymentOutboxEvent implements Persistable<String> {
     // "새 것"이라, Lombok 빌더나 @NoArgsConstructor 가 필드 초기화를 어떻게 다루든
     // 안전한 쪽으로 떨어진다. 불러온 엔티티는 @PostLoad 가 true 로 되돌리므로
     // 스케줄러의 상태 변경(setOutboxStatus 후 save)은 그대로 UPDATE 로 간다.
+    // [JA] ── なぜ Persistable を実装するのか ──
+    //      id をコンストラクタで UUID として **直接割り当てる**。そのため save() 時点で id がすでに null でなく、SimpleJpaRepository はそれだけを見て
+    //      「既存の行」と判断し persist() ではなく merge() を選ぶ。merge は付ける対象を探すために SELECT を先に投げる —
+    //      **新しいアウトボックスイベントを入れるたびに必ず空振りに終わる SELECT が 1 回ずつ** 出ていた。アウトボックスは注文 1 件ごとに使われる経路なのでそのまま掛け算になる。
+    //      もっと悪いのは性能ではない。merge は同じ id がすでにコミットされていれば PK 衝突の代わりに **UPDATE** で黙って通過する。
+    //      挿入が失敗してくれると期待するコードがあるなら、その期待は成り立たない。
+    //      フラグは「新しければ true」ではなく「保存されていれば true」の向きだ。既定値 false がそのまま「新しい」なので、Lombok のビルダーや
+    //      @NoArgsConstructor がフィールド初期化をどう扱っても安全な側に倒れる。読み込んだエンティティは @PostLoad が true に戻すので、
+    //      スケジューラーの状態変更(setOutboxStatus 後の save)はそのまま UPDATE になる。
     @Transient
     private boolean persisted;
 

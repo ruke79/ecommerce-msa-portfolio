@@ -51,10 +51,12 @@ public class PasskeyController {
     private final SecurityAlertProducer securityAlertProducer;
 
     /** 등록 전 "최근 로그인" 창 — 탈퇴(§16)와 같은 생각. */
+    // [JA] 登録前の「最近のログイン」ウィンドウ — 退会(§16)と同じ考え方。
     @Value("${auth.passkey.reauth-window:PT10M}")
     private Duration reauthWindow = Duration.ofMinutes(10);
 
     // ── 관리(로그인 필요) ────────────────────────────────────────────────
+    // [JA] ── 管理(ログイン必須) ──
 
     @GetMapping("/api/user/passkeys")
     ResponseEntity<?> list(@AuthenticationPrincipal UserDetails principal) {
@@ -68,6 +70,10 @@ public class PasskeyController {
     /**
      * 등록 옵션. 🔒 최근 로그인을 요구한다 — 훔친 세션(열려 있는 공용 PC · 탈취된 쿠키)으로 공격자가 <b>자기</b> 패스키를 심으면,
      * 주인이 비밀번호를 바꾸고 모든 기기를 로그아웃시켜도 그 패스키로 다시 들어온다. 비밀번호 변경이 지우지 못하는 뒷문이다.
+     *
+     * <p>[JA] 登録オプション。🔒 最近のログインを要求する — 盗んだセッション(開いたままの共用 PC・奪われた Cookie)で攻撃者が自分の
+     * パスキーを仕込むと、持ち主がパスワードを変えて全端末をログアウトさせてもそのパスキーで再び入ってくる。パスワード変更では
+     * 消せない裏口である。
      */
     @PostMapping("/api/user/passkeys/options")
     ResponseEntity<?> registrationOptions(@AuthenticationPrincipal UserDetails principal,
@@ -88,6 +94,7 @@ public class PasskeyController {
     }
 
     /** 등록 — 본문 {@code {"name": "...", "credential": PublicKeyCredential JSON}}. */
+    // [JA] 登録 — 本文 {@code {"name": "...", "credential": PublicKeyCredential JSON}}。
     @PostMapping("/api/user/passkeys")
     ResponseEntity<?> register(@AuthenticationPrincipal UserDetails principal,
             @CookieValue(name = "REFRESH", required = false) String refresh,
@@ -98,6 +105,7 @@ public class PasskeyController {
             return unauthorized();
         }
         // 옵션과 등록 사이(최대 5분)에 창이 닫혔을 수도 있다 — 저장하는 순간에 다시 본다.
+        // [JA] オプションと登録の間(最大 5 分)にウィンドウが閉じたかもしれない — 保存する瞬間にもう一度見る。
         if (!recentlyAuthenticated(user, refresh)) {
             return reauthRequired();
         }
@@ -105,6 +113,7 @@ public class PasskeyController {
             var saved = passkeyService.register(user.getUserId(), body.path("credential").toString(),
                     body.path("name").asText(""));
             // 본인이 한 일이 아니면 누군가 이 계정에 들어올 새 열쇠를 만든 것이다 — 수신 설정과 무관하게 알린다.
+            // [JA] 本人の操作でなければ、誰かがこのアカウントに入る新しい鍵を作ったということ — 受信設定に関係なく通知する。
             securityAlertProducer.publishAccountEvent(user.getUserId(), user.getEmail(),
                     SecurityAlertProducer.ALERT_PASSKEY_ADDED, null);
             return ResponseEntity.status(HttpStatus.CREATED).body(new PasskeyService.PasskeyView(saved.getPasskeyId(),
@@ -130,8 +139,10 @@ public class PasskeyController {
     }
 
     // ── 로그인(공개) ─────────────────────────────────────────────────────
+    // [JA] ── ログイン(公開) ──
 
     /** 로그인 옵션 — challenge 를 PENDING_PASSKEY(HttpOnly) 쿠키로 이 브라우저에 묶는다. */
+    // [JA] ログインオプション — challenge を PENDING_PASSKEY(HttpOnly)Cookie でこのブラウザに結び付ける。
     @PostMapping("/api/auth/public/passkey/options")
     ResponseEntity<?> loginOptions(HttpServletResponse response) {
         var issued = passkeyService.authenticationOptions();
@@ -144,6 +155,10 @@ public class PasskeyController {
      *
      * <p>통과하면 비밀번호 로그인의 끝과 같다: 기기 기록(새 기기 알림) · REFRESH 쿠키. 2FA(TOTP)와 위험 기반 확인(§19)은 거치지 않는다 —
      * 기기 소유 + 사용자 확인(UV)이 이미 2단계이고, 피싱 · 스터핑이 통하지 않는 수단이다.
+     *
+     * <p>[JA] パスキーログイン — 本文は navigator.credentials.get() の結果の JSON。
+     * 通過すればパスワードログインの終わりと同じである: 端末の記録(新しい端末の通知)・REFRESH Cookie。2FA(TOTP)とリスクベースの
+     * 確認(§19)は通らない — 端末の所有 + ユーザー確認(UV)がすでに 2 段階であり、フィッシング・スタッフィングが通じない手段である。
      */
     @PostMapping("/api/auth/public/passkey/login")
     ResponseEntity<?> login(@RequestBody String credentialJson,
@@ -156,6 +171,7 @@ public class PasskeyController {
         }
         User user = userRepository.findById(userId.get()).orElse(null);
         // 정지 · 탈퇴 계정은 패스키가 있어도 들어오지 못한다. 실패 사유는 구분하지 않는다.
+        // [JA] 停止・退会アカウントはパスキーがあっても入れない。失敗理由は区別しない。
         if (user == null || !user.canSignIn()) {
             return failed();
         }
@@ -182,6 +198,7 @@ public class PasskeyController {
     }
 
     // ── 도우미 ────────────────────────────────────────────────────────────
+    // [JA] ── ヘルパー ──
 
     private boolean recentlyAuthenticated(User user, String refresh) {
         var authTime = refreshTokenService.authTimeOf(refresh, user);
@@ -205,6 +222,7 @@ public class PasskeyController {
     }
 
     // 엔티티(User)를 돌려주는 도우미는 두지 않는다 — 컨트롤러 메서드의 반환형을 검사하는 가드(TotpSecretExposureTest)가 있다.
+    // [JA] エンティティ(User)を返すヘルパーは置かない — コントローラーメソッドの戻り型を検査するガード(TotpSecretExposureTest)がある。
     private static Long idOf(UserDetails principal) {
         return principal instanceof UserDetailsImpl impl ? impl.getId() : null;
     }

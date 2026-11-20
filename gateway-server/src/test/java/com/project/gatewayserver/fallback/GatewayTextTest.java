@@ -11,6 +11,7 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import com.project.gatewayserver.i18n.GatewayText;
 
 /** 게이트웨이가 직접 돌려주는 문구를 요청 언어로 (docs/60 §4). */
+// [JA] ゲートウェイが直接返す文言をリクエストの言語で(docs/60 §4)。
 @DisplayName("게이트웨이 문구 — Accept-Language")
 class GatewayTextTest {
 

@@ -6,9 +6,16 @@
  *
  * <p>배송지의 firstname 은 한국어 안내가 "성"이라 부르는 칸이다(AddShipping 주석) — 일본어도 姓 으로 맞춘다.
  * 그래야 "{firstname} {lastname}" 이 "山田 太郎" 순서로 보인다.
+ *
+ * <p>[JA] 日本語文言 — 領域 "order"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ja.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
+ * 配送先の firstname は韓国語の案内が「姓」と呼ぶ欄だ(AddShipping のコメント) — 日本語も 姓 に合わせる。
+ * そうすると "{firstname} {lastname}" が「山田 太郎」の順に見える。
  */
 const order = {
     // ── 결제 화면(checkout) — 배송지 ─────────────────────────────────────
+    // [JA] ── 決済画面(checkout) — 配送先 ──
     "checkout.address.section_title": "お届け先情報",
     "checkout.address.loading": "お届け先を読み込んでいます…",
     "checkout.address.editing": "お届け先を編集しています — {{firstname}} {{lastname}}、{{address}}",
@@ -55,6 +62,7 @@ const order = {
     "checkout.address.error.country_max": "国・地域は40文字以内で入力してください。",
 
     // ── 결제 화면 — 장바구니 요약 · 결제수단 · 쿠폰 ──────────────────────
+    // [JA] ── 決済画面 — カート要約・決済手段・クーポン ──
     "checkout.cart.title": "カート",
     "checkout.cart.one_item": "1点",
     "checkout.cart.items": "{{count}}点",
@@ -73,6 +81,7 @@ const order = {
     "checkout.coupon_picker.until": "{{date}}まで",
 
     // ── 결제수단(checkout/paymentMethods) — 상표(PayPal·Stripe)는 이름을 번역하지 않는다 ──
+    // [JA] ── 決済手段(checkout/paymentMethods) — 商標(PayPal・Stripe)は名前を翻訳しない ──
     "payment.method.paypal.description": "PayPalアカウントがなくても、クレジットカード・デビットカードでお支払いいただけます。",
     "payment.method.stripe.description": "カード決済です。Stripeの決済ページに移動し、完了後にこちらへ戻ります。",
     "payment.method.portone.name": "クレジットカード（KG イニシス · PortOne）",
@@ -83,6 +92,7 @@ const order = {
     "payment.method.cash.description": "ご注文後にご案内する口座へ期限内にお振り込みいただくと、確認後にお支払いが完了します。",
 
     // ── 주문 상세의 결제(order/Payment) ─────────────────────────────────
+    // [JA] ── 注文詳細の決済(order/Payment) ──
     "payment.title": "お支払い",
     "payment.paypal_loading": "読み込み中…",
     "payment.charge_amount": "お支払い金額",
@@ -112,6 +122,7 @@ const order = {
     "payment.portone.error.generic_code": "決済会社でお支払いを完了できませんでした。（エラーコード：{{code}}）",
 
     // ── 무통장입금 · 가상계좌(order/BankTransfer) ────────────────────────
+    // [JA] ── 銀行振込・仮想口座(order/BankTransfer) ──
     "bank_transfer.intro": "振込名義人を入力して、お振込のご案内をお受け取りください。ご案内の口座へ期限内にお振り込みいただくと、確認後にお支払いが完了します。",
     "bank_transfer.depositor": "振込名義人",
     "bank_transfer.depositor_placeholder": "振込名義人（通帳に記載される名前）",
@@ -135,6 +146,7 @@ const order = {
     "bank_transfer.error.cancel": "キャンセルできませんでした。",
 
     // ── 주문 상세(pages/order) ──────────────────────────────────────────
+    // [JA] ── 注文詳細(pages/order) ──
     "order.detail.title": "注文詳細",
     "order.detail.processing": "処理中…",
     "order.detail.back": "戻る",
@@ -143,16 +155,19 @@ const order = {
     "order.customer.billing_address": "請求先住所",
 
     // ── 결제 전 재고 예약(order/StockHoldNotice) ─────────────────────────
+    // [JA] ── 決済前の在庫予約(order/StockHoldNotice) ──
     "stock_hold.before": "ご注文商品の在庫を",
     "stock_hold.after": "まで確保しています。この時間内にお支払いください。",
     "stock_hold.expired": "在庫の確保期限（{{time}}）を過ぎました。お支払いは可能ですが、在庫は保証されません — お支払い後に在庫が不足した場合は、不足分を返金いたします。",
 
     // ── Stripe 복귀(order/StripeReturn) ─────────────────────────────────
+    // [JA] ── Stripe 復帰(order/StripeReturn) ──
     "stripe_return.canceled": "お支払いをキャンセルしました。もう一度お試しいただけます。",
     "stripe_return.confirming": "お支払いを確認しています…",
     "stripe_return.confirmed": "お支払いを確認しました。",
 
     // ── 구매 확정(order/ConfirmPurchaseButton) ───────────────────────────
+    // [JA] ── 購入確定(order/ConfirmPurchaseButton) ──
     "purchase_confirm.completed": "購入が確定した注文です。",
     "purchase_confirm.completed_at": "確定日時：{{time}}",
     "purchase_confirm.auto": "配送完了後、確定期限を過ぎたため自動的に確定されました。",
@@ -166,6 +181,7 @@ const order = {
     "purchase_confirm.failed": "購入の確定を処理できませんでした。",
 
     // ── 환불(order/RefundButton · ItemQtyPicker) ─────────────────────────
+    // [JA] ── 返金(order/RefundButton · ItemQtyPicker) ──
     "refund.done": "返金が完了した注文です。",
     "refund.reference": "返金参照番号：{{id}}",
     "refund.awaiting_return": "返品受付中 — 商品が到着しだい処理が完了します。",
@@ -189,6 +205,7 @@ const order = {
     "refund.qty_remaining": "（残り {{count}}）",
 
     // ── 배송 추적(delivery/DeliveryTracker) ──────────────────────────────
+    // [JA] ── 配送追跡(delivery/DeliveryTracker) ──
     "delivery.stage.ordered": "注文完了",
     "delivery.stage.shipped": "発送",
     "delivery.stage.in_transit": "配送中",

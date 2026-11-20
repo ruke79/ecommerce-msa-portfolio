@@ -14,6 +14,7 @@ import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;
 
 /** chat 도 user-service 와 같은 키 링으로 검증한다 — 전환 뒤 새 토큰(kid=k2)으로 STOMP 에 붙고, 옛 토큰도 이어진다(docs/68 §17). */
+// [JA] chat も user-service と同じ鍵リングで検証する — 切り替え後に新トークン(kid=k2)で STOMP に接続でき、旧トークンも引き続き使える(docs/68 §17)。
 @DisplayName("chat 토큰 검증 — 키 링")
 class TokenHandlerKeyRingTest {
 

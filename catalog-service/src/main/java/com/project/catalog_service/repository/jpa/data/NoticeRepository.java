@@ -22,6 +22,11 @@ public interface NoticeRepository extends JpaRepository<Notice, Long> {
      *
      * <p>{@code publishedAt} 이 null 인 공개 글은 있을 수 없지만(공개 전환 시 찍는다),
      * 과거 데이터를 대비해 {@code nulls last} 로 둔다.
+     *
+     * <p>[JA] 公開されたお知らせ — 固定が先、その次に新しい順。
+     * 並び順を Pageable の sort で受けずクエリに固定した理由: クライアントが並び替えフィールドを文字列で送ると、それがそのまま JPQL に入る入力になる。
+     * お知らせ一覧の並び順は交渉の対象ではないので、サーバーが決める。
+     * publishedAt が null の公開記事はありえないが(公開切り替え時に記録する)、過去データに備えて nulls last にしておく。
      */
     @Query("select n from Notice n where n.published = true "
             + "order by n.pinned desc, n.publishedAt desc nulls last, n.noticeId desc")

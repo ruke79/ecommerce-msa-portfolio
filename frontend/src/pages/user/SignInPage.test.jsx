@@ -11,14 +11,20 @@ jest.mock("react-router-dom", () => ({
   Link: ({ children, to }) => <a href={to}>{children}</a>,
   // 소셜 로그인 에러/2FA 단계가 리다이렉트 쿼리를 읽는다. 테스트가 값을 바꿀 수 있게
   // 가변 변수를 통해 공급한다(기본은 빈 쿼리).
+  // [JA] ソーシャルログインのエラー/2FA 段階がリダイレクトのクエリを読む。テストが値を変えられるように
+  //      可変変数を通して供給する(既定は空のクエリ)。
   useSearchParams: () => [new URLSearchParams(global.__mockSearch || "")],
   // 로그인 성공 후 "원래 가려던 곳"으로 돌아가기 위해 읽는다. ProtectedRoute 가
   // state.from 에 넣어 준다. 테스트가 값을 정할 수 있게 가변 변수로 공급한다.
+  // [JA] ログイン成功後に「元々行こうとしていた先」へ戻るために読む。ProtectedRoute が
+  //      state.from に入れてくれる。テストが値を決められるよう可変変数で供給する。
   useLocation: () => ({ state: global.__mockLocationState }),
 }));
 
 // 소셜 버튼은 자체 테스트(SocialLogin.test.jsx)가 있다. 여기서는 네트워크 호출이
 // 로그인 테스트에 끼어들지 않게 비워 둔다.
+// [JA] ソーシャルボタンには専用テスト(SocialLogin.test.jsx)がある。ここではネットワーク呼び出しが
+//      ログインテストに割り込まないよう空にしておく。
 jest.mock("components/auth/SocialLogin", () => ({
   __esModule: true,
   default: () => null,
@@ -37,6 +43,7 @@ jest.mock("react-hot-toast", () => ({
 }));
 
 // jwtDecode 는 실제 토큰을 요구하므로, 테스트가 정하는 클레임을 그대로 돌려주게 한다.
+// [JA] jwtDecode は本物のトークンを要求するので、テストが決めたクレームをそのまま返すようにする。
 const mockDecode = jest.fn();
 jest.mock("jwt-decode", () => ({ jwtDecode: (...a) => mockDecode(...a) }));
 
@@ -64,8 +71,11 @@ describe("SignInPage", () => {
   beforeEach(() => {
     // 테스트마다 초기화한다. 남아 있으면 앞 테스트가 정한 리다이렉트 대상이
     // 뒤 테스트로 새어 나간다.
+    // [JA] テストごとに初期化する。残っていると前のテストが決めたリダイレクト先が
+    //      後のテストに漏れる。
     global.__mockLocationState = undefined;
     // 2단계 화면이 수단을 묻는다(docs/24 §10) — 기본은 "인증 앱만"(물어보지 못한 것과 같다).
+    // [JA] 2 段階画面が手段を尋ねる(docs/24 §10) — 既定は「認証アプリのみ」(尋ねられなかったのと同じ)。
     jest.spyOn(api, "get").mockResolvedValue({ data: { totp: true, sms: false } });
   });
 
@@ -85,6 +95,15 @@ describe("SignInPage", () => {
     // "a@example.com" 을 치면 "aeapecm" 이 남았다.
     //
     // 사람이 천천히 타이핑하면 잘 드러나지 않아 지금까지 발견되지 않았다.
+    // [JA] このプロジェクトでフロントエンドテストが初めて捕まえたバグである。
+    //
+    //      フォーム値の出どころが二つあった — ページのローカル state と Formik。LoginInput が
+    //      `{...field}` の後に `{...props}` を展開するため、ページが渡した onChange が Formik の
+    //      onChange を上書きし、`enableReinitialize` がキー入力ごとに Formik を初期化して
+    //      制御された input の値が 1 レンダーずつずれた。その結果 **入力した文字が失われた**:
+    //      "a@example.com" と打つと "aeapecm" が残った。
+    //
+    //      人がゆっくりタイプするとあまり表に出ないので、これまで見つからなかった。
     jest.spyOn(api, "post").mockResolvedValue({ headers: { access: "t" }, data: {} });
     mockDecode.mockReturnValue({ sub: "a@example.com", is2faEnabled: false, exp: 1 });
 
@@ -99,6 +118,9 @@ describe("SignInPage", () => {
     // 예전에는 signin() 이 오류를 삼켜 undefined 를 반환했고, useMutation 은 그것을
     // **성공**으로 받았다. 그래서 onError 는 한 번도 실행되지 않았고 사용자는 서버가
     // 알려준 진짜 이유("비밀번호가 5회 틀려 잠김" 등) 대신 뭉뚱그린 문구만 봤다.
+    // [JA] 以前は signin() がエラーを握りつぶして undefined を返し、useMutation はそれを
+    //      **成功** として受け取った。そのため onError は一度も実行されず、ユーザーはサーバーが
+    //      伝えた本当の理由(「パスワードを 5 回間違えてロック」など)の代わりに大雑把な文言だけを見た。
     jest.spyOn(api, "post").mockRejectedValue({
       response: { status: 401, data: { message: "비밀번호가 올바르지 않습니다" } },
     });
@@ -122,6 +144,13 @@ describe("SignInPage", () => {
    * 그것을 그리는 블록은 한 번도 실행되지 않는 죽은 코드였다. 실패는 토스트로만 알렸는데
    * 토스트는 몇 초 뒤 사라진다. "메일 인증 링크를 눌러 주세요" 처럼 <b>읽고 행동해야 하는</b>
    * 안내가 그대로 증발했다.
+   *
+   * <p>[JA] 🐛 回帰対象: <b>失敗理由が画面に残らなかった。</b>
+   *
+   * <p>ページに `const [login_error] = useState("")` — setter がないので永遠に空文字列で、
+   * それを描くブロックは一度も実行されない死んだコードだった。失敗はトーストでしか知らせず、
+   * トーストは数秒後に消える。「メール認証リンクを押してください」のように<b>読んで行動すべき</b>
+   * 案内がそのまま消えた。
    */
   describe("실패 사유를 사유에 맞게 보여준다", () => {
     const failWith = async (rejection) => {
@@ -142,6 +171,9 @@ describe("SignInPage", () => {
     /**
      * 미인증 계정에 "비밀번호가 틀렸다"를 주면 사용자는 맞는 비밀번호를 계속 다시 치다가
      * 결국 잠긴다. 정작 필요한 것은 메일함을 여는 것이다.
+     *
+     * <p>[JA] 未認証アカウントに「パスワードが違う」と返すと、ユーザーは正しいパスワードを何度も打ち直して
+     * 結局ロックされる。本当に必要なのはメールボックスを開くことである。
      */
     it("메일 인증 안내를 그대로 보여준다", async () => {
       await failWith({
@@ -157,6 +189,9 @@ describe("SignInPage", () => {
     /**
      * 🔴 서버에 닿지도 못했는데 "비밀번호가 틀렸다"로 보이면, 사용자는 맞는 비밀번호를
      * 의심하며 계속 다시 친다.
+     *
+     * <p>[JA] 🔴 サーバーに届いてすらいないのに「パスワードが違う」と見えると、ユーザーは正しいパスワードを
+     * 疑って何度も打ち直す。
      */
     it("응답이 없으면 네트워크 문제라고 말한다 — 비밀번호를 의심하게 두지 않는다", async () => {
       await failWith({ message: "Network Error" });
@@ -184,6 +219,7 @@ describe("SignInPage", () => {
       await failWith({ response: { status: 503, data: "" } });
 
       // 인라인 안내는 남는다.
+      // [JA] インラインの案内は残る。
       expect(await screen.findByRole("alert")).toHaveTextContent(/일시적으로 응답하지 않습니다/);
       expect(mockToastError).not.toHaveBeenCalled();
     });
@@ -222,6 +258,7 @@ describe("SignInPage", () => {
   });
 
   /** 🔴 유출 비밀번호로 로그인하면 들어가되 바꾸기를 권한다(docs/57 §22) — 권고가 없으면 띄우지 않는다. */
+  // [JA] 🔴 漏えいしたパスワードでログインすると入れるが変更を勧める(docs/57 §22) — 勧告がなければ出さない。
   it("passwordAdvice=breached 면 로그인하고 비밀번호 변경을 권한다", async () => {
     jest.spyOn(api, "post").mockResolvedValue({
       headers: { access: "token-abc" },
@@ -244,6 +281,11 @@ describe("SignInPage", () => {
    *
    * /checkout 에서 세션이 끊겨 로그인하러 갔다 오면 홈으로 떨어져 장바구니부터 다시
    * 시작해야 했다. ProtectedRoute 가 막힌 위치를 `state.from` 으로 넘긴다.
+   *
+   * <p>[JA] 🐛 回帰対象: ログイン後は **無条件にホーム** だった(`navigate('/')`)。
+   *
+   * <p>/checkout でセッションが切れてログインしに行って戻ると、ホームに落ちてカートから
+   * やり直す羽目になった。ProtectedRoute がブロックされた位置を `state.from` で渡す。
    */
   describe("로그인 후 원래 가려던 곳으로 돌아간다", () => {
     const signInAnd = async (expected) => {
@@ -276,6 +318,10 @@ describe("SignInPage", () => {
      * 🔒 넘어온 값을 그냥 믿으면 열린 리다이렉트가 된다 — `/signin` 링크에 외부 주소를
      * 심어 로그인 <b>직후</b> 다른 사이트로 보낼 수 있다. 자격증명을 막 입력한 직후라
      * 피싱에 특히 잘 통하는 시점이다.
+     *
+     * <p>[JA] 🔒 渡された値をそのまま信じるとオープンリダイレクトになる — `/signin` リンクに外部アドレスを
+     * 仕込んで、ログイン<b>直後</b>に別サイトへ送れる。資格情報を入力した直後なので
+     * フィッシングに特に効きやすいタイミングである。
      */
     it("외부 주소로는 보내지 않는다", async () => {
       global.__mockLocationState = { from: { pathname: "https://evil.example.com" } };
@@ -285,14 +331,16 @@ describe("SignInPage", () => {
     it("프로토콜 상대 URL(//evil.com)도 막는다", async () => {
       // `//evil.com` 은 브라우저가 https://evil.com 으로 해석한다. `startsWith("/")` 만
       // 검사하면 그대로 통과한다.
+      // [JA] `//evil.com` はブラウザが https://evil.com と解釈する。`startsWith("/")` だけを
+      //      検査するとそのまま通ってしまう。
       global.__mockLocationState = { from: { pathname: "//evil.example.com" } };
       await signInAnd("/");
     });
 
     it.each([
-      ["/\\evil.example.com"],        // 브라우저는 /\ 를 // 로 읽는다 — react-router 6 열린 리다이렉트 권고의 우회
+      ["/\\evil.example.com"],        // 브라우저는 /\ 를 // 로 읽는다 — react-router 6 열린 리다이렉트 권고의 우회 ／ [JA] ブラウザは /\ を // と読む — react-router 6 のオープンリダイレクト勧告の回避
       ["/\\/evil.example.com"],
-      ["/\tevil.example.com"],          // 제어 문자는 브라우저가 지우고 읽는다
+      ["/\tevil.example.com"],          // 제어 문자는 브라우저가 지우고 읽는다 ／ [JA] 制御文字はブラウザが取り除いてから読む
     ])("🔴 역슬래시·제어 문자로 외부로 나가는 경로(%j)도 막는다", async (pathname) => {
       global.__mockLocationState = { from: { pathname } };
       await signInAnd("/");
@@ -312,6 +360,9 @@ describe("SignInPage", () => {
   /**
    * 🔴 2FA 는 서버가 강제한다 — 2FA 계정의 1단계 응답에는 액세스 토큰이 없다(code=two_factor_required,
    * 대기 쿠키만). 예전에는 서버가 토큰을 먼저 주고 이 화면이 들고만 있었다.
+   *
+   * <p>[JA] 🔴 2FA はサーバーが強制する — 2FA アカウントの 1 段階目の応答にはアクセストークンがない(code=two_factor_required、
+   * 待機 Cookie のみ)。以前はサーバーがトークンを先に渡し、この画面が持っているだけだった。
    */
   const twoFactorRequired = { headers: {}, data: { code: "two_factor_required", message: "Two-factor code required" } };
 
@@ -323,6 +374,7 @@ describe("SignInPage", () => {
 
     expect(await screen.findByText("2단계 인증")).toBeInTheDocument();
     // 코드 확인 전에는 절대 로그인이 확정되면 안 된다 — 확정할 토큰도 없다.
+    // [JA] コード確認の前に決してログインが確定してはならない — 確定するトークンもない。
     expect(mockLogin).not.toHaveBeenCalled();
     expect(mockDecode).not.toHaveBeenCalled();
   });
@@ -344,6 +396,7 @@ describe("SignInPage", () => {
 
       await waitFor(() => expect(post.mock.calls[1][0]).toContain("/api/auth/public/verify-2fa?code=123456"));
       // Authorization 을 싣지 않는다 — 신원은 httpOnly 대기 쿠키다.
+      // [JA] Authorization を載せない — 身元は httpOnly の待機 Cookie である。
       expect(post.mock.calls[1][2]).toBeUndefined();
       await waitFor(() => expect(window.location.href).toBe("/checkout"));
       expect(mockLogin).not.toHaveBeenCalled();
@@ -369,6 +422,8 @@ describe("SignInPage", () => {
 
   /**
    * 🔴 SMS 수단(user-service docs/24 §10) — 서버가 알려 준 수단만 보여 주고, 확인 요청에 수단을 싣는다(서버는 켜진 수단만 받는다).
+   *
+   * <p>[JA] 🔴 SMS 手段(user-service docs/24 §10) — サーバーが伝えた手段だけを見せ、確認リクエストに手段を載せる(サーバーは有効な手段だけ受け付ける)。
    */
   it("SMS 만 켠 계정: 처음부터 SMS — 받기를 누르면 마스킹 번호, 코드는 method=sms 로", async () => {
     jest.spyOn(api, "get").mockResolvedValue({ data: { totp: false, sms: true } });
@@ -386,6 +441,7 @@ describe("SignInPage", () => {
     expect(post.mock.calls[1][0]).toBe("/user-service/api/auth/public/2fa/sms");
     expect(await screen.findByText(/\+8210\*\*\*\*5678 로 인증번호를 보냈습니다/)).toBeInTheDocument();
     // 인증 앱이 없으니 앱으로 바꾸는 길도 없다
+    // [JA] 認証アプリがないので、アプリに切り替える道もない
     expect(screen.queryByRole("button", { name: "인증 앱 코드 입력하기" })).not.toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("인증 코드"), "123456");
@@ -407,6 +463,7 @@ describe("SignInPage", () => {
   });
 
   /** 🔴 복구 코드(docs/57 §22) — 서버가 "복구 코드 있음" 을 알려 주면 그 길을 보여 주고, 코드는 method=recovery 로 보낸다. */
+  // [JA] 🔴 リカバリーコード(docs/57 §22) — サーバーが「リカバリーコードあり」と伝えればその道を見せ、コードは method=recovery で送る。
   it("복구 코드가 있으면 '복구 코드 사용' — 코드는 method=recovery 로", async () => {
     jest.spyOn(api, "get").mockResolvedValue({ data: { totp: true, sms: false, recovery: true } });
     const post = jest.spyOn(api, "post")
@@ -443,6 +500,9 @@ describe("SignInPage", () => {
   /**
    * 🔴 위험 기반 로그인(docs/68 §19) — 처음 보는 기기 + 공격 신호면 서버가 토큰 대신 확인 대기 쿠키만 주고
    * code=login_check_required 로 답한다. 화면은 메일 코드 입력으로 가고, 코드는 2FA 가 아닌 엔드포인트로 간다.
+   *
+   * <p>[JA] 🔴 リスクベースのログイン(docs/68 §19) — 初めて見る端末 + 攻撃の兆候なら、サーバーはトークンの代わりに確認待ち Cookie だけを渡して
+   * code=login_check_required で応える。画面はメールコード入力へ進み、コードは 2FA ではないエンドポイントへ送られる。
    */
   it("login_check_required 면 메일 코드 단계가 뜨고 verify-login-check 로 보낸다", async () => {
     const post = jest.spyOn(api, "post")
@@ -471,6 +531,9 @@ describe("SignInPage", () => {
   /**
    * 패스키 로그인(user-service docs/68 §20) — 이메일 · 비밀번호 없이 기기 서명으로. 통과하면 서버가 REFRESH 쿠키를 심고
    * 화면은 가려던 곳으로 전체 리로드한다(2FA 와 같은 끝). 지원하지 않는 브라우저에는 버튼이 없다.
+   *
+   * <p>[JA] パスキーログイン(user-service docs/68 §20) — メール・パスワードなしで端末の署名で。通過するとサーバーが REFRESH Cookie を埋め、
+   * 画面は行こうとしていた先へフルリロードする(2FA と同じ終わり方)。対応していないブラウザにはボタンがない。
    */
   describe("패스키 로그인", () => {
     const bytes = (...values) => new Uint8Array(values).buffer;
@@ -541,6 +604,7 @@ describe("SignInPage", () => {
 
   it("소셜 2FA(?oauth2fa=1): 바로 2FA 화면이 뜨고, 코드는 public 엔드포인트로 간다", async () => {
     // 신원은 PENDING_2FA httpOnly 쿠키가 나른다 — 화면은 토큰을 만지지 않는다.
+    // [JA] 身元は PENDING_2FA httpOnly Cookie が運ぶ — 画面はトークンに触れない。
     global.__mockSearch = "oauth2fa=1";
     const post = jest.spyOn(api, "post").mockResolvedValue({ data: { message: "ok" } });
     delete window.location;
@@ -550,6 +614,7 @@ describe("SignInPage", () => {
       renderPage();
 
       // 비밀번호 단계를 건너뛰고 곧장 2FA 입력이다.
+      // [JA] パスワード段階を飛ばして、すぐに 2FA 入力になる。
       const input = await screen.findByLabelText("인증 코드");
       await userEvent.type(input, "654321");
       await userEvent.click(screen.getByRole("button", { name: /확인/ }));
@@ -557,6 +622,7 @@ describe("SignInPage", () => {
       await waitFor(() =>
         expect(post.mock.calls[0][0]).toContain("/api/auth/public/verify-2fa"));
       // 통과하면 전체 리로드 — REFRESH 쿠키로 세션이 복구된다.
+      // [JA] 通過するとフルリロード — REFRESH Cookie でセッションが復元される。
       await waitFor(() => expect(window.location.href).toBe("/"));
       expect(mockLogin).not.toHaveBeenCalled();
     } finally {
@@ -610,6 +676,7 @@ describe("SignInPage", () => {
   });
 
   /** 일본어 화면에 한국어·영어가 남지 않는다 — 문구가 전부 사전에서 온다(docs/60 §5). */
+  // [JA] 日本語画面に韓国語・英語が残らない — 文言はすべて辞書から来る(docs/60 §5)。
   it("일본어로 바꾸면 화면 문구와 검증 메시지가 일본어다", async () => {
     renderPage("ja");
 

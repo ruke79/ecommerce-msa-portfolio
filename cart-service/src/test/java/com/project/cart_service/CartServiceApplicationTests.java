@@ -22,6 +22,11 @@ import org.testcontainers.utility.DockerImageName;
  * <p>이 저장소에서 가장 비싼 버그들은 하나같이 <b>기동해야만 드러나는</b> 종류였다
  * (docs/14 B-1~B-14, docs/16). 예전에는 인프라가 없어 항상 실패하는 테스트라 꺼 둘 수밖에
  * 없었지만, 이제 컨테이너를 붙여 그 검증을 빌드가 대신 한다.
+ *
+ * <p>[JA] cart-service の起動検証 — 実際の PostgreSQL/Redis コンテナの上で。
+ *      このリポジトリで最も高くついたバグはどれも <b>起動して初めて露見する</b> 種類だった
+ *      (docs/14 B-1~B-14, docs/16)。以前はインフラがなく常に失敗するテストだったので切っておくしか
+ *      なかったが、今はコンテナを付けてその検証をビルドが代わりに行う。
  */
 @Tag("containers")
 @Testcontainers
@@ -38,6 +43,8 @@ class CartServiceApplicationTests {
 
 	// 빈 문자열 비밀번호는 Redisson 이 AUTH 를 보내다 실패하는 함정이라(docs/14 B-6)
 	// 운영 설정과 같은 형태로 비밀번호를 준다.
+	// [JA] 空文字列のパスワードは Redisson が AUTH を送って失敗する罠なので(docs/14 B-6)
+	//      運用設定と同じ形でパスワードを与える。
 	@Container
 	static GenericContainer<?> redis =
 			new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
@@ -59,6 +66,7 @@ class CartServiceApplicationTests {
 		registry.add("management.tracing.enabled", () -> false);
 		registry.add("server.ssl.enabled", () -> false);
 		// 운영(application-local.yml)처럼 파티션 잡을 켠다 — 첫 점검은 1시간 뒤라 이 테스트 동안 DB 를 건드리지 않는다.
+		// [JA] 運用(application-local.yml)と同様にパーティションジョブを有効にする — 最初の点検は 1 時間後なのでこのテストの間 DB に触れない。
 		registry.add("outbox.partitions.tables", () -> "cart.outbox_event");
 		registry.add("outbox.partitions.initial-delay", () -> "PT1H");
 	}
@@ -90,6 +98,8 @@ class CartServiceApplicationTests {
 	void schemaTablesAreCreated() throws Exception {
 		// chat·coupon 은 @Table(schema=...) 를 쓰면서 스키마를 만드는 곳이 없어, DDL 이 WARN 만
 		// 남기고 실패한 채 "떠 있는" 상태였다(docs/14 B-13). 테이블 존재를 명시적으로 못 박는다.
+		// [JA] chat・coupon は @Table(schema=...) を使いながらスキーマを作る場所がなく、DDL が WARN だけ
+		//      残して失敗したまま「起動している」状態だった(docs/14 B-13)。テーブルの存在を明示的に確定させる。
 		try (var conn = java.sql.DriverManager.getConnection(
 						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
 				var st = conn.createStatement();
@@ -120,7 +130,7 @@ class CartServiceApplicationTests {
 				cartRepository.insertIfAbsent(1L, userId);
 				firstInserted.countDown();
 				try {
-					Thread.sleep(500);   // 커밋 전 — B 의 INSERT 가 이 행에서 기다린다
+					Thread.sleep(500);   // 커밋 전 — B 의 INSERT 가 이 행에서 기다린다 ／ [JA] コミット前 — B の INSERT がこの行で待つ
 				} catch (InterruptedException e) {
 					Thread.currentThread().interrupt();
 				}
@@ -148,7 +158,7 @@ class CartServiceApplicationTests {
 
 		tx.executeWithoutResult(s -> {
 			cartRepository.markProcessed("cart-empty-9002");
-			s.setRollbackOnly();   // 비우기가 실패해 롤백됐다 — 다음 재전달이 다시 처리해야 한다
+			s.setRollbackOnly();   // 비우기가 실패해 롤백됐다 — 다음 재전달이 다시 처리해야 한다 ／ [JA] 空にするのが失敗してロールバックされた — 次の再配信が再び処理しなければならない
 		});
 		assertThat(tx.<Integer>execute(s -> cartRepository.markProcessed("cart-empty-9002")).intValue()).isEqualTo(1);
 	}

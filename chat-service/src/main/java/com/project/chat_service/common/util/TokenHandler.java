@@ -44,6 +44,7 @@ public class TokenHandler {
     }
 
     /** 기동 때 한 번 — 키 설정이 틀렸으면 뜨지 않는다. */
+    // [JA] 起動時に一度 — 鍵設定が誤っていれば起動しない。
     @jakarta.annotation.PostConstruct
     void checkKeyRing() {
         ring();
@@ -53,12 +54,14 @@ public class TokenHandler {
     
 
     /** 이미 검증된 토큰의 발급 시각(epoch 초). {@code iat} 가 없으면 0 — 로그인 해제 표시가 있으면 거절된다(docs/68 §9). */
+    // [JA] 検証済みトークンの発行時刻(epoch 秒)。{@code iat} がなければ 0 — ログアウト表示があれば拒否される(docs/68 §9)。
     public long getIssuedAtEpochSec(String token) {
         Date iat = JWT.decode(token).getIssuedAt();
         return iat == null ? 0 : iat.getTime() / 1000;
     }
 
     /** 이미 검증된 토큰의 만료 시각(epoch ms) — 채팅 연결은 이때 닫힌다(docs/68 §9). */
+    // [JA] 検証済みトークンの有効期限(epoch ms) — チャット接続はこのときに閉じられる(docs/68 §9)。
     public long getExpiresAtEpochMs(String token) {
         return JWT.decode(token).getExpiresAt().getTime();
     }
@@ -66,6 +69,7 @@ public class TokenHandler {
     public boolean verifyToken(String token) {
         try {
             // 토큰 머리의 kid 로 키를 고른다 — 없으면 옛 토큰(legacy), 모르는 kid 는 거절(docs/68 §17).
+            // [JA] トークンヘッダの kid で鍵を選ぶ — なければ旧トークン(legacy)、未知の kid は拒否(docs/68 §17)。
             byte[] key = ring().verificationKey(JWT.decode(token).getKeyId()).orElse(null);
             if (key == null) {
                 log.info("알 수 없는 서명 키 — 거절");
@@ -74,6 +78,7 @@ public class TokenHandler {
             JWTVerifier verifier = JWT.require(Algorithm.HMAC256(key)).build();
             DecodedJWT decodedJWT = verifier.verify(token);
             // 🔒 액세스 토큰만 — 리프레시 토큰(같은 키로 서명, 14일)으로 STOMP·API 에 붙지 못하게(user-service JwtUtils.TOKEN_TYPE_CLAIM).
+            // [JA] 🔒 アクセストークンのみ — リフレッシュトークン(同じ鍵で署名、14 日)で STOMP・API に接続できないように(user-service JwtUtils.TOKEN_TYPE_CLAIM)。
             if (!"access".equals(decodedJWT.getClaim("tokenType").asString())) {
                 log.info("액세스 토큰이 아니다 — 거절");
                 return false;
@@ -103,6 +108,11 @@ public class TokenHandler {
      * 쓰는 곳이 없어 지웠다 — 채팅의 신원은 uid 다, docs/48 §6-⑥.)
      *
      * @return uid 클레임. 없거나 숫자가 아니면 null.
+     *
+     * <p>[JA] 検証済みトークンの {@code uid} クレーム(user-service の userId)。
+     * <p>chat-service の {@code chat_member.member_id} は user-service の userId をそのまま使う(ChatMember のコメント)。会員行がなく即席で作る必要があるときにその値が必要になる。
+     * <p>検証した後にだけ読む — 検証していない {@code JWT.decode} の結果を信頼用の識別子として使わないためである。(以前の subject(email) 判定 {@code resolveVerifiedSubject}・検証なしで subject を取り出していた {@code getUid} は使う箇所がなく削除した — チャットの身元は uid である、docs/48 §6-⑥。)
+     * 戻り値: uid クレーム。ない、または数値でなければ null。
      */
     public Long resolveVerifiedUserId(String authorizationHeader) {
         String token = extractBearerToken(authorizationHeader);
@@ -120,6 +130,10 @@ public class TokenHandler {
      * 그쪽은 HTTP 헤더 모양을 기대한다. 호출 전에 {@link #verifyToken} 을 통과시킬 것.
      *
      * @return uid 클레임. 없거나 숫자가 아니면 null.
+     *
+     * <p>[JA] 検証済みの<b>生トークン</b>の {@code uid} クレーム。
+     * <p>STOMP CONNECT は {@code Authorization} ネイティブヘッダにトークンをそのまま載せる("Bearer " 接頭辞がない)。そのため {@link #resolveVerifiedUserId} は使えない — そちらは HTTP ヘッダの形を期待する。呼び出し前に {@link #verifyToken} を通すこと。
+     * 戻り値: uid クレーム。ない、または数値でなければ null。
      */
     public Long getUserId(String token) {
         try {
@@ -135,6 +149,9 @@ public class TokenHandler {
      * 호출 전에 {@link #verifyToken} 을 통과시킬 것.
      *
      * @return 없으면 null
+     *
+     * <p>[JA] 検証済み生トークンの {@code role} クレーム(例: {@code ROLE_SUPPORT})。相談デスク権限(docs/58)に使う。呼び出し前に {@link #verifyToken} を通すこと。
+     * 戻り値: なければ null
      */
     public String getRole(String token) {
         try {
@@ -145,6 +162,7 @@ public class TokenHandler {
     }
 
     /** "Bearer {token}" 헤더를 검증하고 {@code role} 클레임을 돌려준다. 검증에 실패하면 401. */
+    // [JA] "Bearer {token}" ヘッダを検証し {@code role} クレームを返す。検証に失敗すれば 401。
     public String resolveVerifiedRole(String authorizationHeader) {
         String token = extractBearerToken(authorizationHeader);
         if (token == null || !verifyToken(token)) {

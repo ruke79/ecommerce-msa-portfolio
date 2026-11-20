@@ -8,6 +8,11 @@ package com.project.common.constants;
  * 일본어 화면에도 영어가 떴고, 서버 문구 번역(ClientText)은 한국어 원문만 찾으므로 이 문구들은 번역되지도 않았다. 이제
  * 한국어로 적고 번역은 common 카탈로그(i18n/client-text.ja.txt)에 둔다 — 이 파일의 한국어는 ClientTextCoverageTest 가
  * 전부 번역이 있는지 본다.
+ *
+ * <p>[JA] 複数のサービスが応答に載せる共通文言 — <b>客の画面にそのまま表示される。</b>
+ * 🐛 以前はすべて英語の診断文言だった("Review delete failed", "User not found", "Serach failed"…)。韓国語画面にも日本語画面にも英語が出て、
+ * サーバー文言の翻訳(ClientText)は韓国語原文しか探さないのでこれらは翻訳もされなかった。今は韓国語で書き、翻訳は common のカタログ
+ * (i18n/client-text.ja.txt)に置く — このファイルの韓国語はすべて翻訳があるかを ClientTextCoverageTest が確認する。
  */
 public final class StatusMessages {
 
@@ -29,6 +34,11 @@ public final class StatusMessages {
      *
      * <p>미인증 계정과 인증된 계정을 <b>구분하지 않는다</b> — 구분해서 답하면 그것이 계정
      * 상태를 알려주는 도구가 된다. 대신 두 경우 모두에 도움이 되는 안내를 함께 준다.
+     *
+     * <p>[JA] 登録の重複 — <b>画面にそのまま出る文言</b>である。
+     * 以前は上の {@code USER_ID_EXISTS}("The same user Id exists")を 200 とともに送っていた。200 なのでフロントは成功として扱い、この文言は
+     * 誰も見なかった。今は 409 で出て実際に利用者に見えるので、英語の診断文言ではなく<b>次に何をすべきか</b>を書く。
+     * 未認証アカウントと認証済みアカウントを<b>区別しない</b> — 区別して答えるとそれがアカウント状態を知らせる道具になる。代わりに両方の場合に役立つ案内を併せて出す。
      */
     public static final String EMAIL_ALREADY_REGISTERED =
             "이미 가입된 이메일입니다. 로그인해 주세요. 가입 확인 메일을 받지 못했다면 확인 메일 재발송을 이용해 주세요.";
@@ -48,7 +58,7 @@ public final class StatusMessages {
     public static final String COUPON_IS_EXISTED = "이미 있는 쿠폰입니다.";
     
     public static final String PRODUCT_IS_EMPTY = "상품을 찾을 수 없습니다.";
-    /** 장바구니에 담을 수 없다 — 관리자가 품절로 내렸거나, 고른 스타일·사이즈가 없다. */
+    /** 장바구니에 담을 수 없다 — 관리자가 품절로 내렸거나, 고른 스타일·사이즈가 없다. ／ [JA] カートに入れられない — 管理者が品切れにしたか、選んだスタイル · サイズがない。 */
     public static final String PRODUCT_NOT_AVAILABLE = "품절되었거나 판매하지 않는 상품입니다.";
 
     public static final String REVIEW_REGISTRATION_FAILED = "리뷰를 등록하지 못했습니다. 잠시 후 다시 시도해 주세요.";
@@ -71,11 +81,11 @@ public final class StatusMessages {
     public static final String COUPON_NOT_FOUND = "쿠폰을 찾을 수 없습니다.";
 
     public static final String REVIEW_LOAD_FAILED = "리뷰를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
-    /** 지울 내 리뷰가 없다 — 예전에는 성공(200)으로 답해 화면이 "삭제되었습니다" 를 띄웠다. */
+    /** 지울 내 리뷰가 없다 — 예전에는 성공(200)으로 답해 화면이 "삭제되었습니다" 를 띄웠다. ／ [JA] 削除する自分のレビューがない — 以前は成功(200)で答え、画面が「削除されました」を出していた。 */
     public static final String REVIEW_NOT_FOUND = "삭제할 리뷰가 없습니다.";
     public static final String LOGIN_REQUIRED = "로그인이 필요합니다.";
-    /** 받은(배송 완료·구매 확정) 상품만 리뷰를 쓸 수 있다(docs/57 §13). */
+    /** 받은(배송 완료·구매 확정) 상품만 리뷰를 쓸 수 있다(docs/57 §13). ／ [JA] 受け取った(配送完了 · 購入確定)商品だけレビューを書ける(docs/57 §13)。 */
     public static final String REVIEW_PURCHASE_REQUIRED = "받으신 상품만 리뷰를 작성할 수 있습니다.";
-    /** 구매 여부를 묻는 order-service 에 닿지 못했다 — 모르면 받지 않는다. */
+    /** 구매 여부를 묻는 order-service 에 닿지 못했다 — 모르면 받지 않는다. ／ [JA] 購入有無を問い合わせる order-service に届かなかった — 分からなければ受け付けない。 */
     public static final String REVIEW_PURCHASE_CHECK_UNAVAILABLE = "구매 내역을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }

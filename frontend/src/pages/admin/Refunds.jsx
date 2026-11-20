@@ -13,6 +13,9 @@ import { orderStatusLabel } from "util/statusLabel";
  * 화면의 상태 필터. 서버의 OrderStatus 이름 그대로 보낸다 — 번역하지 않는다.
  * AWAITING_RETURN 만 상태가 아니라 플래그다(서버 OrderDataService.AWAITING_RETURN_FILTER) —
  * 환불됐는데 물건이 아직 안 돌아온 주문.
+ *
+ * <p>[JA] 画面の状態フィルタ。サーバーの OrderStatus の名前のまま送る — 翻訳しない。AWAITING_RETURN だけは状態ではなくフラグである
+ * (サーバー OrderDataService.AWAITING_RETURN_FILTER)— 返金済みなのに品物がまだ戻っていない注文。
  */
 const STATUS_OPTIONS = [
     { value: "", labelKey: "admin.refunds.status.all" },
@@ -33,6 +36,9 @@ const formatDate = (value) => formatDateTime(value, "-");
 /**
  * 사전 문구의 {{amount}} 자리에 굵은 금액을 끼운다. 어순이 언어마다 달라 문구를 앞뒤로 쪼개 두지 않고,
  * 치환하지 않은 자리표시자를 기준으로 나눈다(interpolate 는 값이 없는 자리를 그대로 남긴다).
+ *
+ * <p>[JA] 辞書文言の {{amount}} の位置に太字の金額を差し込む。語順が言語ごとに違うので文言を前後に分けておかず、
+ * 置換していないプレースホルダーを基準に分割する(interpolate は値のない位置をそのまま残す)。
  */
 const withAmount = (text, amount) => {
     const [before, after = ""] = text.split("{{amount}}");
@@ -53,6 +59,12 @@ const withAmount = (text, amount) => {
  * <p><b>반품 입고</b>도 여기서 한다. 발송된 뒤 환불된 주문은 물건이 돌아와야 재고가
  * 돌아온다 — 그 행에 "반품 입고" 가 붙고, 파손 등으로 다시 팔 수 없으면 재고 복원을 끄고
  * 입고만 기록한다. 아직 환불되지 않은 배송 완료 주문에도 붙는다(물건이 먼저 돌아온 경우).
+ *
+ * <p>[JA] 管理者返金。顧客画面の返金ボタン(RefundButton)と<b>同じエンドポイント</b>を使う。違いはサーバーが {@code User-Role} で管理者だと知り
+ * 二つの規則を緩めることだけである — 他人の注文でも、<b>発送後でも</b>返金される。だからここでは決済済みのすべての状態にボタンがあり、
+ * 代わりに確定前にもう一度確認する。返金後は一覧を<b>サーバーから読み直す。</b>画面の行だけを変えると、サーバーが拒否したのに画面は返金済みに
+ * 見える場合が生じる。<b>返品入庫</b>もここで行う。発送後に返金された注文は品物が戻ってきて初めて在庫が戻る — その行に「返品入庫」が付き、
+ * 破損などで再販できなければ在庫復元を切って入庫だけを記録する。まだ返金されていない配達完了の注文にも付く(品物が先に戻った場合)。
  */
 const Refunds = () => {
     const { t } = useTranslation();
@@ -65,10 +77,10 @@ const Refunds = () => {
     const [busy, setBusy] = useState(false);
     const [confirming, setConfirming] = useState(null);   // trackingId
     const [reason, setReason] = useState("");
-    const [receiving, setReceiving] = useState(null);     // trackingId — 반품 입고 확인 중
+    const [receiving, setReceiving] = useState(null);     // trackingId — 반품 입고 확인 중 ／ [JA] trackingId — 返品入庫を確認中
     const [restock, setRestock] = useState(true);
-    const [picked, setPicked] = useState({});             // 열려 있는 패널의 품목별 수량
-    const [confirmingDeposit, setConfirmingDeposit] = useState(null);   // trackingId — 입금 확인 중
+    const [picked, setPicked] = useState({});             // 열려 있는 패널의 품목별 수량 ／ [JA] 開いているパネルの品目別数量
+    const [confirmingDeposit, setConfirmingDeposit] = useState(null);   // trackingId — 입금 확인 중 ／ [JA] trackingId — 入金確認中
     const [depositReference, setDepositReference] = useState("");
 
     /**
@@ -76,6 +88,9 @@ const Refunds = () => {
      *
      * <p>shortQty(재고 초과 판매로 배정되지 못한 수, docs/53 §7)는 <b>나간 적이 없으므로</b> 돌아올 수도 없다 — 서버의
      * OrderProduct.remainingToReturn 과 같은 식이다. 예전에는 이 화면이 그 수까지 입고할 수 있다고 보였다.
+     *
+     * <p>[JA] 品目別の「残り数量」— 返金パネルは qty − refundedQty、入庫パネルは qty − shortQty − returnedQty。shortQty(在庫超過販売で割り当てられなかった数、
+     * docs/53 §7)は<b>出荷されたことがないので</b>戻ってくることもない — サーバーの OrderProduct.remainingToReturn と同じ式である。以前はこの画面がその数まで入庫できるように見えていた。
      */
     const refundLines = (row) => (row.items ?? []).map((i) => ({
         id: i.orderProductId, name: i.name, size: i.size,
@@ -147,7 +162,9 @@ const Refunds = () => {
     };
 
     /** 아직 환불되지 않은 수량이 있는 결제된 주문. 품목 정보가 없는 옛 주문은 상태로만 본다. */
+    // [JA] まだ返金されていない数量がある決済済みの注文。品目情報のない古い注文は状態だけで判断する。
     /** 🔒 입금 확인 — 카드 결제 확인과 같은 무게다. 금액은 보내지 않는다. */
+    // [JA] 🔒 入金確認 — カード決済の確認と同じ重みである。金額は送らない。
     const confirmDeposit = async (row) => {
         if (busy) return;
         setBusy(true);
@@ -167,6 +184,9 @@ const Refunds = () => {
     /**
      * 입금 대기인데 아직 확인되지 않은 **무통장입금** 주문(확인되면 providerPaymentId 가 붙는다).
      * 포트원 가상계좌는 포트원 웹훅이 확인한다 — 사람이 확인하면 PG 의 진실과 갈린다.
+     *
+     * <p>[JA] 入金待ちでまだ確認されていない**銀行振込**の注文(確認されると providerPaymentId が付く)。
+     * ポートワンのバーチャル口座はポートワンの Webhook が確認する — 人が確認すると PG の真実と食い違う。
      */
     const canConfirmDeposit = (row) =>
         isAwaitingDeposit(row.orderStatus) && !row.providerPaymentId && row.paymentMethod === "cash";
@@ -174,6 +194,7 @@ const Refunds = () => {
     const canRefund = (row) => PAID_STATUSES.has(String(row.orderStatus ?? "").toUpperCase())
         && (!row.items || row.items.length === 0 || refundLines(row).some((l) => l.max > 0));
     /** 물건이 밖에 있고 아직 안 돌아온 수량이 있는 주문 — 서버의 receiveReturn 규칙과 같다. */
+    // [JA] 品物が外にあり、まだ戻っていない数量がある注文 — サーバーの receiveReturn 規則と同じ。
     const canReceive = (row) => {
         const remaining = row.items && row.items.length > 0
             ? returnLines(row).some((l) => l.max > 0)
@@ -181,6 +202,7 @@ const Refunds = () => {
         return remaining && (row.awaitingReturn || isShipped(row.orderStatus));
     };
     /** 재고 초과 판매로 배정되지 못한 수의 합 — 있으면 송장 수량을 줄여야 한다(docs/53 §7). */
+    // [JA] 在庫超過販売で割り当てられなかった数の合計 — あれば送り状の数量を減らさなければならない(docs/53 §7)。
     const shortTotal = (row) => (row.items ?? []).reduce((n, i) => n + (i.shortQty ?? 0), 0);
 
     const itemSummary = (row) => (row.items ?? []).map((i) => {
@@ -268,6 +290,8 @@ const Refunds = () => {
                                 {shortTotal(row) > 0 && (
                                     // 배송은 결제 직후 주문을 읽어 만들어진다 — 부족 기록보다 먼저였다면 배송 수량이 원래 수량
                                     // 그대로다. 송장을 낼 때 이 수만큼 빼야 한다(docs/53 §7 남은 한계).
+                                    // [JA] 配送は決済直後に注文を読んで作られる — 不足の記録より先だったなら配送数量は元の数量
+                                    //      のままである。送り状を出すときにこの数だけ引かなければならない(docs/53 §7 残る限界)。
                                     <div role="status" className="mt-1 rounded bg-red-50 px-2 py-1 text-xs font-semibold text-red-700">
                                         {t("admin.refunds.short_warning", { count: shortTotal(row) })}
                                     </div>

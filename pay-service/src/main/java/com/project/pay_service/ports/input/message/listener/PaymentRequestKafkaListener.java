@@ -70,6 +70,7 @@ public class PaymentRequestKafkaListener {
                             paymentRequestMessageListener.cancelPayment(paymentRequest);
                         } else {
                             // 🐛 예전에는 로그 없이 버렸다(PY7) — 상태가 없거나(역직렬화 실패 · 옛 프로듀서) 모르는 값이면 남긴다.
+                            // [JA] 🐛 以前はログなしで捨てていた(PY7) — 状態がない(デシリアライズ失敗・旧プロデューサー)か未知の値なら記録する。
                             log.warn("모르는 결제 요청 상태 — 처리하지 않는다. orderId={} status={}",
                                     paymentRequest == null ? null : paymentRequest.getOrderId(),
                                     paymentRequest == null ? null : paymentRequest.getPaymentStatus());
@@ -118,6 +119,7 @@ public class PaymentRequestKafkaListener {
                                     " PaymentRequestKafkaListener: " + e.getMessage(), e), i);
                 } catch (PaymentNotFoundException e) {
                     // 의도된 NO-OP — 취소할 결제가 없다(이미 처리됐거나 결제 전). 오류가 아니므로 ERROR 로 두지 않는다(경보 잡음).
+                    // [JA] 意図した NO-OP — 取り消す決済がない(処理済みか決済前)。エラーではないので ERROR にしない(アラートのノイズ)。
                     log.info("No payment found for order id: {} — nothing to cancel", paymentRequest.getOrderId());
                 } catch (Exception e) {
                     throw new org.springframework.kafka.listener.BatchListenerFailedException(
@@ -129,6 +131,7 @@ public class PaymentRequestKafkaListener {
     }
 
     /** 결제 행의 유니크(order_id, tracking_id) 위반인가 — 같은 결제 요청을 동시에 처리한 늦은 쪽. */
+    // [JA] 決済行のユニーク(order_id, tracking_id)違反か — 同じ決済リクエストを同時に処理した遅い側。
     static boolean isDuplicatePayment(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             String m = t.getMessage();

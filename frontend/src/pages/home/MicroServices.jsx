@@ -20,11 +20,18 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>MUI 를 걷어내고 나머지 화면과 같은 Tailwind 로 맞췄다. 홈 최상단이라 눈에 띄되
  * 캐러셀을 가리지 않아야 해서, 버튼이 아니라 얇은 바로가기 줄로 둔다.
+ *
+ * <p>[JA] ホーム上部のサービスショートカット。以前は MUI `Grid` の中に `<Item href='chat'>Chat</Item>` ボタン一つだった。三つの問題があった:
+ * <b>`href` なので全体の再読み込みが起きる。</b>SPA なのにリンク一つがアプリを丸ごと受け直す。さらに `href='chat'` は<b>相対パス</b>なので `/` では `/chat` に
+ * なるが、`/browse` で同じコンポーネントを使うと `/browse/chat` になる。<b>`Grid size={8}`</b> — 12 欄のうち 8 欄をボタン一つが占め、灰色のボタンが画面の
+ * 横幅の 2/3 を覆ったままカルーセルの上に浮いていた。ログイン状態を見ない。チャットはログインが必要なのに、押して入ると弾かれる。
+ * MUI を取り除き、他の画面と同じ Tailwind に揃えた。ホームの最上部なので目に付きつつカルーセルを隠してはならず、ボタンではなく細いショートカット行にする。
  */
 const SERVICES = [
     {
         to: "/support",
         // 이름표는 사전 키 — 그릴 때 지금 언어로 번역한다.
+        // [JA] 名札は辞書キー — 描画時に今の言語へ翻訳する。
         labelKey: "footer.link.support",
         descriptionKey: "home.services.chat_desc",
         Icon: ChatBubbleLeftRightIcon,
@@ -53,6 +60,8 @@ const MicroServices = () => {
                     key={to}
                     // 로그인이 필요한 곳은 로그인 화면으로 보내되, 어디로 가려 했는지
                     // 넘긴다 — 로그인하면 여기로 돌아온다(SignInPage 의 redirectTo).
+                    // [JA] ログインが必要な場所はログイン画面へ送るが、どこへ行こうとしていたかを
+                    //      渡す — ログインするとここへ戻ってくる(SignInPage の redirectTo)。
                     to={requiresAuth && !isAuthenticated ? "/signin" : to}
                     state={
                         requiresAuth && !isAuthenticated

@@ -83,8 +83,9 @@ import lombok.extern.slf4j.Slf4j;
 public class PasskeyService {
 
     static final String REG_KEY = "passkey:reg:";    // + userId → base64url(challenge) + ":" + userHandle
-    static final String AUTH_KEY = "passkey:auth:";  // + sha256(대기 값) → base64url(challenge)
+    static final String AUTH_KEY = "passkey:auth:";  // + sha256(대기 값) → base64url(challenge) ／ [JA] + sha256(待機値) → base64url(challenge)
     /** 로그인 challenge 를 이 브라우저에 묶는 대기 쿠키(HttpOnly). 응답 본문에는 싣지 않는다. */
+    // [JA] ログイン challenge をこのブラウザに結び付ける待機 Cookie(HttpOnly)。応答本文には載せない。
     public static final String COOKIE = "PENDING_PASSKEY";
     public static final Duration CHALLENGE_TTL = Duration.ofMinutes(5);
     static final int MAX_PER_USER = 10;
@@ -118,6 +119,7 @@ public class PasskeyService {
         this.meters = meters;
         URI front = URI.create(frontendUrl.trim());
         // RP ID 는 화면이 열리는 호스트 — 브라우저는 그 호스트(또는 상위 도메인)가 아니면 패스키를 만들지도 쓰지도 않는다.
+        // [JA] RP ID は画面が開くホスト — ブラウザはそのホスト(または上位ドメイン)でなければパスキーを作りも使いもしない。
         this.rpId = rpId == null || rpId.isBlank() ? front.getHost() : rpId.trim();
         this.origins = (origins == null || origins.isBlank() ? List.of(originOf(front)) : Arrays.asList(origins.split(",")))
                 .stream().map(String::trim).filter(s -> !s.isEmpty()).map(Origin::create)
@@ -130,8 +132,10 @@ public class PasskeyService {
     }
 
     // ── 등록 ──────────────────────────────────────────────────────────────
+    // [JA] ── 登録 ──
 
     /** 등록 옵션 — navigator.credentials.create() 에 그대로 넘긴다(바이트는 base64url). */
+    // [JA] 登録オプション — navigator.credentials.create() にそのまま渡す(バイトは base64url)。
     public Map<String, Object> registrationOptions(User user) {
         Long userId = user.getUserId();
         List<PasskeyCredential> existing = repository.findByUserIdOrderByCreatedAtAsc(userId);
@@ -139,6 +143,7 @@ public class PasskeyService {
             throw new PasskeyException("패스키는 " + MAX_PER_USER + "개까지 등록할 수 있습니다. 쓰지 않는 패스키를 먼저 삭제해 주세요.");
         }
         // 한 사람의 패스키는 같은 user handle 을 쓴다 — 기기가 같은 계정으로 알아보고 덮어쓴다(같은 기기에 두 번 생기지 않게).
+        // [JA] 一人のパスキーは同じ user handle を使う — 端末が同じアカウントとして認識して上書きする(同じ端末に二つできないように)。
         String handle = existing.isEmpty() ? B64U.encodeToString(randomBytes(32)) : existing.get(0).getUserHandle();
         String challenge = B64U.encodeToString(randomBytes(32));
         redis.opsForValue().set(REG_KEY + userId, challenge + ":" + handle, CHALLENGE_TTL);
@@ -151,7 +156,7 @@ public class PasskeyService {
                 "displayName", user.getName() == null || user.getName().isBlank() ? label : user.getName()));
         options.put("pubKeyCredParams", List.of(
                 Map.of("type", "public-key", "alg", -7),      // ES256
-                Map.of("type", "public-key", "alg", -257)));  // RS256(일부 Windows Hello)
+                Map.of("type", "public-key", "alg", -257)));  // RS256(일부 Windows Hello) ／ [JA] RS256(一部の Windows Hello)
         options.put("timeout", CHALLENGE_TTL.toMillis());
         options.put("attestation", "none");
         options.put("authenticatorSelection", Map.of(
@@ -167,7 +172,10 @@ public class PasskeyService {
     /**
      * 등록을 마친다 — 브라우저가 돌려준 응답(PublicKeyCredential 의 JSON)을 검증하고 공개 키를 저장한다.
      *
+     * <p>[JA] 登録を終える — ブラウザが返した応答(PublicKeyCredential の JSON)を検証して公開鍵を保存する。
+     *
      * @throws PasskeyException 시간이 지났다 · 검증 실패 · 이미 등록됨 · 개수 초과
+     *     [JA] 時間切れ・検証失敗・登録済み・個数超過
      */
     @Transactional
     public PasskeyCredential register(Long userId, String responseJson, String name) {
@@ -187,6 +195,7 @@ public class PasskeyService {
                     new RegistrationParameters(serverProperty(challenge), ALGORITHMS, true, true));
         } catch (RuntimeException e) {
             // 출처 · RP ID · challenge · 서명 · UV 중 하나가 맞지 않다. 원인은 운영 로그에만(응답에는 한 가지 문구).
+            // [JA] 出所・RP ID・challenge・署名・UV のどれかが合わない。原因は運用ログにだけ(応答は一つの文言)。
             meters.counter(METRIC, "event", "register_rejected").increment();
             log.warn("패스키 등록 검증 실패 — userId={} ({})", userId, e.getClass().getSimpleName());
             throw new PasskeyException("패스키를 확인하지 못했습니다. 다시 시도해 주세요.");
@@ -227,8 +236,10 @@ public class PasskeyService {
     }
 
     // ── 로그인 ────────────────────────────────────────────────────────────
+    // [JA] ── ログイン ──
 
     /** 로그인 옵션과, 그 challenge 를 이 브라우저에 묶을 대기 값(쿠키로만 보낸다). */
+    // [JA] ログインオプションと、その challenge をこのブラウザに結び付ける待機値(Cookie でだけ送る)。
     public record LoginOptions(String pending, Map<String, Object> options) {
     }
 
@@ -242,6 +253,7 @@ public class PasskeyService {
         options.put("timeout", CHALLENGE_TTL.toMillis());
         options.put("userVerification", "required");
         // 비워 둔다 — 기기가 이 사이트의 계정 목록을 보여 준다(이메일을 먼저 묻지 않는다).
+        // [JA] 空にしておく — 端末がこのサイトのアカウント一覧を見せる(メールアドレスを先に尋ねない)。
         options.put("allowCredentials", List.of());
         return new LoginOptions(pending, options);
     }
@@ -249,8 +261,12 @@ public class PasskeyService {
     /**
      * 로그인 서명을 검증한다.
      *
+     * <p>[JA] ログイン署名を検証する。
+     *
      * @return 통과하면 사용자 id. 시간 초과 · 모르는 패스키 · 다른 계정의 user handle · 서명 · 출처 · UV · 복제 의심은 모두 빈 값
      *         (이유를 응답으로 구분해 주지 않는다 — 운영 지표 · 로그에만)
+     *     [JA] 通過すればユーザー id。時間切れ・未知のパスキー・別アカウントの user handle・署名・出所・UV・複製の疑いはすべて空
+     *          (理由を応答で区別しない — 運用指標・ログにだけ)
      */
     @Transactional
     public Optional<Long> authenticate(String pending, String responseJson) {
@@ -258,6 +274,7 @@ public class PasskeyService {
             return reject("no_pending");
         }
         // 꺼내면서 지운다 — 같은 서명을 다시 보내도(재전송) 두 번째는 challenge 가 없다.
+        // [JA] 取り出しながら消す — 同じ署名を再送しても二度目は challenge がない。
         String challenge = redis.opsForValue().getAndDelete(AUTH_KEY + sha256(pending));
         if (challenge == null) {
             return reject("expired");
@@ -271,10 +288,12 @@ public class PasskeyService {
         Optional<PasskeyCredential> found = repository.findByCredentialId(B64U.encodeToString(parsed.getCredentialId()));
         if (found.isEmpty()) {
             // 삭제했거나 다른 사이트 · 다른 환경의 패스키.
+            // [JA] 削除したか、別サイト・別環境のパスキー。
             return reject("unknown_credential");
         }
         PasskeyCredential row = found.get();
         // 발견 가능한 자격증명 로그인에서는 기기가 user handle 을 꼭 돌려준다 — 저장한 값과 같아야 한다.
+        // [JA] 発見可能な資格情報のログインでは端末が user handle を必ず返す — 保存した値と同じでなければならない。
         byte[] handle = parsed.getUserHandle();
         if (handle == null || !MessageDigest.isEqual(handle, B64U_DEC.decode(row.getUserHandle()))) {
             return reject("user_handle_mismatch");
@@ -288,6 +307,7 @@ public class PasskeyService {
                     List.of(parsed.getCredentialId()), true, true));
         } catch (RuntimeException e) {
             // 출처(피싱 사이트) · RP ID · 서명 · UV 없음 · 서명 횟수 감소(복제) 등.
+            // [JA] 出所(フィッシングサイト)・RP ID・署名・UV なし・署名回数の減少(複製)など。
             log.warn("패스키 로그인 검증 실패 — passkeyId={} ({})", row.getPasskeyId(), e.getClass().getSimpleName());
             return reject("verification_failed");
         }
@@ -307,8 +327,10 @@ public class PasskeyService {
     }
 
     // ── 관리 ──────────────────────────────────────────────────────────────
+    // [JA] ── 管理 ──
 
     /** 화면용 — 공개 키 · 자격증명 id 는 내보내지 않는다. */
+    // [JA] 画面用 — 公開鍵・資格情報 id は出さない。
     public record PasskeyView(Long id, String name, LocalDateTime createdAt, LocalDateTime lastUsedAt, boolean synced) {
     }
 
@@ -321,6 +343,7 @@ public class PasskeyService {
     }
 
     /** @return 내 것이고 지웠으면 true — 남의 것 · 없는 것은 구별하지 않는다(404). */
+    // [JA] @return 自分のもので削除したら true — 他人のもの・存在しないものは区別しない(404)。
     @Transactional
     public boolean delete(Long userId, Long passkeyId) {
         Optional<PasskeyCredential> mine = repository.findByPasskeyIdAndUserId(passkeyId, userId);
@@ -329,6 +352,7 @@ public class PasskeyService {
     }
 
     // ── 도우미 ────────────────────────────────────────────────────────────
+    // [JA] ── ヘルパー ──
 
     private ServerProperty serverProperty(String challenge) {
         return ServerProperty.builder()

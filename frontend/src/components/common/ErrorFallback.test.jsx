@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { withI18n } from "i18n/testing";
 
 // 문구가 사전에서 오므로 I18nProvider 안에서 그린다(기본 한국어).
+// [JA] 文言が辞書から来るので I18nProvider の中で描く(既定は韓国語)。
 const render = (ui, lang) => rtlRender(withI18n(ui, lang));
 
 jest.mock("react-router-dom", () => ({
@@ -29,6 +30,12 @@ const httpError = (status, message) => ({
  * <p>이 화면이 중요해진 이유: 인터셉터가 401·500·503 을 더 이상 "로그아웃"이나
  * "홈으로 이동"으로 삼키지 않고 호출부로 돌려주기 시작했다(TokenRefresher).
  * 그 오류들이 결국 여기로 온다.
+ *
+ * <p>[JA] 🐛 回帰対象: **エラー画面がユーザーにとって何の意味もなかった。**
+ * 以前の fallback は axios の `error.message` をそのまま出していた — "Request failed with status code 401"。
+ * 肝心のサーバーが送った説明は捨てられ、出口は同じ画面を描き直す "Try again" だけだった。
+ * この画面が重要になった理由: インターセプターが 401 · 500 · 503 をもう「ログアウト」や「ホームへ移動」で握りつぶさず
+ * 呼び出し側へ返し始めた(TokenRefresher)。そのエラーは結局ここに来る。
  */
 describe("ErrorFallback", () => {
   const reset = jest.fn();
@@ -41,6 +48,8 @@ describe("ErrorFallback", () => {
 
     // 원문은 접힌 <details> 안에만 남긴다(문의 대응용). 본문에는 나오면 안 된다 —
     // "Request failed with status code 500" 은 사용자에게 아무 의미가 없다.
+    // [JA] 原文は折りたたんだ <details> の中にだけ残す(問い合わせ対応用)。本文に出てはならない —
+    //      "Request failed with status code 500" はユーザーにとって何の意味もない。
     const details = container.querySelector("details");
     const body = container.cloneNode(true);
     body.querySelector("details")?.remove();
@@ -64,6 +73,9 @@ describe("ErrorFallback", () => {
   /**
    * 401 은 이제 로그아웃을 뜻하지 않는다 — 갱신이 성공했는데도 401 이면 그 기능에
    * 권한이 없는 것이다. 사용자가 할 수 있는 일(다른 계정으로 로그인)을 알려 준다.
+   *
+   * <p>[JA] 401 はもうログアウトを意味しない — 更新が成功したのに 401 ならその機能に権限がないのである。
+   * ユーザーにできること(別アカウントでログイン)を知らせる。
    */
   it("401·403 은 권한 문제로 안내하고 로그인 길을 준다", () => {
     for (const status of [401, 403]) {
@@ -100,6 +112,8 @@ describe("ErrorFallback", () => {
 
   /**
    * "Try again" 하나뿐이면 원인이 그대로일 때 같은 화면이 다시 죽는다 — 나갈 길이 없다.
+   *
+   * <p>[JA] "Try again" 一つだけだと原因がそのままのとき同じ画面がまた落ちる — 出口がない。
    */
   it("홈으로 나갈 길이 있다", () => {
     render(<ErrorFallback error={httpError(500)} resetErrorBoundary={reset} />);
@@ -142,6 +156,8 @@ describe("ErrorFallback", () => {
   /**
    * 기술적인 내용은 사용자에게 소음이지만, 문의를 받는 쪽에는 이 한 줄이 전부다.
    * 숨기되 지우지는 않는다.
+   *
+   * <p>[JA] 技術的な内容はユーザーには雑音だが、問い合わせを受ける側にはこの一行がすべてである。隠すが消しはしない。
    */
   it("기술 정보는 접어서 남겨 둔다", () => {
     render(<ErrorFallback error={httpError(500)} resetErrorBoundary={reset} />);

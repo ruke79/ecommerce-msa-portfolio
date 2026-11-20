@@ -42,6 +42,19 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
  *
  * <p>수집기 주소는 k8s 매니페스트가 주는 환경 변수 이름({@code OTEL_EXPORTER_OTLP_TRACES_ENDPOINT})으로 넣는다 —
  * yml 의 자리표시자 이름과 매니페스트의 이름이 어긋나도 여기서 걸린다.
+ *
+ * <p>[JA] トレースが<b>実際に OTLP で出ていくか</b> — 共有設定(application-common.yml)
+ * そのままで(docs/63)。
+ *
+ * <p>Brave・Zipkin から OpenTelemetry へ移る際に設定キーがすべて変わった({@code
+ * management.zipkin.*} → {@code management.otlp.tracing.*})。
+ * キー名が一つでも間違うと起動は正常でトレースだけが静かに消える — Zipkin 時代に Pod 内の {@code
+ * localhost:9411} へ送って実際に経験した(B-59)。そこで設定ファイルを読んで自動設定を立ち上げ、偽のコレクター(JDK
+ * HTTP サーバー)がスパンを受け取るかまで見る。
+ *
+ * <p>コレクターのアドレスは k8s マニフェストが渡す環境変数名({@code
+ * OTEL_EXPORTER_OTLP_TRACES_ENDPOINT})で入れる — yml
+ * のプレースホルダー名とマニフェストの名前が食い違ってもここで引っかかる。
  */
 class OtlpTracingExportTest {
 
@@ -57,6 +70,7 @@ class OtlpTracingExportTest {
             req.put("path", exchange.getRequestURI().getPath());
             req.put("contentType", exchange.getRequestHeaders().getFirst("Content-Type"));
             // protobuf 본문 — 문자열 값(서비스 이름 · 스팬 이름)은 UTF-8 그대로 들어 있다.
+            // [JA] protobuf 本文 — 文字列値(サービス名・スパン名)は UTF-8 のまま入っている。
             req.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
             received.add(req);
             exchange.sendResponseHeaders(200, -1);
@@ -99,6 +113,8 @@ class OtlpTracingExportTest {
             assertThat(req.get("contentType")).isEqualTo("application/x-protobuf");
             String body = (String) req.get("body");
             // Jaeger · span_metrics 는 resource 의 service.name 으로 서비스를 가른다 — spring.application.name 이어야 한다.
+            // [JA] Jaeger・span_metrics は resource の service.name でサービスを分ける —
+            //      spring.application.name である必要がある。
             assertThat(body).contains("order-service").contains("otlp-wiring-probe");
             assertThat(body).contains("deployment.environment");
         });

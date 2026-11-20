@@ -22,6 +22,14 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>캐시하지 않는다. 배송은 주문당 한 번 만들어지고, 그 한 번은 정확해야 한다 — 주문 직후
  * 주소를 바꾼 손님의 옛 주소가 캐시에서 나오면 물건이 엉뚱한 곳으로 간다.
+ *
+ * <p>[JA] 配送サービスが問う「この注文をどこへ、何を送るか」。
+ *
+ * <p>決済完了イベントには住所がない({@link OrderShippingDto} のコメント)。delivery-service
+ * はイベントから注文番号だけを得て、残りはここで読む。
+ *
+ * <p>キャッシュしない。配送は注文ごとに一度作られ、その一度は正確でなければならない —
+ * 注文直後に住所を変えた客の旧住所がキャッシュから出ると、品物が見当違いの場所へ行く。
  */
 @Service
 @RequiredArgsConstructor
@@ -58,12 +66,14 @@ public class OrderShippingInfoService {
     }
 
     /** 보낼 수는 배정된 수다 — 재고가 모자라 배정되지 못한 수(docs/53)는 창고에 없다. */
+    // [JA] 送れる数は割り当てられた数である — 在庫不足で割り当てられなかった数(docs/53)は倉庫にない。
     private static OrderShippingDto.Item toItem(OrderProduct p) {
         return new OrderShippingDto.Item(p.getOrderProductId(), p.getProductId(), p.getName(), p.getImage(),
                 p.allocatedQty(), p.getSkuCode());
     }
 
     /** 주문 주소는 이름이 둘로 나뉘어 있고, 송장에는 하나로 적는다. 한쪽만 있어도 된다. */
+    // [JA] 注文住所は名前が二つに分かれており、送り状には一つにまとめて書く。片方だけでもよい。
     private static String recipientName(String firstname, String lastname) {
         String first = firstname == null ? "" : firstname.trim();
         String last = lastname == null ? "" : lastname.trim();

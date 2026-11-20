@@ -17,15 +17,23 @@ package com.project.delivery_service.carrier;
  *
  * <p>구현체는 예외를 던지지 않고 {@link TrackingResult} 로 결과를 돌려준다. 배송 하나의
  * 조회 실패가 배치 전체를 멈출 이유가 없기 때문이다.
+ *
+ * <p>[JA] 宅配業者連携。<b>拡張ポイント</b>だ(docs/25 §4)。
+ * <p>このインターフェースの責任は<b>一つだけ</b>: 送り状番号 → 標準イベント一覧。状態判定・重複除去・注文連携・通知送信はすべてドメイン側にある。そのため新しい宅配業者を付けるときに必要なのは、このインターフェースを実装したクラス一つ(HTTP 呼び出し + 応答マッピングだけを知る)と {@code carrier} マスターテーブルの行一つだ。
+ * <p>スケジューラー・状態遷移・画面には手を付けない。それがこの抽象化の存在理由だ — 宅配業者が増えるたびにドメインコードが変わるなら抽象化した意味がない。
+ * <p>実装は例外を投げず {@link TrackingResult} で結果を返す。配送一つの照会失敗がバッチ全体を止める理由はないからだ。
  */
 public interface CarrierAdapter {
 
     /** {@code carrier} 테이블의 코드와 일치해야 한다. 이 값으로 어댑터가 선택된다. */
+    // [JA] {@code carrier} テーブルのコードと一致しなければならない。この値でアダプターが選ばれる。
     String carrierCode();
 
     /**
      * @param trackingNumber 송장번호
      * @param international  국제 배송인가. 택배사에 따라 국내/국제 조회 엔드포인트가 다르다
+     *
+     * <p>[JA] @param trackingNumber 送り状番号。@param international 国際配送か。宅配業者によって国内/国際の照会エンドポイントが違う。
      */
     TrackingResult track(String trackingNumber, boolean international);
 
@@ -37,6 +45,9 @@ public interface CarrierAdapter {
      * 받아 <b>곧장 배달 완료로 뛴다</b> — 중간 단계도 그 알림도 건너뛴다. 실제로 그래서
      * 배송 완료를 시험할 수 없었다(docs/25 §11.10). 택배사가 자기 리듬을 아는 것이 맞다.
      * 상자는 기본 주기와 이 값 중 <b>짧은 쪽</b>을 쓴다 — 늘리는 데는 쓰지 않는다.
+     *
+     * <p>[JA] この宅配業者のデータが変わる最小周期。空なら状態別のデフォルト周期({@code DeliveryStatus})だけを使う。
+     * <p>デフォルト周期は実際の宅配業者のリズム(受付後 6 時間、移動中 3 時間)に合わせたものだ。ところがシミュレーターは 1 分ごとに段階を進むのにポーラーが 6 時間後にしか問い合わせないと、そのとき履歴全体を受け取って<b>いきなり配達完了に飛ぶ</b> — 中間段階もその通知も飛ばす。実際にそのせいで配送完了を試験できなかった(docs/25 §11.10)。宅配業者が自分のリズムを知っているのが正しい。箱はデフォルト周期とこの値の<b>短い方</b>を使う — 延ばすのには使わない。
      */
     default java.util.Optional<java.time.Duration> pollIntervalCap() {
         return java.util.Optional.empty();

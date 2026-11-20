@@ -112,20 +112,23 @@ public class ElasticsearchBatchConfig {
     }
 
     // --- TaskExecutor 빈 추가: 병렬 처리를 위한 스레드 풀 정의 ---
+    // [JA] --- TaskExecutor Bean の追加: 並列処理のためのスレッドプール定義 ---
     @Bean
     public TaskExecutor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5); // 기본 스레드 수
-        executor.setMaxPoolSize(10); // 최대 스레드 수
-        executor.setQueueCapacity(25); // 큐 사이즈
+        executor.setCorePoolSize(5); // 기본 스레드 수 ／ [JA] 基本スレッド数
+        executor.setMaxPoolSize(10); // 최대 스레드 수 ／ [JA] 最大スレッド数
+        executor.setQueueCapacity(25); // 큐 사이즈 ／ [JA] キューサイズ
         executor.setThreadNamePrefix("batch-thread-");
         // 재색인을 시작한 요청의 traceId 를 배치 스레드로 넘긴다(docs/51 §3).
+        // [JA] 再インデックスを開始したリクエストの traceId をバッチスレッドに渡す(docs/51 §3)。
         executor.setTaskDecorator(new com.project.common.logging.MdcTaskDecorator());
         executor.initialize();
         return executor;
     }
 
     // --- Readers (수정된 부분) ---
+    // [JA] --- Readers(修正した部分) ---
     /**
      * 상품 — id 키셋 페이징(KeysetItemReader). 예전에는 컬렉션 넷을 JOIN FETCH 한 쿼리에 OFFSET 페이징을 걸어 Hibernate 가
      * <b>매 페이지마다 결과 전체를 메모리에 올렸다</b>(HHH90003004) — 200만 개면 OOM 이다(docs/19 §5.2).
@@ -147,6 +150,8 @@ public class ElasticsearchBatchConfig {
                 (em, ids) -> {
                     // 같은 영속성 컨텍스트라 이미 읽은 상품 · SKU 의 컬렉션에 붙는다(List 두 개를 한 쿼리에 FETCH 하면
                     // MultipleBagFetchException — docs/16 B-26).
+                    // [JA] 同じ永続性コンテキストなので既に読んだ商品 · SKU のコレクションに付く(List 2 つを 1 クエリで FETCH すると
+                    //      MultipleBagFetchException — docs/16 B-26)。
                     em.createQuery("SELECT DISTINCT p FROM Product p "
                             + "LEFT JOIN FETCH p.subcategories ps LEFT JOIN FETCH ps.subcategory "
                             + "WHERE p.productId IN :ids").setParameter("ids", ids).getResultList();
@@ -232,6 +237,11 @@ public class ElasticsearchBatchConfig {
     // 같은 코드를 쓴다. 여기 람다에 별도 매핑이 있으면 두 경로가 반드시 어긋나고, 그
     // 차이는 검색 결과가 이상해질 때까지 아무도 모른다. (덤으로 예전 람다는 shipping·
     // category 무방비 역참조라 그 값이 빈 상품 하나로 배치 전체가 죽는 형태였다.)
+    // [JA] --- Processors ---
+    //      マッピングは ProductDocumentMapper が所有する — リアルタイムの単件インデックス(ProductIndexService)と
+    //      同じコードを使う。ここのラムダに別のマッピングがあると 2 つの経路は必ずずれ、その
+    //      差は検索結果がおかしくなるまで誰も知らない。(おまけに以前のラムダは shipping・
+    //      category を無防備に逆参照しており、その値が空の商品 1 つでバッチ全体が死ぬ形だった。)
     @Bean
     public ItemProcessor<Product, ProductDocument> productProcessor() {
         return com.project.catalog_service.mapper.ProductDocumentMapper::toDocument;
@@ -310,6 +320,8 @@ public class ElasticsearchBatchConfig {
 
     // --- Writers (StepExecutionListener를 사용하여 JobParameters를 주입받도록 수정) ---
     // ItemWriter는 StepExecutionListener를 구현해야 StepExecution에 접근할 수 있습니다.
+    // [JA] --- Writers(StepExecutionListener を使って JobParameters を注入されるよう修正) ---
+    //      ItemWriter は StepExecutionListener を実装しないと StepExecution にアクセスできない。
     public class ProductWriter implements ItemWriter<ProductDocument>, StepExecutionListener {
         private String newIndexName;
 
@@ -321,6 +333,10 @@ public class ElasticsearchBatchConfig {
             // ProductDocument 의 @Setting(nori/kuromoji 애널라이저)과 @Field(Nested) 선언이
             // 전부 무시됐다(기본 standard 애널라이저 + object 강등). 색인 전에 명시적
             // settings/mappings 로 인덱스를 먼저 생성해 선언을 실제로 적용한다.
+            // [JA] (バグ修正, docs/06 CAT-9) 以前は save() がインデックスを動的マッピングで自動生成し、
+            //      ProductDocument の @Setting(nori/kuromoji アナライザ)と @Field(Nested) の宣言が
+            //      すべて無視された(既定の standard アナライザ + object への格下げ)。インデックス前に明示的な
+            //      settings/mappings でインデックスを先に作成し、宣言を実際に適用する。
             String indexName = this.newIndexName + "-products";
             var targetOps = elasticsearchOperations.indexOps(IndexCoordinates.of(indexName));
             if (!targetOps.exists()) {
@@ -442,6 +458,7 @@ public class ElasticsearchBatchConfig {
     }
 
     // --- ItemWriter 빈을 생성하여 반환하도록 수정
+    // [JA] --- ItemWriter Bean を生成して返すよう修正
     @Bean
     public ItemWriter<ProductDocument> productDocWriter() {
         return new ProductWriter();
@@ -492,14 +509,19 @@ public class ElasticsearchBatchConfig {
             // (버그 수정, docs/06 CAT-10) Writer 는 "<newIndexName>-products" 에 색인하는데
             // 여기서는 접미사 없는 이름을 확인해 "인덱스가 없다"며 항상 실패했고,
             // 그 결과 재색인이 성공해도 alias 가 영원히 새 인덱스를 가리키지 못했다.
+            // [JA] (バグ修正, docs/06 CAT-10) Writer は "<newIndexName>-products" にインデックスするのに、
+            //      ここでは接尾辞のない名前を確認して「インデックスがない」と常に失敗しており、
+            //      その結果、再インデックスが成功しても alias が永遠に新しいインデックスを指せなかった。
             final String newIndex = ((newIndexObj != null) ? newIndexObj.toString() : "default-new-index") + "-products";
 
                // --- 앨리어스 롤오버 전에 인덱스 존재 여부 확인 ---
+               // [JA] --- エイリアスのロールオーバー前にインデックスの存在を確認 ---
             if (!elasticsearchOperations.indexOps(IndexCoordinates.of(newIndex)).exists()) {
                 throw new RuntimeException("New index '" + newIndex + "' does not exist. Cannot perform alias rollover.");
             }
 
             // (버그 수정) 최초 롤오버 시 alias 자체가 아직 없다 — 그대로 조회하면 예외가 나므로 가드.
+            // [JA] (バグ修正) 初回ロールオーバー時は alias 自体がまだない — そのまま照会すると例外が出るのでガード。
             List<String> existingIndices = elasticsearchOperations.indexOps(IndexCoordinates.of(productAliasName)).exists()
                 ? elasticsearchOperations.indexOps(IndexCoordinates.of(productAliasName)).getAliases().keySet().stream()
                     .filter(index -> !index.equals(newIndex))
@@ -549,7 +571,7 @@ public class ElasticsearchBatchConfig {
                 .reader(categoryReader())
                 .processor(categoryProcessor())
                 .writer(categoryDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -560,7 +582,7 @@ public class ElasticsearchBatchConfig {
                 .reader(productColorReader())
                 .processor(productColorProcessor())
                 .writer(productColorDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -571,7 +593,7 @@ public class ElasticsearchBatchConfig {
                 .reader(productDetailsReader())
                 .processor(productDetailsProcessor())
                 .writer(productDetailsDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -582,7 +604,7 @@ public class ElasticsearchBatchConfig {
                 .reader(productQAReader())
                 .processor(productQAProcessor())
                 .writer(productQADocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -593,7 +615,7 @@ public class ElasticsearchBatchConfig {
                 .reader(productReader())
                 .processor(productProcessor())
                 .writer(productDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -604,7 +626,7 @@ public class ElasticsearchBatchConfig {
                 .reader(productSkuReader())
                 .processor(productSkuProcessor())
                 .writer(productSkuDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -615,7 +637,7 @@ public class ElasticsearchBatchConfig {
                 .reader(productSizeReader())
                 .processor(productSizeProcessor())
                 .writer(productSizeDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 
@@ -626,7 +648,7 @@ public class ElasticsearchBatchConfig {
                 .reader(subcategoryReader())
                 .processor(subcategoryProcessor())
                 .writer(subcategoryDocWriter())
-                .taskExecutor(taskExecutor) // taskExecutor 추가
+                .taskExecutor(taskExecutor) // taskExecutor 추가 ／ [JA] taskExecutor を追加
                 .build();
     }
 

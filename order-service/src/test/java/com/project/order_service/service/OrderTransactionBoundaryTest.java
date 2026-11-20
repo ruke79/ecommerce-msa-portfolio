@@ -32,6 +32,23 @@ import com.project.order_service.client.CartServiceClient;
  * 필요로 할 때, 가장 자연스러운 자리가 {@code OrderDataService.createOrder} 안이기
  * 때문이다. 거기에 Feign 클라이언트가 <b>없으면</b> 부를 수가 없다 — 이 테스트는 그
  * "없음" 을 지킨다.
+ *
+ * <p>[JA] 注文作成のリモート呼び出しは<b>トランザクションの外</b>になければならない(docs/37 #5)。
+ *
+ * <h3>🔴 何が問題だったか</h3>
+ *
+ * <p>{@code OrderDataService.createOrder} がトランザクションを開いた直後に cart-service
+ * を呼んでいた。DB コネクションを握ったまま他サービスを待つ形のため、<b>注文作成の遅延が cart-service
+ * の遅延に正比例</b>し、cart-service が止まると order-service の DB プールが先に枯渇した。
+ *
+ * <p>docs/40 #10(金額はサーバーが決める)を直す際にクーポン見積もり呼び出しが一つ増え、その窓が倍になった。Feign
+ * の既定は接続 3 秒・読み取り 5 秒なので、最悪コネクション一つを 16 秒まで握り得た。
+ *
+ * <h3>なぜテストで固定するか</h3>
+ *
+ * <p>こうした境界は<b>直しても戻ってくる。</b> 次の人が注文作成に値をもう一つ必要としたとき、最も自然な場所が {@code
+ * OrderDataService.createOrder} の中だからである。そこに Feign
+ * クライアントが<b>なければ</b>呼びようがない — このテストはその「ない」を守る。
  */
 @DisplayName("주문 생성 트랜잭션 경계")
 class OrderTransactionBoundaryTest {
@@ -39,6 +56,9 @@ class OrderTransactionBoundaryTest {
     /**
      * 🔴 이것이 핵심 가드다. 필드가 없으면 그 메서드에서 원격 호출을 할 수 없다.
      * 주석으로 "여기서 부르지 마세요" 라고 적는 것보다 확실하다.
+     *
+     * <p>[JA] 🔴 これが核心のガードである。フィールドがなければそのメソッドでリモート呼び出しはできない。
+     * コメントで「ここで呼ばないで」と書くより確実である。
      */
     @Test
     @DisplayName("트랜잭션 안에서 도는 클래스는 원격 호출 클라이언트를 갖지 않는다")
@@ -60,6 +80,12 @@ class OrderTransactionBoundaryTest {
      * 🔴 조회 화면(상세 · 목록)은 색상을 catalog 에서 받는다 — 그 호출이 트랜잭션 안이면 catalog 가 느린 동안 DB 커넥션(풀 5개)을 쥔다.
      * 🐛 예전에는 OrderService(readOnly) → OrderCacheService(readOnly) → OrderDataService(readOnly) 가 모두 트랜잭션이었고, 그 안에서
      * catalog 를 불렀다(목록은 주문마다 한 번). 트랜잭션은 OrderDataService.load* 안에서만 연다.
+     *
+     * <p>[JA] 🔴 照会画面(詳細・一覧)は色を catalog から受け取る — その呼び出しがトランザクション内だと、catalog
+     * が遅い間 DB コネクション(プール 5 個)を握る。🐛 以前は OrderService(readOnly) →
+     * OrderCacheService(readOnly) → OrderDataService(readOnly) がすべてトランザクションで、
+     * その中で catalog を呼んでいた(一覧は注文ごとに一回)。トランザクションは OrderDataService.load*
+     * の中でだけ開く。
      */
     @Test
     @DisplayName("🔴 조회 화면의 색상 조회는 트랜잭션 밖이다 — OrderService 는 NOT_SUPPORTED, OrderCacheService 는 트랜잭션을 열지 않는다")
@@ -87,6 +113,9 @@ class OrderTransactionBoundaryTest {
     /**
      * 클래스에 {@code @Transactional} 이 붙어 있어 메서드 하나만 끄려면 명시가 필요하다.
      * 이 애노테이션이 사라지면 원격 호출이 다시 트랜잭션 안으로 들어간다 — 코드는 그대로인데.
+     *
+     * <p>[JA] クラスに {@code @Transactional} が付いているので、メソッド一つだけ切るには明示が必要である。
+     * このアノテーションが消えるとリモート呼び出しが再びトランザクション内に入る — コードはそのままなのに。
      */
     @Test
     @DisplayName("createOrder 는 트랜잭션을 열지 않는다")
@@ -105,6 +134,9 @@ class OrderTransactionBoundaryTest {
     /**
      * 저장 단계는 반대로 <b>반드시</b> 트랜잭션이어야 한다. 주문·주문상품·배송지가 한
      * 단위로 커밋되지 않으면 품목 없는 주문이 남는다.
+     *
+     * <p>[JA] 保存段階は逆に<b>必ず</b>トランザクションでなければならない。
+     * 注文・注文商品・配送先が一単位でコミットされないと品目のない注文が残る。
      */
     @Test
     @DisplayName("저장 단계는 트랜잭션 안이다")
@@ -126,6 +158,14 @@ class OrderTransactionBoundaryTest {
      * <p>예전에는 {@code OrderDataService.createOrder} 가 스스로
      * {@code getCustomerIdByEmail} 을 불렀다. 그 자체는 로컬 DB 라 괜찮았지만, 없을 때
      * 메꾸려면 그 자리에서 user-service 를 부르고 싶어진다 — 트랜잭션 안에서.
+     *
+     * <p>[JA] 🔴 注文者 id はトランザクション外で決まり<b>引数で</b>入ってくる — 今はゲートウェイが検証したトークンの
+     * uid(User-Id)で、以前はトランザクション外のバックフィル(user-service 照会)だった(docs/48 §6-①)。
+     * どちらにせよトランザクション内の {@code OrderDataService} は既に決まった値だけを受け取る。
+     *
+     * <p>以前は {@code OrderDataService.createOrder} が自ら {@code
+     * getCustomerIdByEmail} を呼んでいた。それ自体はローカル DB なので問題なかったが、ないときに埋めようとするとその場で
+     * user-service を呼びたくなる — トランザクション内で。
      */
     @Test
     @DisplayName("저장 단계는 주문자 id 를 인자로 받는다 — 스스로 찾지 않는다")
@@ -140,6 +180,8 @@ class OrderTransactionBoundaryTest {
 
         // user-service 호출(관리자 목록의 이메일 등)은 트랜잭션 밖의 OrderService 에 있어야 한다.
         // OrderDataService 에는 user-service 클라이언트 필드가 없어야 부를 수가 없다(docs/37 #5).
+        // [JA] user-service 呼び出し(管理者一覧のメールなど)はトランザクション外の OrderService にあるべきである。
+        //      OrderDataService には user-service クライアントのフィールドがないので呼びようがない(docs/37 #5)。
         assertThat(java.util.Arrays.stream(OrderDataService.class.getDeclaredFields())
                 .map(f -> f.getType().getName()))
                 .as("트랜잭션 안에서 user-service 를 부를 수 있으면 안 된다")
@@ -147,6 +189,7 @@ class OrderTransactionBoundaryTest {
     }
 
     /** 위 가드가 진짜인지 — CartServiceClient 는 client 패키지에 있어야 걸린다. */
+    // [JA] 上のガードが本物か — CartServiceClient は client パッケージにあってこそ引っかかる。
     @Test
     @DisplayName("가드는 client 패키지를 본다")
     void theGuardLooksAtTheRightPackage() {

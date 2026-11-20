@@ -35,6 +35,10 @@ import com.project.userservice.service.ReviewLikeService.LikeSnapshot;
  *
  * <p>여기서 잡으려는 것은 하나다: "이 상품에 리뷰가 있는가"와 "내가 썼는가"는 다른
  * 질문이라는 것. 둘을 혼동하면 남이 먼저 리뷰를 쓴 상품에는 아무도 리뷰를 못 쓰게 된다.
+ *
+ * <p>[JA] レビュー登録/削除の<b>分岐</b>を固定する。
+ * ここで捕まえたいのは一つ: 「この商品にレビューがあるか」と「自分が書いたか」は別の質問だということ。
+ * 二つを混同すると、他人が先にレビューを書いた商品には誰もレビューを書けなくなる。
  */
 @DisplayName("리뷰 등록·삭제")
 class ReviewServiceTest {
@@ -51,6 +55,7 @@ class ReviewServiceTest {
     private RecordingTxManager txManager;
 
     /** 트랜잭션이 열려 있는지 기록하는 가짜 — 외부 호출이 그 밖에서 일어나는지 본다. */
+    // [JA] トランザクションが開いているかを記録する偽物 — 外部呼び出しがその外で起きるかを見る。
     static final class RecordingTxManager extends org.springframework.transaction.support.AbstractPlatformTransactionManager {
         boolean active;
         int commits;
@@ -89,6 +94,7 @@ class ReviewServiceTest {
         reviewLikeService = mock(ReviewLikeService.class);
         orderServiceClient = mock(com.project.userservice.client.OrderServiceClient.class);
         // 기본은 받은 상품 — 자격 검사는 아래 전용 테스트가 본다.
+        // [JA] デフォルトは受け取った商品 — 資格検査は下の専用テストが見る。
         when(orderServiceClient.purchased(anyLong(), anyLong())).thenReturn(java.util.Map.of("purchased", true));
 
         when(reviewLikeService.snapshot(any(), any())).thenReturn(LikeSnapshot.EMPTY);
@@ -136,6 +142,7 @@ class ReviewServiceTest {
     }
 
     /** findByProductId 가 돌려주는 목록은 서비스가 직접 수정하므로 가변이어야 한다. */
+    // [JA] findByProductId が返すリストはサービスが直接変更するので可変でなければならない。
     private void givenExistingReviews(Review... reviews) {
         when(reviewRepository.findByProductId(PRODUCT_ID))
                 .thenReturn(new ArrayList<>(List.of(reviews)));
@@ -152,6 +159,7 @@ class ReviewServiceTest {
         verify(reviewRepository).save(saved.capture());
         assertThat(saved.getValue().getReviewedBy()).isEqualTo(me);
         // 남의 리뷰 + 내 리뷰 = 2건이 응답에 담긴다
+        // [JA] 他人のレビュー + 自分のレビュー = 2 件が応答に入る
         assertThat(result).hasSize(2);
     }
 
@@ -165,7 +173,7 @@ class ReviewServiceTest {
 
         assertThat(mine.getRating()).isEqualTo(5F);
         assertThat(mine.getReview()).isEqualTo("내 리뷰");
-        assertThat(result).hasSize(2);   // 늘어나지 않는다
+        assertThat(result).hasSize(2);   // 늘어나지 않는다 ／ [JA] 増えない
     }
 
     @Test
@@ -243,6 +251,7 @@ class ReviewServiceTest {
 
         verify(reviewRepository, never()).deleteById(anyLong());
         // 남의 리뷰 평점을 건드릴 이유도 없다
+        // [JA] 他人のレビューの評価に触れる理由もない
         verify(catalogServiceClient, never()).updateRating(anyLong(), org.mockito.ArgumentMatchers.anyFloat());
     }
 
@@ -277,7 +286,7 @@ class ReviewServiceTest {
         givenExistingReviews();
         ReviewRequest noSize = request(5F);
         noSize.setSize(null);
-        noSize.setFit(null);   // 사이즈가 없으면 착용감도 묻지 않는다
+        noSize.setFit(null);   // 사이즈가 없으면 착용감도 묻지 않는다 ／ [JA] サイズがなければ着用感も尋ねない
 
         service.addReview("me", PRODUCT_ID, noSize, null);
 
@@ -310,6 +319,7 @@ class ReviewServiceTest {
     }
 
     // ── 리뷰 자격 — 받은 상품만(docs/57 §13) ────────────────────────────────────
+    // [JA] ── レビュー資格 — 受け取った商品だけ(docs/57 §13) ──
 
     @Test
     @DisplayName("🔴 받지 않은 상품에는 새 리뷰를 쓸 수 없다 — 저장도 평점 반영도 없다")
@@ -348,6 +358,9 @@ class ReviewServiceTest {
     /**
      * 🐛 예전: 클래스 전체가 @Transactional 이라 구매 확인(order) · 업로드(S3) · 평점(catalog)이 모두 DB 커넥션을 쥔 채 돌았다 — 풀 5개라
      * S3 가 느리면 로그인까지 모든 DB 요청이 멈췄다. 평점은 커밋 전에 나갔다.
+     *
+     * <p>[JA] 🐛 以前: クラス全体が @Transactional だったので、購入確認(order)・アップロード(S3)・評価(catalog)がすべて DB コネクションを握ったまま動いていた — プールが 5 つなので
+     * S3 が遅いとログインまですべての DB リクエストが止まった。評価はコミット前に送られていた。
      */
     @Test
     @DisplayName("🔴 구매 확인 · 이미지 업로드 · 평점 반영은 트랜잭션 밖 — 평점은 커밋 뒤")
@@ -375,6 +388,7 @@ class ReviewServiceTest {
     }
 
     /** 🐛 예전: 키가 난수 하나뿐(images/ 접두사 · 확장자 없음) — 공개 읽기 정책 밖이라 화면에서 403(깨진 이미지)이었다. */
+    // [JA] 🐛 以前: キーが乱数一つだけ(images/ 接頭辞・拡張子なし) — 公開読み取りポリシーの外なので画面で 403(壊れた画像)だった。
     @Test
     @DisplayName("🔴 리뷰 이미지 키는 images/review/… + 확장자 — 버킷의 공개 읽기 정책(images/*) 안")
     void reviewImageKeyIsPublic() throws Exception {

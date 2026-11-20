@@ -24,9 +24,11 @@ dependencies {
     implementation("org.springframework.cloud:spring-cloud-starter-config")
     
     // RequestRateLimiter(게이트웨이 레이트리미터)의 백엔드 토큰 버킷 저장소
+    // [JA] RequestRateLimiter(ゲートウェイのレートリミッター)のバックエンドのトークンバケット保存先
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     // Prometheus 스크레이프용 메트릭 레지스트리
+    // [JA] Prometheus スクレイプ用メトリクスレジストリ
     implementation("io.micrometer:micrometer-registry-prometheus")
     
     implementation(project(":common"))

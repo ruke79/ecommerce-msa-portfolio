@@ -17,6 +17,15 @@ import com.project.common.avro.SagaPhase;
  *       두 번 답했다면 나중 것이 pay 의 최종 판단이다.</li>
  *   <li>식별 필드(customerId·amounts·couponName)는 비어 있을 때만 채운다. 요청이 진실이고 응답은 보조다.</li>
  * </ul>
+ *
+ * <p>[JA] 集約関数: (これまでの状態, デルタ) → 新しい状態。純粋関数なので TopologyTestDriver なしでも検証する。
+ * 規則: リクエスト → 状態なし: {@code REQUESTED}。
+ * 応答 → 状態なし: {@code ORPHAN_RESPONSE}。{@code order} と {@code payment} は別トピックで消費順序が独立している —
+ * 応答が先に見えるのは正常の範囲。リクエストが後から来たら応答の段階に移す。
+ * リクエスト → 既にある: 段階はそのまま(終了状態をリクエストの再発行が戻してはならない)、リクエスト数だけ +1。
+ * ただし {@code ORPHAN_RESPONSE} だったなら対がそろったので応答の段階へ。
+ * 応答 → 既にある: 段階 = 応答の段階、応答数 +1。遅れて来た応答が勝つ — pay が同じ注文に二回答えたなら後のものが pay の最終判断だ。
+ * 識別フィールド(customerId・amounts・couponName)は空のときだけ埋める。リクエストが真実で応答は補助である。
  */
 public final class SagaStateReducer {
 

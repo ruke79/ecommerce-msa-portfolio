@@ -17,6 +17,7 @@ import lombok.Setter;
 
 @Entity
 // 회원은 한 방에 한 번 참여한다(V9) — 예전에는 제약이 없어 동시 구독이 같은 참여를 두 번 남겼다.
+// [JA] 会員は一つのルームに一回参加する(V9) — 以前は制約がなく、同時購読が同じ参加を二重に残していた。
 @jakarta.persistence.Table(name = "participant_chat_room", indexes = {
         @jakarta.persistence.Index(name = "uq_participant_room_member", columnList = "room_id, member_id", unique = true) })
 @Setter

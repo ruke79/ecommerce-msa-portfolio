@@ -39,8 +39,8 @@ public class Role{
     private AppRole roleName;
 
     @OneToMany(mappedBy = "role", fetch = FetchType.LAZY, cascade = {CascadeType.MERGE})
-    @JsonManagedReference // User로의 순환 참조를 관리합니다.
-    @ToString.Exclude   // 양방향 관계에서 순환 참조 방지
+    @JsonManagedReference // User로의 순환 참조를 관리합니다. ／ [JA] User への循環参照を管理する。
+    @ToString.Exclude   // 양방향 관계에서 순환 참조 방지 ／ [JA] 双方向関係での循環参照を防ぐ
     private Set<User> users = new HashSet<>();
 
     public Role(AppRole roleName) {

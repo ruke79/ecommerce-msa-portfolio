@@ -25,6 +25,7 @@ const Wrapper = styled.div`
 
 export const Portal = ({ children }) => {
   // 모달 창이 나올 경우, 스크롤을 움직이지 못하도록 합니다.
+  // [JA] モーダルが出ている場合、スクロールできないようにする。
   useEffect(() => {    
     document.body.style.cssText = `position: fixed; top: -${window.scrollY}px`;
     return () => {
@@ -34,6 +35,7 @@ export const Portal = ({ children }) => {
     };
   }, []);
   // id가 modal인 DOM 노드에 모달 창을 render합니다.
+  // [JA] id が modal の DOM ノードにモーダルを render する。
   const rootElement = document.getElementById('modal');
   return createPortal(children, rootElement);
 };
@@ -44,6 +46,7 @@ const Modal = ({
   children
 }) => {
   // 바깥 영역을 클릭 시, 모달 창을 닫을 지 여부
+  // [JA] 外側をクリックしたときにモーダルを閉じるかどうか
   const onOverlayClick = () => {
     if (overlayClose) {
       onClose();

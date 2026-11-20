@@ -24,7 +24,11 @@ import org.testcontainers.utility.DockerImageName;
  * 리스너 모두)는 {@code cart LEFT JOIN cart_product ON cart_id} 라 요청마다 줄 표 전체를 훑었다(order V28 · catalog V22 와 같은 결함).
  * V7 까지 올리고 장바구니 2,000개 · 줄 2만 개를 심은 뒤 V8 을 적용해, 같은 모양의 질의 계획이 그 인덱스를 쓰는지 본다.
  *
- * <p>[JA] カート行の外部キーインデックス(V8)— カート読み込みが行テーブルを走査しない。V7 まで上げて行を入れ、V8 後の計画を見る。
+ * <p>[JA] カート行の外部キーインデックス(V8)— カート読み込みが行テーブルを走査しない、実際の PostgreSQL で。
+ *
+ * <p>[JA] 🐛 以前: {@code cart_product.cart_id} にインデックスがなかった。カート読み込み(findByUserId の @EntityGraph — 画面 · チェックアウト ·
+ * 追加 · リスナーすべて)は {@code cart LEFT JOIN cart_product ON cart_id} なので、要求ごとに行テーブル全体を走査していた(order V28 ·
+ * catalog V22 と同じ欠陥)。V7 まで上げてカート 2,000 個 · 行 2 万個を入れた後 V8 を適用し、同じ形の照会計画がそのインデックスを使うかを見る。
  */
 @Tag("containers")
 @Testcontainers
@@ -49,6 +53,7 @@ class CartProductCartIdIndexMigrationTest {
     }
 
     /** findByUserId 의 @EntityGraph(attributePaths = "cartProducts") 가 내는 모양. */
+    // [JA] findByUserId の @EntityGraph(attributePaths = "cartProducts") が出す形。
     private static final String LOAD_CART = "explain select c.cart_id, cp.cartproduct_id, cp.qty from cart.cart c"
             + " left join cart.cart_product cp on cp.cart_id = c.cart_id where c.user_id = 1234";
 

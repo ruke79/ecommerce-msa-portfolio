@@ -98,6 +98,7 @@ public class JwtUtils {
   }
 
   /** 설정 문자열이 같으면 다시 만들지 않는다(테스트가 값을 바꾸면 그에 맞춰 다시 만든다). */
+  // [JA] 設定文字列が同じなら作り直さない(テストが値を変えればそれに合わせて作り直す)。
   private volatile String ringSource;
   private volatile com.project.common.security.JwtKeyRing ring;
 
@@ -111,10 +112,12 @@ public class JwtUtils {
   }
 
   /** 기동할 때 한 번 만들어 본다 — 키 설정이 틀렸으면 틀린 키로 서명하기 전에 뜨지 않는다. */
+  // [JA] 起動時に一度作ってみる — 鍵の設定が誤っていれば、誤った鍵で署名する前に起動しない。
   @PostConstruct
   void checkKeyRing() {
     var r = ring();
     // 이름만 남긴다 — 값 · 길이는 남기지 않는다.
+    // [JA] 名前だけを残す — 値・長さは残さない。
     log.info("[jwt] 서명 키={} · 아는 키={} · legacy 허용={}", r.activeKid(), r.kids(), r.acceptsLegacy());
   }
 
@@ -123,6 +126,7 @@ public class JwtUtils {
   }
 
   /** 서명 키 — 지금 켜진 kid 의 키. */
+  // [JA] 署名鍵 — 今有効な kid の鍵。
   private SecretKey signingKey() {
     return hmac(ring().activeKey());
   }
@@ -130,6 +134,9 @@ public class JwtUtils {
   /**
    * 검증 키를 토큰 머리의 kid 로 고른다. kid 가 없으면 이 변경 전의 토큰 — legacy 키. 모르는 kid · 은퇴한 legacy 면 거절
    * (UnsupportedJwtException → {@link TokenStatus#UNSUPPORTED}).
+   *
+   * <p>[JA] 検証鍵をトークンヘッダーの kid で選ぶ。kid がなければこの変更以前のトークン — legacy 鍵。未知の kid・引退した legacy なら
+   * 拒否する(UnsupportedJwtException → {@link TokenStatus#UNSUPPORTED})。
    */
   private Locator<Key> keyLocator() {
     return header -> {
@@ -248,11 +255,13 @@ public class JwtUtils {
   public static final String AUTH_TIME_CLAIM = "auth_time";
 
   /** 새 로그인 — 새 묶음으로 발급한다. */
+  // [JA] 新しいログイン — 新しいファミリーで発行する。
   public String generateRefreshTokenFromUser(User user) {
     return generateRefreshToken(user, java.util.UUID.randomUUID().toString());
   }
 
   /** 새 로그인의 첫 토큰 — 최초 로그인 시각은 지금. */
+  // [JA] 新しいログインの最初のトークン — 最初のログイン時刻は現在。
   public String generateRefreshToken(User user, String familyId) {
     return generateRefreshToken(user, familyId, System.currentTimeMillis() / 1000);
   }
@@ -425,11 +434,13 @@ public class JwtUtils {
   }
 
   /** 최초 로그인부터 절대 수명이 지났는가. */
+  // [JA] 最初のログインから絶対寿命が過ぎたか。
   public boolean isPastAbsoluteLifetime(long authTimeEpochSec) {
     return System.currentTimeMillis() >= authTimeEpochSec * 1000 + jwtRefreshAbsoluteMs;
   }
 
   /** 토큰의 남은 수명 — 쿠키 Max-Age 를 토큰과 같이 끝나게. 이미 지났으면 0. */
+  // [JA] トークンの残り寿命 — Cookie の Max-Age をトークンと同時に終わらせる。すでに過ぎていれば 0。
   public java.time.Duration remainingLifetime(String token) {
     Date exp;
     try {
@@ -442,6 +453,7 @@ public class JwtUtils {
   }
 
   /** 리프레시 토큰의 묶음 id — 회전 이전에 발급된 토큰이면 null. */
+  // [JA] リフレッシュトークンのファミリー id — ローテーション導入前に発行されたトークンなら null。
   public String getFamilyIdFromJwtToken(String token) {
     return Jwts.parser().keyLocator(keyLocator()).build()
         .parseSignedClaims(token).getPayload().get(FAMILY_CLAIM, String.class);
@@ -471,6 +483,7 @@ public class JwtUtils {
   }
 
   /** 긴 연결(SSE)이 필요한 클레임을 한 번에 — 서명 · 만료를 확인한다(docs/68 §9). */
+  // [JA] 長い接続(SSE)に必要なクレームを一度に — 署名・期限を確認する(docs/68 §9)。
   public record LiveClaims(Long userId, long issuedAtEpochSec, long expiresAtEpochMs) {
   }
 

@@ -19,6 +19,15 @@ import { BRAND_NAME } from "constants/brand";
  * </ul>
  *
  * @param variant "light" — 어두운 배경 위(헤더·푸터) / "dark" — 밝은 배경 위(로그인 화면)
+ *
+ * <p>[JA] サイトのロゴ(ワードマーク)。
+ * 以前は `assets/images/amazon-logo.png` · `amazon-dark.png` を直接 import して使っていた — ヘッダー、フッター、
+ * ログイン · 登録 · パスワード再設定画面の五か所。他社のロゴをアカウント作成画面に掲げることになり、公開配布の状態ではそのままにできなかった。
+ * ビットマップの代わりにテキストで描く。理由はいくつかある:
+ * ・画像ファイルがなくてもよいので今すぐ置き換えが終わる。デザインが出ればこのコンポーネント一つだけ替えればよく、呼び出し側五か所は触らない。
+ * ・どのサイズでも鮮明である。以前の png はヘッダーで `w-20`、フッターで `w-20 h-20` と縦横比が変わったまま使われていた。
+ * ・背景色に合わせて色だけ替えればよい — 明るいロゴ/暗いロゴの二ファイルを管理しなくてよい。
+ * variant: "light" — 暗い背景の上(ヘッダー · フッター) / "dark" — 明るい背景の上(ログイン画面)
  */
 const BrandMark = ({ variant = "light", className = "", size = "md" }) => {
     const color = variant === "dark" ? "text-amazon-blue_dark" : "text-white";
@@ -34,6 +43,7 @@ const BrandMark = ({ variant = "light", className = "", size = "md" }) => {
         <span
             className={`inline-flex items-baseline font-bold tracking-tight select-none ${sizes[size] ?? sizes.md} ${color} ${className}`}
             // 워드마크는 글자지만 의미상 로고 하나다. 스크린리더가 글자를 쪼개 읽지 않도록.
+            // [JA] ワードマークは文字だが意味上は一つのロゴである。スクリーンリーダーが文字を分けて読まないように。
             role="img"
             aria-label={BRAND_NAME}
         >

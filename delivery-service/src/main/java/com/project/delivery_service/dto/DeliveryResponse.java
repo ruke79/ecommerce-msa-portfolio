@@ -15,6 +15,10 @@ import com.project.delivery_service.domain.Shipment;
  * <p>내부 상태 그대로가 아니라 {@code stage} 를 함께 내려준다. 프론트가 상태 enum 을
  * 화면 단계로 매핑하는 로직을 따로 갖게 되면, 상태를 하나 추가할 때마다 양쪽을 고쳐야 하고
  * 둘이 어긋나면 화면이 조용히 틀린다.
+ *
+ * <p>[JA] 配送照会の応答 — Amazon 風の画面が必要とする形。
+ * 内部状態そのままではなく {@code stage} も一緒に返す。フロントが状態 enum を画面段階にマッピングするロジックを別に持つと、
+ * 状態を一つ追加するたびに両方を直す必要があり、両者がずれると画面が黙って間違う。
  */
 public record DeliveryResponse(
         Long deliveryId,
@@ -31,6 +35,13 @@ public record DeliveryResponse(
          *
          * <p>저장소의 다른 DTO 들이 id 를 {@code String} 으로 내리는 이유가 이것이다
          * ({@code OrderDto.id}, {@code OrderedProductDto.id}).
+         *
+         * <p>[JA] 🐛 <b>文字列である。</b> 以前は {@code Long} で、そのため管理画面の送り状登録がいつも「注文または宅配業者が見つかりません」だった。
+         * 注文番号は TSID なので 18 桁である({@code 889196209423729897})。Java では {@code long} なので問題ないが、JSON の数値で返すと
+         * ブラウザの {@code JSON.parse} が<b>倍精度浮動小数点</b>として読む。安全な整数の上限は {@code 2^53-1}(約 9.0e15)なのにこの値は 8.9e17 なので、
+         * 画面に届いた瞬間 {@code 889196209423729920} に変わる。その番号で送り状を登録するとサーバーはそんな注文を知らない —
+         * 画面には番号が正しく見えるので、何が間違っているのか分からない。
+         * リポジトリの他の DTO が id を {@code String} で返す理由がこれである({@code OrderDto.id}、{@code OrderedProductDto.id})。
          */
         String orderId,
         String status,
@@ -39,6 +50,7 @@ public record DeliveryResponse(
         boolean canChangeAddress,
         boolean canCancel,
         /** 주문 번호와 같은 이유로 문자열이다. */
+        // [JA] 注文番号と同じ理由で文字列である。
         String reorderedFromOrderId,
         AddressView address,
         List<ShipmentView> shipments) {
@@ -63,6 +75,7 @@ public record DeliveryResponse(
             List<EventView> events) {}
 
     /** @param skuCode 사이즈 한 줄의 SKU — 포장 목록 · 관리자 화면. 없으면 null. */
+    // [JA] skuCode: サイズ一行の SKU — 梱包リスト・管理画面。なければ null。
     public record ItemView(Long productId, String productName, String imageUrl, int quantity, String skuCode) {}
 
     public record EventView(String status, String stage, LocalDateTime occurredAt,
@@ -77,7 +90,7 @@ public record DeliveryResponse(
                 delivery.overallStatus().stage().name(),
                 delivery.overallEstimatedAt(),
                 delivery.canChangeAddress(),
-                delivery.canChangeAddress(),   // 취소 가능 조건도 '발송 전'으로 같다
+                delivery.canChangeAddress(),   // 취소 가능 조건도 '발송 전'으로 같다 ／ [JA] キャンセル可能条件も「発送前」で同じ
                 delivery.getReorderedFromOrderId() == null ? null
                         : String.valueOf(delivery.getReorderedFromOrderId()),
                 new AddressView(delivery.getRecipientName(), delivery.getRecipientPhone(),
@@ -112,6 +125,9 @@ public record DeliveryResponse(
     /**
      * 장소·설명은 저장된 한국어를 화면 언어로 바꿔 내준다(docs/60 §10). 테스트배송의 문구와 택배사 이름만 카탈로그에 있다 —
      * 실제 택배사가 보낸 문구는 데이터라 원문 그대로 나간다. 요청 밖(리스너·스케줄러)에서 부르면 그대로다.
+     *
+     * <p>[JA] 場所・説明は保存された韓国語を画面の言語に変えて返す(docs/60 §10)。テスト配送の文言と宅配業者名だけがカタログにある —
+     * 実際の宅配業者が送った文言はデータなので原文のまま出る。リクエスト外(リスナー・スケジューラ)で呼ぶとそのままである。
      */
     private static EventView toEventView(DeliveryEvent e) {
         return new EventView(e.getStatus().name(), e.getStatus().stage().name(),

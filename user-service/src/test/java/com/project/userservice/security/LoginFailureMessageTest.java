@@ -51,6 +51,16 @@ import com.project.userservice.service.RefreshTokenService;
  *   <li>인증 예외가 <b>밖으로 나가는가</b> — 나가야 스프링이 실패 처리로 넘긴다</li>
  *   <li>사유별로 <b>무엇을 응답하는가</b> — 상태 코드와 문구</li>
  * </ol>
+ *
+ * <p>[JA] 🐛 回帰対象: <b>ログインがなぜ失敗したかがユーザーに届かなかった。</b>
+ * 画面にはどんな理由で失敗しても "Login Failed." の一行だけが出た。原因は
+ * {@link AuthLoginFilter#attemptAuthentication} の {@code catch (Exception e)} だった —
+ * {@link AuthenticationException} まで捕まえて<b>本文なしの 400</b> を返し null を返却していたが、
+ * {@code AbstractAuthenticationProcessingFilter} は null を「まだ認証が終わっていない」と見てその場で戻る。
+ * そのため {@code unsuccessfulAuthentication} が<b>一度も呼ばれなかった。</b>
+ * ロックまでの残り時間も、メール認証の案内もすべて作られていたが死んだコードだった。
+ * ここでは二つを分けて見る: 認証例外が<b>外に出るか</b>(出てこそ Spring が失敗処理に回す)と、
+ * 理由ごとに<b>何を応答するか</b>(ステータスコードと文言)。
  */
 @DisplayName("로그인 실패 사유")
 class LoginFailureMessageTest {
@@ -64,6 +74,7 @@ class LoginFailureMessageTest {
         filter = new AuthLoginFilter(authenticationManager, mock(JwtUtils.class),
                 mock(RefreshTokenService.class), mock(NotificationService.class),
                 // 기기 기록은 로그인 성공 뒤에만 불린다 — 이 테스트는 실패 경로만 본다.
+                // [JA] 機器記録はログイン成功後にだけ呼ばれる — このテストは失敗経路だけを見る。
                 mock(DeviceRecognitionService.class), mock(SecurityAlertProducer.class),
                 mock(RedisSessionManager.class), mock(PendingTwoFactor.class),
                 mock(com.project.userservice.security.risk.LoginRiskGuard.class), mock(com.project.userservice.service.EmailService.class));
@@ -91,6 +102,9 @@ class LoginFailureMessageTest {
         /**
          * 🔴 이것이 버그의 핵심이다. 예외를 삼키면 스프링이 실패 처리를 부르지 않아
          * 사유가 담긴 본문이 만들어지지 않는다.
+         *
+         * <p>[JA] 🔴 これがバグの核心である。例外を飲み込むと Spring が失敗処理を呼ばず、
+         * 理由を載せた本文が作られない。
          */
         @Test
         @DisplayName("BadCredentials 를 삼키지 않는다 — 삼키면 실패 처리가 불리지 않는다")
@@ -126,6 +140,9 @@ class LoginFailureMessageTest {
         /**
          * null 을 돌려주면 스프링은 "다단계 인증이 진행 중"으로 보고 조용히 반환한다 —
          * 응답 본문이 없는 채로 끝난다. 어떤 경로에서도 null 이 나오면 안 된다.
+         *
+         * <p>[JA] null を返すと Spring は「多段階認証が進行中」と見て黙って戻る —
+         * 応答本文がないまま終わる。どの経路でも null が出てはならない。
          */
         @Test
         @DisplayName("본문이 JSON 이 아니어도 null 을 돌려주지 않는다")
@@ -147,6 +164,9 @@ class LoginFailureMessageTest {
         /**
          * 빈 값으로 인증기에 들어가면 "Bad Credentials" 가 되어 사용자는 비밀번호가
          * 틀린 줄 안다. 실제로는 아무것도 보내지 않은 것이다.
+         *
+         * <p>[JA] 空の値で認証器に入ると "Bad Credentials" になり、ユーザーはパスワードを間違えたと思う。
+         * 実際には何も送っていないのである。
          */
         @Test
         @DisplayName("비밀번호만 비어도 '비밀번호가 틀렸다'로 보이지 않는다")
@@ -198,6 +218,9 @@ class LoginFailureMessageTest {
         /**
          * 여기에 "비밀번호가 틀렸다"를 주면 사용자는 맞는 비밀번호를 계속 다시 치다가
          * 결국 잠긴다. 정작 필요한 것은 메일함을 여는 것이다.
+         *
+         * <p>[JA] ここで「パスワードが違う」を返すと、ユーザーは正しいパスワードを何度も打ち直して
+         * 結局ロックされる。本当に必要なのはメールボックスを開くことである。
          */
         @Test
         @DisplayName("미인증 — 메일함을 보라고 한다. 비밀번호를 의심하게 두지 않는다")
@@ -212,6 +235,9 @@ class LoginFailureMessageTest {
         /**
          * 🔒 "그런 계정이 없습니다"와 "비밀번호가 틀렸습니다"를 구분해 주면, 주소 목록을
          * 넣어 가며 어떤 주소가 가입돼 있는지 알아내는 도구가 된다.
+         *
+         * <p>[JA] 🔒「そのアカウントはありません」と「パスワードが違います」を区別して返すと、アドレスの一覧を
+         * 入れながらどのアドレスが登録済みかを探り出す道具になる。
          */
         @Test
         @DisplayName("없는 계정과 틀린 비밀번호가 같은 문구다 — 가입 여부가 새면 안 된다")
@@ -225,6 +251,7 @@ class LoginFailureMessageTest {
         }
 
         /** 예외 메시지에 들어 있던 이메일이 응답으로 새어 나가면 안 된다. */
+        // [JA] 例外メッセージに入っていたメールアドレスが応答に漏れてはならない。
         @Test
         @DisplayName("예외 메시지의 이메일이 응답에 실리지 않는다")
         void emailNeverLeaksIntoTheResponse() {
@@ -237,6 +264,9 @@ class LoginFailureMessageTest {
         /**
          * 소셜로 가입한 사람이 비밀번호 로그인을 반복하는 것이 흔한 막다른 길이다.
          * 이 문장은 계정이 있든 없든 <b>똑같이</b> 나가므로 아무것도 흘리지 않는다.
+         *
+         * <p>[JA] ソーシャルで登録した人がパスワードログインを繰り返すのはよくある行き止まりである。
+         * この文はアカウントの有無にかかわらず<b>同じように</b>出るので何も漏らさない。
          */
         @Test
         @DisplayName("소셜 로그인 안내를 덧붙인다 — 모두에게 같은 문구라 아무것도 흘리지 않는다")
@@ -266,6 +296,9 @@ class LoginFailureMessageTest {
         /**
          * DB·Redis 가 잠깐 안 뜨는 배포 중에 실제로 일어난다. "비밀번호가 틀렸다"로
          * 보이면 사용자는 자기 자격 증명을 의심하며 반복한다.
+         *
+         * <p>[JA] DB・Redis が一時的に上がらないデプロイ中に実際に起きる。「パスワードが違う」に見えると
+         * ユーザーは自分の資格情報を疑って繰り返す。
          */
         @Test
         @DisplayName("인증 절차 자체의 실패는 503 — 내 잘못이 아니라고 말해 준다")
@@ -276,6 +309,7 @@ class LoginFailureMessageTest {
             assertThat(failure.status()).isEqualTo(503);
             assertThat(failure.message()).contains("일시적인 오류");
             // 내부 오류 문구를 그대로 내보내면 스택·드라이버 정보가 샌다.
+            // [JA] 内部エラーの文言をそのまま出すとスタック・ドライバー情報が漏れる。
             assertThat(failure.message()).doesNotContain("JPA");
         }
 
@@ -285,6 +319,10 @@ class LoginFailureMessageTest {
          * <p>이 코드가 없던 동안 화면은 한국어 문구를 비교할 수밖에 없었고, 실제로는
          * 그마저 하지 않아 <b>재발송 경로가 아예 없었다.</b> 문구를 다듬는 순간 조용히
          * 깨지는 방식이라 코드로 내려보낸다.
+         *
+         * <p>[JA] 🔴 画面が「確認メール再送」フォームを出すかを決めるシグナルである。
+         * このコードがなかった間、画面は韓国語の文言を比べるしかなく、実際にはそれすらしていなかったので
+         * <b>再送の経路がまったくなかった。</b>文言を整えた瞬間に静かに壊れる方式なので、コードで返す。
          */
         @Test
         @DisplayName("🔴 메일 미인증 거부에는 code 를 붙인다 — 화면이 문구를 비교하지 않게")
@@ -300,6 +338,10 @@ class LoginFailureMessageTest {
          * 🔒 code 가 다른 실패에도 붙으면, 비밀번호를 모르는 사람이 그 값 하나로
          * "이 주소는 가입돼 있고 아직 미인증" 을 알아낼 수 있게 된다.
          * DisabledException 은 비밀번호가 맞은 뒤에만 나온다(CustomAuthenticationProvider).
+         *
+         * <p>[JA] 🔒 code が他の失敗にも付くと、パスワードを知らない人がその値一つで
+         * 「このアドレスは登録済みでまだ未認証」と知ることができてしまう。
+         * DisabledException はパスワードが合った後にだけ出る(CustomAuthenticationProvider)。
          */
         @Test
         @DisplayName("🔒 다른 실패에는 code 를 붙이지 않는다 — 가입 여부 확인 도구가 된다")

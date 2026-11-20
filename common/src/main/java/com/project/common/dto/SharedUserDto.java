@@ -16,8 +16,8 @@ import lombok.AccessLevel;
 public class SharedUserDto {
 
     private Long userId;
-    private String username; // 실명
-    private String nickname; // 별명
+    private String username; // 실명 ／ [JA] 実名
+    private String nickname; // 별명 ／ [JA] ニックネーム
     private String email;
     private String image;
 }

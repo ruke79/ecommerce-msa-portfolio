@@ -33,6 +33,11 @@ import com.project.common.message.dto.response.PaymentResponse;
  * <p>여기서 고정하는 것: (1) DTO → Avro → DTO 가 손실이 없다, (2) 예전 JSON 프로듀서의 바이트도 같은
  * DTO 로 읽힌다, (3) 스키마가 진화해도(새 필드) 옛 작성 스키마의 레코드를 읽는다 — 레지스트리 없이
  * {@link SchemaStore} 로, (4) 문자열 소비자용 변환은 토픽별로만 개입한다.
+ *
+ * <p>[JA] ワイヤー形式 — Avro の単一オブジェクトエンコーディングと JSON の下位互換。
+ * ここで固定するもの: (1) DTO → Avro → DTO が無損失、(2) 以前の JSON プロデューサーのバイトも同じ DTO として読める、
+ * (3) スキーマが進化しても(新フィールド)古い書き込みスキーマのレコードを読む — レジストリなしで {@link SchemaStore} で、
+ * (4) 文字列コンシューマー向けの変換はトピックごとにだけ介入する。
  */
 @DisplayName("Avro 전선 형식")
 class AvroWireTest {
@@ -61,7 +66,7 @@ class AvroWireTest {
         assertThat(back.getOrderId()).isEqualTo(123L);
         assertThat(back.getCustomerId()).isEqualTo(7L);
         assertThat(back.getAmounts()).isEqualByComparingTo("59.98");
-        assertThat(back.getAmounts().toPlainString()).isEqualTo("59.98");   // 자릿수도 그대로
+        assertThat(back.getAmounts().toPlainString()).isEqualTo("59.98");   // 자릿수도 그대로 ／ [JA] 桁数もそのまま
         assertThat(back.getOrderStatus()).isEqualTo(OrderStatus.NOT_PROCESSED);
         assertThat(back.getPaymentStatus()).isEqualTo(PaymentStatus.COMPLETED);
         assertThat(back.getCreatedAt()).isEqualTo(LocalDateTime.of(2026, 7, 28, 0, 0));
@@ -115,6 +120,7 @@ class AvroWireTest {
     @DisplayName("스키마 진화: 필드가 하나 적은 옛 작성 스키마의 레코드를 SchemaStore 로 읽는다 — 레지스트리 없이")
     void schemaEvolution_readsOlderWriterSchema() throws IOException {
         // 옛 스키마 = 지금 스키마에서 authorizationToken 을 뺀 것(예전 배포가 썼다고 치자).
+        // [JA] 古いスキーマ = 今のスキーマから authorizationToken を抜いたもの(以前のデプロイが書いたとしよう)。
         Schema current = com.project.common.avro.PaymentResponse.getClassSchema();
         Schema older = new Schema.Parser().parse(
                 "{\"type\":\"record\",\"name\":\"PaymentResponse\",\"namespace\":\"com.project.common.avro\",\"fields\":["
@@ -133,6 +139,7 @@ class AvroWireTest {
         assertThat(AvroWire.isAvro(data)).isTrue();
 
         // 기본 디코더는 자기 지문만 안다 → 옛 지문의 레코드는 못 읽는다.
+        // [JA] デフォルトのデコーダーは自分のフィンガープリントしか知らない → 古いフィンガープリントのレコードは読めない。
         SchemaStore.Cache store = new SchemaStore.Cache();
         store.addSchema(older);
         com.project.common.avro.PaymentResponse read =
@@ -140,7 +147,7 @@ class AvroWireTest {
 
         assertThat(read.getOrderId()).isEqualTo(123L);
         assertThat(read.getPaymentId()).isEqualTo(1L);
-        assertThat(read.getCouponName()).isNull();        // 새 필드는 default(null)
+        assertThat(read.getCouponName()).isNull();        // 새 필드는 default(null) ／ [JA] 新フィールドは default(null)
         assertThat(read.getPaymentStatus()).isNull();
     }
 
@@ -154,19 +161,21 @@ class AvroWireTest {
         JsonNode node = new ObjectMapper().readTree(text.deserialize("payment", avro));
         assertThat(node.get("orderId").asLong()).isEqualTo(123L);
         assertThat(node.get("customerId").asLong()).isEqualTo(7L);
-        assertThat(node.get("paymentStatus").asText()).isEqualTo("COMPLETED");   // delivery 가 "COMPLET" 을 찾는다
+        assertThat(node.get("paymentStatus").asText()).isEqualTo("COMPLETED");   // delivery 가 "COMPLET" 을 찾는다 ／ [JA] delivery が "COMPLET" を探す
 
         String chat = "{\"roomId\":\"r1\"}";
         assertThat(text.deserialize("chat", chat.getBytes(StandardCharsets.UTF_8))).isEqualTo(chat);
-        assertThat(text.deserialize("payment", chat.getBytes(StandardCharsets.UTF_8))).isEqualTo(chat);   // JSON 이면 그대로
+        assertThat(text.deserialize("payment", chat.getBytes(StandardCharsets.UTF_8))).isEqualTo(chat);   // JSON 이면 그대로 ／ [JA] JSON ならそのまま
 
         // DTO 매핑은 common 에 DTO 가 있는 토픽 전부, 디코더는 chat 까지 — 둘의 차이가 정확히 chat 하나다.
+        // [JA] DTO マッピングは common に DTO があるトピック全部、デコーダーは chat まで — 両者の差はちょうど chat 一つだ。
         assertThat(AvroMappings.byTopic()).containsOnlyKeys("order", "payment", "product-update", "user-created",
                 "cart-empty", "cart-rollback", "coupon-use", "coupon-rollback", "outgoing-mail");
         assertThat(AvroDecoders.byTopic().keySet()).containsAll(AvroMappings.byTopic().keySet()).contains("chat");
     }
 
     // ── 나머지 토픽들 — 매핑마다 왕복 무손실 ────────────────────────────────────
+    // [JA] ── 残りのトピック — マッピングごとに往復無損失 ──
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <D> D roundTrip(String topic, AvroMapping mapping, D dto) {
@@ -193,6 +202,7 @@ class AvroWireTest {
     }
 
     /** 재고 복원(환불·반품 입고)은 같은 레코드에 restock=true 다. 기본 false 라 옛 소비자는 차감으로 읽는다. */
+    // [JA] 在庫の復元(返金・返品入庫)は同じレコードで restock=true だ。デフォルト false なので、古いコンシューマーは差し引きとして読む。
     @Test
     @DisplayName("product-update: restock=true 가 그대로 건너간다")
     void productUpdate_restock_roundTrip() {
@@ -219,9 +229,10 @@ class AvroWireTest {
                 new com.project.common.message.dto.request.CartEmptyRequest(7L, true));
         assertThat(empty.getUserId()).isEqualTo(7L);
         assertThat(empty.isEmptyCart()).isTrue();
-        assertThat(empty.getItems()).isEmpty();   // 옛 발행자 — 품목 없음 = 전부 비움
+        assertThat(empty.getItems()).isEmpty();   // 옛 발행자 — 품목 없음 = 전부 비움 ／ [JA] 古い発行者 — 品目なし = 全部空にする
 
         // 품목을 실은 새 발행자: 상품·사이즈·색상·수량이 그대로 건너간다.
+        // [JA] 品目を載せた新しい発行者: 商品・サイズ・色・数量がそのまま渡る。
         var lines = roundTrip("cart-empty", new CartEmptyRequestAvroMapping(),
                 new com.project.common.message.dto.request.CartEmptyRequest(7L, true, java.util.List.of(
                         new com.project.common.message.dto.request.CartEmptyItem(10L, "M", 5L, 2),
@@ -277,7 +288,7 @@ class AvroWireTest {
         assertThat(node.get("orderId").asLong()).isEqualTo(123L);
         assertThat(node.get("customerId").asLong()).isEqualTo(7L);           // NotificationEventListener.longOf(event, "customerId")
         assertThat(node.get("paymentStatus").asText()).isEqualTo("COMPLETED");
-        assertThat(node.get("couponName").isNull()).isTrue();                // {"string": …} 로 감싸지 않는다
+        assertThat(node.get("couponName").isNull()).isTrue();                // {"string": …} 로 감싸지 않는다 ／ [JA] {"string": …} で包まない
         assertThat(node.get("createdAt").asText()).startsWith("2026-07-28T00:00:00");
         assertThat(node.get("amounts").asText()).isEqualTo("59.98");
     }

@@ -13,6 +13,8 @@ import java.io.Serializable;
 @Builder
 // 이메일 필드는 없다(docs/48 §6-⑥) — 소비자(coupon·chat) 누구도 쓰지 않는다. 옛 프로듀서·CDC·e2e 의 JSON 에
 // email 이 있어도 무시한다.
+// [JA] メールアドレスのフィールドはない(docs/48 §6-⑥) — コンシューマー(coupon · chat)の誰も使わない。古いプロデューサー · CDC · e2e の JSON に
+//      email があっても無視する。
 @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
 public class UserCreatedRequest implements Serializable{
 

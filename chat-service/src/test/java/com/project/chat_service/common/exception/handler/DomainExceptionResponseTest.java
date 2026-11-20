@@ -25,7 +25,11 @@ import com.project.common.exception.CustomRestExceptionHandler;
  *
  * <p>사람에게 쓴 문구의 도메인 예외는 400 과 그 문구(docs/57 §15). 운영자용 IllegalStateException 은 500 일반 문구.
  *
- * <p>[JA] chat の例外応答 — 処理器が二つある。わざと common を先に入れる — {@code @Order} が勝たなければならない。
+ * <p>[JA] chat の例外応答 — 処理器が二つある(chat の {@link ExceptionResponseHandler} · common の {@link CustomRestExceptionHandler})。
+ * chat は com.project.common もスキャンするので両方が登録される。以前は両方とも順序がなく、両方とも {@code Exception} 全体を受けて登録
+ * 順が結果を決めていた — chat が先なら不正なリクエスト(型の不一致など)が 500、common が先なら chat の応答の形が変わった。ここでは
+ * わざと <b>common を先に</b>入れる — {@code @Order} が勝たなければならない。
+ * 人向けに書いた文言のドメイン例外は 400 とその文言(docs/57 §15)。運用者向けの IllegalStateException は 500 の一般文言。
  */
 @DisplayName("chat 예외 응답 — 두 처리기의 순서 · 도메인 예외")
 class DomainExceptionResponseTest {
@@ -49,7 +53,7 @@ class DomainExceptionResponseTest {
     }
 
     private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new Throwing())
-            .setControllerAdvice(new CustomRestExceptionHandler(), new ExceptionResponseHandler())   // common 이 먼저
+            .setControllerAdvice(new CustomRestExceptionHandler(), new ExceptionResponseHandler())   // common 이 먼저 ／ [JA] common が先
             .build();
 
     @Test

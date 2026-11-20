@@ -29,6 +29,11 @@ import org.testcontainers.utility.DockerImageName;
  * 드러나는 종류였다(docs/14). 특히 이 서비스는 스키마를 Flyway 가 소유하고 Hibernate 는
  * {@code validate} 만 하므로, <b>기동에 성공한다는 것 자체가</b> 마이그레이션과 엔티티가
  * 일치한다는 증명이다(docs/20).
+ *
+ * <p>[JA] notification-service の起動検証 — 実際の PostgreSQL/Redis コンテナ上で。他のサービスと同じ理由だ:
+ * このリポジトリで最も高くついたバグはどれも<b>起動して初めて</b>表に出る種類だった(docs/14)。
+ * 特にこのサービスはスキーマを Flyway が所有し Hibernate は {@code validate} だけ行うので、
+ * <b>起動に成功すること自体が</b>マイグレーションとエンティティが一致している証明になる(docs/20)。
  */
 @Tag("containers")
 @Testcontainers
@@ -90,6 +95,8 @@ class NotificationServiceApplicationTests {
         assertThat(saved.isEmailEnabled()).as("emailEnabled").isFalse();
 
         // 2단계 인증은 이 경로에서 받지 않는다(docs/24 §10 — user-service 의 것) → 400, 함께 보낸 다른 변경도 저장하지 않는다
+        // [JA] 二段階認証はこの経路では受け付けない(docs/24 §10 — user-service のもの) → 400、
+        //      一緒に送った他の変更も保存しない
         var rejected = notificationController.updatePreferences(userId, "pref@example.com",
                 java.util.Map.of("twoFactorEnabled", true, "emailEnabled", true));
         assertThat(rejected.getStatusCode().value()).isEqualTo(400);
@@ -142,6 +149,7 @@ class NotificationServiceApplicationTests {
                     .as("Hibernate 는 validate 만 하므로, 이 테이블들은 Flyway 가 만든 것이다")
                     .contains("notification", "phone_verification", "notification_preference",
                               // V3 가 추가한 메일 아웃박스 (docs/29)
+                              // [JA] V3 が追加したメールアウトボックス(docs/29)
                               "mail_message");
         }
     }
@@ -151,6 +159,8 @@ class NotificationServiceApplicationTests {
     void mailChannelColumnsMatchEntities() throws Exception {
         // 이 테스트가 도는 시점에 이미 컨텍스트가 떴다는 것은 ddl-auto=validate 를 통과했다는
         // 뜻이므로, 여기서는 V3 가 실제로 무엇을 만들었는지를 눈으로 확인하는 의미가 크다.
+        // [JA] このテストが動く時点ですでにコンテキストが上がったということは ddl-auto=validate
+        //      を通ったという意味なので、ここでは V3 が実際に何を作ったかを目で確かめる意味が大きい。
         assertThat(columnsOf("mail_message"))
                 .contains("mail_id", "to_email", "recipient_user_id", "kind", "params",
                           "locale", "status", "attempts", "detail", "source_event_id",

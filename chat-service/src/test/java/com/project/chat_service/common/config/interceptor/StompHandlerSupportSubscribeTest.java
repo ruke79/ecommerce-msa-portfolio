@@ -35,6 +35,9 @@ import com.project.chat_service.service.SupportService;
  * <p>친구 채팅방은 공개라 구독에 권한 검사가 없었다. 상담은 고객 본인과 상담원만 들어야 한다. 그리고 권한은
  * <b>실제 구독 주소</b>로 판정한다 — roomId 헤더는 클라이언트가 정하는 값이고, 기본 브로커는 구독 주소를
  * <b>패턴</b>으로 맞춘다({@code /sub/**} 를 구독하면 모든 방이 온다).
+ *
+ * <p>[JA] 🔒 相談の購読権限(docs/58)。
+ * <p>友達チャットルームは公開なので購読に権限検査がなかった。相談は顧客本人と相談員だけが聞くべきである。そして権限は<b>実際の購読宛先</b>で判定する — roomId ヘッダはクライアントが決める値で、シンプルブローカーは購読宛先を<b>パターン</b>で照合する({@code /sub/**} を購読するとすべてのルームが来る)。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -156,6 +159,7 @@ class StompHandlerSupportSubscribeTest {
     }
 
     // ── 데스크 알림 구독(§9) ────────────────────────────────────────────
+    // [JA] ── デスク通知の購読(§9) ──
 
     private static Message<byte[]> subscribeDesk(Long userId, String role) {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
@@ -183,6 +187,7 @@ class StompHandlerSupportSubscribeTest {
     }
 
     // ── SEND 주소(§9) ──────────────────────────────────────────────────
+    // [JA] ── SEND 宛先(§9) ──
 
     private static Message<byte[]> send(String destination) {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
@@ -211,6 +216,7 @@ class StompHandlerSupportSubscribeTest {
     }
 
     // ── 보고 있는가(§10) ───────────────────────────────────────────────
+    // [JA] ── 見ているか(§10) ──
 
     @Test
     @DisplayName("상담 구독은 '보고 있다' 로 적고, 구독 해지·연결 끊김에 지운다")

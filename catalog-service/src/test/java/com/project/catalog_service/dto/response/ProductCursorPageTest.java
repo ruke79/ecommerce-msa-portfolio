@@ -23,15 +23,23 @@ import com.project.catalog_service.util.CursorPagenation;
  * 다만 이것을 쓰는 엔드포인트가 카테고리 필수였고, 프론트는 한 곳도 부르지 않았다.
  * 여기서 고정하는 것은 그 유틸의 경계 동작이다 — "다음이 있는가" 를 잘못 판정하면
  * 목록이 중간에 끊기거나 무한 루프가 된다.
+ *
+ * <p>[JA] カーソルページングの契約。
+ * <p>🐛 回帰対象: <b>管理者の商品一覧がカタログ全体を一度に受け取っていた。</b>{@code GET /api/product/products} は名前と違い {@code warmUpProductCaches} を経て、
+ * 全カテゴリ × 全サブカテゴリを回って全商品を一つの配列にし、その結果を Redis キー一つに丸ごと入れていた。
+ * <p>カーソルページングのユーティリティは<b>すでにあった</b>({@link CursorPagenation}、{@link ProductResponse})。ただしそれを使うエンドポイントはカテゴリ必須で、フロントは一か所も呼んでいなかった。
+ * ここで固定するのはそのユーティリティの境界動作である — 「次があるか」の判定を誤ると、一覧が途中で切れるか無限ループになる。
  */
 class ProductCursorPageTest {
 
     /** 실제 엔티티가 필요하다 — ProductResponse 가 nextCursor 로 productId 를 읽는다. */
+    // [JA] 実際のエンティティが必要 — ProductResponse が nextCursor として productId を読む。
     private static List<Product> products(int count) {
         // @SuperBuilder 의 builder() 는 와일드카드 타입을 돌려주므로 매핑 타입을 명시한다.
+        // [JA] @SuperBuilder の builder() はワイルドカード型を返すので、マッピング型を明示する。
         return IntStream.rangeClosed(1, count)
                 .<Product>mapToObj(i -> Product.builder()
-                        .productId((long) (100 - i))    // 내림차순 id
+                        .productId((long) (100 - i))    // 내림차순 id ／ [JA] 降順の id
                         .name("p" + i)
                         .build())
                 .toList();
@@ -41,6 +49,7 @@ class ProductCursorPageTest {
     @DisplayName("한 페이지를 딱 채우면 '더 없음'이다 — 서버는 size+1 을 읽는다")
     void exactlyOnePageMeansLastScroll() {
         // size=10 을 요청하면 서버는 11개를 읽는다. 10개만 왔다면 그것이 끝이다.
+        // [JA] size=10 を要求するとサーバーは 11 個読む。10 個しか来なければそれが最後である。
         CursorPagenation<Product> page = CursorPagenation.of(products(10), 10);
 
         assertThat(page.isLastScroll()).isTrue();
@@ -54,6 +63,7 @@ class ProductCursorPageTest {
 
         assertThat(page.isLastScroll()).isFalse();
         // 여분까지 보여주면 페이지 경계에서 같은 상품이 두 번 나타난다.
+        // [JA] 余分まで見せるとページ境界で同じ商品が二回現れる。
         assertThat(page.getCurrentScrollItems()).hasSize(10);
     }
 
@@ -73,6 +83,7 @@ class ProductCursorPageTest {
         ProductResponse response = ProductResponse.of(CursorPagenation.of(raw, 10), 100);
 
         // 10번째 항목(인덱스 9)의 id. 다음 페이지는 이 id 보다 작은 것부터 가져온다.
+        // [JA] 10 番目の項目(インデックス 9)の id。次のページはこの id より小さいものから取得する。
         assertThat(response.getNextCursor()).isEqualTo(raw.get(9).getProductId());
         assertThat(response.getNextCursor()).isNotEqualTo(-1L);
     }

@@ -30,6 +30,10 @@ import jakarta.servlet.http.Cookie;
  *   <li>Redis: {@code expire(키, 지금 시각 + 기간, ms)} — 기간 자리에 epoch 시각이 들어가 TTL 이 약 56년.</li>
  *   <li>쿠키: {@code Max-Age}(초)에 {@code jwtRefreshExpirationMs}(밀리초) — 14일짜리 쿠키가 약 38년.</li>
  * </ul>
+ *
+ * <p>[JA] 🐛 リフレッシュトークンの寿命が単位の取り違えで事実上無限だった(docs/57 §2, docs/38 §2.1 #6)。
+ * Redis: {@code expire(キー, 現在時刻 + 期間, ms)} — 期間の位置に epoch 時刻が入り TTL が約 56 年。
+ * クッキー: {@code Max-Age}(秒)に {@code jwtRefreshExpirationMs}(ミリ秒) — 14 日のクッキーが約 38 年。
  */
 @DisplayName("리프레시 토큰 수명 — 쿠키 Max-Age 와 Redis TTL")
 class RefreshLifetimeTest {
@@ -69,6 +73,7 @@ class RefreshLifetimeTest {
         repo.save(new RefreshToken("sess-1", "7", "token"));
 
         // 값은 토큰 원문이 아니라 SHA-256 해시다(docs/68 §10)
+        // [JA] 値はトークン原文ではなく SHA-256 ハッシュである(docs/68 §10)
         verify(ops).set(eq("sess-1"), eq(com.project.userservice.repository.redis.RefreshTokenRepository.digest("token")), eq(Duration.ofDays(14)));
         verify(redis, never()).expire(any(), anyLong(), any(TimeUnit.class));
     }

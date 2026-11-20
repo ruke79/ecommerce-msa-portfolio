@@ -52,6 +52,7 @@ class SagaQueryServiceTest {
     }
 
     // ---------------------------------------------------------------- 두 저장소 합치기 · 소유권 (docs/76)
+    // [JA] 二つのストアの統合 · 所有権 (docs/76)
 
     private static OrderSagaState saga(long customerId) {
         return OrderSagaState.newBuilder().setOrderId(1L).setPhase(SagaPhase.COMPLETED).setCustomerId(customerId)
@@ -111,6 +112,7 @@ class SagaQueryServiceTest {
     }
 
     // ---------------------------------------------------------------- 저장소마다의 배치 (SP-L1)
+    // [JA] ストアごとの配置 (SP-L1)
 
     private static final HostInfo SELF = new HostInfo("localhost", 8190);
     private static final HostInfo OTHER = new HostInfo("other", 8190);
@@ -121,6 +123,7 @@ class SagaQueryServiceTest {
     }
 
     /** 사가 · 타임라인 저장소의 배치를 따로 정한 Streams. 저장소는 둘 다 값을 갖고 있다. */
+    // [JA] サガ · タイムラインのストアの配置を別々に決めた Streams。ストアはどちらも値を持っている。
     @SuppressWarnings("unchecked")
     private static SagaQueryService service(KeyQueryMetadata sagaMeta,
             KeyQueryMetadata timelineMeta) {

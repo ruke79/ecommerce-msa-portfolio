@@ -21,6 +21,10 @@ import com.project.common.dto.ProductDto;
  * 조건에 걸려도 목록 조회 응답 전체가 NPE 로 500 이 됐다 — 카탈로그 서비스에서 가장 자주 호출되는
  * 경로다. 컬렉션은 부분적으로 채워진 엔티티(신규 생성 직후, 분리된 엔티티, 일부 조회 경로)에서
  * 실제로 null 이 될 수 있다.
+ *
+ * <p>[JA] ProductMapper の null 安全性の回帰テスト(docs/14 B-15)。
+ * <p>このマッパーは nullable なカラムと関連コレクションを<b>無防備に逆参照</b>していた。商品が一件条件に引っかかるだけで一覧照会の応答全体が NPE で 500 になった
+ * — カタログサービスで最も頻繁に呼ばれる経路である。コレクションは部分的に埋まったエンティティ(新規作成直後、分離されたエンティティ、一部の照会経路)で実際に null になりうる。
  */
 class ProductMapperNullSafetyTest {
 
@@ -41,6 +45,7 @@ class ProductMapperNullSafetyTest {
     void toDto_toleratesNullShipping() {
         // shipping 은 nullable 컬럼이다. 배송비가 비어 있는 상품 하나가 목록에 섞이면
         // getShipping().toPlainString() 이 NPE 를 내며 조회 전체를 500 으로 만들었다.
+        // [JA] shipping は nullable なカラムである。送料が空の商品が一つ一覧に混じると、getShipping().toPlainString() が NPE を出して照会全体を 500 にしていた。
         Product product = minimalProduct();
         product.setSubcategories(Collections.emptyList());
         product.setDetails(Collections.emptySet());
@@ -58,6 +63,7 @@ class ProductMapperNullSafetyTest {
     @DisplayName("연관 컬렉션이 전부 null 이어도 빈 리스트로 매핑되어야 한다")
     void toDto_toleratesNullCollections() {
         // 컬렉션을 하나도 세팅하지 않은 상태 — 무방비 .stream() 이면 여기서 NPE 가 났다.
+        // [JA] コレクションを一つも設定していない状態 — 無防備な .stream() ならここで NPE が出ていた。
         Product product = minimalProduct();
 
         ProductDto dto = ProductMapper.toDto(product);

@@ -33,6 +33,9 @@ import lombok.RequiredArgsConstructor;
  * <p>사용자 식별은 게이트웨이가 JWT 를 검증한 뒤 넣어 주는 {@code User-Id} 헤더로 한다.
  * 남의 배송을 조회하려는 시도는 <b>404 로</b> 끊는다 — 403 은 "그 주문은 존재한다"를
  * 알려주는 셈이라 주문번호를 훑는 데 쓰인다.
+ *
+ * <p>[JA] 配送照会・住所変更・取消、そして送り状登録。
+ * <p>ユーザー識別はゲートウェイが JWT を検証した後に入れる {@code User-Id} ヘッダーで行う。他人の配送を照会しようとする試みは<b>404 で</b>断つ — 403 は「その注文は存在する」と教えるようなもので、注文番号の総当たりに使われる。
  */
 @RestController
 @RequestMapping("/api/deliveries")
@@ -48,6 +51,9 @@ public class DeliveryController {
      * <p>역할 표기가 두 가지로 섞여 있다 — JWT 의 role 클레임은 {@code ROLE_ADMIN} 이지만
      * 다른 곳에서는 {@code ADMIN} 만 쓰기도 한다. 둘 다 받는다. 한쪽만 보면 실제 관리자가
      * 거부당하는데, 그 이유가 로그에도 화면에도 드러나지 않아 원인을 찾기 어렵다.
+     *
+     * <p>[JA] 管理者か。
+     * <p>ロール表記が二種類混在している — JWT の role クレームは {@code ROLE_ADMIN} だが、他の所では {@code ADMIN} だけを使うこともある。両方受け付ける。片方だけ見ると実際の管理者が拒否され、その理由がログにも画面にも現れないので原因を探しにくい。
      */
     private static boolean isAdmin(String role) {
         if (role == null || role.isBlank()) {
@@ -63,6 +69,7 @@ public class DeliveryController {
     }
 
     /** 내 배송 목록. 주문 목록 화면의 "배송 조회" 진입점. */
+    // [JA] 自分の配送一覧。注文一覧画面の「配送照会」の入口。
     @GetMapping
     public ResponseEntity<List<DeliveryResponse>> list(
             @RequestHeader(value = "User-Id", required = false) Long userId,
@@ -77,6 +84,7 @@ public class DeliveryController {
     }
 
     /** 주문 하나의 배송 상세 — 아마존식 타임라인 화면이 쓰는 엔드포인트. */
+    // [JA] 注文一つの配送詳細 — Amazon 風タイムライン画面が使うエンドポイント。
     @GetMapping("/order/{orderId}")
     public ResponseEntity<DeliveryResponse> byOrder(
             @RequestHeader(value = "User-Id", required = false) Long userId,
@@ -94,6 +102,9 @@ public class DeliveryController {
      *
      * <p>409 를 돌려주는 경우가 중요하다: 요청이 잘못된 게 아니라 <b>지금은 할 수 없는</b>
      * 것이므로 400 이 아니다. 프론트는 이 구분으로 "이미 발송되어 변경할 수 없습니다"를 띄운다.
+     *
+     * <p>[JA] 配送先変更 — 発送前のみ。
+     * <p>409 を返す場合が重要だ: リクエストが間違っているのではなく<b>今はできない</b>ことなので 400 ではない。フロントはこの区別で「既に発送済みのため変更できません」を表示する。
      */
     @PatchMapping("/order/{orderId}/address")
     public ResponseEntity<Map<String, Object>> changeAddress(
@@ -117,6 +128,7 @@ public class DeliveryController {
     }
 
     /** 발송 전 배송 취소. 발송 후에는 반품 절차여서 여기서 처리하지 않는다. */
+    // [JA] 発送前の配送取消。発送後は返品手続きなのでここでは処理しない。
     @PostMapping("/order/{orderId}/cancel")
     public ResponseEntity<Map<String, Object>> cancel(
             @RequestHeader(value = "User-Id", required = false) Long userId,
@@ -140,6 +152,9 @@ public class DeliveryController {
      * <p>🔒 송장 등록과 같은 무게로 관리자만. 여러 고객의 수취인·주소·연락처가 한 화면에
      * 나온다. 역할 헤더가 없으면 거부한다 — 게이트웨이를 우회한 요청이 그대로 들어온다.
      * 소유권 개념이 없는 목록이라 다른 데서 막을 곳이 없다.
+     *
+     * <p>[JA] 管理者一覧 — デフォルトは<b>送り状を待つ配送</b>、{@code awaiting=false} なら最近の全体。
+     * <p>🔒 送り状登録と同じ重みで管理者のみ。複数の顧客の受取人・住所・連絡先が一画面に出る。ロールヘッダーがなければ拒否する — ゲートウェイを迂回したリクエストがそのまま入ってくる。所有権の概念がない一覧なので他で防ぐ場所がない。
      */
     @GetMapping("/admin")
     public ResponseEntity<List<AdminDeliveryResponse>> adminList(
@@ -170,6 +185,11 @@ public class DeliveryController {
      * 배송지를 임의로 지정할 수 있으면 그 자체가 물건을 빼돌리는 길이 된다.
      *
      * <p>이미 배송이 있으면 200 에 {@code created: false} 다. 두 번 눌러도 안전하다.
+     *
+     * <p>[JA] 決済は済んだのに配送がない注文の<b>配送を作る</b> — 管理者の復旧用。
+     * <p>正常経路は決済イベントが作る。ところがその経路が塞がっていた間(国名が {@code varchar(2)} を超えて決済レコードが DLT へ行った, docs/25 §11.5)決済された注文が配送なしで残った。そのレコードは二度と来ないので手でつなぐ場所が必要だ。
+     * <p>住所・品目は<b>注文から読み直す</b> — リクエスト本文では受け取らない。管理者でも配送先を任意に指定できると、それ自体が品物を横流しする道になる。
+     * <p>既に配送があれば 200 で {@code created: false}。二度押しても安全だ。
      */
     @PostMapping("/admin/order/{orderId}")
     public ResponseEntity<Map<String, Object>> adminCreateFromOrder(
@@ -192,6 +212,7 @@ public class DeliveryController {
     }
 
     /** 지원 택배사 목록. 프론트의 송장 등록 화면과 조회 링크에 쓰인다. */
+    // [JA] 対応宅配業者の一覧。フロントの送り状登録画面と照会リンクに使われる。
     @GetMapping("/carriers")
     public ResponseEntity<List<Map<String, Object>>> carriers() {
         return ResponseEntity.ok(deliveryService.activeCarriers().stream()
@@ -213,6 +234,10 @@ public class DeliveryController {
      *
      * <p>이제 게이트웨이가 넘겨준 역할을 확인한다. 역할 헤더가 없으면 <b>거부</b>한다 —
      * 없을 때 통과시키면 게이트웨이를 우회한 요청이 그대로 들어온다.
+     *
+     * <p>[JA] 送り状登録 (販売者・物流専用)。
+     * <p>🔒 <b>以前のバージョンは認証だけを確認しロールを見ていなかった。</b>コメントで「運用前に管理者チェックを入れること」とだけ書いておいたが、その間このエンドポイントは<b>ログインした誰でも</b>他人の注文に任意の宅配業者・送り状番号を付けられる状態だった。そうすると注文が発送されたように変わり(ポーリング開始 → DISPATCHED)、住所変更と取消が塞がれ、顧客には届かない品物の配送通知が出る。
+     * <p>今はゲートウェイが渡したロールを確認する。ロールヘッダーがなければ<b>拒否</b>する — ないときに通すとゲートウェイを迂回したリクエストがそのまま入ってくる。
      */
     @PostMapping("/order/{orderId}/tracking")
     public ResponseEntity<Map<String, Object>> registerTracking(

@@ -29,6 +29,16 @@ import org.springframework.data.domain.PageRequest;
  * 두 번 호출해 봐야만 드러나는 결함이다.
  *
  * <p>응답 형태(wire format)를 바꾸지 않기 위해 DTO 를 고치는 대신 역직렬화기를 제공한다.
+ *
+ * <p>[JA] Redis キャッシュが {@link PageImpl} を読み戻せるようにする Jackson モジュール。
+ *      背景(docs/16 B-27): 検索結果 DTO は {@code Page<ProductDto>} を持ち、
+ *      {@code @Cacheable("search_cache")} で Redis に JSON シリアライズされる。ところが {@code PageImpl} には
+ *      デフォルトコンストラクタも {@code @JsonCreator} もなく <b>デシリアライズが不可能</b> だった。結果として
+ *      1 回目の検索 → キャッシュミス → 正常応答 + キャッシュ保存、
+ *      2 回目の検索 → キャッシュヒット → SerializationException → HTTP 500。
+ *      つまり <b>同じ検索語は TTL の間ずっと 500</b> になる状態だった。実際の Elasticsearch を付けて
+ *      2 回呼んでみて初めて露見する欠陥である。
+ *      応答形式(wire format)を変えないため、DTO を直す代わりにデシリアライザを提供する。
  */
 public class PageJacksonModule extends SimpleModule {
 
@@ -44,7 +54,12 @@ public class PageJacksonModule extends SimpleModule {
      * 상품 목록을 두 번 읽은 셈이다({@code SinglePassJsonRedisSerializer} 가 없앤 이중 읽기의 안쪽). 저장 모양 · 읽은 값은 같다
      * (원소는 여전히 {@code @class} 로 복원) — 캐시를 비우지 않아도 된다.
      *
-     * <p>[JA] パーサから直接読む — ツリーを作らない。以前はページ全体をツリーにしてから要素ごとに読み直していた(キャッシュ復元の半分)。
+     * <p>[JA] パーサから直接読む — ツリーを作らない。
+     *
+     * <p>🐛 2026-10-24 CPU プロファイル(docs/83 §5、ゲートウェイ 4 回目): キャッシュ値の復元(catalog CPU 11.7%)の半分がこのクラスの中だった。
+     * 以前はページ全体を {@code readTree} でツリーにしてから、要素ごとに {@code treeToValue} で再びオブジェクトとして読んでいた — 検索結果の
+     * バイトの大部分である商品一覧を二度読んだことになる({@code SinglePassJsonRedisSerializer} が無くした二重読み取りの内側)。保存の形 · 読んだ
+     * 値は同じ(要素は今も {@code @class} で復元)— キャッシュを空にしなくてよい。
      */
     static class PageImplDeserializer extends JsonDeserializer<PageImpl<?>> {
 
@@ -57,6 +72,7 @@ public class PageJacksonModule extends SimpleModule {
             Long total = null;
 
             // @class 를 읽은 타입 역직렬화기가 넘기면 다음 필드 이름에, 타입 정보 없이 오면 '{' 에 서 있다
+            // [JA] @class を読んだ型デシリアライザが渡せば次のフィールド名に、型情報なしで来れば '{' に立っている
             JsonToken t = p.currentToken();
             if (t == JsonToken.START_OBJECT) {
                 t = p.nextToken();
@@ -70,11 +86,12 @@ public class PageJacksonModule extends SimpleModule {
                     case "number" -> number = present ? p.getValueAsInt() : 0;
                     case "size" -> size = present ? p.getValueAsInt() : 0;
                     case "totalElements" -> total = present ? p.getValueAsLong() : null;
-                    default -> p.skipChildren();   // pageable · sort · last … — 다시 셀 수 있는 값이다
+                    default -> p.skipChildren();   // pageable · sort · last … — 다시 셀 수 있는 값이다 ／ [JA] pageable · sort · last … — 数え直せる値である
                 }
             }
 
             // size 가 0이면 PageRequest.of 가 IllegalArgumentException 을 던지므로 보정한다.
+            // [JA] size が 0 だと PageRequest.of が IllegalArgumentException を投げるので補正する。
             int pageSize = size > 0 ? size : Math.max(content.size(), 1);
 
             return new PageImpl(content, PageRequest.of(number, pageSize), total != null ? total : content.size());
@@ -84,6 +101,10 @@ public class PageJacksonModule extends SimpleModule {
          * 기본 타입 정보가 켜져 있으면 컬렉션은 배열에 프로퍼티를 넣을 수 없어
          *   ["java.util.ArrayList", [ {...}, {...} ]]
          * 형태의 wrapper array 로 직렬화된다. 그 경우 실제 원소 배열은 두 번째 항목이다. 원소 타입은 직렬화 시 기록된 타입 정보(@class)로 복원된다.
+         *
+         * <p>[JA] 既定の型情報が有効だとコレクションは配列にプロパティを入れられず
+         *        ["java.util.ArrayList", [ {...}, {...} ]]
+         *      形式の wrapper array でシリアライズされる。その場合、実際の要素配列は 2 番目の項目である。要素の型はシリアライズ時に記録された型情報(@class)で復元される。
          */
         private static void readContent(JsonParser p, DeserializationContext ctxt, List<Object> content) throws IOException {
             if (p.currentToken() != JsonToken.START_ARRAY) {
@@ -97,12 +118,13 @@ public class PageJacksonModule extends SimpleModule {
                 if (t == JsonToken.START_ARRAY) {
                     readElements(p, ctxt, content, p.nextToken());
                     // 바깥 배열의 끝까지(예전처럼 두 항목 모양만 wrapper 로 본다 — 그 뒤는 없다)
+                    // [JA] 外側の配列の終わりまで(以前どおり 2 項目の形だけを wrapper とみなす — その後はない)
                     for (t = p.nextToken(); t != JsonToken.END_ARRAY && t != null; t = p.nextToken()) {
                         p.skipChildren();
                     }
                     return;
                 }
-                content.add(first);   // 문자열 원소의 평범한 배열
+                content.add(first);   // 문자열 원소의 평범한 배열 ／ [JA] 文字列要素の普通の配列
             }
             readElements(p, ctxt, content, t);
         }

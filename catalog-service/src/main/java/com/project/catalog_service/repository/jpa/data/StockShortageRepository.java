@@ -11,6 +11,7 @@ import com.project.catalog_service.model.StockShortage;
 public interface StockShortageRepository extends JpaRepository<StockShortage, String> {
 
     /** 아직 보내지 못한 것 — 오래된 것부터. */
+    // [JA] まだ送れていないもの — 古いものから。
     @Query("select s from StockShortage s where s.publishedAt is null order by s.createdAt")
     List<StockShortage> findUnpublished(Pageable page);
 }

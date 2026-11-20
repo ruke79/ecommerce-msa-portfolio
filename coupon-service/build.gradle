@@ -23,9 +23,11 @@ dependencies {
 	
 	runtimeOnly 'org.postgresql:postgresql'
 	// 스키마 마이그레이션: 파티셔닝 등 Hibernate ddl-auto가 만들 수 없는 DDL은 Flyway가 소유한다 (docs/09 P0)
+	// [JA] スキーママイグレーション: パーティショニングなど Hibernate ddl-auto が作れない DDL は Flyway が所有する (docs/09 P0)
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	// [JA] OpenAPI ドキュメント: /v3/api-docs, /swagger-ui.html
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'		
 	//runtimeOnly 'com.mysql:mysql-connector-j'
 	

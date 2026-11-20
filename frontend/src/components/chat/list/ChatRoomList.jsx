@@ -26,6 +26,10 @@ const ChatRoomList = () => {
     //    타이핑 실수로 보이지만 결과가 있다: 정작 동기화 대상인 `roomList` 가 빠져 있어
     //    목록이 새로 도착해도 redux 에 반영되지 않았다. 방을 만든 뒤 목록을 refetch 해도
     //    화면이 그대로인 이유가 이것이다.
+    // [JA] 🐛 依存配列が `[dispatch, , isPending]` だった — 真ん中が **空欄** である(undefined)。
+    //      タイプミスに見えるが結果がある: 肝心の同期対象である `roomList` が抜けていて、
+    //      一覧が新しく届いても redux に反映されなかった。部屋を作った後に一覧を refetch しても
+    //      画面がそのままだった理由がこれである。
     if (isFetch) {
       dispatch(setRooms(roomList));
     }
@@ -33,6 +37,8 @@ const ChatRoomList = () => {
 
   // 헤더는 항상 그린다. 예전에는 로딩 중 아무것도 반환하지 않아(`return;`) 목록 영역이
   // 통째로 사라졌다가 나타났다 — 방 만들기 버튼까지 함께 사라졌다.
+  // [JA] ヘッダーは常に描く。以前は読み込み中に何も返さず(`return;`)一覧領域が
+  //      丸ごと消えてから現れた — 部屋作成ボタンまで一緒に消えた。
   return (
     <React.Fragment>
       <RoomListHeader changeSearch={setInput} />

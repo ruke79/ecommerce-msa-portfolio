@@ -8,15 +8,21 @@ import { discounted, formatMoney, roundMoney, skuIndexInPriceRange, skuPriceRang
  * 10,000원짜리에 50% 할인 → 9,800원(=2% 할인), 70% 할인 → 9,857원(=1.4% 할인).
  *
  * 사용자에게 표시되는 가격이라 조용히 틀리면 신뢰를 잃는 종류의 버그다.
+ *
+ * <p>[JA] 🐛 回帰対象: 割引価格の計算式が `price - price / discount` だった。`discount` はパーセント(シードデータが 5〜70 を入れる)なのに割り算を使ったため
+ * 意味のない値が出て、<b>割引率が大きいほど割引幅が小さくなる</b>逆の動作だった。10,000ウォンに 50% 割引 → 9,800ウォン(=2% 割引)、70% 割引 → 9,857ウォン(=1.4% 割引)。
+ * ユーザーに表示される価格なので、黙って間違うと信頼を失う種類のバグだ。
  */
 describe("discounted", () => {
   it("applies the percentage, not a division", () => {
     // 옛 공식으로는 9800 이 나온다. 이 한 줄이 버그를 못박는다.
+    // [JA] 古い式では 9800 が出る。この一行がバグを釘付けにする。
     expect(discounted(10000, 50)).toBe(5000);
   });
 
   it("discounts more as the percentage grows", () => {
     // 옛 공식은 이 관계가 반대였다.
+    // [JA] 古い式ではこの関係が逆だった。
     const at30 = discounted(10000, 30);
     const at70 = discounted(10000, 70);
     expect(at70).toBeLessThan(at30);
@@ -32,6 +38,7 @@ describe("discounted", () => {
 
   it("never produces a negative price even on bad data", () => {
     // 데이터 오류로 100 을 넘는 할인율이 들어와도 가격이 음수가 되면 안 된다.
+    // [JA] データ誤りで 100 を超える割引率が入っても価格が負になってはならない。
     expect(discounted(10000, 150)).toBe(0);
   });
 
@@ -50,6 +57,8 @@ describe("discounted", () => {
  * <p>🔴 <b>예전에는 나눌 수가 없었다.</b> cart-service 가 `price×qty + shipping` 으로
  * 합산한 총액 하나만 내려보냈고, 결제 화면은 "Total" 한 줄이 전부였다 — 사용자는 자기가
  * 배송비를 얼마 내는지 <b>주문하는 순간까지 몰랐다.</b>
+ *
+ * <p>[JA] カート合計を商品金額と送料に分ける。🔴 <b>以前は分けられなかった。</b> cart-service が `price×qty + shipping` で合算した合計一つだけを返し、決済画面は "Total" 一行だけだった — ユーザーは自分が送料をいくら払うのか<b>注文する瞬間まで知らなかった。</b>
  */
 describe("splitCartTotal — 총액을 상품 금액과 배송비로", () => {
   const cart = (cartTotal, products) => ({ cartTotal, products });
@@ -73,6 +82,7 @@ describe("splitCartTotal — 총액을 상품 금액과 배송비로", () => {
   });
 
   /** 배송비는 수량과 무관한 줄 단위 금액이다 — 서버의 computeCartTotal 과 같은 규칙. */
+  // [JA] 送料は数量と無関係な行単位の金額である — サーバーの computeCartTotal と同じ規則。
   it("배송비에 수량을 곱하지 않는다 — 서버와 같은 규칙이어야 한다", () => {
     const r = splitCartTotal(cart(33000, [{ price: 10000, qty: 3, shipping: 3000 }]));
 
@@ -81,6 +91,7 @@ describe("splitCartTotal — 총액을 상품 금액과 배송비로", () => {
   });
 
   /** 세 줄이 서로 맞지 않으면 화면이 거짓말을 한다. */
+  // [JA] 三行が互いに合わないと画面が嘘をつく。
   it("상품 금액 + 배송비 = 합계", () => {
     const r = splitCartTotal(cart(27000, [{ price: 24500, qty: 1, shipping: 2500 }]));
 
@@ -90,6 +101,8 @@ describe("splitCartTotal — 총액을 상품 금액과 배송비로", () => {
   /**
    * 옛 장바구니 캐시에는 shipping 필드가 없다. 배송비를 **없는 것으로** 보는 쪽이
    * 안전하다 — 반대로 추측하면 상품 금액이 실제보다 작게 표시된다.
+   *
+   * <p>[JA] 古いカートキャッシュには shipping フィールドがない。送料を<b>ないものと</b>見る方が安全だ — 逆に推測すると商品金額が実際より小さく表示される。
    */
   it("배송비 정보가 없으면 0으로 본다", () => {
     const r = splitCartTotal(cart(10000, [{ price: 10000, qty: 1 }]));
@@ -105,6 +118,7 @@ describe("splitCartTotal — 총액을 상품 금액과 배송비로", () => {
   });
 
   /** 배송비가 총액보다 클 수는 없지만, 데이터가 어긋나도 음수를 보여 주지는 않는다. */
+  // [JA] 送料が合計より大きいことはありえないが、データがずれても負の値は見せない。
   it("상품 금액이 음수가 되지 않는다", () => {
     const r = splitCartTotal(cart(1000, [{ price: 0, qty: 1, shipping: 5000 }]));
 
@@ -125,10 +139,16 @@ describe("splitCartTotal — 총액을 상품 금액과 배송비로", () => {
  *
  * <p>장바구니 화면은 {@code .toFixed(2)} 를 쓰고 있어서 <b>같은 계산인데 한쪽만</b>
  * 이상하게 보였다 — 어디가 문제인지 알아채기 어려운 종류다.
+ *
+ * <p>[JA] 🐛 <b>決済画面の送料が小数点以下十数桁で出ていた。</b> {@code splitCartTotal} が {@code total - shipping} をそのまま出していたが、どちらも浮動小数なので
+ * {@code 20.01 - 6.66} が {@code 13.350000000000001} になる。画面はその値を受けてそのまま表示した。
+ * ⚠️ 例を選ぶときの注意: {@code 13.8 - 4.9} は<b>ちょうど 8.9 である。</b> 最初このガードをその値で書いたところ<b>修正を戻しても通過</b>することを確認して変えた。
+ * 浮動小数のテストは実際にずれる値を選んでこそガードになる。
+ * カート画面は {@code .toFixed(2)} を使っていて、<b>同じ計算なのに片方だけ</b>おかしく見えた — どこが問題か気づきにくい種類だ。
  */
 describe("formatMoney / roundMoney — 돈은 센트에서 멈춘다", () => {
   it("부동소수 꼬리를 자른다", () => {
-    expect(20.01 - 6.66).not.toBe(13.35);          // 전제: 실제로 어긋난다
+    expect(20.01 - 6.66).not.toBe(13.35);          // 전제: 실제로 어긋난다 ／ [JA] 前提: 実際にずれる
     expect(roundMoney(20.01 - 6.66)).toBe(13.35);
     expect(formatMoney(20.01 - 6.66)).toBe("13.35");
     expect(formatMoney(0.1 + 0.2)).toBe("0.3");
@@ -138,10 +158,12 @@ describe("formatMoney / roundMoney — 돈은 센트에서 멈춘다", () => {
     expect(formatMoney(12.345)).toBe("12.35");
     expect(formatMoney(12.344)).toBe("12.34");
     // 1.005 는 실제로 1.00499… 로 저장된다. EPSILON 보정이 없으면 "1"이 된다.
+    // [JA] 1.005 は実際には 1.00499… として保存される。EPSILON 補正がないと "1" になる。
     expect(formatMoney(1.005)).toBe("1.01");
   });
 
   /** 정수 가격이 대부분인 카탈로그에서 "4.00" 은 시끄럽다. */
+  // [JA] 整数価格がほとんどのカタログでは "4.00" はうるさい。
   it("불필요한 0 은 붙이지 않는다", () => {
     expect(formatMoney(4)).toBe("4");
     expect(formatMoney(4.5)).toBe("4.5");
@@ -160,6 +182,7 @@ describe("formatMoney / roundMoney — 돈은 센트에서 멈춘다", () => {
   });
 
   /** 🔴 핵심. 계산 단계에서 고정하지 않으면 화면마다 다시 반올림해야 한다. */
+  // [JA] 🔴 核心。計算段階で固定しないと画面ごとに丸め直す必要がある。
   it("splitCartTotal 이 꼬리를 남기지 않는다", () => {
     const amounts = splitCartTotal({
       cartTotal: 20.01,
@@ -171,6 +194,7 @@ describe("formatMoney / roundMoney — 돈은 센트에서 멈춘다", () => {
   });
 
   /** 세 줄을 각각 반올림하면 1센트가 어긋날 수 있다. 계산 단계에서 맞춰 둔다. */
+  // [JA] 三行をそれぞれ丸めると 1セントずれることがある。計算段階で合わせておく。
   it("반올림 후에도 상품 금액 + 배송비 = 합계", () => {
     const amounts = splitCartTotal({
       cartTotal: 20.01,
@@ -185,6 +209,9 @@ describe("formatMoney / roundMoney — 돈은 센트에서 멈춘다", () => {
  * 🔴 서버와 같은 값이어야 한다 — catalog 의 ProductService.discounted 는 price × (100 − d) / 100 을 소수 둘째
  * 자리에서 HALF_UP 으로 자르고, 그 값이 장바구니에 담겨 청구된다. 예전 식(부동소수 p × (1 − d/100))은 $1.15 의
  * 50% 를 0.57 로 그렸다(서버는 0.58) — 상품 화면과 결제 금액이 1센트 달랐다.
+ *
+ * <p>[JA] 🔴 サーバーと同じ値でなければならない — catalog の ProductService.discounted は price × (100 − d) / 100 を小数第二位で HALF_UP で切り、その値がカートに入って請求される。
+ * 以前の式(浮動小数 p × (1 − d/100))は $1.15 の 50% を 0.57 と描いた(サーバーは 0.58) — 商品画面と決済金額が 1セント違った。
  */
 describe("discounted — 서버와 같은 반올림", () => {
   it.each([
@@ -218,7 +245,7 @@ describe("skuPriceRange — 목록 카드·상품 화면·정렬이 같이 쓰�
 describe("skuIndexInPriceRange — 가격대에 드는 첫 스타일", () => {
     const skus = [
         { discount: 0, sizes: [{ price: 15 }, { price: 29 }] },
-        { discount: 30, sizes: [{ price: 100 }] },          // 화면 가격 70 — 정가(100)가 아니라 할인가로 본다(서버와 같다)
+        { discount: 30, sizes: [{ price: 100 }] },          // 화면 가격 70 — 정가(100)가 아니라 할인가로 본다(서버와 같다) ／ [JA] 画面価格 70 — 定価(100)ではなく割引価格で見る(サーバーと同じ)
         { discount: 0, sizes: [{ price: 120 }] },
     ];
     it("할인가로 비교한다 — 정가 100 이지만 화면 70 이면 $50~$80 에 든다", () => {

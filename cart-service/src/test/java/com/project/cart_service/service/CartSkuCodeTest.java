@@ -41,6 +41,10 @@ import com.project.common.dto.ProductSkuDto;
  *
  * <p>줄의 식별은 여전히 (상품, 색상, 사이즈 이름)이다. SKU 는 기록이라, 값의 출처가 <b>catalog</b> 여야 한다 — 본문을 믿으면
  * 주문 품목 · 포장 목록에 고객이 쓴 코드가 찍힌다.
+ *
+ * <p>[JA] カート行の SKU — サイズ 1 行の在庫単位コード(catalog V17)を書いておき、注文(/checkout)がそのまま持っていく。
+ *      行の識別は依然として(商品, 色, サイズ名)である。SKU は記録なので、値の出所は <b>catalog</b> でなければならない — 本文を信じると
+ *      注文品目 · 梱包リストに顧客が書いたコードが印字される。
  */
 @DisplayName("cart-service — 장바구니 줄의 SKU")
 class CartSkuCodeTest {
@@ -75,6 +79,7 @@ class CartSkuCodeTest {
         when(cartRepository.findByUserId(7L)).thenAnswer(i -> Optional.ofNullable(stored[0]));
         when(cartRepository.save(any(Cart.class))).thenAnswer(i -> stored[0] = i.getArgument(0));
         // 처음 담기 — 없을 때만 만든다(CartRepository.insertIfAbsent, V5)
+        // [JA] 最初の追加 — ないときだけ作る(CartRepository.insertIfAbsent, V5)
         when(cartRepository.insertIfAbsent(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenAnswer(i -> {
                     if (stored[0] != null) {
@@ -85,6 +90,7 @@ class CartSkuCodeTest {
                 });
 
         // 상품 1 — 스타일 둘(검정 5, 흰색 6). 스타일마다 사이즈 줄의 SKU 가 다르다.
+        // [JA] 商品 1 — スタイル 2 つ(黒 5、白 6)。スタイルごとにサイズ行の SKU が違う。
         when(catalog.getProductsInfo(anyList())).thenAnswer(i -> ResponseEntity.ok(List.of(ProductDto.builder()
                 .id("1").name("러닝화").shipping("0")
                 .skus(List.of(style(5L, "RUN-BLK"), style(6L, "RUN-WHT")))
@@ -106,7 +112,7 @@ class CartSkuCodeTest {
     @DisplayName("담으면 그 사이즈 줄의 SKU 를 catalog 에서 적는다 — 본문의 skuCode 는 무시")
     void putRecordsTheSizeSkuFromCatalog() {
         ProductInfoDto body = ProductInfoDto.builder().id("1").style(1).size("280").qty(1)
-                .skuCode("FORGED-999")   // 고객이 보낸 값
+                .skuCode("FORGED-999")   // 고객이 보낸 값 ／ [JA] 顧客が送った値
                 .color(ProductColorDto.builder().id("6").build()).build();
 
         service.putItem(7L, body);
@@ -120,7 +126,7 @@ class CartSkuCodeTest {
     void reputRefreshesTheSku() {
         service.putItem(7L, ProductInfoDto.builder().id("1").style(0).size("270").qty(1)
                 .color(ProductColorDto.builder().id("5").build()).build());
-        stored[0].getCartProducts().get(0).setSkuCode(null);   // 코드가 생기기 전에 담긴 줄처럼
+        stored[0].getCartProducts().get(0).setSkuCode(null);   // 코드가 생기기 전에 담긴 줄처럼 ／ [JA] コードができる前に入れた行のように
 
         service.putItem(7L, ProductInfoDto.builder().id("1").style(0).size("270").qty(3)
                 .color(ProductColorDto.builder().id("5").build()).build());
@@ -132,6 +138,9 @@ class CartSkuCodeTest {
     /**
      * 코드가 생기기 전에 담긴 줄은 SKU 가 비어 있다. 주문 품목이 빈 SKU 로 남지 않게 /checkout 을 만들 때 catalog 에서
      * 채운다 — 스타일은 저장된 순번이 아니라 <b>색상 id</b> 로 고른다(순번은 색상이 추가되면 밀린다).
+     *
+     * <p>[JA] コードができる前に入れた行は SKU が空である。注文品目が空の SKU で残らないよう /checkout を作るときに catalog から
+     *      埋める — スタイルは保存された順番ではなく <b>色 id</b> で選ぶ(順番は色が追加されるとずれる)。
      */
     @Test
     @DisplayName("SKU 가 빈 옛 줄은 /checkout 을 만들 때 catalog 에서 채운다 — 스타일은 색상 id 로")
@@ -158,6 +167,7 @@ class CartSkuCodeTest {
     }
 
     /** 배포 전에 만든 캐시에는 SKU 가 없다. 그대로 돌려주면 주문 품목의 SKU 가 비므로, 그런 캐시는 쓰지 않는다. */
+    // [JA] デプロイ前に作ったキャッシュには SKU がない。そのまま返すと注文品目の SKU が空になるので、そういうキャッシュは使わない。
     @Test
     @DisplayName("SKU 가 빈 줄이 든 캐시는 쓰지 않고 다시 만든다")
     void staleCacheWithoutSkuIsRebuilt() {

@@ -16,6 +16,14 @@
  *
  * 🔒 여기 실리는 값은 전부 **공개**된다(B-51). REACT_APP_ 접두사가 그 약속이다 —
  *    비밀은 절대 이 접두사로 부르지 않는다.
+ *
+ * <p>[JA] ブラウザバンドルに埋め込まれる環境変数 — dev · prod 設定が同じものを使う。
+ * 🐛 以前は `EnvironmentPlugin([四つの名前])` だった。その一覧にない `process.env.REACT_APP_STORE_CURRENCY`(util/money.js、モジュール先頭)は置換されないままバンドルに残り、
+ * ブラウザには `process` がないので最初の画面で `Uncaught ReferenceError: process is not defined` となり<b>アプリ全体が死んだ。</b>
+ * 名前を一つ使うたびに一覧にも書くという規則は守られない — コードは通り(テストは Node なので process がある)本番でだけ爆発する。
+ * だから一覧をなくす。ビルド時点の環境の `REACT_APP_*` を<b>すべて</b>載せ、ない名前は `undefined` になるよう `process.env` 自体をオブジェクトとして定義する
+ * (DefinePlugin のネストしたオブジェクト — `process.env.X` も素の `process.env` もこのオブジェクトに置き換わる)。CRA のやり方である。
+ * 🔒 ここに載る値はすべて<b>公開</b>される(B-51)。REACT_APP_ 接頭辞がその約束だ — 秘密は決してこの接頭辞で呼ばない。
  */
 function clientEnv(nodeEnv) {
   const env = {};

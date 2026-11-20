@@ -22,6 +22,11 @@ import org.springframework.web.server.ServerWebExchange;
  *
  * <p>증상 쪽에서 보면 이렇다 — 파드를 직접 부르면 0.3초에 200 인데 게이트웨이로는
  * "내부 서버 오류"가 난다. 원인이 타임아웃이라는 단서가 응답 어디에도 없다.
+ *
+ * <p>[JA] フォールバックが原因を<b>区別して</b>知らせるか。このテストが存在する理由: 以前は Spring Cloud Gateway の {@code TimeoutException} だけを見ていたが、
+ * このゲートウェイで実際に起きるタイムアウトは Resilience4j TimeLimiter が投げる {@code java.util.concurrent.TimeoutException} だった。クラスが違うので分岐が
+ * 一致せず、すべてのタイムアウトが 503「内部サーバーエラー」にまとめられた。
+ * 症状側から見るとこうなる — ポッドを直接呼ぶと 0.3 秒で 200 なのに、ゲートウェイ経由では「内部サーバーエラー」になる。原因がタイムアウトだという手がかりが応答のどこにもない。
  */
 class FallbackControllerTest {
 
@@ -40,6 +45,7 @@ class FallbackControllerTest {
     @DisplayName("Resilience4j TimeLimiter 의 타임아웃도 504 로 분류한다 (예전에는 503 '내부 서버 오류'였다)")
     void concurrentTimeoutIsGatewayTimeout() {
         // 리액터가 실제로 던지는 메시지 그대로.
+        // [JA] Reactor が実際に投げるメッセージそのまま。
         ResponseEntity<String> response = fallbackFor(new java.util.concurrent.TimeoutException(
                 "Did not observe any item or terminal signal within 1000ms in 'circuitBreaker'"));
 

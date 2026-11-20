@@ -42,6 +42,11 @@ import java.util.Set;
  * 뒤에 {@code if (existData == null)} 이 오는 죽은 분기라 <b>신규 사용자는 예외로,
  * 기존 사용자는 이메일 덮어쓰기로</b> 끝났고, 성공 핸들러는 "google 12345" 를 이메일로
  * 조회해 모든 소셜 로그인이 user_not_found 로 끝났다.
+ *
+ * <p>[JA] ソーシャルユーザー読み込みの回帰テスト。
+ * 以前の実装の失敗の仕方が特殊なのでそのまま固定する: {@code findByUsername(...).orElseThrow} の後に
+ * {@code if (existData == null)} が来る死んだ分岐で、<b>新規ユーザーは例外で、既存ユーザーはメール上書きで</b>終わり、
+ * 成功ハンドラーは "google 12345" をメールとして照会して、すべてのソーシャルログインが user_not_found で終わっていた。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -55,6 +60,7 @@ class CustomOAuth2UserServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void passThroughLinker() {
         // 연결 규칙은 SocialAccountLinkerTest 가 본다 — 여기서는 받은 계정을 그대로 돌려준다.
+        // [JA] 連携ルールは SocialAccountLinkerTest が見る — ここでは受け取ったアカウントをそのまま返す。
         when(socialAccountLinker.link(any(), any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -117,10 +123,12 @@ class CustomOAuth2UserServiceTest {
         CustomOAuth2User principal = (CustomOAuth2User) service.loadUser(request("google"));
 
         // 기존 계정의 역할이 그대로 온다 — 관리자가 소셜로 들어와도 관리자다.
+        // [JA] 既存アカウントのロールがそのまま来る — 管理者がソーシャルで入っても管理者である。
         assertTrue(principal.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")));
         verify(userRepository, never()).save(any());
         // 🔒 기존 계정이면 반드시 연결 규칙(사전 탈취 방어)을 지난다(docs/68 §15).
+        // [JA] 🔒 既存アカウントなら必ず連携ルール(事前乗っ取り防御)を通る(docs/68 §15)。
         verify(socialAccountLinker).link(existing, "google");
     }
 
@@ -140,6 +148,7 @@ class CustomOAuth2UserServiceTest {
         givenRoleExists();
         when(userRepository.findByEmail("dev@example.com")).thenReturn(Optional.empty());
         // GithubResponse: email null → 폴백 호출
+        // [JA] GithubResponse: email null → フォールバック呼び出し
         stubProviderUser(Map.of("id", 777, "login", "devkim"), "id");
         doReturn("dev@example.com").when(service).fetchGithubPrimaryEmail("tok");
 

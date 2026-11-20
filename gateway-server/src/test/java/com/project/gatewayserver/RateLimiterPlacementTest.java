@@ -27,7 +27,11 @@ import org.springframework.core.io.ClassPathResource;
  * 한 라우트의 두 필터가 같은 버킷에서 요청마다 토큰 두 개를 썼다 — 같은 라우트의 리뷰 보기 · 토큰 갱신이 버킷을 비워 갱신이 429 →
  * 화면이 로그아웃시켰다. Redis 명령 타임아웃도 없어(기본 60초) Redis 가 잠깐 끊기면 모든 요청이 멈췄다.
  *
- * <p>[JA] 流入制限はルートごとにちょうど一つ、JWT フィルターの後 — Redis が切れてもゲートウェイは止まらない。
+ * <p>[JA] B-84: 流入制限はルートごとにちょうど一つ、JWT フィルターの後 — そして Redis が切れてもゲートウェイは止まらない。
+ *
+ * <p>[JA] 以前: default-filters に一つ + ログインルートに一つ。RedisRateLimiter は設定をルート id で保存し Redis キーもルート id なので、
+ * 一つのルートの二つのフィルターが同じバケットからリクエストごとにトークンを二つ使った — 同じルートのレビュー閲覧 · トークン更新がバケットを空にして更新が 429 →
+ * 画面がログアウトさせた。Redis コマンドのタイムアウトもなく(既定 60 秒)、Redis が一瞬切れるとすべてのリクエストが止まった。
  */
 @DisplayName("B-84: 게이트웨이 유입 제한 — 라우트마다 하나 · JWT 뒤 · Redis 타임아웃")
 class RateLimiterPlacementTest {
@@ -45,6 +49,7 @@ class RateLimiterPlacementTest {
     }
 
     /** 앱과 같이 ${…} 를 풀어 묶는다(환경 변수 · 기본값). */
+    // [JA] アプリと同じく ${…} を解決してバインドする(環境変数 · デフォルト値)。
     private static GatewayProperties gateway(Map<String, Object> overrides) throws Exception {
         StandardEnvironment env = env(overrides);
         return new Binder(org.springframework.boot.context.properties.source.ConfigurationPropertySources.get(env),
@@ -86,7 +91,9 @@ class RateLimiterPlacementTest {
         // 라우트 필터의 order 는 목록 위치 + 1 이고 default-filters 에는 Dedupe 하나뿐이라, 목록 순서가 곧 실행 순서다.
         // 🐛 예전: 7개 라우트가 쿠키를 먼저 지웠다. 지금 spring-web 은 변형한 요청의 getCookies() 를 원래 요청에 맡겨 우연히 읽혔다 —
         //    그 내부 동작이 바뀌는 날 브라우저(ACCESS 쿠키) 경로가 로그인해도 401 이 된다.
-        // [JA] 以前は 7 ルートが Cookie を先に消していた。今の spring-web が偶然読ませていただけ。
+        // [JA] ルートフィルターの order はリスト位置 + 1 で、default-filters には Dedupe 一つだけなので、リストの順序がそのまま実行順序である。
+        //      以前: 7 ルートが Cookie を先に消していた。今の spring-web は変形したリクエストの getCookies() を元のリクエストに任せていて偶然読めていた —
+        //      その内部動作が変わる日、ブラウザ(ACCESS Cookie)の経路はログインしても 401 になる。
         for (RouteDefinition r : gateway().getRoutes()) {
             List<String> args = r.getFilters().stream().map(f -> f.getName() + "=" + String.join(",", f.getArgs().values())).toList();
             int jwt = r.getFilters().stream().map(FilterDefinition::getName).toList().indexOf("JwtAuthorization");
@@ -112,6 +119,7 @@ class RateLimiterPlacementTest {
                 .doesNotContain("/user-service/api/token/refresh", "/user-service/api/review/**")
                 .contains("/user-service/api/auth/public/**");
         // 읽기 라우트가 로그인 라우트보다 앞이어도 뒤여도 겹치지 않는다 — 경로가 서로 다르다
+        // [JA] 読み取りルートがログインルートより前でも後でも重ならない — パスが互いに異なる
         assertThat(IntStream.range(0, g.getRoutes().size()).filter(i -> g.getRoutes().get(i).getId().startsWith("user-service-public")).count())
                 .isEqualTo(2);
     }
@@ -135,6 +143,7 @@ class RateLimiterPlacementTest {
         assertThat(limiterArg(login, "redis-rate-limiter.replenishRate")).as("로그인은 변수와 상관없이").isEqualTo("1");
         assertThat(limiterArg(login, "redis-rate-limiter.burstCapacity")).isEqualTo("10");
         // 운영 · 데모 매니페스트는 이 변수를 두지 않는다 — 측정할 때만 손으로(docs/83 §3)
+        // [JA] 本番 · デモのマニフェストはこの変数を置かない — 測定するときだけ手で(docs/83 §3)
         for (String f : List.of("k8s/10-configmap.yaml", "k8s/31-gateway-server.yaml",
                 "k8s-overlays/prod/kustomization.yaml")) {
             java.nio.file.Path p = java.nio.file.Path.of("..").resolve(f);

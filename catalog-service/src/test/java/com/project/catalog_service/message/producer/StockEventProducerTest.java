@@ -19,6 +19,8 @@ import com.project.catalog_service.message.producer.StockEventProducer.Variant;
 
 /**
  * 재고가 0 을 건너는 순간 — 품절(운영자 경보)과 재입고(손님 알림) (docs/53).
+ *
+ * <p>[JA] 在庫が 0 をまたぐ瞬間 — 品切れ(運用者への警報)と再入荷(客への通知)(docs/53)。
  */
 @DisplayName("StockEventProducer — 품절·재입고")
 class StockEventProducerTest {

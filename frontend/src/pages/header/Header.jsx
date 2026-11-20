@@ -21,6 +21,7 @@ const Header = ({title, searchHandler}) => {
     const { isAuthenticated } = useAuthContext();
 
     // 모든 화면이 Header 를 통과하므로 제목도 여기서 세운다.
+    // [JA] すべての画面が Header を通るので、タイトルもここで設定する。
     useDocumentTitle(title);
 
     const openMenuHandler = () => {
@@ -44,6 +45,7 @@ const Header = ({title, searchHandler}) => {
               * 제목은 위의 useDocumentTitle 이 document.title 로 직접 세운다.
               * viewport·description 은 index.html 에 있다 — 라우트마다 바뀔 값이 아니다.
               */}
+            {/* [JA] 🐛 ここに `<title>` と `<meta>` があった。React 18 はこれらを <head> に引き上げない — ただ <body> の中に描かれるだけなので(ブラウザが無視する)タブのタイトルが変わらなかった。`public/index.html` にも <title> がなかったので、タブには URL がそのまま見えていた。(ホイスティングは React 19 から。)タイトルは上の useDocumentTitle が document.title で直接設定する。viewport・description は index.html にある — ルートごとに変わる値ではない。 */}
             <div className="bg-amazon-blue_dark flex flex-col md:flex-row">
                 <div className="flex flex-grow items-center p-3 md:space-x-5 md:px-4 text-white">
                     {/* Menu Icon Mobile */}
@@ -57,6 +59,7 @@ const Header = ({title, searchHandler}) => {
                         {/* Logo */}
                         <Link to="/">
                             {/* 예전에는 Amazon 로고 png 였다(constants/brand.js 주석). */}
+                            {/* [JA] 以前は Amazon のロゴ png だった(constants/brand.js のコメント)。 */}
                             <BrandMark variant="light" size="md" className="pt-2" />
                         </Link>
                     </div>
@@ -65,12 +68,14 @@ const Header = ({title, searchHandler}) => {
 
                     {/* Search Desktop — 중괄호 없이 적혀 있어서 헤더에 "Search Desktop"
                         이라는 글자가 그대로 찍히고 있었다. */}
+                    {/* [JA] Search Desktop — 波括弧なしで書かれていたので、ヘッダーに "Search Desktop" という文字がそのまま表示されていた。 */}
                     <div className="hidden md:flex flex-grow">
                         <Search searchHandler={searchHandler} />
                     </div>
 
                     <Language />
                     {/* 알림 종. 로그인 상태에서만 보인다 — 비로그인 사용자에게는 보여줄 알림이 없다. */}
+                    {/* [JA] 通知ベル。ログイン状態でだけ見える — 未ログインのユーザーには見せる通知がない。 */}
                     <NotificationBell isAuthenticated={isAuthenticated} />
                     <Account />
                 </div>

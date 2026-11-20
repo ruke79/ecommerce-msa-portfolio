@@ -32,6 +32,11 @@ import com.project.catalog_service.service.ProductImportService.StorageNotWritab
  * TRUNCATE 해야 했다.
  *
  * <p>그래서 이제 카탈로그가 비어 있지 않으면 <b>시작하지 않는다.</b>
+ *
+ * <p>[JA] インポートを<b>もう一度押したとき</b>何が起きるか。
+ * <p>このジョブは冪等ではない。プロセッサは照会せずに新しいエンティティを作り、実行ごとに {@code time} パラメータで新しい JobInstance になるため Spring Batch の再開が機能しない — 常に 1 段目からやり直す。
+ * <p>実際にこうなった: S3 権限のせいで画像アップロードで死んだ後に再度押すと、カテゴリ 5→10、サブカテゴリ 15→30 になり、商品で {@code uq_product_slug} に引っかかって止まった。ユニーク制約がなければ商品 500 件のカタログが<b>黙って</b>作られていただろう。運用者は psql で直接 TRUNCATE しなければならなかった。
+ * <p>そのため今はカタログが空でなければ<b>開始しない。</b>
  */
 class ProductImportGuardTest {
 
@@ -55,10 +60,12 @@ class ProductImportGuardTest {
                 .hasMessageContaining("reset=true");
 
         // 비우지 않는다 — 시작 자체를 안 한다(저장소 점검은 그보다 먼저 한다 — 아래).
+        // [JA] 空にしない — 開始自体をしない(ストレージ点検はそれより先に行う — 下記)。
         verify(catalogResetService, never()).reset();
     }
 
     /** 🐛 예전에는 reset(TRUNCATE … CASCADE)이 저장소 점검보다 먼저였다 — 자격 증명이 만료된 채 누르면 카탈로그가 지워진 뒤 503. */
+    // [JA] 🐛 以前は reset(TRUNCATE … CASCADE)がストレージ点検より先だった — 資格情報が期限切れのまま押すとカタログが消えた後に 503。
     @Test
     @DisplayName("🔴 저장소에 쓸 수 없으면 reset=true 라도 카탈로그를 비우지 않는다 — 비우기 전에 점검한다")
     void storageCheckedBeforeReset() {
@@ -71,6 +78,7 @@ class ProductImportGuardTest {
     }
 
     /** 🐛 예전에는 파드 안의 AtomicBoolean 뿐이라 다른 파드로 간 재실행이 동시에 돌았다(두 벌 · 진행 중 데이터 TRUNCATE). */
+    // [JA] 🐛 以前は Pod 内の AtomicBoolean だけだったので、別の Pod に行った再実行が同時に動いた(二重登録・進行中データの TRUNCATE)。
     @Test
     @DisplayName("🔴 다른 파드가 임포트 잠금을 쥐고 있으면 시작하지 않는다 — 비우지도 않는다")
     void otherPodHoldsTheLock() {
@@ -123,6 +131,7 @@ class ProductImportGuardTest {
         assertThatThrownBy(() -> service.start(false)).isInstanceOf(CatalogNotEmptyException.class);
 
         // 두 번째 호출이 AlreadyRunning 이면 플래그가 안 풀린 것이다(그러면 파드를 재시작해야 한다).
+        // [JA] 2 回目の呼び出しが AlreadyRunning ならフラグが解放されていない(その場合は Pod を再起動しなければならない)。
         assertThatThrownBy(() -> service.start(false))
                 .isInstanceOf(CatalogNotEmptyException.class)
                 .isNotInstanceOf(AlreadyRunningException.class);

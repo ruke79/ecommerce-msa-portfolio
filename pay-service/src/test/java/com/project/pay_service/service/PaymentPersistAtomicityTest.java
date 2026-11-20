@@ -36,6 +36,10 @@ import com.project.pay_service.repository.jpa.PaymentRepository;
  *
  * <p>🐛 예전: {@code persistPayment} 에 트랜잭션이 없어 둘이 따로 커밋됐다. 아웃박스 쓰기가 실패하면 결제만 남고 order-service 로 갈
  * 응답이 없었다. 모형(mock) 테스트로는 트랜잭션 경계를 볼 수 없어 실제 JPA · 실제 스프링 프록시로 확인한다.
+ *
+ * <p>[JA] 決済行と決済応答のアウトボックス行は<b>一緒に</b>コミットされるか<b>一緒に</b>戻される — 実際のトランザクション(H2)で。
+ * 🐛 以前: {@code persistPayment} にトランザクションがなく二つが別々にコミットされた。アウトボックスの書き込みが失敗すると決済だけが残り、
+ * order-service へ行く応答がなかった。モックのテストではトランザクション境界が見えないので、実際の JPA · 実際の Spring プロキシで確認する。
  */
 @DataJpaTest(properties = {
         "spring.flyway.enabled=false",
@@ -48,7 +52,7 @@ import com.project.pay_service.repository.jpa.PaymentRepository;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({ PaymentService.class, OrderOutboxHelper.class, JacksonAutoConfiguration.class })
-@Transactional(propagation = Propagation.NOT_SUPPORTED)   // 테스트 트랜잭션이 서비스의 경계를 가리지 않게
+@Transactional(propagation = Propagation.NOT_SUPPORTED)   // 테스트 트랜잭션이 서비스의 경계를 가리지 않게 ／ [JA] テストのトランザクションがサービスの境界を隠さないように
 @DisplayName("pay-service — 결제와 아웃박스는 한 트랜잭션")
 class PaymentPersistAtomicityTest {
 

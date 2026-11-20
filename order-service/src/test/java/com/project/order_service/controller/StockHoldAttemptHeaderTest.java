@@ -23,6 +23,7 @@ import com.project.order_service.service.OrderDataService;
 import com.project.order_service.service.OrderService;
 
 /** 결제 시작 — Payment-Attempt 헤더가 서비스에 닿고, 다른 창이 결제 중이면 400 과 이유(화면이 그 이유로 멈춘다). */
+// [JA] 決済開始 — Payment-Attempt ヘッダーがサービスに届き、別ウィンドウが決済中なら 400 と理由(画面はその理由で止まる)。
 @DisplayName("결제 시작 — 결제 시도 헤더")
 class StockHoldAttemptHeaderTest {
 

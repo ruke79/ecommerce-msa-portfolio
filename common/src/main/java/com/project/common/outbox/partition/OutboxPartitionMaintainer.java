@@ -238,8 +238,15 @@ public class OutboxPartitionMaintainer {
      *   <li>오래된 달의 행은 새로 생기지 않고(created_at), 상태는 COMPLETED 로만 간다 — 확인한 뒤 지우는 사이에 끝나지 않은 행이 생기지 않는다.</li>
      * </ul>
      *
-     * <p>[JA] 保持期間より古い月のパーティションを消す — 終わっていない行がないときだけ。このジョブが作る形のものだけが対象。
-     *      パーティションごとに一トランザクションで確認 → DETACH → DROP(CONCURRENTLY は DEFAULT があると使えない)。
+     * <p>[JA] 保持期間より古い月のパーティションを消す — 終わっていない行(状態が COMPLETED でないもの · 状態なし)がないときだけ。
+     * <ul>
+     *   <li>[JA] 対象はこのジョブが作る形({@code <テーブル>_YYYY_MM}、一か月範囲)で親に付いているものだけ — DEFAULT · 別名は触らない。</li>
+     *   <li>[JA] パーティションごとに一トランザクション: advisory lock · ロック 3 秒 · 文 30 秒上限(作成と同じ)→ 終わっていない行の確認 → DETACH →
+     *       DROP。{@code DETACH … CONCURRENTLY} は DEFAULT パーティションがあるテーブルに使えず、トランザクション内でも使えない — そのため
+     *       通常の DETACH を一トランザクションで DROP と一緒に行う。親に一瞬 ACCESS EXCLUSIVE がかかる(その間アウトボックスの書き込みが待つ
+     *       — 3 秒上限)。二段階の間で止まること(DETACH されたまま残るテーブル)がない。</li>
+     *   <li>[JA] 古い月の行は新たに生まれず(created_at)、状態は COMPLETED へしか進まない — 確認してから消すまでの間に終わっていない行は生じない。</li>
+     * </ul>
      *
      * @return PostgreSQL 이 아니거나 파티션 테이블이 아니면 null
      */
@@ -342,7 +349,7 @@ public class OutboxPartitionMaintainer {
                 while (rs.next()) {
                     java.util.regex.Matcher m = BOUND.matcher(rs.getString(2) == null ? "" : rs.getString(2));
                     if (!m.find()) {
-                        continue;   // DEFAULT · 다른 모양
+                        continue;   // DEFAULT · 다른 모양 ／ [JA] DEFAULT · 別の形
                     }
                     YearMonth from = YearMonth.of(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
                     YearMonth to = YearMonth.of(Integer.parseInt(m.group(3)), Integer.parseInt(m.group(4)));

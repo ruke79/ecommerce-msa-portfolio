@@ -22,6 +22,11 @@ import org.springframework.data.domain.Persistable;
  * 재고 차감 요청이 두 번 올 수도 있다. 처리한 eventId 를 비즈니스 변경과 **같은 DB 트랜잭션**으로
  * 기록해 두면, 재전달 시 이 테이블 조회만으로 중복을 스킵할 수 있다(재고 이중 차감 방지).
  * 스키마는 Flyway V2__create_processed_event.sql 이 소유한다.
+ *
+ * <p>[JA] コンシューマ冪等性の処理履歴(docs/11 §4 G8)。
+ * Kafka は at-least-once なので同じイベントが再配信されうるし、サーガの再実行で同じ注文の在庫減算リクエストが二度来ることもある。
+ * 処理した eventId を業務上の変更と同じ DB トランザクションで記録しておけば、再配信時にこのテーブルを照会するだけで重複をスキップできる
+ * (在庫の二重減算防止)。スキーマは Flyway V2__create_processed_event.sql が所有する。
  */
 @Entity
 @Table(name = "processed_event", schema = "product")
@@ -56,6 +61,14 @@ public class ProcessedEvent implements Persistable<String> {
     //     대신 **UPDATE** 를 낸다. 예외가 없으니 롤백도 없고, 재고 차감은 두 번 반영된다.
     //     existsById 를 동시에 통과한 두 소비자를 막아 주는 마지막 방어선이 그 경로에서만
     //     조용히 빠져 있었다. persist() 로 가야 PK 충돌이 실제로 나고 주석대로 동작한다.
+    // [JA] ── なぜ Persistable を実装するのか ──
+    //      eventId は Kafka が与えた値をそのまま割り当てる自然キーだ。そのため save() の時点で id がすでに null ではなく、
+    //      SimpleJpaRepository はそれだけを見て persist() ではなく merge() を選ぶ。結果は二つ。
+    //      1. merge は付け先を探すために先に SELECT を投げる — イベントを処理するたびに、必ず空振りに終わる SELECT が一回余計に出ていた。
+    //      直前の行で existsById によりすでに同じ行を確認した後なので、まったく同じ照会が二回出ていたことになる。
+    //      2. より重要な方。リスナーのコメントは「同時重複は PK 衝突で全体ロールバックされる」と書いているが、merge は別トランザクションが
+    //      すでにコミットした同じ eventId を SELECT で見つけると、衝突の代わりに UPDATE を出す。例外がないのでロールバックもなく、在庫減算は二度反映される。
+    //      existsById を同時に通過した二つの消費者を止める最後の防衛線が、その経路でだけ黙って抜けていた。persist() に行ってこそ PK 衝突が実際に起き、コメントどおりに動く。
     @Transient
     private boolean persisted;
 

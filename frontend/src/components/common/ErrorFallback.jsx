@@ -29,6 +29,15 @@ import { useTranslation } from "i18n/I18nProvider";
  * <p>이걸 손본 이유: 인터셉터가 401·500·503 을 더 이상 "로그아웃" 이나 "홈으로 이동" 으로
  * 삼키지 않고 호출부로 돌려주기 시작했다(TokenRefresher). 그 오류들이 결국 여기로 오므로,
  * 여기가 읽을 만해야 그 변경이 의미가 있다.
+ *
+ * <p>[JA] 画面が例外で落ちたときに代わりに描く。
+ * 🐛 以前は role="alert" の div に "Something went wrong:" と error.message、"Try again" ボタンを出すだけだった。問題は三つだった。
+ * ・メッセージがユーザーにとって何の意味もない。axios エラーの message は "Request failed with status code 401" である。
+ * 肝心のサーバーが送った説明(response.data.message)は捨てられた。
+ * ・出口がない。"Try again" は同じ画面を描き直すだけなので原因がそのままなら同じように落ちる。ヘッダーもリンクもなくホームへ行く方法がない。
+ * ・何でも同じに見える。権限がないのとサーバーが落ちたのとではユーザーにできることが違う。
+ * これに手を入れた理由: インターセプターが 401 · 500 · 503 をもう「ログアウト」や「ホームへ移動」で握りつぶさず
+ * 呼び出し側へ返し始めた(TokenRefresher)。そのエラーは結局ここに来るので、ここが読めるものでないとその変更に意味がない。
  */
 const ErrorFallback = ({ error, resetErrorBoundary }) => {
     const { t } = useTranslation();
@@ -77,6 +86,8 @@ const ErrorFallback = ({ error, resetErrorBoundary }) => {
               * 기술적인 내용은 접어 둔다. 사용자에게는 소음이지만, 문의를 받는 쪽에는
               * 이 한 줄이 전부다 — 아예 숨기면 "뭔가 잘못됐대요" 말고는 남는 게 없다.
               */}
+            {/* [JA] 技術的な内容は折りたたんでおく。ユーザーには雑音だが、問い合わせを受ける側には
+                この一行がすべてである — 完全に隠すと「何かおかしいそうです」以外に何も残らない。 */}
             <details className="mt-4 text-xs text-slate-400">
                 <summary className="cursor-pointer">{t("error.fallback.tech_info")}</summary>
                 <pre className="mt-2 whitespace-pre-wrap break-all text-left">
@@ -91,12 +102,16 @@ const ErrorFallback = ({ error, resetErrorBoundary }) => {
  * 사용자가 할 수 있는 일이 무엇인지로 나눈다.
  *
  * <p>서버가 설명을 보냈으면 그것을 쓴다 — 우리가 만든 일반론보다 구체적이다.
+ *
+ * <p>[JA] ユーザーにできることが何かで分ける。
+ * サーバーが説明を送っていればそれを使う — こちらが作った一般論より具体的である。
  */
 function describe(status, serverMessage, error, t) {
     if (status === 401 || status === 403) {
         return {
             title: t("error.fallback.forbidden.title"),
             // 로그아웃된 것이 아니라 이 기능에 대한 권한이 없는 경우다(TokenRefresher 주석).
+            // [JA] ログアウトされたのではなく、この機能への権限がない場合である(TokenRefresher のコメント)。
             detail: serverMessage
                 ?? t("error.fallback.forbidden.detail"),
             showSignIn: true,
@@ -139,6 +154,7 @@ function describe(status, serverMessage, error, t) {
     }
 
     // 네트워크 오류·타임아웃, 또는 렌더 도중의 자바스크립트 오류.
+    // [JA] ネットワークエラー · タイムアウト、またはレンダー中の JavaScript エラー。
     const timedOut = error?.code === "ECONNABORTED";
     return {
         title: timedOut ? t("error.fallback.timeout.title") : t("error.fallback.generic.title"),

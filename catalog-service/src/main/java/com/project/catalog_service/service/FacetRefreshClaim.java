@@ -26,8 +26,15 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Redis 에 만료가 있는 키 하나({@code SET NX PX}) — 계산을 맡은 파드가 죽어도 {@link Redis#lease} 뒤에는 풀린다. 풀 때는 자기가 건 값일
  * 때만 지운다. 맡지 못한 파드는 옛 값을 그대로 내주고(없으면 메뉴 없이), 새 값은 맡은 파드가 캐시에 쓴다.
  *
- * <p>[JA] フィルターメニュー計算のポッド間の担当 — 同じメニューはクラスタで一つのポッドだけが計算する。Redis の値は全ポッドが同時に古いと
- *      判断するので、ポッドごとに同じ DISTINCT を同時に流して DB を遅くしていた(home まで 6 秒、ゲートウェイで 503)。
+ * <p>[JA] フィルターメニュー計算のポッド間の担当 — 同じメニュー(キャッシュ名 + キー)はクラスタで一つのポッドだけが計算する(SearchFilterFacets)。
+ *
+ * <p>[JA] 2026-10-21 実習 8 時間(mixed {@code 150403Z}、商品 1,000 万、docs/83 §2.8): メニューの値は Redis に計算時刻と一緒にあり、10 分が過ぎて
+ * 古くなった瞬間を<b>全ポッドが同時に</b>見る — ポッドごとに自分の実行器で同じ DISTINCT(ブランド 22 秒 · 色 7 秒 · サイズ 11 秒)を同時に流した
+ * (PostgreSQL ログ: 同じパラメーターの同じ照会がバックエンド三つで同じ瞬間に終了)。三つが一緒に表を走査する間 DB が遅くなり home まで 6 秒 —
+ * ゲートウェイの catalog 枠(ポッドごとに 25)が埋まり、1 分間 {@code /fallback} 503 が 1,472 件。
+ *
+ * <p>[JA] Redis に期限付きのキー一つ({@code SET NX PX}) — 計算を担当したポッドが死んでも {@link Redis#lease} の後には解ける。解くときは自分が置いた値の
+ * ときだけ消す。担当できなかったポッドは古い値をそのまま返し(なければメニューなし)、新しい値は担当したポッドがキャッシュに書く。
  */
 public interface FacetRefreshClaim {
 
@@ -35,12 +42,16 @@ public interface FacetRefreshClaim {
      * 이 메뉴의 계산을 맡았으면 토큰, 다른 파드가 맡고 있으면 null.
      *
      * @throws RuntimeException 맡기를 확인하지 못했다(Redis) — 부르는 쪽은 이 파드에서 계산한다(메뉴가 없는 것보다 낫다)
+     *
+     * <p>[JA] このメニューの計算を引き受けたらトークン、他の Pod が引き受けていれば null。
+     * RuntimeException: 引き受けを確認できなかった(Redis) — 呼ぶ側はこの Pod で計算する(メニューがないよりましだ)。
      */
     String tryClaim(String flightKey);
 
     void release(String flightKey, String token);
 
     /** 한 파드 안에서만(테스트 · 로컬) — 늘 맡는다. */
+    // [JA] 一つの Pod の中だけ(テスト・ローカル) — 常に引き受ける。
     FacetRefreshClaim LOCAL = new FacetRefreshClaim() {
         @Override
         public String tryClaim(String flightKey) {
@@ -63,6 +74,7 @@ public interface FacetRefreshClaim {
         private final Duration lease;
 
         /** 맡는 시간 = 메뉴 질의의 시간 상한({@code catalog.facets.query-timeout-seconds}, FacetQueries) + 1분 — 그보다 오래 계산하는 일은 없다. */
+        // [JA] 引き受ける時間 = メニュークエリの時間上限(catalog.facets.query-timeout-seconds、FacetQueries)+ 1 分 — それより長く計算することはない。
         public Redis(StringRedisTemplate redis, @Value("${catalog.facets.query-timeout-seconds:600}") int queryTimeoutSeconds) {
             this.redis = redis;
             this.lease = Duration.ofSeconds(Math.max(1, queryTimeoutSeconds) + 60L);
@@ -73,6 +85,7 @@ public interface FacetRefreshClaim {
         }
 
         /** 키에는 요청의 카테고리 이름이 들어갈 수 있다 — 길이를 고정한다. */
+        // [JA] キーにはリクエストのカテゴリ名が入りうる — 長さを固定する。
         static String redisKey(String flightKey) {
             try {
                 byte[] digest = MessageDigest.getInstance("SHA-256").digest(flightKey.getBytes(StandardCharsets.UTF_8));

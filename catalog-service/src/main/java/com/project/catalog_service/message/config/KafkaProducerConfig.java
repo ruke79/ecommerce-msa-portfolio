@@ -33,11 +33,21 @@ import com.project.common.kafka.AggregateKeyPartitioner;
  * <p><b>멱등 프로듀서.</b> 재시도로 같은 레코드가 두 번 쓰이는 것을 브로커가 막는다.
  * 그래도 소비 쪽 중복은 남으므로(리밸런스 등) 이벤트에 안정적인 키를 실어 보낸다 —
  * 최종 방어선은 {@code broadcast_notification.source_event_id} 의 UNIQUE 다.
+ *
+ * <p>[JA] このサービスが発行するイベント用のプロデューサー。
+ * これまで catalog-service にはプロデューサー設定がなかった — KafkaDltConfig の DLT 専用テンプレートだけがあり、それはコンシューマが失敗レコードを
+ * 隔離するときにしか使わない。お知らせの掲載を知らせるには、業務イベントを送り出す経路が一つ必要だ。
+ * 値がなぜ String なのか。通知サービスはドメイン DTO に依存せず JSON を JsonNode として読む(NotificationEventListener のコメント) —
+ * 通知一つのために全ドメインのスキーマ変更に引きずられないためだ。だからここでも文字列 JSON で送る。Avro で送るには共通スキーマとマッピングを
+ * 新たに作る必要があるが、お知らせ通知一つのためにそれだけの結合を作る理由はない。
+ * 冪等プロデューサー。リトライで同じレコードが二度書かれるのをブローカーが防ぐ。それでも消費側の重複は残るので(リバランスなど)、
+ * イベントに安定したキーを載せて送る — 最終防衛線は broadcast_notification.source_event_id の UNIQUE である。
  */
 @Configuration
 public class KafkaProducerConfig {
 
     /** SSL/SASL 프로퍼티는 {@link KafkaSecuritySettings} 한 곳에서 만든다. */
+    // [JA] SSL/SASL のプロパティは KafkaSecuritySettings 一か所で作る。
     @Autowired
     private Environment environment;
 
@@ -51,6 +61,7 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class)
                 // 같은 키는 같은 파티션으로 — 한 공지의 게시/수정 순서가 뒤집히지 않는다.
+                // [JA] 同じキーは同じパーティションへ — 一つのお知らせの掲載/修正の順序が逆転しない。
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
@@ -64,6 +75,9 @@ public class KafkaProducerConfig {
      * 이름을 {@code contentEventKafkaTemplate} 로 둔 이유: {@link KafkaDltConfig} 가 이미
      * {@code dltJsonKafkaTemplate}·{@code dltBytesKafkaTemplate} 을 등록한다. 타입이 달라
      * 충돌하진 않지만, 주입받는 쪽이 어느 것을 쓰는지 이름으로 드러나야 한다.
+     *
+     * <p>[JA] 名前を contentEventKafkaTemplate にした理由: KafkaDltConfig がすでに dltJsonKafkaTemplate・dltBytesKafkaTemplate を登録している。
+     * 型が違うので衝突はしないが、注入される側がどれを使うのかが名前で分かるべきだ。
      */
     @Bean
     public KafkaTemplate<String, String> contentEventKafkaTemplate() {

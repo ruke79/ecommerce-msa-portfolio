@@ -12,6 +12,12 @@ import com.project.userservice.model.KnownDevice;
  * 엔티티를 그대로 직렬화하면 그게 새어 나가므로 DTO 로 한 겹 둔다.
  *
  * <p>IP 는 이미 마스킹된 값이다(저장부터 그렇다). 전체 주소는 어디에도 없다.
+ *
+ * <p>[JA] 画面に返すログイン端末。
+ * 🔒 <b>トークンのハッシュを出さない。</b>その値を知ればその端末になりすましてセキュリティ通知を止められる —
+ * パスワードを既に知っている攻撃者にはまさに必要な断片だ(KnownDevice のコメント)。
+ * エンティティをそのままシリアライズするとそれが漏れるので DTO を一枚挟む。
+ * IP は既にマスキングされた値だ(保存時からそうである)。完全なアドレスはどこにもない。
  */
 public record DeviceDto(
         Long id,
@@ -24,6 +30,7 @@ public record DeviceDto(
         return new DeviceDto(
                 device.getDeviceId(),
                 // 라벨을 못 읽은 기기도 목록에는 나와야 한다 — 빈 줄보다 낫다.
+                // [JA] ラベルを読めなかった端末も一覧には出るべきだ — 空行よりよい。
                 device.getLabel() == null || device.getLabel().isBlank()
                         ? "알 수 없는 기기"
                         : device.getLabel(),

@@ -15,6 +15,12 @@ import lombok.extern.slf4j.Slf4j;
  * <b>명시해야만</b> 선택된다. 메일·SMS 의 logging 기본값(docs/29)과 방향이 반대인데,
  * 이유가 있다 — 메일은 "실수로 보내는 것"이 위험하지만 결제는 "실수로 통과시키는 것"이
  * 위험하다. 안전한 기본값의 방향이 서로 다르다.
+ *
+ * <p>[JA] 検証を飛ばす。<b>資格情報なしで回るローカル開発・テスト専用</b> だ。
+ * この Bean が選ばれると決済は以前とまったく同じく「ブラウザがそう言うからそうだ」になる。そこで起動時に
+ * {@link com.project.order_service.config.PaypalConfig} が WARN を出し、ここでも呼ばれるたびに残す — 運用でこのログが見えたら設定が誤っている。
+ * 既定値にしなかったのが核心だ。{@code paypal.verification.mode=disabled} を <b>明示したときだけ</b> 選ばれる。メール・SMS の logging 既定値(docs/29)と
+ * 向きが逆だが理由がある — メールは「誤って送ること」が危険だが決済は「誤って通すこと」が危険だ。安全な既定値の向きが互いに違う。
  */
 @Slf4j
 public class DisabledPaypalOrderVerifier implements PaypalOrderVerifier {
@@ -26,12 +32,17 @@ public class DisabledPaypalOrderVerifier implements PaypalOrderVerifier {
                 paypalOrderId);
         // 금액 대조를 통과시키기 위해 null 을 돌려주지 않는다. 호출자가 금액 비교를
         // 건너뛰도록 status 만 COMPLETED 로 두고 금액은 '검증 안 함'을 뜻하는 null 로 둔다.
+        // [JA] 金額の照合を通すために null を返すわけではない。呼び出し側が金額比較を
+        //      飛ばすよう status だけ COMPLETED にし、金額は「検証しない」を意味する null にする。
         return new VerifiedPaypalOrder(paypalOrderId, VerifiedPaypalOrder.COMPLETED, null, null);
     }
 
     /**
      * 검증을 끈 모드에는 실제 결제가 없으니 돌려줄 돈도 없다. 그런데 "환불됐다" 고
      * 답하면 주문이 REFUNDED 로 바뀌어 <b>돈이 돌아간 것처럼 보인다.</b> 거부한다.
+     *
+     * <p>[JA] 検証を切ったモードには実際の決済がないので返すお金もない。ところが「返金された」と答えると
+     * 注文が REFUNDED に変わり <b>お金が戻ったように見える。</b> 拒否する。
      */
     @Override
     public RefundedPaypalOrder refund(String paypalOrderId, java.math.BigDecimal amount, String currency,

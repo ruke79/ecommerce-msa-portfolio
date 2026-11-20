@@ -32,7 +32,14 @@ import com.project.common.dto.catalog.request.SearchParamsRequest;
  * <p>한 카테고리에 상품 70,000 개(브랜드 7종) + SKU 셋 · 상세 셋을 넣고, 이웃 카테고리에 다른 색상을 둔다 — 메뉴가
  * 그 카테고리 것만 · 중복 없이 나오는지 본다. 예전 코드는 첫 호출에서 예외다.
  *
- * <p>[JA] 商品が 65,535 を超えるカテゴリの 1 ページ目の検索(フィルターメニュー込み)— 本物の PostgreSQL で。以前は IN の展開で例外だった。
+ * <p>[JA] 商品が 65,535 を超えるカテゴリの 1 ページ目の検索(フィルターメニュー込み)— 本物の PostgreSQL で。
+ *
+ * <p>[JA] 2026-10-19 データ規模測定(商品 100 万、docs/83 §5): 失敗 53.61%。フィルターメニューの色 · サイズ · 詳細がカテゴリの商品 id を
+ * すべて {@code IN (:ids)} に展開して {@code PSQLException: PreparedStatement can have at most 65,535 parameters} — fashion · books のような
+ * 大きいカテゴリの 1 ページ目は毎回失敗し(catalog ログ 96 件)、ブランドは DISTINCT なしで商品ごとに一行だった。
+ *
+ * <p>[JA] 一つのカテゴリに商品 70,000 件(ブランド 7 種)+ SKU 三つ · 詳細三つを入れ、隣のカテゴリに別の色を置く — メニューが
+ * そのカテゴリのものだけ · 重複なしで出るかを見る。以前のコードは最初の呼び出しで例外になる。
  */
 @Tag("containers")
 @SpringBootTest(properties = "catalog.facets.wait=10s")
@@ -105,6 +112,7 @@ class SearchFilterFacetsScaleTest {
     private org.springframework.data.redis.connection.RedisConnectionFactory redisConnectionFactory;
 
     /** SearchParamsRequest 는 protected 기본 생성자만 있다. */
+    // [JA] SearchParamsRequest には protected のデフォルトコンストラクタしかない。
     static class Params extends SearchParamsRequest {
         Params() { super(); }
     }
@@ -112,7 +120,7 @@ class SearchFilterFacetsScaleTest {
     @BeforeEach
     void seed() {
         try (var c = redisConnectionFactory.getConnection()) {
-            c.serverCommands().flushAll();   // 앞 실행의 캐시 없이
+            c.serverCommands().flushAll();   // 앞 실행의 캐시 없이 ／ [JA] 前の実行のキャッシュなしで
         }
         Integer seeded = jdbc.queryForObject("select count(*) from product.product where category_id = ?", Integer.class, CATEGORY);
         if (seeded != null && seeded == PRODUCTS) {
@@ -121,6 +129,7 @@ class SearchFilterFacetsScaleTest {
         jdbc.update("insert into product.category (category_id, category_name, slug) values (?, 'scale', 'scale'), (?, 'neighbour', 'neighbour')",
                 CATEGORY, NEIGHBOUR);
         // 브랜드 7종이 1만 번씩 — 예전 질의는 7만 줄을 읽었다
+        // [JA] ブランド 7 種が 1 万回ずつ — 以前のクエリは 7 万行を読んだ
         jdbc.update("""
                 insert into product.product (product_id, category_id, name, slug, brand, status, rating, version)
                 select ? + g, ?, 'scale ' || g, 'scale-' || g, 'brand-' || (g % 7), 'ACTIVE', 0, 0
@@ -131,6 +140,7 @@ class SearchFilterFacetsScaleTest {
 
         jdbc.update("insert into product.product_color (color_id, color, version) values (9101, 'Red', 0), (9102, 'Navy', 0), (9103, 'Green', 0)");
         // SKU 넷: 7만 개 카테고리에 Red · Navy · Red, 이웃 카테고리에 Green — 사이즈 M · L · M · XS
+        // [JA] SKU 4 つ: 7 万個のカテゴリに Red・Navy・Red、隣のカテゴリに Green — サイズ M・L・M・XS
         long[][] skus = { { 9201, FIRST_ID + 1, 9101 }, { 9202, FIRST_ID + 2, 9102 }, { 9203, FIRST_ID + 3, 9101 },
                 { 9204, FIRST_ID + PRODUCTS + 1, 9103 } };
         String[] sizes = { "M", "L", "M", "XS" };
@@ -155,6 +165,7 @@ class SearchFilterFacetsScaleTest {
         params.setIncludeFilters(true);
 
         // 메뉴는 결과 캐시 밖에서 붙는다(SearchController 와 같은 순서) — 이 테스트는 기다림 상한을 넉넉히(10초) 준다
+        // [JA] メニューは結果キャッシュの外で付く(SearchController と同じ順序) — このテストは待ち上限を余裕をもって(10 秒)与える
         SearchResultDto result = filterFacets.attach(searchService.searchProducts(params, SearchEngine.POSTGRES), params);
 
         assertThat(result.getTotalProducts()).as("개수는 세지 않는다 — 10개 + 더 있음 1").isEqualTo(11);

@@ -24,26 +24,31 @@ const GlobalStyle = createGlobalStyle`
       line-height: 1.5;
     }
     /* 폰트 스타일 초기화 */
+    /* [JA] フォントスタイルの初期化 */
     em, address {
       font-style: normal
     }
     /* 불릿 기호 초기화 */
+    /* [JA] 箇条書き記号の初期化 */
     dl, ul, li, ol, menu {
       list-style: none;
     }
 
      /* 제목 태그 초기화 */
+     /* [JA] 見出しタグの初期化 */
      h1, h2, h3, h4, h5, h6 {
        font-size: 13px;
        font-weight: normal;
     }
     /* 버튼 초기화 */
+    /* [JA] ボタンの初期化 */
     button {
       border: none;
       outline: none;
     }
 
     /* 테두리 초기화 */
+    /* [JA] 枠線の初期化 */
     img, fieldset {
       border: 0 none;
     }

@@ -31,7 +31,23 @@
 #
 # 실습 클러스터에서만 — 파드 안에 실행 파일을 넣고 JVM 에 붙는다. 이 클러스터의 APP_PUBLIC_URL 이 운영 주소거나 비어 있으면 거절한다(ops/53 과 같은 판정).
 # 파드는 서비스마다 가장 오래 뜬 Running 파드 하나(HPA 가 늘려도 남고, JIT 이 데워져 있다). 표본 중에 그 파드가 다시 뜨면 결과가 없다 — 재시작 수를 함께 남긴다.
-# [JA] 実習クラスタだけ。サービスごとに最も古い Running Pod 一つ。サンプル中に再起動すると結果は残らない — 再起動数も記録する。
+# [JA] capacity-steps(2026-10-23)で catalog は成功 ~960 要求/秒(Pod あたり ~300)、ゲートウェイは ~1,450(Pod あたり ~480)で
+#      CPU 1 コアに張り付いた。もっと受けるには要求あたりの CPU を減らす必要があるが、どこに使っているかは指標では分からない — そこで
+#      その段で標本を採る。async-profiler(itimer — コンテナで perf_events の権限なしに動く)を Pod の中にコピーして nohup で動かし
+#      (kubectl exec の接続が切れても標本は続く)、終わったら collapsed を取ってきて表を三つ作る:
+#        flat — 最上位(葉)のフレーム別の標本数
+#        inclusive — 標本ごとに一回ずつ、そのスタックに含まれるメソッド別(どの呼び出しの下で時間が使われるか)
+#        束 — 標本を葉から最も近い既知の束(TLS・JSON・Netty・JDBC・Redis・GC・JIT …)に付けた合計
+#      使い方: 一度だけ async-profiler をこの機械(kubectl のあるホスト)に取得する — 実習ノードは amd64。capacity-steps の開始前でも
+#      直後でも — ゲートウェイが毎秒 900 要求を受けた瞬間(200 の段)から 20 秒後に 120 秒。既定の対象は catalog-service と gateway-server、
+#      WHEN=rps:gateway-server:1300 なら 300 の段(ゲートウェイ飽和)、WHEN=now ならすぐ。
+#      環境変数(既定値): WHEN=rps:gateway-server:900 — rps:<サービス>:<要求/秒> はそのサービスが受ける要求/秒(Prometheus、1 分 rate)を
+#      超えたら開始、now はすぐ。PROM は WHEN=rps なら必要(obs-vm の Prometheus)、PROM_ENV=demo。SECS=120・DELAY=20 は標本の長さ・
+#      条件に達した後に待つ秒数(段が変わった直後を避ける)。POLL=10・WAIT_MAX=1800 は条件を見る間隔・最大待ち(秒)。EVENT=itimer・TOP=40 は
+#      async-profiler のイベント・表ごとの行数。AP・OUT・NS・KUBECTL・CURL(テストが差し替える)。
+#      実習クラスタでだけ — Pod の中に実行ファイルを入れて JVM に接続する。このクラスタの APP_PUBLIC_URL が本番アドレスか空なら拒否する
+#      (ops/53 と同じ判定)。Pod はサービスごとに最も長く動いている Running Pod 一つ(HPA が増やしても残り、JIT が温まっている)。
+#      標本中にその Pod が再起動すると結果はない — 再起動数も一緒に残す。
 set -uo pipefail
 
 KUBECTL="${KUBECTL:-kubectl}"
@@ -71,6 +87,7 @@ case "$WHEN" in
 esac
 
 # ── 실습 클러스터인가 ───────────────────────────────────────────────────
+# [JA] ── 実習クラスタか ──
 command -v "$KUBECTL" >/dev/null 2>&1 || die "kubectl 이 필요하다 — kubectl 이 있는 호스트에서 돌린다(loadgen 에는 없다)"
 url="$(k get configmap ecommerce-config -o jsonpath='{.data.APP_PUBLIC_URL}' 2>/dev/null)" \
     || die "ecommerce-config 를 읽지 못했다 — kubectl 컨텍스트가 실습 클러스터인지"
@@ -84,7 +101,8 @@ esac
 mkdir -p "$OUT" || die "결과 폴더를 만들지 못했다: $OUT"
 
 # ── 파드 고르기 · 프로파일러 넣기 ───────────────────────────────────────
-pick() {   # 가장 오래된 Running 파드
+# [JA] ── Pod の選択 · プロファイラの投入 ──
+pick() {   # 가장 오래된 Running 파드 ／ [JA] 最も古い Running Pod
     k get pods -l "app=$1" --field-selector=status.phase=Running \
         --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
@@ -103,6 +121,7 @@ for s in "${SERVICES[@]}"; do
     fi
     j="$(java_pid "$p")"; [[ "$j" =~ ^[0-9]+$ ]] || die "$s: $p 에서 java PID 를 찾지 못했다"
     # 붙는지 3초만 — 표본 때 처음 실패하면 그 순간을 놓친다
+    # [JA] 付くかどうか 3 秒だけ — 標本のときに初めて失敗するとその瞬間を逃す
     k exec "$p" -- /tmp/ap/bin/asprof -e "$EVENT" -d 3 -o flat=3 "$j" >/dev/null 2>&1 \
         || die "$s: $p 의 JVM 에 붙지 못했다(asprof -e $EVENT) — EVENT=cpu 는 perf_events 권한이 있어야 한다"
     POD[$s]="$p"; JPID[$s]="$j"
@@ -111,7 +130,8 @@ done
 echo "프로파일러 준비됨 — 결과: $OUT"
 
 # ── 조건 기다리기 ───────────────────────────────────────────────────────
-rps() {   # rps <서비스> → 정수 요청/초(읽지 못하면 실패)
+# [JA] ── 条件を待つ ──
+rps() {   # rps <서비스> → 정수 요청/초(읽지 못하면 실패) ／ [JA] rps <サービス> → 整数のリクエスト/秒(読めなければ失敗)
     "$CURL" -fsS --max-time 10 -G "$PROM/api/v1/query" --data-urlencode \
         "query=sum(rate(http_server_requests_seconds_count{environment=\"$PROM_ENV\",service=\"$1\"}[1m]))" 2>/dev/null \
       | python3 -I -c '
@@ -138,6 +158,7 @@ fi
 sleep "$DELAY"
 
 # ── 표본 — 파드 안에서 떼어 놓고 ────────────────────────────────────────
+# [JA] ── 標本 — Pod 内で切り離して ──
 declare -A R0
 for s in "${SERVICES[@]}"; do
     p="${POD[$s]}"; R0[$s]="$(restarts "$p")"
@@ -150,13 +171,15 @@ END_NOTE=""
 [ "$WHEN" != now ] && END_NOTE="$WHEN_SVC $(rps "$WHEN_SVC" || echo '?')/초"
 
 # ── 가져오기 · 표 ───────────────────────────────────────────────────────
-summarize() {   # summarize <collapsed> <TOP> → flat · inclusive · 묶음
+# [JA] ── 取得 · 表 ──
+summarize() {   # summarize <collapsed> <TOP> → flat · inclusive · 묶음 ／ [JA] summarize <collapsed> <TOP> → flat · inclusive · まとめ
     python3 -I - "$1" "$2" <<'PY'
 import collections, re, sys
 path, top = sys.argv[1], int(sys.argv[2])
 flat, incl, cat, tot = collections.Counter(), collections.Counter(), collections.Counter(), 0
 # 잎에서 가장 가까운 것부터 — 처음 맞는 묶음에 표본을 붙인다(라이브러리 안쪽 · JDK · JVM 네이티브 잎도 부른 쪽 묶음으로)
 # GC · JIT 은 JVM 의 C++ 프레임(`Klass::method`)에서만 본다 — 자바 클래스 이름에 Mark · Compile 이 들어가도 걸리지 않게.
+# [JA] 葉に最も近いものから — 最初に合った束に標本を付ける(ライブラリ内部・JDK・JVM ネイティブの葉も呼び出し側の束へ)。GC・JIT は JVM の C++ フレーム(Klass::method)でだけ見る — Java クラス名に Mark・Compile が入っていても引っかからないように。
 CATS = [
     ("GC", r"^(G1|Serial|Parallel|PS|Z[A-Z]|Shenandoah|GC|Gen|Young|Tenured|DefNew)\w*::|^\w*(Mark|Evacuat|Compact|Scavenge)\w*::"),
     ("JIT", r"^(CompileBroker|C2Compiler|C1Compiler|Compilation|Compile|Phase\w*|Matcher|Parse|ciEnv|LinearScan|GraphBuilder)\w*::"),
@@ -178,6 +201,7 @@ CATS = [
 CATS = [(n, re.compile(p)) for n, p in CATS]
 def norm(f):
     # async-profiler 의 자바 프레임은 `java/lang/String.equals` — 점으로 바꿔 패키지로 묶는다. 붙는 표시(_[j] · _[i] · _[k])는 뗀다.
+    # [JA] async-profiler の Java フレームは java/lang/String.equals — ドットに変えてパッケージで束ねる。付く印(_[j]・_[i]・_[k])は外す。
     f = re.sub(r"_\[[a-z0-9]\]$", "", f)
     return f.replace("/", ".") if "::" not in f else f
 for line in open(path, encoding="utf-8", errors="replace"):
@@ -190,6 +214,7 @@ for line in open(path, encoding="utf-8", errors="replace"):
     for f in set(frames):
         incl[f] += n
     # JDK 프레임(String · HashMap …)은 건너뛰고 부른 쪽 묶음으로 — 다른 묶음이 하나도 없을 때만 JDK
+    # [JA] JDK フレーム(String・HashMap …)は飛ばして呼び出し側の束へ — ほかの束が一つもないときだけ JDK
     seen_jdk = False
     for f in reversed(frames):
         name = next((c for c, rx in CATS if rx.search(f)), None)
@@ -225,6 +250,7 @@ for s in "${SERVICES[@]}"; do
     p="${POD[$s]}"; r1="$(restarts "$p")"
     echo "$s pod=$p node=$(node_of "$p") restarts_before=${R0[$s]} restarts_after=$r1" >> "$OUT/meta.txt"
     # kubectl cp 는 원본이 없어도 0 을 돌려준다 — 옛 결과가 남지 않게 먼저 지우고, 파드 안의 파일부터 본다
+    # [JA] kubectl cp は元がなくても 0 を返す — 古い結果が残らないよう先に消し、Pod 内のファイルから確かめる
     rm -f "$OUT/$s.collapsed" "$OUT/$s.txt"
     if ! k exec "$p" -- test -s "/tmp/prof-$s.collapsed" 2>/dev/null; then
         echo "  ✗ $s: 파드 안에 결과가 없다(재시작 ${R0[$s]} → $r1 — 다시 떴으면 /tmp 가 비었다). 프로파일러 로그:"

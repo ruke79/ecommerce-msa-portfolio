@@ -27,6 +27,13 @@ import { useState } from "react";
  *
  * <p>{@code cursor-pointer} 와 hover 스타일만 남아 있어서 <b>눌러도 되는 것처럼 보였다.</b>
  * 그게 "반응이 없다"는 인상을 만든 부분이다.
+ *
+ * <p>[JA] 上位カテゴリー一行とその下のサブカテゴリー一覧。
+ * 🐛 サブカテゴリーは押しても何も起きなかった。一覧は描かれていた — サーバーが subCategories を一緒に返し、ここで名前を出す。
+ * しかしその <h5> には onClick がなかった。唯一のハンドラーはコメントアウトされたままだった。
+ * しかもそのコメントの中身さえフィルターではなく開閉である。つまりサブカテゴリーで絞り込む機能は「動かなかった」のではなく
+ * フロント · URL · サーバーのどこにも存在したことがない — SearchParamsRequest にフィールドも検索条件もなかった。
+ * cursor-pointer と hover スタイルだけが残っていて、押せるように見えた。それが「反応がない」という印象を作った部分である。
  */
 const ParentCategory = ({ category, subCategories, categoryHandler, subCategoryHandler, replaceQuery }) => {
     const [show, setShow] = useState(false);

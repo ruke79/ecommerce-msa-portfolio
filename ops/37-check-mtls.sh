@@ -30,6 +30,26 @@
 # 종료 코드: 0 = 기대대로, 1 = 어긋남, 2 = 확인 불가
 #
 # 비밀은 출력하지 않는다 — 인증서·키는 Secret 을 파드에 마운트해 쓰고, 응답은 상태 코드만 본다.
+# [JA] 運用アクション ㊲ — サービス間 mTLS が実際に判定しているかを確認する(docs/57 §16)。
+#      何を見るか:
+#      ② 対照 — 一時的に起動する curl Pod から order-service の内部 API を 2 回呼ぶ: 証明書なし → enforce なら 403、observe・off なら 200 /
+#      内部証明書で(tls-id-user-service — この API を呼べるサービスのアイデンティティ。なければ共有 tls-keystore) → 常に 200。
+#      「証明書を出せば通り、出さなければ通らない」が両方成り立って初めて判定が生きている。
+#      ① observe 警告(先に — ②の「証明書なし」呼び出しが警告を残すので)— バックエンドのログで "[mTLS observe]" を数える。サービス同士の呼び出しが証明書を出せていないという意味だ。
+#      **0 でなければ enforce に上げられない。**(0 でないのに上げるとその呼び出しが 403 で切れる。)
+#      ①-2 ルール違反 — "[mTLS rule]"(許可主体でないか、そのパスを呼べないサービス)。**0 なら RULES_MODE を enforce に上げる。**
+#      caller=localhost が見えればまだ共有証明書で呼んでいる Pod だ — アイデンティティのマウント後に再起動されていない。
+#      ①-3 アイデンティティヘッダ — "[mTLS identity]"(ゲートウェイ証明書でないところから来たアイデンティティヘッダ・サービスが載せた User-Role/User-Email)。
+#      **0 なら INTERNAL_AUTH_IDENTITY_MODE を enforce に上げる。** caller=(証明書なし) がゲートウェイから来るなら、ゲートウェイが
+#      まだ自分の証明書(tls-id-gateway-server)を出していない — ops/38・k8s/96 の発行後にゲートウェイを再起動。
+#      ②-2 対照 — 証明書なしで User-Role: ROLE_ADMIN を付けて同じ内部 API を呼ぶ。identity enforce なら 403、そうでなければ 200。
+#      使い方は上記(既定は今のモード(ConfigMap の INTERNAL_AUTH_MODE)に合わせて期待値を決める、SINCE はログを何時間分見るか(既定 1h)、
+#      --callers は実際に誰がどの内部パスを呼んだか([mTLS caller]) — パスルールを作り直すとき)。
+#      enforce への上げ方(INTERNAL_AUTH_MODE・INTERNAL_AUTH_RULES_MODE とも同じ): k8s/10-configmap.yaml の値を変えてコミット → ops/28 --config-only →
+#      バックエンドを rollout restart(環境変数は再起動しないと読まれない)→ ops/37。
+#      ⚠️ kubectl patch だけで変えると次の ops/28 デプロイがマニフェストの値に黙って戻す(k8s/10-configmap.yaml のコメント)。
+#      終了コード: 0 = 期待どおり、1 = ずれ、2 = 確認不能
+#      秘密は出力しない — 証明書・鍵は Secret を Pod にマウントして使い、応答はステータスコードだけを見る。
 set -uo pipefail
 
 NS="${NS:-ecommerce}"
@@ -69,6 +89,7 @@ if [ "${1:-}" = "--callers" ]; then
     echo "▶ 누가 어느 내부 경로를 불렀나 — [mTLS caller] (파드가 뜬 뒤 처음 본 짝마다 한 줄)"
     if [ "$MODE" = off ]; then
         # off 면 필터가 인증서를 보지 않고 바로 넘긴다 — 호출자 기록이 생기지 않는다(InternalCallerFilter)
+        # [JA] off ならフィルタが証明書を見ずにそのまま通す — 呼び出し元の記録が生じない(InternalCallerFilter)
         echo "  ℹ️  모드가 off 라 호출자를 기록하지 않습니다 — observe 이상에서만 [mTLS caller] 가 남습니다"
         exit 0
     fi
@@ -92,12 +113,14 @@ if [ "${1:-}" = "--callers" ]; then
 fi
 
 # 대조에 쓸 신원 — 이 API(구매 집계)를 부를 수 있는 서비스는 user-service 다(경로 규칙). 서비스별 신원이 없으면 공유 인증서.
+# [JA] 対照に使うアイデンティティ — この API(購入集計)を呼べるサービスは user-service だ(パスルール)。サービス別アイデンティティがなければ共有証明書。
 CERT_SECRET=tls-keystore
 if kubectl -n "$NS" get secret tls-id-user-service >/dev/null 2>&1; then
     CERT_SECRET=tls-id-user-service
 fi
 
 # 로그를 **먼저** 본다 — 아래 대조의 "인증서 없이" 호출이 경고를 하나 남기므로, 뒤에 세면 자기 자신을 잡는다.
+# [JA] ログを**先に**見る — 下の対照の「証明書なし」呼び出しが警告を一つ残すので、後で数えると自分自身を捕まえる。
 echo
 echo "▶ ① observe 경고 — 인증서 없이 내부 경로에 온 요청(최근 $SINCE)"
 TOTAL=0
@@ -153,6 +176,7 @@ if [ "$MODE" != "off" ] && [ "$IDENTITY_MODE" != "off" ]; then
 fi
 
 # curl 파드 — tls-keystore 를 /certs 에 마운트한다. 상태 코드와 curl 의 종료 코드·오류 문구만 찍는다(응답 본문은 버린다).
+# [JA] curl Pod — tls-keystore を /certs にマウントする。ステータスコードと curl の終了コード・エラー文言だけを出力する(応答本文は捨てる)。
 OVERRIDES=$(cat <<JSON
 {"spec":{"containers":[{"name":"probe","image":"$IMAGE","command":["sh","-c",
  "ls /certs/ca.crt /certs/tls.crt /certs/tls.key >/dev/null 2>&1 || echo MISSING=\$(for f in ca.crt tls.crt tls.key; do [ -r /certs/\$f ] || printf '%s ' \$f; done); i=0; while :; do N=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' -H 'X-Mtls-Probe: ops-37' --cacert /certs/ca.crt '$TARGET'); case \"\$N\" in '000 7 '*) i=\$((i+1)); [ \$i -ge 8 ] && break; sleep 2;; *) break;; esac; done; echo TRIES=\$i; echo NOCERT=\$N; echo FORGED=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' -H 'X-Mtls-Probe: ops-37' -H 'User-Id: 1' -H 'User-Role: ROLE_ADMIN' --cacert /certs/ca.crt '$TARGET'); echo WITHCERT=\$(curl -s -m 10 -o /dev/null -w '%{http_code} %{exitcode} %{errormsg}' --cacert /certs/ca.crt --cert /certs/tls.crt --key /certs/tls.key '$TARGET')"],
@@ -164,18 +188,24 @@ echo
 echo "▶ ② 대조 — 인증서 없이 / 내부 인증서($CERT_SECRET)로 order-service 내부 API"
 # 모드를 바꾸고 재시작한 직후면 옛 파드(옛 모드)가 아직 응답한다 — 롤아웃이 끝날 때까지 기다린 뒤 두드린다.
 # 🐛 enforce 로 올리고 곧바로 돌리면 옛 observe 파드가 200 을 줘 "판정이 켜지지 않았다" 로 읽혔다.
+# [JA] モードを変えて再起動した直後なら旧 Pod(旧モード)がまだ応答する — ロールアウトが終わるまで待ってから叩く。
+#      🐛 enforce に上げてすぐ回すと旧 observe Pod が 200 を返し「判定が有効になっていない」と読まれた。
 if ! kubectl -n "$NS" rollout status deploy/order-service --timeout=5s >/dev/null 2>&1; then
     info "order-service 롤아웃 중 — 끝날 때까지 기다린다(최대 5분)"
     kubectl -n "$NS" rollout status deploy/order-service --timeout=300s >/dev/null 2>&1 \
         || { echo "  확인 불가 — order-service 롤아웃이 끝나지 않았다" >&2; exit 2; }
 fi
 # 떠 있는 파드가 어떤 모드로 기동했는가(기동 로그 한 줄) — ConfigMap 과 다르면 재시작하지 않은 것이다.
+# [JA] 起動中の Pod がどのモードで起動したか(起動ログ 1 行)— ConfigMap と違えば再起動していないということだ。
 POD_MODE=$(kubectl -n "$NS" logs deploy/order-service 2>/dev/null | grep -o "서비스 간 mTLS 판정: mode=[A-Z]*" | tail -1 | sed 's/.*mode=//')
 info "order-service 파드의 기동 모드: ${POD_MODE:-알 수 없음(로그에 없음 — off 이거나 로그가 잘렸다)}"
 
 # Service 에 준비된 파드가 있는가 — 없으면 Service 로 가는 연결은 곧바로 거부된다(curl 7, "000"). 게이트웨이는 Eureka 로 파드 IP
 # 에 직접 가므로 화면은 될 수 있다 — 그래서 "화면은 되는데 여기만 000" 이 나온다. 서비스끼리의 Feign(FEIGN_ORDER_URL)은 Service
 # 를 타므로 같이 끊긴다.
+# [JA] Service に準備済みの Pod があるか — なければ Service への接続はすぐ拒否される(curl 7、"000")。ゲートウェイは Eureka で Pod IP
+#      に直接行くので画面は動くことがある — だから「画面は動くのにここだけ 000」になる。サービス同士の Feign(FEIGN_ORDER_URL)は Service
+#      を通るので一緒に切れる。
 READY_IPS=$(kubectl -n "$NS" get endpoints order-service -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)
 NOT_READY_IPS=$(kubectl -n "$NS" get endpoints order-service -o jsonpath='{.subsets[*].notReadyAddresses[*].ip}' 2>/dev/null)
 if [ -z "$READY_IPS" ]; then
@@ -193,6 +223,9 @@ OUT=$(kubectl -n "$NS" run "mtls-probe-$RANDOM" --image="$IMAGE" --restart=Never
 #
 # 🐛 예전에는 HTTP 코드만 찍어, 연결·TLS 에서 실패하면 "000" 만 보였다. 이름을 못 찾았는지(6), 막혔는지(7·28), 서버 인증서를
 #    믿지 못했는지(60 — SAN·CA), CA 파일이 Secret 에 없는지(77) 가를 수 없었다.
+# [JA] 行の形: "<HTTP コード> <curl 終了コード> <curl エラー文言>"。000 なら HTTP まで到達していない — 終了コードが理由だ。
+#      🐛 以前は HTTP コードだけを出力していて、接続・TLS で失敗すると "000" しか見えなかった。名前が見つからないのか(6)、塞がれたのか(7・28)、サーバ証明書を
+#      信頼できないのか(60 — SAN・CA)、CA ファイルが Secret にないのか(77)を区別できなかった。
 NOCERT_LINE=$(printf '%s\n' "$OUT" | sed -n 's/^NOCERT=//p')
 WITHCERT_LINE=$(printf '%s\n' "$OUT" | sed -n 's/^WITHCERT=//p')
 FORGED_LINE=$(printf '%s\n' "$OUT" | sed -n 's/^FORGED=//p')
@@ -205,7 +238,7 @@ NOCERT=${NOCERT_LINE%% *}
 WITHCERT=${WITHCERT_LINE%% *}
 FORGED=${FORGED_LINE%% *}
 
-why() {   # curl 종료 코드 → 사람 말
+why() {   # curl 종료 코드 → 사람 말 ／ [JA] curl 終了コード → 人の言葉
     case "$1" in
         6)  echo "서비스 이름을 찾지 못했다(DNS) — order-service Service 가 $NS 에 있는가" ;;
         7)  if [ "${NETPOLS:-0}" -gt 0 ]; then
@@ -223,7 +256,7 @@ why() {   # curl 종료 코드 → 사람 말
         *)  echo "curl 종료 코드 $1" ;;
     esac
 }
-detail() {   # "<코드> <종료> <문구>" 에서 종료 코드·문구
+detail() {   # "<코드> <종료> <문구>" 에서 종료 코드·문구 ／ [JA] "<コード> <終了> <文言>" から終了コード・文言
     local rest=${1#* }; local code=${rest%% *}; local msg=${rest#* }
     [ "$msg" = "$rest" ] && msg=""
     printf '%s' "$(why "$code")${msg:+ ($msg)}"
@@ -255,6 +288,7 @@ case "$MODE" in
                                || bad "$MODE 인데 인증서 없이 $NOCERT${NOCERT_LINE:+ — $(detail "$NOCERT_LINE")}" ;;
 esac
 # ②-2 — 인증서 없이 관리자 헤더. 예전에는 헤더만 있으면 믿어서 언제나 200 이었다(docs/57 §16).
+# [JA] ②-2 — 証明書なしで管理者ヘッダ。以前はヘッダさえあれば信じていたので常に 200 だった(docs/57 §16)。
 if [ -n "$FORGED" ] && [ "$MODE" != "off" ]; then
     info "인증서 없이 User-Role: ROLE_ADMIN 을 붙이면: $FORGED"
     if [ "$IDENTITY_MODE" = "enforce" ]; then

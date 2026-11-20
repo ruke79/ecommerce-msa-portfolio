@@ -45,8 +45,13 @@ import com.project.common.dto.ProductSkuDto;
  * <p>Flyway 로 올린 실제 카탈로그 스키마에 생성기를 돌리고, 운영의 {@link HomeSectionService}(V10 의 홈 섹션 · Hibernate
  * validate)가 첫 화면을 그리는지 본다 — 손으로 적은 기대값이 아니라 화면이 받는 응답으로.
  *
- * <p>[JA] S3 のないデモクラスターに商品を入れる道。以前はシードバッチも生成器も止まり、shop.lab に商品を入れられなかった。
- * 生成器を本物のスキーマに流し、本番の HomeSectionService がトップ画面を描けるかを見る。
+ * <p>[JA] 画像ストレージ(S3)のないデモクラスターに商品を入れる道 — {@code ops/44 PLACEHOLDER_IMAGE=…}(generate-catalog-data.py
+ * {@code --placeholder-image})。
+ * 🐛 以前: シードバッチジョブは S3 書き込み点検で止まり(デモ Secret は {@code AMAZON_*=demo-not-used})、生成器は {@code product_color} が
+ * 空で止まった — デモ shop.lab には商品を入れる道がなかった(2026-10-17)。今は色をシード CSV から入れ、SKU 画像をプレースホルダーの
+ * アドレスで埋める。
+ * Flyway で上げた本物のカタログスキーマに生成器を流し、本番の {@link HomeSectionService}(V10 のホームセクション · Hibernate validate)が
+ * トップ画面を描くかを見る — 手で書いた期待値ではなく、画面が受け取る応答で。
  */
 @Tag("containers")
 @Testcontainers
@@ -100,6 +105,7 @@ class DemoCatalogSeedIntegrationTest {
         registry.add("LOCAL_ELASTICSEARCH_USERNAME", () -> "");
         registry.add("LOCAL_ELASTICSEARCH_PASSWORD", () -> "");
         // 데모 Secret 과 같다 — 이 값으로는 시드 배치 잡이 시작하지 못한다
+        // [JA] デモの Secret と同じ — この値ではシードのバッチジョブが開始できない
         registry.add("AMAZON_ACCESS_KEY", () -> "demo-not-used");
         registry.add("AMAZON_SECRET_KEY", () -> "demo-not-used");
         registry.add("AMAZON_BUCKET_NAME", () -> "demo-not-used");
@@ -119,8 +125,10 @@ class DemoCatalogSeedIntegrationTest {
     }
 
     // ── 실행 도우미 ────────────────────────────────────────────────────────
+    // [JA] ── 実行ヘルパー ──
 
     /** ops/44 의 load 가 부르는 것과 같은 생성기 명령 — DSN 만 컨테이너로. */
+    // [JA] ops/44 の load が呼ぶのと同じ生成コマンド — DSN だけコンテナに向ける。
     private static Run generate(String... extra) throws Exception {
         List<String> cmd = new ArrayList<>(List.of("python3", repoRoot().resolve("ops/tools/generate-catalog-data.py").toString(),
                 "--products", String.valueOf(PRODUCTS), "--id-offset", String.valueOf(OFFSET),
@@ -171,6 +179,7 @@ class DemoCatalogSeedIntegrationTest {
     }
 
     // ── 테스트 ────────────────────────────────────────────────────────────
+    // [JA] ── テスト ──
 
     @Test
     @DisplayName("🔴 색상이 비어 있어도 시드 CSV 색상 + 자리 표시 이미지로 적재되고, 홈(V10 섹션)이 그 상품을 그린다")
@@ -184,6 +193,7 @@ class DemoCatalogSeedIntegrationTest {
         assertThat(count("SELECT count(*) FROM product.product_sku WHERE images::text[] <> ARRAY['" + PLACEHOLDER + "']::text[]"))
                 .as("모든 SKU 이미지가 자리 표시 한 장 — 클래스패스 경로(images\\…)가 아니다").isZero();
         // 단일 사이즈 상품의 빈 사이즈는 '' — NULL 이면 장바구니 담기가 NPE 로 모두 실패했다(2026-10-18, docs/83 §5)
+        // [JA] 単一サイズ商品の空サイズは '' — NULL だとカート追加が NPE ですべて失敗していた(2026-10-18、docs/83 §5)
         assertThat(count("SELECT count(*) FROM product.product_size WHERE size IS NULL")).as("NULL 사이즈").isZero();
         assertThat(count("SELECT count(*) FROM product.product_size WHERE size = ''")).as("단일 사이즈 상품이 있다").isPositive();
 
@@ -199,6 +209,7 @@ class DemoCatalogSeedIntegrationTest {
         });
 
         // 다시 실행하면 이어서(이미 다 들어갔다) — 색상을 두 번 넣지 않는다
+        // [JA] 再実行すると続きから(すでに全部入っている) — 色を二回入れない
         Run again = generate("--placeholder-image", PLACEHOLDER);
         assertThat(again.code()).as(again.out()).isZero();
         assertThat(count("SELECT count(*) FROM product.product_color")).isEqualTo(509);

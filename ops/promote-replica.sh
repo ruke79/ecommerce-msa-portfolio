@@ -5,6 +5,10 @@
 #    구 프라이머리는 반드시 정지 상태를 유지하고, 재사용하려면 새 레플리카로 재구성해야 한다.
 #
 # 사용: CONFIRM=yes ./ops/promote-replica.sh
+# [JA] プライマリ障害時のレプリカ昇格(手動 failover) — docs/13 §2
+#      ⚠️ 元に戻せない措置: 昇格後に旧プライマリが生き返るとスプリットブレインになるので、
+#         旧プライマリは必ず停止状態を保ち、再利用するなら新しいレプリカとして再構成しなければならない。
+#      使い方: CONFIRM=yes ./ops/promote-replica.sh
 set -euo pipefail
 
 [ "${CONFIRM:-}" = "yes" ] || {

@@ -35,6 +35,9 @@ import io.grpc.stub.StreamObserver;
  *
  * <p>인증서는 keytool 로 만든다({@link TestPki}): 내부 CA 와 그 CA 가 서명한 order-service · cart-service 신원, 다른 CA 가 서명한
  * order-service 신원(이름만 같은 가짜).
+ *
+ * <p>[JA] gRPC サーバーの呼び出し元判定 — <b>実際の TLS</b>(Netty)上で HTTP フィルターと同じルールがかかるかを見る(docs/66)。
+ * 証明書は keytool で作る({@link TestPki}): 内部 CA とその CA が署名した order-service · cart-service の身元、別の CA が署名した order-service の身元(名前だけ同じ偽物)。
  */
 @DisplayName("gRPC 호출자 판정 (mTLS)")
 class InternalCallerGrpcInterceptorTest {
@@ -93,7 +96,7 @@ class InternalCallerGrpcInterceptorTest {
 
     private StockReservationGrpc.StockReservationBlockingStub client(String keyStore) throws Exception {
         var ssl = keyStore == null
-                ? GrpcSslContexts.forClient().trustManager(new java.io.File(ca)).build()   // 인증서를 내지 않는 클라이언트
+                ? GrpcSslContexts.forClient().trustManager(new java.io.File(ca)).build()   // 인증서를 내지 않는 클라이언트 ／ [JA] 証明書を出さないクライアント
                 : GrpcTls.client(keyStore, TestPki.PASSWORD, ca);
         channel = NettyChannelBuilder.forAddress("localhost", server.getPort()).sslContext(ssl).build();
         return StockReservationGrpc.newBlockingStub(channel).withDeadlineAfter(5, TimeUnit.SECONDS);

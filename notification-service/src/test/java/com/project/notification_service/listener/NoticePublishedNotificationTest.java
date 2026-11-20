@@ -27,6 +27,11 @@ import com.project.notification_service.service.BroadcastService;
  * <p>여기서 고정하는 것은 "공지 이벤트 → 전체 알림" 변환이다. 받는 사람이 <b>없다</b>는
  * 점이 다른 리스너와 근본적으로 다르다 — 공지당 행 하나이고 개인별로는 읽음 표시만 남는다
  * (BroadcastNotification 주석).
+ *
+ * <p>[JA] 🐛 回帰対象: <b>お知らせを掲示しても誰にも届かなかった。</b>ユーザーが自分でお知らせ一覧画面に入らないと
+ * 見られなかった。メンテナンス予告のように<b>前もって見てこそ意味がある</b>お知らせがそのまま埋もれた。
+ * ここで固定するのは「お知らせイベント → 全体通知」の変換だ。受け取る人が<b>いない</b>点が他のリスナーと根
+ * 本的に違う — お知らせ一件につき一行で、個人ごとには既読の印だけが残る(BroadcastNotification のコメント)。
  */
 class NoticePublishedNotificationTest {
 
@@ -79,6 +84,7 @@ class NoticePublishedNotificationTest {
     }
 
     /** 알림을 눌렀을 때 그 공지로 가야 한다. 프론트가 "/" + url 로 이동한다. */
+    // [JA] 通知を押したらそのお知らせへ行くべきだ。フロントが "/" + url へ移動する。
     @Test
     @DisplayName("공지 상세로 가는 링크를 단다")
     void linksToTheNotice() {
@@ -103,6 +109,9 @@ class NoticePublishedNotificationTest {
      * 카프카는 at-least-once 다. 재전달될 때마다 공지가 하나씩 더 생기면 사용자 화면에
      * 같은 줄이 쌓인다 — 발행자가 만들어 준 안정적인 키를 그대로 넘겨야
      * {@code source_event_id} UNIQUE 가 막는다.
+     *
+     * <p>[JA] Kafka は at-least-once だ。再配信のたびにお知らせが一つずつ増えるとユーザー画面に同じ行が積もる —
+     * 発行側が作ってくれた安定したキーをそのまま渡してこそ {@code source_event_id} の UNIQUE が防ぐ。
      */
     @Test
     @DisplayName("발행자가 준 eventId 를 그대로 넘긴다")
@@ -115,6 +124,9 @@ class NoticePublishedNotificationTest {
     /**
      * 키가 null 이면 UNIQUE 가 걸리지 않아(널은 서로 충돌하지 않는다) 재전달마다 공지가
      * 하나씩 는다. 옛 형식의 이벤트여도 id 로 키를 만들어 낸다.
+     *
+     * <p>[JA] キーが null だと UNIQUE が効かず(null 同士は衝突しない)、再配信ごとにお知らせが一つずつ増える。
+     * 旧形式のイベントでも id からキーを作り出す。
      */
     @Test
     @DisplayName("eventId 가 없으면 공지 id 로 만들어 낸다 — 키가 비면 중복이 막히지 않는다")
@@ -125,6 +137,7 @@ class NoticePublishedNotificationTest {
     }
 
     /** 게시 즉시 보이고, 관리자가 내리기 전까지 만료되지 않는다. */
+    // [JA] 掲示と同時に見え、管理者が取り下げるまで期限切れにならない。
     @Test
     @DisplayName("시작·종료 시각을 정하지 않는다 — 즉시 보이고 스스로 사라지지 않는다")
     void noSchedule() {
@@ -163,6 +176,9 @@ class NoticePublishedNotificationTest {
     // 공지와 같은 전체 알림 구조를 쓴다 — 모든 사용자에게 같은 내용이라 사용자 수만큼
     // 알림 행을 만들 이유가 없다. 다른 점은 **만료가 있다**는 것이다: 기획전이 끝나면
     // 알림도 사라져야 한다.
+    // [JA] ── 企画展の開始 ──
+    //      お知らせと同じ全体通知構造を使う — 全ユーザーに同じ内容なので、ユーザー数分の通知行を作る理由がない。
+    //      違う点は**期限がある**ことだ: 企画展が終われば通知も消えるべきだ。
 
     private static String eventStarted(String extra) {
         return """
@@ -208,6 +224,7 @@ class NoticePublishedNotificationTest {
     }
 
     /** 언제까지 하는지가 이 알림의 핵심이다 — 없으면 받아 두고 잊는다. */
+    // [JA] いつまで開催するかがこの通知の要だ — なければ受け取ったまま忘れる。
     @Test
     @DisplayName("언제까지 하는지를 본문에 넣는다")
     void eventBodyCarriesTheDeadline() {
@@ -219,6 +236,9 @@ class NoticePublishedNotificationTest {
     /**
      * 🔴 끝난 세일이 알림 목록에 남아 있으면 눌러 들어갔다가 404 를 본다. 기획전 상세는
      * 진행 중일 때만 열린다(EventService.publicOne).
+     *
+     * <p>[JA] 🔴 終わったセールが通知一覧に残っていると、押して入ったら 404 を見る。
+     * 企画展の詳細は開催中のときだけ開く(EventService.publicOne)。
      */
     @Test
     @DisplayName("기획전 종료 시각이 알림의 만료 시각이 된다 — 끝난 세일이 목록에 남으면 안 된다")
@@ -248,6 +268,9 @@ class NoticePublishedNotificationTest {
     /**
      * 형식이 어긋난 이벤트 하나 때문에 기획전 알림이 통째로 빠지면 안 된다. 만료 없는
      * 알림이 되는 쪽이 알림이 아예 없는 것보다 낫다.
+     *
+     * <p>[JA] 形式のずれたイベント一つのために企画展通知がまるごと抜けてはならない。期限のない通知になるほうが、
+     * 通知がまったくないよりよい。
      */
     @Test
     @DisplayName("종료 시각을 읽지 못해도 알림은 만든다")

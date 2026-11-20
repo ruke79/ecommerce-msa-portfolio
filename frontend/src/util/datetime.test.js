@@ -8,9 +8,15 @@ import { formatDate, formatDateTime, localInputToServer, parseServerDate, server
  *
  * 서버는 UTC 를 시간대 표시 없이 내려보내는데, 자바스크립트는 그런 문자열을 **현지 시각**
  * 으로 읽는다. 스무 곳 중 다섯 곳만 `Z` 를 붙이고 있었고 나머지는 전부 틀렸다.
+ *
+ * <p>[JA] 🐛 回帰対象 — 画面の時刻が 9 時間ずれていた。
+ *
+ * <p>サーバーは UTC をタイムゾーン表示なしで返すが、JavaScript はそういう文字列を **現地時刻**
+ * として読む。20 か所のうち 5 か所しか `Z` を付けておらず、残りはすべて間違っていた。
  */
 describe("서버 시각 읽기", () => {
     /** 🔴 핵심 — 시간대 표시가 없는 값은 UTC 다. */
+    // [JA] 🔴 核心 — タイムゾーン表示のない値は UTC である。
     it("🔴 시간대 표시가 없으면 UTC 로 읽는다", () => {
         expect(parseServerDate("2026-09-20T00:27:39").toISOString()).toBe("2026-09-20T00:27:39.000Z");
         expect(parseServerDate("2026-09-20T00:27:39.97").toISOString()).toBe("2026-09-20T00:27:39.970Z");
@@ -24,11 +30,14 @@ describe("서버 시각 읽기", () => {
     /**
      * 날짜만 있는 값에 Z 를 붙이면 시간대에 따라 달력 날짜가 하루 밀린다.
      * 현지 자정으로 읽어야 어디서나 같은 날짜로 보인다.
+     *
+     * <p>[JA] 日付だけの値に Z を付けると、タイムゾーンによってカレンダーの日付が一日ずれる。
+     * 現地の深夜 0 時として読んでこそ、どこでも同じ日付に見える。
      */
     it("날짜만 있는 값은 현지 자정으로 읽는다 — 날짜가 밀리지 않게", () => {
         const parsed = parseServerDate("2026-09-20");
         expect(parsed.getFullYear()).toBe(2026);
-        expect(parsed.getMonth()).toBe(8);      // 0부터 센다
+        expect(parsed.getMonth()).toBe(8);      // 0부터 센다 ／ [JA] 0 から数える
         expect(parsed.getDate()).toBe(20);
     });
 
@@ -58,11 +67,17 @@ describe("서버 시각 읽기", () => {
  *
  * 이 검사가 없으면 새 화면이 또 `new Date(값)` 을 쓰고, 그 화면만 조용히 9시간 틀린다.
  * `util/envRefs.test.js` 가 `process.env` 직접 참조를 막는 것과 같은 방식이다.
+ *
+ * <p>[JA] 🔴 規則は一か所にだけなければならない。
+ *
+ * <p>この検査がないと新しい画面がまた `new Date(値)` を使い、その画面だけ黙って 9 時間ずれる。
+ * `util/envRefs.test.js` が `process.env` の直接参照を防ぐのと同じ方式である。
  */
 describe("시각 파싱은 util/datetime 한곳에서만", () => {
     const SRC = path.join(__dirname, "..");
 
     /** 인자를 받는 `new Date(...)`. `new Date()`(지금 시각)는 문제가 아니다. */
+    // [JA] 引数を取る `new Date(...)`。`new Date()`(現在時刻)は問題ではない。
     const NEW_DATE_WITH_ARG = /new\s+Date\s*\(\s*[^)\s]/;
 
     const walk = (dir, found = []) => {
@@ -99,6 +114,7 @@ describe("관리자 입력칸(datetime-local) ↔ 서버 시각 — 시간대는
     it("🔴 서울에서 오늘 16:00 을 넣으면 서버에는 UTC 07:00 으로 간다 — 그대로 보내면 서울 다음 날 01:00 이 된다", () => {
         expect(localInputToServer("2026-09-27T16:00")).toBe("2026-09-27T07:00:00");
         // 자정 근처: 서울 00:30 은 UTC 로 전날 15:30
+        // [JA] 深夜 0 時付近: ソウルの 00:30 は UTC では前日の 15:30
         expect(localInputToServer("2026-09-28T00:30")).toBe("2026-09-27T15:30:00");
     });
 

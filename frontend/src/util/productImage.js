@@ -11,6 +11,11 @@
  * @param {object} product
  * @param {number} [skuIndex] 색상 인덱스. 범위를 벗어나면 첫 sku 로 떨어진다.
  * @returns {string|null}
+ *
+ * <p>[JA] 商品から代表画像を一枚安全に取り出す。以前は画面のあちこちが `product.skus[0].images[0]` をそのまま読んでいた。sku がないか画像が空の商品が
+ * <b>一つ混ざるだけで</b>その場で TypeError が起き、React はレンダーツリーをまるごと捨てる — ホームが真っ白になる。商品登録が画像アップロード段階で
+ * 失敗すると(現在 AWS キーの交換が未完了なので実際にありうる)まさにそういう商品ができる。なければ null を返し、描く側がプレースホルダーを入れる。
+ * skuIndex は色インデックス。範囲外なら最初の sku に落ちる。
  */
 export function firstImageOf(product, skuIndex = 0) {
     const skus = product?.skus;
@@ -25,6 +30,7 @@ export function firstImageOf(product, skuIndex = 0) {
 }
 
 /** 이 상품을 카드로 그릴 수 있는가. 가격·이미지가 없는 상품은 목록에서 뺀다. */
+// [JA] この商品をカードとして描けるか。価格 · 画像がない商品は一覧から外す。
 export function isRenderable(product) {
     const sku = product?.skus?.[0];
     return Boolean(sku) && Array.isArray(sku.sizes) && sku.sizes.length > 0;

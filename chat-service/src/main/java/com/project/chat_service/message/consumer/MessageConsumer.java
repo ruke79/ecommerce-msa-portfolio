@@ -51,8 +51,10 @@ public class MessageConsumer {
     }
 
     /** 지금 메시지 — 저장 · 뿌리기 · 상담 알림. */
+    // [JA] 現在のメッセージ — 保存・配信・相談通知。
     public void receiveMessage(MessageDto message) {
         // 🔒 메시지 전체를 찍지 않는다 — 예전엔 본문 · 닉네임까지 INFO 로 남겼다(상담 대화 포함). 식별자만.
+        // [JA] 🔒 メッセージ全体を出力しない — 以前は本文・ニックネームまで INFO で残していた(相談の会話を含む)。識別子だけ。
         log.info("채팅 방으로 메시지 전송: roomId={}, messageId={}", message.getRoomId(), message.getId());
 
         // 영속화는 **소비자 측**에서 한다(docs/16 B-24).
@@ -67,19 +69,33 @@ public class MessageConsumer {
         //     조용히 유실되는 상황을 만들지 않는다).
         //
         // 저장을 먼저 하고 브로드캐스트한다 — 구독자가 받은 메시지는 이미 이력에 있어야 한다.
+        // [JA] 永続化は**コンシューマ側**で行う(docs/16 B-24)。
+        //      以前は ChatService.saveMessage を呼ぶ箇所がリポジトリ全体に一つもなく、
+        //      リアルタイム配信だけされて**どのメッセージも保存されていなかった** — 会話履歴照会 API と
+        //      カーソルページネーションが永遠に空の結果を返す状態だった。
+        //      プロデューサ側(sendMessage)ではなくここで保存する理由:
+        //      - コンシューマグループのおかげでインスタンスを増やしてもメッセージごとにちょうど一回だけ保存される。配信はすべての Pod へ(StompFanout — Redis pub/sub、
+        //      docs/21 §2): グループはメッセージを Pod 一つにしか渡さないので、その Pod の購読者にだけ送ると別の Pod に接続した人は受け取れない。
+        //      - 保存失敗時に Kafka のリトライ/DLQ 経路をそのまま使える(ブロードキャストだけ成功して
+        //      黙って失われる状況を作らない)。
+        //      保存を先に行ってからブロードキャストする — 購読者が受け取ったメッセージはすでに履歴になければならない。
         chatService.saveMessage(message);
 
         // 메시지객체 내부의 채팅방번호를 참조하여, 해당 채팅방 구독자에게 메시지를 발송한다.
+        // [JA] メッセージオブジェクト内のチャットルーム番号を参照し、該当チャットルームの購読者にメッセージを送信する。
         fanout.send("/sub/chat/room/" + message.getRoomId(), message);
 
         // 상담 메시지면 데스크에도 알린다 — 저장된 뒤라 상담원이 열면 그 메시지가 기록에 있다(docs/58 §9).
         // 연결·종료 안내(TEXT_ENTER·LEAVE)는 SupportService 가 CLAIMED·CLOSED 로 따로 알린다.
+        // [JA] 相談メッセージならデスクにも知らせる — 保存された後なので相談員が開けばそのメッセージが記録にある(docs/58 §9)。
+        //      接続・終了の案内(TEXT_ENTER・LEAVE)は SupportService が CLAIMED・CLOSED として別に知らせる。
         if (message.getType() == com.project.common.constants.chat.MessageType.TEXT_TALK) {
             Long threadId = com.project.chat_service.model.SupportThread.threadIdOf(message.getRoomId());
             if (threadId != null && threadId > 0) {
                 deskNotifier.notify(threadId, com.project.chat_service.service.SupportDeskNotifier.Kind.MESSAGE,
                         message.getSenderId());
                 // 상담원의 답이면 고객에게 알린다(보고 있지 않을 때만 — SupportReplyNotifier).
+                // [JA] 相談員の回答なら顧客に知らせる(見ていないときだけ — SupportReplyNotifier)。
                 replyNotifier.onMessage(message);
             }
         }

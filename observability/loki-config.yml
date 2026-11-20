@@ -7,6 +7,13 @@
 # 라벨은 service·level 두 개뿐이다. traceId·userId 같은 값은 라벨로 만들지 않는다 — 요청마다 다른
 # 값을 라벨로 두면 스트림이 요청 수만큼 생겨 Loki 가 느려진다(카디널리티). 그런 값은
 # `| json | traceId="..."` 로 줄 안에서 거른다.
+# [JA] Loki — ログストア(docs/51 §4)。単一バイナリ、ファイルシステム保存、ローカル観測スタック用。
+#      サービスは common の logback-spring.xml で ./logs/<サービス>.json に JSON を一行ずつ書き(マスキング後)、Alloy
+#      がそのファイルを読んでここへ送る。Grafana で LogQL で探し、行の traceId を押すと Jaeger
+#      のそのリクエストへ移る(データソースの derivedFields)。
+#      ラベルは service・level の二つだけだ。traceId・userId のような値はラベルにしない —
+#      リクエストごとに違う値をラベルにするとストリームがリクエスト数だけでき Loki が遅くなる(カーディナリティ)。
+#      そうした値は `| json | traceId="..."` で行内で絞る。
 
 auth_enabled: false
 
@@ -38,13 +45,17 @@ schema_config:
 
 limits_config:
   # 7일. 서비스 쪽 파일도 14일·1GB 로 잘리므로 오래 둘 이유가 없다 — 사후 분석이 더 필요하면 늘린다.
+  # [JA] 7 日。サービス側のファイルも 14 日・1GB で切られるので長く置く理由がない — 事後分析がもっと必要なら増やす。
   retention_period: 168h
   # 파일을 처음 읽을 때 며칠 치가 한꺼번에 들어온다. 오래된 줄을 거절하지 않게 보존 기간과 맞춘다.
+  # [JA] ファイルを最初に読むとき数日分が一度に入ってくる。古い行を拒否しないよう保持期間と合わせる。
   reject_old_samples: true
   reject_old_samples_max_age: 168h
 
 # 로그 경보 (docs/51 §4i) — observability/loki-rules/*.yml 을 1분마다 평가해 Alertmanager 로 보낸다.
 # 규칙 파일은 읽기 전용으로 붙고(/etc/loki/rules/fake), 평가용 사본은 데이터 볼륨에 둔다.
+# [JA] ログ警報(docs/51 §4i) — observability/loki-rules/*.yml を 1 分ごとに評価して Alertmanager へ送る。
+#      ルールファイルは読み取り専用で付き(/etc/loki/rules/fake)、評価用のコピーはデータボリュームに置く。
 ruler:
   storage:
     type: local

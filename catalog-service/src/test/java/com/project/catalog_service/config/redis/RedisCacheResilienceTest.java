@@ -45,7 +45,7 @@ class RedisCacheResilienceTest {
     void ttlsAreSpread() {
         RedisCacheManager manager = new RedisCacheConfig(null).redisCacheManager(mock(RedisConnectionFactory.class));
         manager.afterPropertiesSet();
-        manager.getCache("products_by_category");   // 설정 맵에 없는 캐시 — 기본값(10분)으로 실행 중에 생긴다
+        manager.getCache("products_by_category");   // 설정 맵에 없는 캐시 — 기본값(10분)으로 실행 중에 생긴다 ／ [JA] 設定マップにないキャッシュ — 既定値(10 分)で実行中に生まれる
         Map<String, Duration> nominal = Map.of(
                 "products", RedisCacheConfig.PRODUCTS_TTL,
                 "search_cache", Duration.ofMinutes(60),
@@ -73,9 +73,11 @@ class RedisCacheResilienceTest {
     void facetCachesOutliveTheirRefresh() {
         // 🐛 2026-10-20 ~ 21 실습 8시간: 기본 10분(흩어져 8 ~ 10분)이라 다시 계산할 때가 오기 전에 사라져, 카테고리마다 8 ~ 10분에 한 번
         //    첫 쪽이 메뉴를 1.5초 기다린 뒤 빈 채로 나갔다(밤새 검색 p95 1,513ms)
+        // [JA] 🐛 2026-10-20〜21 の実習 8 時間: 既定 10 分(散らして 8〜10 分)なので再計算の時期が来る前に消え、カテゴリごとに 8〜10 分に一回、
+        //      最初のページがメニューを 1.5 秒待った後に空のまま返っていた(夜通し検索 p95 1,513ms)
         RedisCacheManager manager = new RedisCacheConfig(null).redisCacheManager(mock(RedisConnectionFactory.class));
         manager.afterPropertiesSet();
-        Duration refreshAfter = Duration.ofMinutes(10);   // catalog.facets.refresh-after 기본값
+        Duration refreshAfter = Duration.ofMinutes(10);   // catalog.facets.refresh-after 기본값 ／ [JA] catalog.facets.refresh-after の既定値
         for (String name : java.util.List.of("brands_cache", "colors_cache", "sizes_cache", "details_cache")) {
             var config = manager.getCacheConfigurations().get(name);
             assertThat(config).as(name + " — 설정 맵에 있다(없으면 기본 10분)").isNotNull();

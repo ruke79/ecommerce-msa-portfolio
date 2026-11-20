@@ -25,6 +25,11 @@ import { localizeChatName, localizeChatNotice } from "util/chatNotice";
  *   <li>끝나면 별점과 한 줄 의견을 한 번 남길 수 있다.</li>
  *   <li>오른쪽에 지난 상담 — 누르면 그때의 대화를 읽기 전용으로 다시 본다.</li>
  * </ul>
+ *
+ * <p>[JA] カスタマーセンターのチャット — 顧客画面(docs/58 §11)。顧客とカスタマーサポートチームの<b>1:1 相談</b>である(複数人が出入りするグループ会話ルーム /chat とは違う)。
+ * 顧客は開いている相談を一つだけ持つ —「相談を始める」を二回押しても、二つのタブで押しても同じ相談である(サーバーの部分ユニークインデックス)。
+ * 開始時に問い合わせの種類を選ぶ — デスクが種類別に分けて見る。待機中は順番(「前に N 人」)を見せる。相談員が担当すると案内が来て状態を読み直す。
+ * 終わったら星評価と一行の意見を一度残せる。右側に過去の相談 — 押すとそのときの会話を読み取り専用で見返す。
  */
 export default function SupportPage() {
     return (
@@ -38,6 +43,7 @@ export function SupportRoom() {
     const { t } = useTranslation();
     const { user } = useAuthContext();
     // undefined = 읽는 중, null = 열린 상담 없음
+    // [JA] undefined = 読み込み中、null = 開いている相談なし
     const [thread, setThread] = useState(undefined);
     const [history, setHistory] = useState([]);
     const [viewing, setViewing] = useState(null);
@@ -60,6 +66,8 @@ export function SupportRoom() {
 
     // 탭이 뒤에 있을 때 상담원이 답하면 창 제목에 표시한다(docs/58 §10). 보고 있는 동안은 벨 알림이 오지 않으므로
     // (서버가 구독 중인 고객에게는 보내지 않는다) 뒤에 둔 탭에서 답을 놓치지 않게 하는 몫이 여기다.
+    // [JA] タブが裏にあるときに相談員が返答するとウィンドウのタイトルに表示する(docs/58 §10)。見ている間はベル通知が来ないので
+    //      (サーバーは購読中の顧客には送らない)、裏に置いたタブで返答を逃さないようにする役目がここである。
     const [unseen, setUnseen] = useState(0);
     const myId = user?.userId;
     const onMessage = useCallback((m) => {
@@ -181,6 +189,7 @@ function ConnectionDot({ connected }) {
 ConnectionDot.propTypes = { connected: PropTypes.bool };
 
 /** 문의 시작 — 유형을 고르고 연다. 고르지 않으면 "기타". */
+// [JA] 問い合わせ開始 — 種類を選んで開く。選ばなければ「その他」。
 function StartPanel({ onStart, busy }) {
     const { t } = useTranslation();
     const [topic, setTopic] = useState(null);
@@ -251,6 +260,7 @@ function ThreadHeader({ thread, onClose, onNew, busy }) {
 ThreadHeader.propTypes = { thread: PropTypes.object.isRequired, onClose: PropTypes.func, onNew: PropTypes.func, busy: PropTypes.bool };
 
 /** 끝난 상담 — 평가(한 번)와 새 문의. */
+// [JA] 終わった相談 — 評価(一回)と新しい問い合わせ。
 export function RatingPanel({ thread, onRated, onNew }) {
     const { t } = useTranslation();
     const [score, setScore] = useState(0);
@@ -317,6 +327,7 @@ export function RatingPanel({ thread, onRated, onNew }) {
 RatingPanel.propTypes = { thread: PropTypes.object.isRequired, onRated: PropTypes.func.isRequired, onNew: PropTypes.func };
 
 /** 지난 상담 하나 — 읽기 전용. */
+// [JA] 過去の相談一つ — 読み取り専用。
 function PastThread({ thread, myId, onBack }) {
     const { t } = useTranslation();
     const conversation = useSupportConversation(thread);

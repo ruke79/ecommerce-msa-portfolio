@@ -40,11 +40,21 @@ import com.project.notification_service.service.MailDispatcher;
  * <p>Kafka 컨테이너는 띄우지 않는다. 리스너가 받는 것은 어차피 JSON 문자열이고
  * (notification-service 의 모든 컨슈머가 그렇다), 브로커를 하나 더 띄우는 비용에 비해 얻는
  * 것이 적다. Kafka 배선 자체는 기존 리스너들과 같은 팩토리를 쓴다.
+ *
+ * <p>[JA] メールチャネル全区間 — <b>サービス間の契約</b>を検査する。ここで本当に検証するのはロジックではなく<b>継ぎ
+ * 目</b>だ。user-service が作る {@link OutgoingMailRequest} を実際に Jackson
+ * でシリアライズしてリスナーに入れる — フィールド名が一つでもずれるとここで引っかかる。
+ * この契約は二つのサービスが<b>別々に配備されるので</b>コンパイラが守ってくれない。
+ * 黙ってずれると「登録はできるのにメールが来ない」になり、その症状はログを漁るまで誰も気づかない。Kafka
+ * コンテナは立てない。リスナーが受け取るのはどのみち JSON 文字列で(notification-service
+ * のすべてのコンシューマがそうだ)、ブローカーをもう一つ立てるコストに比べて得るものが少ない。Kafka
+ * の配線自体は既存のリスナーと同じファクトリを使う。
  */
 @Tag("containers")
 @Testcontainers
 @SpringBootTest(properties = {
         // 디스패처를 테스트가 직접 부른다. 스케줄러가 같이 돌면 어느 쪽이 보냈는지 알 수 없다.
+        // [JA] ディスパッチャはテストが直接呼ぶ。スケジューラが一緒に動くとどちらが送ったのかわからない。
         "notification.mail.dispatch-initial-delay-ms=600000",
         "notification.sms.dispatch-initial-delay-ms=600000",
         "notification.mail.scrub-initial-delay-ms=600000"
@@ -93,12 +103,14 @@ class MailChannelIntegrationTest {
     void setUp() {
         mailMessageRepository.deleteAll();
         // 기본 발송기는 logging 이다(설정을 켜지 않았으므로). 보낸 내역을 검사에 쓴다.
+        // [JA] 既定の送信器は logging だ(設定を有効にしていないので)。送った履歴を検査に使う。
         assertThat(mailSender).isInstanceOf(LoggingMailSender.class);
         recorder = (LoggingMailSender) mailSender;
         recorder.clear();
     }
 
     /** user-service 가 실제로 만드는 형태 그대로 직렬화한다. */
+    // [JA] user-service が実際に作る形そのままでシリアライズする。
     private String serialized(OutgoingMailRequest request) throws Exception {
         return objectMapper.writeValueAsString(request);
     }
@@ -131,6 +143,7 @@ class MailChannelIntegrationTest {
         assertThat(sent.to()).isEqualTo("alice@example.com");
         assertThat(sent.subject()).contains("회원가입");
         // 링크가 실제로 본문에 들어가야 한다 — 이게 빠지면 메일은 갔는데 가입은 못 한다.
+        // [JA] リンクが実際に本文に入っていなければならない — これが抜けるとメールは届いたのに登録はできない。
         assertThat(sent.text()).contains("token=TOKEN-1");
         assertThat(sent.html()).contains("token=TOKEN-1");
     }
@@ -154,7 +167,7 @@ class MailChannelIntegrationTest {
         String message = serialized(registrationConfirm("evt-3"));
 
         listener.onOutgoingMail(List.of(message), null);
-        listener.onOutgoingMail(List.of(message), null);   // 재전달
+        listener.onOutgoingMail(List.of(message), null);   // 재전달 ／ [JA] 再配信
 
         assertThat(mailMessageRepository.count()).isEqualTo(1);
 
@@ -172,6 +185,7 @@ class MailChannelIntegrationTest {
                 .kind("PASSWORD_RESET")
                 .params(Map.of("resetUrl", "https://shop.example.com/reset?token=R"))
                 // user-service 는 Locale#toLanguageTag 를 넘긴다 → "ja-JP"
+                // [JA] user-service は Locale#toLanguageTag を渡す → "ja-JP"
                 .locale("ja-JP")
                 .build())), null);
 
@@ -191,6 +205,7 @@ class MailChannelIntegrationTest {
                 .build();
 
         // 보내는 쪽의 문제이므로 재시도 없이 격리된다(DLT).
+        // [JA] 送る側の問題なので再試行なしで隔離される(DLT)。
         org.junit.jupiter.api.Assertions.assertThrows(
                 org.springframework.kafka.listener.BatchListenerFailedException.class,
                 () -> listener.onOutgoingMail(List.of(serialized(bad)), null));
@@ -220,6 +235,7 @@ class MailChannelIntegrationTest {
         assertThat(s).doesNotContain("TOKEN-1");
         assertThat(s).doesNotContain("registrationConfirm?token");
         // 어떤 값이 실려 있었는지는 알 수 있어야 한다 — 키 이름까지는 남긴다.
+        // [JA] どんな値が載っていたかはわかる必要がある — キー名までは残す。
         assertThat(s).contains("confirmationUrl");
         assertThat(s).contains("a***@example.com");
     }

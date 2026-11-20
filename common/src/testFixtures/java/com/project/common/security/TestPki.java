@@ -18,6 +18,14 @@ import java.util.List;
  * </ul>
  *
  * <p>키스토어 비밀번호는 {@link #PASSWORD}. 파일은 호출자가 준 임시 디렉터리에 둔다.
+ *
+ * <p>[JA] テスト用の内部 PKI — JDK の keytool だけで(外部ライブラリなしで)運用と同じ形の証明書を作る(docs/57 §16 · docs/66)。
+ * <ul>
+ *   <li>{@link #ca} — 内部 CA(PEM)。運用の {@code /app/resources/ca.crt} の位置。</li>
+ *   <li>{@link #identity} — その CA が署名したサービスの身元(PKCS#12、鍵 + チェーン)。運用の {@code /app/identity/keystore.p12} の位置。
+ *       CN = サービス名、SAN = localhost(テストサーバーのホスト名確認が通るように)。</li>
+ * </ul>
+ * キーストアのパスワードは {@link #PASSWORD}。ファイルは呼び出し側が渡した一時ディレクトリに置く。
  */
 public final class TestPki {
 
@@ -30,6 +38,7 @@ public final class TestPki {
     }
 
     /** CA 를 만들고 PEM 경로를 돌려준다. */
+    // [JA] CA を作り、PEM のパスを返す。
     public Path ca(String alias, String cn) throws Exception {
         keytool("-genkeypair", "-alias", alias, "-keyalg", "RSA", "-keysize", "2048", "-dname", "CN=" + cn,
                 "-ext", "bc:c", "-validity", "2", "-keystore", alias + ".p12", "-storepass", PASSWORD, "-storetype", "PKCS12");
@@ -41,6 +50,9 @@ public final class TestPki {
     /**
      * {@code caAlias} 가 서명한 신원 키스토어(PKCS#12, 키 + [자기 인증서, CA] 체인)를 만들고 경로를 돌려준다.
      * 서버 · 클라이언트 겸용(EKU serverAuth, clientAuth) — 운영의 신원 인증서(k8s/96 usages)와 같다.
+     *
+     * <p>[JA] {@code caAlias} が署名した身元キーストア(PKCS#12、鍵 + [自分の証明書, CA] チェーン)を作り、パスを返す。
+     * サーバー · クライアント兼用(EKU serverAuth, clientAuth) — 運用の身元証明書(k8s/96 の usages)と同じだ。
      */
     public Path identity(String caAlias, String alias, String cn) throws Exception {
         String store = alias + ".p12";
@@ -51,6 +63,7 @@ public final class TestPki {
                 "-ext", "eku=serverAuth,clientAuth", "-ext", "san=dns:localhost,ip:127.0.0.1", "-validity", "2",
                 "-keystore", caAlias + ".p12", "-storepass", PASSWORD);
         // 체인을 키스토어에 넣으려면 CA 를 먼저 신뢰 항목으로 들이고, 서명된 인증서로 키 항목을 바꾼다.
+        // [JA] チェーンをキーストアに入れるには、CA を先に信頼項目として取り込み、署名された証明書で鍵項目を置き換える。
         keytool("-importcert", "-noprompt", "-alias", caAlias + "-trust", "-file", caAlias + ".crt",
                 "-keystore", store, "-storepass", PASSWORD);
         keytool("-importcert", "-noprompt", "-alias", alias, "-file", alias + ".crt", "-keystore", store,

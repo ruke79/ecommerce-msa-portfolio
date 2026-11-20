@@ -34,6 +34,19 @@
 #
 #   ops/24-cloudflare-tunnel.sh --preflight --hostname shop.example.com
 #
+# [JA] Cloudflare Tunnel を作成してクラスタに接続する — インバウンドポートを一つも開けずに。
+#      SECRET-SCANNER-SELF-EXCLUDE — 認証情報パスの文字列がスキャナのパターンに引っかかる。
+#      ── 何を解決するか: OCI Ampere 上のクラスタを外部に公開する方法は三つ。
+#      ① Security List で 80/443 を開放 + パブリック IP — 最も単純だが即座にスキャンされ、TLS 証明書も自前で発行・更新が必要
+#      ② OCI Load Balancer — 無料枠は 10Mbps。それでもポートは開く
+#      ③ Cloudflare Tunnel ← これ
+#      ③ は cloudflared が**外向き**にエッジへ接続し、トラフィックはその接続に乗って入ってくる。
+#      インバウンドルール不要、TLS は Cloudflare が終端し、パブリック IP が変わっても関係ない。
+#      ── 前提: Cloudflare アカウントにドメインが登録済み(ネームサーバを Cloudflare に移した状態、無料プランで十分)・
+#      cloudflared CLI(なければこのスクリプトがインストール方法を案内する)・kubectl が対象クラスタを指していること。
+#      使い方は上記のとおり(--status は現在の状態の確認のみ)。
+#      ⚠️ **登録しただけでは何も動かない。** レジストラでネームサーバを Cloudflare に変え、伝播を待つ必要がある
+#      (数分〜1 日)。それまでは tunnel login がドメインを表示すらしない。残りの作業をまず --preflight で確認する。
 set -euo pipefail
 
 HOSTNAME_ARG=""
@@ -68,6 +81,12 @@ done
 #
 # ⚠️ 확인할 수 있는 것만 확인한다. SSL/TLS 모드나 WebSocket 토글은 대시보드 설정이라
 #    여기서 읽을 수 없다 — 읽을 수 없는 것을 통과시켰다고 말하지 않고, 목록으로만 준다.
+# [JA] 事前点検
+#      トンネルを作る**前に**引っかかる点を確認する。最も時間がかかるのはコードではなく**ネームサーバの伝播**だ —
+#      レジストラでネームサーバを Cloudflare に変えて有効になるまで数分〜1 日かかり、それまでは
+#      `cloudflared tunnel login` がドメインを表示すらしない。だからこの点検はクラスタより先に回す方がよい。
+#      ⚠️ 確認できるものだけ確認する。SSL/TLS モードや WebSocket のトグルはダッシュボード設定でここからは読めない —
+#      読めないものを通過扱いにせず、一覧として示すだけにする。
 
 if [ "$PREFLIGHT" = "1" ]; then
     log "Cloudflare 사전 점검"
@@ -85,6 +104,8 @@ if [ "$PREFLIGHT" = "1" ]; then
 
     # ── ② 로그인 (cert.pem) ───────────────────────────────────────────
     # 이 파일은 계정 자격증명이다. 존재 여부만 본다 — 내용은 절대 찍지 않는다.
+    # [JA] ── ② ログイン (cert.pem)
+    #      このファイルはアカウントの認証情報だ。存在の有無だけを見る — 中身は絶対に出力しない。
     if [ -f "${HOME}/.cloudflared/cert.pem" ]; then
         info "로그인 완료 (~/.cloudflared/cert.pem)"
     else
@@ -97,12 +118,17 @@ if [ "$PREFLIGHT" = "1" ]; then
     #
     # 무료 플랜은 **존 전체 위임**만 된다. 레지스트라에서 네임서버를 Cloudflare 것으로
     # 바꿔야 한다(부분 위임 CNAME 방식은 Business 이상). 바꾼 뒤 전파를 기다려야 한다.
+    # [JA] ── ③ ネームサーバ委任 — これが本当に長くかかる項目だ
+    #      無料プランは**ゾーン全体の委任**しかできない。レジストラでネームサーバを Cloudflare のものに
+    #      変える必要がある(部分委任の CNAME 方式は Business 以上)。変えた後は伝播を待つ。
     if ! command -v dig >/dev/null 2>&1; then
         warn "dig 가 없어 네임서버를 확인하지 못했습니다 — 통과가 아니라 **미확인**입니다"
         warn "  macOS: 기본 포함 / Debian: apt-get install -y dnsutils / RHEL: dnf install -y bind-utils"
     else
         # 존 정점을 찾는다. 라벨을 하나씩 벗기며 NS 레코드가 나오는 첫 지점이 존이다.
         # co.kr·co.uk 같은 2단 TLD 를 목록으로 관리하지 않아도 된다.
+        # [JA] ゾーン頂点を探す。ラベルを一つずつ剥がし、NS レコードが出てくる最初の地点がゾーンだ。
+        #      co.kr・co.uk のような 2 段 TLD をリストで管理しなくて済む。
         ZONE="$HOSTNAME_ARG"
         while [ "${ZONE#*.}" != "$ZONE" ]; do
             [ -n "$(dig +short NS "$ZONE" 2>/dev/null)" ] && break
@@ -125,6 +151,7 @@ if [ "$PREFLIGHT" = "1" ]; then
         fi
 
         # 이미 다른 곳을 가리키는 레코드가 있으면 route dns 가 덮지 못하고 실패한다.
+        # [JA] 既に別の場所を指すレコードがあると route dns は上書きできずに失敗する。
         EXISTING=$(dig +short "$HOSTNAME_ARG" 2>/dev/null | head -3 || true)
         if [ -n "$EXISTING" ]; then
             warn "$HOSTNAME_ARG 가 이미 응답합니다:"
@@ -134,6 +161,7 @@ if [ "$PREFLIGHT" = "1" ]; then
     fi
 
     # ── ④ 대시보드에서 사람이 봐야 하는 것 ────────────────────────────
+    # [JA] ── ④ ダッシュボードで人が確認すべきもの
     cat <<'EOF'
 
   ────────────────────────────────────────────────────────────────────────
@@ -178,6 +206,10 @@ command -v kubectl >/dev/null || die "kubectl 이 필요합니다"
 #    클러스터에 못 붙으면 "ConfigMap 이 없습니다" 같은 **엉뚱한 진단**이 나온다.
 #    맥에서 §9 를 돌릴 때는 kubeconfig 와 SSH 터널이 둘 다 필요한데, 셸을 새로 열면
 #    export 도 백그라운드 터널도 사라진다 — 실제로 그렇게 헷갈렸다.
+# [JA] ⚠️ **まず接続できるかを確認する。** 以下の手順は取得失敗を `2>/dev/null` で握りつぶすので、
+#      クラスタに繋がらないと「ConfigMap がありません」のような**的外れな診断**が出る。
+#      Mac で §9 を回すときは kubeconfig と SSH トンネルの両方が必要だが、シェルを開き直すと
+#      export もバックグラウンドのトンネルも消える — 実際にそれで混乱した。
 KCTX=$(kubectl config current-context 2>/dev/null | head -1 || true)
 if ! CONN_ERR=$(kubectl cluster-info 2>&1 >/dev/null); then
     printf '%s\n' "$CONN_ERR" | head -2 | sed 's/^/      /'
@@ -195,6 +227,7 @@ if ! CONN_ERR=$(kubectl cluster-info 2>&1 >/dev/null); then
 fi
 
 # ---------------------------------------------------------------- 상태 확인
+# [JA] 状態確認
 
 if [ "$STATUS_ONLY" = "1" ]; then
     log "터널 상태"
@@ -202,6 +235,8 @@ if [ "$STATUS_ONLY" = "1" ]; then
     # 접속 확인은 위(주 경로)에서 이미 끝났다. 여기서는 **어느 클러스터를 보고 있는지**만
     # 밝힌다 — 아래 "없습니다" 가 정말 없는 것인지, 엉뚱한 클러스터를 본 것인지 구분하려면
     # 이 한 줄이 필요하다.
+    # [JA] 接続確認は上(主経路)で済んでいる。ここでは**どのクラスタを見ているか**だけを明示する —
+    #      下の「ありません」が本当にないのか、別のクラスタを見ているのかを区別するにはこの 1 行が要る。
     info "클러스터: ${KCTX:-?}"
 
     kubectl -n "$NAMESPACE" get deploy cloudflared 2>/dev/null \
@@ -226,10 +261,12 @@ if ! command -v cloudflared >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------- 1. 로그인 확인
+# [JA] 1. ログイン確認
 
 log "1/5  Cloudflare 인증 확인"
 
 # `tunnel login` 이 ~/.cloudflared/cert.pem 을 만든다. 이게 없으면 아무것도 못 한다.
+# [JA] `tunnel login` が ~/.cloudflared/cert.pem を作る。これがないと何もできない。
 CERT="${HOME}/.cloudflared/cert.pem"
 if [ ! -f "$CERT" ]; then
     die "Cloudflare 인증서가 없습니다: $CERT
@@ -240,10 +277,12 @@ fi
 info "인증서 확인: $CERT"
 
 # ---------------------------------------------------------------- 2. 터널
+# [JA] 2. トンネル
 
 log "2/5  터널 준비"
 
 # 이미 있으면 재사용한다. 같은 이름으로 또 만들면 커넥터가 갈라져 라우팅이 꼬인다.
+# [JA] 既にあれば再利用する。同じ名前でもう一度作るとコネクタが分かれてルーティングがこじれる。
 if cloudflared tunnel list 2>/dev/null | awk '{print $2}' | grep -qx "$TUNNEL_NAME"; then
     TUNNEL_ID=$(cloudflared tunnel list 2>/dev/null | awk -v n="$TUNNEL_NAME" '$2==n {print $1}' | head -1)
     info "기존 터널 재사용: $TUNNEL_NAME ($TUNNEL_ID)"
@@ -276,6 +315,14 @@ log "3/5  DNS 라우트"
 #    실제 배포가 여기서 막혔다(docs/33 §13). 그래서 실패를 삼키지 않고 무엇이 실패했는지
 #    구분해서 알려주고, 덮어쓰기는 **사용자가 직접 결정하게** 남긴다 — 남의 레코드를
 #    말없이 지우는 스크립트가 되어서는 안 된다.
+# [JA] ホスト名をトンネルへ向ける(CNAME <uuid>.cfargotunnel.com)。
+#      ⚠️ ここで「既にあれば正常」として流してはいけない。**レコードがあることと、それがこのトンネルを指すことは別の話だ。**
+#      ドメインを Cloudflare に移すと既存ネームサーバの A レコードが丸ごとインポートされ、それが残っていると:
+#      `route dns` は "record already exists" で**失敗**し、Cloudflare はその古い IP へオリジン接続を試み、
+#      その IP は既に死んでいるので **522** が返る。しかしトンネルコネクタは正常に繋がり Pod も Ready なので、
+#      クラスタ側には何の手がかりもない。
+#      実際のデプロイがここで詰まった(docs/33 §13)。だから失敗を握りつぶさず何が失敗したかを区別して伝え、
+#      上書きは**利用者自身に判断させる** — 他人のレコードを黙って消すスクリプトになってはならない。
 if DNS_ERR=$(cloudflared tunnel route dns "$TUNNEL_NAME" "$HOSTNAME_ARG" 2>&1 >/dev/null); then
     info "$HOSTNAME_ARG → 터널 (CNAME ${TUNNEL_ID}.cfargotunnel.com)"
 else
@@ -296,6 +343,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 4. 클러스터
+# [JA] 4. クラスタ
 
 log "4/5  클러스터에 주입"
 
@@ -304,6 +352,8 @@ kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 \
 
 # ⚠️ 자격증명은 Secret 으로만 들어간다. 저장소에 커밋하지 않는다.
 #    --dry-run + apply 로 멱등하게: 이미 있으면 갱신된다.
+# [JA] ⚠️ 認証情報は Secret としてのみ入れる。リポジトリにはコミットしない。
+#      --dry-run + apply で冪等に: 既にあれば更新される。
 kubectl -n "$NAMESPACE" create secret generic cloudflared-credentials \
     --from-file=credentials.json="$CREDS" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null \
@@ -312,12 +362,15 @@ info "Secret cloudflared-credentials 주입 (파일: $(basename "$CREDS"))"
 
 # ConfigMap 의 터널 ID 를 실제 값으로 바꾼다.
 # 매니페스트를 고쳐 커밋하지 않고 클러스터에서만 치환한다 — UUID 는 환경마다 다르다.
+# [JA] ConfigMap のトンネル ID を実際の値に置き換える。
+#      マニフェストを直してコミットせずクラスタ上でだけ置換する — UUID は環境ごとに異なる。
 if kubectl -n "$NAMESPACE" get configmap cloudflared-config >/dev/null 2>&1; then
     kubectl -n "$NAMESPACE" get configmap cloudflared-config -o yaml \
         | sed "s/REPLACE_ME_TUNNEL_ID/${TUNNEL_ID}/" \
         | kubectl apply -f - >/dev/null
     info "ConfigMap 의 터널 ID 치환: $TUNNEL_ID"
     # ConfigMap 이 바뀌어도 파드는 자동 재시작하지 않는다. 직접 굴린다.
+    # [JA] ConfigMap が変わっても Pod は自動再起動しない。自分で回す。
     kubectl -n "$NAMESPACE" rollout restart deploy/cloudflared >/dev/null 2>&1 || true
 else
     warn "cloudflared-config ConfigMap 이 없습니다. 먼저 배포하세요:"
@@ -326,6 +379,7 @@ else
 fi
 
 # Ingress 의 host 를 실제 도메인으로 맞춘다.
+# [JA] Ingress の host を実際のドメインに合わせる。
 CURRENT_HOST=$(kubectl -n "$NAMESPACE" get ingress ecommerce-frontend \
     -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
 if [ -n "$CURRENT_HOST" ] && [ "$CURRENT_HOST" != "$HOSTNAME_ARG" ]; then
@@ -339,6 +393,7 @@ if [ -n "$CURRENT_HOST" ] && [ "$CURRENT_HOST" != "$HOSTNAME_ARG" ]; then
 fi
 
 # ---------------------------------------------------------------- 5. 확인
+# [JA] 5. 確認
 
 log "5/5  연결 확인"
 
@@ -349,6 +404,9 @@ kubectl -n "$NAMESPACE" rollout status deploy/cloudflared --timeout=120s 2>/dev/
 # ⚠️ 파드가 Ready 인 것은 **엣지에 붙었다**는 뜻일 뿐, 사용자가 접속된다는 뜻이 아니다.
 #    사이에 DNS 레코드와 Ingress host 가 있고 둘 다 조용히 어긋날 수 있다. 그래서
 #    이름이 해석되는지가 아니라 **실제로 한 번 받아온다.**
+# [JA] ⚠️ Pod が Ready なのは**エッジに繋がった**というだけで、利用者がアクセスできるという意味ではない。
+#      間に DNS レコードと Ingress host があり、どちらも黙ってずれうる。だから
+#      名前が解決できるかではなく**実際に一度取得してみる。**
 info "엣지를 통해 실제로 요청해 봅니다 (전파에 최대 60초)"
 HTTP_CODE=""
 for _ in 1 2 3 4 5 6; do

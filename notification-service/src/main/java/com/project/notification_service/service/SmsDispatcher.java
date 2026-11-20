@@ -43,6 +43,15 @@ import lombok.extern.slf4j.Slf4j;
  * <p>다른 점은 <b>시도 횟수 상한</b>이 있다는 것이다. 아웃박스는 무한히 재시도해도 되지만
  * (언젠가는 나가야 하는 이벤트다), SMS 는 시도할 때마다 요금이 나갈 수 있고 오래된 알림은
  * 보내 봐야 의미가 없다.
+ *
+ * <p>[JA] 送信待ち通知を拾って SMS で送り出す。構造はアウトボックスポーラーと同じだ(docs/21) —
+ * 同じ落とし穴があるからだ。<b>先取り</b> — {@code FOR UPDATE SKIP LOCKED} で取ってくる。
+ * レプリカが二つ以上のときロックがないと両方が同じ通知を拾い<b>同じ SMS が二通</b>届く。<b>同期送信</b> —
+ * トランザクション内で結果を確定する。非同期コールバックで状態を更新すると、
+ * 状態確定前にロックが外れて隙間が開く。<b>一時失敗を恒久失敗と記録しない</b> —
+ * ゲートウェイが少し揺れただけで FAILED にすると、その通知は二度と出ない。
+ * 違う点は<b>試行回数の上限</b>があることだ。アウトボックスは無限に再試行してもよいが(いつかは出るべきイベ
+ * ントだ)、SMS は試すたびに料金がかかりうるし、古い通知は送っても意味がない。
  */
 @Slf4j
 @Component
@@ -57,6 +66,7 @@ public class SmsDispatcher {
     private int batchSize;
 
     /** 이 횟수를 넘기면 포기한다. 계속 시도해도 요금만 나간다. */
+    // [JA] この回数を超えたら諦める。試し続けても料金がかかるだけだ。
     @Value("${notification.sms.max-attempts:3}")
     private int maxAttempts;
 
@@ -67,11 +77,17 @@ public class SmsDispatcher {
      * 질의가 상한에 닿지 않은 행을 무조건 다시 집었기 때문이다. 게이트웨이가 잠깐 흔들린
      * 경우조차 살아남지 못했다. 메일(1분)보다 짧게 잡는다: 알림 문자는 늦으면 의미가 줄고,
      * SMS 게이트웨이의 일시 장애는 메일 서버의 그레이리스팅보다 짧게 끝난다.
+     *
+     * <p>[JA] 最初の再試行までの待ち時間。試すたびに倍になる。🔴 これがなかった間、3 回の再試行が<b>15
+     * 秒で</b>尽きた — ポーリング周期が 5 秒なのに、先取りクエリが上限に達していない行を無条件に拾い直した
+     * からだ。ゲートウェイが少し揺れた場合すら生き残れなかった。メール(1 分)より短くする: 通知 SMS
+     * は遅れると意味が薄れ、SMS ゲートウェイの一時障害はメールサーバーのグレイリスティングより短く終わる。
      */
     @Value("${notification.sms.retry-backoff-ms:30000}")
     private long retryBackoffMs;
 
     /** 간격 상한. */
+    // [JA] 間隔の上限。
     @Value("${notification.sms.retry-backoff-max-ms:600000}")
     private long retryBackoffMaxMs;
 
@@ -94,6 +110,8 @@ public class SmsDispatcher {
             if (!sendOne(notification)) {
                 // 게이트웨이가 흔들리는 중이다. 남은 배치를 계속 시도하면 타임아웃 × 배치 크기만큼
                 // 행 잠금과 커넥션을 붙잡는다. 나머지는 다음 주기가 가져간다.
+                // [JA] ゲートウェイが揺れている最中だ。残りのバッチを試し続けるとタイムアウト × バッチサイズ分、
+                //      行ロックとコネクションを掴む。残りは次の周期が持っていく。
                 log.warn("일시적 실패로 배치 중단 — 남은 {}건은 다음 주기에",
                         batch.size() - batch.indexOf(notification) - 1);
                 break;
@@ -102,11 +120,13 @@ public class SmsDispatcher {
     }
 
     /** @return 상태가 확정됐으면 true, 일시적 실패라 배치를 멈춰야 하면 false */
+    // [JA] @return 状態が確定したら true、一時失敗でバッチを止めるべきなら false
     private boolean sendOne(Notification notification) {
         NotificationPreference preference =
                 preferenceRepository.findByUserId(notification.getRecipientId()).orElse(null);
 
         // 알림을 만든 뒤 사용자가 번호를 지웠거나 SMS 를 껐을 수 있다. 발송 직전에 다시 본다.
+        // [JA] 通知を作った後でユーザーが番号を消したか SMS をオフにしたかもしれない。送信直前にもう一度見る。
         if (preference == null || !preference.shouldSendSms(notification.getType())) {
             notification.recordSmsAttempt(SmsStatus.NOT_APPLICABLE, "수신 설정 없음");
             return true;
@@ -119,6 +139,7 @@ public class SmsDispatcher {
                 Map.of("subject", notification.getTitle()));
 
         // 길이는 곧 요금이다. 넘치면 자르되, 잘렸다는 사실을 로그로 남긴다.
+        // [JA] 長さはすなわち料金だ。溢れたら切るが、切ったという事実はログに残す。
         if (!SmsMessage.fitsInSingleSms(text)) {
             log.info("SMS 문구가 한 건을 넘어 잘림: type={} len={}", notification.getType(), text.length());
             text = SmsMessage.truncate(text);
@@ -133,6 +154,7 @@ public class SmsDispatcher {
             }
             case PERMANENT -> {
                 // 번호가 잘못됐거나 잔액이 없다. 재시도해도 같으므로 사람이 보게 남긴다.
+                // [JA] 番号が誤っているか残高がない。再試行しても同じなので人が見るように残す。
                 log.error("SMS 영구 실패: notificationId={} phone={} detail={}",
                         notification.getNotificationId(), PhoneNumbers.mask(e164), result.detail());
                 notification.recordSmsAttempt(SmsStatus.FAILED, result.detail());
@@ -141,12 +163,14 @@ public class SmsDispatcher {
             default -> {
                 // 다음에 집어도 되는 시각을 함께 정한다. 이게 없으면 5초 뒤 같은 행을 또 집어
                 // 상한이 15초 만에 소진된다.
+                // [JA] 次に拾ってよい時刻を併せて決める。これがないと 5 秒後に同じ行をまた拾い、上限が 15 秒で尽きる。
                 notification.scheduleSmsRetry(result.detail(), retryBackoffMs, retryBackoffMaxMs);
 
                 if (notification.getSmsAttempts() >= maxAttempts) {
                     log.warn("SMS 재시도 상한 도달, 포기: notificationId={} attempts={}",
                             notification.getNotificationId(), notification.getSmsAttempts());
                     // giveUpSms 다 — recordSmsAttempt 를 부르면 방금의 한 번이 두 번으로 기록된다.
+                    // [JA] giveUpSms である — recordSmsAttempt を呼ぶと今の一回が二回と記録される。
                     notification.giveUpSms("재시도 상한 초과");
                     return true;
                 }

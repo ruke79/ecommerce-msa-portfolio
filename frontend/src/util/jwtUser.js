@@ -18,6 +18,26 @@
  *
  * <p>단수/복수, 배열/쉼표 문자열을 모두 받아들인다. 백엔드가 나중에 표기를 바꿔도 화면이
  * 조용히 권한을 잃지 않도록 하기 위해서다.
+ *
+ * <p>[JA] JWT ペイロードから画面が使うユーザーオブジェクトを作る。
+ *
+ * <b>なぜヘルパーに切り出したか。</b> 同じ変換が三か所(SignInPage、TokenRefresher の初期復元と
+ * 401 再発行)にコピーされていて、三か所とも<b>同じように間違って</b>いた:
+ *
+ * <pre>
+ *   roles: decodedToken.roles ? decodedToken.roles.split(",") : []
+ * </pre>
+ *
+ * <p>バックエンドが入れるクレームは {@code roles}(複数形)ではなく<b>{@code role}(単数形)</b>で、値は
+ * {@code "ROLE_USER"} / {@code "ROLE_ADMIN"} である(JwtUtils.java)。したがって
+ * {@code decodedToken.roles} は常に undefined で、<b>user.roles は常に空の配列</b>だった。
+ *
+ * <p>これまではロールを実際に検査するコードがなかったので誰も気づかなかった。しかし
+ * 管理者専用のルートガードを追加した瞬間、この空の配列のせいで<b>本物の管理者まで管理者
+ * 画面から追い出される。</b> ガードを入れる前に必ず一緒に直すべき部分である。
+ *
+ * <p>単数/複数形、配列/カンマ区切り文字列をすべて受け付ける。バックエンドが後で表記を変えても画面が
+ * 黙って権限を失わないようにするためである。
  */
 export function toUser(decodedToken, rawToken) {
   return {
@@ -37,6 +57,16 @@ export function toUser(decodedToken, rawToken) {
  * 화면 표시용이고, 신원 판정은 서버가 검증된 토큰으로 한다.
  *
  * @returns 숫자 문자열, 없거나 읽을 수 없으면 null
+ *
+ * <p>[JA] トークンの {@code uid} クレームを<b>文字列のまま</b>読む。
+ *
+ * <p>🐛 uid は 19 桁の TSID である。{@code jwtDecode} はペイロードを {@code JSON.parse} するので、数値クレームが JS の
+ * {@code Number}(2^53、約 16 桁)になって<b>末尾の桁が潰れる</b> — 1234567890123456789 が 1234567890123456800 に
+ * なる。サーバーが送る id(チャットの送信者など)は文字列で正確なので、両者を比べると「自分のメッセージ」が黙って他人のメッセージに
+ * なる(docs/48 §6-⑥)。そこでパース前の JSON テキストから数値を文字として取り出す。署名はここでは見ない —
+ * 画面表示用であり、身元の判定はサーバーが検証済みトークンで行う。
+ *
+ * @returns 数字の文字列、なければまたは読めなければ null
  */
 export function uidOf(rawToken) {
   if (typeof rawToken !== "string") return null;
@@ -57,6 +87,7 @@ export function uidOf(rawToken) {
 }
 
 /** 두 사용자 id 가 같은가 — 둘 다 있을 때만. 숫자·문자열이 섞여 와도 글자로 비교한다(정밀도 손실 없이). */
+// [JA] 二つのユーザー id が同じか — 両方あるときだけ。数値・文字列が混ざって来ても文字として比較する(精度を失わずに)。
 export function sameUserId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
@@ -75,6 +106,12 @@ export function normalizeRoles(decodedToken) {
  * <p>{@code ADMIN} 과 {@code ROLE_ADMIN} 을 모두 받는다. Spring Security 관례는 접두사가
  * 붙은 쪽이지만 코드베이스 안에 둘 다 쓰이는 곳이 있다. 한쪽만 보면 관리자가 조용히 자기
  * 화면에서 쫓겨나고, 화면에는 이유가 전혀 드러나지 않는다.
+ *
+ * <p>[JA] 管理者か。
+ *
+ * <p>{@code ADMIN} と {@code ROLE_ADMIN} の両方を受け付ける。Spring Security の慣例は接頭辞が
+ * 付いた方だが、コードベース内には両方を使う箇所がある。片方だけ見ると管理者が黙って自分の
+ * 画面から追い出され、画面には理由がまったく現れない。
  */
 export function isAdmin(user) {
   return normalizeRolesFromUser(user).some(

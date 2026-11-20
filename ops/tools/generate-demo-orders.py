@@ -40,15 +40,17 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 DEFAULT_ORDER_OFFSET = 8_000_000_000
-DEFAULT_USER_OFFSET = 7_000_000_000   # generate-demo-users.py 의 DEFAULT_OFFSET
-DEFAULT_PRODUCT_OFFSET = 1_000_000    # generate-catalog-data.py · ops/44 의 기본 ID_OFFSET
+DEFAULT_USER_OFFSET = 7_000_000_000   # generate-demo-users.py 의 DEFAULT_OFFSET ／ [JA] generate-demo-users.py の DEFAULT_OFFSET
+DEFAULT_PRODUCT_OFFSET = 1_000_000    # generate-catalog-data.py · ops/44 의 기본 ID_OFFSET ／ [JA] generate-catalog-data.py · ops/44 の既定の ID_OFFSET
 TSID_FLOOR = 1 << 40
 LINES_MAX = 3
 MAX_AGE_DAYS = 730
 # 실측(PG16, 주문 20만 · 줄 40만 — 2026-10-20 로컬 컨테이너, 209MB): 주문 + 배송지 + 줄(평균 2) + 인덱스. estimate 가 쓴다.
+# [JA] 実測(PG16、注文 20 万 · 行 40 万 — 2026-10-20 ローカルコンテナ、209MB): 注文 + 配送先 + 行(平均 2) + インデックス。estimate が使う。
 BYTES_PER_ORDER = 1100
 
 # 끝난 주문의 상태 — (상태, 비율). 결제 전(NOT_PROCESSED) · 입금 대기는 만들지 않는다.
+# [JA] 終わった注文の状態 — (状態, 比率)。決済前(NOT_PROCESSED) · 入金待ちは作らない。
 STATUSES = [("COMPLETED", 0.62), ("DELIVERED", 0.12), ("CANCELED", 0.12), ("REFUNDED", 0.06),
             ("PAID", 0.04), ("PROCESSING", 0.02), ("DISPATCHED", 0.02)]
 PAID_STATES = {"PAID", "PROCESSING", "DISPATCHED", "DELIVERED", "COMPLETED", "REFUNDED"}
@@ -126,6 +128,7 @@ def build_chunk(a, now: datetime):
     for u in range(start, end):
         customer = a.user_offset + u
         # 손님마다 날짜를 정렬해 주문 id 와 같은 순서로
+        # [JA] 客ごとに日付をソートし注文 id と同じ順序に
         ages = sorted((rng.uniform(1, MAX_AGE_DAYS) for _ in range(a.orders_per_user)), reverse=True)
         for j, age in enumerate(ages):
             g = u * a.orders_per_user + j
@@ -174,6 +177,7 @@ def emit_chunk(a, out) -> None:
             w(csv_line(r) + "\n")
         w("\\.\n")
     # 배송지가 먼저(주문이 가리킨다 — V25), 주문, 줄. 이미 있는 주문(다시 실행)은 건너뛰고 그 줄도 넣지 않는다.
+    # [JA] 配送先が先(注文が指す — V25)、注文、行。すでにある注文(再実行)は飛ばし、その行も入れない。
     w(f"INSERT INTO orders.order_address ({ADDR_COLS}) SELECT {ADDR_COLS} FROM demo_addr_stage ON CONFLICT DO NOTHING;\n")
     w(f"INSERT INTO orders.orders ({ORDER_COLS}) SELECT {ORDER_COLS} FROM demo_order_stage ON CONFLICT DO NOTHING;\n")
     w(f"INSERT INTO orders.order_product ({LINE_COLS})\n"

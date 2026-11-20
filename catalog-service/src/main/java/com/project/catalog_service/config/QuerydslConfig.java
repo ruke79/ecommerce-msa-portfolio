@@ -14,6 +14,8 @@ public class QuerydslConfig {
 
     // 1. catalogPersistenceUnit를 위한 EntityManager 주입
     // DataSourceConfig에 정의된 "catalogPersistenceUnit"과 연결됩니다.
+    // [JA] 1. catalogPersistenceUnit のための EntityManager の注入
+    //      DataSourceConfig に定義された "catalogPersistenceUnit" と接続される。
     @PersistenceContext(unitName = "dataPersistenceUnit")
     //@PersistenceContext
     //@Qualifier("entityManagerFactory")
@@ -24,6 +26,10 @@ public class QuerydslConfig {
      * 이 빈은 메인 데이터베이스에 대한 쿼리를 생성할 때 사용됩니다.
      * 
      * @return JPAQueryFactory 빈
+     *
+     * <p>[JA] catalogEntityManager を使う JPAQueryFactory Bean を登録する。
+     *      この Bean はメインデータベースに対するクエリを生成するときに使われる。
+     *      @return JPAQueryFactory Bean
      */
     @Bean
     public JPAQueryFactory catalogJpaQueryFactory() {

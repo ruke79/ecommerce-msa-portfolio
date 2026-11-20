@@ -42,6 +42,8 @@ import com.project.common.constants.chat.MessageType;
 
 /**
  * 고객센터 채팅 (docs/58) — 권한, 맡기, 메시지, 종료.
+ *
+ * <p>[JA] カスタマーセンターチャット (docs/58) — 権限、担当、メッセージ、終了。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -94,6 +96,7 @@ class SupportServiceTest {
     }
 
     // ── 권한 ───────────────────────────────────────────────────────────
+    // [JA] ── 権限 ──
 
     @Test
     @DisplayName("🔒 남의 상담은 404 — 있는지조차 알려 주지 않는다")
@@ -133,6 +136,7 @@ class SupportServiceTest {
     }
 
     // ── 문의 열기 ───────────────────────────────────────────────────────
+    // [JA] ── 問い合わせを開く ──
 
     @Test
     @DisplayName("열린 상담이 있으면 그것을 돌려준다 — 새로 열지 않는다")
@@ -158,6 +162,7 @@ class SupportServiceTest {
     }
 
     // ── 맡기 ───────────────────────────────────────────────────────────
+    // [JA] ── 担当 ──
 
     @Test
     @DisplayName("대기 중인 상담을 맡으면 연결 안내가 팀 명의로 나간다")
@@ -201,6 +206,7 @@ class SupportServiceTest {
     }
 
     // ── 메시지 ─────────────────────────────────────────────────────────
+    // [JA] ── メッセージ ──
 
     @Test
     @DisplayName("🔴 고객 메시지 — 유형은 TEXT_TALK 으로 고정, 이미지 URL 은 버린다, '답변 필요' 가 켜진다")
@@ -272,6 +278,7 @@ class SupportServiceTest {
     }
 
     // ── 종료 ───────────────────────────────────────────────────────────
+    // [JA] ── 終了 ──
 
     @Test
     @DisplayName("고객이 닫으면 종료 안내가 한 번 — 두 번 눌러도 한 번")
@@ -310,6 +317,7 @@ class SupportServiceTest {
     }
 
     // ── 데스크 실시간 알림(§9) ─────────────────────────────────────────
+    // [JA] ── デスクのリアルタイム通知(§9) ──
 
     @Test
     @DisplayName("🔴 새 문의가 열리면 데스크에 NEW_THREAD — 이미 열린 상담을 돌려줄 때는 알리지 않는다")

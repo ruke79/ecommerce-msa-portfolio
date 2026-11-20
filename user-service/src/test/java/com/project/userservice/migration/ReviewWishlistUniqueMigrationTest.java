@@ -55,11 +55,13 @@ class ReviewWishlistUniqueMigrationTest {
                         + "', 'u" + uid + "@example.com', true, true, true, true, true, false)");
             }
             // 사용자 1 이 상품 100 에 리뷰 둘(더블클릭) — 옛 것(10)에 좋아요, 새 것(11)이 남아야 한다
+            // [JA] ユーザー 1 が商品 100 にレビュー二つ(ダブルクリック) — 古いもの(10)にいいね、新しいもの(11)が残らなければならない
             review(db, 10, 1, 100, 310);
             review(db, 11, 1, 100, 311);
-            review(db, 20, 2, 100, 320);   // 다른 사람 — 그대로
+            review(db, 20, 2, 100, 320);   // 다른 사람 — 그대로 ／ [JA] 他の人 — そのまま
             exec(db, "INSERT INTO users.review_like (like_id, review_id, user_id) VALUES (900, 10, 2)");
             // 찜: 사용자 1 · 상품 100 · black 둘, style NULL 둘, 사용자 2 는 하나
+            // [JA] お気に入り: ユーザー 1 · 商品 100 · black 二つ、style NULL 二つ、ユーザー 2 は一つ
             wish(db, 50, 1, 100, "'black'");
             wish(db, 51, 1, 100, "'black'");
             wish(db, 52, 1, 100, "NULL");

@@ -23,6 +23,9 @@ import com.project.coupon_service.service.CouponService;
  * 🔴 결제가 끝나면 쿠폰이 '사용됨' 이 된다 — 같은 쿠폰으로 다시 할인받지 못한다.
  *
  * <p>🐛 예전: Authorization 헤더가 있을 때만 처리했는데 pay-service 는 그 헤더를 싣지 않는다 → 쿠폰이 영원히 NOT_USED 였다.
+ *
+ * <p>[JA] 🔴 決済が終わるとクーポンが「使用済み」になる — 同じクーポンで再び割引を受けられない。
+ * <p>🐛 以前: Authorization ヘッダーがあるときだけ処理していたが pay-service はそのヘッダーを載せない → クーポンが永遠に NOT_USED だった。
  */
 @DisplayName("결제 결과 → 쿠폰 사용 처리")
 class PaymentCouponUsageTest {

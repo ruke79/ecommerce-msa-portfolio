@@ -18,6 +18,10 @@ import org.springframework.test.util.ReflectionTestUtils;
  * <p>컨슈머 쪽 추적만 켜져 있어, 메시지에 추적 헤더가 실리지 않았고 받는 쪽이 새 추적을
  * 시작했다. Zipkin 에서 "장바구니 비우기"·"배송 상태"·"구매 확정 알림" 이 원인이 된 요청과
  * 따로 떨어져 보였다. 공통 자동 구성이 모든 {@link KafkaTemplate} 빈에 켠다.
+ *
+ * <p>[JA] 送信側のトレース(docs/51 §4d)。
+ * コンシューマー側のトレースだけが有効で、メッセージにトレースヘッダーが載らず、受信側が新しいトレースを開始していた。
+ * Zipkin で「カートを空にする」・「配送状態」・「購入確定通知」が原因となったリクエストと切り離されて見えた。共通の自動構成がすべての {@link KafkaTemplate} Bean で有効にする。
  */
 @DisplayName("KafkaTemplate 프로듀서 추적")
 class KafkaTemplateObservationPostProcessorTest {
@@ -31,6 +35,7 @@ class KafkaTemplateObservationPostProcessorTest {
         context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", properties));
         context.register(CommonLoggingAutoConfiguration.class);
         // 브로커에 붙지 않는다 — 템플릿은 첫 발송 때 연결한다.
+        // [JA] ブローカーにつながらない — テンプレートは最初の送信時に接続する。
         context.registerBean("sampleTemplate", KafkaTemplate.class,
                 () -> new KafkaTemplate<>(new DefaultKafkaProducerFactory<String, String>(Map.of())));
         context.refresh();

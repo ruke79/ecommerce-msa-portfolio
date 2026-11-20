@@ -18,6 +18,7 @@ import com.project.order_service.model.OrderProduct;
 import com.project.order_service.repository.jpa.OrderRepository;
 
 /** 배송 서비스가 읽는 주문의 단면 — 주문 쪽 필드 이름을 배송 쪽 이름으로 옮긴다. */
+// [JA] 配送サービスが読む注文の断面 — 注文側のフィールド名を配送側の名前に移す。
 @DisplayName("order-service — 배송 단면 조회")
 class OrderShippingInfoServiceTest {
 

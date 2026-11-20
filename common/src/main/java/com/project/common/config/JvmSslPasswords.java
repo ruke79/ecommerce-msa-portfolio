@@ -25,7 +25,7 @@ import org.springframework.core.Ordered;
  */
 public final class JvmSslPasswords {
 
-    /** 환경 변수 → 시스템 속성. */
+    /** 환경 변수 → 시스템 속성. ／ [JA] 環境変数 → システムプロパティ。 */
     public static final Map<String, String> ENV_TO_PROPERTY = Map.of(
             "JAVAX_NET_SSL_TRUST_STORE_PASSWORD", "javax.net.ssl.trustStorePassword",
             "JAVAX_NET_SSL_KEY_STORE_PASSWORD", "javax.net.ssl.keyStorePassword");
@@ -33,7 +33,7 @@ public final class JvmSslPasswords {
     private JvmSslPasswords() {
     }
 
-    /** 비어 있지 않은 값만, 아직 정해지지 않은 속성에만 옮긴다. 값은 어디에도 남기지 않는다. */
+    /** 비어 있지 않은 값만, 아직 정해지지 않은 속성에만 옮긴다. 값은 어디에도 남기지 않는다. ／ [JA] 空でない値だけを、まだ決まっていないプロパティにだけ移す。値はどこにも残さない。 */
     public static void apply(Map<String, String> env, Properties properties) {
         ENV_TO_PROPERTY.forEach((variable, property) -> {
             String value = env.get(variable);

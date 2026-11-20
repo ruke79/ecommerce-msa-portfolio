@@ -51,6 +51,7 @@ class JwtSessionCutoffTest {
     }
 
     /** @return 아래로 보냈으면 null, 아니면 응답 상태 */
+    // [JA] 下流へ送ったなら null、そうでなければ応答ステータス
     private static HttpStatus run(String token, ReactiveStringRedisTemplate redis) {
         JwtAuthorizationGatewayFilterFactory factory = new JwtAuthorizationGatewayFilterFactory();
         ReflectionTestUtils.setField(factory, "secretKey", SECRET);

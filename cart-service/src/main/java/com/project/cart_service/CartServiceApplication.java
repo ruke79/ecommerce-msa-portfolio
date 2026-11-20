@@ -17,6 +17,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 // TypeExcludeFilter 를 명시적으로 되살린다 — 없으면 @WebMvcTest 등 슬라이스 테스트가
 // 전체 컴포넌트를 로딩하게 된다(docs/14 B-17).
+// [JA] TypeExcludeFilter を明示的に復活させる — ないと @WebMvcTest などのスライステストが
+//      全コンポーネントを読み込んでしまう(docs/14 B-17)。
 @ComponentScan(
 		basePackages = {"com.project.cart_service", "com.project.common"},
 		// AutoConfigurationExcludeFilter 도 되살린다 — 없으면 common 의 자동 설정이 사용자 설정처럼 스캔되어 조건이 너무

@@ -31,6 +31,13 @@ export const useCreateChatRoom = (props) => {
        * 이 mutation 만 끈다 — 방 하나 못 만든 것이 앱을 날릴 이유가 없다.
        *
        * 오류는 삼키지 않고 `error` 로 돌려준다. 호출부가 화면에 보여줄 수 있다.
+       *
+       * <p>[JA] 🐛 ルーム作成が失敗すると **ホームへ飛ばされた。**
+       * グローバル QueryClient が `mutations: { throwOnError: true }` だ(util/api.js)。ここに
+       * `onError` があっても v5 はそれとは別に例外を再送出するので、サーバーが 500 を返すと
+       * 例外が ErrorBoundary まで上がり画面全体が置き換わってユーザーはホームへ落ちた。
+       * この mutation だけオフにする — ルームひとつ作れなかったことがアプリを吹き飛ばす理由にはならない。
+       * エラーは握りつぶさず `error` で返す。呼び出し側が画面に見せられる。
        */
       throwOnError: false,
     });
@@ -45,6 +52,14 @@ export const useCreateChatRoom = (props) => {
      * <p>`mutateAsync` 가 아니라 `mutate` 를 쓰되 Promise 를 돌려준다. 호출부가
      * "성공한 뒤에 모달을 닫는다"를 표현할 수 있어야 한다 — 예전에는 요청을 보내자마자
      * 닫아서 실패해도 아무 표시가 없었다.
+     *
+     * <p>[JA] ルームを作る。
+     * 引数を受け取る。以前は引数を <b>無視して</b> フックに渡した props だけを使っていたが、
+     * 呼び出し側は `handleCreateChatRoom(roomName)` のように値を渡していた — たまたま同じ
+     * 値だったので動いただけで、別の値を渡すと静かに無視される。
+     * `mutateAsync` ではなく `mutate` を使いつつ Promise を返す。呼び出し側が
+     * 「成功した後にモーダルを閉じる」を表現できなければならない — 以前はリクエストを送るとすぐ
+     * 閉じたので失敗しても何の表示もなかった。
      */
     const handleCreateChatRoom = (roomName) =>
         mutateAsync(roomName === undefined ? props : { roomName });
@@ -86,12 +101,15 @@ export const useCreateChatRoom = (props) => {
         const res = await getRoomMessages(room, cursor);
         // 🐛 배열이 아닌 응답(게이트웨이의 HTML 오류 페이지 · 빈 본문)에 .reverse() 를 불러 TypeError 가 나면
         //    화면 전체가 오류 경계로 떨어졌다. 배열이 아니면 "메시지 없음" 으로 다룬다 — 방 목록 · 입력은 살아 있다.
+        // [JA] 🐛 配列でない応答(ゲートウェイの HTML エラーページ・空の本文)に .reverse() を呼んで TypeError になると
+        //      画面全体がエラーバウンダリに落ちた。配列でなければ「メッセージなし」として扱う — ルーム一覧・入力は生きている。
         return Array.isArray(res) ? [...res].reverse() : [];
       },
     
       throwOnError: throwWithoutData,      
       staleTime : 1000,
       // roomId가 있을 때만 쿼리를 실행합니다.
+      // [JA] roomId があるときだけクエリを実行する。
       enabled: !!room?.roomId, 
   });
     

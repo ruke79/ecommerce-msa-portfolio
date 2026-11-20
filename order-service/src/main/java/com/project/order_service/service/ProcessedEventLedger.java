@@ -14,6 +14,7 @@ import jakarta.persistence.PersistenceContext;
 public class ProcessedEventLedger {
 
     /** 원장을 쓰지 않는다 — 생성자로 만드는 단위 테스트의 기본값. */
+    // [JA] 台帳を使わない — コンストラクタで作る単体テストの既定値。
     public static final ProcessedEventLedger NONE = new ProcessedEventLedger() {
         @Override
         public boolean markFirst(String eventId) {

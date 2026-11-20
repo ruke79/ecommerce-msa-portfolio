@@ -33,6 +33,16 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>레플리카가 여럿이어도 회차 임대로 한 파드만 돈다(SchedulerLease). 🐛 예전에는 파드마다 같은 시각에 돌아, 최근 7일 사용자 전원의
  * 이벤트를 파드 수만큼 아웃박스에 썼다 — 사용자 10만 명이면 하룻밤에 약 40만 행(받는 쪽은 멱등이라 결과는 같았다).
+ *
+ * <p>[JA] ユーザー複製の突き合わせ — 最近登録・変更・退会したユーザーのイベントを<b>再送する</b>(docs/48 §6-③, docs/57 §14)。
+ * <p>複製は今二つ — chat の会員行(ニックネームを画面に使う)と coupon の登録クーポン。イベントはアウトボックスで出るが(§6-②)、消費側で失敗して DLT に行くとそこで止まる。
+ * 特に<b>登録クーポンはもらえなかったことを後で知る方法がない</b> — 読み取り時点で気付けない種類の欠落なので、定期的になめる以外に答えがない。
+ * <p><b>なぜ再送か。</b> 受け取る側はすべて冪等: coupon は(クーポン名, ユーザー)が既にあれば作らず、chat は登録ならないときだけ作り、変更は updatedAt がより新しいときだけ適用し、
+ * 退会は何度やっても結果が同じ。だから「抜けを探して埋める」代わりに「最近のものを再送する」で同じ結果を得る — 受け取る側を照会する API が要らない。
+ * <p>範囲は最近の windowDays(既定 7 日 — Kafka の保持期間と同じ)。それより古い欠落(このバッチができる前の登録者)は一度だけ広げて回す:
+ * user.replication.reconcile.window-days を大きくして再起動した後に戻す。
+ * <p>レプリカが複数でも回のリースで一つのポッドだけが回る(SchedulerLease)。🐛 以前はポッドごとに同じ時刻に回り、最近 7 日の全ユーザーのイベントをポッド数だけアウトボックスに書いていた —
+ * ユーザー 10 万人なら一晩で約 40 万行(受け取る側は冪等なので結果は同じだった)。
  */
 @Slf4j
 @Component
@@ -84,6 +94,7 @@ public class UserReplicationReconciler {
     }
 
     /** 임대를 못 잡거나(다른 파드가 이 회차를 돈다) 임대 확인이 실패하면 건너뛴다 — 다음 회차가 같은 일을 한다. */
+    // [JA] リースを取れないか(別のポッドがこの回を回す)リース確認が失敗したら飛ばす — 次の回が同じ仕事をする。
     private boolean acquired() {
         try {
             if (lease.tryAcquire(LEASE, LEASE_FOR)) {
@@ -99,6 +110,9 @@ public class UserReplicationReconciler {
     /**
      * {@code since} 이후 손댄 사용자마다: 탈퇴했으면 user-deleted, 그 안에 가입했으면 user-created + user-updated, 아니면
      * user-updated. 페이지마다 한 트랜잭션 — 아웃박스 기록은 호출자의 트랜잭션을 요구한다(MANDATORY).
+     *
+     * <p>[JA] since 以降に手を入れたユーザーごとに: 退会していれば user-deleted、その期間内に登録していれば user-created + user-updated、そうでなければ user-updated。
+     * ページごとに一トランザクション — アウトボックス記録は呼び出し側のトランザクションを要求する(MANDATORY)。
      */
     public Result reconcile(LocalDateTime since) {
         int created = 0, updated = 0, deleted = 0;

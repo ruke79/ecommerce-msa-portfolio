@@ -31,6 +31,8 @@ public class KafkaProducerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka セキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} 一か所で作る。以前はクラスごとに同じ六行を複製し、値が空でもそのまま入れていたため、SSL を有効にした瞬間に空パスで落ちる組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -50,10 +52,13 @@ public class KafkaProducerConfig {
                 .put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class)
                 .put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class)
                 // 트랜잭션 없음, 멱등만 — coupon-use 는 레코드 하나다(docs/38 §1.17)
+                // [JA] トランザクションなし、冪等のみ — coupon-use はレコード一つだ(docs/38 §1.17)
                 .put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
                 .put(ProducerConfig.ACKS_CONFIG, "all")
                 // (예전에 여기 있던 컨슈머 키 셋 — isolation.level · auto.offset.reset=latest · enable.auto.commit — 은 프로듀서가 쓰지 않아
                 //  기동마다 "supplied but are not used" 경고만 남겼다. 지웠다.)
+                // [JA] (以前ここにあったコンシューマー用キー — isolation.level · auto.offset.reset=latest · enable.auto.commit — はプロデューサーが使わず、
+                //      起動のたびに "supplied but are not used" 警告を残すだけだった。削除した。)
                 .putAll(securityProps())
                 .build();
 
@@ -62,6 +67,7 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, CouponUseRequest> couponUseProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro 単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(producerConfigurations(),
                 new StringSerializer(), new AvroDtoSerializer<>(new CouponUseRequestAvroMapping()));
 
@@ -95,6 +101,10 @@ public class KafkaProducerConfig {
      * 드러나야 한다. 값 직렬화는 {@code StringSerializer} 다. 맵의
      * {@code VALUE_SERIALIZER_CLASS_CONFIG}(JsonSerializer)는 인스턴스를 직접 넘기므로 무시된다 —
      * 그것을 그대로 쓰면 이미 JSON 인 문자열이 <b>한 번 더 따옴표로 감싸져</b> 나간다.
+     *
+     * <p>[JA] 🐛 <b>この Bean がなかったため coupon-service が起動に失敗した。</b>{@code CouponIssuedProducer} は JSON 文字列を発行するので {@code KafkaTemplate<String, String>} を注入されるが、この設定には上の {@code KafkaTemplate<String, CouponUseRequest>}(Avro)一つしかなかった。Spring はジェネリクスまで見て候補を絞るので<b>合う Bean が一つもない</b>と判断した。
+     * <p>Boot の自動設定が代わりに作ってくれることもない — {@code KafkaAutoConfiguration} はユーザー定義の {@code KafkaTemplate} が一つでもあれば丸ごと退く({@code @ConditionalOnMissingBean})。つまり<b>Avro テンプレートを定義した瞬間に文字列テンプレートが消えた。</b>
+     * <p>名前を {@code couponEventKafkaTemplate} にした理由は catalog-service の {@code contentEventKafkaTemplate} と同じ — 注入側がどれを使うか名前で分かるべきだ。値のシリアライザーは {@code StringSerializer}。マップの {@code VALUE_SERIALIZER_CLASS_CONFIG}(JsonSerializer)はインスタンスを直接渡すので無視される — それをそのまま使うと既に JSON の文字列が<b>もう一度引用符で包まれて</b>出ていく。
      */
     @Bean
     public ProducerFactory<String, String> couponEventProducerFactory() {

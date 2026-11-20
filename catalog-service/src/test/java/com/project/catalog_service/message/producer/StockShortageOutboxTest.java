@@ -25,6 +25,8 @@ import com.project.catalog_service.service.ProductService.ShortLine;
 
 /**
  * 재고 부족 아웃박스 — 적기({@link StockShortageRecorder})와 보내기({@link StockShortagePublisher}) (docs/53).
+ *
+ * <p>[JA] 在庫不足のアウトボックス — 記録({@link StockShortageRecorder})と送信({@link StockShortagePublisher})(docs/53)。
  */
 @DisplayName("재고 부족 아웃박스")
 class StockShortageOutboxTest {
@@ -55,6 +57,7 @@ class StockShortageOutboxTest {
     }
 
     /** 누구에게 돌려줄지 모르면 적지 않고 운영자에게 넘긴다(로그 "수동 확인 필요" → Loki 경보). */
+    // [JA] 誰に返金すべきか分からなければ記録せず運用者に回す(ログ「手動確認が必要」→ Loki 警報)。
     @Test
     @DisplayName("주문을 알 수 없는 키(옛 발행자)는 적지 않는다 — 운영자에게 넘긴다")
     void anUnknownOrderIsNotRecorded() {
@@ -88,6 +91,7 @@ class StockShortageOutboxTest {
     }
 
     /** 보내지 못했으면 표시하지 않는다 — 다음 주기에 다시 보낸다. 브로커 문제면 나머지도 실패하므로 멈춘다. */
+    // [JA] 送れなかったら印を付けない — 次の周期に再送する。ブローカーの問題なら残りも失敗するので止まる。
     @Test
     @DisplayName("발행이 실패하면 표시하지 않고 멈춘다 — 다음 주기에 다시")
     void aFailedSendIsRetriedLater() {

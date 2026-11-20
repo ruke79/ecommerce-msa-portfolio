@@ -50,6 +50,7 @@ key_names() {
 }
 
 # 값마다 sha256 앞 12자 — 평문과 암호문이 같은 값을 가졌는지 값 없이 비교한다.
+# [JA] 値ごとに sha256 の先頭 12 文字 — 平文と暗号文が同じ値を持つかを値なしで比べる。
 fingerprints() {
     python3 - "$1" <<'PY'
 import hashlib, sys, yaml
@@ -108,6 +109,7 @@ cmd_init() {
 creation_rules:
   - path_regex: k8s/20-secret\\.enc\\.yaml\$
     # 값만 암호화한다 — kind · metadata · 키 이름은 평문으로 남아 리뷰에서 무엇이 바뀌었는지 보인다.
+    # [JA] 値だけを暗号化する — kind・metadata・キー名は平文で残り、レビューで何が変わったかが見える。
     encrypted_regex: ^(data|stringData)\$
     age: $joined
 EOF
@@ -124,6 +126,7 @@ cmd_encrypt() {
     trap 'rm -f "$tmp"' RETURN
     "$SOPS" --config "$CONFIG" --encrypt --filename-override "$ENC" --input-type yaml --output-type yaml "$PLAIN" > "$tmp"
     # 왕복 확인 — 풀어서 같은 키 · 같은 값(지문)인지 본 뒤에만 바꾼다.
+    # [JA] 往復確認 — 復号して同じキー · 同じ値(指紋)かを確かめてからだけ置き換える。
     local back
     back=$(mktemp)
     (umask 077; "$SOPS" --decrypt --input-type yaml --output-type yaml "$tmp" > "$back") \
@@ -140,6 +143,7 @@ cmd_check() {
     [ -f "$ENC" ] || die "$ENC 이 없다 — encrypt 먼저"
     local bad=0
     # ① 값이 모두 암호문인가 — 평문이 섞인 채 커밋되는 것을 막는다(가드 B-118 도 같은 것을 본다).
+    # [JA] ① 値がすべて暗号文か — 平文が混ざったままコミットされるのを防ぐ(ガード B-118 も同じものを見る)。
     local leaked
     # 빈 값("")은 sops 가 암호화하지 않는다 — 숨길 것이 없으니 누출이 아니다. [JA] 空の値は sops が暗号化しない(漏えいではない)。
     leaked=$(section_lines "$ENC" | grep -v 'ENC\[AES256_GCM,' | grep -vE ':[ ]*(""|'"''"')?[ ]*$' \
@@ -150,12 +154,14 @@ cmd_check() {
     if [ -n "$leaked" ]; then echo "🔴 암호화되지 않은 값: $(tr '\n' ' ' <<<"$leaked")"; bad=1; else echo "✅ 값이 모두 암호문"; fi
     grep -q '^sops:' "$ENC" || { echo "🔴 sops 메타데이터가 없다"; bad=1; }
     # ② 예시와 키 이름이 같은가 — 새 키를 예시에만 · 암호문에만 넣은 것을 찾는다.
+    # [JA] ② 例示とキー名が同じか — 新しいキーを例示だけ · 暗号文だけに入れたものを見つける。
     local missing extra
     missing=$(comm -23 <(key_names "$EXAMPLE") <(key_names "$ENC") | tr '\n' ' ')
     extra=$(comm -13 <(key_names "$EXAMPLE") <(key_names "$ENC") | tr '\n' ' ')
     [ -z "${missing// /}" ] && echo "✅ 예시의 키가 모두 있다" || { echo "⚠️  예시에는 있고 암호문에 없는 키: $missing"; }
     [ -z "${extra// /}" ] || echo "ℹ️  암호문에만 있는 키(예시에 더할지 본다): $extra"
     # ③ 풀리는가 · 평문이 있으면 같은가(값 없이 지문으로).
+    # [JA] ③ 復号できるか · 平文があれば同じか(値なしで指紋で)。
     if command -v "$SOPS" >/dev/null 2>&1 && [ -f "$KEY_FILE" ]; then
         local back
         back=$(mktemp)
@@ -163,7 +169,7 @@ cmd_check() {
             echo "✅ 이 기계의 키로 풀린다"
             if [ -f "$PLAIN" ]; then
                 local differ
-                differ=$(diff <(fingerprints "$PLAIN") <(fingerprints "$back") | awk '/^[<>]/ {print $2}' | sort -u | tr '\n' ' ' || true)  # diff 는 다르면 1 — pipefail 로 조용히 끝나지 않게
+                differ=$(diff <(fingerprints "$PLAIN") <(fingerprints "$back") | awk '/^[<>]/ {print $2}' | sort -u | tr '\n' ' ' || true)  # diff 는 다르면 1 — pipefail 로 조용히 끝나지 않게 ／ [JA] diff は違えば 1 — pipefail で黙って終わらないように
                 if [ -z "${differ// /}" ]; then echo "✅ 평문 $PLAIN 과 같다"
                 else echo "⚠️  평문과 다른 키: $differ— 어느 쪽이 최신인지 보고 encrypt 또는 decrypt"; bad=1; fi
             fi
@@ -183,6 +189,7 @@ cmd_apply() {
     need kubectl "클러스터에 닿는 곳에서 돌린다"
     [ -f "$ENC" ] || die "$ENC 이 없다"
     # 평문 파일 없이 파이프로 — 디스크에 남지 않는다.
+    # [JA] 平文ファイルなしでパイプで — ディスクに残らない。
     "$SOPS" --decrypt --input-type yaml --output-type yaml "$ENC" | kubectl apply -f -
     echo "✅ 적용 — 값이 바뀐 키를 읽는 Deployment 는 재시작해야 새 값을 읽는다(ops/28 --restart 또는 해당 ops)"
 }
@@ -195,7 +202,7 @@ cmd_decrypt() {
     (umask 077; "$SOPS" --decrypt --input-type yaml --output-type yaml "$ENC" > "$tmp") || { rm -f "$tmp"; die "풀지 못했다"; }
     if [ -f "$PLAIN" ] && [ "${FORCE:-0}" != 1 ] && [ "$(fingerprints "$PLAIN")" != "$(fingerprints "$tmp")" ]; then
         local differ
-        differ=$(diff <(fingerprints "$PLAIN") <(fingerprints "$tmp") | awk '/^[<>]/ {print $2}' | sort -u | tr '\n' ' ' || true)  # diff 는 다르면 1 — pipefail 로 조용히 끝나지 않게
+        differ=$(diff <(fingerprints "$PLAIN") <(fingerprints "$tmp") | awk '/^[<>]/ {print $2}' | sort -u | tr '\n' ' ' || true)  # diff 는 다르면 1 — pipefail 로 조용히 끝나지 않게 ／ [JA] diff は違えば 1 — pipefail で黙って終わらないように
         rm -f "$tmp"
         die "있는 평문과 다른 키: $differ— 덮어쓰지 않는다(평문이 최신이면 encrypt, 암호문이 최신이면 FORCE=1)"
     fi

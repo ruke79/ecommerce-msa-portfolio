@@ -39,6 +39,7 @@ class CacheObjectMapperCompatibilityTest {
         ObjectNode tree = (ObjectNode) mapper.readTree(mapper.writeValueAsString(cart));
         tree.put("addedInNextRelease", "x");
         // products 는 [타입, [요소…]] 모양(기본 타이핑) — 요소에도 새 필드를 더한다
+        // [JA] products は [型, [要素…]] の形(デフォルトタイピング) — 要素にも新しいフィールドを足す
         ObjectNode line = (ObjectNode) ((ArrayNode) tree.get("products").get(1)).get(0);
         line.put("alsoNew", 1);
 

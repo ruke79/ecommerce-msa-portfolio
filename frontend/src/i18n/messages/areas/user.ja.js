@@ -3,9 +3,14 @@
  *
  * <p>영역마다 파일을 나눈 이유: 한 파일(ko.js)에 모두 모으면 여러 사람이 동시에 고칠 때 늘 충돌한다. 합치는 곳은 ../ja.js 이고,
  * 같은 키가 두 파일에 있으면 i18n.test.jsx 가 실패한다.
+ *
+ * <p>[JA] 日本語文言 — 領域 "user"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ja.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
  */
 const user = {
     // ── 로그인·가입·비밀번호 찾기 공통 ────────────────────────────────
+    // [JA] ── ログイン・登録・パスワード再設定 共通 ──
     "user.terms_notice": "続行すると、{{brand}}の利用規約およびプライバシーポリシーに同意したものとみなされます。",
     "user.already_have_account": "すでにアカウントをお持ちですか？",
     "user.signin_link": "ログイン",
@@ -16,6 +21,7 @@ const user = {
     "user.validation.password_max": "パスワードは{{max}}文字以内で入力してください。",
 
     // 입력란 이름표(LoginInput)
+    // [JA] 入力欄のラベル(LoginInput)
     "user.input.email": "メールアドレス",
     "user.input.password": "パスワード",
     "user.input.confirm_password": "パスワード（確認）",
@@ -24,6 +30,7 @@ const user = {
     "user.input.full_name": "氏名",
 
     // ── 로그인 ──────────────────────────────────────────────────────────
+    // [JA] ── ログイン ──
     "user.signin.heading": "ログイン",
     "user.signin.submit": "ログイン",
     "user.signin.email_placeholder": "メールアドレスを入力してください",
@@ -80,6 +87,7 @@ const user = {
     "profile.passkeys.delete": "削除",
 
     // ── 회원가입 ────────────────────────────────────────────────────────
+    // [JA] ── 会員登録 ──
     "user.register.heading": "会員登録",
     "user.register.submit": "登録する",
     "user.register.name_placeholder": "お名前",
@@ -96,10 +104,12 @@ const user = {
     "user.register.password_mismatch": "パスワードが一致しません。",
 
     // ── 비밀번호 찾기 ───────────────────────────────────────────────────
+    // [JA] ── パスワード再設定 ──
     "user.forgot.heading": "パスワードをお忘れの方",
     "user.forgot.submit": "リンクを送信",
 
     // ── 프로필 탭(문서 제목·주문·결제수단·보안) ─────────────────────────
+    // [JA] ── プロフィールタブ(文書タイトル・注文・決済手段・セキュリティ) ──
     "profile.doc_title": "{{name}} — プロフィール",
     "profile.addresses.doc_title": "{{name}} — お届け先",
     "profile.payment.doc_title": "{{email}} — お支払い方法",
@@ -150,6 +160,7 @@ const user = {
     "profile.security.recovery.failed": "リカバリーコードを作成できませんでした。しばらくしてから再度お試しください。",
 
     // ── 내 등급 ─────────────────────────────────────────────────────────
+    // [JA] ── 自分のランク ──
     "profile.tier.title": "会員ランク",
     "profile.tier.error": "会員ランクの情報を読み込めませんでした。",
     "profile.tier.amount": "{{amount}}ウォン",
@@ -167,6 +178,7 @@ const user = {
     "profile.tier.refresh_tail": "。本日のご注文金額は明日から反映されます。",
 
     // ── 로그인 기기 ─────────────────────────────────────────────────────
+    // [JA] ── ログイン端末 ──
     "profile.devices.title": "ログイン端末",
     "profile.devices.intro": "最近ログインした端末です。心当たりのない端末がある場合は、",
     "profile.devices.intro_bold": "すぐにパスワードを変更してください。",
@@ -188,6 +200,7 @@ const user = {
     "profile.sessions.done": "すべての端末からログアウトしました。",
 
     // ── 회원 탈퇴 ───────────────────────────────────────────────────────
+    // [JA] ── 会員退会 ──
     "profile.withdrawal.title": "退会",
     "profile.withdrawal.request_failed": "退会を申請できませんでした。パスワードをご確認ください。",
     "profile.withdrawal.cancel_failed": "退会を取り消せませんでした。",
@@ -211,6 +224,7 @@ const user = {
     "profile.withdrawal.submit": "退会を申請",
 
     // ── 알림 ────────────────────────────────────────────────────────────
+    // [JA] ── 通知 ──
     "notification.title": "通知",
     "notification.aria_unread": "通知 {{count}}件（未読）",
     "notification.read_all": "すべて既読にする",
@@ -225,6 +239,7 @@ const user = {
     "notification.hours_ago": "{{count}}時間前",
 
     // ── 휴대폰 인증(SMS) ────────────────────────────────────────────────
+    // [JA] ── 携帯電話認証(SMS) ──
     "notification.sms.title": "携帯電話認証",
     "notification.sms.sent": "{{phone}} に認証番号を送信しました（{{minutes}}分間有効）",
     "notification.sms.done": "認証が完了しました",
@@ -242,6 +257,7 @@ const user = {
     "notification.sms.resend": "認証番号を再送信",
 
     // ── 채팅 ────────────────────────────────────────────────────────────
+    // [JA] ── チャット ──
     "chat.connecting": "チャットサーバーに接続しています...",
     "chat.send": "送信",
     "chat.rooms.title": "チャットルーム",

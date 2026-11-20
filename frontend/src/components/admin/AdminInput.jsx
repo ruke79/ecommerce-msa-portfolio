@@ -27,6 +27,9 @@ const AdminInput = ({ type, placeholder, label, onChange, ...props }) => {
                     // ⚠️ 전개 순서: props 먼저, field 나중, onChange 는 맨 끝에 둘을 함께 부르는 것으로.
                     // 호출부의 onChange 가 Formik 의 것을 덮으면 입력이 Formik 에 닿지 않아 컨트롤드 인풋이
                     // 밀리고 **입력한 글자가 유실된다**(docs/28 §2) — 반대로 field 만 두면 화면 상태가 빈다(위).
+                    // [JA] ⚠️ 展開の順序: props が先、field が後、onChange は最後に両方を一緒に呼ぶ形で。
+                    //      呼び出し側の onChange が Formik のものを上書きすると入力が Formik に届かず制御された入力が
+                    //      ずれて**入力した文字が失われる**(docs/28 §2) — 逆に field だけにすると画面の状態が空になる(上)。
                     {...props}
                     {...field}
                     onChange={handleChange}

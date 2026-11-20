@@ -27,6 +27,11 @@ import com.project.common.dto.cart.request.CartRequest;
  * <p>🔴 {@code /savecart} 는 예전에 <b>본문의 email</b> 로 사용자를 찾았다 — 로그인만 하면 남의 이메일을 넣어 그 사람의
  * 장바구니를 지우고 덮어쓸 수 있었다(docs/38 §1.6). 조회 둘({@code /loadcart}·{@code /checkout})은 {@code User-Email} 을
  * 받아 user-service 에 이메일 → id 를 다시 물었다. order·coupon 의 CartServiceClient 가 이 계약의 짝이다.
+ *
+ * <p>[JA] cart のアイデンティティは <b>{@code User-Id}(トークンの uid)</b> 1 つである(docs/48 §6-⑥)。
+ *      🔴 {@code /savecart} は以前 <b>本文の email</b> でユーザーを探していた — ログインさえすれば他人のメールを入れてその人の
+ *      カートを消して上書きできた(docs/38 §1.6)。照会 2 つ({@code /loadcart}・{@code /checkout})は {@code User-Email} を
+ *      受け取り user-service にメール → id を再度問い合わせていた。order・coupon の CartServiceClient がこの契約の相手である。
  */
 @DisplayName("cart — 신원은 User-Id 헤더")
 class CartIdentityContractTest {
@@ -57,6 +62,7 @@ class CartIdentityContractTest {
     @DisplayName("🔴 savecart 는 본문의 email 이 아니라 User-Id 의 장바구니를 저장한다")
     void saveCartIgnoresBodyEmail() throws Exception {
         // 옛 클라이언트(또는 공격자)가 본문에 남의 email 을 싣는다 — 받지도 않는다(필드가 없다).
+        // [JA] 旧クライアント(または攻撃者)が本文に他人の email を載せる — 受け取りすらしない(フィールドがない)。
         CartRequest body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
                 "{\"products\":[],\"email\":\"victim@example.com\"}", CartRequest.class);
         when(service.saveCart(any(), anyLong())).thenReturn(null);
@@ -69,6 +75,7 @@ class CartIdentityContractTest {
     }
 
     /** 🐛 email 에 @NotNull 이 붙어 있었다 — 이메일을 보내지 않는 새 화면의 저장이 @Valid 에서 전부 400 이 될 뻔했다. */
+    // [JA] 🐛 email に @NotNull が付いていた — メールを送らない新画面の保存が @Valid ですべて 400 になるところだった。
     @Test
     @DisplayName("이메일 없는 본문이 검증을 통과한다")
     void bodyWithoutEmailIsValid() throws Exception {
@@ -90,6 +97,7 @@ class CartIdentityContractTest {
     }
 
     /** 담기·수량·삭제(docs/40 0-b) — 누구의 장바구니인가는 User-Id 뿐이다. 쿼리 파라미터는 줄을 가리킬 뿐이다. */
+    // [JA] 追加・数量・削除(docs/40 0-b) — 誰のカートかは User-Id だけ。クエリパラメータは行を指すだけである。
     @Test
     @DisplayName("담기·수량·삭제도 User-Id 헤더로 — 없으면 401, 서비스에 닿지 않는다. 잘못된 담기는 400")
     void itemEndpointsUseUserId() {
@@ -113,6 +121,7 @@ class CartIdentityContractTest {
     }
 
     /** 🐛 옛 줄은 상품 id 가 없다 — Long.toString(null) 의 NPE 가 전역 처리기의 일반 문구가 됐다. */
+    // [JA] 🐛 旧行は商品 id がない — Long.toString(null) の NPE がグローバルハンドラの一般文言になった。
     @Test
     @DisplayName("줄의 상품 id 가 없거나 줄이 없으면 404 — NPE 가 아니다")
     void productIdOfLegacyLineIsNotFound() {

@@ -8,6 +8,8 @@ import {
 
 /**
  * 결제 화면이 제공자에게 넘기는 것은 청구 통화·금액이다 — 상점 통화의 total 이 아니다.
+ *
+ * <p>[JA] 決済画面がプロバイダーに渡すのは請求通貨・金額である — ショップ通貨の total ではない。
  */
 describe("chargeOf", () => {
     it("청구 통화가 있으면 그것을 쓴다", () => {
@@ -27,6 +29,7 @@ describe("chargeOf", () => {
 });
 
 /** 🔴 JPY·KRW 는 소수가 없다. "1500.00" 은 PayPal 이 거절하고, ×100 은 Stripe 에서 100배다. */
+// [JA] 🔴 JPY・KRW には小数がない。"1500.00" は PayPal が拒否し、×100 は Stripe では 100 倍になる。
 describe("통화별 소수 자릿수", () => {
     it("JPY · KRW 는 0, USD 는 2", () => {
         expect(fractionDigits("JPY")).toBe(0);

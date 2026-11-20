@@ -20,6 +20,10 @@ import org.springframework.transaction.support.TransactionSynchronizationUtils;
  *
  * <p>결제 사가가 폴링 간격 두 번을 기다리던 것(약 12초)을 없애는 장치다. 지켜야 할 것은 셋이다 —
  * <b>커밋된 뒤에만</b> 돈다, <b>몰려도 겹쳐 돌지 않는다</b>, <b>실패해도 멈추지 않는다.</b>
+ *
+ * <p>[JA] コミット直後のリレー(docs/56)。
+ * 決済サーガがポーリング間隔 2 回分を待っていたこと(約 12 秒)をなくす仕組みだ。守るべきことは 3 つ —
+ * <b>コミットされた後にだけ</b>動く、<b>集中しても重ねて動かない</b>、<b>失敗しても止まらない。</b>
  */
 @DisplayName("OutboxRelayTrigger — 커밋 직후 릴레이")
 class OutboxRelayTriggerTest {
@@ -40,6 +44,7 @@ class OutboxRelayTriggerTest {
     }
 
     /** 실행기에 남은 일이 다 끝날 때까지 기다린다 — 단일 스레드라 뒤에 넣은 일이 끝나면 앞의 것도 끝났다. */
+    // [JA] 実行器に残った仕事がすべて終わるまで待つ — 単一スレッドなので、後に入れた仕事が終われば前のものも終わっている。
     private void awaitIdle() throws Exception {
         executor.submit(() -> { }).get(5, TimeUnit.SECONDS);
     }
@@ -104,13 +109,14 @@ class OutboxRelayTriggerTest {
         trigger.afterCommit();
         assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
         for (int i = 0; i < 50; i++) {
-            trigger.afterCommit();       // 첫 릴레이가 도는 동안 커밋 50건
+            trigger.afterCommit();       // 첫 릴레이가 도는 동안 커밋 50건 ／ [JA] 最初のリレーが動いている間にコミット 50 件
         }
         release.countDown();
         awaitIdle();
         awaitIdle();
 
         // 첫 번째 + 그 사이 쌓인 것을 가져갈 한 번. 50번이 아니다.
+        // [JA] 最初の分 + その間に溜まったものを持っていく 1 回。50 回ではない。
         assertThat(runs).hasValue(2);
         assertThat(maxConcurrent).hasValue(1);
     }
@@ -152,7 +158,7 @@ class OutboxRelayTriggerTest {
         executor.shutdown();
 
         trigger.afterCommit();
-        trigger.afterCommit();   // 상태가 IDLE 로 돌아와 있어야 두 번째도 예외 없이 지나간다
+        trigger.afterCommit();   // 상태가 IDLE 로 돌아와 있어야 두 번째도 예외 없이 지나간다 ／ [JA] 状態が IDLE に戻っていて初めて、2 回目も例外なく通過する
 
         assertThat(runs).hasValue(0);
     }

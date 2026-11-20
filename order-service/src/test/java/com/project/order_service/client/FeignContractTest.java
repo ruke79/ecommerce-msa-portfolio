@@ -34,6 +34,24 @@ import org.springframework.web.bind.annotation.RequestParam;
  *
  * <p>컴파일러는 이런 어긋남을 잡지 못한다 — 양쪽이 다른 모듈이고 계약이 애노테이션에만
  * 있기 때문이다. 그래서 여기서 고정한다.
+ *
+ * <p>[JA] サービス間呼び出しの契約ガード。
+ *
+ * <h3>🐛 カート照会が成立したことがなかった</h3>
+ *
+ * <p>cart-service の {@code /api/cart/checkout}
+ * はセキュリティ強化の際に<b>クエリパラメーターを捨て、ゲートウェイが検証した {@code User-Email}
+ * ヘッダー</b>を読むように変わった。order-service の Feign クライアントはそのまま {@code ?userId=}
+ * を送っていて、結果は<b>常に 401</b> だった。
+ *
+ * <p>なぜ長く見えなかったか: ① フロントが決済画面を開くときの呼び出しは<b>ゲートウェイを通ってヘッダーが付き</b>正常だった。
+ * 壊れていたのはサービス間の直接呼び出しだけで、cart-service のログには正常な呼び出ししか見えなかった。② その 401 を
+ * {@code FeignErrorDecoder} が<b>検査例外</b>に変えて返し、プロキシがそれをメッセージのない {@code
+ * UndeclaredThrowableException} で包んだ。画面には {@code {"message": null}}
+ * だけが出た(docs/47 §5-2)。③ order-service のコントローラーがすべての例外を<b>ログなしで</b> 400
+ * に変えていた。
+ *
+ * <p>コンパイラーはこうした食い違いを捕まえられない — 両側が別モジュールで、契約がアノテーションにしかないからである。だからここで固定する。
  */
 class FeignContractTest {
 
@@ -51,6 +69,16 @@ class FeignContractTest {
      * <p>필요도 없다. {@code FeignConfig} 의 인터셉터가 들어온 요청의 {@code Authorization}
      * <b>헤더</b>를 그대로 이어 붙인다. 헤더로 <b>다시 선언해도 안 된다</b> — 인터셉터와
      * 겹쳐 같은 헤더가 두 번 간다.
+     *
+     * <p>[JA] 🔴 <b>トークンは URL に載ってはならない。</b>
+     *
+     * <p>以前は四つのメソッドが {@code @RequestParam("Authorization")} だった。
+     * するとアクセストークンがクエリ文字列に入り、<b>URL はあらゆる所に残る</b> — アクセスログ、プロキシ、例外メッセージ、
+     * Referer。実際に order-service のエラーログにトークン全文が出ていた。
+     *
+     * <p>必要もない。{@code FeignConfig} のインターセプターが受け取ったリクエストの {@code
+     * Authorization} <b>ヘッダー</b>をそのまま付け直す。ヘッダーとして<b>再宣言してもいけない</b> —
+     * インターセプターと重なって同じヘッダーが二度送られる。
      */
     @Test
     @DisplayName("Feign 클라이언트는 토큰을 직접 싣지 않는다 — 인터셉터가 헤더로 넘긴다")
@@ -82,6 +110,11 @@ class FeignContractTest {
      * 🔴 받는 쪽(cart {@code CartController})이 {@code @RequestHeader("User-Id")} 로 신원을 읽는다 — 토큰의 uid 다.
      * 이름이나 타입이 어긋나면 그 순간 401 이다 — 그리고 그 401 은 프론트 경로(게이트웨이가 헤더를 붙인다)에서는
      * 재현되지 않는다. 예전에는 User-Email 이었다(docs/48 §6-⑥). cart 쪽의 짝은 CartIdentityContractTest.
+     *
+     * <p>[JA] 🔴 受け側(cart {@code CartController})は {@code
+     * @RequestHeader("User-Id")} で本人を読む — トークンの uid である。名前や型が食い違えばその瞬間 401
+     * になり、その 401 はフロント経路(ゲートウェイがヘッダーを付ける)では再現しない。以前は User-Email だった(docs/48
+     * §6-⑥)。cart 側の対は CartIdentityContractTest。
      */
     @Test
     @DisplayName("장바구니 조회는 신원을 User-Id 헤더(사용자 id)로 보낸다")
@@ -102,6 +135,8 @@ class FeignContractTest {
     }
 
     /** 전환 릴리스가 끝났다 — User-Email 을 싣는 호출이 되살아나면 이메일 신원도 함께 되살아난다(docs/48 §6-⑥). */
+    // [JA] 移行リリースは終わった — User-Email を載せる呼び出しが復活すると、メールによる本人識別も一緒に復活する(docs/48 §6-⑥)
+    //      。
     @Test
     @DisplayName("어떤 클라이언트도 User-Email 을 싣지 않는다")
     void noClientSendsTheEmailHeader() {
@@ -123,6 +158,10 @@ class FeignContractTest {
      * 🔴 쿠폰 견적은 <b>사용자 id</b> 로 묻는다(coupon {@code CouponController.quote} 의 {@code userId}). 예전에는
      * 이메일을 넘겼고 coupon 이 그 이메일로 user-service 에 id 를 다시 물었다 — 그 호출에는 액세스 토큰이 URL 쿼리로
      * 실렸다.
+     *
+     * <p>[JA] 🔴 クーポン見積もりは<b>ユーザー id</b> で問い合わせる(coupon {@code
+     * CouponController.quote} の {@code userId})。以前はメールを渡し、coupon がそのメールで
+     * user-service に id を問い直していた — その呼び出しではアクセストークンが URL クエリに載っていた。
      */
     @Test
     @DisplayName("쿠폰 견적은 userId 로 묻는다 — 이메일은 싣지 않는다")
@@ -139,6 +178,10 @@ class FeignContractTest {
      * ⚠️ {@code /api/auth/user/id} 는 {@code User-Role} 헤더가 <b>있으면</b> 외부 호출로 보고
      * 관리자만 통과시킨다. 서비스 간 직접 호출에 그 헤더를 실으면 <b>403</b> 이 된다.
      * 인터셉터가 {@code Authorization} 만 넘기는 것은 의도된 것이다.
+     *
+     * <p>[JA] ⚠️ {@code /api/auth/user/id} は {@code User-Role}
+     * ヘッダーが<b>あれば</b>外部呼び出しとみなし、管理者だけを通す。サービス間の直接呼び出しにそのヘッダーを載せると<b>403</b>
+     * になる。インターセプターが {@code Authorization} だけを渡すのは意図的である。
      */
     @Test
     @DisplayName("사용자 조회에 User-Role 을 싣지 않는다 — 실으면 403 이다")

@@ -71,6 +71,10 @@ public class CartController {
      * 🔒 장바구니 저장. 예전에는 <b>본문의 {@code email}</b> 로 사용자를 찾았다 — 로그인만 하면 본문에 남의 이메일을
      * 넣어 <b>그 사람의 장바구니를 지우고 덮어쓸</b> 수 있었다(docs/38 §1.6). 신원은 게이트웨이가 검증한 토큰의 uid
      * ({@code User-Id} 헤더) 하나다. 본문의 email 은 읽지 않는다.
+     *
+     * <p>[JA] 🔒 カート保存。以前は <b>本文の {@code email}</b> でユーザーを探していた — ログインさえすれば本文に他人のメールを
+     *      入れて <b>その人のカートを消して上書きできた</b>(docs/38 §1.6)。アイデンティティはゲートウェイが検証したトークンの uid
+     *      ({@code User-Id} ヘッダ)だけである。本文の email は読まない。
      */
     @PostMapping("/savecart")
     ResponseEntity<?> saveCart(@Valid @RequestBody CartRequest request,
@@ -86,6 +90,7 @@ public class CartController {
                      cart = cartService.saveCart(request, userId);
                  } catch (IllegalArgumentException e) {
                      // 수량이 범위 밖이다(CartService.checkedQty) — 고칠 수 있는 요청 오류다.
+                     // [JA] 数量が範囲外(CartService.checkedQty) — 直せるリクエストエラーである。
                      return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
                  }
 
@@ -108,6 +113,12 @@ public class CartController {
      *
      * <p>예전에는 {@code User-Email} 을 받아 user-service 에 이메일 → id 를 물었다. 장바구니는 id 로 저장되고 토큰이
      * 이미 id 를 나르므로 그 왕복은 필요 없었다(docs/48 §6-①, order 와 같다).
+     *
+     * <p>[JA] 🔒 以前は {@code ?userId=} に <b>他人のメールを入れるとその人のカート</b>が
+     *      そのまま出てきた。アイデンティティはゲートウェイが検証したトークンからのみ来る — {@code User-Id}(トークンの uid)、
+     *      クライアントが送った同名ヘッダはゲートウェイが消す。クエリパラメータは無視する。
+     *      以前は {@code User-Email} を受け取り user-service にメール → id を問い合わせていた。カートは id で保存され、トークンが
+     *      既に id を運ぶので、その往復は不要だった(docs/48 §6-①、order と同じ)。
      */
     @GetMapping("/loadcart")
     ResponseEntity<?> loadCart(@RequestHeader(value = "User-Id", required = false) Long userId) {
@@ -125,6 +136,8 @@ public class CartController {
             catch(RuntimeException e) {
                 // 🐛 예전에는 200 + 빈 본문(null)이었다 — "장바구니 없음" 과 구별되지 않아, 서버 것으로 바꾸는 화면이 장바구니를
                 // 조용히 비웠다. 실패는 실패로 알리고(화면은 가진 것을 그대로 둔다) 원인을 남긴다.
+                // [JA] 🐛 以前は 200 + 空の本文(null)だった — 「カートなし」と区別できず、サーバーのものに置き換える画面がカートを
+                //      黙って空にした。失敗は失敗として知らせ(画面は持っているものをそのまま残す)、原因を残す。
                 log.warn("장바구니 읽기 실패 userId={}", userId, e);
                 return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                         .body(new MessageResponse(ClientMessage.of(e)));
@@ -135,8 +148,12 @@ public class CartController {
     // ── 서버가 장바구니의 기준 — 담기·수량·삭제 (docs/40 0-b 2단계) ─────────────────────────────
     // 예전에는 이 셋이 브라우저(redux)에만 있었고 서버는 마지막 체크아웃의 사본만 가졌다 — 다른 기기에서는 옛 장바구니, 체크아웃에서
     // 고르지 않은 줄은 서버에서 사라졌다. 응답은 언제나 지금 장바구니 전체(loadcart 와 같은 모양) — 화면은 그것을 그대로 쓴다.
+    // [JA] ── サーバーがカートの基準 — 追加・数量・削除(docs/40 0-b 2 段階) ──
+    //      以前はこの 3 つがブラウザ(redux)にだけあり、サーバーは最後のチェックアウトのコピーしか持っていなかった — 別の端末では古いカート、チェックアウトで
+    //      選ばなかった行はサーバーから消えた。応答は常に今のカート全体(loadcart と同じ形) — 画面はそれをそのまま使う。
 
     /** 담기 — 같은 줄(상품·색상·사이즈)이면 수량을 이 값으로. 본문은 catalog 의 담기 응답 + qty·_uid 다. */
+    // [JA] 追加 — 同じ行(商品・色・サイズ)なら数量をこの値に。本文は catalog の追加応答 + qty・_uid である。
     @PutMapping("/items")
     ResponseEntity<?> putItem(@RequestHeader(value = "User-Id", required = false) Long userId,
             @RequestBody ProductInfoDto item) {
@@ -151,6 +168,7 @@ public class CartController {
     }
 
     /** 수량 — 0 이하면 뺀다. */
+    // [JA] 数量 — 0 以下なら外す。
     @org.springframework.web.bind.annotation.PatchMapping("/items")
     ResponseEntity<?> setItemQty(@RequestHeader(value = "User-Id", required = false) Long userId,
             @RequestParam("productId") Long productId, @RequestParam("colorId") Long colorId,
@@ -167,6 +185,7 @@ public class CartController {
     }
 
     /** 빼기. */
+    // [JA] 外す。
     @org.springframework.web.bind.annotation.DeleteMapping("/items")
     ResponseEntity<?> removeItem(@RequestHeader(value = "User-Id", required = false) Long userId,
             @RequestParam("productId") Long productId, @RequestParam("colorId") Long colorId,
@@ -198,6 +217,9 @@ public class CartController {
     /**
      * 🔒 loadCart 와 같은 이유로 쿼리 파라미터 대신 검증된 헤더를 쓴다. order·coupon 이 서비스 간 호출로도 부른다 —
      * 그때도 {@code User-Id} 헤더에 그 사용자의 id 를 싣는다(각자의 CartServiceClient).
+     *
+     * <p>[JA] 🔒 loadCart と同じ理由でクエリパラメータの代わりに検証済みヘッダを使う。order・coupon がサービス間呼び出しでも呼ぶ —
+     *      そのときも {@code User-Id} ヘッダにそのユーザーの id を載せる(それぞれの CartServiceClient)。
      */
     @GetMapping("/checkout")
     ResponseEntity<?> getCart(@RequestHeader(value = "User-Id", required = false) Long userId) {
@@ -209,6 +231,7 @@ public class CartController {
 
             try {
                 // 주문의 근거 — 고른 줄의 가격을 catalog 의 지금 값으로 맞춰 돌려준다(CartService.getCartForCheckout)
+                // [JA] 注文の根拠 — 選んだ行の価格を catalog の今の値に合わせて返す(CartService.getCartForCheckout)
                 CartDto response = cartService.getCartForCheckout(userId);
 
                 return new ResponseEntity<>(response, HttpStatus.OK);
@@ -223,6 +246,10 @@ public class CartController {
      *
      * <p>🐛 줄에 상품 id 가 없으면(옛 스키마의 줄) {@code Long.toString(null)} 에서 NPE — 전역 처리기가 500 대신 일반 문구를 냈고
      * 로그에만 "productId is null" 이 남았다. 없으면 404 다.
+     *
+     * <p>[JA] カート行の商品 id(order-service が古い行の空の商品 id を埋めるときに呼ぶ)。
+     *      🐛 行に商品 id がないと(旧スキーマの行){@code Long.toString(null)} で NPE — グローバルハンドラが 500 の代わりに一般的な文言を出し、
+     *      ログにだけ "productId is null" が残った。ない場合は 404 である。
      */
     @GetMapping("/{cartProductId}") 
     ResponseEntity<String> getProductId(@PathVariable("cartProductId") String cartProdcutId) {

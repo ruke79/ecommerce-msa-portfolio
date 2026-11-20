@@ -6,6 +6,10 @@ import { translate } from "i18n/I18nProvider";
  *
  * 게이트웨이가 JWT 를 검증한 뒤 User-Id 헤더를 채워 넣으므로, 프론트엔드는 사용자 id 를
  * 보내지 않는다. 보내더라도 게이트웨이가 덮어쓴다 — 남의 알림을 읽으려는 시도를 막기 위해서다.
+ *
+ * <p>[JA] 通知 API。
+ * ゲートウェイが JWT を検証した後に User-Id ヘッダを埋めるので、フロントエンドはユーザー id を送らない。
+ * 送ってもゲートウェイが上書きする — 他人の通知を読もうとする試みを防ぐためである。
  */
 const BASE = "/notification-service/api/notifications";
 
@@ -28,6 +32,12 @@ export const fetchUnreadCount = async () => {
  * id 만으로는 어느 쪽인지 알 수 없다(두 테이블이 각자 TSID 를 쓴다). 그래서 서버가 scope 를
  * 실어 보낸다. 이걸 무시하고 개인 알림 경로로 보내면 404 가 나거나 — 더 나쁘게 — 우연히
  * 같은 id 의 남의 개인 알림을 건드린다.
+ *
+ * <p>[JA] 全体通知(お知らせ・管理者案内)か。
+ * 一覧は個人通知と全体通知を合わせて返ってくるが、既読・削除のエンドポイントが互いに異なる —
+ * 全体通知は全員が共有する行なので個人通知のように消せず、個人別の印だけを残す。
+ * id だけではどちらか分からない(二つのテーブルがそれぞれ TSID を使う)。そこでサーバーが scope を載せて送る。
+ * これを無視して個人通知のパスに送ると 404 になるか — もっと悪いことに — たまたま同じ id の他人の個人通知に触れる。
  */
 export const isBroadcast = (item) => item?.scope === "BROADCAST";
 
@@ -48,6 +58,9 @@ export const markAllNotificationsRead = async () => {
  *
  * 전체 알림은 "내 목록에서만" 사라진다 — 공지 자체는 남는다. 한 사람의 삭제가 다른 사람의
  * 화면을 바꾸면 안 된다.
+ *
+ * <p>[JA] 一覧から片付ける。
+ * 全体通知は「自分の一覧からだけ」消える — お知らせ自体は残る。一人の削除が他の人の画面を変えてはならない。
  */
 export const deleteNotification = async (item) => {
   await api.delete(pathFor(item));
@@ -57,10 +70,14 @@ export const deleteNotification = async (item) => {
 //
 // 🔒 서버는 /api/notifications/admin 접두사 아래를 읽기까지 관리자로 제한한다
 // (AdminOnlyInterceptor). 화면의 ProtectedRoute 는 메뉴를 감추는 것일 뿐 인가가 아니다.
+// [JA] ── 管理者: 全体通知の送信 ──
+//      🔒 サーバーは /api/notifications/admin 接頭辞の下を読み取りまで管理者に制限する
+//      (AdminOnlyInterceptor)。画面の ProtectedRoute はメニューを隠すだけで認可ではない。
 
 const ADMIN = `${BASE}/admin/broadcasts`;
 
 /** 예약분·만료분까지 전부. 관리자는 안 보이는 것도 봐야 고칠 수 있다. */
+// [JA] 予約分・期限切れ分まですべて。管理者は見えないものも見えてこそ直せる。
 export const fetchBroadcasts = async (limit = 50) => {
   const { data } = await api.get(`${ADMIN}?limit=${limit}`);
   return data;
@@ -71,6 +88,10 @@ export const fetchBroadcasts = async (limit = 50) => {
  *
  * startsAt 이 비면 즉시, endsAt 이 비면 만료 없음이다. 점검 예고처럼 지나면 의미가 없는
  * 안내는 끝 시각을 넣어 두는 편이 낫다 — 사용자가 하나하나 지우게 하지 않는다.
+ *
+ * <p>[JA] 管理者案内を送る。
+ * startsAt が空なら即時、endsAt が空なら期限なしである。点検予告のように過ぎれば意味のない案内は、
+ * 終了時刻を入れておく方がよい — ユーザーに一つずつ消させない。
  */
 export const createBroadcast = async ({ title, content, url, startsAt, endsAt }) => {
   const { data } = await api.post(ADMIN, {
@@ -84,6 +105,7 @@ export const createBroadcast = async ({ title, content, url, startsAt, endsAt })
 };
 
 /** 모두에게서 내린다 — 사용자의 "치우기"와 다르다. */
+// [JA] 全員から取り下げる — ユーザーの「片付け」とは異なる。
 export const deleteBroadcast = async (id) => {
   await api.delete(`${ADMIN}/${id}`);
 };
@@ -103,6 +125,10 @@ export const updatePreferences = async (patch) => {
  *
  * 429 는 정상적인 응답이다 — 남의 번호로 문자 폭탄을 보내는 것을 막는 제한에 걸린 것이므로,
  * 오류로 처리하지 말고 사용자에게 남은 시간을 보여 준다.
+ *
+ * <p>[JA] 認証番号を要求する。
+ * 429 は正常な応答である — 他人の番号に SMS 爆弾を送るのを防ぐ制限に掛かったものなので、
+ * エラーとして処理せずユーザーに残り時間を見せる。
  */
 export const requestPhoneCode = async ({ phone, region }) => {
   try {

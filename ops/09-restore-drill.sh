@@ -25,6 +25,32 @@
 #   KEEP=1 ./ops/09-restore-drill.sh           # 실패 원인 조사용으로 컨테이너 보존
 #
 # 실패하면 exit 1 — CI 에 넣어 정기 훈련을 자동화할 수 있다(docs/15 §5 "분기 정기 훈련").
+# [JA] 運用アクション ⑨ — PITR 復元訓練(docs/15 §4)
+#
+#      なぜ必要か: **検証していないバックアップはバックアップではない。** バックアップスクリプトが毎日静かに動いていても、
+#      肝心な日に復旧できないことがほとんどだ — WAL が途中で途切れていたり、archive_command が
+#      失敗を成功と報告していたり、保持ポリシーが必要な WAL を消していたり。
+#
+#      このスクリプトは事故を一つ **実際に再現して元に戻す**:
+#
+#        1. アーカイブを有効にした PostgreSQL を起動する
+#        2. 注文データを入れる                          ← 守りたいもの
+#        3. base backup を取る
+#        4. 注文をさらに入れる → 時刻 T を記録          ← ここまでは復旧されなければならない
+#        5. DROP TABLE で事故を起こす                   ← これは元に戻されなければならない
+#        6. base backup + WAL で時刻 T に復旧する
+#        7. 検証: テーブルが生きていて、行数が T 時点と正確に同じで、事故以降のデータはない
+#        8. RTO(復旧所要時間)を実測して出力する
+#
+#      レプリケーション(docs/13 §2)では 5 番を元に戻せない — DROP TABLE はレプリカにも即座に伝播する。
+#      だから PITR が必要で、だからこの訓練が必要である。
+#
+#      使い方:
+#        ./ops/09-restore-drill.sh                  # コンテナで全過程を再現(既定)
+#        PG_IMAGE=postgres:16-alpine ./ops/09-restore-drill.sh
+#        KEEP=1 ./ops/09-restore-drill.sh           # 失敗原因の調査用にコンテナを残す
+#
+#      失敗すると exit 1 — CI に入れて定期訓練を自動化できる(docs/15 §5「四半期の定期訓練」)。
 set -euo pipefail
 
 PG_IMAGE="${PG_IMAGE:-${TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX:-}postgres:16-alpine}"
@@ -49,6 +75,7 @@ cleanup() {
     fi
     docker rm -f "$PRIMARY" "$RESTORED" >/dev/null 2>&1 || true
     # 컨테이너가 postgres uid 로 만든 파일이 있어 host 권한으로는 못 지울 수 있다.
+    # [JA] コンテナが postgres の uid で作ったファイルがあり、ホストの権限では消せない場合がある。
     docker run --rm -v "$WORK:/w" "$PG_IMAGE" sh -c 'rm -rf /w/*' >/dev/null 2>&1 || true
     rm -rf "$WORK" 2>/dev/null || true
 }
@@ -56,6 +83,7 @@ trap cleanup EXIT
 
 mkdir -p "$WORK/wal" "$WORK/base" "$WORK/restore"
 # 컨테이너의 postgres 사용자(uid 70)가 써야 한다.
+# [JA] コンテナの postgres ユーザー(uid 70)が書けなければならない。
 chmod 777 "$WORK" "$WORK/wal" "$WORK/base" "$WORK/restore"
 
 psql_primary() { docker exec -e PGPASSWORD="$PGPASSWORD_DRILL" "$PRIMARY" psql -U postgres -tAqX -v ON_ERROR_STOP=1 "$@"; }
@@ -65,14 +93,17 @@ wait_ready() {
     # ⚠️ pg_isready 만으로는 부족하다. 공식 이미지는 초기화용 임시 서버를 먼저 띄웠다가
     # 껐다 켜므로, 그 임시 서버에 붙으면 곧바로 "the database system is shutting down" 을
     # 맞는다(-c 옵션도 아직 안 먹은 상태다). "초기화 완료" 로그를 본 뒤에 판단한다.
+    # [JA] ⚠️ pg_isready だけでは足りない。公式イメージは初期化用の一時サーバーを先に起動してから
+    #      止めて再起動するので、その一時サーバーにつながるとすぐ "the database system is shutting down" を
+    #      食らう(-c オプションもまだ効いていない状態だ)。「初期化完了」のログを見てから判断する。
     local name="$1" limit="${2:-90}" i
     for i in $(seq 1 "$limit"); do
         if docker logs "$name" 2>&1 | grep -q "init process complete"; then
-            break   # 초기화 단계가 있는 컨테이너 — 이제 진짜 서버를 기다린다
+            break   # 초기화 단계가 있는 컨테이너 — 이제 진짜 서버를 기다린다 ／ [JA] 初期化段階があるコンテナ — これから本物のサーバーを待つ
         fi
         if docker exec "$name" test -f /var/lib/postgresql/data/recovery.signal 2>/dev/null \
            || docker logs "$name" 2>&1 | grep -q "database system is ready to accept connections"; then
-            break   # 복원 컨테이너처럼 초기화 단계가 없는 경우
+            break   # 복원 컨테이너처럼 초기화 단계가 없는 경우 ／ [JA] 復元コンテナのように初期化段階がない場合
         fi
         sleep 1
     done
@@ -90,6 +121,7 @@ wait_ready() {
 }
 
 # ---------------------------------------------------------------- 1. 아카이빙 켜고 기동
+# [JA] 1. アーカイブを有効にして起動
 
 log "1/7  아카이빙이 켜진 PostgreSQL 기동"
 docker rm -f "$PRIMARY" >/dev/null 2>&1 || true
@@ -107,6 +139,7 @@ wait_ready "$PRIMARY"
 info "archive_command = $(psql_primary -c 'SHOW archive_command')"
 
 # ---------------------------------------------------------------- 2. 지켜야 할 데이터
+# [JA] 2. 守るべきデータ
 
 log "2/7  주문 데이터 적재 (${ROWS_BEFORE_BACKUP}건)"
 psql_primary -c "CREATE DATABASE orderdb" >/dev/null
@@ -132,6 +165,7 @@ docker exec -e PGPASSWORD="$PGPASSWORD_DRILL" "$PRIMARY" \
 info "소요 $(( $(date +%s) - backup_started ))초, 크기 $(du -sh "$WORK/base" 2>/dev/null | cut -f1)"
 
 # ---------------------------------------------------------------- 4. 백업 이후 데이터 + 목표 시각
+# [JA] 4. バックアップ以降のデータ + 目標時刻
 
 log "4/7  백업 이후 주문 ${ROWS_AFTER_BACKUP}건 추가 → 이 시점까지 복구되어야 한다"
 psql_primary -d orderdb -c "
@@ -143,13 +177,16 @@ EXPECTED_ROWS="$(psql_primary -d orderdb -c 'SELECT count(*) FROM orders')"
 EXPECTED_SUM="$(psql_primary -d orderdb -c 'SELECT coalesce(sum(amount),0)::text FROM orders')"
 # 목표 시각은 **서버 시계**로 잡는다. 호스트와 컨테이너의 시계/타임존이 어긋나면
 # 복구가 엉뚱한 지점에서 멈춘다 — 실제 복구 실패의 흔한 원인이다.
+# [JA] 目標時刻は **サーバーの時計** で取る。ホストとコンテナの時計/タイムゾーンがずれると
+#      復旧が見当違いの地点で止まる — 実際の復旧失敗のよくある原因である。
 TARGET_TIME="$(psql_primary -c 'SELECT now()')"
 info "목표 시각 T = $TARGET_TIME"
 info "T 시점 상태: ${EXPECTED_ROWS}건, 합계 $EXPECTED_SUM"
 
-sleep 2   # T 와 사고 사이에 확실한 간격을 둔다
+sleep 2   # T 와 사고 사이에 확실한 간격을 둔다 ／ [JA] T と事故の間に確実な間隔を置く
 
 # ---------------------------------------------------------------- 5. 사고
+# [JA] 5. 事故
 
 log "5/7  사고 재현 — DROP TABLE orders"
 psql_primary -d orderdb -c "DROP TABLE orders" >/dev/null
@@ -158,6 +195,8 @@ info "사고 후 상태: $(psql_primary -d orderdb -c 'SELECT count(*) FROM orde
 
 # 사고 시점까지의 WAL 을 아카이브로 밀어낸다. 실무에서는 archive_timeout 이 알아서 하지만
 # 훈련에서는 기다릴 이유가 없다.
+# [JA] 事故時点までの WAL をアーカイブに押し出す。実務では archive_timeout が自動でやるが、
+#      訓練では待つ理由がない。
 psql_primary -c "SELECT pg_switch_wal()" >/dev/null
 psql_primary -c "CHECKPOINT" >/dev/null
 sleep 3
@@ -167,17 +206,23 @@ log "     프라이머리 정지 (사고 난 서버는 더 이상 진실의 원�
 docker stop "$PRIMARY" >/dev/null
 
 # ---------------------------------------------------------------- 6. 복구
+# [JA] 6. 復旧
 
 log "6/7  base backup + WAL 로 T 시점 복구"
 rto_started="$(date +%s)"
 
 # base backup 을 복원 대상 디렉터리로 옮긴다. 원본 백업은 건드리지 않는다 —
 # 복구가 실패했을 때 다시 시도할 수 있어야 한다.
+# [JA] base backup を復元先ディレクトリに移す。元のバックアップには触れない —
+#      復旧が失敗したときにやり直せなければならない。
 docker run --rm -v "$WORK:/w" "$PG_IMAGE" sh -c 'cp -a /w/base/. /w/restore/ && chmod 700 /w/restore'
 
 # 복구 설정. PostgreSQL 12+ 부터 recovery.conf 는 없어졌고 postgresql.auto.conf 에 쓴다.
 #   recovery_target_action=promote : 목표 시각에 도달하면 읽기전용에 머무르지 않고 승격
 #   restore_command                : 아카이브에서 WAL 을 가져오는 방법
+# [JA] 復旧設定。PostgreSQL 12+ から recovery.conf はなくなり、postgresql.auto.conf に書く。
+#        recovery_target_action=promote : 目標時刻に達したら読み取り専用に留まらず昇格
+#        restore_command                : アーカイブから WAL を取ってくる方法
 docker run --rm -v "$WORK:/w" "$PG_IMAGE" sh -c "cat >> /w/restore/postgresql.auto.conf <<'CONF'
 restore_command = 'cp /wal/%f %p'
 recovery_target_time = '$TARGET_TIME'
@@ -196,6 +241,7 @@ docker run -d --name "$RESTORED" \
 wait_ready "$RESTORED" 120
 
 # 승격이 끝날 때까지 기다린다. 복구 중에는 읽기전용이라 검증 결과가 달라질 수 있다.
+# [JA] 昇格が終わるまで待つ。復旧中は読み取り専用なので検証結果が変わりうる。
 for i in $(seq 1 60); do
     [ "$(psql_restored -c 'SELECT pg_is_in_recovery()')" = "f" ] && break
     sleep 1
@@ -204,6 +250,7 @@ RTO=$(( $(date +%s) - rto_started ))
 info "복구 완료 — RTO ${RTO}초"
 
 # ---------------------------------------------------------------- 7. 검증
+# [JA] 7. 検証
 
 log "7/7  검증"
 failed=0
@@ -225,6 +272,8 @@ fi
 
 # 사고(DROP + 쓰레기 삽입)가 되돌려졌는가. 행 수만 봐서는 부족하다 —
 # 쓰레기 테이블도 1건이므로, 원래 스키마가 살아 있는지 직접 확인한다.
+# [JA] 事故(DROP + ゴミの挿入)が元に戻されたか。行数を見るだけでは足りない —
+#      ゴミのテーブルも 1 件なので、元のスキーマが生きているかを直接確認する。
 if [ "$(psql_restored -d orderdb -c "SELECT count(*) FROM information_schema.columns WHERE table_name='orders'")" -ge 4 ]; then
     info "OK   원래 스키마(4개 컬럼) 복원 — DROP TABLE 이 되돌려졌다"
 else

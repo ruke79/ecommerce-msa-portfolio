@@ -9,9 +9,21 @@
  * <p>⚠️ 모양의 원본은 서버 {@code chat-service/.../service/ChatNotices.java} 다. 아래 {@link SERVER_FORMATS} 는 그 목록과
  * 같은 글자여야 한다 — 서버의 ChatNoticesContractTest 가 이 파일을 읽어 대조한다. 알아보지 못한 글은 원문 그대로 보여 준다
  * (사람이 쓴 채팅 메시지는 절대 바꾸지 않는다 — 시스템 안내 자리에서만 부른다).
+ *
+ * <p>[JA] チャットのシステム文言を画面の言語で(docs/60 §8)。
+ *
+ * <p>入室・退室の案内、相談の接続・終了の案内、代替ニックネーム(「고객지원팀」・「탈퇴한 사용자」・「회원」)はサーバーが<b>韓国語(一部英語)の
+ * 文言のまま</b>作ってメッセージとして保存する — Kafka(Avro)を流れて Mongo に残る。コードを載せるよう変えるには Avro スキーマを二
+ * リリースにまたがって変える必要があり、それでもすでに保存されたメッセージは文言だけである。そこで画面がサーバーの<b>決まった形</b>を見分けて
+ * 辞書で描き直す — 保存済みの古いメッセージも翻訳される。
+ *
+ * <p>⚠️ 形の原本はサーバーの {@code chat-service/.../service/ChatNotices.java} である。下の {@link SERVER_FORMATS} はその一覧と
+ * 同じ文字でなければならない — サーバーの ChatNoticesContractTest がこのファイルを読んで突き合わせる。見分けられない文は原文のまま見せる
+ * (人が書いたチャットメッセージは決して変えない — システム案内の位置でだけ呼ぶ)。
  */
 
 /** 서버가 만드는 모양 — {name}·{id} 가 바뀌는 자리. ChatNotices.FORMATS 와 같아야 한다. */
+// [JA] サーバーが作る形 — {name}・{id} が置き換わる位置。ChatNotices.FORMATS と同じでなければならない。
 export const SERVER_FORMATS = [
     "{name} entered.",
     "{name} leaved.",
@@ -42,6 +54,7 @@ const NAME_RULES = [
 ];
 
 /** 이름 — 서버가 대신 붙인 이름이면 화면 언어로, 사람이 정한 닉네임은 그대로. */
+// [JA] 名前 — サーバーが代わりに付けた名前なら画面の言語で、人が決めたニックネームはそのまま。
 export function localizeChatName(t, name) {
     if (typeof name !== "string") return name;
     for (const rule of NAME_RULES) {
@@ -52,6 +65,7 @@ export function localizeChatName(t, name) {
 }
 
 /** 시스템 안내 한 줄 — 알아보면 화면 언어로, 모르면 그대로. 안내 안의 이름도 바꾼다(탈퇴한 사용자 등). */
+// [JA] システム案内一行 — 見分けられれば画面の言語で、わからなければそのまま。案内の中の名前も変える(退会したユーザーなど)。
 export function localizeChatNotice(t, text) {
     if (typeof text !== "string") return text;
     for (const rule of NOTICE_RULES) {
@@ -62,9 +76,11 @@ export function localizeChatNotice(t, text) {
 }
 
 /** 입장·퇴장·상담 안내인가 — 서버가 만든 글이라 번역해도 되는 자리. */
+// [JA] 入室・退室・相談の案内か — サーバーが作った文なので翻訳してよい位置。
 export const isSystemNotice = (m) => m?.type === "TEXT_ENTER" || m?.type === "TEXT_LEAVE";
 
 /** 메시지 본문 — 시스템 안내면 번역, 사람이 쓴 글이면 그대로. */
+// [JA] メッセージ本文 — システム案内なら翻訳、人が書いた文ならそのまま。
 export function chatMessageText(t, m) {
     return isSystemNotice(m) ? localizeChatNotice(t, m?.content) : m?.content;
 }

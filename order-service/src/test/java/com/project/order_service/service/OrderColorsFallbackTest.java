@@ -20,6 +20,10 @@ import com.project.common.dto.order.OrderDto;
  * 주문 조회의 색상은 꾸밈이다 — catalog 가 실패해도 주문은 보인다.
  *
  * <p>🐛 예전에는 색상 조회 예외가 주문 조회를 통째로 400 으로 만들었다(catalog 재배포 중에 주문 화면이 깨졌다).
+ *
+ * <p>[JA] 注文照会の色は装飾である — catalog が失敗しても注文は見える。
+ *
+ * <p>🐛 以前は色照会の例外が注文照会を丸ごと 400 にしていた(catalog の再デプロイ中に注文画面が壊れた)。
  */
 @DisplayName("주문 조회 — catalog 실패에도 주문은 보인다")
 class OrderColorsFallbackTest {

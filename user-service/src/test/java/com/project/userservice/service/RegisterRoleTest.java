@@ -40,6 +40,15 @@ import com.project.userservice.service.impl.UserServiceImpl;
  *       마이그레이션도 넣지 않아, <b>깨끗한 DB 에서는 아무도 가입할 수 없었다</b>
  *       (V3__seed_roles.sql 로 해결). 그때 메시지가 원인을 전혀 알려주지 않았다.
  * </ol>
+ *
+ * <p>[JA] 会員登録のロール決定の回帰テスト。
+ * 二つの実際の事故を固定する:
+ * <b>権限昇格。</b>{@code /api/auth/public/register} は認証なしの公開経路なのに、以前はリクエスト本文の {@code role: ["admin"]} を
+ * そのまま信じて ROLE_ADMIN を与えていた。誰でも一回の POST で管理者になれ、カタログ書き込みを ROLE_ADMIN で
+ * ロックしたことが丸ごと無意味になる。
+ * <b>会員登録の全面失敗。</b>{@code users.roles} に ROLE_USER の行がないと "Error: Role is not found." 400 になった。
+ * ロールを投入するコードはコメントアウトされ、マイグレーションも入れていなかったので、<b>きれいな DB では誰も登録できなかった</b>
+ * (V3__seed_roles.sql で解決)。そのときのメッセージは原因をまったく教えてくれなかった。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -52,12 +61,17 @@ class RegisterRoleTest {
      * 가입은 이제 <b>같은 트랜잭션에</b> user-created 아웃박스 행을 적는다(docs/48 ②·④).
      * 그 전에는 메일 인증 링크를 누른 순간에 발행했는데, 인증 게이트가 꺼진 환경(기본값)
      * 에서는 아무도 그 경로를 지나지 않아 <b>이벤트가 한 건도 나가지 않았다.</b>
+     *
+     * <p>[JA] 登録は今や<b>同じトランザクションで</b> user-created アウトボックス行を書く(docs/48 ②・④)。
+     * 以前はメール認証リンクを押した瞬間に発行していたが、認証ゲートがオフの環境(デフォルト)では
+     * 誰もその経路を通らないので<b>イベントが一件も出ていなかった。</b>
      */
     @Mock private com.project.userservice.message.UserOutboxHelper userOutboxHelper;
 
     @Mock private com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
 
     /** 비밀번호를 정하는 메서드는 짧은 DB 구간을 TransactionTemplate 으로 연다(유출 확인을 그 밖에 두려고). */
+    // [JA] パスワードを決めるメソッドは短い DB 区間を TransactionTemplate で開く(漏洩確認をその外に置くため)。
     @org.mockito.Spy private org.springframework.transaction.support.TransactionTemplate tx =
             com.project.userservice.service.TestTransactions.template();
     @InjectMocks private UserServiceImpl userService;
@@ -110,6 +124,7 @@ class RegisterRoleTest {
 
         assertEquals(AppRole.ROLE_USER, saved.getRole().getRoleName());
         // ROLE_ADMIN 은 조회조차 하지 않는다 — 요청 값이 분기에 영향을 주지 않는다.
+        // [JA] ROLE_ADMIN は照会すらしない — リクエストの値が分岐に影響しない。
         verify(roleRepository, never()).findByRoleName(AppRole.ROLE_ADMIN);
     }
 
@@ -149,6 +164,8 @@ class RegisterRoleTest {
 
         // 예전에는 엔티티 기본값이 true 라 이 값이 언제나 true 였고, 메일 인증은
         // 아무것도 막지 못했다.
+        // [JA] 以前はエンティティのデフォルト値が true だったのでこの値は常に true で、メール認証は
+        //      何も止めていなかった。
         assertFalse(saved.isEnabled());
     }
 

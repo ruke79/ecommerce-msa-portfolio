@@ -25,9 +25,14 @@ import com.project.common.message.dto.request.ProductUpdateRequest;
  * 리스너는 실패 레코드의 "배치 내 인덱스"를 BatchListenerFailedException 으로 알려야
  * DefaultErrorHandler 가 성공분 오프셋을 커밋하고 실패 레코드만 DLT 로 격리한다.
  * (기존 forEach 구현은 인덱스를 잃어 배치 전체가 통짜 재처리되었다)
+ *
+ * <p>[JA] DLQ バッチ失敗セマンティクスの回帰テスト(docs/03 R-2)。
+ * リスナーは失敗レコードの「バッチ内インデックス」を BatchListenerFailedException で知らせてこそ、DefaultErrorHandler が成功分のオフセットをコミットし、失敗レコードだけを DLT へ隔離する。
+ * (以前の forEach 実装はインデックスを失い、バッチ全体が丸ごと再処理されていた)
  */
 // LENIENT: strict stubbing은 "poison에만 스텁"된 메서드를 다른 인자(ok1)로 호출하는 순간
 // PotentialStubbingProblem을 던져, 정상 레코드 처리를 실패로 오인시킨다.
+// [JA] LENIENT: strict stubbing は「poison にだけスタブした」メソッドを別の引数(ok1)で呼んだ瞬間に PotentialStubbingProblem を投げ、正常レコードの処理を失敗と誤認させる。
 @ExtendWith(MockitoExtension.class)
 @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 class ProductUpdateKafkaListenerTest {
@@ -50,8 +55,8 @@ class ProductUpdateKafkaListenerTest {
 
         assertThat(thrown).isInstanceOf(BatchListenerFailedException.class);
         assertThat(((BatchListenerFailedException) thrown).getIndex()).isEqualTo(1);
-        verify(productUpdateMessageListener).productUpdated(ok1);      // 성공분은 처리됨
-        verify(productUpdateMessageListener, never()).productUpdated(ok2); // 실패 이후는 재전달로 처리
+        verify(productUpdateMessageListener).productUpdated(ok1);      // 성공분은 처리됨 ／ [JA] 成功分は処理済み
+        verify(productUpdateMessageListener, never()).productUpdated(ok2); // 실패 이후는 재전달로 처리 ／ [JA] 失敗以降は再配信で処理
     }
 
     @Test

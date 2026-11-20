@@ -39,6 +39,16 @@ import reactor.core.publisher.Mono;
  * </ol>
  *
  * <p>키는 절대 null/empty 가 되지 않는다(예전에 NPE 로 파이프라인이 죽은 적이 있다).
+ *
+ * <p>[JA] RequestRateLimiter のバケットキー。<b>原則一つ: クライアントが選べる値はキーになれない。</b> キーを選べればリクエストごとに新しいバケットを得て、制限がないのと同じだ。
+ * www-security デモのシナリオ 1(「Rate Limit 回避 — X-Forwarded-For スプーフィング」)がまさにこれで、以前の実装は二か所でその罠にはまっていた:
+ * {@code X-User-Id} ヘッダーをフォールバックとして読んでいた。ゲートウェイが入れる名前は {@code User-Id} で {@code X-User-Id} は<b>誰も入れない</b> — つまりその値は常にクライアントが送ったものだった。
+ * 未ログインのリクエストに {@code X-User-Id: 任意} を変えながら付ければリクエストごとにバケットが新しくできた。
+ * また {@code X-Forwarded-For} の<b>最初の項目</b>を IP として使っていた。プロキシはこのヘッダーに<b>追記する</b>だけで消さないので、最初の項目はクライアントが最初に送った値である。これもリクエストごとに変えられる。
+ * 今の優先順位: ① {@code User-Id} — JwtAuthorization が<b>検証後に</b>入れる。クライアントが送った同名ヘッダーは {@code IdentityHeaderScrubFilter} がそれより先に消すので、ここに届いた値はゲートウェイのものだ。
+ * ② {@code CF-Connecting-IP} — Cloudflare エッジが<b>実際の接続 IP で上書きする。</b> クライアントが同じ名前を送ってもエッジで置き換えられるので操作できない。このデプロイは cloudflared トンネルの後ろにあり、すべての外部リクエストがこのヘッダーを持つ。
+ * ③ ソケットのリモートアドレス — トンネルのない経路(ポートフォワード · クラスター内部)。プロキシの後ろならすべて同じ IP に見えるだろうが、それは「制限が少し粗い」のであって「制限がない」のではない。後者より前者がましだ。
+ * キーは決して null/empty にならない(以前 NPE でパイプラインが死んだことがある)。
  */
 @Configuration
 public class CustomUserKeyResolver {
@@ -46,6 +56,7 @@ public class CustomUserKeyResolver {
     static final String ANONYMOUS = "anonymous";
 
     /** Cloudflare 가 엣지에서 채우는 실제 접속 IP. 클라이언트가 보낸 값은 엣지가 덮어쓴다. */
+    // [JA] Cloudflare がエッジで埋める実際の接続 IP。クライアントが送った値はエッジが上書きする。
     static final String CF_CONNECTING_IP = "CF-Connecting-IP";
 
     @Bean

@@ -57,7 +57,7 @@ gen() {
         --product-offset "$PRODUCT_ID_OFFSET" --products "$PRODUCTS" "$@"
 }
 
-psql_db() {   # psql_db <db> [psql 인자…] — SQL 은 stdin 또는 -c
+psql_db() {   # psql_db <db> [psql 인자…] — SQL 은 stdin 또는 -c ／ [JA] psql_db <db> [psql 引数…] — SQL は stdin か -c
     local db="$1"; shift
     kubectl -n "$PG_NS" exec -i "deploy/$PG_DEPLOY" -- psql -X -q -U "$PG_USER" -d "$db" -v ON_ERROR_STOP=1 "$@"
 }
@@ -80,7 +80,7 @@ confirm() {
     [ "$a" = "y" ] || [ "$a" = "Y" ] || die "그만둡니다"
 }
 
-check_window() {   # 백업 CronJob(03:00 · 04:00 매일, 05:00 월요일 — k8s/85)과 겹치지 않게 — ops/44 와 같은 창
+check_window() {   # 백업 CronJob(03:00 · 04:00 매일, 05:00 월요일 — k8s/85)과 겹치지 않게 — ops/44 와 같은 창 ／ [JA] バックアップ CronJob(毎日 03:00 · 04:00、月曜 05:00 — k8s/85)と重ならないように — ops/44 と同じ窓
     local h; h=$((10#$(date -u +%H)))
     if [ "$h" -ge 2 ] && [ "$h" -lt 6 ]; then
         [ "${FORCE:-0}" = "1" ] || die "백업 시간대 근처다(02~06 UTC) — 그 뒤에, 또는 FORCE=1"
@@ -111,7 +111,7 @@ cmd_load() {
     confirm "주문 $((USERS * ORDERS_PER_USER)) 개를 만든다(실습 클러스터) — 진행할까?"
 
     local chunks=$(( (USERS + CHUNK - 1) / CHUNK ))
-    local first=$(( have / (CHUNK * ORDERS_PER_USER) ))   # 묶음은 한 트랜잭션 — 다 들어간 묶음 다음부터(다시 넣어도 같다)
+    local first=$(( have / (CHUNK * ORDERS_PER_USER) ))   # 묶음은 한 트랜잭션 — 다 들어간 묶음 다음부터(다시 넣어도 같다) ／ [JA] バッチは 1 トランザクション — 入りきったバッチの次から(入れ直しても同じ)
     local i
     for i in $(seq "$first" $((chunks - 1))); do
         gen --chunk-index "$i" | psql_db "$ORDER_DB" >/dev/null \

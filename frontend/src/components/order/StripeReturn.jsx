@@ -24,6 +24,16 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>🔒 보내는 것은 <b>세션 id 하나</b>다. 금액도 결제 상태도 보내지 않는다 — 서버가 그
  * 세션을 Stripe 에 직접 조회해 금액까지 대조한다(docs/35).
+ *
+ * <p>[JA] Stripe 決済後 <b>ブラウザが戻ってきた瞬間</b>を処理する。
+ * なぜ画面でもう一度確認するのか — ウェブフックがあるのに: 確定経路は二つあり <b>両方必要だ</b>。
+ * <b>ウェブフック</b>が権威ある経路だ。ブラウザが戻らなくても(決済直後にタブを閉じても)決済が反映される —
+ * それがなければ <b>お金は引き落とされたのに注文は未決済</b>で残る。
+ * <b>復帰検証</b>はユーザーのためのものだ。ウェブフックだけだと決済直後の画面が「確認中」に留まり、
+ * ユーザーは決済できたか分からず決済し直す。
+ * 二つが <b>重なって届くのが正常</b>だ。サーバーの反映は冪等なのでどちらが先に来ても結果は同じだ。
+ * 🔒 送るのは <b>セッション id ひとつ</b>だ。金額も決済状態も送らない — サーバーがその
+ * セッションを Stripe に直接照会し金額まで照合する(docs/35)。
  */
 const StripeReturn = ({ order, onPaid }) => {
     const { t } = useTranslation();
@@ -33,6 +43,8 @@ const StripeReturn = ({ order, onPaid }) => {
 
     // React 18 의 StrictMode 는 개발 중 effect 를 두 번 실행한다. 서버가 멱등하므로
     // 결과는 같지만, 불필요한 요청과 "확인 중" 깜빡임을 막는다.
+    // [JA] React 18 の StrictMode は開発中 effect を二度実行する。サーバーが冪等なので
+    //      結果は同じだが、不要なリクエストと「確認中」のちらつきを防ぐ。
     const started = useRef(false);
 
     const result = searchParams.get("stripe");
@@ -53,6 +65,13 @@ const StripeReturn = ({ order, onPaid }) => {
         //    ?stripe=success&session_id=… 가 그대로 남은 채 다시 떴고, 다시 확인하고, 다시
         //    reload… "확인 중 → 완료 → 새로고침" 이 무한히 반복됐다. 서버는 멱등이라 돈은
         //    한 번만 나갔지만 화면은 영원히 돌았다.
+        // [JA] クエリを消す。残しておくとリロード・戻るたびに確認リクエストが再度出て、
+        //      何よりセッション id がアドレスバーと閲覧履歴に残り続ける。
+        //      🐛 <b>必ず onPaid より先に。</b> 以前は finally で消していたが、then の onPaid が
+        //      window.location.reload() だった — reload は「その瞬間のアドレス」で再表示されるので
+        //      ?stripe=success&session_id=… が残ったまま再表示され、再確認し、再び
+        //      reload… 「確認中 → 完了 → リロード」が無限に繰り返された。サーバーは冪等なのでお金は
+        //      一度しか出なかったが画面は永遠に回った。
         const clearQuery = () => {
             searchParams.delete("stripe");
             searchParams.delete("session_id");
@@ -71,6 +90,8 @@ const StripeReturn = ({ order, onPaid }) => {
             .catch((error) => {
                 // 실패해도 결제가 사라진 것은 아니다 — 웹훅이 뒤늦게 반영할 수 있다.
                 // 그래서 "실패했다"가 아니라 "확인 중"이라고 말한다.
+                // [JA] 失敗しても決済が消えたわけではない — ウェブフックが遅れて反映しうる。
+                //      だから「失敗した」ではなく「確認中」と言う。
                 console.error("Stripe confirm error: ", error);
                 clearQuery();
                 setState("failed");
@@ -81,6 +102,9 @@ const StripeReturn = ({ order, onPaid }) => {
     // 주문이 확정된 뒤(또는 취소·환불된 뒤)에는 이 띠가 할 말이 없다 — 진행은 OrderProgress 가
     // 보여 준다. 🐛 새로고침 없이 주문만 다시 읽게 되자 "결제가 확인됐습니다" 가 환불 뒤에도
     // 그대로 남아 있었다.
+    // [JA] 注文が確定した後(またはキャンセル・返金後)はこの帯に言うことがない — 進行は OrderProgress が
+    //      見せる。🐛 リロードなしで注文だけ読み直すようになると「決済が確認されました」が返金後も
+    //      そのまま残っていた。
     if (isPaid(order?.orderStatus) || isCanceled(order?.orderStatus) || isRefunded(order?.orderStatus)) {
         return null;
     }
@@ -102,6 +126,8 @@ const StripeReturn = ({ order, onPaid }) => {
             <p className="my-2 rounded border border-green-300 bg-green-50 p-3 text-sm text-green-900">
                 {/* "완료" 가 아니라 "확인" 이다 — 주문 확정은 사가가 곧 한다(useOrderSettling).
                     그 진행은 OrderProgress 가 보여 준다. */}
+                {/* [JA] 「完了」ではなく「確認」だ — 注文確定はサガがすぐに行う(useOrderSettling)。
+                    その進行は OrderProgress が見せる。 */}
                 {t("stripe_return.confirmed")}
             </p>
         );

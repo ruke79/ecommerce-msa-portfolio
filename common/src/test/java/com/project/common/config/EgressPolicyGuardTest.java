@@ -57,6 +57,7 @@ class EgressPolicyGuardTest {
     }
 
     /** podSelector 의 app 값 — 두드리기 파드(netpol-probe-*)는 뺀다. */
+    // [JA] podSelector の app の値 — 叩き用ポッド(netpol-probe-*)は除く。
     private static Set<String> apps(String doc) {
         Matcher m = Pattern.compile("values:\\s*\\[([^\\]]*)\\]", Pattern.DOTALL).matcher(doc.split("policyTypes")[0]);
         assertThat(m.find()).as("app 목록").isTrue();
@@ -115,7 +116,7 @@ class EgressPolicyGuardTest {
         for (String app : apps(policyDoc(INTERNAL))) {
             Path main = repoRoot().resolve(app).resolve("src/main");
             if (!Files.isDirectory(main)) {
-                continue;   // frontend 는 nginx 설정 — 아래에서 따로
+                continue;   // frontend 는 nginx 설정 — 아래에서 따로 ／ [JA] frontend は nginx 設定 — 下で別に
             }
             try (Stream<Path> files = Files.walk(main)) {
                 for (Path f : files.filter(p -> p.toString().matches(".*\\.(java|ya?ml|properties)$")).toList()) {
@@ -130,6 +131,7 @@ class EgressPolicyGuardTest {
             }
         }
         // frontend 의 nginx 는 게이트웨이(클러스터 안)로만 넘긴다.
+        // [JA] frontend の nginx はゲートウェイ(クラスター内)にだけ渡す。
         String nginx = Files.readString(repoRoot().resolve("frontend/nginx.conf"), StandardCharsets.UTF_8);
         Matcher pass = Pattern.compile("proxy_pass\\s+([^;]+);").matcher(nginx);
         while (pass.find()) {

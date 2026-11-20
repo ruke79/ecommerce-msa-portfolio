@@ -32,12 +32,15 @@ public class ProductInfoDto {
 
     private String slug;
 
-    /** 스타일(색상 변형) 코드 — {@code product_sku.sku}. 재고 단위가 아니다. */
+    /** 스타일(색상 변형) 코드 — {@code product_sku.sku}. 재고 단위가 아니다. ／ [JA] スタイル(色バリエーション)コード — {@code product_sku.sku}。在庫単位ではない。 */
     private String sku;
 
     /**
      * 고른 사이즈 한 줄의 SKU — 재고를 따로 세는 단위의 코드(예: {@code FAS-100042-XL}, catalog V17).
      * 사이즈 없는 상품은 스타일 코드와 같다. 아직 코드가 없는 옛 행이면 null.
+     *
+     * <p>[JA] 選んだサイズ一行の SKU — 在庫を別に数える単位のコード(例: {@code FAS-100042-XL}、catalog V17)。
+     * サイズのない商品はスタイルコードと同じ。まだコードがない古い行なら null。
      */
     private String skuCode;
 
@@ -60,7 +63,7 @@ public class ProductInfoDto {
 
     private int quantity;   
 
-    /** 실물 중 다른 주문이 결제 전 예약으로 잡아 둔 수(docs/59 §5). {@code quantity} 는 이미 뺀 값이다. 0 이면 싣지 않는다. */
+    /** 실물 중 다른 주문이 결제 전 예약으로 잡아 둔 수(docs/59 §5). {@code quantity} 는 이미 뺀 값이다. 0 이면 싣지 않는다. ／ [JA] 実物のうち他の注文が決済前予約で押さえている数(docs/59 §5)。{@code quantity} はすでに差し引いた値である。0 なら載せない。 */
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_DEFAULT)
     private int onHold;
 

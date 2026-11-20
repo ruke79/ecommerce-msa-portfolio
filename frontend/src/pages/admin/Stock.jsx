@@ -11,12 +11,16 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>입력한 값으로 <b>정한다</b>(더하기가 아니다). 0 에서 채우면 catalog 가 재입고를 알리고, 그 옵션에 재입고 알림을
  * 신청한 손님에게 알림이 간다. 저장 뒤에는 목록을 서버에서 다시 읽는다 — 서버가 거절했는데 화면만 바뀌지 않게.
+ *
+ * <p>[JA] 管理者在庫 — 品切れオプションを見て補充する(docs/53)。品切れアラート({@code ProductSoldOut}、docs/51 §4i)を受けた運営者が開く画面である。
+ * 以前は在庫を補充する方法がまったくなかった — 在庫は注文で減り、返金・返品入庫でしか戻らなかった。入力した値で<b>設定する</b>(加算ではない)。
+ * 0 から補充すると catalog が再入荷を通知し、そのオプションに再入荷通知を申し込んだ客に通知が行く。保存後は一覧をサーバーから読み直す — サーバーが拒否したのに画面だけ変わらないように。
  */
 const Stock = () => {
     const { t } = useTranslation();
     const [soldOutOnly, setSoldOutOnly] = useState(true);
     const [rows, setRows] = useState([]);
-    const [drafts, setDrafts] = useState({});      // sizeId → 입력 중인 수량
+    const [drafts, setDrafts] = useState({});      // sizeId → 입력 중인 수량 ／ [JA] sizeId → 入力中の数量
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
     const [busy, setBusy] = useState(false);
@@ -105,6 +109,7 @@ const Stock = () => {
                             <td className="p-2">
                                 <div>{option(row)}</div>
                                 {/* 사이즈 한 줄의 SKU — 이 행이 곧 재고 단위다(catalog V17) */}
+                                {/* [JA] サイズ 1 行の SKU — この行がそのまま在庫単位である(catalog V17) */}
                                 {row.skuCode && <div className="text-xs font-mono text-slate-500">{row.skuCode}</div>}
                             </td>
                             <td className={`p-2 font-mono ${row.quantity <= 0 ? "text-red-600 font-semibold" : ""}`}>

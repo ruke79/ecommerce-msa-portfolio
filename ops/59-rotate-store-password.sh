@@ -23,9 +23,22 @@
 # 🔒 비밀번호는 인자 · 로그 · 화면에 나오지 않는다 — keytool 에는 0600 파일(-storepass:file)로, 길이만 출력한다. 작업 파일은
 #    0700 임시 디렉터리에서 만들고 끝나면 지운다. 되돌리기용 사본은 원본과 같은 네임스페이스의 Secret 이다(접근 범위가 같다).
 #
-# [JA] キーストア・トラストストアのパスワード交換。鍵と証明書はそのまま、ストアのパスワードだけ keytool -storepasswd で替える。
-#      クラスタの Secret 内の .p12・.jks 全部、ecommerce-secrets の同じ値のキー、この機械の certs/・20-secret.yaml、読む Deployment
-#      の再起動まで。パスワードは引数・ログ・画面に出さない。戻し用の写しはクラスタ内の <Secret>-prerotate。
+# [JA] 運用アクション ㊾ — キーストア・トラストストアのパスワード交換(docs/57 §16「ストアのパスワード」)
+#      なぜ: 2026-10-14 以前のマニフェストがパスワードを JAVA_TOOL_OPTIONS で渡し、JVM が起動のたびに `Picked up JAVA_TOOL_OPTIONS: …` で
+#      Pod のログ・Loki に平文で残した(B-83)。デプロイで新しいログにはもう残らないが、過去のログは保管期間の間は照会できる —
+#      漏れたとみなして替える。同じ値がワイルドカードの秘密鍵・サービス ID のキーストア・トラストストアのパスワードである。
+#      何を: 鍵と証明書はそのままにし、ストアのパスワードだけを替える(keytool -storepasswd — PKCS12 は鍵のパスワードも一緒に変わり、
+#      トラストストアの信頼項目はそのまま)。ops/07 で再発行しない理由: CA が変わるとサービス ID(ops/38)・PostgreSQL 証明書・
+#      ブラウザの信頼まですべてやり直す必要がある。
+#        · クラスタ: ネームスペースの Secret の .p12・.jks 全部(tls-keystore・tls-id-<サービス> …)+ ecommerce-secrets のパスワードのキー
+#          (LOCAL_KEY_STORE_PASSWORD・LOCAL_KEY_PASSWORD・KAFKA_SSL_*_PASSWORD のうち古い値と同じものだけ — 他の値には触れない)
+#        · この機械: certs/ のストア・certs/certs.env・k8s/20-secret.yaml(あれば) — 後で再適用しても古い値に戻らないように
+#        · 再起動: ecommerce-secrets の LOCAL_KEY_STORE_PASSWORD を読む Deployment すべて
+#      使い方: 引数なし = check(替えるもの・今のパスワードで開けるか・再起動するもの、値は出力しない)、apply = 交換('yes' を尋ねる、
+#      YES=1 なら尋ねない)、rollback = 交換前へ(クラスタの <Secret>-prerotate・ファイルの .prerotate)+ 再起動、cleanup = 確認が終わったら
+#      戻し用の写しを消す — その中に古いパスワードがある。
+#      🔒 パスワードは引数・ログ・画面に出ない — keytool には 0600 のファイル(-storepass:file)で渡し、長さだけを出力する。作業ファイルは
+#      0700 の一時ディレクトリで作り、終わったら消す。戻し用の写しは元と同じネームスペースの Secret である(アクセス範囲が同じ)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 umask 077
@@ -61,6 +74,7 @@ chmod 700 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── JSON 다루기(비밀 값은 파일로만 오간다) ──────────────────────────────────────────────
+# [JA] ── JSON の扱い(秘密の値はファイルでだけやり取りする) ──
 py() {
     python3 - "$@" <<'PY'
 import base64, json, re, secrets, string, sys
@@ -73,6 +87,7 @@ def load(p):
 # 서버가 정하는 칸만 뺀다. 라벨 · 주석 · ownerReferences 는 그대로 — cert-manager(ops/39)가 맡은 Secret 은 그것으로 자기
 # 것을 알아본다. 빠지면 인증서를 새로 발급할 수 있다(2026-10-25 운영 check: tls-id-* 10개가 cert-manager).
 # managedFields 는 요청에서 빼면 서버가 있던 것을 둔다.
+# [JA] サーバーが決める欄だけを外す。ラベル・アノテーション・ownerReferences はそのまま — cert-manager(ops/39)が受け持つ Secret はそれで自分のものを見分ける。抜けると証明書を新しく発行しうる(2026-10-25 運用 check: tls-id-* 10 個が cert-manager)。managedFields は要求から外すとサーバーが既存のものを残す。
 def clean(obj):
     md = obj.setdefault("metadata", {})
     for k in ("resourceVersion", "uid", "creationTimestamp", "managedFields", "generation", "selfLink"):
@@ -80,7 +95,7 @@ def clean(obj):
     obj.pop("status", None)
     return obj
 
-if cmd == "stores":            # Secret 목록 → "이름\t키" (되돌리기용 사본은 뺀다)
+if cmd == "stores":            # Secret 목록 → "이름\t키" (되돌리기용 사본은 뺀다) ／ [JA] Secret 一覧 → "名前\tキー"(戻し用のコピーは除く)
     suffix = args[1]
     for s in load(args[0]).get("items", []):
         name = s["metadata"]["name"]
@@ -89,30 +104,30 @@ if cmd == "stores":            # Secret 목록 → "이름\t키" (되돌리기�
         for key in sorted((s.get("data") or {})):
             if key.endswith(".p12") or key.endswith(".jks"):
                 print(f"{name}\t{key}")
-elif cmd == "backups":         # 표지가 붙은 사본의 이름
+elif cmd == "backups":         # 표지가 붙은 사본의 이름 ／ [JA] 目印の付いたコピーの名前
     for s in load(args[0]).get("items", []):
         if args[1] in (s["metadata"].get("labels") or {}):
             print(s["metadata"]["name"])
-elif cmd == "value":           # Secret 의 한 키 → 파일(바이트 그대로). 없으면 종료 코드 3
+elif cmd == "value":           # Secret 의 한 키 → 파일(바이트 그대로). 없으면 종료 코드 3 ／ [JA] Secret の 1 キー → ファイル(バイトそのまま)。なければ終了コード 3
     data = load(args[0]).get("data") or {}
     if args[1] not in data:
         sys.exit(3)
     with open(args[2], "wb") as f:
         f.write(base64.b64decode(data[args[1]]))
-elif cmd == "newpass":         # 영숫자 32자 — YAML · env · JSON 어디에 넣어도 따옴표 문제가 없다
+elif cmd == "newpass":         # 영숫자 32자 — YAML · env · JSON 어디에 넣어도 따옴표 문제가 없다 ／ [JA] 英数字 32 文字 — YAML・env・JSON のどこに入れても引用符の問題がない
     alphabet = string.ascii_letters + string.digits
     with open(args[0], "w") as f:
         f.write("".join(secrets.choice(alphabet) for _ in range(32)))
-elif cmd == "same":            # 두 파일이 같은가(종료 코드)
+elif cmd == "same":            # 두 파일이 같은가(종료 코드) ／ [JA] 2 つのファイルが同じか(終了コード)
     sys.exit(0 if open(args[0], "rb").read() == open(args[1], "rb").read() else 1)
-elif cmd == "setdata":         # Secret JSON + 키=파일 … → 바꾼 Secret JSON(조건 없는 replace — resourceVersion 을 뺀다)
+elif cmd == "setdata":         # Secret JSON + 키=파일 … → 바꾼 Secret JSON(조건 없는 replace — resourceVersion 을 뺀다) ／ [JA] Secret JSON + キー=ファイル … → 変えた Secret JSON(条件なしの replace — resourceVersion を外す)
     obj = clean(load(args[0]))
     for pair in args[2:]:
         key, path = pair.split("=", 1)
         obj.setdefault("data", {})[key] = base64.b64encode(open(path, "rb").read()).decode()
     json.dump(obj, open(args[1], "w"))
-elif cmd == "backup":          # 원본 → <이름><suffix>. 원래 라벨 · 주석 · 소유자는 주석 하나에 접어 둔다 — 사본에 그대로 두면
-    obj = clean(load(args[0]))  # cert-manager 가 사본을 자기 것으로 보고, 소유자(Certificate)가 지워지면 사본도 함께 지워진다
+elif cmd == "backup":          # 원본 → <이름><suffix>. 원래 라벨 · 주석 · 소유자는 주석 하나에 접어 둔다 — 사본에 그대로 두면 ／ [JA] 元 → <名前><suffix>。元のラベル・アノテーション・所有者はアノテーション 1 つに畳んでおく — コピーにそのまま残すと
+    obj = clean(load(args[0]))  # cert-manager 가 사본을 자기 것으로 보고, 소유자(Certificate)가 지워지면 사본도 함께 지워진다 ／ [JA] cert-manager がコピーを自分のものとみなし、所有者(Certificate)が消えるとコピーも一緒に消える
     md = obj["metadata"]
     original = md["name"]
     meta = {k: md.pop(k) for k in ("labels", "annotations", "ownerReferences") if k in md}
@@ -120,7 +135,7 @@ elif cmd == "backup":          # 원본 → <이름><suffix>. 원래 라벨 · �
     md["labels"] = {args[3]: args[4]}
     md["annotations"] = {args[3] + "-of": original, args[3] + "-meta": json.dumps(meta)}
     json.dump(obj, open(args[1], "w"))
-elif cmd == "restore":         # 사본 → 원래 이름 · 라벨 · 주석 · 소유자 그대로의 Secret
+elif cmd == "restore":         # 사본 → 원래 이름 · 라벨 · 주석 · 소유자 그대로의 Secret ／ [JA] コピー → 元の名前・ラベル・アノテーション・所有者のままの Secret
     obj = clean(load(args[0]))
     md = obj["metadata"]
     notes = md.pop("annotations")
@@ -128,7 +143,7 @@ elif cmd == "restore":         # 사본 → 원래 이름 · 라벨 · 주석 ·
     md["name"] = notes[args[2] + "-of"]
     md.update(json.loads(notes.get(args[2] + "-meta", "{}")))
     json.dump(obj, open(args[1], "w"))
-elif cmd == "deploys":         # 이 Secret 의 이 키를 읽는 Deployment
+elif cmd == "deploys":         # 이 Secret 의 이 키를 읽는 Deployment ／ [JA] この Secret のこのキーを読む Deployment
     secret, key = args[1], args[2]
     for d in load(args[0]).get("items", []):
         spec = d["spec"]["template"]["spec"]
@@ -141,7 +156,7 @@ elif cmd == "deploys":         # 이 Secret 의 이 키를 읽는 Deployment
                 hit |= (e.get("secretRef") or {}).get("name") == secret
         if hit:
             print(d["metadata"]["name"])
-elif cmd == "textfile":        # 설정 파일(20-secret.yaml · certs.env)에서 옛 값인 비밀번호 줄 → 새 값. 바꾼 줄 수를 출력
+elif cmd == "textfile":        # 설정 파일(20-secret.yaml · certs.env)에서 옛 값인 비밀번호 줄 → 새 값. 바꾼 줄 수를 출력 ／ [JA] 設定ファイル(20-secret.yaml・certs.env)で古い値のパスワード行 → 新しい値。変えた行数を出力する
     path, oldp, newp, keys, write = args[0], args[1], args[2], args[3].split(), args[4] == "1"
     old = open(oldp).read()
     new = open(newp).read() if newp != "-" else ""
@@ -163,6 +178,7 @@ PY
 }
 
 # ── keytool — 호스트에 없으면 서비스와 같은 JRE 이미지(B-98)로. 파일은 모두 WORK 안의 상대 경로 ───────────────────────
+# [JA] ── keytool — ホストになければサービスと同じ JRE イメージ(B-98)で。ファイルはすべて WORK 内の相対パス ──
 kt() {
     if command -v keytool >/dev/null 2>&1; then
         (cd "$WORK" && keytool "$@")
@@ -174,12 +190,15 @@ kt() {
 }
 store_type() { case "$1" in *.jks) echo JKS ;; *) echo PKCS12 ;; esac; }
 # opens <WORK 안 스토어> <WORK 안 비밀번호 파일>
+# [JA] opens <WORK 内のストア> <WORK 内のパスワードファイル>
 opens() { kt -list -keystore "$1" -storetype "$(store_type "$1")" -storepass:file "$2" >/dev/null 2>&1; }
 
 kube() { kubectl -n "$NS" "$@"; }
 
 # cert-manager(ops/39)가 맡은 신원은 갱신 때 ecommerce-secrets 의 비밀번호로 keystore.p12 를 다시 만든다 — 바꾼 뒤의 값이라
 # 어긋나지 않는다. 지금 바로 맞추고 싶으면 ops/39 renew.
+# [JA] cert-manager(ops/39)が担う身元は更新時に ecommerce-secrets のパスワードで keystore.p12 を作り直す — 変更後の値なので
+#      ずれない。今すぐ合わせたければ ops/39 renew。
 cert_manager_note() {
     local c; c=$(kube get certificates -o name 2>/dev/null || true)
     [ -z "$c" ] || info "cert-manager Certificate $(echo "$c" | wc -l)개 — 다음 갱신부터 새 비밀번호로 만든다(지금 맞추려면 ./ops/39-cert-manager.sh renew <서비스>)"
@@ -192,12 +211,14 @@ read_current_password() {
 }
 
 # 클러스터의 스토어 목록 → $WORK/stores.txt ("Secret\t키")
+# [JA] クラスタのストア一覧 → $WORK/stores.txt ("Secret\tキー")
 list_stores() {
     kube get secrets -o json > "$WORK/secrets.json"
     py stores "$WORK/secrets.json" "$SUFFIX" > "$WORK/stores.txt"
 }
 
 # 이 기계의 스토어(있는 것만)
+# [JA] このマシンのストア(あるものだけ)
 local_stores() {
     [ -d "$CERTS_DIR" ] || return 0
     find "$CERTS_DIR" -maxdepth 1 -type f \( -name '*.p12' -o -name '*.jks' \) ! -name "*$SUFFIX" | sort
@@ -218,6 +239,7 @@ restart_all() {
     targets=$(restart_targets)
     [ -n "$targets" ] || { info "재시작할 Deployment 가 없다"; return 0; }
     # 하나씩 — 노드 하나라 한꺼번에 띄우면 메모리가 몰린다. 등록부(eureka) · 설정(config)을 먼저, 바깥 문(gateway)은 마지막.
+    # [JA] 一つずつ — ノードが 1 台なので一度に起動するとメモリが集中する。登録簿(eureka) · 設定(config)を先に、外の入口(gateway)は最後。
     local ordered="" d
     for d in eureka-server config-server; do echo "$targets" | grep -qx "$d" && ordered="$ordered $d"; done
     for d in $targets; do case " eureka-server config-server gateway-server " in *" $d "*) ;; *) ordered="$ordered $d" ;; esac; done

@@ -28,6 +28,10 @@ const EMPTY = {
  *
  * <p>목록에 <b>"지금 보임"</b> 칸이 있다. 공개로 해 뒀는데 화면에 안 나오는 이유는 대개
  * 기간이라, 그 판정을 서버가 계산해서 그대로 보여 준다.
+ *
+ * <p>[JA] バナー管理。画像は URL で受け取る — コンテンツ API に別のアップロードを入れていないのは意図的で、AWS 認証情報を
+ * さらにサービス一つに広げないためである。商品画像のアップロードで上げてからその URL を貼ればよい。アップロード UI が必要になったらそのとき付ける。
+ * 一覧に「今表示中」列がある。公開にしたのに画面に出ない理由はたいてい期間なので、その判定をサーバーが計算してそのまま見せる。
  */
 const Banners = () => {
     const { t } = useTranslation();
@@ -71,6 +75,8 @@ const Banners = () => {
             published: Boolean(banner.published),
             // datetime-local 은 초 단위를 싫어한다. 서버가 주는 ISO 문자열에서 분까지만 쓴다.
             // 서버(UTC) ↔ 입력칸(현지) — 양쪽 모두 변환한다(util/datetime).
+            // [JA] datetime-local は秒単位を嫌う。サーバーが返す ISO 文字列から分までだけを使う。
+            //      サーバー(UTC)↔ 入力欄(現地)— 両方向とも変換する(util/datetime)。
             startsAt: serverToLocalInput(banner.startsAt),
             endsAt: serverToLocalInput(banner.endsAt),
         });
@@ -88,6 +94,7 @@ const Banners = () => {
             sortOrder: Number(form.sortOrder) || 0,
             published: form.published,
             // 빈 문자열은 null 로 보낸다 — 서버에서 "기간 제한 없음"을 뜻한다.
+            // [JA] 空文字列は null で送る — サーバーでは「期間制限なし」を意味する。
             startsAt: localInputToServer(form.startsAt),
             endsAt: localInputToServer(form.endsAt),
         };

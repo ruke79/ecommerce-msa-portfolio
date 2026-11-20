@@ -18,6 +18,13 @@ import com.project.common.outbox.OutboxStatus;
  * 생성된 이벤트가 <b>다음 달 파티션</b>에 저장되어, 보존 정책(DETACH/DROP)이 엉뚱한 행을 건드린다.
  *
  * <p>따라서 이 값은 반드시 JVM 기본 시계를 따라야 한다.
+ *
+ * <p>[JA] アウトボックスイベントの created_at タイムゾーンの回帰テスト (docs/16 B-21)。
+ * このカラムは単なる記録用ではなく<b>月単位 RANGE パーティションのパーティションキー</b>である(docs/09)。
+ * 以前は {@code LocalDateTime.now(ZoneId.of("Asia/Seoul"))} でハードコードされ、他のカラム
+ * (JPA 監査 = JVM 既定の時計)と<b>9 時間</b>ずれた値が入った。その状態では毎月末の 9 時間に
+ * 生成されたイベントが<b>翌月のパーティション</b>に保存され、保存ポリシー(DETACH/DROP)が見当違いの行に触れる。
+ * したがってこの値は必ず JVM 既定の時計に従わなければならない。
  */
 class OrderOutboxEventCreatedAtTest {
 
@@ -40,6 +47,7 @@ class OrderOutboxEventCreatedAtTest {
         long minutesOff = Math.abs(Duration.between(LocalDateTime.now(), event.getCreatedAt()).toMinutes());
 
         // Asia/Seoul 하드코딩이 살아 있으면 UTC 환경에서 540분(9시간) 차이가 난다.
+        // [JA] Asia/Seoul のハードコードが残っていれば UTC 環境で 540 分(9 時間)の差が出る。
         assertThat(minutesOff)
                 .as("시스템 시각과 분 단위 이상 벌어지면 시간대가 하드코딩된 것이다")
                 .isLessThan(5L);

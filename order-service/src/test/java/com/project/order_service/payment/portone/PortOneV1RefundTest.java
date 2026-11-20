@@ -30,6 +30,17 @@ import com.project.order_service.payment.RefundResult;
  * 환불부터는 누적 취소액을 이번 환불액으로 읽어 "금액이 다르다" 로 또 실패했다.
  *
  * <p>응답 모양은 포트원 V1 문서의 {@code POST /payments/cancel} 규격이다(실제 API 로는 검증하지 못했다 — docs/49 §8).
+ *
+ * <p>[JA] PortOne V1 キャンセル — 部分返金。
+ *
+ * <h3>🐛 回帰対象 — 部分返金が「失敗」と読まれて何度も出ていった</h3>
+ *
+ * <p>V1 は部分キャンセル後も {@code status=paid} である。以前のコードは {@code cancelled}
+ * だけを受け入れ、お金が出た部分返金を拒否と読んで例外を投げていた — 在庫不足の自動返金は Kafka が再送し、
+ * 冪等ヘッダーがないため送るたびにまた返金された。2 回目の部分返金からは累積キャンセル額を今回の返金額と読み、「金額が違う」でまた失敗した。
+ *
+ * <p>応答の形は PortOne V1 ドキュメントの {@code POST /payments/cancel} 規格である(実際の API
+ * では検証できていない — docs/49 §8)。
  */
 @DisplayName("포트원 V1 — 부분 환불")
 class PortOneV1RefundTest {
@@ -63,6 +74,7 @@ class PortOneV1RefundTest {
         server.expect(requestTo("https://api.iamport.kr/payments/cancel"))
                 .andExpect(method(HttpMethod.POST))
                 // 🔒 취소 직전 잔액(우리 기록) — 포트원 잔액과 다르면 거절된다(같은 환불이 두 번 나가지 않게)
+                // [JA] 🔒 キャンセル直前の残高(こちらの記録)— PortOne の残高と違えば拒否される(同じ返金が二度出ないように)
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"checksum\":7000")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"amount\":2000")))
                 .andRespond(withSuccess(cancelled("paid", 5000,
@@ -74,8 +86,8 @@ class PortOneV1RefundTest {
 
         server.verify();
         assertThat(r.accepted()).isTrue();
-        assertThat(r.amount()).isEqualByComparingTo("2000");          // 누적 5000 이 아니다
-        assertThat(r.refundId()).isEqualTo("imp_1:t2");                // 부분 환불마다 다른 참조
+        assertThat(r.amount()).isEqualByComparingTo("2000");          // 누적 5000 이 아니다 ／ [JA] 累積 5000 ではない
+        assertThat(r.refundId()).isEqualTo("imp_1:t2");                // 부분 환불마다 다른 참조 ／ [JA] 部分返金ごとに異なる参照
         assertThat(r.currency()).isEqualTo("KRW");
     }
 
@@ -117,7 +129,7 @@ class PortOneV1RefundTest {
         RefundResult r = gateway.refund("imp_1", new BigDecimal("10000"), "KRW", "");
 
         assertThat(r.accepted()).isTrue();
-        assertThat(r.amount()).isEqualByComparingTo("10000");         // 이력이 없으면 누적(첫 환불)
+        assertThat(r.amount()).isEqualByComparingTo("10000");         // 이력이 없으면 누적(첫 환불) ／ [JA] 履歴がなければ累積(最初の返金)
         assertThat(r.refundId()).isEqualTo("imp_1");
     }
 }

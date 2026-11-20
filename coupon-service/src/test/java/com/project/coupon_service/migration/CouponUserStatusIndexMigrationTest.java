@@ -20,6 +20,8 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * 사용자의 쿠폰 조회 인덱스(V8) — (user_id, status) 가 생기고, 유니크와 겹치던 idx_coupon 이 지워지고, 행은 그대로인지. V7 까지 올리고
  * 행을 심은 뒤 V8 을 적용한다.
+ *
+ * <p>[JA] ユーザーのクーポン照会インデックス(V8) — (user_id, status) ができ、ユニークと重なっていた idx_coupon が消え、行はそのままか。V7 まで上げて行を入れた後 V8 を適用する。
  */
 @Tag("containers")
 @Testcontainers

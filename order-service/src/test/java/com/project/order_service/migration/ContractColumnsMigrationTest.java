@@ -53,6 +53,7 @@ class ContractColumnsMigrationTest {
             + "or (table_name = 'orders' and column_name = 'tax_price')) order by 1";
 
     /** order_address 에 걸린 제약 · 인덱스 중 order_id 를 쓰는 것. */
+    // [JA] order_address に掛かった制約・インデックスのうち order_id を使うもの。
     private static final String ADDRESS_ORDER_ID_OBJECTS = """
             select c.conname from pg_constraint c
               join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
@@ -70,6 +71,7 @@ class ContractColumnsMigrationTest {
         flyway("28").migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // 옛 모양(4415e498565c 전 코드가 만든 주문): 주소가 주문을 가리키고 세금 열이 채워져 있다
+            // [JA] 旧形状(4415e498565c 以前のコードが作った注文): 住所が注文を指し、税金列が埋まっている
             exec(db, "insert into orders.order_address (order_address_id, firstname, lastname, address1, city, state, zip_code, country) "
                     + "values (1, '길동', '홍', '세종대로 1', '서울', '서울', '04524', 'KR'), (2, 'Taro', 'Yamada', '1-1', 'Tokyo', 'Tokyo', '1000001', 'JP')");
             exec(db, "insert into orders.orders (order_id, customer_id, tracking_id, order_status, payment_method, shipping_price, "
@@ -93,6 +95,7 @@ class ContractColumnsMigrationTest {
             assertThat(rows(db, "select to_regclass('orders.uq_orders_order_address')::text"))
                     .as("주문당 주소 하나는 주문 쪽 유니크가 지킨다(V25)").containsExactly("orders.uq_orders_order_address");
             // 새 코드가 쓰는 모양(열 없이)으로 주문이 써진다
+            // [JA] 新しいコードが使う形(列なし)で注文が書かれる
             exec(db, "insert into orders.order_address (order_address_id, firstname, lastname, address1, city, state, zip_code, country) "
                     + "values (3, 'a', 'b', 'c', 'd', 'e', '1', 'KR')");
             exec(db, "insert into orders.orders (order_id, customer_id, tracking_id, order_status, payment_method, shipping_price, "

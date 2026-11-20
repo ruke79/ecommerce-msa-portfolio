@@ -26,7 +26,11 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code kubectl apply -f} 하면 아무 표시 없이 다시 꺼진다. 그래서 적용은 늘 이 동작으로 하고, 켜기 전에 pg_basebackup 이
  * 거절당할 원인(원격 replication 항목 없음)을 확인한다 — 매일 조용히 실패할 백업은 켜지 않는다.
  *
- * <p>[JA] 適用と有効化を一つの操作にまとめているか、replication の許可がなければ何も変えないかを偽の kubectl で確かめる。
+ * <p>[JA] ops/29 ACTION=cronjobs — バックアップ CronJob(k8s/85)を<b>適用し、同じコマンドで有効にする</b>。
+ *
+ * <p>[JA] k8s/85 は postgres-backup · restore-drill を {@code suspend: true} で持っているので、手で patch して有効にした後に誰かが再び
+ * {@code kubectl apply -f} すると何の表示もなく再び止まる。そのため適用は常にこの動作で行い、有効にする前に pg_basebackup が
+ * 拒否される原因(リモート replication 項目なし)を確認する — 毎日静かに失敗するバックアップは有効にしない。偽の kubectl で確かめる。
  */
 @DisplayName("ops/29 cronjobs — 백업 CronJob 적용 + 켜기 · pg_hba 가 막으면 아무것도 바꾸지 않는다")
 class EnableBackupCronJobsTest {
@@ -61,6 +65,7 @@ class EnableBackupCronJobsTest {
         calls = tmp.resolve("calls.log");
         Files.writeString(calls, "");
         // pg_hba 를 들여다보는 exec 만 HBA_EXIT 로 답하고, 나머지는 기록만 하고 성공한다.
+        // [JA] pg_hba を覗く exec だけ HBA_EXIT で答え、残りは記録だけして成功する。
         Path kubectl = bin.resolve("kubectl");
         Files.writeString(kubectl, String.join("\n",
                 "#!/bin/sh",

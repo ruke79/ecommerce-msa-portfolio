@@ -58,10 +58,19 @@ import org.slf4j.LoggerFactory;
  *              order-service ─▶ orders.order_status: NOT_PROCESSED → PAID
  *                    └─▶ product-update 토픽 ─▶ catalog-service ─▶ 재고 차감
  * </pre>
+ *
+ * <p>[JA] サガの<b>全区間</b>を実際のサービスコンテナで検証する — 注文 → 決済 → 在庫。
+ * docs/16 §1 で手で確認し、`ops/06-smoke-test.sh` が「手動確認項目」として残しておいた流れである。catalog 単独テスト(`ProductUpdateSagaIntegrationTest`)は
+ * 在庫減算の区間だけを覆うので、<b>サービス境界を越える部分</b>(pay がアウトボックスに書き、スケジューラが発行し、order が消費して状態を変え、
+ * 再び catalog が在庫を減らす連鎖)は検証されないまま残っていた。
+ * サービス 3 つを一つの JVM に載せることはできない — 各モジュールの {@code application-local.yml} がクラスパス上で衝突する。
+ * そこで<b>事前にビルドした jar をコンテナで起動する。</b> デプロイされる成果物そのものを検証するという副次効果もある。
+ * (図: order トピック → pay-service → pay.payment + アウトボックス →(スケジューラ)→ payment トピック → order-service: NOT_PROCESSED → PAID → product-update トピック → catalog-service → 在庫減算)
  */
 @Tag("containers")
 @Testcontainers
 // 두 테스트는 같은 주문을 공유한다 — 전파 테스트가 먼저 끝나야 재전송 테스트의 전제가 성립한다.
+// [JA] 二つのテストは同じ注文を共有する — 伝播テストが先に終わらないと再送テストの前提が成り立たない。
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @DisplayName("사가 전 구간 (주문→결제→재고, 서비스 컨테이너)")
 class SagaEndToEndTest {
@@ -78,6 +87,8 @@ class SagaEndToEndTest {
                     .withNetworkAliases("kafka")
                     // 기본 부트스트랩 주소는 **호스트에서 접근하는 용도**라 같은 네트워크의 컨테이너는
                     // 쓸 수 없다. 서비스 컨테이너용 내부 리스너를 따로 연다.
+                    // [JA] 既定のブートストラップアドレスは**ホストからアクセスする用途**なので、同じネットワークのコンテナは
+                    //      使えない。サービスコンテナ用の内部リスナーを別に開く。
                     .withListener("kafka:19092");
 
     @Container
@@ -105,6 +116,10 @@ class SagaEndToEndTest {
      * 베이스 JRE 이미지. Docker Hub 가 막힌 환경에서는 미러를 지정할 수 있게 해 둔다
      * (예: {@code E2E_JRE_IMAGE=mirror.gcr.io/library/eclipse-temurin:<같은 판>}). 기본값은 ops/Dockerfile.runtime 의 고정값과 같다(B-98).
      * Dockerfile 안의 FROM 은 데몬이 직접 받아오므로 Testcontainers 의 이미지 치환이 적용되지 않는다.
+     *
+     * <p>[JA] ベース JRE イメージ。Docker Hub が塞がれた環境ではミラーを指定できるようにしておく
+     * (例: {@code E2E_JRE_IMAGE=mirror.gcr.io/library/eclipse-temurin:<同じ版>})。既定値は ops/Dockerfile.runtime の固定値と同じである(B-98)。
+     * Dockerfile 内の FROM はデーモンが直接取得するので、Testcontainers のイメージ置換が適用されない。
      */
     private static final String BASE_IMAGE = System.getenv().getOrDefault(
             "E2E_JRE_IMAGE", "eclipse-temurin:17.0.21_9-jre-jammy@sha256:aa6381384f8db99762fa7d0d3c2b5de58874e5f12c96df4c13a1455376ae0ed1");
@@ -112,6 +127,9 @@ class SagaEndToEndTest {
     /**
      * 파이프라인이 이미 만들어 레지스트리에 올린 이미지를 쓸 때의 접두사.
      * 예: {@code E2E_IMAGE_PREFIX=ghcr.io/ruke79/ecommerce-msa/}, {@code E2E_IMAGE_TAG=<커밋 SHA>}.
+     *
+     * <p>[JA] パイプラインがすでに作ってレジストリに上げたイメージを使うときの接頭辞。
+     * 例: {@code E2E_IMAGE_PREFIX=ghcr.io/ruke79/ecommerce-msa/}、{@code E2E_IMAGE_TAG=<コミット SHA>}。
      */
     private static final String IMAGE_PREFIX = System.getenv().getOrDefault("E2E_IMAGE_PREFIX", "");
     private static final String IMAGE_TAG = System.getenv().getOrDefault("E2E_IMAGE_TAG", "latest");
@@ -129,11 +147,21 @@ class SagaEndToEndTest {
      * 산출물이 된다. 다시 빌드하면 그 보장이 사라진다 — 같은 소스라도 베이스 이미지
      * 갱신, 의존성 해석 시점, 빌드 환경이 달라 다른 바이트가 나올 수 있고, 그러면
      * "테스트한 것"과 "배포한 것"이 다른 물건이 된다.
+     *
+     * <p>[JA] テストするコンテナを作る。
+     * ⭐ 経路が二つあり、その違いがこのテストの意味を変える。
+     * <b>既定(ローカル)</b>: ビルドしたばかりの jar を最小イメージで包む。開発者が手元のコードでサガを確認する用途である。
+     * <b>E2E_IMAGE_PREFIX 指定(パイプライン)</b>: レジストリに**すでに上がったそのイメージ**をそのまま取得して起動する。
+     * ここで通過したものと運用にデプロイされるものがビット単位で同じ成果物になる。再ビルドするとその保証が消える —
+     * 同じソースでもベースイメージの更新、依存解決の時点、ビルド環境が違えば別のバイトが出得て、
+     * そうなると「テストしたもの」と「デプロイしたもの」が別物になる。
      */
     private static GenericContainer<?> newContainer(String module) {
         if (!IMAGE_PREFIX.isBlank()) {
             // 레지스트리 이미지는 Testcontainers 의 hub 접두사 치환 대상이 아니다
             // (이미 완전한 주소이므로). asCompatibleSubstituteFor 도 필요 없다.
+            // [JA] レジストリのイメージは Testcontainers の hub 接頭辞置換の対象ではない
+            //      (すでに完全なアドレスなので)。asCompatibleSubstituteFor も不要である。
             return new GenericContainer<>(
                     DockerImageName.parse(IMAGE_PREFIX + module + ":" + IMAGE_TAG));
         }
@@ -141,6 +169,7 @@ class SagaEndToEndTest {
     }
 
     /** 미리 빌드된 부트 jar 를 그대로 실행하는 최소 이미지. */
+    // [JA] 事前にビルドされた boot jar をそのまま実行する最小イメージ。
     private static ImageFromDockerfile serviceImage(String module) {
         Path jar = Paths.get("..", module, "build", "libs", module + "-0.0.1-SNAPSHOT.jar")
                 .toAbsolutePath().normalize();
@@ -150,6 +179,8 @@ class SagaEndToEndTest {
         }
         // 이름에 레지스트리 성분(점 포함)을 넣어 둔다. 그래야 hub.image.name.prefix 치환이
         // **로컬 빌드 이미지에는 적용되지 않는다**(적용되면 미러에서 찾다가 404 가 난다).
+        // [JA] 名前にレジストリ成分(ドットを含む)を入れておく。そうしてこそ hub.image.name.prefix の置換が
+        //      **ローカルビルドのイメージには適用されない**(適用されるとミラーで探して 404 になる)。
         return new ImageFromDockerfile("e2e.local/" + module + ":test", false)
                 .withDockerfileFromBuilder(builder -> builder
                         .from(BASE_IMAGE)
@@ -189,6 +220,9 @@ class SagaEndToEndTest {
                 // PayPal 검증은 자격증명이 없으면 **기동을 거부한다**(order-service PaypalConfig —
                 // 의도된 fail closed). 이 테스트는 결제 검증이 아니라 사가 전파를 보므로 끈다.
                 // 이 줄이 필요하다는 사실 자체가 기본값이 안전한 쪽이라는 증거다(docs/35).
+                // [JA] PayPal 検証は認証情報がなければ**起動を拒否する**(order-service PaypalConfig —
+                //      意図した fail closed)。このテストは決済検証ではなくサガの伝播を見るのでオフにする。
+                //      この行が必要だという事実そのものが、既定値が安全側であることの証拠である(docs/35)。
                 .withEnv("PAYPAL_VERIFICATION_MODE", "disabled")
                 .waitingFor(Wait.forLogMessage(".*Started \\w+Application.*\\n", 1)
                         .withStartupTimeout(Duration.ofMinutes(4)))
@@ -200,6 +234,9 @@ class SagaEndToEndTest {
     /**
      * 컨테이너 내부에서 보는 인프라 주소로 덮어쓴다. TLS·Eureka 는 이 테스트의 관심사가 아니라 끈다
      * (사가가 도는지를 보는 것이지 전송 보안을 보는 것이 아니다).
+     *
+     * <p>[JA] コンテナ内部から見たインフラのアドレスで上書きする。TLS・Eureka はこのテストの関心事ではないのでオフにする
+     * (サガが回るかを見るのであって、通信の安全性を見るのではない)。
      */
     private static String applicationJson(String db, int port) {
         String jdbc = "jdbc:postgresql://postgres:5432/" + db;
@@ -228,6 +265,8 @@ class SagaEndToEndTest {
 
         // pay → order → catalog 순으로 띄운다. 순서 자체는 중요하지 않지만(모두 Kafka 로 느슨하게
         // 연결돼 있다) 로그를 읽기 쉽다.
+        // [JA] pay → order → catalog の順で起動する。順序自体は重要ではないが(すべて Kafka で緩く
+        //      つながっている)ログが読みやすい。
         payService = service("pay-service", "pay", 8087, "paydb", Map.of());
         orderService = service("order-service", "order", 8084, "orderdb", Map.of(
                 "FEIGN_CART_URL", "http://cart:8082",
@@ -276,6 +315,7 @@ class SagaEndToEndTest {
     private static void seedOrder() throws Exception {
         try (Connection conn = adminConnection("orderdb"); Statement st = conn.createStatement()) {
             // 고객 사본(orders.customer)은 더 쓰지 않는다 — 주문의 customer_id 가 곧 토큰의 uid 다(docs/48 §6-①).
+            // [JA] 顧客のコピー(orders.customer)はもう使わない — 注文の customer_id がそのままトークンの uid である(docs/48 §6-①)。
             st.execute("INSERT INTO orders.orders(order_id, customer_id, order_status, payment_method,"
                     + " total, total_before_discount, shipping_price, tracking_id,"
                     + " created_at, version)"
@@ -323,6 +363,7 @@ class SagaEndToEndTest {
             record.headers().add("__TypeId__",
                     "com.project.common.message.dto.request.PaymentRequest".getBytes());
             // pay-service 리스너는 Authorization 헤더가 없으면 배치를 통째로 건너뛴다.
+            // [JA] pay-service のリスナーは Authorization ヘッダがなければバッチを丸ごとスキップする。
             record.headers().add("Authorization", "Bearer testtoken".getBytes());
             producer.send(record);
             producer.flush();
@@ -341,12 +382,14 @@ class SagaEndToEndTest {
         publishPaymentRequest(9100L);
 
         // 1) pay-service 가 결제를 만들고 아웃박스에 기록한다.
+        // [JA] 1) pay-service が決済を作り、アウトボックスに記録する。
         await().atMost(Duration.ofMinutes(2)).untilAsserted(() ->
                 assertThat(queryInt("paydb", "SELECT count(*) FROM pay.payment WHERE order_id = 9100"))
                         .as("pay-service 가 결제를 생성해야 한다")
                         .isEqualTo(1));
 
         // 2) 아웃박스 스케줄러가 payment 토픽으로 발행한다(상태가 COMPLETED 로 바뀐다).
+        // [JA] 2) アウトボックスのスケジューラが payment トピックに発行する(状態が COMPLETED に変わる)。
         await().atMost(Duration.ofMinutes(2)).untilAsserted(() ->
                 assertThat(queryInt("paydb",
                         "SELECT count(*) FROM pay.order_outbox_event WHERE outbox_status = 'COMPLETED'"))
@@ -354,6 +397,7 @@ class SagaEndToEndTest {
                         .isPositive());
 
         // 3) order-service 가 소비해 주문 상태를 PAID 로 바꾼다.
+        // [JA] 3) order-service が消費して注文状態を PAID に変える。
         await().atMost(Duration.ofMinutes(2)).untilAsserted(() ->
                 assertThat(queryText("orderdb",
                         "SELECT order_status FROM orders.orders WHERE order_id = 9100"))
@@ -361,6 +405,7 @@ class SagaEndToEndTest {
                         .isEqualTo("PAID"));
 
         // 4) 사가가 product-update 를 발행하고 catalog 가 재고를 줄인다(주문 수량 2).
+        // [JA] 4) サガが product-update を発行し、catalog が在庫を減らす(注文数量 2)。
         await().atMost(Duration.ofMinutes(2)).untilAsserted(() ->
                 assertThat(queryInt("productdb",
                         "SELECT quantity FROM product.product_size WHERE size_id = 55000"))
@@ -368,6 +413,7 @@ class SagaEndToEndTest {
                         .isEqualTo(98));
 
         // 5) 멱등 원장에 사가가 만든 키가 남는다 — 재전달이 와도 재고가 또 줄지 않는다는 근거.
+        // [JA] 5) 冪等台帳にサガが作ったキーが残る — 再配信が来ても在庫がまた減らないことの根拠。
         assertThat(queryInt("productdb",
                 "SELECT count(*) FROM product.processed_event WHERE event_id = 'order-9100'"))
                 .as("사가가 멱등 키를 남겨야 한다")
@@ -380,6 +426,8 @@ class SagaEndToEndTest {
     void replayingPaymentDoesNotDoubleDecrement() {
         // 첫 테스트가 주문 9100 을 이미 PAID 로 만들었다. 같은 결제 요청을 다시 보낸다 —
         // 실제 운영에서 Kafka 재전달로 흔히 일어나는 상황이다.
+        // [JA] 最初のテストが注文 9100 をすでに PAID にした。同じ決済要求をもう一度送る —
+        //      実際の運用で Kafka の再配信によりよく起きる状況である。
         int before = queryInt("productdb",
                 "SELECT quantity FROM product.product_size WHERE size_id = 55000");
 
@@ -387,6 +435,8 @@ class SagaEndToEndTest {
 
         // 잠시 기다린 뒤에도 값이 그대로여야 한다. 사가의 상태 검사와 catalog 의 멱등 원장이
         // 각각 방어선 역할을 한다.
+        // [JA] しばらく待った後も値がそのままでなければならない。サガの状態検査と catalog の冪等台帳が
+        //      それぞれ防衛線の役割を果たす。
         await().during(Duration.ofSeconds(20)).atMost(Duration.ofMinutes(2)).untilAsserted(() ->
                 assertThat(queryInt("productdb",
                         "SELECT quantity FROM product.product_size WHERE size_id = 55000"))

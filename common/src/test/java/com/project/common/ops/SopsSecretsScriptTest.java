@@ -99,6 +99,7 @@ class SopsSecretsScriptTest {
         assertThat(e.code()).as(e.out()).isZero();
 
         // 머리 주석(암호화 대상 밖)에는 예시 문장이 남는다 — 값 줄 · 메타데이터에는 평문 값이 없어야 한다
+        // [JA] 頭のコメント(暗号化対象外)には例の文が残る — 値の行 · メタデータには平文の値があってはならない
         assertThat(enc().lines().filter(l -> !l.startsWith("#")).filter(l -> l.contains("s3cr3t-value")).toList()).isEmpty();
         assertThat(enc()).contains("ENC[AES256_GCM,", "MAIL_PASSWORD:", "kind: Secret", "sops:");
         assertThat(Files.getPosixFilePermissions(pub1File)).isEqualTo(PosixFilePermissions.fromString("rw-------"));
@@ -106,6 +107,7 @@ class SopsSecretsScriptTest {
         assertThat(c.code()).as(c.out()).isZero();
         assertThat(c.out()).contains("값이 모두 암호문", "풀린다", "과 같다");
         // 두 번째 받는 사람도 푼다
+        // [JA] 2 人目の受信者も復号する
         assertThat(run("k2.txt", Map.of(), "check").out()).contains("풀린다");
     }
 
@@ -162,6 +164,7 @@ class SopsSecretsScriptTest {
         String pubOffline = k.out().lines().filter(l -> l.startsWith("age1")).findFirst().orElseThrow();
         assertThat(pubOffline).isNotEqualTo(pub1);
         // 이 기계의 키(k1)는 바뀌지 않았다 — 같은 공개 키
+        // [JA] このマシンの鍵(k1)は変わっていない — 同じ公開鍵
         assertThat(lastLine(run("keygen").out())).isEqualTo(pub1);
 
         run("init", pub1, pubOffline);

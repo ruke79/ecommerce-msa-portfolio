@@ -20,6 +20,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p>페이로드는 catalog 의 {@code StockShortageRecorder} 가 만든 JSON 이다: {@code eventId, orderId,
  * lines[{productId, colorId, size, orderedQty, shortQty}], occurredAt}. DTO 로 묶지 않고 필요한 것만 꺼낸다 —
  * {@code delivery-status} 와 같은 판단.
+ *
+ * <p>[JA] {@code stock-shortage} トピック → 在庫不足の補償(記録 + 自動返金、docs/53 §超過販売)。
+ * ペイロードは catalog の {@code StockShortageRecorder} が作った JSON である: {@code eventId, orderId,
+ * lines[{productId, colorId, size, orderedQty, shortQty}], occurredAt}。DTO にまとめず必要なものだけ取り出す —
+ * {@code delivery-status} と同じ判断。
  */
 @Slf4j
 @Component
@@ -29,6 +34,7 @@ public class StockShortageKafkaListener {
     private final OrderStockShortageService shortageService;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id = "order-stock-shortage", topics = "stock-shortage",
@@ -52,6 +58,7 @@ public class StockShortageKafkaListener {
                 shortageService.apply(orderId, eventId, lines);
             } catch (Exception e) {
                 // 이 레코드만 재시도 후 stock-shortage.DLT 로, 앞의 성공분은 커밋된다(docs/11 §3).
+                // [JA] このレコードだけ再試行後 stock-shortage.DLT へ、前の成功分はコミットされる(docs/11 §3)。
                 throw new BatchListenerFailedException("stock-shortage 처리 실패", e, i);
             }
         }

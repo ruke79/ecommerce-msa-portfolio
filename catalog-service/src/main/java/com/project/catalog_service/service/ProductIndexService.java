@@ -49,6 +49,19 @@ import lombok.extern.slf4j.Slf4j;
  * <b>쓰지 않고 경고만 남긴다</b> — 그 이름으로 쓰면 ES 가 같은 이름의 <i>인덱스</i>를
  * 만들어 버리고, 그러면 나중에 배치의 별칭 롤오버가 영구히 실패한다(같은 이름의 인덱스와
  * 별칭은 공존할 수 없다).
+ *
+ * <p>[JA] 商品変更のリアルタイム ES 反映。
+ * <p>バッチ索引(POST /api/products/sync)は新しいインデックスを作ってエイリアスを付け替える全体再索引である — 登録一件の反映のために呼ぶものではない。
+ * そのため今まで ES モードでは<b>登録した商品が次の手動 sync まで検索に出なかった。</b>このサービスがその隙間を埋める: 単件をエイリアスに直接書く。
+ * <p>設計判断二つ: 索引の失敗は商品の保存を失敗させない(検索反映が遅れるのは次の sync で回復するが、登録失敗とは重みが違う — 失敗は警告ログに残し、ES がない配備でも登録はできる)。
+ * search.engine=es のときだけ動く(既定の postgres LIKE では検索が DB を直接見るので索引自体が無意味で、ES コンテナのない配備で登録ごとに接続失敗の警告が積もるのを防ぐ)。
+ * <p>品切れ(SOLD_OUT)は索引を維持する — 検索に見えるがカートに入らないのが一覧と同じ動作である。削除(DELETED)だけ索引から外す。
+ * <p>🔴 どこに書くか — このクラスの仕事のすべてが懸かっていた点: 以前は {@code ProductDocumentRepository} で保存し、{@code @Document(indexName = "products")} に従って
+ * <b>{@code products} インデックス</b>に書いた。だが検索({@link EsProductSearchService})はバッチがロールオーバーする<b>エイリアス {@code product-alias}</b>
+ * (実体は {@code products-<タイムスタンプ>-products})を読む。つまり<b>書く所と読む所が別のインデックスだった。</b>新規登録商品は ES モードで検索に出ず、
+ * さらに誰も読まない {@code products} インデックスが動的マッピングで黙って生まれ育った。保存が<b>成功</b>したので失敗ログも残らない。
+ * <p>今はエイリアスに直接書く。エイリアスがまだなければ(全体再索引を一度も回していない配備)<b>書かずに警告だけ残す</b> — その名前で書くと ES が同名の<i>インデックス</i>を作ってしまい、
+ * 後でバッチのエイリアスロールオーバーが永久に失敗する(同名のインデックスとエイリアスは共存できない)。
  */
 @Slf4j
 @Service
@@ -61,6 +74,7 @@ public class ProductIndexService {
     private String searchEngine;
 
     /** 검색이 읽는 것과 <b>같은</b> 별칭이어야 한다 — EsProductSearchService 와 기본값을 맞춘다. */
+    // [JA] 検索が読むのと<b>同じ</b>エイリアスでなければならない — EsProductSearchService と既定値を合わせる。
     @Value("${elasticsearch.alias.name.product:product-alias}")
     private String productAliasName;
 
@@ -91,6 +105,7 @@ public class ProductIndexService {
     }
 
     /** 쓸 수 있는 대상. ES 모드가 아니거나 별칭이 아직 없으면 null. */
+    // [JA] 書ける対象。ES モードでないかエイリアスがまだなければ null。
     private IndexCoordinates writableTarget() {
         if (!"es".equalsIgnoreCase(searchEngine)) {
             return null;

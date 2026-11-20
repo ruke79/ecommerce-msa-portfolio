@@ -25,6 +25,7 @@ public class UserMessageListener {
 
     private final ChatMemberRepository chatMemberRepository;
     /** 탈퇴 시 대화 기록의 발신자 표시를 지우는 데 쓴다(userDeleted). */
+    // [JA] 退会時に会話記録の送信者表示を消すのに使う(userDeleted)。
     private final MongoTemplate mongoTemplate;
 
     
@@ -34,6 +35,9 @@ public class UserMessageListener {
         // 접속 순간 즉석으로 만든 행(ChatService.createMissingMember)이 먼저 있을 수 있다 — 그 행의 닉네임은 임시값이다.
         // 예전에는 여기서 id 충돌을 삼키고 끝나 임시 닉네임이 영영 남았다. 원본의 값으로 채운다. 이미 프로필 변경을
         // 받았거나 탈퇴했으면 applyProfile 이 거른다(가입 이벤트가 가장 오래된 값이다 — 시각 0).
+        // [JA] 接続の瞬間に即席で作った行(ChatService.createMissingMember)が先にあることがある — その行のニックネームは仮の値である。
+        //      以前はここで id の衝突を飲み込んで終わり、仮のニックネームが永遠に残った。原本の値で埋める。すでにプロフィール変更を
+        //      受けたか退会していれば applyProfile が弾く(加入イベントが最も古い値である — 時刻 0)。
         java.util.Optional<ChatMember> existing = chatMemberRepository.findForUpdate(createdUser.getUserId());
         if (existing.isPresent()) {
             if (existing.get().applyProfile(createdUser.getNickname(), createdUser.getImage(), 0L)) {
@@ -48,6 +52,7 @@ public class UserMessageListener {
                                 imageUrl(createdUser.getImage()).                                
                                 nickname(createdUser.getNickname()).
                                 // 이메일은 복제하지 않는다 — chat 의 신원은 id 다(docs/48 §6-⑥). 이벤트에 실려 와도 버린다.
+                                // [JA] メールは複製しない — chat の身元は id である(docs/48 §6-⑥)。イベントに載ってきても捨てる。
                                 build());
         
         if (customer == null) {
@@ -72,6 +77,9 @@ public class UserMessageListener {
      *
      * <p>복제본이 없으면 건너뛴다 — 만들 수도 없다(이 이벤트에는 이메일이 없고, 채팅 신원은 이메일로 찾는다).
      * 없는 이유는 대개 가입 이벤트가 DLT 에 있는 것이고, 그것을 재처리하면 그때의 최신 값으로 생긴다.
+     *
+     * <p>[JA] 原本のプロフィール変更を複製に反映する({@code user-updated}, docs/48 §6-⑤)。
+     * <p>複製がなければ飛ばす — 作ることもできない(このイベントにはメールがなく、チャットの身元はメールで探す)。ない理由はたいてい加入イベントが DLT にあることで、それを再処理すればそのときの最新値で作られる。
      */
     @Transactional
     void userUpdated(long userId, String nickname, String image, long updatedAt) {
@@ -86,6 +94,8 @@ public class UserMessageListener {
 
     /**
      * 원본이 탈퇴를 최종 처리했다 — 복제본의 식별정보를 지운다({@code user-deleted}). 행은 남긴다(채팅 기록이 가리킨다).
+     *
+     * <p>[JA] 原本が退会を最終処理した — 複製の識別情報を消す({@code user-deleted})。行は残す(チャット記録が指している)。
      */
     @Transactional
     void userDeleted(long userId) {
@@ -100,6 +110,8 @@ public class UserMessageListener {
      * 대화 기록(몽고)에 남은 탈퇴 회원의 흔적을 지운다 — 메시지마다 발신 시점의 <b>닉네임 사본</b>이 있다. 내용은
      * 남긴다 — 상대방의 대화이기도 하다. 입장·퇴장 안내는 문구 자체가 닉네임이라 함께 바꾼다. 여러 번 불려도 결과가
      * 같다. 옛 문서(v1)의 발신자 이메일은 지난 릴리스의 기동 백필이 senderId 로 바꿨다(docs/48 §6-⑥).
+     *
+     * <p>[JA] 会話記録(Mongo)に残った退会会員の痕跡を消す — メッセージごとに送信時点の<b>ニックネームのコピー</b>がある。内容は残す — 相手の会話でもあるからだ。入室・退室案内は文言自体がニックネームなので一緒に変える。何度呼ばれても結果は同じ。旧ドキュメント(v1)の送信者メールは前回リリースの起動時バックフィルが senderId に置き換えた(docs/48 §6-⑥)。
      */
     void scrubMessages(long userId) {
         Criteria who = Criteria.where("senderId").is(userId);

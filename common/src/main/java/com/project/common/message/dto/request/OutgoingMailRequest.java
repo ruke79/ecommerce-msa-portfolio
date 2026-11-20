@@ -30,6 +30,15 @@ import lombok.NoArgsConstructor;
  *   <li>토픽 보존 기간을 짧게 잡는다(docs/29 §4)</li>
  *   <li>수신 측은 발송이 끝나는 즉시 저장된 params 를 지운다(MailMessage#clearParams)</li>
  * </ul>
+ *
+ * <p>[JA] {@code outgoing-mail} トピックのメッセージ — 「この人にこの種類のメールを送れ」という<b>命令</b>である。
+ * ドメインイベントではなく命令なので、スキーマは<b>受信者(notification-service)が所有</b>する。他のトピック(order, payment)は発行者がスキーマを持ち通知サービスが
+ * 必要なフィールドだけを取り出して読むが(NotificationEventListener の JsonNode 方式)、これは逆である — 送る側が「何を送るか」を通知サービスの語彙で言う必要がある。
+ * <b>本文を載せない理由。</b>件名 · HTML 本文を発行者が作って送るとメール文案がサービスごとに散らばる。ブランディングを変えるには複数のリポジトリを直す必要があり、
+ * どのサービスがどの文言を使っているか誰も分からなくなる。だから<b>種類({@code kind})と値({@code params})だけ</b>を載せ、レンダリングは notification-service の
+ * {@code MailTemplates} 一か所で行う。SMS はすでにそうなっており(SmsTemplates)、商用トランザクションメールサービスのテンプレート方式も同じである。
+ * ⚠️ <b>{@code params} には資格情報が入る。</b>登録確認メールの {@code confirmationUrl} はそれ自体でアカウントを有効化できるリンクである。したがって、このオブジェクトを
+ * <b>ログに出さない</b>({@link #toString()} が params を隠す)、トピック保持期間を短くする(docs/29 §4)、受信側は送信が終わり次第保存した params を消す(MailMessage#clearParams)。
  */
 @Data
 @AllArgsConstructor
@@ -44,10 +53,13 @@ public class OutgoingMailRequest implements Serializable {
      *
      * <p>Kafka 는 at-least-once 이므로 이게 없으면 재전달마다 확인 메일이 한 통씩 더 간다.
      * 수신 측 {@code mail_message.source_event_id} 가 UNIQUE 라 DB 가 마지막으로 막는다.
+     *
+     * <p>[JA] 冪等キー。同じ値で二回来てもメールは一回だけ出る。
+     * Kafka は at-least-once なので、これがないと再配信のたびに確認メールが一通ずつ余計に行く。受信側の {@code mail_message.source_event_id} が UNIQUE なので DB が最後に防ぐ。
      */
     private String sourceEventId;
 
-    /** 수신 주소. */
+    /** 수신 주소. ／ [JA] 宛先アドレス。 */
     private String toEmail;
 
     /**
@@ -55,16 +67,21 @@ public class OutgoingMailRequest implements Serializable {
      *
      * <p>가입 확인 메일은 사용자가 아직 알림 설정을 만들기 전이라 null 일 수 있다. 값이 있으면
      * 수신 측이 설정(수신 거부·언어)을 참조한다.
+     *
+     * <p>[JA] 受信者のユーザー ID。不明なら null である。
+     * 登録確認メールは利用者がまだ通知設定を作る前なので null でありうる。値があれば受信側が設定(受信拒否 · 言語)を参照する。
      */
     private Long recipientUserId;
 
-    /** 메일 종류. notification-service 의 {@code MailKind} 이름과 같아야 한다. */
+    /** 메일 종류. notification-service 의 {@code MailKind} 이름과 같아야 한다. ／ [JA] メールの種類。notification-service の {@code MailKind} の名前と同じでなければならない。 */
     private String kind;
 
     /**
      * 문구에 채워 넣을 값들. 종류마다 필요한 키가 다르다.
      *
      * <p>예: {@code REGISTRATION_CONFIRM → {"confirmationUrl": "https://..."}}
+     *
+     * <p>[JA] 文言に埋め込む値。種類ごとに必要なキーが違う。例: {@code REGISTRATION_CONFIRM → {"confirmationUrl": "https://..."}}
      */
     private Map<String, String> params;
 
@@ -72,12 +89,16 @@ public class OutgoingMailRequest implements Serializable {
      * 문구 언어 힌트 (예: {@code ko}, {@code ja}).
      *
      * <p>설정에 지역이 있으면 그쪽이 우선한다. 가입 확인처럼 설정이 아직 없는 경우를 위한 값이다.
+     *
+     * <p>[JA] 文言の言語ヒント(例: {@code ko}, {@code ja})。設定に地域があればそちらが優先する。登録確認のように設定がまだない場合のための値である。
      */
     private String locale;
 
     /**
      * ⚠️ {@code params} 를 그대로 노출하지 않는다. 확인 링크·재설정 링크가 로그로 새면
      * 로그 열람 권한이 곧 계정 탈취 권한이 된다 — 토큰을 DB 에 해시로 저장하는 의미가 사라진다.
+     *
+     * <p>[JA] ⚠️ {@code params} をそのまま露出しない。確認リンク · 再設定リンクがログに漏れると、ログ閲覧権限がそのままアカウント乗っ取り権限になる — トークンを DB にハッシュで保存する意味がなくなる。
      */
     @Override
     public String toString() {

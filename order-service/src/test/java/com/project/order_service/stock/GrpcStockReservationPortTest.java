@@ -46,6 +46,13 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * <p>가장 중요한 것은 <b>동등성</b>이다: 같은 catalog 응답이면 HTTP 로 받든 gRPC 로 받든 {@link OrderStockHold} 의 결과가 같아야
  * 전송 스위치(STOCK_RPC_TRANSPORT)를 안심하고 바꿀 수 있다. catalog 는 메모리 안 gRPC 서버(in-process)로 흉내 낸다 — 판정 · TLS 는
  * catalog 의 {@code StockReservationGrpcServerTest} 가 실제 Netty 로 본다.
+ *
+ * <p>[JA] 在庫予約の gRPC 転送 — order 側(docs/66)。
+ *
+ * <p>最も重要なのは<b>同等性</b>である: 同じ catalog 応答なら HTTP で受けても gRPC で受けても {@link
+ * OrderStockHold} の結果が同じであってこそ、転送スイッチ(STOCK_RPC_TRANSPORT)を安心して切り替えられる。
+ * catalog はメモリ内 gRPC サーバー(in-process)で模倣する — 判定・TLS は catalog の {@code
+ * StockReservationGrpcServerTest} が実際の Netty で見る。
  */
 @DisplayName("재고 예약 — gRPC 전송")
 class GrpcStockReservationPortTest {
@@ -64,6 +71,7 @@ class GrpcStockReservationPortTest {
     }
 
     /** catalog 흉내 — 받은 요청(DTO)을 주면 줄 결과를 정한다. HTTP 흉내와 같은 함수를 쓴다(동등성 비교). */
+    // [JA] catalog の模倣 — 受けたリクエスト(DTO)を渡すと返す結果を決める。HTTP の模倣と同じ関数を使う(同等性の比較)。
     private GrpcStockReservationPort grpcCatalog(Function<StockReservationRequest, StockReservationResult> catalog,
             long deadlineMillis) throws Exception {
         String name = InProcessServerBuilder.generateName();
@@ -120,6 +128,7 @@ class GrpcStockReservationPortTest {
         assertThat(overGrpc).isEqualTo(overHttp);
         assertThat(overGrpc.kind()).isEqualTo(OrderStockHold.Kind.HELD);
         // catalog 가 받은 요청도 같다 — 사이즈 없는 상품의 빈 문자열까지
+        // [JA] catalog が受けたリクエストも同じ — サイズのない商品の空文字列まで
         assertThat(viaGrpc).usingRecursiveComparison().isEqualTo(viaHttp);
         assertThat(viaGrpc.getLines()).extracting(StockReservationRequest.Line::getSize).containsExactly("270", "");
     }
@@ -144,6 +153,9 @@ class GrpcStockReservationPortTest {
     /**
      * 기한은 <b>서버로 전파된다</b> — catalog 는 order 가 포기한 호출을 안다(Context 취소). HTTP 의 읽기 제한은 클라이언트만 포기하고
      * 서버는 끝까지 일한다.
+     *
+     * <p>[JA] 期限は<b>サーバーへ伝播する</b> — catalog は order が諦めた呼び出しを知る(Context キャンセル)
+     * 。HTTP の読み取り制限はクライアントだけが諦め、サーバーは最後まで働く。
      */
     @Test
     @DisplayName("🔴 기한이 지나면 order 는 '닿지 못함' 으로 진행하고, catalog 쪽 호출도 취소된다(기한 전파)")
@@ -155,6 +167,7 @@ class GrpcStockReservationPortTest {
                     @Override
                     public void reserve(ReserveRequest req, StreamObserver<ReserveResponse> out) {
                         // 느린 catalog — 응답하지 않고, 호출이 취소되는지만 본다
+                        // [JA] 遅い catalog — 応答せず、呼び出しがキャンセルされるかだけを見る
                         Context.current().addListener(ctx -> cancelled.countDown(), Runnable::run);
                     }
                 }).build().start();
@@ -173,7 +186,7 @@ class GrpcStockReservationPortTest {
 
         assertThatThrownBy(() -> port.release(77L)).isInstanceOfSatisfying(StatusRuntimeException.class,
                 e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
-        hold(port).release(77L);   // 던지지 않는다
+        hold(port).release(77L);   // 던지지 않는다 ／ [JA] 投げない
     }
 
     @Test
@@ -190,6 +203,6 @@ class GrpcStockReservationPortTest {
         assertThat(config.stockReservationPort(feign, " GRPC ", channels, 3000).transport()).isEqualTo("grpc");
         assertThatThrownBy(() -> config.stockReservationPort(feign, "grcp", channels, 3000))
                 .isInstanceOf(IllegalStateException.class);
-        org.mockito.Mockito.verify(channels, org.mockito.Mockito.times(1)).getObject();   // http 면 채널을 만들지 않는다
+        org.mockito.Mockito.verify(channels, org.mockito.Mockito.times(1)).getObject();   // http 면 채널을 만들지 않는다 ／ [JA] http ならチャネルを作らない
     }
 }

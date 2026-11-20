@@ -20,6 +20,7 @@ import { orderStatusLabel } from "util/statusLabel";
 
 
 /** 한 번에 받는 주문 수. 서버 상한은 MAX_ORDER_PAGE_SIZE(50)다. */
+// [JA] 一度に受け取る注文数。サーバーの上限は MAX_ORDER_PAGE_SIZE(50)である。
 const PAGE_SIZE = 10;
 
 const Orders = () => {
@@ -44,6 +45,11 @@ const Orders = () => {
       * 그대로이고 대부분이 빈 줄이었다. 아래 `order?.id` 물음표들이 그 흔적이다.
       *
       * 커서 페이징 엔드포인트로 옮겼다. 서버가 SQL 에서 걸러 주므로 null 이 오지 않는다.
+      *
+      * <p>[JA] 🐛 以前は `useFetchOrders(filter, email)` が `GET /order/orders` で**注文を全部**受け取っていた。注文が溜まるほど応答が大きくなり、サーバーは
+      * 注文ごとに DB 照会 + user-service 呼び出し + catalog 呼び出しをやり直していた(N+1)。さらに状態で絞り込むときは条件に合わない注文が **null として一覧に
+      * 混ざって**来ていた — "Paid" を選んでも行数はそのままで、大半が空の行だった。下の `order?.id` の疑問符たちがその名残である。
+      * カーソルページングのエンドポイントに移した。サーバーが SQL で絞り込むので null は来ない。
       */
      const {
          data,
@@ -54,18 +60,22 @@ const Orders = () => {
          isPending,
      } = useInfiniteQuery({
          // 필터가 바뀌면 처음부터 다시 받는다.
+         // [JA] フィルタが変わったら最初から受け直す。
          queryKey: ["orders", user.email, filter],
          queryFn: ({ pageParam }) => getOrdersPage({ filter, cursor: pageParam, size: PAGE_SIZE }),
          initialPageParam: undefined,
          getNextPageParam: (lastPage) => {
              const next = lastPage?.nextCursor;
              // 서버가 -1 로 "더 없음" 을 알린다(카탈로그 쪽과 같은 규칙).
+             // [JA] サーバーが -1 で「もうない」を知らせる(カタログ側と同じ規則)。
              if (next === undefined || next === null || Number(next) === -1) return undefined;
              // 빈 묶음이 오면 멈춘다 — 커서가 제자리면 무한 루프가 된다.
+             // [JA] 空のまとまりが来たら止める — カーソルがその場に留まると無限ループになる。
              if (!lastPage?.contents?.length) return undefined;
              return next;
          },
          // 목록 한 묶음을 못 받았다고 화면 전체가 ErrorBoundary 로 날아가면 안 된다.
+         // [JA] 一覧の一まとまりを受け取れなかったからといって画面全体が ErrorBoundary に飛んではならない。
          throwOnError: false,
      });
 
@@ -130,6 +140,7 @@ const Orders = () => {
                               * null 이 오지 않는다 — 그래도 방어는 남겨 둔다(응답이
                               * 망가져도 목록 전체가 죽지는 않아야 한다).
                               */}
+                            {/* [JA] key が配列インデックスだった。追加で読み込むと一覧が伸びるが、インデックスの key は「N 番目の行」を指すので React が行を誤って再利用する。注文 id を使う。`order?.` の疑問符が必要だった理由は、サーバーが絞り込んだ位置に null を詰めて送っていたからである。今は SQL で絞り込むので null は来ない — それでも防御は残しておく(応答が壊れても一覧全体が死んではならない)。 */}
                             {orders.map((order, i) => (
                                 <tr key={order?.id ?? i}>
                                     <td>{order?.id}</td>
@@ -157,6 +168,7 @@ const Orders = () => {
                                           * (common/constants/OrderStatus.java). 결제된 상태를 열거해 판정한다 —
                                           * 새 상태가 추가돼도 기본값이 "미결제"라 안전한 쪽으로 틀린다.
                                           */}
+                                        {/* [JA] 🐛 以前の条件は `orderStatus === "UNPAID"` のとき緑のチェックだった。つまり**未決済が決済完了のように**見え、決済完了は赤い X だった。状態を反転させるだけでは足りない。OrderStatus には UNPAID 以外にも NOT_PROCESSED · CANCELED のように「決済されていない」値がある(common/constants/OrderStatus.java)。決済済みの状態を列挙して判定する — 新しい状態が追加されても既定値が「未決済」なので安全な側に間違える。 */}
                                         {order && (isPaid(order.orderStatus) ? (
                                             <CheckBadgeIcon className="w-8 h-8 fill-green-500" />
                                         ) : (
@@ -175,6 +187,7 @@ const Orders = () => {
                     )}
 
                     {/* 감시 대상. 화면에 들어오면 다음 묶음을 부른다. */}
+                    {/* [JA] 監視対象。画面に入ると次のまとまりを呼ぶ。 */}
                     <div ref={sentinelRef} className="w-full h-1" aria-hidden="true" />
 
                     {isFetchingNextPage && (
@@ -223,6 +236,13 @@ export const loader =  async ({params, request}) => {
         //    임의의 값을 넣으면 안 된다 — 서버가 OrderStatus.getStatus(filter) 로 바꾸다
         //    IllegalStateException("Unsupported status all") 로 500 을 낸다. 빈 문자열일
         //    때만 "상태로 거르지 않는다"로 해석한다(OrderDataService.getOrder).
+        // [JA] ⚠️ `get('q').split(...)` だった。クエリなしで /profile/orders に直接入ると
+        //      (アドレスバー・ブックマーク・再読み込み)get が null なので TypeError で画面が丸ごと死んでいた。
+        //      サイドバーのリンクは q を付けるが、それだけがこの画面に来る道ではない。
+        //      既定値は ordersLinks の "All Orders" と同じ**空文字列**である。"all" のような
+        //      任意の値を入れてはならない — サーバーが OrderStatus.getStatus(filter) で変換する途中で
+        //      IllegalStateException("Unsupported status all") で 500 を出す。空文字列の
+        //      ときだけ「状態で絞り込まない」と解釈する(OrderDataService.getOrder)。
         const filter = searchParams.get('q')?.split("__")[1] ?? "";
                 
 

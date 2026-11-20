@@ -35,6 +35,10 @@ import com.project.common.tracing.OtelTestTracing;
  * <p>요청 스레드에서 행을 쓰고(capture), 다른 스레드의 스케줄러가 몇 초 뒤 보낸다(resume). 그 사이
  * 스레드의 추적 문맥은 없다. 확인하는 것은 하나다: <b>Kafka 로 나간 레코드의 추적 헤더가 원래 요청의
  * traceId 를 싣고 있는가.</b> 그래야 받는 서비스의 리스너가 같은 추적에 자식으로 붙는다.
+ *
+ * <p>[JA] アウトボックスをまたいでもトレースがつながるか — <b>運用と同じ OpenTelemetry トレーサーと実際の KafkaTemplate</b> で見る。
+ * リクエストスレッドで行を書き(capture)、別スレッドのスケジューラーが数秒後に送る(resume)。その間スレッドのトレースコンテキストはない。
+ * 確認するのは一つだ: <b>Kafka に出たレコードのトレースヘッダーが元のリクエストの traceId を載せているか。</b>そうして初めて受信サービスのリスナーが同じトレースに子として付く。
  */
 @DisplayName("OutboxTraceContext — 아웃박스를 건너는 추적")
 class OutboxTraceContextTest {
@@ -62,6 +66,7 @@ class OutboxTraceContextTest {
     }
 
     /** 요청 스레드에서 행을 쓰는 순간. */
+    // [JA] リクエストスレッドで行を書く瞬間。
     private String captureInsideRequest(String[] traceIdHolder) {
         Span request = tracer.nextSpan().name("POST /api/order/payment/paypal").start();
         try (Tracer.SpanInScope ignored = tracer.withSpan(request)) {
@@ -73,6 +78,7 @@ class OutboxTraceContextTest {
     }
 
     /** 프로듀서 추적이 켜진 KafkaTemplate — 운영과 같은 핸들러 구성. */
+    // [JA] プロデューサートレースが有効な KafkaTemplate — 運用と同じハンドラー構成。
     private KafkaTemplate<String, String> tracedTemplate(MockProducer<String, String> producer) {
         ObservationRegistry registry = ObservationRegistry.create();
         registry.observationConfig().observationHandler(
@@ -101,6 +107,7 @@ class OutboxTraceContextTest {
         assertThat(stored).as("저장된 추적 문맥").isNotBlank().contains(traceId[0]);
 
         // 스케줄러 스레드 — 추적 문맥이 없다.
+        // [JA] スケジューラースレッド — トレースコンテキストがない。
         assertThat(tracer.currentSpan()).isNull();
         MockProducer<String, String> producer = new MockProducer<>(true, new StringSerializer(), new StringSerializer());
         KafkaTemplate<String, String> template = tracedTemplate(producer);
@@ -118,11 +125,13 @@ class OutboxTraceContextTest {
                 .as("받는 쪽이 같은 추적에 붙으려면 헤더에 원래 traceId 가 있어야 한다")
                 .contains(traceId[0]);
         // 되살린 릴레이 스팬과 프로듀서 스팬 모두 원래 추적 안에 있다.
+        // [JA] 復元したリレースパンとプロデューサースパンのどちらも元のトレース内にある。
         assertThat(finished()).extracting(SpanData::getTraceId).containsOnly(traceId[0]);
         assertThat(finished()).extracting(SpanData::getName).contains("outbox relay payment-request");
     }
 
     /** 고치기 전의 모습 — 대조군. 이게 통과해야 위 테스트가 무엇을 증명하는지 분명하다. */
+    // [JA] 直す前の姿 — 対照群。これが通って初めて上のテストが何を証明するかが明確になる。
     @Test
     @DisplayName("대조: 문맥 없이 보내면 새 추적이 시작된다 — 예전의 끊김")
     void withoutStoredContextTheTraceStartsOver() throws Exception {
@@ -140,12 +149,17 @@ class OutboxTraceContextTest {
      * 추적이 걸리지 않았고, 결제 응답 행을 쓸 때 현재 추적이 없었다. 여기서 pay-service 의 순서를 그대로
      * 밟는다: 추적이 실린 레코드 → <b>스프링의 실제 배치 변환기</b> → 레코드 헤더로 이어받기 → 그 안에서
      * 다음 아웃박스 행의 문맥 저장.
+     *
+     * <p>[JA] 🐛 決済リクエストまではつながり、決済応答から途切れていた。pay-service のリスナーが<b>バッチ</b>なのでコンシューマーのトレースがかからず、
+     * 決済応答の行を書くときに現在のトレースがなかった。ここで pay-service の順序をそのまま踏む: トレースの載ったレコード →
+     * <b>Spring の実際のバッチ変換器</b> → レコードヘッダーで引き継ぎ → その中で次のアウトボックス行のコンテキストを保存。
      */
     @Test
     @DisplayName("🔴 배치 리스너: 레코드 헤더를 이어받은 안에서 쓴 아웃박스 행은 원래 추적을 남긴다")
     @SuppressWarnings({"unchecked", "rawtypes"})
     void batchListenerContinuesTheTraceIntoTheNextOutboxRow() throws Exception {
         // order-service: 요청 → 아웃박스 → 릴레이가 보낸 레코드
+        // [JA] order-service: リクエスト → アウトボックス → リレーが送ったレコード
         String[] traceId = new String[1];
         String stored = captureInsideRequest(traceId);
         MockProducer<String, String> producer = new MockProducer<>(true, new StringSerializer(), new StringSerializer());
@@ -160,6 +174,7 @@ class OutboxTraceContextTest {
         ProducerRecord<String, String> sent = producer.history().get(0);
 
         // pay-service: 배치로 받는다 — 리스너가 보는 것은 BATCH_CONVERTED_HEADERS 다.
+        // [JA] pay-service: バッチで受け取る — リスナーが見るのは BATCH_CONVERTED_HEADERS だ。
         org.apache.kafka.clients.consumer.ConsumerRecord<String, String> received =
                 new org.apache.kafka.clients.consumer.ConsumerRecord<>("order", 0, 0L, "42", "{}");
         sent.headers().forEach(h -> received.headers().add(h));
@@ -175,7 +190,7 @@ class OutboxTraceContextTest {
         String nextRow = outbox.continueFrom(OutboxTraceContext.headersAt(batchHeaders, 0), "receive payment-request",
                 () -> {
                     insideTrace[0] = tracer.currentSpan().context().traceId();
-                    return outbox.capture();   // 결제 응답 아웃박스 행을 쓰는 순간
+                    return outbox.capture();   // 결제 응답 아웃박스 행을 쓰는 순간 ／ [JA] 決済応答のアウトボックス行を書く瞬間
                 });
 
         assertThat(insideTrace[0]).as("리스너 안의 추적").isEqualTo(traceId[0]);
@@ -184,6 +199,7 @@ class OutboxTraceContextTest {
     }
 
     /** 레코드 어댑터(setBatchToRecordAdapter)면 메시지 헤더가 곧 그 레코드의 헤더다. 배치 변환이면 목록의 i 번째. */
+    // [JA] レコードアダプター(setBatchToRecordAdapter)ならメッセージヘッダーがそのままそのレコードのヘッダーだ。バッチ変換ならリストの i 番目。
     @Test
     @DisplayName("recordHeaders — 레코드 어댑터와 배치 변환 두 모양을 다 받는다")
     void recordHeadersAcceptsBothShapes() {

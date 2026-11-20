@@ -19,6 +19,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>기본값이 로깅 발송기인 것은 의도적이다.</b> SMS 는 건당 과금이고 되돌릴 수 없다.
  * 설정이 덜 된 채 배포됐을 때 "아무 문자도 안 나간다"가 "모르는 사이 요금이 나간다"보다 낫다.
  * 실제 발송은 {@code notification.sms.provider=http} 로 명시해야 켜진다.
+ *
+ * <p>[JA] 送信器の選択。
+ * <b>既定がロギング送信器なのは意図的である。</b> SMS は件数課金で取り消せない。
+ * 設定が不完全なままデプロイされたとき「何も送られない」方が「知らないうちに料金が発生する」よりましである。
+ * 実際の送信は {@code notification.sms.provider=http} を明示して初めて有効になる。
  */
 @Slf4j
 @Configuration
@@ -61,6 +66,8 @@ public class SmsConfig {
 
         // 설정이 반쯤 된 상태로 실제 발송을 켜면, 매 발송이 실패하며 알림만 쌓인다.
         // 여기서 막고 이유를 분명히 알린다.
+        // [JA] 設定が半端な状態で実送信を有効にすると、毎回の送信が失敗して通知だけが溜まる。
+        //      ここで止めて理由をはっきり知らせる。
         if (url.isBlank() || from.isBlank()) {
             throw new IllegalStateException(
                     "notification.sms.provider=http 이지만 url 또는 from 이 비어 있습니다. "
@@ -71,6 +78,10 @@ public class SmsConfig {
         // 메일 쪽에서 실제로 그렇게 새서 가입 확인 메일이 조용히 버려졌다(Placeholders 참조).
         // 여기서는 요금이 걸려 있어 더 나쁘다: 게이트웨이 주소가 자리 표시자면 매 발송이
         // 실패하며 알림만 쌓이고, 주소가 우연히 유효하면 엉뚱한 곳으로 나간다.
+        // [JA] 上の検査は**空の値**しか捕まえない。埋めていない値(REPLACE_ME…)は通過する —
+        //      メール側で実際にそうして漏れ、登録確認メールが黙って捨てられた(Placeholders 参照)。
+        //      ここは料金が絡むのでさらに悪い: ゲートウェイのアドレスがプレースホルダーなら毎回の送信が
+        //      失敗して通知だけが溜まり、アドレスがたまたま有効なら見当違いの所へ送られる。
         Placeholders.rejectUnfilled("notification.sms.provider=http", Placeholders.pairs(
                 "notification.sms.http.url (SMS_API_URL)", url,
                 "notification.sms.http.auth-value (SMS_AUTH_VALUE)", authValue,

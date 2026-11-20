@@ -28,6 +28,10 @@ import io.jsonwebtoken.Jwts;
  *
  * <p>🐛 둘이 같은 키·같은 클레임이라 게이트웨이에서 리프레시 토큰이 액세스로 통했고, user-service 는 만료된 액세스 토큰의
  * subject 를 그대로 믿었다.
+ *
+ * <p>[JA] 🔒 アクセス・リフレッシュトークンは種別クレームで区別される(JwtUtils.TOKEN_TYPE_CLAIM)。
+ * 🐛 両者が同じ鍵・同じクレームだったため、ゲートウェイでリフレッシュトークンがアクセストークンとして通り、user-service は期限切れアクセストークンの
+ * subject をそのまま信じていた。
  */
 @DisplayName("JWT 종류 — 액세스·리프레시")
 class TokenTypeTest {

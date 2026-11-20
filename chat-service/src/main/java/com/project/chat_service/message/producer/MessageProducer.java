@@ -18,7 +18,10 @@ import com.project.chat_service.dto.MessageDto;
  * 흔적 없이 사라졌다 — 보낸 사람 화면에는 아무 신호가 없고 메시지는 저장도 방송도 되지 않았다. 이제 실패를
  * {@value #FAILED_METRIC} 로 세고(경보 {@code ChatMessagePublishFailed}) 방 · 메시지 번호를 남긴다(본문은 남기지 않는다).
  *
- * <p>[JA] 以前は send の結果を見ておらず、非同期の失敗が跡形もなく消えた。今は失敗を数え(警報)、ルーム・メッセージ番号を残す。
+ * <p>[JA] チャットメッセージを {@code chat} トピックへ送る — 保存 · 放送はコンシューマー(MessageConsumer)が行う。
+ * 🐛 以前: {@code send} の結果を見ていなかった。ブローカー障害 · 大きすぎるレコード({@code max.request.size})のような非同期の失敗は
+ * 何の跡もなく消えた — 送った人の画面には何の合図もなく、メッセージは保存も放送もされなかった。今は失敗を
+ * {@value #FAILED_METRIC} で数え(警報 {@code ChatMessagePublishFailed})、ルーム · メッセージ番号を残す(本文は残さない)。
  */
 @Slf4j
 @Component
@@ -40,11 +43,15 @@ public class MessageProducer {
     private KafkaTemplate<String, MessageDto> kafkaTemplate;
 
     // 메시지를 지정한 Kafka 토픽으로 전송
+    // [JA] メッセージを指定した Kafka トピックに送信
     public void send(String topic, MessageDto data) {
 
         // 키 = 방 id. 채팅은 **같은 방 안의 순서**가 곧 대화다 — 키가 없으면 파티션이 둘 이상일 때
         // 한 방의 메시지가 흩어져 소비자(→ 화면)에 뒤섞여 도착한다. 지금은 파티션 하나라 안 보이지만
         // 파티션을 늘리는 순간 깨진다(docs/38 §1.15).
+        // [JA] キー = ルーム id。チャットは**同じルーム内の順序**こそが会話である — キーがないとパーティションが二つ以上のとき
+        //      一つのルームのメッセージが散らばりコンシューマ(→ 画面)に入り混じって届く。今はパーティションが一つなので見えないが
+        //      パーティションを増やした瞬間に壊れる(docs/38 §1.15)。
         try {
             kafkaTemplate.send(topic, data.getRoomId(), data).whenComplete((result, ex) -> {
                 if (ex != null) {
@@ -53,6 +60,7 @@ public class MessageProducer {
             });
         } catch (RuntimeException e) {
             // 동기 실패(직렬화 · 메타데이터 대기 초과)는 호출자에게도 올린다 — STOMP 오류 프레임으로 보낸 사람이 안다.
+            // [JA] 同期の失敗(シリアライズ・メタデータ待ちのタイムアウト)は呼び出し元にも上げる — STOMP エラーフレームで送信者が知る。
             failed(data, e);
             throw e;
         }

@@ -26,6 +26,13 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>이제 문구는 notification-service 의 {@code MailTemplates} 한 곳에 있고, 재시도·DLQ 는
  * 그쪽 아웃박스가 맡는다(docs/29).
+ *
+ * <p>[JA] user-service が送るべきメールを<b>要求</b>する。実際の送信は notification-service が行う。
+ * <p><b>以前の実装の問題:</b> JavaMailSender.send() を同期で呼んでいた。<b>リトライがなかった</b> — SMTP が一度揺れると MailException がそのまま上がり
+ * パスワード再設定要求自体が 500 で失敗した。トークンは既に DB に保存された後なので<b>ユーザーにはリンクがないのにトークンだけ残る</b>状態になった。
+ * <b>同期だった</b> — メールサーバが遅いとその分 HTTP リクエストが掴まれた。<b>SimpleMailMessage だった</b> — 平文一行だけでエンコーディングを指定できず
+ * 韓国語の件名がクライアントによって化けた。登録確認メールは既に HTML+UTF-8 に直していたのにこちらだけ残り、<b>同じサービスが送る二つのメールの見た目が違った。</b>
+ * <p>今は文言が notification-service の MailTemplates 一か所にあり、リトライ・DLQ はそちらのアウトボックスが担う(docs/29)。
  */
 @Slf4j
 @Service
@@ -34,6 +41,7 @@ public class EmailService {
     private final OutgoingMailProducer mailProducer;
 
     /** 메일 요청을 내보내는 일꾼 — 가입 확인 메일과 같은 것(AsyncMailConfig). */
+    // [JA] メール要求を送り出す作業者 — 登録確認メールと同じもの(AsyncMailConfig)。
     private final java.util.concurrent.Executor mailExecutor;
 
     public EmailService(OutgoingMailProducer mailProducer,
@@ -72,7 +80,12 @@ public class EmailService {
      * 재설정 토큰까지 사라지는데, 그건 <b>사용자가 다시 요청하면 되는 상황</b>을
      * <b>요청 자체가 실패하는 상황</b>으로 바꾸는 것이다. 실패는 ERROR 로 남겨 운영자가 본다.
      *
+     * <p>[JA] パスワード再設定メールを要求する。
+     * <p>発行に失敗しても例外を投げない。投げると呼び出し側のトランザクションがロールバックされ今保存した再設定トークンまで消えるが、それは
+     * <b>ユーザーがもう一度要求すればよい状況</b>を<b>要求自体が失敗する状況</b>に変えることだ。失敗は ERROR で残し運用者が見る。
+     *
      * @param userId 수신자 사용자 id. 문구 언어를 사용자 설정에서 고르는 데 쓴다
+     *     [JA] 受信者のユーザー id。文言の言語をユーザー設定から選ぶのに使う
      */
     public void sendPasswordResetEmail(Long userId, String to, String resetUrl) {
         afterCommit(() -> publishPasswordReset(userId, to, resetUrl));
@@ -82,6 +95,7 @@ public class EmailService {
         boolean published = mailProducer.publish(OutgoingMailRequest.builder()
                 // ⚠️ 멱등 키에 토큰을 넣지 않는다 — 그 값이 로그와 DB 컬럼에 그대로 남는다.
                 //    재설정은 사용자가 요청할 때마다 새 메일이 나가야 하므로 시각을 섞는다.
+                // [JA] ⚠️ 冪等キーにトークンを入れない — その値がログと DB 列にそのまま残る。再設定はユーザーが要求するたびに新しいメールが出るべきなので時刻を混ぜる。
                 .sourceEventId("password-reset:" + userId + ":" + System.nanoTime())
                 .toEmail(to)
                 .recipientUserId(userId)
@@ -91,6 +105,7 @@ public class EmailService {
 
         if (!published) {
             // ⚠️ 링크는 남기지 않는다 — 재설정 링크는 그 자체로 비밀번호를 바꿀 수 있다.
+            // [JA] ⚠️ リンクは残さない — 再設定リンクはそれ自体でパスワードを変えられる。
             log.error("비밀번호 재설정 메일 요청을 발행하지 못했습니다: userId={}", userId);
         }
     }

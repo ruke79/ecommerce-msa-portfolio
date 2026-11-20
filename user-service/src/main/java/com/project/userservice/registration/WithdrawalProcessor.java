@@ -28,6 +28,15 @@ import lombok.extern.slf4j.Slf4j;
  * 다시 집힌다({@code withdrawn_at} 이 아직 비어 있으므로).
  *
  * <p>⚠️ 로그에는 userId 와 건수만 남긴다.
+ *
+ * <p>[JA] 猶予期間が終わった退会申請を最終処理する。
+ * 既定がオンである理由: 同じリポジトリの {@link UnverifiedAccountCleanup} は削除が既定オフだが、あちらは私たちが消すと
+ * 判断するアカウントなので有効にする前に影響範囲を確認する必要がある。こちらは本人が要求し、猶予期間まで過ぎた
+ * アカウントである。オフにしておくと退会申請が永遠に処理されない — 機能が動かないのと同じである。
+ * アカウントごとに独立トランザクションである。{@code WithdrawalService.finalizeWithdrawal} が自前のトランザクションを
+ * 開くので、一つのアカウントが失敗しても残りは進む。失敗した分は次の周期に再び拾われる({@code withdrawn_at} が
+ * まだ空なので)。
+ * ⚠️ ログには userId と件数だけを残す。
  */
 @Slf4j
 @Component
@@ -41,6 +50,7 @@ public class WithdrawalProcessor {
     private boolean enabled;
 
     /** {@code WithdrawalService} 와 같은 값을 봐야 한다 — 한쪽만 바꾸면 예정일과 실제가 어긋난다. */
+    // [JA] {@code WithdrawalService} と同じ値を見なければならない — 片方だけ変えると予定日と実際がずれる。
     @Value("${app.withdrawal.grace:P7D}")
     private Duration grace;
 
@@ -69,6 +79,7 @@ public class WithdrawalProcessor {
                     processed++;
                 } else {
                     // 조회와 처리 사이에 취소했다. 정상적인 경로다.
+                    // [JA] 照会と処理の間に取り消した。正常な経路である。
                     skipped++;
                 }
             } catch (RuntimeException e) {

@@ -36,25 +36,31 @@ public class SearchController {
 
     private final SearchService searchService;
     /** 카드의 재고 표시 — 지금 수량 − 결제 전 예약(docs/59 §5). 결과는 캐시(search_cache)에서 오므로 응답 직전에. */
+    // [JA] カードの在庫表示 — 現在数量 − 決済前の予約(docs/59 §5)。結果はキャッシュ(search_cache)から来るので応答直前に反映する。
     private final com.project.catalog_service.service.StockAvailability stockAvailability;
     private final CategoryDocumentRepository categoryDocumentRepository;
 
     private final JobLauncher jobLauncher;
     // @Qualifier("productIndexingJob") // 이 라인을 추가
     // private final Job productIndexingJob;
-    private final Map<String, Job> allJobs; // List<Job> 대신 Map<String, Job>을 사용하여 Job 이름으로 특정 Job을 주입
+    // [JA] @Qualifier("productIndexingJob") // この行を追加 / private final Job productIndexingJob;
+    private final Map<String, Job> allJobs; // List<Job> 대신 Map<String, Job>을 사용하여 Job 이름으로 특정 Job을 주입 ／ [JA] List<Job> の代わりに Map<String, Job> を使い、Job 名で特定の Job を注入する
 
     /** 첫 쪽의 필터 메뉴 — 결과 캐시 밖에서 붙인다(계산은 요청 밖, 기다림은 짧게 — SearchFilterFacets). */
+    // [JA] 最初のページのフィルタメニュー — 結果キャッシュの外で付ける(計算はリクエスト外、待ちは短く — SearchFilterFacets)。
     private final com.project.catalog_service.service.SearchFilterFacets filterFacets;
 
     /** 이 검색을 ES 로 할지 — 기능 플래그(docs/74). 캐시 밖에서 정해 캐시 키에 넣는다. */
+    // [JA] この検索を ES で行うか — 機能フラグ(docs/74)。キャッシュの外で決めてキャッシュキーに入れる。
     private final com.project.catalog_service.service.SearchEngineSelector searchEngineSelector;
 
     /** 한 번에 하나만. 싱글턴 리더를 두 실행이 나눠 읽으면 색인이 조용히 망가진다. */
+    // [JA] 一度に一つだけ。シングルトンのリーダーを二つの実行で分け合って読むと、インデックスが黙って壊れる。
     private final java.util.concurrent.atomic.AtomicBoolean indexing =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     // 데몬 스레드 하나 — 파드가 내려갈 때 종료를 붙잡지 않는다(잡 상태는 메타 테이블에 남는다).
+    // [JA] デーモンスレッド一つ — Pod が落ちるときに終了を引き止めない(ジョブの状態はメタテーブルに残る)。
     private final java.util.concurrent.ExecutorService indexingExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "es-indexing");
@@ -87,7 +93,11 @@ public class SearchController {
      * 포기하지만 catalog 의 스레드와 커넥션은 질의가 끝날 때까지 묶여, 파드마다 5개뿐인 풀이 차자 home · banners 까지 5초 대기 끝에 5xx 였다
      * (필터 검색 측정 실패 95.04%). 이제 비싼 검색만 실패하고 나머지는 산다.
      *
-     * <p>[JA] 検索照会が時間上限に掛かった — 503。照会は DB で取り消され、接続はすぐ戻る。以前は上限がなく、一件が接続を 3 分握って全体が 5xx だった。
+     * <p>[JA] 検索照会が時間上限({@code catalog.search.query-timeout-seconds}、既定 5 秒)に掛かった — 503。照会は DB で取り消され、接続はすぐ戻る。
+     *
+     * <p>[JA] 2026-10-20 実習(商品 1,000 万、docs/83 §2.8): 上限がなく、フィルター検索一つが 75 〜 195 秒間接続を握った。ゲートウェイは 10 秒で
+     * 諦めるが catalog のスレッドと接続は照会が終わるまで縛られ、Pod ごとに 5 本しかないプールが埋まると home · banners まで 5 秒待ちの末 5xx だった
+     * (フィルター検索の測定失敗 95.04%)。今は高い検索だけが失敗し、残りは生きる。
      */
     @org.springframework.web.bind.annotation.ExceptionHandler({
             org.springframework.dao.DataAccessException.class, jakarta.persistence.PersistenceException.class,
@@ -98,6 +108,7 @@ public class SearchController {
         }
         if (hasCause(e, java.net.SocketTimeoutException.class)) {
             // 질의 상한의 취소에도 답이 오지 않았다 — 연결의 상대가 사라졌다(PgJDBC 가 연결을 버리고 Hikari 가 풀에서 뺀다, SearchBulkhead)
+            // [JA] クエリ上限によるキャンセルにも応答がなかった — 接続の相手が消えた(PgJDBC が接続を捨て、Hikari がプールから外す、SearchBulkhead)
             log.warn("검색 연결 소켓 읽기 시간 초과 — 연결을 버리고 503 ({})", e.getClass().getSimpleName());
         } else {
             log.warn("검색 질의 시간 초과 — 503 ({})", e.getClass().getSimpleName());
@@ -120,6 +131,9 @@ public class SearchController {
     /**
      * 시간 상한으로 끝난 질의인가 — 번역 계층마다 예외 종류가 달라 원인 사슬을 본다(PostgreSQL 은 SQLSTATE 57014). 소켓 읽기 상한
      * ({@link java.net.SocketTimeoutException} — 취소의 답도 오지 않은 죽은 연결)도 같다.
+     *
+     * <p>[JA] 時間上限で終わったクエリか — 変換レイヤーごとに例外の種類が違うので原因チェーンを見る(PostgreSQL は SQLSTATE 57014)。ソケット読み取り上限
+     * ({@link java.net.SocketTimeoutException} — キャンセルの応答も来ないデッド接続)も同じ扱い。
      */
     public static boolean isQueryTimeout(Throwable e) {
         if (hasCause(e, java.net.SocketTimeoutException.class)) {
@@ -148,6 +162,7 @@ public class SearchController {
 
 
     /** 결과 페이지의 상품에 지금 재고를 반영한 복사본 — 캐시된 결과는 그대로 둔다. */
+    // [JA] 結果ページの商品に現在の在庫を反映したコピー — キャッシュされた結果はそのままにする。
     private SearchResultDto withStock(SearchResultDto dto) {
         if (dto == null || dto.getProduct() == null || dto.getProduct().getContent().isEmpty()) {
             return dto;
@@ -176,6 +191,16 @@ public class SearchController {
      *
      * <p>202 로 즉시 돌아온다. 이 잡은 새 인덱스에 쓴 뒤 별칭을 바꾸는 방식이라
      * (newIndexName) 실패해도 현재 검색은 그대로다 — 임포트와 달리 재실행이 안전하다.
+     *
+     * <p>[JA] 全件再インデックスの起動。二点を直した。
+     * 1. リクエストスレッドで同期実行されていた。Boot のデフォルトランチャーは SyncTaskExecutor なので jobLauncher.run はジョブが終わるまで戻らない。
+     * 全商品を ES にインデックスする間レスポンスが出ないため、ゲートウェイのタイムアウト(10 秒)・フロントのタイムアウト(15 秒)に先に引っかかる。
+     * 管理者は失敗と見るがジョブは動き続ける — だからもう一度押す。
+     * 2. 重複実行を防いでいなかった。リーダー Bean が @StepScope のないシングルトンなので(ElasticsearchBatchConfig)、同じジョブが同時に二つ動くと
+     * 同じリーダーインスタンスを分け合って読む。読み取り位置が絡み合い、インデックスが途中から空になったり ReaderNotOpenException が出たりする。
+     * ProductImportService と同じ理由・同じ方式で一度に一つだけ動かす。
+     * 202 で即座に返る。このジョブは新しいインデックスに書いてからエイリアスを切り替える方式なので(newIndexName)、失敗しても現在の検索はそのまま —
+     * インポートと違って再実行が安全である。
      */
     @PostMapping("/products/sync")
     public ResponseEntity<String> syncProducts() {
@@ -197,12 +222,14 @@ public class SearchController {
                 .toJobParameters();
 
         // 재색인을 시작한 요청의 traceId 를 색인 스레드로 넘긴다(docs/51 §3).
+        // [JA] 再インデックスを開始したリクエストの traceId をインデックス用スレッドへ渡す(docs/51 §3)。
         indexingExecutor.submit(com.project.common.logging.MdcTaskDecorator.wrap(() -> {
             try {
                 jobLauncher.run(productIndexingJob, jobParameters);
                 log.info("ES 재색인 완료: {}", newIndexName);
             } catch (Exception e) {
                 // 잡 실패는 BATCH_JOB_EXECUTION 에 남는다. 여기서는 원인만 로그로 남긴다.
+                // [JA] ジョブの失敗は BATCH_JOB_EXECUTION に残る。ここでは原因だけをログに残す。
                 log.error("ES 재색인 실패: {}", e.getMessage(), e);
             } finally {
                 indexing.set(false);

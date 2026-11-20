@@ -42,6 +42,7 @@ class AdminUserManagementTest {
     @Mock private RefreshTokenService refreshTokenService;
 
     /** 비밀번호를 정하는 메서드는 짧은 DB 구간을 TransactionTemplate 으로 연다(유출 확인을 그 밖에 두려고). */
+    // [JA] パスワードを決めるメソッドは短い DB 区間を TransactionTemplate で開く(漏洩確認をその外に置くため)。
     @org.mockito.Spy private org.springframework.transaction.support.TransactionTemplate tx =
             com.project.userservice.service.TestTransactions.template();
     @InjectMocks private UserServiceImpl userService;
@@ -66,6 +67,7 @@ class AdminUserManagementTest {
     }
 
     /** 🐛 예전: 역할을 바꿔도 로그인이 그대로라, 관리자에서 내린 계정이 리프레시로 ROLE_ADMIN 토큰을 계속 받았다. */
+    // [JA] 🐛 以前: ロールを変えてもログインがそのままで、管理者から降格したアカウントがリフレッシュで ROLE_ADMIN トークンを受け取り続けた。
     @Test
     @DisplayName("🔴 역할을 바꾸면 그 사용자의 모든 로그인을 끊는다")
     void roleChangeEndsSessions() {

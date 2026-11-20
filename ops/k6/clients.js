@@ -9,6 +9,7 @@
 export const CLIENT_IP_MAX = 65536;
 
 /** VU 번호(1부터) → 손님 IP. count 개를 돌려 쓰고, offset 은 다른 부하 VM 과 겹치지 않게(SPLIT). */
+// [JA] VU 番号(1 から) → 客の IP。count 個を使い回し、offset は他の負荷 VM と重ならないように(SPLIT)。
 export function clientIp(vuId, count, offset = 0) {
   if (!(count > 0)) {
     return null;
@@ -18,6 +19,7 @@ export function clientIp(vuId, count, offset = 0) {
 }
 
 /** "i/n" → { part, of } — 1 ≤ i ≤ n ≤ 16. 틀리면 null. */
+// [JA] "i/n" → { part, of } — 1 ≤ i ≤ n ≤ 16。誤りなら null。
 export function splitPart(spec) {
   const m = /^([1-9][0-9]?)\/([1-9][0-9]?)$/.exec(String(spec || ''));
   if (!m) {

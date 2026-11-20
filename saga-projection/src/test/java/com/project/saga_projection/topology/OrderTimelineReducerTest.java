@@ -62,8 +62,8 @@ class OrderTimelineReducerTest {
     @DisplayName("🔴 늦게 도착한 '먼저 일어난' 변경은 지금 상태를 되돌리지 않는다 — 순서는 발생 시각")
     void lateArrivalOfEarlierChangeDoesNotWinButIsPlacedByTime() {
         OrderTimeline t = fold(
-                event("c", "PAID", "PROCESSING", T0.plusSeconds(20)),      // 먼저 도착
-                event("b", "NOT_PROCESSED", "PAID", T0.plusSeconds(10)));  // 나중 도착, 먼저 발생
+                event("c", "PAID", "PROCESSING", T0.plusSeconds(20)),      // 먼저 도착 ／ [JA] 先に到着
+                event("b", "NOT_PROCESSED", "PAID", T0.plusSeconds(10)));  // 나중 도착, 먼저 발생 ／ [JA] 後で到着、先に発生
 
         assertThat(t.getStatus()).isEqualTo("PROCESSING");
         assertThat(t.getEntries()).extracting(OrderTimelineEntry::getStatus).containsExactly("PAID", "PROCESSING");

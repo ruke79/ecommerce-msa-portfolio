@@ -6,9 +6,16 @@
  *
  * <p>⚠️ 예전에 영어로 하드코딩돼 있던 문구(로그인·가입 화면 등)는 한국어 화면이 달라지지 않도록 <b>원래 글자 그대로</b>
  * 옮겼다 — 기존 테스트가 그 글자를 찾는다. 한국어로 다듬을 때는 테스트도 같이 고친다.
+ *
+ * <p>[JA] 韓国語文言 — 領域 "user"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ko.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
+ * ⚠️ 以前英語でハードコードされていた文言(ログイン・登録画面など)は韓国語画面が変わらないよう <b>元の文字のまま</b>
+ * 移した — 既存テストがその文字を探す。韓国語に整えるときはテストも一緒に直す。
  */
 const user = {
     // ── 로그인·가입·비밀번호 찾기 공통 ────────────────────────────────
+    // [JA] ── ログイン・登録・パスワード再設定 共通 ──
     "user.terms_notice": "계속하면 {{brand}} 의 이용약관과 개인정보 처리방침에 동의하는 것으로 봅니다.",
     "user.already_have_account": "이미 계정이 있으신가요?",
     "user.signin_link": "로그인",
@@ -19,6 +26,7 @@ const user = {
     "user.validation.password_max": "비밀번호는 {{max}}자를 넘을 수 없습니다.",
 
     // 입력란 이름표(LoginInput)
+    // [JA] 入力欄のラベル(LoginInput)
     "user.input.email": "이메일",
     "user.input.password": "비밀번호",
     "user.input.confirm_password": "비밀번호 확인",
@@ -27,6 +35,7 @@ const user = {
     "user.input.full_name": "이름",
 
     // ── 로그인 ──────────────────────────────────────────────────────────
+    // [JA] ── ログイン ──
     "user.signin.heading": "로그인",
     "user.signin.submit": "로그인",
     "user.signin.email_placeholder": "이메일 주소를 입력해 주세요",
@@ -83,6 +92,7 @@ const user = {
     "profile.passkeys.delete": "삭제",
 
     // ── 회원가입 ────────────────────────────────────────────────────────
+    // [JA] ── 会員登録 ──
     "user.register.heading": "회원가입",
     "user.register.submit": "가입하기",
     "user.register.name_placeholder": "이름",
@@ -99,10 +109,12 @@ const user = {
     "user.register.password_mismatch": "비밀번호가 일치하지 않습니다.",
 
     // ── 비밀번호 찾기 ───────────────────────────────────────────────────
+    // [JA] ── パスワード再設定 ──
     "user.forgot.heading": "비밀번호 찾기",
     "user.forgot.submit": "링크 보내기",
 
     // ── 프로필 탭(문서 제목·주문·결제수단·보안) ─────────────────────────
+    // [JA] ── プロフィールタブ(文書タイトル・注文・決済手段・セキュリティ) ──
     "profile.doc_title": "{{name}} — 프로필",
     "profile.addresses.doc_title": "{{name}} — 배송지",
     "profile.payment.doc_title": "{{email}} — 결제수단",
@@ -143,6 +155,7 @@ const user = {
     "profile.security.sms2fa.too_many": "잠시 후 다시 시도해 주세요.",
     "profile.security.sms2fa.failed": "처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
     // 2단계 인증 복구 코드(user-service docs/57 §22)
+    // [JA] 2 段階認証の復旧コード(user-service docs/57 §22)
     "profile.security.recovery.title": "복구 코드",
     "profile.security.recovery.remaining": "남은 코드 {{count}}개",
     "profile.security.recovery.intro": "인증 앱이나 휴대폰을 잃었을 때 로그인 2단계 대신 쓰는 1회용 코드입니다. 새로 만들면 이전 코드는 모두 쓸 수 없게 됩니다.",
@@ -153,6 +166,7 @@ const user = {
     "profile.security.recovery.failed": "복구 코드를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.",
 
     // ── 내 등급 ─────────────────────────────────────────────────────────
+    // [JA] ── 自分のランク ──
     "profile.tier.title": "내 등급",
     "profile.tier.error": "등급 정보를 불러오지 못했습니다.",
     "profile.tier.amount": "{{amount}}원",
@@ -164,6 +178,7 @@ const user = {
     "profile.tier.gold": "골드 {{amount}} 이상",
     "profile.tier.vip": "VIP {{amount}} 이상",
     // "등급은 <b>하루에 한 번</b> 다시 매겨집니다 (마지막 갱신 …). 오늘 주문한 …" — 굵은 글씨 때문에 조각으로 나눈다.
+    // [JA] 「ランクは <b>一日一回</b> 付け直されます(最終更新 …)。今日注文した …」 — 太字のため断片に分ける。
     "profile.tier.refresh_before": "등급은 ",
     "profile.tier.refresh_bold": "하루에 한 번",
     "profile.tier.refresh_after": " 다시 매겨집니다",
@@ -171,6 +186,7 @@ const user = {
     "profile.tier.refresh_tail": ". 오늘 주문한 금액은 내일부터 반영됩니다.",
 
     // ── 로그인 기기 ─────────────────────────────────────────────────────
+    // [JA] ── ログイン端末 ──
     "profile.devices.title": "로그인 기기",
     "profile.devices.intro": "최근에 로그인한 기기입니다. 모르는 기기가 있다면 ",
     "profile.devices.intro_bold": "비밀번호를 바로 변경해 주세요.",
@@ -192,6 +208,7 @@ const user = {
     "profile.sessions.done": "모든 기기에서 로그아웃되었습니다.",
 
     // ── 회원 탈퇴 ───────────────────────────────────────────────────────
+    // [JA] ── 会員退会 ──
     "profile.withdrawal.title": "회원 탈퇴",
     "profile.withdrawal.request_failed": "탈퇴를 신청하지 못했습니다. 비밀번호를 확인해 주세요.",
     "profile.withdrawal.cancel_failed": "탈퇴를 취소하지 못했습니다.",
@@ -215,6 +232,7 @@ const user = {
     "profile.withdrawal.submit": "탈퇴 신청",
 
     // ── 알림 ────────────────────────────────────────────────────────────
+    // [JA] ── 通知 ──
     "notification.title": "알림",
     "notification.aria_unread": "알림 {{count}}건 (읽지 않음)",
     "notification.read_all": "모두 읽음",
@@ -229,6 +247,7 @@ const user = {
     "notification.hours_ago": "{{count}}시간 전",
 
     // ── 휴대폰 인증(SMS) ────────────────────────────────────────────────
+    // [JA] ── 携帯電話認証(SMS) ──
     "notification.sms.title": "휴대폰 인증",
     "notification.sms.sent": "{{phone}} 로 인증번호를 보냈습니다 ({{minutes}}분 유효)",
     "notification.sms.done": "인증이 완료되었습니다",
@@ -246,6 +265,7 @@ const user = {
     "notification.sms.resend": "인증번호 재전송",
 
     // ── 채팅 ────────────────────────────────────────────────────────────
+    // [JA] ── チャット ──
     "chat.connecting": "채팅 서버에 연결하는 중입니다...",
     "chat.send": "보내기",
     "chat.rooms.title": "채팅방",

@@ -17,10 +17,12 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
     
     // --- 비관적 잠금 적용 ---
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
     Optional<PasswordResetToken> findByToken(String token);
 
     // --- 낙관적 잠금 적용 ---
     //@Lock(LockModeType.OPTIMISTIC)
+    // [JA] --- 楽観ロックの適用 ---
     Optional<PasswordResetToken> findByUser(User user);
 
     /**
@@ -36,6 +38,7 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
     void deleteAllExpiredSince(java.time.Instant now);
 
     /** 회원 탈퇴 최종 처리용. 살아 있는 재설정 토큰을 남기면 지워진 계정의 비밀번호를 바꿀 수 있다. */
+    // [JA] 会員退会の最終処理用。生きている再設定トークンを残すと、削除されたアカウントのパスワードを変えられる。
     @org.springframework.transaction.annotation.Transactional
     @Modifying(clearAutomatically = true)
     @Query("delete from PasswordResetToken t where t.user.userId = :userId")

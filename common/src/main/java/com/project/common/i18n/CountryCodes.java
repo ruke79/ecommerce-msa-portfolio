@@ -35,6 +35,16 @@ import java.util.Map;
  *
  * <p><b>모르면 null 이다.</b> 부르는 쪽이 정한다 — 배송은 발송국으로 보고 계속 만든다.
  * 나라 이름 한 칸 때문에 주문이 멈추는 일은 다시 없어야 한다.
+ *
+ * <p>[JA] 国の表記を <b>ISO 3166-1 alpha-2</b> に変える。
+ * 🐛 決済が丸ごと DLT に行った — 2 文字カラムに "Korea, Republic of" を入れたため: 住所入力フォームは国を<b>名前</b>で保存する({@code SingularSelect} が
+ * {@code option.name} を値に使う)。配送テーブルの {@code country} は逆に<b>ISO コード</b>なので {@code varchar(2)} である。決済が終わり配送を作ろうとした瞬間
+ * "value too long for type character varying(2)" で落ちた。そしてその例外は配送一つではなく<b>決済イベント全体</b>を再試行の末に DLT へ送った。画面には
+ * 「配送準備中」だけが出ていて、国名一つのせいで配送が永遠に作られないことを誰も知り得なかった。同じ名前の二つの値が実は別物だった — 一つは<b>人が読む表記</b>、一つは<b>コード</b>。
+ * どう解くか: JDK の {@link Locale} データを索引にする — alpha-2、alpha-3、英語 · 韓国語の表示名。それだけでは足りない。JDK は CLDR 基準で {@code KR} を
+ * "South Korea" と呼ぶが、フォームのリストは ISO 公式表記の "Korea, Republic of" を使う。だから<b>実測で</b>解けないものだけ別名で埋めた({@code CountryCodesTest} が
+ * フォームのリスト全体を実際に突き合わせる)。突き合わせは句読点 · 空白 · 大文字小文字 · アクセントを消してから行う。"AndorrA", "Viet Nam", "Cote D'Ivoire" のような表記ゆれはこの段階で吸収される。
+ * <b>分からなければ null である。</b>呼ぶ側が決める — 配送は発送国とみなして作成を続ける。国名一つのせいで注文が止まることは二度とあってはならない。
  */
 public final class CountryCodes {
 
@@ -42,6 +52,9 @@ public final class CountryCodes {
      * JDK 의 CLDR 표기와 다른 이름들. <b>손으로 고른 것이 아니라</b>, 주소 폼의 목록
      * (frontend/src/components/checkout/countries.jsx) 245개를 전부 돌려 안 풀린 것만 적었다.
      * 목록이 바뀌면 {@code CountryCodesTest} 가 먼저 빨개진다.
+     *
+     * <p>[JA] JDK の CLDR 表記と違う名前。<b>手で選んだのではなく</b>、住所フォームのリスト(frontend/src/components/checkout/countries.jsx)245 個をすべて回して
+     * 解けなかったものだけを書いた。リストが変われば {@code CountryCodesTest} が先に赤くなる。
      */
     private static final String[][] ALIASES = {
         {"Korea, Republic of", "KR"},
@@ -81,6 +94,7 @@ public final class CountryCodes {
         {"대한민국", "KR"},
         {"한국", "KR"},
         // 사람이 손으로 쓸 때의 표기. 폼 목록에는 없지만 옛 주소·다른 경로로 들어온다.
+        // [JA] 人が手で書くときの表記。フォームのリストにはないが、古い住所 · 他の経路から入ってくる。
         {"Republic of Korea", "KR"},
         {"Korea, South", "KR"},
         {"Korea (South)", "KR"},
@@ -91,6 +105,7 @@ public final class CountryCodes {
         {"DPRK", "KP"},
 
         // JDK 가 다르게 부르는 것들
+        // [JA] JDK が違う呼び方をするもの
         {"Congo", "CG"},                                    // CLDR: Congo - Brazzaville
         {"Czech Republic", "CZ"},                           // CLDR: Czechia
         {"Hong Kong", "HK"},                                // CLDR: Hong Kong SAR China
@@ -100,6 +115,7 @@ public final class CountryCodes {
         {"South Georgia and the South Sandwich Islands", "GS"},
 
         // "Saint" 와 "St." — 줄임말을 일반 규칙으로 풀면 다른 이름까지 건드린다. 나라는 몇 개뿐이니 적어 둔다.
+        // [JA] "Saint" と "St." — 略語を一般規則で解くと他の名前まで触ってしまう。国は数個だけなので書いておく。
         {"Saint Kitts and Nevis", "KN"},
         {"Saint Lucia", "LC"},
         {"Saint Pierre and Miquelon", "PM"},
@@ -107,11 +123,13 @@ public final class CountryCodes {
 
         // 폐지된 코드. ISO 목록에는 없지만 폼에 남아 있고, 옛 주소에도 저장돼 있다.
         // 두 글자라 컬럼에는 들어간다 — 알아보지 못해 발송국으로 떨어지는 것보다 낫다.
+        // [JA] 廃止されたコード。ISO のリストにはないがフォームに残っており、古い住所にも保存されている。
+        //      2 文字なのでカラムには入る — 認識できず発送国に落ちるよりよい。
         {"Netherlands Antilles", "AN"},
         {"Serbia and Montenegro", "CS"},
     };
 
-    /** 정규화한 표기 → alpha-2. 불변이며 클래스 로딩 때 한 번만 만든다. */
+    /** 정규화한 표기 → alpha-2. 불변이며 클래스 로딩 때 한 번만 만든다. ／ [JA] 正規化した表記 → alpha-2。不変でクラスロード時に一度だけ作る。 */
     private static final Map<String, String> INDEX = buildIndex();
 
     private CountryCodes() {
@@ -120,19 +138,21 @@ public final class CountryCodes {
     private static Map<String, String> buildIndex() {
         Map<String, String> index = new HashMap<>();
         for (String code : Locale.getISOCountries()) {
-            @SuppressWarnings("deprecation")   // Locale.of 는 Java 19+ 다. 이 모듈은 17 을 쓴다.
+            @SuppressWarnings("deprecation")   // Locale.of 는 Java 19+ 다. 이 모듈은 17 을 쓴다. ／ [JA] Locale.of は Java 19+ である。このモジュールは 17 を使う。
             Locale locale = new Locale("", code);
             put(index, code, code);
             try {
                 put(index, locale.getISO3Country(), code);
             } catch (Exception ignored) {
                 // alpha-3 이 없는 코드가 있다. 그 항목만 건너뛴다.
+                // [JA] alpha-3 がないコードがある。その項目だけ飛ばす。
             }
             put(index, locale.getDisplayCountry(Locale.ENGLISH), code);
             put(index, locale.getDisplayCountry(Locale.KOREAN), code);
             put(index, locale.getDisplayCountry(Locale.JAPANESE), code);
         }
         // 별칭이 우선한다 — 표시명이 겹칠 때 ISO 공식 표기 쪽을 믿는다.
+        // [JA] 別名が優先する — 表示名が重なるとき ISO 公式表記の側を信じる。
         for (String[] alias : ALIASES) {
             index.put(normalize(alias[0]), alias[1]);
         }
@@ -149,6 +169,8 @@ public final class CountryCodes {
     /**
      * @param raw 코드("KR"·"KOR")든 이름("Korea, Republic of"·"대한민국")이든
      * @return ISO 3166-1 alpha-2, 알아보지 못하면 {@code null}
+     *
+     * <p>[JA] raw: コード("KR" · "KOR")でも名前("Korea, Republic of" · "대한민국")でも。戻り値: ISO 3166-1 alpha-2、認識できなければ {@code null}。
      */
     public static String toAlpha2(String raw) {
         if (raw == null) {
@@ -163,6 +185,9 @@ public final class CountryCodes {
      *
      * <p>배송처럼 <b>멈추면 안 되는</b> 흐름이 쓴다. 나라를 잘못 짚으면 통관 단계가 어긋나는
      * 정도지만, 여기서 예외를 던지면 결제 이벤트가 통째로 DLT 로 간다 — 실제로 그랬다.
+     *
+     * <p>[JA] 認識できなければ {@code fallback} を返す。
+     * 配送のように<b>止まってはならない</b>流れが使う。国を取り違えると通関段階がずれる程度だが、ここで例外を投げると決済イベントが丸ごと DLT に行く — 実際にそうなった。
      */
     public static String toAlpha2OrDefault(String raw, String fallback) {
         String code = toAlpha2(raw);
@@ -175,6 +200,10 @@ public final class CountryCodes {
      * <p>{@code &} 는 지우기 전에 {@code and} 로 바꾼다. JDK 는 "Antigua &amp; Barbuda" 라 쓰고 폼의
      * 목록은 "Antigua and Barbuda" 라 쓰는데, 그냥 지우면 두 글자가 달라져 안 맞는다 —
      * 실측에서 이 한 가지로 18개 중 12개가 걸렸다.
+     *
+     * <p>[JA] 大文字小文字 · 空白 · 句読点 · アクセントを消した比較用のキー。"Cote D'Ivoire" と "Côte d'Ivoire" が同じになる。
+     * {@code &} は消す前に {@code and} に変える。JDK は "Antigua &amp; Barbuda" と書きフォームのリストは "Antigua and Barbuda" と書くが、単に消すと
+     * 二文字違って合わない — 実測でこの一点だけで 18 個中 12 個が引っかかった。
      */
     private static String normalize(String label) {
         if (label == null) {

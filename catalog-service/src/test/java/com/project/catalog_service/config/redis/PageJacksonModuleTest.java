@@ -44,10 +44,16 @@ import com.project.common.dto.ProductSkuDto;
  * </pre>
  *
  * <p>즉 <b>같은 검색어는 한 번만 동작</b>했다. 실제 ES 를 붙이고 두 번 호출해야만 드러난다.
+ *
+ * <p>[JA] Redis キャッシュが {@code Page} を読み戻せるかを検証する(docs/16 B-27)。
+ * <p>検索結果 DTO は {@code Page<ProductDto>} を持ち、{@code @Cacheable("search_cache")} で Redis に JSON 保存される。{@code PageImpl} には既定コンストラクタも {@code @JsonCreator} もなく
+ * <b>デシリアライズが不可能</b>で、その結果、実際の動作はこうだった: 1 回目の検索はキャッシュミスで正常応答、2 回目はキャッシュヒット → SerializationException → HTTP 500(TTL 60 分のあいだずっと)。
+ * <p>つまり<b>同じ検索語は一回しか動かなかった。</b>実際の ES を付けて二回呼んで初めて現れる。
  */
 class PageJacksonModuleTest {
 
     /** RedisCacheConfig 의 캐시 직렬화기와 동일하게 구성한 매퍼. */
+    // [JA] RedisCacheConfig のキャッシュシリアライザと同じに構成したマッパー。
     private ObjectMapper cacheMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
@@ -82,6 +88,7 @@ class PageJacksonModuleTest {
     void emptyPageSurvivesRoundTrip() throws Exception {
         ObjectMapper mapper = cacheMapper();
         // size 가 0 이면 PageRequest.of 가 IllegalArgumentException 을 던지므로 보정 로직이 필요하다.
+        // [JA] size が 0 だと PageRequest.of が IllegalArgumentException を投げるので補正ロジックが必要である。
         Page<String> original = new PageImpl<>(List.of(), PageRequest.of(0, 20), 0);
 
         Object restored = mapper.readValue(mapper.writeValueAsString(original), Object.class);
@@ -105,10 +112,13 @@ class PageJacksonModuleTest {
         assertThat(restored.getSize()).isEqualTo(10);
         // PageImpl 은 마지막 페이지에서 total 을 offset+content 크기로 보정한다(여기선 21).
         // 왕복 테스트이므로 입력값이 아니라 **원본이 실제로 보고하는 값**과 비교해야 한다.
+        // [JA] PageImpl は最後のページで total を offset+content のサイズに補正する(ここでは 21)。
+        //      往復テストなので、入力値ではなく**元のオブジェクトが実際に報告する値**と比べなければならない。
         assertThat(restored.getTotalElements()).isEqualTo(original.getTotalElements());
     }
 
     /** 트리 노드를 만들 때마다 센다 — 예전 역직렬화기는 페이지 전체를 readTree 로 트리로 만들었다. */
+    // [JA] ツリーノードを作るたびに数える — 以前のデシリアライザはページ全体を readTree でツリーにしていた。
     static final class CountingNodeFactory extends JsonNodeFactory {
         final AtomicInteger made = new AtomicInteger();
 
@@ -126,6 +136,7 @@ class PageJacksonModuleTest {
     }
 
     /** 예전 구현 그대로(트리로 읽은 뒤 원소마다 다시 읽기) — 새 구현이 같은 값을 읽는지 비교하는 기준. */
+    // [JA] 以前の実装そのまま(ツリーで読んだ後、要素ごとに読み直す) — 新しい実装が同じ値を読むかを比べる基準。
     static final class LegacyTreePageModule extends SimpleModule {
         LegacyTreePageModule() {
             addDeserializer(PageImpl.class, new JsonDeserializer<PageImpl<?>>() {

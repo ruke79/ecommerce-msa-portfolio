@@ -22,6 +22,9 @@ import com.project.userservice.model.User;
  * 2FA 비밀은 어떤 응답에도 실리지 않는다(docs/70).
  *
  * <p>🐛 예전: {@code GET /api/admin/getusers} 가 {@code User} 엔티티 목록을 그대로 돌려줘, 모든 사용자의 TOTP 비밀이 JSON 에 있었다.
+ *
+ * <p>[JA] 2FA の秘密はどの応答にも載らない(docs/70)。
+ * 🐛 以前: {@code GET /api/admin/getusers} が {@code User} エンティティの一覧をそのまま返し、全ユーザーの TOTP 秘密が JSON に入っていた。
  */
 @DisplayName("2FA 비밀 — 응답 노출 금지")
 class TotpSecretExposureTest {
@@ -44,12 +47,14 @@ class TotpSecretExposureTest {
     }
 
     /** 컨트롤러가 엔티티를 그대로 돌려주면 @JsonIgnore 하나를 빠뜨리는 순간 새는 구조다. 응답은 DTO 로만. */
+    // [JA] コントローラーがエンティティをそのまま返すと、@JsonIgnore を一つ付け忘れた瞬間に漏れる構造である。応答は DTO だけで。
     @Test
     @DisplayName("🔴 어떤 컨트롤러도 User 엔티티(또는 그 목록)를 응답으로 돌려주지 않는다")
     void noControllerReturnsTheEntity() throws Exception {
         var scanner = new ClassPathScanningCandidateComponentProvider(false);
         scanner.addIncludeFilter(new AnnotationTypeFilter(RestController.class));
         // Role 도 — Role.users 를 따라 모든 사용자가 직렬화된다(예전 /api/admin/roles).
+        // [JA] Role も — Role.users をたどって全ユーザーがシリアライズされる(以前の /api/admin/roles)。
         Pattern entity = Pattern.compile("\\bcom\\.project\\.userservice\\.model\\.(User|Role)\\b(?![A-Za-z0-9_$])");
         List<String> offenders = new ArrayList<>();
         var controllers = scanner.findCandidateComponents("com.project.userservice");

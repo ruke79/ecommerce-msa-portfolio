@@ -17,6 +17,10 @@ import org.springframework.mock.web.server.MockServerWebExchange;
  * 게이트웨이에 적용한 회귀 테스트다. 예전 테스트는 정반대를 고정하고 있었다 —
  * "X-User-Id 가 있으면 user: 키를 쓴다", "XFF 의 첫 IP 로 폴백한다". 둘 다 클라이언트가
  * 요청마다 바꿀 수 있는 값이라, 그 테스트는 우회 경로를 <b>보호</b>하고 있던 셈이다.
+ *
+ * <p>[JA] レートリミッターのバケットキー — <b>クライアントが選べる値はキーになれない。</b> www-security デモのシナリオ 1(X-Forwarded-For スプーフィングで Rate Limit 回避)を
+ * このゲートウェイに適用した回帰テストである。以前のテストは正反対を固定していた — 「X-User-Id があれば user: キーを使う」「XFF の最初の IP にフォールバックする」。
+ * どちらもクライアントがリクエストごとに変えられる値なので、そのテストは回避経路を<b>保護</b>していたことになる。
  */
 class CustomUserKeyResolverTest {
 
@@ -35,6 +39,7 @@ class CustomUserKeyResolverTest {
     @DisplayName("클라이언트가 보낸 X-User-Id 는 키가 되지 않는다 — 요청마다 새 버킷을 만들 수 있었다")
     void spoofedXUserId_isIgnored() {
         // 게이트웨이는 X-User-Id 를 넣지 않는다. 이 헤더가 있다면 클라이언트가 보낸 것이다.
+        // [JA] ゲートウェイは X-User-Id を入れない。このヘッダーがあればクライアントが送ったものだ。
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/x")
                         .header("X-User-Id", "i-pick-a-new-one-each-request")
@@ -51,6 +56,7 @@ class CustomUserKeyResolverTest {
     @DisplayName("X-Forwarded-For 는 무시한다 — 첫 항목은 클라이언트가 보낸 값이다")
     void forwardedFor_isIgnored() {
         // 프록시는 XFF 에 덧붙이지 지우지 않는다. 첫 항목은 클라이언트가 처음 쓴 것.
+        // [JA] プロキシは XFF に追記するだけで消さない。最初の項目はクライアントが最初に書いたもの。
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/x")
                         .header("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
@@ -66,6 +72,8 @@ class CustomUserKeyResolverTest {
     void cloudflareConnectingIp_wins() {
         // 터널 뒤에서는 원격 주소가 항상 cloudflared 파드다. 엣지가 덮어쓰는 이 헤더가
         // 실제 접속 IP 이고, 클라이언트가 같은 이름을 보내도 엣지에서 교체된다.
+        // [JA] トンネルの後ろではリモートアドレスは常に cloudflared のポッドだ。エッジが上書きするこのヘッダーが
+        //      実際の接続 IP で、クライアントが同じ名前を送ってもエッジで置き換えられる。
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/api/x")
                         .header("CF-Connecting-IP", "203.0.113.7")

@@ -51,6 +51,16 @@ import lombok.extern.slf4j.Slf4j;
  * 로컬 계정을 탈취할 수 있다. 구글은 {@code email_verified} 클레임을, 깃허브는
  * {@code /user/emails} 의 {@code verified} 플래그를, 카카오는 {@code is_email_valid}·
  * {@code is_email_verified} 를 확인한다(페이스북·LINE 은 검증된 주소만 내려준다).
+ *
+ * <p>[JA] ソーシャルログインのユーザーロード — プロバイダーの応答をこのリポジトリの User につなぐ。
+ * 以前の版はチュートリアルを移しかけた状態だった: naver/google しか知らず、{@code findByUsername(...).orElseThrow(...)} の後に
+ * {@code if (existData == null)} が来る死んだ分岐(orElseThrow が投げるので絶対に null ではない)があり、新規ユーザーは
+ * {@code new Role(...)} でロール行を**また作り**、enabled・有効期限などのアカウント初期化はすべて抜けていた。
+ * 連携規則: 検証済みのメールアドレスで既存アカウントを探す。同じメールのローカルアカウントがあればそのアカウントでログインされる
+ * (アカウント連携)。メール検証を要求する理由 — プロバイダーが検証していないアドレスを信じると、攻撃者が他人のメールで
+ * ソーシャルアカウントを作りその人のローカルアカウントを乗っ取れる。Google は {@code email_verified} クレームを、GitHub は
+ * {@code /user/emails} の {@code verified} フラグを、Kakao は {@code is_email_valid}・{@code is_email_verified} を確認する
+ * (Facebook・LINE は検証済みのアドレスだけを返す)。
  */
 @Slf4j
 @Service
@@ -61,9 +71,11 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     /** 기존 계정에 연결할 때의 사전 탈취 방어 · 연결 알림(docs/68 §15). */
+    // [JA] 既存アカウントに連携するときの事前乗っ取り防御・連携通知(docs/68 §15)。
     private final SocialAccountLinker socialAccountLinker;
 
     /** 깃허브 폴백 호출의 상한 — 로그인 스레드가 프로바이더에 묶이지 않게. */
+    // [JA] GitHub フォールバック呼び出しの上限 — ログインスレッドがプロバイダーに縛られないように。
     static final Duration GITHUB_TIMEOUT = Duration.ofSeconds(3);
 
     /**
@@ -94,13 +106,19 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
      * 프로바이더가 준 속성으로 이 저장소의 사용자를 찾거나 만든다 — OAuth2 경로(loadUser)와 OIDC 경로
      * ({@link CustomOidcUserService}, 구글·LINE)가 <b>같은 규칙</b>을 쓰게 하는 한 곳이다.
      *
+     * <p>[JA] プロバイダーが渡した属性でこのリポジトリのユーザーを探すか作る — OAuth2 経路(loadUser)と OIDC 経路
+     * ({@link CustomOidcUserService}, Google・LINE)が同じ規則を使うための一か所である。
+     *
      * @param attributes OAuth2 는 userinfo 응답, OIDC 는 ID 토큰과 userinfo 를 합친 클레임
+     *     [JA] OAuth2 は userinfo の応答、OIDC は ID トークンと userinfo を合わせたクレーム
      */
     public CustomOAuth2User resolve(String registrationId, Map<String, Object> attributes, String accessToken) {
         OAuth2Response response = switch (registrationId) {
             case "google" -> {
                 // 검증 안 된 구글 계정은 거의 없지만, 클레임이 있는데 확인하지 않는 것은
                 // 계정 연결 규칙(클래스 주석)에 대한 태만이다.
+                // [JA] 未検証の Google アカウントはほとんどないが、クレームがあるのに確認しないのは
+                //      アカウント連携規則(クラスのコメント)に対する怠慢である。
                 Object verified = attributes.get("email_verified");
                 if (verified != null && !Boolean.parseBoolean(verified.toString())) {
                     throw error("unverified_email", "구글 계정의 이메일이 검증되지 않았습니다.");
@@ -110,10 +128,12 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
             case "github" -> new GithubResponse(attributes);
             case "facebook" -> new FacebookResponse(attributes);
             // LINE 은 OIDC 로만 온다 — 이메일은 ID 토큰의 email 클레임(채널에 이메일 권한 승인이 있어야 실린다).
+            // [JA] LINE は OIDC でのみ来る — メールアドレスは ID トークンの email クレーム(チャネルにメール権限の承認があってはじめて載る)。
             case "line" -> new LineResponse(attributes);
             case "kakao" -> {
                 KakaoResponse kakao = new KakaoResponse(attributes);
                 // 이메일이 없으면 아래의 email_required 로 떨어진다. 있는데 검증되지 않았으면 여기서 거절한다.
+                // [JA] メールアドレスがなければ下の email_required に落ちる。あるのに未検証ならここで拒否する。
                 if (kakao.getEmail() != null && !kakao.isEmailVerified()) {
                     throw error("unverified_email", "카카오 계정의 이메일이 인증되지 않았습니다.");
                 }
@@ -128,6 +148,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         }
         if (email == null || email.isBlank()) {
             // 이 저장소의 사용자 식별자는 이메일이다 — 없으면 만들 수도 연결할 수도 없다.
+            // [JA] このリポジトリのユーザー識別子はメールアドレスである — なければ作ることも連携することもできない。
             throw error("email_required",
                     "프로바이더가 이메일을 주지 않았습니다. 계정의 이메일 공개 설정을 확인하세요.");
         }
@@ -138,6 +159,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         } else {
             log.info("소셜 로그인 → 기존 계정 연결. provider={}, userId={}", registrationId, user.getUserId());
             // 🔒 주소가 확인된 적 없는 비밀번호 계정이면 그 비밀번호를 해제한다 — 남의 주소로 먼저 가입해 둔 사람이 들어오지 못하게.
+            // [JA] 🔒 アドレスが確認されたことのないパスワードアカウントなら、そのパスワードを解除する — 他人のアドレスで先に登録しておいた人が入れないように。
             user = socialAccountLinker.link(user, registrationId);
         }
 
@@ -148,12 +170,16 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
     /**
      * 프로바이더의 userinfo 를 실제로 가져오는 부분 — 테스트가 갈아 끼우는 이음새다.
      * {@code super.loadUser} 는 실 HTTP 호출이라 스텁할 수 없다.
+     *
+     * <p>[JA] プロバイダーの userinfo を実際に取得する部分 — テストが差し替える継ぎ目である。
+     * {@code super.loadUser} は実際の HTTP 呼び出しなのでスタブできない。
      */
     OAuth2User loadUserFromProvider(OAuth2UserRequest userRequest) {
         return super.loadUser(userRequest);
     }
 
     /** users.username · users.name 의 길이(varchar(20), V2). */
+    // [JA] users.username・users.name の長さ(varchar(20), V2)。
     static final int USERNAME_MAX = 20;
 
     /**
@@ -176,13 +202,14 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                     .digest(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             long bits = java.nio.ByteBuffer.wrap(h, 0, 8).getLong();
             String prefix = provider.length() > 6 ? provider.substring(0, 6) : provider;
-            return prefix + "_" + Long.toUnsignedString(bits, 36);   // 최대 6 + 1 + 13 = 20자
+            return prefix + "_" + Long.toUnsignedString(bits, 36);   // 최대 6 + 1 + 13 = 20자 ／ [JA] 最大 6 + 1 + 13 = 20 文字
         } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다
+            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다 ／ [JA] SHA-256 はすべての JVM にある
         }
     }
 
     /** 표시 이름 — 컬럼(20자)에 맞게 자른다. 서로게이트 쌍(이모지)을 반으로 자르지 않는다. */
+    // [JA] 表示名 — カラム(20 文字)に合わせて切る。サロゲートペア(絵文字)を半分に切らない。
     static String cap(String value, int max) {
         if (value == null || value.codePointCount(0, value.length()) <= max) {
             return value;
@@ -197,9 +224,13 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
 
         // username 은 유일해야 한다. 소셜 사용자는 provider_providerId — 사람이 고른
         // 이름과 절대 충돌하지 않는 형태다. 20자를 넘으면 줄인다(socialUsername).
+        // [JA] username は一意でなければならない。ソーシャルユーザーは provider_providerId — 人が選んだ
+        //      名前と絶対に衝突しない形である。20 文字を超えれば縮める(socialUsername)。
         User user = new User(socialUsername(response.getProvider(), response.getProviderId()), email,
                 // 비밀번호 로그인 경로를 확실히 잠근다. null 로 두면 BCrypt matches 가
                 // 예외를 던지는 애매한 상태가 된다 — 아무도 모르는 난수를 넣는다.
+                // [JA] パスワードログインの経路を確実にロックする。null にしておくと BCrypt の matches が
+                //      例外を投げる曖昧な状態になる — 誰も知らない乱数を入れる。
                 passwordEncoder.encode(UUID.randomUUID().toString()));
         user.setName(cap(response.getName(), USERNAME_MAX));
         user.setRole(role);
@@ -207,6 +238,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         user.setAccountNonExpired(true);
         user.setCredentialsNonExpired(true);
         // 프로바이더가 이메일을 검증했으므로 메일 인증 게이트를 다시 세우지 않는다.
+        // [JA] プロバイダーがメールアドレスを検証したので、メール認証ゲートを立て直さない。
         user.setEnabled(true);
         user.setEmailVerified(true);
         user.setCredentialsExpiryDate(LocalDate.now().plusYears(1));
@@ -221,6 +253,9 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
     /**
      * 깃허브 프로필 이메일이 비공개인 계정의 폴백 — {@code /user/emails} 에서
      * primary+verified 주소를 찾는다(user:email scope 로 받은 토큰이 필요하다).
+     *
+     * <p>[JA] GitHub プロフィールのメールが非公開のアカウントのフォールバック — {@code /user/emails} から primary+verified のアドレスを
+     * 探す(user:email scope で受け取ったトークンが必要)。
      */
     String fetchGithubPrimaryEmail(String accessToken) {
         try {
@@ -241,6 +276,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                     .findFirst().orElse(null);
         } catch (RuntimeException e) {
             // 🔒 예외 원문은 남기지 않는다 — 깃허브 응답 본문 · 요청 URL 에 이메일 주소가 섞여 로그(Loki)에 남는다(//    notification 의 N-H2 와 같은 결함). 종류만으로 충분하다 — 어차피 폴백 실패는 email_required 로 끝난다.
+            // [JA] 🔒 例外の原文は残さない — GitHub の応答本文・リクエスト URL にメールアドレスが混ざってログ(Loki)に残る(notification の N-H2 と同じ欠陥)。種類だけで十分である — どのみちフォールバック失敗は email_required で終わる。
             log.warn("깃허브 이메일 조회 실패 — {}", e.getClass().getSimpleName());
             return null;
         }
@@ -253,6 +289,9 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
     /**
      * 깃허브 폴백으로 얻은 이메일을 응답에 덧입힌다 — 원본 파서는 null 을 돌려줬지만
      * 이후 로직(성공 핸들러의 사용자 조회)은 확정된 이메일이 필요하다.
+     *
+     * <p>[JA] GitHub フォールバックで得たメールアドレスを応答に重ねる — 元のパーサーは null を返したが、その後のロジック(成功ハンドラーの
+     * ユーザー照会)は確定したメールアドレスを必要とする。
      */
     private record ResolvedResponse(OAuth2Response delegate, String email) implements OAuth2Response {
         @Override

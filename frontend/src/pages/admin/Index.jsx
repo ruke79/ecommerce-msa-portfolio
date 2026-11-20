@@ -44,16 +44,22 @@ const initialState = {
 };
 
 // 초안 저장 키. 이미지 없이 텍스트 필드만 저장된다(formDraft.js 주석 참조).
+// [JA] 下書きの保存キー。画像なしでテキストフィールドだけが保存される(formDraft.js のコメント参照)。
 const DRAFT_KEY = "admin-product-draft";
 
 /**
  * 실패를 화면 문구로. 컴포넌트 밖에 두어 effect 의 의존성이 되지 않게 한다 — 안에 두고 t 를 쓰면
  * 언어를 바꿀 때마다 effect 가 다시 돌아 요청이 또 나간다. 실패한 <b>그 순간</b>의 언어로 만든다.
+ *
+ * <p>[JA] 失敗を画面の文言に。コンポーネントの外に置いて effect の依存にならないようにする — 中に置いて t を使うと、
+ * 言語を変えるたびに effect が再実行されリクエストがまた出る。失敗した<b>その瞬間</b>の言語で作る。
  */
 const describeError = (e, fallbackKey) =>
     e?.response?.status === 429
         // 게이트웨이 레이트리미터(burst 40 · 초당 20)다. 예전에는 이 화면이
         // 키 입력마다 요청을 보내서 429 가 쉽게 났고, 아무도 처리하지 않았다.
+        // [JA] ゲートウェイのレートリミッター(burst 40 · 毎秒 20)である。以前はこの画面が
+        //      キー入力ごとにリクエストを送っていたので 429 が出やすく、誰も処理していなかった。
         ? translate("admin.index.rate_limited")
         : (e?.response?.data?.message ?? translate(fallbackKey));
 
@@ -61,6 +67,7 @@ const AdminProduct = () => {
     const { t } = useTranslation();
     const [parents, setParents] = useState([]);
     // 초안이 있으면 그걸로 시작한다 — 긴 폼이 새로고침 한 번에 날아가던 것을 지킨다.
+    // [JA] 下書きがあればそれで始める — 長いフォームが一度のリロードで消えていたのを守る。
     const [product, setProduct] = useState(() => {
         const draft = loadDraft(DRAFT_KEY);
         return draft ? { ...initialState, ...draft, images: [] } : initialState;
@@ -74,6 +81,8 @@ const AdminProduct = () => {
 
     // 입력할 때마다 초안을 갱신한다. 폼이 초기 상태로 돌아가면(등록 성공 후 리셋)
     // 초안도 지운다 — 안 지우면 다음 방문 때 "지난 초안" 이라며 빈 폼이 복구된다.
+    // [JA] 入力のたびに下書きを更新する。フォームが初期状態に戻ったら(登録成功後のリセット)
+    //      下書きも消す — 消さないと次の訪問時に「前回の下書き」として空のフォームが復元される。
     useEffect(() => {
         if (JSON.stringify(product) === JSON.stringify(initialState)) {
             clearDraft(DRAFT_KEY);
@@ -85,9 +94,13 @@ const AdminProduct = () => {
     // 요청이 실패했을 때 화면에 보여줄 것. 예전에는 세 effect 의 async 함수에 catch 가
     // 하나도 없어서, 실패는 콘솔의 "처리되지 않은 거절"로만 남고 화면은 그대로였다 —
     // 관리자는 목록이 비어 있는 것이 장애인지 데이터가 없는 건지 알 수 없었다.
+    // [JA] リクエストが失敗したときに画面に見せるもの。以前は三つの effect の async 関数に catch が
+    //      一つもなく、失敗はコンソールの「未処理の拒否」としてだけ残り画面はそのままだった —
+    //      管理者は一覧が空なのが障害なのかデータがないのか分からなかった。
     const [loadError, setLoadError] = useState("");
 
     // 부모 상품 목록과 카테고리 목록은 **마운트 때 한 번**이면 된다.
+    // [JA] 親商品一覧とカテゴリ一覧は**マウント時に一度**でよい。
     useEffect(() => {
         let cancelled = false;
 
@@ -106,6 +119,8 @@ const AdminProduct = () => {
 
         // loadCategories 는 예전에 아래 effect 안에 있었다 — product.category 와
         // product.name 이 바뀔 때마다 카테고리 전체를 다시 받았다는 뜻이다.
+        // [JA] loadCategories は以前下の effect の中にあった — product.category と
+        //      product.name が変わるたびにカテゴリ全体を受け直していたということである。
         loadCategories(setCategories);
 
         return () => { cancelled = true; };
@@ -127,6 +142,9 @@ const AdminProduct = () => {
                  * effect 가 만들어질 때 닫힌 **오래된 값**이다. 응답이 오는 사이 관리자가
                  * 입력한 내용이 그 낡은 스냅샷으로 덮였다 — 타이핑하던 글자가 사라진다.
                  * 함수형 갱신은 항상 최신 상태를 받는다.
+                 *
+                 * <p>[JA] 🐛 以前は `setProduct({ ...product, ... })` だった。`product` はこの effect が作られたときに閉じ込められた**古い値**である。
+                 * 応答が来る間に管理者が入力した内容がその古いスナップショットで上書きされた — 打っていた文字が消える。関数型更新は常に最新の状態を受け取る。
                  */
                 setProduct((prev) => ({
                     ...prev,
@@ -158,6 +176,10 @@ const AdminProduct = () => {
      * 처리되지 않아 서브카테고리 목록이 조용히 비었다.
      *
      * 서브카테고리는 <b>카테고리</b>에만 달려 있다. 이름과는 아무 관계가 없다.
+     *
+     * <p>[JA] 🐛 依存に `product.name` が入っていた。そのため<b>商品名を一文字打つたびに</b>サブカテゴリ照会(そして以前はカテゴリ全体の照会まで)が
+     * 再び出ていた。名前が 20 文字ならリクエスト 20 回である。ゲートウェイのレートリミッターが burst 40 · 毎秒 20 なので速く打つと 429 になり、
+     * 429 はどこでも処理されずサブカテゴリ一覧が静かに空になった。サブカテゴリは<b>カテゴリ</b>にだけ依存する。名前とは何の関係もない。
      */
     useEffect(() => {
         if (!product.category) {
@@ -193,6 +215,7 @@ const AdminProduct = () => {
         <>
             {/* 이미지 업로드가 죽어 있으면 폼을 채우기 전에 알려 준다 — 등록은 전부
                 이미지에 걸려 있고, 실패는 제출 뒤에야 나타난다. */}
+            {/* [JA] 画像アップロードが死んでいればフォームを埋める前に知らせる — 登録はすべて画像にかかっており、失敗は送信後にしか現れない。 */}
             <div className="px-4 pt-4">
                 <StorageHealthBanner />
                 {loadError && (

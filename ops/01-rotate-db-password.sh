@@ -9,6 +9,15 @@
 #     ./ops/01-rotate-db-password.sh
 #   (새 비밀번호는 안전하게 프롬프트로 입력받는다. NEW_PASSWORD env로도 주입 가능)
 #   DRY_RUN=1  → 실제 변경 없이 수행할 명령만 출력
+# [JA] 運用アクション ① — DB パスワードのローテーション(docs/13 §1 ランブックの実行版)
+#
+#      背景: 以前のコミットで DB パスワードが平文で露出し、git 履歴に永久に残っている。
+#            ファイルから消したのは再発防止にすぎない — 唯一の実質的な解決はこのローテーションである。
+#
+#      使い方:
+#        PGHOST=<DBホスト> PGPORT=5435 PGADMIN_USER=postgres TARGET_ROLE=product ./ops/01-rotate-db-password.sh
+#        (新しいパスワードはプロンプトで安全に入力する。NEW_PASSWORD env でも注入できる)
+#        DRY_RUN=1  → 実際には変更せず、実行するコマンドだけ出力
 set -euo pipefail
 
 PGHOST="${PGHOST:?PGHOST 를 지정하세요 (예: localhost)}"
@@ -34,11 +43,16 @@ else
     # ⚠️ SQL 은 stdin 으로 넘긴다 — psql 의 -v 변수 치환은 stdin/-f 로 읽는 스크립트에서만
     # 동작하고 -c 명령 문자열에서는 동작하지 않는다. (-c 로 쓰면 리터럴 ':' 로 남아
     # 'syntax error at or near ":"' 가 난다. 컨테이너 리허설에서 실제로 잡힌 버그다.)
+    # [JA] :'var' バインディングでシェルエスケープ/SQL インジェクションなしに安全に渡す。
+    #      ⚠️ SQL は stdin で渡す — psql の -v 変数置換は stdin/-f で読むスクリプトでのみ
+    #      動作し、-c のコマンド文字列では動作しない(-c で書くとリテラルの ':' のまま残り
+    #      'syntax error at or near ":"' になる。コンテナのリハーサルで実際に捕まったバグである)。
     psql -h "$PGHOST" -p "$PGPORT" -U "$PGADMIN_USER" -v ON_ERROR_STOP=1 \
          -v role="$TARGET_ROLE" -v pw="$NEW_PASSWORD" \
          <<< "ALTER ROLE :\"role\" WITH PASSWORD :'pw';"
     echo "OK: 비밀번호 변경 완료"
     # 새 비밀번호로 로그인 검증
+    # [JA] 新しいパスワードでログインを検証
     PGPASSWORD="$NEW_PASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$TARGET_ROLE" -d postgres -tAc "SELECT 1" >/dev/null \
         && echo "OK: 새 비밀번호 로그인 검증 성공"
 fi

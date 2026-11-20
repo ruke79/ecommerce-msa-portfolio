@@ -20,11 +20,17 @@ import com.project.common.dto.order.OrderShippingDto;
  *
  * <p>사설 CA 는 JVM 기본 트러스트스토어로 신뢰한다(k8s/48 의 {@code JAVA_TOOL_OPTIONS}).
  * Feign 은 {@code server.ssl}·{@code eureka.client.tls} 와 달리 그 기본값을 쓴다.
+ *
+ * <p>[JA] 注文の配送スナップショット(受取人・住所・品目)を order-service に問い合わせる。
+ * <p>決済完了イベント({@code payment} トピック)には住所がない。配送に必要なものは注文の持ち主が持っているので直接問い合わせる — user-service の等級バッチが購入集計を問い合わせるのと同じ形だ。
+ * <p>🔒 <b>リクエストヘッダー転送インターセプターを付けない。</b>この呼び出しは Kafka リスナースレッドで起きるので転送する HTTP リクエスト自体がなく、ゲートウェイを通らないので {@code User-*} ヘッダーも付かない。order-service はその状態を「内部呼び出し」と読む({@code InternalCallGuard})。身元ヘッダーを載せた瞬間、管理者でないという理由で 403 になる。
+ * <p>私設 CA は JVM のデフォルトトラストストアで信頼する(k8s/48 の {@code JAVA_TOOL_OPTIONS})。Feign は {@code server.ssl}・{@code eureka.client.tls} と違いそのデフォルトを使う。
  */
 @FeignClient(name = "order-service", url = "${feign.order-url}")
 public interface OrderServiceClient {
 
     /** 없는 주문이면 404 → {@code FeignException.NotFound}. */
+    // [JA] 存在しない注文なら 404 → {@code FeignException.NotFound}。
     @GetMapping("api/order/internal/orders/{orderId}/shipping")
     OrderShippingDto shipping(@PathVariable("orderId") long orderId);
 }

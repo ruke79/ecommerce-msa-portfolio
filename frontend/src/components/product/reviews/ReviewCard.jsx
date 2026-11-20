@@ -19,6 +19,13 @@ import Avatar from "components/common/Avatar";
  *
  * 화면 폭에 따라 같은 버튼이 두 번(모바일/데스크톱) 그려지므로 컴포넌트로 뺀다 — 로직이
  * 두 벌이면 한쪽만 고쳐지는 일이 반드시 생긴다.
+ *
+ * <p>[JA] いいねボタン。
+ * 以前はアイコンだけでクリックハンドラーがなかった。横の数字は `{review.likes?.length}6 likes`
+ * だったが、サーバーが `likes` を返したことがなく前半は常に空文字列になり、ハードコードされた "6" だけ
+ * 残って全レビューが "6 likes" と見えた。
+ * 画面幅によって同じボタンが二度(モバイル/デスクトップ)描かれるのでコンポーネントに切り出す — ロジックが
+ * 二組あると片方だけ直されることが必ず起きる。
  */
 const LikeButton = ({ review, onLikeChange, className = "" }) => {
     const { token } = useAuthContext();
@@ -30,6 +37,7 @@ const LikeButton = ({ review, onLikeChange, className = "" }) => {
     const count = review.likeCount ?? 0;
 
     // reviewId 가 없으면 무엇을 누르는지 서버에 말할 수 없다. 눌리는 척하지 않는다.
+    // [JA] reviewId がなければ何を押したかサーバーに伝えられない。押せるふりはしない。
     const usable = Boolean(review.reviewId);
 
     const handleToggle = async () => {
@@ -42,6 +50,7 @@ const LikeButton = ({ review, onLikeChange, className = "" }) => {
         setPending(true);
 
         // 낙관적 갱신: 네트워크를 기다리지 않고 먼저 그린다. 실패하면 아래에서 되돌린다.
+        // [JA] 楽観的更新: ネットワークを待たずに先に描く。失敗したら下で戻す。
         onLikeChange?.(review.reviewId, {
             likedByMe: !liked,
             likeCount: Math.max(0, count + (liked ? -1 : 1)),
@@ -50,6 +59,7 @@ const LikeButton = ({ review, onLikeChange, className = "" }) => {
         try {
             const result = await toggleReviewLike(review.reviewId);
             // 서버가 다시 센 값으로 덮는다 — 그 사이 다른 사람이 눌렀다면 위의 ±1 은 이미 틀렸다.
+            // [JA] サーバーが数え直した値で上書きする — その間に他の人が押していれば上の ±1 は既に誤っている。
             onLikeChange?.(review.reviewId, {
                 likedByMe: result.likedByMe,
                 likeCount: result.likeCount,
@@ -78,6 +88,7 @@ const LikeButton = ({ review, onLikeChange, className = "" }) => {
             <Icon className={`h-6 w-6 mr-1 ${liked ? "text-amazon-orange" : ""}`} />
             <span>
                 {/* 한국어·일본어에는 복수형이 없다 — 단수/복수 분기를 없앤다. */}
+                {/* [JA] 韓国語・日本語には複数形がない — 単数/複数分岐をなくす。 */}
                 {t("product.review.like.count", { count })}
             </span>
         </button>
@@ -95,6 +106,7 @@ const ReviewCard = ({ review, onLikeChange }) => {
         <div className="grid md:grid-cols-10 mb-4">
             <div className="md:col-span-1 flex flex-col items-center mt-1">
                 {/* 🐛 사진을 올리지 않은 회원(대부분)은 image 가 null 이다 — `<img src={null}>` 은 깨진 아이콘이었다. */}
+                {/* [JA] 🐛 写真を上げていない会員(大半)は image が null だ — `<img src={null}>` は壊れたアイコンだった。 */}
                 <Avatar user={{ name, image }} size={55} className="outline outline-1 outline-offset-2 outline-slate-300" />
                 <span className="mt-2 font-semibold">{name}</span>
                 {/* <span className="mt-2 font-xs text-slate-500">{review.updatedAt}</span> */}
@@ -102,6 +114,7 @@ const ReviewCard = ({ review, onLikeChange }) => {
             <div className="md:col-span-9 flex flex-col md:flex-row bg-white border rounded-xl px-5 py-3">
                 <div className="max-md:flex md:mr-6 mt-1 md:w-[75px] max-md:border-b max-md:pb-2 max-md:border-slate-100">
                     {/* 예전 리뷰는 스타일 그림이 비어 있다(색상 정보를 통째로 보내던 때) — 빈 src 는 깨진 아이콘이 된다 */}
+                    {/* [JA] 以前のレビューはスタイル画像が空だ(色情報を丸ごと送っていた頃) — 空の src は壊れたアイコンになる */}
                     {review.style?.image ? (
                         <img
                             src={review.style.image}

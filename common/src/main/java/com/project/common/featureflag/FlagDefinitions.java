@@ -57,7 +57,7 @@ public final class FlagDefinitions {
         return flags;
     }
 
-    /** 파일 전체를 읽는다. 하나라도 틀리면 <b>전체를 거부</b>한다 — 호출자는 직전 정의를 유지한다. */
+    /** 파일 전체를 읽는다. 하나라도 틀리면 <b>전체를 거부</b>한다 — 호출자는 직전 정의를 유지한다. ／ [JA] ファイル全体を読む。一つでも誤っていれば<b>全体を拒否</b>する — 呼び出し側は直前の定義を維持する。 */
     public static FlagDefinitions parse(String json) {
         JsonNode root;
         try {
@@ -75,11 +75,11 @@ public final class FlagDefinitions {
         return new FlagDefinitions(Collections.unmodifiableMap(out));
     }
 
-    /** 플래그 하나. 값은 문자열 · 불리언 · 숫자만 — 객체 값은 1단계에서 쓰지 않는다. */
+    /** 플래그 하나. 값은 문자열 · 불리언 · 숫자만 — 객체 값은 1단계에서 쓰지 않는다. ／ [JA] フラグ一つ。値は文字列 · 真偽値 · 数値のみ — オブジェクト値は第 1 段階では使わない。 */
     public record Flag(String key, boolean enabled, Map<String, Object> variants, String defaultVariant,
             List<Split> fractional, String owner, LocalDate expires) {
 
-        /** 이 대상의 변형(variant)과 그렇게 정해진 이유. 대상 키가 없으면 비율 배정을 하지 않고 기본값이다. */
+        /** 이 대상의 변형(variant)과 그렇게 정해진 이유. 대상 키가 없으면 비율 배정을 하지 않고 기본값이다. ／ [JA] この対象のバリアント(variant)とそう決まった理由。対象キーがなければ割合での割り当てをせずデフォルト値。 */
         public Resolution resolve(String targetingKey) {
             if (fractional.isEmpty()) {
                 return new Resolution(defaultVariant, "STATIC");
@@ -99,7 +99,7 @@ public final class FlagDefinitions {
                     return new Resolution(s.variant(), "SPLIT");
                 }
             }
-            return new Resolution(defaultVariant, "DEFAULT"); // 도달하지 않는다(bucket < total)
+            return new Resolution(defaultVariant, "DEFAULT"); // 도달하지 않는다(bucket < total) ／ [JA] 到達しない(bucket < total)
         }
 
         static Flag parse(String key, JsonNode n) {

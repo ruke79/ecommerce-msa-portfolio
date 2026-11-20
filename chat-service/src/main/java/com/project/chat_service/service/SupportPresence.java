@@ -27,7 +27,13 @@ import lombok.extern.slf4j.Slf4j;
  * {@link #watching} 은 자기 메모리 → 다른 파드의 해시 순으로 본다. 해시는 {@link #TTL} 뒤에 사라지고 {@link #REFRESH} 마다 다시
  * 적는다 — 죽은 파드의 기록은 길어야 {@link #TTL} 만 남는다. Redis 에 닿지 못하면 자기 메모리만 본다(틀려도 "알림 한 통 더" 쪽).
  *
- * <p>[JA] 誰がどの相談ルームを見ているか。Pod が複数になったので、各 Pod の購読を Redis のハッシュにも書き(TTL つき)、他の Pod の分も見る。
+ * <p>[JA] 誰がいまどの相談ルームを見ているか(docs/58 §10)— STOMP の購読で分かる。
+ * 相談員の回答通知を<b>見ている顧客には送らない</b>ためである。会話ウィンドウを開いている人にベル通知まで鳴らすと騒音になる。
+ * 購読(SUBSCRIBE)で書き、購読解除(UNSUBSCRIBE) · 切断(DISCONNECT)で消す。
+ * Pod が複数ある(Redis ファンアウト、docs/21 §2)— 顧客は A Pod につないで見ているのに、回答は B Pod が消費することがある。そこで各 Pod は
+ * 自分のメモリの購読を Redis ハッシュ {@code chat:support-presence:<Pod>} にも書き(フィールド {@code ユーザー|ルーム} = この Pod の購読数)、
+ * {@link #watching} は自分のメモリ → 他の Pod のハッシュの順に見る。ハッシュは {@link #TTL} 後に消え、{@link #REFRESH} ごとに書き直す —
+ * 死んだ Pod の記録は長くても {@link #TTL} しか残らない。Redis に届かなければ自分のメモリだけを見る(間違っても「通知が一通多い」側)。
  */
 @Slf4j
 @Component
@@ -45,6 +51,7 @@ public class SupportPresence {
     }
 
     /** 세션 → (구독 id → 무엇을 보고 있나). */
+    // [JA] セッション → (購読 id → 何を見ているか)。
     private final Map<String, Map<String, Watch>> sessions = new ConcurrentHashMap<>();
 
     private final StringRedisTemplate redis;
@@ -52,6 +59,7 @@ public class SupportPresence {
     private ScheduledExecutorService refresher;
 
     /** 이 파드만 보는 판(테스트 · Redis 없음). */
+    // [JA] この Pod だけを見る版(テスト・Redis なし)。
     public SupportPresence() {
         this(null);
     }
@@ -85,6 +93,7 @@ public class SupportPresence {
                 redis.opsForSet().remove(PODS_KEY, podKey);
             } catch (RuntimeException e) {
                 // 내려가는 중 — TTL 이 지운다
+                // [JA] 停止中 — TTL が消す
             }
         }
     }
@@ -124,6 +133,7 @@ public class SupportPresence {
     }
 
     /** 이 사용자가 이 방을 지금 구독하고 있는가(어느 파드의 탭 하나라도). */
+    // [JA] このユーザーがこのルームを今購読しているか(どの Pod のタブ一つでも)。
     public boolean watching(Long userId, String roomId) {
         if (userId == null || roomId == null) {
             return false;
@@ -148,7 +158,7 @@ public class SupportPresence {
                     return true;
                 }
                 if (!Boolean.TRUE.equals(redis.hasKey(pod))) {
-                    redis.opsForSet().remove(PODS_KEY, pod);   // 죽은 파드 — 해시는 TTL 로 사라졌다
+                    redis.opsForSet().remove(PODS_KEY, pod);   // 죽은 파드 — 해시는 TTL 로 사라졌다 ／ [JA] 死んだ Pod — ハッシュは TTL で消えた
                 }
             }
         } catch (RuntimeException e) {
@@ -162,6 +172,7 @@ public class SupportPresence {
     }
 
     /** 한 (사용자, 방)의 이 파드 구독 수를 Redis 에 맞춘다. */
+    // [JA] 一つの(ユーザー、ルーム)のこの Pod の購読数を Redis に合わせる。
     private void sync(Watch w) {
         if (redis == null) {
             return;
@@ -182,6 +193,7 @@ public class SupportPresence {
     }
 
     /** 이 파드의 구독 전체를 다시 적고 수명을 늘린다 — Redis 가 비워졌어도(재시작) 다음 주기에 돌아온다. */
+    // [JA] この Pod の購読全体を書き直し寿命を延ばす — Redis が空になっても(再起動)次の周期で戻る。
     void publishSnapshot() {
         if (redis == null) {
             return;
@@ -209,6 +221,7 @@ public class SupportPresence {
     }
 
     /** 테스트용 — 이 파드의 Redis 해시 키. */
+    // [JA] テスト用 — この Pod の Redis ハッシュキー。
     String podKey() {
         return podKey;
     }

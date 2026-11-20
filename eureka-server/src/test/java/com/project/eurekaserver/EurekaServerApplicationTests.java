@@ -22,6 +22,12 @@ import org.springframework.test.context.DynamicPropertySource;
  *
  * <p>해석되지 않은 placeholder 가 그대로 경로가 되어 버린 형태다. 테스트에서는 TLS 를 끄고
  * 컨텍스트가 실제로 뜨는지만 확인한다 — 컨테이너가 필요 없으므로 'containers' 태그도 붙이지 않는다.
+ *
+ * <p>[JA] eureka-server のコンテキストロードテスト。
+ * このサービスは外部インフラを必要としない — 以前いつも失敗していた理由は、TLS キーストアの<b>環境変数</b>がないと起動すらできなかったためである
+ * (KeyStoreException: KeyStore not exists: ServletContext resource [/${LOCAL_TRUST_STORE_PATH}])。
+ * 解決されない placeholder がそのままパスになってしまった形である。テストでは TLS を切り、
+ * コンテキストが実際に起動するかだけを確認する — コンテナが不要なので 'containers' タグも付けない。
  */
 @SpringBootTest
 @DisplayName("eureka-server 기동")
@@ -31,9 +37,12 @@ class EurekaServerApplicationTests {
 	static void properties(DynamicPropertyRegistry registry) {
 		// 자기 자신에게 등록/조회하지 않는 단독 모드. eureka.client.enabled 까지 끄면
 		// 서버 자동설정이 요구하는 ApplicationInfoManager 빈이 사라져 컨텍스트가 뜨지 않는다.
+		// [JA] 自分自身に登録/照会しない単独モード。eureka.client.enabled までオフにすると、
+		//      サーバーの自動設定が要求する ApplicationInfoManager の Bean が消えてコンテキストが起動しない。
 		registry.add("eureka.client.register-with-eureka", () -> false);
 		registry.add("eureka.client.fetch-registry", () -> false);
 		// TLS 는 이 테스트의 관심사가 아니다. 켜 두면 키스토어 파일이 실제로 있어야 한다.
+		// [JA] TLS はこのテストの関心事ではない。有効にするとキーストアファイルが実際に存在しなければならない。
 		registry.add("server.ssl.enabled", () -> false);
 		registry.add("eureka.client.tls.enabled", () -> false);
 		registry.add("LOCAL_KEY_STORE_PATH", () -> "");

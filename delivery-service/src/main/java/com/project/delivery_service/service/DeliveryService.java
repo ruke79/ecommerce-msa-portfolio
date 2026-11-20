@@ -31,6 +31,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>폴링과 상태 전이는 {@link TrackingPoller} 가 맡는다 — 외부 API 호출이 이 서비스의
  * 트랜잭션에 끼어들면 주문 이벤트 소비가 그만큼 밀린다.
+ *
+ * <p>[JA] 配送作成・送り状登録・住所変更・キャンセル。
+ * ポーリングと状態遷移は {@link TrackingPoller} が受け持つ — 外部 API 呼び出しがこのサービスのトランザクションに割り込むと、注文イベントの消費がその分遅れる。
  */
 @Slf4j
 @Service
@@ -43,6 +46,7 @@ public class DeliveryService {
     private final DeliveryStatusPublisher publisher;
 
     /** 발송국. 이 나라 밖으로 가면 국제 배송으로 보고 통관 단계를 넣는다. */
+    // [JA] 発送国。この国の外へ行くなら国際配送とみなし、通関段階を入れる。
     @Value("${delivery.origin-country:KR}")
     private String originCountry;
 
@@ -51,6 +55,10 @@ public class DeliveryService {
      *
      * <p>같은 주문으로 두 번 호출돼도 배송은 하나만 생긴다 — Kafka 는 at-least-once 다.
      * {@code order_id} UNIQUE 가 최종 방어선이고, 조회로 먼저 걸러 예외 비용을 줄인다.
+     *
+     * <p>[JA] 決済完了イベントで配送を作る。
+     * 同じ注文で二回呼ばれても配送は一つしかできない — Kafka は at-least-once である。
+     * {@code order_id} UNIQUE が最後の防衛線で、照会で先に弾いて例外のコストを減らす。
      */
     @Transactional
     public Optional<Delivery> createFromOrder(CreateDeliveryCommand command) {
@@ -58,6 +66,8 @@ public class DeliveryService {
         if (existing.isPresent()) {
             // debug 로 두면 운영에서 보이지 않는다 — "배송이 안 생긴다" 를 조사할 때
             // 가장 먼저 배제해야 하는 갈래가 바로 이것이다.
+            // [JA] debug にしておくと運用では見えない — 「配送ができない」を調べるとき、
+            //      真っ先に除外すべき分岐がまさにこれである。
             log.info("이미 배송이 있는 주문, 건너뜀: orderId={}", command.orderId());
             return Optional.empty();
         }
@@ -79,6 +89,8 @@ public class DeliveryService {
 
         // 상자를 하나 미리 만든다. 분할이 필요하면 송장 등록 시 늘어난다 — 상자가 하나뿐인
         // 흔한 경우를 특수 케이스로 두지 않는 편이 화면·로직 양쪽에서 단순하다.
+        // [JA] 箱を一つ先に作っておく。分割が必要なら送り状登録時に増える — 箱が一つだけの
+        //      よくあるケースを特殊ケースにしない方が画面・ロジックの両方で単純である。
         boolean international = delivery.isInternational(originCountry);
         Shipment shipment = delivery.addShipment(international);
         command.items().forEach(item -> shipment.addItem(new ShipmentItem(
@@ -93,6 +105,7 @@ public class DeliveryService {
             return Optional.of(saved);
         } catch (DataIntegrityViolationException e) {
             // 조회와 저장 사이에 다른 레플리카가 먼저 넣었다. UNIQUE 가 막아 준 정상 흐름이다.
+            // [JA] 照会と保存の間に別のレプリカが先に入れた。UNIQUE が防いでくれた正常な流れである。
             log.debug("동시 생성 감지, 건너뜀: orderId={}", command.orderId());
             return Optional.empty();
         }
@@ -101,6 +114,9 @@ public class DeliveryService {
     /**
      * 등록할 송장번호. 테스트 택배사는 비워 두면 {@code SIM-<주문>-<상자>}(정상 진행 각본)를 만든다 — 관리자가 매번 SIM… 을 지어
      * 적을 필요가 없다. 실제 택배사는 번호가 있어야 한다(null).
+     *
+     * <p>[JA] 登録する送り状番号。テスト宅配業者は空にしておくと {@code SIM-<注文>-<箱>}(正常進行のシナリオ)を作る — 管理者が毎回 SIM… を考えて書く必要がない。
+     * 実際の宅配業者は番号が必要である(null)。
      */
     static String trackingNumberFor(String carrierCode, String given, Long orderId, int sequenceNo) {
         if (given != null && !given.isBlank()) {
@@ -116,6 +132,9 @@ public class DeliveryService {
      * 송장번호를 등록한다. 분할 배송이면 상자를 지정하거나 새로 만든다.
      *
      * <p>이 시점부터 폴링이 시작되고 주문은 {@code DISPATCHED} 로 넘어간다.
+     *
+     * <p>[JA] 送り状番号を登録する。分割配送なら箱を指定するか新しく作る。
+     * この時点からポーリングが始まり、注文は {@code DISPATCHED} に移る。
      */
     @Transactional
     public Optional<Shipment> registerTracking(Long orderId, RegisterTrackingRequest request) {
@@ -142,6 +161,10 @@ public class DeliveryService {
         // 그것도 없으면 새 상자를 만든다 — 분할 배송이 이 경로로 생긴다.
         // 고를 수 있는 것은 아직 발송 전(대기 · 접수)인 상자뿐이다. 🐛 예전에는 상태를 보지 않아 sequenceNo 로 배달 완료 · 이동 중인
         // 상자를 접수로 되돌려 썼고, 송장 없는 첫 상자로 취소된 상자를 골랐다.
+        // [JA] 箱を選ぶ。sequenceNo を与えればその箱に、なければまだ送り状のない最初の箱に、
+        //      それもなければ新しい箱を作る — 分割配送はこの経路で生じる。
+        //      選べるのはまだ発送前(待機・受付)の箱だけである。🐛 以前は状態を見ず、sequenceNo で配達完了・輸送中の
+        //      箱を受付に戻して使い、送り状のない最初の箱としてキャンセル済みの箱を選んでいた。
         Shipment shipment;
         if (request.sequenceNo() != null) {
             shipment = delivery.getShipments().stream()
@@ -175,6 +198,7 @@ public class DeliveryService {
                 orderId, shipment.getSequenceNo(), carrier.getCarrierCode(), trackingNumber);
 
         // 주문 전체 상태가 바뀌었을 때만 — 두 번째 상자의 송장은 주문을 다시 "발송" 으로 돌리지 않는다.
+        // [JA] 注文全体の状態が変わったときだけ — 二つ目の箱の送り状は注文を再び「発送」に戻さない。
         publisher.publishIfOverallChanged(delivery, overallBefore);
         return Optional.of(shipment);
     }
@@ -186,6 +210,11 @@ public class DeliveryService {
      * 하면 실물과 기록이 어긋나 분쟁 때 오히려 불리한 증거가 된다.
      *
      * @return 변경 이력. 권한이 없거나 변경 불가 상태면 비어 있음
+     *
+     * <p>[JA] 配送先を変更する — <b>発送前だけ</b>。
+     * 集荷された後は現物が宅配業者の手にあり、こちらで宛先を変えられない。変えたと記録だけすると、
+     * 現物と記録がずれて紛争時にかえって不利な証拠になる。
+     * 戻り値: 変更履歴。権限がないか変更不可の状態なら空。
      */
     @Transactional
     public Optional<AddressChange> changeAddress(Long customerId, Long orderId,
@@ -193,6 +222,7 @@ public class DeliveryService {
         Optional<Delivery> found = deliveryRepository.findByOrderId(orderId);
         if (found.isEmpty() || !found.get().getCustomerId().equals(customerId)) {
             // 남의 배송이면 없는 것처럼 취급한다 — 403 은 "그 주문은 존재한다"를 알려주는 셈이다.
+            // [JA] 他人の配送なら存在しないものとして扱う — 403 は「その注文は存在する」と教えるようなものである。
             return Optional.empty();
         }
         Delivery delivery = found.get();
@@ -218,6 +248,10 @@ public class DeliveryService {
      * <p>취소된 배송을 재사용해 재주문을 붙이지 않는다 — 재주문은 새 주문이므로 새 배송이
      * 생기고, {@code reorderedFromOrderId} 로 연결된다. 재사용하면 취소 이력과 새 배송
      * 이력이 한 행에 뒤섞여 무엇이 언제 일어났는지 알 수 없게 된다.
+     *
+     * <p>[JA] 発送前の配送キャンセル。
+     * キャンセルされた配送を再利用して再注文を付けない — 再注文は新しい注文なので新しい配送ができ、{@code reorderedFromOrderId} でつながる。
+     * 再利用するとキャンセル履歴と新しい配送履歴が一行に混ざり、何がいつ起きたのか分からなくなる。
      */
     @Transactional
     public boolean cancel(Long customerId, Long orderId) {
@@ -242,6 +276,10 @@ public class DeliveryService {
      * <p>{@link #cancel(Long, Long)} 과 같은 규칙(발송 전에만)이지만 소유권 검사가 없다.
      * 결제 이벤트에는 부르는 사람이 없다. 배송이 없거나 이미 집화됐으면 조용히 false —
      * 재전달돼도, 반품 절차로 넘어갔어도 해가 없다.
+     *
+     * <p>[JA] 決済がキャンセル・返金されたときのキャンセル — 顧客ではなく<b>システム</b>が呼ぶ。
+     * {@link #cancel(Long, Long)} と同じ規則(発送前だけ)だが所有権の検査がない。決済イベントには呼ぶ人がいない。
+     * 配送がないかすでに集荷されていれば黙って false — 再配信されても、返品手続きに移っていても害はない。
      */
     @Transactional
     public boolean cancelByOrder(Long orderId) {
@@ -267,6 +305,9 @@ public class DeliveryService {
      *
      * <p>"기다린다" 는 것은 상자 중 하나라도 송장 없이 {@code PENDING} 인 것이다.
      * 분할 배송에서 첫 상자만 보냈어도 여기 남는다.
+     *
+     * <p>[JA] 送り状を待っている配送 — 管理画面の既定の一覧。古い順。
+     * 「待っている」とは箱のうち一つでも送り状なしで {@code PENDING} のものである。分割配送で最初の箱だけ送ってもここに残る。
      */
     @Transactional(readOnly = true)
     public List<Delivery> findAwaitingTracking(int size) {
@@ -274,6 +315,7 @@ public class DeliveryService {
     }
 
     /** 최근 배송 전체 — 관리자가 등록한 송장을 확인하거나 진행을 볼 때. */
+    // [JA] 最近の配送全体 — 管理者が登録した送り状を確認したり進捗を見たりするとき。
     @Transactional(readOnly = true)
     public List<Delivery> findRecent(int size) {
         return deliveryRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, Math.min(Math.max(size, 1), 100)));

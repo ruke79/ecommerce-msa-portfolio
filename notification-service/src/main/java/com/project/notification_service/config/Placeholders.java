@@ -23,10 +23,22 @@ import java.util.Map;
  * <p>여기서 막는 편이 나은 이유는 <b>실패 시점이 원인에 가깝기 때문</b>이다. 기동이 실패하면
  * 파드가 CrashLoopBackOff 로 눈에 띄고 메시지가 어느 키인지 바로 말해 준다. 반대로 통과시키면
  * 원인과 증상이 다른 서비스, 다른 시각, 다른 로그 레벨로 흩어진다.
+ *
+ * <p>[JA] 埋めていない設定値を<b>起動時に</b>捕まえる。
+ * これがなくて実際にこういうことがあった。{@code k8s/20-secret.example.yaml} をコピーして使う際に {@code MAIL_HOST} を
+ * 埋めなかったが、その値 {@code "REPLACE_ME_smtp_host"} は<b>空ではないので</b>既存の検査({@code isBlank()})を通過した。
+ * そのためサービスは上のように出力して正常に起動した。
+ * 失敗は 25 秒後に {@code UnknownHostException: REPLACE_ME_smtp_host} の WARN 一行でしか現れず、その間に登録確認メールは
+ * リトライ上限を使い切って FAILED になった。ユーザーには「登録はできたのにメールが来ない」としか見えなかった。
+ * <b>空の設定は止めるのに、埋めていない設定は通すことが問題だった。</b> 後者の方がはるかによくあるミスなのに —
+ * 空にするには消す必要があるが、埋めないのは何もしなければよい。
+ * ここで止める方がよい理由は<b>失敗の時点が原因に近いから</b>である。起動が失敗すれば Pod が CrashLoopBackOff で目立ち、
+ * メッセージがどのキーかをすぐ教えてくれる。逆に通すと、原因と症状が別のサービス・別の時刻・別のログレベルに散らばる。
  */
 public final class Placeholders {
 
     /** {@code 20-secret.example.yaml} 의 모든 자리 표시자가 이 문자열로 시작한다. */
+    // [JA] {@code 20-secret.example.yaml} のすべてのプレースホルダーはこの文字列で始まる。
     private static final String MARKER = "REPLACE_ME";
 
     private Placeholders() {
@@ -40,8 +52,15 @@ public final class Placeholders {
      * 지금은 값이 자리 표시자라 찍어도 무해하지만, 그것은 이 검사가 <b>걸렸을 때</b> 뿐이다.
      * "걸린 경우에만 안전한 규칙"은 다음 사람이 검사를 넓히는 순간 깨진다.
      *
+     * <p>[JA] プレースホルダーが残っていれば起動を止める。
+     * 🔒 <b>値はメッセージに入れない — キー名だけ入れる。</b> この検査が見る値には {@code MAIL_PASSWORD} のように本物の秘密が
+     * 混じりうるし、例外メッセージはログに出る。今は値がプレースホルダーなので出しても無害だが、それはこの検査に<b>掛かったときだけ</b>である。
+     * 「掛かった場合にだけ安全な規則」は、次の人が検査を広げた瞬間に壊れる。
+     *
      * @param what   무엇을 켜려다 막혔는지 (예: {@code "notification.mail.provider=smtp"})
+     *   [JA] 何を有効にしようとして止められたか(例: {@code "notification.mail.provider=smtp"})
      * @param values 설정 키 → 값. 키는 사람이 고칠 자리를 가리켜야 한다.
+     *   [JA] 設定キー → 値。キーは人が直すべき場所を指さなければならない。
      */
     public static void rejectUnfilled(String what, Map<String, String> values) {
         List<String> unfilled = values.entrySet().stream()
@@ -63,6 +82,11 @@ public final class Placeholders {
      * 연결 문자열 <b>가운데</b> 박혀 있는 경우가 있다
      * ({@code mongodb://admin:REPLACE_ME_mongo_password@…}). {@code startsWith} 로 보면
      * 그런 값을 통째로 놓친다.
+     *
+     * <p>[JA] 値がプレースホルダーか。
+     * {@code contains} で見る理由: {@code SPRING_DATA_MONGODB_CLIENT} のようにプレースホルダーが接続文字列の<b>途中</b>に
+     * 埋め込まれている場合がある({@code mongodb://admin:REPLACE_ME_mongo_password@…})。{@code startsWith} で見ると
+     * そういう値を丸ごと見逃す。
      */
     public static boolean isPlaceholder(String value) {
         return value != null && value.contains(MARKER);
@@ -74,6 +98,10 @@ public final class Placeholders {
      * <p>{@link Map#of} 를 쓰지 않는 이유가 둘 있다. 순서를 잃어 메시지에 나열되는 키 순서가
      * 매번 달라지고, <b>값에 null 을 넣으면 터진다</b> — 설정이 없는 경우가 정확히 이 검사가
      * 다뤄야 할 경우인데, 거기서 예외가 나면 진짜 원인이 가려진다.
+     *
+     * <p>[JA] {@code キー, 値, キー, 値, …} をマップにまとめる。
+     * {@link Map#of} を使わない理由は二つある。順序を失ってメッセージに並ぶキーの順序が毎回変わり、<b>値に null を入れると落ちる</b> —
+     * 設定がない場合こそこの検査が扱うべき場合なのに、そこで例外が出ると本当の原因が隠れる。
      */
     public static Map<String, String> pairs(String... keyValues) {
         if (keyValues.length % 2 != 0) {

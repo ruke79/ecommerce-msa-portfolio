@@ -51,6 +51,7 @@ public class FeatureFlagAutoConfiguration {
             log.info("feature-flags.file 이 비었다 — 기능 플래그는 모두 코드의 기본값으로 돈다");
         } else {
             // "5s" · "PT5S" · "5000"(ms) — Boot 의 변환 서비스가 없는 문맥(테스트 러너 등)에서도 같게 읽는다.
+            // [JA] "5s" · "PT5S" · "5000"(ms) — Boot の変換サービスがない文脈(テストランナーなど)でも同じように読む。
             Duration interval = org.springframework.boot.convert.DurationStyle.detectAndParse(reloadInterval);
             api.setProviderAndWait(new FileFlagProvider(Path.of(file), interval));
         }

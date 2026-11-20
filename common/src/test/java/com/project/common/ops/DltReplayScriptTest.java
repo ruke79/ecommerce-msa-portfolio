@@ -75,7 +75,7 @@ class DltReplayScriptTest {
         cmd.addAll(List.of(args));
         ProcessBuilder pb = new ProcessBuilder(cmd).directory(repoRoot().toFile()).redirectErrorStream(true);
         pb.environment().put("KAFKA_EXEC", "docker exec -i " + KAFKA.getContainerId());
-        pb.environment().put("BOOTSTRAP", "localhost:9093");   // 컨테이너 안에서 본 브로커(BROKER 리스너)
+        pb.environment().put("BOOTSTRAP", "localhost:9093");   // 컨테이너 안에서 본 브로커(BROKER 리스너) ／ [JA] コンテナ内から見たブローカー(BROKER リスナー)
         pb.environment().putAll(env);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -90,6 +90,7 @@ class DltReplayScriptTest {
     }
 
     /** 토픽 둘(원래 3 파티션 · DLT 1 파티션) — 테스트마다 새 이름. */
+    // [JA] トピック 2 つ(元 3 パーティション · DLT 1 パーティション) — テストごとに新しい名前。
     private static String topics() throws Exception {
         String base = "gd-" + UUID.randomUUID().toString().substring(0, 8);
         try (Admin admin = Admin.create(clientProps())) {
@@ -99,6 +100,7 @@ class DltReplayScriptTest {
     }
 
     /** Spring DeadLetterPublishingRecoverer 와 같은 모양의 헤더 — 원래 파티션 · 오프셋은 4 · 8 바이트 정수. */
+    // [JA] Spring の DeadLetterPublishingRecoverer と同じ形のヘッダー — 元のパーティション · オフセットは 4 · 8 バイトの整数。
     private static void dlt(String topic, byte[] key, byte[] value, boolean withOriginalTopic) throws Exception {
         RecordHeaders h = new RecordHeaders();
         if (withOriginalTopic) {
@@ -143,6 +145,7 @@ class DltReplayScriptTest {
     }
 
     /** 줄바꿈 · 0 · 0xFF · CR 이 든 값 — 콘솔 도구로 옮기면 깨지는 모양. 개인정보 자리 표시도 넣어 출력되지 않는지 본다. */
+    // [JA] 改行 · 0 · 0xFF · CR を含む値 — コンソールツールで移すと壊れる形。個人情報のプレースホルダーも入れて出力されないかを見る。
     private static byte[] binaryValue() {
         byte[] marker = "ADDR-SEOUL-123".getBytes(StandardCharsets.UTF_8);
         ByteBuffer b = ByteBuffer.allocate(marker.length + 8);

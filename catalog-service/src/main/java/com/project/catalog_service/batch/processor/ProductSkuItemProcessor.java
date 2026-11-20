@@ -37,6 +37,11 @@ public class ProductSkuItemProcessor implements ItemProcessor<ProductSkuCsvDto, 
         //    끝났고, images 가 빈 SKU 가 그대로 저장됐다. 증상은 등록이 아니라 첫 화면에서
         //    나타난다 — 이미지가 없는 상품 카드는 깨지고, 예전 프론트는 거기서 TypeError 를
         //    내 홈 전체를 백지로 만들었다. 자세한 이유는 ImageService.uploadClasspathImage.
+        // [JA] ⚠️ アップロードの失敗を飲み込まない。以前は catch で printStackTrace の後 null を
+        //         返して除外していた。そのため資格情報が破棄された状態でもジョブが **成功として**
+        //         終わり、images が空の SKU がそのまま保存された。症状は登録ではなく最初の画面で
+        //         現れる — 画像のない商品カードは壊れ、以前のフロントはそこで TypeError を
+        //         出してホーム全体を真っ白にした。詳しい理由は ImageService.uploadClasspathImage。
         List<String> imageUrls = new ArrayList<>();
         if (item.getImages() != null && !item.getImages().isEmpty()) {
             imageUrls = Arrays.stream(item.getImages().split(","))
@@ -53,11 +58,14 @@ public class ProductSkuItemProcessor implements ItemProcessor<ProductSkuCsvDto, 
             // CSV DTO 는 Integer(널 가능)인데 엔티티는 primitive int 라, 빈 셀 하나가
             // 언박싱 NPE 를 일으켜 임포트 잡 전체를 죽였다. 엔티티 기본값과 동일하게 0 으로 채운다
             // (docs/14 B-15).
+            // [JA] CSV DTO は Integer(null 可)なのにエンティティは primitive int なので、空のセル 1 つが
+            //      アンボクシングの NPE を起こしてインポートジョブ全体を殺した。エンティティの既定値と同じく 0 で埋める
+            //      (docs/14 B-15)。
             .discount(item.getDiscount() != null ? item.getDiscount() : 0)
             .sold(item.getSold() != null ? item.getSold() : 0)
             .color(color)
             .product(product)
-            .version(0L) // 초기 버전 설정
+            .version(0L) // 초기 버전 설정 ／ [JA] 初期バージョン設定
             .build();
     }
 }

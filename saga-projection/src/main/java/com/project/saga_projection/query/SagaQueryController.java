@@ -19,6 +19,12 @@ import lombok.RequiredArgsConstructor;
  * 503 아직 준비되지 않았거나(기동·리밸런스·복구 중) 이 인스턴스에 사본이 없음({@code Retry-After} 포함).
  * 인증은 게이트웨이가 한다(라우트 saga-projection, JwtAuthorization) — 이 서비스는 내부 망에서만 열린다. 신원은 User-Id
  * 헤더에서만 읽고, 남의 주문은 404 다(docs/76).
+ *
+ * <p>[JA] {@code GET /api/saga/{orderId}} — 注文一つの決済サガ進行状態。
+ * 応答コード: 200 状態あり(本文に {@code stale} 表示)、404 この注文のリクエストも応答も見たことがない、
+ * 503 まだ準備できていない(起動・リバランス・復旧中)かこのインスタンスに写しがない({@code Retry-After} 付き)。
+ * 認証はゲートウェイが行う(ルート saga-projection、JwtAuthorization) — このサービスは内部網でだけ開く。身元は User-Id
+ * ヘッダーからだけ読み、他人の注文は 404 である(docs/76)。
  */
 @RestController
 @RequestMapping("/api/saga")
@@ -30,6 +36,7 @@ public class SagaQueryController {
     /**
      * @param userId 게이트웨이(JwtAuthorization)가 검증 뒤 넣는 신원. 없으면 401 — 게이트웨이를 거치지 않은 호출이다.
      *               주문의 customerId 와 다르면 404(남의 자원은 403 이 아니라 404).
+     *     [JA] ゲートウェイ(JwtAuthorization)が検証後に入れる身元。なければ 401 — ゲートウェイを経ていない呼び出しだ。注文の customerId と違えば 404(他人の資源は 403 ではなく 404)。
      */
     @GetMapping("/{orderId}")
     public ResponseEntity<?> get(@PathVariable long orderId,

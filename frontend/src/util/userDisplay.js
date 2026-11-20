@@ -20,6 +20,13 @@
  *
  * <p>그때까지는 이메일에서 표시 이름을 만든다. "undefined" 보다는 낫고, 무엇보다
  * 사용자가 자기 계정을 알아볼 수 있다.
+ *
+ * <p>[JA] 画面にユーザーを表示する方法。🐛 画面のあちこちに `undefined` が出ていた。`util/jwtUser.js` の `toUser()` は JWT ペイロードから<b>`{ email, userId, roles }` だけ</b>を作るのに、
+ * 画面は存在しないフィールドを読んでいた — しかもファイルごとに違う名前で(orders.jsx の user.name、address.jsx の user.userName、Sidebar.jsx の data.username、UserInfo.jsx の user.name · user.image)。
+ * <b>根本解決はプロフィールをサーバーから受け取ることだ。</b> JWT は身元証明でありプロフィールの保存場所ではない — 名前を変えてもトークンはそのままだ。
+ * ところが今の user-service には<b>プロフィールを返す GET 自体がない</b>(docs/43 A2)。エンドポイントができれば `toUser()` の結果に name · image が入り、
+ * そのときこれらの関数は<b>直す必要がない</b> — 既にそのフィールドを先に見ている。それまではメールアドレスから表示名を作る。
+ * "undefined" よりはましで、何よりユーザーが自分のアカウントを見分けられる。
  */
 
 import { translate } from "i18n/I18nProvider";
@@ -30,6 +37,9 @@ import { translate } from "i18n/I18nProvider";
  * <p>여러 이름을 순서대로 보는 이유: 서버 DTO 는 `username`(실명)과 `name`(별명)을 모두
  * 갖고 있고(UserProfileDto), 기존 화면들이 `name` · `username` · `userName` 을 제각각
  * 쓰고 있었다. 어느 쪽이 채워지든 동작하게 둔다.
+ *
+ * <p>[JA] 画面に使う名前。複数の名前を順に見る理由: サーバー DTO は `username`(実名)と `name`(ニックネーム)の両方を持ち(UserProfileDto)、
+ * 既存の画面が `name` · `username` · `userName` をばらばらに使っていた。どちらが埋まっても動くようにしておく。
  */
 export function displayName(user) {
   const named = user?.name ?? user?.username ?? user?.userName;
@@ -49,6 +59,7 @@ export function displayName(user) {
 }
 
 /** 프로필 이미지 주소. 없으면 null — 호출부가 폴백을 그린다. */
+// [JA] プロフィール画像のアドレス。なければ null — 呼び出し側がフォールバックを描く。
 export function avatarUrl(user) {
   const image = user?.image;
   return typeof image === "string" && image.trim() !== "" ? image : null;
@@ -59,6 +70,8 @@ export function avatarUrl(user) {
  *
  * <p>`<img src={undefined}>` 는 React 가 src 속성을 빼 버려 <b>깨진 이미지 아이콘</b>이
  * 남는다. 사용자에게는 "사진을 아직 안 올림"이 아니라 "고장남"으로 보인다.
+ *
+ * <p>[JA] 画像がないときに使うイニシャル一文字。`<img src={undefined}>` は React が src 属性を外してしまい<b>壊れた画像アイコン</b>が残る。ユーザーには「写真をまだ上げていない」ではなく「故障」に見える。
  */
 export function initial(user) {
   const name = displayName(user);

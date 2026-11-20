@@ -9,6 +9,11 @@ import { LOCALES, STORE_CURRENCY, formatMoney } from "util/money";
  * 인자로 준다. 🐛 예전에는 화면마다 통화를 손으로 붙였다 — {@code 59.98$} · {@code USD59.98 $} · {@code $59.98}.
  *
  * <p>i18n Provider 가 없으면(일부 단위 테스트) 기본 로캘로 그린다 — 형식은 문구와 달리 없어도 된다.
+ *
+ * <p>[JA] 金額をアプリの言語に合わせて表示する関数を返す — {@code money(59.98)} → "US$59.98"(ko) · "$59.98"(ja)。
+ * 通貨を与えなければ <b>ストア通貨</b>だ(カタログ価格・カート・注文総額)。請求通貨(ポートワン KRW など)は二番目の
+ * 引数で与える。🐛 以前は画面ごとに通貨を手で付けていた — {@code 59.98$} · {@code USD59.98 $} · {@code $59.98}。
+ * i18n Provider が無ければ(一部の単体テスト)デフォルトロケールで描く — 形式は文言と違って無くてもよい。
  */
 export function useMoney() {
     const lang = useCurrentLang();

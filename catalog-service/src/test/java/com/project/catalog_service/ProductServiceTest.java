@@ -57,17 +57,23 @@ class ProductServiceTest {
      * 기획전 할인 합성. 이 테스트들은 기획전을 다루지 않으므로 <b>아무것도 바꾸지 않는</b>
      * 동작으로 스텁한다 — 기본 목은 apply() 가 null 을 돌려줘 조회 결과가 통째로 사라진다.
      * (합성 규칙 자체는 EventPricingTest 가 본다.)
+     *
+     * <p>[JA] 企画展割引の合成。これらのテストは企画展を扱わないので<b>何も変えない</b>動作でスタブする — 既定のモックは apply() が null を返し、照会結果が丸ごと消える。
+     * (合成規則そのものは EventPricingTest が見る。)
      */
     @Mock private com.project.catalog_service.service.EventPricing eventPricing;
 
     // @Spy 가 필요하다: warmUpProductCaches 테스트는 같은 객체의 다른 메서드를
     // 스텁/검증하는데, @InjectMocks 만으로는 실제 객체라 stubbing 시점에 진짜 메서드가
     // 호출돼 PageRequest.of(0, 0) → "Page size must not be less than one" 로 깨졌다.
+    // [JA] @Spy が必要である: warmUpProductCaches のテストは同じオブジェクトの別メソッドをスタブ/検証するが、@InjectMocks だけでは実オブジェクトなのでスタブ時に本物のメソッドが呼ばれ、
+    //      PageRequest.of(0, 0) → "Page size must not be less than one" で壊れた。
     @Spy
     @InjectMocks
     private ProductService productService;
 
     // 테스트에 사용할 공통 객체
+    // [JA] テストで使う共通オブジェクト
     private Product product;
     private ProductDto productDto;
     private Category category;
@@ -96,6 +102,7 @@ class ProductServiceTest {
                 .build();
                 
         // ProductDto 변환 로직에 필요한 관계 설정
+        // [JA] ProductDto 変換ロジックに必要な関係の設定
         ProductSubcategory productSubcategory = ProductSubcategory.builder().product(product).subcategory(subcategory).build();
         List<ProductSubcategory> subcategories = new ArrayList<>();
         subcategories.add(productSubcategory);
@@ -121,6 +128,7 @@ class ProductServiceTest {
         when(subCategoryRepository.findByCategory(category2)).thenReturn(Collections.singletonList(subcategory2));
 
         // @Spy 이므로 doReturn 형식으로 스텁해야 실제 메서드가 호출되지 않는다.
+        // [JA] @Spy なので doReturn 形式でスタブしないと実メソッドが呼ばれてしまう。
         doReturn(Collections.nCopies(10, productDto))
             .when(productService).getProductsByCategoryAndSubcategory(anyString(), anyString(), anyInt(), anyInt());
 
@@ -131,11 +139,13 @@ class ProductServiceTest {
         // 현재 구현은 서브카테고리마다 page=0 한 번만 조회한다. 메서드 안에 page++ 가 있지만
         // 이를 감싸는 루프가 없어 실행되지 않는 죽은 코드다 — 즉 "워밍업"은 각 조합의
         // 첫 페이지만 데운다(docs/14 B-16). 테스트는 상상한 동작이 아니라 실제 동작을 고정한다.
+        // [JA] then — 現在の実装はサブカテゴリごとに page=0 を一回だけ照会する。メソッド内に page++ はあるが、それを包むループがなく実行されない死んだコードである
+        //      — つまり「ウォームアップ」は各組み合わせの最初のページだけを温める(docs/14 B-16)。テストは想像した動作ではなく実際の動作を固定する。
         verify(productService, times(1)).getProductsByCategoryAndSubcategory(
                 eq(category.getCategoryName()), eq(subcategory.getSubcategoryName()), eq(0), eq(20));
         verify(productService, times(1)).getProductsByCategoryAndSubcategory(
                 eq(category2.getCategoryName()), eq(subcategory2.getSubcategoryName()), eq(0), eq(20));
-        assertEquals(20, result.size()); // 조합 2개 × 10건
+        assertEquals(20, result.size()); // 조합 2개 × 10건 ／ [JA] 組み合わせ 2 個 × 10 件
     }
 
     @Test
@@ -244,6 +254,9 @@ class ProductServiceTest {
     //   · Optional 을 `!= null` 로 검사(항상 참) → 없는 카테고리면 NoSuchElementException 500
     //   · 카테고리·부모를 못 찾으면 null 반환 → 컨트롤러가 200 OK 로 돌려줌
     // 지금은 전부 IllegalArgumentException 이어야 한다. 이 테스트들이 그 계약을 지킨다.
+    // [JA] ── addProduct の入力検証の回帰テスト ──
+    //      このメソッドは以前、不正な入力を二つの形で黙って処理していた: Optional を `!= null` で検査(常に真)→ 存在しないカテゴリなら NoSuchElementException で 500、
+    //      カテゴリ・親が見つからないと null を返す → コントローラが 200 OK で返す。今はすべて IllegalArgumentException でなければならない。これらのテストがその契約を守る。
 
     private org.springframework.mock.web.MockMultipartFile img(String name) {
         return new org.springframework.mock.web.MockMultipartFile(name, name + ".jpg", "image/jpeg",
@@ -253,6 +266,8 @@ class ProductServiceTest {
     // ProductRequest 는 기본 생성자가 protected 라(@NoArgsConstructor(PROTECTED))
     // 다른 패키지에서 new 할 수 없다. 컨트롤러가 받는 실제 경로(Jackson 역직렬화)와
     // 같은 방식으로 만든다.
+    // [JA] ProductRequest は既定コンストラクタが protected なので(@NoArgsConstructor(PROTECTED))他のパッケージから new できない。
+    //      コントローラが受け取る実際の経路(Jackson のデシリアライズ)と同じ方法で作る。
     private com.project.common.dto.catalog.request.ProductRequest request(String json) {
         try {
             return new com.fasterxml.jackson.databind.ObjectMapper()
@@ -332,11 +347,14 @@ class ProductServiceTest {
     /**
      * 🐛 삭제한 상품의 slug — findBySlug 는 @SQLRestriction 으로 DELETED 행을 보지 못해 "비었다" 고 했지만, 유니크 인덱스(V6)는 그 행에도
      * 걸려 같은 이름으로 다시 등록하면 500 이었다. 삭제된 행까지 보는 slugTaken 으로 판정한다.
+     *
+     * <p>[JA] 🐛 削除した商品の slug — findBySlug は @SQLRestriction で DELETED 行を見られず「空いている」と言ったが、ユニークインデックス(V6)はその行にもかかり、
+     * 同じ名前で再登録すると 500 だった。削除された行まで見る slugTaken で判定する。
      */
     @Test
     @DisplayName("🔴 uniqueSlug: 삭제된 상품이 쓰던 slug 도 쓴 것으로 본다 — 다시 등록하면 -2")
     void uniqueSlug_countsDeletedProducts() {
-        when(productRepository.slugTaken("tee")).thenReturn(true);                       // 그러나 인덱스에는 있다
+        when(productRepository.slugTaken("tee")).thenReturn(true);                       // 그러나 인덱스에는 있다 ／ [JA] だがインデックスにはある
         when(productRepository.slugTaken("tee-2")).thenReturn(false);
 
         assertEquals("tee-2", productService.uniqueSlug("tee", "무시됨"));
@@ -349,6 +367,7 @@ class ProductServiceTest {
         assertEquals("test-product", productService.uniqueSlug(null, "Test Product"));
         // \p{IsAlphabetic} 은 유니코드 기준이라 한글이 살아남는다 — ASCII [a-z] 로
         // 좁혔다면 한글 상품명이 통째로 지워져 빈 slug 가 됐을 것이다.
+        // [JA] \p{IsAlphabetic} は Unicode 基準なのでハングルが残る — ASCII [a-z] に狭めていたら、ハングルの商品名が丸ごと消えて空の slug になっていただろう。
         assertEquals("청바지-남성", productService.uniqueSlug(null, "청바지 남성"));
     }
 
@@ -360,14 +379,15 @@ class ProductServiceTest {
     }
 
     // ── SKU 자동 생성 ────────────────────────────────────────────────────
+    // [JA] ── SKU 自動生成 ──
 
     @Test
     @DisplayName("skuPrefix: ASCII 영숫자 3자, 못 채우면 PRD — SKU 는 불러 읽는 코드라 대문자 영숫자로 제한한다")
     void skuPrefix_rules() {
         assertEquals("FAS", ProductService.skuPrefix("fashion"));
         assertEquals("CON", ProductService.skuPrefix("consumer electronics"));
-        assertEquals("PRD", ProductService.skuPrefix("청바지"));      // ASCII 밖
-        assertEquals("PRD", ProductService.skuPrefix("tv"));          // 3자 미만
+        assertEquals("PRD", ProductService.skuPrefix("청바지"));      // ASCII 밖 ／ [JA] ASCII 外
+        assertEquals("PRD", ProductService.skuPrefix("tv"));          // 3자 미만 ／ [JA] 3 文字未満
         assertEquals("PRD", ProductService.skuPrefix(null));
     }
 
@@ -390,12 +410,16 @@ class ProductServiceTest {
         ProductSku saved = productService.addProduct(req, List.of(img("a")), img("color"));
 
         // category 는 setUp() 의 "fashion" — 접두사 FAS, 번호는 시퀀스 그대로.
+        // [JA] category は setUp() の "fashion" — 接頭辞 FAS、番号はシーケンスのまま。
         assertEquals("FAS-100042", saved.getSku());
     }
 
     /**
      * 🐛 관리자가 등록한 상품의 사이즈가 어느 스타일에도 속하지 않았다. 부모를 <b>버려지는 객체</b>에 걸고, 실제로 저장되는
      * 객체는 다시 만들어 부모가 비어 있었다({@code product_size.skuproduct_id} = NULL). 상세 · 질문도 같은 모양이었다.
+     *
+     * <p>[JA] 🐛 管理者が登録した商品のサイズがどのスタイルにも属していなかった。親を<b>捨てられるオブジェクト</b>に設定し、実際に保存されるオブジェクトは作り直されて親が空だった
+     * ({@code product_size.skuproduct_id} = NULL)。詳細・質問も同じ形だった。
      */
     @Test
     @DisplayName("🐛 등록한 사이즈 · 상세 · 질문이 부모를 가리킨 채 저장된다 — 저장 뒤 사이즈 SKU 코드를 채운다")
@@ -415,6 +439,7 @@ class ProductServiceTest {
         when(productskuRepository.nextSkuNumber()).thenReturn(100042L);
         when(productskuRepository.existsBySku("FAS-100042")).thenReturn(false);
         // 저장이 id 를 준 것처럼 — 스타일 7, 사이즈 71 · 72
+        // [JA] 保存が id を与えたかのように — スタイル 7、サイズ 71・72
         when(productskuRepository.save(any(ProductSku.class))).thenAnswer(inv -> {
             ProductSku sku = inv.getArgument(0);
             sku.setSkuproductId(7L);
@@ -441,6 +466,7 @@ class ProductServiceTest {
         assertEquals(1, saved.getProduct().getQuestions().size());
 
         // 규칙은 DB 함수에만 — 저장한 행을 먼저 내보낸 뒤 부른다.
+        // [JA] 規則は DB 関数にだけ — 保存した行を先に送り出してから呼ぶ。
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(productskuRepository, productSizeRepository);
         order.verify(productskuRepository).save(any(ProductSku.class));
         order.verify(productSizeRepository).flush();
@@ -482,6 +508,7 @@ class ProductServiceTest {
                 () -> productService.addProduct(req, List.of(img("a")), img("color")));
         assertTrue(e.getMessage().contains("이미 사용 중인 SKU"));
         // 거절 경로에서는 업로드가 일어나지 않아야 한다 — 고아 이미지 예방의 첫 줄이다.
+        // [JA] 拒否経路ではアップロードが起きてはならない — 孤児画像予防の第一線である。
         verifyNoInteractions(imageService);
     }
 
@@ -498,6 +525,7 @@ class ProductServiceTest {
         when(imageService.upload(any(MultipartFile.class), anyString())).thenReturn("https://s3/x.jpg");
         when(productskuRepository.nextSkuNumber()).thenReturn(100001L, 100002L);
         // 관리자가 손으로 FAS-100001 을 이미 만들어 둔 상황
+        // [JA] 管理者が手で FAS-100001 をすでに作っていた状況
         when(productskuRepository.existsBySku("FAS-100001")).thenReturn(true);
         when(productskuRepository.existsBySku("FAS-100002")).thenReturn(false);
         when(productskuRepository.save(any(ProductSku.class)))
@@ -509,6 +537,7 @@ class ProductServiceTest {
     }
 
     // ── 수정·상태(품절·삭제) ─────────────────────────────────────────────
+    // [JA] ── 修正・状態(品切れ・削除) ──
 
     private com.project.common.dto.catalog.request.ProductEditRequest updateReq(String json) {
         try {
@@ -530,8 +559,8 @@ class ProductServiceTest {
 
         assertEquals("새 이름", product.getName());
         assertEquals(new BigDecimal("2500"), product.getShipping());
-        assertEquals("TestBrand", product.getBrand());          // 안 보낸 필드는 그대로
-        assertEquals("test-product", product.getSlug());        // URL 안정성 — 절대 불변
+        assertEquals("TestBrand", product.getBrand());          // 안 보낸 필드는 그대로 ／ [JA] 送らなかったフィールドはそのまま
+        assertEquals("test-product", product.getSlug());        // URL 안정성 — 절대 불변 ／ [JA] URL の安定性 — 絶対不変
     }
 
     @Test
@@ -577,6 +606,7 @@ class ProductServiceTest {
         productService.updateStatus(1L, "DELETED");
         // DB 조회는 @SQLRestriction 이 걸러 주지만 ES 는 별도 저장소다 — 직접 지워야
         // 삭제된 상품이 검색에 유령으로 남지 않는다.
+        // [JA] DB 照会は @SQLRestriction が除いてくれるが ES は別ストレージである — 直接消さないと削除された商品が検索に幽霊として残る。
         verify(productIndexService).remove(1L);
     }
 }

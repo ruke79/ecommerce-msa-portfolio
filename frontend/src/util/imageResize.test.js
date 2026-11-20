@@ -2,6 +2,8 @@ import { targetDimensions, MAX_DIMENSION } from "util/imageResize";
 
 // 리사이즈의 유일한 산수. canvas 자체는 jsdom 에 없으므로(실패 시 원본 폴백이
 // 그 경우를 덮는다) 여기서는 크기 결정만 고정한다.
+// [JA] リサイズの唯一の算数。canvas 自体は jsdom にないので(失敗時の原本フォールバックが
+//      その場合をカバーする)、ここではサイズ決定だけを固定する。
 describe("targetDimensions", () => {
   it("긴 변이 한도 이하면 건드리지 않는다 — 확대는 화질만 상한다", () => {
     expect(targetDimensions(800, 600)).toEqual({ width: 800, height: 600, resized: false });

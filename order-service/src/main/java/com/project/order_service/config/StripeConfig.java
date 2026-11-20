@@ -37,6 +37,15 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Stripe 비밀키는 {@code sk_test_…} · {@code sk_live_…} 로 시작한다. PayPal 처럼 환경
  * 스위치를 따로 둘 필요가 없고, <b>오히려 둘 수가 없다</b> — 키와 어긋난 스위치는 거짓말이
  * 되기 때문이다. 대신 기동 로그에 어느 쪽인지 찍고, live 면 경고한다.
+ *
+ * <p>[JA] Stripe の配線。
+ * stripe.enabled = false(既定)Stripe を付けない — 決済手段の一覧にも出ない / = true 資格情報が必要で、なければ起動が失敗する。
+ * 既定値がオフの理由 — PayPal と逆だ: PayPal の検証は既定がオン(`mode=http`)だ。すでに使っている決済手段なので <b>設定を
+ * 忘れた結果が「検証なしで通過」になってはならない</b> からだ。
+ * Stripe は <b>新しく追加される手段</b> だ。設定していない環境で起動が失敗すると既存のデプロイがすべて止まる。そこで「明示的に有効にする」
+ * が正しく、<b>有効にした後は資格情報がなければ起動を止める</b> — 半分有効な状態が最も悪い。
+ * 🔑 test / live はキー自身が語る: Stripe の秘密鍵は {@code sk_test_…} · {@code sk_live_…} で始まる。PayPal のように環境スイッチを
+ * 別に置く必要がなく、<b>むしろ置けない</b> — キーとずれたスイッチは嘘になるからだ。代わりに起動ログにどちらかを出し、live なら警告する。
  */
 @Slf4j
 @Configuration
@@ -62,6 +71,7 @@ public class StripeConfig {
     private int readTimeoutMs;
 
     /** 옛 주문(청구 통화가 없는)에 쓸 상점 통화. */
+    // [JA] 古い注文(請求通貨のない)に使う店舗通貨。
     @Value("${payment.base-currency:USD}")
     private String baseCurrency;
 
@@ -69,6 +79,8 @@ public class StripeConfig {
     public StripeCheckoutGateway stripeCheckoutGateway() {
         // ⚠️ 켰는데 자격증명이 없으면 기동을 막는다. 조용히 넘어가면 결제수단 목록에는
         //    Stripe 가 뜨는데 누르면 500 이 된다 — 사용자가 먼저 발견하게 된다.
+        // [JA] ⚠️ 有効にしたのに資格情報がなければ起動を止める。黙って通すと決済手段の一覧には
+        //         Stripe が出るのに押すと 500 になる — ユーザーが先に見つけることになる。
         if (secretKey.isBlank()) {
             throw new IllegalStateException(
                     "stripe.enabled=true 인데 STRIPE_SECRET_KEY 가 비어 있습니다. "
@@ -81,6 +93,7 @@ public class StripeConfig {
             log.info("Stripe 테스트 모드 (sk_test_…)");
         } else {
             // 형식이 다르면 붙여넣기 사고이거나 제한 키(rk_)다. 막지는 않되 알린다.
+            // [JA] 形式が違えば貼り付け事故か制限キー(rk_)だ。止めはしないが知らせる。
             log.warn("Stripe 비밀키가 sk_test_/sk_live_ 로 시작하지 않습니다 — 키를 확인하세요.");
         }
 
@@ -101,6 +114,10 @@ public class StripeConfig {
      * <p>비밀키가 없으면 <b>여기서 기동을 막는다.</b> 웹훅만 조용히 꺼지면 "결제는 됐는데
      * 주문에 반영이 안 된다"가 되고, 그건 브라우저가 복귀하지 않은 경우에만 나타나서
      * 재현이 어렵다.
+     *
+     * <p>[JA] Webhook 署名の検証器。
+     * 秘密鍵がなければ <b>ここで起動を止める。</b> Webhook だけが黙って切れると「決済はされたのに注文に反映されない」となり、
+     * それはブラウザが戻ってこなかった場合にだけ現れるので再現が難しい。
      */
     @Bean
     public StripeWebhookVerifier stripeWebhookVerifier() {

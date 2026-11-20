@@ -78,7 +78,7 @@ public class FileFlagProvider implements FeatureProvider {
         log.info("기능 플래그 파일 {} — 플래그 {}개", file, current.all().size());
     }
 
-    /** 지금 쓰는 정의. 가드 테스트와 진단용. */
+    /** 지금 쓰는 정의. 가드 테스트와 진단용. ／ [JA] 現在使っている定義。ガードテストと診断用。 */
     public FlagDefinitions definitions() {
         reloadIfDue(false);
         return current;

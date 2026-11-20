@@ -25,8 +25,14 @@ import org.springframework.security.web.SecurityFilterChain;
  * {@code CONFIG_SERVER_PASSWORD} 를 넣고 클라이언트에 {@code spring.cloud.config.username/password} 를 준다.
  * 열어 두는 것: kubelet 프로브({@code /actuator/health/**}) · {@code /actuator/info} · Prometheus({@code /actuator/prometheus}).
  *
- * <p>[JA] config-server の HTTP 認証 — パスワードがなければ閉じる(プローブ・メトリクスだけ開く)。以前は Spring Security がなく、
- * 同じ名前空間の誰でも全サービスの設定を読め、ENCRYPT_KEY を有効にすると /decrypt で {cipher} を解けた。
+ * <p>[JA] config-server の HTTP 認証 — <b>パスワードがなければ閉じる</b>(プローブ · メトリクスだけ開く)。
+ * 🐛 以前は Spring Security がなく、同じ名前空間の誰でも {@code GET /{application}/{profile}} で全サービスの設定を読め、
+ * {@code ENCRYPT_KEY} を有効にすると {@code POST /decrypt} で設定リポジトリの {@code {cipher}} 値を解けた。今はリポジトリがつながって
+ * いない(CONFIG_GIT_URI がプレースホルダ)ので出すものがないだけだった — リポジトリをつなぐ日にそのまま開く。
+ * 今は {@code CONFIG_SERVER_PASSWORD}(Secret)があればユーザー {@code config} の HTTP Basic だけで、なければ誰にも開かない。
+ * クライアントは {@code optional:configserver:} なので拒否されても自分のバンドル設定で動く(今と同じ)。リポジトリをつなぐときは Secret に
+ * {@code CONFIG_SERVER_PASSWORD} を入れ、クライアントに {@code spring.cloud.config.username/password} を与える。
+ * 開けておくもの: kubelet プローブ({@code /actuator/health/**}) · {@code /actuator/info} · Prometheus({@code /actuator/prometheus})。
  */
 @Configuration(proxyBeanMethods = false)
 public class ConfigServerSecurity {
@@ -42,7 +48,7 @@ public class ConfigServerSecurity {
         if (!open) {
             log.warn("CONFIG_SERVER_PASSWORD 가 없다 — 설정 · 복호화 API 를 모두 거절한다(프로브 · 지표만 연다)");
         }
-        http.csrf(c -> c.disable())   // 브라우저가 아니라 서비스가 부르는 API — 세션 · 쿠키가 없다
+        http.csrf(c -> c.disable())   // 브라우저가 아니라 서비스가 부르는 API — 세션 · 쿠키가 없다 ／ [JA] ブラウザーではなくサービスが呼ぶ API — セッション · クッキーがない
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> {
                     a.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/actuator/prometheus")
@@ -63,6 +69,7 @@ public class ConfigServerSecurity {
     }
 
     /** 사용자 하나({@code config}). 비밀번호가 없으면 아무도 없다 — Boot 의 기본 사용자(기동마다 로그에 찍히는 임의 비밀번호)도 막는다. */
+    // [JA] ユーザー一人({@code config})。パスワードがなければ誰もいない — Boot のデフォルトユーザー(起動のたびにログに出るランダムなパスワード)も塞ぐ。
     @Bean
     UserDetailsService configServerUsers(PasswordEncoder encoder,
             @Value("${config-server.password:${CONFIG_SERVER_PASSWORD:}}") String password) {

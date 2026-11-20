@@ -45,6 +45,10 @@ import com.project.chat_service.repository.jpa.SupportThreadRepository;
  *
  * <p>권한 규칙은 기존 상담과 같다: 남의 것은 404, 상담원 기능은 상담원만. 새로 생긴 경계 두 가지를 특히 본다 —
  * 🔒 내부 메모가 <b>고객 응답에 절대 실리지 않는지</b>, 그리고 평가가 본인 · 종료 · 한 번인지.
+ *
+ * <p>[JA] 相談の改編(docs/58 §11) — 問い合わせ種別 · 待ち順番 · 満足度 · 内部メモ · 返却。
+ * 権限規則は既存の相談と同じ: 他人のものは 404、相談員機能は相談員のみ。新しくできた境界二つを特に見る —
+ * 🔒 内部メモが<b>顧客への応答に決して載らないか</b>、そして評価が本人 · 終了済み · 一回のみか。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -90,6 +94,7 @@ class SupportServiceExtrasTest {
     }
 
     // ── 문의 유형 · 대기 순번 ─────────────────────────────────────────
+    // [JA] ── 問い合わせ種別 · 待ち順番 ──
 
     @Test
     @DisplayName("문의 유형을 골라 연다 — 모르는 값은 OTHER, 이미 열린 상담이 있으면 유형을 바꾸지 않는다")
@@ -144,6 +149,7 @@ class SupportServiceExtrasTest {
     }
 
     // ── 만족도 ────────────────────────────────────────────────────────
+    // [JA] ── 満足度 ──
 
     @Test
     @DisplayName("만족도 — 본인이, 종료된 상담에, 한 번. 점수·의견을 저장한다")
@@ -183,6 +189,7 @@ class SupportServiceExtrasTest {
     }
 
     // ── 내부 메모 ─────────────────────────────────────────────────────
+    // [JA] ── 内部メモ ──
 
     @Test
     @DisplayName("🔒 내부 메모는 데스크 응답에만 — 고객 응답(get · current · history · rate)과 그 JSON 에는 없다")
@@ -223,6 +230,7 @@ class SupportServiceExtrasTest {
     }
 
     // ── 반납 ──────────────────────────────────────────────────────────
+    // [JA] ── 返却 ──
 
     @Test
     @DisplayName("반납 — 맡은 상담원이 하면 대기로 돌아가고, 고객에게 '상담원이 바뀝니다' 안내 · 데스크에 RELEASED")

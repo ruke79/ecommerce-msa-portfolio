@@ -43,16 +43,19 @@ class SearchSkuFilterScaleTest {
     private static final long BIG = 9300L;
     private static final long SMALL = 9301L;
     /** 카테고리 전체에 기획전 20% 가 걸린 카테고리. */
+    // [JA] カテゴリ全体に企画展 20% がかかったカテゴリ。
     private static final long SALE = 9302L;
     private static final int PRODUCTS = 70_000;
     private static final long FIRST_ID = 9_300_000L;
     /** 작은 카테고리(SMALL)의 상품 — 정가 · 상시 할인 · 색상 · 사이즈가 다르다. */
-    private static final long P_SKU30 = 9_400_001L;     // 100 · 상시 30% → 70 · Navy Blue · M
+    // [JA] 小さいカテゴリ(SMALL)の商品 — 定価・常時割引・色・サイズが異なる。
+    private static final long P_SKU30 = 9_400_001L;     // 100 · 상시 30% → 70 · Navy Blue · M ／ [JA] 100・常時 30% → 70・Navy Blue・M
     private static final long P_PLAIN = 9_400_002L;     // 85 · 0% → 85 · Red · XL
-    private static final long P_EVENT50 = 9_400_003L;   // 100 · 상시 10% · 상품 기획전 50% → 50 · Red · M
+    private static final long P_EVENT50 = 9_400_003L;   // 100 · 상시 10% · 상품 기획전 50% → 50 · Red · M ／ [JA] 100・常時 10%・商品企画展 50% → 50・Red・M
     /** 기획전 카테고리(SALE, 20%)의 상품. */
-    private static final long P_BOTH = 9_400_004L;      // 100 · 0% · 상품 기획전 40% + 카테고리 20% → 60 · Red · L
-    private static final long P_CATEGORY = 9_400_005L;  // 100 · 0% · 카테고리 20% → 80 · Red · L
+    // [JA] 企画展カテゴリ(SALE, 20%)の商品。
+    private static final long P_BOTH = 9_400_004L;      // 100 · 0% · 상품 기획전 40% + 카테고리 20% → 60 · Red · L ／ [JA] 100・0%・商品企画展 40% + カテゴリ 20% → 60・Red・L
+    private static final long P_CATEGORY = 9_400_005L;  // 100 · 0% · 카테고리 20% → 80 · Red · L ／ [JA] 100・0%・カテゴリ 20% → 80・Red・L
 
     @Container
     static PostgreSQLContainer<?> postgres =
@@ -111,6 +114,7 @@ class SearchSkuFilterScaleTest {
     private EventPricing eventPricing;
 
     /** SearchParamsRequest 는 protected 기본 생성자만 있다. */
+    // [JA] SearchParamsRequest には protected のデフォルトコンストラクタしかない。
     static class Params extends SearchParamsRequest {
         Params() { super(); }
     }
@@ -123,6 +127,7 @@ class SearchSkuFilterScaleTest {
                     BIG, SMALL, SALE);
             jdbc.update("insert into product.product_color (color_id, color, version) values (9301, 'Red', 0), (9302, 'Navy Blue', 0)");
             // 큰 카테고리: 상품마다 SKU 하나(Red) · 사이즈 하나(M, 10.00)
+            // [JA] 大きいカテゴリ: 商品ごとに SKU 一つ(Red)・サイズ一つ(M, 10.00)
             jdbc.update("""
                     insert into product.product (product_id, category_id, name, slug, brand, status, rating, version)
                     select ? + g, ?, 'big ' || g, 'big-' || g, 'b', 'ACTIVE', 0, 0 from generate_series(1, ?) g
@@ -148,6 +153,7 @@ class SearchSkuFilterScaleTest {
                         id, p[4], new BigDecimal((String) p[1]));
             }
             // 진행 중인 기획전 둘 — 상품 지정(50% · 40%)과 SALE 카테고리 전체 20%
+            // [JA] 進行中の企画展二つ — 商品指定(50%・40%)と SALE カテゴリ全体 20%
             jdbc.update("insert into content.event (event_id, title, slug, status) values (9301, 'e1', 'e1', 'ACTIVE'), (9302, 'e2', 'e2', 'ACTIVE')");
             jdbc.update("insert into content.event_product (event_id, product_id, discount_rate) values (9301, ?, 50), (9301, ?, 40)", P_EVENT50, P_BOTH);
             jdbc.update("insert into content.event_category (event_id, category_id, discount_rate) values (9302, ?, 20)", SALE);
@@ -222,6 +228,8 @@ class SearchSkuFilterScaleTest {
 
         // 필터가 없어도 같다 — 🐛 2026-10-25 운영: 하위 카테고리만 고른 검색의 개수가 200만 상품을 훑어 늘 503(목록은 16ms).
         //    개수는 조건마다 계획이 달라 안전한 조건을 미리 알 수 없어 어떤 검색도 세지 않는다.
+        // [JA] フィルタがなくても同じ — 🐛 2026-10-25 本番: サブカテゴリだけを選んだ検索の件数が 200 万商品を走査して常に 503(一覧は 16ms)。
+        //      件数は条件ごとに実行計画が異なり安全な条件を事前に知ることができないので、どの検索も数えない。
         Params plain = new Params();
         plain.setCategory(String.valueOf(BIG));
         plain.setPage(1);

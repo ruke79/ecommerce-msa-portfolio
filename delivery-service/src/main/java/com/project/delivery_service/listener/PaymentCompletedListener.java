@@ -43,6 +43,18 @@ import lombok.extern.slf4j.Slf4j;
  * <p>결제가 {@code CANCELED} 로 오면(환불·취소 — pay-service 는 둘 다 이 상태로 발행한다)
  * 발송 전인 배송을 접는다. 이미 집화됐으면 손댈 수 없다 — 그건 반품 절차고, 주문 쪽의
  * 반품 입고가 처리한다. {@code FAILED} 는 애초에 배송이 없으니 할 일이 없다.
+ *
+ * <p>[JA] 決済完了 → 配送作成。<b>サガが途切れていた地点</b>である。
+ * これまで注文は {@code PAID} で止まっていた。{@code OrderStatus} に PROCESSING・DISPATCHED・DELIVERED が宣言されているのに誰もその値を設定せず、
+ * フロントの「発送済み」フィルタは永遠に空のリストだった(docs/25 §0)。このリスナーがその先を受け継ぐ。
+ * 🐛 配送が一件も作られなかった: 以前の版は決済イベントの中で {@code shippingAddress} を探していた。しかし {@code payment} トピックの
+ * {@code PaymentResponse} には住所も品目もない — 決済ドメインの事実(注文・金額・状態)だけである。住所が見つからなければ例外を投げる作りだったので、
+ * <b>すべての決済完了が DLT に行き</b>、配送は永遠に 404 だった。注文詳細の「配送準備中」はその 404 を正常と読んだものである。
+ * 今は注文の持ち主に問い合わせる({@link OrderServiceClient})。イベントに住所が載っていれば(他の発行者・将来のスキーマ)それを先に使い、なければ order-service を読む。
+ * <b>スキーマに寛容に読む。</b> 決済イベントの DTO にそのまま依存すると、決済ドメインがフィールドを一つ追加するたびに配送サービスが逆シリアル化の失敗で落ちる。
+ * 配送に必要なのは「誰の、どの注文が、どこへ」だけなので、必要なフィールドだけを取り出して読む(notification-service と同じ判断)。
+ * キャンセル・返金: 決済が {@code CANCELED} で来たら(返金・キャンセル — pay-service はどちらもこの状態で発行する)発送前の配送をたたむ。
+ * すでに集荷されていれば手を付けられない — それは返品手続きで、注文側の返品入庫が処理する。{@code FAILED} はそもそも配送がないので何もしない。
  */
 @Slf4j
 @Component
@@ -53,12 +65,14 @@ public class PaymentCompletedListener {
     private final OrderServiceClient orderServiceClient;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id = "delivery-payment", topics = "payment",
                    containerFactory = "deliveryListenerContainerFactory")
     public void onPayment(List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -66,6 +80,7 @@ public class PaymentCompletedListener {
                 handle(messages.get(i));
             } catch (Exception e) {
                 // 이 레코드만 DLT 로 보내고 나머지 배치는 계속 처리한다(docs/11 §3).
+                // [JA] このレコードだけ DLT に送り、残りのバッチは処理を続ける(docs/11 §3)。
                 throw new BatchListenerFailedException("결제→배송 처리 실패", e, i);
             }
         }
@@ -78,6 +93,11 @@ public class PaymentCompletedListener {
      * 건너뛰었는데, 그러면 배송이 안 생겼을 때 로그에 <b>아무것도 없다</b> — 이벤트를 못 받은
      * 것인지, 받고 건너뛴 것인지, 어디서 실패한 것인지 구분할 방법이 사라진다. 실제로 그
      * 상태로 한참 헤맸다. 결제 이벤트는 주문당 한 건이라 로그가 넘치지도 않는다.
+     *
+     * <p>[JA] 一件のレコード。テストが直接呼ぶ。
+     * <b>どの分岐に進んでも一行を残す。</b> 以前は「完了でない決済」を黙ってスキップしていたが、そうすると配送ができなかったときにログに<b>何もない</b> —
+     * イベントを受け取れなかったのか、受け取ってスキップしたのか、どこで失敗したのかを区別する手段がなくなる。
+     * 実際にその状態で長く迷った。決済イベントは注文あたり一件なのでログが溢れることもない。
      */
     void handle(String raw) throws Exception {
         JsonNode event = objectMapper.readTree(raw);
@@ -97,6 +117,7 @@ public class PaymentCompletedListener {
         }
         if (status == null || !status.toUpperCase().contains("COMPLET")) {
             // 실패 결제로는 배송을 만들지 않는다.
+            // [JA] 失敗した決済では配送を作らない。
             log.info("완료된 결제가 아니라 배송을 만들지 않음: orderId={} status={}", orderId, status);
             return;
         }
@@ -108,6 +129,7 @@ public class PaymentCompletedListener {
     }
 
     /** 그 사이 취소 · 환불된 주문인가 — 배송을 만들면 환불된 물건이 출고된다. */
+    // [JA] その間にキャンセル・返金された注文か — 配送を作ると返金済みの品物が出荷される。
     static boolean isCancelledOrRefunded(String orderStatus) {
         return "CANCELED".equals(orderStatus) || "REFUNDED".equals(orderStatus);
     }
@@ -119,6 +141,10 @@ public class PaymentCompletedListener {
      * 생기고, 그것은 아무 화면에도 "왜" 가 나오지 않는다.
      *
      * @return 만들 배송. 주문이 그 사이 취소 · 환불됐으면 null(만들지 않는다)
+     *
+     * <p>[JA] イベントに住所が載っていればそのまま、なければ order-service に問い合わせる。
+     * 住所が最後まで得られなければ例外 → DLT。黙って空の住所で作ると送り状を出せない配送ができ、それはどの画面にも「なぜ」が出ない。
+     * 戻り値: 作る配送。注文がその間にキャンセル・返金されていれば null(作らない)。
      */
     private CreateDeliveryCommand commandFor(JsonNode event, Long orderId) {
         JsonNode address = firstOf(event, "shippingAddress", "address", "deliveryAddress");
@@ -143,6 +169,8 @@ public class PaymentCompletedListener {
 
         // 여기서 막히면(네트워크·TLS·인가) 그 예외가 곧 원인이다. 부르기 전에 한 줄 남겨
         // "물어보러 갔다가 못 돌아왔다" 를 로그에서 바로 읽을 수 있게 한다.
+        // [JA] ここで詰まったら(ネットワーク・TLS・認可)その例外がそのまま原因である。呼ぶ前に一行残し、
+        //      「問い合わせに行って戻れなかった」をログからすぐ読めるようにする。
         log.info("주문에서 배송 정보를 읽는다: orderId={}", orderId);
         OrderShippingDto order = orderServiceClient.shipping(orderId);
         if (order != null && isCancelledOrRefunded(order.orderStatus())) {
@@ -208,6 +236,7 @@ public class PaymentCompletedListener {
     }
 
     // ── 관대한 읽기 헬퍼 ─────────────────────────────────────────────────────
+    // [JA] ── 寛容な読み取りヘルパー ──
 
     private static JsonNode firstOf(JsonNode node, String... names) {
         for (String name : names) {

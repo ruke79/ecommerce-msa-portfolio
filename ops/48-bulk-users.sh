@@ -18,7 +18,18 @@
 #       운영 노드   kubectl -n ecommerce port-forward svc/gateway-server 8000:8000 뒤 GATEWAY=https://localhost:8000 INSECURE=1
 #                   (게이트웨이는 ClusterIP · 8000 · 내부 CA 인증서 — 이름이 localhost 와 맞지 않는다)
 #       실습        그 클러스터의 게이트웨이 인그레스 주소(자체 서명이면 INSECURE=1)
-#     [JA] GATEWAY は signin がゲートウェイに届くアドレス — 本番は公開アドレス、ノード内は port-forward + INSECURE=1
+#     [JA] ops/tools/generate-demo-users.py が出した SQL を PostgreSQL Pod の psql へ流し込む。作ったアカウントは実際にログインできる
+#          (enabled・BCrypt 2a/10・ROLE_USER)。一人ごとに user-created のアウトボックス行を同じトランザクションに書くので、ウェルカムクーポン・
+#          チャットの会員複製が通常の登録と同じ経路でできる(docs/47・docs/48)。
+#          使い方: estimate = 行数・容量・イベントがすべて出るまで(既定 10 万人)、load = 確認 → パスワード準備 → 束ごとの投入(再実行すると続きから)
+#          → 結果、status = デモユーザー・配送先・イベント(STARTED/COMPLETED/FAILED)・クーポン・チャット複製、retry-failed = 発行失敗(FAILED)で
+#          止まったデモの user-created を再び STARTED に、login-check = 標本の数人が実際にログインできるか(毎秒 1 回 — ログイン制限)、
+#          purge = デモユーザー・その痕跡・クーポン・チャット複製だけを消す。
+#          GATEWAY は /user-service/api/auth/public/signin がゲートウェイに届くアドレス(docs/79 §0):
+#            本番(推奨) — 公開アドレス。トンネルが /user-service/… をゲートウェイへ送り、証明書も正常(403 なら Cloudflare のボット遮断 → 下記)
+#            本番ノード — gateway-server を 8000 へ port-forward した後 localhost:8000 + INSECURE=1
+#                         (ゲートウェイは ClusterIP・8000・内部 CA 証明書 — 名前が localhost と合わない)
+#            実習 — そのクラスターのゲートウェイ Ingress のアドレス(自己署名なら INSECURE=1)
 #   ./ops/48-bulk-users.sh purge                    # 데모 사용자 · 그 흔적 · 쿠폰 · 채팅 복제본만 지운다
 #
 #   USERS=500000 ./ops/48-bulk-users.sh load        # 개수 바꾸기(purge · status 도 같은 값으로)
@@ -66,12 +77,13 @@ gen() {
 }
 
 # psql 을 PostgreSQL 파드 안에서 — SQL 은 stdin 으로(ops/42 · ops/47 과 같다). DB 비밀번호가 필요 없다.
-psql_db() {   # psql_db <db> [psql 인자…]
+# [JA] psql を PostgreSQL Pod 内で — SQL は stdin で(ops/42・ops/47 と同じ)。DB パスワードは不要だ。
+psql_db() {   # psql_db <db> [psql 인자…] ／ [JA] psql_db <db> [psql 引数…]
     local db="$1"; shift
     kubectl -n "$PG_NS" exec -i "deploy/$PG_DEPLOY" -- psql -X -q -U "$PG_USER" -d "$db" -v ON_ERROR_STOP=1 "$@"
 }
 
-confirm() {   # confirm <질문>
+confirm() {   # confirm <질문> ／ [JA] confirm <質問>
     [ "${YES:-0}" = "1" ] && return 0
     printf '  %s [y/N] ' "$1" >&2
     local a; read -r a
@@ -90,7 +102,10 @@ check_window() {
 # spring-security-crypto 의 **클래스** jar — Gradle 캐시에는 IDE 가 받은 -sources · -javadoc jar 도 같은 이름 앞부분으로 있다.
 # 🐛 예전: find | head -1 이 그것을 집으면 클래스가 없어 "package org.springframework.security.crypto.bcrypt does not exist" 로
 #    해시를 만들지 못했다(2026-10-17, IDE 가 있는 기계). 판이 여럿이면 가장 새것, BCrypt.class 가 든 것만.
-# [JA] Gradle キャッシュには IDE が落とした -sources · -javadoc の jar もある。以前は head -1 がそれを拾い、クラスがなく失敗した。
+# [JA] アプリと同じ BCrypt(強度 10、接頭辞なし)で — ops/30 と同じ方法。平文は stdin だけを通る。
+#      spring-security-crypto のクラス jar — Gradle キャッシュには IDE が落とした -sources・-javadoc の jar も同じ名前の前半で存在する。
+#      🐛 以前: find | head -1 がそれを拾うとクラスがなく "package org.springframework.security.crypto.bcrypt does not exist" で
+#      ハッシュを作れなかった(2026-10-17、IDE のある機械)。版が複数あれば最新、BCrypt.class を含むものだけ。
 crypto_jar() {
     local j
     find "${GRADLE_USER_HOME:-$HOME/.gradle}/caches" -name 'spring-security-crypto-*.jar' \
@@ -131,6 +146,7 @@ JAVA
 }
 
 # 데모 비밀번호 — DEMO_PASSWORD 가 있으면 그것, 없으면 파일, 파일도 없으면 무작위로 만들어 파일에 둔다(저장소 밖, 0600).
+# [JA] デモパスワード — DEMO_PASSWORD があればそれ、なければファイル、ファイルもなければランダムに作ってファイルに置く(リポジトリ外、0600)。
 demo_password() {
     if [ -n "${DEMO_PASSWORD:-}" ]; then
         printf '%s' "$DEMO_PASSWORD"
@@ -181,6 +197,7 @@ cmd_load() {
 
     local chunks=$(( (USERS + CHUNK - 1) / CHUNK ))
     # 이어서: 꽉 찬 묶음은 건너뛴다(묶음 SQL 자체도 ON CONFLICT DO NOTHING 이라 다시 넣어도 같다).
+    # [JA] 続きから: 満杯のバッチは飛ばす(バッチ SQL 自体も ON CONFLICT DO NOTHING なので再投入しても同じ)。
     local first=$(( have / CHUNK ))
     local i
     for i in $(seq "$first" $((chunks - 1))); do
@@ -217,6 +234,7 @@ SQL
 cmd_retry_failed() {
     need kubectl
     # 폴러는 발행 실패를 FAILED 로 남기고 다시 집지 않는다(UserOutboxScheduler) — 데모 범위의 것만 되살린다.
+    # [JA] ポーラーは発行失敗を FAILED として残し再び拾わない(UserOutboxScheduler)— デモ範囲のものだけを復活させる。
     psql_db "$USER_DB" <<SQL
 UPDATE users.outbox_event SET outbox_status = 'STARTED'
  WHERE outbox_status = 'FAILED' AND event_type = 'user-created'
@@ -235,6 +253,7 @@ cmd_login_check() {
         idx=$(( (RANDOM * 32768 + RANDOM) % USERS ))
         email=$(printf 'demo%07d@%s' "$idx" "$DOMAIN")
         # 비밀번호는 본문(stdin)으로만 — 명령줄에 올리지 않는다. 응답 본문 · 헤더(ACCESS)는 버린다.
+        # [JA] パスワードは本文(stdin)でのみ — コマンドラインに載せない。応答本文・ヘッダ(ACCESS)は捨てる。
         code=$(printf '%s\n%s\n' "$email" "$pw" \
             | python3 -I -c 'import json,sys; e,p=sys.stdin.read().split("\n")[:2]; print(json.dumps({"email":e,"password":p}))' \
             | curl -sS ${tls[@]+"${tls[@]}"} -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \

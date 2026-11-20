@@ -20,8 +20,16 @@ import com.zaxxer.hikari.HikariDataSource;
  * <p>JPA 설정(DataSourceConfig · MetaDataSourceConfig)과 떼어 둔 것은 풀만 실제 yml 로 띄워 보기 위해서다
  * ({@code CatalogDataSourcePoolsTest}).
  *
- * <p>[JA] catalog の二つのコネクションプール。以前は URL · アカウントしか読まず yml の hikari.* が一つも効いていなかった
- * (最大 5 · 最小 2 · 待ち 5 秒の代わりに Hikari の既定 10 · 30 秒)。Bean に @ConfigurationProperties("….hikari") を付けて結び付ける。
+ * <p>[JA] catalog の二つのコネクションプール — {@code spring.datasource-data}(productdb) · {@code spring.datasource-meta}(metadb)。
+ *
+ * <p>[JA] 2026-10-19: 以前は {@code DataSourceProperties.initializeDataSourceBuilder().build()} だけで URL · アカウントしか読まず、
+ * yml の {@code hikari.*} は<b>一つも適用されていなかった</b> — プール最大 5(`DB_POOL_SIZE`) · 最小 2 · 待ち 5 秒 · リーク検知 20 秒の代わりに
+ * Hikari の既定値(最大 10 · 最小 = 最大 · 待ち 30 秒 · リーク検知なし)で動いていた。spike 負荷測定の Pod 別指標
+ * {@code hikaricp_connections_max} = 10 で判明し(docs/83 §5)、それ以前の「プール 5 → 10」実験はプールを変えられていなかった。
+ * Bean に {@code @ConfigurationProperties("….hikari")} を付けて、作ったプールにその設定を結び付ける(Spring Boot の複数データソース方式)。
+ *
+ * <p>[JA] JPA 設定(DataSourceConfig · MetaDataSourceConfig)と分けてあるのは、プールだけを実際の yml で起動して確かめるためである
+ * ({@code CatalogDataSourcePoolsTest})。
  */
 @Configuration
 public class CatalogDataSourcePools {
@@ -33,6 +41,7 @@ public class CatalogDataSourcePools {
     }
 
     /** 앱 데이터(JPA) — productdb. */
+    // [JA] アプリデータ(JPA) — productdb。
     @Bean(name = "dataDataSource")
     @Primary
     @ConfigurationProperties(prefix = "spring.datasource-data.hikari")
@@ -47,6 +56,7 @@ public class CatalogDataSourcePools {
     }
 
     /** metadb — 이름과 달리 Spring Batch 메타데이터용이 아니다(application-local.yml 의 datasource-meta 주석). */
+    // [JA] metadb — 名前と違って Spring Batch メタデータ用ではない(application-local.yml の datasource-meta のコメント)。
     @Bean(name = "metaDataSource")
     @ConfigurationProperties(prefix = "spring.datasource-meta.hikari")
     public HikariDataSource metaDataSource() {

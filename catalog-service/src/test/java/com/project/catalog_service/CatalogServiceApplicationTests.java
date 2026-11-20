@@ -23,6 +23,10 @@ import org.testcontainers.utility.DockerImageName;
  * <b>커스텀 EMF 가 ddl-auto 를 전달받지 못해 빈 DB 에서 스키마가 아예 생성되지 않는</b> 문제
  * (docs/14 B-8)가 드러났고, 멱등성 엔티티가 스캔 대상 밖에 있는 문제(B-9)도 함께 나왔다.
  * 둘 다 "빈 데이터베이스에 처음 붙일 때만" 나타나므로, 컨테이너로 매번 새 DB 를 만들어 확인한다.
+ *
+ * <p>[JA] catalog-service の起動検証 — 実際の PostgreSQL/Redis コンテナの上で。
+ * <p>catalog はこのリポジトリで最も厄介な起動経路だった。手で立ち上げてみて初めて、<b>カスタム EMF が ddl-auto を受け取れず空の DB でスキーマがまったく作られない</b>問題
+ * (docs/14 B-8)が明らかになり、冪等性エンティティがスキャン対象外にある問題(B-9)も一緒に出た。どちらも「空のデータベースに初めて接続するときだけ」現れるので、コンテナで毎回新しい DB を作って確かめる。
  */
 @Tag("containers")
 @Testcontainers
@@ -103,6 +107,11 @@ class CatalogServiceApplicationTests {
 	 * 데이터는 필요 없다: SQL 이 실행되기만 하면 된다(예전 SQL 은 파싱 단계에서 죽었다).
 	 * 2026-10-19: 메뉴는 이제 id 목록이 아니라 카테고리 조인이다(상품이 65,535 개를 넘으면 id 목록이 실패했다 —
 	 * {@code SearchFilterFacetsScaleTest}). 같은 뜻으로 그 SQL 이 실제 PostgreSQL 에서 실행되는지 본다.
+	 *
+	 * <p>[JA] 🐛 <b>カテゴリを選ぶと /api/search が 500 だった。</b>色・サイズメニューのネイティブ SQL が {@code unnest(CAST(:productIds AS BIGINT[]))} だったが、Hibernate がリストを {@code (?, ?)} に展開し、
+	 * PostgreSQL が "cannot cast type record to bigint[]" で拒否した。空リストは通るので空 DB の起動テストでは捕まえられなかった — そこで<b>空でないリスト</b>で実行してみる。
+	 * データは要らない: SQL が実行されさえすればよい(以前の SQL はパース段階で死んでいた)。
+	 * 2026-10-19: メニューは今や id リストではなくカテゴリ結合である(商品が 65,535 個を超えると id リストが失敗した — {@code SearchFilterFacetsScaleTest})。同じ趣旨でその SQL が実際の PostgreSQL で実行されるかを見る。
 	 */
 	@Test
 	@DisplayName("색상·사이즈·상세 메뉴 SQL 이 PostgreSQL 에서 실행된다 (카테고리 조인)")
@@ -120,6 +129,7 @@ class CatalogServiceApplicationTests {
 	void schemaIsCreatedOnEmptyDatabase() throws Exception {
 		// 커스텀 EMF 가 ddl-auto 를 전달받지 못하던 시절에는 여기서 테이블이 0개였고,
 		// 기동은 'relation "product.category" does not exist' 로 실패했다.
+		// [JA] カスタム EMF が ddl-auto を受け取れなかった頃はここでテーブルが 0 個で、起動は 'relation "product.category" does not exist' で失敗していた。
 		try (var conn = java.sql.DriverManager.getConnection(
 						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
 				var st = conn.createStatement();
@@ -134,6 +144,7 @@ class CatalogServiceApplicationTests {
 	@DisplayName("B-9: 멱등성 원장 테이블(processed_event)이 존재한다")
 	void idempotencyLedgerExists() throws Exception {
 		// 이 테이블이 없으면 재고 이중 차감 방지가 조용히 사라진다.
+		// [JA] このテーブルがないと在庫の二重差し引き防止が黙って消える。
 		try (var conn = java.sql.DriverManager.getConnection(
 						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
 				var st = conn.createStatement();
@@ -151,6 +162,8 @@ class CatalogServiceApplicationTests {
 		// 이 테이블들이 없으면 **모든 배치 잡이 즉시 실패**한다 — ES 색인 잡도, CSV 상품 임포트도.
 		//   ERROR: relation "meta.batch_job_instance" does not exist
 		// 예전에는 스키마를 만드는 곳이 아무 데도 없어 신규 환경에서 항상 이 상태였다(docs/16 §7).
+		// [JA] これらのテーブルがないと**すべてのバッチジョブが即座に失敗**する — ES 索引ジョブも CSV 商品インポートも(上の ERROR)。
+		//      以前はスキーマを作る場所がどこにもなく、新しい環境では常にこの状態だった(docs/16 §7)。
 		try (var conn = java.sql.DriverManager.getConnection(
 						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
 				var st = conn.createStatement();
@@ -170,10 +183,13 @@ class CatalogServiceApplicationTests {
 		// 테이블 존재만으로는 부족하다 — Spring Batch 가 **설정된 접두사(meta.BATCH_)로**
 		// 그 테이블에 실제로 접근하는지 확인한다. 잡을 실행하지는 않는다: 색인 잡은 Elasticsearch 를
 		// 요구하고 이 서비스의 ES 타임아웃이 600초라 테스트가 멈춰 버린다.
+		// [JA] テーブルの存在だけでは足りない — Spring Batch が**設定された接頭辞(meta.BATCH_)で**そのテーブルに実際にアクセスするかを確かめる。
+		//      ジョブは実行しない: 索引ジョブは Elasticsearch を要求し、このサービスの ES タイムアウトが 600 秒なのでテストが止まってしまう。
 		var explorer = context.getBean(org.springframework.batch.core.explore.JobExplorer.class);
 
 		// 아직 실행 이력이 없어도 예외 없이 조회돼야 한다. 접두사나 스키마가 어긋나 있으면
 		// 여기서 'relation "meta.batch_job_instance" does not exist' 로 터진다.
+		// [JA] まだ実行履歴がなくても例外なく照会できなければならない。接頭辞やスキーマがずれていると、ここで 'relation "meta.batch_job_instance" does not exist' で落ちる。
 		assertThat(explorer.getJobNames()).isNotNull();
 		assertThat(explorer.findJobInstancesByJobName("productImportJob", 0, 10)).isNotNull();
 	}

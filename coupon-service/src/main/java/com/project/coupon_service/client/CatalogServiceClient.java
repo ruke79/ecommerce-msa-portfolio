@@ -20,6 +20,9 @@ import com.project.coupon_service.config.FeignConfig;
  * <p>줄마다 한 번씩 부르지 않는다 — 배치 엔드포인트를 쓴다. cart-service 가 같은 이유로
  * 이미 쓰고 있고, 상한도 서버가 갖고 있다({@code MAX_BATCH_IDS = 100}). 찾지 못한 id 는
  * 응답 목록에서 빠지므로, 그런 상품은 대상이 아닌 것으로 취급한다.
+ *
+ * <p>[JA] カート内商品の<b>カテゴリー</b>を調べるためのクライアント。カテゴリー制約クーポンは「この行の商品が対象カテゴリーに属するか」を判定する必要があり、カート行には商品 id しかないのでカテゴリーは catalog-service が知っている。
+ * <p>行ごとに一回ずつ呼ばない — バッチエンドポイントを使う。cart-service が同じ理由で既に使っており、上限もサーバーが持つ({@code MAX_BATCH_IDS = 100})。見つからない id は応答一覧から抜けるので、そのような商品は対象外として扱う。
  */
 @FeignClient(name = "catalog-service", url = "${feign.catalog-url}", configuration = FeignConfig.class)
 public interface CatalogServiceClient {
@@ -36,6 +39,10 @@ public interface CatalogServiceClient {
      * 싸다.
      *
      * <p>진행 중이 아니거나 쿠폰이 없으면 404 다 — 상태 판정을 이쪽에서 다시 하지 않는다.
+     *
+     * <p>[JA] 企画展に付いたクーポンの条件。
+     * <p><b>なぜ受け取るたびに問い合わせるのか。</b>企画展は catalog のものだ。開始時に Kafka で押し込んでおくと、企画展が早く終了したときにこちらが知らずに発行し続ける。受け取りは人がボタンを押したときだけ起きるまれな操作なので、<b>その時に問い合わせる</b>方が常に正しく十分に安い。
+     * <p>進行中でないかクーポンがなければ 404 — 状態判定をこちらで再度しない。
      */
     @GetMapping("/api/content/events/{slug}/coupon-offer")
     ResponseEntity<EventCouponOffer> getEventCouponOffer(@PathVariable("slug") String slug);
@@ -46,6 +53,8 @@ public interface CatalogServiceClient {
      * <p>catalog 의 DTO 를 공유하지 않고 여기 다시 적는다. 공유하면 이 서비스가 카탈로그
      * 도메인의 스키마 변경에 끌려다닌다 — 알림 서비스가 JsonNode 로 읽는 것과 같은
      * 이유다. 필요한 필드만 받고, 늘어난 필드는 무시한다.
+     *
+     * <p>[JA] catalog が返す企画展クーポンの条件。catalog の DTO を共有せずここに書き直す。共有するとこのサービスがカタログドメインのスキーマ変更に振り回される — 通知サービスが JsonNode で読むのと同じ理由。必要なフィールドだけ受け取り、増えたフィールドは無視する。
      */
     record EventCouponOffer(
             Long eventId,

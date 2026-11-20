@@ -34,6 +34,11 @@ import com.project.order_service.repository.jpa.OrderRepository;
  * <p>예전에는 주문 상품마다 {@code getColorInfo} 였다 — 주문 10건 × 상품 3개 = Feign 30번.
  * 배치로 바꾼 뒤 누군가 편의상 단건 호출로 되돌리면 컴파일도 기능도 그대로다. 횟수를
  * 세어야만 보인다.
+ *
+ * <p>[JA] 注文一覧 1 ページが catalog の色照会を<b>ページあたり一回</b>だけ行うか。
+ *
+ * <p>以前は注文商品ごとに {@code getColorInfo} だった — 注文 10 件 × 商品 3 個 = Feign 30 回。
+ * バッチに変えた後で誰かが便宜上単発呼び出しに戻しても、コンパイルも機能もそのままである。回数を数えないと見えない。
  */
 @DisplayName("주문 목록 · 색상 배치 조회")
 class OrderColorBatchTest {
@@ -60,6 +65,8 @@ class OrderColorBatchTest {
         when(orderRepository.findByCustomerId(eq(7L), any())).thenReturn(new PageImpl<>(orders));
 
         // 생성자 인자 순서는 @RequiredArgsConstructor 가 만드는 필드 선언 순서를 따른다(OrderOwnershipTest 와 동일).
+        // [JA] コンストラクタ引数の順序は @RequiredArgsConstructor
+        //      が作るフィールド宣言順に従う(OrderOwnershipTest と同じ)。
         OrderDataService data = new OrderDataService(
                 orderRepository,
                 new ObjectMapper(),
@@ -69,13 +76,16 @@ class OrderColorBatchTest {
                 new com.project.order_service.payment.PaymentCurrencyPolicy());
 
         // 색상은 조회 트랜잭션 밖(OrderCacheService)에서 붙인다 — 데이터 서비스는 catalog 를 갖지 않는다.
+        // [JA] 色は照会トランザクションの外(OrderCacheService)で付ける — データサービスは catalog を持たない。
         Page<OrderDto> page = new OrderCacheService(data, catalog).getOrdersByCustomerIdWithPagination(7L, 0, 10);
 
         // 왕복 횟수 — 이 테스트의 존재 이유.
+        // [JA] 往復回数 — このテストの存在理由。
         verify(catalog, times(1)).getColorsInfo(List.of(1L, 2L));
         verify(catalog, never()).getColorInfo(anyString());
 
         // 색상이 각 상품에 제대로 붙었는가.
+        // [JA] 色が各商品に正しく付いたか。
         assertThat(page.getContent()).hasSize(2);
         assertThat(page.getContent().get(0).getProducts()).hasSize(2);
         assertThat(page.getContent().get(0).getProducts().get(0).getColor().getColor()).isEqualTo("red");

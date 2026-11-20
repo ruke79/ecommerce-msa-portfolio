@@ -19,6 +19,9 @@ import com.project.order_service.model.OrderProduct;
 /**
  * 주문 품목의 SKU — 장바구니가 적어 둔 사이즈 한 줄의 재고 단위 코드(catalog V17)를 <b>주문 시점 값으로 복사</b>하고,
  * 주문 내역 · 배송(포장 목록)이 그 값을 그대로 받는다.
+ *
+ * <p>[JA] 注文品目の SKU — カートが記録したサイズ 1 行の在庫単位コード(catalog V17)
+ * を<b>注文時点の値としてコピー</b>し、注文履歴・配送(梱包リスト)がその値をそのまま受け取る。
  */
 @DisplayName("주문 품목 — SKU")
 class OrderSkuCodeTest {
@@ -67,6 +70,7 @@ class OrderSkuCodeTest {
         var dto = OrderShippingInfoService.toDto(order(black, white));
 
         // 같은 상품 · 같은 사이즈라도 색상이 다르면 다른 물건 — 코드가 그것을 구분한다
+        // [JA] 同じ商品・同じサイズでも色が違えば別の品物 — コードがそれを区別する
         assertThat(dto.items()).extracting(i -> i.skuCode()).containsExactly("RUN-BLK-270", "RUN-WHT-270");
     }
 

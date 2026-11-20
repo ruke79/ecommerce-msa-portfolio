@@ -18,6 +18,13 @@ import { useMoney } from "hook/useMoney";
  *
  * <p>번역하지 않고 <b>지웠다.</b> 거짓 정보를 일본어로도 보여 줄 이유가 없고, 없는 것보다
  * 나쁘다 — 사용자는 그 날짜를 믿고 주문한다. 배송일 추정이 생기면 그때 실제 값으로 되살린다.
+ *
+ * <p>[JA] 配送・在庫案内。
+ * 🐛 <b>ここに事実でない情報が埋め込まれていた。</b> Amazon クローンから付いてきたものだ:
+ * 固定された日付と偽のカウントダウン(このリポジトリには配送日を計算するコードがない)、
+ * {@code Deliver to Germany}(このサービスは韓国・日本へ配送する)、{@code Sold by ATUAT}(存在しない販売者名)。
+ * 翻訳せずに <b>消した。</b> 偽の情報を日本語でも見せる理由はなく、無いより
+ * 悪い — ユーザーはその日付を信じて注文する。配送日の推定ができたらそのとき実際の値で復活させる。
  */
 const ShippingInfo = ({ product }) => {
     const { t } = useTranslation();
@@ -45,7 +52,9 @@ const ShippingInfo = ({ product }) => {
             <div className="my-2">
                 <p className="font-md font-semibold text-green-700">
                     {/* 🐛 예전에는 `> 1` 이라 마지막 1개가 "품절" 로 보였다. */}
+                    {/* [JA] 🐛 以前は `> 1` だったので最後の 1 個が「品切れ」に見えた。 */}
                     {/* 관리자가 품절로 내린 상품은 수량이 남아 있어도 품절이다. */}
+                    {/* [JA] 管理者が品切れにした商品は数量が残っていても品切れだ。 */}
                     {product.quantity > 0 && product.status !== "SOLD_OUT" ? t("shipping.in_stock") : t("shipping.sold_out")}
                 </p>
             </div>
@@ -65,6 +74,8 @@ const ShippingInfo = ({ product }) => {
                 <tbody>
                     {/* "Sold by ATUAT" 는 지웠다 — 존재하지 않는 판매자였다.
                         판매도 발송도 이 서비스가 한다. */}
+                    {/* [JA] "Sold by ATUAT" は消した — 存在しない販売者だった。
+                        販売も発送もこのサービスが行う。 */}
                     <tr className="grid grid-cols-3">
                         <td className="text-slate-500">{t("shipping.ships_from")}</td>
                         <td className="col-span-2">{BRAND_NAME}</td>

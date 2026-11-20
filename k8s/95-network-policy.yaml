@@ -19,6 +19,27 @@
 #
 # 전제: k3s 는 기본으로 NetworkPolicy 를 집행한다(--disable-network-policy 로 끄지 않았다면). ops/35 가 "막혀야 할 흐름이
 # 실제로 막히는가" 를 두드려 집행 여부도 함께 확인한다 — 집행되지 않으면 이 파일은 아무것도 하지 않는다.
+# [JA] ネットワークポリシー — 既定拒否 + 許可リスト(docs/57 §11)
+#      
+#      ⚠️ kustomization.yaml には入れていない。誤って塞ぐとサービス全体が切れるので **ops/35-network-policy.sh apply** でのみ適用する —
+#         適用直後に許可・遮断の流れを実際に叩いてみて、許可されるべき流れが一つでも塞がれたら自ら元に戻す。
+#      
+#      何を塞ぐか: **他のネームスペースから入ってくる接続。** 今はクラスター内のどの Pod でも user-service の内部 API と Postgres・
+#      Redis・Kafka・Mongo・ES に直接つながれる。内部 API の「身元ヘッダーなし = 内部呼び出し」(InternalCallGuard)はその前提の
+#      上にある — Pod 一つが破られれば全部開く(docs/27 §14, docs/54 §10.1)。
+#      
+#      何を開けておくか:
+#        · ecommerce 内同士はすべて — サービス同士は Eureka(Pod IP)で呼び、cloudflared・バックアップ CronJob もここにある。
+#        · kube-system(traefik) → frontend・gateway-server — トンネルの残りの経路が traefik を経由する(k8s-overlays/prod/cloudflared.yaml)。
+#        · インフラのネームスペース(postgres・redis・kafka・mongodb・elasticsearch)は ecommerce と自分のネームスペースからのみ。
+#        · ノード自身(kubelet プローブ、kubectl port-forward/exec、ノードの観測スタック)は k3s のポリシーコントローラー(kube-router)が
+#          ポリシーと無関係に許可する — ops/35 が適用後に Pod の準備状態で確認する。
+#      
+#      何をしないか: **出ていく(egress)接続は塞がない。** 外部の決済会社・SMS・メール・宅配会社の API を呼び DNS を使う — その一覧を
+#      間違えると決済が止まる。入ってくる側だけで「他のネームスペースから内部 API・DB へ」行く道は閉じる。
+#      
+#      前提: k3s は既定で NetworkPolicy を執行する(--disable-network-policy で切っていなければ)。ops/35 が「塞がれるべき流れが
+#      実際に塞がれるか」を叩いて執行の有無も併せて確認する — 執行されなければこのファイルは何もしない。
 
 # ── ecommerce ────────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
@@ -58,6 +79,7 @@ spec:
             matchLabels: { kubernetes.io/metadata.name: kube-system }
 ---
 # ── 인프라 — ecommerce 와 자기 네임스페이스에서만 ─────────────────────────────────
+# [JA] ── インフラ — ecommerce と自分のネームスペースからのみ ──
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

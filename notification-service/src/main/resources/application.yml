@@ -16,6 +16,12 @@ spring:
   #
   # 같은 작업끼리는 fixedDelay 라 겹치지 않고, 서로 다른 작업이 겹치는 것은 처음부터 안전하게
   # 설계돼 있다 — 둘 다 FOR UPDATE SKIP LOCKED 로 자기 몫을 선점한다(docs/21).
+  # [JA] このモジュールには @Scheduled ジョブが三つある — SMS 送信(5 秒)、メール送信(5 秒)、メールのスクラブ(1 時間)。
+  #      Spring の既定スケジューラは**スレッド一つ**なので(TaskSchedulingProperties.Pool.size = 1)、
+  #      三つが同じスレッドを交互に使う。SMS バッチがゲートウェイのタイムアウトにかかっている間メールは一通も出られず、
+  #      その逆も同じだ。ジョブ数分のスレッドを与える。
+  #      同じジョブ同士は fixedDelay なので重ならず、異なるジョブが重なるのは最初から安全に設計されている — どちらも
+  #      FOR UPDATE SKIP LOCKED で自分の分を先取りする(docs/21)。
   task:
     scheduling:
       pool:

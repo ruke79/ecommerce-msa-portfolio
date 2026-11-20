@@ -33,8 +33,19 @@ import lombok.extern.slf4j.Slf4j;
  * 롤백되면 저장되지 않은 상태가 나갔고, 브로커 장애로 생긴 비동기 실패는 로그조차 없었다. 이제 트랜잭션이 있으면 커밋 뒤에 보내고,
  * 실패는 {@value #FAILED_METRIC} 로 센다(경보 {@code DeliveryStatusPublishFailed} — 그 주문은 상태가 멈췄을 수 있다).
  *
- * <p>[JA] コミットの後に送り、失敗を数える。以前はトランザクション内で即送信し結果を見ていなかった(ロールバックされた状態が出る ·
- * 非同期の失敗はログもない)。
+ * <p>[JA] 配送状態の変更を知らせる。聞いているのは二か所:
+ * <ul>
+ *   <li><b>notification-service</b> — 通知 · SMS。{@code OUT_FOR_DELIVERY} と {@code DELIVERED}、
+ *       そして通関保留のようにユーザーが対応すべき状態が特に重要(docs/24)。</li>
+ *   <li><b>order-service</b> — 注文状態を {@code DISPATCHED}/{@code DELIVERED} に反映。
+ *       これらの値は enum にあるだけで誰も埋めていなかったもの(docs/25 §0)。</li>
+ * </ul>
+ * 発行の失敗は配送処理を止めない。状態は既に DB にあり、次のポーリングで改めて遷移が検出されることはないので
+ * 通知を一つ逃すことはありうる — それでも配送自体が止まるよりはよい。
+ * (アウトボックスに移すのが定石だが、それはこのサービスに outbox テーブルを置く別作業である。)
+ * <b>コミットの後に送る · 失敗を数える。</b> 🐛 以前はトランザクション内で即送信し、{@code send} の結果を見ていなかった —
+ * ロールバックされると保存されていない状態が出ていき、ブローカー障害による非同期の失敗はログすらなかった。今はトランザクションがあれば
+ * コミット後に送り、失敗は {@value #FAILED_METRIC} で数える(警報 {@code DeliveryStatusPublishFailed} — その注文は状態が止まったかもしれない)。
  */
 @Slf4j
 @Component
@@ -42,6 +53,7 @@ import lombok.extern.slf4j.Slf4j;
 public class DeliveryStatusPublisher {
 
     /** 상태 이벤트를 보내지 못한 수 — Prometheus {@code delivery_status_publish_failed_total}. */
+    // [JA] 状態イベントを送れなかった数 — Prometheus {@code delivery_status_publish_failed_total}。
     public static final String FAILED_METRIC = "delivery.status.publish.failed";
 
     /**
@@ -94,6 +106,7 @@ public class DeliveryStatusPublisher {
             event.put("worthNotifying", status.isWorthNotifying());
             event.put("occurredAt", java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).toString());
             // 알림 서비스가 이 값으로 중복을 거른다 — 같은 상태 전이가 재전달돼도 알림은 하나다.
+            // [JA] 通知サービスがこの値で重複を除く — 同じ状態遷移が再配信されても通知は一つである。
             event.put("eventId", "delivery:" + delivery.getOrderId() + ":" + status.name());
 
             String key = String.valueOf(delivery.getOrderId());

@@ -33,6 +33,7 @@ class CartFailureStatusTest {
     private static final ProductInfoDto LINE = ProductInfoDto.builder().id("7").qty(1).build();
 
     /** 끝점마다 — 서비스가 그 예외를 던지게 하고 컨트롤러의 상태를 돌려준다. */
+    // [JA] エンドポイントごとに — サービスにその例外を投げさせ、コントローラのステータスを返す。
     private static List<Function<RuntimeException, Integer>> endpoints() {
         return List.of(
                 e -> call(e, (svc, c) -> { when(svc.putItem(anyLong(), any())).thenThrow(e); return c.putItem(1L, LINE); }),

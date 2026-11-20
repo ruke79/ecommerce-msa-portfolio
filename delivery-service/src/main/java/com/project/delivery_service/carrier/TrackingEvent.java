@@ -10,6 +10,9 @@ import com.project.delivery_service.domain.DeliveryStatus;
  * <p>{@code rawStatus} 와 {@code rawPayload} 를 함께 넘기는 것이 중요하다 — 매핑이 틀렸을 때
  * 원문이 없으면 왜 그 상태로 판정됐는지 재구성할 수 없고, 택배사가 문구를 바꿨을 때도
  * 알아챌 방법이 없다(docs/25 N-5).
+ *
+ * <p>[JA] アダプターが返す<b>標準イベント</b>。宅配業者応答の唯一の出力形式だ。
+ * <p>{@code rawStatus} と {@code rawPayload} を一緒に渡すことが重要だ — マッピングが間違ったとき原文がなければなぜその状態と判定されたか再構成できず、宅配業者が文言を変えたときも気づく方法がない(docs/25 N-5)。
  */
 public record TrackingEvent(
         DeliveryStatus status,

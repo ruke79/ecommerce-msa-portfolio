@@ -19,6 +19,10 @@ import { hideRoom } from "../../redux/ChatSelectors";
  * 입력줄(position: fixed, 폭 50%) · 아래로 버튼(fixed, z-index 200) · 오른쪽 메뉴의 화면 덮개(fixed inset-0)가
  * 서로 · 헤더 메뉴와 겹쳤다. 이제 헤더 아래의 카드 한 장이고, 안쪽은 전부 흐름(flex) 배치다.
  * isolation: isolate — 카드 안의 z-index 가 밖(헤더의 계정 · 언어 메뉴)으로 새지 않는다.
+ *
+ * <p>[JA] ⚠️ 重なり(docs/58 §11): 以前はこの画面がサイトのヘッダーなしでビューポート全体(100vw × 100vh)を覆い、内側の入力行(position: fixed、幅 50%)·
+ * 下へボタン(fixed、z-index 200)· 右メニューの画面カバー(fixed inset-0)が互いに · ヘッダーメニューと重なっていた。今はヘッダーの下のカード一枚で、
+ * 内側はすべてフロー(flex)配置である。isolation: isolate — カード内の z-index が外(ヘッダーのアカウント · 言語メニュー)へ漏れない。
  */
 const Wrapper = styled.div`
   position: relative;
@@ -52,9 +56,12 @@ const ListWrapper = styled.div`
     const { t } = useTranslation();
     const { token } = useAuthContext();
     // 좁은 화면에서는 방을 열면 목록을 접는다(대화 머리의 ← 로 돌아온다). 선택자 이름이 hideRoom 이지만 값은 "방이 열려 있다" 다.
+    // [JA] 狭い画面ではルームを開くと一覧を畳む(会話ヘッダーの ← で戻る)。セレクター名は hideRoom だが、値は「ルームが開いている」である。
     const roomOpen = useSelector(hideRoom);
     // 매 렌더링마다 새 객체/문자열을 만들면 StompProvider의 재연결 effect가 매번 재실행되어
     // 소켓이 불필요하게 끊겼다 다시 연결되므로 token이 바뀔 때만 갱신되도록 메모이즈한다.
+    // [JA] レンダーごとに新しいオブジェクト / 文字列を作ると StompProvider の再接続 effect が毎回再実行され、
+    //      ソケットが不必要に切れて再接続されるので、token が変わったときだけ更新されるようメモ化する。
     const brokerURL = useMemo(
       () => API_BASE + '/chat-service/chat',
       []

@@ -29,8 +29,10 @@ SECRET="${SECRET:-ecommerce-secrets}"
 SECRET_FILE="${SECRET_FILE:-k8s/20-secret.yaml}"
 DEPLOYS="${DEPLOYS:-user-service gateway-server chat-service}"
 # 전환한 시각 — retire 가 "옛 키의 토큰이 다 만료됐나" 를 판단한다.
+# [JA] 切り替えた時刻 — retire が「旧鍵のトークンがすべて期限切れになったか」を判断する。
 ACTIVATED_ANN="ecommerce.io/jwt-activated-at"
 # 리프레시 토큰의 절대 수명(JWT_REFRESH_ABSOLUTE_MS 와 같아야 한다) — 기본 30일.
+# [JA] リフレッシュトークンの絶対寿命(JWT_REFRESH_ABSOLUTE_MS と同じでなければならない)— 既定 30 日。
 ABSOLUTE_SEC="${ABSOLUTE_SEC:-2592000}"
 
 die()  { echo "ERROR: $1" >&2; exit 1; }
@@ -51,21 +53,21 @@ ARG="${ARGS[1]:-}"
 
 need kubectl
 
-secret_value() {   # secret_value KEY — 화면에 찍지 않고 값만 돌려준다(호출하는 쪽이 변수에 담는다)
+secret_value() {   # secret_value KEY — 화면에 찍지 않고 값만 돌려준다(호출하는 쪽이 변수에 담는다) ／ [JA] secret_value KEY — 画面に出さず値だけを返す(呼び出し側が変数に入れる)
     kubectl -n "$NS" get secret "$SECRET" -o "jsonpath={.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true
 }
 
-kids_of() {        # kids_of "kid=비밀,kid2=비밀2" → 이름만
+kids_of() {        # kids_of "kid=비밀,kid2=비밀2" → 이름만 ／ [JA] kids_of "kid=秘密,kid2=秘密2" → 名前だけ
     printf '%s' "$1" | tr ',' '\n' | sed -n 's/^[[:space:]]*\([^=[:space:]]*\)=.*/\1/p'
 }
 
-patch_secret() {   # patch_secret KEY VALUE — 값은 stdin 으로만
+patch_secret() {   # patch_secret KEY VALUE — 값은 stdin 으로만 ／ [JA] patch_secret KEY VALUE — 値は stdin でのみ
     local b64; b64="$(printf '%s' "$2" | base64 | tr -d '\n')"
     printf '{"data":{"%s":"%s"}}' "$1" "$b64" \
         | kubectl -n "$NS" patch secret "$SECRET" --type merge --patch-file /dev/stdin >/dev/null
 }
 
-sync_file() {      # sync_file KEY VALUE — 로컬 20-secret.yaml 도 같은 값으로(없으면 건너뛴다)
+sync_file() {      # sync_file KEY VALUE — 로컬 20-secret.yaml 도 같은 값으로(없으면 건너뛴다) ／ [JA] sync_file KEY VALUE — ローカルの 20-secret.yaml も同じ値に(なければ飛ばす)
     [ -f "$SECRET_FILE" ] || { echo "  · $SECRET_FILE 이 없다 — 클러스터만 바꿨다"; return 0; }
     command -v python3 >/dev/null || { echo "  ⚠️ python3 가 없어 $SECRET_FILE 은 손으로 맞춰야 한다($1)"; return 0; }
     K="$1" V="$2" F="$SECRET_FILE" python3 - <<'EOF'
@@ -96,13 +98,13 @@ restart_all() {
     done
 }
 
-secret_changed_at() {   # Secret 이 마지막으로 바뀐 시각(epoch)
+secret_changed_at() {   # Secret 이 마지막으로 바뀐 시각(epoch) ／ [JA] Secret が最後に変わった時刻(epoch)
     local t
     t="$(kubectl -n "$NS" get secret "$SECRET" -o jsonpath='{range .metadata.managedFields[*]}{.time}{"\n"}{end}' | sort | tail -1)"
     [ -n "$t" ] && date -d "$t" +%s 2>/dev/null || echo 0
 }
 
-all_pods_newer_than() {  # 세 서비스의 모든 파드가 그 시각 뒤에 떴나(= 지금 Secret 을 읽었나)
+all_pods_newer_than() {  # 세 서비스의 모든 파드가 그 시각 뒤에 떴나(= 지금 Secret 을 읽었나) ／ [JA] 三つのサービスのすべての Pod がその時刻より後に起動したか(= 今の Secret を読んだか)
     local since="$1" d started bad=""
     for d in $DEPLOYS; do
         local sel; sel="$(kubectl -n "$NS" get deploy "$d" -o jsonpath='{.spec.selector.matchLabels.app}')"

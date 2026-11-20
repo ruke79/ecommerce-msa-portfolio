@@ -50,6 +50,10 @@ public class StockReservationTransportConfig {
     /**
      * catalog 로 가는 gRPC 채널. {@code @Lazy} 대신 {@link org.springframework.beans.factory.ObjectProvider} 로 받으므로 http 면
      * 만들어지지 않는다(프로토타입이 아니라 싱글턴 — 한 번 만들면 계속 쓴다).
+     *
+     * <p>[JA] catalog へ向かう gRPC チャネル。{@code @Lazy} の代わりに {@link
+     * org.springframework.beans.factory.ObjectProvider} で受けるので、http
+     * なら作られない(プロトタイプではなくシングルトン — 一度作ったら使い続ける)。
      */
     @Bean(destroyMethod = "shutdown")
     @org.springframework.context.annotation.Lazy
@@ -65,6 +69,8 @@ public class StockReservationTransportConfig {
             builder.sslContext(GrpcTls.client(keyStore, keyStorePassword, ca));
         } else {
             // 평문 — 로컬 개발. 운영(catalog 가 enforce)에서 이리로 오면 모든 호출이 UNAUTHENTICATED 로 거절된다(로그에 남는다).
+            // [JA] 平文 — ローカル開発。運用(catalog が enforce)でここに来ると、すべての呼び出しが UNAUTHENTICATED
+            //      で拒否される(ログに残る)。
             log.warn("재고 예약 gRPC 채널이 평문이다 — TLS 키스토어/CA 가 없다(keyStore={}, ca={})", keyStore, ca);
             builder.usePlaintext();
         }

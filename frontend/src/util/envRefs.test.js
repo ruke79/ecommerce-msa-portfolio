@@ -14,6 +14,19 @@ import path from "path";
  * `process.env.PUBLIC_URL`. 맨몸의 `process.env`(기본 인자·전달), `process.env[동적]`,
  * 그 외 이름은 금지다. 다른 이름이 필요하면 REACT_APP_ 를 붙인다 — 그것이 "공개된다" 는
  * 표시다(B-51).
+ *
+ * <p>[JA] 🔴 ブラウザバンドルの `process.env` 参照は **バンドラーが置き換えられる形** でなければならない。
+ *
+ * <p>ブラウザには `process` がない。webpack は `process.env.名前` をビルド時の値に
+ * 文字置換するだけなので、その形でない参照はそのまま残り、本番で
+ * `Uncaught ReferenceError: process is not defined` によって **アプリ全体が死ぬ。** テストは
+ * Node で回り `process` があるので、ここで捕まえなければ誰も捕まえられない(実際に経験した —
+ * `util/money.js` のショップ通貨が最初の画面を殺した)。
+ *
+ * <p>許可する形は一つ: `process.env.REACT_APP_*`・`process.env.NODE_ENV`・
+ * `process.env.PUBLIC_URL`。裸の `process.env`(デフォルト引数・受け渡し)、`process.env[動的]`、
+ * それ以外の名前は禁止。別の名前が必要なら REACT_APP_ を付ける — それが「公開される」という
+ * 印である(B-51)。
  */
 const SRC = path.resolve(__dirname, "..");
 const ALLOWED = /^process\.env\.(REACT_APP_[A-Z0-9_]+|NODE_ENV|PUBLIC_URL)\b/;
@@ -23,6 +36,7 @@ function walk(dir, out = []) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) walk(full, out);
         // setupTests.js 는 Jest(Node) 전용이라 번들에 들어가지 않는다.
+        // [JA] setupTests.js は Jest(Node)専用なのでバンドルには入らない。
         else if (/\.(js|jsx)$/.test(entry.name) && !/\.test\.(js|jsx)$/.test(entry.name)
                 && entry.name !== "setupTests.js") out.push(full);
     }
@@ -37,9 +51,11 @@ describe("브라우저 번들의 process 참조", () => {
             const lines = text.split("\n");
             lines.forEach((line, i) => {
                 // 주석 줄은 제외 — 설명하려면 언급은 해야 한다. `typeof process` 가드는 안전하다.
+                // [JA] コメント行は除外 — 説明するには言及は必要である。`typeof process` のガードは安全である。
                 if (/^\s*(\/\/|\*|\/\*)/.test(line) || /typeof\s+process\b/.test(line)) return;
                 let m;
                 // 식별자로서의 process 만 — 경로("/payment/process")·다른 식별자(processPayment)는 제외.
+                // [JA] 識別子としての process だけ — 経路("/payment/process")・別の識別子(processPayment)は除外。
                 const re = /(?<![\w$./'"-])process(?![\w$])(\.env\b[^\s;,)]*)?/g;
                 while ((m = re.exec(line)) !== null) {
                     const ref = m[0];

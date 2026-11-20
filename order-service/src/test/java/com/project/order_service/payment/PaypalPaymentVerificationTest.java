@@ -41,12 +41,21 @@ import com.project.order_service.service.OrderDataService;
  *
  * <p>가장 중요한 것은 <b>실패할 때 아웃박스에 아무것도 들어가지 않는다</b>는 확인이다.
  * 예외를 던지더라도 그 전에 아웃박스에 넣었다면 결제는 이미 하류로 전파된 뒤다.
+ *
+ * <p>[JA] 決済検証の回帰テスト — docs/35。
+ *
+ * <p>直す前はこの経路が<b>リクエスト本文をそのまま信じていた。</b> 金額も決済状態もブラウザが決め、サーバーは何も確認していなかった。
+ * つまり決済せずに curl 一回で注文を完了させられた。下のテストはそれぞれの攻撃が今は防がれるかを見る。
+ *
+ * <p>最も重要なのは<b>失敗時にアウトボックスに何も入らない</b>ことの確認である。例外を投げても、
+ * その前にアウトボックスに入れていれば決済は既に下流へ伝播した後である。
  */
 class PaypalPaymentVerificationTest {
 
     private static final String TRACKING_ID = "track-1";
     private static final String PAYPAL_ORDER_ID = "PP-REAL-1";
     /** 주문 총액 — 상점 통화, 소수 둘째 자리까지(V7). */
+    // [JA] 注文総額 — ストア通貨、小数第 2 位まで(V7)。
     private static final BigDecimal ORDER_TOTAL = new BigDecimal("5998.00");
 
     private OrderRepository orderRepository;
@@ -82,11 +91,14 @@ class PaypalPaymentVerificationTest {
                 // 포트가 생기면서 검증기는 게이트웨이 뒤로 갔다. 이 테스트가 고정하는
                 // 규칙(금액·통화·재사용·아웃박스)은 게이트웨이 **바깥**에 있으므로
                 // 어댑터를 그대로 끼워 예전과 같은 것을 검증한다.
+                // [JA] ポートができて検証器はゲートウェイの裏へ移った。このテストが固定するルール(金額・通貨・再利用・アウトボックス)
+                //      はゲートウェイの**外側**にあるので、アダプターをそのまま差し込んで以前と同じものを検証する。
                 new PaymentGateways(java.util.List.of(new PaypalPaymentGateway(verifier))),
                 testPolicy());
     }
 
     /** 테스트 통화 정책 — 상점 USD, PayPal USD, Stripe JPY(150), 포트원 KRW(1350). */
+    // [JA] テスト用の通貨ポリシー — ストア USD、PayPal USD、Stripe JPY(150)、PortOne KRW(1350)。
     static PaymentCurrencyPolicy testPolicy() {
         PaymentCurrencyPolicy p = new PaymentCurrencyPolicy();
         p.setBaseCurrency("USD");
@@ -103,12 +115,19 @@ class PaypalPaymentVerificationTest {
      * 결제 상태가 들어 있었다. 이제 서버가 읽는 것은 <b>어느 주문의 어떤 결제 참조</b>
      * 둘뿐이다 — 나머지는 애초에 전달되지 않으므로 "본문을 믿지 않는다" 가 시그니처에
      * 드러난다.
+     *
+     * <p>[JA] 決済を反映する。
+     *
+     * <p>以前は {@code persisitPaypalPayment(request, token)} で、
+     * リクエスト本文に金額・決済状態が入っていた。今サーバーが読むのは<b>どの注文のどの決済参照</b>の二つだけである —
+     * 残りはそもそも渡されないので「本文を信じない」がシグネチャに表れる。
      */
     private void record(String paypalOrderId) {
         service.recordPayment(TRACKING_ID, PaymentProvider.PAYPAL, paypalOrderId, 7L);
     }
 
     /** 브라우저가 보내는 요청. 금액·상태는 <b>공격자가 마음대로 정할 수 있는 값</b>이다. */
+    // [JA] ブラウザが送るリクエスト。金額・状態は<b>攻撃者が好きに決められる値</b>である。
     private PaypalPaymentRequest request(String paypalOrderId, BigDecimal claimedAmount) {
         PaypalPaymentRequest r = new PaypalPaymentRequest();
         r.setTrackingId(TRACKING_ID);
@@ -127,6 +146,7 @@ class PaypalPaymentVerificationTest {
     }
 
     // ---------------------------------------------------------------- 정상
+    // [JA] 正常
 
     @Test
     @DisplayName("PayPal 이 확인해 주면 결제가 반영된다")
@@ -141,6 +161,8 @@ class PaypalPaymentVerificationTest {
         assertThat(captured.getValue().getPaymentProvider()).isEqualTo(PaymentProvider.PAYPAL);
         assertThat(captured.getValue().getPaymentStatus()).isEqualTo(PaymentStatus.COMPLETED);
         // 재사용 차단을 위해 주문에 기록돼야 한다 — (payment_provider, provider_payment_id) 유니크(V4).
+        // [JA] 再利用防止のため注文に記録される必要がある — (payment_provider, provider_payment_id) ユニーク(V4)
+        //      。
         assertThat(order.getPaymentProvider()).isEqualTo(PaymentProvider.PAYPAL);
         assertThat(order.getProviderPaymentId()).isEqualTo(PAYPAL_ORDER_ID);
     }
@@ -151,6 +173,7 @@ class PaypalPaymentVerificationTest {
         paypalSays("COMPLETED", "5998", "USD");
 
         // 요청 본문은 1원이라고 주장한다. 서버는 무시해야 한다.
+        // [JA] リクエスト本文は 1 ウォンだと主張する。サーバーは無視しなければならない。
         record(PAYPAL_ORDER_ID);
 
         var captured = org.mockito.ArgumentCaptor.forClass(PaymentRequest.class);
@@ -159,10 +182,14 @@ class PaypalPaymentVerificationTest {
     }
 
     // ---------------------------------------------------------------- 통화
+    // [JA] 通貨
 
     /**
      * 🔴 청구 통화가 상점 통화와 다른 주문 — 일본 테스트(JPY)나 포트원(KRW).
      * 대조 기준은 <b>주문에 저장된 청구</b>(통화·금액)이지 상점 통화의 total 이 아니다.
+     *
+     * <p>[JA] 🔴 請求通貨がストア通貨と異なる注文 — 日本向けテスト(JPY)や PortOne(KRW)。
+     * 照合基準は<b>注文に保存された請求</b>(通貨・金額)であって、ストア通貨の total ではない。
      */
     @Test
     @DisplayName("🔴 JPY 로 청구된 주문은 JPY 청구액과 대조한다 — USD total 이 아니다")
@@ -172,17 +199,20 @@ class PaypalPaymentVerificationTest {
         order.setFxRate(new BigDecimal("150"));
 
         // PayPal 이 USD 5998 이라고 답하면 — 금액 숫자는 같아도 통화가 다르다 — 거절
+        // [JA] PayPal が USD 5998 と答えたら — 金額の数字は同じでも通貨が違う — 拒否
         paypalSays("COMPLETED", "5998", "USD");
         assertThatThrownBy(() -> record(PAYPAL_ORDER_ID))
                 .isInstanceOf(PaymentVerificationException.class)
                 .hasMessageContaining("청구액과 다릅니다");
 
         // JPY 899700 이면 통과
+        // [JA] JPY 899700 なら通過
         paypalSays("COMPLETED", "899700", "JPY");
         assertThatCode(() -> record(PAYPAL_ORDER_ID)).doesNotThrowAnyException();
     }
 
     /** 하류(pay-service · 매출)는 상점 통화로 산다 — 청구 통화의 금액을 섞지 않는다. */
+    // [JA] 下流(pay-service・売上)はストア通貨で動く — 請求通貨の金額を混ぜない。
     @Test
     @DisplayName("아웃박스의 금액은 청구 통화가 아니라 상점 통화의 총액이다")
     void outboxCarriesBaseCurrencyTotal() {
@@ -198,6 +228,7 @@ class PaypalPaymentVerificationTest {
     }
 
     /** 이 컬럼이 생기기 전 주문(currency null)은 예전 그대로 상점 통화의 total 과 대조한다. */
+    // [JA] この列ができる前の注文(currency null)は以前どおりストア通貨の total と照合する。
     @Test
     @DisplayName("청구 통화가 없는 옛 주문은 상점 통화로 total 과 대조한다")
     void legacyOrderFallsBackToBase() {
@@ -207,11 +238,13 @@ class PaypalPaymentVerificationTest {
     }
 
     // ---------------------------------------------------------------- 공격
+    // [JA] 攻撃
 
     @Test
     @DisplayName("🔒 결제하지 않고 지어낸 주문 ID 는 거부된다")
     void fabricatedOrderIdIsRejected() {
         // PayPal 이 "그런 주문 없다"고 답하는 상황.
+        // [JA] PayPal が「そんな注文はない」と答える状況。
         when(verifier.verify(any()))
                 .thenThrow(new PaypalVerificationException("PayPal 주문 조회 실패"));
 
@@ -226,6 +259,7 @@ class PaypalPaymentVerificationTest {
     @DisplayName("🔒 승인만 되고 캡처되지 않은 결제는 거부된다")
     void approvedButNotCapturedIsRejected() {
         // APPROVED 는 돈이 오지 않은 상태다. 여기서 통과시키면 무료로 물건이 나간다.
+        // [JA] APPROVED はお金が来ていない状態である。ここで通すと無料で品物が出ていく。
         paypalSays("APPROVED", "5998", "USD");
 
         assertThatThrownBy(() ->
@@ -240,6 +274,7 @@ class PaypalPaymentVerificationTest {
     @DisplayName("🔒 실제 결제 금액이 주문 총액보다 적으면 거부된다")
     void underpaymentIsRejected() {
         // 59.98 짜리 주문을 0.01 만 결제한 뒤 그 주문 ID 를 붙이는 공격.
+        // [JA] 59.98 の注文を 0.01 だけ決済した後、その注文 ID を付ける攻撃。
         paypalSays("COMPLETED", "1", "USD");
 
         assertThatThrownBy(() ->
@@ -268,6 +303,7 @@ class PaypalPaymentVerificationTest {
     void replayAcrossOrdersIsRejected() {
         paypalSays("COMPLETED", "5998", "USD");
         // DB 의 부분 유니크 인덱스가 거부하는 상황.
+        // [JA] DB の部分ユニークインデックスが拒否する状況。
         when(orderRepository.saveAndFlush(any(Order.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_order_provider_payment"));
 
@@ -292,25 +328,31 @@ class PaypalPaymentVerificationTest {
     }
 
     // ---------------------------------------------------------------- 중복 요청
+    // [JA] 重複リクエスト
 
     @Test
     @DisplayName("같은 주문에 같은 결제를 다시 보내면 조용히 넘어간다 (새로고침)")
     void sameOrderSamePaymentIsIdempotent() {
         paypalSays("COMPLETED", "5998", "USD");
         order.setPaymentProvider(PaymentProvider.PAYPAL);
-        order.setProviderPaymentId(PAYPAL_ORDER_ID);   // 이미 반영된 상태
+        order.setProviderPaymentId(PAYPAL_ORDER_ID);   // 이미 반영된 상태 ／ [JA] 既に反映された状態
 
         assertThatCode(() ->
                 record(PAYPAL_ORDER_ID))
                 .doesNotThrowAnyException();
 
         // 두 번 발행하면 하류에서 결제가 두 건이 된다.
+        // [JA] 二度発行すると下流で決済が二件になる。
         verify(outboxHelper, never()).savePaymentOutbox(any(), any());
     }
 
     /**
      * 같은 결제가 다시 오면(새로고침·웹훅과 복귀 검증이 겹친다) 한 번만 반영한다 — 두 번 발행하면 하류에서 결제가 두 건이
      * 된다. 예전에는 옛 컬럼(paypal_order_id)에만 기록된 결제도 여기서 함께 봤다. 그 값은 V17 이 새 컬럼으로 옮겼다.
+     *
+     * <p>[JA] 同じ決済が再び来たら(再読み込み・Webhook と復帰検証が重なる)一度だけ反映する —
+     * 二度発行すると下流で決済が二件になる。以前は旧列(paypal_order_id)にだけ記録された決済もここで一緒に見ていた。その値は V17
+     * が新しい列へ移した。
      */
     @Test
     @DisplayName("이미 반영된 결제가 다시 오면 발행하지 않는다")
@@ -327,6 +369,9 @@ class PaypalPaymentVerificationTest {
     /**
      * 옛 PayPal 전용 컬럼은 더 매핑하지 않는다. 다시 매핑하면 그 컬럼을 지우는 다음 마이그레이션 뒤 Hibernate validate
      * 에서 기동하지 못한다(docs/49 §3).
+     *
+     * <p>[JA] 旧 PayPal 専用列はもうマッピングしない。再びマッピングすると、その列を消す次のマイグレーション後に Hibernate
+     * validate で起動できない(docs/49 §3)。
      */
     @Test
     @DisplayName("주문 엔티티는 옛 paypal_order_id 컬럼을 매핑하지 않는다")
@@ -336,6 +381,7 @@ class PaypalPaymentVerificationTest {
     }
 
     // ---------------------------------------------------------------- 검증 해제 모드
+    // [JA] 検証解除モード
 
     @Test
     @DisplayName("검증을 끈 모드에서는 금액 대조를 건너뛴다 (로컬 개발 전용)")
@@ -345,14 +391,19 @@ class PaypalPaymentVerificationTest {
 
         assertThat(v.isCompleted()).isTrue();
         // amount 가 null 이라는 것이 '검증하지 않았다'는 신호다.
+        // [JA] amount が null であることが「検証しなかった」の合図である。
         assertThat(v.amount()).isNull();
     }
 
     // ---------------------------------------------------------------- 이중 결제
+    // [JA] 二重決済
 
     /**
      * 🔴 이미 결제가 붙은 주문에 다른 결제가 확인되면 — 예전에는 결제 참조를 두 번째 것으로 덮어써 첫 결제의 참조가 사라졌다(환불도 두
      * 번째 것만). 이제 덮지 않고 거절하며 세어 경보한다(OrderDuplicatePayment).
+     *
+     * <p>[JA] 🔴 既に決済が付いた注文に別の決済が確認されると — 以前は決済参照を二つ目で上書きし、
+     * 最初の決済の参照が消えていた(返金も二つ目だけ)。今は上書きせず拒否し、数えて警報を出す(OrderDuplicatePayment)。
      */
     @Test
     @DisplayName("🔴 이미 다른 결제가 붙은 주문의 두 번째 결제는 덮어쓰지 않고 거절하며 센다")
@@ -399,6 +450,7 @@ class PaypalPaymentVerificationTest {
             when(orderRepository.lockVersion(1L)).thenReturn(2L);
             jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
             // 다시 읽으면 앞선 결제가 보인다(그 커밋이 버전을 올렸다).
+            // [JA] 読み直すと先行する決済が見える(そのコミットがバージョンを上げた)。
             org.mockito.Mockito.doAnswer(i -> {
                 order.setPaymentProvider(PaymentProvider.PAYPAL);
                 order.setProviderPaymentId("FIRST-PAYMENT");
@@ -418,6 +470,7 @@ class PaypalPaymentVerificationTest {
     }
 
     // ---------------------------------------------------------------- 주문 참조 대조
+    // [JA] 注文参照の照合
 
     private OrderDataService serviceWith(VerifiedPayment verified) {
         PaymentGateway gateway = new PaymentGateway() {
@@ -436,6 +489,7 @@ class PaypalPaymentVerificationTest {
     }
 
     /** 🔴 같은 금액의 다른 주문(남의 것일 수도 있다)의 결제로 이 주문을 결제 완료로 만들 수 없다 — 예전에는 금액 · 통화만 봤다. */
+    // [JA] 🔴 同じ金額の別の注文(他人のものかもしれない)の決済でこの注文を決済完了にはできない — 以前は金額・通貨だけを見ていた。
     @Test
     @DisplayName("🔴 제공자가 붙여 둔 주문 참조가 이 주문이 아니면 거절한다")
     void paymentForAnotherOrderIsRejected() {

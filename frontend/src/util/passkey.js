@@ -23,6 +23,7 @@ export const base64urlToBuffer = (value) => {
 };
 
 /** 이 브라우저가 패스키를 쓸 수 있는가 — 안 되면 버튼을 그리지 않는다. */
+// [JA] このブラウザでパスキーを使えるか — 使えなければボタンを描かない。
 export const isPasskeySupported = () =>
   typeof window !== "undefined" &&
   typeof window.PublicKeyCredential === "function" &&
@@ -45,6 +46,7 @@ export const toRequestOptions = (options) => ({
 const optional = (buffer) => (buffer ? bufferToBase64url(buffer) : undefined);
 
 /** PublicKeyCredential → 서버가 읽는 JSON(WebAuthn Level 3 의 toJSON 과 같은 모양). */
+// [JA] PublicKeyCredential → サーバーが読む JSON(WebAuthn Level 3 の toJSON と同じ形)。
 export const credentialToJSON = (credential) => {
   const { response } = credential;
   const json = {
@@ -67,4 +69,5 @@ export const credentialToJSON = (credential) => {
 };
 
 /** 사용자가 기기 창을 닫았거나 시간이 지났다 — 오류로 보여 주지 않는다. */
+// [JA] ユーザーが端末のウィンドウを閉じたか時間切れになった — エラーとしては見せない。
 export const isUserCancel = (error) => error?.name === "NotAllowedError" || error?.name === "AbortError";

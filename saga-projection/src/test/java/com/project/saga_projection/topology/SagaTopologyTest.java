@@ -46,6 +46,10 @@ import com.project.common.message.dto.response.PaymentResponse;
  * 브로커 없이 토폴로지를 끝까지 돌린다: 입력 토픽 둘 → 상태 저장소 → 출력 토픽.
  * EOS 는 TopologyTestDriver 가 흉내 내지 않으므로 여기서 검증하는 것은 <b>접기 규칙과 배선</b>이다 —
  * 어떤 serde 로 어떤 토픽을 읽고, 무엇을 어떤 키로 내는가.
+ *
+ * <p>[JA] ブローカーなしでトポロジーを最後まで回す: 入力トピック二つ → 状態ストア → 出力トピック。
+ * EOS は TopologyTestDriver が模倣しないので、ここで検証するのは<b>畳み込み規則と配線</b>である —
+ * どの serde でどのトピックを読み、何をどのキーで出すか。
  */
 @DisplayName("SagaTopology · order ∪ payment → order-saga-state")
 class SagaTopologyTest {
@@ -135,13 +139,16 @@ class SagaTopologyTest {
     /**
      * 🔴 주문 진행 타임라인(docs/76) — order-status 입력이 별도 저장소 · 출력 토픽으로 접힌다. 사가 저장소는 건드리지
      * 않는다(그 스키마를 바꾸지 않으려고 저장소를 나눴다).
+     *
+     * <p>[JA] 🔴 注文進行タイムライン(docs/76) — order-status 入力が別のストア · 出力トピックに畳み込まれる。サガストアには触れない
+     * (そのスキーマを変えないためにストアを分けた)。
      */
     @Test
     @DisplayName("🔴 order-status(Avro) → 타임라인 저장소 · order-timeline 토픽 — 사가 저장소는 그대로")
     void foldsStatusChangesIntoTimeline() {
         statusAvro.pipeInput("order-11", statusChanged("e1", 11, null, "NOT_PROCESSED", T0));
         statusAvro.pipeInput("11", statusChanged("e2", 11, "NOT_PROCESSED", "PAID", T0.plusSeconds(5)));
-        statusAvro.pipeInput("11", statusChanged("e2", 11, "NOT_PROCESSED", "PAID", T0.plusSeconds(5)));   // 재발행
+        statusAvro.pipeInput("11", statusChanged("e2", 11, "NOT_PROCESSED", "PAID", T0.plusSeconds(5)));   // 재발행 ／ [JA] 再発行
 
         List<KeyValue<String, OrderTimeline>> out = timelineOut.readKeyValuesToList();
         assertThat(out).extracting(kv -> kv.key).containsOnly("11");
@@ -152,7 +159,7 @@ class SagaTopologyTest {
         assertThat(t.getEntries()).hasSize(2);
         assertThat(t.getEventCount()).isEqualTo(3);
         assertThat(t.getCustomerId()).isEqualTo(7L);
-        assertThat(t.getUpdatedAt()).isEqualTo(T0);   // 고정 시계
+        assertThat(t.getUpdatedAt()).isEqualTo(T0);   // 고정 시계 ／ [JA] 固定時計
         assertThat(store().get("11")).as("사가 저장소에는 아무것도 없다").isNull();
         assertThat(stateOut.isEmpty()).isTrue();
     }

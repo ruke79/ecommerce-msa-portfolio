@@ -28,6 +28,10 @@ import org.testcontainers.utility.DockerImageName;
  *   <li>RequestRateLimiter 가 요구하는 KeyResolver 빈이 존재하는가</li>
  *   <li>KeyResolver 가 어떤 요청에도 null 키를 내지 않는가 (NPE 회귀 방지)</li>
  * </ul>
+ *
+ * <p>[JA] gateway-server の起動検証 — レートリミッターが使う実際の Redis の上で。ゲートウェイはこのシステムの単一の入口なので、起動しなければすべてが止まる。
+ * なのに以前はコンテキストテストが無効だった。ここで確認するもの: ルート定義が実際に読み込まれるか(タイプミスのあるルートは起動時に露見する)、
+ * RequestRateLimiter が要求する KeyResolver Bean が存在するか、KeyResolver がどんなリクエストにも null キーを出さないか(NPE 回帰防止)。
  */
 @Tag("containers")
 @Testcontainers
@@ -88,6 +92,8 @@ class GatewayServerApplicationTests {
 	void keyResolverBeanExists() {
 		// RequestRateLimiter 는 KeyResolver 없이는 동작하지 않는다. 빈 이름/타입이 바뀌면
 		// 기동은 되지만 레이트리미팅이 조용히 사라진다.
+		// [JA] RequestRateLimiter は KeyResolver なしでは動かない。Bean の名前/型が変わると
+		//      起動はするがレートリミットが黙って消える。
 		assertThat(keyResolver).isNotNull();
 	}
 }

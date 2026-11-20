@@ -22,6 +22,15 @@ import { useTranslation } from "i18n/I18nProvider";
  * </ul>
  *
  * <p>보내는 것은 주문 번호뿐이다. 서버가 소유권과 상태를 다시 본다.
+ *
+ * <p>[JA] 注文詳細の購入確定(docs/25 §12) — 注文の最後の段階。
+ * 🐛 COMPLETED はサーバーに宣言だけあってその値を入れるコードがなかった。配達完了が終わりで、
+ * プロフィールの「購入確定」フィルターは永遠に空だった。今は配達完了した注文にボタンが出て、押さなくても期限が過ぎればサーバーが自動で確定する。
+ * 状態ごとに三つのうち一つを描く:
+ * ・配達完了(DELIVERED): 案内 + ボタン。押すともう一度確認する — 取り消せない。
+ * ・確定済み(COMPLETED): 確定時刻。自動確定ならそうだと別に言う — 客が押したことがないのに状態が変わっていれば理由を知る必要がある。
+ * ・それ以外: 何も描かない。
+ * 送るのは注文番号だけである。サーバーが所有権と状態を改めて見る。
  */
 export default function ConfirmPurchaseButton({ order, onConfirmed }) {
     const { t } = useTranslation();
@@ -60,6 +69,7 @@ export default function ConfirmPurchaseButton({ order, onConfirmed }) {
             onConfirmed?.(res);
         } catch (error) {
             // 400 은 규칙에 걸린 거절(서버가 이유를 준다), 404 는 내 주문이 아니다.
+            // [JA] 400 は規則に掛かった拒否(サーバーが理由をくれる)、404 は自分の注文ではない。
             toast.error(error?.response?.data?.message ?? t("purchase_confirm.failed"));
         } finally {
             setSubmitting(false);

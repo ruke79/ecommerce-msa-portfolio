@@ -41,6 +41,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>친구 채팅의 {@code chat} 토픽(Avro)에 수신자를 더하지 않은 이유: 필드를 더하면 스키마 버전과 이력, 한 릴리스
  * 동안의 옛 스키마 쓰기가 따라온다(docs/55). 상담 알림은 상담에만 있는 일이라 작은 토픽 하나로 뗀다.
+ *
+ * <p>[JA] 相談員が回答したら顧客に知らせる(docs/58 §10)。
+ * <p>トピック {@value #TOPIC} に {@code { receiverId, threadId, messageId, senderName }} を載せ、notification-service が受け取って通知(ベル・SSE)を作る。<b>本文は載せない</b> — 通知は「回答が来た」だけを言い、内容は本人だけが開ける相談画面で読む(通知テーブル・メールに相談内容が残らないように)。
+ * <p>送らない場合: 送信者が顧客本人である / 顧客が今その相談を見ている({@link SupportPresence}) — すでに画面に出ている / 同じ相談に {@link #THROTTLE} 内にすでに送った — 相談員が三行に分けて回答すると通知も三通になる。
+ * <p>「すでに送った」は Redis キー {@code chat:support-reply:<相談>}(SET NX・{@link #THROTTLE})で決める — Pod が複数あるので(docs/21 §2)メモリに置くと同じ相談の回答を異なる Pod が消費したとき通知が Pod の数だけ行っていた。Redis に届かなければ以前どおりこの Pod のメモリで。
+ * <p>友達チャットの {@code chat} トピック(Avro)に受信者を追加しなかった理由: フィールドを足すとスキーマのバージョンと履歴、1 リリースの間の旧スキーマ書き込みがついてくる(docs/55)。相談通知は相談にしかないことなので小さなトピック一つに切り出す。
  */
 @Slf4j
 @Component
@@ -59,6 +65,7 @@ public class SupportReplyNotifier {
     private Clock clock = Clock.systemUTC();
 
     /** 이 파드의 메모리로만 거르는 판(테스트 · Redis 없음). */
+    // [JA] この Pod のメモリだけで弾く版(テスト・Redis なし)。
     public SupportReplyNotifier(SupportThreadRepository threads, SupportPresence presence,
             KafkaTemplate<String, String> kafkaTemplate, ObjectMapper objectMapper) {
         this(threads, presence, kafkaTemplate, objectMapper, null);
@@ -80,6 +87,7 @@ public class SupportReplyNotifier {
     }
 
     /** 저장된 상담 메시지 하나 — 소비자(MessageConsumer)가 부른다. */
+    // [JA] 保存された相談メッセージ一つ — コンシューマ(MessageConsumer)が呼ぶ。
     public void onMessage(MessageDto message) {
         Long threadId = SupportThread.threadIdOf(message.getRoomId());
         if (threadId == null || threadId <= 0 || message.getSenderId() == null) {
@@ -106,6 +114,7 @@ public class SupportReplyNotifier {
         event.put("senderName", message.getNickname());
         try {
             // 키 = 상담 번호 — 같은 상담의 알림은 한 파티션에서 순서대로(docs/38 §1.15).
+            // [JA] キー = 相談番号 — 同じ相談の通知は一つのパーティションで順番に(docs/38 §1.15)。
             kafkaTemplate.send(TOPIC, String.valueOf(threadId), objectMapper.writeValueAsString(event))
                     .whenComplete((result, ex) -> {
                         // 🐛 예전: 결과를 보지 않아 브로커 거절 · 시간 초과(비동기)는 흔적이 없었고, '보냈다' 기록이 남아
@@ -117,11 +126,13 @@ public class SupportReplyNotifier {
                     });
         } catch (JsonProcessingException | RuntimeException e) {
             // 알림은 부가 기능이다 — 상담 메시지의 저장·전달을 되돌리지 않는다.
+            // [JA] 通知は付加機能である — 相談メッセージの保存・配信を取り消さない。
             failed(threadId, now, token, e);
         }
     }
 
     /** 이 상담의 알림을 지금 보내도 되는가 — 되면 기록을 남기고 그 표(token)를, 창 안이면 null. */
+    // [JA] この相談の通知を今送ってよいか — よければ記録を残してその札(token)を、ウィンドウ内なら null を返す。
     private String claim(Long threadId, Instant now) {
         if (redis != null) {
             String token = UUID.randomUUID().toString();
@@ -137,12 +148,14 @@ public class SupportReplyNotifier {
             return null;
         }
         // 창이 지난 항목은 지운다 — 예전에는 파드 수명 동안 지금까지 본 모든 상담 번호가 쌓였다. 남는 것은 최근 60초에 알린 상담뿐.
+        // [JA] ウィンドウを過ぎた項目は消す — 以前は Pod の寿命の間これまで見たすべての相談番号が溜まっていた。残るのは直近 60 秒に通知した相談だけ。
         lastSent.values().removeIf(sent -> !sent.plus(THROTTLE).isAfter(now));
         lastSent.put(threadId, now);
         return LOCAL;
     }
 
     /** 메모리 판의 표 — Redis 의 표와 섞이지 않는다. */
+    // [JA] メモリ版の札 — Redis の札と混ざらない。
     private static final String LOCAL = "local";
 
     private void failed(Long threadId, Instant now, String token, Throwable e) {
@@ -151,6 +164,7 @@ public class SupportReplyNotifier {
         } else if (redis != null) {
             try {
                 // 내 표일 때만 지운다 — 그사이 창이 지나 다른 파드가 새로 잡은 기록을 지우지 않게.
+                // [JA] 自分の札のときだけ消す — その間にウィンドウが過ぎて別の Pod が新しく取った記録を消さないように。
                 redis.execute(RELEASE, java.util.List.of(THROTTLE_KEY_PREFIX + threadId), token);
             } catch (RuntimeException re) {
                 log.debug("상담 알림 기록을 지우지 못했다 — {}초 뒤 풀린다", THROTTLE.toSeconds());
@@ -164,6 +178,7 @@ public class SupportReplyNotifier {
                     "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", Long.class);
 
     /** 테스트용 — 알림 기록이 남은 상담 수. */
+    // [JA] テスト用 — 通知記録が残っている相談の数。
     int trackedThreads() {
         return lastSent.size();
     }

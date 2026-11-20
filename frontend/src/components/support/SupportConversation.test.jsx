@@ -11,6 +11,7 @@ const renderIt = (props) => render(withI18n(
 ));
 
 /** 위로 올려 읽는 중인 것처럼 — jsdom 은 크기가 0 이라 직접 준다. */
+// [JA] 上にスクロールして読んでいる最中のように — jsdom はサイズが 0 なので直接与える。
 function scrollUp(list) {
     Object.defineProperty(list, "scrollHeight", { configurable: true, value: 2000 });
     Object.defineProperty(list, "clientHeight", { configurable: true, value: 400 });
@@ -20,6 +21,8 @@ function scrollUp(list) {
 
 /**
  * 상담 대화창 (docs/58 §11).
+ *
+ * <p>[JA] 相談チャット画面(docs/58 §11)。
  */
 describe("SupportConversation", () => {
     it("위를 읽는 중에 상대 메시지가 오면 자리를 옮기지 않고 '새 메시지 N' 을 띄운다 — 누르면 바닥으로", async () => {

@@ -22,8 +22,8 @@ import com.project.userservice.model.User;
 @AllArgsConstructor
 public class UserProfileDto {
     private String userId;
-    private String username; // 실명
-    private String name; // 별명
+    private String username; // 실명 ／ [JA] 実名
+    private String name; // 별명 ／ [JA] ニックネーム
     private String email;    
     private boolean isAccountNonLocked;
     private boolean isAccountNonExpired;
@@ -32,6 +32,7 @@ public class UserProfileDto {
     private LocalDate credentialsExpiryDate;
     private LocalDate accountExpiryDate;
     // twoFactorSecret 은 없다 — 이 DTO 는 응답으로 나간다. 비밀은 어떤 응답에도 싣지 않는다(docs/70).
+    // [JA] twoFactorSecret はない — この DTO は応答として出る。秘密はどの応答にも載せない(docs/70)。
     private boolean isTwoFactorEnabled;
     private String signUpMethod;
     private List<String> roles;

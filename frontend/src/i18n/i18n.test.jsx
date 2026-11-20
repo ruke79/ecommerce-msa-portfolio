@@ -11,6 +11,7 @@ import ko, { PARTS as KO_PARTS } from "i18n/messages/ko";
 import ja, { PARTS as JA_PARTS } from "i18n/messages/ja";
 
 /** 문구를 꺼내 보여주고 언어를 바꿀 수 있는 최소 화면. */
+// [JA] 文言を取り出して見せ、言語を切り替えられる最小の画面。
 const Probe = ({ messageKey = "auth.reset.title", vars }) => {
     const { lang, setLang, t } = useTranslation();
     return (
@@ -36,6 +37,7 @@ describe("다국어", () => {
             window.localStorage.clear();
         } catch {
             /* 테스트 환경에 따라 막혀 있을 수 있다 */
+            // [JA] テスト環境によっては塞がれていることがある
         }
     });
 
@@ -43,6 +45,9 @@ describe("다국어", () => {
         /**
          * 🔴 이 파일에서 가장 중요한 테스트다. 키가 빠지면 폴백 때문에 <b>일본어 화면에
          * 한국어가 섞여</b> 나오는데, 화면은 멀쩡해 보여서 아무도 눈치채지 못한다.
+         *
+         * <p>[JA] 🔴 このファイルで最も重要なテストだ。キーが抜けるとフォールバックのせいで <b>日本語画面に
+         * 韓国語が混ざって</b> 出るが、画面は無事に見えるので誰も気づかない。
          */
         it("🔴 두 언어의 키 집합이 같다 — 빠지면 일본어 화면에 한국어가 섞인다", () => {
             expect(Object.keys(ja).sort()).toEqual(Object.keys(ko).sort());
@@ -71,6 +76,7 @@ describe("다국어", () => {
         });
 
         /** 치환 자리가 한쪽에만 있으면 번역된 문장에서 값이 사라진다. */
+        // [JA] 置換箇所が片方にだけあると翻訳された文で値が消える。
         it("치환 자리({{...}})가 두 언어에서 일치한다", () => {
             const placeholders = (s) => (s.match(/\{\{(\w+)\}\}/g) ?? []).sort();
 
@@ -80,9 +86,11 @@ describe("다국어", () => {
         });
 
         /** 일본어 사전에 한글이 들어 있으면 번역을 빠뜨리고 복사한 것이다. */
+        // [JA] 日本語辞書にハングルが入っていれば翻訳を忘れてコピーしたものだ。
         it("일본어 문구에 한글이 섞이지 않는다", () => {
             const offenders = Object.entries(ja)
                 // 언어 이름은 그 언어로 적는 것이 맞다(endonym) — 예외.
+                // [JA] 言語名はその言語で書くのが正しい(endonym) — 例外。
                 .filter(([key]) => key !== "lang.ko")
                 .filter(([, value]) => /[가-힣]/.test(value))
                 .map(([key]) => key);
@@ -109,6 +117,9 @@ describe("다국어", () => {
         /**
          * 🔴 장식이 아니다. 스크린리더가 읽을 발음을 이 값으로 고르고, 브라우저는 한중일
          * 통합 한자의 글꼴을 여기에 맞춘다 — 틀리면 일본어가 한국어 글꼴로 렌더된다.
+         *
+         * <p>[JA] 🔴 飾りではない。スクリーンリーダーが読む発音をこの値で選び、ブラウザは CJK
+         * 統合漢字のフォントをこれに合わせる — 誤ると日本語が韓国語フォントでレンダーされる。
          */
         it("🔴 <html lang> 을 실제로 바꾼다", async () => {
             renderProbe({ provider: { initialLang: "ko" }, probe: {} });
@@ -129,6 +140,7 @@ describe("다국어", () => {
         it("지원하지 않는 언어는 무시한다", () => {
             renderProbe({ provider: { initialLang: "ko" }, probe: {} });
             // setLang("fr") 은 Probe 에 없으므로 SUPPORTED 로 직접 확인한다.
+            // [JA] setLang("fr") は Probe に無いので SUPPORTED で直接確認する。
             expect(SUPPORTED).toEqual(["ko", "ja"]);
         });
     });
@@ -144,6 +156,7 @@ describe("다국어", () => {
         });
 
         /** 지원하지 않는 언어만 있으면 null — 호출자가 기본값으로 떨어뜨린다. */
+        // [JA] サポートしない言語しか無ければ null — 呼び出し側がデフォルトにフォールバックする。
         it("모르는 언어면 고르지 않는다", () => {
             expect(detectBrowserLanguage({ languages: ["fr-FR"], language: "fr-FR" })).toBeNull();
             expect(detectBrowserLanguage(null)).toBeNull();
@@ -154,6 +167,9 @@ describe("다국어", () => {
         /**
          * 없는 키를 빈 문자열로 돌려주면 화면에서 글자가 사라져 아무도 눈치채지 못한다.
          * 키가 보이면 즉시 드러난다.
+         *
+         * <p>[JA] 無いキーを空文字列で返すと画面から文字が消えて誰も気づかない。
+         * キーが見えればすぐ露見する。
          */
         it("없는 키는 키 이름을 그대로 보여준다 — 조용히 비지 않는다", () => {
             renderProbe({ provider: { initialLang: "ko" }, probe: { messageKey: "no.such.key" } });
@@ -171,6 +187,9 @@ describe("다국어", () => {
         /**
          * 값이 없을 때 자리표시자를 지우면 "비밀번호는 자 이상이어야 합니다" 처럼 말이
          * 되는 듯한 문장이 되어 버그가 숨는다. 그대로 남겨 드러나게 한다.
+         *
+         * <p>[JA] 値が無いときプレースホルダーを消すと「パスワードは 文字以上でなければなりません」のように意味が
+         * 通りそうな文になりバグが隠れる。そのまま残して露見させる。
          */
         it("치환값이 없으면 자리표시자를 남긴다", () => {
             renderProbe({

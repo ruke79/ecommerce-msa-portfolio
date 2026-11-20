@@ -2,6 +2,7 @@ import api from "util/api";
 import { translate } from "i18n/I18nProvider";
 
 /** 배송 조회·주소 변경·취소. 사용자 식별은 게이트웨이가 User-Id 헤더로 넣어 준다. */
+// [JA] 配送照会・住所変更・キャンセル。ユーザーの識別はゲートウェイが User-Id ヘッダで入れてくれる。
 const BASE = "/delivery-service/api/deliveries";
 
 export const fetchDeliveries = async (size = 20) => {
@@ -24,6 +25,10 @@ export const fetchCarriers = async () => {
  *
  * 409 는 오류가 아니라 **지금은 할 수 없다**는 뜻이다 — 이미 발송된 것이다.
  * 400 과 구분해야 "잘못 입력했나?" 대신 "이미 발송되었습니다"를 띄울 수 있다.
+ *
+ * <p>[JA] 配送先の変更。
+ * 409 はエラーではなく**今はできない**という意味である — すでに発送されたのである。
+ * 400 と区別してこそ「入力を間違えた?」ではなく「すでに発送されました」を表示できる。
  */
 export const changeDeliveryAddress = async (orderId, payload) => {
   try {
@@ -41,10 +46,14 @@ export const changeDeliveryAddress = async (orderId, payload) => {
 };
 
 // ── 관리자 ─────────────────────────────────────────────────────────────
+// [JA] ── 管理者 ──
 
 /**
  * 관리자 목록. 기본은 **송장을 기다리는 배송**(오래된 것부터), awaiting=false 면 최근 전체.
  * 관리자 여부는 서버가 User-Role 로 안다 — 여기서 보내는 것은 없다.
+ *
+ * <p>[JA] 管理者一覧。既定は**送り状を待っている配送**(古い順)、awaiting=false なら最近の全件。
+ * 管理者かどうかはサーバーが User-Role で分かる — ここから送るものはない。
  */
 export const adminListDeliveries = async ({ awaiting = true, size = 50 } = {}) => {
   const { data } = await api.get(`${BASE}/admin?awaiting=${awaiting}&size=${size}`);
@@ -54,6 +63,9 @@ export const adminListDeliveries = async ({ awaiting = true, size = 50 } = {}) =
 /**
  * 송장 등록 — 이 순간부터 폴링이 시작되고 주문은 DISPATCHED 로 간다.
  * 보내는 것은 택배사 코드와 송장번호뿐이다. 상자(sequenceNo)를 비우면 송장 없는 첫 상자에 붙는다.
+ *
+ * <p>[JA] 送り状登録 — この瞬間からポーリングが始まり、注文は DISPATCHED に移る。
+ * 送るのは宅配業者コードと送り状番号だけである。箱(sequenceNo)を空にすると送り状のない最初の箱に付く。
  */
 export const registerTracking = async (orderId, { carrierCode, trackingNumber, sequenceNo = null }) => {
   const body = { carrierCode, trackingNumber };
@@ -67,6 +79,10 @@ export const registerTracking = async (orderId, { carrierCode, trackingNumber, s
  *
  * 배송지·품목은 서버가 **주문에서 다시 읽는다.** 여기서 보내는 것은 주문 번호뿐이다 —
  * 관리자라도 배송지를 지정할 수 있으면 남의 물건을 자기 주소로 보낼 수 있다.
+ *
+ * <p>[JA] 決済済みなのに配送がない注文の配送を作る — 復旧用。
+ * 配送先・品目はサーバーが**注文から読み直す。** ここから送るのは注文番号だけである —
+ * 管理者でも配送先を指定できると、他人の品物を自分の住所に送れてしまう。
  */
 export const adminCreateDeliveryForOrder = async (orderId) => {
   const { data } = await api.post(`${BASE}/admin/order/${orderId}`);

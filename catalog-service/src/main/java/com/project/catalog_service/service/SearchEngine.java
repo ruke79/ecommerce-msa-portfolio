@@ -7,7 +7,9 @@ package com.project.catalog_service.service;
  */
 public enum SearchEngine {
     /** 선행 와일드카드 LIKE(docs/06 CAT-1). ES 가 없는 배포의 유일한 경로. */
+    // [JA] 先頭ワイルドカードの LIKE(docs/06 CAT-1)。ES のない配備で唯一の経路。
     POSTGRES,
     /** ES 관련도 검색 → id IN (docs/07 R-C1). ES 장애 시에는 SearchService 가 POSTGRES 경로로 폴백한다. */
+    // [JA] ES の関連度検索 → id IN(docs/07 R-C1)。ES 障害時は SearchService が POSTGRES 経路へフォールバックする。
     ES
 }

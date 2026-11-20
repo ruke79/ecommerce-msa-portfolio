@@ -49,6 +49,10 @@ class EurekaServerPropertiesTest {
      * 🐛 2026-10-26 운영: my-url 이 없어 서버가 defaultZone 의 localhost 를 피어로 보고 자기에게 복제했다 — 인증서 없는
      * {@code POST /eureka/peerreplication/batch/} 가 [eureka write] 로 남았고 enforce 면 403. my-url 이 defaultZone 의 모든 URL 과
      * 같으면 PeerEurekaNodes 가 그 URL 을 빼 피어가 0 이다(isThisMyUrl 은 my-url 이 있으면 문자열 비교만 한다).
+     *
+     * <p>[JA] 🐛 2026-10-26 運用: my-url がなくサーバーが defaultZone の localhost をピアとみなして自分に複製した — 証明書のない
+     * {@code POST /eureka/peerreplication/batch/} が [eureka write] として残り、enforce なら 403。my-url が defaultZone のすべての URL と
+     * 同じなら PeerEurekaNodes がその URL を除きピアが 0 になる(isThisMyUrl は my-url があれば文字列比較だけを行う)。
      */
     @Test
     @DisplayName("🔴 my-url 이 defaultZone 과 같다 — 자기 자신을 피어로 보지 않는다(단독 Eureka 는 피어 0)")
@@ -56,6 +60,7 @@ class EurekaServerPropertiesTest {
         Binder binder = new Binder(ConfigurationPropertySources.from(load("application-local.yml")));
         EurekaServerConfigBean bean = binder.bind("eureka.server", Bindable.ofInstance(new EurekaServerConfigBean())).get();
         // serviceUrl 은 맵이라(키 defaultZone 이 대소문자 그대로) 원래 YAML 속성으로 읽는다
+        // [JA] serviceUrl はマップなので(キー defaultZone が大文字小文字そのまま)元の YAML プロパティとして読む
         String zones = String.valueOf(load("application-local.yml").get(0).getProperty("eureka.client.serviceUrl.defaultZone"));
 
         assertThat(bean.getMyUrl()).as("eureka.server.my-url").isNotBlank();

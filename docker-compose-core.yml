@@ -1,6 +1,7 @@
 version: '3.8'
 
 # 공통 앵커: 모든 컨테이너에 적용할 재시작 정책.
+# [JA] 共通アンカー: すべてのコンテナに適用する再起動ポリシー。
 x-restart-policy: &restart-policy
   restart: unless-stopped
 
@@ -11,8 +12,8 @@ services:
     hostname: eureka-server-host
     <<: *restart-policy
     build:
-      context: ./eureka-server   # (수정) 기존 ./discovery-service 오타 → 실제 디렉터리 eureka-server
-      dockerfile: Dockerfile     # (수정) 잘못된 키 'Dockerfile:' → 표준 키 'dockerfile:'
+      context: ./eureka-server   # (수정) 기존 ./discovery-service 오타 → 실제 디렉터리 eureka-server ／ [JA] (修正) 既存の ./discovery-service の誤記 → 実ディレクトリ eureka-server
+      dockerfile: Dockerfile     # (수정) 잘못된 키 'Dockerfile:' → 표준 키 'dockerfile:' ／ [JA] (修正) 誤ったキー 'Dockerfile:' → 標準キー 'dockerfile:'
     ports:
       - "8761:8761"
     volumes:
@@ -27,6 +28,7 @@ services:
       - LOGGING_LEVEL_ROOT=INFO
       - EUREKA_CLIENT_TLS_ENABLED=true
     # eclipse-temurin(jammy)에는 curl/wget이 없으므로 bash /dev/tcp 로 포트 수신 여부만 확인한다.
+    # [JA] eclipse-temurin(jammy)には curl/wget がないので、bash /dev/tcp でポートの待ち受け有無だけを確認する。
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8761' || exit 1"]
       interval: 30s
@@ -62,6 +64,7 @@ services:
       - SPRING_APP_JWTSECRET=
       - LOGGING_LEVEL_ROOT=INFO
       # RequestRateLimiter 토큰 버킷 저장소(Redis). 게이트웨이 레이트리미터가 사용한다.
+      # [JA] RequestRateLimiter のトークンバケット保存先(Redis)。ゲートウェイのレートリミッターが使う。
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
     healthcheck:
@@ -74,7 +77,7 @@ services:
     cpus: 1.0
     depends_on:
       eureka-server:
-        condition: service_healthy   # 컨테이너 "시작"이 아니라 "준비 완료"까지 대기
+        condition: service_healthy   # 컨테이너 "시작"이 아니라 "준비 완료"까지 대기 ／ [JA] コンテナの「起動」ではなく「準備完了」まで待つ
     networks:
       - msa-core-network
 

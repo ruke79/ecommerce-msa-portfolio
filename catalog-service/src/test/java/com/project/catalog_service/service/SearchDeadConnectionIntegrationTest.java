@@ -47,8 +47,12 @@ import com.project.catalog_service.controller.SearchController;
  * <p>중계는 {@link #blackhole()} 뒤에 <b>그때 열려 있던</b> 연결의 바이트를 양쪽 다 버린다(닫지 않는다) — 새 연결(취소 요청 · 풀이 다시 여는
  * 연결)은 그대로 간다. 이 테스트의 상한: 검색 2초 + 소켓 여유 2초, 자리 1(돌아와야만 다음 검색이 된다) · 풀 2(Flyway 가 둘을 쓴다).
  *
- * <p>[JA] 相手が消えた DB 接続の上の検索 — ソケット読み取りの上限で終わり、隔壁の席・接続が戻る。中継は blackhole() の後、その時に開いていた
- * 接続のバイトを両方向とも捨てる(閉じない)。時間上限の取り消しは別接続で届くが、答えが返る元の接続が死んでいるので読み取りは起きない。
+ * <p>[JA] 相手が消えた DB 接続の上の検索 — ソケット読み取りの上限で終わり、隔壁の席 · コネクションが戻る(実際の PostgreSQL · Redis、間に TCP 中継)。
+ * 🐛 2026-10-21 実習 8 時間(mixed {@code 030018Z}、docs/83 §2.8): 終わった後の休止中も catalog の Pod 三つすべてで隔壁の席 3/3 をスレッド三つが
+ * 握っていた — 件数カウントの PostgreSQL ソケット読み取りで数時間。時間上限(5 秒)の取り消しは<b>新しい接続</b>で DB に届いてクエリを止めるが、
+ * その答えが返る元の接続が死んでいると(ノード再起動 — RST が来ない)読み取りは起きない。その後 DB を使う検索はすべて 503 だった(失敗 4.64%)。
+ * 中継は {@link #blackhole()} の後、<b>その時に開いていた</b>接続のバイトを両方向とも捨てる(閉じない)— 新しい接続(取り消し要求 · プールが
+ * 開き直す接続)はそのまま通る。このテストの上限: 検索 2 秒 + ソケット余裕 2 秒、席 1(戻らなければ次の検索ができない) · プール 2(Flyway が二つ使う)。
  */
 @Tag("containers")
 @SpringBootTest(properties = {
@@ -82,6 +86,7 @@ class SearchDeadConnectionIntegrationTest {
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         // 앱 데이터(검색)만 중계를 지난다 — metadb 는 바로
+        // [JA] アプリデータ(検索)だけが中継を通る — metadb は直接
         registry.add("spring.datasource-data.url", () -> {
             proxy = proxy != null ? proxy : new BlackholeProxy(postgres.getHost(), postgres.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT));
             return "jdbc:postgresql://127.0.0.1:" + proxy.port() + "/productdb";
@@ -139,12 +144,12 @@ class SearchDeadConnectionIntegrationTest {
 
     private MvcResult search(String lowPrice) throws Exception {
         try (var c = redisConnectionFactory.getConnection()) {
-            c.serverCommands().flushAll();   // 캐시가 맞으면 DB 에 가지 않는다
+            c.serverCommands().flushAll();   // 캐시가 맞으면 DB 에 가지 않는다 ／ [JA] キャッシュが当たると DB に行かない
         }
         var request = get("/api/search").param("category", String.valueOf(CATEGORY)).param("page", "1").param("pageSize", "10")
                 .param("includeFilters", "false");
         if (lowPrice != null) {
-            request.param("lowPrice", lowPrice);   // 검색마다 다른 질의
+            request.param("lowPrice", lowPrice);   // 검색마다 다른 질의 ／ [JA] 検索ごとに異なるクエリ
         }
         return MockMvcBuilders.standaloneSetup(controller).build().perform(request).andReturn();
     }
@@ -161,6 +166,7 @@ class SearchDeadConnectionIntegrationTest {
         }
 
         // 검색이 개수 세기를 보낸 뒤 답을 기다리는 동안 상대가 사라지게 — 표를 잠가 질의를 붙잡아 두고, 그 사이 연결을 끊는다
+        // [JA] 検索が件数カウントを送った後に応答を待つ間に相手が消えるように — テーブルをロックしてクエリを捕まえておき、その間に接続を切る
         try (Connection lock = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             lock.setAutoCommit(false);
             lock.createStatement().execute("LOCK TABLE product.product IN ACCESS EXCLUSIVE MODE");
@@ -182,13 +188,15 @@ class SearchDeadConnectionIntegrationTest {
             blackholeSoon.join();
             lock.rollback();
         } finally {
-            proxy.dropBlackholed();   // 테스트가 실패해도 매달린 읽기를 풀어 준다
+            proxy.dropBlackholed();   // 테스트가 실패해도 매달린 읽기를 풀어 준다 ／ [JA] テストが失敗しても宙吊りの読み取りを解放する
         }
         assertThat(search("2").getResponse().getStatus()).as("자리 1 — 돌아와야 200").isEqualTo(200);
     }
 
     /**
      * PostgreSQL 앞의 TCP 중계. {@link #blackhole()} 뒤에는 그때 열려 있던 연결의 바이트를 양쪽 다 버린다 — 닫지 않으므로 앱은 끊긴 줄 모른다.
+     *
+     * <p>[JA] PostgreSQL 前段の TCP 中継。{@link #blackhole()} の後はそのとき開いていた接続のバイトを両方向とも捨てる — 閉じないのでアプリは切れたことに気づかない。
      */
     static final class BlackholeProxy implements AutoCloseable {
 
@@ -227,6 +235,7 @@ class SearchDeadConnectionIntegrationTest {
                         pump(p, p.upstream, p.client);
                     } catch (IOException e) {
                         // 닫혔다
+                        // [JA] 閉じた
                     }
                 }
             }, "blackhole-accept");
@@ -239,11 +248,13 @@ class SearchDeadConnectionIntegrationTest {
         }
 
         /** 지금 열린 연결만 — 새 연결은 그대로 간다. */
+        // [JA] 今開いている接続だけ — 新しい接続はそのまま通る。
         void blackhole() {
             pairs.forEach(p -> p.dropping = true);
         }
 
         /** 버리던 연결을 닫는다(매달린 쪽이 있으면 깨운다). */
+        // [JA] 捨てていた接続を閉じる(宙吊りの側がいれば起こす)。
         void dropBlackholed() {
             for (Pair p : pairs) {
                 if (p.dropping) {
@@ -267,6 +278,7 @@ class SearchDeadConnectionIntegrationTest {
                     }
                 } catch (IOException e) {
                     // 닫혔다
+                    // [JA] 閉じた
                 } finally {
                     if (!p.dropping) {
                         p.close();
@@ -282,6 +294,7 @@ class SearchDeadConnectionIntegrationTest {
                 s.close();
             } catch (IOException e) {
                 // 무시
+                // [JA] 無視
             }
         }
 
@@ -291,6 +304,7 @@ class SearchDeadConnectionIntegrationTest {
                 server.close();
             } catch (IOException e) {
                 // 무시
+                // [JA] 無視
             }
             pairs.forEach(Pair::close);
         }

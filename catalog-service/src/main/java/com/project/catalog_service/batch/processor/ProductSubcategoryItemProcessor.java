@@ -29,7 +29,7 @@ public class ProductSubcategoryItemProcessor implements ItemProcessor<ProductSub
            //.id(item.getId())
             .product(product)
             .subcategory(subcategory)
-            .version(0L) // 초기 버전 설정
+            .version(0L) // 초기 버전 설정 ／ [JA] 初期バージョン設定
             .build();
     }
 }

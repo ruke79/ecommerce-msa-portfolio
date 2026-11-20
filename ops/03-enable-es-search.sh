@@ -9,6 +9,15 @@
 #   INSECURE=1        # 자가서명 TLS 환경(-k). 운영에서는 CA 신뢰 권장
 #   RUN_K8S_PATCH=1   # 검증 통과 시 k8s ConfigMap에 SEARCH_ENGINE=es 반영 + 재기동까지 수행
 #   DRY_RUN=1         # 명령만 출력
+# [JA] 運用アクション ③ — 検索の ES 切り替え(docs/13 §3 手順の実行版)
+#
+#      手順: 再インデックスのトリガー → alias 確認 → ドキュメント数確認 → フラグ切り替えの案内(または k8s 自動パッチ)
+#
+#      使い方:
+#        CATALOG_URL=https://localhost:8081 ES_URL=https://localhost:9200 ES_USER=elastic ES_PASSWORD=... ./ops/03-enable-es-search.sh
+#        INSECURE=1        # 自己署名 TLS 環境(-k)。運用では CA の信頼を推奨
+#        RUN_K8S_PATCH=1   # 検証が通れば k8s ConfigMap に SEARCH_ENGINE=es を反映 + 再起動まで行う
+#        DRY_RUN=1         # コマンドだけ出力
 set -euo pipefail
 
 CATALOG_URL="${CATALOG_URL:-https://localhost:8081}"

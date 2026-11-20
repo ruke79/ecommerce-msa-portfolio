@@ -2,6 +2,7 @@ import { useTranslation } from "i18n/I18nProvider";
 import { isCanceled, isCompleted, isRefunded } from "util/orderStatus";
 
 /** 화면의 다섯 단계와, 주문 상태가 그중 어디에 서 있는가. */
+// [JA] 画面の五段階と、注文状態がその中のどこに立っているか。
 export const STEPS = ["payment", "confirmed", "preparing", "shipping", "delivered"];
 
 const STEP_OF = {
@@ -27,6 +28,12 @@ export function stepOf(orderStatus) {
  * 거짓말하지 않는다.
  *
  * <p>취소·환불은 단계가 아니라 결과라 띠 하나로 대신한다.
+ *
+ * <p>[JA] 注文がどこまで来たか — 決済 · 注文確定 · 商品準備 · 配送中 · 配送完了。
+ * 決済確認の直後は注文がまだ NOT_PROCESSED である(サガが Kafka の往復の後に PAID に変える、useOrderSettling)。
+ * その間は最初の段階を完了、二番目の段階を進行中として描き「確定中」と言う。期限を過ぎたら「遅れている」と言う —
+ * 「完了」と嘘をつかない。
+ * キャンセル · 返金は段階ではなく結果なので帯一つで代える。
  */
 export default function OrderProgress({ order, settling = false, timedOut = false }) {
     const { t } = useTranslation();
@@ -42,6 +49,7 @@ export default function OrderProgress({ order, settling = false, timedOut = fals
     }
 
     // 확정을 기다리는 동안은 결제(0)는 끝났고 확정(1)이 진행 중이다.
+    // [JA] 確定を待つ間は決済(0)は終わり、確定(1)が進行中である。
     const current = settling || timedOut ? 1 : stepOf(status);
     const waiting = settling || timedOut;
 
@@ -52,6 +60,7 @@ export default function OrderProgress({ order, settling = false, timedOut = fals
     else if (current === 0) note = t("order.progress.awaiting_payment");
     else if (current === 1) note = t("order.progress.preparing_hint");
     // 구매 확정(docs/25 §12)은 다섯 단계 뒤의 마무리라 띠에는 칸이 없다 — 한 줄로 말한다.
+    // [JA] 購入確定(docs/25 §12)は五段階の後の締めくくりなので帯にはマスがない — 一行で言う。
     else if (isCompleted(status)) note = t("order.progress.completed_hint");
 
     return (
@@ -61,6 +70,7 @@ export default function OrderProgress({ order, settling = false, timedOut = fals
                 {STEPS.map((step, i) => {
                     const state = i < current ? "done" : i === current ? "current" : "todo";
                     // 이미 지난 단계와 지금 단계 모두 "여기까지 왔다" 로 칠한다. 지금 단계만 굵게.
+                    // [JA] すでに過ぎた段階と今の段階の両方を「ここまで来た」で塗る。今の段階だけ太く。
                     const reached = i <= current;
                     return (
                         <li

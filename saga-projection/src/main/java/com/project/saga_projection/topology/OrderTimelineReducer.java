@@ -24,9 +24,17 @@ import com.project.common.avro.OrderTimelineEntry;
  *   <li>{@code customerId} 는 비어 있을 때만 채운다.</li>
  * </ul>
  *
- * <p>[JA] 注文状態変更イベントをタイムラインに畳み込む(docs/76)。同じ eventId は一度だけ(リレーは at-least-once)。
- * 順序は到着ではなく発生(occurredAt) — 今の状態は最も遅く<i>起きた</i>変更である。上限 MAX_ENTRIES を超えると
- * 最も古いものから捨てる。
+ * <p>[JA] 注文状態変更イベントをタイムラインに畳み込む(docs/76)— 純粋関数なので TopologyTestDriver なしでも検証する。規則:
+ * <ul>
+ *   <li><b>同じ eventId は一度だけ。</b> リレーは at-least-once なので同じ行が二度来ることがある(コミット直前に死ぬと再発行)。
+ *       項目は増えず {@code eventCount} だけが増える — その差が再発行が実際にあったという記録である。</li>
+ *   <li><b>順序は到着ではなく発生({@code occurredAt})。</b> 今の状態は最も遅く<i>起きた</i>変更である。リレーが二つの
+ *       レプリカで動くと後の変更が先に到着することがある — 到着順を信じると「配達完了の後に決済完了」になる。
+ *       同じ時刻なら後から到着したものが後(安定ソート)。</li>
+ *   <li><b>上限 {@value #MAX_ENTRIES}。</b> 注文一つの状態変更は数えるほどだが、バグでピンポンするとレコードが際限なく大きくなる。
+ *       超えると最も古いものから捨てる — 今の状態は守る。</li>
+ *   <li>{@code customerId} は空のときだけ埋める。</li>
+ * </ul>
  */
 public final class OrderTimelineReducer {
 
@@ -38,6 +46,7 @@ public final class OrderTimelineReducer {
     }
 
     /** 입력 이벤트 하나 → 항목 하나짜리 타임라인(델타). */
+    // [JA] 入力イベント一つ → 項目一つだけのタイムライン(デルタ)。
     public static OrderTimeline delta(OrderStatusChanged e, Instant now) {
         OrderTimelineEntry entry = OrderTimelineEntry.newBuilder()
                 .setEventId(e.getEventId())
@@ -77,7 +86,7 @@ public final class OrderTimelineReducer {
                 entries.add(incoming);
             }
         }
-        entries.sort(BY_OCCURRED_AT);   // List.sort 는 안정 정렬 — 같은 시각이면 도착 순서
+        entries.sort(BY_OCCURRED_AT);   // List.sort 는 안정 정렬 — 같은 시각이면 도착 순서 ／ [JA] List.sort は安定ソート — 同時刻なら到着順
         while (entries.size() > MAX_ENTRIES) {
             entries.remove(0);
         }

@@ -34,6 +34,10 @@ import org.testcontainers.utility.DockerImageName;
  * <p>테이블은 V1__partition_outbox_event.sql 과 같은 모양이다(부모 + 2026-07 ~ 2027-01 + DEFAULT, PK 에 created_at,
  * 부분 인덱스, 나중에 더한 컬럼 trace_context). DB 는 {@code OUTBOX_PG_URL} 이 있으면 그것(로컬 PostgreSQL), 없으면
  * Testcontainers 로 띄운다. {@code containers} 태그라 {@code -PwithContainers} 에서만 돈다(CI 통합 단계).
+ *
+ * <p>[JA] パーティションジョブを<b>実際の PostgreSQL</b> で動かす — パーティション DDL は H2 では模倣できない。
+ * テーブルは V1__partition_outbox_event.sql と同じ形だ(親 + 2026-07 ~ 2027-01 + DEFAULT、PK に created_at、部分インデックス、後から足したカラム trace_context)。
+ * DB は {@code OUTBOX_PG_URL} があればそれ(ローカルの PostgreSQL)、なければ Testcontainers で起動する。{@code containers} タグなので {@code -PwithContainers} でだけ動く(CI の統合段階)。
  */
 @Tag("containers")
 @DisplayName("아웃박스 파티션 잡 — 실제 PostgreSQL")
@@ -78,6 +82,7 @@ class OutboxPartitionMaintainerPostgresTest {
                 "CREATE TABLE orders.payment_outbox_event_default PARTITION OF orders.payment_outbox_event DEFAULT",
                 "CREATE INDEX idx_payment_outbox_started ON orders.payment_outbox_event (created_at) WHERE outbox_status = 'STARTED'",
                 // V14 처럼 나중에 더한 컬럼 — 컬럼 순서가 LIKE 와 어긋나지 않는지 본다
+                // [JA] V14 のように後から足したカラム — カラムの順序が LIKE とずれないかを見る
                 "ALTER TABLE orders.payment_outbox_event ADD COLUMN trace_context varchar(512)");
     }
 
@@ -97,9 +102,11 @@ class OutboxPartitionMaintainerPostgresTest {
         assertThat(partitions()).contains("payment_outbox_event_2027_02", "payment_outbox_event_2027_04");
 
         // 새 행은 새 파티션으로 간다(DEFAULT 가 아니라)
+        // [JA] 新しい行は新しいパーティションに行く(DEFAULT ではなく)
         insert("a", "2027-03-10 12:00:00");
         assertThat(where("a")).isEqualTo("payment_outbox_event_2027_03");
         // 부모의 부분 인덱스가 새 파티션에도 생겼다
+        // [JA] 親の部分インデックスが新しいパーティションにもできた
         assertThat(query("SELECT count(*) FROM pg_indexes WHERE schemaname = 'orders'"
                 + " AND tablename = 'payment_outbox_event_2027_03' AND indexdef LIKE '%STARTED%'")).isEqualTo("1");
     }
@@ -108,9 +115,10 @@ class OutboxPartitionMaintainerPostgresTest {
     @DisplayName("🔴 DEFAULT 에 그 달의 행이 이미 있어도 만든다 — 행을 옮기고 붙인다(그냥 PARTITION OF 면 실패)")
     void movesRowsOutOfDefault() throws SQLException {
         // 잡이 멈춰 있던 동안 2027-02 행이 DEFAULT 에 쌓였다
+        // [JA] ジョブが止まっていた間に 2027-02 の行が DEFAULT に溜まった
         insert("late-1", "2027-02-03 09:00:00");
         insert("late-2", "2027-02-27 23:59:59");
-        insert("older", "2026-05-01 00:00:00");   // 이관분 — 범위 밖이라 DEFAULT 에 남는다
+        insert("older", "2026-05-01 00:00:00");   // 이관분 — 범위 밖이라 DEFAULT 에 남는다 ／ [JA] 移行分 — 範囲外なので DEFAULT に残る
 
         OutboxPartitionMaintainer.Status s = at("2027-02-10T00:00:00Z", 1).ensure("orders.payment_outbox_event");
 
@@ -121,6 +129,7 @@ class OutboxPartitionMaintainerPostgresTest {
         assertThat(where("older")).isEqualTo("payment_outbox_event_default");
         assertThat(s.defaultRows()).isEqualTo(1);
         // 옮긴 행의 값이 그대로다(나중에 더한 trace_context 포함 — 컬럼을 이름으로 옮긴다)
+        // [JA] 移した行の値がそのままだ(後から足した trace_context を含む — カラムを名前で移す)
         assertThat(query("SELECT trace_context FROM orders.payment_outbox_event WHERE id = 'late-1'")).isEqualTo("tc");
     }
 
@@ -128,17 +137,20 @@ class OutboxPartitionMaintainerPostgresTest {
     @DisplayName("🔴 DETACH 된 채 남은 같은 이름의 테이블은 '그 달이 있다' 가 아니다 — 지표를 속이지 않고 실패한다")
     void detachedLeftoverIsNotAPartition() throws SQLException {
         // 보존 작업(DETACH → DROP)이 두 단계 사이에서 멈춘 모양
+        // [JA] 保持作業(DETACH → DROP)が 2 段階の間で止まった形
         exec("CREATE TABLE orders.payment_outbox_event_2027_02 PARTITION OF orders.payment_outbox_event"
                         + " FOR VALUES FROM ('2027-02-01') TO ('2027-03-01')",
                 "ALTER TABLE orders.payment_outbox_event DETACH PARTITION orders.payment_outbox_event_2027_02");
 
         OutboxPartitionMaintainer m = at("2027-01-15T00:00:00Z", 3);
         // 예전: 이름만 보고 건너뛰어 monthsCovered=3 을 보고했고, 2027-02 행은 모두 DEFAULT 로 갔다
+        // [JA] 以前: 名前だけを見て飛ばし monthsCovered=3 を報告し、2027-02 の行はすべて DEFAULT に行った
         assertThatThrownBy(() -> m.ensure("orders.payment_outbox_event"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("orders.payment_outbox_event_2027_02")
                 .hasMessageContaining("파티션이 아니다");
         // 🐛 예전: 한 트랜잭션 전체가 롤백돼 2027-03 · 04 도 만들지 못했다 — 사람이 고칠 때까지 남은 달까지 DEFAULT 로 갔다.
+        // [JA] 🐛 以前: 1 トランザクション全体がロールバックされ 2027-03 · 04 も作れなかった — 人が直すまで残りの月まで DEFAULT に行った。
         assertThat(partitions()).as("충돌한 달만 건너뛰고 다른 달은 만든다")
                 .contains("payment_outbox_event_2027_03", "payment_outbox_event_2027_04");
         insert("next-month", "2027-03-02 00:00:00");
@@ -146,6 +158,7 @@ class OutboxPartitionMaintainerPostgresTest {
         assertThat(m.monthsAheadNow("orders.payment_outbox_event")).as("성공으로 기록하지 않는다").isNaN();
 
         // 사람이 남은 테이블을 정리하면 다음 주기에 채운다
+        // [JA] 人が残ったテーブルを整理すれば、次の周期で埋める
         exec("DROP TABLE orders.payment_outbox_event_2027_02");
         OutboxPartitionMaintainer.Status s = m.ensure("orders.payment_outbox_event");
         assertThat(s.created()).contains("orders.payment_outbox_event_2027_02");
@@ -169,6 +182,7 @@ class OutboxPartitionMaintainerPostgresTest {
             dump.setAutoCommit(false);
             try (Statement st = dump.createStatement()) {
                 // pg_dump 가 테이블마다 잡는 것과 같은 잠금
+                // [JA] pg_dump がテーブルごとに取るのと同じロック
                 st.execute("LOCK TABLE orders.payment_outbox_event_default IN ACCESS SHARE MODE");
             }
             OutboxPartitionMaintainer m = at("2027-01-15T00:00:00Z", 1);
@@ -183,6 +197,7 @@ class OutboxPartitionMaintainerPostgresTest {
             dump.rollback();
         }
         // 잠금이 풀리면 다음 주기에 만든다
+        // [JA] ロックが解ければ次の周期で作る
         assertThat(at("2027-01-15T00:00:00Z", 1).ensure("orders.payment_outbox_event").created())
                 .containsExactly("orders.payment_outbox_event_2027_02");
     }
@@ -237,6 +252,7 @@ class OutboxPartitionMaintainerPostgresTest {
     }
 
     /** 2026-07 ~ 2026-11 의 월 파티션 — V1 이 만든 모양. */
+    // [JA] 2026-07 ~ 2026-11 の月次パーティション — V1 が作った形。
     private static void monthsFromJuly() throws SQLException {
         for (int m = 7; m <= 12; m++) {
             String from = String.format("2026-%02d-01", m);
@@ -253,7 +269,9 @@ class OutboxPartitionMaintainerPostgresTest {
 
     /**
      * 🐛 2026-11-14 까지 오래된 달을 지우는 곳이 없었다 — "보존 정책을 정한 뒤 사람이 한다" 로 남겨 V1 의 2026-07 부터 모든 달이 쌓였다
-     * (docs/09 PG-1 "지울 방법이 없다" 의 남은 절반). [JA] 古い月を消す所がなく、V1 の 2026-07 から全部溜まっていた。
+     * (docs/09 PG-1 "지울 방법이 없다" 의 남은 절반).
+     * [JA] 2026-11-14 まで古い月を消す所がなかった — 「保存ポリシーを決めた後に人が行う」として残し、V1 の 2026-07 からすべての月が溜まっていた
+     * (docs/09 PG-1「消す方法がない」の残り半分)。
      */
     @Test
     @DisplayName("🔴 보존: 이번 달 앞으로 3달을 남기고 그보다 오래된 달(모두 COMPLETED)은 지운다 — 남긴 달 · DEFAULT 의 행은 그대로")

@@ -9,6 +9,15 @@ import { countries } from "components/checkout/countries";
  *
  * <p>이미 저장된 주소는 영어 이름이다. 그래서 두 모양을 모두 읽는다({@link toCountryCode}). 서버(delivery-service
  * {@code CountryCodes})도 이름·코드를 모두 alpha-2 로 바꾸므로, 섞여 있어도 배송은 같다.
+ *
+ * <p>[JA] 国 — 保存はコード(ISO 3166-1 alpha-2)、画面は現在の言語の名前(docs/60 §11)。
+ *
+ * <p>以前は住所フォームが英語名("Korea, Republic of")を<b>値として</b>保存していた。そのため日本語画面でも一覧・住所
+ * カード・注文詳細が英語で、翻訳すると保存値が言語ごとに変わってしまう。いまはコードを保存し、名前は描くときに作る —
+ * 名前表はブラウザの {@code Intl.DisplayNames}(CLDR)が持っているので、250 個を辞書に書き写さない。
+ *
+ * <p>すでに保存された住所は英語名である。そのため二つの形を両方読む({@link toCountryCode})。サーバー(delivery-service
+ * {@code CountryCodes})も名前・コードをすべて alpha-2 に変えるので、混ざっていても配送は同じである。
  */
 
 const norm = (s) => String(s ?? "")
@@ -21,9 +30,11 @@ const BY_CODE = new Map(countries.map((c) => [c.code, c]));
 const BY_NAME = new Map(countries.map((c) => [norm(c.name), c.code]));
 
 /** 발송국 — 주소 폼의 기본값. */
+// [JA] 発送国 — 住所フォームの既定値。
 export const DEFAULT_COUNTRY = "KR";
 
 /** 저장값(코드 또는 옛 영어 이름) → 코드. 모르면 null. */
+// [JA] 保存値(コードまたは古い英語名) → コード。わからなければ null。
 export function toCountryCode(value) {
     if (!value) return null;
     const upper = String(value).trim().toUpperCase();
@@ -51,6 +62,9 @@ function regionNames(lang) {
 /**
  * 저장값 → 화면 이름. 코드로 읽히면 그 언어의 이름(없으면 목록의 영어 이름), 못 읽으면 저장값 그대로 —
  * 사람이 직접 쓴 값일 수 있다.
+ *
+ * <p>[JA] 保存値 → 画面の名前。コードとして読めればその言語の名前(なければ一覧の英語名)、読めなければ保存値のまま —
+ * 人が直接書いた値かもしれない。
  */
 export function countryName(value, lang) {
     const code = toCountryCode(value);
@@ -67,6 +81,7 @@ export function countryName(value, lang) {
 const optionCache = new Map();
 
 /** 주소 폼의 선택지 — {code, name}, 그 언어의 이름 순서로(일본어면 五十音順). */
+// [JA] 住所フォームの選択肢 — {code, name}、その言語の名前順で(日本語なら五十音順)。
 export function countryOptions(lang) {
     if (!optionCache.has(lang)) {
         const collator = new Intl.Collator(lang);

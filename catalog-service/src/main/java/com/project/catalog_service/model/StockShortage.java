@@ -20,6 +20,10 @@ import lombok.NoArgsConstructor;
  *
  * <p>재고 차감과 <b>같은 트랜잭션</b>으로 적힌다. 발행은 {@code StockShortagePublisher} 가 주기적으로 한다 — 발행이
  * 실패해도 행이 남아 다음 주기에 다시 보낸다. 돈이 걸린 알림이라 "커밋 뒤 한 번 보내 보기" 로는 모자라다.
+ *
+ * <p>[JA] 在庫不足の記録 — 決済済み注文の一部を送れないことを order に知らせるアウトボックス行(V13, docs/53)。
+ * 在庫減算と同じトランザクションで書かれる。発行は StockShortagePublisher が周期的に行う — 発行に失敗しても行が残り、次の周期に再送する。
+ * お金が絡む通知なので「コミット後に一度送ってみる」では足りない。
  */
 @Entity
 @Table(name = "stock_shortage", schema = "product")
@@ -55,6 +59,7 @@ public class StockShortage implements Persistable<String> {
     }
 
     // 자연 키(eventId)를 배정하므로 save() 가 merge 로 가지 않게 한다 — ProcessedEvent 와 같은 이유.
+    // [JA] 自然キー(eventId)を割り当てるので、save() が merge に行かないようにする — ProcessedEvent と同じ理由。
     @Transient
     private boolean persisted;
 

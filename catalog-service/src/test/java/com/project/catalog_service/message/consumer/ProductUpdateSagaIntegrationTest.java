@@ -51,12 +51,19 @@ import org.testcontainers.utility.DockerImageName;
  *   <li>주문 항목이 여러 개면 <b>전부</b> 반영되는가(예전에는 첫 항목만 처리하고 return 했다)</li>
  *   <li>망가진 메시지가 컨슈머를 멈추지 않고 DLT 로 격리되는가</li>
  * </ul>
+ *
+ * <p>[JA] サガの在庫差し引き区間を<b>実際の Kafka ブローカー</b>で検証する。
+ * <p>docs/16 §1 で手で確かめたことをビルドが代わりにやるようにしたテストである。サガ全体(注文→決済→在庫)はサービス三つのコンテキストが同時に必要で一つのテストにまとめにくいが、
+ * <b>お金が懸かった区間</b>はここである — 在庫が二回差し引かれればそのまま損失になる。
+ * <p>確かめること: product-update メッセージ一つが在庫をちょうど注文数量だけ減らすか、同じ eventId を再送しても<b>それ以上減らないか</b>(冪等性、docs/12 §2)、
+ * 注文項目が複数なら<b>すべて</b>反映されるか(以前は最初の項目だけ処理して return していた)、壊れたメッセージがコンシューマを止めずに DLT へ隔離されるか。
  */
 @Tag("containers")
 @Testcontainers
 @SpringBootTest
 // poison message 테스트는 재시도 백오프를 일부러 유발한다. 같은 파티션의 뒤 메시지들이 그동안
 // 대기하므로, 그 테스트를 마지막에 돌려 다른 테스트의 대기 시간을 잡아먹지 않게 한다.
+// [JA] poison message のテストはリトライのバックオフをわざと引き起こす。同じパーティションの後続メッセージがその間待たされるので、そのテストを最後に回して他のテストの待ち時間を食わないようにする。
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @DisplayName("사가 재고 차감 · 멱등성 (Kafka Testcontainers)")
 class ProductUpdateSagaIntegrationTest {
@@ -133,6 +140,8 @@ class ProductUpdateSagaIntegrationTest {
     // 컨슈머는 비동기다 — 한 테스트가 발행한 메시지가 다음 테스트의 @BeforeEach 이후에 처리될 수
     // 있다. 그래서 테스트마다 재고를 초기화하지 않고, **테스트마다 서로 다른 상품**을 쓴다.
     // 순서나 타이밍에 상관없이 각 테스트는 자기 상품만 검증하므로 서로 간섭하지 않는다.
+    // [JA] コンシューマは非同期である — あるテストが発行したメッセージが次のテストの @BeforeEach 以降に処理されることがある。そこでテストごとに在庫を初期化せず、**テストごとに別の商品**を使う。
+    //      順序やタイミングに関係なく各テストは自分の商品だけを検証するので、互いに干渉しない。
     private static boolean seeded = false;
 
     @BeforeEach
@@ -140,6 +149,8 @@ class ProductUpdateSagaIntegrationTest {
         // 컨슈머가 파티션을 배정받기 전에 발행하면 그 메시지를 영영 못 볼 수 있다
         // (auto.offset.reset 이 latest 인 경우). 배정을 기다린 뒤에 발행한다 —
         // 이걸 빼면 테스트가 간헐적으로 실패한다.
+        // [JA] コンシューマがパーティションを割り当てられる前に発行すると、そのメッセージを永遠に見られないことがある(auto.offset.reset が latest の場合)。
+        //      割り当てを待ってから発行する — これを外すとテストが間欠的に失敗する。
         for (MessageListenerContainer container : listenerRegistry.getListenerContainers()) {
             ContainerTestUtils.waitForAssignment(container, 1);
         }
@@ -153,6 +164,7 @@ class ProductUpdateSagaIntegrationTest {
         jdbc.update("INSERT INTO product.category(category_id, category_name, slug, createdat, version)"
                 + " VALUES (1, 'fashion', 'fashion', now(), 0) ON CONFLICT DO NOTHING");
         // product_sku 는 color_id 에 UNIQUE 제약이 있어 SKU 마다 색상이 달라야 한다.
+        // [JA] product_sku は color_id に UNIQUE 制約があるので、SKU ごとに色が違う必要がある。
         for (long colorId = 10L; colorId <= 18L; colorId++) {
             jdbc.update("INSERT INTO product.product_color(color_id, color, colorimage, createdat, version)"
                     + " VALUES (?, ?, 'c.png', now(), 0) ON CONFLICT DO NOTHING",
@@ -160,15 +172,16 @@ class ProductUpdateSagaIntegrationTest {
         }
 
         // productId, skuId, sizeId, 초기 재고 — 테스트별 전용 상품
-        insertProduct(100L, 1000L, 5000L, 10L, 50);   // 단건 차감
-        insertProduct(101L, 1001L, 5001L, 11L, 80);   // 재전달 멱등성
-        insertProduct(102L, 1002L, 5002L, 12L, 50);   // 다중 항목 (1)
-        insertProduct(103L, 1003L, 5003L, 13L, 80);   // 다중 항목 (2)
-        insertProduct(104L, 1004L, 5004L, 14L, 50);   // poison message 이후 처리
-        insertProduct(105L, 1005L, 5005L, 15L, 50);   // 서로 다른 eventId
-        insertProduct(106L, 1006L, 5006L, 16L, 50);   // 미존재 상품 주문 (불변이어야 함)
-        insertProduct(107L, 1007L, 5007L, 17L, 50);   // 연속 주문 누적
-        insertProduct(108L, 1008L, 5008L, 18L, 50);   // 키 없는 망가진 메시지 → DLT 이후 처리
+        // [JA] productId、skuId、sizeId、初期在庫 — テスト別の専用商品
+        insertProduct(100L, 1000L, 5000L, 10L, 50);   // 단건 차감 ／ [JA] 単件の差し引き
+        insertProduct(101L, 1001L, 5001L, 11L, 80);   // 재전달 멱등성 ／ [JA] 再配信の冪等性
+        insertProduct(102L, 1002L, 5002L, 12L, 50);   // 다중 항목 (1) ／ [JA] 複数項目(1)
+        insertProduct(103L, 1003L, 5003L, 13L, 80);   // 다중 항목 (2) ／ [JA] 複数項目(2)
+        insertProduct(104L, 1004L, 5004L, 14L, 50);   // poison message 이후 처리 ／ [JA] poison message 以降の処理
+        insertProduct(105L, 1005L, 5005L, 15L, 50);   // 서로 다른 eventId ／ [JA] 異なる eventId
+        insertProduct(106L, 1006L, 5006L, 16L, 50);   // 미존재 상품 주문 (불변이어야 함) ／ [JA] 存在しない商品の注文(不変でなければならない)
+        insertProduct(107L, 1007L, 5007L, 17L, 50);   // 연속 주문 누적 ／ [JA] 連続注文の累積
+        insertProduct(108L, 1008L, 5008L, 18L, 50);   // 키 없는 망가진 메시지 → DLT 이후 처리 ／ [JA] キーのない壊れたメッセージ → DLT 以降の処理
         seeded = true;
     }
 
@@ -203,6 +216,7 @@ class ProductUpdateSagaIntegrationTest {
         try (var producer = new KafkaProducer<String, String>(config)) {
             var record = new ProducerRecord<String, String>(TOPIC, payload);
             // 컨슈머의 JsonDeserializer 는 타입 헤더로 대상 클래스를 정한다.
+            // [JA] コンシューマの JsonDeserializer は型ヘッダで対象クラスを決める。
             record.headers().add(TYPE_HEADER, REQUEST_TYPE.getBytes());
             producer.send(record);
             producer.flush();
@@ -235,6 +249,7 @@ class ProductUpdateSagaIntegrationTest {
     void replayDoesNotDecrementAgain() {
         // Kafka 는 at-least-once 다. 재전달·사가 재실행에서 같은 이벤트가 다시 오는 것은
         // 예외가 아니라 정상이며, 그때 재고가 또 줄면 그대로 손실이 된다.
+        // [JA] Kafka は at-least-once である。再配信・サガ再実行で同じイベントが再び来るのは例外ではなく正常であり、そのとき在庫がまた減るとそのまま損失になる。
         publish(orderPayload("saga-2", item(101L, 4, "M", 11L)));
         await().atMost(Duration.ofSeconds(60))
                 .untilAsserted(() -> assertThat(quantityOf(101L)).isEqualTo(76));
@@ -244,6 +259,7 @@ class ProductUpdateSagaIntegrationTest {
         }
 
         // 재전송이 처리될 시간을 준 뒤에도 값이 그대로여야 한다.
+        // [JA] 再送が処理される時間を与えた後も値がそのままでなければならない。
         await().during(Duration.ofSeconds(5)).atMost(Duration.ofSeconds(60))
                 .untilAsserted(() -> assertThat(quantityOf(101L))
                         .as("재전달로 재고가 이중 차감되면 안 된다")
@@ -259,6 +275,7 @@ class ProductUpdateSagaIntegrationTest {
     @DisplayName("여러 항목 주문은 모든 항목의 재고를 차감한다")
     void everyOrderItemIsApplied() {
         // 예전 코드는 첫 항목을 처리한 뒤 return 해서 나머지가 조용히 누락됐다.
+        // [JA] 以前のコードは最初の項目を処理した後に return し、残りが黙って抜け落ちていた。
         publish(orderPayload("saga-3", item(102L, 2, "M", 12L) + "," + item(103L, 5, "M", 13L)));
 
         await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
@@ -273,6 +290,7 @@ class ProductUpdateSagaIntegrationTest {
     void poisonMessageDoesNotStallTheConsumer() {
         // 타입 헤더 없이 보내면 역직렬화가 실패한다. 그 뒤에 보낸 정상 메시지가 처리되면
         // 컨슈머가 poison message 에 갇히지 않고 DLT 로 넘긴 것이다.
+        // [JA] 型ヘッダなしで送るとデシリアライズが失敗する。その後に送った正常メッセージが処理されれば、コンシューマが poison message に閉じ込められず DLT へ回したということである。
         Map<String, Object> config = Map.of(
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
                 ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
@@ -297,7 +315,11 @@ class ProductUpdateSagaIntegrationTest {
      * 이 파티셔너를 써서 DLT 발행이 매번 실패했고, 오류 처리기가 같은 레코드를 끝없이 다시 시도해 이 파티션의 뒤 메시지가 영영
      * 처리되지 않았다. 위 {@code poisonMessageDoesNotStallTheConsumer} 의 메시지는 기본 타입으로 읽혀 실패하지 않아 이 경로를
      * 지나지 않았다.
-     * [JA] キーなしで来たレコードが本当に失敗しても DLT へ移され、パーティションが進み続ける。
+     * [JA] 🔴 キーなしで来たレコードが<b>本当に</b>失敗しても(デシリアライズ不可)DLT へ移され、パーティションが進み続ける。
+     * 以前の AggregateKeyPartitioner はキーがなければ -1 を返し、KafkaProducer はカスタムパーティショナーの負数を拒否する。DLT テンプレートも
+     * このパーティショナーを使っていて DLT 発行が毎回失敗し、エラーハンドラーが同じレコードを延々と再試行して、このパーティションの後続
+     * メッセージが永遠に処理されなかった。上の {@code poisonMessageDoesNotStallTheConsumer} のメッセージは既定の型で読まれて失敗しない
+     * ので、この経路を通らなかった。
      */
     @Order(7)
     @Test
@@ -309,7 +331,7 @@ class ProductUpdateSagaIntegrationTest {
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         try (var producer = new KafkaProducer<String, String>(config)) {
             var broken = new ProducerRecord<String, String>(TOPIC, "{깨진 JSON — 역직렬화가 반드시 실패한다");
-            broken.headers().add(TYPE_HEADER, REQUEST_TYPE.getBytes());   // 키 없음
+            broken.headers().add(TYPE_HEADER, REQUEST_TYPE.getBytes());   // 키 없음 ／ [JA] キーなし
             producer.send(broken);
             producer.flush();
         }

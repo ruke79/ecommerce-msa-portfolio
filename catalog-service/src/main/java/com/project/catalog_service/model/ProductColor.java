@@ -30,7 +30,7 @@ import lombok.AccessLevel;
 @Entity
 @Getter
 @Setter
-@SuperBuilder // @Builder 대신 @SuperBuilder 사용
+@SuperBuilder // @Builder 대신 @SuperBuilder 사용 ／ [JA] @Builder の代わりに @SuperBuilder を使う
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "product_color",  schema="product",
     indexes = {

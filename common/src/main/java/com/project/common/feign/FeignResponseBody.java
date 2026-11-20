@@ -29,9 +29,22 @@ import feign.codec.Decoder;
  * {@code feign.Response} 인 메서드는 Feign 이 디코더를 부르지 않으므로 그대로 흘려 읽을 수 있다. 오류 응답은 Feign 의
  * {@code ErrorDecoder} 가 이미 끝까지 읽는다.
  *
- * <p>[JA] サービス間の Feign 応答を<b>最後まで読んでから</b>解釈する — そうして初めて JDK がその接続を再利用する。
- * Spring MVC の JSON は chunked で、Jackson は最後の } で読むのをやめて閉じるため、終端チャンクが残ったまま閉じられ、
- * JDK は接続を捨てていた — 呼び出しごとに新しい mTLS ハンドシェイク(chunked JSON 300 呼び出しで接続 300、読み切れば 1)。
+ * <p>[JA] サービス間の Feign 応答を<b>最後まで読んでから</b>解釈する — そうして初めて JDK がその接続を再利用する(keep-alive)。
+ *
+ * <p>[JA] なぜ: Spring MVC の JSON 応答は長さを知らずに送る {@code Transfer-Encoding: chunked} だ。Feign の既定クライアント(JDK
+ * {@code HttpURLConnection})は chunked 応答を<b>最後の空チャンクまで読んで初めて</b>接続を keep-alive キャッシュに戻す。ところが
+ * Jackson は JSON の最後の閉じ波括弧で読むのをやめてストリームを閉じる — 終端チャンクが残ったまま閉じられると JDK は接続を捨てる。
+ * そのため<b>呼び出しごとに新しい TCP · mTLS ハンドシェイク</b>だった。このリポジトリで測ると chunked JSON 300 呼び出しで接続 300 個、
+ * 最後まで読めば 1 個。
+ *
+ * <p>[JA] 2026-10-18 order 負荷測定(docs/83 §5): cart CPU の 23% が catalog への、order の Feign 時間の 2/3 が cart · catalog への
+ * 新しい TLS ハンドシェイクだった。アイドル接続数を増やした {@code HttpKeepAlive}(5 → 64)をデプロイした後も order は変わらなかった —
+ * 接続をキャッシュに入れる前に捨てていたからだ。
+ *
+ * <p>[JA] どうやって: Feign の {@link Capability} で全クライアントの {@link Decoder} を包む。本文をバイトで全部読み(このとき JDK が
+ * 終端チャンクに出会って接続をキャッシュに入れる)、そのバイトで元のデコーダーを呼ぶ。サービス間の応答は小さい(カート · 商品数個)。
+ * 戻り値の型が {@code feign.Response} のメソッドは Feign がデコーダーを呼ばないので、そのまま流し読みできる。エラー応答は Feign の
+ * {@code ErrorDecoder} がすでに最後まで読む。
  */
 public final class FeignResponseBody implements Capability {
 
@@ -40,7 +53,7 @@ public final class FeignResponseBody implements Capability {
         return decoder instanceof FullyRead ? decoder : new FullyRead(decoder);
     }
 
-    /** 본문을 끝까지 읽어 바이트로 바꾼 뒤 원래 디코더에 넘긴다. */
+    /** 본문을 끝까지 읽어 바이트로 바꾼 뒤 원래 디코더에 넘긴다. ／ [JA] 本文を最後まで読みバイトに変えてから元のデコーダーに渡す。 */
     static final class FullyRead implements Decoder {
 
         private final Decoder delegate;
@@ -57,7 +70,7 @@ public final class FeignResponseBody implements Capability {
             }
             byte[] bytes;
             try (InputStream in = body.asInputStream()) {
-                bytes = in.readAllBytes();   // 끝 청크까지 — JDK 가 이 연결을 keep-alive 캐시에 넣는다
+                bytes = in.readAllBytes();   // 끝 청크까지 — JDK 가 이 연결을 keep-alive 캐시에 넣는다 ／ [JA] 終端チャンクまで — JDK がこの接続を keep-alive キャッシュに入れる
             }
             return delegate.decode(response.toBuilder().body(bytes).build(), type);
         }

@@ -14,6 +14,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>이 네 가지는 "나중에 넣자"가 되기 쉬운데, 각각 스키마와 상태 규칙을 건드리므로 나중에
  * 끼워 넣으면 마이그레이션과 화면을 함께 뜯어야 한다. 규칙을 여기서 고정한다.
+ *
+ * <p>[JA] 配送ドメインの規則 — <b>分割配送・国際配送・住所変更・キャンセル</b>。
+ * この四つは「後で入れよう」になりやすいが、それぞれスキーマと状態規則に触れるので、後から差し込むとマイグレーションと画面を一緒に剥がす必要がある。規則をここで固定する。
  */
 @DisplayName("배송 도메인 규칙")
 class DeliveryDomainTest {
@@ -120,6 +123,7 @@ class DeliveryDomainTest {
         @DisplayName("통관 단계는 이동 중 다음, 배달 출발 앞에 온다")
         void 통관_단계의_순서() {
             // 순서가 곧 진행도다. 통관이 배달출발 뒤에 오면 통관 완료가 진행으로 인정되지 않는다.
+            // [JA] 順序がそのまま進捗度である。通関が配達出発の後に来ると通関完了が進捗として認められない。
             assertThat(DeliveryStatus.CUSTOMS_HOLD.isProgressFrom(DeliveryStatus.IN_TRANSIT)).isTrue();
             assertThat(DeliveryStatus.CUSTOMS_CLEARED.isProgressFrom(DeliveryStatus.CUSTOMS_HOLD)).isTrue();
             assertThat(DeliveryStatus.OUT_FOR_DELIVERY.isProgressFrom(DeliveryStatus.CUSTOMS_CLEARED)).isTrue();

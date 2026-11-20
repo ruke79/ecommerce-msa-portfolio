@@ -40,6 +40,20 @@ import org.apache.avro.specific.SpecificRecord;
  *
  * <p>일부러 싣지 않는 필드는 {@code ignored} 에 <b>경로 → 이유</b>로 적는다. 이유 없는 제외는 받지 않는다.
  * Kafka 없이 Avro 만으로 돈다 — 직렬화기가 하는 일(단일 객체 인코딩)과 같다.
+ *
+ * <p>[JA] DTO ↔ Avro マッピングの契約 — <b>DTO のフィールドがワイヤーを渡って生きて戻ってくるか</b>(docs/55 §7-7)。
+ * <h3>🐛 なぜ必要か</h3>
+ * 決済リクエスト DTO には {@code paymentProvider}·{@code providerPaymentId} があったが Avro スキーマにはなかった。マッピングはないフィールドを黙って捨て、
+ * コンパイルもテストも通った — pay は Stripe・ポートワン・銀行振込の参照を受け取ったことがない(docs/49 §3)。DTO とスキーマは別々に動く。
+ * 片方にフィールドを足してもう片方を忘れても誰も気づかない。
+ * 2 つを見る。
+ * <ol>
+ *   <li><b>名前</b> — DTO のインスタンスフィールドとスキーマのフィールドが同じか。リスト内の入れ子レコードまで降りる。</li>
+ *   <li><b>往復</b> — すべてのフィールドをデフォルトでない値で埋めて {@code toRecord → encoder → decoder → toDto} を一度回し、
+ *       同じ値が戻るか。スキーマにフィールドがあってもマッピングコードが移さなければここで引っかかる。</li>
+ * </ol>
+ * わざと載せないフィールドは {@code ignored} に<b>パス → 理由</b>で書く。理由のない除外は受け付けない。
+ * Kafka なしで Avro だけで動く — シリアライザーがすること(単一オブジェクトエンコーディング)と同じだ。
  */
 public final class AvroMappingContract {
 
@@ -47,6 +61,7 @@ public final class AvroMappingContract {
     }
 
     /** 문제 목록. 비어 있으면 계약을 지킨다. */
+    // [JA] 問題のリスト。空なら契約を守っている。
     public static <D, R extends SpecificRecord> List<String> verify(AvroMapping<D, R> mapping,
             Map<String, String> ignored) {
         List<String> problems = new ArrayList<>();
@@ -83,6 +98,7 @@ public final class AvroMappingContract {
     }
 
     // ---------------------------------------------------------------- 이름
+    // [JA] ---------------------------------------------------------------- 名前
 
     private static void compareNames(Class<?> dto, Schema schema, String path, Map<String, String> ignored,
             List<String> problems) {
@@ -125,6 +141,7 @@ public final class AvroMappingContract {
     }
 
     // ---------------------------------------------------------------- 왕복
+    // [JA] ---------------------------------------------------------------- 往復
 
     private static void compareValues(Object sent, Object got, String path, Map<String, String> ignored,
             List<String> problems) {
@@ -166,6 +183,7 @@ public final class AvroMappingContract {
     }
 
     // ---------------------------------------------------------------- 샘플 — 기본값이 아닌 값으로
+    // [JA] ---------------------------------------------------------------- サンプル — デフォルトでない値で
 
     private static Object sample(Type type, String path, List<String> problems) {
         Class<?> c = raw(type);
@@ -173,7 +191,7 @@ public final class AvroMappingContract {
             return "v-" + path.substring(path.lastIndexOf('.') + 1);
         }
         if (c == Long.class || c == long.class) {
-            return 1234567890123456789L;   // 19자리 — TSID 처럼
+            return 1234567890123456789L;   // 19자리 — TSID 처럼 ／ [JA] 19 桁 — TSID のように
         }
         if (c == Integer.class || c == int.class) {
             return 42;
@@ -188,7 +206,7 @@ public final class AvroMappingContract {
             return new BigDecimal("12345.67");
         }
         if (c == LocalDateTime.class) {
-            return LocalDateTime.of(2026, 9, 25, 12, 34, 56, 789_000_000);   // timestamp-millis 정밀도
+            return LocalDateTime.of(2026, 9, 25, 12, 34, 56, 789_000_000);   // timestamp-millis 정밀도 ／ [JA] timestamp-millis の精度
         }
         if (c == Instant.class) {
             return Instant.ofEpochMilli(1_790_000_000_123L);
@@ -201,7 +219,7 @@ public final class AvroMappingContract {
         }
         if (c.isEnum()) {
             Object[] values = c.getEnumConstants();
-            return values[values.length - 1];   // 첫 값은 흔히 기본값이다
+            return values[values.length - 1];   // 첫 값은 흔히 기본값이다 ／ [JA] 最初の値はたいていデフォルト値だ
         }
         if (List.class.isAssignableFrom(c) || Collection.class.isAssignableFrom(c)) {
             Type element = ((ParameterizedType) type).getActualTypeArguments()[0];
@@ -248,6 +266,7 @@ public final class AvroMappingContract {
     }
 
     // ---------------------------------------------------------------- 리플렉션
+    // [JA] ---------------------------------------------------------------- リフレクション
 
     private static Map<String, Type> fieldsOf(Class<?> c) {
         Map<String, Type> m = new LinkedHashMap<>();
@@ -311,11 +330,13 @@ public final class AvroMappingContract {
     }
 
     /** 우리 코드의 DTO 인가 — 값 타입(JDK·열거형)이 아닌가. */
+    // [JA] 自分たちのコードの DTO か — 値型(JDK・列挙型)ではないか。
     private static boolean isNested(Class<?> c) {
         return !c.isPrimitive() && !c.isEnum() && !c.isArray() && c.getName().startsWith("com.project.");
     }
 
     /** 제외 목록을 만드는 도우미 — 경로와 이유를 짝으로. */
+    // [JA] 除外リストを作るヘルパー — パスと理由を対で。
     public static Map<String, String> ignoring(String... pathAndReason) {
         Map<String, String> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < pathAndReason.length; i += 2) {

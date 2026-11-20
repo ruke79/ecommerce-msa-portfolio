@@ -20,8 +20,14 @@ import lombok.extern.slf4j.Slf4j;
  * ({@code auth:pw-ok:<userId>}, 기본 7일) — 비밀번호를 바꾸면 새 값은 이미 변경 경로에서 검사를 통과했으므로 그 기억이 틀리지 않는다.
  * 확인하지 못함(API 장애)은 1시간만 기억한다 — 장애 동안 로그인마다 상한(2초)을 기다리지 않게. Redis 에는 비밀번호 · 해시를 두지 않는다.
  *
- * <p>[JA] ログインに成功したパスワードが漏えい · ありふれた一覧にあれば変更を勧める — 止めない。「問題なし」は 7 日覚え、
- * 外部 API を毎回呼ばない。Redis にはパスワード · ハッシュを置かない。
+ * <p>[JA] ログインに成功したパスワードが漏えい一覧 · ありふれた一覧にあれば「変えてください」と勧める — 止めない(docs/57 §22 · docs/68 §18)。
+ * 🐛 以前は登録 · 変更 · 再設定でだけ見ていた。その前に決めたパスワードがその後よそで漏れても、このアカウントの持ち主には知るすべが
+ * なかった — クレデンシャルスタッフィングはまさにそのパスワードで入ってくる。
+ * <b>ログインを止めない</b> — 止めるとその人はパスワード再設定メール以外に入る道がなく、外部 API の障害がログイン障害になる。
+ * 応答の {@code passwordAdvice} で画面が案内だけをする。ログインのたびに外部 API を呼ばないよう「問題なし」は覚えておく
+ * ({@code auth:pw-ok:<userId>}、既定 7 日)— パスワードを変えれば新しい値はすでに変更経路で検査を通っているので、その記憶は間違わない。
+ * 確認できなかった場合(API 障害)は 1 時間だけ覚える — 障害の間ログインごとに上限(2 秒)を待たないように。Redis にはパスワード ·
+ * ハッシュを置かない。
  */
 @Slf4j
 @Component
@@ -48,6 +54,7 @@ public class LoginPasswordAdvisor {
     }
 
     /** @return 권할 것이 있으면 {@link #ADVICE_BREACHED}, 없으면 null. 어떤 실패도 로그인을 바꾸지 않는다. */
+    // [JA] @return 勧めることがあれば {@link #ADVICE_BREACHED}、なければ null。どんな失敗もログインを変えない。
     public String adviceFor(Long userId, String rawPassword) {
         if (!enabled || userId == null || rawPassword == null || rawPassword.isEmpty()) {
             return null;
@@ -64,7 +71,7 @@ public class LoginPasswordAdvisor {
         if (verdict == BreachedPasswordChecker.Verdict.BREACHED || verdict == BreachedPasswordChecker.Verdict.COMMON) {
             meters.counter(ADVISED_METRIC, "reason", verdict.name().toLowerCase(java.util.Locale.ROOT)).increment();
             log.info("로그인 비밀번호가 유출 · 흔한 목록에 있다 — 변경을 권한다. userId={}", userId);
-            return ADVICE_BREACHED;   // 기억하지 않는다 — 바꿀 때까지 로그인마다 권한다
+            return ADVICE_BREACHED;   // 기억하지 않는다 — 바꿀 때까지 로그인마다 권한다 ／ [JA] 記憶しない — 変えるまでログインのたびに勧める
         }
         try {
             redis.opsForValue().set(key, "1",

@@ -5,6 +5,7 @@ plugins	{
 }
 
 // Lombok 설정 (Querydsl과 함께 사용 시 필수)
+// [JA] Lombok 設定(Querydsl と一緒に使う場合は必須)
 configurations {
     compileOnly {
         extendsFrom annotationProcessor
@@ -18,7 +19,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	//implementation 'org.springframework.boot:spring-boot-starter-web'
 	//implementation 'org.springframework.boot:spring-boot-starter-validation'
-	implementation 'org.springframework.boot:spring-boot-starter-data-redis'   // 버전은 Boot BOM 이 정한다(고정하면 Boot 를 올려도 따라가지 않는다)
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'   // 버전은 Boot BOM 이 정한다(고정하면 Boot 를 올려도 따라가지 않는다) ／ [JA] バージョンは Boot BOM が決める(固定すると Boot を上げても追従しない)
 
 	
 	
@@ -30,15 +31,19 @@ dependencies {
 	
 	implementation 'org.springframework.kafka:spring-kafka'
 	// S3 만 쓴다 — 예전에는 SDK 전체(aws-java-sdk, 서비스 수백 개)를 넣었다
+	// [JA] S3 だけを使う — 以前は SDK 全体(aws-java-sdk、サービス数百個)を入れていた
 	implementation 'com.amazonaws:aws-java-sdk-s3:1.12.797'
 
 
 	  // JPA와 Elasticsearch를 함께 사용하는 경우, 전이적 의존성으로 인한 충돌 방지
+	  // [JA] JPA と Elasticsearch を一緒に使う場合、推移的依存による衝突を防止
     implementation('org.springframework.boot:spring-boot-starter-data-elasticsearch') {
         // 반응형 Elasticsearch 의존성을 명시적으로 제외
+        // [JA] リアクティブ Elasticsearch の依存を明示的に除外
         exclude group: 'org.springframework.data', module: 'spring-data-elasticsearch-reactive'
         // Reactive 프로그래밍에 사용되는 Reactor 라이브러리도 필요하지 않다면 제외할 수 있습니다.
         // exclude group: 'io.projectreactor', module: 'reactor-core'
+        // [JA] Reactive プログラミングに使われる Reactor ライブラリも不要なら除外できる。
     }
 		
 
@@ -47,6 +52,8 @@ dependencies {
 
 	// 재고 예약 gRPC 서버(docs/66). 계약 · 생성 스텁은 common 에 있고(compileOnly), 런타임은 쓰는 서비스가 얹는다.
 	// grpc-netty-shaded — Netty 를 자기 안에 숨겨 가진다(Spring 의 Netty · Reactor 와 버전이 부딪히지 않게).
+	// [JA] 在庫予約の gRPC サーバー(docs/66)。契約 · 生成スタブは common にあり(compileOnly)、ランタイムは使うサービスが載せる。
+	//      grpc-netty-shaded — Netty を自分の中に隠して持つ(Spring の Netty · Reactor とバージョンがぶつからないように)。
 	implementation platform("io.grpc:grpc-bom:${grpcVersion}")
 	implementation 'io.grpc:grpc-netty-shaded'
 	implementation 'io.grpc:grpc-protobuf'
@@ -57,9 +64,11 @@ dependencies {
 
 	runtimeOnly 'org.postgresql:postgresql'
 	// 스키마 마이그레이션: 파티셔닝 등 Hibernate ddl-auto가 만들 수 없는 DDL은 Flyway가 소유한다 (docs/09 P0)
+	// [JA] スキーママイグレーション: パーティショニングなど Hibernate ddl-auto が作れない DDL は Flyway が所有する(docs/09 P0)
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	// [JA] OpenAPI ドキュメント: /v3/api-docs, /swagger-ui.html
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'	
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	//runtimeOnly 'com.mysql:mysql-connector-j'
@@ -69,9 +78,11 @@ dependencies {
     implementation 'com.querydsl:querydsl-core:5.0.0'
     
     // Q-클래스 생성을 위한 annotationProcessor 의존성
+    // [JA] Q クラス生成のための annotationProcessor 依存
     annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jakarta'
     
     // JPA 엔티티를 인식시키기 위한 의존성
+    // [JA] JPA エンティティを認識させるための依存
     annotationProcessor 'jakarta.persistence:jakarta.persistence-api'
     annotationProcessor 'jakarta.annotation:jakarta.annotation-api'
 	// QueryDSL end
@@ -85,19 +96,23 @@ tasks.named('test') {
 }
 
 // Q-클래스 생성 경로 설정
+// [JA] Q クラスの生成パス設定
 def generated = 'src/main/generated'
 
 // 빌드 시 Q-클래스 디렉토리 삭제
+// [JA] ビルド時に Q クラスのディレクトリを削除
 clean {
     delete file(generated)
 }
 
 // Q-클래스 생성 디렉토리 지정
+// [JA] Q クラス生成ディレクトリの指定
 tasks.withType(JavaCompile) {
     options.annotationProcessorGeneratedSourcesDirectory = file(generated)
 }
 
 // 생성된 Q-클래스 경로를 소스 경로에 추가
+// [JA] 生成された Q クラスのパスをソースパスに追加
 sourceSets {
     main.java.srcDirs += [ generated ]
 }

@@ -32,6 +32,11 @@ import com.project.order_service.payment.portone.VirtualAccount;
  *
  * <p>어느 쪽인지는 본문이 아니라 <b>포트원 조회</b>가 말한다. 발급이면 계좌를 주문에 붙이고
  * (입금 대기), 완료면 결제를 붙인다 — 가상계좌 입금의 완료 웹훅이 곧 "입금 확인" 이다.
+ *
+ * <p>[JA] PortOne の Webhook・復帰 — 決済完了と<b>仮想口座発行</b>を分ける(docs/49 §11)。
+ *
+ * <p>どちらかは本文ではなく<b>PortOne 照会</b>が言う。発行なら口座を注文に付け(入金待ち)、完了なら決済を付ける —
+ * 仮想口座入金の完了 Webhook がそのまま「入金確認」である。
  */
 @DisplayName("포트원 가상계좌")
 class PortOnePaymentServiceTest {
@@ -66,6 +71,7 @@ class PortOnePaymentServiceTest {
     }
 
     // ---------------------------------------------------------------- 웹훅
+    // [JA] Webhook
 
     @Test
     @DisplayName("발급 웹훅: 포트원이 '발급됨' 이라고 하면 계좌를 주문에 붙인다 — 결제는 붙이지 않는다")
@@ -82,6 +88,7 @@ class PortOnePaymentServiceTest {
     }
 
     /** 🔴 가상계좌 입금의 완료 웹훅이 곧 입금 확인이다 — 관리자 손을 거치지 않는다. */
+    // [JA] 🔴 仮想口座入金の完了 Webhook がそのまま入金確認である — 管理者の手を経ない。
     @Test
     @DisplayName("🔴 완료 웹훅: 결제를 붙인다 — 가상계좌 입금이면 이것이 입금 확인이다")
     void paidWebhookRecordsPayment() {
@@ -95,6 +102,7 @@ class PortOnePaymentServiceTest {
     }
 
     /** 🔒 본문이 "발급됐다" 고 해도 포트원이 아니라고 하면 아무것도 붙지 않는다. */
+    // [JA] 🔒 本文が「発行された」と言っても PortOne が違うと言えば何も付かない。
     @Test
     @DisplayName("🔒 본문은 단서일 뿐 — 포트원 조회가 발급도 완료도 아니라면 무시")
     void bodyIsOnlyAHint() {
@@ -121,6 +129,7 @@ class PortOnePaymentServiceTest {
     }
 
     // ---------------------------------------------------------------- 브라우저 복귀
+    // [JA] ブラウザ復帰
 
     @Test
     @DisplayName("복귀: 가상계좌가 발급된 것이면 계좌를 붙이고 VIRTUAL_ACCOUNT_ISSUED 를 돌려준다")
@@ -146,6 +155,7 @@ class PortOnePaymentServiceTest {
     }
 
     /** 🔒 다른 주문의 가상계좌를 내 주문에 붙일 수 없다 — 포트원이 말하는 주문 참조로 대조. */
+    // [JA] 🔒 別の注文の仮想口座を自分の注文に付けることはできない — PortOne が言う注文参照で照合。
     @Test
     @DisplayName("🔒 복귀: 가상계좌가 다른 주문의 것이면 거절")
     void returnWithSomeoneElsesAccount() {

@@ -43,6 +43,16 @@ import com.project.order_service.outbox.repository.jpa.PaymentOutboxRepository;
  * <p>구조: 두 스레드가 각자의 트랜잭션에서 선점 쿼리를 돌리고, <b>둘 다 끝날 때까지 커밋하지
  * 않는다.</b> 커밋을 미루는 것이 핵심이다 — 먼저 커밋해 버리면 잠금이 풀려 두 번째 스레드가
  * 같은 행을 정상적으로 가져가고, 그러면 SKIP LOCKED 가 동작하는지 알 수 없다.
+ *
+ * <p>[JA] アウトボックスの先取りがレプリカを増やしても安全か — 実際の並行トランザクションで確認する。
+ *
+ * <p>このテストが守るもの: レプリカを 2 個に上げた瞬間、二つの Pod のスケジューラーが同時にポーリングする。
+ * 以前のようにロックなしで照会すると<b>両方が同じ行を読んで同じ決済リクエストを二度発行</b>する。単体テストでは捕まらない —
+ * 本物の並行トランザクション二つと本物の PostgreSQL が必要である。
+ *
+ * <p>構造: 二つのスレッドがそれぞれのトランザクションで先取りクエリを回し、<b>両方が終わるまでコミットしない。</b>
+ * コミットを遅らせるのが核心である — 先にコミットするとロックが解けて二つ目のスレッドが同じ行を正常に取ってしまい、SKIP LOCKED
+ * が動作するか分からない。
  */
 @Tag("containers")
 @Testcontainers
@@ -80,8 +90,12 @@ class PaymentOutboxClaimConcurrencyTest {
         // PayPal 검증은 자격증명이 없으면 **기동을 거부한다**(PaypalConfig — 의도된 fail closed).
         // 테스트에는 시크릿이 없으므로 명시적으로 끈다. 이 한 줄이 필요하다는 사실 자체가
         // 기본값이 안전한 쪽으로 잡혀 있다는 증거다(docs/35).
+        // [JA] PayPal 検証は資格情報がなければ**起動を拒否する**(PaypalConfig — 意図した fail closed)。
+        //      テストにはシークレットがないので明示的に切る。この 1 行が必要だという事実そのものが、
+        //      既定値が安全側に設定されている証拠である(docs/35)。
         registry.add("paypal.verification.mode", () -> "disabled");
         // 스케줄러가 배경에서 돌며 행을 가져가면 이 테스트가 불안정해진다.
+        // [JA] スケジューラーがバックグラウンドで回って行を取っていくと、このテストが不安定になる。
         registry.add("order-service.outbox-scheduler-fixed-rate", () -> 3_600_000);
         registry.add("order-service.outbox-scheduler-initial-delay", () -> 3_600_000);
         registry.add("order-service.outbox-relay-on-commit", () -> false);
@@ -112,6 +126,7 @@ class PaymentOutboxClaimConcurrencyTest {
         List<Set<String>> claims = Collections.synchronizedList(new ArrayList<>());
 
         // 두 스레드 모두 선점을 마칠 때까지 아무도 커밋하지 않게 잡아 둔다.
+        // [JA] 両スレッドが先取りを終えるまで誰もコミットしないように押さえておく。
         CountDownLatch bothClaimed = new CountDownLatch(2);
         CountDownLatch release = new CountDownLatch(1);
 

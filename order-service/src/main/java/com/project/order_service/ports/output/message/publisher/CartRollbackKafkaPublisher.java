@@ -28,13 +28,15 @@ public class CartRollbackKafkaPublisher {
 
          try {
             // Kafka 메시지 헤더에 Authorization 토큰을 추가합니다.
+            // [JA] Kafka メッセージヘッダに Authorization トークンを追加する。
             Message<CartRollbackRequest> kafkaMessage = MessageBuilder.withPayload(message)
                     .setHeader(KafkaHeaders.TOPIC, "cart-rollback")
                     // 키 = 사용자 id — 같은 장바구니의 비우기/롤백은 같은 파티션으로(docs/38 §1.15).
+                    // [JA] キー = ユーザー id — 同じカートの空にする/ロールバックは同じパーティションへ(docs/38 §1.15)。
                     .setHeader(KafkaHeaders.KEY, String.valueOf(message.getUserId()))
                     .build();
 
-            CompletableFuture<SendResult<String, CartRollbackRequest>> future = com.project.common.kafka.TransactionalSends.run(kafkaTemplate, ops -> ops.send(kafkaMessage));   // 트랜잭션 밖에서도 보낸다
+            CompletableFuture<SendResult<String, CartRollbackRequest>> future = com.project.common.kafka.TransactionalSends.run(kafkaTemplate, ops -> ops.send(kafkaMessage));   // 트랜잭션 밖에서도 보낸다 ／ [JA] トランザクションの外でも送る
 
             future.whenComplete((result, ex) -> {
                 if (ex == null) {

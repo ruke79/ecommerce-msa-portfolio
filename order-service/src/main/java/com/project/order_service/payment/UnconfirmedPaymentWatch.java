@@ -27,7 +27,14 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>모든 파드가 같은 수를 낸다(읽기 한 번) — 경보는 max 로 본다.
  *
- * <p>[JA] 決済照合 — 決済は確認 · 記録されたのに決済応答が来ず、一定時間を過ぎても決済前の注文を数える。直さない — 人が見る。
+ * <p>[JA] 決済照合 — 決済は確認 · 記録されたのに(プロバイダーの決済参照が付いた)決済応答が来ず、{@value #GRACE_MINUTES} 分を過ぎても
+ * 決済前の注文を数える(ゲージ {@code order_payment_unconfirmed}、アラート OrderPaymentUnconfirmed)。直しはしない — 人が見る。
+ *
+ * <p>[JA] 🐛 以前はこの状態を誰も知らなかった。決済要求アウトボックス · pay-service · 決済応答の消費(payment)のどこで止まっても、客は
+ * お金を払ったのに注文は決済前で、決済画面の在庫予約(30 分)が解けて他人に売られ、応答が DLT へ行っても静かだった。正常なら数秒以内に
+ * PAID になる。
+ *
+ * <p>[JA] すべての Pod が同じ数を出す(読み取り一回)— アラートは max で見る。
  */
 @Slf4j
 @Component
@@ -65,6 +72,7 @@ public class UnconfirmedPaymentWatch {
             }
         } catch (RuntimeException e) {
             // 대사가 실패했다고 서비스가 흔들리면 안 된다 — 다음 실행에서 다시 본다(게이지는 마지막 값).
+            // [JA] 照合が失敗してもサービスが揺らいではならない — 次の実行で再び見る(ゲージは最後の値)。
             log.warn("결제 대사 실패 — 다음 실행에서 다시 본다 ({})", e.getClass().getSimpleName());
         }
     }

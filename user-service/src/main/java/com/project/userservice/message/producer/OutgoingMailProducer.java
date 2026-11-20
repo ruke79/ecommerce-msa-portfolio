@@ -40,6 +40,17 @@ import lombok.extern.slf4j.Slf4j;
  * 왕복하는 것은 실패 확률이 다르다. 이 창을 완전히 닫으려면 user-service 의 아웃박스를 살려
  * 사용자 저장과 같은 트랜잭션에 메일 요청을 적어야 한다({@code OutboxScheduler} 가 구현체 없이
  * 껍데기만 남아 있다 — docs/29 §5).
+ *
+ * <p>[JA] メール送信リクエストを {@code outgoing-mail} トピックに入れる。実際の送信は notification-service が行う。
+ * <b>なぜここで SMTP を呼ばないように変えたか。</b>以前は {@code RegistrationListener} が {@code JavaMailSender} を直接呼んでいた。そのため
+ * メールサーバーが遅いと {@code mailExecutor} スレッドがその分つかまった(応答は既に出たあとだったが、プールが埋まると後のリクエストのメールが遅れる)。
+ * 三回再試行しても失敗すると<b>そのメールは永久に消えた。</b>残るのは ERROR ログ一行だけで、ユーザーはアカウントを有効化する手段がなかった。
+ * メール文面・SMTP 設定・再試行ポリシーが user-service の中にあり、他のサービスがメールを送るにはそのコードをコピーしなければならなかった。
+ * 今はここで Kafka に一行入れて終わる。耐久性・再試行・DLQ は notification-service の {@code mail_message} アウトボックスが担う(docs/29)。
+ * <b>残る隙間。</b>この発行自体が失敗すると(ブローカーに届かないと)メールはやはり消える。以前より隙間がずっと狭いだけだ —
+ * 同じクラスタ内のブローカーに書くのと外部 SMTP プロバイダに往復するのとでは失敗確率が違う。この隙間を完全に閉じるには
+ * user-service のアウトボックスを生かしユーザー保存と同じトランザクションにメールリクエストを書く必要がある
+ * ({@code OutboxScheduler} が実装なしの抜け殻だけ残っている — docs/29 §5)。
  */
 @Slf4j
 @Component
@@ -53,6 +64,7 @@ public class OutgoingMailProducer {
     /**
      * @param baseProducerConfig {@code KafkaProducerConfig#producerConfig()} 가 만든 설정.
      *                           SSL·부트스트랩 설정을 한 곳에서만 관리하려고 재사용한다.
+     *     [JA] {@code KafkaProducerConfig#producerConfig()} が作った設定。SSL・ブートストラップ設定を一か所でだけ管理するために再利用する。
      */
     public OutgoingMailProducer(@Qualifier("producerConfig") Map<String, Object> baseProducerConfig,
             org.springframework.beans.factory.ObjectProvider<io.micrometer.observation.ObservationRegistry> observationRegistry) {
@@ -62,24 +74,32 @@ public class OutgoingMailProducer {
         //    프로듀서로 트랜잭션 밖에서 send() 하면 "No transaction is in process" 로 죽는다.
         //    메일 요청은 사가의 일부가 아니므로 exactly-once 가 필요 없다 — 중복은 수신 측의
         //    source_event_id UNIQUE 가 막는다.
+        // [JA] ⚠️ トランザクション ID を外す。既存のプロデューサーはサガ用でトランザクショナルだが、トランザクショナル
+        //      プロデューサーでトランザクション外から send() すると "No transaction is in process" で落ちる。
+        //      メールリクエストはサガの一部ではないので exactly-once は不要だ — 重複は受信側の source_event_id UNIQUE が防ぐ。
         config.remove(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
 
         // 대신 멱등 프로듀서를 켠다. 브로커 재시도로 같은 레코드가 두 번 쓰이는 것을 막는다.
+        // [JA] 代わりに冪等プロデューサーを有効にする。ブローカーの再試行で同じレコードが二回書かれるのを防ぐ。
         config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         config.put(ProducerConfig.ACKS_CONFIG, "all");
         config.put(ProducerConfig.RETRIES_CONFIG, 3);
         // 여기서 오래 붙잡혀 있으면 가입 처리 스레드가 묶인다. 실패는 로그로 남기고 넘어간다.
+        // [JA] ここで長くつかまると登録処理スレッドが縛られる。失敗はログに残して先に進む。
         config.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
         config.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
         config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5_000);
 
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         this.factory = new DefaultKafkaProducerFactory<>(config,
                 new org.apache.kafka.common.serialization.StringSerializer(),
                 new AvroDtoSerializer<>(new OutgoingMailRequestAvroMapping()));
         this.kafkaTemplate = new KafkaTemplate<>(factory);
         // 빈이 아닌 템플릿이라 공통 후처리기가 닿지 않는다. 가입 요청의 추적이 메일 발송까지 이어지게
         // 레지스트리를 직접 넣는다(docs/51 §4d).
+        // [JA] Bean ではないテンプレートなので共通の後処理器が届かない。登録リクエストの追跡がメール送信までつながるよう
+        //      レジストリを直接入れる(docs/51 §4d)。
         observationRegistry.ifAvailable(registry -> {
             this.kafkaTemplate.setObservationRegistry(registry);
             this.kafkaTemplate.setObservationEnabled(true);
@@ -93,14 +113,20 @@ public class OutgoingMailProducer {
      * 올라가면 이미 성공한 가입이 실패한 것처럼 보인다. 메일이 안 나간 것과 가입이 안 된 것은
      * 전혀 다른 문제다 — 전자는 재발송으로 복구되고 후자는 안 된다.
      *
+     * <p>[JA] メールリクエストを発行する。
+     * <b>例外を外に投げない。</b>このメソッドは登録完了のあとに呼ばれるが、ここで例外が上がると既に成功した登録が
+     * 失敗したように見える。メールが送られなかったことと登録されなかったことはまったく別の問題だ — 前者は再送で復旧でき、後者はできない。
      * @return 발행에 성공했는지
+     *     [JA] 発行に成功したか
      */
     public boolean publish(OutgoingMailRequest request) {
         try {
             // 파티션 키를 수신 주소로 둔다. 같은 사람에게 가는 메일이 한 파티션에 모여
             // 순서가 유지된다 — "재설정 링크를 두 번 요청했는데 옛 것이 나중에 도착"을 막는다.
+            // [JA] パーティションキーを受信アドレスにする。同じ人に行くメールが一つのパーティションに集まり
+            //      順序が保たれる — 「再設定リンクを二回要求したのに古いほうが後から届く」を防ぐ。
             kafkaTemplate.send(TOPIC, request.getToEmail(), request).get();
-            log.info("메일 요청 발행: {}", request);   // toString 이 링크를 가린다
+            log.info("메일 요청 발행: {}", request);   // toString 이 링크를 가린다 ／ [JA] toString がリンクを隠す
             return true;
 
         } catch (InterruptedException e) {
@@ -110,6 +136,7 @@ public class OutgoingMailProducer {
 
         } catch (Exception e) {
             // ⚠️ request 를 그대로 찍는다 — toString 이 params 를 키 이름만 남기고 가린다.
+            // [JA] ⚠️ request をそのまま出力する — toString が params をキー名だけ残して隠す。
             log.error("메일 요청을 발행하지 못했습니다 — 이 메일은 나가지 않습니다: {} ({})",
                     request, e.getMessage());
             return false;
@@ -117,17 +144,20 @@ public class OutgoingMailProducer {
     }
 
     /** 자체 프로듀서 팩토리를 만들었으므로 직접 닫는다. 안 닫으면 종료 시 스레드가 남는다. */
+    // [JA] 独自のプロデューサーファクトリを作ったので自分で閉じる。閉じないと終了時にスレッドが残る。
     @PreDestroy
     public void close() {
         factory.destroy();
     }
 
     /** 멱등 키를 만든다. 같은 사건에 대해 항상 같은 값이어야 한다. */
+    // [JA] 冪等キーを作る。同じ出来事に対して常に同じ値でなければならない。
     public static String eventId(String prefix, Object discriminator) {
         return prefix + ":" + discriminator;
     }
 
     /** 사건을 특정할 값이 없을 때만 쓴다(재발송처럼 매번 새 메일이 나가야 하는 경우). */
+    // [JA] 出来事を特定する値がないときだけ使う(再送のように毎回新しいメールを送るべき場合)。
     public static String randomEventId(String prefix) {
         return prefix + ":" + UUID.randomUUID();
     }

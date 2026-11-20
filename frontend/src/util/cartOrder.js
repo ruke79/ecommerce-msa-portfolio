@@ -3,6 +3,11 @@
  *
  * 결제된 주문을 볼 때 장바구니를 비울지 정한다(pages/order.jsx). 이름·수량으로만 본다 — 주문 품목에는 사이즈가 없고, 색상은
  * catalog 조회가 실패하면 비어 온다. 빈 장바구니는 "이 주문" 이 아니다(비울 것이 없다).
+ *
+ * <p>[JA] ブラウザのカートがこの注文そのままか — 入っている行ごとに同じ名前・数量の注文品目がある。
+ *
+ * <p>決済済みの注文を見るときにカートを空にするかを決める(pages/order.jsx)。名前・数量だけで見る — 注文品目にはサイズがなく、色は
+ * catalog の照会が失敗すると空で来る。空のカートは「この注文」ではない(空にするものがない)。
  */
 export function cartIsThisOrder(cartItems, orderProducts) {
     if (!Array.isArray(cartItems) || cartItems.length === 0 || !Array.isArray(orderProducts)) return false;

@@ -32,6 +32,15 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>이제 모르는 상태는 {@link FeignException} 그대로 돌려준다. 상태 코드·요청·응답 본문이
  * 메시지에 들어 있어 로그만 보고도 어느 쪽이 무엇을 거절했는지 알 수 있다.
+ *
+ * <p>[JA] 他のサービスが 2xx でない応答を返したとき何に変換するかを決める。
+ * 🐛 {@code null} を返していた: 以前は 400 なら {@code break} して最後の {@code return null} に落ち、404 もメソッド名に "find" がなければ同様だった。
+ * Feign はこの戻り値をそのまま投げる({@code throw errorDecoder.decode(configKey, response);})。
+ * つまり {@code throw null} で、JVM がそれを {@code NullPointerException} に変える。<b>本来何が起きたか(どのサービスが何番で応えたか)はその瞬間に消える。</b>
+ * 呼び出し側では「どこかで NPE」としか見えない。
+ * {@code default} の分岐も悪かった — {@code new Exception(...)} は <b>検査例外</b> なので Feign が {@code RuntimeException} で包み、やはり原因が一枚埋もれた。
+ * 今は知らない状態は {@link FeignException} をそのまま返す。ステータスコード・リクエスト・応答本文がメッセージに入っており、
+ * ログだけでどちらが何を拒否したかがわかる。
  */
 @Slf4j
 @Component
@@ -49,6 +58,7 @@ public class FeignErrorDecoder implements ErrorDecoder {
     @Override
     public Exception decode(String methodKey, Response response) {
         // 이메일·토큰이 섞일 수 있는 URL 은 남기지 않는다. 메서드와 상태면 충분하다.
+        // [JA] メール・トークンが混ざり得る URL は残さない。メソッドとステータスで十分だ。
         log.warn("서비스 간 호출 실패: {} -> {}", methodKey, response.status());
 
         if (response.status() == 404 && methodKey.contains("find")) {
@@ -57,6 +67,8 @@ public class FeignErrorDecoder implements ErrorDecoder {
 
         // 나머지는 Feign 기본 동작 — 상태·요청·응답 본문이 담긴 FeignException 이다.
         // ⚠️ null 을 돌려주면 Feign 이 `throw null` 을 해서 원인이 통째로 사라진다.
+        // [JA] 残りは Feign の既定動作 — ステータス・リクエスト・応答本文が入った FeignException だ。
+        //      ⚠️ null を返すと Feign が `throw null` をして原因が丸ごと消える。
         return fallback.decode(methodKey, response);
     }
 }

@@ -1,5 +1,8 @@
 # Prometheus 경보 규칙 — docs/03 부록 "관측 지표 체크리스트"의 실행형.
 # (컨슈머 지연은 kafka-consumer 그룹 — 2026-11-14 부터 지표가 있다, docs/91 §3. 아웃박스 파티션은 outbox-health 그룹)
+# [JA] Prometheus 警報ルール — docs/03 付録「観測指標チェックリスト」の実行形。
+#      (コンシューマ遅延は kafka-consumer グループ — 2026-11-14 から指標がある、docs/91 §3。
+#      アウトボックスのパーティションは outbox-health グループ)
 groups:
   - name: service-availability
     rules:
@@ -76,6 +79,8 @@ groups:
           description: "GC 정지가 10분째 10%를 넘습니다 — 그만큼 요청이 멈춰 있습니다. 같은 시간의 할당 속도(jvm_gc_memory_allocated_bytes_total) · GC 뒤 힙(jvm_memory_usage_after_gc) · 요청 수를 보고, 할당이 늘었으면 프로파일(ops/58 의 할당 모드), 힙이 모자라면 JVM_MAX_RAM_PERCENTAGE 를 봅니다 (docs/91 §4-3)."
       - alert: JvmHeapAfterGcHigh
         # GC 를 마친 뒤에도 오래 사는 영역이 90% — 누수 또는 힙이 작다. 쓰는 중의 힙(JvmHeapNearLimit)과 달리 GC 직전의 쓰레기를 세지 않는다.
+        # [JA] GC を終えた後も長く生きる領域が 90% — リークかヒープが小さい。使用中のヒープ(JvmHeapNearLimit)と違い GC
+        #      直前のゴミを数えない。
         expr: max by (service) (jvm_memory_usage_after_gc{area="heap",pool="long-lived"}) > 0.9
         for: 15m
         labels: { severity: warning }
@@ -85,6 +90,9 @@ groups:
 
   # 초과 판매(docs/53) — 결제 뒤 재고 차감이 모자랐다. 자동 환불되지만 운영자는 알아야 한다: 재고 수치가 실물과
   # 어긋났거나 인기 상품이 동시에 팔리고 있다는 신호다. 자동 환불 실패·무통장은 로그 "수동 환불 필요" 로 Loki 경보가 따로 간다.
+  # [JA] 過剰販売(docs/53) — 決済後の在庫減算が足りなかった。自動返金されるが運用者は知る必要がある:
+  #      在庫数値が実物とずれたか、人気商品が同時に売れているという兆候だ。
+  #      自動返金失敗・銀行振込はログ「手動返金が必要」で Loki 警報が別に行く。
   - name: stock-shortage
     rules:
       - alert: StockShortageOccurred
@@ -97,6 +105,11 @@ groups:
       # 결제 확정 차감 · 복원(product-update)이 DLT 로 갔다 — 재고가 줄지 않은 채 예약이 만료되면 같은 수량이 다시 팔린다(돈은 받았고
       # 물건은 없다). 일시적 DB 실패는 약 3분 다시 하므로(catalog KafkaDltConfig) 여기까지 온 것은 사람이 봐야 한다.
       # 처리: DLT 레코드의 eventId(order-<주문>) 로 주문을 찾아, 재고를 손으로 맞추거나 원래 토픽으로 다시 보낸다(멱등 — 이미 반영됐으면 건너뛴다).
+      # [JA] 決済確定の減算・復元(product-update)が DLT へ行った — 在庫が減らないまま予約が期限切れになると同じ数量が再
+      #      び売れる(お金は受け取ったのに物がない)。一時的な DB 失敗は約 3 分やり直すので(catalog KafkaDltConfig)、
+      #      ここまで来たものは人が見る必要がある。
+      #      対処: DLT レコードの eventId(order-<注文>)で注文を探し、在庫を手で合わせるか元のトピックへ送り直す(冪等 —
+      #      すでに反映済みならスキップする)。
       - alert: KafkaDeadLetterPublished
         expr: sum by (service, topic) (increase(kafka_dlt_records_total[15m])) > 0
         labels: { severity: critical }
@@ -106,6 +119,9 @@ groups:
 
       # 쿠폰 이중 사용 — 한 쿠폰으로 두 주문이 결제를 마쳤다(같은 쿠폰을 고른 두 결제가 겹쳤다). 두 번째 주문은 쿠폰 없이 받을 값을
       # 할인받았다. 처리: coupon-service 로그의 "쿠폰 이중 사용" 의 orderId 로 주문을 찾아 차액을 정한다(청구 · 감수).
+      # [JA] クーポン二重使用 — 一つのクーポンで二つの注文が決済を終えた(同じクーポンを選んだ二つの決済が重なった)。
+      #      二つ目の注文はクーポンなしで受け取るべき額を割引された。対処: coupon-service ログの「クーポン二重使用」の
+      #      orderId で注文を探し、差額を決める(請求・甘受)。
       - alert: CouponDoubleUse
         expr: sum(increase(coupon_double_use_total[1h])) > 0
         labels: { severity: warning }
@@ -115,6 +131,9 @@ groups:
 
       # 이중 결제 — 이미 결제가 붙은 주문에 다른 결제가 확인됐다(두 탭 · 두 수단). 돈을 두 번 받았다. 처리: order-service 로그의
       # "이중 결제" 의 second= 결제를 제공자 콘솔에서 환불한다(주문에는 첫 결제만 붙어 있다 — 주문 환불 버튼은 첫 결제를 돌려준다).
+      # [JA] 二重決済 — すでに決済が付いた注文に別の決済が確認された(二つのタブ・二つの手段)。お金を二度受け取った。
+      #      対処: order-service ログの「二重決済」の second= の決済をプロバイダーのコンソールで返金する(注文には最初の
+      #      決済だけが付いている — 注文の返金ボタンは最初の決済を返す)。
       - alert: OrderDuplicatePayment
         expr: sum by (provider) (increase(order_duplicate_payment_total[30m])) > 0
         labels: { severity: critical }
@@ -124,6 +143,10 @@ groups:
 
       # 결제 대사 — 결제는 기록됐는데 10분 넘게 결제 전인 주문(order UnconfirmedPaymentWatch). 고객은 돈을 냈는데 주문은 결제 전이다.
       # 처리: 로그 "결제 대사" 의 orderId 로 payment-request 아웃박스 행 · pay-service · payment.DLT 를 본다. 모든 파드가 같은 수 → max.
+      # [JA] 決済照合 — 決済は記録されたのに 10 分以上決済前の注文(order UnconfirmedPaymentWatch)。
+      #      客はお金を払ったのに注文は決済前だ。
+      #      対処: ログ「決済照合」の orderId で payment-request アウトボックス行・pay-service・payment.DLT を見る。全
+      #      Pod が同じ数 → max。
       - alert: OrderPaymentUnconfirmed
         expr: max(order_payment_unconfirmed) > 0
         for: 15m
@@ -134,6 +157,9 @@ groups:
 
       # order 아웃박스 행을 보낼 수 없어 FAILED 로 뒀다(깨진 페이로드 · 모르는 타입). 그 메시지(결제 요청 · 주문 상태 · 재고 차감 ·
       # 장바구니 비우기)는 나가지 않았다. 처리: 로그 "아웃박스 행을 보낼 수 없다" 의 id 로 orders.payment_outbox_event 를 본다.
+      # [JA] order アウトボックス行を送れず FAILED にした(壊れたペイロード・未知のタイプ)。
+      #      そのメッセージ(決済要求・注文状態・在庫減算・カートを空にする)は出ていない。対処:
+      #      ログ「アウトボックス行を送れない」の id で orders.payment_outbox_event を見る。
       - alert: OrderOutboxRowFailed
         expr: sum by (type) (increase(order_outbox_failed_total[30m])) > 0
         labels: { severity: critical }
@@ -190,11 +216,17 @@ groups:
 
   # saga-projection 이 입력 레코드를 못 읽었을 때(SagaDeserializationExceptionHandler, docs/55 §8).
   # 깨진 레코드는 건너뛰고(skipped) 모르는 작성 스키마면 멈춘다(halted) — 어느 쪽이든 조용히 지나가면 안 된다.
+  # [JA] saga-projection が入力レコードを読めなかったとき(SagaDeserializationExceptionHandler, docs/55 §8)。
+  #      壊れたレコードはスキップし(skipped)、未知の書き込みスキーマなら止まる(halted) —
+  #      どちらでも黙って通り過ぎてはならない。
   - name: saga-projection
     rules:
       - alert: SagaProjectionHalted
         # 모르는 작성 스키마 — 롤링 배포 중이면 새 파드가 몇 분 안에 이어받는다. 10분이 넘도록 다시 오르면
         # 배포가 아니라 스키마 진화 규칙 위반이다(프로듀서가 아무 소비자도 모르는 스키마로 썼다).
+        # [JA] 未知の書き込みスキーマ — ローリング配備中なら新しい Pod が数分以内に引き継ぐ。10
+        #      分を超えてまた上がるなら配備ではなくスキーマ進化規則の違反だ(プロデューサーがどのコンシューマも知らない
+        #      スキーマで書いた)。
         expr: increase(saga_projection_deserialization_failures_total{action="halted"}[15m]) > 0
         for: 10m
         labels: { severity: critical }
@@ -216,10 +248,19 @@ groups:
   #    months_ahead 는 점검에 성공했을 때의 값을 그대로 냈다 — 성공하면 늘 3, 실패가 이어지면 마지막 값에 멈춤, 한 번도 성공
   #    못 하면 NaN(NaN 과의 비교는 거짓). 이제 months_ahead 는 지금 시각 기준으로 매번 계산하고(잡이 멈추면 달마다 1 씩 준다),
   #    "마지막 성공" 과 "지표 없음" 을 따로 본다.
+  # [JA] アウトボックスの月パーティション(cart・order・pay・user) — common OutboxPartitionAutoConfiguration が 6
+  #      時間ごとに先 3 か月分を作る(docs/09 §4.6)。ジョブが黙って止まると月が変わった瞬間に行が DEFAULT
+  #      パーティションへ行く — エラーは出ない。
+  #      ⚠️ 2026-10-12 までこのグループは一度も鳴りえなかった。① 指標が登録されていなかった(自動設定の順序 — 今は
+  #      MeterBinder) ② months_ahead は点検に成功したときの値をそのまま出していた — 成功すれば常に 3、
+  #      失敗が続けば最後の値で止まり、一度も成功しなければ NaN(NaN との比較は偽)。今は months_ahead
+  #      を現在時刻基準で毎回計算し(ジョブが止まれば月ごとに 1 ずつ減る)、「最後の成功」と「指標なし」を別に見る。
   - name: outbox-health
     rules:
       - alert: OutboxPartitionJobStale
         # 마지막 성공 시각. 처음 값은 기동 시각이라 "기동 뒤 한 번도 못 돌았다" 도 여기서 잡힌다. 주기 6시간 — 하루면 4번 연속 실패.
+        # [JA] 最後の成功時刻。最初の値は起動時刻なので「起動後一度も回っていない」もここで捕まる。周期 6 時間 —
+        #      一日なら 4 回連続失敗。
         expr: time() - max by (service, table) (outbox_partition_last_success_seconds) > 86400
         for: 30m
         labels: { severity: warning }
@@ -229,6 +270,8 @@ groups:
 
       - alert: OutboxPartitionMetricsMissing
         # 파티션을 쓰는 서비스가 하나도 이 지표를 내지 않는다 — 위 경보들이 모두 침묵한다. 2026-10-12 까지 실제로 그랬다.
+        # [JA] パーティションを使うサービスが一つもこの指標を出していない — 上の警報がすべて沈黙する。2026-10-12
+        #      まで実際にそうだった。
         expr: absent(outbox_partition_months_ahead)
         for: 1h
         labels: { severity: warning }
@@ -238,6 +281,8 @@ groups:
 
       - alert: OutboxPartitionRunwayShort
         # 지금 기준 이번 달 뒤로 미리 만들어진 파티션 수. 정상이면 3. 잡이 멈추면 달이 바뀔 때마다 1 씩 준다 — 1 이면 두 달 가까이 못 돌았다.
+        # [JA] 現在基準で今月より後に先に作られたパーティション数。正常なら 3。ジョブが止まると月が変わるたびに 1
+        #      ずつ減る — 1 なら二か月近く回っていない。
         expr: min by (service, table) (outbox_partition_months_ahead) < 2
         for: 6h
         labels: { severity: warning }
@@ -255,6 +300,7 @@ groups:
 
       - alert: OutboxRowsLandingInDefaultPartition
         # DEFAULT 에 옛 이관분이 남아 있을 수 있어 "0 이 아니다" 가 아니라 "늘었다" 를 본다.
+        # [JA] DEFAULT に旧移行分が残っている場合があるので、「0 でない」ではなく「増えた」を見る。
         expr: delta(outbox_partition_default_rows[1d]) > 0
         for: 30m
         labels: { severity: warning }
@@ -265,6 +311,9 @@ groups:
       - alert: OutboxPartitionRetentionStalled
         # 이번 달 앞으로 남은 월 파티션 수 − 보존 설정(기본 3). 보존이 돌면 0 이하 — 2 이상이면 두 달 넘게 오래된 달을 지우지 못했다.
         # 보존을 끈 서비스(retention 0)는 months_kept 가 NaN 이라 울리지 않는다(docs/09 §4.6).
+        # [JA] 今月から先に残っている月パーティション数 − 保持設定(既定 3)。保持が回れば 0 以下 — 2
+        #      以上なら二か月以上古い月を消せていない。
+        #      保持をオフにしたサービス(retention 0)は months_kept が NaN なので鳴らない(docs/09 §4.6)。
         expr: max by (service, table) (outbox_partition_months_kept) - max by (service, table) (outbox_partition_retention_months) > 1
         for: 1d
         labels: { severity: warning }
@@ -276,7 +325,10 @@ groups:
   # (OTLP 내보내기는 실패한 배치를 버리고 계속 간다). 그래서 "추적이 안 보인다" 를 사람이 먼저 알아채기 전에 여기서 잡는다.
   # Collector 지표 이름은 버전에 따라 _total 이 붙기도 해서 둘 다 받는다.
   # 경보가 나가지 못한다 — 이 경보 자신도 나가지 못할 수 있다(같은 길). 그래서 ops/05 · Grafana 에서 보이게 둔다(docs/22 §1).
-  # [JA] アラートが出ていけない — このアラート自身も届かないかもしれない。ops/05 · Grafana で見えるようにしておく。
+  # [JA] トレースパイプライン(docs/63)— サービス → OTel Collector → Jaeger · span_metrics。どこが切れてもサービスはエラーなく動く
+  #      (OTLP エクスポートは失敗したバッチを捨てて続ける)。そのため「トレースが見えない」を人が先に気付く前にここで捉える。
+  #      Collector の指標名はバージョンによって _total が付くこともあるので両方受ける。
+  #      アラートが出ていけない — このアラート自身も出ていけないかもしれない(同じ経路)。そのため ops/05 · Grafana で見えるようにしておく(docs/22 §1)。
   - name: alert-delivery
     rules:
       - alert: AlertDeliveryFailing
@@ -307,6 +359,7 @@ groups:
 
       - alert: TracesRefusedByCollector
         # memory_limiter 가 받기를 거절 — 추적이 폭주했거나 Collector 한도(256m)가 작다.
+        # [JA] memory_limiter が受け取りを拒否 — トレースが暴走したか Collector の上限(256m)が小さい。
         expr: sum(rate({__name__=~"otelcol_receiver_refused_spans(_total)?"}[5m])) > 0
         for: 10m
         labels: { severity: warning }
@@ -316,6 +369,8 @@ groups:
 
       - alert: TailSamplingDroppedTooEarly
         # 결정 전 대기 칸(tail_sampling.num_traces)이 넘쳐 추적을 결정 없이 버렸다 — 오류 추적도 섞여 있을 수 있다.
+        # [JA] 決定前の待機枠(tail_sampling.num_traces)が溢れてトレースを決定なしに捨てた —
+        #      エラートレースも混じっているかもしれない。
         expr: sum(increase({__name__=~"otelcol_processor_tail_sampling_sampling_trace_dropped_too_early(_total)?"}[15m])) > 0
         for: 5m
         labels: { severity: warning }
@@ -326,10 +381,14 @@ groups:
   # 백업은 "실패하는 것"보다 "아무도 모르게 안 도는 것"이 훨씬 위험하다.
   # ops/08-backup-postgres.sh 가 METRICS_DIR 에 남기는 textfile 지표를 감시한다
   # (node_exporter --collector.textfile.directory=<METRICS_DIR> 필요).
+  # [JA] バックアップは「失敗すること」より「誰にも知られず回っていないこと」がはるかに危険だ。
+  #      ops/08-backup-postgres.sh が METRICS_DIR に残す textfile 指標を監視する(node_exporter
+  #      --collector.textfile.directory=<METRICS_DIR> が必要)。
   - name: backup-health
     rules:
       - alert: PostgresBackupStale
         # 일 1회 백업 기준. 48시간 넘게 성공 기록이 갱신되지 않으면 백업이 죽은 것이다.
+        # [JA] 一日 1 回のバックアップ基準。48 時間以上成功記録が更新されなければバックアップが死んでいる。
         expr: time() - ecommerce_pg_backup_last_success_timestamp > 172800
         for: 10m
         labels: { severity: critical }
@@ -339,6 +398,7 @@ groups:
 
       - alert: PostgresBackupMetricMissing
         # 지표 자체가 사라진 경우. "경보가 안 울린다 = 정상"이라는 착각을 막는다.
+        # [JA] 指標自体が消えた場合。「警報が鳴らない = 正常」という錯覚を防ぐ。
         expr: absent(ecommerce_pg_backup_last_success_timestamp)
         for: 1h
         labels: { severity: warning }
@@ -349,6 +409,8 @@ groups:
       - alert: PostgresWalArchivingFailing
         # archive_command 실패는 곧 pg_wal 디스크 포화로 이어진다 — DB 정지 사고의 단골이다.
         # (postgres_exporter 의 pg_stat_archiver 수집이 필요하다)
+        # [JA] archive_command の失敗はすぐ pg_wal のディスク満杯につながる — DB 停止事故の常連だ。(postgres_exporter
+        #      の pg_stat_archiver 収集が必要だ)
         expr: increase(pg_stat_archiver_failed_count[15m]) > 0
         for: 5m
         labels: { severity: critical }
@@ -358,6 +420,7 @@ groups:
 
       - alert: MongoBackupStale
         # 채팅 기록(C3)은 RPO 24시간. 일 1회 백업이 이틀 이상 멈추면 경보.
+        # [JA] チャット記録(C3)は RPO 24 時間。一日 1 回のバックアップが二日以上止まったら警報。
         expr: time() - ecommerce_mongo_backup_last_success_timestamp > 172800
         for: 10m
         labels: { severity: warning }
@@ -375,6 +438,13 @@ groups:
         #
         # 1KiB 는 "gzip 헤더 + 빈 메타데이터"보다 크고 실제 채팅 한 건보다는 작은 값이다.
         # 채팅이 정말 하나도 없는 초기에는 이 경보가 맞게 울린다 — 그때는 억제하면 된다.
+        # [JA] ⚠️ 上の Stale 警報は**時間どおりに回った空のバックアップを捕まえられない。**mongodump は対象 DB
+        #      が空でも成功し、gzip -t は空のアーカイブも通す。実際に 116 バイトのダンプが「完了」
+        #      で終わったことがある。時刻だけ見るとバックアップは健全に見える。
+        #      このプロジェクトは URI のパスではなく spring.data.mongodb.name('chat')で DB を選ぶ。MONGO_URI が別の DB
+        #      を指すとまさにこの状態になる — 毎日成功する空のバックアップ。
+        #      1KiB は「gzip ヘッダー + 空のメタデータ」より大きく、実際のチャット一件よりは小さい値だ。
+        #      チャットが本当に一つもない初期にはこの警報が正しく鳴る — そのときは抑制すればよい。
         expr: ecommerce_mongo_backup_last_size_bytes < 1024
         for: 1h
         labels: { severity: warning }
@@ -395,10 +465,20 @@ groups:
   # 오류 = 5xx 만(4xx 는 손님 쪽). 지연 = 경계를 넘은 요청 비율(5xx 포함).
   # 소진율 경보(Google SRE workbook 5장): 빠름 1h · 5m 가 14.4 배, 느림 6h · 30m 가 6 배. 창은 14일이다 — 운영 Prometheus 보존이
   # 15일이라 30일 예산을 셀 수 없다(docs/91 §2-4). 요청이 적으면(1시간 평균 초당 0.03 = 시간당 약 100 미만) 울리지 않는다.
-  # [JA] SLO 五つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
+  # [JA] SLO 五つ(2026-11-14 決定 — docs/91 §2、gateway は 2026-11-15): サービス側三つ(catalog-browse · catalog-search · order-create)+
+  #      ゲートウェイ(gateway)+ 外部プローブ(site-probe)。
+  #      目標値は slo:objective:* の二行が唯一の場所 — 警報はその値からエラー予算を計算する。可用性はノード一台の今の値で、docs/89 段階 1 · 2 を
+  #      終えたらコメントの目標に上げる。遅延境界(le)は application-common.yml の management.metrics.distribution.slo のバケットと同じでなければ
+  #      ならない(ガード SloRulesTest)。サービス側の SLI は http.server.requests — ゲートウェイ · ネットワークの時間は含まない(ゲートウェイは
+  #      gateway、Cloudflare · トンネル · ネットワークは site-probe が見る)。
+  #      エラー = 5xx のみ(4xx は客側)。遅延 = 境界を超えた要求の割合(5xx 含む)。
+  #      バーンレート警報(Google SRE workbook 5 章): 速い 1h · 5m が 14.4 倍、遅い 6h · 30m が 6 倍。窓は 14 日 — 本番 Prometheus の保持が
+  #      15 日なので 30 日予算は数えられない(docs/91 §2-4)。要求が少なければ(1 時間平均 毎秒 0.03 = 毎時約 100 未満)鳴らない。
   - name: slo
     rules:
       # catalog-browse — 홈 · 상품 상세 · 배너 · 공지 · 기획전 GET(/api/search* · 관리자 · 내부 · actuator 제외): 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 300ms 안 99%
+      # [JA] catalog-browse — ホーム・商品詳細・バナー・お知らせ・企画展の GET(/api/search*・管理者・内部・actuator
+      #      を除く): 可用性 99.5%(ノード一台の今 — 目標 99.9%)・300ms 以内 99%
       - record: slo:objective:availability
         expr: vector(0.995)
         labels: { slo: catalog-browse }
@@ -460,6 +540,9 @@ groups:
             - sum(increase(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri!~".*(actuator|admin|internal|search).*",le="0.3"}[1h]))
         labels: { slo: catalog-browse }
       # catalog-search — 카테고리 목록 · 필터 · 이름 검색 GET(/api/search*) — 드문 필터 조합의 5초 상한 503 은 ES 전까지 남는 한계(docs/83 §2.8): 가용성 99%(노드 한 대인 지금 — 목표 99.5%(ES 뒤 99.9%)) · 1000ms 안 95%
+      # [JA] catalog-search — カテゴリ一覧・フィルタ・名前検索の GET(/api/search*) — 稀なフィルタ組み合わせの 5 秒上限
+      #      503 は ES までは残る限界(docs/83 §2.8): 可用性 99%(ノード一台の今 — 目標 99.5%(ES 後 99.9%))・1000ms 以内
+      #      95%
       - record: slo:objective:availability
         expr: vector(0.99)
         labels: { slo: catalog-search }
@@ -521,6 +604,7 @@ groups:
             - sum(increase(http_server_requests_seconds_bucket{service="catalog-service",method="GET",uri=~"/?api/search.*",le="1.0"}[1h]))
         labels: { slo: catalog-search }
       # order-create — 주문 생성 POST: 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 1000ms 안 99%
+      # [JA] order-create — 注文作成 POST: 可用性 99.5%(ノード一台の今 — 目標 99.9%)・1000ms 以内 99%
       - record: slo:objective:availability
         expr: vector(0.995)
         labels: { slo: order-create }
@@ -585,6 +669,14 @@ groups:
       #   서비스 쪽 SLO 가 보지 못하는 것 — 회로 차단 폴백(/fallback 503) · 연결 실패 · 다운스트림 시간 초과(504) · 게이트웨이 자신의 지연(JWT · 유입 제한).
       #   경계가 2초인 것은 모든 라우트를 한 SLO 로 보기 때문이다 — catalog-search 는 5% 가 1초를 넘어도 되므로 1초 경계면 검색이 많은 날 예산을 먹는다.
       #   유입 제한 429 · 인증 401 은 4xx 라 예산에서 빠진다(docs/91 §2-7).
+      # [JA] gateway — ゲートウェイを通ったすべてのルート(spring.cloud.gateway.requests、chat-service-ws を除く —
+      #      SockJS ストリーミング・WebSocket は接続が終わるまでが一リクエスト): 可用性 99.5%(ノード一台の今 — 目標
+      #      99.9%)・2000ms 以内 99%
+      #        サービス側の SLO が見られないもの — サーキットブレーカーのフォールバック(/fallback 503)
+      #      ・接続失敗・下流のタイムアウト(504)・ゲートウェイ自身の遅延(JWT・流入制限)。
+      #        境界が 2 秒なのは全ルートを一つの SLO で見るからだ — catalog-search は 5% が 1 秒を超えてよいので、1
+      #      秒境界だと検索の多い日に予算を食う。
+      #        流入制限の 429・認証の 401 は 4xx なので予算から外れる(docs/91 §2-7)。
       - record: slo:objective:availability
         expr: vector(0.995)
         labels: { slo: gateway }
@@ -648,6 +740,10 @@ groups:
       # site-probe — 바깥 탐침 — 운영 노드의 blackbox-exporter 가 Cloudflare 를 거쳐 첫 화면 · 홈 API 를 30초마다(docs/91 §2-6): 가용성 99.5%(지금 — 목표 99.9%) · 2000ms 안 99%
       #   요청 = 탐침 한 번. 실패 = probe_success 0(연결 · TLS · 상태 코드 · 본문 확인 실패). 노드가 통째로 죽으면 탐침도 같이 죽는다 —
       #   그 경우는 바깥 감시가 따로 필요하다(docs/91 §2-6).
+      # [JA] site-probe — 外部プローブ — 運用ノードの blackbox-exporter が Cloudflare を経由して最初の画面・ホーム API
+      #      を 30 秒ごとに(docs/91 §2-6): 可用性 99.5%(今 — 目標 99.9%)・2000ms 以内 99%
+      #        リクエスト = プローブ一回。失敗 = probe_success 0(接続・TLS・ステータスコード・本文確認の失敗)。
+      #      ノードがまるごと死ぬとプローブも一緒に死ぬ — その場合は外部監視が別に必要だ(docs/91 §2-6)。
       - record: slo:objective:availability
         expr: vector(0.995)
         labels: { slo: site-probe }
@@ -740,6 +836,8 @@ groups:
           description: "14일 오류 예산의 11%를 6시간에 쓰는 빠르기입니다. 6h 과 30m 창이 둘 다 넘었습니다 — 지금도 계속되는 문제입니다. 서비스별 5xx · p99(High5xxRate · HighP99Latency) · 탐침(SiteProbeDown)과 추적(Jaeger)에서 원인을 보고, 배포 직후면 ops/28 --rollback 을 먼저 생각하세요 (docs/91 §2)."
       - alert: SiteProbeDown
         # 바깥 탐침 하나가 3분 연속 실패 — 손님이 그 주소를 열지 못한다. 서비스 쪽 지표가 멀쩡해도(터널 · Cloudflare · 게이트웨이 · 프론트) 울린다.
+        # [JA] 外部プローブ一つが 3 分連続失敗 — 客がそのアドレスを開けない。サービス側の指標が正常でも(トンネ
+        #      ル・Cloudflare・ゲートウェイ・フロント)鳴る。
         expr: probe_success{job="site-probe"} == 0
         for: 3m
         labels: { severity: critical }
@@ -781,10 +879,14 @@ groups:
           description: "정책(docs/91 §2-4): 기능 배포를 멈추고 안정화 수정만 합니다. 이 상태가 되풀이되면 docs/89 단계 1(데이터 계층을 노드 밖으로)을 앞당기는 근거입니다."
 
   # ── Kafka 컨슈머 지연(docs/91 §3) — 지표는 common 의 KafkaConsumerMetricsAutoConfiguration 이 모든 컨슈머 팩토리에 단다 ──
+  # [JA] ── Kafka コンシューマ遅延(docs/91 §3) — 指標は common の KafkaConsumerMetricsAutoConfiguration
+  #      がすべてのコンシューマファクトリに付ける ──
   - name: kafka-consumer
     rules:
       - alert: KafkaConsumerLagHigh
         # 파티션마다 가장 큰 지연(records-lag-max). 1,000 건이 10분 — 사가 · 알림이 그만큼 늦다. 부하 측정 중이면 그것이 결과다.
+        # [JA] パーティションごとの最大遅延(records-lag-max)。1,000 件が 10 分 — サガ・通知がそれだけ遅れる。
+        #      負荷測定中ならそれが結果だ。
         expr: max by (service, topic) (kafka_consumer_fetch_manager_records_lag_max) > 1000
         for: 10m
         labels: { severity: warning }

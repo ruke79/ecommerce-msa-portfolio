@@ -15,6 +15,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>화면(frontend/src/util/chatNotice.js)이 서버가 저장한 문구를 알아보고 화면 언어로 다시 그린다. 여기 문구를 바꾸고 화면을
  * 빠뜨리면 일본어 화면에 한국어가 그대로 나온다 — 한국어 화면에서는 멀쩡해 보여서 아무도 모른다. 두 목록을 글자로 대조한다.
+ *
+ * <p>[JA] 🔴 サーバのチャットシステム文言の形 = 画面が認識する形(docs/60 §8)。
+ * <p>画面(frontend/src/util/chatNotice.js)はサーバが保存した文言を認識し画面の言語で描き直す。ここの文言を変えて画面を漏らすと日本語画面に韓国語がそのまま出る — 韓国語画面では問題なく見えるので誰も気づかない。二つのリストを文字で照合する。
  */
 @DisplayName("채팅 시스템 문구 — 서버·화면 대조")
 class ChatNoticesContractTest {

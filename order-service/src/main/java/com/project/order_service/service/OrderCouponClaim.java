@@ -22,7 +22,14 @@ import lombok.extern.slf4j.Slf4j;
  * 에서 부른다. 잡지 못하면 결제를 시작하지 않는다(fail-closed — 주문 생성의 쿠폰 견적과 같다). 단 coupon-service 에 이 엔드포인트가
  * 없으면(404 — 옛 파드, 롤링 중) 예전처럼 막지 않는다.
  *
- * <p>[JA] 決済開始時に注文のクーポンをその注文に押さえる。押さえられなければ決済を始めない。coupon-service が古ければ(404)以前どおり。
+ * <p>[JA] 決済開始時に注文のクーポンをその注文に押さえる(coupon V7)— 同じクーポンで二つの注文を同時に決済できないように。
+ *
+ * <p>[JA] 🐛 以前はクーポンが決済確定のときにやっと USED になった。同じ客が同じクーポンで注文を二つ作ると(見積もりには副作用がない)
+ * 両方とも決済でき、二回目の決済確定でアラート(CouponDoubleUse)が鳴るだけだった — 割引は二回出た。
+ *
+ * <p>[JA] 決済画面を開く直前(OrderService.renewCheckoutHold — カード · 簡単決済 · ポートワン · Stripe すべてが通る)と振込案内
+ * (BankTransferService)で呼ぶ。押さえられなければ決済を始めない(fail-closed — 注文作成のクーポン見積もりと同じ)。ただし
+ * coupon-service にこのエンドポイントがなければ(404 — 古い Pod、ローリング中)以前どおり止めない。
  */
 @Slf4j
 @Component
@@ -45,7 +52,10 @@ public class OrderCouponClaim {
     /**
      * 주문에 쿠폰이 있으면 {@code hold} 동안 이 주문에 잡는다. 쿠폰이 없으면 아무것도 하지 않는다.
      *
+     * <p>[JA] 注文にクーポンがあれば {@code hold} の間この注文に確保する。クーポンがなければ何もしない。
+     *
      * @throws OrderDomainException 잡지 못했다 — 결제를 시작하지 않는다(문구는 손님용)
+     *                              [JA] 確保できなかった — 決済を開始しない(文言は顧客向け)
      */
     public void claim(Order order, Duration hold) {
         String coupon = order == null ? null : order.getCouponApplied();

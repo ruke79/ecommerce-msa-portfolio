@@ -34,6 +34,9 @@ public class KafkaProducerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} 一か所で作る。
+     * 以前はクラスごとに同じ六行を複製し、値が空でもそのまま入れていたので SSL を有効にした瞬間に空のパスで落ちる組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -46,6 +49,7 @@ public class KafkaProducerConfig {
     private String kafkaServerUrl;
     
     //Kafka ProduceFactory를 생성하는 Bean 메서드
+    // [JA] Kafka ProducerFactory を生成する Bean メソッド
 
 
     // @Bean
@@ -73,10 +77,12 @@ public class KafkaProducerConfig {
     @Bean
     public ProducerFactory<String, UserCreatedRequest> userCreatedProducerFactory() {
         // 값은 Avro 단일 객체 인코딩(docs/38 §1.16). 인스턴스로 넘기므로 맵의 VALUE_SERIALIZER 는 무시된다.
+        // [JA] 値は Avro の単一オブジェクトエンコーディング(docs/38 §1.16)。インスタンスで渡すのでマップの VALUE_SERIALIZER は無視される。
         return new DefaultKafkaProducerFactory<>(producerConfig(),
                 new StringSerializer(), new AvroDtoSerializer<>(new UserCreatedRequestAvroMapping()));
     }
     // Kafka Producer 구성을 위한 설정값들을 포함한 맵을 반환하는 메서드
+    // [JA] Kafka Producer 構成のための設定値を含むマップを返すメソッド
     @Bean
     public Map<String, Object> producerConfig() {
         return ImmutableMap.<String, Object>builder()

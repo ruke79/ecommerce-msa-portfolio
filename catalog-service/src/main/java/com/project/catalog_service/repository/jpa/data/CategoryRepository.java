@@ -17,13 +17,17 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
     // --- 비관적 잠금 적용 ---
     // 카테고리 정보가 수정되는 동안 다른 트랜잭션이 접근하지 못하도록 락을 겁니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
+    //      カテゴリ情報が更新されている間、他のトランザクションがアクセスできないようロックをかける。
     Optional<Category> findById(Long id);
 
     // --- 낙관적 잠금 적용 ---
     //@Lock(LockModeType.OPTIMISTIC)
+    // [JA] --- 楽観ロックの適用 ---
     public Optional<Category> findByCategoryName(String categoryName);
 
     // 기존 메서드들은 유지
+    // [JA] 既存のメソッドはそのまま維持
     @Query("select categoryName from Category")
     public List<String> findAllCategoryNames();
 

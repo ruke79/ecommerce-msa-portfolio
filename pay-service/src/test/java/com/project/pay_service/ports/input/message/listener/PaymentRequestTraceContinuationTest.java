@@ -28,6 +28,12 @@ import com.project.common.outbox.OutboxTraceContext;
  * 쓰는 순간 현재 추적이 없었고, 결제 응답 릴레이가 새 추적으로 시작했다. 이제 레코드마다 <b>자기
  * 헤더</b>로 추적을 이어받은 안에서 결제를 처리한다. 헤더가 실제 스프링 배치 변환기로 어떻게 오는지와
  * 이어받은 안에서 쓴 행에 원래 traceId 가 남는지는 common 의 {@code OutboxTraceContextTest} 가 본다.
+ *
+ * <p>[JA] 🐛 決済リクエストまでしか追跡がつながらず、決済応答から切れていた (docs/51 §4f)。
+ * このリスナーは<b>バッチ</b>なので Spring Kafka のコンシューマ追跡がかからない。決済応答のアウトボックス行を
+ * 書く瞬間に現在の追跡がなく、決済応答リレーが新しいトレースとして始まった。今はレコードごとに<b>自分の
+ * ヘッダー</b>で追跡を引き継いだ中で決済を処理する。ヘッダーが実際の Spring バッチ変換器でどう届くかと、
+ * 引き継いだ中で書いた行に元の traceId が残るかは common の {@code OutboxTraceContextTest} が見る。
  */
 @DisplayName("pay-service — 결제 요청 배치 리스너의 추적 이어받기")
 class PaymentRequestTraceContinuationTest {
@@ -51,6 +57,7 @@ class PaymentRequestTraceContinuationTest {
                 Map.of("traceparent", "00-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-2222222222222222-01".getBytes()));
 
         // 배치 변환 헤더로 올 때 — 레코드 어댑터로 올 때는 PaymentRequestListenerAdapterTraceTest 가 본다.
+        // [JA] バッチ変換ヘッダーで来るとき — レコードアダプターで来るときは PaymentRequestListenerAdapterTraceTest が見る。
         new PaymentRequestKafkaListener(messages, trace).receive(List.of(first, second),
                 Map.of(org.springframework.kafka.support.KafkaHeaders.BATCH_CONVERTED_HEADERS, headers));
 
@@ -61,6 +68,7 @@ class PaymentRequestTraceContinuationTest {
     }
 
     /** 헤더 목록이 없어도(변환기가 바뀌었거나 옛 메시지) 결제는 그대로 처리된다 — 추적은 부가 정보다. */
+    // [JA] ヘッダー一覧がなくても(変換器が変わったか古いメッセージ)決済はそのまま処理される — 追跡は付加情報だ。
     @Test
     @DisplayName("헤더 목록이 없어도 결제는 처리된다")
     @SuppressWarnings("unchecked")

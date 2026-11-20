@@ -21,6 +21,7 @@ export function markPendingLogout() {
     window.localStorage.setItem(KEY, "1");
   } catch {
     // 저장소가 막힌 환경 — 이번 화면의 로그아웃만 한다
+    // [JA] ストレージが塞がれた環境 — 今回の画面のログアウトだけ行う
   }
 }
 
@@ -29,6 +30,7 @@ export function clearPendingLogout() {
     window.localStorage.removeItem(KEY);
   } catch {
     // 무시
+    // [JA] 無視
   }
 }
 

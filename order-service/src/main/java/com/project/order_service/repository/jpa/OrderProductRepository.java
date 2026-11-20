@@ -15,11 +15,13 @@ import com.project.order_service.model.OrderProduct;
 public interface OrderProductRepository extends JpaRepository<OrderProduct, Long> {
 
     // 비관적 잠금: 주문 상품 목록을 조회할 때 락을 걸어 다른 트랜잭션의 접근을 막습니다.
+    // [JA] 悲観的ロック: 注文商品一覧を照会する時にロックをかけ、他のトランザクションのアクセスを防ぐ。
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from OrderProduct p where p.order.orderId = :orderId")
     Optional<List<OrderProduct>> findByOrder_OrderId(Long orderId);
 
     // 낙관적 잠금: OrderProduct 엔티티의 @Version 필드를 활용합니다.
+    // [JA] 楽観的ロック: OrderProduct エンティティの @Version フィールドを活用する。
     //@Lock(LockModeType.OPTIMISTIC)
     @Override
     Optional<OrderProduct> findById(Long id);
@@ -29,6 +31,10 @@ public interface OrderProductRepository extends JpaRepository<OrderProduct, Long
      *
      * <p>한 문장인 이유는 {@code OrderRepository#markStockRestored} 와 같다. {@code returnedQty}
      * 를 넘지 않게 문장 안에서 막는다 — 두 번 불려도 돌아온 수 이상으로 되돌리지 않는다.
+     *
+     * <p>[JA] 在庫に戻した数を加える — 復元イベントを<b>送った後</b>({@code OrderSaga.restock})。
+     * 一文である理由は {@code OrderRepository#markStockRestored} と同じ。{@code returnedQty}
+     * を超えないよう文の中で防ぐ — 二度呼ばれても戻ってきた数以上には戻さない。
      */
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.transaction.annotation.Transactional
@@ -42,6 +48,10 @@ public interface OrderProductRepository extends JpaRepository<OrderProduct, Long
      *
      * <p>받은 주문만 센다: 배송 완료(DELIVERED)·구매 확정(COMPLETED). 결제만 하고 아직 오지 않은 상품의 리뷰는 쓸 수 없다.
      * 모자라 한 개도 배정되지 못한 품목(qty ≤ shortQty)은 받은 것이 아니다.
+     *
+     * <p>[JA] この顧客がこの商品を<b>受け取ったか</b> — レビュー作成資格(docs/57 §13)。
+     * 受け取った注文だけ数える: 配送完了(DELIVERED)・購入確定(COMPLETED)。決済だけしてまだ届いていない商品のレビューは書けない。
+     * 不足で一つも割り当てられなかった品目(qty ≤ shortQty)は受け取ったものではない。
      */
     @Query("select count(p) > 0 from OrderProduct p where p.order.customerId = :customerId "
             + "and p.productId = :productId and p.qty > p.shortQty "

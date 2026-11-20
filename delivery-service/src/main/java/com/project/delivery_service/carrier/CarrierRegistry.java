@@ -16,6 +16,9 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Spring 이 주입해 주는 {@link CarrierAdapter} 빈을 전부 모아 코드로 색인한다.
  * 새 택배사를 붙일 때 이 클래스를 고칠 필요가 없다는 것이 핵심이다 — 어댑터를 빈으로
  * 등록하기만 하면 자동으로 여기 들어온다(docs/25 §4.2).
+ *
+ * <p>[JA] 宅配業者コード → アダプター。
+ * <p>Spring が注入する {@link CarrierAdapter} Bean をすべて集めてコードで索引する。新しい宅配業者を付けるときにこのクラスを直す必要がないのが核心だ — アダプターを Bean として登録するだけで自動的にここに入る(docs/25 §4.2)。
  */
 @Slf4j
 @Component
@@ -32,6 +35,8 @@ public class CarrierRegistry {
     /**
      * @return 어댑터. 없으면 비어 있음 — 추적을 지원하지 않는 택배사이거나 어댑터를
      *         아직 만들지 않은 경우다. 둘 다 정상 흐름이므로 예외를 던지지 않는다.
+     *
+     * <p>[JA] @return アダプター。なければ空 — 追跡をサポートしない宅配業者か、アダプターをまだ作っていない場合だ。どちらも正常な流れなので例外を投げない。
      */
     public Optional<CarrierAdapter> find(String carrierCode) {
         return Optional.ofNullable(adapters.get(carrierCode));

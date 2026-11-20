@@ -7,6 +7,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** JWT 서명 키 링 — 설정이 틀리면 뜨지 않고, kid 로 키를 고르며, 은퇴한 키는 거절한다(docs/68 §17). */
+// [JA] JWT 署名鍵リング — 設定が間違っていれば起動せず、kid で鍵を選び、引退した鍵は拒否する(docs/68 §17)。
 @DisplayName("JWT 키 링")
 class JwtKeyRingTest {
 

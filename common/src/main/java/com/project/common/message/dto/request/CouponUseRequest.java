@@ -21,5 +21,6 @@ public class CouponUseRequest implements Serializable {
     private int discount;    
     private BigDecimal totalAfterDiscount;
     // 사용자 액세스 토큰은 싣지 않는다(docs/54 §10.1).
+    // [JA] 利用者のアクセストークンは載せない(docs/54 §10.1)。
     
 }

@@ -21,6 +21,9 @@ import org.slf4j.MDC;
  *
  * <p>MDC 는 스레드마다 따로라, 메일 발송·SSE·상품 가져오기·재색인 로그에서 traceId·userId 가
  * 비어 요청과 이을 수 없었다.
+ *
+ * <p>[JA] スレッドプールに渡した作業にログコンテキストが付いていくか。
+ * MDC はスレッドごとに別なので、メール送信・SSE・商品取り込み・再インデックスのログで traceId・userId が空になり、リクエストとつなげられなかった。
  */
 @DisplayName("MdcTaskDecorator")
 class MdcTaskDecoratorTest {
@@ -29,7 +32,7 @@ class MdcTaskDecoratorTest {
 
     @BeforeEach
     void setUp() {
-        pool = Executors.newSingleThreadExecutor();   // 한 스레드 — 재사용될 때 섞이는지 보려고
+        pool = Executors.newSingleThreadExecutor();   // 한 스레드 — 재사용될 때 섞이는지 보려고 ／ [JA] 1 スレッド — 再利用されるときに混ざるかを見るため
     }
 
     @AfterEach
@@ -63,7 +66,7 @@ class MdcTaskDecoratorTest {
         MDC.put("traceId", "t-1");
         pool.submit(MdcTaskDecorator.wrap(() -> { })).get(5, TimeUnit.SECONDS);
 
-        MDC.clear();   // 두 번째 요청에는 문맥이 없다
+        MDC.clear();   // 두 번째 요청에는 문맥이 없다 ／ [JA] 2 番目のリクエストにはコンテキストがない
         AtomicReference<String> seen = new AtomicReference<>();
         String got = seenOnWorker(MdcTaskDecorator.wrap(() -> seen.set(String.valueOf(MDC.get("traceId")))), seen);
 
@@ -73,6 +76,9 @@ class MdcTaskDecoratorTest {
     /**
      * 🔴 넘기는 순간의 <b>관측(추적 문맥)</b>도 작업 스레드로 간다. 예전에는 MDC 만 복사해, 작업 스레드에서 관측을 켠 KafkaTemplate 으로
      * 보내면(가입 메일 요청) 새 루트 추적이 시작돼 요청과 이어지지 않았다.
+     *
+     * <p>[JA] 🔴 渡した瞬間の<b>オブザベーション(トレースコンテキスト)</b>も作業スレッドに行く。以前は MDC だけをコピーしていたので、作業スレッドで
+     * オブザベーションを有効にした KafkaTemplate で送ると(登録メールのリクエスト)新しいルートトレースが始まり、リクエストとつながらなかった。
      */
     @Test
     @DisplayName("🔴 요청의 관측(추적)이 작업 스레드에서도 현재 span 이다 — 작업 안에서 시작한 span 은 그 자식")
@@ -113,7 +119,7 @@ class MdcTaskDecoratorTest {
     @Test
     @DisplayName("작업 스레드의 원래 문맥은 작업이 끝나면 돌아온다")
     void restoresWorkerContext() throws Exception {
-        pool.submit(() -> MDC.put("worker", "w")).get(5, TimeUnit.SECONDS);   // 감싸지 않은 작업이 남긴 값
+        pool.submit(() -> MDC.put("worker", "w")).get(5, TimeUnit.SECONDS);   // 감싸지 않은 작업이 남긴 값 ／ [JA] 包んでいない作業が残した値
 
         MDC.put("traceId", "t-2");
         pool.submit(MdcTaskDecorator.wrap(() -> { })).get(5, TimeUnit.SECONDS);
@@ -126,6 +132,9 @@ class MdcTaskDecoratorTest {
     /**
      * 공통 자동 구성이 등록돼 있어야 서비스마다 붙는다. 대부분의 서비스가 com.project.common 을
      * 스캔하지 않으므로 스캔에 기대면 서비스마다 붙기도 하고 안 붙기도 한다.
+     *
+     * <p>[JA] 共通の自動構成が登録されていて初めてサービスごとに付く。ほとんどのサービスが com.project.common をスキャンしないので、
+     * スキャンに頼るとサービスによって付いたり付かなかったりする。
      */
     @Test
     @DisplayName("자동 구성이 등록돼 있다 — 스캔하지 않는 서비스에도 붙는다")

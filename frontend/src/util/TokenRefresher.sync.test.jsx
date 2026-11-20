@@ -50,6 +50,7 @@ const auth = (over) => ({
 });
 
 /** 다른 탭의 로그인 · 로그아웃을 따라간다(util/authSync). */
+// [JA] 他のタブのログイン・ログアウトに追従する(util/authSync)。
 describe("TokenRefresher — 다른 탭 따라가기", () => {
   const reload = jest.fn();
   beforeAll(() => {

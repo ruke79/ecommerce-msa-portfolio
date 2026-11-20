@@ -41,6 +41,19 @@
 # ── 2 OCPU 인스턴스라면 ────────────────────────────────────────────────
 #
 # 아래 `resources` 를 `../oci` 로 바꾼다. 그쪽이 요청값을 더 낮게 잡는다(docs/32 §2).
+# [JA] local オーバーレイ — **このディレクトリはコミットされない**(.gitignore)。
+#      ── なぜあるか ── external オーバーレイまでは誰でもそのまま使える。しかし最後の一層には**各自の環境にだけある値**が入る — GHCR の所有者、イメージタグ、Neon ホスト、公開ドメイン。
+#      以前はそれらの値を追跡対象のファイル(prod/kustomization.yaml、patch-external-endpoints.yaml、k8s/10-configmap.yaml)に直接書かせていた。実デプロイでの結果:
+#      `git pull` が毎回衝突する(値を埋めた行とリポジトリが直した行が同じ行なので)· 衝突マーカーが残ると kustomize がファイル全体を拒否する
+#      (`error: trouble configuring builtin PatchTransformer` / ScannerError)· 戻すと実ホストが消えサービスが 28P01 · InvalidImageName で死ぬ · そして何より**ホスト名とレジストリ所有者がコミットされかけた**。
+#      このオーバーレイはそれらの値を追跡の外に出す。リポジトリはもう自由に pull できる。
+#      ── 使い方 ── 初回に local.example を local へコピーし、kustomization.yaml と patch-local-endpoints.yaml の REPLACE_ME を埋める。
+#      ⚠️ 適用前の確認: 下の**二行だけ**が残るべきだ。それ以外に REPLACE_ME が見えれば埋めていない値があるということで、大抵 DNS が解決できずそのサービスだけ黙って死ぬ。
+#      REPLACE_ME_TUNNEL_ID は ops/24 がクラスターで置換する(ここでは埋めない)。REPLACE_ME_config_repo_url は config-server の設定リポジトリ — 空なら config-server は
+#      起動するが設定を返せず、クライアントはすべて `optional:` なので黙って自分のバンドル設定で動く。実際に使うなら k8s/32-config-server.yaml の CONFIG_GIT_URI を埋める。
+#      初回 apply: kubectl apply -k k8s-overlays/local。
+#      ⚠️ Secret はここに置かない。k8s/20-secret.yaml(同じく gitignore)が担う。このファイルに入るのは**秘密ではない識別子**だけ — ホスト名、所有者、タグ。
+#      ── 2 OCPU インスタンスなら ── 下の `resources` を `../oci` に変える。そちらが要求値をより低く取る(docs/32 §2)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -70,11 +83,21 @@ resources:
 # ⚠️ 레플리카 1에서는 이 저장소가 레플리카 2에서 잡아 온 동시성 버그가 재현되지 않는다
 #    (아웃박스 중복 발행, 메일·SMS 디스패처 이중 선점 — docs/21, docs/31 §3).
 #    그건 ops/12-staging-rehearsal.sh 로 따로 확인해야 한다.
+# [JA] ── レプリカ — 単一ノードではすべて 1 ── ノードが一つだけなら二つ目のポッドは**可用性を与えない。** 同じノードに立つのでノードが死ねば両方死に、
+#      残る利得はポッド単位の障害とローリングアップデートだけだ。その代わりに要求量が二倍になり、空きが足りないとロールアウトが Pending で止まる(実際にそう詰まった)。
+#      何もしなくても 1 になるのでは — 部分的にしか正しくない: prod オーバーレイが replicas フィールドを消す 10 個はデフォルト 1 になる。
+#      しかし**k8s/70-autoscaling.yaml を適用していれば** HPA が minReplicas=2 にすぐ戻す。ここに書いても HPA には勝てない。単一ノードなら HPA を消すこと(kubectl -n ecommerce delete hpa --all)。
+#      remove-replicas の対象でないもの(saga-projection、cloudflared、chat-service、eureka-server、config-server)はマニフェストの値がそのまま残る。それらを下げるのがこのブロックの実際の役割だ。
+#      明示しておく二つ目の理由は記録である。デフォルトに頼ると次の人がなぜ 1 なのか分からない。
+#      ⚠️ レプリカ 1 では、このリポジトリがレプリカ 2 で捕まえてきた並行性バグが再現しない(アウトボックスの重複発行、メール · SMS ディスパッチャーの二重先取り — docs/21、docs/31 §3)。
+#      それは ops/12-staging-rehearsal.sh で別に確認する必要がある。
 replicas:
   # 원래부터 1이어야 하는 것들 — 늘리면 조용히 깨진다(ConfigurationGuardrailTest B-34)
+  # [JA] もともと 1 でなければならないもの — 増やすと黙って壊れる(ConfigurationGuardrailTest B-34)
   - { name: eureka-server, count: 1 }
   - { name: chat-service, count: 1 }
   # 상태가 없어 늘려도 되지만 이 박스에서는 1
+  # [JA] 状態がないので増やしてもよいが、この箱では 1
   - { name: gateway-server, count: 1 }
   - { name: config-server, count: 1 }
   - { name: user-service, count: 1 }
@@ -87,8 +110,10 @@ replicas:
   - { name: delivery-service, count: 1 }
   - { name: frontend, count: 1 }
   # 매니페스트 값이 2다(활성 1 + 대기 1). 단일 노드에서는 대기 사본의 이득이 적다.
+  # [JA] マニフェストの値が 2 だ(アクティブ 1 + スタンバイ 1)。単一ノードではスタンバイ複製の利得が小さい。
   - { name: saga-projection, count: 1 }
   # 노드가 하나면 터널 파드 2개는 가용성을 주지 못한다.
+  # [JA] ノードが一つならトンネルのポッド 2 個は可用性を与えない。
   - { name: cloudflared, count: 1 }
 
 # ── 이미지 ─────────────────────────────────────────────────────────────
@@ -100,6 +125,9 @@ replicas:
 #
 # ⚠️ 이미지를 다시 빌드했다면 **태그를 올린다.** imagePullPolicy 가 IfNotPresent 라
 #    같은 태그는 노드가 캐시된 것을 그대로 쓴다(docs/33 §6).
+# [JA] ── イメージ ── ⚠️ `name:` は**prod オーバーレイが既に変えた名前**と一致しなければならない。元の `REGISTRY_PLACEHOLDER/...` で書くと何もマッチしない —
+#      親の変換が先に終わった結果の上にこの変換が乗るからだ。黙って何も起きず、ポッドは REPLACE_ME_OWNER のまま `InvalidImageName` になる。
+#      ⚠️ イメージを再ビルドしたら**タグを上げる。** imagePullPolicy が IfNotPresent なので同じタグはノードがキャッシュしたものをそのまま使う(docs/33 §6)。
 images:
   - name: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/eureka-server
     newName: ghcr.io/ruke79/ecommerce-msa/eureka-server
@@ -150,4 +178,6 @@ patches:
   # 실제 메일 발송. 베이스는 안전하게 "logging"(발송 안 함)이므로 여기서 켠다.
   # ⚠️ Secret 의 MAIL_* 만 채우고 이 패치를 빼면 메일은 로그에만 찍히고 나가지 않는다.
   #    회원가입 인증 메일이 안 온다면 대개 이 줄이 빠진 것이다.
+  # [JA] 実際のメール送信。ベースは安全に "logging"(送信しない)なので、ここで有効にする。
+  #      ⚠️ Secret の MAIL_* だけ埋めてこのパッチを外すと、メールはログに出るだけで送られない。会員登録の認証メールが来ないなら大抵この行が抜けている。
   - path: patch-mail.yaml

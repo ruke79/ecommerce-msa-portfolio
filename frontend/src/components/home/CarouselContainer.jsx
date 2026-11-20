@@ -41,12 +41,30 @@ import { useTranslation } from "i18n/I18nProvider";
  *   <li>컨테이너에 <b>종횡비를 고정</b>해 높이를 미리 예약한다. 이미지가 아직 안 왔어도
  *       자리는 그대로라 레이아웃이 튀지 않는다. 배너 원본이 3000×1200(5:2)이다.</li>
  * </ul>
+ *
+ * <p>[JA] ホームのバナー。
+ * バナーは catalog-service のコンテンツ API から来る。以前は画像 5 枚を `import` でバンドルに埋め込んでいて、
+ * バナー一つ替えるにも再ビルド · 再デプロイだった。
+ * バンドル画像は消さずにフォールバックとして残す。最初の画面で最も大きな要素なので、API が落ちているか
+ * まだバナーを一件も登録していないときに空欄になるとサイトが壊れたように見える。
+ * 🐛 以前はこのコンポーネントがマウントされた後に `useEffect` でバナーを取得していた。そのため画面はこう動いた:
+ * 1. ルーターの loader が終わらないとページが描かれないので、最初のペイント時点で商品セクションはすでにある。商品画像がすぐ要求される。
+ * 2. カルーセルはバンドルのフォールバックで描かれる(バンドルなので速い)。
+ * 3. getBanners() の応答が到着 → 画像がリモート URL へ丸ごと置き換わる。まだ受け取っていない画像なので
+ * 高さが 0 に崩れてからまた大きくなり、その下全体が上下に跳ねる。
+ * 「商品画像がバナーより先に読み込まれて不自然だ」というのがこの順序である。
+ * 二つを直した:
+ * ・バナーをホームの loader で受け取る(pages/home/Home.jsx)。最初のペイントに最終画像が入るので置き換え自体がなくなる。
+ * ・コンテナに縦横比を固定して高さを先に予約する。画像がまだ来ていなくても場所はそのままなのでレイアウトが跳ねない。
+ * バナー原本は 3000×1200(5:2)である。
  */
 
 // 폴백. 서버에 배너가 하나도 없거나 API 가 실패했을 때만 쓴다.
+// [JA] フォールバック。サーバーにバナーが一つもないか API が失敗したときだけ使う。
 const FALLBACK = [slider1, slider2, slider3, slider4, slider5].map((src, i) => ({
     id: `fallback-${i}`,
     // 대체 텍스트는 그릴 때 지금 언어로 만든다(아래 alt) — 모듈을 읽는 순간의 언어로 굳히지 않는다.
+    // [JA] 代替テキストは描くときに今の言語で作る(下の alt) — モジュールを読む瞬間の言語で固めない。
     title: null,
     imageUrl: src,
     linkUrl: null,
@@ -58,6 +76,10 @@ const FALLBACK = [slider1, slider2, slider3, slider4, slider5].map((src, i) => (
  * <p>서버 배너의 실제 비율이 다르면 이미지가 잘리거나 여백이 생긴다. 그래도 높이를
  * 예약하지 않는 것보다 낫다 — 예약하지 않으면 <b>매 로드마다</b> 아래 콘텐츠가 튄다.
  * (배너 모델에 width/height 가 없어서 서버에서 알 방법이 없다.)
+ *
+ * <p>[JA] バナーの縦横比。フォールバック画像 5 枚はすべて 3000×1200 である。
+ * サーバーのバナーの実際の比率が違うと画像が切れたり余白ができたりする。それでも高さを予約しないよりよい —
+ * 予約しないと読み込みのたびに下のコンテンツが跳ねる。(バナーモデルに width/height がなく、サーバーから知る方法がない。)
  */
 const BANNER_ASPECT = "5 / 2";
 
@@ -76,6 +98,8 @@ const CarouselContainer = ({ banners }) => {
 
     // 빈 배열도 폴백 대상이다. "등록된 배너 없음" 과 "서버 장애" 를 화면에서 구분할
     // 이유가 없다 — 둘 다 첫 화면이 비면 안 된다.
+    // [JA] 空配列もフォールバックの対象である。「登録されたバナーなし」と「サーバー障害」を画面で区別する
+    //      理由はない — どちらも最初の画面が空になってはならない。
     const slides = (Array.isArray(banners) && banners.length > 0 ? banners : FALLBACK)
         .map((banner, index) => {
             const image = (
@@ -85,14 +109,19 @@ const CarouselContainer = ({ banners }) => {
                     // 첫 장은 화면에 바로 보인다 — 늦게 받을 이유가 없다. 나머지는
                     // 넘겨야 보이므로 미룬다. 예전에는 다섯 장이 상품 이미지와 같은
                     // 우선순위로 한꺼번에 경쟁했다.
+                    // [JA] 最初の一枚は画面にすぐ見える — 遅く受け取る理由がない。残りは
+                    //      めくらないと見えないので後回しにする。以前は五枚が商品画像と同じ
+                    //      優先度で一斉に競合していた。
                     loading={index === 0 ? "eager" : "lazy"}
                     fetchpriority={index === 0 ? "high" : "low"}
                     // 컨테이너가 비율을 잡고 있으므로 이미지는 그 안을 채운다.
+                    // [JA] コンテナが比率を保っているので画像はその中を埋める。
                     className="w-full h-full object-cover"
                 />
             );
 
             // linkUrl 이 없으면 클릭되지 않는 배너다(공지성 이미지).
+            // [JA] linkUrl がなければクリックできないバナーである(お知らせ的な画像)。
             return (
                 <div key={banner.id} style={{ aspectRatio: BANNER_ASPECT }}>
                     {banner.linkUrl ? (
@@ -109,6 +138,8 @@ const CarouselContainer = ({ banners }) => {
     return (
         // 높이 예약. 이미지가 도착하기 전에도 이 자리가 유지되므로 아래 콘텐츠가
         // 튀지 않는다.
+        // [JA] 高さの予約。画像が届く前にもこの場所が保たれるので下のコンテンツが
+        //      跳ねない。
         <div style={{ aspectRatio: BANNER_ASPECT }} className="w-full">
             <Carousel
                 renderArrowPrev={(onClickHandler, hasPrev, label) =>
@@ -137,6 +168,7 @@ const CarouselContainer = ({ banners }) => {
                     )
                 }
                 // 화살표의 title·aria-label 은 라이브러리 기본값이 영어다("previous slide / item").
+                // [JA] 矢印の title · aria-label はライブラリの既定値が英語である("previous slide / item")。
                 labels={{
                     leftArrow: t("home.banner.prev"),
                     rightArrow: t("home.banner.next"),

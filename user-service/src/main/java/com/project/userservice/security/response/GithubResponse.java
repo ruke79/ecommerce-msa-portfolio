@@ -9,6 +9,11 @@ import java.util.Map;
  * 그렇다. null 이면 {@code CustomOAuth2UserService} 가 {@code /user/emails} 를 따로
  * 호출해 primary+verified 주소를 찾는다(user:email scope 필요). 여기서는 있는 그대로
  * 돌려준다 — 폴백을 파서에 숨기면 토큰이 필요한 HTTP 호출이 생겨 테스트할 수 없어진다.
+ *
+ * <p>[JA] GitHub {@code /user} の応答。
+ * ⚠️ {@code email} は**よく null である** — プロフィールのメールを非公開にしたアカウント(多数)がそうである。null なら
+ * {@code CustomOAuth2UserService} が {@code /user/emails} を別に呼んで primary+verified のアドレスを探す(user:email scope が必要)。
+ * ここではあるがままを返す — フォールバックをパーサーに隠すとトークンが必要な HTTP 呼び出しが生じてテストできなくなる。
  */
 public class GithubResponse implements OAuth2Response {
 
@@ -37,6 +42,7 @@ public class GithubResponse implements OAuth2Response {
     @Override
     public String getName() {
         // name 을 안 채운 계정이 많다 — login(핸들)으로 폴백한다.
+        // [JA] name を埋めていないアカウントが多い — login(ハンドル)にフォールバックする。
         Object name = attribute.get("name");
         if (name != null && !name.toString().isBlank()) {
             return name.toString();

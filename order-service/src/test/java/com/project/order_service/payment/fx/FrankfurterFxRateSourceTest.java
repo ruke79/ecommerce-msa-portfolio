@@ -30,6 +30,11 @@ import org.springframework.web.client.RestClient;
  * <p>실제 API 로는 부르지 않는다 — 여기 고정하는 것은 <b>응답 모양</b>(문서 규격)과
  * <b>실패가 주문 생성을 죽이지 않는다</b>는 계약이다. 실제 응답이 다르면 아래 본문과
  * {@code parse} 를 함께 고친다.
+ *
+ * <p>[JA] Frankfurter アダプター。
+ *
+ * <p>実際の API は呼ばない — ここで固定するのは<b>応答の形</b>(ドキュメント規格)
+ * と<b>失敗が注文作成を殺さない</b>という契約である。実際の応答が異なれば下の本文と {@code parse} を一緒に直す。
  */
 @DisplayName("실시간 환율 — Frankfurter")
 class FrankfurterFxRateSourceTest {
@@ -75,6 +80,7 @@ class FrankfurterFxRateSourceTest {
     }
 
     /** 주문마다 API 를 부르지 않는다. TTL 안에서는 한 번. */
+    // [JA] 注文ごとに API を呼ばない。TTL 内では一回。
     @Test
     @DisplayName("TTL 안에서는 한 번만 부른다, 지나면 다시")
     void cachesForTtl() {
@@ -92,6 +98,7 @@ class FrankfurterFxRateSourceTest {
     }
 
     /** 🔴 환율 API 장애가 주문 생성 장애가 되어서는 안 된다 — 비어 있음이지 예외가 아니다. */
+    // [JA] 🔴 為替 API の障害が注文作成の障害になってはならない — 空であって例外ではない。
     @Test
     @DisplayName("🔴 실패하면 비어 있다 — 예외를 던지지 않는다")
     void failureIsEmpty() {
@@ -114,7 +121,7 @@ class FrankfurterFxRateSourceTest {
         s.rate("USD", "JPY");
         s.rate("USD", "KRW");
 
-        server.verify();   // 한 번만
+        server.verify();   // 한 번만 ／ [JA] 一回だけ
     }
 
     @Test

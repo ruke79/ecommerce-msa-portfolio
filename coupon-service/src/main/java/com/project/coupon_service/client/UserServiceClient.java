@@ -14,6 +14,8 @@ import com.project.coupon_service.config.FeignConfig;
 
 /**
  * 마이크로서비스 간의 호출을 위한 feignclient
+ *
+ * <p>[JA] マイクロサービス間呼び出しのための Feign クライアント
  */
 @FeignClient(name="user-service", url="${feign.user-url}", configuration = FeignConfig.class)
 public interface UserServiceClient {
@@ -24,6 +26,9 @@ public interface UserServiceClient {
     * <p>🔒 예전에는 {@code @RequestParam("Authorization")} 으로 <b>액세스 토큰을 쿼리 파라미터</b>에 실었다 — URL 은 액세스
     * 로그·프록시·예외 메시지에 남는다(order 의 같은 버그, docs/47 §5-4). 받는 쪽은 읽지도 않았고, 헤더는
     * {@code FeignConfig} 의 인터셉터가 이미 넘긴다.
+    *
+    * <p>[JA] メール → ユーザー。管理者がメールでクーポンを発行するときだけ使う — 要求者の身元は常に {@code User-Id}。
+    * <p>🔒 以前は {@code @RequestParam("Authorization")} で<b>アクセストークンをクエリパラメータ</b>に載せていた — URL はアクセスログ・プロキシ・例外メッセージに残る(order の同じバグ, docs/47 §5-4)。受け側は読みもせず、ヘッダーは {@code FeignConfig} のインターセプターが既に渡している。
     */
    @GetMapping("api/auth/user/id")
    public ResponseEntity<?> findUserByEmail(@RequestParam("email") String email);
@@ -36,6 +41,9 @@ public interface UserServiceClient {
     * 한 곳을 빠뜨리면 혜택이 조용히 어긋난다.
     *
     * <p>없는 사용자는 빈 목록이다 — 404 로 구분해 주면 그 자체가 가입 여부 신호가 된다.
+    *
+    * <p>[JA] このユーザーが今属する顧客グループ。判定は user-service が行う — 「新規は何日か」はあちらのポリシーで、登録日もあちらだけが持つ。登録日を受け取ってここで計算すると基準を変えるとき二か所を直す必要があり、一か所を漏らすと特典が静かにずれる。
+    * <p>存在しないユーザーは空リスト — 404 で区別するとそれ自体が登録有無のシグナルになる。
     */
    @GetMapping("api/auth/user/segments")
    public ResponseEntity<java.util.Map<String, java.util.List<String>>> findUserSegments(

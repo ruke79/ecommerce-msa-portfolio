@@ -39,7 +39,10 @@ import com.project.order_service.repository.jpa.OrderRepository;
  * <p>🐛 예전: 결제창을 서버가 기록하지 않아 두 탭에서 둘 다 결제할 수 있었다. 입금 확인은 UNPAID 만 보고 이미 붙은 카드 결제의 참조를
  * 덮어썼고, 입금 안내는 결제 기록 뒤 사가가 PAID 로 바꾸기 전의 틈에 UNPAID 로 바꿨다.
  *
- * <p>[JA] 注文一つに決済画面一つ。決済済みの注文には決済開始 · 入金案内 · 入金確認をしない。
+ * <p>[JA] 注文一つに決済画面一つ(V27)— 決済開始が画面ごとの試行キーを記録し、生きている間は別のキーを拒否する。すでに決済が付いた
+ * 注文には決済開始 · 入金案内 · 入金確認をしない。
+ * 🐛 以前: サーバーが決済画面を記録しておらず、二つのタブで両方とも決済できた。入金確認は UNPAID だけを見て、すでに付いたカード決済の
+ * 参照を上書きし、入金案内は決済記録の後、サガが PAID に変える前の隙に UNPAID に変えていた。
  */
 @DisplayName("결제 시도 — 주문당 결제창 하나")
 class PaymentAttemptTest {
@@ -103,7 +106,7 @@ class PaymentAttemptTest {
 
         assertThatThrownBy(() -> start("tab-one-attempt")).hasMessage(OrderDataService.ALREADY_PAID_MESSAGE);
         assertThatThrownBy(() -> start(null)).hasMessage(OrderDataService.ALREADY_PAID_MESSAGE);
-        verify(orderRepository, org.mockito.Mockito.times(2)).lockVersion(1L);   // 잠그고 본다
+        verify(orderRepository, org.mockito.Mockito.times(2)).lockVersion(1L);   // 잠그고 본다 ／ [JA] ロックして見る
     }
 
     @Test

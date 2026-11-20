@@ -115,6 +115,7 @@ class AdminRestrictedLoginTest {
     }
 
     /** 🐛 예전: 없는 계정은 BCrypt 를 건너뛰어(약 50~100ms) 응답 시간으로 가입 여부가 갈렸다. */
+    // [JA] 🐛 以前: 存在しないアカウントは BCrypt を飛ばし(約 50〜100ms)、応答時間で登録有無が分かった。
     @Test
     @DisplayName("🔴 없는 계정도 비밀번호 비교를 한 번 한다 — 응답은 틀린 비밀번호와 같다")
     void unknownAccountStillHashes() {

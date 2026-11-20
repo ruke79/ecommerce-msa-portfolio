@@ -27,6 +27,12 @@ import java.util.stream.Collectors;
  * 비동기 상태 갱신은 레플리카가 둘 이상일 때 <b>같은 결제 응답을 두 번 발행</b>한다. 주문
  * 서비스는 같은 사가 단계를 두 번 받게 된다. {@code FOR UPDATE SKIP LOCKED} 로 선점하고
  * 발행을 트랜잭션 안에서 동기로 확정한다.
+ *
+ * <p>[JA] 決済応答アウトボックスのポーラー。
+ * order-service の {@code PaymentOutboxScheduler} と同じ理由で直した: ロックなしの照会 +
+ * 非同期の状態更新は、レプリカが二つ以上のとき<b>同じ決済応答を二回発行</b>する。注文サービスは
+ * 同じサガ段階を二回受け取ることになる。{@code FOR UPDATE SKIP LOCKED} で先取りし、
+ * 発行をトランザクション内で同期的に確定する。
  */
 @Slf4j
 @Component
@@ -62,13 +68,14 @@ public class OrderOutboxScheduler implements OutboxScheduler {
 
         for (OrderOutboxEvent outbox : outboxList) {
             // 결제 요청을 받은 리스너의 추적 문맥 아래에서 보낸다 — 결제 응답이 같은 사가 추적에 이어진다(docs/51 §4e).
+            // [JA] 決済リクエストを受けたリスナーの追跡コンテキストの下で送る — 決済応答が同じサガのトレースにつながる(docs/51 §4e)。
             boolean settled;
             try {
                 settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay payment-response",
                         () -> paymentResponseMessagePublisher.publish(outbox, this::updateOutboxStatus));
             } catch (RuntimeException e) {
                 if (com.project.common.kafka.DltRetryPolicy.isTransient(e)) {
-                    throw e;   // DB 가 흔들린다 — 배치째 롤백하고 다음 폴링에서 다시(행의 잘못이 아니다)
+                    throw e;   // DB 가 흔들린다 — 배치째 롤백하고 다음 폴링에서 다시(행의 잘못이 아니다) ／ [JA] DB が揺らいでいる — バッチごとロールバックし次のポーリングで再試行(行の問題ではない)
                 }
                 // 🔒 행 하나의 영구 오류(깨진 페이로드 등)는 그 행만 FAILED 로(order 와 같다) — 🐛 예전에는 예외가 배치 트랜잭션째 롤백시켜
                 //    같은 행을 매 폴링 맨 앞에서 다시 집었다. 그 뒤의 결제 응답이 전부 멈췄다(PY6).
@@ -81,6 +88,8 @@ public class OrderOutboxScheduler implements OutboxScheduler {
             if (!settled) {
                 // 브로커가 흔들리는 중이다. 남은 배치를 계속 시도하면 타임아웃 × 배치 크기만큼
                 // 행 잠금과 커넥션을 쥐고 있게 된다. 나머지는 다음 폴링이 가져간다.
+                // [JA] ブローカーが揺らいでいる最中だ。残りのバッチを試し続けるとタイムアウト × バッチサイズの間
+                //      行ロックとコネクションを握ったままになる。残りは次のポーリングが持っていく。
                 log.warn("Aborting outbox batch after a transient publish failure; {} event(s) left for the next poll",
                         outboxList.size() - outboxList.indexOf(outbox) - 1);
                 break;
@@ -89,6 +98,7 @@ public class OrderOutboxScheduler implements OutboxScheduler {
     }
 
     /** 보낼 수 없어 FAILED 로 둔 결제 응답 행 수 — Prometheus {@code pay_outbox_failed_total}, 경보 PayOutboxRowFailed. */
+    // [JA] 送れず FAILED にした決済応答の行数 — Prometheus {@code pay_outbox_failed_total}、アラート PayOutboxRowFailed。
     public static final String FAILED_METRIC = "pay.outbox.failed";
 
     /**

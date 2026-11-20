@@ -4,6 +4,9 @@
 # ⚠️ 비밀은 여기 두지 않는다. 비밀번호·API 키는 k8s/20-secret.yaml(gitignore) 로 간다.
 #    이 파일은 커밋되므로 REPLACE_ME 자리에 실제 호스트를 적어 커밋하지 말 것 —
 #    관리형 엔드포인트 호스트명은 비밀은 아니지만 공격 표면을 넓힌다.
+# [JA] マネージドインフラのエンドポイント。ConfigMap の data は戦略的マージで**キー単位で合わさるので**、ここに書いたキーだけを上書きし残り(FEIGN_*、EUREKA_*、APP_PUBLIC_URL …)はベースの値を保つ。
+#      ⚠️ 秘密はここに置かない。パスワード · API キーは k8s/20-secret.yaml(gitignore)へ行く。このファイルはコミットされるので REPLACE_ME の場所に実ホストを書いてコミットしないこと —
+#      マネージドエンドポイントのホスト名は秘密ではないが攻撃面を広げる。
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -38,11 +41,23 @@ data:
   # ⚠️ **`-pooler` 가 붙은 주소를 쓰지 않는다.** PgBouncer transaction 모드는 서버 사이드
   #    프리페어드 스테이트먼트와 충돌해 `prepared statement "S_1" already exists` 가
   #    산발적으로 난다. 확인:  case "$HOST" in *-pooler.*) echo "풀러다";; esac
+  # [JA] ── PostgreSQL(Neon / Supabase / Aiven)── ベースの JDBC URL が `jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/<db>?sslmode=require` なので、この二つのキーだけ変えれば
+  #      10 個のデータソースがすべてついてくる。データベース名(userdb · productdb · metadb · cartdb · orderdb · paydb · coupondb · chatdb · notificationdb · deliverydb)と
+  #      ロール名(product)はそのままでなければならない — ops/25-provision-external-postgres.sh が作る。
+  #      ⚠️ プーラー(pooler)エンドポイントを使う場合: PgBouncer の transaction モードはサーバーサイドのプリペアドステートメントと衝突する。そのときは URL に &prepareThreshold=0 が必要だが、
+  #      それはこの二つのキーでは入れられず各 Deployment の SPRING_DATASOURCE*_URL をパッチする必要がある(docs/32 §5)。
+  #      ── ホスト名をどこから得るか ── §2 で使った ADMIN_URL に既に入っている。コンソールから目で書き写さず抜き出す(上の echo | sed。出力例はコピーしないこと)。
+  #      ⚠️ **ホスト名だけ**を入れる。次はすべて入ってはならない: `postgresql://` スキーム、`ユーザー:パスワード@`、`:5432` ポート(POSTGRES_PORT が別にある)、
+  #      `/neondb` データベース名(各サービスが自分の DB を付ける)、`?sslmode=require`(ベース URL に既にある) · `&channel_binding=require`(libpq 専用オプション。JDBC は知らないパラメータとみなして失敗する)。
+  #      ⚠️ **`-pooler` が付いたアドレスを使わない。** PgBouncer の transaction モードはサーバーサイドのプリペアドステートメントと衝突し `prepared statement "S_1" already exists` が
+  #      散発的に出る。確認は上の case 文。
   POSTGRES_HOST: "REPLACE_ME.example.neon.tech"
   POSTGRES_PORT: "5432"
 
   # 무료 티어는 커넥션 수가 곧 한도다. 10 데이터소스 × 3 × 레플리카 3 = 90.
   # 베이스 기본값 5 로 두면 150 이라 Supabase 직결(60)·Neon 소형 컴퓨트에서 넘친다.
+  # [JA] 無料ティアはコネクション数がそのまま上限だ。10 データソース × 3 × レプリカ 3 = 90。
+  #      ベースのデフォルト 5 のままだと 150 で、Supabase 直結(60) · Neon の小型コンピュートでは溢れる。
   DB_POOL_SIZE: "3"
 
   # ── Redis — **여기서 바꾸지 않는다** ──────────────────────────────────
@@ -85,12 +100,26 @@ data:
   #   REDIS_PORT: "6379"
   #
   # 단 Redisson 호환은 검증되지 않았다(docs/32 §6). 옮기기 전에 장바구니 담기로 확인할 것.
+  # [JA] ── Redis — **ここでは変えない** ── Redis はクラスター内に残すことにした(docs/32 §6)。だからこのパッチは Redis のキーに触れず、ベース(k8s/10-configmap.yaml)の
+  #      `redis.redis.svc.cluster.local` がそのまま使われる。根拠の要約: 外部化で節約できる資源が 50m/64Mi だけだ。
+  #      ⚠️ 以前はここに「キャッシュ · 分散ロック · カウンターなのですべて再構成可能」と書いてあったが**誤りだった。** user-service はリフレッシュトークンと**ログアウトのブラックリスト**を Redis に置く。
+  #      ブラックリストが消えると既に無効化したトークンが期限まで蘇る — 不便ではなくセキュリティの後退だ。だから 90-dev-infra の Redis は PVC + appendonly に変えた。
+  #      マネージドに移すときも永続性のあるプランか確認すること(無料ティアには揮発性のものがある)。
+  #      ⚠️ したがって `kubectl -n redis delete deploy redis` をしては**ならない。** PG · Mongo と並んでいて一緒に消しやすいが、Redis を使うサービスは**7 個**だ
+  #      (cart · catalog · chat · notification · order · pay · user)。つまり 12 個中 7 個が起動に失敗する。症状は RedisConnectionException / Connection refused。
+  #      ⚠️ Service は残っているので**名前は解決され ClusterIP も取れる。** だから「DNS は通るのになぜ駄目なのか」に見える — 後ろにポッドがないだけだ。確認は get endpoints(<none> ならポッドがない)。
+  #      復旧: kubectl apply -f k8s/90-dev-infra.yaml(pg · mongo も一緒に戻るので再び消す)。
+  #      後でマネージド(Upstash など)に移したいならここに上の値を入れる。⚠️ ストアのパスを**空値で上書きしなければならない** — ベースは私設 CA で発行した truststore/keystore のパスを
+  #      注入するが、マネージド Redis の証明書は公開 CA で発行されるので、パスが残っていると私設 CA だけのトラストストアで検証してハンドシェイクが失敗する(docs/32 §4)。
+  #      REDIS_HOST は古い名前を読むサービス(cart · gateway)用。ただし Redisson との互換は検証されていない(docs/32 §6)。移す前にカート追加で確認すること。
 
   # ── MongoDB (Atlas M0) ────────────────────────────────────────────────
   #
   # 접속 문자열 자체는 비밀번호를 포함하므로 **전부 Secret**(SPRING_DATA_MONGODB_CLIENT)에
   # 있다. 여기서는 인증서 경로만 비운다 — Redis 와 같은 이유다. mongodb+srv 는 TLS 가
   # 기본이고 Atlas 인증서는 공개 CA 로 발급된다(docs/32 §4).
+  # [JA] ── MongoDB(Atlas M0)── 接続文字列自体はパスワードを含むので**すべて Secret**(SPRING_DATA_MONGODB_CLIENT)にある。ここでは証明書パスだけ空にする — Redis と同じ理由だ。
+  #      mongodb+srv は TLS がデフォルトで Atlas の証明書は公開 CA で発行される(docs/32 §4)。
   SPRING_DATA_MONGODB_CACERT: ""
   SPRING_DATA_MONGODB_KEYSTORE: ""
   #
@@ -101,6 +130,10 @@ data:
   #    게다가 Atlas 는 SRV 주소라 `<클러스터>.xxxxx.mongodb.net` 꼴이어서 저 자리에 무엇을
   #    넣어야 하는지도 분명하지 않았다. 채울 수도 없고 채워도 쓰이지 않는 REPLACE_ME 는
   #    apply 전 `grep REPLACE_ME` 점검(docs/33 §8)을 영원히 빨간불로 만든다. 그래서 뺐다.
+  # [JA] ⚠️ `MONGODB_HOST` はここで**上書きしない。** 以前は `REPLACE_ME.mongodb.net` を置いて埋めろと言っていたが、**そのキーを読む箇所がない。** ベース ConfigMap に値があるだけで
+  #      どのマニフェストも `$(MONGODB_HOST)` で展開せず chat-service も参照しない — Mongo 接続は完全に SPRING_DATA_MONGODB_CLIENT 一つで決まる。
+  #      しかも Atlas は SRV アドレスで `<クラスター>.xxxxx.mongodb.net` の形なので、そこに何を入れるべきかも明確でなかった。埋められず埋めても使われない REPLACE_ME は
+  #      apply 前の `grep REPLACE_ME` 点検(docs/33 §8)を永遠に赤にする。だから外した。
 
   # ── Kafka ─────────────────────────────────────────────────────────────
   #
@@ -113,6 +146,8 @@ data:
   #   KAFKA_SASL_MECHANISM: "PLAIN"
   #   KAFKA_SSL_TRUST_STORE_LOCATION: ""
   #   KAFKA_SSL_KEY_STORE_LOCATION: ""
+  # [JA] ── Kafka ── クラスター内に残る(docs/32 §3)。常時無料のマネージド Kafka がない。
+  #      マネージド(Confluent Cloud / Redpanda / Aiven)に移すときは下の行のコメントを外し、KAFKA_SASL_USERNAME/PASSWORD を Secret に入れた後 KAFKA_SSL_*_LOCATION を空にする。
   KAFKA_URL: "kafka.kafka.svc.cluster.local:9092"
   # ⚠️ 프로토콜을 URL 과 **같이** 못박는다. 베이스 ConfigMap 의 기본값은 SSL 인데
   #    90-dev-infra 의 브로커는 PLAINTEXT 리스너 하나뿐이다. 둘이 어긋나면 모든 Kafka
@@ -120,8 +155,13 @@ data:
   #    ops/13 이 적용 시 sed 로 PLAINTEXT 로 덮어썼기 때문인데, 그 우회는 ops/13 경로에만
   #    있고 이 오버레이로 배포하면 적용되지 않았다.
   #    관리형 Kafka 로 옮길 때는 위 주석 블록처럼 이 값도 함께 바꾼다.
+  # [JA] ⚠️ プロトコルを URL と**一緒に**固定する。ベース ConfigMap のデフォルトは SSL だが 90-dev-infra のブローカーは PLAINTEXT リスナー一つだけだ。二つがずれるとすべての Kafka
+  #      クライアントがハンドシェイクで失敗する。これまでこの組み合わせが表に出なかったのは ops/13 が適用時に sed で PLAINTEXT に上書きしていたからだが、その回避は ops/13 の経路にだけ
+  #      あり、このオーバーレイでデプロイすると適用されなかった。マネージド Kafka に移すときは上のコメントブロックのようにこの値も一緒に変える。
   KAFKA_SECURITY_PROTOCOL: "PLAINTEXT"
 
   # ── Elasticsearch ─────────────────────────────────────────────────────
   # 클러스터 안에 남는다 — nori 플러그인이 필요해서다(docs/32 §3).
   # 접속 URI 는 41-catalog-service.yaml 이 직접 지정하므로 여기에 없다.
+  # [JA] ── Elasticsearch ── クラスター内に残る — nori プラグインが必要だからだ(docs/32 §3)。
+  #      接続 URI は 41-catalog-service.yaml が直接指定するのでここにはない。

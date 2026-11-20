@@ -26,6 +26,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * 결제 응답 릴레이 — 행 하나의 영구 오류는 그 행만 FAILED 로, 뒤의 결제 응답은 계속 나간다(PY6, order 와 같다).
  *
  * <p>🐛 예전: 깨진 행 하나의 예외가 배치 트랜잭션째 롤백시켜 같은 행을 매 폴링 맨 앞에서 다시 집었다 — 그 뒤의 결제 응답이 전부 멈췄다.
+ *
+ * <p>[JA] 決済応答リレー — 一行の恒久エラーはその行だけ FAILED にし、後ろの決済応答は送り続ける(PY6、order と同じ)。
+ * 🐛 以前: 壊れた一行の例外がバッチのトランザクションごとロールバックさせ、同じ行を毎ポーリング先頭で拾い直した — その後ろの決済応答がすべて止まった。
  */
 @DisplayName("pay-service — 결제 응답 릴레이의 행 격리")
 class OrderOutboxRowIsolationTest {

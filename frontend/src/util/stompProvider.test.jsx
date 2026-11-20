@@ -17,6 +17,8 @@ jest.mock("sockjs-client", () => jest.fn());
  * 채팅 연결 — 서버가 토큰 만료 · 로그인 해제로 닫았을 때(user-service docs/68 §9).
  *
  * <p>같은 토큰으로 다시 붙어 봐야 거절된다. 자동 재연결을 멈추고 갱신을 부탁해야 한다.
+ *
+ * <p>[JA] チャット接続 — サーバーがトークン期限切れ · ログイン解除で閉じたとき(user-service docs/68 §9)。同じトークンで再接続しても拒否される。自動再接続を止めて更新を頼まなければならない。
  */
 describe("StompProvider — 서버가 4401 로 닫으면", () => {
   const headers = { Authorization: "tok" };

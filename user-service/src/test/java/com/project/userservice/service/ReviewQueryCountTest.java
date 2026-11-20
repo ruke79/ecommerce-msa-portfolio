@@ -101,6 +101,7 @@ class ReviewQueryCountTest {
 
         List<Review> found = reviews.findByProductId(PRODUCT);
         // 화면 변환(ReviewService.toDto)이 만지는 것들
+        // [JA] 画面変換(ReviewService.toDto)が触るもの
         found.forEach(r -> {
             r.getReviewedBy().getUsername();
             r.getReviewedBy().getImage();

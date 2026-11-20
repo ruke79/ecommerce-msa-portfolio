@@ -26,19 +26,28 @@ import java.util.List;
  * <p>선언 순서가 곧 등급의 높낮이다({@link #ordinal()}). "골드 이상" 같은 조건은
  * {@link #atLeast(CustomerTier)} 로 판정한다. 중간에 등급을 끼워 넣으면 순서가 바뀌므로
  * <b>새 등급은 반드시 제자리에</b> 넣어야 한다.
+ *
+ * <p>[JA] 顧客等級。
+ * <b>何を基準に分けるか。</b>直近一定期間の<b>実決済額</b>である。生涯累計の決済額ではない — 5 年前に一度大きく買って去った人と先月も買っている人を
+ * 同じ等級にすると、等級が「現在の顧客」を指せない。期間と金額の基準はポリシーなので<b>この enum ではなく user-service の設定</b>が決める({@code user.tier.*})。
+ * Amazon を参考にしたことの意味: Amazon 式等級の特徴は<b>等級を自慢の種にしないこと</b>である。ポイント · バッジ · 次の等級までの残額のような仕掛けで
+ * 消費を迫らず、等級はただ<b>特典が届く形</b>でのみ現れる。だからここでも等級自体を画面に展示せず、企画展クーポンの対象条件としてのみ使う({@link AudienceSegment})。
+ * もう一つ — Amazon は等級を<b>下げるのも静かに</b>行う。我々も降格を知らせない。「等級が下がりました」の通知は、利用者にできることが消費しかない通告である。
+ * 🔴 順序が意味を持つ: 宣言順がそのまま等級の高低である({@link #ordinal()})。「ゴールド以上」のような条件は {@link #atLeast(CustomerTier)} で判定する。
+ * 途中に等級を挟むと順序が変わるので、<b>新しい等級は必ず正しい位置に</b>入れなければならない。
  */
 public enum CustomerTier {
 
-    /** 일반. 기준 금액에 못 미치거나 최근 구매가 없는 모든 사용자의 기본값. */
+    /** 일반. 기준 금액에 못 미치거나 최근 구매가 없는 모든 사용자의 기본값. ／ [JA] 一般。基準額に満たないか最近の購入がないすべての利用者のデフォルト。 */
     BASIC("일반"),
 
-    /** 실버. */
+    /** 실버. ／ [JA] シルバー。 */
     SILVER("실버"),
 
-    /** 골드. */
+    /** 골드. ／ [JA] ゴールド。 */
     GOLD("골드"),
 
-    /** VIP. 최상위. */
+    /** VIP. 최상위. ／ [JA] VIP。最上位。 */
     VIP("VIP");
 
     private final String displayName;
@@ -47,12 +56,12 @@ public enum CustomerTier {
         this.displayName = displayName;
     }
 
-    /** 화면에 보일 한국어 이름. */
+    /** 화면에 보일 한국어 이름. ／ [JA] 画面に表示する韓国語名。 */
     public String displayName() {
         return displayName;
     }
 
-    /** 문자열을 안전하게 읽는다. 모르는 값이나 null 은 {@link #BASIC}. */
+    /** 문자열을 안전하게 읽는다. 모르는 값이나 null 은 {@link #BASIC}. ／ [JA] 文字列を安全に読む。不明な値や null は {@link #BASIC}。 */
     public static CustomerTier from(String raw) {
         if (raw == null || raw.isBlank()) {
             return BASIC;
@@ -64,11 +73,13 @@ public enum CustomerTier {
             // 모르는 값을 ALL(=모두에게 준다)로 읽는 것과 방향이 반대인데, 이유가 있다.
             // 저쪽은 "혜택을 못 받는 침묵"이 더 나쁜 자리고, 이쪽은 등급이 곧 혜택의
             // 크기라 모르는 값을 높게 읽으면 아무나 VIP 혜택을 받는다.
+            // [JA] 不明な等級に出会ったら最も低い等級として読む。AudienceSegment.from が不明な値を ALL(=全員に与える)として読むのと方向が逆だが、
+            //      理由がある。あちらは「特典を受け取れない沈黙」がより悪い場所で、こちらは等級がそのまま特典の大きさなので、不明な値を高く読むと誰でも VIP 特典を受け取る。
             return BASIC;
         }
     }
 
-    /** 이 등급이 {@code floor} 이상인가. */
+    /** 이 등급이 {@code floor} 이상인가. ／ [JA] この等級が {@code floor} 以上か。 */
     public boolean atLeast(CustomerTier floor) {
         return floor != null && ordinal() >= floor.ordinal();
     }
@@ -83,6 +94,11 @@ public enum CustomerTier {
      *
      * <p>{@link #BASIC} 은 <b>빈 목록</b>이다. "일반 이상" 은 전원이라 조건으로서 의미가
      * 없고, 그건 {@link AudienceSegment#ALL} 이 이미 뜻하는 바다.
+     *
+     * <p>[JA] この等級が持つセグメント一覧。
+     * <b>累積で与える。</b>ゴールド利用者は {@code [TIER_SILVER, TIER_GOLD]} を受け取る。そうすれば受け取る側({@link AudienceSegment#matches})が<b>単純な包含チェック</b>だけで
+     * 「シルバー以上」を判定できる — 大小比較や等級の順序をクーポンサービスが知る必要がなくなる。等級の順序を知る場所が増えるほど、一か所が遅れたときに気づかれにくい。
+     * {@link #BASIC} は<b>空のリスト</b>である。「一般以上」は全員なので条件として意味がなく、それは {@link AudienceSegment#ALL} がすでに意味するところである。
      */
     public List<AudienceSegment> segments() {
         List<AudienceSegment> out = new ArrayList<>();
@@ -98,7 +114,7 @@ public enum CustomerTier {
         return List.copyOf(out);
     }
 
-    /** 이 등급 하나에 대응하는 세그먼트("이 등급 이상"). {@link #BASIC} 은 {@code null}. */
+    /** 이 등급 하나에 대응하는 세그먼트("이 등급 이상"). {@link #BASIC} 은 {@code null}. ／ [JA] この等級一つに対応するセグメント(「この等級以上」)。{@link #BASIC} は {@code null}。 */
     AudienceSegment segment() {
         return switch (this) {
             case SILVER -> AudienceSegment.TIER_SILVER;

@@ -36,6 +36,10 @@ import com.project.catalog_service.repository.jpa.data.NoticeRepository;
  * (실제 DB 가 필요하다). 그 쿼리와 {@link Banner#isVisibleAt} 은 <b>같은 규칙을 두 번</b>
  * 적는 자리라, 아래 경계 테스트가 그 규칙의 정의를 고정하는 역할을 한다 — 쿼리를 고칠 때
  * 이 표를 보고 맞추면 된다.
+ *
+ * <p>[JA] バナーの表示判定とお知らせの公開規則。
+ * <p>ここで検証<b>しない</b>もの: {@code BannerRepository.findVisible} の JPQL 自体(実際の DB が必要)。そのクエリと {@link Banner#isVisibleAt} は<b>同じ規則を二回</b>書く場所なので、
+ * 下の境界テストがその規則の定義を固定する役割を担う — クエリを直すときはこの表を見て合わせればよい。
  */
 @DisplayName("콘텐츠")
 class ContentServiceTest {
@@ -168,6 +172,8 @@ class ContentServiceTest {
         // 🐛 회귀 대상: 공지를 공개해도 아무에게도 전달되지 않았다. 사용자가 스스로 공지
         // 목록 화면에 들어와야만 볼 수 있어서, 점검 예고처럼 미리 봐야 의미가 있는 공지가
         // 그대로 묻혔다.
+        // [JA] ── 全体通知の発行 ──
+        //      🐛 回帰対象: お知らせを公開しても誰にも届いていなかった。ユーザーが自分でお知らせ一覧画面に来ないと見られず、メンテナンス予告のように事前に見てこそ意味があるお知らせがそのまま埋もれていた。
 
         @Test
         @DisplayName("공개 상태로 만들면 전체 알림이 나간다")
@@ -199,6 +205,8 @@ class ContentServiceTest {
         /**
          * 공개된 글의 오타를 고칠 때마다 알림이 나가면 사용자에게는 같은 공지가 반복해서
          * 뜬다. 전환된 순간에만 알려야 한다.
+         *
+         * <p>[JA] 公開済み記事の誤字を直すたびに通知が出ると、ユーザーには同じお知らせが繰り返し表示される。遷移した瞬間にだけ通知すべきである。
          */
         @Test
         @DisplayName("이미 공개된 글을 수정하면 다시 나가지 않는다")
@@ -227,6 +235,8 @@ class ContentServiceTest {
         /**
          * published 를 건드리지 않는 수정(제목만 고치기)에서도 전환은 없다. request 의
          * published 가 null 이면 상태를 그대로 두므로 알림도 나가지 않아야 한다.
+         *
+         * <p>[JA] published に触れない修正(タイトルだけ直す)でも遷移はない。request の published が null なら状態をそのままにするので、通知も出てはならない。
          */
         @Test
         @DisplayName("published 를 생략한 수정은 상태를 바꾸지 않고, 알림도 나가지 않는다")
@@ -249,6 +259,8 @@ class ContentServiceTest {
          * 공지 본문은 길이 제한이 없는 {@code text} 인데(Notice 주석) 알림에 보이는 것은
          * 두어 줄이다. 20KB 를 통째로 카프카에 흘려보낼 이유가 없고, 받는 쪽 컬럼도
          * varchar(1000) 이라 어차피 잘린다.
+         *
+         * <p>[JA] お知らせ本文は長さ制限のない {@code text} だが(Notice のコメント)、通知に見えるのは二、三行である。20KB を丸ごと Kafka に流す理由はなく、受け取る側のカラムも varchar(1000) なのでどのみち切られる。
          */
         @Test
         @DisplayName("긴 본문은 잘리고 잘렸다는 표시가 남는다")

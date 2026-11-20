@@ -17,6 +17,10 @@ import org.springframework.kafka.mock.MockProducerFactory;
  *
  * <p>트랜잭션 프로듀서를 HTTP 요청(트랜잭션 없음)에서 부르면 보낼 수 없다. {@link TransactionalSends}
  * 는 그때 이 한 번의 발송만 감싼 트랜잭션으로 보낸다.
+ *
+ * <p>[JA] 🐛 返金しても在庫が戻らなかった —「재고 복원 발행 실패 … No transaction is in process」。
+ * トランザクショナルプロデューサーを HTTP リクエスト(トランザクションなし)から呼ぶと送れない。{@link TransactionalSends} は
+ * そのとき、この 1 回の送信だけを包んだトランザクションで送る。
  */
 @DisplayName("TransactionalSends — 트랜잭션 프로듀서를 어디서든")
 class TransactionalSendsTest {
@@ -31,7 +35,7 @@ class TransactionalSendsTest {
     private KafkaTemplate<String, String> transactionalTemplate() {
         MockProducerFactory<String, String> factory = new MockProducerFactory<>((tx, id) -> {
             last[0] = new MockProducer<>(true, new StringSerializer(), new StringSerializer());
-            last[0].initTransactions();   // 실제 팩토리가 하는 일
+            last[0].initTransactions();   // 실제 팩토리가 하는 일 ／ [JA] 実際のファクトリーがすること
             return last[0];
         }, "tx-");
         return new KafkaTemplate<>(factory);

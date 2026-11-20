@@ -35,6 +35,7 @@ public class ProductSkuMapper {
     }
 
     // Dto에서 Entity로 변환하는 메서드 추가
+    // [JA] Dto から Entity へ変換するメソッドを追加
     public static ProductSku toEntity(ProductSkuDto dto) {
         if (dto == null) {
             return null;

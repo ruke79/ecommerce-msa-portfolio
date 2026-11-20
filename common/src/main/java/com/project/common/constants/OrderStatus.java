@@ -18,6 +18,9 @@ public enum OrderStatus {
      * 무통장입금 <b>입금 대기</b>(docs/49 §11). {@link #NOT_PROCESSED}(결제 절차를 시작하지
      * 않음)와 다르다 — 입금 안내를 받았고 기한이 있다. 입금이 확인되면 {@link #PAID},
      * 기한이 지나거나 손님이 접으면 {@link #CANCELED}. 돈이 아직 안 왔으니 매출이 아니다.
+     *
+     * <p>[JA] 銀行振込の<b>入金待ち</b>(docs/49 §11)。{@link #NOT_PROCESSED}(決済手続きを始めていない)とは違う — 入金案内を受け取っており期限がある。
+     * 入金が確認されれば {@link #PAID}、期限が過ぎるか客が取りやめれば {@link #CANCELED}。お金がまだ来ていないので売上ではない。
      */
     UNPAID("UNPAID"),       
     PROCESSING("PROCESSING"),
@@ -28,6 +31,8 @@ public enum OrderStatus {
     /**
      * 결제된 뒤 돈을 돌려준 주문. {@link #CANCELED} 와 다르다 — 그쪽은 결제 <b>전</b>에
      * 접은 주문이다. 매출에서 빠진다({@link #PAID_STATUSES} 에 없다).
+     *
+     * <p>[JA] 決済後にお金を返した注文。{@link #CANCELED} とは違う — そちらは決済<b>前</b>に取りやめた注文である。売上から外れる({@link #PAID_STATUSES} にない)。
      */
     REFUNDED("REFUNDED");
     
@@ -50,6 +55,13 @@ public enum OrderStatus {
      *
      * <p>{@link #CANCELED} 는 당연히 빠지고, {@link #NOT_PROCESSED}·{@link #UNPAID} 는
      * 아직 결제 전이라 빠진다. {@link #REFUNDED} 는 돈이 <b>돌아간</b> 주문이라 빠진다.
+     *
+     * <p>[JA] <b>お金が実際に入った</b>注文状態。
+     * 売上集計 · 購入履歴 · 等級算定はすべてこの集合を基準にする。基準が複数箇所に散らばると「注文履歴画面では決済済みなのに等級計算には
+     * 入らない」のような、説明されても利用者が納得できない不一致が生じる。
+     * <b>決済済みの側を列挙する — 未決済の側を除くのではない。</b>後で状態が一つ増えたとき、除く方式だと新しい状態が<b>静かに売上に入り</b>、
+     * 列挙する方式だと静かに売上から外れる。お金を水増しする方がはるかに悪い失敗である。フロントエンドの {@code util/orderStatus.js} も同じ理由で同じ方向を選んだ。
+     * {@link #CANCELED} は当然外れ、{@link #NOT_PROCESSED} · {@link #UNPAID} はまだ決済前なので外れる。{@link #REFUNDED} はお金が<b>戻った</b>注文なので外れる。
      */
     public static final Set<OrderStatus> PAID_STATUSES =
             Set.copyOf(EnumSet.of(PAID, PROCESSING, DISPATCHED, DELIVERED, COMPLETED));

@@ -26,6 +26,7 @@ import com.project.userservice.repository.jpa.UserRepository;
 public class CustomAuthenticationProvider implements AuthenticationProvider {
 
     /** 관리자가 잠그거나 만료한 계정의 문구 — 소셜 로그인 화면 문구(account_restricted)와 같다. */
+    // [JA] 管理者がロックまたは期限切れにしたアカウントの文言 — ソーシャルログイン画面の文言(account_restricted)と同じ。
     static final String RESTRICTED = "이용이 제한된 계정입니다. 고객센터로 문의해 주세요.";
 
     // @Autowired
@@ -50,6 +51,9 @@ public class CustomAuthenticationProvider implements AuthenticationProvider {
         // ⚠️ 비밀번호 검사 **전에** 시도를 센다(잠겨 있으면 여기서 끝). 잠긴 동안 맞는 비밀번호가 통과되면
         //    공격자는 잠금을 무시하고 대입을 계속할 수 있다 — 잠금의 의미가 없어진다. 세는 것도 검사 전이다 —
         //    동시에 보낸 요청이 모두 "잠기지 않음" 을 읽지 않게(LoginAttemptService).
+        // [JA] ⚠️ パスワード検査の**前に**試行を数える(ロック中ならここで終わり)。ロック中に正しいパスワードが通ると、
+        //         攻撃者はロックを無視して総当たりを続けられる — ロックの意味がなくなる。数えるのも検査の前である —
+        //         同時に送ったリクエストがすべて「ロックされていない」を読まないように(LoginAttemptService)。
         loginAttemptService.reserveAttempt(username);
 
         UserDetails userDetails;
@@ -67,6 +71,7 @@ public class CustomAuthenticationProvider implements AuthenticationProvider {
         if (passwordEncoder.matches(password, userDetails.getPassword())) {
 
             // 비밀번호가 맞았으니 대입 시도가 아니다 — 실패 카운터를 먼저 되돌린다.
+            // [JA] パスワードが合ったので総当たりではない — 失敗カウンターを先に戻す。
             loginAttemptService.onSuccess(username);
 
             // ⚠️ 이 클래스는 AuthenticationProvider 를 **직접 구현**한다. DaoAuthenticationProvider 가
@@ -77,6 +82,13 @@ public class CustomAuthenticationProvider implements AuthenticationProvider {
             // ⚠️ **비밀번호 검사 뒤에** 둔 것은 의도적이다. 앞에 두면 비밀번호를 모르는 사람도
             //    "이 주소는 가입돼 있고 미인증"이라는 사실을 알 수 있다 — 가입 여부 확인 도구가
             //    된다. 뒤에 두면 올바른 비밀번호를 아는 본인에게만 이유가 보인다.
+            // [JA] ⚠️ このクラスは AuthenticationProvider を**直接実装**している。DaoAuthenticationProvider がやっていた
+            //         事前チェック(isEnabled など)がまったく動かないので、ここで自分でやらなければならない。
+            //         これがないと APP_REQUIRE_EMAIL_VERIFICATION を有効にしてアカウントを無効にしても
+            //         そのままログインできる — メール認証が何も止めない(docs/38 §1.4)。
+            //      ⚠️ **パスワード検査の後に**置いたのは意図的である。前に置くとパスワードを知らない人も
+            //         「このアドレスは登録済みで未認証」という事実が分かる — 登録有無の確認ツールになる。
+            //         後に置けば、正しいパスワードを知る本人にだけ理由が見える。
             if (!userDetails.isEnabled()) {
                 throw new DisabledException(
                         "메일 인증이 완료되지 않은 계정입니다. 가입 확인 메일의 링크를 눌러 주세요. "
@@ -105,6 +117,7 @@ public class CustomAuthenticationProvider implements AuthenticationProvider {
     }
 
     /** 없는 계정과 비교할 해시 — 진짜 해시와 같은 인코더 · 같은 비용(처음 쓸 때 한 번 만든다). */
+    // [JA] 存在しないアカウントと比較するハッシュ — 本物のハッシュと同じエンコーダー・同じコスト(初めて使うときに一度作る)。
     private volatile String dummyHash;
 
     private String dummyHash() {

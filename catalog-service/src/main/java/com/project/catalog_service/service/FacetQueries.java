@@ -37,6 +37,7 @@ public class FacetQueries {
     }
 
     /** 카테고리를 이름으로 받은(또는 없는 — null 이면 전체) 검색의 브랜드. */
+    // [JA] カテゴリを名前で受けた(またはなし — null なら全体)検索のブランド。
     public List<String> brandsByCategoryName(String categoryName) {
         return productRepository.findDistinctBrandsByCategoryName(categoryName);
     }

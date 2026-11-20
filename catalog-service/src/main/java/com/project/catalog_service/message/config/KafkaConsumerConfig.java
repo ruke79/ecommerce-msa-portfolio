@@ -37,6 +37,9 @@ public class KafkaConsumerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は KafkaSecuritySettings 一か所で作る。
+     * 以前はクラスごとに同じ六行を複製し、値が空でもそのまま入れていたので、SSL を有効にした瞬間に空のパスで死ぬ組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -56,8 +59,10 @@ public class KafkaConsumerConfig {
         factory.getContainerProperties().setConsumerRebalanceListener(new LoggingRebalanceListener());
         factory.setBatchListener(true);
         // 재시도+DLT 격리 (KafkaDltConfig). 없으면 poison message 가 파티션을 무한 블로킹한다.
+        // [JA] リトライ + DLT 隔離(KafkaDltConfig)。なければ poison message がパーティションを無限にブロックする。
         factory.setCommonErrorHandler(kafkaErrorHandler);
         // 분산 추적: 컨슈머 스팬 생성 + traceId 전파 (micrometer-tracing)
+        // [JA] 分散トレーシング: コンシューマのスパン生成 + traceId 伝播(micrometer-tracing)
         factory.getContainerProperties().setObservationEnabled(true);
         return factory;
     }
@@ -65,8 +70,9 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, ProductUpdateRequest> productUpdateonsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 ProductUpdateRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
+        // [JA] ヘッダー(__TypeId__)があれば使い、なければ ProductUpdateRequest として読む — CDC リレーはヘッダーを載せられない(docs/38 §5 A3)。
         JsonDeserializer<ProductUpdateRequest> deserializer = new JsonDeserializer<>(ProductUpdateRequest.class, true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO パッケージのみ
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -84,9 +90,12 @@ public class KafkaConsumerConfig {
 
         // ErrorHandlingDeserializer: 역직렬화 실패가 컨슈머 스레드에서 무한 재폴링을 유발하는 대신
         // DefaultErrorHandler(→DLT)로 전달되도록 감싼다.
+        // [JA] ErrorHandlingDeserializer: デシリアライズ失敗がコンシューマスレッドで無限再ポーリングを起こす代わりに
+        //      DefaultErrorHandler(→DLT)へ渡されるよう包む。
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 같은 DTO 로 — 롤링 배포·CDC·e2e 의 JSON 도 읽는다(docs/38 §1.16).
+                        // [JA] Avro でも JSON でも同じ DTO に — ローリングデプロイ・CDC・e2e の JSON も読む(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new ProductUpdateRequestAvroMapping())));
     }
 

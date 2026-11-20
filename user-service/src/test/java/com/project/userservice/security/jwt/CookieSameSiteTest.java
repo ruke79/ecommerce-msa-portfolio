@@ -70,6 +70,8 @@ class CookieSameSiteTest {
                             String src = Files.readString(p);
                             // 정규 이름(new jakarta.servlet.http.Cookie(…))으로 써도 잡는다 — 🐛 예전 검사는 "new Cookie(" 만 봐서 2FA 대기 쿠키를 지우는
                             // 코드가 빠져나갔다(docs/68 §14).
+                            // [JA] 正式名(new jakarta.servlet.http.Cookie(…))で書いても捕まえる — 🐛 以前の検査は "new Cookie(" だけを見ていたので、2FA 待機クッキーを消す
+                            //      コードが漏れていた(docs/68 §14)。
                             return src.matches("(?s).*new\\s+(jakarta\\.servlet\\.http\\.)?Cookie\\(.*")
                                     || src.matches("(?s).*sameSite\\(\\s*\"None\".*");
                         } catch (IOException e) {

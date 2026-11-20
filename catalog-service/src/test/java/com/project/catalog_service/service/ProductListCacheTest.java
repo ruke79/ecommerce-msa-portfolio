@@ -41,7 +41,15 @@ import com.project.catalog_service.repository.jpa.data.ProductRepository;
  *   <li>상품 등록 · 색상 추가 · 별점 · 일괄 등록 · 카탈로그 초기화가 products 를 비우지 않아 새 상품 · 새 색상이 나오지 않았다</li>
  * </ul>
  *
- * <p>[JA] 商品一覧 · 詳細キャッシュ — キーが混ざらず、空の結果は残らず、書き込みのたびに消える。
+ * <p>[JA] 商品一覧 · 詳細キャッシュ(products)— キーが混ざらず、空の結果は残らず、書き込みのたびに消える。
+ *
+ * <p>[JA] 🐛 以前:
+ * <ul>
+ *   <li>slug · 名前 · 'warmup' · 'all' · カテゴリのキーが一つの空間に混ざっていた — 匿名の {@code GET /api/product/warmup}(slug 照会)が
+ *       管理者一覧の 'warmup' キーに空リストを永久に刻んだ。ホーム(4)と管理者一覧(20)も同じ 'warmup' を使っていた</li>
+ *   <li>存在しない slug · カテゴリの空の結果も期限なしで保存され、匿名リクエストだけで共有 Redis を埋められた</li>
+ *   <li>商品登録 · 色追加 · 星評価 · 一括登録 · カタログ初期化が products を消さず、新商品 · 新しい色が出なかった</li>
+ * </ul>
  */
 @SpringJUnitConfig(ProductListCacheTest.Config.class)
 @DisplayName("상품 목록 캐시 — 키 · 빈 결과 · 무효화")
@@ -111,6 +119,7 @@ class ProductListCacheTest {
     }
 
     // ── 애노테이션 계약 ────────────────────────────────────────────────────
+    // [JA] ── アノテーション契約 ──
 
     private static List<Method> cacheableOn(String cache) {
         List<Method> out = new ArrayList<>();
@@ -170,7 +179,7 @@ class ProductListCacheTest {
                 checked++;
             }
         }
-        assertThat(checked).isGreaterThanOrEqualTo(5);   // load 는 둘
+        assertThat(checked).isGreaterThanOrEqualTo(5);   // load 는 둘 ／ [JA] load は二つ
     }
 
     @Test

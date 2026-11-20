@@ -17,6 +17,11 @@ import org.junit.jupiter.api.Test;
  * 생성된 이벤트가 <b>다음 달 파티션</b>에 저장되어, 보존 정책(DETACH/DROP)이 엉뚱한 행을 건드린다.
  *
  * <p>따라서 이 값은 반드시 JVM 기본 시계를 따라야 한다.
+ *
+ * <p>[JA] アウトボックスイベントの created_at タイムゾーンの回帰テスト(docs/16 B-21)。
+ * <p>この列は単なる記録用ではなく<b>月単位 RANGE パーティションのパーティションキー</b>である(docs/09)。以前は LocalDateTime.now(ZoneId.of("Asia/Seoul")) でハードコードされており、
+ * 他の列(JPA 監査 = JVM 既定の時計)と<b>9 時間</b>ずれた値が入った。その状態では毎月末の 9 時間に作られたイベントが<b>翌月のパーティション</b>に保存され、保持ポリシー(DETACH/DROP)が無関係な行に触れる。
+ * <p>したがってこの値は必ず JVM 既定の時計に従わなければならない。
  */
 class OutboxEventCreatedAtTest {
 
@@ -39,6 +44,7 @@ class OutboxEventCreatedAtTest {
         long minutesOff = Math.abs(Duration.between(LocalDateTime.now(), event.getCreatedAt()).toMinutes());
 
         // Asia/Seoul 하드코딩이 살아 있으면 UTC 환경에서 540분(9시간) 차이가 난다.
+        // [JA] Asia/Seoul のハードコードが生きていると UTC 環境で 540 分(9 時間)の差が出る。
         assertThat(minutesOff)
                 .as("시스템 시각과 분 단위 이상 벌어지면 시간대가 하드코딩된 것이다")
                 .isLessThan(5L);

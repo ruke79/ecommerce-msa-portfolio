@@ -61,7 +61,12 @@ import com.project.common.constants.chat.MessageType;
  *   <li>같은 상담의 답변을 두 파드가 소비해도 알림은 한 통(SupportReplyNotifier 의 Redis SET NX).</li>
  * </ul>
  *
- * <p>[JA] chat の Pod 二つ — 実際の Redis を共有して、配信 · 順序、相談の閲覧状況、通知の重複抑制を見る。
+ * <p>[JA] chat の Pod 二つ(docs/21 §2)— 実際の Redis 一つを二つの「Pod」が共有する。
+ * <ul>
+ *   <li>[JA] 一つの Pod が消費したメッセージを<b>両 Pod の購読者が全員、送った順に</b>受け取る(StompFanout · スレッド一つの実行器)。</li>
+ *   <li>[JA] A Pod で相談ルームを見ていれば B Pod も分かる — 回答通知を送らない(SupportPresence)。</li>
+ *   <li>[JA] 同じ相談の回答を二つの Pod が消費しても通知は一通(SupportReplyNotifier の Redis SET NX)。</li>
+ * </ul>
  */
 @Tag("containers")
 @Testcontainers
@@ -90,8 +95,10 @@ class ChatScaleOutRedisTest {
     }
 
     /** 파드 하나 — 자기 STOMP 템플릿(받은 메시지를 모은다)과 팬아웃 구독. */
+    // [JA] Pod 一つ — 自分の STOMP テンプレート(受信メッセージを集める)とファンアウト購読。
     static final class Pod implements AutoCloseable {
         /** 시험 방(r1)으로 온 것만 — 구독 확인용 probe 는 따로 센다(늦게 도착한 probe 가 순서 검사에 섞이지 않게). */
+        // [JA] 試験ルーム(r1)に来たものだけ — 購読確認用の probe は別に数える(遅れて届いた probe が順序検査に混ざらないように)。
         final List<String> received = Collections.synchronizedList(new ArrayList<>());
         final AtomicInteger probes = new AtomicInteger();
         final StompFanout fanout;
@@ -134,6 +141,7 @@ class ChatScaleOutRedisTest {
     void fanoutReachesEveryPodInOrder() throws Exception {
         try (Pod a = new Pod(); Pod b = new Pod()) {
             // 두 구독이 실제로 붙었는지 — 시험 봉투가 둘 다에 닿을 때까지
+            // [JA] 二つの購読が実際に付いたか — 試験封筒が両方に届くまで
             await().atMost(Duration.ofSeconds(10)).until(() -> {
                 a.fanout.send(PROBE, Map.of("seq", -1));
                 return a.probes.get() > 0 && b.probes.get() > 0;
@@ -168,7 +176,7 @@ class ChatScaleOutRedisTest {
         assertThat(b.watching(7L, "support-5")).as("구독 해지").isFalse();
 
         a.subscribed("s1", "sub-1", 7L, "support-5");
-        a.subscribed("s2", "sub-9", 7L, "support-5");   // 같은 사람의 탭 둘
+        a.subscribed("s2", "sub-9", 7L, "support-5");   // 같은 사람의 탭 둘 ／ [JA] 同じ人のタブ二つ
         a.disconnected("s1");
         assertThat(b.watching(7L, "support-5")).as("탭 하나는 아직 보고 있다").isTrue();
         a.disconnected("s2");
@@ -178,12 +186,12 @@ class ChatScaleOutRedisTest {
         c.subscribed("s3", "sub-1", 9L, "support-7");
         assertThat(b.watching(9L, "support-7")).isTrue();
         String cKey = (String) ReflectionTestUtils.invokeMethod(c, "podKey");
-        redis.delete(cKey);   // 파드가 죽어 해시가 TTL 로 사라졌다
+        redis.delete(cKey);   // 파드가 죽어 해시가 TTL 로 사라졌다 ／ [JA] Pod が死んでハッシュが TTL で消えた
         assertThat(b.watching(9L, "support-7")).as("죽은 파드의 기록은 남지 않는다").isFalse();
         assertThat(redis.opsForSet().isMember("chat:support-presence:pods", cKey)).as("목록에서도 지운다").isFalse();
 
         a.subscribed("s4", "sub-1", 11L, "support-8");
-        ReflectionTestUtils.invokeMethod(a, "stop");   // 파드가 내려간다
+        ReflectionTestUtils.invokeMethod(a, "stop");   // 파드가 내려간다 ／ [JA] Pod が停止する
         assertThat(b.watching(11L, "support-8")).as("내려간 파드").isFalse();
     }
 

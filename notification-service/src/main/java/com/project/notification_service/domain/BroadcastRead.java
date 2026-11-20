@@ -32,6 +32,12 @@ import lombok.experimental.SuperBuilder;
  *
  * <p>복합 키({@code broadcastId} + {@code recipientId})라 같은 사람이 같은 공지에 대해
  * 두 행을 가질 수 없다. 읽음 처리가 여러 번 들어와도 결과가 같다.
+ *
+ * <p>[JA] 全体通知に対する<b>個人別</b>の状態 — 読んだか、消したか。
+ * 行は<b>ユーザーが実際に何かをしたときだけ</b>できる。未読状態は行がないことで表すので、
+ * お知らせを一つ上げても即座にできる行は 0 個である(BroadcastNotification のコメント)。
+ * 複合キー({@code broadcastId} + {@code recipientId})なので同じ人が同じお知らせについて
+ * 二行を持てない。既読処理が何度来ても結果は同じである。
  */
 @Getter
 @Setter
@@ -60,6 +66,10 @@ public class BroadcastRead implements Persistable<BroadcastRead.Key> {
      * <p>공지 자체는 지울 수 없다 — 모두가 공유하는 행이다. "이 사람에게는 보이지 않는다"로
      * 표현한다. 읽음과 따로 두는 이유: 읽었지만 목록에 남겨 두는 것과, 치워 버린 것은
      * 사용자에게 다른 동작이다.
+     *
+     * <p>[JA] ユーザーが一覧から消したか。
+     * お知らせ自体は消せない — 皆が共有する行である。「この人には見えない」で表す。
+     * 既読と別にする理由: 読んだが一覧に残しておくことと、片付けてしまうことはユーザーにとって別の動作である。
      */
     @Column(nullable = false)
     private boolean dismissed;
@@ -83,6 +93,17 @@ public class BroadcastRead implements Persistable<BroadcastRead.Key> {
     // 하나씩 늘어나는 이 헛SELECT 가 그대로 쌓인다.
     //
     // (common 의 EntityPersistenceGuardrailTest 가 이 조건을 강제한다.)
+    // [JA] ── なぜ Persistable を実装するか ──
+    //      
+    //      キーをコードが割り当てる(お知らせ id + ユーザー id)。だから save() の時点で id が既に null ではなく、
+    //      SimpleJpaRepository はそれだけを見て persist() ではなく **merge()** を選ぶ。
+    //      merge は付ける対象を探そうと先に SELECT を投げるが、直前の行で findByBroadcastIdAndRecipientId で
+    //      同じ行を既に確認した後なので、まったく同じ照会が二度出る — 通知を一つ読むたびに。
+    //      
+    //      既読処理はユーザーがベルを押して一覧を眺める間に連続して起きる動作なので、
+    //      一回ごとに一つずつ増えるこの無駄な SELECT がそのまま積もる。
+    //      
+    //      (common の EntityPersistenceGuardrailTest がこの条件を強制する。)
     @Transient
     private boolean persisted;
 
@@ -102,6 +123,10 @@ public class BroadcastRead implements Persistable<BroadcastRead.Key> {
      * <p>{@code @PostLoad} 를 빼면 이미 있는 읽음 행을 다시 저장할 때 UPDATE 가 아니라
      * INSERT 를 시도해 PK 충돌로 죽는다 — 같은 공지를 두 번 읽음 처리하는 흔한 경로가
      * 그대로 500 이 된다.
+     *
+     * <p>[JA] 読み込んだ行は新規ではない。
+     * {@code @PostLoad} を外すと、既存の既読行を再保存するときに UPDATE ではなく INSERT を試みて PK 衝突で落ちる —
+     * 同じお知らせを二度既読処理するよくある経路がそのまま 500 になる。
      */
     @PostPersist
     @PostLoad
@@ -110,6 +135,7 @@ public class BroadcastRead implements Persistable<BroadcastRead.Key> {
     }
 
     /** 복합 키. JPA 가 요구한다. */
+    // [JA] 複合キー。JPA が要求する。
     public static class Key implements Serializable {
         private Long broadcastId;
         private Long recipientId;

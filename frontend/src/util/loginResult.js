@@ -16,14 +16,36 @@
  * 그대로 돌려준다.</b> 그러니 모르는 코드를 그냥 넘기면 토스트에
  * "auth.signin.result.xyz" 가 뜬다 — 서버가 준 영어 문장보다 나쁘다. 아는 코드만 번역하고
  * 나머지는 서버 문구로 떨어뜨린다.
+ *
+ * <p>[JA] ログイン<b>成功</b>の応答を画面の文言に変える。
+ *
+ * <p>🐛 以前は {@code toast.success(response.data.message)} だった。その message はサーバーが
+ * 作った<b>英語の文</b>なので("Login Success",
+ * "User attempted to log in multiply, logging out from previous logged in state")、
+ * 画面の残りが韓国語・日本語なのにログイン直後だけ英語が出た。
+ *
+ * <p>サーバーで翻訳しない理由: <b>サーバーはユーザーの表示言語を知らない。</b> 言語は
+ * ブラウザが選び localStorage にある(docs/45)。{@code Accept-Language} で推測することは
+ * できるが、画面で選んだ値とずれる。そこでサーバーは<b>何が起きたか</b>だけをコードで
+ * 知らせ(`LoginResponse.code`)、文言はここで辞書が選ぶ。失敗経路がすでに使っている
+ * 方式と同じである({@code email_not_verified})。
+ *
+ * <b>なぜコードの一覧を別に持つか。</b> {@code t()} は存在しないキーを受け取ると<b>キー文字列を
+ * そのまま返す。</b> だから未知のコードをそのまま渡すとトーストに
+ * "auth.signin.result.xyz" が出る — サーバーが返した英語の文より悪い。既知のコードだけを翻訳し、
+ * 残りはサーバーの文言に落とす。
  */
 
 /** 사전에 문구가 있는 코드. 서버에 새 코드가 생기면 여기와 ko/ja 에 함께 넣는다. */
+// [JA] 辞書に文言があるコード。サーバーに新しいコードができたら、ここと ko/ja に一緒に入れる。
 export const KNOWN_RESULT_CODES = ["login_success", "multi_login"];
 
 /**
  * @param {object} data 로그인 응답 본문 ({ email, roles, message, code })
  * @param {(key: string) => string} t 사전 조회 함수
+ *
+ * [JA] @param {object} data ログイン応答のボディ({ email, roles, message, code })
+ * @param {(key: string) => string} t 辞書の参照関数
  */
 export function loginResultMessage(data, t) {
     const code = data?.code;
@@ -32,11 +54,13 @@ export function loginResultMessage(data, t) {
     }
 
     // 코드를 모른다 = 서버가 우리보다 새 것이다. 그쪽 문구가 그나마 정확하다.
+    // [JA] コードを知らない = サーバーが我々より新しい。そちらの文言のほうがまだ正確である。
     const fromServer = data?.message;
     if (typeof fromServer === "string" && fromServer.trim()) {
         return fromServer;
     }
 
     // 둘 다 없어도 토스트는 떠야 한다 — 로그인은 성공했으니까.
+    // [JA] 両方なくてもトーストは出なければならない — ログインは成功したのだから。
     return t("auth.signin.result.login_success");
 }

@@ -41,6 +41,10 @@ import com.project.coupon_service.service.CouponService.ClaimResult;
  *
  * <p>여기서 지키는 것의 핵심은 <b>못 받는 경우에 조용히 주지 않는 것</b>이다. 세그먼트를
  * 확인하지 못했을 때 통과시키면 대상이 아닌 사람에게 쿠폰이 나가고, 그건 되돌리기 어렵다.
+ *
+ * <p>[JA] 企画展クーポンの受け取り。
+ * <p><b>なぜ配らずに受け取らせるのか。</b>企画展開始時に全ユーザーへ発行するとユーザー数だけ coupon 行ができる — お知らせ通知で個人別の行を作らないと決めたのと同じ問題で、しかも大半は使わない。受け取った人だけ行ができるようにすれば書き込み量が実際の関心に比例する。
+ * <p>ここで守るものの核心は<b>受け取れない場合に黙って与えないこと</b>だ。セグメントを確認できなかったときに通すと対象でない人にクーポンが出て、それは取り消しにくい。
  */
 @DisplayName("기획전 쿠폰 수령")
 class EventCouponClaimTest {
@@ -59,9 +63,11 @@ class EventCouponClaimTest {
 
     private static final String EMAIL = "tester@example.com";
     /** 게이트웨이가 검증한 신원 — 토큰의 uid(User-Id 헤더). */
+    // [JA] ゲートウェイが検証した身元 — トークンの uid(User-Id ヘッダー)。
     private static final Long USER_ID = 7L;
 
     /** 기획전이 이 조건의 쿠폰을 내건다. */
+    // [JA] 企画展がこの条件のクーポンを掲げる。
     private void offers(String audience, String scope, List<String> targets) {
         when(catalogServiceClient.getEventCouponOffer("autumn")).thenReturn(ResponseEntity.ok(
                 new EventCouponOffer(7L, "autumn", "가을 세일", audience,
@@ -69,12 +75,14 @@ class EventCouponClaimTest {
     }
 
     /** user-service 가 이 사용자를 이 세그먼트로 판정한다. */
+    // [JA] user-service がこのユーザーをこのセグメントと判定する。
     private void segments(String... names) {
         when(userServiceClient.findUserSegments(anyLong()))
                 .thenReturn(ResponseEntity.ok(Map.of("segments", List.of(names))));
     }
 
     /** 사용자 조회와 저장이 통하는 상태 — create() 가 끝까지 가도록. */
+    // [JA] ユーザー照会と保存が通る状態 — create() が最後まで行くように。
     private void issuingWorks() {
         when(couponRepository.existsByNameAndUserId(anyString(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(false);
@@ -125,6 +133,8 @@ class EventCouponClaimTest {
         /**
          * 🔴 세그먼트를 확인하지 못했을 때 통과시키면 대상이 아닌 사람에게 쿠폰이 나간다.
          * 발급은 되돌리기 어렵다 — 못 주는 쪽으로 틀리는 편이 낫다.
+         *
+         * <p>[JA] 🔴 セグメントを確認できなかったときに通すと対象でない人にクーポンが出る。発行は取り消しにくい — 与えない方向に間違える方がよい。
          */
         @Test
         @DisplayName("세그먼트를 확인하지 못하면 주지 않는다")
@@ -139,6 +149,7 @@ class EventCouponClaimTest {
         }
 
         /** 어떤 세그먼트에 속하는지 알려주면 가입 시점을 되짚을 수 있다. */
+        // [JA] どのセグメントに属するか教えると登録時期を推測できてしまう。
         @Test
         @DisplayName("왜 대상이 아닌지는 알려주지 않는다")
         void rejectionDoesNotLeakTheSegment() {
@@ -159,6 +170,8 @@ class EventCouponClaimTest {
          * 🔴 상태 판정을 이쪽에서 다시 하지 않는다 — 같은 규칙이 두 곳에 있으면 언젠가
          * 어긋나고, 그때 이미 종료된 기획전의 쿠폰이 계속 나간다. catalog 가 404 를 주면
          * 그것으로 끝이다.
+         *
+         * <p>[JA] 🔴 状態判定をこちらで再度しない — 同じ規則が二か所にあればいつかずれ、そのとき既に終了した企画展のクーポンが出続ける。catalog が 404 を返せばそれで終わりだ。
          */
         @Test
         @DisplayName("기획전이 끝났으면(catalog 가 404) 발급하지 않는다")
@@ -184,6 +197,7 @@ class EventCouponClaimTest {
         }
 
         /** 조건을 먼저 읽는다 — 반대로 하면 끝난 기획전에도 사용자 조회가 한 번 나간다. */
+        // [JA] 条件を先に読む — 逆にすると終わった企画展にもユーザー照会が一回出る。
         @Test
         @DisplayName("기획전을 먼저 확인한다 — 끝난 기획전에 사용자 조회를 낭비하지 않는다")
         void checksTheEventBeforeTheUser() {
@@ -203,6 +217,8 @@ class EventCouponClaimTest {
         /**
          * 쿠폰의 적용 범위는 기획전 대상을 그대로 물려받아야 한다. 넓히면 "이 기획전의
          * 쿠폰" 이 무관한 상품에 먹어 관리자가 의도한 할인 폭을 넘는다.
+         *
+         * <p>[JA] クーポンの適用範囲は企画展の対象をそのまま受け継がなければならない。広げると「この企画展のクーポン」が無関係な商品に効き、管理者が意図した割引幅を超える。
          */
         @Test
         @DisplayName("기획전이 정한 범위와 대상을 그대로 쓴다")
@@ -216,6 +232,7 @@ class EventCouponClaimTest {
             verify(couponRepository).save(saved.capture());
             assertThat(saved.getValue().scope()).isEqualTo(CouponScope.PRODUCT);
             // 대상 행도 함께 저장된다.
+            // [JA] 対象行も一緒に保存される。
             verify(couponTargetRepository, org.mockito.Mockito.times(2)).save(any());
         }
 
@@ -236,12 +253,15 @@ class EventCouponClaimTest {
         /**
          * 사용자 입장에서 "이미 갖고 있다"는 성공과 다르지 않다 — 버튼을 두 번 눌렀거나
          * 다른 탭에서 이미 받은 것이다. 오류를 띄우면 무엇이 잘못됐는지 찾게 만든다.
+         *
+         * <p>[JA] ユーザーにとって「既に持っている」は成功と変わらない — ボタンを二度押したか別タブで既に受け取ったものだ。エラーを出すと何が悪いのか探させてしまう。
          */
         @Test
         @DisplayName("이미 받았으면 오류가 아니다")
         void alreadyOwnedIsNotAnError() {
             offers("ALL", CouponScope.ALL.name(), List.of());
             // 중복 수령은 coupon 테이블의 uk_coupon_name_user_id 가 이미 막는다.
+            // [JA] 重複受け取りは coupon テーブルの uk_coupon_name_user_id が既に防いでいる。
             when(couponRepository.existsByNameAndUserId(anyString(), org.mockito.ArgumentMatchers.anyLong()))
                     .thenReturn(true);
 
@@ -264,6 +284,7 @@ class EventCouponClaimTest {
         }
 
         /** 이름이 곧 키다 — 기획전이 정한 이름 그대로여야 중복 수령이 막힌다. */
+        // [JA] 名前がすなわちキーだ — 企画展が決めた名前そのままでなければ重複受け取りが防げない。
         @Test
         @DisplayName("기획전이 정한 이름으로 발급한다")
         void usesTheOfferedName() {
@@ -280,6 +301,8 @@ class EventCouponClaimTest {
         /**
          * 🔒 받는 사람은 게이트웨이가 검증한 신원이어야 한다. 경로나 본문에서 받으면
          * 남의 계정으로 쿠폰을 발급시킬 수 있다.
+         *
+         * <p>[JA] 🔒 受け取る人はゲートウェイが検証した身元でなければならない。パスや本文から受け取ると他人のアカウントでクーポンを発行させられる。
          */
         @Test
         @DisplayName("넘겨받은 신원으로만 발급한다")
@@ -293,11 +316,13 @@ class EventCouponClaimTest {
             verify(couponRepository).save(saved.capture());
             assertThat(saved.getValue().getUserId()).isEqualTo(USER_ID);
             // 이메일로 id 를 다시 묻지 않는다 — 예전에는 그 호출의 URL 에 액세스 토큰이 실렸다.
+            // [JA] メールで id を問い直さない — 以前はその呼び出しの URL にアクセストークンが載っていた。
             verify(userServiceClient, never()).findUserByEmail(anyString());
         }
     }
 
     /** 요청 본문이 아니라 기획전 조건이 쿠폰을 정한다 — 그 변환을 한 번 더 못박는다. */
+    // [JA] リクエスト本文ではなく企画展の条件がクーポンを決める — その変換をもう一度固定する。
     @Test
     @DisplayName("쿠폰 요청은 기획전 조건에서 만들어진다")
     void requestIsBuiltFromTheOffer() {
@@ -313,6 +338,7 @@ class EventCouponClaimTest {
     }
 
     /** 컴파일 시점에 CouponRequest 의 모양이 바뀌면 여기서 먼저 드러난다. */
+    // [JA] コンパイル時点で CouponRequest の形が変わればここで先に現れる。
     @Test
     @DisplayName("기획전 쿠폰은 제약 있는 요청으로 만들어진다")
     void offerMapsToAConstrainedRequest() {
@@ -329,6 +355,7 @@ class EventCouponClaimTest {
     class ReviewFixes {
 
         /** 🔴 CP3 — 모르는 고객군은 '전체' 가 아니다. 롤링 중 새 고객군 기획전의 쿠폰이 전원에게 발급되던 것. */
+        // [JA] 🔴 CP3 — 知らない顧客グループは「全体」ではない。ローリング中に新しい顧客グループの企画展クーポンが全員に発行されていた件。
         @Test
         @DisplayName("🔴 모르는 고객군의 기획전 쿠폰은 발급하지 않는다 — 예전에는 ALL 로 읽어 전원에게 나갔다")
         void unknownAudienceIsNotEveryone() {
@@ -343,6 +370,7 @@ class EventCouponClaimTest {
         }
 
         /** 🔴 CP5 — 두 번 누름 · 두 탭: 늦은 쪽이 유니크에 걸리면 "이미 받음"(200). 예전에는 500. */
+        // [JA] 🔴 CP5 — 二度押し · 二つのタブ: 遅い方がユニークに掛かったら「既に受け取った」(200)。以前は 500。
         @Test
         @DisplayName("🔴 동시 수령으로 늦은 쪽이 유니크에 걸리면 '이미 받음' — 예전에는 500")
         void concurrentClaimIsAlreadyOwned() {
@@ -358,6 +386,7 @@ class EventCouponClaimTest {
         }
 
         /** 🔴 CP5 — 발급 알림은 커밋 뒤에. 예전에는 커밋 전에 보내, 롤백된 쿠폰의 알림이 나갔다. */
+        // [JA] 🔴 CP5 — 発行通知はコミット後に。以前はコミット前に送り、ロールバックされたクーポンの通知が出ていた。
         @Test
         @DisplayName("🔴 발급 알림은 커밋된 뒤에 나간다 — 롤백되면 나가지 않는다")
         void issuedNoticeWaitsForCommit() {

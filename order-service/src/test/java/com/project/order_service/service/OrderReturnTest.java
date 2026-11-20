@@ -36,6 +36,12 @@ import com.project.order_service.repository.jpa.OrderRepository;
  * <p>입고는 <b>물건이 나간 주문</b>에만 기록한다. 발송 전 환불은 재고가 이미 돌아왔고,
  * 결제 전 주문은 취소의 영역이다. 재고 복원 이벤트 자체는 여기서 나가지 않는다 —
  * {@code OrderSaga.restock} 이 트랜잭션 밖에서 보낸다({@code OrderSagaRestockTest}).
+ *
+ * <p>[JA] 返品入庫のルール(docs/49 §10)。
+ *
+ * <p>入庫は<b>品物が出ていった注文</b>にだけ記録する。発送前の返金は在庫が既に戻っており、決済前の注文はキャンセルの領域である。
+ * 在庫復元イベント自体はここからは出ない — {@code OrderSaga.restock} がトランザクション外で送る({@code
+ * OrderSagaRestockTest})。
  */
 @DisplayName("반품 입고")
 class OrderReturnTest {
@@ -53,6 +59,7 @@ class OrderReturnTest {
                 .paymentProvider(PaymentProvider.STRIPE).providerPaymentId("cs_1").refundId("re_1")
                 .build();
         // 발송된 뒤 전액 환불된 주문 — 두 품목 다 환불됐고(refunded) 아직 안 돌아왔다(returned 0).
+        // [JA] 発送後に全額返金された注文 — 二品目とも返金され(refunded)、まだ戻っていない(returned 0)。
         order.setOrderedProducts(new java.util.ArrayList<>(List.of(
                 OrderProduct.builder().orderProductId(101L).productId(10L).qty(2).refundedQty(2).order(order).build(),
                 OrderProduct.builder().orderProductId(102L).productId(11L).qty(1).refundedQty(1).order(order).build())));
@@ -78,6 +85,7 @@ class OrderReturnTest {
     }
 
     /** 물건이 먼저 돌아오고 환불이 나중일 수 있다. 그때 입고는 배송 완료 주문에 기록된다. */
+    // [JA] 品物が先に戻り、返金が後になることもある。そのとき入庫は配送完了の注文に記録される。
     @Test
     @DisplayName("아직 환불되지 않은 배송 완료 주문도 입고할 수 있다")
     void deliveredButNotRefundedCanBeReceived() {
@@ -106,10 +114,12 @@ class OrderReturnTest {
     }
 
     /** 발송 전 환불은 재고가 이미 돌아왔다 — 입고를 또 기록하면 재고가 두 번 는다. */
+    // [JA] 発送前の返金は在庫が既に戻っている — 入庫をまた記録すると在庫が二度増える。
     @Test
     @DisplayName("🔴 발송 전에 환불된 주문은 돌아올 물건이 없다 — 이미 돌아온 것으로 세어져 있다")
     void refundedBeforeDispatchIsRejected() {
         // 발송 전 환불: 환불 때 returnedQty 가 함께 올라가 남은 수가 0 이다.
+        // [JA] 発送前の返金: 返金時に returnedQty も一緒に上がり、残り数は 0 である。
         order.setAwaitingReturn(false);
         order.getOrderedProducts().forEach(p -> p.setReturnedQty(p.getQty()));
 
@@ -120,6 +130,7 @@ class OrderReturnTest {
     }
 
     // ---------------------------------------------------------------- 부분 반품
+    // [JA] 部分返品
 
     @Test
     @DisplayName("일부만 입고하면 그 수량만 돌아오고 나머지는 여전히 반품 대기다")

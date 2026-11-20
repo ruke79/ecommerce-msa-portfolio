@@ -51,6 +51,7 @@ public class StockReservationGrpcService extends StockReservationGrpc.StockReser
         } catch (RuntimeException e) {
             if (isLockWait(e)) {
                 // 기한 안에 잠금을 얻지 못했다(lock_timeout 55P03) — 예약은 롤백됐다(아무것도 잡지 않았다).
+                // [JA] 期限内にロックを得られなかった(lock_timeout 55P03) — 予約はロールバックされた(何も確保していない)。
                 log.warn("재고 예약(gRPC) 잠금 대기 초과 — orderId={}", request.getOrderId());
                 out.onError(Status.DEADLINE_EXCEEDED.withDescription("stock lock wait exceeded").asRuntimeException());
                 return;
@@ -79,6 +80,9 @@ public class StockReservationGrpcService extends StockReservationGrpc.StockReser
     /**
      * 잠금 대기 초과인가 — 리포지터리를 지나면 Spring 예외(PessimisticLockingFailureException), EntityManager 를 바로 쓰면
      * JPA 예외(jakarta PessimisticLockException · LockTimeoutException)로 온다. 둘 다 본다.
+     *
+     * <p>[JA] ロック待ち超過か — リポジトリを経由すると Spring の例外(PessimisticLockingFailureException)、EntityManager を直接使うと
+     * JPA の例外(jakarta PessimisticLockException · LockTimeoutException)で来る。両方を見る。
      */
     static boolean isLockWait(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
@@ -94,6 +98,7 @@ public class StockReservationGrpcService extends StockReservationGrpc.StockReser
     }
 
     /** 호출자의 남은 기한에서 응답에 쓸 여유(200ms)를 뺀 것 — 기한이 없으면 null(기본 상한을 쓴다). 취소된 호출은 0. */
+    // [JA] 呼び出し元の残り期限から応答用の余裕(200ms)を引いたもの — 期限がなければ null(デフォルト上限を使う)。キャンセルされた呼び出しは 0。
     static java.time.Duration remainingBudget(io.grpc.Context context) {
         if (context.isCancelled()) {
             return java.time.Duration.ZERO;

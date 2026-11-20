@@ -5,9 +5,15 @@
  * 같은 키가 두 파일에 있으면 i18n.test.jsx 가 실패한다.
  *
  * <p>문구 안의 {@code <b>…</b>} 는 화면이 굵은 글씨로 바꿔 그린다(Events.jsx 의 bold). HTML 로 넣는 것이 아니다.
+ *
+ * <p>[JA] 日本語文言 — 領域 "admin1"(docs/60 §2)。キーの接頭辞は領域の画面名にする。
+ * 領域ごとにファイルを分けた理由: 一ファイル(ko.js)に全部集めると複数人が同時に直すとき常に衝突する。まとめる所は ../ja.js で、
+ * 同じキーが二つのファイルにあると i18n.test.jsx が失敗する。
+ * 文言中の {@code <b>…</b>} は画面が太字に置き換えて描く(Events.jsx の bold)。HTML として入れるのではない。
  */
 const admin1 = {
     // ── 관리자: 환불 (pages/admin/Refunds.jsx) ─────────────────────────────
+    // [JA] ── 管理者: 返金 (pages/admin/Refunds.jsx) ──
     "admin.refunds.title": "返金管理",
     "admin.refunds.status.all": "すべて",
     "admin.refunds.status.paid": "決済完了",
@@ -76,6 +82,7 @@ const admin1 = {
     "admin.refunds.next": "次へ",
 
     // ── 관리자: 기획전 (pages/admin/Events.jsx) ───────────────────────────
+    // [JA] ── 管理者: 企画展 (pages/admin/Events.jsx) ──
     "admin.events.title": "特集管理",
     "admin.events.intro": "割引率は特集にのみ保存され、商品の閲覧時に合成されます。商品の通常割引を上書きしないため、特集を終了または削除すると価格は元に戻ります。開始・終了はサーバーが時刻に合わせて処理します。",
     "admin.events.status.draft": "下書き",
@@ -141,6 +148,7 @@ const admin1 = {
     "admin.events.empty": "登録された特集はありません",
 
     // ── 관리자: 배송 (pages/admin/Deliveries.jsx) ─────────────────────────
+    // [JA] ── 管理者: 配送 (pages/admin/Deliveries.jsx) ──
     "admin.deliveries.title": "配送管理",
     "admin.deliveries.error.load": "配送一覧を読み込めませんでした。",
     "admin.deliveries.error.need_tracking": "配送業者と送り状番号を入力してください。",
@@ -175,6 +183,7 @@ const admin1 = {
     "admin.deliveries.register": "登録",
 
     // ── 관리자: 홈 섹션 (pages/admin/HomeSections.jsx) ───────────────────
+    // [JA] ── 管理者: ホームセクション (pages/admin/HomeSections.jsx) ──
     "admin.home_sections.title": "ホームセクション管理",
     "admin.home_sections.error.load": "ホームセクション一覧を読み込めませんでした。",
     "admin.home_sections.error.save": "保存できませんでした。",

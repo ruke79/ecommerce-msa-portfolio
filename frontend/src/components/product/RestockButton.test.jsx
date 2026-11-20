@@ -27,6 +27,8 @@ const renderButton = (props = {}) => {
 
 /**
  * 재입고 알림 받기 (docs/53) — 품절 옵션에서만 보이고, 누르면 걸고 다시 누르면 거둔다.
+ *
+ * <p>[JA] 再入荷通知を受け取る(docs/53) — 品切れオプションでだけ見え、押すと登録しもう一度押すと取り下げる。
  */
 describe("RestockButton", () => {
     beforeEach(() => {

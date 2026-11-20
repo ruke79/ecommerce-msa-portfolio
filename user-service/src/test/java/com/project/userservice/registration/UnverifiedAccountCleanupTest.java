@@ -39,6 +39,11 @@ import com.project.userservice.repository.jpa.VerificationTokenRepository;
  *
  * <p>JPQL 자체는 여기서 검증되지 않는다(실제 DB 가 필요하다). 이 테스트가 고정하는 것은
  * 스케줄러의 판단과 순서다.
+ *
+ * <p>[JA] 未認証アカウント整理の<b>安全装置</b>を数える。
+ * アカウント削除は取り消せない。だから「消す」より「消さない」を多く検証する —
+ * デフォルトがオフか、その間に認証したアカウントに触れないか、外部キーが阻んだとき残りを続けて処理するか。
+ * JPQL 自体はここでは検証しない(実際の DB が必要)。このテストが固定するのはスケジューラーの判断と順序である。
  */
 @DisplayName("미인증 계정 정리")
 class UnverifiedAccountCleanupTest {
@@ -55,6 +60,7 @@ class UnverifiedAccountCleanupTest {
         userRepository = mock(UserRepository.class);
 
         // 실제 트랜잭션은 필요 없다. 콜백을 그대로 실행하고 예외는 그대로 올린다.
+        // [JA] 実際のトランザクションは不要。コールバックをそのまま実行し、例外はそのまま上げる。
         TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
         cleanup = new UnverifiedAccountCleanup(
@@ -109,6 +115,7 @@ class UnverifiedAccountCleanupTest {
     @DisplayName("조회와 삭제 사이에 인증을 마친 계정은 건드리지 않는다")
     void skipsAccountVerifiedInTheMeantime() {
         // 후보로 뽑힌 뒤 사용자가 링크를 눌러 활성화된 경우 — 재조회에서 걸러진다.
+        // [JA] 候補に選ばれた後でユーザーがリンクを押して有効化された場合 — 再照会で除外される。
         givenCandidates(staleToken(1L, true));
 
         cleanup.cleanUpAccounts(new Date());
@@ -133,12 +140,14 @@ class UnverifiedAccountCleanupTest {
     void foreignKeyViolationDoesNotStopTheBatch() {
         givenCandidates(staleToken(1L, false), staleToken(2L, false));
         // 1번 계정에는 주문·리뷰 같은 참조가 있어 DB 가 삭제를 거부한다.
+        // [JA] 1 番のアカウントには注文・レビューのような参照があり、DB が削除を拒否する。
         org.mockito.Mockito.doThrow(new DataIntegrityViolationException("FK"))
                 .when(userRepository).delete(argThatUserIdIs(10L));
 
         cleanup.cleanUpAccounts(new Date());
 
         // 2번은 그대로 지워져야 한다 — 하나가 막혔다고 배치가 멈추면 안 된다.
+        // [JA] 2 番はそのまま消えなければならない — 一つが阻まれたからといってバッチが止まってはならない。
         verify(userRepository, times(2)).delete(any(User.class));
     }
 
@@ -162,6 +171,7 @@ class UnverifiedAccountCleanupTest {
 
         verify(tokenRepository).deleteExpiredOfEnabledUsers(now);
         // 전체 삭제 메서드를 쓰면 유예 기간 중인 계정의 근거가 사라진다.
+        // [JA] 全件削除メソッドを使うと猶予期間中のアカウントの根拠が消える。
         verify(tokenRepository, never()).deleteAllExpiredSince(any(Date.class));
         verify(passwordResetTokenRepository).deleteAllExpiredSince(now.toInstant());
     }

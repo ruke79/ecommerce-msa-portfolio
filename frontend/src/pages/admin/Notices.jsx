@@ -22,6 +22,10 @@ const formatDate = (value) => formatDateTime(value, "-");
  *
  * <p>본문은 일반 텍스트다. 서식을 지원하려면 마크다운 + sanitize 가 필요한데, 그 전까지는
  * 줄바꿈만 살린다(상세 화면의 whitespace-pre-wrap).
+ *
+ * <p>[JA] お知らせ管理。一覧は<b>非公開の下書きまで</b>見せる。先に書いておき後で公開する流れが基本なので(メンテナンス告知)、
+ * 下書きが一覧になければその流れ自体が使えない。本文はプレーンテキストである。書式をサポートするにはマークダウン + sanitize が必要で、
+ * それまでは改行だけを生かす(詳細画面の whitespace-pre-wrap)。
  */
 const Notices = () => {
     const { t } = useTranslation();
@@ -90,6 +94,7 @@ const Notices = () => {
     };
 
     // 목록은 요약(제목·고정·공개)만 준다. 수정하려면 본문이 필요하므로 상세를 받아 온다.
+    // [JA] 一覧は要約(タイトル・固定・公開)だけを返す。修正するには本文が必要なので詳細を取得する。
     const startEdit = async (id) => {
         setError("");
         try {

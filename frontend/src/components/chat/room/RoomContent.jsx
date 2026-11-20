@@ -15,12 +15,18 @@ const RoomContent = ({search, rooms}) => {
      * 전체가 죽었다.</b> 검색은 "포함하는가"면 충분하다 — 정규식이 필요 없다.
      *
      * <p>공백을 지우고 비교하는 규칙은 그대로 둔다("신상 문의"를 "신상문의"로 찾기 위한 것). 전각 · 반각 카나는 NFKC 로 맞춘다(searchKey).
+     *
+     * <p>[JA] 🐛 以前は検索語をそのまま `new RegExp(...)` に入れていた。ユーザーが `(` · `[` · `*` のような
+     * 正規表現のメタ文字を一文字打っただけで RegExp コンストラクターが例外を投げ、チャット一覧全体が落ちた。
+     * 検索は「含むか」で十分である — 正規表現は要らない。
+     * 空白を消して比較する規則はそのままにする(「신상 문의」を「신상문의」で探すため)。全角 · 半角カナは NFKC で揃える(searchKey)。
      */
     const normalize = searchKey;
 
     const needle = normalize(search);
 
     // `rooms` 가 없을 수 있다(첫 로드·요청 실패). 예전에는 [...rooms] 에서 그대로 터졌다.
+    // [JA] `rooms` がないことがある(初回読み込み · リクエスト失敗)。以前は [...rooms] でそのまま落ちた。
     const temp = Array.isArray(rooms) ? [...rooms] : [];
     const roomList = temp.sort((a, b) => {
       return String(a?.name ?? '').localeCompare(String(b?.name ?? ''));

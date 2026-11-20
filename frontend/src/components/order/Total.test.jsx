@@ -5,6 +5,7 @@ import Total from "components/order/Total";
 jest.mock("i18n/I18nProvider", () => ({
     useTranslation: () => ({ t: (key) => key }),
     // 통화 표기는 앱 언어를 따른다(useMoney). 언어가 없으면 기본 로캘 — "$59.98".
+    // [JA] 通貨表記はアプリの言語に従う(useMoney)。言語がなければデフォルトロケール — "$59.98"。
     useCurrentLang: () => null,
 }));
 
@@ -12,6 +13,10 @@ jest.mock("i18n/I18nProvider", () => ({
  * 🐛 예전에는 `{order.total}$` 였다 — 서버가 int 를 주던 시절 "59$" 로 찍혔고, 통화 기호는
  * 상점 통화와 무관하게 달러였다. V7 부터 서버가 59.98 을 주므로 센트가 보여야 하고,
  * 기호와 자릿수는 Intl 이 상점 통화(빌드 인자, 테스트에서는 USD)로 정한다.
+ *
+ * <p>[JA] 🐛 以前は `{order.total}$` だった — サーバーが int を返していた頃は "59$" と表示され、通貨記号は
+ * ストア通貨と無関係にドルだった。V7 からサーバーが 59.98 を返すのでセントが見えなければならず、
+ * 記号と桁数は Intl がストア通貨(ビルド引数、テストでは USD)で決める。
  */
 describe("Total — 주문 상세의 금액 세 줄", () => {
     it("센트가 보인다 — 59.98 은 $59.98 이지 59$ 가 아니다", () => {
@@ -31,6 +36,7 @@ describe("Total — 주문 상세의 금액 세 줄", () => {
         render(<Total order={{ total: 100, totalBeforeDiscount: 100 }} />);
         expect(screen.queryByText("order.total.coupon")).not.toBeInTheDocument();
         // 세금은 가격에 포함돼 있다 — 예전에는 늘 "무료" 라고 적었다
+        // [JA] 税は価格に含まれている — 以前は常に「無料」と書いていた
         expect(screen.getByText("order.total.included")).toBeInTheDocument();
         expect(screen.queryByText("order.total.free")).not.toBeInTheDocument();
     });

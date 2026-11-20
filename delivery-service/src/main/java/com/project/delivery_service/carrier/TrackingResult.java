@@ -17,6 +17,10 @@ import java.util.List;
  *   <li>{@code RETRYABLE}  — 네트워크 오류·5xx·쿼터 초과</li>
  *   <li>{@code PERMANENT}  — 인증 실패, 지원하지 않는 요청. 사람이 봐야 한다</li>
  * </ul>
+ *
+ * <p>[JA] 照会結果。
+ * <p>SMS 送信と同じ理由で失敗を<b>リトライ可能/不可能</b>に分ける(docs/21)。一時的な失敗を永続的な失敗として処理するとその配送は二度と更新されず、永続的な失敗をリトライし続けるとクォータだけ消費する。
+ * <p>{@code OK} — イベント一覧を受け取った(空のこともある: まだスキャン前)。{@code NOT_FOUND} — 宅配業者がその送り状番号を知らない。登録直後は正常で、何日も続くなら送り状番号が間違っているという意味。{@code RETRYABLE} — ネットワークエラー・5xx・クォータ超過。{@code PERMANENT} — 認証失敗、サポートされないリクエスト。人が見る必要がある。
  */
 public record TrackingResult(Status status, List<TrackingEvent> events,
                              LocalDateTime estimatedAt, String detail) {

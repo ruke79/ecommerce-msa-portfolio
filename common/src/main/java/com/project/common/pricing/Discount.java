@@ -19,7 +19,7 @@ public final class Discount {
     private Discount() {
     }
 
-    /** @return 할인가. 가격이 없거나 할인이 0 이하면 그대로 */
+    /** @return 할인가. 가격이 없거나 할인이 0 이하면 그대로 ／ [JA] 戻り値: 割引価格。価格がないか割引が 0 以下ならそのまま */
     public static BigDecimal apply(BigDecimal price, int percent) {
         if (price == null || percent <= 0) {
             return price;

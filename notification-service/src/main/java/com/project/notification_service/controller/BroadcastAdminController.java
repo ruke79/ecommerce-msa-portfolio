@@ -36,6 +36,15 @@ import lombok.extern.slf4j.Slf4j;
  * 공지 글을 공개할 때 카프카로 들어온다({@code BroadcastEventListener}) — 글이 있고 알림은
  * 그 글을 가리킨다. 여기서 만드는 것은 글 없이 그 자리에서 쓰는 안내라
  * {@code ANNOUNCEMENT} 다.
+ *
+ * <p>[JA] 全体通知の管理 — 管理者が直接送る案内(メンテナンス予告など)。
+ * <b>🔒 パスがそのまま認可規則である。</b> {@code /api/notifications/admin} プレフィックス以下は
+ * {@link com.project.notification_service.config.AdminOnlyInterceptor} が読み取りまで全部管理者に制限する。
+ * <b>新しい管理エンドポイントは必ずこのプレフィックスの下に置くこと</b> — 他の場所に置くと、ログインした一般ユーザーが
+ * サイト全体に任意の文言を出せる。
+ * お知らせ({@code NOTICE_PUBLISHED})はここでは作らない。そちらは catalog-service のお知らせ記事を公開するときに
+ * Kafka で入ってくる({@code BroadcastEventListener}) — 記事があり、通知はその記事を指す。ここで作るのは記事なしで
+ * その場で書く案内なので {@code ANNOUNCEMENT} である。
  */
 @Slf4j
 @RestController
@@ -46,6 +55,7 @@ public class BroadcastAdminController {
     private final BroadcastService broadcastService;
 
     /** 예약분·만료분까지 전부. 관리자는 안 보이는 것도 봐야 고칠 수 있다. */
+    // [JA] 予約分・期限切れ分まで全部。管理者は見えないものも見えないと直せない。
     @GetMapping
     public ResponseEntity<List<BroadcastAdminView>> list(
             @RequestParam(defaultValue = "50") int limit) {
@@ -61,6 +71,8 @@ public class BroadcastAdminController {
 
         // 카프카로 들어오는 공지와 달리 여기에는 "원래 사건"이 없다 — 키를 비워 두면 저장 버튼을 두 번 누르면 같은 안내가 두 줄
         // 생긴다. 키 = 내용(제목 · 본문 · 링크)의 해시 + 분 단위 시각(adminEventId).
+        // [JA] Kafka で入ってくるお知らせと違い、ここには「元の出来事」がない — キーを空にすると保存ボタンを二度押せば同じ案内が二行
+        //      できる。キー = 内容(タイトル · 本文 · リンク)のハッシュ + 分単位の時刻(adminEventId)。
         String eventId = adminEventId(request.title(), request.content(), request.url(), now);
 
         return broadcastService.create(
@@ -97,7 +109,7 @@ public class BroadcastAdminController {
             String digest = java.util.HexFormat.of().formatHex(sha.digest()).substring(0, 16);
             return "admin:" + digest + ":" + now.truncatedTo(java.time.temporal.ChronoUnit.MINUTES);
         } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다
+            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다 ／ [JA] SHA-256 はすべての JVM にある
         }
     }
 
@@ -106,6 +118,10 @@ public class BroadcastAdminController {
      *
      * <p>사용자의 {@code DELETE /broadcasts/{id}} 와 <b>다른 동작</b>이다. 그쪽은 "내
      * 목록에서만 치운다"이고, 이쪽은 모두에게서 사라진다. 읽음 행도 함께 정리한다.
+     *
+     * <p>[JA] 完全に取り下げる。
+     * ユーザーの {@code DELETE /broadcasts/{id}} とは<b>別の動作</b>である。そちらは「自分の一覧からだけ片付ける」で、
+     * こちらは全員から消える。既読行も併せて整理する。
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> remove(@PathVariable Long id) {

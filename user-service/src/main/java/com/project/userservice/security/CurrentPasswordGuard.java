@@ -41,6 +41,7 @@ public class CurrentPasswordGuard {
     }
 
     /** 비교 전에 부른다 — 한도를 넘었으면 {@link TooManyAttemptsException}. */
+    // [JA] 比較の前に呼ぶ — 上限を超えていたら {@link TooManyAttemptsException}。
     public void reserve(Long userId) {
         Long n = redis.execute(RESERVE, List.of(KEY + userId), String.valueOf(windowMs));
         if (n != null && n > max) {
@@ -49,11 +50,13 @@ public class CurrentPasswordGuard {
     }
 
     /** 맞았다 — 이 창의 시도를 지운다. */
+    // [JA] 合った — このウィンドウの試行を消す。
     public void clear(Long userId) {
         redis.delete(KEY + userId);
     }
 
     /** 현재 비밀번호를 너무 많이 틀렸다 — 컨트롤러가 429 로. */
+    // [JA] 現在のパスワードを間違えすぎた — コントローラーが 429 にする。
     public static class TooManyAttemptsException extends RuntimeException {
         public TooManyAttemptsException() {
             super("비밀번호를 너무 많이 틀렸습니다. 잠시 후 다시 시도해 주세요.");

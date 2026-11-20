@@ -44,6 +44,7 @@ import sys
 # ─────────────────────────────────────────────────────────────────────────────
 # 파싱
 # ─────────────────────────────────────────────────────────────────────────────
+# [JA] ── 解析 ──
 
 
 def statements(text: str) -> list[str]:
@@ -75,11 +76,13 @@ def split_table_body(body: str) -> list[str]:
 
 
 # 본문에서 컬럼이 아니라 제약인 줄
+# [JA] 本文でカラムではなく制約である行
 CONSTRAINT_LEAD = re.compile(
     r"^(primary\s+key|unique|foreign\s+key|constraint|check|exclude)\b", re.I
 )
 
 # serial 계열은 add column 으로 붙일 때 시퀀스를 새로 만들어 버리므로 기본 정수형으로 낮춘다.
+# [JA] serial 系は add column で付けるとシーケンスを新しく作ってしまうので基本の整数型に下げる。
 SERIAL_TO_PLAIN = {
     "bigserial": "bigint",
     "serial": "integer",
@@ -97,6 +100,7 @@ def column_for_add(defn: str) -> tuple[str, str] | None:
     name, rest = m.group(1), m.group(2)
 
     # nullable 로만 붙인다 (기존 행이 있는 테이블 때문에). 기본값·생성열도 떼어낸다.
+    # [JA] nullable でだけ付ける(既存行があるテーブルのため)。デフォルト値・生成列も外す。
     rest = re.sub(r"\bnot\s+null\b", "", rest, flags=re.I)
     rest = re.sub(r"\bdefault\s+.*$", "", rest, flags=re.I)
     rest = re.sub(r"\bgenerated\s+.*$", "", rest, flags=re.I)
@@ -115,6 +119,7 @@ def column_for_add(defn: str) -> tuple[str, str] | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # 변환
 # ─────────────────────────────────────────────────────────────────────────────
+# [JA] ── 変換 ──
 
 
 def guarded_constraint(stmt: str) -> str | None:
@@ -128,6 +133,7 @@ def guarded_constraint(stmt: str) -> str | None:
         return None
     table, name, rest = m.group(1), m.group(2), m.group(3)
     # 테이블이 아직 없을 수도 있다(다른 마이그레이션이 만드는 경우). 그때는 조용히 넘어간다.
+    # [JA] テーブルがまだないこともある(別のマイグレーションが作る場合)。そのときは黙って通過する。
     return (
         "DO $$\nBEGIN\n"
         f"    IF to_regclass('{table}') IS NOT NULL\n"

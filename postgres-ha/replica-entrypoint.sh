@@ -2,6 +2,9 @@
 # 레플리카 엔트리포인트: 데이터 디렉터리가 비어 있으면 프라이머리에서 pg_basebackup 으로
 # 초기 복제본을 만들고(-R: standby.signal + primary_conninfo 자동 기록) 스탠바이로 기동한다.
 # 이 절차는 로컬 PostgreSQL 16.13 에서 복제/승격까지 실검증되었다 (docs/13 §2).
+# [JA] レプリカのエントリポイント: データディレクトリが空ならプライマリから pg_basebackup で
+#      初期レプリカを作り(-R: standby.signal + primary_conninfo を自動記録)スタンバイとして起動する。
+#      この手順はローカルの PostgreSQL 16.13 でレプリケーション/昇格まで実地検証済み (docs/13 §2)。
 set -e
 
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -17,4 +20,5 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
 fi
 
 # 이후는 공식 이미지 기본 엔트리포인트로 위임 (스탠바이 모드는 standby.signal 이 결정)
+# [JA] 以降は公式イメージの既定エントリポイントに委ねる (スタンバイモードは standby.signal が決める)
 exec docker-entrypoint.sh postgres

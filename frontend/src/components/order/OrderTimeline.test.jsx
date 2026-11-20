@@ -27,6 +27,9 @@ beforeEach(() => jest.clearAllMocks());
 /**
  * 읽기 모델(saga-projection)에서 온 진행 기록(docs/76). 주문 상세와 별개의 출처라 없을 수 있다 — 그때는 아무것도 그리지
  * 않는다. 주문 상세는 이 컴포넌트 없이도 완전하다.
+ *
+ * <p>[JA] 読み取りモデル(saga-projection)から来た進行記録(docs/76)。注文詳細とは別の出所なので無いことがある — そのときは何も描かない。
+ * 注文詳細はこのコンポーネントなしでも完全だ。
  */
 describe("OrderTimeline — 주문 진행 기록", () => {
     it("기록을 발생 순서대로, 상태 이름과 출처를 사람이 읽는 말로 그린다", async () => {
@@ -44,6 +47,7 @@ describe("OrderTimeline — 주문 진행 기록", () => {
     });
 
     /** 🔴 404(아직 이벤트 없음 · 남의 주문) · 503(프로젝션 준비 중)은 오류가 아니다 — 조용히 비운다. */
+    // [JA] 🔴 404(まだイベントなし・他人の注文)・503(プロジェクション準備中)はエラーではない — 静かに空にする。
     it("🔴 읽기 모델이 답하지 않으면(404 · 503) 아무것도 그리지 않는다", async () => {
         getOrderTimeline.mockRejectedValue({ response: { status: 503 } });
         render(<OrderTimeline orderId={42} orderStatus="PAID" />);

@@ -47,6 +47,7 @@ class ClientTextBoundsTest {
     }
 
     /** 🐛 예전: 조각이 상한(24)을 넘으면 목록 전체가 원문이었다 — 한 조각도 번역되지 않았다. */
+    // [JA] 🐛 以前: 断片が上限(24)を超えるとリスト全体が原文だった — 一つも翻訳されなかった。
     @Test
     @DisplayName("🔴 상한을 넘는 목록도 앞의 상한만큼은 번역하고 나머지만 원문")
     void longKnownListTranslatesItsHead() {

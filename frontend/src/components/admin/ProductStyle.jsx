@@ -44,6 +44,7 @@ const Style = ({ product, setProduct, colorImage, ...props }) => {
             return;
         } else {
             // 캐러셀 이미지와 같은 이유로 리사이즈한다(imageResize.js 주석 참조).
+            // [JA] カルーセル画像と同じ理由でリサイズする(imageResize.js のコメント参照)。
             fileToResizedDataUrl(img).then((dataUrl) => {
                 let obj = {
                     color: product.color.color,

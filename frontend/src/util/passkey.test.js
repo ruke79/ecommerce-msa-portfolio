@@ -10,6 +10,9 @@ import {
 /**
  * 패스키 변환 — 서버의 base64url ↔ 브라우저의 ArrayBuffer(user-service docs/68 §20).
  * 한 바이트라도 어긋나면 서명 검증이 실패한다. "+" "/" "=" 가 섞이는 값으로 본다.
+ *
+ * <p>[JA] パスキーの変換 — サーバーの base64url ↔ ブラウザの ArrayBuffer(user-service docs/68 §20)。
+ * 1 バイトでもずれると署名検証が失敗する。"+" "/" "=" が混ざる値で確かめる。
  */
 const bytes = (...values) => new Uint8Array(values).buffer;
 

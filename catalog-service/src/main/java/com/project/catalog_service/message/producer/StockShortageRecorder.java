@@ -25,6 +25,10 @@ import lombok.extern.slf4j.Slf4j;
  * <p>주문 id 는 차감 이벤트의 멱등 키({@code order-<id>})에서 읽는다. 차감 메시지(Avro)에 주문 id 필드를 더하면
  * 스키마 진화 두 단계가 필요한데(docs/55 §4), 키에 이미 들어 있다. 키가 없거나 모양이 다르면(옛 발행자) 누구에게
  * 돌려줘야 할지 알 수 없다 — 운영자에게 넘긴다.
+ *
+ * <p>[JA] 在庫不足をアウトボックスに記録する — 在庫減算と同じトランザクションの中で呼ばれる(docs/53 §過剰販売)。
+ * 注文 id は減算イベントの冪等キー(order-<id>)から読む。減算メッセージ(Avro)に注文 id フィールドを足すとスキーマ進化が二段階必要になるが
+ * (docs/55 §4)、キーにすでに入っている。キーがない、または形が違えば(旧発行者)誰に返すべきか分からない — 運用者に引き渡す。
  */
 @Slf4j
 @Component
@@ -77,6 +81,7 @@ public class StockShortageRecorder {
             repository.save(new StockShortage(eventId, orderId, objectMapper.writeValueAsString(event)));
         } catch (JsonProcessingException e) {
             // 재고 차감까지 되돌린다 — 부족을 적지 못한 채 커밋하면 아무도 모르는 예전 상태로 돌아간다.
+            // [JA] 在庫減算まで巻き戻す — 不足を記録できないままコミットすると、誰も知らない以前の状態に戻ってしまう。
             throw new IllegalStateException("재고 부족 기록을 만들지 못했다: orderId=" + orderId, e);
         }
         log.warn("재고 부족: 결제된 주문의 일부를 보낼 수 없다 — order 가 부족분을 자동 환불한다. orderId={} 줄 {}개, {}개",

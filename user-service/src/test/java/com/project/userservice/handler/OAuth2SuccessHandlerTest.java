@@ -38,6 +38,9 @@ import jakarta.servlet.http.Cookie;
  * 일반 계정 → REFRESH 쿠키 + 홈, 2FA 계정 → PENDING_2FA 쿠키 + 2FA 입력 화면.
  * (예전에는 2FA 계정을 아예 거절했고, 그 전에는 getUsername() 을 이메일 조회에 넘겨
  * 모든 소셜 로그인이 user_not_found 로 끝났다.)
+ *
+ * <p>[JA] ソーシャルログイン仕上げの二つの分岐を固定する: 一般アカウント → REFRESH クッキー + ホーム、2FA アカウント → PENDING_2FA クッキー + 2FA 入力画面。
+ * (以前は 2FA アカウントをそもそも拒否し、その前は getUsername() をメール検索に渡してすべてのソーシャルログインが user_not_found で終わっていた。)
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -100,6 +103,9 @@ class OAuth2SuccessHandlerTest {
     /**
      * 🔴 소셜 로그인도 새 기기면 알린다(docs/57 §22 · docs/44 §4) — 🐛 예전에는 기기를 보지 않아 소셜 계정을 가져간 사람이
      * 알림 없이 들어왔다. 2FA 계정도 알린다(본인 확인은 이미 끝났다 — 비밀번호 경로와 같은 자리).
+     *
+     * <p>[JA] 🔴 ソーシャルログインも新しい機器なら通知する(docs/57 §22 · docs/44 §4) — 🐛 以前は機器を見ず、ソーシャルアカウントを奪った人が通知なしに入ってきた。
+     * 2FA アカウントも通知する(本人確認は既に終わった — パスワード経路と同じ場所)。
      */
     @Test
     @DisplayName("🔴 새 기기: 기기 쿠키를 심고 새 기기 알림을 보낸다 — 2FA 계정도")
@@ -153,10 +159,11 @@ class OAuth2SuccessHandlerTest {
         handler.onAuthenticationSuccess(new MockHttpServletRequest(), response, auth("kim@example.com"));
 
         assertNotNull(response.getCookie("PENDING_2FA"));
-        assertNull(response.getCookie("REFRESH"));   // 코드 확인 전에는 세션이 없다
+        assertNull(response.getCookie("REFRESH"));   // 코드 확인 전에는 세션이 없다 ／ [JA] コード確認前にはセッションがない
         assertEquals("https://shop.example.com/signin?oauth2fa=1", response.getRedirectedUrl());
         verify(refreshTokenService, never()).createRefreshToken(anyLong());
         // 🔴 대기 쿠키의 값이 액세스 토큰(같은 키의 보통 JWT)이면 게이트웨이에 Bearer 로 보내 2FA 를 건너뛴다.
+        // [JA] 🔴 待機クッキーの値がアクセストークン(同じ鍵の普通の JWT)なら、ゲートウェイに Bearer で送って 2FA を飛ばせる。
         assertEquals("pending-token", response.getCookie("PENDING_2FA").getValue());
         verify(jwtUtils, never()).generateToken(anyLong(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean(), anyLong());
         verify(jwtUtils, never()).generateToken(anyLong(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyBoolean());

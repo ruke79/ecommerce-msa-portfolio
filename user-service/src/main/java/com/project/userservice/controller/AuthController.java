@@ -60,14 +60,18 @@ public class AuthController {
     private final com.project.userservice.service.RefreshTokenService refreshTokenService;
 
     /** 2FA 대기 토큰 — 첫 단계는 통과했고 코드 확인이 남은 상태(비밀번호·소셜 공통). */
+    // [JA] 2FA 待機トークン — 第一段階は通過し、コード確認が残っている状態(パスワード・ソーシャル共通)。
     private final com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
 
     /** 로그인 2단계의 두 번째 수단 — SMS(docs/24 §10). */
+    // [JA] ログイン 2 段階目の二つ目の手段 — SMS(docs/24 §10)。
     private final com.project.userservice.security.SmsTwoFactor smsTwoFactor;
     /** 2단계 인증 복구 코드(docs/57 §22). */
+    // [JA] 2 段階認証のリカバリーコード(docs/57 §22)。
     private final com.project.userservice.security.recovery.RecoveryCodes recoveryCodes;
 
     /** 위험 기반 로그인의 메일 확인(docs/68 §19). */
+    // [JA] リスクベースログインのメール確認(docs/68 §19)。
     private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
     private final com.project.userservice.service.DeviceRecognitionService deviceRecognitionService;
     private final com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
@@ -84,6 +88,7 @@ public class AuthController {
     private final TotpService totpService;
 
     /** 기획전 쿠폰의 대상 판정에 쓴다 — 가입일은 이 서비스만 갖고 있다. */
+    // [JA] 企画展クーポンの対象判定に使う — 登録日はこのサービスだけが持っている。
     private final com.project.userservice.service.SegmentService segmentService;
 
             
@@ -143,6 +148,10 @@ public class AuthController {
      *
      * <p>버튼을 하드코딩하면 client-id 가 없는 프로바이더의 버튼이 그려지고, 누르면
      * 그제서야 에러가 난다. 서버가 아는 것(Secret 에 자격증명이 있는 것)만 노출한다.
+     *
+     * <p>[JA] 設定済みのソーシャルログインプロバイダ一覧 — フロントエンドがこれを見てボタンを描く。
+     * ボタンをハードコードすると client-id のないプロバイダのボタンが描かれ、押して初めて
+     * エラーになる。サーバーが知っているもの(Secret に資格情報があるもの)だけを公開する。
      */
     @org.springframework.web.bind.annotation.GetMapping("/public/oauth2/providers")
     public ResponseEntity<java.util.List<String>> oauth2Providers() {
@@ -158,8 +167,16 @@ public class AuthController {
      * ({@link com.project.userservice.security.PendingTwoFactor}). 틀린 코드는 토큰당 5번, 그리고 <b>사용자당 15분에 5번</b>까지다(docs/68 §15).
      *
      * <p>{@code /public/oauth2/verify-2fa} 는 소셜 경로만 있던 때의 이름이다 — 배포 중인 옛 화면을 위해 남긴다.
+     *
+     * <p>[JA] 2FA 確認 — 第一段階(パスワードログイン・ソーシャルログイン)が仕込んだ PENDING_2FA(httpOnly)Cookie と TOTP コードを一緒に
+     * 検査し、通過してはじめて REFRESH Cookie(セッション)を発行する。
+     * public パスである理由: この時点のユーザーはまだ認証されていない(それがこの段階の存在理由だ)。身元は待機
+     * トークンが証明する — アクセストークンと<b>別のキー</b>で署名されていて、それ自体ではどこにも入れない
+     * ({@link com.project.userservice.security.PendingTwoFactor})。誤ったコードはトークンごとに 5 回、そして<b>ユーザーごとに 15 分で 5 回</b>まで(docs/68 §15)。
+     * {@code /public/oauth2/verify-2fa} はソーシャル経路しかなかった頃の名前だ — デプロイ中の古い画面のために残す。
      */
     /** 대기 쿠키(PENDING_2FA) 값 — 없으면 null. */
+    // [JA] 待機 Cookie(PENDING_2FA)の値 — なければ null。
     private static String pendingCookie(HttpServletRequest request) {
         String pending = null;
         if (request.getCookies() != null) {
@@ -186,6 +203,7 @@ public class AuthController {
                     .body(Map.of("message", "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요."));
         }
         // recovery — 쓰지 않은 복구 코드가 있는가(개수는 싣지 않는다, docs/57 §22).
+        // [JA] recovery — 未使用のリカバリーコードがあるか(個数は載せない、docs/57 §22)。
         return ResponseEntity.ok(Map.of("totp", user.isTwoFactorEnabled(), "sms", user.isSmsTwoFactorEnabled(),
                 "recovery", recoveryCodes != null && recoveryCodes.remaining(user.getUserId()) > 0));
     }
@@ -235,20 +253,26 @@ public class AuthController {
 
         String pending = pendingCookie(request);
         // 수단 — totp(기본, 옛 화면) · sms(docs/24 §10) · recovery(복구 코드, docs/57 §22). 모르는 값은 TOTP 로 읽지 않는다.
+        // [JA] 手段 — totp(既定、旧画面) · sms(docs/24 §10) · recovery(リカバリーコード、docs/57 §22)。未知の値は TOTP として読まない。
         boolean sms = "sms".equals(method);
         boolean recovery = "recovery".equals(method);
         if (!sms && !recovery && !"totp".equals(method)) {
             return ResponseEntity.badRequest().body(Map.of("message", "알 수 없는 인증 수단입니다."));
         }
         // 만료(5분)·위조·부재·시도 초과를 구분해 알려주지 않는다 — 어차피 처음부터 다시 하면 된다.
+        // [JA] 期限切れ(5 分)・偽造・欠落・試行超過を区別して知らせない — どのみち最初からやり直せばよい。
         final String expired = "인증 시간이 지났습니다. 로그인을 다시 시작해 주세요.";
         // 🔒 시도는 검증 **전에** 센다 — 동시에 보낸 코드가 모두 "아직 0번" 을 읽고 전부 검증되던 것을 막는다(PendingTwoFactor 주석).
+        // [JA] 🔒 試行は検証の**前に**数える — 同時に送ったコードがすべて「まだ 0 回」を読み全部検証されていたのを防ぐ(PendingTwoFactor のコメント)。
         var attempt = pendingTwoFactor.reserveAttempt(pending).orElse(null);
         Long userId = attempt == null ? null : attempt.userId();
         User user = userId == null ? null : userRepository.findById(userId).orElse(null);
         // 코드를 받는 사이(최대 5분) 막힌 계정이면 세션을 주지 않는다 — 🐛 예전에는 계정 상태를 보지 않았다.
         // 그 수단이 켜져 있어야 한다 — SMS 만 켠 계정에 TOTP 로, TOTP 만 켠 계정에 SMS 로 들어오지 못한다.
         // 복구 코드는 어느 수단이든 켜져 있으면 쓸 수 있다(그 수단을 잃었을 때 쓰는 것이다).
+        // [JA] コードを受け取る間(最大 5 分)にブロックされたアカウントならセッションを与えない — 🐛 以前はアカウント状態を見ていなかった。
+        //      その手段が有効でなければならない — SMS だけ有効なアカウントに TOTP で、TOTP だけ有効なアカウントに SMS で入れない。
+        //      リカバリーコードはどの手段でも有効なら使える(その手段を失ったときに使うものだ)。
         boolean methodOn = recovery ? user != null && user.requiresTwoFactor()
                 : user != null && (sms ? user.isSmsTwoFactorEnabled() : user.isTwoFactorEnabled());
         if (user == null || !methodOn || !user.canSignIn()) {
@@ -267,6 +291,7 @@ public class AuthController {
                         : UserService.TwoFactorChange.INVALID_CODE);
         if (checked == UserService.TwoFactorChange.UNAVAILABLE) {
             // notification 에 닿지 못했다 — 통과시키지 않는다. 대기 토큰은 남긴다(다시 시도하거나 다른 수단으로).
+            // [JA] notification に届かなかった — 通さない。待機トークンは残す(再試行するか別の手段で)。
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("message", "인증번호를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."));
         }
@@ -283,17 +308,20 @@ public class AuthController {
         }
         if (checked != UserService.TwoFactorChange.OK) {
             // 이번 시도는 위에서 이미 셌다 — 남은 시도가 없으면 다음 요청은 토큰부터 거절된다.
+            // [JA] 今回の試行は上で既に数えた — 残り試行がなければ次のリクエストはトークンの段階で拒否される。
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", attempt.moreAfterThis() ? "인증 코드가 올바르지 않습니다." : expired));
         }
 
         // 통과 — 정상 로그인과 같은 REFRESH 쿠키를 심는다. 대기 토큰은 1회용이다 — 태우고 쿠키도 지운다.
+        // [JA] 通過 — 通常ログインと同じ REFRESH Cookie を仕込む。待機トークンは 1 回限り — 消費して Cookie も消す。
         pendingTwoFactor.consume(pending);
         var refreshToken = refreshTokenService.createRefreshToken(user.getUserId());
         response.addCookie(jwtUtils.createCookie(
                 com.project.userservice.constants.TokenType.REFRESH.getType(),
                 refreshToken.getToken(), jwtUtils.refreshTokenLifetime()));
         // 지우는 쿠키도 발급할 때와 같은 속성(Secure · HttpOnly · SameSite)으로 — 쿠키는 JwtUtils.createCookie 한 곳에서 만든다.
+        // [JA] 消す Cookie も発行時と同じ属性(Secure · HttpOnly · SameSite)で — Cookie は JwtUtils.createCookie 一か所で作る。
         response.addCookie(jwtUtils.createCookie(
                 com.project.userservice.security.PendingTwoFactor.COOKIE, null, java.time.Duration.ZERO));
 
@@ -330,12 +358,14 @@ public class AuthController {
 
         User user = userRepository.findById(passed.userId()).orElse(null);
         // 코드를 받는 사이 막힌 계정(정지 · 탈퇴)이면 세션을 주지 않는다.
+        // [JA] コードを受け取る間にブロックされたアカウント(停止 · 退会)ならセッションを与えない。
         if (user == null || !user.canSignIn()) {
             response.addCookie(clearPending);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", expired));
         }
 
         // 이제야 기기를 기록한다 — 확인을 통과한 브라우저만 "아는 기기" 가 된다.
+        // [JA] ここで初めて端末を記録する — 確認を通過したブラウザだけが「既知の端末」になる。
         try {
             var recognition = deviceRecognitionService.recognize(user.getUserId(),
                     com.project.userservice.security.DeviceIdentity.tokenFrom(request),
@@ -381,6 +411,17 @@ public class AuthController {
      *
      * <p>로그인 실패 경로는 반대다 — 거기서는 비밀번호를 맞힌 뒤에만 계정 상태를 알려준다
      * ({@code CustomAuthenticationProvider}).
+     *
+     * <p>[JA] 会員登録。
+     * 🐛 <b>重複チェックが {@code 200 OK} を返していた。</b>フロントの {@code useMutation} は 2xx を成功とみなすので
+     * {@code onSuccess} が実行され、画面には<b>「認証メールを送りました」</b>トーストが出てログイン画面に移った。
+     * 本文に入った「既に存在する」は誰も見なかった。ユーザーは来ないメールを待ち、その間本物のアカウントはそのままだった。
+     * 本文は既に事実を述べていたので、この変更で<b>新たに漏れる情報はない</b> — 画面がそれを読めるようになっただけだ。
+     * ⚠️ 登録エンドポイントは本質的に<b>アドレスの登録有無を明かす。</b>防げないからではなく(防ぐには「確認メールを送りました」
+     * だけを返し既存ユーザーに案内メールを送るフローが必要)その代償が大きいからだ — タイプミスで他人のアドレスを入れた人が
+     * なぜ登録できないのか永遠に分からなくなる。代わりに<b>認証済みかどうかは区別しない</b>: 未認証アカウントかどうかを
+     * 応答で知らせるとそれが新たな漏洩になる。だから両方の場合に同じ文言を返し、再送の案内を併せて付ける。
+     * ログイン失敗の経路は逆だ — そこではパスワードを当てたあとでだけアカウント状態を知らせる({@code CustomAuthenticationProvider})。
      */
     @PostMapping("/public/register")
     public ResponseEntity<?> registerUserAccount(@Valid @RequestBody SignupRequest accountDto,
@@ -436,12 +477,22 @@ public class AuthController {
      *
      * <p>게이트웨이의 인증 전 경로 속도 제한(분당 60회)이 이 엔드포인트에도 적용되므로,
      * 남의 주소로 메일을 반복 발송하는 것도 함께 제한된다.
+     *
+     * <p>[JA] 確認メールの再送。
+     * このエンドポイントが<b>なかった。</b>だからメールが迷惑メールフォルダに入ったり、SMTP が一時的に失敗したり、
+     * リンクが期限切れになると(以前の既定値は 3 分だった)ユーザーはアカウントを有効化する手段がまったく
+     * なかった — 同じメールでの再登録も「既に存在するアカウント」で弾かれる。
+     * <b>アカウントの存在有無を知らせない。</b>未登録のアドレスでも、認証済みのアドレスでも、未認証のアドレスでも
+     * 応答は同じだ。違う答えを返すとこのエンドポイントが<b>登録有無の確認ツール</b>になってしまう。
+     * 実際に送ったかどうかはサーバーログにだけ残る。
+     * ゲートウェイの認証前パスのレート制限(毎分 60 回)がこのエンドポイントにもかかるので、
+     * 他人のアドレスにメールを繰り返し送ることも併せて制限される。
      */
     @PostMapping("/public/resend-verification")
     public ResponseEntity<?> resendVerificationEmail(@RequestBody Map<String, String> body,
             final HttpServletRequest request) {
 
-        final String email = body == null ? null : com.project.common.text.Nfkc.of(body.get("email")); // 가입 · 로그인과 같은 NFKC
+        final String email = body == null ? null : com.project.common.text.Nfkc.of(body.get("email")); // 가입 · 로그인과 같은 NFKC ／ [JA] 登録 · ログインと同じ NFKC
         final GenericResponse sameAnswer = new GenericResponse(
                 "입력하신 주소로 확인 메일을 보냈습니다. 메일함(스팸함 포함)을 확인해 주세요.");
 
@@ -453,12 +504,14 @@ public class AuthController {
             User user = userService.findByEmail(email);
 
             // 없는 계정, 이미 인증된 계정 — 어느 쪽이든 같은 응답을 돌려주고 아무것도 하지 않는다.
+            // [JA] 存在しないアカウント、既に認証済みのアカウント — どちらでも同じ応答を返し何もしない。
             if (user == null || user.isEnabled()) {
                 log.debug("재발송 요청이지만 보낼 대상이 아니다(미가입 또는 이미 인증됨)");
                 return ResponseEntity.ok(sameAnswer);
             }
 
             // 새 토큰을 발급하고 메일을 다시 보낸다. 리스너가 커밋 이후 비동기로 처리한다.
+            // [JA] 新しいトークンを発行しメールを再送する。リスナーがコミット後に非同期で処理する。
             eventPublisher.publishEvent(new com.project.userservice.registration.OnRegistrationCompleteEvent(
                     user, request.getLocale(), getAppUrl(request)));
 
@@ -466,6 +519,7 @@ public class AuthController {
 
         } catch (RuntimeException e) {
             // 실패해도 응답은 같다 — 오류 메시지로 계정 존재 여부가 새면 안 된다.
+            // [JA] 失敗しても応答は同じ — エラーメッセージでアカウントの存在有無が漏れてはならない。
             log.error("확인 메일 재발송 처리 중 오류", e);
         }
 
@@ -517,6 +571,11 @@ public class AuthController {
      * <p>🔒 예전에는 가드가 없었다 — {@code /api/auth/user/**} 는 USER 역할만 요구하므로, 로그인한 아무나 id 를
      * 바꿔 가며 <b>남의 이메일을 긁어 갈 수 있었다.</b> 바로 아래 {@code /user/id} 와 같은 규칙으로 막는다: 게이트웨이를
      * 거친 요청(신원 헤더 있음)은 관리자만. 막을 때는 없는 사용자와 같은 404 다 — 403 이면 "그 id 는 있다" 를 알려 준다.
+     *
+     * <p>[JA] id → メール。<b>内部専用</b>(cart-service が呼ぶ)。
+     * 🔒 以前はガードがなかった — {@code /api/auth/user/**} は USER ロールしか要求しないので、ログインした誰でも id を
+     * 変えながら<b>他人のメールを収集できた。</b>すぐ下の {@code /user/id} と同じ規則で塞ぐ: ゲートウェイを
+     * 経たリクエスト(身元ヘッダーあり)は管理者だけ。塞ぐときは存在しないユーザーと同じ 404 — 403 だと「その id は存在する」と知らせてしまう。
      */
     @GetMapping("/user/email/{userId}")
     public ResponseEntity<?> getUserEmailById(@PathVariable Long userId,
@@ -536,6 +595,7 @@ public class AuthController {
     }
 
     /** 한 번에 물을 수 있는 id 수 — 관리자 목록 한 페이지면 충분하다. */
+    // [JA] 一度に問い合わせられる id の数 — 管理者一覧の 1 ページ分で十分。
     static final int MAX_EMAIL_LOOKUP = 100;
 
     /**
@@ -543,6 +603,10 @@ public class AuthController {
      *
      * <p>order-service 는 예전에 고객 사본(orders.customer)에서 이메일을 읽었다. 사본을 없애면서 표시에 필요한
      * 이메일만 여기서 받는다 — 페이지 하나에 한 번. 가드는 {@link #getUserEmailById} 와 같다. 없는 id 는 빠진다.
+     *
+     * <p>[JA] 複数の id → メール。<b>内部専用</b> — order-service の管理者注文一覧が呼ぶ(docs/48 §6-①)。
+     * order-service は以前、顧客の写し(orders.customer)からメールを読んでいた。写しをなくすにあたり表示に必要な
+     * メールだけをここで受け取る — 1 ページに 1 回。ガードは {@link #getUserEmailById} と同じ。存在しない id は抜ける。
      */
     @GetMapping("/user/emails")
     public ResponseEntity<?> getUserEmailsByIds(@RequestParam("ids") java.util.List<Long> ids,
@@ -567,6 +631,7 @@ public class AuthController {
     }
 
     /** id → 프로필. <b>내부 전용</b> — 가드는 {@link #getUserEmailById} 와 같다(예전에는 없었다). */
+    // [JA] id → プロフィール。<b>内部専用</b> — ガードは {@link #getUserEmailById} と同じ(以前はなかった)。
     @GetMapping("/user/profile/{userId}")
     public ResponseEntity<?> getUserProfileById(@PathVariable Long userId,
             @RequestHeader(value = "User-Role", required = false) String callerRole,
@@ -627,6 +692,16 @@ public class AuthController {
      * k8s 에서는 ClusterIP 라 기본적으로 성립하지만(이 프로젝트의 모든 Feign 트래픽이 이미
      * 같은 전제를 쓴다), 서비스 포트를 외부에 노출하는 순간 무너진다. 근본적으로는 내부
      * 호출용 별도 포트나 서비스 간 인증(mTLS)으로 가야 한다 — docs/27 에 후속 과제로 남겼다.
+     *
+     * <p>[JA] メールでユーザーを探す — <b>サービス間の内部呼び出し専用</b>(Feign)。
+     * 🔒 以前はゲートウェイ経由で<b>ログインした誰でも</b>呼べた。メールさえ入れればその人の userId・名前・ニックネーム・
+     * プロフィール画像が出たので、メール一覧さえあれば登録有無の確認(アカウント列挙)と個人情報収集がそのまま可能だった。
+     * <b>判定方法。</b>ゲートウェイを経たリクエストにはゲートウェイが {@code User-Role} ヘッダーを付ける(そしてクライアントが
+     * 送った同名ヘッダーは消す)。内部 Feign 呼び出しはゲートウェイを経ないのでこのヘッダーがない。したがって
+     * <b>ヘッダーがある = 外部から来たリクエスト</b>であり、その場合は管理者だけを許可する。
+     * ⚠️ この判定は<b>user-service に外部から直接届かない</b>という前提の上にある。k8s では ClusterIP なので基本的に
+     * 成り立つが(このプロジェクトのすべての Feign トラフィックが既に同じ前提を使う)、サービスポートを外部に公開した瞬間に崩れる。
+     * 根本的には内部呼び出し用の別ポートかサービス間認証(mTLS)に移るべきだ — docs/27 に後続課題として残した。
      */
     @GetMapping("/user/id")
     public ResponseEntity<?> findUserByEmail(@RequestParam("email") String email,
@@ -636,6 +711,8 @@ public class AuthController {
 
         // User-Role **하나만** 보면 role 클레임이 없는 토큰이 헤더 없이 도착해 "내부 호출" 로 통과한다.
         // 세 헤더 중 하나라도 있으면 외부다(InternalCallGuard).
+        // [JA] User-Role **一つだけ**を見ると、role クレームのないトークンがヘッダーなしで届き「内部呼び出し」として通ってしまう。
+        //      三つのヘッダーのうち一つでもあれば外部である(InternalCallGuard)。
         if (!com.project.common.security.InternalCallGuard.allowed(callerRole, callerEmail, callerId)) {
             log.warn("외부에서 사용자 조회 시도를 차단");
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -643,6 +720,7 @@ public class AuthController {
         }
 
         // 이메일은 개인정보다. 전체를 로그에 남기지 않는다.
+        // [JA] メールは個人情報だ。全体をログに残さない。
         log.debug("internal user lookup");
 
         User user = userService.findByEmail(email);
@@ -679,10 +757,20 @@ public class AuthController {
      *
      * <p>없는 사용자는 <b>빈 목록</b>이다. 404 로 구분해 주면 그 자체가 가입 여부를
      * 알려주는 신호가 된다.
+     *
+     * <p>[JA] このユーザーが今属している顧客セグメント。
+     * 企画展クーポンが「新規登録者のみ」のような条件をかけるとき coupon-service が問い合わせる。
+     * 判定はここで行う — 「新規とは何日か」は当方のポリシーで、登録日はこのサービスだけが
+     * 持っている({@link com.project.userservice.service.SegmentService} のコメント)。
+     * 🔒 認可はすぐ上の {@code /user/id} と同じ規則だ。ゲートウェイを経たリクエストには {@code User-Role} ヘッダーが
+     * 付くので<b>ヘッダーがある = 外部から来たリクエスト</b>であり、そのときは管理者だけを許可する。これがないと
+     * id だけで他人が新規か(= 登録時期の区間)を知ることができ、登録有無の確認にもそのまま使われる。
+     * 存在しないユーザーは<b>空のリスト</b>である。404 で区別するとそれ自体が登録有無を知らせる信号になる。
      */
     @GetMapping("/user/segments")
     public ResponseEntity<?> findUserSegments(
             // 사용자 id 로 묻는다(docs/48 §6-⑥ — coupon 의 신원도 id 다). 예전에는 이메일이었다.
+            // [JA] ユーザー id で問い合わせる(docs/48 §6-⑥ — coupon の身元も id だ)。以前はメールだった。
             @RequestParam(value = "userId", required = false) Long userId,
             @RequestHeader(value = "User-Role", required = false) String callerRole,
             @RequestHeader(value = "User-Email", required = false) String callerEmail,
@@ -703,6 +791,7 @@ public class AuthController {
     }
 
     /** 사용자 이름 → 사용자(이메일 포함). <b>내부 전용</b> — 가드는 {@link #getUserEmailById} 와 같다(예전에는 없었다). */
+    // [JA] ユーザー名 → ユーザー(メール含む)。<b>内部専用</b> — ガードは {@link #getUserEmailById} と同じ(以前はなかった)。
     @GetMapping("/user/name")
     public ResponseEntity<?> findUserByName(@RequestParam("userName") String userName,
             @RequestHeader(value = "User-Role", required = false) String callerRole,
@@ -754,6 +843,15 @@ public class AuthController {
      * 경우에 같은 응답을 주는데, 정작 비밀번호 찾기가 뚫려 있었다.
      *
      * <p>{@code e.printStackTrace()} 도 없앴다 — 스택은 로거로 가야 한다.
+     *
+     * <p>[JA] パスワード再設定 — 再設定リンクをメールで送る。
+     * 🐛 <b>{@code @RequestParam} だった。</b>それはクエリ文字列・フォームしか読まないのに、画面は
+     * {@code application/json} の本文で送る({@code ForgotPage.jsx})。だからリクエストは常に
+     * <b>400 "Required request parameter 'email' is not present"</b> だった — パスワード再設定の最初の段階から動いたことがない。
+     * 🔒 <b>どんな場合も同じ 200 を返す。</b>以前は未登録アドレスだとサービスが例外を投げ、ここで 500 に変わった。
+     * 登録済みアドレスは 200 — <b>応答コードがそのまま登録有無だった。</b>同じリポジトリの {@code resend-verification} は
+     * この漏洩を防ぐためすべての場合に同じ応答を返すのに、肝心のパスワード再設定が穴になっていた。
+     * {@code e.printStackTrace()} もなくした — スタックはロガーに送るべきだ。
      */
     @PostMapping("/public/forgot-password")
     public ResponseEntity<?> forgotPassword(@RequestBody Map<String, String> body) {
@@ -761,7 +859,7 @@ public class AuthController {
         final MessageResponse sameAnswer = new MessageResponse(
                 "입력하신 주소로 비밀번호 재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인해 주세요.");
 
-        final String email = body == null ? null : com.project.common.text.Nfkc.of(body.get("email")); // 가입 · 로그인과 같은 NFKC
+        final String email = body == null ? null : com.project.common.text.Nfkc.of(body.get("email")); // 가입 · 로그인과 같은 NFKC ／ [JA] 登録 · ログインと同じ NFKC
         if (email == null || email.isBlank()) {
             return ResponseEntity.ok(sameAnswer);
         }
@@ -771,6 +869,8 @@ public class AuthController {
         } catch (RuntimeException e) {
             // 실패해도 응답은 같다 — 오류 메시지로 계정 존재 여부가 새면 안 된다.
             // ⚠️ 예외 메시지에 주소가 섞일 수 있으므로 클래스 이름만 남긴다.
+            // [JA] 失敗しても応答は同じ — エラーメッセージでアカウントの存在有無が漏れてはならない。
+            //      ⚠️ 例外メッセージにアドレスが混じりうるのでクラス名だけを残す。
             log.error("비밀번호 재설정 메일 처리 중 오류: {}", e.getClass().getSimpleName());
         }
 
@@ -784,6 +884,11 @@ public class AuthController {
      * 가져갈 수 있는 자격증명인데, 쿼리스트링은 nginx 액세스 로그·프록시·브라우저 히스토리에
      * 그대로 남는다. 링크(GET)로 오는 것은 어쩔 수 없지만, 그것을 실제로 쓰는 이 요청까지
      * 같은 자리에 둘 이유는 없다.
+     *
+     * <p>[JA] 再設定リンクで新しいパスワードを設定する。
+     * 🔒 <b>トークンをクエリ文字列ではなく本文で受け取る。</b>このトークンはそれ自体でアカウントを
+     * 奪える資格情報だが、クエリ文字列は nginx アクセスログ・プロキシ・ブラウザ履歴にそのまま残る。
+     * リンク(GET)で来るのは仕方ないが、それを実際に使うこのリクエストまで同じ場所に置く理由はない。
      */
     @PostMapping("/public/reset-password")
     public ResponseEntity<?> resetPassword(@RequestBody Map<String, String> body) {
@@ -802,12 +907,15 @@ public class AuthController {
         } catch (RuntimeException e) {
             // 여기 메시지는 토큰 상태(무효·사용됨·만료)를 설명한다. 토큰을 이미 손에 쥔
             // 사람에게 주는 정보라 계정 존재 여부가 새지 않는다.
+            // [JA] ここのメッセージはトークンの状態(無効・使用済み・期限切れ)を説明する。トークンを既に手にしている
+            //      人に与える情報なので、アカウントの存在有無は漏れない。
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new MessageResponse(ClientMessage.of(e)));
         }
     }
 
     /** 2FA 켜기 전 "최근 로그인" 창 — 패스키 등록 · 탈퇴와 같은 생각(docs/68 §16 · §20). */
+    // [JA] 2FA 有効化前の「最近のログイン」ウィンドウ — パスキー登録 · 退会と同じ考え(docs/68 §16 · §20)。
     @org.springframework.beans.factory.annotation.Value("${auth.two-factor.reauth-window:PT10M}")
     private java.time.Duration twoFactorReauthWindow = java.time.Duration.ofMinutes(10);
 
@@ -831,6 +939,7 @@ public class AuthController {
 
     private ResponseEntity<String> twoFactorReauthRequired() {
         // 본문은 다른 2FA 응답처럼 문자열 — 화면은 code 대신 403 으로 다시 로그인을 안내한다.
+        // [JA] 本文は他の 2FA 応答と同じく文字列 — 画面は code ではなく 403 で再ログインを案内する。
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body("reauth_required");
     }
 
@@ -843,6 +952,7 @@ public class AuthController {
         }
         Long userId = authUtil.loggedInUserId();
         // 🔒 이미 켜져 있으면 비밀을 바꾸지 않는다 — 세션만 가진 사람이 자기 앱으로 바꿔 끼우지 못하게(끄고 다시 켠다, docs/68 §14).
+        // [JA] 🔒 既に有効なら秘密を変えない — セッションだけを持つ者が自分のアプリに差し替えられないように(無効にして再び有効にする、docs/68 §14)。
         if (userService.start2FASetup(userId) == UserService.TwoFactorChange.ALREADY_ENABLED) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body("2FA already enabled");
         }
@@ -866,6 +976,7 @@ public class AuthController {
     }
 
     /** 마지막 수단을 껐으면 복구 코드도 지운다 — 다시 켰을 때 옛 코드가 되살아나지 않게(docs/57 §22). */
+    // [JA] 最後の手段を無効にしたらリカバリーコードも消す — 再び有効にしたとき古いコードが生き返らないように(docs/57 §22)。
     private void forgetRecoveryCodesIfOff(UserService.TwoFactorChange result, Long userId) {
         if (result == UserService.TwoFactorChange.OK && recoveryCodes != null) {
             userRepository.findById(userId).ifPresent(recoveryCodes::forgetIfNoTwoFactor);
@@ -897,6 +1008,7 @@ public class AuthController {
     public ResponseEntity<String> verify2FA(@RequestParam int code,
             @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {
         // 켜기와 확인 사이에 창이 닫혔을 수도 있다 — 실제로 켜지는 이 순간에 다시 본다.
+        // [JA] 有効化と確認の間にウィンドウが閉じたかもしれない — 実際に有効になるこの瞬間に再確認する。
         if (!recentlyAuthenticated(refresh)) {
             return twoFactorReauthRequired();
         }
@@ -918,6 +1030,7 @@ public class AuthController {
     }
 
     // ── 2단계 인증 — SMS 수단 켜기 · 끄기(docs/24 §10) ─────────────────────────────────────────────
+    // [JA] ── 2 段階認証 — SMS 手段の有効化 · 無効化(docs/24 §10) ──
 
     /**
      * SMS 코드를 받는다 — 꺼져 있으면 켜기 위해(지금 등록된 번호로, 최근 로그인 필요), 켜져 있으면 끄기 확인용(켤 때의 번호로).
@@ -934,6 +1047,7 @@ public class AuthController {
             return smsSentResponse(smsTwoFactor.send(user));
         }
         // 켜기 — 훔친 세션으로 자기 번호를 등록해 2단계 인증을 가져가지 못하게 TOTP 켜기와 같은 "최근 로그인" 창(docs/68 §14).
+        // [JA] 有効化 — 盗んだセッションで自分の番号を登録して 2 段階認証を奪えないよう、TOTP 有効化と同じ「最近のログイン」ウィンドウ(docs/68 §14)。
         if (!recentlyAuthenticated(refresh)) {
             return twoFactorReauthRequired();
         }
@@ -967,6 +1081,8 @@ public class AuthController {
         if (user != null) {
             // smsEnabled — 두 번째 수단(docs/24 §10). is2faEnabled 는 예전 그대로 TOTP 다(옛 화면이 읽는다).
             // recoveryCodesRemaining — 쓰지 않은 복구 코드 수(docs/57 §22).
+            // [JA] smsEnabled — 二つ目の手段(docs/24 §10)。is2faEnabled は以前どおり TOTP である(旧画面が読む)。
+            //      recoveryCodesRemaining — 未使用のリカバリーコード数(docs/57 §22)。
             return ResponseEntity.ok().body(Map.of("is2faEnabled", user.isTwoFactorEnabled(),
                     "smsEnabled", user.isSmsTwoFactorEnabled(),
                     "recoveryCodesRemaining", recoveryCodes == null ? 0 : recoveryCodes.remaining(user.getUserId())));
@@ -979,6 +1095,9 @@ public class AuthController {
     // `/public/verify-2fa-login` 은 지웠다(docs/27 §12b). 토큰을 쿼리로 받았고(URL 은 로그에 남는다), 시도 제한 없이
     // 코드가 맞는지만 알려 주는 오라클이었으며, 토큰의 subject(이메일)를 username 으로 조회해 동작한 적도 없다.
     // 화면도 부르지 않았다. 로그인 2단계는 `/public/verify-2fa` 하나다.
+    // [JA] `/public/verify-2fa-login` は削除した(docs/27 §12b)。トークンをクエリで受け取り(URL はログに残る)、試行制限なしに
+    //      コードが合うかだけを教えるオラクルで、トークンの subject(メール)を username として照会しており動いたこともない。
+    //      画面も呼んでいなかった。ログインの 2 段階目は `/public/verify-2fa` 一つである。
 
     private String getAppUrl(HttpServletRequest request) {
         String verifyPath = request.getScheme() +"://" + request.getServerName() + ":" + request.getServerPort() + request.getContextPath();

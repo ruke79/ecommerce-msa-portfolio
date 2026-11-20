@@ -31,11 +31,16 @@ import com.project.delivery_service.service.DeliveryService;
  *
  * <p>{@code payment} 토픽의 이벤트에는 주소가 없다. 이전 리스너는 이벤트 안에서 주소를 찾다
  * 못 찾고 예외를 던졌고, 모든 결제 완료가 DLT 로 갔다. 이제 order-service 에 묻는다.
+ *
+ * <p>[JA] 決済完了イベント → 配送作成。
+ * 🐛 回帰対象 — 配送が一件も作られなかった: {@code payment} トピックのイベントには住所がない。
+ * 以前のリスナーはイベントの中で住所を探して見つからず例外を投げ、すべての決済完了が DLT に行った。今は order-service に問い合わせる。
  */
 @DisplayName("delivery-service — 결제 이벤트로 배송 만들기")
 class PaymentCompletedListenerTest {
 
     /** 실제 PaymentResponse 가 Avro→JSON 으로 오는 모양 그대로 — 주소도 품목도 없다. */
+    // [JA] 実際の PaymentResponse が Avro→JSON で来る形そのまま — 住所も品目もない。
     private static final String COMPLETED =
             "{\"paymentId\":\"p-1\",\"orderId\":889196209423729897,\"customerId\":7,"
             + "\"couponName\":null,\"amounts\":\"59.98\",\"paymentStatus\":\"COMPLETED\"}";
@@ -64,6 +69,7 @@ class PaymentCompletedListenerTest {
     }
 
     /** 🔴 핵심 — 이벤트에 주소가 없어도 order-service 에서 읽어 배송을 만든다. */
+    // [JA] 🔴 核心 — イベントに住所がなくても order-service から読んで配送を作る。
     @Test
     @DisplayName("🔴 이벤트에 주소가 없으면 order-service 에 묻고, 그 주소·품목으로 배송을 만든다")
     void addressComesFromOrderService() {
@@ -84,8 +90,10 @@ class PaymentCompletedListenerTest {
         assertThat(c.country()).isEqualTo("KR");
         assertThat(c.items()).extracting(CreateDeliveryCommand.Item::orderProductId).containsExactly(101L, 102L);
         // 수량 0 은 상자에 넣을 수 없다 — 최소 1
+        // [JA] 数量 0 は箱に入れられない — 最小 1
         assertThat(c.items()).extracting(CreateDeliveryCommand.Item::quantity).containsExactly(2, 1);
         // 포장 목록의 SKU — 주문 품목이 복사해 둔 값을 그대로. SKU 가 없던 주문(옛 품목)은 null 인 채로 배송은 만들어진다
+        // [JA] 梱包リストの SKU — 注文品目がコピーしておいた値をそのまま。SKU がなかった注文(古い品目)は null のまま配送が作られる
         assertThat(c.items()).extracting(CreateDeliveryCommand.Item::skuCode).containsExactly("TEE-BLK-M", null);
     }
 
@@ -110,6 +118,7 @@ class PaymentCompletedListenerTest {
     }
 
     /** 주소 없이 만든 배송은 송장을 낼 수 없다 — 조용히 만들지 않고 DLT 로 보낸다. */
+    // [JA] 住所なしで作った配送は送り状を出せない — 黙って作らず DLT に送る。
     @Test
     @DisplayName("주문에도 주소가 없으면 그 레코드만 실패로 표시한다(DLT)")
     void missingAddressIsIsolated() {

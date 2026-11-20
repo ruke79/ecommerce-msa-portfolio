@@ -39,6 +39,18 @@ import lombok.NoArgsConstructor;
  * <b>종료 상태에 도달하는 즉시 {@link #clearParams()} 로 지운다</b> — 보관 기간을 "발송까지"로
  * 좁히는 것이 이 설계에서 할 수 있는 최선이다. 그리고 {@link #toString()} 은 절대 params 를
  * 포함하지 않는다.
+ *
+ * <p>[JA] 送信待ちのメール 1 件 — <b>メールアウトボックス</b>である。
+ * <b>なぜ {@link Notification} に列を付けなかったか。</b> 登録確認・パスワード再設定メールはアプリ内通知ではない。
+ * 受取人はまだログインすらしておらず、通知一覧に見せるものでもない。{@code Notification} に載せるとその画面に「通知」ではない行が混ざり、
+ * {@code recipientId} が NOT NULL なので登録確認メールを保存することもできない。
+ * <b>なぜ Kafka から直接送らず DB に一度書くか。</b> SMS と同じ理由である({@link com.project.notification_service.service.SmsDispatcher})。
+ * コンシューマー内で直接 SMTP を呼ぶと、(1) メールサーバーが遅いときにコンシューマーが捕まって他の通知まで遅れ、(2) 送信失敗を
+ * コンシューマーのリトライで処理すると<b>リトライのたびにメールが一通ずつ多く</b>出る。ここに書いておき別のディスパッチャーが状態を見て送れば、両方の問題が一緒に消える。
+ * ⚠️ <b>{@code params} は資格情報を含む。</b> {@code REGISTRATION_CONFIRM} の {@code confirmationUrl} はそのリンクだけでアカウントを有効化できる。
+ * user-service はトークンを SHA-256 ハッシュでしか保存しないが、ここに原文リンクが残っていればその防御が無意味になる。だから
+ * <b>終了状態に達したら即座に {@link #clearParams()} で消す</b> — 保管期間を「送信まで」に絞るのがこの設計でできる最善である。
+ * そして {@link #toString()} は絶対に params を含まない。
  */
 @Entity
 @Getter
@@ -46,13 +58,16 @@ import lombok.NoArgsConstructor;
 @Table(name = "mail_message", schema = "notification",
        indexes = {
            // 디스패처가 매 주기 도는 질의. 이게 없으면 보낸 메일이 쌓일수록 폴링이 전체 스캔이 된다.
+           // [JA] ディスパッチャーが毎周期回すクエリ。これがないと送ったメールが溜まるほどポーリングが全件スキャンになる。
            @Index(name = "idx_mail_message_status", columnList = "status, created_at"),
            // 운영 조회: "이 사람에게 나간 메일" — 문의 대응에 매번 필요하다.
+           // [JA] 運用の照会: 「この人に出たメール」 — 問い合わせ対応で毎回必要。
            @Index(name = "idx_mail_message_recipient", columnList = "to_email, created_at")
        })
 public class MailMessage {
 
     /** 재시도해도 의미 없는 시점. 이 값을 넘긴 메일은 보내 봐야 링크가 이미 만료다. */
+    // [JA] リトライしても意味のない時点。この値を超えたメールは送ってもリンクが既に期限切れである。
     public static final int DEFAULT_MAX_ATTEMPTS = 5;
 
     @Id
@@ -64,6 +79,7 @@ public class MailMessage {
     private String toEmail;
 
     /** 알 수 없으면 null (가입 확인처럼 설정이 아직 없는 경우). */
+    // [JA] 不明なら null(登録確認のように設定がまだない場合)。
     @Column(name = "recipient_user_id")
     private Long recipientUserId;
 
@@ -75,11 +91,15 @@ public class MailMessage {
      * 문구에 채울 값들. JSON 문자열로 저장한다.
      *
      * <p>⚠️ 발송이 끝나면 지운다({@link #clearParams()}). 아래 필드 주석과 클래스 주석 참조.
+     *
+     * <p>[JA] 文言に埋める値。JSON 文字列で保存する。
+     * ⚠️ 送信が終わったら消す({@link #clearParams()})。下のフィールドのコメントとクラスのコメントを参照。
      */
     @Column(name = "params", length = 2000)
     private String params;
 
     /** {@code ko} / {@code ja}. null 이면 설정의 지역, 그것도 없으면 한국어. */
+    // [JA] {@code ko} / {@code ja}。null なら設定の地域、それもなければ韓国語。
     @Column(name = "locale", length = 10)
     private String locale;
 
@@ -98,6 +118,10 @@ public class MailMessage {
      *
      * <p>Kafka 재전달로 같은 명령이 두 번 와도 메일은 하나만 나간다. 확인 메일이 두 통 가는 것은
      * 성가신 정도지만, 비밀번호 재설정 링크가 두 개 살아 있는 것은 보안 문제다.
+     *
+     * <p>[JA] このメールを作った元のコマンドの識別子。UNIQUE。
+     * Kafka の再配信で同じコマンドが二度来てもメールは一つしか出ない。確認メールが二通行くのは煩わしい程度だが、
+     * パスワード再設定リンクが二つ生きているのはセキュリティ問題である。
      */
     @Column(name = "source_event_id", length = 120, unique = true)
     private String sourceEventId;
@@ -106,6 +130,7 @@ public class MailMessage {
     private LocalDateTime createdAt;
 
     /** 종료 상태에 도달한 시각. 미발송이면 null. */
+    // [JA] 終了状態に達した時刻。未送信なら null。
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
@@ -118,6 +143,12 @@ public class MailMessage {
      * <p>null 을 "지금"으로 읽는 것은 의도적이다. 새 행과 이 컬럼이 없던 시절의 행이 모두
      * null 인데, 둘 다 즉시 보내는 것이 맞다 — 기본값을 넣어 두면 배포 순간에 밀린 메일이
      * 한꺼번에 미뤄진다.
+     *
+     * <p>[JA] 次の送信試行を許す時刻。<b>null なら今送ってよい。</b>
+     * この列がなかった間、リトライは名ばかりだった — ディスパッチャーが 5 秒ごとに同じ行を拾い直し、
+     * 5 回の上限が 20 秒で尽きた(経緯は {@link RetryBackoff} に書いてある)。
+     * null を「今」と読むのは意図的である。新しい行もこの列がなかった頃の行もすべて null だが、どちらも即送るのが正しい —
+     * 既定値を入れておくと、デプロイの瞬間に溜まっていたメールが一斉に後回しになる。
      */
     @Column(name = "next_attempt_at")
     private LocalDateTime nextAttemptAt;
@@ -134,6 +165,7 @@ public class MailMessage {
         this.status = MailStatus.PENDING;
         this.attempts = 0;
         // UTC 로 통일한다 — Notification 과 같은 이유(B-21).
+        // [JA] UTC に統一する — Notification と同じ理由(B-21)。
         this.createdAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
@@ -142,6 +174,9 @@ public class MailMessage {
      *
      * <p>종료 상태({@code SENT}/{@code FAILED})면 params 를 지운다 — 링크를 필요 이상으로
      * 보관하지 않는다.
+     *
+     * <p>[JA] 送信試行の結果を反映する。試行回数は成功・失敗に関係なく増える。
+     * 終了状態({@code SENT}/{@code FAILED})なら params を消す — リンクを必要以上に保管しない。
      */
     public void recordAttempt(MailStatus status, String detail) {
         this.attempts += 1;
@@ -153,6 +188,10 @@ public class MailMessage {
      *
      * <p>두 가지를 한 메서드에 묶은 이유: 떼어 놓으면 한쪽만 부르는 경로가 생긴다. 시각 없이
      * 횟수만 올리면 다음 주기(5초 뒤)에 곧바로 다시 집혀 백오프가 없던 때로 돌아간다.
+     *
+     * <p>[JA] リトライを予約する — 試行回数を上げ、<b>次に拾ってよい時刻</b>を併せて決める。
+     * 二つを一つのメソッドにまとめた理由: 分けると片方だけ呼ぶ経路ができる。時刻なしで回数だけ上げると
+     * 次の周期(5 秒後)にすぐ拾われ、バックオフがなかった頃に戻る。
      */
     public void scheduleRetry(String detail, long backoffBaseMs, long backoffMaxMs) {
         this.attempts += 1;
@@ -167,6 +206,10 @@ public class MailMessage {
      * <p>방금 실패를 이미 센 뒤 "이번이 마지막이었다"고 확정하는 자리다. 여기서
      * {@link #recordAttempt} 를 부르면 한 번의 발송이 두 번으로 기록돼, 나중에 "몇 번 시도했나"를
      * 보는 사람이 상한을 넘긴 것으로 읽는다(실제로 attempts 가 상한보다 1 큰 값으로 남아 있었다).
+     *
+     * <p>[JA] 試行回数を<b>上げずに</b>諦める。
+     * 直前の失敗を既に数えた後で「今回が最後だった」と確定する場所である。ここで {@link #recordAttempt} を呼ぶと
+     * 一回の送信が二回と記録され、後で「何回試したか」を見る人が上限を超えたと読む(実際に attempts が上限より 1 大きい値で残っていた)。
      */
     public void giveUp(String detail) {
         applyStatus(MailStatus.FAILED, detail);
@@ -180,6 +223,7 @@ public class MailMessage {
         if (status == MailStatus.SENT || status == MailStatus.FAILED) {
             this.completedAt = LocalDateTime.now(ZoneOffset.UTC);
             // 끝난 행에 예약 시각을 남겨 두면 "언제 다시 보내지나"를 묻게 만든다. 답은 '안 보낸다'다.
+            // [JA] 終わった行に予約時刻を残すと「いつ再送されるのか」と問わせる。答えは「送らない」である。
             this.nextAttemptAt = null;
             clearParams();
         }
@@ -190,12 +234,17 @@ public class MailMessage {
      *
      * <p>확인 링크·재설정 링크는 자격증명이다. 메일이 나간 뒤에도 DB 에 남겨 둘 이유가 없고,
      * 남겨 두면 DB 덤프 한 번이 곧 계정 탈취 수단이 된다.
+     *
+     * <p>[JA] 保存されたテンプレート値を消す。
+     * 確認リンク・再設定リンクは資格情報である。メールが出た後も DB に残しておく理由がなく、
+     * 残しておくと DB ダンプ一回がそのままアカウント乗っ取りの手段になる。
      */
     public void clearParams() {
         this.params = null;
     }
 
     /** 아직 보낼 수 있는가. 상한을 넘으면 더 시도하지 않는다. */
+    // [JA] まだ送れるか。上限を超えたらそれ以上試さない。
     public boolean canRetry(int maxAttempts) {
         return attempts < maxAttempts;
     }
@@ -203,6 +252,9 @@ public class MailMessage {
     /**
      * ⚠️ params 를 <b>절대</b> 포함하지 않는다. 주소도 마스킹한다 — 로그 열람 권한이 곧
      * 고객 연락처 열람 권한이 되면 안 된다(LoggingSmsSender 와 같은 규칙).
+     *
+     * <p>[JA] ⚠️ params を<b>絶対に</b>含まない。アドレスもマスキングする — ログの閲覧権限がそのまま
+     * 顧客連絡先の閲覧権限になってはならない(LoggingSmsSender と同じ規則)。
      */
     @Override
     public String toString() {
@@ -214,6 +266,7 @@ public class MailMessage {
     }
 
     /** 테스트·조회용. 저장된 JSON 을 그대로 돌려준다(파싱은 호출자 몫). */
+    // [JA] テスト・照会用。保存された JSON をそのまま返す(パースは呼び出し側の役目)。
     public String rawParams() {
         return params;
     }

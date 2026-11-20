@@ -22,18 +22,24 @@ export const DESK_VIEWS = ["WAITING", "MINE", "ACTIVE", "CLOSED"];
 /**
  * 목록을 다시 읽는 간격 — <b>안전망</b>이다. 새 문의·새 메시지는 {@link DESK_TOPIC} 알림으로 곧바로 온다(docs/58 §9).
  * 소켓이 끊겨 알림을 놓쳐도 이 주기 안에는 목록이 맞춰진다.
+ *
+ * <p>[JA] 一覧を読み直す間隔 — <b>安全網</b>である。新しい問い合わせ・新しいメッセージは {@link DESK_TOPIC} の通知ですぐに来る(docs/58 §9)。
+ * ソケットが切れて通知を逃しても、この周期内には一覧が合わせられる。
  */
 export const DESK_REFRESH_MS = 30000;
 
 /** 상담원 전용 알림 주소. 서버는 번호와 종류만 보낸다 — 본문은 목록을 다시 읽어 얻는다. */
+// [JA] 相談員専用の通知アドレス。サーバーは番号と種類だけを送る — 本文は一覧を読み直して得る。
 export const DESK_TOPIC = "/sub/support/desk";
 
 /** 빠른 답변 — 사전의 support.quick.<key>.{label,text}. 상담원이 입력칸에 넣고 고쳐서 보낸다. */
+// [JA] クイック返信 — 辞書の support.quick.<key>.{label,text}。相談員が入力欄に入れて直してから送る。
 export const QUICK_REPLY_KEYS = ["greet", "check", "order_no", "wait", "resolved", "closing"];
 
 const canNotify = () => typeof window !== "undefined" && "Notification" in window;
 
 /** 탭이 뒤에 있을 때만 브라우저 알림 — 앞에 있으면 토스트로 충분하다. 권한은 상담원이 버튼으로 켠다. */
+// [JA] タブが裏にあるときだけブラウザ通知 — 表にあればトーストで十分である。権限は相談員がボタンで有効にする。
 function browserNotify(title, body) {
     if (!canNotify() || window.Notification.permission !== "granted" || !document.hidden) return;
     try {
@@ -41,6 +47,7 @@ function browserNotify(title, body) {
         new window.Notification(title, { body, tag: "support-desk" });
     } catch {
         // 일부 브라우저(모바일)는 생성자를 막는다 — 토스트가 있다.
+        // [JA] 一部のブラウザ(モバイル)はコンストラクターを塞ぐ — トーストがある。
     }
 }
 
@@ -53,6 +60,11 @@ function browserNotify(title, body) {
  * <p>대기 중인 상담은 "상담 맡기" 를 눌러야 답할 수 있다 — 두 상담원이 같은 문의에 동시에 답하지 않게(서버가 조건부
  * 갱신으로 한 명만 통과시킨다). 맡은 상담은 "반납" 으로 다시 대기열에 돌릴 수 있다. 이 화면의 가드(ProtectedRoute
  * supportOnly)는 UI 가드일 뿐이고, 서버가 같은 규칙을 강제한다.
+ *
+ * <p>[JA] 相談デスク — カスタマーサポートチームの相談員・管理者(docs/58 §11)。三つの欄である: 左の一覧(待機・自分の担当・全体・終了 + 種類 · 検索)、
+ * 中央の会話、右の相談情報(顧客 · 過去の相談数 · 時刻 · 評価 · 🔒 内部メモ)。狭い画面では一覧 ↔ 会話を行き来し、情報は会話の上に引き出しで開く。
+ * 待機中の相談は「相談を担当する」を押さないと返答できない — 二人の相談員が同じ問い合わせに同時に答えないように(サーバーが条件付き更新で一人だけを
+ * 通す)。担当した相談は「返却」で再び待機列に戻せる。この画面のガード(ProtectedRoute supportOnly)は UI のガードにすぎず、サーバーが同じ規則を強制する。
  */
 export default function SupportDesk() {
     return (
@@ -79,6 +91,7 @@ export function Desk() {
         refetchInterval: DESK_REFRESH_MS,
     });
     // 탭 배지용 — 지금 보고 있는 탭 · 유형과 무관하게 대기 · 내 담당은 늘 읽어 둔다.
+    // [JA] タブのバッジ用 — 今見ているタブ · 種類に関係なく、待機 · 自分の担当は常に読んでおく。
     const { data: waiting = [] } = useQuery({
         queryKey: ["support-desk", "WAITING", ""],
         queryFn: () => getSupportDesk("WAITING"),
@@ -111,6 +124,7 @@ export function Desk() {
         setSelected(th);
         setShowInfo(false);
         // 목록에는 없는 것(지난 상담 수)을 채운다.
+        // [JA] 一覧にはないもの(過去の相談数)を埋める。
         Promise.resolve().then(() => getSupportThread(th.threadId))
             .then((detail) => detail && setSelected((cur) => (cur?.threadId === detail.threadId ? detail : cur)))
             .catch(() => {});
@@ -121,6 +135,7 @@ export function Desk() {
     useDeskAlerts({ myId: user?.userId, selectedId, mineList, queryClient, t });
 
     // 탭 제목에 기다리는 수 — 다른 탭에서 일하다가도 보인다.
+    // [JA] タブのタイトルに待っている数 — 別のタブで作業していても見える。
     const pending = badge.WAITING + badge.MINE;
     useEffect(() => {
         const original = document.title.replace(/^\(\d+\) /, "");
@@ -184,6 +199,7 @@ export function Desk() {
 
             <div className="isolate grid h-[calc(100vh-14.5rem)] min-h-[32rem] gap-4 md:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[20rem_minmax(0,1fr)_18rem]">
                 {/* ── 목록 ── */}
+                {/* [JA] ── 一覧 ── */}
                 <aside className={`${selected ? "hidden md:flex" : "flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm`}>
                     <div role="tablist" className="grid grid-cols-4 border-b border-gray-200 text-xs">
                         {DESK_VIEWS.map((v) => (
@@ -249,6 +265,7 @@ export function Desk() {
                 </aside>
 
                 {/* ── 대화 ── */}
+                {/* [JA] ── 会話 ── */}
                 <div className={`${selected ? "flex" : "hidden md:flex"} relative min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-sm`}>
                     {!selected ? (
                         <p className="m-auto text-sm text-gray-400">{t("support.desk.select")}</p>
@@ -325,6 +342,7 @@ export function Desk() {
                 </div>
 
                 {/* ── 상담 정보 ── */}
+                {/* [JA] ── 相談情報 ── */}
                 <aside className="hidden min-h-0 overflow-y-auto rounded-2xl border border-gray-200 bg-white shadow-sm xl:block">
                     {selected ? <InfoPanel thread={selected} onSaved={setSelected} />
                         : <p className="p-6 text-center text-sm text-gray-400">{t("support.desk.info_empty")}</p>}
@@ -335,6 +353,7 @@ export function Desk() {
 }
 
 /** 상담 정보 — 고객 · 시각 · 평가 · 🔒 내부 메모. */
+// [JA] 相談情報 — 顧客 · 時刻 · 評価 · 🔒 内部メモ。
 export function InfoPanel({ thread, onSaved, onClose }) {
     const { t } = useTranslation();
     const [note, setNote] = useState(thread.internalNote ?? "");
@@ -343,11 +362,13 @@ export function InfoPanel({ thread, onSaved, onClose }) {
     const [failed, setFailed] = useState(false);
 
     // 다른 상담을 고르면 칸 · 표시를 새로.
+    // [JA] 別の相談を選んだら欄 · 表示を新しく。
     useEffect(() => {
         setSaved(false);
         setFailed(false);
     }, [thread.threadId]);
     // 저장했거나 다른 상담원이 고쳐 다시 읽으면 칸을 서버 값에 맞춘다("저장했습니다" 는 지우지 않는다).
+    // [JA] 保存したか、他の相談員が直して読み直したら、欄をサーバーの値に合わせる(「保存しました」は消さない)。
     useEffect(() => {
         setNote(thread.internalNote ?? "");
     }, [thread.threadId, thread.internalNote]);
@@ -442,10 +463,15 @@ InfoPanel.propTypes = { thread: PropTypes.object.isRequired, onSaved: PropTypes.
  *   <li>새 문의(NEW_THREAD) · 반납되어 대기열로 돌아온 상담(RELEASED) — 누구든 맡을 수 있으니 모든 상담원에게</li>
  *   <li>내가 맡은 상담에 고객이 말했다(MESSAGE) — 지금 그 상담을 보고 있지 않을 때만</li>
  * </ul>
+ *
+ * <p>[JA] デスクのリアルタイム通知(docs/58 §9)— {@link DESK_TOPIC} を購読する。何が来ても一覧を読み直す。そして人が知るべきものだけを音で知らせる:
+ * 新しい問い合わせ(NEW_THREAD)· 返却されて待機列に戻った相談(RELEASED)— 誰でも担当できるので全相談員に。自分が担当する相談で顧客が発言した
+ * (MESSAGE)— 今その相談を見ていないときだけ。
  */
 export function useDeskAlerts({ myId, selectedId, mineList, queryClient, t }) {
     const { isConnected, subscribe } = useStomp();
     // 구독 콜백은 한 번 걸고 둔다 — 최신 값은 ref 로 읽는다(목록이 바뀔 때마다 다시 구독하지 않게).
+    // [JA] 購読のコールバックは一度掛けて置いておく — 最新の値は ref で読む(一覧が変わるたびに購読し直さないように)。
     const latest = useRef({});
     latest.current = { myId, selectedId, mineList, queryClient, t };
 

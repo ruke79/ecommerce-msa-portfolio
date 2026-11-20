@@ -39,6 +39,7 @@ public class UserCreatedRequestAvroMapping implements AvroMapping<com.project.co
     @Override
     public BinaryMessageDecoder<com.project.common.avro.UserCreatedRequest> decoder() {
         // v1(email 있음)으로 쓴 레코드도 읽는다 — 배포 도중 옛 user-service 가 쓴 것(AvroSchemaHistory).
+        // [JA] v1(email あり)で書いたレコードも読む — デプロイ途中に古い user-service が書いたもの(AvroSchemaHistory)。
         return com.project.common.avro.UserCreatedRequest.createDecoder(
                 AvroSchemaHistory.store(AvroSchemaHistory.USER_CREATED));
     }

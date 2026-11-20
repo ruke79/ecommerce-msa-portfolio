@@ -45,6 +45,12 @@ import lombok.RequiredArgsConstructor;
  * 엔드포인트는 반드시 이 컨트롤러(= {@code /api/content/admin}) 아래에 둬야 한다. 다른
  * 자리에 만들면 아무도 막지 않는다 — 메서드마다 애노테이션을 붙이는 방식은 하나 빠뜨려도
  * 티가 안 나지만, 경로 규칙은 빠뜨리면 URL 이 달라져서 눈에 띈다.
+ *
+ * <p>[JA] コンテンツ管理 — 管理者のみ。
+ *      認可は {@code AdminWriteInterceptor} が <b>パスの接頭辞</b> でかける(ADMIN_CONTENT_PREFIX)。そのため新しい管理者
+ *      エンドポイントは必ずこのコントローラ(= {@code /api/content/admin})の下に置くこと。別の
+ *      場所に作ると誰も塞がない — メソッドごとにアノテーションを付ける方式は 1 つ漏らしても
+ *      目立たないが、パス規則は漏らすと URL が変わるので目に付く。
  */
 @RestController
 @RequestMapping("/api/content/admin")
@@ -55,6 +61,7 @@ public class ContentAdminController {
     private final NoticeService noticeService;
     private final HomeSectionService homeSectionService;
     /** 섹션을 바꾸면 이 파드의 첫 화면 캐시를 비운다(커밋 뒤 — 서비스 메서드가 돌아온 뒤). 다른 파드는 TTL(30초)로 맞춰진다. */
+    // [JA] セクションを変えるとこのポッドの最初の画面のキャッシュを消す(コミット後 — サービスメソッドが戻った後)。他のポッドは TTL(30 秒)で揃う。
     private final HomeViewCache homeView;
     private final ProductImportService productImportService;
     private final ProductService productService;
@@ -62,6 +69,7 @@ public class ContentAdminController {
     private final EventScheduler eventScheduler;
 
     // ── 상품 등록 (일괄) ─────────────────────────────────────────────────
+    // [JA] ── 商品登録(一括) ──
 
     /**
      * 이미지 저장소가 쓰기 가능한지.
@@ -71,6 +79,12 @@ public class ContentAdminController {
      *
      * <p>등록 화면이 폼을 그리기 전에 부른다. 그러지 않으면 관리자는 긴 폼을 다 채우고
      * 이미지를 올린 뒤에야 500 을 보고, 그게 자격 증명 문제인지 알 방법이 없다.
+     *
+     * <p>[JA] 画像ストレージが書き込み可能か。
+     *      ここにある理由は <b>認可</b> のためである。この接頭辞の下でないと GET も管理者専用にならない
+     *      (クラスのコメント参照)。バケット名と SDK のエラーメッセージが載って出るので公開できない。
+     *      登録画面がフォームを描く前に呼ぶ。そうしないと管理者は長いフォームを全部埋めて
+     *      画像を上げた後でやっと 500 を見ることになり、それが資格情報の問題かを知る方法がない。
      */
     @GetMapping("/storage-health")
     public StorageStatus storageHealth() {
@@ -91,6 +105,17 @@ public class ContentAdminController {
      *
      * @param cursor   마지막으로 받은 상품 id. 첫 페이지는 {@code -1}(기본값).
      * @param pageSize 한 번에 받을 개수. 서버가 {@code MAX_ADMIN_PAGE_SIZE} 로 자른다.
+     *
+     * <p>[JA] 管理者の商品一覧 — カーソルページング。
+     *      🐛 以前管理者画面が使っていた {@code GET /api/product/products} は名前と違い
+     *      {@code warmUpProductCaches} を経て <b>カタログ全体を 1 つの配列で</b> 返し、
+     *      その結果を Redis のキー 1 つに丸ごと入れていた(ProductService のコメント)。
+     *      ここ(= {@code /api/content/admin})の下に置く理由は <b>認可</b> のためである。
+     *      {@code AdminWriteInterceptor} がパスの接頭辞で管理者かどうかを判定するので、この接頭辞の
+     *      下でないと GET も管理者専用にならない。以前のエンドポイントは {@code /api/product/**} だったので
+     *      誰でも全カタログを持って行けた。
+     *      cursor: 最後に受け取った商品 id。最初のページは {@code -1}(既定値)。
+     *      pageSize: 一度に受け取る件数。サーバーが {@code MAX_ADMIN_PAGE_SIZE} で切る。
      */
     @GetMapping("/products")
     public ProductResponse products(
@@ -100,10 +125,14 @@ public class ContentAdminController {
     }
 
     // ── 재고 (docs/53) ───────────────────────────────────────────────────
+    // [JA] ── 在庫(docs/53) ──
 
     /**
      * 재고 목록 — 사이즈 id 커서. {@code soldOutOnly=true}(기본)면 품절만 — 품절 경보를 받은 운영자가 "채울 것"
      * 을 보는 화면이다. 이 접두사 아래라 GET 도 관리자 전용이다(AdminWriteInterceptor).
+     *
+     * <p>[JA] 在庫一覧 — サイズ id のカーソル。{@code soldOutOnly=true}(既定)なら品切れのみ — 品切れ警報を受けた運用者が「補充するもの」
+     *      を見る画面である。この接頭辞の下なので GET も管理者専用である(AdminWriteInterceptor)。
      */
     @GetMapping("/stock")
     public java.util.List<ProductService.StockRow> stock(
@@ -115,6 +144,9 @@ public class ContentAdminController {
     /**
      * 재고를 그 값으로 정한다. 0 에서 채우면 재입고 알림을 신청한 손님에게 알림이 간다.
      * 본문: {@code {"quantity": 10}}.
+     *
+     * <p>[JA] 在庫をその値に決める。0 から補充すると再入荷通知を申し込んだ客に通知が行く。
+     *      本文: {@code {"quantity": 10}}。
      */
     @PutMapping("/stock/{sizeId}")
     public ResponseEntity<?> setStock(@PathVariable("sizeId") Long sizeId,
@@ -143,6 +175,10 @@ public class ContentAdminController {
      *
      * <p>{@code reset=true} 는 <b>카탈로그를 비우고</b> 시작한다 — 되돌릴 수 없다. 기본값은
      * false 이고, 그때 카탈로그가 비어 있지 않으면 409 로 거절한다(이 잡은 멱등하지 않다).
+     *
+     * <p>[JA] インポート開始。
+     *      {@code reset=true} は <b>カタログを空にして</b> 始める — 戻せない。既定値は
+     *      false で、そのときカタログが空でなければ 409 で拒否する(このジョブは冪等ではない)。
      */
     @PostMapping("/product-import")
     public ResponseEntity<?> startProductImport(
@@ -151,6 +187,7 @@ public class ContentAdminController {
     }
 
     // ── 홈 섹션 ──────────────────────────────────────────────────────────
+    // [JA] ── ホームセクション ──
 
     @GetMapping("/home-sections")
     public List<HomeSectionAdminView> homeSections() {
@@ -166,6 +203,8 @@ public class ContentAdminController {
         } catch (IllegalArgumentException e) {
             // 없는 카테고리를 가리키면 400 이다. 저장을 허용하면 증상이 "홈에 그 섹션만
             // 안 나온다"로 나타나고, 어디가 틀렸는지 화면에서는 알 수 없다.
+            // [JA] 存在しないカテゴリを指せば 400 である。保存を許すと症状は「ホームでそのセクションだけ
+            //      出ない」として現れ、どこが間違っているか画面ではわからない。
             return ResponseEntity.badRequest().body(ContentController.message(e));
         }
     }
@@ -194,6 +233,7 @@ public class ContentAdminController {
     }
 
     // ── 배너 ────────────────────────────────────────────────────────────
+    // [JA] ── バナー ──
 
     @GetMapping("/banners")
     public List<BannerAdminView> banners() {
@@ -206,6 +246,7 @@ public class ContentAdminController {
             return ResponseEntity.ok(bannerService.create(request));
         } catch (IllegalArgumentException e) {
             // 링크 모양이 틀렸다(SafeLinks) — 관리자가 고칠 수 있는 실패다.
+            // [JA] リンクの形が間違っている(SafeLinks) — 管理者が直せる失敗である。
             return ResponseEntity.badRequest().body(ContentController.message(e));
         }
     }
@@ -231,6 +272,7 @@ public class ContentAdminController {
     }
 
     // ── 공지 ────────────────────────────────────────────────────────────
+    // [JA] ── 告知 ──
 
     @GetMapping("/notices")
     public PagedAdminNotices notices(@RequestParam(value = "page", defaultValue = "0") int page,
@@ -281,6 +323,13 @@ public class ContentAdminController {
     // 저장·삭제 뒤에 eventScheduler.refreshNow() 를 부르는 이유: 할인 맵은 1분마다
     // 갱신된다. 그게 없으면 관리자는 저장한 뒤 최대 1분 동안 자기 변경이 반영되지 않는
     // 것을 보고 저장이 실패했다고 생각한다.
+    // [JA] ── イベント / 企画展 ──
+    //      割引率はここ(event_product)にだけあり、商品照会時に合成される — ProductSku.discount を
+    //      上書きしない(EventPricing のコメント)。だからこの画面で何を変えても商品データは
+    //      そのままで、企画展を消せば価格は元に戻る。
+    //      保存・削除の後に eventScheduler.refreshNow() を呼ぶ理由: 割引マップは 1 分ごとに
+    //      更新される。それがないと管理者は保存後最大 1 分間自分の変更が反映されない
+    //      のを見て、保存が失敗したと思う。
 
     @GetMapping("/events")
     public List<EventAdminView> events() {
@@ -305,6 +354,8 @@ public class ContentAdminController {
         } catch (IllegalArgumentException e) {
             // 없는 상품을 대상에 넣었다. 저장을 허용하면 증상이 "그 상품만 할인이 안
             // 걸린다"로 나타나고, 화면에서는 무엇이 틀렸는지 알 수 없다.
+            // [JA] 存在しない商品を対象に入れた。保存を許すと症状は「その商品だけ割引が
+            //      かからない」として現れ、画面では何が間違っているかわからない。
             return ResponseEntity.badRequest().body(ContentController.message(e));
         }
     }
@@ -324,6 +375,7 @@ public class ContentAdminController {
     }
 
     /** 지금 끝낸다. 삭제와 다르다 — 진행 기록은 남는다. */
+    // [JA] 今すぐ終わらせる。削除とは違う — 実施記録は残る。
     @PostMapping("/events/{id}/end")
     public ResponseEntity<?> endEvent(@PathVariable("id") Long id) {
         try {
@@ -345,6 +397,7 @@ public class ContentAdminController {
             return ResponseEntity.noContent().build();
         } catch (com.project.common.domain.exception.StateConflictException e) {
             // 진행 중인 기획전은 지울 수 없다 — 할인이 조용히 사라지고 기록도 안 남는다.
+            // [JA] 進行中の企画展は消せない — 割引が黙って消え、記録も残らない。
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ContentController.message(e));
         } catch (IllegalArgumentException e) {
             return notFound(e);

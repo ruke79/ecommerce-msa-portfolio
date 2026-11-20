@@ -41,6 +41,18 @@ public interface MailMessageRepository extends JpaRepository<MailMessage, Long> 
      *
      * <p>{@code is null} 을 함께 보는 것은 생략할 수 없다. 새로 만들어진 행과 이 컬럼이 없던
      * 시절의 행은 모두 null 인데, 조건에서 빠뜨리면 <b>그 행들이 영영 선택되지 않는다.</b>
+     *
+     * <p>[JA] 送信待ち・再試行対象を<b>先取り</b>する。{@code NotificationRepository.claimForSms} と同じ理由で
+     * {@code FOR UPDATE SKIP LOCKED} だ(docs/21)。ロックがないとレプリカ二つが同じ行を拾い<b>同じメールが二
+     * 通</b>届く。確認メール二通は煩わしい程度だが、パスワード再設定メールが二通なら有効な再設定リンクが二
+     * つ生きていることになる。{@code lock.timeout = -2} は Hibernate で {@code SKIP LOCKED} を意味する。
+     * 単に {@code FOR UPDATE} にするとロック待ちで二つのレプリカが直列化され、
+     * ロックは正しいがスループットがレプリカ一つ分に落ちる。🔴 <b>{@code next_attempt_at}
+     * の条件がこのチャネルの再試行を実際に作る。</b>以前は上限に達していない行を無条件に拾い直し、
+     * ポーリング周期が 5 秒なので 5 回の再試行が 20 秒で尽きた — 上限を 5 にした理由(グレイリスティング)
+     * がまるごと無効になった。経緯は {@link com.project.notification_service.domain.RetryBackoff} にある。
+     * {@code is null} を併せて見るのは省けない。新しく作られた行とこのカラムがなかった頃の行はどちらも
+     * null で、条件から漏らすと<b>それらの行が永遠に選ばれない。</b>
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
@@ -67,6 +79,13 @@ public interface MailMessageRepository extends JpaRepository<MailMessage, Long> 
      * <p>링크 자체는 24시간이면 만료되므로 그 뒤로는 값이 남아 있을 이유가 없다. 행은 남긴다 —
      * "왜 이 사용자에게 메일이 안 갔나"를 나중에 볼 수 있어야 하기 때문이다. 지우는 것은
      * 자격증명뿐이다.
+     *
+     * <p>[JA] 古い未送信メールのパラメータを消す。<b>なぜ必要か。</b>{@code params}
+     * には登録確認リンク・パスワード再設定リンクが入っている — それ自体でアカウントを有効化したりパスワード
+     * を変えたりできる資格情報だ。正常経路では送信が終わった直後に {@code MailMessage#clearParams}
+     * が消すが、<b>最後まで終了状態に至らなかった行</b>が残りうる(ディスパッチャが止まっていた間に溜まった
+     * ものなど)。リンク自体は 24 時間で期限切れになるので、その後は値を残す理由がない。行は残す —
+     * 「なぜこのユーザーにメールが届かなかったか」を後で見られる必要があるからだ。消すのは資格情報だけだ。
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -78,6 +97,7 @@ public interface MailMessageRepository extends JpaRepository<MailMessage, Long> 
     int scrubParamsOlderThan(@Param("before") LocalDateTime before);
 
     /** 끝난(보냈거나 영구 실패한) 오래된 메일 행을 지운다 — 받는 주소(개인정보)를 무기한 들고 있지 않는다. */
+    // [JA] 終わった(送ったか恒久失敗した)古いメール行を消す — 宛先アドレス(個人情報)を無期限に持たない。
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
            delete from MailMessage m

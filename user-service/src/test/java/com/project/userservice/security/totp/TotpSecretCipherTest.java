@@ -8,12 +8,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 2FA(TOTP) 비밀 암호화(docs/70). TOTP 는 검증할 때마다 원문이 필요해 해시가 아니라 되돌릴 수 있는 암호화다.
+ *
+ * <p>[JA] 2FA(TOTP)秘密の暗号化(docs/70)。TOTP は検証のたびに原文が必要なので、ハッシュではなく復号可能な暗号化である。
  */
 @DisplayName("2FA 비밀 — 저장 암호화")
 class TotpSecretCipherTest {
 
     private static final String JWT = "user-test-secret-user-test-secret-0123456";
-    private static final String KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";   // 32바이트 테스트 키
+    private static final String KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";   // 32바이트 테스트 키 ／ [JA] 32 バイトのテスト鍵
     private static final String SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
     private final TotpSecretCipher derivedOnly = new TotpSecretCipher("", JWT);

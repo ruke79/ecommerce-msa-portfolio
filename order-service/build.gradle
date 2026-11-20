@@ -16,12 +16,14 @@ dependencies {
 	
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	 // Redisson
-    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능
+    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능 ／ [JA] 最新の安定版に変更可能
 	
 	implementation project(':common')
 
 	// 재고 예약 gRPC 클라이언트(docs/66). 계약 · 생성 스텁은 common 에 있고(compileOnly), 런타임은 쓰는 서비스가 얹는다.
 	// grpc-netty-shaded — Netty 를 자기 안에 숨겨 가진다(Spring 의 Netty · Reactor 와 버전이 부딪히지 않게).
+	// [JA] 在庫の仮押さえ gRPC クライアント(docs/66)。契約 · 生成スタブは common にあり(compileOnly)、ランタイムは使うサービスが載せる。
+	//      grpc-netty-shaded — Netty を内部に隠して持つ(Spring の Netty · Reactor とバージョンが衝突しないように)。
 	implementation platform("io.grpc:grpc-bom:${grpcVersion}")
 	implementation 'io.grpc:grpc-netty-shaded'
 	implementation 'io.grpc:grpc-protobuf'
@@ -29,13 +31,16 @@ dependencies {
 	implementation "com.google.protobuf:protobuf-java:${protobufVersion}"
 	testImplementation 'io.grpc:grpc-inprocess'
 	// 추적 테스트의 OTel 추적기(OtelTestTracing — 운영과 같은 브리지)
+	// [JA] トレーシングテストの OTel トレーサー(OtelTestTracing — 運用と同じブリッジ)
 	testImplementation(testFixtures(project(':common')))
 	
 	runtimeOnly 'org.postgresql:postgresql'
 	// 스키마 마이그레이션: 파티셔닝 등 Hibernate ddl-auto가 만들 수 없는 DDL은 Flyway가 소유한다 (docs/09 P0)
+	// [JA] スキーマのマイグレーション: パーティショニングなど Hibernate の ddl-auto が作れない DDL は Flyway が持つ(docs/09 P0)
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	// [JA] OpenAPI ドキュメント: /v3/api-docs, /swagger-ui.html
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'		
 	//runtimeOnly 'com.mysql:mysql-connector-j'
 	

@@ -23,6 +23,11 @@ import com.project.order_service.repository.jpa.OrderRepository;
  * 배송 상태 → 주문 상태. PROCESSING·DISPATCHED·DELIVERED 가 <b>드디어 채워진다</b>(docs/25 §0).
  *
  * <p>지키는 규칙은 둘이다: 앞으로만 간다, 결제된 주문만 움직인다.
+ *
+ * <p>[JA] 配送状態 → 注文状態。PROCESSING・DISPATCHED・DELIVERED
+ * が<b>ようやく埋まる</b>(docs/25 §0)。
+ *
+ * <p>守るルールは二つ: 前にだけ進む、決済済みの注文だけを動かす。
  */
 @DisplayName("order-service — 배송 상태 반영")
 class OrderDeliveryStatusServiceTest {
@@ -79,6 +84,7 @@ class OrderDeliveryStatusServiceTest {
     }
 
     /** 🔴 재전달·순서 뒤집힘 — 배달 완료 뒤에 온 "이동 중" 이 주문을 되돌리면 안 된다. */
+    // [JA] 🔴 再配信・順序の逆転 — 配達完了後に来た「移動中」が注文を戻してはならない。
     @Test
     @DisplayName("🔴 뒤로 가는 이벤트는 무시한다 — DELIVERED 뒤의 IN_TRANSIT, 같은 자리의 재전달")
     void neverGoesBackwards() {
@@ -96,6 +102,7 @@ class OrderDeliveryStatusServiceTest {
     }
 
     /** 🔴 발송 뒤 환불된 물건이 그래도 배달됐다 — 주문은 돈의 상태(REFUNDED)를 지킨다. */
+    // [JA] 🔴 発送後に返金された品物がそれでも配達された — 注文はお金の状態(REFUNDED)を守る。
     @Test
     @DisplayName("🔴 환불·취소·미결제·구매확정 주문은 배송 이벤트가 와도 그대로다")
     void moneyStateWins() {
@@ -111,6 +118,9 @@ class OrderDeliveryStatusServiceTest {
     /**
      * 🐛 배송을 취소했는데 주문은 DISPATCHED 그대로였고 "배송이 시작된 주문은 환불할 수
      * 없습니다" 에 갇혔다. 손님이 배송을 취소한 이유가 환불인데 그 길이 막혔다.
+     *
+     * <p>[JA] 🐛 配送をキャンセルしたのに注文は DISPATCHED のままで、「配送が始まった注文は返金できません」に閉じ込められた。
+     * 客が配送をキャンセルした理由は返金なのに、その道が塞がれていた。
      */
     @Test
     @DisplayName("🔴 발송 전 배송 취소면 주문은 PAID 로 돌아간다 — 환불이 다시 열린다")
@@ -126,6 +136,7 @@ class OrderDeliveryStatusServiceTest {
     }
 
     /** 결제 취소·환불로 시스템이 접은 배송이면 주문은 이미 돈의 상태다 — 되돌리지 않는다. */
+    // [JA] 決済キャンセル・返金でシステムが畳んだ配送なら、注文は既にお金の状態である — 戻さない。
     @Test
     @DisplayName("배송 취소여도 배달 완료·환불·취소된 주문은 그대로다")
     void cancelledDeliveryLeavesTerminalOrdersAlone() {
@@ -163,6 +174,7 @@ class OrderDeliveryStatusServiceTest {
     }
 
     /** 메모리 원장 — 같은 키는 한 번만 true. */
+    // [JA] メモリ台帳 — 同じキーは一度だけ true。
     private static ProcessedEventLedger memoryLedger() {
         java.util.Set<String> seen = new java.util.HashSet<>();
         return new ProcessedEventLedger() {

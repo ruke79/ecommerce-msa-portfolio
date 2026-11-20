@@ -33,6 +33,10 @@ import com.project.notification_service.service.VerificationService;
  * <p>사용자에게는 "알림" 하나이고 어디에 저장됐는지는 관심 밖이다. 저장을 나눈 것은 공지
  * 하나에 사용자 수만큼 행을 만들지 않기 위한 우리 사정이다(BroadcastNotification 주석).
  * 그 사정이 화면에 새어 나가면 안 된다 — 목록도 배지도 하나여야 한다.
+ *
+ * <p>[JA] 個人通知と全体通知は<b>別々に保存され、合わせて見える。</b>ユーザーにとっては「通知」一つで、
+ * どこに保存されたかは関心の外だ。保存を分けたのはお知らせ一つにユーザー数分の行を作らないための我々の事情
+ * だ(BroadcastNotification のコメント)。その事情が画面に漏れてはならない — 一覧もバッジも一つであるべきだ。
  */
 @DisplayName("알림 목록 합치기")
 class NotificationMergeTest {
@@ -51,6 +55,7 @@ class NotificationMergeTest {
                 .url("order/1")
                 .build();
         // createdAt 은 생성자가 찍는다. 정렬을 검증하려면 시각을 정해야 한다.
+        // [JA] createdAt はコンストラクタが付ける。並び順を検証するには時刻を決める必要がある。
         ReflectionTestUtils.setField(n, "createdAt", at);
         return n;
     }
@@ -88,6 +93,9 @@ class NotificationMergeTest {
     /**
      * scope 가 없으면 화면이 어느 엔드포인트로 읽음·삭제를 보낼지 정할 수 없다. 두 테이블이
      * 각자 TSID 를 쓰므로 id 만으로는 구분되지 않는다.
+     *
+     * <p>[JA] scope がないと画面がどのエンドポイントへ既読・削除を送るか決められない。二つのテーブルがそれぞれ
+     * TSID を使うので id だけでは区別できない。
      */
     @Test
     @DisplayName("각 항목에 출처(scope)를 붙인다 — 읽음·삭제 경로가 다르다")
@@ -105,6 +113,9 @@ class NotificationMergeTest {
     /**
      * 합친 뒤 자르지 않으면 size=5 를 요청해도 최대 10개가 내려간다 — 양쪽에서 각각 5개를
      * 받기 때문이다.
+     *
+     * <p>[JA] 合わせた後で切らないと size=5 を要求しても最大 10 件が返る — 両方からそれぞれ 5
+     * 件ずつ受け取るからだ。
      */
     @Test
     @DisplayName("합친 뒤 요청한 개수로 자른다")
@@ -133,6 +144,9 @@ class NotificationMergeTest {
     /**
      * 배지는 사용자가 보는 "안 읽은 알림" 전체다. 개인 알림만 세면 공지를 안 읽었는데도
      * 0 이 되거나(반대로) 목록을 다 읽었는데 숫자가 남는다.
+     *
+     * <p>[JA] バッジはユーザーが見る「未読通知」全体だ。個人通知だけを数えると、お知らせを読んでいないのに 0
+     * になったり(逆に)一覧を全部読んだのに数字が残ったりする。
      */
     @Test
     @DisplayName("배지는 개인 알림과 전체 알림을 더한 수다")
@@ -148,6 +162,9 @@ class NotificationMergeTest {
     /**
      * "모두 읽음"은 배지를 0 으로 만드는 버튼이다. 개인 알림만 처리하면 전체 알림이 남아
      * 숫자가 0 이 되지 않고, 사용자는 버튼을 계속 누르게 된다.
+     *
+     * <p>[JA] 「すべて既読」はバッジを 0 にするボタンだ。個人通知だけ処理すると全体通知が残って数字が 0 にならず、
+     * ユーザーはボタンを押し続けることになる。
      */
     @Test
     @DisplayName("모두 읽음은 전체 알림도 읽음 처리한다")
@@ -163,6 +180,9 @@ class NotificationMergeTest {
     /**
      * 게이트웨이가 User-Id 를 채운다. 없다는 것은 인증이 안 됐다는 뜻이고, 그대로 진행하면
      * 남의 알림을 읽게 된다.
+     *
+     * <p>[JA] ゲートウェイが User-Id を埋める。ないということは認証されていないという意味で、
+     * そのまま進めると他人の通知を読むことになる。
      */
     @Test
     @DisplayName("신원 헤더가 없으면 401 — 조회 자체를 하지 않는다")
@@ -178,6 +198,7 @@ class NotificationMergeTest {
     }
 
     /** 없는 공지를 읽음 처리하면 404 다 — 403 이면 "그 id 는 존재한다"를 알려주는 셈이다. */
+    // [JA] ないお知らせを既読にすると 404 だ — 403 なら「その id は存在する」と教えることになる。
     @Test
     @DisplayName("없는 전체 알림은 404")
     void unknownBroadcastIsNotFound() {
@@ -191,6 +212,7 @@ class NotificationMergeTest {
     }
 
     /** 전체 알림은 문자로 나가지 않는다 — 사용자 수만큼 문자가 나가는 것은 요금 사고다. */
+    // [JA] 全体通知は SMS で出ない — ユーザー数分の SMS が出るのは料金事故だ。
     @Test
     @DisplayName("전체 알림의 SMS 상태는 항상 '해당 없음'")
     void broadcastsAreNeverSms() {

@@ -39,6 +39,24 @@ import lombok.extern.slf4j.Slf4j;
  * <p>계수기 {@code saga_projection_deserialization_failures_total{topic, action}} — action 은 {@code skipped}·
  * {@code halted}. 경보는 {@code observability/alert-rules.yml} 의 saga-projection 그룹. Kafka 가 클래스 이름으로
  * 만들므로 Spring 빈이 아니다 — 전역 레지스트리(Boot 가 자기 레지스트리를 여기에 붙인다)에 기록한다.
+ *
+ * <p>[JA] 入力レコードを読めなかったとき — <b>失敗の種類に応じて</b>止まるか飛ばす (docs/55 §8)。
+ * 🐛 以前: レコード一つでプロジェクション全体が止まった。ハンドラを置かないと Kafka Streams の既定値(LogAndFail)で、
+ * 壊れたレコード一つに当たると処理スレッドが落ち({@code SHUTDOWN_CLIENT})、再起動しても同じオフセットでまた落ちる —
+ * その後のすべての注文がサガ照会で止まる。逆に無条件に飛ばす(LogAndContinue)ともっと悪い場合がある。だから二つに分ける。
+ * <b>未知の書き込みスキーマ</b>({@link MissingSchemaException}) — この Pod より<b>新しい</b>プロデューサーが書いたレコード。ローリング
+ * デプロイ中ならすぐ新しい Pod が引き継いでそのレコードを読める。ここで飛ばすとオフセットがコミットされ(EOS)新しい Pod も
+ * 読み直さない — <b>プロジェクションがその記録を永久に失う。</b>だから<b>止まる</b>: スレッドが落ち readiness が下がり、
+ * 新しい Pod が最後のコミットから読み直す。デプロイ中でないのにこれが起きたら、プロデューサーがどのコンシューマも知らない
+ * スキーマで書いたのである(スキーマ進化規則違反、docs/55 §4·§5) — 止まったままアラートが鳴る。
+ * <b>その他のデシリアライズ失敗</b>(壊れたバイト、不正な JSON、既知のスキーマだが本文が食い違う) — 何度読み直しても
+ * 同じ(poison)。止まると後ろのすべての注文が人質になる。<b>飛ばして</b>座標(トピック・パーティション・オフセット)を残し計数する。
+ * 原本は入力トピックにそのまま残る(保持期間の間)ので座標で探して見られ、プロジェクションは入力トピックから畳み直して
+ * 再構築できる(アプリケーションリセット)。
+ * 値はログに残さない — 注文・決済リクエストだから。座標と例外の種類だけ。
+ * カウンター {@code saga_projection_deserialization_failures_total{topic, action}} — action は {@code skipped}・{@code halted}。
+ * アラートは {@code observability/alert-rules.yml} の saga-projection グループ。Kafka がクラス名で生成するので
+ * Spring Bean ではない — グローバルレジストリ(Boot が自分のレジストリをここに付ける)に記録する。
  */
 @Slf4j
 public class SagaDeserializationExceptionHandler implements DeserializationExceptionHandler {
@@ -94,6 +112,7 @@ public class SagaDeserializationExceptionHandler implements DeserializationExcep
     }
 
     /** 예외 종류와 원인의 종류만 — 메시지에 레코드 값이 섞일 수 있어 싣지 않는다. */
+    // [JA] 例外の種類と原因の種類だけ — メッセージにレコードの値が混じりうるので載せない。
     private static String describe(Throwable e) {
         Throwable root = e;
         while (root.getCause() != null && root.getCause() != root) {

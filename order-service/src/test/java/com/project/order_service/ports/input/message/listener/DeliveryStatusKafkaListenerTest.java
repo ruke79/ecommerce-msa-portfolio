@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.order_service.service.OrderDeliveryStatusService;
 
 /** delivery-service 의 DeliveryStatusPublisher 가 보내는 JSON 그대로 읽는다. */
+// [JA] delivery-service の DeliveryStatusPublisher が送る JSON をそのまま読む。
 @DisplayName("order-service — delivery-status 리스너")
 class DeliveryStatusKafkaListenerTest {
 

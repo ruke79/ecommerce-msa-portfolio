@@ -25,6 +25,30 @@
 #   MODE=verify ./ops/07-issue-certificates.sh
 #   DRY_RUN=1 ./ops/07-issue-certificates.sh                         # 계획만 출력
 #   EXTRA_SANS=shop.lab ./ops/07-issue-certificates.sh               # 기본 SAN 에 이름을 더한다(예: 실습 인그레스 이름)
+# [JA] 運用アクション ⑦ — 証明書の発行 + 注入(docs/18)
+#
+#      背景: docs/15 §0 で「証明書/キーストア = ❌ リポジトリ外の手動管理 = 🔴」として残っていた項目。
+#            サービスは LOCAL_KEY_STORE_PATH(PKCS12) · LOCAL_TRUST_STORE_PATH · LOCAL_CACERT_PATH ·
+#            LOCAL_CRT_PATH · LOCAL_KEY_PATH · KAFKA_SSL_*_LOCATION を要求するが、これらのファイルを
+#            **どう作るかがどこにも書かれていなかった**。開発者 PC の E:/github/... のパスが
+#            yml にそのまま埋め込まれていたのも同じ理由である(docs/18 §1)。
+#
+#            このスクリプトがその空白を埋める: 発行 → Java が読めるストアに変換 →
+#            env ファイル / k8s Secret への **注入** まで。手で keytool を叩く必要がないようにする。
+#
+#      モード:
+#        MODE=dev          ローカル CA を作り、その CA でサービス証明書を発行(既定値、無料・オフライン)
+#        MODE=letsencrypt  certbot で実ドメインの証明書を無料発行(ACME)
+#        MODE=import       すでに持っている証明書/鍵をストアに変換するだけ
+#        MODE=verify       既存の成果物の検証だけ(有効期限・チェーン・SAN・ストアの読み込み)
+#
+#      使用例:
+#        ./ops/07-issue-certificates.sh                                   # 開発用の一式
+#        MODE=letsencrypt LE_DOMAIN=… LE_EMAIL=… ./ops/07-issue-certificates.sh
+#        MODE=import IMPORT_CERT=… IMPORT_KEY=… IMPORT_CHAIN=… ./ops/07-issue-certificates.sh
+#        MODE=verify ./ops/07-issue-certificates.sh
+#        DRY_RUN=1 ./ops/07-issue-certificates.sh                         # 計画だけ出力
+#        EXTRA_SANS=shop.lab ./ops/07-issue-certificates.sh               # 既定の SAN に名前を足す(例: 実習の Ingress 名)
 set -euo pipefail
 
 MODE="${MODE:-dev}"
@@ -41,6 +65,14 @@ WARN_DAYS="${WARN_DAYS:-30}"
 #   - RedisCacheConfig                         storePassword: ${LOCAL_KEY_PASSWORD}
 # 즉 이미 여러 설정이 두 이름을 섞어 쓰고 있어, 다르게 두면 반드시 어딘가가 깨진다.
 # (PKCS12 는 애초에 키별 비밀번호를 분리해도 자바 쪽 지원이 온전하지 않다.)
+# [JA] ストアのパスワード。
+#
+#      ⚠️ 三つの値(キーストア・鍵・トラストストア)は **同じでなければならない**。選択ではなく設定上の制約である:
+#        - gateway-server/application-local.yml:54  trust-store-password: ${LOCAL_KEY_STORE_PASSWORD}
+#        - */application-local.yml                  key-password: ${LOCAL_KEY_PASSWORD}
+#        - RedisCacheConfig                         storePassword: ${LOCAL_KEY_PASSWORD}
+#      つまりすでに複数の設定が二つの名前を混ぜて使っており、別々にすると必ずどこかが壊れる。
+#      (PKCS12 はそもそも鍵ごとにパスワードを分けても Java 側のサポートが完全ではない。)
 STORE_PASSWORD="${STORE_PASSWORD:-}"
 
 CA_DAYS="${CA_DAYS:-3650}"
@@ -52,13 +84,17 @@ ORG="${ORG:-ecommerce-msa}"
 
 # 인증서에 들어갈 이름들(SAN). 여기 없는 이름으로 접속하면 핸드셰이크가 깨진다.
 # 쉼표 구분. IPv4/IPv6 는 자동으로 IP SAN 으로, 나머지는 DNS SAN 으로 분류한다.
+# [JA] 証明書に入る名前(SAN)。ここにない名前で接続するとハンドシェイクが壊れる。
+#      カンマ区切り。IPv4/IPv6 は自動で IP SAN に、それ以外は DNS SAN に分類する。
 DEFAULT_SANS="localhost,127.0.0.1,::1,host.docker.internal"
 # 컨테이너/컴포즈 네트워크의 서비스 이름
+# [JA] コンテナ/compose ネットワークのサービス名
 DEFAULT_SANS="$DEFAULT_SANS,eureka-server,gateway-server,config-server"
 DEFAULT_SANS="$DEFAULT_SANS,user-service,catalog-service,cart-service,order-service"
 DEFAULT_SANS="$DEFAULT_SANS,pay-service,coupon-service,chat-service"
 DEFAULT_SANS="$DEFAULT_SANS,kafka,redis,postgres,mongodb,elasticsearch"
 # k8s 클러스터 DNS (와일드카드가 <서비스>.ecommerce.svc.cluster.local 을 전부 덮는다)
+# [JA] k8s クラスタ DNS(ワイルドカードが <サービス>.ecommerce.svc.cluster.local をすべて覆う)
 DEFAULT_SANS="$DEFAULT_SANS,*.ecommerce.svc.cluster.local,*.ecommerce.svc,*.ecommerce"
 SANS="${SANS:-$DEFAULT_SANS}"
 # 기본 목록을 **바꾸지 않고 더한다** — 실습 인그레스 이름(shop.lab) 같은 것. SANS 를 통째로 주면 위 목록을 손으로 옮겨
@@ -83,6 +119,7 @@ EMIT_K8S="${EMIT_K8S:-1}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-ecommerce}"
 
 # ---------------------------------------------------------------- 유틸
+# [JA] ユーティリティ
 
 log()  { printf '>>> %s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -90,6 +127,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 run()  {
     if [ "$DRY_RUN" = "1" ]; then
         # DRY_RUN 출력은 로그로 남거나 CI 콘솔에 찍힌다. 비밀번호를 그대로 흘리지 않는다.
+        # [JA] DRY_RUN の出力はログに残ったり CI コンソールに出たりする。パスワードをそのまま流さない。
         printf '[DRY_RUN] %s\n' "$*" | sed -E "s/(pass:|-storepass |-passout pass:)[^ ']*/\1****/g"
     else
         eval "$@"
@@ -103,16 +141,19 @@ need keytool
 
 is_ip() {
     # IPv4 또는 IPv6(콜론 포함)면 참
+    # [JA] IPv4 または IPv6(コロンを含む)なら真
     case "$1" in
         *:*) return 0 ;;
         [0-9]*.[0-9]*.[0-9]*.[0-9]*)
             # 각 옥텟이 숫자인지까지 확인
+            # [JA] 各オクテットが数字かまで確認する
             printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' && return 0 || return 1 ;;
         *) return 1 ;;
     esac
 }
 
 # ---------------------------------------------------------------- 준비
+# [JA] 準備
 
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
@@ -120,7 +161,7 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 CA_KEY="$OUT_DIR/ca.key"
 CA_CRT="$OUT_DIR/ca.crt"
 LEAF_KEY="$OUT_DIR/tls.key"
-LEAF_CRT="$OUT_DIR/tls.crt"          # leaf + 중간 체인 (fullchain)
+LEAF_CRT="$OUT_DIR/tls.crt"          # leaf + 중간 체인 (fullchain) ／ [JA] leaf + 中間チェーン(fullchain)
 LEAF_CSR="$OUT_DIR/tls.csr"
 KEYSTORE="$OUT_DIR/keystore.p12"
 TRUSTSTORE_P12="$OUT_DIR/truststore.p12"
@@ -133,6 +174,8 @@ RENEW_HOOK="$OUT_DIR/renew-deploy-hook.sh"
 
 # 산출물이 실수로 커밋되지 않도록 확인한다. 개인키가 git 이력에 들어가면
 # DB 비밀번호 때와 똑같은 일(ops/01)이 반복된다 — 파일을 지워도 이력엔 남는다.
+# [JA] 成果物が誤ってコミットされないよう確認する。秘密鍵が git 履歴に入ると
+#      DB パスワードのとき(ops/01)とまったく同じことが繰り返される — ファイルを消しても履歴には残る。
 if git -C "$OUT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if ! git -C "$OUT_DIR" check-ignore -q "$OUT_DIR" 2>/dev/null; then
         warn "$OUT_DIR 는 git 추적 대상입니다. .gitignore 에 추가하지 않으면 개인키가 커밋됩니다."
@@ -144,6 +187,7 @@ fi
 if [ -z "$STORE_PASSWORD" ]; then
     if [ -f "$ENV_FILE" ]; then
         # 재실행/갱신 시에는 기존 비밀번호를 재사용해야 배포된 Secret 과 어긋나지 않는다.
+        # [JA] 再実行/更新時は既存のパスワードを再利用しないと、配備済みの Secret とずれる。
         STORE_PASSWORD="$(grep -E '^export LOCAL_KEY_STORE_PASSWORD=' "$ENV_FILE" 2>/dev/null \
                           | head -1 | sed -E 's/^[^=]+=//; s/^"//; s/"$//')" || true
         [ -n "$STORE_PASSWORD" ] && log "기존 $ENV_FILE 의 스토어 비밀번호를 재사용합니다."
@@ -157,6 +201,7 @@ fi
 log "모드=$MODE  출력=$OUT_DIR"
 
 # ---------------------------------------------------------------- 검증 함수
+# [JA] 検証関数
 
 verify_artifacts() {
     local failed=0
@@ -167,6 +212,7 @@ verify_artifacts() {
             echo "    OK  leaf 가 CA 로 검증됨"
         else
             # fullchain 은 leaf+중간 이 이어져 있어 -untrusted 가 필요할 수 있다
+            # [JA] fullchain は leaf+中間 がつながっているので -untrusted が必要な場合がある
             if openssl verify -CAfile "$CA_CRT" -untrusted "$LEAF_CRT" "$LEAF_CRT" >/dev/null 2>&1; then
                 echo "    OK  leaf 가 중간 인증서를 거쳐 CA 로 검증됨"
             else
@@ -210,6 +256,8 @@ verify_artifacts() {
     log "검증 ⑤  자바가 실제로 스토어를 읽는가"
     # 서비스가 기동 중에 겪을 것과 같은 경로를 미리 밟아 본다.
     # (여기서 실패하면 'Invalid keystore format' / 'password was incorrect' 로 기동이 죽는다)
+    # [JA] サービスが起動中にたどるのと同じ経路を前もって踏んでみる。
+    #      (ここで失敗すると 'Invalid keystore format' / 'password was incorrect' で起動が落ちる)
     local s
     for s in "$KEYSTORE:PKCS12" "$TRUSTSTORE_P12:PKCS12" "$TRUSTSTORE_JKS:JKS" \
              "$KAFKA_KEYSTORE:PKCS12" "$KAFKA_TRUSTSTORE:JKS"; do
@@ -240,9 +288,11 @@ if [ "$MODE" = "verify" ]; then
 fi
 
 # ---------------------------------------------------------------- 발급
+# [JA] 発行
 
 write_san_config() {
     # openssl 확장 설정 생성. DNS/IP 를 분류해 SAN 에 넣는다.
+    # [JA] openssl 拡張設定の生成。DNS/IP を分類して SAN に入れる。
     local cfg="$1" dns=0 ip=0 entry
     {
         echo "[req]"
@@ -257,6 +307,8 @@ write_san_config() {
         echo "keyUsage = critical, digitalSignature, keyEncipherment"
         # 서비스들이 서로에게 **클라이언트로도** 붙는다(Kafka mTLS, Feign, Eureka).
         # serverAuth 만 넣으면 mTLS 에서 상대가 우리 인증서를 거부한다.
+        # [JA] サービス同士は互いに **クライアントとしても** つながる(Kafka mTLS、Feign、Eureka)。
+        #      serverAuth だけ入れると mTLS で相手がこちらの証明書を拒否する。
         echo "extendedKeyUsage = serverAuth, clientAuth"
         echo "subjectAltName = @alt_names"
         echo "[alt_names]"
@@ -311,6 +363,9 @@ issue_letsencrypt() {
     # 주의: --standalone 은 80 포트를 잠깐 점유한다. 게이트웨이가 80 을 쓰고 있으면
     # CERTBOT_ARGS 를 --webroot -w <경로> 나 DNS-01 플러그인으로 바꿔야 한다.
     # 와일드카드 인증서는 DNS-01 만 가능하다.
+    # [JA] 注意: --standalone は 80 番ポートを一時的に占有する。ゲートウェイが 80 を使っているなら
+    #      CERTBOT_ARGS を --webroot -w <パス> や DNS-01 プラグインに替える必要がある。
+    #      ワイルドカード証明書は DNS-01 でしか取れない。
     log "certbot 으로 $LE_DOMAIN 인증서 발급 (staging=$LE_STAGING)"
     run "certbot certonly --non-interactive --agree-tos \
          -m '$LE_EMAIL' -d '$LE_DOMAIN' $staging $CERTBOT_ARGS"
@@ -326,6 +381,8 @@ issue_letsencrypt() {
     cp "$live/privkey.pem"   "$LEAF_KEY"
     # 공인 인증서는 시스템 신뢰 저장소로 검증되지만, 자바 트러스트스토어를 따로 쓰는
     # 구성(Kafka mTLS)에서는 발급자 체인이 필요하다.
+    # [JA] 公的な証明書はシステムの信頼ストアで検証されるが、Java のトラストストアを別に使う
+    #      構成(Kafka mTLS)では発行者チェーンが必要である。
     [ -f "$live/chain.pem" ] && cp "$live/chain.pem" "$CA_CRT"
 
     write_renew_hook
@@ -343,10 +400,13 @@ import_existing() {
 write_renew_hook() {
     # Let's Encrypt 는 90일마다 갱신된다. 갱신은 PEM 만 바꾸므로, 키스토어를 다시 만들지
     # 않으면 **서비스는 옛 인증서를 계속 쓴다**. 이 훅이 그 간극을 메운다.
+    # [JA] Let's Encrypt は 90 日ごとに更新される。更新は PEM だけを替えるので、キーストアを作り直さないと
+    #      **サービスは古い証明書を使い続ける**。このフックがその隙間を埋める。
     cat > "$RENEW_HOOK" <<HOOK
 #!/usr/bin/env bash
 # certbot 갱신 후 자동 실행되는 훅. 아래 위치에 심볼릭 링크로 걸어 두세요:
 #   sudo ln -sf "$RENEW_HOOK" /etc/letsencrypt/renewal-hooks/deploy/rebuild-java-stores.sh
+# [JA] certbot の更新後に自動で実行されるフック。上の場所にシンボリックリンクで掛けておく。
 set -euo pipefail
 MODE=import \\
 IMPORT_CERT="\${RENEWED_LINEAGE:-/etc/letsencrypt/live/$LE_DOMAIN}/fullchain.pem" \\
@@ -357,9 +417,11 @@ STORE_PASSWORD="\${STORE_PASSWORD:-}" \\
   "$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 # 새 스토어를 클러스터에 반영 (k8s 를 쓰는 경우)
+# [JA] 新しいストアをクラスターに反映する(k8s を使う場合)。
 if command -v kubectl >/dev/null 2>&1; then
     kubectl apply -f "$K8S_SECRET"
     # Secret 볼륨은 kubelet 이 갱신하지만, 자바는 기동 시 한 번만 키스토어를 읽는다.
+    # [JA] Secret ボリュームは kubelet が更新するが、Java は起動時に一度だけキーストアを読む。
     kubectl -n "$K8S_NAMESPACE" rollout restart deployment
 fi
 HOOK
@@ -375,6 +437,7 @@ case "$MODE" in
 esac
 
 # ---------------------------------------------------------------- 스토어 변환
+# [JA] ストア変換
 
 build_stores() {
     log "자바 키스토어/트러스트스토어 생성"
@@ -392,6 +455,10 @@ build_stores() {
         #
         #   - PKCS12: JVM 전역 트러스트스토어. 공인 CA + 내부 CA
         #   - JKS   : Kafka 클라이언트 전용. 내부 CA 만
+        # [JA] トラストストアは二つの形式とも作る。**中身が違う** — 用途が違うからである。
+        #
+        #        - PKCS12: JVM 全体のトラストストア。公的 CA + 内部 CA
+        #        - JKS   : Kafka クライアント専用。内部 CA だけ
         run "rm -f '$TRUSTSTORE_P12' '$TRUSTSTORE_JKS'"
 
         # ── ⚠️ PKCS12 는 반드시 JDK cacerts 를 **바탕으로** 만든다 ──────────────
@@ -412,6 +479,24 @@ build_stores() {
         # cacerts 는 실행하는 쪽 JDK 것을 쓴다. 컨테이너의 JRE 와 완전히 같지는 않지만
         # 공인 루트는 느리게 바뀌므로 실용적으로 문제없다. 바뀌면 이 스크립트를 다시
         # 돌려 Secret 을 갱신한다.
+        # [JA] ── ⚠️ PKCS12 は必ず JDK の cacerts を **土台に** 作る ──
+        #
+        #      マニフェストがこのファイルを `-Djavax.net.ssl.trustStore` で渡す(k8s/30·31·32 …)。
+        #      そのオプションは JDK 既定の cacerts に **足すのではなく置き換える。** だから以前のように
+        #      内部 CA 一つだけ入れると信頼リストが 1 個になり(既定の cacerts は 151 個)、
+        #      **公的証明書を使う外部通信がすべて死ぬ:**
+        #
+        #        · S3 画像アップロード  → PKIX path building failed(商品登録がここで止まった)
+        #        · PayPal API          → 決済
+        #        · Gmail SMTP          → 登録確認メール
+        #        · OAuth トークンエンドポイント → ソーシャルログイン
+        #
+        #      症状が「証明書が見つからない」なので AWS キーの問題と誤解しやすい。キーを替えても
+        #      そのままだ — TLS ハンドシェイクで止まるので認証情報までたどり着かない。
+        #
+        #      cacerts は実行する側の JDK のものを使う。コンテナの JRE と完全に同じではないが、
+        #      公的ルートはゆっくりしか変わらないので実用上問題ない。変わったらこのスクリプトをもう一度
+        #      回して Secret を更新する。
         local cacerts
         cacerts=$(java -XshowSettings:properties -version 2>&1 \
             | sed -n 's/.*java\.home = //p' | head -1)
@@ -432,6 +517,8 @@ build_stores() {
 
         # Kafka 는 내부 브로커하고만 말한다. 공인 CA 를 넣을 이유가 없으므로 넣지 않는다 —
         # 신뢰 범위는 필요한 만큼만.
+        # [JA] Kafka は内部ブローカーとしか話さない。公的 CA を入れる理由がないので入れない —
+        #      信頼範囲は必要な分だけ。
         run "keytool -importcert -noprompt -alias ca -file '$CA_CRT' \
              -keystore '$TRUSTSTORE_JKS' -storetype JKS -storepass '$STORE_PASSWORD' 2>/dev/null"
 
@@ -440,6 +527,7 @@ build_stores() {
             n=$(keytool -list -keystore "$TRUSTSTORE_P12" -storepass "$STORE_PASSWORD" 2>/dev/null \
                 | grep -c 'trustedCertEntry' || true)
             # 1개면 내부 CA 만 들어간 것이다 — 위 사고가 그대로 재현된다.
+            # [JA] 1 個なら内部 CA だけが入っている — 上の事故がそのまま再現する。
             if [ "${n:-0}" -le 1 ]; then
                 warn "트러스트스토어 항목이 ${n}개뿐입니다 — 공인 CA 가 빠졌습니다."
                 warn "  바깥 HTTPS(S3·PayPal·SMTP)가 PKIX 오류로 실패합니다."
@@ -453,6 +541,8 @@ build_stores() {
 
     # Kafka 는 같은 신원을 쓰되 파일명을 분리해 둔다.
     # k8s/10-configmap.yaml 이 이 이름을 가리키고 있다.
+    # [JA] Kafka は同じアイデンティティを使うが、ファイル名を分けておく。
+    #      k8s/10-configmap.yaml がこの名前を指している。
     run "cp '$KEYSTORE' '$KAFKA_KEYSTORE'"
     [ -f "$TRUSTSTORE_JKS" ] && run "cp '$TRUSTSTORE_JKS' '$KAFKA_TRUSTSTORE'"
 
@@ -467,6 +557,7 @@ build_stores() {
 build_stores
 
 # ---------------------------------------------------------------- 주입 ① env 파일
+# [JA] 注入 ① env ファイル
 
 emit_env() {
     if [ "$DRY_RUN" = "1" ]; then log "[DRY_RUN] $ENV_FILE 생성"; return; fi
@@ -475,14 +566,17 @@ emit_env() {
 # 사용:  set -a; source $ENV_FILE; set +a;  ./gradlew :user-service:bootRun
 #
 # ⚠️ 이 파일과 같은 디렉터리의 *.key / *.p12 는 개인키다. 커밋 금지, 공유 금지.
+# [JA] ops/07-issue-certificates.sh が生成。直接編集しない — 再発行時に上書きされる。⚠️ このファイルと同じディレクトリの *.key / *.p12 は秘密鍵だ。コミット禁止、共有禁止。
 
 # ---- 서비스 HTTPS (server.ssl.*) ----
+# [JA] ---- サービス HTTPS (server.ssl.*) ----
 export LOCAL_KEY_STORE_PATH="$KEYSTORE"
 export LOCAL_KEY_STORE_PASSWORD="$STORE_PASSWORD"
 export LOCAL_KEY_PASSWORD="$STORE_PASSWORD"
 export LOCAL_TRUST_STORE_PATH="$TRUSTSTORE_P12"
 
 # ---- PEM (Redis SSL, Elasticsearch 트러스트 번들) ----
+# [JA] ---- PEM (Redis SSL、Elasticsearch のトラストバンドル) ----
 export LOCAL_CACERT_PATH="$CA_CRT"
 export LOCAL_CRT_PATH="$LEAF_CRT"
 export LOCAL_KEY_PATH="$LEAF_KEY"
@@ -490,6 +584,7 @@ export LOCAL_KEY_PATH="$LEAF_KEY"
 # ---- Kafka mTLS ----
 # 브로커가 SSL 리스너로 떠 있을 때만 SSL 로 바꾸세요. PLAINTEXT 로컬 브로커에 SSL 로 붙으면
 # 'Connection to node -1 terminated during authentication' 으로 조용히 실패합니다.
+# [JA] ---- Kafka mTLS ---- ブローカーが SSL リスナーで動いているときだけ SSL に変える。PLAINTEXT のローカルブローカーに SSL でつなぐと、認証中に接続が切れて静かに失敗する。
 export KAFKA_SECURITY_PROTOCOL="\${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}"
 export KAFKA_SSL_KEY_STORE_LOCATION="$KAFKA_KEYSTORE"
 export KAFKA_SSL_KEY_STORE_PASSWORD="$STORE_PASSWORD"
@@ -505,6 +600,7 @@ ENV
 emit_env
 
 # ---------------------------------------------------------------- 주입 ② k8s Secret
+# [JA] 注入 ② k8s Secret
 
 emit_k8s_secret() {
     [ "$EMIT_K8S" = "1" ] || return 0
@@ -519,6 +615,7 @@ emit_k8s_secret() {
 #
 # 각 Deployment 는 이 Secret 을 /app/resources 에 마운트하고
 # LOCAL_KEY_STORE_PATH=/app/resources/keystore.p12 로 참조한다(k8s/31-gateway-server.yaml 등).
+# [JA] ops/07-issue-certificates.sh が生成。秘密鍵が入っているのでコミット禁止。各 Deployment はこの Secret を /app/resources にマウントし、LOCAL_KEY_STORE_PATH=/app/resources/keystore.p12 で参照する(k8s/31-gateway-server.yaml など)。
 apiVersion: v1
 kind: Secret
 metadata:
@@ -544,6 +641,7 @@ HEAD
 emit_k8s_secret
 
 # ---------------------------------------------------------------- 검증
+# [JA] 検証
 
 if [ "$DRY_RUN" = "1" ]; then
     log "DRY_RUN 이므로 검증을 건너뜁니다."

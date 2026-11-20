@@ -81,6 +81,10 @@ public class RedisCacheConfig {
             //    (공개 CA)로 검증한다. 관리형 Redis(Upstash 등)가 바로 이 경우다: 공개 CA 인증서에
             //    비밀번호 인증이고 클라이언트 인증서는 존재하지 않는다. 예전 코드는 빈 경로도
             //    무조건 열어서, TLS 를 켜는 순간 FileNotFoundException 으로 기동이 죽었다(docs/32 §4).
+            // [JA] ⚠️ 証明書のパスが空なら SslOptions を一切作らない — JVM 既定のトラストストア
+            //         (公開 CA)で検証する。マネージド Redis(Upstash など)がまさにこの場合だ: 公開 CA の証明書で
+            //         パスワード認証であり、クライアント証明書は存在しない。以前のコードは空のパスも
+            //         無条件に開き、TLS を有効にした瞬間 FileNotFoundException で起動が落ちた(docs/32 §4)。
             ClientOptions.Builder clientOptions = ClientOptions.builder()
                     .protocolVersion(ProtocolVersion.RESP3);
 
@@ -129,16 +133,19 @@ public class RedisCacheConfig {
     @Bean
     public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory) {
         // 만료 기간이 없는 영구 캐시 설정
+        // [JA] 有効期限のない永続キャッシュ設定
         RedisCacheConfiguration permanentCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
             .disableCachingNullValues()
             .serializeValuesWith(SerializationPair.fromSerializer(cacheValueSerializer()));
         
         // 캐시 이름별 설정 맵 생성
+        // [JA] キャッシュ名別の設定マップを作成
         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
 
         
         cacheConfigurations.put("orderList", redisCacheConfiguration(Duration.ofMinutes(60)));
           // `ordersPage` 캐시 설정: 60분 보관
+          // [JA] `ordersPage` キャッシュ設定: 60 分保持
         cacheConfigurations.put("ordersPage", redisCacheConfiguration(Duration.ofMinutes(60)));
 
         cacheConfigurations.put("orders", redisCacheConfiguration(Duration.ofMinutes(60)));
@@ -155,6 +162,13 @@ public class RedisCacheConfig {
         //    프로듀서 초기화로 그 틈이 몇 초라 거의 매번 걸렸다.
         //    transactionAware: 트랜잭션 안의 비우기·넣기를 **커밋 뒤로** 미룬다. 트랜잭션 밖에서는
         //    예전처럼 바로 한다(docs/25 §11.12).
+        // [JA] 🐛 決済されたのに詳細がしばらく NOT_PROCESSED だった。サーガは状態を変えた **トランザクションの中で**
+        //         キャッシュを消し、コミットはその後(在庫・カートの発行と Kafka トランザクションのコミットまで終わった後)だった。
+        //         その隙に確定を待つ画面の照会が入ると、まだコミット前の古い状態を DB から読んで
+        //         **再びキャッシュに入れる** — 消した直後なのでそのまま 30 分残る。デプロイ直後の最初の注文はトランザクション
+        //         プロデューサーの初期化でその隙が数秒あり、ほぼ毎回引っかかった。
+        //         transactionAware: トランザクション内の削除・投入を **コミットの後に** 遅らせる。トランザクション外では
+        //         以前どおりすぐ行う(docs/25 §11.12)。
         return RedisCacheManager.builder(redisConnectionFactory)
             .initialCacheNames(cacheConfigurations.keySet())
             .withInitialCacheConfigurations(cacheConfigurations)
@@ -172,6 +186,13 @@ public class RedisCacheConfig {
      * 이 채워져 모든 새 주문의 상세가 열리지 않았다.
      *
      * <p>모르는 필드는 무시한다 — DTO 에서 필드를 지운 배포 직후, 캐시에 남은 옛 값이 역직렬화 실패로 같은 400 을 내지 않게.
+     *
+     * <p>[JA] キャッシュ値のシリアライザー — 既定の {@link GenericJackson2JsonRedisSerializer}(型情報 {@code @class} そのまま)に <b>日付・時刻</b> を足す。
+     * 🐛 既定のシリアライザーは {@code LocalDateTime} を書けない("Java 8 date/time type not supported by default")。注文 DTO には
+     * 決済・配送・購入確定の時刻、入金期限、在庫の仮押さえの期限があり、値が <b>ある</b> 注文をキャッシュに入れた瞬間に例外が出て注文照会が
+     * 400("요청을 처리하지 못했습니다")になった。在庫の仮押さえが正しく取れ始めると(docs/59 §10)新しい注文ごとに {@code stockHoldUntil}
+     * が埋まり、すべての新しい注文の詳細が開かなかった。
+     * 知らないフィールドは無視する — DTO からフィールドを消したデプロイの直後、キャッシュに残った古い値がデシリアライズ失敗で同じ 400 を出さないように。
      */
     static GenericJackson2JsonRedisSerializer cacheValueSerializer() {
         return new GenericJackson2JsonRedisSerializer().configure(mapper -> mapper

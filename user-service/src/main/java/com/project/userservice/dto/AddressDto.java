@@ -24,6 +24,10 @@ public class AddressDto {
      * 입력이 컨트롤러를 그대로 통과해 Hibernate 의 flush 시점까지 갔고, 터질 때는
      * ConstraintViolationException 의 덤프가 사용자에게 그대로 전달됐다.
      * 검증은 경계에서 한다.
+     *
+     * <p>[JA] 🐛 検証が<b>エンティティ</b>にしかなかった(ShippingAddress の @NotBlank/@Size)。だから不正な入力が
+     * コントローラーをそのまま通って Hibernate の flush 時点まで行き、失敗するときは
+     * ConstraintViolationException のダンプがユーザーにそのまま伝わった。検証は境界で行う。
      */
     @NotBlank(message = "주소는 공백이 없어야 합니다.")
     @Size(min = 2, message = "주소1은 적어도 2자 이상이어야 합니다.")

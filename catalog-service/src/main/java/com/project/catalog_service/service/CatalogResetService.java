@@ -39,6 +39,20 @@ import lombok.extern.slf4j.Slf4j;
  * <p>비우는 범위는 <b>CSV 가 만드는 것</b>뿐이다. {@code product.processed_event}(사가
  * 멱등성 원장)와 {@code content.*}(배너·공지·홈 섹션)는 건드리지 않는다 — 임포트가 만든
  * 것이 아니고, 홈 섹션을 지우면 첫 화면 구성이 통째로 사라진다.
+ *
+ * <p>[JA] CSV 一括インポートをやり直すためにカタログを空にする。
+ * なぜ必要か — インポートが冪等ではない。プロセッサは照会せずに新しいエンティティを作って入れ(JpaItemWriter も persist で上書きしておいた)、
+ * ProductImportService は実行ごとに time パラメータを入れて新しい JobInstance を作る。つまり Spring Batch の再開が動かず、常に 1 段階目からやり直す。
+ * 失敗したインポートをもう一度押すと、すでに入ったものの上にさらに入れる。
+ * 実際にそうなった。画像アップロード(S3 権限)で死んだ後にもう一度押したら、カテゴリ 5→10、サブカテゴリ 15→30 になり、商品は uq_product_slug に引っかかって止まった。
+ * ユニーク制約がなければ商品 500 個のカタログが黙って作られていただろう。運用者は psql で直接 TRUNCATE しなければならなかった — その作業をなくすのがこのクラスだ。
+ * なぜ DELETE ではなく TRUNCATE ... RESTART IDENTITY なのか。インポートは識別子が 1 から始まることに依存している。CategoryItemProcessor は id を CSV から取らず
+ * DB に生成させるが、ProductItemProcessor は categoryRepository.findById(item.getCategory_id()) で CSV に書かれた id を探す。
+ * 二つの値が一致するのはシーケンスが 1 から始まるときだけだ。
+ * だから行だけ消してシーケンスを残すと、次のインポートが IllegalArgumentException: Invalid category_id: 1 で死ぬ。同じ理由で、インポート前に
+ * /admin/category でカテゴリを一つでも作っておくと id がずれて失敗する(その依存自体が欠陥だ — docs/42 に書いておいた)。
+ * 空にする範囲は CSV が作るものだけだ。product.processed_event(サーガの冪等性台帳)と content.*(バナー・お知らせ・ホームセクション)には触れない —
+ * インポートが作ったものではなく、ホームセクションを消すと最初の画面の構成が丸ごと消える。
  */
 @Slf4j
 @Service
@@ -49,6 +63,9 @@ public class CatalogResetService {
      *
      * <p>순서는 의미가 없다(CASCADE 가 처리한다). 읽는 사람이 자식→부모로 확인하기 쉽도록
      * 그 순서로 적었다.
+     *
+     * <p>[JA] 空にするテーブル。ハードコードである — 名前が外から入ってくると、そのまま SQL になる。
+     * 順序に意味はない(CASCADE が処理する)。読む人が子→親で確認しやすいよう、その順に書いた。
      */
     private static final List<String> CATALOG_TABLES = List.of(
             "product.product_sku",
@@ -65,6 +82,7 @@ public class CatalogResetService {
     private EntityManager entityManager;
 
     /** 임포트가 만든 것이 하나라도 있는가. 재실행 전에 이걸 먼저 묻는다. */
+    // [JA] インポートが作ったものが一つでもあるか。再実行の前にまずこれを尋ねる。
     @Transactional(readOnly = true)
     public long countCatalogRows() {
         Number n = (Number) entityManager
@@ -80,9 +98,13 @@ public class CatalogResetService {
      *
      * <p>되돌릴 수 없는 동작이라 {@code warn} 으로 남긴다. 호출자는 관리자 인증을 거치고
      * {@code reset=true} 를 명시적으로 넘긴 경우뿐이다.
+     *
+     * <p>[JA] カタログを空にし、識別子のシーケンスを 1 に戻す。
+     * 元に戻せない操作なので warn で残す。呼び出し元は管理者認証を経て reset=true を明示的に渡した場合だけだ。
      */
     @Transactional
     // 카탈로그를 비우면 캐시도 — 🐛 예전에는 남아 있어 다시 가져온 뒤에도 홈 · 상세가 지운 옛 카탈로그를 보였다(products 는 영구였다).
+    // [JA] カタログを空にしたらキャッシュも — 🐛 以前は残っていて、再取り込みの後もホーム・詳細が消した古いカタログを見せていた(products は永続だった)。
     @org.springframework.cache.annotation.CacheEvict(value = {"products", "product", "search_cache", "colors_cache",
             "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public void reset() {
@@ -94,6 +116,7 @@ public class CatalogResetService {
     }
 
     /** 가져오기가 끝나면 캐시를 비운다 — 가져오는 동안 들어온 조회가 반쯤 채운 목록을 캐시에 남겼을 수 있다. */
+    // [JA] 取り込みが終わったらキャッシュを空にする — 取り込み中に来た照会が半分だけ埋まった一覧をキャッシュに残したかもしれない。
     @org.springframework.cache.annotation.CacheEvict(value = {"products", "product", "search_cache", "colors_cache",
             "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public void clearCaches() {

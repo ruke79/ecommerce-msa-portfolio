@@ -41,6 +41,25 @@ import lombok.extern.slf4j.Slf4j;
  * <p>환불이 실패하면 예외를 던진다 — Kafka 가 다시 전달하고, 그때는 적는 단계를 건너뛰고(이미 적었다) 환불만 다시
  * 시도한다. 환불 수량은 "적힌 부족분 − 이미 환불된 수" 라 두 번 환불하지 않는다. 제공자 쪽은 환불 멱등 키가 같은 요청을
  * 한 번으로 접는다. 재시도가 다 실패하면 DLT 로 가고, 매번 남긴 "수동 환불 필요" 로 운영자가 안다.
+ *
+ * <p>[JA] 在庫不足の補償 — 決済されたが送れない数量を記録して自動返金する(docs/53 §過剰販売)。
+ *
+ * <h3>🔴 なぜ必要か</h3>
+ *
+ * <p>在庫は<b>決済後に</b>差し引く。最後の 1 個を二人が同時に決済すると、後の差し引きが足りない。以前は catalog がログを
+ * 1 行残すだけだった — 注文は決済完了で進み、返金も警報もなかった。客は代金を払ったのに品物はなく、
+ * 運用者は配送段階で(または客の問い合わせで)ようやく知った。
+ *
+ * <p>今は catalog が不足数を {@code stock-shortage} で知らせ(アウトボックス)、ここで: ①
+ * <b>記録する</b> — 行ごとに {@code shortQty}。在庫復元・返品・配送数量から除かれる(差し引かれたことがない)。
+ * 冪等キーは注文の {@code shortageEventId} — 再配信は捨てる。② <b>返す</b> —
+ * その数だけ部分返金(管理者権限の既存返金経路 — 金額・通貨・プロバイダーのルールがそのまま)。客は既存の返金通知を受け取る。
+ * 全部足りなければ注文全体が返金され、決済キャンセルが配送もキャンセルする。③ <b>返せなければ引き継ぐ</b> —
+ * 銀行振込は口座へ送金する人が要る。ログ「手動返金が必要」が Loki 警報 {@code ManualActionRequired} に行く。
+ *
+ * <p>返金が失敗したら例外を投げる — Kafka が再配信し、その時は記録段階を飛ばして(既に記録した)返金だけを再試行する。
+ * 返金数量は「記録された不足分 − 既に返金した数」なので二重返金しない。プロバイダー側は返金の冪等キーが同じリクエストを一回にまとめる。
+ * 再試行が全部失敗すると DLT に行き、毎回残した「手動返金が必要」で運用者が知る。
  */
 @Slf4j
 @Service
@@ -64,6 +83,7 @@ public class OrderStockShortageService {
     }
 
     /** 부족한 줄 — catalog 가 알린 옵션과 수. */
+    // [JA] 不足した行 — catalog が知らせたオプションと数。
     public record Line(Long productId, Long colorId, String size, int shortQty) {
     }
 
@@ -93,6 +113,7 @@ public class OrderStockShortageService {
         }
         if (r.refundItems().isEmpty() || !OrderStatus.PAID_STATUSES.contains(r.status())) {
             // 이미 (손님·운영자가) 환불했거나, 결제가 살아 있지 않다 — 돌려줄 것이 없다.
+            // [JA] 既に(客・運用者が)返金したか、決済が生きていない — 返すものがない。
             recorder.resolve(orderId);
             log.info("재고 부족: 돌려줄 금액이 남아 있지 않다. orderId={} status={}", orderId, r.status());
             return Outcome.NOTHING_TO_REFUND;
@@ -120,6 +141,7 @@ public class OrderStockShortageService {
     }
 
     /** 적은 결과 — 환불에 필요한 것만(트랜잭션 밖으로 엔티티를 들고 나가지 않는다). */
+    // [JA] 記録した結果 — 返金に必要なものだけ(トランザクション外へエンティティを持ち出さない)。
     public record Recorded(boolean unknownOrder, boolean resolved, String trackingId, OrderStatus status,
             PaymentProvider provider, List<OrderItemQtyRequest> refundItems) {
         static Recorded unknown() {
@@ -130,6 +152,9 @@ public class OrderStockShortageService {
     /**
      * 적는 쪽 — 자기 트랜잭션. 환불({@link OrderService#refundOrder})은 트랜잭션 밖에서 불러야 한다(보상 이벤트 발행이
      * 그 뒤에 따른다), 그래서 별도 빈이다.
+     *
+     * <p>[JA] 記録する側 — 自前のトランザクション。返金({@link OrderService#refundOrder})
+     * はトランザクション外で呼ぶ必要がある(補償イベントの発行がその後に続く)ので、別 Bean である。
      */
     @Service
     public static class Recorder {
@@ -174,11 +199,13 @@ public class OrderStockShortageService {
                 cacheEvictor.evictOrderCaches(orderId, "stockShortage");
             } else if (!order.getShortageEventId().equals(eventId)) {
                 // 차감은 주문당 한 번이라 부족 알림도 하나다. 다른 키가 오면 발행 쪽이 바뀐 것이다.
+                // [JA] 差し引きは注文ごとに一度なので不足通知も一つである。別のキーが来たら発行側が変わったということだ。
                 log.error("주문에 이미 다른 재고 부족 기록이 있다({} ≠ {}) — 수동 확인 필요. orderId={}",
                         order.getShortageEventId(), eventId, orderId);
             }
 
             // 돌려줄 수 = 적힌 부족분 − 이미 환불된 수(환불은 부족분을 먼저 소진한다). 재시도해도 두 번 돌려주지 않는다.
+            // [JA] 返す数 = 記録された不足分 − 既に返金した数(返金は不足分を先に消化する)。再試行しても二重に返さない。
             List<OrderItemQtyRequest> items = new ArrayList<>();
             for (OrderProduct p : order.getOrderedProducts()) {
                 int toRefund = Math.min(Math.max(0, p.getShortQty() - p.getRefundedQty()), p.remainingToRefund());

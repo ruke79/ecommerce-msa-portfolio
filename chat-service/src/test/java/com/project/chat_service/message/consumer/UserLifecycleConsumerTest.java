@@ -27,6 +27,9 @@ import com.project.common.outbox.OutboxTraceContext;
  *
  * <p>user-created 만 받던 동안 복제본은 가입 순간에서 멈춰 있었다 — 바꾼 닉네임이 채팅에 안 보였고, 탈퇴한 사람의
  * 이메일이 여기에만 남았다.
+ *
+ * <p>[JA] チャット会員の複製が原本のプロフィール変更・退会に追従する(docs/48 §6-⑤)。
+ * <p>user-created だけを受けていた間、複製は加入の瞬間で止まっていた — 変えたニックネームがチャットに見えず、退会した人のメールがここにだけ残っていた。
  */
 @DisplayName("채팅 회원 복제본 — user-updated·user-deleted")
 class UserLifecycleConsumerTest {
@@ -118,6 +121,8 @@ class UserLifecycleConsumerTest {
     /**
      * 🔒 대화 기록(몽고)에도 흔적이 있다 — 메시지마다 닉네임 사본, 옛 문서(v1)는 발신자 이메일. 회원 행만 지우면 그것이
      * 남는다. 옛 문서가 아직 백필되지 않았으면 발신자가 이메일이다 — 매핑(V5)에서 찾아 함께 지우고, 매핑도 지운다.
+     *
+     * <p>[JA] 🔒 会話記録(Mongo)にも痕跡がある — メッセージごとのニックネームのコピー、旧ドキュメント(v1)は送信者メール。会員行だけ消すとそれが残る。旧ドキュメントがまだバックフィルされていなければ送信者はメールである — マッピング(V5)から探して一緒に消し、マッピングも消す。
      */
     @Test
     @DisplayName("🔴 탈퇴하면 대화 기록의 발신자 표시(닉네임 사본)도 지운다")
@@ -159,6 +164,7 @@ class UserLifecycleConsumerTest {
     }
 
     // ── user-created 와의 관계 ──────────────────────────────────────────────
+    // [JA] ── user-created との関係 ──
 
     private void created(String nickname, String image) {
         new UserMessageListener(repository, mongo).userCreated(com.project.common.message.dto.request.UserCreatedRequest
@@ -166,6 +172,7 @@ class UserLifecycleConsumerTest {
     }
 
     /** 이메일은 복제하지 않는다 — 회원 행에 컬럼 자체가 없다(V5, docs/48 §6-⑥). */
+    // [JA] メールは複製しない — 会員行にカラム自体がない(V5, docs/48 §6-⑥)。
     @Test
     @DisplayName("🔒 새 회원은 id·닉네임·사진만으로 복제된다")
     void createdStoresNoEmail() {

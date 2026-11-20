@@ -60,7 +60,7 @@ public class DltReplay {
     static KafkaConsumer<byte[], byte[]> consumer(String bootstrap) {
         Properties p = new Properties();
         p.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
-        p.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");   // 그룹 없이 assign — 어느 컨슈머 그룹의 오프셋도 건드리지 않는다
+        p.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");   // 그룹 없이 assign — 어느 컨슈머 그룹의 오프셋도 건드리지 않는다 ／ [JA] グループなしで assign — どのコンシューマーグループのオフセットにも触れない
         p.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         p.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         p.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
@@ -73,6 +73,7 @@ public class DltReplay {
     }
 
     /** Spring 은 원래 파티션 · 오프셋을 4 · 8 바이트 정수로 싣는다(2.x 이후). 글자로 실린 옛 모양도 읽는다. */
+    // [JA] Spring は元のパーティション · オフセットを 4 · 8 バイトの整数で載せる(2.x 以降)。文字で載った古い形も読む。
     static Long numberHeader(ConsumerRecord<byte[], byte[]> r, String name) {
         Header h = r.headers().lastHeader(name);
         if (h == null || h.value() == null) {

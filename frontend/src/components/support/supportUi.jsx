@@ -7,9 +7,14 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>⚠️ 겹침: 상담 화면의 떠 있는 요소(새 메시지 알림 · 빠른 답변 목록)는 카드 안에서만 위로 뜬다. 카드에 {@code isolate}
  * 를 주어 z-index 가 카드 밖으로 새지 않게 한다 — 옛 단체방 화면은 z-index 200 짜리 버튼이 헤더 메뉴를 덮었다.
+ *
+ * <p>[JA] カスタマーセンターチャットの小さな部品 — 顧客画面と相談デスクが共用する(docs/58 §11)。
+ * ⚠️ 重なり: 相談画面の浮かぶ要素(新着通知・クイック返信一覧)はカードの中でだけ上に浮かぶ。カードに {@code isolate}
+ * を与え z-index がカードの外へ漏れないようにする — 旧グループチャット画面は z-index 200 のボタンがヘッダーメニューを覆っていた。
  */
 
 /** 문의 유형 — 서버 SupportTopic 과 같은 순서 · 값. */
+// [JA] 問い合わせ種別 — サーバーの SupportTopic と同じ順序・値。
 export const SUPPORT_TOPICS = ["ORDER", "DELIVERY", "PAYMENT", "PRODUCT", "ACCOUNT", "OTHER"];
 
 const TOPIC_TONE = {
@@ -53,6 +58,7 @@ export function StatusBadge({ status }) {
 StatusBadge.propTypes = { status: PropTypes.string };
 
 /** 이름의 첫 글자로 만든 동그라미. 사진은 쓰지 않는다 — 상담에는 연락처 · 얼굴이 필요 없다. */
+// [JA] 名前の最初の文字で作った丸。写真は使わない — 相談に連絡先・顔は要らない。
 export function Avatar({ name, tone = "blue", size = "md" }) {
     const letter = String(name ?? "").trim().charAt(0) || "·";
     const tones = {
@@ -71,6 +77,7 @@ export function Avatar({ name, tone = "blue", size = "md" }) {
 Avatar.propTypes = { name: PropTypes.string, tone: PropTypes.oneOf(["blue", "gray", "green"]), size: PropTypes.oneOf(["sm", "md", "lg"]) };
 
 /** 별점 표시(읽기 전용). */
+// [JA] 星評価表示(読み取り専用)。
 export function Stars({ value, className = "" }) {
     const { t } = useTranslation();
     if (!value) return null;

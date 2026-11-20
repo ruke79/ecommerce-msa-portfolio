@@ -38,6 +38,7 @@ module.exports = merge(baseConfig, {
       template: './public/index.html'
     }),     
     // prod 와 같은 규칙 — REACT_APP_* 전부 (webpack.env.js).
+    // [JA] prod と同じ規則 — REACT_APP_* すべて(webpack.env.js)。
     new webpack.DefinePlugin(clientEnv("development")),
   ],
 });

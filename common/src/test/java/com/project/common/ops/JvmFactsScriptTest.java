@@ -28,7 +28,12 @@ import org.junit.jupiter.api.io.TempDir;
  * JVM_MAX_RAM_PERCENTAGE). ③ JAVA_OPTS 의 {@code -Xlog:…:file=} 은 빼고 띄운다 — 돌고 있는 JVM 의 gc.log 를 덮지 않는다.
  * ④ 운영 클러스터는 ALLOW_PROD=1 없이는 파드에 아무것도 하지 않는다. ⑤ 파드가 없거나 JVM 이 못 떠도 다른 서비스는 계속한다.
  *
- * <p>[JA] 偽 kubectl の exec がこのテストの本物の JVM でプローブを回す — 表の値は本物のエルゴノミクス。
+ * <p>[JA] JVM 事実表(ops/60-jvm-facts.sh)— docs/92 §2。
+ * 偽 kubectl の {@code exec} が Pod の代わりに<b>このテストの本物の JVM</b> でスクリプトのプローブを回す — そのため表の値は本物の
+ * エルゴノミクスである。コンテナの上限は {@code -XX:ActiveProcessorCount} · {@code -XX:MaxRAM} で模倣する(JVM が cgroup の代わりに使う入力)。
+ * 守ること: ① 1 コアなら Serial · ForkJoin 並列度 1、4 コアなら G1 · 3 — 表が JVM の実際の選択を写す。② 最大ヒープ = 上限 × 50%(イメージの
+ * JVM_MAX_RAM_PERCENTAGE)。③ JAVA_OPTS の {@code -Xlog:…:file=} は外して起動する — 動いている JVM の gc.log を上書きしない。
+ * ④ 本番クラスターは ALLOW_PROD=1 なしには Pod に何もしない。⑤ Pod がないか JVM が起動できなくても、他のサービスは続ける。
  */
 @DisplayName("ops/60 — JVM 사실 표 (docs/92 §2)")
 class JvmFactsScriptTest {
@@ -54,6 +59,7 @@ class JvmFactsScriptTest {
     }
 
     /** 가짜 kubectl — 부른 것을 calls 에, exec 는 마지막 인자(탐침)를 이 기계에서 sh -c 로. FAKE_NOPOD · FAKE_EXEC_FAIL 의 서비스는 빠진다. */
+    // [JA] 偽の kubectl — 呼んだものを calls に、exec は最後の引数(プローブ)をこのマシンで sh -c で。FAKE_NOPOD · FAKE_EXEC_FAIL のサービスは外れる。
     private Run run(Map<String, String> env, String... services) throws Exception {
         assumeTrue(posix(), "bash · POSIX 가 없다");
         Path bin = Files.createDirectories(tmp.resolve("bin"));
@@ -75,6 +81,7 @@ class JvmFactsScriptTest {
         cmd.addAll(List.of(services));
         ProcessBuilder pb = new ProcessBuilder(cmd).directory(tmp.toFile()).redirectErrorStream(true);
         // 파드 안의 java 대신 이 시험의 JVM
+        // [JA] ポッド内の java の代わりにこの試験の JVM
         pb.environment().put("PATH", bin + ":" + Path.of(System.getProperty("java.home"), "bin") + ":" + System.getenv("PATH"));
         pb.environment().put("FAKE", tmp.toString());
         pb.environment().put("OUT", tmp.resolve("out").toString());

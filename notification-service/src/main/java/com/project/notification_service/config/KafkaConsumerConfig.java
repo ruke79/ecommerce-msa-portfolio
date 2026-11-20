@@ -30,6 +30,13 @@ import org.springframework.kafka.listener.DefaultErrorHandler;
  *
  * <p>SSL 설정은 다른 서비스와 같은 형태다. 스토어 <b>형식</b>까지 주입받는 것이 중요하다 —
  * {@code .p12} 를 {@code "JKS"} 로 박아 두면 mTLS 를 켜는 순간 전 서비스가 기동 불가가 된다(B-29).
+ *
+ * <p>[JA] 通知コンシューマーの設定。
+ * <b>なぜ String で受けるか。</b> 他のサービスはそれぞれの DTO にデシリアライズするが、通知サービスは注文・決済・チャットなど
+ * <b>複数ドメイン</b>のイベントを聞く。各 DTO に依存すると、そのドメインのスキーマが変わるたびに通知サービスがデシリアライズ失敗で
+ * 落ちる — 通知がそうした結合を持つ理由はない。原文を受けて必要なフィールドだけ取り出して読む(NotificationEventListener)。
+ * SSL 設定は他のサービスと同じ形である。ストアの<b>形式</b>まで注入するのが重要 — {@code .p12} を {@code "JKS"} と
+ * 決め打ちすると、mTLS を有効にした瞬間に全サービスが起動不能になる(B-29)。
  */
 @EnableKafka
 @Configuration
@@ -39,6 +46,9 @@ public class KafkaConsumerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} 一か所で作る。
+     * 以前はクラスごとに同じ 6 行を複製し、値が空でもそのまま入れていたため、SSL を有効にした瞬間に空のパスで落ちる組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -48,6 +58,7 @@ public class KafkaConsumerConfig {
     }
 
     /** poison message 가 파티션을 막지 않도록 재시도 후 DLT 로 보낸다(docs/11 §3). */
+    // [JA] poison message がパーティションを塞がないよう、リトライ後に DLT へ送る(docs/11 §3)。
     @Autowired
     private DefaultErrorHandler kafkaErrorHandler;
 
@@ -61,6 +72,8 @@ public class KafkaConsumerConfig {
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl);
         // 기본 그룹. ⚠️ 실제로는 리스너마다 리스너 id 가 곧 group.id 다(idIsGroup) — 리스너마다 따로 그룹이고, 같은
         // 리스너의 레플리카끼리는 한 그룹이라 한 메시지는 한 파드만 받는다(알림은 파드마다 만들면 안 된다, docs/21 §2).
+        // [JA] 既定のグループ。⚠️ 実際にはリスナーごとにリスナー id がそのまま group.id になる(idIsGroup) — リスナーごとに別グループで、同じ
+        //      リスナーのレプリカ同士は一つのグループなので一つのメッセージは一つの Pod だけが受ける(通知を Pod ごとに作ってはならない、docs/21 §2)。
         config.put(ConsumerConfig.GROUP_ID_CONFIG, "notification");
         config.put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RebalanceSettings.assignors(environment));
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
@@ -75,6 +88,7 @@ public class KafkaConsumerConfig {
         config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         config.putAll(securityProps());
         // order·payment 토픽은 이제 Avro 다. 이 소비자는 JSON 문자열을 읽으므로 Avro 면 JSON 으로 바꿔 준다(docs/38 §1.16).
+        // [JA] order・payment トピックは今は Avro である。このコンシューマーは JSON 文字列を読むので、Avro なら JSON に変換する(docs/38 §1.16)。
         return new DefaultKafkaConsumerFactory<>(config, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(new AvroJsonTextDeserializer()));
     }

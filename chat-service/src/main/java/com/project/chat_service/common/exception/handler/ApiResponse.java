@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 /**
  * 🐛 getter 가 없었다 — Jackson 은 private 필드를 읽지 못해 에러 응답이 직렬화에 실패했다("No serializer found
  * for class ApiResponse"). 화면은 문구 대신 빈 응답이나 다른 500 을 받았다. {@code @Getter} 로 내보낸다(docs/58).
+ *
+ * <p>[JA] 🐛 getter がなかった — Jackson は private フィールドを読めず、エラー応答のシリアライズに失敗していた("No serializer found for class ApiResponse")。画面は文言の代わりに空の応答や別の 500 を受け取っていた。{@code @Getter} で公開する(docs/58)。
  */
 @Getter
 @RequiredArgsConstructor

@@ -8,6 +8,14 @@
  * <p>알림 쪽 일본어는 이미 서버에 있다({@code MailTemplates}·{@code SmsTemplates} 의 JA).
  * 화면 문구를 여기 두는 것은 그것과 <b>다른 층</b>이다 — 서버는 메일 본문을, 여기는 UI 를
  * 맡는다. 같은 문장을 양쪽에 두지 않는다.
+ *
+ * <p>[JA] 日本語の文言。
+ * キーがここに無ければ {@code ko.js} の値にフォールバックする。翻訳が遅れても画面が空にならない
+ * 代わりに、<b>日本語画面に韓国語が混ざって見える。</b> そのため欠落はテストが捕まえる
+ * ({@code messages.test.js} — 二つのファイルのキー集合が同じでなければならない)。
+ * 通知側の日本語は既にサーバーにある({@code MailTemplates}・{@code SmsTemplates} の JA)。
+ * 画面文言をここに置くのはそれとは <b>別の層</b>だ — サーバーはメール本文を、ここは UI を
+ * 担う。同じ文を両方に置かない。
  */
 import shell from "./areas/shell.ja";
 import shop from "./areas/shop.ja";
@@ -18,6 +26,7 @@ import admin2 from "./areas/admin2.ja";
 
 const ja = {
     // ── 채팅 시스템 문구(util/chatNotice) ─────────────────────────────────
+    // [JA] ── チャットのシステム文言(util/chatNotice) ──
     "chat.notice.entered": "{{name}}さんが入室しました。",
     "chat.notice.left": "{{name}}さんが退室しました。",
     "chat.notice.agent_joined": "サポート担当者の{{name}}さんが対応を開始しました。",
@@ -30,6 +39,7 @@ const ja = {
     "chat.name.member_n": "会員 {{id}}",
 
     // ── 상태 코드 이름표(util/statusLabel) ───────────────────────────────
+    // [JA] ── 状態コードのラベル(util/statusLabel) ──
     "status.order.NOT_PROCESSED": "お支払い待ち",
     "status.order.PAID": "決済完了",
     "status.order.UNPAID": "入金待ち",
@@ -61,6 +71,7 @@ const ja = {
     "status.batch.UNKNOWN": "不明",
 
     // ── 공통 ────────────────────────────────────────────────────────────
+    // [JA] ── 共通 ──
     "common.cancel": "キャンセル",
     "common.save": "保存",
     "common.email": "メールアドレス",
@@ -69,11 +80,13 @@ const ja = {
     "common.sending": "送信中…",
 
     // ── 언어 전환 ───────────────────────────────────────────────────────
+    // [JA] ── 言語切り替え ──
     "lang.label": "言語",
     "lang.ko": "한국어",
     "lang.ja": "日本語",
 
     // ── 로그인 ──────────────────────────────────────────────────────────
+    // [JA] ── ログイン ──
     "auth.signin.title": "ログイン",
     "auth.signin.submit": "ログイン",
     "auth.signin.need_help": "お困りですか？",
@@ -89,9 +102,11 @@ const ja = {
         "他の端末でログインしていたため、以前の接続を終了しました。",
 
     // ── 가입 ────────────────────────────────────────────────────────────
+    // [JA] ── 登録 ──
     "auth.register.title": "会員登録",
 
     // ── 확인 메일 재발송 ────────────────────────────────────────────────
+    // [JA] ── 確認メール再送 ──
     "auth.resend.email_label": "登録に使用したメールアドレス",
     "auth.resend.submit": "再送信",
     "auth.resend.sent":
@@ -100,6 +115,7 @@ const ja = {
     "auth.resend.failed": "リクエストを処理できませんでした。しばらくしてからお試しください。",
 
     // ── 가입 확인 실패 ──────────────────────────────────────────────────
+    // [JA] ── 登録確認の失敗 ──
     "auth.verify_failed.expired.title": "リンクの有効期限が切れています",
     "auth.verify_failed.expired.detail":
         "登録確認リンクは24時間のみ有効です。以下から新しいリンクをお受け取りください。",
@@ -111,6 +127,7 @@ const ja = {
     "auth.verify_failed.doc_title": "メール認証",
 
     // ── 비밀번호 재설정 ─────────────────────────────────────────────────
+    // [JA] ── パスワード再設定 ──
     "auth.reset.doc_title": "パスワードの再設定",
     "auth.reset.title": "新しいパスワードの設定",
     "auth.reset.new_password": "新しいパスワード",
@@ -127,6 +144,7 @@ const ja = {
         "パスワードを変更できませんでした。パスワードの再設定をもう一度リクエストしてください。",
 
     // ── 상품 목록 ───────────────────────────────────────────────────────
+    // [JA] ── 商品一覧 ──
     "browse.home": "ホーム",
     "browse.title": "商品を探す",
     "browse.sort_by": "並び替え",
@@ -148,8 +166,10 @@ const ja = {
     "browse.sort.priceHighToLow": "価格の高い順",
 
     // ── 상품 상세 ───────────────────────────────────────────────────────
+    // [JA] ── 商品詳細 ──
     "product.breadcrumb_label": "現在の位置",
     // 일본어에는 복수형이 없다 — 1件 도 5件 도 같은 형태다(docs/45 §3).
+    // [JA] 日本語には複数形がない — 1件 も 5件 も同じ形だ(docs/45 §3)。
     "product.reviews": "レビュー{{count}}件",
     "product.select_size": "サイズをお選びください",
     "product.select_color": "カラーをお選びください",
@@ -200,6 +220,7 @@ const ja = {
     "product.wishlist.failed": "ほしい物リストに追加できませんでした。",
 
     // ── 배송·재고 안내 ──────────────────────────────────────────────────
+    // [JA] ── 配送・在庫案内 ──
     "shipping.free": "送料無料",
     "shipping.fee": "送料 {{amount}}",
     "shipping.no_import_fees": "輸入手数料はかかりません",
@@ -212,10 +233,12 @@ const ja = {
 
 
     // ── 장바구니 ────────────────────────────────────────────────────────
+    // [JA] ── カート ──
     "cart.empty.title": "カートは空です",
     "cart.empty.shop_now": "買い物を続ける",
     "cart.empty.signin": "ログイン / 会員登録",
     // 일본어는 물건을 셀 때 조수사를 쓴다 — 복수형이 아니라 単位다(点).
+    // [JA] 日本語は物を数えるとき助数詞を使う — 複数形ではなく単位だ(点)。
     "cart.item_summary": "選択中の商品（{{count}}点）",
     "cart.select_items": "すべて選択",
     "cart.summary.title": "ご注文内容",
@@ -229,6 +252,7 @@ const ja = {
         "商品が説明と異なる場合やお届けされない場合は全額返金いたします。",
 
     // ── 주문서(체크아웃) ────────────────────────────────────────────────
+    // [JA] ── 注文書(チェックアウト) ──
     "checkout.summary.title": "ご注文内容",
     "checkout.merchandise": "商品の小計",
     "checkout.coupon.new_price": "割引後の金額",
@@ -245,6 +269,7 @@ const ja = {
     "checkout.error.no_address": "お届け先をお選びください。",
 
     // ── 주문 상세 ───────────────────────────────────────────────────────
+    // [JA] ── 注文詳細 ──
     "order.breadcrumb.orders": "注文履歴",
     "order.payment_status": "お支払い状況",
     "order.status": "注文状況",
@@ -283,6 +308,7 @@ const ja = {
 
 
     // ── 프로필 ──────────────────────────────────────────────────────────
+    // [JA] ── プロフィール ──
     "profile.title": "マイプロフィール",
     "profile.name": "お名前",
     "profile.name_placeholder": "表示する名前",
@@ -323,6 +349,7 @@ const ja = {
     "profile.menu.orders.cancelled": "キャンセル済み",
 
     // ── 프로필 하위 화면 ────────────────────────────────────────────────
+    // [JA] ── プロフィールのサブ画面 ──
     "profile.addresses.title": "お届け先の管理",
     "profile.orders.title": "注文履歴",
     "profile.payment.title": "お支払い方法",
@@ -337,6 +364,7 @@ const ja = {
 
 
     // ── 고객센터 채팅(docs/58) ────────────────────────────────────────────
+    // [JA] ── カスタマーセンターチャット(docs/58) ──
     "support.title": "1:1 カスタマーサポート",
     "support.team": "カスタマーサポートチーム",
     "support.intro": "注文・配送・返金など、ご不明な点をサポートチームに直接お問い合わせください。",
@@ -445,6 +473,7 @@ const ja = {
 };
 
 /** 합치기 전의 조각 — 같은 키가 두 조각에 있으면 안 된다(i18n.test.jsx). */
+// [JA] まとめる前の断片 — 同じキーが二つの断片にあってはならない(i18n.test.jsx)。
 export const PARTS = { base: ja, shell, shop, order, user, admin1, admin2 };
 
 export default { ...ja, ...shell, ...shop, ...order, ...user, ...admin1, ...admin2 };

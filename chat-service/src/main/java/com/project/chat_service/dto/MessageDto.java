@@ -29,6 +29,7 @@ import lombok.AccessLevel;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 // 🔒 이메일 필드는 없다(docs/48 §6-⑥). 옛 클라이언트가 본문에 email 을 실어 보내도 무시한다 — 받지도, 내보내지도 않는다.
+// [JA] 🔒 メールフィールドはない(docs/48 §6-⑥)。旧クライアントが本文に email を載せて送っても無視する — 受け取りも、出力もしない。
 @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
 public class MessageDto implements Serializable {
 
@@ -36,6 +37,7 @@ public class MessageDto implements Serializable {
     public static final String SEQUENCE_NAME = "message_sequence";
     
     /** 본문 최대 길이 — 화면의 입력 상한(ChatFooter · SupportConversation 의 MAX_MESSAGE_LENGTH)과 같다. */
+    // [JA] 本文の最大長 — 画面の入力上限(ChatFooter・SupportConversation の MAX_MESSAGE_LENGTH)と同じ。
     public static final int MAX_CONTENT_LENGTH = 1000;
 
     @Id    
@@ -48,14 +50,17 @@ public class MessageDto implements Serializable {
      *
      * <p>화면에는 <b>문자열</b>로 나간다. TSID 는 19자리라 JS {@code Number}(2^53)에 담기면 끝자리가 뭉개지고,
      * "내 메시지인가" 비교가 조용히 틀린다(docs/25 §11.6 의 주문 번호와 같은 함정).
+     *
+     * <p>[JA] 送信者 = CONNECT 時に検証されたトークンの {@code uid}(chat member_id)。サーバが埋める — クライアントが送った値は上書きする。
+     * <p>画面には<b>文字列</b>で出る。TSID は 19 桁なので JS {@code Number}(2^53)に入れると末尾の桁が潰れ、「自分のメッセージか」の比較が黙って誤る(docs/25 §11.6 の注文番号と同じ罠)。
      */
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long senderId;
 
-    @ToString.Exclude   // 사람을 가리키는 값 — 로그에 싣지 않는다
+    @ToString.Exclude   // 사람을 가리키는 값 — 로그에 싣지 않는다 ／ [JA] 人を指す値 — ログに載せない
     private String nickname;
                
-    @ToString.Exclude   // 대화 본문(상담 내용 포함) — 로그에 싣지 않는다
+    @ToString.Exclude   // 대화 본문(상담 내용 포함) — 로그에 싣지 않는다 ／ [JA] 会話本文(相談内容を含む) — ログに載せない
     private String content;    
 
     private String imageUrl;

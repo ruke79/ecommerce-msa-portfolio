@@ -32,6 +32,10 @@ public class ImageService {
      * {@link MultipartFile#getSize()} 가 이미 알고 있다(톰캣이 받으면서 임시 파일에 써 둔다).
      * 스트림을 그대로 넘기면 프로필 이미지가 힙을 거치지 않는다. catalog-service 의
      * ImageService 와 같은 수정이다.
+     *
+     * <p>[JA] アップロードファイルを S3 へ<b>流す</b> — ヒープに丸ごと載せない。
+     * <p>以前は IOUtils.toByteArray(file.getInputStream()) でファイル全体を byte[] に入れていた。S3 SDK が求める Content-Length を知るためだったが、その値は
+     * MultipartFile#getSize() が既に知っている(Tomcat が受信しながら一時ファイルに書いておく)。ストリームをそのまま渡せばプロフィール画像がヒープを経由しない。catalog-service の ImageService と同じ修正。
      */
     private String putObjectToS3Storage(AmazonS3 client, String filepath, MultipartFile file) throws IOException {
         String bucket = properties.getBucket();
@@ -56,6 +60,10 @@ public class ImageService {
             //    게다가 AWS 신규 버킷 기본값(Object Ownership = Bucket owner enforced)에서는
             //    ACL 자체가 동작하지 않는다. catalog-service 의 ImageService.putRequest 주석 참조 —
             //    두 서비스가 같은 버킷을 쓰므로 규칙이 갈리면 한쪽만 조용히 깨진다.
+            // [JA] ⚠️ 公開 ACL を付けない。公開読み取りは**バケットポリシー**が担う(arn:aws:s3:::<バケット>/images/* に s3:GetObject を許可)。
+            //      以前はここで .withCannedAcl(PublicRead) を付けており、アップロードに s3:PutObject だけでなく **s3:PutObjectAcl** まで必要だった。catalog-service の一括インポートがちょうどその権限がなく 403 で死んだ。
+            //      さらに AWS の新規バケット既定値(Object Ownership = Bucket owner enforced)では ACL 自体が動作しない。catalog-service の ImageService.putRequest のコメント参照 —
+            //      二つのサービスが同じバケットを使うので規則が分かれると片方だけ黙って壊れる。
             client.putObject(new PutObjectRequest(bucket, filepath, stream, metadata));
         }
 

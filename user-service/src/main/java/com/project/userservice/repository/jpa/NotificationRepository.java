@@ -14,16 +14,22 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     // --- 비관적 잠금 적용 ---
     // 알림을 읽음 처리하는 등 상태를 변경할 때 락을 걸어 충돌을 방지합니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
+    //      通知を既読にするなど状態を変えるときにロックをかけて衝突を防ぐ。
     Optional<List<Notification>> findByIsRead(boolean isRead);
     
     // --- 낙관적 잠금 적용 ---
     //@Lock(LockModeType.OPTIMISTIC)
+    // [JA] --- 楽観ロックの適用 ---
     @Override
     Optional<Notification> findById(Long id);
 
     /**
      * 회원 탈퇴 최종 처리 — 그 사용자의 알림 행. {@code email} 열에는 이제 userId 가 들어가지만(AuthLoginFilter), 옛 행에는 실제 이메일이
      * 있어 둘 다 지운다.
+     *
+     * <p>[JA] 会員退会の最終処理 — そのユーザーの通知行。{@code email} 列には今は userId が入るが(AuthLoginFilter)、古い行には
+     * 実際のメールアドレスがあるので両方消す。
      */
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying

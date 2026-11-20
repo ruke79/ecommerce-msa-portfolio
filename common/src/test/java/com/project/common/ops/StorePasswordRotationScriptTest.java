@@ -70,6 +70,7 @@ class StorePasswordRotationScriptTest {
     }
 
     /** 가짜 kubectl — 이 스크립트가 쓰는 명령만. Secret 은 state/secrets/<이름>.json. */
+    // [JA] 偽の kubectl — このスクリプトが使うコマンドだけ。Secret は state/secrets/<名前>.json。
     private static final String FAKE_KUBECTL = String.join("\n",
             "#!/usr/bin/env python3",
             "import json, os, sys",
@@ -121,6 +122,7 @@ class StorePasswordRotationScriptTest {
         secretFile = tmp.resolve("20-secret.yaml");
 
         // 실제 스토어 — ops/07 · ops/38 과 같은 도구(openssl pkcs12 -export · keytool -importcert)
+        // [JA] 実際のストア — ops/07 · ops/38 と同じツール(openssl pkcs12 -export · keytool -importcert)
         Path w = Files.createDirectories(tmp.resolve("make"));
         Files.writeString(w.resolve("pw"), OLD);
         Files.writeString(w.resolve("other"), "SomethingElse12345");
@@ -139,6 +141,7 @@ class StorePasswordRotationScriptTest {
                 "truststore.jks", w.resolve("truststore.jks"), "tls.crt", w.resolve("tls.crt"), "tls.key", w.resolve("tls.key")));
         secret("tls-id-order-service", Map.of("keystore.p12", w.resolve("id.p12"), "tls.crt", w.resolve("id.crt")));
         // cert-manager(ops/39)가 만든 Secret 의 모양 — 라벨 · 주석 · 소유자로 자기 것을 알아본다
+        // [JA] cert-manager(ops/39)が作った Secret の形 — ラベル · アノテーション · 所有者で自分のものを見分ける
         Path idJson = state.resolve("secrets/tls-id-order-service.json");
         Files.writeString(idJson, Files.readString(idJson).replace("\"resourceVersion\":\"7\"",
                 "\"resourceVersion\":\"7\",\"labels\":{\"controller.cert-manager.io/fao\":\"true\"},"
@@ -283,11 +286,13 @@ class StorePasswordRotationScriptTest {
         assertThat(data("tls-keystore", "tls.key")).isEqualTo(key);
 
         // ecommerce-secrets — 옛 값과 같은 키만
+        // [JA] ecommerce-secrets — 古い値と同じキーだけ
         assertThat(value("ecommerce-secrets", "LOCAL_KEY_PASSWORD")).isEqualTo(fresh);
         assertThat(value("ecommerce-secrets", "KAFKA_SSL_KEY_STORE_PASSWORD")).isEqualTo(KAFKA_OTHER);
         assertThat(value("ecommerce-secrets", "LOCAL_DB_PASSWORD")).isEqualTo("DbPassword555");
 
         // 🔴 cert-manager 의 표지는 그대로(빠지면 인증서를 새로 발급할 수 있다) · 사본에는 없다(사본을 자기 것으로 보지 않게)
+        // [JA] 🔴 cert-manager の印はそのまま(抜けると証明書を新たに発行し得る) · コピーにはない(コピーを自分のものとみなさないように)
         JsonNode id = secretJson("tls-id-order-service").path("metadata");
         assertThat(id.path("annotations").path("cert-manager.io/certificate-name").asText()).isEqualTo("id-order-service");
         assertThat(id.path("labels").path("controller.cert-manager.io/fao").asText()).isEqualTo("true");
@@ -297,18 +302,22 @@ class StorePasswordRotationScriptTest {
         assertThat(copy.path("annotations").path("cert-manager.io/certificate-name").isMissingNode()).isTrue();
 
         // 🔴 ecommerce-secrets 를 스토어보다 먼저 — cert-manager 가 그 사이 다시 만들어도 새 값이게
+        // [JA] 🔴 ecommerce-secrets をストアより先に — その間に cert-manager が作り直しても新しい値になるように
         List<String> writes = Files.readAllLines(state.resolve("writes.log")).stream().filter(l -> l.startsWith("replace")).toList();
         assertThat(writes.get(0)).isEqualTo("replace ecommerce-secrets");
         assertThat(writes).contains("replace tls-keystore", "replace tls-id-order-service");
 
         // 되돌리기용 사본 · 재시작 대상
+        // [JA] 戻し用のコピー · 再起動の対象
         assertThat(secretNames()).contains("tls-keystore-prerotate", "tls-id-order-service-prerotate", "ecommerce-secrets-prerotate")
                 .doesNotContain("redis-auth-prerotate");
         // 하나씩 — 등록부 먼저, 바깥 문은 마지막. Secret 을 읽지 않는 redis 는 건드리지 않는다
+        // [JA] 一つずつ — レジストリを先に、外の門は最後。Secret を読まない redis には触れない
         assertThat(Files.readString(state.resolve("restarted.log")))
                 .isEqualTo("deploy/eureka-server\ndeploy/order-service\ndeploy/gateway-server\n");
 
         // 이 기계의 파일
+        // [JA] このマシンのファイル
         assertThat(opens(Files.readAllBytes(certs.resolve("keystore.p12")), "PKCS12", fresh)).isTrue();
         assertThat(Files.readString(certs.resolve("certs.env")))
                 .contains("export LOCAL_KEY_STORE_PASSWORD=\"" + fresh + "\"", "export LOCAL_DB_PASSWORD=DbPassword555");
@@ -319,6 +328,7 @@ class StorePasswordRotationScriptTest {
         assertThat(tmp.resolve("20-secret.yaml-prerotate")).exists();
 
         // 🔒 출력에 비밀번호가 없다
+        // [JA] 🔒 出力にパスワードがない
         assertThat(r.out()).doesNotContain(OLD, fresh).contains("32자");
     }
 

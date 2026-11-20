@@ -34,6 +34,7 @@ class JwtKeyRingWiringTest {
     void everyJwtConsumerReadsTheRing() throws IOException {
         List<Path> consumers = new ArrayList<>();
         // 모듈마다 src/main/resources 만 본다 — 저장소 전체를 걸으면 frontend/node_modules 를 훑느라 멈춘 것처럼 오래 걸린다.
+        // [JA] モジュールごとに src/main/resources だけを見る — リポジトリ全体をたどると frontend/node_modules を舐めるせいで止まったかのように長くかかる。
         List<Path> ymls = new ArrayList<>();
         try (Stream<Path> modules = Files.list(repoRoot())) {
             for (Path module : modules.filter(Files::isDirectory).toList()) {
@@ -72,6 +73,7 @@ class JwtKeyRingWiringTest {
                 continue;
             }
             // kids_of 는 이름만 뽑는다(kid=비밀 의 왼쪽) — 그 호출은 출력해도 된다.
+            // [JA] kids_of は名前だけを取り出す(kid=秘密 の左側) — その呼び出しは出力してよい。
             t = t.replace("kids_of \"$KEYS\"", "kids_of");
             assertThat(t).as("화면에 키가 나갈 수 있는 줄: " + t)
                     .doesNotContain("$NEW").doesNotContain("$NEXT").doesNotContain("$KEYS").doesNotContain("${KEYS");

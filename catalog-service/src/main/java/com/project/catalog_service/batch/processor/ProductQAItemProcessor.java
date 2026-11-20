@@ -25,7 +25,7 @@ public class ProductQAItemProcessor implements ItemProcessor<ProductQACsvDto, Pr
             .question(item.getQuestion())
             .answer(item.getAnswer())
             .product(product)
-            .version(0L) // 초기 버전 설정
+            .version(0L) // 초기 버전 설정 ／ [JA] 初期バージョン設定
             .build();
     }
 }

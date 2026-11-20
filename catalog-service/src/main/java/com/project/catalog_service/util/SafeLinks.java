@@ -10,8 +10,12 @@ import java.util.Locale;
  * 바꾼 것과 같은 위협, V18). {@code //evil.example} 같은 프로토콜 상대 주소와 제어 문자로 쪼갠 스킴({@code java\tscript:} — 브라우저는
  * 탭 · 줄바꿈을 지우고 읽는다)도 거절한다.
  *
- * <p>[JA] 画面が {@code <a href>} として描くリンクの許容形 — http(s) のアドレスかサイト内パス。以前は長さだけを見ており、
- * {@code javascript:} が保存型 XSS になった。
+ * <p>[JA] 画面が {@code <a href>} として描くリンク(バナー · 企画展)の許容形 — http(s) のアドレスかサイト内パス({@code /…})。
+ *
+ * <p>🐛 以前は長さだけを見ていた。フロントはバナーリンクを {@code <a href={banner.linkUrl}>} でそのまま描き(CarouselContainer)、React 18 は
+ * {@code javascript:} を止めない — 管理者アカウント一つが破られると、ホームを開くすべての訪問者に対する保存型 XSS だった(お知らせ本文を
+ * プレーンテキストに変えたのと同じ脅威、V18)。{@code //evil.example} のようなプロトコル相対アドレスと、制御文字で分割したスキーム
+ * ({@code java\tscript:} — ブラウザはタブ · 改行を消して読む)も拒否する。
  */
 public final class SafeLinks {
 
@@ -21,6 +25,7 @@ public final class SafeLinks {
     }
 
     /** 비었으면 null(링크 없음), 허용 모양이면 앞뒤 공백을 뗀 값, 아니면 {@link IllegalArgumentException}. */
+    // [JA] 空なら null(リンクなし)、許可された形なら前後の空白を除いた値、そうでなければ {@link IllegalArgumentException}。
     public static String check(String link) {
         if (link == null || link.isBlank()) {
             return null;

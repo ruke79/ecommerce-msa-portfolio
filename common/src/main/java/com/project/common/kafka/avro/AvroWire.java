@@ -12,10 +12,17 @@ package com.project.common.kafka.avro;
  * <p>마커 덕에 <b>JSON 과 섞여 있어도 구분된다.</b> JSON 은 {@code '{'}(0x7B)로 시작한다. 그래서
  * 소비자는 두 형식을 동시에 받는다 — 롤링 배포 중 옛 프로듀서의 JSON, e2e 테스트의 JSON, 그리고
  * Debezium CDC 릴레이의 JSON(Connect 는 Avro 컨버터 없이는 문자열이다).
+ *
+ * <p>[JA] Avro <b>単一オブジェクトエンコーディング</b>(single-object encoding)の先頭 2 バイト。
+ * スキーマレジストリなしで Avro を使う方式である。レコードの前に {@code C3 01} マーカーと書き込みスキーマの 64 ビットフィンガープリントが付き、読む側は
+ * フィンガープリントで書き込みスキーマを探して自分のスキーマと合わせて読む(スキーマ進化)。Confluent レジストリ方式は代わりに {@code 00} + 4 バイトのスキーマ id を
+ * 付けてレジストリに問い合わせる — この環境にはレジストリサーバーも、そのクライアントライブラリもない(プロキシが packages.confluent.io を塞ぐ、docs/38 §1.16)。
+ * マーカーのおかげで<b>JSON と混ざっていても区別できる。</b>JSON は {@code '{'}(0x7B)で始まる。だからコンシューマーは二形式を同時に受け取る — ローリングデプロイ中の
+ * 古いプロデューサーの JSON、e2e テストの JSON、そして Debezium CDC リレーの JSON(Connect は Avro コンバーターなしでは文字列である)。
  */
 public final class AvroWire {
 
-    /** Avro 명세의 단일 객체 인코딩 마커. */
+    /** Avro 명세의 단일 객체 인코딩 마커. ／ [JA] Avro 仕様の単一オブジェクトエンコーディングのマーカー。 */
     public static final byte MARKER_0 = (byte) 0xC3;
     public static final byte MARKER_1 = (byte) 0x01;
 

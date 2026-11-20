@@ -65,11 +65,14 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     private final PaymentOutboxHelper paymentOutboxHelper;
     private final PaymentRequestKafkaPublisher paymentRequestMessagePublisher;
     /** 주문 상태 변경(docs/76) — 토픽 order-status. */
+    // [JA] 注文状態の変更(docs/76) — トピック order-status。
     private final com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher orderStatusPublisher;
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
     /** 결제 확정 차감 · 반품 복원 — 토픽 product-update. */
+    // [JA] 決済確定の減算 · 返品の復元 — トピック product-update。
     private final com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher productUpdatePublisher;
     /** 결제 뒤 장바구니 비우기 — 토픽 cart-empty. */
+    // [JA] 決済後のカートを空にする — トピック cart-empty。
     private final com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher cartEmptyPublisher;
 
     // 한 번에 선점할 행 수. 제한이 없으면 한 레플리카가 밀린 이벤트를 전부 잠가
@@ -103,7 +106,7 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
                 settled = relay(outbox);
             } catch (RuntimeException e) {
                 if (com.project.common.kafka.DltRetryPolicy.isTransient(e)) {
-                    throw e;   // DB 가 흔들린다 — 배치째 롤백하고 다음 폴링에서 다시(행의 잘못이 아니다)
+                    throw e;   // DB 가 흔들린다 — 배치째 롤백하고 다음 폴링에서 다시(행의 잘못이 아니다) ／ [JA] DB が揺れている — バッチごとロールバックして次のポーリングで再度(行の誤りではない)
                 }
                 // 🔒 행 하나의 영구 오류(깨진 페이로드 등)는 그 행만 FAILED 로 — 🐛 예전에는 예외가 배치 트랜잭션째 롤백시켜 같은 행을
                 //    매 폴링 다시 집었다. 그 뒤의 결제 요청 · 주문 상태 · 재고 차감이 전부 멈췄다. 일시 실패는 발행기가 false 로 알린다.
@@ -130,6 +133,7 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     }
 
     /** 보낼 수 없어 FAILED 로 둔 행 수 — Prometheus {@code order_outbox_failed_total{type}}, 경보 OrderOutboxRowFailed. */
+    // [JA] 送れずに FAILED にした行の数 — Prometheus {@code order_outbox_failed_total{type}}、警報 OrderOutboxRowFailed。
     public static final String FAILED_METRIC = "order.outbox.failed";
 
     /**
@@ -146,6 +150,7 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     }
 
     /** @return 상태가 확정됐으면 true, 일시 실패라 다음 폴링에 다시 보내야 하면 false. 영구 오류는 예외 */
+    // [JA] @return 状態が確定すれば true、一時的な失敗で次のポーリングに送り直すべきなら false。永続的なエラーは例外
     private boolean relay(PaymentOutboxEvent outbox) {
         boolean settled;
         if ("payment-request".equals(outbox.getEventType())) {

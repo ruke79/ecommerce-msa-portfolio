@@ -21,6 +21,7 @@ include('order-service')
 include('notification-service')
 include('delivery-service')
 // 주문 결제 사가의 읽기 모델 — Kafka Streams(exactly_once_v2). DB 없음(docs/38 §1.17).
+// [JA] 注文決済サガの読み取りモデル — Kafka Streams(exactly_once_v2)。DB なし(docs/38 §1.17)。
 include('saga-projection')
 include('pay-service')
 include('user-service')
@@ -31,4 +32,7 @@ include('gateway-server')
 // 사가 전 구간(주문→결제→재고)을 실제 서비스 컨테이너로 검증하는 모듈.
 // 서비스 모듈 3개의 application-local.yml 이 클래스패스에서 충돌하므로, 앱을 이 JVM 에
 // 올리지 않고 **컨테이너로 띄워** 검증한다.
+// [JA] サガ全区間(注文→決済→在庫)を実際のサービスコンテナで検証するモジュール。
+//      サービスモジュール 3 個の application-local.yml がクラスパスで衝突するので、アプリをこの JVM に
+//      載せず**コンテナで起動して**検証する。
 include('e2e-tests')

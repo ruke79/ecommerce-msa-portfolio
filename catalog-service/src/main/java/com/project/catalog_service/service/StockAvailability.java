@@ -40,6 +40,16 @@ import lombok.extern.slf4j.Slf4j;
  * 트랜잭션이 rollback-only 가 된다.
  *
  * <p>🔒 관리자 화면(상품 목록·편집)에는 쓰지 않는다. 뺀 값을 편집 화면이 받아 저장하면 실물 재고가 줄어든다.
+ *
+ * <p>[JA] 客に見える残数 = <b>いまの</b>実在庫 − 他の注文が決済前に押さえた数(docs/59 §5)。
+ * <p>なぜ応答直前に直すか: 商品 DTO は Redis にキャッシュされる — 詳細(slug キー)、検索結果、ホームのカテゴリ一覧。予約は分単位で生まれては消える — キャッシュされる値に入れると、
+ * 予約が解けてもキャッシュが変わるまで「0 個」が残る。しかもカテゴリ一覧のキャッシュは期限がなく在庫が変わっても空にしないので、その中の<b>実在庫数量から</b>いつのものか分からない。
+ * そこで応答のたびに一まとまり(詳細一つ、一覧 1 ページ)についてサイズ別のいまの数量と生きている予約の合計を<b>一つのクエリ</b>で読む({@code ProductSizeRepository#liveAndHeld} — どちらもインデックス照会、V14・V15)。
+ * 🐛 2026-10-24 のプロファイル(docs/83 §5): 以前は別々に二回(クエリごとにトランザクション・DB 往復)で catalog CPU の 20% だった。
+ * キャッシュされたオブジェクトには触れずコピーを直す — キャッシュがメモリキャッシュに変わっても差し引きが積み重ならないように。
+ * <p>失敗したら: 読み取りが失敗したらキャッシュの値をそのまま見せる(数量・予約とも — 一つのクエリなので一緒に失敗する)。在庫表示のせいで商品画面が壊れてはならない —
+ * 注文段階の予約がどのみち正確に絞る。このクラスはトランザクションの外(コントローラ)で呼ぶ — トランザクション内で照会が失敗すると、飲み込んでもそのトランザクションが rollback-only になる。
+ * <p>🔒 管理者画面(商品一覧・編集)には使わない。差し引いた値を編集画面が受け取って保存すると実在庫が減る。
  */
 @Slf4j
 @Component
@@ -64,6 +74,9 @@ public class StockAvailability {
     /**
      * 한 응답에 쓸 재고 — 상품 id 묶음에 대해 지금 수량과 예약 합을 한 번씩 읽어 둔 것. 홈처럼 여러 목록을 한 응답에 담을 때는
      * 모든 상품 id 로 하나를 만들어 나눠 쓴다.
+     *
+     * <p>[JA] 一つの応答に使う在庫 — 商品 id のまとまりについて、いまの数量と予約の合計を一回ずつ読んでおいたもの。ホームのように複数の一覧を一つの応答に入れるときは、
+     * すべての商品 id で一つ作って分け合う。
      */
     public final class Snapshot {
         private final Map<Long, Integer> liveBySizeId;
@@ -75,6 +88,7 @@ public class StockAvailability {
         }
 
         /** 옵션마다 수량을 지금 값 − 예약으로 바꾼 <b>복사본</b>. 원본(캐시된 DTO)은 그대로다. */
+        // [JA] オプションごとの数量をいまの値 − 予約に変えた<b>コピー</b>。元(キャッシュされた DTO)はそのまま。
         public ProductDto apply(ProductDto product) {
             Long productId = parse(product == null ? null : product.getId());
             if (productId == null || product.getSkus() == null || (liveBySizeId.isEmpty() && held.isEmpty())) {
@@ -123,6 +137,7 @@ public class StockAvailability {
     }
 
     /** 이 상품들의 재고를 읽는다. {@code live} 면 사이즈별 지금 수량도 — 캐시의 수량을 믿을 수 없을 때(상세·목록). */
+    // [JA] これらの商品の在庫を読む。{@code live} ならサイズ別のいまの数量も — キャッシュの数量を信用できないとき(詳細・一覧)。
     public Snapshot snapshot(Collection<Long> productIds, boolean live) {
         if (productIds == null || productIds.isEmpty()) {
             return new Snapshot(Map.of(), Map.of());
@@ -131,6 +146,7 @@ public class StockAvailability {
     }
 
     /** 상품 상세 한 건. */
+    // [JA] 商品詳細 1 件。
     public ProductDto apply(ProductDto product) {
         Long productId = parse(product == null ? null : product.getId());
         if (productId == null) {
@@ -140,6 +156,7 @@ public class StockAvailability {
     }
 
     /** 목록 한 페이지 — 상품 id 를 모아 한 번에 읽는다. */
+    // [JA] 一覧 1 ページ — 商品 id を集めて一度に読む。
     public List<ProductDto> apply(List<ProductDto> products) {
         if (products == null || products.isEmpty()) {
             return products;
@@ -148,6 +165,7 @@ public class StockAvailability {
     }
 
     /** 목록 여럿에 걸친 상품 id(중복 없이, 순서 유지). */
+    // [JA] 複数の一覧にまたがる商品 id(重複なし、順序維持)。
     public static Set<Long> idsOf(Collection<ProductDto> products) {
         Set<Long> ids = new LinkedHashSet<>();
         for (ProductDto p : products) {
@@ -160,6 +178,7 @@ public class StockAvailability {
     }
 
     /** 장바구니 항목 하나 — 방금 DB 에서 만든 DTO 라 수량은 지금 값이다. 예약만 빼고, 그 자리에서 고친다. */
+    // [JA] カート項目一つ — いま DB から作った DTO なので数量はいまの値である。予約だけ差し引き、その場で直す。
     public ProductInfoDto apply(ProductInfoDto info) {
         if (info != null) {
             apply(Map.of("_", info));
@@ -168,6 +187,7 @@ public class StockAvailability {
     }
 
     /** 장바구니 항목 여러 개 — 상품 id 를 모아 한 번에 읽는다. */
+    // [JA] カート項目複数 — 商品 id を集めて一度に読む。
     public Map<String, ProductInfoDto> apply(Map<String, ProductInfoDto> infos) {
         if (infos == null || infos.isEmpty()) {
             return infos;
@@ -200,6 +220,8 @@ public class StockAvailability {
     /**
      * 옵션 하나의 지금 재고 — 장바구니 화면용. {@code quantity} 는 이미 {@code onHold} 를 뺀 값이다. {@code status} 는 상품
      * 상태(ACTIVE·SOLD_OUT·DELETED).
+     *
+     * <p>[JA] オプション一つのいまの在庫 — カート画面用。{@code quantity} はすでに {@code onHold} を差し引いた値である。{@code status} は商品の状態(ACTIVE・SOLD_OUT・DELETED)。
      */
     public record OptionStock(int quantity, int onHold, String status) {
     }
@@ -209,6 +231,10 @@ public class StockAvailability {
      *
      * <p>목록·상세와 달리 <b>실패를 삼키지 않고 던진다.</b> 장바구니는 이미 들고 있는 값이 있다 — 빈 결과를 돌려주면 "재고가
      * 없다" 와 구분되지 않는다. 부르는 쪽이 실패로 알리고 화면은 가진 값을 그대로 둔다.
+     *
+     * <p>[JA] カート項目群のいまの在庫 — キーは {@code 商品id:色id:サイズ}。存在しないオプションは結果にない。
+     * <p>一覧・詳細と違い<b>失敗を飲み込まずに投げる。</b>カートはすでに持っている値がある — 空の結果を返すと「在庫がない」と区別できない。
+     * 呼び出し側が失敗として知らせ、画面は持っている値をそのままにする。
      */
     public Map<String, OptionStock> optionStock(Collection<String> keys) {
         Map<String, Option> wanted = new java.util.LinkedHashMap<>();
@@ -245,6 +271,7 @@ public class StockAvailability {
     }
 
     /** {@code 상품id:색상id:사이즈} — 사이즈는 마지막이라 ':' 가 들어 있어도 된다. */
+    // [JA] {@code 商品id:色id:サイズ} — サイズは最後なので ':' を含んでもよい。
     static Option parseKey(String key) {
         String[] parts = key == null ? new String[0] : key.split(":", 3);
         if (parts.length != 3 || parts[2].isEmpty()) {
@@ -258,6 +285,7 @@ public class StockAvailability {
     }
 
     /** 실물 중 잡힌 수 — 실물보다 많이 잡혀 있어도(재고를 관리자가 줄였다) 실물까지만. */
+    // [JA] 実在庫のうち押さえられた数 — 実在庫より多く押さえられていても(管理者が在庫を減らした)実在庫まで。
     private static int onHold(int quantity, Integer held) {
         if (held == null || held <= 0 || quantity <= 0) {
             return 0;

@@ -18,6 +18,7 @@ const ChatRoom = (props) => {
     }
 
     // 예전에는 더블클릭으로만 열렸다 — 알려 주는 곳도 없고 키보드 · 터치로는 열 수 없었다.
+    // [JA] 以前はダブルクリックでしか開かなかった — 知らせる場所もなく、キーボード · タッチでは開けなかった。
     const onKeyDown = (e) => {
         if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();

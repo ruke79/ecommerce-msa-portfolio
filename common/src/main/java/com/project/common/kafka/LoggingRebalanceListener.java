@@ -26,6 +26,15 @@ import org.springframework.kafka.listener.ConsumerAwareRebalanceListener;
  * <p><b>lost.</b> {@link #onPartitionsLost} 는 커밋 없이 파티션을 빼앗긴 경우다(세션 타임아웃 등).
  * 커밋할 수 없으므로 하지 않고 — 하면 예외다 — 경고만 남긴다. 그 파티션을 받은 멤버가 마지막
  * 커밋 지점부터 다시 읽는다.
+ *
+ * <p>[JA] リバランスのたびに<b>コミットし、記録する</b>。
+ * <b>コミット。</b>パーティションを手放す直前({@link #onPartitionsRevokedBeforeCommit})にこれまで処理したオフセットを同期コミットする。コンテナも BATCH モードで
+ * コミットを試みるが、ここでもう一度する理由は<i>タイミング</i>である — リバランス中にコミットが失敗すると、そのパーティションを引き継いだメンバーが同じバッチを
+ * 読み直す。決済 · 在庫のようなコンシューマーは冪等性台帳が防いでくれるが、それは最後の防衛線であって最初ではない。
+ * <b>記録。</b>どのグループがどのパーティションを受け取り手放したか、受け取ったときどれだけ遅れていたか(lag)を一行で残す。リバランスの嵐(ポッドが落ちたり
+ * 上がったりしてグループが揺れ続ける状態)は、このログがないと「消費が遅い」としか見えない。
+ * <b>lost.</b>{@link #onPartitionsLost} はコミットなしにパーティションを奪われた場合である(セッションタイムアウトなど)。コミットできないのでしない — すると例外である —
+ * 警告だけ残す。そのパーティションを受け取ったメンバーが最後のコミット地点から読み直す。
  */
 public class LoggingRebalanceListener implements ConsumerAwareRebalanceListener {
 
@@ -43,6 +52,8 @@ public class LoggingRebalanceListener implements ConsumerAwareRebalanceListener 
         } catch (RuntimeException e) {
             // 여기서 예외를 올리면 리밸런스 자체가 실패한다. 커밋을 못 했을 뿐 파티션은 넘어가야 한다 —
             // 넘겨받은 쪽이 마지막 커밋 지점부터 다시 읽고, 멱등성 원장이 중복을 막는다.
+            // [JA] ここで例外を上げるとリバランス自体が失敗する。コミットできなかっただけでパーティションは移らなければならない —
+            //      引き継いだ側が最後のコミット地点から読み直し、冪等性台帳が重複を防ぐ。
             log.warn("리밸런스 — 그룹 '{}' 파티션 {} 의 커밋 실패, 넘겨받는 멤버가 재처리한다: {}",
                     group, partitions, e.toString());
         }
@@ -51,6 +62,7 @@ public class LoggingRebalanceListener implements ConsumerAwareRebalanceListener 
     @Override
     public void onPartitionsRevokedAfterCommit(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
         // 커밋은 위에서 했다. 기록만.
+        // [JA] コミットは上で済ませた。記録だけ。
     }
 
     @Override

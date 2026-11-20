@@ -25,6 +25,22 @@
 #        새 비밀번호를 다시 만들지 않는다(처음부터 다시 돌리면 전부를 한 번 더 재시작한다).
 #
 # 끝나면 ./ops/27-check-secret-drift.sh --only redis 로 확인한다(이제 SPRING_DATA_REDIS_PASSWORD 로 시험한다).
+# [JA] 運用アクション ㊱ — クラスタ Redis のパスワードを**DB パスワードから分離**する(初回)、または再度変える(その後)。値は出力しない。
+#      なぜ: クラスタ Redis は DB と同じパスワードを使っている — サービス設定が spring.data.redis.password を ${LOCAL_DB_PASSWORD} に
+#      しており、redis-auth Secret も同じ値だ(docs/00 §11.1)。一つが漏れれば両方漏れる。そして DB パスワードを変えるたびに Redis も
+#      合わせる必要があり、漏らすと次の再起動で Redis を使うサービスが一斉に死ぬ(ops/27 §2)。
+#      どうやって — 途切れなく:
+#      ① Redis の default ユーザに**新しいパスワードを追加する**(ACL SETUSER default >新値)。旧値も引き続き通る。
+#      ② ecommerce-secrets に SPRING_DATA_REDIS_PASSWORD(新値)を入れ、redis-auth も新値に。
+#      環境変数 SPRING_DATA_REDIS_PASSWORD はサービス設定ファイルの ${LOCAL_DB_PASSWORD} を上書きする(Spring の優先順位)。
+#      ③ ecommerce の Deployment を順に再起動する — 新しい Pod は新値で接続し、旧 Pod は旧値で動き続ける。
+#      ④ Redis を再起動する — 新プロセスは redis-auth(新値)だけを受け付ける。**この瞬間数秒切れる**(Recreate)。サービスは再接続する。
+#      `--keep-old` なら飛ばす — 旧値(=DB パスワード)は次の Redis 再起動まで通る。
+#      値は引数・ログ・ファイルに残らない — 生成はシェル変数、受け渡しは stdin(kubectl patch --patch-file /dev/stdin、redis-cli 標準入力)。
+#      使い方は上記(--keep-old は Redis を再起動しない、--dry-run は何をするかだけ、--finish は③で止まったとき — 原因を直した後**残りだけ**を終える:
+#      Secret の新値が Redis に通るか確認 → 指定した Deployment だけ再起動 → ecommerce がすべて準備できていれば④(Redis 再起動)。
+#      新しいパスワードは作り直さない(最初から回し直すと全部をもう一度再起動する))。
+#      終わったら ./ops/27-check-secret-drift.sh --only redis で確認する(今は SPRING_DATA_REDIS_PASSWORD で試験する)。
 set -euo pipefail
 
 NS="${NAMESPACE:-ecommerce}"
@@ -48,12 +64,14 @@ kubectl -n redis get deploy redis >/dev/null 2>&1 || die "redis/redis Deployment
 kubectl -n "$NS" get secret "$SECRET" >/dev/null 2>&1 || die "$NS/$SECRET Secret 이 없습니다."
 command -v openssl >/dev/null || die "openssl 이 없습니다."
 
-redis_cli() {   # stdin 으로 명령을 받는다. 인증은 파드 안의 현재 비밀번호 — 값은 파드 밖으로 나오지 않는다.
+redis_cli() {   # stdin 으로 명령을 받는다. 인증은 파드 안의 현재 비밀번호 — 값은 파드 밖으로 나오지 않는다. ／ [JA] stdin でコマンドを受け取る。認証は Pod 内の現在のパスワード — 値は Pod の外に出ない。
     kubectl -n redis exec -i deploy/redis -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli'
 }
 
 # Redis 를 재시작해도 되는가 — ecommerce 의 Deployment 가 전부 준비됐는가. 하나라도 옛 파드가 남아 있으면 그 파드는 옛 값을
 # 들고 있을 수 있다(재시작 전 환경 변수). 그 상태로 Redis 를 재시작하면 그 파드가 Redis 를 잃는다.
+# [JA] Redis を再起動してよいか — ecommerce の Deployment がすべて準備できているか。一つでも旧 Pod が残っていればその Pod は旧値を
+#      持っている可能性がある(再起動前の環境変数)。その状態で Redis を再起動するとその Pod が Redis を失う。
 all_ready() {
     local d bad=""
     for d in $(kubectl -n "$NS" get deploy -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
@@ -80,6 +98,7 @@ if [ "$FINISH" = 1 ]; then
         || die "--finish 인데 $SECRET 에 SPRING_DATA_REDIS_PASSWORD 가 없다 — 처음부터 돌린다(옵션 없이)."
     step "새 비밀번호(Secret 의 값)가 Redis 에 통하는가"
     # 값은 파이프로만 — 화면·인자에 나오지 않는다.
+    # [JA] 値はパイプでのみ — 画面・引数に出ない。
     pong=$(kubectl -n "$NS" get secret "$SECRET" -o jsonpath='{.data.SPRING_DATA_REDIS_PASSWORD}' | base64 -d \
         | kubectl -n redis exec -i deploy/redis -- sh -c 'REDISCLI_AUTH="$(cat)" redis-cli ping' 2>&1)
     [ "$pong" = "PONG" ] || die "Secret 의 새 값이 Redis 에 통하지 않는다 — Redis 가 그새 재시작됐을 수 있다. 처음부터 다시 돌린다(옵션 없이)."

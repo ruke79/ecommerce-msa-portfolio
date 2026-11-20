@@ -35,6 +35,7 @@ const Security = () => {
     const navigate = useNavigate();
 
     // 모든 기기에서 로그아웃한 뒤 — 이 기기도 로그아웃이다. 일반 로그아웃(useLogout)과 같은 정리를 한다.
+    // [JA] すべての端末でログアウトした後 — この端末もログアウトである。通常のログアウト(useLogout)と同じ後片付けをする。
     const afterSignOutEverywhere = () => {
         tokenUtil.remove();
         logout();
@@ -66,6 +67,8 @@ const Security = () => {
 
     // Formik 이 검증을 통과시킨 값을 그대로 받는다. 페이지 state 는 더 이상 폼 값을 갖지
     // 않으므로(성공/실패 메시지 전용) 여기서 values 를 쓰지 않으면 항상 빈 값이 전송된다.
+    // [JA] Formik が検証を通した値をそのまま受け取る。ページの state はもうフォームの値を持たない
+    //      ので(成功 / 失敗メッセージ専用)、ここで values を使わないと常に空の値が送られる。
     const changePasswordHandler = async (values, { resetForm }) => {
         try {
             setLoading(true);
@@ -111,6 +114,10 @@ const Security = () => {
                         // 넘기고 입력마다 onChange 로 Formik 의 onChange 를 덮어쓰면 값의
                         // 출처가 둘이 되고, enableReinitialize 가 키 입력마다 폼을 초기화해
                         // **입력한 글자가 유실된다**(SignInPage/RegisterPage 와 같은 버그).
+                        // [JA] ⚠️ フォームの値は Formik が所有する。ページの state を initialValues として
+                        //      渡し、入力ごとに onChange で Formik の onChange を上書きすると値の
+                        //      出どころが二つになり、enableReinitialize がキー入力ごとにフォームを初期化して
+                        //      **入力した文字が失われる**(SignInPage/RegisterPage と同じバグ)。
                         initialValues={{
                             current_password: "",
                             new_password: "",
@@ -163,6 +170,7 @@ const Security = () => {
                     {/* 휴대폰 인증. notification-service 의 SMS 인증을 쓰는 화면이 지금까지
                         어디에도 없었다 — 컴포넌트는 있는데 붙일 자리가 없어 사용자가
                         번호를 등록할 방법 자체가 없었다. 보안 설정이 있어야 할 자리다. */}
+                    {/* [JA] 携帯電話認証。notification-service の SMS 認証を使う画面がこれまでどこにもなかった — コンポーネントはあるのに付ける場所がなく、ユーザーが番号を登録する方法自体がなかった。セキュリティ設定があるべき場所である。 */}
                     <div className="mt-10 border-t pt-6">
                         <SmsVerification
                             title={t("profile.security.sms_title")}
@@ -177,24 +185,30 @@ const Security = () => {
 
                     {/* SMS 2단계 인증 — 위에서 인증한 번호로 받는다(user-service docs/24 §10). 예전에는 notification 의
                         설정에 "2단계 인증" 값만 있고 로그인이 그것을 읽지 않았다. */}
+                    {/* [JA] SMS 二段階認証 — 上で認証した番号で受け取る(user-service docs/24 §10)。以前は notification の設定に「二段階認証」の値だけがあり、ログインがそれを読んでいなかった。 */}
                     <SmsTwoFactor />
 
                     {/* 복구 코드 — 인증 앱 · 휴대폰을 잃었을 때(docs/57 §22). 2단계 인증이 켜져 있을 때만 보인다. */}
+                    {/* [JA] リカバリーコード — 認証アプリ · 携帯電話を失ったとき(docs/57 §22)。二段階認証が有効なときだけ見える。 */}
                     <RecoveryCodes />
 
                     {/* 로그인 기기. "새로운 기기에서 로그인되었습니다" 알림을 받은
                         사용자가 갈 곳이다 — 알림만 있고 확인할 화면이 없으면 정말
                         조치가 필요한 상황인지 판단할 근거가 없다. */}
+                    {/* [JA] ログイン端末。「新しい端末でログインされました」通知を受けたユーザーが行く場所である — 通知だけあって確認する画面がなければ、本当に対処が必要な状況なのか判断する根拠がない。 */}
                     {/* 패스키 — 비밀번호 없이, 피싱에 넘어가지 않는 로그인(user-service docs/68 §20). */}
+                    {/* [JA] パスキー — パスワードなしで、フィッシングに引っかからないログイン(user-service docs/68 §20)。 */}
                     <Passkeys />
 
                     <LoginDevices />
 
                     {/* 모든 기기에서 로그아웃 — 위 "기억 지우기" 는 로그아웃이 아니다. 알림을 받은 사용자가 실제로 끊을 수 있는 곳(docs/68 §8). */}
+                    {/* [JA] すべての端末でログアウト — 上の「記憶を消す」はログアウトではない。通知を受けたユーザーが実際に切断できる場所(docs/68 §8)。 */}
                     <SignOutEverywhere onSignedOut={afterSignOutEverywhere} />
 
                     {/* 회원 탈퇴. 계정을 없애는 동작이므로 보안 설정 화면에 둔다. 신청
                         중이면 이 자리가 "N일 뒤 삭제 / 취소하기" 패널로 바뀐다. */}
+                    {/* [JA] 会員退会。アカウントをなくす動作なのでセキュリティ設定画面に置く。申請中ならこの場所が「N 日後に削除 / 取り消す」パネルに変わる。 */}
                     <AccountWithdrawal />
                 </div>
             </Layout>

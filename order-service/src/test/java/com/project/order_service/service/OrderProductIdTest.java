@@ -25,6 +25,12 @@ import com.project.order_service.client.CartServiceClient;
  *
  * <p>🐛 예전에는 {@code CartProductDto.id}(장바구니 줄 TSID)를 상품 id 로 저장했다. 어느 상품도 가리키지 않는 값이라 재고 예약은
  * "품절", 결제 뒤 차감은 "상품 없음 → 전량 부족 → 자동 환불", 장바구니 비우기는 불일치, 리뷰는 "구매하지 않음" 이 됐다.
+ *
+ * <p>[JA] 注文品目の商品 id はカートの<b>行</b> id ではなく<b>商品</b> id である。
+ *
+ * <p>🐛 以前は {@code CartProductDto.id}(カート行の TSID)を商品 id として保存していた。
+ * どの商品も指さない値なので、在庫予約は「品切れ」、決済後の差し引きは「商品なし → 全量不足 → 自動返金」、カートの空化は不一致、
+ * レビューは「購入していない」になった。
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("주문 품목 — 상품 id")

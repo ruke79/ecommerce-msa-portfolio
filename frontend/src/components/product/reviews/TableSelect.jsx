@@ -3,12 +3,14 @@ import { useState } from "react";
 import { useTranslation } from "i18n/I18nProvider";
 
 /** 사이즈·스타일 목록 맨 앞의 "전체" 항목 — Table 이 넣는 코드 값이다. 화면에는 문구로 바꿔 그린다. */
+// [JA] サイズ・スタイル一覧の先頭の「全体」項目 — Table が入れるコード値だ。画面には文言に置き換えて描く。
 const ALL = "All";
 
 const TableSelect = ({ property, text, data, handleChange, selectedLabel, optionLabel }) => {
     const { t } = useTranslation();
     const [visible, setVisible] = useState(false);
     // text 는 "rating"·"size"·"style"·"order" — 코드 값이라 화면에는 문구로 바꿔 그린다.
+    // [JA] text は "rating"・"size"・"style"・"order" — コード値なので画面には文言に置き換えて描く。
     const placeholder = t(`product.review.select.${text}`);
     const sizeLabel = (size) => (size === ALL ? t("product.review.filter.all") : size);
 

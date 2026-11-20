@@ -55,6 +55,33 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>모르는 상태는 발행자가 함께 보내는 {@code stage} 로 판정한다 — 배송 서비스가 상태를
  * 하나 더 만들어도 여기가 깨지지 않게.
+ *
+ * <p>[JA] 配送状態({@code delivery-status} トピック)を注文状態に反映する — サーガの最後の節。
+ * {@code OrderStatus} の PROCESSING・DISPATCHED・DELIVERED は宣言だけあって誰も埋めて
+ * いなかった値である(docs/25 §0)。注文は PAID で止まり、フロントの「発送済み」フィルタは永遠に
+ * 空で、{@code deliveredCreatedAt} は常に null だった。ここで埋める。
+ * <b>ルール — 前にだけ進む</b>: Kafka は順序をパーティションの中でだけ守り、再配信もする。配達完了の後に遅れて来た「移動中」
+ * が注文を戻すと、顧客は受け取った品物がまた向かっていると見ることになる。そのため遷移は
+ * <b>PAID → PROCESSING → DISPATCHED → DELIVERED</b> の一方向で、同じ位置や後ろに戻る
+ * イベントは無視する。
+ * <b>決済済みの注文だけ</b>動かす。返金・取消された注文({@code REFUNDED}/{@code CANCELED})に
+ * 配送イベントが遅れて届いても — 発送後に返金された品物がそれでも配達されることは実際に
+ * ある — 注文状態はお金の状態を表すので上書きしない。{@code COMPLETED}(購入確定)も
+ * そのままにする。
+ * <b>配送状態 → 注文状態</b>: {@code PENDING}(配送作成) → {@code PROCESSING}。
+ * 送り状登録以降の移動中のすべての状態(INFO_RECEIVED・PICKED_UP・IN_TRANSIT・通関・配達
+ * 出発・配達失敗・例外) → {@code DISPATCHED}。
+ * {@code DELIVERED} → {@code DELIVERED} + {@code deliveredCreatedAt}。
+ * {@code CANCELLED} → <b>{@code PAID} に戻る</b>(PROCESSING・DISPATCHED だったなら)。
+ * 配送取消は発送<b>前</b>にだけ可能なので品物は出ていない — ところが注文が
+ * DISPATCHED のまま残ると「配送が始まった注文は返金できません」に閉じ込められる。顧客が配送を
+ * 取消した理由が返金なのに、その道が塞がれるのである。実際にそうなった。
+ * {@code RETURNED} → 注文には触れない。返送は返品入庫が処理する。
+ * 「前にだけ進む」の唯一の例外が {@code CANCELLED} である。決済取消・返金でシステムが畳んだ
+ * 配送なら注文は既に {@code REFUNDED}/{@code CANCELED} なので {@link #MOVABLE} の外で、その時は
+ * ここでも触れない — お金の状態が優先である。
+ * 未知の状態は発行者が一緒に送る {@code stage} で判定する — 配送サービスが状態を
+ * 一つ増やしてもここが壊れないように。
  */
 @Slf4j
 @Service
@@ -71,6 +98,7 @@ public class OrderDeliveryStatusService {
     }
 
     /** 처리 원장(V30) — 세터, statusChanger 와 같은 이유. 기본값은 원장 없음(단위 테스트). */
+    // [JA] 処理台帳(V30) — セッター、statusChanger と同じ理由。デフォルトは台帳なし(単体テスト)。
     private ProcessedEventLedger ledger = ProcessedEventLedger.NONE;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -79,6 +107,7 @@ public class OrderDeliveryStatusService {
     }
 
     /** 배송 이벤트가 움직일 수 있는 주문 상태. 이 밖의 주문은 돈의 상태가 우선이다. */
+    // [JA] 配送イベントが動かせる注文状態。この外の注文はお金の状態が優先である。
     static final Set<OrderStatus> MOVABLE = EnumSet.of(OrderStatus.PAID, OrderStatus.PROCESSING, OrderStatus.DISPATCHED);
 
     private final OrderRepository orderRepository;
@@ -86,6 +115,7 @@ public class OrderDeliveryStatusService {
 
     /**
      * @return 주문 상태가 실제로 바뀌었으면 true
+     *         [JA] 注文状態が実際に変わったら true
      */
     @Transactional
     public boolean apply(Long orderId, String deliveryStatus, String stage) {
@@ -97,7 +127,10 @@ public class OrderDeliveryStatusService {
      *
      * <p>키는 {@link #ledgerKey 배송 건 · 상태}다. 🐛 원장이 없을 때 "앞으로만 간다" 밖의 배송 취소가 다시 오면, 관리자가 배송을 다시 만들어
      * PROCESSING 이 된 주문이 PAID 로 돌아갔다. 배송을 다시 만들면 배송 건 번호가 새로 생기므로 새 배송의 상태는 걸러지지 않는다.
-     * [JA] 台帳キー付き — 同じキーを反映済みなら何もしない。配送を作り直すと配送番号が新しくなるので、新しい配送の状態は除かれない。
+     * [JA] 台帳キー付き — 同じキーをすでに反映していれば何もしない(再配信 · 新しいグループの読み直し)。
+     * キーは {@link #ledgerKey 配送件 · 状態}だ。🐛 台帳がないとき「前にだけ進む」の外の配送取消が再び来ると、管理者が配送を作り直して
+     * PROCESSING になった注文が PAID に戻った。配送を作り直すと配送番号が新しくできるので、新しい配送の状態は除かれない。
+     * ledgerKey が null なら台帳を使わない(以前の動作 — 配送番号のないイベント)。
      *
      * @param ledgerKey null 이면 원장을 쓰지 않는다(예전 동작 — 배송 건 번호가 없는 이벤트)
      */
@@ -119,6 +152,7 @@ public class OrderDeliveryStatusService {
         Optional<Order> found = orderRepository.findById(orderId);
         if (found.isEmpty()) {
             // 배송 서비스가 아는 주문을 우리가 모른다 — 삭제됐거나 다른 환경의 이벤트다. 재시도해도 같다.
+            // [JA] 配送サービスが知っている注文を当方が知らない — 削除されたか別環境のイベントである。再試行しても同じ。
             log.warn("배송 상태를 받았지만 주문이 없음: orderId={} status={}", orderId, deliveryStatus);
             return false;
         }
@@ -163,6 +197,11 @@ public class OrderDeliveryStatusService {
      * <p>{@code PROCESSING}(배송 준비) 이나 {@code DISPATCHED}(송장 등록) 였을 때만이다.
      * 배송 도메인이 발송 뒤의 취소를 막으므로 {@code DELIVERED} 에서 이 이벤트가 오는 일은
      * 없지만, 온다 해도 되돌리지 않는다 — 받은 물건을 "결제만 된 상태" 로 만들 수는 없다.
+     *
+     * <p>[JA] 発送前の配送取消 → 注文を {@code PAID} に戻す。
+     * {@code PROCESSING}(配送準備) か {@code DISPATCHED}(送り状登録) だった時だけである。
+     * 配送ドメインが発送後の取消を防ぐので {@code DELIVERED} でこのイベントが来ることは
+     * ないが、来たとしても戻さない — 受け取った品物を「決済だけされた状態」にはできない。
      */
     private boolean revertToPaidOnCancel(Long orderId) {
         Optional<Order> found = orderRepository.findById(orderId);
@@ -184,6 +223,7 @@ public class OrderDeliveryStatusService {
     }
 
     /** 배송 상태 → 주문 상태. 주문을 움직이지 않는 상태면 비어 있다. */
+    // [JA] 配送状態 → 注文状態。注文を動かさない状態なら空である。
     static Optional<OrderStatus> targetOf(String deliveryStatus, String stage) {
         String status = deliveryStatus == null ? "" : deliveryStatus.trim().toUpperCase();
         switch (status) {
@@ -207,6 +247,7 @@ public class OrderDeliveryStatusService {
                 break;
         }
         // 모르는 상태 — 단계로 판정한다.
+        // [JA] 未知の状態 — 段階で判定する。
         String s = stage == null ? "" : stage.trim().toUpperCase();
         return switch (s) {
             case "ORDERED" -> Optional.of(OrderStatus.PROCESSING);
@@ -217,6 +258,7 @@ public class OrderDeliveryStatusService {
     }
 
     /** PAID → PROCESSING → DISPATCHED → DELIVERED 순서에서 앞으로 가는가. */
+    // [JA] PAID → PROCESSING → DISPATCHED → DELIVERED の順序で前に進むか。
     private static boolean isForward(OrderStatus from, OrderStatus to) {
         return rank(to) > rank(from);
     }

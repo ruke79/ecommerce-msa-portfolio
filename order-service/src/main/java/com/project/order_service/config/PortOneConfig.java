@@ -40,6 +40,17 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>같은 제공자({@code PORTONE})에 게이트웨이 빈은 <b>하나만</b> 만든다. 둘이면
  * {@code PaymentGateways} 가 기동을 막는다.
+ *
+ * <p>[JA] PortOne の配線。
+ * portone.enabled = false(既定)付けない — 決済手段の一覧にも出ない / = true 資格情報が必要で、なければ起動が失敗する。
+ * portone.version = v1(既定)アイムポート — imp_key/imp_secret · 加盟店識別コード(imp…) / = v2 api.portone.io — API Secret · Webhook シークレット · Store ID · チャネルキー。
+ * Stripe と同じ規則だ。新しく追加される手段なので既定はオフで、<b>有効にした後にキーがなければ起動を止める</b>
+ * — 半分有効な状態(一覧には出るが押すと 500)が最も悪い。
+ * V1 / V2 はアカウントが決める: 2024 年以降に新しく作った PortOne アカウントには <b>V2 しか</b> ない(コンソールに {@code imp…} の
+ * 識別コードがなく {@code store-…} が見える)。そのアカウントに V1 設定を入れるとどこでも合わない。コンソールでどちらかを見て
+ * {@code PORTONE_VERSION} を合わせる — <b>フロントのビルド引数も一緒に</b> 変わる(V1 は {@code REACT_APP_PORTONE_IMP_CODE}、
+ * V2 は {@code REACT_APP_PORTONE_STORE_ID} + {@code REACT_APP_PORTONE_CHANNEL_KEY})。
+ * 同じ提供者({@code PORTONE})にゲートウェイ Bean は <b>1 つだけ</b> 作る。2 つなら {@code PaymentGateways} が起動を止める。
  */
 @Slf4j
 @Configuration
@@ -93,6 +104,7 @@ public class PortOneConfig {
                                 + "콘솔 → 결제연동 → API Keys 의 V2 API Secret 을 채우거나 PORTONE_ENABLED=false 로 끄세요.");
             }
             // 🔒 시크릿은 절대 찍지 않는다. 길이만 — "넘어오긴 했는지" 대조용이다.
+            // [JA] 🔒 シークレットは絶対に出力しない。長さだけ — 「渡ってきてはいるか」の照合用だ。
             log.info("포트원 V2 결제 활성화 (endpoint={} apiSecret={}자)", v2ApiBaseUrl, v2ApiSecret.length());
             log.warn("⚠️ 포트원은 키만으로 테스트/실결제를 구분할 수 없습니다 — 채널 설정을 확인하세요.");
             return new PortOneV2PaymentGateway(
@@ -110,6 +122,7 @@ public class PortOneConfig {
                             + "(콘솔에 imp… 식별코드가 없고 store-… 만 보이면 V2 계정입니다 — PORTONE_VERSION=v2)");
         }
         // 🔒 시크릿은 절대 찍지 않는다. 키는 앞 4자리만 — 상점 대조용이다.
+        // [JA] 🔒 シークレットは絶対に出力しない。キーは先頭 4 文字だけ — ストアの照合用だ。
         log.info("포트원 V1 결제 활성화 (endpoint={} apiKey={}…)",
                 apiBaseUrl, apiKey.substring(0, Math.min(4, apiKey.length())));
         log.warn("⚠️ 포트원은 키만으로 테스트/실결제를 구분할 수 없습니다 — 상점 설정을 확인하세요.");
@@ -124,6 +137,10 @@ public class PortOneConfig {
      *
      * <p>켰는데 비밀이 없으면 기동을 막는다. 검증 없는 V2 웹훅은 V1 보다 나쁘다 — V1 은
      * 애초에 본문을 안 믿는 구조지만, "서명이 있는 줄 알고" 본문을 믿게 되기 쉽다.
+     *
+     * <p>[JA] V2 にだけ存在する。V1 の Webhook には署名がなく検証器があり得ない — その場合の安全の論理は {@code PortOnePaymentService} のコメントにある。
+     * 有効にしたのに秘密がなければ起動を止める。検証のない V2 の Webhook は V1 より悪い — V1 はそもそも本文を信じない構造だが、
+     * 「署名があると思って」本文を信じてしまいやすい。
      */
     @Bean
     @ConditionalOnProperty(name = "portone.version", havingValue = "v2")

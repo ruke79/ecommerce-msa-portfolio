@@ -20,10 +20,15 @@ public interface ShippingAddressRepository extends JpaRepository<ShippingAddress
     // 특정 사용자의 배송지 정보를 조회할 때 락을 걸어 동시 수정을 방지합니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)   ->Transactional ReadOnly true 에서 사용 불가
     // JOIN FETCH를 사용하여 ShippingAddress와 User 엔티티를 즉시 로딩합니다.
+    // [JA] --- 悲観ロックの適用 ---
+    //      特定ユーザーの配送先情報を照会するときにロックをかけて同時修正を防ぐ。
+    //      (PESSIMISTIC_WRITE は Transactional ReadOnly true では使えない)
+    //      JOIN FETCH を使って ShippingAddress と User エンティティを即時ロードする。
     @Query("SELECT s FROM ShippingAddress s JOIN FETCH s.user u WHERE u.userId = :userId")
     List<ShippingAddress> findByUser_UserIdWithUser(@Param("userId") Long userId);
     
     //@Lock(LockModeType.OPTIMISTIC) // Transactional ReadOnly true 에서 사용 가능
+    // [JA] OPTIMISTIC は Transactional ReadOnly true でも使える
     List<ShippingAddress> findByUser_UserId(Long userId);
     
     /**
@@ -41,6 +46,14 @@ public interface ShippingAddressRepository extends JpaRepository<ShippingAddress
      *   <li>그 전이라도 — 전체에 active 가 딱 하나일 때 — 그 하나가 <b>다른 사람 것</b>이면
      *       남의 기본 배송지를 꺼 버린다.</li>
      * </ol>
+     *
+     * <p>[JA] このユーザーの既定の配送先。
+     * 🔴 以前は {@code Optional<ShippingAddress> findByActive(boolean)} だった — {@code user_id} 条件のない全テーブル照会である。
+     * 結果は二通りに悪かった: ① ユーザーが二人以上既定の配送先を持った瞬間、{@code Optional} で宣言されたクエリが 2 行に
+     * 出会い Spring Data が {@code IncorrectResultSizeDataAccessException} を投げる → コントローラーの
+     * {@code catch (RuntimeException)} に掛かって 400。今はユーザーが事実上 1 人なので表に出なかっただけで、二人目のユーザーが
+     * 配送先を選んだ瞬間に再現する。② それ以前でも — 全体で active がちょうど一つのとき — その一つが他人のものなら
+     * 他人の既定配送先をオフにしてしまう。
      */
     Optional<ShippingAddress> findByUser_UserIdAndActiveTrue(Long userId);
 
@@ -53,6 +66,12 @@ public interface ShippingAddressRepository extends JpaRepository<ShippingAddress
      *
      * <p>"찾아서 비교한다" 가 아니라 "내 것 중에서 찾는다" 로 두는 이유: 비교를 빠뜨리면
      * 조용히 통과하지만, 조건이 쿼리에 있으면 빠뜨릴 수가 없다.
+     *
+     * <p>[JA] このユーザーの配送先一つ。
+     * 🔴 所有権をクエリで確認する。以前は {@code findById(addressId)} で全テーブルから探した後、所有者を照合せずにそのまま
+     * 消していた — ログインした誰でも住所 id さえ分かれば他人の配送先を削除できた(IDOR)。
+     * 「探して比べる」ではなく「自分のものの中から探す」にする理由: 比較を書き漏らすと静かに通ってしまうが、条件が
+     * クエリにあれば書き漏らしようがない。
      */
     Optional<ShippingAddress> findByShippingAddressIdAndUser_UserId(Long shippingAddressId, Long userId);
 
@@ -60,6 +79,7 @@ public interface ShippingAddressRepository extends JpaRepository<ShippingAddress
     Optional<ShippingAddress> findById(Long id);
 
     /** 회원 탈퇴 최종 처리용. 배송지는 주소·연락처라 탈퇴하면 남길 이유가 없다. */
+    // [JA] 会員退会の最終処理用。配送先は住所・連絡先なので退会すると残す理由がない。
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
     @Query("delete from ShippingAddress s where s.user.userId = :userId")

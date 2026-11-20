@@ -12,6 +12,7 @@ const TableHeader = ({ reviews, allSizes, colors }) => {
     const [order, setOrder] = useState("");
 
     // 목록의 이름표는 키로 들고 있다가 그릴 때 번역한다 — 모듈에서 번역하면 그 순간의 언어로 굳는다.
+    // [JA] 一覧のラベルはキーで持っておき描くときに翻訳する — モジュールで翻訳するとその瞬間の言語で固まる。
     const optionLabel = (item) => (item ? t(item.textKey, { count: item.value }) : "");
     const ratingLabel = rating === "All"
         ? t("product.review.filter.all")
@@ -30,6 +31,7 @@ const TableHeader = ({ reviews, allSizes, colors }) => {
                     handleChange={setRating}
                 />
                 {/* 사이즈 없는 상품이면 "All" 하나뿐이다 — 거를 것이 없다. */}
+                {/* [JA] サイズのない商品なら "All" ひとつだけだ — 絞り込むものがない。 */}
                 {allSizes.some((item) => item.size && item.size !== "All") && (
                 <TableSelect
                     property={size}
@@ -63,6 +65,7 @@ const TableHeader = ({ reviews, allSizes, colors }) => {
 export default TableHeader;
 
 // value 는 걸러 보기 상태의 코드 값이라 번역하지 않는다 — 이름표만 textKey 로 번역한다.
+// [JA] value は絞り込み状態のコード値なので翻訳しない — ラベルだけ textKey で翻訳する。
 const ratings = [
     { textKey: "product.review.filter.all", value: "" },
     { textKey: "product.review.filter.stars", value: 5 },

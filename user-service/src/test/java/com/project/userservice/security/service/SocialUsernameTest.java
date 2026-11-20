@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
  * 🔴 소셜 가입의 username 은 users.username(varchar(20))에 들어간다.
  *
  * <p>🐛 예전: {@code google_} + 21자리 sub = 28자 → 구글 · 페이스북 · 네이버 · LINE 가입이 DB 에서 거절됐다.
+ *
+ * <p>[JA] 🔴 ソーシャル登録の username は users.username(varchar(20))に入る。
+ * 🐛 以前: {@code google_} + 21 桁の sub = 28 文字 → Google・Facebook・Naver・LINE の登録が DB で拒否されていた。
  */
 @DisplayName("소셜 username · 표시 이름 길이")
 class SocialUsernameTest {

@@ -35,6 +35,9 @@ import lombok.extern.slf4j.Slf4j;
  * <p>상태 전환은 여기가 아니라 {@code EventScheduler} 가 한다 — 관리자는 <b>확정</b>까지만
  * 하고, 시작·종료는 시각이 결정한다. 사람이 자정에 맞춰 버튼을 누르는 운영은 반드시
  * 놓친다.
+ *
+ * <p>[JA] イベント / 企画展の管理。
+ * 状態遷移はここではなく EventScheduler が行う — 管理者は確定までしか行わず、開始・終了は時刻が決める。人が深夜 0 時に合わせてボタンを押す運用は必ず取りこぼす。
  */
 @Slf4j
 @Service
@@ -43,9 +46,11 @@ import lombok.extern.slf4j.Slf4j;
 public class EventService {
 
     /** 한 기획전에 담을 수 있는 상품 수. */
+    // [JA] 一つの企画展に入れられる商品数。
     static final int MAX_PRODUCTS = 500;
 
     /** 쿠폰 유효기간을 정하지 않았을 때. 받자마자 만료되는 쿠폰이 나가면 안 된다. */
+    // [JA] クーポンの有効期間を決めなかったとき。受け取った途端に期限切れになるクーポンが出てはいけない。
     static final int DEFAULT_COUPON_VALID_DAYS = 14;
 
     private final EventRepository eventRepository;
@@ -63,6 +68,7 @@ public class EventService {
     }
 
     /** 지금 진행 중인 기획전. 공개 목록이 쓴다. */
+    // [JA] 今進行中の企画展。公開一覧が使う。
     public List<Event> active() {
         return eventRepository.findByStatusOrderByStartsAtDesc(EventStatus.ACTIVE);
     }
@@ -72,6 +78,9 @@ public class EventService {
      *
      * <p>진행 중이 아니면 <b>404</b> 다. 403 을 주면 "그 slug 에 기획전이 있긴 하다"가 새어
      * 나가, 준비 중인 기획전의 존재와 이름을 미리 알 수 있다(공지의 비공개 글과 같은 이유).
+     *
+     * <p>[JA] 公開詳細。
+     * 進行中でなければ 404 である。403 を返すと「その slug に企画展は存在する」ことが漏れ、準備中の企画展の存在と名前を事前に知られてしまう(お知らせの非公開記事と同じ理由)。
      */
     public Event publicOne(String slug) {
         return eventRepository.findBySlug(slug)
@@ -111,6 +120,8 @@ public class EventService {
         // 끝난 기획전은 고칠 수 없다. 고치게 두면 "종료된 기획전의 할인율을 바꾼다"는
         // 아무 효과 없는 동작이 되고, 관리자는 왜 가격이 안 바뀌는지 알 수 없다.
         // 새로 만드는 것이 맞다.
+        // [JA] 終わった企画展は直せない。直させると「終了した企画展の割引率を変える」という何の効果もない操作になり、管理者はなぜ価格が変わらないのか分からない。
+        //      新しく作るのが正しい。
         if (event.getStatus() == EventStatus.ENDED) {
             throw new com.project.common.domain.exception.StateConflictException("이미 종료된 기획전은 수정할 수 없습니다. 새로 만들어 주세요.");
         }
@@ -137,6 +148,9 @@ public class EventService {
      *
      * <p>삭제와 다르다 — 진행 중인 기획전을 지우면 그런 세일이 있었다는 기록이 사라진다.
      * 고객 문의("어제 30% 였는데요")에 답할 수 없게 된다.
+     *
+     * <p>[JA] 今終了する。
+     * 削除とは違う — 進行中の企画展を消すと、そういうセールがあったという記録が消える。顧客の問い合わせ(「昨日は 30% だったのに」)に答えられなくなる。
      */
     @Transactional
     public EventAdminView endNow(Long id) {
@@ -146,6 +160,7 @@ public class EventService {
         }
         event.setStatus(EventStatus.ENDED);
         // 종료 시각을 남긴다. 비워 두면 목록에서 "언제 끝났는지"를 알 수 없다.
+        // [JA] 終了時刻を残す。空にしておくと一覧で「いつ終わったか」が分からない。
         event.setEndsAt(java.time.LocalDateTime.now());
         log.warn("기획전 즉시 종료: id={}", id);
         return EventAdminView.of(event);
@@ -156,6 +171,7 @@ public class EventService {
         Event event = find(id);
         // 진행 중인 것을 지우면 할인이 조용히 사라지고 기록도 남지 않는다. 끝내는 것이
         // 맞는 동작이라 그쪽으로 안내한다.
+        // [JA] 進行中のものを消すと割引が黙って消え、記録も残らない。終了させるのが正しい操作なので、そちらへ案内する。
         if (event.getStatus() == EventStatus.ACTIVE) {
             throw new com.project.common.domain.exception.StateConflictException("진행 중인 기획전은 삭제할 수 없습니다. 먼저 종료해 주세요.");
         }
@@ -175,6 +191,12 @@ public class EventService {
      * 인스턴스가 둘이면 스케줄러도 둘이고, 시작 알림이 두 번 나가면 안 된다.
      *
      * @return 이번에 시작된 기획전과 종료된 건수
+     *
+     * <p>[JA] 時刻が来た企画展の状態を進める。スケジューラが呼ぶ。
+     * なぜスケジューラではなくここにあるのか。@Transactional はプロキシで動作する — 同じ Bean の中で自分のメソッドを呼ぶとプロキシを通らず、
+     * アノテーションが黙って無視される。スケジューラの tick() が同じクラスの advance() を呼ぶと、まさにその罠にはまる。Bean の境界を越えさせておく。
+     * 条件付き UPDATE を使う理由は EventRepository.transition のコメント参照 — インスタンスが二つならスケジューラも二つで、開始通知が二度出てはいけない。
+     * 戻り値は今回開始された企画展と終了した件数。
      */
     @Transactional
     public Advanced advanceDueEvents(java.time.LocalDateTime now) {
@@ -194,6 +216,7 @@ public class EventService {
                     EventStatus.ACTIVE, EventStatus.ENDED) > 0) {
                 // 종료는 알리지 않는다. "세일이 끝났습니다"는 사용자에게 쓸모가 없고,
                 // 기획전 하나당 알림이 두 개가 된다.
+                // [JA] 終了は通知しない。「セールが終わりました」はユーザーにとって役に立たず、企画展一つにつき通知が二つになる。
                 log.info("기획전 종료: id={}, slug={}", event.getEventId(), event.getSlug());
                 ended++;
             }
@@ -208,10 +231,15 @@ public class EventService {
      * <p>시작과 종료를 나눠 돌려주는 이유: 시작은 <b>알림을 발행해야</b> 하고 종료는
      * 아니지만, <b>둘 다 캐시를 비워야</b> 한다. 종료를 빠뜨리면 기획전이 끝난 뒤에도
      * 캐시에 남은 할인가가 TTL 이 지날 때까지 보이고 그 가격으로 장바구니에 담긴다.
+     *
+     * <p>[JA] 一回の遷移結果。
+     * 開始と終了を分けて返す理由: 開始は通知を発行する必要があり終了はそうではないが、両方ともキャッシュを空にする必要がある。
+     * 終了を漏らすと、企画展終了後もキャッシュに残った割引価格が TTL が切れるまで見え、その価格でカートに入る。
      */
     public record Advanced(List<Event> started, int ended) {
 
         /** 상태가 하나라도 바뀌었는가 — 캐시를 비워야 하는지. */
+        // [JA] 状態が一つでも変わったか — キャッシュを空にする必要があるか。
         public boolean changed() {
             return !started.isEmpty() || ended > 0;
         }
@@ -227,6 +255,9 @@ public class EventService {
      *
      * <p>{@code publish} 가 null 이면 상태를 건드리지 않는다 — 진행 중인 기획전의 배너
      * 이미지만 고치는 요청이 그것을 취소시키면 안 된다.
+     *
+     * <p>[JA] 確定/取り消し。
+     * publish が null なら状態に触れない — 進行中の企画展のバナー画像だけを直すリクエストがそれを取り消してはいけない。
      */
     private void applyPublishFlag(Event event, Boolean publish) {
         if (publish == null) {
@@ -235,6 +266,7 @@ public class EventService {
         if (publish) {
             // 이미 진행 중이면 그대로 둔다. SCHEDULED 로 되돌리면 스케줄러가 다시 시작시키며
             // 시작 알림이 한 번 더 나간다.
+            // [JA] すでに進行中ならそのままにする。SCHEDULED に戻すと、スケジューラが再び開始させて開始通知がもう一度出る。
             if (event.getStatus() == EventStatus.DRAFT) {
                 event.setStatus(EventStatus.SCHEDULED);
             }
@@ -243,9 +275,11 @@ public class EventService {
         }
         // ACTIVE 를 publish=false 로 끄지 않는다. 그건 "종료"이고 endNow() 가 한다 —
         // 여기서 DRAFT 로 되돌리면 진행 기록이 사라진다.
+        // [JA] ACTIVE を publish=false で止めない。それは「終了」で、endNow() が行う — ここで DRAFT に戻すと進行の記録が消える。
     }
 
     /** 할인율은 0~100 — 요청 검증(@Valid)을 거치지 않은 호출에도(서비스가 마지막 방어선이다). */
+    // [JA] 割引率は 0〜100 — リクエスト検証(@Valid)を経ない呼び出しにも(サービスが最後の防衛線だ)。
     static int checkedRate(Integer rate) {
         if (rate == null || rate < 0 || rate > 100) {
             throw new IllegalArgumentException("할인율은 0~100 사이여야 합니다.");
@@ -262,6 +296,11 @@ public class EventService {
      *
      * <p>상한을 따로 두지 않는다. 카테고리 수는 관리자가 만든 것이라 애초에 적고, 상품
      * 상한({@link #MAX_PRODUCTS})처럼 사용자 입력으로 부풀지 않는다.
+     *
+     * <p>[JA] 対象カテゴリを検証して値型に変える。
+     * 存在しないカテゴリは拒否する。商品と同じ理由だ — そのまま保存すると症状が「そのカテゴリだけ割引がかからない」として現れるが、
+     * 画面の対象一覧には普通に入っているので何が間違っているのか分からない。
+     * 上限は別に設けない。カテゴリ数は管理者が作ったものなのでもともと少なく、商品の上限(MAX_PRODUCTS)のようにユーザー入力で膨らまない。
      */
     private List<EventCategory> toCategories(List<EventCategoryRequest> requested) {
         if (requested == null || requested.isEmpty()) {
@@ -269,6 +308,7 @@ public class EventService {
         }
 
         // 같은 카테고리가 두 번 들어오면 어느 할인율이 적용되는지가 저장 순서에 달린다.
+        // [JA] 同じカテゴリが二度入ると、どの割引率が適用されるかが保存順に左右される。
         Map<Long, Integer> byCategory = new LinkedHashMap<>();
         for (EventCategoryRequest item : requested) {
             if (item != null && item.categoryId() != null) {
@@ -302,6 +342,11 @@ public class EventService {
      * 사용자는 "쿠폰 받기"를 눌러 받아 놓고도 결제 때 아무 일이 일어나지 않는 것을 본다.
      * 반대로 할인율만 있고 이름이 없으면 쿠폰을 식별할 키가 없다 — 이름이 곧 키다
      * (coupon 테이블의 {@code uk_coupon_name_user_id}).
+     *
+     * <p>[JA] 付属クーポンと対象顧客層。
+     * 名前はあるのに割引率がなければ拒否する。そのままにすると 0% クーポンが発行され、ユーザーは「クーポンを受け取る」を押して受け取ったのに、
+     * 決済時に何も起きないのを見る。逆に割引率だけあって名前がなければクーポンを識別するキーがない — 名前がそのままキーだ
+     * (coupon テーブルの uk_coupon_name_user_id)。
      */
     private void applyCoupon(Event event, EventRequest request) {
         // 저장할 때는 모르는 값을 거절한다 — from() 은 "모르면 ALL" 이라 오타가 전원 대상이 됐다.
@@ -323,6 +368,7 @@ public class EventService {
             event.setCouponValidDays(null);
             // 쿠폰이 없으면 고객군은 의미가 없다. ALL 로 되돌려 두지 않으면 관리자 목록에
             // "신규 가입자 전용" 이라고 보이는데 아무것도 전용이 아닌 상태가 된다.
+            // [JA] クーポンがなければ顧客層は意味がない。ALL に戻しておかないと、管理者一覧に「新規会員限定」と表示されるのに何も限定されていない状態になる。
             event.setAudience(AudienceSegment.ALL);
             return;
         }
@@ -331,6 +377,7 @@ public class EventService {
         event.setCouponDiscount(request.couponDiscount());
         // 기간을 정하지 않으면 기본값을 쓴다. 0 이나 null 로 두면 받자마자 만료된 쿠폰이
         // 발급된다.
+        // [JA] 期間を決めなければデフォルト値を使う。0 や null にすると、受け取った途端に期限切れのクーポンが発行される。
         event.setCouponValidDays(request.couponValidDays() == null || request.couponValidDays() <= 0
                 ? DEFAULT_COUPON_VALID_DAYS
                 : request.couponValidDays());
@@ -346,6 +393,12 @@ public class EventService {
      * <p>쿠폰의 <b>적용 범위</b>는 기획전의 대상을 그대로 물려받는다. 상품을 지정한
      * 기획전이면 그 상품에만, 카테고리를 지정했으면 그 카테고리에만 쓸 수 있다 — "이
      * 기획전의 쿠폰" 이 기획전과 무관한 상품에 먹으면 관리자가 의도한 할인 폭을 넘는다.
+     *
+     * <p>[JA] 企画展に付いたクーポン — coupon-service が発行前に読む。
+     * 進行中でない、またはクーポンがなければ例外だ。状態の判定を coupon-service に再度させない — 同じ規則が二か所にあるといつかずれ、
+     * そのとき終了済みの企画展のクーポンが出続ける。
+     * クーポンの適用範囲は企画展の対象をそのまま引き継ぐ。商品を指定した企画展ならその商品だけに、カテゴリを指定したならそのカテゴリだけに使える —
+     * 「この企画展のクーポン」が企画展と無関係な商品に効くと、管理者が意図した割引幅を超える。
      */
     public EventCouponOffer couponOffer(String slug) {
         Event event = publicOne(slug);
@@ -355,6 +408,7 @@ public class EventService {
 
         // 상품 지정이 있으면 상품 범위가 더 좁으므로 그쪽을 쓴다. 둘 다 있으면 상품을
         // 고르는 이유: 카테고리로 넓히면 관리자가 굳이 상품을 고른 의도가 사라진다.
+        // [JA] 商品指定があれば商品の範囲のほうが狭いのでそちらを使う。両方あるときに商品を選ぶ理由: カテゴリに広げると、管理者がわざわざ商品を選んだ意図が消える。
         String scope;
         List<String> targets;
         if (!event.getProducts().isEmpty()) {
@@ -370,6 +424,7 @@ public class EventService {
         } else {
             // 대상이 없는 기획전의 쿠폰은 전 상품에 쓸 수 있다. 이 경우 기획전은
             // 사실상 쿠폰 배포 수단이다.
+            // [JA] 対象のない企画展のクーポンは全商品に使える。この場合、企画展は事実上クーポン配布の手段だ。
             scope = CouponScope.ALL.name();
             targets = List.of();
         }
@@ -387,6 +442,10 @@ public class EventService {
      *
      * <p>없는 상품 id 는 <b>거절한다.</b> 그냥 저장하면 증상이 "그 상품만 할인이 안 걸린다"로
      * 나타나는데, 화면에서는 대상 목록에 멀쩡히 들어 있어 무엇이 틀렸는지 알 수 없다.
+     *
+     * <p>[JA] 対象商品を検証して値型に変える。
+     * 存在しない商品 id は拒否する。そのまま保存すると症状が「その商品だけ割引がかからない」として現れるが、画面では対象一覧に普通に入っているので
+     * 何が間違っているのか分からない。
      */
     private List<EventProduct> toProducts(List<EventProductRequest> requested) {
         if (requested == null || requested.isEmpty()) {
@@ -399,6 +458,8 @@ public class EventService {
 
         // 같은 상품이 두 번 들어오면 어느 할인율이 적용되는지가 저장 순서에 달린다.
         // 마지막 값을 쓰되(화면에서 고친 값이 뒤에 온다) 중복 자체는 여기서 없앤다.
+        // [JA] 同じ商品が二度入ると、どの割引率が適用されるかが保存順に左右される。
+        //      最後の値を使い(画面で直した値が後に来る)、重複自体はここでなくす。
         Map<Long, Integer> byProduct = new LinkedHashMap<>();
         for (EventProductRequest item : requested) {
             if (item == null || item.productId() == null) {
@@ -432,6 +493,11 @@ public class EventService {
      *
      * <p>겹치면 뒤에 숫자를 붙인다. DB 의 UNIQUE 가 최종 방어선이지만(두 관리자가 동시에
      * 저장하면 이 검사를 둘 다 통과한다), 흔한 경우는 여기서 조용히 처리하는 편이 낫다.
+     *
+     * <p>[JA] URL に使う名前を作る。
+     * 管理者が空にしておくとタイトルから作る。タイトルがハングルだと残る文字がなく空文字列になるので、そのときは時刻を混ぜた代替名を使う —
+     * slug が空になると /event/ となり一覧の経路と衝突する。
+     * 重なれば後ろに数字を付ける。DB の UNIQUE が最終防衛線だが(二人の管理者が同時に保存するとこの検査を両方とも通過する)、よくあるケースはここで黙って処理するほうがよい。
      */
     private String uniqueSlug(String requested, String title, Event current) {
         String base = slugify(requested != null && !requested.isBlank() ? requested : title);

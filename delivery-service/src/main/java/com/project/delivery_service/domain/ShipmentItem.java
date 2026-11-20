@@ -23,6 +23,12 @@ import lombok.NoArgsConstructor;
  * <p><b>상품명을 복사해 둔다.</b> catalog-service 를 조회하지 않는 이유는 두 가지다:
  * 배송 이력은 몇 년 뒤에도 조회되는데 그때 상품이 삭제됐거나 이름이 바뀌었을 수 있고,
  * 배송 조회 화면이 카탈로그 장애에 끌려 들어갈 이유도 없다.
+ *
+ * <p>[JA] この箱に何がいくつ入っているか。
+ * 分割配送では必須である。箱だけ分けて中身を記録しないと、ユーザーは「先に届いた箱に何が入っているか」が分からない —
+ * Amazon がパッケージごとに商品リストを見せる理由である。
+ * <b>商品名をコピーしておく。</b> catalog-service を照会しない理由は二つ: 配送履歴は数年後にも照会されるが、
+ * そのとき商品が削除されたり名前が変わったりしている可能性があり、配送照会画面がカタログの障害に巻き込まれる理由もない。
  */
 @Entity
 @Getter
@@ -47,6 +53,7 @@ public class ShipmentItem {
     private Long productId;
 
     /** 주문 시점의 상품명 스냅샷. */
+    // [JA] 注文時点の商品名スナップショット。
     @Column(name = "product_name", length = 300)
     private String productName;
 
@@ -57,6 +64,7 @@ public class ShipmentItem {
     private int quantity;
 
     /** 주문 시점의 SKU 스냅샷(V4) — 창고는 이름이 아니라 이 코드로 집는다. SKU 가 없던 주문이면 null. */
+    // [JA] 注文時点の SKU スナップショット(V4) — 倉庫は名前ではなくこのコードでピッキングする。SKU がなかった注文なら null。
     @Column(name = "sku_code", length = 96)
     private String skuCode;
 

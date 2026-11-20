@@ -20,6 +20,7 @@ const Probe = () => {
 };
 
 /** 로그인 · 로그아웃이 다른 탭에 알리는 조건(util/authSync). */
+// [JA] ログイン・ログアウトが他のタブに知らせる条件(util/authSync)。
 describe("AuthContext — 탭 간 알림", () => {
   beforeEach(() => {
     mockPublish.mockClear();

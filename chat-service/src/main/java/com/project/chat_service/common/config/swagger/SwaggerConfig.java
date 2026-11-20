@@ -16,5 +16,6 @@ package com.project.chat_service.common.config.swagger;
 //                         .description("채팅 마이크로 서비스 API")
 //                         .version(serviceVersion));
 //     }
+// [JA] (コメントアウトされたコード) description の文言: チャットマイクロサービス API
 
 // }

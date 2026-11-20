@@ -29,6 +29,9 @@ describe("nextPageParam — 어디까지 더 불러올지", () => {
    * 🐛 무한 루프 방지. totalProducts 는 상품 수를 따로 센 값이라 실제로 돌아오는 목록과
    * 어긋날 수 있다. 그때 "아직 남았다"로 판단하면 감시 대상이 화면에 계속 남아 있으므로
    * 빈 응답을 부르고 → 또 부르고 → 브라우저가 멈출 때까지 요청이 나간다.
+   *
+   * <p>[JA] 🐛 無限ループ防止。totalProducts は商品数を別に数えた値なので、実際に返ってくる一覧とずれることがある。そのとき「まだ残っている」と判断すると
+   * 監視対象が画面に残り続けるので、空の応答を呼び → また呼び → ブラウザが固まるまでリクエストが出る。
    */
   it("빈 페이지가 오면 총계가 더 크다고 해도 멈춘다", () => {
     const pages = [page(10, 999), page(0, 999)];
@@ -50,11 +53,15 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
    * URL 에 들어가는 이름은 `rating` 인데(ratingHandler → toggleParam('rating', …),
    * HeadingFilter 도 `searchParams.get('rating')` 으로 체크 상태를 그린다) 요청을 만들 때는
    * `searchParams.get("rate")` 를 읽었다. 체크박스는 켜지는데 결과는 그대로였다.
+   *
+   * <p>[JA] 🐛 回帰対象: **星評価フィルタが検索に反映されたことがない。**URL に入る名前は `rating` なのに(ratingHandler → toggleParam('rating', …)、
+   * HeadingFilter も `searchParams.get('rating')` でチェック状態を描く)リクエストを作るときは `searchParams.get("rate")` を読んでいた。チェックボックスは付くのに結果はそのままだった。
    */
   it("별점은 'rating' 에서 읽는다 — 'rate' 가 아니다", () => {
     expect(buildSearchRequest(params("rating=4"), 1).rating).toBe(4);
 
     // 예전 이름으로는 아무 일도 일어나지 않아야 한다(그래야 진짜로 고쳐진 것이다).
+    // [JA] 以前の名前では何も起きてはならない(そうでこそ本当に直ったことになる)。
     expect(buildSearchRequest(params("rate=4"), 1).rating).toBeUndefined();
   });
 
@@ -67,6 +74,10 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
    * `params.getRating() != 0.0f` 가 거짓이라 조건이 붙지 않는다.
    *
    * 바로 옆 `shipping` 은 `shipping.shipping` 으로 풀어 보내고 있었다 — 별점만 빠졌다.
+   *
+   * <p>[JA] 🔴 回帰対象 2: 名前を直した後も<b>もう一層残っていた。</b>このテストは元々 `toEqual({ rating: 4 })` だった — つまり<b>間違った形を固定していた。</b>
+   * axios はオブジェクトを `rating[rating]=4` とシリアライズするのでサーバーには `rating` というパラメータが届かず、Spring は float の既定値 0 でバインドする。
+   * `params.getRating() != 0.0f` が偽なので条件が付かない。すぐ隣の `shipping` は `shipping.shipping` に展開して送っていた — 星評価だけが漏れていた。
    */
   it("🔴 별점은 숫자로 보낸다 — 객체면 서버에 도착하지 않는다", () => {
     const req = buildSearchRequest(params("rating=4"), 1);
@@ -77,6 +88,7 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
 
   it("페이지 번호는 URL 이 아니라 인자에서 온다", () => {
     // 예전 페이지네이션 링크(?page=7)를 북마크해 뒀더라도 무한 스크롤은 1페이지부터다.
+    // [JA] 以前のページネーションのリンク(?page=7)をブックマークしていても、無限スクロールは 1 ページ目からである。
     expect(buildSearchRequest(params("page=7"), 1).page).toBe(1);
     expect(buildSearchRequest(params("page=7"), 3).page).toBe(3);
   });
@@ -97,6 +109,9 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
    * 상세·브랜드)를 함께 실어 보냈다. 그런데 화면은 **첫 페이지 것만 쓰고 나머지를
    * 버린다**(pages[0] 에서만 읽는다). 무한 스크롤을 붙인 뒤로는 스크롤할 때마다
    * 쓰지도 않을 카테고리 전체가 따라왔다.
+   *
+   * <p>[JA] 🐛 サーバーは毎リクエストフィルタメニュー(カテゴリ全体・サブカテゴリ全体・色・サイズ・詳細・ブランド)を一緒に載せて送っていた。ところが画面は
+   * **最初のページのものだけを使い残りを捨てる**(pages[0] からだけ読む)。無限スクロールを付けてからは、スクロールのたびに使いもしないカテゴリ全体が付いてきた。
    */
   it("필터 메뉴는 첫 페이지에서만 요청한다", () => {
     expect(buildSearchRequest(params(""), 1).includeFilters).toBe(true);
@@ -106,6 +121,7 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
 
   it("페이지 번호가 이상해도 1로 보정된 뒤 판단한다", () => {
     // page=0 은 1로 보정된다 — 그러면 첫 페이지이므로 필터가 필요하다.
+    // [JA] page=0 は 1 に補正される — すると最初のページなのでフィルタが必要である。
     expect(buildSearchRequest(params(""), 0).includeFilters).toBe(true);
     expect(buildSearchRequest(params(""), undefined).includeFilters).toBe(true);
   });
@@ -133,6 +149,10 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
    *
    * 비었으면 **보내지 않는다** — axios 가 undefined 를 빼고, 서버는 null 을 "그 경계
    * 없음" 으로 읽는다.
+   *
+   * <p>[JA] 🔴 回帰対象: <b>片側だけの価格範囲がカタログ全体を返していた。</b>以前のコードは `Number(priceQuery[1]) || 0` なので空の上限が **0** になった。
+   * 画面の「500 以上」(price=500_)は `500 ~ 0` という不可能な範囲で出て行き、サーバーは何も見つけられなかった後その「なし」を再び全商品にひっくり返した
+   * (SearchService 1 番目の条件)。空なら**送らない** — axios が undefined を外し、サーバーは null を「その境界なし」と読む。
    */
   it("🔴 비어 있는 경계는 0 이 아니라 '없음' 이다", () => {
     const overFiveHundred = buildSearchRequest(params("price=500_"), 1);
@@ -162,6 +182,9 @@ describe("buildSearchRequest — URL 조건을 검색 파라미터로", () => {
  *
  * <p>🐛 예전 구현은 `String.prototype.search(value)` 를 썼다 — 그 함수의 인자는
  * <b>정규식</b>이다. 문자열을 주면 브라우저가 정규식으로 컴파일한다.
+ *
+ * <p>[JA] 複数選択フィルタのオン・オフ。🐛 以前の実装は `String.prototype.search(value)` を使っていた — その関数の引数は<b>正規表現</b>である。
+ * 文字列を渡すとブラウザが正規表現にコンパイルする。
  */
 describe("toggleInMultiValue — `_` 로 이어 붙인 다중 선택", () => {
   it("없으면 켠다", () => {
@@ -176,6 +199,7 @@ describe("toggleInMultiValue — `_` 로 이어 붙인 다중 선택", () => {
   });
 
   /** 마지막 하나를 끄면 필터 자체가 사라진다 — `?color=` 를 남기면 서버가 빈 값으로 검색한다. */
+  // [JA] 最後の一つを切るとフィルタ自体が消える — `?color=` を残すとサーバーが空の値で検索する。
   it("마지막 하나를 끄면 빈 객체 — 필터를 지우라는 뜻이다", () => {
     expect(toggleInMultiValue("Red", "Red")).toEqual({ result: {}, active: true });
   });
@@ -186,6 +210,9 @@ describe("toggleInMultiValue — `_` 로 이어 붙인 다중 선택", () => {
    * 브랜드/스타일 이름이 `"C++"` 이면 `"Red".search("C++")` 가
    * <b>SyntaxError: Nothing to repeat</b> 를 던졌다 — 필터를 그리는 중이라
    * 화면 전체가 죽는다(실측). `.` 은 더 고약하다: 터지지 않고 <b>조용히 틀린다.</b>
+   *
+   * <p>[JA] 🔴 回帰対象: 正規表現のメタ文字を含む値。ブランド / スタイル名が `"C++"` だと `"Red".search("C++")` が<b>SyntaxError: Nothing to repeat</b> を投げた —
+   * フィルタを描いている最中なので画面全体が死ぬ(実測)。`.` はさらにたちが悪い: 落ちずに<b>静かに間違う。</b>
    */
   it("🔴 정규식 메타문자가 든 값에도 터지지 않는다", () => {
     for (const value of ["C++", "*Star", "?", "(Pack)"]) {
@@ -194,12 +221,15 @@ describe("toggleInMultiValue — `_` 로 이어 붙인 다중 선택", () => {
     }
 
     // `C.C` 를 정규식으로 읽으면 `.` 이 아무 글자나 맞아 `CXC` 도 선택됨이 된다.
+    // [JA] `C.C` を正規表現として読むと `.` が任意の文字に合い、`CXC` も選択済みになる。
     expect(toggleInMultiValue("CXC", "C.C").active).toBe(false);
     // `(Pack)` 의 괄호는 그룹이라 정규식으로는 `Pack` 과 같아진다.
+    // [JA] `(Pack)` の括弧はグループなので、正規表現では `Pack` と同じになる。
     expect(toggleInMultiValue("Pack", "(Pack)").active).toBe(false);
   });
 
   /** 🔴 부분 일치를 "선택됨" 으로 읽으면 안 된다 — `Green` 이 켜졌다고 `Gre` 가 켜진 건 아니다. */
+  // [JA] 🔴 部分一致を「選択済み」と読んではならない — `Green` がオンだからといって `Gre` がオンなわけではない。
   it("🔴 부분 일치는 선택이 아니다", () => {
     expect(toggleInMultiValue("Green", "Gre").active).toBe(false);
     expect(toggleInMultiValue("Green", "Gre").result).toBe("Green_Gre");
@@ -227,6 +257,7 @@ describe("sortProducts — 이어 붙인 전체를 정렬한다", () => {
   });
 
   /** 🐛 예전에는 정가로 정렬했다 — 카드는 할인가를 보여 주므로 30% 할인된 $70 짜리가 $80 짜리보다 뒤에 섰다. */
+  // [JA] 🐛 以前は定価で並べ替えていた — カードは割引価格を見せるので、30% 割引された $70 のものが $80 のものより後ろに立った。
   it("화면에 보이는 가격(할인 반영)으로 정렬한다", () => {
     const discountedOne = { ...product("1", 1, [100]), skus: [{ sold: 1, discount: 30, sizes: [{ price: 100 }] }] };
     const list = [product("2", 1, [80]), discountedOne];
@@ -237,6 +268,9 @@ describe("sortProducts — 이어 붙인 전체를 정렬한다", () => {
    * 🐛 회귀 대상: 예전에는 loader 가 **그 페이지 10개만** 정렬했다. 페이지네이션일 때는
    * 한 화면에 한 페이지만 보여 그럴듯했지만, 무한 스크롤에서는 페이지 경계마다 가격이
    * 처음으로 튀어 오르는 게 그대로 보인다. 이어 붙인 뒤 한 번에 정렬해야 한다.
+   *
+   * <p>[JA] 🐛 回帰対象: 以前は loader が**そのページの 10 件だけ**を並べ替えていた。ページネーションのときは一画面に 1 ページしか見えずそれらしかったが、
+   * 無限スクロールではページの境目ごとに価格が先頭に跳ね戻るのがそのまま見える。つなげた後に一度に並べ替えなければならない。
    */
   it("두 페이지를 이어 붙여도 경계에서 순서가 튀지 않는다", () => {
     const first = [product("1", 1, [10]), product("2", 1, [90])];
@@ -251,6 +285,8 @@ describe("sortProducts — 이어 붙인 전체를 정렬한다", () => {
   /**
    * 목록은 React Query 캐시 안의 배열이다. 제자리에서 정렬하면 같은 데이터를 보는 다른
    * 렌더와 어긋나고, 페이지를 더 불러올 때마다 순서가 누적으로 뒤섞인다.
+   *
+   * <p>[JA] 一覧は React Query のキャッシュ内の配列である。その場で並べ替えると同じデータを見る別のレンダーとずれ、ページを追加で読み込むたびに順序が累積的に乱れる。
    */
   it("입력을 건드리지 않는다", () => {
     const list = [product("1", 1, [50]), product("2", 1, [10])];
@@ -265,6 +301,7 @@ describe("sortProducts — 이어 붙인 전체를 정렬한다", () => {
 
   it("sku 나 sizes 가 비어 있어도 터지지 않는다", () => {
     // 예전 코드는 `sku.sizes.sort(...)` 뒤에 `sizes[0]["price"]` 를 읽어 여기서 죽었다.
+    // [JA] 以前のコードは `sku.sizes.sort(...)` の後に `sizes[0]["price"]` を読んでここで死んでいた。
     const broken = [{ id: "1", skus: [] }, { id: "2", skus: [{ sizes: [] }] }];
 
     expect(() => sortProducts(broken, "priceLowToHight")).not.toThrow();
@@ -284,6 +321,10 @@ describe("sortProducts — 이어 붙인 전체를 정렬한다", () => {
  * Pagination 을 썼다). 그 전에는 훅 자체도 죽어 있었다 — 첫 줄의
  * `useRef < HTMLDivElement > (null)` 은 TS 제네릭이 아니라 비교 연산 두 번으로 읽혀
  * ref 에 불리언이 들어갔다.
+ *
+ * <p>[JA] 🐛 回帰対象: **無限スクロールが一度もつながったことがない。**`useInfiniteScroll` は定義だけあって呼ぶところが一つもなかった(browse.jsx は MUI
+ * Pagination を使っていた)。その前はフック自体も死んでいた — 最初の行の `useRef < HTMLDivElement > (null)` は TS ジェネリクスではなく比較演算二回として
+ * 読まれ、ref にブール値が入っていた。
  */
 describe("useInfiniteScroll — 감시 대상이 보이면 다음 페이지", () => {
   let observed;
@@ -309,6 +350,8 @@ describe("useInfiniteScroll — 감시 대상이 보이면 다음 페이지", ()
 
   // 훅만 떼어 돌리면 ref 가 아무 DOM 에도 붙지 않아 효과가 곧장 return 한다.
   // 실제 컴포넌트처럼 엘리먼트에 붙여야 observer 가 만들어진다.
+  // [JA] フックだけを切り離して回すと ref がどの DOM にも付かず、エフェクトがすぐ return する。
+  //      実際のコンポーネントのように要素に付けてこそ observer が作られる。
   const Probe = ({ hasNextPage, fetchNextPage }) => {
     const ref = useInfiniteScroll({ hasNextPage, fetchNextPage });
     return <div ref={ref} data-testid="sentinel" />;
@@ -319,6 +362,7 @@ describe("useInfiniteScroll — 감시 대상이 보이면 다음 페이지", ()
 
   it("ref 가 실제 엘리먼트에 붙고 observer 가 그것을 감시한다", () => {
     // 예전에는 ref 자리에 불리언 false 가 들어가 observer 자체가 만들어지지 않았다.
+    // [JA] 以前は ref の位置にブール値 false が入り、observer 自体が作られなかった。
     const { getByTestId } = render(
       <Probe hasNextPage={true} fetchNextPage={jest.fn()} />
     );
@@ -370,6 +414,10 @@ describe("useInfiniteScroll — 감시 대상이 보이면 다음 페이지", ()
  * 사라졌다.** 핸들러는 자기 필터 하나만 넘기는데(`filter({ category })`), 토글이 언급하지
  * 않은 필터(`undefined`)를 "비었다" 로 읽어 지웠다. `/browse?category=3` 에서 색상 하나를
  * 고르는 순간 전체 카테고리로 돌아갔다 — "카테고리 필터가 안 먹는다" 의 정체.
+ *
+ * <p>[JA] 🐛 回帰対象: **カテゴリを選ぶと他のフィルタがすべて消え、他のフィルタを選ぶとカテゴリが消えていた。**ハンドラーは自分のフィルタ一つだけを渡すのに
+ * (`filter({ category })`)、トグルが言及していないフィルタ(`undefined`)を「空」と読んで消していた。`/browse?category=3` で色を一つ選んだ瞬間に
+ * 全カテゴリに戻った —「カテゴリフィルタが効かない」の正体。
  */
 describe("applyFilter — 언급한 필터만 바꾼다", () => {
   const params = (init) => new URLSearchParams(init);
@@ -411,7 +459,7 @@ describe("applyFilter — 언급한 필터만 바꾼다", () => {
     expect(p.get("search")).toBeNull();
     expect(p.get("sort")).toBeNull();
     expect(p.get("size")).toBeNull();
-    expect(p.get("category")).toBe("3");   // 언급하지 않았다
+    expect(p.get("category")).toBe("3");   // 언급하지 않았다 ／ [JA] 言及していない
   });
 
   it("상위 카테고리가 다른 것으로 바뀌면 하위는 지운다 — 이전 상위의 것이라 AND 로 묶이면 아무것도 안 나온다", () => {
@@ -429,6 +477,7 @@ describe("applyFilter — 언급한 필터만 바꾼다", () => {
   });
 
   /** 🐛 2026-10-26 운영: 다른 상위의 하위를 누르면 하위만 바뀌어 AND 로 0건 → 서버가 카테고리를 끝까지 훑어 503. */
+  // [JA] 🐛 2026-10-26 本番: 別の親のサブカテゴリを押すとサブカテゴリだけが変わり AND で 0 件 → サーバーがカテゴリを最後まで走査して 503。
   it("다른 상위의 하위를 누르면 상위도 그 하위의 상위로 바꾼다", () => {
     const p = params({ category: "2" });                       // consumer electronics
     applyFilter(p, subCategoryChanges(p, "55", "4"));           // food › dairy products

@@ -41,6 +41,14 @@ import lombok.extern.slf4j.Slf4j;
  *       조회 횟수만큼 중복된다.</li>
  *   <li><b>상태가 바뀔 때만 발행</b> — 폴링마다 발행하면 3시간마다 알림이 간다.</li>
  * </ul>
+ *
+ * <p>[JA] 宅配業者から配送の進捗状況を取得する。
+ * 韓国の宅配業者の多くは Webhook を提供しないので、<b>ポーリングが現実</b>である。そのためこのクラスが気にするのはほとんど
+ * 「どうすれば呼び出しを少なくしつつ取りこぼさないか」である。
+ * <b>確保</b>({@code FOR UPDATE SKIP LOCKED}) — レプリカ二つが同じ箱を照会すると宅配業者のクォータを二倍燃やす(docs/21 と同じ構造)。
+ * <b>状態別の周期</b> — 配達出発なら 30 分、輸送中なら 3 時間、終わったら中断。全件を同じ周期で回すと公共 API の日次上限をすぐ超える。
+ * <b>重複除去</b> — ポーリングは毎回全履歴を返す。そのまま保存するとタイムラインが照会回数分だけ重複する。
+ * <b>状態が変わったときだけ発行</b> — ポーリングのたびに発行すると 3 時間ごとに通知が行く。
  */
 @Slf4j
 @Component
@@ -56,10 +64,12 @@ public class TrackingPoller {
     private int batchSize;
 
     /** 선점한 상자를 조회하는 동안의 리스 — 이 안에 조회 · 반영을 끝내지 못하면 다른 파드가 다시 가져간다. */
+    // [JA] 確保した箱を照会する間のリース — この間に照会・反映を終えられなければ他のポッドが再び取っていく。
     @Value("${delivery.polling.lease-minutes:10}")
     private long leaseMinutes = 10;
 
     /** 없으면(단위 테스트) 그냥 부른다 — 리포지토리 호출마다 자기 트랜잭션이다. */
+    // [JA] なければ(単体テスト)そのまま呼ぶ — リポジトリ呼び出しごとに自前のトランザクションである。
     private TransactionTemplate tx;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -68,6 +78,7 @@ public class TrackingPoller {
     }
 
     /** 선점한 상자 — 택배사 호출에 필요한 것만 트랜잭션 밖으로 들고 나간다. */
+    // [JA] 確保した箱 — 宅配業者の呼び出しに必要なものだけをトランザクションの外へ持ち出す。
     private record Claim(Shipment shipment, Long shipmentId, String carrierCode, String trackingNumber, boolean international) {}
 
     /**
@@ -112,6 +123,7 @@ public class TrackingPoller {
                 });
             } catch (RuntimeException e) {
                 // 한 건의 실패가 배치 전체를 멈추면 안 된다. 그 건만 따로 백오프시키고 넘어간다.
+                // [JA] 一件の失敗がバッチ全体を止めてはならない。その件だけ別にバックオフさせて先へ進む。
                 log.warn("추적 결과 반영 중 예외: shipmentId={} {}", claim.shipmentId(), e.toString());
                 try {
                     inTx(() -> {
@@ -137,6 +149,7 @@ public class TrackingPoller {
     }
 
     /** 반영할 때 다시 읽는다 — 조회하는 동안 취소 · 송장 변경이 있었을 수 있다. id 가 없으면(단위 테스트) 선점한 그 객체. */
+    // [JA] 反映するときに読み直す — 照会している間にキャンセル・送り状変更があったかもしれない。id がなければ(単体テスト)確保したそのオブジェクト。
     private java.util.Optional<Shipment> reload(Claim claim) {
         return claim.shipmentId() == null ? java.util.Optional.of(claim.shipment())
                 : shipmentRepository.findById(claim.shipmentId());
@@ -149,6 +162,7 @@ public class TrackingPoller {
         }
         if (adapter == null) {
             // 어댑터가 없는 택배사다. 계속 조회 대상으로 두면 매 주기마다 로그만 쌓인다.
+            // [JA] アダプターのない宅配業者である。照会対象のままにすると周期ごとにログだけが溜まる。
             log.info("어댑터가 없는 택배사라 폴링을 미룬다: {}", claim.carrierCode());
             shipment.recordSyncFailure();
             return;
@@ -167,6 +181,7 @@ public class TrackingPoller {
             }
             case PERMANENT -> {
                 // 인증 실패나 응답 형식 오류다. 재시도해도 같으므로 길게 물러서고 사람이 보게 남긴다.
+                // [JA] 認証失敗か応答形式のエラーである。再試行しても同じなので長く引き下がり、人が見るように残す。
                 log.error("추적 영구 실패: shipmentId={} 택배사={} {}",
                         shipment.getShipmentId(), shipment.getCarrierCode(), result.detail());
                 shipment.recordSyncFailure();
@@ -175,6 +190,8 @@ public class TrackingPoller {
             case NOT_FOUND -> {
                 // 등록 직후에는 정상이다 — 택배사 시스템에 아직 반영되지 않았다.
                 // 며칠째 계속이면 송장번호가 잘못됐다는 뜻이고, 실패 카운터가 그걸 드러낸다.
+                // [JA] 登録直後は正常である — 宅配業者のシステムにまだ反映されていない。
+                //      何日も続くなら送り状番号が間違っているという意味で、失敗カウンタがそれを明らかにする。
                 log.debug("택배사가 송장을 모름: {} (등록 직후면 정상)", shipment.getTrackingNumber());
                 shipment.recordSyncFailure();
                 return;
@@ -184,6 +201,7 @@ public class TrackingPoller {
 
         applyEvents(shipment, result);
         // 택배사가 자기 갱신 주기를 알면 그것을 따른다(CarrierAdapter.pollIntervalCap 주석).
+        // [JA] 宅配業者が自分の更新周期を知っていればそれに従う(CarrierAdapter.pollIntervalCap のコメント)。
         shipment.recordSyncSuccess(adapter.pollIntervalCap().orElse(null));
     }
 
@@ -211,6 +229,8 @@ public class TrackingPoller {
 
         // 상태는 **가장 최근 이벤트**를 따른다. 이력 전체를 순서대로 적용하면 중간 상태마다
         // 전이가 일어나 알림이 여러 번 나간다.
+        // [JA] 状態は**最も新しいイベント**に従う。履歴全体を順に適用すると中間状態ごとに
+        //      遷移が起きて通知が何度も出る。
         DeliveryStatus latest = result.events().stream()
                 .max(Comparator.comparing(TrackingEvent::occurredAt))
                 .map(TrackingEvent::status)
@@ -229,6 +249,8 @@ public class TrackingPoller {
                     shipment.getShipmentId(), shipment.getStatus(), fresh.size());
             // 상태가 바뀐 경우에만, 그리고 주문 전체 상태가 바뀐 경우에만 발행한다(분할 배송 — 상자 하나의 도착은 주문의 도착이 아니다).
             // 폴링마다 발행하면 알림이 주기마다 나간다.
+            // [JA] 状態が変わった場合だけ、しかも注文全体の状態が変わった場合だけ発行する(分割配送 — 箱一つの到着は注文の到着ではない)。
+            //      ポーリングのたびに発行すると通知が周期ごとに出る。
             publisher.publishIfOverallChanged(shipment.getDelivery(), overallBefore);
         }
     }

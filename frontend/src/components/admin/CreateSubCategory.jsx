@@ -38,6 +38,7 @@ const CreateSubCategory = (categories) => {
             setParent("");
         } catch (error) {
             // console.log 는 운영 번들에서 지워진다 — 실패가 **아무 데도** 남지 않았다.
+            // [JA] console.log は運用バンドルから消される — 失敗が**どこにも**残らなかった。
             console.error("하위 카테고리 추가 실패", error);
         }
     };

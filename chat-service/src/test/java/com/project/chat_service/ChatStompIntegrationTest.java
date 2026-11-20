@@ -68,6 +68,10 @@ import com.project.common.dto.chat.ChatRoomDto;
  *   <li>도착한 메시지가 <b>MongoDB 에도 남는가</b> (docs/16 B-24 — 예전엔 저장 자체가 없었다)</li>
  *   <li>클라이언트가 바디에 실어 보낸 발신자(senderId·email)가 무시되는가 (명의 도용 방지)</li>
  * </ul>
+ *
+ * <p>[JA] チャットの<b>実際の経路</b>の統合テスト — WebSocket/STOMP。
+ * <p>これまでチャットに対する検証はすべてリポジトリを直接呼ぶ方式だった({@link ChatServiceIntegrationTest})。つまりユーザーが実際に通る道 — <b>STOMP CONNECT → SUBSCRIBE → SEND → Kafka → 保存 → ブロードキャスト</b> — は一度も実行されたことがなかった。その区間には JWT 認証インターセプタ、セッション属性による身元確認、Kafka の往復、MongoDB 保存がすべて入っている。
+ * <p>ここではその全区間を本物のコンテナ上で通す: トークンなしの CONNECT は拒否されるか(拒否されなければ誰でも他人の会話を購読できる) / メッセージが Kafka を回って購読者に届くか / 届いたメッセージが<b>MongoDB にも残るか</b>(docs/16 B-24 — 以前は保存自体がなかった) / クライアントがボディに載せて送った送信者(senderId・email)が無視されるか(なりすまし防止)。
  */
 @Tag("containers")
 @Testcontainers
@@ -79,6 +83,7 @@ class ChatStompIntegrationTest {
             "0123456789012345678901234567890123456789012345678901234567890123";
     private static final String USER_EMAIL = "chatter@example.com";
     /** 토큰의 uid 클레임 = chat member_id. 신원은 이것이다(docs/48 §6-⑥). */
+    // [JA] トークンの uid クレーム = chat member_id。身元はこれである(docs/48 §6-⑥)。
     private static final long USER_ID = 1L;
     private static final String NICKNAME = "채터";
 
@@ -131,9 +136,12 @@ class ChatStompIntegrationTest {
         registry.add("eureka.client.fetch-registry", () -> false);
         registry.add("management.tracing.enabled", () -> false);
         // 클라이언트가 평문 ws:// 로 붙을 수 있도록 — TLS 자체는 docs/18 에서 따로 검증한다.
+        // [JA] クライアントが平文の ws:// で接続できるように — TLS 自体は docs/18 で別途検証する。
         registry.add("server.ssl.enabled", () -> false);
         // STOMP 엔드포인트의 허용 오리진. 테스트 클라이언트는 오리진 헤더를 보내지 않지만
         // SockJS info 요청 때문에 값이 필요하다.
+        // [JA] STOMP エンドポイントの許可オリジン。テストクライアントはオリジンヘッダを送らないが
+        //      SockJS info リクエストのために値が必要である。
         registry.add("frontend.url", () -> "*");
         registry.add("JWT_SECRET_KEY", () -> JWT_SECRET);
         registry.add("LOCAL_CACERT_PATH", () -> "");
@@ -177,6 +185,7 @@ class ChatStompIntegrationTest {
     }
 
     /** 서비스가 검증하는 것과 같은 형식의 토큰. uid 클레임이 사용자 식별자가 된다(없으면 CONNECT 거절). */
+    // [JA] サービスが検証するのと同じ形式のトークン。uid クレームがユーザー識別子になる(なければ CONNECT 拒否)。
     private static String token(String subject) {
         return JWT.create()
                 .withSubject(subject)
@@ -198,6 +207,8 @@ class ChatStompIntegrationTest {
         if (authorizationHeader != null) {
             // ⚠️ StompHandler 는 "Bearer " 접두어를 벗기지 않고 헤더 값을 그대로 검증한다.
             // 프론트엔드도 그렇게 보내고 있다. 여기서도 같은 형식으로 보낸다.
+            // [JA] ⚠️ StompHandler は "Bearer " 接頭辞を剥がさずヘッダ値をそのまま検証する。
+            //      フロントエンドもそのように送っている。ここでも同じ形式で送る。
             connectHeaders.add("Authorization", authorizationHeader);
         }
         return stompClient()
@@ -213,6 +224,7 @@ class ChatStompIntegrationTest {
         StompHeaders headers = new StompHeaders();
         headers.setDestination("/sub/chat/room/" + room);
         // StompHandler 의 SUBSCRIBE 분기가 이 네이티브 헤더를 요구한다.
+        // [JA] StompHandler の SUBSCRIBE 分岐がこのネイティブヘッダを要求する。
         headers.add("roomId", room);
         session.subscribe(headers, new StompFrameHandler() {
             @Override
@@ -232,6 +244,7 @@ class ChatStompIntegrationTest {
     @DisplayName("토큰 없는 CONNECT 는 거절된다")
     void connectWithoutTokenIsRejected() {
         // 이게 뚫리면 누구나 임의의 방을 구독해 남의 대화를 실시간으로 읽을 수 있다.
+        // [JA] ここが破られると誰でも任意のルームを購読し他人の会話をリアルタイムで読める。
         assertThatThrownBy(() -> connect(null))
                 .as("Authorization 헤더 없는 STOMP CONNECT 는 성립하면 안 된다")
                 .isNotNull();
@@ -258,6 +271,8 @@ class ChatStompIntegrationTest {
 
         // 컨슈머가 auto.offset.reset=latest 로 붙으므로 파티션 할당을 기다렸다가 보낸다.
         // (할당 전에 보내면 그 메시지는 영영 소비되지 않는다)
+        // [JA] コンシューマが auto.offset.reset=latest で接続するので、パーティション割り当てを待ってから送る。
+        //      (割り当て前に送るとそのメッセージは永遠に消費されない)
         Thread.sleep(3000);
 
         session.send("/pub/chat/message", MessageDto.builder()
@@ -276,6 +291,8 @@ class ChatStompIntegrationTest {
 
         // 실시간 전달만 되고 저장이 안 되던 시절의 회귀 방지(docs/16 B-24).
         // 구독자가 받은 메시지는 이미 이력에 있어야 한다.
+        // [JA] リアルタイム配信だけされて保存されなかった頃の回帰防止(docs/16 B-24)。
+        //      購読者が受け取ったメッセージはすでに履歴になければならない。
         List<ChatMessage> stored = null;
         for (int i = 0; i < 30 && (stored == null || stored.isEmpty()); i++) {
             stored = chatMessageRepository.findByRoomId(roomId).orElse(List.of());
@@ -299,7 +316,7 @@ class ChatStompIntegrationTest {
         session.send("/pub/chat/message", MessageDto.builder()
                 .type(MessageType.TEXT_TALK)
                 .roomId(roomId)
-                .senderId(999L)                // ← 위조 시도
+                .senderId(999L)                // ← 위조 시도 ／ [JA] ← 偽造の試み
                 .nickname("피해자")
                 .content("명의 도용 시도")
                 .imageUrl("")
@@ -321,6 +338,8 @@ class ChatStompIntegrationTest {
     // ── 연결을 토큰 수명 · 로그인 해제에 묶기(user-service docs/68 §9) ──────────────────
     //
     // 🐛 예전: CONNECT 뒤 끊길 때까지 살아 있었다 — 토큰이 만료돼도, 로그인이 끊겨도 방의 메시지를 계속 받았다.
+    // [JA] ── 接続をトークン寿命・ログアウトに結び付ける(user-service docs/68 §9) ──
+    //      🐛 以前: CONNECT 後、切断されるまで生き続けていた — トークンが期限切れになっても、ログインが切れてもルームのメッセージを受け取り続けた。
 
     @Autowired
     private org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
@@ -360,6 +379,7 @@ class ChatStompIntegrationTest {
         StompSession session = connect(before);
         try {
             // user-service RefreshTokenRepository.cutoffLiveSessions 와 같은 일을 한다
+            // [JA] user-service の RefreshTokenRepository.cutoffLiveSessions と同じことをする
             stringRedisTemplate.opsForValue().set(
                     com.project.common.security.SessionRevocation.cutoffKey(USER_ID),
                     String.valueOf(Instant.now().getEpochSecond()));
@@ -372,7 +392,7 @@ class ChatStompIntegrationTest {
                     .as("닫아도 옛 토큰으로 곧장 다시 붙으면 소용이 없다")
                     .isNotNull();
 
-            Thread.sleep(1_100);   // 해제 뒤에 발급된 토큰 — iat 는 초 단위이고, 미래의 iat 는 서명 검증이 거절한다
+            Thread.sleep(1_100);   // 해제 뒤에 발급된 토큰 — iat 는 초 단위이고, 미래의 iat 는 서명 검증이 거절한다 ／ [JA] ログアウト後に発行されたトークン — iat は秒単位で、未来の iat は署名検証が拒否する
             StompSession fresh = connect(tokenExpiringIn(java.time.Duration.ofHours(1), Instant.now()));
             assertThat(fresh.isConnected()).as("갱신한 토큰(로그인이 살아 있는 기기)은 다시 붙는다").isTrue();
             fresh.disconnect();

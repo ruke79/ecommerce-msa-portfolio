@@ -29,6 +29,7 @@ class KafkaConsumerMetricsTest {
 
     private static Map<String, Object> props() {
         // 연결하지 않는다 — KafkaConsumer 는 만들 때 브로커에 붙지 않는다.
+        // [JA] 接続しない — KafkaConsumer は作成時にブローカーにつながらない。
         return Map.of(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:1",
                 ConsumerConfig.GROUP_ID_CONFIG, "metrics-test",
                 ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,

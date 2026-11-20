@@ -28,6 +28,9 @@ import org.testcontainers.utility.DockerImageName;
  *
  * <p>스키마는 Flyway 가 소유하고 Hibernate 는 {@code validate} 만 하므로, <b>기동에
  * 성공한다는 것 자체가</b> 마이그레이션과 엔티티가 일치한다는 증명이다(docs/20).
+ *
+ * <p>[JA] delivery-service の起動検証。
+ * スキーマは Flyway が所有し Hibernate は {@code validate} だけを行うので、<b>起動に成功すること自体が</b>マイグレーションとエンティティが一致している証明である(docs/20)。
  */
 @Tag("containers")
 @Testcontainers
@@ -53,6 +56,7 @@ class DeliveryServiceApplicationTests {
         registry.add("management.tracing.enabled", () -> false);
         registry.add("server.ssl.enabled", () -> false);
         // 폴링이 배경에서 돌면 테스트가 불안정해진다.
+        // [JA] ポーリングがバックグラウンドで回るとテストが不安定になる。
         registry.add("delivery.polling.interval-ms", () -> 3_600_000);
         registry.add("delivery.polling.initial-delay-ms", () -> 3_600_000);
     }

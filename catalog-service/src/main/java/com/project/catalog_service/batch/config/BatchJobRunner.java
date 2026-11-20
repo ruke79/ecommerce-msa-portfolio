@@ -30,6 +30,9 @@
 //                 JobParameters jobParameters = new JobParametersBuilder()
 //                         .addLong("time", System.currentTimeMillis())
 //                         .toJobParameters();
+// [JA] @Bean アノテーションを外すかメソッド自体をコメントアウトして、
+//      アプリケーション起動時に自動でバッチ処理を実行しないようにする。
+//      Job 実行時に一意な JobParameters を生成
 
 //                 jobLauncher.run(productImportJob, jobParameters);
 //                 System.out.println("Batch job started successfully.");

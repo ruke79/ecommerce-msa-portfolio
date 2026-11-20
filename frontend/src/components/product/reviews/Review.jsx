@@ -11,6 +11,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "i18n/I18nProvider";
 
 // 서버로 가는 값이라 번역하지 않는다 — 화면에는 Select 가 FIT_LABEL_KEYS 로 바꿔 그린다.
+// [JA] サーバーへ行く値なので翻訳しない — 画面では Select が FIT_LABEL_KEYS で置き換えて描く。
 let fits = ["Small", "True to size", "Large"];
 
 const deleteReview = async (productId) => {
@@ -42,6 +43,7 @@ const addReview = async ({ productId, formData }) => {
 
 
 /** 서버가 준 사유, 없으면 우리 문구 — 서버 문구는 요청 언어로 온다(Accept-Language, docs/60 §4). */
+// [JA] サーバーがくれた理由、なければこちらの文言 — サーバーの文言はリクエスト言語で来る(Accept-Language、docs/60 §4)。
 const reasonOf = (error, fallback) => error?.response?.data?.message || fallback;
 
 /**
@@ -57,6 +59,15 @@ const reasonOf = (error, fallback) => error?.response?.data?.message || fallback
  *       이미지가 늘 비어 리뷰 카드에 깨진 그림이 떴다.</li>
  *   <li>지운 뒤 평균 별점을 0 으로 박았다 — 남은 리뷰로 다시 센다(Reviews).</li>
  * </ul>
+ *
+ * <p>[JA] レビューの作成・修正・削除。
+ * 🐛 以前の形の問題: {@code const showBoundary = useErrorBoundary()} — このフックは <b>オブジェクト</b>を返す。関数のように
+ * 呼ぶと TypeError で、サーバーが拒否すると(検証・401)案内の代わりに画面が落ちた。今は理由をダイアログで見せる。
+ * 「レビュー削除」が常に見え、自分のレビューがなくてもサーバーが成功と答え「削除されました」が出た。自分のレビューがあるときだけ描き
+ * (サーバーの {@code mine})、消す前に確認する。サーバーも今は無ければ 404 だ。
+ * スタイルとして商品の色情報を丸ごと送っていたがサーバーは {@code {color, image}} を読む —
+ * 画像が常に空でレビューカードに壊れた画像が出た。
+ * 削除後に平均評価を 0 に固定していた — 残ったレビューで数え直す(Reviews)。
  */
 const AddReview = ({ product, myReview, setReviews, updateReviews }) => {
     const dispatch = useDispatch();
@@ -126,6 +137,8 @@ const AddReview = ({ product, myReview, setReviews, updateReviews }) => {
 
     // 사이즈 없는 상품 — 고를 사이즈가 없다(loader 가 이름 없는 사이즈를 뺐다). 사이즈도 착용감도 묻지도 막지도 않는다
     // (올리브오일에 "정사이즈" 는 말이 되지 않는다).
+    // [JA] サイズのない商品 — 選ぶサイズがない(loader が名前のないサイズを除いた)。サイズもフィット感も尋ねも止めもしない
+    //      (オリーブオイルに「ジャストサイズ」は意味をなさない)。
     const sizeless = !(product.allSizes?.length > 0);
 
     const handleSubmit = async () => {
@@ -229,6 +242,7 @@ const AddReview = ({ product, myReview, setReviews, updateReviews }) => {
                     text="style"
                     data={(product.colors ?? []).filter((item) => item?.color !== style?.color)}
                     // 서버는 {color, image} 를 읽는다 — 상품 색상의 그림은 colorImage 다.
+                    // [JA] サーバーは {color, image} を読む — 商品の色の画像は colorImage だ。
                     handleChange={(c) => setStyle({ color: c.color, image: c.colorImage ?? c.image ?? null })}
                 />
                 {!sizeless && (
@@ -266,6 +280,7 @@ const AddReview = ({ product, myReview, setReviews, updateReviews }) => {
                     {loading ? t("product.review.submitting") : myReview ? t("product.review.update") : t("product.review.submit")}
                 </button>
                 {/* 내 리뷰가 있을 때만 — 없는데 누르면 "삭제되었습니다" 가 뜨던 자리 */}
+                {/* [JA] 自分のレビューがあるときだけ — 無いのに押すと「削除されました」が出ていた箇所 */}
                 {myReview && (
                     <button
                         disabled={loading}

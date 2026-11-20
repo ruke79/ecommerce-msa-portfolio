@@ -54,15 +54,20 @@ public class ReviewService {
     private final ReviewLikeService reviewLikeService;
 
     /** 리뷰 작성 자격(받은 상품인가)을 묻는다. docs/57 §13. */
+    // [JA] レビュー作成資格(受け取った商品か)を問う。docs/57 §13。
     private final com.project.userservice.client.OrderServiceClient orderServiceClient;
 
     /** 짧은 DB 구간 — 외부 호출을 그 밖에 두기 위해 메서드 단위 @Transactional 대신 쓴다. */
+    // [JA] 短い DB 区間 — 外部呼び出しをその外に置くため、メソッド単位の @Transactional の代わりに使う。
     private final org.springframework.transaction.support.TransactionTemplate tx;
 
     /**
      * 받은 상품만 리뷰를 쓴다 — 켜고 끌 수 있게 둔다(시연 환경에서 배송까지 기다리기 어려울 때). 기본은 켠다.
      *
      * <p>🐛 검증이 없었다(docs/38 §1.7). 로그인한 아무나 사지 않은 상품에 별점을 남겨 평균을 움직일 수 있었다.
+     *
+     * <p>[JA] 受け取った商品だけレビューを書ける — オンオフできるようにしておく(デモ環境で配送まで待ちにくいとき)。既定は有効。
+     * <p>🐛 検証がなかった(docs/38 §1.7)。ログインした誰でも買っていない商品に星を付けて平均を動かせた。
      */
     @org.springframework.beans.factory.annotation.Value("${review.require-purchase:true}")
     private boolean requirePurchase = true;
@@ -74,6 +79,10 @@ public class ReviewService {
      * 등록·삭제 쪽 사본은 {@code reviewedBy} 에 <b>요청한 사람</b>을 넣고 있어서, 리뷰를
      * 하나 쓰면 화면의 모든 리뷰 작성자 이름이 자기 이름으로 바뀌어 보였다. 좋아요 수처럼
      * 필드를 하나 더 붙이는 순간 그런 사본은 반드시 어긋나므로, 붙이기 전에 합쳤다.
+     *
+     * <p>[JA] レビュー → DTO 変換。<b>このメソッド一つだけ</b>が存在する。
+     * <p>以前は検索・登録・削除の三経路が同じビルダーを四つコピーしていた。そのうち登録・削除側のコピーは reviewedBy に<b>リクエストした人</b>を入れていて、
+     * レビューを一つ書くと画面の全レビューの作成者名が自分の名前に変わって見えた。いいね数のようにフィールドを一つ足した瞬間そういうコピーは必ずずれるので、足す前に統合した。
      */
     private ReviewDto toDto(Review review, LikeSnapshot likes, Long viewerId) {
         User author = review.getReviewedBy();
@@ -99,7 +108,10 @@ public class ReviewService {
      * 목록 변환. 좋아요는 리뷰마다 세지 않고 {@link ReviewLikeService#snapshot} 으로 한 번에
      * 모아 온다 — 리뷰 수만큼 쿼리가 늘어나지 않게 하려는 것이다.
      *
+     * <p>[JA] 一覧変換。いいねはレビューごとに数えず ReviewLikeService#snapshot で一度に集める — レビュー数だけクエリが増えないようにするため。
+     *
      * @param viewerId 비로그인 조회면 null
+     *     [JA] 未ログインの閲覧なら null
      */
     private List<ReviewDto> toDtos(List<Review> reviews, Long viewerId) {
         List<Long> reviewIds = new ArrayList<>(reviews.size());
@@ -119,6 +131,9 @@ public class ReviewService {
     /**
      * 리뷰의 필수 항목. 화면도 같은 것을 먼저 막지만, 서버가 믿을 것은 아니다 — 예전에는 style 이 빠지면
      * {@code request.getStyle().getColor()} 에서 NPE 가 나 "리뷰를 등록하지 못했습니다" 로만 보였다.
+     *
+     * <p>[JA] レビューの必須項目。画面も同じものを先に止めるが、サーバが信じるものではない — 以前は style が抜けると
+     * request.getStyle().getColor() で NPE になり「レビューを登録できませんでした」としか見えなかった。
      */
     static void validate(ReviewRequest request) {
         if (request == null) {
@@ -126,6 +141,7 @@ public class ReviewService {
         }
         // 사이즈는 비어 있어도 된다 — 사이즈 없는 상품(식품 등)은 고를 사이즈가 없다. 예전에는 필수라 그런 상품에는 리뷰를 쓸
         // 수 없었다. 사이즈가 있는 상품은 화면이 고르게 한다.
+        // [JA] サイズは空でもよい — サイズのない商品(食品など)には選ぶサイズがない。以前は必須だったのでそういう商品にはレビューを書けなかった。サイズのある商品は画面が選ばせる。
         if (request.getSize() == null) {
             request.setSize("");
         }
@@ -134,6 +150,7 @@ public class ReviewService {
         }
         // 착용감은 사이즈가 있을 때만 묻는다 — 사이즈 없는 상품(올리브오일)에 "정사이즈" 는 말이 되지 않는다. 사이즈를
         // 골랐으면 여전히 필수다.
+        // [JA] 着用感はサイズがあるときだけ問う — サイズのない商品(オリーブオイル)に「ジャストサイズ」は意味をなさない。サイズを選んだなら依然として必須。
         if (request.getFit() == null || request.getFit().isBlank()) {
             if (!request.getSize().isBlank()) {
                 throw new IllegalArgumentException("착용감을 선택해 주세요.");
@@ -160,6 +177,11 @@ public class ReviewService {
      * 400 으로 바꾸므로 원인도 보이지 않았다). 결과적으로 상품당 <b>첫 리뷰어 한 명만</b>
      * 리뷰를 쓸 수 있었다. 바로 아래 {@code if (null != review)} 는 {@code get()} 이 null 을
      * 돌려줄 수 없으므로 죽은 코드였다 — 원래 의도가 "없을 수도 있다"였음을 보여 준다.
+     *
+     * <p>[JA] 自分がこの商品に書いたレビューを探す。なければ null。
+     * <p>以前はここに .findFirst().get() があった。Optional.get() は空なら NoSuchElementException を投げるので、<b>既に他人のレビューがある商品に自分が初めてレビューを書くと</b>そのまま爆発した
+     * (コントローラが RuntimeException を捕まえて 400 に変えるので原因も見えなかった)。結果として商品ごとに<b>最初のレビュアー一人だけ</b>がレビューを書けた。
+     * すぐ下の if (null != review) は get() が null を返せないので死んだコードだった — 本来の意図が「ないこともある」だったことを示している。
      */
     private Review findMyReview(List<Review> reviews, User user) {
         return reviews.stream()
@@ -174,11 +196,16 @@ public class ReviewService {
      * <p>🐛 실패하면 <b>리뷰까지 롤백됐다</b> — 이 호출이 리뷰 저장과 같은 트랜잭션 안에서 예외를 던졌다. 그리고
      * catalog 가 신원 헤더 없는 이 호출을 401 로 막고 있어서(docs/57 §3) 실제로 늘 실패했다. 평점은 리뷰에서 다시
      * 계산할 수 있는 <b>파생 값</b>이다 — 반영이 실패해도 리뷰는 남기고, 다음 리뷰가 다시 계산해 보낸다.
+     *
+     * <p>[JA] 商品評価をレビュー一覧から計算し直して catalog に知らせる。一覧が空なら 0。
+     * <p>🐛 失敗すると<b>レビューまでロールバックされた</b> — この呼び出しがレビュー保存と同じトランザクション内で例外を投げていた。しかも catalog が
+     * 身元ヘッダのないこの呼び出しを 401 で止めていたので(docs/57 §3)実際には常に失敗していた。評価はレビューから再計算できる<b>派生値</b>である — 反映が失敗してもレビューは残し、次のレビューが再計算して送る。
      */
     private static float ratingOf(List<Review> reviews) {
         if (reviews.isEmpty()) {
             // 0 으로 나누면 NaN 이 된다. 예전 코드는 첫 리뷰를 쓸 때 비어 있는 목록으로
             // 나눠서 NaN 을 catalog 로 보냈다.
+            // [JA] 0 で割ると NaN になる。以前のコードは最初のレビューを書くとき空の一覧で割って NaN を catalog に送っていた。
             return 0.0F;
         }
         float totalPoints = reviews.stream().map(Review::getRating).reduce(0F, Float::sum);
@@ -186,6 +213,7 @@ public class ReviewService {
     }
 
     /** 커밋 뒤에 부른다 — 롤백될 리뷰의 평점을 먼저 보내지 않게. */
+    // [JA] コミット後に呼ぶ — ロールバックされるレビューの評価を先に送らないように。
     private void publishRating(Long productId, float rating) {
         try {
             catalogServiceClient.updateRating(productId, rating);
@@ -195,11 +223,14 @@ public class ReviewService {
     }
 
     /** 쓰기 구간의 결과 — 커밋 뒤 보낼 평점과 응답. */
+    // [JA] 書き込み区間の結果 — コミット後に送る評価と応答。
     private record Written(float rating, List<ReviewDto> dtos) {
     }
 
     /**
      * 받은 상품인가 — 아니면 403, 확인하지 못하면 503(모르면 받지 않는다: 평점은 사지 않은 사람이 움직이면 안 되는 값이다).
+     *
+     * <p>[JA] 受け取った商品か — でなければ 403、確認できなければ 503(分からなければ受け付けない: 評価は買っていない人が動かしてはならない値である)。
      */
     private void requireReceived(Long userId, Long productId) {
         Boolean purchased;
@@ -216,6 +247,7 @@ public class ReviewService {
     }
 
     /** 업로드된 이미지를 저장하고 URL 목록을 돌려준다. 이미지가 없으면 null(= 기존 값 유지). */
+    // [JA] アップロードされた画像を保存し URL 一覧を返す。画像がなければ null(= 既存の値を維持)。
     private List<String> uploadImages(List<MultipartFile> images) throws IOException {
         if (null == images || images.isEmpty()) {
             return null;
@@ -224,6 +256,8 @@ public class ReviewService {
         for (MultipartFile image : images) {
             // 🐛 예전: 키가 난수 하나뿐이었다 — images/ 접두사도 확장자도 없어 버킷의 공개 읽기 정책(images/*) 밖이라, 업로드는 되는데
             //    화면에서는 403(깨진 이미지)이었다. 프로필 이미지와 같은 규칙으로(확장자 검사 포함).
+            // [JA] 🐛 以前: キーが乱数一つだけだった — images/ 接頭辞も拡張子もなくバケットの公開読み取りポリシー(images/*)の外なので、アップロードはできるのに
+            //      画面では 403(壊れた画像)だった。プロフィール画像と同じ規則で(拡張子検査を含む)。
             String key = FileUtil.getFilePath(image, "review/" + FileUtil.getRandomFilename(), "images");
             imageUrls.add(imageService.upload(image, key));
         }
@@ -237,7 +271,12 @@ public class ReviewService {
      * 아니다(멱등)" 라는 생각이었지만, 화면은 200 을 받고 <b>"리뷰가 삭제되었습니다"</b> 를 띄웠다. 손님은 지운 적 없는 리뷰가
      * 지워졌다고 안내받는다. 지울 것이 없으면 그렇다고 말한다(404, "삭제할 리뷰가 없습니다.").
      *
+     * <p>[JA] 自分のレビューを消す。
+     * <p>🐛 以前は自分が書いたレビューがなくても何もせず現在の一覧を 200 で返していた — 「消すものがないのはエラーではない(冪等)」という考えだったが、画面は 200 を受けて
+     * <b>「レビューが削除されました」</b>を表示した。客は消したことのないレビューが消されたと案内される。消すものがなければそう言う(404、「削除するレビューがありません。」)。
+     *
      * @throws NoSuchElementException 회원이 없거나, 이 상품에 내 리뷰가 없다
+     *     [JA] 会員がいないか、この商品に自分のレビューがない
      */
     public List<ReviewDto> deleteReview(String username, Long id) {
         Written w = tx.execute(status -> {
@@ -263,6 +302,7 @@ public class ReviewService {
      * @param viewerUsername 로그인한 사람의 사용자명. 비로그인 조회면 null — 리뷰는 누구나
      *                       볼 수 있고, 그때는 "내가 눌렀는지"를 물을 대상이 없으므로
      *                       {@code likedByMe} 가 전부 false 로 내려간다.
+     *     [JA] ログインした人のユーザー名。未ログインの閲覧なら null — レビューは誰でも見られ、そのときは「自分が押したか」を問う対象がないので likedByMe が全部 false で返る。
      */
     @Transactional(readOnly = true)
     public ReviewsResponse getReviews(Long id, String viewerUsername) {
@@ -288,6 +328,10 @@ public class ReviewService {
      * <p><b>분기 기준은 "상품에 리뷰가 있는가"가 아니라 "내가 썼는가"다.</b> 예전에는
      * 전자로 갈라서, 남이 이미 리뷰를 쓴 상품에 내가 처음 리뷰를 쓰면 수정 분기로 들어간 뒤
      * 내 리뷰를 찾지 못해 예외로 끝났다({@link #findMyReview} 주석 참조).
+     *
+     * <p>[JA] レビュー登録/修正。一人が一商品に残すレビューは一つなので、既に書いていれば上書きする。
+     * <p><b>分岐の基準は「商品にレビューがあるか」ではなく「自分が書いたか」である。</b> 以前は前者で分けていたので、他人が既にレビューを書いた商品に自分が初めて書くと
+     * 修正分岐に入った後に自分のレビューが見つからず例外で終わっていた(findMyReview のコメント参照)。
      */
     public List<ReviewDto> addReview(String username, Long id, ReviewRequest request, List<MultipartFile> images)
             throws IOException {
@@ -295,6 +339,7 @@ public class ReviewService {
         validate(request);
 
         // ① 짧은 읽기 — 누구인가, 이미 썼는가.
+        // [JA] ① 短い読み取り — 誰か、既に書いたか。
         Long[] who = tx.execute(status -> {
             User user = userRepository.findByUsername(username)
                     .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
@@ -306,13 +351,17 @@ public class ReviewService {
 
         // ② 트랜잭션 밖 — 자격 확인(order) · 이미지 업로드(S3). 새 리뷰만 묻는다 — 이미 쓴 리뷰를 고치는 것은 그때 이미 자격을
         //    확인했다. 이미지를 올리기 전에 본다(거절될 것을 올리지 않는다).
+        // [JA] ② トランザクションの外 — 資格確認(order) · 画像アップロード(S3)。新しいレビューだけ問う — 既に書いたレビューの修正はそのとき既に資格を確認した。
+        //      画像を上げる前に見る(拒否されるものを上げない)。
         if (isNew && requirePurchase) {
             requireReceived(userId, id);
         }
         // 이미지를 새로 올리지 않았으면 null 이고, 그때는 기존 이미지를 그대로 둔다.
+        // [JA] 画像を新しく上げていなければ null で、そのときは既存の画像をそのまま置く。
         List<String> imageUrls = uploadImages(images);
 
         // ③ 짧은 쓰기.
+        // [JA] ③ 短い書き込み。
         Written w = tx.execute(status -> {
             User user = userRepository.findByUsername(username)
                     .orElseThrow(() -> new NoSuchElementException(StatusMessages.USER_NOT_FOUND));
@@ -320,6 +369,7 @@ public class ReviewService {
             Review mine = findMyReview(reviews, user);
             if (mine == null && !isNew && requirePurchase) {
                 // ①과 ③ 사이에 내 리뷰가 지워졌다 — 새 리뷰가 되는데 자격은 확인하지 않았다. 드문 경합이라 다시 하게 한다.
+                // [JA] ① と ③ の間に自分のレビューが消された — 新しいレビューになるのに資格は確認していない。稀な競合なのでやり直させる。
                 throw ReviewNotAllowedException.checkUnavailable();
             }
 
@@ -337,6 +387,7 @@ public class ReviewService {
                 mine.setRating(request.getRating());
                 // 🐛 예전: 수정할 때마다 새 ReviewStyle 로 바꿔 끼웠다 — 옛 review_style 행이 주인 없이 남았다(cascade 가 PERSIST 뿐).
                 //    있으면 그 행을 고쳐 쓴다.
+                // [JA] 🐛 以前: 修正のたびに新しい ReviewStyle に差し替えていた — 古い review_style 行が持ち主なしで残った(cascade が PERSIST だけ)。あればその行を書き換えて使う。
                 if (mine.getStyle() != null) {
                     mine.getStyle().setColor(style.getColor());
                     mine.getStyle().setImage(style.getImage());
@@ -374,12 +425,14 @@ public class ReviewService {
                 // 방금 쓴 리뷰가 평균 계산과 응답 목록에 들어가야 한다. 예전에는 여기서
                 // 빠져 있어서, 리뷰를 쓴 직후 화면에 자기 리뷰가 보이지 않았고 평점도
                 // 갱신 전 목록으로 계산됐다.
+                // [JA] 今書いたレビューが平均計算と応答一覧に入らなければならない。以前はここで抜けていて、レビューを書いた直後に画面に自分のレビューが見えず、評価も更新前の一覧で計算されていた。
                 reviews.add(created);
             }
             return new Written(ratingOf(reviews), toDtos(reviews, user.getUserId()));
         });
 
         // ④ 커밋 뒤 — 평점(catalog).
+        // [JA] ④ コミット後 — 評価(catalog)。
         publishRating(id, w.rating());
         return w.dtos();
     }

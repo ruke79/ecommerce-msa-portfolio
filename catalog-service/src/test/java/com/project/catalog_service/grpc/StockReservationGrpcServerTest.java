@@ -53,6 +53,10 @@ import io.micrometer.tracing.handler.PropagatingSenderTracingObservationHandler;
  * <p>확인하는 것: ① 같은 서비스 메서드에 닿고 결과가 그대로 온다 ② 모자람은 오류가 아니다 ③ 잘못된 요청은 INVALID_ARGUMENT,
  * 그 밖의 실패는 INTERNAL(내부 메시지 없이) ④ 경로 규칙이 걸린다 ⑤ order → catalog 가 한 추적이 된다 ⑥ enforce 인데 TLS 가
  * 없으면 서버를 띄우지 않는다.
+ *
+ * <p>[JA] 在庫予約 gRPC サーバー — 運用と同じ組み立て({@link StockGrpcServerConfig})を<b>実際の Netty・TLS</b> の上で立ち上げてみる(docs/66)。
+ * <p>確かめること: ① 同じサービスメソッドに届き結果がそのまま来る ② 不足はエラーではない ③ 不正なリクエストは INVALID_ARGUMENT、その他の失敗は INTERNAL(内部メッセージなし)
+ * ④ パス規則がかかる ⑤ order → catalog が一つのトレースになる ⑥ enforce なのに TLS がなければサーバーを立ち上げない。
  */
 @DisplayName("재고 예약 gRPC 서버 (Netty · mTLS)")
 class StockReservationGrpcServerTest {
@@ -102,6 +106,7 @@ class StockReservationGrpcServerTest {
     }
 
     /** 운영 조립 그대로 — enforce, 경로 규칙은 ConfigMap 과 같은 모양. */
+    // [JA] 運用の組み立てそのまま — enforce、パス規則は ConfigMap と同じ形。
     private int startServer(ObservationRegistry observations, String keyStore, String caPath) throws Exception {
         InternalCallerFilter policy = new InternalCallerFilter(InternalCallerFilter.Mode.ENFORCE,
                 new TestPki(dir).read(Path.of(ca)), Set.of(), List.of(),
@@ -126,7 +131,7 @@ class StockReservationGrpcServerTest {
     private static ReserveRequest request() {
         return ReserveRequest.newBuilder().setOrderId(812L).setTtlSeconds(1800)
                 .addLines(Line.newBuilder().setProductId(10L).setColorId(5L).setSize("270").setQty(2))
-                .addLines(Line.newBuilder().setProductId(11L).setColorId(6L).setSize("").setQty(1))   // 사이즈 없는 상품
+                .addLines(Line.newBuilder().setProductId(11L).setColorId(6L).setSize("").setQty(1))   // 사이즈 없는 상품 ／ [JA] サイズのない商品
                 .build();
     }
 
@@ -193,6 +198,9 @@ class StockReservationGrpcServerTest {
     /**
      * 🐛 서버가 호출자의 기한을 보지 않았다 — order 가 3초 기한으로 포기한 뒤에도 catalog 는 잠금을 기다리며 커넥션을 쥐었다.
      * 이제 남은 기한(여유 200ms 를 뺀 것)을 잠금 대기 상한으로 넘기고, 잠금을 그 안에 얻지 못하면 DEADLINE_EXCEEDED.
+     *
+     * <p>[JA] 🐛 サーバーが呼び出し側の期限を見ていなかった — order が 3 秒の期限で諦めた後も、catalog はロックを待ちながらコネクションを握っていた。
+     * 今は残りの期限(余裕 200ms を引いたもの)をロック待ちの上限として渡し、その間にロックを得られなければ DEADLINE_EXCEEDED。
      */
     @Test
     @DisplayName("🔴 잠금 대기 상한은 호출자의 남은 기한 이하 — 넘기면 DEADLINE_EXCEEDED(예약은 롤백)")
@@ -243,6 +251,7 @@ class StockReservationGrpcServerTest {
     }
 
     /** OTel 브리지가 traceparent 를 gRPC 메타데이터로 넘기고 받아서, order 의 span 과 catalog 의 span 이 한 추적에 있다. */
+    // [JA] OTel ブリッジが traceparent を gRPC メタデータで渡して受け取り、order の span と catalog の span が一つのトレースにある。
     @Test
     @DisplayName("🔴 order → catalog 가 한 추적이 된다 — 서버 span 의 부모가 클라이언트 span")
     void traceContinuesAcrossTheCall() throws Exception {
@@ -253,6 +262,7 @@ class StockReservationGrpcServerTest {
         stub.release(ReleaseRequest.newBuilder().setOrderId(812L).build());
 
         // 서버는 응답을 보낸 <b>뒤에</b> span 을 닫는다 — 클라이언트가 응답을 받은 순간에는 아직 열려 있을 수 있다(간헐 실패의 원인).
+        // [JA] サーバーは応答を送った**後で** span を閉じる — クライアントが応答を受け取った瞬間にはまだ開いていることがある(間欠的な失敗の原因)。
         long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
         while (tracing.finishedSpans().stream().noneMatch(s -> s.getKind() == io.opentelemetry.api.trace.SpanKind.SERVER)
                 && System.nanoTime() < until) {
@@ -264,6 +274,7 @@ class StockReservationGrpcServerTest {
         assertThat(server.getTraceId()).isEqualTo(client.getTraceId());
         assertThat(server.getParentSpanId()).isEqualTo(client.getSpanId());
         // span 이름 = gRPC 메서드 — Jaeger 에서 "ecommerce.stock.v1.StockReservation/Release" 로 찾는다
+        // [JA] span 名 = gRPC メソッド — Jaeger で "ecommerce.stock.v1.StockReservation/Release" で探す
         assertThat(server.getName()).isEqualTo("ecommerce.stock.v1.StockReservation/Release");
     }
 
@@ -273,7 +284,7 @@ class StockReservationGrpcServerTest {
         int port = startServer(registry(), "", ca);
 
         assertThat(port).isEqualTo(-1);
-        assertThat(lifecycle.isRunning()).isTrue();   // 컨텍스트 기동을 막지 않는다
+        assertThat(lifecycle.isRunning()).isTrue();   // 컨텍스트 기동을 막지 않는다 ／ [JA] コンテキストの起動を妨げない
         assertThat(new File(ca)).exists();
     }
 }

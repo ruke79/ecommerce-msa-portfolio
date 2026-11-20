@@ -32,6 +32,12 @@ import com.project.order_service.payment.VerifiedPayment;
  * <p>실제 API 로는 검증하지 못했다(docs/49 §8). 대신 <b>문서 규격의 응답 모양</b>을 여기
  * 고정한다 — 실제 응답이 다르면 이 테스트의 응답 본문과 {@code toVerified} 를 함께 고친다.
  * 그때 이 테스트가 "무엇을 기대하고 있었는지" 를 말해 준다.
+ *
+ * <p>[JA] PortOne V2 応答のマッピング。
+ *
+ * <p>実際の API では検証できていない(docs/49 §8)。代わりに<b>ドキュメント規格の応答の形</b>をここで固定する —
+ * 実際の応答が異なればこのテストの応答本文と {@code toVerified} を一緒に直す。
+ * そのときこのテストが「何を期待していたか」を教えてくれる。
  */
 @DisplayName("포트원 V2 어댑터")
 class PortOneV2PaymentGatewayTest {
@@ -97,6 +103,10 @@ class PortOneV2PaymentGatewayTest {
     /**
      * 🐛 2026-10-25 운영: 포트원이 돌려준 customData 가 `"{\"trackingId\":…}"`(두 번 감싼 문자열)였다 — 화면이 문자열로 넘기고 SDK 가
      * 한 번 더 감쌌다. 예전에는 주문 참조 없음으로 거부해 결제가 성공해도 주문이 결제 전에 남았다.
+     *
+     * <p>[JA] 🐛 2026-10-25 運用: PortOne が返した customData が
+     * `"{\"trackingId\":…}"`(二重に包んだ文字列)だった — 画面が文字列で渡し、SDK がもう一度包んだ。
+     * 以前は注文参照なしとして拒否し、決済が成功しても注文が決済前のまま残っていた。
      */
     @Test
     @DisplayName("🔴 두 번 감싼 customData(이미 만들어진 결제)에서도 trackingId 를 읽는다")
@@ -133,6 +143,7 @@ class PortOneV2PaymentGatewayTest {
     }
 
     // ---------------------------------------------------------------- 가상계좌 (docs/49 §11)
+    // [JA] 仮想口座(docs/49 §11)
 
     private static String virtualAccountPayment(String status) {
         return "{\"id\":\"payment-1\",\"status\":\"" + status + "\","
@@ -159,6 +170,7 @@ class PortOneV2PaymentGatewayTest {
         assertThat(va.get().currency()).isEqualTo("KRW");
         assertThat(va.get().dueAt()).isNotNull();
         // 검증 쪽은 "아직 결제 전" 이다 — 카드처럼 반영되면 안 된다.
+        // [JA] 検証側は「まだ決済前」である — カードのように反映されてはならない。
         server.reset();
         server.expect(requestTo("https://api.portone.io/payments/payment-1"))
                 .andRespond(withSuccess(virtualAccountPayment("VIRTUAL_ACCOUNT_ISSUED"), MediaType.APPLICATION_JSON));
@@ -184,11 +196,13 @@ class PortOneV2PaymentGatewayTest {
         assertThat(gateway.issuedPaymentRefOf(om.readTree(
                 "{\"type\":\"Transaction.Paid\",\"data\":{\"paymentId\":\"payment-1\"}}"))).isEmpty();
         // 결제 완료 참조는 여전히 완료 웹훅에서만 — 발급 웹훅으로 결제가 붙으면 안 된다.
+        // [JA] 決済完了参照は依然として完了 Webhook からのみ — 発行 Webhook で決済が付いてはならない。
         assertThat(gateway.paidPaymentRefOf(om.readTree(
                 "{\"type\":\"Transaction.VirtualAccountIssued\",\"data\":{\"paymentId\":\"payment-1\"}}"))).isEmpty();
     }
 
     /** 결제 완료 웹훅만 참조를 내놓는다. 취소·실패·가상계좌 발급은 비어 있다. */
+    // [JA] 決済完了 Webhook だけが参照を出す。キャンセル・失敗・仮想口座発行は空である。
     @Test
     @DisplayName("웹훅에서는 Transaction.Paid 의 paymentId 만 취한다")
     void webhookRef() throws Exception {
@@ -237,6 +251,7 @@ class PortOneV2PaymentGatewayTest {
     }
 
     /** 🔒 V2 에도 멱등 헤더가 없다 — 취소 직전 잔액을 실어 같은 환불이 두 번 나가지 않게(포트원이 잔액 불일치로 거절). */
+    // [JA] 🔒 V2 にも冪等ヘッダーがない — キャンセル直前の残高を載せて同じ返金が二度出ないように(PortOne が残高不一致で拒否)。
     @Test
     @DisplayName("🔴 취소 직전 잔액(currentCancellableAmount)을 함께 보낸다")
     void refundSendsCurrentCancellableAmount() {

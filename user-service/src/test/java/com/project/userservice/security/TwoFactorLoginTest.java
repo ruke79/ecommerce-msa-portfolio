@@ -48,6 +48,10 @@ import jakarta.servlet.http.Cookie;
  *
  * <p>예전에는 비밀번호 로그인이 2FA 계정에도 액세스 토큰과 REFRESH 쿠키를 먼저 줬고(코드 입력을 기다린 것은
  * 프론트뿐), 소셜 경로의 대기 쿠키는 액세스 토큰과 같은 키로 서명한 보통 JWT 라 게이트웨이를 통과했다.
+ *
+ * <p>[JA] 🔴 2 段階認証はサーバーが強制する(docs/54 §1.3)。
+ * 以前はパスワードログインが 2FA アカウントにもアクセストークンと REFRESH クッキーを先に渡しており(コード入力を待っていたのはフロントだけ)、
+ * ソーシャル経路の待機クッキーはアクセストークンと同じ鍵で署名した普通の JWT なのでゲートウェイを通過した。
  */
 @DisplayName("2단계 인증 — 서버 강제")
 class TwoFactorLoginTest {
@@ -65,6 +69,7 @@ class TwoFactorLoginTest {
         when(redis.opsForValue()).thenReturn(ops);
         when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0)));
         // reserveAttempt 의 Lua(증가 + 첫 시도면 TTL) 를 흉내 낸다 — 원자성 자체는 실제 Redis 로 본다(PendingTwoFactorTest).
+        // [JA] reserveAttempt の Lua(増加 + 初回試行なら TTL)を真似る — 原子性そのものは実際の Redis で見る(PendingTwoFactorTest)。
         when(redis.execute(any(org.springframework.data.redis.core.script.RedisScript.class), anyList(), any()))
                 .thenAnswer(inv -> {
                     String key = ((java.util.List<String>) inv.getArgument(1)).get(0);
@@ -78,6 +83,7 @@ class TwoFactorLoginTest {
     }
 
     // ── 대기 토큰 ─────────────────────────────────────────────────────────
+    // [JA] ── 待機トークン ──
 
     @Test
     @DisplayName("🔴 대기 토큰은 액세스 토큰 키로 검증되지 않는다 — 게이트웨이·다른 서비스가 받아 주지 않는다")
@@ -85,6 +91,7 @@ class TwoFactorLoginTest {
         String token = pending.issue(42L);
 
         // 게이트웨이(JwtAuthorizationGatewayFilterFactory)와 같은 방식의 검증
+        // [JA] ゲートウェイ(JwtAuthorizationGatewayFilterFactory)と同じ方式の検証
         var accessKey = new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         org.assertj.core.api.Assertions.assertThatThrownBy(
                 () -> Jwts.parser().verifyWith(accessKey).build().parseSignedClaims(token))
@@ -112,6 +119,7 @@ class TwoFactorLoginTest {
                     .extracting(PendingTwoFactor.Attempt::moreAfterThis).isEqualTo(true);
         }
         // 다섯 번째는 쓸 수 있지만 마지막이다 — 여섯 번째부터 검증까지 가지 않는다.
+        // [JA] 5 回目は使えるが最後である — 6 回目からは検証まで行かない。
         assertThat(pending.reserveAttempt(token)).get()
                 .extracting(PendingTwoFactor.Attempt::moreAfterThis).isEqualTo(false);
         assertThat(pending.reserveAttempt(token)).isEmpty();
@@ -135,6 +143,7 @@ class TwoFactorLoginTest {
     }
 
     // ── 로그인 필터 ───────────────────────────────────────────────────────
+    // [JA] ── ログインフィルター ──
 
     private AuthLoginFilter filter(JwtUtils jwtUtils, RefreshTokenService refresh, RedisSessionManager sessions) {
         return new AuthLoginFilter(mock(AuthenticationManager.class), jwtUtils, refresh,
@@ -171,6 +180,7 @@ class TwoFactorLoginTest {
         verify(jwtUtils, never()).generateToken(anyLong(), anyString(), anyString(), anyBoolean());
         verify(refresh, never()).createRefreshToken(anyLong());
         // 비밀번호만으로 남의 기존 세션을 끊지 못한다
+        // [JA] パスワードだけで他人の既存セッションを切ることはできない
         verify(sessions, never()).getSession(anyString());
     }
 
@@ -196,6 +206,7 @@ class TwoFactorLoginTest {
     }
 
     /** 🐛 예전: 다중 로그인 알림 행(users.notification)과 Redis 메시지에 실제 이메일을 실었다 — 탈퇴해도 지워지지 않았다(§6). */
+    // [JA] 🐛 以前: 多重ログイン通知の行(users.notification)と Redis メッセージに実際のメールアドレスを載せていた — 退会しても消えなかった(§6)。
     @Test
     @DisplayName("🔴 다중 로그인으로 이전 세션을 끊는 알림에는 userId 만 — 이메일이 아니다")
     void multiLoginNotificationCarriesUserIdNotEmail() throws Exception {

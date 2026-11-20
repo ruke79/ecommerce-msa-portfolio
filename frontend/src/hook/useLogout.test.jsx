@@ -28,6 +28,7 @@ const wrapper = ({ children }) => (
 );
 
 /** 🔴 로그아웃 요청이 실패해도 화면은 로그아웃한다 — 서버 로그아웃은 다음 접속 때 마무리(docs/68 §13). */
+// [JA] 🔴 ログアウトリクエストが失敗しても画面はログアウトする — サーバーのログアウトは次回接続時に仕上げる(docs/68 §13)。
 describe("useLogout — 서버 로그아웃이 실패하면", () => {
   beforeEach(() => {
     jest.clearAllMocks();

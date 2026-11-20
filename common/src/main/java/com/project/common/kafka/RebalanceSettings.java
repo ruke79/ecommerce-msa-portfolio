@@ -26,6 +26,16 @@ import org.springframework.core.env.Environment;
  * 기본값을 1단계로 둔 이유: 지금 배포된 컨슈머는 전부 Range 다. 이 커밋을 배포하는 첫 롤링에서
  * 옛 파드와 새 파드가 같은 그룹에 섞이는데, 그때 새 파드가 cooperative 만 알면 그룹이 깨진다.
  * 1단계가 전부 나간 뒤 yml 한 줄로 2단계로 넘어간다.
+ *
+ * <p>[JA] コンシューマーグループのリバランス設定 — 一か所で。
+ * <b>なぜ協調的(cooperative)リバランスか。</b>デフォルトの {@link RangeAssignor} は <i>eager</i> プロトコルである: メンバーが一つ入るか出るたびに
+ * <b>グループ全員がすべてのパーティションを手放して</b>受け取り直す。その間消費が止まり(stop-the-world)、パーティションが変わったメンバーは処理中のバッチを失う。
+ * ポッド一つがローリングデプロイで入れ替わるたびに、同じグループの残りのポッドまで止まるわけである。{@link CooperativeStickyAssignor} は<b>移すべきパーティションだけ</b>移し、残りは消費を続ける。
+ * <b>なぜすぐ変えず二段階か。</b>eager と cooperative はプロトコルが違う。一つのグループに古いメンバー(Range しか知らない)と新しいメンバーが混ざるとグループが壊れる。
+ * Kafka が定めた安全な順序は: (1) 全メンバーを {@code [cooperative-sticky, range]} でデプロイする — 両方知っているのでグループはまだ eager で回るが、どのメンバーが先に
+ * 変わっても安全である({@code kafka.rebalance.protocol=eager}、デフォルト)。(2) 全員が第 1 段階を過ぎた後に {@code [cooperative-sticky]} だけを残す({@code kafka.rebalance.protocol=cooperative})。
+ * デフォルトを第 1 段階にした理由: 今デプロイされているコンシューマーはすべて Range である。このコミットをデプロイする最初のローリングで古いポッドと新しいポッドが
+ * 同じグループに混ざるが、そのとき新しいポッドが cooperative しか知らなければグループが壊れる。第 1 段階がすべて出た後、yml 一行で第 2 段階へ移る。
  */
 public final class RebalanceSettings {
 
@@ -34,7 +44,7 @@ public final class RebalanceSettings {
     private RebalanceSettings() {
     }
 
-    /** {@code partition.assignment.strategy} 에 넣을 어사이너 목록. */
+    /** {@code partition.assignment.strategy} 에 넣을 어사이너 목록. ／ [JA] {@code partition.assignment.strategy} に入れるアサイナーの一覧。 */
     public static List<String> assignors(Environment env) {
         String protocol = env.getProperty(PROTOCOL_PROPERTY, "eager").trim().toLowerCase();
         return switch (protocol) {

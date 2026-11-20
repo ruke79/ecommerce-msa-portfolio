@@ -32,6 +32,7 @@ import lombok.AccessLevel;
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 // 사용자당 하나(V5) — 예전 일반 인덱스로는 처음 담기가 동시에 일어나면 장바구니가 둘 생겼다(CartService.cartOf).
+// [JA] ユーザーあたり 1 つ(V5) — 以前の通常インデックスでは最初の追加が同時に起きるとカートが 2 つできた(CartService.cartOf)。
 @Table(name="cart", schema = "cart",
        indexes = {
         @Index(columnList = "user_id", name = "uq_cart_user", unique = true) }
@@ -47,6 +48,8 @@ public class Cart extends BaseEntity {
     @OneToMany(mappedBy = "cart", fetch = FetchType.LAZY,
     // MERGE 도 — 예전 PERSIST 뿐이라, 이미 저장된 장바구니에 줄을 붙이고 merge 로 저장하면 새 줄이 조용히 빠졌다
     // (실제로 "담기가 안 되는" 버그였다 — CartService 가 새 줄을 직접 save 해서 막는다. 그 우회를 빼먹는 새 코드도 안전하게).
+    // [JA] MERGE も — 以前は PERSIST だけだったので、既に保存済みのカートに行を付けて merge で保存すると新しい行が黙って抜けた
+    //      (実際に「追加できない」バグだった — CartService が新しい行を直接 save して防いでいる。その回避を忘れる新しいコードでも安全なように)。
     cascade = {CascadeType.PERSIST, CascadeType.MERGE}, targetEntity = CartProduct.class, orphanRemoval = true)
     private List<CartProduct> cartProducts = new ArrayList<>();
 

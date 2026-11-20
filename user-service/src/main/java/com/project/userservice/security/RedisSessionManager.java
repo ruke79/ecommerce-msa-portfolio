@@ -32,12 +32,26 @@ import lombok.extern.slf4j.Slf4j;
  * <p>⚠️ 이 기록은 <b>판단의 근거일 뿐 권한이 아니다.</b> 세션이 실제로 유효한지는 리프레시
  * 토큰(Redis)과 {@code User.passwordChangedAt} 이 정한다. 여기 항목이 남아 있어도 그 토큰이
  * 없으면 그 세션은 이미 죽은 것이다.
+ *
+ * <p>[JA] 「このユーザーが今どのセッションでログインしているか」を記憶する — 多重ログイン遮断の根拠である。
+ * 🐛 名前は Redis なのに実際はインメモリの {@code HashMap} だった。そのため二つのことが同時に間違っていた。user-service は
+ * {@code replicas: 2} で動く: 偽陽性 — 項目を消す場所が明示的なログアウト一つだけだった。ブラウザを閉じたり、トークンが
+ * 期限切れになったり、パスワードを再設定して再ログインしたりすると古い記録がそのまま残り、一人で使っているのに
+ * 「多重ログイン」と警告した。実際にそう報告された。偽陰性 — マップがポッドごとに別々なので、二回目のログインが別の
+ * ポッドに行くと記録がなく、遮断がまったく動かない。つまり防ぎたいものをおよそ半分しか防げなかった。
+ * Redis に移せば両方消える。レプリカが同じストアを見て、TTL があるので記録が自分で期限切れになる — 消すコードが漏れても
+ * 古い記録が永遠に残らない。
+ * TTL はリフレッシュトークンの寿命に合わせる。それより長いと使えないセッションを生きているとみなし、短いと生きている
+ * セッションを取りこぼす。
+ * ⚠️ この記録は判断の根拠にすぎず権限ではない。セッションが実際に有効かはリフレッシュトークン(Redis)と
+ * {@code User.passwordChangedAt} が決める。ここに項目が残っていても、そのトークンがなければそのセッションはすでに死んでいる。
  */
 @Slf4j
 @Component
 public class RedisSessionManager {
 
     /** 키 접두사. 리프레시 토큰은 sessionId 를 그대로 키로 쓰므로 섞이지 않게 붙인다. */
+    // [JA] キーの接頭辞。リフレッシュトークンは sessionId をそのままキーに使うので、混ざらないよう付ける。
     private static final String KEY_PREFIX = "login-session:";
 
     private final StringRedisTemplate redisTemplate;
@@ -67,6 +81,7 @@ public class RedisSessionManager {
     }
 
     /** @return 기억된 세션 id, 없거나 만료됐으면 null */
+    // [JA] @return 記憶されたセッション id、ないか期限切れなら null
     public String getSession(String userId) {
         return redisTemplate.opsForValue().get(key(userId));
     }

@@ -19,11 +19,13 @@ const SmsTwoFactor = () => {
     const { t } = useTranslation();
     const [enabled, setEnabled] = useState(null);
     // 코드를 기다리는 동작 — "enable" · "disable" · ""(대기 없음)
+    // [JA] コードを待つ操作 — "enable" · "disable" · ""(待機なし)
     const [pending, setPending] = useState("");
     const [sentTo, setSentTo] = useState("");
     const [code, setCode] = useState("");
     const [busy, setBusy] = useState(false);
     // 문구가 아니라 문구 키를 담는다 — 그릴 때 지금 언어로 바꾼다.
+    // [JA] 文言ではなく文言キーを入れる — 描くときに今の言語に置き換える。
     const [messageKey, setMessageKey] = useState("");
     const [error, setError] = useState(false);
 
@@ -98,6 +100,7 @@ const SmsTwoFactor = () => {
 
     if (enabled === null && !messageKey) {
         // 상태를 모르면 버튼을 보여 주지 않는다 — 켜진 계정에 '켜기' 를 띄우지 않게.
+        // [JA] 状態が分からなければボタンを見せない — オンのアカウントに「オンにする」を出さないように。
         return null;
     }
 

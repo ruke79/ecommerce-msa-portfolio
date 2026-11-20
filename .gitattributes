@@ -15,14 +15,27 @@
 #
 # 아래 규칙은 **저장소에 무엇이 저장되는지를 바꾸지 않는다.** 체크아웃할 때 어떤 줄바꿈으로
 # 펼쳐지는지만 강제한다.
+# [JA] 改行の正規化 — https://help.github.com/articles/dealing-with-line-endings/
+#      ⚠️ なぜこのファイルが重要か。
+#      Windows の git は core.autocrlf=true が既定で、チェックアウト時に LF を CRLF に変える。
+#      するとシェルスクリプトのシバンが `#!/usr/bin/env bash\r` になり、カーネルは `bash\r` という名前の
+#      プログラムを探して失敗する(/usr/bin/env: ‘bash\r’: No such file or directory)。
+#      WSL で Windows ドライブ(/mnt/c, /mnt/d)にクローンすると必ず踏む。症状がスクリプトの内容と
+#      無関係なので原因を探しにくく、1 ファイルを直してもそれが呼ぶ次のスクリプトで
+#      同じように止まる(ops/13 → ops/07 で実測)。
+#      下の規則は **リポジトリに何が保存されるかを変えない。** チェックアウト時にどの改行で
+#      展開されるかだけを強制する。
 
 # ── 실행되는 것은 전부 LF ────────────────────────────────────────────────
+# [JA] ── 実行されるものはすべて LF ──
 *.sh            text eol=lf
 gradlew         text eol=lf
 *.py            text eol=lf
 
 # 컨테이너 안에서 실행되는 것들. 이미지 빌드 시점에 CRLF 가 섞이면 ENTRYPOINT 가 같은
 # 이유로 죽는데, 그때는 로컬에서 재현조차 되지 않는다.
+# [JA] コンテナの中で実行されるもの。イメージビルド時に CRLF が混ざると ENTRYPOINT が同じ
+#      理由で死ぬが、そのときはローカルで再現すらしない。
 Dockerfile      text eol=lf
 Dockerfile.*    text eol=lf
 *.dockerfile    text eol=lf
@@ -32,6 +45,9 @@ Dockerfile.*    text eol=lf
 # ── 도구가 읽는 것도 LF 로 통일 ──────────────────────────────────────────
 # kubectl·kustomize·psql 은 CRLF 를 견디지만, SQL 의 경우 문자열 리터럴 안에 \r 이
 # 그대로 저장돼 나중에 비교가 어긋난다. 처음부터 섞지 않는 편이 낫다.
+# [JA] ── ツールが読むものも LF に統一 ──
+#      kubectl・kustomize・psql は CRLF に耐えるが、SQL の場合は文字列リテラルの中に \r が
+#      そのまま保存され、後で比較がずれる。最初から混ぜないほうがよい。
 *.yml           text eol=lf
 *.yaml          text eol=lf
 *.sql           text eol=lf
@@ -42,10 +58,12 @@ Dockerfile.*    text eol=lf
 *.gradle        text eol=lf
 
 # ── Windows 전용 ─────────────────────────────────────────────────────────
+# [JA] ── Windows 専用 ──
 *.bat           text eol=crlf
 *.cmd           text eol=crlf
 
 # ── 바이너리 (git 이 텍스트로 오해해 줄바꿈을 건드리면 파일이 깨진다) ────
+# [JA] ── バイナリ(git がテキストと誤解して改行をいじるとファイルが壊れる) ──
 *.jar           binary
 *.p12           binary
 *.jks           binary

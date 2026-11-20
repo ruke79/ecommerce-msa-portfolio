@@ -56,6 +56,7 @@ class FeatureFlagTest {
     }
 
     // ---------------------------------------------------------------- 정의 파일
+    // [JA] ---------------------------------------------------------------- 定義ファイル
 
     @Test
     @DisplayName("비율 배정은 대상 키마다 고정이고, 비중대로 나뉜다")
@@ -109,6 +110,7 @@ class FeatureFlagTest {
     }
 
     // ---------------------------------------------------------------- 파일 공급자
+    // [JA] ---------------------------------------------------------------- ファイルプロバイダー
 
     private Client client(FileFlagProvider provider, Tracer tracer, SimpleMeterRegistry meters) {
         api = OpenFeatureAPI.createIsolated();
@@ -162,6 +164,7 @@ class FeatureFlagTest {
     }
 
     // ---------------------------------------------------------------- 자동 구성
+    // [JA] ---------------------------------------------------------------- 自動構成
 
     private final org.springframework.boot.test.context.runner.ApplicationContextRunner runner =
             new org.springframework.boot.test.context.runner.ApplicationContextRunner()
@@ -183,6 +186,7 @@ class FeatureFlagTest {
     }
 
     // ---------------------------------------------------------------- 관측 훅
+    // [JA] ---------------------------------------------------------------- 観測フック
 
     @Test
     @DisplayName("🔴 평가 결과가 지금 스팬의 태그와 지표로 남는다 — 대상 키(검색어)는 남지 않는다")

@@ -50,6 +50,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * 🔴 리프레시 토큰 회전 · 재사용 감지 — <b>실제 Redis</b>(Lua 의 원자성은 모형으로 확인할 수 없다)와 실제 JWT 로(docs/68).
  *
  * <p>🐛 예전: 갱신해도 옛 토큰이 수명(14일)까지 유효했고, 재사용을 알아채지 못했고, 로그아웃은 지금 낸 토큰 하나만 지웠다.
+ *
+ * <p>[JA] 🔴 リフレッシュトークンのローテーション・再利用検知 — <b>実際の Redis</b>(Lua の原子性はモックでは確認できない)と実際の JWT で(docs/68)。
+ * 🐛 以前: 更新しても古いトークンが寿命(14 日)まで有効で、再利用に気づかず、ログアウトは今出したトークン一つだけを消していた。
  */
 @Tag("containers")
 @Testcontainers
@@ -135,6 +138,7 @@ class RefreshTokenRotationTest {
         assertThat(jwt.getFamilyIdFromJwtToken(r.token())).isEqualTo(jwt.getFamilyIdFromJwtToken(first));
         assertThat(template.hasKey(jwt.getSessionIdFromJwtToken(first))).isFalse();
         // 🔒 저장소에는 해시만 — 원문이 아니다(§10)
+        // [JA] 🔒 保存先にはハッシュだけ — 原文ではない(§10)
         assertThat(template.opsForValue().get(jwt.getSessionIdFromJwtToken(r.token())))
                 .isEqualTo(RefreshTokenRepository.digest(r.token())).isNotEqualTo(r.token());
     }
@@ -156,6 +160,7 @@ class RefreshTokenRotationTest {
     void pastAbsoluteLifetimeEndsTheSession() {
         String token = login();
         // 운영자가 절대 수명을 줄였다 — 그 전에 발급된 토큰은 서명 · 만료가 멀쩡해도 여기서 끝나야 한다.
+        // [JA] 運用者が絶対寿命を縮めた — それ以前に発行されたトークンは署名・期限が正常でもここで終わらなければならない。
         ReflectionTestUtils.setField(jwt, "jwtRefreshAbsoluteMs", 0L);
 
         var r = service.rotate(token, 7L);
@@ -181,8 +186,10 @@ class RefreshTokenRotationTest {
         assertThat(template.hasKey(jwt.getSessionIdFromJwtToken(current))).isFalse();
         assertThat(count("reused")).isEqualTo(1);
         // 계정 주인에게 한 번 알린다 — 주소는 DB 의 것, 묶음 id 원문은 프로듀서가 해시로 바꾼다
+        // [JA] アカウントの持ち主に一度知らせる — アドレスは DB のもの、束 id の原文はプロデューサーがハッシュに変える
         verify(alerts, times(1)).publishRefreshReuse(7L, "a@example.com", jwt.getFamilyIdFromJwtToken(stolen));
         // 끊긴 표시는 토큰 수명만큼 남는다 — 영원히 쌓이지 않는다
+        // [JA] 切断の印はトークン寿命の分だけ残る — 永遠に積もらない
         Long ttl = template.getExpire("rt:revoked:" + jwt.getFamilyIdFromJwtToken(stolen));
         assertThat(ttl).isPositive().isLessThanOrEqualTo(LIFETIME_MS / 1000);
     }
@@ -203,6 +210,7 @@ class RefreshTokenRotationTest {
     }
 
     /** GET · DEL 을 따로 부르면 둘 다 "있다" 를 보고 둘 다 새 토큰을 받는다. Lua 가 막는지 실제로 부딪혀 본다. */
+    // [JA] GET・DEL を別々に呼ぶと両方が「ある」を見て両方が新しいトークンを受け取る。Lua が防ぐかを実際にぶつけてみる。
     @Test
     @DisplayName("🔴 진짜 동시 — 같은 토큰으로 8개가 한꺼번에 와도 회전은 정확히 한 번, 나머지는 같은 새 토큰")
     void concurrentRefreshRotatesOnce() throws Exception {
@@ -283,6 +291,7 @@ class RefreshTokenRotationTest {
     }
 
     // ── 모든 기기에서 로그아웃(docs/68 §8) ─────────────────────────────────────
+    // [JA] ── すべての機器からログアウト(docs/68 §8) ──
 
     @Test
     @DisplayName("🔴 모든 기기에서 로그아웃 — 로그인 둘(하나는 갱신까지 한)이 모두 끊기고, 재사용 알림은 없다")
@@ -301,6 +310,7 @@ class RefreshTokenRotationTest {
         assertThat(meters.find("auth.logout.all").counter().count()).isEqualTo(1);
 
         // 다시 로그인하면 새 묶음 — 정상으로 쓸 수 있다
+        // [JA] 再ログインすれば新しい束 — 正常に使える
         assertThat(service.rotate(login(), 7L).kind()).isEqualTo(Kind.ROTATED);
     }
 
@@ -322,7 +332,7 @@ class RefreshTokenRotationTest {
     @DisplayName("색인은 끝난 로그인을 로그인 때 치운다 — 매일 로그인해도 끝없이 자라지 않는다")
     void indexIsPrunedOnLogin() {
         String first = login();
-        service.revoke(first);           // 로그아웃 — 그 묶음은 끝났다
+        service.revoke(first);           // 로그아웃 — 그 묶음은 끝났다 ／ [JA] ログアウト — その束は終わった
         String second = login();
 
         assertThat(template.opsForSet().members("rt:user:7"))
@@ -338,8 +348,10 @@ class RefreshTokenRotationTest {
     }
 
     // ── 해시만 저장(docs/68 §10) ─────────────────────────────────────────────
+    // [JA] ── ハッシュだけを保存(docs/68 §10) ──
 
     /** Redis 의 모든 키와 값 — 문자열 · 집합. */
+    // [JA] Redis のすべてのキーと値 — 文字列・セット。
     private java.util.List<String> dump() {
         java.util.List<String> all = new java.util.ArrayList<>();
         for (String key : template.keys("*")) {
@@ -359,6 +371,7 @@ class RefreshTokenRotationTest {
         String first = login();
         String second = service.rotate(first, 7L).token();
         // 유예 중(두 번째 탭이 같은 토큰을 받는 20초) — 여기서 원문을 두기 쉽다
+        // [JA] 猶予中(2 つ目のタブが同じトークンを受け取る 20 秒) — ここで原文を置きがちである
         assertThat(service.rotate(first, 7L).kind()).isEqualTo(Kind.GRACE);
         String laptop = login();
 

@@ -97,8 +97,8 @@ class SearchNameNfkcTest {
         }
         jdbc.update("insert into product.category (category_id, category_name, slug) values (?, 'nfkc', 'nfkc')", CATEGORY);
         Object[][] products = {
-                { 9_500_001L, "Ｔシャツ ＢＡＳＩＣ" },   // 전각 영문으로 저장된 이름
-                { 9_500_002L, "ｼｬﾂ ﾌﾞﾙｰ" },            // 반각 카나로 저장된 이름
+                { 9_500_001L, "Ｔシャツ ＢＡＳＩＣ" },   // 전각 영문으로 저장된 이름 ／ [JA] 全角英字で保存された名前
+                { 9_500_002L, "ｼｬﾂ ﾌﾞﾙｰ" },            // 반각 카나로 저장된 이름 ／ [JA] 半角カナで保存された名前
                 { 9_500_003L, "Basic Hoodie" },
                 { 9_500_004L, "コットン100%ワンピース" },
                 { 9_500_005L, "コットン100ワンピース" },
@@ -108,6 +108,7 @@ class SearchNameNfkcTest {
                     + "values (?, ?, ?, ?, 'b', 'ACTIVE', 0, 0)", p[0], CATEGORY, p[1], "nfkc-" + p[0]);
         }
         // 다른 카테고리의 상품 2만 개 — 인덱스를 고를 만한 크기(작으면 플래너가 다 훑는다)
+        // [JA] 別カテゴリの商品 2 万個 — インデックスを選ぶに足る大きさ(小さいとプランナが全走査する)
         jdbc.update("insert into product.category (category_id, category_name, slug) values (9501, 'filler', 'filler')");
         jdbc.update("""
                 insert into product.product (product_id, category_id, name, slug, brand, status, rating, version)
@@ -116,6 +117,7 @@ class SearchNameNfkcTest {
     }
 
     /** 화면이 보내는 것처럼 — 쿼리 문자열이 setter 로 들어온다(그때 NFKC). */
+    // [JA] 画面が送るように — クエリ文字列が setter で入る(そのとき NFKC)。
     private List<String> names(String search) {
         SearchParamsRequest params = mapper.convertValue(Map.of(
                 "search", search, "category", String.valueOf(CATEGORY), "page", 1, "pageSize", 20, "includeFilters", false),

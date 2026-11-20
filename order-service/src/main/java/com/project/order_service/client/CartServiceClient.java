@@ -24,6 +24,18 @@ public interface CartServiceClient {
      *
      * <pre>{@code
      * ResponseEntity<?> getCart(@RequestParam("userId") String email,
+     *
+     * <p>[JA] 注文に使うカートを読む。
+     * 🐛 この呼び出しは一度も成立していなかった: 以前のシグネチャはクエリパラメーター userId(メール)と Authorization を取っていたが、
+     * cart-service 側はセキュリティ強化の際に <b>クエリパラメーターを捨ててゲートウェイが検証したヘッダーを読む</b> よう変わった
+     * — {@code @RequestHeader("User-Email")} がなければ 401。こちらはそのままだったので <b>常に 401</b> だった。
+     * フロントが決済画面を開くときの呼び出しは <b>ゲートウェイを通ってヘッダーが付くので</b> 正常だった。壊れていたのは
+     * <b>サービス間の直接呼び出しだけ</b> で、cart-service のログには正常な呼び出ししか見えなかった — 失敗した呼び出しは
+     * コントローラー本体に入る前に終わり痕跡がなかった。その 401 がなぜ {@code {"message": null}} に見えたかは docs/47 §5-2 にある。
+     * 🔒 トークンをクエリパラメーターで送っていた: {@code Authorization=Bearer%20eyJ…} が <b>URL に</b> 入った。URL はどこにでも残る
+     * — アクセスログ、プロキシ、例外メッセージ、Referer。実際に order-service のエラーログにアクセストークン全文が出力された。
+     * しかも <b>必要もなかった。</b> {@link FeignConfig} のインターセプターが受けたリクエストの {@code Authorization} <b>ヘッダー</b>
+     * をそのまま引き継ぐ。パラメーターを消すだけで済む — ここでヘッダーとして宣言し直すとインターセプターと重なり同じヘッダーが二度送られる。
      *                           @RequestParam("Authorization") String token);
      * }</pre>
      *
@@ -53,6 +65,8 @@ public interface CartServiceClient {
      */
     // 신원은 사용자 id 다 — cart 는 장바구니를 id 로 저장하고 캐시 키도 id 다. 예전에는 User-Email 을 실었고, cart 가
     // 그 이메일로 user-service 에 id 를 다시 물었다(docs/48 §6-⑥).
+    // [JA] 身元はユーザー id だ — cart はカートを id で保存しキャッシュキーも id だ。以前は User-Email を載せ、cart が
+    //      そのメールで user-service に id を問い直していた(docs/48 §6-⑥)。
     @GetMapping("api/cart/checkout")
     ResponseEntity<?> getCart(@RequestHeader("User-Id") Long userId);
 }

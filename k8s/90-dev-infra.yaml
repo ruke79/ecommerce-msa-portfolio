@@ -40,6 +40,41 @@
 #   postgres/pg-credentials  : password (role 'product')
 #   redis/redis-auth         : password
 #   mongodb/mongo-auth       : username, password
+# [JA] 開発/検証用のクラスタ内インフラ — PostgreSQL(SSL) · Redis · Kafka(KRaft) · MongoDB · Elasticsearch
+#      なぜあるか: k8s/10-configmap.yaml は kafka.kafka.svc.cluster.local のような**インフラ DNS を前提**にするが、
+#      そのインフラを作るマニフェストはリポジトリになかった — 「各自のインフラに合わせて修正すること」が
+#      新しいクラスタでは「何も起動できない」と同じ意味だった。このファイルがその前提を満たし、
+#      **空の k3s/k8s クラスタでもスタック全体が起動するように**する(ops/13-k3s-deploy.sh が使用)。
+#      ⚠️ 運用向けではない: 単一レプリカ · 固定の dev 資格情報が前提。
+#         運用では CloudNativePG(80-postgres-cnpg.yaml.example)・マネージド Kafka などに置き換えること。
+#      ── 何が残り何が消えるか ──
+#        PostgreSQL   PVC(pg-data)。**ポッドが交換されてもデータが残る。**
+#        Kafka        PVC(kafka-data)。トピック・オフセット・KRaft メタデータが残る。これがないとポッドを
+#                     入れ替えるたびに ops/02-create-dlt-topics.sh を回し直す必要があり(コンパクショントピック含む)、
+#                     コンシューマグループは auto.offset.reset で巻き戻ってサガが再生されたり飛ばされたりした。
+#        MongoDB      PVC(mongo-data)。チャットメッセージは**原本データ**である — どこからも再構成
+#                     できない。前に「再構成可能」と書いたのは誤りだった。
+#        Elasticsearch PVC(es-data)。索引は PostgreSQL から再構成できるが
+#                     (ops/03-enable-es-search.sh)、その再インデックスは手動で時間がかかる。
+#                     ポッドが交換されるたびに検索が黙って空の結果を返すよりましである。
+#        Redis        PVC(redis-data) + AOF。長く「キャッシュだから飛んでもいい」と分類してきたが、
+#                     実際に入っているのはそれだけではない:
+#                       · リフレッシュトークン — 飛ぶと全員が再ログインしなければならない(目に見える不便)
+#                       · **ログアウトのブラックリスト** — 飛ぶと既に無効化したトークンが再び有効になる。
+#                         期限切れまで生き返るので、これは不便ではなく**セキュリティの後退**である。
+#                     だからスナップショット(RDB)だけでは足りないとみて appendonly を有効にする。デフォルトの RDB 保存
+#                     ポイントは「60 秒に 1 万件」のような条件なので、閑散とした時間帯のログアウト 1 件は
+#                     ディスクに届く前にポッドが入れ替わりうる。
+#        PVC はクラスタのデフォルト StorageClass を使う(k3s は local-path がデフォルト)。
+#        デフォルト StorageClass がないクラスタでは PVC が Pending のまま残りポッドも起動しない:
+#          kubectl get storageclass で (default) 表示があるか確認する
+#        ⚠️ local-path は**そのノードのディスク**である。ノードが消えればデータも消える。
+#           バックアップは ops/08-backup-postgres.sh が担う。
+#      必要なシークレット(ops/13 が作成):
+#        postgres/pg-tls          : tls.crt, tls.key(ops/07 の成果物)
+#        postgres/pg-credentials  : password(role 'product')
+#        redis/redis-auth         : password
+#        mongodb/mongo-auth       : username, password
 ---
 apiVersion: v1
 kind: Namespace
@@ -50,6 +85,10 @@ metadata: { name: postgres }
 #
 # ⚠️ 이 PVC 를 지우면 데이터가 사라진다. `kubectl delete -f k8s/90-dev-infra.yaml` 은
 #    PVC 까지 지운다 — 인프라를 내릴 때는 Deployment 만 지울 것.
+# [JA] PostgreSQL のデータ。StorageClass を指定しないので**クラスタのデフォルト**を使う
+#      (k3s は local-path)。指定するとその名前がないクラスタで Pending のまま止まる。
+#      ⚠️ この PVC を消すとデータが消える。`kubectl delete -f k8s/90-dev-infra.yaml` は
+#         PVC まで消す — インフラを下ろすときは Deployment だけを消すこと。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -89,8 +128,16 @@ metadata: { name: elasticsearch }
 #    가리킨다. 그래서 첫 파드만 떴고, 파드를 다시 만들면(rollout restart · 노드 재부팅 · 축출 · ops/29 setup)
 #    `FATAL: could not load server certificate file "/var/lib/postgresql/tls/tls.crt"` 로 CrashLoopBackOff 였다
 #    (ConfigurationGuardrailTest B-93).
-# [JA] 証明書は initContainer が起動のたびに emptyDir へ複製する。以前は初期化スクリプト(空の PGDATA で一度だけ)が
-#      PVC の外へ複製していたため、Pod を作り直すと証明書がなく起動できなかった。
+# [JA] サービスの datasource が sslmode=require なので SSL を有効にする。証明書は ops/07 の生成物。
+#      証明書は Deployment の initContainer(copy-tls)が Pod が起動するたびに postgres 所有 600 で
+#      /var/lib/postgresql/tls(emptyDir)へ複製する — マウント元は root 所有で直接読めない(ops/12 リハーサルで
+#      実測した落とし穴)。init スクリプトは ① postgresql.conf に ssl 設定を追加(コマンドラインの -c はエントリーポイントの
+#      初期化用一時サーバーにも適用されて落ちる — 同じリハーサルの落とし穴 ③)② role 'product' + DB 作成。
+#      🐛 2026-10-20 実習クラスター: 以前はこの init スクリプトが証明書を複製していた。init スクリプトは空の PGDATA で
+#      一度だけ動く — ところが複製先は PVC の外(コンテナのファイルシステム)で、postgresql.conf(PVC 内)はそのパスを指し続ける。
+#      そのため最初の Pod だけが起動し、Pod を作り直すと(rollout restart・ノード再起動・退避・ops/29 setup)
+#      `FATAL: could not load server certificate file "/var/lib/postgresql/tls/tls.crt"` で CrashLoopBackOff だった
+#      (ConfigurationGuardrailTest B-93)。
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -98,12 +145,15 @@ metadata:
   namespace: postgres
   # 운영에서 이 둘만 다시 적용할 때 쓴다(다른 인프라를 원본으로 되돌리지 않게 — docs/22 §4):
   #   kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres
+  # [JA] 運用でこの 2 つだけを再適用するときに使う(他のインフラを原本に戻さないように — docs/22 §4):
+  #        kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=postgres
   labels: { ecommerce.io/infra: postgres }
 data:
   00-init.sh: |
     #!/bin/bash
     set -e
     # 인증서는 initContainer copy-tls 가 이미 놓았다(파드마다) — 여기서 복사하면 첫 파드에서만 있게 된다.
+    # [JA] 証明書は initContainer copy-tls がすでに置いた(Pod ごと) — ここでコピーすると最初の Pod にしか存在しなくなる。
     [ -r /var/lib/postgresql/tls/tls.key ] || { echo "인증서가 없다 — copy-tls initContainer 확인" >&2; exit 1; }
     cat >> "$PGDATA/postgresql.conf" <<'CONF'
     ssl = on
@@ -117,6 +167,7 @@ data:
     #    나머지는 멀쩡해서 원인이 그 서비스 안에 있는 것처럼 보인다. 실제로 notificationdb 와
     #    deliverydb 가 그렇게 빠져 있었다(두 서비스는 이 파일보다 나중에 생겼다).
     #    ConfigurationGuardrailTest B-40 이 두 목록을 대조한다.
+    # [JA] ⚠️ この一覧は k8s/4x-*.yaml の JDBC URL と正確に一致しなければならない。サービスを足すときここを漏らすと、そのサービスだけが database does not exist で起動に失敗し、残りは無事なので原因がそのサービスの中にあるように見える。実際に notificationdb と deliverydb がそうして抜けていた。ConfigurationGuardrailTest B-40 が 2 つの一覧を突き合わせる。
     for db in userdb productdb metadb cartdb orderdb paydb coupondb chatdb notificationdb deliverydb; do
         psql -v ON_ERROR_STOP=1 -U postgres -c "CREATE DATABASE $db OWNER product"
     done
@@ -133,6 +184,10 @@ spec:
   #    postgres 프로세스가 같은 PGDATA 를 동시에 연다.** 단일 노드에서는 RWO 볼륨이라도
   #    같은 노드이므로 둘 다 마운트에 성공하고, 그 결과는 데이터 손상이다. emptyDir 일
   #    때는 파드마다 볼륨이 따로라 드러나지 않던 문제다.
+  # [JA] ⚠️ Recreate でなければならない。デフォルト(RollingUpdate)は新しいポッドを先に起動するが、そうすると**2 つの
+  #         postgres プロセスが同じ PGDATA を同時に開く。** 単一ノードでは RWO ボリュームでも
+  #         同じノードなので両方ともマウントに成功し、その結果はデータ破損である。emptyDir の
+  #         ときはポッドごとにボリュームが別なので表れなかった問題である。
   strategy: { type: Recreate }
   selector: { matchLabels: { app: postgres } }
   template:
@@ -200,6 +255,7 @@ metadata:
 spec:
   accessModes: [ ReadWriteOnce ]
   # 다른 넷보다 작다. 토큰·락·카운터라 건당 수십 바이트고, AOF 는 재작성으로 잘린다.
+  # [JA] 他の 4 つより小さい。トークン・ロック・カウンターなので 1 件あたり数十バイトで、AOF は書き直しで切り詰められる。
   resources:
     requests:
       storage: 2Gi
@@ -212,6 +268,7 @@ metadata:
 spec:
   replicas: 1
   # 인스턴스 둘이 같은 AOF/RDB 를 쓰면 파일이 섞인다.
+  # [JA] インスタンス 2 つが同じ AOF/RDB を使うとファイルが混ざる。
   strategy: { type: Recreate }
   selector: { matchLabels: { app: redis } }
   template:
@@ -226,6 +283,11 @@ spec:
           #   300초에 100건, 60초에 1만 건" 이다. 로그아웃 블랙리스트처럼 **한 건이 곧
           #   보안 의미**인 쓰기가 몇 분씩 디스크에 닿지 않는다는 뜻이라 AOF 를 켠다.
           #   기록 위치는 작업 디렉터리(/data)이고 아래 볼륨이 거기다.
+          # [JA] $(VAR) は kubelet が env で置換する — パスワードがマニフェストに残らない
+          #      --appendonly yes: デフォルトは RDB スナップショットだけで、保存ポイントが「3600 秒に 1 件、
+          #        300 秒に 100 件、60 秒に 1 万件」である。ログアウトのブラックリストのように**1 件がそのまま
+          #        セキュリティ上の意味**を持つ書き込みが何分もディスクに届かないということなので AOF を有効にする。
+          #        書き込み先は作業ディレクトリ(/data)で、下のボリュームがそこである。
           args: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes"]
           env:
             - name: REDIS_PASSWORD
@@ -239,10 +301,13 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             # AOF 재작성은 순간적으로 메모리를 더 쓴다. 64Mi 요청은 그대로 두되 상한만 올린다.
+            # [JA] AOF の書き直しは瞬間的にメモリを多く使う。64Mi のリクエストはそのままにしてリミットだけ上げる。
             limits: { memory: 384Mi }
       volumes:
         # redis 이미지도 엔트리포인트가 root 로 시작해 /data 를 redis 소유로 chown 한다 —
         # ES 와 달리 fsGroup 이 필요 없다.
+        # [JA] redis イメージもエントリポイントが root で始まり /data を redis 所有に chown する —
+        #      ES と違って fsGroup は不要である。
         - { name: data, persistentVolumeClaim: { claimName: redis-data } }
 ---
 apiVersion: v1
@@ -258,6 +323,10 @@ spec:
 # ⚠️ PLAINTEXT 리스너다. 10-configmap 기본값(KAFKA_SECURITY_PROTOCOL: "SSL")과 다르므로
 # 맞춰 주는 쪽이 둘 있다: ops/13 은 적용 시 sed 로 덮어쓰고, k8s-overlays/external 은
 # KAFKA_URL 옆에서 PLAINTEXT 로 못박는다. 브로커 mTLS 는 운영 Kafka 에서 구성할 것.
+# [JA] ── Kafka(KRaft 単一ノード) ──
+#      ⚠️ PLAINTEXT リスナーである。10-configmap のデフォルト(KAFKA_SECURITY_PROTOCOL: "SSL")と違うので
+#      合わせる側が 2 つある: ops/13 は適用時に sed で上書きし、k8s-overlays/external は
+#      KAFKA_URL の横で PLAINTEXT に固定する。ブローカーの mTLS は運用 Kafka で構成すること。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -278,6 +347,8 @@ spec:
   replicas: 1
   # ⚠️ postgres 와 같은 이유로 Recreate 다. 브로커 둘이 같은 로그 디렉터리를 열면
   #    두 번째가 .lock 을 못 잡아 죽거나, 운이 나쁘면 메타데이터가 엉킨다.
+  # [JA] ⚠️ postgres と同じ理由で Recreate である。ブローカー 2 つが同じログディレクトリを開くと
+  #         2 つ目が .lock を取れずに落ちるか、運が悪いとメタデータが絡まる。
   strategy: { type: Recreate }
   selector: { matchLabels: { app: kafka } }
   template:
@@ -287,6 +358,10 @@ spec:
       # 자동 주입하는데, cp-kafka 의 설정 스크립트가 이를 브로커 설정 `port` 로 오해해
       # 기동이 죽는다("port is deprecated..." 후 CrashLoop — 실측). Service 이름이 kafka 인 이상
       # 피할 수 없으므로 레거시 주입 자체를 끈다(DNS 디스커버리에는 영향 없음).
+      # [JA] k8s は同じネームスペースの Service を KAFKA_PORT=tcp://... 形式のレガシー環境変数として
+      #      自動注入するが、cp-kafka の設定スクリプトがこれをブローカー設定の `port` と誤解して
+      #      起動が落ちる("port is deprecated..." の後 CrashLoop — 実測)。Service 名が kafka である以上
+      #      避けられないので、レガシー注入自体を切る(DNS ディスカバリには影響なし)。
       enableServiceLinks: false
       containers:
         - name: kafka
@@ -308,9 +383,15 @@ spec:
             # 지점과 한 눈에 맞물려야 한다 — 둘이 어긋나면 브로커는 정상으로 뜨고 데이터만
             # 볼륨 밖(컨테이너 쓰기 계층)에 쌓인다. 파드를 갈아야만 드러나는 종류다.
             # KRaft 메타데이터도 여기 있으므로 CLUSTER_ID 와 함께 보존된다.
+            # [JA] ログディレクトリを**明示する。** イメージのデフォルトと同じパスだが、下のマウント
+            #      ポイントとひと目で噛み合っていなければならない — 2 つがずれるとブローカーは正常に起動し、データだけが
+            #      ボリュームの外(コンテナの書き込みレイヤー)に溜まる。ポッドを入れ替えて初めて表れる類である。
+            #      KRaft メタデータもここにあるので CLUSTER_ID と一緒に保存される。
             - { name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data" }
             # 브로커 힙을 명시적으로 묶는다. 기본 1G 힙이면 컨테이너 리밋과 경합해
             # 프로브/CLI 가 OOM(137) 으로 죽는다 — 실측.
+            # [JA] ブローカーのヒープを明示的に縛る。デフォルトの 1G ヒープだとコンテナリミットと競合して
+            #      プローブ/CLI が OOM(137)で落ちる — 実測。
             - { name: KAFKA_HEAP_OPTS, value: "-Xmx512m -Xms256m" }
           ports: [ { containerPort: 9092 } ]
           volumeMounts:
@@ -318,6 +399,8 @@ spec:
           readinessProbe:
             # kafka-topics 는 JVM 을 하나 더 띄운다 — 리밋이 빠듯한 파드에서는 프로브 자체가
             # OOM(137) 으로 죽어 브로커가 멀쩡한데도 영원히 0/1 이다(실측). TCP 로 충분하다.
+            # [JA] kafka-topics は JVM をもう 1 つ起動する — リミットがきついポッドではプローブ自体が
+            #      OOM(137)で落ち、ブローカーは無事なのに永遠に 0/1 である(実測)。TCP で十分である。
             tcpSocket: { port: 9092 }
             initialDelaySeconds: 15
             periodSeconds: 10
@@ -330,6 +413,11 @@ spec:
         #    브로커가 로그 디렉터리 생성에서 죽는다. 그때 로그에 나오는 문구는 권한이 아니라
         #    "Failed to create data directory" 라 원인이 바로 보이지 않는다.
         #    해결은 파드에 securityContext.fsGroup: 1000 을 주는 것이다.
+        # [JA] ⚠️ cp-kafka は uid 1000(appuser)で動く。k3s の local-path はディレクトリを 0777 で
+        #         作ってくれるのでそのまま使えるが、他のプロビジョナーで権限が root 専用だと
+        #         ブローカーがログディレクトリの作成で落ちる。その時ログに出る文言は権限ではなく
+        #         "Failed to create data directory" なので原因がすぐには見えない。
+        #         解決はポッドに securityContext.fsGroup: 1000 を与えることである。
         - { name: data, persistentVolumeClaim: { claimName: kafka-data } }
 ---
 apiVersion: v1
@@ -362,6 +450,8 @@ spec:
   replicas: 1
   # postgres·kafka 와 같은 이유. mongod 둘이 같은 dbPath 를 열면 두 번째가 mongod.lock
   # 때문에 죽고, 그 사이 첫 번째는 종료 중이라 어느 쪽도 서비스하지 못한다.
+  # [JA] postgres・kafka と同じ理由。mongod 2 つが同じ dbPath を開くと 2 つ目が mongod.lock
+  #      のせいで落ち、その間 1 つ目は終了中なのでどちらもサービスできない。
   strategy: { type: Recreate }
   selector: { matchLabels: { app: mongodb } }
   template:
@@ -388,6 +478,8 @@ spec:
       volumes:
         # mongo 이미지는 엔트리포인트가 root 로 시작해 /data/db 를 mongodb 소유로 chown 한
         # 뒤 권한을 내린다. 그래서 아래 ES 와 달리 fsGroup 이 필요 없다.
+        # [JA] mongo イメージはエントリポイントが root で始まり /data/db を mongodb 所有に chown した
+        #      後に権限を下げる。だから下の ES と違って fsGroup は不要である。
         - { name: data, persistentVolumeClaim: { claimName: mongo-data } }
 ---
 apiVersion: v1
@@ -401,6 +493,8 @@ spec:
 ---
 # ── Elasticsearch ───────────────────────────────────────────────────────────
 # 호스트에 vm.max_map_count >= 262144 필요 (ops/13 이 확인/설정).
+# [JA] ── Elasticsearch ──
+#      ホストに vm.max_map_count >= 262144 が必要(ops/13 が確認/設定)。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -420,6 +514,7 @@ metadata:
 spec:
   replicas: 1
   # 노드 둘이 같은 data 경로를 열면 두 번째가 node.lock 에서 죽는다.
+  # [JA] ノード 2 つが同じ data パスを開くと 2 つ目が node.lock で落ちる。
   strategy: { type: Recreate }
   selector: { matchLabels: { app: elasticsearch } }
   template:
@@ -431,6 +526,12 @@ spec:
       #    k3s 의 local-path 는 디렉터리를 0777 로 만들어 주므로 이 설정 없이도 돌지만,
       #    hostPath 기반 볼륨에는 fsGroup 이 적용되지 않아 이 줄은 그 환경에서 무효다.
       #    CSI 프로비저너를 쓰는 클러스터에서는 이 줄이 실제로 소유권을 맞춰 준다.
+      # [JA] ⚠️ ES イメージは uid 1000 で動きながらデータパスを **chown しない。** mongo・postgres
+      #         と違う点である。パスに書けないと起動中にこう落ちる:
+      #           java.nio.file.AccessDeniedException: /usr/share/elasticsearch/data/nodes
+      #         k3s の local-path はディレクトリを 0777 で作ってくれるのでこの設定なしでも動くが、
+      #         hostPath ベースのボリュームには fsGroup が適用されないので、この行はその環境では無効である。
+      #         CSI プロビジョナーを使うクラスタではこの行が実際に所有権を合わせてくれる。
       securityContext:
         fsGroup: 1000
       # 형태소 분석 플러그인(nori · kuromoji) — common/src/main/resources/es/es-settings.json 이 nori_tokenizer ·
@@ -438,6 +539,11 @@ spec:
       # (Unknown tokenizer type). 플러그인은 PVC 안(.es-plugins)에 둔다 — 한 번 받으면 재시작에 네트워크가 필요 없다.
       # ES 이미지를 올리면 플러그인 버전이 어긋나므로, 버전이 다른 것만 지우고 다시 받는다(docs/19 §5.2).
       # ⚠️ k8s 는 args 의 $(…) 를 환경 변수 참조로 읽는다 — 명령 치환은 $$(…) 로 쓴다.
+      # [JA] 形態素解析プラグイン(nori · kuromoji) — common/src/main/resources/es/es-settings.json が nori_tokenizer ·
+      #      kuromoji_tokenizer を使う。デフォルトのイメージにはないので、なければ再インデックスが**インデックス作成段階で**失敗する
+      #      (Unknown tokenizer type)。プラグインは PVC 内(.es-plugins)に置く — 一度取得すれば再起動にネットワークが不要である。
+      #      ES イメージを上げるとプラグインのバージョンがずれるので、バージョンが違うものだけ消して取得し直す(docs/19 §5.2)。
+      #      ⚠️ k8s は args の $(…) を環境変数参照として読む — コマンド置換は $$(…) と書く。
       initContainers:
         - name: install-analysis-plugins
           image: mirror.gcr.io/elasticsearch:8.15.5
@@ -468,6 +574,8 @@ spec:
             - { name: xpack.security.enabled, value: "false" }
             # 힙 1GB — 상품 수백만 개(nested 포함 Lucene 문서 수천만)를 색인할 때 512MB 로는 병합 중 메모리가 모자란다(docs/19 §5.2).
             # 컨테이너 상한은 힙의 2배(오프힙 · 파일 캐시 몫).
+            # [JA] ヒープ 1GB — 商品数百万個(nested を含む Lucene ドキュメント数千万)を索引するとき、512MB ではマージ中にメモリが足りない(docs/19 §5.2)。
+            #      コンテナのリミットはヒープの 2 倍(オフヒープ · ファイルキャッシュの分)。
             - { name: ES_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
           ports: [ { containerPort: 9200 } ]
           volumeMounts:

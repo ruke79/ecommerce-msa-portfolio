@@ -31,6 +31,16 @@ import com.project.common.constants.PaymentType;
  * 쪽이 v3 를 알게 하면서 쓰기는 v2 작성 스키마로 했고, 이번 릴리스부터 v3 로 쓴다 — 롤링 중 옛 파드는 앞 릴리스라 v3 를
  * 안다(앞 릴리스를 건너뛰면 order V18 이 기동을 막는다). 다음에 필드를 더할 때도 같은 두 단계를 밟는다: 새 필드는 끝에
  * 붙이고, 한 릴리스 동안 옛 작성 스키마로 쓴다({@code new BinaryMessageEncoder<>(SpecificData.getForClass(..), 옛스키마)}).
+ *
+ * <p>[JA] order → pay 決済リクエスト(トピック {@code order})。
+ * フィールドを抜くとき(v4, paypalOrderId) — 次のスキーマを先に知らせる: 中ほどのフィールドを抜くと後ろのフィールドの位置がずれるので、下の「古い書き込みスキーマで
+ * 書く」が通じない。そこで前のリリース(C1)は生成クラスを v3 のままにして v4 をデコーダーのストアに先に入れ、今回のリリース(C2)から v4 で書く — ローリング中の
+ * 古いポッドは C1 なので v4 を知っている(C1 を飛ばすと order のマイグレーションが起動を止める、docs/49 §3)。
+ * v3 は二つのリリースにまたがって入った — 読む側が先: v3 はプロバイダー中立のフィールド(paymentProvider · providerPaymentId)を足した(docs/49 §3)。単一オブジェクト
+ * エンコーディングは書き込みスキーマの<b>フィンガープリント</b>を載せ、読む側は知っているフィンガープリントしか読めない。デプロイは全サービスをほぼ同時に入れ替えるので
+ * (ops/28)、すぐに v3 で書いていたらローリング中に古い pay は決済リクエストを DLT に送り、古い saga-projection はストリームが止まっていた。そこで前のリリースは
+ * 読む側すべてに v3 を知らせつつ書き込みは v2 の書き込みスキーマで行い、今回のリリースから v3 で書く — ローリング中の古いポッドは前のリリースなので v3 を知っている
+ * (前のリリースを飛ばすと order V18 が起動を止める)。次にフィールドを足すときも同じ二段階を踏む: 新しいフィールドは末尾に付け、一リリースの間は古い書き込みスキーマで書く。
  */
 public class PaymentRequestAvroMapping
         implements AvroMapping<com.project.common.message.dto.request.PaymentRequest, PaymentRequest> {
@@ -89,6 +99,8 @@ public class PaymentRequestAvroMapping
     public BinaryMessageDecoder<PaymentRequest> decoder() {
         // v1(authorizationToken 있음)·v2(제공자 중립 필드 없음)·v3(paypalOrderId 있음)로 쓴 레코드도 읽는다 — 앞
         // 릴리스들의 order 가 쓴 것이 토픽·DLT 보존 기간 동안 남는다(AvroSchemaHistory).
+        // [JA] v1(authorizationToken あり) · v2(プロバイダー中立フィールドなし) · v3(paypalOrderId あり)で書いたレコードも読む —
+        //      前のリリースの order が書いたものがトピック · DLT の保持期間の間残る(AvroSchemaHistory)。
         return PaymentRequest.createDecoder(AvroSchemaHistory.store(AvroSchemaHistory.PAYMENT_REQUEST));
     }
 }

@@ -35,6 +35,7 @@ public class TotpReplayGuard {
     static final String FAIL_KEY = "totp:mgmt-fail:";
 
     /** 마지막 구간보다 새 구간일 때만 기록하고 1, 아니면 0. */
+    // [JA] 最後の区間より新しい区間のときだけ記録して 1、そうでなければ 0。
     private static final DefaultRedisScript<Long> CLAIM = new DefaultRedisScript<>("""
             local cur = tonumber(redis.call('GET', KEYS[1]) or '-1')
             local step = tonumber(ARGV[1])
@@ -46,6 +47,7 @@ public class TotpReplayGuard {
             """, Long.class);
 
     /** 실패를 하나 더하고, 처음이면 창의 길이만큼 TTL. 지금까지의 실패 수. */
+    // [JA] 失敗を一つ足し、初回ならウィンドウの長さだけ TTL。これまでの失敗数。
     private static final DefaultRedisScript<Long> FAIL = new DefaultRedisScript<>("""
             local n = redis.call('INCR', KEYS[1])
             if n == 1 then
@@ -69,10 +71,14 @@ public class TotpReplayGuard {
     /**
      * 이 구간의 코드를 받아들여도 되는가 — 되면 기록한다.
      *
+     * <p>[JA] この区間のコードを受け入れてよいか — よければ記録する。
+     *
      * @return false 면 이미 같은(또는 더 늦은) 구간의 코드가 쓰였다 = 재사용
+     *     [JA] false なら、すでに同じ(またはより遅い)区間のコードが使われた = 再利用
      */
     public boolean claim(Long userId, long timeStep) {
         // 기록은 허용 창(앞뒤 한 구간 = 90초)보다 넉넉히 — 그 뒤에는 옛 구간의 코드가 어차피 맞지 않는다.
+        // [JA] 記録は許容ウィンドウ(前後 1 区間 = 90 秒)より余裕を持って — その後は古い区間のコードはどのみち合わない。
         Long r = redis.execute(CLAIM, List.of(STEP_KEY + userId), String.valueOf(timeStep), "300000");
         return r != null && r == 1L;
     }

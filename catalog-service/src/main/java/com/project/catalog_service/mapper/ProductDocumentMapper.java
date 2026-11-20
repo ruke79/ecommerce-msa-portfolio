@@ -17,6 +17,12 @@ import com.project.catalog_service.model.Product;
  * <p>null 방어가 배치 람다보다 강하다: shipping·category·컬렉션이 비어 있는 상품이
  * 하나만 있어도 배치 전체가 NPE 로 죽는 형태였다(같은 무방비 역참조로 목록 API 가
  * 500 났던 이력 — docs/14 B-15).
+ *
+ * <p>[JA] Product → ProductDocument — バッチインデックスとリアルタイム単件インデックスが同じマッピングを使う。
+ * 以前はこのマッピングがバッチジョブのラムダの中にしかなかった。リアルタイムインデックスを別に書くと二つのマッピングは必ずずれる —
+ * バッチでインデックスされた商品と登録直後にインデックスされた商品が違う形になり、その差は検索結果がおかしくなるまで誰も気づかない。
+ * null 防御はバッチのラムダより強い: shipping・category・コレクションが空の商品が一つでもあればバッチ全体が NPE で死ぬ形だった
+ * (同じ無防備な参照で一覧 API が 500 になった履歴 — docs/14 B-15)。
  */
 public final class ProductDocumentMapper {
 

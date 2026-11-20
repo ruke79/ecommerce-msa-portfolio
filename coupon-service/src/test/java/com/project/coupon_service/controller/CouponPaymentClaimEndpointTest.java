@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import com.project.coupon_service.service.CouponService;
 
 /** 결제 시작 엔드포인트 — 내부 호출만(게이트웨이를 지난 사용자 요청은 403), 결과는 이름 그대로. */
+// [JA] 決済開始エンドポイント — 内部呼び出しのみ(ゲートウェイを通ったユーザーリクエストは 403)、結果は名前そのまま。
 @DisplayName("쿠폰 결제 시작 엔드포인트")
 class CouponPaymentClaimEndpointTest {
 

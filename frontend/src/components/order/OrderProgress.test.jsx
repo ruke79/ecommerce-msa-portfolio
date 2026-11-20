@@ -12,6 +12,10 @@ const states = () => screen.getAllByRole("listitem").map((li) => li.getAttribute
  * 결제 확인 직후 주문은 아직 NOT_PROCESSED 다(사가가 PAID 로 바꾼다). 예전 화면은 그 순간
  * "결제가 완료되었습니다" 라고 말했고, 바로 옆의 결제 상태는 X 였다 — 사용자에게는 모순.
  * 이 컴포넌트는 지금 어디까지 왔는지를 그리고, 기다리는 동안은 "확정하는 중" 이라고 말한다.
+ *
+ * <p>[JA] 決済確認の直後、注文はまだ NOT_PROCESSED である(サガが PAID に変える)。以前の画面はその瞬間に
+ * 「決済が完了しました」と言い、すぐ横の決済状態は X だった — ユーザーには矛盾。
+ * このコンポーネントは今どこまで来たかを描き、待つ間は「確定中」と言う。
  */
 describe("OrderProgress — 주문 진행 단계", () => {
     it("상태 → 단계 매핑", () => {
@@ -32,6 +36,7 @@ describe("OrderProgress — 주문 진행 단계", () => {
     });
 
     /** 🔴 핵심 — 확인은 됐고 확정은 아직. "완료" 가 아니라 "확정하는 중". */
+    // [JA] 🔴 核心 — 確認は済み確定はまだ。「完了」ではなく「確定中」。
     it("🔴 정산을 기다리는 동안은 결제는 끝났고 확정이 진행 중이다", () => {
         render(<OrderProgress order={{ orderStatus: "NOT_PROCESSED" }} settling />);
         expect(states()).toEqual(["done", "current", "todo", "todo", "todo"]);

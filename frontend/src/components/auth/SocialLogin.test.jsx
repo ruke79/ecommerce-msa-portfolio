@@ -5,6 +5,7 @@ import { withI18n } from "i18n/testing";
 import { getRequest } from "util/api";
 
 // 버튼 문구가 사전에서 오므로 I18nProvider 안에서 그린다(기본 한국어).
+// [JA] ボタン文言が辞書から来るので I18nProvider の中で描く(既定は韓国語)。
 const render = (ui, lang) => rtlRender(withI18n(ui, lang));
 
 jest.mock("util/api", () => ({
@@ -14,6 +15,8 @@ jest.mock("util/api", () => ({
 
 // 핵심 계약: 버튼은 **서버가 아는 프로바이더만** 그린다. 하드코딩된 버튼은
 // client-id 없는 프로바이더로 이동한 뒤에야 에러를 보여주게 된다.
+// [JA] 核心の契約: ボタンは **サーバーが知っているプロバイダーだけ** 描く。ハードコードしたボタンは
+//      client-id のないプロバイダーへ遷移してから初めてエラーを見せることになる。
 describe("SocialLogin", () => {
   beforeEach(() => jest.clearAllMocks());
 

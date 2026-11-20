@@ -15,8 +15,10 @@ import java.io.IOException;
 //  JwtTokenFilter를 common 모듈에 추가하고 다른 서비스들이 이를 사용하는 것은
 //  Spring Security를 사용하는 user-service의 필터와 충돌하는 것이 아니라,
 //   오히려 마이크로 서비스 아키텍처에서 인증 로직을 분산 처리하는 표준적인 방식
+// [JA] JwtTokenFilter を common モジュールに追加し他サービスがそれを使うのは、Spring Security を使う user-service のフィルターと衝突するものではなく、
+//      むしろマイクロサービスアーキテクチャで認証ロジックを分散処理する標準的な方式である
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE) // 필터 체인에서 가장 먼저 실행되도록 설정
+@Order(Ordered.HIGHEST_PRECEDENCE) // 필터 체인에서 가장 먼저 실행되도록 설정 ／ [JA] フィルターチェーンで最初に実行されるように設定
 public class JwtTokenFilter extends OncePerRequestFilter {
 
     @Override
@@ -31,6 +33,7 @@ public class JwtTokenFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } finally {
             // 요청 처리가 끝난 후 반드시 토큰을 제거하여 메모리 누수 방지
+            // [JA] リクエスト処理の終了後に必ずトークンを除去してメモリリークを防ぐ
             TokenContext.clear();
         }
     }

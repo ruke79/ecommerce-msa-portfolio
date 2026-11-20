@@ -18,6 +18,10 @@ import lombok.Getter;
  *
  * <p>고객에게는 상담원의 <b>표시 이름</b>만 간다(닉네임). 상담원의 회원 id 는 고객 화면에 필요 없지만, 메시지가
  * "내 것인가" 를 가르는 데 senderId 를 쓰므로 숨길 수 없다 — id 는 식별자일 뿐 연락처가 아니다.
+ *
+ * <p>[JA] 相談スレッド — 顧客画面と相談デスクが共用する(docs/58)。
+ * <p>id 類は<b>文字列</b>で出る — 会員 id は TSID(19 桁)なので JS {@code Number} に入れると末尾の桁が潰れる(MessageDto.senderId と同じ理由)。
+ * <p>顧客には相談員の<b>表示名</b>だけが渡る(ニックネーム)。相談員の会員 id は顧客画面には不要だが、メッセージが「自分のものか」を分けるのに senderId を使うので隠せない — id は識別子にすぎず連絡先ではない。
  */
 @Getter
 @Builder
@@ -26,12 +30,14 @@ public class SupportThreadDto {
     @JsonSerialize(using = ToStringSerializer.class)
     private final Long threadId;
     /** STOMP 구독·메시지의 방 id — {@code support-<threadId>}. */
+    // [JA] STOMP 購読・メッセージのルーム id — {@code support-<threadId>}。
     private final String roomId;
     private final SupportThreadStatus status;
 
     @JsonSerialize(using = ToStringSerializer.class)
     private final Long customerId;
     /** 상담 데스크에만 채운다 — 고객 화면에는 자기 이름이 필요 없다. */
+    // [JA] 相談デスクにだけ埋める — 顧客画面には自分の名前は不要。
     private final String customerName;
 
     @JsonSerialize(using = ToStringSerializer.class)
@@ -46,21 +52,26 @@ public class SupportThreadDto {
     private final Instant closedAt;
 
     /** 문의 유형(docs/58 §11). */
+    // [JA] 問い合わせ種別(docs/58 §11)。
     private final SupportTopic topic;
     /** 대기 순번(1 = 다음 차례) — 대기 중인 고객 화면에만. 그 밖에는 null. */
+    // [JA] 待ち順番(1 = 次の番) — 待機中の顧客画面にだけ。それ以外は null。
     private final Long queuePosition;
 
     /** 만족도(1~5)와 의견 — 평가 전이면 null. 고객은 자기 것을, 데스크는 모두 본다. */
+    // [JA] 満足度(1〜5)と意見 — 評価前なら null。顧客は自分のものを、デスクはすべてを見る。
     private final Integer rating;
     private final String ratingComment;
     private final Instant ratedAt;
 
     /** 🔒 상담원 내부 메모 — 데스크 응답에만. 고객 응답에서는 언제나 null(JSON 에서도 빠진다). */
+    // [JA] 🔒 相談員の内部メモ — デスクの応答にだけ。顧客への応答では常に null(JSON からも抜ける)。
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private final String internalNote;
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private final Instant noteUpdatedAt;
     /** 데스크의 상담 하나를 볼 때만 — 이 고객의 지난(종료) 상담 수. */
+    // [JA] デスクで相談一つを見るときだけ — この顧客の過去(終了)の相談数。
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private final Long customerPastThreads;
 }

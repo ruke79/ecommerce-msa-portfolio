@@ -75,6 +75,8 @@ class ProductSkuItemProcessorTest {
         // color 조회·이미지 업로드까지 가지 않는다). 엄격 모드에서는 이런 미사용 스텁이
         // UnnecessaryStubbingException 으로 테스트를 깨뜨리므로 이 세 건만 lenient 로 둔다.
         // 개별 테스트에서 추가하는 스텁에는 엄격 검사가 그대로 적용된다.
+        // [JA] 共通スタブなのでテストごとに使われるものが違う(例: 不正な product_id のケースは color 照会・画像アップロードまで行かない)。
+        //      strict モードではこうした未使用スタブが UnnecessaryStubbingException でテストを壊すので、この三件だけ lenient にする。個別テストで追加するスタブには strict 検査がそのまま適用される。
         lenient().when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         lenient().when(productColorRepository.findById(1L)).thenReturn(Optional.of(color));
         lenient().when(imageService.uploadClasspathImage(anyString()))
@@ -87,6 +89,7 @@ class ProductSkuItemProcessorTest {
         processor.process(csvDto);
 
         // Then — 역슬래시 정규화는 ImageService.uploadClasspathImage 안에서 한다.
+        // [JA] Then — バックスラッシュの正規化は ImageService.uploadClasspathImage の中で行う。
         verify(imageService).uploadClasspathImage("images\\food\\Image_2.jpg");
         verify(imageService).uploadClasspathImage("images\\food\\Image_9.jpg");
     }
@@ -97,6 +100,10 @@ class ProductSkuItemProcessorTest {
      * <p>예전에는 프로세서가 예외를 삼키고 null 을 걸러 냈다. 그래서 S3 자격 증명이
      * 폐기된 상태에서도 임포트 잡이 성공으로 끝났고, images 가 빈 SKU 가 DB 에 남았다.
      * 그 상품이 첫 화면에 올라오면 카드가 깨진다.
+     *
+     * <p>[JA] アップロードが失敗したら<b>そのまま落ちなければならない。</b>
+     * <p>以前はプロセッサが例外を飲み込み null を除いていた。そのため S3 資格情報が廃棄された状態でもインポートジョブが成功で終わり、images が空の SKU が DB に残った。
+     * その商品がトップ画面に上がるとカードが壊れる。
      */
     @Test
     void process_should_fail_when_image_upload_fails() {

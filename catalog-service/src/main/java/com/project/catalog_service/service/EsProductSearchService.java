@@ -28,6 +28,14 @@ import lombok.extern.slf4j.Slf4j;
  *
  * 대상 인덱스는 배치가 롤오버하는 alias(product-alias)이며, 필드는 ProductDocument 의
  * 한/영/일 멀티필드(nori·standard·kuromoji — 배치의 명시적 매핑 생성으로 실제 적용됨)를 사용한다.
+ *
+ * <p>[JA] 商品テキスト検索の Elasticsearch 経路(docs/07 R-C1)。
+ * search.engine=es のときだけ Bean が作られる(デフォルトは postgres — 既存の LIKE 経路を維持)。
+ * パターン: 「ES で関連度検索 → productId 一覧 → Postgres で詳細/ファセットのハイドレーション」。
+ * SearchService がこの一覧を IN 条件に使うのでレスポンスの形(SearchResultDto)は変わらず、前方ワイルドカード LIKE のフルスキャン(docs/06 CAT-1)だけが
+ * 関連度ベースの全文検索に置き換わる。
+ * 対象インデックスはバッチがロールオーバーするエイリアス(product-alias)で、フィールドは ProductDocument の
+ * 韓/英/日マルチフィールド(nori・standard・kuromoji — バッチの明示的なマッピング生成で実際に適用される)を使う。
  */
 @Slf4j
 @Service
@@ -43,6 +51,9 @@ public class EsProductSearchService {
     /**
      * 검색어에 매칭되는 productId 목록을 관련도 순으로 반환한다.
      * 실패 시 예외를 그대로 던진다 — 폴백(기존 LIKE 경로) 판단은 호출자(SearchService)가 한다.
+     *
+     * <p>[JA] 検索語にマッチする productId 一覧を関連度順に返す。
+     * 失敗時は例外をそのまま投げる — フォールバック(既存の LIKE 経路)の判断は呼び出し元(SearchService)が行う。
      */
     public List<Long> searchProductIds(String term, int limit) {
         NativeQuery query = NativeQuery.builder()

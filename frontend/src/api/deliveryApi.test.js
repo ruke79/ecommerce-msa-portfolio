@@ -7,6 +7,10 @@ import { changeDeliveryAddress, cancelDelivery, fetchDeliveryByOrder } from "api
  * 409 는 "요청이 잘못됐다"가 아니라 "지금은 할 수 없다 — 이미 발송됐다"는 뜻이다. 400 과
  * 구분하지 못하면 사용자에게 "잘못 입력하셨습니다"를 띄우게 되는데, 사용자는 아무것도 잘못
  * 입력하지 않았다.
+ *
+ * <p>[JA] 配送 API は <b>409 をエラーではなく状態として</b>扱う。
+ * 409 は「リクエストが間違っている」ではなく「今はできない — すでに発送された」という意味である。400 と区別できないと
+ * ユーザーに「入力が間違っています」を表示することになるが、ユーザーは何も間違えて入力していない。
  */
 describe("deliveryApi", () => {
   afterEach(() => jest.restoreAllMocks());
@@ -50,6 +54,7 @@ describe("deliveryApi", () => {
 
     it("falls back to a readable message when the server sends no body", async () => {
       // 서버가 본문 없이 실패를 줄 수 있다. 여기서 터지면 화면이 통째로 죽는다.
+      // [JA] サーバーが本文なしで失敗を返すことがある。ここで弾けると画面が丸ごと落ちる。
       jest.spyOn(api, "patch").mockRejectedValue({ response: { status: 500 } });
 
       const result = await changeDeliveryAddress(1, {});
@@ -93,6 +98,8 @@ describe("deliveryApi", () => {
     it("propagates failures so the caller can decide", async () => {
       // 이 함수는 오류를 삼키지 않는다 — 호출부(DeliveryTracker)가 "아직 배송 없음"과
       // 진짜 오류를 구분해 처리한다.
+      // [JA] この関数はエラーを握りつぶさない — 呼び出し側(DeliveryTracker)が「まだ配送なし」と
+      //      本当のエラーを区別して処理する。
       jest.spyOn(api, "get").mockRejectedValue(new Error("404"));
 
       await expect(fetchDeliveryByOrder(5)).rejects.toThrow();

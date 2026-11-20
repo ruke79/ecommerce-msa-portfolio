@@ -25,7 +25,9 @@ import org.springframework.core.io.support.SpringFactoriesLoader;
  * <p>🐛 예전: 13개 매니페스트가 {@code -Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)}(서비스는 keyStorePassword 도)를
  * 넣어, "Picked up JAVA_TOOL_OPTIONS: …" 한 줄로 파드 로그 · Loki 에 평문 비밀번호가 남았다(logback 의 마스킹을 거치지 않는다).
  *
- * <p>[JA] B-83: ストアのパスワードは JAVA_TOOL_OPTIONS の外へ — JVM が起動のたびにその変数をまるごと stderr に出す。
+ * <p>[JA] B-83: ストアのパスワードは {@code JAVA_TOOL_OPTIONS} の外へ — JVM が起動のたびにその変数をまるごと stderr に出す。
+ * 🐛 以前: 13 個のマニフェストが {@code -Djavax.net.ssl.trustStorePassword=$(LOCAL_KEY_STORE_PASSWORD)}(サービスは keyStorePassword も)を
+ * 入れており、"Picked up JAVA_TOOL_OPTIONS: …" の一行で Pod のログ · Loki に平文のパスワードが残った(logback のマスキングを通らない)。
  */
 @DisplayName("B-83: JVM 스토어 비밀번호 — JAVA_TOOL_OPTIONS 가 아니라 환경 변수에서")
 class JvmSslPasswordsTest {
@@ -56,6 +58,7 @@ class JvmSslPasswordsTest {
     }
 
     /** JAVA_TOOL_OPTIONS · JDK_JAVA_OPTIONS 의 값(여러 줄 >- 포함)과 그 파일의 env 이름들. */
+    // [JA] JAVA_TOOL_OPTIONS · JDK_JAVA_OPTIONS の値(複数行の >- を含む)とそのファイルの env 名。
     private static List<String> jvmOptionValues(String yaml) {
         List<String> out = new ArrayList<>();
         Matcher m = Pattern.compile("(?m)^(\\s*)- name: (?:JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS)\\s*\\n((?:\\1  .*\\n?)+)").matcher(yaml);
@@ -87,6 +90,7 @@ class JvmSslPasswordsTest {
                 }
             }
             // 셸 스크립트: JAVA_TOOL_OPTIONS="… Password=…" · JTO="…"
+            // [JA] シェルスクリプト: JAVA_TOOL_OPTIONS="… Password=…" · JTO="…"
             for (String line : text.split("\n")) {
                 if (line.matches(".*(JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS|JTO)=\".*Password=.*")) {
                     offenders.add(root().relativize(f) + ": " + line.strip().substring(0, Math.min(60, line.strip().length())));

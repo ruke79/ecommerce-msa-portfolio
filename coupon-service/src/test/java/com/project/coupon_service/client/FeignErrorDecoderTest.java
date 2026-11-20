@@ -19,6 +19,9 @@ import feign.Response;
  *
  * <p>🐛 예전에는 400 · find 가 아닌 호출의 404(장바구니 · 상품 · 기획전)에 null 을 돌려줬다 — Feign 이 던질 것이 없어 NPE 가 났고, 로그에는
  * 원래 상태 대신 NPE 가 남았다.
+ *
+ * <p>[JA] coupon の Feign エラーデコーダー — どの状態にも投げる例外がある(CP9)。
+ * <p>🐛 以前は 400 · find 以外の呼び出しの 404(カート · 商品 · 企画展)に null を返していた — Feign が投げるものがなく NPE になり、ログには本来の状態の代わりに NPE が残った。
  */
 @DisplayName("coupon · Feign 오류 디코더")
 class FeignErrorDecoderTest {

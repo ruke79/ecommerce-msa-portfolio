@@ -44,6 +44,27 @@
 #   ./ops/32-db-migration.sh repair user-service  # 실패 행 제거 (되돌릴 수 없다 — 묻는다)
 #
 # 종료 코드: 0=정상 · 1=실패한 마이그레이션이 있음 · 2=사용법 오류
+# [JA] 運用アクション ㉜ — DB マイグレーション状態の照会・修復
+#      ── このスクリプトが必要な理由: マイグレーションツールは既にある。Flyway が 9 サービスすべてでスキーマを所有し、
+#      Hibernate は `ddl-auto: validate` で検証だけをする(docs/20)。マイグレーションは**アプリ起動時に**適用される。
+#      なかったのはそれを**運用で扱う方法**だ。これまでは: デプロイが DB を何に変えるかを**事前に見る方法がなかった**
+#      (ops/28 がイメージを変え、Pod の起動とともにマイグレーションが黙って適用される)。マイグレーションが失敗すると
+#      flyway_schema_history に success=false の行が残り、それ以降**そのサービスは二度と起動できない**("Detected failed migration")。
+#      直すにはその行を消す必要があるが(flyway repair)その手段がリポジトリになかった — 運用者が手で DELETE を書く必要があり、
+#      誤って消すと既に適用されたマイグレーションを再実行する。Pod が CrashLoopBackOff のとき「どこまで適用されたか」を見る場所がなかった。
+#      Flyway CLI は新たに導入しない。必要な情報はすべて flyway_schema_history テーブルにあり、
+#      保留中の一覧はこのリポジトリの db/migration/*.sql と照合すれば得られる。
+#      ── ⚠️ ロールバックはスキーマを戻さない: `ops/28 --rollback` は**イメージだけ**を戻す。スキーマは前に進んだまま残る。
+#      だからあるデプロイがカラムを消したり名前を変えたりしていれば、戻した旧イメージは Hibernate validate で
+#      起動に失敗する — 安全網があると信じた瞬間にないのだ。
+#      規則: **マイグレーションは 1 世代前と互換になるよう書く**(expand-contract)。① 追加だけの変更を先にデプロイする
+#      (カラム追加、nullable で) ② コードが新カラムを使い旧カラムをもう読まないバージョンがデプロイされ安定したら
+#      ③ そのとき旧いものを消すマイグレーションを**次のリリースで**出す。
+#      そうすれば①・②のどの時点でも 1 バージョンのロールバックが動く。削除文を書かざるを得ないなら
+#      マイグレーションファイルに `-- ROLLBACK-UNSAFE: <理由と対策>` を書く(ConfigurationGuardrailTest B-54 がその表示を要求する)。
+#      ── 使い方は上記(全サービス要約・info = 適用履歴全体・pending = デプロイすると何が適用されるか(デプロイ前に)・
+#      drift = 適用済みファイルが変更されたか(デプロイ前に)・repair = 失敗行の削除(戻せない — 確認を求める))。
+#      終了コード: 0=正常・1=失敗したマイグレーションがある・2=使い方の誤り
 set -uo pipefail
 
 ACTION="${1:-summary}"
@@ -68,6 +89,8 @@ command -v kubectl >/dev/null || die "kubectl 이 필요합니다"
 
 # 서비스 → 데이터베이스. application-local.yml 의 jdbc URL 에서 읽는다 — 여기 또 적으면
 # 두 벌이 되고 반드시 어긋난다.
+# [JA] サービス → データベース。application-local.yml の jdbc URL から読む — ここにもう一度書くと
+#      二重管理になり必ずずれる。
 db_of() {
     grep -hoP 'url:\s*jdbc:postgresql://[^/]+/\K[A-Za-z0-9_]+' \
         "$1/src/main/resources/application-local.yml" 2>/dev/null | head -1
@@ -77,6 +100,7 @@ SERVICES="user-service catalog-service cart-service order-service pay-service
           coupon-service chat-service notification-service delivery-service"
 
 # 파드 안에서 psql. -A -t 로 값만, -F 로 구분자 고정.
+# [JA] Pod 内で psql。-A -t で値だけ、-F で区切り文字を固定。
 q() {  # q <db> <sql>
     kubectl -n "$PG_NS" exec "deploy/$PG_DEPLOY" -- \
         psql -U "$PG_SUPERUSER" -d "$1" -At -F'|' -c "$2" 2>/dev/null
@@ -86,6 +110,7 @@ kubectl -n "$PG_NS" get "deploy/$PG_DEPLOY" >/dev/null 2>&1 \
     || die "$PG_NS/$PG_DEPLOY 를 찾을 수 없습니다 (PG_NS·PG_DEPLOY 로 지정하세요)"
 
 # 저장소가 들고 있는 마이그레이션 버전들(정렬).
+# [JA] リポジトリが持っているマイグレーションのバージョン(ソート済み)。
 local_versions() {
     ls "$1"/src/main/resources/db/migration/V*__*.sql 2>/dev/null \
         | sed 's|.*/V\([0-9.]*\)__.*|\1|' | sort -V
@@ -96,7 +121,11 @@ local_versions() {
 # ⚠️ comm 을 쓰지 않는다. comm 은 양쪽이 **같은 정렬 규칙**이어야 하는데 버전은 1,2,10 처럼
 #    숫자라 `sort -V`(자연순)와 comm 이 기대하는 사전순이 어긋난다 — "file 1 is not in
 #    sorted order" 로 조용히 틀린 답을 낸다. 집합 차이는 정렬 없이 구한다.
-pending_versions() {  # pending_versions <서비스> <db>
+# [JA] リポジトリにはあるがまだ適用されていないバージョン。
+#      ⚠️ comm は使わない。comm は両側が**同じソート規則**である必要があるが、バージョンは 1,2,10 のような
+#      数字なので `sort -V`(自然順)と comm が期待する辞書順がずれる — "file 1 is not in
+#      sorted order" で黙って誤った答えを出す。集合差はソートせずに求める。
+pending_versions() {  # pending_versions <서비스> <db> ／ [JA] pending_versions <サービス> <db>
     local applied; applied=$(q "$2" "select version from flyway_schema_history where version is not null")
     if [ -z "$applied" ]; then
         local_versions "$1"
@@ -106,6 +135,7 @@ pending_versions() {  # pending_versions <서비스> <db>
 }
 
 # ---------------------------------------------------------------- 요약
+# [JA] 要約
 
 summary() {
     log "마이그레이션 상태 (DB: $PG_NS/$PG_DEPLOY)"
@@ -145,6 +175,7 @@ summary() {
 }
 
 # ---------------------------------------------------------------- 상세
+# [JA] 詳細
 
 info_one() {
     local s="$1" db; db=$(db_of "$s")
@@ -171,6 +202,7 @@ info_one() {
     done <<< "$rows"
 
     # 저장소에만 있는 것 = 다음 기동에 적용될 것.
+    # [JA] リポジトリにだけあるもの = 次の起動で適用されるもの。
     local pending
     pending=$(pending_versions "$s" "$db")
     if [ -n "$pending" ]; then
@@ -181,6 +213,7 @@ info_one() {
 }
 
 # ---------------------------------------------------------------- 대기 목록
+# [JA] 保留一覧
 
 pending_all() {
     log "배포하면 DB 에 적용될 마이그레이션"
@@ -199,6 +232,7 @@ pending_all() {
             local f; f=$(ls "$s"/src/main/resources/db/migration/V${v}__*.sql 2>/dev/null | head -1)
             printf '    V%-6s %s\n' "$v" "$(basename "${f:-?}")"
             # 되돌리기를 깨뜨리는 문장이 있으면 배포 전에 알아야 한다.
+            # [JA] ロールバックを壊す文があればデプロイ前に知っておく必要がある。
             if [ -n "$f" ] && grep -qiE '^\s*(ALTER TABLE .*(DROP COLUMN|DROP CONSTRAINT|RENAME)|DROP TABLE)' "$f"; then
                 warn "      ↑ 되돌리기를 깨뜨릴 수 있는 문장이 있습니다 — 옛 이미지가 validate 에서 죽습니다"
             fi
@@ -208,12 +242,17 @@ pending_all() {
 }
 
 # ---------------------------------------------------------------- 체크섬 드리프트
+# [JA] チェックサムのドリフト
 
 # Flyway 의 마이그레이션 체크섬을 재현한다.
 #
 # 알고리즘: 파일을 **줄 단위로** 읽어 각 줄의 UTF-8 바이트로 CRC32 를 갱신한다. 줄바꿈은
 # 포함하지 않고, 결과를 부호 있는 32비트로 본다(Flyway 의 AbstractLoadableResource 참조).
 # 이 저장소의 마이그레이션 6개로 Java(java.util.zip.CRC32) 구현과 값이 일치함을 확인했다.
+# [JA] Flyway のマイグレーションチェックサムを再現する。
+#      アルゴリズム: ファイルを**行単位で**読み、各行の UTF-8 バイトで CRC32 を更新する。改行は
+#      含めず、結果を符号付き 32 ビットとして扱う(Flyway の AbstractLoadableResource 参照)。
+#      このリポジトリのマイグレーション 6 個で Java(java.util.zip.CRC32)実装と値が一致することを確認した。
 checksum_of() {
     python3 - "$1" <<'PYEOF'
 import sys, zlib
@@ -231,6 +270,10 @@ PYEOF
 #
 # 주석 한 줄만 더해도 그렇다 — Flyway 는 파일 **내용**으로 체크섬을 계산한다. 이 검사를
 # 만들면서 실제로 그럴 뻔했다(이미 적용된 V1 넷에 설명을 달려다가).
+# [JA] 既に適用されたマイグレーションファイルを直すと、次の起動でそのサービスが死ぬ
+#      ("Migration checksum mismatch for migration version N")。
+#      コメントを 1 行足すだけでもそうなる — Flyway はファイルの**内容**でチェックサムを計算する。この検査を
+#      作りながら実際にそうなりかけた(既に適用された V1 四つに説明を付けようとして)。
 drift_all() {
     log "적용된 마이그레이션 파일이 수정됐는지 (수정됐다면 다음 기동에서 죽는다)"
 
@@ -278,6 +321,7 @@ drift_all() {
 }
 
 # ---------------------------------------------------------------- 복구
+# [JA] 修復
 
 repair_one() {
     local s="$1" db; db=$(db_of "$s")
@@ -318,6 +362,7 @@ EOF
     fi
 
     # 실패 행만 지운다. 성공 행은 건드리지 않는다 — 지우면 이미 적용된 것을 다시 돌린다.
+    # [JA] 失敗行だけを消す。成功行には触らない — 消すと既に適用されたものを再実行する。
     local deleted
     deleted=$(q "$db" "delete from flyway_schema_history where not success")
     ok "실패 행을 제거했습니다. 파드를 재시작하면 다시 시도합니다:"
@@ -325,6 +370,7 @@ EOF
 }
 
 # ---------------------------------------------------------------- 진입점
+# [JA] エントリポイント
 
 case "$ACTION" in
     summary) summary ;;

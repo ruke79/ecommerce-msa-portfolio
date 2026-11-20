@@ -49,15 +49,64 @@
 #   SKIP_STATE=1  → 상태 토픽 · saga-projection 입력 토픽은 건드리지 않는다 (DLT 만)
 #   SOURCE_TOPICS="order payment order-status"   # saga-projection 의 입력 — 없으면 브로커 기본 파티션으로 만든다
 #   DRY_RUN=1 → 명령만 출력
+# [JA] 運用アクション ② — トピックの事前作成: DLT 23 種(下の TOPICS — docs/12 §1 の 2026-07 の一覧から増えた) + コンパクションの状態トピック(docs/38 §1.17)
+#
+#      ブローカーが auto.create.topics.enable=false だと DLT の発行が失敗するので、あらかじめ作る。
+#      (auto-create が有効でも、パーティション/保持ポリシーを明示的に管理するほうが安全である)
+#
+#      ── なぜコンパクショントピックがここに入ったか ──
+#
+#      saga-projection(Kafka Streams)の出力 `order-saga-state` は **注文ごとに最新状態を一つ** 持つ
+#      トピックである。そのためには `cleanup.policy=compact` でなければならないが、Streams はシンクトピック
+#      (`to()`)を作らない — 内部トピック(変更ログ・リパーティション)だけを自分で作る。だから誰も
+#      作らなければ **ブローカーが自動作成し、その既定ポリシーは `delete`** である。症状がないのが問題だ:
+#      トピックはでき、レコードもちゃんと溜まり、retention.ms(既定 7 日)が過ぎてから過去の注文の状態が
+#      静かに消える。そのときプロジェクションを最初から作り直すと古い注文が抜ける。
+#
+#      もっと厄介な順序が一つある。**アプリが先に起動するとトピックはすでに存在する。** その後でこのスクリプトを
+#      `--if-not-exists` で回すと「成功」で終わり、ポリシーは delete のままだ。だからここでは
+#      存在有無だけを見ず、**cleanup.policy を実際に読んで確認し、違えば kafka-configs で
+#      直す**(FIX_CONFIGS=0 なら警告だけ)。トピック作成と違ってこれは既存トピックへの変更なので、
+#      何を変えたかを常に出力する。
+#
+#      ── 実行場所を自分で探す ──
+#
+#      以前は `kafka-topics.sh` が PATH にあるか、KAFKA_BIN・KAFKA_CONTAINER(docker)の
+#      どれかでなければならなかった。ところがこのプロジェクトの実際の配備先は **k8s** で、そこでは三つとも
+#      当てはまらない — Pod の中には docker がなく、ローカルの PATH にも Kafka CLI がない。
+#      docs/33 を書いていて見つけた: ランブックが「このスクリプトを使え」と書いておきながら実際には動かなかった。
+#
+#      さらにコマンド名がディストリビューションごとに違う:
+#        · Apache Kafka ディストリビューション   kafka-topics.sh
+#        · Confluent イメージ                     kafka-topics(.sh なし) ← k8s/90-dev-infra.yaml が使うもの
+#
+#      今は実行方式を指定しなければ **kubectl → docker → ローカル PATH の順に自分で探す。**
+#      そしてどちらでも二つの名前を両方試す。
+#
+#      使い方:
+#        ./ops/02-create-dlt-topics.sh                       # 自動で探す(k8s 優先)
+#        ./ops/02-create-dlt-topics.sh --check               # 何を使うかの診断だけ
+#        KUBE_NAMESPACE=kafka KUBE_WORKLOAD=deploy/kafka ...  # k8s を明示
+#        KAFKA_CONTAINER=kafka1 ...                           # docker を明示
+#        KAFKA_BIN=/opt/kafka/bin BOOTSTRAP=localhost:29092 ... # ローカル CLI を明示
+#        COMMAND_CONFIG=/path/client-ssl.properties          # SSL/SASL ブローカー
+#        PARTITIONS · REPLICATION · RETENTION_MS(14 日) · EXTRA_TOPICS
+#        STATE_TOPICS · STATE_PARTITIONS=<n>   # 空なら order トピックと同じ数に合わせる
+#        FIX_CONFIGS=0 → 既存トピックの誤ったポリシーを直さず警告だけ
+#        SKIP_STATE=1  → 状態トピック · saga-projection の入力トピックには触れない(DLT だけ)
+#        SOURCE_TOPICS="order payment order-status"   # saga-projection の入力 — なければブローカー既定のパーティション数で作る
+#        DRY_RUN=1 → コマンドだけ出力
 set -euo pipefail
 
 PARTITIONS="${PARTITIONS:-3}"
 REPLICATION="${REPLICATION:-1}"
-RETENTION_MS="${RETENTION_MS:-1209600000}"   # 14일 — DLT 는 재처리 유예 기간만 보존
+RETENTION_MS="${RETENTION_MS:-1209600000}"   # 14일 — DLT 는 재처리 유예 기간만 보존 ／ [JA] 14 日 — DLT は再処理の猶予期間だけ保持
 # 🔒 살아 있는 비밀(가입 확인 · 비밀번호 재설정 링크)이 흐르는 토픽 — 본 토픽과 DLT 모두 짧게(docs/29 §5.3). 예전에는 DLT 도
 # 14일이라, 처리에 실패한 메일 요청의 확인 링크가 DLT 에 2주 남았다(값 원본 그대로 · 역직렬화 실패면 예외 헤더에도).
+# [JA] 🔒 生きている秘密(登録確認 · パスワード再設定リンク)が流れるトピック — 本トピックも DLT も短く(docs/29 §5.3)。以前は DLT も
+#      14 日で、処理に失敗したメール要求の確認リンクが DLT に 2 週間残った(値は原本のまま · 逆シリアライズ失敗なら例外ヘッダにも)。
 SECRET_TOPICS="${SECRET_TOPICS:-outgoing-mail}"
-SECRET_RETENTION_MS="${SECRET_RETENTION_MS:-3600000}"   # 1시간 — 토큰 수명(24시간)보다 짧게
+SECRET_RETENTION_MS="${SECRET_RETENTION_MS:-3600000}"   # 1시간 — 토큰 수명(24시간)보다 짧게 ／ [JA] 1 時間 — トークン寿命(24 時間)より短く
 DRY_RUN="${DRY_RUN:-0}"
 FIX_CONFIGS="${FIX_CONFIGS:-1}"
 SKIP_STATE="${SKIP_STATE:-0}"
@@ -67,11 +116,18 @@ CHECK_ONLY=0
 # 의 saga-projection.topics.state · .timeline 과 같아야 한다 — 어긋나면 프로젝션은 자기가 만든(delete 정책)
 # 토픽에 쓰고 이 스크립트는 아무도 안 쓰는 토픽을 컴팩션으로 만든다. 둘 다 조용하다.
 # ConfigurationGuardrailTest(B-38)가 값을 대조한다. order-timeline 은 주문 진행 타임라인(docs/76).
+# [JA] saga-projection の出力トピック。名前は saga-projection/src/main/resources/application-local.yml
+#      の saga-projection.topics.state · .timeline と同じでなければならない — ずれるとプロジェクションは自分が作った(delete ポリシーの)
+#      トピックに書き、このスクリプトは誰も書かないトピックをコンパクションにする。どちらも静かだ。
+#      ConfigurationGuardrailTest(B-38)が値を照合する。order-timeline は注文進行タイムライン(docs/76)。
 STATE_TOPICS="${STATE_TOPICS:-order-saga-state order-timeline}"
 # saga-projection(Kafka Streams)의 입력 토픽. 이름은 saga-projection.topics.order · payment · order-status 와 같다
 # (DltTopicsScriptTest 가 대조). 아래 "saga-projection 입력 토픽" 의 이유 참조.
+# [JA] saga-projection(Kafka Streams)の入力トピック。名前は saga-projection.topics.order · payment · order-status と同じ
+#      (DltTopicsScriptTest が照合)。下の「saga-projection 入力トピック」の理由を参照。
 SOURCE_TOPICS="${SOURCE_TOPICS:-order payment order-status}"
 # 상태 토픽이 본뜨는 입력 토픽. 파티션 수를 여기에 맞춘다(아래 이유 참조).
+# [JA] 状態トピックが倣う入力トピック。パーティション数をこれに合わせる(下の理由を参照)。
 STATE_SOURCE_TOPIC="${STATE_SOURCE_TOPIC:-order}"
 
 KUBE_NAMESPACE="${KUBE_NAMESPACE:-kafka}"
@@ -87,6 +143,14 @@ KUBE_WORKLOAD="${KUBE_WORKLOAD:-deploy/kafka}"
 #    실패하고, 그 파티션이 막힌다. 즉 **DLQ 를 넣은 이유였던 바로 그 장애**가 그대로 난다.
 #    outgoing-mail 과 user-presence 가 실제로 그렇게 빠져 있었다(두 리스너는 이 목록보다
 #    나중에 생겼다). ConfigurationGuardrailTest B-41 이 두 목록을 대조한다.
+# [JA] エラーハンドラが配線されたコンシューマトピックすべて(docs/12 §1)
+#
+#      ⚠️ この一覧はリポジトリの @KafkaListener トピックと **正確に一致しなければならない**。抜けたトピックは
+#         普段は何の症状もない — DLT は処理失敗が起きたときだけ使われるからだ。そして本当に
+#         poison message が一つ入ると、DeadLetterPublishingRecoverer が存在しないトピックに書こうとして
+#         失敗し、そのパーティションが詰まる。つまり **DLQ を入れた理由だったまさにその障害** がそのまま起きる。
+#         outgoing-mail と user-presence が実際にそうして抜けていた(二つのリスナーはこの一覧より
+#         後にできた)。ConfigurationGuardrailTest B-41 が二つの一覧を照合する。
 TOPICS=(order payment product-update user-created cart-empty cart-rollback coupon-use coupon-rollback chat
         outgoing-mail user-presence delivery-status coupon-issued notice-published event-started security-alert
         order-completed order-refunded product-stock user-updated user-deleted stock-shortage support-reply)
@@ -97,12 +161,14 @@ warn() { printf '  \033[0;33m!\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[0;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 실행 방식 결정
+# [JA] 実行方式の決定
 
 MODE=""       # kube | docker | local
 CLI=""        # kafka-topics | kafka-topics.sh
 
 # 파드/컨테이너 안에 어떤 이름으로 있는지 확인한다. 배포판마다 다르다.
-detect_cli() {  # detect_cli <실행 프리픽스...>
+# [JA] Pod/コンテナの中にどの名前であるかを確認する。ディストリビューションごとに違う。
+detect_cli() {  # detect_cli <실행 프리픽스...> ／ [JA] detect_cli <実行プレフィックス...>
     for name in kafka-topics kafka-topics.sh; do
         if "$@" sh -c "command -v $name" >/dev/null 2>&1; then
             CLI="$name"; return 0
@@ -144,6 +210,8 @@ fi
 
 # 부트스트랩 주소의 기본값은 실행 위치에 따라 다르다. 파드/컨테이너 **안**에서 도는 경우
 # 브로커는 localhost 이고, 밖에서 도는 경우는 외부에 노출된 주소여야 한다.
+# [JA] ブートストラップアドレスの既定値は実行場所によって違う。Pod/コンテナの **中** で動く場合
+#      ブローカーは localhost で、外で動く場合は外部に公開されたアドレスでなければならない。
 case "$MODE" in
     kube|docker) BOOTSTRAP="${BOOTSTRAP:-localhost:9092}" ;;
     local)       BOOTSTRAP="${BOOTSTRAP:-localhost:29092}" ;;
@@ -160,6 +228,9 @@ kafka_topics() {
 # kafka-configs 는 kafka-topics 와 같은 배포판에 나란히 들어 있고 이름 규칙도 같다
 # (Apache 는 .sh 가 붙고 Confluent 는 안 붙는다). 그래서 따로 탐지하지 않고 이름만 바꾼다 —
 # 로컬 모드의 절대 경로(/opt/kafka/bin/kafka-topics.sh)도 그대로 맞는다.
+# [JA] kafka-configs は kafka-topics と同じディストリビューションに並んで入っていて、名前の規則も同じ
+#      (Apache は .sh が付き、Confluent は付かない)。だから別に検出せず名前だけ替える —
+#      ローカルモードの絶対パス(/opt/kafka/bin/kafka-topics.sh)もそのまま合う。
 CFG_CLI="${CLI//kafka-topics/kafka-configs}"
 
 kafka_configs() {
@@ -188,6 +259,7 @@ CFG_ARGS=(--bootstrap-server "$BOOTSTRAP")
 [ -n "${COMMAND_CONFIG:-}" ] && CFG_ARGS+=(--command-config "$COMMAND_CONFIG")
 
 # ---------------------------------------------------------------- 생성
+# [JA] 作成
 
 printf '\n\033[1;36m▶ DLT 토픽 %d종\033[0m\n' "${#TOPICS[@]}"
 
@@ -217,9 +289,12 @@ if [ "$DRY_RUN" != "1" ]; then
 fi
 
 # ------------------------------------------------- 비밀이 흐르는 토픽의 보존 (docs/29 §5.3)
+# [JA] 秘密が流れるトピックの保持(docs/29 §5.3)
 
 # 이미 있는 토픽에도 건다 — --create --if-not-exists 는 있는 토픽의 설정을 바꾸지 않는다. 본 토픽은 서비스가 처음 보낼 때
 # 생기므로 아직 없으면 경고만 하고, 첫 발송 뒤 이 스크립트를 다시 돌린다.
+# [JA] 既存のトピックにもかける — --create --if-not-exists は既存トピックの設定を変えない。本トピックはサービスが最初に送るときに
+#      できるので、まだなければ警告だけして、最初の送信の後でこのスクリプトをもう一度回す。
 printf '\n\033[1;36m▶ 비밀이 흐르는 토픽 — 보존 %s ms\033[0m\n' "$SECRET_RETENTION_MS"
 for t in $SECRET_TOPICS; do
     for name in "$t" "$t.DLT"; do
@@ -235,6 +310,7 @@ for t in $SECRET_TOPICS; do
 done
 
 # ------------------------------------------------- saga-projection 입력 토픽
+# [JA] saga-projection 入力トピック
 
 # 본 토픽은 보통 서비스가 처음 보낼 때 브로커가 자동으로 만든다. 그런데 Kafka Streams 는 입력 토픽이 없으면
 # MissingSourceTopicException 으로 처리 스레드를 내리고(SHUTDOWN_CLIENT → ERROR), 토픽이 나중에 생겨도 스스로
@@ -258,6 +334,7 @@ if [ "$SKIP_STATE" != "1" ]; then
 fi
 
 # ------------------------------------------------- 컴팩션 상태 토픽 (docs/38 §1.17)
+# [JA] コンパクション状態トピック(docs/38 §1.17)
 
 # saga-projection 의 출력에 필요한 설정. 셋 다 이유가 있다:
 #
@@ -269,6 +346,16 @@ fi
 #                                 "컴팩션을 켰는데 왜 안 줄지"의 거의 유일한 원인이다.
 #   min.cleanable.dirty.ratio     기본 0.5 는 "중복이 절반은 돼야 청소한다". 상태 토픽은
 #                                 주문당 2~3회 갱신이라 그 비율에 잘 닿지 않는다.
+# [JA] saga-projection の出力に必要な設定。三つとも理由がある:
+#
+#        cleanup.policy=compact        注文ごとに最新状態一つ。これが抜けると retention.ms を過ぎた
+#                                      過去の注文が静かに消える。
+#        segment.ms                    コンパクションは **アクティブセグメントに触れない。** 低トラフィックのトピックで
+#                                      既定値(segment.bytes=1GB, segment.ms=7 日)だと一つのセグメントが
+#                                      何週間も開いたままで、その間重複キーがそのまま溜まる —
+#                                      「コンパクションを有効にしたのになぜ減らないか」のほぼ唯一の原因である。
+#        min.cleanable.dirty.ratio     既定 0.5 は「重複が半分にならないと掃除しない」。状態トピックは
+#                                      注文あたり 2〜3 回の更新なのでその比率になかなか届かない。
 STATE_CONFIGS=("cleanup.policy=compact" "segment.ms=86400000" "min.cleanable.dirty.ratio=0.1")
 STATE_CONFIG_CSV=$(IFS=,; echo "${STATE_CONFIGS[*]}")
 
@@ -276,6 +363,7 @@ provision_state_topic() {
     local STATE_TOPIC="$1"
 if [ "$DRY_RUN" = "1" ]; then
     # 브로커를 읽지 않는다(기존 토픽 유무에 따라 실제 명령이 갈리므로 둘 다 보여 준다).
+    # [JA] ブローカーを読まない(既存トピックの有無で実際のコマンドが分かれるので両方見せる)。
     printf '\n\033[1;36m▶ 컴팩션 상태 토픽 %s\033[0m\n' "$STATE_TOPIC"
     echo "[DRY_RUN] 없으면: $CLI ${CFG_ARGS[*]} --create --if-not-exists --topic $STATE_TOPIC --partitions ${STATE_PARTITIONS:-<$STATE_SOURCE_TOPIC 와 동일>} --replication-factor $REPLICATION --config ${STATE_CONFIGS[0]} --config ${STATE_CONFIGS[1]} --config ${STATE_CONFIGS[2]}"
     echo "[DRY_RUN] 있으면: $CFG_CLI ${CFG_ARGS[*]} --alter --entity-type topics --entity-name $STATE_TOPIC --add-config $STATE_CONFIG_CSV"
@@ -287,6 +375,10 @@ else
     # 다시 읽어 order/payment 와 조인하려는 순간 **공동 파티셔닝**이 요구된다(Streams 는 파티션
     # 수가 다르면 TopologyException 으로 거부한다). DLT 기본값 3 을 그대로 쓰면 입력이 1인 지금
     # 이미 어긋난다.
+    # [JA] パーティション数は入力トピックに合わせる。今は単純なシンクなので違っても動くが、このトピックを KTable として
+    #      読み直して order/payment と結合しようとした瞬間に **コパーティショニング** が要求される(Streams はパーティション
+    #      数が違うと TopologyException で拒否する)。DLT の既定値 3 をそのまま使うと、入力が 1 の今
+    #      すでにずれる。
     DETECTED=$(kafka_topics "${CFG_ARGS[@]}" --describe --topic "$STATE_SOURCE_TOPIC" 2>/dev/null \
                 | sed -n 's/.*PartitionCount: *\([0-9][0-9]*\).*/\1/p' | head -1) || DETECTED=""
     if [ -n "$DETECTED" ]; then
@@ -307,6 +399,15 @@ else
         #   앞에 `.*` 를 두면 탐욕적 매칭이 **synonyms 안의 마지막 값**(브로커 기본값 delete)을 잡아,
         #   이미 compact 인 토픽도 매번 "delete → compact 로 바꿨다"고 보고한다. 스텁 브로커로
         #   재실행 시나리오를 돌려 보고서야 드러났다.
+        # [JA] すでにある — アプリが先に起動して **ブローカーが自動作成した** 可能性が高く、その既定ポリシーは delete だ。
+        #      --if-not-exists で通すと「成功」に見えながらポリシーはそのままなので、実際の値を読む。
+        #      --all はブローカーの既定値まで見せる(動的設定だけを見ると自動作成トピックは空行になる)。
+        #
+        #      ⚠️ 正規表現を **行頭に固定** しなければならない。出力の一行はこういう形だ:
+        #          cleanup.policy=compact sensitive=false synonyms={DYNAMIC_TOPIC_CONFIG:cleanup.policy=compact, DEFAULT_CONFIG:log.cleanup.policy=delete}
+        #        前に `.*` を置くと貪欲マッチが **synonyms の中の最後の値**(ブローカー既定値 delete)を捕まえ、
+        #        すでに compact のトピックでも毎回「delete → compact に変えた」と報告する。スタブブローカーで
+        #        再実行シナリオを回してみて初めて分かった。
         POLICY=$(kafka_configs "${CFG_ARGS[@]}" --describe --all --entity-type topics --entity-name "$STATE_TOPIC" 2>/dev/null \
                   | sed -n 's/^[[:space:]]*cleanup\.policy=\([a-z,]*\).*/\1/p' | head -1) || POLICY=""
 

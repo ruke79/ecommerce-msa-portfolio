@@ -27,6 +27,9 @@ import com.project.order_service.repository.jpa.OrderRepository;
 /**
  * 결제 응답 → PAID. 카드는 NOT_PROCESSED 에서, 무통장입금은 UNPAID(입금 대기)에서 —
  * 둘 다 같은 길로 재고가 나가고 장바구니가 비워진다(docs/49 §11).
+ *
+ * <p>[JA] 決済応答 → PAID。カードは NOT_PROCESSED から、銀行振込は UNPAID(入金待ち)から —
+ * どちらも同じ道で在庫が出ていき、カートが空になる(docs/49 §11)。
  */
 @DisplayName("결제 응답 처리")
 class OrderSagaProcessTest {
@@ -62,12 +65,16 @@ class OrderSagaProcessTest {
 
         assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAID);
         // 🔴 결제 시각도 남는다 — 예전에는 무통장입금 수동 확인에서만 채워졌다.
+        // [JA] 🔴 決済時刻も残る — 以前は銀行振込の手動確認でしか埋まらなかった。
         assertThat(order.getPaidCreatedAt()).isNotNull();
         // 키는 메시지 키 — CDC 릴레이(EventRouter)가 aggregate_id 를 키로 쓴다: 재고는 eventId, 장바구니는 사용자 id
+        // [JA] キーはメッセージキー — CDC リレー(EventRouter)が aggregate_id をキーに使う: 在庫は eventId、
+        //      カートはユーザー id
         verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.PRODUCT_UPDATE_EVENT), eq("order-1"), any());
         org.mockito.ArgumentCaptor<Object> cart = org.mockito.ArgumentCaptor.forClass(Object.class);
         verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.CART_EMPTY_EVENT), eq("7"), cart.capture());
         // 🔴 주문 id 를 싣는다 — cart 가 같은 주문의 재전달을 거른다(cart-empty-<orderId>)
+        // [JA] 🔴 注文 id を載せる — cart が同じ注文の再配信を除外する(cart-empty-<orderId>)
         assertThat(((com.project.common.message.dto.request.CartEmptyRequest) cart.getValue()).getOrderId()).isEqualTo(1L);
     }
 

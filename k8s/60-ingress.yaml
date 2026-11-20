@@ -6,12 +6,20 @@
 # (표준 Ingress는 백엔드까지 TLS를 그대로 통과시키지 않고 HTTP로 프록시하는 것이 기본 동작이라,
 #  게이트웨이의 자체 TLS 종료와 맞지 않습니다. 공인 인증서를 게이트웨이 앞단에 두고 싶다면
 #  Traefik IngressRoute + ServersTransport(TLS passthrough)를 별도로 구성하세요).
+# [JA] k3s はデフォルトで Traefik を内蔵 Ingress コントローラとして一緒にインストールする(ingressClassName: traefik)。
+#      frontend は平文 HTTP で配信されるので標準の Ingress でそのまま公開する。
+#      gateway-server は自ら HTTPS(mTLS)を終端するのでここの Ingress には含めず、
+#      Cloudflare トンネルが ClusterIP Service へ直接送る(k8s-overlays/prod/cloudflared.yaml、B-85)
+#      (標準 Ingress はバックエンドまで TLS をそのまま通さず HTTP でプロキシするのがデフォルトの動作なので、
+#       ゲートウェイ自身の TLS 終端と合わない。公開証明書をゲートウェイの前段に置きたいなら
+#       Traefik IngressRoute + ServersTransport(TLS passthrough)を別途構成すること)。
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ecommerce-frontend
   namespace: ecommerce
 # 클래스는 spec.ingressClassName 하나로 — kubernetes.io/ingress.class 어노테이션은 폐기(apply 마다 경고). 2026-11-19 에 뺐다.
+# [JA] クラスは spec.ingressClassName 1 つで — kubernetes.io/ingress.class アノテーションは廃止(apply のたびに警告)。2026-11-19 に外した。
 spec:
   ingressClassName: traefik
   rules:
@@ -29,6 +37,17 @@ spec:
     #
     # 인바운드 포트를 직접 여는 구성으로 바꾼다면(터널 없이 NodePort·LB 를 노출한다면)
     # 그때는 host 를 명시할 것 — 그 경우엔 IP 로 직접 때리는 요청까지 이 규칙이 받는다.
+    # [JA] ⚠️ host フィールドをわざと置かない — すべてのホストにマッチする。
+    #      以前はここに `host: shop.example.com` がプレースホルダーとしてあった。それが罠だった:
+    #      置き換えを忘れてもデプロイは**成功したように見え**、失敗はずっと後にブラウザで 404 としてだけ
+    #      表れる。クラスタ内ではポッドが全部 Running で Ingress も正常なので、原因を
+    #      突き止める手がかりがない。実際のデプロイでここに引っかかった(docs/33 §13)。
+    #      ホストを固定しなくてよい理由: このクラスタに入ってくるトラフィックは Cloudflare Tunnel
+    #      1 つだけで(インバウンドポートは 0 個 — k8s-overlays/prod/cloudflared.yaml)、どの
+    #      ホスト名を受け入れるかは **Cloudflare が既に決めている。** ここでもう一度検査しても
+    #      得るものがなく、apex(example.com)と www の両方を受けるにはルールが 2 組になるだけである。
+    #      インバウンドポートを直接開ける構成に変えるなら(トンネルなしで NodePort・LB を公開するなら)
+    #      その時は host を明示すること — その場合は IP を直接叩くリクエストまでこのルールが受ける。
     - http:
         paths:
           - path: /

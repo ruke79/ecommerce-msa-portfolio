@@ -38,8 +38,19 @@ import lombok.extern.slf4j.Slf4j;
  *       실행이나 다음 기동에서 같은 기준으로 잡힌다. 고친 코드가 쓴 문서는 기준 시각 뒤라 건드리지 않는다.</li>
  * </ol>
  *
- * <p>[JA] 会話記録(Mongo)の整備 — ルーム基準のインデックスと、旧メッセージ時刻の +9 時間補正。起動を止めないよう
- * バックグラウンドで実行する。補正は最初に起動した修正版の時刻を基準に一度だけ決め、表示(tzFixed)で冪等にする。
+ * <p>[JA] 会話記録(Mongo)の整備二つ — 起動を止めないよう<b>バックグラウンド</b>で走る(docs/62 §18)。
+ * <ol>
+ *   <li>[JA] <b>ルーム基準のインデックス。</b> ルームの会話は {@code roomId} で絞り、数値 id 順に並べる(ChatMessageRepository の
+ *       {@code numericOrdering} collation)。そのインデックスがなく、メッセージが溜まるほど毎回の照会がコレクション全体を読んでいた。
+ *       インデックスは照会と<b>同じ collation</b> でないと使われない。コードの {@code @CompoundIndex} で宣言すると自動インデックス作成
+ *       (auto-index-creation)が起動中に作り、大きなコレクションならその間起動が止まって liveness に引っかかり再起動 → 再作成を繰り返し
+ *       かねない。そのためここで後回しにして作る。既にあれば何もしない。</li>
+ *   <li>[JA] <b>旧メッセージ時刻の補正(+9 時間)。</b> 以前のコードは {@code LocalDateTime.now()} をソウル時間として解釈したが、コンテナの
+ *       JVM は UTC なので全メッセージの時刻が 9 時間早かった(MessageDto.setSendTimeAndSender)。修正版が最初に起動した瞬間を基準時刻
+ *       (cutoff)として一度決めて Mongo に書き、それより早く書かれた文書を +9 時間ずらしながら {@code tzFixed} 印を付ける。印のある文書は
+ *       再びずらさないので、何度回っても結果は同じ。ローリングデプロイ中に旧 Pod が遅れて書いた文書(やはり 9 時間早い)は、15 分後の
+ *       二回目の実行か次の起動で同じ基準により拾われる。修正版が書いた文書は基準時刻より後なので触らない。</li>
+ * </ol>
  */
 @Slf4j
 @Component
@@ -56,6 +67,7 @@ public class ChatMessageMaintenance implements ApplicationRunner {
     private final Clock clock;
 
     // 생성자가 둘이다 — 빈은 이것으로(B-65)
+    // [JA] コンストラクタが二つある — Bean はこれで(B-65)
     @org.springframework.beans.factory.annotation.Autowired
     public ChatMessageMaintenance(MongoTemplate mongoTemplate) {
         this(mongoTemplate, Clock.systemUTC());
@@ -78,7 +90,7 @@ public class ChatMessageMaintenance implements ApplicationRunner {
             quietly("시각 보정", this::fixLegacyTimes);
         });
         worker.schedule(() -> quietly("시각 보정(2차)", this::fixLegacyTimes), 15, TimeUnit.MINUTES);
-        worker.shutdown();   // 예약된 두 번째 실행까지 마치면 스레드가 끝난다
+        worker.shutdown();   // 예약된 두 번째 실행까지 마치면 스레드가 끝난다 ／ [JA] 予約された 2 回目の実行まで終えるとスレッドが終了する
     }
 
     private static void quietly(String what, Runnable task) {
@@ -86,11 +98,13 @@ public class ChatMessageMaintenance implements ApplicationRunner {
             task.run();
         } catch (RuntimeException e) {
             // 실패해도 서비스는 계속한다 — 인덱스가 없으면 느릴 뿐이고, 보정은 다음 기동에 다시 돈다.
+            // [JA] 失敗してもサービスは続ける — インデックスがなければ遅いだけで、補正は次回起動時に再び走る。
             log.warn("대화 기록 정비({}) 실패 — 다음 기동에 다시 돈다: {}", what, e.getMessage());
         }
     }
 
     /** 방 기준 인덱스 — 조회와 같은 collation 으로. 이미 있으면 그대로. */
+    // [JA] ルーム基準のインデックス — 照会と同じ collation で。すでにあればそのまま。
     public void ensureRoomIndex() {
         mongoTemplate.indexOps(ChatMessage.class).ensureIndex(
                 new CompoundIndexDefinition(new Document("roomId", 1).append("_id", -1))
@@ -102,6 +116,9 @@ public class ChatMessageMaintenance implements ApplicationRunner {
      * 기준 시각보다 이르게 적힌(그리고 아직 보정하지 않은) 문서를 +9시간 옮긴다.
      *
      * @return 옮긴 문서 수
+     *
+     * <p>[JA] 基準時刻より早く記録された(そしてまだ補正していない)ドキュメントを +9 時間ずらす。
+     * 戻り値: ずらしたドキュメント数
      */
     public long fixLegacyTimes() {
         long cutoff = cutoff();
@@ -124,6 +141,7 @@ public class ChatMessageMaintenance implements ApplicationRunner {
     }
 
     /** 기준 시각 — 처음 부른 파드가 정하고, 그 뒤로는 모두 같은 값을 읽는다(원자적 upsert). */
+    // [JA] 基準時刻 — 最初に呼んだ Pod が決め、その後は全員が同じ値を読む(アトミックな upsert)。
     long cutoff() {
         Document marker = mongoTemplate.getCollection(MARKER_COLLECTION).findOneAndUpdate(
                 new Document("_id", TIME_MARKER_ID),

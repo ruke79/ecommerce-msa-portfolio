@@ -24,6 +24,20 @@
 # 인자·로그·파일에 남지 않는다. 개인키는 임시 디렉터리(0700)에서 만들고 Secret 에 넣은 뒤 지운다(저장소·디스크에 남기지 않는다).
 #
 # 발급 뒤: 매니페스트(k8s/40~49)가 /app/identity 에 마운트한다 — ./ops/28-deploy.sh <환경> <버전> 으로 반영.
+# [JA] 運用アクション ㊳ — サービスごとに**自分のアイデンティティ証明書**(CN=サービス名)を発行し Secret `tls-id-<サービス>` として入れる(docs/57 §16)。
+#      なぜ: 今はすべてのサービスが証明書一つ(CN=localhost、Secret tls-keystore)を共有している。だからサービス間 mTLS の判定は「内部
+#      サービスか」までで「どのサービスか」には絞れない — しかもゲートウェイも同じ鍵をサーバ証明書として持っており、ゲートウェイが
+#      破られるとその鍵で内部呼び出しを装える。サービス別アイデンティティがあれば判定フィルタがパスごとに呼べるサービスを決める
+#      (INTERNAL_AUTH_PATH_RULES)— ゲートウェイの共有鍵は許可主体でなくなる。
+#      何を変えるか: サービスが**他のサービスを呼ぶときに出すクライアント証明書**だけ(JVM 既定 keystore — Feign)。サーバ証明書・Redis・Kafka は
+#      共有証明書のままだ(同じ CA なので変える理由がない)。
+#      Secret の形は cert-manager の Certificate(keystores.pkcs12)が作るものと同じ — tls.crt・tls.key・ca.crt・keystore.p12。
+#      だから後で発行者を cert-manager に変えても(docs/57 §18)マニフェストはそのままだ。
+#      使い方は上記(既定はないか期限が近い(RENEW_DAYS)サービスだけ発行、check はサービス別 CN・有効期限(値は出力しない)、FORCE=1 は全部やり直し、--only で対象指定)。
+#      必要: ops/07 が作ったローカル CA(CA_DIR、既定 ./certs の ca.crt・ca.key)、kubectl、openssl。
+#      キーストアのパスワードはクラスタの ecommerce-secrets(LOCAL_KEY_STORE_PASSWORD)から読み、**環境変数でのみ** openssl に渡す —
+#      引数・ログ・ファイルに残らない。秘密鍵は一時ディレクトリ(0700)で作り Secret に入れた後消す(リポジトリ・ディスクに残さない)。
+#      発行後: マニフェスト(k8s/40~49)が /app/identity にマウントする — ./ops/28-deploy.sh <環境> <バージョン> で反映。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -37,6 +51,10 @@ ORG="${ORG:-ecommerce-msa}"
 # **신원 헤더를 붙여 넘기는 쪽**이라는 증명이다 — 받는 쪽은 그 헤더를 이 CN 으로 온 요청에서만 믿는다(docs/57 §16).
 # config-server 는 내부 API 를 부르지 않지만 Eureka 에 자기를 등록한다 — Eureka 는 등록을 그 서비스 자신의 CN 으로만 받는다
 # (docs/57 §16 "Eureka 쓰기"). eureka-server 는 자기에게 등록하지 않는다 — 신원이 없다.
+# [JA] 他のサービスを呼ぶ(Feign)か今後呼びうるバックエンド + ゲートウェイ。ゲートウェイ証明書は内部 API を呼ぶためではなく
+#      **アイデンティティヘッダを付けて渡す側**であることの証明だ — 受ける側はそのヘッダをこの CN で来たリクエストでだけ信じる(docs/57 §16)。
+#      config-server は内部 API を呼ばないが Eureka に自分を登録する — Eureka は登録をそのサービス自身の CN でだけ受け付ける
+#      (docs/57 §16「Eureka 書き込み」)。eureka-server は自分には登録しない — アイデンティティがない。
 SERVICES="${SERVICES:-gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server}"
 
 MODE="issue"
@@ -58,6 +76,7 @@ command -v kubectl >/dev/null || die "kubectl 이 필요합니다"
 command -v openssl >/dev/null || die "openssl 이 필요합니다"
 
 # 이 Secret 의 인증서가 며칠 남았나(없으면 -1). 인증서는 공개 정보라 읽어도 된다 — 키는 읽지 않는다.
+# [JA] この Secret の証明書があと何日残っているか(なければ -1)。証明書は公開情報なので読んでよい — 鍵は読まない。
 days_left() {
     local crt end
     crt=$(kubectl -n "$NS" get secret "tls-id-$1" -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null) || true
@@ -105,6 +124,7 @@ local_ca=$(openssl x509 -in "$CA_DIR/ca.crt" -noout -fingerprint -sha256)
 [ "$cluster_ca" = "$local_ca" ] || die "$CA_DIR/ca.crt 가 클러스터의 CA(tls-keystore) 와 다릅니다 — 같은 CA 로 발급해야 한다"
 
 # 키스토어 비밀번호 — 서비스들이 이미 쓰는 값(JAVA_TOOL_OPTIONS 의 keyStorePassword). 변수로만 들고 있는다.
+# [JA] キーストアのパスワード — サービスが既に使っている値(JAVA_TOOL_OPTIONS の keyStorePassword)。変数でのみ保持する。
 STOREPASS=$(kubectl -n "$NS" get secret ecommerce-secrets -o jsonpath='{.data.LOCAL_KEY_STORE_PASSWORD}' | base64 -d)
 [ -n "$STOREPASS" ] || die "ecommerce-secrets 의 LOCAL_KEY_STORE_PASSWORD 를 읽지 못했습니다"
 export STOREPASS
@@ -117,6 +137,7 @@ echo "▶ 서비스별 신원 발급 (${DAYS}일, 같은 CA)"
 issued=""
 for s in $SERVICES; do
     # cert-manager 가 맡고 있으면(ops/39) 손대지 않는다 — 둘이 번갈아 덮으면 서비스가 계속 재시작된다.
+    # [JA] cert-manager が担当しているなら(ops/39)触らない — 両者が交互に上書きするとサービスが再起動し続ける。
     if kubectl -n "$NS" get certificate "id-$s" >/dev/null 2>&1; then
         info "$s: cert-manager 가 발급·갱신한다(Certificate id-$s) — 건너뜀. 지금 새로: ./ops/39-cert-manager.sh renew $s"
         continue
@@ -147,6 +168,7 @@ EOF
         -out "$dir/tls.crt" -days "$DAYS" -sha256 -extfile "$dir/ext.cnf" -extensions v3 2>/dev/null
     cp "$CA_DIR/ca.crt" "$dir/ca.crt"
     # 자바가 읽는 PKCS12 — 비밀번호는 환경 변수로(인자에 남기지 않는다). 별칭은 서비스 이름.
+    # [JA] Java が読む PKCS12 — パスワードは環境変数で(引数に残さない)。エイリアスはサービス名。
     openssl pkcs12 -export -inkey "$dir/tls.key" -in "$dir/tls.crt" -certfile "$dir/ca.crt" -name "$s" \
         -passout env:STOREPASS -out "$dir/keystore.p12"
     kubectl -n "$NS" create secret generic "tls-id-$s" \

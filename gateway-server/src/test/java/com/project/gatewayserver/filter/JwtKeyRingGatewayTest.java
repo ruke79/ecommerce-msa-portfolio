@@ -25,6 +25,7 @@ import io.jsonwebtoken.Jwts;
 import reactor.core.publisher.Mono;
 
 /** 게이트웨이도 kid 로 검증 키를 고른다 — 전환 뒤 새 토큰 · 옛 토큰 모두 통과, 은퇴 · 모르는 kid 는 401(docs/68 §17). */
+// [JA] ゲートウェイも kid で検証キーを選ぶ — 切り替え後の新しいトークン · 古いトークンはどちらも通過、引退 · 知らない kid は 401(docs/68 §17)。
 @DisplayName("게이트웨이 JWT — 키 링")
 class JwtKeyRingGatewayTest {
 

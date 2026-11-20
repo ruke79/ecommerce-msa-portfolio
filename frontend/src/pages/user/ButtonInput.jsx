@@ -7,6 +7,10 @@ import { ChevronRightIcon } from "@heroicons/react/24/solid";
  * `disabled={isPending}` 을 넘겨도 아무 효과가 없었다 — 로그인·회원가입 화면에 "중복 제출을
  * 막는다"는 주석까지 달려 있었지만 실제로는 막히지 않았고, 버튼을 두 번 누르면 요청이 두 번
  * 나갔다. onClick 같은 다른 핸들러도 전부 조용히 버려졌다.
+ *
+ * <p>[JA] フォームの送信ボタン。以前は `...props` を受け取っておきながら<b>button に展開していなかった。</b>そのため呼び出し側が `disabled={isPending}` を渡しても
+ * 何の効果もなかった — ログイン・会員登録画面には「二重送信を防ぐ」というコメントまで付いていたが実際には防げておらず、ボタンを二回押すとリクエストが
+ * 二回出ていた。onClick のような他のハンドラーもすべて静かに捨てられていた。
  */
 const ButtonInput = ({ type, text, className = "", ...props }) => {
     return (

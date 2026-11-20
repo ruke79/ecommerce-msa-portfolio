@@ -18,6 +18,8 @@ const Reviews = ({ product, num_reviews, userReviews, updateReviews }) => {
 
     // 새로 읽은 목록(주기적으로 — useFetchReviews)을 반영한다. 예전에는 처음 받은 목록을 복사해 둔 뒤로 다시 보지 않아, 다른
     // 사람이 누른 좋아요·새 리뷰가 새로고침 전에는 보이지 않았다. 바뀐 것이 없으면 React Query 가 같은 참조를 주므로 돌지 않는다.
+    // [JA] 読み直した一覧(定期的に — useFetchReviews)を反映する。以前は最初に受けた一覧をコピーした後は見直さず、他の
+    //      人が押したいいね・新しいレビューがリロードまで見えなかった。変化がなければ React Query が同じ参照を返すので回らない。
     useEffect(() => {
         if (userReviews) {
             setReviews(userReviews);
@@ -28,12 +30,14 @@ const Reviews = ({ product, num_reviews, userReviews, updateReviews }) => {
 
         if (reviews && reviews.length > 0) {
             // 리뷰 본문에는 사용자가 쓴 글이 들어 있다. 콘솔에 통째로 찍지 않는다.
+            // [JA] レビュー本文にはユーザーが書いた文章が入っている。コンソールに丸ごと出さない。
             const totalPoints = reviews.reduce((acc, currReview) => {
                 return acc + currReview.rating;
             }, 0.0);
             setPrdRating(totalPoints / reviews.length);
         } else if (reviews) {
             // 마지막 리뷰를 지웠다 — 예전에는 삭제 쪽이 0 을 직접 박았다(남은 리뷰가 있어도).
+            // [JA] 最後のレビューを消した — 以前は削除側が 0 を直接固定していた(残ったレビューがあっても)。
             setPrdRating(0);
         }
         
@@ -44,6 +48,10 @@ const Reviews = ({ product, num_reviews, userReviews, updateReviews }) => {
      * 좋아요 상태는 리뷰 목록의 일부다. 그래서 카드가 각자 들고 있지 않고 목록을 소유한
      * 이 컴포넌트가 갱신한다 — 카드가 자기 상태를 따로 들면 목록이 다시 그려질 때(리뷰
      * 추가·삭제, 페이지 이동) 그 상태가 조용히 초기값으로 돌아간다.
+     *
+     * [JA] いいね状態はレビュー一覧の一部だ。そのためカードがそれぞれ持たず、一覧を所有する
+     * このコンポーネントが更新する — カードが自分の状態を別に持つと一覧が再描画されるとき(レビュー
+     * 追加・削除、ページ移動)その状態が静かに初期値に戻る。
      */
     const handleLikeChange = useCallback((reviewId, next, { settled = false } = {}) => {
         setReviews((prev) =>
@@ -51,6 +59,8 @@ const Reviews = ({ product, num_reviews, userReviews, updateReviews }) => {
         );
         // 서버가 확정한 뒤에는 목록을 바로 다시 읽는다 — 누르기 전에 떠난 주기적 읽기가 늦게 도착해 방금 누른 것을 덮지 않게
         // (refetch 는 진행 중인 읽기를 취소하고 새로 읽는다).
+        // [JA] サーバーが確定した後は一覧をすぐ読み直す — 押す前に出た定期読み込みが遅れて届き今押したものを上書きしないように
+        //      (refetch は進行中の読み込みを取り消して新しく読む)。
         if (settled) {
             updateReviews?.();
         }

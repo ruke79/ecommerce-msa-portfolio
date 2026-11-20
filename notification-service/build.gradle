@@ -14,6 +14,8 @@ dependencies {
 	implementation 'org.springframework.kafka:spring-kafka'
 	// 트랜잭션 메일 발송(SmtpMailSender). spring.mail.host 가 설정된 경우에만
 	// JavaMailSender 빈이 만들어지고, 그렇지 않으면 MailConfig 가 로깅 발송기를 쓴다.
+	// [JA] トランザクションメール送信(SmtpMailSender)。spring.mail.host が設定された場合にのみ
+	//      JavaMailSender Bean が作られ、そうでなければ MailConfig がロギング送信器を使う。
 	implementation 'org.springframework.boot:spring-boot-starter-mail'
 
 	implementation project(':common')
@@ -26,13 +28,23 @@ dependencies {
 	//   · 일본 휴대폰은 070/080/090 이고, 자릿수가 지역번호에 따라 다르다.
 	//   · 번호 대역은 통신사 사정으로 계속 바뀐다 — 직접 유지보수할 성격이 아니다.
 	// libphonenumber 는 구글이 관리하는 그 데이터를 담고 있다.
+	// [JA] 電話番号のパース・検証・正規化(Apache-2.0、無料)。
+	//      
+	//      なぜ自前の正規表現を使わないか: 韓国(+82)と日本(+81)は規則が互いに異なり、どちらも厄介である。
+	//        · 国内表記は先頭に 0 が付くが(010-1234-5678)、E.164 にするとその 0 が落ちる(+821012345678)。
+	//          正規表現で書くとこの「0 トランクプレフィックス」の処理を必ず間違える。
+	//        · 日本の携帯は 070/080/090 で、桁数が市外局番によって異なる。
+	//        · 番号帯は通信会社の事情で変わり続ける — 自前で保守する性質のものではない。
+	//      libphonenumber は Google が管理するそのデータを持っている。
 	implementation 'com.googlecode.libphonenumber:libphonenumber:8.13.52'
 
 	runtimeOnly 'org.postgresql:postgresql'
 	// 스키마는 Flyway 가 소유한다 (docs/20)
+	// [JA] スキーマは Flyway が所有する(docs/20)
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	// OpenAPI 문서: /v3/api-docs, /swagger-ui.html
+	// [JA] OpenAPI ドキュメント: /v3/api-docs, /swagger-ui.html
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
 
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'

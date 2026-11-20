@@ -7,12 +7,20 @@ package com.project.userservice.dto;
  * <b>서버가 센 최종 수치</b>를 그대로 돌려주는 것이 중요하다 — 그 사이 다른 사람이 눌렀다면
  * 클라이언트의 +1/-1 계산은 이미 틀렸다.
  *
+ * <p>[JA] いいねトグルの結果。
+ * 画面が必要なものだけを入れる。クライアントは楽観的に先に描いてからこの応答で上書きするので、
+ * <b>サーバーが数えた最終値</b>をそのまま返すことが重要だ — その間に他の人が押していれば
+ * クライアントの +1/-1 計算は既に誤っている。
  * @param reviewId  대상 리뷰
+ *     [JA] 対象レビュー
  * @param likeCount 토글 후 총 좋아요 수
+ *     [JA] トグル後の総いいね数
  * @param likedByMe 토글 후 이 사용자가 누른 상태인지
+ *     [JA] トグル後にこのユーザーが押した状態か
  */
 public record ReviewLikeDto(
         // TSID 는 JS 숫자를 넘는다 — 문자열로(ReviewDto.reviewId 주석)
+        // [JA] TSID は JS の数値を超える — 文字列で(ReviewDto.reviewId のコメント)
         @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
         Long reviewId,
         long likeCount,

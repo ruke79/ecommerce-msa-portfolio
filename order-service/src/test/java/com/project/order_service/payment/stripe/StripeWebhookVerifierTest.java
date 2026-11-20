@@ -29,6 +29,17 @@ import com.project.order_service.payment.PaymentVerificationException;
  * <p>SDK 없이 직접 구현했으므로(의존성을 늘리지 않으려고) <b>그 대가로 경계 조건을 전부
  * 고정한다</b>: 정상 · 다른 비밀키 · 본문 변조 · 시각 만료 · 미래 시각 · 헤더 없음 ·
  * 형식 깨짐 · v1 여러 개 · 16진수가 아닌 값.
+ *
+ * <p>[JA] Stripe Webhook 署名検証。
+ *
+ * <h3>🔴 なぜこのファイルがこれほど細かいのか</h3>
+ *
+ * <p>Webhook エンドポイントは<b>認証なしで公開</b>されている — Stripe がこちらのトークンを持てないからである。
+ * そのため「このリクエストは本当に Stripe から来たか」を判断するのは<b>この署名だけ</b>であり、ここが誤っていると、その URL
+ * に JSON を POST するだけで他人の注文を決済完了にできる。
+ *
+ * <p>SDK なしで直接実装したので(依存を増やさないため)、<b>その代償として境界条件をすべて固定する</b>:
+ * 正常・別の秘密鍵・本文改ざん・時刻期限切れ・未来の時刻・ヘッダーなし・形式崩れ・v1 複数・16 進数でない値。
  */
 @DisplayName("Stripe 웹훅 서명")
 class StripeWebhookVerifierTest {
@@ -39,6 +50,7 @@ class StripeWebhookVerifierTest {
     private static final Instant NOW = Instant.parse("2026-09-18T12:00:00Z");
 
     /** Stripe 가 만드는 것과 같은 방식으로 헤더를 만든다. */
+    // [JA] Stripe が作るのと同じ方法でヘッダーを作る。
     private static String header(String secret, String payload, Instant timestamp) {
         long t = timestamp.getEpochSecond();
         return "t=" + t + ",v1=" + hmacHex(secret, t + "." + payload);
@@ -67,6 +79,7 @@ class StripeWebhookVerifierTest {
     }
 
     /** 🔴 핵심. 비밀키를 모르면 서명을 만들 수 없어야 한다. */
+    // [JA] 🔴 核心。秘密鍵を知らなければ署名を作れないはずである。
     @Test
     @DisplayName("다른 비밀키로 만든 서명은 거부한다")
     void aSignatureFromAnotherSecretIsRejected() {
@@ -78,6 +91,7 @@ class StripeWebhookVerifierTest {
     }
 
     /** 🔴 서명은 본문에 묶여 있어야 한다 — 아니면 금액만 바꿔 되보낼 수 있다. */
+    // [JA] 🔴 署名は本文に結び付いていなければならない — でなければ金額だけ変えて送り返せる。
     @Test
     @DisplayName("본문이 한 글자라도 바뀌면 거부한다")
     void aTamperedPayloadIsRejected() {
@@ -91,6 +105,9 @@ class StripeWebhookVerifierTest {
     /**
      * 🔴 재전송(replay) 방어. 서명 자체는 <b>영원히 유효하다</b> — 시각을 보지 않으면
      * 한 번 가로챈 요청을 몇 달 뒤에도 그대로 다시 보낼 수 있다.
+     *
+     * <p>[JA] 🔴 再送(replay)防御。署名自体は<b>永遠に有効</b>である — 時刻を見なければ、
+     * 一度傍受したリクエストを数か月後でもそのまま送り直せる。
      */
     @Test
     @DisplayName("오래된 요청은 거부한다")
@@ -104,6 +121,7 @@ class StripeWebhookVerifierTest {
     }
 
     /** 미래 시각도 막는다 — 정상 요청이라면 나올 수 없고, 막지 않으면 만료 검사를 우회한다. */
+    // [JA] 未来の時刻も止める — 正常なリクエストなら出てこず、止めなければ期限チェックを回避される。
     @Test
     @DisplayName("미래 시각도 거부한다")
     void aFutureTimestampIsRejected() {
@@ -125,6 +143,7 @@ class StripeWebhookVerifierTest {
     }
 
     /** 비밀키 교체 중에는 Stripe 가 v1 을 여러 개 보낸다. 하나만 맞으면 된다. */
+    // [JA] 秘密鍵の交換中は Stripe が v1 を複数送る。一つ合えばよい。
     @Test
     @DisplayName("v1 이 여러 개면 하나만 맞아도 통과한다")
     void anyMatchingSignaturePasses() {
@@ -137,6 +156,7 @@ class StripeWebhookVerifierTest {
     }
 
     /** v0 은 옛 스킴이다. 그것만 있으면 통과해서는 안 된다. */
+    // [JA] v0 は旧スキームである。それだけなら通してはならない。
     @Test
     @DisplayName("v0 만 있으면 거부한다")
     void theLegacySchemeAloneIsRejected() {
@@ -165,6 +185,7 @@ class StripeWebhookVerifierTest {
         assertThatThrownBy(() -> verifier().verify(PAYLOAD, "t=notanumber,v1=abc", NOW))
                 .isInstanceOf(PaymentVerificationException.class);
         // 16진수가 아닌 v1 은 후보에서 빠지고, 남는 후보가 없으므로 불일치다.
+        // [JA] 16 進数でない v1 は候補から外れ、残る候補がないので不一致である。
         assertThatThrownBy(() -> verifier().verify(
                 PAYLOAD, "t=" + NOW.getEpochSecond() + ",v1=zzzz", NOW))
                 .isInstanceOf(PaymentVerificationException.class);
@@ -173,6 +194,9 @@ class StripeWebhookVerifierTest {
     /**
      * 🔴 빈 비밀키로 조용히 동작하면 모든 서명이 같은 값으로 계산돼 검증이 무의미해진다.
      * 설정 실수가 <b>기동 시점에</b> 드러나야 한다.
+     *
+     * <p>[JA] 🔴 空の秘密鍵で黙って動くと、すべての署名が同じ値で計算され検証が無意味になる。
+     * 設定ミスは<b>起動時点で</b>表に出るべきである。
      */
     @Test
     @DisplayName("비밀키가 비어 있으면 만들 수조차 없다")

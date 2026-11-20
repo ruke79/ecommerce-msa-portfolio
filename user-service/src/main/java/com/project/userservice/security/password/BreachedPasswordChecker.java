@@ -54,6 +54,7 @@ public class BreachedPasswordChecker {
     static final String REJECTED_METRIC = "auth.breached_password.rejected";
 
     /** 접두사(대문자 hex 5자)로 범위를 받아 온다 — 테스트가 갈아 끼우는 이음새. */
+    // [JA] 接頭辞(大文字 hex 5 文字)で範囲を取得する — テストが差し替える継ぎ目。
     @FunctionalInterface
     public interface RangeFetcher {
         String fetch(String prefix) throws IOException, InterruptedException;
@@ -83,6 +84,7 @@ public class BreachedPasswordChecker {
     }
 
     /** 유출 · 흔한 비밀번호면 {@link BreachedPasswordException}. 판단할 수 없으면 통과(fail-open). */
+    // [JA] 漏えい・ありふれたパスワードなら {@link BreachedPasswordException}。判断できなければ通す(fail-open)。
     public void assertAcceptable(String rawPassword) {
         Verdict v = check(rawPassword);
         if (v == Verdict.BREACHED || v == Verdict.COMMON) {
@@ -93,7 +95,7 @@ public class BreachedPasswordChecker {
 
     public Verdict check(String rawPassword) {
         if (rawPassword == null || rawPassword.isEmpty()) {
-            return Verdict.OK;   // 비어 있는지는 각 경로의 입력 검사가 본다
+            return Verdict.OK;   // 비어 있는지는 각 경로의 입력 검사가 본다 ／ [JA] 空かどうかは各経路の入力チェックが見る
         }
         if (common.contains(rawPassword.toLowerCase(Locale.ROOT))) {
             return Verdict.COMMON;
@@ -111,6 +113,7 @@ public class BreachedPasswordChecker {
                 if (colon == 35 && line.regionMatches(true, 0, suffix, 0, 35)) {
                     long count = parseCount(line.substring(colon + 1));
                     // 패딩 줄은 개수가 0 이다 — 진짜 유출이 아니다.
+                    // [JA] パディング行は件数が 0 である — 本当の漏えいではない。
                     return count > 0 ? Verdict.BREACHED : Verdict.OK;
                 }
             }
@@ -138,7 +141,7 @@ public class BreachedPasswordChecker {
             byte[] d = MessageDigest.getInstance("SHA-1").digest(raw.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().withUpperCase().formatHex(d);
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);   // SHA-1 은 모든 JVM 에 있다
+            throw new IllegalStateException(e);   // SHA-1 은 모든 JVM 에 있다 ／ [JA] SHA-1 はすべての JVM にある
         }
     }
 

@@ -15,11 +15,14 @@ import com.project.common.dto.stock.StockReservationResult;
 public interface StockReservationPort {
 
     /** 주문의 모든 줄을 잡는다(연장 포함). */
+    // [JA] 注文のすべての行を確保する(延長を含む)。
     StockReservationResult reserve(StockReservationRequest request);
 
     /** 푼다 — 여러 번 불러도 같다. */
+    // [JA] 解放する — 何度呼んでも同じ。
     void release(Long orderId);
 
     /** 지표 · 로그의 전송 이름. */
+    // [JA] メトリクス・ログ用の転送名。
     String transport();
 }

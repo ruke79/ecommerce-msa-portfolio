@@ -27,6 +27,8 @@ const ImagesProduct = ({
             if (images.length === 6) {
                 // 사용자에게는 바로 아래 dialog 로 알린다. "err" 한 글자를 콘솔에
                 // 찍는 것은 아무에게도 도움이 되지 않았다.
+                // [JA] ユーザーにはすぐ下の dialog で知らせる。"err" の一語をコンソールに
+                //      出すことは誰の役にも立たなかった。
                 dispatch(
                     showDialog({
                         header: t("admin.product_form.max_images_header"),
@@ -70,6 +72,10 @@ const ImagesProduct = ({
                 // 요청 하나가 수십 MB 가 되고, Cloudflare 무료 플랜의 100MB 제한에
                 // 걸리면 **엣지에서 잘려 서버 로그에 아무것도 남지 않는다**(docs/33 §11).
                 // 긴 변 1920px 로 줄이면 장당 수백 KB 다. 실패하면 원본으로 폴백한다.
+                // [JA] 元のまま入れない — スマホの写真(1 枚 5〜12MB)を 3 枚以上入れると
+                //      リクエスト一つが数十 MB になり、Cloudflare 無料プランの 100MB 制限に
+                //      掛かると**エッジで切られサーバーログに何も残らない**(docs/33 §11)。
+                //      長辺 1920px に縮めれば 1 枚数百 KB である。失敗したら元画像にフォールバックする。
                 fileToResizedDataUrl(img).then((dataUrl) => {
                     setImages((images) => [...images, dataUrl]);
                 });

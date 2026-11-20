@@ -26,6 +26,11 @@ import lombok.Setter;
  *
  * <p>{@code startsAt}/{@code endsAt} 이 둘 다 null 이면 "기간 제한 없음"이다 — 상시 배너는
  * published 만 켜면 되고, 기간 개념을 몰라도 쓸 수 있다.
+ *
+ * <p>[JA] ホーム画面のバナー。
+ * 表示判定が published 一つではない理由。企画展バナーは「金曜 0 時から日曜深夜 0 時まで」のように期間が決まっている。人が時刻に合わせて
+ * チェックボックスをオン・オフする方式は必ず取りこぼす。isVisibleAt がサーバー時刻で判定する。
+ * startsAt/endsAt が両方 null なら「期間制限なし」— 常設バナーは published を入れるだけでよく、期間の概念を知らなくても使える。
  */
 @Entity
 @Getter
@@ -48,6 +53,7 @@ public class Banner {
     private String imageUrl;
 
     /** 클릭했을 때 갈 곳. 비워 두면 클릭되지 않는 배너다(공지성 이미지). */
+    // [JA] クリックしたときの行き先。空にしておくとクリックできないバナーになる(お知らせ的な画像)。
     @Column(name = "link_url", length = 1000)
     private String linkUrl;
 
@@ -78,6 +84,9 @@ public class Banner {
      *
      * <p>경계는 <b>시작 포함, 종료 포함</b>이다. "23:59:59 까지"를 운영자가 직접 계산하지
      * 않아도 되도록, 종료 시각을 자정으로 넣으면 그 자정까지 보인다.
+     *
+     * <p>[JA] この時刻に表示されるか。
+     * 境界は開始を含み、終了も含む。「23:59:59 まで」を運用者が自分で計算しなくて済むよう、終了時刻を深夜 0 時にすればその 0 時まで見える。
      */
     public boolean isVisibleAt(LocalDateTime now) {
         if (!published) {

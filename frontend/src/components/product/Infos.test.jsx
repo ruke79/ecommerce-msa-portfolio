@@ -14,6 +14,7 @@ jest.mock("store/AuthContext", () => ({ useAuthContext: () => mockAuth }));
 jest.mock("hook/useMoney", () => ({ useMoney: () => (v) => String(v) }));
 jest.mock("components/product/AccordianProduct", () => () => null);
 // 재입고 알림 버튼은 따로 테스트한다 — 여기서는 "품절로 보았는가" 만 본다.
+// [JA] 再入荷通知ボタンは別にテストする — ここでは「品切れとみなしたか」だけを見る。
 jest.mock("components/product/RestockButton", () => ({ soldOut }) => (
     <span data-testid="restock">{soldOut ? "restock-offered" : "no-restock"}</span>
 ));
@@ -46,6 +47,9 @@ beforeEach(() => {
 /**
  * 결제 전 재고 예약이 상품 화면에 보이는 방식 (docs/59 §5) — 서버가 남은 수량에서 다른 주문의 예약을 이미 뺐다.
  * 남은 게 0 이어도 누가 결제 중인 것이면 품절이 아니다.
+ *
+ * <p>[JA] 決済前の在庫予約が商品画面に見える方式(docs/59 §5) — サーバーが残数から他の注文の予約を既に引いている。
+ * 残りが 0 でも誰かが決済中のものなら品切れではない。
  */
 describe("상품 정보 — 결제 중인 재고", () => {
     it("남은 게 0 이고 다른 손님이 결제 중이면 '결제 중' 안내를 보여 주고, 재입고 알림은 권하지 않는다", () => {
@@ -53,6 +57,7 @@ describe("상품 정보 — 결제 중인 재고", () => {
 
         expect(screen.getByTestId("stock-on-hold")).toHaveTextContent("다른 고객이 결제 중인 재고입니다");
         // 재입고 알림은 실물이 0 을 건널 때만 간다 — 예약이 풀려 돌아오는 것으로는 오지 않는다.
+        // [JA] 再入荷通知は実物が 0 をまたぐときだけ届く — 予約が解けて戻るものでは来ない。
         expect(screen.getByTestId("restock")).toHaveTextContent("no-restock");
     });
 
@@ -70,6 +75,7 @@ describe("상품 정보 — 결제 중인 재고", () => {
 
     it("담는 순간 다 잡혀 버렸으면 '품절' 이 아니라 '결제 중' 이라고 말한다", async () => {
         // 화면을 연 뒤에 다른 손님이 잡았다 — 화면은 1개 남음, 담기 조회는 0개·잡힘 1.
+        // [JA] 画面を開いた後に他の客が確保した — 画面は残り 1 個、カート追加の照会は 0 個・確保 1。
         getRequest.mockResolvedValue({ data: { id: "1", size: "M", quantity: 0, onHold: 1 } });
         renderAt(product({ sizes: [{ size: "M", quantity: 1 }], quantity: 1, onHold: 0 }));
 
@@ -92,6 +98,9 @@ describe("상품 정보 — 결제 중인 재고", () => {
 /**
  * 사이즈 없는 상품(식품 등) — 사이즈 행은 있지만 이름이 비어 있다. 예전에는 빈 동그라미가 줄지어 나오고, 고르지 않으면
  * "사이즈를 선택하세요" 로 담기가 막혔다.
+ *
+ * <p>[JA] サイズのない商品(食品など) — サイズ行はあるが名前が空だ。以前は空の丸が並び、選ばないと
+ * 「サイズを選択してください」でカート追加が止まった。
  */
 describe("상품 정보 — 사이즈 없는 상품", () => {
     const oil = (overrides = {}) => product({
@@ -128,6 +137,7 @@ describe("상품 정보 — 사이즈 없는 상품", () => {
 });
 
 /** 관리자가 품절로 내린 상품 — 수량이 남아 있어도 담기지 않는다. */
+// [JA] 管理者が品切れにした商品 — 数量が残っていてもカートに入らない。
 describe("상품 정보 — 관리자가 품절로 내림", () => {
     it("🔴 담기 버튼이 막히고 품절이라고 말한다(수량이 남아 있어도)", () => {
         renderAt(product({ status: "SOLD_OUT", sizes: [{ size: "M", quantity: 5 }], quantity: 5, onHold: 0 }));
@@ -156,6 +166,8 @@ describe("상품 정보 — 관리자가 품절로 내림", () => {
 
 /**
  * 로그인했으면 담기가 서버에 바로 반영된다(docs/40 0-b) — 서버가 장바구니의 기준이다. 다른 기기에서도 같은 장바구니가 보인다.
+ *
+ * <p>[JA] ログインしていればカート追加がサーバーに即反映される(docs/40 0-b) — サーバーがカートの基準だ。他の端末でも同じカートが見える。
  */
 describe("상품 정보 — 서버 장바구니에 담기", () => {
     const inStock = () => product({ sizes: [{ size: "M", quantity: 5 }], quantity: 5, onHold: 0 });
@@ -223,7 +235,7 @@ describe("상품 정보 — 색상을 바꿔도 고른 사이즈는 그대로", 
         colors: [{ id: "5", color: "black", colorImage: "b.png" }, { id: "6", color: "white", colorImage: "w.png" }],
         skus: [
             { images: ["b1"], sizes: [{ size: "S" }, { size: "M" }, { size: "L" }] },
-            { images: ["w1"], sizes: [{ size: "M" }, { size: "L" }] },   // 흰색에는 S 가 없다 — M 은 0 번
+            { images: ["w1"], sizes: [{ size: "M" }, { size: "L" }] },   // 흰색에는 S 가 없다 — M 은 0 번 ／ [JA] 白には S がない — M は 0 番
         ],
         sizes: [{ size: "S", quantity: 3 }, { size: "M", quantity: 3 }, { size: "L", quantity: 3 }],
         quantity: 3, onHold: 0,
@@ -259,6 +271,8 @@ describe("상품 정보 — 색상을 바꿔도 고른 사이즈는 그대로", 
 
         // 사이즈 확인을 지나 담기 조회까지 갔다(예전에는 여기서 멈추고 오류를 띄웠다). 스타일 번호는 loader 가 다시 읽은 상품의 것이라
         // 이 테스트(상품 고정)에서는 보지 않는다 — 사이즈는 주소가 실어 온 흰색의 0 번.
+        // [JA] サイズ確認を通ってカート追加の照会まで行った(以前はここで止まりエラーを出した)。スタイル番号は loader が読み直した商品のものなので
+        //      このテスト(商品固定)では見ない — サイズはアドレスが運んできた白の 0 番。
         await waitFor(() => expect(getRequest).toHaveBeenCalledWith(expect.stringMatching(/&size=0$/)));
         expect(screen.queryByText("사이즈를 먼저 선택해 주세요.")).toBeNull();
     });

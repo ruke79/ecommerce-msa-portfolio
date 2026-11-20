@@ -41,10 +41,12 @@ public class PasskeyCredential {
     private Long userId;
 
     /** base64url(자격증명 id) — 전역에서 하나. */
+    // [JA] base64url(クレデンシャル id) — 全体で一意。
     @Column(name = "credential_id", nullable = false, unique = true, length = 1400)
     private String credentialId;
 
     /** base64url(난수 32바이트) — 이메일 · userId 를 기기에 남기지 않는다. */
+    // [JA] base64url(乱数 32 バイト) — メールアドレス・userId を端末に残さない。
     @Column(name = "user_handle", nullable = false, length = 64)
     private String userHandle;
 

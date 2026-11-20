@@ -35,10 +35,10 @@ import java.util.regex.Pattern;
 //      今は追加 → 切り替え → 引退の 3 段階で、誰もログアウトさせずに交換できる。kid のない旧トークンは JWT_SECRET_KEY(legacy)で検証する。
 public final class JwtKeyRing {
 
-    /** {@code JWT_SECRET_KEY} 의 이름 — kid 가 없는 옛 토큰도 이 키로 본다. */
+    /** {@code JWT_SECRET_KEY} 의 이름 — kid 가 없는 옛 토큰도 이 키로 본다. ／ [JA] {@code JWT_SECRET_KEY} の名前 — kid のない古いトークンもこのキーで検証する。 */
     public static final String LEGACY_KID = "legacy";
 
-    /** HS256 은 256비트 이상 — 코드는 문자열을 디코딩하지 않고 UTF-8 바이트 그대로 쓴다(k8s/20-secret.example.yaml). */
+    /** HS256 은 256비트 이상 — 코드는 문자열을 디코딩하지 않고 UTF-8 바이트 그대로 쓴다(k8s/20-secret.example.yaml). ／ [JA] HS256 は 256 ビット以上 — コードは文字列をデコードせず UTF-8 バイトのまま使う(k8s/20-secret.example.yaml)。 */
     static final int MIN_KEY_BYTES = 32;
 
     private static final Pattern KID = Pattern.compile("[A-Za-z0-9._-]{1,32}");
@@ -59,6 +59,10 @@ public final class JwtKeyRing {
      * @param activeKid     {@code JWT_ACTIVE_KID} — 비어 있으면 {@value #LEGACY_KID}
      * @param acceptLegacy  {@code JWT_ACCEPT_LEGACY} — false 면 legacy 키를 검증에 쓰지 않는다
      * @throws IllegalStateException 설정이 틀렸다 — 기동을 멈춘다(틀린 키로 서명하느니 뜨지 않는 편이 낫다)
+     *
+     * <p>[JA] パラメータの意味: legacySecret は JWT_SECRET_KEY、signingKeys は JWT_SIGNING_KEYS("kid=秘密,kid2=秘密2"、空なら legacy 一つだけ)、
+     * activeKid は JWT_ACTIVE_KID(空なら LEGACY_KID)、acceptLegacy は JWT_ACCEPT_LEGACY(false なら legacy キーを検証に使わない)。
+     * 設定が誤っていれば IllegalStateException で起動を止める(誤ったキーで署名するより起動しない方がよい)。
      */
     public static JwtKeyRing of(String legacySecret, String signingKeys, String activeKid, boolean acceptLegacy) {
         Map<String, byte[]> keys = new LinkedHashMap<>();
@@ -100,17 +104,18 @@ public final class JwtKeyRing {
         byte[] b = secret.getBytes(StandardCharsets.UTF_8);
         if (b.length < MIN_KEY_BYTES) {
             // 값은 찍지 않는다 — 길이만.
+            // [JA] 値は出力しない — 長さだけ。
             throw new IllegalStateException("JWT 키 '" + kid + "' 가 " + b.length + "바이트입니다 — HS256 은 " + MIN_KEY_BYTES + "바이트 이상(openssl rand -hex 32)");
         }
         return b;
     }
 
-    /** 서명에 쓸 이름 — 토큰 머리의 kid 에 적는다. */
+    /** 서명에 쓸 이름 — 토큰 머리의 kid 에 적는다. ／ [JA] 署名に使う名前 — トークンヘッダーの kid に記す。 */
     public String activeKid() {
         return activeKid;
     }
 
-    /** 서명 키. */
+    /** 서명 키. ／ [JA] 署名キー。 */
     public byte[] activeKey() {
         return keys.get(activeKid);
     }
@@ -119,6 +124,8 @@ public final class JwtKeyRing {
      * 검증 키 — 토큰 머리의 kid 로 찾는다. kid 가 없으면 옛 토큰이므로 legacy.
      *
      * @return 모르는 kid · 은퇴한 legacy 면 빈 값(= 거절)
+     *
+     * <p>[JA] 検証キー — トークンヘッダーの kid で探す。kid がなければ古いトークンなので legacy。戻り値: 不明な kid · 引退した legacy なら空(= 拒否)。
      */
     public Optional<byte[]> verificationKey(String kid) {
         String name = kid == null || kid.isBlank() ? LEGACY_KID : kid;
@@ -128,7 +135,7 @@ public final class JwtKeyRing {
         return Optional.ofNullable(keys.get(name));
     }
 
-    /** 운영 확인용 — 이름만(값은 절대 내보내지 않는다). */
+    /** 운영 확인용 — 이름만(값은 절대 내보내지 않는다). ／ [JA] 運用確認用 — 名前だけ(値は決して出さない)。 */
     public java.util.Set<String> kids() {
         return keys.keySet();
     }

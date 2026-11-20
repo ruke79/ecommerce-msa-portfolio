@@ -35,6 +35,13 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
      * <p>🔴 {@code sms_next_attempt_at} 조건은 {@code MailMessageRepository.claimForSend} 와
      * 같은 이유로 있다 — 상한만 있고 간격이 없으면 3회 재시도가 15초 만에 소진된다.
      * {@code is null} 을 함께 보지 않으면 새 행이 영영 선택되지 않는다.
+     *
+     * <p>[JA] 送信待ち・再試行対象を<b>先取り</b>する。アウトボックスポーラーと同じ理由で
+     * {@code FOR UPDATE SKIP LOCKED} だ(docs/21)。ロックがないとレプリカ二つが同じ通知を拾い<b>ユーザーに同
+     * じ SMS が二通</b>届く。アウトボックスのときは決済が重複し、ここでは料金とユーザーの苛立ちが重複する。
+     * 🔴 {@code sms_next_attempt_at} の条件は {@code MailMessageRepository.claimForSend} と同じ理由である —
+     * 上限だけで間隔がないと 3 回の再試行が 15 秒で尽きる。{@code is null}
+     * を併せて見ないと新しい行が永遠に選ばれない。
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))

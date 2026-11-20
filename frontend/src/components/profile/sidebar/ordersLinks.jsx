@@ -3,6 +3,10 @@
  *
  * <p>{@code name} 은 번역하지 않는다 — slugify 해서 주소(?q=)를 만드는 값이다(sidebar/profile.jsx 주석).
  * 화면에 보이는 글자는 {@code key} 로 사전에서 꺼낸다.
+ *
+ * <p>[JA] 注文履歴画面の状態タブ。
+ * {@code name} は翻訳しない — slugify してアドレス(?q=)を作る値だ(sidebar/profile.jsx のコメント)。
+ * 画面に見える文字は {@code key} で辞書から取り出す。
  */
 export const ordersLinks = [
     {
@@ -37,6 +41,8 @@ export const ordersLinks = [
     },
     // 🐛 "Delivered" 가 COMPLETED 를 걸렀다 — 도착한 주문은 DELIVERED 라 이 탭은 언제나 비었다.
     //    COMPLETED 는 구매 확정(docs/25 §12)이고 그 탭은 따로 있다.
+    // [JA] 🐛 "Delivered" が COMPLETED で絞り込んでいた — 届いた注文は DELIVERED なのでこのタブは常に空だった。
+    //      COMPLETED は購入確定(docs/25 §12)でそのタブは別にある。
     {
         name: "Delivered Orders",
         key: "profile.menu.orders.delivered",

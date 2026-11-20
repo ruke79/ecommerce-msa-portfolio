@@ -19,19 +19,24 @@ public interface  SubcategoryRepository extends JpaRepository<Subcategory, Long>
 
     // --- 낙관적 잠금 적용 ---
     //@Lock(LockModeType.OPTIMISTIC)
+    // [JA] --- 楽観ロックの適用 ---
     List<Subcategory> findByCategory_CategoryNameAndSubcategoryNameIn(String categoryName, List<String> subcategoryName);
 
     // 기존 메서드들은 유지
+    // [JA] 既存のメソッドはそのまま維持
     List<Subcategory> findBySubcategoryIdIn(List<Long> subcategoryName);    
     Subcategory findBySubcategoryNameAndCategory_CategoryId(String name, Long parent);
 
     /** 하위 카테고리의 상위 카테고리 id — 검색이 "다른 상위의 하위" 조합을 DB 에 묻지 않게 한다(SearchService). */
+    // [JA] サブカテゴリの親カテゴリ id — 検索が「別の親のサブ」の組み合わせを DB に問い合わせないようにする(SearchService)。
     @Query("SELECT s.category.categoryId FROM Subcategory s WHERE s.subcategoryId = :subcategoryId")
     java.util.Optional<Long> findParentCategoryId(@org.springframework.data.repository.query.Param("subcategoryId") Long subcategoryId);
 
      // JPQL을 사용하여 Subcategory와 Category를 함께 조회합니다.
      // Subcategory를 조회할 때 연관된 Category 엔티티를 즉시 로딩하도록 쿼리를 수정합니다
+     // [JA] JPQL を使って Subcategory と Category を一緒に照会する。
+     //      Subcategory を照会するとき、関連する Category エンティティを即時ロードするようクエリを修正する
     @Override
-    @Query("SELECT s FROM Subcategory s JOIN FETCH s.category") // s.category는 Subcategory 엔티티의 필드명입니다.
+    @Query("SELECT s FROM Subcategory s JOIN FETCH s.category") // s.category는 Subcategory 엔티티의 필드명입니다. ／ [JA] s.category は Subcategory エンティティのフィールド名である。
     List<Subcategory> findAll();
 }

@@ -21,6 +21,20 @@
 # 종료 코드: 0 = 모든 값이 죽었다 · 2 = 살아 있거나 Secret 에 있는 값이 있다(회전 필요) · 1 = 검사가 유효하지 않다
 #
 # SECRET-SCANNER-SELF-EXCLUDE — 이 파일은 password 패턴을 담고 있어 ops/20 에 걸린다.
+# [JA] 履歴の JSON に残った password の値が**今も通用するか**を確認する。**値は絶対に出力しない。**
+#      なぜ必要か: ops/20 は「履歴に password がある」までしか言わない(値を出さないので)。その値が既に死んだ値か、
+#      今運用に配線されている値かは分からない — 2026-09-25 にコネクタ JSON 四つの値は死んだ値だと確認したが(docs/30 §6)、
+#      その後フルクローンの再検査で**別のパス**(kafka_2.12-3.7.2/*-outbox-connector.json)がさらに見つかった。
+#      同じ値か、違う値なら生きているかを、人が値を見ずに判別する。
+#      何をするか(値ごとに — 画面には A・B・C のような名前だけが出る):
+#      ① 履歴のすべての *.json blob から password キーの値を集める(ops/20 と同じ基準: 6 文字以上、${…}・**** を除く)
+#      ② クラスタの**すべての Secret**(接続文字列の中も含む)とローカルの k8s/20-secret.yaml*・k8s-overlays/ に同じ値があるか
+#      ③ 運用 PostgreSQL に product・postgres で、Redis にログインしてみる — 値は kubectl exec の **stdin** でのみ渡す
+#      (引数・ファイル・ログに残らない)。対照群(ランダム値 → 拒否)と陽性対照(Pod の現在のパスワード → 成功)で
+#      検査自体が有効かをまず確かめる。対照がずれたら結論を出さない。
+#      使い方(サーバの**フルクローン**で — シャロークローンは履歴がないので拒否する)は上記。
+#      終了コード: 0 = すべての値が死んでいる・2 = 生きているか Secret にある値がある(ローテーションが必要)・1 = 検査が有効でない
+#      SECRET-SCANNER-SELF-EXCLUDE — このファイルは password パターンを含むので ops/20 に引っかかる。
 set -euo pipefail
 
 if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
@@ -43,6 +57,7 @@ def ignorable(v):
     return len(v) < 6 or "${" in v or set(v) <= {"*"} or "REPLACE_ME" in v
 
 # ── ① 이력의 JSON 에서 값 모으기 ───────────────────────────────────────────────
+# [JA] ── ① 履歴の JSON から値を集める ──
 objects = subprocess.run(["git", "rev-list", "--all", "--objects"], capture_output=True, text=True, check=True).stdout
 paths_by_blob = defaultdict(set)
 for line in objects.splitlines():
@@ -50,7 +65,7 @@ for line in objects.splitlines():
     if path.lower().endswith(".json"):
         paths_by_blob[sha].add(path)
 
-where = defaultdict(set)          # 값 → 경로들 (값은 이 프로세스 메모리에만 있다)
+where = defaultdict(set)          # 값 → 경로들 (값은 이 프로세스 메모리에만 있다) ／ [JA] 値 → パスたち(値はこのプロセスのメモリにだけある)
 for sha, paths in paths_by_blob.items():
     body = subprocess.run(["git", "cat-file", "-p", sha], capture_output=True).stdout.decode("utf-8", "replace")
     for _, value in PAIR.findall(body):
@@ -71,6 +86,7 @@ for v in values:
 print()
 
 # ── ② Secret·로컬 파일에 같은 값이 있나 ────────────────────────────────────────
+# [JA] ── ② Secret・ローカルファイルに同じ値があるか ──
 def kubectl(args, stdin=None):
     return subprocess.run(["kubectl", *args], input=stdin, capture_output=True, text=True)
 
@@ -78,7 +94,7 @@ res = kubectl(["get", "secrets", "-A", "-o", "json"])
 if res.returncode != 0:
     print("❌ Secret 목록을 읽지 못했습니다 — 검사가 유효하지 않습니다.", file=sys.stderr)
     sys.exit(1)
-decoded = []                       # (ns/name, key, 값) — 값은 출력하지 않는다
+decoded = []                       # (ns/name, key, 값) — 값은 출력하지 않는다 ／ [JA] (ns/name, key, 値) — 値は出力しない
 for item in json.loads(res.stdout)["items"]:
     ref = f'{item["metadata"]["namespace"]}/{item["metadata"]["name"]}'
     for key, b64 in (item.get("data") or {}).items():
@@ -96,13 +112,14 @@ for f in local_files:
         pass
 
 # ── ③ 로그인 — 값은 stdin 으로만 ────────────────────────────────────────────────
+# [JA] ── ③ ログイン — 値は stdin でだけ渡す ──
 PG_TRY = ('PGPASSWORD="$(cat)" PGCONNECT_TIMEOUT=5 psql -h "$(hostname -i | cut -d" " -f1)" '
           '-U "$1" -d postgres -tAc "select 1" 2>&1')
 PG_POSITIVE = {"postgres": 'PGPASSWORD="$POSTGRES_PASSWORD"', "product": 'PGPASSWORD="$PRODUCT_PASSWORD"'}
 
 def pg_login(user, value=None):
     """True=성공 · False=암호 거절 · None=판단 불가. 루프백은 trust 일 수 있어 파드 IP 로 붙는다."""
-    if value is None:   # 양성 대조 — 파드 안의 현재 암호, 값은 파드 밖으로 나오지 않는다
+    if value is None:   # 양성 대조 — 파드 안의 현재 암호, 값은 파드 밖으로 나오지 않는다 ／ [JA] 陽性対照 — Pod 内の現在のパスワード、値は Pod の外に出ない
         script = (f'{PG_POSITIVE[user]} PGCONNECT_TIMEOUT=5 psql -h "$(hostname -i | cut -d" " -f1)" '
                   f'-U "$1" -d postgres -tAc "select 1" 2>&1')
         out = kubectl(["-n", PG_NS, "exec", "-i", PG_DEPLOY, "--", "sh", "-c", script, "_", user], stdin="")

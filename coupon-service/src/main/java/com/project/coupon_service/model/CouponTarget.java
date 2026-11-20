@@ -28,6 +28,10 @@ import lombok.experimental.SuperBuilder;
  *
  * <p>대상을 문자열로 두는 이유: 카테고리 id 와 상품 id 는 둘 다 TSID(long)이지만, 나중에
  * 브랜드·태그처럼 문자열 키를 쓰는 대상이 생겨도 스키마를 바꾸지 않아도 된다.
+ *
+ * <p>[JA] クーポンが適用される対象一つ — カテゴリー id 一つまたは商品 id 一つ。
+ * <p><b>なぜ Coupon 内のコレクションではなく別エンティティか。</b>{@code @ElementCollection} の方が短いが、Hibernate が作る DDL が正確に何かにスキーマが縛られる。このプロジェクトは {@code ddl-auto: validate} + Flyway 所有の構造なので(docs/20)、マイグレーションが Hibernate の期待と一文字でもずれると<b>サービスが起動しない。</b>普通のエンティティにすればカラムを自分たちで決め、マイグレーションもそのまま書けばよい。
+ * <p>対象を文字列にする理由: カテゴリー id と商品 id はどちらも TSID(long)だが、後でブランド・タグのように文字列キーを使う対象ができてもスキーマを変えなくて済む。
  */
 @Getter
 @Setter
@@ -51,11 +55,13 @@ public class CouponTarget {
     private Long couponId;
 
     /** {@link CouponScope#CATEGORY} 또는 {@link CouponScope#PRODUCT}. ALL 은 대상 행이 없다. */
+    // [JA] {@link CouponScope#CATEGORY} または {@link CouponScope#PRODUCT}。ALL は対象行がない。
     @Enumerated(EnumType.STRING)
     @Column(name = "target_type", nullable = false, length = 16)
     private CouponScope targetType;
 
     /** 카테고리 id 또는 상품 id. */
+    // [JA] カテゴリー id または商品 id。
     @Column(name = "target_value", nullable = false)
     private String targetValue;
 }

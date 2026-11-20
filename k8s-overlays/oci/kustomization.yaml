@@ -56,6 +56,47 @@
 # ES 는 요청만 200m/768Mi 이고 실제 힙이 512MB 라, 2 OCPU 박스에서 **꺼져 있는 기능에
 # 주기에는 너무 비싸다.** 한국어 형태소 검색(nori)이 필요해지면 그때 판단할 것 —
 # 그때는 이 박스로는 부족하다.
+# [JA] oci オーバーレイ — Always Free Ampere **2 OCPU / 12GB** 1 台に詰め込む。
+#        kubectl apply -k k8s-overlays/oci(k8s/70-autoscaling.yaml は**適用しない** — 下記 §HPA)
+#      ⚠️ **4 OCPU / 24GB を得たならこれではなく `k8s-overlays/external` である。** このオーバーレイでも
+#         もちろん動く(より絞った値なので余裕が残るだけ)が、4 OCPU ではリクエスト・リミットを削る理由がなく
+#         Elasticsearch も残せる。どちらかはインスタンスで `nproc` で見る —
+#         `ops/23-oci-ampere-bootstrap.sh --check` がコア数を見て選んでくれる。
+#      ── なぜできたか ──
+#      2026-06-15 付で Oracle が Always Free Ampere A1 の上限を **4 OCPU/24GB → 2 OCPU/12GB に
+#      半減**したと、告知なしにドキュメントだけが変わった。ただし**実際には 4 OCPU/24GB がそのまま取れる
+#      アカウントもある** — 上限はテナンシーごとに違うので断定せず確認すること。
+#      それまでの計画(docs/32 §2)は 4 OCPU 基準だった。2 OCPU で計算し直すと:
+#        external オーバーレイそのまま、全部 1 レプリカ + Kafka・ES・Redis   3,550m → 2 OCPU 超過 🔴
+#        このオーバーレイ + Kafka・Redis(ES 除く)                         ~1,115m → 収まる ✅
+#        (2026-09 追加分を反映: saga-projection と config-server の 2 つ。external は各 +100m、
+#         このオーバーレイは各 +60m。saga-projection は external の replicas ブロックが 1 レプリカに
+#         固定した値基準で、config-server はマニフェスト自体が 1 である。)
+#      ── 何を減らすか ──
+#        リクエスト(requests) 250m/384Mi → 60m/256Mi    スケジューラが確保しておく量
+#        リミット(limits)     1000m/768Mi → 800m/512Mi  実際に使える天井
+#        JVM ヒープ           -XX:MaxRAMPercentage=60   リミットを下げたのでヒープも一緒に下げる
+#        cloudflared          レプリカ 2 → 1            ノードが 1 つだけなので 2 つは意味がない
+#      ⚠️ docs/31 §3 は「requests だけ下げて limits は触るな」と書いた。ここでは **limits も下げる** —
+#         その助言の前提が「ヒープがリミットに合わせて自動で決まる」だったからである。
+#         JVM のデフォルトヒープはコンテナリミットの 1/4 なので、リミットだけ下げればヒープも下がりはするが、
+#         14 サービスが同時にリミットまで上がると 14 × 768Mi = 10.8GB で 12GB ノードが OOM になる。
+#         リミットを 512Mi に下げ、MaxRAMPercentage でヒープを明示して**予測可能に**する。
+#         (ENTRYPOINT が `java ${JAVA_OPTS} -jar` なので JAVA_OPTS がそのまま効く。
+#          JAVA_TOOL_OPTIONS はトラストストア用に既に使われているので触らない。)
+#      ── HPA を適用しない ──
+#      prod オーバーレイが Deployment から replicas を消したので(HPA が所有)、HPA を適用しなければ
+#      Kubernetes のデフォルトの **1 レプリカ**になる。それがこのノードで望む値である。
+#      70-autoscaling.yaml を適用すると minReplicas=2 に上がり、すぐに資源が足りなくなる。
+#      どうしても使うなら min=1/max=2 に下げて適用すること。
+#      ⚠️ レプリカ 1 では、このリポジトリがレプリカ 2 で捕まえた並行性バグが再現しない
+#         (アウトボックス重複発行、メール・SMS ディスパッチャの二重先取り — docs/21, docs/31 §3)。
+#         それは ops/12-staging-rehearsal.sh で別に確認しなければならない。
+#      ── Elasticsearch は起動しない ──
+#      `SEARCH_ENGINE=postgres` がデフォルトなので ES なしでも検索は動く(LIKE 経路)。
+#      ES はリクエストだけで 200m/768Mi、実ヒープが 512MB で、2 OCPU の箱では**オフになっている機能に
+#      払うには高すぎる。** 韓国語形態素検索(nori)が必要になったらその時に判断すること —
+#      その時はこの箱では足りない。
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -63,22 +104,26 @@ kind: Kustomization
 namespace: ecommerce
 
 resources:
-  - ../external          # 관리형 PG/Mongo 엔드포인트 + cloudflared 를 그대로 상속
+  - ../external          # 관리형 PG/Mongo 엔드포인트 + cloudflared 를 그대로 상속 ／ [JA] マネージド PG/Mongo エンドポイント + cloudflared をそのまま継承
 
 patches:
   # 자바 서비스 13종 — 요청·상한을 줄이고 힙을 명시한다.
+  # [JA] Java サービス 13 種 — リクエスト・リミットを減らしヒープを明示する。
   - path: patch-java-resources.yaml
     target:
       kind: Deployment
       name: "eureka-server|gateway-server|user-service|catalog-service|cart-service|order-service|pay-service|coupon-service|chat-service|notification-service|delivery-service|saga-projection|config-server"
 
   # frontend 는 nginx 라 자바 설정이 필요 없고 원래도 작다.
+  # [JA] frontend は nginx なので Java 設定は不要で、元々小さい。
   - path: patch-frontend.yaml
     target: { kind: Deployment, name: frontend }
 
   # 노드가 하나뿐이라 cloudflared 2개는 가용성을 주지 못한다 — 자원만 쓴다.
+  # [JA] ノードが 1 つだけなので cloudflared 2 つは可用性をもたらさない — 資源を使うだけである。
   - path: patch-cloudflared.yaml
     target: { kind: Deployment, name: cloudflared }
 
   # ES 를 띄우지 않으므로 헬스 인디케이터를 끈다(§위).
+  # [JA] ES を起動しないのでヘルスインジケータを切る(§上)。
   - path: patch-config.yaml

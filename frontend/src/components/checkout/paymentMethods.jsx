@@ -18,6 +18,16 @@ import { translate } from "i18n/I18nProvider";
  * <p>{@code icon} 은 public/ 아래의 실제 파일이다. 🐛 예전에는 화면이
  * {@code /assets/images/${id}.png} 를 조립했는데, Stripe·포트원에는 그런 PNG 가 없어
  * 아이콘이 깨진 채 떴다. 파일이 있는지는 paymentMethods.test.js 가 확인한다.
+ *
+ * <p>[JA] 決済手段の一覧。
+ * 🐛 以前は名前が "Creadit cart" だった(credit card の誤字が二つ)。そして三つのうち PayPal だけが実際に動いた —
+ * 注文画面が決済手段と無関係に PayPal ボタンだけを描いていたからである(order/Payment.jsx のコメント)。
+ * id はサーバーへ行く値なので軽々しく変えない。画面に見えるのは name(商標)か nameKey(辞書のキー)で、
+ * 二つを分けた理由は docs/45 §4-1 の並び替えオプションと同じ — 画面の文言が API 契約を変えてはならない。
+ * available: false は「一覧にはあるがまだ使えない」という意味である。一覧から完全に外さない理由: ユーザーが期待する手段が
+ * なぜないのか分からないより、あるけれど準備中だと言う方がよい。画面がこの値を見て案内文言を出す。
+ * icon は public/ 下の実際のファイルである。🐛 以前は画面が /assets/images/${id}.png を組み立てていたが、
+ * Stripe · ポートワンにはそういう PNG がなくアイコンが壊れたまま出た。ファイルの有無は paymentMethods.test.js が確認する。
  */
 export const paymentMethods = [
     {
@@ -49,6 +59,7 @@ export const paymentMethods = [
         id: "credit_card",
         icon: "/assets/images/credit_card.png",
         // 🐛 "mastedcard" 였다. 파일은 public/assets/images/mastercard.png 다.
+        // [JA] 🐛 "mastedcard" だった。ファイルは public/assets/images/mastercard.png である。
         descriptionKey: "payment.method.credit_card.description",
         available: false,
         images: [
@@ -65,6 +76,7 @@ export const paymentMethods = [
         id: "cash",
         icon: "/assets/images/cash.png",
         // 결제 API 가 아니라 상태 기계다(docs/49 §11): 안내 → 입금 대기 → 관리자 입금 확인 → 결제 완료.
+        // [JA] 決済 API ではなく状態機械である(docs/49 §11): 案内 → 入金待ち → 管理者の入金確認 → 決済完了。
         descriptionKey: "payment.method.cash.description",
         available: true,
         images: [],
@@ -76,6 +88,10 @@ export const paymentMethods = [
  *
  * <p>목록은 모듈이 한 번 읽을 때 만들어지므로 문구를 여기 담아 두면 그 순간의 언어로 굳는다 — 키만 두고
  * 그릴 때 번역한다. 컴포넌트는 useTranslation 의 {@code t} 를 넘긴다(언어가 바뀌면 다시 그려진다).
+ *
+ * <p>[JA] 画面に見せる名前。商標(PayPal · Stripe)は name のまま、それ以外は辞書(nameKey)から。
+ * 一覧はモジュールが一度読まれるときに作られるので、文言をここに入れておくとその瞬間の言語で固まる — キーだけ置いて
+ * 描くときに翻訳する。コンポーネントは useTranslation の t を渡す(言語が変われば描き直される)。
  */
 export function paymentMethodName(method, t = translate) {
     if (!method) return "";
@@ -83,11 +99,13 @@ export function paymentMethodName(method, t = translate) {
 }
 
 /** 화면에 보일 설명 — {@link paymentMethodName} 과 같은 이유로 그릴 때 번역한다. */
+// [JA] 画面に見せる説明 — paymentMethodName と同じ理由で描くときに翻訳する。
 export function paymentMethodDescription(method, t = translate) {
     return method?.descriptionKey ? t(method.descriptionKey) : "";
 }
 
 /** 결제수단 id → 정의. 모르는 값이면 undefined. */
+// [JA] 決済手段 id → 定義。知らない値なら undefined。
 export function paymentMethodOf(id) {
     return paymentMethods.find((m) => m.id === id);
 }

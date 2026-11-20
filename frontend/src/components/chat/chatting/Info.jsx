@@ -47,6 +47,7 @@ const DownBtnWrapper = styled.div`
 `;
 
 // 날짜를 표시하는 등 채팅방의 경계를 나타냅니다.
+// [JA] 日付を表示するなど、チャットルームの境界を示す。
 export const SeparationBoundary = ({content }) => {
     return (
       <BorderBlock>

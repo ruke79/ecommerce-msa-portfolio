@@ -3,10 +3,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.catalog_service.controller.ProductController;
 import com.project.catalog_service.service.ProductImportService;
 import com.project.catalog_service.service.ProductService;
-import com.project.common.dto.ProductColorDto; // 이 import 추가
+import com.project.common.dto.ProductColorDto; // 이 import 추가 ／ [JA] この import を追加
 import com.project.common.dto.ProductDto;
-import com.project.common.dto.ProductInfoDto; // 이 import 추가
-import com.project.common.response.MessageResponse; // 이 import 추가
+import com.project.common.dto.ProductInfoDto; // 이 import 추가 ／ [JA] この import を追加
+import com.project.common.response.MessageResponse; // 이 import 추가 ／ [JA] この import を追加
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,16 +19,19 @@ import java.util.Collections;
 import java.util.List;
 
 // 아래의 Mockito static import를 추가하세요.
+// [JA] 下の Mockito の static import を追加すること。
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong; // 이 import 추가
+import static org.mockito.ArgumentMatchers.anyLong; // 이 import 추가 ／ [JA] この import を追加
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 // 아래의 MockMvcRequestBuilders static import를 추가하세요.
+// [JA] 下の MockMvcRequestBuilders の static import を追加すること。
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put; // 이 import 추가
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put; // 이 import 추가 ／ [JA] この import を追加
 
 // 아래의 MockMvcResultMatchers static import를 추가하세요.
+// [JA] 下の MockMvcResultMatchers の static import を追加すること。
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -42,6 +45,7 @@ class ProductControllerTest {
     private MockMvc mockMvc;
 
     // 컨트롤러가 의존하는 서비스를 가짜(Mock) 객체로 주입합니다.
+    // [JA] コントローラが依存するサービスを偽(Mock)オブジェクトとして注入する。
     @MockBean
     private ProductService productService;
 
@@ -49,15 +53,21 @@ class ProductControllerTest {
     // @WebMvcTest 는 웹 계층 빈만 올리므로 이게 없으면 컨텍스트 로딩부터 실패해 이 클래스의
     // 테스트가 전부 깨진다. 예전에는 JobLauncher 와 Job 빈을 직접 주입받아서, 여기서도
     // 그 둘을 가짜로 세워 줘야 했다.
+    // [JA] ProductController は CSV 一括登録(/products/load)を ProductImportService に渡す。
+    //      @WebMvcTest は Web 層の Bean しか載せないので、これがないとコンテキストのロードから失敗してこのクラスのテストがすべて壊れる。
+    //      以前は JobLauncher と Job Bean を直接注入していたので、ここでもその二つを偽物として立てる必要があった。
     @MockBean
     private ProductImportService productImportService;
 
     // 남은 수량에서 결제 전 예약을 빼는 StockAvailability 는 진짜를 쓰고 저장소만 가짜로 — 예약이 없으면(빈 목록) 응답이
     // 서비스가 준 그대로인지, 있으면 빠지는지를 컨트롤러 경로에서 본다(docs/59 §5).
+    // [JA] 残数から決済前の予約を差し引く StockAvailability は本物を使い、リポジトリだけ偽物にする — 予約がなければ(空リスト)応答がサービスの返したままか、
+    //      あれば差し引かれるかをコントローラ経路で見る(docs/59 §5)。
     @MockBean
     private com.project.catalog_service.repository.jpa.data.StockReservationRepository stockReservations;
 
     // 지금 수량(캐시를 믿지 않는다) — 빈 목록이면 캐시의 수량 그대로.
+    // [JA] いまの数量(キャッシュを信用しない) — 空リストならキャッシュの数量のまま。
     @MockBean
     private com.project.catalog_service.repository.jpa.data.ProductSizeRepository productSizes;
 
@@ -118,6 +128,7 @@ class ProductControllerTest {
     }
 
     // ── 배치 조회 /api/products/info — cart-service 가 항목마다 /api/{id} 를 부르던 것의 대체 ──
+    // [JA] ── バッチ照会 /api/products/info — cart-service が項目ごとに /api/{id} を呼んでいたのの置き換え ──
 
     @Test
     @DisplayName("ids 여러 개를 한 요청으로 받아 찾은 것만 목록으로 돌려준다 (못 찾은 id 는 빠질 뿐 실패가 아니다)")
@@ -126,6 +137,7 @@ class ProductControllerTest {
                 ProductDto.builder().id("1").name("A").build(),
                 ProductDto.builder().id("2").name("B").build());
         // 요청은 1,2,999 인데 999 는 없다 — 그래도 200 이고 둘만 돌아온다.
+        // [JA] リクエストは 1,2,999 だが 999 は存在しない — それでも 200 で二つだけ返る。
         when(productService.getProductsByIds(List.of(1L, 2L, 999L))).thenReturn(found);
 
         mockMvc.perform(get("/api/products/info").param("ids", "1", "2", "999"))
@@ -154,6 +166,7 @@ class ProductControllerTest {
                 "1:0:0", ProductInfoDto.builder().id("1").style(0).size("M").build(),
                 "2:1:0", ProductInfoDto.builder().id("2").style(1).size("L").build());
         // 세 항목을 물었는데 셋째(3:0:0)는 없다 — 그래도 200 이고 둘만 돌아온다.
+        // [JA] 三項目を尋ねたが三つ目(3:0:0)は存在しない — それでも 200 で二つだけ返る。
         when(productService.getCartProductsInfo(org.mockito.ArgumentMatchers.argThat(items ->
                 items.size() == 3
                         && items.get(0).getProductId() == 1L && items.get(0).getStyle() == 0 && items.get(0).getSize() == 0
@@ -163,6 +176,7 @@ class ProductControllerTest {
 
         // GET 인 이유: AdminWriteInterceptor 가 POST 에 User-Id 를 요구하는데 서비스 간 호출에는 없다.
         // 이 테스트가 POST 였을 때 정확히 그 이유로 401 이 났다.
+        // [JA] GET である理由: AdminWriteInterceptor が POST に User-Id を要求するが、サービス間呼び出しにはない。このテストが POST だった頃、まさにその理由で 401 になった。
         mockMvc.perform(get("/api/cart/info").param("items", "1:0:0", "2:1:0", "3:0:0"))
                 .andExpect(status().isOk())
                 .andExpect(content().json(objectMapper.writeValueAsString(found)));
@@ -173,9 +187,9 @@ class ProductControllerTest {
     void getCartProductsInfo_shouldReject_emptyOrMalformed() throws Exception {
         mockMvc.perform(get("/api/cart/info").param("items", ""))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(get("/api/cart/info").param("items", "1:0"))          // 세 조각이 아니다
+        mockMvc.perform(get("/api/cart/info").param("items", "1:0"))          // 세 조각이 아니다 ／ [JA] 三つの断片ではない
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(get("/api/cart/info").param("items", "a:0:0"))        // 숫자가 아니다
+        mockMvc.perform(get("/api/cart/info").param("items", "a:0:0"))        // 숫자가 아니다 ／ [JA] 数値ではない
                 .andExpect(status().isBadRequest());
     }
 
@@ -200,6 +214,8 @@ class ProductControllerTest {
     void getProductsInfo_isNotShadowedBySingleIdRoute() throws Exception {
         // 두 세그먼트라 {productId} 한 세그먼트 패턴과 겹치지 않아야 한다. 겹치면 "products" 를
         // Long 으로 파싱하다 400 이 난다 — 그 경우를 단건 400 과 구분하기 위해 서비스 호출로 확인한다.
+        // [JA] 二セグメントなので {productId} の一セグメントのパターンと重なってはならない。重なると "products" を Long として解析して 400 になる
+        //      — その場合を単件の 400 と区別するため、サービス呼び出しで確かめる。
         when(productService.getProductsByIds(List.of(7L))).thenReturn(List.of());
         mockMvc.perform(get("/api/products/info").param("ids", "7"))
                 .andExpect(status().isOk())
@@ -268,6 +284,7 @@ class ProductControllerTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.skus[0].sizes[0].quantity").value(1))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.skus[0].sizes[0].onHold").value(2))
                 // 실물보다 많이 잡혀 있어도 음수가 아니라 0, 잡힌 수는 실물까지만
+                // [JA] 実在庫より多く押さえられていても負ではなく 0、押さえた数は実在庫まで
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.skus[0].sizes[1].quantity").value(0))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.skus[0].sizes[1].onHold").value(1));
 
@@ -304,6 +321,7 @@ class ProductControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.skus[0].sizes[0].quantity").value(3))
                 // 0 이면 싣지 않는다 — 이 필드를 모르는 옛 파드가 캐시를 읽다 깨지지 않게
+                // [JA] 0 なら載せない — このフィールドを知らない古いポッドがキャッシュを読んで壊れないように
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.skus[0].sizes[0].onHold").doesNotExist());
     }
 
@@ -329,6 +347,7 @@ class ProductControllerTest {
     }
 
     // ── 장바구니 화면의 지금 재고 GET /api/stock?items=상품:색상:사이즈 (docs/59 §5) ──
+    // [JA] ── カート画面のいまの在庫 GET /api/stock?items=商品:色:サイズ (docs/59 §5) ──
 
     @Test
     @DisplayName("🔴 장바구니 항목의 지금 재고 — 수량은 예약을 뺀 값, 상품 상태도 함께, 없는 옵션은 빠진다")
@@ -393,6 +412,9 @@ class ProductControllerTest {
     // 신원은 헤더로 온다. 이 서비스에는 Spring Security 가 없고, 게이트웨이가 검증한
     // 신원을 User-Id/User-Role 로 넘긴다(외부에서 넣은 같은 이름의 헤더는 게이트웨이가
     // 지운다 — AdminWriteInterceptor javadoc 참조).
+    // [JA] この二つのテストは対である。評価は**ログインだけ**を要求する唯一の書き込み経路なので(AdminWriteInterceptor の明示的な例外)、
+    //      「管理者でなくてもよい」と「誰でもよいわけではない」の両方を固定してこそ意味がある。片方だけだと、例外が広すぎたり狭すぎたりする変更を捕まえられない。
+    //      身元はヘッダで来る。このサービスには Spring Security がなく、ゲートウェイが検証した身元を User-Id/User-Role で渡す(外から入れた同名のヘッダはゲートウェイが消す — AdminWriteInterceptor の javadoc 参照)。
 
     @Test
     @DisplayName("🔴 로그인한 일반 사용자는 별점을 직접 바꿀 수 없다 — 403 (docs/57 §3)")
@@ -431,6 +453,10 @@ class ProductControllerTest {
     // 테스트였다(docs/14 B-16). 실제로 productService.getProductsByCategoryAndSubcategory
     // 는 HTTP 로 노출된 적이 없고 캐시 워밍업 경로에서만 쓰인다.
     // 페이지네이션 조회는 위의 "페이지네이션 API" 테스트가 실제 엔드포인트로 커버한다.
+    // [JA] ここにあった「カテゴリ/サブカテゴリ API」テストは削除した。GET /api/product/products/by-subcategory を呼んで 200 を期待していたが、
+    //      ProductController にそのマッピングがなく常に 404 だった — 存在しない API を検証するテストだった(docs/14 B-16)。
+    //      実際 productService.getProductsByCategoryAndSubcategory は HTTP で公開されたことがなく、キャッシュウォームアップの経路でだけ使われる。
+    //      ページネーション照会は上の「ページネーション API」テストが実際のエンドポイントでカバーする。
 
     @Test
     @DisplayName("🔴 공개 카테고리 목록의 pageSize 는 100 으로 자른다 — 카테고리 전체를 읽어 캐시에 넣지 않게")

@@ -36,6 +36,11 @@ import com.project.delivery_service.repository.ShipmentRepository;
  * <p>🐛 예전에는 첫 조회 뒤 다음 조회가 6시간 뒤였다(접수 상태의 기본 주기). 시뮬레이터가
  * 1분마다 단계를 밟아도 폴러는 6시간 뒤에야 한 번 더 물었고, 그때 이력 전체를 받아 곧장
  * 배달 완료로 뛰었다. 화면에서는 "접수" 다음이 바로 "배달 완료" 였고 그 사이의 알림은 없었다.
+ *
+ * <p>[JA] ポーラー + シミュレーター — 配送完了まで<b>段階ごとに</b>進む。
+ * 🐛 以前は最初の照会の後、次の照会が 6 時間後だった(受付状態の既定周期)。シミュレーターが 1 分ごとに段階を進めても
+ * ポーラーは 6 時間後にやっともう一度問い、そのとき履歴全体を受け取ってすぐ配達完了に飛んだ。
+ * 画面では「受付」の次がいきなり「配達完了」で、その間の通知はなかった。
  */
 @DisplayName("delivery-service — 폴러가 시뮬레이터의 리듬을 따른다")
 class TrackingPollerSimulatedTest {
@@ -56,6 +61,7 @@ class TrackingPollerSimulatedTest {
         DeliveryEventRepository eventRepository = mock(DeliveryEventRepository.class);
         publisher = mock(DeliveryStatusPublisher.class);
         // 주문 전체 상태 판정은 실제로 — 발행(publish)만 가짜다.
+        // [JA] 注文全体の状態判定は本物で — 発行(publish)だけが偽物である。
         when(publisher.publishIfOverallChanged(any(), any())).thenCallRealMethod();
         CarrierRegistry carriers = mock(CarrierRegistry.class);
         when(carriers.find("SIMULATED")).thenReturn(Optional.of(simulated));
@@ -76,6 +82,7 @@ class TrackingPollerSimulatedTest {
     }
 
     /** 🔴 핵심 — 첫 조회 뒤 다음 조회가 6시간이 아니라 시뮬레이터의 한 단계(1분) 뒤다. */
+    // [JA] 🔴 核心 — 最初の照会の後、次の照会は 6 時間後ではなくシミュレーターの一段階(1 分)後である。
     @Test
     @DisplayName("🔴 접수 뒤 다음 조회를 6시간이 아니라 시뮬레이터 단계 간격으로 잡는다")
     void nextPollFollowsTheSimulatorStep() {
@@ -86,6 +93,7 @@ class TrackingPollerSimulatedTest {
     }
 
     /** 단계마다 한 번씩 조회하면 전이도 단계마다 일어나고 알림도 그때마다 나간다. */
+    // [JA] 段階ごとに一回ずつ照会すれば遷移も段階ごとに起き、通知もそのたびに出る。
     @Test
     @DisplayName("단계마다 물으면 집화 → 이동 → 배달 출발 → 배달 완료를 하나씩 밟는다")
     void walksEveryStageToDelivered() {
@@ -102,7 +110,7 @@ class TrackingPollerSimulatedTest {
 
         assertThat(shipment.getNextPollAt()).as("끝나면 더 조회하지 않는다").isNull();
         for (DeliveryStatus s : expected) {
-            if (s != DeliveryStatus.INFO_RECEIVED) {   // 접수는 송장 등록 때 이미 발행됐다
+            if (s != DeliveryStatus.INFO_RECEIVED) {   // 접수는 송장 등록 때 이미 발행됐다 ／ [JA] 受付は送り状登録時にすでに発行された
                 verify(publisher).publish(any(), eq(s));
             }
         }

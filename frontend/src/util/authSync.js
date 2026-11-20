@@ -35,6 +35,7 @@ export const SIGNED_IN = "signed-in";
 export const SIGNED_OUT = "signed-out";
 
 // 이 탭의 표식 — 같은 탭 안의 다른 채널 인스턴스가 받는 자기 메시지를 거른다(BroadcastChannel 은 같은 탭의 다른 인스턴스에도 전달한다).
+// [JA] このタブの目印 — 同じタブ内の別のチャネルインスタンスが受け取る自分のメッセージを除く(BroadcastChannel は同じタブの別インスタンスにも届ける)。
 const TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 let sender = null;
@@ -45,6 +46,7 @@ function channelSupported() {
 
 function envelope(type, uid) {
   // 허용한 필드만 — 호출부가 무엇을 넘겨도 토큰이 섞여 나가지 않는다.
+  // [JA] 許可したフィールドだけ — 呼び出し側が何を渡してもトークンが混ざって出ていかない。
   return { type, uid: uid == null ? null : String(uid), from: TAB_ID, at: Date.now() };
 }
 
@@ -53,6 +55,11 @@ function envelope(type, uid) {
  *
  * @param {"signed-in"|"signed-out"} type
  * @param {string|null} [uid] 사용자 id(문자열). 토큰은 받지 않는다.
+ *
+ * <p>[JA] 他のタブに知らせる。
+ *
+ * @param {"signed-in"|"signed-out"} type
+ * @param {string|null} [uid] ユーザー id(文字列)。トークンは受け取らない。
  */
 export function publishAuth(type, uid = null) {
   if (type !== SIGNED_IN && type !== SIGNED_OUT) return;
@@ -64,10 +71,12 @@ export function publishAuth(type, uid = null) {
       return;
     }
     // 대체 경로: 값을 바꿔야 이벤트가 나므로 at 이 들어간 새 값을 쓰고 바로 지운다.
+    // [JA] 代替経路: 値を変えないとイベントが出ないので、at を入れた新しい値を書いてすぐ消す。
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(message));
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
     // 저장소가 막힌 환경(사생활 보호 모드 등) — 동기화만 빠지고 앱은 그대로 동작한다.
+    // [JA] ストレージが塞がれた環境(プライバシー保護モードなど) — 同期だけが抜け、アプリはそのまま動作する。
   }
 }
 
@@ -83,6 +92,11 @@ function accept(raw, handler) {
  *
  * @param {(msg: {type: string, uid: string|null}) => void} handler
  * @returns {() => void} 구독 해제
+ *
+ * <p>[JA] 他のタブの通知を受け取る。
+ *
+ * @param {(msg: {type: string, uid: string|null}) => void} handler
+ * @returns {() => void} 購読解除
  */
 export function subscribeAuth(handler) {
   if (typeof window === "undefined") return () => {};
@@ -97,6 +111,7 @@ export function subscribeAuth(handler) {
       accept(JSON.parse(event.newValue), handler);
     } catch {
       // 깨진 값은 무시한다
+      // [JA] 壊れた値は無視する
     }
   };
   window.addEventListener("storage", onStorage);
@@ -104,12 +119,14 @@ export function subscribeAuth(handler) {
 }
 
 /** 테스트용 — 보내는 채널을 닫고 다시 만들게 한다. */
+// [JA] テスト用 — 送信チャネルを閉じて作り直させる。
 export function resetAuthSyncForTest() {
   if (sender) {
     try {
       sender.close();
     } catch {
       // 무시
+      // [JA] 無視
     }
   }
   sender = null;

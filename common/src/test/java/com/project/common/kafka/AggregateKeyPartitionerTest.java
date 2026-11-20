@@ -53,9 +53,9 @@ class AggregateKeyPartitionerTest {
         AggregateKeyPartitioner p = new AggregateKeyPartitioner();
         Cluster cluster = clusterWith("payment", 6);
 
-        for (String key : List.of("123", "9", "abc", "order")) {   // "order" 는 접두사 "order-" 가 아니다
+        for (String key : List.of("123", "9", "abc", "order")) {   // "order" 는 접두사 "order-" 가 아니다 ／ [JA] "order" は接頭辞 "order-" ではない
             byte[] bytes = key.getBytes(StandardCharsets.UTF_8);
-            int expected = Utils.toPositive(Utils.murmur2(bytes)) % 6;  // DefaultPartitioner 의 계산
+            int expected = Utils.toPositive(Utils.murmur2(bytes)) % 6;  // DefaultPartitioner 의 계산 ／ [JA] DefaultPartitioner の計算
             assertThat(partitionOf(p, "payment", key, cluster)).as(key).isEqualTo(expected);
         }
     }
@@ -79,7 +79,7 @@ class AggregateKeyPartitionerTest {
     void nullKey_prefersAvailablePartitions() {
         Node node = new Node(0, "localhost", 9092);
         Cluster cluster = new Cluster("test", List.of(node), List.of(
-                new PartitionInfo("t", 0, null, new Node[]{node}, new Node[]{}),     // 리더 없음
+                new PartitionInfo("t", 0, null, new Node[]{node}, new Node[]{}),     // 리더 없음 ／ [JA] リーダーなし
                 new PartitionInfo("t", 1, node, new Node[]{node}, new Node[]{node})), Set.of(), Set.of());
         AggregateKeyPartitioner p = new AggregateKeyPartitioner();
         for (int i = 0; i < 50; i++) {

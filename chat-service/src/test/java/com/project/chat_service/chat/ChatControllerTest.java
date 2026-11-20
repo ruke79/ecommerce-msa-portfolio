@@ -35,9 +35,12 @@ import org.springframework.data.jpa.mapping.JpaMetamodelMappingContext;
 @AutoConfigureMockMvc
 // 채팅방 생성은 ChatApiController 에 있는데 슬라이스에 StompController 만 넣어 두어
 // 대상 컨트롤러가 로딩되지 않았고, 그래서 이 클래스의 테스트는 계속 404 였다(docs/14 B-17).
+// [JA] チャットルーム作成は ChatApiController にあるのにスライスに StompController だけを入れていたため
+//      対象コントローラが読み込まれず、このクラスのテストはずっと 404 だった(docs/14 B-17)。
 @WebMvcTest(controllers = {StompController.class, ChatApiController.class})
 @MockBean(JpaMetamodelMappingContext.class)
 // StompController 가 상담 메시지의 권한을 SupportService 에 묻는다(docs/58).
+// [JA] StompController が相談メッセージの権限を SupportService に問い合わせる(docs/58)。
 @MockBean(com.project.chat_service.service.SupportService.class)
 public class ChatControllerTest extends MvcTestBasic {
     @MockBean
@@ -55,6 +58,8 @@ public class ChatControllerTest extends MvcTestBasic {
         String requestJson = createStringJson(chatRequestDto);
         // ChatApiController 는 @RequestMapping("/api/chat") 아래에 있다. 예전 경로 "/chat/room"
         // 은 매핑된 적이 없어 항상 404 였다.
+        // [JA] ChatApiController は @RequestMapping("/api/chat") の下にある。以前のパス "/chat/room"
+        //      はマッピングされたことがなく、常に 404 だった。
         mvc.perform(post("/api/chat/room")
                         .headers(GenerateMockToken.getToken())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -75,23 +80,28 @@ public class ChatControllerTest extends MvcTestBasic {
         // MessageDto chat1 = new MessageDto(MessageType.TEXT_TALK, roomId, "user2@example.com", "yun", "안녕하세요", "", 0, 
         // LocalDateTime.now().atZone(ZoneId.of("Asia/Seoul")).toInstant()
         // );
+        // [JA] (コメントアウトされたコード) 本文の値は「こんにちは」
         
         // MessageDto chat2 = new MessageDto(MessageType.TEXT_TALK, roomId, "user2@example.com", "yun", "안녕하세요2", "", 0, 
         // LocalDateTime.now().atZone(ZoneId.of("Asia/Seoul")).toInstant()
         // );
+        // [JA] (コメントアウトされたコード) 本文の値は「こんにちは2」
 
         // MessageDto chat3 = new MessageDto(MessageType.TEXT_TALK, roomId, "user2@example.com", "yun", "안녕하세요3", "", 0, 
         // LocalDateTime.now().atZone(ZoneId.of("Asia/Seoul")).toInstant()
         // );
+        // [JA] (コメントアウトされたコード) 本文の値は「こんにちは3」
 
         // MessageDto chat4 = new MessageDto(MessageType.TEXT_TALK, roomId, "user2@example.com", "yun", "안녕하세요4", "", 0, 
         // LocalDateTime.now().atZone(ZoneId.of("Asia/Seoul")).toInstant()
         // );
+        // [JA] (コメントアウトされたコード) 本文の値は「こんにちは4」
 
         // given(chatService.saveMessage(chat1)).willReturn("안녕하세요1");
         // given(chatService.saveMessage(chat2)).willReturn("안녕하세요2");
         // given(chatService.saveMessage(chat3)).willReturn("안녕하세요3");
         // given(chatService.saveMessage(chat4)).willReturn("안녕하세요4");        
+        // [JA] (コメントアウトされたコード) 戻り値は「こんにちは1」〜「こんにちは4」
 
         
         // List<MessageDto> chatList = List.of(chat1, chat2, chat3, chat4);
@@ -104,6 +114,7 @@ public class ChatControllerTest extends MvcTestBasic {
         // .andExpect(status().isOk())
         //          .andExpect(jsonPath("$", hasSize(2)));
         //         // .andExpect(jsonPath("$.chatList[0].content", is("안녕하세요")));
+        // [JA] (コメントアウトされたコード) 期待する content は「こんにちは」
     }
 
     

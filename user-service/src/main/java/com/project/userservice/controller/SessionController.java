@@ -64,6 +64,7 @@ public class SessionController {
 
         int revoked = refreshTokenService.revokeAll(user.getUserId());
         // 이 기기의 리프레시 쿠키도 지운다 — 서버에서는 이미 끊겼지만, 남겨 두면 다음 로딩에 400 을 한 번 더 본다.
+        // [JA] この端末のリフレッシュ Cookie も消す — サーバーでは既に切れているが、残すと次のロードで 400 をもう一度見る。
         response.addCookie(jwtUtils.createCookie(TokenType.REFRESH.getType(), null, Duration.ZERO));
         return ResponseEntity.ok(Map.of("revoked", revoked));
     }

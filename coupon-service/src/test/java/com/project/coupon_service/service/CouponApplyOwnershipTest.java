@@ -38,6 +38,10 @@ import com.project.coupon_service.repository.jpa.CouponTargetRepository;
  * 금액을 받고, (3) 그 사람 id 로 쿠폰 사용 이벤트를 발행시킬 수 있었다.
  *
  * <p>이 테스트는 "본문에 남의 이메일을 넣어도 <b>검증된 신원</b>으로만 조회한다"를 고정한다.
+ *
+ * <p>[JA] クーポン適用は<b>要求した本人の</b>クーポンにだけ届かなければならない (BOLA — www-security シナリオ 10)。
+ * <p>以前は本文の {@code userEmail} でユーザーを探した。ログインさえしていれば本文に他人のメールを入れて (1) その人が未使用クーポンを持つか知り、(2) その割引率で計算された金額を受け取り、(3) その人の id でクーポン使用イベントを発行させられた。
+ * <p>このテストは「本文に他人のメールを入れても<b>検証された身元</b>でだけ照会する」を固定する。
  */
 class CouponApplyOwnershipTest {
 
@@ -45,10 +49,12 @@ class CouponApplyOwnershipTest {
     private final CouponTargetRepository couponTargetRepository = mock(CouponTargetRepository.class);
     private final UserServiceClient userServiceClient = mock(UserServiceClient.class);
     // 제약 있는 쿠폰만 부른다. 이 테스트의 쿠폰은 존재하지 않으므로 여기까지 오지 않는다.
+    // [JA] 制約付きクーポンでだけ呼ぶ。このテストのクーポンは存在しないのでここまで来ない。
     private final CartServiceClient cartServiceClient = mock(CartServiceClient.class);
     private final CatalogServiceClient catalogServiceClient = mock(CatalogServiceClient.class);
     private final CouponUseProducer couponUseProducer = mock(CouponUseProducer.class);
     // 쿠폰 발급 알림 발행자. 이 테스트는 적용 경로만 보므로 호출되지 않는다.
+    // [JA] クーポン発行通知の発行者。このテストは適用経路だけを見るので呼ばれない。
     private final CouponIssuedProducer couponIssuedProducer = mock(CouponIssuedProducer.class);
 
     private final CouponService service = new CouponService(
@@ -59,6 +65,7 @@ class CouponApplyOwnershipTest {
     @DisplayName("🔴 본문에 남의 이메일을 실어도 검증된 신원(User-Id)의 쿠폰만 본다 — user-service 도 부르지 않는다")
     void bodyEmailIsIgnored_verifiedIdentityWins() throws Exception {
         // 옛 클라이언트(또는 공격자)가 본문에 userEmail 을 싣는다 — 필드가 없어 읽히지도 않는다.
+        // [JA] 古いクライアント(または攻撃者)が本文に userEmail を載せる — フィールドがないので読まれもしない。
         CouponApplyRequest request = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
                 "{\"couponName\":\"WELCOME10\",\"totalPrice\":100.00,\"userEmail\":\"victim@example.com\"}",
                 CouponApplyRequest.class);
@@ -69,9 +76,11 @@ class CouponApplyOwnershipTest {
         CouponResponse response = service.applyCoupon(request, 7L);
 
         // 쿠폰은 **검증된 id** 로만 찾는다. 이메일 → id 왕복이 없다.
+        // [JA] クーポンは**検証された id** でだけ探す。メール → id の往復がない。
         verify(couponRepository).findByNameAndUserIdAndCouponStatus(eq("WELCOME10"), eq(7L), any());
         verify(userServiceClient, never()).findUserByEmail(anyString());
         // 남의 쿠폰이 없으니 할인도 없다 — 존재 여부조차 새지 않는다.
+        // [JA] 他人のクーポンがないので割引もない — 存在の有無すら漏れない。
         assertThat(response.getMessage()).isNotBlank();
         verify(couponUseProducer, never()).publish(any());
         assertThat(java.util.Arrays.stream(CouponApplyRequest.class.getDeclaredFields())
@@ -82,6 +91,7 @@ class CouponApplyOwnershipTest {
     @DisplayName("컨트롤러는 신원을 User-Id 헤더에서 받는다 — 본문·이메일로 되돌리지 못하게")
     void controllerTakesIdentityFromHeader() throws Exception {
         // 시그니처를 고정한다. 컴파일 단계에서 걸리지 않는 회귀라 여기서 잡는다(docs/48 §6-⑥).
+        // [JA] シグネチャーを固定する。コンパイル段階で掛からない回帰なのでここで捕まえる(docs/48 §6-⑥)。
         Method m = CouponController.class.getDeclaredMethod(
                 "applyCoupon", CouponApplyRequest.class, Long.class);
 
@@ -99,6 +109,7 @@ class CouponApplyOwnershipTest {
     }
 
     /** 나머지 사용자 엔드포인트(쿠폰 목록·기획전 받기)도 User-Id 로 — User-Email 을 받는 곳이 남으면 id 왕복이 되살아난다. */
+    // [JA] 残りのユーザーエンドポイント(クーポン一覧・企画展受け取り)も User-Id で — User-Email を受け取る所が残ると id の往復が復活する。
     @Test
     @DisplayName("쿠폰 목록·기획전 받기도 User-Id 헤더로 신원을 읽는다")
     void otherUserEndpointsReadUserId() throws Exception {

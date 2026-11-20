@@ -11,6 +11,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 🔴 PY6 — 결제 응답 프로듀서의 max.block.ms 는 발행 기다림 상한(기본 5초)과 같다. 예전에는 기본 60초라, 브로커 메타데이터를 기다리는 동안
  * send() 가 60초 막혀 "5초 = 릴레이의 행 잠금 보유 상한" 이 지켜지지 않았다.
+ *
+ * <p>[JA] 🔴 PY6 — 決済応答プロデューサーの max.block.ms は発行待ちの上限(既定 5 秒)と同じ。以前は既定の 60 秒で、ブローカーのメタデータを待つ間
+ * send() が 60 秒ブロックし「5 秒 = リレーの行ロック保持上限」が守られなかった。
  */
 @DisplayName("pay-service — 결제 응답 프로듀서의 막힘 상한")
 class KafkaProducerTimeoutTest {

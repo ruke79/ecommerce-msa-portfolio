@@ -29,6 +29,12 @@ function HoveredSubMenuItem({ icon, text, active }) {
  * 마지막 하나가 통째로 잘렸다. 그리고 그룹의 제목이 {@code <Link to="">} 라 누르는 순간
  * 빈 주소로 이동했다. 이제 높이는 짐작하지 않는다 — CSS grid 의 {@code 0fr → 1fr} 로
  * 내용만큼 열린다(index.css .sub-menu). 그룹 제목은 링크가 아니다.
+ *
+ * <p>[JA] 管理サイドバーの一行 — リンクか、サブメニューを開閉するグループである。
+ * 🐛 サブメニューが切れたり見えなかったりした: サブメニューの高さを<b>「項目一つ = 40px」と見積もって</b> {@code height} に固定していた。
+ * 実際の項目は 48px(py-2 + my-1)なので項目が多いほど切れた — Content Management の五つは最後の一つが丸ごと切れた。
+ * そしてグループのタイトルが {@code <Link to="">} なので押した瞬間に空のアドレスへ移動した。
+ * 今は高さを見積もらない — CSS grid の {@code 0fr → 1fr} で内容の分だけ開く(index.css .sub-menu)。グループのタイトルはリンクではない。
  */
 export default function SidebarItem({
   icon,
@@ -75,6 +81,7 @@ export default function SidebarItem({
             }`}
           >
             {/* 링크가 있을 때만 링크다. 그룹 제목을 <Link to=""> 로 두면 누를 때 이동한다. */}
+            {/* [JA] リンクがあるときだけリンクである。グループのタイトルを Link to="" にすると押したときに移動する。 */}
             {link ? <Link to={link}>{text}</Link> : text}
           </span>
           {subMenu && (
@@ -116,6 +123,7 @@ export default function SidebarItem({
       </li>
       {subMenu && (
         // 높이를 계산하지 않는다 — grid-template-rows 0fr/1fr 이 내용만큼 열고 닫는다.
+        // [JA] 高さを計算しない — grid-template-rows 0fr/1fr が内容の分だけ開閉する。
         <li className="sub-menu" data-open={open}>
           <ul className="pl-6" hidden={!open}>
             {expanded &&

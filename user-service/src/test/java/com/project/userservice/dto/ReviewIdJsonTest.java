@@ -12,11 +12,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *
  * <p>🐛 TSID(18~19자리)를 숫자로 내보냈다. JS 숫자는 2^53(약 9×10^15)까지만 정확해서 브라우저가 끝자리를 반올림했고, 좋아요가
  * 없는 리뷰 id 로 가서 404 — 화면은 낙관적으로 올린 1 을 0 으로 되돌렸다(작성자·운영자 모두).
+ *
+ * <p>[JA] レビュー id は<b>文字列</b>で出る。
+ * <p>🐛 TSID(18~19 桁)を数値で出していた。JS の数値は 2^53(約 9×10^15)までしか正確でなくブラウザが末尾を丸め、いいねのないレビュー id に行って 404 —
+ * 画面は楽観的に上げた 1 を 0 に戻した(作成者・運用者とも)。
  */
 @DisplayName("리뷰 id — JSON 에서 문자열")
 class ReviewIdJsonTest {
 
-    private static final long TSID = 891579158660068589L;   // 2^53 을 넘는 실제 크기의 id
+    private static final long TSID = 891579158660068589L;   // 2^53 을 넘는 실제 크기의 id ／ [JA] 2^53 を超える実サイズの id
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test

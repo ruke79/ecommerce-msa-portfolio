@@ -47,6 +47,28 @@ import lombok.extern.slf4j.Slf4j;
  * 했다</b> — "No qualifying bean of type StripeCheckoutGateway". 컨트롤러는 이미
  * {@code @Autowired(required = false)} 로 null 을 기다리고 있었으니, 빠진 것은 이 한 줄이다.
  * 같은 조건을 여기에도 둔다({@code PortOnePaymentService} 도 같다).
+ *
+ * <p>[JA] Stripe 決済の開始と確定。
+ *
+ * <h3>確定経路が二つあり、両方が同じ場所に集まる</h3>
+ *
+ * <p>① <b>復帰検証</b> — 決済後にブラウザが戻るとサーバーが Stripe に照会する。ユーザーが即座に結果を見る。②
+ * <b>Webhook</b> — Stripe が直接知らせる。<b>ブラウザが戻らなくても</b>反映される。
+ *
+ * <p>なぜ両方必要か: 復帰検証だけだと、決済直後にタブを閉じたユーザーは<b>お金は引かれたのに注文は未決済</b>のまま残る。
+ * Webhook だけだと決済直後の画面が「確認中」に留まる。
+ *
+ * <p>二つが重なるのは<b>正常でよく起きる。</b> そのため確定は {@code
+ * OrderDataService.recordPayment} 一つに集め、そちらが冪等である — 同じ決済が既に付いていれば静かに終える。
+ * 冪等性をここに置かなかったのは、それが<b>全プロバイダー共通のルール</b>だからである(PaymentGateway のコメント)。
+ *
+ * <h3>🐛 {@code stripe.enabled=false} ならこの Bean もあってはならない</h3>
+ *
+ * <p>ゲートウェイ・検証器は {@code StripeConfig} がその条件で作る。ところがこのサービスには条件がなく、Stripe
+ * を切った環境(クラスターの既定)で<b>order-service が起動すらできなかった</b> — "No qualifying bean
+ * of type StripeCheckoutGateway"。コントローラーは既に {@code @Autowired(required =
+ * false)} で null を待っていたので、欠けていたのはこの 1 行である。同じ条件をここにも置く({@code
+ * PortOnePaymentService} も同じ)。
  */
 @Slf4j
 @Service
@@ -55,8 +77,10 @@ import lombok.extern.slf4j.Slf4j;
 public class StripePaymentService {
 
     /** Stripe 가 "결제가 끝났다" 고 알리는 이벤트. 다른 이벤트는 무시한다. */
+    // [JA] Stripe が「決済が終わった」と知らせるイベント。他のイベントは無視する。
     private static final String CHECKOUT_COMPLETED = "checkout.session.completed";
     /** 나중 결제(계좌이체 등)가 뒤늦게 성공했을 때. 같은 처리를 한다. */
+    // [JA] 後払い(口座振替など)が遅れて成功したとき。同じ処理をする。
     private static final String ASYNC_PAYMENT_SUCCEEDED = "checkout.session.async_payment_succeeded";
 
     private final OrderCacheService cahcedOrderService;
@@ -74,8 +98,15 @@ public class StripePaymentService {
      * <p>⚠️ <b>트랜잭션을 열지 않는다.</b> Stripe 호출이 들어 있다 — DB 커넥션을 쥔 채
      * 외부 서비스를 기다리면 안 된다(docs/37 #5).
      *
+     * <p>[JA] 決済ページを開く。
+     *
+     * <p>⚠️ <b>トランザクションを開かない。</b> Stripe 呼び出しが入っている — DB
+     * コネクションを握ったまま外部サービスを待ってはならない(docs/37 #5)。
+     *
      * @param requesterId 게이트웨이가 검증한 요청자. 남의 주문으로 결제 페이지를 열 수 없다
+     *        [JA] ゲートウェイが検証した要求者。他人の注文で決済ページを開くことはできない
      * @return 브라우저를 보낼 주소
+     *        [JA] ブラウザを送る先のアドレス
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public CheckoutSession startCheckout(String trackingId, Long requesterId) {
@@ -87,6 +118,7 @@ public class StripePaymentService {
         if (requesterId == null || !requesterId.equals(order.getCustomerId())) {
             log.warn("다른 고객의 주문으로 결제를 시작하려는 시도를 차단: orderId={}", order.getOrderId());
             // 404 와 같은 문구 — 403 은 "그 주문은 존재한다"를 알려 준다.
+            // [JA] 404 と同じ文言 — 403 は「その注文は存在する」を教えてしまう。
             throw new PaymentVerificationException("주문을 찾을 수 없습니다: trackingId=" + trackingId);
         }
 
@@ -96,6 +128,8 @@ public class StripePaymentService {
 
         // 복귀 주소에 세션 id 를 실어 보낸다. Stripe 가 {CHECKOUT_SESSION_ID} 를 치환한다 —
         // 우리가 미리 알 수 없는 값이라 이 자리표시자가 규격으로 정해져 있다.
+        // [JA] 復帰アドレスにセッション id を載せて送る。Stripe が {CHECKOUT_SESSION_ID} を置換する —
+        //      こちらが事前に知り得ない値なので、このプレースホルダーが規格で決まっている。
         String orderPath = frontendUrl + "/order/" + order.getOrderId();
         String returnUrl = orderPath + "?stripe=success&session_id={CHECKOUT_SESSION_ID}";
         String cancelUrl = orderPath + "?stripe=canceled";
@@ -108,6 +142,11 @@ public class StripePaymentService {
      *
      * <p>브라우저가 보고한 것은 <b>세션 id 하나뿐</b>이고, 그마저 믿지 않는다. 그 세션을
      * Stripe 에 조회해 금액까지 대조하는 것은 {@code recordPayment} 다.
+     *
+     * <p>[JA] 復帰検証 — ブラウザが戻ってきた。
+     *
+     * <p>ブラウザが報告したのは<b>セッション id 一つだけ</b>で、それすら信じない。そのセッションを Stripe
+     * に照会して金額まで照合するのは {@code recordPayment} である。
      */
     public void confirmReturn(String trackingId, String sessionId, Long requesterId) {
         cahcedOrderService.recordPayment(trackingId, PaymentProvider.STRIPE, sessionId, requesterId);
@@ -130,6 +169,17 @@ public class StripePaymentService {
      *
      * <p>소유권 검사는 결제를 시작한 사람이 이미 통과했다({@link #startCheckout}). 여기서는
      * 그 주문의 고객을 그대로 쓴다.
+     *
+     * <p>[JA] Webhook — Stripe が直接知らせた。
+     *
+     * <h3>🔒 この経路にはログインしたユーザーがいない</h3>
+     *
+     * <p>そのため二点が復帰検証と異なる。① <b>本人確認を署名が代わりに担う。</b> 認証なしで開いたエンドポイントなので、「本当に
+     * Stripe が送ったか」は署名だけが答える({@link StripeWebhookVerifier})。②
+     * <b>注文参照もセッションから読む。</b> 本文の値をそのまま使わず Stripe に問い直す — 署名が有効なら本文は Stripe
+     * が作ったものなので問題ないが、どの注文に付けるかは<b>常にプロバイダーに確認した値</b>で決めるほうがルールが一つで済む。
+     *
+     * <p>所有権チェックは決済を開始した人が既に通過した({@link #startCheckout})。ここではその注文の顧客をそのまま使う。
      */
     public void handleWebhook(String payload, String signatureHeader) {
         webhookVerifier.verify(payload, signatureHeader);
@@ -145,6 +195,7 @@ public class StripePaymentService {
         if (!CHECKOUT_COMPLETED.equals(type) && !ASYNC_PAYMENT_SUCCEEDED.equals(type)) {
             // 구독하지 않은 이벤트가 오는 것은 정상이다(대시보드 설정에 따라). 200 으로
             // 끝내야 Stripe 가 재시도하지 않는다.
+            // [JA] 購読していないイベントが来るのは正常である(ダッシュボード設定次第)。200 で終えないと Stripe が再試行する。
             log.debug("Stripe 웹훅: 처리하지 않는 이벤트 {}", type);
             return;
         }
@@ -162,6 +213,8 @@ public class StripePaymentService {
 
         // 웹훅에는 로그인한 요청자가 없다 — 소유권 대조의 상대는 주문의 고객 그 자신이다. 예전에는 고객 사본에서
         // 그 고객의 이메일을 거꾸로 찾아 넘기고, 받는 쪽이 다시 이메일로 id 를 찾았다(docs/48 §6-①).
+        // [JA] Webhook にはログインした要求者がいない — 所有権照合の相手は注文の顧客自身である。
+        //      以前は顧客コピーからその顧客のメールを逆に探して渡し、受け側が再びメールで id を探していた(docs/48 §6-①)。
         Long ownerId = order.getCustomerId();
         if (ownerId == null) {
             throw new PaymentVerificationException(
@@ -170,10 +223,12 @@ public class StripePaymentService {
 
         log.info("Stripe 웹훅 수신: type={} orderId={}", type, order.getOrderId());
         // 사용자 토큰을 넘기지 않는다 — 결제 사가의 메시지는 토큰을 싣지 않는다(docs/54 §1.7).
+        // [JA] ユーザートークンは渡さない — 決済サガのメッセージはトークンを載せない(docs/54 §1.7)。
         cahcedOrderService.recordPayment(trackingId, PaymentProvider.STRIPE, sessionId, ownerId);
     }
 
     /** 복귀 URL 에 붙이는 쿼리를 만들 때 쓴다. 지금은 단순하지만 값이 늘면 여기로 모은다. */
+    // [JA] 復帰 URL に付けるクエリを作るときに使う。今は単純だが、値が増えたらここに集める。
     static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }

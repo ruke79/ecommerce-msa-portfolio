@@ -47,6 +47,7 @@ import reactor.netty.http.server.HttpServer;
 class NettyServerTest {
 
     /** 백엔드 대역 — 받은 글을 그대로 돌려보내는 WebSocket. 컨텍스트(라우트)보다 먼저 떠 있어야 해서 정적 초기화로 띄운다. */
+    // [JA] バックエンドの代役 — 受けた文をそのまま返す WebSocket。コンテキスト(ルート)より先に立ち上がっている必要があるので静的初期化で起動する。
     static final DisposableServer ECHO = HttpServer.create().host("127.0.0.1").port(0)
             .route(r -> r.ws("/echo", (in, out) -> out.sendString(in.receive().asString().map(s -> "echo:" + s))))
             .bindNow();

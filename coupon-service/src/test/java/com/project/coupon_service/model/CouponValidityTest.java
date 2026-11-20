@@ -16,6 +16,9 @@ import com.project.common.constants.coupon.CouponStatus;
  * <p>{@code startDate}/{@code endDate} 는 저장만 되고 적용 시점에 아무도 보지 않았다.
  * 쿠폰을 찾는 쿼리는 {@code findByNameAndUserIdAndCouponStatus} — 이름·사용자·상태뿐이다.
  * 그래서 가입 쿠폰의 31일 유효기간은 장식이었고, 1년 전에 만료된 쿠폰도 그대로 할인됐다.
+ *
+ * <p>[JA] 🐛 回帰対象: <b>クーポンの有効期間が検査されたことがない。</b>
+ * <p>{@code startDate}/{@code endDate} は保存されるだけで適用時に誰も見ていなかった。クーポンを探すクエリは {@code findByNameAndUserIdAndCouponStatus} — 名前・ユーザー・状態だけ。そのため登録クーポンの 31 日の有効期間は飾りで、1 年前に期限切れのクーポンもそのまま割引された。
  */
 class CouponValidityTest {
 
@@ -71,6 +74,8 @@ class CouponValidityTest {
     void nullScopeReadsAsAll() {
         // V5 이전에 만들어진 행은 scope 가 NULL 이다. 이게 CATEGORY 로 읽히면
         // 대상이 없어 기존 쿠폰 전부가 갑자기 아무것에도 적용되지 않는다.
+        // [JA] V5 以前に作られた行は scope が NULL だ。これが CATEGORY として読まれると
+        //      対象がなく既存クーポン全部が突然何にも適用されなくなる。
         Coupon legacy = coupon(NOW.minusDays(1), NOW.plusDays(1));
         assertThat(legacy.getScope()).isNull();
         assertThat(legacy.scope()).isEqualTo(CouponScope.ALL);

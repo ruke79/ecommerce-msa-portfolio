@@ -52,12 +52,12 @@ public class ProductSubcategory {
     //    읽는 곳(하위 카테고리 → 상품 목록)에서는 행마다 추가 SELECT 가 나갔다. 연결 행은 대개 상품 쪽 컬렉션으로 읽히므로 상품은 이미
     //    영속성 컨텍스트에 있고, 하위 카테고리는 Subcategory 의 @BatchSize 로 한 번에 채운다(ProductQueryCountTest).
     // [JA] 両方 JPA の既定(EAGER)だった。LAZY にし、下位カテゴリは Subcategory の @BatchSize でまとめて読む。
-    @JsonBackReference // Product로의 순환 참조를 끊습니다.
+    @JsonBackReference // Product로의 순환 참조를 끊습니다. ／ [JA] Product への循環参照を断つ。
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name="product_id")
     private Product product;
 
-    @JsonBackReference // Subcategory로의 순환 참조를 끊습니다.
+    @JsonBackReference // Subcategory로의 순환 참조를 끊습니다. ／ [JA] Subcategory への循環参照を断つ。
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name="subcategory_id")
     private Subcategory subcategory;

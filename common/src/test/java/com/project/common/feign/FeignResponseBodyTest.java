@@ -51,7 +51,12 @@ import com.sun.net.httpserver.HttpsServer;
  * <b>HTTPS</b> 서버에 같은 클라이언트로 여러 번 부르고 서버가 받은 연결 수를 센다. 평문 HTTP 에서는 JDK 가 닫을 때 남은 끝 청크를
  * 읽어 내 연결을 살리므로(그래서 이 결함이 잘 안 보였다) 서비스 간과 같은 TLS 로 잰다.
  *
- * <p>[JA] サービス間の Feign 応答を最後まで読む — chunked JSON でも接続を再利用する。本物の OpenFeign の配線で数える。
+ * <p>[JA] サービス間の Feign 応答を最後まで読む — chunked JSON でも接続を再利用する(docs/83 §5)。
+ * 🐛 2026-10-18 order 負荷計測: order の Feign 時間の 2/3 が cart · catalog への新しい TLS ハンドシェイクだった。Spring MVC の JSON は
+ * chunked だが、Jackson が最後の閉じ波括弧で止まって閉じ、JDK が終端チャンクを見ていない接続を捨てていた — 呼び出しごとに新しい接続。
+ * 本物の Spring Cloud OpenFeign の配線(自動設定 · {@code @EnableFeignClients} · Spring デコーダー)で、Spring MVC のように chunked で
+ * 応答する <b>HTTPS</b> サーバーに同じクライアントで何度も呼び、サーバーが受けた接続数を数える。平文 HTTP では JDK が閉じるときに残った
+ * 終端チャンクを読み切って接続を生かすので(だからこの欠陥が見えにくかった)、サービス間と同じ TLS で測る。
  */
 @DisplayName("Feign 응답을 끝까지 읽기 — chunked JSON 의 연결 재사용")
 class FeignResponseBodyTest {
@@ -77,6 +82,7 @@ class FeignResponseBodyTest {
     }
 
     /** localhost 자체 서명 키 — 서버 인증서이자 클라이언트가 믿는 것(서비스 간 mTLS 의 자리). */
+    // [JA] localhost の自己署名鍵 — サーバー証明書であり、クライアントが信頼するもの(サービス間 mTLS の位置)。
     private SSLContext tls() throws Exception {
         Path ks = tmp.resolve("ks.p12");
         Process k = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "keytool").toString(), "-genkeypair",
@@ -102,15 +108,16 @@ class FeignResponseBodyTest {
     void startServer() throws Exception {
         SSLContext ctx = tls();
         // Feign 기본 클라이언트는 JDK 기본 소켓 팩토리를 쓴다 — 서비스에서는 JVM 의 트러스트 스토어(javax.net.ssl.*)가 그 자리다
+        // [JA] Feign のデフォルトクライアントは JDK デフォルトのソケットファクトリーを使う — サービスでは JVM のトラストストア(javax.net.ssl.*)がその位置だ
         previousDefault = HttpsURLConnection.getDefaultSSLSocketFactory();
         HttpsURLConnection.setDefaultSSLSocketFactory(ctx.getSocketFactory());
         server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(ctx));
         server.createContext("/items", ex -> {
-            connections.add(ex.getRemoteAddress().getPort());   // 클라이언트 포트 = 연결 하나
+            connections.add(ex.getRemoteAddress().getPort());   // 클라이언트 포트 = 연결 하나 ／ [JA] クライアントポート = 接続一つ
             byte[] b = "{\"ok\":true,\"items\":[1,2,3]}".getBytes(StandardCharsets.UTF_8);
             ex.getResponseHeaders().add("Content-Type", "application/json");
-            ex.sendResponseHeaders(200, 0);                      // 0 = chunked — Spring MVC 의 JSON 응답과 같다
+            ex.sendResponseHeaders(200, 0);                      // 0 = chunked — Spring MVC 의 JSON 응답과 같다 ／ [JA] 0 = chunked — Spring MVC の JSON 応答と同じ
             try (OutputStream o = ex.getResponseBody()) {
                 o.write(b);
             }
@@ -143,7 +150,7 @@ class FeignResponseBodyTest {
         runner(withCapability).run(ctx -> {
             ChunkedClient client = ctx.getBean(ChunkedClient.class);
             for (int i = 0; i < CALLS; i++) {
-                assertThat(client.items()).containsEntry("ok", true);   // 응답은 그대로 해석된다
+                assertThat(client.items()).containsEntry("ok", true);   // 응답은 그대로 해석된다 ／ [JA] 応答はそのまま解釈される
             }
         });
         return connections.size();

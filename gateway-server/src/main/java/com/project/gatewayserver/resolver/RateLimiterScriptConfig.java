@@ -24,13 +24,26 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
  * 스크립트 원본만 같은 글자의 {@code StaticScriptSource} 로 바꾼다 — 스크립트 내용 · SHA1 · 결과 타입 · 쓰는 곳({@code RedisRateLimiter})은 그대로다.
  * jar 안의 파일은 배포 사이에 바뀌지 않으니 "바뀌었나" 를 볼 이유가 없다. 파일을 못 읽으면 기동이 실패한다(조용히 유입 제한이 빠지지 않게).
  *
- * <p>[JA] 流入制限の Redis スクリプトを起動時に一度読んで文字列に固定する。以前は要求ごとに jar 内のファイルの更新時刻を確かめ
- * (クラスローダーで入れ子 jar を探し FileNotFoundException を作る · グローバルロックの中)、ゲートウェイの CPU の 18.7% を使っていた。
+ * <p>[JA] 流入制限(RequestRateLimiter)の Redis スクリプトを起動時に一度読んで文字列に固定する — 要求ごとに jar 内のファイルを確かめ直さないように。
+ * <h3>[JA] なぜ</h3>
+ * <p>[JA] 2026-10-18 負荷計測(docs/83 §5)でゲートウェイの CPU が 1 コアに張り付き、バルクヘッド 503 が出た。async-profiler で取ると
+ * ゲートウェイ CPU の <b>18.7%</b> がこの一行だった: Spring Cloud Gateway はスクリプト Bean({@code redisRequestRateLimiterScript})を
+ * {@code ResourceScriptSource(ClassPathResource("META-INF/scripts/request_rate_limiter.lua"))} で作り、Spring Data Redis の
+ * {@code DefaultRedisScript.getSha1()} は<b>要求ごとに</b> {@code scriptSource.isModified()} を呼ぶ → ファイルの更新時刻を見るために
+ * クラスローダーで Boot の入れ子 jar を探し({@code NestedJarFile.hasEntry} · {@code URL.<init>})、{@code ResourceUtils.getFile} が
+ * {@code FileNotFoundException} を作る(jar 内なのでファイルではない)。しかもその確認は<b>グローバルロックの中</b>で走る — イベントループの
+ * スレッドが列を作る。未ログインの要求はすべて流入制限を通るので、要求数だけ起きる。
+ * <h3>[JA] どうやって</h3>
+ * <p>[JA] その Bean は置き換えず(SCG の Bean は {@code @ConditionalOnMissingBean} がなく、同じ名前で上書きすると起動が失敗する)、作った直後に
+ * スクリプトのソースだけを同じ文字列の {@code StaticScriptSource} に替える — スクリプト内容 · SHA1 · 結果型 · 使う所({@code RedisRateLimiter})は
+ * そのまま。jar 内のファイルはデプロイの間に変わらないので「変わったか」を見る理由がない。ファイルを読めなければ起動が失敗する
+ * (黙って流入制限が抜けないように)。
  */
 @Configuration(proxyBeanMethods = false)
 public class RateLimiterScriptConfig {
 
     /** Spring Cloud Gateway(GatewayRedisAutoConfiguration)의 스크립트 빈 이름. */
+    // [JA] Spring Cloud Gateway(GatewayRedisAutoConfiguration)のスクリプト Bean 名。
     static final String SCRIPT_BEAN = "redisRequestRateLimiterScript";
 
     @Bean
@@ -40,6 +53,7 @@ public class RateLimiterScriptConfig {
             public Object postProcessAfterInitialization(Object bean, String beanName) {
                 if (SCRIPT_BEAN.equals(beanName) && bean instanceof DefaultRedisScript<?> script) {
                     // 지금 원본(jar 의 lua)을 한 번 읽어 같은 글자로 — 이후 isModified() 는 false, getSha1() 은 계산해 둔 값
+                    // [JA] 今の原本(jar の lua)を一度読んで同じ文字列で — 以後 isModified() は false、getSha1() は計算済みの値
                     script.setScriptText(script.getScriptAsString());
                 }
                 return bean;

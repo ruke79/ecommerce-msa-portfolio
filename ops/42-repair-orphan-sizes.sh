@@ -43,6 +43,25 @@
 #
 #    되돌리기는 대개 덤프까지 갈 필요가 없다 — apply 한 size_id 들을 다시 NULL 로:
 #      UPDATE product.product_size SET skuproduct_id = NULL, sku_code = NULL WHERE size_id IN (901, 902);
+# [JA] 運用アクション ㊷ — 親なしで保存されたサイズ(管理者登録のバグ)の発見・対の推定・再接続
+#      ── どんなバグだったか(docs/65 §5): 管理画面で商品(または色)を登録するとサイズが親(スタイル = product_sku)なしで保存された —
+#      product_size.skuproduct_id = NULL。その商品はサイズが一つもない商品になり、詳細画面に価格がなく
+#      カートに入れられない。コードは直したが(ProductService.sizesOf)既に保存された行は自分では戻らない。
+#      ── どうやって対を見つけるか: DB には「このサイズがどのスタイルのものか」という情報がない。代わりに**時刻**が残る。バグのあった登録フローは
+#      スタイルエンティティ生成(createdAt) → 画像アップロード(数秒) → サイズエンティティ生成(createdAt) の順なので、
+#      サイズの createdAt は自分のスタイルの createdAt の**直後**だ。そしてそのスタイルはサイズが一つもない
+#      (バグで全部抜け落ちたので)。だから候補は「サイズが一つもないスタイル」のうち、サイズより先に作られ WINDOW(既定 10 分)内で最も近いもの。
+#      これは**推定**だ。二人の管理者が数秒間隔で登録していたら誤りうる。だからこのスクリプトは既定では
+#      何も直さない — プレビューで候補と確信度を見せ、人が確認した対だけを apply で反映する。
+#      ── 使い方は上記(status = 孤児サイズ・空スタイルの数(既定)、preview = 対の推定表 — 直さない、apply = <size_id>:<skuproduct_id> — 確認した対だけ。
+#      PSQL は Pod の代わりに別の psql を使うとき(リハーサル・ローカル))。
+#      ── apply の後にやること: 1. 管理画面 › 商品 › その商品 › 「保存」を一度 — 商品キャッシュ(products・product・search_cache …)を空にし
+#      検索インデックスを書き直す(ProductService.updateProduct の @CacheEvict + productIndexService.index)。
+#      これをしないと詳細画面はキャッシュされた「サイズなし」を、検索は価格のない商品を表示し続ける。
+#      2. 在庫数量は登録時に入れた値のままだ。管理画面 › 在庫で確認する。
+#      ⚠️ まずバックアップ — このスクリプトは product_size の 2 列(skuproduct_id・sku_code)だけを UPDATE する。そのテーブル一つで十分だ。
+#      (ops/08 はクラスタ全体の物理バックアップ・PITR 用なのでここには過剰だ。)
+#      ロールバックは大抵ダンプまで要らない — apply した size_id を再び NULL に戻せばよい(上記の UPDATE)。
 set -uo pipefail
 
 ACTION="${1:-status}"
@@ -57,6 +76,7 @@ WINDOW="${WINDOW:-10 minutes}"
 die()  { echo "ERROR: $1" >&2; exit 1; }
 
 # psql 을 파드 안에서 돌린다. SQL 은 stdin 으로, 값은 -v 로 — 문자열에 이어 붙이지 않는다(ops/30 과 같은 이유).
+# [JA] psql を Pod 内で回す。SQL は stdin で、値は -v で — 文字列に連結しない(ops/30 と同じ理由)。
 psql_in() {
     if [ -n "${PSQL:-}" ]; then
         # shellcheck disable=SC2086
@@ -83,6 +103,10 @@ SQL
 #   HIGH      — 창 안의 후보가 하나뿐이고, 그 후보 스타일에서 이 사이즈가 첫 사이즈와 1분 안
 #   CHECK     — 창 안에 후보가 둘 이상(가까운 쪽을 골랐다) — 관리자 화면의 등록 내용과 대조할 것
 #   NONE      — 창 안에 후보가 없다 — 자동으로 짝을 지을 수 없다(다시 등록 권장)
+# [JA] 確信度
+#      HIGH — 窓内の候補が一つだけで、その候補スタイルでこのサイズが最初のサイズから 1 分以内
+#      CHECK — 窓内に候補が二つ以上(近い方を選んだ)— 管理画面の登録内容と照合すること
+#      NONE — 窓内に候補がない — 自動では対にできない(再登録を推奨)
 preview() {
     echo "════ 짝 추정 (창: $WINDOW) — 아무것도 고치지 않습니다 ════"
     psql_in <<'SQL'
@@ -137,6 +161,8 @@ apply() {
     echo "════ 다시 연결 — $# 줄 (한 트랜잭션) ════"
     # 숫자만 통과한 값이라 VALUES 에 그대로 넣는다(정규식이 주입을 막는다).
     # 한 줄이라도 조건에 맞지 않으면 전부 되돌린다 — 반쯤 고친 상태를 남기지 않는다.
+    # [JA] 数字だけが通った値なので VALUES にそのまま入れる(正規表現がインジェクションを防ぐ)。
+    #      1 行でも条件に合わなければ全部戻す — 半分直した状態を残さない。
     psql_in <<SQL
 BEGIN;
 CREATE TEMP TABLE repair_pairs(size_id bigint PRIMARY KEY, skuproduct_id bigint NOT NULL) ON COMMIT DROP;

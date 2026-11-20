@@ -22,6 +22,9 @@ import org.springframework.web.socket.WebSocketSession;
  * 채팅 연결을 토큰 수명 · 로그인 해제에 묶기(user-service docs/68 §9).
  *
  * <p>🐛 예전: CONNECT 뒤 끊길 때까지 살아 있었다 — 토큰이 만료돼도, 로그인이 끊겨도 방의 메시지를 계속 받았다.
+ *
+ * <p>[JA] チャット接続をトークン寿命・ログアウトに結び付ける(user-service docs/68 §9)。
+ * <p>🐛 以前: CONNECT 後、切断されるまで生き続けていた — トークンが期限切れになっても、ログインが切れてもルームのメッセージを受け取り続けた。
  */
 @DisplayName("채팅 연결 — 토큰 만료 · 로그인 해제에 닫는다")
 class LiveSessionRegistryTest {

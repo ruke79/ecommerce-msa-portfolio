@@ -47,6 +47,16 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>번역이 {@code = -} 이면 <b>운영자용</b>이라 번역하지 않는다는 표시다 — 기동 시 설정 검증, 직렬화 실패처럼 손님 응답으로
  * 나가지 않는 문구. 검사는 "적혀 있음" 으로 친다(빠뜨린 것과 일부러 두는 것을 구분한다).
+ *
+ * <p>[JA] 客に返すサーバー文言をリクエストの言語で (docs/60 §4)。
+ * なぜ「韓国語原文がキー」か: サーバー文言約 250 個が例外 · 応答生成箇所に韓国語で埋め込まれている。それをすべてメッセージキーに変えると、ログ · テスト ·
+ * 運用文書がすべてキーになる — 韓国語の運用者がログを読めない。だからコードはそのままにし、<b>応答として出る瞬間</b>に原文をカタログから探して置き換える
+ * (gettext と同じ方式)。韓国語のリクエストでは何もしない。
+ * カタログ: {@code classpath*:i18n/client-text.ja.txt} — モジュールごとに一つ(common · 各サービス)。二行が一組(原文と「= 翻訳」)である。
+ * {@code {}} は文言内の変わる部分である(原文で文字列を連結した位置)。翻訳でも同じ順序で {@code {}}、順序を変える必要があれば {@code {0}} · {@code {1}}。
+ * 変わる部分も再びカタログで探す — 断片がカンマで連なったものは断片ごとに。カタログにない文言は原文のまま出る(漏れは ClientTextCoverageTest が捕まえる)。
+ * 翻訳が {@code = -} なら<b>運用者用</b>なので翻訳しないという印である — 起動時の設定検証、シリアライズ失敗のように客への応答に出ない文言。
+ * 検査では「書いてある」と数える(書き漏れと意図的に残すものを区別する)。
  */
 @Slf4j
 public final class ClientText {
@@ -68,7 +78,7 @@ public final class ClientText {
     record Rule(Pattern source, String target, int literalLength) {
     }
 
-    /** 한 언어의 카탈로그 — 정확히 같은 문구와, 바뀌는 부분이 있는 문구. */
+    /** 한 언어의 카탈로그 — 정확히 같은 문구와, 바뀌는 부분이 있는 문구. ／ [JA] 一言語のカタログ — 完全一致の文言と、変わる部分のある文言。 */
     static final class Catalog {
         final Map<String, String> exact = new HashMap<>();
         final List<Rule> patterns = new ArrayList<>();
@@ -79,7 +89,7 @@ public final class ClientText {
     private ClientText() {
     }
 
-    /** 지금 요청의 언어로. 요청 밖(Kafka 리스너·스케줄러)이면 그대로 — 그 문구는 사람에게 가는 응답이 아니다. */
+    /** 지금 요청의 언어로. 요청 밖(Kafka 리스너·스케줄러)이면 그대로 — 그 문구는 사람에게 가는 응답이 아니다. ／ [JA] 今のリクエストの言語で。リクエストの外(Kafka リスナー · スケジューラー)ならそのまま — その文言は人に行く応答ではない。 */
     public static String localize(String message) {
         if (RequestContextHolder.getRequestAttributes() == null) {
             return message;
@@ -105,6 +115,8 @@ public final class ClientText {
         }
         // 쉼표로 이은 조각들 — 조각마다 찾는다. 패턴보다 먼저: "{}({}) 품절" 같은 패턴은 목록 전체("A(M) 남은 수량 1개, B(L) 품절")에도
         // 억지로 맞아 버린다. 문장 전체(depth 0)는 쉼표가 문장 안의 쉼표일 수 있어 패턴을 먼저 본다.
+        // [JA] カンマでつないだ断片 — 断片ごとに探す。パターンより先に: "{}({}) 품절" のようなパターンはリスト全体にも無理やり合ってしまう。
+        //      文全体(depth 0)はカンマが文中のカンマでありうるのでパターンを先に見る。
         if (depth > 0 && text.contains(", ")) {
             String joined = translateList(c, text, depth);
             if (joined != null) {
@@ -136,6 +148,10 @@ public final class ClientText {
      * <p>🐛 상품 이름에 ", " 가 들어 있으면("셔츠, 블루(M) 품절") 이름 한가운데서 잘려 두 조각 다 모양에 맞지 않았고, 그 조각들은
      * 원문 그대로 나갔다. 이제 <b>맞는 모양이 나올 때까지 이웃 조각을 이어 붙인다</b> — i 번째에서 시작해 i..j 를 ", " 로 다시 이은
      * 것이 번역되는 가장 짧은 j 를 고른다. 어디까지 이어도 맞지 않으면 그 조각만 원문으로 두고 다음으로 간다.
+     *
+     * <p>[JA] カンマでつないだ断片を断片ごとに — 一つも変わらなければ null。
+     * 🐛 商品名に ", " が入っていると名前の真ん中で切れて、両方の断片とも形に合わず原文のまま出ていた。今は<b>合う形が出るまで隣の断片をつなげる</b> —
+     * i 番目から始めて i..j を ", " で再びつないだものが翻訳される最短の j を選ぶ。どこまでつないでも合わなければその断片だけ原文のままにして次へ進む。
      */
     private static String translateList(Catalog c, String text, int depth) {
         String[] all = text.split(", ");
@@ -220,7 +236,7 @@ public final class ClientText {
         return c;
     }
 
-    /** 두 줄이 한 쌍 — 원문, 그리고 "= 번역". '#' 로 시작하는 줄과 빈 줄은 건너뛴다. */
+    /** 두 줄이 한 쌍 — 원문, 그리고 "= 번역". '#' 로 시작하는 줄과 빈 줄은 건너뛴다. ／ [JA] 二行が一組 — 原文、そして「= 翻訳」。'#' で始まる行と空行は飛ばす。 */
     static void parseInto(Catalog c, String text, String origin) {
         String source = null;
         for (String raw : text.split("\\R")) {
@@ -234,7 +250,7 @@ public final class ClientText {
                     continue;
                 }
                 String target = line.substring(1).strip();
-                if (!"-".equals(target)) {   // "-" = 운영자용 문구(설정 검증·직렬화 실패) — 손님에게 가지 않아 번역하지 않는다
+                if (!"-".equals(target)) {   // "-" = 운영자용 문구(설정 검증·직렬화 실패) — 손님에게 가지 않아 번역하지 않는다 ／ [JA] "-" = 運用者用文言(設定検証 · シリアライズ失敗) — 客に行かないので翻訳しない
                     add(c, source, target);
                 }
                 source = null;
@@ -262,7 +278,7 @@ public final class ClientText {
         c.patterns.add(new Rule(Pattern.compile(regex.toString(), Pattern.DOTALL), target, literal));
     }
 
-    /** 테스트용 — 카탈로그를 다시 읽게 한다. */
+    /** 테스트용 — 카탈로그를 다시 읽게 한다. ／ [JA] テスト用 — カタログを読み直させる。 */
     static void reset() {
         ja = null;
     }

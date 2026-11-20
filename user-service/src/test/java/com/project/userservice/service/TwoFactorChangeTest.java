@@ -35,6 +35,9 @@ import com.project.userservice.service.impl.UserServiceImpl;
  * 🔴 로그인 중의 2FA 변경 — 끄려면 지금 코드, 켜져 있으면 다시 설정 불가, 시도 제한, 알림(docs/68 §14).
  *
  * <p>🐛 예전: 끄기는 세션만 있으면 아무것도 묻지 않았고, 켜기는 이미 켜져 있어도 비밀을 덮어썼다.
+ *
+ * <p>[JA] 🔴 ログイン中の 2FA 変更 — オフにするには現在のコード、オンなら再設定不可、試行制限、通知(docs/68 §14)。
+ * 🐛 以前: オフはセッションさえあれば何も尋ねず、オンは既にオンでも秘密を上書きしていた。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -46,6 +49,7 @@ class TwoFactorChangeTest {
     @Mock private TotpReplayGuard guard;
     @Mock private SecurityAlertProducer alerts;
     /** 비밀번호를 정하는 메서드는 짧은 DB 구간을 TransactionTemplate 으로 연다(유출 확인을 그 밖에 두려고). */
+    // [JA] パスワードを決めるメソッドは短い DB 区間を TransactionTemplate で開く(漏洩確認をその外に置くため)。
     @org.mockito.Spy private org.springframework.transaction.support.TransactionTemplate tx =
             com.project.userservice.service.TestTransactions.template();
     @InjectMocks private UserServiceImpl userService;
@@ -134,6 +138,8 @@ class TwoFactorChangeTest {
     }
     /**
      * 🐛 예전: locked() 로 읽고 → 검증하고 → 틀리면 더했다 — 동시에 보낸 코드 수백 개가 모두 "잠기지 않음" 을 읽고 검증됐다.
+     *
+     * <p>[JA] 🐛 以前: locked() で読み → 検証し → 間違えば足していた — 同時に送った数百個のコードがすべて「ロックされていない」を読んで検証された。
      */
     @Test
     @DisplayName("🔴 시도는 코드를 검증하기 전에 센다 — 동시에 보낸 요청이 모두 '잠기지 않음' 을 읽지 않게")
@@ -148,9 +154,11 @@ class TwoFactorChangeTest {
         order.verify(guard).reserveAttempt(7L);
         order.verify(totpService).matchedStep(eq("SECRET"), anyInt(), anyLong());
         // 잠겼는지 읽기만 하던 guard.locked() 는 없앴다 — 이제 "먼저 확인하고 검증" 으로 되돌아가려면 컴파일되지 않는다.
+        // [JA] ロックされたかを読むだけだった guard.locked() はなくした — 「先に確認してから検証」に戻ろうとするとコンパイルが通らない。
     }
 
     // ── 로그인 2단계 (docs/68 §15) ────────────────────────────────────────
+    // [JA] ── ログインの 2 段階目(docs/68 §15) ──
 
     @Test
     @DisplayName("🔴 로그인 2단계도 사용자별로 센다 — 막혀 있으면 맞는 코드도 받지 않는다")

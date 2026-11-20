@@ -27,6 +27,9 @@ import org.testcontainers.utility.DockerImageName;
  * 에서 고정한다. 정규식 · 창 함수 · 부분 UNIQUE 인덱스는 H2 나 목(mock)으로는 확인할 수 없다.
  *
  * <p>Spring 컨텍스트 없이 Flyway 만 돌린다 — 확인할 것은 SQL 이다.
+ *
+ * <p>[JA] サイズ単位の SKU(V17) — 規則が DB 関数 {@code product.assign_size_sku_codes()} 一か所にあるので<b>実際の PostgreSQL</b>で固定する。正規表現・ウィンドウ関数・部分 UNIQUE インデックスは H2 やモックでは確認できない。
+ * <p>Spring コンテキストなしで Flyway だけ回す — 確かめるのは SQL である。
  */
 @Tag("containers")
 @Testcontainers
@@ -72,6 +75,7 @@ class SizeSkuCodeMigrationTest {
     }
 
     /** 스타일 하나를 만들고 그 id. */
+    // [JA] スタイルを一つ作り、その id。
     private long style(String code) throws SQLException {
         long id = nextId++;
         exec("insert into product.product_sku (skuproduct_id, product_id, sku, discount, sold) values ("
@@ -80,6 +84,7 @@ class SizeSkuCodeMigrationTest {
     }
 
     /** 사이즈 한 줄을 만들고 그 id. */
+    // [JA] サイズ 1 行を作り、その id。
     private long size(long styleId, String name) throws SQLException {
         long id = 1000 + nextId++;
         exec("insert into product.product_size (size_id, skuproduct_id, size, quantity, price) values ("
@@ -118,7 +123,7 @@ class SizeSkuCodeMigrationTest {
 
         assertThat(codes()).containsEntry(s270, "FAS-100042-270")
                 .containsEntry(s280, "FAS-100042-280")
-                .containsEntry(xl, "FAS-100042-XL");   // 대문자로
+                .containsEntry(xl, "FAS-100042-XL");   // 대문자로 ／ [JA] 大文字に
     }
 
     @Test
@@ -148,6 +153,9 @@ class SizeSkuCodeMigrationTest {
     /**
      * 시드 CSV 에 같은 스타일 · 같은 사이즈 이름이 두 줄인 경우가 실제로 있다(394쌍). 첫 줄만 원래 코드를 갖는다.
      * "-2" 가 아닌 이유 — 사이즈 "2" 의 코드와 겹친다.
+     *
+     * <p>[JA] シード CSV に同じスタイル・同じサイズ名が 2 行ある場合が実際にある(394 組)。最初の行だけが元のコードを持つ。
+     * "-2" でない理由 — サイズ "2" のコードと重なる。
      */
     @Test
     @DisplayName("같은 코드가 두 번 나오면 첫 줄만 그 코드, 나머지는 '-dup-<size_id>'")
@@ -170,7 +178,7 @@ class SizeSkuCodeMigrationTest {
         long st = style("FAS-9");
         long m = size(st, "M");
         assign();
-        exec("update product.product_size set size = 'L' where size_id = " + m);   // 이름이 바뀌어도
+        exec("update product.product_size set size = 'L' where size_id = " + m);   // 이름이 바뀌어도 ／ [JA] 名前が変わっても
         long s = size(st, "S");
 
         assertThat(assign()).isEqualTo(1);
@@ -183,7 +191,7 @@ class SizeSkuCodeMigrationTest {
         long a = style("FAS-1");
         long am = size(a, "M");
         assign();
-        long b = style("FAS-1-M");   // 사람이 이런 스타일 코드를 직접 넣었다
+        long b = style("FAS-1-M");   // 사람이 이런 스타일 코드를 직접 넣었다 ／ [JA] 人がこのようなスタイルコードを直接入れた
         long bOnly = size(b, "");
 
         assign();

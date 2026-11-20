@@ -21,6 +21,14 @@ import org.junit.jupiter.api.Test;
  * 그것을 보장하지 않는다 — 클레임 이름이 바뀌거나, 다른 경로로 발급된 토큰이 생기거나,
  * 파싱이 실패하면 그날 조용히 열린다. 이 엔드포인트들이 내주는 것은 <b>전 고객의 결제
  * 금액</b>과 <b>남의 쿠폰 보유 여부</b>다.
+ *
+ * <p>[JA] 内部専用エンドポイントの認可判定。
+ * サービス間の Feign 呼び出しはゲートウェイを通らないので身元ヘッダーがない。それを「内部呼び出し」とみなして通し、ヘッダーがあれば外部リクエストなので管理者だけを許可する。
+ * <h3>🔴 ここで止めるもの</h3>
+ * 複数の箇所が {@code User-Role} <b>一つだけ</b>を見ていた。ところがゲートウェイはトークンから取り出した値があるときだけそのヘッダーを付ける({@code if (role != null)})。
+ * role クレームのないトークンで入ってくるとヘッダーがなく、受け取る側はそれを内部呼び出しと読んで<b>通してしまう。</b>
+ * 今発行されるトークンには role が常に入るので、実際に破られたことはない。しかし構造がそれを保証しない — クレーム名が変わったり、
+ * 別の経路で発行されたトークンができたり、パースが失敗したりすれば、その日に黙って開く。これらのエンドポイントが渡すのは<b>全顧客の決済金額</b>と<b>他人のクーポン保有状況</b>だ。
  */
 @DisplayName("내부 호출 판정")
 class InternalCallGuardTest {
@@ -48,11 +56,14 @@ class InternalCallGuardTest {
     /**
      * 🔴 이것이 이 클래스가 존재하는 이유다. role 헤더만 보면 여기서 통과한다 —
      * 로그인한 아무나 전 고객의 결제 금액을 페이지 단위로 긁어갈 수 있게 된다.
+     *
+     * <p>[JA] 🔴 これがこのクラスが存在する理由だ。role ヘッダーだけを見るとここで通る — ログインした誰でも全顧客の決済金額をページ単位でかき集められるようになる。
      */
     @Test
     @DisplayName("role 헤더가 없어도 다른 신원 헤더가 있으면 외부 요청이다")
     void aMissingRoleHeaderDoesNotLookInternal() {
         // 게이트웨이가 role 을 못 붙인 경우 — User-Email 은 JWT subject 라 남아 있다.
+        // [JA] ゲートウェイが role を付けられなかった場合 — User-Email は JWT の subject なので残っている。
         assertThat(InternalCallGuard.fromGateway(null, "attacker@example.com", "7")).isTrue();
         assertThat(InternalCallGuard.allowed(null, "attacker@example.com", "7")).isFalse();
     }
@@ -64,6 +75,7 @@ class InternalCallGuardTest {
     }
 
     /** 빈 문자열 헤더는 "없음"과 같다 — 프록시가 빈 값을 붙이는 경우가 있다. */
+    // [JA] 空文字列のヘッダーは「なし」と同じだ — プロキシが空の値を付けることがある。
     @Test
     @DisplayName("빈 값은 없는 것으로 본다")
     void blankIsAbsent() {
@@ -83,6 +95,8 @@ class InternalCallGuardTest {
     /**
      * 🔴 관리자 판정은 <b>정확히 일치</b>해야 한다. 부분 일치로 하면
      * {@code ROLE_ADMIN_READONLY} 같은 역할이 나중에 생겼을 때 저절로 관리자가 된다.
+     *
+     * <p>[JA] 🔴 管理者判定は<b>完全一致</b>でなければならない。部分一致にすると、{@code ROLE_ADMIN_READONLY} のようなロールが後でできたとき自動的に管理者になる。
      */
     @Test
     @DisplayName("비슷한 이름의 역할은 관리자가 아니다")

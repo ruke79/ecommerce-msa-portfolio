@@ -24,6 +24,11 @@ import com.project.order_service.stock.OrderStockHold;
  * PayPal 창을 닫아 주문을 취소하면 결제 시작 때 잡은 쿠폰도 푼다(coupon-rollback — coupon V7 은 이 주문의 표시만 지운다).
  *
  * <p>🐛 보상이 없으면 PayPal 창을 닫고 다시 주문할 때 30분 동안 같은 쿠폰이 "다른 주문이 결제 중" 으로 막힌다.
+ *
+ * <p>[JA] PayPal ウィンドウを閉じて注文をキャンセルすると、決済開始時に確保したクーポンも解く(coupon-rollback —
+ * coupon V7 はこの注文の印だけを消す)。
+ *
+ * <p>🐛 補償がないと、PayPal ウィンドウを閉じて再注文するとき 30 分間同じクーポンが「別の注文が決済中」で塞がる。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)

@@ -29,6 +29,12 @@ import com.project.pay_service.repository.jpa.PaymentRepository;
  * 요청(CANCELED)은 같은 주문으로 오므로 결제 완료 응답이 있는 한 언제나 "중복" 이었다 —
  * 결제 행은 영원히 COMPLETED, order-service 는 옛 COMPLETED 응답을 다시 받아 무시, 쿠폰·재고
  * 복원과 환불 알림 전부 없었다. 화면의 주문 상태만 REFUNDED 라 환불된 것처럼 보였다.
+ *
+ * <p>[JA] 重複判定は<b>リクエストした状態まで</b>同じでなければならない。
+ * 🐛 回帰対象 — 返金が一度も反映されなかった: 以前は注文 id だけを見て「完了した応答イベントがあれば処理済み」と判定した。
+ * 返金リクエスト(CANCELED)は同じ注文で来るので、決済完了応答がある限り常に「重複」だった —
+ * 決済行は永遠に COMPLETED、order-service は古い COMPLETED 応答を再び受け取って無視し、クーポン・在庫の
+ * 復元と返金通知がすべてなかった。画面の注文状態だけが REFUNDED なので返金されたように見えた。
  */
 @DisplayName("pay-service — 요청 중복 판정")
 class PaymentIdempotencyTest {
@@ -52,6 +58,7 @@ class PaymentIdempotencyTest {
     }
 
     /** 🔴 핵심 — 결제 완료 응답이 있어도 환불 요청은 새 요청이다. */
+    // [JA] 🔴 核心 — 決済完了応答があっても返金リクエストは新しいリクエストである。
     @Test
     @DisplayName("🔴 결제 완료 응답이 있어도 환불(CANCELED) 요청은 중복이 아니다")
     void refundIsNotADuplicateOfThePayment() {
@@ -63,6 +70,7 @@ class PaymentIdempotencyTest {
     }
 
     /** 같은 결제 요청이 다시 오면(재전달) 저장된 응답을 다시 발행한다 — 예전 동작 그대로. */
+    // [JA] 同じ決済リクエストが再び来たら(再配信)保存済みの応答を再発行する — 以前の動作そのまま。
     @Test
     @DisplayName("같은 상태의 재전달은 중복이고, 저장된 응답을 다시 발행한다")
     void redeliveryOfTheSamePaymentIsADuplicate() {
@@ -83,6 +91,7 @@ class PaymentIdempotencyTest {
     }
 
     /** 🔴 PY4 — 같은 상태의 응답이 아직 발행 전(STARTED)이면 새 응답 행을 쓰지 않는다. 예전에는 하나 더 썼다. */
+    // [JA] 🔴 PY4 — 同じ状態の応答がまだ発行前(STARTED)なら新しい応答行を書かない。以前はもう一つ書いていた。
     @Test
     @DisplayName("🔴 같은 상태의 응답이 발행 대기(STARTED)면 처리 중으로 본다 — 다른 상태(환불)는 아니다")
     void pendingResponseOfTheSameStatus() {

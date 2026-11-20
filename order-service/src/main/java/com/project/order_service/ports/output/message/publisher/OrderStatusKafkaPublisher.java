@@ -50,6 +50,7 @@ public class OrderStatusKafkaPublisher {
     private long publishTimeoutMs;
 
     /** @return 상태가 확정됐으면 true, 일시 실패라 다음 폴링에서 다시 시도해야 하면 false */
+    // [JA] 状態が確定したら true、一時的な失敗で次のポーリングで再試行すべきなら false
     public boolean publish(PaymentOutboxEvent outboxEvent, BiConsumer<PaymentOutboxEvent, OutboxStatus> outboxCallback) {
         OrderStatusChanged event = toEvent(outboxEvent);
 
@@ -80,6 +81,7 @@ public class OrderStatusKafkaPublisher {
     }
 
     /** 행(JSON 페이로드 + 행 id) → Avro 레코드. 페이로드가 깨졌으면 재시도해도 같다 — 예외로 FAILED 가 되게 둔다. */
+    // [JA] 行(JSON ペイロード + 行 id) → Avro レコード。ペイロードが壊れていれば再試行しても同じ — 例外で FAILED になるようにしておく。
     public OrderStatusChanged toEvent(PaymentOutboxEvent outboxEvent) {
         OrderStatusChanger.Payload p;
         try {

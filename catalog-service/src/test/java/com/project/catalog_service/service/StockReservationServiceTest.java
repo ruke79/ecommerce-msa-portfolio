@@ -37,6 +37,8 @@ import com.project.common.dto.stock.StockReservationResult;
 
 /**
  * 결제 전 재고 예약 (docs/59).
+ *
+ * <p>[JA] 決済前の在庫予約(docs/59)。
  */
 @DisplayName("StockReservationService — 결제 전 재고 예약")
 class StockReservationServiceTest {
@@ -57,6 +59,7 @@ class StockReservationServiceTest {
     }
 
     /** 옵션 하나의 실물 수량. */
+    // [JA] オプション一つの実物数量。
     private void stock(long productId, long colorId, String size, int qty) {
         ProductSku sku = mock(ProductSku.class);
         when(sku.getSkuproductId()).thenReturn(productId * 100 + colorId);
@@ -189,7 +192,7 @@ class StockReservationServiceTest {
         stock(1, 5, "M", 3);
         heldByOthers(1, 5, "M", 0);
         StockReservation old = StockReservation.hold(10L, 1L, 5L, "M", 2, now.plusSeconds(60), now.minusSeconds(600));
-        old.release(now.minusSeconds(1));   // 이미 만료돼 풀렸던 것도 다시 잡는다
+        old.release(now.minusSeconds(1));   // 이미 만료돼 풀렸던 것도 다시 잡는다 ／ [JA] すでに期限切れで解放されたものも再び確保する
         when(reservations.findByOrderId(10L)).thenReturn(List.of(old));
 
         StockReservationResult r = service.reserve(request(10, 48 * 3600, line(1, 5, "M", 2)));

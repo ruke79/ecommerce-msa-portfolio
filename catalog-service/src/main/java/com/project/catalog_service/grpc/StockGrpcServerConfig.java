@@ -74,6 +74,7 @@ public class StockGrpcServerConfig {
                     .addService(ServerInterceptors.intercept(service,
                             new InternalCallerGrpcInterceptor(callerFilter.getFilter()),
                             // 마지막에 넣은 것이 가장 바깥 — 추적이 판정보다 먼저 돈다(거절도 추적에 남는다)
+                            // [JA] 最後に入れたものが一番外側 — トレースが判定より先に動く(拒否もトレースに残る)
                             new ObservationGrpcServerInterceptor(observations)));
             if (tls) {
                 builder.sslContext(GrpcTls.server(keyStore, keyStorePassword, ca));
@@ -85,6 +86,7 @@ public class StockGrpcServerConfig {
     }
 
     /** 서버를 만드는 일 — 실패하면 기동을 멈춘다(포트 충돌 · 키스토어 비밀번호 틀림은 조용히 넘길 일이 아니다). */
+    // [JA] サーバーを作る処理 — 失敗したら起動を止める(ポート衝突・キーストアのパスワード誤りは黙って見過ごすことではない)。
     @FunctionalInterface
     interface ServerFactory {
         Server start() throws Exception;
@@ -93,6 +95,9 @@ public class StockGrpcServerConfig {
     /**
      * 스프링 수명에 서버를 묶는다 — 컨텍스트가 뜰 때 열고, 닫힐 때 <b>진행 중인 호출을 기다렸다가</b>(최대 10초) 닫는다.
      * Tomcat 의 graceful shutdown 과 같은 단계(SmartLifecycle)에서 멈추므로, 배포 중 롤링 교체에 예약 호출이 끊기지 않는다.
+     *
+     * <p>[JA] Spring のライフサイクルにサーバーを結び付ける — コンテキストが上がるときに開き、閉じるときは進行中の呼び出しを待ってから(最大 10 秒)閉じる。
+     * Tomcat の graceful shutdown と同じ段階(SmartLifecycle)で止まるので、デプロイ中のローリング入れ替えで予約呼び出しが切れない。
      */
     static final class GrpcServerLifecycle implements SmartLifecycle {
 
@@ -140,6 +145,7 @@ public class StockGrpcServerConfig {
         }
 
         /** 실제로 열린 포트(테스트 — 0 으로 열었을 때). 서버를 띄우지 않았으면 -1. */
+        // [JA] 実際に開いたポート(テスト — 0 で開いたとき)。サーバーを起動していなければ -1。
         int port() {
             Server s = server;
             return s == null ? -1 : s.getPort();

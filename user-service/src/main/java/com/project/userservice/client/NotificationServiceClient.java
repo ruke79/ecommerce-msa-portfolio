@@ -27,11 +27,14 @@ public interface NotificationServiceClient {
 
     /**
      * @param binding 켤 때 저장한 번호 결속값 — 켜는 중이면 null(지금 등록된 번호로 보내고 그 결속값을 돌려받는다)
+     *     [JA] 有効化時に保存した番号の結束値 — 有効化中なら null(今登録されている番号に送り、その結束値を受け取る)
      * @param code    확인할 6자리(발송에는 null). 쿼리가 아니라 본문 — URL 은 접근 로그 · 추적에 남는다.
+     *     [JA] 確認する 6 桁(送信には null)。クエリではなく本文 — URL はアクセスログ · 追跡に残る。
      */
     record TwoFactorSmsRequest(Long userId, String binding, String code) {
 
         /** 코드 · 결속값을 문자열 표현에 남기지 않는다(Feign 로그 · 예외 메시지). */
+        // [JA] コード · 結束値を文字列表現に残さない(Feign ログ · 例外メッセージ)。
         @Override
         public String toString() {
             return "TwoFactorSmsRequest[userId=" + userId + "]";

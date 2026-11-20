@@ -44,6 +44,10 @@ import jakarta.persistence.EntityManager;
  *
  * <p><b>자기가 만든 방은 멀쩡했다</b> — 이미 참여자라 저장 자체를 건너뛰기 때문이다. 그래서
  * "남이 만든 방(또는 예전에 만든 방)에서만 실패" 로 나타났다.
+ *
+ * <p>[JA] 購読(入室)時の参加者登録。
+ * <p><b>🐛 回帰対象 — 「あるルームでは購読が失敗する」</b>: 参加者行を作るときにルームオブジェクトを<b>Redis から</b>読んで関連に設定していた。それはデシリアライズされた切り離されたオブジェクトなので JPA が管理せず、保存すると flush 段階で爆発する。その例外が SUBSCRIBE フレームを殺し、クライアントには {@code Failed to send message to ExecutorSubscribableChannel[clientInboundChannel]} しか見えなかった。
+ * <p><b>自分が作ったルームは問題なかった</b> — すでに参加者なので保存自体を飛ばすからである。そのため「他人が作ったルーム(または以前作ったルーム)でだけ失敗」として現れた。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -90,6 +94,8 @@ class ChatServiceConnectTest {
     /**
      * 🔴 <b>이 파일의 핵심.</b> 참여자 행의 방은 <b>DB 에서 읽은 것</b>이어야 한다.
      * Redis 의 방 객체는 쳐다보지도 않는다.
+     *
+     * <p>[JA] 🔴 <b>このファイルの核心。</b>参加者行のルームは<b>DB から読んだもの</b>でなければならない。Redis のルームオブジェクトには見向きもしない。
      */
     @Test
     @DisplayName("🔴 참여자 행은 DB 의 방으로 만든다 — Redis 의 방 객체를 쓰지 않는다")
@@ -103,10 +109,12 @@ class ChatServiceConnectTest {
 
         verify(chatRoomJpaRepository).findByRoomUid(ROOM);
         // DB 의 방(그 id)으로, 없을 때만 넣는다(V9 유니크 — 동시 구독이 참여를 두 번 남기지 않게).
+        // [JA] DB のルーム(その id)で、ないときだけ入れる(V9 ユニーク — 同時購読が参加を二重に残さないように)。
         verify(participantChatRoomRepository).insertIfAbsent(room.getId(), member.getId());
     }
 
     /** 방을 만든 사람은 이미 참여자다 — 다시 저장하지 않는다(그래서 예전 버그가 안 보였다). */
+    // [JA] ルームを作った人はすでに参加者である — 再び保存しない(そのため以前のバグが見えなかった)。
     @Test
     @DisplayName("이미 참여자면 다시 저장하지 않는다")
     void existingParticipantIsNotSavedAgain() {
@@ -121,6 +129,7 @@ class ChatServiceConnectTest {
     }
 
     /** 세션↔방 매핑이 먼저다 — 참여자 등록이 실패해도 DISCONNECT 가 정리할 것은 남는다. */
+    // [JA] セッション↔ルームのマッピングが先である — 参加者登録が失敗しても DISCONNECT が片付けるものは残る。
     @Test
     @DisplayName("참여자 등록이 실패해도 세션↔방 매핑은 남는다")
     void enterInfoIsRecordedFirst() {
@@ -137,6 +146,8 @@ class ChatServiceConnectTest {
     /**
      * 회원 복제 행이 없는 사용자도 구독할 수 있어야 한다. 예전에는 이 경로가 userId 를
      * 항상 null 로 넘겨, 그런 사용자는 <b>어느 방에도</b> 들어가지 못했다.
+     *
+     * <p>[JA] 会員の複製行がないユーザーも購読できなければならない。以前はこの経路が userId を常に null で渡し、そのようなユーザーは<b>どのルームにも</b>入れなかった。
      */
     @Test
     @DisplayName("회원 행이 없으면 토큰의 userId 로 즉석에서 만든다")
@@ -150,6 +161,7 @@ class ChatServiceConnectTest {
 
         verify(em).flush();
         // 즉석 생성 행은 id 하나로 만든다 — 신원은 id 다(docs/48 §6-⑥).
+        // [JA] 即席生成の行は id 一つで作る — 身元は id である(docs/48 §6-⑥)。
         org.mockito.ArgumentCaptor<Object> persisted = org.mockito.ArgumentCaptor.forClass(Object.class);
         verify(em, org.mockito.Mockito.atLeastOnce()).persist(persisted.capture());
         ChatMember created = (ChatMember) persisted.getAllValues().stream()

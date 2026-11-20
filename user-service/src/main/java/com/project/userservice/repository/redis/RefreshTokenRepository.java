@@ -19,6 +19,7 @@ public class RefreshTokenRepository {
     private int jwtRefreshExpirationMs;
 
     /** 액세스 토큰 수명 — 로그인 해제 표시(cutoff)의 TTL. 그보다 오래 두면 의미가 없다(그 전 토큰은 모두 만료). */
+    // [JA] アクセストークンの寿命 — ログイン解除の印(cutoff)の TTL。それより長く置いても意味がない(それ以前のトークンはすべて期限切れ)。
     @Value("${spring.app.jwtExpirationMs:900000}")
     private int jwtExpirationMs = 900_000;
 
@@ -30,14 +31,17 @@ public class RefreshTokenRepository {
     }
 
     // 분산 락 획득 메서드
+    // [JA] 分散ロックの取得メソッド
     private boolean acquireLock(String key, String lockValue) {
-        Boolean success = redisTemplate.opsForValue().setIfAbsent(LOCK_PREFIX + key, lockValue, 30, TimeUnit.SECONDS); // 30초 TTL
+        Boolean success = redisTemplate.opsForValue().setIfAbsent(LOCK_PREFIX + key, lockValue, 30, TimeUnit.SECONDS); // 30초 TTL ／ [JA] 30 秒 TTL
         return Boolean.TRUE.equals(success);
     }
 
     // 분산 락 해제 메서드
+    // [JA] 分散ロックの解放メソッド
     private void releaseLock(String key, String lockValue) {
         // 락을 해제할 때, 자신이 획득한 락인지 확인하는 것이 중요합니다. (A가 락을 획득했는데, B가 락을 해제하면 안됨)
+        // [JA] ロックを解放するとき、自分が取得したロックかを確認することが重要である。(A がロックを取得したのに B が解放してはならない)
         String value = redisTemplate.opsForValue().get(LOCK_PREFIX + key);
         if (lockValue.equals(value)) {
             redisTemplate.delete(LOCK_PREFIX + key);
@@ -56,7 +60,12 @@ public class RefreshTokenRepository {
                 //
                 // 🔒 토큰 원문이 아니라 SHA-256 해시를 둔다(docs/68 §10). 예전에는 JWT 원문이 값이었다 — Redis 덤프가 새면 그 값을
                 //    쿠키에 넣어 그대로 로그인할 수 있었다. 해시로는 토큰을 만들 수 없다. 비교는 받은 토큰을 해시해서 한다(rotate).
-                //    [JA] トークン原文ではなく SHA-256 ハッシュを置く。以前は JWT 原文が値で、Redis ダンプが漏れればそのまま使えた。
+                //    [JA] 🐛 以前は set の後に expire(キー, "現在時刻 + 期間", ms) だった — 期間の所に**時刻**(epoch ms)を入れ、TTL が約 56 年
+                //         だった。ログアウトしていないセッションのキーは事実上消えずに溜まった。値と TTL を一つのコマンドで入れる — set と
+                //         expire の間で死んで TTL のないキーが残る隙もなくす(docs/57 §2)。
+                //         🔒 トークン原文ではなく SHA-256 ハッシュを置く(docs/68 §10)。以前は JWT 原文が値だった — Redis ダンプが漏れれば
+                //         その値を Cookie に入れてそのままログインできた。ハッシュからはトークンを作れない。比較は受け取ったトークンを
+                //         ハッシュして行う(rotate)。
                 redisTemplate.opsForValue().set(refreshToken.getSessionId(), digest(refreshToken.getToken()),
                         java.time.Duration.ofMillis(jwtRefreshExpirationMs));
             } finally {
@@ -64,6 +73,7 @@ public class RefreshTokenRepository {
             }
         } else {
             // 락 획득 실패 시, 재시도 로직이나 예외 처리를 추가할 수 있습니다.
+            // [JA] ロック取得に失敗した場合、リトライロジックや例外処理を追加できる。
             throw new IllegalStateException("Failed to acquire lock for saving RefreshToken");
         }
     }
@@ -73,13 +83,18 @@ public class RefreshTokenRepository {
      *
      * <p>🗑️ 예전의 {@code registerBlacklist} 는 로그아웃할 때 <b>액세스 토큰 원문을 키로</b> 적었다 — 그런데 그 키를 읽는 곳이 어디에도
      * 없었다(게이트웨이는 서명만 본다). 막는 효과 없이 유효한 토큰만 Redis 에 쌓았다. 지웠다.
+     *
+     * <p>[JA] 保存形式 — トークンの SHA-256(hex)。トークンは署名付き JWT なのでエントロピーが十分である(パスワードではないので
+     * ソルト・低速ハッシュは要らない)。
+     * 🗑️ 以前の {@code registerBlacklist} はログアウト時にアクセストークンの原文をキーとして書いていた — ところがそのキーを
+     * 読む場所がどこにもなかった(ゲートウェイは署名だけを見る)。防ぐ効果なしに有効なトークンだけを Redis に溜めていた。削除した。
      */
     public static String digest(String token) {
         try {
             return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                     .digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다
+            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다 ／ [JA] SHA-256 はすべての JVM にある
         }
     }
 
@@ -106,6 +121,7 @@ public class RefreshTokenRepository {
             }
         } else {
             // 락 획득 실패 시, 재시도 로직이나 예외 처리를 추가할 수 있습니다.
+            // [JA] ロック取得に失敗した場合、リトライロジックや例外処理を追加できる。
             throw new IllegalStateException("Failed to acquire lock for deleting RefreshToken");
         }
     }
@@ -126,6 +142,11 @@ public class RefreshTokenRepository {
      * 둘 다 "있다" 를 보고 둘 다 새 토큰을 받는다 — 회전이 무너진다.
      *
      * <p>1 = 지금 이 요청이 회전했다(옛 키 삭제 + 유예 키 PENDING), 0 = 없다(이미 회전됐거나 끊겼거나 만료), -1 = 값이 다르다.
+     *
+     * <p>[JA] 比較してから削除を一度に(Lua — Redis 内でアトミック)。GET と DEL を別々に呼ぶと、二つのリクエストが同じトークンで
+     * 同時に入り、両方が「ある」を見て両方が新しいトークンを受け取る — ローテーションが崩れる。
+     * 1 = 今このリクエストがローテーションした(古いキー削除 + 猶予キー PENDING)、0 = ない(すでにローテーション済み・切断・
+     * 期限切れ)、-1 = 値が違う。
      */
     private static final org.springframework.data.redis.core.script.DefaultRedisScript<Long> ROTATE =
             new org.springframework.data.redis.core.script.DefaultRedisScript<>("""
@@ -144,16 +165,19 @@ public class RefreshTokenRepository {
     }
 
     /** 회전을 끝낸 요청이 새 토큰의 <b>암호문</b>을 유예 키에 적는다 — 동시에 갱신한 다른 탭이 이것을 풀어 받는다(원문은 두지 않는다). */
+    // [JA] ローテーションを終えたリクエストが新しいトークンの暗号文を猶予キーに書く — 同時に更新した別のタブがこれを復号して受け取る(原文は置かない)。
     public void completeGrace(String oldSessionId, String sealedNewToken, long graceMs) {
         redisTemplate.opsForValue().set(graceKey(oldSessionId), sealedNewToken, java.time.Duration.ofMillis(graceMs));
     }
 
     /** 유예 키 — 없으면 null, 회전 중이면 {@link #PENDING}, 끝났으면 새 토큰의 암호문. */
+    // [JA] 猶予キー — なければ null、ローテーション中なら {@link #PENDING}、終わっていれば新しいトークンの暗号文。
     public String grace(String oldSessionId) {
         return redisTemplate.opsForValue().get(graceKey(oldSessionId));
     }
 
     /** 묶음의 지금 세션을 적는다(회전할 때마다 — TTL 도 새로). */
+    // [JA] ファミリーの現在のセッションを書く(ローテーションのたびに — TTL も新しく)。
     public void setFamilyCurrent(String familyId, String sessionId) {
         redisTemplate.opsForValue().set(familyKey(familyId), sessionId, java.time.Duration.ofMillis(jwtRefreshExpirationMs));
     }
@@ -165,6 +189,9 @@ public class RefreshTokenRepository {
     /**
      * 묶음 전체를 끊는다 — 살아 있는 세션 키를 지우고, 끊겼다는 표시를 토큰 수명만큼 남긴다. 표시가 있어야 이미 발급된 다른 토큰
      * (예: 유예 중에 받은 것)도 거절된다. 여러 번 불러도 같다.
+     *
+     * <p>[JA] ファミリー全体を切る — 生きているセッションキーを消し、切ったという印をトークンの寿命だけ残す。印があってこそ、すでに
+     * 発行された他のトークン(例: 猶予中に受け取ったもの)も拒否される。何度呼んでも同じである。
      */
     public void revokeFamily(String familyId) {
         String current = redisTemplate.opsForValue().get(familyKey(familyId));
@@ -179,9 +206,12 @@ public class RefreshTokenRepository {
     //
     // 세션 키는 sessionId 로만 저장돼 "이 사용자의 모든 로그인" 을 거꾸로 찾을 수 없었다. 로그인 · 갱신마다 묶음 id 를
     // 사용자 집합에 넣는다. TTL 은 토큰 수명 — 마지막 로그인 · 갱신 뒤 수명이 지나면 그 안의 토큰도 모두 만료다.
-    // [JA] ユーザー → ファミリーの索引。ログイン・更新のたびにファミリー id を集合に入れる。TTL はトークン寿命。
+    // [JA] ユーザー → ファミリーの索引(「すべての端末からログアウト」、docs/68 §8)。
+    //      セッションキーは sessionId だけで保存され、「このユーザーのすべてのログイン」を逆に探せなかった。ログイン・更新のたびに
+    //      ファミリー id をユーザーの集合に入れる。TTL はトークン寿命 — 最後のログイン・更新から寿命が過ぎれば、その中のトークンもすべて満了している。
 
     /** 이 사용자의 묶음으로 적는다(이미 있으면 그대로) — 수명을 다시 센다. */
+    // [JA] このユーザーのファミリーとして書く(すでにあればそのまま) — 寿命を数え直す。
     public void addUserFamily(Long userId, String familyId) {
         String key = userKey(userId);
         redisTemplate.opsForSet().add(key, familyId);
@@ -196,6 +226,9 @@ public class RefreshTokenRepository {
     /**
      * 이미 끝난 묶음(끊겼거나 수명이 지나 {@code rt:fam} 이 없는 것)을 집합에서 뺀다 — 로그인할 때만 부른다.
      * 안 빼면 매일 로그인하는 사용자의 집합이 끝없이 자란다(TTL 이 매번 다시 세어지므로 통째로 사라지지도 않는다).
+     *
+     * <p>[JA] すでに終わったファミリー(切られたか寿命が過ぎて {@code rt:fam} がないもの)を集合から外す — ログイン時にだけ呼ぶ。
+     * 外さないと毎日ログインするユーザーの集合が際限なく育つ(TTL が毎回数え直されるので丸ごと消えることもない)。
      */
     public void pruneUserFamilies(Long userId) {
         String key = userKey(userId);

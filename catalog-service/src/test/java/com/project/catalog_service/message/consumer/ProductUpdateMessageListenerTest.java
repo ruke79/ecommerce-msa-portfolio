@@ -23,6 +23,8 @@ import com.project.common.message.dto.request.ProductUpdateRequest;
 
 /**
  * 컨슈머 멱등성 회귀 테스트 (docs/11 §4 G8 — 재고 이중 차감 방지).
+ *
+ * <p>[JA] コンシューマ冪等性の回帰テスト(docs/11 §4 G8 — 在庫の二重差し引き防止)。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -78,6 +80,7 @@ class ProductUpdateMessageListenerTest {
     }
 
     /** 🔴 예전에는 모자라도 로그 한 줄이었다 — 이제 같은 트랜잭션에서 부족 기록을 남긴다(docs/53). */
+    // [JA] 🔴 以前は不足してもログ一行だった — 今は同じトランザクションで不足記録を残す(docs/53)。
     @Test
     @DisplayName("🔴 재고가 모자라면 같은 트랜잭션에서 부족 기록을 남긴다")
     void aShortageIsRecorded() {
@@ -102,6 +105,7 @@ class ProductUpdateMessageListenerTest {
     }
 
     // ── 결제 전 재고 예약(docs/59) ─────────────────────────────────────────
+    // [JA] ── 決済前の在庫予約(docs/59) ──
 
     @Test
     @DisplayName("🔴 결제 확정 차감은 다른 주문의 예약을 빼고 세고(자기 주문 제외), 같은 트랜잭션에서 자기 예약을 확정한다")

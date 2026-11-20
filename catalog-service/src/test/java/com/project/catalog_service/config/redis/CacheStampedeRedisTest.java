@@ -34,6 +34,8 @@ import org.testcontainers.utility.DockerImageName;
  * 만료 시각이 48개 모두 17:15), {@code sync = true} 인데도 키마다 들어온 요청이 모두 DB 로 가 20초 동안 커넥션 대기 22 · 서버 p95 1.5초.
  *
  * <p>[JA] 期限切れの瞬間の殺到(本物の Redis、本番と同じキャッシュマネージャ)— 同じキーの同時ミスは一度だけ計算し、寿命はキーごとに散る。
+ * 🐛 2026-10-19 mixed {@code 160904Z}(docs/83 §5): 一度に埋まった {@code search_cache} キー 48 個が同じ秒に切れ(Redis の満了時刻が
+ * 48 個すべて 17:15)、{@code sync = true} なのにキーごとに来た要求がすべて DB へ行き、20 秒間 接続待ち 22 · サーバー p95 1.5 秒だった。
  */
 @Tag("containers")
 @Testcontainers
@@ -71,7 +73,7 @@ class CacheStampedeRedisTest {
         AtomicInteger loads = new AtomicInteger();
         Callable<String> loader = () -> {
             loads.incrementAndGet();
-            Thread.sleep(200);   // 100만 상품에서 캐시 밖 검색 한 번(수십 ~ 수백 ms)
+            Thread.sleep(200);   // 100만 상품에서 캐시 밖 검색 한 번(수십 ~ 수백 ms) ／ [JA] 100 万商品でキャッシュ外の検索一回(数十〜数百 ms)
             return "result";
         };
         CountDownLatch start = new CountDownLatch(1);

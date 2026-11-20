@@ -36,6 +36,17 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>발행 실패가 게시를 되돌리지 않는다.</b> 공지는 이미 공개됐고 그것이 진실이다.
  * 알림이 안 나갔다고 공지를 내리면 더 나쁘다 — 목록에는 있어야 할 글이 사라진다.
  * (정석은 아웃박스다. coupon-service·delivery-service 도 같은 이유로 직접 발행한다.)
+ *
+ * <p>[JA] お知らせが掲載されたことを知らせる。
+ * 🐛 これまでお知らせは誰にも届いていなかった。管理者がお知らせを公開しても、それを知る方法はユーザーが自分でお知らせ一覧画面を見に行くことだけだった。
+ * メンテナンス予告のように事前に見てこそ意味のあるお知らせは、その方式では届かない。
+ * 個人通知ではなく全体通知だ。通知サービスはこのイベントを broadcast_notification 行一つにする — ユーザー数分の通知行は作らない
+ * (notification-service の BroadcastNotification のコメント)。だからこのイベントには受信者がない。その点が coupon-issued・delivery-status と違う。
+ * コミットしてから送る。公開への切り替えは dirty checking でコミット時点に反映されるので、トランザクション内ですぐ発行すると
+ * まだ公開されていない(またはロールバックされる)お知らせの通知が先に出うる。ユーザーが通知を押すと 404 になるか、さらに悪いとロールバックされた
+ * 下書きのタイトルが全体通知として残る。トランザクション外で呼ばれたらそのまますぐ送る。
+ * 発行の失敗は掲載を巻き戻さない。お知らせはすでに公開されており、それが真実だ。通知が出なかったからとお知らせを下げるほうが悪い —
+ * 一覧にあるべき記事が消える。(正攻法はアウトボックスだ。coupon-service・delivery-service も同じ理由で直接発行している。)
  */
 @Slf4j
 @Component
@@ -47,6 +58,10 @@ public class NoticePublishedProducer {
      * <p>공지 본문은 {@code text} 라 길이 제한이 없는데(Notice 주석), 알림에 보이는 것은
      * 두어 줄이다. 20KB 짜리 본문을 통째로 카프카에 흘려보낼 이유가 없고, 받는 쪽 컬럼도
      * {@code varchar(1000)} 이라 어차피 잘린다.
+     *
+     * <p>[JA] イベントに載せる本文の長さ上限。
+     * お知らせ本文は text なので長さ制限がないが(Notice のコメント)、通知に見えるのは二、三行だ。20KB の本文を丸ごと Kafka に流す理由はなく、
+     * 受け側のカラムも varchar(1000) なのでどうせ切られる。
      */
     public static final int SUMMARY_LIMIT = 200;
 
@@ -64,6 +79,7 @@ public class NoticePublishedProducer {
     }
 
     /** 공지가 <b>공개로 전환됐을 때</b>만 부른다. 수정 저장마다 부르면 알림이 반복된다. */
+    // [JA] お知らせが公開に切り替わったときだけ呼ぶ。保存のたびに呼ぶと通知が繰り返される。
     public void publish(Notice notice) {
         if (notice == null || notice.getNoticeId() == null || !notice.isPublished()) {
             return;
@@ -71,6 +87,8 @@ public class NoticePublishedProducer {
 
         // 커밋되기 전의 값을 그대로 읽어 둔다 — afterCommit 시점에는 영속성 컨텍스트가
         // 닫혀 있을 수 있어 엔티티를 다시 만지면 LazyInitializationException 이 난다.
+        // [JA] コミット前の値をそのまま読んでおく — afterCommit の時点では永続化コンテキストが
+        //      閉じていることがあり、エンティティに再び触れると LazyInitializationException が出る。
         Long noticeId = notice.getNoticeId();
         String title = notice.getTitle();
         String summary = summarize(notice.getBody());
@@ -98,6 +116,8 @@ public class NoticePublishedProducer {
             event.put("occurredAt", LocalDateTime.now().toString());
             // 공지 하나당 전체 알림 하나. 재게시(내렸다 다시 올림)해도 같은 키라 중복되지
             // 않는다 — source_event_id 가 UNIQUE 다.
+            // [JA] お知らせ一つにつき全体通知一つ。再掲載(下げてから再び上げる)しても同じキーなので重複しない
+            //      — source_event_id が UNIQUE である。
             event.put("eventId", "notice:" + noticeId);
 
             kafkaTemplate.send(topic, String.valueOf(noticeId), objectMapper.writeValueAsString(event));
@@ -105,6 +125,7 @@ public class NoticePublishedProducer {
 
         } catch (Exception e) {
             // 공지는 이미 공개됐다. 알림만 못 나간 것이라 되돌리지 않는다.
+            // [JA] お知らせはすでに公開された。通知が出なかっただけなので巻き戻さない。
             log.error("공지 게시 발행 실패: noticeId={} — 알림이 나가지 않는다: {}", noticeId, e.getMessage());
         }
     }
@@ -114,6 +135,9 @@ public class NoticePublishedProducer {
      *
      * <p>순수 함수라 따로 테스트한다 — 카프카를 띄우지 않고도 경계(빈 본문, 정확히 상한,
      * 상한 초과)를 고정할 수 있다.
+     *
+     * <p>[JA] 本文の先頭部分だけ。改行を空白に潰して一行にする(通知は二、三行しか見えない)。
+     * 純粋関数なので別にテストする — Kafka を起動せずに境界(空の本文、ちょうど上限、上限超過)を固定できる。
      */
     public static String summarize(String body) {
         if (body == null) {

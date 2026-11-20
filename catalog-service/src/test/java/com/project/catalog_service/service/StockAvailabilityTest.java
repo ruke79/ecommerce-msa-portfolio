@@ -26,6 +26,8 @@ import com.project.common.dto.ProductSkuDto;
 
 /**
  * 목록·상세의 재고 = 지금 수량 − 다른 주문의 결제 전 예약 (docs/59 §5).
+ *
+ * <p>[JA] 一覧・詳細の在庫 = 現在数量 − 他の注文の決済前予約(docs/59 §5)。
  */
 @DisplayName("StockAvailability — 손님에게 보이는 재고")
 class StockAvailabilityTest {
@@ -44,11 +46,13 @@ class StockAvailabilityTest {
     }
 
     /** 합친 질의의 '지금 수량' 행. */
+    // [JA] 統合クエリの「現在数量」行。
     static Object[] live(long sizeId, int qty) {
         return new Object[] {"L", sizeId, null, null, null, (long) qty};
     }
 
     /** 합친 질의의 '예약 합' 행. */
+    // [JA] 統合クエリの「予約合計」行。
     static Object[] held(long productId, long colorId, String size, long sum) {
         return new Object[] {"H", null, productId, colorId, size, sum};
     }
@@ -75,9 +79,9 @@ class StockAvailabilityTest {
 
         ProductDto shown = availability.apply(List.of(cached)).get(0);
 
-        assertThat(sizeOf(shown, 0).getQuantity()).isZero();      // 지금 2, 둘 다 잡힘
+        assertThat(sizeOf(shown, 0).getQuantity()).isZero();      // 지금 2, 둘 다 잡힘 ／ [JA] 現在 2、両方とも確保済み
         assertThat(sizeOf(shown, 0).getOnHold()).isEqualTo(2);
-        assertThat(sizeOf(shown, 1).getQuantity()).isEqualTo(3);  // 캐시 0 → 지금 4, 1 잡힘
+        assertThat(sizeOf(shown, 1).getQuantity()).isEqualTo(3);  // 캐시 0 → 지금 4, 1 잡힘 ／ [JA] キャッシュ 0 → 現在 4、1 確保
         assertThat(sizeOf(shown, 1).getOnHold()).isEqualTo(1);
         assertThat(sizeOf(cached, 0).getQuantity()).as("캐시된 DTO 는 그대로").isEqualTo(9);
     }

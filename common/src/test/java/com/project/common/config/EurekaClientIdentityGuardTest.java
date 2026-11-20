@@ -26,8 +26,12 @@ import org.junit.jupiter.api.Test;
  * ← 매니페스트의 {@code EUREKA_CLIENT_TLS_ENABLED=true} · {@code /app/identity} 마운트 ← Secret {@code tls-id-<서비스>} 발급
  * (ops/38 · ops/39 · k8s/96) · 받는 쪽 {@code SERVER_SSL_CLIENT_AUTH=want} · ConfigMap {@code EUREKA_WRITE_AUTH_MODE}.
  *
- * <p>[JA] Eureka に登録するポッドは自分の身元証明書で登録する。鎖が一つ抜けると enforce でそのサービスのハートビートが 403 になり、
- * 登録から外れて lb:// 呼び出しが 503 になる。
+ * <p>[JA] B-86: Eureka に登録する Pod は<b>自分の身元証明書</b>で登録する — Eureka は登録簿を変える要求を、その CN がアプリ名と同じときだけ
+ * 受け付ける(eureka-server {@code RegistryWriteGuard}、docs/57 §16「Eureka 書き込み」)。鎖が一つ抜けると enforce でそのサービスの
+ * ハートビートが 403 → 90 秒後に登録簿から外れ、そのサービスへの {@code lb://} 呼び出しがすべて 503 になる。
+ * 鎖: 共通設定の {@code eureka.client.tls}(application-common.yml — JVM キーストアは Eureka クライアントが使わない)← マニフェストの
+ * {@code EUREKA_CLIENT_TLS_ENABLED=true} · {@code /app/identity} マウント ← Secret {@code tls-id-<サービス>} の発行(ops/38 · ops/39 · k8s/96)
+ * · 受け手の {@code SERVER_SSL_CLIENT_AUTH=want} · ConfigMap {@code EUREKA_WRITE_AUTH_MODE}。
  */
 @DisplayName("B-86: Eureka 클라이언트는 자기 신원 인증서로 등록한다")
 class EurekaClientIdentityGuardTest {
@@ -42,6 +46,7 @@ class EurekaClientIdentityGuardTest {
     }
 
     /** k8s/3x · 4x 의 Deployment 매니페스트(파일 이름 → 내용). */
+    // [JA] k8s/3x · 4x の Deployment マニフェスト(ファイル名 → 内容)。
     private static List<Path> deployments() throws IOException {
         try (Stream<Path> s = Files.list(root().resolve("k8s"))) {
             return s.filter(p -> p.getFileName().toString().matches("[34]\\d-.*\\.yaml")).sorted().toList();
@@ -60,6 +65,7 @@ class EurekaClientIdentityGuardTest {
                 "key-store: ${EUREKA_CLIENT_KEY_STORE:file:/app/identity/keystore.p12}",
                 "trust-store: file:${LOCAL_TRUST_STORE_PATH:/app/resources/truststore.p12}");
         // 자리까지 본다 — eureka.instance 아래에 두면 아무도 읽지 않는다(게이트웨이에 실제로 그렇게 있었다).
+        // [JA] 場所まで見る — eureka.instance の下に置くと誰も読まない(ゲートウェイに実際にそうあった)。
         Object tls = null;
         for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(yml)) {
             tls = at(doc, "eureka", "client", "tls");
@@ -135,6 +141,7 @@ class EurekaClientIdentityGuardTest {
     }
 
     /** yml 문서들에서 처음 나오는 eureka.client.tls. */
+    // [JA] yml ドキュメント群で最初に出てくる eureka.client.tls。
     private static Object tlsOf(String yml) {
         for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(yml)) {
             Object tls = at(doc, "eureka", "client", "tls");
@@ -166,7 +173,7 @@ class EurekaClientIdentityGuardTest {
             }
             String gradle = Files.readString(build);
             if (gradle.contains("project(':common')") || gradle.contains("project(\":common\")")) {
-                continue;   // application-common.yml 이 클래스패스에 있다
+                continue;   // application-common.yml 이 클래스패스에 있다 ／ [JA] application-common.yml がクラスパスにある
             }
             withoutCommon++;
             Path yml = module.resolve("src/main/resources/application-local.yml");

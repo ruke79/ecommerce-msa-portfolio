@@ -45,6 +45,17 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>이 행이 커밋되면 이벤트는 <b>반드시 나간다</b>(폴러가 계속 재시도한다). 커밋되지
  * 않으면 계정 활성화도 함께 롤백된다. 둘 중 하나만 일어나는 일이 없다.
+ *
+ * <p>[JA] ユーザーイベントを<b>アウトボックスに書く</b> — 送りはしない。
+ * なぜこのクラスができたか: {@code users.outbox_event} テーブルとエンティティは<b>最初からあった。</b>ところが書く場所が
+ * なかった — {@code UserServiceImpl} に<b>コメントアウトされたまま</b>残っていた(上の例)。
+ * つまりアウトボックスを作っておいて<b>コメント一行の差で</b> dual-write を使っていた。その代償が docs/47 だ:
+ * アカウントはコミットされたのにイベントは送られず、誰も気づかず、そのユーザーは数週間後に注文ボタンで 400 を受けた。
+ * ⚠️ 必ず呼び出し側のトランザクションに参加する: {@code MANDATORY} で固定する。トランザクションなしで呼ばれると
+ * <b>即座に例外</b>だ — それこそが dual-write で、黙って成り立ってしまうとこの作業全体が無意味になる。新しいトランザクションを
+ * 開く {@code REQUIRES_NEW} も同じ理由で不可。
+ * この行がコミットされればイベントは<b>必ず送られる</b>(ポーラーが再試行し続ける)。コミットされなければ
+ * アカウント有効化も一緒にロールバックされる。片方だけが起きることはない。
  */
 @Slf4j
 @Component
@@ -52,6 +63,7 @@ import lombok.extern.slf4j.Slf4j;
 public class UserOutboxHelper {
 
     /** 아웃박스 행의 aggregate 종류. CDC EventRouter 로 옮길 때 라우팅 근거가 된다. */
+    // [JA] アウトボックス行の aggregate 種別。CDC EventRouter に移すときルーティングの根拠になる。
     private static final String AGGREGATE_TYPE = "User";
 
     private final OutboxEventRepository outboxEventRepository;
@@ -60,6 +72,9 @@ public class UserOutboxHelper {
     /**
      * 커밋되면 폴링을 기다리지 않고 바로 릴레이한다(docs/56 §9). 가입 확인 직후 채팅·쿠폰 화면으로 가면
      * 복제본(chat_member)과 가입 쿠폰이 아직 없던 최대 10초를 없앤다.
+     *
+     * <p>[JA] コミットされたらポーリングを待たずにすぐリレーする(docs/56 §9)。登録確認の直後にチャット・クーポン画面へ行くと
+     * 写し(chat_member)と登録クーポンがまだなかった最大 10 秒をなくす。
      */
     private final com.project.common.outbox.OutboxRelayTrigger relayTrigger;
 
@@ -68,6 +83,10 @@ public class UserOutboxHelper {
      *
      * <p>멱등성은 호출자가 갖는다 — {@code validateAndGetUser} 는 <b>이미 활성화된
      * 계정이면 그보다 먼저 빠져나간다.</b> 확인 링크를 두 번 눌러도 행은 하나다.
+     *
+     * <p>[JA] 登録確定イベントを書く。
+     * 冪等性は呼び出し側が持つ — {@code validateAndGetUser} は<b>既に有効化されたアカウントならそれより先に抜ける。</b>
+     * 確認リンクを二回押しても行は一つだ。
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordUserCreated(User user) {
@@ -76,6 +95,8 @@ public class UserOutboxHelper {
                 .image(user.getImage())
                 // 이메일은 없다(docs/48 §6-⑥) — DTO·Avro(v2) 모두. 소비자 둘 중 coupon 은 id 만 쓰고, chat 은 신원을
                 // uid 로 옮겼다. 쓰지 않는 개인정보를 여러 DB 로 퍼뜨리지 않는다(데이터 최소화).
+                // [JA] メールはない(docs/48 §6-⑥) — DTO・Avro(v2)とも。二つのコンシューマのうち coupon は id だけを使い、chat は身元を
+                //      uid に移した。使わない個人情報を複数の DB に広げない(データ最小化)。
                 .nickname(user.getName())
                 .build();
 
@@ -85,6 +106,8 @@ public class UserOutboxHelper {
         } catch (JsonProcessingException e) {
             // 여기서 던지면 인증 확정까지 롤백된다. 그게 맞다 — 보낼 수 없는 이벤트를
             // 적어 두고 성공했다고 하는 것보다, 사용자가 링크를 다시 누르는 편이 낫다.
+            // [JA] ここで投げると認証確定までロールバックされる。それが正しい — 送れないイベントを
+            //      書いておいて成功したと言うより、ユーザーがリンクをもう一度押すほうがよい。
             throw new IllegalStateException(
                     "user-created 페이로드를 만들지 못했다: userId=" + user.getUserId(), e);
         }
@@ -95,8 +118,10 @@ public class UserOutboxHelper {
                 UserCreatedProducer.TOPIC,
                 payload)
                 // 가입 확인 요청의 추적 문맥 — 릴레이가 되살려 보낸다(docs/51 §4e).
+                // [JA] 登録確認リクエストの追跡コンテキスト — リレーが復元して送る(docs/51 §4e)。
                 .withTraceContext(outboxTraceContext.capture()));
         // MANDATORY 라 언제나 트랜잭션 안이다 — 인증 확정이 커밋된 뒤에 돈다. 롤백되면 돌지 않는다.
+        // [JA] MANDATORY なので常にトランザクション内だ — 認証確定がコミットされたあとに動く。ロールバックされれば動かない。
         relayTrigger.afterCommit();
 
         log.info("user-created 아웃박스 기록: userId={}", user.getUserId());
@@ -107,6 +132,10 @@ public class UserOutboxHelper {
      *
      * <p>이메일은 싣지 않는다 — 받는 쪽이 쓰지 않는다(데이터 최소화). 값 전체를 싣는다(부분 변경이 아니라 최신 상태) —
      * 순서가 뒤집혀 옛 이벤트가 나중에 와도 {@code updatedAt} 으로 거를 수 있다.
+     *
+     * <p>[JA] 表示用プロフィール(ニックネーム・画像)が変わった — 写し(chat_member)が追従するようにする(docs/48 §6-⑤)。
+     * メールは載せない — 受け手が使わない(データ最小化)。値全体を載せる(部分変更ではなく最新状態) —
+     * 順序が逆転して古いイベントが後から来ても {@code updatedAt} でふるい落とせる。
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordUserUpdated(User user) {
@@ -123,6 +152,9 @@ public class UserOutboxHelper {
     /**
      * 탈퇴가 최종 처리됐다(원본은 익명화됐다) — 복제본도 식별정보를 지우게 한다(docs/48 §6-⑤).
      * 행을 지우라는 뜻이 아니다 — 채팅 기록이 누구 것이었는지(탈퇴한 사용자)는 남는다.
+     *
+     * <p>[JA] 退会が最終処理された(原本は匿名化された) — 写しも識別情報を消すようにする(docs/48 §6-⑤)。
+     * 行を消せという意味ではない — チャット記録が誰のものだったか(退会したユーザー)は残る。
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordUserDeleted(Long userId) {

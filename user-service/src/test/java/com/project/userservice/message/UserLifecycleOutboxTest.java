@@ -31,6 +31,10 @@ import com.project.userservice.model.User;
  *
  * <p>{@code user-created} 만 있던 동안 닉네임·사진을 바꿔도 채팅에는 옛 값이 보였고, 탈퇴로 원본을 익명화해도 chat 의
  * 복제본에는 이메일이 남았다. 두 사건을 가입과 같은 아웃박스로 적고, 같은 릴레이가 보낸다.
+ *
+ * <p>[JA] 🐛 複製が登録時の値で止まっていた — プロフィール変更・退会を知らせる(docs/48 §6-⑤)。
+ * <p>user-created しかなかった間はニックネーム・写真を変えてもチャットには古い値が見え、退会で原本を匿名化しても chat の複製にはメールが残った。
+ * 二つの出来事を登録と同じアウトボックスに書き、同じリレーが送る。
  */
 @DisplayName("사용자 변경·탈퇴 이벤트 — 아웃박스")
 class UserLifecycleOutboxTest {
@@ -54,6 +58,7 @@ class UserLifecycleOutboxTest {
     }
 
     /** 🔒 가입 이벤트에도 이메일을 싣지 않는다 — 소비자(coupon·chat) 누구도 쓰지 않는다(docs/48 §6-⑥). */
+    // [JA] 🔒 登録イベントにもメールを載せない — 消費者(coupon・chat)の誰も使わない(docs/48 §6-⑥)。
     @Test
     @DisplayName("🔒 가입 — user-created 에 이메일을 싣지 않는다")
     void createdCarriesNoEmail() throws Exception {
@@ -95,6 +100,7 @@ class UserLifecycleOutboxTest {
     }
 
     /** 가입 이벤트와 같은 이유 — REQUIRED 면 트랜잭션 없이 불렸을 때 새 트랜잭션을 열어 dual-write 가 된다. */
+    // [JA] 登録イベントと同じ理由 — REQUIRED だとトランザクションなしで呼ばれたとき新しいトランザクションを開き dual-write になる。
     @Test
     @DisplayName("두 기록 모두 MANDATORY — 원본 변경과 같은 트랜잭션에서만 적힌다")
     void recordsAreMandatory() throws Exception {

@@ -26,6 +26,18 @@ import java.util.List;
  *
  * <p>{@code message} 는 <b>남겨 둔다.</b> 지우면 코드를 모르는 클라이언트가 아무것도 받지
  * 못한다. 프론트는 코드를 먼저 보고, 모르는 코드면 이 문구로 떨어진다.
+ *
+ * <p>[JA] ログイン成功の応答。
+ * 🐛 文言がサーバーから英語で降りてきていた。{@code message} はサーバーが作った英語の文
+ * ({@code "User attempted to log in multiply, logging out from previous logged in state"})で、フロントはそれを
+ * {@code toast.success(response.data.message)} でそのまま表示していた。画面の他の部分は韓国語・日本語なのに、ログイン直後
+ * だけ英語が出る理由がこれである。
+ * 文言をサーバーで翻訳しない理由: サーバーはユーザーの表示言語を知らない。言語はブラウザが選び {@code localStorage} に入っている
+ * (docs/45)。{@code Accept-Language} で推測はできるが、ユーザーが画面で選んだ値とずれる。
+ * そこでサーバーは何が起きたかだけをコードで知らせ、文言はフロントの辞書が選ぶ。失敗経路ですでに同じ方式を使っている
+ * ({@code AuthLoginFilter.Failure.code}, {@code email_not_verified})。
+ * {@code message} は残しておく。消すとコードを知らないクライアントが何も受け取れない。フロントはまずコードを見て、知らない
+ * コードならこの文言にフォールバックする。
  */
 @Setter
 @Getter
@@ -35,10 +47,13 @@ public class LoginResponse {
     private List<String> roles;
 
     /** 사람이 읽는 문구(영어). 코드를 모르는 클라이언트를 위한 폴백이다. */
+    // [JA] 人が読む文言(英語)。コードを知らないクライアントのためのフォールバックである。
     private String message;
 
     /**
      * 무슨 일이 있었는지. 프론트가 이 값으로 사전에서 문구를 고른다.
+     *
+     * <p>[JA] 何が起きたか。フロントがこの値で辞書から文言を選ぶ。
      *
      * @see com.project.userservice.security.AuthLoginFilter#LOGIN_SUCCESS_CODE
      * @see com.project.userservice.security.AuthLoginFilter#MULTI_LOGIN_CODE

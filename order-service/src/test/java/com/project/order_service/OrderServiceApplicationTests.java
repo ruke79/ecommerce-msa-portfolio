@@ -25,6 +25,15 @@ import org.testcontainers.utility.DockerImageName;
  *
  * <p>Kafka 는 붙이지 않는다 — 컨슈머는 브로커가 없어도 재시도 로그만 남기고 기동을 막지 않으므로
  * 컨텍스트 로딩 검증에는 불필요하고 테스트만 느려진다. 사가 흐름은 별도 통합 테스트의 몫이다.
+ *
+ * <p>[JA] order-service の起動検証 — 実際の PostgreSQL/Redis コンテナ上で。
+ *
+ * <p>以前はインフラがなければ常に失敗する {@code @SpringBootTest} で、そのため {@code @Disabled}
+ * で無効にするしかなかった。問題は、このリポジトリで最も高くついたバグがことごとく<b>起動して初めて現れる</b>種類だったことである(docs
+ * /14 B-1〜B-9、docs/16)。コンテナを付けてその検証をビルドに肩代わりさせる。
+ *
+ * <p>Kafka は付けない — コンシューマーはブローカーがなくても再試行ログを残すだけで起動を止めないので、
+ * コンテキストのロード検証には不要でテストが遅くなるだけである。サガの流れは別の統合テストの役目である。
  */
 @Tag("containers")
 @Testcontainers
@@ -41,6 +50,8 @@ class OrderServiceApplicationTests {
 
 	// 비밀번호를 설정한다. 빈 문자열 비밀번호는 Redisson 이 AUTH 를 보내다 실패하는
 	// 알려진 함정이라(docs/14 B-6) 운영 설정과 같은 형태로 맞춘다.
+	// [JA] パスワードを設定する。空文字列のパスワードは Redisson が AUTH を送って失敗する既知の罠なので(docs/14 B-6)、
+	//      運用設定と同じ形に合わせる。
 	@Container
 	static GenericContainer<?> redis =
 			new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
@@ -57,17 +68,23 @@ class OrderServiceApplicationTests {
 		registry.add("spring.data.redis.password", () -> "testpw");
 		registry.add("spring.data.redis.ssl.enabled", () -> false);
 		// 이 테스트 범위 밖의 외부 의존성은 끈다.
+		// [JA] このテストの範囲外の外部依存は切る。
 		registry.add("eureka.client.enabled", () -> false);
 		registry.add("eureka.client.register-with-eureka", () -> false);
 		registry.add("eureka.client.fetch-registry", () -> false);
 		registry.add("management.tracing.enabled", () -> false);
 		registry.add("server.ssl.enabled", () -> false);
 		// 운영(application-local.yml)처럼 파티션 잡을 켠다 — 첫 점검은 1시간 뒤라 이 테스트 동안 DB 를 건드리지 않는다.
+		// [JA] 運用(application-local.yml)のようにパーティションジョブを有効にする — 最初の点検は 1 時間後なので、このテストの間
+		//      DB に触れない。
 		registry.add("outbox.partitions.tables", () -> "orders.payment_outbox_event");
 		registry.add("outbox.partitions.initial-delay", () -> "PT1H");
 		// PayPal 검증은 자격증명이 없으면 **기동을 거부한다**(PaypalConfig — 의도된 fail closed).
 		// 테스트에는 시크릿이 없으므로 명시적으로 끈다. 이 한 줄이 필요하다는 사실 자체가
 		// 기본값이 안전한 쪽으로 잡혀 있다는 증거다(docs/35).
+		// [JA] PayPal 検証は資格情報がなければ**起動を拒否する**(PaypalConfig — 意図した fail closed)。
+		//      テストにはシークレットがないので明示的に切る。この 1 行が必要だという事実そのものが、
+		//      既定値が安全側に設定されている証拠である(docs/35)。
 		registry.add("paypal.verification.mode", () -> "disabled");
 	}
 
@@ -98,6 +115,8 @@ class OrderServiceApplicationTests {
 	void outboxPartitionsAreCreated() throws Exception {
 		// docs/09 P0 의 파티션 마이그레이션이 실제로 적용됐는지 확인한다.
 		// 파티션 부모 + 월 파티션 + DEFAULT 파티션이 만들어져야 한다.
+		// [JA] docs/09 P0 のパーティションマイグレーションが実際に適用されたかを確認する。パーティション親 + 月パーティション +
+		//      DEFAULT パーティションが作られている必要がある。
 		try (var conn = java.sql.DriverManager.getConnection(
 						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
 				var st = conn.createStatement();
@@ -124,6 +143,7 @@ class OrderServiceApplicationTests {
 	private org.springframework.transaction.PlatformTransactionManager txManager;
 
 	/** 조회 화면의 색상 — 부를 때 트랜잭션이 열려 있는지 기록한다(B-87). */
+	// [JA] 照会画面の色 — 呼び出し時にトランザクションが開いているかを記録する(B-87)。
 	@org.springframework.test.context.bean.override.mockito.MockitoBean
 	private com.project.order_service.client.CatalogServiceClient catalog;
 
@@ -280,6 +300,7 @@ class OrderServiceApplicationTests {
 	}
 
 	/** 품목(색상 7) 하나를 가진 주문. */
+	// [JA] 品目(色 7)を一つ持つ注文。
 	private Long newOrderWithProduct() {
 		return new org.springframework.transaction.support.TransactionTemplate(txManager).execute(st -> {
 			var address = com.project.order_service.model.OrderAddress.builder()

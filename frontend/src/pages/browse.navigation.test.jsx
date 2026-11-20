@@ -6,6 +6,7 @@ import Browse, { loader } from "pages/browse";
 import { withI18n } from "i18n/testing";
 
 // jsdom 에는 fetch 의 Request 가 없다 — 데이터 라우터는 loader 에 넘길 요청(주소 · 신호)만 만든다. 그만큼만 채운다.
+// [JA] jsdom には fetch の Request がない — データルーターは loader に渡すリクエスト(アドレス · シグナル)だけを作る。その分だけ埋める。
 if (typeof global.Request === "undefined") {
     global.Request = class {
         constructor(input, init = {}) {
@@ -21,6 +22,7 @@ if (typeof global.Headers === "undefined") {
 }
 
 // 화면 바깥(머리글 · 카드 · 무한 스크롤 감시)은 덜어 낸다 — 이 테스트가 보는 것은 "어느 조건의 결과가 그려지는가" 하나다.
+// [JA] 画面の外側(ヘッダー · カード · 無限スクロールの監視)は取り除く — このテストが見るのは「どの条件の結果が描かれるか」一つである。
 jest.mock("pages/header/Header", () => () => null);
 jest.mock("components/home/ProductCard", () => ({ product }) => <div data-testid="card">{product.name}</div>);
 jest.mock("hook/hooks", () => ({ useInfiniteScroll: () => ({ current: null }) }));
@@ -38,6 +40,7 @@ const PRODUCTS = {
 };
 
 /** 카테고리마다 다른 결과를 늦게(서버처럼) 돌려준다. */
+// [JA] カテゴリごとに違う結果を遅れて(サーバーのように)返す。
 function serve() {
     getRequest.mockImplementation((_url, { params }) => {
         const key = typeof params.category === "string" ? params.category : "";
@@ -66,6 +69,7 @@ function renderAt(url) {
 
 const cards = () => screen.queryAllByTestId("card").map((c) => c.textContent);
 // 왼쪽 메뉴의 카테고리 — 이름은 위쪽 경로 표시 · 버튼 줄에도 나오니 마지막(메뉴)을 누른다.
+// [JA] 左メニューのカテゴリ — 名前は上部のパンくず · ボタン行にも出るので最後(メニュー)を押す。
 const menu = (name) => screen.getAllByText(name).at(-1);
 
 beforeEach(() => {

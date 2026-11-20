@@ -19,6 +19,10 @@ import com.project.chat_service.model.ChatRoom;
  * [clientInboundChannel]} 만 보인다.
  *
  * <p>DB 에 쓸 연관은 DB 에서 읽은 것이어야 한다. Redis 는 방 <b>목록</b>의 캐시로만 쓴다.
+ *
+ * <p>[JA] チャットルームの<b>DB</b>側。名前が似ている {@link com.project.chat_service.repository.redis.ChatRoomRepository} は Redis 側である。
+ * <p>🐛 <b>二つを混ぜて使ったことが「特定のルームでだけ購読が失敗」の原因だった。</b>参加者行({@code ParticipantChatRoom})を作るときにルームオブジェクトを<b>Redis から読んで</b>関連に設定していたが、それはデシリアライズされた<b>切り離された(detached)オブジェクト</b>である — JPA が管理していない。そのオブジェクトで関連を作って保存すると識別子の状態によって flush 段階で爆発し、その例外が SUBSCRIBE フレームを殺してクライアントには {@code Failed to send message to ExecutorSubscribableChannel [clientInboundChannel]} しか見えない。
+ * <p>DB に書く関連は DB から読んだものでなければならない。Redis はルーム<b>一覧</b>のキャッシュとしてだけ使う。
  */
 @Repository
 public interface ChatRoomJpaRepository extends JpaRepository<ChatRoom, Long> {
@@ -28,5 +32,6 @@ public interface ChatRoomJpaRepository extends JpaRepository<ChatRoom, Long> {
     boolean existsByRoomUid(String roomUid);
 
     /** 목록. 만든 순서가 곧 화면 순서다 — 정렬이 없으면 DB 마음대로다. */
+    // [JA] 一覧。作成順がそのまま画面の順序である — ソートがなければ DB 任せになる。
     java.util.List<ChatRoom> findAllByOrderByIdAsc();
 }

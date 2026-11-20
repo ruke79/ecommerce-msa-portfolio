@@ -35,6 +35,7 @@ command -v kubectl >/dev/null 2>&1 || die "kubectl 이 필요하다"
 [[ "$K6_CPU" =~ ^[0-9]+(\.[0-9]+|m)?$ ]] && [[ "$K6_MEMORY" =~ ^[0-9]+(Mi|Gi)$ ]] || die "K6_CPU · K6_MEMORY 형식(예 1 · 1Gi)"
 
 # 인자 — 요약 경로와 시나리오만 바꾸고 나머지는 그대로 넘긴다
+# [JA] 引数 — 要約のパスとシナリオだけ変えて残りはそのまま渡す
 summary=""; script=""; args=(); prev=""
 for a in "$@"; do
     if [ "$prev" = "--summary-export" ]; then
@@ -61,15 +62,18 @@ cleanup() {
 trap cleanup EXIT
 
 # 시나리오 전부를 ConfigMap 으로(서로 import 한다)
+# [JA] シナリオ全部を ConfigMap に(互いに import する)
 files=()
 for f in "$K6_DIR"/*.js; do files+=("--from-file=$(basename "$f")=$f"); done
 kubectl -n "$APP_NS" create configmap "$cm" "${files[@]}" >/dev/null
 
 # 컨테이너 인자 — sh -c 의 스크립트, $0, 그다음 k6 run 의 인자. JSON 배열로(따옴표 · 공백이 섞여도 그대로)
+# [JA] コンテナ引数 — sh -c のスクリプト、$0、その次に k6 run の引数。JSON 配列で(引用符 · 空白が混ざってもそのまま)
 runner="k6 \"\$@\"; rc=\$?; echo $BEGIN_MARK; cat /out/summary.json 2>/dev/null; echo; echo $END_MARK; exit \$rc"
 args_json="$(python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$runner" k6 run "${args[@]}")"
 
 # Job — 한 번만(backoffLimit 0), 끝나면 지운다. 같은 네임스페이스라 NetworkPolicy(k8s/95)가 게이트웨이로 가는 길을 연다.
+# [JA] Job — 1 回だけ(backoffLimit 0)、終われば消す。同じネームスペースなので NetworkPolicy(k8s/95)がゲートウェイへの道を開く。
 kubectl -n "$APP_NS" apply -f - >/dev/null <<EOF
 apiVersion: batch/v1
 kind: Job
@@ -106,6 +110,7 @@ spec:
         - name: scripts
           configMap: { name: $cm }
         # 공개 인증서(ca.crt)만 — tls-keystore 의 키스토어 · 비밀번호는 싣지 않는다
+        # [JA] 公開証明書(ca.crt)だけ — tls-keystore のキーストア・パスワードは載せない
         - name: ca
           secret: { secretName: tls-keystore, items: [ { key: ca.crt, path: ca.crt } ] }
         - name: out
@@ -115,6 +120,7 @@ EOF
 echo ">>> k6 Job $job ($K6_IMAGE · cpu $K6_CPU · $K6_MEMORY) — $(basename "$script")"
 
 # 파드가 뜰 때까지
+# [JA] Pod が起動するまで
 pod=""
 for _ in $(seq 1 120); do
     pod="$(kubectl -n "$APP_NS" get pods -l job-name="$job" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
@@ -128,6 +134,7 @@ log="$(mktemp)"
 kubectl -n "$APP_NS" logs -f "$pod" 2>&1 | tee "$log" | sed "/$BEGIN_MARK/,/$END_MARK/d" || true
 
 # 요약 — 표지 사이
+# [JA] 要約 — 目印の間
 if [ -n "$summary" ]; then
     mkdir -p "$(dirname "$summary")"
     sed -n "/$BEGIN_MARK/,/$END_MARK/p" "$log" | sed '1d;$d' > "$summary"

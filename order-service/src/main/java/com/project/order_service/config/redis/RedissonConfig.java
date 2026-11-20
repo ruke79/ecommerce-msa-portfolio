@@ -51,6 +51,7 @@
 //     // Redis 서버의 비밀번호를 주입받습니다.
 //     @Value("${spring.data.redis.password}")
 //     private String password;
+// [JA] Redis サーバーのパスワードを注入する。
 
 //     @Value("${spring.data.redis.ssl.enabled}")
 //     private boolean useSsl;
@@ -77,12 +78,14 @@
 //         // Redis 서버 주소 및 비밀번호 설정 (SSL 사용 여부와 관계없이 공통으로 적용)
 //         serverConfig.setAddress("rediss://" + host + ":" + port);
 //         serverConfig.setPassword(password);
+// [JA] Redis サーバーのアドレスとパスワードの設定(SSL 使用の有無に関係なく共通に適用)
 
 //         if (useSsl) {
 //             try {
 //                 // File 객체를 URL 객체로 변환
 //                 URL truststoreUrl = new File(truststoreFileLocation).toURI().toURL();
 //                 URL keystoreUrl = new File(keystoreFileLocation).toURI().toURL();
+// [JA] File オブジェクトを URL オブジェクトに変換
 
 //                 serverConfig.setSslTruststore(truststoreUrl);
 //                 serverConfig.setSslKeystore(keystoreUrl);
@@ -106,29 +109,35 @@
 //         }
 //         return Redisson.create(config);
 //     }
+// [JA] 例外発生時により具体的な情報をログに残す
      
 
 //     // ObjectMapper를 주입받아 RedisTemplate을 설정합니다.
 //     @Bean
 //     public RedisTemplate<String, Object> redisTemplate(RedissonClient redissonClient, 
 //      @Qualifier("cacheObjectMapper") ObjectMapper cacheObjectMapper) {       
+// [JA] ObjectMapper を注入して RedisTemplate を設定する。
         
 //         RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
 
 //         // RedissonConnectionFactory를 사용하도록 설정합니다.
 //         redisTemplate.setConnectionFactory(new RedissonConnectionFactory(redissonClient));
+// [JA] RedissonConnectionFactory を使うよう設定する。
 
 //         // ObjectMapper를 사용하는 Jackson2JsonRedisSerializer를 생성합니다.
 //         Jackson2JsonRedisSerializer<Object> jsonSerializer = new Jackson2JsonRedisSerializer<>(cacheObjectMapper, Object.class);
+// [JA] ObjectMapper を使う Jackson2JsonRedisSerializer を作成する。
         
 
 //         // Key와 Hash Key는 String으로 직렬화
 //         redisTemplate.setKeySerializer(new StringRedisSerializer());
 //         redisTemplate.setHashKeySerializer(new StringRedisSerializer());
+// [JA] Key と Hash Key は String でシリアライズ
 
 //         // Value와 Hash Value는 설정된 ObjectMapper를 사용하는 JSON 직렬화기로 설정합니다.
 //         redisTemplate.setValueSerializer(jsonSerializer);
 //         redisTemplate.setHashValueSerializer(jsonSerializer);
+// [JA] Value と Hash Value は設定した ObjectMapper を使う JSON シリアライザーに設定する。
 
 //         return redisTemplate;
 //     }
@@ -141,12 +150,15 @@
 
 //           // 캐시 이름별 설정 맵 생성
 //         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
+// [JA] キャッシュ名別の設定マップを作成
 
 //         // `orderList` 캐시 설정: 60분 보관 (원하는 보관 기간으로 변경 가능)
 //         cacheConfigurations.put("orderList", redisCacheConfiguration(Duration.ofMinutes(60), jsonSerializer));
+// [JA] `orderList` キャッシュ設定: 60 分保持(望む保持期間に変更可能)
         
 //         // `ordersPage` 캐시 설정: 60분 보관
 //         cacheConfigurations.put("ordersPage", redisCacheConfiguration(Duration.ofMinutes(60), jsonSerializer));
+// [JA] `ordersPage` キャッシュ設定: 60 分保持
 
 //         cacheConfigurations.put("orders", redisCacheConfiguration(Duration.ofMinutes(60), jsonSerializer));
 

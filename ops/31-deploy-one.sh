@@ -40,6 +40,22 @@
 #   REGISTRY=ghcr.io/owner ...                          # 기본값은 현재 배포된 이미지에서 읽는다
 #
 # 종료 코드: 0=성공, 1=실패
+# [JA] 運用アクション ㉛ — サービスを一つだけビルドしてその場に上げる(開発ループ用)
+#      二つ以上を一緒に上げるなら ops/33-deploy-some.sh — ビルド 1 回、決まった順序、失敗したら止めて戻す。
+#      ── ⚠️ これは ops/28 の代替ではない: ops/28 は**システム全体を一つのバージョンで**デプロイする(docs/36)。だから「今デプロイされているのは
+#      何か」に答えが一つに定まり、失敗したとき戻す地点が明確だ。このリポジトリはその答えがぼやけてデプロイが 7 時間止まったことがある(docs/39 §7)。
+#      このスクリプトはそのモデルを**意図的に壊す。** 一つのサービスだけ別タグで上げるので: デプロイジャーナルに記録されない
+#      (`--rollback` の基準にならない)、スモークゲートを通らない(**未検証のデプロイ**だ)、クラスタが複数バージョンの混在した状態になる。
+#      だから用途は一つ: **直して確かめるを繰り返す間の速いループ。** 原因を掴んだら必ず ops/28 で全体を一つのバージョンに
+#      収束させる。このスクリプトは終了時にそのコマンドを出力する。
+#      ⚠️ user-service と gateway-server は**別々のバージョンにしないこと。** ゲートウェイは uid クレームのないトークンを拒否するので、
+#      ゲートウェイだけ新バージョンだと旧 user-service が発行したトークンがすべて 401 になる(docs/27)。片方を上げたらもう片方も上げる。
+#      ── なぜ全体ビルドが遅かったか: jar が再現可能でなかったからだ。Gradle の既定がファイルのタイムスタンプをアーカイブに埋め込むため、
+#      ソースが同じでもビルドごとにバイトが変わり → Docker レイヤが変わり → 変わっていない 13 サービスまで毎回レジストリへ送られていた。
+#      build.gradle の `preserveFileTimestamps = false` がそれをなくした(そのコメント参照)。だから今は**全体ビルドもずっと速い** —
+#      このスクリプトが必要な場面が減ったということだ。
+#      ── 使い方は上記(HEAD でビルド→プッシュ→差し替え、frontend は REACT_APP_* も渡す、--dry-run は何をするかだけ出力、TAG で直接指定、REGISTRY の既定は現在デプロイ中のイメージから読む)。
+#      終了コード: 0=成功、1=失敗
 set -uo pipefail
 
 NS="${NS:-ecommerce}"
@@ -67,6 +83,9 @@ kubectl -n "$NS" get "deploy/$SERVICE" >/dev/null 2>&1 \
 #
 # 기본은 커밋 SHA 12자다. ops/28 과 같은 규칙이라야 나중에 전체 배포로 수렴시킬 때
 # 같은 태그를 쓸 수 있다.
+# [JA] ── タグ
+#      既定はコミット SHA 12 文字だ。ops/28 と同じ規則でなければ、後で全体デプロイに収束させるとき
+#      同じタグを使えない。
 TAG="${TAG:-$(git rev-parse --short=12 HEAD 2>/dev/null || true)}"
 [ -n "$TAG" ] || die "TAG 를 알 수 없습니다. TAG=... 로 지정하세요"
 
@@ -75,6 +94,10 @@ TAG="${TAG:-$(git rev-parse --short=12 HEAD 2>/dev/null || true)}"
 # 지금 **실제로 돌고 있는 이미지**에서 읽는다. 오버레이를 다시 해석하지 않아도 되고,
 # 무엇보다 오버레이와 클러스터가 어긋나 있어도 클러스터 쪽을 따른다 — 지금 도는 것을
 # 같은 자리에 갈아 끼우는 게 이 스크립트의 목적이기 때문이다.
+# [JA] ── レジストリ
+#      今**実際に動いているイメージ**から読む。オーバーレイを再解釈しなくて済み、
+#      何よりオーバーレイとクラスタがずれていてもクラスタ側に従う — 今動いているものを
+#      同じ場所で差し替えるのがこのスクリプトの目的だからだ。
 CURRENT_IMAGE=$(kubectl -n "$NS" get "deploy/$SERVICE" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
 [ -n "$CURRENT_IMAGE" ] || die "$SERVICE 의 현재 이미지를 읽지 못했습니다"
@@ -82,12 +105,14 @@ CURRENT_IMAGE=$(kubectl -n "$NS" get "deploy/$SERVICE" \
 CONTAINER=$(kubectl -n "$NS" get "deploy/$SERVICE" \
     -o jsonpath='{.spec.template.spec.containers[0].name}')
 
-IMAGE_NAME="${CURRENT_IMAGE%:*}"            # 태그를 뗀 이름
+IMAGE_NAME="${CURRENT_IMAGE%:*}"            # 태그를 뗀 이름 ／ [JA] タグを外した名前
 CURRENT_TAG="${CURRENT_IMAGE##*:}"
 NEW_IMAGE="$IMAGE_NAME:$TAG"
 
 # REGISTRY 는 ops/19 가 `<REGISTRY>/ecommerce-msa/<서비스>` 로 조립하므로,
 # 이미지 이름에서 마지막 두 조각을 떼면 된다.
+# [JA] REGISTRY は ops/19 が `<REGISTRY>/ecommerce-msa/<サービス>` と組み立てるので、
+#      イメージ名から最後の 2 片を外せばよい。
 DERIVED_REGISTRY="${IMAGE_NAME%/ecommerce-msa/*}"
 REGISTRY="${REGISTRY:-$DERIVED_REGISTRY}"
 
@@ -100,6 +125,8 @@ info "레지스트리  : $REGISTRY"
 if [ "$CURRENT_TAG" = "$TAG" ]; then
     # 같은 태그로 다시 올리면 노드가 캐시된 이미지를 그대로 쓴다(imagePullPolicy:
     # IfNotPresent). 새로 만든 이미지가 반영되지 않고, 그 사실이 아무 데도 안 드러난다.
+    # [JA] 同じタグで再度上げるとノードはキャッシュ済みのイメージをそのまま使う(imagePullPolicy:
+    #      IfNotPresent)。新しく作ったイメージが反映されず、そのことがどこにも現れない。
     warn "현재 태그와 같습니다($TAG). 이미지를 새로 만들어도 노드가 캐시를 씁니다."
     warn "  커밋하고 새 SHA 로 하거나 TAG=... 로 다른 값을 주세요."
     die "중단합니다"
@@ -116,22 +143,29 @@ fi
 #
 # 빌드는 ops/19 에 맡긴다. jar 생성·포트 추출·buildx·레지스트리 로그인 확인이 전부
 # 거기 있고, 여기서 다시 구현하면 두 벌이 서서히 어긋난다.
+# [JA] ── 1. ビルド
+#      ビルドは ops/19 に任せる。jar 生成・ポート抽出・buildx・レジストリログイン確認がすべて
+#      そこにあり、ここで再実装すると二つが徐々にずれる。
 log "1/3  이미지 빌드 ($SERVICE)"
 ./ops/19-build-images.sh --registry "$REGISTRY" --push --only "$SERVICE" --tag "$TAG" \
     || die "빌드에 실패했습니다"
 
 # ── 2. 교체 ─────────────────────────────────────────────────────────────
+# [JA] ── 2. 差し替え
 log "2/3  이미지 교체"
 kubectl -n "$NS" set image "deploy/$SERVICE" "$CONTAINER=$NEW_IMAGE" \
     || die "set image 에 실패했습니다"
 
 # 누가·언제·무엇을 바꿨는지 남긴다. ops/28 과 같은 형식이라 rollout history 에서
 # 나란히 읽힌다 — 다만 "(부분)" 을 붙여 전체 배포와 구분한다.
+# [JA] 誰が・いつ・何を変えたかを残す。ops/28 と同じ形式なので rollout history で
+#      並べて読める — ただし "(부분)" を付けて全体デプロイと区別する。
 kubectl -n "$NS" annotate "deploy/$SERVICE" \
     "kubernetes.io/change-cause=ops/31-deploy-one.sh $SERVICE $TAG (부분) @ $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --overwrite >/dev/null 2>&1 || true
 
 # ── 3. 롤아웃 ───────────────────────────────────────────────────────────
+# [JA] ── 3. ロールアウト
 log "3/3  롤아웃 대기"
 if kubectl -n "$NS" rollout status "deploy/$SERVICE" --timeout="${ROLLOUT_TIMEOUT:-600s}"; then
     ok "$SERVICE → $TAG"

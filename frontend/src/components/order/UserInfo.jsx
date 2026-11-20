@@ -6,10 +6,14 @@ import { countryName } from "util/country";
 /**
  * 🐛 `user.image` / `user.name` 은 JWT 에서 만든 사용자 객체에 없는 필드다
  * (util/jwtUser.js). 주문 상세에서 깨진 이미지와 빈 이름으로 보이던 자리다.
+ *
+ * <p>[JA] 🐛 `user.image` / `user.name` は JWT から作ったユーザーオブジェクトにないフィールドだ
+ * (util/jwtUser.js)。注文詳細で壊れた画像と空の名前に見えていた箇所だ。
  */
 const UserInfo = ({ order, user }) => {
     const { t, lang } = useTranslation();
     // 나라는 코드(또는 옛 주소의 영어 이름)로 저장돼 있다 — 지금 언어의 이름으로 그린다(docs/60 §11).
+    // [JA] 国はコード(または古い住所の英語名)で保存されている — 今の言語の名前で描く(docs/60 §11)。
     const country = countryName(order.shippingAddress.country, lang);
     return (
         <div className=" mb-2">

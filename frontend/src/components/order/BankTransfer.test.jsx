@@ -4,6 +4,7 @@ import BankTransfer from "components/order/BankTransfer";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("util/api", () => ({
@@ -27,6 +28,7 @@ const notice = {
 beforeEach(() => jest.clearAllMocks());
 
 /** 무통장입금 상태 기계의 고객 쪽 — 안내 받기 → 입금 대기 → (취소). 금액은 서버가 준다. */
+// [JA] 無通帳入金の状態機械の顧客側 — 案内を受け取る → 入金待ち → (キャンセル)。金額はサーバーがくれる。
 describe("BankTransfer", () => {
     it("결제 전이면 입금자명을 받아 안내를 요청한다 — 본문은 어느 주문·누구 뿐", async () => {
         startBankTransfer.mockResolvedValue(notice);
@@ -38,7 +40,7 @@ describe("BankTransfer", () => {
         await waitFor(() => expect(startBankTransfer).toHaveBeenCalledWith("t-1", "홍길동"));
         expect(await screen.findByTestId("bank-transfer-notice")).toBeInTheDocument();
         expect(screen.getByText("123-456-789")).toBeInTheDocument();
-        expect(screen.getByText(/80,973/)).toBeInTheDocument();     // 서버의 청구액(KRW), total 환산 아님
+        expect(screen.getByText(/80,973/)).toBeInTheDocument();     // 서버의 청구액(KRW), total 환산 아님 ／ [JA] サーバーの請求額(KRW)、total の換算ではない
     });
 
     it("입금자명이 비면 보내지 않는다", () => {
@@ -71,12 +73,13 @@ describe("BankTransfer", () => {
     });
 
     /** 가상계좌는 포트원 결제창이 발급한다 — 여기서 안내를 만들 일이 없고, 입금자명도 없다. */
+    // [JA] バーチャル口座はポートワンの決済画面が発行する — ここで案内を作ることはなく、入金者名もない。
     it("포트원 가상계좌: 입금 대기면 PG 의 계좌를 보여 주고, 결제 전이면 아무것도 그리지 않는다", async () => {
         getBankTransferNotice.mockResolvedValue({ ...notice, provider: "PORTONE", bank: "KOOKMIN", depositorName: null });
         const { unmount } = render(
             <BankTransfer order={{ trackingId: "t-1", orderStatus: "UNPAID", paymentMethod: "portone" }} />);
 
-        expect(await screen.findByText("KOOKMIN")).toBeInTheDocument();   // 안내가 로드된 뒤
+        expect(await screen.findByText("KOOKMIN")).toBeInTheDocument();   // 안내가 로드된 뒤 ／ [JA] 案内が読み込まれた後
         expect(screen.getByText("가상계좌 입금 대기 중")).toBeInTheDocument();
         expect(screen.queryByText("입금자명")).not.toBeInTheDocument();
         expect(screen.getByText(/포트원이 자동으로 확인/)).toBeInTheDocument();

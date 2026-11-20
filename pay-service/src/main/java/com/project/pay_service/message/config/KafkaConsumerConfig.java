@@ -33,6 +33,10 @@ public class KafkaConsumerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka セキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings}
+     * 一か所で作る。以前はこのクラスごとに同じ 6 行を複製し、値が空でもそのまま入れていたので、SSL
+     * を有効にした瞬間に空パスで死ぬ組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -42,6 +46,8 @@ public class KafkaConsumerConfig {
     }
 
     // 재시도+DLT 격리 (KafkaDltConfig, docs/11 §3) — poison message 파티션 블로킹 방지
+    // [JA] 再試行 + DLT 隔離(KafkaDltConfig、docs/11 §3)— poison message
+    //      によるパーティションのブロッキングを防ぐ
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.kafka.listener.DefaultErrorHandler kafkaErrorHandler;
 
@@ -51,8 +57,10 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, PaymentRequest> paymentRequestConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 PaymentRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
+        // [JA] ヘッダー(__TypeId__)があれば使い、なければ PaymentRequest として読む — CDC
+        //      リレーはヘッダーを載せられない(docs/38 §5 A3)。
         JsonDeserializer<PaymentRequest> deserializer = new JsonDeserializer<>(PaymentRequest.class, true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO パッケージのみ
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -62,6 +70,7 @@ public class KafkaConsumerConfig {
                 .put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, deserializer)
                 .put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed")
                 // 그룹 오프셋이 없을 때(첫 배포 · 보존 기간 만료) 쌓인 결제 요청을 건너뛰지 않는다(PY7) — 다시 처리해도 중복 판정이 흡수한다.
+                // [JA] グループオフセットがないとき(初回デプロイ・保持期間切れ)溜まった決済リクエストを飛ばさない(PY7)— 再処理しても重複判定が吸収する。
                 .put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 .put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
                 .putAll(securityProps())
@@ -70,6 +79,7 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 같은 DTO 로 — 롤링 배포·CDC·e2e 의 JSON 도 읽는다(docs/38 §1.16).
+                        // [JA] Avro または JSON を同じ DTO に — ローリングデプロイ・CDC・e2e の JSON も読む(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new PaymentRequestAvroMapping())));
 
     }

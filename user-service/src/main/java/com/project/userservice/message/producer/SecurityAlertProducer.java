@@ -34,6 +34,17 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>발행 실패가 로그인을 되돌리지 않는다.</b> 로그인은 이미 성공했고 그것이 진실이다.
  * 알림을 못 보냈다고 로그인을 실패시키면, 카프카가 잠깐 안 뜨는 동안 아무도 로그인하지
  * 못한다 — 보안 알림을 붙이려다 서비스를 멈추는 것이다.
+ *
+ * <p>[JA] 新しい端末からのログインを通知する — {@code SECURITY_ALERT}。
+ * 🐛 この通知には生成する経路がなかった。メール件名({@code MailTemplates})・SMS 文言({@code SmsTemplates})・
+ * メール種別のマッピング({@code MailKind})はもちろん、受信設定に「セキュリティ通知はユーザーがオフにしても送る」という
+ * 例外まで入っていた({@code NotificationPreference.shouldSendSms})。全部揃えておいて、生成する側だけがなかった。
+ * 値は JSON 文字列で送る。このサービスの他のプロデューサーは Avro を使うが(サーガ経路なのでスキーマが契約である)、
+ * 通知サービスはイベントを {@code JsonNode} で緩く読む — 通知ひとつのためにすべてのドメインのスキーマ変更に
+ * 振り回されないためである({@code NotificationEventListener} のコメント)。お知らせ・企画展の通知も同じ形である。
+ * 発行失敗はログインを取り消さない。ログインはすでに成功しており、それが真実である。通知を送れなかったからと
+ * ログインを失敗させると、Kafka が少し落ちている間は誰もログインできない — セキュリティ通知を付けようとして
+ * サービスを止めることになる。
  */
 @Slf4j
 @Component
@@ -46,6 +57,7 @@ public class SecurityAlertProducer {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 테스트용 — 템플릿을 직접 받는다. */
+    // [JA] テスト用 — テンプレートを直接受け取る。
     SecurityAlertProducer(KafkaTemplate<String, String> kafkaTemplate) {
         this.factory = null;
         this.kafkaTemplate = kafkaTemplate;
@@ -59,12 +71,17 @@ public class SecurityAlertProducer {
         // ⚠️ 트랜잭션 ID 를 뺀다. 기본 프로듀서는 사가용이라 트랜잭셔널인데, 트랜잭셔널
         //    프로듀서로 트랜잭션 밖에서 send() 하면 "No transaction is in process" 로 죽는다
         //    (OutgoingMailProducer 가 같은 이유로 같은 처리를 한다).
+        // [JA] ⚠️ トランザクション ID を外す。既定のプロデューサーはサーガ用でトランザクショナルだが、トランザクショナル
+        //      プロデューサーでトランザクション外から send() すると "No transaction is in process" で落ちる
+        //      (OutgoingMailProducer も同じ理由で同じ処理をしている)。
         config.remove(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
         config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         config.put(ProducerConfig.ACKS_CONFIG, "all");
 
         // 로그인 응답 경로에서 불린다. 여기서 오래 붙잡히면 로그인이 그만큼 느려진다 —
         // 브로커가 안 뜰 때 사용자가 기다리는 시간이다.
+        // [JA] ログイン応答の経路で呼ばれる。ここで長く捕まるとログインがその分遅くなる —
+        //      ブローカーが落ちているときにユーザーが待つ時間である。
         config.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 5_000);
         config.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 3_000);
         config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 3_000);
@@ -74,6 +91,8 @@ public class SecurityAlertProducer {
         this.kafkaTemplate = new KafkaTemplate<>(factory);
         // 빈이 아닌 템플릿이라 공통 후처리기(KafkaTemplateObservationPostProcessor)가 닿지 않는다.
         // 레지스트리를 직접 넣어야 로그인 요청의 추적이 알림 서비스까지 이어진다(docs/51 §4d).
+        // [JA] Bean ではないテンプレートなので共通の後処理(KafkaTemplateObservationPostProcessor)が届かない。
+        //      レジストリを直接入れてはじめて、ログインリクエストのトレースが通知サービスまでつながる(docs/51 §4d)。
         observationRegistry.ifAvailable(registry -> {
             this.kafkaTemplate.setObservationRegistry(registry);
             this.kafkaTemplate.setObservationEnabled(true);
@@ -83,7 +102,10 @@ public class SecurityAlertProducer {
     /**
      * 새 기기 로그인을 발행한다.
      *
+     * <p>[JA] 新しい端末からのログインを発行する。
+     *
      * @param email 알림 서비스가 메일을 보낼 주소. 이 서비스만 알고 있다.
+     *     [JA] 通知サービスがメールを送るアドレス。このサービスだけが知っている。
      */
     public void publishNewDevice(Long userId, String email, KnownDevice device) {
         if (userId == null || device == null) {
@@ -96,16 +118,20 @@ public class SecurityAlertProducer {
             event.put("email", email);
             event.put("deviceLabel", device.getLabel());
             // 마스킹된 값이다(DeviceIdentity.maskIp) — 원문 IP 는 저장도 발행도 하지 않는다.
+            // [JA] マスキング済みの値である(DeviceIdentity.maskIp) — 生の IP は保存も発行もしない。
             event.put("maskedIp", device.getLastIp());
             event.put("occurredAt", LocalDateTime.now().toString());
             // 기기 하나당 알림 하나. 재전달돼도 sourceEventId 가 UNIQUE 라 중복되지 않는다.
+            // [JA] 端末 1 台につき通知 1 件。再配信されても sourceEventId が UNIQUE なので重複しない。
             event.put("eventId", "security:device:" + device.getDeviceId());
 
             // ⚠️ 이메일과 IP 는 로그에 남기지 않는다. 사실만 남긴다.
+            // [JA] ⚠️ メールアドレスと IP はログに残さない。事実だけを残す。
             send(userId, objectMapper.writeValueAsString(event), "새 기기 로그인");
 
         } catch (Exception e) {
             // 로그인은 이미 성공했다. 알림만 못 나간 것이라 되돌리지 않는다.
+            // [JA] ログインはすでに成功した。通知だけが出なかったのであり、取り消さない。
             log.error("새 기기 로그인 알림을 발행하지 못했습니다: userId={} ({})", userId, e.getMessage());
         }
     }
@@ -144,21 +170,28 @@ public class SecurityAlertProducer {
     }
 
     /** {@code security-alert} 의 사건 구분 — notification-service 가 문구를 고른다. 없으면 새 기기 로그인. */
+    // [JA] {@code security-alert} の事象区分 — notification-service が文言を選ぶ。なければ新しい端末からのログイン。
     public static final String ALERT_REFRESH_REUSE = "refresh-reuse";
     public static final String ALERT_2FA_ENABLED = "2fa-enabled";
     public static final String ALERT_2FA_DISABLED = "2fa-disabled";
     /** 비밀번호는 맞았는데 2FA 코드가 창 안에서 한도만큼 틀렸다 — 비밀번호가 샜다는 신호(docs/68 §15). */
+    // [JA] パスワードは合っていたが 2FA コードがウィンドウ内で上限まで間違えた — パスワードが漏れた兆候(docs/68 §15)。
     public static final String ALERT_2FA_FAILURES = "2fa-failures";
     /** 비밀번호 찾기로 비밀번호를 새로 정했다(docs/68 §15). */
+    // [JA] パスワード再設定でパスワードを新しく決めた(docs/68 §15)。
     public static final String ALERT_PASSWORD_RESET = "password-reset";
     /** 소셜 로그인이 처음으로 이 계정에 연결됐다(docs/68 §15). provider 를 싣는다. */
+    // [JA] ソーシャルログインが初めてこのアカウントに連携された(docs/68 §15)。provider を載せる。
     public static final String ALERT_SOCIAL_LINKED = "social-linked";
     /** 소셜 로그인이 이메일 소유를 증명해, 확인된 적 없는 비밀번호를 해제했다(사전 탈취 방어, docs/68 §15). */
+    // [JA] ソーシャルログインがメールの所有を証明し、確認されたことのないパスワードを解除した(事前乗っ取り防御、docs/68 §15)。
     public static final String ALERT_UNPROVEN_PASSWORD_CLEARED = "unproven-password-cleared";
     /** 패스키를 새로 등록했다 · 지웠다(docs/68 §20) — 본인이 한 일이 아니면 누군가 세션을 쓰고 있다. */
+    // [JA] パスキーを新しく登録した・削除した(docs/68 §20) — 本人の操作でなければ誰かがセッションを使っている。
     public static final String ALERT_PASSKEY_ADDED = "passkey-added";
     public static final String ALERT_PASSKEY_REMOVED = "passkey-removed";
     /** 2단계 인증 복구 코드를 새로 만들었다 · 로그인에 썼다(docs/57 §22) — notification 의 같은 이름 상수와 짝. */
+    // [JA] 2 段階認証のリカバリーコードを新しく作った・ログインに使った(docs/57 §22) — notification の同名定数と対になる。
     public static final String ALERT_RECOVERY_CODES_CREATED = "recovery-codes-created";
     public static final String ALERT_RECOVERY_CODE_USED = "recovery-code-used";
 
@@ -216,11 +249,12 @@ public class SecurityAlertProducer {
                     .digest(familyId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(h, 0, 16);
         } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다
+            throw new IllegalStateException(e);   // SHA-256 은 모든 JVM 에 있다 ／ [JA] SHA-256 はすべての JVM にある
         }
     }
 
     /** 자체 프로듀서 팩토리를 만들었으므로 직접 닫는다. 안 닫으면 종료 시 스레드가 남는다. */
+    // [JA] 独自のプロデューサーファクトリーを作ったので自分で閉じる。閉じないと終了時にスレッドが残る。
     @PreDestroy
     public void close() {
         if (factory != null) {

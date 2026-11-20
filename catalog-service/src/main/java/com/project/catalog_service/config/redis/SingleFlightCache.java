@@ -24,8 +24,17 @@ import lombok.extern.slf4j.Slf4j;
  * 기다리는 동안 DB 커넥션은 쥐지 않는다(계산하는 스레드만 쥔다). 값이 null 이면 담지 않는다(null 을 허용하지 않는 캐시가 있다).
  * 쓰기 실패는 경고만 하고 계산한 값을 돌려준다 — 밖으로 던지면 Spring 의 오류 처리기가 읽기 실패로 보고 한 번 더 계산한다.
  *
- * <p>[JA] {@code @Cacheable(sync = true)} の読み取りをキーごとに一つのスレッドだけが計算するようにする(Pod 内)。Spring Data Redis 3.x
- *      はロックをキャッシュライターに任せ、このサービスのライターはロックしないため {@code sync = true} が何もしていなかった。
+ * <p>[JA] {@code @Cacheable(sync = true)} の読み取りを<b>キーごとに一つのスレッドだけ</b>が計算するようにするラッパー(Pod 内)— 残りの動作はそのまま委ねる。
+ *
+ * <p>[JA] 🐛 2026-10-19 データ規模測定(docs/83 §5 · mixed {@code 160904Z}): {@code search_cache} のキー 48 個が同じ秒に期限切れになると 20 秒間
+ * 接続待ち 22 · サーバー p95 1.5 秒 — 期限切れのキーごとに来たリクエストがすべて同じ検索を DB で計算し直した。Spring Data Redis 3.x の
+ * {@code RedisCache.get(key, loader)} はロックをキャッシュライターに任せるが、このサービスのライターはロックしない方
+ * ({@code nonLockingRedisCacheWriter})なので {@code sync = true} を付けても誰も待たなかった(2.x の {@code RedisCache} は
+ * {@code synchronized} だった)。ロックするライターはキャッシュ<b>名全体</b>を Redis ロック一つで束ね、他のキーの書き込みまで止めるので使わない。
+ *
+ * <p>[JA] ロックはキーごとに別々で、待っていたスレッドはロックを得た後キャッシュを読み直す — 先行スレッドが埋めた値を持っていき DB へ行かない。
+ * 待つ間 DB 接続は握らない(計算するスレッドだけが握る)。値が null なら格納しない(null を許さないキャッシュがある)。
+ * 書き込み失敗は警告だけして計算した値を返す — 外へ投げると Spring のエラーハンドラーが読み取り失敗とみなしてもう一度計算する。
  */
 @Slf4j
 final class SingleFlightCache implements Cache {
@@ -42,6 +51,7 @@ final class SingleFlightCache implements Cache {
     }
 
     /** 지금 잡혀 있는 키 잠금 수 — 계산이 끝나면 지운다(검색 조합마다 잠금이 쌓이지 않는다). */
+    // [JA] 今保持されているキーロックの数 — 計算が終われば消す(検索の組み合わせごとにロックが溜まらない)。
     int inFlight() {
         return locks.size();
     }
@@ -58,6 +68,7 @@ final class SingleFlightCache implements Cache {
         lock.lock();
         try {
             // 기다리는 동안 앞선 스레드가 채웠으면 그 값을 쓴다
+            // [JA] 待っている間に先行スレッドが埋めていればその値を使う
             hit = delegate.get(key);
             if (hit != null) {
                 return (T) hit.get();
@@ -79,6 +90,7 @@ final class SingleFlightCache implements Cache {
         } finally {
             lock.unlock();
             // 기다리는 스레드가 없을 때만 지운다 — 그 사이 새로 온 스레드가 지운 잠금을 잡아도 다시 읽기에서 값을 찾는다
+            // [JA] 待っているスレッドがないときだけ消す — その間に新しく来たスレッドが消されたロックを取っても、再読み込みで値を見つける
             if (!lock.hasQueuedThreads()) {
                 locks.remove(key, lock);
             }

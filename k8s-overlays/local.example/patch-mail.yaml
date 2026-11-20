@@ -26,6 +26,17 @@
 # ⚠️ MAIL_FROM 은 **MAIL_USERNAME 과 같은 주소**로 둘 것. 다르면 Gmail 이 발신자를
 #    계정 주소로 갈아 끼우거나 거부하고, SPF/DKIM 정렬이 깨져 스팸으로 분류된다.
 #    MailConfig 는 from 이 비면 아예 기동을 막는다 — 조용히 잘못되지 않게 한 장치다.
+# [JA] 実際のメール送信を有効にする。**コミットされない**(local/ は .gitignore)。
+#      ── なぜ別パッチか ── ベース(k8s/47)は MAIL_PROVIDER を "logging" にしている。料金ではなく**評判**のためだ: 設定が不十分なままデプロイされテストアドレスにメールが出ると、
+#      そのハードバウンスが送信ドメインに溜まり、一度スパムに分類されると戻すのに数週間かかる(docs/29)。
+#      ⚠️ Secret に MAIL_* を入れるだけでは**何も起きない。** provider が logging なら JavaMailSender をまったく見ない。このパッチがそのスイッチだ。
+#      ── 有効にする前に ── Secret に四つの値が必要(k8s/20-secret.yaml): MAIL_HOST · MAIL_PORT · MAIL_USERNAME · MAIL_PASSWORD(アプリパスワード)。
+#      ⚠️ Gmail は**アプリパスワード**でなければならない(アカウントのパスワードではない)。2 段階認証を有効にした後 Google アカウント → セキュリティ → アプリパスワードで 16 桁を発行する。空白が混ざって表示されるが
+#      🔴 **空白は必ず抜く。** Google の画面は読みやすいよう 4 文字ずつ 4 組で見せるが、その空白まで入れると SMTP は 19 文字の文字列をそのまま照合し**認証に失敗する**
+#      (detail=auth_failed)。実際にこの罠にはまった。
+#      16 文字、英小文字だ — 数字ではない。そして base64 で入れるとき改行が混ざらないようにする: `printf '%s' '...' | base64`(echo は末尾に \n を付ける)。
+#      ⚠️ MAIL_FROM は**MAIL_USERNAME と同じアドレス**にすること。違うと Gmail が送信者をアカウントのアドレスに差し替えるか拒否し、SPF/DKIM のアラインメントが崩れてスパムに分類される。
+#      MailConfig は from が空なら起動自体を止める — 黙って誤らないようにした仕掛けだ。
 apiVersion: apps/v1
 kind: Deployment
 metadata:

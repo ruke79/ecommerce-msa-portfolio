@@ -7,6 +7,7 @@ import { saveShippingAddress, updateShippingAddress } from "util/api";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("util/api", () => ({
@@ -23,6 +24,9 @@ const initialValue = {
 /**
  * 부모가 shipping 상태를 들고 있는 실제 사용 형태를 그대로 재현한다. 상태를 고정값으로
  * 넣으면 이 버그(부모 상태 갱신 → 폼 초기화 경합)가 재현되지 않는다.
+ *
+ * <p>[JA] 親が shipping 状態を持つ実際の使い方をそのまま再現する。状態を固定値で入れると
+ * このバグ(親の状態更新 → フォーム初期化の競合)が再現しない。
  */
 function Harness({ invalidate = jest.fn(), editing = null, onCancelEdit = jest.fn() }) {
   const [shipping, setShipping] = useState(initialValue);
@@ -40,6 +44,7 @@ function Harness({ invalidate = jest.fn(), editing = null, onCancelEdit = jest.f
 }
 
 /** 나라를 잘못 골라 KP 로 저장된 실제 주소 — 이걸 고치려고 수정 기능이 생겼다. */
+// [JA] 国を誤って選び KP で保存された実際の住所 — これを直すために編集機能ができた。
 const saved = {
   id: "889000000000000001", active: true,
   firstname: "Sangyong", lastname: "Yun", phoneNumber: "01032123123",
@@ -53,8 +58,11 @@ describe("AddShipping", () => {
 
   // ShippingInput 은 떠 있는 라벨(span)을 쓰므로 input 에는 placeholder 속성이 없다.
   // 접근 가능한 이름(aria-label)으로 찾는다 — 스크린리더가 보는 것과 같은 경로다.
+  // [JA] ShippingInput は浮いたラベル(span)を使うので input には placeholder 属性がない。
+  //      アクセシブルな名前(aria-label)で探す — スクリーンリーダーが見るのと同じ経路である。
 
   // 국가 선택은 MUI Select 라 네이티브 <select> 가 아니다. 목록을 열고 항목을 눌러야 한다.
+  // [JA] 国の選択は MUI Select なのでネイティブの <select> ではない。一覧を開いて項目を押す必要がある。
   const selectCountry = async (name) => {
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(await screen.findByRole("option", { name }));
@@ -67,8 +75,14 @@ describe("AddShipping", () => {
    * **주소는 잘못 저장돼도 그럴듯해 보인다.** 그대로 결제까지 진행되면 물건이 엉뚱한 곳으로
    * 간다. 배송 주소는 delivery-service 가 스냅샷으로 복사해 두는 값이라, 잘못된 값이
    * 주문·배송·분쟁 기록에 그대로 남는다.
+   *
+   * <p>[JA] 🐛 配送先フォームにも SignInPage · RegisterPage と同じ二重状態バグがあった。
+   * ここでは結果がもっと悪い — ログインは失敗すればユーザーが気づいて再試行するが、**住所は誤って保存されてももっともらしく見える。**
+   * そのまま決済まで進むと品物が見当違いの場所へ行く。配送先は delivery-service がスナップショットとしてコピーしておく値なので、
+   * 誤った値が注文 · 配送 · 紛争の記録にそのまま残る。
    */
   // ── 수정 ────────────────────────────────────────────────────────────────
+  // [JA] ── 編集 ──
 
   it("수정 모드면 저장된 값이 채워져 있고 버튼이 Update 다", () => {
     render(<Harness editing={saved} />);
@@ -82,6 +96,7 @@ describe("AddShipping", () => {
   });
 
   /** 🔴 핵심 — 나라만 바꿔 저장하면 그 주소의 id 로 PUT 이 나가고, 새 주소를 만들지 않는다. */
+  // [JA] 🔴 核心 — 国だけ変えて保存するとその住所の id で PUT が出て、新しい住所を作らない。
   it("🔴 수정하면 그 주소의 id 로 update 를 부르고 save 는 부르지 않는다", async () => {
     updateShippingAddress.mockResolvedValue({});
     const invalidate = jest.fn();
@@ -93,13 +108,14 @@ describe("AddShipping", () => {
 
     await waitFor(() => expect(updateShippingAddress).toHaveBeenCalledTimes(1));
     const [id, values] = updateShippingAddress.mock.calls[0];
-    expect(id).toBe("889000000000000001");                 // 18자리 그대로 — 문자열
+    expect(id).toBe("889000000000000001");                 // 18자리 그대로 — 문자열 ／ [JA] 18 桁そのまま — 文字列
     expect(values).toEqual(expect.objectContaining({
       country: "KR",
       address1: "samhak-do 702ho",
       zipCode: "55555",
     }));
     // 폼에 없는 값은 싣지 않는다 — active 를 실어 보내면 기본 배송지가 슬쩍 바뀔 수 있다.
+    // [JA] フォームにない値は載せない — active を載せて送ると既定の配送先がこっそり変わりうる。
     expect(values).not.toHaveProperty("active");
     expect(values).not.toHaveProperty("id");
     expect(saveShippingAddress).not.toHaveBeenCalled();
@@ -110,6 +126,9 @@ describe("AddShipping", () => {
   /**
    * 🔴 옛 주소는 나라를 영어 이름으로 저장했다. 선택지의 값은 이제 코드라, 그대로 넣으면 칸이 비어 보이고
    * 손대지 않고 저장하면 빈 나라로 검증에 걸린다 — 폼에 넣을 때 코드로 바꾼다(docs/60 §11).
+   *
+   * <p>[JA] 🔴 古い住所は国を英語名で保存した。選択肢の値は今コードなので、そのまま入れると欄が空に見え、
+   * 触らずに保存すると空の国として検証に掛かる — フォームに入れるときにコードに変える(docs/60 §11)。
    */
   it("🔴 옛 주소(영어 이름)를 고치면 나라 칸에 지금 언어 이름이 보이고, 코드로 저장된다", async () => {
     updateShippingAddress.mockResolvedValue({});
@@ -185,6 +204,7 @@ describe("AddShipping", () => {
     await waitFor(() => expect(saveShippingAddress).toHaveBeenCalled());
 
     // 저장된 주소가 입력과 한 글자도 다르면 안 된다.
+    // [JA] 保存された住所が入力と一文字でも違ってはならない。
     expect(saveShippingAddress).toHaveBeenCalledWith(
       expect.objectContaining({
         firstname: "길동",
@@ -203,11 +223,14 @@ describe("AddShipping", () => {
   it("🐛 accepts ordinary Korean names", async () => {
     // 이름 최소 길이가 3이었다. 한국 이름은 성 1글자("홍") + 이름 2글자("길동")가 가장
     // 흔하므로 **정상적인 한국 이름이 거의 다 거부됐다.** 배송지를 저장할 수 없다는 뜻이다.
+    // [JA] 名前の最小長が 3 だった。韓国の名前は姓 1 文字(「홍」) + 名 2 文字(「길동」)が最も
+    //      多いので、**普通の韓国の名前がほぼすべて拒否された。** 配送先を保存できないということである。
     render(<Harness />);
 
     await userEvent.type(screen.getByLabelText("*성"), "길동");
     await userEvent.type(screen.getByLabelText("*이름"), "홍");
     // 다른 필드를 건드려 검증을 트리거한다.
+    // [JA] 別のフィールドに触れて検証をトリガーする。
     await userEvent.click(screen.getByRole("button", { name: "배송지 저장" }));
 
     expect(screen.queryByText(/성을 입력해 주세요/)).not.toBeInTheDocument();
@@ -216,6 +239,7 @@ describe("AddShipping", () => {
 
   it("names the field it is complaining about", async () => {
     // 전화번호 검증 메시지가 전부 "First Name ..." 으로 복사돼 있었다.
+    // [JA] 電話番号の検証メッセージがすべて "First Name ..." でコピーされていた。
     render(<Harness />);
 
     await userEvent.click(screen.getByRole("button", { name: "배송지 저장" }));
@@ -231,6 +255,7 @@ describe("AddShipping", () => {
     await userEvent.click(screen.getByRole("button", { name: "배송지 저장" }));
 
     // 주소 없이 저장되면 배송이 불가능한 주문이 생긴다.
+    // [JA] 住所なしで保存されると配送不可能な注文が生まれる。
     await waitFor(() => expect(screen.getAllByText(/입력해 주세요/).length).toBeGreaterThan(0));
     expect(saveShippingAddress).not.toHaveBeenCalled();
   });

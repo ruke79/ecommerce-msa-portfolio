@@ -21,6 +21,12 @@ import { useTranslation } from "i18n/I18nProvider";
  *       처음부터 없는 편이 낫다</li>
  *   <li>환불됨: 완료 표시</li>
  * </ul>
+ *
+ * <p>[JA] 注文詳細の返金リクエスト。
+ * 送るのは <b>どの注文・なぜ</b> だけだ。金額も決済参照も送らない — サーバーが
+ * DB の注文総額をプロバイダーに返すよう求め、応答を照合する(docs/49 §10)。
+ * 状態別に三つのうち一つを描く: 発送前(PAID・PROCESSING)はボタン、発送後はカスタマーセンター案内
+ * (サーバーがどのみち拒否するが、押して拒否されるより最初から無いほうがよい)、返金済みは完了表示。
  */
 export default function RefundButton({ order, onRefunded }) {
     const { t } = useTranslation();
@@ -32,6 +38,7 @@ export default function RefundButton({ order, onRefunded }) {
 
     const status = order?.orderStatus;
     // 부분 환불(docs/49 §10) — 줄마다 아직 환불되지 않은 수량이 남아 있으면 고를 수 있다.
+    // [JA] 部分返金(docs/49 §10) — 行ごとにまだ返金されていない数量が残っていれば選べる。
     const lines = (order?.products ?? []).map((p) => ({
         id: p.id, name: p.name, size: p.size,
         max: Math.max(0, Number(p.qty ?? 0) - Number(p.refundedQty ?? 0)),
@@ -63,6 +70,7 @@ export default function RefundButton({ order, onRefunded }) {
 
     if (!canRequestRefund(status)) {
         // 도착한 물건과 오는 중인 물건은 다른 말이 필요하다. 도착했으면 돌려보내야 환불된다.
+        // [JA] 届いた品物と配送中の品物では別の言い方が要る。届いたなら返送しないと返金されない。
         return (
             <div className="mt-4 rounded border border-slate-300 bg-slate-50 p-3 text-sm text-slate-700">
                 {isDelivered(status)
@@ -73,6 +81,7 @@ export default function RefundButton({ order, onRefunded }) {
     }
 
     // 무통장입금은 돌려줄 계좌가 필요하다 — 서버도 고객의 직접 환불을 거절한다(docs/49 §11).
+    // [JA] 銀行振込は返金先の口座が必要だ — サーバーも顧客による直接返金を拒否する(docs/49 §11)。
     if (order?.paymentMethod === "cash") {
         return (
             <div className="mt-4 rounded border border-slate-300 bg-slate-50 p-3 text-sm text-slate-700">
@@ -90,13 +99,14 @@ export default function RefundButton({ order, onRefunded }) {
         try {
             const body = { trackingId: order.trackingId, reason };
             const items = toItems(lines, picked);
-            if (items) body.items = items;   // 비우면 남은 전부 — 서버 기본과 같다
+            if (items) body.items = items;   // 비우면 남은 전부 — 서버 기본과 같다 ／ [JA] 空なら残り全部 — サーバーのデフォルトと同じ
             const res = await postRequest("/order-service/api/order/refund", body);
             toast.success(res?.data?.message ?? t("refund.success"));
             setConfirming(false);
             onRefunded?.(res?.data);
         } catch (error) {
             // 400 은 규칙에 걸린 거절(서버가 이유를 준다), 그 밖은 처리 실패다.
+            // [JA] 400 は規則に引っかかった拒否(サーバーが理由を返す)、それ以外は処理失敗だ。
             toast.error(error?.response?.data?.message ?? t("refund.error.failed"));
         } finally {
             setSubmitting(false);

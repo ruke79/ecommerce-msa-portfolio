@@ -18,6 +18,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /** 공지 본문 — 대형 객체(OID)에 있던 글을 text 로 옮기고 대형 객체를 해제하는지(V18), 실제 PostgreSQL 에서. */
+// [JA] お知らせ本文 — ラージオブジェクト(OID)にあった文章を text へ移し、ラージオブジェクトを解放するか(V18)、実際の PostgreSQL で。
 @Tag("containers")
 @Testcontainers
 @DisplayName("공지 본문 대형 객체 → text (V18, PostgreSQL)")
@@ -46,10 +47,12 @@ class NoticeBodyMigrationTest {
         flyway("17").migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // @Lob 시절의 저장 모양: 글은 대형 객체에, 열에는 그 OID. 수정 때 버려진 옛 대형 객체도 하나.
+            // [JA] @Lob 時代の保存形: 文章はラージオブジェクトに、列にはその OID。修正時に捨てられた古いラージオブジェクトも一つ。
             long lo = scalar(db, "select lo_from_bytea(0, convert_to('점검 안내 — 결제가 잠시 멈춥니다.', 'UTF8'))");
             scalar(db, "select lo_from_bytea(0, convert_to('고치기 전의 본문', 'UTF8'))");
             exec(db, "insert into content.notice (notice_id, title, body) values (1, 't', '" + lo + "')");
             // 숫자로만 된 글이지만 그런 대형 객체가 없는 본문 — 손대지 않는다
+            // [JA] 数字だけの文章だが、そのようなラージオブジェクトがない本文 — 手を付けない
             exec(db, "insert into content.notice (notice_id, title, body) values (2, 't', '2026')");
             exec(db, "insert into content.notice (notice_id, title, body) values (3, 't', '평범한 글')");
 

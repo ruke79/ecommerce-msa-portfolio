@@ -37,6 +37,22 @@
 # ⚠️ 승격·재설정 뒤에는 반드시 **로그아웃 → 재로그인**할 것. 이미 발급된 JWT 에는 옛 역할이
 #    박혀 있어서, 화면은 열리는데 저장할 때만 403 이 난다(AdminWriteInterceptor 가
 #    User-Role 헤더로 판정한다). 증상이 원인을 가리는 대표적인 경우다.
+# [JA] 運用アクション ㉚ — 管理者アカウントのブートストラップ(最初の管理者・パスワード再設定・有効化)
+#      ── なぜスクリプトか: 「管理者を作るには管理者が必要だ」という循環がある。`AdminController` はクラス全体が
+#      @PreAuthorize("hasRole('ROLE_ADMIN')") なので、管理者が 0 人だと API では管理者を作れない。登録フォームで role を
+#      受け取っていた経路は**セキュリティ修正で塞がれた** — 以前はリクエスト本文に "admin" の 1 行で管理者になれた(UserServiceImpl のコメント参照)。
+#      実務でもこの循環は UI ではなく**デプロイ経路**で断つ: Grafana の GF_SECURITY_ADMIN_PASSWORD、Keycloak の KEYCLOAK_ADMIN、
+#      Django の createsuperuser。公開 URL に「管理者登録画面」を置かないことが肝心だ — どんな招待コードで隠しても
+#      いずれ漏れ、その画面自体が恒久的な攻撃面になる。
+#      このスクリプトはそのうちの CLI 系だ。2 人目以降の管理者はこれを使わず、既存の管理者が
+#      画面で昇格させること(監査記録が残る経路はそちらだ)。
+#      ── パスワードの扱い: 引数では受け取らない(argv は `ps` で他ユーザに見え、シェル履歴にも残る)。画面に表示しない(read -s)。
+#      ハッシュは**アプリと同じ BCrypt** で作る(spring-security-crypto、BCryptPasswordEncoder 既定 = strength 10)。別ツールで作ったハッシュを
+#      入れるとログインだけが黙って失敗し原因が画面に現れない。平文はどこにも記録しない — ログ・ファイル・一時ファイルすべて。
+#      ── 使い方は上記(status = アカウント・ロール・有効化状態(既定)、promote = ROLE_ADMIN へ昇格 + 有効化、password = パスワード再設定(対話入力)、enable = 有効化・ロック解除のみ)。
+#      ⚠️ 昇格・再設定の後は必ず**ログアウト → 再ログイン**すること。既に発行された JWT には古いロールが
+#      埋め込まれていて、画面は開くのに保存時だけ 403 になる(AdminWriteInterceptor が
+#      User-Role ヘッダで判定する)。症状が原因を隠す典型例だ。
 set -uo pipefail
 
 ACTION="${1:-status}"
@@ -59,6 +75,9 @@ command -v java    >/dev/null || die "java 가 필요합니다 (해시 생성에
 #
 # 값을 SQL 문자열에 이어 붙이지 않는 이유: 이메일에 작은따옴표가 들어가면 문장이 깨지고,
 # 최악의 경우 주입이 된다. psql 의 :'name' 은 값을 제대로 인용해 준다.
+# [JA] psql を Pod 内で回す。SQL は stdin で、値は -v で渡す。
+#      値を SQL 文字列に連結しない理由: メールアドレスにシングルクォートが入ると文が壊れ、
+#      最悪の場合インジェクションになる。psql の :'name' は値を正しくクォートしてくれる。
 psql_in() {
     local extra=()
     [ -n "${EMAIL:-}" ] && extra+=(-v "email=$EMAIL")
@@ -72,11 +91,14 @@ require_email() {
 }
 
 # ---------------------------------------------------------------- 상태
+# [JA] 状態
 
 status() {
     echo "════ 계정 상태 ($PG_NS/$PG_DEPLOY → $PG_DB) ════"
     # ⚠️ 토큰 테이블 이름의 오타(verfication)는 엔티티·마이그레이션에 함께 박혀 있어
     #    실제 이름이 그렇다. 고치려면 둘을 같이 옮겨야 한다.
+    # [JA] ⚠️ トークンテーブル名の誤字(verfication)はエンティティ・マイグレーションの両方に埋め込まれていて
+    #      実際の名前がそうなっている。直すなら両方を一緒に移す必要がある。
     psql_in <<'SQL'
 SELECT u.user_id,
        u.email,
@@ -96,16 +118,20 @@ SQL
 }
 
 # ---------------------------------------------------------------- 승격
+# [JA] 昇格
 
 promote() {
     require_email
     # 역할 행이 없으면 승격할 대상 자체가 없다. V3 마이그레이션이 넣는다.
+    # [JA] ロール行がなければ昇格する対象自体がない。V3 マイグレーションが入れる。
     local roles
     roles=$(psql_in -At -c "SELECT count(*) FROM users.roles WHERE role_name = 'ROLE_ADMIN'" 2>/dev/null)
     [ "${roles:-0}" = "1" ] || die "users.roles 에 ROLE_ADMIN 행이 없습니다 — V3 마이그레이션이 적용됐는지 확인하세요"
 
     # 승격과 함께 계정을 연다. 인증 메일을 못 받은 계정이 enabled=false 로 남아 있으면
     # 역할만 올려도 로그인 자체가 막힌다.
+    # [JA] 昇格と同時にアカウントを開く。認証メールを受け取れなかったアカウントが enabled=false のまま残っていると
+    #      ロールだけ上げてもログイン自体が塞がれる。
     EMAIL="$EMAIL" psql_in <<'SQL'
 UPDATE users.users
    SET role_id = (SELECT role_id FROM users.roles WHERE role_name = 'ROLE_ADMIN'),
@@ -119,6 +145,7 @@ SQL
 }
 
 # ---------------------------------------------------------------- 활성화
+# [JA] 有効化
 
 enable_account() {
     require_email
@@ -134,13 +161,18 @@ SQL
 }
 
 # ---------------------------------------------------------------- 비밀번호
+# [JA] パスワード
 
 # 앱과 같은 BCrypt 로 해시를 만든다. BCryptPasswordEncoder 의 생성자는 commons-logging 을
 # 끌어오므로, 의존성이 없는 저수준 BCrypt 클래스를 직접 쓴다(결과는 동일한 $2a$10$ 형식).
 # spring-security-crypto 의 **클래스** jar — Gradle 캐시에는 IDE 가 받은 -sources · -javadoc jar 도 같은 이름 앞부분으로 있다.
 # 🐛 예전: find | head -1 이 그것을 집으면 클래스가 없어 "package org.springframework.security.crypto.bcrypt does not exist" 로
 #    해시를 만들지 못했다(2026-10-17, IDE 가 있는 기계). 판이 여럿이면 가장 새것, BCrypt.class 가 든 것만.
-# [JA] Gradle キャッシュには IDE が落とした -sources · -javadoc の jar もある。以前は head -1 がそれを拾い、クラスがなく失敗した。
+# [JA] アプリと同じ BCrypt でハッシュを作る。BCryptPasswordEncoder のコンストラクタは commons-logging を引き込むので、
+#      依存のない低レベルの BCrypt クラスを直接使う(結果は同じ 2a/10 形式)。
+#      spring-security-crypto のクラス jar — Gradle キャッシュには IDE が落とした -sources・-javadoc の jar も同じ名前の前半で存在する。
+#      🐛 以前: find | head -1 がそれを拾うとクラスがなく "package org.springframework.security.crypto.bcrypt does not exist" で
+#      ハッシュを作れなかった(2026-10-17、IDE のある機械)。版が複数あれば最新、BCrypt.class を含むものだけ。
 crypto_jar() {
     local j
     find "${GRADLE_USER_HOME:-$HOME/.gradle}/caches" -name 'spring-security-crypto-*.jar' \
@@ -155,7 +187,7 @@ crypto_jar() {
         done
 }
 
-bcrypt_hash() {   # stdin 으로 평문을 받아 stdout 으로 해시를 낸다
+bcrypt_hash() {   # stdin 으로 평문을 받아 stdout 으로 해시를 낸다 ／ [JA] stdin で平文を受け取り stdout にハッシュを出す
     local jar workdir
     jar=$(crypto_jar)
     [ -n "$jar" ] || die "spring-security-crypto 의 클래스 jar 를 찾지 못했습니다(-sources · -javadoc 은 제외) — 먼저 ./gradlew :user-service:bootJar 로 의존성을 받으세요"
@@ -175,6 +207,7 @@ public class Bc {
 }
 JAVA
     # 소스에 비밀번호는 들어가지 않지만(stdin 으로 받는다) 임시물은 남기지 않는다.
+    # [JA] ソースにパスワードは入らないが(stdin で受け取る)一時ファイルは残さない。
     java -cp "$jar" "$workdir/Bc.java"
     local rc=$?
     rm -rf "$workdir"
@@ -191,6 +224,8 @@ set_password() {
     [ -n "$pw1" ] || die "비어 있습니다"
     # 길이만 본다. 복잡도 정책은 앱(회원가입 검증)이 정할 일이고, 여기서 다시 정의하면
     # 두 곳의 규칙이 어긋난다.
+    # [JA] 長さだけを見る。複雑さのポリシーはアプリ(会員登録の検証)が決めることで、ここで再定義すると
+    #      2 か所の規則がずれる。
     [ "${#pw1}" -ge 8 ] || die "8자 이상이어야 합니다"
 
     hash=$(printf '%s\n' "$pw1" | bcrypt_hash) || die "해시 생성에 실패했습니다"
@@ -210,6 +245,14 @@ set_password() {
     #    바로 이 스크립트를 쓰는 상황이라 더 그렇다.
     #
     #    액세스 토큰은 서명만으로 검증되므로 남은 수명(기본 15분) 동안은 살아 있다.
+    # [JA] ハッシュは psql 変数(-v)で渡すので kubectl の argv には入る。平文ではなく
+    #      **ハッシュ**であり、どのみち DB に保存される値なのでそのままにする — 平文だけは絶対に argv に載せない。
+    #      🔒 password_changed_at も一緒に立てる(V10)。
+    #      アプリのパスワード変更・再設定はこの値を立て、RefreshTokenController がそれより前に
+    #      発行されたリフレッシュトークンを拒否する。ここで漏らすとこの経路でだけ**既存セッションが生き残り**、
+    #      アプリと動作が食い違う — アカウントを乗っ取られ管理者が代わりにパスワードを変える場合が
+    #      まさにこのスクリプトを使う状況なので、なおさらだ。
+    #      アクセストークンは署名だけで検証されるので、残りの寿命(既定 15 分)の間は生きている。
     EMAIL="$EMAIL" HASH="$hash" psql_in <<'SQL'
 UPDATE users.users
    SET password = :'hash',

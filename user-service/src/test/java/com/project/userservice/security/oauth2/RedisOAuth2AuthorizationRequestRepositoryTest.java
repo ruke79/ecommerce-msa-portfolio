@@ -37,6 +37,15 @@ import com.project.userservice.security.oauth2.repository.RedisOAuth2Authorizati
  * <p>직렬화 자체는 컨테이너 없이 {@code RedisAuthorizationRequestSerializationTest} 가
  * 검사한다. 여기서는 <b>Redis 가 실제로 하는 일</b>(GETDEL 의 원자성, TTL, 인스턴스 간
  * 공유)만 본다.
+ *
+ * <p>[JA] 実際の Redis 上での認可リクエスト保存先 — <b>Pod が二つのとき</b>もログインできるか。
+ * このテストが存在する理由はただ一つである。デフォルト実装は認可リクエストを HTTP セッションに入れるが、
+ * このサービスはレプリカが 2 つで(HPA minReplicas=2)セッション複製もアフィニティもない。そのため
+ * <b>ログインを始めた Pod とコールバックを受けた Pod が違うとログインが壊れる。</b>おおよそ半分の確率で失敗し、
+ * 再試行すれば通る場合があるので「たまにできない」としか見えない — 最も診断しにくい種類の故障である。
+ * 下の {@code 서로 다른 인스턴스}(= 別々の Pod)テストがその状況をそのまま作る。
+ * シリアライズ自体はコンテナなしで {@code RedisAuthorizationRequestSerializationTest} が検査する。
+ * ここでは<b>Redis が実際にすること</b>(GETDEL の原子性、TTL、インスタンス間共有)だけを見る。
  */
 @Tag("containers")
 @Testcontainers
@@ -97,6 +106,7 @@ class RedisOAuth2AuthorizationRequestRepositoryTest {
     @DisplayName("한 파드에서 시작한 로그인을 다른 파드가 이어받는다 — 이 변경의 목적")
     void authorizationRequest_isSharedAcrossInstances() {
         // 인스턴스 두 개 = 파드 두 개. 공유하는 것은 Redis 뿐이다(세션도, 메모리도 아니다).
+        // [JA] インスタンス二つ = Pod 二つ。共有するのは Redis だけである(セッションでもメモリでもない)。
         RedisOAuth2AuthorizationRequestRepository podA = newRepository(600);
         RedisOAuth2AuthorizationRequestRepository podB = newRepository(600);
 
@@ -104,10 +114,12 @@ class RedisOAuth2AuthorizationRequestRepositoryTest {
         String verifier = (String) original.getAttributes().get("code_verifier");
 
         // ① 파드 A 가 로그인을 시작한다.
+        // [JA] ① Pod A がログインを始める。
         podA.saveAuthorizationRequest(original, new MockHttpServletRequest(),
                 new MockHttpServletResponse());
 
         // ② 프로바이더가 파드 B 로 돌려보낸다.
+        // [JA] ② プロバイダーが Pod B へ戻す。
         OAuth2AuthorizationRequest restored = podB.removeAuthorizationRequest(
                 callbackWith("state-cross-pod"), new MockHttpServletResponse());
 
@@ -115,6 +127,7 @@ class RedisOAuth2AuthorizationRequestRepositoryTest {
                 .isNotNull();
         assertThat(restored.getState()).isEqualTo("state-cross-pod");
         // verifier 가 없으면 토큰 교환이 invalid_grant 로 실패한다.
+        // [JA] verifier がなければトークン交換が invalid_grant で失敗する。
         assertThat(restored.getAttributes().get("code_verifier")).isEqualTo(verifier);
     }
 
@@ -133,6 +146,8 @@ class RedisOAuth2AuthorizationRequestRepositoryTest {
         assertThat(first).isNotNull();
         // GETDEL 이 원자적이라서 두 번째는 반드시 빈손이다. GET 후 DELETE 로 나눴다면
         // 두 콜백이 동시에 도착할 때 둘 다 성공할 수 있다.
+        // [JA] GETDEL が原子的なので 2 回目は必ず空振りである。GET の後に DELETE と分けていたら、
+        //      二つのコールバックが同時に届いたとき両方とも成功しうる。
         assertThat(second).isNull();
         assertThat(template.hasKey("oauth2:authreq:state-once")).isFalse();
     }
@@ -147,6 +162,7 @@ class RedisOAuth2AuthorizationRequestRepositoryTest {
 
         assertThat(ttl).isNotNull();
         // -1 = TTL 없음(영구), -2 = 키 없음. 둘 다 실패다.
+        // [JA] -1 = TTL なし(永久)、-2 = キーなし。どちらも失敗である。
         assertThat(ttl).isGreaterThan(0L).isLessThanOrEqualTo(600L);
     }
 
@@ -157,6 +173,7 @@ class RedisOAuth2AuthorizationRequestRepositoryTest {
                 new MockHttpServletRequest(), new MockHttpServletResponse());
 
         // TTL 1초. 실제로 지나가기를 기다린다 — 가짜 시계로는 Redis 의 만료를 검증할 수 없다.
+        // [JA] TTL 1 秒。実際に過ぎるのを待つ — 偽の時計では Redis の期限切れを検証できない。
         TimeUnit.MILLISECONDS.sleep(1500);
 
         assertThat(newRepository(600).loadAuthorizationRequest(callbackWith("state-expire")))

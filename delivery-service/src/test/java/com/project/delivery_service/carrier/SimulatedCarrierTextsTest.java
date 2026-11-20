@@ -27,6 +27,10 @@ import com.project.delivery_service.dto.DeliveryResponse;
  *
  * <p>이력은 한국어로 저장되고 조회 응답에서 바뀐다. 시뮬레이터에 단계나 장소를 더하고 카탈로그를 빠뜨리면 일본어 화면의
  * 배송 조회에 한국어가 남는다 — 한국어 화면에서는 멀쩡해 보인다.
+ *
+ * <p>[JA] 🔴 テスト配送の履歴文言・宅配業者名はすべて日本語がある(docs/60 §10)。
+ * 履歴は韓国語で保存され、照会応答で変換される。シミュレーターに段階や場所を足してカタログを漏らすと、
+ * 日本語画面の配送照会に韓国語が残る — 韓国語画面では問題なく見える。
  */
 @DisplayName("배송 이력 문구 — 일본어")
 class SimulatedCarrierTextsTest {
@@ -53,6 +57,7 @@ class SimulatedCarrierTextsTest {
     void everyStatusHasDescription() {
         for (DeliveryStatus status : DeliveryStatus.values()) {
             // 발송 전(PENDING)과 우리 쪽 취소(CANCELLED)는 택배사 이력이 아니다
+            // [JA] 発送前(PENDING)とこちら側のキャンセル(CANCELLED)は宅配業者の履歴ではない
             if (status == DeliveryStatus.PENDING || status == DeliveryStatus.CANCELLED) {
                 continue;
             }
@@ -73,6 +78,7 @@ class SimulatedCarrierTextsTest {
         assertThat(ja.events().get(0).location()).isEqualTo("大田ハブ");
         assertThat(ja.events().get(0).description()).isEqualTo("輸送中です");
         // 중복 제거 키에 쓰이는 저장값은 바뀌지 않는다
+        // [JA] 重複除去キーに使われる保存値は変わらない
         assertThat(event.getLocation()).isEqualTo("대전허브");
 
         withRequest(Locale.KOREAN);

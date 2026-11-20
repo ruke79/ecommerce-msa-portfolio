@@ -37,6 +37,9 @@ class EgressPolicyScriptTest {
     /**
      * 가짜 kubectl. 두드리기 파드(`run netpol-probe-<그룹>-N … sh -c "<스크립트>"`)는 스크립트의 대상마다 OK 를 내되,
      * 적용 전이면 FAIL_BEFORE, 적용 뒤면 FAIL_AFTER 에 있는 "그룹:대상" 은 FAIL. apply 는 본문을 남기고, delete 는 기록한다.
+     *
+     * <p>[JA] 偽の kubectl。叩き用ポッド(`run netpol-probe-<グループ>-N … sh -c "<スクリプト>"`)はスクリプトの対象ごとに OK を出すが、
+     * 適用前なら FAIL_BEFORE、適用後なら FAIL_AFTER にある "グループ:対象" は FAIL。apply は本文を残し、delete は記録する。
      */
     private static final String FAKE_KUBECTL = """
             #!/usr/bin/env bash
@@ -110,6 +113,7 @@ class EgressPolicyScriptTest {
     }
 
     /** 정책이 제대로 집행될 때 막히는 것들 — internal 은 바깥 전부, 두 그룹 모두 메타데이터 · 노드 kubelet. */
+    // [JA] ポリシーが正しく執行されたときに塞がれるもの — internal は外部全部、両グループともメタデータ · ノードの kubelet。
     private static final String ENFORCED = "internal:1.1.1.1:443 internal:api.stripe.com:443 internal:169.254.169.254:80 "
             + "internal:10.0.0.5:10250 public:169.254.169.254:80 public:10.0.0.5:10250";
 

@@ -5,6 +5,11 @@ import api, { putCartItem, removeCartItem, retryOnceOnNetworkError, setCartItemQ
  *
  * <p>🐛 PC 의 다른 컨테이너가 재시작을 반복해 네트워크가 바뀔 때마다(ERR_NETWORK_CHANGED) 휴지통 첫 클릭이
  * "カートを更新できませんでした" 로 실패했다. 다시 누르면 됐다 — 사용자가 할 일을 화면이 대신한다.
+ *
+ * <p>[JA] カートの追加・数量・削除は応答が **まったくないときだけ** もう一度送る(三つとも冪等 — 数量を「この値に」)。
+ *
+ * <p>🐛 PC の別のコンテナが再起動を繰り返してネットワークが変わるたびに(ERR_NETWORK_CHANGED)、ゴミ箱の最初のクリックが
+ * "カートを更新できませんでした" で失敗した。もう一度押せば通った — ユーザーがすべきことを画面が代わりに行う。
  */
 const networkError = () => Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" });
 const serverError = (status) => Object.assign(new Error("Request failed"), { response: { status, data: { message: "x" } } });
@@ -43,6 +48,7 @@ describe("장바구니 요청 — 네트워크 오류면 한 번 더", () => {
         const del = jest.spyOn(api, "delete").mockRejectedValueOnce(networkError()).mockResolvedValueOnce({ data: ["c"] });
 
         // 실제 대기(0.6초)를 셋이 함께 기다린다
+        // [JA] 実際の待機(0.6 秒)を三つが一緒に待つ
         await expect(Promise.all([
             putCartItem({ id: "1", qty: 1 }),
             setCartItemQty({ productId: "1", colorId: "5", size: "M", qty: 2 }),

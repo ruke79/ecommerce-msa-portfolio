@@ -37,8 +37,9 @@ import lombok.experimental.SuperBuilder;
 @Setter
 @Entity
 // 지연 로딩 프록시(상품 → 하위 카테고리 → 카테고리)를 한 번에 채운다 — 없으면 상품 목록이 서로 다른 하위 카테고리마다 SELECT 를 낸다(ProductQueryCountTest).
+// [JA] 遅延ロードのプロキシ(商品 → サブカテゴリ → カテゴリ)を一度に埋める — なければ商品一覧がサブカテゴリごとに SELECT を出す(ProductQueryCountTest)。
 @org.hibernate.annotations.BatchSize(size = 100)
-@SuperBuilder // @Builder 대신 @SuperBuilder 사용
+@SuperBuilder // @Builder 대신 @SuperBuilder 사용 ／ [JA] @Builder の代わりに @SuperBuilder を使う
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name="subcategory",  schema="product",
        indexes = {
@@ -58,7 +59,7 @@ public class Subcategory extends BaseEntity {
     private String slug;
 
     
-    @JsonBackReference // Category로의 순환 참조를 끊습니다.
+    @JsonBackReference // Category로의 순환 참조를 끊습니다. ／ [JA] Category への循環参照を断つ。
     @ManyToOne(fetch=FetchType.LAZY)
     @JoinColumn(name="category_id", referencedColumnName = "category_id", nullable=false)
     private Category category;    
@@ -68,11 +69,12 @@ public class Subcategory extends BaseEntity {
     // private List<Product> products = new ArrayList<>();
 
     @Builder.Default 
-    @JsonManagedReference // ProductSubcategory로의 순환 참조를 관리합니다.
+    @JsonManagedReference // ProductSubcategory로의 순환 참조를 관리합니다. ／ [JA] ProductSubcategory への循環参照を管理する。
     @OneToMany(mappedBy = "subcategory", fetch= FetchType.LAZY, cascade = CascadeType.PERSIST)        
     private List<ProductSubcategory> products = new ArrayList<>();
 
     // this() 로 시작한다 — @Builder.Default 의 컬렉션 기본값은 손으로 쓴 생성자에 남지 않는다(EntityLombokGuardTest).
+    // [JA] this() で始める — @Builder.Default のコレクション既定値は手書きのコンストラクタには残らない(EntityLombokGuardTest)。
     public Subcategory(String name, String slug, Category category) {
         this();
         this.subcategoryName = name;

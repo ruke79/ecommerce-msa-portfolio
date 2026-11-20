@@ -9,6 +9,7 @@ const lines = [
 ];
 
 /** 부분 환불·반품의 공통 조각. 기본은 "남은 전부" 라 손대지 않으면 서버 기본(items 없음)과 같다. */
+// [JA] 部分返金 · 返品の共通部品。既定は「残り全部」なので触らなければサーバー既定(items なし)と同じである。
 describe("ItemQtyPicker", () => {
     it("전부 남은 수량이면 items 는 null — 서버가 남은 전부로 본다", () => {
         expect(toItems(lines, {})).toBeNull();

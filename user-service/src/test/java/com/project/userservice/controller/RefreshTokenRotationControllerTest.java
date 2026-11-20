@@ -42,6 +42,9 @@ import jakarta.servlet.http.Cookie;
  * 🔴 토큰 재발급 — 회전 결과를 응답으로 옮기는 부분(docs/68). 회전 자체는 {@code RefreshTokenRotationTest}(실제 Redis).
  *
  * <p>🐛 예전: 세션 키가 "있는가" 만 보고 {@code createRefreshToken} 으로 새 토큰을 새 키에 만들었다 — 옛 토큰은 그대로 살아 있었다.
+ *
+ * <p>[JA] 🔴 トークン再発行 — ローテーション結果を応答に移す部分(docs/68)。ローテーション自体は RefreshTokenRotationTest(実際の Redis)。
+ * <p>🐛 以前: セッションキーが「あるか」だけを見て createRefreshToken で新トークンを新キーに作っていた — 古いトークンはそのまま生きていた。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -81,6 +84,7 @@ class RefreshTokenRotationControllerTest {
         when(userService.findByEmail("a@example.com")).thenReturn(owner);
         when(jwtUtils.generateTokenFromUser(owner)).thenReturn("new.access");
         // 쿠키는 새 토큰의 남은 수명으로 — 절대 수명(30일)이 가까우면 14일보다 짧다(docs/68 §12)
+        // [JA] クッキーは新トークンの残り寿命で — 絶対寿命(30 日)が近ければ 14 日より短い(docs/68 §12)
         when(jwtUtils.remainingLifetime(anyString())).thenReturn(Duration.ofDays(14));
         when(jwtUtils.createCookie(anyString(), any(), any(Duration.class))).thenAnswer(inv -> {
             Cookie c = new Cookie(inv.getArgument(0), inv.getArgument(1));
@@ -103,6 +107,7 @@ class RefreshTokenRotationControllerTest {
         assertThat(c.getValue()).isEqualTo("next.refresh");
         assertThat(c.getMaxAge()).isPositive();
         // 🔴 컨트롤러가 따로 새 묶음을 만들지 않는다 — 예전 버그의 자리
+        // [JA] 🔴 コントローラが別に新しい系列を作らない — 以前のバグの場所
         verify(refreshTokenService, never()).createRefreshToken(any());
     }
 
@@ -167,6 +172,8 @@ class RefreshTokenRotationControllerTest {
     /**
      * 🐛 예전: 서명을 확인할 수 없는 리프레시 토큰은 예외가 그대로 올라가 500 이었다. 키를 은퇴시킨 뒤(docs/68 §17) 옛 키의 토큰을 든
      * 사용자는 400 이어야 화면이 로그아웃으로 정리된다.
+     *
+     * <p>[JA] 🐛 以前: 署名を確認できないリフレッシュトークンは例外がそのまま上がり 500 だった。鍵を引退させた後(docs/68 §17)旧鍵のトークンを持つユーザーは 400 でなければ画面がログアウトとして片付かない。
      */
     @Test
     @DisplayName("🔴 은퇴한 키 · 모르는 kid · 서명 불일치 — 500 이 아니라 400, 쿠키를 지운다")

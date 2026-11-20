@@ -40,7 +40,11 @@ import com.project.catalog_service.controller.SearchController;
  * 필터 검색 95.04%). 느린 질의를 만드는 대신 <b>표를 잠가</b> 질의가 끝나지 않게 한다 — 같은 결과(커넥션을 쥔 채 기다림)를 몇 초 안에 재현한다.
  * 이 테스트의 상한: 검색 2초 · 메뉴 질의 3초 · 메뉴 기다림 0.8초.
  *
- * <p>[JA] 検索照会の時間上限(503・接続の返却)とリクエスト外のフィルターメニュー — 実 PostgreSQL・Redis。表をロックして終わらない照会を作る。
+ * <p>[JA] 検索照会の時間上限(503・接続の返却)とリクエスト外のフィルターメニュー — 実 PostgreSQL・Redis。
+ * 🐛 2026-10-20 実習(商品 1,000 万、docs/83 §2.8): フィルター検索一つが 75 〜 195 秒、メニューのサイズ DISTINCT が 76 秒間接続を握った。
+ * ゲートウェイは 10 秒で諦めるが catalog のスレッドと接続は縛られたままで、プール(Pod ごとに 5)が埋まって home · banners まで 5xx だった
+ * (拡大 10.33%、フィルター検索 95.04%)。遅い照会を作る代わりに<b>表をロックして</b>照会が終わらないようにする — 同じ結果(接続を握ったまま
+ * 待つ)を数秒で再現する。このテストの上限: 検索 2 秒 · メニュー照会 3 秒 · メニュー待ち 0.8 秒。
  */
 @Tag("containers")
 @SpringBootTest(properties = {
@@ -147,6 +151,7 @@ class SearchFacetsTimeoutIntegrationTest {
     }
 
     /** 다른 연결에서 표를 잠근다 — 닫으면(롤백) 풀린다. */
+    // [JA] 別の接続でテーブルをロックする — 閉じれば(ロールバック)解放される。
     private Connection lock(String table) throws Exception {
         Connection c = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         c.setAutoCommit(false);
@@ -157,6 +162,7 @@ class SearchFacetsTimeoutIntegrationTest {
     }
 
     /** 잠금을 기다리는 질의(이 연결 · 잠근 연결 말고) — 시간 상한이 취소했으면 0. */
+    // [JA] ロックを待っているクエリ(この接続・ロックした接続以外) — 時間上限がキャンセルしていれば 0。
     private int waitingOnLocks() {
         return jdbc.queryForObject("select count(*) from pg_stat_activity where datname = current_database() "
                 + "and wait_event_type = 'Lock' and pid <> pg_backend_pid()", Integer.class);
@@ -185,12 +191,13 @@ class SearchFacetsTimeoutIntegrationTest {
     @DisplayName("🔴 필터 검색 여덟이 몰려도 DB 에 들어가는 것은 둘 — 나머지 여섯은 커넥션 없이 바로 503(Retry-After), 풀에는 다른 요청 몫이 남는다")
     void filteredSearchesCannotDrainThePool() throws Exception {
         // 🐛 2026-10-20 실습(필터 검색 비율 1): 필터 검색이 커넥션을 1 ~ 4초씩 쥐어 풀(파드마다 5)이 늘 찼고 home · 상품까지 5초 대기 끝에 5xx
+        // [JA] 🐛 2026-10-20 実習(フィルタ検索比率 1): フィルタ検索がコネクションを 1〜4 秒ずつ握りプール(Pod ごとに 5)が常に満杯で、home・商品まで 5 秒待った末に 5xx
         Connection locked = lock("product.product");
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
         try {
             List<java.util.concurrent.Future<MvcResult>> results = new java.util.ArrayList<>();
             for (int i = 1; i <= 8; i++) {
-                String low = String.valueOf(i);   // 검색마다 다른 캐시 키 — 단일 계산으로 묶이지 않게
+                String low = String.valueOf(i);   // 검색마다 다른 캐시 키 — 단일 계산으로 묶이지 않게 ／ [JA] 検索ごとに異なるキャッシュキー — 単一計算にまとめられないように
                 results.add(pool.submit(() -> mvc().perform(get("/api/search").param("category", String.valueOf(CATEGORY))
                         .param("page", "1").param("pageSize", "10").param("includeFilters", "false").param("lowPrice", low))
                         .andReturn()));

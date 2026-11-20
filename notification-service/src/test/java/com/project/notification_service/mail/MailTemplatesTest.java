@@ -16,6 +16,10 @@ import com.project.notification_service.sms.PhoneNumbers.Region;
  * <p>가장 중요한 검사는 <b>이스케이프</b>다. {@code subject} 는 Kafka 이벤트에서 오는 값이라
  * 우리가 만든 문자열이 아니다. 그대로 HTML 에 넣으면 우리 브랜드로 도착한 메일 안에 공격자가
  * 가짜 로그인 링크를 심을 수 있다 — 피싱으로서는 최상의 조건이다.
+ *
+ * <p>[JA] メール文言。最も重要な検査は<b>エスケープ</b>だ。{@code subject} は Kafka イベントから来る値で、
+ * 我々が作った文字列ではない。そのまま HTML に入れると、我々のブランドで届いたメールの中に攻撃者が偽のログ
+ * インリンクを仕込める — フィッシングとしては最上の条件だ。
  */
 @DisplayName("메일 문구")
 class MailTemplatesTest {
@@ -28,6 +32,7 @@ class MailTemplatesTest {
 
         assertThat(r.subject()).contains("회원가입");
         // HTML 을 표시하지 않는 클라이언트에서도 링크를 볼 수 있어야 한다.
+        // [JA] HTML を表示しないクライアントでもリンクが見られるべきだ。
         assertThat(r.text()).contains("https://shop.example.com/confirm?token=abc");
         assertThat(r.html()).contains("https://shop.example.com/confirm?token=abc");
     }
@@ -50,6 +55,7 @@ class MailTemplatesTest {
                 Map.of("subject", "<a href=\"https://evil.example\">여기를 누르세요</a>"));
 
         // 태그가 살아 있으면 수신자에게는 우리가 보낸 정상 링크로 보인다.
+        // [JA] タグが生きていると、受信者には我々が送った正常なリンクに見える。
         assertThat(r.html()).doesNotContain("<a href=\"https://evil.example\"");
         assertThat(r.html()).contains("&lt;a href=");
     }
@@ -67,6 +73,7 @@ class MailTemplatesTest {
     @DisplayName("🐛 javascript: URL 은 href 에 들어가지 않는다 — 이스케이프만으로는 못 막는다")
     void 위험한_스킴() {
         // 특수문자가 없어 이스케이프를 그대로 통과한다. 스킴 허용 목록이 유일한 방어다.
+        // [JA] 特殊文字がないのでエスケープをそのまま通過する。スキームの許可リストが唯一の防御だ。
         var r = MailTemplates.render(Region.KR, MailKind.REGISTRATION_CONFIRM,
                 Map.of("confirmationUrl", "javascript:alert(1)"));
 
@@ -115,6 +122,7 @@ class MailTemplatesTest {
         assertThat(r.subject()).contains("会員登録");
         assertThat(r.html()).contains("メールアドレスを認証する");
         // 버튼 아래 안내문까지 일본어여야 한다 — 여기가 한국어로 남아 있던 적이 있다.
+        // [JA] ボタン下の案内文まで日本語であるべきだ — ここが韓国語のまま残っていたことがある。
         assertThat(r.html()).contains("ブラウザに貼り付け");
         assertThat(r.html()).doesNotContain("브라우저");
     }
@@ -123,6 +131,7 @@ class MailTemplatesTest {
     @DisplayName("로케일 표기가 어떻게 오든 일본어를 알아본다")
     void 로케일_해석() {
         // HTTP Accept-Language 는 하이픈, Locale#toString 은 밑줄을 쓴다.
+        // [JA] HTTP の Accept-Language はハイフン、Locale#toString はアンダースコアを使う。
         assertThat(MailTemplates.regionOf("ja")).isEqualTo(Region.JP);
         assertThat(MailTemplates.regionOf("ja-JP")).isEqualTo(Region.JP);
         assertThat(MailTemplates.regionOf("ja_JP")).isEqualTo(Region.JP);
@@ -150,12 +159,14 @@ class MailTemplatesTest {
         assertThat(revoked.subject()).doesNotContain("새로운 기기");
         assertThat(revoked.text()).contains("비밀번호").contains("수신 설정과 관계없이");
         // 수신 설정으로 끌 수 없는 메일에 "설정에서 바꿀 수 있다" 고 쓰면 거짓말이다
+        // [JA] 受信設定でオフにできないメールに「設定で変えられる」と書けば嘘になる
         assertThat(revoked.text()).doesNotContain("마이페이지에서 바꿀 수");
 
         var device = MailTemplates.render(Region.KR, MailKind.SECURITY_ALERT,
                 Map.of("subject", "새로운 기기에서 로그인되었습니다"));
         assertThat(device.subject()).isEqualTo("[쇼핑몰] 새로운 기기에서 로그인되었습니다");
         // 예전에는 "새로운 기기에서 로그인되었습니다 — 새로운 기기에서 로그인되었습니다" 로 두 번 찍혔다
+        // [JA] 以前は「新しい端末でログインされました — 新しい端末でログインされました」と二度出ていた
         assertThat(device.text()).containsOnlyOnce("새로운 기기에서 로그인되었습니다");
     }
 
@@ -193,6 +204,7 @@ class MailTemplatesTest {
         assertThat(ja.html()).doesNotContain("href").doesNotContain("로그인");
 
         // 코드 자리에 다른 것이 와도 숫자만, 6자리까지만 — 제목 헤더 주입도 막힌다.
+        // [JA] コードの箇所に他のものが来ても数字だけ、6 桁まで — 件名ヘッダーのインジェクションも防がれる。
         var odd = MailTemplates.render(Region.KR, MailKind.LOGIN_CHALLENGE,
                 Map.of("code", "12<b>34\r\nBcc: x@y.z 5678"));
         assertThat(odd.subject()).endsWith(" 123456").doesNotContain("<").doesNotContain("Bcc");

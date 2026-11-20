@@ -16,6 +16,9 @@ import com.project.delivery_service.domain.DeliveryStatus;
  * 시뮬레이터 — 실제 택배사 없이 전 경로를 돌리기 위한 어댑터.
  *
  * <p>시계를 주입해 몇 시간을 순식간에 지나가게 한다.
+ *
+ * <p>[JA] シミュレーター — 実際の宅配業者なしで全経路を回すためのアダプター。
+ * 時計を注入して数時間を一瞬で経過させる。
  */
 @DisplayName("시뮬레이터 택배사")
 class SimulatedCarrierAdapterTest {

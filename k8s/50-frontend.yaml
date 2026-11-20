@@ -25,6 +25,9 @@ spec:
           # docker build --build-arg REACT_APP_API_URL=https://<게이트웨이 외부 주소>:8000 \
           #   --build-arg REACT_APP_PAYPAL_CLIENT_ID=<paypal client id> \
           #   -t <registry>/ecommerce-msa/frontend:1.0.0 -f frontend/Dockerfile frontend
+          # [JA] REACT_APP_API_URL / REACT_APP_PAYPAL_CLIENT_ID は実行時ではなくビルド時に埋め込まれる値なので、
+          #      ここ(Deployment env)で指定しても反映されない。frontend/Dockerfile のコメント参照、
+          #      イメージビルド時に --build-arg で gateway-server の公開ドメイン/ポートを入れてビルドすること。
           image: REGISTRY_PLACEHOLDER/ecommerce-msa/frontend:1.0.0
           ports:
             - containerPort: 8080

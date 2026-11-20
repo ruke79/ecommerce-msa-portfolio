@@ -38,6 +38,13 @@ import com.google.common.collect.ImmutableMap;
  * 리스너는 BatchListenerFailedException(index)을 던져 "배치의 몇 번째 레코드가
  * 실패했는지"를 알려야, 이미 처리된 앞 레코드들의 오프셋은 커밋되고 실패 레코드만
  * 격리된 뒤 나머지가 재전달된다 (ProductUpdateKafkaListener 참조).
+ *
+ * <p>[JA] Kafka コンシューマ共通のエラー処理(DLQ)設定 — docs/03 R-2、docs/09 参照。
+ * 以前はエラーハンドラーがまったくなく、poison message 1 件がパーティション全体を無限リトライでブロックしていた(docs/03 F-2)。この設定は:
+ * 1) 処理に失敗したレコードを指数バックオフで 3 回リトライした後 <topic>.DLT に隔離し、
+ * 2) デシリアライズ失敗(回復不能)はリトライせず即座に DLT へ送る。
+ * リスナーは BatchListenerFailedException(index) を投げて「バッチの何番目のレコードが失敗したか」を知らせる必要がある。
+ * そうすれば処理済みの前方レコードのオフセットはコミットされ、失敗レコードだけが隔離された後、残りが再配信される(ProductUpdateKafkaListener 参照)。
  */
 @Configuration
 public class KafkaDltConfig {
@@ -46,6 +53,9 @@ public class KafkaDltConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は KafkaSecuritySettings 一か所で作る。
+     * 以前はクラスごとに同じ六行を複製し、値が空でもそのまま入れていたので、SSL を有効にした瞬間に空のパスで死ぬ組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -68,18 +78,21 @@ public class KafkaDltConfig {
     }
 
     /** 정상 역직렬화된 페이로드를 DLT 로 보낼 때 사용(JSON 재직렬화). */
+    // [JA] 正常にデシリアライズされたペイロードを DLT に送るときに使う(JSON 再シリアライズ)。
     @Bean
     public KafkaTemplate<String, Object> dltJsonKafkaTemplate() {
         return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(dltProducerProps(JsonSerializer.class)));
     }
 
     /** 역직렬화 실패 레코드의 원본 바이트를 DLT 로 보낼 때 사용. */
+    // [JA] デシリアライズに失敗したレコードの元のバイトを DLT に送るときに使う。
     @Bean
     public KafkaTemplate<String, byte[]> dltBytesKafkaTemplate() {
         return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(dltProducerProps(ByteArraySerializer.class)));
     }
 
     /** DLT 로 보낸 레코드 수 — 토픽별. 경보 KafkaDeadLetterPublished(observability/alert-rules.yml)가 본다. */
+    // [JA] DLT に送ったレコード数 — トピック別。アラート KafkaDeadLetterPublished(observability/alert-rules.yml)が見る。
     static final String DLT_METRIC = com.project.common.kafka.DltRetryPolicy.DLT_METRIC;
 
     @Bean
@@ -89,12 +102,14 @@ public class KafkaDltConfig {
             io.micrometer.core.instrument.MeterRegistry meters) {
 
         // 값 타입에 따라 템플릿 선택: 역직렬화 실패면 byte[](원본 보존), 그 외엔 JSON.
+        // [JA] 値の型によってテンプレートを選ぶ: デシリアライズ失敗なら byte[](原本保持)、それ以外は JSON。
         Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
         templates.put(byte[].class, dltBytesKafkaTemplate);
         templates.put(Object.class, dltJsonKafkaTemplate);
 
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(templates,
                 // 파티션 -1: DLT 의 파티션 수가 원본 토픽과 달라도 안전하게 브로커가 선택
+                // [JA] パーティション -1: DLT のパーティション数が元トピックと違っても安全にブローカーが選ぶ
                 (record, ex) -> new TopicPartition(record.topic() + ".DLT", -1));
 
         ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(3);
@@ -113,6 +128,7 @@ public class KafkaDltConfig {
         // [JA] 一時的な失敗(デッドロック · ロック待ち · 接続枯渇 · フェイルオーバー)は長く再試行する。以前はすべて 7 秒で DLT だった。
         handler.setBackOffFunction((record, ex) -> isTransient(ex) ? transientBackOff() : null);
         // 재시도해도 절대 성공할 수 없는 예외는 즉시 DLT 로 (poison 즉시 격리)
+        // [JA] リトライしても絶対に成功しない例外は即座に DLT へ(poison を即時隔離)
         handler.addNotRetryableExceptions(
                 DeserializationException.class,
                 MessageConversionException.class,
@@ -127,6 +143,7 @@ public class KafkaDltConfig {
     }
 
     /** 일시적인 실패의 백오프 — 정책은 common 의 {@link com.project.common.kafka.DltRetryPolicy}(order 도 쓴다). */
+    // [JA] 一時的な失敗のバックオフ — ポリシーは common の DltRetryPolicy(order も使う)。
     static org.springframework.util.backoff.BackOff transientBackOff() {
         return com.project.common.kafka.DltRetryPolicy.transientBackOff();
     }

@@ -16,6 +16,10 @@ public interface DeliveryEventRepository extends JpaRepository<DeliveryEvent, Lo
      *
      * <p>폴링은 매번 전체 이력을 돌려주므로, 저장 전에 이 집합과 대조해 새 것만 넣는다.
      * UNIQUE 제약이 최종 방어선이지만, 매번 예외를 던지고 잡는 것보다 조회가 싸다.
+     *
+     * <p>[JA] すでに保存されたイベントの重複キー。
+     * ポーリングは毎回全履歴を返すので、保存前にこの集合と突き合わせて新しいものだけを入れる。
+     * UNIQUE 制約が最後の防衛線だが、毎回例外を投げて捕まえるより照会の方が安い。
      */
     @Query("select e.dedupKey from DeliveryEvent e where e.shipment.shipmentId = :shipmentId")
     Set<String> findDedupKeys(@Param("shipmentId") Long shipmentId);

@@ -27,7 +27,10 @@ import org.junit.jupiter.api.io.TempDir;
  * "Error: Invalid or corrupt jarfile /app/app.jar" 로 1초 만에 죽을 때에야 드러난다. (2026-10-18 데모의 같은 증상은
  * 노드가 풀어 둔 사본의 손상이었다 — 레지스트리 이미지의 jar 해시는 빌드 결과와 같았다. 이 테스트는 빌드 쪽 원인을 막는다.)
  *
- * <p>[JA] ops/19 がイメージに入れる jar の選び方。確認なしだと壊れた jar のイメージが push まで通る。
+ * <p>[JA] ops/19 がイメージに入れる jar の選び方(pick_jar)。
+ * 以前: {@code ls *.jar | head -1} を確認なしに入れていた — 切れた jar が入ってもビルド · push は通り、Pod が
+ * "Error: Invalid or corrupt jarfile /app/app.jar" で 1 秒で死んで初めて分かる。(2026-10-18 デモの同じ症状は
+ * ノードが展開しておいたコピーの破損だった — レジストリのイメージの jar ハッシュはビルド結果と同じだった。このテストはビルド側の原因を防ぐ。)
  */
 @DisplayName("ops/19 — 이미지에 넣을 jar 고르기 · 확인")
 class BuildImagesJarScriptTest {
@@ -46,6 +49,7 @@ class BuildImagesJarScriptTest {
     }
 
     /** bootJar 모양(매니페스트 + 클래스 하나). mainClass 가 null 이면 Main-Class 없는 jar. */
+    // [JA] bootJar の形(マニフェスト + クラス一つ)。mainClass が null なら Main-Class のない jar。
     private Path jar(String name, String mainClass, long epochSecond) throws IOException {
         Path libs = Files.createDirectories(tmp.resolve("saga-projection/build/libs"));
         Path jar = libs.resolve(name);
@@ -67,6 +71,7 @@ class BuildImagesJarScriptTest {
     private record Run(int code, String out) {}
 
     /** 스크립트에서 pick_jar 만 꺼내 돌린다 — 빌드(gradle · docker)는 돌지 않는다. */
+    // [JA] スクリプトから pick_jar だけを取り出して動かす — ビルド(gradle · docker)は動かない。
     private Run pick() throws Exception {
         Path script = repoRoot().resolve("ops/19-build-images.sh");
         String body = "warn() { echo \"WARN: $*\"; }; "

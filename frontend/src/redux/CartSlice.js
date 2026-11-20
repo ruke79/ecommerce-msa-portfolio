@@ -20,6 +20,12 @@ const initialState = {
      *
      * <p>🐛 예전에는 주인이 없었다 — 장바구니가 localStorage 에 남아, 같은 브라우저에서 다른 사람이 로그인하면 앞 사람의
      * 장바구니가 보였고 체크아웃하면 그 사람 서버 장바구니로 들어갔다.
+     *
+     * <p>[JA] このカートが **誰のサーバーカートを映したものか**(ユーザー id)。null ならこのブラウザにだけあるカート — ログイン前に
+     * 入れたもの、またはサーバー基準に変わる前(docs/40 0-b)の古い状態。ログインすると CartSync がその行をサーバーに上げ、この値を埋める。
+     *
+     * <p>🐛 以前は持ち主がなかった — カートが localStorage に残り、同じブラウザで別の人がログインすると前の人の
+     * カートが見え、チェックアウトするとその人のサーバーカートに入った。
      */
     ownerId : null,
 };
@@ -27,12 +33,18 @@ const initialState = {
 /**
  * 서버 목록으로 바꾸되, CartPage 가 받아 둔 **지금 재고** 표시(syncStock)는 같은 줄이면 이어 간다 — 재고 조회는 키가 같으면
  * 다시 돌지 않으므로, 버리면 "남은 수량 N개" 가 담기·수량 변경 한 번에 사라진다.
+ *
+ * <p>[JA] サーバーの一覧に置き換えるが、CartPage が受け取っておいた **現在の在庫** 表示(syncStock)は同じ行なら引き継ぐ — 在庫照会はキーが同じなら
+ * 再実行されないので、捨てると「残り N 個」がカート追加・数量変更一回で消える。
  */
 const withStockOf = (previous, items) => {
     const byKey = new Map(previous.filter((i) => i.stockStatus !== undefined).map((i) => [cartStockKey(i), i]));
     // 배열이 아니면 빈 장바구니 — 🐛 2026-10-24 운영: 장바구니가 없을 때 옛 서버가 200 + 빈 본문을 줬고, axios 는 그것을 빈 문자열("")로
     // 받는다. `"" ?? []` 는 "" 라 `.map` 에서 TypeError — 장바구니 화면 전체가 오류 화면이었다(주문 뒤 · 마지막 줄을 뺀 직후).
     // 서버는 이제 빈 목록을 주지만(cart-service loadCart), 롤링 중의 옛 파드와 다른 모양의 응답에도 화면이 깨지지 않게 여기서 거른다.
+    // [JA] 配列でなければ空のカート — 🐛 2026-10-24 本番: カートがないとき旧サーバーは 200 + 空ボディを返し、axios はそれを空文字列("")として
+    //      受け取る。`"" ?? []` は "" なので `.map` で TypeError — カート画面全体がエラー画面だった(注文後・最後の行を外した直後)。
+    //      サーバーはいま空の一覧を返すが(cart-service loadCart)、ローリング中の旧 Pod や別の形の応答でも画面が壊れないようにここで弾く。
     return (Array.isArray(items) ? items : []).map((item) => {
         const before = byKey.get(cartStockKey(item));
         return before ? { ...item, quantity: before.quantity, onHold: before.onHold, stockStatus: before.stockStatus } : item;
@@ -45,6 +57,8 @@ export const cartSlice = createSlice({
     reducers: {
         /**
          * 사용자가 담았다. 이 순간부터 이 장바구니는 **사용자가 손댄 것**이다.
+         *
+         * <p>[JA] ユーザーが入れた。この瞬間からこのカートは **ユーザーが手を加えたもの** である。
          */
         addToCart(state, action) {
             state.cartItems.push(action.payload);
@@ -60,6 +74,15 @@ export const cartSlice = createSlice({
          * 사용자가 방금 지운 것이 그대로 들어 있다.
          *
          * <p>사용자가 손댄 사실을 기록해야 "비어 있다"와 "비웠다"를 구분할 수 있다.
+         *
+         * <p>[JA] ユーザーが直した — 数量変更・項目削除。
+         *
+         * <p>⚠️ `state.status = UPDATED` がコメントアウトされていた。そのため状態が EMPTY のまま
+         * 残り、カート画面が「空ならサーバーのコピーで埋める」を再実行した —
+         * **消した品物が生き返った。** サーバーのコピーは最後のチェックアウト時点のスナップショットなので、
+         * ユーザーがたった今消したものがそのまま入っている。
+         *
+         * <p>ユーザーが手を加えた事実を記録してこそ「空である」と「空にした」を区別できる。
          */
         updateCart(state , action) {
             state.cartItems = action.payload;
@@ -73,6 +96,13 @@ export const cartSlice = createSlice({
          * 하나는 "사용자가 이렇게 바꿨다"이고 하나는 "서버에 있던 것을 가져왔다"이다.
          * 그런데 채운 뒤에도 상태는 EMPTY 가 아니어야 한다 — 그러지 않으면 사용자가
          * 전부 지웠을 때 다시 채우기가 돌아 같은 버그로 되돌아간다.
+         *
+         * <p>[JA] サーバーのコピーで埋める — ユーザーの編集ではない。
+         *
+         * <p>updateCart と分けた理由: どちらも一覧をまるごと置き換えるが **意味が違う。**
+         * 一方は「ユーザーがこう変えた」で、もう一方は「サーバーにあったものを取ってきた」である。
+         * ただし埋めた後も状態は EMPTY であってはならない — そうでないとユーザーが
+         * すべて消したときに再び埋め直しが走り、同じバグに戻る。
          */
         hydrateCart(state, action) {
             state.cartItems = withStockOf(state.cartItems, action.payload);
@@ -84,6 +114,11 @@ export const cartSlice = createSlice({
          * 로그인한 사용자의 장바구니는 이 액션으로만 바뀐다 — 서버가 기준이다.
          *
          * @param action.payload `{ items: [...] | null, ownerId }` — 장바구니가 없으면 빈 목록(옛 서버는 빈 본문 — 배열이 아니면 빈 장바구니로 본다)
+         *
+         * <p>[JA] サーバーが返した **現在のカート**(loadcart・追加・数量・削除の応答)に置き換え、持ち主を記録する(docs/40 0-b)。
+         * ログインしたユーザーのカートはこのアクションでしか変わらない — サーバーが基準である。
+         *
+         * @param action.payload `{ items: [...] | null, ownerId }` — カートがなければ空の一覧(旧サーバーは空ボディ — 配列でなければ空のカートとみなす)
          */
         syncedFromServer(state, action) {
             const { items, ownerId } = action.payload ?? {};
@@ -93,6 +128,7 @@ export const cartSlice = createSlice({
         },
 
         /** 로그아웃 — 서버 장바구니의 사본은 지운다(서버에 남아 있다). 브라우저에만 있던 장바구니(주인 없음)는 그대로 둔다. */
+        // [JA] ログアウト — サーバーカートのコピーは消す(サーバーには残っている)。ブラウザにだけあったカート(持ち主なし)はそのまま残す。
         forgetOwner(state) {
             if (state.ownerId == null) return;
             state.cartItems = [];
@@ -110,6 +146,16 @@ export const cartSlice = createSlice({
          * 없는 옛 항목)은 그대로 둔다.
          *
          * @param action.payload `{ stock: {키: {quantity, onHold, status}}, asked: [키...] }`
+         *
+         * <p>[JA] サーバーが伝えた **現在の** 在庫で項目の数量情報を置き換える(docs/59 §5) — 入れたときに受け取った値は数日前のものかもしれない。
+         *
+         * <p>ユーザーの編集ではないので status には触れない。入れた数量(qty)も変えない — 減らすかどうかはユーザーが決める
+         * (画面が「残り N 個 — 数量を減らしてください」と知らせる)。
+         *
+         * <p>問い合わせたキーが応答になければ、そのオプションはもう存在しない(販売終了・オプション削除) — `UNAVAILABLE`。問い合わせていない項目(キーを作れない
+         * 古い項目)はそのまま残す。
+         *
+         * @param action.payload `{ stock: {キー: {quantity, onHold, status}}, asked: [キー...] }`
          */
         syncStock(state, action) {
             const { stock = {}, asked = [] } = action.payload ?? {};

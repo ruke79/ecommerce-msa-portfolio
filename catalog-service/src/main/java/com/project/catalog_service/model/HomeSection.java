@@ -30,6 +30,13 @@ import lombok.Setter;
  * <p><b>카테고리를 이름으로 가리킨다.</b> 대상이 사라지면 그 섹션만 조용히 빠지고 나머지
  * 홈은 그대로 뜬다 — 첫 화면에서는 그쪽이 맞다. 대신 어드민 화면이 "가리키는 카테고리가
  * 없다"를 표시한다(V10 주석 참조).
+ *
+ * <p>[JA] ホーム画面の一セクション。
+ * 以前はこの情報がフロントエンドのコードにあった — カテゴリ五つが二つのファイルにそれぞれ五行ずつ埋め込まれ、管理画面でカテゴリを作ってもホームには出なかった。
+ * 表示判定が published 一つではない理由はバナーと同じ。企画展セクションは期間が決まっており、人が時刻に合わせてチェックボックスをオン・オフすると必ず取りこぼす。
+ * startsAt/endsAt が両方 null なら「期間制限なし」である。
+ * カテゴリを名前で指す。対象が消えるとそのセクションだけが黙って抜け、残りのホームはそのまま表示される — 最初の画面ではそれが正しい。
+ * 代わりに管理画面が「指しているカテゴリがない」と表示する(V10 のコメント参照)。
  */
 @Entity
 @Getter
@@ -41,11 +48,13 @@ import lombok.Setter;
 public class HomeSection {
 
     /** 무엇을 기준으로 상품을 고르는가. */
+    // [JA] 何を基準に商品を選ぶか。
     public enum Kind {
         CATEGORY, SUBCATEGORY
     }
 
     /** 화면에서의 생김새. GRID 는 상단 격자 카드, SWIPER 는 가로 스와이퍼. */
+    // [JA] 画面での見た目。GRID は上部のグリッドカード、SWIPER は横スワイパー。
     public enum Layout {
         GRID, SWIPER
     }
@@ -56,6 +65,7 @@ public class HomeSection {
     private Long sectionId;
 
     /** 화면에 보이는 제목. 카테고리 이름과 달라도 된다("가전" → "새로 나온 가전"). */
+    // [JA] 画面に見えるタイトル。カテゴリ名と違ってもよい(「家電」→「新着家電」)。
     @Column(nullable = false, length = 200)
     private String title;
 
@@ -66,6 +76,7 @@ public class HomeSection {
     private String categoryName;
 
     /** {@code kind=SUBCATEGORY} 일 때만 쓴다. */
+    // [JA] kind=SUBCATEGORY のときだけ使う。
     @Column(name = "subcategory_name", length = 100)
     private String subcategoryName;
 
@@ -98,6 +109,8 @@ public class HomeSection {
 
     /**
      * 이 시각에 노출되는가. 경계는 <b>시작 포함, 종료 포함</b>이다(배너와 같은 규칙).
+     *
+     * <p>[JA] この時刻に表示されるか。境界は開始を含み、終了も含む(バナーと同じ規則)。
      */
     public boolean isVisibleAt(LocalDateTime now) {
         if (!published) {

@@ -9,6 +9,7 @@ import { formatDateTime } from "util/datetime";
 import { useTranslation } from "i18n/I18nProvider";
 
 /** 유예 기간(일). 서버의 탈퇴 유예 기간과 같다. */
+// [JA] 猶予期間(日)。サーバーの退会猶予期間と同じだ。
 const GRACE_DAYS = 7;
 
 /**
@@ -19,6 +20,12 @@ const GRACE_DAYS = 7;
  *
  * <p>유예 기간 동안 계정은 평소처럼 쓸 수 있다. 잠그면 취소할 방법이 사라지기 때문이다 —
  * 그래서 이 패널이 "언제 지워지는지"를 계속 보여 주는 역할을 한다.
+ *
+ * <p>[JA] 会員退会 — 申請と取り消し。
+ * 取り消せない操作なので一度に押されないよう三重に防ぐ: 展開 → パスワード →
+ * 確認チェックボックス。それでも一週間の猶予期間が残り、この画面ですぐ取り消せる。
+ * 猶予期間中アカウントは普段どおり使える。ロックすると取り消す方法がなくなるからだ —
+ * そのためこのパネルが「いつ消されるか」を見せ続ける役割を担う。
  */
 const AccountWithdrawal = () => {
     const { t } = useTranslation();
@@ -36,6 +43,7 @@ const AccountWithdrawal = () => {
             setStatus(await getWithdrawalStatus());
         } catch (e) {
             // 상태를 못 읽는다고 보안 설정 화면 전체가 죽으면 안 된다. 패널만 접는다.
+            // [JA] 状態を読めないからといってセキュリティ設定画面全体が落ちてはならない。パネルだけ畳む。
             setStatus(null);
         } finally {
             setLoading(false);
@@ -90,6 +98,8 @@ const AccountWithdrawal = () => {
     if (status.pending) {
         // 서버가 보낸 예정 시각을 그대로 믿지 않는다 — 형식이 어긋나면 날짜 대신 남은
         // 일수만 보여 준다. 남은 일수는 서버가 계산한 값이라 항상 맞다.
+        // [JA] サーバーが送った予定時刻をそのまま信じない — 形式がずれていれば日付の代わりに残り
+        //      日数だけ見せる。残り日数はサーバーが計算した値なので常に正しい。
         const scheduled = formatDateTime(status.scheduledAt, null);
 
         return (

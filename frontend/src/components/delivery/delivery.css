@@ -1,4 +1,5 @@
 /* 배송 추적 UI — 아마존 주문 상세의 배송 영역을 참고했다. */
+/* [JA] 配送追跡 UI — Amazon の注文詳細の配送領域を参考にした。 */
 :root {
   --dlv-brand: #232f3e;        /* 아마존 계열의 진한 네이비 */
   --dlv-accent: #ff9900;
@@ -35,6 +36,7 @@
 }
 
 /* 사용자가 가장 알고 싶은 것 하나를 크게. */
+/* [JA] ユーザーが最も知りたいもの一つを大きく。 */
 .dlv__headline {
   font-size: 19px;
   font-weight: 700;
@@ -55,6 +57,7 @@
 }
 
 /* 진행 바. 단계 사이를 선으로 잇되, 마지막 단계 뒤에는 선을 그리지 않는다. */
+/* [JA] 進行バー。段階の間を線でつなぐが、最後の段階の後には線を描かない。 */
 .dlv__progress {
   display: flex;
   list-style: none;
@@ -156,6 +159,7 @@
 }
 
 /* 이력. 최신이 위로 오게 뒤집어 렌더링한다. */
+/* [JA] 履歴。最新が上に来るよう逆順でレンダーする。 */
 .dlv__timeline { list-style: none; margin: 8px 0 0; padding: 0 0 0 4px; }
 .dlv__timeline li {
   display: grid;
@@ -170,6 +174,7 @@
 .dlv__loc { color: var(--dlv-muted); }
 @media (max-width: 480px) {
   /* 좁은 화면에서 3열은 무너진다. 시각·지점을 한 줄로 접는다. */
+  /* [JA] 狭い画面では 3 列が崩れる。時刻 · 拠点を一行に畳む。 */
   .dlv__timeline li { grid-template-columns: 84px 1fr; }
   .dlv__loc { grid-column: 2; }
   .dlv__desc { grid-column: 1 / -1; }

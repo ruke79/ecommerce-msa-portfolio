@@ -62,6 +62,7 @@ export function setup() {
   const data = browseSetup();
   const sessions = loginSessions(password, REVIEW_VUS, ID_OFFSET);
   // 시작 전 확인 — 리뷰를 쓸 수 있는가(받은 상품만 확인이 켜져 있으면 403)
+  // [JA] 開始前の確認 — レビューを書けるか(受け取った商品だけの確認が有効なら 403)
   const probe = writeReview(sessions[0], reviewTarget(data));
   if (probe.status === 403) {
     fail('리뷰가 403 이다(받은 상품만) — 호스트에서 ./ops/53-load-k6.sh reviews open 후 다시(끝나면 reviews default)');
@@ -75,11 +76,13 @@ export function setup() {
 export { browse };
 
 /** 리뷰를 쓸 상품 — 데이터 규모 모드면 ops/44 범위의 무작위 상품, 아니면 홈의 상품. */
+// [JA] レビューを書く商品 — データ規模モードなら ops/44 の範囲のランダムな商品、そうでなければホームの商品。
 function reviewTarget(data) {
   return PRODUCTS > 0 ? coldProductId() : String(pick(data.products).id);
 }
 
 /** 화면과 같은 모양(Review.jsx) — multipart, 부분 'review' 는 JSON. 사이즈 없는 상품처럼 사이즈 · 착용감은 비운다. */
+// [JA] 画面と同じ形(Review.jsx) — multipart、パート 'review' は JSON。サイズのない商品のようにサイズ · 着用感は空にする。
 function writeReview(session, productId) {
   const body = {
     review: `k6 리뷰 ${Date.now()}`,
@@ -89,7 +92,7 @@ function writeReview(session, productId) {
     style: { color: 'k6', image: '' },
   };
   const headers = Object.assign({}, authHeaders(session.access));
-  delete headers['Content-Type'];   // k6 가 multipart 경계를 붙인다
+  delete headers['Content-Type'];   // k6 가 multipart 경계를 붙인다 ／ [JA] k6 が multipart の境界を付ける
   const res = http.post(`${GATEWAY}/user-service/api/review/add/${encodeURIComponent(productId)}`,
     { review: http.file(JSON.stringify(body), 'review.json', 'application/json') },
     { headers, tags: { name: 'review_add' } });
@@ -102,6 +105,7 @@ let session = null;
 let account = 0;
 
 /** 리뷰 VU 마다의 세션 — setup 의 세션 하나에서 시작해 13분이 지나면 갱신하고, 갱신이 실패하면(다른 VU 가 먼저 회전시켰다) 다시 로그인한다. */
+// [JA] レビュー VU ごとのセッション — setup のセッション 1 つから始めて 13 分経ったら更新し、更新に失敗したら(他の VU が先にローテーションした)ログインし直す。
 function mySession(data) {
   if (!session) {
     account = (exec.vu.idInTest - 1) % data.sessions.length;

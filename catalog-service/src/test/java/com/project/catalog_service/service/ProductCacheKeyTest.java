@@ -23,6 +23,9 @@ import com.project.common.dto.ProductDto;
  *
  * <p>🐛 예전: addProduct 의 {@code @CachePut(key = "#result.productId")} — 반환값 ProductSku 에 productId 가 없어 프록시에서
  * SpEL 예외(EL1008E)로 등록이 500 이 됐다. 몇 메서드는 ProductSku · ProductSize · Product 를 ProductDto 자리에 넣으려 했다.
+ *
+ * <p>[JA] 🔴 "product" キャッシュには ProductDto のみ — キー式は実際の戻り値から評価される。
+ * <p>🐛 以前: addProduct の {@code @CachePut(key = "#result.productId")} — 戻り値 ProductSku に productId がなく、プロキシで SpEL 例外(EL1008E)となり登録が 500 になった。いくつかのメソッドは ProductSku・ProductSize・Product を ProductDto の位置に入れようとしていた。
  */
 @DisplayName("상품 캐시 — 타입 · 키")
 class ProductCacheKeyTest {

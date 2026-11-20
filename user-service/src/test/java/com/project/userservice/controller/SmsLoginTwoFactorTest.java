@@ -65,7 +65,7 @@ class SmsLoginTwoFactorTest {
     void setUp() {
         user = User.builder().build();
         user.setUserId(7L);
-        user.setSmsTwoFactorEnabled(true);     // SMS 만 켰다
+        user.setSmsTwoFactorEnabled(true);     // SMS 만 켰다 ／ [JA] SMS だけ有効にした
         user.setSmsTwoFactorBinding("b");
         when(userRepository.findById(7L)).thenReturn(Optional.of(user));
         when(pendingTwoFactor.reserveAttempt("pending"))

@@ -56,6 +56,7 @@ class CatalogDataSourcePoolsTest {
                 assertThat(ds.getMinimumIdle()).isEqualTo(2);
                 assertThat(ds.getConnectionTimeout()).isEqualTo(5_000);
                 // 누수 감지는 기본 끔 — 켜면 빌릴 때마다 스택 추적 예외(2026-10-23 프로파일 catalog CPU 3.9%, B-104)
+                // [JA] リーク検知は既定で無効 — 有効にすると借りるたびにスタックトレース付き例外(2026-10-23 のプロファイルで catalog CPU 3.9%、B-104)
                 assertThat(ds.getLeakDetectionThreshold()).isZero();
                 assertThat(ds.getMaxLifetime()).isEqualTo(1_200_000);
             }
@@ -78,6 +79,7 @@ class CatalogDataSourcePoolsTest {
     @DisplayName("🔴 두 풀 모두 소켓 읽기 상한(마지막 안전망) 900초 — 가장 긴 정상 질의(필터 메뉴 600초)보다 길다, DB_SOCKET_TIMEOUT_SECONDS")
     void socketReadsAreBounded() {
         // 🐛 2026-10-21 실습 8시간(docs/83 §2.8): 상대가 사라진 연결의 읽기가 끝나지 않아 검색 스레드 셋이 커넥션과 함께 몇 시간 묶였다
+        // [JA] 🐛 2026-10-21 の実習 8 時間(docs/83 §2.8): 相手が消えた接続の読み取りが終わらず、検索スレッド三つがコネクションごと何時間も縛られた
         runner().run(ctx -> {
             for (String name : new String[] { "dataDataSource", "metaDataSource" }) {
                 HikariDataSource ds = ctx.getBean(name, HikariDataSource.class);

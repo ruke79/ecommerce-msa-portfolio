@@ -18,6 +18,11 @@ import com.project.order_service.service.RefundPricing.Quote;
  *
  * <p>여기 고정하는 것: 마지막 환불은 남은 전부라 <b>부분 환불의 합은 정확히 총액</b>이고,
  * 그 전의 환불은 <b>할인을 나눠 뺀 단가</b>이며 배송비는 돌려주지 않는다.
+ *
+ * <p>[JA] 部分返金の金額 — サーバーが決める(docs/49 §10)。
+ *
+ * <p>ここで固定するもの: 最後の返金は残り全部なので<b>部分返金の合計はちょうど総額</b>であり、
+ * それより前の返金は<b>割引を按分して引いた単価</b>で、送料は返さない。
  */
 @DisplayName("부분 환불 금액")
 class RefundPricingTest {
@@ -27,6 +32,7 @@ class RefundPricingTest {
     }
 
     /** 2 × 20.00 + 1 × 10.00 = 50.00 상품, 배송비 5.00, 할인 없음 → 총 55.00 */
+    // [JA] 2 × 20.00 + 1 × 10.00 = 50.00 の商品、送料 5.00、割引なし → 総額 55.00
     private static final List<Line> LINES = List.of(
             new Line(1L, d("20.00"), 2, 0),
             new Line(2L, d("10.00"), 1, 0));
@@ -52,10 +58,12 @@ class RefundPricingTest {
     }
 
     /** 쿠폰 10%: 정가로 돌려주면 손님이 낸 것보다 더 받는다. */
+    // [JA] クーポン 10%: 定価で返すと客は払った以上に受け取る。
     @Test
     @DisplayName("할인은 품목 금액 비율로 나눠 뺀다 — 10% 쿠폰이면 품목도 10% 깎인 값")
     void discountIsProrated() {
         // 상품 50 → 할인 5 → 45 + 배송 5 = 50
+        // [JA] 商品 50 → 割引 5 → 45 + 送料 5 = 50
         Quote q = RefundPricing.quote(d("50.00"), d("55.00"), d("5.00"), BigDecimal.ZERO, LINES,
                 List.of(new Item(1L, 1)));
 
@@ -63,13 +71,15 @@ class RefundPricingTest {
     }
 
     /** 🔴 부분 환불을 몇 번 하든 합은 총액이다 — 반올림 찌꺼기와 배송비는 마지막에 정리된다. */
+    // [JA] 🔴 部分返金を何回しても合計は総額である — 丸めの端数と送料は最後に清算される。
     @Test
     @DisplayName("🔴 마지막 환불은 남은 전부 — 부분 환불의 합은 정확히 총액")
     void partsSumToTheTotal() {
         List<Line> lines = List.of(
                 new Line(1L, d("19.99"), 3, 0),   // 59.97
-                new Line(2L, d("0.01"), 1, 0));   // 0.01 → 상품 59.98
+                new Line(2L, d("0.01"), 1, 0));   // 0.01 → 상품 59.98 ／ [JA] 0.01 → 商品 59.98
         // 할인 7% → 55.78, 배송 4.90 → 총 60.68
+        // [JA] 割引 7% → 55.78、送料 4.90 → 総額 60.68
         BigDecimal total = d("60.68");
         BigDecimal before = d("64.88");
         BigDecimal ship = d("4.90");
@@ -135,6 +145,7 @@ class RefundPricingTest {
     }
 
     /** 품목 정보가 없는 옛 주문은 남은 돈 전부다 — 부분 환불이 불가능할 뿐 환불은 된다. */
+    // [JA] 品目情報のない古い注文は残りのお金全部である — 部分返金ができないだけで返金はできる。
     @Test
     @DisplayName("품목이 없는 옛 주문은 남은 돈 전부")
     void legacyOrderWithoutLines() {

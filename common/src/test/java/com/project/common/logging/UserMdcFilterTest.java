@@ -15,6 +15,8 @@ import jakarta.servlet.FilterChain;
 
 /**
  * 요청의 사용자 id 를 로그 문맥에 넣는다 — 그리고 요청이 끝나면 <b>그것만</b> 지운다.
+ *
+ * <p>[JA] リクエストのユーザー id をログコンテキストに入れる — そしてリクエストが終わったら<b>それだけ</b>を消す。
  */
 @DisplayName("UserMdcFilter")
 class UserMdcFilterTest {
@@ -27,6 +29,7 @@ class UserMdcFilterTest {
     }
 
     /** 체인 안에서 본 MDC 의 userId. */
+    // [JA] チェーン内で見た MDC の userId。
     private String userIdSeenInside(MockHttpServletRequest request) throws Exception {
         AtomicReference<String> seen = new AtomicReference<>();
         FilterChain chain = (req, res) -> seen.set(MDC.get(UserMdcFilter.MDC_KEY));
@@ -45,6 +48,7 @@ class UserMdcFilterTest {
     }
 
     /** MDC.clear() 를 하면 추적이 넣은 traceId 까지 지워 같은 스레드의 뒤따르는 로그가 추적을 잃는다. */
+    // [JA] MDC.clear() をするとトレースが入れた traceId まで消し、同じスレッドで後に続くログがトレースを失う。
     @Test
     @DisplayName("🔴 끝날 때 traceId 는 건드리지 않는다 — userId 만 지운다")
     void leavesTracingAlone() throws Exception {
@@ -64,6 +68,7 @@ class UserMdcFilterTest {
     }
 
     /** 게이트웨이를 거치지 않은 요청은 헤더를 꾸밀 수 있다. 로그 표시에만 쓰지만 가짜 줄은 못 만들게 한다. */
+    // [JA] ゲートウェイを通らないリクエストはヘッダーを偽造できる。ログ表示にしか使わないが、偽の行は作れないようにする。
     @Test
     @DisplayName("🔒 줄바꿈·특수문자는 걸러진다 — 로그에 가짜 줄을 끼워 넣지 못한다")
     void blocksLogInjection() throws Exception {

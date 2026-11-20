@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import com.project.common.i18n.ClientText;
 
 /** catalog-service 의 서버 문구가 일본어 카탈로그(i18n/client-text.ja.txt)로 바뀌는지 (docs/60 §4). */
+// [JA] catalog-service のサーバー文言が日本語カタログ(i18n/client-text.ja.txt)に置き換わるか(docs/60 §4)。
 @DisplayName("catalog-service 서버 문구 일본어 번역")
 class CatalogClientTextTest {
 

@@ -60,13 +60,13 @@ class OrderStatusBrokerDownTest {
     private KafkaTemplate<String, OrderStatusChanged> templateToNowhere() throws Exception {
         int port;
         try (ServerSocket s = new ServerSocket(0)) {
-            port = s.getLocalPort();   // 닫힌 뒤에는 아무도 듣지 않는다
+            port = s.getLocalPort();   // 닫힌 뒤에는 아무도 듣지 않는다 ／ [JA] 閉じた後は誰も聞いていない
         }
         factory = new DefaultKafkaProducerFactory<>(Map.of(
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "127.0.0.1:" + port,
                 ProducerConfig.MAX_BLOCK_MS_CONFIG, 300,
                 ProducerConfig.RECONNECT_BACKOFF_MAX_MS_CONFIG, 100),
-                new StringSerializer(), (topic, value) -> new byte[0]);   // 메타데이터에서 멈추므로 값은 직렬화되지 않는다
+                new StringSerializer(), (topic, value) -> new byte[0]);   // 메타데이터에서 멈추므로 값은 직렬화되지 않는다 ／ [JA] メタデータで止まるので値はシリアライズされない
         return new KafkaTemplate<>(factory);
     }
 

@@ -12,6 +12,11 @@ import lombok.Setter;
  * 자리를 비운 사이나 토큰이 탈취된 상태에서 계정이 지워질 수 있다 — 되돌릴 수 없는 동작
  * 앞에서는 한 번 더 묻는 것이 맞다. 소셜 로그인 계정에는 확인할 비밀번호가 없으므로
  * 서버가 그 경우에만 생략한다({@code WithdrawalService.requirePassword}).
+ *
+ * <p>[JA] 会員退会の申請。
+ * {@code password} は本人確認用である。ログイン状態だけで退会を受け付けると、少し席を外した隙やトークンが奪われた状態で
+ * アカウントが消されうる — 取り消せない操作の前ではもう一度尋ねるのが正しい。ソーシャルログインのアカウントには確認する
+ * パスワードがないので、サーバーがその場合にだけ省略する({@code WithdrawalService.requirePassword})。
  */
 @Getter
 @Setter
@@ -21,6 +26,7 @@ public class WithdrawalRequest {
     private String password;
 
     /** 왜 떠나는지. 선택 사항이며 통계용이다. ⚠️ 자유 입력이므로 로그에 남기지 않는다. */
+    // [JA] なぜ去るのか。任意で統計用である。⚠️ 自由入力なのでログに残さない。
     @Size(max = 255)
     private String reason;
 }

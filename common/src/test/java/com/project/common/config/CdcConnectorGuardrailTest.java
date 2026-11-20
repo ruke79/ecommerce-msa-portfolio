@@ -30,6 +30,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *       {@code StringSerializer} 와 바이트가 같아야 같은 파티션이다.</li>
  *   <li>테이블: 실제 스키마({@code orders.}/{@code pay.}) — {@code public.} 은 아무것도 캡처하지 않는다.</li>
  * </ul>
+ *
+ * <p>[JA] Debezium アウトボックスコネクターが<b>スケジューラーリレーと同じトピック · キー規則</b>を使うかを守るガードレール。
+ * 二つのリレーは同じアウトボックス行を同じコンシューマーに送る。規則がずれると、どちらを有効にするかによってイベントが別のトピック(誰も聞いていない
+ * {@code Order.events})や別のパーティション(別のキーバイト)に座る — docs/38 §5 A1 · A2, §1.15。規則は次のとおり。
+ * トピック: {@code event_type} で決め、スケジューラーの名前と同じに — {@code payment-request→order}, {@code payment-response→payment}。
+ * キー: {@code aggregate_id}(集約 id)そのまま、{@code StringConverter} で — アプリのプロデューサーの {@code StringSerializer} とバイトが同じでなければ同じパーティションにならない。
+ * テーブル: 実際のスキーマ({@code orders.}/{@code pay.}) — {@code public.} は何もキャプチャしない。
  */
 @DisplayName("CDC 가드레일 · 커넥터가 스케줄러 릴레이와 같은 토픽·키 규칙인가")
 class CdcConnectorGuardrailTest {
@@ -39,7 +46,7 @@ class CdcConnectorGuardrailTest {
         return cwd.getFileName().toString().equals("common") ? cwd.getParent() : cwd;
     }
 
-    /** 스케줄러가 쓰는 event_type → 토픽. PaymentOutboxScheduler / OrderOutboxScheduler 와 같아야 한다. */
+    /** 스케줄러가 쓰는 event_type → 토픽. PaymentOutboxScheduler / OrderOutboxScheduler 와 같아야 한다. ／ [JA] スケジューラーが使う event_type → トピック。PaymentOutboxScheduler / OrderOutboxScheduler と同じでなければならない。 */
     private static final Map<String, String> SCHEDULER_TOPICS = Map.of(
             "payment-request", "order",
             "payment-response", "payment");
@@ -70,6 +77,7 @@ class CdcConnectorGuardrailTest {
             }
 
             // RegexRouter 하나하나가 스케줄러 표의 한 줄이어야 한다.
+            // [JA] RegexRouter 一つ一つがスケジューラーの表の一行でなければならない。
             String[] chain = text(c, "transforms").split(",");
             int routes = 0;
             for (String t : chain) {

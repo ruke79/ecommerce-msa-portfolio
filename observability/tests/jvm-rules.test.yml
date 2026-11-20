@@ -1,11 +1,13 @@
 # promtool 단위 시험 — jvm-health 그룹(힙 · GC 부담 · GC 뒤 힙, docs/91 §4-3). 실행: SloRulesPromtoolTest(컨테이너) 또는
 #   docker run --rm -v "$PWD/observability:/o" --entrypoint promtool prom/prometheus:v2.53.0 test rules /o/tests/jvm-rules.test.yml
-# [JA] promtool の単体テスト — jvm-health グループ(ヒープ · GC 負担 · GC 後のヒープ)。
+# [JA] promtool の単体テスト — jvm-health グループ(ヒープ · GC 負担 · GC 後のヒープ、docs/91 §4-3)。実行: SloRulesPromtoolTest(コンテナ)または
+#      上の docker run … promtool test rules /o/tests/jvm-rules.test.yml
 rule_files:
 - ../alert-rules.yml
 evaluation_interval: 1m
 tests:
 # GC 부담 15% 가 계속 — 10분이 되기 전에는 아직, 지나면 울린다. 다른 서비스(4%)는 조용
+# [JA] GC 負荷 15% が継続 — 10 分になる前はまだ、過ぎると鳴る。他のサービス(4%)は静か
 - interval: 1m
   input_series:
   - series: jvm_gc_overhead{service="gateway-server",instance="gw-1"}
@@ -28,6 +30,7 @@ tests:
         summary: "gateway-server 의 GC 가 시간의 15% 를 쓰고 있습니다"
         description: "GC 정지가 10분째 10%를 넘습니다 — 그만큼 요청이 멈춰 있습니다. 같은 시간의 할당 속도(jvm_gc_memory_allocated_bytes_total) · GC 뒤 힙(jvm_memory_usage_after_gc) · 요청 수를 보고, 할당이 늘었으면 프로파일(ops/58 의 할당 모드), 힙이 모자라면 JVM_MAX_RAM_PERCENTAGE 를 봅니다 (docs/91 §4-3)."
 # GC 부담이 잠깐 튀었다 내려가면(부하 측정의 한 계단) 울리지 않는다
+# [JA] GC 負荷が一瞬跳ねて下がれば(負荷測定の一段)鳴らない
 - interval: 1m
   input_series:
   - series: jvm_gc_overhead{service="gateway-server",instance="gw-1"}
@@ -37,6 +40,8 @@ tests:
     alertname: JvmGcOverheadHigh
     exp_alerts: []
 # GC 뒤 힙 95% 가 15분 — 울린다. 쓰는 중의 힙만 90% 를 넘나드는(GC 뒤는 40%) 서비스는 이 경보에 걸리지 않는다
+# [JA] GC 後ヒープ 95% が 15 分 — 鳴る。使用中のヒープだけが 90% を行き来する(GC 後は 40%)
+#      サービスはこの警報にかからない
 - interval: 1m
   input_series:
   - series: jvm_memory_usage_after_gc{service="catalog-service",area="heap",pool="long-lived"}
@@ -57,6 +62,7 @@ tests:
         summary: "catalog-service — GC 뒤에도 힙의 95% 가 남아 있습니다"
         description: "오래 사는 영역이 GC 뒤에도 15분째 90%를 넘습니다. 곧 Full GC 가 잦아지고 OOM 으로 갑니다. 재시작 전에 힙 덤프 대신 할당 프로파일(ops/58)과 캐시 크기를 보고, 늘 그만큼 쓰는 서비스면 JVM_MAX_RAM_PERCENTAGE 또는 메모리 한도를 올립니다 (docs/91 §4-3)."
 # 쓰는 중의 힙 92% 가 5분 — JvmHeapNearLimit(기존 경보도 이 파일이 시험한다)
+# [JA] 使用中のヒープ 92% が 5 分 — JvmHeapNearLimit(既存の警報もこのファイルが試験する)
 - interval: 1m
   input_series:
   - series: jvm_memory_used_bytes{service="order-service",area="heap",id="eden"}

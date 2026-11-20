@@ -54,6 +54,7 @@ public class SocialAccountLinker {
 
     static final String LINKED_KEY = "oauth:linked:";
     /** 비밀번호 가입의 signUpMethod — UserServiceImpl.registerUserAccount 와 같은 값. */
+    // [JA] パスワード登録の signUpMethod — UserServiceImpl.registerUserAccount と同じ値。
     static final String PASSWORD_SIGNUP = "email";
 
     private final UserRepository userRepository;
@@ -72,6 +73,7 @@ public class SocialAccountLinker {
                 VerificationToken pending = verificationTokenRepository.findByUser(user);
                 if (!user.isEnabled() && pending == null) {
                     // 관리자 정지 · 탈퇴 — 소셜 로그인이 풀어 주지 않는다.
+                    // [JA] 管理者による停止・退会 — ソーシャルログインが解除してくれるわけではない。
                     log.info("소셜 연결 — 막힌 계정이라 건드리지 않는다. provider={}, userId={}", provider, userId);
                     return user;
                 }
@@ -80,6 +82,7 @@ public class SocialAccountLinker {
                 return user;
             }
             // 소셜로 만든 계정 — 프로바이더가 이미 주소를 검증했다. 표시만 맞춘다.
+            // [JA] ソーシャルで作ったアカウント — プロバイダーがすでにアドレスを検証した。表示だけ合わせる。
             user.setEmailVerified(true);
             userRepository.save(user);
         }
@@ -94,6 +97,7 @@ public class SocialAccountLinker {
     private void clearUnprovenPassword(User user, VerificationToken pending, String provider) {
         Long userId = user.getUserId();
         // 아무도 모르는 값 — null 로 두면 BCrypt matches 가 예외를 던지는 애매한 상태가 된다(소셜 가입과 같은 방식).
+        // [JA] 誰も知らない値 — null にしておくと BCrypt の matches が例外を投げる曖昧な状態になる(ソーシャル登録と同じ方式)。
         user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
         user.setPasswordChangedAt(LocalDateTime.now());
         user.setEmailVerified(true);
@@ -105,6 +109,7 @@ public class SocialAccountLinker {
             verificationTokenRepository.delete(pending);
         }
         // 그 비밀번호로 열려 있던 로그인 · 채팅 · 알림 연결을 모두 닫는다. 이 소셜 로그인의 새 로그인은 이 뒤에 발급된다(OAuth2SuccessHandler).
+        // [JA] そのパスワードで開いていたログイン・チャット・通知の接続をすべて閉じる。このソーシャルログインの新しいログインはこの後に発行される(OAuth2SuccessHandler)。
         int revoked = refreshTokenService.revokeAll(userId);
         securityAlertProducer.publishAccountEvent(userId, user.getEmail(),
                 SecurityAlertProducer.ALERT_UNPROVEN_PASSWORD_CLEARED, provider);
@@ -113,12 +118,14 @@ public class SocialAccountLinker {
     }
 
     /** @return 이 프로바이더가 이 계정에 처음 연결됐으면 true */
+    // [JA] @return このプロバイダーがこのアカウントに初めて連携されたら true
     private boolean rememberLinked(Long userId, String provider) {
         try {
             Long added = redis.opsForSet().add(LINKED_KEY + userId, provider);
             return added != null && added > 0;
         } catch (RuntimeException e) {
             // Redis 가 안 되면 알림만 빠진다 — 로그인을 막을 이유는 아니다.
+            // [JA] Redis が使えなければ通知だけが抜ける — ログインを止める理由ではない。
             log.warn("소셜 연결 기록 실패: userId={} ({})", userId, e.getClass().getSimpleName());
             return false;
         }

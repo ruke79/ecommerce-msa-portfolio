@@ -38,6 +38,16 @@ import com.project.userservice.service.UserService;
  * <p>그래서 애노테이션을 문자열로 검사하지 않고 <b>스프링 이벤트 인프라를 실제로 태운다</b>.
  * 트랜잭션 매니저를 두지 않았으므로 발행 시점에 트랜잭션이 없고, 그게 운영에서의 조건과 같다.
  * {@code @Async} 는 이 컨텍스트에 {@code @EnableAsync} 가 없어 동기로 실행된다.
+ *
+ * <p>[JA] 登録確認メールの要求が<b>実際に発行されるか</b>を Spring のイベント基盤の上で確認する。
+ * このテストがある理由は一つである。{@code @TransactionalEventListener} は発行時点でアクティブなトランザクションがないと
+ * リスナーを<b>黙ってスキップする</b>。コントローラーはトランザクションの外で発行するので、
+ * {@code fallbackExecution = true} が抜けた瞬間に登録確認メールがまた一通も出なくなる。
+ * しかもその失敗は<b>何のログも残さない</b> — リスナーが実行されないので成功も失敗も記録されない。
+ * 実際のデプロイで {@code outgoing-mail} のオフセット 0 から見つけたバグである(docs/38 §1.4)。
+ * そこでアノテーションを文字列で検査せず、<b>Spring のイベント基盤を実際に通す</b>。
+ * トランザクションマネージャーを置いていないので発行時点にトランザクションがなく、それが運用での条件と同じである。
+ * {@code @Async} はこのコンテキストに {@code @EnableAsync} がないので同期で実行される。
  */
 @SpringJUnitConfig(RegistrationListenerDeliveryTest.Config.class)
 @TestPropertySource(properties = "app.public-url=https://shop.example.com/")
@@ -79,6 +89,9 @@ class RegistrationListenerDeliveryTest {
     /**
      * 스프링 테스트 컨텍스트는 <b>테스트 메서드 사이에 캐시된다.</b> 같은 목 인스턴스가 재사용되므로
      * 호출 기록이 누적되고, 두 번째 테스트의 {@code verify} 가 "2번 호출됨"으로 깨진다.
+     *
+     * <p>[JA] Spring のテストコンテキストは<b>テストメソッド間でキャッシュされる。</b>同じモックインスタンスが再利用されるので
+     * 呼び出し記録が累積し、2 番目のテストの {@code verify} が「2 回呼ばれた」で壊れる。
      */
     @BeforeEach
     void resetMocks() {
@@ -113,6 +126,7 @@ class RegistrationListenerDeliveryTest {
         publisher.publishEvent(new OnRegistrationCompleteEvent(newUser(), Locale.KOREAN, "https://ignored"));
 
         // 토큰이 없으면 링크를 눌러도 활성화되지 않는다 — 발행보다 먼저 만들어져야 한다.
+        // [JA] トークンがなければリンクを押しても有効化されない — 発行より先に作られていなければならない。
         verify(userService).createVerificationTokenForUser(any(User.class), any(String.class));
 
         ArgumentCaptor<OutgoingMailRequest> sent = ArgumentCaptor.forClass(OutgoingMailRequest.class);
@@ -120,6 +134,7 @@ class RegistrationListenerDeliveryTest {
 
         String url = sent.getValue().getParams().get("confirmationUrl");
         // 설정값 끝의 슬래시가 중복되면 안 된다. 이벤트의 appUrl 은 쓰이지 않는다.
+        // [JA] 設定値末尾のスラッシュが重複してはならない。イベントの appUrl は使われない。
         assertThat(url).startsWith("https://shop.example.com/user-service/registrationConfirm?token=");
         assertThat(url).doesNotContain("ignored").doesNotContain("//user-service");
     }

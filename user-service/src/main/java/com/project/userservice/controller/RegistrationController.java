@@ -80,11 +80,26 @@ public class RegistrationController {
      * <p>이미 인증된 계정으로 다시 들어와도 성공으로 처리한다(멱등). 사용자가 링크를 두 번
      * 누르거나 메일 클라이언트가 미리 열어 보는 일은 흔한데, 그때 오류를 띄우면 멀쩡히
      * 가입한 사람이 실패한 줄 안다.
+     *
+     * <p>[JA] メールの確認リンクが届く先。
+     * 🐛 <b>以前は確認に失敗するとアカウントを削除していた。</b>{@code userService.deleteUser(...)} が失敗経路にそのままあった。問題は幾重にもあった:
+     * トークンの有効期限が 3 分だったので(VerificationToken 参照)<b>ほとんどのユーザーが</b>リンクを押した時点で既に期限切れで、
+     * その結果<b>登録したアカウントが削除された。</b>ユーザーは最初から登録し直さなければならなかった。
+     * 失敗時 {@code validateAndGetUser} は user の位置に {@code null} を入れていたので {@code deleteUser(null)} が呼ばれた。
+     * その中でパスワード再設定トークンを {@code orElseThrow} で取り出そうとして例外になり<b>500 で終わった</b>。アカウントが消えなかったのは
+     * ひとえにその二つ目のバグのおかげだった。
+     * メールスキャナやブラウザのプリフェッチがリンクを代わりに開いても同じ経路を通った。
+     * 確認失敗はアカウントを消す理由にならない。アカウントは<b>未認証のまま残し</b>再送を案内する。
+     * 未認証アカウントの整理が必要なら別のバッチの仕事だ。
+     * 既に認証済みのアカウントで再び来ても成功として扱う(冪等)。ユーザーがリンクを二回押したりメールクライアントが
+     * 先に開いたりするのはよくあることで、そのときエラーを出すとまともに登録した人が失敗したと思い込む。
      */
     // 메일 링크는 {공개 주소}/user-service/registrationConfirm — 게이트웨이(user-service-public)가 /user-service 를 떼어 /registrationConfirm
     // 으로 보낸다. 🐛 예전에는 /user-service/registrationConfirm 만 받아, 게이트웨이를 지난 요청은 맞는 핸들러가 없었다(게이트웨이도
     // 그 경로를 404 로 막고 있었다 — RouteMatchingTest). 옛 경로도 남긴다(클러스터 안에서 직접 부르는 경우).
-    // [JA] メールのリンクはゲートウェイが /user-service を外して /registrationConfirm で届く。以前は旧経路しか受けなかった。
+    // [JA] メールのリンクは {公開アドレス}/user-service/registrationConfirm — ゲートウェイ(user-service-public)が /user-service を外して /registrationConfirm
+    //      へ送る。以前は /user-service/registrationConfirm しか受けず、ゲートウェイを通ったリクエストには合うハンドラーがなかった(ゲートウェイも
+    //      その経路を 404 で塞いでいた — RouteMatchingTest)。旧経路も残す(クラスタ内から直接呼ぶ場合)。
     @GetMapping({"/registrationConfirm", "/user-service/registrationConfirm"})
     public ModelAndView confirmRegistration(final HttpServletRequest request, final ModelMap model, @RequestParam("token") final String token) throws JsonProcessingException {
 
@@ -98,9 +113,11 @@ public class RegistrationController {
         }
 
         // ⚠️ 토큰 값은 로그에 남기지 않는다 — 계정을 활성화할 수 있는 자격증명이다.
+        // [JA] ⚠️ トークンの値はログに残さない — アカウントを有効化できる資格情報だ。
         log.warn("Account verification failed: status={}", result.getStatus());
 
         // 계정은 그대로 둔다. 프론트가 재발송 화면을 띄울 수 있도록 상태만 넘긴다.
+        // [JA] アカウントはそのまま残す。フロントが再送画面を出せるよう状態だけを渡す。
         String reason = "expired".equals(result.getStatus()) ? "expired" : "invalid";
         return new ModelAndView(
                 "redirect:" + frontendUrl + "/verification-failed?reason=" + reason, model);
@@ -109,6 +126,7 @@ public class RegistrationController {
         // final User user = userService.getUser(token);
 
         // log.info("User object class: {}", user.getClass().getName()); //proxy class 확인용 로그
+        // [JA] proxy クラス確認用ログ
 
         // log.info("Before accessing user's email");
         // String email = user.getEmail();
@@ -121,6 +139,7 @@ public class RegistrationController {
         //     // 성공 시 프론트엔드 URL로 직접 리다이렉션
         //     return new ModelAndView("redirect:" + frontendUrl + "/signin", model);
         // }
+        // [JA] 成功時はフロントエンド URL へ直接リダイレクト
 
         // userService.deleteUser(user);
         // log.warn("Account verification failed for token: {}", token);
@@ -130,6 +149,7 @@ public class RegistrationController {
         // model.addAttribute("expired", "expired".equals(result));
         // model.addAttribute("token", token);
         // return new ModelAndView("redirect:" + frontendUrl + "/verification-failed", model);
+        // [JA] 失敗時はフロントエンドの別 URL にリダイレクトするか、失敗メッセージを含める
 
 
 
@@ -140,6 +160,9 @@ public class RegistrationController {
     // 프론트엔드에서 리다이렉션 처리    
     // @GetMapping("/registrationConfirm")
     // public ResponseEntity<Map<String, String>> confirmRegistration(final HttpServletRequest request, final ModelMap model, @RequestParam("token") final String token)  throws JsonProcessingException {
+    // [JA] REST API 版(フロントエンドとの通信用)
+    //      フロントエンドがこのエンドポイントを呼び、JSON 応答を受け取るよう実装
+    //      フロントエンドでリダイレクトを処理
 
     //     //Locale locale = request.getLocale();
     //     //model.addAttribute("lang", locale.getLanguage());
@@ -158,6 +181,7 @@ public class RegistrationController {
     //         response.put("redirectUrl", frontendUrl + "/signin");
     //         return ResponseEntity.ok(response);
     //     }
+    // [JA] 成功応答を返す: クライアントに成功メッセージとリダイレクト URL を渡す
 
     //     userService.deleteUser(user);
     //     log.warn("Account verification failed for token: {}", token);
@@ -166,6 +190,7 @@ public class RegistrationController {
     //     response.put("status", "failure");
     //     response.put("message", "auth.message." + result);
     //     return ResponseEntity.badRequest().body(response);
+    // [JA] 失敗応答を返す: クライアントに失敗メッセージを渡す
     
     // }      
     

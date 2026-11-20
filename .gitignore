@@ -1,4 +1,5 @@
 # common 모듈의 resources 폴더에 있는 보안 파일 제외
+# [JA] common モジュールの resources フォルダにあるセキュリティファイルを除外
 common/src/main/resources/kafka-secrets.properties
 common/src/main/resources/certs/
 
@@ -12,9 +13,18 @@ common/src/main/resources/certs/
 #
 #    `20-secret.yaml*` 은 `20-secret.example.yaml`(커밋되어야 하는 템플릿)을 잡지 않는다 —
 #    접두사가 `20-secret.yaml` 이어야 걸리기 때문이다.
+# [JA] k3s デプロイ用の実際の Secret 値(k8s/20-secret.example.yaml をコピーして作るファイル)
+#      ⚠️ 接尾辞まで塞ぐ。以前の規則は正確に `k8s/20-secret.yaml` 1 つだけを塞いでいたため、
+#         エディタが残した `20-secret.yaml.save`(nano)・`.bak`・`~` が **無視も追跡もされない
+#         状態** で作業ツリーに浮いていた。`git add -A` 一回で JWT 署名鍵・DB パスワード・
+#         AWS キー・PayPal シークレット・SMTP パスワードが公開リポジトリに行く。
+#         実際に運用インスタンスの `git status` で `?? k8s/20-secret.yaml.save` として見つけた。
+#         `20-secret.yaml*` は `20-secret.example.yaml`(コミットすべきテンプレート)を捕まえない —
+#         接頭辞が `20-secret.yaml` でなければかからないからである。
 k8s/20-secret.yaml*
 
 # 편집기 백업본. 원본이 무엇이든 커밋할 이유가 없고, 비밀 파일의 사본일 때가 가장 위험하다.
+# [JA] エディタのバックアップ。元が何であれコミットする理由はなく、シークレットファイルのコピーのときが最も危険。
 *.save
 *.bak
 
@@ -30,6 +40,7 @@ payment-outbox-connector.json
 build/
 
 # QueryDSL 등 annotation processor가 생성하는 소스 (컴파일 산출물)
+# [JA] QueryDSL などの annotation processor が生成するソース(コンパイル成果物)
 **/src/main/generated/
 
 bin/
@@ -81,6 +92,7 @@ chat-service/gradle/wrapper/gradle-wrapper.jar
 .idea/vcs.xml
 
 # 인증서 발급 산출물 (ops/07-issue-certificates.sh) — 개인키 포함, 절대 커밋 금지
+# [JA] 証明書発行の成果物(ops/07-issue-certificates.sh) — 秘密鍵を含む、絶対にコミット禁止
 certs/
 *.p12
 *.jks
@@ -88,9 +100,11 @@ certs/
 certs.env
 
 # 스테이징 리허설 런타임 (ops/12) — 로그·PID·PG용 키 사본
+# [JA] ステージングリハーサルのランタイム(ops/12) — ログ・PID・PG 用の鍵のコピー
 .staging/
 
 # Alertmanager 웹훅 URL — 값 자체가 인증 수단이라 커밋 금지 (docs/22)
+# [JA] Alertmanager の Webhook URL — 値そのものが認証手段なのでコミット禁止(docs/22)
 observability/secrets/
 
 # 로컬 전용 오버레이 — **패치 파일만** 제외한다.
@@ -107,18 +121,34 @@ observability/secrets/
 # 반대로 패치 파일에는 환경 고유값이 들어간다 — 특히 patch-mail.yaml 의 MAIL_FROM 은
 # 실제 개인 메일 주소다(자격증명은 아니지만 공개 저장소에 올릴 값은 아니다).
 # 그 둘만 제외한다. 템플릿은 k8s-overlays/local.example/ 에 있다 (docs/33 §8).
+# [JA] ローカル専用オーバーレイ — **パッチファイルだけ** 除外する。
+#      以前は `k8s-overlays/local/` を丸ごと除外していた。しかしその中の
+#      kustomization.yaml は環境固有値ではなく **ベースに追従すべき一覧** である:
+#      images の列挙、replicas、パッチ対象の正規表現。除外するとガードレール B-39 がそのファイルを
+#      見られず(`k8s-overlays/*/kustomization.yaml` を巡回する)、新しいサービスを足すときに
+#      このオーバーレイだけが静かに取り残される。
+#      実際に 2 回噛まれた: saga-projection のとき images の漏れで REPLACE_ME_OWNER がそのまま
+#      残って InvalidImageName、content-service のときもう一度。どちらも「口頭での伝達」に頼っていた。
+#      逆にパッチファイルには環境固有値が入る — 特に patch-mail.yaml の MAIL_FROM は
+#      実際の個人メールアドレスである(資格情報ではないが公開リポジトリに上げる値ではない)。
+#      その 2 つだけ除外する。テンプレートは k8s-overlays/local.example/ にある(docs/33 §8)。
 k8s-overlays/local/patch-*.yaml
 
 # ops/28-deploy.sh 가 배포할 때마다 새로 쓰는 임시 오버레이(태그 주입용).
 # 커밋된 오버레이를 고치지 않기 위해 존재한다 — 산출물이지 소스가 아니다 (docs/36 §3).
+# [JA] ops/28-deploy.sh がデプロイのたびに新しく書く一時オーバーレイ(タグ注入用)。
+#      コミットされたオーバーレイを直さないために存在する — 成果物でありソースではない(docs/36 §3)。
 .deploy/
 
 # 프론트 빌드 값(환경마다 다르다) — ops/frontend.env.example 참조
+# [JA] フロントのビルド値(環境ごとに異なる) — ops/frontend.env.example 参照
 ops/frontend.env
 
 # Python 캐시 — ops/tools 의 스크립트를 import 하면 생긴다(2026-10-09 커밋에 딸려 들어갔던 것)
+# [JA] Python キャッシュ — ops/tools のスクリプトを import すると生じる(2026-10-09 のコミットに紛れ込んでいたもの)
 __pycache__/
 *.pyc
 
 # 부하 시험 결과(ops/14 · ops/53) — 그때의 이미지 판 · 노드 이름이 들어 있다, 커밋하지 않는다
+# [JA] 負荷試験の結果(ops/14 · ops/53) — その時のイメージ版・ノード名が入っている、コミットしない
 load-results/

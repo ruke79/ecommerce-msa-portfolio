@@ -4,6 +4,11 @@
 # ⚠️ readiness 프로브(/actuator/health/readiness)는 readinessState 그룹만 보므로 파드는
 #    정상으로 뜬다 — 즉 **파드는 멀쩡한데 헬스만 빨간** 헷갈리는 상태가 된다.
 #    ops/06 스모크도 여기서 경고를 낸다.
+# [JA] Elasticsearch を起動しないのでヘルスインジケータを切る。
+#      切らないと catalog-service の総合ヘルス(/actuator/health)がずっと DOWN に見える。
+#      ⚠️ readiness プローブ(/actuator/health/readiness)は readinessState グループだけを見るのでポッドは
+#         正常に起動する — つまり**ポッドは無事なのにヘルスだけ赤い**紛らわしい状態になる。
+#         ops/06 のスモークもここで警告を出す。
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,4 +22,8 @@ data:
   # 이 박스의 실효 동시성(2 OCPU / 12서비스)에는 50이면 충분하고도 남는다.
   # -Xss 로 스택 크기를 줄이는 것보다 안전하다 — 개수를 줄이는 것은 부작용이 없다.
   # (gateway-server 는 WebFlux 라 이 값을 읽지 않는다. 무해하다.)
+  # [JA] Tomcat ワーカースレッド。デフォルトの 200 個はスタックだけでサービスあたり 200MB 近くを確保する。
+  #      この箱の実効並行度(2 OCPU / 12 サービス)には 50 で十分すぎる。
+  #      -Xss でスタックサイズを減らすより安全である — 個数を減らすのは副作用がない。
+  #      (gateway-server は WebFlux なのでこの値を読まない。無害である。)
   SERVER_TOMCAT_THREADS_MAX: "50"

@@ -42,6 +42,7 @@ class ServiceObjectMapperTest {
             .withUserConfiguration(RedisConfig.class);
 
     /** 입금 기한(LocalDateTime) · 시각(Instant)이 ISO 문자열이고, 모르는 필드가 있는 요청 본문을 읽는다. */
+    // [JA] 入金期限(LocalDateTime)· 時刻(Instant)が ISO 文字列で、未知のフィールドのあるリクエスト本文を読む。
     private static void assertServiceDefaults(ObjectMapper m) throws Exception {
         JsonNode order = m.valueToTree(OrderDto.builder().depositDeadline(DEADLINE).stockHoldUntil(DEADLINE).build());
         assertThat(order.get("depositDeadline").isTextual()).as("배열이면 화면이 \"2026,9,21,10,0\" 을 보인다: %s",
@@ -61,7 +62,7 @@ class ServiceObjectMapperTest {
     @DisplayName("🔴 HTTP 변환기가 받는 매퍼(= 주입되는 ObjectMapper)가 ISO 날짜를 쓰고 모르는 필드를 무시한다")
     void httpConverterUsesServiceDefaults() {
         runner.run(ctx -> {
-            ObjectMapper injected = ctx.getBean(ObjectMapper.class);   // 둘(objectMapper · cacheObjectMapper) 중 모호하지 않다
+            ObjectMapper injected = ctx.getBean(ObjectMapper.class);   // 둘(objectMapper · cacheObjectMapper) 중 모호하지 않다 ／ [JA] 2 つ(objectMapper · cacheObjectMapper)のうちで曖昧ではない
             assertThat(injected).isSameAs(ctx.getBean("objectMapper"));
             assertThat(injected).isNotSameAs(ctx.getBean("cacheObjectMapper"));
 

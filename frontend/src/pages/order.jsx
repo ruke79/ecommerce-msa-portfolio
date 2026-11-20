@@ -35,11 +35,17 @@ const OrderPage = () => {
     // 결제 확인 뒤 주문이 확정(PAID)될 때까지 다시 읽는다. 확인 응답과 주문 상태 변경은
     // 다른 시점이다(사가) — 그 사이를 화면이 "완료" 라고 말하면 결제 상태 X 와 나란히
     // 놓여 모순으로 보인다. useOrderSettling 주석.
+    // [JA] 決済確認後、注文が確定(PAID)するまで読み直す。確認応答と注文状態の変更は
+    //      別の時点である(サガ)— その間に画面が「完了」と言うと決済状態 X と並んで
+    //      置かれ矛盾に見える。useOrderSettling のコメント。
     const reduxDispatch = useDispatch();
     const { settling, timedOut, start: startSettling } = useOrderSettling(orderData, refetchOrder, {
         // 🐛 Stripe 로 결제하면 장바구니가 화면에 그대로 남았다. 서버 사본은 사가가 비우지만
         //    (publishCartEmptyState) 브라우저의 redux 사본(redux-persist, localStorage)은 PayPal
         //    경로만 비우고 있었다. 확정된 순간 — 결제수단과 무관하게 — 여기서 비운다.
+        // [JA] 🐛 Stripe で決済するとカートが画面にそのまま残っていた。サーバーのコピーはサガが空にするが
+        //      (publishCartEmptyState)ブラウザの redux のコピー(redux-persist、localStorage)は PayPal
+        //      経路でだけ空にしていた。確定した瞬間 — 決済手段に関係なく — ここで空にする。
         onSettled: (settled) => {
             if (settled?.orderStatus !== "NOT_PROCESSED" && settled?.orderStatus !== "CANCELED") {
                 reduxDispatch(emptyCart());
@@ -52,6 +58,11 @@ const OrderPage = () => {
     //    그 흐름이 없다. 서버 사본은 사가가 비웠는데 브라우저 사본(redux-persist)만 남는다.
     //    결제된 주문을 볼 때, 장바구니가 체크아웃 뒤 손대지 않은 그대로(COMMITED)이고 담긴 것이 전부 이 주문에 있으면 비운다
     //    — 옛 주문을 보다가 지금 체크아웃 중인 새 장바구니를 지우지 않게 내용까지 대조한다.
+    // [JA] 🐛 決済は済んだのにカートが画面に残った — 上の onSettled は決済手段から**戻ってくる流れ**(確認 → 確定待ち)が回るときだけ
+    //      空にする。決済ページで接続が切れて戻れず(Stripe「インターネット接続が不安定です」)注文画面を直接開くと
+    //      その流れがない。サーバーのコピーはサガが空にしたのに、ブラウザのコピー(redux-persist)だけが残る。
+    //      決済済みの注文を見るとき、カートがチェックアウト後に手付かずのまま(COMMITED)で入っているものがすべてこの注文にあれば空にする
+    //      — 古い注文を見ていて今チェックアウト中の新しいカートを消さないよう、内容まで照合する。
     const cart = useSelector((state) => state.cart);
     useEffect(() => {
         if (orderData && isPaid(orderData.orderStatus) && cart?.status === CartStatus.COMMITED
@@ -63,6 +74,9 @@ const OrderPage = () => {
     // 🐛 배송을 취소해도 주문은 DISPATCHED 그대로였고, "배송이 시작된 주문은 환불할 수 없습니다"
     //    가 그대로 떠 있었다. 서버는 이제 취소를 받으면 주문을 PAID 로 되돌리는데, 그것도
     //    Kafka 왕복 뒤라 화면은 다시 읽어야 안다 — 결제 확정을 기다리던 것과 같은 모양이다.
+    // [JA] 🐛 配送をキャンセルしても注文は DISPATCHED のままで、「配送が始まった注文は返金できません」
+    //      がそのまま出ていた。サーバーは今キャンセルを受けると注文を PAID に戻すが、それも
+    //      Kafka の往復の後なので画面は読み直さないと分からない — 決済確定を待っていたのと同じ形である。
     const { start: startCancelSettling } = useOrderSettling(orderData, refetchOrder, {
         until: (s) => s !== "PROCESSING" && s !== "DISPATCHED",
     });
@@ -71,19 +85,25 @@ const OrderPage = () => {
     //    새로고침해야 바뀌었다. 주문은 react-query 가 들고 있고 아무도 다시 읽으라고 하지
     //    않았다. 배송 상태가 바뀐 것을 보면 주문이 그 단계를 따라잡을 때까지 다시 읽는다 —
     //    주문 상태는 같은 이벤트를 Kafka 로 받아 바뀌므로 몇 초 늦는다.
+    // [JA] 🐛 送り状が登録されると配送追跡(ポーリング)は「発送されました」に変わるのに、進行バー・返金案内は
+    //      再読み込みしないと変わらなかった。注文は react-query が持っていて、誰も読み直せと言って
+    //      いなかった。配送状態が変わったのを見たら、注文がその段階に追いつくまで読み直す —
+    //      注文状態は同じイベントを Kafka で受けて変わるので数秒遅れる。
     const expectedRank = useRef(0);
     const { start: startFollowDelivery } = useOrderSettling(orderData, refetchOrder, {
         until: (s) => orderRank(s) >= expectedRank.current,
     });
     const onDeliveryStatusChange = (delivery) => {
         const rank = rankForDeliveryStage(delivery?.stage);
-        if (rank == null) return;              // 취소·반송은 여기 규칙이 아니다(onCancelled)
+        if (rank == null) return;              // 취소·반송은 여기 규칙이 아니다(onCancelled) ／ [JA] キャンセル・返送はここの規則ではない(onCancelled)
         expectedRank.current = rank;
         startFollowDelivery();
     };
 
     // 결제 컴포넌트가 "결제됐다" 고 알리면 확정을 기다리고, 그 밖의 변화는 다시 읽는다.
     // (예전에는 여기 useState 가 있었고 아무도 읽지 않았다.)
+    // [JA] 決済コンポーネントが「決済された」と知らせたら確定を待ち、それ以外の変化は読み直す。
+    //      (以前はここに useState があり、誰も読んでいなかった。)
     const onOrderChanged = (next) => {
         if (next?.orderStatus === "PAID") startSettling();
         else refetchOrder();
@@ -105,6 +125,7 @@ const OrderPage = () => {
                 <section className="col-span-2 bg-white p-2 md:p-5 rounded-xl border">
                     <OrderProgress order={orderData} settling={settling} timedOut={timedOut} />
                     {/* 상태 변경 이력 — 읽기 모델(saga-projection, docs/76). 주문 상태가 바뀌면 다시 읽는다. */}
+                    {/* [JA] 状態変更の履歴 — 読み取りモデル(saga-projection、docs/76)。注文状態が変わると読み直す。 */}
                     <OrderTimeline orderId={orderData.id ?? orderId} orderStatus={orderData.orderStatus} />
                     <OrderInfo order={orderData} />
 
@@ -121,26 +142,33 @@ const OrderPage = () => {
                         (StripeReturn 주석). 🐛 여기가 window.location.reload() 였다 — 주소의
                         ?stripe=success&session_id=… 가 남은 채 다시 떠서 확인 → 완료 →
                         새로고침이 무한히 반복됐다. 주문만 다시 읽는다. */}
+                    {/* [JA] Stripe 決済後に戻ってきた場合。Webhook と重なってもサーバーへの反映は冪等である(StripeReturn のコメント)。🐛 ここが window.location.reload() だった — アドレスの ?stripe=success&session_id=… が残ったまま再表示され、確認 → 完了 → 再読み込みが無限に繰り返された。注文だけを読み直す。 */}
                     <StripeReturn order={orderData} onPaid={startSettling} />
                     {/* 포트원 V2 결제창이 리디렉션으로 끝나 돌아온 경우(모바일 등 — KG이니시스). 결제 id 하나로 확인하고,
                         결제됐으면 확정을 기다린다 · 가상계좌 발급이면 주문만 다시 읽는다(PortOneReturn 주석). */}
+                    {/* [JA] ポートワン V2 の決済画面がリダイレクトで終わって戻ってきた場合(モバイル等 — KG イニシス)。決済 id 一つで確認し、決済されていれば確定を待つ · バーチャル口座発行なら注文だけを読み直す(PortOneReturn のコメント)。 */}
                     <PortOneReturn order={orderData} onConfirmed={onOrderChanged} />
                     { (orderData.orderStatus === "NOT_PROCESSED" || orderData.orderStatus === "UNPAID" ) && !settling
                     && (<Payment order={orderData} setOrder={onOrderChanged} setLoading={setLoading} profile={false} />)}
 
                     {/* 결제된 주문의 환불. 상태에 따라 버튼·안내·완료 중 하나를 스스로 고른다. */}
+                    {/* [JA] 決済済み注文の返金。状態に応じてボタン・案内・完了のいずれかを自分で選ぶ。 */}
                     {/* 환불 뒤에는 주문만 다시 읽는다. 장바구니는 건드리지 않는다 — 환불은 물건을
                         다시 담아 주는 것이 아니다. */}
+                    {/* [JA] 返金後は注文だけを読み直す。カートには触らない — 返金は品物を再びカートに入れてくれるものではない。 */}
                     <RefundButton order={orderData} onRefunded={() => refetchOrder()} />
 
                     {/* 배달 완료된 주문의 구매 확정 — 주문의 마지막 단계(docs/25 §12). 확정된
                         주문에는 시각을, 자동 확정이면 그렇다고 보여 준다. 상태는 컴포넌트가 고른다. */}
+                    {/* [JA] 配達完了した注文の購入確定 — 注文の最後の段階(docs/25 §12)。確定した注文には時刻を、自動確定ならその旨を見せる。状態はコンポーネントが選ぶ。 */}
                     <ConfirmPurchaseButton order={orderData} onConfirmed={() => refetchOrder()} />
 
                     {/* 결제가 끝난 주문에는 배송 추적을 보여 준다. 결제 직후에는 아직
                         delivery 가 없을 수 있는데, 그건 오류가 아니라 "배송 준비 중"이고
                         DeliveryTracker 가 그 상태를 스스로 처리한다. */}
+                    {/* [JA] 決済が終わった注文には配送追跡を見せる。決済直後にはまだ delivery がないことがあるが、それはエラーではなく「配送準備中」であり、DeliveryTracker がその状態を自分で処理する。 */}
                     {/* 🐛 환불·취소된 주문에도 "배송 준비 중" 이 떠 있었다 — 배송할 것이 없다. */}
+                    {/* [JA] 🐛 返金・キャンセルされた注文にも「配送準備中」が出ていた — 配送するものがない。 */}
                     {orderData.orderStatus !== "NOT_PROCESSED"
                         && orderData.orderStatus !== "UNPAID"
                         && !isCanceled(orderData.orderStatus) && !isRefunded(orderData.orderStatus) && (

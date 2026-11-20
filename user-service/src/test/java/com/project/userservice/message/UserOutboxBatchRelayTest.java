@@ -67,6 +67,7 @@ class UserOutboxBatchRelayTest {
         List<OutboxEvent> batch = updates(n);
         when(repository.claimPending(any(Integer.class))).thenReturn(batch);
         // 브로커 흉내: 묶음의 마지막 건이 보내질 때 비로소 모든 ack 가 온다 — 한 건씩 기다리면 첫 건에서 기한을 넘긴다
+        // [JA] ブローカーの模倣: まとまりの最後の一件が送られたとき初めてすべての ack が来る — 一件ずつ待つと最初の一件で期限を越える
         List<CompletableFuture<Object>> acks = new ArrayList<>();
         doAnswer(inv -> {
             CompletableFuture<Object> f = new CompletableFuture<>();
@@ -113,6 +114,7 @@ class UserOutboxBatchRelayTest {
                 signupAckedBeforeUpdate.set(signupAck.isDone());
             } else {
                 // 가입의 ack 는 다른 사용자를 보낸 뒤 200ms 에 온다 — 같은 사용자의 변경은 그것을 기다려야 한다
+                // [JA] 登録の ack は他のユーザーを送った後 200ms で来る — 同じユーザーの変更はそれを待たなければならない
                 otherSentBeforeSignupAck.set(!signupAck.isDone());
                 CompletableFuture.delayedExecutor(200, TimeUnit.MILLISECONDS).execute(() -> signupAck.complete(null));
             }

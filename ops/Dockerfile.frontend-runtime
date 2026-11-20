@@ -9,18 +9,31 @@
 # ⚠️ REACT_APP_* 값은 **번들에 박히므로** dist 를 만들 때 이미 결정돼 있어야 한다.
 #    이 이미지에서 런타임 환경변수로 바꿀 수 없다(ops/19-build-images.sh 가 빌드 전에 넣는다).
 #    GATEWAY_URL 만 예외로, nginx 템플릿이 기동 시 치환한다.
+# [JA] フロントエンドのランタイムイメージ(マルチアーキテクチャ)。
+#      frontend/Dockerfile はビルダーステージで `npm ci && npm run build` を回す。それを別アーキテクチャで
+#      ビルドすると **Node ツールチェーン全体が QEMU 上で** 動き数倍遅くなる。
+#      webpack が出す成果物(dist/)は静的ファイルでアーキテクチャに依存しない。そこでここでは
+#      ビルド済みの dist を nginx で包むだけにする — ops/Dockerfile.runtime と同じ理由だ。
+#      ⚠️ REACT_APP_* の値は **バンドルに埋め込まれる** ので dist を作る時点で決まっていなければならない。
+#         このイメージでランタイム環境変数として変えることはできない(ops/19-build-images.sh がビルド前に入れる)。
+#         GATEWAY_URL だけは例外で、nginx テンプレートが起動時に置換する。
 
 FROM nginx:1.30.7-alpine@sha256:bef154735288bc38d99fac41ae63730684bcc661503673a04a0f9bc526ba8598
 
 # 빌드 컨텍스트는 frontend/ 다. dist/ 는 미리 만들어져 있어야 한다.
+# [JA] ビルドコンテキストは frontend/ だ。dist/ はあらかじめ作っておく必要がある。
 COPY dist /usr/share/nginx/html
 
 # nginx.conf 를 **템플릿**으로 넣는다. 공식 엔트리포인트가 기동 시 envsubst 로 치환한다.
 # conf.d 로 바로 넣으면 ${GATEWAY_URL} 이 그대로 남아 nginx 가 기동에 실패한다.
+# [JA] nginx.conf を **テンプレート** として入れる。公式エントリポイントが起動時に envsubst で置換する。
+#      conf.d に直接入れると ${GATEWAY_URL} がそのまま残り nginx の起動に失敗する。
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 # ⚠️ 치환 대상을 제한한다. 필터가 없으면 envsubst 가 $host, $remote_addr 같은
 #    nginx 자체 변수까지 빈 문자열로 치환해 프록시가 통째로 망가진다.
+# [JA] ⚠️ 置換対象を制限する。フィルタがないと envsubst が $host, $remote_addr のような
+#         nginx 自体の変数まで空文字列に置換し、プロキシが丸ごと壊れる。
 ENV NGINX_ENVSUBST_FILTER="^(GATEWAY_URL)$"
 ENV GATEWAY_URL="http://gateway-server.ecommerce.svc.cluster.local:8000"
 
@@ -39,6 +52,13 @@ ENV GATEWAY_URL="http://gateway-server.ecommerce.svc.cluster.local:8000"
 #
 # 1000 은 Dockerfile.runtime 과 맞춘 값이다. adduser 에 -u 를 주지 않으면 Alpine 이
 # 시스템 UID 를 임의로 배정해 이미지마다 달라진다.
+# [JA] ⚠️ UID を **数値で固定** し、USER も数値で与える。
+#      マニフェストが `securityContext.runAsNonRoot: true` をかけているが、kubelet はイメージの USER が
+#      **数値のときだけ** root かどうかを判定できる。名前(`USER spring`)だと判定自体ができず、コンテナを作る前に拒否する
+#      (CreateContainerConfigError — container has runAsNonRoot and image has non-numeric user …)。
+#      ログがなく(コンテナが作られていない)原因を探しにくい。実際にこの状態でデプロイされ frontend だけが起動できなかった
+#      — Java イメージは `USER 1000` なので無事だった(Dockerfile.runtime)。
+#      1000 は Dockerfile.runtime と合わせた値だ。adduser に -u を与えないと Alpine がシステム UID を任意に割り当て、イメージごとに変わる。
 RUN addgroup -g 1000 -S spring && adduser -u 1000 -S spring -G spring \
     && chown -R spring:spring /usr/share/nginx/html /var/cache/nginx /var/log/nginx /etc/nginx/conf.d /etc/nginx/templates \
     && touch /var/run/nginx.pid && chown spring:spring /var/run/nginx.pid

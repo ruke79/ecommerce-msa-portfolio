@@ -25,6 +25,14 @@ import lombok.extern.slf4j.Slf4j;
  * <p>{@code @EnableScheduling} 은 {@code message.config.SchedulerConfig} 에 이미 있다.
  * 없으면 {@code @Scheduled} 는 <b>아무 오류 없이 그냥 실행되지 않는다</b> — 새 배치를
  * 추가하는 서비스에서 가장 먼저 확인할 것이다.
+ *
+ * <p>[JA] 等級バッチをいつ回すか。
+ * <p><b>なぜ別クラスか。</b> @Scheduled メソッドがバッチ本体と同じ Bean にあると、テストでバッチを呼ぼうとした途端スケジューラまで付いてくる。
+ * もっと重要な理由は catalog-service の EventScheduler で経験したのと同じ — スケジューラとトランザクション境界を一つの Bean に置くと自己呼び出しでプロキシが飛ばされる。
+ * 時刻を決める側と仕事をする側を分けておけばその誤りをする余地がない。
+ * <p><b>なぜ明け方か。</b> 等級バッチは全顧客をなめる重い検索である。注文が最も少ない時間に回す。UTC 19:10 = 韓国時間 4 時 10 分。
+ * <b>正時を避けた理由:</b> 他のバッチ(退会処理など)と重なると DB 負荷が一点に集まる。10 分ずつずらしておく。
+ * <p>@EnableScheduling は message.config.SchedulerConfig に既にある。なければ @Scheduled は<b>何のエラーもなく単に実行されない</b> — 新しいバッチを足すサービスで最初に確認すること。
  */
 @Slf4j
 @Component
@@ -35,11 +43,15 @@ public class CustomerTierScheduler {
     private final SchedulerLease lease;
 
     /** 임대 이름(V17 users.scheduler_lock). */
+    // [JA] リース名(V17 users.scheduler_lock)。
     static final String LEASE = "customer-tier";
 
     /**
      * 임대 길이 — 한 회차가 이보다 오래 걸리면 다른 파드가 이어 돌 수 있다. 회차는 상한(MAX_CUSTOMERS_PER_RUN)이 있어 수 분이다.
      * 파드가 도중에 죽어도 이 시간이 지나면 다음 회차(다음 날)가 막히지 않는다.
+     *
+     * <p>[JA] リースの長さ — 一回がこれより長くかかると別のポッドが続けて回せる。一回には上限(MAX_CUSTOMERS_PER_RUN)があり数分である。
+     * ポッドが途中で死んでもこの時間が過ぎれば次の回(翌日)が塞がらない。
      */
     static final java.time.Duration LEASE_FOR = java.time.Duration.ofHours(2);
 
@@ -77,6 +89,7 @@ public class CustomerTierScheduler {
             }
         } catch (Exception e) {
             // 배치 하나가 던진 예외로 스케줄러 스레드가 죽으면 이후 회차가 전부 사라진다.
+            // [JA] バッチ一つが投げた例外でスケジューラスレッドが死ぬと、以降の回がすべて消える。
             log.error("등급 배치 실패: {}", e.toString());
         } finally {
             try {

@@ -12,6 +12,7 @@ import { batchStatusLabel } from "util/statusLabel";
 const formatTime = (value) => formatDateTime(value, "-");
 
 // 사전 키만 둔다 — 모듈이 읽힐 때 번역하면 그때의 언어로 굳는다. 그릴 때 t 로 꺼낸다.
+// [JA] 辞書キーだけを置く — モジュール読み込み時に翻訳するとその時の言語で固まる。描画時に t で取り出す。
 const STATE_LABEL_KEY = {
     IDLE: "admin.import.state.idle",
     RUNNING: "admin.import.state.running",
@@ -30,6 +31,11 @@ const STATE_LABEL_KEY = {
  * 그 요청은 잡이 끝날 때까지 응답을 주지 않아 게이트웨이 타임아웃에 먼저 걸렸다.
  * 관리자는 504 를 보고 "실패했구나" 하고 다시 눌렀다. 지금은 즉시 돌아오고, 진행 상황을
  * 여기서 따로 묻는다.
+ *
+ * <p>[JA] CSV 一括商品登録。同梱の CSV(カテゴリ → サブカテゴリ → 商品 → 色 → SKU → 詳細 → Q&A → サイズ)を順に入れ、画像も一緒に S3 へ上げる。
+ * <b>初期データ投入用</b>であり常時の登録手段ではない — このジョブは冪等でないので、二回回すと商品が二組できる。
+ * 以前はこの機能に画面がなかった。{@code POST /api/products/load} を直接叩く必要があり、そのリクエストはジョブが終わるまで応答を返さず
+ * ゲートウェイのタイムアウトに先に引っかかった。管理者は 504 を見て「失敗した」と思い再び押した。今はすぐ戻り、進捗はここで別途問い合わせる。
  */
 const ProductImport = () => {
     const { t } = useTranslation();
@@ -37,6 +43,7 @@ const ProductImport = () => {
     const [storage, setStorage] = useState(null);
     const [error, setError] = useState("");
     // 서버가 "카탈로그가 차 있다"로 거절했는가 — 그때만 비우기를 제안한다.
+    // [JA] サーバーが「カタログが埋まっている」で拒否したか — そのときだけ空にすることを提案する。
     const [needsReset, setNeedsReset] = useState(false);
     const [busy, setBusy] = useState(false);
     const timer = useRef(null);
@@ -56,6 +63,8 @@ const ProductImport = () => {
 
     // 진행 중일 때만 폴링한다. 끝난 뒤에도 계속 물으면 관리자 화면 하나가 서버에
     // 초당 요청을 꽂는 셈이 된다.
+    // [JA] 進行中のときだけポーリングする。終わった後も問い合わせ続けると、管理画面一つがサーバーに
+    //      毎秒リクエストを打ち込むことになる。
     useEffect(() => {
         clearInterval(timer.current);
         if (status?.state === "RUNNING") {
@@ -71,12 +80,19 @@ const ProductImport = () => {
      * 그때 화면이 "비우고 다시 넣기"를 제안한다 — 그 길이 없으면 운영자는 psql 로 직접
      * TRUNCATE 하게 되고, 실제로 그렇게 했다(그 자리에서 시퀀스까지 되돌려야 한다는 것을
      * 알아야 한다 — CatalogResetService 주석 참조).
+     *
+     * <p>[JA] インポート開始。このジョブは冪等でないので、カタログが空でなければサーバーが 409 で拒否する。そのとき画面が「空にして入れ直す」を提案する —
+     * その道がなければ運営者は psql で直接 TRUNCATE することになり、実際にそうした(その場でシーケンスまで戻さなければならないことを
+     * 知っている必要がある — CatalogResetService のコメント参照)。
      */
     const start = async (resetArg = false) => {
         if (busy) return;
         // ⚠️ `onClick={start}` 로 붙이면 클릭 **이벤트**가 첫 인자로 들어온다. 그걸
         //    그대로 쓰면 truthy 라 일반 버튼이 카탈로그를 지운다. 호출부도 고쳤지만,
         //    여기서 정확히 true 만 통과시켜 두 겹으로 막는다.
+        // [JA] ⚠️ `onClick={start}` で付けるとクリック**イベント**が第一引数に入ってくる。それを
+        //      そのまま使うと truthy なので通常のボタンがカタログを消す。呼び出し側も直したが、
+        //      ここで厳密に true だけを通して二重に防ぐ。
         const reset = resetArg === true;
 
         const question = reset
@@ -96,6 +112,8 @@ const ProductImport = () => {
             setError(res?.data?.message ?? t("admin.import.start_failed"));
             // 409 중에서도 "카탈로그가 차 있다"일 때만 비우기를 제안한다. "이미 진행 중"에
             // 비우기를 권하면 돌고 있는 잡의 발밑을 지우게 된다.
+            // [JA] 409 の中でも「カタログが埋まっている」ときだけ空にすることを提案する。「すでに進行中」に
+            //      空にすることを勧めると、回っているジョブの足元を消すことになる。
             setNeedsReset(
                 res?.status === 409 && String(res?.data?.message ?? "").includes("reset=true"));
             await refresh();

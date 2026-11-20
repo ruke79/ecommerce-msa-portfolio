@@ -75,6 +75,7 @@ const Wrapper = styled.footer`
 
 
 // 본문 최대 길이 — 서버(chat-service MessageDto.MAX_CONTENT_LENGTH)와 같다. 넘으면 서버가 조용히 버리므로 입력에서 막는다.
+// [JA] 本文の最大長 — サーバー(chat-service MessageDto.MAX_CONTENT_LENGTH)と同じ。超えるとサーバーが静かに捨てるので入力で止める。
 export const MAX_MESSAGE_LENGTH = 1000;
 
 const ChatFooter = ({ onChatSumbmit }) => {
@@ -90,6 +91,10 @@ const ChatFooter = ({ onChatSumbmit }) => {
     // 아니다. 파일을 바꾸거나 푸터가 사라질 때 이전 URL 을 놓아준다.
     // (첨부 UI 는 지금 주석 처리돼 있어 이 경로는 잠들어 있다. 되살릴 때 누수가 같이
     //  살아나지 않도록 미리 막아 둔다.)
+    // [JA] URL.createObjectURL はブラウザにファイルを掴ませる — revoke するまで GC 対象にならない。
+    //      ファイルを替えるかフッターが消えるときに前の URL を手放す。
+    //      (添付 UI は今コメントアウトされていてこの経路は眠っている。復活させるときにリークが一緒に
+    //      蘇らないよう先に塞いでおく。)
     useEffect(() => {
       const url = img.url;
       return () => {
@@ -98,6 +103,7 @@ const ChatFooter = ({ onChatSumbmit }) => {
     }, [img.url]);
 
     // 채팅 내용이 공백이라면, 채팅을 보낼 수 없도록 설정하였습니다.
+    // [JA] チャット内容が空白なら、チャットを送れないようにしている。
   const isCanSubmit = !!message.replace(/ |\n/g, '');
   const btnClassName = isCanSubmit ? 'canSubmit' : 'cannotSubmit';
   const onMessageChange = (event) => {
@@ -118,6 +124,7 @@ const ChatFooter = ({ onChatSumbmit }) => {
   };
   const onEnterPress = (event) => {
     // shift + enter 이면 줄바꿈이 되고, enter키만 누르면 채팅 전송이 됩니다.
+    // [JA] shift + enter なら改行になり、enter キーだけ押すとチャットが送信される。
     if (!event.shiftKey && event.key === 'Enter') {
       event.preventDefault();
       requestSubmit();

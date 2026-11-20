@@ -22,6 +22,9 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
         // 레플리카 2개가 동시에 등록하면 같은 번호를 받는다 — 시퀀스는 그럴 수 없다.
         // 시퀀스는 롤백해도 번호를 되돌리지 않으므로 결번이 생기는데, 그것이 정상이다.
         // SKU 는 식별자이지 일련번호가 아니다 — 연속성을 약속하면 안 된다.
+        // [JA] ── SKU 自動生成(ProductService.generateSku) ──
+        //      番号は DB シーケンスから受け取る(V7)。アプリケーションで max+1 を数える方式は、レプリカ 2 つが同時に登録すると同じ番号を受け取る — シーケンスではそれは起きない。
+        //      シーケンスはロールバックしても番号を戻さないので欠番が生じるが、それが正常だ。SKU は識別子であって連番ではない — 連続性を約束してはならない。
         @Query(value = "select nextval('product.product_sku_seq')", nativeQuery = true)
         Long nextSkuNumber();
 
@@ -48,6 +51,17 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
         // 거부한다.)
         //
         // 트랜잭션은 짧다(갱신 + 캐시 DTO 변환).
+        // [JA] ── 在庫・販売数更新用の SKU 照会(ProductService.updateSoldValue) ──
+        //      以前は派生クエリ findByProductProductIdAndSizesSizeAndColorColorId だった — コレクション sizes を join する形。変えた理由は名前の長さではなくロックの範囲だ。
+        //      原作者がコメントで残した PESSIMISTIC_WRITE を有効にする必要がある。sold は読んで-足して-書く値なので、同じ SKU の注文二つが重なると片方の増分が消える
+        //      (BaseEntity の @Version が捕まえてはくれるが、それは例外で落として再配信を誘発する方で、Kafka の消費経路では行一つをロックして直列化するほうが正しい)。
+        //      ところが join の形に FOR UPDATE を付けると、PostgreSQL は FROM にある二つのテーブルの行をすべてロックする — 同じサーガの次の段階である
+        //      updateProductSize_Qty(product_size の数量減算)がこのロックに阻まれる。
+        //      実測: join+FOR UPDATE を保持したまま product_size を UPDATE → lock timeout、exists → 通過。exists は product_sku 一テーブルだけをロックする。
+        //      おまけ: product_size には (skuproduct_id, size) のユニーク制約がなく、同じ SKU に同じサイズの行が二つあると join は DB から二行を返す。
+        //      Hibernate 6 がルートエンティティを重複排除するので例外までは行かないが(実測)、exists はもともと一行だ。
+        //      (join に distinct を付ける道はない — PostgreSQL は DISTINCT … FOR UPDATE を拒否する。)
+        //      トランザクションは短い(更新 + キャッシュ DTO 変換)。
         @Lock(LockModeType.PESSIMISTIC_WRITE)
         @Query("""
                select sk from ProductSku sk
@@ -63,6 +77,9 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
         // 가격 · 사이즈 · 색상 필터는 SearchService.skuFilter 의 상관 서브쿼리(EXISTS)다 — 🐛 2026-10-19 까지는 여기의 두 질의
         // (findProductIDBySizeAndPriceAndColor · findPriceCandidates)가 후보를 카테고리와 상관없이 전부 앱으로 읽었다(100만 상품에서
         // 힙 부족, docs/83 §5). 두 경계를 따로 보는 규칙(한쪽만 준 가격 범위 — docs/40)은 skuFilter 가 그대로 지킨다.
+        // [JA] 価格・サイズ・色のフィルタは SearchService.skuFilter の相関サブクエリ(EXISTS)だ — 🐛 2026-10-19 まではここの二つのクエリ
+        //      (findProductIDBySizeAndPriceAndColor · findPriceCandidates)が候補をカテゴリと無関係に全部アプリに読み込んでいた(100 万商品でヒープ不足、docs/83 §5)。
+        //      二つの境界を別々に見る規則(片方だけ与えた価格範囲 — docs/40)は skuFilter がそのまま守る。
 
         @Query(value = "select product_id from product.product_sku a " +
                         "left join product.product_size b on a.skuproduct_id = b.skuproduct_id " +
@@ -83,7 +100,12 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
          * {@code PSQLException: PreparedStatement can have at most 65,535 parameters} 로 그 검색이 매번 실패했다.
          * (그 전의 {@code unnest(CAST(:ids AS BIGINT[]))} 는 상품이 하나라도 있으면 실패했다 — "cannot cast type record to bigint[]".)
          * "전체" 는 {@link #findAllColors()}.
-         * [JA] フィルターメニューの色 — 商品 id をアプリに持ち込まず DB 内で結合する。以前は id 全部を IN に展開し、65,535 を超えると失敗した。
+         * [JA] フィルターメニューの色 — 一つのカテゴリの商品の SKU の色を重複なしに。商品 id をアプリに持ち込まず DB 内で結合する。
+         * 🐛 2026-10-19 データ規模計測(docs/83 §5): 以前はカテゴリの商品 id を<b>全部</b>読み、{@code in (:productIds)} で送り返していた —
+         * Hibernate がリストをバインド変数に展開し、100 万商品で商品が 65,535 個を超えるカテゴリ(fashion · books …)では
+         * {@code PSQLException: PreparedStatement can have at most 65,535 parameters} でその検索が毎回失敗した。
+         * (その前の {@code unnest(CAST(:ids AS BIGINT[]))} は商品が一つでもあれば失敗した — "cannot cast type record to bigint[]"。)
+         * 「全体」は {@link #findAllColors()}。
          */
         @Query(value = "select distinct b.color from product.product_sku a " +
                         "inner join product.product_color b on a.color_id = b.color_id " +
@@ -96,6 +118,7 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
         List<String> findAllColors();
 
         /** 필터 메뉴의 사이즈 — {@link #findColorsByCategoryId} 와 같은 이유로 DB 안에서 조인한다. */
+        // [JA] フィルタメニューのサイズ — findColorsByCategoryId と同じ理由で DB の中で結合する。
         @Query(value = "SELECT DISTINCT b.size FROM product.product_sku a " +
                         "INNER JOIN product.product_size b ON a.skuproduct_id = b.skuproduct_id " +
                         "INNER JOIN product.product p ON p.product_id = a.product_id " +
@@ -150,6 +173,9 @@ public interface ProductSkuRepository extends JpaRepository<ProductSku, Long> {
     /**
      * 이 트랜잭션 동안만 잠금 대기 상한을 둔다(SET LOCAL lock_timeout). 예약이 SKU 잠금을 호출자의 기한보다 오래 기다리지 않게 —
      * 기다림이 길어지면 PostgreSQL 이 55P03 으로 끊는다(StockReservationService.reserve).
+     *
+     * <p>[JA] このトランザクションの間だけロック待ちの上限を設ける(SET LOCAL lock_timeout)。予約が SKU ロックを呼び出し元の期限より長く待たないように —
+     * 待ちが長くなると PostgreSQL が 55P03 で切る(StockReservationService.reserve)。
      */
     @org.springframework.data.jpa.repository.Query(value = "select set_config('lock_timeout', :value, true)", nativeQuery = true)
     String setLocalLockTimeout(@org.springframework.data.repository.query.Param("value") String value);

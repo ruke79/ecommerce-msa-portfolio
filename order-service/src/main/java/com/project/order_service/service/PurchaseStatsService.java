@@ -23,6 +23,14 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>"결제된 주문" 의 정의는 {@link OrderStatus#PAID_STATUSES} 하나뿐이다. 여기서 따로
  * 상태를 나열하지 않는다.
+ *
+ * <p>[JA] 等級算定のための購入集計。
+ *
+ * <p><b>なぜ order-service が計算するのか。</b> 等級の<b>基準</b>(何か月、いくら)は user-service
+ * のポリシーだが、その基準に入れる<b>数字</b>は注文データからしか出ない。注文を丸ごと渡して向こうで足させると、
+ * 配送先・連絡先までサービス境界を越える。合計だけを渡す。
+ *
+ * <p>「決済済み注文」の定義は {@link OrderStatus#PAID_STATUSES} 一つだけ。ここで別に状態を列挙しない。
  */
 @Service
 @RequiredArgsConstructor
@@ -33,10 +41,16 @@ public class PurchaseStatsService {
      *
      * <p>배치가 커서로 여러 번 부르므로 이 값이 결과를 자르지는 않는다. 응답 한 개의
      * 크기를 묶어 두기 위한 상한이다 — 고객이 백만이어도 응답 하나는 500 행이다.
+     *
+     * <p>[JA] 一度に出す最大顧客数。
+     *
+     * <p>バッチがカーソルで何度も呼ぶので、この値が結果を切ることはない。応答一つのサイズを抑えるための上限である — 顧客が百万でも応答一つは
+     * 500 行である。
      */
     static final int MAX_BATCH = 500;
 
     /** 기본 산정 기간. user-service 가 값을 주지 않았을 때만 쓰인다. */
+    // [JA] 既定の算定期間。user-service が値をくれなかった場合だけ使われる。
     static final int DEFAULT_MONTHS = 3;
 
     private final OrderRepository orderRepository;
@@ -47,6 +61,12 @@ public class PurchaseStatsService {
      * <p>시각은 <b>UTC 로 계산한다</b>(B-21). 저장된 {@code createdAt} 도 UTC 다. 여기서
      * 시스템 기본 시간대를 쓰면 로컬 개발 장비에서만 창이 9시간 밀리는데, 3개월 창에서
      * 그 정도 오차는 눈에 띄지 않아 <b>틀린 채로 오래 간다</b>.
+     *
+     * <p>[JA] {@code afterCustomerId} の次の顧客から最大 {@code size} 人分の購入集計。
+     *
+     * <p>時刻は<b>UTC で計算する</b>(B-21)。保存された {@code createdAt} も UTC である。
+     * ここでシステム既定のタイムゾーンを使うとローカル開発機でだけ窓が 9 時間ずれるが、3 か月の窓ではその程度の誤差は目立たず、
+     * <b>誤ったまま長く続く</b>。
      */
     @Transactional(readOnly = true)
     public List<PurchaseStatDto> recentStats(Integer months, Long afterCustomerId, Integer size) {

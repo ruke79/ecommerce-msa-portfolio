@@ -17,6 +17,10 @@ import com.project.common.i18n.ClientText;
  *
  * <p>로그인 실패 둘("없는 계정"·"틀린 비밀번호")은 한국어에서 같은 문구다(user enumeration 방지). 일본어에서도 같아야 한다 —
  * 번역이 갈라지면 언어만 바꿔 가입 여부를 알아낼 수 있다.
+ *
+ * <p>[JA] user-service のサーバー文言が日本語カタログ({@code i18n/client-text.ja.txt})に置き換わるか(docs/60 §4)。
+ * ログイン失敗の二つ(「存在しないアカウント」・「誤ったパスワード」)は韓国語で同じ文言である(user enumeration 防止)。日本語でも同じでなければならない —
+ * 訳が分かれると言語を切り替えるだけで登録有無が分かってしまう。
  */
 @DisplayName("user-service 서버 문구 일본어")
 class UserClientTextTest {

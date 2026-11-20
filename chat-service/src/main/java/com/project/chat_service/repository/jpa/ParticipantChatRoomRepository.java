@@ -9,12 +9,16 @@ import com.project.chat_service.model.ParticipantChatRoom;
 public interface ParticipantChatRoomRepository extends JpaRepository<ParticipantChatRoom, Long> {
 
     /** 이미 참여 중인가 — 회원은 member_id(uid)로 가린다. */
+    // [JA] すでに参加中か — 会員は member_id(uid)で判別する。
     boolean existsByRoom_RoomUidAndMember_Id(String roomUid, Long memberId);
 
     /**
      * 참여 행을 없을 때만 넣는다 — 같은 (방, 회원)이 이미 있으면(다른 탭이 방금 넣었어도) 아무것도 하지 않는다(V9 유니크).
      *
      * @return 넣었으면 1, 이미 있었으면 0
+     *
+     * <p>[JA] 参加行をないときだけ入れる — 同じ(ルーム、会員)がすでにあれば(別のタブが今入れたばかりでも)何もしない(V9 ユニーク)。
+     * 戻り値: 入れたら 1、すでにあれば 0
      */
     @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true)
     @org.springframework.data.jpa.repository.Query(nativeQuery = true,

@@ -29,6 +29,9 @@ import com.project.catalog_service.service.ProductImportService.StorageNotWritab
  *
  * <p>세 가지를 못 박는다: 저장소가 안 되면 <b>시작하지 않는다</b>, 두 번 돌지 않는다,
  * 요청 스레드를 붙잡지 않는다. 셋 다 예전에 실제로 사고가 났던 지점이다.
+ *
+ * <p>[JA] CSV 一括インポートの起動規則。
+ * <p>三つを固定する: ストレージが使えなければ<b>開始しない</b>、二重に走らない、リクエストスレッドを掴まない。三つとも以前に実際に事故が起きた箇所である。
  */
 class ProductImportServiceTest {
 
@@ -55,6 +58,9 @@ class ProductImportServiceTest {
      *
      * <p>업로드 실패가 이제 스텝을 실패시키므로, 자격 증명이 죽은 채 시작하면 카테고리와
      * 상품까지 들어간 뒤 SKU 스텝에서 죽는다 — 절반만 채워진 DB 가 남는다.
+     *
+     * <p>[JA] ストレージに書けなければ<b>ジョブを起動すらしない。</b>
+     * <p>アップロード失敗が今はステップを失敗させるので、資格情報が死んだまま開始するとカテゴリと商品まで入った後に SKU ステップで死ぬ — 半分だけ埋まった DB が残る。
      */
     @Test
     void refusesToStartWhenStorageIsNotWritable() throws Exception {
@@ -68,6 +74,7 @@ class ProductImportServiceTest {
         verify(jobLauncher, never()).run(any(), any());
         // 실패했으니 잠금이 풀려 있어야 한다 — 여기서 안 풀면 키를 고친 뒤에도
         // 영원히 "이미 진행 중"이 된다.
+        // [JA] 失敗したのでロックは解放されていなければならない — ここで解放しないとキーを直した後も永遠に「すでに進行中」になる。
         assertThat(service.status().state()).isEqualTo("IDLE");
     }
 
@@ -88,6 +95,7 @@ class ProductImportServiceTest {
         assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
 
         // 이 잡은 멱등하지 않다 — 두 번 돌면 상품이 두 벌 생긴다.
+        // [JA] このジョブは冪等ではない — 二度走ると商品が二重にできる。
         assertThatThrownBy(() -> service.start(false)).isInstanceOf(AlreadyRunningException.class);
 
         release.countDown();
@@ -95,6 +103,7 @@ class ProductImportServiceTest {
     }
 
     /** 잡이 실패하면 원인이 상태에 남아야 한다 — 관리자가 로그를 볼 수 없는 경우가 대부분이다. */
+    // [JA] ジョブが失敗したら原因が状態に残らなければならない — 管理者がログを見られない場合がほとんどである。
     @Test
     void recordsFailureMessage() throws Exception {
         when(imageService.probe()).thenReturn(OK);
@@ -122,6 +131,7 @@ class ProductImportServiceTest {
     }
 
     // ── 도우미 ──────────────────────────────────────────────────────────
+    // [JA] ── ヘルパー ──
 
     private JobExecution completed() {
         JobExecution execution = mock(JobExecution.class);
@@ -132,6 +142,7 @@ class ProductImportServiceTest {
     }
 
     /** 임포트는 다른 스레드에서 돈다. 상태가 바뀔 때까지 잠깐 기다린다. */
+    // [JA] インポートは別スレッドで走る。状態が変わるまで少し待つ。
     private String awaitState(ProductImportService service, String expected)
             throws InterruptedException {
         for (int i = 0; i < 100; i++) {
@@ -147,6 +158,8 @@ class ProductImportServiceTest {
      * 빈 카탈로그를 돌려주는 목. 이 테스트들은 "재실행 방지"가 아니라 <b>동기/중복/저장소</b>
      * 를 검증하므로, 카탈로그 상태는 항상 비어 있는 것으로 둔다
      * (재실행 방지는 ProductImportGuardTest 가 본다).
+     *
+     * <p>[JA] 空のカタログを返すモック。これらのテストは「再実行防止」ではなく<b>同期/重複/ストレージ</b>を検証するので、カタログ状態は常に空として置く(再実行防止は ProductImportGuardTest が見る)。
      */
     private static CatalogResetService emptyCatalog() {
         CatalogResetService reset = org.mockito.Mockito.mock(CatalogResetService.class);

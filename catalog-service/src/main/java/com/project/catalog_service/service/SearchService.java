@@ -55,17 +55,24 @@ public class SearchService {
      *
      * <p>여기를 빠뜨리면 같은 상품이 <b>검색 결과에서는 정가, 상세 화면에서는 할인가</b>로
      * 보인다. 사용자는 목록에서 보고 들어왔는데 가격이 달라진 것을 본다.
+     *
+     * <p>[JA] 検索結果にも企画展割引を載せる。
+     * <p>ここを漏らすと同じ商品が<b>検索結果では定価、詳細画面では割引価格</b>で見える。ユーザーは一覧で見て入ってきたのに価格が変わっているのを見ることになる。
      */
     private final EventPricing eventPricing;
 
     /** 검색의 DB 작업 격벽 — 자리를 얻은 뒤에 시간 상한 트랜잭션을 연다(캐시가 맞으면 오지 않는다). */
+    // [JA] 検索の DB 作業のバルクヘッド — 枠を得た後で時間上限付きトランザクションを開く(キャッシュがヒットすれば来ない)。
     private final SearchBulkhead searchBulkhead;
 
     // 첫 쪽의 필터 메뉴(브랜드 · 색상 · 사이즈 · 상세)는 여기서 만들지 않는다 — 결과 캐시 밖에서 SearchFilterFacets.attach 가 붙인다
     // (SearchController). 🐛 2026-10-20 전에는 이 캐시된 계산 안에서 돌아 1,000만 상품에서 질의 하나가 1분 넘게 커넥션을 쥐었다.
+    // [JA] 最初のページのフィルタメニュー(ブランド・色・サイズ・詳細)はここでは作らない — 結果キャッシュの外で SearchFilterFacets.attach が付ける(SearchController)。
+    //      🐛 2026-10-20 より前はこのキャッシュされる計算の中で回っており、1,000 万商品でクエリ一つが 1 分以上コネクションを握っていた。
 
     // @RequiredArgsConstructor가 있으므로 별도의 @Autowired 생성자는 필요 없습니다.
     // private final 필드들에 대한 생성자를 자동으로 생성합니다.
+    // [JA] @RequiredArgsConstructor があるので別途 @Autowired コンストラクタは不要である。private final フィールドのコンストラクタを自動生成する。
 
     private Pageable createPageRequest(int page, int size) {
         return PageRequest.of(page, size);
@@ -75,6 +82,9 @@ public class SearchService {
      * ES 관련도 검색으로 후보 productId 를 조회한다.
      * @return 이 검색이 ES 로 가지 않음(엔진 POSTGRES · ES 빈 없음) 또는 조회 실패 시 null (호출자가 LIKE 경로로 폴백),
      *         정상 조회 시 id 목록(비어 있을 수 있음 — "매칭 없음" 의미)
+     *
+     * <p>[JA] ES の関連度検索で候補の productId を照会する。
+     * 戻り値: この検索が ES に行かない(エンジン POSTGRES・ES Bean なし)か照会失敗なら null(呼び出し側が LIKE 経路へフォールバック)、正常なら id リスト(空もありうる — 「一致なし」の意味)。
      */
     private List<Long> searchIdsViaEs(String term, SearchEngine engine) {
         if (engine != SearchEngine.ES || esProductSearchService == null) {
@@ -105,8 +115,21 @@ public class SearchService {
      * 그 상품의 율을 고르는 CASE 로 싣는다. 높은 율부터 보므로 겹치면 높은 쪽 — {@code EventPricing.refresh} 와 같은 규칙이다.
      * 사이즈 · 색상은 값마다 앞부분 일치(대소문자 무시, 글자 그대로 — {@link #likeLiteral}).
      *
-     * <p>[JA] 価格 · サイズ · 色の条件 — 合う SKU が一つでもある商品。以前は候補をカテゴリに関係なく全部アプリに読み、合う id を IN で
-     *      送り直していた(100 万商品で catalog がヒープ不足で倒れた)。今は相関サブクエリ(EXISTS)で DB の中で判定する。
+     * <p>[JA] 価格 · サイズ · 色の条件 — その条件に合う SKU(サイズ行)が一つでもある商品。条件がなければ null(条件なし)。
+     *
+     * <p>[JA] 価格は<b>画面に見える価格</b>で見る — サイズ定価に常時割引と企画展割引の大きい方を適用した値(商品画面 · 一覧カード · カートと
+     * 同じ {@link ProductService#discounted} の式: {@code 定価 × (100 − 率) / 100}、小数 2 桁で四捨五入)。🐛 以前は定価で絞り込み、カードに
+     * $70 と見える商品が「$80 以下」から抜けて「$90 以上」に出た(docs/40 §22)。
+     *
+     * <p>[JA] 🐛 2026-10-19 データ規模測定(商品 100 万、docs/83 §5): 以前は条件に合う候補を<b>カテゴリに関係なく全部</b>アプリに読んでいた —
+     * 価格帯は下限以上のサイズ行全部(数百万行)を読んで割引価格をアプリで判定し、合う商品 id を {@code IN (…)} で送り直していた。
+     * フィルター検索を毎秒 3 回混ぜると catalog 3 個が 20 秒で {@code OutOfMemoryError: Java heap space} で倒れた(失敗 93.76%、ヒープ 512MB)。
+     * 今は相関サブクエリ({@code EXISTS})で DB の中で判定する — 外側クエリのカテゴリ条件と一緒に動き、アプリに来るのはそのページの
+     * 商品 10 個と件数だけだ。合うものがなければ 0 件である(「なし」が「全部」に反転しない)。
+     *
+     * <p>[JA] 企画展割引は SQL が知らないメモリ上のマップなので、展開前のルール({@link EventPricing#rules()} — 商品指定 · カテゴリ指定)を
+     * その商品の率を選ぶ CASE として載せる。高い率から見るので重なれば高い方 — {@code EventPricing.refresh} と同じルールだ。
+     * サイズ · 色は値ごとに前方一致(大文字小文字無視、文字どおり — {@link #likeLiteral})。
      */
     com.querydsl.core.types.Predicate skuFilter(SearchParamsRequest params) {
         if (!hasSkuFilter(params)) {
@@ -137,6 +160,7 @@ public class SearchService {
                     shownPrice(size.price, sku.discount, eventRate(product));
             if (low != null) {
                 // 할인가는 정가를 넘지 않는다 — 정가 조건은 늘 참이고, 할인가를 셈하기 전에 줄을 거른다
+                // [JA] 割引価格は定価を超えない — 定価の条件は常に真で、割引価格を計算する前に行を絞る
                 where.and(size.price.goe(low)).and(shown.goe(low));
             }
             if (high != null) {
@@ -147,6 +171,7 @@ public class SearchService {
     }
 
     /** 화면의 할인가 — {@code round(정가 × (100 − least(greatest(상시, 기획전), 100)) / 100, 2)}(common Discount.apply 와 같은 값). */
+    // [JA] 画面の割引価格 — {@code round(定価 × (100 − least(greatest(常時, 企画展), 100)) / 100, 2)}(common Discount.apply と同じ値)。
     private static com.querydsl.core.types.dsl.NumberExpression<java.math.BigDecimal> shownPrice(
             com.querydsl.core.types.dsl.NumberPath<java.math.BigDecimal> price,
             com.querydsl.core.types.dsl.NumberPath<Integer> skuDiscount,
@@ -158,6 +183,9 @@ public class SearchService {
     /**
      * 그 상품의 기획전 할인율 — 상품 지정 · 카테고리 지정 중 높은 쪽, 없으면 0. 규칙이 없으면(대부분의 때) 상수 0.
      * 상품 지정은 많아야 수천 건이고 카테고리 지정은 카테고리 수만큼이라 바인드 변수 한도(65,535) 안이다 — 펼친 맵을 싣지 않는 이유.
+     *
+     * <p>[JA] その商品の企画展割引率 — 商品指定・カテゴリ指定のうち高い方、なければ 0。ルールがなければ(ほとんどの時)定数 0。
+     * 商品指定は多くても数千件、カテゴリ指定はカテゴリ数だけなのでバインド変数の上限(65,535)内である — 展開したマップを載せない理由。
      */
     private com.querydsl.core.types.dsl.NumberExpression<Integer> eventRate(QProduct product) {
         EventPricing.Rules rules = eventPricing.rules();
@@ -189,6 +217,7 @@ public class SearchService {
     }
 
     /** 값 중 하나로 시작하면 참(대소문자 무시, 글자 그대로). 값이 없으면 null(조건 없음). */
+    // [JA] 値のどれかで始まれば真(大文字小文字無視、文字どおり)。値がなければ null(条件なし)。
     private static com.querydsl.core.types.Predicate startsWithAny(com.querydsl.core.types.dsl.StringPath path, List<String> values) {
         if (values.isEmpty()) {
             return null;
@@ -201,6 +230,7 @@ public class SearchService {
     }
 
     /** 앞부분 일치 LIKE 패턴 — {@code 값%}, 값 안의 {@code %} · {@code _} · {@code !} 는 글자({@link #likeLiteral}, 이스케이프 {@code !}). */
+    // [JA] 前方一致の LIKE パターン — {@code 値%}、値の中の {@code %}・{@code _}・{@code !} は文字として扱う({@link #likeLiteral}、エスケープは {@code !})。
     static List<String> prefixLikes(List<String> values) {
         return values.stream().map(v -> likeLiteral(v) + "%").toList();
     }
@@ -210,10 +240,16 @@ public class SearchService {
      *
      * <p>걸지 않았으면 SKU 조건을 <b>만들지 않는다.</b> 조건 없는 SKU 질의는 상품 전량을
      * 훑는데, 그 결과는 "모든 상품" 이라 필터로서 아무 의미가 없다.
+     *
+     * <p>[JA] 価格・サイズ・色のどれか一つでも指定したか。
+     * <p>指定していなければ SKU 条件を<b>作らない。</b>条件のない SKU クエリは商品全量を走査するが、その結果は「すべての商品」でフィルタとして何の意味もない。
      */
     /**
      * 하위 카테고리가 고른 카테고리에 속하지 않는다(없는 하위 포함) — 두 조건을 AND 로 묶으면 0건이 확실하다.
      * 카테고리가 이름이거나 둘 중 하나가 없으면 묻지 않는다.
+     *
+     * <p>[JA] サブカテゴリが選んだカテゴリに属さない(存在しないサブを含む) — 二つの条件を AND で結べば 0 件が確実である。
+     * カテゴリが名前か、二つのどちらかがなければ問い合わせない。
      */
     boolean subcategoryOutsideCategory(Long categoryId, SearchParamsRequest params) {
         Long subCategoryId = parseCategoryId(params.getSubCategory());
@@ -226,6 +262,7 @@ public class SearchService {
     }
 
     /** 어떤 값도 들 수 없는 가격 범위 — 하한 > 상한, 또는 상한 < 0. */
+    // [JA] どんな値も入りえない価格範囲 — 下限 > 上限、または上限 < 0。
     static boolean emptyPriceRange(SearchParamsRequest params) {
         java.math.BigDecimal low = params.getLowPrice();
         java.math.BigDecimal high = params.getHighPrice();
@@ -240,6 +277,7 @@ public class SearchService {
     }
 
     /** 다중 선택 필터 하나에 받는 값의 상한 · 값 하나의 길이 상한. */
+    // [JA] 複数選択フィルタ一つで受け取る値の上限・値一つの長さの上限。
     static final int MAX_FILTER_VALUES = 20;
     static final int MAX_FILTER_VALUE_LENGTH = 100;
 
@@ -255,8 +293,16 @@ public class SearchService {
      *       <b>화면에서 고른 필터가 한 번도 맞지 않았다</b>(언제나 0건)</li>
      * </ul>
      *
-     * <p>[JA] 画面が送る複数選択値({@code ^Red|^Blue})を文字どおりの値リストにする。以前は SQL の正規表現(500 · 高コスト)や
-     * LIKE '%^Nike|^Adidas%'(常に 0 件)になっていた。
+     * <p>[JA] 画面が送る複数選択値({@code ^Red|^Blue} — browse.jsx の createRegex)を<b>文字どおりの値リスト</b>にする。
+     * 先頭の {@code ^} を外して {@code |} で分ける。正規表現としては読まない。
+     *
+     * <p>[JA] 🐛 以前はこの文字列をそのまま使っていた:
+     * <ul>
+     *   <li>サイズ · 色は SQL {@code ~*} の<b>正規表現</b>になった — 匿名リクエストが正規表現を選べる。{@code size=(} は
+     *       "invalid regular expression" の 500、後方参照 · 入れ子の繰り返しはその SKU 表全体に対する高コストなマッチングだった</li>
+     *   <li>ブランド · スタイル · 素材 · 性別は LIKE {@code '%^Nike|^Adidas%'} になった — {@code ^} · {@code |} を文字として探すので
+     *       <b>画面で選んだフィルターが一度も合わなかった</b>(常に 0 件)</li>
+     * </ul>
      */
     static List<String> filterValues(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -279,6 +325,7 @@ public class SearchService {
     }
 
     /** LIKE 의 {@code %} · {@code _} · 이스케이프 문자를 글자로 — 값 안의 {@code _} 가 "아무 한 글자" 가 되지 않게. */
+    // [JA] LIKE の {@code %}・{@code _}・エスケープ文字を文字として扱う — 値の中の {@code _} が「任意の一文字」にならないように。
     static String likeLiteral(String value) {
         return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
@@ -295,6 +342,7 @@ public class SearchService {
     }
 
     /** 값 중 하나라도 포함하면 참. 값이 없으면 null(조건 없음). */
+    // [JA] 値のどれか一つでも含めば真。値がなければ null(条件なし)。
     private static com.querydsl.core.types.Predicate containsAny(com.querydsl.core.types.dsl.StringPath path, List<String> values) {
         if (values.isEmpty()) {
             return null;
@@ -307,6 +355,7 @@ public class SearchService {
     }
 
     /** 스타일 · 소재 · 성별 중 하나라도 값이 있는가 — {@link #buildSearchPredicate} 의 5번 조건이 생기는가와 같다. */
+    // [JA] スタイル・素材・性別のどれか一つでも値があるか — {@link #buildSearchPredicate} の 5 番の条件ができるかと同じ。
     static boolean hasDetailsFilter(SearchParamsRequest params) {
         return !filterValues(params.getStyle()).isEmpty()
                 || !filterValues(params.getMaterial()).isEmpty()
@@ -314,6 +363,7 @@ public class SearchService {
     }
 
     /** category 파라미터가 숫자 id면 Long으로, 이름이거나 비어있으면 null을 반환한다(이름 검색은 별도 경로). */
+    // [JA] category パラメータが数値 id なら Long で、名前か空なら null を返す(名前検索は別経路)。
     static Long parseCategoryId(String category) {
         if (category == null || category.isBlank()) {
             return null;
@@ -327,15 +377,20 @@ public class SearchService {
 
     
     // 페이지 크기 상한: 무제한 pageSize로 인한 대량 조회/deep pagination(DoS) 방지.
+    // [JA] ページサイズの上限: 無制限の pageSize による大量照会/deep pagination(DoS)を防ぐ。
     private static final int MAX_PAGE_SIZE = 100;
     private static final int DEFAULT_PAGE_SIZE = 20;
 
     // ES 관련도 검색으로 가져올 후보 productId 상한 (파셋/필터가 이후 Postgres 에서 더 걸러냄)
+    // [JA] ES の関連度検索で持ってくる候補 productId の上限(ファセット/フィルタがその後 Postgres でさらに絞る)
     private static final int ES_CANDIDATE_LIMIT = 1000;
 
     // (docs/07 R-C1) search.engine=es 일 때만 존재하는 선택적 빈.
     // 존재하고 이 검색의 엔진이 ES 면(docs/74 — 기능 플래그) 텍스트 검색을 "ES 관련도 검색 → id IN 조건" 으로 전환하고,
     // ES 장애 시에는 기존 LIKE 경로로 폴백한다. 테스트 주입을 위해 package-private.
+    // [JA] (docs/07 R-C1) search.engine=es のときだけ存在する任意の Bean。
+    //      存在し、この検索のエンジンが ES なら(docs/74 — 機能フラグ)テキスト検索を「ES 関連度検索 → id IN 条件」に切り替え、ES 障害時は既存の LIKE 経路へフォールバックする。
+    //      テストで注入するため package-private。
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     EsProductSearchService esProductSearchService;
 
@@ -352,7 +407,15 @@ public class SearchService {
      *
      * <p>트랜잭션(= 커넥션)은 여기서 열지 않는다({@code NOT_SUPPORTED}) — 캐시를 본 뒤 {@link SearchBulkhead} 가 자리를 얻고 나서 연다
      * (읽기 전용 · 시간 상한 {@code catalog.search.query-timeout-seconds}). 🐛 2026-10-20 실습: 필터 검색이 커넥션을 1 ~ 4초씩 쥐어 풀이
-     * 늘 차고 home · 상품까지 5xx 였다. [JA] トランザクション(接続)はここでは開かない — 隔壁が席を得てから開く。
+     * 늘 차고 home · 상품까지 5xx 였다.
+     *
+     * <p>[JA] {@code sync = true} — 期限切れの瞬間、同じ検索を Pod ごとに一度だけ計算する({@code SingleFlightCache})。🐛 2026-10-19 mixed
+     * {@code 160904Z}(docs/83 §5): 一斉に埋められたキー 48 個が同じ秒に期限切れになると、キーごとに来たリクエストがすべて DB で計算し直し、
+     * 20 秒間接続待ち 22 · サーバー p95 1.5 秒。
+     *
+     * <p>[JA] トランザクション(= 接続)はここでは開かない({@code NOT_SUPPORTED})— キャッシュを見た後 {@link SearchBulkhead} が席を得てから開く
+     * (読み取り専用 · 時間上限 {@code catalog.search.query-timeout-seconds})。🐛 2026-10-20 実習: フィルター検索が接続を 1 ~ 4 秒ずつ握り、
+     * プールが常に埋まって home · 商品まで 5xx だった。
      */
     @Cacheable(value = "search_cache", cacheManager = "redisCacheManager", sync = true)
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
@@ -363,16 +426,23 @@ public class SearchService {
     private SearchResultDto search(SearchParamsRequest params, SearchEngine engine) {
         // category는 숫자 id 또는 이름(name)일 수 있다. 숫자가 아니면 id로 파싱하지 않고 null 처리
         // (기존 Long.parseLong은 이름 검색 시 NumberFormatException → 500을 유발했다).
+        // [JA] category は数値 id か名前(name)でありうる。数値でなければ id として解析せず null とする
+        //      (以前の Long.parseLong は名前検索時に NumberFormatException → 500 を引き起こしていた)。
         Long categoryId = parseCategoryId(params.getCategory());
 
         // 1. SKU(가격·색상·사이즈) 필터를 **건 경우에만** 조건(EXISTS)을 만든다 — null 은 "이 필터를 걸지 않았다"는 뜻이다.
         //
         // 🔴 예전에는 조건이 없어도 매번 후보 id 질의를 돌렸다(상품 전량의 id 를 읽어 `in (...)` 에 넣었다).
         //    건 경우에도 후보를 앱으로 읽었다 — 100만 상품에서 힙 부족(skuFilter 주석).
+        // [JA] 1. SKU(価格・色・サイズ)フィルタを**指定した場合だけ**条件(EXISTS)を作る — null は「このフィルタを指定していない」という意味である。
+        //      🔴 以前は条件がなくても毎回候補 id のクエリを回していた(商品全量の id を読んで `in (...)` に入れていた)。
+        //      指定した場合も候補をアプリへ読み込んでいた — 100 万商品でヒープ不足(skuFilter のコメント)。
         com.querydsl.core.types.Predicate skuFilter = skuFilter(params);
 
         // 2. Querydsl을 사용하여 모든 검색 조건(상품명, 브랜드, 상세 정보, 평점)을 조합하여 최종 상품 목록 조회
         // SKU 조건은 상관 서브쿼리(EXISTS)로 같은 WHERE 에 들어간다.
+        // [JA] 2. Querydsl ですべての検索条件(商品名、ブランド、詳細情報、評価)を組み合わせて最終的な商品一覧を照会する。
+        //      SKU 条件は相関サブクエリ(EXISTS)として同じ WHERE に入る。
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
         BooleanBuilder builder = buildSearchPredicate(params, categoryId, skuFilter, engine);
@@ -383,6 +453,7 @@ public class SearchService {
         boolean joinDetails = hasDetailsFilter(params);
 
         // page는 1-기반 입력. 0/음수 입력 시 PageRequest.of(-1,..)가 예외를 던지므로 안전하게 클램프.
+        // [JA] page は 1 始まりの入力。0/負の入力だと PageRequest.of(-1,..) が例外を投げるので安全にクランプする。
         int safePage = Math.max(1, params.getPage()) - 1;
         int safeSize = params.getPageSize() <= 0
                 ? DEFAULT_PAGE_SIZE
@@ -454,6 +525,11 @@ public class SearchService {
          *
          * 필요 없다고 말한 요청에는 만들지 않는다. 기본값은 true 라 이 값을 모르는
          * 호출부의 동작은 그대로다.
+         *
+         * <p>[JA] 3. フィルタメニューに表示する情報の照会
+         * 🐛 以前は<b>条件なしに毎回</b>この六つをすべて読んでいた。うち二つは `findAll()` — カテゴリ全体とサブカテゴリ全体である。だが画面は最初のページのものだけ使い、残りは捨てる(browse.jsx は `pages[0]` からだけ読む)。
+         * 無限スクロールを付けてからこれがより目立った — 2・3・4 ページを受け取るたびに使いもしないカテゴリ全体が付いてきた。商品 20 件を追加で受け取るために、カテゴリ・サブカテゴリ・色・サイズ・詳細・ブランドの六クエリを余分に回していたことになる。
+         * 不要と言ったリクエストには作らない。既定値は true なので、この値を知らない呼び出し側の動作はそのままである。
          */
         SearchResultDto.SearchResultDtoBuilder result = SearchResultDto.builder()
                 .product(productPage)
@@ -461,6 +537,8 @@ public class SearchService {
 
         // 메뉴 넷(색상 · 사이즈 · 상세 · 브랜드)은 빈 목록으로 두고 SearchFilterFacets.attach 가 채운다 — 캐시된 이 결과에 넣으면
         // 60분 동안 그 메뉴가 그대로고, 계산이 늦으면 검색 전체가 그만큼 늦다.
+        // [JA] メニュー四つ(色・サイズ・詳細・ブランド)は空リストにしておき SearchFilterFacets.attach が埋める — キャッシュされるこの結果に入れると
+        //      60 分間そのメニューが変わらず、計算が遅れれば検索全体がその分遅れる。
         if (params.isIncludeFilters()) {
             List<CategoryDto> categoryDtos = categoryRepository.findAll().stream().map(CategoryMapper::toDto).collect(Collectors.toList());
             List<SubCategoryDto> subCategoryDtos = subCategoryRepository.findAll().stream().map(SubcategoryMapper::toDto).collect(Collectors.toList());
@@ -474,6 +552,7 @@ public class SearchService {
         } else {
             // null 이 아니라 빈 목록을 준다. 받는 쪽이 길이를 재거나 순회할 때
             // null 검사를 빠뜨려도 터지지 않는다.
+            // [JA] null ではなく空リストを渡す。受け取る側が長さを測ったり回したりするとき、null 検査を忘れても落ちない。
             result.categories(List.of())
                   .subCategories(List.of())
                   .colors(List.of())
@@ -483,6 +562,7 @@ public class SearchService {
         }
 
         // 4. 결과 DTO 구성 및 반환
+        // [JA] 4. 結果 DTO の構成と返却
         return result.build();
     }
 
@@ -502,11 +582,17 @@ public class SearchService {
         //    null(필터를 걸지 않음)과 빈 목록(걸었는데 매칭 없음)을 반드시 갈라야 한다.
         //
         //    지금은 EXISTS 라 맞는 SKU 가 없으면 그 상품이 빠질 뿐이다 — 조건이 사라질 수 없다(skuFilter).
+        // [JA] 1. SKU 条件(Price、Color、Size — skuFilter)
+        //      🔴 以前の条件は `!= null && !isEmpty()` だった。つまり**フィルタが何も見つけられないと条件自体を捨てていた** — 「一致なし」が「制限なし」に反転する。
+        //      ユーザーにはこう見える: 価格帯を狭めるほど商品が減るが、一致が一つもない区間を選んだ瞬間**カタログ全体**が返ってくる。色・サイズも同じ。
+        //      null(フィルタ指定なし)と空リスト(指定したが一致なし)は必ず区別しなければならない。
+        //      今は EXISTS なので一致する SKU がなければその商品が抜けるだけ — 条件が消えることはない(skuFilter)。
         if (skuFilter != null) {
             builder.and(skuFilter);
         }
 
         // 2. categoryId 조건
+        // [JA] 2. categoryId 条件
         if (categoryId != null) {
             builder.and(product.category.categoryId.eq(categoryId));
         } else if (params.getCategory() != null && !params.getCategory().isBlank()) {
@@ -515,6 +601,9 @@ public class SearchService {
             //    (주석에는 "이름 검색은 별도 경로" 라고 적혀 있지만 그런 경로가 없다).
             //    그래서 category=shoes 처럼 이름으로 들어오면 **필터가 조용히 사라지고
             //    전체 상품이 나왔다** — 사용자에게는 "카테고리를 골랐는데 다 나온다"다.
+            // [JA] 🐛 以前はここで**何もしていなかった。**parseCategoryId は数値でなければ null を返し、その後名前で絞るコードはどこにもなかった
+            //      (コメントには「名前検索は別経路」とあるが、そんな経路はない)。
+            //      そのため category=shoes のように名前で来ると**フィルタが黙って消えて全商品が出た** — ユーザーには「カテゴリを選んだのに全部出る」である。
             builder.and(product.category.categoryName.equalsIgnoreCase(params.getCategory().trim()));
         }
 
@@ -524,9 +613,13 @@ public class SearchService {
         //    누를 수 있었다 해도 보낼 파라미터도 여기 조건도 없었다.
         //
         // category 와 AND 로 묶인다 — 상위를 고른 뒤 그 안에서 좁히는 것이 화면의 모양이다.
+        // [JA] 2-1. subCategory 条件
+        //      🐛 サブカテゴリは**画面に描かれるだけだった。**押すこともできず(onClick なし)、押せたとしても送るパラメータもここの条件もなかった。
+        //      category と AND で結ばれる — 上位を選んだ後でその中を絞るのが画面の形である。
         Long subCategoryId = parseCategoryId(params.getSubCategory());
         if (subCategoryId != null) {
             // exists 서브쿼리가 아니라 조인이면 상품이 하위 카테고리 수만큼 중복된다.
+            // [JA] exists サブクエリではなく結合だと、商品がサブカテゴリの数だけ重複する。
             QProductSubcategory link = QProductSubcategory.productSubcategory;
             builder.and(JPAExpressions.selectOne()
                     .from(link)
@@ -537,6 +630,8 @@ public class SearchService {
 
         // 3. name 조건 — 이 검색의 엔진이 ES 면 관련도 검색으로 후보 id 를 구해 IN 으로 좁힌다 (docs/07 R-C1, docs/74).
         //    POSTGRES · ES 장애 시에는 기존 LIKE 경로 유지(폴백).
+        // [JA] 3. name 条件 — この検索のエンジンが ES なら関連度検索で候補 id を求めて IN で絞る(docs/07 R-C1、docs/74)。
+        //      POSTGRES・ES 障害時は既存の LIKE 経路を維持(フォールバック)。
         if (params.getSearch() != null && !params.getSearch().isEmpty()) {
             List<Long> esIds = searchIdsViaEs(params.getSearch(), engine);
             if (esIds == null) {
@@ -546,6 +641,7 @@ public class SearchService {
                 builder.and(nameMatches(product.name, params.getSearch()));
             } else if (esIds.isEmpty()) {
                 // ES 가 "매칭 없음"이라고 답함 → 빈 결과 (IN () 는 SQL 오류이므로 불가능 조건 사용)
+                // [JA] ES が「一致なし」と答えた → 空の結果(IN () は SQL エラーなので不可能な条件を使う)
                 builder.and(product.productId.eq(-1L));
             } else {
                 builder.and(product.productId.in(esIds));
@@ -553,12 +649,14 @@ public class SearchService {
         }
 
         // 4. brand 조건
+        // [JA] 4. brand 条件
         com.querydsl.core.types.Predicate brand = containsAny(product.brand, filterValues(params.getBrand()));
         if (brand != null) {
             builder.and(brand);
         }
 
         // 5. style, material, gender 조건 (OR 로직) — 값마다 글자 그대로 포함(filterValues)
+        // [JA] 5. style、material、gender 条件(OR ロジック) — 値ごとに文字どおり含む(filterValues)
         BooleanBuilder detailsBuilder = new BooleanBuilder();
         for (String raw : new String[] { params.getStyle(), params.getMaterial(), params.getGender() }) {
             com.querydsl.core.types.Predicate any = containsAny(productDetails.value, filterValues(raw));
@@ -571,6 +669,7 @@ public class SearchService {
         }
 
         // 6. rating 조건
+        // [JA] 6. rating 条件
         if (params.getRating() != 0.0f) {
             builder.and(product.rating.goe(params.getRating()));
         }
@@ -584,6 +683,11 @@ public class SearchService {
         //    화면이 보내는 값은 0(무료)뿐이지만 조건은 "그 값 이하"로 둔다. 나중에
         //    "배송비 3,000원 이하" 같은 것을 붙일 때 서버를 다시 고치지 않아도 된다.
         //    배송비가 null 인 상품은 제외된다 — 모르는 값을 무료라고 말하지 않는다.
+        // [JA] 7. shipping 条件
+        //      🐛 `SearchParamsRequest.shipping` は**受け取るだけで一度も使われていなかった。**画面の「送料無料」チェックボックスは URL を変えリクエストにも載っていたが、検索条件に入ったことはない
+        //      — 評価フィルタと同じ形の欠陥である(docs/40)。
+        //      画面が送る値は 0(無料)だけだが、条件は「その値以下」にしておく。後で「送料 3,000 ウォン以下」のようなものを付けるときにサーバーを直さずに済む。
+        //      送料が null の商品は除外される — 分からない値を無料とは言わない。
         if (params.getShipping() != null) {
             builder.and(product.shipping.loe(params.getShipping()));
         }

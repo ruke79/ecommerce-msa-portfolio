@@ -35,6 +35,20 @@
 #
 # ⚠️ 2천만 개 같은 큰 값은 운영 노드에 넣지 않는다 — 디스크 60~90GB, PostgreSQL 파드 메모리 512Mi(docs/19 §5.1).
 #
+# [JA] 運用アクション ㊹ — 負荷テスト用商品の大量登録・確認・削除(docs/19 §5.1)
+#      ops/tools/generate-catalog-data.py を運用ノードで安全に回すラッパーだ。手でやると漏らしやすいことを代わりに行う:
+#      ディスク余裕(テーブル + インデックス + WAL)とバックアップ時間帯(03:00~05:00 UTC)を先に見る・DB を port-forward で一時的に開け、終われば(失敗しても)閉じる・
+#      DB パスワードは Secret から読み生成器プロセスの環境変数でのみ渡す — 画面・コマンドライン・シェル履歴に残らない・途切れても再実行すれば続きから入れる(生成器 --resume)・
+#      投入・削除の後にカタログキャッシュを空にする — "products" キャッシュは期限がないので、空にしないと一覧が古い状態のまま残る。
+#      ── 使い方は上記(estimate = 行数・容量・時間の推定のみ(既定 200 万個)、load = 点検 → 投入(続きから) → キャッシュ削除 → 結果、status = 生成範囲に入った商品数・テーブルサイズ、
+#      purge = 生成範囲だけ削除 → VACUUM ANALYZE → キャッシュ削除、flush-cache = カタログキャッシュだけ削除。PRODUCTS で個数を変える(purge も同じ値で)、
+#      PLACEHOLDER_IMAGE はイメージストレージ(S3)のないデモクラスタ向け — シードバッチジョブなしで)。
+#      環境変数(既定値): STORAGE_DIR = local-path が PVC を置く場所(ディスク余裕をここで測る)。SKEW・SKEW_CATEGORY・LONG_NAMES = データの形(docs/83 §2.5):
+#      商品の SKEW 比率を一つの大分類に(既定: 重みが最大のもの)、LONG_NAMES=1 なら名前 100 ~ 180 文字。続きの投入は同じ値で(違うと前後のバッチの形が変わる)。
+#      PLACEHOLDER_IMAGE = 空ならシードバッチジョブが作った色・画像 URL が必要。指定すると(/パス・http(s))色が空のとき
+#      シード CSV から入れ、すべての SKU 画像をこのアドレスに — デモ(S3 なし)はフロントが配信する /logo512.png。
+#      FORCE=1 = バックアップ時間帯・ディスク警告を無視、YES=1 = purge の確認を尋ねない。
+#      ⚠️ 2 千万個のような大きな値は運用ノードに入れない — ディスク 60~90GB、PostgreSQL Pod のメモリ 512Mi(docs/19 §5.1)。
 set -euo pipefail
 
 PRODUCTS="${PRODUCTS:-2000000}"
@@ -56,8 +70,10 @@ STORAGE_DIR="${STORAGE_DIR:-/var/lib/rancher/k3s/storage}"
 PLACEHOLDER_IMAGE="${PLACEHOLDER_IMAGE:-}"
 
 # 상품당 표 + 인덱스 바이트 — 생성기의 MEASURED["bytes_per_product"] 와 같은 값(로컬 50만 개 실측)
+# [JA] 商品あたりのテーブル + インデックスのバイト数 — 生成器の MEASURED["bytes_per_product"] と同じ値(ローカル 50 万個の実測)
 BYTES_PER_PRODUCT=2108
 # 카탈로그가 쓰는 캐시 이름(@Cacheable). 키는 "<이름>::<키>" 다.
+# [JA] カタログが使うキャッシュ名(@Cacheable)。キーは "<名前>::<キー>" だ。
 CACHES="products product products_by_category search_cache colors_cache sizes_cache details_cache brands_cache"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -89,6 +105,7 @@ gen() {
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 # DB 를 잠깐 연다. 끝나면 trap 이 닫는다.
+# [JA] DB を一時的に開く。終われば trap が閉じる。
 open_db() {
     need kubectl
     port_open "$LOCAL_PORT" && die "127.0.0.1:$LOCAL_PORT 를 이미 누가 쓰고 있다 — LOCAL_PORT 를 바꿔 다시"
@@ -105,6 +122,7 @@ open_db() {
 dsn() { echo "host=127.0.0.1 port=$LOCAL_PORT dbname=$PG_DB user=$PG_USER sslmode=require"; }
 
 # 비밀번호는 이 함수의 출력으로만 지나간다 — 변수에 담아 echo 하거나 명령줄 인자로 넘기지 않는다.
+# [JA] パスワードはこの関数の出力としてだけ通る — 変数に入れて echo したりコマンドライン引数で渡したりしない。
 db_password() {
     kubectl -n "$APP_NS" get secret "$SECRET" -o "jsonpath={.data.$SECRET_KEY}" | base64 -d
 }
@@ -127,6 +145,7 @@ check_window() {
     local h
     h=$(date -u +%H)
     # 백업 CronJob: 03:00 · 04:00 매일, 05:00 월요일(k8s/85). 적재와 겹치면 둘 다 느려지고 덤프가 반쯤 찬 표를 담는다.
+    # [JA] バックアップ CronJob: 03:00・04:00 毎日、05:00 月曜(k8s/85)。投入と重なると両方遅くなり、ダンプが半分埋まったテーブルを取り込む。
     if [ "$h" -ge 2 ] && [ "$h" -lt 6 ]; then
         [ "${FORCE:-0}" = "1" ] && { warn "백업 시간대(02~06 UTC)지만 FORCE=1 — 진행"; return; }
         die "지금은 백업 시간대 근처다(02~06 UTC, 한국 11~15시). 그 뒤에 다시, 또는 FORCE=1"
@@ -137,6 +156,7 @@ check_disk() {
     local dir need_kb free_kb
     dir="$STORAGE_DIR"; [ -d "$dir" ] || dir=/
     # 표 + 인덱스 × 1.5(적재 중 WAL · 체크포인트 여유)
+    # [JA] テーブル + インデックス × 1.5(投入中の WAL・チェックポイントの余裕)
     need_kb=$(( PRODUCTS * BYTES_PER_PRODUCT * 3 / 2 / 1024 ))
     free_kb=$(df -Pk "$dir" | awk 'NR==2 {print $4}')
     echo "  디스크($dir): 남은 $(( free_kb / 1024 / 1024 )) GiB · 필요 약 $(( need_kb / 1024 / 1024 + 1 )) GiB"
@@ -145,6 +165,7 @@ check_disk() {
         die "디스크가 모자란다 — PRODUCTS 를 줄이거나 공간을 비운 뒤 다시"
     fi
     # 다 쓰고 나서도 10% 는 남기자 — 꽉 찬 노드는 kubelet 이 파드를 쫓아낸다(디스크 압박 축출)
+    # [JA] 使い切った後も 10% は残そう — 満杯のノードは kubelet が Pod を追い出す(ディスク圧迫による退避)
     local total_kb
     total_kb=$(df -Pk "$dir" | awk 'NR==2 {print $2}')
     if [ $(( free_kb - need_kb )) -lt $(( total_kb / 10 )) ]; then
@@ -156,6 +177,7 @@ check_disk() {
 flush_cache() {
     info "카탈로그 캐시 비우기 ($CACHES)"
     # 비밀번호는 파드 안의 환경 변수(REDIS_PASSWORD)를 그대로 쓴다 — 밖으로 꺼내지 않는다.
+    # [JA] パスワードは Pod 内の環境変数(REDIS_PASSWORD)をそのまま使う — 外に出さない。
     kubectl -n "$REDIS_NS" exec "deploy/$REDIS_DEPLOY" -- sh -c '
         export REDISCLI_AUTH="$REDIS_PASSWORD"
         total=0

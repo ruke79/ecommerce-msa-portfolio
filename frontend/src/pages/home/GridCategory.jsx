@@ -38,17 +38,34 @@ import { useTranslation } from "i18n/I18nProvider";
  * 잘려 나가는 양은 상자 비율이 사진 비율에서 얼마나 먼가로 정해지는데, 상품 사진은 대개
  * 세로가 길다. 정사각은 그만큼 더 자르지만 격자를 가지런히 두는 값이 더 크고, 카드는
  * 상품을 보는 자리라 덜 자르는 쪽을 골랐다.
+ *
+ * <p>[JA] 上部の格子カード一枚。以前は全商品の配列とカテゴリ名を受け取り<b>自分で絞り込んでいた</b>({@code products.filter(p => category === p.category.name).slice(0, gridCols*gridCols)})。
+ * 今はサーバーがセクション別にグループ化して必要な数だけ送るので、受け取ったとおりに描く。画像アクセスに {@code firstImageOf} を使う理由: 以前は
+ * {@code product.skus[0].images[0]} をそのまま読んでいた。sku や画像のない商品が一つでも混ざるとその場で TypeError になり<b>ホーム全体が真っ白な画面</b>に
+ * なった。最初の画面でそれは高すぎる失敗である。🐛 カードの中に大きな空白が残った。原因は二つ。<b>① 1 列の格子に 420px のタイルを積んでいた。</b>
+ * {@code grid-cols-1} + {@code h-[420px]} だったが、サーバーが返す数は {@code item_limit = 4} である。つまりカード一枚が縦に 1700px 超まで伸びた。ところが
+ * カテゴリごとに商品数が違う — 商品が 1 個だけのカテゴリのカードは 420px なのに<b>同じ行の別のカードが 1700px</b> なので、格子が行の高さを揃えるときに
+ * そのカードの下に 1200px 超の白い空白ができた。名前は「格子」なのに 1 列だったのが災いの元である。2 列に戻すと(4 個 → 2×2)カードが正方形に近づき、
+ * 高さの差も 1/2 に減る。<b>② {@code object-contain} は余った場所を空ける。</b>箱の比率と写真の比率が違うと、その差がそのまま<b>レターボックス</b>
+ * (上下または左右の白い帯)になる。横長の写真を縦長の箱に入れると半分が空く。タイルを {@code aspect-square} に固定し {@code object-cover} で埋める —
+ * <b>箱は決して空かない。</b>ホームで {@code cover} を使う理由: ホームは<b>サムネイル</b>である。端が少し切れてもタイルが埋まっているほうがよい。
+ * 商品をきちんと見るべき<b>詳細画面</b>は切らない {@code contain} をそのまま使う。ここのタイルが正方形でカードスワイパー({@code ProductSwiper})が 4:5 なのは
+ * 意図的である。切り取られる量は箱の比率が写真の比率からどれだけ遠いかで決まり、商品写真はたいてい縦長である。正方形はその分多く切るが格子を揃える価値の
+ * ほうが大きく、カードは商品を見る場所なので切る量が少ないほうを選んだ。
  */
 const GridCategory = ({ title, products, moreHref = "/browse" }) => {
     const { t } = useTranslation();
     const items = Array.isArray(products) ? products : [];
 
     // 상품이 하나뿐이면 2열로 두면 오른쪽 칸이 통째로 빈다. 그때는 한 칸을 꽉 쓴다.
+    // [JA] 商品が一つだけなのに 2 列にすると右の欄が丸ごと空く。そのときは一欄をいっぱいに使う。
     const columns = items.length === 1 ? "grid-cols-1" : "grid-cols-2";
 
     return (
         // w-full: 부모(HomeSections 의 flex 항목)가 정해 준 폭을 그대로 쓴다.
         // 이게 없으면 내용 폭으로 줄어들어 카드 오른쪽이 빈다.
+        // [JA] w-full: 親(HomeSections の flex 項目)が決めた幅をそのまま使う。
+        //      これがないと内容の幅に縮み、カードの右側が空く。
         <div className="flex w-full flex-col bg-white border rounded p-3">
             <h3 className="font-bold mb-2 uppercase truncate">
                 {String(title ?? "").replace("-", " ")}
@@ -67,6 +84,7 @@ const GridCategory = ({ title, products, moreHref = "/browse" }) => {
                               * overflow-hidden 은 cover 가 넘긴 부분을 잘라내는 쪽 —
                               * 이게 없으면 잘리지 않고 옆 칸을 침범한다.
                               */}
+                            {/* [JA] タイルが大きさを決め(aspect-square)画像はそれを埋める。overflow-hidden は cover がはみ出させた部分を切り取る側 — これがないと切られずに隣の欄を侵す。 */}
                             <div className="relative aspect-square overflow-hidden rounded bg-slate-100">
                                 {image ? (
                                     <img
@@ -79,6 +97,8 @@ const GridCategory = ({ title, products, moreHref = "/browse" }) => {
                                 ) : (
                                     // 이미지가 없는 상품도 자리는 지킨다 — 격자가 무너지면
                                     // 옆 카드까지 어긋나 보인다.
+                                    // [JA] 画像がない商品も場所は守る — 格子が崩れると
+                                    //      隣のカードまでずれて見える。
                                     <div className="absolute inset-0 flex items-center justify-center p-2 text-center text-xs text-slate-400">
                                         {product.name}
                                     </div>
@@ -92,6 +112,7 @@ const GridCategory = ({ title, products, moreHref = "/browse" }) => {
               * mt-auto: 카드 높이가 남더라도 이 줄은 바닥에 붙는다.
               * 🐛 예전에는 <h4> 였다 — 눌리는 모양인데 링크가 아니었다(browseLink.js 참조).
               */}
+            {/* [JA] mt-auto: カードの高さが余ってもこの行は底に付く。🐛 以前は <h4> だった — 押せそうな見た目なのにリンクではなかった(browseLink.js 参照)。 */}
             <Link
                 to={moreHref}
                 className="self-start text-xs hover:underline text-blue-500 mt-auto pt-2"

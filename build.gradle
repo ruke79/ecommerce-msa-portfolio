@@ -34,6 +34,15 @@ subprojects {
 	//
 	// 부수 효과도 좋다 — 같은 커밋이 같은 바이너리를 만든다는 것은 "지금 배포된 게
 	// 정확히 무엇인가"를 태그가 아니라 **내용으로** 확인할 수 있다는 뜻이다.
+	// [JA] ── 再現可能なアーカイブ ──
+	//      Gradle の既定はファイルのタイムスタンプをアーカイブに **そのまま埋め込む。** そのためソースが
+	//      まったく変わらなくてもビルドのたびに jar のバイトが変わる(実測: 同じコミットを 2 回
+	//      ビルドしたら sha256 が違った)。
+	//      その代償はデプロイで出る。jar が違えば Docker レイヤーが違い、レジストリに上げる
+	//      ときに **変わっていないサービス 13 個まで毎回再送される。** サービスあたり数十 MB × 14 である。
+	//      再現可能にしておけば変わっていないサービスはダイジェストが同じで、push は事実上 no-op になる。
+	//      副次効果もよい — 同じコミットが同じバイナリを作るということは「今デプロイされているのが
+	//      正確に何か」をタグではなく **内容で** 確認できるという意味である。
 	tasks.withType(AbstractArchiveTask).configureEach {
 		preserveFileTimestamps = false
 		reproducibleFileOrder = true
@@ -56,6 +65,8 @@ subprojects {
         set('springCloudVersion', "2025.0.3")
         // gRPC 시범(docs/66) — common 이 계약(.proto)과 부품을 갖고, catalog · order 가 런타임을 얹는다.
         // protobuf 는 grpc-protobuf 가 요구하는 버전과 맞춘다(grpc 1.84 → protobuf-java 3.25.x).
+        // [JA] gRPC 試行(docs/66) — common が契約(.proto)と部品を持ち、catalog · order がランタイムを載せる。
+        //      protobuf は grpc-protobuf が要求するバージョンに合わせる(grpc 1.84 → protobuf-java 3.25.x)。
         set('grpcVersion', '1.84.0')
         set('protobufVersion', '3.25.9')
     }
@@ -82,6 +93,9 @@ subprojects {
 		// Testcontainers — 실제 인프라(PostgreSQL/Redis/Kafka/Mongo/ES)를 띄워 통합 테스트를 돌린다.
 		// docs/14·16 의 기동 불가 버그들은 전부 "실제로 띄워야만" 드러났다. 그 검증을 손이 아니라
 		// 빌드가 하도록 옮기는 것이 목적이다. 버전은 Spring Boot BOM 이 관리한다.
+		// [JA] Testcontainers — 実際のインフラ(PostgreSQL/Redis/Kafka/Mongo/ES)を起動して統合テストを回す。
+		//      docs/14·16 の起動不能バグはすべて「実際に起動して初めて」露見した。その検証を手ではなく
+		//      ビルドが行うよう移すのが目的。バージョンは Spring Boot BOM が管理する。
 		testImplementation 'org.springframework.boot:spring-boot-testcontainers'
 		testImplementation 'org.testcontainers:junit-jupiter'
 		testImplementation 'org.testcontainers:postgresql'
@@ -89,18 +103,26 @@ subprojects {
 		testImplementation 'org.testcontainers:mongodb'
 		testImplementation 'org.testcontainers:elasticsearch'
 		// 비동기(Kafka 소비) 결과를 기다리는 데 필요하다. sleep 대신 조건 대기.
+		// [JA] 非同期(Kafka 消費)の結果を待つのに必要。sleep の代わりに条件待ち。
 		testImplementation 'org.awaitility:awaitility'
 		// ContainerTestUtils.waitForAssignment — 컨슈머가 파티션을 배정받기 전에 발행하면
 		// 메시지를 놓칠 수 있어(auto.offset.reset 에 따라) 테스트가 불안정해진다.
+		// [JA] ContainerTestUtils.waitForAssignment — コンシューマがパーティションを割り当てられる前に発行すると
+		//      メッセージを取りこぼすことがあり(auto.offset.reset 次第)、テストが不安定になる。
 		testImplementation 'org.springframework.kafka:spring-kafka-test'
 
 		 // Logstash Logback Encoder 의존성 추가
+		 // [JA] Logstash Logback Encoder の依存関係を追加
     	implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
 
 		// 분산 추적 — OpenTelemetry(docs/63). traceId/spanId 생성·전파는 Micrometer Tracing 의 OTel 브리지가,
 		// 내보내기는 OTLP(HTTP)가 한다 → OTel Collector → Jaeger · spanmetrics(Prometheus).
 		// 코드는 벤더 중립 API(io.micrometer.tracing.*)만 쓰므로 브리지만 바꿨다(예전: Brave + Zipkin 리포터).
 		// 버전은 Spring Boot BOM 이 관리한다. 수집기 주소는 application-common.yml 의 management.otlp.tracing.endpoint.
+		// [JA] 分散トレーシング — OpenTelemetry(docs/63)。traceId/spanId の生成・伝播は Micrometer Tracing の OTel ブリッジが、
+		//      エクスポートは OTLP(HTTP)が行う → OTel Collector → Jaeger · spanmetrics(Prometheus)。
+		//      コードはベンダー中立 API(io.micrometer.tracing.*)だけを使うのでブリッジだけ替えた(以前: Brave + Zipkin レポーター)。
+		//      バージョンは Spring Boot BOM が管理する。コレクタのアドレスは application-common.yml の management.otlp.tracing.endpoint。
 		implementation 'io.micrometer:micrometer-tracing-bridge-otel'
 		implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 
@@ -115,6 +137,9 @@ subprojects {
 		// API 1.32 로 붙어, 최신 Docker Engine(29.x, 최소 1.40 요구)에서
 		//   "client version 1.32 is too old"
 		// 로 컨테이너를 아예 띄우지 못한다. 최신 Testcontainers 로 올려 이를 회피한다.
+		// [JA] Spring Boot 3.4.1 が固定する Testcontainers 1.20.4 は docker-java クライアントが
+		//      API 1.32 で接続し、最新の Docker Engine(29.x、最低 1.40 要求)では
+		//      "client version 1.32 is too old" でコンテナをまったく起動できない。最新の Testcontainers に上げてこれを回避する。
 		mavenBom "org.testcontainers:testcontainers-bom:1.21.4"
 	}
 }
@@ -124,6 +149,11 @@ subprojects {
 // UP-TO-DATE 로 건너뛴다 — 즉 매니페스트를 깨뜨려도 **가드레일이 아예 실행되지 않는다**.
 // (k3s 검증 중 실측: 시크릿에서 AMAZON_ACCESS_KEY 를 지웠는데 빌드가 초록불이었다.)
 // 그 파일들을 명시적 입력으로 선언해, 바뀌면 다시 돌게 한다.
+	// [JA] ⚠️ ConfigurationGuardrailTest は **モジュールの外**(各サービスの yml、k8s/、observability/)を読む。
+	//      Gradle はそれらのファイルを test タスクの入力として知らないので、ソースが変わらなければタスクを
+	//      UP-TO-DATE としてスキップする — つまりマニフェストを壊しても **ガードレールがまったく実行されない**。
+	//      (k3s 検証中の実測: シークレットから AMAZON_ACCESS_KEY を消したのにビルドが緑だった。)
+	//      それらのファイルを明示的な入力として宣言し、変われば再実行させる。
 tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEach {
     inputs.files(
         fileTree(rootDir) {
@@ -132,29 +162,38 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
             include 'common/src/main/resources/es/*.json'
             include '*/src/main/java/**/Kafka*Config.java'
             // InternalEndpointGuardTest(B-80 · B-81) · B-78 — 컨트롤러 · Feign · 인터셉터 소스를 읽는다(입력이 아니면 고쳐도 UP-TO-DATE 로 건너뛴다)
+            // [JA] InternalEndpointGuardTest(B-80 · B-81) · B-78 — コントローラ · Feign · インターセプタのソースを読む(入力でなければ直しても UP-TO-DATE でスキップされる)
             include '*/src/main/java/**/*.java'
             include '*/src/main/resources/db/migration/*.sql'
             include 'ops/19-build-images.sh'
             // B-75 — 배포 워크플로
+            // [JA] B-75 — デプロイワークフロー
             include '.github/workflows/*.yml'
             // EnableBackupCronJobsTest(docs/22 §2) — 백업 CronJob 적용 + 켜기
+            // [JA] EnableBackupCronJobsTest(docs/22 §2) — バックアップ CronJob の適用 + 有効化
             include 'ops/29-enable-pitr-in-cluster.sh'
             // CheckMtlsScriptTest(docs/57 §16) — mTLS 점검(신원 헤더)
+            // [JA] CheckMtlsScriptTest(docs/57 §16) — mTLS 点検(アイデンティティヘッダ)
             include 'ops/37-check-mtls.sh'
             // DltTopicsScriptTest(docs/29 §5.3) — 비밀이 흐르는 토픽의 보존
+            // [JA] DltTopicsScriptTest(docs/29 §5.3) — シークレットが流れるトピックの保持
             include 'ops/02-create-dlt-topics.sh'
             // B-39 · B-56 — 오버레이와 배포 스크립트
+            // [JA] B-39 · B-56 — オーバーレイとデプロイスクリプト
             include 'k8s-overlays/**/*.yaml'
             include 'ops/28-deploy.sh'
             include 'ops/07-issue-certificates.sh'
             include 'ops/45-multinode.sh'
             // CatalogGeneratorShapeTest(docs/83 §2.5) · CatalogPlaceholderImageArgTest — 상품 생성기
+            // [JA] CatalogGeneratorShapeTest(docs/83 §2.5) · CatalogPlaceholderImageArgTest — 商品ジェネレータ
             include 'ops/tools/generate-catalog-data.py'
             include 'ops/44-bulk-catalog.sh'
             // BulkOrdersScriptTest(docs/83 §2.4) — 주문 이력 적재 · 그 생성기
+            // [JA] BulkOrdersScriptTest(docs/83 §2.4) — 注文履歴の投入 · そのジェネレータ
             include 'ops/54-bulk-orders.sh'
             include 'ops/tools/generate-demo-orders.py'
             // ReadmeTestCountTest — README 의 테스트 수 두 표기
+            // [JA] ReadmeTestCountTest — README のテスト数の 2 つの表記
             include 'README.md'
             include 'README.ko.md'
             include 'order-service/src/main/resources/application-local.yml'
@@ -164,7 +203,8 @@ tasks.matching { it.name == 'test' && it.project.name == 'common' }.configureEac
 
 // DemoUserGeneratorIntegrationTest(docs/79)는 모듈 밖의 ops/tools/generate-demo-users.py 를 돌린다 — 입력으로 선언하지
 // 않으면 생성기를 고쳐도 테스트가 UP-TO-DATE 로 건너뛰어진다(실측: 변이 확인이 모두 "통과"했다).
-// [JA] モジュール外の生成器を実行するので入力として宣言する。
+// [JA] DemoUserGeneratorIntegrationTest(docs/79)はモジュール外の ops/tools/generate-demo-users.py を実行する — 入力として宣言しないと、
+//      生成器を直してもテストが UP-TO-DATE としてスキップされる(実測: 変異確認がすべて「通過」した)。
 tasks.matching { it.name == 'test' && it.project.name == 'user-service' }.configureEach {
     inputs.file(file("${rootDir}/ops/tools/generate-demo-users.py"))
         .withPropertyName('demoUserGenerator').withPathSensitivity(PathSensitivity.RELATIVE)
@@ -186,6 +226,10 @@ tasks.named('test') {
 		// 분리한다. 기본 실행에서는 제외되고, `-PwithContainers` 를 줄 때만 포함된다.
 		//   ./gradlew test                    → 단위 테스트만 (Docker 불필요)
 		//   ./gradlew test -PwithContainers   → Testcontainers 통합 테스트까지
+		// [JA] Docker がない環境でも単体テストは回るべきなので、統合テストは 'containers' タグで
+		//      分離する。既定の実行では除外され、`-PwithContainers` を与えたときだけ含まれる。
+		//        ./gradlew test                    → 単体テストのみ(Docker 不要)
+		//        ./gradlew test -PwithContainers   → Testcontainers 統合テストまで
 		useJUnitPlatform {
 			if (!project.hasProperty('withContainers')) {
 				excludeTags 'containers'
@@ -196,6 +240,10 @@ tasks.named('test') {
 		// 컨텍스트를 띄우면서 자기가 만들 DDL 을 build/schema/<서비스>.sql 로 뱉는다.
 		// 그 산출물을 ops/tools/hbm2flyway.py 가 멱등 마이그레이션으로 바꾼다.
 		// 엔티티를 바꾼 뒤 베이스라인을 다시 뜰 때만 쓰는 개발용 스위치 — CI 는 쓰지 않는다.
+		// [JA] スキーマのベースライン再生成用(docs/20 §3)。`-PexportSchema` を与えると Hibernate が
+		//      コンテキストを起動しながら自分が作る DDL を build/schema/<サービス>.sql に吐き出す。
+		//      その成果物を ops/tools/hbm2flyway.py が冪等なマイグレーションに変える。
+		//      エンティティを変えた後にベースラインを取り直すときだけ使う開発用スイッチ — CI は使わない。
 		if (project.hasProperty('exportSchema')) {
 			def target = file("${rootDir}/build/schema/${project.name}.sql")
 			target.parentFile.mkdirs()
@@ -204,6 +252,8 @@ tasks.named('test') {
 			systemProperty 'spring.jpa.properties.jakarta.persistence.schema-generation.scripts.create-target', target.absolutePath
 			// 스키마(네임스페이스) 생성문까지 포함시킨다 — 빈 DB 에서는 이게 없으면
 			// 'schema "product" does not exist' 로 첫 CREATE TABLE 부터 실패한다.
+			// [JA] スキーマ(名前空間)の作成文まで含める — 空の DB ではこれがないと
+			//      'schema "product" does not exist' で最初の CREATE TABLE から失敗する。
 			systemProperty 'spring.jpa.properties.hibernate.hbm2ddl.create_namespaces', 'true'
 		}
 
@@ -211,11 +261,16 @@ tasks.named('test') {
 		// 있어(이 저장소를 검증한 환경이 그랬다) 미러를 주입할 수 있게 해 둔다.
 		//   TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/
 		// 값이 없으면 아무 것도 하지 않으므로 일반 환경에서는 평소대로 Docker Hub 를 쓴다.
+		// [JA] Testcontainers がイメージを取得する場所。既定は Docker Hub だが、レジストリが塞がれた環境が
+		//      あり(このリポジトリを検証した環境がそうだった)、ミラーを注入できるようにしておく。
+		//        TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX=mirror.gcr.io/
+		//      値がなければ何もしないので、通常の環境ではいつもどおり Docker Hub を使う。
 		def hubPrefix = System.getenv('TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX')
 		if (hubPrefix) {
 			environment 'TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX', hubPrefix
 		}
 		// Gradle 데몬이 상속하지 않는 경우가 있어 Docker 접속 정보도 명시적으로 넘긴다.
+		// [JA] Gradle デーモンが継承しない場合があるので、Docker の接続情報も明示的に渡す。
 		['DOCKER_HOST', 'DOCKER_API_VERSION', 'TESTCONTAINERS_RYUK_DISABLED', 'TESTCONTAINERS_CHECKS_DISABLE', 'E2E_JRE_IMAGE'].each { key ->
 			def value = System.getenv(key)
 			if (value) {

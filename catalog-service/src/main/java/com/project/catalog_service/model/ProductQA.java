@@ -28,7 +28,7 @@ import lombok.experimental.SuperBuilder;
 @Getter
 @Setter
 @Entity
-@SuperBuilder // @Builder 대신 @SuperBuilder 사용
+@SuperBuilder // @Builder 대신 @SuperBuilder 사용 ／ [JA] @Builder の代わりに @SuperBuilder を使う
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name="product_qa" ,schema="product")
 public class ProductQA extends BaseEntity {
@@ -44,7 +44,7 @@ public class ProductQA extends BaseEntity {
 
     private String answer;
 
-    @JsonBackReference // Product로의 순환 참조를 끊습니다.
+    @JsonBackReference // Product로의 순환 참조를 끊습니다. ／ [JA] Product への循環参照を断つ。
     @ManyToOne(fetch=FetchType.LAZY)
     @JoinColumn(name="product_id", referencedColumnName = "product_id", nullable=false)
     private Product product;

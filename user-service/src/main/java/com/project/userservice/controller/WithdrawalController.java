@@ -31,6 +31,11 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>신원은 토큰에서만 온다. userId 를 본문이나 경로로 받지 않는다 — 받으면 남의 계정을
  * 탈퇴시킬 수 있다.
+ *
+ * <p>[JA] 会員退会。
+ * 三つの動作を HTTP メソッドで分けた — 照会(GET)、申請(POST)、取消(DELETE)。取消が DELETE なのは
+ * <b>退会申請というリソースを消す</b>からだ(アカウントを消すのではない)。アカウントを消すのは猶予期間が過ぎたあとバッチが行う。
+ * 身元はトークンからだけ来る。userId を本文やパスで受け取らない — 受け取ると他人のアカウントを退会させられる。
  */
 @RestController
 @RequestMapping("/api/user/withdrawal")
@@ -52,6 +57,7 @@ public class WithdrawalController {
     ResponseEntity<?> request(@Valid @RequestBody(required = false) WithdrawalRequest request,
             @AuthenticationPrincipal UserDetails userDetails,
             // 비밀번호를 비웠을 때 "최근 로그인" 을 확인하는 근거(docs/68 §16). HttpOnly 쿠키라 화면은 만지지 않는다.
+            // [JA] パスワードを空にしたとき「最近のログイン」を確認する根拠(docs/68 §16)。HttpOnly Cookie なので画面は触らない。
             @org.springframework.web.bind.annotation.CookieValue(name = "REFRESH", required = false) String refresh) {   // = TokenType.REFRESH
 
         Long userId = idOf(userDetails);
@@ -69,6 +75,7 @@ public class WithdrawalController {
                     .body(new MessageResponse(ClientMessage.of(e)));
         } catch (BadCredentialsException e) {
             // 비밀번호가 틀렸다. 되돌릴 수 없는 동작 앞의 본인 확인이므로 통과시키지 않는다.
+            // [JA] パスワードが誤っている。取り消せない動作の前の本人確認なので通さない。
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(new MessageResponse(ClientMessage.of(e)));
         } catch (IllegalArgumentException e) {

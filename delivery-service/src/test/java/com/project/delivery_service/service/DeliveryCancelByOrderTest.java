@@ -23,6 +23,7 @@ import com.project.delivery_service.repository.DeliveryRepository;
 import com.project.delivery_service.repository.ShipmentRepository;
 
 /** 결제 취소·환불이 배송에 미치는 영향 — 발송 전에만 접는다. */
+// [JA] 決済のキャンセル・返金が配送に及ぼす影響 — 発送前だけたたむ。
 @DisplayName("delivery-service — 결제 취소로 배송 접기")
 class DeliveryCancelByOrderTest {
 

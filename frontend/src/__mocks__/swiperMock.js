@@ -8,12 +8,20 @@
  *
  * <p>캐러셀의 동작은 어느 테스트의 검증 대상도 아니다. 슬라이드를 그대로 그리는 대역으로
  * 바꾼다. 실제 Swiper 를 쓰고 싶어지면 그때 resolver 를 손보면 된다.
+ *
+ * <p>[JA] Swiper の代役。
+ * swiper 11 は package.json の `exports` マップでだけサブパスを公開する(`./react`、`./modules` はディスク上にその名前のディレクトリがない)。
+ * jest 27 の resolver は `exports` を読まないので `Cannot find module 'swiper/modules'` で落ちる — 商品カードを経由するテストがすべて塞がれる。
+ * カルーセルの動作はどのテストの検証対象でもない。スライドをそのまま描く代役に置き換える。実際の Swiper を使いたくなったらそのとき resolver を直せばよい。
  */
 const React = require("react");
 
 // forwardRef 인 이유: ProductSwiper 가 `ref={swiperRef}` 를 넘긴다. 함수 컴포넌트에
 // ref 를 주면 React 가 "Function components cannot be given refs" 를 찍는다. div 에
 // 붙여 두면 `swiperRef.current?.swiper?.…` 는 옵셔널 체이닝으로 조용히 통과한다.
+// [JA] forwardRef である理由: ProductSwiper が `ref={swiperRef}` を渡す。関数コンポーネントに
+//      ref を渡すと React が "Function components cannot be given refs" を出す。div に
+//      付けておけば `swiperRef.current?.swiper?.…` はオプショナルチェーンで静かに通過する。
 const Swiper = React.forwardRef(({ children, ...rest }, ref) =>
   React.createElement(
     "div",
@@ -29,6 +37,9 @@ const SwiperSlide = ({ children, ...rest }) =>
 // Swiper 전용 props 를 그대로 div 에 넘기면 React 가 "unknown prop" 경고를 쏟아낸다.
 // 목록이 빠지면 조용히 실패하지 않고 **경고로 테스트 출력을 덮어** 정작 봐야 할 것을
 // 가린다. 실제로 쓰는 prop 을 늘릴 때는 여기에도 넣는다.
+// [JA] Swiper 専用の props をそのまま div に渡すと React が "unknown prop" 警告を大量に出す。
+//      リストが漏れると静かに失敗するのではなく、**警告でテスト出力を覆って**本当に見るべきものを
+//      隠す。実際に使う prop を増やすときはここにも入れる。
 function stripSwiperProps({
   modules,
   slidesPerView,
@@ -47,6 +58,7 @@ function stripSwiperProps({
 }
 
 // swiper/modules 의 플러그인들. 존재하기만 하면 된다.
+// [JA] swiper/modules のプラグイン群。存在しさえすればよい。
 const Autoplay = "Autoplay";
 const Navigation = "Navigation";
 const Pagination = "Pagination";

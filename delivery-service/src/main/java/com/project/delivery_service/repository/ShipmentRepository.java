@@ -27,6 +27,12 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
      *
      * <p>배치 크기를 제한하는 이유는 한 레플리카가 밀린 건을 전부 잠그면 나머지가 놀기
      * 때문이고, 외부 HTTP 호출이 배치 크기만큼 직렬로 붙어 트랜잭션이 길어지기 때문이다.
+     *
+     * <p>[JA] 照会の時期が来た箱を<b>排他的に確保</b>する。
+     * アウトボックスのポーラー・SMS 送信器と同じ理由で {@code FOR UPDATE SKIP LOCKED} である(docs/21)。
+     * ロックがなければレプリカ二つが同じ箱を取り、<b>宅配業者 API を二回呼ぶ</b> — 公共 API の日次クォータを二倍燃やし、イベントも重複処理される。
+     * バッチサイズを制限する理由は、一つのレプリカが溜まった分を全部ロックすると残りが遊ぶためであり、
+     * 外部 HTTP 呼び出しがバッチサイズ分だけ直列につながってトランザクションが長くなるためである。
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))

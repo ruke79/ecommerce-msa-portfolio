@@ -24,14 +24,18 @@ ext {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     // spring-cloud-starter-bus-amqp 는 뺐다 — RabbitMQ 가 없어 매니페스트가 꺼 두기만 했다(ConfigServerClasspathTest).
+    // [JA] spring-cloud-starter-bus-amqp は外した — RabbitMQ がなく、マニフェストが無効にしておくだけだった(ConfigServerClasspathTest)。
 
     implementation 'org.springframework.cloud:spring-cloud-config-server'
     implementation 'org.springframework.cloud:spring-cloud-starter'
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     // 🔒 설정 · 복호화 API 인증(ConfigServerSecurity). 예전에는 없어 같은 네임스페이스의 누구나 GET /{application}/{profile} 로
     //    모든 서비스의 설정을, ENCRYPT_KEY 를 켜면 POST /decrypt 로 {cipher} 값을 읽을 수 있었다.
+    // [JA] 🔒 設定 · 復号 API の認証(ConfigServerSecurity)。以前はなく、同じネームスペースの誰でも GET /{application}/{profile} で
+    //         全サービスの設定を、ENCRYPT_KEY を有効にすれば POST /decrypt で {cipher} の値を読めた。
     implementation 'org.springframework.boot:spring-boot-starter-security'
     // spring-cloud-starter-bootstrap 은 뺐다 — 읽을 bootstrap.yml 이 없다(B-89).
+    // [JA] spring-cloud-starter-bootstrap は外した — 読むべき bootstrap.yml がない(B-89)。
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

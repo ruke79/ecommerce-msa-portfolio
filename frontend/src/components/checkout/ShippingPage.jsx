@@ -20,6 +20,10 @@ const initialValue = {
     // Republic of" 바로 아래가 "Korea, Republic of") 빈 채로 두면 잘못 고르기 쉽고, 그러면
     // 목포 주소가 KP 로 저장돼 국제 배송(통관 단계)으로 만들어진다 — 실제로 그랬다.
     // 값은 나라 코드다 — 이름은 화면 언어로 그린다(docs/60 §11).
+    // [JA] 発送国を既定値にする。一覧で二つの韓国が並んでいて("Korea, Democratic People'S
+    //      Republic of" のすぐ下が "Korea, Republic of")空のままにすると誤って選びやすく、そうすると
+    //      木浦の住所が KP で保存され国際配送(通関段階)として作られる — 実際にそうなった。
+    //      値は国コードである — 名前は画面の言語で描く(docs/60 §11)。
     country: DEFAULT_COUNTRY,
 };
 
@@ -35,6 +39,8 @@ const ShippingPage = ({
     const [shipping, setShipping] = useState(initialValue);
     // 고치는 중인 배송지. 지금까지는 등록·삭제만 됐다 — 나라 하나를 잘못 골랐으면 지우고
     // 다시 넣어야 했고, 그러면 기본 배송지 표시도 함께 사라졌다.
+    // [JA] 編集中の配送先。これまでは登録 · 削除しかできなかった — 国一つを誤って選んだら消して
+    //      入れ直すしかなく、そうすると既定の配送先の表示も一緒に消えた。
     const [editing, setEditing] = useState(null);
     const { addressesData, isPendingAddress, invalidate, isSuccessAddress } = useFetchAddresses(user.userId);
          
@@ -62,6 +68,9 @@ if (isPendingAddress) {
     // 🐛 `return;` 이었다 — undefined 를 그리면 React 는 **아무것도 렌더하지 않는다.**
     //    배송지를 불러오는 동안 결제 화면 위쪽이 통째로 빈 공간이 됐고, 사용자는
     //    로딩 중인지 주소가 없는 건지 알 수 없었다.
+    // [JA] 🐛 `return;` だった — undefined を描くと React は **何もレンダーしない。**
+    //      配送先を読み込む間、決済画面の上部が丸ごと空白になり、ユーザーは
+    //      読み込み中なのか住所がないのか分からなかった。
     return (
         <div className="py-6 text-sm text-slate-500" role="status">
             {t("checkout.address.loading")}

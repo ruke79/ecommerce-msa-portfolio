@@ -36,6 +36,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>그래서 컨슈머는 알림을 저장만 하고 {@code PENDING} 으로 표시한다. 실제 발송은
  * {@link SmsDispatcher} 가 별도로 집어 간다.
+ *
+ * <p>[JA] 通知の作成・照会。通知を作ることと SMS を送ることを<b>分離</b>する。イベントを受けたその場ですぐ SMS
+ * を送ると二つ困る: SMS ゲートウェイが遅いか死んでいると Kafka コンシューマがその分掴まれる —
+ * 通知一つのために全体の消費が遅れる。送信失敗をコンシューマの再試行で処理すると<b>通知が重複作成</b>され
+ * る。アウトボックスで経験したのと同じ構造だ(docs/21)。そのためコンシューマは通知を保存して
+ * {@code PENDING} と印を付けるだけにする。実際の送信は {@link SmsDispatcher} が別に拾っていく。
  */
 @Slf4j
 @Service
@@ -49,7 +55,10 @@ public class NotificationService {
     /**
      * 알림을 만든다. 같은 {@code sourceEventId} 로는 한 번만 만들어진다.
      *
+     * <p>[JA] 通知を作る。同じ {@code sourceEventId} では一度だけ作られる。
+     *
      * @return 새로 만들어졌으면 그 알림, 이미 있으면 비어 있음
+     *         [JA] 新しく作られたらその通知、すでにあれば空
      */
     @Transactional
     public Optional<Notification> create(Long recipientId, NotificationType type,
@@ -57,6 +66,7 @@ public class NotificationService {
                                          String sourceEventId, Map<String, String> smsParams) {
 
         // 1차 방어 — 이미 있으면 조용히 넘어간다.
+        // [JA] 一次防御 — すでにあれば静かに通り過ぎる。
         if (sourceEventId != null && notificationRepository.findBySourceEventId(sourceEventId).isPresent()) {
             log.debug("이미 처리된 이벤트, 건너뜀: {}", sourceEventId);
             return Optional.empty();
@@ -81,12 +91,16 @@ public class NotificationService {
             // 2차 방어 — 위 조회와 저장 사이에 다른 레플리카가 먼저 넣었다. UNIQUE 제약이
             // 막아 준 것이므로 정상 흐름으로 취급한다. 이게 없으면 레플리카 2개에서
             // 같은 문자가 두 통 나간다.
+            // [JA] 二次防御 — 上の照会と保存の間に別のレプリカが先に入れた。UNIQUE
+            //      制約が防いでくれたものなので正常な流れとして扱う。これがないとレプリカ 2 つで同じ SMS が二通出る。
             log.debug("동시 생성 감지, 건너뜀: {}", sourceEventId);
             return Optional.empty();
         }
 
         // 알림이 실제로 만들어진 경우에만 메일을 건다. 위 UNIQUE 방어를 통과했다는 것은
         // 이 이벤트를 우리가 처음 처리했다는 뜻이므로, 메일도 여기서 한 번만 걸린다.
+        // [JA] 通知が実際に作られた場合にだけメールをかける。上の UNIQUE 防御を通ったということはこのイベントを我々が初
+        //      めて処理したという意味なので、メールもここで一度だけかかる。
         enqueueMail(recipientId, type, title, url, sourceEventId);
 
         return Optional.of(saved);
@@ -108,6 +122,17 @@ public class NotificationService {
      * 일이 사실상 없다. 반면 {@code REQUIRES_NEW} 는 그 구간 동안 커넥션을 하나 더 붙잡아
      * 풀 총합 가드레일(docs/19 §3, B-32)에 그대로 영향을 준다 — 일어나지 않는 경우를 위해
      * 치를 비용이 아니다.
+     *
+     * <p>[JA] 同じ通知をメールでも送る。SMS と違い<b>ここで状態を通知行に書かない。</b>メールは別テーブ
+     * ル({@code mail_message})を使うからだ — 登録確認のように通知行がまったくないメールもあり、
+     * 通知に付属するカラムでは表現できない(MailMessage クラスのコメント参照)。
+     * <b>同じトランザクション内で動く。</b>下の {@code catch} は設定照会のような普通のランタイム例外で通知
+     * までロールバックされるのを防ぐが、<b>制約違反は防げない</b> — JPA がトランザクションを rollback-only
+     * にしてしまうので、捕まえてもコミットされない。それでも別トランザクション({@code REQUIRES_NEW})
+     * に切り離さなかった。ここまで来たということは通知行が自分の UNIQUE を通ったという意味で、
+     * メールキーはその値から派生するので実際にぶつかることは事実上ない。一方 {@code REQUIRES_NEW}
+     * はその区間の間コネクションをもう一つ掴み、プール総和のガードレール(docs/19 §3, B-32)
+     * にそのまま影響する — 起きないケースのために払うコストではない。
      */
     private void enqueueMail(Long recipientId, NotificationType type,
                              String title, String url, String sourceEventId) {
@@ -118,7 +143,7 @@ public class NotificationService {
 
         MailKind kind = MailKind.forNotification(type).orElse(null);
         if (kind == null) {
-            return;   // shouldSendEmail 이 이미 걸렀지만, 두 판정이 어긋나도 안전하게.
+            return;   // shouldSendEmail 이 이미 걸렀지만, 두 판정이 어긋나도 안전하게. ／ [JA] shouldSendEmail がすでに絞ったが、二つの判定がずれても安全に。
         }
 
         // 🐛 2026-10-24 운영: 지역(region)은 전화번호를 인증해야 채워진다 — 인증하지 않은 사용자는 locale 이 null 이고,
@@ -132,6 +157,8 @@ public class NotificationService {
             Map<String, String> params = new HashMap<>();
             if (title != null) {
                 // 제목은 한국어로 저장된다(NotificationTexts) — 일본 지역이면 메일에 넣기 전에 바꾼다(docs/60 §9).
+                // [JA] 件名は韓国語で保存される(NotificationTexts) — 日本地域ならメールに入れる前に置き換える(docs/60
+                //      §9)。
                 params.put("subject", com.project.common.i18n.ClientText.localize(title,
                         locale == null ? null : java.util.Locale.forLanguageTag(locale)));
             }
@@ -141,6 +168,8 @@ public class NotificationService {
 
             // 알림과 다른 멱등 키를 쓴다. 같은 값을 쓰면 두 테이블의 UNIQUE 가 서로를 막지는
             // 않지만, 로그와 운영 조회에서 "알림 id"와 "메일 id"가 같은 문자열을 가리켜 혼동된다.
+            // [JA] 通知とは別の冪等キーを使う。同じ値を使っても二つのテーブルの UNIQUE が互いを妨げはしないが、
+            //      ログや運用照会で「通知 id」と「メール id」が同じ文字列を指して混乱する。
             mailService.enqueue(
                     sourceEventId == null ? null : "mail:" + sourceEventId,
                     preference.getEmail(),
@@ -150,14 +179,18 @@ public class NotificationService {
                     // 설정의 지역(KR/JP)을 로케일(ko/ja)로 바꿔 넘긴다. 디스패처가 설정을 다시
                     // 보긴 하지만, 그 사이 사용자가 지역을 바꿔도 이 메일은 등록 시점의 언어로
                     // 나가야 한다 — 주문 알림이 갑자기 다른 언어로 오면 그게 더 이상하다.
+                    // [JA] 設定の地域(KR/JP)をロケール(ko/ja)に変えて渡す。ディスパッチャが設定を再度見はするが、
+                    //      その間にユーザーが地域を変えてもこのメールは登録時点の言語で出るべきだ —
+                    //      注文通知が突然別の言語で来るほうがよほどおかしい。
                     locale);
         } catch (RuntimeException e) {
             log.warn("알림 메일을 큐에 넣지 못했습니다(알림 자체는 생성됨): recipientId={} type={} {}",
-                    recipientId, type, e.getClass().getSimpleName());   // 메시지에는 받는 주소가 섞일 수 있다(N-H2)
+                    recipientId, type, e.getClass().getSimpleName());   // 메시지에는 받는 주소가 섞일 수 있다(N-H2) ／ [JA] メッセージには宛先アドレスが混じりうる(N-H2)
         }
     }
 
     /** 설정의 지역 코드(KR/JP)를 문구 로케일(ko/ja)로. 모르는 값이면 null — 기본값에 맡긴다. */
+    // [JA] 設定の地域コード(KR/JP)を文言ロケール(ko/ja)に。未知の値なら null — 既定値に任せる。
     private static String localeOf(String region) {
         if (region == null) {
             return null;
@@ -170,6 +203,7 @@ public class NotificationService {
     }
 
     /** 이 사용자·이 종류가 SMS 대상인지 판정한다. 번호가 없거나 설정이 꺼져 있으면 아니다. */
+    // [JA] このユーザー・この種類が SMS 対象かを判定する。番号がないか設定がオフなら対象外。
     private SmsStatus resolveSmsStatus(Long recipientId, NotificationType type) {
         return preferenceRepository.findByUserId(recipientId)
                 .filter(pref -> pref.shouldSendSms(type))
@@ -194,6 +228,10 @@ public class NotificationService {
      * <p>수신자 확인이 필수다. id 만으로 처리하면 남의 알림 id 를 넣어 상태를 바꿀 수 있다
      * (IDOR). 조회 결과의 수신자가 요청자와 다르면 없는 것처럼 취급한다 — "그 id 는 존재한다"는
      * 사실조차 알려주지 않는다.
+     *
+     * <p>[JA] 通知を既読にする。受信者の確認が必須だ。id だけで処理すると他人の通知 id
+     * を入れて状態を変えられる(IDOR)。照会結果の受信者が要求者と違えば存在しないものとして扱う — 「その id
+     * は存在する」という事実すら知らせない。
      */
     @Transactional
     public boolean markRead(Long recipientId, Long notificationId) {
@@ -246,6 +284,16 @@ public class NotificationService {
      *
      * <p>한계는 분명하다: <b>로그인 후 알림 API 를 한 번도 부르지 않은 사용자에게는 알림 메일이
      * 나가지 않는다.</b> 가입 확인·비밀번호 재설정은 주소가 명령에 실려 오므로 영향받지 않는다.
+     *
+     * <p>[JA] 設定を取得しつつアカウントのアドレスを記録する。<b>なぜこう埋めるのか。</b>通知サービスはユーザーテー
+     * ブルを持っていない。メールを送るにはアドレスが必要だが、それを得る経路は三つしかない: (1)
+     * user-service に毎回問い合わせる — 通知ごとに同期呼び出しが付く、(2)
+     * ユーザー作成イベントを購読して複製する — 正攻法だが既存ユーザーは埋まらない、(3)
+     * <b>ゲートウェイが付けてくれる {@code User-Email} ヘッダー</b>。(3) を使う。
+     * そのヘッダーはゲートウェイが JWT から取り出して付け、クライアントが送った同名ヘッダーはゲートウェイが
+     * 消す(docs/27) — つまり偽造できない。ユーザーが通知一覧か設定画面を一度でも開けば埋まる。
+     * 限界ははっきりしている: <b>ログイン後に通知 API を一度も呼んでいないユーザーには通知メールが出な
+     * い。</b>登録確認・パスワード再設定はアドレスが命令に載ってくるので影響を受けない。
      */
     @Transactional
     public NotificationPreference preferenceOf(Long userId, String email) {
@@ -255,6 +303,7 @@ public class NotificationService {
     }
 
     /** 설정 변경의 결과 — 바꿨거나, 이 경로가 받지 않는 키가 있어 아무것도 바꾸지 않았다. */
+    // [JA] 設定変更の結果 — 変えたか、この経路が受け付けないキーがあって何も変えなかったか。
     public sealed interface PreferenceUpdate {
         record Updated(NotificationPreference preference) implements PreferenceUpdate {}
         record Rejected(String reason) implements PreferenceUpdate {}
@@ -286,6 +335,8 @@ public class NotificationService {
         if (changes.containsKey("emailEnabled")) {
             // 메일 수신 거부. ⚠️ 가입 확인·비밀번호 재설정은 이 설정과 무관하게 나간다 — 본인이 방금 요청한 메일을 수신 거부로
             // 막으면 계정에 못 들어간다(MailKind#isTransactional).
+            // [JA] メール受信拒否。⚠️ 登録確認・パスワード再設定はこの設定と無関係に出る —
+            //      本人がたった今要求したメールを受信拒否で止めるとアカウントに入れなくなる(MailKind#isTransactional)。
             preference.setEmailEnabled(Boolean.TRUE.equals(changes.get("emailEnabled")));
         }
         return new PreferenceUpdate.Updated(preference);
@@ -296,6 +347,10 @@ public class NotificationService {
      *
      * <p>값이 그대로면 {@code rememberEmail} 이 아무것도 하지 않으므로 UPDATE 가 나가지 않는다 —
      * 화면마다 불리는 경로에서 매번 쓰기가 발생하면 WAL 만 늘어난다.
+     *
+     * <p>[JA] アドレスだけ記録する。通知一覧の照会のように設定が不要な経路で使う。値がそのままなら
+     * {@code rememberEmail} は何もしないので UPDATE は出ない — 画面ごとに呼ばれる経路で毎回書き込みが起きる
+     * と WAL が増えるだけだ。
      */
     @Transactional
     public void rememberEmail(Long userId, String email) {

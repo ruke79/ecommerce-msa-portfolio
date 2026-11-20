@@ -53,7 +53,7 @@ class PasswordResetMailTimingTest {
 
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
         assertThat(queued).hasSize(1);
-        verify(producer, never()).publish(any());   // 요청 스레드에서는 여전히 아니다
+        verify(producer, never()).publish(any());   // 요청 스레드에서는 여전히 아니다 ／ [JA] リクエストスレッドでは依然として行わない
 
         queued.get(0).run();
         verify(producer).publish(any());

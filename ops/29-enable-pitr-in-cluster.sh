@@ -46,7 +46,30 @@
 # 를 다시 하면 **아무 표시 없이 다시 꺼진다** — 적용 결과는 'configured' 한 줄뿐이고, 백업은 그날부터 멈춘다.
 # 이 동작은 "적용"과 "켜기"를 한 명령으로 묶는다. 켜기 전에 pg_basebackup 이 거절당할 원인(원격 replication
 # 항목 없음)을 확인하고, 없으면 아무것도 바꾸지 않는다 — 매일 03:00 에 조용히 실패하는 백업을 켜지 않는다.
-# [JA] 適用と有効化を一つにまとめる。あとから apply すると suspend: true に戻るため、常にこれで適用する。
+# [JA] 運用アクション ㉙ — クラスター内の PostgreSQL を PITR 可能な状態にする。
+#      ── なぜ ops/08 だけでは駄目か ── ops/08 はサーバーと同じマシンで動くことを前提に書かれた。クラスター内の PostgreSQL
+#      (k8s/90-dev-infra.yaml)に対しては二つのことができない:
+#        1. `archive_command` の宛先ディレクトリ。そのパスは Pod の中にある必要がある — archive_command を実行するのはサーバーで
+#           あってスクリプトではない。ホストで mkdir してもサーバーはそのパスを知らない。
+#        2. `pg_hba.conf` の replication 項目。pg_basebackup は通常の接続ではなく replication 接続を使うが、initdb が作る既定の
+#           pg_hba にはローカル(127.0.0.1/::1)の項目しかない。Pod の外から繋ぐと "no pg_hba.conf entry for replication
+#           connection" で拒否される。これはファイルなので SQL(ALTER SYSTEM)では直せない。k8s/85-backup-cronjobs.yaml の
+#           冒頭が「実際にこのマニフェストをコンテナで動かしてみて初めて確認した」と書いたまさにその箇所である。
+#      そこでこのスクリプトは `kubectl exec` で Pod の中からその二つを処理する。バックアップ自体は依然 ops/08 が行う — ここで再実装しない。
+#      ── ⚠️ WAL アーカイブをどこに置くか ── 既定はデータボリュームの中(`PGDATA/../wal_archive`)である。災害復旧としては不十分 —
+#      ディスクが死ぬと元データとアーカイブが一緒に死ぬ。それでも既定にした理由は、この値でも復元訓練(ops/09)のシナリオは正確に
+#      再現できるからである: DROP TABLE の事故を起こし、事故直前の時点へ戻すこと。ディスクは無事でデータが間違っている場合が実際にはより多い。
+#      本当の災害復旧をするなら ARCHIVE_DIR を別ボリューム(PVC)やオブジェクトストレージへ移す。そのときは Pod にそのボリュームを
+#      マウントすることが先である。
+#      ── 使い方 ── 引数なし = 点検のみ(既定、何も変えない)、ACTION=setup = 適用 + 再起動、ACTION=cronjobs = バックアップ
+#      CronJob(k8s/85)の適用 + postgres-backup・restore-drill の有効化。
+#      ── ACTION=cronjobs — バックアップ CronJob は常にこれで適用する ── k8s/85 は postgres-backup・restore-drill を
+#      `suspend: true` で持っている(マネージド DB では成功しえないので既定は無効 — ファイル冒頭)。そのため `kubectl patch … suspend:false`
+#      で有効にした後に誰かが `kubectl apply -f k8s/85…` をやり直すと、何の表示もなく再び無効になる — 適用結果は 'configured' の一行だけで、
+#      バックアップはその日から止まる。この動作は「適用」と「有効化」を一つのコマンドにまとめる。有効にする前に pg_basebackup が拒否される
+#      原因(リモートの replication 項目がない)を確かめ、なければ何も変えない — 毎日 03:00 に静かに失敗するバックアップを有効にしない。
+#      PG_NS・PG_DEPLOY・ARCHIVE_DIR で対象を変えられ、YES=1 で再起動の確認プロンプトを省く。
+#      終了コード: 0 = PITR 準備完了、1 = 準備できていない(または失敗)。
 #   PG_NS=postgres PG_DEPLOY=postgres ARCHIVE_DIR=/var/lib/postgresql/wal_archive ...
 #   YES=1 ...                                          # 재기동 확인 프롬프트 생략
 #
@@ -60,6 +83,7 @@ PG_SUPERUSER="${PG_SUPERUSER:-postgres}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-/var/lib/postgresql/wal_archive}"
 ARCHIVE_TIMEOUT="${ARCHIVE_TIMEOUT:-60}"
 # 파드 네트워크. replication 을 허용할 대역이다. 기본은 k3s 의 기본 파드 CIDR.
+# [JA] Pod ネットワーク。replication を許可する帯域だ。既定は k3s の既定 Pod CIDR。
 POD_CIDR="${POD_CIDR:-10.42.0.0/16}"
 YES="${YES:-0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -75,6 +99,7 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 command -v kubectl >/dev/null || die "kubectl 이 필요합니다"
 
 # 파드 안에서 psql 을 돌린다. -A -t 로 값만 받는다.
+# [JA] Pod 内で psql を回す。-A -t で値だけを受け取る。
 q() { kubectl -n "$PG_NS" exec "deploy/$PG_DEPLOY" -- \
         psql -U "$PG_SUPERUSER" -At -c "$1" 2>/dev/null; }
 sh_in() { kubectl -n "$PG_NS" exec "deploy/$PG_DEPLOY" -- sh -c "$1"; }
@@ -83,6 +108,7 @@ kubectl -n "$PG_NS" get "deploy/$PG_DEPLOY" >/dev/null 2>&1 \
     || die "$PG_NS/$PG_DEPLOY 를 찾을 수 없습니다 (PG_NS·PG_DEPLOY 로 지정하세요)"
 
 # pg_hba.conf 에 루프백이 아닌 replication 항목이 있는가 — 없으면 백업 Job 의 pg_basebackup 이 거절된다.
+# [JA] pg_hba.conf にループバック以外の replication 項目があるか — なければバックアップ Job の pg_basebackup が拒否される。
 hba_allows_remote_replication() {
     sh_in "grep -qE '^host[[:space:]]+replication[[:space:]]' \"\$PGDATA/pg_hba.conf\" 2>/dev/null \
                 && grep -E '^host[[:space:]]+replication[[:space:]]' \"\$PGDATA/pg_hba.conf\" \
@@ -90,6 +116,7 @@ hba_allows_remote_replication() {
 }
 
 # ---------------------------------------------------------------- 점검
+# [JA] 点検
 
 check() {
     echo "════ 클러스터 안 PostgreSQL PITR 준비 상태 ($PG_NS/$PG_DEPLOY) ════"
@@ -106,6 +133,7 @@ check() {
     senders="$(q 'SHOW max_wal_senders')"
 
     # wal_level=minimal 이면 WAL 에 복구용 정보가 아예 안 들어간다 — PITR 불가.
+    # [JA] wal_level=minimal だと WAL に復旧用情報がまったく入らない — PITR 不可。
     case "$wal_level" in
         replica|logical) ok "wal_level = $wal_level" ;;
         *)               bad "wal_level = $wal_level (replica 이상이어야 합니다)" ;;
@@ -121,6 +149,8 @@ check() {
 
     # archive_timeout=0 이면 WAL 세그먼트(16MB)가 다 찰 때까지 아카이브되지 않는다.
     # 한산한 시스템에서는 며칠이 걸릴 수 있고, 그만큼이 그대로 RPO 가 된다.
+    # [JA] archive_timeout=0 だと WAL セグメント(16MB)が満杯になるまでアーカイブされない。
+    #      閑散としたシステムでは数日かかることもあり、その分がそのまま RPO になる。
     [ "$archive_timeout" != "0" ] \
         && ok "archive_timeout = $archive_timeout (RPO 상한)" \
         || bad "archive_timeout = 0 — 세그먼트가 찰 때까지 아카이브되지 않습니다"
@@ -131,6 +161,8 @@ check() {
 
     # 아카이브가 **조용히 실패**하면 pg_wal 이 차올라 결국 디스크가 터진다.
     # 실패 수는 pg_stat_archiver 가 안다.
+    # [JA] アーカイブが**黙って失敗**すると pg_wal が膨らみ、最終的にディスクがあふれる。
+    #      失敗数は pg_stat_archiver が知っている。
     local failed last_failed
     failed="$(q 'SELECT failed_count FROM pg_stat_archiver')"
     last_failed="$(q "SELECT coalesce(last_failed_wal, '-') FROM pg_stat_archiver")"
@@ -141,6 +173,7 @@ check() {
     fi
 
     # pg_hba 의 replication 항목 — pg_basebackup 이 여기서 막힌다.
+    # [JA] pg_hba の replication 項目 — pg_basebackup がここで止まる。
     if hba_allows_remote_replication; then
         ok "pg_hba.conf 에 원격 replication 항목이 있습니다"
     else
@@ -148,6 +181,7 @@ check() {
     fi
 
     # 아카이브 디렉터리
+    # [JA] アーカイブディレクトリ
     if sh_in "test -d '$ARCHIVE_DIR' && test -w '$ARCHIVE_DIR'" 2>/dev/null; then
         local n
         n="$(sh_in "ls -1 '$ARCHIVE_DIR' 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ')"
@@ -173,6 +207,7 @@ check() {
 }
 
 # ---------------------------------------------------------------- 적용
+# [JA] 適用
 
 setup() {
     echo "════ PITR 설정 적용 ($PG_NS/$PG_DEPLOY) ════"
@@ -184,6 +219,7 @@ setup() {
     fi
 
     # ① 아카이브 디렉터리 — 서버가 쓸 수 있어야 하므로 파드 안에서 만든다.
+    # [JA] ① アーカイブディレクトリ — サーバが書き込める必要があるので Pod 内で作る。
     sh_in "mkdir -p '$ARCHIVE_DIR' && chown postgres:postgres '$ARCHIVE_DIR'" \
         || die "아카이브 디렉터리를 만들지 못했습니다"
     ok "아카이브 디렉터리 준비: $ARCHIVE_DIR"
@@ -193,6 +229,11 @@ setup() {
     #    거짓말하면 PostgreSQL 이 그 WAL 을 지워 버리고, 복구는 그 지점에서 끊긴다.
     #    `test ! -f` 로 덮어쓰기를 막는 것도 같은 이유다(이미 있는 파일을 덮으면
     #    이전 아카이브가 소리 없이 사라진다).
+    # [JA] ② 設定。ALTER SYSTEM は postgresql.auto.conf に記録され再起動後も残る。
+    #      archive_command は**失敗したら 0 以外のコード**を返さなければならない。成功したと
+    #      偽ると PostgreSQL がその WAL を消してしまい、復旧はその地点で途切れる。
+    #      `test ! -f` で上書きを防ぐのも同じ理由だ(既存ファイルを上書きすると
+    #      以前のアーカイブが音もなく消える)。
     q "ALTER SYSTEM SET wal_level = 'replica'"        >/dev/null
     q "ALTER SYSTEM SET archive_mode = 'on'"          >/dev/null
     q "ALTER SYSTEM SET archive_command = 'test ! -f $ARCHIVE_DIR/%f && cp %p $ARCHIVE_DIR/%f'" >/dev/null
@@ -201,6 +242,7 @@ setup() {
     ok "ALTER SYSTEM 적용 (postgresql.auto.conf)"
 
     # ③ pg_hba — 파일이라 SQL 로는 못 고친다. 중복 추가를 막고 덧붙인다.
+    # [JA] ③ pg_hba — ファイルなので SQL では直せない。重複追加を防いで追記する。
     sh_in "grep -q 'ops/29 PITR' \"\$PGDATA/pg_hba.conf\" || \
            printf '%s\n' '' '# ops/29 PITR — pg_basebackup 용 replication 접속' \
              'host replication all $POD_CIDR scram-sha-256' >> \"\$PGDATA/pg_hba.conf\"" \
@@ -208,6 +250,7 @@ setup() {
     ok "pg_hba.conf 에 replication 항목 추가 ($POD_CIDR)"
 
     # ④ 재기동. wal_level·archive_mode 는 reload 로는 적용되지 않는다.
+    # [JA] ④ 再起動。wal_level・archive_mode は reload では適用されない。
     echo "  ▶ 파드 재기동 중…"
     kubectl -n "$PG_NS" rollout restart "deploy/$PG_DEPLOY" >/dev/null \
         || die "재기동에 실패했습니다"
@@ -221,6 +264,7 @@ setup() {
 }
 
 # ---------------------------------------------------------------- 백업 CronJob
+# [JA] バックアップ CronJob
 
 cronjobs() {
     echo "════ 백업 CronJob 적용 + 켜기 ($APP_NS, k8s/85) ════"
@@ -230,6 +274,7 @@ cronjobs() {
 
     kubectl apply -f "$ROOT/k8s/85-backup-cronjobs.yaml" || die "k8s/85 적용에 실패했습니다"
     # 매니페스트의 suspend: true 를 이 클러스터에서만 뒤집는다 — 다시 적용할 때도 이 동작을 쓴다(위 머리말).
+    # [JA] マニフェストの suspend: true をこのクラスタでだけ反転する — 再適用するときもこの動作を使う(上の冒頭コメント)。
     local cj
     for cj in postgres-backup restore-drill; do
         kubectl -n "$APP_NS" patch cronjob "$cj" -p '{"spec":{"suspend":false}}' >/dev/null \

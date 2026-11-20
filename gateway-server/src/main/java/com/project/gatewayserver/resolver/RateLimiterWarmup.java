@@ -30,9 +30,21 @@ import org.springframework.data.redis.core.script.RedisScript;
  * 손님 키와 겹치지 않는 키로 한 번 실행한다 — 연결이 열리고 스크립트가 Redis 에 올라간 뒤에야 프로브가 통과한다.
  * Redis 에 닿지 못하면 경고만 남기고 뜬다(예전과 같은 fail-open — 게이트웨이가 Redis 때문에 뜨지 못하는 것이 더 나쁘다).
  *
- * <p>[JA] 流入制限の Redis 経路を起動時に一度温める。タイムアウト 500ms を超えると制限は通過(fail-open)になり、起動直後の最初の
- * コマンド(接続 · AUTH · スクリプト読み込み)が上限を超えて、2026-10-24 の本番スモークで 429 が一つも出ず自動復帰した。
- * ApplicationRunner は readiness より前に動く。Redis に届かなければ警告だけで起動する。
+ * <p>[JA] 流入制限(RequestRateLimiter)の Redis 経路を起動時に一度温める — 最初の客のリクエストが接続 · 認証 · スクリプト読み込みを背負わないように。
+ *
+ * <h3>[JA] なぜ</h3>
+ *
+ * <p>[JA] Redis コマンドのタイムアウトは 500ms で(B-84 — 既定の 60 秒だと Redis が一瞬切れてもすべてのリクエストが止まる)、超えると RedisRateLimiter は
+ * リクエストを<b>通過</b>させる(fail-open)。ところが起動したばかりのゲートウェイの最初のコマンド群は Redis 接続 · AUTH · スクリプト読み込み(EVALSHA が
+ * NOSCRIPT → EVAL)を一緒にこなし、その間に入ったリクエストは列に並ぶ。2026-10-24 の本番デプロイでスモーク 3 番(同時 70 発)が
+ * 429 を一つも受けずデプロイが自動復帰した — 全サービスが一斉に起動した単一ノードで最初のコマンド群が上限を超え、すべて通過した。
+ * 同じことはデプロイ · 再起動直後の実際の客にも起きる(その数秒間は制限がない)。
+ *
+ * <h3>[JA] どうやって</h3>
+ *
+ * <p>[JA] {@link ApplicationRunner} は準備状態(readiness)が ACCEPTING_TRAFFIC になる<b>前</b>に動く。ここで流入制限と同じスクリプトを
+ * 客のキーと重ならないキーで一度実行する — 接続が開きスクリプトが Redis に載った後で初めてプローブが通る。
+ * Redis に届かなければ警告だけ残して起動する(以前と同じ fail-open — ゲートウェイが Redis のせいで起動できない方が悪い)。
  */
 @Configuration(proxyBeanMethods = false)
 public class RateLimiterWarmup {
@@ -40,6 +52,7 @@ public class RateLimiterWarmup {
     private static final Logger log = LoggerFactory.getLogger(RateLimiterWarmup.class);
 
     /** 손님 버킷(`request_rate_limiter.{user:…}` · `{ip:…}`)과 겹치지 않는 키. 수명은 스크립트가 정한다(몇 초). */
+    // [JA] 客のバケット(`request_rate_limiter.{user:…}` · `{ip:…}`)と重ならないキー。寿命はスクリプトが決める(数秒)。
     static final List<String> KEYS = List.of(
             "request_rate_limiter.{gateway-warmup}.tokens",
             "request_rate_limiter.{gateway-warmup}.timestamp");
@@ -55,6 +68,7 @@ public class RateLimiterWarmup {
         long started = System.nanoTime();
         try {
             // 인자는 RedisRateLimiter 와 같은 모양(보충 · 용량 · 지금(빈 값 → Redis TIME) · 요청 토큰)
+            // [JA] 引数は RedisRateLimiter と同じ形(補充 · 容量 · 現在(空値 → Redis TIME) · 要求トークン)
             redis.execute(script, KEYS, List.of("1", "1", "", "1")).blockLast(timeout);
             log.info("유입 제한 Redis 데우기 끝 — {}ms", (System.nanoTime() - started) / 1_000_000);
             return true;

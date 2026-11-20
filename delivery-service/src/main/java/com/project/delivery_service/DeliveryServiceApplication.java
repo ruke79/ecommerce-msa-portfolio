@@ -9,7 +9,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @EnableDiscoveryClient
 @EnableScheduling   // TrackingPoller
-@EnableFeignClients // OrderServiceClient — 결제 완료 뒤 주문의 배송 단면을 읽는다
+@EnableFeignClients // OrderServiceClient — 결제 완료 뒤 주문의 배송 단면을 읽는다 ／ [JA] OrderServiceClient — 決済完了後に注文の配送スナップショットを読む
 public class DeliveryServiceApplication {
 
     public static void main(String[] args) {

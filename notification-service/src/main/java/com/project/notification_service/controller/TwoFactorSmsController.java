@@ -32,8 +32,18 @@ import lombok.extern.slf4j.Slf4j;
  * 같은 예외로 받아, "코드가 틀렸다" 와 "notification 이 죽었다" 를 가르기 어렵다. 본문에 코드가 있으므로 쿼리로 받지 않는다(URL 은
  * 접근 로그 · 추적에 남는다).
  *
- * <p>[JA] ログイン二段階認証の SMS 手段 — user-service だけが呼ぶ。登録済みの番号へ送り、合っているかを見るだけ。管理者もゲートウェイ
- *      経由では呼べない。応答は常に 200 の {"result": …}。コードは本文で受ける(URL はログ · トレースに残る)。
+ * <p>[JA] ログイン二段階認証の SMS 手段 — <b>user-service だけ</b>が呼ぶ(パス規則 {@code /api/notifications/internal/two-factor=user-service}、
+ * docs/24 §10 · docs/57 §16)。
+ *
+ * <p>[JA] ログインの流れ(パスワード → 待機トークン → コード)と二段階認証を有効にしているかは user-service が持つ。ここは<b>登録済みの番号へ送り、
+ * 合っているかを見る</b>だけ — 番号をリクエストから受け取らない(受け取るとコードを任意の番号へ送れてしまう)。
+ *
+ * <p>[JA] 他の内部パスと違い、<b>管理者もゲートウェイ経由では呼べない</b>。{@code InternalCallGuard.allowed} は管理者を通すが、
+ * 管理者トークン一つで任意の利用者にログインコードを送って照合する理由はない — ゲートウェイを経たリクエストはすべて拒否する。
+ *
+ * <p>[JA] 応答は常に 200 の {@code {"result": …}} である(クーポンの決済開始と同じ形)。4xx を使うと user-service の Feign がそれを接続失敗と
+ * 同じ例外として受け、「コードが違う」と「notification が死んでいる」を区別しにくい。本文にコードがあるのでクエリでは受けない(URL は
+ * アクセスログ · トレースに残る)。
  */
 @Slf4j
 @RestController
@@ -45,12 +55,16 @@ public class TwoFactorSmsController {
 
     /**
      * @param userId  대상 사용자
+     *   [JA] 対象ユーザー
      * @param binding 켤 때 저장한 번호 결속값(켜는 중이면 null)
+     *   [JA] 有効化時に保存した番号の結束値(有効化中なら null)
      * @param code    확인할 6자리(발송에는 없다)
+     *   [JA] 確認する 6 桁(送信にはない)
      */
     public record TwoFactorSmsRequest(Long userId, String binding, String code) {
 
         /** 코드는 어떤 문자열 표현에도 남기지 않는다(로그 · 예외 메시지). */
+        // [JA] コードはどの文字列表現にも残さない(ログ · 例外メッセージ)。
         @Override
         public String toString() {
             return "TwoFactorSmsRequest[userId=" + userId + "]";

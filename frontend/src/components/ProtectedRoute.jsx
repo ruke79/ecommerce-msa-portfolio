@@ -13,6 +13,12 @@ import DotLoaderSpinner from "./loader/Loading";
  * 사용자도 주소창에 /admin/product 를 치면 관리자 화면이 그려졌다(그 안의 API 호출만 401 로
  * 실패했다). 게다가 역할 검사가 아예 없어서, 일반 회원으로 로그인만 하면 관리자 화면을
  * 볼 수 있었다.
+ *
+ * <p>[JA] ログイン(および任意で管理者権限)が必要な画面を包む。
+ * <b>これは UI のガードにすぎず、セキュリティ境界ではない。</b> 本当の権限検査はゲートウェイと各サービスが行う —
+ * ブラウザで動くコードはユーザーがいくらでも変えられるからである。それでも必要な理由は、権限のないユーザーに管理画面の構造・メニュー・エンドポイントを見せないためである。
+ * 以前は `/admin` ルートがこのコンポーネントで包まれてすらいなかった。ログインしていないユーザーもアドレスバーに /admin/product を打つと
+ * 管理画面が描かれた(その中の API 呼び出しだけが 401 で失敗した)。さらに役割の検査がまったくなく、一般会員でログインするだけで管理画面を見られた。
  */
 const ProtectedRoute = ({ children, adminOnly = false, supportOnly = false }) => {
   const { status, isAuthenticated, user } = useAuthContext();
@@ -20,6 +26,8 @@ const ProtectedRoute = ({ children, adminOnly = false, supportOnly = false }) =>
 
   // 새로고침 직후에는 리프레시 토큰으로 세션을 복구하는 중이다. 이때 리다이렉트해 버리면
   // 로그인한 사용자가 매번 로그인 화면으로 튕긴다.
+  // [JA] リロード直後はリフレッシュトークンでセッションを復旧している最中である。このときリダイレクトしてしまうと
+  //      ログインしたユーザーが毎回ログイン画面に弾かれる。
   if (status === STATUS.PENDING) {
     return <DotLoaderSpinner loading={true} />;
   }
@@ -28,6 +36,9 @@ const ProtectedRoute = ({ children, adminOnly = false, supportOnly = false }) =>
     // 어디로 가려다 막혔는지 넘긴다. 로그인 화면이 성공 후 그리로 돌려보낸다.
     // 예전에는 로그인하면 **무조건 홈**이었다 — /checkout 에서 세션이 끊겨 로그인하고
     // 돌아오면 장바구니부터 다시 시작해야 했다.
+    // [JA] どこへ行こうとして塞がれたかを渡す。ログイン画面が成功後にそこへ戻す。
+    //      以前はログインすると**無条件にホーム**だった — /checkout でセッションが切れてログインして
+    //      戻るとカートから始め直さなければならなかった。
     return <Navigate to="/signin" replace state={{ from: location }} />;
   }
 
@@ -36,6 +47,7 @@ const ProtectedRoute = ({ children, adminOnly = false, supportOnly = false }) =>
   }
 
   // 상담 데스크(docs/58) — 상담원과 관리자. 서버도 같은 규칙을 강제한다(SupportService.requireAgent).
+  // [JA] 相談デスク(docs/58) — 相談員と管理者。サーバーも同じ規則を強制する(SupportService.requireAgent)。
   if (supportOnly && !hasSupportRole(user)) {
     return <Navigate to="/" replace />;
   }
@@ -47,6 +59,9 @@ const ProtectedRoute = ({ children, adminOnly = false, supportOnly = false }) =>
  * 역할 표기가 배포마다 다르다 — JWT 의 roles 클레임이 "ADMIN" 인 곳도 있고 Spring Security
  * 관례대로 "ROLE_ADMIN" 인 곳도 있다. 둘 다 받아들인다. 한쪽만 보면 관리자가 조용히 자기
  * 화면에서 쫓겨나고, 원인이 화면에 전혀 드러나지 않는다.
+ *
+ * <p>[JA] 役割の表記がデプロイごとに異なる — JWT の roles クレームが "ADMIN" のところもあれば、Spring Security の慣例どおり
+ * "ROLE_ADMIN" のところもある。両方受け入れる。片方だけ見ると管理者が黙って自分の画面から追い出され、原因が画面にまったく現れない。
  */
 export function hasAdminRole(user) {
   const roles = user?.roles;
@@ -58,6 +73,7 @@ export function hasAdminRole(user) {
 }
 
 /** 고객지원팀 상담원(ROLE_SUPPORT) 또는 관리자 — 상담 데스크를 쓸 수 있다. */
+// [JA] サポートチームの相談員(ROLE_SUPPORT)または管理者 — 相談デスクを使える。
 export function hasSupportRole(user) {
   if (hasAdminRole(user)) return true;
   const roles = user?.roles;

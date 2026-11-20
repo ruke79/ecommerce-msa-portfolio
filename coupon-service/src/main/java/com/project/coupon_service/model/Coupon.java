@@ -28,13 +28,14 @@ import lombok.experimental.SuperBuilder;
 @Getter
 @Setter
 @Entity
-@SuperBuilder // @Builder 대신 @SuperBuilder 사용
+@SuperBuilder // @Builder 대신 @SuperBuilder 사용 ／ [JA] @Builder の代わりに @SuperBuilder を使用
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name="coupon", schema = "coupon",
        uniqueConstraints = {
         @jakarta.persistence.UniqueConstraint(columnNames = {"name", "user_id"}, name = "uk_coupon_name_user_id")
        },
 // (name, user_id) 조회는 유니크 제약의 인덱스가 받는다. 사용자의 쓰지 않은 쿠폰 목록은 (user_id, status) — V8.
+// [JA] (name, user_id) の検索はユニーク制約のインデックスが受ける。ユーザーの未使用クーポン一覧は (user_id, status) — V8。
 indexes = {
         @Index(columnList = "user_id, status", name = "idx_coupon_user_status") })
 public class Coupon extends BaseEntity{
@@ -62,6 +63,8 @@ public class Coupon extends BaseEntity{
     /**
      * 적용 범위. null 은 {@link CouponScope#ALL} 로 읽는다 — V5 이전에 만들어진 쿠폰이
      * 그대로 동작해야 하기 때문이다. 읽을 때는 {@link #scope()} 를 쓴다.
+     *
+     * <p>[JA] 適用範囲。null は {@link CouponScope#ALL} として読む — V5 以前に作られたクーポンがそのまま動く必要があるからだ。読むときは {@link #scope()} を使う。
      */
     /**
      * 이 쿠폰을 쓴 주문(결제 확정 때 적는다, V6). 보상(coupon-rollback)은 이 주문의 것일 때만 되돌린다. 쓰기 전 · 옛 USED 행은 null.
@@ -82,12 +85,14 @@ public class Coupon extends BaseEntity{
     private LocalDateTime paymentUntil;
 
     /** 다른 주문이 지금 이 쿠폰으로 결제 중인가. {@code orderId} 가 null 이면 어느 주문이든. */
+    // [JA] 別の注文が今このクーポンで決済中か。{@code orderId} が null ならどの注文でも。
     public boolean inPaymentByAnotherOrder(Long orderId, LocalDateTime now) {
         return paymentOrderId != null && !paymentOrderId.equals(orderId)
                 && paymentUntil != null && paymentUntil.isAfter(now);
     }
 
     /** 결제 중 표시를 지운다(결제 확정 · 보상). */
+    // [JA] 決済中の印を消す(決済確定 · 補償)。
     public void clearPayment() {
         paymentOrderId = null;
         paymentUntil = null;
@@ -98,6 +103,7 @@ public class Coupon extends BaseEntity{
     private CouponScope scope;
 
     /** null 을 ALL 로 해석한다. 호출부가 매번 null 검사를 반복하지 않도록. */
+    // [JA] null を ALL と解釈する。呼び出し側が毎回 null チェックを繰り返さないように。
     public CouponScope scope() {
         return scope == null ? CouponScope.ALL : scope;
     }
@@ -111,6 +117,10 @@ public class Coupon extends BaseEntity{
      *
      * <p>경계는 양쪽 다 포함이다. 날짜가 비어 있으면 그 방향으로는 제한이 없다고 본다
      * (관리자가 시작일만 정하고 종료일을 비워 두는 경우).
+     *
+     * <p>[JA] 今使える期間か。
+     * <p><b>以前はこのチェックがどこにもなかった。</b>{@code startDate}/{@code endDate} を保存するだけで適用時に見ていなかった — 登録クーポンの 31 日の有効期間は飾りで、1 年前に期限切れのクーポンもそのまま割引された。クーポンを探すクエリは名前・ユーザー・状態しか見ていなかった。
+     * <p>境界は両端とも含む。日付が空ならその方向には制限がないとみなす(管理者が開始日だけ決めて終了日を空にする場合)。
      */
     public boolean isUsableAt(LocalDateTime when) {
         if (startDate != null && when.isBefore(startDate)) {

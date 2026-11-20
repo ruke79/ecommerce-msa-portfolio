@@ -19,6 +19,9 @@ import com.project.coupon_service.service.CouponCalculator.Line;
  * <p>예전에는 계산이 {@code CouponService.applyCoupon} 안에 네 줄로 박혀 있었고, 늘
  * <b>장바구니 총액 전체</b>에 할인율을 곱했다. 제약(카테고리·상품)이 생기면서 "얼마에
  * 곱할 것인가"가 판단이 필요한 문제가 됐다 — 그래서 떼어내 테스트한다.
+ *
+ * <p>[JA] クーポン割引計算。
+ * <p>以前は計算が {@code CouponService.applyCoupon} の中に四行で埋め込まれ、常に<b>カート総額全体</b>に割引率を掛けていた。制約(カテゴリー・商品)ができて「何に掛けるか」が判断の要る問題になった — そのため切り出してテストする。
  */
 class CouponCalculatorTest {
 
@@ -31,11 +34,13 @@ class CouponCalculatorTest {
     }
 
     /** 배송비가 없는 장바구니 — 상품 금액 합이 곧 총액이다. */
+    // [JA] 送料のないカート — 商品金額の合計がすなわち総額だ。
     private static List<Line> cartWorth(String amount) {
         return List.of(line("p1", "cat", amount, 1));
     }
 
     // ── 제약 없는 쿠폰 ───────────────────────────────────────────────────────
+    // [JA] ── 制約なしクーポン ──
 
     @Test
     @DisplayName("ALL 쿠폰은 모든 줄의 상품 금액을 깎는다")
@@ -56,11 +61,16 @@ class CouponCalculatorTest {
      *
      * <p>상품 10,000원 + 배송비 3,000원 = 13,000원 장바구니에 10% 쿠폰:
      * 예전에는 1,300원이 깎였고(배송비의 10%인 300원 포함), 이제 1,000원이 깎인다.
+     *
+     * <p>[JA] 🔴 <b>クーポンは送料を割り引かない。</b>
+     * <p>以前は制約なしクーポンが {@code cartTotal}(送料込み)を丸ごと割り引き、制約付きクーポンは行金額だけを見ていた — 同じカートでもクーポンの種類だけで割引額が違った。
+     * <p>商品 10,000 ウォン + 送料 3,000 ウォン = 13,000 ウォンのカートに 10% クーポン: 以前は 1,300 ウォン引かれ(送料の 10% の 300 ウォンを含む)、今は 1,000 ウォン引かれる。
      */
     @Test
     @DisplayName("배송비는 할인하지 않는다 — 상품 금액에만 적용된다")
     void shippingIsNeverDiscounted() {
         // 총액 13,000원 중 상품은 10,000원, 나머지 3,000원은 배송비다.
+        // [JA] 総額 13,000 ウォンのうち商品は 10,000 ウォン、残り 3,000 ウォンは送料だ。
         var r = CouponCalculator.calculate(10, CouponScope.ALL, Set.of(),
                 new BigDecimal("13000"), cartWorth("10000"));
 
@@ -71,6 +81,7 @@ class CouponCalculatorTest {
     }
 
     /** 제약 있는 쿠폰도 같은 답이어야 한다 — 쿠폰 종류로 할인액이 갈리면 안 된다. */
+    // [JA] 制約付きクーポンも同じ答えでなければならない — クーポンの種類で割引額が分かれてはならない。
     @Test
     @DisplayName("제약 있는 쿠폰도 같은 기준이다 — 종류로 할인액이 갈리지 않는다")
     void bothScopesAgreeOnTheBase() {
@@ -88,6 +99,8 @@ class CouponCalculatorTest {
      * 🔒 반올림 회귀 방지. 할인액을 먼저 반올림하는 식으로 바꾸면 1전이 어긋나는 값이
      * 있다(0.05 에 30%: 0.04 냐 0.03 이냐). <b>배송비가 없는</b> 장바구니에서는 상품 금액이
      * 곧 총액이므로 결과가 교과서 식과 정확히 같아야 한다.
+     *
+     * <p>[JA] 🔒 丸めの回帰防止。割引額を先に丸める式に変えると 1 銭ずれる値がある(0.05 に 30%: 0.04 か 0.03 か)。<b>送料のない</b>カートでは商品金額がすなわち総額なので、結果が教科書の式と正確に同じでなければならない。
      */
     @Test
     @DisplayName("배송비가 없으면 금액이 교과서 식과 완전히 같다 — 반올림 경계까지")
@@ -109,13 +122,14 @@ class CouponCalculatorTest {
     }
 
     // ── 카테고리 제약 ────────────────────────────────────────────────────────
+    // [JA] ── カテゴリー制約 ──
 
     @Test
     @DisplayName("카테고리 쿠폰은 그 카테고리 줄의 소계에만 할인한다")
     void categoryScopeDiscountsOnlyEligibleSubtotal() {
         List<Line> cart = List.of(
-                line("p1", "cat-fashion", "10000", 1),   // 대상
-                line("p2", "cat-books", "90000", 1));    // 대상 아님
+                line("p1", "cat-fashion", "10000", 1),   // 대상 ／ [JA] 対象
+                line("p2", "cat-books", "90000", 1));    // 대상 아님 ／ [JA] 対象外
 
         var r = CouponCalculator.calculate(10, CouponScope.CATEGORY, Set.of("cat-fashion"),
                 new BigDecimal("100000"), cart);
@@ -129,6 +143,8 @@ class CouponCalculatorTest {
     /**
      * 🐛 이게 "대상 소계에만" 을 고른 이유다. 전체 할인이었다면 1,000원짜리 대상 상품
      * 하나로 100,000원 장바구니 전체가 10% 깎인다 — 10,000원 할인.
+     *
+     * <p>[JA] 🐛 これが「対象小計にだけ」を選んだ理由だ。全体割引だったら 1,000 ウォンの対象商品一つで 100,000 ウォンのカート全体が 10% 引かれる — 10,000 ウォンの割引。
      */
     @Test
     @DisplayName("대상 상품이 싸다고 장바구니 전체가 깎이지 않는다")
@@ -140,7 +156,7 @@ class CouponCalculatorTest {
         var r = CouponCalculator.calculate(10, CouponScope.CATEGORY, Set.of("cat-fashion"),
                 new BigDecimal("100000"), cart);
 
-        assertThat(r.discountAmount()).isEqualByComparingTo(won("100"));   // 10,000 이 아니다
+        assertThat(r.discountAmount()).isEqualByComparingTo(won("100"));   // 10,000 이 아니다 ／ [JA] 10,000 ではない
         assertThat(r.totalAfterDiscount()).isEqualByComparingTo(won("99900"));
     }
 
@@ -170,6 +186,7 @@ class CouponCalculatorTest {
     }
 
     // ── 상품 제약 ────────────────────────────────────────────────────────────
+    // [JA] ── 商品制約 ──
 
     @Test
     @DisplayName("상품 쿠폰은 지정한 상품 줄만 본다")
@@ -187,10 +204,13 @@ class CouponCalculatorTest {
     }
 
     // ── 망가진 입력 ──────────────────────────────────────────────────────────
+    // [JA] ── 壊れた入力 ──
 
     /**
      * catalog 가 모르는 상품은 카테고리가 null 로 남는다. 그것을 대상으로 세면 "모르는
      * 상품이 전부 할인 대상"이 된다 — 반대로 틀려야 한다.
+     *
+     * <p>[JA] catalog が知らない商品はカテゴリーが null のまま残る。それを対象に数えると「知らない商品が全部割引対象」になる — 逆方向に間違えるべきだ。
      */
     @Test
     @DisplayName("카테고리를 모르는 줄은 대상이 아니다")
@@ -206,6 +226,8 @@ class CouponCalculatorTest {
     /**
      * 대상을 지정하다 만 쿠폰이 전 상품 할인이 되면 안 된다. 만드는 쪽에서도 막지만
      * (CouponService.create), 계산에서도 안전한 쪽으로 떨어져야 한다.
+     *
+     * <p>[JA] 対象を指定しかけたクーポンが全商品割引になってはならない。作る側でも防ぐが(CouponService.create)、計算でも安全な側に落ちるべきだ。
      */
     @Test
     @DisplayName("제약 쿠폰인데 대상이 비어 있으면 아무것도 적용되지 않는다")
@@ -222,6 +244,8 @@ class CouponCalculatorTest {
     /**
      * 쿠폰 생성에 할인율 검증이 없어 음수나 100 초과가 들어갈 수 있었다.
      * 음수면 결제 금액이 <b>늘어나고</b>, 100 초과면 음수가 된다.
+     *
+     * <p>[JA] クーポン作成に割引率の検証がなく、負数や 100 超が入り得た。負数なら決済金額が<b>増え</b>、100 超なら負になる。
      */
     @Test
     @DisplayName("할인율이 범위를 벗어나도 금액이 늘거나 음수가 되지 않는다")

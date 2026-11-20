@@ -24,6 +24,10 @@ import com.project.notification_service.service.NotificationService;
  * <p>🐛 회귀 대상: <b>환불 알림이 없었다.</b> "FAIL 이 아니면 전부 결제 완료" 라 pay-service 의
  * CANCELED 응답이 "결제 완료" 로 분류됐다. 그마저 중복 키가 같은 주문의 결제 완료와 겹쳐
  * 아무것도 만들어지지 않았다 — 사용자는 환불이 됐는지 알 길이 없었다.
+ *
+ * <p>[JA] 決済応答 → 通知種類。🐛 回帰対象: <b>返金通知がなかった。</b>「FAIL でなければ全部決済完了」だったので、
+ * pay-service の CANCELED 応答が「決済完了」に分類された。しかも重複キーが同じ注文の決済完了と重なって何も
+ * 作られなかった — ユーザーは返金されたかどうか知る術がなかった。
  */
 class PaymentNotificationTest {
 
@@ -45,6 +49,7 @@ class PaymentNotificationTest {
     }
 
     /** 🔴 핵심 — 환불은 환불이다. */
+    // [JA] 🔴 要 — 返金は返金だ。
     @Test
     @DisplayName("🔴 CANCELED 응답은 환불 완료 알림이다")
     void canceledIsRefund() {
@@ -67,6 +72,7 @@ class PaymentNotificationTest {
     }
 
     /** 중복 키에 상태가 들어 있다 — 같은 주문의 결제 완료와 환불 완료는 다른 알림이다. */
+    // [JA] 重複キーに状態が入っている — 同じ注文の決済完了と返金完了は別の通知だ。
     @Test
     @DisplayName("중복 키는 주문과 상태로 갈린다")
     void dedupKeyIncludesStatus() {

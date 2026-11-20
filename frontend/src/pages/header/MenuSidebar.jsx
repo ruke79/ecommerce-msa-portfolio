@@ -27,6 +27,12 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>실제 카테고리를 읽어 그린다. 각 항목은 `/browse?category=<id>` 로 간다 —
  * browse 의 categoryHandler 가 그 파라미터를 이미 처리한다.
+ *
+ * <p>[JA] 左メニュー(ハンバーガー)。<b>以前は 101 行全体にデータを読むコードが一行もなかった。</b>一覧が JSX にそのまま埋め込まれており —
+ * "Amazon Music", "Amazon Appstore", "Electronics", "Smart Home", "Gift Cards", "Amazon Live" — このサイトの実際のカテゴリ(books、fashion など)とは何の関係も
+ * なかった。`<li>` に `onClick` も `<Link>` もなかったので<b>押しても何も起きなかった。</b>挨拶も静的な文字列だった — ログインしてもずっと "Hello, sign in"。
+ * 同じ画面のヘッダー(`Account.jsx`)は最初から認証状態を見ていたのに、ここだけ漏れていた。実際のカテゴリを読んで描く。各項目は `/browse?category=<id>` へ行く —
+ * browse の categoryHandler がそのパラメータをすでに処理している。
  */
 const MenuSideBar = () => {
     const { t } = useTranslation();
@@ -36,6 +42,8 @@ const MenuSideBar = () => {
 
     // 로그인했을 때만 받는다 — 비로그인 상태에서 부르면 401 이다.
     // Layout(프로필 탭들)과 같은 쿼리 키라, 이미 받아 뒀으면 요청이 나가지 않는다.
+    // [JA] ログインしたときだけ受け取る — 未ログイン状態で呼ぶと 401 になる。
+    //      Layout(プロフィールのタブ群)と同じクエリキーなので、すでに受け取っていればリクエストは出ない。
     const { profile } = useProfile({ enabled: Boolean(isAuthenticated) });
     const me = { ...(user ?? {}), ...(profile ?? {}) };
 
@@ -46,6 +54,10 @@ const MenuSideBar = () => {
      * <p>`throwOnError` 를 끈다. 전역 설정은 true 라(util/api.js) 카테고리를 못 받으면
      * 예외가 ErrorBoundary 까지 올라가 <b>보고 있던 화면 전체가 사라진다.</b> 메뉴가
      * 비는 것과 사이트가 죽는 것은 다르다.
+     *
+     * <p>[JA] カテゴリはほとんど変わらない。そして<b>メニューを初めて開くときに</b>受け取る — 最初の画面の読み込みにリクエストをもう一つ載せる理由はない(`enabled: menu`)。
+     * `throwOnError` を切る。グローバル設定は true なので(util/api.js)カテゴリを受け取れないと例外が ErrorBoundary まで上がり、<b>見ていた画面全体が消える。</b>
+     * メニューが空になるのとサイトが死ぬのは違う。
      */
     const { data, isPending, isError } = useQuery({
         queryKey: ["menu-categories"],
@@ -67,6 +79,9 @@ const MenuSideBar = () => {
      * <p>`/allsubcategories` 는 하위 카테고리마다 부모를 <b>이름</b>으로 준다
      * (`SubCategoryResponse(id, name, categoryName)`). id 가 아니라 이름이므로 이름으로
      * 묶는다 — 여기서 id 로 묶으려 하면 조용히 전부 빈 목록이 된다.
+     *
+     * <p>[JA] カテゴリごとにサブカテゴリをまとめる。`/allsubcategories` はサブカテゴリごとに親を<b>名前</b>で返す(`SubCategoryResponse(id, name, categoryName)`)。
+     * id ではなく名前なので名前でまとめる — ここで id でまとめようとすると静かにすべて空の一覧になる。
      */
     const grouped = useMemo(() => {
         const categories = data?.categories ?? [];
@@ -96,6 +111,7 @@ const MenuSideBar = () => {
                     </div>
 
                     {/* 인사말. 예전에는 "Hello, sign in" 이 박혀 있어 로그인해도 그대로였다. */}
+                    {/* [JA] 挨拶。以前は "Hello, sign in" が埋め込まれていて、ログインしてもそのままだった。 */}
                     <div className="flex items-center bg-amazon-blue_light text-white px-6 py-4 shrink-0">
                         {isAuthenticated ? (
                             <>

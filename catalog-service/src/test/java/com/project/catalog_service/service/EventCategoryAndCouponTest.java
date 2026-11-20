@@ -40,6 +40,10 @@ import com.project.common.constants.event.AudienceSegment;
  * <p>셋은 따로 보이지만 <b>하나의 결정</b>에서 나온다: 세그먼트 할인을 진열가가 아니라
  * 쿠폰으로 준다는 것. 그래서 고객군은 쿠폰에만 붙고, 쿠폰의 적용 범위는 기획전의 대상
  * (상품 또는 카테고리)을 그대로 물려받는다.
+ *
+ * <p>[JA] 企画展の三つの拡張 — カテゴリ単位の対象・対象顧客層・付属クーポン。
+ * <p>三つは別々に見えるが<b>一つの決定</b>から来る: セグメント割引を陳列価格ではなくクーポンで与えるということ。だから顧客層はクーポンにだけ付き、クーポンの適用範囲は企画展の対象
+ * (商品またはカテゴリ)をそのまま受け継ぐ。
  */
 @DisplayName("기획전 — 카테고리 · 고객군 · 쿠폰")
 class EventCategoryAndCouponTest {
@@ -99,11 +103,13 @@ class EventCategoryAndCouponTest {
         /**
          * 없는 카테고리를 그냥 저장하면 증상이 "그 카테고리만 할인이 안 걸린다"로
          * 나타나는데, 화면의 대상 목록에는 멀쩡히 들어 있어 무엇이 틀렸는지 알 수 없다.
+         *
+         * <p>[JA] 存在しないカテゴリをそのまま保存すると症状は「そのカテゴリだけ割引がかからない」として現れるが、画面の対象一覧には問題なく入っているので、何が間違っているか分からない。
          */
         @Test
         @DisplayName("없는 카테고리는 거절한다")
         void rejectsUnknownCategories() {
-            categoriesExist(3L);   // 99 는 없다
+            categoriesExist(3L);   // 99 는 없다 ／ [JA] 99 は存在しない
 
             assertThatThrownBy(() -> service.create(with(List.of(),
                     List.of(new EventCategoryRequest(3L, 20), new EventCategoryRequest(99L, 20)),
@@ -126,6 +132,7 @@ class EventCategoryAndCouponTest {
         }
 
         /** 같은 카테고리 안에서 일부만 다른 할인율을 주는 흔한 조합이다. */
+        // [JA] 同じカテゴリ内で一部だけ別の割引率を与える、よくある組み合わせである。
         @Test
         @DisplayName("상품과 카테고리를 함께 담을 수 있다")
         void productsAndCategoriesCoexist() {
@@ -144,6 +151,8 @@ class EventCategoryAndCouponTest {
         /**
          * 카테고리는 상품으로 펼쳐지므로 실제 대상 수는 조회 시점에야 정해진다. 여기에
          * 합치면 목록의 "대상 N개" 가 화면마다 다른 뜻이 된다.
+         *
+         * <p>[JA] カテゴリは商品に展開されるので、実際の対象数は照会時点でようやく決まる。ここで合算すると、一覧の「対象 N 個」が画面ごとに違う意味になる。
          */
         @Test
         @DisplayName("목록의 대상 수는 상품만 센다")
@@ -189,6 +198,8 @@ class EventCategoryAndCouponTest {
         /**
          * 🔴 0% 쿠폰이 발급되면 사용자는 "쿠폰 받기"를 눌러 받아 놓고도 결제 때 아무 일이
          * 일어나지 않는 것을 본다.
+         *
+         * <p>[JA] 🔴 0% クーポンが発行されると、ユーザーは「クーポンを受け取る」を押して受け取っておいたのに、決済時に何も起きないのを見る。
          */
         @Test
         @DisplayName("이름만 있고 할인율이 없으면 거절한다")
@@ -200,6 +211,7 @@ class EventCategoryAndCouponTest {
         }
 
         /** 이름이 곧 키다(coupon 의 uk_coupon_name_user_id). 없으면 식별할 수 없다. */
+        // [JA] 名前がそのままキーである(coupon の uk_coupon_name_user_id)。なければ識別できない。
         @Test
         @DisplayName("할인율만 있고 이름이 없어도 거절한다")
         void discountWithoutNameIsRejected() {
@@ -209,6 +221,7 @@ class EventCategoryAndCouponTest {
         }
 
         /** 기간을 정하지 않았다고 받자마자 만료된 쿠폰이 나가면 안 된다. */
+        // [JA] 期間を決めていないからといって、受け取った途端に期限切れのクーポンが出てはならない。
         @Test
         @DisplayName("유효기간을 비우면 기본값을 쓴다")
         void defaultsTheValidity() {
@@ -228,6 +241,7 @@ class EventCategoryAndCouponTest {
         }
 
         /** 저장할 때 모르는 고객군을 ALL 로 읽으면 VIP 전용 쿠폰이 전원에게 열린다. */
+        // [JA] 保存時に未知の顧客層を ALL と読むと、VIP 専用クーポンが全員に開かれる。
         @Test
         @DisplayName("🔴 모르는 고객군(오타)은 거절한다 — 조용히 ALL(전원)로 저장되지 않는다")
         void unknownAudienceIsRejected() {
@@ -276,6 +290,8 @@ class EventCategoryAndCouponTest {
         /**
          * 🔴 "이 기획전의 쿠폰" 이 기획전과 무관한 상품에 먹으면 관리자가 의도한 할인
          * 폭을 넘는다. 쿠폰 범위는 기획전 대상을 그대로 물려받아야 한다.
+         *
+         * <p>[JA] 🔴「この企画展のクーポン」が企画展と無関係な商品に効くと、管理者が意図した割引幅を超える。クーポンの範囲は企画展の対象をそのまま受け継がなければならない。
          */
         @Test
         @DisplayName("상품을 지정한 기획전의 쿠폰은 그 상품에만 쓸 수 있다")
@@ -300,6 +316,7 @@ class EventCategoryAndCouponTest {
         }
 
         /** 둘 다 있으면 좁은 쪽 — 카테고리로 넓히면 상품을 고른 의도가 사라진다. */
+        // [JA] 両方あれば狭い方 — カテゴリに広げると商品を選んだ意図が消える。
         @Test
         @DisplayName("상품과 카테고리가 둘 다 있으면 상품 범위다")
         void productWinsOverCategory() {
@@ -340,6 +357,8 @@ class EventCategoryAndCouponTest {
         /**
          * 🔴 coupon-service 가 상태를 다시 판정하지 않게 한다 — 같은 규칙이 두 곳에
          * 있으면 언젠가 어긋나고, 그때 이미 종료된 기획전의 쿠폰이 계속 나간다.
+         *
+         * <p>[JA] 🔴 coupon-service が状態を再判定しないようにする — 同じ規則が二か所にあるといつかずれ、そのときすでに終了した企画展のクーポンが出続ける。
          */
         @Test
         @DisplayName("진행 중이 아니면 조건 자체를 주지 않는다")
@@ -373,6 +392,7 @@ class EventCategoryAndCouponTest {
         }
 
         /** user-service 가 소문자로 내려보내도 판정이 달라지면 안 된다. */
+        // [JA] user-service が小文字で送ってきても判定が変わってはならない。
         @Test
         @DisplayName("대소문자와 공백을 가리지 않는다")
         void lenientComparison() {

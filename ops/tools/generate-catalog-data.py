@@ -61,6 +61,11 @@ IMAGES = REPO / "catalog-service/src/main/resources/images"
 # 이미지 풀은 저장소에 있는 상품 이미지 폴더 이름이다(images/<풀>/). 새 대분류에 맞는 사진은
 # 없으므로 가장 가까운 풀을 빌려 쓴다 — 부하 테스트용 데이터라 "그려지는가" 만 맞으면 된다.
 # 비중은 대형 쇼핑몰의 상품 수 분포를 거칠게 따른다(책 · 의류 · 생활용품이 많고 악기 · 자동차가 적다).
+# [JA] ── 組み込みの分類 ──
+#      (大分類, 画像プール, 比重, 形容詞, [(小分類, オプション種別, (最低価格, 最高価格), 名詞 …)])
+#      画像プールはリポジトリにある商品画像フォルダの名前だ(images/<プール>/)。新しい大分類に合う写真は
+#      ないので最も近いプールを借りて使う — 負荷テスト用データなので「描画されるか」だけ合っていればよい。
+#      比重は大手ショッピングモールの商品数分布に大まかに従う(本 · 衣類 · 生活用品が多く楽器 · 自動車が少ない)。
 TAXONOMY = [
     ("fashion", "fashion", 13,
      ["Classic", "Slim-Fit", "Relaxed", "Lightweight", "Organic Cotton", "Everyday", "Vintage", "Stretch"],
@@ -204,6 +209,7 @@ TAXONOMY = [
 ]
 
 # 옵션 종류 → (값 목록, 고르는 개수 범위, 연속 구간인가, SKU(색상) 개수 범위, 값마다 가격 배율)
+# [JA] オプション種別 → (値の一覧, 選ぶ個数の範囲, 連続区間か, SKU(色)の個数の範囲, 値ごとの価格倍率)
 OPTIONS = {
     "apparel":   (["XS", "S", "M", "L", "XL", "XXL"], (3, 5), True, (2, 4), 0.0),
     "shoes":     (["230", "240", "250", "260", "270", "280", "290"], (4, 6), True, (1, 3), 0.0),
@@ -282,6 +288,7 @@ def classpath_images() -> dict[str, list[str]]:
 
 
 # ── 분류 준비 ────────────────────────────────────────────────────────────────
+# [JA] ── 分類の準備 ──
 
 class Plan:
     """적재할 카테고리 · 소분류 · 색상 · 이미지 풀. id 는 DB(또는 시드 CSV)의 같은 이름을 먼저 찾는다."""
@@ -341,18 +348,22 @@ class Plan:
 
 
 # ── 생성 ─────────────────────────────────────────────────────────────────────
+# [JA] ── 生成 ──
 
 def rand_date(rng: random.Random, span_days: int = 730) -> str:
     # 날짜를 넓게 퍼뜨린다 — 한 날짜에 몰리면 "최신순" 정렬 · 파티션 프루닝 효과를 잴 수 없다(docs/09).
+    # [JA] 日付を広く散らす — 1 つの日付に集中すると「新着順」ソート · パーティションプルーニングの効果を測れない(docs/09)。
     return (date.today() - timedelta(days=rng.randrange(span_days))).isoformat()
 
 
 def popularity(rng: random.Random) -> int:
     # 판매량은 긴 꼬리다 — 대부분 0~수십, 소수가 수만. 균등 분포면 "많이 팔린 순" 이 의미 없어진다.
+    # [JA] 販売数はロングテールだ — 大半は 0〜数十、少数が数万。一様分布だと「売れ筋順」が意味をなさなくなる。
     return min(100_000, int(rng.paretovariate(1.25) * 4) - 4)
 
 
 # 긴 이름(--long-names)에 붙이는 말 — 이름 부분 일치(트라이그램 GIN) · 목록 응답의 크기가 실제 상점처럼 무거워진다(docs/83 §2.5)
+# [JA] 長い名前(--long-names)に付ける語 — 名前の部分一致(トライグラム GIN) · 一覧応答のサイズが実際の店のように重くなる(docs/83 §2.5)
 LONG_NAME_WORDS = ["Premium", "Edition", "Collection", "Series", "Limited", "Signature", "Professional", "Deluxe", "Essential",
                    "Heritage", "Urban", "Outdoor", "Performance", "Comfort", "Seasonal", "Exclusive", "Original", "Advanced"]
 
@@ -367,6 +378,7 @@ class Generator:
                 self.weights.append(d["weight"])
         self.brands_cache: dict[int, list[str]] = {}
         # 쏠림(--skew) — 상품의 그 비율을 한 대분류에. 0 이면 난수를 더 쓰지 않는다(예전 데이터와 같은 상품 — 이어 넣기가 맞는다).
+        # [JA] 偏り(--skew) — 商品のその割合を 1 つの大分類に。0 なら乱数を余分に使わない(以前のデータと同じ商品 — 追加投入が合う)。
         self.skew = skew
         self.long_names = long_names
         self.skew_dept = None
@@ -384,6 +396,7 @@ class Generator:
 
     def brands_for(self, cid: int, rng: random.Random) -> list[str]:
         # 대분류마다 브랜드 400개 — 브랜드 필터 · 집계의 카디널리티가 현실적이 된다.
+        # [JA] 大分類ごとにブランド 400 個 — ブランドフィルター · 集計のカーディナリティが現実的になる。
         if cid not in self.brands_cache:
             brng = random.Random(f"{self.seed}:brands:{cid}")
             self.brands_cache[cid] = sorted({brand_name(brng) for _ in range(500)})[:400]
@@ -441,10 +454,12 @@ class Generator:
         name = f"{brand} {adj} {noun} {model}"
         if self.long_names:
             # 앞부분(브랜드 · 형용사 · 명사 · 모델)은 그대로 — 이름 검색어(browse 의 NAME_TERMS)가 계속 맞는다. 180자 안(name · slug 255)
+            # [JA] 前半(ブランド · 形容詞 · 名詞 · モデル)はそのまま — 名前の検索語(browse の NAME_TERMS)が引き続き当たる。180 文字以内(name · slug 255)
             name = (name + " " + " ".join(rng.sample(LONG_NAME_WORDS, rng.randint(8, 12)))
                     + " - " + rng.choice(FEATURES))[:180].rstrip()
         lo, hi = sc["price"]
         # 가격은 로그 균등 — 싼 상품이 많고 비싼 상품이 적다
+        # [JA] 価格は対数一様 — 安い商品が多く高い商品が少ない
         price = round(lo * (hi / lo) ** rng.random(), 2)
         desc = (f"{adj} {noun.lower()} by {brand} from our {sc['name']} collection. "
                 + " ".join(rng.sample(FEATURES, rng.randint(2, 4))))
@@ -486,6 +501,7 @@ class Generator:
 
 
 # ── 출력: PostgreSQL COPY ────────────────────────────────────────────────────
+# [JA] ── 出力: PostgreSQL COPY ──
 
 def pg_array(items: list[str]) -> str:
     """text[] 리터럴. 백슬래시(윈도우 경로)와 따옴표는 배열 안에서 이스케이프한다."""
@@ -589,6 +605,8 @@ class PgSink:
 
         # 이미지는 시드 배치가 S3 에 올린 URL 을 대분류(이미지 풀)별로 재사용한다. 예전 --copy 는 CSV 의
         # 클래스패스 경로(images\food\…)를 그대로 넣어 화면에서 이미지가 전부 깨졌다.
+        # [JA] 画像はシードバッチが S3 に上げた URL を大分類(画像プール)別に再利用する。以前の --copy は CSV の
+        #      クラスパスのパス(images\food\…)をそのまま入れ、画面で画像がすべて壊れていた。
         found: dict[str, set[str]] = {}
         for cname, url in self.rows(
                 "SELECT c.category_name, u FROM product.product_sku k "
@@ -600,6 +618,7 @@ class PgSink:
         plan.images = {k: sorted(v) for k, v in found.items()}
         if not plan.images and self.placeholder:
             # 풀 하나 — Generator 는 대분류 풀이 없으면 첫 풀을 쓴다. SKU 마다 이 한 장.
+            # [JA] プール 1 つ — Generator は大分類のプールがなければ最初のプールを使う。SKU ごとにこの 1 枚。
             print(f"  기존 상품 이미지 URL 이 없다 — 모든 SKU 에 자리 표시 이미지({self.placeholder})")
             plan.images = {"placeholder": [self.placeholder]}
         if not plan.images:
@@ -664,6 +683,7 @@ class PgSink:
         self.conn.autocommit = True
         with self.conn.cursor() as cur:
             # 신원 열의 시퀀스를 넣은 id 뒤로 — 안 그러면 관리자가 상품을 등록하다 언젠가 id 가 부딪힌다.
+            # [JA] ID 列のシーケンスを入れた id の後ろへ — そうしないと管理者が商品を登録するうちにいつか id がぶつかる。
             for table, col in (("product", "product_id"), ("product_sku", "skuproduct_id"),
                                ("product_size", "size_id"), ("product_subcategory", "proc_subcategory_id"),
                                ("category", "category_id"), ("subcategory", "subcategory_id"),
@@ -674,6 +694,7 @@ class PgSink:
                     cur.execute(f"SELECT setval('{seq}', greatest((SELECT coalesce(max({col}), 1) FROM product.{table}), "
                                 f"(SELECT last_value FROM {seq})))")
             # SKU 코드 번호 시퀀스도 — 앱이 만드는 코드가 생성기 코드와 겹치지 않게(그래도 앱은 존재 검사를 한다).
+            # [JA] SKU コード番号のシーケンスも — アプリが作るコードが生成器のコードと重ならないように(それでもアプリは存在チェックをする)。
             cur.execute("SELECT setval('product.product_sku_seq', greatest((SELECT coalesce(max(skuproduct_id), 1) "
                         "FROM product.product_sku), (SELECT last_value FROM product.product_sku_seq)))")
             for t in ("product", "product_sku", "product_size", "product_subcategory"):
@@ -709,6 +730,7 @@ class PgSink:
                 total += cur.rowcount
                 self.conn.commit()
                 # 묶음마다 찍는다 — 🐛 예전에는 끝날 때까지 아무것도 찍지 않아 멈춘 것과 구별되지 않았다(catalog V22 전에는 묶음 하나가 몇 시간)
+                # [JA] バッチごとに出力する — 🐛 以前は終わるまで何も出さず、止まったのと区別できなかった(catalog V22 以前はバッチ 1 つが数時間)
                 print(f"  id {a:,} ~ {b:,} 지움 — 상품 {cur.rowcount:,}개 · {time.monotonic() - t0:.0f}초"
                       f"(누적 {total:,}개 · {time.monotonic() - started:.0f}초)", flush=True)
         print(f"  상품 {total:,}개와 그 SKU · 사이즈 · 연결을 지웠다. 공간은 VACUUM 뒤에 재사용된다"
@@ -717,6 +739,7 @@ class PgSink:
 
 
 # ── 출력: CSV(배치 잡용) ─────────────────────────────────────────────────────
+# [JA] ── 出力: CSV(バッチジョブ用) ──
 
 class CsvSink:
     """배치 잡(BatchConfig)이 읽는 열 순서 그대로. sku_code 는 배치의 마지막 단계(DB 함수)가 채운다."""
@@ -772,6 +795,7 @@ class CsvSink:
             w.writeheader()
             w.writerows(colors)
         # 배치 잡이 읽지만 시드가 비어 있는 파일들 — 헤더만
+        # [JA] バッチジョブが読むがシードが空のファイル — ヘッダーだけ
         for name, cols in (("product_details", ["pdetail_id", "name", "value", "product_id", "created_at"]),
                            ("product_qas", ["qa_id", "question", "answer", "product_id", "created_at"])):
             (self.outdir / f"{name}.csv").write_text(",".join(cols) + "\n", encoding="utf-8")
@@ -796,16 +820,21 @@ class CsvSink:
 
 
 # ── 용량 추정 ────────────────────────────────────────────────────────────────
+# [JA] ── 容量の見積もり ──
 
 # 로컬 PostgreSQL 16 에 dept 분류로 50만 개를 넣고 잰 값(docs/19 §5.1, 2026-10-01). 인덱스가 있는 채로 넣었다 —
 # 운영과 같은 조건이라 인덱스 단편화까지 들어 있다. 바이트는 표 + 인덱스(14개)다.
+# [JA] ローカルの PostgreSQL 16 に dept 分類で 50 万件を入れて測った値(docs/19 §5.1, 2026-10-01)。インデックスがある状態で入れた —
+#      運用と同じ条件なのでインデックスの断片化まで含まれている。バイト数はテーブル + インデックス(14 個)だ。
 MEASURED = {
     "rows_per_product": {"product_sku": 1.70, "product_size": 3.02, "product_subcategory": 1.0},
     "bytes_per_product": 2_108,
-    "products_per_sec": 3_000,     # 4코어 x86 · synchronous_commit=off. 운영 노드 · 기본 설정이면 3~5배로 잡는다
+    "products_per_sec": 3_000,     # 4코어 x86 · synchronous_commit=off. 운영 노드 · 기본 설정이면 3~5배로 잡는다 ／ [JA] 4 コア x86 · synchronous_commit=off。運用ノード · 既定設定なら 3〜5 倍と見る
 }
 # Elasticsearch 는 재지 않았다 — 문서(ProductDocument: 이름 · 설명 · 브랜드 다중 필드 + nested skus · subcategories)
 # 원본 JSON 약 0.7KB 에 색인 오버헤드를 더한 추정 범위다.
+# [JA] Elasticsearch は測っていない — ドキュメント(ProductDocument: 名前 · 説明 · ブランドのマルチフィールド + nested skus · subcategories)の
+#      元 JSON 約 0.7KB にインデックスのオーバーヘッドを足した推定範囲だ。
 ES_BYTES_PER_PRODUCT = (1_000, 1_600)
 
 
@@ -826,6 +855,7 @@ def estimate(n: int):
 
 
 # ── 진입점 ───────────────────────────────────────────────────────────────────
+# [JA] ── エントリポイント ──
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

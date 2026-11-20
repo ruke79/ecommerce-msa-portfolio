@@ -24,6 +24,13 @@ import lombok.Getter;
  *
  * <p>{@code detail} 을 {@code super} 로 올린다. {@code errorCode} 는 그대로 남으므로
  * 코드로 분기하던 곳은 영향이 없다.
+ *
+ * <p>[JA] 🐛 <b>{@code getMessage()} が常に {@code null} だった。</b>
+ * 以前は {@code @Getter @AllArgsConstructor} で {@code errorCode} フィールドだけを持つクラスだった。Lombok の {@code @AllArgsConstructor} はフィールドを代入するだけで
+ * {@code super(message)} を<b>呼ばない。</b>そのためいくら詳しい {@link ErrorCode#getDetail()} を入れても例外自体にはメッセージがなかった。{@code e.getMessage()} を
+ * 応答本文に入れる箇所が複数あり、画面には {@code {"message": null}} が出て、ログのスタックトレースの先頭行も {@code com.project.common.exception.CustomException}
+ * だけだった — 何がなぜ失敗したのかがどこにもなかった。
+ * {@code detail} を {@code super} に渡す。{@code errorCode} はそのまま残るので、コードで分岐していた箇所には影響がない。
  */
 @Getter
 public class CustomException extends RuntimeException {

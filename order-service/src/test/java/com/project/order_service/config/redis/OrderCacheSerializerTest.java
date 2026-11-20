@@ -18,6 +18,11 @@ import com.project.common.dto.order.OrderDto;
  *
  * <p>🐛 기본 직렬화기는 {@code LocalDateTime} 에서 예외를 던져, 재고 예약 만료({@code stockHoldUntil})가 채워진 새 주문의 상세가 전부
  * 400 이었다.
+ *
+ * <p>[JA] 注文キャッシュは日付・時刻のある注文も入れて読み戻せる。
+ *
+ * <p>🐛 既定のシリアライザーは {@code LocalDateTime} で例外を投げ、在庫予約の期限({@code
+ * stockHoldUntil})が埋まった新しい注文の詳細がすべて 400 だった。
  */
 @DisplayName("주문 캐시 직렬화")
 class OrderCacheSerializerTest {

@@ -58,10 +58,12 @@ public class SearchEngineSelector {
         String term = normalize(params == null ? null : params.getSearch());
         if (term == null) {
             // 검색어가 없으면 엔진이 결과에 영향을 주지 않는다 — 평가하지 않고, 캐시 키도 하나로 모은다.
+            // [JA] 検索語がなければエンジンは結果に影響しない — 評価せず、キャッシュキーも一つにまとめる。
             return SearchEngine.POSTGRES;
         }
         if (!esDeployed) {
             // ES 가 없는 배포(OCI). 플래그가 뭐라 하든 갈 곳이 없다 — 평가해서 "es" 로 기록되면 추적이 거짓말을 한다.
+            // [JA] ES のない配備(OCI)。フラグが何と言おうと行き先がない — 評価して "es" と記録されるとトレースが嘘をつく。
             return SearchEngine.POSTGRES;
         }
         String variant = flags.getStringValue(FLAG, "es", new ImmutableContext(term));
@@ -69,6 +71,7 @@ public class SearchEngineSelector {
     }
 
     /** 대소문자 · 앞뒤 공백 · 연속 공백만 맞춘다. "Nike" 와 " nike " 는 같은 검색이다. */
+    // [JA] 大文字小文字・前後の空白・連続空白だけを揃える。"Nike" と " nike " は同じ検索である。
     static String normalize(String search) {
         if (search == null) {
             return null;

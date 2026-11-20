@@ -36,7 +36,23 @@
 # chat-service 는 2026-11-01 Redis 팬아웃(B-107, docs/21 §2-1)으로 HPA 1 ~ 3 이 생겼다 — 그래서 지운다.
 #   🐛 2026-11-14 까지 아래 대상에서 빠져 있어, HPA 가 chat 을 늘린 상태에서 이 오버레이를 apply 하면 1 로
 #      떨어졌다(접속 중인 STOMP 세션이 끊긴다). 대상 목록 = k8s/70 의 HPA 대상 — 가드 B-111.
-# [JA] eureka-server だけ HPA がないので replicas を残す。chat-service は HPA ができたので消す(B-111 が一致を守る)。
+# [JA] prod オーバーレイ。
+#      🔴 上の apply は初回デプロイでだけ使う。下の `images:` の `newTag` は手で書いた値なのですぐ古くなる。デプロイ後に
+#      このファイルをそのまま apply すると全サービスがその古いタグへ戻る — 失敗でもロールバックでもなく書かれたとおりに
+#      適用されたもので、症状は「デプロイがおかしい」としか見えない(実際にフロントエンドが数週間前の版へ戻った)。
+#      二回目からは ops/28-deploy.sh(デプロイ・--config-only・--config-only --restart)を使う。ops/28 はデプロイする版
+#      (またはクラスターから読んだ現在の版)でタグを上書きして適用する。
+#      ── dev との違い ── レプリカ: Deployment から完全に消す(HPA が所有する — 下の §replicas)。リソース: ベースの値を
+#      そのまま使う(すでに本番基準)。イメージ: 実レジストリ + 固定タグ。イングレス: Cloudflare Tunnel から入る
+#      (cloudflared.yaml — 公開 IP・LB 不要)。インフラ: クラスター外(マネージドまたは別ノード)、90-dev-infra は使わない。
+#      ── なぜ replicas を消すか ── HPA が管理する Deployment に `replicas` が残っていると、`kubectl apply` のたびに
+#      マニフェストの値へ戻ってから HPA が再び引き上げる。トラフィックが集中して 6 個に増えた状態でデプロイすると 2 に
+#      落ちてまた上がる — その間が障害である。そこでここではフィールドを削除する(JSON6902 remove)。初期の数は HPA の
+#      minReplicas が決める(k8s/70-autoscaling.yaml ですべて min=2)。
+#      eureka-server は HPA がないので replicas を残す — 1 台で足りる(ピア複製を設定していない)。chat-service は
+#      2026-11-01 の Redis ファンアウト(B-107、docs/21 §2-1)で HPA 1 ~ 3 ができた — だから消す。
+#      🐛 2026-11-14 まで下の対象から漏れていて、HPA が chat を増やした状態でこのオーバーレイを apply すると 1 に落ちた
+#      (接続中の STOMP セッションが切れる)。対象リスト = k8s/70 の HPA 対象 — ガード B-111。
 #
 # ── 왜 HPA·백업을 오버레이에 넣지 않는가 ────────────────────────────────
 #
@@ -50,14 +66,18 @@ kind: Kustomization
 namespace: ecommerce
 
 resources:
-  - ../../k8s          # 베이스
-  - cloudflared.yaml   # 오버레이 안에 있으므로 참조 가능하다
+  - ../../k8s          # 베이스 ／ [JA] ベース
+  - cloudflared.yaml   # 오버레이 안에 있으므로 참조 가능하다 ／ [JA] オーバーレイ内にあるので参照できる
 
 # ── 이미지 ─────────────────────────────────────────────────────────────
 # 배포할 때마다 태그를 바꾼다:
 #   kustomize edit set image REGISTRY_PLACEHOLDER/ecommerce-msa/user-service=ghcr.io/ruke79/ecommerce-msa/user-service:1.2.3
 #
 # ⚠️ latest 를 쓰지 말 것. 롤백할 수 없고, 노드마다 다른 이미지가 돌 수 있다.
+# [JA] ── イメージ ──
+#      デプロイのたびにタグを変える:
+#        kustomize edit set image REGISTRY_PLACEHOLDER/ecommerce-msa/user-service=ghcr.io/ruke79/ecommerce-msa/user-service:1.2.3
+#      ⚠️ latest を使わないこと。ロールバックできず、ノードごとに違うイメージが動きうる。
 images:
   - name: REGISTRY_PLACEHOLDER/ecommerce-msa/eureka-server
     newName: ghcr.io/REPLACE_ME_OWNER/ecommerce-msa/eureka-server
@@ -110,6 +130,12 @@ patches:
   #    늘려도 활성 태스크는 하나뿐이다. 매니페스트의 replicas: 2 는 확장이 아니라 **대기
   #    복제본**(활성 1 + standby 1)이고, 그 값이 num.standby.replicas 와 짝을 이뤄야 한다.
   #    여기에 넣으면 replicas 가 지워져 기본값 1이 되고 대기 사본이 사라진다.
+  # [JA] HPA が管理する Deployment から replicas を消す(§上の説明)。
+  #      ⚠️ saga-projection は**わざと外してある。** HPA の対象ではないからである(70-autoscaling.yaml
+  #         にもない)。Kafka Streams の並列度は入力パーティション数が決めるので — 今は 1 — レプリカを
+  #         増やしてもアクティブタスクは 1 つだけである。マニフェストの replicas: 2 はスケールではなく**待機
+  #         レプリカ**(アクティブ 1 + standby 1)で、その値は num.standby.replicas と対にならなければならない。
+  #         ここに入れると replicas が消えてデフォルトの 1 になり、待機コピーがなくなる。
   - path: patch-remove-replicas.yaml
     target:
       kind: Deployment

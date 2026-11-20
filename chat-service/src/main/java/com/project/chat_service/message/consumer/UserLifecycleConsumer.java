@@ -23,18 +23,24 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>페이로드는 JSON 문자열이다. 필드 이름으로만 읽는다 — 모르는 필드는 무시되므로 보내는 쪽이 필드를 더해도
  * 깨지지 않는다. {@code userId} 가 없는 레코드는 고칠 수 없으니 실패로 보고해 DLT 로 격리한다.
+ *
+ * <p>[JA] 原本(user-service)のプロフィール変更・退会をチャット会員の複製に反映する — {@code user-updated}, {@code user-deleted}(docs/48 §6-⑤)。
+ * <p>{@code user-created} だけを受けていた間、複製は加入の瞬間の値で止まっていた。ニックネーム・写真を変えてもチャットには古い値が見え、退会して原本を匿名化してもここにはメール・名前・写真が残っていた。
+ * <p>ペイロードは JSON 文字列である。フィールド名でのみ読む — 未知のフィールドは無視されるので送信側がフィールドを追加しても壊れない。{@code userId} のないレコードは直せないので失敗として報告し DLT に隔離する。
  */
 @Component
 @RequiredArgsConstructor
 public class UserLifecycleConsumer {
 
     // 가드(B-41·B-60b)가 애너테이션의 토픽을 문자열로 읽는다 — 애너테이션에는 상수 대신 글자를 쓴다.
+    // [JA] ガード(B-41・B-60b)がアノテーションのトピックを文字列として読む — アノテーションには定数ではなく文字を書く。
     static final String UPDATED = "user-updated";
     static final String DELETED = "user-deleted";
 
     private final UserMessageListener userMessageListener;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽(아웃박스 릴레이)의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダの traceparent で送信側(アウトボックスリレー)のトレースを引き継ぐ(docs/51 §4h)。
     private final OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id = "chat-user-updated", topics = "user-updated", containerFactory = "userLifecycleContainerFactory")
@@ -48,6 +54,7 @@ public class UserLifecycleConsumer {
                         event.path("updatedAt").asLong(0));
             } catch (Exception e) {
                 // 실패 인덱스 보고 → 성공분 커밋 + 실패 레코드만 DLT 격리 (KafkaDltConfig, docs/11 §3)
+                // [JA] 失敗インデックスを報告 → 成功分をコミット + 失敗レコードだけ DLT に隔離(KafkaDltConfig, docs/11 §3)
                 throw new BatchListenerFailedException(UPDATED + "(chat) 처리 실패", e, i);
             }
         }
@@ -69,6 +76,7 @@ public class UserLifecycleConsumer {
         JsonNode id = event.path("userId");
         if (!id.canConvertToLong()) {
             // TSID 는 JSON 숫자로 온다. 문자열로 오는 경우도 받는다.
+            // [JA] TSID は JSON の数値で来る。文字列で来る場合も受け付ける。
             if (id.isTextual() && id.asText().matches("-?\\d+")) {
                 return Long.parseLong(id.asText());
             }

@@ -4,6 +4,8 @@ import com.project.common.domain.exception.DomainException;
 
 /**
  * 리뷰를 받을 수 없다 — 받은 상품이 아니거나(403), 구매 여부를 확인하지 못했다(503). docs/57 §13.
+ *
+ * <p>[JA] レビューを受け付けられない — 受け取った商品でないか(403)、購入有無を確認できなかった(503)。docs/57 §13。
  */
 public class ReviewNotAllowedException extends DomainException {
 
@@ -23,6 +25,7 @@ public class ReviewNotAllowedException extends DomainException {
     }
 
     /** 확인 자체를 못 했는가(잠시 뒤 다시) — 아니면 받은 상품이 아니다. */
+    // [JA] 確認自体ができなかったか(少し後に再試行) — でなければ受け取った商品ではない。
     public boolean isUnavailable() {
         return unavailable;
     }

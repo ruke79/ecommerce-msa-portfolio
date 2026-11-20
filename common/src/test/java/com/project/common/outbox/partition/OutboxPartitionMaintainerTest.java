@@ -55,6 +55,7 @@ class OutboxPartitionMaintainerTest {
     }
 
     /** 테스트가 시각을 옮길 수 있는 시계. */
+    // [JA] テストが時刻を動かせる時計。
     static final class MutableClock extends Clock {
         private Instant now;
 
@@ -96,10 +97,12 @@ class OutboxPartitionMaintainerTest {
         assertThat(m.monthsAheadNow("orders.t")).as("한 번도 점검하지 못했다").isNaN();
 
         // 2026-10 에 성공 — 2027-01 까지 이어져 있다(이번 달 + 3).
+        // [JA] 2026-10 に成功 — 2027-01 まで続いている(今月 + 3)。
         m.record("orders.t", new OutboxPartitionMaintainer.Status(3, YearMonth.of(2027, 1), 0, List.of()));
         assertThat(m.monthsAheadNow("orders.t")).isEqualTo(3.0);
 
         // 그 뒤로 DB 가 내려가 점검이 계속 실패한다.
+        // [JA] その後 DB が落ちて点検が失敗し続ける。
         clock.set("2026-12-01T00:00:00Z");
         m.runOnce();
         assertThat(m.monthsAheadNow("orders.t")).as("두 달이 지났다 — RunwayShort(<2)").isEqualTo(1.0);
@@ -152,6 +155,7 @@ class OutboxPartitionMaintainerTest {
     }
 
     /** 🐛 예전: lock_timeout 만 걸었다 — ATTACH 가 DEFAULT 를 훑는 동안(잠금을 쥔 채) 걸리는 시간에는 상한이 없었다. */
+    // [JA] 🐛 以前: lock_timeout だけをかけていた — ATTACH が DEFAULT を舐める間(ロックを握ったまま)かかる時間には上限がなかった。
     @org.junit.jupiter.api.Test
     @org.junit.jupiter.api.DisplayName("🔴 DDL 트랜잭션은 잠금 대기와 함께 문장 시간에도 상한을 건다(SET LOCAL statement_timeout)")
     void ddlTransactionBoundsStatementTime() throws Exception {

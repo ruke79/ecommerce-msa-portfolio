@@ -11,6 +11,14 @@
 //
 // 서버의 호출자 판정은 HTTP 와 같은 규칙(INTERNAL_AUTH_PATH_RULES)을 쓴다 — gRPC 의 HTTP/2 경로가
 // "/ecommerce.stock.v1.StockReservation/Reserve" 라서 경로 앞부분 규칙이 그대로 맞는다.
+// [JA] 決済前の在庫予約 — order-service → catalog-service の内部 RPC (docs/59 · docs/66)。
+//      同じことをする HTTP 経路(/api/internal/stock/reservations)がそのまま残っている。order-service は設定 STOCK_RPC_TRANSPORT(http | grpc)で
+//      どちらかを選ぶ — 問題が起きたら設定だけ戻す。
+//      契約の規則(スキーマが真実 — Avro と同じ): フィールド番号は変えず、再利用もしない。消したフィールドは reserved で残す。新しいフィールドは新しい番号でのみ足す。
+//      古いクライアントは未知のフィールドを無視する。「足りない」はエラーではなく結果である(held=false + shortages)。ステータスコードは呼び出し自体の失敗にだけ使う
+//      (INVALID_ARGUMENT · PERMISSION_DENIED · UNAUTHENTICATED · UNAVAILABLE · DEADLINE_EXCEEDED)。
+//      サーバーの呼び出し元判定は HTTP と同じ規則(INTERNAL_AUTH_PATH_RULES)を使う — gRPC の HTTP/2 パスが "/ecommerce.stock.v1.StockReservation/Reserve" なので、
+//      パス前方一致の規則がそのまま合う。
 syntax = "proto3";
 
 package ecommerce.stock.v1;
@@ -21,8 +29,10 @@ option java_outer_classname = "StockReservationProto";
 
 service StockReservation {
   // 주문의 모든 줄을 ttl 동안 잡는다. 이미 잡혀 있으면 수량 · 만료를 새로 쓴다(연장). 전부 아니면 전무.
+  // [JA] 注文の全行を ttl の間押さえる。すでに押さえていれば数量 · 期限を書き直す(延長)。全部か無か。
   rpc Reserve(ReserveRequest) returns (ReserveResponse);
   // 푼다 — 여러 번 불러도 같다(없는 예약도 성공).
+  // [JA] 解放する — 何度呼んでも同じ(ない予約も成功)。
   rpc Release(ReleaseRequest) returns (ReleaseResponse);
 }
 
@@ -33,10 +43,11 @@ message ReserveRequest {
 }
 
 // 재고의 식별은 (상품, 색상, 사이즈 이름)이다 — 사이즈 SKU(docs/65)는 기록이지 키가 아니다.
+// [JA] 在庫の識別は(商品、色、サイズ名)である — サイズ SKU(docs/65)は記録であってキーではない。
 message Line {
   int64 product_id = 1;
   int64 color_id = 2;
-  string size = 3;   // 사이즈 없는 상품은 빈 문자열
+  string size = 3;   // 사이즈 없는 상품은 빈 문자열 ／ [JA] サイズのない商品は空文字列
   int32 qty = 4;
 }
 
@@ -44,6 +55,8 @@ message ReserveResponse {
   bool held = 1;
   // 잡았을 때만. Unix epoch 밀리초 — google.protobuf.Timestamp 를 쓰지 않은 것은 well-known 타입 의존을
   // 늘리지 않기 위해서다(0 = 없음).
+  // [JA] 押さえたときだけ。Unix epoch ミリ秒 — google.protobuf.Timestamp を使わなかったのは well-known 型への依存を
+  //      増やさないためである(0 = なし)。
   int64 expires_at_epoch_millis = 2;
   repeated Shortage shortages = 3;
 }

@@ -37,6 +37,11 @@ import com.project.userservice.service.UserService;
  *
  * <p>이건 상태 코드 하나가 <b>사용자에게 거짓말을 시킨</b> 경우다. 서버는 사실을 말했지만
  * 그 사실이 닿을 수 없는 자리에 놓여 있었다.
+ *
+ * <p>[JA] 🐛 <b>重複登録が 200 OK で出ていた。</b>
+ * <p>フロントの useMutation は 2xx を成功とみなすので onSuccess が実行され、画面には<b>「認証メールを送りました」</b>トーストが出た後ログイン画面に移った。
+ * 本文に入っていた「既に存在する」は誰も見なかった — ユーザーは来ないメールを待ち、その間本物のアカウントはそのままあった。
+ * <p>これはステータスコード一つが<b>ユーザーに嘘をつかせた</b>例である。サーバは事実を言ったが、その事実が届かない場所に置かれていた。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -70,6 +75,8 @@ class RegisterDuplicateTest {
     /**
      * 🔴 이 파일의 핵심. 200 이면 프론트는 성공 경로를 탄다 — 본문에 무엇이 들어 있든
      * 상관없다.
+     *
+     * <p>[JA] 🔴 このファイルの核心。200 ならフロントは成功経路に乗る — 本文に何が入っていても関係ない。
      */
     @Test
     @DisplayName("🔴 이미 가입된 이메일은 2xx 가 아니다 — 2xx 면 화면이 성공으로 처리한다")
@@ -96,6 +103,8 @@ class RegisterDuplicateTest {
     /**
      * 문구가 실제로 사용자에게 보이게 됐으므로, 영어 진단문이 아니라 <b>다음에 뭘 해야
      * 하는지</b>가 적혀 있어야 한다. 예전 문구는 "The same user Id exists" 였다.
+     *
+     * <p>[JA] 文言が実際にユーザーに見えるようになったので、英語の診断文ではなく<b>次に何をすべきか</b>が書かれていなければならない。以前の文言は "The same user Id exists" だった。
      */
     @Test
     @DisplayName("무엇을 하면 되는지 알려준다 — 로그인, 그리고 확인 메일 재발송")
@@ -112,6 +121,9 @@ class RegisterDuplicateTest {
      * 🔒 미인증 계정인지 아닌지를 응답으로 구분하면, 이 엔드포인트가 <b>계정 상태 확인
      * 도구</b>가 된다. 가입 여부가 드러나는 것은 가입 엔드포인트의 피할 수 없는 성질이지만,
      * 인증 여부까지 얹을 이유는 없다.
+     *
+     * <p>[JA] 🔒 未認証アカウントかどうかを応答で区別すると、このエンドポイントが<b>アカウント状態の確認ツール</b>になる。登録有無が分かるのは登録エンドポイントの避けられない性質だが、
+     * 認証有無まで載せる理由はない。
      */
     @Test
     @DisplayName("🔒 인증된 계정과 미인증 계정을 구분해 답하지 않는다")
@@ -132,6 +144,7 @@ class RegisterDuplicateTest {
     }
 
     /** 중복이면 계정을 만들지 않는다 — 당연해 보이지만 고정해 둔다. */
+    // [JA] 重複ならアカウントを作らない — 当然に見えるが固定しておく。
     @Test
     @DisplayName("중복이면 가입 절차로 넘어가지 않는다")
     void doesNotRegisterOnDuplicate() throws Exception {
@@ -142,6 +155,7 @@ class RegisterDuplicateTest {
         verify(userService, never()).registerNewUserAccount(any());
     }
     /** 🐛 예전: 400 의 본문이 문자열 하나라 화면이 이유를 읽지 못했다(docs/68 §18 — 유출 비밀번호를 고칠 수 없었다). */
+    // [JA] 🐛 以前: 400 の本文が文字列一つで画面が理由を読めなかった(docs/68 §18 — 漏洩パスワードを直せなかった)。
     @Test
     @DisplayName("🔴 400 도 message 를 담는다 — 유출 비밀번호면 화면이 그 이유를 보여 줄 수 있다")
     void badRequestCarriesMessage() throws Exception {

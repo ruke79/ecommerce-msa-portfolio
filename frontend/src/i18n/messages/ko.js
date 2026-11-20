@@ -6,6 +6,12 @@
  *
  * <p>키는 <b>화면·기능</b>으로 묶는다({@code auth.*}, {@code common.*}). 문구 자체를 키로
  * 쓰지 않는 이유: 한국어 문구를 다듬을 때마다 모든 언어 파일의 키가 깨진다.
+ *
+ * <p>[JA] 韓国語文言 — <b>基準言語</b>。
+ * 新しい文言は常にここに先に入れる。{@code ja.js} に無いキーはこの値にフォールバックするので
+ * (fallback)、翻訳が遅れても画面が空にならない。逆にここに無いキーはどの言語にも無い。
+ * キーは <b>画面・機能</b>でまとめる({@code auth.*}, {@code common.*})。文言自体をキーに
+ * しない理由: 韓国語の文言を整えるたびに全言語ファイルのキーが壊れる。
  */
 import shell from "./areas/shell.ko";
 import shop from "./areas/shop.ko";
@@ -16,6 +22,7 @@ import admin2 from "./areas/admin2.ko";
 
 const ko = {
     // ── 채팅 시스템 문구(util/chatNotice) ─────────────────────────────────
+    // [JA] ── チャットのシステム文言(util/chatNotice) ──
     "chat.notice.entered": "{{name}} 님이 입장했습니다.",
     "chat.notice.left": "{{name}} 님이 나갔습니다.",
     "chat.notice.agent_joined": "상담원 {{name}} 님이 연결되었습니다.",
@@ -28,6 +35,7 @@ const ko = {
     "chat.name.member_n": "회원 {{id}}",
 
     // ── 상태 코드 이름표(util/statusLabel) ───────────────────────────────
+    // [JA] ── 状態コードのラベル(util/statusLabel) ──
     "status.order.NOT_PROCESSED": "결제 대기",
     "status.order.PAID": "결제 완료",
     "status.order.UNPAID": "입금 대기",
@@ -59,6 +67,7 @@ const ko = {
     "status.batch.UNKNOWN": "알 수 없음",
 
     // ── 공통 ────────────────────────────────────────────────────────────
+    // [JA] ── 共通 ──
     "common.cancel": "취소",
     "common.save": "저장",
     "common.email": "이메일",
@@ -67,11 +76,13 @@ const ko = {
     "common.sending": "보내는 중…",
 
     // ── 언어 전환 ───────────────────────────────────────────────────────
+    // [JA] ── 言語切り替え ──
     "lang.label": "언어",
     "lang.ko": "한국어",
     "lang.ja": "日本語",
 
     // ── 로그인 ──────────────────────────────────────────────────────────
+    // [JA] ── ログイン ──
     "auth.signin.title": "로그인",
     "auth.signin.submit": "로그인",
     "auth.signin.need_help": "도움이 필요하신가요?",
@@ -81,15 +92,19 @@ const ko = {
 
     // 로그인 성공 뒤 서버가 코드로 알려 주는 결과. 서버는 표시 언어를 모르므로
     // 문구는 여기서 고른다(LoginResponse 주석).
+    // [JA] ログイン成功後にサーバーがコードで知らせる結果。サーバーは表示言語を知らないので
+    //      文言はここで選ぶ(LoginResponse のコメント)。
     "auth.signin.result.login_success": "로그인되었습니다.",
     "auth.signin.password_breached": "이 비밀번호는 다른 사이트에서 유출된 비밀번호 목록에 있습니다. 내 정보 › 보안에서 비밀번호를 바꿔 주세요.",
     "auth.signin.result.multi_login":
         "다른 기기에서 로그인되어 있어 이전 접속을 종료했습니다.",
 
     // ── 가입 ────────────────────────────────────────────────────────────
+    // [JA] ── 登録 ──
     "auth.register.title": "회원가입",
 
     // ── 확인 메일 재발송 ────────────────────────────────────────────────
+    // [JA] ── 確認メール再送 ──
     "auth.resend.email_label": "가입에 사용한 이메일",
     "auth.resend.submit": "재발송",
     "auth.resend.sent": "확인 메일을 다시 보냈습니다. 메일함(스팸함 포함)을 확인해 주세요.",
@@ -97,6 +112,7 @@ const ko = {
     "auth.resend.failed": "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
 
     // ── 가입 확인 실패 ──────────────────────────────────────────────────
+    // [JA] ── 登録確認の失敗 ──
     "auth.verify_failed.expired.title": "링크의 유효기간이 지났습니다",
     "auth.verify_failed.expired.detail":
         "가입 확인 링크는 24시간 동안만 쓸 수 있습니다. 아래에서 새 링크를 받아 주세요.",
@@ -108,6 +124,7 @@ const ko = {
     "auth.verify_failed.doc_title": "메일 인증",
 
     // ── 비밀번호 재설정 ─────────────────────────────────────────────────
+    // [JA] ── パスワード再設定 ──
     "auth.reset.doc_title": "비밀번호 재설정",
     "auth.reset.title": "새 비밀번호 설정",
     "auth.reset.new_password": "새 비밀번호",
@@ -123,6 +140,7 @@ const ko = {
         "비밀번호를 변경하지 못했습니다. 비밀번호 찾기를 다시 요청해 주세요.",
 
     // ── 상품 목록 ───────────────────────────────────────────────────────
+    // [JA] ── 商品一覧 ──
     "browse.home": "홈",
     "browse.title": "상품 찾기",
     "browse.sort_by": "정렬",
@@ -136,6 +154,7 @@ const ko = {
     "browse.price_range.over": "{{min}}$ 이상 상품 보기",
 
     // 정렬 옵션. value 는 서버로 가는 값이라 번역하지 않는다 — 이름만 번역한다.
+    // [JA] 並べ替えオプション。value はサーバーへ行く値なので翻訳しない — 名前だけ翻訳する。
     "browse.sort.recommend": "추천순",
     "browse.sort.popular": "인기순",
     "browse.sort.newest": "신상품순",
@@ -145,6 +164,7 @@ const ko = {
     "browse.sort.priceHighToLow": "높은 가격순",
 
     // ── 상품 상세 ───────────────────────────────────────────────────────
+    // [JA] ── 商品詳細 ──
     "product.breadcrumb_label": "현재 위치",
     "product.reviews": "리뷰 {{count}}개",
     "product.select_size": "사이즈를 선택하세요",
@@ -185,6 +205,7 @@ const ko = {
     "product.sku": "상품 번호 {{sku}}",
 
     // 담기 실패 사유 — 사용자가 다음에 무엇을 할지 알 수 있어야 한다.
+    // [JA] カート追加失敗の理由 — ユーザーが次に何をすべきか分からなければならない。
     "product.error.select_size": "사이즈를 먼저 선택해 주세요.",
     "product.error.out_of_stock": "품절된 상품입니다.",
     "product.restock.subscribe": "재입고 알림 받기",
@@ -197,6 +218,7 @@ const ko = {
     "product.wishlist.failed": "위시리스트에 담지 못했습니다.",
 
     // ── 배송·재고 안내 ──────────────────────────────────────────────────
+    // [JA] ── 配送・在庫案内 ──
     "shipping.free": "무료 배송",
     "shipping.fee": "배송비 {{amount}}",
     "shipping.no_import_fees": "별도의 수입 수수료가 없습니다",
@@ -209,6 +231,7 @@ const ko = {
 
 
     // ── 장바구니 ────────────────────────────────────────────────────────
+    // [JA] ── カート ──
     "cart.empty.title": "장바구니가 비어 있습니다",
     "cart.empty.shop_now": "쇼핑하러 가기",
     "cart.empty.signin": "로그인 / 회원가입",
@@ -225,6 +248,7 @@ const ko = {
         "상품이 설명과 다르거나 배송되지 않으면 전액 환불해 드립니다.",
 
     // ── 주문서(체크아웃) ────────────────────────────────────────────────
+    // [JA] ── 注文書(チェックアウト) ──
     "checkout.summary.title": "주문 요약",
     "checkout.merchandise": "상품 금액",
     "checkout.coupon.new_price": "할인 후 금액",
@@ -241,6 +265,7 @@ const ko = {
     "checkout.error.no_address": "배송지를 선택해 주세요.",
 
     // ── 주문 상세 ───────────────────────────────────────────────────────
+    // [JA] ── 注文詳細 ──
     "order.breadcrumb.orders": "주문 내역",
     "order.payment_status": "결제 상태",
     "order.status": "주문 상태",
@@ -279,6 +304,7 @@ const ko = {
 
 
     // ── 프로필 ──────────────────────────────────────────────────────────
+    // [JA] ── プロフィール ──
     "profile.title": "내 프로필",
     "profile.name": "이름",
     "profile.name_placeholder": "표시할 이름",
@@ -303,6 +329,7 @@ const ko = {
     "profile.joined_at": "가입일",
 
     // 사이드바. link/filter 값은 URL 을 만들므로 번역하지 않는다 — 아래 주석 참조.
+    // [JA] サイドバー。link/filter の値は URL を作るので翻訳しない — 下のコメント参照。
     "profile.menu.account": "내 계정",
     "profile.menu.my_profile": "내 프로필",
     "profile.menu.addresses": "배송지",
@@ -320,6 +347,7 @@ const ko = {
     "profile.menu.orders.cancelled": "취소됨",
 
     // ── 프로필 하위 화면 ────────────────────────────────────────────────
+    // [JA] ── プロフィールのサブ画面 ──
     "profile.addresses.title": "배송지 관리",
     "profile.orders.title": "주문 내역",
     "profile.payment.title": "결제 수단",
@@ -334,6 +362,7 @@ const ko = {
 
 
     // ── 고객센터 채팅(docs/58) ────────────────────────────────────────────
+    // [JA] ── カスタマーセンターチャット(docs/58) ──
     "support.title": "1:1 고객 상담",
     "support.team": "고객지원팀",
     "support.intro": "주문·배송·환불 등 궁금한 점을 고객지원팀에 바로 물어보세요.",
@@ -442,6 +471,7 @@ const ko = {
 };
 
 /** 합치기 전의 조각 — 같은 키가 두 조각에 있으면 안 된다(i18n.test.jsx). */
+// [JA] まとめる前の断片 — 同じキーが二つの断片にあってはならない(i18n.test.jsx)。
 export const PARTS = { base: ko, shell, shop, order, user, admin1, admin2 };
 
 export default { ...ko, ...shell, ...shop, ...order, ...user, ...admin1, ...admin2 };

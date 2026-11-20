@@ -24,6 +24,8 @@ import com.project.userservice.repository.jpa.UserRepository;
 
 /**
  * 복제 대사 — 최근 가입·변경·탈퇴한 사용자의 이벤트를 다시 보낸다(docs/57 §14). 받는 쪽은 모두 멱등이다.
+ *
+ * <p>[JA] 複製の突き合わせ — 最近登録・変更・退会したユーザーのイベントを再送する(docs/57 §14)。受け取る側はすべて冪等である。
  */
 @DisplayName("사용자 복제 대사")
 class UserReplicationReconcilerTest {
@@ -57,7 +59,7 @@ class UserReplicationReconcilerTest {
         verify(outbox).recordUserCreated(fresh);
         verify(outbox).recordUserUpdated(fresh);
         verify(outbox).recordUserUpdated(old);
-        verify(outbox, never()).recordUserCreated(old);   // 오래된 가입자에게 가입 쿠폰을 다시 만들지 않는다
+        verify(outbox, never()).recordUserCreated(old);   // 오래된 가입자에게 가입 쿠폰을 다시 만들지 않는다 ／ [JA] 古い登録者に登録クーポンを作り直さない
         verify(outbox).recordUserDeleted(3L);
         verify(outbox, never()).recordUserUpdated(gone);
     }

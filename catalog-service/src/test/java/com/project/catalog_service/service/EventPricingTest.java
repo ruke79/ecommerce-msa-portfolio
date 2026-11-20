@@ -25,6 +25,9 @@ import com.project.common.dto.ProductSkuDto;
  *
  * <p>이 규칙들이 틀리면 <b>고객이 내는 금액이 틀린다.</b> 조용히 틀리는 종류라 — 예외도
  * 로그도 없고 숫자만 다르다 — 여기서 표로 고정한다.
+ *
+ * <p>[JA] 企画展割引が商品価格に合成される規則。
+ * <p>これらの規則が間違うと<b>顧客が払う金額が間違う。</b>黙って間違う種類なので — 例外もログもなく数字だけが違う — ここで表として固定する。
  */
 @DisplayName("기획전 할인 합성")
 class EventPricingTest {
@@ -42,6 +45,7 @@ class EventPricingTest {
     }
 
     /** 리포지터리가 돌려주는 {@code [productId, discountRate]} 행. */
+    // [JA] リポジトリが返す {@code [productId, discountRate]} の行。
     private void activeDiscounts(Object[]... rows) {
         when(eventRepository.activeProductDiscounts()).thenReturn(List.of(rows));
         when(eventRepository.activeCategoryDiscounts()).thenReturn(List.of());
@@ -61,6 +65,10 @@ class EventPricingTest {
          *       <b>오른다.</b> 관리자는 세일을 추가했는데 고객은 비싸진 것을 본다.</li>
          *   <li><b>누적</b> — 40% + 20% 가 52% 가 된다. 아무도 그 숫자를 의도하지 않았다.</li>
          * </ul>
+         *
+         * <p>[JA] 🔴 この選択がこの機能の核心である。
+         * <p>代案は二つとも実際に問題を生む: <b>企画展が上書きする</b> — 常時 40% の商品を 20% の企画展に入れると価格が<b>上がる。</b>管理者はセールを追加したのに、顧客は高くなったのを見る。
+         * <b>累積</b> — 40% + 20% が 52% になる。誰もその数字を意図していない。
          */
         @Test
         @DisplayName("상시 할인이 더 크면 상시 할인을 쓴다 — 기획전에 넣었는데 비싸지면 안 된다")
@@ -97,6 +105,8 @@ class EventPricingTest {
         /**
          * 기획전 둘이 같은 상품을 겹쳐 잡을 수 있다(DB 가 막지 않는다 — 복합 키는 기획전
          * 하나 안에서만 유일하다). 더하면 30% 둘이 51% 가 된다.
+         *
+         * <p>[JA] 二つの企画展が同じ商品を重ねて押さえることがある(DB は防がない — 複合キーは企画展一つの中でだけ一意である)。足すと 30% 二つが 51% になる。
          */
         @Test
         @DisplayName("기획전이 겹치면 높은 쪽 하나만 — 두 개를 더하지 않는다")
@@ -134,6 +144,7 @@ class EventPricingTest {
             ProductDto dto = pricing.apply(product("42", 10, 50));
 
             // 10% SKU 는 기획전이 이기고, 50% SKU 는 상시 할인이 이긴다.
+            // [JA] 10% の SKU は企画展が勝ち、50% の SKU は常時割引が勝つ。
             assertThat(dto.getSkus()).extracting(ProductSkuDto::getDiscount)
                     .containsExactly(30, 50);
         }
@@ -151,6 +162,8 @@ class EventPricingTest {
         /**
          * id 는 문자열이다(ProductDto). 숫자가 아닌 값이 들어와도 조회 전체가 500 이
          * 되면 안 된다 — 상품 하나 때문에 목록이 통째로 죽는다.
+         *
+         * <p>[JA] id は文字列である(ProductDto)。数値でない値が来ても照会全体が 500 になってはならない — 商品一つのせいで一覧が丸ごと死ぬ。
          */
         @Test
         @DisplayName("id 가 숫자가 아니어도 터지지 않는다")
@@ -189,12 +202,17 @@ class EventPricingTest {
      * <p>🔴 <b>펼친 결과를 저장하지 않는다.</b> 저장하면 그 순간 목록이 굳어, 기획전이
      * 시작된 뒤 그 카테고리에 등록된 상품이 빠진다 — 관리자는 카테고리를 걸었다고
      * 생각하는데 신상품만 정가로 남고, 그 사실은 고객 문의로야 드러난다.
+     *
+     * <p>[JA] カテゴリ単位の対象。
+     * <p>🔴 <b>展開した結果を保存しない。</b>保存するとその瞬間に一覧が固まり、企画展が始まった後にそのカテゴリに登録された商品が抜ける — 管理者はカテゴリを指定したと思っているのに
+     * 新商品だけ定価のまま残り、その事実は顧客の問い合わせでようやく明らかになる。
      */
     @Nested
     @DisplayName("카테고리 펼치기")
     class ExpandingCategories {
 
         /** 카테고리 대상과, 그 카테고리에 속한 상품들을 준비한다. */
+        // [JA] カテゴリ対象と、そのカテゴリに属する商品を準備する。
         private void activeCategories(List<Object[]> categoryRows, List<Object[]> productRows) {
             when(eventRepository.activeProductDiscounts()).thenReturn(List.of());
             when(eventRepository.activeCategoryDiscounts()).thenReturn(categoryRows);
@@ -226,6 +244,8 @@ class EventPricingTest {
         /**
          * "카테고리 전체 20%, 그중 이 상품만 40%" 가 자연스럽게 표현돼야 한다. 순서에
          * 따라 결과가 달라지면 관리자는 어느 쪽이 이길지 예측할 수 없다.
+         *
+         * <p>[JA] 「カテゴリ全体 20%、そのうちこの商品だけ 40%」が自然に表現されなければならない。順序によって結果が変わると、管理者はどちらが勝つか予測できない。
          */
         @Test
         @DisplayName("상품 지정이 카테고리보다 크면 상품 쪽이 이긴다")
@@ -264,6 +284,8 @@ class EventPricingTest {
         /**
          * 카테고리 대상이 없는데도 상품을 조회하면, 대상 없는 기획전이 1분마다 카탈로그
          * 전체를 읽는 질의를 만든다.
+         *
+         * <p>[JA] カテゴリ対象がないのに商品を照会すると、対象のない企画展が 1 分ごとにカタログ全体を読むクエリを作る。
          */
         @Test
         @DisplayName("카테고리 대상이 없으면 상품을 조회하지 않는다")
@@ -306,6 +328,7 @@ class EventPricingTest {
             assertThat(pricing.effectiveDiscount(42L, 0)).isEqualTo(30);
 
             // 기획전이 끝나 ACTIVE 가 하나도 없다.
+            // [JA] 企画展が終わり ACTIVE が一つもない。
             activeDiscounts();
 
             assertThat(pricing.effectiveDiscount(42L, 0)).isZero();
@@ -330,6 +353,11 @@ class EventPricingTest {
      * <p>프론트엔드(`util/pricing.js`)는 이미 고쳐져 있었고 <b>이 경로만 남아 있었다.</b>
      * 그래서 상세 화면은 50% 할인가를 보여 주는데 장바구니에 담으면 2% 할인가가 담겼다 —
      * 같은 상품의 가격이 화면마다 달랐다. 기획전 할인도 이 계산을 지난다.
+     *
+     * <p>[JA] 🐛 回帰対象: <b>バックエンドの割引価格の計算式が間違っていた。</b>
+     * <p>{@code price - price / discount} — 「定価から、定価を割引率で割った値を引く」という意味で何の意味もなく、<b>割引率が大きいほど割引幅が小さくなった。</b>
+     * <p>フロントエンド(`util/pricing.js`)はすでに直っていて<b>この経路だけ残っていた。</b>そのため詳細画面は 50% 割引価格を見せるのに、カートに入れると 2% 割引価格が入った
+     * — 同じ商品の価格が画面ごとに違った。企画展割引もこの計算を通る。
      */
     @Nested
     @DisplayName("할인가 계산")
@@ -364,6 +392,7 @@ class EventPricingTest {
         }
 
         /** 데이터 오류로 100 을 넘는 값이 들어와도 주문 금액이 마이너스가 되면 안 된다. */
+        // [JA] データ誤りで 100 を超える値が来ても、注文金額がマイナスになってはならない。
         @Test
         @DisplayName("100% 를 넘겨도 가격이 음수가 되지 않는다")
         void neverNegative() {

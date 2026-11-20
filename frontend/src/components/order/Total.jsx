@@ -10,6 +10,13 @@ import { useMoney } from "hook/useMoney";
  *
  * <p>여기는 <b>상점 통화</b>다. 제공자에게 실제 청구한 통화·금액(KRW·JPY)은 결제 화면과
  * 환불 버튼이 {@code chargeOf(order)} 로 따로 보여 준다.
+ *
+ * <p>[JA] 注文詳細の金額三行 — ストア通貨だ。
+ * サーバーの {@code total · totalBeforeDiscount · taxPrice} は V7 から小数第二位まで
+ * 来る($59.98 が以前は 59 で来ていた)。通貨記号はハードコードしない — ストア通貨は
+ * ビルド引数({@code REACT_APP_STORE_CURRENCY})で、{@code Intl} が桁数と記号を知っている。
+ * ここは <b>ストア通貨</b>だ。プロバイダーに実際に請求した通貨・金額(KRW・JPY)は決済画面と
+ * 返金ボタンが {@code chargeOf(order)} で別に見せる。
  */
 
 const Total = ({ order }) => {
@@ -39,6 +46,7 @@ const Total = ({ order }) => {
             <div className="flex items-center justify-between font-semibold text-slate-800">
                 <span>{t("order.total.tax")}</span>
                 {/* 가격은 세금 포함이다. 예전에는 서버에 없는 order.tax 를 보고 늘 "무료" 라고 적었다(docs/62 §18). */}
+                {/* [JA] 価格は税込みだ。以前はサーバーにない order.tax を見て常に「無料」と書いていた(docs/62 §18)。 */}
                 <span>{t("order.total.included")}</span>
             </div>
             <div className="flex items-center justify-between font-bold text-slate-800 border-t pt-2">

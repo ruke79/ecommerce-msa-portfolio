@@ -60,6 +60,9 @@ export const TitleBlock = styled.section`
    * 방 만들기 버튼. 예전에는 아이콘 <i> 에 직접 onClick 이 달려 있어 키보드로 누를 수
    * 없었다(RoomListHeader 주석). <button> 으로 바뀌었으므로 브라우저 기본 버튼 스타일을
    * 지우고 원형 타깃을 준다 — 20px 아이콘 하나는 누르기에 너무 작다.
+   *
+   * [JA] 部屋作成ボタン。以前はアイコン <i> に直接 onClick が付いていてキーボードで押せなかった(RoomListHeader のコメント)。
+   * <button> に変わったのでブラウザ既定のボタンスタイルを消し、円形のターゲットを与える — 20px のアイコン一つは押すには小さすぎる。
    */
   & button.add-room {
     position: absolute;

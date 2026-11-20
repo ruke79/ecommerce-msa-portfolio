@@ -45,16 +45,30 @@ import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
  *       부르는 쪽 트랜잭션에 그냥 합류하는 경우(readOnly · timeout 차이만)는 프록시를 지나도 같은 결과라 막지 않는다.</li>
  * </ol>
  *
- * <p>[JA] B-108: 付いているのに効かない @Transactional を防ぐ — private · static · final、@PostConstruct、プロキシを通らない自己呼び出し。
+ * <p>[JA] B-108: {@code @Transactional} が<b>付いているのに適用されない</b>箇所をすべてのサービスで防ぐ。
+ *
+ * <p>[JA] Spring のトランザクションはプロキシが掛ける。そのため次の箇所のアノテーションは何もしない — コードだけ見るとトランザクションがあるように読め、
+ * 誤って信じることになる(2026-11-03 全数調査: 312 箇所中 private 6 · {@code @PostConstruct} 1 · 受ける側の設定を飛ばした自己呼び出し 9)。
+ * <ol>
+ *   <li>[JA] <b>private · static · final メソッド</b> — CGLIB プロキシが横取りできない。(package-private · protected は Spring 6 で適用される。)</li>
+ *   <li>[JA] <b>{@code @PostConstruct}</b> — プロキシができる前に対象オブジェクトで直接呼ばれる。</li>
+ *   <li>[JA] <b>自己呼び出し</b> — 同じクラスの中で {@code foo()} · {@code this.foo()} と呼ぶとプロキシを通らない。呼ぶ側にトランザクションが
+ *       ないか(または NOT_SUPPORTED · NEVER)、受ける側が別の伝播(REQUIRES_NEW など)を望むと、受ける側の設定は無視される。そういう所は
+ *       TransactionTemplate で開くか(ラムダ内の呼び出しはこのガードが見る)、トランザクションを入口メソッドへ移す。
+ *       呼ぶ側のトランザクションにそのまま合流する場合(readOnly · timeout の違いだけ)はプロキシを通っても同じ結果なので防がない。</li>
+ * </ol>
  */
 @DisplayName("B-108: @Transactional 이 적용되지 않는 자리(private · @PostConstruct · 자기 호출)")
 class TransactionalProxyGuardTest {
 
     /** 받는 쪽이 이 전파면 합류가 아니라 다른 동작을 원한 것이다 — 자기 호출로는 그 동작이 없다. */
+    // [JA] 受け取る側がこの伝播なら、合流ではなく別の動作を望んだということだ — 自己呼び出しではその動作がない。
     private static final Set<String> OWN_PROPAGATION = Set.of("REQUIRES_NEW", "NOT_SUPPORTED", "NEVER", "NESTED", "MANDATORY");
     /** 부르는 쪽이 이 전파면 트랜잭션이 없다. */
+    // [JA] 呼び出し側がこの伝播ならトランザクションがない。
     private static final Set<String> NO_TX_PROPAGATION = Set.of("NOT_SUPPORTED", "NEVER");
     /** 이 이름의 호출에 넘긴 람다 · 메서드 참조 안은 템플릿이 트랜잭션을 연다(TransactionTemplate · TransactionOperations · 각 서비스의 inTransaction). */
+    // [JA] この名前の呼び出しに渡したラムダ · メソッド参照の中は、テンプレートがトランザクションを開く(TransactionTemplate · TransactionOperations · 各サービスの inTransaction)。
     private static final Set<String> TEMPLATE_CALLS = Set.of("execute", "executeWithoutResult", "inTransaction");
 
     private static final List<Unit> UNITS = new ArrayList<>();
@@ -134,6 +148,8 @@ class TransactionalProxyGuardTest {
                 for (MethodDeclaration caller : c.getMethods()) {
                     // private 은 프록시를 지나지 않으므로 클래스 단위 설정도 그 메서드의 것이 아니다 — 하지만 부르는 입구가 클래스 단위
                     // 트랜잭션 안이면 그 안에서 돈다. 클래스 단위가 있으면 그것으로 본다.
+                    // [JA] private はプロキシを通らないので、クラス単位の設定もそのメソッドのものではない — しかし呼び出す入口がクラス単位の
+                    //      トランザクション内ならその中で動く。クラス単位があればそれで判断する。
                     AnnotationExpr callerTx = tx(caller).orElse(classTx);
                     String callerProp = propagation(callerTx);
                     boolean callerHasTx = callerTx != null && !NO_TX_PROPAGATION.contains(callerProp);
@@ -148,11 +164,11 @@ class TransactionalProxyGuardTest {
                         }
                         AnnotationExpr calleeTx = tx(callee).orElse(null);
                         if (calleeTx == null) {
-                            continue;   // 받는 쪽에 메서드 단위 설정이 없으면 부르는 쪽의 것을 그대로 쓴다
+                            continue;   // 받는 쪽에 메서드 단위 설정이 없으면 부르는 쪽의 것을 그대로 쓴다 ／ [JA] 受け取る側にメソッド単位の設定がなければ、呼び出し側のものをそのまま使う
                         }
                         String calleeProp = propagation(calleeTx);
                         if (calleeProp.equals(callerProp) || (!callerHasTx && NO_TX_PROPAGATION.contains(calleeProp))) {
-                            continue;   // 프록시를 지나도 같다 — 둘 다 트랜잭션 없음, 또는 같은 전파
+                            continue;   // 프록시를 지나도 같다 — 둘 다 트랜잭션 없음, 또는 같은 전파 ／ [JA] プロキシを通っても同じだ — どちらもトランザクションなし、または同じ伝播
                         }
                         boolean wantsOwn = OWN_PROPAGATION.contains(calleeProp) && !calleeProp.equals(callerProp);
                         if (!callerHasTx || wantsOwn) {
@@ -168,6 +184,7 @@ class TransactionalProxyGuardTest {
     }
 
     // ── 도구 ────────────────────────────────────────────────────────────
+    // [JA] ── ツール ──
 
     private static Optional<AnnotationExpr> tx(NodeWithAnnotations<?> n) {
         return n.getAnnotations().stream()
@@ -176,6 +193,7 @@ class TransactionalProxyGuardTest {
     }
 
     /** 전파 이름(REQUIRED 가 기본). 어노테이션 본문에서 Propagation.X 를 읽는다. */
+    // [JA] 伝播の名前(REQUIRED がデフォルト)。アノテーション本文から Propagation.X を読む。
     private static String propagation(AnnotationExpr a) {
         if (a == null) {
             return "NONE";
@@ -194,6 +212,7 @@ class TransactionalProxyGuardTest {
     }
 
     /** 이 호출이 템플릿 호출(execute · inTransaction …)에 넘긴 람다 · 메서드 참조 안에 있는가. */
+    // [JA] この呼び出しが、テンプレート呼び出し(execute · inTransaction …)に渡したラムダ · メソッド参照の中にあるか。
     private static boolean insideTemplate(Node call, Node stop) {
         Node n = call;
         while (n != null && n != stop) {

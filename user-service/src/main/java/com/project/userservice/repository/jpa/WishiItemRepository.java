@@ -17,10 +17,14 @@ public interface WishiItemRepository extends JpaRepository<WishItem, Long> {
     // 위시리스트를 수정하거나 삭제할 때 다른 트랜잭션의 접근을 막기 위해 락을 겁니다.
     // 이 메서드를 호출하면 데이터베이스에 SELECT ... FOR UPDATE 쿼리가 실행됩니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
+    //      ウィッシュリストを修正・削除するとき、他のトランザクションのアクセスを防ぐためにロックをかける。
+    //      このメソッドを呼ぶとデータベースで SELECT ... FOR UPDATE クエリが実行される。
     @Override
     Optional<WishItem> findById(Long id);
 
     /** 회원 탈퇴 최종 처리용. 위시리스트는 취향 기록이라 탈퇴하면 남길 이유가 없다. */
+    // [JA] 会員退会の最終処理用。ウィッシュリストは好みの記録なので退会すると残す理由がない。
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
     @org.springframework.data.jpa.repository.Query("delete from WishItem w where w.user.userId = :userId")

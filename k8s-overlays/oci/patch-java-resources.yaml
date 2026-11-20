@@ -1,5 +1,7 @@
 # JSON6902 — 컨테이너 이름이 서비스마다 달라서 전략적 병합으로는 한 번에 못 고친다.
 # 인덱스 0 은 모든 Deployment 가 단일 컨테이너라 안전하다.
+# [JA] JSON6902 — コンテナ名がサービスごとに違うので、戦略的マージでは一度に直せない。
+#      インデックス 0 は全 Deployment が単一コンテナなので安全である。
 - op: replace
   path: /spec/template/spec/containers/0/resources/requests/cpu
   value: "60m"
@@ -23,6 +25,15 @@
 #    프록시·리플렉션 호출에서 StackOverflowError 가 날 수 있고, 그건 특정 경로에서만
 #    터져 재현이 어렵다. 스레드 **개수**를 줄이는 편이 안전하다(ConfigMap 의
 #    SERVER_TOMCAT_THREADS_MAX — 200 → 50).
+# [JA] リミットを下げたのでヒープも明示する。512Mi × 60% ≈ 307Mi のヒープ + 残りはメタスペース・スタック・ネイティブ。
+#      これを外すと JVM がリミットの 1/4(128Mi)しかヒープに取らず、かえって GC で喘ぐ。
+#      UseSerialGC: 2 OCPU を 12 個の JVM で分け合うとサービスあたり実効 0.16 コアである。G1 の並行 GC
+#        スレッドはその環境では利得より競合が大きい。(JVM もコア・メモリが少なければ自ら
+#        SerialGC を選ぶが、コンテナではその判定がずれることがあるので明示する。)
+#      ⚠️ -Xss は入れない。スレッドスタックを減らせばメモリは節約できるが、Spring の深い
+#         プロキシ・リフレクション呼び出しで StackOverflowError が出ることがあり、それは特定の経路でだけ
+#         起きるので再現が難しい。スレッドの**個数**を減らすほうが安全である(ConfigMap の
+#         SERVER_TOMCAT_THREADS_MAX — 200 → 50)。
 - op: add
   path: /spec/template/spec/containers/0/env/-
   value:

@@ -68,6 +68,10 @@ public class KeysetItemReader<T> implements ItemStreamReader<T> {
      * @param idAttribute id 속성 이름(예: {@code "productId"})
      * @param loadQuery   {@code :ids} 로 엔티티를 읽는 JPQL — 단일 값 연관(ManyToOne)과 컬렉션 <b>하나</b>까지 JOIN FETCH 해도 된다
      * @param initializer 같은 EntityManager 에서 나머지 연관을 채운다(같은 영속성 컨텍스트라 이미 읽은 엔티티에 붙는다). 없으면 null
+     *
+     * <p>[JA] entity: JPQL のエンティティ名、idAttribute: id 属性名、
+     *      loadQuery: {@code :ids} でエンティティを読む JPQL — 単一値の関連(ManyToOne)とコレクション <b>1 つ</b>まで JOIN FETCH してよい、
+     *      initializer: 同じ EntityManager で残りの関連を埋める(同じ永続性コンテキストなので既に読んだエンティティに付く)。なければ null
      */
     public KeysetItemReader(EntityManagerFactory emf, String entity, String idAttribute, String loadQuery,
             Function<T, Long> idOf, BiConsumer<EntityManager, List<Long>> initializer, int pageSize) {
@@ -112,6 +116,7 @@ public class KeysetItemReader<T> implements ItemStreamReader<T> {
             }
             tx.commit();
             // JOIN FETCH 로 같은 엔티티가 여러 줄 나올 수 있다 — id 로 한 번씩, id 순으로
+            // [JA] JOIN FETCH で同じエンティティが複数行出ることがある — id ごとに 1 回ずつ、id 順に
             rows.stream()
                     .collect(java.util.stream.Collectors.toMap(idOf, r -> r, (a, b) -> a))
                     .values().stream()
@@ -141,6 +146,7 @@ public class KeysetItemReader<T> implements ItemStreamReader<T> {
     @Override
     public void update(ExecutionContext executionContext) throws ItemStreamException {
         // 재시작 지점을 저장하지 않는다 — 재색인은 처음부터 다시 돈다
+        // [JA] 再開地点を保存しない — 再インデックスは最初から回り直す
     }
 
     @Override

@@ -10,6 +10,18 @@
  *
  * <p>같은 약속을 캐시한다. 버튼을 두 번 누르거나 컴포넌트가 다시 마운트돼도 스크립트는
  * 한 번만 들어간다 — 두 번 넣으면 {@code IMP} 가 재초기화되며 진행 중인 결제창이 끊긴다.
+ *
+ * <p>[JA] ポートワン(旧アイムポート)V1 ブラウザ SDK のローダー。
+ *
+ * <h3>なぜスクリプトを直接付けるか</h3>
+ *
+ * <p>ポートワン V1 は npm パッケージではなく {@code <script>} で {@code window.IMP} を埋め込む
+ * 方式である。{@code index.html} に埋め込まず<b>必要なときに一度だけ</b>入れる理由:
+ * 決済画面に来ないユーザーにまで外部スクリプトをダウンロードさせる理由はなく、
+ * 何よりも<b>ポートワンを切った環境ではまったく読み込まれてはならない</b>からである。
+ *
+ * <p>同じプロミスをキャッシュする。ボタンを二度押したりコンポーネントが再マウントされたりしてもスクリプトは
+ * 一度だけ入る — 二度入れると {@code IMP} が再初期化され、進行中の決済ウィンドウが切れる。
  */
 
 import { translate } from "i18n/I18nProvider";
@@ -38,12 +50,14 @@ export function loadPortOne() {
                 resolve(window.IMP);
             } else {
                 // 스크립트는 받았는데 전역이 없다 — 광고 차단기나 CSP 가 흔한 원인이다.
+                // [JA] スクリプトは受け取ったのにグローバルがない — 広告ブロッカーや CSP がよくある原因である。
                 loading = null;
                 reject(new Error(translate("portone.init_failed")));
             }
         };
         script.onerror = () => {
             // 다음 시도에서 다시 붙일 수 있도록 캐시를 비운다.
+            // [JA] 次の試行で付け直せるようキャッシュを空にする。
             loading = null;
             reject(new Error(translate("portone.load_failed")));
         };
@@ -54,6 +68,7 @@ export function loadPortOne() {
 }
 
 /** 테스트에서 모듈 상태를 되돌린다 — 캐시가 테스트 사이에 새면 결과가 순서에 좌우된다. */
+// [JA] テストでモジュールの状態を元に戻す — キャッシュがテスト間で漏れると結果が順序に左右される。
 export function resetPortOneLoaderForTests() {
     loading = null;
 }
@@ -64,6 +79,12 @@ export function resetPortOneLoaderForTests() {
  * <p>V1 과 전역이 다르다({@code IMP} 가 아니라 {@code PortOne}). 계정이 V2 면
  * (콘솔에 {@code imp…} 식별코드가 없고 {@code store-…} 가 보인다) 이쪽을 쓴다.
  * 로딩 규칙은 V1 과 같다 — 필요할 때 한 번만, 실패하면 다음 시도에서 다시.
+ *
+ * <p>[JA] ポートワン <b>V2</b> ブラウザ SDK のローダー — {@code window.PortOne}。
+ *
+ * <p>V1 とはグローバルが違う({@code IMP} ではなく {@code PortOne})。アカウントが V2 なら
+ * (コンソールに {@code imp…} 形式の識別コードがなく {@code store-…} が見える)こちらを使う。
+ * 読み込み規則は V1 と同じ — 必要なときに一度だけ、失敗したら次の試行で再び。
  */
 const SDK_V2_URL = "https://cdn.portone.io/v2/browser-sdk.js";
 
@@ -106,6 +127,10 @@ export function loadPortOneV2() {
  * V2 결제 id. 포트원이 발급하는 것이 아니라 <b>우리가 정한다</b> — 조회·취소·웹훅이
  * 전부 이 값으로 온다. 시도마다 새 값이어야 한다(같은 id 로 두 번 결제할 수 없다).
  * 주문과의 연결은 {@code customData.trackingId} 가 맡는다.
+ *
+ * <p>[JA] V2 の決済 id。ポートワンが発行するのではなく<b>我々が決める</b> — 照会・取消・Webhook が
+ * すべてこの値で来る。試行ごとに新しい値でなければならない(同じ id で二度決済できない)。
+ * 注文との結び付けは {@code customData.trackingId} が受け持つ。
  */
 export function newPortOnePaymentId() {
     const uuid = typeof crypto !== "undefined" && crypto.randomUUID
@@ -224,6 +249,7 @@ export function portOneStoreDetails(currency, email) {
 }
 
 /** 돌아온 쿼리에서 지울 키 — 남기면 새로고침마다 다시 확인하고, 결제 id 가 방문 기록에 남는다. */
+// [JA] 戻ってきたクエリから消すキー — 残すとリロードのたびに再確認し、決済 id が閲覧履歴に残る。
 export const PORTONE_RETURN_KEYS = ["paymentId", "code", "message", "pgCode", "pgMessage", "transactionType", "txId"];
 
 /**
@@ -232,6 +258,12 @@ export const PORTONE_RETURN_KEYS = ["paymentId", "code", "message", "pgCode", "p
  * <p>⚠️ 기본값을 {@code env = process.env} 로 두지 않는다. 번들러는 {@code process.env.이름}
  * 꼴만 값으로 바꾸고, 맨몸의 {@code process.env} 는 그대로 남겨 브라우저에서
  * {@code process is not defined} 가 된다(webpack.env.js). 이름을 하나씩 읽어 넘긴다.
+ *
+ * <p>[JA] どのバージョンでビルドされたか。Store ID があれば V2、なければ識別コードがあるとき V1。
+ *
+ * <p>⚠️ 既定値を {@code env = process.env} にしない。バンドラーは {@code process.env.名前}
+ * の形だけを値に置き換え、裸の {@code process.env} はそのまま残してブラウザで
+ * {@code process is not defined} になる(webpack.env.js)。名前を一つずつ読んで渡す。
  */
 export function portOneVersion(env) {
     const e = env ?? {

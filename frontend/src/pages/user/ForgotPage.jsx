@@ -40,6 +40,7 @@ const ForgotPage = ({ providers }) => {
 
 
     // Formik 이 소유한 값을 받는다 — 페이지 state 는 더 이상 폼 값을 갖지 않는다.
+    // [JA] Formik が所有する値を受け取る — ページの state はもうフォームの値を持たない。
     const forgotHandler = async (values, { resetForm }) => {
         try {
             setLoading(true)
@@ -74,6 +75,7 @@ const ForgotPage = ({ providers }) => {
                     <Link to="/">
                         {/* 예전에는 Amazon 로고 png 였다 — 계정 생성·로그인 화면에
                             남의 로고를 거는 것이라 교체했다(constants/brand.js 주석). */}
+                        {/* [JA] 以前は Amazon のロゴ png だった — アカウント作成・ログイン画面に他人のロゴを掲げることになるので差し替えた(constants/brand.js のコメント)。 */}
                         <BrandMark variant="dark" size="lg" className="pt-2" />
                     </Link>
                 </div>
@@ -84,6 +86,10 @@ const ForgotPage = ({ providers }) => {
                         // 넘기고 입력마다 onChange 로 Formik 의 onChange 를 덮어쓰면 값의
                         // 출처가 둘이 되고, enableReinitialize 가 키 입력마다 폼을 초기화해
                         // **입력한 글자가 유실된다**(SignInPage/RegisterPage 와 같은 버그).
+                        // [JA] ⚠️ フォームの値は Formik が所有する。ページの state を initialValues として
+                        //      渡し、入力ごとに onChange で Formik の onChange を上書きすると値の
+                        //      出どころが二つになり、enableReinitialize がキー入力ごとにフォームを初期化して
+                        //      **入力した文字が失われる**(SignInPage/RegisterPage と同じバグ)。
                         initialValues={{
                             email: "",
                         }}

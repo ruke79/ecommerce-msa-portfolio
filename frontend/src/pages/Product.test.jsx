@@ -3,6 +3,7 @@ import { getRequest } from "util/api";
 
 jest.mock("util/api", () => ({ getRequest: jest.fn() }));
 // jsdom 에는 fetch 의 Response 가 없다 — redirect 가 무엇을 가리키는지만 본다.
+// [JA] jsdom には fetch の Response がない — redirect が何を指すかだけを見る。
 jest.mock("react-router-dom", () => ({ ...jest.requireActual("react-router-dom"), redirect: (to) => ({ redirectTo: to }) }));
 jest.mock("pages/header/Header", () => () => null);
 jest.mock("components/product/ProductPage", () => () => null);
@@ -12,6 +13,7 @@ const detail = {
     skus: [{
         sku: "T-1", discount: 0, images: [], color: { id: "5" },
         // 서버가 이미 다른 주문의 결제 전 예약을 뺐다 — M 은 3 중 2 가 잡혀 1, L 은 잡힌 것이 없어 onHold 가 없다(docs/59 §5).
+        // [JA] サーバーがすでに他の注文の決済前予約を引いている — M は 3 のうち 2 が確保されて 1、L は確保がないので onHold がない(docs/59 §5)。
         sizes: [{ size: "M", quantity: 1, onHold: 2, price: 10 }, { size: "L", quantity: 4, price: 12 }],
     }],
 };

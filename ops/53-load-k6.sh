@@ -125,7 +125,7 @@ die()  { echo "ERROR: $1" >&2; exit 1; }
 info() { echo ">>> $*"; }
 warn() { echo "  ⚠️  $*" >&2; }
 
-usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 1; }   # 머리 주석 전체
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 1; }   # 머리 주석 전체 ／ [JA] 冒頭コメント全体
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
@@ -139,9 +139,13 @@ esac
 # 그 버킷(초당 20 · 버스트 40)을 모든 손님이 나눠 쓴다 — 그대로 재면 결과는 "초당 20 에서 429" 뿐이다. 그래서 측정하는 동안만
 # 게이트웨이의 기본 제한을 올린다(GATEWAY_RATE_LIMIT_*, gateway application-local.yml — 기본값은 그대로). 로그인 제한(초당 1)은
 # 바꿀 수 없다. 운영 클러스터에는 하지 않는다: 이 클러스터의 APP_PUBLIC_URL 이 운영 주소면 거절한다.
-# [JA] 計測の間だけゲートウェイの既定の流入制限を上げる。本番クラスタでは拒否する。ログイン制限は変えられない。
+# [JA] ── 流入制限 — 計測の間だけ ── 非ログインの要求(カタログ読み取り)はバケットのキーが IP である。デモには Cloudflare がなく、
+#      すべての外部要求が Traefik Pod の IP 一つに見え、そのバケット(毎秒 20・バースト 40)を全客が分け合う — そのまま測ると結果は
+#      「毎秒 20 で 429」だけになる。そこで計測の間だけゲートウェイの既定の制限を上げる(GATEWAY_RATE_LIMIT_*、gateway
+#      application-local.yml — 既定値はそのまま)。ログイン制限(毎秒 1)は変えられない。本番クラスタにはしない: このクラスタの
+#      APP_PUBLIC_URL が本番アドレスなら拒否する。
 # 실습 클러스터인가 — 측정용 예외(kubectl set env)를 운영에 걸지 않는다. 이 클러스터의 APP_PUBLIC_URL 이 운영 주소거나 비어 있으면 멈춘다.
-lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지>
+lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지> ／ [JA] lab_cluster_or_die <何を変えようとしているか>
     command -v kubectl >/dev/null 2>&1 || die "kubectl 이 필요하다"
     local url
     url="$(kubectl -n "$APP_NS" get configmap ecommerce-config -o jsonpath='{.data.APP_PUBLIC_URL}' 2>/dev/null)" \
@@ -159,14 +163,18 @@ lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지>
 # 그래서 계단은 낮게 시작하고 SLO 가 깨지는 첫 계단에서 멈추는 ceiling 으로 잰다. 쓰기 시나리오(order · mixed · contention)는 운영
 # 데이터(주문 · 재고 · 쿠폰)를 남기므로 거절한다. Cloudflare 를 거치면 엣지가 CF-Connecting-IP 를 덮어써 한 IP 의 유입 제한(초당 20)만 잰다 —
 # 클러스터 안에서 게이트웨이로 바로 보내고 손님 IP 흉내(CLIENT_IPS)로 버킷을 나눈다(운영 제한 설정은 바꾸지 않는다).
-# [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
-cluster_public_url() {   # 지금 kubectl 컨텍스트의 APP_PUBLIC_URL(못 읽으면 빈 값)
+# [JA] ── 本番の読み取り天井(docs/91 §4-2) ── 本番クラスタには読み取りだけ、クラスター内から、上限付きで。本番ノードは一台なので
+#      (データ層まで)天井を超えるとサイト全体が一緒に遅くなる — そこで階段は低く始め、SLO が破れる最初の段で止まる ceiling で測る。
+#      書き込みシナリオ(order・mixed・contention)は本番データ(注文・在庫・クーポン)を残すので拒否する。Cloudflare を経由すると
+#      エッジが CF-Connecting-IP を上書きし、一つの IP の流入制限(毎秒 20)しか測れない — クラスター内からゲートウェイへ直接送り、
+#      客の IP の模倣(CLIENT_IPS)でバケットを分ける(本番の制限設定は変えない)。
+cluster_public_url() {   # 지금 kubectl 컨텍스트의 APP_PUBLIC_URL(못 읽으면 빈 값) ／ [JA] 今の kubectl コンテキストの APP_PUBLIC_URL(読めなければ空)
     command -v kubectl >/dev/null 2>&1 || return 0
     kubectl -n "$APP_NS" get configmap ecommerce-config -o jsonpath='{.data.APP_PUBLIC_URL}' 2>/dev/null || true
 }
 is_prod_url() { case "${1:-}" in *ysyproject.com*) return 0 ;; esac; return 1; }
 
-prod_readonly_guard() {   # prod_readonly_guard <시나리오> <이번에 걸 최고 도착률>
+prod_readonly_guard() {   # prod_readonly_guard <시나리오> <이번에 걸 최고 도착률> ／ [JA] prod_readonly_guard <シナリオ> <今回かける最高到着率>
     local scenario="$1" rate="$2" host hhmm
     [ "${PROD_READONLY:-}" = "1" ] || die "운영 클러스터다 — 부하는 PROD_READONLY=1 의 읽기 천장으로만(docs/91 §4-2)"
     [ "$scenario" = "browse" ] || die "운영에서는 browse(읽기)만 — $scenario 는 운영 데이터(주문 · 재고 · 쿠폰 · 리뷰)를 남긴다"
@@ -187,8 +195,9 @@ prod_readonly_guard() {   # prod_readonly_guard <시나리오> <이번에 걸 �
 }
 
 # Alertmanager 묵음 — 측정 동안만. 만들면 PROD_SILENCE_ID, 끝나면(EXIT) 푼다. 못 만들면 SILENCED=1(손으로 걸었다) 없이는 멈춘다.
+# [JA] Alertmanager のサイレンス — 計測の間だけ。作れたら PROD_SILENCE_ID、終われば(EXIT)解除する。作れなければ SILENCED=1(手でかけた)なしでは止まる。
 PROD_SILENCE_ID=""
-prod_silence_start() {   # prod_silence_start <분>
+prod_silence_start() {   # prod_silence_start <분> ／ [JA] prod_silence_start <分>
     local minutes="$1" am="${ALERTMANAGER:-http://localhost:9093}" body
     body="$(python3 -I -c '
 import json, sys, datetime
@@ -216,6 +225,7 @@ prod_silence_end() {
 }
 
 # 서버 지표 선택자 — 실습은 environment 라벨, 운영 노드의 Prometheus 는 environment 가 없다(metrics-agent 가 붙이지 않는다)
+# [JA] サーバー指標のセレクター — 実習は environment ラベル、運用ノードの Prometheus には environment がない(metrics-agent が付けない)
 prom_match() {
     if [ -z "${PROM_MATCH:-}" ]; then
         if [ "${PROD_READONLY:-}" = "1" ]; then PROM_MATCH='job="spring-actuator"'; else PROM_MATCH="environment=\"${PROM_ENV:-demo}\""; fi
@@ -223,7 +233,7 @@ prom_match() {
     [[ "$PROM_MATCH" =~ ^[a-z_]+=\"[a-z0-9_.-]+\"$ ]] || die "PROM_MATCH 는 라벨=\"값\" 하나(예 job=\"spring-actuator\")"
 }
 
-prod_confirm() {   # 운영이다 — YES=1 이 아니면 묻는다
+prod_confirm() {   # 운영이다 — YES=1 이 아니면 묻는다 ／ [JA] 運用である — YES=1 でなければ尋ねる
     [ "${YES:-}" = "1" ] && return 0
     [ -t 0 ] || die "운영 부하 — 확인할 터미널이 없다. YES=1 로 명시"
     local a; read -r -p "  운영 클러스터에 읽기 부하를 건다($1). 진행할까? [y/N] " a
@@ -237,9 +247,14 @@ prod_confirm() {   # 운영이다 — YES=1 이 아니면 묻는다
 # 그래서 게이트웨이 파드를 바꾸는 명령(limits load · default, replicas 의 게이트웨이)은 바꾸기 **전에** 파드마다 로그 전체를 남긴다 — `logs` 로 언제든.
 # 폴백 로그(FallbackController: "Fallback triggered. Exception: <클래스>: …")를 예외별로 센 요약도 함께. 로그에는 토큰 · 이메일이 없지만(보안 경로 로그 규칙)
 # 운영자 기계의 0700 폴더에만 둔다.
-# [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
+# [JA] ── ゲートウェイのログ — Pod が入れ替わる前に ── 🐛 2026-10-18: キャッシュ後の回の 503 10,281 件が何か(バルクヘッド・
+#      サーキットブレーカー・タイムアウト)をフォールバックログで数えようとしたら 0 だった — 計測後に呼んだ `limits default` の
+#      ローリングが計測時のゲートウェイ Pod を消し、ログも一緒に消えた(指標でバルクヘッドだとは分かったが、例外の種類・メッセージはなかった)。
+#      そこでゲートウェイ Pod を変えるコマンド(limits load・default、replicas のゲートウェイ)は変える前に Pod ごとにログ全体を残す —
+#      `logs` でいつでも。フォールバックログ(FallbackController: "Fallback triggered. Exception: <クラス>: …")を例外別に数えた要約も一緒に。
+#      ログにトークン・メールはないが(セキュリティ経路のログ規則)、運用者の機械の 0700 フォルダーにだけ置く。
 GATEWAY_LOG_DIR="${GATEWAY_LOG_DIR:-$HOME/.ecommerce-msa/gateway-logs}"
-save_gateway_logs() {   # save_gateway_logs <이유>
+save_gateway_logs() {   # save_gateway_logs <이유> ／ [JA] save_gateway_logs <理由>
     local pods p dir f old
     pods="$(kubectl -n "$APP_NS" get pods -l app=gateway-server -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
     if [ -z "$pods" ]; then
@@ -250,7 +265,7 @@ save_gateway_logs() {   # save_gateway_logs <이유>
     old="$(umask)"; umask 077
     mkdir -p "$dir"
     for p in $pods; do
-        for f in "" previous; do   # 재시작한 컨테이너는 앞 로그도
+        for f in "" previous; do   # 재시작한 컨테이너는 앞 로그도 ／ [JA] 再起動したコンテナは前のログも
             kubectl -n "$APP_NS" logs "$p" ${f:+--previous} --tail=-1 --timestamps > "$dir/$p${f:+.$f}.log" 2>/dev/null || true
             if [ -s "$dir/$p${f:+.$f}.log" ]; then gzip -f "$dir/$p${f:+.$f}.log"; else rm -f "$dir/$p${f:+.$f}.log"; fi
         done
@@ -310,7 +325,9 @@ fi
 #
 # 리뷰는 받은 상품만 쓸 수 있다(review.require-purchase, 기본 켬 — docs/57 §13). 데모 계정은 받은 상품이 없어 mixed 의 리뷰가 모두 403 이다.
 # 측정하는 동안만 끈다(REVIEW_REQUIRE_PURCHASE=false — 시연 환경을 위해 둔 스위치). user-service 가 다시 뜬다. 운영 클러스터는 거절한다.
-# [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
+# [JA] ── レビュー資格 — 計測の間だけ ── レビューは受け取った商品にだけ書ける(review.require-purchase、既定で有効 — docs/57 §13)。
+#      デモアカウントは受け取った商品がないので mixed のレビューがすべて 403 になる。計測の間だけ切る(REVIEW_REQUIRE_PURCHASE=false —
+#      デモ環境のために置いたスイッチ)。user-service が再起動する。本番クラスタでは拒否する。
 cmd_reviews() {
     lab_cluster_or_die "리뷰 자격"
     case "${2:-status}" in
@@ -343,16 +360,19 @@ fi
 # contention 은 재고가 작은 상품 하나에 손님을 몰아야 뜻이 있다(재고 100 에 손님 50 이면 경합이 아니다). 그 상품의 SKU 하나 · 모든 사이즈의
 # 수량을 <수> 로 맞추고 원래 값을 운영자 기계(0700)에 남긴다 — stock restore 가 되돌린다. 운영 클러스터는 거절한다.
 # 남은 수 = 수량 − 살아 있는 예약(docs/59) — 앞 회차가 중간에 끊겨 입금 대기가 남았으면 그만큼 적다(RELEASE_HELD=1 로 푼다).
-# [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
+# [JA] ── 競合させる商品の在庫 — 計測の間だけ ── contention は在庫の少ない商品一つに客を集めてこそ意味がある(在庫 100 に客 50 では
+#      競合ではない)。その商品の SKU 一つ・全サイズの数量を <数> に合わせ、元の値を運用者の機械(0700)に残す — stock restore が戻す。
+#      本番クラスタでは拒否する。残数 = 数量 − 生きている予約(docs/59) — 前の回が途中で切れて入金待ちが残っていればその分少ない
+#      (RELEASE_HELD=1 で解く)。
 PG_NS="${PG_NS:-postgres}"
 PG_DEPLOY="${PG_DEPLOY:-postgres}"
 PG_USER="${PG_USER:-product}"
 PG_DB="${PG_DB:-productdb}"
 STOCK_DIR="${STOCK_DIR:-$HOME/.ecommerce-msa/stock}"
-pg() {   # pg <SQL> — 값만(머리말 없이)
+pg() {   # pg <SQL> — 값만(머리말 없이) ／ [JA] pg <SQL> — 値だけ(ヘッダーなし)
     kubectl -n "$PG_NS" exec -i "deploy/$PG_DEPLOY" -- psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 -tA -c "$1"
 }
-stock_show() {   # stock_show <상품 id>
+stock_show() {   # stock_show <상품 id> ／ [JA] stock_show <商品 id>
     pg "SELECT 'size ' || s.size_id || ' (' || coalesce(nullif(s.size, ''), '-') || ') 수량 ' || s.quantity
           || ' · 예약 ' || coalesce((SELECT sum(r.qty) FROM product.stock_reservation r WHERE r.product_id = k.product_id
                AND r.color_id = k.color_id AND r.size = s.size AND r.status = 'HELD' AND r.expires_at > now()), 0)
@@ -376,7 +396,7 @@ cmd_stock() {
             [ "$skus" = "1" ] || die "상품 $pid 의 SKU 가 ${skus:-0}개 — 하나인 상품만(담기 · 장바구니가 같은 SKU 를 고르는 것이 확실하다)"
             mkdir -p "$STOCK_DIR"; chmod 700 "$STOCK_DIR"
             saved="$STOCK_DIR/$pid.saved"
-            if [ ! -f "$saved" ]; then   # 두 번 set 해도 처음 값을 지킨다
+            if [ ! -f "$saved" ]; then   # 두 번 set 해도 처음 값을 지킨다 ／ [JA] 二度 set しても最初の値を守る
                 pg "SELECT s.size_id || '=' || s.quantity FROM product.product_size s
                       JOIN product.product_sku k ON k.skuproduct_id = s.skuproduct_id WHERE k.product_id = $pid" > "$saved"
             fi
@@ -435,13 +455,20 @@ fi
 # (2026-11-20 — 예전에는 한 건씩 기다려 트랜잭션이 묶음 × 왕복, 브로커가 죽으면 묶음 × 10초였다). 이제 트랜잭션은 왕복 한 번 · 최악 기한
 # (publish-timeout-ms 10초) 한 번이지만, 묶음이 크면 여전히 그만큼 많은 행을 잠그고 엔티티를 메모리에 올리며, 실패하면 그 묶음 전체가
 # FAILED(자동 재시도 없음)나 재발행이 된다. 그래서 묶음은 1000 이하, 간격은 200ms 이상(더 짧으면 빈 조회만 는다). 운영 클러스터는 거절한다.
-# [JA] 計測用に user-service のアウトボックスのポーラー間隔を縮める。バッチは 1000 まで(1 トランザクションでロックしてまとめて ack を待つ — ロック・メモリ・失敗の範囲)。本番クラスタでは拒否する。
-OUTBOX_DEFAULT_DELAY_MS=10000   # user-service application-local.yml 의 APP_OUTBOX_FIXED_DELAY_MS 기본값(가드 LoadK6ScriptTest)
-OUTBOX_DEFAULT_BATCH=100        # 같은 파일의 APP_OUTBOX_BATCH_SIZE 기본값
-outbox_env() {   # outbox_env <이름> → user-service Deployment 에 적힌 값(없으면 빈 값)
+# [JA] ── user-service のアウトボックスのポーラー — デモユーザーを流す間だけ ── ops/48 はユーザー行と user-created のアウトボックス行を
+#      SQL で入れる — コミット直後のリレー(relay-on-commit)を通らないのでポーラーだけが送る。ポーラーはレプリカあたり 10 秒に 100 件
+#      (UserOutboxScheduler)なので、10 万人なら約 2.8 時間、300 万人なら約 83 時間である(docs/79 §4)。
+#      縮めるのは主に休む間隔である。ポーラーは一つのトランザクションで束をロックし(FOR UPDATE SKIP LOCKED)すべて送った後に ack を
+#      まとめて待つ(2026-11-20 — 以前は一件ずつ待ち、トランザクションが束 × 往復、ブローカーが死ぬと束 × 10 秒だった)。今はトランザクションは
+#      往復一回・最悪で期限(publish-timeout-ms 10 秒)一回だが、束が大きければ依然その分多くの行をロックしエンティティをメモリに載せ、失敗すると
+#      その束全体が FAILED(自動再試行なし)か再発行になる。そこで束は 1000 以下、間隔は 200ms 以上(もっと短いと空の照会が増えるだけ)。
+#      本番クラスタでは拒否する。
+OUTBOX_DEFAULT_DELAY_MS=10000   # user-service application-local.yml 의 APP_OUTBOX_FIXED_DELAY_MS 기본값(가드 LoadK6ScriptTest) ／ [JA] user-service application-local.yml の APP_OUTBOX_FIXED_DELAY_MS の既定値(ガード LoadK6ScriptTest)
+OUTBOX_DEFAULT_BATCH=100        # 같은 파일의 APP_OUTBOX_BATCH_SIZE 기본값 ／ [JA] 同じファイルの APP_OUTBOX_BATCH_SIZE の既定値
+outbox_env() {   # outbox_env <이름> → user-service Deployment 에 적힌 값(없으면 빈 값) ／ [JA] outbox_env <名前> → user-service Deployment に書かれた値(なければ空)
     kubectl -n "$APP_NS" get deploy user-service -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name==\"$1\")].value}" 2>/dev/null || true
 }
-outbox_backlog() {   # 밀린 user-created — "상태 건수" 줄(못 읽으면 빈 값)
+outbox_backlog() {   # 밀린 user-created — "상태 건수" 줄(못 읽으면 빈 값) ／ [JA] 滞留した user-created — 「状態 件数」の行(読めなければ空)
     kubectl -n "$PG_NS" exec -i "deploy/$PG_DEPLOY" -- psql -X -U "$PG_USER" -d "${USER_DB:-userdb}" -v ON_ERROR_STOP=1 -tA -F ' ' -c \
         "SELECT outbox_status, count(*) FROM users.outbox_event WHERE event_type = 'user-created' AND outbox_status IN ('STARTED', 'FAILED') GROUP BY 1 ORDER BY 1" \
         2>/dev/null || true
@@ -482,6 +509,7 @@ cmd_outbox() {
             echo "밀린 user-created: STARTED $started · FAILED $failed"
             if [ "$started" -gt 0 ] 2>/dev/null; then
                 # 쉬는 간격만 센 하한 — 묶음마다의 왕복(ack)은 빠져 있다
+                # [JA] 休止間隔だけを数えた下限 — バッチごとの往復(ack)は含まない
                 echo "  지금 설정으로 남은 시간 ≥ 약 $(( started * ${d:-$OUTBOX_DEFAULT_DELAY_MS} / (${b:-$OUTBOX_DEFAULT_BATCH} * reps) / 60000 ))분(레플리카 $reps, 발행 시간 제외)"
             fi
             [ "$failed" -gt 0 ] 2>/dev/null && echo "  FAILED 는 다시 보내지 않는다 — 데모 범위는 ./ops/48-bulk-users.sh retry-failed"
@@ -503,10 +531,15 @@ fi
 # 플래그 파일을 끈다(FEATURE_FLAGS_FILE 을 비우면 코드의 기본값 = ES 가 있으면 ES) — ConfigMap 은 건드리지 않는다(ops/28 --config-only 규칙).
 # 되돌릴 때 FEATURE_FLAGS_FILE 은 지우지 않고 매니페스트 값(k8s/41)으로 다시 쓴다 — 매니페스트에 직접 적힌 값이라 지우면 플래그가 영영 꺼진다.
 # ES 는 검색어가 있는 검색(name_search)에만 쓰인다 — 카테고리 목록 · 필터는 늘 PostgreSQL 이다. 운영 클러스터는 거절한다.
-# [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
+# [JA] ── 検索エンジン — 計測の間だけ ── エンジンは二つで決まる(SearchEngineSelector、docs/74): search.engine=es(ES がこのデプロイに
+#      あるか — SEARCH_ENGINE、ConfigMap)とフラグ catalog.search-engine(あれば検索語ごとに ES へ送る比率 — k8s/15 は 0%)。計測の間だけ
+#      catalog に SEARCH_ENGINE=es を与えフラグファイルを切る(FEATURE_FLAGS_FILE を空にするとコードの既定値 = ES があれば ES) —
+#      ConfigMap には触れない(ops/28 --config-only の規則)。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値(k8s/41)で書き直す —
+#      マニフェストに直接書かれた値なので、消すとフラグが永遠に切れる。ES は検索語のある検索(name_search)にだけ使われる — カテゴリ一覧・
+#      フィルターは常に PostgreSQL である。本番クラスタでは拒否する。
 ES_NS="${ES_NS:-elasticsearch}"
-FLAGS_FILE_DEFAULT="/app/flags/flags.json"   # k8s/41-catalog-service.yaml 의 FEATURE_FLAGS_FILE(가드 LoadK6ScriptTest)
-es_count() {   # 별칭 product-alias 의 문서 수(없으면 빈 값) — ES 파드 안의 curl(데모는 보안을 끈 단일 노드, k8s/90)
+FLAGS_FILE_DEFAULT="/app/flags/flags.json"   # k8s/41-catalog-service.yaml 의 FEATURE_FLAGS_FILE(가드 LoadK6ScriptTest) ／ [JA] k8s/41-catalog-service.yaml の FEATURE_FLAGS_FILE(ガード LoadK6ScriptTest)
+es_count() {   # 별칭 product-alias 의 문서 수(없으면 빈 값) — ES 파드 안의 curl(데모는 보안을 끈 단일 노드, k8s/90) ／ [JA] エイリアス product-alias のドキュメント数(なければ空) — ES Pod 内の curl(デモはセキュリティを切った単一ノード、k8s/90)
     kubectl -n "$ES_NS" exec deploy/elasticsearch -- curl -s --max-time 10 "http://localhost:9200/product-alias/_count" 2>/dev/null \
         | python3 -I -c 'import json, sys
 try:
@@ -558,9 +591,12 @@ fi
 # 2026-10-18 browse 의 첫 유효 회차: 100 반복/초에서 catalog 의 HikariCP 대기가 0 → 30, catalog p95 31 → 390ms, 그만큼 게이트웨이의
 # 벌크헤드(동시 25)가 넘쳐 503 이었다(docs/83 §5). 풀(DB_POOL_SIZE, 기본 5)이 병목인지는 풀만 바꿔 같은 조건으로 다시 재야 안다.
 # 데이터소스 수(catalog 는 2개) × 크기 × HPA 최대 레플리카만큼 DB 연결이 늘 수 있으니, 바꾸기 전에 max_connections 안에 드는지 센다.
-# [JA] 計測の間だけ DB コネクションプールを大きくする。変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
+# [JA] ── DB コネクションプール — 計測の間だけ ── 2026-10-18 browse の最初の有効な回: 毎秒 100 反復で catalog の HikariCP 待ちが 0 → 30、
+#      catalog p95 が 31 → 390ms、その分ゲートウェイのバルクヘッド(同時 25)があふれて 503 だった(docs/83 §5)。プール(DB_POOL_SIZE、既定 5)が
+#      ボトルネックかどうかは、プールだけを変えて同じ条件で測り直さないと分からない。データソース数(catalog は 2 個)× サイズ × HPA 最大レプリカの
+#      分だけ DB 接続が増えうるので、変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
 POOL_DEFAULT=5
-pool_now() {   # pool_now <deploy> → 지금 크기(설정 없으면 기본값)
+pool_now() {   # pool_now <deploy> → 지금 크기(설정 없으면 기본값) ／ [JA] pool_now <deploy> → 今のサイズ(設定がなければ既定値)
     local v
     v="$(kubectl -n "$APP_NS" get deploy "$1" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="DB_POOL_SIZE")].value}' 2>/dev/null)"
     echo "${v:-$POOL_DEFAULT}"
@@ -594,6 +630,7 @@ cmd_pool() {
     [[ "$size" =~ ^[1-9][0-9]?$ ]] || die "크기는 1 ~ 99"
 
     # 예산 — 데이터소스 수는 그 서비스 설정의 maximum-pool-size 줄 수(catalog 는 2), 레플리카는 HPA 최대(없으면 지금 수)
+    # [JA] 予算 — データソース数はそのサービス設定の maximum-pool-size の行数(catalog は 2)、レプリカは HPA の最大(なければ今の数)
     local yml="$HERE/../$svc/src/main/resources/application-local.yml" pools maxrep now add max used
     pools="$(grep -c 'maximum-pool-size: ${DB_POOL_SIZE' "$yml" 2>/dev/null || true)"
     [ "${pools:-0}" -ge 1 ] || die "$svc 의 설정에 DB_POOL_SIZE 를 쓰는 풀이 없다($yml) — DB 를 쓰지 않는 서비스다"
@@ -624,9 +661,12 @@ fi
 # 2026-10-18 풀 실험: 100 반복/초에서 catalog · 게이트웨이 모두 CPU 상한(1 코어)에 붙었다(docs/83 §5). HPA 가 늘리긴 하지만(요청 250m 의 70%)
 # 새 파드의 기동 · 데움이 100 단계(2분)보다 늦다 — 그래서 미리 늘려 같은 조건으로 잰다. HPA 가 있으면 최소값을 함께 올린다(그대로 두면
 # 부하가 없는 동안 HPA 가 다시 줄인다). 늘리기 전에 스케줄 가능한 노드(NoSchedule 테인트 · cordon 제외)의 요청 여유를 센다.
-# [JA] 計測の間だけレプリカを先に増やす。HPA の最小値も上げる。増やす前にノードの requests の余裕を数える。本番クラスタでは拒否する。
+# [JA] ── レプリカ — 計測の間だけ ── 2026-10-18 のプール実験: 毎秒 100 反復で catalog・ゲートウェイともに CPU 上限(1 コア)に張り付いた
+#      (docs/83 §5)。HPA は増やしはするが(requests 250m の 70%)、新しい Pod の起動・ウォームアップが 100 の段(2 分)より遅い — そこで先に
+#      増やして同じ条件で測る。HPA があれば最小値も一緒に上げる(そのままだと負荷のない間に HPA がまた減らす)。増やす前にスケジュール可能な
+#      ノード(NoSchedule テイント・cordon を除く)の requests の余裕を数える。本番クラスタでは拒否する。
 REPLICA_DEFAULT_SVCS="catalog-service gateway-server"
-hpa_manifest() {   # hpa_manifest <deploy> → "최소 최대" (k8s/70 에 없으면 빈 값)
+hpa_manifest() {   # hpa_manifest <deploy> → "최소 최대" (k8s/70 에 없으면 빈 값) ／ [JA] hpa_manifest <deploy> → "最小 最大"(k8s/70 になければ空)
     python3 -I - "$HERE/../k8s/70-autoscaling.yaml" "$1" <<'PY'
 import re, sys
 for doc in open(sys.argv[1], encoding="utf-8").read().split("\n---"):
@@ -637,7 +677,7 @@ for doc in open(sys.argv[1], encoding="utf-8").read().split("\n---"):
         break
 PY
 }
-overlay_replicas() {   # overlay_replicas <deploy> → demo 오버레이의 count (없으면 1)
+overlay_replicas() {   # overlay_replicas <deploy> → demo 오버레이의 count (없으면 1) ／ [JA] overlay_replicas <deploy> → demo オーバーレイの count(なければ 1)
     local n
     n="$(grep -oE "\{ *name: *$1, *count: *[0-9]+ *\}" "$HERE/../k8s-overlays/lab/kustomization.yaml" 2>/dev/null | grep -oE '[0-9]+ *\}$' | tr -dc '0-9')"
     echo "${n:-1}"
@@ -657,6 +697,7 @@ cmd_replicas() {
         kubectl -n "$APP_NS" get deploy "$d" >/dev/null 2>&1 || die "그런 Deployment 가 없다: $d"
     done
     # 줄이면 파드가 지워진다(default 는 HPA 가 몇 분 뒤에) — 게이트웨이면 그 전에 로그를 남긴다
+    # [JA] 減らすと Pod が消える(default は HPA が数分後に) — ゲートウェイならその前にログを残す
     if [ "$action" != "status" ] && [ "$action" != "max" ] && [[ " $svcs " == *" gateway-server "* ]]; then
         save_gateway_logs "replicas-$action"
     fi
@@ -683,6 +724,7 @@ cmd_replicas() {
     [[ "$n" =~ ^[1-9]$ ]] || die "레플리카 수는 1 ~ 9"
     if [ "$action" = "max" ]; then
         # 최대만 — HPA 가 없으면 늘릴 주체가 없고, 최소보다 작은 최대는 HPA 가 거절한다
+        # [JA] 最大だけ — HPA がなければ増やす主体がなく、最小より小さい最大は HPA が拒否する
         for d in $svcs; do
             local mm
             mm="$(kubectl -n "$APP_NS" get hpa "$d" -o jsonpath='{.spec.minReplicas} {.spec.maxReplicas}' 2>/dev/null || true)"
@@ -693,6 +735,8 @@ cmd_replicas() {
 
     # 예산 — 늘릴 파드의 요청(CPU · 메모리) ≤ 스케줄 가능한 노드의 할당 가능 − 이미 잡힌 요청
     # (max 는 HPA 가 최대까지 늘렸을 때 — 그때 Pending 이면 HPA 가 따라가는 것이 아니라 노드가 막는 것을 잰다)
+    # [JA] 予算 — 増やす Pod の要求(CPU · メモリ) ≤ スケジュール可能なノードの割り当て可能量 − すでに確保された要求
+    #      (max は HPA が最大まで増やしたとき — そこで Pending なら HPA が追随するのではなくノードが詰まるのを測る)
     local need
     need="$(for d in $svcs; do
         printf '%s %s %s\n' "$(kubectl -n "$APP_NS" get deploy "$d" -o jsonpath='{.spec.replicas}')" \
@@ -768,10 +812,17 @@ fi
 # 간다(docs/91 §4-3). 메모리 한도는 바꾸지 않는다(heap= 은 그 안의 비율만).
 # vt=0|1 은 가상 스레드 스위치(env VIRTUAL_THREADS_ENABLED — JDK 21 이미지인 jdk21-build 만 읽는다, 그 브랜치 docs/75 §5; JDK 17 이미지의
 # Spring 은 무시한다). pinning=1 은 -Djdk.tracePinnedThreads=short — 가상 스레드가 캐리어를 붙잡은 채 막히면 파드 로그에 스택을 남긴다(JDK 21).
-# [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
+# [JA] ── JVM 設定 — 計測の間だけ(docs/92 §4-3) ── 本二冊の比較実験(GC 種類・CPU 上限・ヒープ比率・GC ログ)は JAVA_OPTS・
+#      JVM_MAX_RAM_PERCENTAGE・CPU 上限を変える必要がある。手で `kubectl set env` すると元の値を失い、デプロイ(ops/28)の apply は env を
+#      消さないので残る — だからこのモードでだけ行う。変える前に元の値を Deployment の注釈 ecommerce.io/jvm-measure に書き(JAVA_OPTS は
+#      base64 — 空白・引用符)、default がその値で戻す。ロールアウトは一回(pause → 変更 → resume)。1 コア(今の上限)なら JDK 17 は Serial を
+#      選ぶ — gc= はその選択を覆し、cpu=2 なら JVM が自分で G1 に行く(docs/91 §4-3)。メモリ上限は変えない(heap= はその中の比率だけ)。
+#      vt=0|1 は仮想スレッドのスイッチ(env VIRTUAL_THREADS_ENABLED — JDK 21 イメージの jdk21-build だけが読む、そのブランチの docs/75 §5;
+#      JDK 17 イメージの Spring は無視する)。pinning=1 は -Djdk.tracePinnedThreads=short — 仮想スレッドがキャリアを掴んだまま
+#      ブロックすると Pod のログにスタックを残す(JDK 21)。
 JVM_ANNOTATION="ecommerce.io/jvm-measure"
 JVM_GC_LOG="-Xlog:gc*,safepoint:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m"
-jvm_state() {   # jvm_state <deploy> → 다섯 줄: JAVA_OPTS(base64 · 없으면 -) · 힙 비율 · CPU 한도 · 가상 스레드 · 주석
+jvm_state() {   # jvm_state <deploy> → 다섯 줄: JAVA_OPTS(base64 · 없으면 -) · 힙 비율 · CPU 한도 · 가상 스레드 · 주석 ／ [JA] jvm_state <deploy> → 5 行: JAVA_OPTS(base64 · なければ -) · ヒープ比率 · CPU 上限 · 仮想スレッド · アノテーション
     kubectl -n "$APP_NS" get deploy "$1" -o json 2>/dev/null | python3 -I -c '
 import base64, json, sys
 d = json.load(sys.stdin); c = d["spec"]["template"]["spec"]["containers"][0]
@@ -782,9 +833,9 @@ print(((c.get("resources") or {}).get("limits") or {}).get("cpu") or "-")
 print(env.get("VIRTUAL_THREADS_ENABLED") or "-")
 print((d["metadata"].get("annotations") or {}).get("ecommerce.io/jvm-measure") or "-")'
 }
-jvm_field() { tr ';' '\n' <<<"$1" | sed -n "s/^$2=//p"; }   # jvm_field <주석> <이름>
+jvm_field() { tr ';' '\n' <<<"$1" | sed -n "s/^$2=//p"; }   # jvm_field <주석> <이름> ／ [JA] jvm_field <アノテーション> <名前>
 b64d() { [ "$1" = "-" ] && return 0; printf '%s' "$1" | base64 -d; }
-jvm_apply() {   # jvm_apply <deploy> <JAVA_OPTS|""> <힙|-> <cpu|-> <가상 스레드|-> — 한 번의 롤아웃
+jvm_apply() {   # jvm_apply <deploy> <JAVA_OPTS|""> <힙|-> <cpu|-> <가상 스레드|-> — 한 번의 롤아웃 ／ [JA] jvm_apply <deploy> <JAVA_OPTS|""> <ヒープ|-> <cpu|-> <仮想スレッド|-> — 1 回のロールアウト
     local d="$1" opts="$2" heap="$3" cpu="$4" vt="${5:--}"
     kubectl -n "$APP_NS" rollout pause "deploy/$d" >/dev/null
     if [ -n "$opts" ]; then kubectl -n "$APP_NS" set env "deploy/$d" "JAVA_OPTS=$opts" >/dev/null
@@ -853,6 +904,7 @@ cmd_jvm() {
             continue
         fi
         # 원래 값 — 이미 측정 중이면 주석의 것(겹쳐 쌓지 않는다)
+        # [JA] 元の値 — すでに計測中ならアノテーションのもの(重ねて積まない)
         if [ "$ann" = "-" ]; then
             ann="java_opts=$(sed -n 1p <<<"$st");heap=$(sed -n 2p <<<"$st");cpu=$(sed -n 3p <<<"$st");vt=$(sed -n 4p <<<"$st")"
         fi
@@ -896,7 +948,9 @@ fi
 #
 # 회차마다 summary.txt(k6 화면 그대로 — 진행 막대까지 길다) · meta.txt 를 따로 열지 않아도 되게 summary.json · meta.txt 에서
 # 기록에 쓰는 값만 뽑는다(docs/83 §5). 엔드포인트별 응답 시간은 임계값을 건 이름만 summary.json 에 있다(k6 --summary-export).
-# [JA] 結果をまとめて見る — summary.json と meta.txt から記録に使う値だけを出す。
+# [JA] ── 結果をまとめて見る ── 回ごとの summary.txt(k6 の画面そのまま — 進行バーまで長い)・meta.txt を別々に開かなくてよいように、
+#      summary.json・meta.txt から記録に使う値だけを抜き出す(docs/83 §5)。エンドポイント別の応答時間は、閾値をかけた名前だけが
+#      summary.json にある(k6 --summary-export)。
 cmd_report() {
     command -v python3 >/dev/null 2>&1 || die "python3 가 필요하다"
     [ -d "$OUT" ] || die "결과 폴더가 없다: $OUT (OUT=<폴더> 로 바꿀 수 있다)"
@@ -906,6 +960,7 @@ import json, os, re, sys, unicodedata
 
 out, picks = sys.argv[1], sys.argv[2:]
 # 이름은 <시나리오>-<UTC 시각> — 시각 순으로(이름순이면 "가장 최근" 이 시나리오 이름에 따라 바뀐다)
+# [JA] 名前は <シナリオ>-<UTC 時刻> — 時刻順に(名前順だと「最新」がシナリオ名によって変わる)
 runs = sorted((d for d in os.listdir(out)
                if os.path.isdir(os.path.join(out, d)) and os.path.exists(os.path.join(out, d, "meta.txt"))),
               key=lambda d: (d.rsplit("-", 1)[-1], d))
@@ -920,7 +975,7 @@ def meta(d):
             if line.startswith(("deploy ", "node ", "hpa ")):
                 extra.append(line)
                 continue
-            if line.startswith(("gateway_limits=", "db_pool=", "replicas_")):   # 값 안에 = 이 있다(이름=값 여럿)
+            if line.startswith(("gateway_limits=", "db_pool=", "replicas_")):   # 값 안에 = 이 있다(이름=값 여럿) ／ [JA] 値の中に = がある(名前=値が複数)
                 k, v = line.split("=", 1)
                 m[k] = v.strip()
                 continue
@@ -938,7 +993,7 @@ def summary(d):
 def width(t):
     return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in t)
 
-def L(t, n):   # 한글은 두 칸 — 표가 어긋나지 않게
+def L(t, n):   # 한글은 두 칸 — 표가 어긋나지 않게 ／ [JA] ハングルは 2 桁 — 表がずれないように
     t = str(t)
     return t + " " * max(0, n - width(t))
 
@@ -952,7 +1007,7 @@ def num(x, digits=0):
 def pct(x):
     return "-" if x is None else f"{x * 100:.2f}%"
 
-KEY = ("catalog-service", "gateway-server")   # 측정에서 늘리는 둘 — 늘 보인다
+KEY = ("catalog-service", "gateway-server")   # 측정에서 늘리는 둘 — 늘 보인다 ／ [JA] 測定で増やす 2 つ — 常に表示する
 
 def counts(v):
     return dict(x.split("=", 1) for x in (v or "").split() if "=" in x)
@@ -969,11 +1024,11 @@ def replicas(m, extra):
             dep[mm.group(1)] = (mm.group(2),)
     return ("kubectl", dep) if dep else (None, {})
 
-def key_max(m, extra):   # 한 줄 표의 "catalog·gateway" 최대(없으면 -)
+def key_max(m, extra):   # 한 줄 표의 "catalog·gateway" 최대(없으면 -) ／ [JA] 1 行の表の「catalog・gateway」の最大(なければ -)
     _, r = replicas(m, extra)
     return "·".join(r[k][1 if len(r[k]) > 1 else 0] if k in r else "?" for k in KEY) if r else "-"
 
-def products(m):   # 검색 조합을 넓힌 회차(SPREAD=1)는 따로 보이게 — 같은 상품 수라도 캐시를 잰 회차와 견줄 수 없다
+def products(m):   # 검색 조합을 넓힌 회차(SPREAD=1)는 따로 보이게 — 같은 상품 수라도 캐시를 잰 회차와 견줄 수 없다 ／ [JA] 検索の組み合わせを広げた回(SPREAD=1)は別に見えるように — 同じ商品数でもキャッシュを測った回とは比べられない
     p = m.get("products", "?")
     return f"{p}·넓힘" if m.get("spread") == "1" else p
 
@@ -1012,6 +1067,7 @@ def detail(d):
         print(f"  검색 조합: 넓힘={m.get('spread', '0')} · 깊은 쪽 {m.get('deep_pages', '?')} · 이름 검색 쪽 {m.get('name_pages', '?')}"
               f" · 필터 검색 비율 {m.get('filter_search', '0')}")
     # 🐛 loadgen 에는 kubectl 이 없어 이 줄이 meta.txt 에 없다 — 없는 것을 "기본값" 으로 읽으면 안 된다
+    # [JA] 🐛 loadgen には kubectl がなく、この行は meta.txt にない — ないものを「既定値」と読んではいけない
     if "db_pool" in m:
         print("  DB 커넥션 풀: " + (m["db_pool"] or "모두 기본값(5)"))
     if "gateway_limits" not in m:
@@ -1054,7 +1110,7 @@ def detail(d):
         rows.append(("구매 한 번(purchase)", s["purchase_duration"]))
     print("  " + L("응답 시간(ms)", 22) + " " + " ".join(R(h, 8) for h in ("avg", "p50", "p95", "p99", "max")))
     for name, v in rows:
-        if v and (v.get("max") or 0) > 0:   # 표본이 없는 이름(데이터 규모 모드 밖의 search_deep 등)은 0 뿐이다
+        if v and (v.get("max") or 0) > 0:   # 표본이 없는 이름(데이터 규모 모드 밖의 search_deep 등)은 0 뿐이다 ／ [JA] 標本のない名前(データ規模モード外の search_deep など)は 0 しかない
             print("    " + L(name, 20) + " " + " ".join(R(num(v.get(k)), 8) for k in ("avg", "p(50)", "p(95)", "p(99)", "max")))
     for line in extra:
         if line.startswith("hpa "):
@@ -1148,6 +1204,7 @@ cmd_ceiling() {
     [ -z "${STAGES:-}" ] || die "ceiling 은 STAGES 를 직접 만든다 — CEILING_RATES · CEILING_HOLD · CEILING_RAMP 로"
     [ -z "${SPLIT:-}" ] || die "ceiling 은 SPLIT 과 함께 쓰지 않는다 — 계단마다 판정하려면 한 부하기의 요약이 전부여야 한다"
     # 운영에는 걸지 않는다 — 계단마다 다시 부르는 쪽도 거절하지만, 폴더를 만들기 전에
+    # [JA] 運用にはかけない — 段ごとに呼び直す側も拒否するが、フォルダを作る前に
     case "$(printf '%s' "$GATEWAY" | sed -E 's#^[a-zA-Z]+://##; s#[/:].*$##' | tr 'A-Z' 'a-z')" in
         ysyproject.com|*.ysyproject.com) die "운영 주소에는 부하를 걸지 않는다 — 실습 클러스터(GATEWAY=https://shop.lab)에서 잰다(docs/71 §1 · docs/91 §4)" ;;
     esac
@@ -1203,6 +1260,7 @@ cmd_ceiling() {
 }
 
 # ceiling_judge <폴더> <계단> <회차 폴더> <시작> <끝> <PROM> <5xx 상한> — 한 줄을 ceiling.tsv 에. SLO 가 깨졌거나 부하기가 모자라면 1
+# [JA] ceiling_judge <フォルダ> <段> <回のフォルダ> <開始> <終了> <PROM> <5xx 上限> — 1 行を ceiling.tsv に。SLO が破れたか負荷生成側が足りなければ 1
 ceiling_judge() {
     local dir="$1" r="$2" step="$3" t0="$4" t1="$5" prom="$6" max5xx="$7" w q
     w=$(( t1 - t0 )); [ "$w" -ge 60 ] || w=60
@@ -1230,6 +1288,7 @@ ceiling_judge() {
 import json, re, sys
 d, r, step, max5xx, p99max, metric, gcmax = sys.argv[1:8]
 # GC 종류 — jvm_gc_pause 의 gc 라벨에서(1 코어 파드는 JVM 이 SerialGC 를 고른다, docs/91 §4-3)
+# [JA] GC の種類 — jvm_gc_pause の gc ラベルから(1 コアの Pod では JVM が SerialGC を選ぶ、docs/91 §4-3)
 GC_KIND = (("G1 ", "G1"), ("Copy", "Serial"), ("MarkSweepCompact", "Serial"), ("PS ", "Parallel"), ("ZGC", "ZGC"), ("Shenandoah", "Shenandoah"))
 s = json.load(open(f"{step}/summary.json", encoding="utf-8")).get("metrics", {})
 reqs = (s.get("http_reqs") or {}).get("count") or 0
@@ -1257,7 +1316,7 @@ try:
                     kinds.append(kind)
                 continue
             v = float(x["value"][1])
-            if v == v:   # NaN 은 버린다
+            if v == v:   # NaN 은 버린다 ／ [JA] NaN は捨てる
                 srv.setdefault(name, {})[key] = v
 except FileNotFoundError:
     pass
@@ -1273,6 +1332,7 @@ if short:
     why.append(f"부하기가 도착률을 못 맞췄다(dropped {dropped:.0f}) — 부하 VM 을 늘린다")
 # 막힌 곳 후보 — CPU 0.8 이상 · 커넥션 대기 > 0 · Kafka 지연 > 1000 · GC 부담 ≥ CEILING_GC_OVERHEAD(0.10) · GC 뒤 힙 ≥ 90%
 # (GC 부담은 JVM 의 GC 정지 시간 ÷ 지난 5분 — 계단이 짧으면 앞 계단의 몫이 섞인다. GC 뒤 힙은 오래 사는 영역의 사용 비율)
+# [JA] 詰まりどころの候補 — CPU 0.8 以上・接続待ち > 0・Kafka 遅延 > 1000・GC 負担 ≥ CEILING_GC_OVERHEAD(0.10)・GC 後ヒープ ≥ 90%(GC 負担は JVM の GC 停止時間 ÷ 直近 5 分 — 段が短いと前の段の分が混ざる。GC 後ヒープは長寿命領域の使用率)
 hints = []
 for name, v in sorted(srv.items()):
     if v.get("cpu", 0) >= 0.8:
@@ -1296,6 +1356,7 @@ PY
 }
 
 # ceiling_table <폴더> — ceiling.md(계단마다 한 줄 + 서비스별 파드당 요청/초 · CPU · 대기 · 지연)
+# [JA] ceiling_table <フォルダ> — ceiling.md(段ごとに 1 行 + サービス別の Pod あたりリクエスト/秒 · CPU · 待ち · レイテンシ)
 ceiling_table() {
     python3 -I - "$1" <<'PY'
 import json, sys
@@ -1380,6 +1441,7 @@ command -v "$K6" >/dev/null 2>&1 || die "k6 가 없다 — 설치(root 없이, �
 [[ "$ID_OFFSET" =~ ^[0-9]+$ ]] || die "ID_OFFSET 은 0 이상의 정수"
 
 # 손님 IP 흉내 · 부하 VM 나누기(docs/83 §2.6) — 계산은 ops/k6/clients.js 와 같다
+# [JA] 客の IP の模倣 · 負荷 VM の分割(docs/83 §2.6) — 計算は ops/k6/clients.js と同じ
 [ -z "${ENGINE:-}" ] || [[ "$ENGINE" =~ ^(es|postgres)$ ]] || die "ENGINE 은 es 또는 postgres(회차 기록용 이름표)"
 CLIENT_IPS="${CLIENT_IPS:-0}"
 [[ "$CLIENT_IPS" =~ ^[0-9]+$ ]] && [ "$CLIENT_IPS" -le 65536 ] || die "CLIENT_IPS 는 0 ~ 65536"
@@ -1392,9 +1454,10 @@ if [ -n "${SPLIT:-}" ]; then
     [[ "${RATE:-}" =~ ^[1-9][0-9]*$ ]] || die "SPLIT 에는 전체 RATE(정수)가 필요하다 — VM 마다 RATE/n"
     [ $(( RATE % SPLIT_OF )) -eq 0 ] || die "SPLIT 의 RATE($RATE)는 n($SPLIT_OF)으로 나누어떨어져야 한다"
     RATE=$(( RATE / SPLIT_OF ))
-    ID_OFFSET=$(( ID_OFFSET + (SPLIT_PART - 1) * USERS ))   # 데모 계정을 VM 마다 따로(리프레시 토큰이 회전한다)
+    ID_OFFSET=$(( ID_OFFSET + (SPLIT_PART - 1) * USERS ))   # 데모 계정을 VM 마다 따로(리프레시 토큰이 회전한다) ／ [JA] デモアカウントを VM ごとに分ける(リフレッシュトークンがローテーションする)
 fi
 # 운영 클러스터 — 읽기 천장 모드로만(docs/91 §4-2)
+# [JA] 運用クラスタ — 読み取り天井モードでのみ(docs/91 §4-2)
 RUN_PUBLIC_URL="$(cluster_public_url)"
 if is_prod_url "$RUN_PUBLIC_URL" || [ "${PROD_READONLY:-}" = "1" ]; then
     if [ "${CEILING_STEP:-}" != "1" ]; then
@@ -1415,6 +1478,7 @@ if [ -n "${START_AT:-}" ]; then
 fi
 
 # 인증서 — 검증을 끄지 않는다. 데모 CA 가 있으면 그것을 믿게 한다(k6 는 Go — SSL_CERT_FILE 을 읽는다).
+# [JA] 証明書 — 検証は切らない。デモ CA があればそれを信頼させる(k6 は Go — SSL_CERT_FILE を読む)。
 if [ -f "$CA_FILE" ]; then
     export SSL_CERT_FILE="$CA_FILE"
 else
@@ -1422,9 +1486,11 @@ else
 fi
 
 # smoke 는 계정 하나로 한 번
+# [JA] smoke はアカウント 1 つで 1 回
 [ "$SCENARIO" = "smoke" ] && USERS=1
 
 # 데모 비밀번호 — 로그인하는 시나리오만. 길이만 알린다.
+# [JA] デモのパスワード — ログインするシナリオだけ。長さだけを知らせる。
 if [ "$SCENARIO" = "order" ] || [ "$SCENARIO" = "smoke" ] || [ "$SCENARIO" = "mixed" ] || [ "$SCENARIO" = "contention" ]; then
     [ -f "$PASSWORD_FILE" ] || die "$PASSWORD_FILE 이 없다 — 먼저 USERS=$USERS ./ops/48-bulk-users.sh load"
     DEMO_PASSWORD="$(cat "$PASSWORD_FILE")"
@@ -1447,7 +1513,7 @@ PROM_ENV="${PROM_ENV:-demo}"
 [[ "$PROM_ENV" =~ ^[a-z0-9-]+$ ]] || die "PROM_ENV 는 영소문자 · 숫자 · - 만"
 prom_match   # PROM_MATCH
 UP="count by (service) (up{$PROM_MATCH} == 1)"
-prom_counts() {   # prom_counts <PromQL> → "서비스=수 …" (응답이 없거나 결과가 비면 실패)
+prom_counts() {   # prom_counts <PromQL> → "서비스=수 …" (응답이 없거나 결과가 비면 실패) ／ [JA] prom_counts <PromQL> → "サービス=数 …"(応答がないか結果が空なら失敗)
     curl -fsS --max-time 10 -G "$PROM/api/v1/query" --data-urlencode "query=$1" 2>/dev/null | python3 -I -c '
 import json, sys
 r = json.load(sys.stdin)
@@ -1456,7 +1522,7 @@ if not rows:
     sys.exit(1)
 print(" ".join("%s=%d" % row for row in rows))'
 }
-replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
+replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄 ／ [JA] replicas_line <キー> <PromQL> → meta.txt の 1 行
     local v
     if v="$(prom_counts "$2")"; then
         echo "$1=$v"
@@ -1467,6 +1533,7 @@ replicas_line() {   # replicas_line <키> <PromQL> → meta.txt 한 줄
 }
 
 # 그때의 조건 — 전후 비교의 근거. 비밀은 없다(이미지 판 · 레플리카 · 노드).
+# [JA] そのときの条件 — 前後比較の根拠。秘密はない(イメージの版 · レプリカ · ノード)。
 {
     echo "scenario=$SCENARIO"
     echo "gateway=$GATEWAY"
@@ -1525,13 +1592,14 @@ if [ -n "${START_EPOCH:-}" ]; then
     sleep $(( START_EPOCH - $(date -u +%s) ))
 fi
 # 종료 코드는 tee 가 아니라 k6 의 것 — 임계값(thresholds)을 넘으면 99
+# [JA] 終了コードは tee ではなく k6 のもの — 閾値(thresholds)を超えると 99
 t0="$(date +%s)"
 set +e
 "$K6" "${args[@]}" 2>&1 | tee "$dir/summary.txt"
 rc="${PIPESTATUS[0]}"
 set -e
 if [ -n "$PROM" ]; then
-    secs=$(( $(date +%s) - t0 + 30 ))   # 마지막 스크레이프까지
+    secs=$(( $(date +%s) - t0 + 30 ))   # 마지막 스크레이프까지 ／ [JA] 最後のスクレイプまで
     [ "$secs" -ge 60 ] || secs=60
     { replicas_line replicas_max "max_over_time(($UP)[${secs}s:15s])"
       replicas_line replicas_end "$UP"; } >> "$dir/meta.txt"

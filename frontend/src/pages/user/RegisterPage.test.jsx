@@ -52,6 +52,10 @@ describe("RegisterPage", () => {
     // 즉 **정상적인 이메일로 가입하는 것이 불가능했다.** 원인은 SignInPage 와 같다:
     // 페이지 state 와 Formik 이 값을 이중으로 소유했고 enableReinitialize 가 키 입력마다
     // 폼을 초기화했다.
+    // [JA] 会員登録フォームはこのバグが最もひどかった。"a@example.com" と打つと "@xml.o" が残った —
+    //      つまり**正常なメールアドレスで登録することが不可能だった。**原因は SignInPage と同じ:
+    //      ページの state と Formik が値を二重に所有し、enableReinitialize がキー入力ごとに
+    //      フォームを初期化していた。
     renderPage();
 
     const email = screen.getByPlaceholderText(/이메일 주소/);
@@ -87,6 +91,9 @@ describe("RegisterPage", () => {
     // 예전에는 signup() 이 오류를 삼켜 undefined 를 반환했고 useMutation 이 그걸 성공으로
     // 받았다. 그래서 실패해도 "인증 메일을 보냈습니다" 토스트가 뜨고 로그인 화면으로
     // 이동했다 — 사용자는 오지 않는 메일을 기다렸다.
+    // [JA] 以前は signup() がエラーを飲み込んで undefined を返し、useMutation がそれを成功として
+    //      受け取っていた。そのため失敗しても「認証メールを送りました」トーストが出てログイン画面へ
+    //      移動した — ユーザーは来ないメールを待っていた。
     jest.spyOn(api, "post").mockRejectedValue({
       response: { status: 400, data: { message: "이미 가입된 이메일입니다" } },
     });

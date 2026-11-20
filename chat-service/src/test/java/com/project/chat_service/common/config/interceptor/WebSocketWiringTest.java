@@ -24,6 +24,9 @@ import com.project.chat_service.service.SupportService;
  * {@code StompHandler} 가 {@code SupportService} 를 받게 됐는데, 그 아래의 {@code SupportDeskNotifier} 가 <b>브로커가 만드는</b>
  * {@code SimpMessageSendingOperations} 를 필요로 한다 — 그 브로커는 다시 {@code StompHandler} 를 인터셉터로 등록해야 만들어진다.
  * 단위 테스트는 이 조립을 하지 않아 초록이었다. 여기서는 실제 WebSocket 설정·상담 서비스·알림기를 띄우고 나머지만 목으로 둔다.
+ *
+ * <p>[JA] 🔴 STOMP ブローカーの組み立てが循環なしで立ち上がる(docs/57 §17)。
+ * <p>🐛 2026-09-26 のデプロイで chat-service が "APPLICATION FAILED TO START" で起動できなかった。相談チャット(docs/58)が入り {@code StompHandler} が {@code SupportService} を受け取るようになったが、その下の {@code SupportDeskNotifier} が<b>ブローカーが作る</b> {@code SimpMessageSendingOperations} を必要とする — そのブローカーは再び {@code StompHandler} をインターセプタとして登録して初めて作られる。単体テストはこの組み立てをしないので緑だった。ここでは実際の WebSocket 設定・相談サービス・通知器を立ち上げ、残りだけをモックにする。
  */
 @DisplayName("chat WebSocket 조립 — 순환 참조 없이 뜬다")
 class WebSocketWiringTest {
@@ -35,6 +38,8 @@ class WebSocketWiringTest {
                 .withUserConfiguration(WebSocketConfiguration.class)
                 // 목은 완성된 싱글턴으로 넣는다 — withBean 으로 넣으면 목 클래스가 물려받은 @Autowired·@PersistenceContext 필드를
                 // 스프링이 채우려 든다.
+                // [JA] モックは完成したシングルトンとして入れる — withBean で入れるとモッククラスが継承した @Autowired・@PersistenceContext フィールドを
+                //      Spring が埋めようとする。
                 .withInitializer(ctx -> {
                     var bf = ctx.getBeanFactory();
                     bf.registerSingleton("tokenHandler", mock(TokenHandler.class));

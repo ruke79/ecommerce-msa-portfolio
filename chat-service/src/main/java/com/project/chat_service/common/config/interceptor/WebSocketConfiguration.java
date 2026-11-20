@@ -17,14 +17,16 @@ import com.project.chat_service.common.config.interceptor.StompHandler;
 
 @Configuration
 @RequiredArgsConstructor
-@EnableWebSocketMessageBroker //websocker 활상화하고 메세지 브로커 사용가능
+@EnableWebSocketMessageBroker //websocker 활상화하고 메세지 브로커 사용가능 ／ [JA] WebSocket を有効化しメッセージブローカーを使用可能にする
 public class WebSocketConfiguration implements WebSocketMessageBrokerConfigurer {
     //private final StompHandler stompHandler;
 
     /** 연결 · 끊김을 알아야 토큰 만료 · 로그인 해제에 닫을 수 있다(docs/68 §9). */
+    // [JA] 接続・切断を知ってこそトークン期限切れ・ログアウト時に閉じられる(docs/68 §9)。
     private final LiveSessionRegistry liveSessions;
 
     // 나머지 서비스의 globalcors 설정(https://localhost:3000)과 동일한 오리진만 허용한다.
+    // [JA] 他サービスの globalcors 設定(https://localhost:3000)と同じオリジンだけを許可する。
     @Value("${frontend.url:https://localhost:3000}")
     private String frontendUrl;
 
@@ -32,10 +34,14 @@ public class WebSocketConfiguration implements WebSocketMessageBrokerConfigurer 
      * STOMP 엔드포인트를 등록하는 메서드
      * Stomp 연결을 프론트에서 시도할때 요청을 보낼 엔드포인트를 지정하는 부분
      * param StompEndpointRegistry
+     *
+     * <p>[JA] STOMP エンドポイントを登録するメソッド。
+     * フロントから STOMP 接続を試みるときにリクエストを送るエンドポイントを指定する部分。
+     * param StompEndpointRegistry
      */
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/chat") //stomp endpoint 지정
+        registry.addEndpoint("/chat") //stomp endpoint 지정 ／ [JA] STOMP エンドポイント指定
                 .setAllowedOrigins(frontendUrl)
                 .withSockJS();
 
@@ -44,11 +50,15 @@ public class WebSocketConfiguration implements WebSocketMessageBrokerConfigurer 
      * 메시지 브로커를 구성하는 메서드
      * 채팅방번호로 구독하는 채팅방을 구분
      * param MessageBrokerRegistry
+     *
+     * <p>[JA] メッセージブローカーを構成するメソッド。
+     * チャットルーム番号で購読するチャットルームを区別する。
+     * param MessageBrokerRegistry
      */
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
-        registry.enableSimpleBroker("/sub"); // /subscribe/{chatNo}로 주제 구독 가능
-        registry.setApplicationDestinationPrefixes("/pub");// /publish/message로 메시지 전송 컨트롤러 라우팅 가능
+        registry.enableSimpleBroker("/sub"); // /subscribe/{chatNo}로 주제 구독 가능 ／ [JA] /subscribe/{chatNo} でトピック購読が可能
+        registry.setApplicationDestinationPrefixes("/pub");// /publish/message로 메시지 전송 컨트롤러 라우팅 가능 ／ [JA] /publish/message でメッセージ送信コントローラへのルーティングが可能
 
     }
 
@@ -62,13 +72,19 @@ public class WebSocketConfiguration implements WebSocketMessageBrokerConfigurer 
      * 클라이언트 인바운드 채널을 구성하는 메서드
      * JWT 인증 절차가 채팅에서도 적용
      * param ChannelRegistration
+     *
+     * <p>[JA] クライアントのインバウンドチャネルを構成するメソッド。
+     * JWT 認証手続きがチャットにも適用される。
+     * param ChannelRegistration
      */
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         // stompHandler를 인터셉터로 등록하여 STOMP 메시지 핸들링을 수행
+        // [JA] stompHandler をインターセプタとして登録し STOMP メッセージのハンドリングを行う
         registration.interceptors(myChannelInterceptor());
     }
     /** 들어오는 STOMP 메시지 하나의 상한 — 본문 1000자(MessageDto.MAX_CONTENT_LENGTH, UTF-8 로 3KB 남짓)와 헤더에 넉넉하다. */
+    // [JA] 受信する STOMP メッセージ一つの上限 — 本文 1000 文字(MessageDto.MAX_CONTENT_LENGTH、UTF-8 で 3KB 強)とヘッダに十分な大きさ。
     static final int MESSAGE_SIZE_LIMIT = 64 * 1024;
 
     /**

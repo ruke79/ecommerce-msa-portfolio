@@ -19,6 +19,7 @@ public class CouponResponse {
     private BigDecimal totalAfterDiscount;
 
     /** 할인율(%) — 쿠폰에 적힌 값 그대로다. 실제로 깎인 금액은 {@link #discountAmount}. */
+    // [JA] 割引率(%) — クーポンに書かれた値そのまま。実際に引かれた金額は {@link #discountAmount}。
     private int discount;
 
     private String message;
@@ -29,12 +30,17 @@ public class CouponResponse {
      * <p>제약 있는 쿠폰이 생기면서 <b>할인율만으로는 얼마가 깎였는지 알 수 없게 됐다.</b>
      * "10% 쿠폰"이라도 장바구니 10만원 중 대상 상품이 2만원뿐이면 깎이는 건 2천원이다.
      * 화면이 그 차이를 설명할 수 있어야 한다.
+     *
+     * <p>[JA] 実際に引かれた金額。
+     * <p>制約付きクーポンができて<b>割引率だけではいくら引かれたか分からなくなった。</b>「10% クーポン」でもカート 10 万ウォンのうち対象商品が 2 万ウォンだけなら引かれるのは 2 千ウォンだ。画面がその差を説明できなければならない。
      */
     private BigDecimal discountAmount;
 
     /** 할인율이 곱해진 금액. 제약 없는 쿠폰이면 장바구니 총액과 같다. */
+    // [JA] 割引率を掛ける対象の金額。制約のないクーポンならカート総額と同じ。
     private BigDecimal eligibleSubtotal;
 
     /** 할인이 적용된 장바구니 줄 수. 0이면 대상 상품이 장바구니에 없다는 뜻이다. */
+    // [JA] 割引が適用されたカート行の数。0 なら対象商品がカートにないという意味。
     private int eligibleItemCount;
 }

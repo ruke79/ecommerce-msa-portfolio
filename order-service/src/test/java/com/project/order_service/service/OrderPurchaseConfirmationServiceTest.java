@@ -33,12 +33,18 @@ import com.project.order_service.repository.jpa.OrderRepository;
  *
  * <p>🐛 {@code OrderStatus.COMPLETED} 는 선언만 있고 <b>그 값을 넣는 코드가 저장소 어디에도
  * 없었다.</b> 배달 완료가 끝이었다. 여기서 채운다 — 손님이 누르거나, 기한이 지나 자동으로.
+ *
+ * <p>[JA] 購入確定 — {@code DELIVERED → COMPLETED}。
+ *
+ * <p>🐛 {@code OrderStatus.COMPLETED} は宣言だけあり、<b>その値を入れるコードがリポジトリのどこにもなかった。
+ * </b> 配達完了が終わりだった。ここで埋める — 客が押すか、期限が過ぎて自動で。
  */
 @DisplayName("order-service — 구매 확정")
 class OrderPurchaseConfirmationServiceTest {
 
     private static final long OWNER_ID = 100L;
     // 요청자는 게이트웨이가 검증한 토큰의 uid(User-Id) 다 — 이메일로 고객 사본을 찾지 않는다(docs/48 §6-①).
+    // [JA] 要求者はゲートウェイが検証したトークンの uid(User-Id)である — メールで顧客コピーを探さない(docs/48 §6-①)。
     private static final Long OWNER = OWNER_ID;
     private static final Long INTRUDER = 200L;
 
@@ -82,6 +88,7 @@ class OrderPurchaseConfirmationServiceTest {
     }
 
     /** 두 번 누르거나 자동 확정과 겹쳐도 두 번째는 아무 일도 하지 않는다. */
+    // [JA] 二度押しても自動確定と重なっても、二回目は何もしない。
     @Test
     @DisplayName("이미 확정된 주문은 그대로 돌려준다 — 저장도 알림도 없다")
     void alreadyCompletedIsIdempotent() {
@@ -113,6 +120,7 @@ class OrderPurchaseConfirmationServiceTest {
     }
 
     /** 🔒 남의 주문은 403 이 아니라 404 — 번호를 훑어 존재 여부를 알아내지 못하게. */
+    // [JA] 🔒 他人の注文は 403 ではなく 404 — 番号をなぞって存在有無を探られないように。
     @Test
     @DisplayName("🔒 남의 주문이나 없는 주문은 '찾을 수 없음' 이다 — 존재를 알려 주지 않는다")
     void strangersAndUnknownOrdersLookTheSame() {
@@ -152,6 +160,7 @@ class OrderPurchaseConfirmationServiceTest {
         }
 
         // 기준선은 now − days 다. 하루라도 덜 지난 주문은 다음 주기에 다시 본다.
+        // [JA] 基準線は now − days である。1 日でも経過が足りない注文は次の周期で再び見る。
         ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(orderRepository).findByOrderStatusAndDeliveredCreatedAtBefore(eq(OrderStatus.DELIVERED),
                 cutoff.capture(), any(Pageable.class));
@@ -170,6 +179,7 @@ class OrderPurchaseConfirmationServiceTest {
     }
 
     /** 시뮬레이터로 시험할 때 — 0일이면 배달 완료 직후 다음 주기에 확정된다. */
+    // [JA] シミュレーターで試すとき — 0 日なら配達完了直後の次の周期に確定される。
     @Test
     @DisplayName("days=0 이면 기준선이 지금이다 — 시험용")
     void zeroDaysMeansImmediately() {

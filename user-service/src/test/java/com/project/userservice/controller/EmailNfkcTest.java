@@ -37,6 +37,7 @@ class EmailNfkcTest {
     private static final String EMAIL = "buyer@example.com";
 
     // 비밀번호 값은 글자 그대로 JSON 에 쓰지 않는다 — 비밀 스캔(ops/20)이 `"password":"…"` 를 자격증명으로 본다.
+    // [JA] パスワード値は文字通り JSON に書かない — 秘密スキャン(ops/20)が `"password":"…"` を資格情報とみなす。
     private final ObjectMapper mapper = new ObjectMapper();
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 

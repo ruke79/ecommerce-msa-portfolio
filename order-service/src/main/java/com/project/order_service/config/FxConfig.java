@@ -34,6 +34,16 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>{@code PaymentCurrencyPolicy} 에 이 빈을 여기서 직접 넣지 않는다 — 그러면 정책 ↔ 이
  * 설정이 순환한다. 정책이 {@code @Autowired(required = false)} 로 받아 간다.
+ *
+ * <p>[JA] リアルタイム為替レートの配線。
+ * payment.fx.live.enabled = false(既定)固定レート(FX_RATE_*)だけを使う / = true Frankfurter から受け取り、固定レートは上限・代替策になる。
+ * 有効にしても <b>固定レートを消さない。</b> リアルタイム値が固定値と {@code payment.fx.max-deviation-percent} を超えて違えば
+ * ポリシーは固定値を使って警告する — API がおかしな値を返す日(通貨コードの混同、データ事故)に請求額が十倍になるのを防ぐ最後の線だ。
+ * API が落ちれば固定値に切り替わる。
+ * ⚠️ order-service の Pod から {@code api.frankfurter.app} への HTTPS が開いている必要がある。塞がれていると起動はするが
+ * 毎回の更新が失敗し(警告ログ)固定レートだけを使うことになる — 有効にしたのに値が変わらなければまずそのログを見る。
+ * {@code PaymentCurrencyPolicy} にこの Bean をここで直接入れない — そうするとポリシー ↔ この設定が循環する。
+ * ポリシーが {@code @Autowired(required = false)} で受け取る。
  */
 @Slf4j
 @Configuration

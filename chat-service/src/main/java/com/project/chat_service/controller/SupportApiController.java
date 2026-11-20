@@ -28,6 +28,9 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>신원·역할은 검증된 토큰에서 읽는다 — 친구 채팅 API({@code ChatApiController})와 같은 경로다. 요청 본문에는
  * 신원이 없다.
+ *
+ * <p>[JA] カスタマーセンターチャット REST(docs/58)。メッセージ送信は STOMP({@code /pub/chat/message}, roomId = {@code support-<id>})である。
+ * <p>身元・ロールは検証済みトークンから読む — 友達チャット API({@code ChatApiController})と同じ経路である。リクエスト本文には身元がない。
  */
 @RestController
 @RequiredArgsConstructor
@@ -38,8 +41,10 @@ public class SupportApiController {
     private final TokenHandler tokenHandler;
 
     // ── 고객 ────────────────────────────────────────────────────────────
+    // [JA] ── 顧客 ──
 
     /** 열린 상담. 없으면 204 — 화면은 "문의하기" 를 보인다. */
+    // [JA] 開いている相談。なければ 204 — 画面は「問い合わせる」を表示する。
     @GetMapping("/threads/mine")
     public ResponseEntity<SupportThreadDto> current(HttpServletRequest request) {
         return supportService.current(userId(request))
@@ -50,6 +55,8 @@ public class SupportApiController {
     /**
      * 문의하기 — 열린 상담이 있으면 그것을, 없으면 새로 연다. 본문은 선택이다({@code {"topic":"ORDER"}}) — 옛 화면은
      * 본문 없이 부르므로 없으면 "기타" 로 연다. 본문에 신원은 없다.
+     *
+     * <p>[JA] 問い合わせる — 開いている相談があればそれを、なければ新しく開く。本文は任意({@code {"topic":"ORDER"}}) — 旧画面は本文なしで呼ぶので、なければ「その他」で開く。本文に身元はない。
      */
     @PostMapping("/threads/mine")
     public SupportThreadDto open(@RequestBody(required = false) OpenRequest body, HttpServletRequest request) {
@@ -57,12 +64,14 @@ public class SupportApiController {
     }
 
     /** 지난 상담. */
+    // [JA] 過去の相談。
     @GetMapping("/threads/mine/history")
     public List<SupportThreadDto> history(HttpServletRequest request) {
         return supportService.history(userId(request));
     }
 
     // ── 공통(고객 본인·상담원) ───────────────────────────────────────────
+    // [JA] ── 共通(顧客本人・相談員) ──
 
     @GetMapping("/threads/{threadId}")
     public SupportThreadDto get(@PathVariable("threadId") Long threadId, HttpServletRequest request) {
@@ -81,6 +90,7 @@ public class SupportApiController {
     }
 
     /** 만족도 — 고객 본인이 종료된 상담에 한 번(docs/58 §11). */
+    // [JA] 満足度 — 顧客本人が終了した相談に一度(docs/58 §11)。
     @PostMapping("/threads/{threadId}/rating")
     public SupportThreadDto rate(@PathVariable("threadId") Long threadId, @RequestBody RatingRequest body,
             HttpServletRequest request) {
@@ -88,8 +98,10 @@ public class SupportApiController {
     }
 
     // ── 상담 데스크(상담원·관리자) ───────────────────────────────────────
+    // [JA] ── 相談デスク(相談員・管理者) ──
 
     /** 데스크 목록. {@code topic} 을 주면 그 유형만(비우면 전부). */
+    // [JA] デスク一覧。{@code topic} を与えればその種別だけ(空ならすべて)。
     @GetMapping("/desk/threads")
     public List<SupportThreadDto> desk(@RequestParam(name = "view", defaultValue = "WAITING") DeskView view,
             @RequestParam(name = "topic", required = false) String topic, HttpServletRequest request) {
@@ -103,6 +115,7 @@ public class SupportApiController {
     }
 
     /** 🔒 상담원 내부 메모 — 고객 응답에는 실리지 않는다. */
+    // [JA] 🔒 相談員の内部メモ — 顧客への応答には載らない。
     @PutMapping("/desk/threads/{threadId}/note")
     public SupportThreadDto note(@PathVariable("threadId") Long threadId, @RequestBody NoteRequest body,
             HttpServletRequest request) {
@@ -110,20 +123,24 @@ public class SupportApiController {
     }
 
     /** 맡은 상담을 반납 — 다시 대기 목록으로. */
+    // [JA] 担当した相談を返却 — 再び待機リストへ。
     @PostMapping("/desk/threads/{threadId}/release")
     public SupportThreadDto release(@PathVariable("threadId") Long threadId, HttpServletRequest request) {
         return supportService.release(threadId, userId(request), role(request));
     }
 
     /** 문의하기 본문(선택) — 유형만. */
+    // [JA] 問い合わせ本文(任意) — 種別のみ。
     public record OpenRequest(String topic) {
     }
 
     /** 만족도 본문 — 1~5 점과 선택 의견(500자). */
+    // [JA] 満足度本文 — 1〜5 点と任意の意見(500 文字)。
     public record RatingRequest(Integer score, String comment) {
     }
 
     /** 내부 메모 본문(2000자). 비우면 지운다. */
+    // [JA] 内部メモ本文(2000 文字)。空なら削除する。
     public record NoteRequest(String note) {
     }
 

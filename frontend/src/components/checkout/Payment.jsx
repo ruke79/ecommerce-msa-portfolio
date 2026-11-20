@@ -54,6 +54,7 @@ const PaymentCheckout = ({ paymentMethod, setPaymentMethod, profile }) => {
                                 을 넣으면 /public/assets/... 를 찾아 404 가 나고 결제수단
                                 아이콘이 전부 깨진다. order/Payment.jsx 는 같은 이미지를
                                 /assets/images/... 로 올바르게 참조하고 있었다. */}
+                            {/* [JA] public/ フォルダの内容は**ルート(/)**で配信される。パスに /public を入れると /public/assets/... を探して 404 になり、決済手段のアイコンがすべて壊れる。order/Payment.jsx は同じ画像を /assets/images/... で正しく参照していた。 */}
                             <img
                                 src={`${process.env.PUBLIC_URL}${payment.icon}`}
                                 alt={paymentMethodName(payment, t)}

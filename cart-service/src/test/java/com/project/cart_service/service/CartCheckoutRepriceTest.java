@@ -75,6 +75,7 @@ class CartCheckoutRepriceTest {
         when(cartRepository.findByUserId(7L)).thenAnswer(i -> Optional.ofNullable(stored[0]));
         when(cartRepository.save(any(Cart.class))).thenAnswer(i -> stored[0] = i.getArgument(0));
         // 처음 담기 — 없을 때만 만든다(CartRepository.insertIfAbsent, V5)
+        // [JA] 最初の追加 — ないときだけ作る(CartRepository.insertIfAbsent, V5)
         when(cartRepository.insertIfAbsent(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenAnswer(i -> {
                     if (stored[0] != null) {
@@ -85,6 +86,7 @@ class CartCheckoutRepriceTest {
                 });
 
         // 상품 1 — 스타일 둘(검정 5, 흰색 6). 스타일마다 사이즈 줄의 SKU 가 다르다.
+        // [JA] 商品 1 — スタイル 2 つ(黒 5、白 6)。スタイルごとにサイズ行の SKU が違う。
         when(catalog.getProductsInfo(anyList())).thenAnswer(i -> ResponseEntity.ok(List.of(ProductDto.builder()
                 .id("1").name("러닝화").shipping("0")
                 .skus(List.of(style(5L, "RUN-BLK"), style(6L, "RUN-WHT")))
@@ -103,6 +105,7 @@ class CartCheckoutRepriceTest {
     }
 
     /** 저장된 줄처럼 id 를 붙인다 — 목 저장소는 TSID 를 매기지 않는다(캐시 DTO 는 줄 id 를 싣는다). */
+    // [JA] 保存された行のように id を付ける — モックリポジトリは TSID を振らない(キャッシュ DTO は行 id を載せる)。
     private void persisted() {
         long id = 100;
         for (CartProduct line : stored[0].getCartProducts()) {
@@ -128,13 +131,13 @@ class CartCheckoutRepriceTest {
     @org.junit.jupiter.api.Test
     @org.junit.jupiter.api.DisplayName("🔴 할인이 끝났으면 체크아웃의 가격 · 합계는 지금 값 — 담을 때의 할인가가 아니다")
     void checkoutUsesCurrentPrice() {
-        catalogPrice("100", 30);   // 담을 때: 30% 할인 → 70
+        catalogPrice("100", 30);   // 담을 때: 30% 할인 → 70 ／ [JA] 追加時: 30% 割引 → 70
         service.putItem(7L, item("270", 2, 5L));
         assertThat(stored[0].getCartTotal()).isEqualByComparingTo("140");
         persisted();
         org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCommit();
 
-        catalogPrice("100", 0);   // 할인 끝
+        catalogPrice("100", 0);   // 할인 끝 ／ [JA] 割引終了
         service.getCartForCheckout(7L);
 
         assertThat(stored[0].getCartProducts()).singleElement().satisfies(l -> assertThat(l.getPrice()).isEqualByComparingTo("100"));

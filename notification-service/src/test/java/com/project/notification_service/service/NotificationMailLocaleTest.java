@@ -35,7 +35,11 @@ import com.project.notification_service.repository.NotificationRepository;
  * NPE 를 던졌고, 그 줄이 메일 실패를 막는 try 밖이라 <b>알림 생성 전체</b>가 실패했다 — 주문 접수 · 결제 완료 안내가 10-16 부터 모두
  * {@code order.DLT} · {@code payment.DLT}(notification 그룹)로 갔다(배송 · 쿠폰 · 재입고 안내도 같은 길).
  *
- * <p>[JA] 地域を知らない利用者でも通知が作られ、メールがキューに入る。以前は Locale.forLanguageTag(null) の NPE で通知の作成ごと失敗した。
+ * <p>[JA] 通知メール — 地域(region)が分からない利用者でも通知が作られ、メールがキューに入る。
+ *
+ * <p>[JA] 2026-10-24 本番: 地域は電話番号を認証して初めて埋まる。認証していない利用者(大半)では {@code Locale.forLanguageTag(null)} が
+ * NPE を投げ、その行がメール失敗を防ぐ try の外だったため<b>通知作成全体</b>が失敗した — 注文受付 · 決済完了の案内が 10-16 からすべて
+ * {@code order.DLT} · {@code payment.DLT}(notification グループ)へ行った(配送 · クーポン · 再入荷の案内も同じ道)。
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("알림 메일 — 지역을 모르는 사용자(전화 미인증)")
@@ -58,7 +62,7 @@ class NotificationMailLocaleTest {
     @BeforeEach
     void setUp() {
         preference = new NotificationPreference(7L);
-        preference.rememberEmail("buyer@example.com");   // 지역은 비어 있다 — 전화번호를 인증하지 않았다
+        preference.rememberEmail("buyer@example.com");   // 지역은 비어 있다 — 전화번호를 인증하지 않았다 ／ [JA] 地域は空だ — 電話番号を認証していない
         when(preferenceRepository.findByUserId(7L)).thenReturn(Optional.of(preference));
         when(notificationRepository.findBySourceEventId(anyString())).thenReturn(Optional.empty());
         when(notificationRepository.saveAndFlush(any(Notification.class))).thenAnswer(inv -> inv.getArgument(0));

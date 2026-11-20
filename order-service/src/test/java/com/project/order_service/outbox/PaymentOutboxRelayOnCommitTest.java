@@ -23,6 +23,11 @@ import com.project.order_service.outbox.repository.jpa.PaymentOutboxRepository;
  *
  * <p>예전에는 행을 쓰고 끝이었다 — 결제 요청은 다음 폴링(최대 10초)까지 DB 에 앉아 있었다. 사가의
  * 첫 번째 대기다. 두 번째는 pay-service 의 결제 응답이다({@code OrderOutboxRelayOnCommitTest}).
+ *
+ * <p>[JA] 決済リクエスト行を書くと、コミット直後にリレーを予約する(docs/56)。
+ *
+ * <p>以前は行を書いて終わりだった — 決済リクエストは次のポーリング(最大 10 秒)まで DB に座っていた。サガの一つ目の待ちである。
+ * 二つ目は pay-service の決済応答である({@code OrderOutboxRelayOnCommitTest})。
  */
 @DisplayName("order-service — 결제 요청 아웃박스의 즉시 릴레이")
 class PaymentOutboxRelayOnCommitTest {

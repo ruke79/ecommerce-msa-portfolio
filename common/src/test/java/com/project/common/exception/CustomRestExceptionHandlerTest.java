@@ -10,6 +10,8 @@ import org.springframework.http.ResponseEntity;
 
 /**
  * 공통 예외 처리기의 500 이 내부 문구를 싣지 않는다 (docs/57 §1).
+ *
+ * <p>[JA] 共通例外ハンドラーの 500 が内部の文言を載せない(docs/57 §1)。
  */
 @DisplayName("CustomRestExceptionHandler — 응답 본문의 문구")
 class CustomRestExceptionHandlerTest {
@@ -50,6 +52,7 @@ class CustomRestExceptionHandlerTest {
     }
 
     // ── 실제 디스패치(MockMvc) — 어느 처리기가 고르는가 ───────────────────────
+    // [JA] ── 実際のディスパッチ(MockMvc) — どのハンドラーが選ばれるか ──
 
     @org.springframework.web.bind.annotation.RestController
     static class Throwing {

@@ -10,7 +10,7 @@ import static org.springframework.http.HttpStatus.*;
 @AllArgsConstructor
 public enum ErrorCode {
 
-    /* 404 NOT_FOUND : Resource 를 찾을 수 없음 */
+    /* 404 NOT_FOUND : Resource 를 찾을 수 없음 ／ [JA] 404 NOT_FOUND : リソースが見つからない */
     USER_NOT_FOUND(NOT_FOUND, "해당 회원 정보를 찾을 수 없습니다.", "015"),
     
     UNAUTHORIZED_TOKEN_EXCEPTION(UNAUTHORIZED, "다시 채팅을 시작해주세요.", "028"),

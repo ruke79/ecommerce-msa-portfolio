@@ -6,9 +6,14 @@ import ja from "i18n/messages/ja";
  * 🐛 로그인 직후에만 영어가 떴다. {@code toast.success(response.data.message)} 가 서버가
  * 만든 영어 문장을 그대로 띄웠기 때문이다 — 특히 다중 로그인 안내가
  * "User attempted to log in multiply, logging out from previous logged in state" 였다.
+ *
+ * <p>[JA] 🐛 ログイン直後だけ英語が出た。{@code toast.success(response.data.message)} がサーバーの
+ * 作った英語の文をそのまま出していたからである — 特に多重ログインの案内が
+ * "User attempted to log in multiply, logging out from previous logged in state" だった。
  */
 describe("로그인 결과 문구", () => {
   // 실제 사전으로 조회한다. 가짜 t 를 쓰면 키가 사전에 없는 것을 못 잡는다.
+  // [JA] 実際の辞書で引く。偽の t を使うと、キーが辞書にないことを捕まえられない。
   const t = (dict) => (key) => dict[key] ?? key;
 
   it("코드를 사전 문구로 바꾼다", () => {
@@ -32,6 +37,9 @@ describe("로그인 결과 문구", () => {
   /**
    * 🔴 t() 는 없는 키를 받으면 **키를 그대로 돌려준다.** 모르는 코드를 그냥 넘기면
    * 토스트에 "auth.signin.result.xyz" 가 뜬다 — 서버 문장보다 나쁘다.
+   *
+   * <p>[JA] 🔴 t() は存在しないキーを受け取ると **キーをそのまま返す。** 未知のコードをそのまま渡すと
+   * トーストに "auth.signin.result.xyz" が出る — サーバーの文より悪い。
    */
   it("모르는 코드면 서버 문구로 떨어진다 — 키가 노출되지 않는다", () => {
     const shown = loginResultMessage(
@@ -53,6 +61,7 @@ describe("로그인 결과 문구", () => {
   });
 
   /** 두 사전에 같은 키가 있어야 한다 — 하나만 넣으면 그 언어에서만 키가 노출된다. */
+  // [JA] 二つの辞書に同じキーがなければならない — 一つにだけ入れるとその言語でだけキーが露出する。
   it("ko·ja 가 같은 결과 키를 갖는다", () => {
     for (const key of ["auth.signin.result.login_success", "auth.signin.result.multi_login"]) {
       expect(ko[key]).toBeTruthy();

@@ -83,6 +83,7 @@ public class AuthLogoutFilter extends GenericFilterBean {
         }
 
         // Refresh Token이 없는 경우 BadCredentialsException을 던짐
+        // [JA] Refresh Token がない場合は BadCredentialsException を投げる
         if (refreshToken == null) {
             log.warn("Refresh cookie not found for logout request");
             throw new BadCredentialsException("Refresh cookie not found");
@@ -90,12 +91,14 @@ public class AuthLogoutFilter extends GenericFilterBean {
 
         try {
             // Refresh Token 만료 여부 검사
+            // [JA] Refresh Token の期限切れ検査
             if (jwtUtils.isJwtTokenExpired(refreshToken)) {
                 log.warn("Refresh token expired");
                 throw new BadCredentialsException("Refresh token expired");
             }
             
             // Refresh Token 유효성 검사 (TokenStatus 로직을 사용하는 경우)
+            // [JA] Refresh Token の有効性検査(TokenStatus ロジックを使う場合)
             if (jwtUtils.validateJwtToken(refreshToken) != TokenStatus.VALID || !jwtUtils.isRefreshTokenType(refreshToken)) {
                 log.warn("Refresh token invalid");
                 throw new BadCredentialsException("Refresh token invalid");
@@ -113,12 +116,15 @@ public class AuthLogoutFilter extends GenericFilterBean {
             refreshTokenService.revoke(refreshToken);
             if (!stored) {
                 // 이메일은 남기지 않는다(docs/51).
+                // [JA] メールアドレスは残さない(docs/51)。
                 log.warn("로그아웃 — 저장소에 없는 리프레시 토큰(이미 회전됐거나 만료) — 그 묶음을 끊었다");
                 throw new BadCredentialsException("Refresh token not found");
             }
 
             // 🗑️ 예전에는 여기서 액세스 토큰 <b>원문</b>을 Redis 키로 적었다("블랙리스트"). 그 키를 읽는 곳이 없었다 — 게이트웨이는
             //    서명만 본다. 막는 효과 없이 유효한 토큰만 저장소에 쌓았다(docs/68 §10). 긴 연결은 §9 의 해제 표시가 막는다.
+            // [JA] 🗑️ 以前はここでアクセストークンの原文を Redis キーとして書いていた(「ブラックリスト」)。そのキーを読む場所がなかった — ゲートウェイは
+            //         署名だけを見る。防ぐ効果なしに有効なトークンだけをストアに溜めていた(docs/68 §10)。長い接続は §9 の解除の印が止める。
 
             if ("false".equals(request.getHeader("MultiLogin"))) {
                 jwtUtils.removeSession(email);
@@ -132,6 +138,7 @@ public class AuthLogoutFilter extends GenericFilterBean {
             response.addCookie(jwtUtils.createCookie(TokenType.REFRESH.getType(), null, java.time.Duration.ZERO));
 
             // 성공 응답 전송
+            // [JA] 成功応答の送信
             response.setStatus(HttpServletResponse.SC_OK);
             response.setContentType("application/json");
             response.getWriter().write("{\"message\": \"Logout Success\"}");
@@ -140,7 +147,7 @@ public class AuthLogoutFilter extends GenericFilterBean {
             log.warn("Refresh token expired: {}", e.getMessage());
             throw new BadCredentialsException("Refresh token expired", e);
         } catch (AuthenticationException e) {
-            throw e; // Spring Security가 처리하도록 예외를 다시 던짐
+            throw e; // Spring Security가 처리하도록 예외를 다시 던짐 ／ [JA] Spring Security が処理するよう例外を投げ直す
         } catch (Exception e) {
             log.error("Error during logout process", e);
             throw new ServletException("Internal server error during logout", e);

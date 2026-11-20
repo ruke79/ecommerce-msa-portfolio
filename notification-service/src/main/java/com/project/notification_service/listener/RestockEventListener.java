@@ -21,6 +21,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p>{@code RESTOCKED}(0 → 있음)면 그 옵션에 재입고 알림을 신청한 손님에게 알린다. {@code SOLD_OUT} 은 여기서
  * 하는 일이 없다 — 품절은 운영자에게 알릴 일이고 catalog 의 로그 경보({@code ProductSoldOut}, docs/51 §4i)가
  * 맡는다. 손님은 상품 화면의 "품절" 로 충분하다.
+ *
+ * <p>[JA] catalog-service の {@code product-stock} — オプションの在庫が 0 をまたいだ(docs/53)。
+ * {@code RESTOCKED}(0 → あり)ならそのオプションに再入荷通知を申し込んだ客に知らせる。{@code SOLD_OUT} はここでは
+ * することがない — 品切れは運用者に知らせることで、catalog のログ警報({@code ProductSoldOut}, docs/51 §4i)が受け持つ。
+ * 客には商品画面の「品切れ」で十分である。
  */
 @Slf4j
 @Component
@@ -30,19 +35,21 @@ public class RestockEventListener {
     private final RestockSubscriptionService restockService;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダーの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id = "notification-product-stock", topics = "product-stock",
                    containerFactory = "notificationListenerContainerFactory")
     public void onProductStock(List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
                     OutboxTraceContext.recordHeaders(kafkaHeaders, i), "receive product-stock")) {
                 JsonNode event = objectMapper.readTree(messages.get(i));
                 if (!"RESTOCKED".equals(text(event, "type"))) {
-                    continue;   // 품절은 운영자 경보가 맡는다
+                    continue;   // 품절은 운영자 경보가 맡는다 ／ [JA] 品切れは運用者の警報が受け持つ
                 }
                 Long productId = number(event, "productId");
                 String size = text(event, "size");
@@ -55,6 +62,7 @@ public class RestockEventListener {
                 int n;
                 do {
                     // 페이지마다 트랜잭션이 따로다 — 서비스 프록시를 거쳐 부른다.
+                    // [JA] ページごとにトランザクションが別である — サービスのプロキシを経由して呼ぶ。
                     n = restockService.notifyPage(productId, colorId, size,
                             text(event, "name"), text(event, "slug"), text(event, "color"));
                     total += n;

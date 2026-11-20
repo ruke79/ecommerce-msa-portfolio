@@ -6,6 +6,7 @@ import { translate } from "i18n/I18nProvider";
 import { SESSION_CLOSE_CODE, requestTokenRefresh } from "./authEvents";
 
 // Context 생성
+// [JA] Context の作成
 const StompContext = createContext(null);
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -33,6 +34,7 @@ export function StompProvider({
       webSocketFactory: () => new SockJS(brokerURL, null, sockjsOptions),
       connectHeaders,
       // 운영 환경에서는 STOMP 프레임(인증 헤더 포함)을 콘솔에 남기지 않는다.
+      // [JA] 本番環境では STOMP フレーム(認証ヘッダーを含む)をコンソールに残さない。
       debug: isDev ? (str) => console.debug("[STOMP]", str) : () => {},
       reconnectDelay,
       heartbeatIncoming: 4000,
@@ -59,6 +61,8 @@ export function StompProvider({
         setIsConnected(false);
         // 서버가 "토큰이 만료됐거나 로그인이 해제됐다" 로 닫았다(docs/68 §9). 같은 토큰으로 다시 붙어 봐야 거절되므로
         // 자동 재연결을 멈추고 갱신을 부탁한다 — 새 토큰이 나오면 connectHeaders 가 바뀌어 이 effect 가 다시 붙는다.
+        // [JA] サーバーが「トークンが期限切れかログインが解除された」で閉じた(docs/68 §9)。同じトークンで再接続しても拒否されるので、
+        //      自動再接続を止めて更新を頼む — 新しいトークンが出ると connectHeaders が変わってこの effect が再接続する。
         if (event?.code === SESSION_CLOSE_CODE) {
           client.deactivate();
           requestTokenRefresh();
@@ -92,6 +96,8 @@ export function StompProvider({
       }
       // 구독마다 독립적인 StompSubscription을 캡처해서 반환하므로,
       // 방을 빠르게 전환해도 이전 구독이 최신 구독을 대신 해지하는 일이 없다.
+      // [JA] 購読ごとに独立した StompSubscription をキャプチャして返すので、
+      //      部屋を素早く切り替えても前の購読が最新の購読を代わりに解除することはない。
       const subscription = stompClientRef.current.subscribe(destination, callback, headers);
       return () => subscription.unsubscribe();
     },
@@ -132,6 +138,7 @@ StompProvider.propTypes = {
 };
 
 // Context를 쉽게 사용하기 위한 커스텀 훅
+// [JA] Context を簡単に使うためのカスタムフック
 export function useStomp() {
   const context = useContext(StompContext);
   if (!context) {

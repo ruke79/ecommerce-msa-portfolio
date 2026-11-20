@@ -32,6 +32,16 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>⚠️ <b>페이로드를 통째로 로그에 찍지 않는다.</b> {@code params} 에 가입 확인 링크가 들어 있고,
  * 그 링크는 그 자체로 계정을 활성화할 수 있다. 로그 열람 권한이 계정 탈취 권한이 되면 안 된다.
+ *
+ * <p>[JA] {@code outgoing-mail} トピックを読んでメールをキューに入れる。
+ * このトピックは他のトピックと性格が違う。{@code order}・{@code payment} は<b>ドメインイベント</b>で、発行者がスキーマを持ち
+ * こちらは必要なフィールドだけ取り出して読むが、これは<b>コマンド</b>である — 「この人にこの種類のメールを送れ」。だからスキーマを
+ * こちらが所有し({@link com.project.common.message.dto.request.OutgoingMailRequest})、知らない種類が来たら黙って捨てずに残す。
+ * <b>ここではメールを送らない。</b> キューに入れるだけである。コンシューマー内で SMTP を呼ぶとメールサーバーの遅延がそのまま
+ * コンシューマーラグになり、失敗をコンシューマーのリトライで処理するとリトライのたびにメールが一通ずつ多く出る。
+ * 実際の送信は {@link com.project.notification_service.service.MailDispatcher} が行う。
+ * ⚠️ <b>ペイロードを丸ごとログに出さない。</b> {@code params} に登録確認リンクが入っており、そのリンクはそれ自体で
+ * アカウントを有効化できる。ログの閲覧権限がアカウント乗っ取りの権限になってはならない。
  */
 @Slf4j
 @Component
@@ -41,12 +51,14 @@ public class OutgoingMailListener {
     private final MailService mailService;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダーの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id = "notification-outgoing-mail", topics = "outgoing-mail",
                    containerFactory = "notificationListenerContainerFactory")
     public void onOutgoingMail(List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -58,6 +70,8 @@ public class OutgoingMailListener {
                 if (kind == null) {
                     // 모르는 종류다. 재시도해도 같으므로 DLT 로 보내 사람이 보게 한다 —
                     // 조용히 버리면 "메일이 안 온다"를 추적할 방법이 없다.
+                    // [JA] 知らない種類である。リトライしても同じなので DLT に送って人に見せる —
+                    //      黙って捨てると「メールが来ない」を追跡する方法がない。
                     throw new BatchListenerFailedException(
                             "알 수 없는 메일 종류: " + kindName, i);
                 }
@@ -65,6 +79,7 @@ public class OutgoingMailListener {
                 String toEmail = text(command, "toEmail");
                 if (!EmailAddresses.isValid(toEmail)) {
                     // 주소가 잘못된 것은 보내는 쪽의 문제다. 재시도해도 같다.
+                    // [JA] アドレスが誤っているのは送る側の問題である。リトライしても同じ。
                     throw new BatchListenerFailedException(
                             "보낼 수 없는 주소: " + EmailAddresses.mask(toEmail), i);
                 }
@@ -84,12 +99,16 @@ public class OutgoingMailListener {
                 // 파싱 실패 등. 어느 레코드인지 알려야 앞의 레코드 오프셋은 커밋되고 이것만
                 // 격리된다(docs/11 §3). 인덱스를 넘기지 않으면 배치 전체가 재전달된다.
                 // ⚠️ 예외 메시지에 원문 일부가 섞일 수 있으므로 페이로드는 따로 찍지 않는다.
+                // [JA] パース失敗など。どのレコードかを伝えれば前のレコードのオフセットはコミットされ、これだけが
+                //      隔離される(docs/11 §3)。インデックスを渡さないとバッチ全体が再配信される。
+                //      ⚠️ 例外メッセージに原文の一部が混じりうるので、ペイロードは別に出力しない。
                 throw new BatchListenerFailedException("메일 명령을 처리하지 못했습니다", e, i);
             }
         }
     }
 
     /** 모르는 이름이면 null. enum 이 늘어나기 전 버전이 배포돼 있을 수 있으므로 예외로 죽이지 않는다. */
+    // [JA] 知らない名前なら null。enum が増える前のバージョンがデプロイされている場合があるので例外で落とさない。
     private MailKind parseKind(String name) {
         if (name == null || name.isBlank()) {
             return null;
@@ -106,6 +125,10 @@ public class OutgoingMailListener {
      *
      * <p>값이 문자열이 아니어도(숫자·불리언) 문자열로 바꿔 받는다. 발행자가 JSON 타입을 조금
      * 다르게 쓴다고 메일이 안 나갈 이유는 없다.
+     *
+     * <p>[JA] {@code params} を文字列マップとして取り出す。
+     * 値が文字列でなくても(数値・真偽値)文字列に変えて受ける。発行者が JSON の型を少し違えて使ったからといって
+     * メールが出ない理由はない。
      */
     private Map<String, String> params(JsonNode command) {
         JsonNode node = command.get("params");

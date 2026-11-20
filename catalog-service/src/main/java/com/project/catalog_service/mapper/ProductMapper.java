@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 public class ProductMapper {
 
     /** null 컬렉션을 빈 리스트로 취급해 매핑한다(엔티티가 부분적으로 채워진 경우 대비). */
+    // [JA] null のコレクションを空リストとして扱ってマッピングする(エンティティが部分的にしか埋まっていない場合への備え)。
     private static <E, D> List<D> mapList(java.util.Collection<E> source,
                                           java.util.function.Function<E, D> mapper) {
         if (source == null) {
@@ -21,8 +22,10 @@ public class ProductMapper {
     }
 
     // ... (기존 toDto 메서드는 유지) ...
+    // [JA] ... (既存の toDto メソッドは維持) ...
     public static ProductDto toDto(Product product) {
         // ... 기존 코드 ...
+        // [JA] ... 既存コード ...
         return ProductDto.builder()
                 .id(Long.toString(product.getProductId()))
                 .name(product.getName())
@@ -33,6 +36,9 @@ public class ProductMapper {
                 // 연관 컬렉션은 엔티티가 부분적으로만 채워진 경우(신규 생성 직후, 분리된
                 // 엔티티, 일부 조회 경로) null 일 수 있다. 무방비 .stream() 이라 그런 상품이
                 // 하나만 섞여도 조회 응답 전체가 NPE 로 500 이 됐다(docs/14 B-15).
+                // [JA] 関連コレクションは、エンティティが部分的にしか埋まっていない場合(新規作成直後、デタッチされた
+                //      エンティティ、一部の照会経路)に null になりうる。無防備な .stream() のため、そうした商品が
+                //      一つ混ざるだけで照会レスポンス全体が NPE で 500 になった(docs/14 B-15)。
                 .subCategories(mapList(product.getSubcategories(), ProductSubcategoryMapper::toDto))
                 .details(mapList(product.getDetails(), ProductDetailsMapper::toDto))
                 .questions(mapList(product.getQuestions(), ProductQAMapper::toDto))
@@ -43,6 +49,8 @@ public class ProductMapper {
                 // shipping 은 nullable 컬럼이고 createdAt 도 DB 에서 NULL 로 읽힐 수 있다.
                 // 무방비 역참조라 배송비가 비어 있는 상품 하나만 있어도 목록 조회 전체가
                 // NPE 로 500 이 됐다(docs/14 B-15).
+                // [JA] shipping は nullable カラムで、createdAt も DB から NULL として読まれうる。
+                //      無防備な参照のため、送料が空の商品が一つあるだけで一覧照会全体が NPE で 500 になった(docs/14 B-15)。
                 .shipping(product.getShipping() != null ? product.getShipping().toPlainString() : null)
                 .createdAt(product.getCreatedAt() != null ? product.getCreatedAt().toString() : null)
                 .build();
@@ -52,6 +60,8 @@ public class ProductMapper {
      * ProductDto를 Product 엔티티로 변환합니다.
      * @param dto 변환할 ProductDto
      * @return 변환된 Product 엔티티
+     *
+     * <p>[JA] ProductDto を Product エンティティに変換する。dto は変換する ProductDto、戻り値は変換された Product エンティティ。
      */
     public static Product toEntity(ProductDto dto) {
         if (dto == null) {

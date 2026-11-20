@@ -20,6 +20,12 @@ import lombok.extern.slf4j.Slf4j;
  * 메일이 나가면 그 하드 바운스가 발신 도메인에 그대로 쌓이고, 한 번 스팸으로 분류된 도메인을
  * 되돌리는 데는 몇 주가 걸린다. 실제 발송은 {@code notification.mail.provider=smtp} 로 명시해야
  * 켜진다.
+ *
+ * <p>[JA] メール送信器の選択。{@link SmsConfig} と同じ形である。
+ * <b>既定がロギング送信器なのは意図的である。</b> 根拠は SMS と少し違う — メールはたいてい無料だが
+ * <b>取り消せず、評判が残る。</b> 設定が不完全なままデプロイされてテストデータのアドレスにメールが出ると、そのハードバウンスが
+ * 送信ドメインにそのまま積もり、一度スパムに分類されたドメインを戻すには数週間かかる。実際の送信は
+ * {@code notification.mail.provider=smtp} を明示して初めて有効になる。
  */
 @Slf4j
 @Configuration
@@ -35,10 +41,12 @@ public class MailConfig {
     private String fromName;
 
     /** SMTP 호스트. 비어 있으면 실제 발송을 켤 수 없다 — 아래 검사 참조. */
+    // [JA] SMTP ホスト。空なら実送信を有効にできない — 下の検査を参照。
     @Value("${spring.mail.host:}")
     private String smtpHost;
 
     /** 자리 표시자 검사에만 쓴다. 값은 어디에도 찍지 않는다. */
+    // [JA] プレースホルダー検査にだけ使う。値はどこにも出力しない。
     @Value("${spring.mail.username:}")
     private String smtpUsername;
 
@@ -56,9 +64,16 @@ public class MailConfig {
      * {@code org.springframework.mail.MailSender} 라서, 타입 기준 주입은 애매해지지 않는다.
      * 부딪히는 것은 이름뿐이다.
      *
+     * <p>[JA] ⚠️ <b>Bean 名が {@code mailSender} であってはならない。</b> Spring Boot の {@code MailSenderPropertiesConfiguration} が
+     * 同じ名前で {@code JavaMailSenderImpl} を登録するため、そのままだと {@code BeanDefinitionOverrideException} で
+     * <b>アプリケーションがまったく起動しない。</b>(実際にこのミスをして起動テストが捕まえた。)
+     * 型は重ならない — このインターフェースは {@code com.project.notification_service.mail.MailSender} で Spring のものは
+     * {@code org.springframework.mail.MailSender} なので、型による注入は曖昧にならない。ぶつかるのは名前だけである。
+     *
      * @param javaMailSender 스프링이 {@code spring.mail.host} 가 있을 때만 만드는 빈이다.
      *                       {@link ObjectProvider} 로 받는 이유: 설정이 없으면 이 빈도 없는데,
      *                       직접 주입하면 <b>logging 발송기를 쓰려는 경우에도 기동이 실패한다.</b>
+     *   [JA] Spring が {@code spring.mail.host} があるときだけ作る Bean。{@link ObjectProvider} で受ける理由: 設定がなければこの Bean もなく、直接注入すると <b>logging 送信器を使う場合でも起動に失敗する。</b>
      */
     @Bean
     public MailSender notificationMailSender(ObjectProvider<JavaMailSender> javaMailSender) {
@@ -73,6 +88,10 @@ public class MailConfig {
         //    yml 이 ${MAIL_HOST:} 처럼 빈 기본값을 주면 <b>빈 문자열도 '존재'로 친다.</b>
         //    그래서 JavaMailSender 빈은 만들어지지만 호스트가 없어, 여기서 막지 않으면
         //    매 발송이 알 수 없는 오류로 실패하며 큐만 쌓인다.
+        // [JA] ⚠️ ホストを別に見る。Boot の条件は「spring.mail.host プロパティが存在するか」だが、
+        //         yml が ${MAIL_HOST:} のように空の既定値を与えると<b>空文字列も「存在」とみなす。</b>
+        //         だから JavaMailSender Bean は作られるがホストがなく、ここで止めないと
+        //         毎回の送信が不明なエラーで失敗し、キューだけが溜まる。
         if (delegate == null || smtpHost.isBlank()) {
             throw new IllegalStateException(
                     "notification.mail.provider=smtp 이지만 spring.mail.host 가 비어 있습니다.");
@@ -80,6 +99,8 @@ public class MailConfig {
         if (from.isBlank()) {
             // From 이 비면 JavaMail 이 SMTP 계정 주소로 대체한다 — 우연히 동작하지만
             // SPF/DKIM 정렬이 깨져 스팸으로 분류되기 쉽다. 명시하게 한다.
+            // [JA] From が空だと JavaMail が SMTP アカウントのアドレスで代替する — たまたま動くが
+            //      SPF/DKIM のアラインメントが崩れてスパムに分類されやすい。明示させる。
             throw new IllegalStateException(
                     "notification.mail.provider=smtp 이지만 notification.mail.from 이 비어 있습니다. "
                     + "발신 주소는 SPF/DKIM 정렬에 직결되므로 명시해야 합니다.");
@@ -89,6 +110,10 @@ public class MailConfig {
         //    "REPLACE_ME_smtp_host" 는 비어 있지 않으므로 통과했고, 서비스는 "smtp (실제 발송)"
         //    이라고 찍으며 정상 기동한 뒤 25초 동안 재시도 상한을 태우고 조용히 포기했다.
         //    실제로 겪은 일이다(Placeholders 에 경위가 적혀 있다).
+        // [JA] ⚠️ 上の二つの検査は**空の値**しか捕まえない。埋めていない値は捕まえられなかった —
+        //         "REPLACE_ME_smtp_host" は空ではないので通過し、サービスは "smtp (실제 발송)" と
+        //         出力して正常起動した後、25 秒かけてリトライ上限を使い切って黙って諦めた。
+        //         実際に経験したことである(経緯は Placeholders に書いてある)。
         Placeholders.rejectUnfilled("notification.mail.provider=smtp", Placeholders.pairs(
                 "spring.mail.host (MAIL_HOST)", smtpHost,
                 "spring.mail.username (MAIL_USERNAME)", smtpUsername,

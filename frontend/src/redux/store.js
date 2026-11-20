@@ -33,6 +33,26 @@ const rootReducer = combineReducers({
  * <p>`blacklist: ['token']` 도 지웠다. blacklist 역시 최상위 키 목록이라 `token` 이라는
  * 리듀서가 없는 이상 아무것도 하지 않았다 — "토큰은 저장 안 함"이라는 안심을 주는 주석만
  * 남기고 실제 보호는 하지 않는, 있어서 더 위험한 설정이었다.
+ *
+ * <p>[JA] どの状態をリロード後にも残すか。
+ *
+ * <b>以前の設定は何も保存していなかった。</b> `whitelist: ['auth']` になっていたが
+ * rootReducer に `auth` がない(上のほうでコメントアウトされていた)。redux-persist の whitelist は
+ * <b>存在するトップレベルの reducer キー</b>だけが意味を持つので、存在しないキーを指定すると保存対象が 0 個に
+ * なる。PersistGate でアプリを包み persistStore まで呼びながら、実際には何もしない
+ * 状態だった — カートはリロードするたびに空になった。
+ *
+ * <p>いまは `cart` だけを保存する。入れておいた品物がリロードで消えるのは、ユーザーが最も大きく
+ * 体感する損失である。逆に保存してはならないもの:
+ *  - `chat`: サーバーが真実である。古い会話一覧を復元すると実際とずれる。
+ *  - `menu`/`dialog`: 純粋な UI 状態。開いていたモーダルがリロード後に復活するのはおかしい。
+ *  - 認証トークン: そもそもこのストアにない。XSS で奪われないようメモリ(AuthContext)にだけ
+ *    置くのが意図した設計である(util/tokenUtil.js)。ここの whitelist に auth を入れようとするのは
+ *    その設計を元に戻すことなので、してはならない。
+ *
+ * `blacklist: ['token']` も削除した。blacklist もトップレベルのキー一覧なので、`token` という
+ * reducer がない以上何もしていなかった — 「トークンは保存しない」という安心を与えるコメントだけ
+ * 残して実際の保護はしない、あることでかえって危険な設定だった。
  */
 const persistConfig = {
     key: "root",
@@ -51,6 +71,10 @@ export const store = configureStore({
             // **우리 코드가 스토어에 넣는 File·Date 같은 값도** 검사에서 빠진다. 그러면
             // 직렬화 불가능한 값이 들어가도 개발 중에 아무 경고가 없다가 persist 시점에야
             // 터진다. 검사는 켜 두고 redux-persist 액션만 예외로 둔다(공식 권장 방식).
+            // [JA] serializableCheck をまるごと切ると、redux-persist の内部アクションだけでなく
+            //      **我々のコードがストアに入れる File・Date のような値も** 検査から外れる。すると
+            //      シリアライズできない値が入っても開発中は何の警告もなく、persist の時点で初めて
+            //      落ちる。検査は有効にしたまま redux-persist のアクションだけを例外にする(公式の推奨方法)。
             serializableCheck: {
                 ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER],
             },

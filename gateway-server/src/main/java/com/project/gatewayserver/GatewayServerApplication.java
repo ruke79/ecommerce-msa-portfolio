@@ -20,7 +20,7 @@ public class GatewayServerApplication {
    
 
     public static void main(String[] args) {
-        applySslPasswordsFromEnv(System.getenv(), System.getProperties());   // 첫 TLS 연결보다 먼저
+        applySslPasswordsFromEnv(System.getenv(), System.getProperties());   // 첫 TLS 연결보다 먼저 ／ [JA] 最初の TLS 接続より先に
         SpringApplication.run(GatewayServerApplication.class, args);
     }
 

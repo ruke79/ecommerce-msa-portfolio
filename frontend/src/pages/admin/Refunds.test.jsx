@@ -28,6 +28,9 @@ const page = (content) => ({ content, totalPages: 1, totalElements: content.leng
  *
  * <p>고객 화면과 같은 엔드포인트를 쓰되, 관리자는 <b>발송된 주문도</b> 환불한다. 그래서
  * 여기서 지키는 것은 "버튼이 어디에 있는가" 와 "무엇을 보내는가" 다.
+ *
+ * <p>[JA] 管理者返金画面。顧客画面と同じエンドポイントを使うが、管理者は<b>発送済みの注文も</b>返金する。だからここで守るのは
+ * 「ボタンがどこにあるか」と「何を送るか」である。
  */
 describe("환불 관리", () => {
     beforeEach(() => {
@@ -50,17 +53,21 @@ describe("환불 관리", () => {
     });
 
     /** 관리자는 발송된 주문도 환불한다 — 고객 화면과 다른 점이다. */
+    // [JA] 管理者は発送済みの注文も返金する — 顧客画面との違いである。
     it("결제된 주문에는 전부 환불 버튼이 있고, 미결제·환불됨에는 없다", async () => {
         render(withI18n(<Refunds />));
         await screen.findAllByText("buyer@example.com");
 
         // PAID · DISPATCHED 두 줄에만 버튼
+        // [JA] PAID · DISPATCHED の 2 行にだけボタン
         expect(screen.getAllByRole("button", { name: "환불" })).toHaveLength(2);
         // 환불된 줄은 참조를 보여 준다
+        // [JA] 返金済みの行は参照を見せる
         expect(screen.getByText("re_3")).toBeInTheDocument();
     });
 
     /** 🔒 보내는 것은 어느 주문·왜 뿐이다. 금액·결제 참조는 본문에 없다. */
+    // [JA] 🔒 送るのはどの注文・なぜだけである。金額・決済参照は本文にない。
     it("🔒 확정하면 trackingId 와 사유만 보내고 목록을 다시 읽는다", async () => {
         adminRefundOrder.mockResolvedValue({ message: "환불이 처리되었습니다." });
         render(withI18n(<Refunds />));
@@ -72,6 +79,7 @@ describe("환불 관리", () => {
 
         await waitFor(() => expect(adminRefundOrder).toHaveBeenCalledWith("track-1", "고객센터 접수", null));
         // 화면의 행을 손으로 바꾸지 않고 서버에서 다시 읽는다.
+        // [JA] 画面の行を手で変えずにサーバーから読み直す。
         await waitFor(() => expect(adminListOrders).toHaveBeenCalledTimes(2));
     });
 
@@ -110,8 +118,10 @@ describe("환불 관리", () => {
     });
 
     // ── 반품 입고 ───────────────────────────────────────────────────────────
+    // [JA] ── 返品入庫 ───────────────────────────────────────────────────────────
 
     /** 물건이 밖에 있고 아직 안 돌아온 주문에만 — 발송 전 환불(재고가 이미 돌아옴)에는 없다. */
+    // [JA] 品物が外にあってまだ戻っていない注文にだけ — 発送前の返金(在庫はすでに戻っている)にはない。
     it("반품 입고 버튼은 반품 대기·발송된 주문에만 있다", async () => {
         adminListOrders.mockResolvedValue(page([
             row({ orderId: 1, trackingId: "t-paid", orderStatus: "PAID" }),
@@ -125,14 +135,18 @@ describe("환불 관리", () => {
         await screen.findAllByText("buyer@example.com");
 
         // DISPATCHED · REFUNDED+awaitingReturn 두 줄
+        // [JA] DISPATCHED · REFUNDED+awaitingReturn の 2 行
         expect(screen.getAllByRole("button", { name: "반품 입고" })).toHaveLength(2);
         // 필터 옵션에도 같은 글자가 있으므로 행의 표시만 센다(옵션 1 + 행 1)
+        // [JA] フィルタの選択肢にも同じ文字があるので行の表示だけを数える(選択肢 1 + 行 1)
         expect(screen.getAllByText("반품 대기")).toHaveLength(2);
         // 시각은 로케일 형식이라 앞글자만 본다(입고 패널은 닫혀 있어 체크박스 라벨은 없다)
+        // [JA] 時刻はロケール形式なので先頭の文字だけを見る(入庫パネルは閉じていてチェックボックスのラベルはない)
         expect(screen.getByText(/^재고 복원 /)).toBeInTheDocument();
     });
 
     /** 🔒 보내는 것은 어느 주문·재고로 되돌릴지뿐이다. 수량은 본문에 없다. */
+    // [JA] 🔒 送るのはどの注文・在庫に戻すかだけである。数量は本文にない。
     it("🔒 입고 확정은 trackingId 와 restock 만 보내고 목록을 다시 읽는다", async () => {
         adminListOrders.mockResolvedValue(page([
             row({ orderId: 3, trackingId: "t-wait", orderStatus: "REFUNDED", awaitingReturn: true }),
@@ -164,6 +178,7 @@ describe("환불 관리", () => {
     });
 
     // ── 부분 환불·부분 반품 ─────────────────────────────────────────────────
+    // [JA] ── 部分返金・部分返品 ─────────────────────────────────────────────────
 
     const withItems = (over = {}) => row({
         orderId: 9, trackingId: "t-items", orderStatus: "DELIVERED",
@@ -176,15 +191,16 @@ describe("환불 관리", () => {
     });
 
     /** 🔒 품목·수량만 보낸다. 금액은 서버가 정한다. 이미 환불된 줄은 잠긴다. */
+    // [JA] 🔒 品目・数量だけを送る。金額はサーバーが決める。すでに返金された行はロックされる。
     it("🔒 일부 수량만 고르면 items 로 보내고 금액은 보내지 않는다", async () => {
         adminListOrders.mockResolvedValue(page([withItems()]));
         adminRefundOrder.mockResolvedValue({ message: "선택한 품목이 환불되었습니다." });
         render(withI18n(<Refunds />));
         await screen.findAllByText("buyer@example.com");
 
-        expect(screen.getByText(/환불 −/)).toBeInTheDocument();          // 누적 환불액
+        expect(screen.getByText(/환불 −/)).toBeInTheDocument();          // 누적 환불액 ／ [JA] 累積返金額
         fireEvent.click(screen.getByRole("button", { name: "환불" }));
-        expect(screen.getByLabelText("환불 수량 바지")).toBeDisabled();     // 남은 0
+        expect(screen.getByLabelText("환불 수량 바지")).toBeDisabled();     // 남은 0 ／ [JA] 残り 0
         fireEvent.change(screen.getByLabelText("환불 수량 티셔츠"), { target: { value: "1" } });
         fireEvent.click(screen.getByRole("button", { name: "환불 확정" }));
 
@@ -217,7 +233,7 @@ describe("환불 관리", () => {
         await screen.findAllByText("buyer@example.com");
 
         fireEvent.click(screen.getByRole("button", { name: "반품 입고" }));
-        expect(screen.getByLabelText("입고 수량 바지")).toBeDisabled();     // 이미 돌아옴
+        expect(screen.getByLabelText("입고 수량 바지")).toBeDisabled();     // 이미 돌아옴 ／ [JA] すでに戻っている
         fireEvent.change(screen.getByLabelText("입고 수량 티셔츠"), { target: { value: "1" } });
         fireEvent.click(screen.getByRole("button", { name: "입고 확정" }));
 
@@ -238,6 +254,7 @@ describe("환불 관리", () => {
     });
 
     // ── 재고 초과 판매(docs/53 §7) ──────────────────────────────────────────
+    // [JA] ── 在庫超過販売(docs/53 §7) ──────────────────────────────────────────
 
     it("🔴 재고 부족 수량을 품목과 주문에 보인다 — 발송 수량에서 빼야 한다", async () => {
         adminListOrders.mockResolvedValue(page([withItems({ orderStatus: "PAID",
@@ -270,21 +287,24 @@ describe("환불 관리", () => {
         fireEvent.click(screen.getByRole("button", { name: "반품 입고" }));
 
         const picker = screen.getByLabelText("입고 수량 티셔츠");
-        expect(Array.from(picker.options).map((o) => o.value)).toEqual(["0", "1"]);   // 3 − 2 = 1 까지
+        expect(Array.from(picker.options).map((o) => o.value)).toEqual(["0", "1"]);   // 3 − 2 = 1 까지 ／ [JA] 3 − 2 = 1 まで
     });
 
     // ── 무통장입금 입금 확인 ────────────────────────────────────────────────
+    // [JA] ── 銀行振込の入金確認 ────────────────────────────────────────────────
 
     /** 🔒 카드 결제 확인과 같은 무게. 보내는 것은 어느 주문·참조뿐이고 금액은 없다. */
+    // [JA] 🔒 カード決済の確認と同じ重み。送るのはどの注文・参照だけで、金額はない。
     it("🔒 입금 대기 주문에 입금 확인 버튼이 있고, 확정하면 trackingId 와 참조만 보낸다", async () => {
         adminListOrders.mockResolvedValue(page([
             row({ orderId: 1, trackingId: "t-cash", orderStatus: "UNPAID", paymentMethod: "cash",
                 paymentProvider: null, providerPaymentId: null, depositorName: "홍길동",
                 depositDeadline: "2026-09-21T10:00:00", currency: "KRW", chargedAmount: 80973 }),
             row({ orderId: 2, trackingId: "t-done", orderStatus: "UNPAID", paymentMethod: "cash",
-                paymentProvider: "BANK_TRANSFER", providerPaymentId: "deposit-2" }),   // 확인됨, 반영 중
+                paymentProvider: "BANK_TRANSFER", providerPaymentId: "deposit-2" }),   // 확인됨, 반영 중 ／ [JA] 確認済み、反映中
             row({ orderId: 3, trackingId: "t-card", orderStatus: "NOT_PROCESSED", paymentProvider: null }),
             // 포트원 가상계좌 — 포트원 웹훅이 확인한다. 사람이 누를 버튼이 없어야 한다.
+            // [JA] ポートワンのバーチャル口座 — ポートワンの Webhook が確認する。人が押すボタンがあってはならない。
             row({ orderId: 4, trackingId: "t-vbank", orderStatus: "UNPAID", paymentMethod: "portone",
                 paymentProvider: null, providerPaymentId: null, depositDeadline: "2026-09-21T10:00:00" }),
         ]));
@@ -298,7 +318,7 @@ describe("환불 관리", () => {
         expect(screen.getByText(/확인됨\(반영 중\)/)).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole("button", { name: "입금 확인" }));
-        expect(screen.getByText(/통장에/)).toBeInTheDocument();   // 확인 패널 — 청구액(KRW)이 그 안에 있다
+        expect(screen.getByText(/통장에/)).toBeInTheDocument();   // 확인 패널 — 청구액(KRW)이 그 안에 있다 ／ [JA] 確認パネル — 請求額(KRW)がその中にある
         fireEvent.change(screen.getByLabelText("입금 참조"), { target: { value: "TX-9" } });
         fireEvent.click(screen.getByRole("button", { name: "입금 확인 확정" }));
 

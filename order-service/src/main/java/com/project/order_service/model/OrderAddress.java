@@ -30,6 +30,7 @@ import lombok.experimental.SuperBuilder;
 @SuperBuilder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 // 주소는 주문이 가리킨다(Order.shippingAddress) — 예전에는 여기서도 주문을 가리켜(order_id) 외래 키가 둘이었다(V25).
+// [JA] 住所は注文が指す(Order.shippingAddress) — 以前はここからも注文を指し(order_id)外部キーが 2 つあった(V25)。
 @Table(name="order_address", schema = "orders")
 public class OrderAddress extends BaseEntity {
 
@@ -59,6 +60,7 @@ public class OrderAddress extends BaseEntity {
 
     @NotBlank(message="우편번호는 공백이 없어야 합니다.")
     //@Pattern(regexp = "(^$|[0-9]{5})", message="우편번호는 5자리 숫자이어야 합니다.")
+    // [JA] (コメントアウトされた検証 — 郵便番号は 5 桁の数字でなければならない)
     @Size(min=2, message="우편번호는 적어도 2자 이상이어야 합니다.")
     private String zipCode;
     

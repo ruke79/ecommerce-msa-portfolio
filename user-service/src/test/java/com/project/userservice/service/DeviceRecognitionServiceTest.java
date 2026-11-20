@@ -33,6 +33,10 @@ import com.project.userservice.service.DeviceRecognitionService.Recognition;
  * <p><b>이 판단은 양쪽으로 조용히 틀린다.</b> 알림이 안 나가면 계정이 털려도 사용자는
  * 모르고, 너무 자주 나가면 무시하게 되어 진짜 경고까지 묻힌다. 둘 다 예외도 로그도 없이
  * 일어나므로 규칙을 표로 고정한다.
+ *
+ * <p>[JA] 「このログインは初めて見る機器か」 — {@code SECURITY_ALERT} を生み出す唯一の判断。
+ * <b>この判断は両方向に静かに間違う。</b>通知が出なければアカウントが乗っ取られてもユーザーは気づかず、
+ * 頻繁に出すぎると無視するようになって本物の警告まで埋もれる。どちらも例外もログもなく起きるので、ルールを表で固定する。
  */
 @DisplayName("새 기기 인식")
 class DeviceRecognitionServiceTest {
@@ -58,6 +62,7 @@ class DeviceRecognitionServiceTest {
     }
 
     /** 이 사용자에게 이미 기기 기록이 있다고 해 둔다. */
+    // [JA] このユーザーには既に機器記録があることにしておく。
     private void hasDevices(boolean any) {
         when(repository.existsByUserId(USER)).thenReturn(any);
     }
@@ -74,6 +79,9 @@ class DeviceRecognitionServiceTest {
          * 🔴 가입하고 처음 로그인한 사람에게 "새로운 기기에서 로그인되었습니다" 는 말이
          * 안 된다 — 비교할 기기가 없으니 새롭다고 할 것도 없다. 게다가 첫인상이 쓸데없는
          * 경고면 나중의 진짜 경고도 무시한다.
+         *
+         * <p>[JA] 🔴 登録して初めてログインした人に「新しい機器からログインされました」はおかしい —
+         * 比べる機器がないので新しいと言うこともない。しかも第一印象が無駄な警告だと、後の本物の警告も無視される。
          */
         @Test
         @DisplayName("첫 기기에는 알리지 않는다 — 비교할 기기가 없다")
@@ -84,6 +92,7 @@ class DeviceRecognitionServiceTest {
 
             assertThat(result.shouldAlert()).isFalse();
             // 그래도 기록은 한다 — 다음 기기가 새 기기인지 알려면 이게 있어야 한다.
+            // [JA] それでも記録はする — 次の機器が新しい機器かを知るにはこれが必要である。
             verify(repository).save(any(KnownDevice.class));
             assertThat(result.cookieToken()).isNotNull();
         }
@@ -112,12 +121,16 @@ class DeviceRecognitionServiceTest {
         /**
          * 한 브라우저를 두 사람이 쓰면 두 번째 사람에게는 새 기기다. 쿠키 값이 같아도
          * <b>사용자별로</b> 판정해야 한다.
+         *
+         * <p>[JA] 一つのブラウザを二人が使えば、二人目にとっては新しい機器である。クッキー値が同じでも
+         * <b>ユーザーごとに</b>判定しなければならない。
          */
         @Test
         @DisplayName("같은 쿠키라도 다른 사용자에게는 새 기기다")
         void sameCookieDifferentUserIsNew() {
             hasDevices(true);
             // 이 사용자에게는 그 해시가 없다.
+            // [JA] このユーザーにはそのハッシュがない。
             when(repository.findByUserIdAndTokenHash(anyLong(), anyString()))
                     .thenReturn(Optional.empty());
 
@@ -127,6 +140,9 @@ class DeviceRecognitionServiceTest {
         /**
          * 쿠키를 지운 브라우저는 서버 입장에서 처음 보는 브라우저와 구별되지 않는다.
          * 알리는 쪽이 맞다 — 오탐이 아니다.
+         *
+         * <p>[JA] クッキーを消したブラウザは、サーバーから見ると初めて見るブラウザと区別できない。
+         * 知らせるのが正しい — 誤検知ではない。
          */
         @Test
         @DisplayName("쿠키를 지우면 새 기기로 본다")
@@ -200,6 +216,8 @@ class DeviceRecognitionServiceTest {
         /**
          * 값을 못 읽은 로그인 한 번이 예전 기록을 지우면, 사용자는 목록에서 "알 수 없음"
          * 만 보게 된다.
+         *
+         * <p>[JA] 値を読めなかったログイン一回が以前の記録を消すと、ユーザーは一覧で「不明」だけを見ることになる。
          */
         @Test
         @DisplayName("라벨을 못 읽어도 예전 라벨을 지우지 않는다")
@@ -228,6 +246,9 @@ class DeviceRecognitionServiceTest {
         /**
          * 쿠키는 있는데 이 사용자에게는 처음인 경우다. 새 토큰을 만들면 브라우저의 다른
          * 계정 기록이 끊긴다 — 가져온 값을 그대로 쓴다.
+         *
+         * <p>[JA] クッキーはあるがこのユーザーには初めての場合である。新しいトークンを作るとブラウザの別アカウントの記録が
+         * 途切れる — 持ってきた値をそのまま使う。
          */
         @Test
         @DisplayName("가져온 쿠키 값이 있으면 그 값으로 기록한다")
@@ -250,6 +271,9 @@ class DeviceRecognitionServiceTest {
          * 🔴 같은 사용자가 동시에 두 번 로그인하면 둘 다 "새 기기" 로 보고 각자 저장을
          * 시도한다. UNIQUE 가 한쪽을 막는데, 그때 알림까지 보내면 사용자는 같은 알림을
          * 두 개 받는다.
+         *
+         * <p>[JA] 🔴 同じユーザーが同時に二回ログインすると、両方が「新しい機器」と見てそれぞれ保存を試みる。
+         * UNIQUE が片方を止めるが、そのとき通知まで送るとユーザーは同じ通知を二つ受け取る。
          */
         @Test
         @DisplayName("UNIQUE 에 걸린 쪽은 알리지 않는다 — 알림이 두 개가 되면 안 된다")
@@ -287,6 +311,7 @@ class DeviceRecognitionServiceTest {
         }
 
         /** 상한이 없으면 쿠키를 지우는 브라우저 하나가 이 사용자의 행을 무한히 늘린다. */
+        // [JA] 上限がなければ、クッキーを消すブラウザ一つがこのユーザーの行を無限に増やす。
         @Test
         @DisplayName("상한을 넘으면 오래 안 쓴 것부터 지운다")
         void trimsTheOldest() {
@@ -330,6 +355,7 @@ class DeviceRecognitionServiceTest {
     class Forgetting {
 
         /** 🔒 id 만으로 지우면 번호를 훑어 남의 기기 기록을 지울 수 있다. */
+        // [JA] 🔒 id だけで消すと、番号を走査して他人の機器記録を消せる。
         @Test
         @DisplayName("남의 기기는 지울 수 없다 — 소유자까지 함께 조회한다")
         void cannotForgetSomeoneElsesDevice() {

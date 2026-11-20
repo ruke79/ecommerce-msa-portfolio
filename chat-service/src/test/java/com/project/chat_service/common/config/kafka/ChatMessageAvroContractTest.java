@@ -12,6 +12,8 @@ import com.project.common.kafka.avro.AvroMappingContract;
 /**
  * chat 토픽의 DTO({@code MessageDto}) ↔ Avro 매핑 계약. 매핑이 chat-service 에 있어 common 의
  * {@code AvroMappingContractTest} 가 보지 못한다 — 같은 검사를 여기서 한다(docs/55 §7-7).
+ *
+ * <p>[JA] chat トピックの DTO({@code MessageDto}) ↔ Avro マッピング契約。マッピングが chat-service にあるので common の {@code AvroMappingContractTest} からは見えない — 同じ検査をここで行う(docs/55 §7-7)。
  */
 @DisplayName("chat — DTO ↔ Avro 매핑 계약")
 class ChatMessageAvroContractTest {

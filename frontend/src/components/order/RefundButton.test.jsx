@@ -4,6 +4,7 @@ import RefundButton from "components/order/RefundButton";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("util/api", () => ({ postRequest: jest.fn() }));
@@ -32,6 +33,7 @@ describe("RefundButton — 상태별 모습", () => {
     });
 
     /** 서버가 거절하는 상태에는 버튼을 그리지 않는다 — 눌러 보고 거절당하게 두지 않는다. */
+    // [JA] サーバーが拒否する状態にはボタンを描かない — 押して拒否されるままにしない。
     it("발송 뒤에는 버튼 대신 고객센터 안내", () => {
         render(<RefundButton order={order("DISPATCHED")} />);
         expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -39,6 +41,7 @@ describe("RefundButton — 상태별 모습", () => {
     });
 
     /** 도착한 물건은 돌려보내야 환불된다 — "배송이 시작됐다" 는 오는 중인 물건에 하는 말이다. */
+    // [JA] 届いた品物は返送しないと返金されない — 「配送が始まった」は配送中の品物に言う言葉だ。
     it("배송 완료 뒤에는 반품 절차를 안내한다", () => {
         render(<RefundButton order={order("DELIVERED")} />);
         expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -52,6 +55,7 @@ describe("RefundButton — 상태별 모습", () => {
     });
 
     /** 돌려주는 것은 제공자에게 청구한 금액이다 — 상점 통화의 total 이 아니다. */
+    // [JA] 返すのはプロバイダーに請求した金額だ — ストア通貨の total ではない。
     it("확인 문구는 청구 통화·금액이다 — JPY 로 결제했으면 ¥, 센트도 그대로", () => {
         const { unmount } = render(
             <RefundButton order={order("PAID", { currency: "JPY", chargedAmount: 8850 })} />);
@@ -59,9 +63,10 @@ describe("RefundButton — 상태별 모습", () => {
         expect(screen.getByText(/8,850/)).toBeInTheDocument();
         unmount();
 
-        render(<RefundButton order={order("PAID")} />);   // 옛 주문 — 상점 통화로 total
+        render(<RefundButton order={order("PAID")} />);   // 옛 주문 — 상점 통화로 total ／ [JA] 古い注文 — ストア通貨で total
         fireEvent.click(screen.getByRole("button", { name: /환불 요청/ }));
         // 한국어 화면(ko-KR)의 달러 표기는 "US$" 다 — 통화 표기는 앱 언어를 따른다(useMoney).
+        // [JA] 韓国語画面(ko-KR)のドル表記は "US$" だ — 通貨表記はアプリの言語に従う(useMoney)。
         expect(screen.getByText("US$59.98")).toBeInTheDocument();
     });
 
@@ -84,6 +89,7 @@ describe("RefundButton — 상태별 모습", () => {
 
 describe("RefundButton — 요청", () => {
     /** 🔒 보내는 것은 어느 주문·왜 뿐이다. 금액·결제 참조는 본문에 없어야 한다. */
+    // [JA] 🔒 送るのはどの注文・なぜだけだ。金額・決済参照は本文にあってはならない。
     it("🔒 확정하면 trackingId 와 사유만 보낸다", async () => {
         postRequest.mockResolvedValue({ data: { message: "환불이 처리되었습니다." } });
         const onRefunded = jest.fn();
@@ -121,6 +127,7 @@ describe("RefundButton — 요청", () => {
     });
 
     /** 🔒 부분 환불 — 품목·수량만. 금액은 서버가 정한다. */
+    // [JA] 🔒 部分返金 — 品目・数量だけ。金額はサーバーが決める。
     it("🔒 품목 수량을 줄이면 items 를 보내고 금액은 보내지 않는다", async () => {
         postRequest.mockResolvedValue({ data: { message: "선택한 품목이 환불되었습니다." } });
         render(<RefundButton order={order("PAID", {

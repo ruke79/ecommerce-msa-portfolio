@@ -30,6 +30,7 @@ import reactor.core.publisher.Mono;
 class NoPeerCertificateSslInfoFilterTest {
 
     /** getSslInfo() 를 부를 때마다 센다 — 진짜 요청이라면 여기서 getPeerCertificates() 예외가 난다. */
+    // [JA] getSslInfo() を呼ぶたびに数える — 本物のリクエストならここで getPeerCertificates() の例外が出る。
     private static ServerWebExchange exchange(String url, AtomicInteger lookups) {
         ServerHttpRequest counting = new ServerHttpRequestDecorator(MockServerHttpRequest.get(url).build()) {
             @Override
@@ -42,6 +43,7 @@ class NoPeerCertificateSslInfoFilterTest {
     }
 
     /** 라우트 필터(RemoveRequestHeader 등)처럼 요청을 고치고, 고친 요청의 TLS 정보를 돌려준다. */
+    // [JA] ルートフィルター(RemoveRequestHeader など)のようにリクエストを書き換え、書き換えたリクエストの TLS 情報を返す。
     private static SslInfo runAndMutate(NoPeerCertificateSslInfoFilter filter, ServerWebExchange exchange) {
         AtomicReference<SslInfo> seen = new AtomicReference<>();
         WebFilterChain chain = ex -> {

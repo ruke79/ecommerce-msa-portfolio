@@ -10,6 +10,8 @@ import com.project.chat_service.common.config.FeignConfig;
 
 /**
  * 마이크로서비스 간의 호출을 위한 feignclient
+ *
+ * <p>[JA] マイクロサービス間の呼び出しのための FeignClient
  */
 @FeignClient(name="user-service", url="${feign.user-url}", configuration = FeignConfig.class)
 public interface UserServiceClient {

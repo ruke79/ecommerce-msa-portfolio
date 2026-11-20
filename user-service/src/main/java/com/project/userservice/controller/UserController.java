@@ -48,6 +48,7 @@ public class UserController {
     private final UserServiceImpl userService;
 
     /** 비밀번호를 바꾸면 다른 기기는 끊고 이 기기는 새 로그인으로 이어 준다(docs/68 §14). */
+    // [JA] パスワードを変えたら他の端末は切り、この端末は新しいログインとしてつなぐ(docs/68 §14)。
     private final com.project.userservice.service.RefreshTokenService refreshTokenService;
     private final com.project.userservice.security.jwt.JwtUtils jwtUtils;
 
@@ -63,8 +64,14 @@ public class UserController {
     //    /update-password 가 전부였다. 그래서 화면은 JWT 페이로드로 사용자 객체를
     //    만들어 썼고(util/jwtUser.js), 거기에 없는 name·image 를 읽어 화면 곳곳에
     //    undefined 가 찍혔다. `/profile` 본문은 아예 만들어진 적이 없다.
+    // [JA] ── 自分のプロフィール ──
+    //      🐛 これまで**プロフィールを返す GET がなかった。**このコントローラーのエンドポイントは
+    //      /address · /save_address · /select · /delete · /payment · /changepm · /update-password ですべてだった。
+    //      だから画面は JWT ペイロードでユーザーオブジェクトを作って使い(util/jwtUser.js)、そこにない name・image を
+    //      読んで画面のあちこちに undefined が出た。`/profile` の本文は一度も作られたことがない。
 
     /** 내 프로필. 신원은 게이트웨이가 검증한 토큰이 정한다. */
+    // [JA] 自分のプロフィール。身元はゲートウェイが検証したトークンが決める。
     @GetMapping("/me")
     ResponseEntity<?> getMyProfile(@AuthenticationPrincipal UserDetails userDetails) {
         if (null == userDetails) {
@@ -83,12 +90,19 @@ public class UserController {
     //
     // 보안 알림("새로운 기기에서 로그인되었습니다")을 받은 사용자가 갈 곳이다. 알림만 있고
     // 확인할 화면이 없으면 "본인이 아니면 비밀번호를 바꾸세요" 밖에 할 수 있는 일이 없다.
+    // [JA] ── ログイン端末 ──
+    //      セキュリティ通知(「新しい端末でログインしました」)を受けたユーザーが行く先である。通知だけあって
+    //      確認する画面がなければ「本人でなければパスワードを変えてください」以外にできることがない。
 
     /**
      * 내가 로그인한 적 있는 기기들.
      *
      * <p>🔒 신원은 게이트웨이가 검증한 토큰이 정한다. 사용자 id 를 파라미터로 받으면
      * 남의 기기 목록을 볼 수 있다 — 이 저장소가 여러 번 겪은 형태다.
+     *
+     * <p>[JA] 自分がログインしたことのある端末。
+     * 🔒 身元はゲートウェイが検証したトークンが決める。ユーザー id をパラメータで受け取ると
+     * 他人の端末一覧が見えてしまう — このリポジトリが何度も経験した形だ。
      */
     @GetMapping("/devices")
     ResponseEntity<?> myDevices(@AuthenticationPrincipal UserDetails userDetails) {
@@ -112,6 +126,12 @@ public class UserController {
      *
      * <p>화면 설계는 {@link com.project.userservice.dto.TierStatusDto} 주석에 적었다 —
      * 요점은 <b>"다음 등급까지 얼마"를 주지 않는다</b>는 것이다.
+     *
+     * <p>[JA] 自分の等級とその根拠。
+     * 🔒 本人のものだけを見る — 身元はゲートウェイが検証したトークンからだけ来る。等級はその人の
+     * <b>消費規模</b>をそのまま表す値なので他人に見えてはならない。
+     * 画面設計は {@link com.project.userservice.dto.TierStatusDto} のコメントに書いた —
+     * 要点は<b>「次の等級まであといくら」を出さない</b>ことだ。
      */
     @GetMapping("/tier")
     ResponseEntity<?> myTier(@AuthenticationPrincipal UserDetails userDetails) {
@@ -134,6 +154,12 @@ public class UserController {
      * 이 동작의 뜻은 "다음에 그 기기에서 로그인하면 새 기기로 보고 알린다" 뿐이다.
      * 화면 문구도 그렇게 적어야 한다. "로그아웃시킨다"로 읽히면 사용자는 조치를 했다고
      * 믿고 더 이상 아무것도 하지 않는다 — 진짜로 필요한 것은 비밀번호 변경이다.
+     *
+     * <p>[JA] 端末の記憶を消す。
+     * ⚠️ <b>セッションは切らない。</b>その端末にログイン状態があればそのまま残る —
+     * この動作の意味は「次にその端末でログインしたら新しい端末とみなして通知する」だけだ。
+     * 画面の文言もそう書くべきだ。「ログアウトさせる」と読まれるとユーザーは対処したと信じて
+     * それ以上何もしない — 本当に必要なのはパスワード変更だ。
      */
     @DeleteMapping("/devices/{deviceId}")
     ResponseEntity<?> forgetDevice(@PathVariable("deviceId") Long deviceId,
@@ -143,6 +169,7 @@ public class UserController {
                     .body(new MessageResponse(StatusMessages.USER_NOT_FOUND));
         }
         // 남의 기기면 404 다 — 403 을 주면 "그 번호의 기기는 존재한다"가 새어 나간다.
+        // [JA] 他人の端末なら 404 — 403 を返すと「その番号の端末は存在する」が漏れる。
         return userService.forgetDevice(userDetails.getUsername(), deviceId)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -150,6 +177,7 @@ public class UserController {
     }
 
     /** 표시 이름 변경. 이메일·로그인 id 는 바꾸지 않는다(UserServiceImpl 주석 참조). */
+    // [JA] 表示名の変更。メール・ログイン id は変えない(UserServiceImpl のコメント参照)。
     @PutMapping("/me")
     ResponseEntity<?> updateMyProfile(@Valid @RequestBody ProfileUpdateRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
@@ -177,6 +205,11 @@ public class UserController {
      *
      * <p>{@code FileUtil.getFilePath} 가 확장자를 검사한다 — 허용 목록에 없는 형식이면
      * 던진다. 업로드 경로에서 파일 형식을 믿으면 안 되기 때문이다.
+     *
+     * <p>[JA] プロフィール画像のアップロード。
+     * キーに {@code images/} 接頭辞を付ける。バケットの公開読み取りポリシーが {@code arn:aws:s3:::<バケット>/images/*} にだけ
+     * かかっているので(ImageService のコメント)、接頭辞なしで上げると<b>アップロードは成功するのにブラウザでは 403</b> になる。
+     * {@code FileUtil.getFilePath} が拡張子を検査する — 許可リストにない形式なら投げる。アップロード経路ではファイル形式を信じてはならないからだ。
      */
     @PostMapping("/me/image")
     ResponseEntity<?> uploadMyProfileImage(@RequestPart("image") MultipartFile image,
@@ -190,12 +223,14 @@ public class UserController {
         }
         if (image.getSize() > MAX_PROFILE_IMAGE_BYTES) {
             // 톰캣의 multipart 상한에 걸리면 메시지가 스택트레이스로 나간다. 먼저 막는다.
+            // [JA] Tomcat の multipart 上限に引っかかるとメッセージがスタックトレースとして出る。先に止める。
             return ResponseEntity.badRequest()
                     .body(new MessageResponse("이미지는 5MB까지 올릴 수 있습니다."));
         }
 
         try {
             // 접두사를 명시한다. FileUtil 의 기본값은 "image"(단수)라 정책과 어긋난다.
+            // [JA] 接頭辞を明示する。FileUtil の既定値は "image"(単数)でポリシーと食い違う。
             String path = FileUtil.getFilePath(
                     image, "profile/" + FileUtil.getRandomFilename(), "images");
             String url = imageService.upload(image, path);
@@ -208,11 +243,13 @@ public class UserController {
                     .body(new MessageResponse("이미지를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."));
         } catch (RuntimeException e) {
             // 확장자 검사 실패(FileUtil) 등.
+            // [JA] 拡張子検査の失敗(FileUtil)など。
             return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
         }
     }
 
     /** 프로필 이미지 삭제 — 기본 아바타(이니셜)로 돌아간다. */
+    // [JA] プロフィール画像の削除 — 既定のアバター(イニシャル)に戻る。
     @DeleteMapping("/me/image")
     ResponseEntity<?> deleteMyProfileImage(@AuthenticationPrincipal UserDetails userDetails) {
         if (null == userDetails) {
@@ -221,10 +258,13 @@ public class UserController {
         }
         // S3 객체는 지우지 않는다. 같은 URL 을 다른 곳에서 참조하고 있을 수 있고(과거
         // 리뷰 등), 정리는 별도 배치의 일이다. 프로필에서 참조만 끊는다.
+        // [JA] S3 オブジェクトは消さない。同じ URL を別の場所で参照しているかもしれず(過去の
+        //      レビューなど)、整理は別のバッチの仕事だ。プロフィールからの参照だけを切る。
         return ResponseEntity.ok(userService.updateMyProfileImage(userDetails.getUsername(), null));
     }
 
     /** 프로필 이미지 최대 크기. */
+    // [JA] プロフィール画像の最大サイズ。
     static final long MAX_PROFILE_IMAGE_BYTES = 5L * 1024 * 1024;
 
     @GetMapping("/address")
@@ -271,6 +311,9 @@ public class UserController {
     /**
      * 기본 배송지로 정한다. 🐛 상태를 바꾸는데 GET 이었다 — 화면은 PUT 으로 부른다. 배포 중인 옛 화면을 위해 GET 도 한동안 받는다.
      * 없거나 남의 주소면 404(예전에는 200 빈 본문).
+     *
+     * <p>[JA] 既定の配送先にする。🐛 状態を変えるのに GET だった — 画面は PUT で呼ぶ。デプロイ中の古い画面のため GET もしばらく受け付ける。
+     * 存在しないか他人の住所なら 404(以前は 200 で空の本文)。
      */
     @org.springframework.web.bind.annotation.RequestMapping(value = "/select/{addressId}",
             method = {org.springframework.web.bind.annotation.RequestMethod.PUT,
@@ -297,6 +340,7 @@ public class UserController {
     }
 
     /** 배송지 수정. 본인 것만 — 남의 것이면 403, 잘못된 id 면 400. 기본 배송지 여부는 바뀌지 않는다. */
+    // [JA] 配送先の修正。本人のものだけ — 他人のものなら 403、不正な id なら 400。既定の配送先かどうかは変わらない。
     @PutMapping("/address/{addressId}")
     ResponseEntity<?> updateShippingAddress(@PathVariable("addressId") String addressId,
             @jakarta.validation.Valid @RequestBody AddressRequest request,
@@ -387,6 +431,13 @@ public class UserController {
      *
      * <p>🐛 응답이 <b>맨 문자열</b>이라 화면의 {@code data.message} 가 언제나 undefined 였다
      * — 바꾸는 데 성공해도 성공 문구가 빈칸으로 떴다. JSON 으로 바꾼다.
+     *
+     * <p>[JA] ログイン状態でパスワードを変える。
+     * 🐛 以前は<b>現在のパスワードが誤っていても {@code 200 "Password updated"}</b> だった。
+     * サービスが条件文の中でだけ保存し else なしで抜けていたが戻り値が void なので、ここでは成功と区別する方法がなかった。
+     * 今はサービスが例外を投げ、それが 400 になる。
+     * 🐛 応答が<b>素の文字列</b>だったので画面の {@code data.message} は常に undefined だった
+     * — 変更に成功しても成功文言が空欄で出た。JSON に変える。
      */
     @PutMapping("/update-password")
     public ResponseEntity<?> updatePassword(@RequestBody PasswordRequest request,

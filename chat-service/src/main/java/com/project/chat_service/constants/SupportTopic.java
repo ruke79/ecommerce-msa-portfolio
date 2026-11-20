@@ -5,11 +5,15 @@ package com.project.chat_service.constants;
  *
  * <p>V8 의 CHECK 제약과 같은 목록이어야 한다. 모르는 값이 오면 {@link #OTHER} 로 받는다 — 화면이 새 유형을 먼저
  * 배포해도 문의가 막히지 않게.
+ *
+ * <p>[JA] 問い合わせ種別 — 顧客が相談を開くときに選ぶ(docs/58 §11)。デスクが種別ごとに絞り込み、相談員は何から見るべきかがわかる。
+ * <p>V8 の CHECK 制約と同じリストでなければならない。未知の値が来たら {@link #OTHER} として受け付ける — 画面が新しい種別を先にデプロイしても問い合わせが止まらないように。
  */
 public enum SupportTopic {
     ORDER, DELIVERY, PAYMENT, PRODUCT, ACCOUNT, OTHER;
 
     /** 요청의 문자열 → 유형. null · 빈 값 · 모르는 값은 OTHER. */
+    // [JA] リクエストの文字列 → 種別。null・空値・未知の値は OTHER。
     public static SupportTopic parse(String value) {
         if (value == null || value.isBlank()) {
             return OTHER;

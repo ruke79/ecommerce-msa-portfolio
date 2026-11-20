@@ -24,7 +24,9 @@ import org.junit.jupiter.api.io.TempDir;
  * 자동 복귀가 CrashLoop 파드를 지워 손으로도 볼 수 없었고(2026-10-17 데모 saga-projection — 재시작 6번 · Pending 3개),
  * OOMKilled 는 로그에 원인이 없어 보이지 않았다.
  *
- * <p>[JA] ops/28 のロールアウト失敗の診断。以前は最新の Pod(Pending ならログなし)を選び、自動復帰で証拠が消えた。
+ * <p>[JA] ops/28 のロールアウト失敗の診断(show_startup_error)— 自動復帰の前に、失敗した Pod の証拠を残す。
+ * 🐛 以前: 最も新しい Pod を選び、それがイメージ取得中の Pending Pod ならログがなく何も出なかった。自動復帰が CrashLoop の Pod を消して
+ * 手でも見られず(2026-10-17 デモ saga-projection — 再起動 6 回 · Pending 3 個)、OOMKilled はログに原因がなく見えなかった。
  */
 @DisplayName("ops/28 — 롤아웃 실패 파드의 증거")
 class DeployStartupErrorScriptTest {
@@ -44,6 +46,9 @@ class DeployStartupErrorScriptTest {
     /**
      * 가짜 kubectl — 오래된 정상 파드 · CrashLoop 파드(재시작 6, OOMKilled) · 가장 새 Pending 파드(컨테이너 없음).
      * 생성 순서로 정렬된 목록에서 마지막이 Pending 이다.
+     *
+     * <p>[JA] 偽の kubectl — 古い正常ポッド · CrashLoop ポッド(再起動 6、OOMKilled) · 最も新しい Pending ポッド(コンテナなし)。
+     * 作成順に並んだリストで最後が Pending だ。
      */
     private static final String FAKE_KUBECTL = """
             #!/usr/bin/env bash
@@ -70,6 +75,9 @@ class DeployStartupErrorScriptTest {
     /**
      * Spring 전에 JVM 이 죽은 파드 — 로그는 "Error: Invalid or corrupt jarfile" 한 줄(2026-10-18 데모: 레지스트리 이미지는
      * 멀쩡하고 agent2 가 풀어 둔 사본만 깨져 있었다).
+     *
+     * <p>[JA] Spring より前に JVM が死んだポッド — ログは "Error: Invalid or corrupt jarfile" の 1 行(2026-10-18 デモ: レジストリのイメージは
+     * 正常で、agent2 が展開しておいたコピーだけが壊れていた)。
      */
     private static final String FAKE_KUBECTL_BAD_JAR = """
             #!/usr/bin/env bash

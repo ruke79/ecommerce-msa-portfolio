@@ -37,6 +37,7 @@ public class CouponRollbackRequestAvroMapping implements AvroMapping<com.project
     @Override
     public BinaryMessageDecoder<com.project.common.avro.CouponRollbackRequest> decoder() {
         // v1(orderId 없음)으로 쓴 레코드도 읽는다 — 배포 도중 옛 order 파드가 쓴 것(AvroSchemaHistory).
+        // [JA] v1(orderId なし)で書いたレコードも読む — デプロイ途中に古い order ポッドが書いたもの(AvroSchemaHistory)。
         return com.project.common.avro.CouponRollbackRequest.createDecoder(AvroSchemaHistory.store(AvroSchemaHistory.COUPON_ROLLBACK));
     }
 }

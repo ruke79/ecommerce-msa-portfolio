@@ -51,7 +51,7 @@ public class TotpSecretCipher {
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
 
-    private final SecretKey dedicated;   // 없으면 null
+    private final SecretKey dedicated;   // 없으면 null ／ [JA] なければ null
     private final SecretKey derived;
     private final SecureRandom random = new SecureRandom();
 
@@ -62,11 +62,13 @@ public class TotpSecretCipher {
         TotpSecretConverter.use(this);
         if (dedicated == null) {
             // 값은 남기지 않는다 — 있고 없음만.
+            // [JA] 値は残さない — あるかないかだけ。
             log.warn("TOTP_ENCRYPTION_KEY 가 없다 — 2FA 비밀을 JWT 비밀에서 파생한 키로 암호화한다. JWT 비밀을 교체하기 전에 전용 키를 넣고 한 번 배포할 것(docs/70)");
         }
     }
 
     /** 지금 쓰는 키의 표시 — 이것이 아닌 값은 백필이 다시 잠근다. */
+    // [JA] 今使っている鍵の標識 — これでない値はバックフィルが再ロックする。
     public String currentPrefix() {
         return dedicated != null ? DEDICATED : DERIVED;
     }
@@ -98,6 +100,9 @@ public class TotpSecretCipher {
     /**
      * 복호화. 접두사가 없으면 옛 평문 그대로. 풀 수 없으면(키가 바뀌었거나 값이 손상됐다) 예외 — 틀린 비밀로 조용히 검증하면
      * 사용자는 이유도 모른 채 2FA 에 계속 실패한다. 운영자가 보게 크게 실패한다.
+     *
+     * <p>[JA] 復号。接頭辞がなければ古い平文のまま。復号できなければ(鍵が変わったか値が壊れた)例外 — 誤った秘密で静かに検証すると、
+     * ユーザーは理由も分からないまま 2FA に失敗し続ける。運用者が気づくよう大きく失敗する。
      */
     public String decrypt(String stored) {
         if (stored == null || !stored.startsWith("enc:")) {

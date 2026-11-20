@@ -101,6 +101,7 @@ public class SecurityConfig {
         private final com.project.userservice.security.PendingTwoFactor pendingTwoFactor;
 
         /** 위험 기반 로그인(docs/68 §19). */
+        // [JA] リスクベースログイン(docs/68 §19)。
         private final com.project.userservice.security.risk.LoginRiskGuard loginRiskGuard;
         private final com.project.userservice.service.EmailService emailService;
 
@@ -298,7 +299,9 @@ public class SecurityConfig {
                 // JWT 필터는 로그인 필터 자리(UsernamePasswordAuthenticationFilter) 앞. 🐛 예전에는 AuthLoginFilter.class 를 기준으로 줘
                 //    상속에 기대고 있었다 — 그 클래스가 UsernamePasswordAuthenticationFilter 상속을 끊으면 기동이 IllegalArgumentException 으로
                 //    죽는다. 표준 자리를 직접 가리킨다(아래 addFilterAt 과 같은 자리 · 같은 순서).
-                // [JA] JWT フィルターはログインフィルターの位置の前。以前は AuthLoginFilter.class 基準で継承に頼っていた。
+                // [JA] JWT フィルターはログインフィルターの位置(UsernamePasswordAuthenticationFilter)の前。以前は AuthLoginFilter.class を基準に与え
+                //      継承に頼っていた — そのクラスが UsernamePasswordAuthenticationFilter の継承をやめると起動が IllegalArgumentException で
+                //      死ぬ。標準の位置を直接指す(下の addFilterAt と同じ位置 · 同じ順序)。
                 http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
 
                 http.addFilterBefore(new AuthLogoutFilter(jwtUtils, refreshTokenService), LogoutFilter.class);

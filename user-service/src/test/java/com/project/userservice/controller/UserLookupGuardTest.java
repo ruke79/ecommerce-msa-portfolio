@@ -30,6 +30,11 @@ import com.project.userservice.service.UserService;
  * {@code /user/name} 에 가드가 없던 동안 <b>로그인한 아무나 남의 이메일·프로필을 id 로 긁어 갈 수 있었다</b>(IDOR).
  * 판정은 {@code InternalCallGuard}: 게이트웨이를 거친 요청(신원 헤더 셋 중 하나라도 있음)은 관리자만, 서비스 간
  * Feign 호출(신원 헤더 없음 — Authorization 만 전달)은 통과. 막을 때 id·이름 조회는 없는 사용자와 같은 404 다.
+ *
+ * <p>[JA] 🔒 ユーザー照会エンドポイントは<b>内部専用</b>である(docs/27)。
+ * <p>/api/auth/user/** は USER ロールだけを要求する。だから /user/email/{id}・/user/profile/{id}・/user/name にガードがなかった間、
+ * <b>ログインした誰でも他人のメール・プロフィールを id で吸い出せた</b>(IDOR)。判定は InternalCallGuard: ゲートウェイを経たリクエスト(身元ヘッダ三つのうち一つでもある)は管理者だけ、
+ * サービス間 Feign 呼び出し(身元ヘッダなし — Authorization だけ伝達)は通過。止めるとき id・名前照会は存在しないユーザーと同じ 404。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -124,6 +129,7 @@ class UserLookupGuardTest {
     }
 
     /** coupon 의 신원이 id 로 바뀌었다 — 고객군도 id 로 묻는다(docs/48 §6-⑥). */
+    // [JA] coupon の身元が id に変わった — 顧客層も id で問う(docs/48 §6-⑥)。
     @Test
     @DisplayName("고객군은 사용자 id 로 묻는다 — 내부 호출만, 외부면 403 이고 조회하지 않는다")
     void segmentsById() {

@@ -27,8 +27,13 @@ import lombok.NoArgsConstructor;
  * ({@link #recordMessage})가 스레드를 읽은 뒤 커밋하기 전에 상담원이 조건부 UPDATE 로 맡으면({@code claim}), 메시지 쪽 커밋이
  * 읽어 둔 {@code status=WAITING · agent_id=null} 을 그대로 다시 써 <b>배정이 사라졌다</b> — 상담원에게는 "맡았다", 고객에게는
  * "상담원이 들어왔다" 안내까지 갔는데 스레드는 대기열로 돌아갔다. 내부 메모와 메시지 요약도 서로를 덮었다.
- * [JA] 変更した列だけを UPDATE する。以前は全列を書き戻し、メッセージ受信と同時に担当者が引き受ける(claim)と、
- * 読み込んだ時点の WAITING・担当者なしで上書きして割り当てが消えていた。
+ * [JA] 客 ↔ カスタマーサポートの相談スレッド(docs/58, V7)。
+ * メッセージ本文は友だちチャットと同じ MongoDB コレクションに {@link #roomId()} で積まれる。ここは状態 · 担当者 · 一覧の要約である。
+ * 会員は id だけで持つ — 関連を張ると一覧一回で会員行を次々に読む。
+ * 🐛 {@code @DynamicUpdate} — 変更した列だけを UPDATE する。以前は Hibernate が<b>全列</b>を書き戻していた。客のメッセージ
+ * ({@link #recordMessage})がスレッドを読んでからコミットするまでの間に担当者が条件付き UPDATE で引き受けると({@code claim})、メッセージ側の
+ * コミットが読んでおいた {@code status=WAITING · agent_id=null} をそのまま書き戻して<b>割り当てが消えた</b> — 担当者には「引き受けた」、客には
+ * 「担当者が入った」の案内まで行ったのに、スレッドは待ち行列に戻った。内部メモとメッセージ要約も互いを上書きした。
  */
 @Entity
 @org.hibernate.annotations.DynamicUpdate
@@ -38,12 +43,15 @@ import lombok.NoArgsConstructor;
 public class SupportThread {
 
     /** 상담 메시지의 방 id 접두사. 친구 채팅방의 id 는 UUID 라 겹치지 않는다. */
+    // [JA] 相談メッセージのルーム id 接頭辞。友達チャットルームの id は UUID なので重ならない。
     public static final String ROOM_PREFIX = "support-";
 
     /** 목록에 보일 마지막 메시지 요약의 길이(V7 의 컬럼 길이). */
+    // [JA] 一覧に表示する最後のメッセージ要約の長さ(V7 のカラム長)。
     static final int PREVIEW_LENGTH = 200;
 
     /** 평가 의견 · 내부 메모의 최대 길이(V8 의 컬럼 길이). */
+    // [JA] 評価の意見・内部メモの最大長(V8 のカラム長)。
     public static final int RATING_COMMENT_LENGTH = 500;
     public static final int NOTE_LENGTH = 2000;
 
@@ -81,11 +89,13 @@ public class SupportThread {
     private Instant closedAt;
 
     /** 문의 유형(V8). 연 뒤에는 바뀌지 않는다. */
+    // [JA] 問い合わせ種別(V8)。開いた後は変わらない。
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16, updatable = false)
     private SupportTopic topic = SupportTopic.OTHER;
 
     /** 만족도(1~5) — 종료된 상담에 고객이 한 번(V8). */
+    // [JA] 満足度(1〜5) — 終了した相談に顧客が一度(V8)。
     @Column(name = "rating")
     private Short rating;
 
@@ -96,6 +106,7 @@ public class SupportThread {
     private Instant ratedAt;
 
     /** 🔒 상담원끼리만 보는 메모(V8) — 고객 응답에 싣지 않는다. */
+    // [JA] 🔒 相談員同士だけが見るメモ(V8) — 顧客への応答に載せない。
     @Column(name = "internal_note", length = NOTE_LENGTH)
     private String internalNote;
 
@@ -116,6 +127,7 @@ public class SupportThread {
     }
 
     /** 이 스레드의 메시지가 쌓이는 방 id — STOMP 구독 주소 {@code /sub/chat/room/<roomId>} 에도 쓰인다. */
+    // [JA] このスレッドのメッセージが溜まるルーム id — STOMP 購読宛先 {@code /sub/chat/room/<roomId>} にも使われる。
     public String roomId() {
         return ROOM_PREFIX + id;
     }
@@ -125,7 +137,11 @@ public class SupportThread {
      *
      * <p>🐛 {@link #roomId()} 가 만드는 모양({@code support-<번호>}) 그대로일 때만 번호다. 예전에는 {@code support-+7} ·
      * {@code support-007} 도 7 로 읽었다 — 접근 검사는 7번 스레드로 통과하고, 메시지는 다른 방 id 로 저장 · 전송돼 상담 기록과
-     * 구독 화면 어디에도 나타나지 않았다. [JA] roomId() と同じ形のときだけ番号として扱う。
+     * 구독 화면 어디에도 나타나지 않았다.
+     *
+     * <p>[JA] room id が相談スレッドのものならスレッド番号、そうでなければ null。🐛 {@link #roomId()} が作る形({@code support-<番号>})
+     * そのままのときだけ番号とする。以前は {@code support-+7} · {@code support-007} も 7 と読んでいた — アクセス検査は 7 番スレッドで通り、
+     * メッセージは別の room id で保存 · 送信されて、相談記録にも購読画面にも現れなかった。
      */
     public static Long threadIdOf(String roomId) {
         if (roomId == null || !roomId.startsWith(ROOM_PREFIX)) {
@@ -135,11 +151,12 @@ public class SupportThread {
             long id = Long.parseLong(roomId.substring(ROOM_PREFIX.length()));
             return roomId.equals(ROOM_PREFIX + id) ? id : -1L;
         } catch (NumberFormatException e) {
-            return -1L;   // 접두사는 맞는데 번호가 아니다 — 없는 스레드로 다룬다(구독·조회가 거절된다)
+            return -1L;   // 접두사는 맞는데 번호가 아니다 — 없는 스레드로 다룬다(구독·조회가 거절된다) ／ [JA] 接頭辞は合うが番号ではない — 存在しないスレッドとして扱う(購読・照会が拒否される)
         }
     }
 
     /** 방 id 가 상담 스레드의 것인가(번호가 올바르지 않아도 참 — 공개 방 경로로 새면 안 된다). */
+    // [JA] ルーム id が相談スレッドのものか(番号が正しくなくても真 — 公開ルームの経路に漏れてはならない)。
     public static boolean isSupportRoom(String roomId) {
         return roomId != null && roomId.startsWith(ROOM_PREFIX);
     }
@@ -159,11 +176,13 @@ public class SupportThread {
     }
 
     /** 평가가 끝났는가. */
+    // [JA] 評価が終わったか。
     public boolean isRated() {
         return rating != null;
     }
 
     /** 만족도를 남긴다 — 검증(종료 · 본인 · 한 번 · 범위)은 서비스가 먼저 한다. */
+    // [JA] 満足度を残す — 検証(終了・本人・一度・範囲)はサービスが先に行う。
     public void rate(int score, String comment, Instant now) {
         this.rating = (short) score;
         this.ratingComment = comment == null || comment.isBlank() ? null : comment.strip();
@@ -171,6 +190,7 @@ public class SupportThread {
     }
 
     /** 내부 메모를 바꾼다. 빈 글이면 지운다. */
+    // [JA] 内部メモを変更する。空の文なら削除する。
     public void updateNote(String note, Instant now) {
         this.internalNote = note == null || note.isBlank() ? null : note.strip();
         this.noteUpdatedAt = now;
@@ -179,6 +199,9 @@ public class SupportThread {
     /**
      * 상담원이 상담을 반납한다 — 다시 대기열로(담당자 없음). V7 의 CHECK(대기 중이면 담당자 없음)를 지킨다.
      * "답변 필요" 는 그대로 둔다 — 다음 상담원이 고객의 마지막 말에 답해야 하는지 알아야 한다.
+     *
+     * <p>[JA] 相談員が相談を返却する — 再び待機列へ(担当者なし)。V7 の CHECK(待機中なら担当者なし)を守る。
+     * 「回答必要」はそのままにする — 次の相談員が顧客の最後の発言に答えるべきかを知る必要がある。
      */
     public void release() {
         this.status = SupportThreadStatus.WAITING;
@@ -187,15 +210,18 @@ public class SupportThread {
     }
 
     /** 메시지가 오갔다 — 목록 요약과 "답변 필요" 를 갱신한다. */
+    // [JA] メッセージがやり取りされた — 一覧の要約と「回答必要」を更新する。
     public void recordMessage(String content, boolean fromCustomer, Instant now) {
         String text = content == null ? "" : content.strip();
         // 코드 포인트 경계에서 자른다 — char 로 자르면 이모지(서로게이트 쌍)가 반으로 갈라져 목록에 깨진 글자가 찍혔다.
+        // [JA] コードポイント境界で切る — char で切ると絵文字(サロゲートペア)が半分に割れ、一覧に壊れた文字が表示された。
         this.lastMessagePreview = text.length() > PREVIEW_LENGTH ? truncate(text, PREVIEW_LENGTH - 1) + "…" : text;
         this.lastMessageAt = now;
         this.awaitingReply = fromCustomer;
     }
 
     /** 앞에서부터 최대 {@code maxChars} 개의 char 안에 들어가는 코드 포인트까지. */
+    // [JA] 先頭から最大 {@code maxChars} 個の char に収まるコードポイントまで。
     static String truncate(String text, int maxChars) {
         int end = text.offsetByCodePoints(0, Math.min(text.codePointCount(0, text.length()), maxChars));
         while (end > maxChars) {

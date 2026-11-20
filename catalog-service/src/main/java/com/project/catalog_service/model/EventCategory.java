@@ -21,6 +21,13 @@ import lombok.Setter;
  *
  * <p>{@link EventProduct} 와 같은 이유로 {@code @Embeddable} 이다: 기획전을 떠나서는
  * 의미가 없고, 아무도 이 행을 가리키지 않는다.
+ *
+ * <p>[JA] 企画展の対象カテゴリ一つとその割引率。
+ * なぜ商品単位だけでは足りないのか。「女性衣料全体 20%」を商品単位でやるには中の商品を一つずつ入れる必要があり、企画展一つ 500 個の上限にすぐ達する。
+ * さらに悪いのは、企画展開始後に登録された商品が漏れることだ — 管理者はカテゴリを指定したつもりなのに新商品だけが定価のまま残り、
+ * それが明るみに出るのは顧客の問い合わせによってだ。
+ * カテゴリは照会時点で商品に展開する(EventPricing)。だから後から入った商品も自動的に含まれる — 一覧を保存しておくとその瞬間にまた固まってしまう。
+ * EventProduct と同じ理由で @Embeddable である: 企画展を離れては意味がなく、誰もこの行を指さない。
  */
 @Embeddable
 @Getter
@@ -33,6 +40,7 @@ public class EventCategory {
     private Long categoryId;
 
     /** 퍼센트(0~100). {@code ProductSku.discount} 와 같은 단위여야 한다. */
+    // [JA] パーセント(0〜100)。ProductSku.discount と同じ単位でなければならない。
     @Column(name = "discount_rate", nullable = false)
     private int discountRate;
 }

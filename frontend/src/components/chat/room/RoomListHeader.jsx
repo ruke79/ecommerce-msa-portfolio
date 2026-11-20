@@ -18,6 +18,14 @@ import { FaPlus } from 'react-icons/fa';
  *   <li>쓰이지 않는 `createRoom` prop 과, .js 파일에 들어와 있던 TS 타입 import
  *       (`ChangeEvent`) 를 걷어냈다 — 후자는 런타임에 존재하지 않는 이름이다.</li>
  * </ul>
+ *
+ * <p>[JA] チャットルーム一覧のヘッダー — タイトル · 部屋作成 · 検索。
+ * 手を入れたもの:
+ * ・部屋作成が `<i>` タグの onClick だった。ボタンではないのでキーボードで押せず、スクリーンリーダーにも拾われない。
+ * `<button>` に変えて aria-label を付けた。
+ * ・アイコンが fa-user-plus(人の追加)だった。ここで作るのは人ではなく部屋である — アイコンと title("Add Room")が別のことを言っていた。
+ * ・タイトル "Room" と placeholder "Search Name" が英語なのにモーダルは韓国語だった。
+ * ・使われない `createRoom` prop と、.js ファイルに入り込んでいた TS 型の import(`ChangeEvent`)を取り除いた — 後者は実行時に存在しない名前である。
  */
 const RoomListHeader = ({ changeSearch }) => {
   const { t } = useTranslation();

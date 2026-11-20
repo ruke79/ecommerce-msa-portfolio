@@ -52,6 +52,7 @@ public class CartEmptyRequestAvroMapping implements AvroMapping<com.project.comm
     @Override
     public BinaryMessageDecoder<com.project.common.avro.CartEmptyRequest> decoder() {
         // v1(authorizationToken 있음) · v2(orderId 없음)로 쓴 레코드도 읽는다 — 배포 도중 옛 프로듀서가 쓴 것(AvroSchemaHistory).
+        // [JA] v1(authorizationToken あり) · v2(orderId なし)で書いたレコードも読む — デプロイ途中に古いプロデューサーが書いたもの(AvroSchemaHistory)。
         return com.project.common.avro.CartEmptyRequest.createDecoder(AvroSchemaHistory.store(AvroSchemaHistory.CART_EMPTY));
     }
 }

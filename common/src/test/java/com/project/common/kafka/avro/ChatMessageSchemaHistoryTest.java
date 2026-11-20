@@ -24,6 +24,10 @@ import com.project.common.avro.UserCreatedRequest;
  *
  * <p>레지스트리가 없어 레코드 앞의 지문으로 작성 스키마를 찾는다. 이력이 없으면 지문이 다른 레코드는 전부
  * 역직렬화 실패로 DLT 에 간다 — 채팅 메시지는 방에 전달되지 않고, 가입 쿠폰은 나가지 않는다.
+ *
+ * <p>[JA] スキーマ履歴 — フィールドを足しても抜いても、デプロイ途中に古いプロデューサーが書いたレコードを新しいコンシューマーが読む(docs/48 §6-⑥)。
+ * レジストリがないので、レコード先頭のフィンガープリントで書き込みスキーマを探す。履歴がなければフィンガープリントの違うレコードは
+ * すべてデシリアライズ失敗で DLT に行く — チャットメッセージはルームに届かず、登録クーポンは出ない。
  */
 @DisplayName("Avro 스키마 이력 — 옛 레코드를 새 소비자가 읽는다")
 class ChatMessageSchemaHistoryTest {
@@ -107,6 +111,7 @@ class ChatMessageSchemaHistoryTest {
     }
 
     /** 🔒 cart-empty·cart-rollback·coupon-use v1 은 사용자 액세스 토큰을 실었다. 새 소비자는 읽되 토큰은 버린다. */
+    // [JA] 🔒 cart-empty・cart-rollback・coupon-use の v1 はユーザーのアクセストークンを載せていた。新しいコンシューマーは読むがトークンは捨てる。
     @Test
     @DisplayName("🔴 토큰을 실은 v1 레코드(cart-empty·cart-rollback·coupon-use)를 읽는다 — 토큰은 버려진다")
     void tokenCarryingV1RecordsAreReadable() throws Exception {
@@ -137,6 +142,7 @@ class ChatMessageSchemaHistoryTest {
                 .deserialize("coupon-use", use).getTotalAfterDiscount()).isEqualByComparingTo("90.00");
 
         // 문자열 소비자(알림 등)용 디코더도 읽고, JSON 으로 옮길 때 토큰이 나오지 않는다.
+        // [JA] 文字列コンシューマー(通知など)向けのデコーダーも読み、JSON に移すときトークンが出てこない。
         for (var entry : Map.of("cart-empty", empty, "cart-rollback", rollback, "coupon-use", use).entrySet()) {
             assertThat(new AvroJsonTextDeserializer().deserialize(entry.getKey(), entry.getValue()))
                     .as(entry.getKey()).doesNotContain(token).doesNotContain("authorizationToken");
@@ -144,6 +150,7 @@ class ChatMessageSchemaHistoryTest {
     }
 
     /** 🔒 결제 요청(order)·상품 갱신(product-update) v1 도 사용자 토큰을 실었다 — 새 소비자는 읽되 토큰은 버린다. */
+    // [JA] 🔒 決済リクエスト(order)・商品更新(product-update)の v1 もユーザートークンを載せていた — 新しいコンシューマーは読むがトークンは捨てる。
     @Test
     @DisplayName("🔴 토큰을 실은 결제 요청·상품 갱신 v1 을 읽는다 — pay·catalog·saga-projection 이 쓰는 디코더")
     void paymentSagaV1RecordsAreReadable() throws Exception {

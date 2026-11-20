@@ -27,6 +27,16 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>멱등성.</b> 이벤트마다 안정적인 키를 만들어 {@code sourceEventId} 로 넘긴다.
  * 그 컬럼이 UNIQUE 라 재전달이 와도 알림은 하나만 생긴다(NotificationService).
  * Kafka 는 at-least-once 이므로 이 방어가 없으면 재전달마다 문자가 한 통씩 더 나간다.
+ *
+ * <p>[JA] 業務イベントを通知に変える。
+ * <b>なぜ JsonNode で受けるか。</b> このサービスは注文・決済・チャット・クーポンのイベントをすべて聞くが、
+ * 各 DTO にそのまま依存すると通知サービスが<b>すべてのドメインのスキーマ変更に振り回される。</b>
+ * 注文 DTO にフィールドが一つ増えると通知サービスがデシリアライズに失敗して落ちる、という具合である。通知に必要なのは
+ * 「誰に、何が」だけなので必要なフィールドだけ取り出して読む。なければ既定値で進む —
+ * <b>通知一つのせいでコンシューマーが止まる方が悪い。</b>
+ * <b>冪等性。</b> イベントごとに安定したキーを作り {@code sourceEventId} として渡す。
+ * その列が UNIQUE なので再配信が来ても通知は一つしかできない(NotificationService)。
+ * Kafka は at-least-once なので、この防御がなければ再配信のたびに SMS が一通ずつ多く出る。
  */
 @Slf4j
 @Component
@@ -34,12 +44,15 @@ import lombok.extern.slf4j.Slf4j;
 public class NotificationEventListener {
 
     /** {@code security-alert} 의 {@code alert} 값 — 리프레시 토큰 재사용으로 로그인이 끊겼다(user-service SecurityAlertProducer). */
+    // [JA] {@code security-alert} の {@code alert} 値 — リフレッシュトークンの再利用でログインが切られた(user-service SecurityAlertProducer)。
     static final String ALERT_REFRESH_REUSE = "refresh-reuse";
     static final String ALERT_2FA_ENABLED = "2fa-enabled";
     static final String ALERT_2FA_DISABLED = "2fa-disabled";
     // 로그인 보안 2차(user-service docs/68 §15) — SecurityAlertProducer 의 같은 이름 상수와 값이 같아야 한다.
+    // [JA] ログインセキュリティ第 2 弾(user-service docs/68 §15) — SecurityAlertProducer の同名定数と値が同じでなければならない。
     static final String ALERT_2FA_FAILURES = "2fa-failures";
     /** 2단계 인증 복구 코드 — 새로 만듦 · 로그인에 씀(user-service SecurityAlertProducer 와 같은 값). */
+    // [JA] 二段階認証の復旧コード — 新規作成 · ログインでの使用(user-service SecurityAlertProducer と同じ値)。
     static final String ALERT_RECOVERY_CODES_CREATED = "recovery-codes-created";
     static final String ALERT_RECOVERY_CODE_USED = "recovery-code-used";
     static final String ALERT_PASSWORD_RESET = "password-reset";
@@ -51,13 +64,16 @@ public class NotificationEventListener {
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダーの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     /** 결제 응답 — 성공/실패에 따라 알림 종류가 갈린다. */
+    // [JA] 決済応答 — 成功/失敗によって通知の種類が分かれる。
     @KafkaListener(id = "notification-payment", topics = "payment",
                    containerFactory = "notificationListenerContainerFactory")
     public void onPayment(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -67,6 +83,7 @@ public class NotificationEventListener {
                 String orderId = textOf(event, "orderId");
                 if (userId == null) {
                     // 수신자를 모르면 알림을 만들 수 없다. 버리되 조용히 버리지는 않는다.
+                    // [JA] 受取人が分からなければ通知を作れない。捨てるが黙っては捨てない。
                     log.warn("결제 이벤트에 수신자가 없어 알림을 만들지 못함: {}", abbreviate(messages.get(i)));
                     continue;
                 }
@@ -77,6 +94,10 @@ public class NotificationEventListener {
                 //    분류됐고, 중복 키까지 같은 주문의 결제 완료와 겹쳐 아무것도 만들어지지 않았다.
                 //    (그 전에 pay-service 가 환불 요청을 중복으로 오인해 응답 자체를 안 보냈다 —
                 //    PaymentService.publishIfOutboxEventProcessedForPayment 주석.)
+                // [JA] 🐛 以前は「FAIL でなければ全部決済完了」だった。返金(CANCELED)も「決済完了」に
+                //         分類され、重複キーまで同じ注文の決済完了とぶつかって何も作られなかった。
+                //         (その前は pay-service が返金要求を重複と誤認して応答自体を送らなかった —
+                //         PaymentService.publishIfOutboxEventProcessedForPayment のコメント。)
                 NotificationType type;
                 String title;
                 String body;
@@ -102,16 +123,19 @@ public class NotificationEventListener {
 
             } catch (Exception e) {
                 // 이 레코드만 DLT 로 보내고 나머지 배치는 계속 처리한다(docs/11 §3).
+                // [JA] このレコードだけ DLT に送り、残りのバッチは処理を続ける(docs/11 §3)。
                 throw new BatchListenerFailedException("payment 알림 처리 실패", e, i);
             }
         }
     }
 
     /** 주문 접수. */
+    // [JA] 注文受付。
     @KafkaListener(id = "notification-order", topics = "order",
                    containerFactory = "notificationListenerContainerFactory")
     public void onOrder(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -141,6 +165,11 @@ public class NotificationEventListener {
      * 테이블·메일에 상담 내용이 남지 않게. 종류는 {@link NotificationType#CHAT_MESSAGE} 를 쓴다 — 고객의 "채팅
      * 알림" 설정을 따르고, SMS 는 나가지 않는다. chat-service 가 이미 걸렀다: 보고 있는 고객·같은 상담 60초 안의
      * 연속 답변에는 오지 않는다.
+     *
+     * <p>[JA] カスタマーセンター相談員の回答(docs/58 §10) — chat-service が {@code support-reply} で送る。
+     * 本文は来ない — 「回答が来た」だけを知らせ、内容は本人だけが開く相談画面(/support)で読む。通知テーブル・メールに
+     * 相談内容が残らないように。種類は {@link NotificationType#CHAT_MESSAGE} を使う — 客の「チャット通知」設定に従い、
+     * SMS は出ない。chat-service が既に絞っている: 見ている客・同じ相談の 60 秒以内の連続回答には来ない。
      */
     @KafkaListener(id = "notification-support-reply", topics = "support-reply",
                    containerFactory = "notificationListenerContainerFactory")
@@ -173,11 +202,16 @@ public class NotificationEventListener {
      *
      * <p>SMS 로 보내지 않는다({@link NotificationType#CHAT_MESSAGE} 의 smsWorthy=false).
      * 대화 한 번에 문자 수십 통이 나가면 사용자에게도 우리에게도 재앙이다.
+     *
+     * <p>[JA] チャットメッセージ。
+     * SMS では送らない({@link NotificationType#CHAT_MESSAGE} の smsWorthy=false)。
+     * 一回の会話で SMS が数十通出るとユーザーにも我々にも災難である。
      */
     @KafkaListener(id = "notification-chat", topics = "chat",
                    containerFactory = "notificationListenerContainerFactory")
     public void onChat(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -197,6 +231,8 @@ public class NotificationEventListener {
                         NotificationType.CHAT_MESSAGE.path() + roomId,
                         // messageId 가 없으면 방+수신자로 대체한다. 완벽하진 않지만
                         // 없는 것보다 낫다 — 최소한 같은 메시지의 재전달은 걸러진다.
+                        // [JA] messageId がなければ部屋+受信者で代替する。完璧ではないが
+                        //      ないよりまし — 少なくとも同じメッセージの再配信は除かれる。
                         "chat:" + (messageId != null ? messageId : roomId + ":" + receiverId),
                         Map.of());
             } catch (Exception e) {
@@ -210,13 +246,19 @@ public class NotificationEventListener {
      *
      * <p>SMS 대상이 아니다. 접속 알림은 <b>지금 이 순간</b>에만 의미가 있어서, 문자가 몇 분 뒤
      * 도착하면 이미 쓸모없다. 앱 안에서만 보여 준다.
+     *
+     * <p>[JA] 友達の接続。
+     * SMS の対象ではない。接続通知は<b>今この瞬間</b>にしか意味がなく、SMS が数分後に届けばもう役に立たない。
+     * アプリ内でだけ見せる。
      */
     @KafkaListener(id = "notification-presence", topics = "user-presence",
                    containerFactory = "notificationListenerContainerFactory",
                    // 지난 접속을 몰아서 알리지 않는다 — 처음 붙으면 지금부터만(팩토리 기본은 earliest).
+                   // [JA] 過去の接続をまとめて知らせない — 初めてつながったら今からだけ(ファクトリーの既定は earliest)。
                    properties = "auto.offset.reset=latest")
     public void onPresence(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -235,6 +277,7 @@ public class NotificationEventListener {
                         NotificationTexts.FRIEND_ONLINE_BODY,
                         NotificationType.FRIEND_ONLINE.path(),
                         // 접속 이벤트는 자주 반복된다. 시각까지 키에 넣어 같은 접속을 한 번만 알린다.
+                        // [JA] 接続イベントは頻繁に繰り返される。時刻までキーに入れて同じ接続を一度だけ知らせる。
                         "presence:" + userId + ":" + watcherId + ":" + at,
                         Map.of());
             } catch (Exception e) {
@@ -265,11 +308,25 @@ public class NotificationEventListener {
      * {@code DeliveryStatus.isWorthNotifying()} 이 그것을 갖고 있다. 여기에 복사하면 두 곳이
      * 어긋난다. 다만 플래그가 <b>없는</b> 이벤트는 알리지 않는다 — 옛 형식의 이벤트가
      * 재전달됐을 때 전부 문자로 나가는 것보다, 안 나가는 쪽이 낫다.
+     *
+     * <p>[JA] 配送状態の変更。
+     * 🐛 <b>このリスナーがなかった。</b> delivery-service の {@code DeliveryStatusPublisher} は {@code delivery-status} トピックに状態変更を
+     * <b>発行していたのに、そのトピックを聞くコードがコードベース全体になかった。</b> イベントは Kafka に出てそのまま消えていた。
+     * {@link NotificationType#SHIPPING_UPDATED} はメールの件名({@code MailTemplates})、SMS 文言({@code SmsTemplates})、受信設定ポリシー
+     * ({@code NotificationPreference})、テストまで全部揃っていた — <b>作る側だけがなかった。</b> 発行者もこのリスナーを念頭に作られていた:
+     * {@code worthNotifying} フラグと安定した {@code eventId} を既に載せて送っている。
+     * <b>すべての遷移を知らせない。</b> 一件の配送は受付 → 集荷 → 幹線 → 配達出発 → 配達完了と 5~6 回変わる。
+     * 全部知らせると SMS 料金でありノイズである。発行者が計算して送った {@code worthNotifying} だけを通す —
+     * 実際にユーザーの行動が変わる瞬間である(今日受け取る · 到着した · 問題が起きた · 通関保留で書類が必要)。
+     * 判断をここでやり直さない理由: どの状態が知らせるに値するかは配送ドメインの知識で、
+     * {@code DeliveryStatus.isWorthNotifying()} がそれを持っている。ここにコピーすると二か所がずれる。ただしフラグが<b>ない</b>
+     * イベントは知らせない — 旧形式のイベントが再配信されたときに全部 SMS で出るより、出ない方がましである。
      */
     @KafkaListener(id = "notification-delivery", topics = "delivery-status",
                    containerFactory = "notificationListenerContainerFactory")
     public void onDeliveryStatus(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -287,6 +344,7 @@ public class NotificationEventListener {
                 JsonNode worth = event.get("worthNotifying");
                 if (worth == null || !worth.asBoolean(false)) {
                     // 중간 단계다. 앱에도 남기지 않는다 — 배송 상세 화면이 이력을 보여준다.
+                    // [JA] 中間段階である。アプリにも残さない — 配送詳細画面が履歴を見せる。
                     continue;
                 }
 
@@ -297,6 +355,8 @@ public class NotificationEventListener {
                         NotificationType.SHIPPING_UPDATED.path() + (orderId == null ? "" : orderId),
                         // 발행자가 "delivery:<orderId>:<status>" 로 만들어 준다. 같은 상태
                         // 전이가 재전달돼도 알림은 하나다(sourceEventId 가 UNIQUE).
+                        // [JA] 発行者が "delivery:<orderId>:<status>" で作ってくれる。同じ状態遷移が
+                        //      再配信されても通知は一つ(sourceEventId が UNIQUE)。
                         textOf(event, "eventId"),
                         Map.of("subject", NotificationTexts.orderSubject(orderId)));
 
@@ -316,11 +376,18 @@ public class NotificationEventListener {
      *
      * <p>SMS 로는 보내지 않는다({@code smsWorthy=false}) — 판촉이라 놓쳐도 손해가 나지
      * 않고, 건당 과금을 태울 이유가 없다. 앱과 메일로 충분하다.
+     *
+     * <p>[JA] クーポン発行。
+     * 🐛 <b>このリスナーもなかった。</b> {@link NotificationType#COUPON_ISSUED} はメールの件名({@code MailTemplates})・SMS 文言({@code SmsTemplates})・
+     * メール種類のマッピング({@code MailKind})・受信設定ポリシーが全部揃っていたのに<b>作る側がなかった。</b> 登録するとクーポンが
+     * 発行されるが、ユーザーは決済画面に行って初めてそれを知った。
+     * SMS では送らない({@code smsWorthy=false}) — 販促なので見逃しても損はなく、件数課金を使う理由がない。アプリとメールで十分である。
      */
     @KafkaListener(id = "notification-coupon", topics = "coupon-issued",
                    containerFactory = "notificationListenerContainerFactory")
     public void onCouponIssued(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -347,6 +414,7 @@ public class NotificationEventListener {
                         body,
                         NotificationType.COUPON_ISSUED.path(),
                         // 발행자가 "coupon:<couponId>" 로 만들어 준다 — 재전달돼도 하나다.
+                        // [JA] 発行者が "coupon:<couponId>" で作ってくれる — 再配信されても一つ。
                         textOf(event, "eventId"),
                         Map.of("subject", name));
 
@@ -376,11 +444,24 @@ public class NotificationEventListener {
      * 경로에서는 게이트웨이가 붙인 헤더로 주소를 기억해 두지만
      * ({@code NotificationService#rememberEmail}), 보안 알림은 사용자가 화면을 한 번도
      * 열지 않은 계정에도 나가야 한다 — 그 경우 기억된 주소가 없다. 발행자가 함께 보낸다.
+     *
+     * <p>[JA] 新しい端末からのログイン · リフレッシュトークン再利用によるログイン解除 — セキュリティ通知。
+     * どちらも {@code SECURITY_ALERT} である(受信設定を無視してアプリ · メール · SMS)。イベントの {@code alert} が
+     * {@code refresh-reuse} なら「セキュリティのためログインが解除されました」(docs/68 §7)、なければ新しい端末からのログインである。
+     * 🐛 <b>この通知も作る側がなかった。</b> {@link NotificationType#SECURITY_ALERT} はメールの件名・SMS 文言・メール種類のマッピングはもちろん、
+     * 受信設定に<b>「セキュリティ通知はユーザーが切っても送る」</b>という例外まで入っていた({@code NotificationPreference.shouldSendSms})。
+     * 全部揃えておいて発行する側だけがなく、アカウントが乗っ取られてもユーザーは知る方法がなかった。
+     * <b>これだけは SMS で出る。</b> 他の販促的な通知と正反対である — アカウントが乗っ取られつつあるという信号は、
+     * アプリを開かないと見えない所だけに置くと遅い。攻撃者が先に通知設定を切るのも防ぐ必要があるので受信設定を無視する。
+     * <b>メールアドレスをイベントに載せる理由。</b> このサービスにはユーザーテーブルがない。一覧照会の経路では
+     * ゲートウェイが付けたヘッダーでアドレスを覚えておくが({@code NotificationService#rememberEmail})、セキュリティ通知は
+     * ユーザーが画面を一度も開いていないアカウントにも出す必要がある — その場合覚えたアドレスがない。発行者が一緒に送る。
      */
     @KafkaListener(id = "notification-security", topics = "security-alert",
                    containerFactory = "notificationListenerContainerFactory")
     public void onSecurityAlert(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -396,6 +477,8 @@ public class NotificationEventListener {
 
                 // 주소를 먼저 기억시킨다. 그래야 아래 create 가 메일까지 보낼 수 있다 —
                 // 화면을 한 번도 열지 않은 계정에는 기억된 주소가 없다.
+                // [JA] アドレスを先に覚えさせる。そうしてこそ下の create がメールまで送れる —
+                //      画面を一度も開いていないアカウントには覚えたアドレスがない。
                 String email = textOf(event, "email");
                 if (email != null) {
                     notificationService.rememberEmail(userId, email);
@@ -429,6 +512,7 @@ public class NotificationEventListener {
                     body = NotificationTexts.UNPROVEN_PASSWORD_CLEARED_BODY;
                 } else if (ALERT_PASSKEY_ADDED.equals(alert)) {
                     // 모르는 사건은 아래 "새 기기" 문구로 떨어진다 — 패스키 등록을 새 기기 로그인으로 알리면 사용자가 무엇을 확인할지 모른다.
+                    // [JA] 知らない出来事は下の「新しい端末」文言に落ちる — パスキー登録を新しい端末のログインとして知らせるとユーザーは何を確認すべきか分からない。
                     title = NotificationTexts.PASSKEY_ADDED_TITLE;
                     body = NotificationTexts.PASSKEY_ADDED_BODY;
                 } else if (ALERT_PASSKEY_REMOVED.equals(alert)) {
@@ -450,6 +534,7 @@ public class NotificationEventListener {
                         body,
                         NotificationType.SECURITY_ALERT.path(),
                         // 발행자가 "security:device:<id>" · "security:refresh-reuse:<묶음 해시>" 로 만들어 준다 — 재전달돼도 하나다.
+                        // [JA] 発行者が "security:device:<id>" · "security:refresh-reuse:<まとまりのハッシュ>" で作ってくれる — 再配信されても一つ。
                         textOf(event, "eventId"),
                         Map.of());
 
@@ -469,11 +554,20 @@ public class NotificationEventListener {
      *
      * <p>{@code eventId} 는 발행자가 {@code order-completed:<orderId>} 로 만든다. 같은 주문의
      * 확정은 한 번뿐이라 재전달돼도 알림은 하나다(sourceEventId 가 UNIQUE).
+     *
+     * <p>[JA] 購入確定(docs/25 §12)。
+     * order-service が {@code order-completed} で発行する — 客が押したか({@code auto:false})、
+     * 配達完了後に期限が過ぎて自動でなったか({@code auto:true})を問わない。<b>自動確定が通知の理由である。</b>
+     * 客が自分で押したものは既に知っているが、自動は何もしていないのに注文状態が変わることなので、知らせなければ
+     * 注文履歴を開いて初めて分かる。文言が二つに分かれる。
+     * {@code eventId} は発行者が {@code order-completed:<orderId>} で作る。同じ注文の確定は一度きりなので
+     * 再配信されても通知は一つ(sourceEventId が UNIQUE)。
      */
     @KafkaListener(id = "notification-order-completed", topics = "order-completed",
                    containerFactory = "notificationListenerContainerFactory")
     public void onOrderCompleted(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマーのトレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -514,11 +608,19 @@ public class NotificationEventListener {
      * 결제 응답 쪽이 이미 알리므로 건너뛴다 — 둘 다 만들면 같은 환불에 알림이 두 개다. 종류는 같은
      * {@code PAYMENT_REFUNDED}(메일·문자 문구와 수신 설정을 그대로 쓴다). 키는 발행자가 만든
      * {@code order-refunded:<orderId>:<n>} — n 번째 환불은 하나뿐이라 재전달돼도 하나다.
+     *
+     * <p>[JA] 部分返金(docs/49 §10)。
+     * 🐛 <b>部分返金には通知がなかった。</b>「返金完了」は決済応答(CANCELED, {@link #onPayment})から出るが、
+     * order-service は全額が戻ったときにだけ決済を取り消す。品目の一部を返金するとお金は戻るのに何の通知もなかった。
+     * order-service が返金<b>一件ごとに</b> {@code order-refunded} を送る。全額({@code complete:true})は決済応答側が既に知らせるので
+     * 飛ばす — 両方作ると同じ返金に通知が二つになる。種類は同じ {@code PAYMENT_REFUNDED}(メール・SMS の文言と受信設定をそのまま使う)。
+     * キーは発行者が作った {@code order-refunded:<orderId>:<n>} — n 番目の返金は一つだけなので再配信されても一つ。
      */
     @KafkaListener(id = "notification-order-refunded", topics = "order-refunded",
                    containerFactory = "notificationListenerContainerFactory")
     public void onOrderRefunded(java.util.List<String> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h).
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
@@ -535,6 +637,8 @@ public class NotificationEventListener {
                 if (complete == null || complete.asBoolean(true)) {
                     // 전액 환불 — 결제 응답(CANCELED)이 "환불 완료" 를 이미 만든다. 플래그가 없는 옛 형식도
                     // 전액으로 보고 건너뛴다(두 번 알리는 것보다 낫다).
+                    // [JA] 全額返金 — 決済応答(CANCELED)が「返金完了」を既に作る。フラグのない旧形式も
+                    //      全額とみなして飛ばす(二度知らせるよりまし)。
                     continue;
                 }
                 String amount = refundAmount(textOf(event, "amount"), textOf(event, "currency"));
@@ -552,6 +656,7 @@ public class NotificationEventListener {
     }
 
     /** "8,000 KRW" — 금액이 없거나 숫자가 아니면 null(문구에서 뺀다). */
+    // [JA] "8,000 KRW" — 金額がないか数字でなければ null(文言から外す)。
     static String refundAmount(String amount, String currency) {
         if (amount == null || amount.isBlank()) {
             return null;
@@ -566,6 +671,8 @@ public class NotificationEventListener {
 
     // ── 스키마에 관대한 읽기 헬퍼 ────────────────────────────────────────────
     // 필드 이름이 서비스마다 조금씩 다르다(customerId/userId 등). 후보를 순서대로 본다.
+    // [JA] ── スキーマに寛容な読み取りヘルパー ──
+    //      フィールド名がサービスごとに少しずつ違う(customerId/userId など)。候補を順に見る。
 
     private static Long longOf(JsonNode node, String... names) {
         for (String name : names) {
@@ -578,6 +685,7 @@ public class NotificationEventListener {
                     return Long.parseLong(value.asText());
                 } catch (NumberFormatException ignored) {
                     // 다음 후보로
+                    // [JA] 次の候補へ
                 }
             }
         }

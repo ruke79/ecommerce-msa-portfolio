@@ -4,6 +4,7 @@ import ConfirmPurchaseButton from "components/order/ConfirmPurchaseButton";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 jest.mock("util/api", () => ({ confirmPurchase: jest.fn() }));
@@ -22,6 +23,9 @@ beforeEach(() => jest.clearAllMocks());
 /**
  * 🐛 COMPLETED 는 서버에 선언만 있고 그 값을 넣는 코드가 없었다. 배달 완료가 끝이었고,
  * 프로필의 "구매 확정" 필터는 영원히 비어 있었다.
+ *
+ * <p>[JA] 🐛 COMPLETED はサーバーに宣言だけあってその値を入れるコードがなかった。配達完了が終わりで、
+ * プロフィールの「購入確定」フィルターは永遠に空だった。
  */
 describe("ConfirmPurchaseButton — 상태별 모습", () => {
     it("배달 완료면 버튼과 자동 확정 안내가 있다", () => {
@@ -31,6 +35,7 @@ describe("ConfirmPurchaseButton — 상태별 모습", () => {
     });
 
     /** 서버가 거절하는 상태에는 버튼을 그리지 않는다 — 눌러 보고 거절당하게 두지 않는다. */
+    // [JA] サーバーが拒否する状態にはボタンを描かない — 押してから拒否されるままにしない。
     it("배달 완료가 아니면 아무것도 그리지 않는다", () => {
         ["PAID", "PROCESSING", "DISPATCHED", "REFUNDED", "CANCELED", "NOT_PROCESSED", "UNPAID"].forEach((s) => {
             const { container, unmount } = render(<ConfirmPurchaseButton order={order(s)} />);
@@ -48,6 +53,7 @@ describe("ConfirmPurchaseButton — 상태별 모습", () => {
     });
 
     /** 손님이 누른 적이 없는데 상태가 바뀌어 있으면 이유를 알아야 한다. */
+    // [JA] 客が押したことがないのに状態が変わっていれば理由を知る必要がある。
     it("자동 확정이면 그렇다고 말한다", () => {
         render(<ConfirmPurchaseButton order={order("COMPLETED", { completedAt: "2026-09-20T03:00:00", autoCompleted: true })} />);
         expect(screen.getByText(/자동으로 확정되었습니다/)).toBeInTheDocument();
@@ -61,13 +67,14 @@ describe("ConfirmPurchaseButton — 확정", () => {
         render(<ConfirmPurchaseButton order={order("DELIVERED")} onConfirmed={onConfirmed} />);
 
         fireEvent.click(screen.getByRole("button", { name: "구매 확정" }));
-        expect(confirmPurchase).not.toHaveBeenCalled();   // 아직 — 되돌릴 수 없는 일이라 한 번 더 묻는다
+        expect(confirmPurchase).not.toHaveBeenCalled();   // 아직 — 되돌릴 수 없는 일이라 한 번 더 묻는다 ／ [JA] まだ — 取り消せないことなのでもう一度確認する
         expect(screen.getByText(/되돌릴 수 없습니다/)).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole("button", { name: "확정" }));
 
         await waitFor(() => expect(onConfirmed).toHaveBeenCalled());
         // 18자리 주문 번호가 문자열 그대로 간다 — 숫자로 바꾸면 값이 바뀐다.
+        // [JA] 18 桁の注文番号が文字列のまま行く — 数値に変えると値が変わる。
         expect(confirmPurchase).toHaveBeenCalledWith("123456789012345678");
         expect(toast.success).toHaveBeenCalledWith("구매가 확정되었습니다.");
     });

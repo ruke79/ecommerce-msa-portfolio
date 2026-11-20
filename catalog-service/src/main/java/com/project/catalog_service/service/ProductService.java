@@ -106,6 +106,7 @@ public class ProductService  {
     private final ImageService imageService;
 
     // 실시간 ES 반영. search.engine=es 가 아니면 내부에서 no-op 이다.
+    // [JA] リアルタイム ES 反映。search.engine=es でなければ内部で no-op である。
     private final ProductIndexService productIndexService;
 
     /**
@@ -118,10 +119,16 @@ public class ProductService  {
      *
      * <p>캐시에 합성된 값이 들어가지만, 기획전이 시작·종료할 때 {@code EventScheduler} 가
      * 상품 캐시를 비운다. 그래서 stale 구간은 상태 전환 시점 하나뿐이다.
+     *
+     * <p>[JA] 進行中の企画展割引を照会結果に載せる。
+     * <p>DB の {@code ProductSku.discount} は<b>企画展と無関係な常時割引</b>一つの意味だけを持つ。企画展開始時にその値を上書きすると、終了時の復元がその間の修正を上書きするからだ(EventPricing のコメント)。
+     * 合成は {@link #convertToDto} 一か所だけで行う — 新しい照会経路ができても、その funnel を通れば自動で適用される。
+     * <p>キャッシュには合成済みの値が入るが、企画展の開始・終了時に {@code EventScheduler} が商品キャッシュを空にする。だから stale な区間は状態遷移の時点一つだけである。
      */
     private final EventPricing eventPricing;
 
     /** 재고가 0 을 건너면(품절·재입고) 알린다 — docs/53. */
+    // [JA] 在庫が 0 をまたいだら(品切れ・再入荷)通知する — docs/53。
     private final com.project.catalog_service.message.producer.StockEventProducer stockEvents;
 
     // private final ObjectMapper objectMapper;
@@ -151,6 +158,7 @@ public class ProductService  {
         CursorPagenation<Product> productCursor = CursorPagenation.of(productsPage.getContent(), pageSize);
         // ProductResponse 는 static 팩토리라 매퍼를 직접 쓴다 — convertToDto funnel 을 타지
         // 않으므로 여기서 기획전 할인을 얹는다.
+        // [JA] ProductResponse は static ファクトリなのでマッパーを直接使う — convertToDto の funnel を通らないので、ここで企画展割引を載せる。
         return eventPricing.apply(
                 ProductResponse.of(productCursor, productsPage.getContent().size()).getContents());
     }
@@ -173,13 +181,22 @@ public class ProductService  {
      * 커서마다 키가 갈려 캐시 적중률도 낮다. 무엇보다 위의 Redis 문제가 캐시 때문이었다.
      *
      * @param cursor 마지막으로 받은 상품 id. 첫 페이지는 음수({@code -1}).
+     *
+     * <p>[JA] 管理者の商品一覧 — カーソルページング。
+     * <p>🐛 <b>以前は管理者画面がカタログ全体を一度に受け取っていた。</b>{@code GET /api/product/products} → {@code warmUpProductCaches(20)} だが、名前と違い全カテゴリ × 全サブカテゴリを回って
+     * <b>全商品を一つの配列に</b>していた。しかも {@code @Cacheable(key = "'warmup'")} なので<b>カタログ全体が Redis キー一つ</b>に入った。商品が 250 個だから耐えていただけで、
+     * 規模が大きくなると応答 JSON が数 MB(ゲートウェイタイムアウト・ブラウザメモリ)、Redis キー一つが数十 MB(maxmemory ポリシーで他のキーを追い出すか、このキーが evict されて毎回全カタログを再照会)になる。
+     * <p><b>キャッシュしない。</b>管理者一覧はいま登録した商品が見えるべき画面で、カーソルごとにキーが分かれてヒット率も低い。何より上の Redis 問題はキャッシュのせいだった。
+     * cursor: 最後に受け取った商品 id。最初のページは負数({@code -1})。
      */
     @Transactional(readOnly = true)
     public ProductResponse getProductsPage(Long cursor, int pageSize) {
         // 상한을 둔다. pageSize=100000 이 오면 결국 전체 조회가 되어 고친 의미가 없다.
+        // [JA] 上限を置く。pageSize=100000 が来れば結局全件照会になり、直した意味がない。
         int safeSize = Math.max(1, Math.min(pageSize, MAX_ADMIN_PAGE_SIZE));
 
         // +1 을 더 읽어 "다음이 있는가" 를 판정한다(CursorPagenation).
+        // [JA] 1 件多く読んで「次があるか」を判定する(CursorPagenation)。
         PageRequest pageRequest = PageRequest.of(0, safeSize + 1);
 
         Page<Product> page = (cursor == null || cursor < 0)
@@ -190,19 +207,24 @@ public class ProductService  {
 
         // 전체 건수는 목록에 "총 N개" 를 보여주기 위한 것이다. 커서 페이징은 총계를 몰라도
         // 동작하므로, 한 번만(첫 페이지에서만) 센다 — 페이지마다 count(*) 를 돌릴 이유가 없다.
+        // [JA] 総件数は一覧に「全 N 件」を表示するためのもの。カーソルページングは総数を知らなくても動くので、一度だけ(最初のページでだけ)数える
+        //      — ページごとに count(*) を回す理由はない。
         long total = (cursor == null || cursor < 0) ? productRepository.count() : -1;
 
         ProductResponse response = ProductResponse.of(cursorPage, total);
         // 관리자 목록도 고객이 보는 것과 같은 할인을 보여야 한다. 여기만 정가면 관리자는
         // 기획전이 걸린 줄 모르고 상품을 수정한다.
+        // [JA] 管理者一覧も顧客が見るのと同じ割引を見せなければならない。ここだけ定価だと、管理者は企画展がかかっていると知らずに商品を修正する。
         eventPricing.apply(response.getContents());
         return response;
     }
 
     /** 관리자 목록 한 페이지의 상한. */
+    // [JA] 管理者一覧 1 ページの上限。
     public static final int MAX_ADMIN_PAGE_SIZE = 100;
 
     /** 공개 카테고리 목록 한 페이지의 상한(ProductController). */
+    // [JA] 公開カテゴリ一覧 1 ページの上限(ProductController)。
     public static final int MAX_PUBLIC_PAGE_SIZE = 100;
 
     @Cacheable(value = "products", key = "'name:' + #productName", unless = "#result == null || #result.isEmpty()")
@@ -237,17 +259,20 @@ public class ProductService  {
 
      
     // 키에 pageSize — 🐛 홈(4)과 관리자 목록(20)이 같은 'warmup' 키를 써서 먼저 부른 쪽의 개수가 둘 다에 나왔다(아래 메서드와 같은 버그).
+    // [JA] キーに pageSize — 🐛 ホーム(4)と管理者一覧(20)が同じ 'warmup' キーを使い、先に呼んだ方の件数が両方に出ていた(下のメソッドと同じバグ)。
     @Cacheable(value = "products", key = "'warmup:' + #pageSize", unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> warmUpProductCaches(int pageSize) {
         
         log.info("Starting to warm up product caches...");        
 
         // 1. 모든 카테고리 목록을 가져옵니다.
+        // [JA] 1. すべてのカテゴリ一覧を取得する。
         List<Category> allCategories = categoryRepository.findAll();
         List<ProductDto> products = new ArrayList<>();
 
         for (Category category : allCategories) {
             // 2. 현재 카테고리에 속한 모든 서브카테고리 목록을 가져옵니다.
+            // [JA] 2. 現在のカテゴリに属するすべてのサブカテゴリ一覧を取得する。
             List<Subcategory> allSubcategories = subCategoryRepository.findByCategory(category);
             
             for (Subcategory subcategory : allSubcategories) {
@@ -257,11 +282,12 @@ public class ProductService  {
                             category.getCategoryName(), subcategory.getSubcategoryName(), page);
 
                     // 3. getProductsByCategoryAndSubcategory 메소드를 호출하여 캐시를 채웁니다.
+                    // [JA] 3. getProductsByCategoryAndSubcategory メソッドを呼んでキャッシュを満たす。
                     products.addAll( getProductsByCategoryAndSubcategory(
                             category.getCategoryName(), subcategory.getSubcategoryName(), page, pageSize));
 
                 
-                    page++; // 다음 페이지로 이동
+                    page++; // 다음 페이지로 이동 ／ [JA] 次のページへ移動
                 
             }
         }
@@ -275,23 +301,33 @@ public class ProductService  {
      * @param subcategoryName
      * @param page
      * @return
+     *
+     * <p>[JA] カテゴリおよびサブカテゴリ別に商品を 10 件ずつページネーションして照会する。
      */
     // ⚠️ 키에 pageSize 가 **빠져 있었다.** /api/product/frontpage 는 pageSize=4 로,
     //    /api/product/products 는 20 으로 같은 메서드를 부르는데 키가 같아 **한 엔트리를
     //    공유했다** — 먼저 호출된 쪽이 이겨서, 홈에 20개가 깔리거나 목록에 4개만 나왔다.
     //    캐시가 비어 있을 때만 재현되니 "가끔 개수가 다르다"로 보였다.
     //    같은 파일의 getProductsByCategory(114행)는 처음부터 pageSize 를 키에 넣고 있었다.
+    // [JA] ⚠️ キーに pageSize が**抜けていた。**/api/product/frontpage は pageSize=4、/api/product/products は 20 で同じメソッドを呼ぶのにキーが同じで
+    //      **一つのエントリを共有していた** — 先に呼ばれた方が勝ち、ホームに 20 件並ぶか一覧に 4 件しか出なかった。
+    //      キャッシュが空のときだけ再現するので「たまに件数が違う」に見えた。同じファイルの getProductsByCategory(114 行)は最初から pageSize をキーに入れていた。
     @Cacheable(value = "products",
             key = "'sub:' + #categoryName + '_' + #subcategoryName + '_' + #page + '_' + #pageSize",
             unless = "#result == null || #result.isEmpty()")
     public List<ProductDto> getProductsByCategoryAndSubcategory(String categoryName, String subcategoryName, int page, int pageSize) {
          // 기본 페이지 크기를 10으로 설정합니다.
         // 한 페이지에 1개씩 가져오도록 PageRequest 객체를 생성합니다.
+         // [JA] 既定のページサイズを 10 にする。
+         //      1 ページに 1 件ずつ取得するよう PageRequest オブジェクトを作る。
         PageRequest pageRequest = PageRequest.of(page, pageSize);
 
         // ProductRepository에 새로운 쿼리 메소드를 추가하여 사용해야 합니다.
         // 이 쿼리 메소드는 categoryName과 subcategoryName을 기준으로 결과를 필터링합니다.
         // 이 메소드명은 JPA 규칙을 따르며, ProductSubcategory 엔티티를 통해 조인됩니다.
+        // [JA] ProductRepository に新しいクエリメソッドを追加して使う必要がある。
+        //      このクエリメソッドは categoryName と subcategoryName を基準に結果を絞り込む。
+        //      メソッド名は JPA の規則に従い、ProductSubcategory エンティティを通じて結合される。
         Page<Product> productsPage = productRepository
                 .findAllByCategory_CategoryNameAndSubcategories_Subcategory_SubcategoryName(
                         categoryName, subcategoryName, pageRequest);
@@ -302,6 +338,7 @@ public class ProductService  {
     }
 
     // 없는 id 는 캐시하지 않는다 — 🐛 null 을 막아 둔 캐시가 IllegalArgumentException 을 던져 404 대신 400 이 나갔다.
+    // [JA] 存在しない id はキャッシュしない — 🐛 null を禁じたキャッシュが IllegalArgumentException を投げ、404 の代わりに 400 が出ていた。
     @Cacheable(value = "product", key = "#productId", unless = "#result == null")
     public ProductDto getProductById(Long productId) {
         return productRepository.findById(productId)
@@ -318,6 +355,11 @@ public class ProductService  {
      * 없어진다. DB 한 번(IN 절) + {@code @BatchSize} 로 묶인 컬렉션 조회가 항목 수와 무관하게
      * 상수 번이라 그편이 낫다. 찾지 못한 id 는 결과에서 그냥 빠진다 — 호출자가 id 로 대조한다.
      * (DELETED 는 {@code @SQLRestriction} 이 거른다.)
+     *
+     * <p>[JA] 複数の商品を<b>一度に</b>照会する — cart-service がカート項目の数だけ {@link #getProductById} を直列に呼んでいたのを置き換える(docs/38 §1.13)。
+     * <p>キャッシュを通らない。{@code @Cacheable} は id 一つに DTO 一つを結び付ける構造で一覧には合わず、ここで項目ごとにキャッシュを探せば結局項目数だけ往復になりバッチの意味がなくなる。
+     * DB 一回(IN 句)+ {@code @BatchSize} でまとめたコレクション照会が項目数と無関係に定数回なので、その方がよい。見つからない id は結果から抜けるだけ — 呼び出し側が id で突き合わせる。
+     * (DELETED は {@code @SQLRestriction} が除く。)
      */
     @Transactional(readOnly = true)
     public List<ProductDto> getProductsByIds(Collection<Long> productIds) {
@@ -348,8 +390,15 @@ public class ProductService  {
      * 1건에 홈 카드 · 목록 · 검색 · 메뉴가 늘 캐시 밖이 되어 모든 요청이 DB 커넥션을 기다렸고(대기 37 ~ 47, 받기까지 1 ~ 2초), 실패
      * 0.25% → 79.90%. 그 전에는 반대로 products 를 비우지 않아 상세 별점이 영구 캐시에 옛 값으로 남았다 — 상세는 지금도 바로 맞는다.
      *
-     * <p>[JA] 評価はその商品のキャッシュだけを合わせる(id の詳細は置き換え、slug · 名前の照会は消す)。一覧 · 検索の評価は期限(30 · 60 分)
-     * まで古い値。以前は七つのキャッシュを丸ごと消し、レビュー毎秒 1 件で失敗が 0.25% → 79.90% になった。
+     * <p>[JA] 評価 — user-service がレビューが変わるたびに(そして毎日の評価照合がレビューのある商品ごとに)呼ぶ。
+     *
+     * <p>[JA] <b>その商品のキャッシュだけ</b>を合わせる: id の詳細(product)は新しい値に置き換え、slug の詳細 · 名前の照会(products の 'slug:' · 'name:')は
+     * 消す。一覧 · 検索 · カテゴリ側(products の他のキー · search_cache · products_by_category)の評価は期限(30 · 60 分)まで古い値で、
+     * 「評価 N 以上」フィルターもその分遅れる — 受け入れる。フィルターメニュー(colors · sizes · details · brands)は評価と関係ない。
+     *
+     * <p>[JA] 2026-10-19 データ規模測定(docs/83 §5 · §2.2): 以前は上の七つのキャッシュを {@code allEntries} で丸ごと消していた — レビュー毎秒
+     * 1 件でトップのカード · 一覧 · 検索 · メニューが常にキャッシュ外になり、すべてのリクエストが DB 接続を待ち(待ち 37 〜 47、取得まで 1 〜 2 秒)、失敗
+     * 0.25% → 79.90%。その前は逆に products を消さず、詳細の評価が永続キャッシュに古い値で残っていた — 詳細は今もすぐ合う。
      */
     @Caching(
             put = @CachePut(value = "product", key = "#productId"),
@@ -392,6 +441,7 @@ public class ProductService  {
     }
 
     // private 이라 @Transactional · @CachePut 이 돌지 않았다 — 그리고 "product" 캐시에 엔티티를 넣으려 했다. 둘 다 지웠다.
+    // [JA] private なので @Transactional・@CachePut が効いていなかった — しかも "product" キャッシュにエンティティを入れようとしていた。両方消した。
     private Product createOrFindProduct(ProductAddRequest request) {
         if (request.getParent() != null && !request.getParent().isEmpty()) {
             return productRepository.findById(Long.parseLong(request.getParent()))
@@ -448,8 +498,12 @@ public class ProductService  {
     // 🐛 예전 @CachePut(value = "product", key = "#result.productId") — 돌려주는 ProductSku 에는 productId 가 없어 프록시에서
     //    SpEL 예외(EL1008E)로 등록이 500 이 됐고, 됐더라도 ProductDto 를 담는 "product" 캐시에 엔티티를 넣었다. 부모 상품의
     //    캐시를 <b>지운다</b> — 다음 조회가 새 변형까지 담아 다시 만든다(ProductCacheKeyTest).
+    // [JA] 新規商品の登録時に検索/フィルタキャッシュを無効化しないと、最大 60 分(search_cache TTL)のあいだ登録した商品が検索結果に出ない。
+    //      🐛 以前の @CachePut(value = "product", key = "#result.productId") — 返す ProductSku には productId がなくプロキシで SpEL 例外(EL1008E)となり登録が 500 になった。
+    //      通ったとしても ProductDto を入れる "product" キャッシュにエンティティを入れていた。親商品のキャッシュを**消す** — 次の照会が新しいバリエーションまで含めて作り直す(ProductCacheKeyTest)。
     @org.springframework.cache.annotation.Caching(evict = {
             // products 도 — 🐛 예전에는 빠져 있어 새 상품이 홈 · 카테고리 목록에, 새 색상이 상세(slug)에 나오지 않았다.
+            // [JA] products も — 🐛 以前は抜けていて、新商品がホーム・カテゴリ一覧に、新しい色が詳細(slug)に出なかった。
             @CacheEvict(value = {"products", "search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true),
             @CacheEvict(value = "product", key = "#result.product.productId")
     })
@@ -466,12 +520,18 @@ public class ProductService  {
     //
     //    이제 잘못된 입력은 IllegalArgumentException 으로 던진다(컨트롤러가 400 으로
     //    변환). null 반환 경로는 없다.
+    // [JA] ⚠️ このメソッドは以前、三つの形で黙って間違っていた。すべて実配備で確認された形なので直した理由を残す:
+    //      ・`Optional<Category> category` を `if (category != null)` で検査していた — Optional は null でないので**常に真**で、存在しないカテゴリだと `category.get()` が NoSuchElementException で 500 を出した。検証ではなく爆発だった。
+    //      ・カテゴリ・親が見つからないと `return null` — コントローラがそれを**200 OK で**返し、画面は「登録完了」を出すのに実際には何も作られていなかった。
+    //      ・slug に何の制約もなく、同じ名前を二回登録すると詳細照会(`findBySlug`)が任意のものを返した。
+    //      今は不正な入力を IllegalArgumentException で投げる(コントローラが 400 に変換)。null を返す経路はない。
     public ProductSku addProduct(ProductRequest request, List<MultipartFile> images, MultipartFile colorImage)
             throws IOException {
 
         if (images == null || images.isEmpty()) {
             // createSku 가 images 를 그대로 순회하고 colorImage 를 무조건 업로드한다.
             // 시그니처의 required=false 는 거짓말이다 — 여기서 명확히 끊는다.
+            // [JA] createSku は images をそのまま回し、colorImage を無条件にアップロードする。シグネチャの required=false は嘘である — ここではっきり断つ。
             throw new IllegalArgumentException("이미지가 없습니다 — 최소 1장이 필요합니다");
         }
         if (colorImage == null || colorImage.isEmpty()) {
@@ -484,7 +544,7 @@ public class ProductService  {
                     .orElseThrow(() -> new IllegalArgumentException(
                             "부모 상품이 없습니다: id=" + request.getParent()));
 
-            ProductSku newSku = createSku(request, parent, images, colorImage, false);   // 변형 — 상품 정보는 그대로
+            ProductSku newSku = createSku(request, parent, images, colorImage, false);   // 변형 — 상품 정보는 그대로 ／ [JA] バリエーション — 商品情報はそのまま
             productRepository.save(parent);
             productIndexService.index(parent);
             return newSku;
@@ -520,12 +580,15 @@ public class ProductService  {
         if (subCategories.size() != subcategoryIds.size()) {
             // 일부만 존재하면 "찾은 것만" 붙이고 조용히 넘어가는 편이 더 나쁘다 —
             // 화면에서 고른 분류와 실제 저장이 어긋난 채 성공한 것으로 보인다.
+            // [JA] 一部だけ存在するとき「見つかったものだけ」付けて黙って進む方がもっと悪い — 画面で選んだ分類と実際の保存がずれたまま成功したように見える。
             throw new IllegalArgumentException(
                     "존재하지 않는 서브카테고리가 있습니다: 요청 " + subcategoryIds.size()
                             + "개 중 " + subCategories.size() + "개만 찾음");
         }
         // 🐛 하위 카테고리가 상품의 카테고리에 속하는지 보지 않았다. 시드 데이터의 연결 81% 가 다른 카테고리였다
         //    (올리브유가 "테이블 · 스마트폰" 에) — 검색 화면의 하위 카테고리 필터가 엉뚱한 상품을 보여 준 원인이다(V16).
+        // [JA] 🐛 サブカテゴリが商品のカテゴリに属するかを見ていなかった。シードデータの紐付けの 81% が別カテゴリだった(オリーブオイルが「テーブル・スマートフォン」に)
+        //      — 検索画面のサブカテゴリフィルタが見当違いの商品を見せた原因である(V16)。
         for (Subcategory sub : subCategories) {
             if (sub.getCategory() == null || !sub.getCategory().getCategoryId().equals(category.getCategoryId())) {
                 throw new IllegalArgumentException("서브카테고리가 상품의 카테고리에 속하지 않습니다: " + sub.getSubcategoryId());
@@ -544,6 +607,7 @@ public class ProductService  {
         productRepository.save(product);
         ProductSku created = createSku(request, product, images, colorImage, true);
         // 색인은 SKU(이미지·가격)까지 저장된 뒤에 — 문서에 SKU 목록이 들어간다.
+        // [JA] 索引は SKU(画像・価格)まで保存された後に — ドキュメントに SKU 一覧が入る。
         productIndexService.index(product);
         return created;
     }
@@ -558,6 +622,11 @@ public class ProductService  {
      * <p>번호는 DB 시퀀스라 레플리카가 몇 개든 충돌하지 않는다. 그래도 존재 검사를
      * 하는 이유: 관리자가 손으로 넣은 SKU 가 우연히 같은 모양(예: FOO-000200)일 수
      * 있다. 그 경우 다음 번호로 넘어간다.
+     *
+     * <p>[JA] SKU の自動生成: {@code <カテゴリ接頭辞 3 文字>-<シーケンス 6 桁>} — 例: {@code FOO-000123}。
+     * <p>接頭辞は人が読むためのヒントにすぎない — カテゴリが変わっても SKU はそのままにする。属性をコードに刻んだ瞬間、属性が変わるとコードが嘘をつくので、
+     * 信頼する情報はすべて DB にあり、コードは識別だけを担う。
+     * <p>番号は DB シーケンスなのでレプリカがいくつでも衝突しない。それでも存在検査をする理由: 管理者が手で入れた SKU がたまたま同じ形(例: FOO-000200)のことがある。その場合は次の番号へ進む。
      */
     private String generateSku(Product product) {
         String prefix = skuPrefix(
@@ -577,6 +646,9 @@ public class ProductService  {
      * 카테고리 이름에서 접두사 3자를 뽑는다. ASCII 영숫자만 쓴다 — SKU 는 창고 라벨·
      * 전화 응대에서 불러 읽는 코드라 대문자 영숫자로 제한하는 것이 관례다. 한글 등
      * ASCII 밖 이름이라 3자를 못 채우면 중립 접두사 PRD 로 떨어진다.
+     *
+     * <p>[JA] カテゴリ名から接頭辞 3 文字を取る。ASCII 英数字だけを使う — SKU は倉庫ラベル・電話対応で読み上げるコードなので、大文字英数字に限るのが慣例である。
+     * ハングルなど ASCII 外の名前で 3 文字を満たせなければ中立の接頭辞 PRD に落ちる。
      */
     public static String skuPrefix(String categoryName) {
         if (categoryName == null) {
@@ -591,6 +663,9 @@ public class ProductService  {
      *
      * <p>slug 는 **바꾸지 않는다** — 상세 페이지 URL 이라 바꾸면 검색엔진·공유 링크·
      * 장바구니의 기존 참조가 전부 404 가 된다. 이름을 고쳐도 주소는 남는다.
+     *
+     * <p>[JA] 商品の基本情報の修正。空でないフィールドだけを反映する(部分修正)。
+     * <p>slug は<b>変えない</b> — 詳細ページの URL なので、変えると検索エンジン・共有リンク・カートの既存参照がすべて 404 になる。名前を直してもアドレスは残る。
      */
     @org.springframework.cache.annotation.CacheEvict(
             value = { "products", "product", "search_cache", "products_by_category" }, allEntries = true)
@@ -628,6 +703,9 @@ public class ProductService  {
      *
      * <p>DELETED 로 바꾼 뒤에는 이 메서드로도 **되돌릴 수 없다** — @SQLRestriction 이
      * findById 에서 이미 걸러 "상품이 없습니다" 가 된다. 의도된 동작이다(V8 주석).
+     *
+     * <p>[JA] 状態変更 — 品切れ(SOLD_OUT)・復帰(ACTIVE)・削除(DELETED)はすべてこの経路である。
+     * <p>DELETED にした後はこのメソッドでも<b>元に戻せない</b> — @SQLRestriction が findById で既に除き、「商品がありません」になる。意図した動作である(V8 のコメント)。
      */
     @org.springframework.cache.annotation.CacheEvict(
             value = { "products", "product", "search_cache", "products_by_category" }, allEntries = true)
@@ -645,6 +723,8 @@ public class ProductService  {
         // 품절은 검색에 남긴다(목록과 같은 동작 — 보이되 담기지 않는다).
         // 삭제만 색인에서 뺀다 — DB 조회는 @SQLRestriction 이 걸러 주지만 ES 는
         // 별도 저장소라 직접 지워야 한다.
+        // [JA] 品切れは検索に残す(一覧と同じ動作 — 見えるがカートに入らない)。
+        //      削除だけ索引から外す — DB 照会は @SQLRestriction が除いてくれるが、ES は別ストレージなので直接消す必要がある。
         if ("DELETED".equals(status)) {
             productIndexService.remove(productId);
         } else {
@@ -668,6 +748,10 @@ public class ProductService  {
      * 있을 수 있다. slug 는 상세 페이지 URL 이라 중복이면 {@code findBySlug} 가 여러
      * 건을 돌려주고 어느 것이 보일지는 우연이 정한다. V6 마이그레이션의 UNIQUE 제약이
      * 최후 방어선이고, 여기서는 충돌 시 "-2", "-3" … 를 붙여 제약에 걸리기 전에 피한다.
+     *
+     * <p>[JA] slug を決め、<b>一意に</b>する。
+     * <p>クライアントが渡す slug を信用しない理由: 空だったり、同名の商品がすでにあったりする。slug は詳細ページの URL なので、重複すると {@code findBySlug} が複数件を返し、
+     * どれが見えるかは偶然が決める。V6 マイグレーションの UNIQUE 制約が最後の防衛線で、ここでは衝突時に "-2"、"-3" … を付けて制約に引っかかる前に避ける。
      */
     public String uniqueSlug(String requested, String name) {
         String base = (requested == null || requested.isBlank())
@@ -679,11 +763,12 @@ public class ProductService  {
         }
         String candidate = base;
         int n = 1;
-        while (productRepository.slugTaken(candidate)) {   // 삭제된 상품의 slug 도 쓴 것이다(유니크 인덱스가 그 행에도 걸린다)
+        while (productRepository.slugTaken(candidate)) {   // 삭제된 상품의 slug 도 쓴 것이다(유니크 인덱스가 그 행에도 걸린다) ／ [JA] 削除された商品の slug も使用済みである(ユニークインデックスはその行にもかかる)
             n++;
             candidate = base + "-" + n;
             if (n > 100) {
                 // 같은 이름이 100개면 데이터가 아니라 다른 문제다. 무한루프 방지.
+                // [JA] 同じ名前が 100 個あるならデータではなく別の問題である。無限ループ防止。
                 throw new IllegalStateException("slug 충돌이 100회를 넘었습니다: " + base);
             }
         }
@@ -703,6 +788,12 @@ public class ProductService  {
      * {@code sku} 가 비면 {@code product_size.skuproduct_id} 가 NULL 로 저장된다. 그 사이즈는 어느 스타일에도
      * 속하지 않게 되어 <b>관리자가 등록한 상품은 사이즈가 없는 상품이 됐다</b> — 상세 화면에 가격이 없고 장바구니에
      * 담을 수 없다. 상세 · 질문도 같은 모양({@code mappedBy="product"})이라 함께 고친다.
+     *
+     * <p>[JA] リクエストのサイズ群をエンティティに — <b>親(スタイル)を指したまま。</b>
+     * <p>🐛 以前のコードは ① で毎回<b>新しいオブジェクト</b>を作って親を設定し、そのまま捨てていた。実際に保存されるのは ② が<b>改めて</b>作ったオブジェクトで、親が空だった。
+     * {@code sizes} は {@code mappedBy="sku"} — 外部キーを持つのはサイズ側なので、サイズの {@code sku} が空だと {@code product_size.skuproduct_id} が NULL で保存される。
+     * そのサイズはどのスタイルにも属さなくなり、<b>管理者が登録した商品はサイズのない商品になった</b> — 詳細画面に価格がなく、カートに入れられない。
+     * 詳細・質問も同じ形({@code mappedBy="product"})なので一緒に直す。
      */
     private static List<ProductSize> sizesOf(List<ProductSizeDto> requested, ProductSku parent) {
         if (requested == null) {
@@ -726,6 +817,11 @@ public class ProductService  {
      * <p>🐛 예전: 변형(기존 상품에 스타일 추가) · 대량 적재의 부모에서도 불렀고, 컬렉션을 통째로 갈아 끼워 flush 가
      * "orphan deletion 컬렉션" 예외로 거절됐다 — 변형 등록이 늘 500 이었다. 설령 통과했어도 부모의 상세를 변형 양식의
      * 빈 줄로 덮어썼을 것이다. 변형은 스타일을 더할 뿐 상품 정보를 바꾸지 않는다. 내용은 {@link Product#replaceDetails} 로 바꾼다.
+     *
+     * <p>[JA] {@link #sizesOf} と同じ理由 — 保存されるオブジェクトに親を設定する。<b>新しい商品にだけ</b>使う。
+     * <p>🐛 以前: バリエーション(既存商品へのスタイル追加)・大量投入の親でも呼び、コレクションを丸ごと差し替えたため flush が「orphan deletion コレクション」例外で拒否した
+     * — バリエーション登録が常に 500 だった。仮に通っても、親の詳細をバリエーション様式の空行で上書きしていただろう。バリエーションはスタイルを足すだけで商品情報を変えない。
+     * 内容は {@link Product#replaceDetails} で変える。
      */
     private static void attachDetailsAndQuestions(Product product, Collection<ProductDetailsDto> details,
             Collection<ProductQADto> questions) {
@@ -758,9 +854,12 @@ public class ProductService  {
      *
      * <p>함수는 DB 의 행을 고치므로 메모리의 엔티티는 모른다. 이 엔티티로 곧바로 응답 · 색인 · 캐시를 만들기 때문에
      * 채운 값을 다시 읽어 옮겨 적는다.
+     *
+     * <p>[JA] いま保存したスタイルのサイズごとに SKU コードを埋める(V17 の DB 関数 — 規則はそこにだけある)。
+     * <p>関数は DB の行を直すので、メモリ上のエンティティは知らない。このエンティティですぐ応答・索引・キャッシュを作るため、埋めた値を読み直して書き写す。
      */
     private ProductSku withSizeSkuCodes(ProductSku saved) {
-        productSizeRepository.flush();   // 네이티브 함수가 방금 INSERT 한 행을 보도록
+        productSizeRepository.flush();   // 네이티브 함수가 방금 INSERT 한 행을 보도록 ／ [JA] ネイティブ関数がいま INSERT した行を見るように
         productSizeRepository.assignSkuCodes();
         if (saved.getSkuproductId() == null || saved.getSizes() == null) {
             return saved;
@@ -827,6 +926,7 @@ public class ProductService  {
 
         skuProject.setSizes(sizesOf(request.getSizes(), skuProject));
         // 부모에 붙이는 변형이면 상품 정보는 건드리지 않는다(createSku 와 같은 이유).
+        // [JA] 親に付けるバリエーションなら商品情報には触れない(createSku と同じ理由)。
         if (request.getParent() == null || request.getParent().isEmpty()) {
             attachDetailsAndQuestions(product, request.getDetails(), request.getQuestions());
         }
@@ -842,6 +942,7 @@ public class ProductService  {
 
         // SKU: 비우면 생성하고, 주면 중복을 거절한다. 어느 쪽이든 유일성은 V7 의
         // UNIQUE 인덱스가 최후 방어선이다 — 여기 검사는 좋은 에러 메시지를 위한 것이다.
+        // [JA] SKU: 空なら生成し、指定されたら重複を拒否する。どちらでも一意性は V7 の UNIQUE インデックスが最後の防衛線である — ここの検査は良いエラーメッセージのためである。
         String sku;
         if (request.getSku() == null || request.getSku().isBlank()) {
             sku = generateSku(product);
@@ -871,6 +972,8 @@ public class ProductService  {
         //    (엔티티 매핑, DB 저장, 다음 업로드…) 이미 올라간 파일은 아무도 참조하지
         //    않는 고아가 된다 — 눈에 안 보이고 요금만 나간다. 그래서 올린 것을 전부
         //    기록해 두고, 실패하면 지운 뒤 원래 예외를 그대로 다시 던진다.
+        // [JA] ⚠️ ここから S3 に副作用が生じる。アップロードの**後で**どの段階が失敗しても(エンティティのマッピング、DB 保存、次のアップロード…)、
+        //      すでに上がったファイルは誰も参照しない孤児になる — 見えず料金だけかかる。だから上げたものをすべて記録しておき、失敗したら消してから元の例外をそのまま投げ直す。
         List<String> uploaded = new ArrayList<>();
         try {
             List<String> imageUrls = new ArrayList<String>();
@@ -897,6 +1000,7 @@ public class ProductService  {
 
             skuProject.setProduct(product);
             // 양쪽을 맞춘다 — 예전엔 상품의 skus 에 넣지 않아, 바로 뒤의 검색 색인이 SKU 없는 문서를 만들었다.
+            // [JA] 両側を合わせる — 以前は商品の skus に入れておらず、直後の検索索引が SKU のないドキュメントを作っていた。
             product.getSkus().add(skuProject);
 
             return withSizeSkuCodes(productskuRepository.save(skuProject));
@@ -928,6 +1032,9 @@ public class ProductService  {
      * 색상 여러 개를 <b>한 번에</b> — order-service 가 주문 상품마다, cart-service 가 장바구니
      * 항목마다 {@link #getColorAttributeInfo} 를 부르던 것의 대체다(docs/38 §1.13). 주문 목록
      * 한 페이지(주문 10건 × 상품 3개)가 색상 조회 30번이었다. 못 찾은 id 는 결과에서 빠진다.
+     *
+     * <p>[JA] 複数の色を<b>一度に</b> — order-service が注文商品ごと、cart-service がカート項目ごとに {@link #getColorAttributeInfo} を呼んでいたのの置き換えである(docs/38 §1.13)。
+     * 注文一覧 1 ページ(注文 10 件 × 商品 3 個)で色の照会が 30 回だった。見つからない id は結果から抜ける。
      */
     @Transactional(readOnly = true)
     public List<ProductColorDto> getColorsByIds(Collection<Long> colorIds) {
@@ -981,6 +1088,10 @@ public class ProductService  {
      * 항목별 계산은 단건과 같은 {@link #toCartProductInfo} 를 쓴다. 못 찾은 항목(없는 상품,
      * 품절, 잘못된 스타일/사이즈 인덱스)은 결과 맵에서 빠질 뿐이다 — 한 항목 때문에 장바구니
      * 전체가 실패하지 않게 하고, 호출자가 키로 대조한다.
+     *
+     * <p>[JA] カート項目複数の(商品、スタイル、サイズ)情報を<b>一度に</b> — cart-service の loadCart が項目ごとに {@link #getCartProductInfo} を呼んでいたのの置き換えである(docs/38 §1.13)。
+     * <p>商品は重複のない id で一度に読み({@code findAllById} + {@code @BatchSize} コレクション)、項目ごとの計算は単件と同じ {@link #toCartProductInfo} を使う。
+     * 見つからない項目(存在しない商品、品切れ、誤ったスタイル/サイズのインデックス)は結果マップから抜けるだけ — 一項目のためにカート全体が失敗しないようにし、呼び出し側がキーで突き合わせる。
      */
     @Transactional(readOnly = true)
     public Map<String, ProductInfoDto> getCartProductsInfo(List<CartProductInfoRequest.Item> items) {
@@ -1012,6 +1123,7 @@ public class ProductService  {
                 }
             } catch (IndexOutOfBoundsException e) {
                 // 단건 API 에서는 400 이 되던 경우. 배치에서는 그 항목만 뺀다.
+                // [JA] 単件 API では 400 になっていたケース。バッチではその項目だけ外す。
                 log.info("잘못된 스타일/사이즈 인덱스: {}", item.key());
             }
         }
@@ -1019,18 +1131,22 @@ public class ProductService  {
     }
 
     /** 단건·배치가 공유하는 항목 하나의 계산. 품절이거나 SKU 가 없으면 null. */
+    // [JA] 単件・バッチが共有する項目一つの計算。品切れか SKU がなければ null。
     private ProductInfoDto toCartProductInfo(Product product, int style, int size) {
         // 품절(SOLD_OUT) 상품은 장바구니에 담기지 않아야 한다. 이 메서드는 cart-service
         // 가 담기 직전에 부르는 상품 정보 조회라, 여기서 null 을 돌려주면 담기가
         // "상품 없음"과 같은 경로로 실패한다 — cart 쪽 코드는 이미 null 을 처리한다.
         // (DELETED 는 @SQLRestriction 이 위 findById 에서 이미 걸렀다.)
+        // [JA] 品切れ(SOLD_OUT)商品はカートに入ってはならない。このメソッドは cart-service がカートに入れる直前に呼ぶ商品情報照会なので、
+        //      ここで null を返すとカート追加が「商品なし」と同じ経路で失敗する — cart 側のコードはすでに null を扱う。
+        //      (DELETED は @SQLRestriction が上の findById で既に除いた。)
         if ("SOLD_OUT".equals(product.getStatus())) {
             log.info("품절 상품의 장바구니 담기 차단. productId={}", product.getProductId());
             return null;
         }
 
         Optional<ProductSku> optionalSku = product.getSkus().stream()
-                .skip(style) // get(style)과 유사하게 특정 순서의 요소를 건너뛰지만, Set은 순서가 없으므로 정확한 결과를 보장하지 않습니다.
+                .skip(style) // get(style)과 유사하게 특정 순서의 요소를 건너뛰지만, Set은 순서가 없으므로 정확한 결과를 보장하지 않습니다. ／ [JA] get(style) と同様に特定順の要素を飛ばすが、Set は順序がないので正確な結果は保証しない。
                 .findFirst();
 
         if (optionalSku.isPresent()) {
@@ -1040,6 +1156,8 @@ public class ProductService  {
             // 진행 중인 기획전이 있으면 그 할인율을 얹는다. 이 값이 **실제로 청구되는
             // 금액**을 정한다 — 화면과 다른 값을 쓰면 상세에서 본 가격과 결제 금액이
             // 어긋난다(EventPricing 은 두 경로 모두 같은 맵을 본다).
+            // [JA] 進行中の企画展があればその割引率を載せる。この値が**実際に請求される金額**を決める — 画面と違う値を使うと、詳細で見た価格と決済金額がずれる
+            //      (EventPricing は両経路とも同じマップを見る)。
             int discountPercent = eventPricing.effectiveDiscount(product.getProductId(), sku.getDiscount());
             BigDecimal priceBefore = sku.getSizes().get(size).getPrice();
             BigDecimal price = discounted(priceBefore, discountPercent);
@@ -1076,10 +1194,12 @@ public class ProductService  {
                     .slug(product.getSlug())
                     .sku(sku.getSku())
                     // 사이즈 한 줄의 SKU(V17) — 장바구니 → 주문 품목이 이 값을 들고 간다.
+                    // [JA] サイズ 1 行の SKU(V17) — カート → 注文品目がこの値を持っていく。
                     .skuCode(sku.getSizes().get(size).getSkuCode())
                     .brand(product.getBrand())
                     // ProductMapper 와 같은 무방비 역참조 — shipping 은 nullable 이라
                     // 배송비 없는 상품이 장바구니에 담기면 500 이 났다(docs/14 B-15).
+                    // [JA] ProductMapper と同じ無防備な逆参照 — shipping は nullable なので、送料のない商品がカートに入ると 500 になっていた(docs/14 B-15)。
                     .shipping(product.getShipping() != null ? product.getShipping().toPlainString() : null)
                     .images(sku.getImages())
                     .color(color)
@@ -1114,9 +1234,17 @@ public class ProductService  {
      *
      * <p>{@code RoundingMode.HALF_UP} · 소수점 2자리는 통화 금액의 관례다. 100 을 넘는 값이
      * 들어와도 가격이 음수가 되지 않게 자른다.
+     *
+     * <p>[JA] 割引価格。{@code discountPercent} は<b>パーセント</b>である(シードデータが 5〜70 を入れる)。
+     * <p>🐛 <b>以前の式は {@code price - price / discount} だった。</b>「定価から、定価を割引率で割った値を引く」という意味で何の意味もなく、結果として
+     * <b>割引率が大きいほど割引幅が小さくなった</b>: 10,000 ウォンに 50% 割引なら 9,800 ウォン(=2% 割引)、70% 割引なら 9,857 ウォン(=1.4%)。
+     * <p>フロントエンド(`util/pricing.js`)はすでに直っていて<b>ここだけ残っていた。</b>そのため詳細画面は 50% 割引価格を見せるのに、カートに入れると 2% 割引価格が入った
+     * — 同じ商品の価格が画面ごとに違った。企画展割引もこの経路を通るので先に正す。
+     * <p>{@code RoundingMode.HALF_UP}・小数点 2 桁は通貨金額の慣例である。100 を超える値が来ても価格が負にならないよう切る。
      */
     static BigDecimal discounted(BigDecimal priceBefore, int discountPercent) {
         // 식은 common 의 하나뿐 — cart-service 가 옛 식을 따로 갖고 있다가 결제 금액이 달라졌다(Discount 주석).
+        // [JA] 式は common の一つだけ — cart-service が古い式を別に持っていて決済金額が変わってしまった(Discount のコメント)。
         return com.project.common.pricing.Discount.apply(priceBefore, discountPercent);
     }
 
@@ -1127,6 +1255,10 @@ public class ProductService  {
      * 직접 불렀는데, 그러면 새 경로가 생길 때마다 합성을 한 줄씩 더해야 하고 빠뜨리면
      * <b>그 화면만 정가를 보여 준다</b> — 같은 상품이 목록에서는 30% 할인인데 상세에서는
      * 정가인 식이다. 통로를 하나로 두면 빠뜨릴 곳이 없다.
+     *
+     * <p>[JA] エンティティ → DTO の<b>唯一の</b>通り道。
+     * <p>企画展割引をここで載せる。以前は照会経路ごとに {@code ProductMapper::toDto} を直接呼んでいたが、それだと新しい経路ができるたびに合成を一行ずつ足す必要があり、
+     * 忘れると<b>その画面だけ定価を見せる</b> — 同じ商品が一覧では 30% 割引なのに詳細では定価、というように。通り道を一つにすれば忘れる場所がない。
      */
     private ProductDto convertToDto(Product product) {
         return eventPricing.apply(ProductMapper.toDto(product));
@@ -1222,8 +1354,10 @@ public class ProductService  {
     // A transactional public method that orchestrates the update
     @Transactional
     // 판매량/재고 변경(주문 성공 Kafka 소비 경로)도 검색 필터(재고·판매량 기반)에 영향 → 캐시 무효화.
+    // [JA] 販売数/在庫の変更(注文成功の Kafka 消費経路)も検索フィルタ(在庫・販売数ベース)に影響する → キャッシュ無効化。
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     // "product" 캐시는 ProductDto 를 담는다 — 여기 있던 @CachePut 은 ProductSku 를 넣으려 했다(자기 호출이라 실제로는 돌지 않았다).
+    // [JA] "product" キャッシュは ProductDto を入れる — ここにあった @CachePut は ProductSku を入れようとしていた(自己呼び出しなので実際には動いていなかった)。
     public ProductSku updateSoldValue(Long productId, String slug, String size, Long colorId, int qty) {
         Optional<ProductSku> optionalSku = productskuRepository
                 .findForStockUpdate(productId, size, colorId);
@@ -1233,6 +1367,8 @@ public class ProductService  {
             // qty 가 음수면 재고 복원(환불·반품 입고)이다 — 판매량을 뺀다. 0 아래로는 가지
             // 않는다: 복원 이벤트가 차감보다 먼저 도착하는 순서 역전은 이론상 가능하고,
             // 그때 판매량이 음수로 화면에 찍히는 것보다 0 이 낫다.
+            // [JA] qty が負なら在庫復元(返金・返品入庫)である — 販売数を減らす。0 未満にはしない: 復元イベントが差し引きより先に届く順序逆転は理論上ありうるし、
+            //      そのとき販売数が負で画面に出るより 0 の方がよい。
             int sold = Math.max(0, sku.getSold() + qty);
             sku.setSold(sold);
 
@@ -1276,22 +1412,27 @@ public class ProductService  {
     @Transactional
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     // "product" 캐시에 ProductSize 를 넣으려던 @CachePut 을 지웠다(위와 같은 이유).
+    // [JA] "product" キャッシュに ProductSize を入れようとしていた @CachePut を消した(上と同じ理由)。
     public ProductSize updateProductSize_Qty(String slug, Long skuId, String size, int qty) {
         ProductSize productSize = getProductSizeModel(skuId, size);
 
         if (productSize != null) {
             // qty 가 음수면 재고 복원이다 — 아래 조건은 언제나 참이고 수량이 |qty| 만큼 는다.
+            // [JA] qty が負なら在庫復元である — 下の条件は常に真で、数量が |qty| だけ増える。
             if (productSize.getQuantity() >= qty) {
                 int before = productSize.getQuantity();
                 int currQty = productSize.getQuantity() - qty;
                 productSize.setQuantity(currQty);
 
                 // 데이터베이스 저장
+                // [JA] データベースに保存
                 productSize = productSizeRepository.save(productSize);
                 // 0 을 건넜으면(품절·재입고) 커밋 뒤에 알린다(docs/53).
+                // [JA] 0 をまたいだら(品切れ・再入荷)コミット後に通知する(docs/53)。
                 stockEvents.onQuantityChanged(variantOf(productSize), before, currQty);
 
                 // 데이터베이스 업데이트 후 캐시를 갱신하는 메서드 호출
+                // [JA] データベース更新後にキャッシュを更新するメソッドの呼び出し
                 refreshProductsCache(slug);
 
                 return productSize;
@@ -1301,6 +1442,7 @@ public class ProductService  {
     }
 
     /** 이벤트에 실을 옵션 정보 — 커밋 전(영속성 컨텍스트 안)에 읽는다. */
+    // [JA] イベントに載せるオプション情報 — コミット前(永続性コンテキスト内)に読む。
     private static com.project.catalog_service.message.producer.StockEventProducer.Variant variantOf(ProductSize size) {
         ProductSku sku = size.getSku();
         Product product = sku == null ? null : sku.getProduct();
@@ -1315,17 +1457,22 @@ public class ProductService  {
     }
 
     // ── 관리자 재고 (docs/53) ──────────────────────────────────────────────
+    // [JA] ── 管理者在庫 (docs/53) ──
 
     /** 관리자 재고 목록 한 줄. */
+    // [JA] 管理者在庫一覧の 1 行。
     public record StockRow(Long sizeId, Long productId, String name, String slug, Long colorId, String color,
             String size, String skuCode, int quantity) {
     }
 
     /** 한 번에 돌려주는 최대 줄 수 — 관리자 화면 한 장. */
+    // [JA] 一度に返す最大行数 — 管理者画面 1 枚分。
     public static final int MAX_STOCK_ROWS = 200;
 
     /**
      * 재고 목록. {@code soldOutOnly} 면 품절(0 이하)만 — "채울 것" 목록이다. 상품 id·사이즈 id 순.
+     *
+     * <p>[JA] 在庫一覧。{@code soldOutOnly} なら品切れ(0 以下)だけ — 「補充すべきもの」の一覧である。商品 id・サイズ id 順。
      */
     @Transactional(readOnly = true)
     public List<StockRow> stockRows(boolean soldOutOnly, Long afterSizeId) {
@@ -1339,6 +1486,9 @@ public class ProductService  {
      * 재입고 알림을 신청한 손님에게 알림이 간다.
      *
      * @return 바뀐 줄. 그런 사이즈가 없으면 null
+     *
+     * <p>[JA] 管理者が在庫を<b>決める</b>(加算ではなくその値に)。0 をまたぐと品切れ・再入荷が送られる — 補充すると再入荷通知を申し込んだ客に通知が行く。
+     * 戻り値は変わった行。そのサイズがなければ null。
      */
     @Transactional
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
@@ -1371,6 +1521,8 @@ public class ProductService  {
     /**
      * @CachePut 어노테이션을 사용하여 Redis 캐시를 갱신합니다.
      *           이 메서드는 오직 캐시를 업데이트하는 역할만 담당합니다.
+     *
+     * <p>[JA] @CachePut アノテーションを使って Redis キャッシュを更新する。このメソッドはキャッシュの更新だけを担当する。
      */
     @Transactional
     @CachePut(value = "products", key = "'slug:' + #slug")
@@ -1402,11 +1554,22 @@ public class ProductService  {
      * 배정한 만큼만 오른다. 모자란 수는 결과의 {@code shortages} 로 돌려주고, 리스너가 같은 트랜잭션에서 부족
      * 기록(아웃박스)을 남긴다 — order 가 그 수만큼 자동 환불한다(docs/53 §초과 판매). 상품·SKU·사이즈를 찾지 못한
      * 줄은 전부 모자란 것으로 본다(보낼 수 없다).
+     *
+     * <p>[JA] 注文決済後の在庫差し引き、そしてその<b>逆</b>である在庫復元(返金・返品入庫)。
+     * <p>{@code request.restock} が真なら同じ項目リストを符号だけ変えて適用する — サイズ数量が戻り、販売数が減る。別経路を置かない理由: 差し引きと復元はまったく同じ SKU・サイズを探して
+     * 同じ二つのフィールドを触る仕事で、経路が二つあると片方だけ直される日が来る(CAT-13 がその種の欠陥だった)。冪等性はリスナーの {@code eventId} が守る —
+     * 差し引きは {@code order-<id>}、復元は {@code restock-<id>} でそれぞれ一回である。
+     * <p>🔴 在庫が足りないとき — 売り越し: 在庫は<b>決済後に</b>差し引く。最後の 1 個を二人が同時に決済すると後の差し引きは足りない。以前はそのとき
+     * {@code updateProductSize_Qty} が黙って null を返し、リスナーがログを一行残すだけだった — 注文は決済完了で進み、返金も警報もなかった。🐛 さらに販売数は数量を確かめる<b>前に</b>上がり、差し引きが失敗しても販売数だけ増えた。
+     * <p>今は行ごとに SKU をロックしたまま({@code findForStockUpdate})残数を見て<b>ある分だけ</b>割り当てる。販売数も割り当てた分だけ上がる。足りない数は結果の {@code shortages} で返し、
+     * リスナーが同じトランザクションで不足記録(アウトボックス)を残す — order がその数だけ自動返金する(docs/53 §売り越し)。商品・SKU・サイズが見つからない行はすべて不足とみなす(送れない)。
      */
     @Transactional
     // 주문 성공 시 판매량/재고가 바뀌므로 검색/필터 캐시를 무효화한다.
     // (updateSoldValue/updateProductSize_Qty는 여기서 this로 자기호출되어 그쪽 애노테이션은 프록시를 타지 않으므로,
     //  실제 외부 진입점인 이 메서드에 무효화를 건다.)
+    // [JA] 注文成功時は販売数/在庫が変わるので検索/フィルタキャッシュを無効化する。
+    //      (updateSoldValue/updateProductSize_Qty はここで this による自己呼び出しになり、そちらのアノテーションはプロキシを通らないので、実際の外部入口であるこのメソッドに無効化をかける。)
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
     public StockApplyResult productUpdated(ProductUpdateRequest request) {
         return productUpdated(request, HeldQuantities.NONE);
@@ -1415,6 +1578,8 @@ public class ProductService  {
     /**
      * @param held 이 차감이 쓸 수 없는 수 — <b>다른</b> 주문이 결제 전에 잡아 둔 수(docs/59). 결제 확정 차감은 자기 주문의
      *             예약을 쓰므로 그것은 빼고 넘어온다(StockReservationService.heldByOthers).
+     *
+     * <p>[JA] held: この差し引きが使えない数 — <b>他の</b>注文が決済前に押さえた数(docs/59)。決済確定の差し引きは自分の注文の予約を使うので、それは除いて渡される(StockReservationService.heldByOthers)。
      */
     @Transactional
     @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
@@ -1433,6 +1598,7 @@ public class ProductService  {
 
             if (request.isRestock()) {
                 // 복원 — 수량이 돌아오고 판매량이 빠진다. 모자랄 일이 없다.
+                // [JA] 復元 — 数量が戻り販売数が減る。足りなくなることはない。
                 if (product == null) {
                     continue;
                 }
@@ -1446,6 +1612,8 @@ public class ProductService  {
 
             // 차감 — 있는 만큼만 배정한다. 잠금은 이 트랜잭션이 끝날 때까지 쥔다(같은 SKU 의 동시 차감은 줄을 선다).
             // 남은 수 = 잠근 뒤 읽은 실물 − 다른 주문이 결제 전에 잡아 둔 수(docs/59).
+            // [JA] 差し引き — ある分だけ割り当てる。ロックはこのトランザクションが終わるまで握る(同じ SKU の同時差し引きは順番待ちになる)。
+            //      残数 = ロック後に読んだ実在庫 − 他の注文が決済前に押さえた数(docs/59)。
             int available = product == null ? 0
                     : Math.max(0, availableForUpdate(product.getProductId(), item.getSize(), item.getColorId())
                             - (held == null ? 0 : held.heldByOthers(product.getProductId(), item.getColorId(), item.getSize())));
@@ -1459,7 +1627,7 @@ public class ProductService  {
                     if (updated != null) {
                         lastUpdated = updated;
                     } else {
-                        allocated = 0;   // 잠금 아래에서 확인했으므로 오지 않는다 — 와도 모자란 것으로 센다
+                        allocated = 0;   // 잠금 아래에서 확인했으므로 오지 않는다 — 와도 모자란 것으로 센다 ／ [JA] ロックの下で確認したので来ない — 来ても不足として数える
                     }
                 } else {
                     allocated = 0;
@@ -1479,7 +1647,11 @@ public class ProductService  {
      * 잠금을 기다리다 PostgreSQL 이 한쪽을 교착(40P01)으로 끊었고, 끊긴 결제 확정 차감은 재시도를 다 쓰면 DLT 로 갔다 —
      * 재고는 줄지 않은 채 예약이 만료되어 같은 수량이 다시 팔렸다.
      *
-     * <p>[JA] ロック順序 — 仮押さえと同じ (商品, 色, サイズ) 順で行を回る。以前は注文行の順でロックし、逆順の注文同士がデッドロックした。
+     * <p>[JA] ロック順序 — 仮押さえ(StockReservationService.Option.ORDER)と同じ (商品, 色, サイズ) 順で行を回る。
+     *
+     * <p>[JA] 以前は注文行の順で SKU をロックしていた(仮押さえだけ並べていた)。[A, B] 注文と [B, A] 注文の減算 · 復元が重なると互いの
+     * ロックを待ち、PostgreSQL が片方をデッドロック(40P01)で切り、切られた決済確定の減算は再試行を使い切ると DLT へ行った —
+     * 在庫は減らないまま仮押さえが期限切れになり、同じ数量が再び売れた。
      */
     static List<OrderProductRequest> inLockOrder(List<OrderProductRequest> lines) {
         List<OrderProductRequest> sorted = new ArrayList<>(lines);
@@ -1492,6 +1664,8 @@ public class ProductService  {
 
     /**
      * 이 옵션의 남은 수량 — SKU 를 잠근 뒤에 읽는다. 없는 SKU·사이즈는 0. 음수(예전 초과 판매의 흔적)도 0 으로 본다.
+     *
+     * <p>[JA] このオプションの残数 — SKU をロックした後に読む。存在しない SKU・サイズは 0。負数(以前の売り越しの痕跡)も 0 とみなす。
      */
     int availableForUpdate(Long productId, String size, Long colorId) {
         Optional<ProductSku> sku = productskuRepository.findForStockUpdate(productId, size, colorId);
@@ -1503,6 +1677,7 @@ public class ProductService  {
     }
 
     /** 다른 주문이 결제 전에 잡아 둔 수 — 옵션(상품·색상·사이즈)별(docs/59). */
+    // [JA] 他の注文が決済前に押さえた数 — オプション(商品・色・サイズ)別(docs/59)。
     @FunctionalInterface
     public interface HeldQuantities {
         HeldQuantities NONE = (productId, colorId, size) -> 0;
@@ -1511,6 +1686,7 @@ public class ProductService  {
     }
 
     /** 재고 반영 결과 — 마지막으로 바뀐 사이즈 행(없으면 null)과 모자란 줄들. */
+    // [JA] 在庫反映の結果 — 最後に変わったサイズ行(なければ null)と不足した行。
     public record StockApplyResult(ProductSize lastUpdated, List<ShortLine> shortages) {
         public boolean hasShortage() {
             return shortages != null && !shortages.isEmpty();
@@ -1518,6 +1694,7 @@ public class ProductService  {
     }
 
     /** 모자란 줄 — 주문한 수와 그중 보낼 수 없는 수. */
+    // [JA] 不足した行 — 注文した数と、そのうち送れない数。
     public record ShortLine(Long productId, Long colorId, String size, int orderedQty, int shortQty) {
     }
 }

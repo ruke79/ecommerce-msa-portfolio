@@ -6,6 +6,7 @@ import com.project.common.dto.CategoryDto;
 public class CategoryMapper {
     public static CategoryDto toDto(Category category) {
         // ... 기존 코드 ...
+        // [JA] ... 既存コード ...
         if (category == null) {
             return null;
         }

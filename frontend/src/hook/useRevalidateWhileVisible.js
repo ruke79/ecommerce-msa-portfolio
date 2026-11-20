@@ -9,6 +9,12 @@ import { useRevalidator } from "react-router-dom";
  * "3개 남음" 을 보고 3개를 고른 뒤에야 거절당했다.
  *
  * <p>숨겨진 탭에서는 돌지 않는다(요청을 아낀다). 이미 다시 읽는 중이면 겹쳐 부르지 않는다.
+ *
+ * <p>[JA] 画面を開いたままにしても loader の値が古くならないように — タブに戻ったときと、見えている間 {@code intervalMs} ごとに loader を再実行する。
+ * 商品詳細の残数が理由だ(docs/59 §8)。サーバーは応答ごとに他の注文の決済前予約を引いて返すが、詳細画面は開いた瞬間の
+ * 値を持ったままだった — その後に生じた予約はリロードまで見えなかった。カート追加の照会がその瞬間の値を見直しはするが、客は
+ * 「残り 3 個」を見て 3 個選んだ後に拒否された。
+ * 隠れたタブでは回らない(リクエストを節約する)。既に読み直し中なら重ねて呼ばない。
  */
 export default function useRevalidateWhileVisible(intervalMs = 60_000) {
     const revalidator = useRevalidator();

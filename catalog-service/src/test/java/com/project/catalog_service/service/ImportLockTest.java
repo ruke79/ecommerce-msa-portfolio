@@ -15,6 +15,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 /** 임포트 잠금(Redis) — 만료가 있는 SET NX, 자기 값일 때만 푼다. */
+// [JA] インポートロック(Redis) — 期限付きの SET NX、自分の値のときだけ解放する。
 @DisplayName("임포트 잠금 — Redis")
 class ImportLockTest {
 

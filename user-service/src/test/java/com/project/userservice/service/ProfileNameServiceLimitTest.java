@@ -22,6 +22,7 @@ import com.project.userservice.repository.jpa.UserRepository;
 import com.project.userservice.service.impl.UserServiceImpl;
 
 /** 프로필 이름 — 서비스도 열(20자)과 같은 한도. 🐛 예전에는 50 이라 21~50자가 저장에서 실패해 404 로 보였다. */
+// [JA] プロフィール名 — サービスもカラム(20 文字)と同じ上限。🐛 以前は 50 で、21〜50 文字が保存で失敗して 404 に見えた。
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("프로필 이름 — 서비스 한도 20자")
@@ -30,6 +31,7 @@ class ProfileNameServiceLimitTest {
     @Mock private UserRepository userRepository;
 
     /** 비밀번호를 정하는 메서드는 짧은 DB 구간을 TransactionTemplate 으로 연다(유출 확인을 그 밖에 두려고). */
+    // [JA] パスワードを決めるメソッドは短い DB 区間を TransactionTemplate で開く(漏洩確認をその外に置くため)。
     @org.mockito.Spy private org.springframework.transaction.support.TransactionTemplate tx =
             com.project.userservice.service.TestTransactions.template();
     @InjectMocks private UserServiceImpl userService;

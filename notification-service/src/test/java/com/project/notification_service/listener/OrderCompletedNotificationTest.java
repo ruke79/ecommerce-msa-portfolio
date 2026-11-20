@@ -26,6 +26,10 @@ import com.project.notification_service.service.NotificationService;
  *
  * <p>order-service 가 {@code order-completed} 로 발행한다. 자동 확정({@code auto:true})이 이
  * 알림의 존재 이유다 — 손님이 아무것도 안 했는데 주문 상태가 바뀌는 일이라 말해 줘야 한다.
+ *
+ * <p>[JA] 購入確定通知(docs/25 §12)。order-service が {@code order-completed} で発行する。
+ * 自動確定({@code auto:true})がこの通知の存在理由だ — 客が何もしていないのに注文状態が変わることなので知ら
+ * せる必要がある。
  */
 @DisplayName("notification-service — 구매 확정 알림")
 class OrderCompletedNotificationTest {
@@ -74,6 +78,7 @@ class OrderCompletedNotificationTest {
     }
 
     /** 돈이 오가지 않으므로 문자는 아니다. 메일은 간다. */
+    // [JA] お金が動かないので SMS ではない。メールは行く。
     @Test
     @DisplayName("문자로는 나가지 않고 메일로는 나간다")
     void channels() {

@@ -37,6 +37,15 @@ import lombok.experimental.SuperBuilder;
  * <p><b>기간.</b> {@code startsAt} 이전이거나 {@code endsAt} 이후면 목록에 나오지 않는다.
  * 점검 예고처럼 지나면 의미가 없는 안내를 사용자가 직접 지우게 하지 않기 위해서다.
  * {@code endsAt} 이 null 이면 만료 없음.
+ *
+ * <p>[JA] 全ユーザーに送る通知 — お知らせ掲示、管理者案内。
+ * <b>なぜ個人通知({@code notification})の行を作らないか。</b> お知らせ一つにユーザー数分の行を作ると、ユーザーが 10 万なら
+ * お知らせ一件で 10 万行である。それは書き込みの急増を生み(お知らせを一つ上げるたびに 10 万 insert)、テーブルをユーザー数 × お知らせ数に
+ * 膨らませ、お知らせの内容を直すと 10 万行を全部直さなければならない。
+ * ここは<b>行一つ</b>である。個人別に必要なのは「読んだか」だけで、それだけを {@link BroadcastRead} に残す —
+ * <b>読んだ人だけ</b>行ができるので未読状態はタダである。
+ * <b>期間。</b> {@code startsAt} より前か {@code endsAt} より後なら一覧に出ない。
+ * メンテナンス予告のように過ぎれば意味のない案内をユーザーに自分で消させないためである。{@code endsAt} が null なら期限なし。
  */
 @Getter
 @Setter
@@ -74,6 +83,11 @@ public class BroadcastNotification {
      * <p>개인 알림의 {@code sourceEventId} 와 같은 역할이다. 카프카는 at-least-once 라
      * 공지 게시 이벤트가 재전달될 수 있는데, 그때마다 공지가 하나씩 더 생기면 안 된다.
      * DB 의 UNIQUE 제약이 최종 방어선이다.
+     *
+     * <p>[JA] 同じ出来事が二度来てもお知らせが一つだけできるようにするキー。
+     * 個人通知の {@code sourceEventId} と同じ役割である。Kafka は at-least-once なので
+     * お知らせ掲示イベントが再配信されうるが、そのたびにお知らせが一つずつ増えてはならない。
+     * DB の UNIQUE 制約が最後の防衛線である。
      */
     @Column(name = "source_event_id", unique = true)
     private String sourceEventId;
@@ -82,6 +96,7 @@ public class BroadcastNotification {
     private LocalDateTime startsAt;
 
     /** null 이면 만료 없음. */
+    // [JA] null なら期限なし。
     @Column(name = "ends_at")
     private LocalDateTime endsAt;
 
@@ -96,6 +111,11 @@ public class BroadcastNotification {
      * 서버가 KST 면 공지가 언제나 9시간 미래로 보여 항상 맨 위에 붙는다. 그리고 화면은
      * 서버 시각을 UTC 로 보고 현지 시각으로 바꾸므로(NotificationBell 의 RelativeTime),
      * 그 공지는 영영 "방금"으로 표시된다.
+     *
+     * <p>[JA] 時刻は UTC に統一する(B-21)。
+     * ここだけシステムのタイムゾーンを使うと<b>二か所が静かに壊れる。</b> 一覧は個人通知と全体通知を合わせて {@code createdAt} で並べるが、
+     * 個人通知は UTC で記録されるので、サーバーが KST だとお知らせがいつも 9 時間未来に見えて常に一番上に付く。そして画面は
+     * サーバー時刻を UTC とみなして現地時刻に変えるので(NotificationBell の RelativeTime)、そのお知らせはずっと「たった今」と表示される。
      */
     @PrePersist
     void onCreate() {
@@ -109,6 +129,7 @@ public class BroadcastNotification {
     }
 
     /** 지금 사용자에게 보여야 하는가. */
+    // [JA] 今ユーザーに見えるべきか。
     public boolean isActiveAt(LocalDateTime when) {
         if (startsAt != null && when.isBefore(startsAt)) {
             return false;

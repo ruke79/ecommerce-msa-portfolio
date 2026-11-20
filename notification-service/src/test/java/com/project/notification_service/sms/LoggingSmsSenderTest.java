@@ -27,6 +27,14 @@ import ch.qos.logback.core.read.ListAppender;
  * <p>전역 마스킹으로는 막을 수 없다 — 여섯 자리 숫자는 주문 번호·금액과 구별이 안 된다. 그래서
  * <b>실제로 찍힌 로그를 캡처해서</b> 확인한다. 소스를 훑는 정적 검사로는 인자 이름만 보이고
  * 그 안에 무엇이 들었는지는 보이지 않는다.
+ *
+ * <p>[JA] 🔒 回帰対象 — <b>携帯電話の認証番号が運用ログに平文で残った。</b>この送信器が既定値で(k8s も provider
+ * を変えない)、SMS 本文全体を {@code body={}} で INFO に出していた。認証 SMS
+ * の本文には認証番号が入っている。ログを読める人なら他人の番号で認証を完了できた。
+ * {@code VerificationService} は「コードは決してログに残さない」と書いて自分のログからは外していたが、
+ * そのコードを受け取ったこちら側がそのまま出していた。グローバルマスキングでは防げない — 6
+ * 桁の数字は注文番号・金額と区別がつかない。そこで<b>実際に出力されたログをキャプチャして</b>確認する。
+ * ソースを走査する静的検査では引数名しか見えず、その中に何が入っているかは見えない。
  */
 @DisplayName("LoggingSmsSender — 문자 본문을 로그에 남기지 않는다")
 class LoggingSmsSenderTest {
@@ -64,6 +72,7 @@ class LoggingSmsSenderTest {
         assertThat(appender.list).as("발송 사실 자체는 남아야 한다").hasSize(Region.values().length);
         assertThat(rendered()).allSatisfy(line -> assertThat(line).doesNotContain(CODE));
         // 포맷 전 인자에도 없어야 한다 — JSON 인코더는 인자를 따로 직렬화할 수 있다.
+        // [JA] フォーマット前の引数にもあってはならない — JSON エンコーダは引数を別にシリアライズしうる。
         assertThat(appender.list).allSatisfy(e -> assertThat(e.getArgumentArray())
                 .allSatisfy(arg -> assertThat(String.valueOf(arg)).doesNotContain(CODE)));
     }

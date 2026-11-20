@@ -18,6 +18,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>🐛 연결 499 건 중 404 건(81%)이 다른 카테고리였다 — 검색 화면에서 "men's clothing" 을 누르면 침대 프레임 · 소설 · 쿠키가
  * 나왔다. 운영 데이터는 V16 이 고쳤고, 이 테스트는 CSV 가 다시 그렇게 되지 않게 막는다.
+ *
+ * <p>[JA] シード CSV の商品 ↔ サブカテゴリの紐付けは<b>同じカテゴリ内</b>でなければならない。
+ * <p>🐛 紐付け 499 件中 404 件(81%)が別カテゴリだった — 検索画面で "men's clothing" を押すとベッドフレーム・小説・クッキーが出た。
+ * 運用データは V16 が直し、このテストは CSV が再びそうならないよう防ぐ。
  */
 @DisplayName("시드 CSV — 상품의 하위 카테고리는 상품의 카테고리에 속한다")
 class SeedCsvConsistencyTest {
@@ -37,6 +41,7 @@ class SeedCsvConsistencyTest {
     }
 
     /** 따옴표 안의 쉼표를 지키는 최소 CSV 파서(설명 칸에 쉼표가 있다). */
+    // [JA] 引用符内のカンマを守る最小の CSV パーサ(説明欄にカンマがある)。
     private static String[] parse(String line) {
         List<String> cells = new ArrayList<>();
         StringBuilder cur = new StringBuilder();

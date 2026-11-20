@@ -39,6 +39,18 @@ import lombok.extern.slf4j.Slf4j;
  * <p>응답 해석은 <b>HTTP 상태 코드</b>로만 한다. 본문 스키마는 공급자마다 제각각이라 파싱하면
  * 결합이 생긴다. 2xx=접수, 4xx=영구 실패(번호 오류·잔액 부족·발신번호 미등록), 5xx·타임아웃=
  * 재시도. 이 구분이 흐려지면 일시 장애로 알림이 영영 사라지거나, 잘못된 번호로 무한 재시도한다.
+ *
+ * <p>[JA] 設定で記述する汎用 HTTP SMS 送信器。<b>なぜプロバイダー別 SDK を使わないのか。</b>韓
+ * 国(CoolSMS・Aligo・NHN Cloud など)と日本(Twilio・KDDI Web Communications など)の事業者は違い、
+ * 一社で両国をうまくカバーすることは稀だ。SDK を一つ選ぶとその時点で国を一つ諦めるか、SDK
+ * を二つ抱えることになる。ところがこれらの API は実質的にどれも同じ形だ — <b>トークンをヘッダーに入れて
+ * JSON を POST</b>。そこで SDK の代わりにリクエストの形を設定で記述する。
+ * プロバイダーを変えるときコードではなく yml が変わる。(上の pre 例のコメント: auth-header は例: Bearer
+ * xxx またはプロバイダー固有ヘッダー、from は韓国では事前登録された発信番号でなければならない、to-field
+ * はプロバイダーごとにフィールド名が違う。)応答の解釈は<b>HTTP ステータスコード</b>だけで行う。
+ * 本文スキーマはプロバイダーごとにまちまちで、パースすると結合が生じる。2xx=受付、
+ * 4xx=恒久失敗(番号誤り・残高不足・発信番号未登録)、5xx・タイムアウト=再試行。
+ * この区別が曖昧になると一時障害で通知が永遠に消えるか、誤った番号に無限に再試行する。
  */
 @Slf4j
 public class HttpSmsSender implements SmsSender {
@@ -76,6 +88,7 @@ public class HttpSmsSender implements SmsSender {
                     config.fromField(), config.from()));
         } catch (Exception e) {
             // 직렬화가 실패하면 몇 번을 다시 해도 실패한다.
+            // [JA] シリアライズが失敗したら何度やり直しても失敗する。
             return SmsResult.permanent("요청 본문 생성 실패: " + e.getMessage());
         }
 
@@ -100,6 +113,7 @@ public class HttpSmsSender implements SmsSender {
 
             if (status == 429 || status >= 500) {
                 // 속도 제한과 서버 오류는 시간이 해결한다.
+                // [JA] レート制限とサーバーエラーは時間が解決する。
                 log.warn("[SMS:retryable] to={} status={} body={}",
                         PhoneNumbers.mask(e164), status, truncateForLog(response.body()));
                 return SmsResult.retryable("HTTP " + status);
@@ -107,6 +121,8 @@ public class HttpSmsSender implements SmsSender {
 
             // 4xx — 번호가 잘못됐거나, 잔액이 없거나, 발신번호가 등록되지 않았다.
             // 재시도해도 같은 결과이므로 영구 실패로 기록하고 사람이 보게 한다.
+            // [JA] 4xx — 番号が誤っているか、残高がないか、発信番号が登録されていない。
+            //      再試行しても同じ結果なので恒久失敗と記録し、人が見るようにする。
             log.error("[SMS:permanent] to={} status={} body={}",
                     PhoneNumbers.mask(e164), status, truncateForLog(response.body()));
             return SmsResult.permanent("HTTP " + status + " " + truncateForLog(response.body()));
@@ -115,6 +131,9 @@ public class HttpSmsSender implements SmsSender {
             // ⚠️ 타임아웃은 "안 갔다"가 아니라 "모른다"이다. 게이트웨이가 이미 접수했을 수 있다.
             // 재시도하면 중복 발송이 될 수 있으므로, 상위에서 멱등키로 막아야 한다
             // (NotificationDispatcher 가 알림 1건당 1회만 시도하도록 상태를 관리한다).
+            // [JA] ⚠️ タイムアウトは「届かなかった」ではなく「わからない」だ。ゲートウェイがすでに受け付けたかもしれな
+            //      い。再試行すると重複送信になりうるので、上位で冪等キーで防ぐ必要がある(NotificationDispatcher
+            //      が通知 1 件につき 1 回だけ試すよう状態を管理する)。
             log.warn("[SMS:timeout] to={} — 접수 여부 불명", PhoneNumbers.mask(e164));
             return SmsResult.retryable("timeout");
 
@@ -143,6 +162,7 @@ public class HttpSmsSender implements SmsSender {
     }
 
     /** 공급자 응답 본문에 개인정보나 키가 섞여 올 수 있어 길이를 제한한다. */
+    // [JA] プロバイダーの応答本文に個人情報やキーが混じって来うるので長さを制限する。
     private static String truncateForLog(String body) {
         if (body == null) {
             return "";

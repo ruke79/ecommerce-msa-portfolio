@@ -13,6 +13,12 @@ import org.apache.avro.specific.SpecificRecord;
  * {@link AvroDecoders} 에 한 줄씩, (4) 프로듀서 팩토리의 값 직렬화기, (5) 소비자 팩토리의 값
  * 역직렬화기 — 리스너·서비스는 그대로다. 여기 넣으면 {@code AvroMappingContractTest} 가 DTO 의 모든 필드가
  * 스키마에 있고 왕복해도 살아 돌아오는지 자동으로 검사한다(DTO 에만 필드를 더하면 조용히 사라진다, docs/55 §7-7).
+ *
+ * <p>[JA] どのトピックがどの DTO 変換か — 一か所に。
+ * DTO が common にあるトピックすべてである。chat は DTO(MessageDto)が chat-service にあるのでそちらでマッピングを持ち、文字列コンシューマー用のデコーダーは
+ * {@link AvroDecoders} がスキーマだけで作る。新しいトピックを Avro に移すとき: (1) {@code src/main/avro} にスキーマ、(2) {@code AvroMapping} 実装、(3) ここと
+ * {@link AvroDecoders} に一行ずつ、(4) プロデューサーファクトリーの値シリアライザー、(5) コンシューマーファクトリーの値デシリアライザー — リスナー · サービスはそのまま。
+ * ここに入れると {@code AvroMappingContractTest} が DTO の全フィールドがスキーマにあり往復しても生きて戻るかを自動で検査する(DTO にだけフィールドを足すと静かに消える、docs/55 §7-7)。
  */
 public final class AvroMappings {
 

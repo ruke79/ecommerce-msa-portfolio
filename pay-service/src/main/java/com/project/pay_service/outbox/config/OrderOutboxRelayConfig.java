@@ -14,6 +14,11 @@ import com.project.pay_service.outbox.scheduler.OrderOutboxScheduler;
  * <p>스케줄러를 {@link ObjectProvider} 로 받는 이유: 스케줄러 → 헬퍼 → 이 트리거 → 스케줄러로
  * 순환한다. 쓰는 순간에 꺼내면 순환이 없고, 꺼낸 것은 {@code @Transactional} 프록시다 — 선점
  * 잠금이 발행이 끝날 때까지 유지된다.
+ *
+ * <p>[JA] 決済応答アウトボックスをコミット直後にリレーする (docs/56)。
+ * スケジューラを {@link ObjectProvider} で受け取る理由: スケジューラ → ヘルパー → このトリガー → スケジューラと
+ * 循環する。使う瞬間に取り出せば循環はなく、取り出したものは {@code @Transactional} プロキシである —
+ * 先取りロックが発行の終わりまで保持される。
  */
 @Configuration
 public class OrderOutboxRelayConfig {

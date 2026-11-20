@@ -90,6 +90,7 @@ class PendingTwoFactorTest {
         }
         pool.shutdown();
         // 🐛 읽고-검증하고-더하는 순서면 50개가 모두 "아직 0번" 을 읽고 통과했다.
+        // [JA] 🐛 読んで-検証して-足す順序だと、50 個すべてが「まだ 0 回」を読んで通過した。
         assertThat(passed).isEqualTo(5);
     }
 

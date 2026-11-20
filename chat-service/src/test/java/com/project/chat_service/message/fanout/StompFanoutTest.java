@@ -34,6 +34,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * STOMP 팬아웃(docs/21 §2) — 보내는 쪽은 Redis 에만 싣고(자기 구독자에게는 Redis 로 돌아온 것으로 보낸다), 받는 쪽은 예전 직접 보내기와
  * <b>같은 JSON</b> 을 구독자에게 보낸다. Redis 에 못 실으면 이 파드의 구독자에게라도 보낸다.
  * 여러 파드 사이의 실제 전달 · 순서는 {@code ChatScaleOutRedisTest}(컨테이너).
+ *
+ * <p>[JA] STOMP ファンアウト(docs/21 §2) — 送信側は Redis にだけ載せ(自分の購読者には Redis から戻ってきたものとして送る)、受信側は以前の直接送信と<b>同じ JSON</b> を購読者に送る。Redis に載せられなければこの Pod の購読者にだけでも送る。複数 Pod 間の実際の配信・順序は {@code ChatScaleOutRedisTest}(コンテナ)。
  */
 @DisplayName("StompFanout — Redis 로 모든 파드에")
 class StompFanoutTest {
@@ -41,6 +43,7 @@ class StompFanoutTest {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     List<Message<?>> delivered = new ArrayList<>();
     /** Spring Boot 가 STOMP 에 거는 변환기와 같은 모양 — Jackson 은 앱의 ObjectMapper(시간 모듈 · 날짜를 문자열로). */
+    // [JA] Spring Boot が STOMP にかけるコンバータと同じ形 — Jackson はアプリの ObjectMapper(時間モジュール・日付を文字列で)。
     CompositeMessageConverter converter = new CompositeMessageConverter(List.of(
             new StringMessageConverter(), new ByteArrayMessageConverter(), bootJackson()));
 

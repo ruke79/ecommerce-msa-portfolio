@@ -14,6 +14,15 @@
  * <p>봐주는 것은 hardcodedText.allow.js 에만 — 상표·통화 기호처럼 번역하지 않는 것이 맞는 글자뿐이다.
  *
  * <p>일부만 보고 싶으면: {@code I18N_SCAN_ONLY=pages/admin,components/admin npx jest src/i18n/hardcodedText.test.js}
+ *
+ * <p>[JA] 🔴 画面に見える文字は辞書(i18n/messages)からのみ来る — docs/60 §5。
+ * 日本語に切り替えたのに韓国語・英語が残るのは誰かが文言を JSX にそのまま書いたものだ。画面は無事に見えるので(韓国語画面では
+ * 正しい文字だ)レビューでも見えない。この検査がソースを構文木として読んで見つける:
+ * JSX テキスト中のハングルや英単語、見える JSX 属性(placeholder・title・alt・aria-label・label)の文字、
+ * ハングルを含む文字列・テンプレートリテラル — どこにあっても(トースト・エラー・状態ラベル)。例外は console.* の引数、
+ * 英文をトースト・alert・confirm・setError・Error に渡すこと、オブジェクトの label・title・description・message 属性。
+ * 見逃すのは hardcodedText.allow.js にあるものだけ — 商標・通貨記号のように翻訳しないのが正しい文字だけだ。
+ * 一部だけ見たければ: {@code I18N_SCAN_ONLY=pages/admin,components/admin npx jest src/i18n/hardcodedText.test.js}
  */
 import fs from "fs";
 import path from "path";
@@ -63,6 +72,7 @@ const calleeName = (callee) => {
 const allowed = (text) => ALLOWED_TEXT.has(text.trim()) || !text.trim();
 
 /** 한 파일의 위반 — [줄, 종류, 글자]. */
+// [JA] 一ファイルの違反 — [行, 種類, 文字]。
 export function scan(rel) {
     const code = fs.readFileSync(path.join(SRC, rel), "utf8");
     const ast = parse(code, { sourceType: "module", plugins: ["jsx"] });
@@ -92,6 +102,7 @@ export function scan(rel) {
             if (insideConsole(p)) return;
             if (HANGUL.test(v)) { report(p.node, "string", v); return; }
             // 영어 문장 — 사람에게 보여 주는 자리에서만(클래스 이름·키·URL 과 구분)
+            // [JA] 英文 — 人に見せる場所でだけ(クラス名・キー・URL と区別)
             if ((parent.type === "CallExpression" || parent.type === "NewExpression")
                 && MESSAGE_CALLEE.test(calleeName(parent.callee)) && WORD.test(v)) {
                 report(p.node, "message", v);
@@ -117,6 +128,7 @@ describe("화면 문구는 사전에서만 (docs/60 §5)", () => {
         const violations = files.flatMap(scan);
         if (violations.length) {
             // 한눈에 보이게 — 어느 파일 몇째 줄의 어떤 글자인지.
+            // [JA] 一目で分かるように — どのファイルの何行目のどの文字か。
             throw new Error(`사전으로 옮기지 않은 문구 ${violations.length}개:\n` + violations.join("\n"));
         }
     });

@@ -43,6 +43,7 @@ public class BatchConfig {
     private final EntityManagerFactory entityManagerFactory;
 
     // ItemProcessor 클래스들을 주입
+    // [JA] ItemProcessor クラスを注入
     private final CategoryItemProcessor categoryItemProcessor;
     private final SubcategoryItemProcessor subcategoryItemProcessor;
     private final ProductItemProcessor productItemProcessor;
@@ -54,6 +55,7 @@ public class BatchConfig {
     private final ProductSizeItemProcessor productSizeItemProcessor;
 
     // 생성자 주입
+    // [JA] コンストラクタ注入
     public BatchConfig(JobRepository jobRepository,
             @Qualifier("batchTransactionManager") PlatformTransactionManager batchTransactionManager,
             @Qualifier("metaTransactionManager") PlatformTransactionManager metaTransactionManager,
@@ -325,6 +327,10 @@ public class BatchConfig {
      * 사이즈마다 SKU 코드를 채운다(catalog V17). CSV 에는 사이즈 SKU 가 없다 — 규칙은 DB 함수 한 곳에만 두고
      * 사이즈가 다 들어온 뒤 한 번 부른다. 행마다 계산하지 않는 이유: 같은 스타일에 같은 사이즈 이름이 두 줄인
      * 경우(시드에 실제로 있다) 어느 쪽이 원래 코드를 갖는지 정하려면 전체를 봐야 한다.
+     *
+     * <p>[JA] サイズごとに SKU コードを埋める(catalog V17)。CSV にはサイズ SKU がない — 規則は DB 関数 1 か所にだけ置き、
+     *      サイズがすべて入った後に 1 回呼ぶ。行ごとに計算しない理由: 同じスタイルに同じサイズ名が 2 行ある
+     *      場合(シードに実際にある)どちらが元のコードを持つかを決めるには全体を見る必要がある。
      */
     @Bean
     public Step sizeSkuCodeStep() {
@@ -362,6 +368,7 @@ public class BatchConfig {
     private <T> FlatFileItemReader<T> createCsvReader(String resource, Class<T> targetType, String... names) {
         FlatFileItemReader<T> reader = new FlatFileItemReader<>();
         // resources/csv 폴더 내의 파일을 참조하도록 경로 수정
+        // [JA] resources/csv フォルダ内のファイルを参照するようパスを修正
         reader.setResource(new ClassPathResource("csv/" + resource));
         reader.setLineMapper(createLineMapper(targetType, names));
         reader.setLinesToSkip(1); // Skip the header row
@@ -390,6 +397,15 @@ public class BatchConfig {
     // 존재하는 행의 버전과 충돌하여 OptimisticLockException이 발생하게 됩니다.
     // 이는 데이터가 실제로 중복되어 발생한 문제가 아니라, 엔티티 ID가 이미 할당된 상태에서 JpaItemWriter가 update를 시도하기
     // 때문에 발생하는 문제입니다.
+    // [JA] JpaItemWriter は基本的に merge() 演算でエンティティを保存する。merge() は ID が存在すれば update を、
+    //      なければ insert を試みる。
+    //      category.csv のデータは初回実行時には DB に存在しないはずである。しかし categoryStep で
+    //      JpaItemWriter が Category エンティティを merge() するとき、Category エンティティに id(主キー)が既に
+    //      割り当てられているため Hibernate が update を試みる。
+    //      update はエンティティのバージョンフィールドを確認するが、CSV から読んだエンティティはバージョン情報がないか 0 なので、DB に既に
+    //      存在する行のバージョンと衝突して OptimisticLockException が発生する。
+    //      これはデータが実際に重複して起きた問題ではなく、エンティティ ID が既に割り当てられた状態で JpaItemWriter が update を試みる
+    //      ために起きる問題である。
 
     // BatchConfig.java
     private <T> JpaItemWriter<T> createJpaWriter() {
@@ -397,7 +413,7 @@ public class BatchConfig {
             @Override
             protected void doWrite(jakarta.persistence.EntityManager entityManager, Chunk<? extends T> items) {
                 for (T item : items) {
-                    entityManager.persist(item); // merge() 대신 persist() 사용
+                    entityManager.persist(item); // merge() 대신 persist() 사용 ／ [JA] merge() の代わりに persist() を使用
                 }
             }
         };

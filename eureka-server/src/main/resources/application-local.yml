@@ -1,8 +1,10 @@
 # Standalone Eureka Server — 피어 없이 한 대(k8s/30 이 replicas: 1 로 고정하고 그 이유를 적었다).
+# [JA] Standalone Eureka Server — ピアなしで一台(k8s/30 が replicas: 1 に固定し、その理由を書いた)。
 server:
   port: 8761
 
   # HTTPS 로 받는다 — key-store 만 주면 Boot 가 TLS 를 켠다. 클라이언트 인증서 요청(want)은 매니페스트의 SERVER_SSL_CLIENT_AUTH.
+  # [JA] HTTPS で受ける — key-store だけ与えれば Boot が TLS を有効にする。クライアント証明書の要求(want)はマニフェストの SERVER_SSL_CLIENT_AUTH。
   ssl:
    key-store: ${LOCAL_KEY_STORE_PATH}
    key-store-password: ${LOCAL_KEY_STORE_PASSWORD}
@@ -24,6 +26,9 @@ eureka:
     # 🐛 예전에는 여기에 peer-awareness.enabled · registry-sync-interval-seconds 가 있었다 — EurekaServerConfigBean 에 없는 속성이라
     # 오류 없이 무시됐다(EurekaServerPropertiesTest 가 이제 막는다). 피어 구성은 eureka.client.service-url.defaultZone 에 상대 노드를
     # 적어서 한다.
+    # [JA] 🐛 以前はここに peer-awareness.enabled ・ registry-sync-interval-seconds があった — EurekaServerConfigBean にないプロパティなので
+    #      エラーなく無視された(EurekaServerPropertiesTest が今は防ぐ)。ピア構成は eureka.client.service-url.defaultZone に相手ノードを
+    #      書いて行う。
     peer-node-read-timeout-ms: 30000
     # 이 서버 자신의 주소 — 아래 defaultZone 과 같아야 한다. 🐛 예전에는 없어서 PeerEurekaNodes 가 "localhost" 를 파드의 호스트 이름과
     # 비교해(다르다) 자기 자신을 피어로 보고, 등록 · 하트비트를 `POST /eureka/peerreplication/batch/` 로 자기에게 복제했다 — 인증서 없이
@@ -35,10 +40,13 @@ eureka:
 
   client:
     # standalone — 자기에게 등록하지도, 등록부를 받아 가지도 않는다.
+    # [JA] standalone — 自分に登録もせず、レジストリを取得もしない。
     register-with-eureka: false
     fetch-registry: false
     # 쓰이지 않는 값이 아니다 — 서버의 피어 노드 목록(PeerEurekaNodes)이 이 URL 들을 읽는다. 지우면 기본값
     # http://localhost:8761/eureka/(평문)가 들어가 동작이 바뀔 수 있으므로 그대로 둔다. 피어를 둘 때 상대 노드를 여기에 적는다.
+    # [JA] 使われない値ではない — サーバーのピアノード一覧(PeerEurekaNodes)がこの URL を読む。消すと既定値
+    #      http://localhost:8761/eureka/(平文)が入り動作が変わり得るので、そのままにする。ピアを置くときは相手ノードをここに書く。
     serviceUrl:
       defaultZone: https://localhost:8761/eureka/
 
@@ -51,6 +59,11 @@ eureka:
     #   KeyStore not exists: ServletContext resource [/.../truststore.p12]
     # 로 기동이 죽는다. (RedisCacheConfig 는 코드에서 "file:" 를 직접 붙이므로,
     #  환경변수 자체는 접두어 없는 순수 경로로 둔다.)
+    # [JA] Spring Boot はこの設定に基づいて HTTPS 接続を自動で構成する。
+    #      ⚠️ ここのパスには file: 接頭辞が**必ず**必要である。server.ssl.* と違い eureka.client.tls.* は Spring の Resource として解釈され、
+    #      Web アプリケーションでは接頭辞のないパスは ServletContext 相対パスとして扱われる。接頭辞がないとファイルがちゃんと存在しても
+    #      "KeyStore not exists: ServletContext resource [/.../truststore.p12]" で起動が落ちる。
+    #      (RedisCacheConfig はコードで "file:" を直接付けるので、環境変数そのものは接頭辞のない純粋なパスにしておく。)
     tls:
       enabled: true
       key-store: file:${LOCAL_KEY_STORE_PATH}
@@ -59,6 +72,8 @@ eureka:
 
       # 다른 Peer Eureka Server의 인증서를 신뢰하기 위한 Truststore 설정
       # Standalone 모드라도 자기 자신의 인증서를 신뢰해야 하므로 필요합니다.
+      # [JA] 他の Peer Eureka Server の証明書を信頼するための Truststore 設定。
+      #      Standalone モードでも自分自身の証明書を信頼する必要があるので必要である。
       trust-store: file:${LOCAL_TRUST_STORE_PATH}
       trust-store-password: ${LOCAL_KEY_STORE_PASSWORD}
 
@@ -67,14 +82,20 @@ eureka:
 # 스프링이 읽지 않았다. 레벨도 파일도 적용되지 않았고, 대신 이 모듈의 logback-spring.xml 이
 # Netflix 로거를 DEBUG 로 고정하고 있었다. 이제 최상위에 두고, 출력 형식·마스킹은 common 의
 # 공통 설정(logback-spring.xml)을 쓴다.
+# [JA] ロギング設定 — 🐛 以前はこのブロックが二文字インデントされて `eureka:` の下(eureka.logging.*)に入っており、
+#      Spring が読まなかった。レベルもファイルも適用されず、代わりにこのモジュールの logback-spring.xml が
+#      Netflix のロガーを DEBUG に固定していた。今は最上位に置き、出力形式・マスキングは common の
+#      共通設定(logback-spring.xml)を使う。
 logging:
   level:
     root: info
     # Eureka 관련 로그를 자세히 보고 싶을 때 LOG_LEVEL_EUREKA=debug
+    # [JA] Eureka 関連のログを詳しく見たいときは LOG_LEVEL_EUREKA=debug
     com.netflix.eureka: ${LOG_LEVEL_EUREKA:info}
     com.netflix.discovery: ${LOG_LEVEL_EUREKA:info}
     org.springframework.cloud.netflix: ${LOG_LEVEL_EUREKA:info}
   file:
     path: ./logs
-    name: ${logging.file.path}/discovery-service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+    name: ${logging.file.path}/discovery-service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51) ／ [JA] JSON 一行ずつ — common の logback-spring.xml が書く(docs/51)
   # 출력 패턴은 common 의 logback-spring.xml 이 정한다(가드 B-57).
+  # [JA] 出力パターンは common の logback-spring.xml が決める(ガード B-57)。

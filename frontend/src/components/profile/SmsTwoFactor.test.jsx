@@ -9,6 +9,8 @@ jest.mock("util/api", () => ({ __esModule: true, default: { get: jest.fn(), post
 
 /**
  * SMS 2단계 인증 켜기 · 끄기(user-service docs/24 §10) — 코드를 받아 확인해야 바뀌고, 서버의 거절 사유를 알려 준다.
+ *
+ * <p>[JA] SMS 2 段階認証のオン・オフ(user-service docs/24 §10) — コードを受け取って確認しないと変わらず、サーバーの拒否理由を伝える。
  */
 describe("SMS 2단계 인증 설정", () => {
   afterEach(() => jest.clearAllMocks());

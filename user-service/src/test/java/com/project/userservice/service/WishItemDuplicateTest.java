@@ -26,6 +26,9 @@ import com.project.userservice.security.request.WishListRequest;
  * 🔴 같은 상품 · 스타일을 다시 찜하면 '이미 있음' — 상품 id 가 128 이상이어도.
  *
  * <p>🐛 예전 {@code x.getProductId() == id} 는 박싱된 Long 의 <b>참조</b> 비교라 -128~127 에서만 같았다.
+ *
+ * <p>[JA] 🔴 同じ商品・スタイルを再度お気に入りに入れると「既にある」 — 商品 id が 128 以上でも。
+ * 🐛 以前の {@code x.getProductId() == id} はボクシングされた Long の<b>参照</b>比較なので -128〜127 でしか一致しなかった。
  */
 @DisplayName("찜 — 중복 판정")
 class WishItemDuplicateTest {
@@ -60,6 +63,7 @@ class WishItemDuplicateTest {
     }
 
     /** 🐛 예전: "확인 후 삽입" 뿐이라 동시에 온 두 요청이 모두 저장됐다. 이제 DB 유니크(V18)가 막고, 그것을 "이미 있음" 으로 읽는다. */
+    // [JA] 🐛 以前: 「確認してから挿入」だけだったので同時に来た二つのリクエストが両方保存された。今は DB ユニーク(V18)が防ぎ、それを「既にある」と読む。
     @Test
     @DisplayName("🔴 동시에 온 두 번째 찜(유니크 위반)은 OS_ALREADY_EXISTED — 500 이 아니다")
     void uniqueViolationMeansAlreadyThere() {

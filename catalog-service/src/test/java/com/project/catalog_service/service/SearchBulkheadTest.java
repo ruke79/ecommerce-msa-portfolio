@@ -25,17 +25,22 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * <p>🐛 2026-10-20 실습(상품 1,000만 · 필터 검색 비율 1): 필터 검색이 커넥션을 1 ~ 4초씩 쥐어 풀 15개가 늘 찼고 home · 상품까지 5xx 였다.
  * 실제 풀 · 잠금으로 보는 쪽은 SearchFacetsTimeoutIntegrationTest.
  *
- * <p>[JA] 検索の隔壁 — 全体 3・フィルター検索 2、席を得られなければトランザクションを開かずに Busy。
+ * <p>[JA] 検索の隔壁 — 全体 3・フィルター検索 2、席を得られなければトランザクションを開かずに {@link SearchBulkhead.Busy}。
+ *
+ * <p>[JA] 2026-10-20 実習(商品 1,000 万 · フィルター検索比率 1): フィルター検索が接続を 1 〜 4 秒ずつ握ってプール 15 本が常に埋まり、home · 商品まで 5xx だった。
+ * 実際のプール · ロックで確かめるのは SearchFacetsTimeoutIntegrationTest。
  */
 @DisplayName("검색 격벽 — 전체 3 · 필터 검색 2 · 넘치면 트랜잭션 전에 거절")
 class SearchBulkheadTest {
 
     /** 상한 없음 · 트랜잭션 없음 — 격벽과 상관없는 SearchService 단위 테스트용. */
+    // [JA] 上限なし・トランザクションなし — バルクヘッドと関係ない SearchService 単体テスト用。
     static SearchBulkhead direct() {
         return new SearchBulkhead(TransactionOperations.withoutTransaction(), 1_000, 1_000, Duration.ZERO, new SimpleMeterRegistry());
     }
 
     /** 트랜잭션을 연 횟수를 센다 — 거절된 검색은 열지 않아야 한다(= 커넥션을 잡지 않는다). */
+    // [JA] トランザクションを開いた回数を数える — 拒否された検索は開いてはならない(= コネクションを取らない)。
     static class CountingTransactions implements TransactionOperations {
         final AtomicInteger opened = new AtomicInteger();
 
@@ -114,6 +119,7 @@ class SearchBulkheadTest {
             pool.awaitTermination(5, TimeUnit.SECONDS);
         }
         // 위의 거절에서 필터 자리가 새지 않았다 — 두 개가 그대로 있다
+        // [JA] 上の拒否でフィルタ枠が漏れていない — 二つがそのまま残っている
         CountDownLatch hold = new CountDownLatch(1);
         ExecutorService two = Executors.newFixedThreadPool(2);
         try {

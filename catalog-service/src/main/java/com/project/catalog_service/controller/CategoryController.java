@@ -149,6 +149,17 @@ public class CategoryController {
      *
      * <p>바로 옆 {@code /categories} 는 빈 검사가 없어 {@code 200 []} 를 준다. 그 비대칭이
      * "카테고리 토스트는 안 뜨는데 하위 카테고리 토스트만 뜬다" 로 나타났다.
+     *
+     * <p>[JA] 下位カテゴリの全一覧。
+     *      <b>⚠️ 結果が空だからといって 400 を返さないこと。</b> 以前は空なら SUBCATEGORY_NOT_FOUND を BAD_REQUEST で返していた。
+     *      一覧照会で <b>0 件はエラーではない。</b> リクエストは完全に正常で、答えが空の一覧だった
+     *      だけである。400 は「あなたのリクエストが間違っている」という意味なので、クライアントには直すものがない。
+     *      そしてこれは <b>インストール直後のシステムをロックしてしまう。</b> 管理者が下位カテゴリを作るには
+     *      /admin/category に入る必要があるが、その画面が開くときにこの API を呼んで 400 を受け取り
+     *      "Faild to load subcategories" で終わる — 1 つもないから 1 つも作れない
+     *      鶏と卵になる。実際に空の DB でその状態になった。
+     *      すぐ隣の {@code /categories} は空チェックがなく {@code 200 []} を返す。その非対称が
+     *      「カテゴリのトーストは出ないのに下位カテゴリのトーストだけ出る」として現れた。
      */
     @GetMapping("/product/allsubcategories")
     ResponseEntity<?> loadAllSubcategories() {
@@ -169,6 +180,7 @@ public class CategoryController {
             });
 
             // 0건이면 빈 배열. 화면은 "아직 없음" 을 그리면 된다.
+            // [JA] 0 件なら空の配列。画面は「まだない」を描けばよい。
             return new ResponseEntity<>(subCategoryList, HttpStatus.OK);
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -193,6 +205,9 @@ public class CategoryController {
             // 위 메서드와 같은 이유로 0건도 200 이다. 하위 카테고리가 아직 없는 카테고리는
             // 정상이며, 그걸 400 으로 돌려주면 상품 등록 폼이 열리다 만다
             // (admin/Index.jsx 의 getSubs 는 catch 조차 없어 콘솔에 처리되지 않은 거절이 남았다).
+            // [JA] 上のメソッドと同じ理由で 0 件も 200 である。下位カテゴリがまだないカテゴリは
+            //      正常であり、それを 400 で返すと商品登録フォームが開きかけで止まる
+            //      (admin/Index.jsx の getSubs は catch すらなく、コンソールに未処理の拒否が残った)。
             return new ResponseEntity<>(subCategoryList, HttpStatus.OK);
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)

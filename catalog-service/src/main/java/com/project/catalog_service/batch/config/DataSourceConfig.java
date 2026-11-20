@@ -30,6 +30,10 @@ public class DataSourceConfig {
     // 기본값이 'validate' 인 것은 의도적이다. 스키마는 Flyway 가 소유한다(docs/20).
     // 이 값이 'update' 였을 때 Hibernate 가 운영 DB 에 예고 없이 DDL 을 던졌고,
     // 그러면서도 제약을 **지우지는 않아** V4 같은 수동 마이그레이션이 따로 필요했다.
+    // [JA] 手動生成の EMF に渡す JPA 設定(application-local.yml の spring.jpa.*)
+    //      既定値が 'validate' なのは意図的である。スキーマは Flyway が所有する(docs/20)。
+    //      この値が 'update' だったとき Hibernate が運用 DB に予告なく DDL を投げ、
+    //      それでいて制約を **消しはしない** ため V4 のような手動マイグレーションが別に必要だった。
     @Value("${spring.jpa.hibernate.ddl-auto:validate}")
     private String ddlAuto;
 
@@ -39,6 +43,9 @@ public class DataSourceConfig {
     // spring.jpa.properties.* 를 통째로 받는다. 예전에는 dialect 하나만 @Value 로 꺼내 썼는데,
     // 그러면 새 프로퍼티를 추가할 때마다 여기도 고쳐야 하고 잊으면 **조용히 무시된다** —
     // B-8(ddl-auto 미전달로 스키마 미생성)이 바로 그 실패였다. 맵째로 넘겨 그 부류를 없앤다.
+    // [JA] spring.jpa.properties.* を丸ごと受け取る。以前は dialect 1 つだけを @Value で取り出して使っていたが、
+    //      それだと新しいプロパティを追加するたびにここも直す必要があり、忘れると **黙って無視される** —
+    //      B-8(ddl-auto 未伝達でスキーマ未生成)がまさにその失敗だった。マップごと渡してその類をなくす。
     private final JpaProperties jpaProperties;
 
     public DataSourceConfig(JpaProperties jpaProperties) {
@@ -46,6 +53,7 @@ public class DataSourceConfig {
     }
 
     // 데이터소스(풀)는 CatalogDataSourcePools — yml 의 hikari.* 를 묶는 곳이 거기다
+    // [JA] データソース(プール)は CatalogDataSourcePools — yml の hikari.* を束ねる場所がそこである
     @Bean(name = "entityManagerFactory")
     @Primary
     public LocalContainerEntityManagerFactoryBean dataEntityManager(@Qualifier("dataDataSource") DataSource dataDataSource) {
@@ -62,6 +70,11 @@ public class DataSourceConfig {
         // 빈 데이터베이스에서는 스키마가 생성되지 않아 기동 시
         // 'relation "product.category" does not exist' 로 실패했다(docs/14 B-8).
         // spring.jpa.properties.* 를 통째로 넘긴 뒤, 별도 키인 ddl-auto/show-sql 만 덧댄다.
+        // [JA] この EMF は手動生成なので spring.jpa.* 設定が自動で渡らない。
+        //      プロパティマップがコメントアウトされていて ddl-auto が EMF に届かず、その結果
+        //      空のデータベースではスキーマが生成されず、起動時に
+        //      'relation "product.category" does not exist' で失敗した(docs/14 B-8)。
+        //      spring.jpa.properties.* を丸ごと渡した後、別キーの ddl-auto/show-sql だけを足す。
         Map<String, Object> properties = new HashMap<>(jpaProperties.getProperties());
         properties.putIfAbsent("hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
         properties.put("hibernate.hbm2ddl.auto", ddlAuto);
@@ -72,6 +85,7 @@ public class DataSourceConfig {
     }
 
     // Batch Transaction Manager를 JpaTransactionManager로 변경
+    // [JA] Batch の Transaction Manager を JpaTransactionManager に変更
     @Bean(name = "batchTransactionManager")
     @Primary
     public PlatformTransactionManager batchTransactionManager(EntityManagerFactory dataEntityManager) {

@@ -37,6 +37,11 @@ public class UserDetailsImpl implements UserDetails {
      * <p>예전에는 이 값을 담지도 않고 {@link #isEnabled()} 가 {@code true} 를 하드코딩했다.
      * 그래서 {@code APP_REQUIRE_EMAIL_VERIFICATION=true} 로 켜서 계정을 {@code enabled=false}
      * 로 만들어도 <b>그대로 로그인됐다</b> — 메일 인증이 아무것도 막지 않았다(docs/38 §1.4).
+     *
+     * <p>[JA] アカウントの有効状態 — メール認証のゲート。
+     * 以前はこの値を持たず {@link #isEnabled()} が {@code true} をハードコードしていた。そのため
+     * {@code APP_REQUIRE_EMAIL_VERIFICATION=true} で有効にしてアカウントを {@code enabled=false} にしても、そのままログインできた —
+     * メール認証が何も止めていなかった(docs/38 §1.4)。
      */
     private boolean enabled;
 
@@ -63,6 +68,7 @@ public class UserDetailsImpl implements UserDetails {
                 user.getEmail(),
                 user.getPassword(),
                 // 로그인 2단계가 필요한가 — TOTP 든 SMS 든(docs/24 §10). 🐛 SMS 를 이 값에 넣지 않으면 SMS 만 켠 계정은 비밀번호로 끝난다.
+                // [JA] ログインの第 2 段階が必要か — TOTP でも SMS でも(docs/24 §10)。🐛 SMS をこの値に入れないと、SMS だけ有効にしたアカウントはパスワードで終わる。
                 user.requiresTwoFactor(),
                 user.isEnabled(),
                 List.of(authority) // Wrapping the single authority in a list
@@ -130,6 +136,7 @@ public class UserDetailsImpl implements UserDetails {
     }
 
     /** 메일 인증 게이트. 하드코딩이 아니라 <b>엔티티의 값</b>이다 — 위 {@link #enabled} 주석 참조. */
+    // [JA] メール認証のゲート。ハードコードではなくエンティティの値である — 上の {@link #enabled} のコメント参照。
     @Override
     public boolean isEnabled() {
         return enabled;

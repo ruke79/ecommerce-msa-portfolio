@@ -38,6 +38,12 @@ import com.project.common.constants.chat.MessageType;
  * 발행되지 않던 경로가 있었다(docs/48 — 메일 인증을 끈 가입). 그런 계정이 보낸 메시지는
  * <b>id 없이, 시각 없이</b> 카프카로 나갔다. 화면은 {@code createdAt} 이 없는 메시지를
  * 그리다 죽었다("Cannot read properties of undefined (reading 'trim')").
+ *
+ * <p>[JA] メッセージ送信 — 送信者の会員複製行が<b>ないとき</b>。
+ * 回帰対象: 以前は {@code if (member != null)} の中でだけ id と {@code createdAt} を付けていた。会員複製行({@code ChatMember})は
+ * {@code user-created} イベントで埋まるが、そのイベントが発行されない経路があった(docs/48 — メール認証を切った登録)。そのアカウントが
+ * 送ったメッセージは<b>id も時刻もなしに</b> Kafka へ出た。画面は {@code createdAt} のないメッセージを描こうとして落ちた
+ * ("Cannot read properties of undefined (reading 'trim')")。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -68,7 +74,7 @@ class ChatServiceSendMessageTest {
     private static final long GHOST = 99L;
     private static final long KNOWN = 7L;
 
-    /** 컨트롤러가 세션의 uid 로 senderId 를 채운 뒤의 모양이다(StompController.authenticate). */
+    /** 컨트롤러가 세션의 uid 로 senderId 를 채운 뒤의 모양이다(StompController.authenticate). ／ [JA] コントローラーがセッションの uid で senderId を埋めた後の形である(StompController.authenticate)。 */
     private static MessageDto outgoing(long senderId) {
         return MessageDto.builder()
                 .type(MessageType.TEXT_TALK)
@@ -85,7 +91,7 @@ class ChatServiceSendMessageTest {
         return captor.getValue();
     }
 
-    /** 🔴 id 와 시각은 메시지의 속성이지 회원의 속성이 아니다 — 회원 행이 없어도 붙는다. */
+    /** 🔴 id 와 시각은 메시지의 속성이지 회원의 속성이 아니다 — 회원 행이 없어도 붙는다. ／ [JA] 🔴 id と時刻はメッセージの属性であり会員の属性ではない — 会員行がなくても付く。 */
     @Test
     @DisplayName("🔴 회원 행이 없어도 id 와 createdAt 이 붙어서 나간다")
     void idAndTimestampDoNotDependOnMemberRow() {
@@ -101,6 +107,9 @@ class ChatServiceSendMessageTest {
     /**
      * 본문의 닉네임은 쓰지 않는다 — 클라이언트가 임의로 정한 값이다. 이메일에서도 만들지 않는다 — 닉네임은 상대방
      * 화면에 보이고, 로컬 파트는 대개 계정 아이디다(docs/48 §6-⑥).
+     *
+     * <p>[JA] 本文のニックネームは使わない — クライアントが勝手に決めた値である。メールアドレスからも作らない — ニックネームは相手の
+     * 画面に見え、ローカルパートはたいていアカウント ID である(docs/48 §6-⑥)。
      */
     @Test
     @DisplayName("🔒 회원 행이 없으면 닉네임은 대체값 — 본문 닉네임도, 이메일의 어느 부분도 아니다")
@@ -127,11 +136,12 @@ class ChatServiceSendMessageTest {
         assertThat(out.getSenderId()).isEqualTo(KNOWN);
     }
 
-    /** 🔒 화면으로 나가는 JSON — senderId 는 문자열(19자리 TSID 가 JS Number 에서 뭉개진다), email 은 없다. */
+    /** 🔒 화면으로 나가는 JSON — senderId 는 문자열(19자리 TSID 가 JS Number 에서 뭉개진다), email 은 없다. ／ [JA] 🔒 画面へ出る JSON — senderId は文字列(19 桁の TSID が JS Number で潰れる)、email はない。 */
     @Test
     @DisplayName("🔒 브로드캐스트 JSON: senderId 는 문자열, email 필드는 아예 없다")
     void broadcastJsonHasStringSenderAndNoEmail() throws Exception {
         // 옛 클라이언트가 본문에 email 을 실어 보낸다 — 받지도(필드가 없다) 내보내지도 않는다.
+        // [JA] 古いクライアントが本文に email を載せて送る — 受け取りも(フィールドがない)送り出しもしない。
         MessageDto m = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
                 "{\"roomId\":\"room-1\",\"content\":\"hi\",\"email\":\"should-not-leak@example.com\"}",
                 MessageDto.class);
@@ -146,6 +156,7 @@ class ChatServiceSendMessageTest {
     }
 
     // ── 입장·퇴장 안내 ──────────────────────────────────────────────────
+    // [JA] ── 入室・退室の案内 ──
 
     private static org.springframework.messaging.simp.SimpMessageHeaderAccessor session() {
         org.springframework.messaging.simp.SimpMessageHeaderAccessor h =
@@ -154,7 +165,7 @@ class ChatServiceSendMessageTest {
         return h;
     }
 
-    /** 🔒 예전에는 "tester@example.com entered." 가 방의 상대방 화면에 찍혔다. */
+    /** 🔒 예전에는 "tester@example.com entered." 가 방의 상대방 화면에 찍혔다. ／ [JA] 🔒 以前は "tester@example.com entered." が部屋の相手の画面に表示されていた。 */
     @Test
     @DisplayName("🔒 입장·퇴장 안내에 이메일이 없다 — 회원 행의 닉네임을 쓴다")
     void enterAndLeaveDoNotShowEmail() {

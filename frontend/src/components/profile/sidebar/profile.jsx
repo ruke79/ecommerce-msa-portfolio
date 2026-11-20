@@ -7,6 +7,13 @@
  *
  * <p>그래서 표시용 문구는 {@code key} 로 따로 둔다. {@code name} 은 영어 그대로 남아
  * 화면에 보이지 않고 주소에만 쓰인다.
+ *
+ * <p>[JA] プロフィールサイドバーメニュー。
+ * 🔴 <b>{@code name} を翻訳しない。</b> {@code Item.jsx} がその値を
+ * {@code slugify(link.name)} して URL の {@code ?q=} を作る — 翻訳すると <b>言語によって
+ * アドレスが変わり</b> 共有したリンクが別言語のユーザーで開けず、戻るもずれる。
+ * そのため表示用の文言は {@code key} で別に置く。{@code name} は英語のまま残り
+ * 画面には見えずアドレスにだけ使われる。
  */
 export const profile =[
     {
@@ -77,6 +84,8 @@ export const profile =[
             },
             // 🐛 "배송 완료" 가 COMPLETED 를 걸렀다 — 도착한 주문은 DELIVERED 라 언제나 비었다.
             //    COMPLETED 는 구매 확정(docs/25 §12)이고 그 항목은 따로 있다.
+            // [JA] 🐛「配送完了」が COMPLETED で絞り込んでいた — 届いた注文は DELIVERED なので常に空だった。
+            //      COMPLETED は購入確定(docs/25 §12)でその項目は別にある。
             {
                 name: "Delivered Orders",
                 key: "profile.menu.orders.delivered",

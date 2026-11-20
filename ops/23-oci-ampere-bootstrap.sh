@@ -73,6 +73,78 @@
 #   sudo bash ops/23-oci-ampere-bootstrap.sh
 #   sudo bash ops/23-oci-ampere-bootstrap.sh --check     # 진단만, 변경 없음
 #
+# [JA] OCI Ampere A1(arm64)インスタンスに k3s を載せる。
+#
+#      対象: Oracle Cloud Always Free の Ampere A1(arm64)。
+#
+#      ⚠️ **上限がテナンシーごとに違う。** 2026-06-15 付で Always Free の Ampere 上限が
+#         4 OCPU/24GB → 2 OCPU/12GB に縮小されたと告知なしに文書だけが変わったが、実際には
+#         4 OCPU/24GB がそのまま取れるアカウントもある。このスクリプトが `nproc` で確認してくれる。
+#
+#         CPU 要求の合計(docs/32 §2):
+#
+#                                                                       4 OCPU  2 OCPU
+#           prod(HPA min=2) + クラスタ内インフラ 5 種    5,950m/10,048Mi   🔴      🔴
+#           **k8s-overlays/external** すべて 1 レプリカ  3,550m/ 6,592Mi   ✅      🔴
+#           **k8s-overlays/oci** + Kafka・Redis(ES 除く) 1,120m/ 4,032Mi   ✅      ✅
+#
+#         (2026-09: saga-projection と config-server が加わり、external はそれぞれ +100m/384Mi、
+#          oci はそれぞれ +60m/256Mi。saga-projection は external オーバーレイが 1 レプリカに固定する —
+#          マニフェストの既定値は 2 である。config-server はマニフェスト自体が 1 である。)
+#
+#         受け取ったサイズによってオーバーレイが分かれる。4 OCPU なら external、2 OCPU なら oci である
+#         (oci は external を継承してさらに絞ったものなので 4 OCPU で使ってもよい。逆はだめだ)。
+#
+#         **どちらでも k8s/70-autoscaling.yaml は適用しない** — prod の HPA は min=2 なので
+#         11 個のサービスが 5,300m になり 4 OCPU も超える(replicas フィールドがなければ既定値 1)。
+#         ⚠️ レプリカ 1 では、このリポジトリがレプリカ 2 で捕まえてきた並行性バグを再現できない
+#            (docs/31 §3)。4 OCPU なら余裕で主要な二つほどだけ手で 2 レプリカに上げてみられる。
+#            2 OCPU なら ops/12-staging-rehearsal.sh で Linux 上で別に確認すること。
+#
+#      ⚠️ **インスタンスの上で直接実行する。** ローカルからリモートに対して回すスクリプトではない。
+#
+#        scp ops/23-oci-ampere-bootstrap.sh <ユーザー>@<公開IP>:~/
+#        ssh <ユーザー>@<公開IP> 'sudo bash 23-oci-ampere-bootstrap.sh'
+#
+#        既定のユーザーはイメージごとに違う: Ubuntu は `ubuntu`、**Oracle Linux は `opc`**。
+#        root では直接入れない(どちらのイメージも `PermitRootLogin` が塞がれている)。
+#
+#      ── どのイメージを選ぶか ──
+#
+#        **Oracle Linux 9(aarch64)** を勧める。三つとも動くが、OCI の中でだけ差が出る:
+#
+#          Oracle Linux 9  プラットフォームイメージ(コンソールに常にある)、oci-utils・cloud-init 内蔵、2032 まで
+#          Rocky Linux 9   技術的には同等だが OCI ではマーケットプレイスイメージ — OCID を別に探す必要がある
+#          CentOS          **選択肢ではない。** CentOS Linux は 2024-06 EOL、残った Stream はローリング
+#          Ubuntu          よく動くが、東京リージョンで A1 のイメージ一覧に出てこない場合が報告されている
+#
+#        ⚠️ イメージを替えても `Out of host capacity` は解決しない — 容量はイメージと無関係である
+#           (ops/26 参照)。イメージの選択は容量の問題とは別だ。
+#
+#        ⚠️ OL8 ではなく **OL9** を使うこと。OL8 は cgroup v1 が既定なので k3s が v2 を使えない。
+#
+#        このスクリプトは Ubuntu(iptables + netfilter-persistent)と RHEL 系(firewalld + SELinux)を
+#        両方扱う。
+#
+#      ══════════════════════════════════════════════════════════════
+#       ⚠️ OCI で k3s が壊れるいちばんよくある理由 — このスクリプトが扱うもの
+#      ══════════════════════════════════════════════════════════════
+#
+#      OCI の Ubuntu・Oracle Linux イメージは **インスタンスの中に iptables の REJECT 規則をあらかじめ入れて
+#      ある。** 22 番を除くほぼすべての入力を塞ぐが、これが Pod ネットワーク(CNI)まで塞ぐ。
+#      症状は見当違いの形で現れる — Pod は Running なのに互いに通信できず、CoreDNS が
+#      CrashLoopBackOff を繰り返し、`kubectl exec` がタイムアウトする。「k3s がおかしい」に見えるが
+#      原因はファイアウォールである。
+#
+#      二つ目は **Security List / NSG** である。これはインスタンスの外(コンソール)なのでスクリプトは手を出せない。
+#      ただしこのプロジェクトは Cloudflare Tunnel で入ってくるので(ops/24)**インバウンドを開ける必要がない。**
+#      22 番(SSH)さえあればよい。それがトンネルを使ういちばん大きな理由である。
+#
+#      ══════════════════════════════════════════════════════════════
+#
+#      使い方:
+#        sudo bash ops/23-oci-ampere-bootstrap.sh
+#        sudo bash ops/23-oci-ampere-bootstrap.sh --check     # 診断だけ、変更なし
 set -euo pipefail
 
 CHECK_ONLY=0
@@ -94,6 +166,7 @@ done
 [ "$(id -u)" = "0" ] || die "root 로 실행하세요: sudo bash $0"
 
 # ---------------------------------------------------------------- 1. 환경 확인
+# [JA] 1. 環境の確認
 
 log "1/6  환경 확인"
 
@@ -111,6 +184,9 @@ info "CPU ${CPUS}코어 / 메모리 ${MEM_GB}GB"
 # 배포판을 판별한다. 아래 방화벽·SELinux 처리가 계열마다 완전히 다르기 때문이다.
 #   Ubuntu/Debian : iptables 규칙 파일 + netfilter-persistent, SELinux 없음
 #   RHEL 계열     : firewalld + SELinux enforcing (Oracle Linux·Rocky·AlmaLinux)
+# [JA] ディストリビューションを判別する。下のファイアウォール・SELinux の処理が系統ごとにまったく違うからである。
+#        Ubuntu/Debian : iptables の規則ファイル + netfilter-persistent、SELinux なし
+#        RHEL 系       : firewalld + SELinux enforcing(Oracle Linux・Rocky・AlmaLinux)
 OS_ID=""; OS_VER=""; OS_NAME="unknown"
 if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
@@ -127,6 +203,7 @@ info "배포판: $OS_NAME (계열: $OS_FAMILY)"
     warn "배포판을 알아내지 못했습니다 — 방화벽·SELinux 처리를 건너뛸 수 있습니다"
 
 # OL8/Rocky8 은 cgroup v1 이 기본이다. k3s 는 v2 를 기대한다.
+# [JA] OL8/Rocky8 は cgroup v1 が既定である。k3s は v2 を期待する。
 if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
     warn "cgroup v2 통합 계층이 보이지 않습니다 — k3s 의 메모리·CPU 제한이 헐거워집니다"
     case "$OS_FAMILY" in
@@ -143,6 +220,14 @@ fi
 #   external  3,550m / 6,592Mi     oci  1,120m / 4,032Mi
 #
 # oci 는 external 을 상속해 더 조인 것이라 4 OCPU 에서 써도 된다. 반대는 안 된다.
+# [JA] ── この箱に合うオーバーレイを選んでくれる ──
+#
+#      上限がテナンシーごとに違うので(4 OCPU/24GB または 2 OCPU/12GB)文書だけを見て選べない。
+#      実際のコア数で判定する。要求の合計は docs/32 §2:
+#
+#        external  3,550m / 6,592Mi     oci  1,120m / 4,032Mi
+#
+#      oci は external を継承してさらに絞ったものなので 4 OCPU で使ってもよい。逆はだめだ。
 if [ "$CPUS" -ge 4 ]; then
     OVERLAY="k8s-overlays/external"
     info "권장 오버레이: $OVERLAY  (요청 3,550m — ${CPUS}코어에 들어갑니다)"
@@ -158,11 +243,13 @@ fi
 warn "어느 쪽이든 k8s/70-autoscaling.yaml 은 적용하지 마세요 (HPA min=2 → 5,300m)"
 
 # 실제 사용량(자바 서비스 13개 + Kafka)은 8GB 안팎이다. 요청 합계보다 이쪽이 진짜 제약이다.
+# [JA] 実際の使用量(Java サービス 13 個 + Kafka)は 8GB 前後である。要求の合計よりこちらが本当の制約だ。
 if [ "$MEM_GB" -lt 10 ]; then
     warn "메모리 ${MEM_GB}GB — 자바 서비스 13개 + Kafka 의 실사용이 8GB 안팎이라 빠듯합니다"
 fi
 
 # ---------------------------------------------------------------- 2. 방화벽
+# [JA] 2. ファイアウォール
 
 log "2/6  iptables 규칙 점검 (OCI 의 대표적 함정)"
 
@@ -171,6 +258,11 @@ log "2/6  iptables 규칙 점검 (OCI 의 대표적 함정)"
 # ⚠️ `iptables` 명령이 없으면 이 검사는 "규칙 0개"를 돌려준다 — **없는 것과 못 본 것은 다르다.**
 #    최소 설치된 Oracle Linux 이미지가 바로 이 경우라, 규칙이 멀쩡히 있는데도 통과했다고
 #    보고할 수 있다. 그래서 명령 유무를 먼저 가른다.
+# [JA] OCI のイメージは INPUT チェーンの末尾に REJECT を置く。これをそのままにすると CNI のトラフィックが塞がれる。
+#
+#      ⚠️ `iptables` コマンドがないとこの検査は「規則 0 個」を返す — **ないことと見えていないことは違う。**
+#         最小インストールの Oracle Linux イメージがまさにこのケースで、規則がちゃんとあるのに通過したと
+#         報告しうる。だからコマンドの有無を先に分ける。
 IPTABLES_SEEN=1
 if ! command -v iptables >/dev/null 2>&1; then
     IPTABLES_SEEN=0
@@ -192,18 +284,25 @@ if [ "$REJECT_RULES" -gt 0 ]; then
         #
         # 10.42.0.0/16  파드 CIDR (k3s 기본)
         # 10.43.0.0/16  서비스 CIDR (k3s 기본)
+        # [JA] 規則を丸ごと消さない。**k3s が使う帯域だけを明示的に許可** し、
+        #      残りはそのままにする — REJECT を全部取り払うとインスタンスがそのまま露出する。
+        #
+        #      10.42.0.0/16  Pod CIDR(k3s 既定)
+        #      10.43.0.0/16  サービス CIDR(k3s 既定)
         for cidr in 10.42.0.0/16 10.43.0.0/16; do
             iptables -C INPUT -s "$cidr" -j ACCEPT 2>/dev/null \
                 || iptables -I INPUT 1 -s "$cidr" -j ACCEPT
             info "허용: $cidr"
         done
         # cni0/flannel 인터페이스에서 오는 것도 허용.
+        # [JA] cni0/flannel インターフェースから来るものも許可する。
         iptables -C INPUT -i cni0 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i cni0 -j ACCEPT 2>/dev/null || true
         iptables -C FORWARD -s 10.42.0.0/16 -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -s 10.42.0.0/16 -j ACCEPT
         iptables -C FORWARD -d 10.42.0.0/16 -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -d 10.42.0.0/16 -j ACCEPT
         info "FORWARD 체인에 파드 CIDR 허용"
 
         # 재부팅 후에도 남게 저장한다. 이걸 빼먹으면 "어제는 됐는데" 가 된다.
+        # [JA] 再起動後も残るよう保存する。これを忘れると「昨日は動いたのに」になる。
         if command -v netfilter-persistent >/dev/null 2>&1; then
             netfilter-persistent save >/dev/null 2>&1 && info "netfilter-persistent 로 저장"
         elif command -v iptables-save >/dev/null 2>&1 && [ -d /etc/iptables ]; then
@@ -225,10 +324,12 @@ elif [ "$IPTABLES_SEEN" = "1" ]; then
 fi
 
 # Oracle Linux 는 firewalld 를 쓴다. 켜져 있으면 같은 문제가 생긴다.
+# [JA] Oracle Linux は firewalld を使う。有効なら同じ問題が起きる。
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     warn "firewalld 가 켜져 있습니다 — k3s 와 충돌합니다"
     if [ "$CHECK_ONLY" = "0" ]; then
         # 끄는 대신 파드 대역을 trusted 존에 넣는다.
+        # [JA] 止める代わりに Pod の帯域を trusted ゾーンに入れる。
         firewall-cmd --permanent --zone=trusted --add-source=10.42.0.0/16 >/dev/null
         firewall-cmd --permanent --zone=trusted --add-source=10.43.0.0/16 >/dev/null
         firewall-cmd --reload >/dev/null
@@ -247,6 +348,17 @@ fi
 #
 #   container-selinux  컨테이너 런타임용 기본 정책 (배포판 저장소에 있다)
 #   k3s-selinux        k3s 전용 정책 (get.k3s.io 가 rancher 저장소를 추가해 설치한다)
+# [JA] 2b. SELinux
+#
+#      RHEL 系(Oracle Linux・Rocky・AlmaLinux)は SELinux が **enforcing** で出てくる。
+#      ポリシーなしで k3s を載せるとインストールは成功するのにコンテナ作成が拒否され、ログには
+#      `permission denied` だけが残ってファイアウォールの問題のように見える。原因はファイアウォールではなくポリシーである。
+#
+#      ここでやることは **切ることではなくポリシーを入れること** である。`setenforce 0` でも動くが
+#      再起動すると戻り、何よりディストリビューションがくれる隔離を丸ごと捨てる選択である。
+#
+#        container-selinux  コンテナランタイム用の基本ポリシー(ディストリビューションのリポジトリにある)
+#        k3s-selinux        k3s 専用ポリシー(get.k3s.io が rancher リポジトリを追加してインストールする)
 
 SELINUX_MODE="$(getenforce 2>/dev/null || echo "N/A")"
 [ "$SELINUX_MODE" = "N/A" ] || log "2b/6  SELinux 정책 (RHEL 계열)"
@@ -261,6 +373,7 @@ if [ "$SELINUX_MODE" = "Enforcing" ]; then
             warn "container-selinux 설치 실패 — k3s 설치가 정책을 못 넣을 수 있습니다"
         fi
         # k3s-selinux 는 아래 get.k3s.io 가 알아서 설치한다. 설치 후 4/6 에서 확인한다.
+        # [JA] k3s-selinux は下の get.k3s.io が自動でインストールする。インストール後 4/6 で確認する。
     fi
 elif [ "$SELINUX_MODE" != "N/A" ]; then
     info "SELinux: $SELINUX_MODE (정책 처리 불필요)"
@@ -272,17 +385,23 @@ if [ "$CHECK_ONLY" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------- 3. 커널·시스템
+# [JA] 3. カーネル・システム
 
 log "3/6  커널 파라미터"
 
 # Elasticsearch 가 요구한다. 없으면 부트스트랩 체크에서 즉시 죽는다
 # ("max virtual memory areas vm.max_map_count [65530] is too low").
+# [JA] Elasticsearch が要求する。なければブートストラップチェックで即座に死ぬ
+#      ("max virtual memory areas vm.max_map_count [65530] is too low")。
 cat > /etc/sysctl.d/99-k3s-ecommerce.conf <<'EOF'
 # Elasticsearch 부트스트랩 체크 통과용
+# [JA] Elasticsearch のブートストラップチェックを通すため
 vm.max_map_count = 262144
 # 커넥션이 많은 서비스(게이트웨이·Kafka)에서 포트 고갈을 막는다
+# [JA] 接続の多いサービス(ゲートウェイ・Kafka)でポート枯渇を防ぐ
 net.ipv4.ip_local_port_range = 10240 65535
 # 컨테이너가 많아 기본값으로는 inotify 감시자가 모자란다
+# [JA] コンテナが多く、既定値では inotify の監視数が足りない
 fs.inotify.max_user_watches = 524288
 fs.inotify.max_user_instances = 512
 EOF
@@ -306,6 +425,16 @@ else
     #
     # 이미지 GC 임계값을 낮춘 이유: 프리티어 부트볼륨이 작아(기본 50GB) 이미지가 몇 번
     # 쌓이면 디스크가 찬다. 디스크가 차면 kubelet 이 파드를 evict 하기 시작한다.
+    # [JA] --write-kubeconfig-mode 644 : sudo なしで kubectl を使うため
+    #      traefik は **切らない** — 60-ingress.yaml と Cloudflare Tunnel がこれを使う
+    #      --disable servicelb : トンネルで入ってくるので LoadBalancer タイプは要らない。
+    #                            有効にしておくと klipper-lb の Pod が 80/443 を取ろうとして失敗する
+    #
+    #      metrics-server は **切らない** — prod オーバーレイの HPA がこれを使う。k3s は標準で
+    #      含むので何もしなければ有効である(`--disable metrics-server=false` のような文法はない)。
+    #
+    #      イメージ GC のしきい値を下げた理由: 無料枠のブートボリュームが小さく(既定 50GB)イメージが何度か
+    #      溜まるとディスクがいっぱいになる。ディスクがいっぱいになると kubelet が Pod を evict し始める。
     curl -sfL https://get.k3s.io | \
         INSTALL_K3S_VERSION="$K3S_VERSION" \
         INSTALL_K3S_EXEC="server \
@@ -319,6 +448,8 @@ fi
 
 # 설치 스크립트가 정책을 실제로 넣었는지 확인한다. "설치가 성공했다"와 "정책이 들어갔다"는
 # 다른 말이고, 어긋나면 증상이 파드 단계에서야 나타난다.
+# [JA] インストールスクリプトがポリシーを実際に入れたかを確認する。「インストールが成功した」と「ポリシーが入った」は
+#      別の話で、ずれると症状は Pod の段階になって初めて現れる。
 if [ "$SELINUX_MODE" = "Enforcing" ]; then
     if rpm -q k3s-selinux >/dev/null 2>&1; then
         info "k3s-selinux 정책 확인"
@@ -332,6 +463,7 @@ if [ "$SELINUX_MODE" = "Enforcing" ]; then
 fi
 
 # 준비될 때까지 기다린다. 바로 kubectl 을 때리면 아직 API 가 안 떠 있다.
+# [JA] 準備できるまで待つ。すぐに kubectl を叩くとまだ API が起動していない。
 for i in $(seq 1 60); do
     k3s kubectl get nodes >/dev/null 2>&1 && break
     sleep 2
@@ -340,10 +472,12 @@ k3s kubectl get nodes >/dev/null 2>&1 || die "k3s API 가 뜨지 않았습니다
 info "노드: $(k3s kubectl get nodes --no-headers | awk '{print $1, $2}')"
 
 # ---------------------------------------------------------------- 5. 검증
+# [JA] 5. 検証
 
 log "5/6  파드 네트워크 검증 (방화벽이 제대로 열렸는지)"
 
 # CoreDNS 가 뜨는지가 가장 빠른 판정이다. 방화벽이 막고 있으면 여기서 CrashLoopBackOff 다.
+# [JA] CoreDNS が起動するかが最も速い判定である。ファイアウォールが塞いでいるとここで CrashLoopBackOff になる。
 for i in $(seq 1 60); do
     ready=$(k3s kubectl -n kube-system get deploy coredns -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
     [ "${ready:-0}" -ge 1 ] && break
@@ -363,6 +497,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 6. 마무리
+# [JA] 6. 仕上げ
 
 log "6/6  완료"
 

@@ -13,6 +13,12 @@ const Probe = ({ title }) => {
  * `<title>` 을 `<head>` 로 올리지 않는다 — `<body>` 안의 그 태그를 브라우저는 무시한다
  * (호이스팅은 React 19 부터). 게다가 `public/index.html` 에 `<title>` 자체가 없어서
  * 탭에는 URL 이 그대로 보였다.
+ *
+ * <p>[JA] 🐛 回帰対象: **タブタイトルが変わらなかった。**
+ * `Header.jsx` が `<header>` の中に `<title>{title}</title>` を描いていた。React 18 は
+ * `<title>` を `<head>` へ持ち上げない — `<body>` の中のそのタグをブラウザは無視する
+ * (ホイスティングは React 19 から)。しかも `public/index.html` に `<title>` 自体が無く
+ * タブには URL がそのまま見えていた。
  */
 describe("useDocumentTitle", () => {
   const original = document.title;
@@ -38,6 +44,8 @@ describe("useDocumentTitle", () => {
 
   /**
    * 되돌리지 않으면 제목을 세우지 않는 화면으로 이동했을 때 이전 화면의 제목이 남는다.
+   *
+   * <p>[JA] 戻さないとタイトルを設定しない画面へ移動したとき前の画面のタイトルが残る。
    */
   it("언마운트하면 이전 제목으로 되돌린다", () => {
     document.title = "이전 제목";

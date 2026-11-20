@@ -40,6 +40,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 class HomeViewCacheTest {
 
     /** 손으로 넘기는 시계. */
+    // [JA] 手で進める時計。
     static final class MovableClock extends Clock {
         private Instant now = Instant.parse("2026-10-18T06:00:00Z");
 
@@ -86,7 +87,7 @@ class HomeViewCacheTest {
         assertThat(cache.get().sections().get(0).title()).isEqualTo("v1");
         verify(sections, times(1)).home();
 
-        clock.advance(Duration.ofSeconds(1));   // 30초 — 만료
+        clock.advance(Duration.ofSeconds(1));   // 30초 — 만료 ／ [JA] 30秒 — 期限切れ
         assertThat(cache.get().sections().get(0).title()).isEqualTo("v2");
         verify(sections, times(2)).home();
         assertThat(count("miss")).isEqualTo(2);
@@ -110,11 +111,11 @@ class HomeViewCacheTest {
         try {
             List<Future<HomeView>> results = new ArrayList<>();
             results.add(pool.submit(cache::get));
-            assertThat(building.await(10, TimeUnit.SECONDS)).isTrue();   // 첫 스레드가 만드는 중
+            assertThat(building.await(10, TimeUnit.SECONDS)).isTrue();   // 첫 스레드가 만드는 중 ／ [JA] 最初のスレッドが作成中
             for (int i = 0; i < 15; i++) {
                 results.add(pool.submit(cache::get));
             }
-            Thread.sleep(100);   // 나머지가 자물쇠 앞에 줄 서게
+            Thread.sleep(100);   // 나머지가 자물쇠 앞에 줄 서게 ／ [JA] 残りがロックの前に並ぶように
             release.countDown();
             for (Future<HomeView> f : results) {
                 assertThat(f.get(10, TimeUnit.SECONDS).sections().get(0).title()).isEqualTo("v1");

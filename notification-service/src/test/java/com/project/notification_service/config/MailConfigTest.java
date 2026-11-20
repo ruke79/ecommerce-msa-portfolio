@@ -24,6 +24,12 @@ import com.project.notification_service.mail.MailSender;
  *
  * <p>가입 확인 메일은 큐에 정상 등록됐고, 25초 뒤 {@code UnknownHostException} WARN 다섯 줄을
  * 남기고 FAILED 가 됐다. 사용자에게는 "가입은 됐는데 메일이 안 온다" 로만 보였다.
+ *
+ * <p>[JA] 送信器の選択 — <b>設定が不十分なまま「実際の送信」を有効にできないよう防ぐ箇所</b>。🐛 運用で
+ * {@code MAIL_HOST} が {@code "REPLACE_ME_smtp_host"} のまま配備された。その値は空ではないので
+ * {@code isBlank()} 検査を通り、サービスは「メール送信器: smtp (実際の送信) from=…」
+ * と出力して正常に起動した。登録確認メールはキューに正常に登録され、25 秒後に {@code UnknownHostException}
+ * の WARN を五行残して FAILED になった。ユーザーには「登録はできたのにメールが来ない」としか見えなかった。
  */
 @DisplayName("메일 발송기 선택")
 class MailConfigTest {
@@ -66,6 +72,9 @@ class MailConfigTest {
     /**
      * 🔴 이것이 이 파일의 핵심이다. 안 채운 값은 비어 있지 않아 예전 검사를 통과했다 —
      * 비우려면 지워야 하지만 안 채우는 것은 아무것도 안 하면 된다. 후자가 훨씬 흔한 실수다.
+     *
+     * <p>[JA] 🔴 これがこのファイルの要だ。埋めていない値は空ではないので以前の検査を通った —
+     * 空にするには消す必要があるが、埋めないのは何もしなければよい。後者のほうがはるかによくあるミスだ。
      */
     @Test
     @DisplayName("🐛 호스트가 자리 표시자면 기동을 막는다 — 25초 뒤 WARN 이 아니라 지금 터져야 한다")
@@ -86,6 +95,7 @@ class MailConfigTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("MAIL_PASSWORD")
                 // 🔒 어느 키인지만 말한다. 값은 로그로 나간다.
+                // [JA] 🔒 どのキーかだけを言う。値はログに出る。
                 .hasMessageNotContaining("REPLACE_ME_smtp_app_password");
     }
 
@@ -113,6 +123,10 @@ class MailConfigTest {
      * 자리 표시자 검사가 <b>logging 경로까지</b> 번지면 안 된다. 기본값이 logging 인 것은
      * 의도된 안전장치이고, 그때는 MAIL_* 가 안 채워져 있는 것이 정상이다 — 여기서 막으면
      * 아무 설정도 없는 개발 환경이 기동조차 못 한다.
+     *
+     * <p>[JA] プレースホルダー検査が<b>logging 経路まで</b>広がってはならない。既定値が logging
+     * なのは意図した安全装置で、そのときは MAIL_* が埋まっていないのが正常だ —
+     * ここで止めると何の設定もない開発環境が起動すらできない。
      */
     @Test
     @DisplayName("logging 발송기는 MAIL_* 가 자리 표시자여도 그대로 뜬다")
@@ -130,6 +144,10 @@ class MailConfigTest {
      * {@code spring.mail.host} 가 빈 기본값({@code ${MAIL_HOST:}})이면 부트는 프로퍼티가
      * "존재한다"고 보아 JavaMailSender 빈을 만든다. 호스트를 따로 보지 않으면 매 발송이
      * 알 수 없는 오류로 실패하며 큐만 쌓인다.
+     *
+     * <p>[JA] {@code spring.mail.host} が空の既定値({@code ${MAIL_HOST:}})だと、Boot はプロパティが「存在する」
+     * とみなして JavaMailSender の Bean を作る。ホストを別に見ないと毎回の送信が不明なエラーで失敗し、
+     * キューだけが溜まる。
      */
     @Test
     @DisplayName("JavaMailSender 빈이 없으면 막는다")

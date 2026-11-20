@@ -8,6 +8,7 @@ server:
       key-password: ${LOCAL_KEY_PASSWORD}
 
 # Kafka 접속 설정은 common/application-common.yml 이 소유한다(docs/18).
+# [JA] Kafka 接続設定は common/application-common.yml が持つ(docs/18)。
 
 eureka:
   instance:
@@ -26,25 +27,36 @@ spring:
 
 # 이 서비스에는 datasource 가 없다 — 상태는 Kafka Streams 의 로컬 저장소와 변경 로그 토픽이다.
 # 그래서 B-32(커넥션 풀 총합)·B-33(베이스라인 마이그레이션) 가드레일의 대상이 아니다.
+# [JA] このサービスには datasource がない — 状態は Kafka Streams のローカルストアと変更ログトピックである。
+#      だから B-32(コネクションプール総数)・B-33(ベースラインマイグレーション)ガードレールの対象ではない。
 
 saga-projection:
   # Kafka Streams application.id = 소비자 그룹 id = 내부 토픽 접두사. 바꾸면 새 앱으로 취급되어
   # 입력을 처음부터 다시 접는다(그게 원하는 것일 때가 있다 — 프로젝션 재구축).
+  # [JA] Kafka Streams application.id = コンシューマグループ id = 内部トピック接頭辞。変えると新しいアプリとして扱われ
+  #      入力を最初から畳み直す(それが望みのときもある — プロジェクションの再構築)。
   application-id: ${SAGA_APPLICATION_ID:saga-projection}
   # 이 인스턴스가 대화형 조회(interactive query)에서 자기를 식별하는 host:port. 파드마다 달라야
   # 하므로 k8s 는 POD_IP 를 넣는다. 같은 값을 두 파드가 쓰면 "내가 활성 호스트" 판단이 틀려
   # 남의 키를 빈 값으로 답한다.
+  # [JA] このインスタンスが対話型照会(interactive query)で自分を識別する host:port。Pod ごとに違う必要が
+  #      あるので k8s は POD_IP を入れる。同じ値を二つの Pod が使うと「自分がアクティブホスト」の判断が狂い、
+  #      他人のキーを空値で答える。
   application-server: ${SAGA_APPLICATION_SERVER:localhost:8190}
   # RocksDB 상태 디렉터리. 파드 재시작 사이에 남아 있으면 변경 로그 재생을 건너뛴다(빠른 기동).
   # 없어도 된다 — 변경 로그에서 복구한다.
+  # [JA] RocksDB の状態ディレクトリ。Pod の再起動をまたいで残っていれば変更ログの再生を飛ばす(高速起動)。
+  #      なくてもよい — 変更ログから復旧する。
   state-dir: ${SAGA_STATE_DIR:./state}
   # 대기(standby) 복제본 수. 레플리카 ≤ standby+1 이면 모든 파드가 모든 키를 로컬에서 답할 수 있다.
+  # [JA] 待機(standby)レプリカ数。レプリカ ≤ standby+1 ならすべての Pod がすべてのキーをローカルで答えられる。
   standby-replicas: ${SAGA_STANDBY_REPLICAS:1}
   topics:
     order: order
     payment: payment
     state: order-saga-state
     # 주문 상태 변경(order-service 아웃박스 → 릴레이) → 주문 진행 타임라인(docs/76). 출력은 컴팩션이어야 한다 — ops/02 가 만든다(B-38).
+    # [JA] 注文状態変更(order-service アウトボックス → リレー) → 注文進行タイムライン(docs/76)。出力はコンパクションでなければならない — ops/02 が作る(B-38)。
     order-status: order-status
     timeline: order-timeline
 
@@ -53,6 +65,7 @@ management:
     health:
       group:
         # Streams 가 RUNNING 이 아니면 트래픽을 받지 않는다 — 조회 API 가 503 만 낼 상태다.
+        # [JA] Streams が RUNNING でなければトラフィックを受けない — 照会 API が 503 しか返せない状態だ。
         readiness:
           include: readinessState, kafkaStreams
 
@@ -61,9 +74,12 @@ logging:
     root: info
     com.project.saga_projection: ${LOG_LEVEL_APP:info}
     # 리밸런스·상태 전이는 info 로 충분하다. Streams 내부의 debug 는 한 줄이 아니라 초당 수백 줄이다.
+    # [JA] リバランス・状態遷移は info で十分。Streams 内部の debug は一行ではなく毎秒数百行だ。
     org.apache.kafka.streams: info
   file:
     path: ./logs
-    name: ${logging.file.path}/saga_projection.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+    name: ${logging.file.path}/saga_projection.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51) ／ [JA] JSON を一行ずつ — common の logback-spring.xml が書く(docs/51)
   # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
   # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+  # [JA] 出力パターンは common の logback-spring.xml が決める — メッセージ・例外を %mask で包み機微情報を隠す。
+  #      ここに logging.pattern を置いても使われない(ガード B-57)。

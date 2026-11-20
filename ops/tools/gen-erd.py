@@ -31,6 +31,7 @@ DOCS = [ROOT / "docs/69-erd.md", ROOT / "docs/69-erd.ko.md"]
 CONTAINER = "gen-erd-pg"
 
 # (문서 구간 키, 서비스, DB, 스키마들)
+# [JA] (文書区間のキー, サービス, DB, スキーマ群)
 SPEC = [
     ("user", "user-service", "userdb", ["users"]),
     ("catalog-product", "catalog-service", "catalogdb", ["product"]),
@@ -76,7 +77,7 @@ def migrate():
         for f in files:
             r = subprocess.run(["docker", "exec", "-i", CONTAINER, "psql", "-U", "postgres", "-d", db, "-q"],
                                input=f.read_text(), capture_output=True, text=True)
-            if "ERROR" in r.stderr and "seed_" not in r.stderr:   # 데이터 보정 스크립트의 임시 표 오류는 스키마와 무관
+            if "ERROR" in r.stderr and "seed_" not in r.stderr:   # 데이터 보정 스크립트의 임시 표 오류는 스키마와 무관 ／ [JA] データ補正スクリプトの一時テーブルのエラーはスキーマと無関係
                 print(f"경고: {service}/{f.name}: {r.stderr.strip().splitlines()[0]}", file=sys.stderr)
 
 

@@ -34,17 +34,20 @@ beforeEach(() => {
 
 /**
  * 로그인·로그아웃 경계에서 장바구니를 서버와 맞춘다(docs/40 0-b).
+ *
+ * <p>[JA] ログイン · ログアウトの境界でカートをサーバーと合わせる(docs/40 0-b)。
  */
 describe("CartSync — 로그인 때 한 번 서버와 맞추기", () => {
     it("🔴 로그인 전에 담은 줄(주인 없음)은 서버에 올리고, 서버 장바구니를 받아 내 것으로 적는다", async () => {
         const store = storeWith(addToCart(item("1", { stockStatus: "ACTIVE", onHold: 1 })));
-        loadCart.mockResolvedValue([item("1"), item("9")]);   // 9 는 다른 기기에서 담은 것
+        loadCart.mockResolvedValue([item("1"), item("9")]);   // 9 는 다른 기기에서 담은 것 ／ [JA] 9 は別の端末で入れたもの
         mockAuth = signedIn("42");
 
         mount(store);
 
         await waitFor(() => expect(store.getState().cart.ownerId).toBe("42"));
         // 화면 표시(재고)는 서버에 보내지 않는다
+        // [JA] 画面表示(在庫)はサーバーに送らない
         expect(putCartItem).toHaveBeenCalledWith(item("1"));
         expect(store.getState().cart.cartItems.map((i) => i.id)).toEqual(["1", "9"]);
     });

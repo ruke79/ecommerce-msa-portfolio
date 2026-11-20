@@ -34,7 +34,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 @ConditionalOnProperty(name = "ecommerce.kafka.consumer-metrics.enabled", havingValue = "true", matchIfMissing = true)
 public class KafkaConsumerMetricsAutoConfiguration {
 
-    /** static — BeanPostProcessor 는 다른 빈보다 먼저 만들어진다. 레지스트리는 쓸 때 꺼낸다. */
+    /** static — BeanPostProcessor 는 다른 빈보다 먼저 만들어진다. 레지스트리는 쓸 때 꺼낸다. ／ [JA] static — BeanPostProcessor は他の bean より先に作られる。レジストリは使うときに取り出す。 */
     @Bean
     static BeanPostProcessor kafkaConsumerMetricsPostProcessor(ObjectProvider<MeterRegistry> meters) {
         return new ConsumerMetricsPostProcessor(meters);

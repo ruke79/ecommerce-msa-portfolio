@@ -2,6 +2,7 @@
 // [JA] k6 のステージ長の計算 — k6 モジュールを使わない純粋関数。
 
 /** 단계 길이의 합(초) — "1m" · "30s" · "1m30s" · "500ms". */
+// [JA] 段階の長さの合計(秒) — "1m" · "30s" · "1m30s" · "500ms"。
 export function totalSeconds(list) {
   let sec = 0;
   for (const st of list) {

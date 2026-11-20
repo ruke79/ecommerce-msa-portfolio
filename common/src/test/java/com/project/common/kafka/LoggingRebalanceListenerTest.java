@@ -33,7 +33,7 @@ class LoggingRebalanceListenerTest {
     void commitsBeforeRevoke() {
         TopicPartition tp = new TopicPartition("payment", 0);
         MockConsumer<String, String> consumer = consumerWith(tp, 3);
-        consumer.poll(java.time.Duration.ofMillis(10));            // 3건을 읽어 position 이 3 이 된다
+        consumer.poll(java.time.Duration.ofMillis(10));            // 3건을 읽어 position 이 3 이 된다 ／ [JA] 3 件を読んで position が 3 になる
 
         new LoggingRebalanceListener().onPartitionsRevokedBeforeCommit(consumer, List.of(tp));
 
@@ -60,6 +60,7 @@ class LoggingRebalanceListenerTest {
         assertThatCode(() -> new LoggingRebalanceListener().onPartitionsAssigned(consumer, List.of(tp)))
                 .doesNotThrowAnyException();
         // 아무것도 할당되지 않은 호출도 안전해야 한다(리밸런스 초기에 빈 목록이 온다).
+        // [JA] 何も割り当てられていない呼び出しも安全でなければならない(リバランス初期に空のリストが来る)。
         assertThatCode(() -> new LoggingRebalanceListener().onPartitionsAssigned(consumer, List.of()))
                 .doesNotThrowAnyException();
     }

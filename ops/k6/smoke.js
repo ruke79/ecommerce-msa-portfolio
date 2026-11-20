@@ -19,6 +19,7 @@ export const options = {
 };
 
 // order 의 setup 이 홈(상품 · 카테고리)과 로그인을 함께 준비한다 — USERS 는 ops/53 이 smoke 에서 1 로 넘긴다
+// [JA] order の setup がホーム(商品 · カテゴリ)とログインを一緒に準備する — USERS は ops/53 が smoke で 1 として渡す
 export const setup = orderSetup;
 
 export function browseOnce(data) {

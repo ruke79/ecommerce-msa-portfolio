@@ -40,14 +40,29 @@ import lombok.extern.slf4j.Slf4j;
  * </ul>
  *
  * <p>🔒 이 API 에는 자격증명이 없다. 요청에 주문·고객 정보도 싣지 않는다 — 통화 코드뿐이다.
+ *
+ * <p>[JA] Frankfurter(ECB 参照レート) — キー不要の公開 API。
+ * {@code GET /latest?from=USD} が店舗通貨基準のレート表を返す(上の例)。
+ * ECB は<b>平日 1 日 1 回</b>(16:00 CET)更新する。そのためキャッシュ TTL が 1 時間でも
+ * 値が変わるのは 1 日 1 回で、週末・祝日は金曜日の値である。実決済の請求額を決めるには
+ * 粗い値だが — どのみち請求額は<b>注文に固定</b>され({@code fx_rate})、確認・返金は
+ * その値と照合するので、レートの精度は精算損益の問題であって整合性の問題ではない。
+ * <b>キャッシュと失敗</b>: 基準通貨ごとに表を一つ TTL の間保持する。注文ごとに API を呼ばない。
+ * 更新に失敗したら<b>古い表をそのまま使う</b>(あれば)。なければ {@code empty} を返し、
+ * ポリシーが固定レートに切り替わる。どちらでも注文作成は止まらない。
+ * 失敗後 {@link #RETRY_AFTER} の間は再び呼ばない。障害中に注文ごとに
+ * タイムアウトを待たせないためである。
+ * 🔒 この API には認証情報がない。リクエストに注文・顧客情報も載せない — 通貨コードだけである。
  */
 @Slf4j
 public class FrankfurterFxRateSource implements FxRateSource {
 
     /** 실패한 뒤 다시 시도하기까지. */
+    // [JA] 失敗してから再試行するまで。
     static final Duration RETRY_AFTER = Duration.ofMinutes(1);
 
     /** {@code fx_rate numeric(19,6)} 에 맞춘다. */
+    // [JA] {@code fx_rate numeric(19,6)} に合わせる。
     private static final int RATE_SCALE = 6;
 
     private final RestClient client;
@@ -57,6 +72,7 @@ public class FrankfurterFxRateSource implements FxRateSource {
     private final Map<String, Snapshot> cache = new ConcurrentHashMap<>();
 
     /** 한 기준 통화의 환율 표. {@code nextRefresh} 전에는 API 를 부르지 않는다. */
+    // [JA] 一つの基準通貨のレート表。{@code nextRefresh} の前は API を呼ばない。
     private record Snapshot(Map<String, BigDecimal> rates, Instant fetchedAt, Instant nextRefresh) {
     }
 
@@ -94,6 +110,7 @@ public class FrankfurterFxRateSource implements FxRateSource {
             return new Snapshot(fresh, now, now.plus(ttl));
         }
         // 실패 — 옛 표가 있으면 그대로(오래됐다고 경고), 없으면 빈 표. 둘 다 잠시 뒤 재시도.
+        // [JA] 失敗 — 古い表があればそのまま(古いと警告)、なければ空の表。どちらも少し後に再試行。
         if (current != null && !current.rates().isEmpty()) {
             log.warn("실시간 환율 갱신 실패 — {} 기준 표를 {} 에 받은 값으로 계속 쓴다",
                     base, current.fetchedAt());
@@ -103,6 +120,7 @@ public class FrankfurterFxRateSource implements FxRateSource {
     }
 
     /** 성공하면 환율 표, 실패하면 {@code null}. 예외는 여기서 멈춘다. */
+    // [JA] 成功すればレート表、失敗すれば {@code null}。例外はここで止まる。
     private Map<String, BigDecimal> fetch(String base) {
         try {
             String body = client.get()
@@ -114,6 +132,7 @@ public class FrankfurterFxRateSource implements FxRateSource {
             return rates;
         } catch (RuntimeException e) {
             // 본문은 싣지 않는다 — 장애 메시지에 HTML 한 페이지가 들어오는 일이 흔하다.
+            // [JA] 本文は載せない — 障害メッセージに HTML が 1 ページ丸ごと入ってくることがよくある。
             log.warn("실시간 환율 조회 실패: base={} {}", base, e.getClass().getSimpleName());
             return null;
         }

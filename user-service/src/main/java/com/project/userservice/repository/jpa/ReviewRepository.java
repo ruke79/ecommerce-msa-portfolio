@@ -21,6 +21,8 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     // --- 비관적 잠금 적용 ---
     // 리뷰를 조회하여 수정 또는 삭제할 때 락을 걸어 다른 트랜잭션을 차단합니다.
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    // [JA] --- 悲観ロックの適用 ---
+    //      レビューを照会して修正・削除するときにロックをかけて他のトランザクションを遮断する。
     Optional<Review> findById(Long id);
     
     /**
@@ -38,6 +40,7 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     void deleteById(@Param("id") Long id);
 
     /** 상품별 평균 평점 — 평점 대사(ReviewRatingReconciler)가 매일 다시 보낸다. 행: [productId(Long), avg(Double)]. */
+    // [JA] 商品別の平均評価 — 評価の突き合わせ(ReviewRatingReconciler)が毎日送り直す。行: [productId(Long), avg(Double)]。
     @Query("select r.productId, avg(r.rating) from Review r where r.productId is not null group by r.productId")
     List<Object[]> averageRatingByProduct();
 }

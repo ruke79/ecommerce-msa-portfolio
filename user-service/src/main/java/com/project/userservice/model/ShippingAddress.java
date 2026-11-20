@@ -48,6 +48,15 @@ import lombok.experimental.SuperBuilder;
  *     JPA 애너테이션으로 표현할 수 없다. 인덱스 정의가 두 곳으로 갈리느니 한 곳에 둔다.
  *
  * Hibernate 의 ddl-auto: validate 는 인덱스를 보지 않으므로 이 차이는 기동을 막지 않는다.
+ *
+ * <p>[JA] インデックスは Flyway が所有する(V7)。ここに @Index を書かない理由:
+ * 以前は `@Index(columnList = "firstname, lastname, address1, city, state, zipCode")` があった。6 カラムの複合
+ * インデックスだが、このインデックスを使うクエリが一つもなかった — 照会はすべて user_id か pk で行う。やっていたのは
+ * 書き込みのたびにインデックスを更新し、実名 + 住所全体をソート済みの形でもう一組複製しておくことだけだった。
+ * DB ダンプが漏れると「この人の住所探し」がインデックススキャン 1 回になる。
+ * そして本当に必要なもの(ユーザーあたり既定の配送先を一つに強制する部分ユニークインデックス)は JPA アノテーションで
+ * 表現できない。インデックス定義が二か所に分かれるくらいなら一か所に置く。
+ * Hibernate の ddl-auto: validate はインデックスを見ないので、この差は起動を妨げない。
  */
 @Table(name="shipping_address", schema="users")
 public class ShippingAddress extends BaseEntity {
@@ -78,6 +87,7 @@ public class ShippingAddress extends BaseEntity {
 
     @NotBlank(message="우편번호는 공백이 없어야 합니다.")
     //@Pattern(regexp = "(^$|[0-9]{5})", message="우편번호는 5자리 숫자이어야 합니다.")
+    // [JA] 郵便番号は 5 桁の数字でなければならない(無効化されたバリデーション)。
     @Size(min=2, message="우편번호는 적어도 2자 이상이어야 합니다.")
     private String zipCode;
     
@@ -110,6 +120,14 @@ public class ShippingAddress extends BaseEntity {
      *
      * <p>둘 중 하나를 지우는 것으로는 부족했다. 지우는 쪽을 잘못 고르면 다음 사람이
      * 다시 짝을 맞춰 놓는다. 매핑을 <b>여기 하나로</b> 모으고 서비스는 이것만 부른다.
+     *
+     * <p>[JA] DTO から新しい配送先を作る — マッピングがある唯一の場所である。
+     * 🐛 以前は同じマッピングが二組あった。{@code AddressService.saveShippingAddress} がビルダーで全フィールドを埋めた直後に
+     * {@code deepCopyShippingAddress(address, src)} で同じフィールドをもう一度上書きしていた。単なる重複だが、重複では
+     * 終わらない — 後でビルダーにだけフィールドを追加すると deepCopy がそれを null で上書きする。コンパイルも通り、
+     * テストもそのフィールドを見なければ通る。新しい住所フィールド一つが静かに消える形である。
+     * どちらか一方を消すだけでは足りなかった。消す側を間違えると次の人がまた対を作ってしまう。マッピングをここ一つに
+     * 集め、サービスはこれだけを呼ぶ。
      */
     public static ShippingAddress from(AddressDto src) {
         ShippingAddress address = ShippingAddress.builder()
@@ -128,6 +146,13 @@ public class ShippingAddress extends BaseEntity {
      * <p>{@code active}(기본 배송지) 는 <b>건드리지 않는다.</b> 그것은 주소의 내용이 아니라
      * 이 사용자의 선택이고, 바꾸는 길은 {@code selectShipAddress} 하나다. 수정 폼이 보낸
      * 값으로 기본 배송지가 슬쩍 바뀌면 다음 주문이 엉뚱한 곳으로 간다.
+     *
+     * <p>[JA] 住所の値を DTO から上書きする — 修正が使う。{@link #from} もこれを呼ぶ。
+     * フィールド一覧はここ一か所だけである。修正経路を別に並べると {@code from} と対を合わせる必要があり、片方だけ
+     * 直した日に新しい項目が修正から静かに抜ける — 以前の deepCopy がその形だった。
+     * {@code active}(既定の配送先)には触れない。それは住所の内容ではなくこのユーザーの選択であり、変える道は
+     * {@code selectShipAddress} 一つである。修正フォームが送った値で既定の配送先がこっそり変わると、次の注文が
+     * とんでもない所へ行く。
      */
     public void applyFrom(AddressDto src) {
         this.address1 = src.getAddress1();

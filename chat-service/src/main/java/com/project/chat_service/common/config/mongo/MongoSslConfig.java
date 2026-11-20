@@ -59,6 +59,7 @@ public class MongoSslConfig {
     // private String truststoreFile;
     // @Value("${spring.data.mongodb.truststorePassword}") // truststore 비밀번호 지정
     // private String truststorePassword;
+    // [JA] (コメントアウトされたコード) 新しいプロパティで truststore ファイルパスを指定 / truststore パスワードを指定
 
 
     private static boolean isSet(String value) {
@@ -78,10 +79,15 @@ public class MongoSslConfig {
         // 아래 인증서 로딩도 무조건 실행돼 TLS 를 쓰지 않는 환경(로컬 개발, TLS 를 사이드카/프록시에서
         // 종단하는 배포)에서는 chat-service 를 아예 띄울 수 없었다(docs/16 B-23).
         // Redisson 의 rediss:// 하드코딩(docs/14 B-14)과 같은 부류의 문제다.
+        // [JA] TLS の使用有無は接続文字列(spring.data.mongodb.client の ?ssl=)に従う。
+        //      以前は .enabled(true) で**ハードコード**されており URI に ssl=false を与えても無視され、
+        //      下の証明書読み込みも無条件に実行されるため、TLS を使わない環境(ローカル開発、TLS をサイドカー/プロキシで
+        //      終端するデプロイ)では chat-service をまったく起動できなかった(docs/16 B-23)。
+        //      Redisson の rediss:// ハードコード(docs/14 B-14)と同じ類の問題である。
         ConnectionString connectionString = new ConnectionString(mongoProperties.getClient());
         boolean sslEnabled = connectionString.getSslEnabled() != null
                 ? connectionString.getSslEnabled()
-                : true;   // 명시하지 않으면 기존 동작(TLS 사용)을 유지한다 — 안전한 기본값
+                : true;   // 명시하지 않으면 기존 동작(TLS 사용)을 유지한다 — 안전한 기본값 ／ [JA] 明示しなければ既存の動作(TLS 使用)を維持する — 安全なデフォルト
 
         if (!sslEnabled) {
             return MongoClients.create(baseSettings(connectionString).build());
@@ -92,6 +98,11 @@ public class MongoSslConfig {
         //    기본이고, 인증서는 공개 CA 로 발급되며, 클라이언트 인증서는 없다.
         //    이 분기가 없으면 Atlas 로 붙는 순간 FileNotFoundException 이거나(경로가 비었을 때),
         //    사설 CA 만 담긴 트러스트스토어로 검증에 실패한다(경로가 남아 있을 때).
+        // [JA] ⚠️ 証明書パスが空なら下のプライベート CA の組み立てを飛ばし、**JVM デフォルトのトラストストア**で
+        //      TLS を有効にする。マネージド MongoDB(Atlas など)がまさにこのケースである — mongodb+srv は TLS が
+        //      デフォルトで、証明書は公開 CA で発行され、クライアント証明書はない。
+        //      この分岐がないと Atlas に接続した瞬間に FileNotFoundException になるか(パスが空のとき)、
+        //      プライベート CA だけが入ったトラストストアで検証に失敗する(パスが残っているとき)。
         if (!isSet(caCertificatePath) && !isSet(keystoreFile)) {
             return MongoClients.create(baseSettings(connectionString)
                     .applyToSslSettings(builder -> builder.enabled(true))
@@ -105,8 +116,11 @@ public class MongoSslConfig {
             // FileInputStream trustStoreStream = new FileInputStream(truststoreFile);
             // trustStore.load(trustStoreStream, truststorePassword.toCharArray());
             // trustStoreStream.close();
+            // [JA] (コメントアウトされたコード) TrustStore 設定: truststore ファイルを直接ロードする
+            //      (既定タイプの KeyStore を作り、truststoreFile を FileInputStream で開いて truststorePassword でロードし、ストリームを閉じる)。
 
             // .pem CA 인증서 설정 (신뢰할 수 있는 인증서)
+            // [JA] .pem CA 証明書の設定(信頼できる証明書)
             FileInputStream caFileStream  = new FileInputStream(caCertificatePath);
             CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
             X509Certificate caCert = (X509Certificate) certificateFactory.generateCertificate(caFileStream );
@@ -121,6 +135,7 @@ public class MongoSslConfig {
             tmf.init(trustStore);
             
              // KeyStore 설정 (클라이언트 인증서 및 키)
+             // [JA] KeyStore 設定(クライアント証明書と鍵)
             KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
             FileInputStream keyStoreStream = new FileInputStream(keystoreFile);
             keyStore.load(keyStoreStream, keystorePassword.toCharArray());
@@ -130,12 +145,14 @@ public class MongoSslConfig {
             kmf.init(keyStore, keystorePassword.toCharArray());
             
             SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);  // 이 부분이 중요
+            sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);  // 이 부분이 중요 ／ [JA] この部分が重要
 
             // KeyManagerFactory와 TrustManagerFactory 모두 사용하여 상호 TLS 설정
             //sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+            // [JA] KeyManagerFactory と TrustManagerFactory の両方を使って相互 TLS を設定
 
             // MongoClientSettings에 SSL Context 설정
+            // [JA] MongoClientSettings に SSL Context を設定
             MongoClientSettings settings = baseSettings(connectionString)
                 .applyToSslSettings(builder -> builder.enabled(true).context(sslContext))
                 .build();
@@ -149,6 +166,7 @@ public class MongoSslConfig {
     }
 
     /** TLS 관련 설정을 제외한 공통 클라이언트 설정. TLS 사용/미사용 경로가 같은 값을 공유한다. */
+    // [JA] TLS 関連設定を除いた共通クライアント設定。TLS 使用/不使用の経路が同じ値を共有する。
     private MongoClientSettings.Builder baseSettings(ConnectionString connectionString) {
         return MongoClientSettings.builder()
                 .applyConnectionString(connectionString)

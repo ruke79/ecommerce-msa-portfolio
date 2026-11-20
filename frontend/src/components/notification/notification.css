@@ -1,6 +1,8 @@
 /* 알림 UI.
  *
  * 색은 CSS 변수로 뺀다 — 다크모드나 브랜드 색이 바뀔 때 이 파일 한 곳만 고치면 된다.
+ *
+ * [JA] 通知 UI。色は CSS 変数に出す — ダークモードやブランド色が変わるときにこのファイル一か所だけ直せばよい。
  */
 :root {
   --notif-brand: #4f46e5;
@@ -36,6 +38,7 @@
 }
 .notif__button:focus-visible {
   /* 키보드 사용자를 위해 초점을 반드시 보이게 한다. outline: none 은 접근성 문제다. */
+  /* [JA] キーボード利用者のためにフォーカスを必ず見えるようにする。outline: none はアクセシビリティの問題である。 */
   outline: 2px solid var(--notif-brand);
   outline-offset: 2px;
   border-radius: 6px;
@@ -116,6 +119,7 @@
   color: var(--notif-muted);
   margin-top: 2px;
   /* 본문이 길어도 목록이 무너지지 않게 두 줄로 자른다. */
+  /* [JA] 本文が長くても一覧が崩れないよう二行で切る。 */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -138,6 +142,7 @@
 .notif__sms--failed { color: var(--notif-danger); }
 
 /* 전체 공지 표시. SMS 배지와 같은 모양이되 색으로 구분한다 — 상태가 아니라 출처다. */
+/* [JA] 全体お知らせの表示。SMS バッジと同じ形だが色で区別する — 状態ではなく出所である。 */
 .notif__scope {
   border: 1px solid currentColor;
   border-radius: 4px;
@@ -164,6 +169,7 @@
 .notif-icon--muted  { color: var(--notif-muted); }
 
 /* ── SMS 인증 ─────────────────────────────────────────────────────────────── */
+/* [JA] ── SMS 認証 ── */
 
 .sms-verify { display: flex; flex-direction: column; gap: 12px; max-width: 420px; }
 .sms-verify__row { display: flex; gap: 8px; }
@@ -190,6 +196,7 @@
 .sms-verify__ok { font-size: 13px; color: var(--notif-ok); }
 
 /* 인증번호 입력은 6자리 숫자다. 자간을 넓혀 한 자리씩 확인하기 쉽게 한다. */
+/* [JA] 認証番号の入力は 6 桁の数字である。字間を広げて一桁ずつ確認しやすくする。 */
 .sms-verify__code {
   letter-spacing: 0.5em;
   text-align: center;

@@ -60,6 +60,7 @@ const Item = ({ item, visible, index }) => {
                       *      냈고, 목록이 바뀔 때 엉뚱한 항목을 재사용할 수 있었다.
                       * 프래그먼트는 <li> 하나만 감싸고 있어 존재할 이유가 없다 — 없앤다.
                       */}
+                    {/* [JA] 🐛 ここには問題が二つあった。① JSX の中で {console.log(link)} を呼んでいた — 描画のたびにサイドバーのリンクがすべてコンソールに出ていた。② 包んでいるフラグメント <> に key がなかった。key は map が作る**一番外側の要素**に必要だが、内側の <li> に付いていた。React は "Each child in a list should have a unique key" の警告を出し、リストが変わると違う項目を再利用することがあった。フラグメントは <li> 一つしか包んでおらず存在理由がない — 取り除く。 */}
                     {item.links.map((link, i) => (
                         <React.Fragment key={link.link ?? i}>
                             {link.link.startsWith("/profile/orders") ? (

@@ -31,6 +31,9 @@ import lombok.NoArgsConstructor;
  * <p><b>원문을 함께 보존한다.</b> 표준 상태로 매핑해 저장하되 택배사가 준 문자열과 원본
  * 응답을 남긴다. 매핑이 틀렸을 때 원문이 없으면 "왜 이 상태로 판정됐는지"를 재구성할 수
  * 없고, 택배사가 상태 문구를 바꿨을 때도 알아챌 방법이 없다(docs/25 N-5).
+ *
+ * <p>[JA] 宅配業者のスキャンイベント 1 件 — 顧客が見るタイムラインの一行。
+ * <p><b>原文を一緒に保存する。</b>標準状態にマッピングして保存しつつ、宅配業者が送った文字列と元の応答を残す。マッピングが間違ったとき原文がなければ「なぜこの状態と判定されたか」を再構成できず、宅配業者が状態文言を変えたときも気づく方法がない(docs/25 N-5)。
  */
 @Entity
 @Getter
@@ -45,6 +48,7 @@ public class DeliveryEvent {
     private Long eventId;
 
     /** 이벤트는 <b>상자</b>에 붙는다 — 분할 배송이면 상자마다 이력이 따로 흐른다. */
+    // [JA] イベントは<b>箱</b>に付く — 分割配送なら箱ごとに履歴が別に流れる。
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shipment_id", nullable = false)
     private Shipment shipment;
@@ -54,10 +58,12 @@ public class DeliveryEvent {
     private DeliveryStatus status;
 
     /** 택배사가 알려준 스캔 시각. 우리가 조회한 시각이 아니다 — 둘은 몇 시간 차이 날 수 있다. */
+    // [JA] 宅配業者が知らせたスキャン時刻。こちらが照会した時刻ではない — 両者は数時間ずれることがある。
     @Column(name = "occurred_at", nullable = false)
     private LocalDateTime occurredAt;
 
     /** '대전허브', '서울강남' 같은 지점명. 국내 택배가 주는 '위치'는 이것이 전부다. */
+    // [JA] 「大田ハブ」「ソウル江南」のような拠点名。国内宅配が返す「位置」はこれがすべてだ。
     @Column(name = "location", length = 120)
     private String location;
 
@@ -80,6 +86,10 @@ public class DeliveryEvent {
      *
      * <p>완벽하지는 않다 — 같은 지점에서 같은 시각에 두 번 스캔되면 하나로 합쳐진다.
      * 그 손실보다 중복이 타임라인을 뒤덮는 쪽이 훨씬 나쁘다는 판단이다.
+     *
+     * <p>[JA] 重複除去キー。
+     * <p>ポーリングは毎回<b>全履歴</b>を返す。このキーがないと同じスキャンが照会回数だけ溜まりタイムラインが重複で埋め尽くされる。宅配業者がイベントに安定した ID を与えない場合が多いので (時刻 + 原文状態 + 拠点) のハッシュを使う。
+     * <p>完璧ではない — 同じ拠点で同じ時刻に二回スキャンされると一つにまとまる。その損失より重複がタイムラインを埋め尽くす方がはるかに悪いという判断だ。
      */
     @Column(name = "dedup_key", nullable = false, length = 120)
     private String dedupKey;

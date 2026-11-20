@@ -7,6 +7,11 @@ const path = require("path");
  * <p>🐛 `import … from "redux/CartSlice"` 가 jest 에서는 `src/redux/CartSlice` 로 풀려 테스트가 모두 초록이었는데, 운영 빌드
  * (webpack)는 같은 문자열을 **npm 패키지 `redux` 의 하위 경로**로 풀어 "Package path ./CartSlice is not exported" 로 실패했다
  * (CartSync.jsx). 둘의 모듈 해석 순서가 달라서 생기는 일이라, 테스트로만 확인한 변경은 배포 단계에서야 깨진다.
+ *
+ * <p>[JA] `src/<フォルダー>` の名前が npm パッケージ名と同じなら、そのフォルダーは **相対パスでのみ** import する。
+ * 🐛 `import … from "redux/CartSlice"` が jest では `src/redux/CartSlice` に解決されテストは全部緑だったが、本番ビルド
+ * (webpack)は同じ文字列を **npm パッケージ `redux` のサブパス**として解決し "Package path ./CartSlice is not exported" で失敗した
+ * (CartSync.jsx)。両者のモジュール解決順序が違うために起きることで、テストでだけ確認した変更はデプロイ段階で初めて壊れる。
  */
 const SRC = __dirname;
 const NODE_MODULES = path.join(SRC, "..", "node_modules");

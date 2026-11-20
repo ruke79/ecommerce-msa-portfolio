@@ -21,6 +21,28 @@
 #
 # cron 예시 (일 1회 base backup, WAL 은 서버가 연속 아카이브):
 #   0 3 * * *  cd /srv/ecommerce && PGHOST=db BACKUP_ROOT=/var/backups/pg ./ops/08-backup-postgres.sh
+# [JA] 運用アクション ⑧ — PostgreSQL バックアップ(base backup + WAL アーカイブ)
+#
+#      背景: docs/15 は **設計文書** だった。「PostgreSQL バックアップ ❌ なし、復旧手順 ❌ なし = 🔴」。
+#            レプリケーション(docs/13 §2)はノード障害しか防がない。DROP TABLE・誤ったマイグレーション・ランサムウェアは
+#            レプリカに **即座に伝播** するので、元に戻すにはポイントインタイムリカバリ(PITR)が必要である。
+#
+#      このスクリプトがすること:
+#        1. サーバーが PITR 可能な状態か点検(wal_level, archive_mode, archive_command)
+#           → そうでなければ必要な設定を出力し、--setup で適用
+#        2. base backup(pg_basebackup、圧縮・チェックサム検証)
+#        3. バックアップ自体の検証(pg_verifybackup)
+#        4. 保持期間を過ぎたバックアップの整理
+#        5. Prometheus textfile 指標の記録 → バックアップが **静かに失敗** するのを防ぐ
+#
+#      使い方:
+#        PGHOST=db PGPORT=5435 PGUSER=postgres BACKUP_ROOT=/var/backups/pg ./ops/08-backup-postgres.sh
+#        ACTION=setup   ...     # アーカイブ設定を適用(再起動が必要な場合がある)
+#        ACTION=check   ...     # 点検だけ
+#        DRY_RUN=1      ...     # 実行するコマンドだけ出力
+#
+#      cron の例(1 日 1 回 base backup、WAL はサーバーが継続アーカイブ):
+#        0 3 * * *  cd /srv/ecommerce && PGHOST=db BACKUP_ROOT=/var/backups/pg ./ops/08-backup-postgres.sh
 set -euo pipefail
 
 ACTION="${ACTION:-backup}"           # backup | setup | check
@@ -32,8 +54,10 @@ WAL_ARCHIVE="${WAL_ARCHIVE:-$BACKUP_ROOT/wal}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 DRY_RUN="${DRY_RUN:-0}"
 # 아카이브 타임아웃. docs/15 §2.1 의 RPO ≈ 60초 근거가 이 값이다.
+# [JA] アーカイブのタイムアウト。docs/15 §2.1 の RPO ≈ 60 秒の根拠がこの値である。
 ARCHIVE_TIMEOUT="${ARCHIVE_TIMEOUT:-60}"
 # node_exporter 의 textfile collector 디렉터리. 있으면 백업 지표를 남긴다.
+# [JA] node_exporter の textfile collector ディレクトリ。あればバックアップ指標を残す。
 METRICS_DIR="${METRICS_DIR:-}"
 
 export PGHOST PGPORT PGUSER
@@ -49,6 +73,7 @@ command -v psql          >/dev/null || die "psql 이 필요합니다"
 q() { psql -tAqX -v ON_ERROR_STOP=1 -c "$1"; }
 
 # ---------------------------------------------------------------- 점검
+# [JA] 点検
 
 check_pitr_ready() {
     local ok=0
@@ -67,6 +92,8 @@ check_pitr_ready() {
 
     # wal_level=minimal 이면 WAL 에 복구에 필요한 정보가 아예 안 들어간다.
     # 이 상태로 base backup 을 아무리 떠 봐야 시점 복구는 불가능하다.
+    # [JA] wal_level=minimal だと WAL に復旧に必要な情報がまったく入らない。
+    #      この状態でいくら base backup を取ってもポイントインタイムリカバリは不可能である。
     [ "$wal_level" = "minimal" ] && { warn "wal_level=minimal 이면 PITR 이 불가능합니다"; ok=1; }
     [ "$archive_mode" = "off" ]  && { warn "archive_mode=off — WAL 이 보관되지 않습니다"; ok=1; }
     { [ -z "$archive_command" ] || [ "$archive_command" = "(disabled)" ]; } && {
@@ -74,6 +101,8 @@ check_pitr_ready() {
 
     # 아카이빙이 켜져 있다면 **실제로 성공하고 있는지** 본다.
     # archive_command 가 조용히 실패하면 pg_wal 이 차올라 결국 디스크가 터진다.
+    # [JA] アーカイブが有効なら **実際に成功しているか** を見る。
+    #      archive_command が静かに失敗すると pg_wal が溢れて、最後にはディスクがパンクする。
     if [ "$archive_mode" != "off" ]; then
         local stats
         stats="$(q "SELECT archived_count || '|' || failed_count || '|' || coalesce(last_failed_time::text,'-') FROM pg_stat_archiver")"
@@ -107,6 +136,7 @@ setup_archiving() {
     log "WAL 아카이빙 설정 적용"
     run "mkdir -p '$WAL_ARCHIVE'"
     # ALTER SYSTEM 은 postgresql.auto.conf 에 기록되므로 재기동에도 살아남는다.
+    # [JA] ALTER SYSTEM は postgresql.auto.conf に記録されるので再起動後も生き残る。
     run "psql -v ON_ERROR_STOP=1 -c \"ALTER SYSTEM SET wal_level = 'replica'\""
     run "psql -v ON_ERROR_STOP=1 -c \"ALTER SYSTEM SET archive_mode = 'on'\""
     run "psql -v ON_ERROR_STOP=1 -c \"ALTER SYSTEM SET archive_command = 'test ! -f $WAL_ARCHIVE/%f && cp %p $WAL_ARCHIVE/%f'\""
@@ -117,12 +147,17 @@ setup_archiving() {
 }
 
 # ---------------------------------------------------------------- 백업
+# [JA] バックアップ
 
 write_metric() {
     # 백업의 가장 흔한 실패 방식은 "에러가 나는 것"이 아니라 "아무도 모르게 안 도는 것"이다.
     # 마지막 성공 시각을 노출해 두면 observability/alert-rules.yml 에서
     #   time() - ecommerce_pg_backup_last_success_timestamp > 172800
     # 같은 규칙으로 잡을 수 있다.
+    # [JA] バックアップのいちばんよくある失敗の仕方は「エラーが出ること」ではなく「誰にも知られず動いていないこと」である。
+    #      最後の成功時刻を公開しておけば observability/alert-rules.yml で
+    #        time() - ecommerce_pg_backup_last_success_timestamp > 172800
+    #      のような規則で捕まえられる。
     [ -n "$METRICS_DIR" ] || return 0
     [ "$DRY_RUN" = "1" ] && return 0
     mkdir -p "$METRICS_DIR"
@@ -138,7 +173,7 @@ write_metric() {
         echo "# TYPE ecommerce_pg_backup_duration_seconds gauge"
         echo "ecommerce_pg_backup_duration_seconds $3"
     } > "$tmp"
-    mv "$tmp" "$METRICS_DIR/pg_backup.prom"   # 원자적 교체 — 반쯤 쓰인 파일을 스크랩하지 않게
+    mv "$tmp" "$METRICS_DIR/pg_backup.prom"   # 원자적 교체 — 반쯤 쓰인 파일을 스크랩하지 않게 ／ [JA] アトミックな置き換え — 書きかけのファイルをスクレイプしないように
 }
 
 take_base_backup() {
@@ -154,6 +189,10 @@ take_base_backup() {
     #        (슬롯 없이 뜨면 큰 DB 에서 백업 도중 WAL 이 재활용돼 복구 불가 백업이 나온다)
     # -X stream: 백업에 필요한 WAL 을 같이 받아 백업 단독으로 일관성 확보
     # --checkpoint=fast: 체크포인트를 기다리지 않고 즉시 시작
+    # [JA] -C -S: バックアップ中に必要な WAL が消されないよう一時的なレプリケーションスロットを作る。
+    #             (スロットなしで取ると、大きな DB ではバックアップ途中に WAL が再利用され、復旧不能なバックアップになる)
+    #      -X stream: バックアップに必要な WAL も一緒に受け取り、バックアップ単体で一貫性を確保
+    #      --checkpoint=fast: チェックポイントを待たずにすぐ開始
     run "pg_basebackup --pgdata='$target' --format=tar --gzip --compress=9 \
          --wal-method=stream --checkpoint=fast --progress --no-password \
          --create-slot --slot='backup_$stamp' --verbose"
@@ -163,6 +202,8 @@ take_base_backup() {
 
     # 슬롯은 백업이 끝나면 지운다. 남겨 두면 그 슬롯이 요구하는 WAL 이 영원히 보존돼
     # pg_wal 디스크가 가득 찬다 — 복제 슬롯 방치는 PostgreSQL 장애의 단골이다.
+    # [JA] スロットはバックアップが終わったら消す。残しておくとそのスロットが要求する WAL が永遠に保持され、
+    #      pg_wal のディスクがいっぱいになる — レプリケーションスロットの放置は PostgreSQL 障害の常連である。
     psql -v ON_ERROR_STOP=1 -c "SELECT pg_drop_replication_slot('backup_$stamp')" >/dev/null 2>&1 || \
         warn "복제 슬롯 backup_$stamp 을 지우지 못했습니다 — 수동으로 확인하세요"
 
@@ -170,6 +211,7 @@ take_base_backup() {
     log "완료: $(numfmt --to=iec "$size" 2>/dev/null || echo "$size bytes"), ${elapsed}초"
 
     # tar 포맷은 pg_verifybackup 이 지원하지 않으므로 gzip 무결성만 확인한다.
+    # [JA] tar 形式は pg_verifybackup が対応していないので、gzip の整合性だけ確認する。
     log "백업 무결성 확인"
     local f
     for f in "$target"/*.tar.gz; do
@@ -188,6 +230,8 @@ prune_old() {
 
     # ⚠️ base backup 보다 오래된 WAL 만 지워야 한다. 순서를 반대로 하면
     # 남아 있는 백업이 필요로 하는 WAL 을 지워 **복구 불가능한 백업**이 된다.
+    # [JA] ⚠️ base backup より古い WAL だけを消さなければならない。順序を逆にすると
+    #      残っているバックアップが必要とする WAL を消して **復旧不能なバックアップ** になる。
     local oldest_kept
     oldest_kept="$(find "$BACKUP_ROOT/base" -maxdepth 1 -mindepth 1 -type d \
                    -mtime "-$RETENTION_DAYS" -printf '%f\n' 2>/dev/null | sort | head -1)"

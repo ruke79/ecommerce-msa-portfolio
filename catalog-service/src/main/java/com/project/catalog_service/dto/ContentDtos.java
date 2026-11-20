@@ -18,6 +18,11 @@ import jakarta.validation.constraints.Size;
  * <p><b>공개 응답과 관리자 응답을 나눈다.</b> 공개 응답에 {@code published} 나
  * {@code startsAt} 을 실으면 아직 공개하지 않은 기획전의 존재와 시작 시각이 새어 나간다 —
  * 목록에서 걸러도 필드가 있으면 언젠가 누가 그 필드로 필터를 만든다.
+ *
+ * <p>[JA] バナー・お知らせの入出力の形。
+ * 一ファイルにまとめた理由: どれもフィールド三、四個の record で、ファイルを分けると読む人が六回ジャンプしなければならない。増えたらそのとき分ける。
+ * 公開レスポンスと管理者レスポンスを分ける。公開レスポンスに published や startsAt を載せると、まだ公開していない企画展の存在と開始時刻が漏れる —
+ * 一覧で絞り込んでもフィールドがあれば、いつか誰かがそのフィールドでフィルタを作る。
  */
 public final class ContentDtos {
 
@@ -25,8 +30,10 @@ public final class ContentDtos {
     }
 
     // ── 배너 ────────────────────────────────────────────────────────────
+    // [JA] ── バナー ──
 
     /** 공개 응답. 화면이 그리는 데 필요한 것만. */
+    // [JA] 公開レスポンス。画面の描画に必要なものだけ。
     public record BannerView(Long id, String title, String imageUrl, String linkUrl) {
 
         public static BannerView of(Banner b) {
@@ -35,6 +42,7 @@ public final class ContentDtos {
     }
 
     /** 관리자 응답. 노출 판정에 쓰인 값까지 전부 보여 줘야 왜 안 보이는지 알 수 있다. */
+    // [JA] 管理者レスポンス。表示判定に使った値まで全部見せないと、なぜ表示されないのかが分からない。
     public record BannerAdminView(Long id, String title, String imageUrl, String linkUrl,
                                   int sortOrder, boolean published,
                                   LocalDateTime startsAt, LocalDateTime endsAt,
@@ -58,8 +66,10 @@ public final class ContentDtos {
     }
 
     // ── 공지 ────────────────────────────────────────────────────────────
+    // [JA] ── お知らせ ──
 
     /** 목록용. 본문은 싣지 않는다 — 20건짜리 목록이 본문 20개를 끌고 오면 안 된다. */
+    // [JA] 一覧用。本文は載せない — 20 件の一覧が本文 20 個を引きずってきてはいけない。
     public record NoticeSummary(Long id, String title, boolean pinned, LocalDateTime publishedAt) {
 
         public static NoticeSummary of(Notice n) {
@@ -102,6 +112,11 @@ public final class ContentDtos {
      *
      * <p>{@code publishedAt} 만으로 판정할 수 없다는 점이 핵심이다. 공개했다가 내린 글은
      * 공개 시각이 남아 있어서, 그 값만 보면 공개 중인 것처럼 보인다.
+     *
+     * <p>[JA] 管理者一覧用の要約。
+     * NoticeSummary と分けた理由: 管理者は公開状態を見る必要がある(下書きが一覧に混ざっている)。かといって公開レスポンスにそのフィールドは載せられない —
+     * 公開一覧には公開済みのものしかないので常に true のフィールドになり、いつか誰かがそれでフィルタを作る。
+     * publishedAt だけでは判定できない点が肝心だ。公開してから下げた記事は公開時刻が残っているので、その値だけ見ると公開中のように見える。
      */
     public record NoticeAdminSummary(Long id, String title, boolean pinned, boolean published,
                                      LocalDateTime publishedAt) {
@@ -113,6 +128,7 @@ public final class ContentDtos {
     }
 
     /** 목록 응답. 페이지 정보를 함께 준다 — 프론트가 총 페이지 수를 직접 계산하지 않도록. */
+    // [JA] 一覧レスポンス。ページ情報も一緒に返す — フロントが総ページ数を自分で計算しないように。
     public record PagedNotices(List<NoticeSummary> items, int page, int size, long total,
                                int totalPages) {
     }

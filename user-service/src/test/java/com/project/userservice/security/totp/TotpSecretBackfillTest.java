@@ -12,6 +12,9 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
  * 기동 백필 — 평문 · 옛 키 암호문을 지금 키로 맞춘다(docs/70). 실제 SQL(H2)로.
  *
  * <p>JPA 로 하면 변환기가 이미 평문으로 풀어 줘서 "바뀐 것이 없다" 로 보이고 저장되지 않는다 — 그래서 백필은 JDBC 다.
+ *
+ * <p>[JA] 起動時バックフィル — 平文・旧鍵の暗号文を現在の鍵に揃える(docs/70)。実際の SQL(H2)で。
+ * JPA で行うとコンバーターが既に平文に復号してしまい「変化なし」と見なされて保存されない — だからバックフィルは JDBC である。
  */
 @DisplayName("2FA 비밀 — 기동 백필")
 class TotpSecretBackfillTest {

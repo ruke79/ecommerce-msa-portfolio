@@ -21,6 +21,18 @@ import reducer, {
  * 그대로 들어 있다.
  *
  * 핵심은 "비어 있다"와 "사용자가 비웠다"를 구분하는 것이다. 그 구분이 status 다.
+ *
+ * <p>[JA] 🐛 回帰対象: **カートで消した品物が生き返った。**
+ *
+ * <p>原因は `updateCart` 内の `state.status = UPDATED` がコメントアウトされていたこと。そのため
+ * ユーザーが項目を消しても状態はずっと `EMPTY` のままで、カート画面の「空なら
+ * サーバーのコピーで埋める」が再実行された(pages/cart.jsx)。
+ *
+ * <p>生き返るコピーが何かが特にまずい — サーバーのカートは `savecart`(チェックアウトを押した
+ * ときだけ呼ばれる)で保存された **最後のチェックアウト時点のスナップショット** である。たった今消した品物がそこに
+ * そのまま入っている。
+ *
+ * <p>肝心なのは「空である」と「ユーザーが空にした」を区別すること。その区別が status である。
  */
 describe("CartSlice — 비어 있다 vs 비웠다", () => {
   const item = (uid) => ({ _uid: uid, qty: 1, price: 100, shipping: 0 });
@@ -36,11 +48,12 @@ describe("CartSlice — 비어 있다 vs 비웠다", () => {
     const withItem = reducer(undefined, addToCart(item("a")));
 
     // 삭제는 "남은 목록으로 통째로 교체"다(components/cart/Product.jsx).
+    // [JA] 削除は「残った一覧でまるごと置き換え」である(components/cart/Product.jsx)。
     const emptied = reducer(withItem, updateCart([]));
 
     expect(emptied.cartItems).toHaveLength(0);
     expect(emptied.status)
-      .not.toBe(CartStatus.EMPTY);   // EMPTY 면 화면이 서버 사본으로 다시 채운다
+      .not.toBe(CartStatus.EMPTY);   // EMPTY 면 화면이 서버 사본으로 다시 채운다 ／ [JA] EMPTY だと画面がサーバーのコピーで埋め直す
     expect(emptied.status).toBe(CartStatus.UPDATED);
   });
 
@@ -51,6 +64,7 @@ describe("CartSlice — 비어 있다 vs 비웠다", () => {
     expect(hydrated.status).not.toBe(CartStatus.EMPTY);
 
     // 채운 뒤 사용자가 전부 지워도 EMPTY 로 돌아가면 안 된다.
+    // [JA] 埋めた後にユーザーがすべて消しても EMPTY に戻ってはならない。
     const emptied = reducer(hydrated, updateCart([]));
     expect(emptied.status).not.toBe(CartStatus.EMPTY);
   });
@@ -76,6 +90,8 @@ describe("CartSlice — 비어 있다 vs 비웠다", () => {
 
 /**
  * 장바구니의 수량을 지금 값으로 (docs/59 §5) — 담을 때 받은 수량은 며칠 전 것일 수 있다.
+ *
+ * <p>[JA] カートの数量を現在の値に(docs/59 §5) — 入れたときに受け取った数量は数日前のものかもしれない。
  */
 describe("syncStock — 지금 재고로 갱신", () => {
   const item = (over) => ({ _uid: over.id, id: over.id, color: { id: "5" }, size: "M", qty: 2, quantity: 9, ...over });
@@ -110,6 +126,9 @@ describe("syncStock — 지금 재고로 갱신", () => {
 /**
  * 서버가 장바구니의 기준이다(docs/40 0-b). 로그인한 사용자의 장바구니는 서버 응답으로만 바뀌고, 누구의 것인지(ownerId)를 적는다.
  * 🐛 예전에는 주인이 없어 같은 브라우저의 다음 사람에게 앞 사람의 장바구니가 보였다.
+ *
+ * <p>[JA] サーバーがカートの基準である(docs/40 0-b)。ログインしたユーザーのカートはサーバー応答でしか変わらず、誰のものか(ownerId)を記録する。
+ * 🐛 以前は持ち主がなく、同じブラウザの次の人に前の人のカートが見えた。
  */
 describe("syncedFromServer · forgetOwner — 서버 장바구니의 사본", () => {
   const item = (over) => ({ _uid: over.id, id: over.id, color: { id: "5" }, size: "M", qty: 1, quantity: 9, ...over });
@@ -161,6 +180,9 @@ describe("서버가 배열이 아닌 것을 주면 — 빈 장바구니로(2026-
   /**
    * 🐛 장바구니가 없을 때(주문 뒤 · 마지막 줄을 뺀 직후) 옛 서버는 200 + 빈 본문을 줬고, axios 는 그것을 ""로 받는다.
    * `("" ?? []).map` 은 TypeError — 장바구니 화면이 "画面の表示中にエラーが発生しました" 였다.
+   *
+   * <p>[JA] 🐛 カートがないとき(注文後・最後の行を外した直後)旧サーバーは 200 + 空ボディを返し、axios はそれを "" として受け取る。
+   * `("" ?? []).map` は TypeError — カート画面が "画面の表示中にエラーが発生しました" だった。
    */
   test.each([["빈 본문(\"\")", ""], ["null", null], ["객체", { message: "x" }]])("syncedFromServer(%s) → 빈 목록", (_, items) => {
     const state = reducer(undefined, syncedFromServer({ items, ownerId: "42" }));

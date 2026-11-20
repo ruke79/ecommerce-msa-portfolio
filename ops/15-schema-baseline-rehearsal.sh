@@ -21,13 +21,35 @@
 #   PGURL=... SERVICE=order-service ./ops/15-schema-baseline-rehearsal.sh
 #
 # 종료코드: 0 = validate 가 통과할 것이다 · 1 = 지금 배포하면 기동 실패한다
+# [JA] スキーマベースラインのリハーサル — `ddl-auto: update` を切る前に必ず一度。
+#
+#      何を確認するか
+#      ---------------
+#      このリポジトリは今や Flyway がスキーマを所有し、Hibernate は `validate` で検証だけする(docs/20)。
+#      切り替えのリスクはただ一つ: **既存の DB がエンティティとずれていると、サービスは起動すら
+#      できない**(`Schema-validation: missing table/column`)。それを配備中に知ったのでは遅い。
+#
+#      このスクリプトは配備前に同じ判定を下す:
+#        ① 適用前のスキーマをスナップショット
+#        ② ベースラインマイグレーションを適用(すべての文が冪等なので、すでに合っている DB では何もしない)
+#        ③ 適用後のスナップショット → 何が変わったかを正確に見せる
+#        ④ ベースラインが要求するカラムが **すべて存在するか** を照合 — Hibernate validate と同じ判定
+#
+#      ⚠️ 運用 DB に直接回さないこと。ops/09 の復元物や pg_dump のコピーに回す。
+#         (--force を付ければ強行するが、それはコピーであることを確認したという意味である。)
+#
+#      使い方
+#        PGURL='postgresql://…/productdb' SERVICE=catalog-service ./ops/15-schema-baseline-rehearsal.sh
+#        PGURL=... SERVICE=order-service ./ops/15-schema-baseline-rehearsal.sh
+#
+#      終了コード: 0 = validate は通るはず · 1 = 今配備すると起動に失敗する
 
 set -euo pipefail
 
 PGURL="${PGURL:-}"
 SERVICE="${SERVICE:-}"
 FORCE="${FORCE:-0}"
-APPLY="${APPLY:-1}"     # APPLY=0 이면 적용 없이 진단만
+APPLY="${APPLY:-1}"     # APPLY=0 이면 적용 없이 진단만 ／ [JA] APPLY=0 なら適用せず診断だけ
 
 if [[ -z "$PGURL" || -z "$SERVICE" ]]; then
     cat >&2 <<'USAGE'
@@ -56,6 +78,7 @@ fi
 command -v psql >/dev/null || { echo "ERROR: psql 이 필요합니다" >&2; exit 2; }
 
 # 운영 DB 로 보이는 이름이면 멈춘다. 이 스크립트는 DDL 을 실행한다.
+# [JA] 運用 DB に見える名前なら止める。このスクリプトは DDL を実行する。
 if [[ "$APPLY" == "1" && "$FORCE" != "1" ]]; then
     if [[ "$PGURL" =~ (prod|production|live) ]]; then
         echo "REFUSED: PGURL 이 운영 DB 로 보입니다. 사본에 돌리세요 (확신하면 FORCE=1)." >&2
@@ -88,6 +111,8 @@ snapshot() {
 
 # 베이스라인의 'ADD COLUMN IF NOT EXISTS' 줄은 엔티티가 요구하는 컬럼의 **완전한 목록**이다.
 # validate 가 보는 것과 같은 집합이므로 이것으로 판정할 수 있다.
+# [JA] ベースラインの 'ADD COLUMN IF NOT EXISTS' の行は、エンティティが要求するカラムの **完全な一覧** である。
+#      validate が見るのと同じ集合なので、これで判定できる。
 expected_columns() {
     sed -n 's/^ALTER TABLE \([^ ]*\) ADD COLUMN IF NOT EXISTS \([^ ]*\) .*/\1.\2/p' "$BASELINE" \
         | tr 'A-Z' 'a-z' | sort -u
@@ -121,6 +146,7 @@ fail=0
 if [[ "$APPLY" == "1" ]]; then
     echo "② 베이스라인 적용"
     # NOTICE(이미 존재함)는 정상이므로 걸러내고, 진짜 오류만 보여준다.
+    # [JA] NOTICE(すでに存在する)は正常なので除き、本当のエラーだけを見せる。
     if ! psql "$PGURL" -v ON_ERROR_STOP=1 -q -f "$BASELINE" 2> "$WORK/err.txt"; then
         echo "   ❌ 적용 실패:"
         sed 's/^/      /' "$WORK/err.txt"
@@ -143,6 +169,8 @@ if [[ "$APPLY" == "1" ]]; then
     else
         # diff 는 차이가 있으면 1 을 반환한다. pipefail + set -e 아래에서는 그것만으로
         # 스크립트가 여기서 죽어 ④ 판정을 못 보게 되므로 상태를 삼킨다.
+        # [JA] diff は差分があると 1 を返す。pipefail + set -e の下ではそれだけで
+        #      スクリプトがここで死んで ④ の判定を見られなくなるので、ステータスを飲み込む。
         { diff "$WORK/before.txt" "$WORK/after.txt" || true; } \
             | grep '^[<>]' | sed 's/^</   제거: /; s/^>/   추가: /' || true
     fi
@@ -168,6 +196,8 @@ echo
 
 # ddl-auto 가 남긴 잔재 중 가장 흔한 것: @OneToOne 이 만들어 둔 UNIQUE.
 # Flyway 는 이런 것을 명시적으로 지워야 하므로(V4 가 그 예), 발견되면 알려준다.
+# [JA] ddl-auto が残した痕跡のうち最もよくあるもの: @OneToOne が作っておいた UNIQUE。
+#      Flyway ではこういうものを明示的に消す必要があるので(V4 がその例)、見つかれば知らせる。
 echo "⑤ 참고 — ddl-auto 시절의 잔재 점검"
 orphan_unique="$("${PSQL[@]}" -c "
     SELECT n.nspname||'.'||r.relname||'.'||c.conname

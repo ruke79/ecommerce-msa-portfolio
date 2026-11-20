@@ -25,11 +25,24 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>실제로 있는 것만 남긴다. 링크가 생기면 그때 추가하면 된다 — 없는 페이지로 가는
  * 링크를 미리 깔아 두는 것보다 낫다.
+ *
+ * <p>[JA] フッター。
+ * 以前のフッターは Amazon クローンのテンプレートそのままだった:
+ * <b>他人の商号</b>によるリンク 30 余り、その下に四つの項目を <b>五回コピーして貼った</b> 20 個のリスト
+ * (誤字 "Mazon" までそのまま繰り返される)、そして他社の著作権表示。
+ * そしてこれらのリンクは <b>全部どこにも行かない</b> — `to="/"` または `to=""`。押すと
+ * ホームへ行くか何も起きない。つまりこの領域は情報ではなく画面を埋める飾りで、
+ * その飾りがよりによって他人のブランドだった。
+ * 実際にあるものだけ残す。リンクができたらそのとき追加すればよい — 無いページへ行く
+ * リンクを先に敷いておくよりよい。
  */
 
 // 실제로 동작하는 링크만 넣는다. `to` 가 없는 항목은 아직 페이지가 없다는 뜻이고,
 // 링크가 아니라 회색 글자로 그린다 — 눌러도 아무 일이 없는 링크는 고장으로 보인다.
 // 이름표는 사전 키로 둔다 — 모듈을 읽는 순간의 언어로 굳지 않게 그릴 때 번역한다.
+// [JA] 実際に動くリンクだけ入れる。`to` の無い項目はまだページが無いという意味で、
+//      リンクではなく灰色の文字で描く — 押しても何も起きないリンクは故障に見える。
+//      ラベルは辞書キーで置く — モジュールを読む瞬間の言語で固まらないよう描くときに翻訳する。
 const SECTIONS = [
     {
         titleKey: "footer.section.shopping",
@@ -72,6 +85,9 @@ const Footer = () => {
               * 이상한 곳으로 이동한다 — 맨 위로 올라가지 않는다. 버튼으로 바꾸고
               * 실제로 스크롤한다.
               */}
+            {/* [JA] 以前は `<Link to="#">` だった。react-router では "#" がパスとして解釈され
+                おかしな所へ移動する — 一番上へは戻らない。ボタンに変えて
+                実際にスクロールする。 */}
             <button
                 type="button"
                 onClick={scrollToTop}
@@ -114,6 +130,12 @@ const Footer = () => {
                       * 한다. cursor-pointer 를 뺀 이유: 눌러도 아무 일이 없는 것을
                       * 누를 수 있는 것처럼 보이면 안 된다.
                       */}
+                    {/* [JA] 以前は English / USD / United States(星条旗)の三つの欄だった。この
+                        サイトは韓国語で notification-service は KR・JP テンプレートを持って
+                        いる — アメリカのデフォルトはどこから来たものでもない。
+                        まだ言語・通貨を実際に変えられる機能が無いので <b>表示だけ</b>
+                        する。cursor-pointer を外した理由: 押しても何も起きないものを
+                        押せるように見せてはならない。 */}
                     <div className="flex items-center border rounded border-slate-400 px-2 py-2 text-xs text-slate-100">
                         <GlobeAltIcon className="h-4 mr-2" />
                         <span>{t(`lang.${lang}`)}</span>
@@ -129,6 +151,7 @@ const Footer = () => {
                 <div className="flex flex-col items-center">
                     <ul className="flex whitespace-nowrap max-md:flex-col items-center text-xs text-slate-300 space-x-4 max-md:space-y-2">
                         {/* 갈 곳이 있는 것만 링크다. 나머지는 페이지가 생기면 추가한다. */}
+                        {/* [JA] 行き先のあるものだけリンクだ。残りはページができたら追加する。 */}
                         <li className="hover:underline">
                             <Link to="/notice">{t("footer.link.notices")}</Link>
                         </li>

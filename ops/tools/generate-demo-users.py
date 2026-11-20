@@ -47,12 +47,16 @@ from datetime import datetime, timedelta, timezone
 DOMAIN = "demo.invalid"
 DEFAULT_OFFSET = 7_000_000_000
 # 앱의 TSID 는 (2020 년 이후 밀리초 << 22) — 지금 약 10^18. 예약 범위는 그보다 한참 작아야 한다.
+# [JA] アプリの TSID は(2020 年以降のミリ秒 << 22) — 今は約 10^18。予約範囲はそれよりずっと小さくなければならない。
 TSID_FLOOR = 1 << 40
 # users.users 의 열 길이(V2) — username varchar(20), email varchar(50), name varchar(20)
+# [JA] users.users の列の長さ(V2) — username varchar(20), email varchar(50), name varchar(20)
 USERNAME_MAX, EMAIL_MAX, NAME_MAX = 20, 50, 20
 # UserReplicationReconciler 의 창(7일)보다 오래전이어야 한다 — 하루 여유를 더 둔다.
+# [JA] UserReplicationReconciler のウィンドウ(7 日)より前でなければならない — さらに 1 日の余裕を置く。
 MIN_AGE_DAYS, MAX_AGE_DAYS = 8, 730
 # 실측(로컬 PG16, 2만 명 — 2026-10-08): 사용자 + 인덱스 + 배송지 + 아웃박스 행 — docs/79 §3. estimate 가 쓴다.
+# [JA] 実測(ローカル PG16、2 万人 — 2026-10-08): ユーザー + インデックス + 配送先 + アウトボックス行 — docs/79 §3。estimate が使う。
 BYTES_PER_USER = 1012
 
 KO_FAMILY = ["김", "이", "박", "최", "정", "강", "조", "윤", "장", "임", "한", "오", "서", "신", "권", "황"]
@@ -144,10 +148,12 @@ def chunk_range(a) -> tuple[int, int]:
 def emit_chunk(a, out) -> None:
     pw_hash = os.environ.get("DEMO_PASSWORD_HASH", "")
     # 앱은 접두사 없는 BCryptPasswordEncoder(강도 10)다 — {bcrypt} 접두사나 다른 강도면 로그인이 안 된다.
+    # [JA] アプリは接頭辞なしの BCryptPasswordEncoder(強度 10)だ — {bcrypt} 接頭辞や別の強度だとログインできない。
     if not re.fullmatch(r"\$2[aby]\$10\$[./A-Za-z0-9]{53}", pw_hash):
         sys.exit("DEMO_PASSWORD_HASH 가 $2a$10$ BCrypt 해시가 아니다(앱의 BCryptPasswordEncoder 와 같아야 로그인된다)")
     start, end = chunk_range(a)
     # 묶음마다 시드를 고정 — 이어서 넣어도(resume) 같은 번호는 같은 사람이다.
+    # [JA] バッチごとにシードを固定 — 続けて入れても(resume)同じ番号は同じ人だ。
     rng = random.Random(a.seed * 1_000_003 + a.chunk_index)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     expiry = (now + timedelta(days=365)).date().isoformat()
@@ -157,6 +163,7 @@ def emit_chunk(a, out) -> None:
     w("\\set ON_ERROR_STOP on\nBEGIN;\n")
     w("SET LOCAL synchronous_commit = off;\n")
     # 같은 이름의 임시 표가 세션에 남아 있어도 되게 — 트랜잭션이 끝나면 사라진다.
+    # [JA] 同じ名前の一時テーブルがセッションに残っていてもよいように — トランザクションが終われば消える。
     w(f"CREATE TEMP TABLE demo_user_stage (LIKE users.users INCLUDING DEFAULTS) ON COMMIT DROP;\n")
     w(f"CREATE TEMP TABLE demo_addr_stage (LIKE users.shipping_address INCLUDING DEFAULTS) ON COMMIT DROP;\n")
     w(f"COPY demo_user_stage ({USER_COLS}) FROM stdin WITH (FORMAT csv);\n")
@@ -171,6 +178,7 @@ def emit_chunk(a, out) -> None:
                     expiry, expiry, "email", created.isoformat(sep=" ", timespec="microseconds"), 0]) + "\n")
     w("\\.\n")
     # role_id 는 이름으로 찾는다 — 시드 id 가 DB 마다 다를 수 있다(V3 은 "없으면 넣기").
+    # [JA] role_id は名前で探す — シードの id は DB ごとに違い得る(V3 は「なければ入れる」)。
     w(f"INSERT INTO users.users ({USER_COLS}, role_id)\n"
       f"SELECT {USER_COLS}, (SELECT role_id FROM users.roles WHERE role_name = 'ROLE_USER')\n"
       f"  FROM demo_user_stage ON CONFLICT DO NOTHING;\n")
@@ -181,6 +189,7 @@ def emit_chunk(a, out) -> None:
                         p["state"], p["zip"], p["country"], created.isoformat(sep=" ", timespec="microseconds"), 0]) + "\n")
         w("\\.\n")
         # 실제로 들어간(이 범위 · 이 도메인) 사용자의 것만, 이미 배송지가 있는 사람은 건너뛴다(사람당 활성 주소 하나 — V7).
+        # [JA] 実際に入った(この範囲 · このドメインの)ユーザーのものだけ、すでに配送先がある人は飛ばす(1 人あたり有効な住所 1 つ — V7)。
         w(f"INSERT INTO users.shipping_address ({ADDR_COLS})\n"
           f"SELECT s.* FROM (SELECT {ADDR_COLS} FROM demo_addr_stage) s\n"
           f"  JOIN users.users u ON u.user_id = s.user_id AND u.email LIKE '%@{DOMAIN}'\n"
@@ -189,6 +198,8 @@ def emit_chunk(a, out) -> None:
     if a.events:
         # UserOutboxHelper.recordUserCreated 와 같은 모양: {"userId","image","nickname"} — 이메일은 싣지 않는다(docs/48 §6-⑥).
         # 이 묶음에서 **새로** 들어간 사용자만 — 아웃박스에 같은 사용자의 user-created 가 이미 있으면 만들지 않는다.
+        # [JA] UserOutboxHelper.recordUserCreated と同じ形: {"userId","image","nickname"} — メールは載せない(docs/48 §6-⑥)。
+        #      このバッチで **新しく** 入ったユーザーだけ — アウトボックスに同じユーザーの user-created がすでにあれば作らない。
         w("CREATE TEMP TABLE demo_event_stage (id varchar(255), aggregate_id varchar(255), payload jsonb) ON COMMIT DROP;\n")
         w("COPY demo_event_stage (id, aggregate_id, payload) FROM stdin WITH (FORMAT csv);\n")
         for uid, p, _ in people:
@@ -210,6 +221,8 @@ def emit_purge(a, out) -> None:
     w(f"-- generate-demo-users: 삭제 — 사용자 {lo} … {hi} 중 @{DOMAIN} 인 행만\n\\set ON_ERROR_STOP on\nBEGIN;\n")
     # users.users 를 가리키는 모든 외래 키를 카탈로그에서 찾아 아래부터 지운다 — 데모 중에 생긴 기기 · 알림 · 리뷰 · 위시리스트까지.
     # 표 목록을 여기 적어 두면 새 표가 생길 때 빠진다(그러면 FK 위반으로 purge 가 멈춘다). 파티션 자식은 부모 제약으로 충분하다.
+    # [JA] users.users を指すすべての外部キーをカタログから探して下から消す — デモ中にできた機器 · 通知 · レビュー · ウィッシュリストまで。
+    #      テーブル一覧をここに書いておくと新しいテーブルができたとき漏れる(そうなると FK 違反で purge が止まる)。パーティションの子は親の制約で十分だ。
     w("""CREATE FUNCTION pg_temp.demo_purge(target regclass, cond text) RETURNS bigint LANGUAGE plpgsql AS $f$
 DECLARE fk record; n bigint;
 BEGIN
@@ -230,12 +243,15 @@ BEGIN
 END $f$;
 """)
     # 지울 사람을 먼저 고정한다 — 사용자 행을 지운 뒤에는 "누가 데모였나" 를 다시 알 수 없다.
+    # [JA] 消す人を先に固定する — ユーザー行を消した後では「誰がデモだったか」を再び知ることはできない。
     w("CREATE TEMP TABLE demo_ids ON COMMIT DROP AS\n"
       f"SELECT user_id FROM users.users WHERE user_id BETWEEN {lo} AND {hi} AND email LIKE '%@{DOMAIN}';\n")
     # 아직 안 나간 user-created 는 같이 지운다 — 사용자가 없는데 이벤트만 나가면 쿠폰 · 채팅에 유령이 생긴다.
+    # [JA] まだ出ていない user-created は一緒に消す — ユーザーがいないのにイベントだけ出るとクーポン · チャットに幽霊ができる。
     w("DELETE FROM users.outbox_event WHERE aggregate_id IN (SELECT user_id::text FROM demo_ids)\n"
       "   AND outbox_status <> 'COMPLETED';\n")
     # 외래 키 없이 user_id 만 가진 표(known_device 등) — 카탈로그에서 찾는다. 그 표의 자식은 demo_purge 가 따라간다.
+    # [JA] 外部キーなしで user_id だけを持つテーブル(known_device など) — カタログから探す。そのテーブルの子は demo_purge がたどる。
     w("""DO $d$
 DECLARE t record;
 BEGIN
@@ -260,6 +276,7 @@ def emit_purge_replicas(a, out) -> None:
     w("\\set ON_ERROR_STOP on\nBEGIN;\n")
     if a.purge_replicas == "coupon":
         # 웰컴 쿠폰(user-created 로 발급) — 쓰인 쿠폰(주문에 묶임)도 데모 것이라 같이 지운다. 처리 기록은 남겨도 해가 없다.
+        # [JA] ウェルカムクーポン(user-created で発行) — 使われたクーポン(注文に紐づく)もデモのものなので一緒に消す。処理記録は残しても害はない。
         w(f"DELETE FROM coupon.coupon WHERE user_id BETWEEN {lo} AND {hi};\n")
     else:
         w(f"DELETE FROM chat.member WHERE member_id BETWEEN {lo} AND {hi};\n")

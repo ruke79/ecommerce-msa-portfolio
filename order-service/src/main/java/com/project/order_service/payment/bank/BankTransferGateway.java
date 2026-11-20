@@ -28,6 +28,17 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>빈은 언제나 있다(자격증명이 필요 없다). 켜고 끄는 것은 {@code bank-transfer.enabled}
  * 이고, 꺼져 있으면 입금 안내 시작이 거부된다.
+ *
+ * <p>[JA] 銀行振込 — 問い合わせるプロバイダのない「ゲートウェイ」。
+ * 決済確認は {@code recordPayment} ではなく {@code BankTransferService.confirmDeposit}
+ * (管理者)が行う。そのため {@link #verify} は<b>呼んではならない</b>メソッドである — 呼ばれたということは、
+ * 誰かが銀行振込をカードのように「ブラウザが決済したと言う」経路に入れたという意味なので拒否する。
+ * 返金は管理者が口座へ送金した<b>記録</b>である。お金を動かす API がないので常に
+ * 「受け付けた」と答え、参照は返金キーから作る。そのため {@code refundOrder} はこの
+ * プロバイダに限り管理者だけを許可する — 顧客が自分で呼ぶと、お金は送られていないのに注文だけが
+ * REFUNDED になる。
+ * Bean は常にある(認証情報が不要)。有効・無効を切り替えるのは {@code bank-transfer.enabled}
+ * であり、無効なら入金案内の開始が拒否される。
  */
 @Slf4j
 @Component

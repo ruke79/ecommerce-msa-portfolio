@@ -74,6 +74,7 @@ public class StompController {
             }
             if (com.project.chat_service.model.SupportThread.isSupportRoom(request.getRoomId())) {
                 // 상담(docs/58) — 고객 본인이거나 맡은 상담원이어야 보낼 수 있다. 거절되면 보내지 않는다.
+                // [JA] 相談(docs/58) — 顧客本人か担当の相談員でなければ送れない。拒否されたら送らない。
                 try {
                     supportService.acceptMessage(request, role(headerAccessor));
                 } catch (com.project.chat_service.common.exception.handler.CustomException e) {
@@ -90,10 +91,12 @@ public class StompController {
 
         authenticate(msg, headerAccessor);
         // 상담에는 "누가 입장했다" 안내가 없다 — 연결·종료 안내는 서버가 팀 명의로 낸다(SupportService).
+        // [JA] 相談には「誰が入室した」案内がない — 接続・終了の案内はサーバがチーム名義で出す(SupportService)。
         if (com.project.chat_service.model.SupportThread.isSupportRoom(msg.getRoomId())) {
             return;
         }
         // 없는 방의 입장 안내는 저장하지 않는다(위 sendMessage 와 같다)
+        // [JA] 存在しないルームの入室案内は保存しない(上の sendMessage と同じ)
         if (!chatService.roomExists(msg.getRoomId())) {
             log.warn("입장 안내 거절 — 없는 방: room={}, sender={}", msg.getRoomId(), msg.getSenderId());
             return;
@@ -129,6 +132,8 @@ public class StompController {
      * StompHandler가 CONNECT 시점에 검증된 토큰의 uid 를 세션에 저장해두므로, 클라이언트가 본문에 실어 보낸
      * 발신자(senderId)는 신뢰하지 않고 이 값으로 덮어써서 다른 사용자 명의로 메시지를 보내는 위조를 막는다. 옛 클라이언트가
      * 보낸 email 은 MessageDto 에 필드가 없어 애초에 읽히지 않는다.
+     *
+     * <p>[JA] StompHandler が CONNECT 時点で検証済みトークンの uid をセッションに保存しているので、クライアントが本文に載せて送った送信者(senderId)は信頼せずこの値で上書きし、他のユーザー名義でメッセージを送る偽造を防ぐ。旧クライアントが送った email は MessageDto にフィールドがないのでそもそも読まれない。
      */
     static void authenticate(MessageDto msg, SimpMessageHeaderAccessor headerAccessor) {
         Object userId = Objects.requireNonNull(headerAccessor.getSessionAttributes())

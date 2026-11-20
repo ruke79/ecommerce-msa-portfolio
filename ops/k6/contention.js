@@ -31,6 +31,7 @@ const HOLD = Number(__ENV.HOLD_SECONDS || 20);
 const GAP = Number(__ENV.ROUND_GAP_SECONDS || 10);
 
 // 회차마다 — 받아짐 · 재고 부족 거절(주문 / 입금 안내) · 늦음 · 그 밖의 거절 · 오류
+// [JA] 回ごとに — 受付 · 在庫不足の拒否(注文 / 入金案内) · 遅延 · その他の拒否 · エラー
 const accepted = new Counter('contention_accepted');
 const shortCreate = new Counter('contention_short_create');
 const shortStart = new Counter('contention_short_start');
@@ -40,12 +41,13 @@ const failed = new Counter('contention_errors');
 
 const perRound = {};
 for (let r = 0; r < ROUNDS; r++) {
-  perRound[`contention_accepted{round:${r}}`] = [`count<=${STOCK}`];   // 초과 판매가 없다
+  perRound[`contention_accepted{round:${r}}`] = [`count<=${STOCK}`];   // 초과 판매가 없다 ／ [JA] 過剰販売がない
   perRound[`contention_short_create{round:${r}}`] = ['count>=0'];
   perRound[`contention_late{round:${r}}`] = ['count>=0'];
 }
 
 // 재고 부족 거절(400)은 기대한 결과 — http_req_failed 에 넣지 않는다
+// [JA] 在庫不足の拒否(400)は期待した結果 — http_req_failed に入れない
 const SHORT_OK = http.expectedStatuses(200, 400);
 
 export const options = {
@@ -84,12 +86,14 @@ export function setup() {
   limitsRaisedOrFail();
   const sessions = loginSessions(password, USERS, ID_OFFSET);
   // 담을 수 있는지 한 번 — SKU 하나 · 첫 사이즈(stock set 이 고른 상품)
+  // [JA] カートに入れられるか一度 — SKU 1 つ · 最初のサイズ(stock set が選んだ商品)
   session = Object.assign({}, sessions[0]);
   const info = send('GET', `/catalog-service/api/cart/${PRODUCT}?style=0&size=0`, null, 'cart_info');
   if (info.status !== 200) {
     fail(`상품 ${PRODUCT} 의 담기 정보가 ${info.status} — 상품 id · 재고를 stock show 로 확인`);
   }
   // 모든 VU 가 로그인을 마친 뒤 같은 시각에 시작하도록 — 첫 회차는 10초 뒤
+  // [JA] すべての VU がログインを終えた後に同じ時刻に始まるように — 最初の回は 10 秒後
   return { sessions, t0: Date.now() + 10_000 };
 }
 
@@ -118,6 +122,7 @@ function waitUntil(ms) {
 }
 
 /** 주문 · 입금 안내 응답을 센다 — 재고 부족은 기대한 400, 그 밖의 400 · 5xx 는 시나리오 · 서버의 실패. */
+// [JA] 注文 · 入金案内の応答を数える — 在庫不足は期待した 400、それ以外の 400 · 5xx はシナリオ · サーバーの失敗。
 function judge(res, name, round, shortCounter) {
   const kind = classify(res.status, res.body);
   const tags = { round: String(round) };
@@ -142,6 +147,7 @@ export function contention(data) {
   const w = roundWindow(data.t0, round, HOLD, GAP);
 
   // 준비 — 회차 시작 전에(몰리는 것은 주문부터)
+  // [JA] 準備 — 回の開始前に(集中させるのは注文から)
   const infoRes = send('GET', `/catalog-service/api/cart/${PRODUCT}?style=0&size=0`, null, 'cart_info');
   if (!ok(infoRes, 'cart_info')) {
     failed.add(1, { round: String(round) });
@@ -159,6 +165,7 @@ export function contention(data) {
   ok(send('GET', '/cart-service/api/cart/checkout', null, 'checkout'), 'checkout');
 
   // 시작 — 모든 VU 가 같은 순간에
+  // [JA] 開始 — すべての VU が同じ瞬間に
   waitUntil(w.start);
   let trackingId = null;
   let awaiting = false;
@@ -176,12 +183,14 @@ export function contention(data) {
       if (judge(startRes, 'bank_transfer_start', round, shortStart) === 'ok') {
         awaiting = true;
         // 해제 시각 뒤에 받아진 것은 남이 돌려준 재고다 — 초과 판매로 세지 않는다
+        // [JA] 解除時刻の後に受け付けられたものは他人が返した在庫だ — 過剰販売として数えない
         (Date.now() <= w.release ? accepted : late).add(1, { round: String(round) });
       }
     }
   }
 
   // 해제 — 모두 함께. 입금을 취소해 예약을 풀고(입금 대기 한도 3건도 비운다) 줄을 뺀다
+  // [JA] 解除 — 全員一斉に。入金を取り消して仮押さえを解き(入金待ち上限 3 件も空ける)、行を削除する
   waitUntil(w.release);
   if (awaiting) {
     ok(send('POST', '/order-service/api/order/payment/bank-transfer/cancel', { trackingId }, 'bank_transfer_cancel'),

@@ -40,6 +40,24 @@
 #
 # ⚠️ 이 스크립트는 값을 **절대 출력하지 않는다.** 어긋났다는 사실과 어디가 어긋났는지만
 #    알린다. 실패 메시지에 비밀번호를 실으면 그 메시지가 로그·이슈·스크린샷으로 퍼진다.
+# [JA] 運用アクション ㉗ — Secret の認証情報が**実際に通るか**を確認する。
+#      ── なぜ必要か: ops/25 はプロビジョニング時に `product` でログインしてみて終わる。その瞬間は正しい。
+#      問題はその後だ。二つのシステム(マネージド DB とクラスタ Secret)は**それぞれ別に変わりうるし、ずれても誰も教えてくれない。**
+#      ずれた状態はこう現れる: 既に起動している Pod は**問題なく動き続ける**(起動時に読んだ値を持っている)ので
+#      `kubectl get pods` はすべて緑。次のロールアウト・再起動・ノード交換のときに**一斉に**死ぬ。そのときのエラーは
+#      `password authentication failed for user 'product'` だけで、ホストか TLS かロールかパスワードかをメッセージは教えてくれない。
+#      実際のデプロイでこの状態のまま数時間を費やした(docs/33 §13)。5 時間経った Pod は Running なのに
+#      新しく起動する Pod だけ CrashLoopBackOff で、原因は Secret のパスワードだった。
+#      ── どう確認するか: **値を比較しない。接続してみる。**
+#      今回のデプロイで繰り返し確認したこと — 「名前が解決できる」は「そこに何かある」を意味しない
+#      (Neon のワイルドカード DNS、Pod のない Service の ClusterIP)。値の比較も同じ罠を持つ: Secret とどこかに
+#      書き留めた値が同じでも**DB がその値を受け入れる保証はない。** 唯一信頼できる検査はその認証情報で実際にログインしてみることだ。
+#      そして検査は**クラスタ内で**回す。理由は二つ: パスワードがローカルのシェル・履歴・プロセス一覧に出ない
+#      (Secret 参照で注入する)、そしてサービスが受け取る値と**まったく同じ値**を試すことになる。ローカルファイルを読んで試すと
+#      「ファイルは正しいがクラスタ Secret が違う」場合を見逃す — それが実際に起きたことだ。
+#      ── 使い方は上記。終了コード: 0 = すべて通過、1 = 一つでもずれ、2 = 点検不能(クラスタ未接続など)。
+#      ⚠️ このスクリプトは値を**絶対に出力しない。** ずれたという事実とどこがずれたかだけを伝える。
+#      失敗メッセージにパスワードを載せると、そのメッセージがログ・Issue・スクリーンショットで広がる。
 set -uo pipefail
 
 NAMESPACE="${NAMESPACE:-ecommerce}"
@@ -47,6 +65,7 @@ SECRET="${SECRET:-ecommerce-secrets}"
 CONFIGMAP="${CONFIGMAP:-ecommerce-config}"
 ONLY=""
 # 하나만 붙어 보면 충분하다 — 같은 역할·같은 서버다. 전부 돌면 느리기만 하다.
+# [JA] 一つ接続してみれば十分だ — 同じロール・同じサーバだ。全部回っても遅いだけだ。
 PROBE_DB="${PROBE_DB:-userdb}"
 
 while [ $# -gt 0 ]; do
@@ -67,11 +86,14 @@ PASS=0; FAIL=0; SKIP=0
 want() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 
 # ── 전제 ───────────────────────────────────────────────────────────────
+# [JA] ── 前提
 
 command -v kubectl >/dev/null || { echo "kubectl 이 필요합니다" >&2; exit 2; }
 
 # ⚠️ 붙지 못한 채 진행하면 "없습니다"를 "괜찮습니다"로 보고하게 된다. ops/24 가 정확히
 #    그렇게 잘못 보고했고, 그 때문에 자격증명이 엉뚱한 클러스터에 만들어졌다.
+# [JA] ⚠️ 接続できないまま進むと「ありません」を「大丈夫です」と報告してしまう。ops/24 がまさに
+#      そう誤報告し、そのせいで認証情報が的外れなクラスタに作られた。
 if ! CONN_ERR=$(kubectl cluster-info 2>&1 >/dev/null); then
     printf '%s\n' "$CONN_ERR" | head -2 | sed 's/^/      /'
     echo "클러스터에 붙지 못했습니다 — 점검할 수 없습니다." >&2
@@ -85,6 +107,8 @@ kubectl -n "$NAMESPACE" get secret "$SECRET" >/dev/null 2>&1 \
 
 # 클러스터 안에서 한 컨테이너를 돌리고 종료 코드와 출력을 돌려준다.
 #   $1 = 이름, $2 = 이미지, $3 = sh -c 로 넘길 스크립트, $4.. = env 주입 JSON 조각
+# [JA] クラスタ内でコンテナを一つ回し、終了コードと出力を返す。
+#      $1 = 名前、$2 = イメージ、$3 = sh -c に渡すスクリプト、$4.. = env 注入の JSON 断片
 run_probe() {
     local name="$1" image="$2" script="$3" envjson="$4"
     kubectl -n "$NAMESPACE" run "$name" \
@@ -94,10 +118,10 @@ run_probe() {
         2>&1
 }
 
-secret_env() {  # $1 = 환경변수명, $2 = Secret 키
+secret_env() {  # $1 = 환경변수명, $2 = Secret 키 ／ [JA] $1 = 環境変数名、$2 = Secret キー
     printf '{"name":"%s","valueFrom":{"secretKeyRef":{"name":"%s","key":"%s"}}}' "$1" "$SECRET" "$2"
 }
-config_env() {  # $1 = 환경변수명, $2 = ConfigMap 키
+config_env() {  # $1 = 환경변수명, $2 = ConfigMap 키 ／ [JA] $1 = 環境変数名、$2 = ConfigMap キー
     printf '{"name":"%s","valueFrom":{"configMapKeyRef":{"name":"%s","key":"%s"}}}' "$1" "$CONFIGMAP" "$2"
 }
 
@@ -112,6 +136,7 @@ if want postgres; then
     else
         ENVJSON="[$(secret_env PGPASSWORD LOCAL_DB_PASSWORD),$(config_env PGHOST POSTGRES_HOST),$(config_env PGPORT POSTGRES_PORT),{\"name\":\"PGUSER\",\"value\":\"${PGUSER:-product}\"},{\"name\":\"PGDATABASE\",\"value\":\"$PROBE_DB\"},{\"name\":\"PGSSLMODE\",\"value\":\"require\"},{\"name\":\"PGCONNECT_TIMEOUT\",\"value\":\"10\"}]"
         # ⚠️ 오류 출력에 비밀번호가 섞일 여지가 없도록 psql 의 stderr 만 남긴다.
+        # [JA] ⚠️ エラー出力にパスワードが混じる余地がないよう psql の stderr だけを残す。
         OUT=$(run_probe pgdrift-check postgres:16-alpine \
             'psql -X -q -t -A -c "select 1" >/dev/null 2>/tmp/e && echo PROBE_OK || { echo PROBE_FAIL; cat /tmp/e; }' \
             "$ENVJSON")
@@ -145,6 +170,8 @@ fi
 if want redis; then
     # 애플리케이션이 쓰는 Redis 비밀번호: SPRING_DATA_REDIS_PASSWORD 가 있으면 그것(ops/36 으로 DB 와 분리한 뒤 — 환경 변수가
     # 설정 파일의 ${LOCAL_DB_PASSWORD} 를 덮는다), 없으면 LOCAL_DB_PASSWORD. 값은 읽지 않고 키가 있는지만 본다.
+    # [JA] アプリケーションが使う Redis パスワード: SPRING_DATA_REDIS_PASSWORD があればそれ(ops/36 で DB と分離した後 — 環境変数が
+    #      設定ファイルの ${LOCAL_DB_PASSWORD} を上書きする)、なければ LOCAL_DB_PASSWORD。値は読まずキーの有無だけを見る。
     REDIS_APP_KEY=LOCAL_DB_PASSWORD
     if [ -n "$(kubectl -n "$NAMESPACE" get secret "$SECRET" -o jsonpath='{.data.SPRING_DATA_REDIS_PASSWORD}' 2>/dev/null)" ]; then
         REDIS_APP_KEY=SPRING_DATA_REDIS_PASSWORD
@@ -155,6 +182,9 @@ if want redis; then
     #    ${LOCAL_DB_PASSWORD} 로 잡고 있는데, redis 서버는 별도 Secret(redis-auth)의
     #    값으로 requirepass 를 건다. DB 비밀번호만 바꾸면 다음 재시작에서 Redis 를 쓰는
     #    **7개 서비스**(cart·catalog·chat·notification·order·pay·user)가 죽는다.
+    # [JA] ⚠️ この二つは**同じでなければならない。** アプリケーション設定は spring.data.redis.password を
+    #      ${LOCAL_DB_PASSWORD} にしているが、redis サーバは別の Secret(redis-auth)の値で requirepass をかける。
+    #      DB パスワードだけ変えると、次の再起動で Redis を使う**7 サービス**(cart・catalog・chat・notification・order・pay・user)が死ぬ。
     if ! kubectl -n redis get secret redis-auth >/dev/null 2>&1; then
         skip "redis-auth Secret 이 없습니다 (관리형 Redis 를 쓰는 구성이면 정상)"
     else
@@ -201,6 +231,8 @@ if want mongo; then
 
         # ⚠️ 실패 판정을 **먼저** 한다. mongosh 의 에러 문구에도 숫자 1 이 섞일 수 있어,
         #    성공(ok 가 1)을 먼저 매칭하면 실패를 성공으로 읽는다.
+        # [JA] ⚠️ 失敗判定を**先に**行う。mongosh のエラー文言にも数字 1 が混じりうるので、
+        #      成功(ok が 1)を先にマッチさせると失敗を成功と読んでしまう。
         case "$OUT" in
             *"Authentication failed"*|*"bad auth"*|*"AuthenticationFailed"*)
                 bad "**Mongo 자격증명이 어긋나 있습니다**"
@@ -211,6 +243,7 @@ if want mongo; then
                 note "Atlas Network Access 에 이 클러스터의 공인 IP 가 있는지 확인하세요." ;;
             *)
                 # ping 이 성공하면 `db.runCommand({ping:1}).ok` 가 1 한 줄만 찍는다.
+                # [JA] ping が成功すると `db.runCommand({ping:1}).ok` が 1 の 1 行だけを出力する。
                 if printf '%s\n' "$OUT" | grep -qx '1'; then
                     ok "Mongo 접속 문자열로 ping 성공"
                 else
@@ -222,6 +255,7 @@ if want mongo; then
 fi
 
 # ── 4. 파일 ↔ 클러스터 ─────────────────────────────────────────────────
+# [JA] ── 4. ファイル ↔ クラスタ
 
 if want file; then
     log "4. k8s/20-secret.yaml 과 클러스터 Secret 이 같은가"
@@ -229,6 +263,9 @@ if want file; then
     # ⚠️ 파일이 달라도 지금 당장은 아무 일도 없다. 그러다 누군가
     #    `kubectl apply -f k8s/20-secret.yaml` 을 돌리는 순간 **클러스터가 파일 쪽으로
     #    되돌아간다.** 이번 배포에서 이 방식으로 비밀번호가 세 번 되살아났다.
+    # [JA] ⚠️ ファイルが違っても今すぐには何も起きない。だが誰かが
+    #      `kubectl apply -f k8s/20-secret.yaml` を回した瞬間**クラスタがファイル側に戻る。**
+    #      今回のデプロイでこの形でパスワードが 3 回よみがえった。
     if [ ! -f k8s/20-secret.yaml ]; then
         skip "k8s/20-secret.yaml 이 없습니다 (이 머신에서 관리하지 않는 구성)"
     elif ! command -v python3 >/dev/null; then
@@ -238,6 +275,10 @@ if want file; then
         # ⚠️ 파이썬을 `python3 -c '...'` 로 넘기지 않는다. 코드 안에 작은따옴표가 있으면
         #    셸 인용이 그 자리에서 닫혀 스크립트 전체가 깨진다(실제로 한 번 그랬다).
         #    인용된 히어독은 안에 무엇이 들어와도 셸이 건드리지 않는다.
+        # [JA] 値は出力しない。ハッシュだけを比較する。
+        #      ⚠️ Python を `python3 -c '...'` で渡さない。コード内にシングルクォートがあると
+        #      シェルのクォートがそこで閉じてスクリプト全体が壊れる(実際に一度そうなった)。
+        #      クォートされたヒアドキュメントは中に何が入ってもシェルが手を出さない。
         LIVEJSON=$(mktemp)
         trap 'rm -f "$LIVEJSON"' EXIT
         kubectl -n "$NAMESPACE" get secret "$SECRET" -o json > "$LIVEJSON"
@@ -298,6 +339,7 @@ PYEOF
 fi
 
 # ── 결과 ───────────────────────────────────────────────────────────────
+# [JA] ── 結果
 
 printf '\n════════════════════════════════════════\n'
 printf '  통과 %d · 실패 %d · 생략 %d\n' "$PASS" "$FAIL" "$SKIP"

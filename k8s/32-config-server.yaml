@@ -7,12 +7,17 @@ metadata:
     app: config-server
   annotations:
     # 신원 인증서가 갱신되면(cert-manager — k8s/96) 롤링 재시작 — keystore 는 기동할 때만 읽는다.
+    # [JA] 身元証明書が更新されたら(cert-manager — k8s/96)ローリング再起動 — keystore は起動時にしか読まない。
     secret.reloader.stakater.com/reload: "tls-id-config-server"
 spec:
   # config-server 는 상태가 없다(설정의 진실은 git 저장소다). eureka-server 와 달리 늘려도
   # 조용히 깨지지 않으므로 2로 올려도 된다. 1로 두는 이유는 단지 자원이다 —
   # Always Free 박스에서는 파드 하나가 아깝고, 이 서비스가 잠깐 없어도 클라이언트는
   # optional: 로 넘어간다(아래 SPRING_CONFIG_IMPORT 주석 참조).
+  # [JA] config-server は状態を持たない(設定の真実は git リポジトリ)。eureka-server と違い増やしても
+  #      黙って壊れないので 2 に上げてもよい。1 にする理由は単に資源である —
+  #      Always Free の箱ではポッド 1 つが惜しく、このサービスが一時的になくてもクライアントは
+  #      optional: で先へ進む(下の SPRING_CONFIG_IMPORT のコメント参照)。
   replicas: 1
   selector:
     matchLabels:
@@ -27,6 +32,7 @@ spec:
       containers:
         - name: config-server
           # 이미지는 ops/19-build-images.sh 가 ops/Dockerfile.runtime 으로 만든다(CI 와 같은 경로 — 모듈별 Dockerfile 은 지웠다).
+          # [JA] イメージは ops/19-build-images.sh が ops/Dockerfile.runtime で作る(CI と同じ経路 — モジュール別の Dockerfile は消した)。
           image: REGISTRY_PLACEHOLDER/ecommerce-msa/config-server:1.0.0
           ports:
             - containerPort: 8888
@@ -38,6 +44,8 @@ spec:
           env:
             # Eureka 등록 · 하트비트에 내는 클라이언트 인증서 = 이 서비스의 신원(/app/identity, CN=config-server). Eureka 는 등록부를
             # 바꾸는 요청을 그 CN 이 앱 이름과 같을 때만 받는다(EUREKA_WRITE_AUTH_MODE, docs/57 §16 "Eureka 쓰기", B-86).
+            # [JA] Eureka 登録 · ハートビートで出すクライアント証明書 = このサービスの身元(/app/identity、CN=config-server)。Eureka はレジストリを
+            #      変えるリクエストを、その CN がアプリ名と同じときだけ受ける(EUREKA_WRITE_AUTH_MODE、docs/57 §16「Eureka 書き込み」、B-86)。
             - name: EUREKA_CLIENT_TLS_ENABLED
               value: "true"
             # ⚠️ 이름이 없으면 Eureka 에 **UNKNOWN 으로 등록된다.** config-server 는 자기
@@ -45,6 +53,11 @@ spec:
             #    그랬다(`POST /eureka/apps/UNKNOWN` 으로 확인). 지금은 다른 서비스들이
             #    config-server 를 주소로 직접 찾으므로 드러나지 않지만,
             #    spring.cloud.config.discovery 로 바꾸는 순간 이름으로 찾지 못해 깨진다.
+            # [JA] ⚠️ 名前がないと Eureka に **UNKNOWN として登録される。** config-server は自分の
+            #         application.yml のどこにも spring.application.name を宣言しておらず、実際に
+            #         そうなった(`POST /eureka/apps/UNKNOWN` で確認)。今は他のサービスが
+            #         config-server をアドレスで直接探すので表に出ないが、
+            #         spring.cloud.config.discovery に変えた瞬間、名前で見つけられず壊れる。
             - name: SPRING_APPLICATION_NAME
               value: "config-server"
 
@@ -54,6 +67,12 @@ spec:
             #    자기 자신에게 설정을 물으러 간다 — 아직 Endpoints 에 없으니 실패하고,
             #    optional: 라 넘어가긴 하지만 매 기동마다 무의미한 왕복과 경고가 남는다.
             #    환경변수가 yml 보다 우선하므로 여기서 원래 값으로 되돌린다.
+            # [JA] ⚠️ **自分自身を import しないように上書きする。** 共用 ConfigMap の
+            #         SPRING_CONFIG_IMPORT は `optional:configserver:https://config-server...:8888`
+            #         で、envFrom でこのポッドにも入ってくる。そのままだと config-server が起動中に
+            #         自分自身へ設定を尋ねに行く — まだ Endpoints にないので失敗し、
+            #         optional: なので先へは進むが、起動のたびに無意味な往復と警告が残る。
+            #         環境変数は yml より優先されるので、ここで元の値に戻す。
             - name: SPRING_CONFIG_IMPORT
               value: "optional:classpath:application-common.yml"
 
@@ -66,17 +85,30 @@ spec:
             #    CONFIG_GIT_URI 인 이유: 값은 application-local.yml 의 `${CONFIG_GIT_URI:...}`
             #    가 받는다. 하이픈이 든 프로퍼티의 환경변수 이름 규칙을 매번 기억하지 않기
             #    위해서다(가드레일 B-44 가 두 이름을 대조한다).
+            # [JA] ── 設定リポジトリ ──
+            #      埋めるまで config-server は**起動するが設定は配れない** — git バックエンドは
+            #      clone-on-start がオフで最初のリクエスト時にクローンするので、起動は成功する。
+            #      クライアントは全部 optional: なのでその失敗をログに残すだけで、自分のバンドル設定で動く。
+            #      ⚠️ 名前が Spring プロパティ(SPRING_CLOUD_CONFIG_SERVER_GIT_URI)ではなく
+            #         CONFIG_GIT_URI である理由: 値は application-local.yml の `${CONFIG_GIT_URI:...}`
+            #         が受ける。ハイフンを含むプロパティの環境変数名の規則を毎回覚えておかなくて済む
+            #         ようにするためである(ガードレール B-44 が 2 つの名前を照合する)。
             - name: CONFIG_GIT_URI
               value: "REPLACE_ME_config_repo_url"
 
             # 저장소를 실제로 연결한 뒤 켤 것. 기동 시 클론하므로 URI·자격증명이 틀리면
             # **기동에서 바로** 실패한다 — 지금처럼 "파드는 Ready 인데 설정이 안 내려가는"
             # 조용한 실패보다 낫다.
+            # [JA] リポジトリを実際に接続してから有効にすること。起動時にクローンするので URI・資格情報が間違っていれば
+            #      **起動ですぐに**失敗する — 今のような「ポッドは Ready なのに設定が配られない」
+            #      静かな失敗よりましである。
             # - name: CONFIG_GIT_CLONE_ON_START
             #   value: "true"
 
             # 비공개 저장소라면. 이 둘은 하이픈이 없어 Spring 프로퍼티 이름을 그대로 써도
             # 매핑이 모호하지 않다. **반드시 Secret 으로** — value: 로 적으면 커밋된다.
+            # [JA] 非公開リポジトリなら。この 2 つはハイフンがないので Spring プロパティ名をそのまま使っても
+            #      マッピングが曖昧にならない。**必ず Secret で** — value: で書くとコミットされる。
             # - name: SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME
             #   valueFrom:
             #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_GIT_USERNAME }
@@ -96,10 +128,21 @@ spec:
             #    GET /{application}/{profile} 로 전 서비스의 설정이, ENCRYPT_KEY 를 켜면 /decrypt 로 {cipher} 값이 열렸다.
             #    저장소를 연결할 때: Secret 에 CONFIG_SERVER_PASSWORD(envFrom 으로 들어온다) + 클라이언트에
             #    SPRING_CLOUD_CONFIG_USERNAME=config · SPRING_CLOUD_CONFIG_PASSWORD.
+            # [JA] 設定リポジトリに `{cipher}...` で秘密を入れてここで復号するには必要である。
+            #      依存関係の確認済み: spring-security-crypto が入っているので**対称鍵方式はそのまま
+            #      動作する。** キーストアベースの非対称方式は spring-security-rsa がないので追加が必要である。
+            #      🔒 HTTP 認証(ConfigServerSecurity、2026-10-15): Secret に CONFIG_SERVER_PASSWORD があればユーザー config の Basic でのみ、
+            #         なければ設定 · 復号 API をすべて拒否する(プローブ · メトリクスだけ開く)。以前は認証がなく、リポジトリを付けた日に
+            #         GET /{application}/{profile} で全サービスの設定が、ENCRYPT_KEY を有効にすると /decrypt で {cipher} の値が開いていた。
+            #         リポジトリを接続するとき: Secret に CONFIG_SERVER_PASSWORD(envFrom で入ってくる) + クライアントに
+            #         SPRING_CLOUD_CONFIG_USERNAME=config · SPRING_CLOUD_CONFIG_PASSWORD。
 
             # Spring Cloud Bus(AMQP)는 2026-10-16 의존성에서 뺐다 — RabbitMQ 가 없어 이 매니페스트가
             # SPRING_CLOUD_BUS_ENABLED · MANAGEMENT_HEALTH_RABBIT_ENABLED 를 false 로 꺼 두기만 했다.
             # 설정 변경을 전 서비스에 방송하려면 브로커와 함께 다시 들인다.
+            # [JA] Spring Cloud Bus(AMQP)は 2026-10-16 に依存関係から外した — RabbitMQ がなく、このマニフェストが
+            #      SPRING_CLOUD_BUS_ENABLED · MANAGEMENT_HEALTH_RABBIT_ENABLED を false で切っておくだけだった。
+            #      設定変更を全サービスに放送するならブローカーと一緒に再導入する。
 
             # ⚠️ config-server 는 common 모듈에 의존하지 않아 application-common.yml 이
             #    클래스패스에 없다(그래서 위 import 가 optional: 이다). 그 파일이 켜 주던
@@ -107,6 +150,12 @@ spec:
             #    /actuator/health/liveness 가 404 라 아래 프로브가 전부 실패한다.
             #    (쿠버네티스에서는 Boot 가 자동으로 켜 주기도 하지만, 그 자동 판정에
             #     기동 가능 여부를 걸어 둘 이유가 없다.)
+            # [JA] ⚠️ config-server は common モジュールに依存しないので application-common.yml が
+            #         クラスパスにない(だから上の import が optional: である)。そのファイルが有効にしていた
+            #         health probes がここでは有効にならないので直接有効にする — なければ
+            #         /actuator/health/liveness が 404 になり、下のプローブがすべて失敗する。
+            #         (Kubernetes では Boot が自動で有効にしてくれることもあるが、その自動判定に
+            #          起動の可否を賭けておく理由はない。)
             - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
               value: "true"
 
@@ -116,6 +165,12 @@ spec:
             #    아예 없어 평문 HTTP 로 뜬다 — 그대로 두면 모든 클라이언트가 TLS 핸드셰이크에서
             #    실패한다. 다른 서비스들은 yml 에 블록이 있고 경로만 주입받지만, 여기서는
             #    블록 자체가 없으므로 환경변수로 만든다(Spring relaxed binding). 네 변수는 가드 B-91 이 지킨다.
+            # [JA] ── TLS ──
+            #      ⚠️ 共用 ConfigMap がクライアントに **https://** config-server:8888 に来いと
+            #         言っている。ところが config-server の application-local.yml には server.ssl ブロックが
+            #         まったくなく平文 HTTP で起動する — そのままだと全クライアントが TLS ハンドシェイクで
+            #         失敗する。他のサービスは yml にブロックがあってパスだけ注入されるが、ここでは
+            #         ブロック自体がないので環境変数で作る(Spring relaxed binding)。4 つの変数はガード B-91 が守る。
             - name: LOCAL_KEY_STORE_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -140,6 +195,11 @@ spec:
             # 🔒 스토어 비밀번호는 JAVA_TOOL_OPTIONS 에 넣지 않는다 — JVM 이 기동마다 그 변수를 통째로 "Picked up JAVA_TOOL_OPTIONS: …"
             #    로 stderr 에 찍어 파드 로그 · Loki 에 평문으로 남았다. 앱이 기동 첫 순간에 아래 변수를 javax.net.ssl.*Password 로
             #    옮긴다(common JvmSslPasswords · 게이트웨이 · config-server 는 main, B-83).
+            # [JA] 私設 CA を JVM デフォルトのトラストストアで信頼させる — Eureka 登録(Jersey)と
+            #      アクチュエータのアウトバウンドは server.ssl ではなくこちらを使う(30-eureka-server.yaml のコメント)。
+            #      🔒 ストアのパスワードは JAVA_TOOL_OPTIONS に入れない — JVM が起動のたびにその変数を丸ごと "Picked up JAVA_TOOL_OPTIONS: …"
+            #         として stderr に出し、ポッドログ · Loki に平文で残った。アプリが起動の最初の瞬間に下の変数を javax.net.ssl.*Password に
+            #         移す(common JvmSslPasswords · ゲートウェイ · config-server は main、B-83)。
             - name: JAVAX_NET_SSL_TRUST_STORE_PASSWORD
               value: "$(LOCAL_KEY_STORE_PASSWORD)"
             - name: JAVA_TOOL_OPTIONS
@@ -158,6 +218,7 @@ spec:
               value: "/app/resources/tls.key"
 
             # 인증서 SAN 이 커버하는 이름으로 Eureka 에 등록한다(48-delivery-service.yaml 주석).
+            # [JA] 証明書の SAN がカバーする名前で Eureka に登録する(48-delivery-service.yaml のコメント)。
             - name: EUREKA_INSTANCE_PREFER_IP_ADDRESS
               value: "false"
             - name: EUREKA_INSTANCE_HOSTNAME
@@ -171,11 +232,14 @@ spec:
               mountPath: /app/resources
               readOnly: true
             # 이 서비스의 신원(CN=config-server) — Eureka 에 등록할 때만 낸다. 발급: ops/38(cert-manager 면 k8s/96 · ops/39)
+            # [JA] このサービスの身元(CN=config-server) — Eureka に登録するときだけ出す。発行: ops/38(cert-manager なら k8s/96 · ops/39)
             - name: tls-id
               mountPath: /app/identity
               readOnly: true
           # 네 값이 모두 있어야 한다. external·oci 오버레이가 JSON6902 replace 로
           # 이 경로들을 덮어쓰므로, 하나라도 없으면 kustomize 빌드가 실패한다.
+          # [JA] 4 つの値がすべて必要である。external・oci オーバーレイが JSON6902 replace で
+          #      これらのパスを上書きするので、1 つでもなければ kustomize のビルドが失敗する。
           resources:
             requests:
               cpu: "250m"
@@ -204,6 +268,7 @@ spec:
             periodSeconds: 10
       volumes:
         # 🔴 JVM 충돌 기록(ops/Dockerfile.runtime 의 -XX:ErrorFile) — 로그(Loki)로 보내지 않는다: 기록에 메모리 내용이 들어갈 수 있다
+        # [JA] 🔴 JVM クラッシュ記録(ops/Dockerfile.runtime の -XX:ErrorFile) — ログ(Loki)には送らない: 記録にメモリ内容が入りうる
         - name: jvm-crash
           emptyDir:
             sizeLimit: 64Mi

@@ -32,10 +32,12 @@ describe("SmsVerification", () => {
   it("does not validate the number format client-side", async () => {
     // 프론트 정규식으로 미리 거르면 유효한 번호까지 막힌다 — 한국의 10자리 010 번호나
     // 019 대역이 대표적이다. 판정은 libphonenumber 를 쓰는 서버가 한다.
+    // [JA] フロントの正規表現で先に弾くと有効な番号まで止まる — 韓国の 10 桁の 010 番号や
+    //      019 帯が代表的である。判定は libphonenumber を使うサーバーが行う。
     requestPhoneCode.mockResolvedValue({ ok: true, phone: "010-***-4567", expiresInMinutes: 3 });
 
     render(withI18n(<SmsVerification />));
-    await typePhone("0101234567");           // 10자리
+    await typePhone("0101234567");           // 10자리 ／ [JA] 10 桁
     await userEvent.click(screen.getByRole("button", { name: /인증번호 받기/ }));
 
     await waitFor(() => expect(requestPhoneCode).toHaveBeenCalled());
@@ -61,6 +63,7 @@ describe("SmsVerification", () => {
     await userEvent.click(screen.getByRole("button", { name: /인증번호 받기/ }));
 
     // 남은 시간을 보여줘야 사용자가 언제 다시 눌러야 할지 안다.
+    // [JA] 残り時間を見せてこそユーザーはいつまた押せばよいか分かる。
     expect(await screen.findByRole("button", { name: /30초 후 재시도/ })).toBeInTheDocument();
   });
 
@@ -74,6 +77,7 @@ describe("SmsVerification", () => {
     await userEvent.click(screen.getByRole("button", { name: /인증번호 받기/ }));
 
     // 3600 으로 잘린다.
+    // [JA] 3600 で切られる。
     expect(await screen.findByRole("button", { name: /3600초 후 재시도/ })).toBeInTheDocument();
   });
 
@@ -90,6 +94,7 @@ describe("SmsVerification", () => {
     await userEvent.click(screen.getByRole("button", { name: "확인" }));
 
     // 알려주지 않으면 사용자는 왜 갑자기 막혔는지 모른다.
+    // [JA] 知らせないとユーザーはなぜ急に止められたのか分からない。
     expect(await screen.findByText(/남은 시도 2회/)).toBeInTheDocument();
   });
 
@@ -118,6 +123,8 @@ describe("SmsVerification", () => {
 
     // 코드 단계의 재전송 버튼은 쿨다운 동안 비활성이다. 이게 없으면 사용자가 연타해
     // 서버 제한(429)에 스스로 걸린다.
+    // [JA] コード段階の再送ボタンはクールダウン中は無効である。これがないとユーザーが連打して
+    //      サーバーの制限(429)に自ら掛かる。
     const resend = await screen.findByRole("button", { name: /재전송 \(60초\)/ });
     expect(resend).toBeDisabled();
   });

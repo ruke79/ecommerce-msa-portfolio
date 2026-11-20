@@ -23,6 +23,10 @@ import { useProfile, useUpdateProfile, profileErrorText } from "hook/useProfile"
  *
  * <p>그리고 프로필 사진을 바꿀 방법도 없었다. UI 가 빠진 것이 아니라 서버에 <b>경로 자체가
  * 없었다</b> — 프로필을 돌려주는 GET 도, 이미지를 바꾸는 엔드포인트도.
+ *
+ * <p>[JA] マイプロフィール。🐛 <b>この画面には本文がなかった。</b>全体が Layout の中に My Profile の見出し一行だけだった — バグではなく作られたことがない。
+ * 同じ Layout を使う他のタブ(住所・注文・決済手段・セキュリティ)はすべて内容があり、`/profile` だけが抜け殻だった。そしてプロフィール写真を変える方法も
+ * なかった。UI が抜けていたのではなくサーバーに<b>経路自体がなかった</b> — プロフィールを返す GET も、画像を変えるエンドポイントも。
  */
 const Profile = () => {
     const { t } = useTranslation();
@@ -31,6 +35,7 @@ const Profile = () => {
     const { save, uploadImage, removeImage } = useUpdateProfile();
 
     // 프로필을 아직 못 받았어도 화면은 그려야 한다. JWT 의 이메일이 그때의 근거다.
+    // [JA] プロフィールをまだ受け取れていなくても画面は描かなければならない。JWT のメールアドレスがそのときの根拠である。
     const shown = profile ?? user;
 
     const [name, setName] = useState("");
@@ -39,11 +44,14 @@ const Profile = () => {
 
     // 서버 값이 도착하면 입력란을 채운다. 이미 타이핑 중이면 덮지 않는다 —
     // 응답이 늦게 오는 사이 입력한 글자가 사라지면 안 된다.
+    // [JA] サーバーの値が届いたら入力欄を埋める。すでにタイプ中なら上書きしない —
+    //      応答が遅れて来る間に入力した文字が消えてはならない。
     useEffect(() => {
         if (profile && name === "") {
             setName(profile.name ?? profile.username ?? "");
         }
         // name 을 의존성에 넣으면 한 글자 칠 때마다 다시 돈다.
+        // [JA] name を依存に入れると一文字打つたびに再実行される。
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [profile]);
 
@@ -56,6 +64,7 @@ const Profile = () => {
     const onPickImage = (event) => {
         const file = event.target.files?.[0];
         // 같은 파일을 다시 고를 수 있어야 한다. value 를 비우지 않으면 change 가 안 뜬다.
+        // [JA] 同じファイルを再び選べなければならない。value を空にしないと change が発生しない。
         event.target.value = "";
         if (file) {
             uploadImage.mutate(file);
@@ -81,6 +90,7 @@ const Profile = () => {
                 )}
 
                 {/* ── 프로필 사진 ─────────────────────────────────────────── */}
+                {/* [JA] ── プロフィール写真 ───────────────────────────────────────── */}
                 <section className="flex flex-col items-center gap-3 pb-6 border-b">
                     <Avatar user={shown} size={112} className="outline outline-2 outline-offset-[3px] outline-slate-200" />
 
@@ -111,6 +121,7 @@ const Profile = () => {
                       * 뿐이고 사용자가 "모든 파일"로 바꿀 수 있다. 실제 검사는 서버가 한다
                       * (FileUtil 의 확장자 허용 목록).
                       */}
+                    {/* [JA] accept は便宜であって検証ではない — ファイル選択ダイアログの既定フィルタを決めるだけで、ユーザーが「すべてのファイル」に変えられる。実際の検査はサーバーが行う(FileUtil の拡張子許可リスト)。 */}
                     <input
                         ref={fileRef}
                         type="file"
@@ -136,6 +147,7 @@ const Profile = () => {
                 </section>
 
                 {/* ── 기본 정보 ───────────────────────────────────────────── */}
+                {/* [JA] ── 基本情報 ───────────────────────────────────────────── */}
                 <form onSubmit={onSave} className="py-6 flex flex-col gap-4">
                     <label className="flex flex-col gap-1">
                         <span className="text-sm font-semibold">{t("profile.name")}</span>
@@ -157,6 +169,7 @@ const Profile = () => {
                           * 다른 서비스(order·cart·coupon)가 사용자를 찾는 키다. 바꿀 수
                           * 없는 것을 입력란처럼 보여 주면 눌러 보고 나서야 알게 된다.
                           */}
+                        {/* [JA] メールアドレスは変えられない — 身元そのものであり JWT の subject であり、他のサービス(order・cart・coupon)がユーザーを探すキーである。変えられないものを入力欄のように見せると、押してみて初めて分かることになる。 */}
                         <input
                             type="email"
                             value={shown?.email ?? ""}
@@ -190,6 +203,7 @@ const Profile = () => {
                 </form>
 
                 {/* ── 계정 ────────────────────────────────────────────────── */}
+                {/* [JA] ── アカウント ──────────────────────────────────────────────── */}
                 <section className="py-6 border-t text-sm text-slate-600 flex flex-col gap-2">
                     <div className="flex justify-between">
                         <span>{t("profile.signup_method")}</span>
@@ -211,6 +225,7 @@ const Profile = () => {
                   * 등급은 프로필에 둔다. 별도 탭을 만들면 "등급 화면" 이 되고, 그러면
                   * 등급 자체가 목적처럼 보인다 — 계정 정보 옆에 있는 편이 톤에 맞는다.
                   */}
+                {/* [JA] 等級はプロフィールに置く。別のタブを作ると「等級画面」になり、すると等級自体が目的のように見える — アカウント情報の横にあるほうがトーンに合う。 */}
                 <TierStatus />
             </div>
         </Layout>
@@ -225,5 +240,8 @@ export default Profile;
  * <p>예전에는 `tab` 을 계산해 돌려줬는데 컴포넌트에서 쓰는 줄이 주석 처리돼 있었다.
  * 프로필은 언제나 첫 번째 탭이므로 계산할 것이 없다. 데이터는 useProfile 이 가져온다 —
  * loader 로 가져오면 프로필 조회가 느릴 때 화면 전환 자체가 막힌다.
+ *
+ * <p>[JA] ルートの loader。以前は `tab` を計算して返していたが、コンポーネントで使う行がコメントアウトされていた。プロフィールは常に最初のタブなので
+ * 計算するものがない。データは useProfile が取得する — loader で取得するとプロフィール照会が遅いとき画面遷移自体が止まる。
  */
 export const loader = async () => null;

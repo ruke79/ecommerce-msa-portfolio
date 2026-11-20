@@ -31,8 +31,15 @@ import org.yaml.snakeyaml.Yaml;
  *
  * <p>매니페스트의 스크립트를 그대로 꺼내 가짜 psql · pg_basebackup 으로 끝까지 돌린다(경로만 임시 디렉터리로).
  *
- * <p>[JA] バックアップ Job が新しい Pod の数秒間の拒否に耐え、最後に失敗したら psql のエラーを残すかを、マニフェストの
- * スクリプトをそのまま偽コマンドで実行して確かめる。
+ * <p>[JA] k8s/85-backup-cronjobs.yaml の postgres-backup — 接続確認が<b>新しい Pod の最初の数秒の拒否に耐え</b>、最後に失敗したら
+ * <b>psql のエラーをそのまま</b>残すか。バックアップが終わった後に指標を書けなくても<b>Job を失敗させないか</b>(再試行がバックアップ全体を
+ * 取り直す)。restore-drill は本番の postgresql.conf(ssl = on、データディレクトリ外の証明書)を切って起動するか。
+ *
+ * <p>[JA] 2026-10-10 本番でこの Job が毎回「ERROR: … 接続できません」の一行で終わっていた。原因は NetworkPolicy(k8s/95)を
+ * 執行する kube-router が新しい Pod の IP を許可リストに入れるまでの数秒だった — 最初の試行は「Connection refused」、5 秒後には
+ * 成功。エラーを /dev/null に捨てていたため、それを突き止めるのに Pod を三回別々に起動しなければならなかった。
+ *
+ * <p>[JA] マニフェストのスクリプトをそのまま取り出し、偽の psql · pg_basebackup で最後まで実行する(パスだけ一時ディレクトリへ)。
  */
 @DisplayName("85-backup · postgres-backup — 첫 거절에 재시도 · 실패하면 psql 오류를 남긴다")
 class BackupCronJobScriptTest {
@@ -92,6 +99,7 @@ class BackupCronJobScriptTest {
     }
 
     /** 컨테이너의 절대 경로(/tmp · /backup · /metrics)만 임시 디렉터리로 옮긴다. 나머지는 매니페스트 그대로다. */
+    // [JA] コンテナの絶対パス(/tmp · /backup · /metrics)だけを一時ディレクトリに移す。残りはマニフェストのままだ。
     private Path localize(String cronJob) throws IOException {
         String body = script(cronJob)
                 .replace("/tmp/", tmp.resolve("t") + "/")
@@ -110,10 +118,12 @@ class BackupCronJobScriptTest {
         Files.writeString(calls, "");
         Files.createDirectories(tmp.resolve("t"));
         // /metrics 는 노드의 hostPath 다 — 디렉터리는 늘 있다(initContainer 가 파일을 미리 만든다).
+        // [JA] /metrics はノードの hostPath だ — ディレクトリは常にある(initContainer がファイルを先に作る)。
         Files.createDirectories(tmp.resolve("metrics"));
         script = localize("postgres-backup");
 
         // 가짜 psql — REFUSE_FIRST 번은 거절(stderr), 그 뒤로는 성공. FAIL_MSG 가 있으면 늘 그 메시지로 실패.
+        // [JA] 偽の psql — REFUSE_FIRST 回は拒否(stderr)、その後は成功。FAIL_MSG があれば常にそのメッセージで失敗。
         exe(bin.resolve("psql"),
                 "#!/bin/sh",
                 "echo \"psql $*\" >> '" + calls + "'",
@@ -122,6 +132,7 @@ class BackupCronJobScriptTest {
                 "if [ \"$n\" -le \"${REFUSE_FIRST:-0}\" ]; then echo '" + REFUSED + "' >&2; exit 2; fi",
                 "echo 1");
         // 가짜 pg_basebackup — -D 의 디렉터리에 읽히는 gzip 두 개를 만든다.
+        // [JA] 偽の pg_basebackup — -D のディレクトリに読める gzip を 2 つ作る。
         exe(bin.resolve("pg_basebackup"),
                 "#!/bin/sh",
                 "echo \"pg_basebackup $*\" >> '" + calls + "'",
@@ -188,6 +199,7 @@ class BackupCronJobScriptTest {
     @DisplayName("백업 뒤 지표를 못 써도 성공으로 끝낸다 — 실패로 끝내면 재시도가 0.8GB 백업을 다시 뜬다")
     void metricsFailureDoesNotFailTheBackup() throws Exception {
         // 쓸 수 없는 /metrics — 디렉터리 자리에 파일을 둔다(root 로 도는 테스트에서도 확실히 실패한다).
+        // [JA] 書き込めない /metrics — ディレクトリの位置にファイルを置く(root で走るテストでも確実に失敗する)。
         Files.delete(tmp.resolve("metrics"));
         Files.writeString(tmp.resolve("metrics"), "");
 
@@ -218,6 +230,7 @@ class BackupCronJobScriptTest {
     }
 
     /** 백업 하나를 실제 tar.gz 로 만든다(데이터 디렉터리 흉내 — PG_VERSION 하나). */
+    // [JA] バックアップ一つを実際の tar.gz で作る(データディレクトリの模倣 — PG_VERSION 一つ)。
     private void oneBackup() throws Exception {
         Path data = Files.createDirectories(tmp.resolve("data"));
         Files.writeString(data.resolve("PG_VERSION"), "16\n");
@@ -231,6 +244,9 @@ class BackupCronJobScriptTest {
     /**
      * 가짜 psql — 운영처럼 데이터베이스가 여럿이고 기본 DB(postgres)는 비어 있다. 목록 질의에는 DB 이름을,
      * {@code -d <db>} 의 테이블 수 질의에는 tables 의 값을 돌려준다.
+     *
+     * <p>[JA] 偽の psql — 運用のようにデータベースが複数あり、デフォルト DB(postgres)は空だ。一覧の照会には DB 名を、
+     * {@code -d <db>} のテーブル数の照会には tables の値を返す。
      */
     private void multiDbPsql(Map<String, Integer> tables) throws IOException {
         StringBuilder cases = new StringBuilder();

@@ -27,16 +27,16 @@ package com.project.common.security;
 //      ② ログイン解除時は cutoff を書いて CHANNEL で知らせ、受け手は即座に閉じ、それ以前に発行されたトークンを拒否する。
 public final class SessionRevocation {
 
-    /** 이 사용자의 액세스 토큰 중 {@code iat} 가 이 값(epoch 초)보다 이른 것은 긴 연결 · HTTP(게이트웨이) 모두 쓸 수 없다. TTL = 액세스 토큰 수명. */
+    /** 이 사용자의 액세스 토큰 중 {@code iat} 가 이 값(epoch 초)보다 이른 것은 긴 연결 · HTTP(게이트웨이) 모두 쓸 수 없다. TTL = 액세스 토큰 수명. ／ [JA] この利用者のアクセストークンのうち {@code iat} がこの値(epoch 秒)より早いものは、長い接続 · HTTP(ゲートウェイ)のどちらでも使えない。TTL = アクセストークンの寿命。 */
     public static final String CUTOFF_KEY_PREFIX = "auth:cutoff:";
 
-    /** 로그인 해제 알림 채널(Redis pub/sub). 본문은 사용자 id 숫자 하나 — 토큰 · 이메일은 싣지 않는다. */
+    /** 로그인 해제 알림 채널(Redis pub/sub). 본문은 사용자 id 숫자 하나 — 토큰 · 이메일은 싣지 않는다. ／ [JA] ログイン解除通知チャネル(Redis pub/sub)。本文は利用者 id の数値一つ — トークン · メールアドレスは載せない。 */
     public static final String CHANNEL = "auth:session-revoked";
 
-    /** "토큰이 만료됐거나 로그인이 해제됐다 — 갱신하고 다시 붙어라". WebSocket 앱 전용 범위(4000–4999). */
+    /** "토큰이 만료됐거나 로그인이 해제됐다 — 갱신하고 다시 붙어라". WebSocket 앱 전용 범위(4000–4999). ／ [JA] 「トークンが期限切れかログインが解除された — 更新して再接続せよ」。WebSocket アプリ専用の範囲(4000–4999)。 */
     public static final int CLOSE_CODE = 4401;
 
-    /** SSE 에서 같은 뜻 — 이 이벤트를 받으면 프론트는 토큰을 갱신한다. */
+    /** SSE 에서 같은 뜻 — 이 이벤트를 받으면 프론트는 토큰을 갱신한다. ／ [JA] SSE での同じ意味 — このイベントを受け取るとフロントはトークンを更新する。 */
     public static final String SSE_REAUTH = "Reauth";
 
     private SessionRevocation() {
@@ -51,6 +51,8 @@ public final class SessionRevocation {
      *
      * @param cutoffEpochSec {@link #cutoffKey} 의 값(없으면 null)
      * @param issuedAtEpochSec 토큰의 {@code iat}(초)
+     *
+     * <p>[JA] このトークンを長い接続に使ってよいか。cutoffEpochSec は {@link #cutoffKey} の値(なければ null)、issuedAtEpochSec はトークンの {@code iat}(秒)。
      */
     public static boolean allowed(String cutoffEpochSec, long issuedAtEpochSec) {
         if (cutoffEpochSec == null || cutoffEpochSec.isBlank()) {
@@ -59,7 +61,7 @@ public final class SessionRevocation {
         try {
             return issuedAtEpochSec >= Long.parseLong(cutoffEpochSec.trim());
         } catch (NumberFormatException e) {
-            return true;   // 모르는 값 때문에 모든 연결을 막지 않는다 — 만료 묶기가 여전히 상한을 건다
+            return true;   // 모르는 값 때문에 모든 연결을 막지 않는다 — 만료 묶기가 여전히 상한을 건다 ／ [JA] 不明な値のためにすべての接続を塞がない — 期限による束縛が引き続き上限を掛ける
         }
     }
 }

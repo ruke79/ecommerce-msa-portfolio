@@ -38,7 +38,11 @@ import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
  * 바뀌면 그 시계열이 없어 지연 SLI 가 조용히 비고 경보는 울릴 수 없다. 실제로 울리는지는 promtool 시험
  * (observability/tests/slo-rules.test.yml, {@code SloRulesPromtoolTest})이 본다.
  *
- * <p>[JA] SLO — 遅延境界のバケット · 記録ルール · バーンレート警報が互いに合う。既定のバケットに 0.3 · 1.0 はない。
+ * <p>[JA] SLO(docs/91)— 遅延境界のバケット · 記録ルール · バーンレート警報が互いに合う。
+ * 警報は {@code http_server_requests_seconds_bucket{le="0.3"}} のような<b>正確な境界</b>を読む。Micrometer の既定のヒストグラムバケットには
+ * 0.3 · 1.0 がない — application-common.yml の {@code management.metrics.distribution.slo} が抜けたりルールの境界が変わったりすると、
+ * その時系列がなく遅延 SLI が黙って空になり、警報は鳴りようがない。実際に鳴るかは promtool 試験
+ * (observability/tests/slo-rules.test.yml、{@code SloRulesPromtoolTest})が見る。
  */
 @DisplayName("SLO — 지연 경계 버킷 · 기록 규칙 · 소진율 경보 (docs/91)")
 class SloRulesTest {
@@ -55,6 +59,7 @@ class SloRulesTest {
         List<PropertySource<?>> docs = new YamlPropertySourceLoader().load("application-common",
                 new FileSystemResource(repoRoot().resolve("common/src/main/resources/application-common.yml")));
         // 프로필 문서는 빼고 기본 문서만(그 경계는 모든 프로필에 같아야 한다)
+        // [JA] プロファイルのドキュメントは除いて基本ドキュメントだけ(その境界はすべてのプロファイルで同じでなければならない)
         docs.stream().filter(d -> d.getProperty("spring.config.activate.on-profile") == null)
                 .forEach(d -> env.getPropertySources().addLast(d));
         return Binder.get(env).bind("management.metrics", MetricsProperties.class).orElseGet(MetricsProperties::new);
@@ -62,14 +67,17 @@ class SloRulesTest {
 
     private static final String HTTP_TIMER = "http.server.requests";
     /** Spring Cloud Gateway 의 라우트 타이머(GatewayMetricsFilter — {@code spring.cloud.gateway.server.webflux.metrics.enabled}). */
+    // [JA] Spring Cloud Gateway のルートタイマー(GatewayMetricsFilter — {@code spring.cloud.gateway.server.webflux.metrics.enabled})。
     private static final String GATEWAY_TIMER = "spring.cloud.gateway.requests";
 
     /** http.server.requests 타이머 하나를 기록하고 Prometheus 출력의 le 값을 모은다. */
+    // [JA] http.server.requests タイマーを一つ記録し、Prometheus 出力の le 値を集める。
     private static Set<String> exposedBuckets(MetricsProperties props) {
         return exposedBuckets(props, HTTP_TIMER, "method", "GET", "uri", "/api/search", "status", "200");
     }
 
     /** 그 이름의 타이머 하나를 기록하고 Prometheus 출력의 le 값을 모은다. props 가 null 이면 기본 히스토그램(percentiles-histogram)만. */
+    // [JA] その名前のタイマーを一つ記録し、Prometheus 出力の le 値を集める。props が null ならデフォルトのヒストグラム(percentiles-histogram)だけ。
     private static Set<String> exposedBuckets(MetricsProperties props, String timer, String... tags) {
         PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
         if (props != null) {
@@ -110,12 +118,14 @@ class SloRulesTest {
         assertThat(withSlo).as("application-common.yml 의 management.metrics.distribution.slo").contains("0.3", "1.0");
         assertThat(exposedBuckets(null)).as("기본 히스토그램 버킷만 — 그래서 slo 설정이 필요하다").doesNotContain("0.3", "1.0");
         // 게이트웨이 라우트 타이머 — SLO gateway 의 2초 경계. percentiles-histogram 은 켜지 않으므로 slo 경계가 유일한 버킷이다
+        // [JA] ゲートウェイのルートタイマー — SLO gateway の 2 秒の境界。percentiles-histogram は有効にしないので、slo の境界が唯一のバケットだ
         Set<String> gateway = exposedBuckets(commonMetricsProperties(), GATEWAY_TIMER, "routeId", "catalog-service", "httpStatusCode", "200");
         assertThat(gateway).as("application-common.yml 의 slo." + GATEWAY_TIMER).contains("2.0");
         assertThat(gateway).as("라우트 타이머에는 경계 버킷만(+Inf 포함) — 백분위 히스토그램을 켜면 라우트 × 상태마다 70여 개").hasSizeLessThanOrEqualTo(4);
     }
 
     /** 히스토그램 SLO(http.server.requests · gateway 라우트 타이머) — 지연 경계가 버킷(le)이다. site-probe 는 탐침 시간(probe_duration_seconds)이라 따로. */
+    // [JA] ヒストグラム SLO(http.server.requests · gateway ルートタイマー) — 遅延の境界がバケット(le)だ。site-probe はプローブ時間(probe_duration_seconds)なので別。
     private static final Set<String> HTTP_SLOS = Set.of("catalog-browse", "catalog-search", "order-create", "gateway");
 
     @SuppressWarnings("unchecked")
@@ -181,6 +191,7 @@ class SloRulesTest {
                     .contains(name.endsWith("Fast") ? "ratio_rate5m" : "ratio_rate30m");
         });
         // 검색은 catalog-browse 에서 빠지고 catalog-search 에만 — 드문 필터 조합의 503 이 상품 · 홈의 예산을 쓰지 않게
+        // [JA] 検索は catalog-browse から外して catalog-search にだけ — まれなフィルター組み合わせの 503 が商品 · ホームの予算を使わないように
         String browse = rules.stream().filter(r -> "slo:requests:rate1h".equals(r.get("record")) && "catalog-browse".equals(label(r, "slo")))
                 .map(r -> String.valueOf(r.get("expr"))).findFirst().orElseThrow();
         assertThat(browse).contains("uri!~\".*(actuator|admin|internal|search).*\"");
@@ -199,6 +210,7 @@ class SloRulesTest {
         assertThat(alerts.get("SloErrorBudgetHalfSpent")).contains(">= 0.5", "slo:requests:avg_rate14d > 0.03");
         assertThat(alerts.get("SloErrorBudgetExhausted")).contains(">= 1 ", "slo:requests:avg_rate14d > 0.03");
         // 창(14d) < 운영 Prometheus 보존 — 넘으면 앞부분이 없는 채로 셈이 틀린다
+        // [JA] ウィンドウ(14d) < 運用 Prometheus の保持期間 — 超えると前半がないまま計算が狂う
         String compose = Files.readString(repoRoot().resolve("docker-compose-observability.oci.yml"), StandardCharsets.UTF_8);
         Matcher retention = Pattern.compile("retention\\.time=(\\d+)d").matcher(compose);
         assertThat(retention.find()).isTrue();
@@ -234,10 +246,13 @@ class SloRulesTest {
         assertThat(String.valueOf(job.get("relabel_configs"))).contains("__param_target", "__param_module", "blackbox-exporter:9115");
         // API 대상은 앞단 캐시를 지나친다 — catalog 의 EdgeCacheHeaders 가 probe 쿼리에는 no-store(docs/91 §2-9). 빼면 원본이 죽어도
         // 앞단 캐시의 200 으로 탐침이 성공한다
+        // [JA] API 対象は前段キャッシュを素通りする — catalog の EdgeCacheHeaders が probe クエリには no-store(docs/91 §2-9)。外すとオリジンが死んでも
+        //      前段キャッシュの 200 でプローブが成功する
         List<String> apiTargets = statics.stream().flatMap(sc -> ((List<String>) sc.get("targets")).stream())
                 .filter(t -> t.contains("/api/")).toList();
         assertThat(apiTargets).as("API 탐침 대상").isNotEmpty().allMatch(t -> t.matches(".*[?&]probe=[^&]+.*"));
         // 규칙은 이 작업 이름으로 탐침을 읽는다
+        // [JA] ルールはこのジョブ名でプローブを読む
         assertThat(Files.readString(repoRoot().resolve("observability/alert-rules.yml"), StandardCharsets.UTF_8))
                 .contains("probe_success{job=\"site-probe\"}");
     }
@@ -264,6 +279,7 @@ class SloRulesTest {
         }
         assertThat(gw).as("게이트웨이 설정 spring.cloud.gateway.server.webflux").isNotNull();
         // 꺼져 있으면 spring_cloud_gateway_requests_seconds 가 없어 SLO gateway 의 SLI 가 조용히 빈다(경보는 요청 하한에 걸려 울리지 않는다)
+        // [JA] 無効だと spring_cloud_gateway_requests_seconds がなく、SLO gateway の SLI が黙って空になる(アラートはリクエスト下限に引っかかって鳴らない)
         assertThat(at(gw, "metrics")).as("spring.cloud.gateway.server.webflux.metrics").isNotNull()
                 .containsEntry("enabled", true).doesNotContainKey("path-tags");
 
@@ -287,6 +303,7 @@ class SloRulesTest {
             }
         }
         // 라우트 이름을 바꾸면 빼던 라우트가 조용히 SLO 에 들어온다(SockJS 스트리밍은 연결이 끝날 때까지 한 요청 — 지연 예산을 다 쓴다)
+        // [JA] ルート名を変えると、除外していたルートが黙って SLO に入る(SockJS ストリーミングは接続が終わるまで 1 リクエスト — 遅延予算を使い切る)
         assertThat(excluded).as("규칙이 빼는 라우트").isNotEmpty();
         assertThat(pathById).as("빼는 라우트는 게이트웨이에 있다").containsKeys(excluded.toArray(String[]::new));
         assertThat(excluded).as("빼는 것은 SockJS · WebSocket(/chat-service/chat/**) 라우트만 — 나머지는 모두 SLO 안")
@@ -313,6 +330,7 @@ class SloRulesTest {
             }
         }
         // JSON 은 YAML 의 부분집합 — snakeyaml 로 읽는다
+        // [JA] JSON は YAML の部分集合 — snakeyaml で読む
         Map<String, Object> dash = new org.yaml.snakeyaml.Yaml().load(Files.readString(
                 repoRoot().resolve("observability/grafana/provisioning/dashboards/slo.json"), StandardCharsets.UTF_8));
         assertThat(dash).containsEntry("uid", "slo");
@@ -348,6 +366,7 @@ class SloRulesTest {
             assertThat(alertNames.stream().anyMatch(n -> n.matches(a))).as("대시보드의 경보 이름 " + a).isTrue();
         }
         // 변수 slo 는 목표 기록에서 — SLO 를 더하면 저절로 나온다
+        // [JA] 変数 slo は目標の記録から — SLO を足せば自動的に出てくる
         assertThat(String.valueOf(dash.get("templating"))).contains("label_values(slo:objective:availability, slo)");
     }
 

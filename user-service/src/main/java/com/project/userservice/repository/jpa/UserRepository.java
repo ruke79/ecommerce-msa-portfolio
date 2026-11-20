@@ -21,12 +21,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // --- 비관적 잠금 적용 ---
     // 사용자 정보를 수정하기 전에 락을 걸어 다른 트랜잭션의 접근을 막습니다.    
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<User> findByName(String name);  // 별명으로 검색
+    // [JA] --- 悲観ロックの適用 ---
+    //      ユーザー情報を修正する前にロックをかけて他のトランザクションのアクセスを防ぐ。
+    Optional<User> findByName(String name);  // 별명으로 검색 ／ [JA] ニックネームで検索
     
     // --- 낙관적 잠금 적용 ---
     // 엔티티의 @Version 필드를 사용하여 동시성 충돌을 감지합니다.    
     //@Lock(LockModeType.OPTIMISTIC)
-    Optional<User> findByUsername(String name);  // 실명으로 검색
+    // [JA] --- 楽観ロックの適用 ---
+    //      エンティティの @Version フィールドを使って同時実行の衝突を検知する。
+    Optional<User> findByUsername(String name);  // 실명으로 검색 ／ [JA] 実名で検索
 
     Boolean existsByUsername(String username);
 
@@ -35,10 +39,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 
     // User와 Roles를 한 번의 쿼리로 가져오기 위해 JOIN FETCH 사용
+    // [JA] User と Roles を 1 回のクエリで取得するために JOIN FETCH を使う
     @Query("SELECT u FROM User u JOIN FETCH u.role WHERE u.email = :email")
     Optional<User> findByEmailWithRoles(@Param("email") String email);
 
     /** 관리자 회원 목록 — 역할을 함께(사용자마다 따로 읽지 않는다). */
+    // [JA] 管理者の会員一覧 — ロールも一緒に(ユーザーごとに別々に読まない)。
     @Query("SELECT u FROM User u LEFT JOIN FETCH u.role")
     List<User> findAllWithRole();
 
@@ -46,6 +52,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     // 🐛 지웠다: findAddressesByUserUserId — ON 조건 없는 엔티티 조인이라 모든 사용자의 주소를 돌려줄 수 있는 모양이었다(쓰는 곳 없음).
     //    배송지는 ShippingAddressRepository 의 소유자 조건 쿼리로만 읽는다.
+    // [JA] 🐛 削除した: findAddressesByUserUserId — ON 条件のないエンティティ結合で、全ユーザーの住所を返しうる形だった(使用箇所なし)。
+    //      配送先は ShippingAddressRepository の所有者条件付きクエリでだけ読む。
 
     @Transactional
     @Modifying
@@ -58,6 +66,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
      *
      * <p>{@code withdrawnAt is null} 이 "아직 처리 안 됨"의 판정이다. 처리한 행에 값이
      * 찍히므로 배치가 같은 계정을 두 번 집지 않는다.
+     *
+     * <p>[JA] 猶予期間が終わり最終処理するアカウント。識別子だけを取得する — 処理はアカウントごとの独立トランザクションなので、
+     * エンティティを先に掴んでおくとその間に変わった値を上書きしうる。
+     * {@code withdrawnAt is null} が「まだ処理していない」の判定である。処理した行には値が入るので、バッチが同じアカウントを
+     * 二度拾わない。
      */
     @Query("select u.userId from User u "
             + "where u.withdrawalRequestedAt is not null and u.withdrawnAt is null "
@@ -106,6 +119,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * <p>{@code lifetimeOrderCount} 는 <b>건드리지 않는다.</b> 평생 구매 이력은 시간이
      * 지난다고 사라지지 않는다. 여기서 0 으로 밀면 오래 쉰 단골이 {@code NEVER_PURCHASED}
      * 로 분류돼 첫 구매 쿠폰을 받는다.
+     *
+     * <p>[JA] 今回の回で手を付けなかったランク保持者を一般に下げる (V9)。
+     * 🔴 降格はここでだけ起きる。order-service は最近購入のある顧客だけを返すので、ウィンドウから外れた人は応答にいない。
+     * 「いない」を検知する方法は {@code tierComputedAt} が回の開始より古いかどうか一つだけである。
+     * {@code recentPaidAmount} も 0 に戻す — ランクは下がったのに根拠の金額が古い値で残っていると、問い合わせに答えるとき
+     * かえって紛らわしい。
+     * {@code lifetimeOrderCount} には触れない。生涯の購入履歴は時間が経っても消えない。ここで 0 にすると、長く休んでいた
+     * 常連が {@code NEVER_PURCHASED} に分類され初回購入クーポンを受け取る。
      */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -118,6 +139,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     /**
      * 복제 대사(UserReplicationReconciler)의 대상 — {@code since} 이후 가입·변경·탈퇴한 사용자, id 순 커서.
+     *
+     * <p>[JA] 複製の突き合わせ(UserReplicationReconciler)の対象 — {@code since} 以降に登録・変更・退会したユーザー、id 順のカーソル。
      */
     @Query("select u from User u where (u.createdAt >= :since or u.updatedAt >= :since or u.withdrawnAt >= :since) "
             + "and u.userId > :afterId order by u.userId")

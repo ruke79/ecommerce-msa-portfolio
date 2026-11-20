@@ -21,6 +21,19 @@ import { useTranslation } from 'i18n/I18nProvider';
  *   <li>"Try again" 버튼이 {@code toast("Worng Error")} 만 띄웠다. 사용자가 할 수 있는 게
  *       아무것도 없었다.</li>
  * </ul>
+ *
+ * <p>[JA] ルーター単位のエラー画面。
+ * <b>エラー画面自体がエラーで落ちないようにすること</b>がこのファイルの唯一の目標だ。以前のコードは
+ * そうできていなかった:
+ * {@code error.code} を無防備に読んでいた。ルーターは {@code throw new Response(...)} や
+ * 文字列もエラーとして受けられ、そのとき error は undefined か code が無い →
+ * エラー画面を描く途中で再び落ち、ユーザーは <b>完全に空の画面</b>を見る。
+ * {@code error.data.message} を 500 のときそのまま読んでいた。本文の無い 500 ならここで
+ * また落ちる。
+ * {@code navigate('error_server')} は先頭にスラッシュが無く <b>相対パス</b>だ。/order/12
+ * でエラーが起きると /order/error_server へ行き、そんなルートは無いので再びエラーだ。
+ * "Try again" ボタンが {@code toast("Worng Error")} を出すだけだった。ユーザーにできることが
+ * 何もなかった。
  */
 function ErrorPage() {
   const error = useRouteError();
@@ -60,6 +73,7 @@ function ErrorPage() {
       {status && <p className="text-sm text-slate-500">{String(status)}</p>}
       <div className="mt-4 flex gap-2 justify-center">
         {/* 실제로 다시 시도한다. 라우터 오류는 대개 로더 실패라 재요청으로 풀린다. */}
+        {/* [JA] 実際に再試行する。ルーターのエラーはたいてい loader の失敗なので再リクエストで解ける。 */}
         <button type="button" onClick={() => navigate(0)}>{t('error.retry')}</button>
         <button type="button" onClick={() => navigate('/', { replace: true })}>{t('error.go_home')}</button>
       </div>

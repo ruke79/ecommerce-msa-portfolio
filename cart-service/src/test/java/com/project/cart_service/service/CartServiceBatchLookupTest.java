@@ -46,6 +46,11 @@ import com.project.common.dto.catalog.request.ProductInfoRequest;
  * <p>예전에는 항목마다 {@code getProductInfo} 였다 — 항목 N 개면 Feign 왕복 N 번. 배치
  * 엔드포인트로 바꾼 뒤 누군가 편의상 단건 호출로 되돌리면 컴파일은 그대로 되고 기능도
  * 그대로 동작한다. 호출 횟수를 세어야만 보인다. 그래서 여기서 센다.
+ *
+ * <p>[JA] カートの計算が catalog を <b>項目数と無関係に 1 回</b> 呼ぶか。
+ *      以前は項目ごとに {@code getProductInfo} だった — 項目 N 個なら Feign 往復 N 回。バッチ
+ *      エンドポイントに変えた後、誰かが便宜上単件呼び出しに戻してもコンパイルはそのまま通り機能も
+ *      そのまま動く。呼び出し回数を数えなければ見えない。だからここで数える。
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CartService · catalog 배치 조회")
@@ -87,14 +92,16 @@ class CartServiceBatchLookupTest {
 
         List<ProductInfoDto> result = cartService.updateCart(requestOf(
                 ProductInfoDto.builder().id("1").style(0).size("M").qty(2).build(),
-                ProductInfoDto.builder().id("1").style(0).size("M").qty(1).build(),   // 같은 상품, 다른 줄
+                ProductInfoDto.builder().id("1").style(0).size("M").qty(1).build(),   // 같은 상품, 다른 줄 ／ [JA] 同じ商品、別の行
                 ProductInfoDto.builder().id("2").style(0).size("L").qty(1).build()));
 
         // 왕복 횟수 — 이 테스트의 존재 이유.
+        // [JA] 往復回数 — このテストの存在理由。
         verify(catalogServiceClient, times(1)).getProductsInfo(List.of(1L, 2L));
         verify(catalogServiceClient, never()).getProductInfo(anyString());
 
         // 계산은 예전과 같아야 한다.
+        // [JA] 計算は以前と同じであるべき。
         assertThat(result).hasSize(3);
         assertThat(result.get(0).getPriceBefore()).isEqualTo("100");
         assertThat(result.get(0).getPrice()).isEqualTo("100");
@@ -146,7 +153,7 @@ class CartServiceBatchLookupTest {
         Cart cart = new Cart(7L);
         cart.setCartProducts(List.of(
                 CartProduct.builder().productId(1L).style(0).size("M").qty(2)._uid("u1").build(),
-                CartProduct.builder().productId(1L).style(0).size("L").qty(1)._uid("u2").build(),   // 같은 상품, 다른 사이즈
+                CartProduct.builder().productId(1L).style(0).size("L").qty(1)._uid("u2").build(),   // 같은 상품, 다른 사이즈 ／ [JA] 同じ商品、別のサイズ
                 CartProduct.builder().productId(2L).style(0).size("S").qty(1)._uid("u3").build()));
         when(cartRepository.findByUserId(7L)).thenReturn(Optional.of(cart));
 
@@ -159,6 +166,7 @@ class CartServiceBatchLookupTest {
         when(catalogServiceClient.getProductsInfo(List.of(1L, 2L))).thenReturn(ResponseEntity.ok(List.of(p1, p2)));
 
         // 장바구니 정보 배치 — 키는 productId:style:sizeIndex. L 은 p1 의 사이즈 목록에서 1번째다.
+        // [JA] カート情報のバッチ — キーは productId:style:sizeIndex。L は p1 のサイズ一覧で 1 番目である。
         when(catalogServiceClient.getCartProductsInfo(any())).thenReturn(ResponseEntity.ok(Map.of(
                 "1:0:0", ProductInfoDto.builder().id("1").style(0).size("M").name("p1").build(),
                 "1:0:1", ProductInfoDto.builder().id("1").style(0).size("L").name("p1").build(),
@@ -167,13 +175,16 @@ class CartServiceBatchLookupTest {
         List<ProductInfoDto> result = cartService.loadCart(7L);
 
         // 왕복 횟수.
+        // [JA] 往復回数。
         verify(catalogServiceClient, times(1)).getProductsInfo(List.of(1L, 2L));
         // 배치 요청에 세 항목이 productId:style:sizeIndex 로 정확히 담겼는가.
+        // [JA] バッチリクエストに 3 項目が productId:style:sizeIndex で正確に入ったか。
         verify(catalogServiceClient, times(1)).getCartProductsInfo(List.of("1:0:0", "1:0:1", "2:0:0"));
         verify(catalogServiceClient, never()).getProductInfo(anyString());
         verify(catalogServiceClient, never()).getCartProductInfo(anyString(), anyInt(), anyInt());
 
         // 계산은 예전과 같아야 한다.
+        // [JA] 計算は以前と同じであるべき。
         assertThat(result).hasSize(3);
         assertThat(result.get(1).getPriceBefore()).isEqualTo("110");
         assertThat(result.get(1).getQty()).isEqualTo(1);
@@ -188,12 +199,12 @@ class CartServiceBatchLookupTest {
         org.springframework.data.redis.core.ValueOperations<String, Object> ops =
                 mock(org.springframework.data.redis.core.ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(ops);
-        when(ops.get("carts::7")).thenReturn(null);                        // 캐시 미스 — 키는 사용자 id
+        when(ops.get("carts::7")).thenReturn(null);                        // 캐시 미스 — 키는 사용자 id ／ [JA] キャッシュミス — キーはユーザー id
 
         Cart cart = new Cart(7L);
         cart.setCartProducts(List.of(
                 CartProduct.builder().cartproductId(11L).productId(1L).colorId(1L).price(BigDecimal.TEN).qty(1).build(),
-                CartProduct.builder().cartproductId(12L).productId(1L).colorId(1L).price(BigDecimal.TEN).qty(1).build(),  // 같은 색
+                CartProduct.builder().cartproductId(12L).productId(1L).colorId(1L).price(BigDecimal.TEN).qty(1).build(),  // 같은 색 ／ [JA] 同じ色
                 CartProduct.builder().cartproductId(13L).productId(2L).colorId(2L).price(BigDecimal.TEN).qty(1).build()));
         when(cartRepository.findByUserId(7L)).thenReturn(Optional.of(cart));
 

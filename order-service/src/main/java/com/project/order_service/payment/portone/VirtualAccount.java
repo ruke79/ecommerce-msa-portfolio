@@ -10,12 +10,23 @@ import java.time.LocalDateTime;
  * 입금하면 포트원이 결제 완료 웹훅을 보내고, 그것이 곧 입금 확인이다 — 관리자가 통장을
  * 볼 필요가 없다.
  *
+ * <p>[JA] PortOne が発行した仮想口座 — プロバイダ中立で読んだもの (docs/49 §11)。
+ * 銀行振込の状態機械の「入金案内」を<b>PG が代わりに作ったもの</b>である。顧客がここに
+ * 入金すると PortOne が決済完了 Webhook を送り、それがそのまま入金確認になる — 管理者が通帳を
+ * 見る必要がない。
+ *
  * @param bank          은행 이름·코드(V1 은 이름, V2 는 코드). 화면에 그대로 보여 준다
+ *                      [JA] 銀行名・コード(V1 は名前、V2 はコード)。画面にそのまま表示する
  * @param accountNumber 가상계좌 번호
+ *                      [JA] 仮想口座番号
  * @param holder        예금주(상점 쪽 표시 이름)
+ *                      [JA] 預金者(店舗側の表示名)
  * @param dueAt         입금 기한. 지나면 PG 가 계좌를 닫고 우리도 주문을 접는다. 없으면 null
+ *                      [JA] 入金期限。過ぎると PG が口座を閉じ、当方も注文を畳む。なければ null
  * @param amount        입금해야 할 금액 — 발급 요청 금액. 주문의 청구액과 대조한다
+ *                      [JA] 入金すべき金額 — 発行リクエスト金額。注文の請求額と照合する
  * @param currency      대문자 ISO 코드
+ *                      [JA] 大文字の ISO コード
  */
 public record VirtualAccount(
         String bank,

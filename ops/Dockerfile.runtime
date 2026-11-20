@@ -16,6 +16,16 @@
 #
 # 빌드 컨텍스트는 **jar 가 있는 디렉터리**다(ops/19-build-images.sh 가 그렇게 넘긴다).
 # 저장소 전체를 컨텍스트로 보내면 수백 MB 를 매 서비스마다 전송하게 된다.
+# [JA] マルチアーキテクチャのランタイムイメージ(JVM サービス共用)。
+#      ⭐ なぜサービス別の Dockerfile を使わないのか
+#      各サービスの Dockerfile はビルダーステージで **Gradle のフルビルドをやり直す。** それを
+#      `--platform linux/amd64,linux/arm64` で回すと片方のアーキテクチャは QEMU エミュレーション上で Gradle を丸ごと回すことになる
+#      — ネイティブ比で数倍から十倍まで遅くなり、メモリもその分多く使う。
+#      その必要はない。**Java バイトコードはアーキテクチャ非依存** なので jar は一度ビルドすれば両方でそのまま動く。
+#      アーキテクチャごとに違う必要があるのは **JRE ベースイメージだけ** で、それは buildx がプラットフォーム別に取ってくる。
+#      そこでこのファイルはビルド済みの jar を包むだけにする。残る RUN は mkdir/chown の 1 行だけなので、エミュレーションがかかっても 1 秒もかからない。
+#      ビルドコンテキストは **jar のあるディレクトリ** だ(ops/19-build-images.sh がそう渡す)。
+#      リポジトリ全体をコンテキストに送ると数百 MB をサービスごとに転送することになる。
 
 # 🔴 JRE 는 정확한 판 + 다이제스트로 고정한다(B-98) — 바꾸는 것은 이 줄을 고치는 커밋이다. ops/19 · ops/13 은 이 줄을 읽는다.
 #
@@ -23,8 +33,13 @@
 #    (2026-10-10 에 빌드한 운영 b7c5053 도 이미 17.0.20.1 — Docker Hub 의 갱신 시각 10-17 은 태그를 다시 올린 때다). 그 밤 catalog 파드 하나가 JVM 내부 SIGSEGV 로 죽고 user-service 파드 하나는 C2 컴파일 하나가
 #    10시간 동안 한 코어를 다 썼다 — 그런데 어느 빌드에 어느 JVM 이 들어갔는지 저장소에 남아 있지 않았다.
 #    다이제스트는 멀티 아키텍처 목록(amd64 · arm64)의 것이라 플랫폼마다 그대로 쓰인다. 미러(mirror.gcr.io/library/…)도 같은 다이제스트다.
-# [JA] JRE は正確な版 + ダイジェストで固定する — 変えるのはこの行を直すコミット。以前の浮動タグはビルドのたびにその日の最新パッチが入り、
-#      どのビルドにどの JVM が入ったか記録に残らなかった(17.0.20.1 で SIGSEGV と C2 の 10 時間コンパイル)。
+# [JA] 🔴 JRE は正確な版 + ダイジェストで固定する(B-98) — 変えるのはこの行を直すコミットである。ops/19・ops/13 はこの行を読む。
+#      🐛 2026-10-21 実習 8 時間(docs/83 §2.8): 以前の `17-jre-jammy` は浮動タグで、ビルドのたびにその日の最新パッチが入った
+#      (2026-10-10 にビルドした本番 b7c5053 もすでに 17.0.20.1 — Docker Hub の更新時刻 10-17 はタグを上げ直したとき)。その夜 catalog の
+#      Pod 一つが JVM 内部の SIGSEGV で落ち、user-service の Pod 一つは C2 コンパイル一つが 10 時間一コアを使い切った — ところが
+#      どのビルドにどの JVM が入ったかリポジトリに残っていなかった。
+#      ダイジェストはマルチアーキテクチャのリスト(amd64・arm64)のものなので、プラットフォームごとにそのまま使われる。
+#      ミラー(mirror.gcr.io/library/…)も同じダイジェストである。
 # 2026-11-18: 17.0.20.1 → 17.0.21_9(2026-10 CPU — 이 판까지의 보안 수정). 11월 수정판(17.0.21.1, CVE-2026-114938 · CVE-2026-91403)은
 #    Temurin 이미지가 아직 없다(Docker Hub, 2026-11-18) — 나오면 이 줄을 그 판으로, 그때 아래 ENTRYPOINT 의 -XX:-UseBASE64Intrinsics 를 뺀다(B-113).
 # [JA] 2026-11-18: 10 月 CPU の 17.0.21_9 へ。11 月の修正版(17.0.21.1)は Temurin のイメージがまだない — 出たらこの行を更新し、下の回避フラグを外す。
@@ -49,12 +64,21 @@ WORKDIR /app
 # 디렉터리를 만들지 못해 앱은 뜨지만 파일 로그가 조용히 사라진다 — 가장 나쁜 실패 방식이다.
 #
 # /var/log/jvm — JVM 충돌 기록(hs_err, 아래 -XX:ErrorFile). 매니페스트는 여기에 emptyDir 을 붙여 컨테이너가 다시 떠도 남게 한다(B-97).
+# [JA] ⚠️ 順序が重要だ。mkdir/chown を **COPY の前に** 置く。
+#      逆にすると(COPY 後に `RUN chown -R /app`)chown が jar のメタデータを変え、Docker が
+#      **104MB の jar を丸ごと新しいレイヤーに複製する。** 実測でイメージがサービスあたり 109MB 大きくなり、12 サービスで 1.3GB を無駄にしていた。
+#      ここでは /app がまだ空なのでこの RUN は数 KB のレイヤーで済み、jar は COPY --chown で最初から正しい所有者で入る(レイヤー 1 つ)。
+#      logs ディレクトリが必要な理由: アプリが logging.file.path(./logs)に書く。なければ uid 1000 がディレクトリを作れず、
+#      アプリは起動するがファイルログが黙って消える — 最も悪い失敗の仕方だ。
+#      /var/log/jvm — JVM クラッシュ記録(hs_err、下の -XX:ErrorFile)。マニフェストはここに emptyDir を付け、コンテナが再起動しても残るようにする(B-97)。
 RUN mkdir -p /app/logs /var/log/jvm && chown -R 1000:1000 /app /var/log/jvm
 
 COPY --chown=1000:1000 ${JAR_FILE} app.jar
 
 # ⚠️ 반드시 **숫자 UID**. k8s 의 runAsNonRoot 는 이름(spring)으로는 검증하지 못하고
 # 'image will run as root' 로 파드 생성을 거부한다(ops/13 의 k3s 실측).
+# [JA] ⚠️ 必ず **数値 UID**。k8s の runAsNonRoot は名前(spring)では検証できず、
+#      'image will run as root' で Pod 作成を拒否する(ops/13 の k3s 実測)。
 USER 1000
 
 ENV SPRING_PROFILES_ACTIVE=local
@@ -67,24 +91,35 @@ ENV SPRING_PROFILES_ACTIVE=local
 # 50% 인 이유: 768Mi 에서 힙 384MB + 비힙(메타스페이스 · 코드 캐시 · 스레드 스택 · 버퍼, Spring 서비스 ~250MB)이 한도 안에 든다.
 # 더 주면(65% 이상) 768Mi 서비스는 컨테이너 한도(OOMKilled)에 먼저 닿는다. 서비스마다 바꾸려면 JVM_MAX_RAM_PERCENTAGE.
 # JAVA_OPTS 가 뒤에 오므로 거기에 -XX:MaxRAMPercentage · -Xmx 를 주면 그쪽이 이긴다.
-# [JA] 最大ヒープ = コンテナのメモリ上限のこの割合。以前は未設定で JVM 既定の 25%(catalog 256MB)だった —
-#      100 万商品で catalog がヒープ不足で再起動を繰り返した。768Mi で非ヒープ込みで収まる 50%。
+# [JA] 最大ヒープ = コンテナのメモリ上限のこの割合。
+#      🐛 2026-10-19 データ規模の計測(商品 100 万、docs/83 §5): この値がなく JVM 既定の 25% だった — catalog(上限 1Gi)はヒープ
+#      256MB(MaxHeapSize 268435456)、他のサービス(768Mi)は 192MB。100 万商品で catalog が `OutOfMemoryError: Java heap space` で
+#      GC だけを回して liveness に引っかかり落ちるのを繰り返した(exit 137、計測失敗 99%)。上限の 3/4 はヒープとして使われていなかった。
+#      50% の理由: 768Mi でヒープ 384MB + 非ヒープ(メタスペース・コードキャッシュ・スレッドスタック・バッファ、Spring サービスで ~250MB)が
+#      上限内に収まる。もっと与えると(65% 以上)768Mi のサービスはコンテナ上限(OOMKilled)に先に届く。サービスごとに変えるには
+#      JVM_MAX_RAM_PERCENTAGE。JAVA_OPTS が後に来るので、そこに -XX:MaxRAMPercentage・-Xmx を与えるとそちらが勝つ。
 ENV JVM_MAX_RAM_PERCENTAGE=50
 
 # JVM 충돌 기록 — 🐛 2026-10-21 실습(docs/83 §2.8): catalog 파드가 SIGSEGV 로 죽었는데 기록(/app/hs_err_pid7.log)이 컨테이너와 함께
 # 사라져 원인을 볼 수 없었다. 이제 /var/log/jvm(매니페스트의 emptyDir — 파드가 사는 동안 남는다)에 쓴다. 로그(Loki)로는 보내지 않는다:
 # 기록에는 레지스터 근처의 메모리 내용(문자열 조각 — 토큰 · 이메일일 수 있다)이 들어간다. 코어 덤프(힙 전체 — 개인정보)는 만들지 않는다.
 # 둘 다 JAVA_OPTS 앞이라 서비스마다 뒤집을 수 있다(B-97). 꺼내기: kubectl -n ecommerce exec <파드> -- ls /var/log/jvm
-# [JA] JVM のクラッシュ記録 — 以前は記録がコンテナと一緒に消えた。/var/log/jvm(emptyDir — Pod が生きている間残る)に書く。Loki には
-#      送らない(メモリ内容が入る)。コアダンプ(ヒープ全体 — 個人情報)は作らない。
+# [JA] JVM のクラッシュ記録 — 🐛 2026-10-21 実習(docs/83 §2.8): catalog の Pod が SIGSEGV で落ちたが、記録(/app/hs_err_pid7.log)が
+#      コンテナと一緒に消えて原因を見られなかった。今は /var/log/jvm(マニフェストの emptyDir — Pod が生きている間残る)に書く。ログ(Loki)には
+#      送らない: 記録にはレジスタ付近のメモリ内容(文字列の断片 — トークン・メールかもしれない)が入る。コアダンプ(ヒープ全体 — 個人情報)は
+#      作らない。どちらも JAVA_OPTS の前なのでサービスごとに覆せる(B-97)。取り出し: kubectl -n ecommerce exec <Pod> -- ls /var/log/jvm
 # 🔴 -XX:-UseBASE64Intrinsics — CVE-2026-114938("Java4Shell", 2026-11-17 공개 · 보도 기준 CVSS 8.1): java.util.Base64 디코더의 메모리 손상.
 #    JDK 17 은 17.0.21.1 에서 고쳐졌다(보도 — Oracle · CISA 원문은 이 환경에서 열지 못했다). 그 판의 Temurin 이미지가 나오기 전까지
 #    보도된 우회책인 하드웨어 가속(내장 함수) 끄기를 둔다. 이 시스템은 외부 입력을 java.util.Base64 로 디코딩한다 —
 #    포트원 웹훅 서명 헤더(PortOneV2WebhookVerifier, 인증 전), 패스키 응답(PasskeyService), 2FA 대기 토큰(GraceTokenCipher).
 #    대가는 Base64 디코딩이 순수 자바로 도는 것뿐이다(요청마다 수백 바이트 — 측정할 만한 차이가 아니다). JAVA_OPTS 앞이라 서비스마다
 #    뒤집을 수 있지만 뒤집지 않는다 — 가드 B-113 이 JRE 가 고쳐진 판이 될 때까지 이 옵션을 지킨다.
-# [JA] CVE-2026-114938(Base64 デコーダーのメモリ破損)の回避 — 修正版(17.0.21.1)の Temurin イメージが出るまで内蔵関数を切る。
-#      外部入力を java.util.Base64 でデコードする経路がある(PortOne の Webhook 署名 · パスキー · 2FA 待ちトークン)。
+# [JA] 🔴 -XX:-UseBASE64Intrinsics — CVE-2026-114938("Java4Shell"、2026-11-17 公開・報道ベースで CVSS 8.1): java.util.Base64 デコーダーの
+#      メモリ破損。JDK 17 は 17.0.21.1 で修正された(報道 — Oracle・CISA の原文はこの環境で開けなかった)。その版の Temurin イメージが出るまで、
+#      報道された回避策であるハードウェア加速(組み込み関数)の無効化を置く。このシステムは外部入力を java.util.Base64 でデコードする —
+#      PortOne の Webhook 署名ヘッダー(PortOneV2WebhookVerifier、認証前)、パスキー応答(PasskeyService)、2FA 待ちトークン(GraceTokenCipher)。
+#      代償は Base64 デコードが純 Java で動くことだけである(要求ごとに数百バイト — 測るほどの差ではない)。JAVA_OPTS の前なのでサービスごとに
+#      覆せるが覆さない — ガード B-113 が、JRE が修正版になるまでこのオプションを守る。
 # CONFIG_SERVER_URL 이 비어 있으면 config server import 자체를 생략한다.
 # 빈 값으로 넘기면 Spring 이 빈 URL 로 접속을 시도하다 기동에 실패한다.
 ENTRYPOINT ["sh","-c","java -XX:MaxRAMPercentage=${JVM_MAX_RAM_PERCENTAGE} -XX:ErrorFile=/var/log/jvm/hs_err_pid%p.log -XX:-CreateCoredumpOnCrash -XX:-UseBASE64Intrinsics ${JAVA_OPTS} -jar /app/app.jar --spring.profiles.active=${SPRING_PROFILES_ACTIVE} ${CONFIG_SERVER_URL:+--spring.config.import=optional:configserver:${CONFIG_SERVER_URL}}"]

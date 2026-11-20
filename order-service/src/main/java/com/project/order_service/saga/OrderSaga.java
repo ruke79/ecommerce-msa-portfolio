@@ -66,6 +66,7 @@ public class OrderSaga {
     private com.project.order_service.service.OrderStatusChanger statusChanger = com.project.order_service.service.OrderStatusChanger.withoutEvents();
 
     /** 재고 복원의 트랜잭션. 세터 — 생성자를 쓰는 테스트가 많다. 없으면(단위 테스트) 트랜잭션 없이 돈다. */
+    // [JA] 在庫復元のトランザクション。セッター — コンストラクタを使うテストが多い。なければ(単体テスト)トランザクションなしで動く。
     private org.springframework.transaction.support.TransactionTemplate transactions;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -79,6 +80,7 @@ public class OrderSaga {
     }
 
     // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
+    // [JA] トランザクションは process · rollback(@Transactional) · restock(テンプレート)のもの — private はプロキシを通らない(B-108)。
     private Order getOrderByOrderStatus(Long orderId, OrderStatus orderStatus) {
         log.debug("OrderSaga: Attempting to get order with ID {} and status {}", orderId, orderStatus);
         Optional<Order> order = orderRepository.findByOrderIdAndOrderStatus(orderId, orderStatus);
@@ -92,6 +94,7 @@ public class OrderSaga {
     }
 
     // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
+    // [JA] トランザクションは process · rollback(@Transactional) · restock(テンプレート)のもの — private はプロキシを通らない(B-108)。
     private List<OrderProduct> getOrderProductsByOrder(Long orderId) {
         log.debug("OrderSaga: Attempting to get order products for order ID {}", orderId);
         Optional<List<OrderProduct>> orderProductsOptional = orderProductRepository.findByOrder_OrderId(orderId); // 변수명 충돌 방지
@@ -139,6 +142,7 @@ public class OrderSaga {
     }
 
     // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
+    // [JA] トランザクションは process · rollback(@Transactional) · restock(テンプレート)のもの — private はプロキシを通らない(B-108)。
     private void publishProductStateUpdate(Long orderId) {
         log.debug("OrderSaga: Preparing to publish product state update for order ID {}.", orderId);
         List<OrderProduct> orderProducts = getOrderProductsByOrder(orderId);
@@ -186,6 +190,7 @@ public class OrderSaga {
      * 品目が空で届いた場合(旧い発行元)、cart-service は従来どおり全部空にする。
      */
     // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
+    // [JA] トランザクションは process · rollback(@Transactional) · restock(テンプレート)のもの — private はプロキシを通らない(B-108)。
     private void publishCartEmptyState(Order order) {
         Long customerId = order.getCustomerId();
         log.debug("OrderSaga: Preparing to publish cart empty state for customer ID {}.", customerId);
@@ -212,10 +217,12 @@ public class OrderSaga {
     }
 
     // 트랜잭션은 process · rollback(@Transactional) · restock(템플릿)의 것 — private 은 프록시를 지나지 않는다(B-108).
+    // [JA] トランザクションは process · rollback(@Transactional) · restock(テンプレート)のもの — private はプロキシを通らない(B-108)。
     private Order updateOrderStatus(Order order, OrderStatus orderStatus) {
         log.debug("OrderSaga: Updating order {} status from {} to {}.", order.getOrderId(), order.getOrderStatus(), orderStatus);
         if (orderStatus == OrderStatus.PAID) {
             // 결제 시각도 함께 — 카드 · 간편결제 경로는 여기서만 PAID 가 된다
+            // [JA] 決済時刻も一緒に — カード · 簡易決済の経路はここでだけ PAID になる
             statusChanger.markPaid(order, java.time.LocalDateTime.now(), "payment-saga");
         } else {
             statusChanger.change(order, orderStatus, "payment-saga");
@@ -227,6 +234,7 @@ public class OrderSaga {
     }
 
     /** 쿠폰 보상 — 주문 id 를 싣는다: coupon 은 이 주문이 쓴 쿠폰일 때만 되돌린다(예전에는 아무 주문이 쓴 쿠폰이나 되돌렸다). */
+    // [JA] クーポンの補償 — 注文 id を載せる: coupon はこの注文が使ったクーポンの時だけ戻す(以前はどの注文が使ったクーポンでも戻していた)。
     private void publishCouponStateRollback(Order order) {
         Long customerId = order.getCustomerId();
         String couponName = order.getCouponApplied();

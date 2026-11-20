@@ -25,6 +25,10 @@ import com.webauthn4j.data.attestation.statement.NoneAttestationStatement;
  *
  * <p>목(mock)이 아니라 진짜 서명이다. 그래서 출처(피싱) · RP ID · challenge · UV · 서명 횟수 검사를 라이브러리가 실제로 하는지 볼 수 있다.
  * 각 값은 일부러 틀리게 바꿀 수 있다.
+ *
+ * <p>[JA] テスト用のソフトウェア認証器 — 実機のように P-256 鍵ペアを作って署名する(docs/68 §20)。
+ * モックではなく本物の署名である。そのため origin(フィッシング)・RP ID・challenge・UV・署名回数の検査をライブラリが実際に行うかを見られる。
+ * 各値はわざと誤った値に変えられる。
  */
 final class SoftwareAuthenticator {
 
@@ -35,11 +39,13 @@ final class SoftwareAuthenticator {
     long signCount;
 
     // 바꿔 볼 수 있는 값들
+    // [JA] 変えてみられる値
     String origin;
     String rpId;
     boolean userVerified = true;
     boolean backupEligible = false;
     /** 동기화 패스키(iCloud · Google)처럼 서명 횟수를 늘 0 으로 — 복제 검사가 건너뛰어진다. */
+    // [JA] 同期パスキー(iCloud・Google)のように署名回数を常に 0 に — 複製検査がスキップされる。
     boolean counterless = false;
 
     SoftwareAuthenticator(String origin, String rpId) throws Exception {
@@ -75,6 +81,7 @@ final class SoftwareAuthenticator {
     }
 
     /** navigator.credentials.create() 결과의 JSON. */
+    // [JA] navigator.credentials.create() の結果の JSON。
     String register(String challenge) throws Exception {
         AttestedCredentialData acd = new AttestedCredentialData(AAGUID.ZERO, credentialId,
                 EC2COSEKey.create(keyPair, COSEAlgorithmIdentifier.ES256));
@@ -90,6 +97,7 @@ final class SoftwareAuthenticator {
     }
 
     /** navigator.credentials.get() 결과의 JSON — 서명할 때마다 횟수를 올린다(실제 기기처럼). */
+    // [JA] navigator.credentials.get() の結果の JSON — 署名のたびに回数を上げる(実機のように)。
     String assertion(String challenge, String userHandleB64) throws Exception {
         if (counterless) {
             return assertionWithCount(challenge, userHandleB64, 0);

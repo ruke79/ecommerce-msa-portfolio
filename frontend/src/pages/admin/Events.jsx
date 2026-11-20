@@ -31,14 +31,17 @@ const EMPTY = {
 };
 
 /** 대상에 담을 때의 기본 할인율. 0 으로 두면 "담았는데 가격이 그대로"가 된다. */
+// [JA] 対象に入れるときの既定の割引率。0 にすると「入れたのに価格がそのまま」になる。
 const DEFAULT_RATE = 10;
 
 const formatDate = (value) => formatDateTime(value, "-");
 
 /** 서버 시각(UTC) → 입력칸(현지). 보낼 때는 localInputToServer — 한쪽만 바꾸면 9시간 어긋난다(util/datetime). */
+// [JA] サーバー時刻(UTC)→ 入力欄(現地)。送るときは localInputToServer — 片方だけ変換すると 9 時間ずれる(util/datetime)。
 const toInput = serverToLocalInput;
 
 /** 상태 이름표 — 사전 키를 두고 그릴 때 번역한다(모듈을 읽을 때 번역하면 언어가 그때로 굳는다). */
+// [JA] 状態の名札 — 辞書キーを持っておき描画時に翻訳する(モジュール読み込み時に翻訳すると言語がその時点で固まる)。
 const STATUS_LABEL = {
     DRAFT: "admin.events.status.draft",
     SCHEDULED: "admin.events.status.scheduled",
@@ -47,6 +50,7 @@ const STATUS_LABEL = {
 };
 
 /** 사전 문구의 <b>…</b> 를 굵은 글씨로 그린다. 쪼갠 조각의 홀수 번째가 굵은 부분이다. */
+// [JA] 辞書文言の <b>…</b> を太字で描く。分割した断片の奇数番目が太字部分である。
 const bold = (text) => text.split(/<b>(.*?)<\/b>/).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
 
 const STATUS_CLASS = {
@@ -68,6 +72,11 @@ const STATUS_CLASS = {
  *
  * <p><b>상태는 직접 바꿀 수 없다.</b> 관리자는 "확정"까지만 하고, 시작·종료는 시각이
  * 결정한다(서버 스케줄러). 사람이 자정에 맞춰 버튼을 누르는 운영은 반드시 놓친다.
+ *
+ * <p>[JA] イベント / 企画展の管理。<b>割引率はここにだけ保存される。</b>企画展の開始時に商品の常時割引を上書きし終了時に戻す方式ではない — それだと
+ * 進行中に商品を修正したとき、終了時の復元がその修正を上書きする。商品データはそのままにして参照時に合成する。だからこの画面で何をしても
+ * 商品は損なわれない。企画展を消せば価格は元に戻る。<b>状態は直接変えられない。</b>管理者は「確定」までを行い、開始・終了は時刻が
+ * 決める(サーバーのスケジューラ)。人が深夜 0 時に合わせてボタンを押す運用は必ず取りこぼす。
  */
 const Events = () => {
     const { t } = useTranslation();
@@ -79,6 +88,8 @@ const Events = () => {
 
     // 대상 상품을 고르기 위한 카탈로그. 첫 묶음만 받아 이름으로 걸러 쓴다 —
     // 전체를 받아오면 상품이 늘수록 이 화면이 무거워진다.
+    // [JA] 対象商品を選ぶためのカタログ。最初のまとまりだけ受け取り名前で絞って使う —
+    //      全部を取得すると商品が増えるほどこの画面が重くなる。
     const [catalog, setCatalog] = useState([]);
     const [query, setQuery] = useState("");
     const [categories, setCategories] = useState([]);
@@ -101,11 +112,14 @@ const Events = () => {
             .then((page) => setCatalog(page?.contents ?? []))
             // 상품 목록을 못 받아도 이 화면은 쓸 수 있어야 한다 — 기존 기획전의 기간이나
             // 배너를 고치는 데는 필요 없다.
+            // [JA] 商品一覧を受け取れなくてもこの画面は使えなければならない — 既存企画展の期間や
+            //      バナーを直すのには不要である。
             .catch(() => setCatalog([]));
     }, []);
 
     useEffect(() => {
         // 카테고리를 못 받아도 화면은 쓸 수 있어야 한다 — 상품 단위 지정만 하면 된다.
+        // [JA] カテゴリを受け取れなくても画面は使えなければならない — 商品単位の指定だけすればよい。
         getCategories().then((list) => setCategories(list ?? [])).catch(() => setCategories([]));
     }, []);
 
@@ -139,6 +153,8 @@ const Events = () => {
     const setRate = (productId, raw) => {
         // 0~100 밖의 값은 서버가 400 으로 거절한다. 여기서 먼저 잡아 두면 관리자가
         // 저장 버튼을 누르고 나서야 알게 되지 않는다.
+        // [JA] 0~100 の範囲外の値はサーバーが 400 で拒否する。ここで先に捕まえておけば、管理者が
+        //      保存ボタンを押してから気づくことにならない。
         const rate = Math.max(0, Math.min(100, Number(raw) || 0));
         setForm((prev) => ({
             ...prev,
@@ -191,6 +207,8 @@ const Events = () => {
         }
         // 확정하면 스케줄러가 시작시킨다. 시작 시각이 없으면 영영 시작되지 않는데,
         // 화면에는 "예약"이라고만 보여 무엇이 잘못됐는지 알 수 없다.
+        // [JA] 確定するとスケジューラが開始させる。開始時刻がなければ永遠に開始されないのに、
+        //      画面には「予約」とだけ見えて何が間違っているのか分からない。
         if (form.publish && !form.startsAt) {
             setError(t("admin.events.error.publish_needs_start"));
             return;
@@ -198,6 +216,8 @@ const Events = () => {
 
         // 이름만 있고 할인율이 없으면 0% 쿠폰이 발급되고, 사용자는 받아 놓고도 결제 때
         // 아무 일이 일어나지 않는 것을 본다. 서버도 막지만 여기서 먼저 잡는다.
+        // [JA] 名前だけあって割引率がないと 0% クーポンが発行され、ユーザーは受け取っても決済時に
+        //      何も起きないのを目にする。サーバーも防ぐが、ここで先に捕まえる。
         if (form.couponName.trim() && !(Number(form.couponDiscount) > 0)) {
             setError(t("admin.events.error.coupon_needs_discount"));
             return;
@@ -246,6 +266,7 @@ const Events = () => {
                 startsAt: toInput(detail.startsAt),
                 endsAt: toInput(detail.endsAt),
                 // 진행 중인 것을 수정할 때 이 값이 false 면 저장하면서 취소된다.
+                // [JA] 進行中のものを修正するときこの値が false だと、保存と同時にキャンセルされる。
                 publish: detail.status !== "DRAFT",
                 products: detail.products ?? [],
                 categories: detail.categories ?? [],
@@ -282,6 +303,8 @@ const Events = () => {
         } catch (e) {
             // 진행 중인 기획전은 서버가 409 로 거절한다 — 할인이 조용히 사라지고
             // 기록도 안 남기 때문이다.
+            // [JA] 進行中の企画展はサーバーが 409 で拒否する — 割引が静かに消え、
+            //      記録も残らないからである。
             setError(e?.response?.data?.message ?? t("admin.events.error.delete"));
         } finally {
             setBusy(false);
@@ -369,6 +392,7 @@ const Events = () => {
                 </div>
 
                 {/* ── 대상 상품 ── */}
+                {/* [JA] ── 対象商品 ── */}
                 <div className="mt-5 rounded border border-slate-200 p-3">
                     <h3 className="mb-2 text-sm font-semibold">
                         {t("admin.events.products.heading")} {form.products.length > 0 && `(${form.products.length})`}
@@ -446,6 +470,7 @@ const Events = () => {
                 {/* ── 대상 카테고리 ──
                     상품 단위와 달리 **나중에 등록된 상품도 자동으로 포함된다.** 상품 목록을
                     저장해 두면 그 순간 굳어, 기획전 중에 들어온 신상품만 정가로 남는다. */}
+                {/* [JA] ── 対象カテゴリ ── 商品単位と違い**後から登録された商品も自動で含まれる。**商品一覧を保存しておくとその瞬間に固まり、企画展中に入った新商品だけが定価で残る。 */}
                 <div className="mt-4 rounded border border-slate-200 p-3">
                     <h3 className="mb-2 text-sm font-semibold">
                         {t("admin.events.categories.heading")} {form.categories.length > 0 && `(${form.categories.length})`}
@@ -498,6 +523,7 @@ const Events = () => {
                     🔴 세그먼트(고객군) 할인은 진열가가 아니라 **쿠폰으로** 준다. 상품 조회에는
                     신원이 없고(공개 라우트), 목록은 캐시되며, 신원을 아는 화면과 모르는 화면이
                     섞이면 "목록에서 30% 를 보고 들어왔는데 상세는 정가" 가 되살아난다. */}
+                {/* [JA] ── 付属クーポン ── 🔴 セグメント(顧客層)割引は陳列価格ではなく**クーポンで**与える。商品照会には身元がなく(公開ルート)、一覧はキャッシュされ、身元を知る画面と知らない画面が混ざると「一覧で 30% を見て入ったのに詳細は定価」が蘇る。 */}
                 <div className="mt-4 rounded border border-slate-200 p-3">
                     <h3 className="mb-2 text-sm font-semibold">{t("admin.events.coupon.heading")}</h3>
 
@@ -555,6 +581,7 @@ const Events = () => {
                                     <option value="NEVER_PURCHASED">{t("admin.events.audience.never_purchased")}</option>
                                 </optgroup>
                                 {/* 등급은 전부 "이상" 이다 — 골드 회원은 실버 조건에도 해당한다. */}
+                                {/* [JA] 等級はすべて「以上」である — ゴールド会員はシルバー条件にも該当する。 */}
                                 <optgroup label={t("admin.events.audience.group.tier")}>
                                     <option value="TIER_SILVER">{t("admin.events.audience.tier_silver")}</option>
                                     <option value="TIER_GOLD">{t("admin.events.audience.tier_gold")}</option>
@@ -634,6 +661,8 @@ const Events = () => {
                                 {event.status === "ACTIVE" ? (
                                     // 진행 중인 것은 지울 수 없다 — 할인이 조용히 사라지고
                                     // "어제 30% 였는데요" 라는 문의에 답할 근거도 없어진다.
+                                    // [JA] 進行中のものは消せない — 割引が静かに消え、
+                                    //      「昨日は 30% だったのですが」という問い合わせに答える根拠もなくなる。
                                     <button
                                         type="button"
                                         onClick={() => endNow(event.id)}

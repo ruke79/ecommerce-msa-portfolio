@@ -60,6 +60,7 @@ class CheckMtlsScriptTest {
         assumeTrue(shellAvailable(), "bash · grep · sed · POSIX 가 없다");
         bin = Files.createDirectories(tmp.resolve("bin"));
         // 값은 환경 변수로 — 시나리오마다 다르다.
+        // [JA] 値は環境変数で — シナリオごとに違う。
         String kubectl = String.join("\n",
                 "#!/bin/sh",
                 "case \"$*\" in",

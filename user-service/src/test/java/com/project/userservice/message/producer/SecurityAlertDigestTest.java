@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** 로그인 해제 알림의 eventId(docs/68) — 묶음마다 하나로 고정되고, 묶음 id 원문(토큰의 클레임)은 드러내지 않는다. */
+// [JA] ログイン解除通知の eventId(docs/68) — 系列ごとに一つに固定され、系列 id の原文(トークンのクレーム)は露出しない。
 @DisplayName("보안 알림 — 로그인 해제 eventId")
 class SecurityAlertDigestTest {
 

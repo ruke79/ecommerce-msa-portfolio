@@ -1,8 +1,10 @@
 plugins	{
 	 id 'java-library'
 	 // AvroMappingContract(DTO ↔ Avro 계약 검사)를 다른 모듈의 테스트가 쓰도록 — chat 의 매핑은 chat-service 에 있다.
+	 // [JA] AvroMappingContract(DTO ↔ Avro の契約検査)を他モジュールのテストが使えるように — chat のマッピングは chat-service にある。
 	 id 'java-test-fixtures'
 	 // gRPC 계약(src/main/proto) → 메시지 · 스텁 생성(docs/66). 플랫폼별 protoc 을 알아서 받는다(x86 CI · Ampere 운영 빌드).
+	 // [JA] gRPC 契約(src/main/proto) → メッセージ · スタブ生成(docs/66)。プラットフォーム別の protoc を自動で取得する(x86 CI · Ampere 運用ビルド)。
 	 id 'com.google.protobuf' version '0.10.0'
 	// id 'org.springframework.boot' version '3.4.1'
 	// id 'io.spring.dependency-management' version '1.1.7'	
@@ -23,6 +25,8 @@ jar { enabled = true }
 // 스키마(src/main/avro/*.avsc)에서 SpecificRecord 클래스를 만든다. Gradle Avro 플러그인은
 // 플러그인 포털에서 받히지 않아(프록시) avro-compiler 의 Ant 태스크로 직접 돌린다.
 // 생성물은 build/generated/avro 에 두고 커밋하지 않는다 — 스키마가 진실이다.
+// [JA] ── Avro ── スキーマ(src/main/avro/*.avsc)から SpecificRecord クラスを作る。Gradle Avro プラグインはプラグインポータルから
+//      取得できない(プロキシ)ため、avro-compiler の Ant タスクで直接回す。生成物は build/generated/avro に置きコミットしない — スキーマが真実である。
 configurations { avroTool }
 dependencies { avroTool 'org.apache.avro:avro-compiler:1.11.4' }
 
@@ -45,12 +49,16 @@ compileJava.dependsOn 'generateAvro'
 // 스키마(src/main/proto)가 진실이다 — 생성물은 build/generated/source/proto 에 두고 커밋하지 않는다(Avro 와 같다).
 // 런타임 의존성은 compileOnly — common 을 쓰는 서비스 중 gRPC 를 쓰는 것은 catalog · order 뿐이다. 나머지로 Netty 를
 // 끌고 가지 않는다. 쓰는 서비스가 자기 build.gradle 에서 런타임을 얹는다.
+// [JA] ── gRPC (docs/66) ── スキーマ(src/main/proto)が真実 — 生成物は build/generated/source/proto に置きコミットしない(Avro と同じ)。
+//      ランタイム依存は compileOnly — common を使うサービスのうち gRPC を使うのは catalog · order だけである。残りに Netty を
+//      引きずっていかない。使うサービスが自分の build.gradle でランタイムを載せる。
 protobuf {
 	protoc { artifact = "com.google.protobuf:protoc:${protobufVersion}" }
 	plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}" } }
 	generateProtoTasks {
 		all().each { task ->
 			// @javax.annotation.Generated 를 붙이지 않는다 — javax.annotation 의존을 늘리지 않는다(@GrpcGenerated 는 남는다).
+			// [JA] @javax.annotation.Generated を付けない — javax.annotation 依存を増やさない(@GrpcGenerated は残る)。
 			task.plugins { grpc { option '@generated=omit' } }
 		}
 	}
@@ -60,6 +68,8 @@ dependencies {
 
 	// 설정 가드레일 테스트(ConfigurationGuardrailTest)용. common 은 java-library 라
 	// 루트의 subprojects 블록이 주는 테스트 의존성을 받지 않으므로 여기서 직접 선언한다.
+	// [JA] 設定ガードレールテスト(ConfigurationGuardrailTest)用。common は java-library なので、ルートの subprojects ブロックが与える
+	//      テスト依存を受け取らない。そのためここで直接宣言する。
 	testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
 	testImplementation 'org.assertj:assertj-core:3.26.3'
 	testImplementation 'com.fasterxml.jackson.core:jackson-databind'
@@ -69,39 +79,57 @@ dependencies {
 	// Kafka 를 아예 쓰지 않는 것들(eureka-server, config-server)이 있어서, 상수 하나 때문에
 	// kafka-clients 를 그쪽 런타임까지 끌고 갈 이유가 없기 때문이다.
 	// 대신 그 문자열이 실제 상수와 일치하는지는 여기서 검증한다 — **테스트 클래스패스에만** 둔다.
+	// [JA] KafkaSecuritySettings は設定キーを文字列で持っている — common に依存するモジュールの中には Kafka をまったく使わないもの
+	//      (eureka-server, config-server)があり、定数一つのために kafka-clients をそちらのランタイムまで引きずる理由がないからである。
+	//      代わりにその文字列が実際の定数と一致するかはここで検証する — **テストクラスパスにだけ**置く。
 	testImplementation 'org.apache.kafka:kafka-clients'
 	// AggregateKeyPartitioner 는 Partitioner 인터페이스를 구현해야 하므로 컴파일 시점에는 필요하다.
 	// compileOnly 라 common 을 의존하는 모듈의 런타임으로는 전파되지 않는다 — 위와 같은 이유.
 	// 파티셔너를 실제로 쓰는 모듈은 spring-kafka 를 통해 이미 kafka-clients 를 갖고 있다.
+	// [JA] AggregateKeyPartitioner は Partitioner インターフェースを実装する必要があるため、コンパイル時には必要である。
+	//      compileOnly なので common に依存するモジュールのランタイムには伝播しない — 上と同じ理由。
+	//      パーティショナーを実際に使うモジュールは spring-kafka 経由ですでに kafka-clients を持っている。
 	compileOnly 'org.apache.kafka:kafka-clients'
 	// LoggingRebalanceListener 는 spring-kafka 의 ConsumerAwareRebalanceListener 를 구현한다 — 같은 이유로 compileOnly.
+	// [JA] LoggingRebalanceListener は spring-kafka の ConsumerAwareRebalanceListener を実装する — 同じ理由で compileOnly。
 	compileOnly 'org.springframework.kafka:spring-kafka'
 	// 서비스 간 Feign 응답을 끝까지 읽는 Capability(FeignResponseBody) — Feign 을 쓰는 서비스만 런타임에 있다. 같은 이유로 compileOnly.
+	// [JA] サービス間の Feign 応答を最後まで読む Capability(FeignResponseBody) — Feign を使うサービスにだけランタイムにある。同じ理由で compileOnly。
 	compileOnly 'io.github.openfeign:feign-core'
 	testImplementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
 	testImplementation 'org.springframework.kafka:spring-kafka'
 	// OutboxRelayTrigger 가 커밋 뒤 콜백(TransactionSynchronization)을 건다. 아웃박스를 쓰는 모듈은 JPA 로
 	// 이미 spring-tx 를 갖고 있다 — 위와 같은 이유로 compileOnly.
+	// [JA] OutboxRelayTrigger がコミット後のコールバック(TransactionSynchronization)を登録する。アウトボックスを使うモジュールは JPA で
+	//      すでに spring-tx を持っている — 上と同じ理由で compileOnly。
 	compileOnly 'org.springframework:spring-tx'
 	testImplementation 'org.springframework:spring-tx'
 	// B-108 TransactionalProxyGuardTest — 모든 서비스의 소스를 읽어 적용되지 않는 @Transactional 을 찾는다(테스트 전용).
+	// [JA] B-108 TransactionalProxyGuardTest — 全サービスのソースを読み、適用されない @Transactional を探す(テスト専用)。
 	testImplementation 'com.github.javaparser:javaparser-core:3.26.2'
 	// 아웃박스 파티션 잡의 지표(OutboxPartitionAutoConfiguration.Metrics). 파티션을 쓰는 모듈은 actuator 로 이미
 	// micrometer 를 갖고 있다 — 위와 같은 이유로 compileOnly(eureka·config-server 로 끌고 가지 않는다).
+	// [JA] アウトボックスパーティションジョブのメトリクス(OutboxPartitionAutoConfiguration.Metrics)。パーティションを使うモジュールは actuator で
+	//      すでに micrometer を持っている — 上と同じ理由で compileOnly(eureka · config-server へ引きずらない)。
 	compileOnly 'io.micrometer:micrometer-core'
 	// MdcTaskDecorator — 추적 문맥(현재 관측)을 작업 스레드로 넘긴다. 있으면 쓴다(ClassUtils.isPresent) — 없는 서비스로 끌고 가지 않는다.
+	// [JA] MdcTaskDecorator — トレース文脈(現在の観測)をワーカースレッドへ渡す。あれば使う(ClassUtils.isPresent) — ないサービスへ引きずらない。
 	compileOnly 'io.micrometer:context-propagation'
 	testImplementation 'io.micrometer:context-propagation'
 	// 추적 테스트용 OTel 추적기(OtelTestTracing — 운영과 같은 브리지 · W3C 전파, 끝난 span 을 메모리에 모은다).
 	// 이 모듈을 쓰는 서비스의 추적 테스트가 testFixtures 의존성으로 받는다(각 서비스 build.gradle).
+	// [JA] トレーステスト用の OTel トレーサー(OtelTestTracing — 運用と同じブリッジ · W3C 伝播、終わった span をメモリに集める)。
+	//      このモジュールを使うサービスのトレーステストが testFixtures 依存で受け取る(各サービスの build.gradle)。
 	testFixturesApi 'io.micrometer:micrometer-tracing-bridge-otel'
 	testFixturesApi 'io.opentelemetry:opentelemetry-sdk'
 	testFixturesApi 'io.opentelemetry:opentelemetry-sdk-testing'
 	testImplementation 'io.micrometer:micrometer-tracing-bridge-otel'
 	// 파티션 잡의 실제 PostgreSQL 검증(OutboxPartitionMaintainerPostgresTest — containers 태그, CI 통합 단계).
+	// [JA] パーティションジョブの実 PostgreSQL 検証(OutboxPartitionMaintainerPostgresTest — containers タグ、CI 統合段階)。
 	testImplementation 'org.postgresql:postgresql'
 	testImplementation 'org.testcontainers:postgresql'
 	// 관측 설정(observability/*.yml)을 구조로 읽는 가드(B-72) — 파이프라인 순서는 문자열로는 못 본다.
+	// [JA] 観測設定(observability/*.yml)を構造として読むガード(B-72) — パイプラインの順序は文字列では見られない。
 	testImplementation 'org.yaml:snakeyaml'
 	// MockEnvironment
 	testImplementation 'org.springframework:spring-test'
@@ -110,12 +138,16 @@ dependencies {
 	// Avro 런타임 — 생성된 SpecificRecord 와 단일 객체 인코더가 쓴다. 스키마 레지스트리는 없다:
 	// Confluent 직렬화기는 이 환경의 프록시가 막고, 그 없이도 Avro 의 단일 객체 인코딩(스키마
 	// 지문 헤더)으로 진화가 된다(docs/38 §1.16). api 인 이유: 모듈의 리스너가 생성 클래스를 볼 수 있어야 한다.
+	// [JA] Avro ランタイム — 生成された SpecificRecord と単一オブジェクトエンコーダーが使う。スキーマレジストリはない:
+	//      Confluent のシリアライザーはこの環境のプロキシが塞いでおり、それがなくても Avro の単一オブジェクトエンコーディング(スキーマ
+	//      フィンガープリントヘッダー)で進化できる(docs/38 §1.16)。api である理由: モジュールのリスナーが生成クラスを見られる必要がある。
 	api 'org.apache.avro:avro:1.11.4'
 
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
 	// gRPC 계약 · 부품(docs/66) — compileOnly 인 이유는 protobuf 블록의 주석. 테스트는 실제 TLS 로 돈다.
+	// [JA] gRPC 契約 · 部品(docs/66) — compileOnly の理由は protobuf ブロックのコメント。テストは実際の TLS で回る。
 	compileOnly platform("io.grpc:grpc-bom:${grpcVersion}")
 	compileOnly 'io.grpc:grpc-protobuf'
 	compileOnly 'io.grpc:grpc-stub'
@@ -131,16 +163,23 @@ dependencies {
 	// implementation 이어도 런타임에는 common 을 쓰는 모든 서비스로 전파된다 — 공통 logback
 	// 설정이 이 클래스들을 참조하므로 **반드시** 런타임에 있어야 한다. 없으면 logback 설정 오류로
 	// 기동이 실패한다. 버전은 루트 subprojects 블록과 같게 둔다.
+	// [JA] 共通ログ設定(logback-spring.xml)とマスキング(com.project.common.logging)が使う。
+	//      implementation でもランタイムには common を使うすべてのサービスへ伝播する — 共通 logback 設定がこれらのクラスを参照するので
+	//      **必ず**ランタイムに存在しなければならない。なければ logback 設定エラーで起動に失敗する。バージョンはルートの subprojects ブロックと同じにする。
 	implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
 
 	// RedisTemplate의 GenericJackson2JsonRedisSerializer의 Java8 날짜 및 시간 지원을 위한 Jackson 모듈
+	// [JA] RedisTemplate の GenericJackson2JsonRedisSerializer で Java8 の日付・時刻をサポートするための Jackson モジュール
 	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
 	// 기능 플래그(docs/74) — OpenFeature 표준 API. 공급자(provider)는 common 이 가진 파일 공급자다.
 	// api 로 두는 이유: 서비스 코드가 dev.openfeature.sdk.Client 를 직접 받는다.
+	// [JA] 機能フラグ(docs/74) — OpenFeature 標準 API。プロバイダーは common が持つファイルプロバイダーである。
+	//      api にする理由: サービスコードが dev.openfeature.sdk.Client を直接受け取る。
 	api 'dev.openfeature:sdk:1.23.0'
 	testImplementation 'io.micrometer:micrometer-core'
 	// SLO 버킷 가드(SloRulesTest) — application-common.yml 의 slo 경계를 Boot 와 같은 필터로 묶어 Prometheus 출력의 le 를 본다.
+	// [JA] SLO バケットのガード(SloRulesTest) — application-common.yml の slo 境界を Boot と同じフィルターで束ね、Prometheus 出力の le を見る。
 	testImplementation 'io.micrometer:micrometer-registry-prometheus'
 	testImplementation 'org.springframework.boot:spring-boot-actuator-autoconfigure'
 
@@ -161,5 +200,11 @@ tasks.named('test') {
 	// 저장소 전체를 입력으로 선언하면 build 산출물 때문에 매번 바뀌어 결국 같은 결과이므로,
 	// 캐시를 끄는 쪽이 정직하다. 이 모듈의 테스트는 파일을 읽고 문자열을 검사할 뿐이라
 	// 몇 초면 끝난다.
+	// [JA] このモジュールのテストは**他モジュールのファイル**を読むガードレールである(ConfigurationGuardrailTest は各サービスの yml · k8s
+	//      マニフェストを、EntityPersistenceGuardrailTest は各サービスのエンティティソースを走査する)。それらのファイルは :common:test の
+	//      宣言された入力ではないため、common 自身が変わらなければ Gradle が UP-TO-DATE でスキップする — つまり**ガードレールが守るべき
+	//      まさにその変更で静かに実行されない。**実際に他モジュールのエンティティを戻して回したとき通ってしまうことを確認した。
+	//      リポジトリ全体を入力として宣言すると build 成果物のせいで毎回変わり結局同じ結果なので、キャッシュを切る方が正直である。
+	//      このモジュールのテストはファイルを読んで文字列を検査するだけなので数秒で終わる。
 	outputs.upToDateWhen { false }
 }

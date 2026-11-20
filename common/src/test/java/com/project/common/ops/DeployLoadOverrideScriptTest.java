@@ -38,6 +38,7 @@ class DeployLoadOverrideScriptTest {
     }
 
     /** 가짜 kubectl — 게이트웨이 · catalog 의 지금 env 이름(GATEWAY_ENV · CATALOG_ENV, 줄바꿈 구분)을 돌려준다. */
+    // [JA] 偽の kubectl — ゲートウェイ · catalog の現在の env 名(GATEWAY_ENV · CATALOG_ENV、改行区切り)を返す。
     private static final String FAKE_KUBECTL = """
             #!/usr/bin/env bash
             a="$*"
@@ -62,6 +63,7 @@ class DeployLoadOverrideScriptTest {
         Files.writeString(kubectl, FAKE_KUBECTL);
         Files.setPosixFilePermissions(kubectl, PosixFilePermissions.fromString("rwx------"));
         // 명령줄 인자는 ASCII 로 — JDK 21 · POSIX 로캘에서는 인자의 한글이 ?? 로 깨진다(jdk21 브랜치에서 실측).
+        // [JA] コマンドライン引数は ASCII で — JDK 21 · POSIX ロケールでは引数のハングルが ?? に化ける(jdk21 ブランチで実測)。
         String body = "set -uo pipefail; NS=ecommerce; MANAGED_DEPLOYS='catalog-service gateway-server'; "
                 + "eval \"$(sed -n '/^warn() {/p; /^die()  {/p' ops/28-deploy.sh)\"; "
                 + "eval \"$(sed -n '/^check_load_overrides() {/,/^}/p' ops/28-deploy.sh)\"; "

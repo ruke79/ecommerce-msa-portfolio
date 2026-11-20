@@ -43,6 +43,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 /**
  * 읽지 못한 입력 레코드 — 깨진 것은 건너뛰고, 모르는 스키마면 멈춘다 ({@code SagaDeserializationExceptionHandler}).
  * 운영 설정({@link KafkaStreamsConfig#errorHandling()})을 그대로 드라이버에 준다.
+ *
+ * <p>[JA] 読めなかった入力レコード — 壊れたものは飛ばし、未知のスキーマなら止まる ({@code SagaDeserializationExceptionHandler})。
+ * 運用設定({@link KafkaStreamsConfig#errorHandling()})をそのままドライバーに渡す。
  */
 @DisplayName("saga-projection · 역직렬화 실패")
 class SagaDeserializationFailureTest {
@@ -97,6 +100,7 @@ class SagaDeserializationFailureTest {
     }
 
     /** 아무 소비자도 모르는 작성 스키마 — 결제 요청과 같은 이름이지만 필드가 다르다(= 이 파드보다 새 프로듀서). */
+    // [JA] どのコンシューマも知らない書き込みスキーマ — 決済リクエストと同じ名前だがフィールドが違う(= この Pod より新しいプロデューサー)。
     private static byte[] unknownSchemaRecord() throws IOException {
         Schema future = SchemaBuilder.record("PaymentRequest").namespace("com.project.common.avro").fields()
                 .requiredLong("orderId").optionalString("somethingNew").endRecord();
@@ -106,6 +110,7 @@ class SagaDeserializationFailureTest {
     }
 
     /** 🔴 핵심 — 깨진 레코드 하나가 뒤의 주문을 인질로 잡지 않는다. */
+    // [JA] 🔴 核心 — 壊れたレコード一つが後ろの注文を人質に取らない。
     @Test
     @DisplayName("🔴 깨진 레코드는 건너뛰고 다음 주문을 계속 접는다 — 계수기가 오른다")
     void aPoisonRecordIsSkipped() {
@@ -122,6 +127,9 @@ class SagaDeserializationFailureTest {
     /**
      * 🔴 건너뛰면 오프셋이 커밋되어 새 파드도 다시 읽지 않는다 — 프로젝션이 그 기록을 영영 잃는다. 멈추면 롤링 배포 중
      * 새 파드가 마지막 커밋부터 다시 읽는다.
+     *
+     * <p>[JA] 🔴 飛ばすとオフセットがコミットされ新しい Pod も読み直さない — プロジェクションがその記録を永久に失う。止まればローリングデプロイ中に
+     * 新しい Pod が最後のコミットから読み直す。
      */
     @Test
     @DisplayName("🔴 모르는 작성 스키마면 건너뛰지 않고 멈춘다 — 새 파드가 이어받아 읽도록")
@@ -135,6 +143,7 @@ class SagaDeserializationFailureTest {
     }
 
     /** 예전 동작(처리기 없음 = LogAndFail) — 깨진 레코드 하나에 멈췄다. 재시작해도 같은 오프셋에서 또 멈춘다. */
+    // [JA] 以前の動作(ハンドラなし = LogAndFail) — 壊れたレコード一つで止まった。再起動しても同じオフセットでまた止まる。
     @Test
     @DisplayName("처리기가 없으면 깨진 레코드 하나에 멈춘다 — 예전 동작")
     void withoutTheHandlerAPoisonRecordHalts() {

@@ -5,6 +5,9 @@
 # ⚠️ requests 만 낮춘다. limits 는 건드리지 않는다 —
 #    requests 는 스케줄러가 잡아 두는 자리, limits 는 실제 상한이다.
 #    limits 를 같이 낮추면 JVM 이 힙을 잡다 OOMKilled 된다.
+# [JA] 要求量をノート PC 規模に下げる。JSON6902 を使う理由: 戦略的マージパッチはコンテナを**名前で**探すが、サービスごとに名前が違うので 12 個を別々に書く必要がある。
+#      すべての Deployment がコンテナ 1 個だけなのを確認したのでインデックス 0 で一度に処理する。
+#      ⚠️ requests だけ下げる。limits には触れない — requests はスケジューラーが確保する場所、limits は実際の上限だ。limits を一緒に下げると JVM がヒープを取ろうとして OOMKilled される。
 - op: replace
   path: /spec/template/spec/containers/0/resources/requests/cpu
   value: "50m"

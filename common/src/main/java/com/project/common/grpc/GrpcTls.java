@@ -34,6 +34,9 @@ public final class GrpcTls {
     /**
      * 서버. 클라이언트 인증서는 <b>요청하되 강제하지 않는다</b>(OPTIONAL) — 없을 때의 처리(observe 면 기록 후 통과, enforce 면
      * UNAUTHENTICATED)는 인터셉터가 모드에 따라 정한다. TLS 층에서 끊으면 observe 단계에서 "누가 인증서 없이 부르나" 를 볼 수 없다.
+     *
+     * <p>[JA] サーバー。クライアント証明書は<b>要求するが強制しない</b>(OPTIONAL) — ないときの処理(observe なら記録して通過、enforce なら UNAUTHENTICATED)は
+     * インターセプターがモードに応じて決める。TLS 層で切ると observe 段階で「誰が証明書なしで呼んでいるか」が見えない。
      */
     public static SslContext server(String keyStorePath, String keyStorePassword, String caPemPath) throws Exception {
         return GrpcSslContexts.configure(SslContextBuilder.forServer(keyManagers(keyStorePath, keyStorePassword)))
@@ -42,7 +45,7 @@ public final class GrpcTls {
                 .build();
     }
 
-    /** 클라이언트 — 자기 신원 인증서를 내고, 서버 인증서를 내부 CA 와 호스트 이름(dnsNames)으로 확인한다. */
+    /** 클라이언트 — 자기 신원 인증서를 내고, 서버 인증서를 내부 CA 와 호스트 이름(dnsNames)으로 확인한다. ／ [JA] クライアント — 自分の身元証明書を出し、サーバー証明書を内部 CA とホスト名(dnsNames)で確認する。 */
     public static SslContext client(String keyStorePath, String keyStorePassword, String caPemPath) throws Exception {
         return GrpcSslContexts.forClient()
                 .keyManager(keyManagers(keyStorePath, keyStorePassword))
@@ -50,7 +53,7 @@ public final class GrpcTls {
                 .build();
     }
 
-    /** 설정이 TLS 를 켜라고 하는가 — 키스토어와 CA 가 둘 다 읽을 수 있어야 한다. */
+    /** 설정이 TLS 를 켜라고 하는가 — 키스토어와 CA 가 둘 다 읽을 수 있어야 한다. ／ [JA] 設定が TLS を有効にせよと言っているか — キーストアと CA の両方が読める必要がある。 */
     public static boolean configured(String keyStorePath, String caPemPath) {
         return readable(keyStorePath) && readable(caPemPath);
     }

@@ -65,6 +65,7 @@ class DemoOrderGeneratorIntegrationTest {
     }
 
     /** 생성기를 돌려 그 SQL 을 컨테이너의 psql 로 — ops/54 와 같다. */
+    // [JA] ジェネレーターを回してその SQL をコンテナの psql へ — ops/54 と同じ。
     private void apply(String name, String... args) throws Exception {
         List<String> cmd = new ArrayList<>(List.of("python3", "-I", repoRoot().resolve("ops/tools/generate-demo-orders.py").toString()));
         cmd.addAll(List.of(args));
@@ -94,6 +95,8 @@ class DemoOrderGeneratorIntegrationTest {
                 .baselineOnMigrate(true).baselineVersion("0").load().migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), "product", "testpw")) {
             // 범위 안에 이미 있는 진짜 주문 — 생성기는 건너뛰고(ON CONFLICT) purge 는 남겨야 한다(tracking_id 가 demo- 가 아니다)
+            // [JA] 範囲内に既にある本物の注文 — ジェネレーターは飛ばし(ON CONFLICT)、purge は残す必要がある(tracking_id が
+            //      demo- ではない)
             long real = ORDER_OFFSET + 3;
             exec(db, "insert into orders.order_address (order_address_id, address1, city, state, zip_code) values (" + real + ", 'a', 'c', 's', 'z')");
             exec(db, "insert into orders.orders (order_id, customer_id, tracking_id, order_status, payment_method, shipping_price, "

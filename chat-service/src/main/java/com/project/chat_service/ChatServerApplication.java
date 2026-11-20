@@ -25,6 +25,11 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 // Kafka 컨슈머·JPA 리포지토리까지 전부 로딩하다 'No bean named entityManagerFactory' 로
 // 실패했다(docs/14 B-17). 필터를 되돌려 주면 com.project.common 스캔은 유지하면서
 // 슬라이스 테스트도 정상 동작한다.
+// [JA] 明示的な @ComponentScan は @SpringBootApplication がデフォルトで付ける TypeExcludeFilter を
+//      置き換えてしまう。その結果 @WebMvcTest スライスが動作せず、Web 層だけ立ち上げるべきテストが
+//      Kafka コンシューマ・JPA リポジトリまで全部読み込み 'No bean named entityManagerFactory' で
+//      失敗した(docs/14 B-17)。フィルタを戻せば com.project.common のスキャンは維持しつつ
+//      スライステストも正常に動作する。
 @ComponentScan(
 		basePackages = {"com.project.chat_service", "com.project.common"},
 		// AutoConfigurationExcludeFilter 도 되살린다 — 없으면 common 의 자동 설정이 사용자 설정처럼 스캔되어 조건이 너무

@@ -64,12 +64,13 @@ class AbsoluteLifetimeTest {
     @DisplayName("🔴 갱신은 최초 로그인 시각을 이어받고, 만료는 '최초 로그인 + 30일' 을 넘지 않는다")
     void rotationIsCappedByAbsoluteLifetime() {
         JwtUtils j = jwt();
-        long loggedIn = nowSec() - 25 * 24 * 3600;   // 25일 전에 로그인
+        long loggedIn = nowSec() - 25 * 24 * 3600;   // 25일 전에 로그인 ／ [JA] 25 日前にログイン
 
         String t = j.generateRefreshToken(user(), "fam-1", loggedIn);
 
         assertThat(j.getAuthTimeFromJwtToken(t)).isEqualTo(loggedIn);
         // 14일이 아니라 남은 5일
+        // [JA] 14 日ではなく残りの 5 日
         assertThat(j.remainingLifetime(t)).isBetween(Duration.ofDays(5).minusSeconds(5), Duration.ofDays(5));
     }
 

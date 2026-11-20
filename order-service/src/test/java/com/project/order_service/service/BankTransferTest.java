@@ -47,6 +47,11 @@ import com.project.order_service.repository.jpa.OrderRepository;
  * <p>여기 고정하는 것: 입금 확인은 카드 결제 확인과 <b>같은 아웃박스</b>로 나간다(그래야
  * 그 뒤가 같다), 돈이 오지 않은 주문은 취소이지 환불이 아니다, 그리고 확인이 끝난 주문은
  * 만료 잡이 접지 않는다.
+ *
+ * <p>[JA] 銀行振込の状態機械(docs/49 §11)。
+ *
+ * <p>ここで固定するもの: 入金確認はカード決済確認と<b>同じアウトボックス</b>で出る(そうしてこそその後が同じになる)、
+ * お金が来ていない注文はキャンセルであって返金ではない、そして確認が済んだ注文は期限切れジョブが畳まない。
  */
 @DisplayName("무통장입금")
 class BankTransferTest {
@@ -79,6 +84,7 @@ class BankTransferTest {
     }
 
     // ---------------------------------------------------------------- 입금 안내
+    // [JA] 入金案内
 
     @Test
     @DisplayName("입금 안내를 받으면 UNPAID 가 되고 기한·입금자명이 남는다")
@@ -88,7 +94,7 @@ class BankTransferTest {
         assertThat(o.getOrderStatus()).isEqualTo(OrderStatus.UNPAID);
         assertThat(o.getDepositorName()).isEqualTo("홍길동");
         assertThat(o.getDepositDeadline()).isAfter(LocalDateTime.now().plusHours(47));
-        verify(outboxHelper, never()).savePaymentOutbox(any(), any());   // 돈이 안 왔다 — 하류에 알릴 것이 없다
+        verify(outboxHelper, never()).savePaymentOutbox(any(), any());   // 돈이 안 왔다 — 하류에 알릴 것이 없다 ／ [JA] お金が来ていない — 下流に知らせるものがない
     }
 
     @Test
@@ -126,8 +132,10 @@ class BankTransferTest {
     }
 
     // ---------------------------------------------------------------- 입금 확인
+    // [JA] 入金確認
 
     /** 🔴 카드 결제 확인과 같은 아웃박스 — 그래야 pay-service → 사가 → PAID · 재고 차감이 같다. */
+    // [JA] 🔴 カード決済確認と同じアウトボックス — そうしてこそ pay-service → サガ → PAID・在庫差し引きが同じになる。
     @Test
     @DisplayName("🔴 입금 확인은 결제를 붙이고 같은 아웃박스로 COMPLETED 를 보낸다")
     void confirmDepositGoesThroughTheOutbox() {
@@ -171,6 +179,7 @@ class BankTransferTest {
     }
 
     // ---------------------------------------------------------------- 취소·만료
+    // [JA] キャンセル・期限切れ
 
     @Test
     @DisplayName("입금 전에는 손님이 스스로 접을 수 있다 — 환불이 아니라 취소")
@@ -184,6 +193,7 @@ class BankTransferTest {
     }
 
     /** 🔴 입금이 확인된 뒤에는 돈이 있다 — 취소가 아니라 환불의 영역이다. */
+    // [JA] 🔴 入金が確認された後はお金がある — キャンセルではなく返金の領域である。
     @Test
     @DisplayName("🔴 입금이 확인된 주문은 취소할 수 없다")
     void cannotCancelAfterDepositConfirmed() {
@@ -215,8 +225,10 @@ class BankTransferTest {
     }
 
     // ---------------------------------------------------------------- 환불
+    // [JA] 返金
 
     /** 게이트웨이가 언제나 "받아들였다" 고 답하므로 고객이 스스로 부르면 돈 없이 REFUNDED 가 된다. */
+    // [JA] ゲートウェイが常に「受け付けた」と答えるので、顧客が自分で呼ぶとお金なしで REFUNDED になる。
     @Test
     @DisplayName("🔒 무통장입금 주문의 환불은 관리자만 — 고객은 고객센터 안내")
     void bankTransferRefundIsAdminOnly() {
@@ -234,6 +246,7 @@ class BankTransferTest {
     }
 
     // ---------------------------------------------------------------- 포트원 가상계좌
+    // [JA] PortOne 仮想口座
 
     private static final com.project.order_service.payment.portone.VirtualAccount VA =
             new com.project.order_service.payment.portone.VirtualAccount("KOOKMIN", "123-45-6789", "예시상점",
@@ -265,6 +278,7 @@ class BankTransferTest {
     }
 
     /** 🔒 1원짜리 가상계좌를 붙여 두면 손님이 틀린 안내를 본다 — 청구액과 대조한다. */
+    // [JA] 🔒 1 ウォンの仮想口座を付けておくと客は誤った案内を見る — 請求額と照合する。
     @Test
     @DisplayName("🔒 가상계좌 금액·통화가 청구액과 다르면 붙이지 않는다")
     void virtualAccountAmountMustMatch() {
@@ -285,6 +299,7 @@ class BankTransferTest {
     }
 
     /** 사람이 확인하면 PG 의 진실과 갈린다 — 나중에 웹훅이 오면 두 번 반영된다. */
+    // [JA] 人が確認すると PG の真実と食い違う — 後で Webhook が来ると二度反映される。
     @Test
     @DisplayName("🔒 가상계좌 주문은 관리자가 입금을 확인할 수 없다 — 포트원 웹훅이 한다")
     void virtualAccountCannotBeConfirmedByAdmin() {
@@ -297,6 +312,7 @@ class BankTransferTest {
     }
 
     /** 🔴 기한이 지나 우리가 접은 뒤 입금이 도착하면 조용히 삼키지 않는다 — 수동 환불이 보여야 한다. */
+    // [JA] 🔴 期限が過ぎてこちらが畳んだ後に入金が届いたら、黙って握りつぶさない — 手動返金が見えるべきである。
     @Test
     @DisplayName("🔴 취소된 주문에 결제가 도착하면 거절하고 error 로 남긴다")
     void paymentOnCanceledOrderIsRejected() {
@@ -305,6 +321,7 @@ class BankTransferTest {
         com.project.order_service.payment.PaymentGateway portone = mock(com.project.order_service.payment.PaymentGateway.class);
         when(portone.provider()).thenReturn(PaymentProvider.PORTONE);
         // 소유권 검사는 주문자 id(7)로 통과한다 — 이 테스트의 관심은 그 뒤의 상태 검사다.
+        // [JA] 所有権チェックは注文者 id(7)で通る — このテストの関心はその後の状態チェックである。
         OrderDataService withPortOne = new OrderDataService(orderRepository,
                 new ObjectMapper(), mock(OrderAddressRepository.class),
                 outboxHelper, new PaymentGateways(List.of(portone)), new PaymentCurrencyPolicy());

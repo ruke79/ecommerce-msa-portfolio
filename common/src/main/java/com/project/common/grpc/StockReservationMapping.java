@@ -32,6 +32,7 @@ public final class StockReservationMapping {
     }
 
     // ── 클라이언트 → 서버 ────────────────────────────────────────────────
+    // [JA] ── クライアント → サーバー ──
 
     public static ReserveRequest toProto(StockReservationRequest dto) {
         ReserveRequest.Builder b = ReserveRequest.newBuilder()
@@ -65,6 +66,7 @@ public final class StockReservationMapping {
     }
 
     // ── 서버 → 클라이언트 ────────────────────────────────────────────────
+    // [JA] ── サーバー → クライアント ──
 
     public static ReserveResponse toProto(StockReservationResult dto) {
         ReserveResponse.Builder b = ReserveResponse.newBuilder()

@@ -36,6 +36,10 @@ import jakarta.persistence.PersistenceContext;
  * {@code ProductMapper.toDto} 가 그 넷을 모두 순회한다. 배치 페치가 없으면
  * <b>상품 N건 → 1 + 4N 쿼리</b>가 된다. 20건이면 81번. 코드에는 {@code //@BatchSize} 가
  * 주석 처리된 채 남아 있었다 — 누군가 문제를 알았지만 켜지 않았다는 흔적이다.
+ *
+ * <p>[JA] 商品一覧照会が発行する<b>SQL の数</b>を固定する — N+1 の回帰防止。
+ * <p>なぜ数か: 応答時間はハードウェア・データ量・キャッシュ状態に左右され CI で再現されない。一方<b>クエリ数は環境に依存しない構造的事実</b>である。商品 20 件を読むのに SQL が 1 回か 81 回かはノート PC でも本番でも同じだ。だから性能回帰の中で最もよくあり最も高くつく N+1 だけはビルドが守れる。
+ * <p>背景: {@code Product} は LAZY コレクションを 4 つ(subcategories・details・questions・skus)持ち、{@code ProductMapper.toDto} がその 4 つをすべて走査する。バッチフェッチがなければ<b>商品 N 件 → 1 + 4N クエリ</b>になる。20 件なら 81 回。コードには {@code //@BatchSize} がコメントアウトされたまま残っていた — 誰かが問題を知っていたが有効にしなかった痕跡である。
  */
 @Tag("containers")
 @Testcontainers
@@ -44,6 +48,7 @@ import jakarta.persistence.PersistenceContext;
 class ProductQueryCountTest {
 
     /** 목록 한 페이지 크기. 실제 API 기본값과 같은 규모로 잡는다. */
+    // [JA] 一覧 1 ページのサイズ。実際の API デフォルト値と同じ規模にする。
     private static final int PRODUCTS = 20;
 
     @Container
@@ -74,6 +79,7 @@ class ProductQueryCountTest {
         registry.add("spring.data.redis.ssl.enabled", () -> false);
 
         // 통계 수집을 켜야 쿼리 개수를 셀 수 있다.
+        // [JA] 統計収集を有効にしないとクエリ数を数えられない。
         registry.add("spring.jpa.properties.hibernate.generate_statistics", () -> true);
 
         registry.add("eureka.client.register-with-eureka", () -> false);
@@ -97,6 +103,7 @@ class ProductQueryCountTest {
     }
 
     // catalog 는 @Primary 로 선언된 기본 EMF 하나를 쓴다(batch/config/DataSourceConfig).
+    // [JA] catalog は @Primary で宣言されたデフォルト EMF 一つを使う(batch/config/DataSourceConfig)。
     @Autowired
     private EntityManagerFactory emf;
 
@@ -119,6 +126,8 @@ class ProductQueryCountTest {
     /**
      * 검색이 "다른 상위의 하위" 조합을 DB 에 묻지 않게 쓰는 JPQL(SearchService.subcategoryOutsideCategory) — 실제 스키마에서
      * 상위 id 를 돌려주고, 없는 하위는 비어 있다.
+     *
+     * <p>[JA] 検索が「別の親カテゴリのサブカテゴリ」の組み合わせを DB に問い合わせないために使う JPQL(SearchService.subcategoryOutsideCategory) — 実スキーマで親 id を返し、存在しないサブカテゴリは空である。
      */
     @Test
     @DisplayName("하위 카테고리의 상위 id 조회 — 있으면 그 상위, 없으면 비어 있다")
@@ -142,6 +151,9 @@ class ProductQueryCountTest {
         // 상한의 근거: 목록 1 + LAZY 컬렉션 4종을 배치 페치로 각 1~2회.
         // 배치 페치가 꺼지면 1 + 4×N 이 되어 20건에서 81 을 넘는다 — 그때 이 테스트가 깨진다.
         // 상한을 20(=상품 수)으로 잡아, "상품당 최소 한 번"이라는 N+1 의 정의에 걸리게 한다.
+        // [JA] 上限の根拠: 一覧 1 + LAZY コレクション 4 種をバッチフェッチでそれぞれ 1〜2 回。
+        //      バッチフェッチが無効になると 1 + 4×N になり 20 件で 81 を超える — そのときこのテストが壊れる。
+        //      上限を 20(= 商品数)にして、「商品ごとに最低 1 回」という N+1 の定義に引っかかるようにする。
         assertThat(queries)
                 .as("""
                     상품 %d건 조회에 SQL %d회. 상품 수에 비례해 늘고 있다면 N+1 이다 —
@@ -156,6 +168,8 @@ class ProductQueryCountTest {
     void lazyCollectionsDeclareBatchFetching() {
         // 위 테스트는 데이터가 적으면 우연히 통과할 수 있다. 이 검사는 데이터와 무관하게
         // **선언 자체**를 본다 — 주석 처리된 @BatchSize 가 다시 꺼지면 여기서 잡힌다.
+        // [JA] 上のテストはデータが少ないと偶然通ることがある。この検査はデータと無関係に
+        //      **宣言そのもの**を見る — コメントアウトされた @BatchSize が再び無効になればここで捕まる。
         var product = emf.getMetamodel().entity(com.project.catalog_service.model.Product.class);
         assertThat(product).isNotNull();
 
@@ -181,6 +195,7 @@ class ProductQueryCountTest {
         long first = stats().getPrepareStatementCount();
 
         // 같은 호출을 반복해도 쿼리 수가 늘지 않아야 한다(영속성 컨텍스트/캐시 무관하게 상한 유지).
+        // [JA] 同じ呼び出しを繰り返してもクエリ数が増えてはならない(永続性コンテキスト/キャッシュに関係なく上限を維持)。
         stats().clear();
         productService.getProducts();
         long second = stats().getPrepareStatementCount();
@@ -199,6 +214,12 @@ class ProductQueryCountTest {
         //   · 색상 필터 패싯(frontend/ColorsFilter.jsx)이 무의미해진다 — 색상당 상품 1개.
         // 시드가 SKU 509 = 색상 509 로 제약을 정확히 채우고 있어, 상품을 하나만 더 넣어도
         // 적재가 막혔다(docs/19 §5.1). 매핑과 스키마 양쪽을 검사한다.
+        // [JA] ProductSku.color が @OneToOne だと JPA が color_id に UNIQUE をかけ、
+        //      **色の行一つを一つの SKU だけ**が参照できるようになる。すると
+        //      ・カタログ全体の SKU 数が色の行数で上限がかかり
+        //      ・色フィルタのファセット(frontend/ColorsFilter.jsx)が無意味になる — 色ごとに商品 1 つ。
+        //      シードが SKU 509 = 色 509 で制約をちょうど満たしており、商品を一つ追加するだけで
+        //      投入が止まった(docs/19 §5.1)。マッピングとスキーマの両方を検査する。
         java.lang.reflect.Field colour;
         try {
             colour = com.project.catalog_service.model.ProductSku.class.getDeclaredField("color");
@@ -215,6 +236,8 @@ class ProductQueryCountTest {
 
         // 선언만으로는 부족하다 — 기존 DB 에 남아 있는 UNIQUE 제약도 확인한다.
         // (Hibernate 의 ddl-auto: update 는 제약을 **지우지 않는다**. V4 마이그레이션이 지운다.)
+        // [JA] 宣言だけでは不十分 — 既存 DB に残っている UNIQUE 制約も確認する。
+        //      (Hibernate の ddl-auto: update は制約を**削除しない**。V4 マイグレーションが削除する。)
         Long uniques = (Long) em.createNativeQuery("""
                 SELECT count(*) FROM pg_constraint con
                 JOIN pg_class rel ON rel.oid = con.conrelid
@@ -259,6 +282,7 @@ class ProductQueryCountTest {
         }
 
         // getProducts() 는 캐시(@Cacheable "products")를 거쳐 SQL 을 세지 못한다 — 같은 일(읽고 매퍼로 변환)을 트랜잭션 하나에서.
+        // [JA] getProducts() はキャッシュ(@Cacheable "products")を経由するので SQL を数えられない — 同じ処理(読んでマッパーで変換)をトランザクション一つで行う。
         List<Long> ids = java.util.stream.LongStream.range(9000, 9000 + PRODUCTS).boxed().toList();
         stats().clear();
         List<com.project.common.dto.ProductDto> listed = new org.springframework.transaction.support.TransactionTemplate(txManager)
@@ -271,6 +295,8 @@ class ProductQueryCountTest {
                 .as("하위 카테고리가 응답에 실린다(지연 로딩이어도 같은 트랜잭션에서 채운다)").isEqualTo(PRODUCTS);
         // 실측(2026-10): 연결 행 연관이 EAGER 일 때 6, LAZY + Subcategory · Category 의 @BatchSize 로 7. LAZY 만 두고 배치가 없으면 11 —
         // 서로 다른 하위 카테고리 · 카테고리마다 SELECT 가 나간다. 상한은 상품 수(N+1 의 정의).
+        // [JA] 実測(2026-10): 連結行の関連が EAGER のとき 6、LAZY + Subcategory・Category の @BatchSize で 7。LAZY だけでバッチがなければ 11 —
+        //      異なるサブカテゴリ・カテゴリごとに SELECT が出る。上限は商品数(N+1 の定義)。
         assertThat(queries).as("상품 %d건에 SQL %d회", PRODUCTS, queries).isLessThan(PRODUCTS);
     }
 }

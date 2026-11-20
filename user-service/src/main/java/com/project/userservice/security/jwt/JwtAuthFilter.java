@@ -85,6 +85,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // 유효한 액세스 토큰일 때만 인증을 세운다. 아니면 인증 없이 다음으로 넘긴다 — 보호된 경로는 SecurityConfig 의
         // JwtAuthEntryPoint 가 401 을 주고(화면은 401 이면 토큰을 갱신한다), 공개 경로(가입·비밀번호 찾기)는 오래된 쿠키가
         // 실려 와도 막히지 않는다.
+        // [JA] 🐛 期限チェックがコメントアウトされており、getIdFromJwtToken は期限切れ例外を飲み込んでいた — user-service は期限切れの
+        //         アクセストークンを有効として受け付けていた。リフレッシュトークンもアクセスとして通っていた(JwtUtils.TOKEN_TYPE_CLAIM)。
+        //      有効なアクセストークンのときだけ認証を立てる。そうでなければ認証なしで次へ渡す — 保護された経路は SecurityConfig の
+        //      JwtAuthEntryPoint が 401 を返し(画面は 401 ならトークンを更新する)、公開経路(登録・パスワード再設定)は古い Cookie が
+        //      載ってきても塞がれない。
         if (accessToken != null
                 && jwtUtils.validateJwtToken(accessToken) == TokenStatus.VALID
                 && jwtUtils.isAccessToken(accessToken)
@@ -98,6 +103,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (RuntimeException e) {
                 // 탈퇴 등으로 사용자를 찾지 못했다 — 인증 없이 넘긴다.
+                // [JA] 退会などでユーザーが見つからなかった — 認証なしで渡す。
                 SecurityContextHolder.clearContext();
             }
         }

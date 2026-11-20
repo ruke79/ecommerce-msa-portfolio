@@ -18,6 +18,7 @@ export const loadCategories = async(setCategories) => {
 
        } catch(error) {
            // 컴포넌트 밖의 함수다 — 토스트를 띄우는 그 순간의 언어로 만든다.
+           // [JA] コンポーネント外の関数である — トーストを出すその瞬間の言語で作る。
            toast.error(translate("admin.category.load_failed"));
            
        }  

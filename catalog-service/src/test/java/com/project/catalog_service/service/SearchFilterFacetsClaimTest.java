@@ -46,6 +46,7 @@ class SearchFilterFacetsClaimTest {
     private static final long NOW = 1_800_000_000_000L;
 
     /** Redis 의 SET NX 와 같은 뜻 — 파드들이 함께 쓴다. */
+    // [JA] Redis の SET NX と同じ意味 — Pod 同士で共有する。
     static final class SharedClaim implements FacetRefreshClaim {
         final Map<String, String> held = new ConcurrentHashMap<>();
 
@@ -80,6 +81,7 @@ class SearchFilterFacetsClaimTest {
     }
 
     /** 계산 횟수를 세고, 풀어 줄 때까지 멈춰 있는 질의(브랜드 DISTINCT 22초 대역). */
+    // [JA] 計算回数を数え、解放するまで止まっているクエリ(ブランド DISTINCT 22 秒の代役)。
     private static Supplier<List<String>> slowQuery(AtomicInteger runs, CountDownLatch started, CountDownLatch release) {
         return () -> {
             runs.incrementAndGet();
@@ -152,7 +154,7 @@ class SearchFilterFacetsClaimTest {
         FacetRefreshClaim writesThenGrants = new FacetRefreshClaim() {
             @Override
             public String tryClaim(String flightKey) {
-                redisCache.getCache("colors_cache").put("3", new FacetEntry(new java.util.ArrayList<>(List.of("Red")), NOW));   // 다른 파드가 막 끝냈다
+                redisCache.getCache("colors_cache").put("3", new FacetEntry(new java.util.ArrayList<>(List.of("Red")), NOW));   // 다른 파드가 막 끝냈다 ／ [JA] 別の Pod がちょうど終えた
                 return "t";
             }
 

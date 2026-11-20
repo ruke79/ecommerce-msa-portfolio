@@ -42,6 +42,7 @@ const ChatUserinfo = () => {
 
   const { user } = useAuthContext();
   // 이메일이 없는 토큰(소셜 로그인 등)이면 빈 칸 대신 아무것도 그리지 않는다 — 예전에는 목록 위에 큰 빈 줄이 남았다.
+  // [JA] メールのないトークン(ソーシャルログインなど)なら空欄ではなく何も描かない — 以前は一覧の上に大きな空行が残った。
   if (!user?.email) return null;
 
   return (

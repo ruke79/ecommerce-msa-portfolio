@@ -44,6 +44,11 @@ import com.project.common.dto.cart.request.CartRequest;
  *
  * <p>담기는 새 줄을 장바구니 컬렉션에 더하기만 하고 저장은 연쇄(cascade)에 맡겼다. 응답(같은 트랜잭션의 메모리 상태)에는 줄이 보이지만
  * 다음 요청이 DB 에서 읽으면 없었다 — 장바구니 화면이 서버 것으로 바꾸는 순간 사라졌다. 목(mock) 저장소 테스트로는 보이지 않는다.
+ *
+ * <p>[JA] 実際の JPA(Hibernate + H2)で — 追加・チェックアウトが <b>DB に残るか</b>。リクエストごとにトランザクションを別に開く(運用のリクエスト 1 つ = トランザクション 1 つ)。
+ *      🐛 回帰対象 — 「エラーはないのに追加できない」
+ *      追加は新しい行をカートのコレクションに足すだけで、保存はカスケードに任せていた。応答(同じトランザクションのメモリ状態)には行が見えるが、
+ *      次のリクエストが DB から読むとなかった — カート画面がサーバーのものに置き換えた瞬間に消えた。モックリポジトリのテストでは見えない。
  */
 @DataJpaTest(properties = {
         "spring.flyway.enabled=false",
@@ -64,6 +69,7 @@ class CartPersistenceJpaTest {
     private CartService service;
     private TransactionTemplate tx;
     /** catalog 를 부를 때마다 — 그때 트랜잭션이 열려 있었는가(B-87). */
+    // [JA] catalog を呼ぶたびに — そのときトランザクションが開いていたか(B-87)。
     private final List<Boolean> catalogInTx = new ArrayList<>();
     private static long nextUser = 1000;
     private long userId;
@@ -170,6 +176,7 @@ class CartPersistenceJpaTest {
     }
 
     /** 🐛 화면이 만든 _uid 가 겹쳤다(이름이 같은 다른 상품) — 하나를 고르면 전부 선택됐다. 식별자는 줄 id 다. */
+    // [JA] 🐛 画面が作った _uid が重複した(名前が同じ別の商品) — 1 つを選ぶとすべて選択された。識別子は行 id である。
     @Test
     @DisplayName("🔴 화면이 준 _uid 가 겹쳐도 줄마다 다른 식별자(줄 id)로 돌려주고, 하나만 빼면 나머지는 남는다")
     void lineIdentifiersAreUnique() {
@@ -189,6 +196,10 @@ class CartPersistenceJpaTest {
      * 트랜잭션 밖에서 읽은 장바구니도 줄을 쓸 수 있다(findByUserId 의 @EntityGraph).
      *
      * <p>🐛 예전에는 담기 · 수량 · 저장 · 조회가 트랜잭션 안에서 catalog 를 불렀고, 커밋 뒤 캐시 갱신도 커넥션을 쥔 채 catalog 를 불렀다.
+     *
+     * <p>[JA] 🔴 B-87: 運用と同様に — リクエストトランザクションなしで(open-in-view オフ)サービスが自ら短いトランザクションを開く。catalog はその外でのみ呼び、
+     *      トランザクションの外で読んだカートも行を使える(findByUserId の @EntityGraph)。
+     *      🐛 以前は追加 · 数量 · 保存 · 照会がトランザクションの中で catalog を呼び、コミット後のキャッシュ更新もコネクションを握ったまま catalog を呼んでいた。
      */
     @Test
     @DisplayName("🔴 B-87: 담기 · 수량 · 저장 · 조회 · 체크아웃의 catalog 호출은 트랜잭션 밖 — 그래도 DB 에 남고 줄을 읽는다")

@@ -7,6 +7,12 @@
 #  - 컨테이너에서 호스트의 서비스에 접근하기 위해 host.docker.internal 을 사용한다
 #    (docker-compose-observability.yml 의 extra_hosts 참조). 서비스가 컨테이너/다른 호스트에
 #    있으면 타깃 주소만 바꾸면 된다.
+# [JA] Prometheus のスクレイプ設定(docs/03 付録「観測指標チェックリスト」の収集器の役割)。
+#      前提: 各サービスは application-common.yml で /actuator/prometheus をすでに公開している。サービスは独自
+#      TLS(HTTPS、自己署名)で起動するので scheme: https + insecure_skip_verify で収集する(運用では私設 CA を ca_file
+#      で信頼させ skip_verify を外すこと)。コンテナからホストのサービスにアクセスするため host.docker.internal
+#      を使う(docker-compose-observability.yml の extra_hosts 参照)。サービスがコンテナ/別ホストにあればターゲットアド
+#      レスだけ変えればよい。
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -48,11 +54,15 @@ scrape_configs:
   # 추적에서 뽑은 RED 지표(docs/63) — Collector 의 span_metrics 커넥터가 :8889 로 낸다.
   # 서비스 이름은 service_name 라벨이다(job 은 이 작업 이름). OpenMetrics 로 긁어야 exemplar 가 온다 —
   # Prometheus 기본 협상이 OpenMetrics 를 먼저 청한다.
+  # [JA] トレースから抜き出した RED 指標(docs/63) — Collector の span_metrics コネクタが :8889 で出す。サービス名は
+  #      service_name ラベルだ(job はこのジョブ名)。OpenMetrics で収集してこそ exemplar が来る — Prometheus
+  #      の既定のネゴシエーションが OpenMetrics を先に要求する。
   - job_name: "otel-span-metrics"
     static_configs:
       - targets: ["otel-collector:8889"]
 
   # 추적 파이프라인 자신의 건강 — 버린 스팬·내보내기 실패(alert-rules.yml 의 tracing-pipeline).
+  # [JA] トレースパイプライン自身の健全性 — 捨てたスパン・エクスポート失敗(alert-rules.yml の tracing-pipeline)。
   - job_name: "otel-collector"
     static_configs:
       - targets: ["otel-collector:8888"]
@@ -62,6 +72,8 @@ scrape_configs:
 
   # 경보 전달 자신의 건강 — Discord 로 보낸 시도 · 실패(alert-rules.yml 의 AlertDeliveryFailing, docs/22 §1).
   # 🐛 2026-10-20 전에는 긁지 않아 9-24 부터 전달 0건이었던 것을 아무 데서도 볼 수 없었다.
+  # [JA] 警報配信自身の健全性 — Discord へ送った試行・失敗(alert-rules.yml の AlertDeliveryFailing, docs/22 §1)。
+  #      🐛 2026-10-20 より前は収集しておらず、9-24 から配信 0 件だったことをどこからも見られなかった。
   - job_name: "alertmanager"
     static_configs:
       - targets: ["alertmanager:9093"]

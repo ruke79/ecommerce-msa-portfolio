@@ -38,6 +38,10 @@ public class KafkaConsumerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} 1 か所で作る。
+     *      以前はこのクラスごとに同じ 6 行を複製し、値が空でもそのまま入れていたため
+     *      SSL を有効にした瞬間に空のパスで死ぬ組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -47,6 +51,7 @@ public class KafkaConsumerConfig {
     }
 
     // 재시도+DLT 격리 (KafkaDltConfig, docs/11 §3) — poison message 파티션 블로킹 방지
+    // [JA] リトライ + DLT 隔離(KafkaDltConfig, docs/11 §3) — poison message によるパーティションのブロッキング防止
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.kafka.listener.DefaultErrorHandler kafkaErrorHandler;
     @Value("${kafka.url}")
@@ -54,6 +59,8 @@ public class KafkaConsumerConfig {
 
     // (예전의 paymentFailedConsumerFactory · paymentFailedListenerContainerFactory 는 지웠다 — payment-failed 를 듣는 리스너가 없었다.
     //  결제 실패 보상은 cart-rollback 이 한다.)
+    // [JA] (以前の paymentFailedConsumerFactory · paymentFailedListenerContainerFactory は消した — payment-failed を聞くリスナーがなかった。
+    //       決済失敗の補償は cart-rollback が行う。)
 
     /**
      * 오프셋이 없을 때(그룹이 처음 뜸 · 무활동 7일로 오프셋 만료) — 처음부터 읽는다.
@@ -77,8 +84,9 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, CouponUseRequest> couponUseConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 CouponUseRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
+        // [JA] ヘッダ(__TypeId__)があれば使い、なければ CouponUseRequest として読む — CDC リレーはヘッダを載せられない(docs/38 §5 A3)。
         JsonDeserializer<CouponUseRequest> deserializer = new JsonDeserializer<>(CouponUseRequest.class, true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO パッケージのみ
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -95,6 +103,7 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 같은 DTO 로 — 롤링 배포·CDC·e2e 의 JSON 도 읽는다(docs/38 §1.16).
+                        // [JA] Avro または JSON を同じ DTO に — ローリングデプロイ・CDC・e2e の JSON も読む(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new CouponUseRequestAvroMapping())));
 
     }
@@ -113,8 +122,9 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, CartEmptyRequest> cartEmptyConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 CartEmptyRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
+        // [JA] ヘッダ(__TypeId__)があれば使い、なければ CartEmptyRequest として読む — CDC リレーはヘッダを載せられない(docs/38 §5 A3)。
         JsonDeserializer<CartEmptyRequest> deserializer = new JsonDeserializer<>(CartEmptyRequest.class, true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO パッケージのみ
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -132,6 +142,7 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 같은 DTO 로 — 롤링 배포·CDC·e2e 의 JSON 도 읽는다(docs/38 §1.16).
+                        // [JA] Avro または JSON を同じ DTO に — ローリングデプロイ・CDC・e2e の JSON も読む(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new CartEmptyRequestAvroMapping())));
     }
 
@@ -149,8 +160,9 @@ public class KafkaConsumerConfig {
     @Bean
     public ConsumerFactory<String, CartRollbackRequest> cartRollbackConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 CartRollbackRequest 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
+        // [JA] ヘッダ(__TypeId__)があれば使い、なければ CartRollbackRequest として読む — CDC リレーはヘッダを載せられない(docs/38 §5 A3)。
         JsonDeserializer<CartRollbackRequest> deserializer = new JsonDeserializer<>(CartRollbackRequest.class, true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO パッケージのみ
 
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
@@ -168,6 +180,7 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 같은 DTO 로 — 롤링 배포·CDC·e2e 의 JSON 도 읽는다(docs/38 §1.16).
+                        // [JA] Avro または JSON を同じ DTO に — ローリングデプロイ・CDC・e2e の JSON も読む(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new CartRollbackRequestAvroMapping())));
     }
 }

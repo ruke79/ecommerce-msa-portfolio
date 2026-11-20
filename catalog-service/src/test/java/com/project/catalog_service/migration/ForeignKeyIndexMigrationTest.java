@@ -53,10 +53,12 @@ class ForeignKeyIndexMigrationTest {
     }
 
     /** 부모를 지울 때 Postgres 가 자식 표에 묻는 것과 같은 모양(RI 트리거 — 값을 모르는 일반 계획). */
+    // [JA] 親を消すとき Postgres が子テーブルに問い合わせるのと同じ形(RI トリガー — 値を知らない汎用プラン)。
     private static final String RI_CHECK = "prepare ri_check(bigint) as select 1 from only product.product_subcategory x "
             + "where product_id = $1 for key share of x";
 
     /** 인덱스의 앞 열이 그 외래 키의 열이 아닌 외래 키(부분 인덱스는 치지 않는다). Spring Batch 의 meta 스키마는 그 쪽 DDL 이라 뺀다. */
+    // [JA] インデックスの先頭列がその外部キーの列でない外部キー(部分インデックスは数えない)。Spring Batch の meta スキーマはそちらの DDL なので除く。
     private static final String UNINDEXED_FKS = """
             select n.nspname || '.' || r.relname || '(' || (
                      select string_agg(a.attname, ', ' order by k.ord)
@@ -79,6 +81,7 @@ class ForeignKeyIndexMigrationTest {
         flyway("21").migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // 데이터 규모 정리의 모양 — 상품마다 분류 연결 하나(10만)
+            // [JA] データ規模整理の形 — 商品ごとに分類の紐付け一つ(10 万)
             exec(db, "insert into product.category (category_id, category_name, slug) values (1, 'c', 'c')");
             exec(db, "insert into product.subcategory (subcategory_id, category_id, slug, subcategory_name) "
                     + "select g, 1, 's-' || g, 's' || g from generate_series(1, 40) g");

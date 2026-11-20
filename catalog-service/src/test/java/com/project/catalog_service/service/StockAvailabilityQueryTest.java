@@ -36,7 +36,10 @@ import jakarta.persistence.PersistenceContext;
  * 재고 반영이 SQL 하나다(예전 둘 — 2026-10-24 프로파일에서 catalog CPU 의 20%, docs/83 §5). UNION ALL 의 열 형(bigint · varchar)이 맞는지는
  * 실제 DB 에서만 드러난다.
  *
- * <p>[JA] 在庫表示の合わせた照会を実際の PostgreSQL で — 以前の二つの照会と同じ値で、一覧一ページの在庫反映が SQL 一つ。
+ * <p>[JA] 在庫表示の合わせた照会({@code ProductSizeRepository#liveAndHeld})— 実際の PostgreSQL(Flyway で上げたスキーマ · シード)で。
+ * 守ること: ① 以前の二つの照会(サイズ別の現在数量 · 生きている予約の合計)を合わせたものと同じ値 — 期限切れ · 確定済みの予約は除かれる。
+ * ② 一覧一ページの在庫反映が SQL 一つ(以前は二つ — 2026-10-24 プロファイルで catalog CPU の 20%、docs/83 §5)。UNION ALL の列型
+ * (bigint · varchar)が合うかは実際の DB でしか分からない。
  */
 @Tag("containers")
 @Testcontainers
@@ -98,6 +101,7 @@ class StockAvailabilityQueryTest {
     private StockAvailability availability;
 
     /** 상품 셋(색상 하나 · 사이즈 M · L) — 한 번만 넣는다. 각 상품의 첫 옵션 {@code [product_id, color_id, size]}. */
+    // [JA] 商品 3 つ(色一つ・サイズ M・L) — 一度だけ入れる。各商品の最初のオプション {@code [product_id, color_id, size]}。
     private static List<Object[]> seeded;
 
     private static synchronized List<Object[]> options() {
@@ -130,6 +134,7 @@ class StockAvailabilityQueryTest {
     }
 
     /** 예약 행 — 앱의 트랜잭션과 상관없이 바로 넣는다(데이터소스가 둘이라 트랜잭션 관리자도 여럿이다). */
+    // [JA] 予約行 — アプリのトランザクションと関係なく直接入れる(データソースが二つなのでトランザクションマネージャも複数ある)。
     private void reserve(long orderId, Object[] option, int qty, String status, Instant expiresAt) {
         try (var c = postgres.createConnection(""); var ps = c.prepareStatement("""
                 insert into product.stock_reservation (order_id, product_id, color_id, size, qty, status, expires_at)
@@ -149,6 +154,7 @@ class StockAvailabilityQueryTest {
     }
 
     /** 예전 두 질의 그대로 — 대조 기준. */
+    // [JA] 以前の二つのクエリそのまま — 対照の基準。
     @SuppressWarnings("unchecked")
     private Map<String, Long> legacy(List<Long> ids, Instant now) {
         Map<String, Long> out = new HashMap<>();
@@ -185,8 +191,8 @@ class StockAvailabilityQueryTest {
         Instant now = Instant.now();
         reserve(910001, options.get(0), 2, "HELD", now.plus(30, ChronoUnit.MINUTES));
         reserve(910002, options.get(0), 1, "HELD", now.plus(10, ChronoUnit.MINUTES));
-        reserve(910003, options.get(0), 5, "HELD", now.minus(1, ChronoUnit.MINUTES));       // 만료
-        reserve(910004, options.get(1), 4, "COMMITTED", now.plus(30, ChronoUnit.MINUTES));  // 확정
+        reserve(910003, options.get(0), 5, "HELD", now.minus(1, ChronoUnit.MINUTES));       // 만료 ／ [JA] 期限切れ
+        reserve(910004, options.get(1), 4, "COMMITTED", now.plus(30, ChronoUnit.MINUTES));  // 확정 ／ [JA] 確定
         List<Long> ids = new ArrayList<>();
         for (Object[] o : options) {
             ids.add(((Number) o[0]).longValue());

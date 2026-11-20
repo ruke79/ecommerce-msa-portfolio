@@ -38,14 +38,20 @@ public class PaymentRequestKafkaPublisher {
 
     // 발행을 트랜잭션 안에서 기다리므로, 이 값이 곧 행 잠금을 쥐고 있는 최대 시간이다.
     // 너무 크면 브로커 장애 때 커넥션이 오래 묶이고, 너무 작으면 정상 지연에도 재시도가 늘어난다.
+    // [JA] 発行をトランザクションの中で待つので、この値がそのまま行ロックを握る最大時間である。
+    //      大きすぎるとブローカー障害時にコネクションが長く拘束され、小さすぎると通常の遅延でも再試行が増える。
     @Value("${order-service.outbox-publish-timeout-ms:5000}")
     private long publishTimeoutMs;
 
     /**
      * 아웃박스 이벤트 하나를 Kafka 로 발행한다.
      *
+     * <p>[JA] アウトボックスイベント一つを Kafka に発行する。
+     *
      * @return 이 이벤트의 상태가 <b>확정</b>되었으면 true(COMPLETED 또는 재시도 불가로 FAILED),
      *         일시적 실패라 다음 폴링에서 다시 시도해야 하면 false.
+     *         [JA] このイベントの状態が<b>確定</b>したら true(COMPLETED または再試行不可で FAILED)、
+     *              一時的な失敗で次のポーリングで再試行すべきなら false。
      *
      * <p><b>동기 발행인 이유.</b> 예전에는 {@code whenComplete} 콜백에서 상태를 갱신했다. 그
      * 콜백은 Kafka 프로듀서 IO 스레드에서, <b>스케줄러 트랜잭션이 이미 커밋된 뒤</b> 실행된다.
@@ -61,6 +67,16 @@ public class PaymentRequestKafkaPublisher {
      * <p><b>일시적 실패를 FAILED 로 적지 않는 이유.</b> 스케줄러는 STARTED 만 조회한다. 브로커가
      * 잠깐 흔들렸다고 FAILED 로 적으면 그 이벤트는 <b>영원히 재시도되지 않는다</b> — 결제 요청이
      * 조용히 사라진다. 상태를 그대로 두면 다음 폴링이 자연히 재시도한다.
+     *
+     * <p>[JA] <b>同期発行の理由。</b>以前は {@code whenComplete} コールバックで状態を更新していた。その
+     * コールバックは Kafka プロデューサの IO スレッドで、<b>スケジューラのトランザクションが既にコミットされた後</b>に実行される。
+     * 結果は二つだった: 行ロックが状態更新の<b>前に</b>外れる → 別のレプリカが同じ行を STARTED と見て
+     * 再び発行する。SKIP LOCKED だけではこの窓を防げない。{@code save()} がトランザクションの外で呼ばれる →
+     * 自分のトランザクションを開いて何とかなるが、照会と更新がアトミックでない。
+     * 発行をトランザクションの中で待てば、ロックが状態確定まで保持される。
+     * <b>一時的な失敗を FAILED と書かない理由。</b>スケジューラは STARTED だけを照会する。ブローカーが
+     * 少し揺れただけで FAILED と書くと、そのイベントは<b>永遠に再試行されない</b> — 決済要求が
+     * 静かに消える。状態をそのままにしておけば次のポーリングが自然に再試行する。
      */
     public boolean publish(PaymentOutboxEvent outboxEvent, BiConsumer<PaymentOutboxEvent, OutboxStatus> outboxCallback) {
 
@@ -71,9 +87,14 @@ public class PaymentRequestKafkaPublisher {
                 // 키 = 주문 id. 키가 없으면 파티션이 둘 이상일 때 같은 주문의 이벤트가 서로 다른
                 // 파티션으로 흩어져 순서가 깨진다. 지금은 토픽이 파티션 하나라 드러나지 않지만,
                 // 파티션을 늘리는 순간 조용히 깨지는 종류다(docs/38 §1.15).
+                // [JA] キー = 注文 id。キーがないとパーティションが二つ以上の時、同じ注文のイベントが別々の
+                //      パーティションに散らばり順序が崩れる。いまはトピックがパーティション一つなので表に出ないが、
+                //      パーティションを増やした瞬間に静かに壊れる種類である(docs/38 §1.15)。
                 .setHeader(KafkaHeaders.KEY, String.valueOf(payload.getOrderId()))
                 // 🔒 Authorization 헤더는 싣지 않는다 — 예전에는 사용자 토큰 원문이 실렸고 받는 쪽은 "있는가" 만 봤다
                 //    (docs/54 §1.7). 토픽에 쓸 수 있는 주체는 브로커 ACL 이 정한다.
+                // [JA] 🔒 Authorization ヘッダは載せない — 以前はユーザートークンの原文が載り、受け取る側は「あるか」だけを見ていた
+                //      (docs/54 §1.7)。トピックに書ける主体はブローカーの ACL が決める。
                 .build();
 
         try {
@@ -94,6 +115,7 @@ public class PaymentRequestKafkaPublisher {
 
         } catch (TimeoutException | ExecutionException | KafkaException e) {
             // 일시적 실패로 본다 — 상태를 건드리지 않으면 다음 폴링이 다시 집는다.
+            // [JA] 一時的な失敗と見る — 状態に触れなければ次のポーリングが再び拾う。
             log.error("Failed to send PaymentRequest for order id: {} — will retry next poll. Error: {}",
                     payload.getOrderId(), e.getMessage());
             return false;

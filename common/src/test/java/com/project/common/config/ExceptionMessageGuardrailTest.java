@@ -23,16 +23,23 @@ import org.junit.jupiter.api.Test;
  * {@code ClientMessage.of(e)} 를 거친다 — 로그에는 그대로 써도 된다.
  *
  * <p>검사 단위는 문장(세미콜론까지)이다. 여러 줄에 걸친 {@code log.warn(...)} 도 로그로 본다.
+ *
+ * <p>[JA] コントローラー・例外ハンドラーが例外の文言を<b>そのまま</b>レスポンスに載せないか(docs/57 §1)。
+ * {@code catch (RuntimeException e)} はサービスが書いた文言と JDBC・JPA・Feign の文言を一緒に受け取る。
+ * {@code e.getMessage()} を本文に載せると SQL・制約名・入力値がクライアントに行く。文言は {@code ClientMessage.of(e)} を通す — ログにはそのまま書いてよい。
+ * 検査単位は文(セミコロンまで)だ。複数行にわたる {@code log.warn(...)} もログとみなす。
  */
 @DisplayName("가드레일 · 예외 문구를 응답에 그대로 싣지 않는다")
 class ExceptionMessageGuardrailTest {
 
     /** 예외의 문구를 읽는 호출. 검증 위반({@code violation.getMessage()})은 애너테이션에 우리가 쓴 문구라 뺀다. */
+    // [JA] 例外の文言を読む呼び出し。検証違反({@code violation.getMessage()})はアノテーションに自分たちが書いた文言なので除く。
     private static final Pattern MESSAGE_CALL = Pattern.compile("(?<!violation)\\.get(Localized)?Message\\(\\)");
     private static final Pattern LOG_CALL =
             Pattern.compile("(?s).*\\b(log|logger|LOG|LOGGER)\\s*\\.\\s*(trace|debug|info|warn|error)\\s*\\(.*");
 
     /** 문자열 리터럴 안의 {@code ; { }} 는 경계로 보지 않고 문장을 자른다 — 로그 형식 문자열의 "{}" 때문이다. */
+    // [JA] 文字列リテラル内の {@code ; { }} は境界とみなさずに文を切る — ログ形式文字列の "{}" のためだ。
     private static List<String> statements(String body) {
         List<String> out = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
@@ -52,7 +59,7 @@ class ExceptionMessageGuardrailTest {
                 continue;
             }
             if (c == '/' && i + 1 < body.length() && body.charAt(i + 1) == '/') {
-                cur.setLength(cur.length() - 1);                   // 줄 끝 주석 — 안의 ' 가 문자 리터럴로 읽히면 안 된다
+                cur.setLength(cur.length() - 1);                   // 줄 끝 주석 — 안의 ' 가 문자 리터럴로 읽히면 안 된다 ／ [JA] 行末コメント — 中の ' が文字リテラルとして読まれてはいけない
                 int eol = body.indexOf('\n', i);
                 i = eol < 0 ? body.length() : eol - 1;
             } else if (c == '/' && i + 1 < body.length() && body.charAt(i + 1) == '*') {

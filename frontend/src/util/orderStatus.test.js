@@ -5,10 +5,16 @@ import { isPaid, isCanceled, isRefunded, canRequestRefund } from "util/orderStat
  *
  * `pages/profile/orders.jsx` 가 `orderStatus === "UNPAID"` 일 때 초록 체크를 그렸다.
  * 미결제가 결제 완료처럼 보이고, 실제로 결제된 주문에는 빨간 X 가 붙었다.
+ *
+ * <p>[JA] 🐛 回帰対象: **注文一覧の決済表示が逆だった。**
+ *
+ * `pages/profile/orders.jsx` が `orderStatus === "UNPAID"` のときに緑のチェックを描いていた。
+ * 未決済が決済完了のように見え、実際に決済された注文には赤い X が付いた。
  */
 describe("isPaid — 결제된 주문인가", () => {
   it("결제 이후 상태는 전부 결제된 것으로 본다", () => {
     // 배송 중인 주문이 "미결제"로 보이면 안 된다.
+    // [JA] 配送中の注文が「未決済」に見えてはならない。
     ["PAID", "PROCESSING", "DISPATCHED", "DELIVERED", "COMPLETED"].forEach((s) =>
       expect(isPaid(s)).toBe(true)
     );
@@ -21,6 +27,9 @@ describe("isPaid — 결제된 주문인가", () => {
   /**
    * "UNPAID 가 아니면 결제됨"으로 판정하지 않는 이유가 이것이다. OrderStatus 에는
    * 결제되지 않은 상태가 UNPAID 말고도 있다.
+   *
+   * <p>[JA] 「UNPAID でなければ決済済み」で判定しない理由がこれである。OrderStatus には
+   * UNPAID 以外にも決済されていない状態がある。
    */
   it("NOT_PROCESSED · CANCELED 도 결제되지 않았다", () => {
     expect(isPaid("NOT_PROCESSED")).toBe(false);
@@ -30,6 +39,9 @@ describe("isPaid — 결제된 주문인가", () => {
   /**
    * 새 상태가 서버에 추가됐을 때 기본값이 "결제 완료"면 결제되지 않은 주문에 초록
    * 체크가 붙는다. 안전한 쪽으로 틀려야 한다.
+   *
+   * <p>[JA] 新しい状態がサーバーに追加されたとき既定値が「決済完了」だと、決済されていない注文に緑の
+   * チェックが付く。安全な側に間違えなければならない。
    */
   it("모르는 상태는 결제되지 않은 것으로 본다", () => {
     expect(isPaid("REFUND_REQUESTED")).toBe(false);
@@ -60,6 +72,7 @@ describe("환불", () => {
   });
 
   /** 서버의 SELF_SERVICE_REFUNDABLE 과 같아야 한다 — 발송 뒤에는 버튼이 없다. */
+  // [JA] サーバーの SELF_SERVICE_REFUNDABLE と同じでなければならない — 発送後はボタンがない。
   it("발송 전(PAID · PROCESSING)에만 스스로 환불을 요청할 수 있다", () => {
     expect(canRequestRefund("PAID")).toBe(true);
     expect(canRequestRefund("PROCESSING")).toBe(true);
@@ -73,6 +86,7 @@ describe("구매 확정 (docs/25 §12)", () => {
   const { isCompleted, canConfirmPurchase } = require("util/orderStatus");
 
   /** 서버의 OrderPurchaseConfirmationService 와 같은 규칙 — 배달 완료에서만 누를 수 있다. */
+  // [JA] サーバーの OrderPurchaseConfirmationService と同じ規則 — 配達完了でのみ押せる。
   it("배달 완료(DELIVERED)에서만 구매 확정을 누를 수 있다", () => {
     expect(canConfirmPurchase("DELIVERED")).toBe(true);
     ["PAID", "PROCESSING", "DISPATCHED", "COMPLETED", "REFUNDED", "CANCELED", "NOT_PROCESSED", "UNPAID", "", null]
@@ -100,6 +114,7 @@ describe("orderRank / rankForDeliveryStage — 배송 뒤 주문이 따라왔는
   });
 
   /** 서버의 OrderDeliveryStatusService.targetOf 와 같은 대응이다. */
+  // [JA] サーバーの OrderDeliveryStatusService.targetOf と同じ対応である。
   it("배송 단계가 주문을 데려가는 자리", () => {
     expect(rankForDeliveryStage("ORDERED")).toBe(orderRank("PROCESSING"));
     ["SHIPPED", "IN_TRANSIT", "CUSTOMS", "EXCEPTION"].forEach((s) =>
@@ -110,6 +125,7 @@ describe("orderRank / rankForDeliveryStage — 배송 뒤 주문이 따라왔는
   });
 
   /** 🔴 구매 확정된 주문에 늦게 온 배송 이벤트는 "이미 따라왔다" 다 — 영원히 기다리지 않는다. */
+  // [JA] 🔴 購入確定済みの注文に遅れて来た配送イベントは「すでに追いついた」である — 永遠に待たない。
   it("주문이 더 앞서 있으면 이미 따라온 것이다", () => {
     expect(orderRank("COMPLETED") >= rankForDeliveryStage("DELIVERED")).toBe(true);
     expect(orderRank("DISPATCHED") >= rankForDeliveryStage("SHIPPED")).toBe(true);

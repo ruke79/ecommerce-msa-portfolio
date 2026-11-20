@@ -58,20 +58,24 @@ import lombok.extern.slf4j.Slf4j;
 @Component
 public class LoginRiskGuard {
 
-    static final String IP_KEY = "risk:ip:";          // + hmac(ip)    → 실패한 계정 hmac 집합(10분)
-    static final String ACCOUNT_KEY = "risk:acct:";   // + hmac(email) → 실패한 IP hmac 집합(1시간)
-    static final String GLOBAL_KEY = "risk:global:";  // + 분 번호      → 실패 수
-    static final String CHALLENGE_KEY = "risk:chal:"; // + sha256(대기 값) → uid · 코드 해시 · 시도 수
-    static final String USER_FAIL_KEY = "risk:chalfail:"; // + userId → 1시간 동안 틀린 코드 수(대기 값과 무관)
+    static final String IP_KEY = "risk:ip:";          // + hmac(ip)    → 실패한 계정 hmac 집합(10분) ／ [JA] + hmac(ip) → 失敗したアカウント hmac の集合(10 分)
+    static final String ACCOUNT_KEY = "risk:acct:";   // + hmac(email) → 실패한 IP hmac 집합(1시간) ／ [JA] + hmac(email) → 失敗した IP hmac の集合(1 時間)
+    static final String GLOBAL_KEY = "risk:global:";  // + 분 번호      → 실패 수 ／ [JA] + 分番号 → 失敗数
+    static final String CHALLENGE_KEY = "risk:chal:"; // + sha256(대기 값) → uid · 코드 해시 · 시도 수 ／ [JA] + sha256(待機値) → uid・コードのハッシュ・試行数
+    static final String USER_FAIL_KEY = "risk:chalfail:"; // + userId → 1시간 동안 틀린 코드 수(대기 값과 무관) ／ [JA] + userId → 1 時間に間違えたコードの数(待機値と無関係)
     static final String CHALLENGE_METRIC = "auth.risk.challenge";
 
     /** 확인 대기 쿠키 — 비밀번호 단계만 통과했다는 표시. HttpOnly(JwtUtils.createCookie). */
+    // [JA] 確認待機 Cookie — パスワード段階だけを通過したという印。HttpOnly(JwtUtils.createCookie)。
     public static final String COOKIE = "PENDING_LOGIN_CHECK";
     public static final Duration CHALLENGE_TTL = Duration.ofMinutes(10);
     static final int MAX_ATTEMPTS = 5;
     /**
      * 사용자별 한도 — 대기 값당 5번만 세면 비밀번호를 아는 쪽이 다시 로그인할 때마다 새 5번을 얻는다(§15 의 2FA 와 같은 구멍).
      * 1시간에 10번이면 6자리 코드를 맞힐 확률은 시간당 10/1,000,000 이다.
+     *
+     * <p>[JA] ユーザーごとの上限 — 待機値あたり 5 回だけ数えると、パスワードを知る側が再ログインするたびに新しい 5 回を得る(§15 の 2FA と
+     * 同じ穴)。1 時間に 10 回なら 6 桁のコードを当てる確率は 1 時間あたり 10/1,000,000 である。
      */
     static final int MAX_USER_FAILURES = 10;
     static final Duration USER_FAIL_WINDOW = Duration.ofHours(1);
@@ -86,6 +90,7 @@ public class LoginRiskGuard {
     public record Passed(Long userId) implements Verification {
     }
     /** @param more 이 대기 값으로 더 시도할 수 있는가 */
+    // [JA] @param more この待機値でさらに試行できるか
     public record Wrong(boolean more) implements Verification {
     }
     public record Expired() implements Verification {
@@ -113,6 +118,7 @@ public class LoginRiskGuard {
     }
 
     // ── 실패 기록 ─────────────────────────────────────────────────────────
+    // [JA] ── 失敗の記録 ──
 
     static final Duration IP_WINDOW = Duration.ofMinutes(10);
     static final Duration ACCOUNT_WINDOW = Duration.ofHours(1);
@@ -138,6 +144,7 @@ public class LoginRiskGuard {
             """, Long.class);
 
     /** 비밀번호가 틀린 로그인 하나를 기록한다. 기록이 실패해도 로그인 응답은 바뀌지 않는다. */
+    // [JA] パスワードが間違ったログイン一つを記録する。記録が失敗してもログイン応答は変わらない。
     public void recordFailure(String email, String ip) {
         try {
             String acct = hmac(normalize(email));
@@ -154,6 +161,7 @@ public class LoginRiskGuard {
     }
 
     /** 지금 이 계정 · IP 에 걸린 신호. Redis 가 안 되면 빈 목록(막지 않는다). */
+    // [JA] 今このアカウント・IP にかかっているシグナル。Redis が使えなければ空のリスト(止めない)。
     public List<Signal> signals(String email, String ip) {
         List<Signal> out = new ArrayList<>();
         try {
@@ -176,16 +184,21 @@ public class LoginRiskGuard {
     }
 
     /** 결정 — 아는 기기면 통과, 처음 보는 기기에 신호가 하나라도 있으면 확인. */
+    // [JA] 決定 — 既知の端末なら通過、初めて見る端末にシグナルが一つでもあれば確認。
     public static boolean needsChallenge(boolean knownDevice, List<Signal> signals) {
         return !knownDevice && !signals.isEmpty();
     }
 
     // ── 확인 코드 ─────────────────────────────────────────────────────────
+    // [JA] ── 確認コード ──
 
     /**
      * 확인을 시작한다 — 코드를 만들어 해시만 저장하고, 원문 코드는 호출자가 메일로만 보낸다.
      *
+     * <p>[JA] 確認を始める — コードを作ってハッシュだけを保存し、原文のコードは呼び出し側がメールでだけ送る。
+     *
      * @return 대기 쿠키 값 · 6자리 코드. 코드는 로그 · 응답에 싣지 않는다.
+     *     [JA] 待機 Cookie の値・6 桁のコード。コードはログ・応答に載せない。
      */
     public IssuedChallenge issue(Long userId, List<Signal> signals) {
         String pending = HexFormat.of().formatHex(randomBytes(32));
@@ -203,6 +216,7 @@ public class LoginRiskGuard {
     }
 
     /** 원문 코드는 이 값에만 있다 — 메일로 보낸 뒤 버린다. */
+    // [JA] 原文のコードはこの値にだけある — メールで送った後に捨てる。
     public record IssuedChallenge(Issued issued, String code) {
     }
 
@@ -216,6 +230,14 @@ public class LoginRiskGuard {
      *
      * <p>사용자 칸의 이름은 스크립트 안에서 접두사 + uid 로 만든다(단일 Redis — 클러스터로 가면 두 키가 같은 슬롯이어야 한다).
      * KEYS[1]=대기 값 · ARGV[1]=대기 값당 한도 ARGV[2]=사용자 한도 ARGV[3]=사용자 칸 수명(초) ARGV[4]=사용자 칸 접두사
+     *
+     * <p>[JA] 待機値があれば今回の試行を数えて {tries, ユーザー枠, uid, コードのハッシュ} を返す。なければ(すでに焼いたか消した) {} —
+     * 復活させない。どちらでも上限を超えれば待機値を消して {}。
+     * uid・コードのハッシュもここで一緒に読む — 以前はユーザー枠の名前を作るためにスクリプトの前でハッシュをもう一度読んでいた。
+     * その間にキーが消えてもスクリプトが {} を返して安全に終わったが、往復が二回で「読んだ値」と「数えた対象」が分かれていた。
+     * コード欄のない(壊れた)ハッシュなら返すものが三つだけなので、呼び出し側は期限切れとみなす — 止める側である。
+     * ユーザー枠の名前はスクリプト内で接頭辞 + uid で作る(単一 Redis — クラスターに移るなら二つのキーが同じスロットでなければならない)。
+     * KEYS[1]=待機値 · ARGV[1]=待機値あたりの上限 ARGV[2]=ユーザー上限 ARGV[3]=ユーザー枠の寿命(秒) ARGV[4]=ユーザー枠の接頭辞
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static final DefaultRedisScript<List<Object>> RESERVE = new DefaultRedisScript<>("""
@@ -236,6 +258,7 @@ public class LoginRiskGuard {
                     """, (Class) List.class);
 
     /** 코드를 확인한다. 맞으면 대기 값을 태운다(한 번만 쓴다). */
+    // [JA] コードを確認する。合えば待機値を焼く(一度だけ使う)。
     public Verification verify(String pending, String code) {
         if (pending == null || pending.isBlank() || code == null) {
             return new Expired();
@@ -268,8 +291,10 @@ public class LoginRiskGuard {
             return new Wrong(more);
         }
         // 맞았다 — 이 시도는 실패가 아니다. 사용자 칸에서 되돌린다(다음 로그인의 확인 코드 몫을 깎지 않게).
+        // [JA] 合った — この試行は失敗ではない。ユーザー枠から戻す(次のログインの確認コードの分を削らないように)。
         redis.opsForValue().decrement(userKey);
         // 한 번만 — 지우기에 성공한 요청만 통과한다(같은 코드로 동시에 두 번 와도 하나만).
+        // [JA] 一度だけ — 削除に成功したリクエストだけが通る(同じコードで同時に二度来ても一つだけ)。
         Boolean deleted = redis.delete(key);
         if (!Boolean.TRUE.equals(deleted)) {
             return new Expired();
@@ -278,6 +303,7 @@ public class LoginRiskGuard {
     }
 
     // ── 도우미 ───────────────────────────────────────────────────────────
+    // [JA] ── ヘルパー ──
 
     private long count(String key) {
         String v = redis.opsForValue().get(key);
@@ -327,6 +353,7 @@ public class LoginRiskGuard {
     }
 
     /** 응답에 이 확인이 걸려 있다는 표시(쿠키 값은 응답 본문에 싣지 않는다). */
+    // [JA] 応答にこの確認がかかっているという印(Cookie の値は応答本文に載せない)。
     public static Optional<String> cookieValue(jakarta.servlet.http.HttpServletRequest request) {
         if (request.getCookies() == null) {
             return Optional.empty();

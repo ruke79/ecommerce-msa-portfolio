@@ -83,6 +83,7 @@ const authReducer = (state, action) => {
 
 export const ContextProvider = ({ children }) => {
   // 인증 상태는 전적으로 메모리(reducer)에 보관한다. (localStorage 조회 제거)
+  // [JA] 認証状態は完全にメモリ(reducer)に保持する。(localStorage の参照を削除)
   const [state, dispatch] = React.useReducer(authReducer, initialState);
 
   // 탭 간 동기화(util/authSync) — 로그아웃은 "로그인돼 있던 탭이 로그아웃할 때" 만 알린다. 처음 열린 탭의 복구 실패(쿠키 없음)까지
@@ -93,6 +94,8 @@ export const ContextProvider = ({ children }) => {
 
   /**
    * @param options.broadcast false 면 다른 탭에 알리지 않는다 — 다른 탭의 알림을 받아 따라 할 때(알림이 되돌아오지 않게)
+   *
+   * [JA] @param options.broadcast false なら他のタブに知らせない — 他のタブの通知を受けて追従するとき(通知が跳ね返らないように)
    */
   const login = React.useCallback((user, token, expiresAt, { broadcast = true } = {}) => {
     dispatch({
@@ -104,6 +107,7 @@ export const ContextProvider = ({ children }) => {
       },
     });
     // 갱신마다 알린다 — 받은 탭 중 로그아웃 상태인 탭만 움직인다(같은 사용자로 로그인된 탭은 무시한다).
+    // [JA] 更新のたびに知らせる — 受け取ったタブのうちログアウト状態のタブだけが動く(同じユーザーでログイン中のタブは無視する)。
     if (broadcast) publishAuth(SIGNED_IN, user?.userId);
   }, []);
 
@@ -158,6 +162,7 @@ export const ContextProvider = ({ children }) => {
   //     setAuthenticationStatus(STATUS.IDLE);
   //     return;
   //   }
+  // [JA] (コメントアウトされたコード)トークンがなければ API を呼ばない
 
   //   try {
   //     const { data } = await getRequest(`/user-service/api/auth/user`);
@@ -171,6 +176,7 @@ export const ContextProvider = ({ children }) => {
   //     logout();
   //   }
   // }, [state.token, updateUser, logout]);
+  // [JA] (コメントアウトされたコード)fetchUser が成功すればユーザー情報を更新
 
   //   useEffect(() => {
   //       fetchUser();    

@@ -23,6 +23,17 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  *
  * <p>큐가 가득 차면 {@code CallerRunsPolicy} 로 호출 스레드가 직접 처리한다. 메일 요청을 버리는
  * 것보다 잠깐 느려지는 편이 낫다 — 버리면 그 사용자는 계정을 활성화할 방법이 없어진다.
+ *
+ * <p>[JA] 確認メールの<b>リクエスト発行</b>用スレッドプール。
+ * <b>なぜ専用プールか。</b>{@code @Async} を名前なしで使うと Spring は {@code SimpleAsyncTaskExecutor} に
+ * フォールバックするが、これは<b>リクエストごとに新しいスレッドを作り上限がない。</b>登録が集中すると
+ * スレッドが無制限に増え JVM を倒しうる。境界を置く。
+ * <b>今ここでするのは Kafka 発行だけである</b>(docs/29)。以前は SMTP の往復と再試行の待ち(最大 8 秒)が
+ * このスレッド上で起きたのでプールがずっと埋まりやすかった。今は同じクラスタ内のブローカーに一行書くだけなので
+ * ずっと早く空く — それでも上限はそのまま置く。ブローカーが揺らぐと発行に最大 5 秒かかりうり
+ * ({@code MAX_BLOCK_MS})、そのときがまさに境界が必要な瞬間だ。
+ * キューが満杯になると {@code CallerRunsPolicy} で呼び出しスレッドが直接処理する。メールリクエストを捨てるより
+ * 少し遅くなるほうがよい — 捨てるとそのユーザーはアカウントを有効化する手段がなくなる。
  */
 @Configuration
 @EnableAsync
@@ -36,10 +47,13 @@ public class AsyncMailConfig {
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("mail-");
         // 요청의 traceId·userId 를 메일 스레드로 넘긴다 — "가입 메일이 안 왔다" 를 요청과 이어 찾는다(docs/51 §3).
+        // [JA] リクエストの traceId・userId をメールスレッドに渡す — 「登録メールが来ない」をリクエストとつなげて探す(docs/51 §3)。
         executor.setTaskDecorator(new com.project.common.logging.MdcTaskDecorator());
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         // 종료 시 이미 큐에 들어간 메일은 보내고 내려간다. 그러지 않으면 배포할 때마다
         // 그 순간 가입한 사용자들의 확인 메일이 사라진다.
+        // [JA] 終了時、既にキューに入ったメールは送ってから停止する。そうしないとデプロイのたびに
+        //      その瞬間に登録したユーザーの確認メールが消える。
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

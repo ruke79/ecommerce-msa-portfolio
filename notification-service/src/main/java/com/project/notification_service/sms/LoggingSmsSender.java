@@ -16,11 +16,18 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>테스트에서도 쓴다 — 보낸 내역을 메모리에 쌓아 두므로 "이 이벤트가 이 번호로 이 문구를
  * 보냈는가"를 검증할 수 있다. 실제 게이트웨이 없이 알림 로직 전체를 검사할 수 있다는 뜻이다.
+ *
+ * <p>[JA] 実際には送らずログにだけ残す送信器。<b>既定値</b>である。既定値にした理由: SMS
+ * は一通ごとの課金で取り消せない。設定が不十分なまま配備されたとき「何も起きない」
+ * のほうが「知らない間に料金がかかる」より安全だ。実際の送信は {@code notification.sms.provider}
+ * を明示的に変えて初めて有効になる。テストでも使う — 送った履歴をメモリに溜めるので「このイベントがこの番号
+ * にこの文言を送ったか」を検証できる。実際のゲートウェイなしで通知ロジック全体を検査できるということだ。
  */
 @Slf4j
 public class LoggingSmsSender implements SmsSender {
 
     /** 테스트 검증용 발송 내역. 운영에서는 무한히 쌓이지 않도록 상한을 둔다. */
+    // [JA] テスト検証用の送信履歴。運用では無限に溜まらないよう上限を置く。
     private static final int MAX_RECORDED = 500;
 
     private final List<Sent> recorded = Collections.synchronizedList(new ArrayList<>());
@@ -40,6 +47,14 @@ public class LoggingSmsSender implements SmsSender {
         //    전역 마스킹(common 의 SensitiveDataMasker)은 여섯 자리 숫자를 인증번호로 알아볼 수
         //    없다 — 주문 번호·금액과 구별이 안 된다. 그래서 여기서 애초에 넘기지 않는다.
         //    문구를 확인해야 하는 테스트는 sent() 로 메모리의 기록을 본다.
+        // [JA] 番号はマスキングして残す — ログ閲覧権限がそのまま連絡先閲覧権限になってはならない。
+        //      🔒 本文は残さない。以前は body={} で全文を INFO に出していたが、この送信器が**既定値**なので(k8s も
+        //      provider を変えない)、運用で携帯電話認証 SMS の認証番号がそのままログに残った。
+        //      ログを読める人なら他人の番号で認証を完了できる。認証番号はどの経路でもログに残さないという規則を破った箇
+        //      所だった(docs/38 §1.7 が指摘したが残っていた)。
+        //      グローバルマスキング(common の SensitiveDataMasker)は 6 桁の数字を認証番号と見分けられない —
+        //      注文番号・金額と区別がつかない。そこでここでそもそも渡さない。文言を確認する必要があるテストは sent()
+        //      でメモリの記録を見る。
         log.info("[SMS:dry-run] to={} chars={} single={}",
                 PhoneNumbers.mask(e164), message.length(),
                 SmsMessage.fitsInSingleSms(message));
@@ -64,6 +79,7 @@ public class LoggingSmsSender implements SmsSender {
     }
 
     /** 테스트용. 보낸 내역 사본. */
+    // [JA] テスト用。送信履歴のコピー。
     public List<Sent> sent() {
         synchronized (recorded) {
             return List.copyOf(recorded);

@@ -20,6 +20,11 @@ import ch.qos.logback.core.spi.FilterReply;
  * 환경변수로 고른다.
  *
  * <p>판정은 시작할 때 한 번 한다. 줄마다 문자열을 비교하지 않는다.
+ *
+ * <p>[JA] 設定値一つで appender を有効 · 無効にする — 共通 logback 設定のスイッチ。
+ * {@code actual} が {@code expected} と同じなら(大文字小文字無視)通し、違えばすべての行を捨てる。logback の {@code <if>} は Janino を追加で取り込む必要があり、
+ * {@code <springProfile>} はこのリポジトリでは使えない — すべての環境が {@code local} プロファイルで回る(k8s を含む)。だからプロファイルではなく環境変数で選ぶ。
+ * 判定は起動時に一度行う。行ごとに文字列を比較しない。
  */
 public class FormatSwitchFilter extends Filter<ILoggingEvent> {
 

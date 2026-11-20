@@ -18,6 +18,10 @@ jest.mock("util/api", () => ({
 // setLoading(true) 뒤의 블록이 통째로 주석 처리되어 있어서 **버튼이 '불러오는 중…' 에서
 // 영원히 멈췄다.** 그런 고장은 "아무 일도 안 일어난다"로 보여서 눈치채기 어렵다.
 // 그래서 이 테스트는 화면 렌더링이 아니라 **실제로 나가는 요청**을 검사한다.
+// [JA] この画面の壊れ方は特異だった。例外もなくリクエストもなく画面も変わらなかった —
+//      setLoading(true) の後のブロックが丸ごとコメントアウトされていて、**ボタンが「読み込み中…」で
+//      永遠に止まった。** そうした故障は「何も起きない」と見えるので気づきにくい。
+//      そこでこのテストは画面のレンダリングではなく**実際に出ていくリクエスト**を検査する。
 
 const PNG = "data:image/png;base64,aGVsbG8=";   // 'hello'
 const JPG = "data:image/jpeg;base64,d29ybGQ=";  // 'world'
@@ -63,6 +67,7 @@ function Harness({ product = baseProduct, images = [PNG, PNG, PNG] }) {
 }
 
 // setProduct 호출을 밖에서 관찰해야 하는 테스트용 — 배너 클릭이 parent 를 채우는지.
+// [JA] setProduct の呼び出しを外から観察する必要があるテスト用 — バナーのクリックが parent を埋めるか。
 function HarnessWithSetter({ setProduct }) {
   const [loading, setLoading] = useState(false);
   const store = configureStore({ reducer: { dialog: dialogReducer } });
@@ -87,6 +92,7 @@ function HarnessWithSetter({ setProduct }) {
 }
 
 // jsdom 의 Blob 에는 .text() 가 없다. FileReader 로 읽는다.
+// [JA] jsdom の Blob には .text() がない。FileReader で読む。
 const readBlob = (blob) =>
   new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -116,6 +122,9 @@ describe("CreateProduct 제출", () => {
     // ⚠️ 이 인자가 핵심이다. api 인스턴스의 기본 Content-Type 이 application/json 인데,
     //    axios 1.x 는 Content-Type 이 JSON 이면 FormData 를 JSON 으로 바꿔 버린다.
     //    Blob 은 {} 가 되어 **빈 본문이 200 으로 성공한다.** 그 사고를 막는 검사다.
+    // [JA] ⚠️ この引数が核心である。api インスタンスの既定の Content-Type が application/json だが、
+    //      axios 1.x は Content-Type が JSON なら FormData を JSON に変えてしまう。
+    //      Blob は {} になり **空の本文が 200 で成功する。** その事故を防ぐ検査である。
     expect(contentType).toBe("multipart/form-data");
   });
 
@@ -131,6 +140,7 @@ describe("CreateProduct 제출", () => {
     expect(body.get("product")).toBeTruthy();
 
     // 파일명이 없으면 브라우저가 "blob" 으로 보낸다 — 확장자로 타입을 정하는 경로가 깨진다.
+    // [JA] ファイル名がないとブラウザが "blob" として送る — 拡張子でタイプを決める経路が壊れる。
     expect(body.getAll("images")[0].name).toMatch(/^image-1\.png$/);
     expect(body.get("colorImage").name).toMatch(/^color\.jpg$/);
   });
@@ -144,6 +154,8 @@ describe("CreateProduct 제출", () => {
     const json = JSON.parse(await readBlob(postRequest.mock.calls[0][1].get("product")));
     // 같은 이미지가 파일 파트로 이미 가고 있다. JSON 에도 실으면 본문이 두 배가 되고
     // Cloudflare 무료 플랜의 100MB 제한에 훨씬 빨리 걸린다(엣지에서 잘려 로그가 없다).
+    // [JA] 同じ画像がファイルパートですでに送られている。JSON にも載せると本文が二倍になり、
+    //      Cloudflare 無料プランの 100MB 制限にずっと早く引っかかる(エッジで切られログがない)。
     expect(json.color.image).toBeUndefined();
     expect(json.images).toEqual([]);
     expect(json.slug).toBeTruthy();
@@ -160,7 +172,7 @@ describe("CreateProduct 제출", () => {
   });
 
   it("검증에 걸리면 요청을 보내지 않는다", async () => {
-    render(withI18n(<Harness images={[PNG]} />));   // 3장 미만
+    render(withI18n(<Harness images={[PNG]} />));   // 3장 미만 ／ [JA] 3 枚未満
     await submit();
 
     await waitFor(() =>
@@ -192,6 +204,8 @@ describe("CreateProduct 제출", () => {
 
     // 예전에는 응답에 productId 가 없어(엔티티의 @JsonBackReference 에 잘림)
     // 이 흐름 자체를 만들 수 없었다 — 부모를 셀렉트에서 손으로 찾아야 했다.
+    // [JA] 以前は応答に productId がなく(エンティティの @JsonBackReference で切られた)
+    //      この流れ自体を作れなかった — 親をセレクトで手で探す必要があった。
     expect(setProduct).toHaveBeenCalledWith(
       expect.objectContaining({ parent: "77" })
     );
@@ -218,6 +232,9 @@ describe("CreateProduct 제출", () => {
   // 🐛 2026-11-14: 위 시험들은 product 를 props 로 미리 채워 둬서, AdminInput 이 화면의 onChange(handleChange →
   // setProduct)를 부르지 않던 것을 잡지 못했다 — 관리자가 타이핑한 이름 · 브랜드는 product 에 들어가지 않았다.
   // 여기서는 product 를 실제 state 로 두고 입력란에 타이핑한 뒤, 나가는 JSON 파트를 본다.
+  // [JA] 🐛 2026-11-14: 上の試験は product を props で事前に埋めていたので、AdminInput が画面の onChange(handleChange →
+  //      setProduct)を呼んでいなかったことを捕まえられなかった — 管理者がタイプした名前・ブランドは product に入っていなかった。
+  //      ここでは product を実際の state にして入力欄にタイプした後、出ていく JSON パートを見る。
   it("타이핑한 상품 이름이 요청의 product 파트에 실린다(입력란 → handleChange → setProduct)", async () => {
     postRequest.mockResolvedValue({ data: { sku: "SKU-1" } });
     function Stateful() {

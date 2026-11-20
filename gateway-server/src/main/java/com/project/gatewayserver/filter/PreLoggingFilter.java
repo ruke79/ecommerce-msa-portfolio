@@ -34,6 +34,7 @@ public class PreLoggingFilter implements GlobalFilter, Ordered {
     @Override
     public int getOrder() {
         // 가장 먼저 — 차단되는 탐색 요청(/x-service/actuator 등)도 원래 경로로 한 줄 남는다
+        // [JA] 最初に — 遮断される探索リクエスト(/x-service/actuator など)も元のパスで一行残る
         return ORDER;
     }
 }

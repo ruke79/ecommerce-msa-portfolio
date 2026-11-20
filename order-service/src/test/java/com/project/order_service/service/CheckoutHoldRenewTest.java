@@ -33,6 +33,9 @@ import com.project.order_service.stock.OrderStockHold;
 /**
  * 결제창을 열기 직전 재고 예약을 새로 잡는다(docs/59 §8) — 포트원 가상계좌는 계좌가 PG 창 안에서 발급돼, 여기서 막지 않으면
  * 없는 물건에 계좌가 나간다.
+ *
+ * <p>[JA] 決済画面を開く直前に在庫予約を取り直す(docs/59 §8)— PortOne の仮想口座は口座が PG
+ * の画面内で発行されるので、ここで止めなければない品物に口座が出てしまう。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)

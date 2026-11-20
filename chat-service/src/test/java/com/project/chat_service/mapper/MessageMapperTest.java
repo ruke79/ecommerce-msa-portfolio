@@ -14,6 +14,9 @@ import com.project.common.constants.chat.MessageType;
  *
  * <p>여기서 고정하는 두 동작은 모두 실제 MongoDB 를 붙여 보고서야 드러난 결함이다(docs/16 B-24).
  * 둘 다 "컴파일도 되고 단위 테스트도 없던" 상태였다.
+ *
+ * <p>[JA] MessageMapper の回帰テスト。
+ * <p>ここで固定する二つの動作は、どちらも実際の MongoDB を接続して初めて明らかになった欠陥である(docs/16 B-24)。どちらも「コンパイルは通り単体テストもなかった」状態だった。
  */
 class MessageMapperTest {
 
@@ -37,6 +40,9 @@ class MessageMapperTest {
         // 과거 버그: ChatMessage.get(type, nickname, email, roomId, ...) 시그니처에
         // (type, roomId, email, nickname, ...) 순서로 넘겨 두 값이 뒤바뀌어 저장됐다.
         // 그 상태로 저장되면 메시지의 roomId 가 닉네임이 되어 findByRoomId 로 영영 조회되지 않는다.
+        // [JA] 過去のバグ: ChatMessage.get(type, nickname, email, roomId, ...) のシグネチャに
+        //      (type, roomId, email, nickname, ...) の順で渡し、二つの値が入れ替わって保存されていた。
+        //      その状態で保存されるとメッセージの roomId がニックネームになり findByRoomId で永遠に照会されない。
         ChatMessage entity = MessageMapper.toChatMessage(sampleDto(1785196000000L));
 
         assertThat(entity.getRoomId()).isEqualTo("room-42");
@@ -65,6 +71,8 @@ class MessageMapperTest {
     void fromChatMessage_shouldTolerateMissingCreatedAt() {
         // MongoDB 는 스키마리스라 createdAt 이 빠진 문서가 섞일 수 있다. 과거에는 무방비
         // Long.parseLong 이라 그런 문서 1건이 방 전체 이력 조회를 HTTP 500 으로 만들었다.
+        // [JA] MongoDB はスキーマレスなので createdAt が抜けたドキュメントが混ざり得る。過去は無防備な
+        //      Long.parseLong だったため、そのようなドキュメント 1 件がルーム全体の履歴照会を HTTP 500 にしていた。
         ChatMessage noTimestamp = ChatMessage.get(
                 MessageType.TEXT_TALK, "테스터", 7L, "room-42",
                 "타임스탬프 없음", "", 0, null);
@@ -87,6 +95,7 @@ class MessageMapperTest {
     }
 
     /** 🔒 몽고 문서·DTO 어디에도 이메일 필드가 없다 — 다시 생기면 저장·전송 경로로 샌다(docs/48 §6-⑥). */
+    // [JA] 🔒 Mongo ドキュメント・DTO のどこにもメールフィールドがない — 再びできると保存・送信経路から漏れる(docs/48 §6-⑥)。
     @Test
     @DisplayName("🔒 ChatMessage·MessageDto 에 email 필드가 없다")
     void noEmailFieldAnywhere() {

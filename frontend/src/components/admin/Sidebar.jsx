@@ -47,6 +47,7 @@ import {
               </div>
             </div>
             {/* 하위 메뉴를 여러 개 열면 화면보다 길어진다 — 잘리지 않고 스크롤한다. */}
+            {/* [JA] サブメニューを複数開くと画面より長くなる — 切れずにスクロールする。 */}
             <ul className="flex-1 overflow-y-auto px-3">{children}</ul>
             <div className="flex border-t p-3">
               <img
@@ -73,6 +74,7 @@ import {
     const [expanded, setExpanded] = useState(true);
     const { t } = useTranslation();
     // 메뉴 이름은 렌더할 때 사전에서 꺼낸다 — 언어를 바꾸면 바로 다시 그려진다.
+    // [JA] メニュー名は描画時に辞書から取り出す — 言語を変えるとすぐ描き直される。
     const navBarItems = [
       {
         icon: <HomeIcon />,
@@ -151,6 +153,7 @@ import {
         icon: <CogIcon />,
         text: t('admin.sidebar.orders'),
         // 🐛 `submenu` 였다 — SidebarItem 은 `subMenu` 를 받는다. 환불 메뉴가 어디에도 없었다.
+        // [JA] 🐛 `submenu` だった — SidebarItem は `subMenu` を受け取る。返金メニューがどこにもなかった。
         subMenu: [
           {
             icon: <CogIcon />,

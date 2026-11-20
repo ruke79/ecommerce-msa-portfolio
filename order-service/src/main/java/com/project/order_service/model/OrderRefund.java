@@ -24,6 +24,10 @@ import lombok.experimental.SuperBuilder;
  * <p>금액은 둘이다: {@code amount} 는 상점 통화(매출에서 빠지는 돈), {@code chargedAmount}
  * 는 제공자에게 실제로 돌려달라고 한 돈(청구 통화). {@code items} 는 어느 품목 몇 개인지의
  * JSON — 화면·분쟁 대응용이고 규칙은 여기서 읽지 않는다(규칙은 품목의 수량 카운터를 본다).
+ *
+ * <p>[JA] 返金 1 件(V9) — 部分返金ができて「注文に返金参照 1 つ」では足りなくなった。
+ * 金額は 2 つだ: {@code amount} は店舗通貨(売上から引かれるお金)、{@code chargedAmount} は提供者に実際に返してくれと頼んだお金(請求通貨)。
+ * {@code items} はどの品目を何個かの JSON — 画面・紛争対応用で、規則はここから読まない(規則は品目の数量カウンターを見る)。
  */
 @Getter
 @Setter
@@ -44,6 +48,7 @@ public class OrderRefund extends BaseEntity {
     private Order order;
 
     /** 제공자의 환불 참조. */
+    // [JA] 提供者の返金参照。
     private String refundRef;
 
     @Column(precision = 19, scale = 2, nullable = false)

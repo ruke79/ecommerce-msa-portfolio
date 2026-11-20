@@ -20,6 +20,14 @@
  *
  * @param array 정렬할 배열(원본은 건드리지 않는다)
  * @param keys  {키: 'asc' | 'desc' | 'skip'} 형태의 정렬 기준. 비우면 값 자체로 정렬한다.
+ *
+ * <p>[JA] オブジェクト配列を複数のキーでソートする。以前はこのファイルが `Array.prototype.keySort = function (...)` で<b>組み込みプロトタイプを直接書き換えていた。</b> すると:
+ * このモジュールを import するだけでアプリケーションの<b>すべての配列</b>が変わる(import の副作用がグローバルで、どこでなぜ生えたメソッドか追いにくい)。
+ * 列挙可能なプロパティとして追加されるので `for (const k in someArray)` がインデックスと一緒に "keySort" まで返す(そういうループが一つでもあれば黙って壊れる)。
+ * 同じ名前を使う他のライブラリや将来の標準メソッドと衝突する。
+ * そして `export default Array.prototype.keySort` というデフォルトエクスポートは<b>バインドされていない関数</b>なので、import してそのまま呼ぶと `this` が undefined で即座に落ちる。
+ * 実際このモジュールを import する箇所は一つもなかった — 誰も使えないコードだった。今は配列を引数に受けて<b>新しい配列</b>を返す普通の関数である。
+ * array はソートする配列(元は変えない)、keys は {キー: 'asc' | 'desc' | 'skip'} 形式のソート基準。空なら値そのものでソートする。
  */
 export function keySort(array, keys) {
     const items = [...array];

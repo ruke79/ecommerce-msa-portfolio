@@ -5,6 +5,8 @@ import DashboardLayout from "components/admin/DashboardLayout";
 
 // Sidebar 는 redux 와 라우팅에 얽혀 있다. 여기서 확인할 것은 "사이드바가 렌더링되는가"이지
 // 사이드바의 내용이 아니므로 자리 표시자로 바꾼다.
+// [JA] Sidebar は redux とルーティングに絡んでいる。ここで確認するのは「サイドバーがレンダリングされるか」であって
+//      サイドバーの中身ではないので、プレースホルダに置き換える。
 jest.mock("components/admin/Sidebar", () => () => <nav data-testid="sidebar">SIDEBAR</nav>);
 
 /**
@@ -12,6 +14,10 @@ jest.mock("components/admin/Sidebar", () => () => <nav data-testid="sidebar">SID
  *
  * JSX 에서 `//` 는 주석이 아니라 <b>그냥 글자</b>다. 그래서 사이드바는 렌더링되지 않았고,
  * 대신 관리자 화면 왼쪽 위에 `//` 두 글자가 그대로 찍혔다. 관리자 메뉴 이동이 아예 불가능했다.
+ *
+ * <p>[JA] 🐛 回帰対象: JSX の中に `//<Sidebar/>` と書かれていた。
+ * JSX で `//` はコメントではなく<b>ただの文字</b>である。そのためサイドバーはレンダリングされず、
+ * 代わりに管理画面の左上に `//` の二文字がそのまま表示された。管理メニューの移動がまったくできなかった。
  */
 describe("DashboardLayout", () => {
   it("renders the sidebar", () => {
@@ -32,6 +38,7 @@ describe("DashboardLayout", () => {
     );
 
     // 고치기 전에는 화면 텍스트에 "//" 가 들어 있었다.
+    // [JA] 直す前は画面のテキストに "//" が入っていた。
     expect(container.textContent).not.toContain("//");
   });
 });

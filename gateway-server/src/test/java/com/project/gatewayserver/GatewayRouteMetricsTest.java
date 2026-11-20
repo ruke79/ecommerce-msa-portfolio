@@ -31,13 +31,18 @@ import reactor.netty.http.server.HttpServer;
  * {@code spring_cloud_gateway_requests_seconds} 가 없어 SLO gateway 는 조용히 비고, 경보는 요청 하한에 걸려 울리지 않는다.
  * 설정 키를 틀려도(옛 위치 · 오타) 실패한다. 규칙 쪽(경계 · 빼는 라우트)은 common 의 {@code SloRulesTest}, 경보는 promtool 시험.
  *
- * <p>[JA] SLO gateway の SLI — ゲートウェイがルートごとのタイマーを残し、ルールが読む 2 秒境界のバケットがある(4.3 は既定で無効)。
+ * <p>[JA] SLO {@code gateway}(docs/91 §2-7)の SLI — ゲートウェイがルートごとに要求タイマー {@code spring.cloud.gateway.requests} を残し、
+ * そのタイマーにルールが読む 2 秒境界のバケットがある。
+ * Spring Cloud Gateway 4.3 はこのタイマーが既定で無効である({@code spring.cloud.gateway.server.webflux.metrics.enabled})— 無効だと
+ * {@code spring_cloud_gateway_requests_seconds} がなく、SLO gateway は黙って空になり、警報は要求数の下限にかかって鳴らない。
+ * 設定キーを誤っても(旧位置 · 誤字)失敗する。ルール側(境界 · 除外ルート)は common の {@code SloRulesTest}、警報は promtool 試験。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @DisplayName("SLO gateway — 라우트 타이머(spring.cloud.gateway.requests)와 2초 경계 버킷")
 class GatewayRouteMetricsTest {
 
     /** catalog-service 대역 — 200 과, 격벽이 찬 catalog 처럼 503. */
+    // [JA] catalog-service の代役 — 200 と、バルクヘッドが満杯の catalog のような 503。
     private static final DisposableServer CATALOG = HttpServer.create().host("127.0.0.1").port(0)
             .route(r -> r
                     .get("/api/content/home", (req, res) -> res.sendString(Mono.just("home")))
@@ -86,6 +91,7 @@ class GatewayRouteMetricsTest {
         assertThat(count("catalog-service", "503") - busyBefore).isEqualTo(1);
 
         // 게이트웨이의 http.server.requests 는 라우트를 모른다 — 라우트 요청의 uri 는 모두 UNKNOWN(그래서 라우트 타이머가 필요하다)
+        // [JA] ゲートウェイの http.server.requests はルートを知らない — ルートリクエストの uri はすべて UNKNOWN(だからルートタイマーが必要だ)
         assertThat(meters.find("http.server.requests").tag("status", "503").timers())
                 .isNotEmpty().allMatch(t -> "UNKNOWN".equals(t.getId().getTag("uri")));
     }

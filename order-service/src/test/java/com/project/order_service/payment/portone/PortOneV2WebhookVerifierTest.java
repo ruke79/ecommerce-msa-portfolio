@@ -22,6 +22,11 @@ import com.project.order_service.payment.PaymentVerificationException;
  * <p>Stripe 검증기와 같은 경계 조건을 고정하되, 규격이 다른 곳을 하나 더 잡는다:
  * <b>비밀키는 {@code whsec_} 뒤 base64 를 디코딩한 바이트</b>다. 문자열을 그대로 키로
  * 쓰면 모든 서명이 불일치한다 — 그 실수를 회귀 테스트로 막는다.
+ *
+ * <p>[JA] PortOne V2 Webhook 署名 — Standard Webhooks。
+ *
+ * <p>Stripe 検証器と同じ境界条件を固定しつつ、規格が違う所をもう一つ押さえる: <b>秘密鍵は {@code whsec_} の後ろの
+ * base64 をデコードしたバイト</b>である。文字列をそのまま鍵に使うとすべての署名が不一致になる — その誤りを回帰テストで防ぐ。
  */
 @DisplayName("포트원 V2 웹훅 서명")
 class PortOneV2WebhookVerifierTest {
@@ -56,6 +61,7 @@ class PortOneV2WebhookVerifierTest {
     }
 
     /** 🔴 키는 base64 를 디코딩한 바이트다. 문자열 그대로 서명하면 불일치해야 한다. */
+    // [JA] 🔴 鍵は base64 をデコードしたバイトである。文字列のまま署名すると不一致になるべきである。
     @Test
     @DisplayName("🔴 whsec_ 문자열을 그대로 키로 쓴 서명은 거부한다")
     void rawSecretStringIsNotTheKey() {

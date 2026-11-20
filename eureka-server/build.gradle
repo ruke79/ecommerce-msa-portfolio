@@ -5,6 +5,7 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-server'
 
      // common 모듈에 대한 의존성 추가
+     // [JA] common モジュールへの依存を追加
     implementation project(':common')
     
 }
@@ -18,3 +19,5 @@ dependencies {
 //         }
 //     }
 // }
+// [JA] (コメントアウトされた設定) 上位モジュールの resources ディレクトリをクラスパスに追加する。
+//      ファイルがないと見つからないというエラーが出るので順序を変更。

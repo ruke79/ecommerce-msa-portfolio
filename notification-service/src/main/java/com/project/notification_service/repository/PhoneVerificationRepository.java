@@ -20,7 +20,11 @@ public interface PhoneVerificationRepository extends JpaRepository<PhoneVerifica
      *
      * <p>🐛 예전에는 잠금 없이 읽고 {@code attempts+1} 을 썼다. 동시 요청 N개가 모두 같은 attempts 를 읽어 5회 제한이 사실상
      * 사라졌다. 잠그면 같은 코드의 검증은 한 줄로 서고, 뒤의 요청은 앞이 올린 횟수를 본다.
-     * [JA] 検証用 — 最新の有効なコードをロックして読む。以前はロックなしで読み attempts+1 を書いたため、同時リクエストで 5 回制限が消えていた。
+     * <p>[JA] 検証用 — この番号に発行された<b>最新の</b>生きているコードを<b>ロックして</b>読む({@code FOR UPDATE})。
+     * 最新のものだけを見る理由: ユーザーが「再送」を押すとコードが複数生きている状態になるが、古いコードも通すと有効なコードの数が増え、
+     * 総当たりがその分容易になる。
+     * 🐛 以前はロックなしで読み {@code attempts+1} を書いていた。同時リクエスト N 個がすべて同じ attempts を読み、5 回制限が事実上消えていた。
+     * ロックすれば同じコードの検証は一列に並び、後のリクエストは前が上げた回数を見る。
      */
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("select v from PhoneVerification v where v.phoneE164 = :phone and v.consumed = false"
@@ -30,6 +34,7 @@ public interface PhoneVerificationRepository extends JpaRepository<PhoneVerifica
             org.springframework.data.domain.Pageable page);
 
     /** 번호 등록용 — 로그인 2단계 인증 코드(LOGIN_2FA)는 보지 않는다(V12). */
+    // [JA] 番号登録用 — ログイン二段階認証コード(LOGIN_2FA)は見ない(V12)。
     default java.util.List<PhoneVerification> findLatestForUpdate(String phoneE164,
             org.springframework.data.domain.Pageable page) {
         return findLatestForUpdate(phoneE164, PhoneVerification.Purpose.PHONE, page);
@@ -52,6 +57,7 @@ public interface PhoneVerificationRepository extends JpaRepository<PhoneVerifica
     }
 
     /** 만료된 코드 정리. 개인정보를 필요 이상으로 들고 있지 않기 위해서이기도 하다. */
+    // [JA] 期限切れコードの整理。個人情報を必要以上に持たないためでもある。
     @Modifying
     @Query("delete from PhoneVerification v where v.expiresAt < :before")
     int deleteExpiredBefore(@Param("before") LocalDateTime before);

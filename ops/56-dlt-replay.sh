@@ -48,6 +48,7 @@ run_tool() {
     [ -f "$TOOL" ] || die "도구가 없습니다: $TOOL"
     "${EXEC[@]}" sh -c "cat > $REMOTE" < "$TOOL" || die "Kafka 파드에 도구를 넣지 못했습니다 — ${EXEC[*]}"
     # tools-log4j: 클라이언트 로그는 경고만 stderr 로(cp-kafka 의 도구 설정) — 표준 출력은 이 도구의 결과뿐
+    # [JA] tools-log4j: クライアントのログは警告だけを stderr に(cp-kafka のツール設定) — 標準出力はこのツールの結果だけ
     "${EXEC[@]}" java -Dlog4j.configuration=file:/etc/kafka/tools-log4j.properties -cp '/usr/share/java/kafka/*' "$REMOTE" "$@"
 }
 

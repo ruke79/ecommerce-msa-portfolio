@@ -59,6 +59,16 @@ import com.project.userservice.service.impl.UserServiceImpl;
  *
  * <p>앞의 둘은 읽기 시점에 "행이 없네" 를 알아차릴 수 있어 눈에 띄었지만, 쿠폰은 <b>안
  * 왔다는 사실조차 알기 어려웠다.</b> 그래서 이벤트를 <b>가입 시점</b>으로 옮겼다.
+ *
+ * <p>[JA] 登録確定イベント — <b>dual-write をアウトボックスへ</b>(docs/48 ②)。
+ * <p><b>何が壊れていたか:</b> 認証確定は validateAndGetUser がコミットし、イベントはその<b>後</b>に registerConfirmed が非同期の kafkaTemplate.send で送っていた。
+ * 二つが別トランザクションなのでアカウントだけコミットされイベントは行かないことがありえ、send は結果を見ないので<b>失敗してもログ一行残らなかった。</b>
+ * 実際の結果: user-created トピックが丸ごと空なのにアカウントは正常で、そのユーザーは注文ボタンで 400 を受けた(docs/47)。
+ * アウトボックステーブルは<b>最初からあった。</b> UserServiceImpl に上のようにコメントアウトされたまま。
+ * <p>🔴 <b>しかも発行時点自体が間違っていた:</b> 発行は<b>メール認証リンクを押した瞬間</b>にかかっていた。ところが require-email-verification の既定値が <b>false</b> —
+ * アカウントがすぐ enabled で作られるので<b>その経路を誰も通らない。</b> だから user-created イベントは一件も発行されたことがなく、症状が三つ現れた:
+ * 注文失敗(docs/47)、チャット入室失敗、そして<b>登録祝いクーポン未発行。</b> 前の二つは読み取り時点で「行がない」と気付けて目立ったが、クーポンは<b>来なかったという事実すら分かりにくかった。</b>
+ * そこでイベントを<b>登録時点</b>に移した。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -74,6 +84,7 @@ class UserCreatedOutboxTest {
     @Mock private com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
 
     /** 비밀번호를 정하는 메서드는 짧은 DB 구간을 TransactionTemplate 으로 연다(유출 확인을 그 밖에 두려고). */
+    // [JA] パスワードを決めるメソッドは短い DB 区間を TransactionTemplate で開く(漏洩確認をその外に置くため)。
     @org.mockito.Spy private org.springframework.transaction.support.TransactionTemplate tx =
             com.project.userservice.service.TestTransactions.template();
     @InjectMocks private UserServiceImpl userService;
@@ -88,6 +99,7 @@ class UserCreatedOutboxTest {
         user.setEnabled(false);
 
         // 살아 있는 토큰. TTL 을 넉넉히 줘서 이 테스트가 시계에 흔들리지 않게 한다.
+        // [JA] 生きているトークン。TTL を十分に与えてこのテストが時計に揺さぶられないようにする。
         token = new VerificationToken("raw-token", user, java.time.Duration.ofHours(1));
 
         when(tokenRepository.findByToken(any())).thenReturn(token);
@@ -101,6 +113,10 @@ class UserCreatedOutboxTest {
      * {@code require-email-verification} 이 꺼진 환경(=기본값)에서 <b>아무도 그 경로를
      * 지나지 않아</b> 이벤트가 영영 발행되지 않는다. 실제로 그랬고, 그 결과가 주문
      * 실패·채팅 실패·쿠폰 미발급이었다.
+     *
+     * <p>[JA] 🔴 <b>このファイルの核心ガード。</b>
+     * <p>イベントは<b>登録時点</b>に書かれなければならない。認証リンク経路に置くと require-email-verification がオフの環境(=既定値)で<b>誰もその経路を通らず</b>
+     * イベントが永遠に発行されない。実際にそうなり、その結果が注文失敗・チャット失敗・クーポン未発行だった。
      */
     @Test
     @DisplayName("가입하면 인증 설정과 무관하게 아웃박스에 적는다")
@@ -127,6 +143,8 @@ class UserCreatedOutboxTest {
     /**
      * 인증 링크 경로에서는 <b>적지 않는다.</b> 가입 시점에 이미 적었으므로, 여기서 또
      * 적으면 같은 사용자의 이벤트가 두 번 나간다.
+     *
+     * <p>[JA] 認証リンク経路では<b>書かない。</b> 登録時点で既に書いたので、ここでまた書くと同じユーザーのイベントが二回出る。
      */
     @Test
     @DisplayName("인증 링크 경로에서는 적지 않는다 — 가입 때 이미 적었다")
@@ -140,6 +158,9 @@ class UserCreatedOutboxTest {
     /**
      * 🐛 운영 기본값(require-email-verification=false)은 가입 즉시 enabled 다. 예전에는 그 계정이 링크를 눌러도 emailVerified 를
      * 켜지 않아, 나중에 같은 주소의 소셜 로그인이 비밀번호를 "확인된 적 없음" 으로 지웠다(SocialAccountLinker).
+     *
+     * <p>[JA] 🐛 運用既定値(require-email-verification=false)は登録即 enabled である。以前はそのアカウントがリンクを押しても emailVerified を立てず、
+     * 後で同じアドレスのソーシャルログインがパスワードを「確認されたことがない」として消していた(SocialAccountLinker)。
      */
     @Test
     @DisplayName("🔴 이미 활성인 계정도 링크를 누르면 emailVerified — 토큰은 남겨 두 번째 클릭도 성공")
@@ -160,6 +181,10 @@ class UserCreatedOutboxTest {
      * <p>{@code REQUIRED} 면 트랜잭션 없이 불렸을 때 <b>조용히 새 트랜잭션을 열어</b>
      * 성립해 버린다 — 그게 바로 dual-write 이고, 이 작업 전체가 무의미해진다.
      * {@code MANDATORY} 는 그 경우 예외를 던져 <b>배포 전에</b> 드러나게 한다.
+     *
+     * <p>[JA] 🔴 MANDATORY でなければならない。
+     * <p>REQUIRED だとトランザクションなしで呼ばれたとき<b>黙って新しいトランザクションを開いて</b>成立してしまう — それがまさに dual-write で、この作業全体が無意味になる。
+     * MANDATORY はその場合に例外を投げて<b>デプロイ前に</b>露見させる。
      */
     @Test
     @DisplayName("아웃박스 기록은 호출자의 트랜잭션을 요구한다(MANDATORY)")
@@ -181,6 +206,10 @@ class UserCreatedOutboxTest {
      * 비동기면 상태를 바꾸는 콜백이 커밋 뒤에 돌고, 그 사이 행은 STARTED 인데 잠금은
      * 풀려 있다 — 다른 레플리카가 집어 가서 <b>같은 이벤트를 두 번 보낸다.</b>
      * order-service 의 결제 아웃박스가 정확히 그랬다(docs/21).
+     *
+     * <p>[JA] 🔴 ポーラーは発行を<b>自分のトランザクション内で</b>終えなければならない。
+     * <p>FOR UPDATE SKIP LOCKED で先取りしたロックはコミットまでしか保持されない。発行が非同期だと状態を変えるコールバックがコミット後に動き、その間行は STARTED なのにロックは
+     * 解けている — 別のレプリカが拾って<b>同じイベントを二回送る。</b> order-service の決済アウトボックスがまさにそうだった(docs/21)。
      */
     @Test
     @DisplayName("폴러는 트랜잭션 안에서 돈다")
@@ -199,6 +228,9 @@ class UserCreatedOutboxTest {
      * <p>user-service 는 {@code replicas: 2} 다. 잠금 없이 조회하면 두 레플리카가 같은
      * 행을 읽는다. JPQL 에는 이 구문이 없어 네이티브 쿼리인데, 그래서 <b>리팩터링 중
      * 조용히 사라지기 쉽다.</b>
+     *
+     * <p>[JA] 🔴 先取りクエリに SKIP LOCKED がなければならない。
+     * <p>user-service は replicas: 2。ロックなしで検索すると二つのレプリカが同じ行を読む。JPQL にはこの構文がなくネイティブクエリだが、だからこそ<b>リファクタリング中に黙って消えやすい。</b>
      */
     @Test
     @DisplayName("선점 쿼리가 FOR UPDATE SKIP LOCKED 를 쓴다")

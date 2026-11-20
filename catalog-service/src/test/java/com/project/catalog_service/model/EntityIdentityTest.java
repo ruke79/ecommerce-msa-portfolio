@@ -12,6 +12,9 @@ import org.junit.jupiter.api.Test;
 /**
  * 🔴 다른 행은 다른 엔티티다 — 예전 BaseEntity {@code @Data} 는 equals 를 버전 · 시각만으로 만들어,
  * 같은 순간에 만든 상세 둘(한 SQL 로 적재한 시드 · 반복문에서 연달아 만든 새 줄)을 HashSet 이 하나로 합쳤다.
+ *
+ * <p>[JA] 🔴 別の行は別のエンティティである — 以前の BaseEntity {@code @Data} は equals をバージョン・時刻だけで作り、
+ * 同じ瞬間に作った詳細二つ(一つの SQL で投入したシード・ループで続けて作った新しい行)を HashSet が一つにまとめていた。
  */
 @DisplayName("엔티티 동일성 — 감사 필드로 비교하지 않는다")
 class EntityIdentityTest {

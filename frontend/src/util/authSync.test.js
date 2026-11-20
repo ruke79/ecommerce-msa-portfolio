@@ -1,7 +1,10 @@
 /**
  * 탭 간 로그인 동기화 — 토큰을 보내지 않고, 자기 메시지는 받지 않고, BroadcastChannel 이 없으면 storage 이벤트로.
+ *
+ * <p>[JA] タブ間のログイン同期 — トークンを送らず、自分のメッセージは受け取らず、BroadcastChannel がなければ storage イベントで。
  */
 // 여러 탭을 흉내 내는 BroadcastChannel — 같은 이름의 다른 인스턴스에 전달한다(같은 탭의 다른 인스턴스 포함, 실제와 같다).
+// [JA] 複数のタブを模した BroadcastChannel — 同じ名前の別インスタンスに届ける(同じタブの別インスタンスを含む、実際と同じ)。
 class FakeChannel {
   static all = [];
   constructor(name) {
@@ -42,7 +45,7 @@ describe("authSync — BroadcastChannel", () => {
     const sent = FakeChannel.all[0].posted[0];
     expect(Object.keys(sent).sort()).toEqual(["at", "from", "type", "uid"]);
     expect(sent.uid).toBe("1234567890123456789");
-    expect(JSON.stringify(sent)).not.toMatch(/eyJ/);   // JWT 모양이 없다
+    expect(JSON.stringify(sent)).not.toMatch(/eyJ/);   // JWT 모양이 없다 ／ [JA] JWT の形がない
   });
 
   it("🔴 같은 탭이 보낸 것은 받지 않는다(같은 탭의 다른 채널 인스턴스에도 전달되므로 출처로 거른다)", () => {

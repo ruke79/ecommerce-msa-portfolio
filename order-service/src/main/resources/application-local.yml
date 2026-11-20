@@ -16,6 +16,13 @@ server:
 #
 # 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
 # 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+# [JA] Kafka 接続設定は common/application-common.yml が所有する。ここには開発者 PC
+#      の絶対パスがそのまま埋め込まれていた(trust-store-location:
+#      file:E:/github/amazon-clone-msa/.../local_truststore.jks)。
+#      そのパスは他のどのマシンにも存在しないため、このブロックは protocol: "SSL" を有効にしたまま存在しないストアを指していた。
+#      ローカルブローカーが PLAINTEXT なので黙って通っていただけである。今は KAFKA_URL /
+#      KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 環境変数で注入する。ファイルは
+#      ops/07-issue-certificates.sh が作り、certs.env を source すると値が埋まる(docs/18)。
 
 eureka:
   instance:
@@ -30,14 +37,20 @@ feign:
   # 서비스 간 Feign 호출 대상. 기존에는 어디에도 정의돼 있지 않아
   # @FeignClient(url="${feign.*-url}") 해석 실패로 기동 자체가 불가능했다.
   # 환경변수(FEIGN_*_URL, k8s ConfigMap)로 오버라이드 가능.
+  # [JA] サービス間 Feign 呼び出しの宛先。以前はどこにも定義されておらず、@FeignClient(url="${feign.*-url}")
+  #      の解決失敗で起動自体ができなかった。環境変数(FEIGN_*_URL、k8s ConfigMap)で上書き可能。
   cart-url: ${FEIGN_CART_URL:https://localhost:8082}
   catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
   user-url: ${FEIGN_USER_URL:https://localhost:8080}
   # 주문 총액을 서버에서 계산할 때 쿠폰 할인액을 물어본다(docs/40 #10).
+  # [JA] 注文総額をサーバーで計算するときにクーポン割引額を問い合わせる(docs/40 #10)。
   coupon-url: ${FEIGN_COUPON_URL:https://localhost:8183}
   # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
   # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
   # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.
+  # [JA] タイムアウトはここに置かない — common/application-common.yml の
+  #      spring.cloud.openfeign.client.config.default が全サービス唯一の定義である(docs/37
+  #      §2.1)。以前ここにあった feign.client.config.* は OpenFeign 4.x が読まないキーだった。
 
 spring:
   application:
@@ -56,10 +69,16 @@ spring:
       # 늦게 뜬 파드가 통째로 기동 실패한다.
       # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
       # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+      # [JA] コネクションプールの見積もり(docs/19)。既定値 10 のままだとデータソース 8 個 × 10 = 80 コネクションで、HPA
+      #      でレプリカが 2 個になるだけで 160 となり PostgreSQL の既定 max_connections(100)
+      #      を**算術的に超える**。そのときの症状は「遅くなる」ではなく「FATAL: sorry, too many clients already」—
+      #      遅れて起動した Pod が丸ごと起動失敗する。5 × 8 データソース × 3 レプリカ = 120。max_connections は
+      #      200 に上げること(docs/19 §3)。プールは大きければ速いわけではない — コネクションごとに DB 側のプロセスが一つずつ付く。
       hikari:
         maximum-pool-size: ${DB_POOL_SIZE:5}
         minimum-idle: ${DB_POOL_MIN_IDLE:2}
         # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+        # [JA] プール枯渇を黙って待たず素早く失敗させる(既定の 30 秒はリクエストスレッドを縛り付ける)。
         connection-timeout: 5000
         # 커넥션 누수 감지 — 기본 끔(0). 켜면 커넥션을 빌릴 때마다 스택 추적 예외를 하나씩 만든다(2026-10-23 프로파일: catalog CPU 의 3.9%,
         # docs/83 §5 · B-104). 의심될 때만 DB_LEAK_DETECTION_MS=20000 으로 켠다. [JA] リーク検出は既定オフ — 借りるたびに例外を作る。
@@ -76,12 +95,17 @@ spring:
   # Redis: order-service 의 RedisCacheConfig/RedissonConfig 가 요구하는 프로퍼티인데
   # 기존에는 어디에도 정의돼 있지 않아 'Could not resolve placeholder spring.data.redis.host'
   # 로 기동 자체가 불가능했다. 환경변수로 오버라이드 가능.
+  # [JA] Redis: order-service の RedisCacheConfig/RedissonConfig が要求するプロパティだが、
+  #      以前はどこにも定義されておらず 'Could not resolve placeholder spring.data.redis.host'
+  #      で起動自体ができなかった。環境変数で上書き可能。
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       # 다른 서비스는 전부 LOCAL_DB_PASSWORD 로 Redis 에 인증하는데 여기만 기본값이 빈 값이었다.
       # requirepass Redis 앞에서 order-service 만 WRONGPASS 로 기동 실패 — 스테이징 리허설에서 실측.
+      # [JA] 他のサービスはすべて LOCAL_DB_PASSWORD で Redis に認証するのに、ここだけ既定値が空だった。requirepass
+      #      付き Redis の前で order-service だけが WRONGPASS で起動失敗 — ステージングのリハーサルで実測。
       password: ${REDIS_PASSWORD:${LOCAL_DB_PASSWORD:}}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
@@ -121,6 +145,19 @@ spring:
 #    (웹훅이 결국 반영하지만 사용자는 그 사이 아무것도 못 본다).
 #    이미 모든 서비스가 아는 APP_PUBLIC_URL(configmap · 사이트 주소)을 기본으로 쓴다.
 #    FRONTEND_URL 은 프론트가 다른 호스트에 있을 때만 따로 준다.
+# [JA] PayPal 決済検証(docs/35)。⚠️ 以前はブラウザが送った「決済した」をサーバーがそのまま信じていた。今はサーバーが PayPal
+#      に直接照会して状態・金額・通貨を照合する。そのためここで**初めてシークレットが必要になる。** mode の既定が http
+#      であることが重要 — 資格情報がなければ**起動が失敗する。** それが意図である。検証なしで動かすには
+#      PAYPAL_VERIFICATION_MODE=disabled を明示する必要があり、そのとき起動ログに警告が出る。メール・SMS は逆に
+#      logging が既定だが(docs/29)、安全な方向が互いに違う: メールは誤って**送ること**が、
+#      決済は誤って**通すこと**が危険である。
+#      決済後にブラウザが戻る先。Stripe Checkout はサーバーが成功・キャンセル URL を決めてセッションに入れるので、
+#      order-service がフロントのアドレスを知っている必要がある。🐛 以前は FRONTEND_URL だけを見ていたが、
+#      その変数を**どのマニフェストも設定していなかった。** クラスターでは黙って https://localhost:3000 になり、
+#      Stripe 決済後にブラウザがユーザー自身の PC の 3000 番ポートに戻っていた —
+#      決済は済んだのに注文は「確認中」で止まる(Webhook が最終的に反映するが、ユーザーはその間何も見られない)。既に全サービスが知っている
+#      APP_PUBLIC_URL(ConfigMap・サイトアドレス)を既定に使う。FRONTEND_URL
+#      はフロントが別ホストにあるときだけ別途与える。
 frontend:
   url: ${FRONTEND_URL:${APP_PUBLIC_URL:https://localhost:3000}}
 
@@ -140,13 +177,26 @@ frontend:
 # ⚠️ Stripe 는 키가 sk_test_/sk_live_ 로 테스트 여부를 말하지만 **포트원은 그렇지 않다** —
 #    테스트/실결제는 상점에 연결된 PG 설정이 정한다. 기동 로그에 키 앞 4자리를 찍으니
 #    프론트의 REACT_APP_PORTONE_IMP_CODE(가맹점 식별코드)와 짝이 맞는지 확인할 것.
+# [JA] ── Stripe ── 既定が無効なのは PayPal と逆である。PayPal
+#      検証は既に使っている手段なので「設定を忘れると検証なしで通過」になってはならず、既定が有効である。Stripe は新しく加わる手段なので、
+#      設定していない環境で起動が失敗すると既存デプロイがすべて止まる。代わりに**有効にした後で資格情報がなければ起動を止める** —
+#      半分だけ有効な状態が最悪である。🔑 test/live スイッチはない。Stripe の秘密鍵が sk_test_ / sk_live_
+#      で自ら語るので、別に置くと鍵と食い違ったスイッチが嘘になる。起動ログがどちらかを出力する。
+#      ── PortOne(旧 I'mport)── Stripe と同じルール: 既定は無効、有効にした後で鍵がなければ起動失敗。⚠️
+#      Stripe は鍵が sk_test_/sk_live_ でテストかどうかを語るが、**PortOne はそうではない** —
+#      テスト/本決済はストアに連携した PG 設定が決める。起動ログに鍵の先頭 4 文字を出すので、フロントの
+#      REACT_APP_PORTONE_IMP_CODE(加盟店識別コード)と対応が合っているか確認すること。
 portone:
   enabled: ${PORTONE_ENABLED:false}
   # v1 = 아임포트(imp_key · 가맹점 식별코드 imp…), v2 = api.portone.io(API Secret · Store ID).
   # 계정이 정한다 — 콘솔에 imp… 가 없고 store-… 만 보이면 v2 다. 프론트 빌드 인자도 같이 바뀐다.
+  # [JA] v1 = I'mport(imp_key・加盟店識別コード imp…)、v2 = api.portone.io(API
+  #      Secret・Store ID)。アカウントが決める — コンソールに imp… がなく store-… だけが見えるなら v2 である。
+  #      フロントのビルド引数も一緒に変わる。
   version: ${PORTONE_VERSION:v1}
   api-base-url: ${PORTONE_API_BASE_URL:https://api.iamport.kr}
   # 🔒 Secret 에서만 온다. 절대 커밋하지 않는다.
+  # [JA] 🔒 Secret からのみ来る。絶対にコミットしない。
   api-key: ${PORTONE_API_KEY:}
   api-secret: ${PORTONE_API_SECRET:}
   connect-timeout-ms: ${PORTONE_CONNECT_TIMEOUT_MS:3000}
@@ -154,8 +204,10 @@ portone:
   v2:
     api-base-url: ${PORTONE_V2_API_BASE_URL:https://api.portone.io}
     # 🔒 Secret 에서만 온다. V2 API Secret 은 토큰 교환 없이 매 요청의 Authorization 에 그대로 실린다.
+    # [JA] 🔒 Secret からのみ来る。V2 API Secret はトークン交換なしで毎リクエストの Authorization にそのまま載る。
     api-secret: ${PORTONE_V2_API_SECRET:}
     # 콘솔에서 웹훅 엔드포인트를 만들면 나오는 whsec_… — Standard Webhooks 서명 키.
+    # [JA] コンソールで Webhook エンドポイントを作ると出る whsec_… — Standard Webhooks 署名鍵。
     webhook-secret: ${PORTONE_V2_WEBHOOK_SECRET:}
 
 # ── 통화 — 결제수단마다 다르다 ────────────────────────────────────────────
@@ -179,6 +231,20 @@ portone:
 # 마지막 방어선). 어느 쪽이든 환율은 주문에 고정된다(fx_rate). ECB 는 평일 하루 한 번
 # 갱신하므로 ttl 을 더 짧게 해도 값이 더 자주 바뀌지는 않는다.
 # ⚠️ 파드에서 api.frankfurter.app 으로 나가는 HTTPS 가 열려 있어야 한다.
+# [JA] ── 通貨 — 決済手段ごとに異なる ── base-currency は**ストア通貨**である:
+#      カタログ価格・Order.total・売上集計・pay-service。providers.* はそのプロバイダーに**実際に請求する通貨**。
+#      二つが異なれば、注文作成時に rates の為替レートで請求額を決めて注文に保存し(currency · charged_amount ·
+#      fx_rate)、決済確認と返金はその保存値と照合する。例 — PortOne(国内 PG)は KRW でしか決済できないので
+#      PORTONE_CURRENCY=KRW、FX_RATE_KRW=1350。日本の決済を試すには STRIPE_CURRENCY=JPY、
+#      FX_RATE_JPY=150(Stripe ダッシュボードが JPY を受けられる設定であること)。PayPal も
+#      PAYPAL_CURRENCY=JPY になるが、**フロントの PayPalScriptProvider
+#      の通貨は注文の請求通貨に実行時に変わる**(Payment.jsx)。rates.* は固定レートである。
+#      請求通貨のレートがなければその決済手段では**注文作成が失敗**する — 黙ってレート 1 で請求しない。
+#      fx.live.enabled=true なら Frankfurter(ECB 参照レート、キー不要)から得た値を先に使う。それでも
+#      rates.* は残す — API が落ちたときの備えであり、リアルタイム値が固定値と fx.max-deviation-percent
+#      以上違えば固定値を使って警告する(請求額が十倍になる事故の最後の防衛線)。どちらにせよレートは注文に固定される(fx_rate)。ECB
+#      は平日 1 日 1 回更新なので、ttl を短くしても値がより頻繁に変わるわけではない。⚠️ Pod から
+#      api.frankfurter.app への HTTPS が開いている必要がある。
 payment:
   base-currency: ${STORE_CURRENCY:USD}
   providers:
@@ -186,6 +252,7 @@ payment:
     STRIPE: ${STRIPE_CURRENCY:${STORE_CURRENCY:USD}}
     PORTONE: ${PORTONE_CURRENCY:KRW}
     # 무통장입금 — 국내 계좌면 KRW. 손님이 입금할 금액이 이 통화로 안내된다.
+    # [JA] 銀行振込 — 国内口座なら KRW。客が入金する金額がこの通貨で案内される。
     BANK_TRANSFER: ${BANK_TRANSFER_CURRENCY:${STORE_CURRENCY:USD}}
   rates:
     KRW: ${FX_RATE_KRW:1350}
@@ -205,6 +272,9 @@ payment:
 # NOT_PROCESSED ─(입금 안내: 고객)─▶ UNPAID ─(입금 확인: 관리자)─▶ PAID
 #                                      └─(기한 경과 · 취소)─▶ CANCELED
 # 계좌는 손님에게 보여 주는 값이라 비밀이 아니다 — 그래도 비어 있으면 안내를 시작할 수 없다.
+# [JA] ── 銀行振込(docs/49 §11)— 決済 API ではなく注文の状態機械 ── NOT_PROCESSED ─(入金案内: 顧客)─▶
+#      UNPAID ─(入金確認: 管理者)─▶ PAID、UNPAID ─(期限経過・キャンセル)─▶ CANCELED。
+#      口座は客に見せる値なので秘密ではない — それでも空なら案内を開始できない。
 bank-transfer:
   enabled: ${BANK_TRANSFER_ENABLED:true}
   bank: ${BANK_TRANSFER_BANK:}
@@ -217,6 +287,9 @@ bank-transfer:
 #
 # 손님이 주문 상세에서 누르거나, 배달 완료 뒤 days 가 지나면 한 시간마다 도는 잡이 자동으로
 # 확정한다. 시뮬레이터로 시험할 때는 ORDER_AUTO_CONFIRM_DAYS=0 으로 두면 다음 주기에 바로 된다.
+# [JA] ── 購入確定(docs/25 §12)— DELIVERED → COMPLETED、注文の最後の遷移 ── 客が注文詳細で押すか、
+#      配達完了後 days が過ぎると 1 時間ごとに回るジョブが自動で確定する。シミュレーターで試すときは
+#      ORDER_AUTO_CONFIRM_DAYS=0 にすると次の周期ですぐ確定する。
 order:
   auto-confirm:
     enabled: ${ORDER_AUTO_CONFIRM_ENABLED:true}
@@ -228,8 +301,10 @@ stripe:
   enabled: ${STRIPE_ENABLED:false}
   api-base-url: ${STRIPE_API_BASE_URL:https://api.stripe.com}
   # 🔒 Secret 에서만 온다. 절대 커밋하지 않는다.
+  # [JA] 🔒 Secret からのみ来る。絶対にコミットしない。
   secret-key: ${STRIPE_SECRET_KEY:}
   # 웹훅 서명 비밀(whsec_…). 이것이 없으면 공개 웹훅 엔드포인트를 아무나 호출할 수 있다.
+  # [JA] Webhook 署名の秘密(whsec_…)。これがないと公開 Webhook エンドポイントを誰でも呼べる。
   webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
   connect-timeout-ms: ${STRIPE_CONNECT_TIMEOUT_MS:3000}
   read-timeout-ms: ${STRIPE_READ_TIMEOUT_MS:5000}
@@ -247,33 +322,49 @@ paypal:
   #
   # 기본값이 sandbox 인 이유: 설정을 깜빡한 결과가 "테스트에 붙는다"여야지 "실제 돈이
   # 오간다"여서는 안 된다.
+  # [JA] ── サンドボックス / ライブ ── この一つの値が PayPal ホストを決める。sandbox(既定)または live。⚠️
+  #      サーバーだけ変えてはならない。**ブラウザに埋め込まれる client id も同じ環境**でなければならない:
+  #      REACT_APP_PAYPAL_CLIENT_ID ← フロントの**ビルド時**に埋め込まれる(B-51)。三つ(env・サーバーの
+  #      client-id/secret・フロントの client id)が食い違っても起動は成功し、症状は決済画面まで進んでから出る —
+  #      ブラウザはサンドボックスで決済を作ったのにサーバーはライブに照会するので「そんな注文はない」となる。起動ログに env と client id
+  #      の先頭 6 文字を出すので、それで照合すること。既定が sandbox である理由: 設定を忘れた結果は「テストにつながる」であるべきで、
+  #      「実際のお金が動く」であってはならない。
   env: ${PAYPAL_ENV:sandbox}
 
   # 호스트를 직접 지정해야 할 때만(사내 프록시 등). 비우면 env 에서 유도한다.
   # env 와 어긋나면 기동을 막는다 — 조용히 어긋나 있는 것이 애초의 문제였다.
+  # [JA] ホストを直接指定する必要があるときだけ(社内プロキシなど)。空なら env から導く。env と食い違えば起動を止める —
+  #      黙って食い違っていたことがそもそもの問題だった。
   api-base-url: ${PAYPAL_API_BASE_URL:}
   client-id: ${PAYPAL_CLIENT_ID:}
   client-secret: ${PAYPAL_CLIENT_SECRET:}
   # (옮겨 갔다) 대조 통화는 이제 payment.* 가 정한다 — 결제수단마다 다를 수 있어서다.
+  # [JA] (移った)照合通貨は今は payment.* が決める — 決済手段ごとに異なり得るからである。
   verification:
     mode: ${PAYPAL_VERIFICATION_MODE:http}
     connect-timeout-ms: ${PAYPAL_CONNECT_TIMEOUT_MS:3000}
     # 짧게 잡아 '확인 불가'로 거부되는 편이, 길게 잡아 사용자가 빈 화면을 오래 보는 것보다 낫다.
     # 거부돼도 돈은 PayPal 에 그대로 있고 다시 시도할 수 있다.
+    # [JA] 短く設定して「確認不能」で拒否されるほうが、長く設定してユーザーが空白画面を長く見るよりよい。拒否されてもお金は PayPal にそのままあり、
+    #      再試行できる。
     read-timeout-ms: ${PAYPAL_READ_TIMEOUT_MS:5000}
 
 order-service:
   # 폴러는 이제 안전망이다 — 행이 커밋되면 곧바로 한 번 릴레이한다(outbox-relay-on-commit, docs/56).
   # 이 간격은 즉시 릴레이가 놓친 것(발행 실패·커밋 직후 종료)을 되줍는 주기다.
-  outbox-scheduler-fixed-rate: 10000 # 10초
-  outbox-scheduler-initial-delay: 3000 # 3초
+  # [JA] ポーラーは今は安全網である — 行がコミットされるとすぐ一度リレーする(outbox-relay-on-commit、docs/56)。
+  #      この間隔は即時リレーが取りこぼしたもの(発行失敗・コミット直後の終了)を拾い直す周期である。
+  outbox-scheduler-fixed-rate: 10000 # 10초 ／ [JA] 10 秒
+  outbox-scheduler-initial-delay: 3000 # 3초 ／ [JA] 3 秒
   # false 면 즉시 릴레이를 끄고 폴러만 남는다 — 결제 사가가 다시 폴링 간격 두 번(평균 약 10초)만큼 늦는다.
+  # [JA] false なら即時リレーを切ってポーラーだけが残る — 決済サガが再びポーリング間隔 2 回分(平均約 10 秒)遅れる。
   outbox-relay-on-commit: ${OUTBOX_RELAY_ON_COMMIT:true}
 
 logging:
   level:
     root: info
     # 모든 스케줄링 관련 로그를 INFO 이상으로만 기록합니다.
+    # [JA] スケジューリング関連のログはすべて INFO 以上のみ記録する。
     org.springframework.scheduling: WARN
     com.project.order_service: ${LOG_LEVEL_APP:info}
     org.springframework.jdbc: ${LOG_LEVEL_SQL:warn}
@@ -282,9 +373,11 @@ logging:
 
   file:
     path: ./logs
-    name: ${logging.file.path}/order_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+    name: ${logging.file.path}/order_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51) ／ [JA] JSON を 1 行ずつ — common の logback-spring.xml が書く(docs/51)
   # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
   # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+  # [JA] 出力パターンは common の logback-spring.xml が決める — メッセージ・例外を %mask で包んで機微情報を隠す。
+  #      ここに logging.pattern を置いても使われない(ガード B-57)。
        
         
 
@@ -294,6 +387,9 @@ logging:
 
 # 아웃박스 월 파티션을 미리 만든다(common OutboxPartitionAutoConfiguration, docs/09 §4.6).
 # V1 마이그레이션이 만든 파티션은 2027-01 까지다 — 이 잡이 없으면 그 뒤로는 모든 행이 DEFAULT 로 간다.
+# [JA] アウトボックスの月パーティションを事前に作る(common OutboxPartitionAutoConfiguration、docs/09
+#      §4.6)。V1 マイグレーションが作ったパーティションは 2027-01 までである — このジョブがなければ、それ以降はすべての行が
+#      DEFAULT に行く。
 outbox:
   partitions:
     tables: orders.payment_outbox_event

@@ -13,6 +13,21 @@
 #
 # CA 개인키는 cert-manager 네임스페이스의 Secret internal-ca 에만 둔다(ClusterIssuer 의 규칙) — 앱 네임스페이스(ecommerce)에서
 # Secret 을 읽을 수 있는 것이 생겨도 CA 키는 거기 없다.
+# [JA] サービス別の身元証明書を cert-manager が発行・更新する(docs/57 §18)。
+#      
+#      ⚠️ kustomization.yaml には入れていない — cert-manager(CRD)が先にないと適用できない。**ops/39-cert-manager.sh** でのみ適用する
+#         (インストール → CA 登録 → このファイル → Ready 確認)。
+#      
+#      何を作るか: サービスごとに Secret tls-id-<サービス> — ops/38 が手で作っていたものと**同じ名前・同じキー**である(tls.crt・tls.key・
+#      ca.crt・keystore.p12)。だからマニフェスト(k8s/40~49)は変わらない。発行者だけが変わる。
+#      
+#        · 寿命 90 日、期限切れ 30 日前に再発行(鍵も新しく — rotationPolicy: Always)
+#        · keystore.p12 のパスワードはサービスが既に使っている値(ecommerce-secrets の LOCAL_KEY_STORE_PASSWORD)
+#        · Java は keystore を起動時にしか読まない — Secret が変わると Reloader がその Deployment をローリング再起動する
+#          (各 Deployment の secret.reloader.stakater.com/reload アノテーション)
+#      
+#      CA 秘密鍵は cert-manager ネームスペースの Secret internal-ca にだけ置く(ClusterIssuer の規則) — アプリのネームスペース(ecommerce)で
+#      Secret を読めるものができても CA 鍵はそこにない。
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -22,6 +37,7 @@ spec:
     secretName: internal-ca
 ---
 # 게이트웨이 — 백엔드로 넘길 때 내는 클라이언트 인증서(신원 헤더를 믿는 근거, docs/57 §16). 서버 인증서는 공유 tls-keystore 그대로.
+# [JA] ゲートウェイ — バックエンドへ渡すときに出すクライアント証明書(身元ヘッダーを信じる根拠、docs/57 §16)。サーバー証明書は共有の tls-keystore のまま。
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -36,8 +52,8 @@ spec:
     - gateway-server
     - gateway-server.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -45,7 +61,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -67,8 +83,8 @@ spec:
     - user-service
     - user-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -76,7 +92,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -98,8 +114,8 @@ spec:
     - catalog-service
     - catalog-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -107,7 +123,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -129,8 +145,8 @@ spec:
     - cart-service
     - cart-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -138,7 +154,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -160,8 +176,8 @@ spec:
     - order-service
     - order-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -169,7 +185,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -191,8 +207,8 @@ spec:
     - pay-service
     - pay-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -200,7 +216,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -222,8 +238,8 @@ spec:
     - coupon-service
     - coupon-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -231,7 +247,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -253,8 +269,8 @@ spec:
     - chat-service
     - chat-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -262,7 +278,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -284,8 +300,8 @@ spec:
     - notification-service
     - notification-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -293,7 +309,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -315,8 +331,8 @@ spec:
     - delivery-service
     - delivery-service.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -324,7 +340,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -346,8 +362,8 @@ spec:
     - saga-projection
     - saga-projection.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -355,7 +371,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD
@@ -364,6 +380,7 @@ spec:
     kind: ClusterIssuer
 ---
 # config-server — 내부 API 를 부르지 않는다. 이 신원은 Eureka 에 자기를 등록할 때만 낸다(docs/57 §16 "Eureka 쓰기").
+# [JA] config-server — 内部 API を呼ばない。この身元は Eureka に自分を登録するときだけ出す(docs/57 §16「Eureka 書き込み」)。
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -378,8 +395,8 @@ spec:
     - config-server
     - config-server.ecommerce.svc.cluster.local
   usages: [client auth, server auth, digital signature, key encipherment]
-  duration: 2160h      # 90일
-  renewBefore: 720h    # 만료 30일 전
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
   privateKey:
     algorithm: RSA
     size: 2048
@@ -387,7 +404,7 @@ spec:
   keystores:
     pkcs12:
       create: true
-      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
       passwordSecretRef:
         name: ecommerce-secrets
         key: LOCAL_KEY_STORE_PASSWORD

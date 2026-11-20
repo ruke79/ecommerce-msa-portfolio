@@ -33,6 +33,7 @@ public class NotificationController {
     HttpServletRequest request, HttpServletResponse response) {
 
         // userId 만 — 🐛 예전에는 INFO 로 username(실명 · provider_id)을 연결마다(토큰 갱신마다) 남겼다.
+        // [JA] userId だけ — 🐛 以前は INFO で username(実名 · provider_id)を接続ごとに(トークン更新ごとに)残していた。
         log.debug("SSE 연결 시도: userId={}", userDetails instanceof com.project.userservice.security.service.UserDetailsImpl u
                 ? u.getId() : null);
 
@@ -50,15 +51,23 @@ public class NotificationController {
         //
         // 두 번째 줄은 이름까지 틀렸다. substring(7) 은 세션 id 가 아니라 토큰 전문이다.
         // 세션 id 는 JwtUtils 가 토큰을 해석해야 나온다.
+        // [JA] ⚠️ このヘッダーを**絶対にログに出さないこと。**以前は二行あった(Authorization ヘッダーと、トークンから取り出した Session ID — 実はトークン全文だった)。
+        //      どちらも有効なアクセストークンを平文で残す。ログを読める人は誰でもそのトークンで**そのユーザーになりすませる** — 期限切れまで。
+        //      しかも SSE は接続のたびに出力され、トークン更新のたびに再び出力される(TokenRefresher が期限の 10 秒前に更新する)。
+        //      ログ収集基盤に出た瞬間に回収する方法もない。
+        //      二行目は名前まで誤っていた。substring(7) はセッション id ではなくトークン全文だ。
+        //      セッション id は JwtUtils がトークンを解析して初めて出てくる。
         if (authorization == null || !authorization.startsWith("Bearer ")) {
             // 예전에는 `== null` 만 봤다. "Bearer " 로 시작하지 않는 헤더가 오면
             // substring(7) 이 엉뚱한 문자열을 잘라내거나 StringIndexOutOfBounds 로 죽었다.
+            // [JA] 以前は `== null` だけを見ていた。"Bearer " で始まらないヘッダーが来ると
+            //      substring(7) が見当違いの文字列を切り出すか StringIndexOutOfBounds で落ちた。
             log.warn("Authorization 헤더가 없거나 Bearer 형식이 아닙니다 — SSE 구독을 거절합니다");
             return null;
         }
 
         response.setHeader("X-Accel-Buffering", "no");
-        response.setHeader("Connection", "keep-alive");  // http 1.1에서는 기본값이 keep-alive
+        response.setHeader("Connection", "keep-alive");  // http 1.1에서는 기본값이 keep-alive ／ [JA] HTTP 1.1 では既定値が keep-alive
         response.setHeader("Cache-Control", "no-cache");
 
         return notificationService.createEmitter(authorization.substring("Bearer ".length()));

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "i18n/I18nProvider";
 
 /** 값은 서버로 가는 질의 값이라 번역하지 않는다 — 이름표만 키로 번역한다. */
+// [JA] 値はサーバーへ行くクエリ値なので翻訳しない — ラベルだけキーで翻訳する。
 const GENDER_LABEL_KEYS = {
     Men: "browse.filter.gender.men",
     Women: "browse.filter.gender.women",

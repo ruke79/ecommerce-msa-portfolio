@@ -23,6 +23,9 @@ import org.testcontainers.utility.DockerImageName;
  * 장바구니 사용자당 하나(V5) — 이미 생긴 중복을 <b>합친 뒤</b> 유니크를 거는지, 실제 PostgreSQL 에서.
  *
  * <p>Spring 컨텍스트 없이 Flyway 만 돌린다 — V4 까지 올리고 중복을 심은 뒤 V5 를 적용한다.
+ *
+ * <p>[JA] カートはユーザーあたり 1 つ(V5) — 既にできた重複を <b>統合した後に</b> ユニークをかけるか、実際の PostgreSQL で。
+ *      Spring コンテキストなしで Flyway だけを回す — V4 まで上げて重複を仕込んだ後 V5 を適用する。
  */
 @Tag("containers")
 @Testcontainers
@@ -52,12 +55,14 @@ class CartOnePerUserMigrationTest {
         flyway("4").migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // 사용자 7 — 장바구니 둘. 최근 것(2)에 상품 100/M, 옛 것(1)에 100/M(겹침) · 200/L(옮겨야 함)
+            // [JA] ユーザー 7 — カート 2 つ。新しい方(2)に商品 100/M、古い方(1)に 100/M(重複) · 200/L(移すべき)
             exec(db, "insert into cart.cart (cart_id, user_id, version, updated_at) values (1, 7, 0, '2026-10-01 10:00')");
             exec(db, "insert into cart.cart (cart_id, user_id, version, updated_at) values (2, 7, 0, '2026-10-01 11:00')");
             line(db, 11, 1, 100, "M", "10.00", 1);
             line(db, 12, 1, 200, "L", "20.00", 2);
             line(db, 21, 2, 100, "M", "10.00", 3);
             // 사용자 8 — 하나뿐(그대로여야 한다)
+            // [JA] ユーザー 8 — 1 つだけ(そのままであるべき)
             exec(db, "insert into cart.cart (cart_id, user_id, version, cart_total, updated_at) values (3, 8, 0, 99, '2026-10-01 09:00')");
             line(db, 31, 3, 300, "S", "5.00", 1);
 
@@ -68,8 +73,10 @@ class CartOnePerUserMigrationTest {
                     .as("겹친 줄(11)은 버리고 남길 장바구니에 없던 줄(12)만 옮긴다").containsExactly(12L, 21L);
             assertThat(longs(db, "select count(*) from cart.cart_product where cart_id = 1")).containsExactly(0L);
             // 합계는 고른 줄로 다시: 20×2 + 10×3 = 70
+            // [JA] 合計は選んだ行で再計算: 20×2 + 10×3 = 70
             assertThat(decimal(db, "select cart_total from cart.cart where cart_id = 2")).isEqualByComparingTo("70");
             // 중복이 없던 사용자는 손대지 않는다
+            // [JA] 重複がなかったユーザーには手を付けない
             assertThat(decimal(db, "select cart_total from cart.cart where cart_id = 3")).isEqualByComparingTo("99");
             assertThat(longs(db, "select count(*) from cart.cart_product where cart_id = 3")).containsExactly(1L);
 

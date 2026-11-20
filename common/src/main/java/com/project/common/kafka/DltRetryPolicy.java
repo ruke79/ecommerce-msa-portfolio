@@ -15,11 +15,16 @@ import io.micrometer.core.instrument.MeterRegistry;
  *   <li>DLT 로 가는 순간을 센다({@value #DLT_METRIC}{topic}) — 경보 KafkaDeadLetterPublished. 예전에는 격리가 조용했다</li>
  * </ul>
  *
- * <p>[JA] コンシューマ失敗の再試行 · DLT 方針 — 一時的な失敗は約 3 分再試行し、DLT へ送った瞬間を数える。
+ * <p>[JA] コンシューマー失敗の再試行 · DLT 方針 — サービスごとの {@code KafkaDltConfig} が使う(catalog から始まり、order の決済応答も)。
+ * <ul>
+ *   <li><b>一時的な失敗</b>(デッドロック 40P01 · 直列化失敗 · ロック待ち · 接続プール枯渇 · DB フェイルオーバー)は約 3 分再試行する —
+ *       🐛 以前はすべての失敗が 1 · 2 · 4 秒の三回の後 DLT だった(決済確定の在庫減算 · 決済応答が 7 秒で消えた)</li>
+ *   <li>DLT へ送る瞬間を数える({@value #DLT_METRIC}{topic})— アラート KafkaDeadLetterPublished。以前は隔離が静かだった</li>
+ * </ul>
  */
 public final class DltRetryPolicy {
 
-    /** DLT 로 보낸 레코드 수 — Prometheus {@code kafka_dlt_records_total{topic}}. */
+    /** DLT 로 보낸 레코드 수 — Prometheus {@code kafka_dlt_records_total{topic}}. ／ [JA] DLT に送ったレコード数 — Prometheus {@code kafka_dlt_records_total{topic}}。 */
     public static final String DLT_METRIC = "kafka.dlt.records";
 
     /**
@@ -36,7 +41,7 @@ public final class DltRetryPolicy {
     private DltRetryPolicy() {
     }
 
-    /** DLT 로 보내기 전에 센다. */
+    /** DLT 로 보내기 전에 센다. ／ [JA] DLT に送る前に数える。 */
     public static ConsumerRecordRecoverer counting(ConsumerRecordRecoverer recoverer, MeterRegistry meters) {
         return (record, ex) -> {
             meters.counter(DLT_METRIC, "topic", record.topic()).increment();
@@ -44,7 +49,7 @@ public final class DltRetryPolicy {
         };
     }
 
-    /** 일시적인 실패의 백오프 — 1 · 2 · 4 · 8 · 16 · 30 · 30 · 30 · 30 · 30초(약 3분). 한 번 쉬는 시간은 max.poll.interval(5분)보다 짧다. */
+    /** 일시적인 실패의 백오프 — 1 · 2 · 4 · 8 · 16 · 30 · 30 · 30 · 30 · 30초(약 3분). 한 번 쉬는 시간은 max.poll.interval(5분)보다 짧다. ／ [JA] 一時的な失敗のバックオフ — 1 · 2 · 4 · 8 · 16 · 30 · 30 · 30 · 30 · 30 秒(約 3 分)。一回の待ち時間は max.poll.interval(5 分)より短い。 */
     public static BackOff transientBackOff() {
         ExponentialBackOffWithMaxRetries b = new ExponentialBackOffWithMaxRetries(10);
         b.setInitialInterval(1_000L);
@@ -53,7 +58,7 @@ public final class DltRetryPolicy {
         return b;
     }
 
-    /** 원인 사슬에 일시적인 DB 실패가 있는가 — 시간이 지나면 같은 메시지가 성공할 수 있는 것. */
+    /** 원인 사슬에 일시적인 DB 실패가 있는가 — 시간이 지나면 같은 메시지가 성공할 수 있는 것. ／ [JA] 原因チェーンに一時的な DB の失敗があるか — 時間が経てば同じメッセージが成功しうるもの。 */
     public static boolean isTransient(Throwable ex) {
         for (Throwable t = ex; t != null; t = t.getCause() == t ? null : t.getCause()) {
             if (t instanceof org.springframework.dao.TransientDataAccessException
@@ -66,7 +71,7 @@ public final class DltRetryPolicy {
             }
             if (t instanceof java.sql.SQLException sql && sql.getSQLState() != null
                     && (sql.getSQLState().startsWith("40") || sql.getSQLState().startsWith("08") || "55P03".equals(sql.getSQLState()))) {
-                return true;   // 40001 직렬화 실패 · 40P01 교착 · 08xxx 연결 · 55P03 잠금 대기 시간 초과
+                return true;   // 40001 직렬화 실패 · 40P01 교착 · 08xxx 연결 · 55P03 잠금 대기 시간 초과 ／ [JA] 40001 シリアライズ失敗 · 40P01 デッドロック · 08xxx 接続 · 55P03 ロック待ちタイムアウト
             }
         }
         return false;

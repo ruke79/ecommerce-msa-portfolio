@@ -24,6 +24,7 @@ import com.project.userservice.security.risk.LoginRiskGuard.Signal;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /** 🔴 위험 신호 · 메일 확인 코드 — <b>실제 Redis</b>(집합 · 해시 · 만료, docs/68 §19). */
+// [JA] 🔴 リスクシグナル・メール確認コード — <b>実際の Redis</b>(セット・ハッシュ・期限、docs/68 §19)。
 @Tag("containers")
 @Testcontainers
 @DisplayName("위험 기반 로그인 (실제 Redis)")
@@ -98,8 +99,10 @@ class LoginRiskGuardTest {
 
         var keys = template.keys("risk:*");
         // IP 집합 · 계정 집합 · 분 카운터 셋.
+        // [JA] IP セット・アカウントセット・分カウンターの三つ。
         assertThat(keys).hasSize(3);
         // 🐛 SADD 와 EXPIRE 가 따로였을 때는 그 사이에 끊기면 만료 없는 집합이 남아, 아무 일 없는 사용자에게 계속 확인을 요구했다.
+        // [JA] 🐛 SADD と EXPIRE が別々だったときは、その間で切れると期限のないセットが残り、何事もないユーザーに確認を求め続けた。
         assertThat(keys).allSatisfy(k -> assertThat(template.getExpire(k))
                 .as("%s 의 TTL", k).isPositive());
     }
@@ -185,12 +188,15 @@ class LoginRiskGuardTest {
             assertThat(guard.verify(second.issued().cookieValue(), wrong2)).isEqualTo(new LoginRiskGuard.Wrong(true));
         }
         // 열 번째 — 대기 값당으로는 5번째지만 사용자 한도에 닿았다.
+        // [JA] 10 回目 — 待機値ごとでは 5 回目だが、ユーザーの上限に達した。
         assertThat(guard.verify(second.issued().cookieValue(), wrong2)).isEqualTo(new LoginRiskGuard.Wrong(false));
 
         // 세 번째 로그인 — 맞는 코드도 받지 않는다.
+        // [JA] 3 回目のログイン — 正しいコードも受け付けない。
         var third = guard.issue(77L, List.of(Signal.IP_FANOUT));
         assertThat(guard.verify(third.issued().cookieValue(), third.code())).isInstanceOf(LoginRiskGuard.Expired.class);
         // 다른 사용자는 영향 없다.
+        // [JA] 他のユーザーには影響しない。
         var other = guard.issue(78L, List.of(Signal.IP_FANOUT));
         assertThat(guard.verify(other.issued().cookieValue(), other.code())).isEqualTo(new LoginRiskGuard.Passed(78L));
     }
@@ -199,12 +205,16 @@ class LoginRiskGuardTest {
      * 🐛 예전: tries 를 읽고 → 비교하고 → 틀리면 더했다 — 동시에 보낸 요청이 모두 0 을 읽어 6자리를 수백 개 대입할 수 있었다.
      * 🐛 그 다음: 세기는 INCR 로 했지만, 다섯 번째 실패가 키를 지운 <b>뒤에</b> 도착한 요청의 HINCRBY 가 tries 만 든 새 해시를
      *    만들어(만료도 없이) 다시 1 부터 셌다 — 비교가 5번을 넘었고 그 키는 영원히 남았다. 여러 판 돌려 그 틈을 잡는다.
+     *
+     * <p>[JA] 🐛 以前: tries を読み → 比較し → 間違えば足していた — 同時に送ったリクエストがすべて 0 を読み、6 桁を数百個試せた。
+     * 🐛 その次: カウントは INCR で行ったが、5 回目の失敗がキーを消した<b>後に</b>届いたリクエストの HINCRBY が tries だけの新しいハッシュを
+     * (期限もなく)作り、また 1 から数えた — 比較が 5 回を超え、そのキーは永遠に残った。何周も回してその隙を捕まえる。
      */
     @Test
     @DisplayName("🔴 동시에 40번 틀린 코드를 보내도 비교까지 가는 것은 대기 값당 5번뿐 — 지운 대기 값이 되살아나지 않는다")
     void concurrentWrongCodesAreCapped() throws Exception {
         for (int round = 0; round < 10; round++) {
-            long uid = 4200L + round;   // 사용자 칸(MAX_USER_FAILURES)이 판 사이에 섞이지 않게
+            long uid = 4200L + round;   // 사용자 칸(MAX_USER_FAILURES)이 판 사이에 섞이지 않게 ／ [JA] ユーザー枠(MAX_USER_FAILURES)が周回の間で混ざらないように
             var issued = guard.issue(uid, List.of(Signal.IP_FANOUT));
             String pending = issued.issued().cookieValue();
             String wrong = issued.code().equals("000000") ? "111111" : "000000";
@@ -230,6 +240,7 @@ class LoginRiskGuardTest {
             assertThat(compared).as("판 %d", round).isLessThanOrEqualTo(LoginRiskGuard.MAX_ATTEMPTS);
             assertThat(guard.verify(pending, issued.code())).isNotInstanceOf(LoginRiskGuard.Passed.class);
             // 지운 대기 값이 tries 만 든 채(만료 없이) 되살아나지 않았다.
+            // [JA] 消した待機値が tries だけを持ったまま(期限なしで)復活しなかった。
             for (String k : template.keys(LoginRiskGuard.CHALLENGE_KEY + "*")) {
                 assertThat(template.getExpire(k)).as("만료 없는 대기 값 " + k).isPositive();
             }

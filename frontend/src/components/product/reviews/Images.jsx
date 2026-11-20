@@ -24,6 +24,7 @@ const ImagesReview = ({ images, setImages }) => {
                 return;
             } else if (img.size > 1024 * 1024) {
                 // 예전 문구는 "max 5MB" 였지만 실제 검사는 1MB 다 — 검사하는 값을 그대로 보여 준다.
+                // [JA] 以前の文言は "max 5MB" だったが実際の検査は 1MB だ — 検査する値をそのまま見せる。
                 setError(t("product.review.images.too_large", { name: img.name, max: "1MB" }));
                 files = files.filter((item) => item.name !== img.name);
             } else {

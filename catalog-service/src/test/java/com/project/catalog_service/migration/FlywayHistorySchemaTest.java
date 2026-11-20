@@ -38,8 +38,13 @@ import org.testcontainers.utility.DockerImageName;
  * 기동부터는 product 에서 이력을 찾지 못해 기준선(0)을 다시 잡고 V1 부터 모두 다시 돌렸다 — V10 의 첫 화면 구성이 두 벌이 됐다(10 → 20).
  * 운영 productdb 에도 이력 표가 public(V5) · product(V18) 둘 남아 있다.
  *
- * <p>[JA] catalog の Flyway 履歴は最初から product スキーマ一つ — 空の DB で 2 回目の起動が V1 から再実行しない。DB の所有ロールと
- *      サービスのスキーマが同じ名前のため、既定の current_schema() が product スキーマの作成で変わっていた。
+ * <p>[JA] catalog の Flyway 履歴は最初から最後まで product スキーマ一つ — 空の DB で 2 回目の起動が V1 から再実行しない(実際の PostgreSQL ·
+ *      Spring Boot の Flyway 自動設定 · サービスの yml そのまま)。
+ *      🐛 2026-10-21(本番バックアップでマイグレーションを事前に適用してみて判明): 本番と同じく DB を所有するロールが {@code product} で、
+ *      サービスのスキーマも {@code product} である。Flyway はスキーマを指定しないと接続の {@code current_schema()} — 既定の search_path
+ *      {@code "$user", public} の最初の<b>存在する</b>スキーマ — を使う。空の DB の初回起動では product スキーマがなく履歴を public に書き、
+ *      マイグレーションが product を作った後の起動からは product で履歴を見つけられずベースライン(0)を取り直し、V1 から全部再実行した —
+ *      V10 のトップ画面構成が二重になった(10 → 20)。本番 productdb にも履歴表が public(V5) · product(V18) の二つ残っている。
  */
 @Tag("containers")
 @Testcontainers
@@ -54,6 +59,7 @@ class FlywayHistorySchemaTest {
                     .withPassword("testpw");
 
     /** 서비스와 같은 설정 — catalog 의 application.yml 과 공통 application-common.yml 의 spring.flyway.* 를 그대로 읽는다. */
+    // [JA] サービスと同じ設定 — catalog の application.yml と共通の application-common.yml の spring.flyway.* をそのまま読む。
     private static ApplicationContextRunner start() {
         return new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(FlywayAutoConfiguration.class))
@@ -89,7 +95,7 @@ class FlywayHistorySchemaTest {
         start().run(ctx -> assertThat(ctx).hasNotFailed());
         String homeSections = rows("select count(*) from content.home_section").get(0);
 
-        start().run(ctx -> assertThat(ctx).hasNotFailed());   // 파드가 다시 뜬다
+        start().run(ctx -> assertThat(ctx).hasNotFailed());   // 파드가 다시 뜬다 ／ [JA] ポッドが再び起動する
 
         assertThat(rows("select count(*) from content.home_section").get(0)).as("V10 의 첫 화면 구성이 두 벌이 되지 않는다")
                 .isEqualTo(homeSections);

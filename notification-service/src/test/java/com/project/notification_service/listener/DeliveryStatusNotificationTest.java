@@ -29,6 +29,12 @@ import com.project.notification_service.service.NotificationService;
  *
  * <p>{@link NotificationType#SHIPPING_UPDATED} 는 메일 제목·SMS 문구·수신 설정 정책·테스트가
  * 전부 갖춰져 있었다 — 만드는 쪽만 없었다.
+ *
+ * <p>[JA] 🐛 回帰対象: <b>配送通知が作られる経路がなかった。</b>delivery-service の
+ * {@code DeliveryStatusPublisher} は {@code delivery-status} トピックに状態変更を発行していたが、
+ * <b>そのトピックを聞くコードがコードベース全体になかった。</b>イベントが Kafka に出てそのまま消えた。
+ * {@link NotificationType#SHIPPING_UPDATED} はメール件名・SMS 文言・受信設定ポリシー・テストが全部揃ってい
+ * た — 作る側だけがなかった。
  */
 class DeliveryStatusNotificationTest {
 
@@ -59,6 +65,7 @@ class DeliveryStatusNotificationTest {
     }
 
     /** 받는 사람이 가장 먼저 기다리는 소식이다. 대부분의 쇼핑몰이 보낸다. */
+    // [JA] 受け取る人が最も待っている知らせだ。ほとんどのショッピングモールが送る。
     @Test
     @DisplayName("송장이 등록되면 '발송되었습니다' 를 알린다")
     void shipped() {
@@ -88,6 +95,11 @@ class DeliveryStatusNotificationTest {
      * 알리면 소음이다. 무엇이 알릴 만한지는 <b>배송 도메인이 계산해서</b> 보내 준다
      * ({@code DeliveryStatus.isWorthNotifying()}) — 여기서는 그 플래그만 믿는다. 그래서
      * 발송(INFO_RECEIVED)을 알림 대상에 더할 때도 이쪽은 고칠 것이 없었다.
+     *
+     * <p>[JA] 一件の配送は 受付 → 集荷 → 幹線 → 配達出発 → 配達完了 と五、六回変わる。全部知らせると騒音だ。
+     * 何が知らせるに値するかは<b>配送ドメインが計算して</b>送ってくれ
+     * る({@code DeliveryStatus.isWorthNotifying()}) — ここではそのフラグだけを信じる。
+     * だから発送(INFO_RECEIVED)を通知対象に加えたときも、こちらは直すところがなかった。
      */
     @Test
     @DisplayName("집화·간선 같은 중간 단계는 알리지 않는다 — 알아도 할 일이 없다")
@@ -104,6 +116,9 @@ class DeliveryStatusNotificationTest {
     /**
      * 플래그가 없는 이벤트는 알리지 않는다. 옛 형식의 이벤트가 재전달됐을 때 전부 문자로
      * 나가는 것보다, 안 나가는 쪽이 낫다.
+     *
+     * <p>[JA] フラグのないイベントは知らせない。旧形式のイベントが再配信されたとき全部 SMS で出るより、
+     * 出ないほうがよい。
      */
     @Test
     @DisplayName("worthNotifying 이 아예 없으면 알리지 않는다")
@@ -118,6 +133,9 @@ class DeliveryStatusNotificationTest {
     /**
      * 카프카는 at-least-once 다. 같은 상태 전이가 재전달되면 문자가 한 통 더 나간다 —
      * 발행자가 만들어 준 안정적인 키를 그대로 넘겨야 {@code sourceEventId} UNIQUE 가 막는다.
+     *
+     * <p>[JA] Kafka は at-least-once だ。同じ状態遷移が再配信されると SMS がもう一通出る —
+     * 発行側が作ってくれた安定したキーをそのまま渡してこそ {@code sourceEventId} の UNIQUE が防ぐ。
      */
     @Test
     @DisplayName("발행자가 준 eventId 를 그대로 넘긴다 — 재전달돼도 알림은 하나다")
@@ -148,6 +166,9 @@ class DeliveryStatusNotificationTest {
     /**
      * 사용자가 <b>직접 조치해야</b> 풀리는 상태다. "상태가 변경되었습니다" 로 뭉뚱그리면
      * 왜 며칠째 멈춰 있는지 알 수 없다.
+     *
+     * <p>[JA] ユーザーが<b>自分で対処して</b>初めて解ける状態だ。「状態が変更されました」とまとめると、
+     * なぜ何日も止まっているのかわからない。
      */
     @Test
     @DisplayName("통관 보류는 무엇을 해야 하는지 알려 준다")
@@ -164,6 +185,9 @@ class DeliveryStatusNotificationTest {
     /**
      * 내부 상태 이름을 그대로 보여주면 안 된다 — 사용자에게 "OUT_FOR_DELIVERY" 는 아무
      * 의미가 없다. 그리고 새 상태가 추가돼도 알림이 깨지면 안 된다.
+     *
+     * <p>[JA] 内部状態名をそのまま見せてはならない — ユーザーにとって "OUT_FOR_DELIVERY" は何の意味もない。
+     * そして新しい状態が追加されても通知が壊れてはならない。
      */
     @Test
     @DisplayName("모르는 상태여도 내부 이름을 노출하지 않고 넘어간다")
@@ -186,6 +210,7 @@ class DeliveryStatusNotificationTest {
     }
 
     // ── 쿠폰 발급 ───────────────────────────────────────────────────────────
+    // [JA] ── クーポン発行 ──
 
     /**
      * 🐛 회귀 대상: <b>쿠폰 발급 알림도 만드는 쪽이 없었다.</b>
@@ -193,6 +218,10 @@ class DeliveryStatusNotificationTest {
      * {@link NotificationType#COUPON_ISSUED} 는 메일 제목·SMS 문구·메일 종류 매핑·수신
      * 설정 정책이 전부 갖춰져 있었는데 발행자가 없었다. 가입하면 쿠폰이 발급되지만
      * 사용자는 결제 화면에 가서야 그 사실을 알았다.
+     *
+     * <p>[JA] 🐛 回帰対象: <b>クーポン発行通知も作る側がなかった。</b>{@link NotificationType#COUPON_ISSUED}
+     * はメール件名・SMS 文言・メール種類のマッピング・受信設定ポリシーが全部揃っていたのに発行側がなかっ
+     * た。登録するとクーポンが発行されるが、ユーザーは決済画面に行って初めてそれを知った。
      */
     private static String couponEvent(String extra) {
         return """
@@ -221,6 +250,7 @@ class DeliveryStatusNotificationTest {
         assertThat(title.getValue()).isEqualTo("10% 쿠폰이 발급되었습니다");
         assertThat(body.getValue()).contains("웰컴 10% 할인 쿠폰");
         // 언제까지 쓸 수 있는지가 이 알림의 핵심이다 — 없으면 받아 두고 잊는다.
+        // [JA] いつまで使えるかがこの通知の要だ — なければ受け取ったまま忘れる。
         assertThat(body.getValue()).contains("2026-10-16");
     }
 
@@ -252,8 +282,8 @@ class DeliveryStatusNotificationTest {
     @DisplayName("이름이나 받는 사람이 없으면 건너뛴다 — 컨슈머가 멈추면 안 된다")
     void couponSkipsIncompleteEvents() {
         listener.onCouponIssued(List.of(
-                "{\"customerId\":7,\"eventId\":\"coupon:1\"}",        // 이름 없음
-                "{\"name\":\"쿠폰\",\"eventId\":\"coupon:2\"}"), null);   // 받는 사람 없음
+                "{\"customerId\":7,\"eventId\":\"coupon:1\"}",        // 이름 없음 ／ [JA] 名前なし
+                "{\"name\":\"쿠폰\",\"eventId\":\"coupon:2\"}"), null);   // 받는 사람 없음 ／ [JA] 受取人なし
 
         verify(notificationService, never()).create(
                 anyLong(), any(), anyString(), anyString(), anyString(), anyString(), any());
@@ -278,6 +308,11 @@ class DeliveryStatusNotificationTest {
     // 메일 종류 매핑은 물론이고, 수신 설정에 "보안 알림은 사용자가 꺼도 보낸다"는 예외까지
     // 들어가 있었다(NotificationPreference.shouldSendSms). 전부 갖춰 놓고 발행하는 쪽만
     // 없어서, 계정이 털려도 사용자는 알 방법이 없었다.
+    // [JA] ── セキュリティ通知 ──
+    //      🐛 回帰対象: この通知も作る側がなかった。SECURITY_ALERT はメール件名・SMS
+    //      文言・メール種類のマッピングはもちろん、受信設定に「セキュリティ通知はユーザーがオフにしても送る」
+    //      という例外まで入っていた(NotificationPreference.shouldSendSms)。全部揃えておいて発行する側だけがなく、
+    //      アカウントが乗っ取られてもユーザーは知る術がなかった。
 
     private static String securityEvent(String extra) {
         return """
@@ -316,6 +351,8 @@ class DeliveryStatusNotificationTest {
     /**
      * 사용자가 <b>"나인가 아닌가"를 판단할 수 있어야</b> 쓸모가 있다. 기기와 대략적인
      * 위치가 그 재료다.
+     *
+     * <p>[JA] ユーザーが<b>「自分かどうか」を判断できて</b>こそ役に立つ。端末とおおよその位置がその材料だ。
      */
     @Test
     @DisplayName("기기와 위치를 본문에 담는다 — 본인인지 판단할 재료다")
@@ -334,6 +371,10 @@ class DeliveryStatusNotificationTest {
      * 이 서비스에는 사용자 테이블이 없다. 목록 조회 경로에서 주소를 기억해 두지만,
      * 보안 알림은 화면을 한 번도 열지 않은 계정에도 나가야 한다 — 그 경우 기억된 주소가
      * 없어 메일이 나가지 못한다.
+     *
+     * <p>[JA] このサービスにはユーザーテーブルがない。一覧照会の経路でアドレスを覚えておくが、
+     * セキュリティ通知は画面を一度も開いていないアカウントにも出る必要がある —
+     * その場合は覚えたアドレスがなくメールが出られない。
      */
     @Test
     @DisplayName("이벤트의 이메일을 먼저 기억시킨다 — 화면을 연 적 없는 계정에도 메일이 나가야 한다")
@@ -380,6 +421,10 @@ class DeliveryStatusNotificationTest {
     //
     // 같은 security-alert · 같은 SECURITY_ALERT(수신 설정 무시) — 사건만 다르다. "새 기기 로그인" 문구로 나가면
     // 사용자는 "내가 로그인했으니 괜찮다" 로 넘긴다. 로그인이 끊겼다는 사실이 정확히 전달돼야 한다.
+    // [JA] ── ログイン解除(リフレッシュトークンの再利用、user-service docs/68) ──
+    //      同じ security-alert・同じ SECURITY_ALERT(受信設定を無視) — 事象だけが違う。「新しい端末でのログイン」
+    //      の文言で出ると、ユーザーは「自分がログインしたから大丈夫」と流す。
+    //      ログインが切られたという事実が正確に伝わる必要がある。
 
     private static final String REUSE_EVENT = """
             {"alert":"refresh-reuse","customerId":7,"email":"tester@example.com",

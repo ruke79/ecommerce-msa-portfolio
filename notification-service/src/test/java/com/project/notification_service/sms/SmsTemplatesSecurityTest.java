@@ -14,6 +14,9 @@ import com.project.notification_service.sms.PhoneNumbers.Region;
  * 보안 문자 — 사건(새 기기 · 로그인 해제, user-service docs/68)을 알림 제목으로 구분한다.
  *
  * <p>🐛 예전: 종류로 고정이라 어떤 보안 사건이든 "새로운 기기에서 로그인되었습니다" 문자였다.
+ *
+ * <p>[JA] セキュリティ SMS — 事象(新しい端末・ログイン解除、user-service docs/68)を通知件名で区別する。🐛 以前:
+ * 種類で固定だったため、どんなセキュリティ事象でも「新しい端末でログインされました」の SMS だった。
  */
 @DisplayName("SMS 문구 — 보안 알림")
 class SmsTemplatesSecurityTest {
@@ -26,6 +29,7 @@ class SmsTemplatesSecurityTest {
         assertThat(ko).contains("보안을 위해 로그인이 해제되었습니다").contains("비밀번호").doesNotContain("새로운 기기");
 
         // 일본 번호 — 한국어 제목을 카탈로그로 바꿔 넣는다(docs/60 §9)
+        // [JA] 日本の番号 — 韓国語の件名をカタログで置き換えて入れる(docs/60 §9)
         String ja = SmsTemplates.forNotification(Region.JP, NotificationType.SECURITY_ALERT,
                 Map.of("subject", "보안을 위해 로그인이 해제되었습니다"));
         assertThat(ja).contains("ログインを解除しました").contains("パスワード").doesNotContain("로그인");

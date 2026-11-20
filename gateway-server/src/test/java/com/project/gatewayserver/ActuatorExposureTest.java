@@ -22,9 +22,15 @@ import org.springframework.web.reactive.function.client.WebClient;
  * 가 적혀 있었지만, {@code spring.config.import} 로 읽은 application-common.yml 의 목록이 우선해 실제로는 404 였다(이 시험으로 확인 —
  * 죽은 설정이라 지웠다). 설정을 읽는 순서가 바뀌거나 공통 목록에 쓰기 엔드포인트가 들어오면 여기서 걸린다. 파일 쪽 가드는 common 의 B-112.
  *
- * <p>[JA] ゲートウェイ自身の actuator は読み取りの四つだけ — 実際の設定で起動して refresh などが 404 であることを確かめる。
+ * <p>[JA] ゲートウェイ自身の actuator は読み取りの四つ(health · info · metrics · prometheus)だけ — 実際の設定(application-local.yml + 共通)で
+ * 起動して確かめる(B-112)。
+ * ゲートウェイには Spring Security がなく、クラスター内(同じ名前空間 · kube-system — k8s/95)からは actuator に認証なしで届く。外からは
+ * トンネルが {@code /actuator} をゲートウェイへ送らない(B-82)。2026-11-17 までゲートウェイの yml に {@code refresh, busrefresh} が書かれていたが、
+ * {@code spring.config.import} で読んだ application-common.yml の一覧が優先し、実際には 404 だった(この試験で確認 — 死んだ設定なので消した)。
+ * 設定を読む順序が変わったり、共通一覧に書き込みエンドポイントが入ったりするとここで捕まる。ファイル側のガードは common の B-112。
  */
 // Spring Boot 시험은 지표 내보내기(prometheus)를 끈다 — 운영처럼 켠다(추적은 끈 채)
+// [JA] Spring Boot のテストはメトリクスエクスポート(prometheus)を切る — 本番のように有効にする(トレースは切ったまま)
 @AutoConfigureObservability(tracing = false)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @DisplayName("B-112: 게이트웨이 actuator — refresh · env · gateway 는 404, 프로브 · 지표는 200")
@@ -59,6 +65,7 @@ class ActuatorExposureTest {
     @DisplayName("읽기 넷은 그대로 — health(k8s/31 의 프로브는 그 아래 — 프로브 그룹은 k8s 에서만 켜진다) · prometheus(지표 에이전트) · info · metrics 는 있다")
     void probesAndMetricsStayExposed() {
         // 시험에는 Redis 가 없어(포트 1) health 는 DOWN = 503 — 여기서 보는 것은 상태가 아니라 '있다'(404 가 아니다)
+        // [JA] テストには Redis がなく(ポート 1)health は DOWN = 503 — ここで見るのは状態ではなく「ある」こと(404 ではない)
         assertThat(status(HttpMethod.GET, "/actuator/health")).as("health").isIn(200, 503);
         assertThat(status(HttpMethod.GET, "/actuator/prometheus")).as("prometheus").isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/actuator/info")).as("info").isEqualTo(200);

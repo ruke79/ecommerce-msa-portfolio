@@ -12,6 +12,14 @@ import java.util.List;
  * <p>⚠️ 모든 모양은 {@link #FORMATS} 에 있어야 하고, 그 모양마다 카탈로그에 번역이 있어야 한다 — NotificationTextsTest 가
  * 모양마다 예시 값을 넣어 일본어로 바뀌는지(한글이 남지 않는지) 본다. 문구를 바꾸면 카탈로그의 옛 모양도 남긴다(이미 저장된
  * 알림을 위해).
+ *
+ * <p>[JA] 通知の件名・本文 — サーバーが作って<b>文言そのまま</b>保存する(docs/60 §9)。保存は韓国語で行い、
+ * 一覧を返すときに要求言語へ置き換える(NotificationController → ClientText、カタログは
+ * {@code i18n/client-text.ja.txt})。保存時に翻訳しない理由: 受け取る人が画面言語をいつでも変える —
+ * 保存した文はそのままにして読むときに選べば、すでに溜まった通知も一緒に変わる。⚠️ すべての形は
+ * {@link #FORMATS} になければならず、形ごとにカタログに翻訳がなければならない — NotificationTextsTest
+ * が形ごとに例の値を入れて日本語に変わるか(ハングルが残らないか)を見る。
+ * 文言を変えたらカタログの古い形も残す(すでに保存された通知のため)。
  */
 public final class NotificationTexts {
 
@@ -19,6 +27,7 @@ public final class NotificationTexts {
     }
 
     // ── 주문·결제 ─────────────────────────────────────────────────────────
+    // [JA] ── 注文・決済 ──
     public static final String ORDER_PLACED_TITLE = "주문 접수";
     public static String orderPlaced(String orderId) { return "주문 " + orderId + " 이 접수되었습니다."; }
 
@@ -45,12 +54,17 @@ public final class NotificationTexts {
     }
 
     /** 문자·메일 제목의 주문 표시. */
+    // [JA] SMS・メール件名の注文表示。
     public static String orderSubject(String orderId) { return "주문 " + (orderId == null ? "" : orderId); }
 
     // ── 배송 ──────────────────────────────────────────────────────────────
+    // [JA] ── 配送 ──
     /**
      * 상태별 제목. 내부 상태 이름을 그대로 보여주지 않는다 — 사용자에게 "OUT_FOR_DELIVERY" 는 아무 의미가 없다. 모르는 상태는
      * 뭉뚱그린 문구로 넘어간다(새 상태가 추가돼도 알림이 깨지지 않는다).
+     *
+     * <p>[JA] 状態別の件名。内部状態名をそのまま見せない — ユーザーにとって "OUT_FOR_DELIVERY" は何の意味もない。
+     * 未知の状態はまとめた文言にフォールバックする(新しい状態が追加されても通知が壊れない)。
      */
     public static String deliveryTitle(String status) {
         return switch (status == null ? "" : status) {
@@ -80,6 +94,7 @@ public final class NotificationTexts {
     }
 
     // ── 쿠폰 ──────────────────────────────────────────────────────────────
+    // [JA] ── クーポン ──
     public static String couponTitle(String discount) {
         return discount == null ? "쿠폰이 발급되었습니다" : discount + "% 쿠폰이 발급되었습니다";
     }
@@ -89,10 +104,15 @@ public final class NotificationTexts {
     }
 
     // ── 보안 ──────────────────────────────────────────────────────────────
+    // [JA] ── セキュリティ ──
     public static final String SECURITY_TITLE = "새로운 기기에서 로그인되었습니다";
     /**
      * 보안 알림 본문. 사용자가 <b>"나인가 아닌가"를 판단할 수 있어야</b> 쓸모가 있다 — 기기와 대략적인 위치가 그 재료다. 둘 다
      * 없으면 최소한 무엇을 해야 하는지는 말해 준다. IP 는 이미 마스킹된 값이 온다(user-service DeviceIdentity.maskIp).
+     *
+     * <p>[JA] セキュリティ通知本文。ユーザーが<b>「自分かどうか」を判断できて</b>こそ役に立つ —
+     * 端末とおおよその位置がその材料だ。どちらもなければ、少なくとも何をすべきかは伝える。IP
+     * はすでにマスキングされた値が来る(user-service DeviceIdentity.maskIp)。
      */
     public static String securityBody(String deviceLabel, String maskedIp) {
         StringBuilder body = new StringBuilder();
@@ -154,6 +174,7 @@ public final class NotificationTexts {
             "소셜 로그인으로 이메일 주소의 주인이 확인되어, 주소 확인 없이 설정돼 있던 비밀번호를 해제하고 모든 기기의 로그인을 종료했습니다. "
             + "비밀번호로도 로그인하려면 '비밀번호 찾기' 로 새로 설정해 주세요.";
     /** 패스키 등록 · 삭제(user-service docs/68 §20). */
+    // [JA] パスキーの登録・削除(user-service docs/68 §20)。
     public static final String PASSKEY_ADDED_TITLE = "새 패스키가 등록되었습니다";
     public static final String PASSKEY_ADDED_BODY =
             "이 계정에 로그인할 수 있는 패스키가 새로 등록되었습니다. 본인이 한 일이 아니라면 보안 설정에서 그 패스키를 삭제하고, "
@@ -163,6 +184,7 @@ public final class NotificationTexts {
             "이 계정의 패스키 하나가 삭제되었습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
 
     /** 2단계 인증 복구 코드 — 새로 만듦 · 로그인에 씀(user-service docs/57 §22). */
+    // [JA] 二段階認証のリカバリーコード — 新規作成・ログインに使用(user-service docs/57 §22)。
     public static final String RECOVERY_CODES_CREATED_TITLE = "2단계 인증 복구 코드를 새로 만들었습니다";
     public static final String RECOVERY_CODES_CREATED_BODY =
             "이전 복구 코드는 더 이상 쓸 수 없습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
@@ -171,6 +193,7 @@ public final class NotificationTexts {
             "2단계 인증 대신 복구 코드 하나가 쓰였습니다. 본인이 한 일이 아니라면 바로 비밀번호를 변경하고 모든 기기에서 로그아웃해 주세요.";
 
     /** 프로바이더 표시 이름 — 사용자에게는 registrationId(google · kakao)가 아니라 서비스 이름을 보여 준다. */
+    // [JA] プロバイダーの表示名 — ユーザーには registrationId(google・kakao)ではなくサービス名を見せる。
     static String providerLabel(String provider) {
         return switch (provider) {
             case "google" -> "Google";
@@ -183,6 +206,7 @@ public final class NotificationTexts {
     }
 
     // ── 채팅·상담·친구 ────────────────────────────────────────────────────
+    // [JA] ── チャット・相談・友だち ──
     public static final String SUPPORT_REPLY_TITLE = "고객지원팀 답변";
     public static final String SUPPORT_REPLY_BODY = "상담원이 문의에 답변했습니다.";
     public static String chatTitle(String senderName) { return senderName == null ? "새 메시지" : senderName + " 님의 메시지"; }
@@ -191,6 +215,7 @@ public final class NotificationTexts {
     public static final String FRIEND_ONLINE_BODY = "지금 대화할 수 있습니다.";
 
     // ── 재입고 ────────────────────────────────────────────────────────────
+    // [JA] ── 再入荷 ──
     public static final String RESTOCK_TITLE = "재입고 알림";
     public static final String RESTOCK_FALLBACK_PRODUCT = "신청하신 상품";
     public static String restockBody(String productName, String option) {
@@ -200,6 +225,9 @@ public final class NotificationTexts {
     /**
      * 저장될 수 있는 모든 모양 — {@code {}} 는 바뀌는 자리(주문 번호·이름·금액·날짜·기기). 테스트가 모양마다 예시 값을 넣어
      * 카탈로그로 번역되는지 본다.
+     *
+     * <p>[JA] 保存されうるすべての形 — {@code {}} は変わる箇所(注文番号・名前・金額・日付・端末)。
+     * テストが形ごとに例の値を入れてカタログで翻訳されるかを見る。
      */
     public static final List<String> FORMATS = List.of(
             ORDER_PLACED_TITLE, orderPlaced("{}"),

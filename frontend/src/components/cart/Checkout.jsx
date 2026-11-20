@@ -6,6 +6,8 @@ const Checkout = ({ subtotal, shippingFee, total, selected, saveCartToDbHandler 
     const money = useMoney();
     // 🐛 예전에는 금액이 toFixed 의 **문자열**("0.00")로 와서 `shippingFee === 0` 이 늘 거짓이었다 — 무료 배송이
     //    "배송비 0.00$" 로 보였다. 숫자로 받는다(CartPage).
+    // [JA] 🐛 以前は金額が toFixed の **文字列**("0.00")で来て `shippingFee === 0` が常に偽だった — 送料無料が
+    //      「送料 0.00$」と見えた。数値で受け取る(CartPage)。
     const free = Number(shippingFee) === 0;
 
     return (

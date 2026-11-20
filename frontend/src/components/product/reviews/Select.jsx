@@ -5,6 +5,9 @@ import { useTranslation } from "i18n/I18nProvider";
 /**
  * 착용감 값 → 문구 키. 값("Small" 등)은 서버에 저장되는 코드라 번역하지 않고, 화면에 그릴 때만 바꾼다.
  * 리뷰 카드도 이 표로 그린다 — 모르는 값(예전에 저장된 다른 값)은 그대로 보여 준다.
+ *
+ * <p>[JA] フィット感の値 → 文言キー。値("Small" など)はサーバーに保存されるコードなので翻訳せず、画面に描くときだけ置き換える。
+ * レビューカードもこの表で描く — 知らない値(以前に保存された別の値)はそのまま見せる。
  */
 export const FIT_LABEL_KEYS = {
     Small: "product.review.fit.small",
@@ -15,6 +18,7 @@ export const FIT_LABEL_KEYS = {
 export const fitLabel = (t, fit) => (FIT_LABEL_KEYS[fit] ? t(FIT_LABEL_KEYS[fit]) : fit);
 
 /** 스타일 한 칸의 그림 — 이미지가 있으면 이미지, 없으면 색 동그라미. 빈 src 는 깨진 아이콘이 된다. */
+// [JA] スタイル一枠の絵 — 画像があれば画像、なければ色の丸。空の src は壊れたアイコンになる。
 const StyleSwatch = ({ style, size = 20 }) => {
     const image = style?.image ?? style?.colorImage;
     if (image) {
@@ -39,12 +43,19 @@ const StyleSwatch = ({ style, size = 20 }) => {
  *   <li>스타일이 {@code item.image} 를 그렸는데 상품의 색상 정보에는 그 필드가 없다({@code colorImage}) — 깨진 그림이었다.</li>
  *   <li>사이즈가 많으면 목록이 화면 밖으로 길어졌다 — 높이를 제한하고 스크롤.</li>
  * </ul>
+ *
+ * <p>[JA] レビュー作成の選択欄(サイズ・スタイル・フィット感)。
+ * 🐛 以前の形の問題: 選んでもリストが閉じなかった — マウスがリストを離れたときだけ閉じたので、スマホ(マウスなし)では永遠に開いたままだった。
+ * 選べば閉じ、外側を押せば閉じる。リストが欄の右端に付いて(right-2)欄とずれていた — 欄のすぐ下に左揃えで。
+ * スタイルが {@code item.image} を描いていたが商品の色情報にそのフィールドはない({@code colorImage}) — 壊れた画像だった。
+ * サイズが多いとリストが画面外まで伸びた — 高さを制限してスクロール。
  */
 const Select = ({ property, text, data, handleChange }) => {
     const { t } = useTranslation();
     const [visible, setVisible] = useState(false);
     const box = useRef(null);
     // text 는 "size"·"style"·"fit" — 코드 값이라 화면에는 문구로 바꿔 그린다.
+    // [JA] text は "size"・"style"・"fit" — コード値なので画面には文言に置き換えて描く。
     const placeholder = t(`product.review.select.${text}`);
 
     useEffect(() => {
@@ -106,6 +117,7 @@ const Select = ({ property, text, data, handleChange }) => {
                             role="option"
                             aria-selected={false}
                             // 사이즈는 이름만 값으로(서버가 문자열로 받는다), 스타일·착용감은 항목 그대로
+                            // [JA] サイズは名前だけを値に(サーバーが文字列で受ける)、スタイル・フィット感は項目そのまま
                             onClick={() => choose(text === "size" ? item.size : item)}
                             className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm hover:bg-slate-100 cursor-pointer"
                         >

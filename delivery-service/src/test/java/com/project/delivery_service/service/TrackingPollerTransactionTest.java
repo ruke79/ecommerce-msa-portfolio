@@ -55,6 +55,7 @@ class TrackingPollerTransactionTest {
     private Shipment second;
 
     /** 트랜잭션 시작 · 끝을 기록하는 가짜 관리자. */
+    // [JA] トランザクションの開始・終了を記録する偽のマネージャー。
     private PlatformTransactionManager recordingManager() {
         return new PlatformTransactionManager() {
             @Override

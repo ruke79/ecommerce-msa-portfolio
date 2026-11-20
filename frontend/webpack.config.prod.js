@@ -24,6 +24,11 @@ module.exports = merge(baseConfig, {
   // ⚠️ 맵 파일은 여전히 dist/ 에 만들어진다. 주석이 없을 뿐이라 `/main.bundle.js.map` 을
   // 직접 찍으면 그대로 받아진다. 그래서 nginx.conf 가 `.map` 요청을 404 로 막는다 —
   // 둘 중 하나만으로는 부족하다.
+  // [JA] 🔒 以前は `source-map` だった。すると dist/*.map が作られ nginx が**そのまま配信する** — コメントまで含む元のソースが誰にでも公開される。
+  //      このリポジトリのコメントにはなぜそう直したか、どんな攻撃経路を塞いだかが書いてある。攻撃者に渡すような文章ではない。
+  //      `hidden-source-map` はマップを作るがバンドルに `//# sourceMappingURL=` コメントを入れない。ブラウザはマップを探さず、エラー追跡ツール(Sentry など)にはビルド成果物として別にアップロードできる。
+  //      マップ自体をなくすと(`false`)後でスタックトレースを解く手段がなくなる。
+  //      ⚠️ マップファイルは依然 dist/ に作られる。コメントがないだけなので `/main.bundle.js.map` を直接叩けばそのまま取得できる。だから nginx.conf が `.map` 要求を 404 で塞ぐ — どちらか一方だけでは足りない。
   devtool: "hidden-source-map",
 
   // 🔴 파일 이름에 **내용 해시**를 넣는다. 이게 없으면 배포해도 사용자는 옛 화면을 본다.
@@ -42,9 +47,18 @@ module.exports = merge(baseConfig, {
   // 이름에 해시가 들어가면 내용이 바뀔 때마다 경로가 바뀐다 — 캐시가 낄 자리가 없다.
   // `/static/` 아래로 내보내 nginx 의 기존 immutable 규칙이 의도대로 걸리게 한다.
   // HtmlWebPackPlugin 이 script 태그를 새 이름으로 다시 쓰므로 수동 작업은 없다.
+  // [JA] 🔴 ファイル名に**内容ハッシュ**を入れる。これがないとデプロイしてもユーザーは古い画面を見る。
+  //      base 設定は `filename: "[name].bundle.js"` なのでバンドル名が**常に main.bundle.js** だった。ところが nginx.conf のキャッシュ規則は CRA のようにハッシュ付きファイルが `/static/` にあると前提する
+  //      (そのコメントにそう書いてある)。実際の成果物はルートの `main.bundle.js` なのでその規則に**一つもかからず**、Cache-Control ヘッダーがまったく付かなかった。
+  //      ヘッダーがないとブラウザは*ヒューリスティックキャッシュ*をする — 通常 Last-Modified からの経過時間の 10% を勝手にキャッシュする。index.html は no-cache なので新しく取得するが、
+  //      その中の `<script src="/main.bundle.js">` は名前が同じなので、ブラウザは**キャッシュにある古いバンドルをそのまま使う。** 開発者ツールには `200 OK (from disk cache)` と見え、
+  //      サーバーは新しいファイルを正しく配信しているので「デプロイしたのに画面が変わらない」としか現れない。
+  //      名前にハッシュが入れば内容が変わるたびにパスが変わる — キャッシュが挟まる余地がない。`/static/` 以下に出力して nginx の既存の immutable 規則が意図どおりかかるようにする。
+  //      HtmlWebPackPlugin が script タグを新しい名前に書き換えるので手作業はない。
   output: {
     // 🧹 빌드 전에 dist/ 를 비운다. 해시가 붙으면 더 중요해진다 — 없으면 옛 해시 파일이
     // 무한히 쌓여 이미지가 계속 커진다.
+    // [JA] 🧹 ビルド前に dist/ を空にする。ハッシュが付くとより重要になる — なければ古いハッシュのファイルが無限に溜まりイメージが大きくなり続ける。
     clean: true,
     filename: "static/[name].[contenthash:8].bundle.js",
     chunkFilename: "static/[name].[contenthash:8].bundle.js",
@@ -55,6 +69,7 @@ module.exports = merge(baseConfig, {
     }),
     // REACT_APP_* 전부 + PUBLIC_URL + NODE_ENV. 목록을 손으로 관리하지 않는다 — 이유는
     // webpack.env.js 에. 빠진 이름 하나가 첫 화면의 `process is not defined` 였다.
+    // [JA] REACT_APP_* すべて + PUBLIC_URL + NODE_ENV。一覧を手で管理しない — 理由は webpack.env.js に。漏れた名前一つが最初の画面の `process is not defined` だった。
     new webpack.DefinePlugin(clientEnv("production")),
 
     // ⚠️ public/ 은 **루트로** 복사한다. 그리고 assets/ 를 빼지 않는다.
@@ -84,6 +99,15 @@ module.exports = merge(baseConfig, {
     //
     // index.html 만 뺀다. 그건 HtmlWebPackPlugin 이 해시 붙은 번들을 가리키도록 만든다 —
     // 템플릿 원본을 덮어쓰면 스크립트 태그가 없는 빈 페이지가 된다.
+    // [JA] ⚠️ public/ は**ルートへ**コピーする。そして assets/ を除外しない。以前の設定は `to: "public"` + `ignore: ["**/assets/**"]` だった。どちらも誤り。
+    //      ① `to: "public"` — ブラウザは `/favicon.ico` を探すがファイルは `/public/favicon.ico` に置かれる。public/ の内容は**ルートから**配信されるのが CRA · webpack の慣例だ。
+    //      ② `ignore: ["**/assets/**"]` — バンドラーが `assets/images/[name].[ext]` に出力するので重なると見たのだが、バンドラーが出力するのは**import した画像だけ**である。
+    //      文字列パスでだけ使う画像は import がないので誰も作らず、Copy も飛ばして本番で 404 になった: 決済手段アイコンすべて(order/Payment.jsx の import はコメントアウトされている)、
+    //      カードブランドのロゴ 6 種(public/ にしかなくバンドラーが作れない)、/browse のブランドロゴ。
+    //      開発では問題なかった。webpack.config.dev.js には CopyPlugin がなく dev-server が public/ をそのまま配信するからだ —「ローカルでは動くのにデプロイすると壊れる」の典型。
+    //      名前が重なる 31 個は src/assets/images と**バイトまで同一のコピー**であることを確認した。CopyPlugin はデフォルト(force:false)でコンパイルが既に作った資産を上書きしないので、
+    //      重なればバンドラー側が残る — 同じファイルなのでどちらでも結果は同じ。
+    //      index.html だけ除外する。それは HtmlWebPackPlugin がハッシュ付きバンドルを指すように作る — テンプレート原本で上書きするとスクリプトタグのない空ページになる。
     new CopyPlugin({
       patterns: [
         {
@@ -112,17 +136,22 @@ module.exports = merge(baseConfig, {
             //    사용자는 토스트 한 줄을 보고 우리는 아무것도 못 본다.
             //
             //    소음(log·debug)만 지우고 진단(error·warn·info)은 남긴다.
+            // [JA] 🔴 以前は `drop_console: true` だった。それは console.log だけでなく**console.error · console.warn まですべて**消す — 本番でクライアント診断がゼロになる。
+            //      実際に消えていたもの: "[auth] 強制ログアウト — 原因リクエスト: …"(トークン更新)、ErrorBoundary が出すコンポーネントスタック、axios インターセプターの失敗理由。
+            //      ユーザーはトースト一行を見て、こちらは何も見られない。ノイズ(log · debug)だけ消して診断(error · warn · info)は残す。
             drop_debugger: true,
             pure_funcs: ["console.log", "console.debug", "console.trace"],
             warnings: false,
           },
           mangle: {
             // 코드 변수명 난독화
-            toplevel: true, // 최상위 변수 이름도 변경
+            // [JA] コードの変数名を難読化
+            toplevel: true, // 최상위 변수 이름도 변경 ／ [JA] トップレベルの変数名も変更
           },
           format: {
             // 출력 포맷
-            comments: false, // 주석 제거
+            // [JA] 出力フォーマット
+            comments: false, // 주석 제거 ／ [JA] コメント除去
           },
         },
       }),

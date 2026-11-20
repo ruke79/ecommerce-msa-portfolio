@@ -15,6 +15,14 @@
 #   ./ops/39-cert-manager.sh renew <서비스>  # 지금 새로 발급(연습·사고 대응) — Reloader 가 그 서비스를 재시작한다
 #
 # 비밀은 출력하지 않는다 — CA 키는 파일에서 kubectl 로 바로 넣고(인자·로그 없음), 확인은 지문(fingerprint)만 비교한다.
+# [JA] 運用アクション ㊴ — サービス別アイデンティティ証明書の発行・更新を cert-manager に任せる(docs/57 §18)。
+#      なぜ: ops/38 で作ったアイデンティティは 1 年有効で、更新は人が再実行して再起動する必要がある — 忘れると期限の日にサービス間呼び出しがすべて
+#      切れる(enforce)。cert-manager が 90 日のものを期限の 30 日前に新規発行し、Reloader がそのサービスだけをローリング再起動する。
+#      Secret 名・キーは ops/38 と同じ(tls-id-<サービス>)— マニフェストはそのままで、発行者だけが変わる。
+#      使い方は上記(引数なしは全部 — install → ca → apply → check(各段階は済んでいれば飛ばす)、install = cert-manager・Reloader のインストール(固定バージョン)、
+#      ca = ops/07 の CA を ClusterIssuer として登録(cert-manager 名前空間にのみ)、apply = k8s/96 — Certificate 10 個、check = Certificate の Ready・期限・次回更新、
+#      renew = 今すぐ新規発行(練習・事故対応)— Reloader がそのサービスを再起動する)。
+#      秘密は出力しない — CA 鍵はファイルから kubectl で直接入れ(引数・ログなし)、確認はフィンガープリントだけを比較する。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -117,6 +125,8 @@ renew() {
     command -v cmctl >/dev/null && { cmctl renew -n "$NS" "id-$s"; return; }
     # cmctl 이 없으면 — Secret 을 지우면 cert-manager 가 곧바로 다시 발급한다(키도 새로). 떠 있는 파드는 마운트된 옛 파일을 계속
     # 쓰고, 새 Secret 이 생기면 Reloader 가 재시작한다. 그 몇 초 사이에 새로 뜨는 파드는 기다린다(ContainerCreating).
+    # [JA] cmctl がなければ — Secret を消すと cert-manager がすぐ再発行する(鍵も新しく)。起動中の Pod はマウントされた旧ファイルを使い
+    #      続け、新しい Secret ができると Reloader が再起動する。その数秒の間に新しく起動する Pod は待つ(ContainerCreating)。
     kubectl -n "$NS" delete secret "tls-id-$s" >/dev/null
     kubectl -n "$NS" wait --for=condition=Ready "certificate/id-$s" --timeout=120s >/dev/null || die "다시 발급되지 않았다"
     ok "$s: 새로 발급 — Reloader 가 재시작한다(kubectl -n $NS rollout status deploy/$s)"

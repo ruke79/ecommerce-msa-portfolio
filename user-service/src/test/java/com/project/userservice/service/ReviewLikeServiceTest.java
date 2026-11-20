@@ -32,6 +32,11 @@ import com.project.userservice.service.ReviewLikeService.LikeSnapshot;
  * <p>여기서 검증하지 <b>않는</b> 것: 유니크 제약 자체(실제 DB 가 필요하다). 대신 그 제약이
  * 터졌을 때 서비스가 어떻게 해석하는지를 검증한다 — 동시 클릭을 오류로 돌려주면 사용자
  * 화면에서는 "눌렀는데 실패했다고 나오고, 새로고침하면 눌려 있다"가 된다.
+ *
+ * <p>[JA] いいねトグルの<b>判断</b>を固定する。
+ * ここで検証<b>しない</b>もの: ユニーク制約そのもの(実際の DB が必要)。代わりにその制約が発火したとき
+ * サービスがどう解釈するかを検証する — 同時クリックをエラーで返すと、ユーザーの画面では
+ * 「押したのに失敗と出て、再読み込みすると押されている」になる。
  */
 @DisplayName("리뷰 좋아요")
 class ReviewLikeServiceTest {
@@ -77,6 +82,7 @@ class ReviewLikeServiceTest {
     @DisplayName("이미 눌렀으면 지우고, 다시 저장하지 않는다")
     void secondClickUnlikes() {
         // 삭제가 1행을 지웠다 = 눌려 있었다. 별도 조회 없이 이 값만으로 방향이 정해진다.
+        // [JA] 削除が 1 行を消した = 押されていた。別途照会せずこの値だけで方向が決まる。
         when(likeRepository.deleteByReviewIdAndUserId(REVIEW_ID, USER_ID)).thenReturn(1);
         when(likeRepository.countByReviewId(REVIEW_ID)).thenReturn(0L);
 
@@ -98,6 +104,7 @@ class ReviewLikeServiceTest {
         ReviewLikeDto result = service.toggle(USERNAME, REVIEW_ID);
 
         // 원하던 최종 상태는 이미 다른 요청이 만들었다. 사용자에게 실패를 보일 이유가 없다.
+        // [JA] 望んだ最終状態は既に別のリクエストが作った。ユーザーに失敗を見せる理由はない。
         assertThat(result.likedByMe()).isTrue();
         assertThat(result.likeCount()).isEqualTo(1L);
     }
@@ -133,6 +140,7 @@ class ReviewLikeServiceTest {
     @DisplayName("좋아요가 하나도 없는 리뷰는 0으로 읽힌다 — 집계 결과에 아예 없기 때문")
     void snapshotFillsMissingCountsWithZero() {
         // List.of(Object[]) 는 가변인자로 풀려 List<Object> 가 된다 — 타입을 못 박아야 한다.
+        // [JA] List.of(Object[]) は可変長引数として展開され List<Object> になる — 型を固定しなければならない。
         when(likeRepository.countByReviewIds(any()))
                 .thenReturn(List.<Object[]>of(new Object[] { 1L, 3L }));
         when(likeRepository.findLikedReviewIds(eq(USER_ID), any())).thenReturn(List.of(1L));

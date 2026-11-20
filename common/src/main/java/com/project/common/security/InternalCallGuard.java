@@ -108,6 +108,7 @@ public final class InternalCallGuard {
             return false;
         }
         // Locale.ROOT — 기본 로캘이 터키어면 "admin".toUpperCase() 가 "ADMİN"(점 있는 İ)이 되어 관리자를 못 알아본다.
+        // [JA] Locale.ROOT — デフォルトロケールがトルコ語だと "admin".toUpperCase() が "ADMİN"(点付き İ)になり管理者を認識できない。
         String normalized = userRole.trim().toUpperCase(java.util.Locale.ROOT);
         return normalized.equals("ADMIN") || normalized.equals("ROLE_ADMIN");
     }

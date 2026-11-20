@@ -14,6 +14,10 @@ import org.springframework.web.multipart.MultipartFile;
  * <p>이 클래스는 <b>업로드를 거르는 유일한 관문</b>이다. 그런데 프로필 이미지 업로드가
  * 생기기 전까지 {@code getFilePath} 를 부르는 코드가 한 곳도 없었고, 그래서 아래 두 가지
  * 결함이 드러나지 않았다.
+ *
+ * <p>[JA] アップロードファイルの拡張子検査と S3 キーの組み立て。
+ * このクラスは<b>アップロードをふるいにかける唯一の関門</b>だ。ところがプロフィール画像のアップロードができるまで {@code getFilePath} を呼ぶコードが
+ * 一箇所もなく、そのため下の 2 つの欠陥が表に出なかった。
  */
 class FileUtilTest {
 
@@ -22,10 +26,14 @@ class FileUtilTest {
     }
 
     // ── 확장자 허용 목록 ────────────────────────────────────────────────────
+    // [JA] ── 拡張子の許可リスト ──
 
     /**
      * 🐛 {@code FileType.GIF} 의 값이 {@code "git"} 이었다 — 오타다. 두 방향으로 틀렸다:
      * {@code .gif} 이미지는 거부되고, {@code .git} 으로 끝나는 파일은 이미지로 통과했다.
+     *
+     * <p>[JA] 🐛 {@code FileType.GIF} の値が {@code "git"} だった — タイポだ。2 方向に間違っていた:
+     * {@code .gif} 画像は拒否され、{@code .git} で終わるファイルは画像として通っていた。
      */
     @Test
     @DisplayName("gif 를 받아들인다 — 예전에는 오타 때문에 거부했다")
@@ -78,6 +86,9 @@ class FileUtilTest {
      * 예전에는 {@code Objects.requireNonNull(file.getOriginalFilename())} 이었다.
      * 파일명 없는 업로드는 드물지만 가능하고, 그때 NPE 가 500 으로 나갔다 — 잘못된
      * 요청은 400 이다.
+     *
+     * <p>[JA] 以前は {@code Objects.requireNonNull(file.getOriginalFilename())} だった。ファイル名のないアップロードはまれだが可能で、
+     * そのとき NPE が 500 として出ていた — 不正なリクエストは 400 だ。
      */
     @Test
     @DisplayName("파일명이 없어도 NPE 가 아니라 '지원하지 않는 형식'이다")
@@ -90,11 +101,15 @@ class FileUtilTest {
     }
 
     // ── 키 접두사 ───────────────────────────────────────────────────────────
+    // [JA] ── キーの接頭辞 ──
 
     /**
      * 🔑 버킷의 공개 읽기 정책이 {@code arn:aws:s3:::<버킷>/images/*} 에 걸려 있다.
      * 접두사가 어긋나면 <b>업로드는 성공하는데 브라우저에서 403</b> 이 된다 — 가장
      * 알아채기 어려운 실패 방식이다.
+     *
+     * <p>[JA] 🔑 バケットの公開読み取りポリシーが {@code arn:aws:s3:::<バケット>/images/*} にかかっている。
+     * 接頭辞がずれると<b>アップロードは成功するのにブラウザーで 403</b> になる — 最も気づきにくい失敗の仕方だ。
      */
     @Test
     @DisplayName("접두사를 지정하면 그것을 쓴다")
@@ -134,6 +149,7 @@ class FileUtilTest {
 
         assertThat(a).isNotEqualTo(b);
         // 사용자 입력이 아니지만, 키에 들어가는 값이 경로를 만들지 않는다는 것을 고정한다.
+        // [JA] ユーザー入力ではないが、キーに入る値がパスを作らないことを固定する。
         assertThat(a).doesNotContain("/").doesNotContain("..");
     }
 }

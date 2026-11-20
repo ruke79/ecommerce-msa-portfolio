@@ -26,7 +26,12 @@ import org.junit.jupiter.api.io.TempDir;
  * ③ 파드 안에 결과가 없으면(표본 중 재시작) 옛 파일을 성공으로 보이지 않고 실패로 끝난다. 표의 묶음은 잎에서 가장 가까운 아는 묶음이다.
  * kubectl · curl · async-profiler 는 가짜로 바꿔 돌린다(bash · POSIX 가 없으면 건너뛴다).
  *
- * <p>[JA] 本番クラスタは何も入れる前に拒否 · 決めた負荷に届くまでサンプルを始めない · Pod 内に結果がなければ失敗で終わる。
+ * <p>[JA] 負荷中の CPU プロファイル(ops/58-cpu-profile.sh) — docs/83 §4。
+ *
+ * <p>[JA] Pod の中に実行ファイルを入れて JVM に付くツールなので三つを守る。① 本番クラスタ(APP_PUBLIC_URL が本番アドレス · 空)は何も入れる前に拒否する。
+ * ② 決めた負荷(Prometheus のリクエスト/秒)に届くまではサンプルを始めない — 段階上げの前の段階を取ると見当違いの所を直す。
+ * ③ Pod の中に結果がなければ(サンプル中の再起動)古いファイルを成功に見せず失敗で終わる。表の束は葉に最も近い既知の束である。
+ * kubectl · curl · async-profiler は偽物に替えて実行する(bash · POSIX がなければスキップ)。
  */
 @DisplayName("ops/58 — 부하 중 CPU 프로파일 (docs/83 §4)")
 class CpuProfileScriptTest {
@@ -52,6 +57,7 @@ class CpuProfileScriptTest {
     }
 
     /** async-profiler 모양의 collapsed — 자바 프레임은 슬래시, JVM 은 C++ 프레임. */
+    // [JA] async-profiler の形の collapsed — Java フレームはスラッシュ、JVM は C++ フレーム。
     private static final String COLLAPSED = String.join("\n",
             "java/lang/Thread.run;io/netty/channel/nio/NioEventLoop.run;sun/security/ssl/SSLEngineImpl.wrap;com/sun/crypto/provider/GaloisCounterMode.doFinal 50",
             "java/lang/Thread.run;com/project/catalog_service/service/HomeService.home;com/fasterxml/jackson/databind/ObjectMapper.writeValueAsBytes;java/lang/String.charAt 30",
@@ -63,6 +69,9 @@ class CpuProfileScriptTest {
     /**
      * 가짜 kubectl(부른 것을 calls 에 · cp 는 FAKE_COLLAPSED 를 쓴다 · FAKE_MISSING 의 서비스는 파드 안 결과가 없다) ·
      * 가짜 curl(물을 때마다 FAKE_RPS 의 다음 값을 Prometheus 응답으로) · 가짜 async-profiler 폴더로 돌린다.
+     *
+     * <p>[JA] 偽の kubectl(呼んだものを calls に · cp は FAKE_COLLAPSED を書く · FAKE_MISSING のサービスはポッド内の結果がない) ·
+     * 偽の curl(聞くたびに FAKE_RPS の次の値を Prometheus の応答として) · 偽の async-profiler フォルダーで動かす。
      */
     private Run run(Map<String, String> env, String... args) throws Exception {
         Path bin = Files.createDirectories(tmp.resolve("bin"));
@@ -143,6 +152,7 @@ class CpuProfileScriptTest {
         assertThat(sampleStart).as("표본은 부하가 900 을 넘은 뒤에야").isGreaterThan(third);
         assertThat(calls.indexOf("curl rps=600")).isLessThan(third);
         // 기본 두 서비스 모두, 넣기 → 붙는지 확인 → 표본
+        // [JA] デフォルトの 2 サービスとも、入れる → 付いたか確認 → 標本
         assertThat(calls).contains("cp " + tmp.resolve("ap") + " catalog-service-pod-1:/tmp/ap")
                 .contains("cp " + tmp.resolve("ap") + " gateway-server-pod-1:/tmp/ap")
                 .contains("-e itimer -d 3 -o flat=3 7")
@@ -152,6 +162,7 @@ class CpuProfileScriptTest {
 
         String table = Files.readString(tmp.resolve("out/catalog-service.txt"));
         // 묶음: 잎에서 가장 가까운 아는 묶음 — 암호 잎은 TLS, String.charAt 은 부른 Jackson, 자바 클래스 이름의 Markup 은 GC 가 아니다
+        // [JA] まとまり: リーフに最も近い既知のまとまり — 暗号のリーフは TLS、String.charAt は呼び出し元の Jackson、Java クラス名の Markup は GC ではない
         assertThat(table).startsWith("표본 100")
                 .containsPattern("50 +50\\.00%  TLS · 암호")
                 .containsPattern("30 +30\\.00%  JSON")

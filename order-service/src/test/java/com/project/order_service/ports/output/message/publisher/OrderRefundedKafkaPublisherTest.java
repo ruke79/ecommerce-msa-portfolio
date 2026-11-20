@@ -15,6 +15,9 @@ import com.project.order_service.model.OrderRefund;
 
 /**
  * 🐛 부분 환불에는 알림이 없었다 — 환불 한 건마다 {@code order-refunded} 를 보낸다 (docs/49 §10).
+ *
+ * <p>[JA] 🐛 部分返金には通知がなかった — 返金一件ごとに {@code order-refunded} を送る(docs/49
+ * §10)。
  */
 @DisplayName("OrderRefundedKafkaPublisher — 환불 한 건의 이벤트")
 class OrderRefundedKafkaPublisherTest {

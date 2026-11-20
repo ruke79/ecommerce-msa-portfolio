@@ -16,12 +16,16 @@ const formatDate = (value) => serverDate(value, "");
  *
  * <p>본문은 목록에 싣지 않는다 — 10건짜리 목록이 본문 10개를 끌고 오면 안 된다(서버의
  * NoticeSummary 가 제목·고정·공개시각만 준다).
+ *
+ * <p>[JA] お知らせ一覧。これまでサービスのメンテナンスやポリシー変更を知らせる方法がなかった。一覧はログインなしで開く。
+ * 本文は一覧に載せない — 10 件の一覧が本文 10 個を引き連れてきてはならない(サーバーの NoticeSummary がタイトル・固定・公開時刻だけを返す)。
  */
 const NoticeList = () => {
     const { t } = useTranslation();
     const [data, setData] = useState(null);
     const [page, setPage] = useState(0);
     // 문구가 아니라 실패 여부만 담는다 — 문구는 그릴 때 지금 언어로 만든다.
+    // [JA] 文言ではなく失敗したかどうかだけを入れる — 文言は描画時に今の言語で作る。
     const [error, setError] = useState(false);
     const [loading, setLoading] = useState(true);
 

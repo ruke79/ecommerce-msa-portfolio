@@ -24,7 +24,7 @@ describe("formDraft", () => {
     const draft = loadDraft(KEY);
     expect(draft.images).toBeUndefined();
     expect(draft.color.image).toBe("");
-    expect(draft.color.color).toBe("#fff");   // 색상값 자체는 지킨다
+    expect(draft.color.color).toBe("#fff");   // 색상값 자체는 지킨다 ／ [JA] 色の値そのものは守る
   });
 
   it("저장 실패(쿼터 초과)는 조용히 포기한다 — 초안은 편의 기능이지 게이트가 아니다", () => {

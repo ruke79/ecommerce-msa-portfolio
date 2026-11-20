@@ -22,6 +22,12 @@ import lombok.extern.slf4j.Slf4j;
  * <p>레플리카가 여럿이어도 회차 임대로 한 파드만 돈다(SchedulerLease). 🐛 예전에는 파드마다 같은 시각에 돌아 catalog 에 상품마다 같은
  * 값을 두 번 보냈다 — 멱등이라 결과는 같았지만 호출이 파드 수만큼 늘었다. 리뷰가 하나도 남지 않은 상품은
  * 여기서 보이지 않는다 — 마지막 리뷰를 지울 때 0 을 보내고(ReviewService.deleteReview), 그것이 실패한 경우만 남는다.
+ *
+ * <p>[JA] 商品評価の突き合わせ — 毎日レビューから平均を計算し直して catalog に送る(docs/57 §13)。
+ * <p>評価はレビューが変わるとき ReviewService.publishRating が送る。その呼び出しが失敗するとレビューは残して警告だけ残すので(docs/57 §3)、<b>その後レビューのない商品は評価がずれたまま残る。</b>
+ * 評価はレビューからいつでも再計算できる派生値なので、定期的に全部送り直すのが最も単純な復旧である。
+ * <p>レプリカが複数でも回のリースで一つのポッドだけが回る(SchedulerLease)。🐛 以前はポッドごとに同じ時刻に回り catalog に商品ごと同じ値を二回送っていた — 冪等なので結果は同じだったが呼び出しがポッド数だけ増えた。
+ * レビューが一つも残っていない商品はここでは見えない — 最後のレビューを消すとき 0 を送り(ReviewService.deleteReview)、それが失敗した場合だけ残る。
  */
 @Slf4j
 @Component
@@ -59,11 +65,13 @@ public class ReviewRatingReconciler {
             }
         } catch (Exception e) {
             // 예외로 스케줄러 스레드가 죽으면 이후 회차가 사라진다.
+            // [JA] 例外でスケジューラスレッドが死ぬと以降の回が消える。
             log.error("평점 대사 실패: {}", e.toString());
         }
     }
 
     /** 임대를 못 잡거나(다른 파드가 이 회차를 돈다) 임대 확인이 실패하면 건너뛴다 — 다음 회차가 같은 일을 한다. */
+    // [JA] リースを取れないか(別のポッドがこの回を回す)リース確認が失敗したら飛ばす — 次の回が同じ仕事をする。
     private boolean acquired() {
         try {
             if (lease.tryAcquire(LEASE, LEASE_FOR)) {
@@ -77,6 +85,7 @@ public class ReviewRatingReconciler {
     }
 
     /** 리뷰가 있는 모든 상품의 평균을 catalog 에 보낸다. 한 상품의 실패가 나머지를 막지 않는다. */
+    // [JA] レビューのあるすべての商品の平均を catalog に送る。一商品の失敗が残りを止めない。
     public Result reconcile() {
         List<Object[]> rows = reviewRepository.averageRatingByProduct();
         int sent = 0;

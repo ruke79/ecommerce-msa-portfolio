@@ -21,6 +21,11 @@ import org.junit.jupiter.api.Test;
  * 쪽이 먼저 바뀌어도 안전하지만, 그건 <i>이행기</i>의 안전이다. 누군가 편의상 프로듀서를
  * {@code JsonSerializer} 로 되돌리면 컴파일도 기능도 그대로라 — 하이브리드 역직렬화기가 조용히
  * 받아 주니까 — 전선이 JSON 으로 돌아간 것을 아무도 모른다. 그래서 파일 단위로 못박는다.
+ *
+ * <p>[JA] サガトピック({@code order}, {@code payment})の両端が<b>Avro で結ばれているか</b>を守る。
+ * ワイヤー形式はプロデューサーとコンシューマーが一緒に変わる必要がある。コンシューマーは Avro · JSON の両方を読むのでどちらが先に変わっても安全だが、それは
+ * <i>移行期</i>の安全である。誰かが便宜上プロデューサーを {@code JsonSerializer} に戻すと、コンパイルも機能もそのままなので — ハイブリッドデシリアライザーが
+ * 黙って受け取ってくれるから — ワイヤーが JSON に戻ったことに誰も気づかない。だからファイル単位で釘を刺す。
  */
 @DisplayName("Avro 배선 가드레일 · order/payment 의 프로듀서와 소비자")
 class AvroWiringGuardrailTest {
@@ -30,9 +35,10 @@ class AvroWiringGuardrailTest {
         return cwd.getFileName().toString().equals("common") ? cwd.getParent() : cwd;
     }
 
-    /** 파일 → 그 파일에 반드시 있어야 하는 문자열. */
+    /** 파일 → 그 파일에 반드시 있어야 하는 문자열. ／ [JA] ファイル → そのファイルに必ずなければならない文字列。 */
     private static final Map<String, List<String>> REQUIRED = Map.ofEntries(
             // 프로듀서
+            // [JA] プロデューサー
             Map.entry("order-service/src/main/java/com/project/order_service/config/KafkaProducerConfig.java",
                     List.of("new AvroDtoSerializer<>(new PaymentRequestAvroMapping())",
                             "new AvroDtoSerializer<>(new CouponRollbackRequestAvroMapping())",
@@ -50,10 +56,12 @@ class AvroWiringGuardrailTest {
             Map.entry("chat-service/src/main/java/com/project/chat_service/common/config/kafka/KafkaProducerConfig.java",
                     List.of("new AvroDtoSerializer<>(new ChatMessageAvroMapping())")),
             // DTO 소비자
+            // [JA] DTO コンシューマー
             Map.entry("pay-service/src/main/java/com/project/pay_service/message/config/KafkaConsumerConfig.java",
                     List.of("new AvroDtoDeserializer<>(new PaymentRequestAvroMapping())")),
             Map.entry("order-service/src/main/java/com/project/order_service/config/KafkaConsumerConfig.java",
                     // user-created 는 더 받지 않는다 — 요청자 신원은 User-Id 헤더다(docs/48 §6-①).
+                    // [JA] user-created はもう受け取らない — 要求者の身元は User-Id ヘッダーである(docs/48 §6-①)。
                     List.of("new AvroDtoDeserializer<>(new PaymentResponseAvroMapping())")),
             Map.entry("coupon-service/src/main/java/com/project/coupon_service/config/KafkaConsumerConfig.java",
                     List.of("new AvroDtoDeserializer<>(new PaymentResponseAvroMapping())",
@@ -67,17 +75,21 @@ class AvroWiringGuardrailTest {
                     List.of("new AvroDtoDeserializer<>(new ProductUpdateRequestAvroMapping())")),
             Map.entry("chat-service/src/main/java/com/project/chat_service/common/config/kafka/KafkaConsumerConfig.java",
                     // user-created 가 빠져 있어 가입 이벤트가 전부 DLT 로 갔다(docs/48 §6-⑤).
+                    // [JA] user-created が抜けていて登録イベントがすべて DLT に行った(docs/48 §6-⑤)。
                     List.of("new AvroDtoDeserializer<>(new ChatMessageAvroMapping())",
                             "new AvroDtoDeserializer<>(new com.project.common.kafka.avro.UserCreatedRequestAvroMapping())")),
             // Kafka Streams 프로젝션 — 입력 둘은 하이브리드로, 출력은 레코드 serde 로
+            // [JA] Kafka Streams プロジェクション — 入力二つはハイブリッドで、出力はレコード serde で
             Map.entry("saga-projection/src/main/java/com/project/saga_projection/topology/SagaTopology.java",
                     List.of("new AvroDtoDeserializer<>(new PaymentRequestAvroMapping())",
                             "new AvroDtoDeserializer<>(new PaymentResponseAvroMapping())",
                             "new AvroSpecificSerde<>(OrderSagaState.getEncoder(), OrderSagaState.getDecoder())",
                             // 주문 상태 변경 입력 · 진행 타임라인 출력(docs/76) — DTO 없이 레코드 serde
+                            // [JA] 注文状態変更の入力 · 進行タイムラインの出力(docs/76) — DTO なしでレコード serde
                             "new AvroSpecificSerde<>(OrderStatusChanged.getEncoder(), OrderStatusChanged.getDecoder())",
                             "new AvroSpecificSerde<>(OrderTimeline.getEncoder(), OrderTimeline.getDecoder())")),
             // 문자열 소비자 — Avro 를 JSON 문자열로 바꿔 주지 않으면 JsonNode 파싱에서 깨진다
+            // [JA] 文字列コンシューマー — Avro を JSON 文字列に変えてやらないと JsonNode のパースで壊れる
             Map.entry("delivery-service/src/main/java/com/project/delivery_service/config/KafkaConsumerConfig.java",
                     List.of("new AvroJsonTextDeserializer()")),
             Map.entry("notification-service/src/main/java/com/project/notification_service/config/KafkaConsumerConfig.java",
@@ -116,6 +128,8 @@ class AvroWiringGuardrailTest {
         assertThat(com.project.common.kafka.avro.AvroDecoders.byTopic()).hasSize(schemas.size());
         // DTO 매핑은 chat(모듈 로컬 DTO)과 DTO 없이 생성 레코드를 그대로 싣는 셋(order-saga-state · order-status · order-timeline,
         // docs/38 §1.17 · docs/76)을 빼고 전부
+        // [JA] DTO マッピングは chat(モジュールローカル DTO)と、DTO なしで生成レコードをそのまま載せる三つ(order-saga-state · order-status · order-timeline,
+        //      docs/38 §1.17 · docs/76)を除いてすべて
         assertThat(com.project.common.kafka.avro.AvroMappings.byTopic()).hasSize(schemas.size() - 4);
     }
 }

@@ -28,6 +28,15 @@ import org.junit.jupiter.api.Test;
  *   <li><b>컨테이너 팩토리마다 리밸런스 리스너.</b> 리스너가 없는 팩토리는 파티션을 내려놓을 때
  *       커밋도 기록도 없다.</li>
  * </ol>
+ *
+ * <p>[JA] コンシューマー設定のガードレール — 3 つを守る。
+ * <ol>
+ *   <li><b>型なしの {@code JsonDeserializer} 禁止。</b>{@code new JsonDeserializer<>()} はレコードの {@code __TypeId__} ヘッダーだけに依存する。
+ *       Debezium CDC リレーはヘッダーを載せられないので、そのレコードは全量 DLT に行く(docs/38 §5 A3)。対象の型を渡し、ヘッダーは「あれば」使う。</li>
+ *   <li><b>アサイナーは {@code RebalanceSettings} で。</b>モジュールごとに手で書くと 2 段階のアップグレード(eager → cooperative)を一箇所が漏らし、
+ *       そのグループはローリングデプロイ中に壊れる。</li>
+ *   <li><b>コンテナファクトリーごとにリバランスリスナー。</b>リスナーのないファクトリーはパーティションを手放すときにコミットも記録もない。</li>
+ * </ol>
  */
 @DisplayName("Kafka 컨슈머 가드레일")
 class KafkaConsumerGuardrailTest {
@@ -82,6 +91,7 @@ class KafkaConsumerGuardrailTest {
         }
 
         // 8 — user-service 의 것은 리스너가 하나도 없는 죽은 설정이라 지웠다(2026-10-16, B-92)
+        // [JA] 8 — user-service のものはリスナーが一つもない死んだ設定だったので消した(2026-10-16, B-92)
         assertThat(inspected).as("KafkaConsumerConfig 파일 수").isGreaterThanOrEqualTo(8);
         assertThat(offenders).isEmpty();
     }

@@ -18,6 +18,11 @@ jest.mock("react-router-dom", () => ({
  *
  * <p>Root.jsx 에는 `{navigation.state === 'loading' && <p>Loading...</p>}` 이 <b>주석
  * 처리된 채</b> 남아 있었다.
+ *
+ * <p>[JA] 画面が変わる間、何かが進行中だという事実を見せる(docs/43 D5)。
+ * 🔴 このアプリの画面遷移は loader が終わってから起きる。データルーターはローダーが応答するまで
+ * URL も変えず前の画面をそのまま置く。`/browse` でフィルターを押しても何の反応もなかった理由で、そのためユーザーはクリックが効いたか分からないままもう一度押す。
+ * Root.jsx には `{navigation.state === 'loading' && <p>Loading...</p>}` がコメントアウトされたまま残っていた。
  */
 describe("화면 전환 진행 표시", () => {
   beforeEach(() => {
@@ -51,6 +56,9 @@ describe("화면 전환 진행 표시", () => {
   /**
    * 🔴 캐시된 전환은 수십 ms 에 끝난다. 그때 막대를 띄우면 <b>깜빡임</b>만 남아 오히려
    * 화면이 불안해 보인다 — 진행 표시가 없는 것보다 나쁘다.
+   *
+   * <p>[JA] 🔴 キャッシュされた遷移は数十 ms で終わる。そのときバーを出すとちらつきだけが残り、かえって
+   * 画面が不安定に見える — 進行表示がないより悪い。
    */
   it("짧은 전환에는 나타나지 않는다 — 깜빡임이 없는 것보다 나쁘다", () => {
     mockNavigationState = "loading";
@@ -58,6 +66,8 @@ describe("화면 전환 진행 표시", () => {
 
     // 🔴 여기서 **전환이 진행되는 중**에 없어야 한다. 끝난 뒤만 확인하면 지연을 통째로
     //    지워도 테스트가 통과한다 — 실제로 지워 보고 통과하는 것을 확인한 뒤 고쳤다.
+    // [JA] 🔴 ここで **遷移が進行している最中に** ないことが必要である。終わった後だけ確認すると遅延を丸ごと
+    //      消してもテストが通る — 実際に消してみて通ることを確認してから直した。
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     advance(100);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -82,6 +92,7 @@ describe("화면 전환 진행 표시", () => {
   });
 
   /** form 제출도 같은 기다림이다 — 사용자 입장에서 구분할 이유가 없다. */
+  // [JA] form の送信も同じ待ちである — ユーザーの立場で区別する理由がない。
   it("제출 중에도 나타난다", () => {
     mockNavigationState = "submitting";
     render(withI18n(<NavigationProgress />));
@@ -92,6 +103,7 @@ describe("화면 전환 진행 표시", () => {
   });
 
   /** 막대만 그리면 눈으로 보는 사람에게만 전달된다. */
+  // [JA] バーだけ描くと目で見る人にしか伝わらない。
   it("스크린리더에도 알린다", () => {
     mockNavigationState = "loading";
     render(withI18n(<NavigationProgress />));
@@ -104,6 +116,9 @@ describe("화면 전환 진행 표시", () => {
   /**
    * 화면을 덮지 않는다. 이 앱의 전체화면 스피너(DotLoaderSpinner)가 호출부 대부분에서
    * 주석 처리된 이유가 그것이다 — 덮으면 읽던 내용이 사라지고 화면이 깜빡인다.
+   *
+   * <p>[JA] 画面を覆わない。このアプリの全画面スピナー(DotLoaderSpinner)が呼び出し側のほとんどで
+   * コメントアウトされた理由がそれである — 覆うと読んでいた内容が消え画面がちらつく。
    */
   it("화면을 덮지 않는다", () => {
     mockNavigationState = "loading";

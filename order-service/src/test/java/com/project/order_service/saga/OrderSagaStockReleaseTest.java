@@ -22,6 +22,8 @@ import com.project.order_service.stock.OrderStockHold;
 
 /**
  * 결제가 실패해 주문을 접으면 잡아 둔 재고를 푼다 (docs/59).
+ *
+ * <p>[JA] 決済が失敗して注文を畳むと、確保していた在庫を解く(docs/59)。
  */
 @DisplayName("OrderSaga.rollback — 결제 실패 시 재고 예약 해제")
 class OrderSagaStockReleaseTest {

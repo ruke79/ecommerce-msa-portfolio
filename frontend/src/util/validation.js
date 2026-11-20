@@ -74,6 +74,9 @@ const validateCreateProduct = (product, images) => {
     //    Yup 스키마에도 이 필드가 없어서 여기서 막지 않으면 아무도 안 막는다.
     //    단, 색상 변형 추가(parent 지정)에서는 배송비가 부모 상품 소유라 서버가 읽지
     //    않는다 — 요구하면 변형 등록이 불가능해진다.
+    // [JA] ⚠️ サーバーが `new BigDecimal(request.getShippingFee())` をそのまま呼ぶ。空か数字でなければ NumberFormatException で **500** になり、画面には原因が出ない。
+    //      Yup スキーマにもこのフィールドがないので、ここで止めなければ誰も止めない。
+    //      ただし色バリエーション追加(parent 指定)では送料は親商品の所有でサーバーが読まない — 要求するとバリエーション登録が不可能になる。
     if (!product.parent &&
         (product.shippingFee === undefined || product.shippingFee === "" ||
         Number.isNaN(Number(product.shippingFee)))) {

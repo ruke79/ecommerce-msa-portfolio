@@ -28,16 +28,23 @@ import com.project.delivery_service.domain.DeliveryStatus;
  *   <li>{@code SIMINTL-...}  국제 배송 — 통관 보류를 거친다</li>
  *   <li>{@code SIMNONE-...}  택배사가 송장을 모름 (등록 직후 또는 오타)</li>
  * </ul>
+ *
+ * <p>[JA] 実際の宅配業者なしで配送フロー全体を回してみるためのアダプター。
+ * <p><b>なぜ必要か。</b>郵便局 API はサービスキーが必要で、キーがあっても実際の送り状番号が必要だ。その二つがなければ 決済→配送作成→ポーリング→状態遷移→通知→注文締め という<b>全経路を一度も実行しないまま</b>コードをコミットすることになる。このリポジトリで最も高くついたバグがどれも「実行して初めて見える」種類だったことを考えると、それは受け入れられない。
+ * <p>送り状番号を作った時刻からの<b>経過時間に応じて</b>イベントを作り出す。時間が経てば状態が実際に進むので、ポーリング・重複除去・状態遷移・通知がすべて本物のように動く。テストでは時計を注入して数時間を一瞬で経過させられる。
+ * <p><b>送り状番号でシナリオを選ぶ</b> — ハッピーパスだけ検証すると実運用ですぐ詰まる: {@code SIM-...} 正常進行(集荷 → 移動 → 配達出発 → 完了)、{@code SIMFAIL-...} 配達試行失敗後に完了、{@code SIMEXC-...} 紛失(例外)で停止、{@code SIMINTL-...} 国際配送 — 通関保留を経る、{@code SIMNONE-...} 宅配業者が送り状を知らない(登録直後または誤記)。
  */
 public class SimulatedCarrierAdapter implements CarrierAdapter {
 
     public static final String CODE = "SIMULATED";
 
     /** 한 단계를 진행하는 데 걸리는 시간. 테스트는 짧게 준다. */
+    // [JA] 一段階進むのにかかる時間。テストは短く与える。
     private final java.time.Duration stepDuration;
     private final java.util.function.Supplier<LocalDateTime> clock;
 
     /** 이 송장번호가 처음 조회된 시각. 경과 시간의 기준이 된다. */
+    // [JA] この送り状番号が初めて照会された時刻。経過時間の基準になる。
     private final java.util.Map<String, LocalDateTime> firstSeen = new java.util.concurrent.ConcurrentHashMap<>();
 
     public SimulatedCarrierAdapter(java.time.Duration stepDuration,
@@ -56,6 +63,7 @@ public class SimulatedCarrierAdapter implements CarrierAdapter {
     }
 
     /** 한 단계가 지날 때마다 이력이 하나 는다. 그보다 자주 물을 이유도, 드물게 물을 이유도 없다. */
+    // [JA] 一段階過ぎるごとに履歴が一つ増える。それより頻繁に問い合わせる理由も、まれに問い合わせる理由もない。
     @Override
     public java.util.Optional<java.time.Duration> pollIntervalCap() {
         return java.util.Optional.of(stepDuration);
@@ -76,6 +84,8 @@ public class SimulatedCarrierAdapter implements CarrierAdapter {
 
         // 경과한 단계까지의 이벤트를 만든다. 매 조회마다 **전체 이력**을 돌려주는 것이
         // 실제 택배사 API 의 동작이고, 그래서 중복 제거가 필요하다.
+        // [JA] 経過した段階までのイベントを作る。照会のたびに**全履歴**を返すのが
+        //      実際の宅配業者 API の動作で、だから重複除去が必要だ。
         for (int i = 0; i <= Math.min(steps, script.size() - 1); i++) {
             DeliveryStatus status = script.get(i);
             LocalDateTime occurredAt = start.plus(stepDuration.multipliedBy(i));
@@ -118,6 +128,7 @@ public class SimulatedCarrierAdapter implements CarrierAdapter {
     }
 
     // 문구는 SimulatedCarrierTexts 에 모아 둔다 — 조회 응답이 화면 언어로 바꾼다(docs/60 §10).
+    // [JA] 文言は SimulatedCarrierTexts に集めておく — 照会応答が画面の言語に変える(docs/60 §10)。
     private static String locationFor(int step) {
         return SimulatedCarrierTexts.locationFor(step);
     }

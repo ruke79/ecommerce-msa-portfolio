@@ -60,6 +60,7 @@ public final class SagaTopology {
 
     public static final String STORE_NAME = "order-saga-state-store";
     /** 주문 진행 타임라인 저장소(docs/76) — 키는 사가 저장소와 같은 주문 id 문자열. */
+    // [JA] 注文進行タイムラインのストア(docs/76) — キーはサガストアと同じ注文 id 文字列。
     public static final String TIMELINE_STORE_NAME = "order-timeline-store";
 
     private final String orderTopic;
@@ -92,6 +93,7 @@ public final class SagaTopology {
         this.timelineTopic = timelineTopic;
         com.project.saga_projection.config.SagaDeserializationExceptionHandler.registerAlertCounters(
                 java.util.List.of(orderTopic, paymentTopic, orderStatusTopic));   // B-101 — 경보 SagaProjectionHalted · SagaProjectionSkippedRecords 가 첫 건부터 본다
+                // [JA] B-101 — アラート SagaProjectionHalted · SagaProjectionSkippedRecords が最初の一件から見る
         this.events = new SagaEvents(clock);
         this.clock = clock;
     }
@@ -101,6 +103,7 @@ public final class SagaTopology {
     }
 
     /** 입력 {@code order-status} — order-service 의 발행기와 같은 단일 객체 인코딩(docs/76). */
+    // [JA] 入力 {@code order-status} — order-service の発行器と同じ単一オブジェクトエンコーディング(docs/76)。
     public static Serde<OrderStatusChanged> orderStatusSerde() {
         return new AvroSpecificSerde<>(OrderStatusChanged.getEncoder(), OrderStatusChanged.getDecoder());
     }

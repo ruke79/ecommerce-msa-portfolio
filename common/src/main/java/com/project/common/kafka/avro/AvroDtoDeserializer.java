@@ -22,6 +22,12 @@ import org.springframework.kafka.support.serializer.JsonDeserializer;
  * </ul>
  * JSON 쪽은 spring-kafka 의 {@link JsonDeserializer} 에 그대로 맡긴다 — 이 저장소가 지금까지 쓰던
  * 바로 그 역직렬화기라 날짜 형식·헤더 처리가 예전과 같다.
+ *
+ * <p>[JA] Avro 単一オブジェクトエンコーディングなら Avro で、そうでなければ JSON で読み、<b>同じ DTO</b> を返す。
+ * 二つの形式を同時に受け取る理由(docs/38 §1.16): ローリングデプロイ — プロデューサーが先に Avro に変わってもコンシューマーが先に変わっても、その間トピックには
+ * 二形式が混在する。コンシューマーが両方読めればどの順序でデプロイしても安全である。Debezium CDC リレー — Connect は Avro コンバーター(Confluent)なしでは
+ * 文字列(JSON)しか出さない。e2e テストと手動発行 — JSON を手で書く方がはるかに楽である。
+ * JSON 側は spring-kafka の {@link JsonDeserializer} にそのまま任せる — このリポジトリがこれまで使っていたまさにそのデシリアライザーなので、日付形式 · ヘッダー処理が以前と同じである。
  */
 public class AvroDtoDeserializer<D> implements Deserializer<D> {
 
@@ -37,11 +43,17 @@ public class AvroDtoDeserializer<D> implements Deserializer<D> {
         // ConcurrentHashMap, 나머지 필드는 final. Kafka 소비자 스레드가 여럿이어도 한 인스턴스를 같이 쓴다. avro 를 올리면 다시 본다). 🐛 예전에는 레코드마다 mapping.decoder() 를 불러, 매핑
         // 대부분이 그 안에서 avsc 이력을 클래스패스에서 읽고 파싱해 새 디코더를 만들었다 — 옛 작성 스키마로 쓴 레코드는 해석 문법까지
         // 매번 다시 만들었다(소비 핫 경로). 이력이 없으면 여기서 실패한다 — 기동할 때 드러난다.
-        // [JA] デコーダーは一度だけ作る。以前はレコードごとに mapping.decoder() を呼び、avsc 履歴の読み込み・解析から作り直していた。
+        // [JA] デコーダーは一度だけ作る(BinaryMessageDecoder はスレッドセーフ — avro 1.11.4 のバイトコードで確認: 読み取りバッファ · BinaryDecoder は
+        //      ThreadLocal(BaseDecoder.BYTE_BUFFER_IN · RawMessageDecoder.DECODER · HEADER_BUFFER · FP_BUFFER)、指紋 → デコーダーのキャッシュは
+        //      ConcurrentHashMap、残りのフィールドは final。Kafka コンシューマーのスレッドが複数でも一つのインスタンスを共有する。avro を上げたら見直す)。
+        //      🐛 以前はレコードごとに mapping.decoder() を呼び、マッピングの大部分がその中で avsc 履歴をクラスパスから読んで解析し、新しいデコーダーを
+        //      作っていた — 古い書き込みスキーマで書かれたレコードは解決文法まで毎回作り直していた(消費のホットパス)。履歴がなければここで失敗する —
+        //      起動時に分かる。
         this.decoder = mapping.decoder();
         // 헤더(__TypeId__)가 있으면 쓰고 없으면 dtoType — 컨슈머 설정들과 같은 규칙(docs/38 §5 A3).
+        // [JA] ヘッダー(__TypeId__)があれば使い、なければ dtoType — コンシューマー設定と同じ規則(docs/38 §5 A3)。
         this.json = new JsonDeserializer<>(mapping.dtoType(), true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(this.json);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(this.json);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO パッケージのみ
     }
 
     @Override

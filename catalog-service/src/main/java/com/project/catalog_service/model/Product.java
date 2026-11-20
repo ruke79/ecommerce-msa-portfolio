@@ -41,7 +41,7 @@ import lombok.experimental.SuperBuilder;
 @Entity
 @Getter
 @Setter
-@SuperBuilder // @Builder 대신 @SuperBuilder 사용
+@SuperBuilder // @Builder 대신 @SuperBuilder 사용 ／ [JA] @Builder の代わりに @SuperBuilder を使う
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name="product",  schema="product",
        indexes = {
@@ -50,6 +50,9 @@ import lombok.experimental.SuperBuilder;
 // slug 상세까지 수십 개의 파생 쿼리를 하나씩 고치는 대신 여기 한 줄로 막는다.
 // 대가: DELETED 행은 JPA 로 읽을 수 없어 애플리케이션에서 복구가 불가능하다(의도 —
 // V8 마이그레이션 주석 참조. 복구는 SQL 로만 한다).
+// [JA] 削除された商品はすべての JPA 照会から自動的に除外される — frontpage・ページネーション・検索・slug 詳細まで、
+//      数十の派生クエリを一つずつ直す代わりにここ一行で塞ぐ。
+//      代償: DELETED 行は JPA で読めないため、アプリケーションからは復旧できない(意図的 — V8 マイグレーションのコメント参照。復旧は SQL でのみ行う)。
 @org.hibernate.annotations.SQLRestriction("status <> 'DELETED'")
 public class Product extends BaseEntity {
 
@@ -70,7 +73,7 @@ public class Product extends BaseEntity {
     private String slug;
 
 
-    @JsonBackReference // Category로의 순환 참조를 끊습니다.
+    @JsonBackReference // Category로의 순환 참조를 끊습니다. ／ [JA] Category への循環参照を断つ。
     @ManyToOne(fetch=FetchType.LAZY)
     @JoinColumn(name="category_id", referencedColumnName = "category_id", nullable=false)
     private Category category;    
@@ -79,6 +82,10 @@ public class Product extends BaseEntity {
     // 배치 페치가 없으면 상품 N건 조회가 1 + 4N 쿼리가 된다(20건이면 81번).
     // 예전에는 @BatchSize 가 주석 처리된 채 남아 있었다 — 문제를 알았지만 켜지 않은 흔적이다.
     // ProductQueryCountTest 가 선언과 실제 쿼리 수를 함께 검증한다(docs/19 §2).
+    // [JA] ⚠️ バッチフェッチ — この四つのコレクションはすべて LAZY で、ProductMapper.toDto が四つすべてを走査する。
+    //      バッチフェッチがないと商品 N 件の照会が 1 + 4N クエリになる(20 件なら 81 回)。
+    //      以前は @BatchSize がコメントアウトされたまま残っていた — 問題を知りながら有効にしなかった痕跡だ。
+    //      ProductQueryCountTest が宣言と実際のクエリ数を一緒に検証する(docs/19 §2)。
     @BatchSize(size = 20)
     @Builder.Default 
     @JsonManagedReference
@@ -91,26 +98,29 @@ public class Product extends BaseEntity {
 
     @Builder.Default
     @BatchSize(size = 20)
-    @JsonManagedReference // ProductDetails로의 순환 참조를 관리합니다.
+    @JsonManagedReference // ProductDetails로의 순환 참조를 관리합니다. ／ [JA] ProductDetails への循環参照を管理する。
     @OneToMany(mappedBy="product", fetch = FetchType.LAZY,
     cascade = CascadeType.PERSIST,targetEntity = ProductDetails.class, orphanRemoval = true)
     private Set<ProductDetails> details = new java.util.HashSet<>();
 
     // 🐛 예전 cascade 가 MERGE 뿐이라, 새 상품을 persist 하면 Q&A 가 저장되지 않고 <b>조용히 빠졌다</b>(details 는 PERSIST 라 저장됐다).
+    // [JA] 🐛 以前の cascade が MERGE だけだったので、新しい商品を persist すると Q&A が保存されず黙って抜けていた(details は PERSIST なので保存された)。
     @Builder.Default
     @BatchSize(size = 20)
-    @JsonManagedReference // ProductQA로의 순환 참조를 관리합니다.
+    @JsonManagedReference // ProductQA로의 순환 참조를 관리합니다. ／ [JA] ProductQA への循環参照を管理する。
     @OneToMany(mappedBy="product", fetch = FetchType.LAZY,
     cascade = {CascadeType.PERSIST, CascadeType.MERGE}, targetEntity = ProductQA.class, orphanRemoval = true)
     private Set<ProductQA> questions = new java.util.HashSet<>();
 
     @BatchSize(size = 20)
-    @JsonManagedReference // ProductColorAttribute로의 순환 참조를 관리합니다.
+    @JsonManagedReference // ProductColorAttribute로의 순환 참조를 관리합니다. ／ [JA] ProductColorAttribute への循環参照を管理する。
     @OneToMany(mappedBy="product", fetch = FetchType.LAZY,
             cascade = CascadeType.PERSIST,targetEntity = ProductSku.class, orphanRemoval = true)
     // 순서를 정한다 — 스타일(색상)은 인덱스로 주고받는다(?style=1, 장바구니의 style). 순서 없는 Set 이면 같은 인덱스가 상품
     // 화면(캐시된 DTO)과 장바구니 담기(새로 읽은 엔티티)에서 다른 SKU 를 가리킬 수 있었다. @OrderBy 면 Hibernate 가 순서를
     // 지키는 Set 을 쓴다.
+    // [JA] 順序を決める — スタイル(色)はインデックスでやり取りする(?style=1、カートの style)。順序のない Set だと、同じインデックスが商品画面(キャッシュされた DTO)と
+    //      カート追加(新たに読んだエンティティ)で別の SKU を指しうる。@OrderBy なら Hibernate は順序を保つ Set を使う。
     @jakarta.persistence.OrderBy("skuproductId ASC")
     @Builder.Default
     private Set<ProductSku> skus = new java.util.LinkedHashSet<>();
@@ -131,6 +141,7 @@ public class Product extends BaseEntity {
     }
 
     /** {@link #replaceDetails} 와 같다 — Q&A. */
+    // [JA] replaceDetails と同じ — Q&A。
     public void replaceQuestions(java.util.Collection<ProductQA> next) {
         if (questions == null) {
             questions = new java.util.HashSet<>();
@@ -146,6 +157,9 @@ public class Product extends BaseEntity {
      * ACTIVE · SOLD_OUT · DELETED (V8). 문자열로 두는 이유: 값 집합이 DB CHECK 와
      * 프론트엔드에도 있어, enum 을 셋이 공유할 방법이 없다 — 한 곳(마이그레이션)을
      * 정본으로 두고 나머지는 문자열을 따른다.
+     *
+     * <p>[JA] ACTIVE · SOLD_OUT · DELETED(V8)。文字列にする理由: 値の集合が DB の CHECK とフロントエンドにもあり、enum を三者で共有する方法がない —
+     * 一か所(マイグレーション)を正本とし、残りは文字列に従う。
      */
     @Builder.Default
     @Column(length = 20, nullable = false)

@@ -17,12 +17,17 @@ import org.springframework.mock.env.MockEnvironment;
  *
  * <p>여기서 검증하는 것들은 전부 "PLAINTEXT 로 개발하는 동안에는 절대 드러나지 않고,
  * 프로토콜을 바꾸는 순간 기동이 죽는" 종류다. 그래서 빌드가 대신 지킨다.
+ *
+ * <p>[JA] {@link KafkaSecuritySettings} の回帰テスト。
+ * ここで検証するものはすべて「PLAINTEXT で開発している間は決して表に出ず、プロトコルを変えた瞬間に起動が死ぬ」種類だ。だからビルドが代わりに守る。
  */
 class KafkaSecuritySettingsTest {
 
     /**
      * 키 이름을 문자열로 쓴 대가를 여기서 갚는다. kafka-clients 는 테스트 클래스패스에만
      * 있으므로, 이 검증이 런타임에 그 의존성을 끌고 오지는 않는다.
+     *
+     * <p>[JA] キー名を文字列で書いた代償をここで払う。kafka-clients はテストのクラスパスにしかないので、この検証が実行時にその依存を引き込むことはない。
      */
     @Test
     @DisplayName("설정 키 이름이 Kafka 클라이언트 상수와 정확히 일치한다")
@@ -53,6 +58,7 @@ class KafkaSecuritySettingsTest {
         MockEnvironment env = new MockEnvironment()
                 .withProperty("kafka.security.protocol", "PLAINTEXT")
                 // 로컬 기본값처럼 빈 값이 함께 들어와도 새어 나가면 안 된다.
+                // [JA] ローカルのデフォルトのように空の値が一緒に入ってきても漏れてはならない。
                 .withProperty("kafka.ssl.trust-store-location", "")
                 .withProperty("kafka.ssl.key-store-location", "");
 
@@ -72,6 +78,7 @@ class KafkaSecuritySettingsTest {
     void blankStorePathsAreOmittedUnderSsl() {
         // 예전 코드는 이 상황에서 ssl.truststore.location="" 를 그대로 넣었고,
         // Kafka 클라이언트가 빈 경로를 열려다 NoSuchFileException 으로 죽었다.
+        // [JA] 以前のコードはこの状況で ssl.truststore.location="" をそのまま入れ、Kafka クライアントが空のパスを開こうとして NoSuchFileException で死んだ。
         MockEnvironment env = new MockEnvironment()
                 .withProperty("kafka.security.protocol", "SASL_SSL")
                 .withProperty("kafka.ssl.trust-store-location", "   ")
@@ -106,10 +113,12 @@ class KafkaSecuritySettingsTest {
                 .containsEntry("ssl.truststore.password", "tspw")
                 .containsEntry("ssl.truststore.type", "JKS")
                 // file:// 뒤에 남은 /app/... 이 그대로여야 한다(슬래시 하나를 더 먹으면 경로가 깨진다).
+                // [JA] file:// の後に残る /app/... がそのままでなければならない(スラッシュを一つ余計に食うとパスが壊れる)。
                 .containsEntry("ssl.keystore.location", "/app/resources/kafka-keystore.p12")
                 .containsEntry("ssl.keystore.password", "kspw")
                 .containsEntry("ssl.keystore.type", "PKCS12")
                 // mTLS 에는 SASL 이 없다.
+                // [JA] mTLS には SASL がない。
                 .doesNotContainKeys("sasl.mechanism", "sasl.jaas.config");
     }
 
@@ -150,6 +159,8 @@ class KafkaSecuritySettingsTest {
     void jaasValuesAreEscaped() {
         // 관리형 서비스의 API 시크릿에는 실제로 이런 문자가 들어간다. 그대로 두면 JAAS 파서가
         // 문자열을 엉뚱한 곳에서 끊어 'Unable to find login module' 이라는 무관한 오류를 낸다.
+        // [JA] マネージドサービスの API シークレットには実際にこうした文字が入る。そのままにすると JAAS パーサーが文字列を見当違いの場所で切り、
+        //      'Unable to find login module' という無関係なエラーを出す。
         MockEnvironment env = new MockEnvironment()
                 .withProperty("kafka.security.protocol", "SASL_SSL")
                 .withProperty("kafka.sasl.username", "u")

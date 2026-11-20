@@ -20,6 +20,8 @@ import com.project.notification_service.service.RestockSubscriptionService;
 
 /**
  * catalog 의 product-stock — 재입고면 신청자에게, 품절이면 아무것도 (docs/53).
+ *
+ * <p>[JA] catalog の product-stock — 再入荷なら申込者へ、品切れなら何もしない(docs/53)。
  */
 @DisplayName("RestockEventListener — product-stock")
 class RestockEventListenerTest {

@@ -86,6 +86,7 @@ const ListShipping = ({
                     {addresses.length > 0 ? (
                         <div className="z-10 absolute top-2 right-2 flex items-center gap-2">
                             {/* 수정. 카드 클릭(기본 배송지 선택)과 겹치므로 전파를 막는다. */}
+                            {/* [JA] 編集。カードのクリック(既定の配送先の選択)と重なるため、伝播を止める。 */}
                             <button
                                 type="button"
                                 aria-label={t("checkout.address.edit_aria")}
@@ -119,6 +120,7 @@ const ListShipping = ({
                       * 채 남아 있었고, 그 안에 `address.phoneNumbe`(r 빠짐) 오타가 있었다.
                       * 되살리면서 함께 고쳤다.
                       */}
+                    {/* [JA] 🐛 ここには `<img src={""} alt={address.id} />` があった。空の `src` は「なし」ではない — ブラウザは現在の文書のアドレスとして解釈してページの HTML を取得し、画像として読めず結局 alt テキストを文字で描く。その alt が `address.id`(TSID)だったため、配送先カードごとに長い数字が 60px の枠で切れたまま表示された。配送先にはもともと見せる画像がない。代わりにその場所に実際に必要な情報(受取人・連絡先)を入れる — 下のブロックはコメントアウトされたまま残っていて、その中に `address.phoneNumbe`(r 抜け)の誤字があった。復活させる際に一緒に直した。 */}
                     <div className="mb-3 flex flex-col gap-1">
                         <span className="flex items-center font-semibold">
                             <UserIcon className="w-4 h-4 mr-1" />

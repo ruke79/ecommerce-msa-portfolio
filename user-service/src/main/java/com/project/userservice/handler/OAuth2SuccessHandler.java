@@ -39,6 +39,16 @@ import lombok.extern.slf4j.Slf4j;
  *       그 쿠키를 읽지 않는다. 심은 사람만 아는 쿠키였다
  *   <li>만료가 60*60*60 = <b>216,000초(2.5일)</b> — 60분을 의도한 오타로 보인다
  * </ul>
+ *
+ * <p>[JA] ソーシャルログインの仕上げ — セッションを仕込んでフロントエンドに戻す。
+ * 核心の決定: <b>通常ログインと同じ REFRESH Cookie 一つだけを仕込む。</b>アクセストークンは作らない。
+ * このアプリのセッション復旧経路が既にそうなっているからだ — SPA は最初に起動するとき(STATUS.PENDING)
+ * {@code GET /api/token/refresh} を呼び、REFRESH Cookie が有効なら access トークンをヘッダーで受け取ってセッションを
+ * 復旧する(TokenRefresher.js)。リダイレクトで戻ったページも「最初に起動したページ」なので同じ経路がそのまま動く。
+ * 以前の版は三つの点が食い違っていた: {@code findByEmail(customUserDetails.getUsername())} — getUsername() は
+ * "google 12345" を返すのでメール照会が<b>常に失敗</b>し、すべてのソーシャルログインが user_not_found で終わった。
+ * "OAUTH2" という名前の Cookie にアクセストークンを入れていた — ゲートウェイもフロントもその Cookie を読まない。仕込んだ人だけが知る Cookie だった。
+ * 期限が 60*60*60 = <b>216,000 秒(2.5 日)</b> — 60 分を意図したタイプミスと見られる。
  */
 @Slf4j
 @Component
@@ -56,8 +66,10 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
     private String frontendUrl;
 
     /** 2FA 확인 대기 쿠키 — verify 엔드포인트(AuthController)와 이름을 공유한다. */
+    // [JA] 2FA 確認待ち Cookie — verify エンドポイント(AuthController)と名前を共有する。
     public static final String PENDING_2FA_COOKIE = com.project.userservice.security.PendingTwoFactor.COOKIE;
     /** 5분 — TOTP 한두 번 넣어 볼 시간이면 충분하고, 방치된 브라우저에 오래 남지 않는다. */
+    // [JA] 5 分 — TOTP を一、二回入れてみる時間なら十分で、放置されたブラウザに長く残らない。
     public static final long PENDING_2FA_TTL_MS = com.project.userservice.security.PendingTwoFactor.TTL_MS;
 
     @Override
@@ -70,6 +82,8 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
         if (user == null) {
             // CustomOAuth2UserService 가 방금 만들었거나 찾았어야 한다. 여기 왔다는 것은
             // 트랜잭션·타이밍 문제라는 뜻이므로 명확히 실패시킨다.
+            // [JA] CustomOAuth2UserService がたった今作ったか見つけていたはずだ。ここに来たということは
+            //      トランザクション・タイミングの問題という意味なので明確に失敗させる。
             log.error("소셜 인증은 통과했는데 사용자 레코드가 없다 — email 기준 조회 실패");
             response.sendRedirect(frontendUrl + "/signin?error=oauth_user_not_found");
             return;
@@ -89,7 +103,7 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
         //    docs/57 §22). [JA] 端末を記録し、初めての端末なら知らせる — 以前はソーシャルログインが端末を見ず、新しい端末の通知がなかった。
         recordDevice(request, response, user);
 
-        if (user.requiresTwoFactor()) {   // TOTP 든 SMS 든(docs/24 §10)
+        if (user.requiresTwoFactor()) {   // TOTP 든 SMS 든(docs/24 §10) ／ [JA] TOTP でも SMS でも(docs/24 §10)
             // 2FA 계정은 여기서 세션을 주지 않는다 — 주면 소셜 버튼이 2FA 우회로가 된다.
             // 대신 5분짜리 보류 토큰을 httpOnly 쿠키로 심고 2FA 입력 화면으로 보낸다.
             // 코드 확인(/api/auth/public/oauth2/verify-2fa)이 통과해야 REFRESH 가 발급된다.
@@ -100,6 +114,13 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             //
             // 🔴 예전에는 이 값이 액세스 토큰과 같은 키로 서명한 보통 JWT(uid 포함)였다 — 게이트웨이에 Bearer 로
             //    보내면 통과해 2FA 가 무의미했다. 이제 별도 키로 서명한다(PendingTwoFactor 주석).
+            // [JA] 2FA アカウントはここでセッションを与えない — 与えるとソーシャルボタンが 2FA の迂回路になる。
+            //      代わりに 5 分間の保留トークンを httpOnly Cookie で仕込み 2FA 入力画面に送る。
+            //      コード確認(/api/auth/public/oauth2/verify-2fa)を通過してはじめて REFRESH が発行される。
+            //      トークンを URL ではなく Cookie で運ぶ理由: URL のトークンはブラウザ履歴・リファラ・プロキシログに残る。
+            //      httpOnly なので JS も読めない — フロントは Cookie の存在すら知らずにコードだけ送ればよい。
+            //      🔴 以前はこの値がアクセストークンと同じキーで署名した普通の JWT(uid 含む)だった — ゲートウェイに Bearer で
+            //      送ると通ってしまい 2FA が無意味だった。今は別のキーで署名する(PendingTwoFactor のコメント)。
             String pending = pendingTwoFactor.issue(user.getUserId());
             response.addCookie(jwtUtils.createCookie(PENDING_2FA_COOKIE, pending,
                     java.time.Duration.ofMillis(PENDING_2FA_TTL_MS)));
@@ -117,6 +138,7 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
     }
 
     /** 기록도 알림도 로그인의 성공 조건이 아니다 — 실패하면 남기고 계속한다(AuthLoginFilter#recordDevice 와 같다). */
+    // [JA] 記録も通知もログインの成功条件ではない — 失敗したら記録して続ける(AuthLoginFilter#recordDevice と同じ)。
     private void recordDevice(HttpServletRequest request, HttpServletResponse response, User user) {
         try {
             var recognition = deviceRecognitionService.recognize(user.getUserId(),

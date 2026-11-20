@@ -9,6 +9,10 @@
 #     --build-arg REACT_APP_API_URL=https://api.example.com \
 #     --build-arg REACT_APP_PAYPAL_CLIENT_ID=xxxx \
 #     -t <registry>/ecommerce-msa/frontend:1.0.0 -f frontend/Dockerfile frontend
+# [JA] frontend 用 Dockerfile(既存リポジトリになかったので今回追加)。
+#      注意: React_APP_* の値はランタイムの環境変数ではなく、webpack のビルド時にバンドルに埋め込まれる(bake-in)値である
+#      (webpack.config.prod.js が dotenv で .env.production を読み、EnvironmentPlugin で置換)。
+#      したがってこれらの値は k8s ConfigMap/Secret ではなく**イメージビルド時の --build-arg** で渡す必要がある。ビルド例は上の通り。
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -21,6 +25,9 @@ ARG REACT_APP_PAYPAL_CLIENT_ID
 #    이름으로** 해석해 엉뚱한 곳에 요청을 보내고 결제수단 아이콘이 전부 깨진다.
 #    (운영 빌드 경로인 ops/19-build-images.sh 는 PUBLIC_URL="" 로 호스트에서 번들을 만들고
 #     ops/Dockerfile.frontend-runtime 으로 감싸므로 영향이 없다. 이 파일은 그 밖의 경로용이다.)
+# [JA] ⚠️ 既定値は**空文字列**でなければならない。`/` にすると画面が使う `${process.env.PUBLIC_URL}/assets/images/x.png` が `//assets/images/x.png` になるが、
+#      これはパスではなく**プロトコル相対 URL** である — ブラウザが `assets` を**ホスト名として**解釈して見当違いの場所にリクエストを送り、決済手段アイコンがすべて壊れる。
+#      (運用のビルド経路である ops/19-build-images.sh は PUBLIC_URL="" でホスト上でバンドルを作り、ops/Dockerfile.frontend-runtime で包むので影響はない。このファイルはそれ以外の経路用である。)
 ARG PUBLIC_URL=
 ARG NODE_ENV=production
 
@@ -34,16 +41,22 @@ RUN printf 'REACT_APP_API_URL=%s\nREACT_APP_PROFILE=%s\nPUBLIC_URL=%s\nREACT_APP
     && npm run build
 
 # ---- 런타임 이미지: 정적 파일을 nginx로 서빙 ----
+# [JA] ---- ランタイムイメージ: 静的ファイルを nginx で配信 ----
 FROM nginx:1.30.7-alpine@sha256:bef154735288bc38d99fac41ae63730684bcc661503673a04a0f9bc526ba8598
 COPY --from=builder /app/dist /usr/share/nginx/html
 # nginx.conf 를 **템플릿**으로 넣는다. 공식 엔트리포인트가 기동 시 envsubst 로 치환한다.
 # conf.d 로 바로 넣으면 ${GATEWAY_URL} 이 그대로 남아 nginx 가 기동에 실패한다.
+# [JA] nginx.conf を**テンプレート**として入れる。公式エントリポイントが起動時に envsubst で置換する。
+#      conf.d に直接入れると ${GATEWAY_URL} がそのまま残り、nginx が起動に失敗する。
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 # ⚠️ 치환 대상을 제한한다. 필터가 없으면 envsubst 가 $host, $remote_addr 같은
 #    **nginx 자체 변수까지 빈 문자열로 치환**해 프록시가 통째로 망가진다.
+# [JA] ⚠️ 置換対象を制限する。フィルタがないと envsubst が $host、$remote_addr のような
+#      **nginx 自体の変数まで空文字列に置換**し、プロキシが丸ごと壊れる。
 ENV NGINX_ENVSUBST_FILTER="^(GATEWAY_URL)$"
 # 게이트웨이 주소. k8s 에서는 매니페스트가 덮어쓴다.
+# [JA] ゲートウェイのアドレス。k8s ではマニフェストが上書きする。
 ENV GATEWAY_URL="http://gateway-server.ecommerce.svc.cluster.local:8000"
 
 

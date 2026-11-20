@@ -34,6 +34,7 @@ import org.springframework.stereotype.Component;
 public class GraceTokenCipher {
 
     /** 키 파생 용도 — 다른 용도(2FA 대기 토큰 등)의 키와 섞이지 않는다. 바꾸면 진행 중인 유예 값만 못 읽는다(최대 20초). */
+    // [JA] 鍵派生の用途 — 他の用途(2FA 待機トークンなど)の鍵と混ざらない。変えると進行中の猶予値だけが読めなくなる(最大 20 秒)。
     static final String PURPOSE = "refresh-grace-v1";
     private static final String PREFIX = "v1:";
     private static final int IV_BYTES = 12;
@@ -47,6 +48,7 @@ public class GraceTokenCipher {
     }
 
     /** 암호화 — {@code v1:} + base64(iv ‖ 암호문 ‖ 태그). */
+    // [JA] 暗号化 — {@code v1:} + base64(iv ‖ 暗号文 ‖ タグ)。
     public String seal(String oldSessionId, String newToken) {
         try {
             byte[] iv = new byte[IV_BYTES];
@@ -65,6 +67,7 @@ public class GraceTokenCipher {
     }
 
     /** 복호화 — 형식이 틀렸거나 · 위변조됐거나 · 다른 세션의 값이면 null(호출자가 거절한다). */
+    // [JA] 復号 — 形式が誤っている・改ざんされた・別セッションの値なら null(呼び出し側が拒否する)。
     public String open(String oldSessionId, String sealed) {
         if (sealed == null || !sealed.startsWith(PREFIX)) {
             return null;

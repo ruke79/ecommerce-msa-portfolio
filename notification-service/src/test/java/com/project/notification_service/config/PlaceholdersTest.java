@@ -13,6 +13,11 @@ import org.junit.jupiter.api.Test;
  * <p>🐛 {@code MAIL_HOST} 가 {@code "REPLACE_ME_smtp_host"} 인 채로 배포됐는데, 그 값은
  * <b>비어 있지 않아서</b> {@code isBlank()} 검사를 통과했다. 서비스는 "smtp (실제 발송)" 이라고
  * 찍고 정상 기동했고, 실패는 25초 뒤 {@code UnknownHostException} WARN 한 줄로만 나타났다.
+ *
+ * <p>[JA] 埋めていない設定を起動時点で捕まえる。🐛 {@code MAIL_HOST} が {@code "REPLACE_ME_smtp_host"}
+ * のまま配備されたが、その値は<b>空ではないので</b> {@code isBlank()} 検査を通った。サービスは「smtp
+ * (実際の送信)」と出力して正常に起動し、失敗は 25 秒後に {@code UnknownHostException} の WARN
+ * 一行としてしか現れなかった。
  */
 @DisplayName("설정 자리 표시자")
 class PlaceholdersTest {
@@ -30,6 +35,10 @@ class PlaceholdersTest {
      * 🔒 값에는 {@code MAIL_PASSWORD} 같은 진짜 비밀이 섞일 수 있고 예외 메시지는 로그로 나간다.
      * 지금은 값이 자리 표시자라 무해하지만, "걸렸을 때만 안전한 규칙"은 다음 사람이 검사를
      * 넓히는 순간 깨진다.
+     *
+     * <p>[JA] 🔒 値には {@code MAIL_PASSWORD} のような本物の秘密が混じりうるし、例外メッセージはログに出る。
+     * 今は値がプレースホルダーなので無害だが、「引っかかったときだけ安全な規則」
+     * は次の人が検査を広げた瞬間に壊れる。
      */
     @Test
     @DisplayName("🔒 메시지에 값을 넣지 않는다 — 키 이름만 넣는다")
@@ -53,6 +62,9 @@ class PlaceholdersTest {
     /**
      * 비어 있는 값은 여기서 다루지 않는다 — 호출하는 쪽의 {@code isBlank()} 검사가 이미 잡고,
      * 그쪽이 훨씬 구체적인 메시지를 준다. 여기서 또 막으면 어느 검사가 걸렸는지 흐려진다.
+     *
+     * <p>[JA] 空の値はここでは扱わない — 呼ぶ側の {@code isBlank()} 検査がすでに捕まえ、
+     * そちらがはるかに具体的なメッセージを出す。ここでも止めるとどの検査に引っかかったのかが曖昧になる。
      */
     @Test
     @DisplayName("빈 값·null 은 이 검사의 몫이 아니다")
@@ -65,6 +77,9 @@ class PlaceholdersTest {
     /**
      * 🐛 {@code startsWith} 로 보면 연결 문자열 가운데 박힌 자리 표시자를 놓친다.
      * {@code 20-secret.example.yaml} 의 {@code SPRING_DATA_MONGODB_CLIENT} 가 그 모양이다.
+     *
+     * <p>[JA] 🐛 {@code startsWith} で見ると接続文字列の途中に埋め込まれたプレースホルダーを見逃す。
+     * {@code 20-secret.example.yaml} の {@code SPRING_DATA_MONGODB_CLIENT} がその形だ。
      */
     @Test
     @DisplayName("🐛 값 가운데 박힌 자리 표시자도 잡는다")

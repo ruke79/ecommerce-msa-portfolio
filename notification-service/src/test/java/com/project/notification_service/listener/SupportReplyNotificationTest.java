@@ -20,6 +20,8 @@ import com.project.notification_service.service.NotificationService;
 
 /**
  * 고객센터 상담원 답변 알림 (docs/58 §10).
+ *
+ * <p>[JA] カスタマーセンター相談員の回答通知(docs/58 §10)。
  */
 @DisplayName("notification-service — 상담원 답변 알림")
 class SupportReplyNotificationTest {

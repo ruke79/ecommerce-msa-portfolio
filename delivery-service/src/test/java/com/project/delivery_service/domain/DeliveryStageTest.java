@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
  * 🐛 송장을 등록하면 주문은 DISPATCHED 가 되고 "발송되었습니다" 알림이 나가는데, 배송 추적의
  * 진행 바는 <b>주문 완료</b>에 서 있었다 — {@code INFO_RECEIVED} 의 단계가 {@code ORDERED} 였다.
  * 같은 화면에서 주문 상태와 진행 바가 서로 다른 말을 했다.
+ *
+ * <p>[JA] 🐛 送り状を登録すると注文は DISPATCHED になり「発送されました」通知が出るのに、配送追跡の進捗バーは<b>注文完了</b>に立っていた —
+ * {@code INFO_RECEIVED} の段階が {@code ORDERED} だった。同じ画面で注文状態と進捗バーが食い違っていた。
  */
 @DisplayName("배송 상태 → 화면 단계")
 class DeliveryStageTest {
@@ -18,6 +21,7 @@ class DeliveryStageTest {
     void infoReceivedIsShipped() {
         assertThat(DeliveryStatus.INFO_RECEIVED.stage()).isEqualTo(DeliveryStatus.Stage.SHIPPED);
         // 그래도 실물은 아직 판매자에게 있으므로 주소 변경·취소는 된다.
+        // [JA] それでも現物はまだ販売者の手元にあるので、住所変更・キャンセルはできる。
         assertThat(DeliveryStatus.INFO_RECEIVED.isBeforeDispatch()).isTrue();
     }
 

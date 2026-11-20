@@ -26,6 +26,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * 논리 타입을 원시값(epoch millis)으로 낸다. delivery·notification 리스너는 {@code event.get("customerId")}
  * 처럼 필드를 바로 꺼내므로 그 모양이면 전부 null 이 된다. 여기서는 유니온을 벗기고, enum 은 이름으로,
  * timestamp-millis 는 ISO-8601 문자열로 낸다 — 예전 Jackson 출력과 같다.
+ *
+ * <p>[JA] Avro レコードを<b>普通の JSON</b>に — 文字列コンシューマー({@code List<String>} + {@code JsonNode})が以前の JSON プロデューサーの出力と同じ形を見られるようにする。
+ * Avro 自身の JSON エンコーダーを使わない理由: それはユニオンを {@code {"string":"x"}} で包み、論理型を生の値(epoch millis)で出す。delivery · notification のリスナーは
+ * {@code event.get("customerId")} のようにフィールドを直接取り出すので、その形だとすべて null になる。ここではユニオンを剥がし、enum は名前で、timestamp-millis は
+ * ISO-8601 文字列で出す — 以前の Jackson 出力と同じである。
  */
 public final class SpecificRecordJson {
 
@@ -57,6 +62,7 @@ public final class SpecificRecordJson {
             }
             case UNION: {
                 // 값에 맞는 분기를 고른다 — null 이 아니면 null 이 아닌 첫 분기가 맞는 경우가 대부분이다.
+                // [JA] 値に合う分岐を選ぶ — null でなければ null でない最初の分岐が合う場合がほとんどである。
                 for (Schema branch : schema.getTypes()) {
                     if (branch.getType() == Schema.Type.NULL) continue;
                     if (matches(branch, value)) return toNode(branch, value);

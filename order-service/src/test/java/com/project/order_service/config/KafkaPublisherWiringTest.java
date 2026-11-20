@@ -32,6 +32,14 @@ import com.project.order_service.ports.output.message.publisher.ProductUpdateKaf
  * 템플릿은 구매 확정 · 환불 둘이다.) 발행자 단위 테스트는 목으로 만들어서 <b>빈 배선은
  * 한 번도 검사되지 않았다.</b> 여기서 실제 {@link KafkaProducerConfig} 와 발행자 전부를 스프링
  * 컨텍스트로 띄운다. 브로커에는 붙지 않는다(템플릿은 첫 발송 때 연결한다).
+ *
+ * <p>[JA] 🐛 回帰対象 — <b>order-service がデプロイで起動できなかった。</b>
+ *
+ * <p>購入確定通知(docs/25 §12)が {@code KafkaTemplate<String, String>} をもう一つ作ったが、
+ * 既存の発行者が同じ型を名前なしで注入されていた。(そのトークン発行者は使う所がないので消した —
+ * 今同じ型のテンプレートは購入確定・返金の二つである。)発行者の単体テストはモックで作っていたので<b>Bean
+ * の配線は一度も検査されていなかった。</b> ここで実際の {@link KafkaProducerConfig} と発行者すべてを
+ * Spring コンテキストで立ち上げる。ブローカーには接続しない(テンプレートは最初の送信時に接続する)。
  */
 @DisplayName("order-service — Kafka 발행자 빈 배선")
 class KafkaPublisherWiringTest {
@@ -59,6 +67,7 @@ class KafkaPublisherWiringTest {
     }
 
     /** 이름이 뒤바뀌면 환불이 구매 확정의 템플릿으로(또는 그 반대로) 나간다. */
+    // [JA] 名前が入れ替わると、返金が購入確定のテンプレートで(またはその逆で)出ていく。
     @Test
     @DisplayName("각 발행자가 자기 템플릿을 받는다 — 환불과 구매 확정이 섞이지 않는다")
     void eachPublisherGetsItsOwnTemplate() {

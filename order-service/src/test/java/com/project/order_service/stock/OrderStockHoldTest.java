@@ -29,6 +29,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * 결제 전 재고 예약 — order 쪽 (docs/59).
+ *
+ * <p>[JA] 決済前の在庫予約 — order 側(docs/59)。
  */
 @DisplayName("OrderStockHold — 결제 전 재고 예약")
 class OrderStockHoldTest {
@@ -116,7 +118,7 @@ class OrderStockHoldTest {
     void releaseSwallows() {
         doThrow(new RuntimeException("down")).when(catalog).releaseStock(77L);
 
-        hold.release(77L);   // 예외 없음
+        hold.release(77L);   // 예외 없음 ／ [JA] 例外なし
         verify(catalog).releaseStock(77L);
     }
 

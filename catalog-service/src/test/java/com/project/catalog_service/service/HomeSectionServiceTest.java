@@ -41,6 +41,10 @@ import com.project.common.dto.ProductDto;
  * <p>{@code HomeSectionRepository.findVisible} 의 JPQL 은 여기서 검증되지 않는다(실제 DB가
  * 필요하다). 그 쿼리와 {@link HomeSection#isVisibleAt} 은 같은 규칙을 두 번 적는 자리라,
  * 경계 테스트가 그 정의를 고정한다.
+ *
+ * <p>[JA] ホームセクションの<b>判断</b>を固定する。
+ * <p>トップ画面はサイトの顔なので、ここで最も重要なのは「描く」ことではなく<b>「一つが壊れても全体が死なない」</b>ことである — カテゴリが一つ削除されたからといってホームが空ページになってはならない。
+ * <p>{@code HomeSectionRepository.findVisible} の JPQL はここでは検証されない(実 DB が必要)。そのクエリと {@link HomeSection#isVisibleAt} は同じ規則を二度書く箇所なので、境界テストがその定義を固定する。
  */
 @DisplayName("홈 섹션")
 class HomeSectionServiceTest {
@@ -172,6 +176,7 @@ class HomeSectionServiceTest {
             var view = service.home().sections().get(0);
 
             // TSID 는 2^53 을 넘는다 — 숫자로 실으면 브라우저에서 끝자리가 바뀐다.
+            // [JA] TSID は 2^53 を超える — 数値で載せるとブラウザで末尾の桁が変わる。
             assertThat(view.categoryId()).isEqualTo("812345678901234567");
             assertThat(view.subcategoryId()).isNull();
         }

@@ -34,6 +34,9 @@ import org.springframework.web.server.ServerWebExchange;
  * 로그인 시작이 게이트웨이에서 404 였다(2026-09-28 부터). 또 웹훅 · 공개 인증 라우트는 넓은 라우트에 덮이는데 선언 순서에만 기댔다.
  *
  * <p>[JA] ゲートウェイのルート — 経路パターンがきれいで、重なるルートは order で順序が決まり、実際のリクエストが意図したルートに行く。
+ * 🐛 以前: {@code user-service-public} の Path を複数行に {@code , \} でつないで書き、YAML が {@code \} を文字のまま残した —
+ * {@code "\ /user-service/registrationConfirm"} · {@code "\ /user-service/oauth2/**"} が何にも一致せず、登録確認メールのリンクとソーシャル
+ * ログインの開始がゲートウェイで 404 だった(2026-09-28 から)。また Webhook · 公開認証ルートは広いルートに覆われるのに、宣言順だけに頼っていた。
  */
 @DisplayName("게이트웨이 라우트 — 패턴 · 순서 · 실제 매칭")
 class RouteMatchingTest {
@@ -72,6 +75,7 @@ class RouteMatchingTest {
     }
 
     /** a 가 b 보다 좁은가 — b 가 {@code /x/**} 이고 a 가 {@code /x/…} 이면서 같지 않을 때. */
+    // [JA] a が b より狭いか — b が {@code /x/**} で a が {@code /x/…} かつ同じでないとき。
     private static boolean narrower(String a, String b) {
         return b.endsWith("/**") && !a.equals(b) && a.startsWith(b.substring(0, b.length() - 2));
     }
@@ -88,6 +92,7 @@ class RouteMatchingTest {
                 }
                 boolean covered = args(a, "Path").stream().anyMatch(pa -> args(b, "Path").stream().anyMatch(pb -> narrower(pa, pb)))
                         // 같은 경로라도 조건(Method)이 더 붙은 쪽이 먼저여야 한다
+                        // [JA] 同じパスでも条件(Method)がより多く付いた方が先でなければならない
                         || (args(a, "Path").equals(args(b, "Path")) && a.getPredicates().size() > b.getPredicates().size());
                 if (covered && a.getOrder() >= b.getOrder()) {
                     offenders.add(a.getId() + "(" + a.getOrder() + ") ⊂ " + b.getId() + "(" + b.getOrder() + ")");
@@ -114,6 +119,7 @@ class RouteMatchingTest {
     }
 
     /** 게이트웨이와 같은 규칙 — order 로 안정 정렬한 뒤 처음 맞는 라우트. */
+    // [JA] ゲートウェイと同じ規則 — order で安定ソートした後、最初に一致するルート。
     private static String resolve(List<RouteDefinition> all, HttpMethod method, String path) {
         ServerWebExchange ex = MockServerWebExchange.from(MockServerHttpRequest.method(method, path));
         return all.stream().sorted(Comparator.comparingInt(RouteDefinition::getOrder))

@@ -58,9 +58,26 @@
 #
 # 요구: oci CLI (`oci setup config` 로 인증 완료), jq
 #
+# [JA] OCI Always Free Ampere A1 インスタンスを**確保できるまで**リトライする。
+#      ── 何を解決するか: 東京・ソウルのような人気リージョンで A1 を作ろうとするとほぼ必ず "Out of host capacity." に当たる。
+#      これは設定ミスではなく**その瞬間ホストに A1 コアの空きがない**という意味だ。だから次はすべて無駄だ:
+#      イメージを Ubuntu から Oracle Linux に変える(容量はイメージと無関係)・shape を A1 以外にする(Always Free でなくなる)・
+#      別リージョンを選ぶ(⚠️ Always Free は**ホームリージョンでのみ**有効)・別の AD/FD を選ぶ(⚠️ 東京・大阪・ソウルは **AD が一つだけ**、FD を指定するとかえって範囲が狭まる)。
+#      実際に効くのは二つだけ: **試し続けるか**、Pay As You Go にアップグレードするか
+#      (Always Free リソースはそれでも $0 で、割り当て成功率が上がるという報告が多い)。このスクリプトは前者を自動化する。
+#      ── 何を作るか: docs/33 §4 の要求仕様どおり VM.Standard.A1.Flex・2 OCPU / 12GB・ブートボリューム 100GB(既定値 — 下記参照)。
+#      ⚠️ **上限はテナンシーごとに違う。** 2026-06-15 付で無料上限が 4 OCPU/24GB → 2 OCPU/12GB に縮小されたと文書だけは変わったが、
+#      **4 OCPU/24GB がそのまま取れるアカウントもある。** 既定値は安全側の 2/12。自分のアカウントが 4/24 を許すなら上記のように渡す。
+#      上限を超えると LimitExceeded が出るが、このスクリプトはそれを**リトライせず即座に止まる** — 永遠に通らない要求だからだ。
+#      なので 4/24 を試すコストは低い(容量不足と上限超過は別の失敗だ。下の分類を見よ)。
+#      ⚠️ この値は Always Free A1 の**上限すべて**を使うという意味だ。既に A1 インスタンスがあると上限を超えて
+#      LimitExceeded になり、それはリトライしても永遠に通らない — 下で区別する。
+#      ── 使い方: 0) 必要な OCID を探す(このスクリプトが手伝う) 1) 値を入れて点検(--check-network は SSH が入れる経路かを見る)
+#      2) 確保できるまで回す(tmux/screen の中で何日置いてもよい)。要件: oci CLI(`oci setup config` で認証済み)、jq。
 set -euo pipefail
 
 # ---------------------------------------------------------------- 기본값
+# [JA] 既定値
 
 SHAPE="${OCI_SHAPE:-VM.Standard.A1.Flex}"
 OCPUS="${OCI_OCPUS:-2}"
@@ -73,8 +90,8 @@ COMPARTMENT="${OCI_COMPARTMENT_OCID:-}"
 SUBNET="${OCI_SUBNET_OCID:-}"
 IMAGE="${OCI_IMAGE_OCID:-}"
 
-INTERVAL="${OCI_RETRY_INTERVAL:-60}"    # 초. 너무 짧으면 OCI 가 429 로 막는다
-MAX_ATTEMPTS="${OCI_MAX_ATTEMPTS:-0}"   # 0 = 무제한
+INTERVAL="${OCI_RETRY_INTERVAL:-60}"    # 초. 너무 짧으면 OCI 가 429 로 막는다 ／ [JA] 秒。短すぎると OCI が 429 で止める
+MAX_ATTEMPTS="${OCI_MAX_ATTEMPTS:-0}"   # 0 = 무제한 ／ [JA] 0 = 無制限
 
 ACTION="launch"
 
@@ -104,9 +121,11 @@ command -v oci >/dev/null || die "oci CLI 가 필요합니다.
 command -v jq >/dev/null || die "jq 가 필요합니다"
 
 # 테넌시는 CLI 설정에서 읽는다. 대부분의 개인 계정은 compartment == tenancy 다.
+# [JA] テナンシーは CLI 設定から読む。個人アカウントの大半は compartment == tenancy だ。
 TENANCY="${OCI_TENANCY_OCID:-$(grep -m1 '^tenancy' ~/.oci/config 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)}"
 
 # ---------------------------------------------------------------- 조회 도우미
+# [JA] 照会ヘルパー
 
 if [ "$ACTION" = "list-ads" ]; then
     log "가용성 도메인 (AD)"
@@ -160,6 +179,20 @@ fi
 # ⚠️ NSG 는 서브넷이 아니라 VNIC 에 붙으므로 여기서 보이지 않는다. OCI 는 보안 리스트와
 #    NSG 를 **합집합**으로 적용하니 보안 리스트에 22가 있으면 통과다. 다만 NSG 로만
 #    허용해 둔 구성이라면 이 점검이 "22 없음"이라고 말할 수 있다 — 그때는 오탐이다.
+# [JA] ネットワーク点検
+#      「セキュリティリストでポートを開けておくべきでは?」 — **22 番は既定のセキュリティリストに既にある。**
+#      OCI が VCN を作るとき `0.0.0.0/0 → TCP 22` のイングレスを入れてくれる。ウィザードで作ったなら
+#      触るものはない。そしてこのプロジェクトは Cloudflare Tunnel で入るので 80・443・6443 は
+#      **開けない**(kubectl は SSH トンネルで繋ぐ — docs/33 §8)。
+#      だから SSH が通らないとき犯人は普通セキュリティリストではない。三つのどれかだ:
+#      ① プライベートサブネットを選んだ(パブリック IP 自体が付かない) ② ルートテーブルに IGW がない(パブリック IP はあるが外から入る道がない)
+#      ③ インスタンス**内**のファイアウォール(OCI の外の問題。ops/23 が扱う)。
+#      ①②(OCI 側)と③(ホスト側)は症状で分けられる: timeout = パケットが黙って捨てられた → ①②・セキュリティリスト、
+#      Connection refused = パケットは届いた → ③ または sshd が起動していない。
+#      この点検は①②とセキュリティリストだけを見る。③ は `ops/23 --check` がインスタンス上で見る。
+#      ⚠️ NSG はサブネットではなく VNIC に付くのでここからは見えない。OCI はセキュリティリストと NSG を
+#      **和集合**で適用するので、セキュリティリストに 22 があれば通過だ。ただし NSG だけで
+#      許可している構成だとこの点検が「22 なし」と言いうる — そのときは誤検知だ。
 
 if [ "$ACTION" = "check-network" ]; then
     log "네트워크 경로 점검 — SSH 가 들어갈 수 있는가"
@@ -177,6 +210,7 @@ if [ "$ACTION" = "check-network" ]; then
     FAIL=0
 
     # ── ① 공인 IP 가 붙는가 ────────────────────────────────────────────
+    # [JA] ── ① パブリック IP が付くか
     if [ "$(printf '%s' "$SUBNET_JSON" | jq -r '.["prohibit-public-ip-on-vnic"]')" = "true" ]; then
         warn "프라이빗 서브넷입니다 — 공인 IP 가 붙지 않아 SSH 로 들어갈 수 없습니다"
         warn "  VCN 마법사로 만들면 퍼블릭·프라이빗 서브넷이 **둘 다** 생깁니다. 퍼블릭 쪽을 고르세요"
@@ -186,6 +220,7 @@ if [ "$ACTION" = "check-network" ]; then
     fi
 
     # ── ② 라우트 테이블에 인터넷 게이트웨이가 있는가 ───────────────────
+    # [JA] ── ② ルートテーブルにインターネットゲートウェイがあるか
     RT_ID=$(printf '%s' "$SUBNET_JSON" | jq -r '.["route-table-id"]')
     if ! RAW=$(oci network route-table get --rt-id "$RT_ID" 2>&1); then
         printf '%s\n' "$RAW" | head -3
@@ -208,6 +243,8 @@ if [ "$ACTION" = "check-network" ]; then
     # ── ③ 보안 리스트: 22 는 열려 있는가, 그 밖에 열린 것은 없는가 ─────
     #
     # protocol "6"=TCP, "all"=전부. tcp-options 가 없으면 모든 포트다.
+    # [JA] ── ③ セキュリティリスト: 22 は開いているか、それ以外に開いているものはないか
+    #      protocol "6"=TCP、"all"=すべて。tcp-options がなければ全ポートだ。
     PORT_FILTER='
       def allows($p):
         (.protocol == "all" or .protocol == "6")
@@ -224,6 +261,7 @@ if [ "$ACTION" = "check-network" ]; then
         SL_NAME=$(printf '%s' "$RAW" | jq -r '.data["display-name"]')
 
         # 22 를 허용하는 규칙이 하나라도 있는가
+        # [JA] 22 を許可するルールが一つでもあるか
         N=$(printf '%s' "$RAW" | jq "$PORT_FILTER"'
             [.data["ingress-security-rules"][] | select(allows(22))] | length')
         [ "$N" -gt 0 ] && SSH_OK=1
@@ -232,6 +270,9 @@ if [ "$ACTION" = "check-network" ]; then
         #
         # ICMP(1)·ICMPv6(58)는 제외한다. 기본 보안 리스트의 `type 3 code 4` 는 Path MTU
         # Discovery 용이라 **있어야 하는** 규칙이고, 이걸 경고하면 경고 자체가 소음이 된다.
+        # [JA] 0.0.0.0/0 に開いたルールを列挙する。22 以外があればそれが露出だ。
+        #      ICMP(1)・ICMPv6(58)は除外する。既定セキュリティリストの `type 3 code 4` は Path MTU
+        #      Discovery 用で**あるべき**ルールであり、これを警告すると警告自体がノイズになる。
         OPEN=$(printf '%s' "$RAW" | jq -r '
             .data["ingress-security-rules"][]
             | select(.source == "0.0.0.0/0")
@@ -245,6 +286,7 @@ if [ "$ACTION" = "check-network" ]; then
                 "$SL_NAME" "$(printf '%s' "$OPEN" | tr '\n' ' ')"
         fi
         # 22(=6:22-22) 외에 열린 것이 있으면 경고한다. 터널을 쓰므로 있을 이유가 없다.
+        # [JA] 22(=6:22-22)以外に開いているものがあれば警告する。トンネルを使うのであるべき理由がない。
         EXTRA=$(printf '%s' "$OPEN" | grep -v '^6:22-22$' || true)
         if [ -n "$EXTRA" ]; then
             warn "$SL_NAME: 22번 외에 인터넷으로 열린 규칙이 있습니다"
@@ -275,6 +317,7 @@ if [ "$ACTION" = "check-network" ]; then
 fi
 
 # ---------------------------------------------------------------- 점검
+# [JA] 点検
 
 [ -n "$COMPARTMENT" ] || die "OCI_COMPARTMENT_OCID 가 필요합니다 (--list-subnets 도움말 참고)"
 [ -n "$SUBNET" ]      || die "OCI_SUBNET_OCID 가 필요합니다 — ops/26-oci-launch-retry.sh --list-subnets"
@@ -288,12 +331,19 @@ fi
 # ⚠️ 다만 **대부분의 리전은 AD 가 하나뿐이다.** 3개를 가진 곳은 애슈번·피닉스·프랑크푸르트·
 #    런던 정도이고 도쿄·오사카·서울은 전부 단일 AD 다. 그런 리전에서는 아래 순회가
 #    원소 1개짜리 목록을 도는 **no-op** 이다 — 해롭진 않지만 이걸 "해법"으로 기대하면 안 된다.
+# [JA] AD 一覧を取得しておく。AD は**作成要求で選ぶ値**なので(作成済みインスタンスは移せない)
+#      試行ごとに別の AD を使え、AD が複数あれば容量も AD ごとに異なる。
+#      ⚠️ ただし**大半のリージョンは AD が一つだけだ。** 三つあるのはアッシュバーン・フェニックス・フランクフルト・
+#      ロンドン程度で、東京・大阪・ソウルはすべて単一 AD だ。そうしたリージョンでは下のループは
+#      要素 1 個のリストを回る **no-op** だ — 害はないがこれを「解決策」と期待してはいけない。
 mapfile -t ADS < <(oci iam availability-domain list --compartment-id "${TENANCY:-$COMPARTMENT}" \
                      | jq -r '.data[].name')
 [ "${#ADS[@]}" -gt 0 ] || die "가용성 도메인을 조회하지 못했습니다 — oci CLI 인증을 확인하세요"
 
 # 폴트 도메인(FD)은 **일부러 지정하지 않는다.** 지정하면 OCI 가 찾을 범위를 좁힐 뿐이라
 # 용량 확보에 불리하다. 비워 두면 OCI 가 여유 있는 FD 를 알아서 고른다.
+# [JA] フォールトドメイン(FD)は**あえて指定しない。** 指定すると OCI が探す範囲を狭めるだけで
+#      容量確保に不利だ。空けておけば OCI が余裕のある FD を自分で選ぶ。
 
 log "설정"
 info "shape      : $SHAPE  ($OCPUS OCPU / ${MEMORY_GB}GB)"
@@ -318,6 +368,7 @@ if [ "$ACTION" = "check" ]; then
 fi
 
 # ---------------------------------------------------------------- 발사
+# [JA] 発射
 
 launch_cmd() {  # launch_cmd <AD>
     oci compute instance launch \
@@ -383,6 +434,8 @@ EOF
     # ── 실패 분류 — 재시도할 것과 하지 말아야 할 것을 가른다 ──────────
     #
     # 여기서 구분하지 않으면 "영원히 안 될 요청"을 며칠씩 두드리게 된다.
+    # [JA] ── 失敗の分類 — リトライすべきものとしてはいけないものを分ける
+    #      ここで区別しないと「永遠に通らない要求」を何日も叩き続けることになる。
     case "$ERR" in
         *"Out of host capacity"*|*OutOfCapacity*|*"out of capacity"*)
             printf '\r  [%3d회] %s  용량 없음 — %s 후 재시도   ' \
@@ -430,5 +483,6 @@ EOF
     fi
 
     # 같은 초에 몰리지 않도록 약간의 지터를 준다.
+    # [JA] 同じ秒に集中しないよう少しジッタを入れる。
     sleep $(( INTERVAL + RANDOM % 15 ))
 done

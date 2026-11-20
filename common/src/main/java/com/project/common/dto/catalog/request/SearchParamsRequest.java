@@ -41,6 +41,12 @@ public class SearchParamsRequest implements Serializable{
      *
      * <p>{@code category} 와 <b>함께</b> 쓸 수 있다(AND). 상위를 고르고 그 안에서 좁히는
      * 것이 화면의 모양이기 때문이다.
+     *
+     * <p>[JA] サブカテゴリ id。
+     * 🐛 このフィールドが<b>なかった</b>: 画面にはサブカテゴリ一覧が<b>描かれていた</b>(サーバーが {@code subCategories} を一緒に返す)。ところがその項目には
+     * {@code onClick} がなく — 唯一のハンドラーがコメントアウトされていた — URL パラメータも、このフィールドも、検索条件もなかった。つまり<b>一覧だけあって
+     * 機能はどこにもなかった。</b>押しても何の反応もなかった理由である。
+     * {@code category} と<b>一緒に</b>使える(AND)。上位を選んでその中で絞り込むのが画面の形だからである。
      */
     private String subCategory;
 
@@ -80,6 +86,12 @@ public class SearchParamsRequest implements Serializable{
      *
      * <p>기본값 {@code true} 는 <b>기존 동작을 그대로 두기 위해서</b>다. 이 필드를 모르는
      * 호출부(있을 수 있다)는 예전과 똑같이 받는다. 필요 없는 쪽만 false 를 보낸다.
+     *
+     * <p>[JA] フィルターメニューのデータ(カテゴリ · サブカテゴリ · 色 · サイズ · 詳細 · ブランド)を一緒に返すか。
+     * 🐛 以前は選択肢がなかった — {@code /api/search} は<b>毎リクエスト</b>それらを一緒に載せて送っていた。カテゴリ全体とサブカテゴリ全体を {@code findAll()} で読んでいたからである。
+     * 画面は<b>最初のページのものだけ使い残りは捨てる</b>(browse.jsx は `pages[0]` からだけフィルターを読む)。無限スクロールを付けてからは 2 · 3 · 4 ページを
+     * 受け取るたびに使いもしないカテゴリ全体が付いてきた。
+     * デフォルト {@code true} は<b>既存の動作をそのまま残すため</b>である。このフィールドを知らない呼び出し側(ありうる)は以前と同じく受け取る。不要な側だけ false を送る。
      */
     private boolean includeFilters = true;
 }

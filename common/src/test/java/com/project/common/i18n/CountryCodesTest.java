@@ -21,6 +21,11 @@ import org.junit.jupiter.api.Test;
  * <p>주소 폼은 나라를 이름으로 저장하는데 배송 테이블의 {@code country} 는 {@code varchar(2)} 라,
  * 첫 배송을 만들려는 순간 {@code value too long for type character varying(2)} 로 죽었다.
  * 그 예외가 결제 레코드를 재시도 끝에 DLT 로 보냈고, 화면에는 "배송 준비 중" 만 떠 있었다.
+ *
+ * <p>[JA] 🐛 <b>回帰対象 — 決済イベントが丸ごと DLT に行った。</b>
+ * 住所フォームは国を名前で保存するのに配送テーブルの {@code country} は {@code varchar(2)} なので、
+ * 最初の配送を作ろうとした瞬間 {@code value too long for type character varying(2)} で死んだ。
+ * その例外が決済レコードをリトライの末に DLT に送り、画面には「配送準備中」だけが表示されていた。
  */
 @DisplayName("나라 표기 → ISO alpha-2")
 class CountryCodesTest {
@@ -36,6 +41,10 @@ class CountryCodesTest {
      *
      * <p>목록에 나라가 추가되거나 표기가 바뀌면 여기가 먼저 빨개진다. 운영에서
      * "그 나라로 주문하면 배송이 안 생긴다" 로 드러나는 것보다 낫다.
+     *
+     * <p>[JA] 🔴 <b>最も重要なテスト。</b>住所フォームが実際に送り得る値はフロントのリストがすべてだ。
+     * その 245 個を<b>ファイルから読んで</b>一つずつ突き合わせる — 手で選んだ標本ではなく全数だ。
+     * リストに国が追加されたり表記が変わったりすると、ここが先に赤くなる。運用で「その国で注文すると配送が作られない」として表に出るよりよい。
      */
     @Test
     @DisplayName("🔴 주소 폼의 나라 목록 전부가 자기 코드로 풀린다")
@@ -78,6 +87,9 @@ class CountryCodesTest {
      * 바로 위 항목("Korea, Democratic People'S Republic of")이었다 — 두 한국이 나란히 있어
      * 잘못 고르기 쉽다. 그래서 두 값이 서로 섞이지 않는지, 그리고 사람이 손으로 쓰는
      * 표기들이 제대로 갈리는지를 따로 고정한다.
+     *
+     * <p>[JA] 木浦の住所の配送が {@code KP} で記録されたことがある。変換器は正しく、保存された値がリストのすぐ上の項目("Korea, Democratic People'S Republic of")だった —
+     * 2 つの韓国が並んでいて選び間違えやすい。そこで 2 つの値が互いに混ざらないか、そして人が手で書く表記が正しく分かれるかを別に固定する。
      */
     @Test
     @DisplayName("두 한국은 절대 섞이지 않는다 — 손으로 쓴 표기까지")
@@ -91,6 +103,7 @@ class CountryCodesTest {
             assertThat(CountryCodes.toAlpha2(north)).as(north).isEqualTo("KP");
         }
         // "Korea" 만으로는 어느 쪽인지 알 수 없다 — 짐작하지 않는다.
+        // [JA] "Korea" だけではどちらか分からない — 推測しない。
         assertThat(CountryCodes.toAlpha2("Korea")).isNull();
     }
 
@@ -111,6 +124,7 @@ class CountryCodesTest {
     }
 
     /** 🔴 모르는 값에 예외를 던지면 그 순간 결제 이벤트가 DLT 로 간다 — 그게 이 버그였다. */
+    // [JA] 🔴 未知の値に例外を投げると、その瞬間に決済イベントが DLT に行く — それがこのバグだった。
     @Test
     @DisplayName("🔴 알아보지 못하면 null 이고, 기본값을 주면 그것을 쓴다 — 예외는 던지지 않는다")
     void unknownFallsBackInsteadOfThrowing() {
@@ -123,6 +137,7 @@ class CountryCodesTest {
     }
 
     /** 어떤 값이 들어와도 두 글자거나 null 이다 — 컬럼이 varchar(2) 라는 사실을 여기서 고정한다. */
+    // [JA] どんな値が来ても 2 文字か null だ — カラムが varchar(2) だという事実をここで固定する。
     @Test
     @DisplayName("결과는 언제나 두 글자다")
     void resultAlwaysFitsTheColumn() {

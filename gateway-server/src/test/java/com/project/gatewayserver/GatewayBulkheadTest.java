@@ -31,7 +31,13 @@ import reactor.core.publisher.Mono;
  * 기본값이 resilience4j 의 기본값과 같으니, 이 테스트는 변수로 40 을 주고 실제로 40 이 걸리는지 본다 — 설정 키가 틀려도 ·
  * 다른 레지스트리를 써도 · 설정을 지워도(그러면 25) 실패한다. 기본값 25 는 설정 파일을 읽어 따로 본다.
  *
- * <p>[JA] ゲートウェイのルートの同時呼び出し上限が設定値で掛かるか — 実際のコンテキストのファクトリで同時呼び出しを掛けて数える。
+ * <p>[JA] ゲートウェイのルートの同時呼び出し上限(バルクヘッド)が設定値で掛かるか — 実際のコンテキストのサーキットブレーカーファクトリで同時呼び出しを掛けて数える。
+ *
+ * <p>[JA] 2026-10-18 負荷試験(docs/83 §5): 設定にバルクヘッドがなく Spring Cloud CircuitBreaker が resilience4j の既定値(同時 25 · 待ち 0)を
+ * そのまま使い、catalog が遅くなると Pod あたり 26 番目の呼び出しから {@code BulkheadFullException} → fallback 503 だった。今は値が設定にあり
+ * (application-local.yml の resilience4j.bulkhead — 25 と 100 を測って 25)、GATEWAY_BULKHEAD_MAX_CONCURRENT で変えられる。
+ * 既定値が resilience4j の既定値と同じなので、このテストは変数で 40 を与えて実際に 40 が掛かるかを見る — 設定キーが間違っても ·
+ * 別のレジストリを使っても · 設定を消しても(すると 25)失敗する。既定値 25 は設定ファイルを読んで別に見る。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @DisplayName("게이트웨이 — 동시 호출 상한(벌크헤드)은 설정값")
@@ -40,7 +46,7 @@ class GatewayBulkheadTest {
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         NettyServerTest.properties(registry);
-        registry.add("GATEWAY_BULKHEAD_MAX_CONCURRENT", () -> "40");   // 기본값(25)과 다른 값 — 설정이 실제로 이어졌는지 보려고
+        registry.add("GATEWAY_BULKHEAD_MAX_CONCURRENT", () -> "40");   // 기본값(25)과 다른 값 — 설정이 실제로 이어졌는지 보려고 ／ [JA] デフォルト(25)と異なる値 — 設定が実際につながったかを見るため
     }
 
     @Autowired
@@ -50,11 +56,13 @@ class GatewayBulkheadTest {
     MeterRegistry meters;
 
     /** 이름이 같은 회로 차단기로 calls 개를 동시에 걸어 — 각 호출은 300ms 동안 슬롯을 쥔다 — 벌크헤드에 막힌 수를 센다. */
+    // [JA] 同じ名前のサーキットブレーカーで calls 個を同時にかけ — 各呼び出しは 300ms スロットを握る — バルクヘッドに阻まれた数を数える。
     private long rejected(String name, int calls) {
         ReactiveCircuitBreaker cb = factory.create(name);
         List<String> results = Flux.fromStream(IntStream.range(0, calls).boxed())
                 .flatMap(i -> cb.run(Mono.delay(Duration.ofMillis(300)).map(x -> "ok"),
                         // resilience4j-bulkhead 는 런타임에만 있다(테스트 컴파일 경로 밖) — 이름으로 본다
+                        // [JA] resilience4j-bulkhead は実行時にだけある(テストのコンパイルパス外) — 名前で見る
                         t -> Mono.just("BulkheadFullException".equals(t.getClass().getSimpleName()) ? "bulkhead" : "other:" + t.getClass().getSimpleName())),
                         calls)
                 .collectList()
@@ -74,6 +82,7 @@ class GatewayBulkheadTest {
     void bulkheadIsObservable() {
         rejected("orderServiceCircuitBreaker", 5);
         // Prometheus 이름: resilience4j_bulkhead_max_allowed_concurrent_calls · resilience4j_bulkhead_available_concurrent_calls{name=…}
+        // [JA] Prometheus 名: resilience4j_bulkhead_max_allowed_concurrent_calls · resilience4j_bulkhead_available_concurrent_calls{name=…}
         assertThat(meters.get("resilience4j.bulkhead.max.allowed.concurrent.calls").tag("name", "orderServiceCircuitBreaker").gauge().value())
                 .isEqualTo(40.0);
         assertThat(meters.get("resilience4j.bulkhead.available.concurrent.calls").tag("name", "orderServiceCircuitBreaker").gauge().value())

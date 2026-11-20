@@ -88,6 +88,7 @@ public class UserServiceImpl implements UserService {
     private final EmailService emailService;
 
     /** 로그인 중 "현재 비밀번호" 의 시도 제한(비밀번호 변경). */
+    // [JA] ログイン中の「現在のパスワード」の試行制限(パスワード変更)。
     private final com.project.userservice.security.CurrentPasswordGuard currentPasswordGuard;
 
     /**
@@ -95,12 +96,17 @@ public class UserServiceImpl implements UserService {
      *
      * <p>지우지 않으면 다음 로그인에서 "다중 로그인" 경고가 뜬다 — 혼자 쓰는데도.
      * 실제로 비밀번호를 재설정하고 로그인한 사용자가 그 경고를 봤다.
+     *
+     * <p>[JA] ログインセッション記録(Redis)。パスワードを変えると<b>ここに残った古いセッションも消す。</b>
+     * <p>消さないと次のログインで「多重ログイン」警告が出る — 一人で使っているのに。実際にパスワードを再設定してログインしたユーザーがその警告を見た。
      */
     private final com.project.userservice.security.RedisSessionManager sessionManager;
 
     /** 로그인 기기 목록·삭제. 판단 로직은 그쪽이 갖고 있다. */
+    // [JA] ログイン機器の一覧・削除。判断ロジックはそちらが持っている。
     private final com.project.userservice.service.DeviceRecognitionService deviceRecognitionService;
     /** 등급 기준(기간·금액). 화면이 "왜 이 등급인가" 를 설명하려면 기준이 필요하다. */
+    // [JA] 等級基準(期間・金額)。画面が「なぜこの等級か」を説明するには基準が必要。
     private final com.project.userservice.config.TierProperties tierProperties;
 
     private final TotpService totpService;
@@ -111,15 +117,19 @@ public class UserServiceImpl implements UserService {
     private final com.project.userservice.message.UserOutboxHelper userOutboxHelper;
 
     /** OTP 재사용 거절 · 로그인 중 2FA 변경 시도 제한(docs/68 §14). */
+    // [JA] OTP 再利用の拒否 · ログイン中の 2FA 変更の試行制限(docs/68 §14)。
     private final com.project.userservice.security.totp.TotpReplayGuard totpReplayGuard;
 
     /** 2FA 를 켜고 끄면 계정 주인에게 알린다(docs/68 §14). */
+    // [JA] 2FA を有効化・無効化したらアカウントの持ち主に知らせる(docs/68 §14)。
     private final com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
 
     /** 관리자가 계정을 막을 때 이미 열린 로그인도 끊는다(docs/68 §13). */
+    // [JA] 管理者がアカウントを止めるとき既に開いているログインも切る(docs/68 §13)。
     private final com.project.userservice.service.RefreshTokenService refreshTokenService;
 
     /** 유출 · 흔한 비밀번호를 거절한다 — 비밀번호를 정하는 모든 경로(가입 · 변경 · 재설정)에서(docs/68 §18). */
+    // [JA] 漏洩 · ありふれたパスワードを拒否する — パスワードを決めるすべての経路(登録 · 変更 · 再設定)で(docs/68 §18)。
     private final com.project.userservice.security.password.BreachedPasswordChecker breachedPasswordChecker;
 
     /**
@@ -138,6 +148,10 @@ public class UserServiceImpl implements UserService {
      * 주석이 남아 있는 걸 보면 테스트하려고 줄인 값을 되돌리지 않은 것으로 보인다. 메일이
      * 배달되는 데 걸리는 시간만으로도 3분을 넘기는 경우가 흔해, 사실상 상당수 가입자가
      * 링크를 눌러도 만료였다.
+     *
+     * <p>[JA] 確認トークンの有効期間。既定 24 時間。
+     * <p>以前はエンティティ定数 EXPIRATION = 3(分)が埋め込まれていた。横に //60 * 24 のコメントが残っているのを見ると、テストのために縮めた値を戻さなかったものと思われる。
+     * メールの配達にかかる時間だけで 3 分を超えることが多く、事実上多くの登録者がリンクを押しても期限切れだった。
      */
     @Value("${app.verification.token-ttl:PT24H}")
     private java.time.Duration verificationTokenTtl;
@@ -149,11 +163,16 @@ public class UserServiceImpl implements UserService {
      * 아무도 로그인할 수 없기 때문</b>이다(notification-service 의 기본 발송기는 logging).
      * 메일 발송을 확인한 뒤 {@code APP_REQUIRE_EMAIL_VERIFICATION=true} 로 켠다.
      * 자세한 순서는 application-local.yml 의 주석 참조.
+     *
+     * <p>[JA] 登録直後のアカウントを無効にしておくかどうか。
+     * <p>⚠️ 既定値 false は安全だからではなく、<b>メールが実際に出ない環境で有効にすると誰もログインできないから</b>である(notification-service の既定の送信器は logging)。
+     * メール送信を確認した後に APP_REQUIRE_EMAIL_VERIFICATION=true で有効にする。詳しい手順は application-local.yml のコメント参照。
      */
     @Value("${app.verification.require-email-verification:false}")
     private boolean requireEmailVerification;
 
     /** 비밀번호 재설정 링크의 수명(docs/68 §15). */
+    // [JA] パスワード再設定リンクの寿命(docs/68 §15)。
     @Value("${auth.password-reset.ttl:PT1H}")
     private java.time.Duration passwordResetTtl = java.time.Duration.ofHours(1);
 
@@ -215,12 +234,19 @@ public class UserServiceImpl implements UserService {
     //
     //    JWT 는 **신원 증명**이지 프로필 저장소가 아니다. 이름을 바꿔도 이미 발급된
     //    토큰은 그대로이므로, 프로필은 그때그때 서버에서 읽어야 한다.
+    // [JA] ── 自分のプロフィール ──
+    //      🐛 これまで**プロフィールを返す GET がなかった。** そのため画面は JWT ペイロードからユーザーオブジェクトを作って使っていたが(util/jwtUser.js の toUser)、
+    //      そこには { email, userId, roles } しかない。画面が user.name · user.image を読むと常に undefined で、プロフィールのサイドバーは名前が空欄、アバターが壊れたまま出ていた。
+    //      `/profile` の本文は一度も作られたことがない。JWT は**身元の証明**でありプロフィールの保存場所ではない。名前を変えても発行済みトークンはそのままなので、プロフィールはその都度サーバから読むべきだ。
 
     /**
      * 내가 로그인한 적 있는 기기들.
      *
      * <p>보안 알림을 받은 사용자가 확인하러 오는 화면이다. 토큰 해시는 내보내지 않는다 —
      * 그 값을 알면 그 기기인 척해서 <b>알림을 끌 수 있다</b>(KnownDevice 주석).
+     *
+     * <p>[JA] 自分がログインしたことのある機器。
+     * <p>セキュリティ通知を受けたユーザーが確認しに来る画面である。トークンのハッシュは出さない — その値を知ればその機器のふりをして<b>通知を止められる</b>(KnownDevice のコメント)。
      */
     @Transactional(readOnly = true)
     public java.util.List<com.project.userservice.dto.DeviceDto> myDevices(String email) {
@@ -244,6 +270,11 @@ public class UserServiceImpl implements UserService {
      * <p>기준 금액을 함께 내려보내는 이유는 화면이 <b>"왜 내가 실버인가"</b> 에 답해야
      * 하기 때문이다. 기준을 클라이언트에 하드코딩하면 설정을 바꾼 날부터 화면이 거짓말을
      * 한다.
+     *
+     * <p>[JA] 自分の等級 — 保存された値を読むだけ。
+     * <p>🔴 <b>ここで計算しない。</b> 等級は一日一回バッチが埋める(CustomerTierService)。画面を開くたびに order-service を呼ぶと注文サービスの障害がプロフィール画面の障害に広がり、
+     * 同じ人が再読み込みするたびに等級が違って見えうる。
+     * <p>基準金額を一緒に返す理由は、画面が<b>「なぜ自分はシルバーなのか」</b>に答えなければならないからだ。基準をクライアントにハードコードすると設定を変えた日から画面が嘘をつく。
      */
     @Transactional(readOnly = true)
     public com.project.userservice.dto.TierStatusDto myTier(String email) {
@@ -268,6 +299,7 @@ public class UserServiceImpl implements UserService {
     }
 
     /** 기기 기억을 지운다. 세션은 끊지 않는다(컨트롤러 주석). */
+    // [JA] 機器の記憶を消す。セッションは切らない(コントローラのコメント)。
     @Transactional
     public boolean forgetDevice(String email, Long deviceId) {
         User user = findByUsername(email);
@@ -278,6 +310,7 @@ public class UserServiceImpl implements UserService {
     }
 
     /** 이메일(검증된 신원)로 내 프로필. */
+    // [JA] メール(検証済みの身元)で自分のプロフィール。
     @Transactional(readOnly = true)
     public UserProfileDto getMyProfile(String email) {
         User user = findByUsername(email);
@@ -294,6 +327,10 @@ public class UserServiceImpl implements UserService {
      * 둘은 신원 그 자체이고, JWT 의 subject 이며 다른 서비스가 사용자를 찾는 키다
      * (order·cart·coupon 이 전부 이메일로 조회한다). 여기서 바꾸면 이미 발급된 토큰과
      * 다른 서비스의 참조가 한꺼번에 어긋난다. 표시 이름({@code name})만 바꾼다.
+     *
+     * <p>[JA] 表示名を変える。
+     * <p>username(ログイン id = メール)と email は<b>変えない。</b> 二つは身元そのものであり、JWT の subject で、他のサービスがユーザーを探すキーだ
+     * (order・cart・coupon がすべてメールで検索する)。ここで変えると発行済みトークンと他サービスの参照が一斉にずれる。表示名(name)だけを変える。
      */
     @Transactional
     public UserProfileDto updateMyProfile(String email, String newName) {
@@ -307,6 +344,7 @@ public class UserServiceImpl implements UserService {
             throw new IllegalArgumentException("이름을 입력해 주세요.");
         }
         // 열(users.name)이 20자다 — 🐛 예전에는 50 이라 21~50자가 여기를 지나 저장에서 실패했다(ProfileUpdateRequest 와 같은 한도).
+        // [JA] 列(users.name)は 20 文字 — 🐛 以前は 50 だったので 21~50 文字がここを通過して保存で失敗した(ProfileUpdateRequest と同じ上限)。
         if (trimmed.length() > 20) {
             throw new IllegalArgumentException("이름은 20자까지 입력할 수 있습니다.");
         }
@@ -314,12 +352,14 @@ public class UserServiceImpl implements UserService {
         user.setName(trimmed);
         userRepository.save(user);
         // 복제본(chat_member)이 새 이름을 따라오게 — 같은 트랜잭션의 아웃박스(docs/48 §6-⑤).
+        // [JA] 複製(chat_member)が新しい名前に追随するよう — 同じトランザクションのアウトボックス(docs/48 §6-⑤)。
         userOutboxHelper.recordUserUpdated(user);
 
         return UserProfileDto.toDto(user, rolesOf(user));
     }
 
     /** 프로필 이미지 주소를 바꾼다. null 이면 지운다(기본 아바타로 돌아간다). */
+    // [JA] プロフィール画像のアドレスを変える。null なら消す(既定のアバターに戻る)。
     @Transactional
     public UserProfileDto updateMyProfileImage(String email, String imageUrl) {
         User user = findByUsername(email);
@@ -350,6 +390,7 @@ public class UserServiceImpl implements UserService {
         .collect(Collectors.toList());
 
         // 토큰 갱신 경로다 — 사용자에게 알릴 것이 없으므로 문구도 코드도 없다.
+        // [JA] トークン更新経路 — ユーザーに知らせることがないので文言もコードもない。
         return new LoginResponse(email, roles, null, null);
     }
     
@@ -441,16 +482,24 @@ public class UserServiceImpl implements UserService {
      *
      * <p>{@code catch (Exception e) -> RuntimeException("Failed to update password")} 도
      * 함께 없앴다. 그게 있으면 아래에서 던지는 구체적인 사유까지 뭉뚱그려진다.
+     *
+     * <p>[JA] ログイン状態でパスワードを変える。
+     * <p>🐛 <b>現在のパスワードが間違っていても成功と報告していた。</b> 以前のコードは matches が真のときだけ設定・保存し else がなかった — そのまま抜けていた。
+     * メソッドが void なのでコントローラはそのまま 200 "Password updated" を返した。ユーザーはパスワードが変わったと思い次のログインで新しいパスワードを入れて失敗する — そのときにはもう何が悪かったか分からない。
+     * <p>catch (Exception e) → RuntimeException("Failed to update password") も一緒になくした。それがあると下で投げる具体的な理由までひとまとめにされる。
      */
     @Override
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void updatePassword(Long userId, String currPassword, String password) {
         // ① 현재 비밀번호(읽기 한 번) → ② 새 비밀번호 정책 · 유출 확인(트랜잭션 밖) → ③ 저장(짧은 트랜잭션). 순서는 예전과 같다 —
         //    현재 비밀번호가 틀리면 유출 확인까지 가지 않는다.
+        // [JA] ① 現在のパスワード(読み取り一回) → ② 新パスワードのポリシー · 漏洩確認(トランザクションの外) → ③ 保存(短いトランザクション)。順序は以前と同じ —
+        //      現在のパスワードが間違っていれば漏洩確認まで行かない。
         User current = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException(StatusMessages.USER_NOT_FOUND));
 
         // 🔒 비교 전에 센다 — 🐛 예전에는 제한이 없어 세션만 가진 사람이 이 엔드포인트로 비밀번호를 대입할 수 있었다.
+        // [JA] 🔒 比較の前に数える — 🐛 以前は制限がなく、セッションだけ持つ人がこのエンドポイントでパスワードを総当たりできた。
         currentPasswordGuard.reserve(userId);
         if (!passwordEncoder.matches(currPassword, current.getPassword())) {
             throw new InvalidCurrentPasswordException();
@@ -464,6 +513,7 @@ public class UserServiceImpl implements UserService {
     }
 
     /** 현재 비밀번호가 맞지 않는다. 컨트롤러가 400 으로 바꾼다. */
+    // [JA] 現在のパスワードが合わない。コントローラが 400 に変える。
     public static class InvalidCurrentPasswordException extends RuntimeException {
         public InvalidCurrentPasswordException() {
             super("현재 비밀번호가 올바르지 않습니다.");
@@ -479,14 +529,22 @@ public class UserServiceImpl implements UserService {
      * <p>{@code passwordChangedAt} 보다 <b>먼저 발급된</b> 리프레시 토큰이 거절되는 방식이다
      * ({@code RefreshTokenController}). 이미 가진 액세스 토큰은 호출부의 {@code revokeAll} 이 쓰는
      * 로그인 해제 시각으로 게이트웨이가 곧바로 거절한다(2026-11-19, docs/57 §22 — 그 전에는 남은 수명 15분 동안 살아 있었다).
+     *
+     * <p>[JA] 新しいパスワードを適用し<b>既存のセッションを切る。</b>
+     * <p>セッションを切らないと、アカウントを盗られてパスワードを変えた場合でも攻撃者はログイン状態のまま残る — パスワードを変えた意味がなくなる。
+     * <p>passwordChangedAt より<b>前に発行された</b>リフレッシュトークンが拒否される方式(RefreshTokenController)。既に持っているアクセストークンは呼び出し側の revokeAll が書く
+     * ログイン解除時刻でゲートウェイが即座に拒否する(2026-11-19, docs/57 §22 — それ以前は残り寿命 15 分の間生きていた)。
      */
     /** 가입과 같은 길이(SignupRequest @Size(min = 6, max = 40)). */
+    // [JA] 登録と同じ長さ(SignupRequest @Size(min = 6, max = 40))。
     static final int PASSWORD_MIN = 6;
     static final int PASSWORD_MAX = 40;
 
     /**
      * 새 비밀번호가 정책(길이 · 유출 목록)을 지났다는 표 — {@link #acceptNewPassword} 만 만든다. 저장하는 {@link #applyNewPassword} 는
      * 이것만 받으므로, 정책을 건너뛰고 저장하는 길이 타입으로 막힌다.
+     *
+     * <p>[JA] 新しいパスワードがポリシー(長さ · 漏洩リスト)を通ったという証 — acceptNewPassword だけが作る。保存する applyNewPassword はこれしか受け取らないので、ポリシーを飛ばして保存する道が型で塞がれる。
      */
     static final class AcceptedPassword {
         private final String raw;
@@ -508,7 +566,11 @@ public class UserServiceImpl implements UserService {
      * 거부하므로 본인이 잠겼다), 유출 확인이 판단하지 못하면(fail-open) 한 글자 비밀번호도 통과했다. 새 비밀번호는 모두 여기를 지난다.
      * 유출 목록에 있으면 바꾸지 않는다(재설정 링크도 소진되지 않아 다시 시도할 수 있다).
      *
-     * <p>[JA] 新しいパスワードの方針 — トランザクションの外で呼ぶ。新しいパスワードはすべてここを通る。
+     * <p>[JA] 新しいパスワードの方針 — <b>トランザクションの外で</b>呼ぶ(漏洩確認は外部呼び出しだ、{@link #tx} のコメント)。
+     *
+     * <p>[JA] 🐛 パスワード方針が登録にしかなかった — 変更 · 再設定 · 管理者の経路は空文字列("")も受け取って保存し(ログインフィルターが
+     * 空パスワードを拒否するので本人がロックアウトされた)、漏洩確認が判断できないと(fail-open)一文字のパスワードも通った。新しい
+     * パスワードはすべてここを通る。漏洩リストにあれば変えない(再設定リンクも消費されないので再試行できる)。
      */
     private AcceptedPassword acceptNewPassword(String rawPassword) {
         if (rawPassword == null || rawPassword.length() < PASSWORD_MIN || rawPassword.length() > PASSWORD_MAX) {
@@ -527,13 +589,14 @@ public class UserServiceImpl implements UserService {
         // 옛 세션 기록을 지운다. passwordChangedAt 이 그 세션을 이미 <b>쓸 수 없게</b>
         // 만들지만, 기록이 남아 있으면 다음 로그인이 "다중 로그인" 으로 보인다 —
         // 죽은 세션을 살아 있다고 말하는 셈이다.
+        // [JA] 古いセッション記録を消す。passwordChangedAt がそのセッションを既に<b>使えなく</b>しているが、記録が残っていると次のログインが「多重ログイン」に見える — 死んだセッションを生きていると言うのと同じだ。
         sessionManager.removeSession(user.getEmail());
     }
 
     @Override
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void updatePassword(Long userId, String password) {
-        AcceptedPassword accepted = acceptNewPassword(password);   // 트랜잭션 밖 — 이유는 그대로 던진다
+        AcceptedPassword accepted = acceptNewPassword(password);   // 트랜잭션 밖 — 이유는 그대로 던진다 ／ [JA] トランザクションの外 — 理由はそのまま投げる
         try {
             tx.executeWithoutResult(status -> {
                 User user = userRepository.findById(userId)
@@ -561,6 +624,11 @@ public class UserServiceImpl implements UserService {
      *
      * <p>여기서 조용히 끝내는 것이 유일하게 맞는 선택이다 — 오타를 알려주는 편의보다
      * "이 주소가 이 서비스에 가입돼 있다"가 훨씬 값진 정보이고, 그 목록은 피싱의 재료가 된다.
+     *
+     * <p>[JA] パスワード再設定リンクを送る。
+     * <p>🔒 <b>登録されていないアドレスにも黙って成功する。</b> 以前は orElseThrow(USER_NOT_FOUND) で、コントローラがそれを 500 に変えていた — 未登録は 500、登録済みは 200。
+     * <b>応答コードだけでそのアドレスの登録有無が分かった。</b> 同じリポジトリの resend-verification はこの漏洩を防ぐため全ケースで同じ応答を返すのに、肝心のパスワード検索が穴だった。
+     * <p>ここで黙って終えるのが唯一正しい選択である — タイプミスを知らせる便利さより「このアドレスがこのサービスに登録されている」の方がはるかに価値のある情報で、その一覧はフィッシングの材料になる。
      */
     @Override
     @Transactional
@@ -568,18 +636,22 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findByEmail(email).orElse(null);
         if (user == null) {
             // 로그에만 남긴다. 호출자는 성공과 구분할 수 없어야 한다.
+            // [JA] ログにだけ残す。呼び出し側は成功と区別できてはならない。
             log.debug("비밀번호 재설정 요청이지만 가입되지 않은 주소다");
             return;
         }
 
         String token = UUID.randomUUID().toString();
         // 1시간(docs/68 §15) — 예전 24시간은 메일함이 털렸을 때 쓸 수 있는 시간이 그만큼 길었다. 메일은 보통 몇 분 안에 온다.
+        // [JA] 1 時間(docs/68 §15) — 以前の 24 時間はメールボックスを盗られたとき使える時間がそれだけ長かった。メールは普通数分で届く。
         Instant expiryDate = Instant.now().plus(passwordResetTtl);
 
         // 🔒 같은 행을 재사용한다 — 사용자당 살아 있는 링크가 하나여야 한다. 예전에는
         //    요청할 때마다 새 행을 넣고 이전 것을 그대로 뒀다. 열 번 누르면 24시간짜리
         //    유효 링크가 열 개 살아 있었고, 메일함이 털렸을 때 고를 수 있는 링크가 그만큼
         //    늘어난다. (V10 이 user_id 에 UNIQUE 를 걸어 두 번째 행 자체를 막는다.)
+        // [JA] 🔒 同じ行を再利用する — ユーザーごとに生きているリンクは一つでなければならない。以前は要求のたびに新しい行を入れて前のものをそのまま残していた。
+        //      十回押すと 24 時間有効なリンクが十個生きており、メールボックスを盗られたとき選べるリンクがそれだけ増える。(V10 が user_id に UNIQUE をかけて二行目自体を防ぐ。)
         PasswordResetToken resetToken = passwordResetTokenRepository.findByUser(user)
                 .orElseGet(() -> new PasswordResetToken(token, expiryDate, user));
         resetToken.refresh(token, expiryDate);
@@ -589,6 +661,8 @@ public class UserServiceImpl implements UserService {
         // 메일은 여기서 보내지 않고 요청만 한다 — 발송·재시도는 notification-service 가 맡는다.
         // 발행이 실패해도 예외가 올라오지 않으므로 이 트랜잭션(토큰 저장)은 그대로 커밋된다.
         // ⚠️ resetUrl 은 자격증명이다 — 로그에 남기지 않는다.
+        // [JA] メールはここで送らず要求だけする — 送信・リトライは notification-service が担う。発行が失敗しても例外が上がらないのでこのトランザクション(トークン保存)はそのままコミットされる。
+        //      ⚠️ resetUrl は資格情報である — ログに残さない。
         emailService.sendPasswordResetEmail(user.getUserId(), user.getEmail(), resetUrl);
         log.info("비밀번호 재설정 메일 요청: userId={}", user.getUserId());
     }
@@ -602,15 +676,22 @@ public class UserServiceImpl implements UserService {
      * <p>바꾼 뒤 토큰을 소진 처리하고, {@code passwordChangedAt} 으로 기존 세션을 끊는다.
      * 비밀번호를 되찾는 사람의 절반은 <b>계정을 도둑맞아서</b> 오는데, 그때 공격자의 세션이
      * 살아 있으면 되찾은 것이 아니다.
+     *
+     * <p>[JA] 再設定リンクでパスワードを変える。
+     * <p>🔒 検索は<b>ハッシュで</b>行う。保存値がハッシュなので原文のまま探しても何も当たらない — ハッシュ化を入れながらこの行を漏らすと再設定が丸ごと死ぬ。
+     * <p>変えた後トークンを使用済みにし、passwordChangedAt で既存セッションを切る。パスワードを取り戻しに来る人の半分は<b>アカウントを盗まれて</b>来るのであり、そのとき攻撃者のセッションが生きていれば取り戻したことにならない。
      */
     @Override
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void resetPassword(String token, String newPassword) {
         // ① 링크부터 — 유효하지 않으면 유출 확인(외부 호출)까지 가지 않는다(인증 없는 경로가 HIBP 호출을 만들지 않게).
+        // [JA] ① リンクから — 無効なら漏洩確認(外部呼び出し)まで行かない(認証のない経路が HIBP 呼び出しを生まないように)。
         validResetToken(token);
         // ② 정책 · 유출 확인 — 트랜잭션 밖
+        // [JA] ② ポリシー · 漏洩確認 — トランザクションの外
         AcceptedPassword accepted = acceptNewPassword(newPassword);
         // ③ 다시 확인하고 바꾼다 — ① 과 ③ 사이에 같은 링크가 쓰였을 수 있다.
+        // [JA] ③ もう一度確認して変える — ① と ③ の間に同じリンクが使われたかもしれない。
         tx.executeWithoutResult(status -> resetInTransaction(validResetToken(token), accepted));
     }
 
@@ -631,6 +712,7 @@ public class UserServiceImpl implements UserService {
         User user = resetToken.getUser();
         applyNewPassword(user, accepted);
         // 메일의 링크를 눌렀다 = 그 주소의 주인이다. 소셜 연결 때 이 비밀번호를 "확인된 적 없음" 으로 다루지 않게(docs/68 §15).
+        // [JA] メールのリンクを押した = そのアドレスの持ち主である。ソーシャル連携のときこのパスワードを「確認されたことがない」として扱わないように(docs/68 §15)。
         user.setEmailVerified(true);
         userRepository.save(user);
 
@@ -685,6 +767,8 @@ public class UserServiceImpl implements UserService {
 
         // 유출 · 흔한 비밀번호로는 가입하지 않는다(docs/68 §18) — 다른 사이트에서 샌 목록을 그대로 넣는 크리덴셜 스터핑의 재료다.
         // 트랜잭션 밖에서(외부 호출 — tx 주석). 계정 · 가입 이벤트(아웃박스, MANDATORY)는 아래 한 트랜잭션이다.
+        // [JA] 漏洩 · ありふれたパスワードでは登録しない(docs/68 §18) — 他サイトから漏れたリストをそのまま入れるクレデンシャルスタッフィングの材料である。
+        //      トランザクションの外で(外部呼び出し — tx のコメント)。アカウント · 登録イベント(アウトボックス、MANDATORY)は下の一つのトランザクション。
         breachedPasswordChecker.assertAcceptable(request.getPassword());
         return tx.execute(status -> createAccount(request));
     }
@@ -711,8 +795,13 @@ public class UserServiceImpl implements UserService {
         //
         // 관리자 승격은 DB 에서 사람이 한다(docs/34 의 UPDATE 문). 승격 API 를 만든다면
         // 그때는 반드시 인증된 관리자만 호출할 수 있는 별도 경로여야 한다.
+        // [JA] ⚠️ 会員登録で得るロールは**常に ROLE_USER である。**
+        //      以前はリクエスト本文の role が "admin" なら ROLE_ADMIN をそのまま与えていた。ところがこのエンドポイントは /api/auth/public/register — **認証なしの公開経路**だ。
+        //      つまり誰でも上の POST 一回で管理者になれた。カタログ書き込みを ROLE_ADMIN で施錠したことが丸ごと無意味になる穴だった(docs/34)。
+        //      管理者への昇格は DB で人が行う(docs/34 の UPDATE 文)。昇格 API を作るなら、そのときは必ず認証済み管理者だけが呼べる別経路にすること。
         if (strRoles != null && !strRoles.isEmpty()) {
             // 이메일은 남기지 않는다(보안 경로 로그에는 userId 만, 이 시점에는 아직 없다). 🐛 예전에는 email= 을 남겼다.
+            // [JA] メールは残さない(セキュリティ経路のログには userId だけ、この時点ではまだない)。🐛 以前は email= を残していた。
             log.warn("회원가입 요청이 역할을 지정했다 — 무시하고 ROLE_USER 로 만든다.");
         }
         role = roleRepository.findByRoleName(AppRole.ROLE_USER)
@@ -725,6 +814,8 @@ public class UserServiceImpl implements UserService {
         //    만료일과 가입 방식이 비어 있는 사용자가 만들어졌다(불리언 넷은 엔티티 기본값이
         //    true 라 우연히 문제가 안 났을 뿐이다). 역할과 아무 상관 없는 계정 초기화라
         //    조건 없이 실행한다.
+        // [JA] ⚠️ このブロックは以前 `strRoles` が空でないときだけ実行されていた。ところがフロントエンドは role を送らないので**正常な登録経路では丸ごと飛ばされていた。**
+        //      その結果、期限と登録方式が空のユーザーが作られた(ブール値四つはエンティティ既定値が true なので偶然問題にならなかっただけ)。ロールと無関係なアカウント初期化なので条件なしで実行する。
         user.setAccountNonLocked(true);
         user.setAccountNonExpired(true);
         user.setCredentialsNonExpired(true);
@@ -741,6 +832,9 @@ public class UserServiceImpl implements UserService {
         //
         //    끄고 켜는 스위치로 둔 이유는 메일 발송 여부에 의존하기 때문이다. 자세한
         //    내용은 필드 선언부와 application-local.yml 주석 참조.
+        // [JA] ⚠️ User エンティティの enabled 既定値は true。そのため誰もこの値に触れていなかった間**メール認証は何も止めていなかった** — 確認リンクを押さなくてもログインでき、
+        //      他人のメールアドレスで登録してもそのまま使えた。認証確認コード(verifyRegistration → setEnabled(true))は既にあったが、通過前から true なので意味がなかった。
+        //      オンオフのスイッチにした理由はメール送信の有無に依存するからだ。詳細はフィールド宣言部と application-local.yml のコメント参照。
         user.setEnabled(!requireEmailVerification);
         if (requireEmailVerification) {
             log.info("가입 계정을 비활성으로 만든다 — 확인 메일의 링크로 활성화된다.");
@@ -769,6 +863,14 @@ public class UserServiceImpl implements UserService {
         //    ⚠️ 나중에 인증 여부를 하위 서비스가 알아야 하면 UserCreatedRequest 에
         //       emailVerified 를 더한다. 이벤트 스키마(Avro 매핑) + 소비자 셋을 함께
         //       고쳐야 하므로 지금은 하지 않았다(docs/48 ④).
+        // [JA] 🔴 登録確定イベントを**ここで**書く — 同じトランザクションである(docs/48 ②・④)。
+        //      最初はこの行を validateAndGetUser(確認リンクを押した瞬間)に置いていた。ところが `require-email-verification` の既定値が **false** なのでその経路を誰も通らない —
+        //      アカウントはすぐに enabled で作られ確認リンクを押すことがない。そのため **user-created イベントが一件も発行されたことがなかった。**
+        //      症状三つがすべてここから出た: order DB に注文者行がなく注文失敗(docs/47)、chat_member がなくチャット入室失敗、そして**登録祝いクーポン未発行。**
+        //      前の二つは読み取り時点で気付けるので目立ったが、クーポンは「来ない」という事実すら分かりにくかった。
+        //      登録時点に移せば認証設定と無関係に常に発行される。認証を有効にした環境では未認証アカウントにも行ができるが、そのアカウントはログイン自体ができないので害はない —
+        //      逆に「アカウントはあるのに下位サービスにはない」状態の方がはるかに悪い。
+        //      ⚠️ 後で認証有無を下位サービスが知る必要が出たら UserCreatedRequest に emailVerified を足す。イベントスキーマ(Avro マッピング) + 消費者三つを一緒に直す必要があるので今はしていない(docs/48 ④)。
         userOutboxHelper.recordUserCreated(saved);
 
         return saved;
@@ -841,6 +943,7 @@ public class UserServiceImpl implements UserService {
             return checked;
         }
         // 비밀도 지운다 — 남겨 두면 예전 앱의 코드가 다시 켤 때 그대로 맞는다.
+        // [JA] 秘密も消す — 残しておくと以前のアプリのコードが再有効化時にそのまま一致する。
         user.setTwoFactorEnabled(false);
         user.setTwoFactorSecret(null);
         userRepository.save(user);
@@ -869,7 +972,9 @@ public class UserServiceImpl implements UserService {
         // 🔒 시도를 **검증하기 전에** 원자적으로 센다(INCR). 🐛 예전에는 locked() 로 읽고 → 검증하고 → 틀리면 더했다 — 비밀번호를 아는
         //    공격자가 다른 코드 수백 개를 동시에 보내면 모두 "잠기지 않음" 을 읽고 검증됐다(한 번에 수백 개 대입, 15분마다 반복).
         //    한도를 넘은 시도는 검증하지 않는다. 맞으면 아래에서 지운다.
-        // [JA] 試行を検証の前に原子的に数える。以前は読む → 検証 → 失敗なら加算で、同時に数百のコードを試せた。
+        // [JA] 🔒 試行を**検証する前に**原子的に数える(INCR)。🐛 以前は locked() で読み → 検証し → 間違えば加算していた — パスワードを知る
+        //      攻撃者が別のコード数百個を同時に送ると、すべて「ロックされていない」を読んで検証された(一度に数百個の総当たり、15 分ごとに繰り返し)。
+        //      上限を超えた試行は検証しない。合えば下で消す。
         long attempt = totpReplayGuard.reserveAttempt(userId);
         if (attempt > totpReplayGuard.maxFailures()) {
             return TwoFactorChange.TOO_MANY_ATTEMPTS;
@@ -912,6 +1017,11 @@ public class UserServiceImpl implements UserService {
      * 정상</b>이다. 즉 대다수의 사용자에 대해 이 메서드는 삭제를 하지 못하고 예외를 던졌다.
      * 바로 아래 {@code if (passwordToken != null)} 은 orElseThrow 를 통과한 시점에 이미
      * null 일 수 없으므로 죽은 코드였고, 그 사실이 의도(“없으면 건너뛴다”)를 드러낸다.
+     *
+     * <p>[JA] ユーザーとそれに付随するトークンを消す。
+     * <p>🐛 以前の実装は<b>ほぼ常に例外で終わっていた。</b> パスワード再設定トークンを orElseThrow(() -> new RuntimeException("Invalid password reset token")) で取り出していたが、
+     * 一度もパスワード再設定を要求していないユーザーにはそのトークンが<b>ないのが正常</b>である。つまり大多数のユーザーについてこのメソッドは削除できず例外を投げていた。
+     * すぐ下の if (passwordToken != null) は orElseThrow を通過した時点で null ではありえないので死んだコードで、その事実が意図(「なければ飛ばす」)を表している。
      */
     @Override
     @Transactional
@@ -927,6 +1037,7 @@ public class UserServiceImpl implements UserService {
         }
 
         // 없는 것이 정상이다 — 있으면 지우고 없으면 넘어간다.
+        // [JA] ないのが正常 — あれば消し、なければ進む。
         passwordResetTokenRepository.findByUser(user)
                 .ifPresent(passwordResetTokenRepository::delete);
 
@@ -938,6 +1049,9 @@ public class UserServiceImpl implements UserService {
      *
      * <p>예전에는 재발송할 때마다 새 행을 넣어 한 사용자에게 유효한 토큰이 여러 개 생겼다.
      * 옛 링크도 계속 살아 있으므로 메일함이 노출됐을 때 위험 창이 불필요하게 넓어진다.
+     *
+     * <p>[JA] 確認トークンを作る。<b>ユーザーごとに一行だけ</b>維持する。
+     * <p>以前は再送のたびに新しい行を入れ、一人のユーザーに有効なトークンが複数できていた。古いリンクも生き続けるので、メールボックスが露出したときの危険な窓が不必要に広がる。
      */
     @Override
     @Transactional
@@ -963,6 +1077,11 @@ public class UserServiceImpl implements UserService {
      * "옛 토큰 문자열"을 인자로 요구했는데, <b>재발송을 요청하는 사용자는 그 값을 모른다</b>
      * — 메일이 오지 않아서 재발송하는 것이기 때문이다. 그래서 아무도 호출하지 않는 죽은
      * 코드였다.
+     *
+     * <p>[JA] 再送用のトークンを新しく作り<b>原文</b>を返す。
+     * <p>DB にはハッシュしか残らないので、ここで原文を返さないとメールに載せる値を再び得る方法がない。呼び出し側はこの値をメールでだけ送りログに残してはならない。
+     * <p>以前の generateNewVerificationToken(String oldToken) を置き換える。そちらは「古いトークン文字列」を引数に要求していたが、<b>再送を要求するユーザーはその値を知らない</b>
+     * — メールが来ないから再送するのだから。だから誰も呼ばない死んだコードだった。
      */
     @Override
     @Transactional
@@ -977,6 +1096,9 @@ public class UserServiceImpl implements UserService {
     // validateAndGetUser 와 같은 일을 하면서 규칙이 달랐다(만료 토큰을 지우고, 성공해도
     // 토큰을 남기고, 이미 인증된 계정을 다루지 않았다). 살아 있는 호출부는 없었고 주석
     // 처리된 옛 코드만 참조하고 있었다. 같은 판정을 두 곳에 두면 한쪽만 고치게 된다.
+    // [JA] 削除: validateVerificationToken(String)
+    //      validateAndGetUser と同じことをしながら規則が違っていた(期限切れトークンを消し、成功してもトークンを残し、既に認証済みのアカウントを扱わなかった)。
+    //      生きている呼び出し元はなく、コメントアウトされた古いコードだけが参照していた。同じ判定を二か所に置くと片方だけ直すことになる。
 
     @Override
     public List<String> getUsersFromSessionRegistry() {
@@ -1050,6 +1172,12 @@ public class UserServiceImpl implements UserService {
      * <p>이제 이벤트 기록은 {@code validateAndGetUser} 가 <b>활성화와 같은 트랜잭션</b>에서
      * 한다({@link com.project.userservice.message.UserOutboxHelper}). 여기 남은 일은
      * SecurityContext 설정뿐이다.
+     *
+     * <p>[JA] 認証確定直後の後始末。
+     * <p>🐛 <b>ここで Kafka に直接送っていた — それが dual-write だった。</b> 以前はこのメソッドに上の三行があった。アウトボックスは<b>作ってコメントアウト</b>されており、
+     * 実際に動いていたのは非同期の kafkaTemplate.send だった。しかもこのメソッドは validateAndGetUser と<b>別のトランザクション</b>である — アカウント有効化は既にコミット済みなので、
+     * 発行が失敗しても戻すものがない。実際にそうなり誰も気付かなかった(docs/47)。
+     * <p>今はイベント記録を validateAndGetUser が<b>有効化と同じトランザクション</b>で行う(UserOutboxHelper)。ここに残った仕事は SecurityContext の設定だけ。
      */
     @Override        
     public void registerConfirmed(User user) throws JsonProcessingException {
@@ -1097,6 +1225,12 @@ public class UserServiceImpl implements UserService {
      *       토큰이었는지 알 수 없다. 만료분 정리는 스케줄러의 몫이다
      *       ({@code deleteAllExpiredSince}).</li>
      * </ul>
+     *
+     * <p>[JA] 確認トークンを検証しアカウントを有効化する。
+     * <p>変わった点: <b>トークンをハッシュで検索する</b>(保存値がハッシュなので入力も同じ方式でハッシュして探す)。
+     * <b>失敗してもユーザー情報を一緒に返す</b>(以前は失敗時 user の位置に null を入れ、呼び出し側(RegistrationController)がその値で deleteUser(...) を呼んで <b>NPE で爆発した</b>。再送案内をするには誰のトークンだったかも知る必要がある)。
+     * <b>既に認証済みのアカウントは成功として扱う</b>(メールスキャナやユーザーの再クリックで同じリンクが二回開かれるのはよくある。二回目を失敗にすると正常に登録したユーザーにエラー画面が出る)。
+     * <b>期限切れトークンを消さない</b>(消すと「再送」画面で誰のトークンだったか分からない。期限切れの片付けはスケジューラの役目 — deleteAllExpiredSince)。
      */
     @Override
     @Transactional
@@ -1121,7 +1255,11 @@ public class UserServiceImpl implements UserService {
         //    enabled 라 **모든** 사용자가 이 길로 왔다. 링크를 눌러 주소를 증명한 사용자도 "확인된 적 없음" 으로 남아, 나중에 같은
         //    주소로 소셜 로그인하면 SocialAccountLinker 가 비밀번호를 지우고 세션을 끊었다. 토큰은 지우지 않는다 — 메일 스캐너가 먼저
         //    열어도 사용자의 클릭이 실패하지 않게(이 계정에서 토큰이 할 수 있는 일은 이 표시를 켜는 것뿐이다).
-        // [JA] 以前はここで返して emailVerified を立てなかった — 既定ではすべての利用者がこの経路で、リンクで証明しても未確認のままだった。
+        // [JA] すでに有効化されたアカウントなら何回押しても成功だ(冪等)。
+        //      🐛 以前はここでそのまま戻って emailVerified を立てなかった — 本番の既定値(require-email-verification=false)は登録直後に
+        //      enabled なので**すべての**利用者がこの経路に来た。リンクを押してアドレスを証明した利用者も「確認されたことなし」のまま残り、後で
+        //      同じアドレスでソーシャルログインすると SocialAccountLinker がパスワードを消してセッションを切った。トークンは消さない — メール
+        //      スキャナーが先に開いても利用者のクリックが失敗しないように(このアカウントでトークンができることはこの表示を立てることだけだ)。
         if (user != null && user.isEnabled()) {
             if (!user.isEmailVerified() && !verificationToken.isExpired()) {
                 user.setEmailVerified(true);
@@ -1132,11 +1270,13 @@ public class UserServiceImpl implements UserService {
 
         if (verificationToken.isExpired()) {
             // 계정도 토큰도 지우지 않는다 — 사용자는 재발송으로 복구할 수 있어야 한다.
+            // [JA] アカウントもトークンも消さない — ユーザーは再送で復旧できなければならない。
             return new VerificationResult(TOKEN_EXPIRED, user);
         }
 
         user.setEnabled(true);
         // 메일의 링크를 눌렀다 = 주소의 주인이다(docs/68 §15 — 소셜 연결이 이 값을 본다).
+        // [JA] メールのリンクを押した = アドレスの持ち主である(docs/68 §15 — ソーシャル連携がこの値を見る)。
         user.setEmailVerified(true);
         userRepository.save(user);
 
@@ -1144,8 +1284,11 @@ public class UserServiceImpl implements UserService {
         //    (registerUserAccount 주석 참조). 여기 두면 require-email-verification 이
         //    꺼진 환경에서 이 경로를 아무도 지나지 않아 이벤트가 영영 발행되지 않는다 —
         //    실제로 그랬다.
+        // [JA] ⚠️ user-created イベントはここではなく**登録時点**で書く(registerUserAccount のコメント参照)。ここに置くと require-email-verification が
+        //      オフの環境でこの経路を誰も通らずイベントが永遠に発行されない — 実際にそうだった。
 
         // 토큰은 1회용이다. 활성화에 성공했으면 즉시 버려 재사용을 막는다.
+        // [JA] トークンは一回用。有効化に成功したら即座に捨てて再利用を防ぐ。
         tokenRepository.delete(verificationToken);
 
         return new VerificationResult(TOKEN_VALID, user);

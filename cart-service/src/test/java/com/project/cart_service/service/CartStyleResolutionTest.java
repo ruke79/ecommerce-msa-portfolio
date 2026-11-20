@@ -13,6 +13,7 @@ import com.project.common.dto.ProductDto;
 import com.project.common.dto.ProductSkuDto;
 
 /** 장바구니 줄의 스타일(SKU) — 저장된 목록 위치가 아니라 색상으로 찾는다. */
+// [JA] カート行のスタイル(SKU) — 保存された一覧の位置ではなく色で探す。
 class CartStyleResolutionTest {
 
     private static ProductDto product(String... colorIds) {
@@ -37,6 +38,7 @@ class CartStyleResolutionTest {
     @DisplayName("SKU 목록이 바뀌어 위치가 어긋나면 색상으로 다시 찾는다 — 예전에는 다른 변형(색 · 가격)을 가리켰다")
     void followsColorWhenPositionShifted() {
         // 담을 때 [10, 20, 30] 의 1번(20). 그 뒤 10 이 빠져 [20, 30] — 1번은 이제 30 이다.
+        // [JA] 追加時は [10, 20, 30] の 1 番(20)。その後 10 が抜けて [20, 30] — 1 番は今は 30 である。
         assertThat(CartService.styleIndexOf(line(1, 20L), product("20", "30"))).isZero();
     }
 

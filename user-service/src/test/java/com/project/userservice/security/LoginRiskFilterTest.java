@@ -38,6 +38,8 @@ import jakarta.servlet.http.Cookie;
 
 /**
  * 🔴 위험 기반 로그인 — 비밀번호가 맞아도 처음 보는 기기 + 공격 신호면 토큰 대신 메일 확인(docs/68 §19).
+ *
+ * <p>[JA] 🔴 リスクベースログイン — パスワードが合っていても、初めて見る機器 + 攻撃シグナルならトークンの代わりにメール確認(docs/68 §19)。
  */
 @DisplayName("위험 기반 로그인 — 로그인 필터")
 class LoginRiskFilterTest {
@@ -160,6 +162,7 @@ class LoginRiskFilterTest {
     }
 
     /** 🐛 예전: 위험 판정이 X-Forwarded-For 의 첫 항목을 썼다 — 요청마다 난수 IP 를 붙이면 IP_FANOUT 이 켜지지 않았다. */
+    // [JA] 🐛 以前: リスク判定が X-Forwarded-For の先頭項目を使っていた — リクエストごとに乱数 IP を付けると IP_FANOUT が立たなかった。
     @Test
     @DisplayName("🔴 실패 기록의 IP 는 클라이언트가 고를 수 없는 값 — X-Forwarded-For 가 아니라 CF-Connecting-IP(없으면 소켓)")
     void riskUsesTrustedIp() throws Exception {

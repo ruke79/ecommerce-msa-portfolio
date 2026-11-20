@@ -8,7 +8,11 @@ const path = require("path");
  * 모든 화면에 남의 CSS 가 들어오고(속성 선택자로 입력값을 빼낼 수 있다), 그 CSS 가 다시 받는 웹폰트는 SRI 로도 지킬 수 없다.
  * 같은 Font Awesome 5 아이콘은 react-icons/fa(SVG)로 그린다.
  *
- * <p>[JA] index.html は同じオリジンのバンドルだけを読む。以前は Font Awesome を CDN から SRI なしで読んでいた。
+ * <p>[JA] index.html はこのオリジンのバンドルだけを受け取る — 外部 CSS · スクリプトを置かない。
+ *
+ * <p>[JA] 以前はチャットのアイコン三つのために Font Awesome の all.min.css を cdnjs から完全性ハッシュ(SRI)なしで読んでいた。CDN が汚染されると
+ * すべての画面に他人の CSS が入り(属性セレクターで入力値を抜き出せる)、その CSS がさらに読み込む Web フォントは SRI でも守れない。
+ * 同じ Font Awesome 5 のアイコンは react-icons/fa(SVG)で描く。
  */
 const SRC = __dirname;
 const INDEX = path.join(SRC, "..", "public", "index.html");
@@ -22,6 +26,7 @@ const sourceFiles = (dir) =>
 
 describe("index.html — 외부 자원", () => {
     // 주석 안의 설명(예전 주소)은 세지 않는다 — 브라우저가 받는 태그만 본다.
+    // [JA] コメント内の説明(以前のアドレス)は数えない — ブラウザが受け取るタグだけ見る。
     const html = fs.readFileSync(INDEX, "utf8").replace(/<!--[\s\S]*?-->/g, "");
 
     it("🔒 외부 출처의 stylesheet · script 가 없다", () => {

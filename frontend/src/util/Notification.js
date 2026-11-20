@@ -30,6 +30,26 @@ const MAX_RECONNECT_ATTEMPTS = 5;
  *   <li>오타 `EventSoruce`, 그리고 모든 알림 본문을 콘솔에 찍던 `console.log` 를 정리했다.
  *       알림 내용에는 주문번호 같은 개인정보가 들어갈 수 있어 운영 콘솔에 남기면 안 된다.</li>
  * </ol>
+ *
+ * <p>[JA] サーバーが送るリアルタイム通知(SSE)の購読。
+ *
+ * <p>直したこと:
+ *
+ * <ol>
+ *   <li><b>再接続が永遠に止まった。</b> 試行回数を数える `reconnectAttempts` は成功(onopen)
+ *       したときだけ 0 に戻っていた。そのためサーバーのデプロイのように数分切れる状況で 5 回を
+ *       すぐ使い切ると、その後サーバーが戻っても<b>二度と接続を試みなかった。</b> ユーザーが
+ *       ページをリロードするまで通知が死ぬ。いまは上限に達すると 5 分間隔の「ゆっくりした
+ *       再試行」に移る。</li>
+ *   <li><b>接続が重なった。</b> 新しい接続を作る前に以前の EventSource を閉じなかったので、
+ *       トークンが更新されるたび(TokenRefresher が失効 10 秒前に更新する)接続が一つずつ
+ *       増えた。長く開いたタブでは同じ通知が何度も届く。</li>
+ *   <li><b>後始末(cleanup)が再接続を止められなかった。</b> アンマウント時にタイマーは消したが、すでに
+ *       実行中だった onerror が新しいタイマーを掛けるとそのまま生き残った。いまは「止める」フラグを
+ *       置き、それ以降の再接続を防ぐ。</li>
+ *   <li>タイポ `EventSoruce`、そしてすべての通知本文をコンソールに出していた `console.log` を整理した。
+ *       通知内容には注文番号のような個人情報が入りうるので、本番のコンソールに残してはならない。</li>
+ * </ol>
  */
 export const useNotification = () => {
   const { token, isAuthenticated } = useAuthContext();
@@ -42,6 +62,7 @@ export const useNotification = () => {
   const timerId = useRef(null);
   const stopped = useRef(false);
   // 서버가 "갱신하고 다시 붙어라" 를 보냈다 — 이 토큰으로는 재연결하지 않는다(토큰이 바뀌면 새로 붙는다).
+  // [JA] サーバーが「更新して再接続せよ」を送った — このトークンでは再接続しない(トークンが変われば新たに接続する)。
   const awaitingReauth = useRef(false);
 
   const connect = useCallback(() => {
@@ -53,6 +74,8 @@ export const useNotification = () => {
       const attempt = reconnectAttempts.current;
       // 상한을 넘겨도 포기하지 않는다 — 대신 5분마다 조용히 다시 시도한다. 서버가
       // 돌아왔을 때 사용자가 새로고침하지 않아도 알림이 되살아나야 한다.
+      // [JA] 上限を超えても諦めない — 代わりに 5 分ごとに静かに再試行する。サーバーが
+      //      戻ったとき、ユーザーがリロードしなくても通知が復活しなければならない。
       const delay = attempt >= MAX_RECONNECT_ATTEMPTS
         ? 5 * 60 * 1000
         : Math.min(1000 * 2 ** attempt, 30000);
@@ -63,6 +86,7 @@ export const useNotification = () => {
     }
 
     // 새로 열기 전에 반드시 이전 연결을 닫는다.
+    // [JA] 新しく開く前に必ず以前の接続を閉じる。
     eventSource.current?.close();
     awaitingReauth.current = false;
 
@@ -75,6 +99,8 @@ export const useNotification = () => {
             "Cache-Control": "no-cache",
             // nginx 가 SSE 를 버퍼링하지 않도록 하는 힌트. 서버도 같은 헤더를
             // 응답에 실어야 실제로 효과가 있다(frontend/nginx.conf 참조).
+            // [JA] nginx が SSE をバッファリングしないようにするヒント。サーバーも同じヘッダーを
+            //      応答に載せないと実際には効果がない(frontend/nginx.conf 参照)。
             "X-Accel-Buffering": "no",
             Authorization: `Bearer ${token}`,
           },
@@ -92,11 +118,14 @@ export const useNotification = () => {
 
       source.addEventListener("notification", (event) => {
         // 다른 기기에서 로그인해 이 세션이 밀려난 경우다.
+        // [JA] 別の端末でログインしてこのセッションが押し出された場合である。
         if (event.data === "Logout") {
           logout();
         }
         // 토큰이 만료됐거나 로그인이 해제됐다(docs/68 §9) — 갱신을 부탁한다. 로그인이 살아 있으면 새 토큰으로 다시 붙고,
         // 끊겼으면 갱신이 실패해 로그아웃된다.
+        // [JA] トークンが失効したかログインが解除された(docs/68 §9) — 更新を頼む。ログインが生きていれば新しいトークンで再接続し、
+        //      切れていれば更新が失敗してログアウトされる。
         if (event.data === SSE_REAUTH) {
           awaitingReauth.current = true;
           source.close();

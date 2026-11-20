@@ -14,6 +14,14 @@
 #
 # 서버에서는 Jaeger 가 루프백(127.0.0.1:16686)에만 열려 있으므로 그 서버에서 돌린다. 내 PC 에서 보려면
 #   ssh -L 16686:localhost:16686 <서버>   를 열어 두고 여기서 돌린다.
+# [JA] 運用アクション ㊶ — トレース一つをターミナルに木として描く(docs/63 §3)
+#      ブラウザなしで「注文 1 件がサービス・Kafka をどう渡ったか」を見る。ruke79/kafka の test/show-trace.sh を
+#      このリポジトリに移した — そこではリトライの階段(5s・30s 待ち)がスパン間の隙間として見え、ここではアウトボックス
+#      リレーの遅延とサーガの往復(order → pay → order → delivery)がそう見える。
+#      使い方は上記(既定は gateway-server の最新トレース、--longest はスパンが最も多いもの — 大抵は注文・決済サーガ、--errors はエラーが出たトレースの最新、
+#      traceId 直接指定はログ行の traceId でそのまま、SERVICE・LOOKBACK で対象と期間を変える)。
+#      サーバでは Jaeger がループバック(127.0.0.1:16686)にしか開いていないのでそのサーバで回す。自分の PC で見るなら
+#      ssh -L 16686:localhost:16686 <サーバ> を開いておいてここで回す。
 set -euo pipefail
 
 JAEGER="${JAEGER:-http://localhost:16686}"
@@ -28,6 +36,7 @@ case "${1:-}" in
     "")        ;;
     *)
         # 로그의 traceId(32자리 16진수. 옛 Brave 로그는 16자리)
+        # [JA] ログの traceId(32 桁の 16 進数。旧 Brave のログは 16 桁)
         if [[ "$1" =~ ^[0-9a-f]{16,32}$ ]]; then TRACE_ID="$1"; else echo "알 수 없는 인자: $1 (--help)"; exit 2; fi ;;
 esac
 
@@ -86,6 +95,7 @@ def show(span, depth=0):
     name = ("  " * depth + span["operationName"])[:52]
     # 시작 시각의 차이가 핵심이다: 부모가 끝난 뒤 한참 뒤에 시작한 자식은 아웃박스 릴레이 · Kafka 를 건넌 것이고,
     # 그 빈틈이 "그동안 아무 일도 안 했다" 이다.
+    # [JA] 開始時刻の差が肝心だ: 親が終わってだいぶ後に始まった子はアウトボックスリレー・Kafka を渡ったもので、その隙間が「その間何もしなかった」だ。
     print("%s %-16s %-52s +%8.0fms %9.1fms" % (mark, names[span["processID"]][:16], name, at, took))
     for child in sorted(children.get(span["spanID"], []), key=lambda s: s["startTime"]):
         show(child, depth + 1)

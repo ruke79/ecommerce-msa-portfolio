@@ -55,11 +55,30 @@ import org.junit.jupiter.api.Test;
  *
  * <p>이 테스트는 넷 중 아무것도 없는 엔티티를 잡는다. 눈으로는 보이지 않는 결함이다 —
  * 매핑은 정상이고 컴파일도 되고 기능도 동작한다. 쿼리를 세어 보기 전에는 드러나지 않는다.
+ *
+ * <p>[JA] エンティティが<b>INSERT 時に SELECT を呼ばないか</b>を守るガードレール。
+ * 背景。{@code SimpleJpaRepository.save()} は 1 行で分岐する(isNew なら persist、そうでなければ merge)。
+ * そして {@code isNew()} のデフォルト判定は<b>「@Id が null か」</b>だ。そのため id をコードが直接割り当てるエンティティ
+ * (コンストラクターで {@code UUID.randomUUID()}、Kafka が渡した eventId、他サービスが渡した userId)は save() の時点で id がすでに埋まっており、
+ * それだけで「既存の行」と判定されて {@code merge()} に行く。merge は付ける対象を探すために<b>先に SELECT を投げる</b> —
+ * 新しい行を入れるたびに、必ず空振りで終わる照会が 1 回ずつ付いてくる。
+ * コストより悪いのは<b>意味が変わる</b>ことだ。merge は同じ id がすでにコミットされていると、PK 衝突の代わりに黙って UPDATE を出す。
+ * そのため「重複なら挿入が失敗するはず」に頼っていたコードがすべて無力になる — 実際に catalog・coupon の冪等性台帳のコメント
+ * (「同時重複は PK 衝突で全体ロールバック」)と chat の {@code catch (DataIntegrityViolationException)} がそういう状態だった。
+ * 抜け道は 3 つで、どれも {@code isNew()} が新規を新規と答えるようにする。
+ * <ol>
+ *   <li>{@code @GeneratedValue} — DB/シーケンスが埋めるので save() 時に id が null だ。</li>
+ *   <li>{@code @Tsid} — {@code TsidGenerator} が {@code IdentifierGenerator} なので同様に insert 時点で埋める(save() 直前はまだ null)。</li>
+ *   <li>ラッパー型の {@code @Version} または {@link org.springframework.data.domain.Persistable} の実装 —
+ *       {@code JpaMetamodelEntityInformation} が id の代わりに version を見るか、エンティティが直接答える。</li>
+ * </ol>
+ * このテストは 4 つのどれもないエンティティを捕まえる。目には見えない欠陥だ — マッピングは正常でコンパイルも通り機能も動く。クエリを数えるまで表に出ない。
  */
 @DisplayName("엔티티 가드레일 · 할당 ID 가 merge 로 새지 않는가")
 class EntityPersistenceGuardrailTest {
 
     /** common 모듈 기준으로 저장소 루트를 찾는다(Gradle 테스트의 작업 디렉터리는 모듈 디렉터리). */
+    // [JA] common モジュールを基準にリポジトリルートを探す(Gradle テストの作業ディレクトリはモジュールディレクトリ)。
     private static Path repoRoot() {
         Path cwd = Paths.get("").toAbsolutePath();
         return cwd.getFileName().toString().equals("common") ? cwd.getParent() : cwd;
@@ -73,6 +92,7 @@ class EntityPersistenceGuardrailTest {
             Pattern.compile("@Version\\b[\\s\\S]{0,300}?\\bprivate\\s+(\\w+)\\s+\\w+\\s*[;=]");
 
     /** 줄 주석과 Javadoc 본문을 걷어낸다 — 이 저장소에는 {@code //@GeneratedValue} 가 많다. */
+    // [JA] 行コメントと Javadoc 本文を取り除く — このリポジトリには {@code //@GeneratedValue} が多い。
     private static String live(String source) {
         return source.lines()
                 .map(String::strip)
@@ -116,6 +136,7 @@ class EntityPersistenceGuardrailTest {
             }
 
             // 상속을 따라 올라가며(@Id·@Version 이 BaseEntity 에 있는 엔티티가 많다) 전부 모은다.
+            // [JA] 継承をさかのぼって(@Id・@Version が BaseEntity にあるエンティティが多い)すべて集める。
             StringBuilder chain = new StringBuilder(body);
             String current = body;
             Set<String> visited = new LinkedHashSet<>();
@@ -141,6 +162,7 @@ class EntityPersistenceGuardrailTest {
             boolean persistable = Pattern.compile("\\bimplements\\b[^{]*\\bPersistable\\b").matcher(body).find();
 
             // JpaMetamodelEntityInformation 은 version 이 **원시 타입이면** id 판정으로 되돌아간다.
+            // [JA] JpaMetamodelEntityInformation は version が**プリミティブ型なら** id 判定に戻る。
             boolean wrapperVersion = false;
             Matcher v = VERSION_FIELD.matcher(all);
             while (v.find()) {
@@ -176,6 +198,9 @@ class EntityPersistenceGuardrailTest {
             // 되돌리지 않으면 불러온 엔티티도 isNew()=true 로 남아 save() 가 INSERT 를 시도하고,
             // 아웃박스 릴레이의 상태 변경(claim → setOutboxStatus → save)이 PK 충돌로 통째로 죽는다.
             // 성능 최적화가 만들 수 있는 최악의 회귀라 따로 못박아 둔다.
+            // [JA] 戻さないと読み込んだエンティティも isNew()=true のまま残り、save() が INSERT を試みて、
+            //      アウトボックスリレーの状態変更(claim → setOutboxStatus → save)が PK 衝突で丸ごと死ぬ。
+            //      性能最適化が作り得る最悪の回帰なので、別に釘を刺しておく。
             if (!body.contains("@PostLoad")) {
                 offenders.add(repoRoot().relativize(p) + " → @PostLoad 없음");
             }

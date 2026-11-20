@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @EnableDiscoveryClient
-@EnableScheduling   // SmsDispatcher 폴링
+@EnableScheduling   // SmsDispatcher 폴링 ／ [JA] SmsDispatcher のポーリング
 public class NotificationServiceApplication {
 
     public static void main(String[] args) {

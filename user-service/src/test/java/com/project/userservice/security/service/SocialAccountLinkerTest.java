@@ -32,6 +32,9 @@ import com.project.userservice.service.RefreshTokenService;
  * 🔴 소셜 로그인의 사전 탈취(pre-account hijacking) 방어와 연결 알림(docs/68 §15).
  *
  * <p>🐛 예전: 같은 주소면 그냥 연결했다 — 남의 주소로 먼저 가입해 둔 사람의 비밀번호가 그대로 살아 있었다.
+ *
+ * <p>[JA] 🔴 ソーシャルログインの事前乗っ取り(pre-account hijacking)防御と連携通知(docs/68 §15)。
+ * 🐛 以前: 同じアドレスならそのまま連携していた — 他人のアドレスで先に登録しておいた人のパスワードがそのまま生きていた。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)

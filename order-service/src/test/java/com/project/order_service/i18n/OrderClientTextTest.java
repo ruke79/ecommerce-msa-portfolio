@@ -14,6 +14,12 @@ import com.project.common.i18n.ClientText;
  *
  * <p>ClientTextCoverageTest 는 "카탈로그에 적혀 있다" 만 본다. 여기서는 조각을 이어 만든 문구 — 재고 부족 목록, 결제 실패
  * 접두어 — 가 패턴과 조각 번역을 거쳐 끝까지 바뀌는지를 본다.
+ *
+ * <p>[JA] order-service のサーバー文言が実際のカタログ(classpath*:i18n/client-text.ja.txt
+ * )で日本語になるか(docs/60 §4)。
+ *
+ * <p>ClientTextCoverageTest は「カタログに書かれている」だけを見る。ここでは断片をつないで作る文言 — 在庫不足リスト、
+ * 決済失敗の接頭辞 — がパターンと断片翻訳を経て最後まで変わるかを見る。
  */
 @DisplayName("order-service 서버 문구 일본어")
 class OrderClientTextTest {
@@ -54,6 +60,8 @@ class OrderClientTextTest {
     }
 
     /** 🔒 포트원(PG)이 쓴 문구는 일본어 응답에 싣지 않는다 — 읽을 수 없는 한국어다. 코드만 남기고 원문은 로그에 있다(docs/60 §12). */
+    // [JA] 🔒 PortOne(PG)が書いた文言は日本語応答に載せない — 読めない韓国語である。コードだけ残し、原文はログにある(docs/60
+    //      §12)。
     @Test
     @DisplayName("포트원 거절 — 일본어에서는 PG 원문을 빼고 코드만")
     void portOneProviderTextIsDropped() {
@@ -64,6 +72,7 @@ class OrderClientTextTest {
         assertThat(ja("포트원 결제 조회 실패: payment-1 — 400 Bad Request: {\"type\":\"PAYMENT_NOT_FOUND\",\"message\":\"결제 건이 존재하지 않습니다.\"}"))
                 .isEqualTo("PortOne 決済の照会に失敗しました：payment-1");
         // 한국어 요청은 그대로 — 원문이 원인을 가장 잘 말해 준다
+        // [JA] 韓国語リクエストはそのまま — 原文が原因を最もよく語る
         assertThat(ClientText.localize("포트원이 환불을 거부했습니다: code=1, message=이미 전액취소된 주문입니다", Locale.KOREAN))
                 .isEqualTo("포트원이 환불을 거부했습니다: code=1, message=이미 전액취소된 주문입니다");
     }

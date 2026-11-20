@@ -13,6 +13,15 @@
  * 걸려 신호 대 잡음비가 무너진다. 잡고 싶은 것은 "선언해 놓고 안 쓰는 import·변수" 다.
  * checkout.jsx 가 `@reduxjs/toolkit` 의 isPending 을 엉뚱하게 import 하고 있던 것이
  * 정확히 이 규칙이 잡았어야 할 종류다.
+ *
+ * <p>[JA] docs/40 #18 — 「使っていない import が多い。ESLint no-unused-vars を CI で有効にすること。」
+ * 🔴 今有効にすると警告が 198 個である。すべて error に上げると CI が初日から赤くなり、そうなると人は規則を直す代わりに**規則を切る。**
+ * 逆に警告だけ出して CI を通すならそれは飾りである — 誰も読まない。
+ * そこでラチェット(ratchet)で掛ける。package.json の lint スクリプトが `--max-warnings` を現在の数に固定するので、**新しい警告が一つでも出れば CI が赤くなる。**
+ * 既存の 198 個は直すたびにその数を下げてロックする。数は上がらない。
+ * `args: "none"` — 使わないコールバック引数まで捕まえると `(e, i) => ...` のようなよくある形がすべて引っかかり、S/N 比が崩れる。
+ * 捕まえたいのは「宣言しておいて使わない import・変数」である。checkout.jsx が `@reduxjs/toolkit` の isPending を見当違いに import していたのが、
+ * まさにこの規則が捕まえるべき種類である。
  */
 module.exports = {
   root: true,

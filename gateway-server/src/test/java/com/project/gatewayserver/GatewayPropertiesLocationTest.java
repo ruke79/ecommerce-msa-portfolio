@@ -22,6 +22,11 @@ import org.springframework.core.io.ClassPathResource;
  * <p>4.3(Spring Cloud 2025.0)부터 서버 설정의 접두사가 바뀌었다. 옛 위치(spring.cloud.gateway.*)는 기동 때 옮겨 읽어 주지만
  * (GatewayServerWebfluxPropertiesMigrationListener, 경고) 다음 메이저에서 빠진다 — 그날 라우트가 <b>조용히 0개</b>가 된다.
  * 기동 테스트(GatewayServerApplicationTests)는 Docker 가 있는 통합 단계에서만 돌아서, 여기서 Docker 없이 바인딩으로 확인한다.
+ *
+ * <p>[JA] ゲートウェイ設定が<b>Spring Cloud Gateway 4.3 の位置</b>(spring.cloud.gateway.server.webflux)にあり、そこからルートが読まれる。
+ * 4.3(Spring Cloud 2025.0)からサーバー設定の接頭辞が変わった。古い位置(spring.cloud.gateway.*)は起動時に移して読んでくれるが
+ * (GatewayServerWebfluxPropertiesMigrationListener、警告)次のメジャーで外れる — その日ルートが<b>黙って 0 個</b>になる。
+ * 起動テスト(GatewayServerApplicationTests)は Docker のある統合段階でしか回らないので、ここで Docker なしにバインディングで確認する。
  */
 @DisplayName("게이트웨이 설정 위치 — spring.cloud.gateway.server.webflux")
 class GatewayPropertiesLocationTest {
@@ -68,6 +73,8 @@ class GatewayPropertiesLocationTest {
     /**
      * 🐛 연결 풀이 백엔드가 이미 닫은 연결을 재사용해 {@code PrematureCloseException} → fallback 503 이 나던 것.
      * 쉬는 연결은 백엔드(Tomcat) keep-alive 60초보다 먼저 버려야 한다.
+     *
+     * <p>[JA] 🐛 接続プールがバックエンドが既に閉じた接続を再利用し {@code PrematureCloseException} → fallback 503 になっていたもの。アイドル接続はバックエンド(Tomcat)の keep-alive 60 秒より先に捨てなければならない。
      */
     @Test
     @DisplayName("🔴 연결 풀은 쉬는 연결을 백엔드 keep-alive(60초)보다 먼저 버린다")
@@ -76,6 +83,7 @@ class GatewayPropertiesLocationTest {
         new YamlPropertySourceLoader().load("application-local", new ClassPathResource("application-local.yml"))
                 .forEach(env.getPropertySources()::addLast);
         // Binder.get 은 ${…:기본값} 을 풀어 준다(위의 binder() 는 풀지 않는다)
+        // [JA] Binder.get は ${…:デフォルト値} を解決する(上の binder() は解決しない)
         org.springframework.cloud.gateway.config.HttpClientProperties http = Binder.get(env)
                 .bind("spring.cloud.gateway.server.webflux.httpclient",
                         Bindable.of(org.springframework.cloud.gateway.config.HttpClientProperties.class))

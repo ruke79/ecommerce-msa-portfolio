@@ -9,6 +9,8 @@ jest.mock("util/api");
 
 /**
  * 패스키 관리(user-service docs/68 §20) — 등록 · 목록 · 삭제, 그리고 "최근 로그인" 안내.
+ *
+ * <p>[JA] パスキー管理(user-service docs/68 §20) — 登録・一覧・削除、そして「最近のログイン」案内。
  */
 const bytes = (...values) => new Uint8Array(values).buffer;
 const fakeCredential = {

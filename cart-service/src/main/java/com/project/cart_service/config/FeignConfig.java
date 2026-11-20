@@ -19,6 +19,7 @@ public class FeignConfig {
             ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
 
             // HTTP 요청 컨텍스트가 존재하는 경우에만 헤더를 복사합니다.
+            // [JA] HTTP リクエストコンテキストが存在する場合にのみヘッダをコピーする。
             if (attributes != null) {
                 HttpServletRequest request = attributes.getRequest();
                 String accessToken = request.getHeader("Authorization");
@@ -28,11 +29,14 @@ public class FeignConfig {
                     log.debug("Feign token: Authorization header copied successfully.");
                 } else {
                     // 토큰이 존재하지 않을 경우 경고 로그만 남깁니다.
+                    // [JA] トークンが存在しない場合は警告ログだけを残す。
                     log.warn("Feign token: Authorization header is missing in the incoming request.");
                 }
             } else {
                   // 비동기 환경(예: Kafka 리스너)에서는 요청 컨텍스트가 없으므로
                 // 헤더 복사를 건너뛰고, Feign Client 메서드가 토큰을 직접 인자로 받도록 합니다.
+                  // [JA] 非同期環境(例: Kafka リスナー)ではリクエストコンテキストがないので
+                  //      ヘッダのコピーを飛ばし、Feign Client のメソッドがトークンを直接引数で受け取るようにする。
                 log.debug("Feign token: No request context available. Skipping Authorization header.");
             }
         };

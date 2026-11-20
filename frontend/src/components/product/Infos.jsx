@@ -44,6 +44,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
     
         
     // 사이즈 없는 상품은 고를 것이 없다 — 첫 행(0)을 고른 것으로 본다. loader 도 ?size 가 없으면 0 번을 쓴다.
+    // [JA] サイズのない商品は選ぶものがない — 先頭行(0)を選んだものとみなす。loader も ?size がなければ 0 番を使う。
     const sizeParam = product.sizeless ? (searchParams.get('size') ?? "0") : searchParams.get('size');
     const styleParam = searchParams.get('style');    
 
@@ -52,13 +53,16 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
     const [qty, setQty] = useState(1);
     const [error, setError] = useState("");
     /** 고른 사이즈가 지금은 0 개지만 다른 손님의 결제 대기 때문일 때(docs/59 §5). */
+    // [JA] 選んだサイズが今は 0 個だが他の客の決済待ちのためであるとき(docs/59 §5)。
     const heldOut = sizeParam !== null && product.quantity < 1 && (product.onHold ?? 0) > 0;
     /** 관리자가 품절로 내린 상품 — 수량이 남아 있어도 팔지 않는다(목록 카드와 같은 판단 — util/stock). */
+    // [JA] 管理者が品切れにした商品 — 数量が残っていても売らない(一覧カードと同じ判断 — util/stock)。
     const discontinued = product.status === "SOLD_OUT";
 
     const { mutate : saveCartOp } = useMutation({    
         mutationFn : getCartData, 
         // 담기 실패는 이 화면의 문구로 — 전역 기본값(throwOnError)이면 화면 전체가 오류 화면으로 바뀐다.
+        // [JA] カート追加の失敗はこの画面の文言で — グローバルのデフォルト(throwOnError)だと画面全体がエラー画面に変わる。
         throwOnError: false,
         onError: (error) => {
             setError(error?.response?.data?.message ?? t("product.error.out_of_stock"));
@@ -66,6 +70,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
         },
         onSuccess: (data) => {
             // 🐛 서버가 빈 본문(품절로 내린 상품)을 주면 수량이 undefined 라 아래 두 비교가 모두 거짓 — 그대로 담았다.
+            // [JA] 🐛 サーバーが空の本文(品切れにした商品)を返すと数量が undefined で下の二つの比較がどちらも偽 — そのままカートに入れていた。
             if (!data || typeof data.quantity !== "number") {
                 setError(t("product.error.out_of_stock"));
                 setLoading(false);
@@ -74,6 +79,8 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
     
             // 0 개를 먼저 본다 — 예전 순서로는 0 개도 "재고보다 많은 수량" 으로 나왔다. 남은 게 없는데 누가 결제 중이면
             // 품절이 아니다(결제가 안 되면 돌아온다 — docs/59 §5).
+            // [JA] 0 個を先に見る — 以前の順序では 0 個も「在庫より多い数量」と出た。残りがないのに誰かが決済中なら
+            //      品切れではない(決済されなければ戻ってくる — docs/59 §5)。
             if (data.quantity < 1) {
                 setError(t((data.onHold ?? 0) > 0 ? "product.on_hold" : "product.error.out_of_stock"));
                 setLoading(false);
@@ -86,10 +93,14 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
             } else {
                 // 줄 식별자 — 상품 id 로. 예전에는 상품명이었는데, 이름이 같은 다른 상품(시드에 "Digital Camera" 가 여럿)이 같은 값을
                 // 가져 장바구니에서 하나를 고르면 전부 선택됐다. 로그인했으면 서버가 줄 id 로 다시 준다.
+                // [JA] 行の識別子 — 商品 id で。以前は商品名だったが、名前が同じ別の商品(シードに "Digital Camera" が複数)が同じ値を
+                //      持ちカートで一つを選ぶと全部選択された。ログインしていればサーバーが行 id で返し直す。
                 let _uid = `${product.id}_${product.style}_${sizeParam}`;
 
                 // 로그인했으면 서버에 담는다 — 서버가 장바구니의 기준이다(docs/40 0-b). 같은 줄이면 서버가 수량을 이 값으로
                 // 바꾸고, 응답(지금 장바구니 전체)으로 화면을 바꾼다. 다른 기기에서도 같은 장바구니가 보인다.
+                // [JA] ログインしていればサーバーに入れる — サーバーがカートの基準だ(docs/40 0-b)。同じ行ならサーバーが数量をこの値に
+                //      変え、応答(今のカート全体)で画面を更新する。他の端末でも同じカートが見える。
                 if (token && user?.userId) {
                     putCartItem({ ...data, qty, size: data.size, _uid })
                         .then((items) => {
@@ -102,6 +113,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
                 }
 
                 // 로그인 전 — 이 브라우저에만 담는다. 로그인하면 CartSync 가 서버에 올린다.
+                // [JA] ログイン前 — このブラウザにだけ入れる。ログインすると CartSync がサーバーへ上げる。
                 let exist = cart.find((p) => p._uid === _uid);
                 if (exist) {
                     
@@ -198,6 +210,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
         <div className="flex flex-col row-span-3 md:col-span-3 max-md:px-2 mb-4">
             <h1 className="text-2xl font-bold ">{product.name}</h1>
             {/* 고른 사이즈의 SKU — 문의 · 반품 때 "어느 것" 인지 말할 수 있게(docs/65). */}
+            {/* [JA] 選んだサイズの SKU — 問い合わせ・返品のとき「どれ」かを言えるように(docs/65)。 */}
             {product.sku && (
                 <div data-testid="product-sku" className="text-xs text-slate-500 font-mono">
                     {t("product.sku", { sku: product.sku })}
@@ -219,6 +232,8 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
                     {product.num_reviews >= 1 ? "reviews" : "review"}) */}
                     {/* 🌏 영어의 단수/복수 분기를 없앤다. 한국어·일본어에는 복수형이
                         없어서 "리뷰 1개"·"レビュー1件" 이 그대로 맞다(docs/45 §3). */}
+                    {/* [JA] 🌏 英語の単数/複数分岐をなくす。韓国語・日本語には複数形が
+                        ないので「리뷰 1개」・「レビュー1件」がそのまま正しい(docs/45 §3)。 */}
                     {t("product.reviews", { count: num_reviews })}
                 </span>
             </div>
@@ -247,6 +262,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
 
             <div className="mt-1  text-sm text-slate-500">
                 {/* 🌏 예전에는 "pieces Available" 이 번역되지 않은 채 남아 있었다. */}
+                {/* [JA] 🌏 以前は "pieces Available" が翻訳されないまま残っていた。 */}
                 {t("product.stock_left", {
                     count: discontinued ? 0
                         : size || product.sizeless ? product.quantity : product.sizes.reduce((start, next) => start + next.quantity, 0),
@@ -369,6 +385,8 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
             </div>
             {/* 남은 게 없지만 다른 손님이 결제 중인 재고라면 품절이 아니다 — 결제되지 않으면 곧 돌아온다(docs/59 §5).
                 재입고 알림은 실물이 0 을 건널 때만 가므로 여기서 걸게 하면 알림이 오지 않는다. */}
+            {/* [JA] 残りはないが他の客が決済中の在庫なら品切れではない — 決済されなければすぐ戻る(docs/59 §5)。
+                再入荷通知は実物が 0 をまたぐときだけ届くので、ここで登録させると通知が来ない。 */}
             {discontinued && (
                 <p className="mt-2 rounded border border-slate-300 bg-slate-100 p-2 text-sm text-slate-700" data-testid="discontinued">
                     {t("product.error.out_of_stock")}
@@ -380,6 +398,7 @@ const Infos = ({ product, num_reviews, setActiveImg }) => {
                 </p>
             )}
             {/* 선택한 사이즈가 품절이면 재입고 알림을 걸 수 있다(docs/53). */}
+            {/* [JA] 選択したサイズが品切れなら再入荷通知を登録できる(docs/53)。 */}
             <RestockButton
                 product={product}
                 colorId={product.colors?.[Number(styleParam) || 0]?.id ?? null}

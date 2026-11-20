@@ -13,6 +13,12 @@ import java.util.Map;
  * 프로필 API 는 이메일을 주지 않는다 — 그래서 LINE 은 OAuth2 가 아니라 OIDC({@code openid} scope)로 등록한다.
  * 권한이 없거나 사용자가 이메일 제공에 동의하지 않으면 null 이고, {@code CustomOAuth2UserService} 가
  * {@code email_required} 로 거절한다.
+ *
+ * <p>[JA] LINE ログイン v2.1 — OIDC クレーム(ID トークン + userinfo を合わせたもの)。
+ * ⚠️ メールアドレスは ID トークンにだけあり、チャネルで「メールアドレス取得権限」の申請が承認されてはじめて載る。userinfo
+ * エンドポイントとプロフィール API はメールアドレスを返さない — そのため LINE は OAuth2 ではなく OIDC({@code openid} scope)で
+ * 登録する。権限がないかユーザーがメール提供に同意しなければ null で、{@code CustomOAuth2UserService} が {@code email_required}
+ * で拒否する。
  */
 public class LineResponse implements OAuth2Response {
 

@@ -36,6 +36,14 @@ import com.project.userservice.security.jwt.JwtUtils;
  *
  * <p>둘 다 레플리카가 하나여도, 사용자가 둘만 있어도 재현된다. 그런데 증상은 "가끔 로그아웃이
  * 된다"라서 원인에 도달하기 어렵다.
+ *
+ * <p>[JA] SSE 購読が<b>セッションごとに</b>隔離されるか。
+ * このテストが存在する理由: {@code NotificationService} がセッション id を {@code private String sessionId} という
+ * <b>インスタンスフィールド</b>に持っていた。Spring Bean はシングルトンなのでそのフィールドは全リクエストが共有し、二つが壊れた。
+ * 一つ目、多重ログイン遮断が<b>見当違いの人をログアウトさせた</b> — B が SSE に繋いだ直後に A が再ログインすると、
+ * A の以前のセッションを切るはずの通知が B に届いた。
+ * 二つ目、emitter マップが汚染された — 後始末ラムダがフィールドを実行時点で読み、<b>他人のキー</b>を消した。
+ * どちらもレプリカが一つでも、ユーザーが二人だけでも再現する。しかし症状は「たまにログアウトされる」なので原因にたどり着きにくい。
  */
 class NotificationSessionRoutingTest {
 
@@ -50,6 +58,7 @@ class NotificationSessionRoutingTest {
             redisTemplate, new ObjectMapper(), dispatcher, repository, jwtUtils, stringRedisTemplate);
 
     /** 토큰의 사용자 · 발급 · 만료 — 기본은 사용자 7, 방금 발급, 한 시간 뒤 만료(30분 타임아웃보다 길다). */
+    // [JA] トークンのユーザー・発行・期限 — デフォルトはユーザー 7、発行直後、1 時間後に期限切れ(30 分のタイムアウトより長い)。
     @org.junit.jupiter.api.BeforeEach
     void liveClaims() {
         long now = System.currentTimeMillis();
@@ -81,10 +90,12 @@ class NotificationSessionRoutingTest {
         when(jwtUtils.getSessionIdFromJwtToken("token-B")).thenReturn("session-B");
 
         SseEmitter a = service.createEmitter("token-A");
-        service.createEmitter("token-B");   // 공유 필드였다면 여기서 필드가 session-B 가 된다
+        service.createEmitter("token-B");   // 공유 필드였다면 여기서 필드가 session-B 가 된다 ／ [JA] 共有フィールドだったなら、ここでフィールドが session-B になる
 
         // ⚠️ emitter.complete() 는 **비동기 요청에 붙어 있을 때만** 콜백을 돌린다. 단위 테스트의
         //    맨 SseEmitter 는 플래그만 세우므로, 등록된 콜백을 직접 실행한다.
+        // [JA] ⚠️ emitter.complete() は**非同期リクエストに付いているときだけ**コールバックを回す。単体テストの
+        //      素の SseEmitter はフラグを立てるだけなので、登録されたコールバックを直接実行する。
         runCompletionCallback(a);
 
         assertThat(emitters()).doesNotContainKey("session-A");
@@ -94,6 +105,7 @@ class NotificationSessionRoutingTest {
     }
 
     /** ResponseBodyEmitter 의 completionCallback 을 꺼내 실행한다(Spring 내부 필드). */
+    // [JA] ResponseBodyEmitter の completionCallback を取り出して実行する(Spring の内部フィールド)。
     private static void runCompletionCallback(SseEmitter emitter) {
         Object callback = ReflectionTestUtils.getField(emitter, "completionCallback");
         assertThat(callback)
@@ -109,12 +121,15 @@ class NotificationSessionRoutingTest {
         when(repository.save(any(Notification.class))).thenAnswer(i -> i.getArgument(0));
 
         // B 가 **마지막으로** 구독한다. 공유 필드 시절에는 이 값이 배달 대상이 됐다.
+        // [JA] B が**最後に**購読する。共有フィールドの頃はこの値が配達先になっていた。
         service.createEmitter("token-B");
 
         // A 의 **이전 세션**을 끊으라는 알림.
+        // [JA] A の**以前のセッション**を切れという通知。
         service.sendNotification("a@example.com", "session-A-old", "Logout");
 
         // 저장된 알림이 올바른 세션을 가리키는지 확인한다(배달은 Redis pub/sub 을 거친다).
+        // [JA] 保存された通知が正しいセッションを指しているか確認する(配達は Redis pub/sub を経由する)。
         org.mockito.ArgumentCaptor<Notification> saved =
                 org.mockito.ArgumentCaptor.forClass(Notification.class);
         verify(repository).save(saved.capture());
@@ -139,6 +154,11 @@ class NotificationSessionRoutingTest {
         //
         // 그래서 두 가지를 못 박는다: 클래스에 @Transactional 이 없을 것, 그리고
         // createEmitter 에도 없을 것. DB 를 만지는 sendNotification 에만 있어야 한다.
+        // [JA] 実際の障害: クラスレベルの @Transactional のせいで createEmitter がトランザクションを開き、
+        //      SSE 接続が生きている間ずっとコネクションが返却されなかった。接続 3 つでプールが枯渇し
+        //      (total=3, active=3, idle=0)、その後ログインを含む**すべての** DB リクエストが失敗した。
+        //      そこで二つを固定する: クラスに @Transactional がないこと、そして createEmitter にもないこと。
+        //      DB を触る sendNotification にだけあるべきである。
         assertThat(NotificationService.class.getAnnotation(Transactional.class))
                 .as("클래스 레벨 @Transactional 은 createEmitter 까지 트랜잭션에 넣는다 — "
                         + "SSE 커넥션이 풀을 말린다")
@@ -164,6 +184,8 @@ class NotificationSessionRoutingTest {
 
         // 인자 없는 new SseEmitter() 는 timeout 이 null 이고, 그러면 톰캣 기본 30초가 쓰인다.
         // 30초마다 AsyncRequestTimeoutException 으로 스트림이 닫혀 브라우저에 오류가 났다.
+        // [JA] 引数なしの new SseEmitter() は timeout が null で、そうなると Tomcat のデフォルト 30 秒が使われる。
+        //      30 秒ごとに AsyncRequestTimeoutException でストリームが閉じ、ブラウザでエラーになっていた。
         assertThat(emitter.getTimeout())
                 .as("timeout 이 null 이면 컨테이너 기본값(톰캣 30초)으로 떨어진다")
                 .isEqualTo(1_800_000L);
@@ -193,6 +215,7 @@ class NotificationSessionRoutingTest {
     }
 
     // ── 긴 연결을 로그인에 묶기(docs/68 §9) ───────────────────────────────────────
+    // [JA] ── 長い接続をログインに結びつける(docs/68 §9) ──
 
     @Test
     @DisplayName("🔴 스트림은 토큰 만료를 넘기지 않는다 — 예전에는 30분이라 로그인이 끊긴 뒤에도 알림을 받았다")

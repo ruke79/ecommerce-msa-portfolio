@@ -16,6 +16,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 🔒 예전에는 두 처리기 모두 {@code e.getMessage()} 를 그대로 실었다 — 500 이면 MongoDB·Redis 예외의 문구(호스트·
  * 쿼리·필드)가 클라이언트로 갔다. 문구는 {@link ClientMessage} 가 허용한 것만, 원래 문구는 로그로(docs/57 §1).
+ *
+ * <p>[JA] 🔒 以前は二つのハンドラとも {@code e.getMessage()} をそのまま載せていた — 500 なら MongoDB・Redis 例外の文言(ホスト・クエリ・フィールド)がクライアントに渡った。文言は {@link ClientMessage} が許可したものだけ、元の文言はログへ(docs/57 §1)。
  */
 @Slf4j
 @RestControllerAdvice
@@ -37,6 +39,8 @@ public class ExceptionResponseHandler {
     /**
      * 우리가 사람에게 쓴 문구의 도메인 예외(채팅방 없음·회원 정보 없음 등) — 400 과 그 문구. 예전에는 같은 문구를
      * {@code IllegalStateException} 으로 던져 아래 500 "서버 오류" 로 떨어졌다(docs/57 §15).
+     *
+     * <p>[JA] 我々が人向けに書いた文言のドメイン例外(チャットルームなし・会員情報なしなど) — 400 とその文言。以前は同じ文言を {@code IllegalStateException} で投げ、下の 500「サーバエラー」に落ちていた(docs/57 §15)。
      */
     @ExceptionHandler(com.project.common.domain.exception.DomainException.class)
     public ResponseEntity<ApiResponse> handleDomainException(com.project.common.domain.exception.DomainException e) {

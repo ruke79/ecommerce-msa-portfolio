@@ -27,6 +27,10 @@ import com.project.pay_service.repository.jpa.PaymentRepository;
  *
  * <p>예전에는 PayPal 참조만 {@code paypal_order_id} 에 적었다 — Stripe·포트원·무통장 결제는 참조가 남지 않았다. 앞
  * 릴리스의 order 가 v2 로 쓴 레코드(제공자 필드 없음)는 결제수단에서 정한다.
+ *
+ * <p>[JA] 決済行は<b>どの提供元のどの決済か</b>を提供元に関係なく記録する (V5、docs/49 §3)。
+ * 以前は PayPal 参照だけを {@code paypal_order_id} に記録していた — Stripe・PortOne・銀行振込の決済は参照が残らなかった。
+ * 前リリースの order が v2 で書いたレコード(提供元フィールドなし)は決済手段から決める。
  */
 @DisplayName("pay-service — 제공자 중립 결제 참조")
 class PaymentProviderRecordTest {
@@ -70,6 +74,8 @@ class PaymentProviderRecordTest {
     void v2PaypalRequestFallsBack() {
         // v2 의 PayPal 참조는 옛 paypalOrderId 에만 있었고 그 필드는 스키마 v4 에서 빠졌다 — 읽으면 비어 있다.
         // 원본 참조는 order 의 provider_payment_id 에 있다(docs/49 §3 C2).
+        // [JA] v2 の PayPal 参照は旧 paypalOrderId にだけあり、そのフィールドはスキーマ v4 で外れた — 読むと空である。
+        //      元の参照は order の provider_payment_id にある(docs/49 §3 C2)。
         Payment p = saved(base(PaymentType.PAYPAL).build());
 
         assertThat(p.getPaymentProvider()).isEqualTo(PaymentProvider.PAYPAL);
@@ -86,6 +92,7 @@ class PaymentProviderRecordTest {
     }
 
     /** 옛 PayPal 전용 컬럼은 더 매핑하지 않는다 — 다음 릴리스에서 컬럼을 지운 뒤 다시 매핑하면 기동하지 못한다. */
+    // [JA] 旧 PayPal 専用カラムはもうマッピングしない — 次のリリースでカラムを消したあと再びマッピングすると起動できない。
     @Test
     @DisplayName("결제 엔티티는 옛 paypal_order_id 컬럼을 매핑하지 않는다")
     void paymentNoLongerMapsTheLegacyColumn() {

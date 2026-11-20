@@ -34,6 +34,15 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>판정 순서는 <b>확실한 신호부터</b>다. SMTP 응답 코드가 있으면 그게 가장 정확하고(4xx/5xx),
  * 없으면 잘못된 주소 목록을 보고, 그것도 없으면 원인 예외의 종류로 판단한다.
+ *
+ * <p>[JA] 実際の SMTP 送信器。
+ * 核心は<b>{@code MailException} をリトライ可能/不可能に分けること</b>である。Spring のメール抽象化は
+ * 「メールボックスが満杯」(再送すべき)と「そんなアドレスはない」(再送してはならない)を同じ例外階層で投げる。
+ * これを潰すと両方向に壊れる: 全部リトライ → 存在しないアドレスに送り続ける。ハードバウンスが溜まると受信サーバーが
+ * <b>送信ドメインをスパムとして学習</b>し、正常なメールまで迷惑メールフォルダに行く。全部諦める → メールサーバーが少し揺れただけなのに
+ * ユーザーは登録確認メールを永遠に受け取れない。
+ * 判定の順序は<b>確かな信号から</b>である。SMTP の応答コードがあればそれが最も正確で(4xx/5xx)、
+ * なければ無効なアドレス一覧を見て、それもなければ原因例外の種類で判断する。
  */
 @Slf4j
 public class SmtpMailSender implements MailSender {
@@ -56,6 +65,9 @@ public class SmtpMailSender implements MailSender {
             // multipart=true → 같은 메일에 평문과 HTML 을 함께 싣는다(multipart/alternative).
             // HTML 만 보내면 텍스트 대안이 없다는 이유로 스팸 점수가 오르고, HTML 을 표시하지
             // 않는 클라이언트에서는 본문이 통째로 비어 보인다.
+            // [JA] multipart=true → 同じメールに平文と HTML を一緒に載せる(multipart/alternative)。
+            //      HTML だけ送るとテキストの代替がないという理由でスパムスコアが上がり、HTML を表示しない
+            //      クライアントでは本文が丸ごと空に見える。
             MimeMessageHelper helper =
                     new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
             helper.setTo(to);
@@ -67,6 +79,9 @@ public class SmtpMailSender implements MailSender {
             // 메시지를 구성하지 못했다. 같은 입력으로 다시 해도 같은 결과다.
             // ⚠️ 접두사 [MAIL: 를 붙인다. 발송 결과를 훑는 표준 grep 이 이것이다 —
             //    빠진 줄은 "아무 시도도 없었다" 로 보인다(아래 인증 실패에서 실제로 겪었다).
+            // [JA] メッセージを組み立てられなかった。同じ入力でやり直しても同じ結果である。
+            //      ⚠️ 接頭辞 [MAIL: を付ける。送信結果を眺める標準の grep がこれである —
+            //         抜けた行は「何の試行もなかった」ように見える(下の認証失敗で実際に経験した)。
             log.error("[MAIL:permanent] to={} 메일 구성 실패: {}",
                     EmailAddresses.mask(to), describe(e));
             return MailResult.permanent("compose_failed: " + describe(e));
@@ -85,6 +100,11 @@ public class SmtpMailSender implements MailSender {
             //    아무것도 잡지 못했다. 발송 시도가 통째로 없는 것처럼 보여 엉뚱한 곳
             //    (스케줄러·백오프)을 한참 뒤졌다. 결과를 남기는 줄은 전부 같은 접두사를
             //    달아야 한 번의 grep 으로 끝난다.
+            // [JA] 認証情報が誤っている。リトライするとアカウントがロックされうる — 人が見る必要がある。
+            //      🐛 この行に [MAIL: 接頭辞がなかったので、運用診断時に `grep "\[MAIL:"` が
+            //         何も捕まえなかった。送信試行が丸ごとないように見え、見当違いの所
+            //         (スケジューラー・バックオフ)を長々と探した。結果を残す行はすべて同じ接頭辞を
+            //         付けてこそ一度の grep で済む。
             log.error("[MAIL:permanent] to={} SMTP 인증 실패 — 설정을 확인해야 합니다: {}",
                     EmailAddresses.mask(to), describe(e));
             return MailResult.permanent("auth_failed");
@@ -98,6 +118,8 @@ public class SmtpMailSender implements MailSender {
         } catch (org.springframework.mail.MailException e) {
             // 알 수 없는 메일 예외. 재시도 쪽으로 둔다 — 상한이 있으므로 무한히 시도하지 않고,
             // 보낼 수 있는 메일을 영구 실패로 버리는 쪽이 더 나쁘다.
+            // [JA] 不明なメール例外。リトライ側に置く — 上限があるので無限には試さず、
+            //      送れるメールを恒久失敗として捨てる方が悪い。
             log.warn("[MAIL:error] to={} {}", EmailAddresses.mask(to), describe(e));
             return MailResult.retryable(describe(e));
         }
@@ -107,6 +129,9 @@ public class SmtpMailSender implements MailSender {
      * 발송 실패를 재시도 가능/불가능으로 가른다.
      *
      * <p>{@link MailSendException#getFailedMessages()} 안에 원인 예외가 들어 있다.
+     *
+     * <p>[JA] 送信失敗をリトライ可能/不可能に分ける。
+     * {@link MailSendException#getFailedMessages()} の中に原因例外が入っている。
      */
     private MailResult classify(String to, MailSendException e) {
         for (Exception cause : e.getFailedMessages().values()) {
@@ -116,6 +141,7 @@ public class SmtpMailSender implements MailSender {
             }
         }
         // failedMessages 가 비어 있으면 연결 단계에서 실패한 것이다(서버에 닿지도 못했다).
+        // [JA] failedMessages が空なら接続段階で失敗したのである(サーバーに届きもしなかった)。
         MailResult decided = classifyOne(to, e);
         if (decided != null) {
             return decided;
@@ -126,10 +152,12 @@ public class SmtpMailSender implements MailSender {
     }
 
     /** @return 판정했으면 결과, 이 예외로는 알 수 없으면 null */
+    // [JA] @return 判定できれば結果、この例外では分からなければ null
     private MailResult classifyOne(String to, Throwable cause) {
         for (Throwable t = cause; t != null; t = t.getCause()) {
 
             // 1) SMTP 응답 코드가 있으면 그게 가장 정확하다. 4xx = 일시, 5xx = 영구.
+            // [JA] 1) SMTP の応答コードがあればそれが最も正確である。4xx = 一時、5xx = 恒久。
             Integer code = smtpReturnCode(t);
             if (code != null) {
                 if (code >= 500) {
@@ -146,15 +174,20 @@ public class SmtpMailSender implements MailSender {
 
             // 2) 코드가 없으면 주소 목록을 본다. 서버가 "이 주소는 유효하지 않다"고 말한 것이므로
             //    다시 보내도 같다.
+            // [JA] 2) コードがなければアドレス一覧を見る。サーバーが「このアドレスは無効だ」と言ったのだから
+            //         再送しても同じ。
             if (t instanceof SendFailedException sfe) {
                 // ⚠️ Address[] 로 받는다. 선언 타입이 Address[] 라 InternetAddress[] 로 캐스팅하면
                 //    런타임에 ClassCastException 이 날 수 있고, 그러면 분류 자체가 실패한다.
+                // [JA] ⚠️ Address[] で受ける。宣言型が Address[] なので InternetAddress[] にキャストすると
+                //         実行時に ClassCastException が出ることがあり、すると分類自体が失敗する。
                 Address[] invalid = sfe.getInvalidAddresses();
                 if (invalid != null && invalid.length > 0) {
                     log.error("[MAIL:permanent] to={} 유효하지 않은 주소", EmailAddresses.mask(to));
                     return MailResult.permanent("invalid_address");
                 }
                 // 유효하지만 못 보낸 주소만 있다면 서버 사정이다 — 다시 시도한다.
+                // [JA] 有効だが送れなかったアドレスだけなら、サーバー側の事情である — 再試行する。
                 Address[] unsent = sfe.getValidUnsentAddresses();
                 if (unsent != null && unsent.length > 0) {
                     return MailResult.retryable("valid_unsent");
@@ -162,6 +195,7 @@ public class SmtpMailSender implements MailSender {
             }
 
             // 3) 네트워크 계층 실패는 명백히 일시적이다.
+            // [JA] 3) ネットワーク層の失敗は明らかに一時的である。
             if (t instanceof ConnectException
                     || t instanceof SocketTimeoutException
                     || t instanceof UnknownHostException) {
@@ -183,6 +217,13 @@ public class SmtpMailSender implements MailSender {
      *
      * <p>반대로 이 정보를 포기하면 4xx(일시)와 5xx(영구)를 구분할 가장 정확한 근거를 잃는다.
      * 그래서 <b>있으면 쓰고 없으면 다음 근거로 넘어가는</b> 형태로 읽는다.
+     *
+     * <p>[JA] SMTP の応答コードを取り出す。なければ null。
+     * <b>なぜリフレクションか。</b> コードを持っているのは {@code SMTPSendFailedException} / {@code SMTPAddressFailedException} だが、
+     * これらは jakarta.mail の <b>API</b> ではなく実装(Angus Mail)のクラスである。コンパイル時に参照すると実装を差し替えられなくなり、
+     * 実装のない環境ではクラスロードから失敗する。
+     * 逆にこの情報を諦めると 4xx(一時)と 5xx(恒久)を区別する最も正確な根拠を失う。
+     * だから<b>あれば使い、なければ次の根拠に移る</b>形で読む。
      */
     /**
      * 로그 · {@code mail_message.detail} 에 남길 예외 설명 — 예외 종류와 SMTP 응답 코드만.
@@ -220,6 +261,10 @@ public class SmtpMailSender implements MailSender {
      *
      * <p>표시 이름을 함께 넣는 이유: 수신함에서 {@code no-reply@...} 만 보이는 것보다 서비스명이
      * 보이는 편이 열람률이 높고, 무엇보다 <b>사용자가 피싱과 구분할 수 있다.</b>
+     *
+     * <p>[JA] 送信者を設定する。
+     * 表示名を一緒に入れる理由: 受信箱で {@code no-reply@...} だけが見えるよりサービス名が見える方が開封率が高く、
+     * 何より<b>ユーザーがフィッシングと区別できる。</b>
      */
     private void setFrom(MimeMessageHelper helper)
             throws jakarta.mail.MessagingException, UnsupportedEncodingException {

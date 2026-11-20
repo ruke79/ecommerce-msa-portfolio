@@ -21,6 +21,8 @@ import { useTranslation } from "i18n/I18nProvider";
 
 // Blob 에는 파일명이 없다. 이름 없이 append 하면 브라우저가 "blob" 으로 보내고, 서버가
 // 확장자로 컨텐트 타입을 정하는 경로에서 어긋난다. MIME 에서 확장자를 되돌린다.
+// [JA] Blob にはファイル名がない。名前なしで append するとブラウザが "blob" として送り、サーバーが
+//      拡張子でコンテンツタイプを決める経路でずれる。MIME から拡張子を戻す。
 const EXT_BY_MIME = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -48,6 +50,8 @@ const CreateProduct = ({
     const [progress, setProgress] = useState(0);
     // 방금 등록한 상품 — "색상 변형 이어서 등록" 배너의 근거. 서버 응답의 productId 를
     // 쓴다(엔티티 직렬화 시절에는 이 값이 응답에 없어서 이 흐름을 만들 수 없었다).
+    // [JA] 登録したばかりの商品 — 「色バリエーションを続けて登録」バナーの根拠。サーバー応答の productId を
+    //      使う(エンティティをシリアライズしていた頃はこの値が応答になく、この流れを作れなかった)。
     const [lastCreated, setLastCreated] = useState(null);
 
     const validate = Yup.object({
@@ -60,12 +64,16 @@ const CreateProduct = ({
         // subCategories: Yup.array().min(1, "하위 카테고리를 하나 이상 선택해 주세요."),
         // sku 는 선택 입력이다 — 비우면 서버가 <카테고리 접두사>-<순번> 으로 생성한다.
         // 직접 넣으면 서버가 중복을 검사해 400 으로 알려준다.
+        // [JA] sku は任意入力である — 空にするとサーバーが <カテゴリ接頭辞>-<連番> で生成する。
+        //      直接入れるとサーバーが重複を検査し 400 で知らせる。
         sku: Yup.string(),
         color: Yup.string().required(t("admin.product_form.color_required")),
         description: Yup.string().required(t("admin.product_form.description_required")),
     });
     // ⚠️ 컴포넌트와 같은 이름(CreateProduct)이던 것을 바꿨다. 안쪽 const 가 컴포넌트를
     //    가려서, 스택트레이스와 에디터의 "정의로 이동"이 전부 엉뚱한 곳을 가리켰다.
+    // [JA] ⚠️ コンポーネントと同じ名前(CreateProduct)だったものを変えた。内側の const がコンポーネントを
+    //      隠し、スタックトレースとエディタの「定義へ移動」がすべて見当違いの場所を指していた。
     const handleSubmit = async () => {
         const test = validateCreateProduct(product, images);
         if (test === "valid") {
@@ -91,12 +99,18 @@ const CreateProduct = ({
     //    createSku() 가 images 를 그대로 순회하고 colorImage 를 무조건 업로드하므로
     //    비면 서버가 NPE 로 500 을 낸다. validateCreateProduct 가 이미 이미지 3장과
     //    스타일 이미지를 요구하므로 여기까지 왔다면 둘 다 있다.
+    // [JA] catalog-service が期待するもの(ProductController.addProduct): POST /catalog-service/api/product multipart/form-data、
+    //      product: ProductRequest JSON(@RequestPart)、images: ファイル N 個(@RequestParam List<MultipartFile>)、colorImage: ファイル 1 個(@RequestParam MultipartFile)。
+    //      ⚠️ images・colorImage はシグネチャ上 required=false だが**実際には両方必須**である。
+    //      createSku() が images をそのまま走査し colorImage を無条件にアップロードするので、空だとサーバーが NPE で 500 を返す。
+    //      validateCreateProduct がすでに画像 3 枚とスタイル画像を要求するので、ここまで来たなら両方ある。
     const createProductHandler = async () => {
         setLoading(true);
         try {
             const formData = new FormData();
 
             // 이미지는 화면에서 FileReader.readAsDataURL 로 담겨 data URL 상태다.
+            // [JA] 画像は画面で FileReader.readAsDataURL で読み込まれ data URL の状態である。
             for (let i = 0; i < images.length; i++) {
                 const blob = dataURItoBlob(images[i]);
                 formData.append("images", blob, `image-${i + 1}.${extOf(blob)}`);
@@ -110,6 +124,11 @@ const CreateProduct = ({
             //    100MB 업로드 제한에 훨씬 빨리 걸린다(그 경우 엣지에서 잘려 서버 로그에
             //    아무것도 남지 않는다). 서버도 request.getImages() 를 쓰지 않는다 —
             //    URL 은 S3 업로드 결과로 채워진다.
+            // [JA] ⚠️ color.image(=base64 data URL)を JSON に載せて送らない。同じ画像を
+            //      ファイルパートですでに送っているので本文が二倍になり、Cloudflare 無料プランの
+            //      100MB アップロード制限にずっと早く引っかかる(その場合エッジで切られサーバーログに
+            //      何も残らない)。サーバーも request.getImages() を使わない —
+            //      URL は S3 アップロードの結果で埋まる。
             const { image, ...color } = product.color;
             const slug = slugify(product.name, { lower: true }) || product.sku;
             const payload = { ...product, color, images: [], slug };
@@ -125,6 +144,12 @@ const CreateProduct = ({
             //    올라가고, 요청은 200 으로 성공한 것처럼 보인다. 실측으로 확인했다.
             //    문자열만 넘기면 실제 boundary 는 브라우저가 붙인다(resolveConfig 가
             //    FormData 일 때 Content-Type 을 지운다).
+            // [JA] ⚠️ contentType を必ず "multipart/form-data" で渡す。api インスタンスの既定値が
+            //      application/json だが、axios 1.x は Content-Type が JSON なら **FormData を
+            //      JSON に変えてしまう**(transformRequest)。Blob は {} になり空の本文が
+            //      上がり、リクエストは 200 で成功したように見える。実測で確認した。
+            //      文字列だけ渡せば実際の boundary はブラウザが付ける(resolveConfig が
+            //      FormData のとき Content-Type を消す)。
             const { data } = await postRequest(
                 "/catalog-service/api/product",
                 formData,
@@ -135,12 +160,15 @@ const CreateProduct = ({
                         setProgress(Math.round((e.loaded * 100) / e.total));
                     },
                     // 이미지 여러 장을 올리므로 인스턴스 기본 15초로는 부족하다.
+                    // [JA] 画像を複数枚アップロードするので、インスタンス既定の 15 秒では足りない。
                     timeout: 120000,
                 }
             );
 
             // 변형 연속 등록의 재료 — 새 상품일 때만 담는다(변형 추가면 부모를 유지한 채
             // 배너가 계속 살아 있는 편이 자연스럽다).
+            // [JA] バリエーション連続登録の材料 — 新しい商品のときだけ入れる(バリエーション追加なら親を保ったまま
+            //      バナーが生き続ける方が自然である)。
             if (data?.productId) {
                 setLastCreated({ productId: data.productId, name: product.name });
             }
@@ -160,6 +188,8 @@ const CreateProduct = ({
         } catch (error) {
             // ⚠️ 예전에는 이 자리가 console.log 였다. 화면에는 아무 변화가 없어서
             //    "눌러도 아무 일이 없다"로 보였다. 실패는 반드시 사용자에게 보인다.
+            // [JA] ⚠️ 以前はここが console.log だった。画面に何の変化もないので
+            //      「押しても何も起きない」と見えた。失敗は必ずユーザーに見せる。
             const res = error?.response;
             const detail =
                 res?.data?.message ||
@@ -176,6 +206,10 @@ const CreateProduct = ({
             //    블록이 통째로 주석 처리되어 setLoading(false) 에 **닿지 못했다.**
             //    버튼이 'Loading...' 에서 영원히 멈췄다. finally 로 옮겨 어떤 경로로도
             //    반드시 풀리게 한다.
+            // [JA] ⚠️ ここがこの画面が壊れていた理由である。以前のコードは setLoading(true) の後の
+            //      ブロックが丸ごとコメントアウトされ、setLoading(false) に**到達しなかった。**
+            //      ボタンが 'Loading...' で永遠に止まった。finally に移し、どの経路でも
+            //      必ず解除されるようにする。
             setLoading(false);
             setProgress(0);
         }
@@ -216,6 +250,7 @@ const CreateProduct = ({
                 셀렉트에서 방금 만든 상품을 손으로 찾아야 했고, 목록이 갱신되지 않아
                 대개 찾을 수도 없었다. 응답의 productId 로 parent 를 바로 채운다.
                 parent 가 설정되면 카테고리·이름은 폼이 알아서 잠근다/채운다. */}
+            {/* [JA] 色バリエーションの連続登録 — 以前は SKU をもう一つ付けるには Parent Product のセレクトで登録したばかりの商品を手で探す必要があり、一覧が更新されないので大抵見つけることもできなかった。応答の productId で parent をすぐ埋める。parent が設定されるとカテゴリ・名前はフォームが自動でロック/入力する。 */}
             {lastCreated && !product.parent && (
                 <div className="flex items-center justify-between bg-green-50 border border-green-300 rounded p-3 my-2 text-sm">
                     <span>
@@ -404,6 +439,7 @@ const CreateProduct = ({
                         >
                             {/* progress 를 계산만 하고 어디에도 쓰지 않아, 큰 이미지를
                                 올리는 동안 화면이 멈춘 것처럼 보였다. */}
+                            {/* [JA] progress を計算するだけでどこにも使っておらず、大きな画像をアップロードしている間画面が止まったように見えた。 */}
                             {loading
                                 ? (progress > 0
                                     ? t("admin.product_form.uploading", { progress })

@@ -10,6 +10,13 @@
  *
  * prefers-reduced-motion 을 존중한다. 움직임에 민감한 사용자에게 무한 반복 애니메이션은
  * 불편을 넘어 증상을 유발할 수 있다 — 그때는 정지한 회색 블록으로 충분히 뜻이 전달된다.
+ *
+ * [JA] 画面が待つ間に見せる二つの動き(docs/43 D5)。
+ * 全画面スピナーはこのアプリで失敗した — 画面を覆い前の内容が消えてちらつくので
+ * 呼び出し側の大半がコメントアウトしてしまい、結果として **何の表示もない状態**が残った。
+ * 覆わない二つで代える: 上部の進行バー(NavigationProgress)とスケルトン(Skeleton)。
+ * prefers-reduced-motion を尊重する。動きに敏感なユーザーにとって無限反復アニメーションは
+ * 不快を超えて症状を誘発しうる — そのときは静止した灰色ブロックで十分意味が伝わる。
  */
 @keyframes nav-progress {
     0%   { transform: translateX(-100%); }
@@ -32,7 +39,9 @@
 
 
 /* 관리자 사이드바의 하위 메뉴. 높이를 JS 로 짐작하지 않는다(SidebarItem 주석) —
-   grid-template-rows 0fr → 1fr 이 내용 높이만큼 열고 닫으며 애니메이션한다. */
+   grid-template-rows 0fr → 1fr 이 내용 높이만큼 열고 닫으며 애니메이션한다.
+   [JA] 管理者サイドバーのサブメニュー。高さを JS で推測しない(SidebarItem のコメント) —
+   grid-template-rows 0fr → 1fr が内容の高さだけ開閉しアニメーションする。 */
 .sub-menu {
     display: grid;
     grid-template-rows: 0fr;

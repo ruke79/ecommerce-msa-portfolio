@@ -18,14 +18,17 @@ public class CouponRollbackConsumer {
 
     private final CouponRollbackMessageListener couponRollbackMessageListener;
     /** 레코드 헤더의 traceparent 로 보낸 쪽의 추적을 이어받는다(docs/51 §4h). */
+    // [JA] レコードヘッダーの traceparent で送信側のトレースを引き継ぐ(docs/51 §4h)。
     private final com.project.common.outbox.OutboxTraceContext outboxTraceContext;
 
     @KafkaListener(id="coupon", topics = "coupon-rollback", containerFactory = "couponRollbackContainerFactory")
     void receive(List<CouponRollbackRequest> messages,
             // 레코드마다 보낸 쪽의 추적을 이어받는다(docs/51 §4h). 배치 리스너에는 컨슈머 추적이 걸리지 않는다.
+            // [JA] レコードごとに送信側のトレースを引き継ぐ(docs/51 §4h)。バッチリスナーにはコンシューマートレースが掛からない。
             @org.springframework.messaging.handler.annotation.Headers java.util.Map<String, Object> kafkaHeaders) {
 
         // 실패 인덱스 보고 → 성공분 커밋 + 실패 레코드만 DLT 격리 (KafkaDltConfig, docs/11 §3)
+        // [JA] 失敗インデックスを報告 → 成功分をコミット + 失敗レコードだけ DLT 隔離 (KafkaDltConfig, docs/11 §3)
         for (int i = 0; i < messages.size(); i++) {
             try (com.project.common.outbox.OutboxTraceContext.TraceScope trace = outboxTraceContext.openFrom(
                     com.project.common.outbox.OutboxTraceContext.recordHeaders(kafkaHeaders, i), "receive coupon-rollback")) {

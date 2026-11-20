@@ -24,6 +24,17 @@ import com.project.notification_service.sms.PhoneNumbers.Region;
  * 즉 우리가 만든 문자열이 아니다. 이스케이프 없이 HTML 에 넣으면 메일 본문에 임의의 마크업을
  * 심을 수 있고, 링크를 바꿔치기해 피싱에 쓸 수 있다. URL 은 추가로 스킴까지 검사한다
  * ({@link #safeUrl}) — {@code javascript:} 로 시작하는 href 를 넣지 못하게.
+ *
+ * <p>[JA] メールの文言。韓国語・日本語。{@link com.project.notification_service.sms.SmsTemplates} のメール版である。
+ * <b>なぜ文言をここに集めるか。</b> 以前は確認メールの HTML が user-service の {@code RegistrationListener} の中に、
+ * パスワード再設定の文言が {@code EmailService} の中にそれぞれ埋め込まれていた。ブランディングを変えるには二つのファイルを直す必要があり、
+ * 実際に二つのメールの見た目が互いに違った(片方は HTML、片方は平文一行)。サービスが増えればその分さらに散らばる。
+ * <b>SMS と違って長さ制限が事実上ない。</b> {@code SmsMessage} が 70 字・90 バイトを数えるのはそれがそのまま料金だからだが、
+ * メールはそうではない。代わりにメールには別の制約がある — <b>HTML を見られない、または見ないクライアント</b>がまだ多く、
+ * テキストの代替がないメールはスパムスコアが上がる。だからすべての文言が {@link Rendered#text()} と {@link Rendered#html()} を一緒に出す。
+ * ⚠️ <b>すべての挿入値はエスケープする。</b> {@code subject} のような値は Kafka イベントから来る — つまり我々が作った文字列ではない。
+ * エスケープなしで HTML に入れるとメール本文に任意のマークアップを仕込め、リンクをすり替えてフィッシングに使える。URL はさらにスキームまで検査する
+ * ({@link #safeUrl}) — {@code javascript:} で始まる href を入れられないように。
  */
 public final class MailTemplates {
 
@@ -31,10 +42,12 @@ public final class MailTemplates {
     private static final String BRAND_JA = "ショップ";
 
     /** 버튼을 렌더링하지 못하는 클라이언트를 위한 안내. 언어별로 다르므로 상수로 둔다. */
+    // [JA] ボタンをレンダリングできないクライアント向けの案内。言語ごとに違うので定数にしておく。
     private static final String KO_LINK_HINT = "버튼이 동작하지 않으면 아래 주소를 브라우저에 붙여넣어 주세요.";
     private static final String JA_LINK_HINT = "ボタンが動作しない場合は、以下のURLをブラウザに貼り付けてください。";
 
     /** 보안 알림 — 무엇을 해야 하는지, 왜 설정과 무관하게 왔는지. */
+    // [JA] セキュリティ通知 — 何をすべきか、なぜ設定と無関係に来たか。
     private static final String KO_SECURITY_ADVICE = "본인이 한 일이 아니라면 비밀번호를 바로 변경해 주세요.";
     private static final String KO_SECURITY_FOOTER = "보안 알림은 계정 보호를 위해 수신 설정과 관계없이 발송됩니다.";
     private static final String JA_SECURITY_ADVICE = "お心当たりがない場合は、すぐにパスワードを変更してください。";
@@ -44,6 +57,7 @@ public final class MailTemplates {
     }
 
     /** 렌더링 결과. 제목과 두 가지 본문. */
+    // [JA] レンダリング結果。件名と二種類の本文。
     public record Rendered(String subject, String text, String html) {
     }
 
@@ -53,6 +67,11 @@ public final class MailTemplates {
      * <p>{@code ja}, {@code ja-JP}, {@code ja_JP} 를 모두 받는다 — 어디서 오느냐에 따라 표기가
      * 달라서(HTTP {@code Accept-Language} 는 하이픈, 자바 {@code Locale#toString} 은 밑줄)
      * 한쪽만 받으면 조용히 한국어로 떨어진다.
+     *
+     * <p>[JA] ロケール文字列を地域に変える。知らない値なら韓国語。
+     * {@code ja}, {@code ja-JP}, {@code ja_JP} をすべて受ける — どこから来るかによって表記が
+     * 違うので(HTTP {@code Accept-Language} はハイフン、Java の {@code Locale#toString} はアンダースコア)、
+     * 片方だけ受けると黙って韓国語に落ちる。
      */
     public static Region regionOf(String locale) {
         if (locale == null) {
@@ -65,8 +84,11 @@ public final class MailTemplates {
     /**
      * 종류별 문구를 만든다.
      *
+     * <p>[JA] 種類別の文言を作る。
+     *
      * @param params 없는 키는 빈 문자열로 채운다 — 문구가 조금 어색해질지언정
      *               {@code NullPointerException} 으로 발송 전체가 멈추면 안 된다(SmsTemplates 와 같은 규칙)
+     *   [JA] ないキーは空文字列で埋める — 文言が少しぎこちなくなっても {@code NullPointerException} で送信全体が止まってはならない(SmsTemplates と同じ規則)
      */
     public static Rendered render(Region region, MailKind kind, Map<String, String> params) {
         Map<String, String> p = params == null ? Map.of() : params;
@@ -74,6 +96,7 @@ public final class MailTemplates {
     }
 
     // ────────────────────────────────────────────────────────────── 한국어
+    // [JA] ── 韓国語
 
     private static Rendered renderKo(MailKind kind, Map<String, String> p) {
         String brand = BRAND_KO;
@@ -103,6 +126,7 @@ public final class MailTemplates {
             }
             case LOGIN_CHALLENGE -> {
                 // 코드는 숫자 6자리만 — 파라미터에 다른 것이 섞여 와도 본문에 싣지 않는다. 링크가 없다(피싱 메일과 구별되게 "코드만").
+                // [JA] コードは数字 6 桁のみ — パラメーターに別のものが混じって来ても本文に載せない。リンクはない(フィッシングメールと区別できるよう「コードだけ」)。
                 String code = loginCode(p);
                 yield new Rendered(
                         "[" + brand + "] 로그인 확인 코드 " + code,
@@ -117,6 +141,9 @@ public final class MailTemplates {
                 // 보안 알림은 사건이 여럿이다(새 기기 · 로그인 해제, docs/68) — 제목은 종류가 아니라 알림 제목을 따른다.
                 // 예전에는 종류로 고정("새로운 기기에서 로그인되었습니다")이라 다른 사건도 새 기기 메일로 나갈 뻔했다.
                 // 끝 문장은 수신 설정 안내가 아니다 — 보안 알림은 설정으로 끌 수 없다(NotificationPreference).
+                // [JA] セキュリティ通知は出来事が複数ある(新しい端末 · ログイン解除、docs/68) — 件名は種類ではなく通知タイトルに従う。
+                //      以前は種類で固定(「新しい端末でログインされました」)だったので、別の出来事も新端末のメールとして出るところだった。
+                //      最後の文は受信設定の案内ではない — セキュリティ通知は設定で切れない(NotificationPreference)。
                 String subject = oneLine(p.getOrDefault("subject", ""));
                 String headline = subject.isBlank() ? headlineKo(kind) : subject;
                 String url = safeUrl(p.get("url"));
@@ -156,6 +183,7 @@ public final class MailTemplates {
     }
 
     // ────────────────────────────────────────────────────────────── 일본어
+    // [JA] ── 日本語
 
     private static Rendered renderJa(MailKind kind, Map<String, String> p) {
         String brand = BRAND_JA;
@@ -236,10 +264,13 @@ public final class MailTemplates {
     }
 
     // ────────────────────────────────────────────────────────────── 조립
+    // [JA] ── 組み立て
 
     /**
      * 평문 본문. 줄바꿈은 {@code \r\n} 이다 — RFC 5322 가 요구하고, 일부 MTA 는 {@code \n} 만
      * 있는 본문을 거부하거나 재작성한다.
+     *
+     * <p>[JA] 平文本文。改行は {@code \r\n} である — RFC 5322 が要求し、一部の MTA は {@code \n} だけの本文を拒否したり書き換えたりする。
      */
     private static String body(String intro, String url, String note1, String note2) {
         StringBuilder sb = new StringBuilder(intro);
@@ -261,6 +292,10 @@ public final class MailTemplates {
      * <p>인라인 스타일만 쓴다 — 메일 클라이언트 상당수가 {@code <style>} 블록과 외부 CSS 를
      * 제거한다. 그리고 URL 이 없으면 버튼 자체를 넣지 않는다(빈 {@code href} 는 클릭하면
      * 현재 페이지로 가는 이상한 링크가 된다).
+     *
+     * <p>[JA] HTML 本文。
+     * インラインスタイルだけを使う — メールクライアントの相当数が {@code <style>} ブロックと外部 CSS を除去する。
+     * そして URL がなければボタン自体を入れない(空の {@code href} はクリックすると現在のページへ行くおかしなリンクになる)。
      */
     private static String html(String title, String intro, String buttonLabel, String url,
                                String fallbackHint, String footer) {
@@ -288,12 +323,14 @@ public final class MailTemplates {
     }
 
     /** 확인 코드 — 숫자만, 최대 6자리. 파라미터에 다른 것이 섞여 와도 본문에 싣지 않는다(docs/68 §19). */
+    // [JA] 確認コード — 数字のみ、最大 6 桁。パラメーターに別のものが混じって来ても本文に載せない(docs/68 §19)。
     static String loginCode(Map<String, String> p) {
         String digits = p.getOrDefault("code", "").replaceAll("[^0-9]", "");
         return digits.length() > 6 ? digits.substring(0, 6) : digits;
     }
 
     /** 메일 제목 헤더에 들어가는 값 — 줄바꿈을 없앤다(헤더 주입 · 접힘 방지). */
+    // [JA] メールの件名ヘッダーに入る値 — 改行を取り除く(ヘッダーインジェクション · 折り返し防止)。
     private static String oneLine(String v) {
         return v == null ? "" : v.replaceAll("[\\r\\n]+", " ").strip();
     }
@@ -307,6 +344,13 @@ public final class MailTemplates {
      *
      * <p>작은따옴표까지 처리하는 이유: 속성값을 큰따옴표로 감싸고 있지만, 나중에 누가 작은따옴표로
      * 바꿔도 안전하도록. 이스케이프는 문맥에 덜 의존할수록 오래 간다.
+     *
+     * <p>[JA] HTML の特殊文字をエスケープする。
+     * 挿入値のうち {@code subject} は Kafka イベントから来る — 我々が作った文字列ではない。
+     * そのまま入れるとメール本文に任意のマークアップを仕込め、その中でも実害になるのは<b>リンクのすり替え</b>である
+     * (我々のブランドで来たメールの中の偽ログインリンク)。
+     * シングルクォートまで処理する理由: 属性値をダブルクォートで囲んでいるが、後で誰かがシングルクォートに変えても安全なように。
+     * エスケープは文脈に依存しないほど長持ちする。
      */
     static String escape(String s) {
         if (s == null) {
@@ -329,6 +373,13 @@ public final class MailTemplates {
      * <p>URL 은 우리가 만든 값이라 지금은 이 검사에 걸릴 일이 없다. 그래도 두는 이유는, 이
      * 파라미터가 Kafka 를 건너 오기 때문이다 — 언젠가 다른 서비스가 이 토픽에 쓰게 되면
      * 그때는 우리가 만든 값이 아니게 된다.
+     *
+     * <p>[JA] href に入れてよい URL か確認する。そうでなければ空文字列。
+     * <b>なぜスキームを検査するか。</b> エスケープだけでは {@code javascript:alert(1)} のような値を防げない —
+     * 特殊文字がないのでそのまま通り、メールクライアントによっては実行される。{@code data:} も同様に任意の文書を開ける。
+     * 許可リストで防ぐのが正しい。
+     * URL は我々が作った値なので今はこの検査に掛かることはない。それでも置く理由は、このパラメーターが Kafka を
+     * 越えて来るからである — いつか別のサービスがこのトピックに書くようになれば、そのときは我々が作った値ではなくなる。
      */
     static String safeUrl(String url) {
         if (url == null || url.isBlank()) {

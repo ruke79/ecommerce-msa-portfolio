@@ -26,6 +26,9 @@ import com.project.coupon_service.repository.jpa.CouponTargetRepository;
  *
  * <p>🐛 예전에는 아무 값이나 받았다: 계산기가 할인을 0 ~ 100 으로 잘라 내지만 발급 알림에는 원래 값(150%)이 실렸고, 시작일이 종료일보다
  * 늦은 쿠폰은 아무도 쓸 수 없는 행으로 남았다.
+ *
+ * <p>[JA] クーポン発行の入力検査(CP8) — 割引率 1 〜 100、開始日 ≤ 終了日。
+ * <p>🐛 以前は何でも受け付けた: 計算機が割引を 0 〜 100 に切り詰めるが発行通知には元の値(150%)が載り、開始日が終了日より遅いクーポンは誰も使えない行として残った。
  */
 @DisplayName("쿠폰 발급 — 입력 검사")
 class CouponCreateValidationTest {

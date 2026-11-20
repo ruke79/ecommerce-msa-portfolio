@@ -4,9 +4,11 @@ import StockHoldNotice from "components/order/StockHoldNotice";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 /** 서버가 보내는 모양 그대로 — 시간대 없는 UTC 시각. */
+// [JA] サーバーが送る形そのまま — タイムゾーンなしの UTC 時刻。
 const naiveUtc = (date) => date.toISOString().replace("Z", "");
 
 const order = (overrides) => ({ orderStatus: "NOT_PROCESSED", ...overrides });
@@ -21,6 +23,7 @@ describe("결제 전 재고 예약 안내 (docs/59)", () => {
         const notice = screen.getByTestId("stock-hold-notice");
         expect(notice).toHaveTextContent("이 시간 안에 결제해 주세요");
         // 시간대 없는 값을 UTC 로 읽었는가 — 현지 시각으로 읽으면 시간대만큼 어긋난다.
+        // [JA] タイムゾーンなしの値を UTC で読んだか — 現地時刻で読むとタイムゾーン分ずれる。
         expect(notice).toHaveTextContent(until.toLocaleString());
         expect(screen.queryByTestId("stock-hold-expired")).toBeNull();
     });

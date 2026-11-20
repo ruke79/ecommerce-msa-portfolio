@@ -21,6 +21,13 @@ spring:
         #    EUREKA_CLIENT_SERVICEURL_DEFAULTZONE 이 그 규칙의 실례다. 매니페스트에
         #    Spring 프로퍼티 이름을 그대로 적으면 하이픈이 든 것마다 규칙을 기억해야 하고
         #    틀려도 **조용히 무시된다.** 이 저장소의 다른 서비스가 전부 이 방식이다.
+        # [JA] ── 設定リポジトリ ──
+        #      ⚠️ **このサービスはまだ何もしていない。** uri のデフォルトがプレースホルダーなので設定を返せず、クライアント側の SPRING_CONFIG_IMPORT は
+        #         すべて `optional:configserver:...`(k8s/10-configmap.yaml)なので、その失敗を**ログに残すだけ**でそれぞれ同梱の設定で動く。
+        #         つまり今は症状がない — 使い始めるには CONFIG_GIT_URI を埋めるのが最初のステップだ。
+        #      ⚠️ 値をここで `${ENV:デフォルト値}` で受け取る理由: 環境変数名のマッピングはハイフンを消す(`default-label` → `DEFAULTLABEL`)。
+        #         同じリポジトリの EUREKA_CLIENT_SERVICEURL_DEFAULTZONE がそのルールの実例だ。マニフェストに Spring プロパティ名をそのまま書くと、
+        #         ハイフンを含むものごとにルールを覚えておく必要があり、間違えても**黙って無視される。**このリポジトリの他のサービスはすべてこの方式だ。
         git:
           uri: ${CONFIG_GIT_URI:REPLACE_ME_config_repo_url}
           default-label: ${CONFIG_GIT_LABEL:main}
@@ -29,16 +36,23 @@ spring:
           # 파드가 기동에서 죽는다. 저장소를 실제로 연결한 뒤에는 true 를 권한다:
           # 지금은 첫 요청 때 클론하므로 uri 가 틀려도 파드는 Ready 로 뜨고, 문제가
           # "설정이 왜 안 먹지"라는 형태로 한참 뒤에 드러난다.
+          # [JA] 起動時にクローンするか。**デフォルトは false** — true にすると uri がプレースホルダーである今、ポッドが起動時に死ぬ。
+          #      リポジトリを実際に接続した後は true を推奨する: 今は最初のリクエスト時にクローンするので、uri が間違っていてもポッドは Ready で起動し、
+          #      問題が「設定がなぜ効かないのか」という形でずっと後に表に出る。
           clone-on-start: ${CONFIG_GIT_CLONE_ON_START:false}
 
           # 0(스프링 기본)이면 **요청마다 git fetch** 다. 서비스 14개가 동시에 뜨면
           # 그만큼 나간다. 설정이 분 단위로 늦게 반영되는 것은 문제가 되지 않는다.
+          # [JA] 0(Spring のデフォルト)だと**リクエストごとに git fetch** だ。サービス 14 個が同時に起動すればその分だけ出ていく。
+          #      設定が分単位で遅れて反映されることは問題にならない。
           refresh-rate: ${CONFIG_GIT_REFRESH_RATE:60}
 
           timeout: ${CONFIG_GIT_TIMEOUT:10}
 
           # 클론 위치. 스프링 기본값은 무작위 임시 디렉터리라 디버깅할 때 찾기 어렵고,
           # 나중에 readOnlyRootFilesystem 을 켜면 쓰기 가능한 경로를 명시해야 한다.
+          # [JA] クローン先。Spring のデフォルトはランダムな一時ディレクトリでデバッグ時に探しにくく、
+          #      後で readOnlyRootFilesystem を有効にするときは書き込み可能なパスを明示する必要がある。
           basedir: ${CONFIG_GIT_BASEDIR:/tmp/config-repo}
 
           search-paths:
@@ -50,6 +64,9 @@ spring:
       # 없다. 필수 import 로 둔 탓에 ConfigDataResourceNotFoundException 으로 기동이
       # 불가능했다(docs/14 B-18). 이 서비스에 필요한 설정(management/logging)은 아래에 이미
       # 있으므로 optional 로 두어, 나중에 common 을 의존하게 되면 자동으로 적용되게 한다.
+      # [JA] config-server は common モジュールに依存しないので、application-common.yml がクラスパスにない。
+      #      必須の import にしていたせいで ConfigDataResourceNotFoundException で起動できなかった(docs/14 B-18)。
+      #      このサービスに必要な設定(management/logging)は下にすでにあるので optional にしておき、後で common に依存するようになれば自動的に適用されるようにする。
       import: "optional:classpath:application-common.yml"
 
 eureka:
@@ -62,8 +79,13 @@ eureka:
     #    spring-cloud-commons 의 SSLContextFactory 가 경고만 남기고 **키 없는** SSL 로 붙었다 — 인증서 없는 등록 · 하트비트라 observe
     #    에서 30초마다 [eureka write] 가 남아 enforce 전환 조건(24시간 0건)이 채워지지 않았고, enforce 면 등록부에서 빠졌다.
     #    값은 application-common.yml 과 같아야 한다(가드 B-86 이 대조한다). 로컬 개발은 꺼진 채다(기본 false).
-    # [JA] 他サービスはこのブロックを common の application-common.yml から受け取るが、config-server は common に依存せずその
-    #      ファイルがない。そのため鍵ストアが空で、証明書なしで登録していた。値は application-common.yml と同じにする(B-86)。
+    # [JA] Eureka に登録 · ハートビートを送るときに出すクライアント証明書 = このサービスの身元(tls-id-config-server、CN=config-server)。
+    #      Eureka は登録簿を変える要求を、その CN がアプリ名と同じときだけ受け付ける(eureka-server RegistryWriteGuard、docs/57 §16「Eureka 書き込み」)。
+    #      🐛 他サービスはこのブロックを common の application-common.yml から受け取るが、config-server は common に依存せずそのファイルが
+    #      クラスパスにない(上の import は optional)。そのためマニフェストが EUREKA_CLIENT_TLS_ENABLED=true を渡してもキーストアのパスが空で、
+    #      spring-cloud-commons の SSLContextFactory が警告だけ残して**鍵のない** SSL で接続していた — 証明書なしの登録 · ハートビートなので、
+    #      observe では 30 秒ごとに [eureka write] が残って enforce 切り替え条件(24 時間 0 件)が満たされず、enforce なら登録簿から外れた。
+    #      値は application-common.yml と同じでなければならない(ガード B-86 が照合する)。ローカル開発ではオフのまま(既定 false)。
     tls:
       enabled: ${EUREKA_CLIENT_TLS_ENABLED:false}
       key-store: ${EUREKA_CLIENT_KEY_STORE:file:/app/identity/keystore.p12}
@@ -88,6 +110,13 @@ management:
         #
         # 운영에 필요한 것만 남긴다. env/configprops/heapdump 가 필요하면 그때만
         # 일시적으로 열고, 반드시 인증 뒤에 둔다.
+        # [JA] 🔒 以前は "*" だった。config-server は**全サービスの設定を握っている**サービスなので公開範囲が最も狭くあるべきなのに、正反対に全部開いていた。
+        #        · /actuator/env         → DB パスワード・JWT シークレットを含む全環境変数
+        #        · /actuator/configprops → バインドされた設定値全体
+        #        · /actuator/heapdump    → ヒープダンプ(メモリ内の平文の資格情報まで)
+        #        · /actuator/shutdown    → (デフォルトは無効だが "*" で開けておく習慣そのものが危険)
+        #      認証もかかっておらず、ネットワークで届く誰でも読めた。
+        #      運用に必要なものだけを残す。env/configprops/heapdump が必要ならそのときだけ一時的に開き、必ず認証の後ろに置く。
         include: health, info, prometheus
   endpoint:
     health:
@@ -101,8 +130,11 @@ logging:
     #    어떤 프로퍼티를 내보냈는지**를 남긴다. 지금은 내보낼 것이 없어 무해하지만,
     #    설정 저장소를 연결하는 순간 로그가 설정 내용의 사본이 된다. 기본을 INFO 로 두고
     #    필요할 때만 CONFIG_SERVER_LOG_LEVEL=DEBUG 로 올린다.
+    # [JA] ⚠️ 以前は DEBUG に固定されていた。このパッケージの DEBUG ログは**どのアプリケーションのどのプロパティを返したか**を残す。
+    #         今は返すものがなく無害だが、設定リポジトリを接続した瞬間ログが設定内容のコピーになる。デフォルトを INFO にし、
+    #         必要なときだけ CONFIG_SERVER_LOG_LEVEL=DEBUG に上げる。
     org.springframework.cloud.config.server: ${CONFIG_SERVER_LOG_LEVEL:INFO}
-    org.springframework.web: INFO # Spring Web 관련 로그를 INFO 레벨로 설정
+    org.springframework.web: INFO # Spring Web 관련 로그를 INFO 레벨로 설정 ／ [JA] Spring Web 関連のログを INFO レベルに設定
   file:
     path: ./logs
     name: ${logging.file.path}/config_server.log
@@ -110,5 +142,7 @@ logging:
     # 다른 서비스(common logback-spring.xml 의 TEXT_PATTERN)와 같은 칸 — [traceId,spanId,userId]. 예전에는 userId 칸이 없어 같은 정규식으로
     # 읽히지 않았다. ⚠️ common 을 쓰지 않아 마스킹 변환자는 없다 — 이 서비스는 사용자 데이터를 다루지 않고, 설정 내용을 남기는 DEBUG 는
     # 기본으로 끈다(위 org.springframework.cloud.config.server).
+    # [JA] 他のサービス(common logback-spring.xml の TEXT_PATTERN)と同じ欄 — [traceId,spanId,userId]。以前は userId の欄がなく、同じ正規表現で読めなかった。
+    #      ⚠️ common を使わないのでマスキング変換子はない — このサービスはユーザーデータを扱わず、設定内容を残す DEBUG はデフォルトで無効にする(上の org.springframework.cloud.config.server)。
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-},%X{userId:-}] %-5level %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-},%X{spanId:-},%X{userId:-}] %-5level %logger{36} - %msg%n"

@@ -15,6 +15,10 @@ import com.project.common.outbox.partition.OutboxPartitionMaintainer;
  *
  * <p>설정 키는 B-70 이 보지만, 자동 설정이 빈을 만드는지는 컨텍스트를 띄워야 안다. 이 테스트를 처음 돌렸을 때
  * {@code @Value Duration} 변환이 실패해 빈 생성이 깨졌다(변환 서비스가 없는 컨텍스트) — 문자열로 받아 직접 읽게 고쳤다.
+ *
+ * <p>[JA] パーティションジョブ(common OutboxPartitionAutoConfiguration)がこのサービスの設定で <b>実際に有効になるか</b>。
+ *      設定キーは B-70 が見るが、自動設定が Bean を作るかはコンテキストを起動しないとわからない。このテストを最初に回したとき
+ *      {@code @Value Duration} の変換が失敗して Bean 生成が壊れた(変換サービスのないコンテキスト) — 文字列で受けて直接読むよう直した。
  */
 class OutboxPartitionWiringTest {
 

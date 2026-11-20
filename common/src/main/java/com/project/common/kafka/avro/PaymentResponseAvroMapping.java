@@ -8,7 +8,7 @@ import org.apache.avro.message.BinaryMessageEncoder;
 import com.project.common.avro.PaymentResponse;
 import com.project.common.constants.PaymentStatus;
 
-/** pay → order 결제 응답 (토픽 {@code payment}). */
+/** pay → order 결제 응답 (토픽 {@code payment}). ／ [JA] pay → order 決済応答(トピック {@code payment})。 */
 public class PaymentResponseAvroMapping
         implements AvroMapping<com.project.common.message.dto.response.PaymentResponse, PaymentResponse> {
 

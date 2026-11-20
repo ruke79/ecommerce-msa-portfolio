@@ -12,6 +12,9 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * <p>둘을 `_` 로 이어 붙인 한 문자열이고 <b>한쪽만 있을 수 있다</b> — `500_` 은
  * "500 이상", `_50` 은 "50 이하"다.
+ *
+ * <p>[JA] `price` パラメーターを [最小, 最大] に分ける。ない境界は空文字列である。
+ * 二つを `_` でつないだ一つの文字列で、片方だけのこともある — `500_` は「500 以上」、`_50` は「50 以下」である。
  */
 export function splitPriceParam(priceParam) {
     const [min = "", max = ""] = String(priceParam ?? "").split("_");
@@ -24,6 +27,10 @@ export function splitPriceParam(priceParam) {
  * <p>🐛 `multiPriceHandler(500, "")` 가 만드는 `price=500_` 을 예전 요청 생성기가
  * `highPrice: 0` 으로 바꿨다(browse.jsx 의 `Number("") || 0`). `500 ~ 0` 은 아무것도
  * 맞지 않는 범위이고, 서버는 그 "없음"을 <b>전체 상품</b>으로 뒤집었다.
+ *
+ * <p>[JA] 価格帯ボタン。上限のない最後のマスは空文字列である — 0 ではない。
+ * 🐛 `multiPriceHandler(500, "")` が作る `price=500_` を以前のリクエスト生成器が `highPrice: 0` に変えていた
+ * (browse.jsx の `Number("") || 0`)。`500 ~ 0` は何にも当たらない範囲で、サーバーはその「なし」を全商品に裏返した。
  */
 export const PRICE_RANGES = [
     { min: 0, max: 10, height: "15%" },
@@ -66,6 +73,11 @@ const HeadingFilter = ({
      *
      * <p>입력칸의 주인은 이 state 하나다. 바깥에서 URL 이 바뀌면(Clear All · 뒤로가기 ·
      * 가격대 버튼) 아래 effect 가 맞춰 준다.
+     *
+     * <p>[JA] 入力欄の値。
+     * 🐛 以前は `value={minPrice || priceParam?.split("_")[0]}` だった。消した欄は空文字列で、空文字列は falsy なので
+     * URL の古い値が蘇った — 数字を消すとその場所に今消した値が再び現れ、価格欄を空にできなかった。
+     * 入力欄の持ち主はこの state 一つである。外で URL が変わったら(Clear All · 戻る · 価格帯ボタン)下の effect が合わせる。
      */
     const [minDraft, setMinDraft] = useState(minParam);
     const [maxDraft, setMaxDraft] = useState(maxParam);
@@ -79,6 +91,9 @@ const HeadingFilter = ({
      * 🐛 예전에는 `Number(searchParams.get(...))` 를 문자열과 비교했다 —
      * `0 === "0"` 은 언제나 거짓이라 <b>체크 상태가 한 번도 켜지지 않았다.</b>
      * 게다가 `defaultChecked` 라서 URL 이 바뀌어도(Clear All) 체크가 그대로 남았다.
+     *
+     * <p>[JA] 🐛 以前は `Number(searchParams.get(...))` を文字列と比較していた — `0 === "0"` は常に偽なので
+     * チェック状態が一度もオンにならなかった。しかも `defaultChecked` なので URL が変わっても(Clear All)チェックがそのまま残った。
      */
     const freeShippingOn = searchParams.get('shipping') === "0";
     const ratingOn = searchParams.get('rating') === "4";
@@ -106,6 +121,9 @@ const HeadingFilter = ({
                     // 🐛 `max="0"` 이었다 — 위 칸의 `min="0"` 을 복사하며 이름만 바뀐 것이다.
                     //    "최대 가격은 0 이하여야 한다"는 뜻이라, 양수를 넣는 순간 입력칸이
                     //    유효하지 않은 상태가 되고 브라우저 스피너가 0 위로 올라가지 않는다.
+                    // [JA] 🐛 `max="0"` だった — 上の欄の `min="0"` をコピーして名前だけ変えたものである。
+                    //      「最大価格は 0 以下」という意味なので、正の数を入れた瞬間に入力欄が無効状態になり、
+                    //      ブラウザのスピナーが 0 より上に上がらない。
                     min="0"
                     aria-label={t("browse.price.max")}
                     onChange={(e) => { setMaxDraft(e.target.value); priceHandler(e.target.value, "max", 500); }}
@@ -116,6 +134,7 @@ const HeadingFilter = ({
             <div>
                 {PRICE_RANGES.map((range) => {
                     // 지금 고른 범위인가. 눌러 놓고도 어느 칸인지 알 수 없던 자리다.
+                    // [JA] 今選んだ範囲か。押しておいてもどのマスか分からなかった箇所である。
                     const active =
                         String(range.min) === minParam && String(range.max) === maxParam;
                     return (
@@ -154,6 +173,7 @@ const HeadingFilter = ({
                         id="shipping"
                         checked={freeShippingOn}
                         // 빈 객체는 "이 필터를 지운다" 는 뜻이다(browse.jsx 의 toggleParam).
+                        // [JA] 空オブジェクトは「このフィルターを消す」という意味である(browse.jsx の toggleParam)。
                         onChange={() => shippingHandler(freeShippingOn ? {} : "0")}
                     />
                     {t("browse.filter.free_shipping")}
@@ -228,6 +248,12 @@ export default HeadingFilter;
  *
  * <p>{@code value} 는 서버로 가는 질의 값이라 번역하지 않는다 — 화면 언어가 API 계약을
  * 바꾸면 안 된다. ({@code priceLowToHight} 의 오타는 서버와 맞춰진 값이라 그대로 둔다.)
+ *
+ * <p>[JA] 並び替えオプション。
+ * 表示名ではなく文言キーを入れる。この配列はモジュール読み込み時に一度だけ評価されるので、
+ * 翻訳済み文字列をここに入れると言語を切り替えても変わらない。
+ * value はサーバーへ行くクエリ値なので翻訳しない — 画面の言語が API 契約を変えてはならない。
+ * (priceLowToHight の誤字はサーバーと合わせた値なのでそのままにする。)
  */
 const sortingOptions = [
     { key: "browse.sort.recommend", value: "" },
@@ -240,5 +266,6 @@ const sortingOptions = [
 ];
 
 /** 지금 정렬값에 해당하는 문구 키. 모르는 값이면 기본(추천순)으로 떨어진다. */
+// [JA] 今の並び替え値に当たる文言キー。知らない値なら既定(おすすめ順)に落ちる。
 const sortName = (value) =>
     sortingOptions.find((x) => x.value === value)?.key ?? "browse.sort.recommend";

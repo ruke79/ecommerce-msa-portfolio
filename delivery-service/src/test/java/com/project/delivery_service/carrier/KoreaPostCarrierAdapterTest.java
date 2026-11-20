@@ -18,6 +18,10 @@ import com.project.delivery_service.domain.DeliveryStatus;
  * <p><b>이 테스트가 존재하는 이유.</b> 실제 API 키가 없어 실호출을 검증할 수 없다. 그래서
  * HTTP 호출과 파싱을 분리하고, 파싱만 기록된 형태의 응답으로 검증한다. 키를 받으면
  * 필드 이름만 yml 에서 맞추면 되고, 매핑 규칙은 이미 고정돼 있다(docs/25 §4.1).
+ *
+ * <p>[JA] 郵便局の応答マッピング。
+ * <b>このテストが存在する理由。</b> 実際の API キーがなく実呼び出しを検証できない。そこで HTTP 呼び出しとパースを分離し、
+ * パースだけを記録された形の応答で検証する。キーを受け取ったらフィールド名だけを yml で合わせればよく、マッピング規則はすでに固定されている(docs/25 §4.1)。
  */
 @DisplayName("우체국 응답 매핑")
 class KoreaPostCarrierAdapterTest {
@@ -30,6 +34,7 @@ class KoreaPostCarrierAdapterTest {
     @ParameterizedTest(name = "'{0}' → {1}")
     @CsvSource({
             // 순서가 중요하다: '배달완료' 가 '배달' 보다 먼저 매칭돼야 한다.
+            // [JA] 順序が重要: '배달완료' が '배달' より先にマッチしなければならない。
             "배달완료,            DELIVERED",
             "배달완료(홍길동),     DELIVERED",
             "'배달 완료',          DELIVERED",
@@ -60,6 +65,8 @@ class KoreaPostCarrierAdapterTest {
     void 미지의_상태() {
         // EXCEPTION 으로 두면 택배사가 문구를 하나 바꿨을 뿐인데 정상 배송이 전부
         // '문제 있음' 으로 표시된다.
+        // [JA] EXCEPTION にすると、宅配業者が文言を一つ変えただけで正常な配送がすべて
+        //      「問題あり」と表示される。
         assertThat(adapter.mapStatus("새로운상태문구")).isEqualTo(DeliveryStatus.IN_TRANSIT);
     }
 

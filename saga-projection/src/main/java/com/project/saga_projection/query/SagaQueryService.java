@@ -28,6 +28,14 @@ import lombok.extern.slf4j.Slf4j;
  * 서비스 DNS 뿐이라 검증에 실패한다(k8s/48 의 EUREKA_INSTANCE_HOSTNAME 주석과 같은 이유). 레플리카 수가
  * standby+1 을 넘으면 이 파드에 사본이 없는 키가 생기고, 그때는 {@link Answer#NOT_HERE} 로 503 을 낸다 —
  * 조용히 "없음"으로 답하는 것보다 낫다. 입력 토픽이 파티션 하나인 지금은 하위 토폴로지마다 태스크가 하나라(사가 · 타임라인) 레플리카 2 · standby 1 이면 항상 로컬이다.
+ *
+ * <p>[JA] 対話型照会(interactive query) — 状態ストアを HTTP で開く。
+ * <b>他の Pod に回さない。</b>代わりに {@code num.standby.replicas} でストアの写しを Pod ごとに置き
+ * ({@code enableStaleStores})ローカルで答える。転送は Pod IP に HTTPS をかける必要があるが、証明書の SAN が
+ * サービス DNS だけなので検証に失敗する(k8s/48 の EUREKA_INSTANCE_HOSTNAME コメントと同じ理由)。レプリカ数が
+ * standby+1 を超えるとこの Pod に写しのないキーが生じ、そのときは {@link Answer#NOT_HERE} で 503 を返す —
+ * 黙って「なし」と答えるよりよい。入力トピックがパーティション一つの今はサブトポロジーごとにタスクが一つで(サガ · タイムライン)、
+ * レプリカ 2 · standby 1 なら常にローカルである。
  */
 @Slf4j
 @Service
@@ -50,6 +58,7 @@ public class SagaQueryService {
     }
 
     /** 소유권 검사 없음 — 내부 진단용. 게이트웨이를 거친 요청은 {@link #find(long, Long)} 로 온다. */
+    // [JA] 所有権チェックなし — 内部診断用。ゲートウェイを経たリクエストは {@link #find(long, Long)} に来る。
     public Result find(long orderId) {
         return find(orderId, null);
     }
@@ -86,6 +95,7 @@ public class SagaQueryService {
             }
         }
         // 둘 중 하나라도 대기 사본에서 읽으면 늦을 수 있다
+        // [JA] 二つのうち一つでも待機写しから読めば遅れうる
         boolean stale = !self.equals(sagaMeta.activeHost()) || !self.equals(timelineMeta.activeHost());
 
         try {
@@ -98,12 +108,14 @@ public class SagaQueryService {
             return compose(sagaStore.get(key), timelineStore.get(key), requesterId, stale);
         } catch (InvalidStateStoreException e) {
             // 리밸런스 중이거나 저장소를 아직 복구하는 중이다 — 잠깐 뒤 다시.
+            // [JA] リバランス中か、ストアをまだ復旧中である — 少し後に再試行。
             log.debug("상태 저장소를 아직 열 수 없다: {}", e.getMessage());
             return Result.of(Answer.NOT_READY);
         }
     }
 
     /** 저장소 둘 → 답. 순수 함수라 Streams 없이 검증한다. */
+    // [JA] ストア二つ → 答え。純粋関数なので Streams なしで検証する。
     static Result compose(OrderSagaState saga, OrderTimeline timeline, Long requesterId, boolean stale) {
         if (saga == null && timeline == null) {
             return Result.of(Answer.NOT_FOUND);
@@ -111,6 +123,7 @@ public class SagaQueryService {
         OrderSagaView view = OrderSagaView.of(saga, timeline, stale);
         if (requesterId != null && !requesterId.equals(view.customerId())) {
             // 남의 주문 — 있는지조차 알리지 않는다(진짜 없음과 같은 답).
+            // [JA] 他人の注文 — あるかどうかさえ知らせない(本当にない場合と同じ答え)。
             return Result.of(Answer.NOT_FOUND);
         }
         return new Result(Answer.FOUND, view, null);

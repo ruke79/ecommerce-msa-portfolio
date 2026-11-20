@@ -44,15 +44,19 @@ import com.sun.net.httpserver.HttpServer;
  * 받은 추적을 이 JVM 의 작은 HTTP 서버로 내보내는 Collector 를 띄운다. 설정 검사({@code otelcol validate})는 정책의 모르는 키를
  * 그냥 통과시켜서(확인함) 실제로 보내 남는 수를 센다. 상한을 빼면 600 개가 모두 남아 실패한다.
  *
- * <p>[JA] テールサンプリングの「エラー」·「遅い」トレースは毎秒スパン上限までしか残らない — 本番と同じ Collector で。
- *      リポジトリの設定をそのまま読み、実際にトレースを送って残る数を数える(validate は未知のキーを通す)。
+ * <p>[JA] B-102: テールサンプリングの「エラー」·「遅い」トレースは毎秒スパン上限までしか残らない — 本番と同じ Collector(0.160.0)で。
+ * 2026-10-22 実習の容量計測: エラーが 117 万件出るとそのトレースがすべて保存され、Jaeger ボリュームが 12G で観測 VM のディスク(19G)を埋めた —
+ * Jaeger は再起動を繰り返し、Grafana はストレージに書けなかった。障害が最も大きいときに観測が先に止まったのである。
+ * リポジトリの {@code observability/otel-collector.yml} から {@code tail_sampling} を<b>そのまま</b>読み(決定待ちだけ 1 秒に)、受け取った
+ * トレースをこの JVM の小さな HTTP サーバーへ送り出す Collector を立てる。設定検査({@code otelcol validate})はポリシーの未知のキーを
+ * そのまま通すので(確認済み)、実際に送って残る数を数える。上限を外すと 600 個がすべて残って失敗する。
  */
 @Tag("containers")
 @DisplayName("B-102: 오류 · 느린 추적은 초당 상한까지 — 실제 Collector 0.160.0")
 class TailSamplingBudgetTest {
 
     static final DockerImageName IMAGE = DockerImageName.parse("mirror.gcr.io/otel/opentelemetry-collector-contrib:0.160.0");
-    static final int CAP = 50;   // 시험용 상한(초당 스팬) — 운영 기본값은 설정의 env 기본값
+    static final int CAP = 50;   // 시험용 상한(초당 스팬) — 운영 기본값은 설정의 env 기본값 ／ [JA] 試験用の上限(毎秒スパン) — 運用のデフォルトは設定の env デフォルト値
     static final Pattern TRACE_ID = Pattern.compile("\"traceId\"\\s*:\\s*\"([0-9a-f]{32})\"");
 
     static HttpServer sink;
@@ -89,7 +93,7 @@ class TailSamplingBudgetTest {
         org.yaml.snakeyaml.Yaml yaml = new org.yaml.snakeyaml.Yaml();
         Map<String, Object> repo = yaml.load(Files.readString(repoRoot().resolve("observability/otel-collector.yml")));
         Map<String, Object> tail = (Map<String, Object>) ((Map<String, Object>) repo.get("processors")).get("tail_sampling");
-        tail.put("decision_wait", "1s");   // 시험을 빠르게 — 정책은 그대로
+        tail.put("decision_wait", "1s");   // 시험을 빠르게 — 정책은 그대로 ／ [JA] 試験を速く — ポリシーはそのまま
 
         Map<String, Object> cfg = new LinkedHashMap<>();
         cfg.put("receivers", Map.of("otlp", Map.of("protocols", Map.of("http", Map.of("endpoint", "0.0.0.0:4318")))));
@@ -104,7 +108,7 @@ class TailSamplingBudgetTest {
                 .withCommand("--config=/etc/budget-test.yml")
                 .withEnv("TAIL_SAMPLING_ERROR_SPANS_PER_SEC", String.valueOf(CAP))
                 .withEnv("TAIL_SAMPLING_SLOW_SPANS_PER_SEC", String.valueOf(CAP))
-                .withEnv("TAIL_SAMPLING_PERCENT", "0")   // 표본 정책이 섞이지 않게 — 상한만 본다
+                .withEnv("TAIL_SAMPLING_PERCENT", "0")   // 표본 정책이 섞이지 않게 — 상한만 본다 ／ [JA] 標本ポリシーが混ざらないように — 上限だけを見る
                 .withExposedPorts(4318)
                 .waitingFor(Wait.forLogMessage(".*Everything is ready.*", 1).withStartupTimeout(Duration.ofSeconds(90)));
         collector.start();
@@ -126,7 +130,10 @@ class TailSamplingBudgetTest {
      * <p>🐛 처음에는 나머지를 일련번호로 채웠다 — Collector 의 결정 캐시(decision_cache)는 추적 id 의 <b>뒤 8바이트</b>를 키로
      * 써서, 폭주 때 "버림" 으로 기억된 0 ~ 599 번이 뒤에 보낸 평소 오류 0 ~ 9 번과 겹쳐 함께 버려졌다(상한 아래인데 0 ~ 1 개).
      * 실제 추적 id 는 무작위라 겹치지 않는다 — 시험도 그렇게 만든다.
-     * [JA] 追跡 id の残りはランダム — 決定キャッシュは id の下位 8 バイトをキーにするため、連番だと別の追跡と衝突した。
+     * <p>[JA] トレース n 個(スパン一つずつ)を一つの要求で — すべて同じ瞬間に届く。prefix はトレース id の先頭 4 文字、残りはランダム。
+     * 🐛 最初は残りを連番で埋めていた — Collector の決定キャッシュ(decision_cache)はトレース id の<b>後ろ 8 バイト</b>をキーに使うため、
+     * 暴走時に「捨てる」と記憶された 0 〜 599 番が、後で送った平常のエラー 0 〜 9 番と重なって一緒に捨てられた(上限未満なのに 0 〜 1 個)。
+     * 実際のトレース id はランダムなので重ならない — 試験もそう作る。
      */
     private static void send(String prefix, int n, String service, boolean error, long durationMs) throws Exception {
         long end = System.currentTimeMillis() * 1_000_000L;
@@ -151,6 +158,7 @@ class TailSamplingBudgetTest {
     }
 
     /** 결정 대기(1초) · 내보내기가 끝나 그 접두사의 수가 3초 동안 그대로일 때까지. */
+    // [JA] 決定待ち(1 秒)· エクスポートが終わり、その接頭辞の数が 3 秒間変わらなくなるまで。
     private static long kept(String prefix) throws InterruptedException {
         long last = -1;
         int stable = 0;
@@ -174,7 +182,7 @@ class TailSamplingBudgetTest {
     @Test
     @DisplayName("🔴 느린 추적 600 개도 상한까지 — 시스템이 무너지면 거의 모든 요청이 느려진다")
     void slowStormIsCapped() throws Exception {
-        Thread.sleep(1500);   // 앞 시험과 다른 초에
+        Thread.sleep(1500);   // 앞 시험과 다른 초에 ／ [JA] 前の試験とは別の秒に
         send("5100", 600, "catalog-service", false, 2_000);
         long n = kept("5100");
         assertThat(n).as("남은 느린 추적").isBetween(1L, 3L * CAP);

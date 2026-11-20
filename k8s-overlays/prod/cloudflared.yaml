@@ -32,6 +32,29 @@
 #   ops/24-cloudflare-tunnel.sh   터널 생성 + 자격증명 Secret 주입 + DNS 라우트
 #
 # 그 스크립트가 만드는 Secret(cloudflared-credentials)이 없으면 파드는 CrashLoopBackOff 다.
+# [JA] Cloudflare Tunnel — 公開 IP・ロードバランサーなしで外部から接続する。
+#      ── なぜこれを使うか(ALB + ACM の代わりに) ──
+#      このプロジェクトの運用対象は OCI Ampere の無料枠である。AWS ALB はその上に付けられず、
+#      OCI の無料 LB は帯域が 10Mbps に制限される。そしてどちらにしても**インスタンスにインバウンド
+#      ポートを開けなければならない** — 公開 IP に 80/443 を開けた瞬間スキャナーが寄ってくる。
+#      トンネルは逆である。cloudflared が**外へ**出て Cloudflare エッジへの接続を維持し、
+#      トラフィックはその接続に乗って入ってくる。結果:
+#        · インバウンドポート 0 個。OCI Security List に 80/443 を開ける必要がない
+#        · TLS は Cloudflare が終端する — 証明書の発行・更新がない(ACM も cert-manager も不要)
+#        · 公開 IP が変わっても構わない。DNS も Cloudflare が CNAME で管理する
+#        · 無料
+#      代償もはっきりしている:
+#        · Cloudflare に依存する。エッジ障害 = サービス障害
+#        · 平文 HTTP でクラスタ内に入ってくる(下記 §ingress のコメント)
+#        · 無料プランはアップロード 100MB 制限がある — 商品画像のアップロードに引っかかりうる
+#      ── トラフィック経路 ──
+#        ユーザー → Cloudflare エッジ → (トンネル) → cloudflared ポッド
+#               → traefik(k3s 内蔵) → k8s/60-ingress.yaml のルール → frontend / gateway
+#      Ingress をそのまま通す理由: ホスト・パスのルーティングは既に 60-ingress.yaml が持っている。
+#      トンネルからサービスへ直接送るとそのルールをトンネル設定に複製することになり、必ずずれる。
+#      ── 先にやること ──
+#        ops/24-cloudflare-tunnel.sh   トンネル作成 + 資格情報 Secret 注入 + DNS ルート
+#      そのスクリプトが作る Secret(cloudflared-credentials)がなければポッドは CrashLoopBackOff である。
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -41,14 +64,17 @@ metadata:
 data:
   config.yaml: |
     # 터널 UUID. ops/24 가 실제 값으로 치환한다.
+    # [JA] トンネル UUID。ops/24 が実際の値に置き換える。
     tunnel: REPLACE_ME_TUNNEL_ID
     credentials-file: /etc/cloudflared/creds/credentials.json
 
     # 엣지 연결. 기본값이면 한 곳에만 붙어 그 리전이 흔들릴 때 끊긴다.
+    # [JA] エッジ接続。既定値だと 1 か所にしかつながらず、そのリージョンが揺らぐと切れる。
     protocol: quic
     ha-connections: 4
 
     # 메트릭 — 아래 프로브가 이 포트를 쓴다.
+    # [JA] メトリクス — 下のプローブがこのポートを使う。
     metrics: 0.0.0.0:2000
     no-autoupdate: true
 
@@ -74,15 +100,30 @@ data:
       # path 는 정규식이다. 게이트웨이의 Path 술어와 같은 접두사를 쓴다 — 게이트웨이에 접두사를 더하면 여기도(B-82 가 대조한다).
       # 🐛 saga-projection(주문 진행 타임라인, docs/76)이 빠져 있었다 — /saga-projection/... 이 traefik → 프론트 nginx 로 가
       #    index.html 200 을 받았다(try_files). 게이트웨이까지 오지도 않아 서버 로그에도 없었다.
-      # [JA] ゲートウェイの Path 述語と同じ接頭辞。saga-projection が抜けていて、タイムラインが index.html を受け取っていた(B-82)。
+      # [JA] ── ① API はゲートウェイへ直接送る ──
+      #      ⚠️ この規則がないと API はまったく外部から届かない。理由が二つ重なる:
+      #        · k8s/60-ingress.yaml の規則は `/` → frontend の一つだけである。ゲートウェイの経路がないため、
+      #          /user-service/... がフロントエンドへ行って 404 になる
+      #        · k8s/31-gateway-server.yaml の Service は ClusterIP である(B-85 — 以前の LoadBalancer は ops/23 の
+      #          `--disable servicelb` により外部 IP はないまま nodePort だけを全ノードに開いていた)。外からはこのトンネルでしか届かない
+      #      traefik を経由せずここから直接送る理由: ゲートウェイは自分で HTTPS を終端する(profile local の server.ssl、ポート 8000)。
+      #      標準の Ingress はバックエンドへ平文 HTTP を送るのでそのままでは繋がらず、traefik に ServersTransport を別途作る必要がある。
+      #      cloudflared は originRequest の一行で済む。
+      #      ホスト名を一つに保つことが重要である — フロントエンドと API が同一オリジンなので CORS 設定が不要で、
+      #      無料 Universal SSL のサブドメイン一段の制約にもかからない。だから REACT_APP_API_URL は単に `https://<ドメイン>` である(docs/33 §6)。
+      #      path は正規表現である。ゲートウェイの Path 述語と同じ接頭辞を使う — ゲートウェイに接頭辞を足したらここにも(B-82 が照合する)。
+      #      🐛 saga-projection(注文進行タイムライン、docs/76)が抜けていた — /saga-projection/... が traefik → フロントの nginx へ行き、
+      #      index.html の 200 を受け取っていた(try_files)。ゲートウェイまで来ないのでサーバーログにも残らなかった。
       - path: ^/((user|catalog|cart|order|pay|coupon|chat|notification|delivery)-service|saga-projection)(/|$)
         service: https://gateway-server.ecommerce.svc.cluster.local:8000
         originRequest:
           # 게이트웨이 인증서는 ops/07 이 만든 자체 서명이다. 이 구간은 클러스터
           # 내부이고 바깥 TLS 는 Cloudflare 가 이미 종단했으므로 검증하지 않는다.
+          # [JA] ゲートウェイの証明書は ops/07 が作った自己署名だ。この区間はクラスター内部で、外側の TLS は Cloudflare がすでに終端しているので検証しない。
           noTLSVerify: true
           connectTimeout: 30s
           # chat-service 의 STOMP/WebSocket 과 user-service 의 SSE 가 이 경로로 온다.
+          # [JA] chat-service の STOMP/WebSocket と user-service の SSE がこの経路で来る。
           tcpKeepAlive: 30s
 
       # ── ② 나머지는 traefik 으로 ────────────────────────────────────────
@@ -103,10 +144,12 @@ data:
       #
       #    바꾼 뒤에는 반드시 검증할 것:
       #      cloudflared --config <파일> tunnel ingress validate
+      # [JA] ── ② 残りは traefik へ。http:// だ — この区間はクラスター内部で TLS は Cloudflare がすでに終端している(https にすると traefik の自己署名証明書で失敗する)。⚠️ この規則は最後でなければならない — hostname・path がなければ catch-all で、cloudflared は catch-all の後に規則があると起動を拒否する。以前は後ろに 404 規則を置いてトンネルがまったく起動しなかった。マッチしないパスは traefik が 404 を返すので 404 規則は不要だ。変えたら必ず cloudflared tunnel ingress validate で検証する。
       - service: http://traefik.kube-system.svc.cluster.local:80
         originRequest:
           connectTimeout: 30s
           # WebSocket(chat-service)이 유휴로 끊기지 않게 한다.
+          # [JA] WebSocket(chat-service)がアイドルで切れないようにする。
           tcpKeepAlive: 30s
 ---
 apiVersion: apps/v1
@@ -119,6 +162,8 @@ metadata:
 spec:
   # 2개 이상 두면 각각 엣지에 붙어 무중단 롤아웃이 된다.
   # cloudflared 는 같은 터널에 커넥터가 여럿 붙는 것을 허용하므로 충돌하지 않는다.
+  # [JA] 2 つ以上置くとそれぞれがエッジに繋がり、無停止ロールアウトになる。
+  #      cloudflared は同じトンネルに複数のコネクタが繋がることを許すので衝突しない。
   replicas: 2
   selector:
     matchLabels:
@@ -126,13 +171,14 @@ spec:
   strategy:
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0   # 배포 중에도 최소 1개는 붙어 있게
+      maxUnavailable: 0   # 배포 중에도 최소 1개는 붙어 있게 ／ [JA] デプロイ中も最低 1 つは繋がっているように
   template:
     metadata:
       labels:
         app: cloudflared
     spec:
       # 같은 노드에 몰리면 노드 하나가 빠질 때 터널이 통째로 끊긴다.
+      # [JA] 同じノードに集まると、ノード 1 つが抜けたときにトンネルが丸ごと切れる。
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -148,6 +194,7 @@ spec:
       containers:
         - name: cloudflared
           # ⚠️ 태그를 고정한다. latest 는 롤백이 불가능하고 노드마다 다른 버전이 돌 수 있다.
+          # [JA] ⚠️ タグを固定する。latest はロールバックできず、ノードごとに違うバージョンが動きうる。
           image: cloudflare/cloudflared:2024.8.3
           args:
             - tunnel
@@ -193,4 +240,6 @@ spec:
           secret:
             # ops/24-cloudflare-tunnel.sh 가 만든다. 없으면 파드가 뜨지 않는다.
             # ⚠️ 이 Secret 은 **절대 커밋하지 않는다** — 터널 자격증명이다.
+            # [JA] ops/24-cloudflare-tunnel.sh が作る。なければポッドが起動しない。
+            #      ⚠️ この Secret は**決してコミットしない** — トンネルの資格情報である。
             secretName: cloudflared-credentials

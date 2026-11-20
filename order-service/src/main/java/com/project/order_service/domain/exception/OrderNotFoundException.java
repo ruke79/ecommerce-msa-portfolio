@@ -8,6 +8,10 @@ import com.project.common.domain.exception.DomainException;
  * <p>구매 확정(docs/25 §12)에서는 둘을 구분하지 않는다. 남의 주문에 403 을 주면 "그 번호의
  * 주문이 존재한다" 는 사실을 알려 줘 번호를 훑는 것 자체를 막지 못한다
  * ({@code OrderDataService.getOrder} 와 같은 이유). 컨트롤러는 이것을 404 로 바꾼다.
+ *
+ * <p>[JA] 注文がないか <b>リクエスト者のものではない。</b>
+ * 購入確定(docs/25 §12)では 2 つを区別しない。他人の注文に 403 を返すと「その番号の注文が存在する」という事実を教えてしまい、
+ * 番号をなめること自体を防げない({@code OrderDataService.getOrder} と同じ理由)。コントローラーはこれを 404 に変える。
  */
 public class OrderNotFoundException extends DomainException {
 

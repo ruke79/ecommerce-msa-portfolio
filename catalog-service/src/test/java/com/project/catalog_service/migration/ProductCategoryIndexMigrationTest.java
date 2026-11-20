@@ -53,6 +53,7 @@ class ProductCategoryIndexMigrationTest {
         flyway("19").migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // 큰 카테고리 하나(5만)와 작은 카테고리 스물(각 100) — 측정 데이터처럼 카테고리마다 크기가 다르다
+            // [JA] 大きなカテゴリ一つ(5 万)と小さなカテゴリ二十(各 100) — 測定データのようにカテゴリごとに大きさが違う
             exec(db, "insert into product.category (category_id, category_name, slug) "
                     + "select g, 'c' || g, 'c-' || g from generate_series(1, 21) g");
             exec(db, "insert into product.product (product_id, category_id, name, slug, brand, status, rating, version) "

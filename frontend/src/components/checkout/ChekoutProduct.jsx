@@ -13,6 +13,12 @@ import { useTranslation } from "i18n/I18nProvider";
  * ({@code <img>} 에는 없는 속성), {@code object-contained} 는 Tailwind 에 없는 클래스다.
  *
  * <p>없는 이미지는 그리지 않는다. 글자로 대신 그리는 {@code <img>} 보다 빈 자리가 낫다.
+ *
+ * <p>[JA] 決済画面下のカート要約 — サーバーの checkout 応答(CartProductDto[])を描く。
+ * 🐛 色チップが product.color.image を読んでいた。DTO のフィールドは colorImage である(カート画面は正しく読んでいた)。
+ * src={undefined} の <img> は空欄ではなく alt を文字として描く — そのためチップごとに商品名が背景のように重なって見えた。
+ * 商品画像側には Next.js の fill が残っていて(<img> にはない属性)、object-contained は Tailwind にないクラスである。
+ * ない画像は描かない。文字で代わりに描く <img> より空いた場所の方がよい。
  */
 /**
  * 상품 상세로 가는 주소 — 상품 **id** 로 간다(catalog 가 slug 로 못 찾으면 숫자를 id 로 보고, 화면이 slug 주소로 바꾼다).
@@ -20,6 +26,11 @@ import { useTranslation } from "i18n/I18nProvider";
  * <p>🐛 예전에는 이름을 slug 자리에 넣었다(`Italian Olive Oil` → `/product/Italian-Olive-Oil`). slug 는 이름과 무관한 값이라
  * ("event-much-mention") 그런 상품은 전부 "商品が見つかりません" 400 이었다. 스타일도 늘 0, 사이즈도 늘 첫 번째였다 — 담은
  * 스타일로 가고, 사이즈는 이름만 알아 인덱스를 모르므로 고르지 않는다.
+ *
+ * <p>[JA] 商品詳細へ行くアドレス — 商品 **id** で行く(catalog が slug で見つけられなければ数字を id とみなし、画面が slug アドレスに替える)。
+ * 🐛 以前は名前を slug の位置に入れていた(`Italian Olive Oil` → `/product/Italian-Olive-Oil`)。slug は名前と無関係の値なので
+ * ("event-much-mention")そういう商品はすべて「商品が見つかりません」400 だった。スタイルも常に 0、サイズも常に最初だった —
+ * 入れたスタイルへ行き、サイズは名前しか知らずインデックスが分からないので選ばない。
  */
 export function productHref(product) {
     const style = Number(product?.style) || 0;

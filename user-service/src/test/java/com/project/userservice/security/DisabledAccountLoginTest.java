@@ -36,6 +36,13 @@ import com.project.userservice.security.service.UserDetailsServiceImpl;
  * (docs/38 §1.4).
  *
  * <p>둘 중 하나만 되돌려도 게이트가 사라지므로 양쪽을 각각 세는 테스트를 둔다.
+ *
+ * <p>[JA] メール認証が<b>実際にログインを阻むか</b>を確認する。
+ * 以前は阻めなかった。{@code UserDetailsImpl.isEnabled()} が {@code true} をハードコードしており、
+ * {@link CustomAuthenticationProvider} は {@code AuthenticationProvider} を直接実装して
+ * Spring の事前チェック({@code isEnabled} など)をまったく通らなかった。二重に無効化されていたので、
+ * {@code APP_REQUIRE_EMAIL_VERIFICATION=true} にしても無効アカウントがそのままログインできた(docs/38 §1.4)。
+ * どちらか一方を戻すだけでゲートが消えるので、両方をそれぞれ確かめるテストを置く。
  */
 @DisplayName("미인증 계정 로그인 차단")
 class DisabledAccountLoginTest {

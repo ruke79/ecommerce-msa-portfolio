@@ -35,6 +35,10 @@ import com.project.common.constants.chat.MessageType;
  * <p>⚠️ 메시지 <b>저장 자체가 호출되지 않는</b> 문제(docs/16 B-24 1번)는 설계 결정이라 미해결이다.
  * 따라서 이 테스트는 리포지토리를 직접 호출해 <b>저장·조회 경로가 동작함</b>을 확인한다 —
  * 배선만 연결하면 바로 쓸 수 있는 상태라는 뜻이기도 하다.
+ *
+ * <p>[JA] chat-service 統合テスト — 実際の MongoDB/PostgreSQL/Redis の上で。
+ * <p>チャット経路は MongoDB なしではまったく検証できず、そのため長い間未検証のまま残っていた。実際に接続してみると<b>TLS ハードコード(B-23)</b>と<b>保存経路の欠陥 3 件(B-24)</b>が明らかになった。ここではそのうちコードで直せた部分が維持されることを固定する。
+ * <p>⚠️ メッセージの<b>保存自体が呼ばれない</b>問題(docs/16 B-24 の 1 番)は設計判断なので未解決である。したがってこのテストはリポジトリを直接呼んで<b>保存・照会経路が動作すること</b>を確認する — 配線さえつなげばすぐ使える状態だという意味でもある。
  */
 @Tag("containers")
 @Testcontainers
@@ -62,6 +66,8 @@ class ChatServiceIntegrationTest {
     static void properties(DynamicPropertyRegistry registry) {
         // ssl=false 로 붙는다 — 예전에는 클라이언트가 TLS 를 하드코딩해 이 설정을 무시했고,
         // TLS 없는 MongoDB 에는 아예 접속할 수 없었다(docs/16 B-23).
+        // [JA] ssl=false で接続する — 以前はクライアントが TLS をハードコードしてこの設定を無視し、
+        //      TLS なしの MongoDB にはまったく接続できなかった(docs/16 B-23)。
         registry.add("spring.data.mongodb.client",
                 () -> mongo.getConnectionString() + "/chat?ssl=false");
         registry.add("spring.data.mongodb.name", () -> "chat");
@@ -80,6 +86,7 @@ class ChatServiceIntegrationTest {
 
         registry.add("eureka.client.enabled", () -> false);
         // 백그라운드 정비(인덱스 · 옛 시각 보정)는 테스트가 직접 부른다 — 심어 둔 문서의 시각을 몰래 옮기지 않게.
+        // [JA] バックグラウンド整備(インデックス・古い時刻の補正)はテストが直接呼ぶ — 仕込んだドキュメントの時刻をこっそり動かさないように。
         registry.add("chat.message-maintenance.enabled", () -> false);
         registry.add("eureka.client.register-with-eureka", () -> false);
         registry.add("eureka.client.fetch-registry", () -> false);
@@ -140,6 +147,8 @@ class ChatServiceIntegrationTest {
     void roomIdIsNotOverwrittenByNickname() {
         // 매퍼가 인자 순서를 뒤바꿔 넘기던 시절에는 roomId 자리에 닉네임이 들어가
         // findByRoomId 로 영영 조회되지 않았다. 매퍼를 거친 뒤에도 방으로 찾을 수 있어야 한다.
+        // [JA] マッパーが引数の順序を入れ替えて渡していた頃は roomId の位置にニックネームが入り
+        //      findByRoomId で永遠に照会されなかった。マッパーを経た後もルームで探せなければならない。
         var dto = com.project.chat_service.dto.MessageDto.builder()
                 .id("3001").type(MessageType.TEXT_TALK).roomId("room-c")
                 .senderId(7L).nickname("테스터")
@@ -193,6 +202,7 @@ class ChatServiceIntegrationTest {
         chatMessageRepository.save(message("1001", "room-a", "정상", 1785196001000L));
         chatMessageRepository.save(message("1004", "room-a", "타임스탬프 없음", 0L));
         // 실제로는 필드 자체가 없는 문서가 있을 수 있다. 매퍼가 이를 견디는지 확인한다.
+        // [JA] 実際にはフィールド自体がないドキュメントがあり得る。マッパーがそれに耐えるか確認する。
         ChatMessage noTimestamp = message("1005", "room-a", "필드 없음", 0L);
         noTimestamp.setCreatedAt(null);
         chatMessageRepository.save(noTimestamp);
@@ -201,6 +211,7 @@ class ChatServiceIntegrationTest {
 
         assertThat(all).hasSize(3);
         // 방 전체를 DTO 로 옮길 때 한 건 때문에 예외가 나면 안 된다(예전엔 HTTP 500 이었다).
+        // [JA] ルーム全体を DTO に移すときに 1 件のせいで例外が出てはならない(以前は HTTP 500 だった)。
         assertThat(all.stream().map(MessageMapper::fromChatMessage).toList()).hasSize(3);
     }
 
@@ -210,6 +221,9 @@ class ChatServiceIntegrationTest {
         // 소비자 측 저장(docs/16 B-24 배선)을 켠 뒤 생긴 새 위험이다. Kafka 는 at-least-once 라
         // 같은 메시지가 다시 오는데, 엔티티가 생산자 시퀀스 id 를 싣지 않으면 MongoDB 가 매번
         // 새 _id 를 만들어 **같은 대화가 여러 번 저장**된다.
+        // [JA] コンシューマ側での保存(docs/16 B-24 の配線)を有効にした後に生まれた新しいリスクである。Kafka は at-least-once なので
+        //      同じメッセージが再び来るが、エンティティがプロデューサのシーケンス id を載せないと MongoDB が毎回
+        //      新しい _id を作り、**同じ会話が何度も保存**される。
         var dto = com.project.chat_service.dto.MessageDto.builder()
                 .id("seq-9001").type(MessageType.TEXT_TALK).roomId("room-dup")
                 .senderId(7L).nickname("테스터")
@@ -248,6 +262,7 @@ class ChatServiceIntegrationTest {
         Long id = thread.getId();
 
         // 고객 메시지(acceptMessage 와 같은 순서): 스레드를 읽고 요약을 바꾼다 → 커밋 전에 상담원이 맡는다 → 커밋.
+        // [JA] 顧客メッセージ(acceptMessage と同じ順序): スレッドを読み要約を変える → コミット前に相談員が担当する → コミット。
         tx.executeWithoutResult(s -> {
             var t = supportThreads.findById(id).orElseThrow();
             t.recordMessage("주문이 아직 안 왔어요", true, java.time.Instant.now());
@@ -261,6 +276,7 @@ class ChatServiceIntegrationTest {
 
         var after = supportThreads.findById(id).orElseThrow();
         // 예전에는 메시지 쪽 UPDATE 가 모든 컬럼을 다시 써 WAITING · 담당자 없음으로 돌아갔다.
+        // [JA] 以前はメッセージ側の UPDATE がすべてのカラムを書き直し、WAITING・担当者なしに戻っていた。
         assertThat(after.getStatus()).isEqualTo(com.project.chat_service.constants.SupportThreadStatus.ACTIVE);
         assertThat(after.getAgentId()).isEqualTo(900L);
         assertThat(after.getLastMessagePreview()).isEqualTo("주문이 아직 안 왔어요");
@@ -279,6 +295,7 @@ class ChatServiceIntegrationTest {
         var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
             // user-deleted 처리(UserMessageListener.userDeleted 와 같은 순서): 잠그고 읽어 익명화 → 커밋 전에 잠시 멈춘다.
+            // [JA] user-deleted 処理(UserMessageListener.userDeleted と同じ順序): ロックして読み匿名化 → コミット前に少し止まる。
             var deleted = pool.submit(() -> tx.executeWithoutResult(s -> {
                 chatMembers.findForUpdate(777L).orElseThrow().anonymize();
                 chatMembers.flush();
@@ -291,6 +308,7 @@ class ChatServiceIntegrationTest {
             }));
             locked.await();
             // 그 사이에 user-updated 처리 — 예전처럼 그냥 읽었다면 익명화 전 값을 보고 시각 검사를 통과했다.
+            // [JA] その間に user-updated 処理 — 以前のように単に読んでいたら匿名化前の値を見て時刻検査を通っていた。
             var updated = pool.submit(() -> tx.execute(s ->
                     chatMembers.findForUpdate(777L).orElseThrow().applyProfile("되살아난 이름", null, 1_000L)));
             deleted.get();

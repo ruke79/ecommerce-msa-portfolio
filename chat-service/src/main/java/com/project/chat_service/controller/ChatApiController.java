@@ -53,6 +53,10 @@ public class ChatApiController {
         // 도착하지 않았거나 chat-service 배포 전에 가입한 사용자) 서비스가 즉석에서
         // 만드는데, 그때 member_id 로 user-service 의 userId 가 필요하다.
         // 예전에는 회원 행이 없으면 NPE 로 500 이 났다.
+        // [JA] userId も一緒に渡す。このユーザーの chat_member 行がまだなければ(加入イベントが
+        //      届いていない、または chat-service デプロイ前に加入したユーザー)、サービスが即席で
+        //      作るが、そのとき member_id として user-service の userId が必要になる。
+        //      以前は会員行がなければ NPE で 500 になっていた。
         ChatRoomDto dto = chatService.createChatRoom(chatroomReqest.getRoomName(), getMemberId(request));
 
         return dto;
@@ -81,9 +85,13 @@ public class ChatApiController {
                 HttpServletRequest request) {
         // 방 목록(GET /rooms)이 모든 인증 사용자에게 공개되는 공개 채팅방 모델이므로,
         // 여기서는 "유효한 인증"만 요구하고 방 참여 이력은 별도로 강제하지 않는다.
+        // [JA] ルーム一覧(GET /rooms)がすべての認証ユーザーに公開される公開チャットルームモデルなので、
+        //      ここでは「有効な認証」だけを要求し、ルーム参加履歴は別途強制しない。
         getMemberId(request);
         // 🔒 상담 기록은 여기로 읽을 수 없다 — 이 경로는 방 참여를 확인하지 않는다(공개 방 전제). 상담은
         //    본인·상담원만 보는 /api/chat/support/threads/{id}/messages 로 읽는다(docs/58).
+        // [JA] 🔒 相談記録はここからは読めない — この経路はルーム参加を確認しない(公開ルーム前提)。相談は
+        //      本人・相談員だけが見る /api/chat/support/threads/{id}/messages で読む(docs/58)。
         if (com.project.chat_service.model.SupportThread.isSupportRoom(roomId)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
@@ -96,6 +104,7 @@ public class ChatApiController {
 
 
     /** 검증된 토큰의 uid 클레임 — 신원이자 chat_member.member_id. 없으면 401(docs/48 §6-⑥). */
+    // [JA] 検証済みトークンの uid クレーム — 身元であり chat_member.member_id。なければ 401(docs/48 §6-⑥)。
     private Long getMemberId(HttpServletRequest request) {
         Long memberId = tokenHandler.resolveVerifiedUserId(request.getHeader("Authorization"));
         if (memberId == null) {

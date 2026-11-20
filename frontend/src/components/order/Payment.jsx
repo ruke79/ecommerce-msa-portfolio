@@ -32,6 +32,8 @@ function reducer(state, action) {
     default:
       // default 가 없으면 모르는 액션에서 undefined 를 반환하고, 다음 렌더에서
       // state.loading 접근이 터진다. 상태 머신은 항상 상태를 돌려줘야 한다.
+      // [JA] default がないと知らないアクションで undefined を返し、次のレンダーで
+      //      state.loading へのアクセスが落ちる。ステートマシンは常に状態を返さなければならない。
       return state;
   }
 }
@@ -45,9 +47,12 @@ const Payment = ({ order, setLoading, setOrder }) => {
   const [{ isPending, options: paypalOptions }, paypalDispatch] = usePayPalScriptReducer();
 
   // 제공자에게 청구할 통화·금액 — 상점 통화의 total 이 아니다(util/money.js).
+  // [JA] プロバイダーに請求する通貨・金額 — ストア通貨の total ではない(util/money.js)。
   const charge = chargeOf(order);
   // 포트원 결제수단: 카드 또는 가상계좌. 가상계좌는 결제창이 계좌를 발급하고 끝난다 —
   // 입금은 나중이고, 포트원이 입금을 보면 웹훅으로 알려 준다(docs/49 §11).
+  // [JA] ポートワン決済手段: カードまたは仮想口座。仮想口座は決済ウィンドウが口座を発行して終わる —
+  //      入金は後で、ポートワンが入金を見るとウェブフックで知らせてくれる(docs/49 §11)。
   const [chosenPortOnePayMethod, setPortOnePayMethod] = useState("card");
   // 가상계좌는 국내(KRW) 채널에만 있다 — 이니시스 일본결제(JPY)는 카드 · 편의점 · 간편결제뿐이라 고를 수 없게 한다(카드 고정).
   // [JA] バーチャル口座は国内(KRW)チャネルだけ — イニシス日本決済(JPY)には無いので選べない(カード固定)。
@@ -59,6 +64,12 @@ const Payment = ({ order, setLoading, setOrder }) => {
    * <b>영원히 true</b> 였다. PayPal 버튼은 SDK 의 {@code isPending} 을 보므로 멀쩡했지만,
    * Stripe·포트원 버튼은 {@code disabled={state.loading}} 이라 <b>처음부터 "이동 중…" 인 채
    * 눌리지 않았다.</b> 진행 중은 사용자가 버튼을 누른 뒤부터다(PAY_REQUEST).
+   *
+   * <p>[JA] 決済の進行状態。🐛 {@code loading: true} で始まり、戻す箇所が
+   * {@code if (!order.trackingId)} ひとつだけだった — 実際の注文には trackingId が常にあるので
+   * <b>永遠に true</b> だった。PayPal ボタンは SDK の {@code isPending} を見るので無事だったが、
+   * Stripe・ポートワンのボタンは {@code disabled={state.loading}} なので <b>最初から「移動中…」のまま
+   * 押せなかった。</b> 進行中はユーザーがボタンを押した後からだ(PAY_REQUEST)。
    */
   const [state, dispatch] = useReducer(reducer, {
     loading: false,
@@ -83,6 +94,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
   //       value: "pending",
   //     });
   //   }
+  // [JA] (コメントアウトされた旧コード)order.trackingId があるときだけ PayPal SDK オプションを設定
 
   // }, [order, paypalDispatch]);
 
@@ -93,6 +105,12 @@ const Payment = ({ order, setLoading, setOrder }) => {
    * 청구 통화가 다르면(일본 테스트 JPY) 스크립트를 그 통화로 **다시** 로드해야 한다 —
    * createOrder 에 currency_code 만 바꿔 보내면 SDK 통화와 어긋나 PayPal 이 거절한다.
    * 같은 통화면 아무것도 하지 않는다(다시 로드하면 버튼이 깜빡인다).
+   *
+   * <p>[JA] PayPal SDK の通貨をこの注文の請求通貨に合わせる。
+   * SDK は App で一度ロードされ通貨がそこに固定される(initialOptions.currency)。注文の
+   * 請求通貨が違えば(日本テスト JPY)スクリプトをその通貨で **再ロード** しなければならない —
+   * createOrder の currency_code だけ変えて送ると SDK の通貨とずれて PayPal が拒否する。
+   * 同じ通貨なら何もしない(再ロードするとボタンがちらつく)。
    */
   useEffect(() => {
     if (order.paymentMethod !== "paypal") return;
@@ -113,10 +131,18 @@ const Payment = ({ order, setLoading, setOrder }) => {
    * `/api/order/{id}` 로 받은 주문을 그리고 있고, 그 총액은 서버가 장바구니와 쿠폰으로
    * 직접 계산한 값이다(docs/40 #10). 브라우저가 정한 숫자를 PayPal 로 넘기는 것이
    * 아니다. 결제가 끝나면 서버가 실제 결제액을 이 총액과 다시 대조한다.
+   *
+   * <p>[JA] PayPal 注文を作る。
+   * ここで使う {@code order.total} は <b>サーバーがくれた注文総額</b>だ — この画面は
+   * `/api/order/{id}` で受けた注文を描いており、その総額はサーバーがカートとクーポンで
+   * 直接計算した値だ(docs/40 #10)。ブラウザが決めた数字を PayPal に渡しているのでは
+   * ない。決済が終わるとサーバーが実際の決済額をこの総額と再度照合する。
    */
   async function createOrderHanlder(data, actions) {
     // 결제창을 열기 전에 서버에 결제 시작을 알린다 — 재고 예약 갱신과 쿠폰 잡기(coupon V7). 예전에는 PayPal 만 이 단계를 건너뛰어,
     // 같은 쿠폰의 다른 주문이 결제 중이어도 PayPal 창이 열렸다. 거절되면(400) 이유를 띄우고 창을 열지 않는다.
+    // [JA] 決済ウィンドウを開く前にサーバーへ決済開始を知らせる — 在庫予約の更新とクーポン確保(coupon V7)。以前は PayPal だけこの段階を飛ばし、
+    //      同じクーポンの別注文が決済中でも PayPal ウィンドウが開いた。拒否されたら(400)理由を表示しウィンドウを開かない。
     if (!(await renewStockHold())) {
       throw new Error(t("payment.error.not_completed"));
     }
@@ -126,6 +152,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
           {
             amount: {
               // 청구 통화·금액. JPY 는 소수가 없다 — "1500.00" 은 PayPal 이 거절한다.
+              // [JA] 請求通貨・金額。JPY には小数がない — "1500.00" は PayPal が拒否する。
               value: amountString(charge.amount, charge.currency),
               currency_code: charge.currency,
             },
@@ -149,6 +176,15 @@ const Payment = ({ order, setLoading, setOrder }) => {
    *
    * <p>또한 백엔드 기록이 실패하면 이제 그걸 <b>실패로 표시한다.</b> 예전에는 성공 경로에서만
    * 상태를 갱신하고 실패는 아무 데도 표시되지 않아, 화면은 계속 "결제 중"이었다.
+   *
+   * <p>[JA] 決済承認。<b>capture はちょうど一度だけ呼ぶ。</b>
+   * 以前のコードは {@code actions.order.capture()} を二度呼んでいた。一度目の結果は使わずに
+   * 捨ててから二度目を呼んだが、PayPal はキャプチャ済み注文の再キャプチャを
+   * {@code ORDER_ALREADY_CAPTURED} で拒否する。しかもバックエンドに決済を記録する呼び出しが
+   * よりによって <b>二度目のキャプチャの .then の中</b>にあった — そのためお金は引き落とされたのに注文は永遠に
+   * 未決済のまま残った。ユーザーには「決済したのに注文に反映されない」と見える。
+   * また、バックエンドの記録が失敗したら今はそれを <b>失敗として表示する。</b> 以前は成功経路でしか
+   * 状態を更新せず失敗はどこにも表示されず、画面はずっと「決済中」だった。
    */
   async function onApproveHandler(data, actions) {
     dispatch({ type: "PAY_REQUEST" });
@@ -171,6 +207,8 @@ const Payment = ({ order, setLoading, setOrder }) => {
 
       // 서버에 기록된 뒤에만 화면을 결제 완료로 바꾼다. 순서를 바꾸면 기록 실패 시
       // 화면만 결제 완료가 되어 사용자가 다시 결제하지 않는다.
+      // [JA] サーバーに記録された後でのみ画面を決済完了に変える。順序を逆にすると記録失敗時に
+      //      画面だけ決済完了になり、ユーザーが決済し直さない。
       setOrder({ ...order, orderStatus: "PAID" });
       reduxDispatch(emptyCart());
       dispatch({ type: "PAY_SUCCESS", payload: res.data });
@@ -201,6 +239,15 @@ const Payment = ({ order, setLoading, setOrder }) => {
    *
    * <p>취소는 다른 연산이므로 다른 문을 쓴다(`/payment/paypal/cancel`). 그쪽은 캡처를
    * 요구하지 않고, 결제 아웃박스에도 쓰지 않으며, **이미 결제된 주문은 거절한다.**
+   *
+   * <p>[JA] 決済キャンセル — PayPal ウィンドウを承認せずに閉じたとき。
+   * 🐛 以前は <b>承認と同じエンドポイント</b>(`/payment/paypal`)を呼び、本文に
+   * `paymentStatus: "CANCELED"` を載せていた。しかしサーバーはそのフィールドを **わざと読まない**
+   * — ブラウザに決済状態を決めさせることが決済検証の欠陥の出発点だった
+   * (docs/35)。そのためキャンセルも決済として扱われ PayPal キャプチャ検証に引っかかり、承認すらしていない
+   * 注文は PayPal で `CREATED` なので **常に 400** だった(上の <pre> のとおり)。
+   * キャンセルは別の操作なので別の入口を使う(`/payment/paypal/cancel`)。そちらはキャプチャを
+   * 要求せず、決済アウトボックスにも書かず、**既に決済済みの注文は拒否する。**
    */
   async function onCancelHandler(id) {
     try {
@@ -210,6 +257,11 @@ const Payment = ({ order, setLoading, setOrder }) => {
       //
       // 🔒 userEmail 은 보내지 않는다. 요청자는 게이트웨이가 검증한 헤더가 정한다 —
       //    본문으로 보내면 남의 주문을 취소할 수 있다.
+      // [JA] 以前は `order.paymentStatus = ...` で親がくれたオブジェクトを直接書き換えていた。props で受けた
+      //      オブジェクトを変形すると React は変化に気づかず(参照が同じ)再描画しない。画面が
+      //      更新されたように見えたのは横で setOrder が一緒に呼ばれていたからにすぎない。
+      //      🔒 userEmail は送らない。要求者はゲートウェイが検証したヘッダーが決める —
+      //      本文で送ると他人の注文をキャンセルできてしまう。
       const cancelation = {
         orderId: order.id,
         trackingId: order.trackingId,
@@ -239,6 +291,12 @@ const Payment = ({ order, setLoading, setOrder }) => {
    * "빌드 시점에 박히는 client id" 문제가 구조적으로 생기지 않는다.
    *
    * <p>🔒 금액을 보내지 않는다. 서버가 주문에서 읽는다(docs/35).
+   *
+   * <p>[JA] Stripe 決済開始。
+   * サーバーが Checkout セッションを作り URL を返すとそこへ移動する。<b>ブラウザに
+   * Stripe キーは要らない</b> — セッションをサーバーが作るからだ。PayPal で経験した
+   * 「ビルド時に埋め込まれる client id」問題が構造的に起きない。
+   * 🔒 金額を送らない。サーバーが注文から読む(docs/35)。
    */
   /**
    * 결제창을 열기 직전 — 재고 예약을 새로 잡는다(docs/59 §8). 결제 화면에 오래 머물면 주문 때 잡은 30분이 지나 있을 수 있다.
@@ -246,10 +304,16 @@ const Payment = ({ order, setLoading, setOrder }) => {
    *
    * <p>모자라면 서버가 400 과 이유("재고가 부족해 결제를 시작하지 못했습니다…")를 준다 — 그 이유로 멈춘다(false). 그 밖의
    * 실패(네트워크·5xx)는 막지 않는다 — 주문 생성과 같은 fail-open 이고, 결제 뒤 부족분 환불이 받는다.
+   *
+   * <p>[JA] 決済ウィンドウを開く直前 — 在庫予約を取り直す(docs/59 §8)。決済画面に長く留まると注文時に取った 30 分が過ぎていることがある。
+   * 特にポートワンの仮想口座は口座が決済ウィンドウ内で発行され、その後は止められない。
+   * 足りなければサーバーが 400 と理由(「在庫が不足して決済を開始できませんでした…」)を返す — その理由で止まる(false)。それ以外の
+   * 失敗(ネットワーク・5xx)は止めない — 注文作成と同じ fail-open で、決済後の不足分返金が受け止める。
    */
   async function renewStockHold() {
     try {
       // 창마다의 결제 시도 키(order V27) — 다른 탭이 이 주문을 결제 중이면 서버가 400 과 이유를 준다.
+      // [JA] ウィンドウごとの決済試行キー(order V27) — 別タブがこの注文を決済中ならサーバーが 400 と理由を返す。
       const { data } = await postRequest(`/order-service/api/order/payment/stock-hold/${order.trackingId}`, {},
         "application/json", { headers: { "Payment-Attempt": paymentAttemptKey(order.trackingId) } });
       if (data?.stockHoldUntil) {
@@ -279,6 +343,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
         throw new Error(t("payment.error.no_checkout_url"));
       }
       // replace 가 아니라 assign 이다 — 결제를 취소하고 뒤로 가면 이 화면으로 돌아와야 한다.
+      // [JA] replace ではなく assign だ — 決済をキャンセルして戻るとこの画面に戻ってこなければならない。
       window.location.assign(data.url);
     } catch (error) {
       console.error("Stripe session error: ", error);
@@ -303,6 +368,16 @@ const Payment = ({ order, setLoading, setOrder }) => {
    *
    * <p>{@code merchant_uid} 는 우리 {@code trackingId} 다. 웹훅이 어느 주문인지 아는
    * 근거가 되므로 <b>반드시</b> 넣어야 한다.
+   *
+   * <p>[JA] ポートワン決済開始。
+   * Stripe とは <b>形が違う</b>。Stripe はサーバーがセッションを作りブラウザが移動するが、
+   * ポートワンは <b>ブラウザが決済ウィンドウを開く</b>(PayPal と同じ)。そのため開始リクエストがなく、
+   * 決済ウィンドウが閉じた後に確認リクエストだけ送る。
+   * 🔒 {@code amount} はブラウザが決める — それでよい理由はサーバーが確認段階で
+   * <b>ポートワンが知らせた実際の決済額を DB の注文総額と照合</b>するからだ。ユーザーが
+   * 1 ウォンに変えて決済すると決済はされるが <b>注文には反映されない</b>(docs/35)。
+   * {@code merchant_uid} はこちらの {@code trackingId} だ。ウェブフックがどの注文か分かる
+   * 根拠になるので <b>必ず</b> 入れなければならない。
    */
   async function onPortOneHandler() {
     const version = portOneVersion();
@@ -329,23 +404,31 @@ const Payment = ({ order, setLoading, setOrder }) => {
           // 포트원 콘솔의 결제 채널에서 고른 PG 와 **같아야** 한다. 채널이 KG이니시스면
           // html5_inicis, 토스페이먼츠면 tosspayments, 나이스면 nice — 다르면 결제창이
           // "등록되지 않은 PG" 로 뜬다. 빌드 인자로 받고 기본은 테스트 상점의 이니시스다.
+          // [JA] ポートワンコンソールの決済チャネルで選んだ PG と **同じでなければならない**。チャネルが KG イニシスなら
+          //      html5_inicis、トスペイメンツなら tosspayments、ナイスなら nice — 違うと決済ウィンドウが
+          //      「登録されていない PG」と表示される。ビルド引数で受け、デフォルトはテスト店舗のイニシスだ。
           pg: process.env.REACT_APP_PORTONE_PG || "html5_inicis",
           // 가상계좌는 pay_method: "vbank". 발급되면 콜백의 status 가 "ready" 로 오고
           // 서버가 포트원에 조회해 계좌를 주문에 붙인다 — 입금 대기(UNPAID).
+          // [JA] 仮想口座は pay_method: "vbank"。発行されるとコールバックの status が "ready" で来て
+          //      サーバーがポートワンに照会し口座を注文に付ける — 入金待ち(UNPAID)。
           pay_method: portOnePayMethod === "vbank" ? "vbank" : "card",
           merchant_uid: order.trackingId,
           name: t("payment.portone.order_name", { id: order.id }),
           // 청구 금액(KRW). 상점 통화의 total 이 아니다 — 서버가 이 값과 대조한다.
+          // [JA] 請求金額(KRW)。ストア通貨の total ではない — サーバーがこの値と照合する。
           amount: charge.amount,
           currency: charge.currency,
           buyer_email: user.email,
         },
         async (response) => {
           // success 가 false 면 사용자가 취소했거나 PG 가 거절한 것이다.
+          // [JA] success が false ならユーザーがキャンセルしたか PG が拒否したのだ。
           if (!response.success) {
             dispatch({
               type: "PAY_FAIL",
               // PG 가 쓴 문구(대개 한국어)를 그대로 띄우지 않는다 — 알아보고 화면 언어로(util/portoneError).
+              // [JA] PG が書いた文言(たいてい韓国語)をそのまま出さない — 判別して画面の言語で(util/portoneError)。
               payload: portOneFailureText(t, lang, response),
             });
             return;
@@ -354,6 +437,8 @@ const Payment = ({ order, setLoading, setOrder }) => {
           try {
             // 🔒 보내는 것은 imp_uid 하나다. 금액도 상태도 보내지 않는다 —
             //    서버가 포트원에 다시 조회해 확인한다.
+            // [JA] 🔒 送るのは imp_uid ひとつだ。金額も状態も送らない —
+            //      サーバーがポートワンに再照会して確認する。
             const res = await postRequest("/order-service/api/order/payment/portone/confirm", {
               trackingId: order.trackingId,
               providerPaymentId: response.imp_uid,
@@ -363,6 +448,8 @@ const Payment = ({ order, setLoading, setOrder }) => {
             console.error("PortOne confirm error: ", error);
             // 결제는 됐는데 반영이 실패한 상태다. 웹훅이 뒤늦게 반영할 수 있으므로
             // "실패"가 아니라 "확인 중"이라고 말한다.
+            // [JA] 決済はされたが反映が失敗した状態だ。ウェブフックが遅れて反映しうるので
+            //      「失敗」ではなく「確認中」と言う。
             dispatch({
               type: "PAY_FAIL",
               payload: t("payment.confirm_delayed"),
@@ -392,6 +479,15 @@ const Payment = ({ order, setLoading, setOrder }) => {
    *
    * <p>⚠️ 통화. 국내 PG 는 KRW 로 결제한다. 이 상점의 주문 총액이 USD 면 서버의 통화
    * 대조에서 거절된다 — 상점 통화(PAYPAL_CURRENCY)와 여기 통화가 같아야 한다(docs/49 §6).
+   *
+   * <p>[JA] ポートワン <b>V2</b> — アカウントに {@code imp…} がなく {@code store-…} だけあるとき。
+   * V1 と違う点は三つ: 決済 id を <b>こちらが</b> 決める({@code paymentId}、試行ごとに新しい値)。
+   * 注文との紐付けは {@code merchant_uid} ではなく {@code customData} — サーバーがポートワンに照会しそこから trackingId を読む。
+   * PG コードではなく <b>チャネルキー</b>でチャネルを選ぶ(コンソール → 決済チャネル → チャネルキー)。
+   * 金額をブラウザが決めてよい理由は V1 と同じ — サーバーがポートワンの知らせた実際の
+   * 決済額を DB の注文総額と照合する(docs/35)。
+   * ⚠️ 通貨。国内 PG は KRW で決済する。このストアの注文総額が USD ならサーバーの通貨
+   * 照合で拒否される — ストア通貨(PAYPAL_CURRENCY)とここの通貨が同じでなければならない(docs/49 §6)。
    */
   async function onPortOneV2Handler() {
     const storeId = process.env.REACT_APP_PORTONE_STORE_ID;
@@ -417,10 +513,13 @@ const Payment = ({ order, setLoading, setOrder }) => {
         paymentId,
         orderName: t("payment.portone.order_name", { id: order.id }),
         // 청구 통화·금액은 주문이 안다 — 서버가 주문 생성 때 환율로 정해 저장했다.
+        // [JA] 請求通貨・金額は注文が知っている — サーバーが注文作成時に為替レートで決めて保存した。
         totalAmount: charge.amount,
         currency: portOneCurrencyCode(charge.currency),
         // 가상계좌는 VIRTUAL_ACCOUNT + 유효 시간. 발급되면 status 가 VIRTUAL_ACCOUNT_ISSUED 로
         // 남고, 서버가 포트원에 조회해 계좌를 주문에 붙인다 — 입금 대기(UNPAID).
+        // [JA] 仮想口座は VIRTUAL_ACCOUNT + 有効時間。発行されると status が VIRTUAL_ACCOUNT_ISSUED で
+        //      残り、サーバーがポートワンに照会し口座を注文に付ける — 入金待ち(UNPAID)。
         payMethod: portOnePayMethod === "vbank" ? "VIRTUAL_ACCOUNT" : "CARD",
         ...(portOnePayMethod === "vbank"
           ? { virtualAccount: { accountExpiry: { validHours: 48 } } }
@@ -443,6 +542,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
       });
 
       // V2 는 실패를 예외가 아니라 code 가 있는 응답으로 준다(사용자 취소 포함).
+      // [JA] V2 は失敗を例外ではなく code のある応答で返す(ユーザーキャンセルを含む)。
       if (!response || response.code !== undefined) {
         dispatch({
           type: "PAY_FAIL",
@@ -453,6 +553,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
 
       try {
         // 🔒 보내는 것은 paymentId 하나다. 금액도 상태도 보내지 않는다.
+        // [JA] 🔒 送るのは paymentId ひとつだ。金額も状態も送らない。
         const res = await postRequest("/order-service/api/order/payment/portone/confirm", {
           trackingId: order.trackingId,
           providerPaymentId: response.paymentId ?? paymentId,
@@ -475,6 +576,10 @@ const Payment = ({ order, setLoading, setOrder }) => {
    * 포트원 복귀 확인의 결과. 서버가 orderStatus 를 말해 준다 — PAID 면 결제 완료,
    * UNPAID 면 가상계좌가 발급된 것이라 입금 안내를 보여 줘야 한다(BankTransfer).
    * 장바구니는 PAID 일 때만 비운다 — 입금 전에 비우면 기한이 지나 접힌 주문의 장바구니가 없다.
+   *
+   * <p>[JA] ポートワン復帰確認の結果。サーバーが orderStatus を教えてくれる — PAID なら決済完了、
+   * UNPAID なら仮想口座が発行されたので入金案内を見せる必要がある(BankTransfer)。
+   * カートは PAID のときだけ空にする — 入金前に空にすると期限切れで畳まれた注文のカートがなくなる。
    */
   function afterPortOneConfirm(res) {
     const status = res?.data?.orderStatus === "UNPAID" ? "UNPAID" : "PAID";
@@ -522,6 +627,8 @@ const Payment = ({ order, setLoading, setOrder }) => {
                 <div className="flex items-center ">
                   {/* 결제 화면(checkout/Payment.jsx)과 같은 파일 — id 로 경로를 조립하면
                       stripe·portone 은 PNG 가 없어 깨진다. paymentMethods 의 icon 을 쓴다. */}
+                  {/* [JA] 決済画面(checkout/Payment.jsx)と同じファイル — id でパスを組み立てると
+                      stripe・portone は PNG がなく壊れる。paymentMethods の icon を使う。 */}
                   <img
                     src={`${process.env.PUBLIC_URL}${payment.icon}`}
                     alt={paymentMethodName(payment, t)}
@@ -559,8 +666,13 @@ const Payment = ({ order, setLoading, setOrder }) => {
           *    그래서 "무통장입금"을 골라도 PayPal 버튼이 떴다. 결제수단 선택이
           *    화면에만 있고 <b>아무 동작도 하지 않았다.</b>
           */}
+        {/* [JA] 🐛 <b>ここが決済手段と無関係に PayPal ボタンだけ描いていた。</b> 分岐条件が
+            コメントアウトされたままだった。そのため「銀行振込」を選んでも PayPal ボタンが出た。決済手段の選択が
+            画面にあるだけで <b>何の動作もしなかった。</b> */}
         {/* 청구 통화가 상점 통화와 다르면(포트원 KRW · 일본 JPY) 실제로 결제될 금액을 보여 준다.
             total 만 보이면 사용자는 결제창의 금액이 왜 다른지 알 수 없다. */}
+        {/* [JA] 請求通貨がストア通貨と違えば(ポートワン KRW・日本 JPY)実際に決済される金額を見せる。
+            total だけ見えるとユーザーは決済ウィンドウの金額がなぜ違うのか分からない。 */}
         {charge.currency !== STORE_CURRENCY && (
           <p className="mt-2 text-sm text-slate-700" data-testid="charge-summary">
             {t("payment.charge_amount")}: <b>{money(charge.amount, charge.currency)}</b>
@@ -571,6 +683,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
         )}
 
         {/* 결제 전 재고 예약(docs/59) — 언제까지 결제해야 재고가 보장되는지. */}
+        {/* [JA] 決済前の在庫予約(docs/59) — いつまでに決済すれば在庫が保証されるか。 */}
         <StockHoldNotice order={order} />
 
         <div className="mt-2">
@@ -589,6 +702,7 @@ const Payment = ({ order, setLoading, setOrder }) => {
 
           {order.paymentMethod === "portone" && order.orderStatus === "UNPAID" && (
             /* 가상계좌가 발급된 주문 — 계좌·금액·기한을 보여 준다. 입금은 포트원 웹훅이 확인한다. */
+            // [JA] 仮想口座が発行された注文 — 口座・金額・期限を見せる。入金はポートワンのウェブフックが確認する。
             <BankTransfer order={order} onChanged={() => window.location.reload()} />
           )}
 
@@ -636,12 +750,16 @@ const Payment = ({ order, setLoading, setOrder }) => {
 
           {/* 무통장입금 — 결제 API 가 아니라 상태 기계다(docs/49 §11). 안내를 받고 입금하면
               관리자가 확인한다. 확인 뒤에는 이 화면이 아니라 결제 완료 화면이다. */}
+          {/* [JA] 銀行振込 — 決済 API ではなくステートマシンだ(docs/49 §11)。案内を受けて入金すると
+              管理者が確認する。確認後はこの画面ではなく決済完了画面だ。 */}
           {order.paymentMethod === "cash" && (
             <BankTransfer order={order} onChanged={() => window.location.reload()} />
           )}
 
           {/* 아직 못 쓰는 수단. 버튼을 그리지 않고 이유를 말한다 — 예전에는 이 자리에
               PayPal 버튼이 떠서 다른 수단을 고른 사용자를 혼란스럽게 했다. */}
+          {/* [JA] まだ使えない手段。ボタンを描かず理由を言う — 以前はこの場所に
+              PayPal ボタンが出て、別の手段を選んだユーザーを混乱させた。 */}
           {!["paypal", "stripe", "portone", "cash"].includes(order.paymentMethod) && (
             <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               {paymentMethodDescription(paymentMethodOf(order.paymentMethod), t)
@@ -653,6 +771,9 @@ const Payment = ({ order, setLoading, setOrder }) => {
         {/* PAY_FAIL 이 담아 둔 메시지를 실제로 보여 준다. 예전에는 reducer 가 error 를
             저장만 하고 화면 어디에도 그리지 않아, 결제가 실패해도 사용자는 아무 표시를
             못 받고 버튼만 계속 눌렀다. */}
+        {/* [JA] PAY_FAIL が入れておいたメッセージを実際に見せる。以前は reducer が error を
+            保存するだけで画面のどこにも描かず、決済が失敗してもユーザーは何の表示も
+            受けずにボタンを押し続けた。 */}
         {state.error && (
           <p className="mt-2 text-red-600 text-sm" role="alert">{state.error}</p>
         )}

@@ -5,6 +5,7 @@ import { formatDate } from "util/datetime";
 import { useTranslation } from "i18n/I18nProvider";
 
 /** 등급 기준 금액은 원화다. 숫자 자리 구분만 화면 언어를 따른다. */
+// [JA] ランク基準額はウォン建てだ。数字の桁区切りだけ画面の言語に従う。
 const numberLocale = (lang) => (lang === "ja" ? "ja-JP" : "ko-KR");
 
 /**
@@ -23,6 +24,17 @@ const numberLocale = (lang) => (lang === "ja" ? "ja-JP" : "ko-KR");
  *
  * <p>⏱️ 갱신 시점을 반드시 적는다. 등급은 하루 한 번 다시 매겨지므로 "오늘 큰 주문을
  * 했는데 왜 그대로냐"가 반드시 나온다. 화면이 미리 답해 둔다.
+ *
+ * <p>[JA] 自分のランク。
+ * 🔴 この画面に <b>無いもの</b>が設計だ: 進捗ゲージも「ゴールドまであと 32 万ウォン」も無い。計算して入れるのは簡単だが、その
+ * 一行が画面の性格を変える — <b>「あなたの特典」が「あなたがもっと使うべき金額」になる。</b>
+ * ランクを点数のように陳列しないのがこのサービスの選んだトーンだ(CustomerTier のコメント)。
+ * 代わりに <b>根拠は全部見せる</b>: 今のランク、その判断に使った金額、基準額、
+ * 最終計算時刻。「なぜ自分がシルバーなのか」に画面が答えられなければその質問は CS に行く。
+ * ユーザーがその数字で自分で引き算するのは止めない — 知りたい人に隠すことと
+ * こちらから先に突きつけることは違う。
+ * ⏱️ 更新時点を必ず書く。ランクは一日一回付け直されるので「今日大きな注文を
+ * したのになぜそのままなのか」が必ず出る。画面があらかじめ答えておく。
  */
 const TierStatus = () => {
     const { t, lang } = useTranslation();
@@ -40,12 +52,14 @@ const TierStatus = () => {
                 if (alive) setStatus(data);
             } catch (e) {
                 // 문구가 아니라 "실패했다"는 사실만 담는다 — 문구는 그릴 때 지금 언어로 만든다.
+                // [JA] 文言ではなく「失敗した」という事実だけを入れる — 文言は描くときに今の言語で作る。
                 if (alive) setError(true);
             } finally {
                 if (alive) setLoading(false);
             }
         })();
         // 언마운트 뒤 setState 를 막는다 — 프로필을 빠르게 벗어나면 경고가 뜬다.
+        // [JA] アンマウント後の setState を防ぐ — プロフィールを素早く離れると警告が出る。
         return () => { alive = false; };
     }, []);
 
@@ -59,6 +73,7 @@ const TierStatus = () => {
     }
 
     // 등급 하나 때문에 프로필 화면 전체가 죽으면 안 된다.
+    // [JA] ランクひとつのためにプロフィール画面全体が落ちてはならない。
     if (error) {
         return (
             <section className="mt-10 border-t pt-6">
@@ -71,6 +86,7 @@ const TierStatus = () => {
     if (!status) return null;
 
     // 서버는 UTC 로 준다(B-21). 표시 시점에만 현지 시각으로 바꾼다 — util/datetime.
+    // [JA] サーバーは UTC で返す(B-21)。表示時点でだけ現地時刻に変える — util/datetime。
     const computedAt = formatDate(status.computedAt, null);
     const isBasic = status.tier === "BASIC";
 
@@ -91,6 +107,8 @@ const TierStatus = () => {
               * 혜택을 먼저, 등급은 그 이유로만. 지금 등급으로 받을 수 있는 것이 무엇인지가
               * 사용자가 실제로 알고 싶은 것이다.
               */}
+            {/* [JA] 特典を先に、ランクはその理由としてだけ。今のランクで受けられるものが何かが
+                ユーザーが本当に知りたいことだ。 */}
             <p className="mt-3 text-sm text-slate-600">
                 {isBasic
                     ? t("profile.tier.benefit_basic")
@@ -99,6 +117,8 @@ const TierStatus = () => {
 
             {/* 기준은 정적으로 공개한다. 클라이언트에 하드코딩하면 설정을 바꾼 날부터
                 화면이 거짓말을 한다 — 서버가 내려준 값을 그대로 쓴다. */}
+            {/* [JA] 基準は静的に公開する。クライアントにハードコードすると設定を変えた日から
+                画面が嘘をつく — サーバーが返した値をそのまま使う。 */}
             <dl className="mt-4 rounded bg-slate-50 p-3 text-xs text-slate-600">
                 <dt className="font-medium text-slate-700">{t("profile.tier.criteria", { months: status.months })}</dt>
                 <dd className="mt-2 flex flex-col gap-1">

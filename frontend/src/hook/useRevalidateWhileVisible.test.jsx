@@ -3,6 +3,7 @@ import { renderHook, act } from "@testing-library/react";
 import useRevalidateWhileVisible from "hook/useRevalidateWhileVisible";
 
 // jsdom 에는 fetch 의 Request 가 없어 데이터 라우터를 띄울 수 없다 — 라우터의 revalidator 를 흉내 낸다.
+// [JA] jsdom には fetch の Request がなくデータルーターを立ち上げられない — ルーターの revalidator を真似る。
 const mockRevalidator = { state: "idle", revalidate: jest.fn() };
 jest.mock("react-router-dom", () => ({ useRevalidator: () => mockRevalidator }));
 
@@ -10,6 +11,8 @@ const setVisibility = (v) => Object.defineProperty(document, "visibilityState", 
 
 /**
  * 상품 상세의 남은 수량이 연 순간에 굳지 않는다(docs/59 §8) — 탭으로 돌아오면, 그리고 보이는 동안 주기적으로 loader 를 다시 돌린다.
+ *
+ * <p>[JA] 商品詳細の残数が開いた瞬間に固まらない(docs/59 §8) — タブに戻ったとき、そして見えている間定期的に loader を再実行する。
  */
 describe("useRevalidateWhileVisible", () => {
     beforeEach(() => { mockRevalidator.state = "idle"; mockRevalidator.revalidate.mockClear(); setVisibility("visible"); });

@@ -41,19 +41,37 @@ import org.springframework.web.util.pattern.PathPatternParser;
  *
  * <p>끄기: {@code catalog.edge-cache.enabled=false}(모두 no-store) 또는 앞단의 캐시 규칙을 끈다.
  *
- * <p>[JA] エッジ(Cloudflare)キャッシュの指示 — 利用者を見ない公開 GET の 200 だけ public、ほかはすべて no-store。ブラウザーは
- * max-age=0 でこれまでどおり毎回取得し、エッジだけが短く(既定 30 秒)持つ。probe クエリ付きと 200 以外は no-store。
+ * <p>[JA] エッジ(Cloudflare)キャッシュの指示 — 利用者を見ない公開 GET の 200 だけ {@code public}、ほかはすべて {@code no-store}(docs/91 §2-9)。
+ *
+ * <p>[JA] なぜサーバーが決めるのか: エッジのルールだけで {@code /catalog-service/api/*} をキャッシュすると在庫 · カート用の照会まで混ざり、指示のない
+ * 応答はエッジの既定の寿命(200 なら数時間)で残る。だから<b>既定は no-store</b> で、下のリストのパスが 200 で答えるときだけ変える。
+ * リストのエンドポイントは {@code User-Id} · Cookie · 言語を見ない(ガード {@code EdgeCacheHeadersTest} がコントローラーのシグネチャを見る)。
+ *
+ * <ul>
+ *   <li>[JA] {@code max-age=0} — ブラウザーはこれまでどおり毎回取得する(管理者が直したもの · 在庫が再読み込みですぐ見える)。</li>
+ *   <li>{@code s-maxage} — エッジだけ短く(既定 30 秒 — 最初の画面の Pod メモリキャッシュ {@code HomeViewCache} と同じ長さ)。在庫表示はその分
+ *       遅れうる — 注文 · 決済ではサーバーが在庫を見直す。</li>
+ *   <li>{@code stale-while-revalidate} — 期限切れ直後は古い応答を返しつつ裏で取り直す(オリジンが一瞬遅くても客は待たない)。</li>
+ *   <li>{@code probe} クエリがあれば no-store — 外部プローブ(site-probe)がキャッシュではなくオリジンを測るように。クエリが違えばエッジのキャッシュキーも違う。</li>
+ *   <li>エラー(200 以外)は no-store — まれなフィルター組み合わせの 503 を 30 秒間全員に返さない。</li>
+ * </ul>
+ *
+ * <p>[JA] 無効化: {@code catalog.edge-cache.enabled=false}(すべて no-store)またはエッジのキャッシュルールを切る。
  */
 @ControllerAdvice
 public class EdgeCacheHeaders implements HandlerInterceptor, ResponseBodyAdvice<Object> {
 
     static final String NO_STORE = "no-store";
     /** 바깥 탐침이 붙이는 쿼리 — 이 이름이 있으면 캐시하지 않는다(prometheus.oci.yml 의 site-probe 대상). */
+    // [JA] 外部プローブが付けるクエリ — この名前があればキャッシュしない(prometheus.oci.yml の site-probe 対象)。
     static final String PROBE_PARAM = "probe";
 
     /**
      * 캐시해도 되는 공개 GET(게이트웨이의 RewritePath 뒤 경로). 화면이 부르는 것만 — 서비스 사이 호출(/api/{id} · products/info ·
      * cart/* · stock · color*)과 관리자(/api/content/admin/**) · 내부(/api/internal/**)는 넣지 않는다.
+     *
+     * <p>[JA] キャッシュしてよい公開 GET(ゲートウェイの RewritePath 後のパス)。画面が呼ぶものだけ — サービス間呼び出し(/api/{id} · products/info ·
+     *      cart/* · stock · color*)と管理者(/api/content/admin/**) · 内部(/api/internal/**)は入れない。
      */
     static final List<String> PUBLIC_GET = List.of(
             "/api/content/home",
@@ -90,6 +108,7 @@ public class EdgeCacheHeaders implements HandlerInterceptor, ResponseBodyAdvice<
     }
 
     /** 응답을 시작하기 전에 기본값 no-store — 예외 · 빈 본문 · 목록 밖은 이대로 나간다. */
+    // [JA] 応答を始める前に既定値 no-store — 例外 · 空本文 · 一覧外はこのまま出る。
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         response.setHeader(HttpHeaders.CACHE_CONTROL, NO_STORE);
@@ -102,6 +121,7 @@ public class EdgeCacheHeaders implements HandlerInterceptor, ResponseBodyAdvice<
     }
 
     /** 본문을 쓰기 직전 — 상태 코드가 정해진 뒤다. 목록의 GET 이 200 이면 public 으로 바꾼다. */
+    // [JA] 本文を書く直前 — ステータスコードが決まった後である。一覧の GET が 200 なら public に変える。
     @Override
     public Object beforeBodyWrite(Object body, MethodParameter returnType, MediaType contentType,
                                   Class<? extends HttpMessageConverter<?>> converterType,
@@ -110,12 +130,14 @@ public class EdgeCacheHeaders implements HandlerInterceptor, ResponseBodyAdvice<
             HttpServletResponse servlet = res.getServletResponse();
             String value = decide(req.getServletRequest(), servlet.getStatus());
             // setHeader 는 덮어쓴다 — preHandle 의 no-store 와 두 줄이 되지 않게(getHeaders().set 은 add 로 쓰인다)
+            // [JA] setHeader は上書きする — preHandle の no-store と 2 行にならないように(getHeaders().set は add として使われる)
             servlet.setHeader(HttpHeaders.CACHE_CONTROL, value);
         }
         return body;
     }
 
     /** 이 요청 · 상태 코드에 붙일 Cache-Control. */
+    // [JA] このリクエスト · ステータスコードに付ける Cache-Control。
     String decide(HttpServletRequest request, int status) {
         if (!enabled || status != 200 || request.getParameter(PROBE_PARAM) != null) {
             return NO_STORE;

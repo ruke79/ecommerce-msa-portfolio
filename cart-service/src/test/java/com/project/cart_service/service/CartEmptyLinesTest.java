@@ -38,6 +38,12 @@ import com.project.common.message.dto.request.CartEmptyRequest;
  * <p>사라진 것은 환불이 아니라 그 전 결제의 cart-empty 였다. 결제 응답 뒤 사가가 비동기로
  * "이 사용자의 장바구니를 통째로 지워라" 를 보냈고, 확정이 늦어지는 사이 손님이 새로 담은
  * 물건이 함께 지워졌다. 이제 발행자가 주문의 품목을 싣고 여기서는 그 줄만 뺀다.
+ *
+ * <p>[JA] cart-empty は <b>注文した品目だけ</b> を外す。
+ *      🐛 回帰対象 — 返金したら返金と無関係な品物まで消えた
+ *      消えたのは返金ではなくその前の決済の cart-empty だった。決済応答の後にサガが非同期で
+ *      「このユーザーのカートを丸ごと消せ」を送り、確定が遅れる間に客が新しく入れた
+ *      品物が一緒に消された。今は発行者が注文の品目を載せ、ここではその行だけを外す。
  */
 @DisplayName("cart-service — 주문한 품목만 빼기")
 class CartEmptyLinesTest {
@@ -56,6 +62,13 @@ class CartEmptyLinesTest {
      *
      * <p>고친 것: 프록시가 여는 트랜잭션의 동기화를 테스트가 직접 연다. 코드를 "동기화가 없으면 바로 지운다" 로 바꾸는
      * 방법도 있지만, 그러면 운영에서 절대 타지 않는 분기가 생기고 — 트랜잭션 밖에서 불리는 실수를 조용히 삼킨다.
+     *
+     * <p>[JA] 🐛 このファイルのテスト 6 個は最初から(5eb6671)すべて失敗していた — "Transaction synchronization is not active"。
+     *      {@code cartEmpty} はキャッシュ削除を <b>コミット後に</b> 遅らせるためにトランザクション同期を登録する。運用ではクラスの
+     *      {@code @Transactional} プロキシがトランザクションを開いているので問題ない。ところがテストはサービスを {@code new} で
+     *      作ってプロキシを通さず、同期がない状態で登録しようとして死んだ。CI の最初の段階がこのせいで赤だった。
+     *      直したこと: プロキシが開くトランザクションの同期をテストが直接開く。コードを「同期がなければすぐ消す」に変える
+     *      方法もあるが、そうすると運用では決して通らない分岐ができ — トランザクションの外で呼ばれるミスを黙って飲み込む。
      */
     @BeforeEach
     void openTransactionSynchronization() {
@@ -75,12 +88,12 @@ class CartEmptyLinesTest {
         service = new CartService(cartRepository, mock(CartProductRepository.class),
                 mock(CatalogServiceClient.class), new ObjectMapper(), redisTemplate);
 
-        cart = new Cart() { };   // 생성자가 protected 다 — 익명 하위 클래스로 만든다
+        cart = new Cart() { };   // 생성자가 protected 다 — 익명 하위 클래스로 만든다 ／ [JA] コンストラクタが protected — 匿名サブクラスで作る
         cart.setUserId(7L);
         cart.setCartProducts(new ArrayList<>(List.of(
-                line(10L, "M", 5L, 2, "20.00"),     // 주문한 것
-                line(11L, "L", 6L, 1, "30.00"),     // 주문한 것
-                line(12L, "S", 7L, 3, "10.00"))));  // 결제 뒤에 새로 담은 것 — 남아야 한다
+                line(10L, "M", 5L, 2, "20.00"),     // 주문한 것 ／ [JA] 注文したもの
+                line(11L, "L", 6L, 1, "30.00"),     // 주문한 것 ／ [JA] 注文したもの
+                line(12L, "S", 7L, 3, "10.00"))));  // 결제 뒤에 새로 담은 것 — 남아야 한다 ／ [JA] 決済後に新しく入れたもの — 残るべき
         when(cartRepository.findByUserId(7L)).thenReturn(Optional.of(cart));
         when(cartRepository.save(any(Cart.class))).thenAnswer(i -> i.getArgument(0));
     }
@@ -95,6 +108,7 @@ class CartEmptyLinesTest {
     }
 
     /** 🔴 핵심 — 주문에 없던 줄은 남는다. */
+    // [JA] 🔴 核心 — 注文になかった行は残る。
     @Test
     @DisplayName("🔴 주문한 줄만 빠지고 새로 담은 줄은 남는다")
     void onlyOrderedLinesAreRemoved() {
@@ -116,6 +130,7 @@ class CartEmptyLinesTest {
     }
 
     /** 같은 상품이라도 사이즈·색상이 다르면 다른 줄이다 — 담기 규칙과 같다. */
+    // [JA] 同じ商品でもサイズ・色が違えば別の行である — 追加の規則と同じ。
     @Test
     @DisplayName("사이즈·색상이 다르면 빼지 않는다")
     void differentSizeOrColorIsAnotherLine() {
@@ -134,6 +149,7 @@ class CartEmptyLinesTest {
     }
 
     /** 옛 발행자(품목 없음)는 예전처럼 전부 비운다 — 배포 순서와 무관하게 동작해야 한다. */
+    // [JA] 旧発行者(品目なし)は以前どおりすべて空にする — デプロイ順序と無関係に動くべきである。
     @Test
     @DisplayName("품목이 없는 요청은 전부 비운다(옛 발행자 호환)")
     void legacyRequestEmptiesEverything() {
@@ -145,6 +161,9 @@ class CartEmptyLinesTest {
     /**
      * 캐시는 <b>커밋 뒤에</b> 지운다. 커밋 전에 지우면 그 틈에 들어온 조회가 옛 장바구니를 다시 캐시에 넣는다
      * (order 의 결제 상태 캐시에서 실제로 겪은 것, docs/25 §11.12). 롤백되면 지우지 않는다.
+     *
+     * <p>[JA] キャッシュは <b>コミット後に</b> 消す。コミット前に消すとその隙に入った照会が古いカートを再びキャッシュに入れる
+     *      (order の決済状態キャッシュで実際に経験したこと、docs/25 §11.12)。ロールバックされれば消さない。
      */
     @Test
     @DisplayName("캐시는 커밋 뒤에만 지운다 — 커밋 전·롤백이면 그대로. 키는 사용자 id")
@@ -166,6 +185,7 @@ class CartEmptyLinesTest {
     }
 
     /** 🔴 at-least-once — 같은 주문의 비우기가 다시 와도 한 번만 뺀다(원장 cart-empty-<orderId>, V6). */
+    // [JA] 🔴 at-least-once — 同じ注文の空にする処理が再び来ても 1 回だけ外す(台帳 cart-empty-<orderId>, V6)。
     @Test
     @DisplayName("🔴 같은 주문의 비우기가 다시 오면 건너뛴다 — 예전에는 주문하지 않은 수량까지 한 번 더 뺐다")
     void redeliveryOfTheSameOrderIsSkipped() {

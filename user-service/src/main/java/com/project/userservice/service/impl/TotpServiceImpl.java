@@ -25,6 +25,7 @@ public class TotpServiceImpl implements TotpService {
     }
 
     /** 인증 앱에 보이는 발급자 이름. */
+    // [JA] 認証アプリに表示される発行者名。
     static final String ISSUER = "YSY Shop";
 
     /**
@@ -46,6 +47,7 @@ public class TotpServiceImpl implements TotpService {
     }
 
     /** 30초 구간 — Google Authenticator · RFC 6238 의 기본값. */
+    // [JA] 30 秒区間 — Google Authenticator · RFC 6238 の既定値。
     static final long STEP_MS = 30_000L;
 
     @Override
@@ -55,6 +57,7 @@ public class TotpServiceImpl implements TotpService {
         }
         long now = nowMillis / STEP_MS;
         // 지금 구간을 먼저 — 앞뒤는 시계 오차 몫이다(authorize 의 기본 창과 같다).
+        // [JA] 今の区間を先に — 前後は時計のずれの分(authorize の既定の窓と同じ)。
         for (long step : new long[] { now, now - 1, now + 1 }) {
             if (gAuth.getTotpPassword(secret, step * STEP_MS) == code) {
                 return java.util.OptionalLong.of(step);

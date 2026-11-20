@@ -79,6 +79,39 @@
 #                                        적용하고 단일 노드 환경(local·external·oci·dev)에서는
 #                                        건너뛴다 — 이유는 아래 apply 블록 주석 참조
 #
+# [JA] デプロイ — **すべての環境に同じ手順で。**
+#      『Continuous Delivery』(Humble & Farley)10 章の引用のとおり。
+#      だからこのスクリプトは一つだけで、環境は**引数**だ(prod も同じコード経路、オーバーレイだけが違う。ロールバックも**同じコード経路**)。
+#      ロールバックに別手順がないことが肝心だ。別手順は定義上ほとんど実行されず、だから本当に必要な日
+#      — 障害の真っ只中、明け方 — に初めて実行され、その日に初めてバグが露呈する。ここでのロールバックは
+#      「直前に正常に動いていたバージョンを普段の経路でもう一度デプロイする」以上でも以下でもない。
+#      ── 何を検証し何を拒否するか:
+#      1. レジストリにそのバージョンのイメージが**実際にあるか**をまず確認する。なければクラスタに触る前に死ぬ。
+#      「名前が解決できる」が「そこに何かある」を意味しないことをこのプロジェクトで何度も経験した(docs/33 §13)。
+#      2. コミット済みのオーバーレイファイルは**絶対に変更しない。** タグ注入はリポジトリ内の一時オーバーレイ(.deploy/、gitignore 済み)で行う。
+#      以前の手順は運用者に `kustomize edit set image` をさせていたが、それでは作業ツリーが汚れ、
+#      「今デプロイされているのは何か」がコミットされていないローカル変更に隠れる。
+#      3. デプロイ後の ops/06 スモークが**ゲート**だ。失敗すれば直前のバージョンへ自動復帰する。
+#      ── 使い方: --rollback は直前の成功バージョンへ戻す。
+#      ⚠️ **ロールバックはスキーマを戻さない。** --rollback はイメージだけを変える。マイグレーションはアプリ起動時に
+#      適用され前にしか進まない。だからあるデプロイがカラムを消したり名前を変えたりしていれば、戻した旧イメージは
+#      Hibernate validate で起動できない — あると信じた瞬間にない安全網だ。デプロイ前に何が適用されるかを見て、
+#      その後戻せるかを判断すること(pending = このデプロイが DB を何に変えるか、drift = 適用済みファイルを誰かが直したか — 直していれば起動失敗)。
+#      規則は expand-contract だ(ops/32 のコメント)。--dry-run は適用せず何が変わるかだけを見る。--report はデプロイ履歴とサイクルタイム。
+#      --config-only [--restart <deploy>]: イメージはそのままで**設定だけ**を反映する(ConfigMap・Secret・Ingress など)。
+#      🔴 このとき `kubectl apply -k k8s-overlays/<環境>` を直接打ってはいけない。そのオーバーレイの `images:` には手で書いた
+#      `newTag` が埋め込まれていて、apply は**全サービスをそのタグに戻す。** 実際にそれで数週間前のバージョンに戻った。
+#      このスクリプトはクラスタで今動いているタグを読んでそれに固定してから適用する。
+#      ConfigMap はハッシュ接尾辞がないので変わっても Pod は再起動しない。値を実際に読ませるにはそのサービスを
+#      再起動する必要がある — それが --restart だ。
+#      環境: k8s-overlays/ 配下のディレクトリ名(dev・prod・external・oci・local)。バージョン: パイプラインが付けたコミット SHA 12 文字(.github/workflows/build.yml 参照)。
+#      オプション環境変数: GATEWAY = スモーク対象(未指定なら Ingress ホストから推定し、それもなければ port-forward)、
+#      NO_SMOKE=1 = スモークゲート省略(**未検証のデプロイ**になる)、NO_ROLLBACK=1 = 失敗しても自動復帰しない(原因調査用)、
+#      DEPLOY_JOURNAL = デプロイ履歴ファイル(既定 ~/.ecommerce-msa/deploy-journal.tsv)、
+#      ROLLOUT_TIMEOUT=600s = 既定値。マニフェストの startupProbe 予算(60×5 秒=300 秒)より余裕が必要 — 同じだと正常起動がタイムアウトと競って負ける(下記)、
+#      APPLY_HPA=1 = HPA・PDB を強制適用(既定は prod でのみ適用し、単一ノード環境(local・external・oci・dev)では飛ばす — 理由は下の apply ブロックのコメント)、
+#      REGISTRY_API = イメージ確認をそのレジストリの HTTP API で行う(クラスタ内 HTTP レジストリ)。イメージ名のレジストリ部分
+#      (例: registry.local:5000)はノードのミラーキーなのでこのマシンでは解決できず、docker manifest inspect は HTTP レジストリを拒否する。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -100,6 +133,18 @@ NS="${NS:-ecommerce}"
 #
 # ⚠️ 매니페스트의 failureThreshold·periodSeconds 를 올린다면 이 값도 같이 올려야 한다.
 #    가드레일 B-43 이 두 값을 대조한다.
+# [JA] ── ロールアウト待ち時間
+#      以前の既定値は 300 秒だった。ところがすべてのアプリケーションマニフェストの startupProbe 予算も
+#      **ちょうど 300 秒**だ(failureThreshold 60 × periodSeconds 5)。両者が同じだとコンテナ起動時間が少し
+#      加わるだけで正常起動がタイムアウトに負ける — するとこのスクリプトは失敗と判定して**自動復帰**させ、
+#      運用者は「Pod がまた Running だ」を見てデプロイできたと誤解する。
+#      (実際に経験した: マイグレーション 4 つを一度に回す初回デプロイで user-service がこうして
+#      ロールバックされ、旧 ReplicaSet の Pod が Running なので成功に見えた。)
+#      だから startupProbe 予算の 2 倍にする。本当に起動に失敗した Pod は CrashLoopBackOff で
+#      先に現れるので、この値を増やしても障害の検知が遅れるわけではない — 増えるのは
+#      「遅いが結局起動する」場合を待ってやる余裕だけだ。
+#      ⚠️ マニフェストの failureThreshold・periodSeconds を上げるならこの値も一緒に上げること。
+#      ガードレール B-43 が二つの値を照合する。
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-600s}"
 JOURNAL="${DEPLOY_JOURNAL:-$HOME/.ecommerce-msa/deploy-journal.tsv}"
 
@@ -110,6 +155,7 @@ err()  { printf '  \033[0;31m✗\033[0m %s\n' "$*" >&2; }
 die()  { printf '\n\033[0;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 인자
+# [JA] 引数
 
 ENVIRONMENT=""
 VERSION=""
@@ -146,6 +192,13 @@ done
 # 되돌리므로 오버레이가 그 사이에 바뀌었다면 다음 apply 에서 조용히 다시 앞으로 간다.
 # 여기서는 "직전에 스모크까지 통과한 버전"을 명시적으로 적어 두고, 그것을 **정방향으로
 # 다시 배포**한다.
+# [JA] デプロイ履歴
+#      なぜファイルが必要か: デプロイすると**直前のバージョンはクラスタのどこにも残らない。**
+#      Deployment の revision history には残るがイメージタグを辿るのが面倒で、
+#      `kubectl rollout undo` はこのプロジェクトが望むものと違う — undo は Pod スペックだけを
+#      戻すので、その間にオーバーレイが変わっていれば次の apply で黙ってまた前に進む。
+#      ここでは「直前にスモークまで通過したバージョン」を明示的に記録し、それを**順方向に
+#      もう一度デプロイ**する。
 
 journal_append() {   # journal_append <env> <version> <result>
     mkdir -p "$(dirname "$JOURNAL")" 2>/dev/null || return 0
@@ -155,7 +208,7 @@ journal_append() {   # journal_append <env> <version> <result>
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "$committed" >> "$JOURNAL"
 }
 
-last_good() {        # last_good <env>  → 마지막으로 ok 로 끝난 버전
+last_good() {        # last_good <env>  → 마지막으로 ok 로 끝난 버전 ／ [JA] last_good <env> → 最後に ok で終わったバージョン
     [ -f "$JOURNAL" ] || return 0
     awk -F'\t' -v e="$1" '$2==e && $4=="ok" {v=$3} END {if (v) print v}' "$JOURNAL"
 }
@@ -165,11 +218,15 @@ last_good() {        # last_good <env>  → 마지막으로 ok 로 끝난 버전
 # 책이 유일한 전역 지표로 꼽는 것이 사이클 타임 — "커밋이 사용자에게 닿기까지".
 # 그래서 저널에 커밋 시각을 함께 적어 두고 여기서 뺀다. 측정하지 않는 것은 개선되지
 # 않는다. 배포 횟수가 아니라 **간격**을 보는 것이 요점이다.
-to_epoch() {   # to_epoch <ISO8601>  → 초. 파싱 못 하면 빈 문자열(GNU/BSD date 모두 시도).
+# [JA] ── --report: サイクルタイム
+#      書籍が唯一のグローバル指標として挙げるのがサイクルタイム — 「コミットが利用者に届くまで」。
+#      だからジャーナルにコミット時刻を併記しておきここで引き算する。測らないものは改善されない。
+#      デプロイ回数ではなく**間隔**を見るのが要点だ。
+to_epoch() {   # to_epoch <ISO8601>  → 초. 파싱 못 하면 빈 문자열(GNU/BSD date 모두 시도). ／ [JA] to_epoch <ISO8601> → 秒。パースできなければ空文字列(GNU/BSD date の両方を試す)。
     date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
 }
 
-humanize() {   # humanize <초>
+humanize() {   # humanize <초> ／ [JA] humanize <秒>
     local s="$1"
     if   [ "$s" -lt 3600 ];  then printf '%d분' $(( s / 60 ))
     elif [ "$s" -lt 86400 ]; then printf '%d시간 %d분' $(( s / 3600 )) $(( (s % 3600) / 60 ))
@@ -183,6 +240,8 @@ if [ "$REPORT" = "1" ]; then
     log "배포 이력  ($JOURNAL)"
     # printf 의 %-21s 는 **바이트**를 센다. 한글은 표시 폭 2칸에 3바이트라 헤더만
     # 폭이 어긋난다. 헤더는 그래서 손으로 맞춘 공백을 쓴다.
+    # [JA] printf の %-21s は**バイト**を数える。ハングルは表示幅 2 桁で 3 バイトなのでヘッダだけ
+    #      幅がずれる。だからヘッダは手で揃えた空白を使う。
     echo "  배포시각             환경      버전           결과      사이클 타임(커밋→배포)"
     while IFS=$'\t' read -r at env ver result committed; do
         cycle="-"
@@ -201,6 +260,7 @@ if [ "$REPORT" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------- 환경 확인
+# [JA] 環境確認
 
 [ -n "$ENVIRONMENT" ] || die "환경을 지정하세요. 예: $0 prod <버전>
   사용 가능: $(ls k8s-overlays 2>/dev/null | grep -v '\.example$' | tr '\n' ' ')"
@@ -213,6 +273,8 @@ command -v kubectl >/dev/null || die "kubectl 이 필요합니다"
 
 # 어느 클러스터에 붙어 있는지 **먼저 보여 준다.** 컨텍스트를 착각한 채 prod 를 때리는
 # 사고는 이 계열에서 가장 흔하고 가장 비싸다.
+# [JA] どのクラスタに繋がっているかを**先に見せる。** コンテキストを取り違えたまま prod を叩く
+#      事故はこの系統で最も多く、最も高くつく。
 CONTEXT=$(kubectl config current-context 2>/dev/null || echo "?")
 kubectl cluster-info >/dev/null 2>&1 || die "클러스터에 닿지 않습니다 (context: $CONTEXT)"
 
@@ -220,6 +282,9 @@ kubectl cluster-info >/dev/null 2>&1 || die "클러스터에 닿지 않습니다
 #
 # 클러스터가 권위 있는 출처다. 저널은 롤백 대상을 기억하기 위한 것이고, "지금 뭐가
 # 도는가"는 언제나 클러스터에 물어본다.
+# [JA] 現在のバージョンを読む
+#      クラスタが権威ある情報源だ。ジャーナルはロールバック先を覚えておくためのもので、「今何が
+#      動いているか」は常にクラスタに問い合わせる。
 
 current_tag_of() {   # current_tag_of <deployment>
     local img
@@ -234,6 +299,8 @@ CURRENT_VERSION="$(current_tag_of gateway-server)"
 
 # 지금 도는 이미지들의 태그 — "이미지 짧은 이름<TAB>태그" 한 줄씩(Deployment 의 모든 컨테이너).
 # --config-only 가 서비스마다 **자기** 태그로 고정하는 데 쓴다.
+# [JA] 今動いているイメージのタグ — 「イメージ短縮名<TAB>タグ」を 1 行ずつ(Deployment のすべてのコンテナ)。
+#      --config-only がサービスごとに**自分の**タグで固定するのに使う。
 running_tags() {
     kubectl -n "$NS" get deploy \
         -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' 2>/dev/null \
@@ -243,6 +310,7 @@ running_tags() {
 RUNNING_TAGS=""
 
 # --rollback: 버전을 저널에서 찾는다.
+# [JA] --rollback: バージョンをジャーナルから探す。
 if [ "$DO_ROLLBACK" = "1" ]; then
     [ -z "$VERSION" ] || die "--rollback 과 버전을 함께 줄 수 없습니다 (되돌릴 버전은 이력이 정합니다)"
     VERSION="$(last_good "$ENVIRONMENT")"
@@ -250,6 +318,7 @@ if [ "$DO_ROLLBACK" = "1" ]; then
   되돌릴 버전을 직접 아는 경우 그냥 배포하세요:  $0 $ENVIRONMENT <버전>"
     if [ "$VERSION" = "$CURRENT_VERSION" ]; then
         # 마지막 성공 = 지금 도는 것. 그 앞의 성공을 찾는다.
+        # [JA] 最後の成功 = 今動いているもの。その前の成功を探す。
         VERSION=$(awk -F'\t' -v e="$ENVIRONMENT" -v cur="$CURRENT_VERSION" \
             '$2==e && $4=="ok" && $3!=cur {v=$3} END {if (v) print v}' "$JOURNAL")
         [ -n "$VERSION" ] || die "지금 도는 $CURRENT_VERSION 말고는 성공한 배포 이력이 없습니다"
@@ -259,6 +328,8 @@ fi
 
 # --config-only: 버전은 **클러스터가 정한다.** 사람이 태그를 적을 일이 없어야 한다 —
 # 그 한 줄을 오버레이에서 읽어 오는 순간 옛 태그로 되돌리는 사고가 난다.
+# [JA] --config-only: バージョンは**クラスタが決める。** 人がタグを書く必要があってはならない —
+#      その 1 行をオーバーレイから読んだ瞬間に古いタグへ戻す事故が起きる。
 if [ "$CONFIG_ONLY" = "1" ]; then
     [ "$DO_ROLLBACK" = "0" ] || die "--config-only 와 --rollback 은 함께 쓸 수 없습니다"
     [ -z "$VERSION" ] || die "--config-only 에는 버전을 주지 않습니다 (지금 도는 것을 그대로 유지합니다)"
@@ -267,6 +338,9 @@ if [ "$CONFIG_ONLY" = "1" ]; then
     # 🐛 예전에는 **게이트웨이의 태그 하나**로 전 서비스를 고정했다. ops/31·33 으로 몇 서비스만 새 태그로 올려 둔 상태(흔하다)
     #    에서 부르면 그 서비스들이 게이트웨이의 옛 태그로 **되돌아갔다** — 이 옵션이 막으려던 바로 그 사고다. 이제 서비스마다
     #    지금 도는 자기 태그로 고정한다(write_overlay). $VERSION 은 클러스터에 아직 없는 서비스에만 쓰인다.
+    # [JA] 🐛 以前は**ゲートウェイのタグ一つ**で全サービスを固定していた。ops/31・33 で一部サービスだけ新タグに上げた状態(よくある)
+    #      で呼ぶと、そのサービスがゲートウェイの古いタグに**戻ってしまった** — このオプションが防ごうとしたまさにその事故だ。今はサービスごとに
+    #      今動いている自分のタグで固定する(write_overlay)。$VERSION はクラスタにまだないサービスにだけ使われる。
     RUNNING_TAGS="$(running_tags)"
     [ -n "$RUNNING_TAGS" ] || die "클러스터에서 지금 도는 이미지를 읽지 못했습니다"
     if [ "$(printf '%s\n' "$RUNNING_TAGS" | cut -f2 | sort -u | wc -l | tr -d ' ')" -gt 1 ]; then
@@ -286,18 +360,26 @@ fi
 # 서비스 목록을 스크립트에 박아 두지 않는다. 오버레이를 렌더링해서 **거기 실제로 있는**
 # 이미지를 읽는다. 서비스가 추가·제거되어도 이 스크립트를 고칠 일이 없고, 무엇보다
 # "오버레이에는 있는데 배포 스크립트는 모르는 서비스"가 생기지 않는다.
+# [JA] イメージ一覧の解釈
+#      サービス一覧をスクリプトに埋め込まない。オーバーレイをレンダリングして**そこに実際にある**
+#      イメージを読む。サービスが追加・削除されてもこのスクリプトを直す必要がなく、何より
+#      「オーバーレイにはあるがデプロイスクリプトは知らないサービス」が生じない。
 
 log "오버레이 해석  ($OVERLAY)"
 
 # kubectl 내장 kustomize 를 먼저 쓰고, 없으면 독립 kustomize 로 떨어진다.
 # (kubectl 내장 버전이 구형이라 최신 문법에서 막히는 환경이 있다.)
-render() {   # render <오버레이 경로>
+# [JA] kubectl 内蔵の kustomize をまず使い、なければ単体の kustomize にフォールバックする。
+#      (kubectl 内蔵版が古く新しい文法で詰まる環境がある。)
+render() {   # render <오버레이 경로> ／ [JA] render <オーバーレイのパス>
     # 성공한 출력만 내보낸다. 곧바로 파이프로 흘리면 kubectl 이 절반쯤 찍고 죽었을 때
     # 그 절반이 폴백의 출력과 섞인다.
+    # [JA] 成功した出力だけを出す。直接パイプに流すと kubectl が半分ほど出力して死んだとき
+    #      その半分がフォールバックの出力と混ざる。
     local out
     if out=$(kubectl kustomize "$1" 2>/dev/null); then printf '%s\n' "$out"; return 0; fi
     if command -v kustomize >/dev/null 2>&1; then kustomize build "$1"; return $?; fi
-    kubectl kustomize "$1"      # 실패 메시지를 보여 주기 위해 한 번 더
+    kubectl kustomize "$1"      # 실패 메시지를 보여 주기 위해 한 번 더 ／ [JA] 失敗メッセージを見せるためにもう一度
 }
 
 RENDERED="$(render "$OVERLAY" 2>&1)" \
@@ -305,6 +387,9 @@ RENDERED="$(render "$OVERLAY" 2>&1)" \
         # 가장 흔한 실패: 같은 키를 두 번 쓴 YAML (예 — PORTONE_ENABLED: "true" 를 기존
         # "false" 줄을 지우지 않고 아래에 더함). kustomize 는 파일 이름 없이 행 번호만
         # 말하므로 어느 파일인지 여기서 찾아 준다.
+        # [JA] 最もよくある失敗: 同じキーを 2 回書いた YAML(例 — PORTONE_ENABLED: "true" を既存の
+        #      "false" の行を消さずに下に足した)。kustomize はファイル名なしで行番号だけを
+        #      言うので、どのファイルかをここで探してやる。
         if printf '%s' "$RENDERED" | grep -q 'already defined'; then
             key=$(printf '%s' "$RENDERED" | sed -n 's/.*mapping key "\([^"]*\)" already defined.*/\1/p' | head -1)
             echo "  ↳ 같은 키('$key')가 한 파일에 두 번 있다. 값을 바꿔야지 줄을 더하면 안 된다:" >&2
@@ -322,6 +407,11 @@ $RENDERED"
 #    `      - image: ...` 로 나온다. 처음에 `^\s+image:` 만 봤더니 **frontend 하나가
 #    조용히 빠졌다** — 12개여야 할 목록이 11개였고, 그대로 뒀으면 프론트엔드만 옛
 #    버전으로 남아 "배포했는데 화면이 그대로"가 됐을 것이다.
+# [JA] このリポジトリが作るイメージだけが対象だ(cloudflared・postgres などサードパーティには触らない)。
+#      ⚠️ `- image:` の形も拾う必要がある。コンテナマップの最初のキーが image だと YAML シリアライズが
+#      `      - image: ...` になる。最初は `^\s+image:` だけを見ていたら**frontend 一つが黙って抜けた** —
+#      12 個のはずの一覧が 11 個で、そのままならフロントエンドだけが古いバージョンに残り
+#      「デプロイしたのに画面がそのまま」になっていただろう。
 IMAGES=$(printf '%s\n' "$RENDERED" \
     | grep -E '^[[:space:]]*-?[[:space:]]*image:[[:space:]]' \
     | sed -E 's/^[[:space:]]*-?[[:space:]]*image:[[:space:]]*//' | tr -d '"' \
@@ -331,6 +421,7 @@ IMAGES=$(printf '%s\n' "$RENDERED" \
   $OVERLAY 의 images: 항목이 아직 REPLACE_ME_OWNER 그대로일 수 있습니다."
 
 # 태그를 떼서 이름만 남긴다. 이 이름들이 태그 주입의 대상이다.
+# [JA] タグを外して名前だけを残す。この名前がタグ注入の対象だ。
 IMAGE_NAMES=$(printf '%s\n' "$IMAGES" | sed 's/:[^:/]*$//' | sort -u)
 info "$(printf '%s\n' "$IMAGE_NAMES" | wc -l | tr -d ' ') 개 이미지"
 info "현재 배포 버전: ${CURRENT_VERSION:-(없음 — 최초 배포)}"
@@ -342,11 +433,17 @@ info "배포할 버전   : $VERSION"
 #    order(V16·V18)·pay(V6)·chat(V5)의 마이그레이션은 이미 성공해 컬럼·테이블을 지웠다 — 옛 이미지는 그 스키마에서 Hibernate
 #    validate 로 기동하지 못했고("missing table orders.customer"), 복귀가 장애를 **키웠다.** 이미지는 되돌려도 스키마는 되돌리지
 #    않는다. 이런 범위에서는 실패하면 **앞으로 고쳐야** 한다 — 자동 복귀를 끄고, 수동 --rollback 도 막는다.
-unsafe_migrations() {   # $1=from $2=to — 그 사이에 들어온 ROLLBACK-UNSAFE 마이그레이션 파일. 커밋을 모르면 "?"
+# [JA] ── 戻せないマイグレーション(ROLLBACK-UNSAFE, B-54)がこの範囲にあるか
+#      🐛 2026-09-26: 85 コミットを一度に上げたら user-service・chat が起動に失敗し、スクリプトは**自動復帰**した。だがその間に
+#      order(V16・V18)・pay(V6)・chat(V5)のマイグレーションは既に成功してカラム・テーブルを消していた — 旧イメージはそのスキーマで Hibernate
+#      validate により起動できず("missing table orders.customer")、復帰が障害を**大きくした。** イメージは戻せてもスキーマは戻らない。
+#      こうした範囲では失敗したら**前に進めて直す**しかない — 自動復帰を切り、手動 --rollback も止める。
+unsafe_migrations() {   # $1=from $2=to — 그 사이에 들어온 ROLLBACK-UNSAFE 마이그레이션 파일. 커밋을 모르면 "?" ／ [JA] $1=from $2=to — その間に入った ROLLBACK-UNSAFE マイグレーションファイル。コミットが分からなければ "?"
     git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1 && git rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 \
         || { echo "?"; return; }
     local lo="$1" hi="$2" f
     # 되돌리기(새 → 옛)도 같은 범위다 — 옛 쪽이 조상이 되게 맞춘다.
+    # [JA] ロールバック(新 → 旧)も同じ範囲だ — 旧側が祖先になるように揃える。
     git merge-base --is-ancestor "$hi" "$lo" 2>/dev/null && { lo="$2"; hi="$1"; }
     git diff --name-only --diff-filter=A "$lo" "$hi" -- '*/src/main/resources/db/migration/*.sql' 2>/dev/null \
         | while read -r f; do git show "$hi:$f" 2>/dev/null | grep -q "ROLLBACK-UNSAFE" && echo "$f"; done
@@ -373,6 +470,9 @@ info "클러스터      : $CONTEXT / ns=$NS"
 #
 # 클러스터를 건드리기 **전에** 확인한다. 없는 태그로 apply 하면 파드가 ImagePullBackOff
 # 로 멈추고, 그때는 이미 옛 파드가 종료되기 시작한 뒤다 — 즉 장애가 난 다음에야 안다.
+# [JA] 成果物が実際にあるか
+#      クラスタに触る**前に**確認する。存在しないタグで apply すると Pod が ImagePullBackOff
+#      で止まり、そのときは既に旧 Pod の終了が始まった後だ — つまり障害が起きてから知ることになる。
 
 verify_images() {
     local prober="" missing=0 name
@@ -401,6 +501,7 @@ verify_images() {
             skopeo) skopeo inspect "docker://$name:$VERSION" >/dev/null 2>&1 ;;
             crane)  crane manifest "$name:$VERSION" >/dev/null 2>&1 ;;
             # 매니페스트 HEAD — 목록(index)·단일 모두 받는다. 200 이면 그 태그가 있다.
+            # [JA] マニフェスト HEAD — 一覧(index)・単一の両方を受け付ける。200 ならそのタグがある。
             registry-api) curl -fsS -o /dev/null -I \
                     -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
                     "${REGISTRY_API%/}/v2/${name#*/}/manifests/$VERSION" 2>/dev/null ;;
@@ -429,10 +530,12 @@ EOF
 # ---------------------------------------------------------------- 임시 오버레이 생성
 #
 # 커밋된 오버레이는 건드리지 않는다. 이 디렉터리는 .gitignore 되어 있고 매번 새로 쓴다.
+# [JA] 一時オーバーレイの生成
+#      コミット済みのオーバーレイには触らない。このディレクトリは .gitignore されていて毎回新しく書く。
 
 WORK="$ROOT/.deploy/$ENVIRONMENT"
 
-write_overlay() {   # write_overlay <디렉터리> <버전> [게이트웨이-고정-버전]
+write_overlay() {   # write_overlay <디렉터리> <버전> [게이트웨이-고정-버전] ／ [JA] write_overlay <ディレクトリ> <バージョン> [ゲートウェイ固定バージョン]
     local dir="$1" ver="$2" gw_pin="${3:-}" name short
     rm -rf "$dir"; mkdir -p "$dir"
     {
@@ -441,6 +544,7 @@ write_overlay() {   # write_overlay <디렉터리> <버전> [게이트웨이-고
         echo "kind: Kustomization"
         echo "resources:"
         # $dir 은 언제나 <저장소>/.deploy/<환경> 이므로 두 단계 위가 저장소 루트다.
+        # [JA] $dir は常に <リポジトリ>/.deploy/<環境> なので 2 段上がリポジトリのルートだ。
         echo "  - ../../$OVERLAY"
         echo "images:"
         while IFS= read -r name; do
@@ -452,7 +556,7 @@ write_overlay() {   # write_overlay <디렉터리> <버전> [게이트웨이-고
             if [ -n "$gw_pin" ] && [ "$short" = "gateway-server" ]; then
                 echo "    newTag: \"$gw_pin\""
             elif [ -n "$running" ]; then
-                echo "    newTag: \"$running\""      # --config-only — 지금 도는 그 태그 그대로
+                echo "    newTag: \"$running\""      # --config-only — 지금 도는 그 태그 그대로 ／ [JA] --config-only — 今動いているそのタグのまま
             else
                 echo "    newTag: \"$ver\""
             fi
@@ -463,6 +567,7 @@ EOF
 }
 
 # ---------------------------------------------------------------- 롤아웃 대기
+# [JA] ロールアウト待ち
 
 # ⚠️ `kubectl apply -k` 는 Deployment 를 **한꺼번에** 바꾼다. 그러니 롤아웃은 동시에
 #    진행되고, 이 함수가 순서대로 기다려도 전체 시간은 합이 아니라 **가장 늦는 하나**가
@@ -483,11 +588,23 @@ EOF
 #    재시작 6번 · Pending 3개). OOMKilled 는 로그에 원인이 없어 grep 으로는 영영 보이지 않았다.
 #    이제 재시작이 가장 많은 파드(같으면 가장 새 것)를 고르고, 노드 · 직전 종료 이유를 찍고,
 #    describe · 로그 · 이벤트를 파일로 남긴다(FAILED_POD_DIR, 기본 ~/.ecommerce-msa/failed-pods — 700).
-# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
-#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
+# [JA] ⚠️ `kubectl apply -k` は Deployment を一度に変える。だからロールアウトは同時に進み、この関数が順に待っても全体の時間は
+#      合計ではなく最も遅い一つが決める。下の表の秒は「この段階が始まってから何秒で終わったか」である — それぞれがどれだけ
+#      かかったかではない。末尾が誰かを見るのが目的である。
+#      そして Pod がスケジュールできずにいるかも一緒に見る。このクラスターは単一ノードだが、アプリの Deployment に strategy がなく
+#      既定値(replicas 1 → maxSurge 1)がかかる。つまりロールアウト中はサービスごとに Pod が二つで、13 個なら要求リソースが瞬間的に
+#      倍になる。ノードがそれを受けられないと surge Pod が Pending で列をなしロールアウトが直列化する — 失敗せずただ遅くなるだけなので、
+#      ログを見るだけでは永遠に分からない。
+#      最新の Pod の起動エラーを見せる — ロールアウト失敗の直後、自動復帰でその Pod が消える前に。全ログではなく失敗を語る行だけ:
+#      Spring の APPLICATION FAILED TO START ブロック、例外の Caused by、ERROR。DEBUG の洪水(LOG_LEVEL_SQL=debug など)の中でも原因が見えるように。
+#      🐛 以前: 「最新の Pod」を選んでいた — イメージ取得中の Pending Pod が最新だとログがなく何も出ず、自動復帰が CrashLoop の Pod を
+#      消して手でも見られなかった(2026-10-17 デモ、saga-projection 再起動 6 回・Pending 3 個)。OOMKilled はログに原因がなく grep では永遠に見えなかった。
+#      今は再起動が最多の Pod(同じなら最新)を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す
+#      (FAILED_POD_DIR、既定 ~/.ecommerce-msa/failed-pods — 700)。
 show_startup_error() {   # show_startup_error <deployment>
     local d="$1" pod info node reason code image dir logs
     # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
+    # [JA] コンテナがまだない(Pending)Pod は再起動欄が空で名前だけが出る → 0 として数える
     pod=$(kubectl -n "$NS" get pods -l "app=$d" --sort-by=.metadata.creationTimestamp \
         -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null \
         | awk 'NF == 1 { r = 0; n = $1 } NF >= 2 { r = $1 + 0; n = $2 } NF && r >= best { best = r; name = n } END { print name }')
@@ -515,13 +632,16 @@ show_startup_error() {   # show_startup_error <deployment>
         logs=$({ kubectl -n "$NS" logs "$pod" --tail=400; kubectl -n "$NS" logs "$pod" --tail=400 --previous; } 2>/dev/null)
     fi
     # JVM 이 Spring 전에 죽으면 "Error: …" 한 줄뿐이다 — ERROR · Caused by 로는 걸리지 않는다
+    # [JA] JVM が Spring より前に死ぬと "Error: …" の 1 行だけだ — ERROR・Caused by では引っかからない
     printf '%s\n' "$logs" \
       | grep -E "APPLICATION FAILED TO START|Caused by:|\bERROR\b|Description:|Action:|^Error: |jarfile|no main manifest" \
       | grep -vE "DEBUG|^\s*$" | tail -12 | sed 's/^/      /'
     # 🐛 2026-10-18 데모: saga-projection 이 "Invalid or corrupt jarfile" 로 죽었는데 레지스트리 이미지의 jar 는 멀쩡했다
     #    (해시가 빌드 결과와 같고, 노드의 다이제스트도 레지스트리와 같았다) — 그 노드가 풀어 둔 사본만 깨져 있었다.
     #    같은 태그라 kubelet 은 다시 받지 않는다(IfNotPresent) — 그 노드에서 지워야 한다.
-    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
+    # [JA] 🐛 2026-10-18 デモ: saga-projection が "Invalid or corrupt jarfile" で落ちたが、レジストリのイメージの jar は正常だった
+    #      (ハッシュがビルド結果と同じで、ノードのダイジェストもレジストリと同じだった) — そのノードが展開したコピーだけが壊れていた。
+    #      同じタグなので kubelet は再取得しない(IfNotPresent) — そのノードで消す必要がある。
     if printf '%s\n' "$logs" | grep -qE "Invalid or corrupt jarfile|Unable to access jarfile|no main manifest attribute"; then
         printf '      → jar 를 열지 못했습니다. 레지스트리 이미지가 멀쩡해도 노드 %s 의 사본만 깨졌을 수 있습니다:\n' "${node:-?}"
         printf '          확인(빌드 VM):  docker run --rm --entrypoint sha256sum <레지스트리>/%s /app/app.jar  ↔ build/libs 의 jar\n' "${image#*/}"
@@ -545,6 +665,8 @@ wait_rollouts() {   # wait_rollouts <deployment...>
 
     # 대기하는 동안 Pending 파드를 표본으로 모은다. 백그라운드로 도는 이유: 앞선
     # deployment 를 기다리는 사이에 뒤엣것이 Pending 이어도 알아채야 하기 때문이다.
+    # [JA] 待っている間に Pending の Pod をサンプルとして集める。バックグラウンドで回す理由: 先の
+    #      deployment を待つ間に後ろのものが Pending でも気付く必要があるからだ。
     (
         while :; do
             kubectl -n "$NS" get pods --field-selector=status.phase=Pending \
@@ -567,6 +689,8 @@ wait_rollouts() {   # wait_rollouts <deployment...>
             err "$d 롤아웃 실패/타임아웃"
             # 왜 못 떴는지를 여기서 바로 보여 준다. 이걸 안 찍으면 운영자가
             # describe/logs 를 손으로 찾아 헤매게 된다.
+            # [JA] なぜ起動しなかったかをここですぐ見せる。これを出さないと運用者が
+            #      describe/logs を手で探し回ることになる。
             kubectl -n "$NS" get pods -l "app=$d" \
                 -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,REASON:.status.containerStatuses[0].state.waiting.reason,RESTARTS:.status.containerStatuses[0].restartCount \
                 2>/dev/null | sed 's/^/      /'
@@ -576,6 +700,12 @@ wait_rollouts() {   # wait_rollouts <deployment...>
             #    한다(실제로 겪었다: order-service 가 Stripe 빈 부재로 기동 실패했는데 옛
             #    파드의 아웃박스 폴링 로그만 보였다). 그래서 여기서, 되돌리기 전에, 가장 새
             #    파드의 기동 오류를 뽑아 둔다. 재시작 중이면 --previous 가 직전 시도다.
+            # [JA] 🐛 起動失敗の原因は**新しい Pod**のログにある。ところが自動復帰の後に
+            #      `kubectl logs deploy/<名前>` を打つと旧 Pod(正常な方)のログが出る —
+            #      運用者はスケジューラが回る DEBUG 行ばかり延々と見て「ログに何もない」と言う
+            #      (実際に経験した: order-service が Stripe Bean 不在で起動失敗したのに旧 Pod の
+            #      アウトボックスポーリングのログしか見えなかった)。だからここで、戻す前に、最も新しい
+            #      Pod の起動エラーを抜き出しておく。再起動中なら --previous が直前の試行だ。
             show_startup_error "$d"
             rc=1
         fi
@@ -584,6 +714,7 @@ wait_rollouts() {   # wait_rollouts <deployment...>
     kill $sampler 2>/dev/null
 
     # 꼬리부터 본다 — 이 단계의 길이를 정한 것이 그것이다.
+    # [JA] 末尾から見る — この段階の長さを決めたのはそれだ。
     if [ -n "$timings" ]; then
         printf '\n  이 단계에서 늦게 끝난 순서 (단계 시작 기준 초):\n'
         printf '%s' "$timings" | sort -rn | head -5 | while IFS='|' read -r secs name; do
@@ -592,6 +723,7 @@ wait_rollouts() {   # wait_rollouts <deployment...>
     fi
 
     # Pending 이 관측됐다면 그게 느린 이유다. 단일 노드 + maxSurge 조합을 의심할 것.
+    # [JA] Pending が観測されたならそれが遅い理由だ。単一ノード + maxSurge の組み合わせを疑うこと。
     local pending
     pending=$(sort -u "$pending_log" 2>/dev/null | grep -c . || true)
     if [ "${pending:-0}" -gt 0 ]; then
@@ -610,6 +742,10 @@ wait_rollouts() {   # wait_rollouts <deployment...>
 # 오버레이에는 우리 것이 아닌 Deployment 도 있다(cloudflared). 그것까지 기다리면,
 # 이미 아파 있던 cloudflared 때문에 멀쩡한 배포가 실패로 판정되고 아무 도움도 안 되는
 # 롤백이 돌아간다. 배포의 성패는 배포한 것으로만 판정해야 한다.
+# [JA] 待つ対象は**こちらがバージョンを変える Deployment だけだ。**
+#      オーバーレイには自分たちのものでない Deployment もある(cloudflared)。それまで待つと、
+#      既に不調だった cloudflared のせいで正常なデプロイが失敗と判定され、何の役にも立たない
+#      ロールバックが回る。デプロイの成否はデプロイしたものだけで判定すべきだ。
 OUR_NAMES=$(printf '%s\n' "$IMAGE_NAMES" | sed 's|.*/||' | sort -u)
 ALL_DEPLOYS=$(printf '%s\n' "$RENDERED" \
     | awk '/^kind: Deployment$/{d=1} d && /^  name: /{print $2; d=0}' | sort -u)
@@ -629,13 +765,24 @@ OTHER_DEPLOYS=$(printf '%s\n' "$MANAGED_DEPLOYS" | grep -vx -e user-service -e g
 #
 # ⚠️ 파드 템플릿(spec.template)에는 **절대** 넣지 않는다. 거기 넣으면 주석 한 줄이
 #    템플릿 해시를 바꿔, 내용이 완전히 같아도 배포할 때마다 새 롤아웃이 돌아간다.
-stamp_change_cause() {   # stamp_change_cause <버전> <deployment...>
+# [JA] リビジョン注釈
+#      `kubectl rollout history` は ReplicaSet の `kubernetes.io/change-cause` を読む。
+#      誰も書かなければすべて `<none>` で、「リビジョン 37 はどのコミットか」を知るには
+#      ReplicaSet を全部取り出してイメージタグを目で照合する必要がある。実際にそうなった —
+#      リビジョン 38 個がすべて `<none>` で、何がデプロイされているかを確かめるだけでかなりかかった。
+#      Deployment の **metadata 注釈**を付けるとコントローラが同期時にその時点の ReplicaSet へ
+#      コピーする。なくなった `kubectl --record` がやっていたのはまさにこれだ。注釈を付ける行為
+#      自体が同期を起こすので、apply 直後に付けても新しい ReplicaSet に載る。
+#      ⚠️ Pod テンプレート(spec.template)には**絶対に**入れない。そこに入れると注釈 1 行が
+#      テンプレートハッシュを変え、内容がまったく同じでもデプロイのたびに新しいロールアウトが回る。
+stamp_change_cause() {   # stamp_change_cause <버전> <deployment...> ／ [JA] stamp_change_cause <バージョン> <deployment...>
     local ver="$1"; shift
     local cause d
     cause="ops/28-deploy.sh $ENVIRONMENT $ver @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     for d in "$@"; do
         kubectl -n "$NS" get deploy "$d" >/dev/null 2>&1 || continue
         # 실패해도 배포를 멈추지 않는다 — 기록이 없는 것이 배포가 안 되는 것보다 낫다.
+        # [JA] 失敗してもデプロイを止めない — 記録がないほうがデプロイできないよりましだ。
         kubectl -n "$NS" annotate deploy "$d" \
             "kubernetes.io/change-cause=$cause" --overwrite >/dev/null 2>&1 || true
     done
@@ -645,6 +792,9 @@ stamp_change_cause() {   # stamp_change_cause <버전> <deployment...>
 #
 # 배포는 "파드가 Running" 이 아니라 "요청이 정상 응답한다" 로 끝난다. 이 프로젝트는
 # 파드가 전부 Running 인데 사이트가 522 를 뱉는 상태를 실제로 겪었다(docs/33 §2).
+# [JA] スモークゲート
+#      デプロイは「Pod が Running」ではなく「リクエストが正常に応答する」で終わる。このプロジェクトは
+#      Pod がすべて Running なのにサイトが 522 を返す状態を実際に経験した(docs/33 §2)。
 
 SMOKE_PF_PID=""
 cleanup_pf() { [ -n "$SMOKE_PF_PID" ] && kill "$SMOKE_PF_PID" 2>/dev/null; SMOKE_PF_PID=""; }
@@ -653,8 +803,12 @@ trap cleanup_pf EXIT
 # ⚠️ 결과를 echo 로 돌려주지 않고 전역 SMOKE_TARGET 에 담는다.
 #    $(...) 로 부르면 port-forward 가 **서브셸에서** 뜨고 그 PID 를 부모가 알 수 없다.
 #    그러면 스크립트가 끝나도 port-forward 가 남는다 — trap 이 죽일 대상을 못 찾는다.
+# [JA] ⚠️ 結果を echo で返さずグローバルの SMOKE_TARGET に入れる。
+#      $(...) で呼ぶと port-forward が**サブシェルで**起動し、その PID を親が知ることができない。
+#      するとスクリプトが終わっても port-forward が残る — trap が殺す対象を見つけられない。
 SMOKE_TARGET=""
 # 스모크에 넘길 부가 설정. resolve_gateway 가 대상에 맞게 정한다.
+# [JA] スモークに渡す追加設定。resolve_gateway が対象に合わせて決める。
 SMOKE_INSECURE=""
 SMOKE_SKIP_DIRECT=""
 resolve_gateway() {
@@ -663,6 +817,9 @@ resolve_gateway() {
     # Ingress 의 호스트를 쓴다. 없으면(호스트 미지정 Ingress 가 이 저장소의 기본값이다 —
     # k8s/60-ingress.yaml 참조) port-forward 로 게이트웨이에 직접 붙는다.
     # 대상을 못 찾았다고 게이트를 조용히 건너뛰지는 않는다.
+    # [JA] Ingress のホストを使う。なければ(ホスト未指定の Ingress がこのリポジトリの既定だ —
+    #      k8s/60-ingress.yaml 参照)port-forward でゲートウェイに直接繋ぐ。
+    #      対象が見つからないからといってゲートを黙って飛ばしはしない。
     local host
     host=$(printf '%s\n' "$RENDERED" | awk '/^kind: Ingress$/{i=1} i && /^ *- host: /{print $3; exit}')
     if [ -n "$host" ]; then SMOKE_TARGET="https://$host"; return 0; fi
@@ -670,6 +827,7 @@ resolve_gateway() {
     kubectl -n "$NS" port-forward svc/gateway-server 18000:8000 >/dev/null 2>&1 &
     SMOKE_PF_PID=$!
     # 포트가 열릴 때까지 최대 10초. 고정 sleep 보다 빠르고, 안 열리면 확실히 안다.
+    # [JA] ポートが開くまで最大 10 秒。固定 sleep より速く、開かなければ確実に分かる。
     local i
     for i in $(seq 1 20); do
         if (exec 3<>/dev/tcp/127.0.0.1/18000) 2>/dev/null; then exec 3<&- 3>&-; break; fi
@@ -681,14 +839,25 @@ resolve_gateway() {
     #    400 "This combination of host and port requires TLS" 로 튕겼다. 즉 **스모크 게이트가
     #    구조적으로 통과할 수 없었다** — 무엇을 배포하든 실패 판정을 받고 자동 복귀했다.
     #    저널에 ok 가 한 줄도 없던 이유다. (docs/39 §7.7)
+    # [JA] ⚠️ **https だ。** ゲートウェイは自分で TLS を終端する(profile local の server.ssl、
+    #      ポート 8000)。以前はここが `http://` で、そのためスモークのすべてのリクエストが Tomcat で
+    #      400 "This combination of host and port requires TLS" で弾かれた。つまり**スモークゲートが
+    #      構造的に通過できなかった** — 何をデプロイしても失敗判定を受け自動復帰した。
+    #      ジャーナルに ok が 1 行もなかった理由だ。(docs/39 §7.7)
     SMOKE_TARGET="https://localhost:18000"
     # 게이트웨이 인증서는 ops/07 이 만든 자체 서명이다. 이 구간은 로컬 포트포워드라
     # 중간자가 낄 자리가 없으므로 검증을 끈다.
+    # [JA] ゲートウェイ証明書は ops/07 が作った自己署名だ。この区間はローカルのポートフォワードなので
+    #      中間者が入り込む余地がなく、検証を切る。
     SMOKE_INSECURE=1
     # ⚠️ 개별 서비스 직접 점검을 끈다. ops/06 은 $GATEWAY 가 localhost 면 "로컬 실행"으로
     #    보고 localhost:8080 등을 직접 찌르는데, 여기서 localhost 인 것은 포트포워드 때문이고
     #    서비스 포트는 클러스터 밖으로 나오지 않는다. 그대로 두면 가짜 실패 7건이 나고
     #    (마지막 코드 000) 진짜 문제가 그 사이에 묻힌다. k8s 프로브가 이미 같은 일을 한다.
+    # [JA] ⚠️ 個別サービスの直接点検を切る。ops/06 は $GATEWAY が localhost だと「ローカル実行」と
+    #      みなして localhost:8080 などを直接叩くが、ここで localhost なのはポートフォワードのためで
+    #      サービスポートはクラスタ外に出ない。そのままだと偽の失敗が 7 件出て
+    #      (最後のコード 000)本当の問題がその間に埋もれる。k8s のプローブが既に同じことをしている。
     SMOKE_SKIP_DIRECT=1
 }
 
@@ -701,6 +870,8 @@ run_smoke() {
     log "스모크 테스트  ($SMOKE_TARGET)"
     # SKIP_DIRECT 는 빈 값이면 ops/06 이 스스로 판단한다 — 그 자동 판단을 덮어써야 하는
     # 경우(포트포워드)에만 값이 들어 있다.
+    # [JA] SKIP_DIRECT は空なら ops/06 が自分で判断する — その自動判断を上書きすべき
+    #      場合(ポートフォワード)にだけ値が入っている。
     GATEWAY="$SMOKE_TARGET" \
         INSECURE="${SMOKE_INSECURE:-${INSECURE:-0}}" \
         SKIP_DIRECT="${SMOKE_SKIP_DIRECT:-${SKIP_DIRECT:-}}" \
@@ -717,8 +888,14 @@ run_smoke() {
 #    아직 옛 user-service 가 발급한 토큰이 전부 401 이 된다(docs/27).
 #    그래서 1단계에서는 게이트웨이만 **현재 버전에 고정**해 두고 나머지를 올린 뒤,
 #    2단계에서 게이트웨이를 올린다. 최초 배포(현재 버전 없음)에서는 단계를 나누지 않는다.
+# [JA] デプロイ本体
+#      ⚠️ user-service を gateway-server より先に上げる。
+#      ゲートウェイは uid クレームのないトークンを拒否するので、ゲートウェイが先に新バージョンになると
+#      まだ旧 user-service が発行したトークンがすべて 401 になる(docs/27)。
+#      だから第 1 段階ではゲートウェイだけを**現在のバージョンに固定**して残りを上げ、
+#      第 2 段階でゲートウェイを上げる。初回デプロイ(現在のバージョンなし)では段階を分けない。
 
-deploy_version() {   # deploy_version <버전>
+deploy_version() {   # deploy_version <버전> ／ [JA] deploy_version <バージョン>
     local ver="$1"
 
     if [ -n "$CURRENT_VERSION" ] && [ "$CURRENT_VERSION" != "$ver" ]; then
@@ -727,6 +904,8 @@ deploy_version() {   # deploy_version <버전>
         kubectl apply -k "$WORK" || return 1
         # 게이트웨이는 아직 $CURRENT_VERSION 에 고정돼 있으므로 여기서 찍지 않는다 —
         # 실제로 배포된 것과 다른 버전이 이력에 남으면 없느니만 못하다.
+        # [JA] ゲートウェイはまだ $CURRENT_VERSION に固定されているのでここでは記録しない —
+        #      実際にデプロイされたものと違うバージョンが履歴に残るならないほうがましだ。
         # shellcheck disable=SC2086
         stamp_change_cause "$ver" user-service $OTHER_DEPLOYS
         # shellcheck disable=SC2086
@@ -764,6 +943,17 @@ deploy_version() {   # deploy_version <버전>
     #    prod 는 replicas 를 Deployment 에서 아예 지우고 HPA 가 소유하는 모델이라 필요하다.
     #    단일 노드 환경(local·external·oci·dev)에서는 필요하지도, 들어가지도 않는다.
     #    그래도 켜고 싶으면 APPLY_HPA=1 로 강제한다.
+    # [JA] HPA・PDB はオーバーレイの外にある(k8s-overlays/prod のコメント参照 — kustomize はオーバーレイ
+    #      ディレクトリ外の単体ファイルを参照できない)。バージョンとは無関係だがデプロイのたびに合わせておく。
+    #      ⚠️ **prod でのみ適用する。** 以前は環境に関係なく毎回適用していたが、リポジトリの他の文書は
+    #      正反対を言っていた(k8s-overlays/external・ops/23-oci-ampere・k8s-overlays/local.example がいずれも単一ノードでは HPA を適用しない/消すと記述)。
+    #      だから運用者が `kubectl delete hpa --all` で消しても**次のデプロイが復活させた。**
+    #      その結果が単一ノードで連鎖的に現れた: サービスごとに Pod が最低 2 個 → デプロイ時に
+    #      新 Pod 2 個が同時に起動 → startupProbe 予算(300 秒)超過 → ロールアウトタイムアウト →
+    #      自動復帰。「デプロイしたのにそのサービスだけ旧バージョン」の正体だった(実測: gateway-server)。
+    #      prod は replicas を Deployment から完全に消して HPA が所有するモデルなので必要だ。
+    #      単一ノード環境(local・external・oci・dev)では必要でもなく、収まりもしない。
+    #      それでも有効にしたければ APPLY_HPA=1 で強制する。
     if [ "${APPLY_HPA:-auto}" = "1" ] \
             || { [ "${APPLY_HPA:-auto}" = "auto" ] && [ "$ENVIRONMENT" = "prod" ]; }; then
         kubectl apply -f k8s/70-autoscaling.yaml >/dev/null 2>&1 \
@@ -782,6 +972,15 @@ deploy_version() {   # deploy_version <버전>
         # 지우지는 않는다. 운영자가 일부러 켰을 수도 있고, 배포 스크립트가 남의 리소스를
         # 조용히 삭제하는 것은 그 자체로 놀라운 동작이다. 대신 **보이게** 한다 —
         # 이 경고가 없으면 증상이 "배포하면 파드가 자꾸 두 개가 된다"로만 나타난다.
+        # [JA] 適用しないことと**存在しないこと**は違う。
+        #      このスクリプトが作らなくても HPA は別の経路で入りうる — 手で打った
+        #      `kubectl apply -f k8s/70-autoscaling.yaml`(ops/23 と k8s/README の案内文にそのまま書いてある)、
+        #      以前のバージョンのこのスクリプト、別のウィンドウで回した何か。
+        #      すると minReplicas=2 がここで決めた replicas=1 を 15 秒以内に戻し、
+        #      単一ノードではそれがそのまま起動競合 → startupProbe 超過 → ロールアウト失敗になる。
+        #      消しはしない。運用者が意図して有効にした可能性もあり、デプロイスクリプトが他人のリソースを
+        #      黙って削除するのはそれ自体が驚く動作だ。代わりに**見えるように**する —
+        #      この警告がないと症状が「デプロイすると Pod がいつの間にか 2 個になる」としてしか現れない。
         local hpas
         hpas=$(kubectl -n "$NS" get hpa -o name 2>/dev/null | wc -l | tr -d ' ')
         if [ "${hpas:-0}" -gt 0 ]; then
@@ -800,6 +999,9 @@ deploy_version() {   # deploy_version <버전>
 #
 # 백엔드 매니페스트(k8s/40~49)는 자기 신원 Secret(tls-id-<서비스>)을 마운트한다(docs/57 §16). 없으면 새 파드가
 # ContainerCreating 에서 멈추고 롤아웃이 시간 초과로 끝난다 — 적용하기 **전에** 막는다.
+# [JA] サービスごとのアイデンティティ Secret があるか
+#      バックエンドマニフェスト(k8s/40~49)は自分のアイデンティティ Secret(tls-id-<サービス>)をマウントする(docs/57 §16)。なければ新しい Pod が
+#      ContainerCreating で止まりロールアウトがタイムアウトで終わる — 適用する**前に**止める。
 check_identity_secrets() {
     local missing="" name
     for name in $(grep -ho 'secretName: tls-id-[a-z-]*' "$ROOT"/k8s/*.yaml 2>/dev/null | awk '{print $2}' | sort -u); do
@@ -823,12 +1025,15 @@ check_load_overrides() {
     for d in $MANAGED_DEPLOYS; do
         # ops/53 jvm load(docs/92 §4-3) — 원래 값을 적어 둔 주석이 있으면 측정용 JVM 설정이 걸려 있다. apply 는 CPU 한도만 매니페스트로
         # 되돌리고 JAVA_OPTS · JVM_MAX_RAM_PERCENTAGE 는 남긴다(스모크는 깨지지 않으니 알리기만).
+        # [JA] ops/53 jvm load(docs/92 §4-3)— 元の値を記録した注釈があれば計測用の JVM 設定がかかっている。apply は CPU 上限だけをマニフェストに
+        #      戻し、JAVA_OPTS・JVM_MAX_RAM_PERCENTAGE は残す(スモークは壊れないので知らせるだけ)。
         jvm="$(kubectl -n "$NS" get deploy "$d" -o jsonpath='{.metadata.annotations.ecommerce\.io/jvm-measure}' 2>/dev/null || true)"
         [ -z "$jvm" ] || warn "$d 에 측정용 JVM 설정이 남아 있습니다(GC · 힙 비율 · GC 로그 — 배포 뒤에도 남습니다) — 되돌리려면: ./ops/53-load-k6.sh jvm default $d"
         for var in $(kubectl -n "$NS" get deploy "$d" \
                 -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' 2>/dev/null \
                 | grep -E '^(GATEWAY_RATE_LIMIT_[A-Z_]+|DB_POOL_SIZE)$' || true); do
             # 매니페스트가 선언한 값이면 측정용 예외가 아니다.
+            # [JA] マニフェストが宣言した値なら計測用の例外ではない。
             printf '%s\n' "$RENDERED" | grep -qE "^ *- name: $var\$" && continue
             case "$var" in
                 GATEWAY_RATE_LIMIT_*) found_limit="$found_limit $d/$var" ;;
@@ -848,12 +1053,16 @@ check_load_overrides() {
 }
 
 # ---------------------------------------------------------------- 실행
+# [JA] 実行
 
 # --config-only 는 지금 도는 이미지를 그대로 쓰므로 레지스트리 확인이 필요 없다
 # (태그가 레지스트리에서 지워졌어도 노드에는 남아 있다).
+# [JA] --config-only は今動いているイメージをそのまま使うのでレジストリ確認は不要だ
+#      (タグがレジストリから消えていてもノードには残っている)。
 [ "$CONFIG_ONLY" = "1" ] || verify_images
 check_identity_secrets
 # --config-only 는 스모크를 돌리지 않는다.
+# [JA] --config-only はスモークを回さない。
 [ "$CONFIG_ONLY" = "1" ] || check_load_overrides
 
 if [ "$CONFIG_ONLY" = "1" ]; then
@@ -908,6 +1117,7 @@ if deploy_version "$VERSION" && run_smoke; then
 fi
 
 # ── 여기부터는 실패 경로 ────────────────────────────────────────────────
+# [JA] ── ここからは失敗経路
 
 journal_append "$ENVIRONMENT" "$VERSION" fail
 err "배포 또는 스모크가 실패했습니다: $ENVIRONMENT @ $VERSION"
@@ -934,6 +1144,9 @@ fi
 # ⭐ 여기가 책의 처방이 그대로 드러나는 곳이다. 롤백 전용 경로를 타지 않는다 —
 #    **평소 쓰는 배포 함수를 직전 버전으로 다시 호출할 뿐이다.** 그래서 이 경로는
 #    한 번도 따로 테스트할 필요가 없다. 매 배포가 곧 이 경로의 테스트다.
+# [JA] ⭐ ここが書籍の処方がそのまま現れる場所だ。ロールバック専用の経路は通らない —
+#      **普段使うデプロイ関数を直前のバージョンでもう一度呼ぶだけだ。** だからこの経路は
+#      一度も別にテストする必要がない。毎回のデプロイがそのままこの経路のテストになる。
 log "자동 복귀 — 직전 버전 $CURRENT_VERSION 을 다시 배포합니다"
 
 ROLLBACK_TO="$CURRENT_VERSION"
@@ -951,6 +1164,16 @@ ROLLBACK_TO="$CURRENT_VERSION"
 #
 # 근본 해법은 순서가 아니라 호환성이다 — 게이트웨이가 두 형태의 토큰을 모두 받으면
 # 순서 자체가 사라진다(docs/36 §5 의 남은 과제).
+# [JA] 復帰は**一度に全部**戻す(段階を分けない)。
+#      2 段階の順序(user-service が先、gateway が後)は前に進むときだけ成り立つ規則だ。
+#      戻るときに同じ順序を使うとかえって旧 user-service + 新 gateway の組み合わせが生じて
+#      問題を大きくする。逆順を新たに作れば、それこそ「デプロイと異なる別手順」 —
+#      ほとんど実行されず必要な日に初めてバグが露呈するあの経路だ。
+#      だから復帰は書籍の言うとおりにする: **直前に正常に動いていた構成全体をそのまま
+#      もう一度デプロイする**("redeploy the previous good version from scratch")。部分的に
+#      巻き戻さないので組み合わせの数が増えない。
+#      根本的な解決は順序ではなく互換性だ — ゲートウェイが両形式のトークンを受け付ければ
+#      順序そのものがなくなる(docs/36 §5 の残課題)。
 CURRENT_VERSION=""
 
 if deploy_version "$ROLLBACK_TO"; then

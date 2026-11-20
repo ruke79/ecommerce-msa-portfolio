@@ -27,6 +27,18 @@ import jakarta.persistence.*;
  * <p>SMS 인증번호(notification-service)에는 페퍼를 섞었지만 여기서는 쓰지 않는다. 6자리 숫자는
  * 경우의 수가 100만 개뿐이라 해시를 미리 계산해 둘 수 있지만, 이 토큰은 UUIDv4 (122비트
  * 무작위)라 사전 계산이 불가능하다. 페퍼는 이 경우 보호를 더하지 못하면서 키 관리 부담만 는다.
+ *
+ * <p>[JA] 会員登録の確認トークン。
+ * 有効期限が 3 分だった。定数の横に {@code //60 * 24} というコメントが残っていることから、本来 24 時間だった値を
+ * テストのために 3 に減らして戻さなかったと見られる。メールの配達にかかる時間(スパムフィルタ・キューイング)だけで
+ * 3 分を超えることはよくあるため、事実上かなりの登録者がリンクを押しても失敗する状態だった。今は既定 24 時間で、
+ * 設定で変えられる。
+ * トークンを平文で保存しない。このトークンはそれ自体でアカウントを有効化できる資格情報(bearer credential)である。
+ * DB を読める人 — バックアップファイル・ダンプ・読み取り専用レプリカにアクセスする誰でも — がこの未確認アカウントを
+ * 代わりに有効化できた。パスワードをハッシュで保存するのと同じ理由でハッシュだけを保存する。
+ * SMS 認証番号(notification-service)にはペッパーを混ぜたが、ここでは使わない。6 桁の数字は場合の数が 100 万通り
+ * しかなくハッシュを事前計算できるが、このトークンは UUIDv4(122 ビットのランダム)なので事前計算は不可能である。
+ * ペッパーはこの場合保護を足さず、鍵管理の負担だけが増える。
  */
 @Entity
 @Table(name="verfication_token", schema="users",
@@ -36,12 +48,14 @@ import jakarta.persistence.*;
 public class VerificationToken {
 
     /** 기본 만료. 설정으로 덮어쓸 수 있다(app.verification.token-ttl). */
+    // [JA] 既定の有効期限。設定で上書きできる(app.verification.token-ttl)。
     public static final Duration DEFAULT_TTL = Duration.ofHours(24);
 
     @Id @Tsid
     private Long id;
 
     /** ⚠️ 원문이 아니라 SHA-256 해시다. 조회할 때도 입력을 해시해서 찾는다. */
+    // [JA] ⚠️ 原文ではなく SHA-256 ハッシュである。照会するときも入力をハッシュして探す。
     private String token;
 
     @OneToOne(targetEntity = User.class, fetch = FetchType.LAZY)
@@ -65,6 +79,9 @@ public class VerificationToken {
      * 원문 토큰을 조회·비교용 해시로 바꾼다.
      *
      * <p>저장할 때와 찾을 때 모두 이걸 거친다. 원문은 메일로 나간 뒤 어디에도 남지 않는다.
+     *
+     * <p>[JA] 原文トークンを照会・比較用のハッシュに変える。
+     * 保存するときも探すときも必ずこれを通る。原文はメールで出た後どこにも残らない。
      */
     public static String hash(final String rawToken) {
         try {
@@ -73,6 +90,7 @@ public class VerificationToken {
             return HexFormat.of().formatHex(hashed);
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 은 모든 JVM 이 반드시 제공한다. 여기 오면 실행 환경이 깨진 것이다.
+            // [JA] SHA-256 はすべての JVM が必ず提供する。ここに来たら実行環境が壊れている。
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
@@ -107,6 +125,7 @@ public class VerificationToken {
     }
 
     /** 재발송 시 같은 행을 재사용한다 — 사용자당 토큰이 하나만 살아 있게 유지된다. */
+    // [JA] 再送時は同じ行を再利用する — ユーザーあたりトークンが一つだけ生きている状態を保つ。
     public void refresh(final String rawToken, final Duration ttl) {
         this.token = hash(rawToken);
         this.expiryDate = expiryFrom(ttl);
@@ -115,6 +134,9 @@ public class VerificationToken {
     // id 기반 equals/hashCode. 예전에는 token·expiryDate·user 를 모두 썼는데, user 가 LAZY
     // 프록시라 equals 를 부르는 것만으로 추가 쿼리가 나갔고 영속화 전(id=null) 인스턴스와
     // 후의 해시가 달라 컬렉션에서 사라지는 문제가 있다.
+    // [JA] id ベースの equals/hashCode。以前は token・expiryDate・user をすべて使っていたが、user が LAZY
+    //      プロキシなので equals を呼ぶだけで追加クエリが出て、永続化前(id=null)のインスタンスと
+    //      後とでハッシュが変わりコレクションから消える問題があった。
 
     @Override
     public int hashCode() {
@@ -133,6 +155,7 @@ public class VerificationToken {
     }
 
     /** ⚠️ 토큰 값은 절대 넣지 않는다 — 로그로 새면 해시 저장이 무의미해진다. */
+    // [JA] ⚠️ トークン値は絶対に入れない — ログに漏れるとハッシュ保存が無意味になる。
     @Override
     public String toString() {
         return "VerificationToken[id=" + id + ", expires=" + expiryDate + "]";

@@ -25,6 +25,32 @@
 #   MODE=verify ./ops/17-configure-alert-receivers.sh      # 설정만 점검 (URL 불필요)
 #   MODE=test   ./ops/17-configure-alert-receivers.sh      # 테스트 경보 발사
 #   K8S=1 NAMESPACE=observability ./ops/17-configure-alert-receivers.sh   # Secret 도 생성
+# [JA] アラート受信チャネルの設定 + **実際に届くことの証明**。
+#
+#      なぜ必要か
+#      -----------
+#      このリポジトリにはアラート規則が 9 種あり、発火まで実測した(docs/12)。ところが受信チャネルが
+#      プレースホルダのコメントだったので **アラートはどこにも行っていなかった。** ダッシュボードは緑で規則も
+#      ちゃんと動いているが、明け方にサービスが死んでも誰も気づかない。最悪の種類の「設定されているように見える
+#      未設定」である。
+#
+#      このスクリプトがすること:
+#        ① Webhook URL をコミットされないファイルに書く(URL 自体が認証手段なので、設定ではなく秘密である)
+#        ② k8s を使うなら同じ値で Secret を作る
+#        ③ Alertmanager の設定を再読み込みし、文法を検証する
+#        ④ **テストアラートを実際に押し込んで** チャネルに届くかを確認する — これが核心である。
+#           設定ファイルがそれらしいことと、通知が届くことは別の問題だ。
+#
+#      チャネルは Discord である(2026-10-20 — observability/alertmanager.yml の discord_configs、Alertmanager 0.28+)。
+#      Discord: サーバー設定 → 連携サービス → ウェブフック → 新しいウェブフック → チャンネル選択 →「ウェブフック URL をコピー」。
+#
+#      使い方 — アドレスをコマンドラインに書かない(シェル履歴 · ps に残る)。空のままなら尋ねる(入力は画面に表示されない):
+#        sudo ./ops/17-configure-alert-receivers.sh          # root でないと秘密ファイルを Alertmanager(uid 65534)が読めるようにできない
+#        (warning チャネルを別にするなら 2 つ目の質問に別のアドレス、同じチャネルなら Enter)
+#
+#        MODE=verify ./ops/17-configure-alert-receivers.sh      # 設定の点検だけ(URL 不要)
+#        MODE=test   ./ops/17-configure-alert-receivers.sh      # テストアラートの発射
+#        K8S=1 NAMESPACE=observability ./ops/17-configure-alert-receivers.sh   # Secret も作成
 
 set -euo pipefail
 
@@ -34,6 +60,7 @@ SECRET_DIR="${SECRET_DIR:-observability/secrets}"
 K8S="${K8S:-0}"
 NAMESPACE="${NAMESPACE:-observability}"
 # prom/alertmanager 컨테이너가 도는 UID. 시크릿 파일을 읽을 수 있어야 한다.
+# [JA] prom/alertmanager コンテナが動く UID。シークレットファイルを読めなければならない。
 ALERTMANAGER_UID="${ALERTMANAGER_UID:-65534}"
 CURL_OPTS=(-sS --max-time 10)
 [[ "${INSECURE:-0}" == "1" ]] && CURL_OPTS+=(-k)
@@ -52,6 +79,7 @@ echo "════════════════════════�
 echo
 
 # ── ① 웹훅 URL 을 파일로 ──────────────────────────────────────────────────────
+# [JA] ── ① Webhook URL をファイルに ──
 if [[ "$MODE" == "configure" ]]; then
     if [[ -z "${WEBHOOK_CRITICAL:-}" && -t 0 ]]; then
         read -rsp "  critical 채널의 Discord 웹후크 URL: " WEBHOOK_CRITICAL; echo
@@ -65,10 +93,13 @@ if [[ "$MODE" == "configure" ]]; then
 
     # 🔒 주소 자체가 비밀이다 — 길이 · 앞부분만 찍는다.
     # 🐛 2026-10-20 전에는 Slack 주소를 예로 들었는데 수신 설정이 webhook_configs(Alertmanager JSON)라 Slack · Discord 가 형식으로 거절했다.
+    # [JA] 🔒 アドレス自体が秘密である — 長さ · 先頭部分だけを出す。
+    #      🐛 2026-10-20 以前は Slack のアドレスを例にしていたが、受信設定が webhook_configs(Alertmanager JSON)だったので Slack · Discord が形式で拒否した。
     for url in "$WEBHOOK_CRITICAL" "$WEBHOOK_WARNING"; do
         if [[ ! "$url" =~ ^https://(discord|discordapp)\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$ ]]; then
             echo "ERROR: Discord 웹후크 URL 형식이 아닙니다(길이 ${#url}, 앞부분 '${url:0:30}')" >&2
             # 예시 주소를 글자 그대로 적지 않는다 — 비밀 스캔(ops/20)이 웹후크 주소로 잡는다
+            # [JA] 例のアドレスを文字どおりに書かない — 秘密スキャン(ops/20)が Webhook のアドレスとして捕まえる
             echo "       Discord 의 '웹후크 URL 복사' 그대로(api/webhooks/<숫자>/<토큰>) — 뒤에 /slack · ?wait= 를 붙이지 않습니다." >&2
             exit 2
         fi
@@ -77,6 +108,7 @@ if [[ "$MODE" == "configure" ]]; then
     mkdir -p "$SECRET_DIR"
     if [[ ! -w "$SECRET_DIR" ]]; then
         # Docker 가 없는 디렉터리를 root 소유로 만들어 둔 경우(운영 2026-09-24)
+        # [JA] Docker が存在しないディレクトリを root 所有で作っておいた場合(運用 2026-09-24)
         echo "ERROR: $SECRET_DIR 에 쓸 수 없습니다(소유자 $(stat -c %U "$SECRET_DIR")) — sudo 로 다시 실행하세요." >&2
         exit 2
     fi
@@ -89,6 +121,12 @@ if [[ "$MODE" == "configure" ]]; then
     #      "notify retry canceled ... open /etc/alertmanager/secrets/...: permission denied"
     #    그래서 그룹 읽기(640)를 주고 컨테이너 UID 를 소유자로 지정한다. 여전히
     #    world-readable 은 아니다. k8s 에서는 Secret 이 이 문제를 대신 처리한다.
+    # [JA] ⚠️ 権限を 600 にすると **コンテナが読めない。** prom/alertmanager イメージは
+    #         nobody(65534)で動くからである。最初にこのスクリプトをそう作ったら、設定点検は
+    #         すべて緑なのに配信だけが静かに失敗した:
+    #           "notify retry canceled ... open /etc/alertmanager/secrets/...: permission denied"
+    #         だからグループ読み取り(640)を与え、コンテナの UID を所有者に指定する。それでも
+    #         world-readable ではない。k8s では Secret がこの問題を代わりに処理する。
     chmod 640 "$SECRET_DIR"/webhook-url-*
     if [[ "$(id -u)" == "0" ]]; then
         chown "$ALERTMANAGER_UID:$ALERTMANAGER_UID" "$SECRET_DIR"/webhook-url-* 2>/dev/null || true
@@ -99,6 +137,7 @@ if [[ "$MODE" == "configure" ]]; then
     fi
 
     # gitignore 안전장치. 값이 커밋되면 채널이 공개되는 것과 같다.
+    # [JA] gitignore の安全装置。値がコミットされるとチャネルが公開されるのと同じである。
     if git -C "$ROOT" check-ignore -q "$SECRET_DIR/webhook-url-critical" 2>/dev/null; then
         ok "$SECRET_DIR/ 가 gitignore 되어 있다"
     else
@@ -119,6 +158,7 @@ if [[ "$MODE" == "configure" ]]; then
 fi
 
 # ── ② 설정 상태 점검 ─────────────────────────────────────────────────────────
+# [JA] ── ② 設定状態の点検 ──
 echo "설정 점검"
 
 if [[ -s "$SECRET_DIR/webhook-url-critical" ]]; then
@@ -133,6 +173,7 @@ else
 fi
 
 # 예전 상태(주석 처리된 플레이스홀더)로 되돌아가지 않았는지 본다.
+# [JA] 以前の状態(コメントアウトされたプレースホルダ)に戻っていないかを見る。
 if grep -qE '^\s*#.*hooks\.slack\.com/services/XXX' observability/alertmanager.yml 2>/dev/null; then
     bad "alertmanager.yml 이 플레이스홀더 주석 상태다"
 fi
@@ -143,10 +184,12 @@ else
 fi
 
 # 실행 중이라면 Alertmanager 자신에게 물어본다.
+# [JA] 実行中なら Alertmanager 自身に問い合わせる。
 if curl "${CURL_OPTS[@]}" -o /dev/null "$ALERTMANAGER_URL/-/healthy" 2>/dev/null; then
     ok "Alertmanager 응답 ($ALERTMANAGER_URL)"
 
     # 설정을 다시 읽게 하고, 받아들여졌는지 확인한다.
+    # [JA] 設定を読み直させ、受け入れられたかを確認する。
     if curl "${CURL_OPTS[@]}" -X POST -o /dev/null -w '' "$ALERTMANAGER_URL/-/reload" 2>/dev/null; then
         ok "설정 재적재 요청 성공"
     fi
@@ -165,6 +208,7 @@ fi
 echo
 
 # ── ③ 실제 도달 시험 ─────────────────────────────────────────────────────────
+# [JA] ── ③ 実際の到達試験 ──
 if [[ "$MODE" == "test" || "$MODE" == "configure" ]]; then
     echo "도달 시험 — 테스트 경보를 실제로 밀어 넣는다"
 
@@ -172,10 +216,13 @@ if [[ "$MODE" == "test" || "$MODE" == "configure" ]]; then
         note "Alertmanager 가 없어 건너뜁니다"
     else
         # 짧게 끝나도록 endsAt 을 가까운 미래로 둔다 — 남아서 계속 알림이 가면 곤란하다.
+        # [JA] 短く終わるように endsAt を近い未来にする — 残って通知が送られ続けると困る。
         ends="$(date -u -d '+2 minutes' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
                 || date -u -v+2M '+%Y-%m-%dT%H:%M:%SZ')"
         # 회차마다 다른 이름표 — 🐛 2026-10-20 운영: 같은 이름표(service=ops-17)의 두 번째 시험은 첫 시험과 같은 경보로 묶여
         #    repeat_interval(30분) 안이라 다시 보내지 않았다("전달 시도 자체가 없었다"). 그룹 키(alertname · service)가 새로우면 group_wait 뒤 바로 나간다.
+        # [JA] 回ごとに違うラベル — 🐛 2026-10-20 運用: 同じラベル(service=ops-17)の 2 回目の試験は 1 回目と同じアラートにまとめられ、
+        #         repeat_interval(30 分)以内なので再送しなかった(「配信の試みそのものがなかった」)。グループキー(alertname · service)が新しければ group_wait の後すぐ送られる。
         run_id="$(date -u +%Y%m%dT%H%M%SZ)"
         payload=$(cat <<JSON
 [{
@@ -195,8 +242,10 @@ JSON
         # 전달 지표는 Alertmanager 가 뜬 뒤의 누적이다 — 이 시험 전의 값을 기준으로 차이만 본다.
         # 🐛 2026-10-20 운영: 주소 파일을 만들기 전에 Alertmanager 를 새로 띄워 이미 울리던 경보 4건이 실패로 쌓였고,
         #    시험 경보는 Discord 에 왔는데도 누적 실패 수 때문에 "전달 실패" 로 판정했다.
-        # [JA] 送信指標は起動後の累積 — この試験前の値を基準に差分だけを見る。
-        discord_counts() {   # "시도 실패" — 재기동 뒤 누적
+        # [JA] 送信指標は Alertmanager 起動後の累積である — この試験前の値を基準に差分だけを見る。
+        #      🐛 2026-10-20 本番: アドレスファイルを作る前に Alertmanager を新しく起動したため、すでに鳴っていたアラート 4 件が失敗として積もり、
+        #      試験アラートは Discord に届いたのに累積失敗数のせいで「送信失敗」と判定した。
+        discord_counts() {   # "시도 실패" — 재기동 뒤 누적 ／ [JA] 「試行失敗」 — 再起動後の累積
             local m; m="$(curl "${CURL_OPTS[@]}" "$ALERTMANAGER_URL/metrics" 2>/dev/null || echo '')"
             awk '/^alertmanager_notifications_total\{.*integration="discord"/ {t+=$NF}
                  /^alertmanager_notifications_failed_total\{.*integration="discord"/ {f+=$NF}
@@ -225,6 +274,9 @@ JSON
         # ⚠️ 여기서 멈추면 안 된다. "수용됐다"와 "전달됐다"는 다른 얘기다 — 실제로 이 스크립트를
         # 처음 돌렸을 때 위 검사는 전부 통과했는데 웹훅은 permission denied 로 실패하고 있었다.
         # Alertmanager 자신의 지표로 전달 성공/실패를 확인한다. 채널에 접근할 필요가 없다.
+        # [JA] ⚠️ ここで止まってはいけない。「受け入れられた」と「配信された」は別の話だ — 実際にこのスクリプトを
+        #      初めて回したとき、上の検査はすべて通ったのに Webhook は permission denied で失敗していた。
+        #      Alertmanager 自身の指標で配信の成功/失敗を確認する。チャネルにアクセスする必要はない。
         echo "     전달 결과를 기다리는 중 (critical group_wait 10s)..."
         delivered=0; failed=0
         for _ in $(seq 1 12); do

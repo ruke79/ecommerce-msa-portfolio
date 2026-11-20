@@ -44,16 +44,36 @@ import lombok.extern.slf4j.Slf4j;
  * 검색은 모두 0.2초 뒤 503 이었다(실패 4.64% — 5xx 28만 건 중 검색 셋이 27.9만), 풀(5)에도 둘만 남았다. 소켓 상한이면 그 연결은 버려지고
  * (SQLSTATE 08006 — Hikari 가 풀에서 뺀다) 자리는 돌아온다.
  *
- * <p>[JA] 検索の DB 作業の隔壁 — ポッド内で同時に DB を使う検索数に上限を置き、席を得てからトランザクション(接続)を開く。席を待てなければ
- * 接続に触れずに 503。1,000 万商品のフィルター検索が接続を 1〜4 秒ずつ握ってプール全体が埋まり、home・商品まで 5xx だった。
- *      その接続のソケット読み取りにも上限を置く — 時間上限の取り消しは別接続で送るだけなので、元の接続が死んでいると読み取りが永遠に
- *      起きず、席が戻らなかった(8 時間実習で全ポッドの席 3/3 が数時間ふさがった)。
+ * <p>[JA] 検索の DB 作業の隔壁 — Pod 内で同時に DB を使う検索数に上限を置き、席を得てからトランザクション(コネクション)を開く。
+ *
+ * <ul>
+ *   <li>検索全体 {@code catalog.search.bulkhead.max-concurrent}(既定 3)— プール(Pod ごとに 5)の残りは home · banners · 商品 · カート側の分。</li>
+ *   <li>その中で価格 · 色 · サイズのフィルター検索 {@code catalog.search.bulkhead.max-concurrent-filtered}(既定 2)— フィルターなしの検索が一席は常に使える。</li>
+ *   <li>席を {@code catalog.search.bulkhead.wait}(既定 200ms)までしか待たず、得られなければコネクションに触れずに {@link Busy}(503) —
+ *       キャッシュがヒットする検索({@code search_cache})はここまで来ない。</li>
+ *   <li>トランザクションは読み取り専用 · 時間上限 {@code catalog.search.query-timeout-seconds}(既定 5 秒 — 超えると DB で取り消し、SearchController が 503)。</li>
+ *   <li>そのコネクションのソケット読み取りも上限 + {@code catalog.search.network-timeout-grace}(既定 5 秒)までしか待たない — コネクションがプールに
+ *       戻ると Hikari が元の値に戻す。</li>
+ * </ul>
+ *
+ * <p>🐛 2026-10-20 実習(商品 1,000 万 · フィルター検索比率 1、docs/83 §2.8): 時間上限のおかげでクエリが何分もぶら下がることはなかったが、フィルター検索
+ * 一つが件数カウント + 一覧で 1 〜 4 秒ずつコネクションを握り、プール 15 個(Pod 3 × 5)が常に埋まった — コネクション待ち 30 〜 46、取得まで平均
+ * 2 〜 3.5 秒、home · banners · 商品まで 5 秒待った末に 5xx(失敗 17.70% · 21.48%、フィルター検索以外の 5xx 300 件余り)。コネクションは
+ * トランザクションが開くときに取られるので、席はその前に得る。キャッシュの単一計算({@code sync = true})が同じ検索を一つにまとめた後なので、
+ * 同じキーの同時リクエストは席を一つしか使わない。
+ *
+ * <p>🐛 2026-10-21 実習 8 時間(mixed {@code 030018Z}、docs/83 §2.8): 終わった後の休止中も Pod 三つすべてで席 3/3 をスレッド三つが握っていた —
+ * すべて件数カウント({@code fetchOne})の PostgreSQL ソケット読み取り(SSL)で、スレッドは数時間そのまま。時間上限は DB に取り消し要求を
+ * <b>新しい接続で</b>送るだけなので、元の接続が死んでいると(ノード再起動 · 消えた相手 — RST が来ない)答えが返らず読み取りは起きない。
+ * その後 DB を使う検索はすべて 0.2 秒後に 503 だった(失敗 4.64% — 5xx 28 万件のうち検索三つが 27.9 万)、プール(5)にも二つしか残らなかった。
+ * ソケット上限ならその接続は捨てられ(SQLSTATE 08006 — Hikari がプールから外す)、席は戻る。
  */
 @Slf4j
 @Component
 public class SearchBulkhead {
 
     /** 자리를 못 얻었다 — 커넥션은 잡지 않았다(SearchController 가 503 · Retry-After). */
+    // [JA] 枠を得られなかった — コネクションは取っていない(SearchController が 503・Retry-After)。
     public static class Busy extends RuntimeException {
         private final String limit;
 
@@ -118,6 +138,7 @@ public class SearchBulkhead {
                     });
                 } catch (RuntimeException e) {
                     // 버려진 연결에서는 롤백도 실패한다('Unable to rollback') — 그 예외가 원래 원인(소켓 시간 초과)을 덮지 않게 한다
+                    // [JA] 捨てられた接続ではロールバックも失敗する('Unable to rollback') — その例外が元の原因(ソケットタイムアウト)を覆わないようにする
                     if (failure[0] != null && e != failure[0]) {
                         failure[0].addSuppressed(e);
                         throw failure[0];
@@ -131,6 +152,9 @@ public class SearchBulkhead {
     /**
      * 이 트랜잭션의 커넥션에 소켓 읽기 상한을 건다({@link java.sql.Connection#setNetworkTimeout}) — 넘으면 PgJDBC 가 연결을 버리고 08006.
      * Hikari 는 바꾼 값을 기억했다가 커넥션이 풀로 돌아올 때 되돌린다(다른 요청 · 필터 메뉴 계산 600초에는 번지지 않는다).
+     *
+     * <p>[JA] このトランザクションのコネクションにソケット読み取りの上限をかける({@link java.sql.Connection#setNetworkTimeout}) — 超えると PgJDBC が接続を捨てて 08006。
+     * Hikari は変えた値を覚えておき、コネクションがプールに戻るときに元に戻す(他のリクエスト・フィルタメニュー計算の 600 秒には波及しない)。
      */
     private static void boundSocketReads(JpaTransactionManager jpa, int millis) {
         EntityManagerFactoryUtils.getTransactionalEntityManager(jpa.getEntityManagerFactory()).unwrap(Session.class)
@@ -148,6 +172,9 @@ public class SearchBulkhead {
      * 자리를 얻고(필터 검색이면 두 자리) 읽기 전용 · 시간 상한 트랜잭션 안에서 {@code search} 를 돌린다.
      *
      * @throws Busy 기다림 상한 안에 자리를 못 얻었다 — 커넥션을 잡기 전이다
+     *
+     * <p>[JA] 枠を得て(フィルタ検索なら二枠)、読み取り専用・時間上限付きトランザクションの中で {@code search} を回す。
+     * Busy: 待ち時間の上限内に枠を得られなかった — コネクションを取る前である。
      */
     public <T> T run(boolean filteredSearch, Supplier<T> search) {
         long deadline = System.nanoTime() + waitNanos;
@@ -182,6 +209,7 @@ public class SearchBulkhead {
     private static Busy busy(Counter counter, String limit) {
         counter.increment();
         // 몰릴 때는 초당 수백 건이다 — 수는 지표(catalog_search_bulkhead_rejected_total)로 본다
+        // [JA] 集中するときは毎秒数百件になる — 件数はメトリクス(catalog_search_bulkhead_rejected_total)で見る
         log.debug("검색 격벽이 찼다 — 503 limit={}", limit);
         return new Busy(limit);
     }

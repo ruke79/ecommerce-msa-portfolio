@@ -14,6 +14,22 @@
  *
  * <p>하지 않는 경우: 운영 빌드가 아닐 때, API 주소가 비었거나 상대 경로일 때(그때는 어느 호스트든 같은
  * 출처다), 로컬 호스트일 때(로컬 개발은 3000 ↔ 8000 으로 원래 출처가 다르다).
+ *
+ * <p>[JA] ページが API と<b>異なるオリジン</b>で開かれたら、API のオリジンへ移すアドレスを返す。移す必要がなければ null。
+ *
+ * <h3>🐛 Firefox で "Cross-Origin Request Blocked … token/refresh (403)"</h3>
+ *
+ * <p>本番バンドルの API アドレスはビルド時に埋め込まれた絶対アドレス({@code REACT_APP_API_URL=https://www.<ドメイン>})である。
+ * ところが Cloudflare Tunnel はホスト名を問わずサイトを返す — {@code https://<ドメイン>}(www なし)
+ * で入っても画面は出る。するとすべての API 呼び出しが www へ向かう<b>クロスオリジンリクエスト</b>になり、
+ * ゲートウェイの CORS 許可リスト(ローカル開発のオリジンのみ)にないので 403 で拒否される。ログイン Cookie も www にあるので
+ * そのアドレスではどのみちログインが続かない。
+ *
+ * <p>本番は「フロントと API が同一オリジン」で設計されている(k8s-overlays/prod/cloudflared.yaml)。だから別の
+ * オリジンで開かれたなら、直すべきは CORS ではなく<b>アドレス</b>である — 同じ経路で API のオリジンに開き直す。
+ *
+ * <p>行わない場合: 本番ビルドでないとき、API アドレスが空か相対パスのとき(そのときはどのホストでも同一
+ * オリジンである)、ローカルホストのとき(ローカル開発は 3000 ↔ 8000 で元々オリジンが異なる)。
  */
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -25,7 +41,7 @@ export function canonicalRedirectTarget(apiBase, location, isProduction) {
     try {
         api = new URL(apiBase);
     } catch (e) {
-        return null;   // 상대 경로 — 어느 호스트에서든 같은 출처다
+        return null;   // 상대 경로 — 어느 호스트에서든 같은 출처다 ／ [JA] 相対パス — どのホストでも同一オリジンである
     }
     if (api.origin === location.origin || LOCAL_HOSTS.has(location.hostname)) {
         return null;

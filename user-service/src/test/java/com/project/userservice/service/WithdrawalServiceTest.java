@@ -34,6 +34,10 @@ import com.project.userservice.repository.jpa.WishiItemRepository;
  *
  * <p>최종 처리는 되돌릴 수 없으므로, "처리한다"보다 "처리하지 않는다"를 더 많이 검증한다 —
  * 그 사이 취소한 계정, 이미 처리한 계정, 비밀번호가 틀린 신청.
+ *
+ * <p>[JA] 会員退会の<b>取り消せる区間</b>を固定する。
+ * 最終処理は取り消せないので「処理する」より「処理しない」を多く検証する —
+ * その間に取り消したアカウント、既に処理したアカウント、パスワードの違う申請。
  */
 @DisplayName("회원 탈퇴")
 class WithdrawalServiceTest {
@@ -90,6 +94,7 @@ class WithdrawalServiceTest {
     }
 
     // ── 신청 ────────────────────────────────────────────────────────────
+    // [JA] ── 申請 ──
 
     @Test
     @DisplayName("신청하면 예정일이 유예 기간만큼 뒤로 잡힌다")
@@ -125,6 +130,9 @@ class WithdrawalServiceTest {
     /**
      * 🐛 예전 테스트는 소셜 계정을 {@code password = null} 로 만들었다 — 실제 소셜 가입은 <b>아무도 모르는 난수</b>를 넣으므로 그 계정은
      * 존재하지 않는다. 테스트가 통과하는 동안 실제 소셜 가입자는 탈퇴할 수 없었다(docs/68 §16). 이제 실제와 같은 모양으로 만든다.
+     *
+     * <p>[JA] 🐛 以前のテストはソーシャルアカウントを {@code password = null} で作っていた — 実際のソーシャル登録は<b>誰も知らない乱数</b>を入れるのでそのアカウントは
+     * 存在しない。テストが通る間、実際のソーシャル登録者は退会できなかった(docs/68 §16)。今は実際と同じ形で作る。
      */
     @Test
     @DisplayName("🔴 소셜 계정(난수 비밀번호)은 비밀번호 없이, 최근 로그인으로 신청한다")
@@ -182,6 +190,7 @@ class WithdrawalServiceTest {
     }
 
     // ── 취소 ────────────────────────────────────────────────────────────
+    // [JA] ── 取り消し ──
 
     @Test
     @DisplayName("취소하면 신청 기록이 사라진다")
@@ -205,6 +214,7 @@ class WithdrawalServiceTest {
     }
 
     // ── 최종 처리 ────────────────────────────────────────────────────────
+    // [JA] ── 最終処理 ──
 
     @Test
     @DisplayName("최종 처리는 식별정보를 지우고 로그인 경로를 닫는다")
@@ -219,6 +229,7 @@ class WithdrawalServiceTest {
         assertThat(user.isEnabled()).isFalse();
         assertThat(user.getWithdrawnAt()).isNotNull();
         // 옛 비밀번호로는 더 이상 들어올 수 없다
+        // [JA] 古いパスワードではもう入れない
         assertThat(user.getPassword()).isNotEqualTo(oldPasswordHash);
         assertThat(passwordEncoder.matches(PASSWORD, user.getPassword())).isFalse();
     }
@@ -226,13 +237,14 @@ class WithdrawalServiceTest {
     @Test
     @DisplayName("익명화한 username 은 20자 제한을 넘지 않는다")
     void anonymizedUsernameFitsTheColumn() {
-        user.setUserId(Long.MAX_VALUE);          // 가장 긴 식별자
+        user.setUserId(Long.MAX_VALUE);          // 가장 긴 식별자 ／ [JA] 最も長い識別子
         when(userRepository.findById(Long.MAX_VALUE)).thenReturn(Optional.of(user));
         user.setWithdrawalRequestedAt(LocalDateTime.now().minusDays(8));
 
         service.finalizeWithdrawal(Long.MAX_VALUE);
 
         // @Size(max = 20) 이다. 10진수 TSID 를 그대로 쓰면 19자 + 접두사로 넘친다.
+        // [JA] @Size(max = 20) である。10 進数の TSID をそのまま使うと 19 文字 + 接頭辞であふれる。
         assertThat(user.getUsername().length()).isLessThanOrEqualTo(20);
         assertThat(user.getEmail().length()).isLessThanOrEqualTo(50);
     }
@@ -262,6 +274,7 @@ class WithdrawalServiceTest {
     }
 
     /** 🐛 예전에는 기기 · 패스키 · 알림(실제 이메일) · 탈퇴 사유가 남아, 탈퇴 7일 뒤에도 원래 주소가 DB 에서 나왔다. */
+    // [JA] 🐛 以前は機器・パスキー・通知(実際のメールアドレス)・退会理由が残り、退会 7 日後にも元のアドレスが DB から出てきた。
     @Test
     @DisplayName("🔴 최종 처리는 기기 · 패스키 · 알림(옛 행의 실제 이메일 포함) · 탈퇴 사유도 지운다")
     void finalizeDeletesDevicesPasskeysNotificationsAndReason() {
@@ -279,6 +292,7 @@ class WithdrawalServiceTest {
     }
 
     /** 🔴 원본만 지우면 chat 의 복제본에 이메일·이름·사진이 남는다(docs/48 §6-⑤). */
+    // [JA] 🔴 原本だけ消すと chat の複製にメールアドレス・名前・写真が残る(docs/48 §6-⑤)。
     @Test
     @DisplayName("🔴 최종 처리는 user-deleted 를 같은 트랜잭션의 아웃박스에 적는다 — 복제본도 지우게")
     void finalizeTellsReplicas() {
@@ -293,6 +307,7 @@ class WithdrawalServiceTest {
     @DisplayName("그 사이 취소한 계정은 건드리지 않는다")
     void finalizeSkipsCancelledAccounts() {
         // withdrawalRequestedAt 이 null = 취소했다
+        // [JA] withdrawalRequestedAt が null = 取り消した
         assertThat(service.finalizeWithdrawal(USER_ID)).isFalse();
 
         assertThat(user.getEmail()).isEqualTo("tester@example.com");
@@ -312,6 +327,7 @@ class WithdrawalServiceTest {
     }
 
     /** 🐛 예전: 현재 비밀번호 확인에 제한이 없어, 세션만 가진 사람이 탈퇴 신청으로 비밀번호를 대입할 수 있었다. */
+    // [JA] 🐛 以前: 現在のパスワード確認に制限がなく、セッションだけを持つ人が退会申請でパスワードを総当たりできた。
     @Test
     @DisplayName("🔴 비밀번호 확인은 비교 전에 시도를 센다 — 한도를 넘으면 비교하지 않는다")
     void passwordAttemptsAreLimited() {

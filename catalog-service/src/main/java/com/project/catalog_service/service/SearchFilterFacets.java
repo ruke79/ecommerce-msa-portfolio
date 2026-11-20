@@ -50,8 +50,25 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>상품 쓰기의 {@code @CacheEvict}(ProductService)가 지우면 다음 요청이 다시 계산을 맡긴다.</li>
  * </ul>
  *
- * <p>[JA] 検索 1 ページ目のフィルターメニュー。リクエストは計算しない — キャッシュを読み、なければ専用実行器に任せて短く待つだけ。1,000 万商品で
- * メニュー照会(76 秒)がリクエスト内で走り、キャッシュ満了のたびに接続を数分握ってプールが詰まり、home まで 5xx だった。
+ * <p>[JA] 検索 1 ページ目のフィルターメニュー(ブランド · 色 · サイズ · 詳細)— カテゴリごとの重複のない値。<b>リクエストは計算しない</b>:
+ * キャッシュを読み、ないか古ければ専用実行器に計算を任せて短く待つだけ({@code catalog.facets.wait}、既定 1.5 秒)。その間に終わらなければ
+ * メニューなしで結果だけ返す。
+ * 🐛 2026-10-20 実習(商品 1,000 万、docs/83 §2.8): メニュー照会がリクエスト内で走った(サイズ DISTINCT 76 秒 — 大きなカテゴリの SKU ×
+ * サイズ全部を結合する)。キャッシュ(8 〜 10 分)が切れるたびに再実行して接続を数分ずつ握り、Pod ごとに 5 個しかないプールが埋まって
+ * home · banners まで 5 秒待ちの末 5xx だった(拡大計測の失敗 10.33%、二度目の崩壊は最初の充填の 9 分後)。メニューは検索結果キャッシュ
+ * ({@code search_cache}、60 分)にも一緒に入っていて長くそのままだった — 今は結果キャッシュには入れず、毎リクエストこの Bean が付ける
+ * ({@link #attach})。
+ * <ul>
+ *   <li>[JA] 値と計算時刻を一緒に置く({@link FacetEntry}、キャッシュ 24 時間)。{@code catalog.facets.refresh-after}(既定 10 分)を過ぎると
+ *       古い値を返しながら裏で再計算する — 満了の瞬間にリクエストが照会を待たない。</li>
+ *   <li>[JA] 計算はキーごとに一つ(Pod 内)、実行器スレッドは {@code catalog.facets.threads}(既定 1)個 — メニュー照会が Pod の接続を
+ *       一つより多く使わない。照会自体の時間上限は {@link FacetQueries}(既定 600 秒)。</li>
+ *   <li>[JA] そして<b>クラスターで一つの Pod だけ</b>({@link FacetRefreshClaim})— 引き受けられなかった Pod は古い値をそのまま(なければ
+ *       メニューなしで)返し、新しい値は引き受けた Pod が書く。🐛 2026-10-21 実習: 古くなった瞬間を全 Pod が同時に見て、同じ DISTINCT を
+ *       Pod 三つが同時に走らせた — DB が遅くなり home まで 6 秒、ゲートウェイ 503 が 1,472 件(docs/83 §2.8)。Redis に届かなければ以前どおり
+ *       この Pod で計算する。</li>
+ *   <li>[JA] 商品書き込みの {@code @CacheEvict}(ProductService)が消すと、次のリクエストが再び計算を任せる。</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -67,6 +84,7 @@ public class SearchFilterFacets {
     private final Map<String, CompletableFuture<List<Object>>> inFlight = new ConcurrentHashMap<>();
 
     /** 다른 파드가 이 메뉴를 계산하고 있다 — 이 파드는 계산하지 않는다(기다리던 요청은 메뉴 없이). */
+    // [JA] 別のポッドがこのメニューを計算している — このポッドは計算しない(待っていたリクエストはメニューなしで)。
     static final class ClaimedElsewhere extends RuntimeException {
         ClaimedElsewhere() {
             super(null, null, false, false);
@@ -99,6 +117,7 @@ public class SearchFilterFacets {
     }
 
     /** 데몬 스레드 · 대기열 상한 — 넘치면 그 계산은 다음 요청이 다시 맡긴다(메뉴만 비고 결과는 나간다). */
+    // [JA] デーモンスレッド・待ち行列の上限 — あふれたらその計算は次のリクエストが改めて依頼する(メニューだけ空で、結果は返る)。
     private static ExecutorService newExecutor(int threads) {
         int n = Math.max(1, threads);
         return new ThreadPoolExecutor(n, n, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(64), r -> {
@@ -118,6 +137,9 @@ public class SearchFilterFacets {
     /**
      * 첫 쪽 결과에 메뉴를 붙인 복사본. {@code includeFilters=false} 면 그대로. 네 가지를 먼저 모두 맡기고 한 기한(기본 1.5초) 안에서 모은다 —
      * 하나씩 기다리면 최악이 네 배다.
+     *
+     * <p>[JA] 最初のページの結果にメニューを付けたコピー。{@code includeFilters=false} ならそのまま。四つを先にすべて依頼し、一つの期限(既定 1.5 秒)内で集める
+     * — 一つずつ待つと最悪で四倍になる。
      */
     public SearchResultDto attach(SearchResultDto dto, SearchParamsRequest params) {
         if (dto == null || params == null || !params.isIncludeFilters()) {
@@ -142,6 +164,7 @@ public class SearchFilterFacets {
     }
 
     /** 캐시에 있으면 그 값(오래됐으면 뒤에서 다시 계산을 맡긴다), 없으면 진행 중인 계산. */
+    // [JA] キャッシュにあればその値(古ければ裏で再計算を依頼する)、なければ進行中の計算。
     CompletableFuture<List<Object>> lookup(String cacheName, String key, Supplier<? extends List<?>> loader) {
         Cache cache = cacheManager.getCache(cacheName);
         FacetEntry hit = read(cache, cacheName, key);
@@ -163,6 +186,7 @@ public class SearchFilterFacets {
             return hit != null && hit.getValues() != null ? hit : null;
         } catch (RuntimeException e) {
             // 옛 모양(목록 그대로 — 2026-10-20 전)이거나 Redis 오류 — 없는 것으로 보고 다시 만든다
+            // [JA] 古い形(リストそのまま — 2026-10-20 より前)か Redis エラー — ないものとみなして作り直す
             log.debug("필터 메뉴 캐시 읽기 실패 — 다시 계산 cache={} ({})", cacheName, e.getClass().getSimpleName());
             return null;
         }
@@ -173,6 +197,7 @@ public class SearchFilterFacets {
     }
 
     /** 맡기를 확인하지 못해 이 파드에서 계산할 때의 표시 — 풀 것이 없다. */
+    // [JA] 引き受けを確認できずこのポッドで計算するときの印 — 解放するものはない。
     private static final String LOCAL_TOKEN = new String("unclaimed");
 
     private CompletableFuture<List<Object>> refresh(Cache cache, String cacheName, String key, Supplier<? extends List<?>> loader) {
@@ -189,14 +214,15 @@ public class SearchFilterFacets {
                     try {
                         token = claim.tryClaim(flightKey);
                     } catch (RuntimeException e) {
-                        token = LOCAL_TOKEN;   // 맡기를 확인하지 못했다(Redis) — 메뉴가 없는 것보다 낫다, 예전처럼 이 파드에서
+                        token = LOCAL_TOKEN;   // 맡기를 확인하지 못했다(Redis) — 메뉴가 없는 것보다 낫다, 예전처럼 이 파드에서 ／ [JA] 引き受けを確認できなかった(Redis) — メニューがないよりましなので、以前どおりこのポッドで
                         log.debug("필터 메뉴 계산 맡기 실패 — 이 파드에서 계산 cache={} ({})", cacheName, e.getClass().getSimpleName());
                     }
                     if (token == null) {
-                        mine.completeExceptionally(new ClaimedElsewhere());   // 옛 값은 캐시에 그대로 · 새 값은 맡은 파드가 쓴다
+                        mine.completeExceptionally(new ClaimedElsewhere());   // 옛 값은 캐시에 그대로 · 새 값은 맡은 파드가 쓴다 ／ [JA] 古い値はキャッシュにそのまま・新しい値は引き受けたポッドが書く
                         return;
                     }
                     // 맡기 직전에 다른 파드가 새로 써 두었으면 다시 하지 않는다
+                    // [JA] 引き受ける直前に別のポッドが新しく書いていたらやり直さない
                     FacetEntry fresh = read(cache, cacheName, key);
                     if (fresh != null && !stale(fresh)) {
                         mine.complete(fresh.getValues());
@@ -213,6 +239,7 @@ public class SearchFilterFacets {
                     mine.complete(values);
                 } catch (Throwable t) {
                     // 옛 값이 있으면 캐시에 그대로 남는다 — 지우지 않는다
+                    // [JA] 古い値があればキャッシュにそのまま残る — 消さない
                     log.warn("필터 메뉴 계산 실패 cache={} ({})", cacheName, t.getClass().getSimpleName());
                     mine.completeExceptionally(t);
                 } finally {
@@ -235,7 +262,7 @@ public class SearchFilterFacets {
             long left = Math.max(0, deadlineNanos - System.nanoTime());
             return future.get(left, TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
-            return List.of();   // 계산은 계속된다 — 다음 요청이 캐시에서 받는다
+            return List.of();   // 계산은 계속된다 — 다음 요청이 캐시에서 받는다 ／ [JA] 計算は続く — 次のリクエストがキャッシュから受け取る
         } catch (ExecutionException e) {
             return List.of();
         } catch (InterruptedException e) {

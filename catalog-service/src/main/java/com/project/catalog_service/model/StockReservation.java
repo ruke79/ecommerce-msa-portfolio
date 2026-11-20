@@ -19,6 +19,9 @@ import lombok.NoArgsConstructor;
  *
  * <p>수량을 옮기지 않는다. {@code product_size.quantity} 는 창고의 실물 그대로고, 예약은 "이만큼은 누가 사는 중" 이라는
  * 표시다. 남은 수량 = quantity − 살아 있는 HELD 의 합.
+ *
+ * <p>[JA] 決済前の在庫予約一行 — 注文一つの一オプション(商品・色・サイズ)(docs/59, V14)。
+ * 数量は移さない。product_size.quantity は倉庫の実物そのままで、予約は「この分は誰かが購入中」という印だ。残り数量 = quantity − 有効な HELD の合計。
  */
 @Entity
 @Table(name = "stock_reservation", schema = "product")
@@ -28,10 +31,13 @@ public class StockReservation {
 
     public enum Status {
         /** 잡아 두었다 — 결제를 기다린다. */
+        // [JA] 確保した — 決済を待っている。
         HELD,
         /** 결제가 확정돼 실제 차감으로 넘어갔다. */
+        // [JA] 決済が確定し、実際の減算に移った。
         COMMITTED,
         /** 취소·만료로 풀렸다. */
+        // [JA] キャンセル・期限切れで解放された。
         RELEASED
     }
 
@@ -84,6 +90,7 @@ public class StockReservation {
     }
 
     /** 다시 잡는다 — 수량·만료를 새로 쓴다(재시도·무통장 전환). 풀렸던 행도 다시 HELD 가 된다. */
+    // [JA] もう一度確保する — 数量・期限を新しく書く(リトライ・銀行振込への切り替え)。解放済みの行も再び HELD になる。
     public void rehold(int qty, Instant expiresAt, Instant now) {
         this.qty = qty;
         this.status = Status.HELD;
@@ -102,6 +109,7 @@ public class StockReservation {
     }
 
     /** 살아 있는 예약인가 — HELD 이고 아직 만료 전. */
+    // [JA] 有効な予約か — HELD で、まだ期限前。
     public boolean isActive(Instant now) {
         return status == Status.HELD && expiresAt.isAfter(now);
     }

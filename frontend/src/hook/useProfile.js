@@ -8,6 +8,7 @@ import {
 } from "util/api";
 
 /** 프로필 쿼리 키. 수정 후 이 키를 갱신하면 화면 전체가 한 번에 따라온다. */
+// [JA] プロフィールのクエリキー。修正後にこのキーを更新すると画面全体が一度に追従する。
 export const PROFILE_KEY = ["profile", "me"];
 
 /**
@@ -23,6 +24,16 @@ export const PROFILE_KEY = ["profile", "me"];
  * <p>`throwOnError` 를 끈다. 전역 QueryClient 는 true 라(util/api.js) 프로필을 못 받으면
  * 예외가 ErrorBoundary 까지 올라가 <b>프로필 화면 전체가 사라진다.</b> 이름과 사진이
  * 비는 것과 화면이 죽는 것은 다르다 — 주소·주문 탭은 그대로 쓸 수 있어야 한다.
+ *
+ * <p>[JA] 自分のプロフィール。
+ * 🐛 以前は画面が `useAuthContext().user` をプロフィールのように使っていた。その値は JWT から
+ * 作った `{ email, userId, roles }` だけなので `user.name` · `user.image` は常に undefined
+ * で、プロフィールサイドバーは名前が空欄でアバターが壊れたまま出た。
+ * JWT は身元証明でありプロフィールの保存場所ではない — 名前を変えても既に発行されたトークンは
+ * そのままだ。プロフィールはサーバーから読む。
+ * `throwOnError` をオフにする。グローバル QueryClient は true なので(util/api.js)プロフィールを受け取れないと
+ * 例外が ErrorBoundary まで上がり <b>プロフィール画面全体が消える。</b> 名前と写真が
+ * 空になることと画面が落ちることは違う — 住所・注文タブはそのまま使えなければならない。
  */
 export function useProfile({ enabled = true } = {}) {
   const { data, isPending, isError, error, refetch } = useQuery({
@@ -30,6 +41,7 @@ export function useProfile({ enabled = true } = {}) {
     queryFn: getMyProfile,
     enabled,
     // 프로필은 거의 바뀌지 않는다. 바뀌는 순간(수정·업로드)은 아래 훅들이 직접 갱신한다.
+    // [JA] プロフィールはほとんど変わらない。変わる瞬間(修正・アップロード)は下のフックが直接更新する。
     staleTime: 5 * 60 * 1000,
     throwOnError: false,
   });
@@ -45,6 +57,12 @@ export function useProfile({ enabled = true } = {}) {
  *
  * <p>응답을 버리고 `invalidateQueries` 만 하면 왕복이 한 번 더 생기고, 그 사이에 옛 값이
  * 잠깐 보인다 — 방금 바꾼 이름이 돌아왔다가 다시 바뀌는 깜빡임이다.
+ *
+ * <p>[JA] プロフィール修正・画像アップロード・画像削除。
+ * 三つともサーバーが <b>更新されたプロフィール全体</b>を返す。それをそのままキャッシュに
+ * 入れれば再照会しなくても画面が最新になる(`setQueryData`)。
+ * 応答を捨てて `invalidateQueries` だけすると往復がもう一回増え、その間に古い値が
+ * 一瞬見える — 今変えた名前が戻ってからまた変わるちらつきだ。
  */
 export function useUpdateProfile() {
   const queryClient = useQueryClient();
@@ -77,6 +95,7 @@ export function useUpdateProfile() {
 }
 
 /** 서버가 준 메시지를 우선 보여준다 — "실패했습니다" 보다 이유가 있는 편이 낫다. */
+// [JA] サーバーがくれたメッセージを優先して見せる — 「失敗しました」より理由がある方がよい。
 export function profileErrorText(error, fallback) {
   return error?.response?.data?.message ?? fallback;
 }

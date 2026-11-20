@@ -28,7 +28,10 @@ import org.junit.jupiter.params.provider.ValueSource;
  * "package org.springframework.security.crypto.bcrypt does not exist" 로 해시를 만들지 못했다(2026-10-17, IDE 가 있는 기계).
  * 이제 -sources · -javadoc · -tests 를 빼고, BCrypt.class 가 든 것 중 가장 새 판을 쓴다.
  *
- * <p>[JA] ops/30 · ops/48 が BCrypt に使う jar の選び方。以前は head -1 が -sources.jar を拾って失敗した。
+ * <p>[JA] ops/30(管理者アカウント) · ops/48(デモユーザー)が BCrypt ハッシュに使う spring-security-crypto jar の選び方。
+ * 🐛 以前: {@code find … -name 'spring-security-crypto-*.jar' | head -1} が IDE の取得した {@code -sources.jar} を拾い、
+ * "package org.springframework.security.crypto.bcrypt does not exist" でハッシュを作れなかった(2026-10-17、IDE がある機械)。
+ * 今は -sources · -javadoc · -tests を除き、BCrypt.class を含むもののうち最も新しい版を使う。
  */
 @DisplayName("ops/30 · ops/48 — BCrypt 용 jar 고르기")
 class CryptoJarScriptTest {
@@ -46,6 +49,7 @@ class CryptoJarScriptTest {
     }
 
     /** Gradle 캐시 모양으로 zip 하나 — 안에는 주어진 항목만. */
+    // [JA] Gradle キャッシュの形で zip 一つ — 中には与えられた項目だけ。
     private Path jar(Path home, String version, String fileName, String entry, byte[] body) throws IOException {
         Path dir = Files.createDirectories(home.resolve("caches/modules-2/files-2.1/org.springframework.security/"
                 + "spring-security-crypto/" + version + "/" + Integer.toHexString(fileName.hashCode())));
@@ -61,9 +65,11 @@ class CryptoJarScriptTest {
     private record Run(int code, String out) {}
 
     /** 스크립트에서 함수만 꺼내(stub 과 함께) 돌린다 — 스크립트 본체(인자 처리 · DB 연결)는 돌지 않는다. */
+    // [JA] スクリプトから関数だけを取り出して(stub と一緒に)動かす — スクリプト本体(引数処理 · DB 接続)は動かない。
     private Run fn(String script, Path gradleHome, String call, String stdin) throws Exception {
         String body = "die() { echo \"DIE: $1\" >&2; exit 1; }; need() { command -v \"$1\" >/dev/null || die \"$1\"; }; "
                 // 함수 하나를 꺼낸다 — bcrypt_hash 안의 Java here-doc 에도 첫 칸의 } 가 있어 sed 범위로는 중간에서 끊긴다
+                // [JA] 関数一つを取り出す — bcrypt_hash 内の Java here-doc にも先頭列の } があり、sed の範囲では途中で切れる
                 + "fn_src() { awk -v n=\"$1\" '$0 ~ \"^\"n\"\\\\(\\\\) \\\\{\" {p=1} p {print} p && /<<.JAVA.$/ {h=1; next} "
                 + "h && /^JAVA$/ {h=0; next} p && !h && /^}$/ {exit}' \"$2\"; }; "
                 + "eval \"$(fn_src crypto_jar " + script + ")\"; eval \"$(fn_src bcrypt_hash " + script + ")\"; " + call;

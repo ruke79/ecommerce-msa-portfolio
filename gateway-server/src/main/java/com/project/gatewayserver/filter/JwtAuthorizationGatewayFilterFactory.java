@@ -43,6 +43,7 @@ public class JwtAuthorizationGatewayFilterFactory
         extends AbstractGatewayFilterFactory<JwtAuthorizationGatewayFilterFactory.Config> {
 
     /** 설정 항목 없음 — 예전의 exceptPaths 는 어느 라우트도 쓰지 않았고, 경로 재작성 앞뒤에 따라 뜻이 달라져 지웠다. */
+    // [JA] 設定項目なし — 以前の exceptPaths はどのルートも使っておらず、パス書き換えの前後で意味が変わるので削除した。
     public static class Config {
     }
 
@@ -103,6 +104,7 @@ public class JwtAuthorizationGatewayFilterFactory
                 claims = Jwts.parser().keyLocator(keyLocator()).build().parseSignedClaims(jwt).getPayload();
             } catch (ExpiredJwtException e) {
                 // 만료는 정상 흐름이다 — 화면이 401 을 받으면 리프레시로 새 토큰을 받는다
+                // [JA] 期限切れは正常な流れである — 画面が 401 を受けるとリフレッシュで新しいトークンを受け取る
                 return unauthorized(exchange, "expired", relogin(exchange));
             } catch (JwtException | IllegalArgumentException e) {
                 // 🐛 예전: 서명이 안 맞는 토큰 · 모르는 kid 는 예외가 그대로 올라가 500 이었다. 401 이어야 화면이 리프레시로 새 토큰을
@@ -170,7 +172,7 @@ public class JwtAuthorizationGatewayFilterFactory
         }
         java.util.Date issuedAt = claims.getIssuedAt();
         if (issuedAt == null) {
-            return Mono.just(true);   // iat 없는 토큰은 만들지 않는다(JwtUtils) — 모르는 모양 때문에 모두를 막지 않는다
+            return Mono.just(true);   // iat 없는 토큰은 만들지 않는다(JwtUtils) — 모르는 모양 때문에 모두를 막지 않는다 ／ [JA] iat のないトークンは作らない(JwtUtils) — 知らない形のせいで全員を塞がない
         }
         long iat = issuedAt.getTime() / 1000;
         return redis.opsForValue().get(com.project.common.security.SessionRevocation.cutoffKey(uid))
@@ -208,6 +210,7 @@ public class JwtAuthorizationGatewayFilterFactory
 
     com.project.common.security.JwtKeyRing ring() {
         // 설정 리프레시를 따라간다. 검사와 대입이 원자적이지 않아 동시에 두 번 만들 수 있지만 같은 값이라 무해하다.
+        // [JA] 設定のリフレッシュに追従する。検査と代入がアトミックでないため同時に二度作ることがあるが、同じ値なので無害である。
         String source = secretKey + "\u0000" + jwtSigningKeys + "\u0000" + jwtActiveKid + "\u0000" + jwtAcceptLegacy;
         if (!source.equals(ringSource)) {
             ring = com.project.common.security.JwtKeyRing.of(secretKey, jwtSigningKeys, jwtActiveKid, jwtAcceptLegacy);
@@ -217,12 +220,14 @@ public class JwtAuthorizationGatewayFilterFactory
     }
 
     /** 기동 때 한 번 — 키 설정이 틀렸으면 뜨지 않는다(검증만 하는 쪽도 모르는 키로 서명된 토큰을 받게 두지 않는다). */
+    // [JA] 起動時に一度 — キー設定が誤っていれば起動しない(検証だけする側も、知らないキーで署名されたトークンを受け入れさせない)。
     @jakarta.annotation.PostConstruct
     void checkKeyRing() {
         ring();
     }
 
     /** 토큰 머리의 kid 로 검증 키를 고른다 — kid 가 없으면 옛 토큰(legacy), 모르는 kid 는 거절(docs/68 §17). */
+    // [JA] トークンヘッダーの kid で検証キーを選ぶ — kid がなければ古いトークン(legacy)、知らない kid は拒否(docs/68 §17)。
     private io.jsonwebtoken.Locator<java.security.Key> keyLocator() {
         return header -> {
             String kid = header instanceof io.jsonwebtoken.ProtectedHeader ph ? ph.getKeyId() : null;

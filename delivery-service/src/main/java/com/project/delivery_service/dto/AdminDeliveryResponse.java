@@ -11,9 +11,14 @@ import com.project.delivery_service.domain.Delivery;
  *
  * <p>고객 응답({@link DeliveryResponse})은 "누구의" 를 싣지 않는다 — 요청한 사람 것이니까.
  * 관리자는 여러 사람의 배송을 한 화면에 보므로 그 둘이 필요하다.
+ *
+ * <p>[JA] 管理者一覧の一行 — 顧客応答にない {@code customerId}・作成時刻を加えたもの。
+ * 顧客応答({@link DeliveryResponse})は「誰の」を載せない — 要求した本人のものだから。
+ * 管理者は複数人の配送を一つの画面で見るので、その二つが必要である。
  */
 public record AdminDeliveryResponse(
         /** 주문 번호와 같은 이유로 문자열이다({@link DeliveryResponse#orderId()}). */
+        // [JA] 注文番号と同じ理由で文字列である({@link DeliveryResponse#orderId()})。
         String customerId,
         LocalDateTime createdAt,
         DeliveryResponse delivery) {

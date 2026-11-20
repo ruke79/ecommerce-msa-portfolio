@@ -10,6 +10,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 /**
  * 서버 문구 번역을 모든 서블릿 서비스에 — com.project.common 을 컴포넌트 스캔하지 않는 서비스(catalog·user·coupon…)도
  * 받게 자동 구성으로 건다(docs/60 §4). 스캔하는 서비스는 이미 빈이 있으므로 두 번 걸리지 않는다.
+ *
+ * <p>[JA] サーバー文言の翻訳をすべてのサーブレットサービスに — com.project.common をコンポーネントスキャンしないサービス(catalog · user · coupon…)も
+ * 受け取れるよう自動構成で掛ける(docs/60 §4)。スキャンするサービスはすでに bean があるので二重には掛からない。
  */
 @AutoConfiguration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)

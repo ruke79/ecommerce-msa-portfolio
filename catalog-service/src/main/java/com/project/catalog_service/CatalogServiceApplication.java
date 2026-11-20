@@ -10,6 +10,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * {@code @EnableScheduling} 은 기획전 때문에 켰다({@code EventScheduler}). "금요일 0시부터"를
  * 사람이 그 시각에 버튼을 눌러 운영하면 반드시 놓치고, 시작 시점에 알림도 나가야 한다.
  * 멱등 원장 정리({@code ProcessedEventCleanup})도 이것으로 돈다.
+ *
+ * <p>[JA] {@code @EnableScheduling} は企画展のために有効にした({@code EventScheduler})。「金曜 0 時から」を
+ *      人がその時刻にボタンを押して運用すると必ず逃し、開始時点に通知も出す必要がある。
+ *      冪等台帳の整理({@code ProcessedEventCleanup})もこれで動く。
  */
 @SpringBootApplication
 @EnableScheduling

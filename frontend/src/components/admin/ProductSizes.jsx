@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "i18n/I18nProvider";
 
 // 사이즈 이름은 그대로 상품 데이터로 저장되는 값이라 번역하지 않는다.
+// [JA] サイズ名はそのまま商品データとして保存される値なので翻訳しない。
 const sizeList = [
     "Mini",
     "Pro",

@@ -32,6 +32,7 @@ class SocialClientRegistrationTest {
     void nothingWhenEmpty() {
         assertTrue(registration("", "").configuredRegistrations().isEmpty());
         // 시크릿만 빠져도 등록하지 않는다 — 카카오는 Client Secret 을 켜 두면 토큰 요청에 꼭 실어야 한다
+        // [JA] シークレットが抜けただけでも登録しない — Kakao は Client Secret を有効にするとトークン要求に必ず載せなければならない
         assertTrue(registration("rest-api-key", "").configuredRegistrations().isEmpty());
     }
 
@@ -50,6 +51,7 @@ class SocialClientRegistrationTest {
         assertEquals("https://kapi.kakao.com/v2/user/me", k.getProviderDetails().getUserInfoEndpoint().getUri());
         assertEquals("id", k.getProviderDetails().getUserInfoEndpoint().getUserNameAttributeName());
         // 이메일이 없으면 계정을 만들 수 없다 — 동의항목에 account_email 이 빠지면 모든 카카오 로그인이 거절된다
+        // [JA] メールアドレスがなければアカウントを作れない — 同意項目に account_email が抜けるとすべての Kakao ログインが拒否される
         assertTrue(k.getScopes().contains("account_email"));
     }
 

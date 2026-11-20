@@ -3,6 +3,7 @@ plugins {
 }
 
 // 이 모듈은 애플리케이션이 아니다 — 테스트만 있다.
+// [JA] このモジュールはアプリケーションではない — テストだけがある。
 bootJar { enabled = false }
 jar { enabled = false }
 
@@ -22,6 +23,11 @@ dependencies {
 // 릴리스 후보 이미지**를 받아서 띄우므로 jar 가 필요 없다. 여기서 bootJar 를 강제하면
 // 파이프라인의 인수 스테이지가 "이미 만든 바이너리"를 검증하러 와서 바이너리를 한 번 더
 // 만드는 꼴이 된다. 그게 바로 피하려는 것이다.
+// [JA] サービスの jar がないとコンテナイメージを作れない。
+//      ただし E2E_IMAGE_PREFIX が指定されたら話が違う — そのときは**レジストリにすでに上がった
+//      リリース候補イメージ**を取得して起動するので jar は不要である。ここで bootJar を強制すると、
+//      パイプラインの受け入れステージが「すでに作ったバイナリ」を検証しに来て、バイナリをもう一度
+//      作る羽目になる。それこそが避けたいことである。
 tasks.named('test') {
 	if (!System.getenv('E2E_IMAGE_PREFIX')) {
 		dependsOn ':order-service:bootJar', ':pay-service:bootJar', ':catalog-service:bootJar'

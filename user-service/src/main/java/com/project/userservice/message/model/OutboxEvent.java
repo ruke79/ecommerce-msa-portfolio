@@ -64,6 +64,12 @@ public class OutboxEvent implements Persistable<String> {
      * 아웃박스 테이블은 <b>있는데 아무도 쓰지 않았다.</b>
      *
      * <p>이제 애플리케이션 폴러가 이 값을 보고 고른다({@code UserOutboxScheduler}).
+     *
+     * <p>[JA] もう送ったか。
+     * 🐛 このカラムは<b>なかった</b>(V1 のコメント: 「user-service の OutboxEvent エンティティには outbox_status カラムがない」)。
+     * CDC リレーだけを想定していたからだが、肝心の user-created 用コネクタは作られたことがなく、発行は {@code kafkaTemplate.send} 一行だった —
+     * つまりアウトボックステーブルは<b>あるのに誰も使っていなかった。</b>
+     * 今はアプリケーションのポーラーがこの値を見て選ぶ({@code UserOutboxScheduler})。
      */
     @Enumerated(EnumType.STRING)
     @Column(name = "outbox_status", nullable = false, length = 20)
@@ -72,6 +78,9 @@ public class OutboxEvent implements Persistable<String> {
     /**
      * 행을 쓴 순간의 추적 문맥(전파 헤더). 릴레이가 이것으로 스팬을 되살린 채 보내 요청 → 사가가
      * 하나의 추적으로 이어진다(docs/51 §4e, OutboxTraceContext). 없으면 예전처럼 보낸다.
+     *
+     * <p>[JA] 行を書いた瞬間の追跡コンテキスト(伝播ヘッダー)。リレーがこれでスパンを復元したまま送り、リクエスト → サガが
+     * 一つのトレースにつながる(docs/51 §4e、OutboxTraceContext)。なければ以前どおり送る。
      */
     @Column(name = "trace_context", length = 512)
     private String traceContext;
@@ -86,6 +95,9 @@ public class OutboxEvent implements Persistable<String> {
         // 하드코딩된 Asia/Seoul 로 인해 다른 컬럼(JPA 감사 = JVM 기본 시계)과 9시간 어긋났다
         // (docs/14 B-21). 이 컬럼은 users.outbox_event 의 **파티션 키**다(docs/09).
         // 나머지 컬럼과 같은 시계를 쓴다. 운영에서는 JVM·DB 를 UTC 로 맞출 것.
+        // [JA] ハードコードされた Asia/Seoul のせいで他のカラム(JPA 監査 = JVM 既定の時計)と 9 時間ずれていた
+        //      (docs/14 B-21)。このカラムは users.outbox_event の**パーティションキー**だ(docs/09)。
+        //      他のカラムと同じ時計を使う。運用では JVM・DB を UTC に揃えること。
         this.createdAt = LocalDateTime.now();
     }
 
@@ -101,13 +113,23 @@ public class OutboxEvent implements Persistable<String> {
     // 플래그가 "저장됐으면 true" 방향인 이유는 기본값 false 가 곧 "새 것"이라 Lombok 이
     // 필드 초기화를 어떻게 다루든 안전한 쪽으로 떨어지기 때문이다. 불러온 엔티티는
     // @PostLoad 가 true 로 되돌리므로 수정 후 save() 는 그대로 UPDATE 로 간다.
+    // [JA] ── なぜ Persistable を実装するのか ──
+    //      id をコンストラクタで UUID として直接割り当てる。
+    //      SimpleJpaRepository は save() 時に「@Id が null か」だけを見て新規かどうかを判断するので、
+    //      id が既に埋まっているこのエンティティは persist() ではなく merge() に行く。merge は対象を探すため
+    //      先に SELECT を投げ(= INSERT ごとに空振りの照会)、同じ id が既にコミット済みなら PK 衝突ではなく黙って UPDATE を出す。
+    //      フラグが「保存済みなら true」の向きなのは、既定値 false がそのまま「新規」なので、Lombok が
+    //      フィールド初期化をどう扱っても安全側に倒れるからだ。読み込んだエンティティは
+    //      @PostLoad が true に戻すので、修正後の save() はそのまま UPDATE になる。
     /** 쓰는 순간의 추적 문맥을 붙인다(docs/51 §4e). */
+    // [JA] 書く瞬間の追跡コンテキストを付ける(docs/51 §4e)。
     public OutboxEvent withTraceContext(String traceContext) {
         this.traceContext = traceContext;
         return this;
     }
 
     /** 발행에 성공했다. 다시는 고르지 않는다. */
+    // [JA] 発行に成功した。二度と選ばない。
     public void markCompleted() {
         this.outboxStatus = OutboxStatus.COMPLETED;
     }
@@ -117,6 +139,9 @@ public class OutboxEvent implements Persistable<String> {
      *
      * <p>지우지 않고 남긴다 — <b>무엇이 안 나갔는지 알 수 있어야</b> 손으로든 배치로든
      * 복구할 수 있다. 조용히 사라지는 것이 이 전체 사태의 원인이었다.
+     *
+     * <p>[JA] 発行に失敗した。
+     * 消さずに残す — <b>何が送られなかったか分かってこそ</b>手作業でもバッチでも復旧できる。黙って消えることがこの事態全体の原因だった。
      */
     public void markFailed() {
         this.outboxStatus = OutboxStatus.FAILED;

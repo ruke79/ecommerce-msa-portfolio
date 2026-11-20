@@ -79,6 +79,7 @@ class RatingCacheTest {
         when(productRepository.findById(ID)).thenReturn(Optional.of(product));
 
         // 측정 때처럼 모든 캐시가 차 있다
+        // [JA] 計測時のようにすべてのキャッシュが埋まっている
         put("products", "slug:classic-hoodie-77", List.of("old"));
         put("products", "name:Classic Hoodie 77", List.of("old"));
         put("products", "slug:another-product", List.of("other"));

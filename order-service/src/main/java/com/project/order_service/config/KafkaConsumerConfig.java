@@ -33,6 +33,9 @@ public class KafkaConsumerConfig {
      * Kafka 보안 프로퍼티(SSL/SASL)는 {@link KafkaSecuritySettings} 한 곳에서 만든다.
      * 예전에는 이 클래스마다 같은 여섯 줄을 복제했고, 값이 비어 있어도 그대로 넣어
      * SSL 을 켜는 순간 빈 경로로 죽는 조합이었다.
+     *
+     * <p>[JA] Kafka のセキュリティプロパティ(SSL/SASL)は {@link KafkaSecuritySettings} の一か所で作る。
+     * 以前はこのクラスごとに同じ 6 行を複製し、値が空でもそのまま入れていたので、SSL を有効にした瞬間に空のパスで落ちる組み合わせだった。
      */
     @Autowired
     private Environment environment;
@@ -46,12 +49,15 @@ public class KafkaConsumerConfig {
 
     // user-created 구독은 없앴다 — order-service 는 고객 사본이 필요 없다. 주문자 id 는 토큰의 uid(User-Id)다
     // (docs/48 §6-①). 기본 이름의 팩토리(kafkaListenerContainerFactory)도 그 리스너 하나만 쓰던 것이라 함께 뺐다.
+    // [JA] user-created の購読はなくした — order-service は顧客のコピーが要らない。注文者 id はトークンの uid(User-Id)だ
+    //      (docs/48 §6-①)。既定名のファクトリー(kafkaListenerContainerFactory)もそのリスナー 1 つだけが使っていたので一緒に外した。
 
     @Bean
     public ConsumerFactory<String, PaymentResponse> paymentResponseConsumerFactory() {
         // 헤더(__TypeId__)가 있으면 쓰고, 없으면 PaymentResponse 로 읽는다 — CDC 릴레이는 헤더를 못 싣는다(docs/38 §5 A3).
+        // [JA] ヘッダー(__TypeId__)があれば使い、なければ PaymentResponse として読む — CDC リレーはヘッダーを載せられない(docs/38 §5 A3)。
         JsonDeserializer<PaymentResponse> deserializer = new JsonDeserializer<>(PaymentResponse.class, true);
-        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만
+        com.project.common.kafka.KafkaTrustedPackages.trustMessageDtos(deserializer);  // B-115: "*" 금지 — 메시지 DTO 패키지만 ／ [JA] B-115: "*" 禁止 — メッセージ DTO のパッケージだけ
         Map<String, Object> consumerConfigurations = ImmutableMap.<String, Object>builder()
                 .put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl)
                 .put(ConsumerConfig.GROUP_ID_CONFIG, "payment-response")
@@ -69,6 +75,7 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(consumerConfigurations, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         // Avro 또는 JSON 을 같은 DTO 로 — 롤링 배포·CDC·e2e 의 JSON 도 읽는다(docs/38 §1.16).
+                        // [JA] Avro でも JSON でも同じ DTO に — ローリングデプロイ・CDC・e2e の JSON も読む(docs/38 §1.16)。
                         new AvroDtoDeserializer<>(new PaymentResponseAvroMapping())));
 
     }
@@ -82,12 +89,16 @@ public class KafkaConsumerConfig {
         factory.setBatchListener(true);
         // 사가의 핵심 토픽(payment): 실패 레코드는 재시도 후 payment.DLT 로 격리해
         // 파티션 블로킹(주문 영구 PENDING, docs/03 F-2)을 방지한다.
+        // [JA] サーガの中核トピック(payment): 失敗したレコードはリトライ後 payment.DLT に隔離し、
+        //      パーティションのブロッキング(注文が永久に PENDING、docs/03 F-2)を防ぐ。
         factory.setCommonErrorHandler(kafkaErrorHandler);
         factory.getContainerProperties().setObservationEnabled(true);
         // 🔴 레코드 어댑터(setBatchToRecordAdapter)를 두지 않는다 — DefaultBatchToRecordAdapter 는 리스너의 예외를 잡아 recoverer 에
         //    넘기기만 하고 다시 던지지 않는다. 예전 recoverer 는 레코드를 필드에 담기만 해서, 결제 응답 처리의 실패가 위의 재시도
         //    (DltRetryPolicy 약 3분) · payment.DLT · 경보에 한 번도 닿지 않고 사라졌다 — 돈은 냈는데 주문은 결제 전(가드 B-88).
-        // [JA] レコードアダプターを置かない — 決済応答の失敗が再試行 · DLT · 警報に届かず消えていた。
+        // [JA] レコードアダプター(setBatchToRecordAdapter)を置かない — DefaultBatchToRecordAdapter はリスナーの例外を捕まえて recoverer に
+        //      渡すだけで再び投げない。以前の recoverer はレコードをフィールドに入れるだけだったので、決済応答処理の失敗が上の再試行
+        //      (DltRetryPolicy 約 3 分) · payment.DLT · 警報に一度も届かず消えていた — お金は払ったのに注文は決済前(ガード B-88)。
 
         return factory;
 
@@ -99,6 +110,10 @@ public class KafkaConsumerConfig {
      * <p>그룹을 따로 둔다. notification-service 도 같은 토픽을 듣지만 그쪽은 알림용이고
      * 여기는 주문 상태용이다 — 한쪽이 밀려도 다른 쪽이 멈추지 않는다. 문자열로 받아
      * 필요한 필드만 읽는다({@code DeliveryStatusKafkaListener}).
+     *
+     * <p>[JA] {@code delivery-status} — delivery-service が JSON 文字列で発行する(DTO なし)。
+     * グループを別にする。notification-service も同じトピックを聞くがあちらは通知用で、ここは注文状態用だ — 片方が遅れても
+     * もう片方は止まらない。文字列で受けて必要なフィールドだけ読む({@code DeliveryStatusKafkaListener})。
      */
     @Bean
     public ConsumerFactory<String, String> deliveryStatusConsumerFactory() {
@@ -116,6 +131,7 @@ public class KafkaConsumerConfig {
                 .putAll(securityProps())
                 .build();
         // 지금은 JSON 이지만 이 토픽이 Avro 로 바뀌어도 JSON 텍스트로 읽는다(docs/38 §1.16).
+        // [JA] 今は JSON だがこのトピックが Avro に変わっても JSON テキストとして読む(docs/38 §1.16)。
         return new DefaultKafkaConsumerFactory<>(config, new StringDeserializer(),
                 new org.springframework.kafka.support.serializer.ErrorHandlingDeserializer<>(
                         new com.project.common.kafka.avro.AvroJsonTextDeserializer()));
@@ -129,6 +145,7 @@ public class KafkaConsumerConfig {
         factory.getContainerProperties().setConsumerRebalanceListener(new LoggingRebalanceListener());
         factory.setBatchListener(true);
         // 실패 레코드는 재시도 후 delivery-status.DLT 로 격리한다(B-42, ops/02).
+        // [JA] 失敗したレコードはリトライ後 delivery-status.DLT に隔離する(B-42, ops/02)。
         factory.setCommonErrorHandler(kafkaErrorHandler);
         factory.getContainerProperties().setObservationEnabled(true);
         return factory;
@@ -138,6 +155,10 @@ public class KafkaConsumerConfig {
      * {@code stock-shortage} — catalog 가 "결제됐지만 n개 모자라다" 고 알린다(docs/53 §초과 판매). 값은 JSON 이고 리스너가
      * 필드 이름으로 읽는다. 돈이 걸린 알림이라 이 그룹이 처음 뜨기 전에 쌓인 것부터 읽는다(earliest) — 처리는
      * 멱등하다(주문의 shortageEventId).
+     *
+     * <p>[JA] {@code stock-shortage} — catalog が「決済済みだが n 個足りない」と知らせる(docs/53 §過剰販売)。値は JSON でリスナーが
+     * フィールド名で読む。お金が絡む通知なので、このグループが初めて起動する前に溜まったものから読む(earliest) — 処理は
+     * 冪等だ(注文の shortageEventId)。
      */
     @Bean
     public ConsumerFactory<String, String> stockShortageConsumerFactory() {
@@ -164,6 +185,7 @@ public class KafkaConsumerConfig {
         factory.getContainerProperties().setConsumerRebalanceListener(new LoggingRebalanceListener());
         factory.setBatchListener(true);
         // 자동 환불이 실패하면 재시도 후 stock-shortage.DLT 로 격리한다(B-42, ops/02). 실패마다 "수동 환불 필요" 가 남는다.
+        // [JA] 自動返金が失敗するとリトライ後 stock-shortage.DLT に隔離する(B-42, ops/02)。失敗ごとに「手動返金が必要」が残る。
         factory.setCommonErrorHandler(kafkaErrorHandler);
         factory.getContainerProperties().setObservationEnabled(true);
         return factory;

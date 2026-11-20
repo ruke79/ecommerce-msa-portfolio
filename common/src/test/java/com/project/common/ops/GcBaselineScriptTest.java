@@ -28,7 +28,11 @@ import org.junit.jupiter.api.io.TempDir;
  * ④ 창 · 선택자가 질의에 그대로 들어간다 — 창은 보존(15일) 안, 선택자는 라벨 하나만(질의를 바꿔 끼울 수 없다)
  * ⑤ Prometheus 가 없거나 모든 질의가 실패하면 0 이 아닌 종료.
  *
- * <p>[JA] 偽 curl がクエリごとに決めた Prometheus 応答を返す。表の計算 · GC 種別 · 窓と選択子 · 入力検査 · 失敗時の終了コードを見る。
+ * <p>[JA] 平常時の GC 基準値(ops/61-gc-baseline.sh)— docs/91 §4-3 · docs/92 F-6。
+ * 偽 curl がクエリごとに決めた Prometheus 応答を返す。守ること: ① 表の値がクエリ結果から正しく計算される(Pod あたり · リクエストあたり ·
+ * 単位) ② gc ラベル → Serial · G1 · Parallel、一つのサービス内で異なれば「混在」 ③ 警報の閾値(10%) · GC 後のヒープ 90% · 停止 0.5 秒を
+ * 注目点に ④ 窓 · 選択子がクエリにそのまま入る — 窓は保持期間(15 日)内、選択子はラベル一つだけ(クエリを差し替えられない)
+ * ⑤ Prometheus がない、またはすべてのクエリが失敗したら 0 以外で終了。
  */
 @DisplayName("ops/61 — 평시 GC 기준값 (docs/91 §4-3 · docs/92 F-6)")
 class GcBaselineScriptTest {
@@ -49,6 +53,7 @@ class GcBaselineScriptTest {
     }
 
     /** 서비스 하나의 값 — Prometheus 벡터 결과 한 줄. */
+    // [JA] サービス一つの値 — Prometheus のベクター結果 1 行。
     private static String one(String service, String value) {
         return "{\"metric\":{\"service\":\"" + service + "\"},\"value\":[1,\"" + value + "\"]}";
     }
@@ -62,6 +67,7 @@ class GcBaselineScriptTest {
     }
 
     /** 질의 열 이름 → 응답. catalog 는 Serial · 두 파드, gateway 는 파드마다 GC 가 다르다(Serial 하나 · G1 하나). */
+    // [JA] 照会列名 → 応答。catalog は Serial · 2 ポッド、gateway はポッドごとに GC が違う(Serial 一つ · G1 一つ)。
     private static Map<String, String> sample() {
         Map<String, String> m = new HashMap<>();
         m.put("pods", vector(one("catalog-service", "2"), one("gateway-server", "2")));
@@ -86,6 +92,9 @@ class GcBaselineScriptTest {
     /**
      * 가짜 curl — 인자를 curl.log 에, /-/ready 는 FAKE_DOWN 이 아니면 성공, 질의는 내용으로 열을 골라 $FAKE/resp/<열>.json 을 낸다
      * (파일이 없으면 실패 — 그 열의 질의가 실패한 것).
+     *
+     * <p>[JA] 偽の curl — 引数を curl.log に、/-/ready は FAKE_DOWN でなければ成功、照会は内容で列を選んで $FAKE/resp/<列>.json を出す
+     * (ファイルがなければ失敗 — その列の照会が失敗したということ)。
      */
     private Run run(Map<String, String> responses, Map<String, String> env) throws Exception {
         assumeTrue(posix(), "bash · POSIX 가 없다");

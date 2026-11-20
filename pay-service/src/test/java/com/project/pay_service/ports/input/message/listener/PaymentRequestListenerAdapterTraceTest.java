@@ -50,6 +50,14 @@ import com.project.common.tracing.OtelTestTracing;
  * <p>여기서는 <b>운영의 {@link KafkaConsumerConfig} 그대로</b> {@code @KafkaListener} 를 등록하고(브로커 없이,
  * 자동 시작만 끈다), 스프링이 만든 리스너 어댑터에 레코드를 넣는다. 결제 처리 순간의 현재 추적이 보낸
  * 쪽의 traceparent 와 같은지 본다.
+ *
+ * <p>[JA] 🐛 決済リクエストの後ろに追跡がつながらなかった — Zipkin に pay-service・"outbox relay payment-response" がない。
+ * {@code PaymentRequestTraceContinuationTest} はリスナーメソッドを<b>直接</b>呼んで通っていた。ところが
+ * 運用のコンテナファクトリは {@code setBatchToRecordAdapter(...)} なので、Spring はバッチを<b>レコード一件ずつ</b>
+ * リスナーに渡し、{@code BATCH_CONVERTED_HEADERS} は来ない。期待したヘッダーが null なので引き継ぎが何もしなかった。
+ * ここでは<b>運用の {@link KafkaConsumerConfig} そのまま</b>で {@code @KafkaListener} を登録し(ブローカーなし、
+ * 自動起動だけ切る)、Spring が作ったリスナーアダプターにレコードを入れる。決済処理の瞬間の現在の追跡が送り手の
+ * traceparent と同じかを見る。
  */
 @DisplayName("pay-service — 운영 리스너 어댑터를 거쳐도 추적을 이어받는다")
 class PaymentRequestListenerAdapterTraceTest {
@@ -89,6 +97,7 @@ class PaymentRequestListenerAdapterTraceTest {
         @Bean
         OutboxTraceContext outboxTraceContext() {
             // 운영과 같은 OpenTelemetry 브리지 · W3C 전파(docs/63) — traceparent 를 그대로 읽는다.
+            // [JA] 運用と同じ OpenTelemetry ブリッジ · W3C 伝播(docs/63) — traceparent をそのまま読む。
             tracing = new OtelTestTracing();
             tracer = tracing.tracer();
             io.micrometer.tracing.propagation.Propagator propagator = tracing.propagator();
@@ -96,6 +105,7 @@ class PaymentRequestListenerAdapterTraceTest {
         }
 
         /** 브로커 없이 — 컨테이너를 만들되 시작하지 않는다. 팩토리 설정은 운영 그대로다. */
+        // [JA] ブローカーなしで — コンテナは作るが起動しない。ファクトリ設定は運用そのまま。
         @Bean
         static BeanPostProcessor noAutoStartup() {
             return new BeanPostProcessor() {
@@ -111,6 +121,7 @@ class PaymentRequestListenerAdapterTraceTest {
     }
 
     /** order-service 의 릴레이가 보내는 모양 — Authorization 은 스프링 헤더 매퍼로, traceparent 는 프로듀서 추적이 바이트로. */
+    // [JA] order-service のリレーが送る形 — Authorization は Spring のヘッダーマッパーで、traceparent はプロデューサー追跡がバイトで。
     private static ConsumerRecord<String, PaymentRequest> recordFromOrderService(PaymentRequest value) {
         RecordHeaders headers = new RecordHeaders();
         new DefaultKafkaHeaderMapper().fromHeaders(new MessageHeaders(Map.of("Authorization", "Bearer t")), headers);
@@ -154,6 +165,10 @@ class PaymentRequestListenerAdapterTraceTest {
      *
      * <p>🐛 예전 팩토리는 레코드 어댑터(DefaultBatchToRecordAdapter)를 둬서, 리스너의 예외를 잡아 필드에 담기만 했다 — 재시도도 DLT 도
      * 없이 오프셋이 커밋됐다(가드 B-88).
+     *
+     * <p>[JA] 🔴 処理失敗は飲み込まない — 失敗したレコードの位置を載せた BatchListenerFailedException がエラーハンドラ(再試行 · DLT · アラート)まで届く。
+     * 🐛 以前のファクトリはレコードアダプター(DefaultBatchToRecordAdapter)を置き、リスナーの例外を捕まえてフィールドに入れるだけだった —
+     * 再試行も DLT もなくオフセットがコミットされた(ガード B-88)。
      */
     @Test
     @DisplayName("🔴 처리 실패는 실패 위치(두 번째)와 함께 에러 핸들러로 간다 — 예전에는 레코드 어댑터가 삼켰다")
@@ -185,6 +200,7 @@ class PaymentRequestListenerAdapterTraceTest {
 
             Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(() -> adapter.onMessage(batch, null, null));
             // 어댑터는 ListenerExecutionFailedException 으로 감싼다 — 에러 핸들러는 원인 사슬에서 BatchListenerFailedException 을 찾는다.
+            // [JA] アダプターは ListenerExecutionFailedException で包む — エラーハンドラは原因の連鎖から BatchListenerFailedException を探す。
             org.springframework.kafka.listener.BatchListenerFailedException failed = null;
             for (Throwable t = thrown; t != null && failed == null; t = t.getCause()) {
                 if (t instanceof org.springframework.kafka.listener.BatchListenerFailedException b) {
@@ -201,6 +217,10 @@ class PaymentRequestListenerAdapterTraceTest {
      * 🔴 PY3 — 같은 결제 요청을 동시에 처리한 늦은 쪽(결제 행 유니크 위반)은 "이미 처리됨" 으로 넘어간다. 다른 무결성 위반은 실패로 보낸다.
      * 🐛 예전에는 DuplicateKeyException 만 잡았는데 기본 Hibernate 는 DataIntegrityViolationException 을 내서 그 catch 는 한 번도 타지 않았다.
      * PY7 — 그룹 오프셋이 없으면 처음부터(earliest) 읽는다.
+     *
+     * <p>[JA] 🔴 PY3 — 同じ決済リクエストを同時に処理した遅い側(決済行のユニーク違反)は「処理済み」として通す。その他の整合性違反は失敗として送る。
+     * 🐛 以前は DuplicateKeyException だけを捕まえていたが、既定の Hibernate は DataIntegrityViolationException を出すのでその catch は一度も通らなかった。
+     * PY7 — グループオフセットがなければ最初から(earliest)読む。
      */
     @Test
     @DisplayName("🔴 결제 행 유니크 위반은 이미 처리됨, 그 밖의 무결성 위반은 실패 · 오프셋 기본은 earliest")

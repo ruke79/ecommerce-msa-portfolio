@@ -15,11 +15,27 @@
 #   CONCURRENCY="1 5 10 20 50" DURATION=15 ./ops/14-load-test.sh   # 동시성 스윕
 #   PATHS="/catalog-service/api/category/categories" ./ops/14-load-test.sh
 #   INSECURE=0                                                     # 실인증서 환경
+# [JA] 運用アクション ⑭ — ローカル負荷ハーネス
+#
+#      何を測れて何は測れないか(docs/19 §1):
+#        ✅ 応答コードの分布 — 負荷が上がるとき 5xx/429 がいつ出るか
+#        ✅ エラー率の **変曲点** — 同時実行数 N で壊れ始めるか(コネクションプール枯渇などの構造的限界)
+#        ✅ 回帰 — 同じマシンでコードの前後を比べれば相対的な変化は有効である
+#        ❌ 絶対的な遅延/スループット — ハードウェア・ネットワーク・データ量が運用と違う。運用の数値として使わないこと。
+#
+#      このスクリプトがあえて curl ベースである理由: k6/JMeter のインストールを前提にしないためである。
+#      精密な測定が必要なら k6 に移すが、「何を見るか」はここと同じである。
+#
+#      使い方:
+#        GATEWAY=https://localhost:8000 ./ops/14-load-test.sh
+#        CONCURRENCY="1 5 10 20 50" DURATION=15 ./ops/14-load-test.sh   # 同時実行数のスイープ
+#        PATHS="/catalog-service/api/category/categories" ./ops/14-load-test.sh
+#        INSECURE=0                                                     # 実証明書の環境
 set -uo pipefail
 
 GATEWAY="${GATEWAY:-https://localhost:8000}"
 CONCURRENCY="${CONCURRENCY:-1 5 10 20 40}"
-DURATION="${DURATION:-10}"          # 단계당 초
+DURATION="${DURATION:-10}"          # 단계당 초 ／ [JA] 段階ごとの秒数
 PATHS="${PATHS:-/catalog-service/api/category/categories}"
 OUT="${OUT:-./load-results}"
 CURL=(curl -sS --max-time 20 -o /dev/null)
@@ -39,6 +55,7 @@ echo
 
 worker() {
     # 한 워커가 DURATION 초 동안 반복 요청하며 'code time_total' 을 기록한다
+    # [JA] 1 つのワーカーが DURATION 秒のあいだ繰り返しリクエストし、'code time_total' を記録する
     local out="$1" endpoint="$2" deadline
     deadline=$(( $(date +%s) + DURATION ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -84,6 +101,7 @@ rps = n / dur
 row = f"{conc}\t{n}\t{c2}\t{c4}\t{c429}\t{c5}\t{err}\t{pct(50):.0f}\t{pct(95):.0f}\t{pct(99):.0f}\t{rps:.1f}"
 open(report, 'a').write(row + "\n")
 # 429 는 레이트리미터가 **일하고 있다는 신호**다 — 실패로 세지 않는다.
+# [JA] 429 はレートリミッターが働いているという合図だ — 失敗には数えない。
 flag = ''
 if c5 or err:
     flag = '  ⚠️ 5xx/무응답 발생 — 여기가 구조적 한계일 수 있다'

@@ -25,6 +25,11 @@ import lombok.extern.slf4j.Slf4j;
  * 다시 보내고, order 가 {@code eventId} 로 두 번째를 버린다 — 파드가 여럿이라 같은 행을 둘이 보내도 마찬가지다.
  *
  * <p>오래 못 보내면(브로커가 계속 거부) 운영자에게 넘긴다 — 그동안 손님은 환불을 기다리고 있다.
+ *
+ * <p>[JA] 在庫不足のアウトボックスを stock-shortage トピックへ送り出す(docs/53 §過剰販売)。
+ * 送ってから印を付ける。順序を逆にすると、発行に失敗したのに「送った」になる。この順序なら印付けが失敗しても次の周期に再送し、
+ * order が eventId で二度目を捨てる — Pod が複数で同じ行を二つが送っても同じだ。
+ * 長く送れなければ(ブローカーが拒否し続ける)運用者に引き渡す — その間、客は返金を待っている。
  */
 @Slf4j
 @Component
@@ -52,6 +57,7 @@ public class StockShortagePublisher {
         for (StockShortage s : pending) {
             try {
                 // 주문 id 가 키 — 같은 주문의 기록이 순서대로 간다.
+                // [JA] 注文 id がキー — 同じ注文の記録が順序どおりに届く。
                 kafkaTemplate.send(topic, String.valueOf(s.getOrderId()), s.getPayload()).get(5, TimeUnit.SECONDS);
                 s.markPublished();
                 repository.save(s);
@@ -62,7 +68,7 @@ public class StockShortagePublisher {
                 } else {
                     log.warn("재고 부족 기록 발행 실패 — 다음 주기에 다시 보낸다. orderId={}: {}", s.getOrderId(), e.toString());
                 }
-                return;   // 브로커 문제면 나머지도 실패한다 — 다음 주기에
+                return;   // 브로커 문제면 나머지도 실패한다 — 다음 주기에 ／ [JA] ブローカーの問題なら残りも失敗する — 次の周期に
             }
         }
     }

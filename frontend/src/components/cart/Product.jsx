@@ -29,6 +29,10 @@ const Product = ({ product, selected, setSelected,  cart }) => {
      * 로그인한 사용자의 장바구니(서버 장바구니를 비춘 것)면 수량·삭제를 서버에 바로 반영하고 응답으로 화면을 바꾼다(docs/40 0-b).
      * 예전에는 브라우저에만 반영돼 다른 기기에서는 옛 장바구니가 보였고, 체크아웃에서 고르지 않은 줄은 서버에서 사라졌다.
      * 실패하면 화면은 그대로 — 서버와 어긋난 화면을 만들지 않는다.
+     *
+     * <p>[JA] ログインしたユーザーのカート(サーバーカートを映したもの)なら数量 · 削除をサーバーにすぐ反映し、応答で画面を変える(docs/40 0-b)。
+     * 以前はブラウザにだけ反映されて別の端末では古いカートが見え、チェックアウトで選ばなかった行はサーバーから消えた。
+     * 失敗したら画面はそのまま — サーバーと食い違う画面を作らない。
      */
     const onServer = Boolean(token && user?.userId && cart.ownerId === user.userId);
     const line = { productId: product.id, colorId: product.color?.id, size: product.size };
@@ -64,6 +68,7 @@ const Product = ({ product, selected, setSelected,  cart }) => {
             dispatch(updateCart(cartItems.map((p) => (p._uid === product._uid ? { ...p, qty } : p))));
         }
         // 고른 목록은 고를 때의 복사본이다 — 수량을 맞춰 둔다(합계가 그것으로 계산된다).
+        // [JA] 選んだリストは選んだときのコピーである — 数量を合わせておく(合計がそれで計算される)。
         if (selected.find((p) => p._uid === product._uid)) {
             setSelected(selected.map((p) => (p._uid === product._uid ? { ...p, qty } : p)));
         }
@@ -88,6 +93,7 @@ const Product = ({ product, selected, setSelected,  cart }) => {
     };
 
     // 지금 재고 기준의 문제 — 장바구니 화면이 들어올 때마다 서버에서 새로 받는다(CartPage, docs/59 §5).
+    // [JA] 今の在庫基準の問題 — カート画面に入るたびにサーバーから新たに受け取る(CartPage, docs/59 §5)。
     const stock = cartLineStockOf(product);
     const atMax = typeof product.quantity === "number" && product.qty >= product.quantity;
 

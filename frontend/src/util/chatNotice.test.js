@@ -8,7 +8,8 @@ const tJa = tOf(ja);
 const tKo = tOf(ko);
 
 /** 서버 모양에 예시 값을 넣는다 — {name}·{id}. */
-const sample = (format) => format.replace("{name}", "Tanaka").replace("{id}", "3f2k");   // 이름은 사람이 정한 값이라 그대로 남는다
+// [JA] サーバーの形に例示値を入れる — {name}・{id}。
+const sample = (format) => format.replace("{name}", "Tanaka").replace("{id}", "3f2k");   // 이름은 사람이 정한 값이라 그대로 남는다 ／ [JA] 名前は人が決めた値なのでそのまま残る
 
 describe("채팅 시스템 문구 (docs/60 §8)", () => {
     it("🔴 서버가 만드는 모양은 모두 알아본다 — 일본어 화면에 한국어·영어가 남지 않는다", () => {

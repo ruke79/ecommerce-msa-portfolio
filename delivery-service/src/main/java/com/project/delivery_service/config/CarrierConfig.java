@@ -18,6 +18,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>새 택배사를 추가할 때 여기에 빈을 하나 더하면 {@code CarrierRegistry} 가 자동으로
  * 인식한다 — 스케줄러·상태 판정·화면은 손대지 않는다(docs/25 §4.2).
+ *
+ * <p>[JA] 宅配業者アダプターの登録。
+ * <p>新しい宅配業者を追加するときここに Bean を一つ足せば {@code CarrierRegistry} が自動で認識する — スケジューラー・状態判定・画面には手を付けない(docs/25 §4.2)。
  */
 @Slf4j
 @Configuration
@@ -56,6 +59,9 @@ public class CarrierConfig {
      * <p>서비스키가 없어도 빈은 만든다 — 없으면 호출 시 "키가 설정되지 않았다"는 영구 실패를
      * 돌려준다. 빈을 아예 안 만들면 그 택배사로 등록된 배송이 <b>이유 없이 갱신되지 않는</b>
      * 상태가 되고, 그건 진단이 훨씬 어렵다.
+     *
+     * <p>[JA] 郵便局。
+     * <p>サービスキーがなくても Bean は作る — なければ呼び出し時に「キーが設定されていない」という永続的な失敗を返す。Bean をまったく作らないとその宅配業者で登録された配送が<b>理由なく更新されない</b>状態になり、それは診断がはるかに難しい。
      */
     @Bean
     public CarrierAdapter koreaPostCarrierAdapter(ObjectMapper objectMapper) {
@@ -73,6 +79,8 @@ public class CarrierConfig {
     /**
      * 시뮬레이터. 실제 택배사 없이 결제→배송→추적→알림 전 경로를 돌려 보기 위한 것이다.
      * 운영에서는 끈다.
+     *
+     * <p>[JA] シミュレーター。実際の宅配業者なしで 決済→配送→追跡→通知 の全経路を回してみるためのもの。運用では無効にする。
      */
     @Bean
     @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(

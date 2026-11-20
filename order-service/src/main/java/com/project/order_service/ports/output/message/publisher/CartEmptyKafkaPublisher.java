@@ -25,7 +25,8 @@ import lombok.extern.slf4j.Slf4j;
  * 아웃박스의 {@code cart-empty} 행(결제 뒤 주문한 줄 빼기)을 토픽 {@value #TOPIC} 으로 낸다. 규칙은
  * {@link ProductUpdateKafkaPublisher} 와 같다. 키 = 사용자 id — 같은 장바구니의 비우기 · 롤백은 같은 파티션으로(docs/38 §1.15).
  *
- * <p>[JA] アウトボックスの cart-empty 行をトピックに出す。キーはユーザー id。
+ * <p>[JA] アウトボックスの {@code cart-empty} 行(決済後に注文した行を外す)をトピック {@value #TOPIC} に出す。ルールは
+ * {@link ProductUpdateKafkaPublisher} と同じ。キー = ユーザー id — 同じカートの空にする処理 · ロールバックは同じパーティションへ(docs/38 §1.15)。
  */
 @Slf4j
 @Component
@@ -41,6 +42,7 @@ public class CartEmptyKafkaPublisher {
     private long publishTimeoutMs = 5000;
 
     /** @return 상태가 확정됐으면 true, 일시 실패라 다음 폴링에서 다시 시도해야 하면 false */
+    // [JA] 状態が確定したら true、一時的な失敗で次のポーリングで再試行すべきなら false
     public boolean publish(PaymentOutboxEvent outboxEvent, BiConsumer<PaymentOutboxEvent, OutboxStatus> outboxCallback) {
         CartEmptyRequest request = read(outboxEvent);
         try {

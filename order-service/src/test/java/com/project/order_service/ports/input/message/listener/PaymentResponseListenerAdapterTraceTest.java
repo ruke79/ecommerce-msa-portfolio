@@ -47,6 +47,13 @@ import com.project.common.tracing.OtelTestTracing;
  *
  * <p>운영의 {@link KafkaConsumerConfig} 그대로 {@code @KafkaListener} 를 등록하고(자동 시작만 끈다),
  * 스프링이 만든 어댑터에 pay-service 가 보내는 모양의 레코드를 넣는다.
+ *
+ * <p>[JA] 🐛 決済応答を受けて注文を確定する瞬間にトレースがなかった — 運用ファクトリーがレコードアダプターだったため、
+ * バッチヘッダーが来なかった(pay-service の {@code PaymentRequestListenerAdapterTraceTes
+ * t} と同じ原因、docs/51 §4g)。
+ *
+ * <p>運用の {@link KafkaConsumerConfig} そのままで {@code @KafkaListener}
+ * を登録し(自動開始だけ切る)、Spring が作ったアダプターに pay-service が送る形のレコードを入れる。
  */
 @DisplayName("order-service — 운영 리스너 어댑터를 거쳐도 결제 응답의 추적을 이어받는다")
 class PaymentResponseListenerAdapterTraceTest {
@@ -86,6 +93,7 @@ class PaymentResponseListenerAdapterTraceTest {
         @Bean
         OutboxTraceContext outboxTraceContext() {
             // 운영과 같은 OpenTelemetry 브리지 · W3C 전파(docs/63) — traceparent 를 그대로 읽는다.
+            // [JA] 運用と同じ OpenTelemetry ブリッジ・W3C 伝播(docs/63)— traceparent をそのまま読む。
             tracing = new OtelTestTracing();
             tracer = tracing.tracer();
             io.micrometer.tracing.propagation.Propagator propagator = tracing.propagator();
@@ -93,6 +101,7 @@ class PaymentResponseListenerAdapterTraceTest {
         }
 
         /** 브로커 없이 — 컨테이너를 만들되 시작하지 않는다. 팩토리 설정은 운영 그대로다. */
+        // [JA] ブローカーなしで — コンテナを作るが開始しない。ファクトリー設定は運用そのままである。
         @Bean
         static BeanPostProcessor noAutoStartup() {
             return new BeanPostProcessor() {
@@ -145,6 +154,12 @@ class PaymentResponseListenerAdapterTraceTest {
      *
      * <p>🐛 예전 팩토리는 레코드 어댑터(DefaultBatchToRecordAdapter)를 둬서, 리스너의 예외를 잡아 필드에 담기만 했다 — 재시도도 DLT 도
      * 없이 오프셋이 커밋됐다(가드 B-88).
+     *
+     * <p>[JA] 🔴 処理失敗は握りつぶさない — 失敗したレコードの位置を載せた BatchListenerFailedException
+     * がエラーハンドラー(再試行・DLT・警報)まで届く。
+     *
+     * <p>🐛 以前のファクトリーはレコードアダプター(DefaultBatchToRecordAdapter)を置いていて、
+     * リスナーの例外を捕まえてフィールドに入れるだけだった — 再試行も DLT もなくオフセットがコミットされていた(ガード B-88)。
      */
     @Test
     @DisplayName("🔴 처리 실패는 실패 위치(두 번째)와 함께 에러 핸들러로 간다 — 예전에는 레코드 어댑터가 삼켰다")
@@ -176,6 +191,8 @@ class PaymentResponseListenerAdapterTraceTest {
 
             Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(() -> adapter.onMessage(batch, null, null));
             // 어댑터는 ListenerExecutionFailedException 으로 감싼다 — 에러 핸들러는 원인 사슬에서 BatchListenerFailedException 을 찾는다.
+            // [JA] アダプターは ListenerExecutionFailedException で包む — エラーハンドラーは原因の連鎖から
+            //      BatchListenerFailedException を探す。
             org.springframework.kafka.listener.BatchListenerFailedException failed = null;
             for (Throwable t = thrown; t != null && failed == null; t = t.getCause()) {
                 if (t instanceof org.springframework.kafka.listener.BatchListenerFailedException b) {

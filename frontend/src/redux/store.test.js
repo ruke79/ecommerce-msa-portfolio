@@ -8,6 +8,13 @@ import { addToCart, commitCart, emptyCart, cancelCart, updateCart, CartStatus } 
  * whitelist 는 존재하는 최상위 리듀서 키만 의미가 있으므로 저장 대상이 0개였고, PersistGate
  * 로 앱을 감싸고 persistStore 까지 부르면서 실제로는 아무 일도 하지 않았다.
  * 사용자에게는 "새로고침하면 장바구니가 비워진다"로 나타났다.
+ *
+ * <p>[JA] 🐛 回帰対象: redux-persist が<b>何も保存していなかった。</b>
+ *
+ * `whitelist: ['auth']` になっていたが rootReducer に `auth` がなかった(コメントアウトされていた)。
+ * whitelist は存在するトップレベルの reducer キーだけが意味を持つので保存対象は 0 個で、PersistGate
+ * でアプリを包み persistStore まで呼びながら、実際には何もしていなかった。
+ * ユーザーには「リロードするとカートが空になる」として現れた。
  */
 describe("redux store", () => {
   it("registers every reducer the app reads from", () => {
@@ -24,6 +31,8 @@ describe("redux store", () => {
 
     // redux-persist 가 실제로 관리 중이면 해당 슬라이스에 _persist 메타가 붙는다.
     // whitelist 가 없는 키를 가리키면 이 값이 나타나지 않는다.
+    // [JA] redux-persist が実際に管理していれば、そのスライスに _persist メタが付く。
+    //      whitelist が存在しないキーを指すとこの値は現れない。
     expect(state._persist).toBeDefined();
     expect(state._persist.version).toBeDefined();
   });
@@ -31,6 +40,8 @@ describe("redux store", () => {
   it("does not persist an `auth` slice — tokens stay in memory by design", () => {
     // 액세스 토큰은 XSS 탈취를 막기 위해 AuthContext(메모리)에만 둔다. 여기 auth 가
     // 생긴다면 그 설계가 되돌려진 것이므로 즉시 알아야 한다.
+    // [JA] アクセストークンは XSS による奪取を防ぐため AuthContext(メモリ)にだけ置く。ここに auth が
+    //      現れたらその設計が元に戻されたということなので、すぐに知る必要がある。
     expect(store.getState()).not.toHaveProperty("auth");
   });
 });
@@ -70,6 +81,7 @@ describe("CartSlice", () => {
 
   it("marks the cart cancelled without wiping the id", () => {
     // 취소는 결제 실패 경로다. cartId 를 남겨 둬야 어떤 장바구니가 취소됐는지 추적된다.
+    // [JA] キャンセルは決済失敗の経路である。cartId を残しておかないと、どのカートがキャンセルされたか追跡できない。
     store.dispatch(commitCart("cart-77"));
     store.dispatch(cancelCart());
 

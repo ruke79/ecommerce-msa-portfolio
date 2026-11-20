@@ -105,6 +105,7 @@ class RecoveryCodesTest {
         verify(alerts).publishAccountEvent(42L, "kim@example.com", SecurityAlertProducer.ALERT_RECOVERY_CODE_USED, null);
 
         // 이미 쓴 코드 — UPDATE 가 0 행
+        // [JA] 既に使ったコード — UPDATE が 0 行
         when(repository.consume(eq(42L), eq(codes.hash("ABCDEFGH23")), any())).thenReturn(0);
         assertThat(codes.verifyLogin(user, code)).isEqualTo(TwoFactorChange.INVALID_CODE);
     }

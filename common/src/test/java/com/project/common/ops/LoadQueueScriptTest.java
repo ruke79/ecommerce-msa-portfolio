@@ -26,7 +26,11 @@ import org.junit.jupiter.api.io.TempDir;
  * 99 로 끝나도 다음 회차는 간다 — 그것도 결과다. ③ 끝나면 측정용 설정(유입 제한 · 리뷰 확인)을 되돌린다.
  * ops/53 · pgrep · kubectl 은 가짜로 바꿔 돌린다(bash · POSIX 가 없으면 건너뛴다).
  *
- * <p>[JA] 負荷キュー。いまの k6 が終わるまで次を始めない · 閾値超え(99)でも次へ進む · 最後に測定用の設定を戻す。
+ * <p>[JA] 負荷キュー(ops/57-load-queue.sh)— docs/83。
+ * 夜通しの長時間実行の後、人がいないときに次の計測をつなぐ道具なので、間違えると朝になって分かる。そこで三つを守る。
+ * ① いま動いている k6 が終わるまで次の回を始めない(二つの回が重なると両方台無しになる)。② 回が閾値を超えて
+ * 99 で終わっても次の回へ進む — それも結果である。③ 終わったら計測用の設定(流入制限 · レビュー確認)を戻す。
+ * ops/53 · pgrep · kubectl は偽物に替えて動かす(bash · POSIX がなければスキップする)。
  */
 @DisplayName("ops/57 — 부하 대기열 (docs/83)")
 class LoadQueueScriptTest {
@@ -54,6 +58,9 @@ class LoadQueueScriptTest {
     /**
      * 가짜 ops/53(부른 순서 · RATE · STAGES 를 calls 에, order 는 FAKE_ORDER_EXIT 로 끝난다) ·
      * 가짜 pgrep(FAKE_BUSY 번은 'k6 가 돈다', 그 뒤 '없다' — 물을 때마다 calls 에 남긴다) · 가짜 kubectl 로 돌린다.
+     *
+     * <p>[JA] 偽の ops/53(呼んだ順 · RATE · STAGES を calls に、order は FAKE_ORDER_EXIT で終わる) ·
+     * 偽の pgrep(FAKE_BUSY 回は「k6 が走っている」、その後は「ない」 — 聞くたびに calls に残す) · 偽の kubectl で動かす。
      */
     private Run run(Map<String, String> env, String... args) throws Exception {
         Path bin = Files.createDirectories(tmp.resolve("bin"));

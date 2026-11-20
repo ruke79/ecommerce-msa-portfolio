@@ -40,6 +40,9 @@ import jakarta.servlet.http.Cookie;
  * 🔴 로그인 2단계의 사용자별 시도 한도(docs/68 §15).
  *
  * <p>🐛 예전: 대기 토큰당 5번만 셌다 — 비밀번호로 다시 로그인하면 새 토큰 = 다시 5번이었다.
+ *
+ * <p>[JA] 🔴 ログイン二段階目のユーザー別試行上限(docs/68 §15)。
+ * <p>🐛 以前: 待機トークンごとに 5 回だけ数えていた — パスワードで再ログインすれば新トークン = また 5 回だった。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -97,6 +100,7 @@ class LoginTwoFactorLimitTest {
         assertThat(r.getStatusCode().value()).isEqualTo(401);
         assertThat(((Map<?, ?>) r.getBody()).get("message").toString()).contains("올바르지 않습니다");
         // 세는 것은 검증 전 한 번뿐이다 — 틀린 뒤 또 세면 토큰당 5번이 사실은 2~3번이 된다.
+        // [JA] 数えるのは検証前の一回だけ — 間違えた後にまた数えるとトークンごとの 5 回が実際には 2~3 回になる。
         verify(pendingTwoFactor).reserveAttempt("pending");
         verify(refreshTokenService, never()).createRefreshToken(anyLong());
     }

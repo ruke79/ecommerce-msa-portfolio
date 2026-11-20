@@ -18,6 +18,9 @@ import com.project.coupon_service.service.CouponService;
  *
  * <p>🐛 예전에는 "이미 있음"(create 가 null)을 예외로 바꿔, 커밋 전 리밸런스 · 재기동 · CDC 중복 같은 정상 재전달이 재시도 뒤
  * user-created.DLT 와 경보(KafkaDeadLetterPublished)로 끝났다.
+ *
+ * <p>[JA] 登録イベント(user-created)が再び来ても正常に終わる — 既に登録クーポンがあればスキップする(CP4)。
+ * <p>🐛 以前は「既にある」(create が null)を例外に変え、コミット前のリバランス · 再起動 · CDC 重複のような正常な再配信がリトライ後 user-created.DLT とアラート(KafkaDeadLetterPublished)で終わっていた。
  */
 @DisplayName("가입 쿠폰 — 재전달")
 class WelcomeCouponRedeliveryTest {

@@ -70,7 +70,7 @@ class HttpKeepAliveTest {
         }
 
         p = new Properties();
-        p.setProperty("http.maxConnections", "7");   // 명령행 -D
+        p.setProperty("http.maxConnections", "7");   // 명령행 -D ／ [JA] コマンドラインの -D
         HttpKeepAlive.apply(Map.of("HTTP_KEEPALIVE_MAX_CONNECTIONS", "128"), p);
         assertThat(p.getProperty("http.maxConnections")).isEqualTo("7");
     }
@@ -85,6 +85,9 @@ class HttpKeepAliveTest {
     /**
      * 실제 HTTPS 로 — 동시 호출이 오르내리는 모양(32 스레드, 호출 사이 평균 20ms 의 지수 분포 대기, 1,600 호출)에서 서버가 받은 연결 수.
      * JDK 는 이 속성을 한 번만 읽으므로 JVM 을 따로 띄운다.
+     *
+     * <p>[JA] 実際の HTTPS で — 同時呼び出しが上下する形(32 スレッド、呼び出し間に平均 20ms の指数分布の待機、1,600 呼び出し)でサーバーが受けた接続数。
+     * JDK はこのプロパティを一度しか読まないので、JVM を別に起動する。
      */
     @Test
     @DisplayName("🔴 동시 호출이 오르내려도 연결을 다시 쓴다 — 적용하면 연결 ≈ 스레드 수, 안 하면(JDK 기본 5) 그 몇 배의 새 TLS 연결")
@@ -115,6 +118,7 @@ class HttpKeepAliveTest {
     }
 
     /** 따로 띄우는 JVM — HTTPS 서버와 Feign 기본 클라이언트와 같은 HttpURLConnection 호출. */
+    // [JA] 別に起動する JVM — HTTPS サーバーと、Feign のデフォルトクライアントと同じ HttpURLConnection 呼び出し。
     public static final class Probe {
         public static void main(String[] args) throws Exception {
             if (args[1].equals("apply")) {
@@ -135,7 +139,7 @@ class HttpKeepAliveTest {
             server.setHttpsConfigurator(new HttpsConfigurator(ctx));
             Set<Integer> conns = ConcurrentHashMap.newKeySet();
             server.createContext("/", ex -> {
-                conns.add(ex.getRemoteAddress().getPort());   // 클라이언트 포트 = 연결 하나
+                conns.add(ex.getRemoteAddress().getPort());   // 클라이언트 포트 = 연결 하나 ／ [JA] クライアントポート = 接続一つ
                 try {
                     Thread.sleep(5);
                 } catch (InterruptedException e) {

@@ -42,6 +42,7 @@ public class WishItem extends BaseEntity{
 
     
       // 한 명의 사용자는 여러 위시리스트 항목을 가질 수 있으므로 @ManyToOne 관계가 적절합니다.
+      // [JA] 1 人のユーザーは複数のウィッシュリスト項目を持てるので @ManyToOne 関係が適切である。
     @ManyToOne(fetch=FetchType.LAZY)
     @JoinColumn(name="user_id", referencedColumnName = "user_id", nullable = false)
     @JsonBackReference

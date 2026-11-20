@@ -39,13 +39,17 @@ public class AddressService {
         //    이름이거나 소셜 계정의 provider_providerId 이고, 둘 다 그 사람을 특정한다.
         //    다른 경로(보안 알림·기기 인식)가 userId 만 남기는 것과 기준을 맞춘다.
         //    배송지 저장은 자주 일어나므로 INFO 한 줄이 그대로 쌓인다.
+        // [JA] 🔒 人を指す値はログに残さない。username はユーザーが選んだ名前かソーシャルアカウントの provider_providerId で、どちらもその人を特定する。
+        //      他の経路(セキュリティ通知・機器認識)が userId だけを残すのと基準を揃える。配送先の保存は頻繁なので INFO 一行がそのまま積もる。
         log.debug("배송지 저장: userId={}", user.getUserId());
 
         // 매핑은 ShippingAddress.from 하나뿐이다 — 예전에는 빌더로 채운 직후 deepCopy 가
         // 같은 필드를 다시 덮었다(ShippingAddress.from 주석 참조).
+        // [JA] マッピングは ShippingAddress.from 一つだけ — 以前はビルダーで埋めた直後に deepCopy が同じフィールドを上書きしていた(ShippingAddress.from のコメント参照)。
         ShippingAddress address = ShippingAddress.from(request.getAddress());
 
         // 새 주소를 기본으로 저장하면 지금 기본을 먼저 끈다 — 아니면 '사용자당 기본 하나' 인덱스에 걸린다(아래 deactivateCurrentDefault).
+        // [JA] 新しい住所を既定として保存するなら今の既定を先に外す — でないと「ユーザーごとに既定は一つ」インデックスに引っかかる(下の deactivateCurrentDefault)。
         if (address.isActive()) {
             deactivateCurrentDefault(user.getUserId(), null);
         }
@@ -57,6 +61,8 @@ public class AddressService {
         // 양방향 연관을 메모리에서도 맞춰 둔다. 소유 측은 address.user 라 DB 에는 이미
         // 반영됐고, 이 줄은 같은 트랜잭션 안에서 user 를 다시 읽는 코드가 방금 만든
         // 주소를 보게 하려는 것이다.
+        // [JA] 双方向関連をメモリ上でも揃えておく。所有側は address.user なので DB には既に反映済みで、この行は同じトランザクション内で
+        //      user を読み直すコードが今作った住所を見られるようにするためのもの。
         user.getShippingAddresses().add(address);
 
         // 🧹 여기 있던 `userRepository.save(user); // prevent java.stackoverflow` 를 지웠다.
@@ -66,6 +72,10 @@ public class AddressService {
         //    한 번 더 유발할 뿐이다. 스택오버플로와는 아무 관계가 없다 — 그건 양방향
         //    연관을 toString/직렬화할 때 나는 증상이고, 그 방어는 @JsonBackReference 가
         //    이미 하고 있다.
+        // [JA] 🧹 ここにあった `userRepository.save(user); // prevent java.stackoverflow` を消した。コメントの説明は事実ではない。
+        //      user は直前に findByUsername で読んだ**永続状態のエンティティ**で、このクラスは @Transactional なので、変更はコミット時にダーティチェックで反映される。
+        //      save は何もせず SELECT/UPDATE を一回余計に起こすだけ。スタックオーバーフローとは無関係 — それは双方向関連を toString/シリアライズするときの症状で、
+        //      その防御は @JsonBackReference が既にしている。
 
         AddressDto result = new AddressDto();
         AddressDto.deepCopyShippingAddressDto(result, address);
@@ -87,6 +97,11 @@ public class AddressService {
      *   <li>사용자의 배송지를 전부 불러 자바에서 반복하며 id 를 대조했다. 배송지가 N 개면
      *       N 개를 다 읽는다. 쿼리 하나로 충분하다.</li>
      * </ol>
+     *
+     * <p>[JA] 既定の配送先を選ぶ。
+     * <p>🔴 以前は二つの誤りがあった: (1) 現在の既定を findByActive(true) で探していた — user_id 条件のない<b>全テーブル検索</b>。
+     * 既定が二つ以上あると Optional クエリが二行に当たり IncorrectResultSizeDataAccessException → 400 になり、その前でも全体で active が一つだけで
+     * それが他人のものなら<b>他人の既定配送先を外していた</b>。(2) ユーザーの配送先を全部読みジャバで回して id を照合していた。N 件なら N 件全部読む。クエリ一つで足りる。
      */
     public AddressDto selectShipAddress(String username, String addressId) {
         // 🐛 예전: 없는 사용자 · 잘못된 id · 남의(없는) 주소 모두 null → 200 빈 본문이었다 — 화면은 "기본 배송지로 정했습니다" 로 읽었다.
@@ -104,6 +119,7 @@ public class AddressService {
         }
 
         // 내 것 중에서 찾는다. 소유권 확인이 쿼리에 들어 있으므로 빠뜨릴 수가 없다.
+        // [JA] 自分のものの中から探す。所有権の確認がクエリに入っているので漏らしようがない。
         ShippingAddress address = shippingAddressRepository
                 .findByShippingAddressIdAndUser_UserId(targetId, user.getUserId())
                 .orElse(null);
@@ -114,6 +130,7 @@ public class AddressService {
         }
 
         // 이 사용자의 현재 기본 배송지만 끈다.
+        // [JA] このユーザーの現在の既定配送先だけを外す。
         deactivateCurrentDefault(user.getUserId(), targetId);
 
         address.setActive(true);
@@ -131,6 +148,10 @@ public class AddressService {
      * {@code NumberFormatException} 이 그대로 올라가 500 이 된다 — 잘못된 요청은 400 이다.
      * (컨트롤러가 RuntimeException 을 400 으로 바꾸기는 하지만, 메시지가
      * "For input string: ..." 이라 무엇이 문제인지 알 수 없다.)
+     *
+     * <p>[JA] 住所 id のパース。
+     * <p>以前は Long.parseLong(addressId) をそのまま呼んでいた。数字でない値が来ると NumberFormatException がそのまま上がり 500 になる — 不正なリクエストは 400 である。
+     * (コントローラが RuntimeException を 400 に変えはするが、メッセージが "For input string: ..." で何が問題か分からない。)
      */
     static final String ADDRESS_NOT_FOUND = "배송지를 찾을 수 없습니다.";
 
@@ -169,17 +190,22 @@ public class AddressService {
         // 없는 사용자는 빈 목록이다(이메일 · username 을 남기면 "그 계정이 있는지" 가 로그로 샌다).
         // 🐛 예전에는 try/catch(RuntimeException) 로 감싸 **DB 장애까지** 빈 목록으로 삼켰다 — 결제 화면이 "배송지가 없습니다" 를
         //    보여 손님이 주소를 다시 넣게 했다. 이제 없는 사용자만 빈 목록이고, 다른 오류는 그대로 올라간다(5xx).
-        // [JA] 存在しないユーザーだけ空リスト。以前は DB 障害まで空リストとして飲み込んでいた。
+        // [JA] 🔒 username はログに残さない — 利用者を特定する値だ。必要なのは「誰の住所を何件読んだか」で、それは userId で足りる。
+        //      存在しないユーザーは空リストだ(メール · username を残すと「そのアカウントがあるか」がログから漏れる)。
+        //      🐛 以前は try/catch(RuntimeException) で包んで**DB 障害まで**空リストとして飲み込んでいた — 決済画面が「配送先がありません」を
+        //      見せて客に住所を入れ直させた。今は存在しないユーザーだけ空リストで、他のエラーはそのまま上がる(5xx)。
         User user = userRepository.findByUsername(username).orElse(null);
         if (user == null) {
             log.warn("배송지 조회: 사용자를 찾지 못해 빈 목록을 돌려준다");
             return Collections.emptyList();
         }
         // JOIN FETCH 로 User 와 ShippingAddress 를 함께 로드
+        // [JA] JOIN FETCH で User と ShippingAddress を一緒にロード
         List<ShippingAddress> addresses = shippingAddressRepository.findByUser_UserIdWithUser(user.getUserId());
         log.debug("배송지 조회: userId={} count={}", user.getUserId(), addresses.size());
 
         // 스트림 API를 사용하여 변환 로직을 간결하게 작성
+        // [JA] ストリーム API で変換ロジックを簡潔に書く
         List<AddressDto> addressDtos = addresses.stream()
                 .map(address -> {
                     AddressDto dto = new AddressDto();
@@ -203,6 +229,11 @@ public class AddressService {
      * 하나뿐이다). {@code active} 는 옮기지 않는다 — 그것은 {@link #selectShipAddress} 의 일이다.
      *
      * <p>과거 주문의 배송지는 바뀌지 않는다. 주문은 주문 시점의 주소를 복사해 갖는다.
+     *
+     * <p>[JA] 配送先を修正する — <b>本人のものだけ</b>、既定かどうかはそのまま。
+     * <p>これまで住所は登録と削除しかできなかった。国を一つ間違えたら(一覧で二つの韓国が並んでいて実際にそうなった、docs/25 §11.9)
+     * 消して入れ直すしかなく、そうすると既定の印も一緒に消えた。所有権の判定は削除と同じ — 自分のものから探し、なければ他人のものか存在しないのかを区別して言わない。
+     * 値は ShippingAddress#applyFrom が移す(フィールド一覧はそこだけ)。active は移さない — それは selectShipAddress の仕事。過去の注文の配送先は変わらない。注文は注文時点の住所をコピーして持つ。
      */
     public AddressDto updateShippingAddress(String username, String addressId, AddressDto changes) {
         User user = userRepository.findByUsername(username).orElse(null);
@@ -260,6 +291,12 @@ public class AddressService {
      *
      * <p>주소를 지워도 <b>과거 주문의 배송지는 바뀌지 않는다.</b> 주문은 주문 시점의 주소를
      * {@code OrderAddress} 로 복사해 갖는다(order-service OrderDataService).
+     *
+     * <p>[JA] 配送先を削除する。
+     * <p>🔴 <b>以前は所有権の検査がなかった(IDOR)。</b> ユーザーを検索はするが<b>その住所がこのユーザーのものか照合しなかった。</b>
+     * コレクションから外す remove は他人のものなら黙って素通りし、次の行の delete がそのまま実行される。ログインした誰でも住所 id 一つ知っていれば他人の配送先を消せた。
+     * TSID で id の推測が難しいのは緩和要因であって対策ではない。同じファイルの selectShipAddress は(方式は非効率だったが)所有権を確認していた — 削除だけ抜けていた。
+     * 住所を消しても<b>過去の注文の配送先は変わらない。</b> 注文は注文時点の住所を OrderAddress にコピーして持つ(order-service OrderDataService)。
      */
     public void deleteShippingAddress(String username, String addressId) {
         User user = userRepository.findByUsername(username).orElse(null);
@@ -275,6 +312,7 @@ public class AddressService {
 
         // 내 것 중에서 찾는다 — 없으면 남의 것이거나 존재하지 않는다. 둘을 구분해
         // 알려 주지 않는다(존재 여부가 새면 그 자체가 정보다).
+        // [JA] 自分のものの中から探す — なければ他人のものか存在しない。二つを区別して知らせない(存在するかどうかが漏れればそれ自体が情報になる)。
         ShippingAddress target = shippingAddressRepository
                 .findByShippingAddressIdAndUser_UserId(targetId, user.getUserId())
                 .orElse(null);

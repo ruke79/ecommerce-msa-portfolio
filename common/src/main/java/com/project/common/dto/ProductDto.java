@@ -43,7 +43,7 @@ public class ProductDto  {
 
     private String refundPolicy;
 
-    /** ACTIVE · SOLD_OUT · DELETED — 관리자 화면의 배지·품절 토글이 읽는다(V8). */
+    /** ACTIVE · SOLD_OUT · DELETED — 관리자 화면의 배지·품절 토글이 읽는다(V8). ／ [JA] ACTIVE · SOLD_OUT · DELETED — 管理画面のバッジ · 品切れトグルが読む(V8)。 */
     private String status;
 
     private float rating;

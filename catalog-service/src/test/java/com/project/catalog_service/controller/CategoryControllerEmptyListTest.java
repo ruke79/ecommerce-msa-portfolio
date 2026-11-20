@@ -35,6 +35,13 @@ import com.project.catalog_service.service.CategoryService;
  * 닭과 달걀이다. 빈 DB 에서 실제로 그 상태가 됐다.
  *
  * <p>빈 목록을 "없음" 으로 다루는 것은 화면의 일이다. 서버는 200 과 {@code []} 를 준다.
+ *
+ * <p>[JA] 一覧照会で<b>0 件はエラーではない。</b>
+ * <p>二つのエンドポイントが結果が空だと 400 を返していた(上のコード)。400 は「あなたのリクエストが間違っている」という意味だが、リクエストは完全に正常だった。
+ * クライアントが直すものがないので、画面はただ失敗トーストを出すしかない。
+ * <p>そしてこれが<b>インストール直後のシステムをロックした。</b>管理者がサブカテゴリを作るには /admin/category を開く必要があるが、その画面が開くときにこの API を呼んで 400 を受け、
+ * "Faild to load subcategories" で終わる — <b>一つもないので一つも作れない</b>鶏と卵である。空の DB で実際にその状態になった。
+ * <p>空リストを「なし」として扱うのは画面の仕事である。サーバーは 200 と {@code []} を返す。
  */
 class CategoryControllerEmptyListTest {
 
@@ -80,6 +87,7 @@ class CategoryControllerEmptyListTest {
     @DisplayName("카테고리 id 가 숫자가 아니면 그건 진짜 잘못된 요청이라 400 이다")
     void nonNumericCategoryIdIsStillABadRequest() {
         // 0건과 잘못된 입력을 구분하는 것이 이 변경의 핵심이다. 후자는 400 이 맞다.
+        // [JA] 0 件と不正な入力を区別することがこの変更の核心である。後者は 400 が正しい。
         ResponseEntity<?> response = controller.getSubcategories("어쩌구");
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);

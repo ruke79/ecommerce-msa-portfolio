@@ -13,6 +13,12 @@ import org.springframework.stereotype.Component;
  * 살아 있어 파드는 Running 이지만, 이 지표가 DOWN 이라 트래픽에서 빠지고 대시보드에 드러난다.
  * REBALANCING 은 UP 이다 — 파드가 늘거나 줄 때마다 잠깐 거치는 정상 상태라 그때마다 트래픽을 빼면
  * 배포 중 조회가 전부 503 이 된다.
+ *
+ * <p>[JA] Streams クライアントの状態をヘルスとして出す — Boot は Streams 用ヘルスを自動構成しない。
+ * readiness グループに入れる(application-local.yml)。処理スレッドが落ちてクライアントが停止しても JVM は
+ * 生きていて Pod は Running だが、この指標が DOWN なのでトラフィックから外れ、ダッシュボードに現れる。
+ * REBALANCING は UP である — Pod が増減するたびに一時的に通る正常状態で、そのたびにトラフィックを外すと
+ * デプロイ中の照会がすべて 503 になる。
  */
 @Component("kafkaStreams")
 public class KafkaStreamsHealthIndicator implements HealthIndicator {

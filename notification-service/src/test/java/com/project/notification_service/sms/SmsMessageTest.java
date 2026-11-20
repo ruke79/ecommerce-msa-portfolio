@@ -10,6 +10,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>한글·일본어가 하나라도 섞이면 UCS-2 로 인코딩되어 70자가 한 건의 한계이고, 한국 사업자는
  * 이를 넘으면 LMS 로 전환해 요금이 3~4배가 된다. 문구가 조용히 경계를 넘으면 청구서에서야 안다.
+ *
+ * <p>[JA] SMS の長さ規則 — <b>長さはすなわち料金だ</b>。ハングル・日本語が一つでも混じると UCS-2 でエンコードされ
+ * 70 字が一通の限界で、韓国の事業者はこれを超えると LMS に切り替えて料金が 3~4 倍になる。
+ * 文言が黙って境界を越えると請求書で初めて知る。
  */
 @DisplayName("SMS 길이 규칙")
 class SmsMessageTest {
@@ -57,6 +61,8 @@ class SmsMessageTest {
     void 서로게이트_쌍_보호() {
         // substring 으로 자르면 서로게이트 쌍이 깨져 깨진 문자가 문자로 나간다.
         // 코드포인트 단위로 세야 한다.
+        // [JA] substring で切るとサロゲートペアが壊れて、壊れた文字が SMS で出る。
+        //      コードポイント単位で数える必要がある。
         String text = "🎁".repeat(100);
         String truncated = SmsMessage.truncate(text);
 
@@ -66,6 +72,7 @@ class SmsMessageTest {
                 .isTrue();
 
         // 서로게이트 쌍이 쪼개졌다면 마지막 이모지 자리에 상위 서로게이트만 남는다.
+        // [JA] サロゲートペアが割れていたら、最後の絵文字の位置に上位サロゲートだけが残る。
         String beforeEllipsis = truncated.substring(0, truncated.length() - 1);
         assertThat(beforeEllipsis.isEmpty()
                         || !Character.isHighSurrogate(beforeEllipsis.charAt(beforeEllipsis.length() - 1)))

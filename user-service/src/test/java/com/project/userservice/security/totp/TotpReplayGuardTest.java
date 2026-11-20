@@ -25,6 +25,8 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * 🔴 OTP 한 번만 쓰기 · 2FA 변경 시도 제한 — <b>실제 Redis</b>(Lua 의 원자성은 모형으로 확인할 수 없다, docs/68 §14).
+ *
+ * <p>[JA] 🔴 OTP の一回限り使用・2FA 変更の試行制限 — <b>実際の Redis</b>(Lua の原子性はモックでは確認できない、docs/68 §14)。
  */
 @Tag("containers")
 @Testcontainers
@@ -102,11 +104,13 @@ class TotpReplayGuardTest {
     @DisplayName("변경 시도를 세어 막고, 성공하면 지운다 · 센 키에는 만료가 붙는다")
     void failureLimit() {
         // 호출부(UserServiceImpl.checkCode)와 같은 판정 — 돌려준 수가 한도를 넘으면 검증하지 않는다.
+        // [JA] 呼び出し側(UserServiceImpl.checkCode)と同じ判定 — 返した数が上限を超えれば検証しない。
         for (int i = 1; i <= guard.maxFailures(); i++) {
             assertThat(guard.reserveAttempt(7L)).isEqualTo(i).isLessThanOrEqualTo(guard.maxFailures());
         }
         assertThat(guard.reserveAttempt(7L)).isGreaterThan(guard.maxFailures());
         // 창이 지나면 저절로 풀린다 — 영구 잠금은 남의 계정을 잠그는 DoS 버튼이 된다.
+        // [JA] 窓が過ぎれば自然に解ける — 永久ロックは他人のアカウントをロックする DoS ボタンになる。
         assertThat(template.getExpire(TotpReplayGuard.FAIL_KEY + 7L)).isPositive();
 
         guard.clearFailures(7L);

@@ -30,17 +30,27 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>커밋 뒤에</b> 보내고 찍는다. 재고 차감이 롤백됐는데 "품절" 경보가 나가거나 "재입고" 알림이 나가면
  * 거짓말이다. 커밋 전에 필요한 값은 미리 읽어 둔다(afterCommit 에는 영속성 컨텍스트가 닫혀 있을 수 있다).
+ *
+ * <p>[JA] オプション(商品・色・サイズ)の在庫が 0 をまたぐ瞬間を知らせる — 品切れと再入荷(docs/53)。
+ * 品切れ(あり → 0): 「품절 발생」を warn で残す。Loki のアラート ProductSoldOut がこの文言で運用者に知らせる(docs/51 §4i) —
+ * 在庫を補充するのは運用者だ。客には商品画面の「品切れ」で十分。
+ * 再入荷(0 → あり): 返金・返品の入庫で在庫が戻るか、運用者が補充したとき。notification-service がこのオプションに再入荷通知を申し込んだ客に知らせる。
+ * どちらも product-stock トピックに出る(type で分かれる)。0 をまたがない変化(5 → 3)は何もしない — 注文ごとにイベントが出るとノイズだ。
+ * コミット後に送ってログを出す。在庫減算がロールバックされたのに「品切れ」アラートや「再入荷」通知が出たら嘘になる。
+ * コミット前に必要な値はあらかじめ読んでおく(afterCommit では永続化コンテキストが閉じていることがある)。
  */
 @Slf4j
 @Component
 public class StockEventProducer {
 
     /** 로그 경보가 찾는 문구 — observability/loki-rules 의 SOLD_OUT_MARKER 와 같아야 한다(B-61). */
+    // [JA] ログアラートが探す文言 — observability/loki-rules の SOLD_OUT_MARKER と同じでなければならない(B-61)。
     public static final String SOLD_OUT_MARKER = "품절 발생";
 
     public enum Transition { SOLD_OUT, RESTOCKED }
 
     /** 이벤트에 실을 옵션 정보. 커밋 전에 엔티티에서 읽어 둔 값이다. */
+    // [JA] イベントに載せるオプション情報。コミット前にエンティティから読んでおいた値。
     public record Variant(Long productId, String slug, String name, Long colorId, String color, String size) {
     }
 
@@ -58,6 +68,7 @@ public class StockEventProducer {
     }
 
     /** 0 을 건너는가. 건너지 않으면 null. */
+    // [JA] 0 をまたぐか。またがなければ null。
     public static Transition transitionOf(int before, int after) {
         if (before > 0 && after <= 0) {
             return Transition.SOLD_OUT;
@@ -106,9 +117,11 @@ public class StockEventProducer {
             event.put("eventId", transition.name().toLowerCase() + ":" + v.productId() + ":" + v.colorId() + ":"
                     + v.size() + ":" + System.currentTimeMillis());
             // 같은 상품의 품절·재입고가 뒤집혀 도착하지 않게 상품 id 를 키로.
+            // [JA] 同じ商品の品切れ・再入荷が逆順で届かないよう、商品 id をキーに。
             kafkaTemplate.send(topic, String.valueOf(v.productId()), objectMapper.writeValueAsString(event));
         } catch (Exception e) {
             // 재고는 이미 반영됐다. 알림만 못 나간 것이라 되돌리지 않는다.
+            // [JA] 在庫はすでに反映された。通知が出なかっただけなので巻き戻さない。
             log.error("재고 이벤트 발행 실패: type={} productId={} — 재입고 알림이 나가지 않는다: {}",
                     transition, v.productId(), e.getMessage());
         }

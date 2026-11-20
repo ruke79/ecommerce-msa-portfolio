@@ -40,6 +40,12 @@ import com.project.order_service.service.OrderDataService;
  * <p>결제 확인({@link PaypalPaymentVerificationTest})의 거울상이다. 여기 고정하는 규칙은
  * 게이트웨이 <b>바깥</b>에 있으므로, 어느 제공자든 같은 규칙을 탄다. 게이트웨이는 가짜다 —
  * "제공자가 뭐라고 답했는가" 만 조작한다.
+ *
+ * <p>[JA] 返金ルール — {@code OrderDataService.refundOrder}。
+ *
+ * <p>決済確認({@link PaypalPaymentVerificationTest})の鏡像である。
+ * ここで固定するルールはゲートウェイの<b>外側</b>にあるので、どのプロバイダーでも同じルールを通る。ゲートウェイは偽物である —
+ * 「プロバイダーが何と答えたか」だけを操作する。
  */
 @DisplayName("환불 규칙")
 class OrderRefundTest {
@@ -72,6 +78,7 @@ class OrderRefundTest {
                 .providerPaymentId("cs_test_1")
                 .build();
         // 품목 둘: 2 × 1999.00 + 1 × 2000.00 = 5998.00 — 부분 환불의 단위다.
+        // [JA] 品目二つ: 2 × 1999.00 + 1 × 2000.00 = 5998.00 — 部分返金の単位である。
         order.setOrderedProducts(new java.util.ArrayList<>(List.of(
                 OrderProduct.builder().orderProductId(101L).productId(10L).qty(2).size("M").colorId(5L)
                         .price(new BigDecimal("1999.00")).order(order).build(),
@@ -87,10 +94,13 @@ class OrderRefundTest {
                 new PaymentGateways(List.of(gateway)), testPolicy());
         // 서비스는 "취소 직전 잔액" 을 싣는 6인자 판을 부른다. 이 목의 기본 메서드는 실제처럼 5인자 판으로 넘긴다 — 아래 검증들이
         // 5인자 판을 본다(잔액을 쓰는 것은 포트원 어댑터뿐이다).
+        // [JA] サービスは「キャンセル直前の残高」を載せる 6 引数版を呼ぶ。このモックの default メソッドは実物同様 5 引数版に渡す —
+        //      下の検証は 5 引数版を見る(残高を使うのは PortOne アダプターだけである)。
         when(gateway.refund(any(), any(), any(), any(), any(), any())).thenCallRealMethod();
     }
 
     /** 테스트 통화 정책 — 상점 USD, PayPal USD, Stripe JPY(150), 포트원 KRW(1350). */
+    // [JA] テスト用の通貨ポリシー — ストア USD、PayPal USD、Stripe JPY(150)、PortOne KRW(1350)。
     static PaymentCurrencyPolicy testPolicy() {
         PaymentCurrencyPolicy p = new PaymentCurrencyPolicy();
         p.setBaseCurrency("USD");
@@ -110,10 +120,14 @@ class OrderRefundTest {
     }
 
     // ---------------------------------------------------------------- 정상
+    // [JA] 正常
 
     /**
      * 🔒 취소 직전 잔액(청구 통화, 우리 기록)을 어댑터에 넘긴다 — 멱등 헤더가 없는 포트원이 이것으로 같은 환불을 두 번 내지 않는다.
      * 첫 환불이면 청구액 전부다.
+     *
+     * <p>[JA] 🔒 キャンセル直前の残高(請求通貨、こちらの記録)をアダプターに渡す — 冪等ヘッダーのない PortOne
+     * がこれで同じ返金を二度出さない。最初の返金なら請求額全部である。
      */
     @Test
     @DisplayName("🔒 어댑터에 취소 직전 잔액(청구 통화)을 넘긴다")
@@ -138,6 +152,7 @@ class OrderRefundTest {
     }
 
     /** 🔒 환불액은 요청 본문이 아니라 DB 의 주문 총액이다. 게이트웨이가 받은 값을 본다. */
+    // [JA] 🔒 返金額はリクエスト本文ではなく DB の注文総額である。ゲートウェイが受け取った値を見る。
     @Test
     @DisplayName("🔒 제공자에게 요청하는 환불액은 DB 의 주문 총액이다")
     void refundAmountComesFromTheOrder() {
@@ -163,6 +178,7 @@ class OrderRefundTest {
     }
 
     /** 🔴 KRW 로 받았으면 KRW 로 돌려준다 — 상점 통화(USD)의 total 이 아니다. */
+    // [JA] 🔴 KRW で受け取ったなら KRW で返す — ストア通貨(USD)の total ではない。
     @Test
     @DisplayName("🔴 청구 통화로 환불한다 — KRW 로 받은 주문은 KRW 청구액을 돌려준다")
     void refundsInChargedCurrency() {
@@ -177,12 +193,14 @@ class OrderRefundTest {
         assertThat(refunded.getOrderStatus()).isEqualTo(OrderStatus.REFUNDED);
         verify(gateway).refund(eq("cs_test_1"), eq(new BigDecimal("8097300")), eq("KRW"), any(), any());
         // 🔴 PY5 — pay 에 알리는 금액은 상점 통화(결제 요청과 같다). 예전에는 KRW 청구액(8,097,300)을 실었다.
+        // [JA] 🔴 PY5 — pay に知らせる金額はストア通貨(決済リクエストと同じ)。以前は KRW の請求額(8,097,300)を載せていた。
         ArgumentCaptor<PaymentRequest> captor = ArgumentCaptor.forClass(PaymentRequest.class);
         verify(outboxHelper).savePaymentOutbox(captor.capture(), eq(OutboxStatus.STARTED));
         assertThat(captor.getValue().getAmounts()).isEqualByComparingTo(ORDER_TOTAL);
     }
 
     // ---------------------------------------------------------------- 거절 — 제공자를 부르기 전
+    // [JA] 拒否 — プロバイダーを呼ぶ前
 
     @Test
     @DisplayName("🔒 남의 주문은 환불할 수 없다 — 404 와 같은 문구")
@@ -216,6 +234,7 @@ class OrderRefundTest {
     }
 
     /** 발송된 뒤에는 물건이 돌아와야 한다 — 사용자 스스로는 안 되고 관리자가 판단한다. */
+    // [JA] 発送後は品物が戻る必要がある — ユーザー自身ではできず、管理者が判断する。
     @Test
     @DisplayName("발송된 주문은 사용자가 스스로 환불할 수 없다 — 관리자는 된다")
     void dispatchedOrderNeedsAdmin() {
@@ -232,8 +251,10 @@ class OrderRefundTest {
     }
 
     // ---------------------------------------------------------------- 반품·재고
+    // [JA] 返品・在庫
 
     /** 발송 전 환불은 물건이 창고에 그대로다 — 기다릴 반품이 없고, 재고는 바로 돌아온다(OrderSaga). */
+    // [JA] 発送前の返金は品物が倉庫にそのままある — 待つべき返品がなく、在庫はすぐ戻る(OrderSaga)。
     @Test
     @DisplayName("발송 전 환불은 반품 대기가 아니다")
     void refundBeforeDispatchDoesNotAwaitReturn() {
@@ -243,6 +264,7 @@ class OrderRefundTest {
     }
 
     /** 발송된 뒤의 환불은 물건이 밖에 있다 — 입고될 때까지 재고를 돌려주지 않는다. */
+    // [JA] 発送後の返金は品物が外にある — 入庫されるまで在庫を戻さない。
     @Test
     @DisplayName("발송된 주문의 환불은 반품 대기다 — 재고는 입고 때 돌아온다")
     void refundAfterDispatchAwaitsReturn() {
@@ -255,12 +277,13 @@ class OrderRefundTest {
     }
 
     /** 물건이 먼저 돌아온 뒤 환불하면 기다릴 것이 없다. */
+    // [JA] 品物が先に戻ってから返金すれば待つものはない。
     @Test
     @DisplayName("입고가 먼저 기록된 주문의 환불은 반품 대기가 아니다")
     void refundAfterReturnAlreadyReceived() {
         order.setOrderStatus(OrderStatus.DELIVERED);
         order.setReturnReceivedAt(java.time.LocalDateTime.now().minusDays(1));
-        order.getOrderedProducts().forEach(p -> p.setReturnedQty(p.getQty()));   // 입고가 세어 둔 것
+        order.getOrderedProducts().forEach(p -> p.setReturnedQty(p.getQty()));   // 입고가 세어 둔 것 ／ [JA] 入庫が数えておいたもの
         providerSays(true, "5998", "USD");
 
         Order refunded = service.refundOrder(TRACKING_ID, 7L, true, null);
@@ -269,6 +292,7 @@ class OrderRefundTest {
     }
 
     /** 🔴 이미 환불된 주문에 또 오면 제공자를 **다시 부르지 않는다** — 두 번 환불되면 안 된다. */
+    // [JA] 🔴 既に返金された注文にまた来たら、プロバイダーを**再び呼ばない** — 二重返金されてはならない。
     @Test
     @DisplayName("🔴 이미 환불된 주문은 제공자를 다시 부르지 않는다 (멱등)")
     void alreadyRefundedIsIdempotent() {
@@ -283,6 +307,7 @@ class OrderRefundTest {
     }
 
     // ---------------------------------------------------------------- 부분 환불
+    // [JA] 部分返金
 
     private static List<OrderItemQtyRequest> items(Object... pairs) {
         List<OrderItemQtyRequest> out = new java.util.ArrayList<>();
@@ -293,6 +318,7 @@ class OrderRefundTest {
     }
 
     /** 🔒 금액은 서버가 정한다 — 품목 단가 × 수량. 요청 본문에는 금액이 없다. */
+    // [JA] 🔒 金額はサーバーが決める — 品目単価 × 数量。リクエスト本文に金額はない。
     @Test
     @DisplayName("🔒 일부 품목만 환불하면 그 단가만큼만 돌려주고 주문은 결제 상태로 남는다")
     void partialRefundKeepsTheOrderPaid() {
@@ -310,20 +336,25 @@ class OrderRefundTest {
         assertThat(refunded.getRefunds()).hasSize(1);
         assertThat(refunded.getRefunds().get(0).getItems()).contains("101");
         // 결제가 아직 살아 있다 — pay-service 에 CANCELED 를 보내지 않는다.
+        // [JA] 決済はまだ生きている — pay-service に CANCELED を送らない。
         verify(outboxHelper, never()).savePaymentOutbox(any(), any());
     }
 
     // ---------------------------------------------------------------- 재고 부족분 (docs/53)
+    // [JA] 在庫不足分(docs/53)
 
     /**
      * 🔴 재고가 모자라 배정되지 못한 수는 차감된 적이 없다 — 환불해도 "돌아왔다" 로 세면 재고 복원이 없는 재고를
      * 만든다. 환불은 부족분을 먼저 소진하고, 그다음부터가 창고에 있는 몫이다.
+     *
+     * <p>[JA] 🔴 在庫不足で割り当てられなかった数は差し引かれたことがない — 返金しても「戻った」と数えると、
+     * 在庫復元がない在庫を作ってしまう。返金は不足分を先に消化し、その次からが倉庫にある分である。
      */
     @Test
     @DisplayName("🔴 재고 부족분 환불은 돌아온 수로 세지 않는다 — 없는 재고를 복원하지 않게")
     void shortUnitsAreNotReturned() {
-        OrderProduct line = order.getOrderedProducts().get(0);   // 2개 중
-        line.setShortQty(1);                                     // 1개는 배정되지 못했다
+        OrderProduct line = order.getOrderedProducts().get(0);   // 2개 중 ／ [JA] 2 個のうち
+        line.setShortQty(1);                                     // 1개는 배정되지 못했다 ／ [JA] 1 個は割り当てられなかった
         providerSays(true, "1999.00", "USD");
 
         service.refundOrder(TRACKING_ID, null, true, "재고 부족", items(101L, 1));
@@ -352,6 +383,7 @@ class OrderRefundTest {
     }
 
     /** 마지막 환불은 남은 전부다 — 부분 환불의 합은 정확히 총액이고 그때 REFUNDED 가 된다. */
+    // [JA] 最後の返金は残り全部である — 部分返金の合計はちょうど総額で、そのとき REFUNDED になる。
     @Test
     @DisplayName("남은 수량을 전부 환불하면 남은 금액 전부가 나가고 REFUNDED 가 된다")
     void lastPartialRefundCompletesTheOrder() {
@@ -381,6 +413,7 @@ class OrderRefundTest {
     }
 
     /** 🔴 같은 캡처에 환불이 여럿이면 멱등 키가 달라야 한다 — 같으면 두 번째가 첫 번째의 응답이 된다. */
+    // [JA] 🔴 同じキャプチャーに返金が複数あれば冪等キーは異なるべきである — 同じだと二つ目が一つ目の応答になる。
     @Test
     @DisplayName("🔴 부분 환불마다 멱등 키가 다르다")
     void eachPartialRefundHasItsOwnKey() {
@@ -395,6 +428,7 @@ class OrderRefundTest {
     }
 
     /** 발송된 뒤 일부만 환불하면 그 수량만 반품 대기다. */
+    // [JA] 発送後に一部だけ返金すると、その数量だけが返品待ちである。
     @Test
     @DisplayName("발송된 뒤의 부분 환불은 반품 대기 — 돌아온 수량이 환불 수량보다 적다")
     void partialRefundAfterDispatchAwaitsReturn() {
@@ -408,6 +442,7 @@ class OrderRefundTest {
     }
 
     // ---------------------------------------------------------------- 거절 — 제공자 응답
+    // [JA] 拒否 — プロバイダーの応答
 
     @Test
     @DisplayName("제공자가 거절하면 주문은 그대로다")
@@ -422,6 +457,7 @@ class OrderRefundTest {
     }
 
     /** 돈은 이미 나갔다. 거부하되 운영자가 찾을 수 있게 환불 참조를 예외에 싣는다. */
+    // [JA] お金は既に出ている。拒否するが、運用者が探せるよう返金参照を例外に載せる。
     @Test
     @DisplayName("환불액이 주문 총액과 다르면 거부하고 환불 참조를 남긴다")
     void amountMismatchIsRejectedWithReference() {
@@ -464,10 +500,15 @@ class OrderRefundTest {
     }
 
     // ---------------------------------------------------------------- 동시 환불
+    // [JA] 同時返金
 
     /**
      * 🔴 같은 주문의 환불 둘이 겹치면 — 예전에는 둘 다 제공자에게 돈을 돌려주게 한 뒤 늦은 커밋만 낙관적 잠금으로 실패했다(돈은 두 번,
      * 기록은 한 번). 이제 행을 잠그고, 읽은 뒤에 다른 요청이 바꿨으면 제공자를 부르기 전에 멈춘다.
+     *
+     * <p>[JA] 🔴 同じ注文の返金二つが重なると — 以前は両方がプロバイダーにお金を返させた後、
+     * 遅いコミットだけが楽観ロックで失敗した(お金は二度、記録は一度)。今は行をロックし、
+     * 読んだ後に別のリクエストが変えていたらプロバイダーを呼ぶ前に止まる。
      */
     @Test
     @DisplayName("🔴 읽은 뒤 다른 요청이 주문을 바꿨으면(버전이 다르면) 제공자를 부르지 않고 거절한다")

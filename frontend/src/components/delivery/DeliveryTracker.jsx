@@ -28,12 +28,22 @@ import { useTranslation } from "i18n/I18nProvider";
  *
  * 2. **단계 매핑을 서버가 준 `stage` 로 한다.** 프론트가 상태 enum 을 직접 매핑하면 서버가
  *    상태를 추가할 때마다 양쪽을 고쳐야 하고, 둘이 어긋나면 화면이 조용히 틀린다.
+ *
+ * <p>[JA] 配送追跡 — Amazon の注文詳細の配送領域を参考にした。
+ * 設計判断は二つ:
+ * 1. 段階を畳む。サーバーの内部状態は 12 個だがユーザーには 4 ~ 5 段階だけ見せる。状態をそのまま出すと
+ * 「CUSTOMS_CLEARED って何?」になる。詳しい履歴は折りたたんだ領域に置く — Amazon のやり方で、必要な人だけ開く。
+ * 2. 段階の対応付けはサーバーがくれた `stage` で行う。フロントが状態 enum を直接対応付けると、サーバーが状態を
+ * 足すたびに両側を直す必要があり、二つが食い違うと画面が静かに間違う。
  */
 
 /**
  * 국내 배송의 진행 단계. 통관은 국제 배송에만 끼워 넣는다.
  *
  * <p>이름표는 사전의 키로 둔다 — 모듈이 읽힐 때 문구를 만들면 그 순간의 언어로 굳는다. 그릴 때 번역한다.
+ *
+ * <p>[JA] 国内配送の進行段階。通関は国際配送にだけ挟み込む。
+ * ラベルは辞書のキーで持つ — モジュールが読まれるときに文言を作るとその瞬間の言語で固まる。描くときに翻訳する。
  */
 const DOMESTIC_STAGES = [
   { key: "ORDERED", labelKey: "delivery.stage.ordered", Icon: IoCheckmarkCircle },
@@ -51,9 +61,11 @@ const INTERNATIONAL_STAGES = [
 ];
 
 /** 진행 중인 배송을 다시 읽는 간격. 시뮬레이터는 1분마다, 실제 택배사는 몇 시간마다 바뀐다. */
+// [JA] 進行中の配送を読み直す間隔。シミュレーターは 1 分ごと、実際の宅配業者は数時間ごとに変わる。
 export const POLL_MS = 20000;
 
 /** 더 바뀌지 않는 상태 — 여기 오면 읽기를 멈춘다. */
+// [JA] これ以上変わらない状態 — ここに来たら読み込みを止める。
 const TERMINAL = new Set(["DELIVERED", "RETURNED", "CANCELLED"]);
 
 /**
@@ -65,6 +77,14 @@ const TERMINAL = new Set(["DELIVERED", "RETURNED", "CANCELLED"]);
  *                    (첫 읽기는 제외). 주문 상태도 같은 이벤트로 바뀌지만 Kafka 왕복 뒤라,
  *                    주문 화면이 이것을 받아 주문을 다시 읽는다 — 안 그러면 여기만 "발송" 이고
  *                    진행 띠는 "상품 준비" 로 남는다.
+ *
+ * <p>[JA] orderStatus: 注文状態。変わったら(PROCESSING → DISPATCHED → DELIVERED)配送もすぐ読み直す —
+ * 注文は react-query が更新するのに配送だけ古い値で残ると同じ画面が違うことを言う。
+ * onCancelled: 配送キャンセルがサーバーで受け入れられた後に一度呼ばれる。注文状態は Kafka の往復の後に
+ * 変わるので(DISPATCHED → PAID)注文画面がこれを受けて読み直す。
+ * onStatusChange: 周期読み込みで配送状態が変わったのを見た瞬間に新しい配送とともに呼ばれる(最初の読み込みは除く)。
+ * 注文状態も同じイベントで変わるが Kafka の往復の後なので、注文画面がこれを受けて注文を読み直す —
+ * でないとここだけ「発送」で進行バーは「商品準備」のまま残る。
  */
 export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress, onCancelled, onStatusChange }) {
   const { t } = useTranslation();
@@ -78,6 +98,10 @@ export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress,
   //    새로고침해야 바뀌었다. 주문은 react-query 가 들고 있고 아무도 다시 읽으라고 하지
   //    않았기 때문이다. 배송 상태가 **바뀐 것을 본 순간** 부모에게 알린다 — 첫 읽기는 변화가
   //    아니므로 알리지 않고, 같은 상태를 다시 받은 것도 아니다.
+  // [JA] 🐛 送り状が登録されるとここ(ポーリング)は「発送されました」に変わるのに、注文の進行バー · 返金案内は
+  //      再読み込みしないと変わらなかった。注文は react-query が持っていて誰も読み直せと言わなかったからである。
+  //      配送状態が **変わったのを見た瞬間** 親に知らせる — 最初の読み込みは変化ではないので知らせず、
+  //      同じ状態を再び受けたときも知らせない。
   const lastStatus = useRef(undefined);
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
@@ -89,6 +113,7 @@ export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress,
       setDelivery(next);
     } catch {
       // 아직 배송이 만들어지지 않았을 수 있다(결제 직후). 오류가 아니라 정상 상태다.
+      // [JA] まだ配送が作られていないことがある(決済直後)。エラーではなく正常な状態である。
       setDelivery(null);
     } finally {
       setLoading(false);
@@ -103,6 +128,9 @@ export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress,
   // 🐛 처음 한 번만 읽었다. 송장이 등록되고 시뮬레이터가 단계를 밟아도 화면은 그대로였고,
   //    주문 상태(react-query)는 갱신되니 진행 바는 "발송" 인데 여기는 "배송 준비 중" 이었다.
   //    주문 상태가 바뀔 때 바로 읽고, 끝나지 않은 배송은 주기적으로 읽는다.
+  // [JA] 🐛 最初に一度だけ読んでいた。送り状が登録されシミュレーターが段階を進めても画面はそのままで、
+  //      注文状態(react-query)は更新されるので進行バーは「発送」なのにここは「配送準備中」だった。
+  //      注文状態が変わったらすぐ読み、終わっていない配送は周期的に読む。
   useEffect(() => { load(); }, [load, orderStatus]);
 
   const active = !loading && (!delivery || !TERMINAL.has(delivery.status));
@@ -145,6 +173,7 @@ export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress,
       <DeliveryHeadline delivery={delivery} problem={problem} cancelled={cancelled} />
 
       {/* 진행 바. 예외·취소 상태에서는 진행을 그리지 않는다 — 진행 바만 있으면 문제가 묻힌다. */}
+      {/* [JA] 進行バー。例外 · キャンセル状態では進行を描かない — 進行バーだけあると問題が埋もれる。 */}
       {!problem && !cancelled && (
         <ProgressBar stages={stages} currentStage={delivery.stage} />
       )}
@@ -156,6 +185,7 @@ export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress,
       )}
 
       {/* 분할 배송이면 상자별로 나눠 보여준다 — 아마존의 "패키지 1/2" */}
+      {/* [JA] 分割配送なら箱ごとに分けて見せる — Amazon の「パッケージ 1/2」 */}
       {delivery.shipments?.map((shipment) => (
         <ShipmentCard
           key={shipment.shipmentId}
@@ -189,6 +219,7 @@ export default function DeliveryTracker({ orderId, orderStatus, onChangeAddress,
 }
 
 /** 맨 위의 큰 한 줄. 사용자가 가장 알고 싶은 것 하나만 크게 보여준다. */
+// [JA] 一番上の大きな一行。ユーザーが最も知りたいもの一つだけを大きく見せる。
 function DeliveryHeadline({ delivery, problem, cancelled }) {
   const { t } = useTranslation();
   if (cancelled) {
@@ -214,6 +245,7 @@ function DeliveryHeadline({ delivery, problem, cancelled }) {
     );
   }
   // OUT_FOR_DELIVERY 는 가장 가치 있는 정보다 — 오늘 받는다.
+  // [JA] OUT_FOR_DELIVERY は最も価値のある情報である — 今日受け取る。
   if (delivery.status === "OUT_FOR_DELIVERY") {
     return <div className="dlv__headline dlv__headline--today">{t("delivery.headline.today")}</div>;
   }
@@ -235,6 +267,9 @@ function DeliveryHeadline({ delivery, problem, cancelled }) {
   // 🐛 예상 도착일이 없으면 무조건 "배송 준비 중" 이었다. 송장을 막 등록하면 첫 조회 전이라
   //    도착일이 없는데, 진행 바는 "발송" 을 가리키면서 헤드라인은 준비 중이라고 했다.
   //    도착일이 없을 때는 **단계**로 말한다.
+  // [JA] 🐛 到着予定日がなければ無条件に「配送準備中」だった。送り状を登録したばかりだと最初の照会前で
+  //      到着日がないのに、進行バーは「発送」を指しながら見出しは準備中と言っていた。
+  //      到着日がないときは **段階** で言う。
   return (
     <div className="dlv__headline">
       {t(STAGE_HEADLINE[delivery.stage] ?? "delivery.headline.preparing")}
@@ -243,6 +278,7 @@ function DeliveryHeadline({ delivery, problem, cancelled }) {
 }
 
 /** 예상 도착일을 아직 모를 때 단계별로 하는 말(사전의 키). 진행 바와 같은 것을 가리켜야 한다. */
+// [JA] 到着予定日がまだ分からないときの段階ごとの言葉(辞書のキー)。進行バーと同じものを指さなければならない。
 const STAGE_HEADLINE = {
   ORDERED: "delivery.headline.preparing",
   SHIPPED: "delivery.headline.shipped",
@@ -256,6 +292,7 @@ function EstimatedDate({ value }) {
   if (!parsed) return t("delivery.stage.in_transit");
 
   // 요일 이름은 Intl 이 안다 — 한국어 "월", 일본어 "月". 예전에는 한국어 배열이 박혀 있었다.
+  // [JA] 曜日名は Intl が知っている — 韓国語「월」、日本語「月」。以前は韓国語の配列が埋め込まれていた。
   const weekday = parsed.toLocaleDateString(lang === "ja" ? "ja-JP" : "ko-KR", { weekday: "short" });
   return t("delivery.estimated", { month: parsed.getMonth() + 1, day: parsed.getDate(), weekday });
 }
@@ -333,6 +370,8 @@ function ShipmentCard({ shipment, total, expanded, onToggle }) {
 
       {/* 택배사 자체 조회 페이지 — 우리가 못 보여주는 정보를 사용자가 직접 볼 수 있게 한다.
           추적 데이터가 늦거나 빠질 때의 안전판이기도 하다. */}
+      {/* [JA] 宅配業者自身の照会ページ — こちらが見せられない情報をユーザーが直接見られるようにする。
+          追跡データが遅れたり抜けたりしたときの安全弁でもある。 */}
       {shipment.trackingUrl && (
         <a className="dlv__external" href={shipment.trackingUrl}
            target="_blank" rel="noopener noreferrer">
@@ -356,6 +395,7 @@ function AddressPanel({ address, canChange, onChangeAddress }) {
           </button>
         ) : (
           // 왜 못 바꾸는지 알려준다. 버튼만 사라지면 사용자는 이유를 모른다.
+          // [JA] なぜ変えられないかを知らせる。ボタンが消えるだけではユーザーは理由が分からない。
           <span className="dlv__muted">{t("delivery.cannot_change")}</span>
         )}
       </div>
@@ -373,6 +413,7 @@ function AddressPanel({ address, canChange, onChangeAddress }) {
 }
 
 /** 서버는 UTC 로 내려준다(B-21 과 같은 이유). 표시 시점에만 현지 시각으로 바꾼다. */
+// [JA] サーバーは UTC で返す(B-21 と同じ理由)。表示時点でだけ現地時刻に変える。
 function formatEventTime(value) {
   if (!value) return "";
   const parsed = parseServerDate(value);

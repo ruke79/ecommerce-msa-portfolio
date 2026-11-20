@@ -28,6 +28,15 @@ import org.junit.jupiter.api.Test;
  *
  * <p>검사 규칙: {@code kafkaTemplate.send(...)} 호출은 (topic, key, value) 세 인자이거나,
  * {@code MessageBuilder} 로 만든 메시지라면 같은 문장 안에 {@code KafkaHeaders.KEY} 헤더가 있어야 한다.
+ *
+ * <p>[JA] すべての Kafka 発行が<b>キーを載せるか</b>を守るガードレール。
+ * キーのないレコードはパーティショナーがラウンドロビン(スティッキー)でばらまく。トピックが 1 パーティションのときは何の違いもないので —
+ * このリポジトリの主要トピックはすべてそうだ(ブローカーのデフォルト num.partitions=1) — 目立たない。ところがパーティションを増やした瞬間、
+ * 同じ注文・同じルーム・同じユーザーのイベントが別々のパーティションに行き、コンシューマーはパーティション間の順序を保証されないので、
+ * 決済応答よりロールバックが先に処理されたりチャットが入り乱れたりする。**パーティションを増やした人はキーを漏らしたコードを見たことがない** —
+ * だから発行地点で先に釘を刺す(docs/38 §1.15)。
+ * 検査ルール: {@code kafkaTemplate.send(...)} の呼び出しは (topic, key, value) の 3 引数であるか、{@code MessageBuilder} で作ったメッセージなら
+ * 同じ文の中に {@code KafkaHeaders.KEY} ヘッダーがなければならない。
  */
 @DisplayName("Kafka 가드레일 · 발행마다 키가 있는가")
 class KafkaProducerKeyGuardrailTest {
@@ -44,6 +53,7 @@ class KafkaProducerKeyGuardrailTest {
     }
 
     /** 문장 하나(세미콜론까지)를 통째로 잡는다 — MessageBuilder 체인은 여러 줄이다. */
+    // [JA] 文一つ(セミコロンまで)を丸ごと取る — MessageBuilder のチェーンは複数行だ。
     private static final Pattern SEND_STATEMENT = Pattern.compile("kafkaTemplate\\s*\\.\\s*send\\s*\\(([^;]*);", Pattern.DOTALL);
     private static final Pattern BUILDER_STATEMENT = Pattern.compile("MessageBuilder\\s*\\.\\s*withPayload\\s*\\(([^;]*);", Pattern.DOTALL);
 
@@ -75,6 +85,8 @@ class KafkaProducerKeyGuardrailTest {
 
                 // 프로듀서 설정 맵마다 AggregateKeyPartitioner 가 등록돼 있어야 한다 — 그래야 "order-123" 과
                 // "123" 이 같은 파티션이고, CDC 릴레이와도 공동 파티셔닝된다(docs/38 §1.15).
+                // [JA] プロデューサー設定マップごとに AggregateKeyPartitioner が登録されていなければならない — そうして初めて "order-123" と "123" が同じパーティションになり、
+                //      CDC リレーとも共同パーティショニングされる(docs/38 §1.15)。
                 if (body.contains("ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG")
                         && !body.contains("PARTITIONER_CLASS_CONFIG")) {
                     offenders.add(rel + " → 프로듀서 설정에 PARTITIONER_CLASS_CONFIG(AggregateKeyPartitioner) 없음");
@@ -84,6 +96,7 @@ class KafkaProducerKeyGuardrailTest {
                 while (send.find()) {
                     String args = send.group(1);
                     // Message 객체 하나를 넘기는 형태는 위의 builder 검사가 맡는다.
+                    // [JA] Message オブジェクト一つを渡す形は、上の builder 検査が担当する。
                     if (args.contains("kafkaMessage") || args.contains("Message")) {
                         continue;
                     }
@@ -101,6 +114,7 @@ class KafkaProducerKeyGuardrailTest {
     }
 
     /** 괄호·제네릭 안의 쉼표는 세지 않는다. */
+    // [JA] 括弧・ジェネリクス内のカンマは数えない。
     private static int topLevelArgCount(String args) {
         int depth = 0;
         int count = 1;
@@ -110,6 +124,7 @@ class KafkaProducerKeyGuardrailTest {
             else if (c == ',' && depth == 0) count++;
         }
         // 마지막 닫는 괄호가 group 에 포함돼 depth 가 -1 로 끝나는 것은 무시한다.
+        // [JA] 最後の閉じ括弧が group に含まれて depth が -1 で終わるのは無視する。
         return count;
     }
 }

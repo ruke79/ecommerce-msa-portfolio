@@ -57,6 +57,7 @@ class OrderCreateAddressValidationTest {
     }
 
     /** 화면(AddShipping.jsx)이 만드는 모양의 정상 주소. */
+    // [JA] 画面(AddShipping.jsx)が作る形の正常な住所。
     private static Map<String, Object> address() {
         Map<String, Object> a = new LinkedHashMap<>();
         a.put("id", "1");

@@ -37,9 +37,25 @@ import io.micrometer.core.instrument.MeterRegistry;
  * <p>담긴 값은 여러 요청이 함께 읽는다 — 고치지 않는다. 재고 반영은 {@code StockAvailability.Snapshot} 이 복사본을 만든다.
  * 지표 {@code catalog_home_cache_total{result="hit|miss|off"}}.
  *
- * <p>[JA] トップ画面の構成(セクション · 商品一覧)を Pod のメモリに短く置く。負荷計測で catalog の時間の 65% がホームだった
- * (リクエストあたり 27ms、他の 9 倍)。在庫表示は含めない(応答ごとに読む)。TTL 既定 30 秒、0 で無効。トランザクションの外 —
- * ヒットなら DB コネクションを取らない。期限切れは一つのスレッドだけが作り直す。失敗は入れない。
+ * <p>[JA] トップ画面の構成(セクション · セクションの商品一覧)を Pod のメモリに短く置く — 在庫表示はここに入らない(ContentController が応答ごとに)。
+ *
+ * <p>なぜ: 2026-10-18 負荷計測(docs/83 §5)で、browse において catalog が使った時間の <b>65%</b> が {@code /api/content/home} だった —
+ * リクエストあたり 27ms(リクエスト ~125/秒)、詳細 3ms · 検索 5ms の 9 倍、リクエスト ~500/秒で 105ms。ホーム一回がセクション照会 1 回 +
+ * セクションごとのカテゴリ id 照会 1 〜 2 回(DB) + セクションごとの商品一覧(Redis から受けて逆シリアル化)で、その間読み取りトランザクションが
+ * DB コネクションを握る。しかしこの構成は客ごとに同じで、管理者が変えるときだけ変わる。
+ *
+ * <p>どうやって:
+ * <ul>
+ * <li>値一つ(ホームは引数がない)を {@code content.home.cache-ttl}(既定 30 秒)の間使う。{@code 0} なら無効(毎回作る)。
+ * <li>トランザクションの外 — ヒットなら DB コネクションを取らない({@link HomeSectionService} はクラス全体が読み取りトランザクション)。
+ * <li>期限切れになると一つのスレッドだけが作り直し、残りはその結果を待つ — 期限切れの瞬間の同時リクエストがすべて DB へ行かないように。
+ * <li>作る途中で失敗したら入れない — 次のリクエストが作り直す。
+ * <li>管理者がセクションを変えると、そのリクエストを受けた Pod はすぐ空にする。他の Pod · 商品情報(名前 · 価格 · 画像)の変更は長くても TTL
+ *     後に見える — 注文金額は注文時にサーバーが catalog の現在値で決めるので、カードの価格が 30 秒遅れても請求金額は間違わない。
+ * </ul>
+ *
+ * <p>入った値は複数のリクエストが一緒に読む — 変更しない。在庫反映は {@code StockAvailability.Snapshot} がコピーを作る。
+ * 指標 {@code catalog_home_cache_total{result="hit|miss|off"}}。
  */
 @Component
 public class HomeViewCache {
@@ -80,6 +96,7 @@ public class HomeViewCache {
     }
 
     /** 첫 화면 구성 — 재고는 반영되지 않은 값(호출한 쪽이 반영한다). */
+    // [JA] 最初の画面の構成 — 在庫は反映されていない値(呼んだ側が反映する)。
     public HomeView get() {
         if (ttl.isZero()) {
             off.increment();
@@ -92,18 +109,19 @@ public class HomeViewCache {
         }
         synchronized (rebuild) {
             e = entry;
-            if (fresh(e)) {   // 기다리는 동안 다른 스레드가 만들었다
+            if (fresh(e)) {   // 기다리는 동안 다른 스레드가 만들었다 ／ [JA] 待っている間に他のスレッドが作った
                 hit.increment();
                 return e.view();
             }
             miss.increment();
-            HomeView view = sections.home();   // 실패하면 예외가 그대로 나간다 — 담지 않는다
+            HomeView view = sections.home();   // 실패하면 예외가 그대로 나간다 — 담지 않는다 ／ [JA] 失敗したら例外がそのまま出る — キャッシュに入れない
             entry = new Entry(view, clock.instant().plus(ttl));
             return view;
         }
     }
 
     /** 이 파드의 값을 비운다 — 관리자가 섹션을 바꾼 뒤(커밋 뒤). 다른 파드는 TTL 로 맞춰진다. */
+    // [JA] この Pod の値を空にする — 管理者がセクションを変えた後(コミット後)。他の Pod は TTL で揃う。
     public void invalidate() {
         entry = null;
     }

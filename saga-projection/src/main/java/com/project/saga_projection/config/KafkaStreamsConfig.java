@@ -35,6 +35,15 @@ import lombok.extern.slf4j.Slf4j;
  * <p>이 보장은 <b>Kafka→Kafka 이기 때문에</b> 가능하다. DB 를 갱신하는 리스너는 DB 커밋과 Kafka 커밋이
  * 원자적일 수 없어 EOS 가 아니라 멱등 원장을 쓴다 — 그래서 Streams 를 기존 리스너에 끼우지 않고 새
  * 읽기 모델에 썼다.
+ *
+ * <p>[JA] Kafka Streams 設定 — このリポジトリで唯一<b>exactly-once が実際に成り立つ</b>コンシューマ(docs/38 §1.17)。
+ * {@code processing.guarantee=exactly_once_v2}: 入力オフセットのコミット、状態ストアの変更ログ、リパーティショントピック、
+ * 出力トピックが<b>一つの Kafka トランザクション</b>である。処理中に落ちるとすべて中断され、再起動したインスタンスが同じ入力を
+ * もう一度畳み込む — 同じ結果で。{@code transactional.id} は Streams が application.id + タスクで自ら固定するので、
+ * §1.17 の「起動ごとに UUID」問題はここにはない。コンシューマは {@code isolation.level=read_committed} が自動である。
+ * この保証は<b>Kafka→Kafka だからこそ</b>可能だ。DB を更新するリスナーは DB コミットと Kafka コミットが
+ * アトミックになれないので EOS ではなく冪等台帳を使う — だから Streams を既存リスナーに差し込まず、新しい
+ * 読み取りモデルに使った。
  */
 @Slf4j
 @Configuration
@@ -55,16 +64,24 @@ public class KafkaStreamsConfig {
         // EOS 의 커밋 간격 기본값은 100ms 다. 트랜잭션 하나 = 커밋 하나이므로 너무 짧으면 브로커에
         // 트랜잭션 마커만 쌓이고, 너무 길면 read_committed 소비자(다른 서비스가 order-saga-state 를
         // 읽을 때)가 그만큼 늦게 본다. 1초면 사가 조회에 충분하다.
+        // [JA] EOS のコミット間隔の既定値は 100ms。トランザクション一つ = コミット一つなので、短すぎるとブローカーに
+        //      トランザクションマーカーばかり積もり、長すぎると read_committed コンシューマ(他サービスが order-saga-state を
+        //      読むとき)がその分遅れて見る。サガ照会には 1 秒で十分だ。
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1_000);
 
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.StringSerde.class);
         // 값 serde 는 토폴로지가 단계마다 명시한다 — 기본값이 있으면 빠뜨린 자리가 조용히 그 기본값으로
         // 돌아가므로 일부러 두지 않는다(빠뜨리면 기동에서 죽는다, 실행 중이 아니라).
+        // [JA] 値の serde はトポロジーが段階ごとに明示する — 既定値があると書き漏れた箇所が黙ってその既定値に
+        //      戻るので、わざと置かない(漏らすと実行中ではなく起動時に落ちる)。
 
         // 처음 붙을 때 토픽의 처음부터 접는다 — 프로젝션은 과거 주문도 알아야 한다.
+        // [JA] 初めて接続するときトピックの先頭から畳み込む — プロジェクションは過去の注文も知る必要がある。
         config.put(StreamsConfig.consumerPrefix(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG), "earliest");
         // 내부 토픽(변경 로그·리파티션)의 복제 계수. -1 = 브로커 기본값. 브로커가 하나인 dev 에서 3 을
         // 고정하면 내부 토픽 생성이 실패해 기동이 멈춘다.
+        // [JA] 内部トピック(変更ログ・リパーティション)のレプリケーション係数。-1 = ブローカー既定値。ブローカーが一つの dev で 3 に
+        //      固定すると内部トピックの作成が失敗し起動が止まる。
         config.put(StreamsConfig.REPLICATION_FACTOR_CONFIG, -1);
         config.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 1);
         config.putAll(errorHandling());
@@ -77,6 +94,10 @@ public class KafkaStreamsConfig {
      * 입력 레코드를 못 읽었을 때의 처리 — 모르는 작성 스키마면 멈추고, 그 밖의 깨진 레코드는 건너뛴다
      * ({@link SagaDeserializationExceptionHandler}). 예전에는 기본값(LogAndFail)이라 깨진 레코드 하나에 프로젝션 전체가
      * 멈췄다. 테스트(TopologyTestDriver)도 이 설정을 그대로 쓴다.
+     *
+     * <p>[JA] 入力レコードを読めなかったときの処理 — 未知の書き込みスキーマなら止まり、その他の壊れたレコードは飛ばす
+     * ({@link SagaDeserializationExceptionHandler})。以前は既定値(LogAndFail)で、壊れたレコード一つでプロジェクション全体が
+     * 止まった。テスト(TopologyTestDriver)もこの設定をそのまま使う。
      */
     public static Map<String, Object> errorHandling() {
         return Map.of(StreamsConfig.DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER_CLASS_CONFIG,
@@ -84,6 +105,7 @@ public class KafkaStreamsConfig {
     }
 
     /** 토폴로지를 {@link StreamsBuilder} 에 붙인다. 테스트는 같은 {@link SagaTopology} 를 TopologyTestDriver 에 붙인다. */
+    // [JA] トポロジーを {@link StreamsBuilder} に付ける。テストは同じ {@link SagaTopology} を TopologyTestDriver に付ける。
     @Bean
     public SagaTopology sagaTopology(SagaProjectionProperties props) {
         return new SagaTopology(props.topics().order(), props.topics().payment(), props.topics().state(),
@@ -103,6 +125,11 @@ public class KafkaStreamsConfig {
      * 파드는 Running 인데 아무것도 접지 않는, 가장 나쁜 실패 방식이다. 상태를 헬스가 보고 readiness 를
      * 내리므로(KafkaStreamsHealthIndicator) 트래픽은 빠지지만, 복구는 재시작뿐이라 여기서 로그를 남긴다.
      * 스레드 교체(REPLACE_THREAD)는 역직렬화 실패 같은 결정적 오류에서 무한 반복이 되므로 쓰지 않는다.
+     *
+     * <p>[JA] 処理スレッドが落ちたとき。既定値(SHUTDOWN_CLIENT)は Streams クライアントだけを止め JVM は生きている —
+     * Pod は Running なのに何も畳み込まない、最悪の失敗の仕方だ。状態をヘルスが見て readiness を
+     * 下げるので(KafkaStreamsHealthIndicator)トラフィックは外れるが、復旧は再起動だけなのでここでログを残す。
+     * スレッド置換(REPLACE_THREAD)はデシリアライズ失敗のような決定的エラーで無限ループになるので使わない。
      */
     @Bean
     public StreamsBuilderFactoryBeanConfigurer sagaStreamsConfigurer() {

@@ -35,6 +35,7 @@ class AvroDtoDeserializerTest {
     }
 
     /** 디코더 하나를 소비자 스레드 여럿이 같이 쓴다 — BinaryMessageDecoder 의 버퍼는 ThreadLocal, 캐시는 ConcurrentHashMap 이라 안전하다. */
+    // [JA] デコーダー一つを複数のコンシューマースレッドが共有する — BinaryMessageDecoder のバッファは ThreadLocal、キャッシュは ConcurrentHashMap なので安全だ。
     @Test
     @DisplayName("디코더 하나를 8 스레드가 동시에 써도 레코드가 섞이지 않는다")
     void sharedDecoderIsThreadSafe() throws Exception {

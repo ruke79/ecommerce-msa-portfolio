@@ -10,6 +10,7 @@ import { useTranslation } from "i18n/I18nProvider";
 const formatDeadline = (value) => {
     if (!value) return "-";
     // 읽을 수 없으면 원문이라도 보여 준다 — 입금 기한은 사라지면 안 되는 정보다.
+    // [JA] 読めなければ原文だけでも見せる — 入金期限は消えてはならない情報である。
     return formatDateTime(value, String(value));
 };
 
@@ -25,6 +26,12 @@ const formatDeadline = (value) => {
  * <p>금액은 서버의 청구액이다(포트원처럼 KRW 일 수 있다). 화면이 total 을 환산하지 않는다.
  * 입금 확인은 관리자가 하고, 확인되면 주문이 결제 완료로 바뀐다 — 여기서는 기다린다고만
  * 말한다.
+ *
+ * <p>[JA] 無通帳入金 — 注文詳細の決済欄に描かれる状態機械の顧客側(docs/49 §11)。
+ * ・NOT_PROCESSED: 入金者名を受けて「入金案内を受け取る」。サーバーが UNPAID に変え、口座 · 金額 · 期限を返す。
+ * ・UNPAID: 案内をもう一度見せる(口座 · 金額 · 期限 · 入金者名) + 入金前キャンセル。
+ * 金額はサーバーの請求額である(ポートワンのように KRW のこともある)。画面が total を換算しない。
+ * 入金確認は管理者が行い、確認されると注文が決済完了に変わる — ここでは待っているとだけ言う。
  */
 export default function BankTransfer({ order, onChanged }) {
     const { t } = useTranslation();
@@ -81,6 +88,7 @@ export default function BankTransfer({ order, onChanged }) {
 
     if (!waiting && status !== "NOT_PROCESSED") return null;
     // 포트원 가상계좌는 결제창이 발급한다 — 여기서 입금자명을 받아 안내를 만들 일이 없다.
+    // [JA] ポートワンのバーチャル口座は決済画面が発行する — ここで入金者名を受けて案内を作ることはない。
     if (!waiting && order?.paymentMethod && order.paymentMethod !== "cash") return null;
 
     if (!waiting && !notice) {

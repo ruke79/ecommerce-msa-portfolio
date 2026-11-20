@@ -21,6 +21,13 @@ import org.junit.jupiter.api.Test;
  * <p>여기서 고정하는 것은 하나다: <b>어떤 입력이 와도 컬럼에 들어간다.</b> 값이 이상하면
  * 자르고 경고를 남기되, 배송은 만든다. 잘린 주소는 관리자 화면에 보이고 발송 전에 고칠 수
  * 있지만, 배송이 없으면 아무도 모른다.
+ *
+ * <p>[JA] 🐛 <b>回帰対象 — 国名一つのせいで決済が DLT に行った。</b>
+ * 住所フォームは国を名前("Korea, Republic of")で保存するのに、{@code country} カラムは {@code varchar(2)} である。
+ * 最初の配送を作ろうとした瞬間に "ERROR: value too long for type character varying(2)" で落ちた。
+ * そしてその例外は配送一つではなく<b>決済レコード</b>を再試行の末に DLT に送った。注文は PAID なのに配送はいつまでもできず、画面には「配送準備中」だけが残った。
+ * ここで固定するのは一つ: <b>どんな入力が来てもカラムに収まる。</b> 値がおかしければ切り詰めて警告を残すが、配送は作る。
+ * 切り詰められた住所は管理画面に見え発送前に直せるが、配送がなければ誰も気づかない。
  */
 @DisplayName("배송 — 어떤 입력도 컬럼에 들어간다")
 class DeliveryColumnFitTest {
@@ -35,6 +42,7 @@ class DeliveryColumnFitTest {
     }
 
     /** 🔴 폼이 저장하는 값 그대로. 이것이 터져서 결제가 DLT 로 갔다. */
+    // [JA] 🔴 フォームが保存する値そのまま。これが弾けて決済が DLT に行った。
     @Test
     @DisplayName("🔴 나라를 이름으로 줘도 두 글자 코드로 들어간다")
     void countryNameBecomesCode() {
@@ -52,6 +60,7 @@ class DeliveryColumnFitTest {
     }
 
     /** 알아보지 못하는 나라라도 배송은 만들어진다 — 예외를 던지면 결제가 멈춘다. */
+    // [JA] 認識できない国でも配送は作られる — 例外を投げると決済が止まる。
     @Test
     @DisplayName("모르는 나라 이름이어도 배송은 만들어진다(발송국으로 본다)")
     void unknownCountryStillCreatesDelivery() {
@@ -61,6 +70,7 @@ class DeliveryColumnFitTest {
     }
 
     /** 폼은 우편번호를 30자까지 받는데 컬럼은 12자다 — 같은 종류의 사고가 하나 더 있었다. */
+    // [JA] フォームは郵便番号を 30 文字まで受けるのにカラムは 12 文字である — 同じ種類の事故がもう一つあった。
     @Test
     @DisplayName("우편번호가 컬럼보다 길면 잘라서라도 저장한다")
     void longPostalCodeIsTruncatedNotThrown() {
@@ -69,6 +79,7 @@ class DeliveryColumnFitTest {
     }
 
     /** 컬럼 폭을 넘는 값이 하나라도 남아 있으면 배송 생성이 죽는다. 전부 확인한다. */
+    // [JA] カラム幅を超える値が一つでも残っていると配送作成が落ちる。すべて確認する。
     @Test
     @DisplayName("모든 문자열 칸이 컬럼 폭 안에 들어간다")
     void everyStringFieldFitsItsColumn() {
@@ -92,6 +103,7 @@ class DeliveryColumnFitTest {
     }
 
     /** 주소 변경도 같은 폼에서 오므로 같은 규칙이어야 한다. */
+    // [JA] 住所変更も同じフォームから来るので同じ規則でなければならない。
     @Test
     @DisplayName("주소를 바꿀 때도 나라 이름이 코드가 된다")
     void addressChangeNormalizesToo() {

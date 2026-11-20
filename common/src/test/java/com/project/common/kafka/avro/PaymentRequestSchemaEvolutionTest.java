@@ -37,6 +37,13 @@ import com.project.common.message.dto.request.PaymentRequest;
  * </ul>
  *
  * <p>"옛 소비자" 는 그 스키마만 아는 제네릭 디코더로 흉내 낸다. 옛 레코드는 이력 스키마로 만든다.
+ *
+ * <p>[JA] 決済リクエストスキーマの進化 — フィールドを足すとき(v3)と抜くとき(v4)(docs/49 §3, {@link PaymentRequestAvroMapping} のコメント)。
+ * <ul>
+ *   <li>v3(プロバイダー中立のフィールド追加): 読む側に v3 を知らせたリリース(A)の間、order は v2 の書き込みスキーマで書き、B から v3 で。</li>
+ *   <li>v4(paypalOrderId 削除): C1 が v4 を「次のスキーマ」としてデコーダーに先に入れ、C2(今)から v4 で書く。</li>
+ * </ul>
+ * 「古いコンシューマー」はそのスキーマしか知らない汎用デコーダーで模倣する。古いレコードは履歴スキーマで作る。
  */
 @DisplayName("결제 요청 — 스키마 진화")
 class PaymentRequestSchemaEvolutionTest {
@@ -69,6 +76,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     /** 이력 스키마로 레코드를 만든다 — 앞 릴리스의 order 가 쓴 바이트. 없는 필드는 건너뛴다. */
+    // [JA] 履歴スキーマでレコードを作る — 前のリリースの order が書いたバイト。ないフィールドは飛ばす。
     private static byte[] encodeWith(Schema schema, Map<String, Object> values) {
         GenericRecordBuilder b = new GenericRecordBuilder(schema);
         values.forEach((name, value) -> {
@@ -93,6 +101,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     // ---------------------------------------------------------------- 지금(v4)
+    // [JA] ---------------------------------------------------------------- 今(v4)
 
     @Test
     @DisplayName("order 는 v4 로 쓴다 — 참조는 providerPaymentId 하나다")
@@ -109,6 +118,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     /** 🔴 C1 이 한 일 — 롤링 중 남은 C1 의 소비자(생성 클래스 v3 + 저장소에 v4)가 C2 의 레코드를 읽는다. */
+    // [JA] 🔴 C1 がしたこと — ローリング中に残った C1 のコンシューマー(生成クラス v3 + ストアに v4)が C2 のレコードを読む。
     @Test
     @DisplayName("🔴 C1 의 소비자(v3 + 다음 스키마 v4)는 C2 의 레코드를 읽는다")
     void aC1ConsumerReadsV4() throws Exception {
@@ -123,6 +133,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     /** C1 을 건너뛰면 안 되는 이유 — v3 만 아는 소비자는 v4 지문을 모른다. order V20 이 그 배포를 막는다. */
+    // [JA] C1 を飛ばしてはいけない理由 — v3 しか知らないコンシューマーは v4 のフィンガープリントを知らない。order V20 がそのデプロイを止める。
     @Test
     @DisplayName("v3 만 아는 소비자는 v4 레코드를 읽지 못한다 — 그래서 C1 을 건너뛰면 안 된다")
     void aV3OnlyConsumerCannotReadV4() {
@@ -133,6 +144,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     // ---------------------------------------------------------------- 옛 레코드(토픽·DLT 보존 기간 동안)
+    // [JA] ---------------------------------------------------------------- 古いレコード(トピック・DLT の保持期間の間)
 
     @Test
     @DisplayName("B~C1 의 order 가 쓴 v3 레코드를 읽는다 — 옛 paypalOrderId 는 버린다")
@@ -144,6 +156,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     /** B 이전의 order 가 쓴 v2 레코드 — 제공자 필드가 없고, PayPal 참조가 있던 필드는 v4 에서 빠졌다. C3 에서 이 경로를 지운다. */
+    // [JA] B 以前の order が書いた v2 レコード — プロバイダーのフィールドがなく、PayPal 参照のあったフィールドは v4 で消えた。C3 でこの経路を消す。
     @Test
     @DisplayName("A 의 order 가 쓴 v2 레코드도 읽는다 — 제공자 필드는 비어 있다")
     void readsV2Records() {
@@ -156,8 +169,10 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     // ---------------------------------------------------------------- 진화 규칙
+    // [JA] ---------------------------------------------------------------- 進化のルール
 
     /** 필드를 더할 때(v3)는 끝에만 붙였다 — 한 릴리스 동안 옛 작성 스키마로 쓰려면 위치가 같아야 했다. */
+    // [JA] フィールドを足すとき(v3)は末尾にだけ付けた — 1 リリースの間、古い書き込みスキーマで書くには位置が同じである必要があった。
     @Test
     @DisplayName("v3 는 v2 의 필드를 같은 위치에 두고 끝에만 더했다")
     void v3AppendedOnly() {
@@ -167,6 +182,7 @@ class PaymentRequestSchemaEvolutionTest {
     }
 
     /** v4 는 v3 에서 paypalOrderId 만 뺀 것이다 — C1 이 디코더에 넣었던 "다음 스키마" 와 같은 지문이어야 한다. */
+    // [JA] v4 は v3 から paypalOrderId だけを抜いたものだ — C1 がデコーダーに入れた「次のスキーマ」と同じフィンガープリントでなければならない。
     @Test
     @DisplayName("v4 는 v3 에서 paypalOrderId 만 뺀 것이다")
     void v4OnlyDropsPaypalOrderId() {

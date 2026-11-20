@@ -35,11 +35,15 @@ public class CategoryItemProcessor implements ItemProcessor<CategoryCsvDto, Cate
         //                 .version(0L) // 초기 버전 설정
         //                 .build();
         //     });
+        // [JA] (コメントアウトされた旧コード)
+        //      データベースにその ID の Category が既に存在するか確認する(categoryRepository.findById)。
+        //      既に存在すればフィールド(categoryName · slug)だけ更新して返す(OptimisticLockException 回避)。
+        //      存在しなければ新しい Category エンティティを生成する(categoryId · categoryName · slug、version(0L) で初期バージョン設定)。
                 return Category.builder()
                         //.categoryId(item.getCategory_id())
                         .categoryName(item.getCategory_name())
                         .slug(item.getSlug())
-                        .version(0L) // 초기 버전 설정
+                        .version(0L) // 초기 버전 설정 ／ [JA] 初期バージョン設定
                         .build();
     }
 }

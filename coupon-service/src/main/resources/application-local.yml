@@ -16,6 +16,11 @@ server:
 #
 # 이제 KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 환경변수로 주입한다.
 # 파일은 ops/07-issue-certificates.sh 가 만들고, certs.env 를 source 하면 값이 채워진다(docs/18).
+# [JA] Kafka 接続設定は common/application-common.yml が所有する。
+#      ここには開発者 PC の絶対パスがそのまま埋め込まれていた。そのパスは他のどのマシンにも存在しないので、このブロックは
+#      protocol: "SSL" を有効にしたまま存在しないストアを指していた。ローカルブローカーが PLAINTEXT なので黙って通っていただけだ。
+#      今は KAFKA_URL / KAFKA_SECURITY_PROTOCOL / KAFKA_SSL_* 環境変数で注入する。
+#      ファイルは ops/07-issue-certificates.sh が作り、certs.env を source すると値が埋まる(docs/18)。
 
 eureka:
   instance:
@@ -30,24 +35,37 @@ feign:
   # 서비스 간 Feign 호출 대상. 기존에는 어디에도 정의돼 있지 않아
   # @FeignClient(url="${feign.*-url}") 해석 실패로 기동 자체가 불가능했다.
   # 환경변수(FEIGN_*_URL, k8s ConfigMap)로 오버라이드 가능.
+  # [JA] サービス間 Feign 呼び出しの宛先。以前はどこにも定義されておらず
+  #      @FeignClient(url="${feign.*-url}") の解決失敗で起動自体ができなかった。
+  #      環境変数(FEIGN_*_URL, k8s ConfigMap)でオーバーライド可能。
   user-url: ${FEIGN_USER_URL:https://localhost:8080}
   # 제약(상품·카테고리) 있는 쿠폰을 판정할 때만 쓴다. 장바구니는 cart-service 에서
   # 직접 읽고(클라이언트가 보낸 목록을 믿지 않는다), 상품의 카테고리는 catalog 에서 받는다.
   # 두 키 모두 k8s ConfigMap 에 이미 있다(FEIGN_CART_URL, FEIGN_CATALOG_URL).
+  # [JA] 制約(商品・カテゴリー)付きクーポンを判定するときだけ使う。カートは cart-service から
+  #      直接読み(クライアントが送った一覧を信じない)、商品のカテゴリーは catalog から受け取る。
+  #      両キーとも k8s ConfigMap に既にある(FEIGN_CART_URL, FEIGN_CATALOG_URL)。
   cart-url: ${FEIGN_CART_URL:https://localhost:8082}
   catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
   # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
   # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
   # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.
+  # [JA] タイムアウトはここに置かない — common/application-common.yml の
+  #      spring.cloud.openfeign.client.config.default が全サービス唯一の定義だ(docs/37 §2.1)。
+  #      以前ここにあった feign.client.config.* は OpenFeign 4.x が読まないキーだった。
 
 coupon:
   topics:
     # 쿠폰 발급 이벤트. notification-service 가 듣고 COUPON_ISSUED 알림을 만든다.
+    # [JA] クーポン発行イベント。notification-service が購読して COUPON_ISSUED 通知を作る。
     issued: ${COUPON_ISSUED_TOPIC:coupon-issued}
   welcome:
     # 가입 축하 쿠폰. 예전에는 이름·할인율·유효기간이 UserMessageListener 자바 코드에
     # 리터럴로 박혀 있었다("30% discount coupon", 30, 31일). 판촉 정책은 코드가 아니라
     # 설정이므로 여기로 옮겼다. 할인율을 바꾸려고 서비스를 다시 빌드하지 않는다.
+    # [JA] 会員登録お祝いクーポン。以前は名前・割引率・有効期間が UserMessageListener の Java コードに
+    #      リテラルで埋め込まれていた("30% discount coupon", 30, 31 日)。販促ポリシーはコードではなく
+    #      設定なのでここに移した。割引率を変えるためにサービスを再ビルドしない。
     enabled: ${COUPON_WELCOME_ENABLED:true}
     name: ${COUPON_WELCOME_NAME:웰컴 10% 할인 쿠폰}
     discount: ${COUPON_WELCOME_DISCOUNT:10}
@@ -69,10 +87,18 @@ spring:
       # 늦게 뜬 파드가 통째로 기동 실패한다.
       # 5 × 8 데이터소스 × 3 레플리카 = 120. max_connections 는 200 으로 올릴 것(docs/19 §3).
       # 풀은 크다고 빠르지 않다 — 커넥션당 DB 측 프로세스가 하나씩 붙는다.
+      # [JA] コネクションプールの算定 (docs/19)。
+      #      デフォルト 10 のままだとデータソース 8 個 × 10 = 80 コネクションで、HPA でレプリカが
+      #      2 個になるだけで 160 となり PostgreSQL のデフォルト max_connections(100)を**算術的に超える**。
+      #      その瞬間の症状は「遅くなる」ではなく 'FATAL: sorry, too many clients already' —
+      #      遅れて上がったポッドが丸ごと起動失敗する。
+      #      5 × 8 データソース × 3 レプリカ = 120。max_connections は 200 に上げること(docs/19 §3)。
+      #      プールは大きければ速いわけではない — コネクションごとに DB 側プロセスが一つずつ付く。
       hikari:
         maximum-pool-size: ${DB_POOL_SIZE:5}
         minimum-idle: ${DB_POOL_MIN_IDLE:2}
         # 풀 고갈을 조용히 기다리지 않고 빠르게 실패시킨다(기본 30초는 요청 스레드를 묶어 둔다).
+        # [JA] プール枯渇を黙って待たず素早く失敗させる(デフォルトの 30 秒はリクエストスレッドを縛る)。
         connection-timeout: 5000
         # 커넥션 누수 감지 — 기본 끔(0). 켜면 커넥션을 빌릴 때마다 스택 추적 예외를 하나씩 만든다(2026-10-23 프로파일: catalog CPU 의 3.9%,
         # docs/83 §5 · B-104). 의심될 때만 DB_LEAK_DETECTION_MS=20000 으로 켠다. [JA] リーク検出は既定オフ — 借りるたびに例外を作る。
@@ -88,7 +114,7 @@ spring:
         sslpassword: ${LOCAL_KEY_PASSWORD}
   jpa:
     # 🔒 요청 내내 DB 커넥션을 쥐지 않는다 — 견적 · 적용 · 기획전 받기는 cart · catalog · user-service 를 트랜잭션 밖에서 부른다(B-87, CP2).
-    #    [JA] リクエスト中ずっと DB 接続を持たない。
+    #    [JA] 🔒 リクエスト中ずっと DB 接続を持たない — 見積もり · 適用 · 企画展の受け取りは cart · catalog · user-service をトランザクションの外で呼ぶ(B-87、CP2)。
     open-in-view: false
     show-sql: true
     hibernate:
@@ -113,9 +139,14 @@ logging:
 # 이 설정은 Elasticsearch 클라이언트가 내부적으로 사용하는 Apache HTTP 클라이언트에 대한 로그를 활성화합니다.
     #org.apache.http: DEBUG
     #apache.http.wire: DEBUG
+# [JA] Elasticsearch クライアントパッケージのロギングレベルを DEBUG に設定。
+#      HTTP リクエスト/レスポンスのヘッダーとボディを見るには TRACE レベルを設定する。
+#      この設定は Elasticsearch クライアントが内部で使う Apache HTTP クライアントのログを有効にする。
   file:
     path: ./logs
-    name: ${logging.file.path}/coupon_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51)
+    name: ${logging.file.path}/coupon_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51) ／ [JA] JSON 一行ずつ — common の logback-spring.xml が書く(docs/51)
   # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
   # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
+  # [JA] 出力パターンは common の logback-spring.xml が決める — メッセージ・例外を %mask で包み機微情報を隠す。
+  #      ここに logging.pattern を置いても使われない(ガード B-57)。
               

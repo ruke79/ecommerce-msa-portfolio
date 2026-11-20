@@ -8,12 +8,16 @@ const path = require("path");
  * ⚠️ nginx 는 location 안에 add_header 가 하나라도 있으면 server 의 add_header 를 <b>물려받지 않는다</b> — 캐시 헤더를 단
  * /index.html · /static/ 에서 보안 헤더가 조용히 사라지는 것이 이 설정에서 가장 흔한 실수라, 그 location 들도 본다.
  *
- * <p>[JA] nginx のセキュリティヘッダー。location に add_header が一つでもあると server の分を継承しない — そこも確かめる。
+ * <p>[JA] frontend nginx のセキュリティヘッダー — すべての応答に付く(nginx.conf の「セキュリティヘッダー」節)。
+ * 🔒 以前は一つもなく、決済 · アカウント · 管理者画面を他人のサイトが iframe に入れられた(クリックジャッキング、2026-10-22 点検)。
+ * ⚠️ nginx は location 内に add_header が一つでもあると server の add_header を<b>継承しない</b> — キャッシュヘッダーを付けた
+ * /index.html · /static/ でセキュリティヘッダーが黙って消えるのがこの設定で最もよくあるミスなので、その location も見る。
  */
 const CONF = fs.readFileSync(path.join(__dirname, "..", "nginx.conf"), "utf8")
     .split("\n").map((line) => line.replace(/#.*$/, "")).join("\n");
 
 /** server 바로 안의 add_header 와 location 마다의 add_header — 중괄호를 세어 가른다. */
+// [JA] server 直下の add_header と location ごとの add_header — 波括弧を数えて分ける。
 function parse(conf) {
     const server = [];
     const locations = [];
@@ -72,7 +76,9 @@ describe("frontend nginx — 보안 헤더", () => {
     /**
      * 🔒 2026-10-25 강제로 바꿨다 — 사흘 동안 Report-Only 로 위반을 모으고, 운영에서 카드 · PayPal · 무통장을 돌려 콘솔 위반 0.
      * 전체 정책이 강제 헤더에 있어야 한다: Report-Only 로 되돌리면(또는 강제 헤더가 frame-ancestors 만 남으면) 스크립트 출처
-     * 제한이 다시 '보고만' 이 된다. [JA] 2026-10-25 に強制へ。Report-Only へ戻ると script-src の制限がまた報告だけになる。
+     * 제한이 다시 '보고만' 이 된다. [JA] 2026-10-25 に強制へ変えた — 3 日間 Report-Only で違反を集め、
+     *      本番でカード · PayPal · 銀行振込を回してコンソール違反 0。ポリシー全体が強制ヘッダーになければならない: Report-Only に
+     *      戻すと(または強制ヘッダーが frame-ancestors だけになると)スクリプトの出所制限がまた「報告だけ」になる。
      */
     it("🔒 CSP 전체가 강제 — default-src · script-src 가 강제 헤더에 있고 Report-Only 는 어디에도 없다", () => {
         const policy = server["content-security-policy"];

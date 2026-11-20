@@ -58,6 +58,23 @@ import lombok.extern.slf4j.Slf4j;
  * <p>꺼낼 때 {@code GETDEL}(원자적)을 쓴다. 콜백이 두 번 도착해도 두 번째는 값을 얻지
  * 못한다. GET 후 DELETE 로 나누면 그 사이에 두 요청이 같은 인가 요청을 얻어 코드 재사용
  * 창이 열린다 — 짧지만 실재하는 창이다.
+ *
+ * <p>[JA] 進行中の認可リクエストを Redis に保管する(既定の HttpSession の代わりに)。
+ * なぜ変えるか: ソーシャルログインは 2 回のリクエストで成り立つ。① ブラウザが {@code /oauth2/authorization/google} に来ると
+ * サーバーが {@code state}(PKCE を有効にすれば {@code code_verifier} も)を作って保存し、プロバイダーへ送る。② プロバイダーが
+ * {@code /login/oauth2/code/google} に戻すと、サーバーがその値を取り出して検証しトークンを交換する。既定の実装
+ * ({@code HttpSessionOAuth2AuthorizationRequestRepository})はその間の値を HTTP セッションに入れる。このサービスでは二つの理由で
+ * それが合わない: レプリカが 2 つある — HPA の minReplicas が 2 で(k8s/70-autoscaling.yaml)セッション複製もセッション
+ * アフィニティもない。①を受けたポッドと②を受けたポッドが違うとセッションに何もなく、{@code authorization_request_not_found}
+ * でログインが壊れる。確率はおよそ半分である。セッションポリシーが STATELESS である — JWT で状態を持ち回る設計でセッションを
+ * 使わないと決めておきながら、ソーシャルログイン経路でだけサーブレットセッションが生まれていた — 設計と実際が食い違っていた。
+ * Redis はすでにこのサービスがリフレッシュトークンに使っている(RefreshTokenRepository)。新しいインフラは増えない。
+ * なぜ Cookie ではなく Redis か: よくある代替は認可リクエストを丸ごと Cookie に入れることである。動きはするが、PKCE を有効にした
+ * 今は {@code code_verifier} がブラウザへ出てしまう。PKCE の前提は「verifier を知る側だけがコードを交換できる」ことなのに、
+ * その値をクライアントに預けると保護のかなりの部分が失われる(HttpOnly Cookie でも XSS・拡張機能・ブラウザ脆弱性の射程内に
+ * ある)。このアプリケーションはクライアントシークレットを守れる機密クライアントなので、verifier もサーバーに置く。
+ * 一度だけ使われる: 取り出すときに {@code GETDEL}(アトミック)を使う。コールバックが二度届いても二度目は値を得られない。GET と
+ * DELETE に分けると、その間に二つのリクエストが同じ認可リクエストを得てコード再利用の窓が開く — 短いが実在する窓である。
  */
 @Slf4j
 @Component
@@ -81,6 +98,10 @@ public class RedisOAuth2AuthorizationRequestRepository
         // Security 의 믹스인들은 **다형 타입 정보(@class)** 를 켠 상태를 전제로 한다.
         // 공용 매퍼에 그걸 켜면 모든 REST 응답에 @class 가 섞여 나가 API 계약이 깨진다.
         // 그래서 이 용도만의 매퍼를 따로 만든다.
+        // [JA] ⚠️ アプリケーション共用の ObjectMapper を使わない。
+        //      Security の Mixin は**多態型情報(@class)**を有効にした状態を前提とする。
+        //      共用マッパーでそれを有効にするとすべての REST 応答に @class が混ざって出て API 契約が壊れる。
+        //      そこでこの用途専用のマッパーを別に作る。
         ObjectMapper om = new ObjectMapper();
         ClassLoader loader = getClass().getClassLoader();
         om.registerModules(SecurityJackson2Modules.getModules(loader));
@@ -103,6 +124,8 @@ public class RedisOAuth2AuthorizationRequestRepository
 
         // 계약상 null 은 "지워라"라는 뜻이다. 이걸 빠뜨리면 로그아웃/실패 경로에서
         // 인가 요청이 TTL 이 끝날 때까지 남는다.
+        // [JA] 契約上 null は「消せ」という意味である。これを漏らすとログアウト/失敗の経路で
+        //      認可リクエストが TTL が切れるまで残る。
         if (authorizationRequest == null) {
             removeAuthorizationRequest(request, response);
             return;
@@ -111,6 +134,7 @@ public class RedisOAuth2AuthorizationRequestRepository
         String state = authorizationRequest.getState();
         if (!StringUtils.hasText(state)) {
             // state 없는 인가 요청은 CSRF 방어가 없다는 뜻이다. 저장을 거부한다.
+            // [JA] state のない認可リクエストは CSRF 防御がないという意味である。保存を拒否する。
             throw new IllegalArgumentException("인가 요청에 state 가 없습니다 — 저장할 수 없습니다");
         }
 
@@ -119,6 +143,8 @@ public class RedisOAuth2AuthorizationRequestRepository
         } catch (Exception e) {
             // 여기서 조용히 넘어가면 콜백에서 "인가 요청을 찾을 수 없다"로 나타나고,
             // 그때는 원인이 Redis 라는 단서가 남지 않는다. 시작 지점에서 죽는 편이 낫다.
+            // [JA] ここで静かにやり過ごすとコールバックで「認可リクエストが見つからない」として現れ、
+            //      そのときには原因が Redis だという手がかりが残らない。開始地点で落ちる方がよい。
             log.error("인가 요청을 저장하지 못했습니다 — 소셜 로그인을 시작할 수 없습니다", e);
             throw new IllegalStateException("인가 요청 저장 실패", e);
         }
@@ -132,6 +158,7 @@ public class RedisOAuth2AuthorizationRequestRepository
             return null;
         }
         // GETDEL — 읽기와 삭제가 한 번에 일어난다(위 §한 번만 쓰인다).
+        // [JA] GETDEL — 読み取りと削除が一度に起きる(上の §一度だけ使われる)。
         return deserialize(redis.opsForValue().getAndDelete(key(state)), state);
     }
 
@@ -148,6 +175,8 @@ public class RedisOAuth2AuthorizationRequestRepository
         if (json == null) {
             // 정상적인 경우다 — TTL 만료, 이미 쓰인 state, 또는 위조된 콜백.
             // state 값은 **로그에 남기지 않는다**(CSRF 토큰과 같은 성격이다).
+            // [JA] 正常な場合である — TTL 切れ、使用済みの state、または偽造されたコールバック。
+            //      state の値は**ログに残さない**(CSRF トークンと同じ性質である)。
             log.debug("인가 요청을 찾지 못했습니다 (만료·재사용·위조 중 하나)");
             return null;
         }
@@ -156,6 +185,8 @@ public class RedisOAuth2AuthorizationRequestRepository
         } catch (Exception e) {
             // 역직렬화가 깨졌다는 것은 저장 형식이 바뀌었다는 뜻이다(스프링 업그레이드 등).
             // 남은 값을 지워서 같은 사용자가 계속 같은 오류를 겪지 않게 한다.
+            // [JA] デシリアライズが壊れたということは保存形式が変わったという意味である(Spring のアップグレードなど)。
+            //      残った値を消して、同じユーザーが同じエラーを繰り返さないようにする。
             log.warn("인가 요청 역직렬화 실패 — 해당 항목을 폐기합니다", e);
             redis.delete(key(state));
             return null;

@@ -18,6 +18,25 @@
 #      잡아내는지 확인한다 (실패하지 않는 테스트는 테스트가 아니다)
 #
 # 사용법:  ./ops/18-test-nginx-sse.sh
+# [JA] nginx を通る SSE が **実際にストリーミングされるか** を検証する。
+#
+#      なぜこのテストが必要か
+#      -----------------------
+#      nginx の既定設定は SSE を静かに壊す。接続は張られ HTTP 200 が来てエラーもない。
+#      イベントだけが届かず、ストリームが切れるときにそれまでのものが一度に押し寄せる。
+#
+#      だから「受け取った内容」だけを確認するテストは **バッファリングを捕まえられない** — 最後まで待てば結局
+#      全部届くからである。捕まえるには **到着時刻** を見なければならない。このスクリプトはサーバーが 1 秒間隔で
+#      送るイベントがクライアントにも 1 秒間隔で届くかを測る。
+#
+#      検証方式
+#        ① 1 秒間隔でイベントを送る SSE オリジンを起動する
+#        ② 本物の nginx をリポジトリの設定(frontend/nginx.conf)で起動する
+#        ③ 最初のイベントまでの時間とイベント間の間隔を測る → バッファリングされると全部が最後に固まる
+#        ④ **対照群**: バッファリングを有効にした設定で同じ測定をして、このテストが失敗を実際に
+#           捕まえるかを確認する(失敗しないテストはテストではない)
+#
+#      使い方:  ./ops/18-test-nginx-sse.sh
 
 set -euo pipefail
 
@@ -51,6 +70,8 @@ docker network create "$NET" >/dev/null 2>&1 || true
 
 # ── ① SSE 오리진 ─────────────────────────────────────────────────────────────
 # 1초 간격으로 5개의 이벤트를 보낸다. 게이트웨이/user-service 의 SSE 엔드포인트를 흉내 낸다.
+# [JA] ── ① SSE オリジン ──
+#      1 秒間隔で 5 個のイベントを送る。ゲートウェイ/user-service の SSE エンドポイントを模す。
 cat > "$WORK/origin.py" <<'PY'
 import http.server, socketserver, time, sys
 
@@ -69,6 +90,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # 실무에서는 설정과 함께 두 겹으로 두지만, 대조군에서는 이걸 빼야 한다 —
         # 그렇지 않으면 proxy_buffering on 을 켜도 버퍼링이 일어나지 않아
         # "테스트가 버퍼링을 잡아내는가"를 확인할 수 없다. (실제로 그 함정을 밟았다.)
+        # [JA] アップストリームがこのヘッダーを返すと、nginx は設定に関係なくその応答のバッファリングを切る。実務では設定と二重にするが、対照群ではこれを外さなければならない — でないと proxy_buffering on にしてもバッファリングが起きず、「テストがバッファリングを捉えるか」を確かめられない(実際にその罠を踏んだ)。
         if not self.path.startswith("/sse-raw/"):
             self.send_header("X-Accel-Buffering", "no")
         self.send_header("Transfer-Encoding", "chunked")
@@ -103,6 +125,7 @@ sleep 2
 ok "SSE 오리진 기동 (1초 간격 × 5회)"
 
 # ── ② 저장소 설정으로 nginx 기동 ──────────────────────────────────────────────
+# [JA] ── ② リポジトリの設定で nginx を起動 ──
 docker run -d --name sse-nginx --network "$NET" -p 18081:8080 \
     -e GATEWAY_URL="http://sse-origin:8000" \
     -e NGINX_ENVSUBST_FILTER='^(GATEWAY_URL)$' \
@@ -118,6 +141,7 @@ fi
 ok "nginx 설정 문법 정상 (저장소의 frontend/nginx.conf)"
 
 # 템플릿이 실제로 치환됐는지 — ${GATEWAY_URL} 이 남아 있으면 프록시가 동작하지 않는다.
+# [JA] テンプレートが実際に置換されたか — ${GATEWAY_URL} が残っているとプロキシが動かない。
 if docker exec sse-nginx grep -q 'GATEWAY_URL' /etc/nginx/conf.d/default.conf 2>/dev/null; then
     bad "envsubst 치환이 되지 않았다 — \${GATEWAY_URL} 이 그대로 남아 있다"
 else
@@ -125,6 +149,7 @@ else
 fi
 
 # nginx 자체 변수가 살아남았는지 — 필터가 없으면 \$host 까지 지워진다.
+# [JA] nginx 自身の変数が生き残ったか — フィルタがないと \$host まで消える。
 if docker exec sse-nginx grep -qE 'proxy_set_header +Host +\$host' /etc/nginx/conf.d/default.conf 2>/dev/null; then
     ok "nginx 자체 변수(\$host)가 보존됨 — ENVSUBST_FILTER 가 동작한다"
 else
@@ -134,6 +159,8 @@ echo
 
 # ── ③ 도착 시각 측정 ─────────────────────────────────────────────────────────
 # curl 로 받으면서 각 줄의 도착 시각을 기록한다. 버퍼링되면 전부 마지막에 몰린다.
+# [JA] ── ③ 到着時刻の測定 ──
+#      curl で受けながら各行の到着時刻を記録する。バッファリングされると全部が最後に固まる。
 measure() {
     local url="$1" out="$2" extra="${3:-}"
     # shellcheck disable=SC2086
@@ -164,6 +191,7 @@ else
     echo "     첫 이벤트까지: ${first_delay}초 · 첫~마지막 간격: ${span}초"
 
     # 버퍼링되면 첫 이벤트가 스트림 종료(약 5초) 시점에야 온다.
+    # [JA] バッファリングされると最初のイベントがストリーム終了(約 5 秒)の時点でようやく来る。
     if awk -v d="$first_delay" 'BEGIN{exit !(d < 2.5)}'; then
         ok "첫 이벤트가 즉시 도착 (${first_delay}초) — 버퍼링되지 않는다"
     else
@@ -171,6 +199,7 @@ else
     fi
 
     # 이벤트들이 시간에 걸쳐 흩어져 있어야 한다. 한꺼번에 오면 span 이 0 에 가깝다.
+    # [JA] イベントが時間にわたって散らばっていなければならない。一度に来ると span が 0 に近い。
     if awk -v s="$span" 'BEGIN{exit !(s > 2.5)}'; then
         ok "이벤트가 시간에 걸쳐 도착 (${span}초) — 한꺼번에 쏟아지지 않는다"
     else
@@ -181,11 +210,17 @@ echo
 
 # ── ④ 대조군: 이 테스트가 실패를 실제로 잡는가 ────────────────────────────────
 # 버퍼링을 켠 설정으로 같은 측정을 한다. 여기서 통과해 버리면 위의 통과는 의미가 없다.
+# [JA] ── ④ 対照群: このテストが失敗を実際に捕まえるか ──
+#      バッファリングを有効にした設定で同じ測定をする。ここで通ってしまうと上の通過には意味がない。
 echo "대조군 — gzip 을 적용하면 이 테스트가 실패를 잡아내는가"
 # ⚠️ 처음에는 `proxy_buffering on` 을 대조군으로 썼는데 **재현되지 않았다** — nginx 1.27 은
 #    소량 청크를 그대로 흘려보내 첫 이벤트가 0.02초에 도착했다. HTTP/1.0 도 마찬가지였다.
 #    실제로 SSE 를 죽이는 것은 **gzip** 이었다(12초 동안 한 건도 도착하지 않음).
 #    대조군은 재현되는 것으로 두어야 의미가 있다.
+# [JA] ⚠️ 最初は `proxy_buffering on` を対照群にしたが **再現しなかった** — nginx 1.27 は
+#         少量のチャンクをそのまま流し、最初のイベントが 0.02 秒で届いた。HTTP/1.0 も同じだった。
+#         実際に SSE を殺すのは **gzip** だった(12 秒間 1 件も届かない)。
+#         対照群は再現するものにしておいてこそ意味がある。
 cat > "$WORK/buffered.conf" <<'CONF'
 server {
     listen 8080;
@@ -195,6 +230,7 @@ server {
         # SSE 응답에 gzip 을 적용한다 — 압축은 블록을 채워야 출력이 나오므로 스트림이 멈춘다.
         # 저장소 설정에도 server 레벨 `gzip on` 이 있어, 누군가 gzip_types 에
         # text/event-stream 을 추가하면 그대로 재현되는 시나리오다.
+        # [JA] SSE 応答に gzip を掛ける — 圧縮はブロックが埋まるまで出力が出ないのでストリームが止まる。リポジトリの設定にも server レベルの gzip on があり、誰かが gzip_types に text/event-stream を足せばそのまま再現するシナリオだ。
         gzip on;
         gzip_types text/event-stream;
         gzip_proxied any;

@@ -14,6 +14,10 @@ import { countryOptions, toCountryCode } from "util/country";
  *
  * <p>나라는 코드로 바꾼다 — 옛 주소는 영어 이름("Korea, Republic of")으로 저장돼 있어, 그대로 두면 선택지(코드)와
  * 맞지 않아 칸이 비어 보인다. 고쳐 저장하면 코드로 바뀐다. 목록에 없는 값은 그대로 둔다.
+ *
+ * <p>[JA] 保存済みの配送先をフォーム値へ。id · active のようにフォームにないキーは載せない。
+ * 国はコードに変える — 古い住所は英語名("Korea, Republic of")で保存されており、そのままだと選択肢(コード)と
+ * 合わず欄が空に見える。直して保存するとコードに変わる。一覧にない値はそのままにする。
  */
 const toFormValues = (address, blank) => {
     const values = Object.fromEntries(Object.keys(blank).map((k) => [k, address?.[k] ?? ""]));
@@ -30,11 +34,13 @@ const AddShipping = ({
     invalidate, 
     initialValue,    
     /** 고치는 중인 배송지. null 이면 새로 등록한다. */
+    // [JA] 編集中の配送先。null なら新規登録する。
     editing = null,
     onCancelEdit,
 }) => {
     const { t, lang } = useTranslation();
     // 안내 문구는 렌더마다 지금 언어로 만든다 — 스키마를 모듈에 두면 처음 언어로 굳는다.
+    // [JA] 案内文言はレンダーごとに今の言語で作る — スキーマをモジュールに置くと最初の言語で固まる。
     const validate = Yup.object({
         // 🐛 이름 최소 길이가 3이었다. 한국 이름은 성이 1글자("홍"), 이름이 2글자("길동")인
         // 경우가 가장 흔하므로 **정상적인 한국 이름이 거의 다 거부됐다.** 회원가입의
@@ -43,6 +49,12 @@ const AddShipping = ({
         //
         // 문구도 한국어로 옮겼다. 원래는 "charactes"·"atleast" 같은 오타가 그대로
         // 사용자에게 보였고(docs/40 #16), 한국어 화면에 영어 안내만 섞여 있었다.
+        // [JA] 🐛 名前の最小長が 3 だった。韓国の名前は姓が 1 文字(「홍」)、名が 2 文字(「길동」)の
+        //      場合が最も多いので、**普通の韓国の名前がほぼすべて拒否された。** 会員登録の
+        //      username 正規表現と同じ類の問題である(docs/28 §3) — 欧米式の名前を前提にした検証が
+        //      韓国語サービスにそのまま残っていた。
+        //      文言も韓国語に移した。元は "charactes" · "atleast" のような誤字がそのまま
+        //      ユーザーに見え(docs/40 #16)、韓国語画面に英語の案内だけが混じっていた。
         firstname: Yup.string()
             .required(t("checkout.address.error.firstname_required"))
             .min(1, t("checkout.address.error.firstname_required"))
@@ -53,6 +65,8 @@ const AddShipping = ({
             .max(20, t("checkout.address.error.lastname_max")),
         // 메시지가 전부 "First Name ..." 으로 복사돼 있어서, 전화번호가 틀려도 이름이
         // 잘못됐다는 안내가 떴다.
+        // [JA] メッセージがすべて "First Name ..." でコピーされていて、電話番号が間違っていても名前が
+        //      誤っているという案内が出た。
         phoneNumber: Yup.string()
             .required(t("checkout.address.error.phone_required"))
             .min(3, t("checkout.address.error.phone_min"))
@@ -71,6 +85,8 @@ const AddShipping = ({
             .max(30, t("checkout.address.error.zip_max")),
         // 🐛 address1 의 안내가 전부 "Address 2" 였다 — 기본 주소를 비우면 상세 주소가
         // 잘못됐다는 말이 떴다. 위 phoneNumber 와 똑같은 복사 실수다.
+        // [JA] 🐛 address1 の案内がすべて "Address 2" だった — 基本住所を空にすると詳細住所が
+        //      誤っているという文言が出た。上の phoneNumber とまったく同じコピーミスである。
         address1: Yup.string()
             .required(t("checkout.address.error.address1_required"))
             .min(5, t("checkout.address.error.address1_min"))
@@ -96,6 +112,13 @@ const AddShipping = ({
      * <p>주소는 결제 후 delivery-service 가 스냅샷으로 복사해 가는 값이라, 한 번 잘못
      * 저장되면 주문·배송·분쟁 기록에 그대로 남고 물건도 엉뚱한 곳으로 간다. 이제 Formik 이
      * 검증한 values 를 그대로 저장한다.
+     *
+     * <p>[JA] 住所を保存する。
+     * 🐛 以前は Formik の values の代わりにページの state(`shipping`)を保存していた。しかしその state は
+     * 各入力が Formik の onChange を上書きする方式でしか更新されず、その競合のため入力した文字が失われた(docs/28 §2)。
+     * つまりユーザーが見た住所と保存された住所が違った。
+     * 住所は決済後に delivery-service がスナップショットとしてコピーしていく値なので、一度誤って保存されると
+     * 注文 · 配送 · 紛争の記録にそのまま残り、品物も見当違いの場所へ行く。今は Formik が検証した values をそのまま保存する。
      */
     const submitHandler = async (values, { resetForm }) => {
         if (editing?.id) {
@@ -112,6 +135,8 @@ const AddShipping = ({
 
     // 고칠 배송지가 바뀌면 폼을 그 값으로 **다시 마운트**한다(key). enableReinitialize 는
     // 쓰지 않는다 — 부모 상태가 바뀔 때마다 폼을 초기화해 입력이 유실되던 버그가 그것이었다.
+    // [JA] 編集する配送先が変わったらフォームをその値で **再マウント** する(key)。enableReinitialize は
+    //      使わない — 親の状態が変わるたびにフォームを初期化して入力が失われていたバグがそれだった。
     const formValues = editing ? toFormValues(editing, initialValue) : initialValue;
 
     return (
@@ -119,6 +144,8 @@ const AddShipping = ({
             key={editing?.id ?? "new"}
             // 폼 값의 주인은 Formik 하나다. 부모 state 를 initialValues 로 넘기고
             // enableReinitialize 를 켜면 키 입력마다 폼이 초기화되어 입력이 유실된다.
+            // [JA] フォーム値の持ち主は Formik 一つである。親の state を initialValues として渡し
+            //      enableReinitialize をオンにすると、キー入力のたびにフォームが初期化され入力が失われる。
             initialValues={formValues}
             validationSchema={validate}
             onSubmit={submitHandler}

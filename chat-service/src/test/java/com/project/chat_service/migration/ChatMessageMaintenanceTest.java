@@ -26,6 +26,7 @@ import com.mongodb.client.model.Collation;
 import com.project.chat_service.model.ChatMessage;
 
 /** 대화 기록 정비 — 방 기준 인덱스와 옛 메시지 시각 보정을 실제 MongoDB 에서. */
+// [JA] 会話記録の整備 — ルーム基準のインデックスと古いメッセージ時刻の補正を実際の MongoDB で。
 @Tag("containers")
 @Testcontainers
 @DisplayName("대화 기록 정비 (MongoDB)")
@@ -73,10 +74,10 @@ class ChatMessageMaintenanceTest {
     @DisplayName("기준 시각 전의 문서만 +9시간 — 한 번만, 고친 코드가 쓴 문서와 형식이 깨진 문서는 그대로")
     void shiftsLegacyMessagesOnce() {
         long old = CUTOFF - 60_000;
-        long older = CUTOFF - 10 * 3600_000L;   // 9시간 넘게 이른 문서 — 옮긴 뒤에도 기준 전이라, 표시가 없으면 또 옮겨진다
+        long older = CUTOFF - 10 * 3600_000L;   // 9시간 넘게 이른 문서 — 옮긴 뒤에도 기준 전이라, 표시가 없으면 또 옮겨진다 ／ [JA] 9 時間より早いドキュメント — ずらした後も基準前なので、印がなければ再びずらされる
         doc("1", Long.toString(old));
         doc("5", Long.toString(older));
-        doc("2", Long.toString(CUTOFF + 1));   // 고친 코드가 기준 뒤에 쓴 것
+        doc("2", Long.toString(CUTOFF + 1));   // 고친 코드가 기준 뒤에 쓴 것 ／ [JA] 直したコードが基準後に書いたもの
         doc("3", "not-a-number");
         doc("4", null);
 
@@ -87,6 +88,7 @@ class ChatMessageMaintenanceTest {
         assertThat(createdAt("3")).isEqualTo("not-a-number");
 
         // 다시 돌아도(다른 파드 · 다음 기동) 두 번 옮기지 않는다 — 기준 시각도 처음 정한 값 그대로다.
+        // [JA] 再度走っても(別の Pod・次回起動)二重にずらさない — 基準時刻も最初に決めた値のままである。
         assertThat(at(CUTOFF + NINE_H * 3).fixLegacyTimes()).isZero();
         assertThat(createdAt("1")).isEqualTo(Long.toString(old + NINE_H));
         assertThat(createdAt("5")).isEqualTo(Long.toString(older + NINE_H));
@@ -96,8 +98,8 @@ class ChatMessageMaintenanceTest {
     @Test
     @DisplayName("롤링 배포 중 옛 파드가 늦게 쓴 문서(9시간 이른 값)도 다음 실행이 같은 기준으로 잡는다")
     void laterRunCatchesRolloutStragglers() {
-        at(CUTOFF).fixLegacyTimes();   // 기준 시각을 정한다
-        long straggler = CUTOFF + 120_000 - NINE_H;   // 기준 2분 뒤, 옛 파드가 쓴 값
+        at(CUTOFF).fixLegacyTimes();   // 기준 시각을 정한다 ／ [JA] 基準時刻を決める
+        long straggler = CUTOFF + 120_000 - NINE_H;   // 기준 2분 뒤, 옛 파드가 쓴 값 ／ [JA] 基準の 2 分後、旧 Pod が書いた値
         doc("9", Long.toString(straggler));
 
         assertThat(at(CUTOFF + 900_000).fixLegacyTimes()).isEqualTo(1);
@@ -111,7 +113,7 @@ class ChatMessageMaintenanceTest {
             doc(Integer.toString(i), "1");
         }
         at(CUTOFF).ensureRoomIndex();
-        at(CUTOFF).ensureRoomIndex();   // 두 번 불러도 된다
+        at(CUTOFF).ensureRoomIndex();   // 두 번 불러도 된다 ／ [JA] 二度呼んでもよい
 
         Document plan = template.getCollection(template.getCollectionName(ChatMessage.class))
                 .find(new Document("roomId", "r"))

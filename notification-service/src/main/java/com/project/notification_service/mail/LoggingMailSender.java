@@ -19,11 +19,21 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>테스트에서도 쓴다 — 보낸 내역을 메모리에 쌓아 두므로 "이 이벤트가 이 주소로 이 제목의
  * 메일을 보냈는가"를 SMTP 서버 없이 검증할 수 있다.
+ *
+ * <p>[JA] 実際には送らずログにだけ残す送信器。<b>既定</b>である。
+ * {@link com.project.notification_service.sms.LoggingSmsSender} と同じ理由で既定だが、根拠は少し違う。SMS は件数課金なので
+ * 「知らないうちに料金が出る」ことが問題だった。メールはたいてい無料だが<b>取り消せず評判が残る</b> — 設定が不完全な状態でデプロイされて
+ * 誤ったアドレスやテストデータでメールが出ると、そのハードバウンスが送信ドメインの評判にそのまま積もる。一度スパムに分類された
+ * ドメインを戻すには数週間かかる。
+ * 実際の送信は {@code notification.mail.provider=smtp} を明示して初めて有効になる。
+ * テストでも使う — 送った履歴をメモリに溜めておくので、「このイベントがこのアドレスにこの件名のメールを送ったか」を
+ * SMTP サーバーなしで検証できる。
  */
 @Slf4j
 public class LoggingMailSender implements MailSender {
 
     /** 테스트 검증용 발송 내역. 운영에서는 무한히 쌓이지 않도록 상한을 둔다. */
+    // [JA] テスト検証用の送信履歴。運用で無限に溜まらないよう上限を置く。
     private static final int MAX_RECORDED = 500;
 
     private final List<Sent> recorded = Collections.synchronizedList(new ArrayList<>());
@@ -36,6 +46,10 @@ public class LoggingMailSender implements MailSender {
         //    dry-run 이라 해도 로그에 찍히면 실제 발송과 같은 노출이 된다.
         //    주소도 마스킹한다(EmailAddresses.mask 참조).
         //    제목도 남기지 않는다 — 로그인 확인 메일은 제목에 확인 코드가 들어간다(MailTemplates).
+        // [JA] ⚠️ 本文をログに残さない。確認リンク・再設定リンクが本文に入っているからである —
+        //         dry-run でもログに出れば実際の送信と同じ露出になる。
+        //         アドレスもマスキングする(EmailAddresses.mask 参照)。
+        //         件名も残さない — ログイン確認メールは件名に確認コードが入る(MailTemplates)。
         log.info("[MAIL:dry-run] to={} subjectLen={} textLen={} htmlLen={}",
                 EmailAddresses.mask(to), subject == null ? 0 : subject.length(),
                 text == null ? 0 : text.length(),
@@ -61,6 +75,7 @@ public class LoggingMailSender implements MailSender {
     }
 
     /** 테스트용. 보낸 내역 사본. */
+    // [JA] テスト用。送った履歴のコピー。
     public List<Sent> sent() {
         synchronized (recorded) {
             return List.copyOf(recorded);

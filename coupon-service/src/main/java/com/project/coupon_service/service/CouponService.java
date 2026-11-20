@@ -57,10 +57,13 @@ public class CouponService {
 
     
     // cart · catalog 를 부른다 — 트랜잭션 밖에서(CP2: 예전에는 쓰기 트랜잭션 안에서 불러 그동안 DB 커넥션을 쥐었다).
+    // [JA] cart · catalog を呼ぶ — トランザクションの外で(CP2: 以前は書き込みトランザクション内で呼び、その間 DB コネクションを握っていた)。
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     /**
      * @param userId       게이트웨이가 검증한 사용자({@code User-Id} 헤더 = 토큰의 uid). 본문에는 신원 필드가 없다 —
      *                     예전에는 본문의 {@code userEmail} 을 믿어 남의 쿠폰이 적용됐다(컨트롤러 주석 참조).
+     *
+     * <p>[JA] @param userId ゲートウェイが検証したユーザー({@code User-Id} ヘッダー = トークンの uid)。本文には身元フィールドがない — 以前は本文の {@code userEmail} を信じて他人のクーポンが適用された(コントローラーのコメント参照)。
      */
     public CouponResponse applyCoupon(CouponApplyRequest request, Long userId) {
 
@@ -86,8 +89,11 @@ public class CouponService {
      * <p>🔴 <b>주문 생성이 쿠폰을 "사용" 처리하면 안 된다.</b> 결제가 실패하거나 사용자가
      * 결제 화면에서 이탈하면 쓰지도 않은 쿠폰이 소모된다. 사용 처리는 원래 적용 시점에
      * 일어나고, 여기서는 금액만 답한다.
+     *
+     * <p>[JA] いくら引かれるか — <b>副作用なしで</b>。{@link #applyCoupon} と計算は同じで、クーポン使用イベントを発行しないことだけが違う。order-service が注文総額をサーバーで再計算するときに呼ぶ(docs/40 #10)。
+     * <p>🔴 <b>注文作成がクーポンを「使用」処理してはならない。</b>決済が失敗したりユーザーが決済画面から離脱したりすると、使ってもいないクーポンが消費される。使用処理は本来適用時点に起き、ここでは金額だけを答える。
      */
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // cart · catalog 를 부른다(CP2)
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // cart · catalog 를 부른다(CP2) ／ [JA] cart · catalog を呼ぶ(CP2)
     public CouponResponse quote(String couponName, Long userId) {
         if (userId == null) {
             return CouponResponse.builder().message("Failed to get coupons").build();
@@ -102,9 +108,12 @@ public class CouponService {
      * 금액을 그대로 청구했다. 두 읽기 사이(수십 ms)에 다른 탭에서 비싼 줄을 빼면 $1010 어치 품목이 $9 결제로 만들어졌고, 결제 검증은
      * 주문 총액과만 비교하므로 통과했다. 이제 계산의 근거가 주문의 품목과 같은 장바구니다. 실린 장바구니가 없으면(옛 order) 예전처럼 읽는다.
      *
-     * <p>[JA] 注文が読んだそのカートで見積もる。以前はここでカートを読み直していて、二つの読み取りの間に行を外すと品目と決済額がずれた。
+     * <p>[JA] 注文が読んだそのカートで見積もる — order-service が注文を作るとき(内部呼び出し)。
+     * 🐛 以前は order がカートを読んで品目を作り、ここではカートを<b>もう一度</b>読んで割引後の金額を計算していた — order はその
+     * 金額をそのまま請求した。二つの読み取りの間(数十 ms)に別のタブで高い行を外すと、$1010 分の品目が $9 の決済で作られ、決済検証は
+     * 注文の総額とだけ比べるので通った。今は計算の根拠が注文の品目と同じカートである。カートが載っていなければ(古い order)以前のように読む。
      */
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 를 부를 수 있다(CP2)
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 를 부를 수 있다(CP2) ／ [JA] catalog を呼ぶことがある(CP2)
     public CouponResponse quote(String couponName, Long userId, CartDto orderCart) {
         if (userId == null) {
             return CouponResponse.builder().message("Failed to get coupons").build();
@@ -119,12 +128,15 @@ public class CouponService {
      * @param couponName   적용할 쿠폰 이름
      * @param userId       <b>게이트웨이가 검증한</b> 신원(토큰의 uid). 본문에서 온 값을 넣으면 안 된다. 예전에는
      *                     이메일을 받아 매번 user-service 에 id 를 다시 물었다(docs/48 §6-⑥).
+     *
+     * <p>[JA] クーポン計算の本体。@param couponName 適用するクーポン名。@param userId <b>ゲートウェイが検証した</b>身元(トークンの uid)。本文由来の値を入れてはならない。以前はメールを受け取り毎回 user-service に id を問い直していた(docs/48 §6-⑥)。
      */
     private Quoted computeQuote(String couponName, Long userId) {
         return computeQuote(couponName, userId, null);
     }
 
     /** @param givenCart 계산의 근거로 쓸 장바구니(주문이 읽은 것). null 이면 cart-service 에서 읽는다. */
+    // [JA] @param givenCart 計算の根拠に使うカート(注文が読んだもの)。null なら cart-service から読む。
     private Quoted computeQuote(String couponName, Long userId, CartDto givenCart) {
 
         Coupon coupon = getCouponNotUsed(couponName, userId);
@@ -136,6 +148,9 @@ public class CouponService {
         // 🕐 기간 검증. 예전에는 이 검사가 **어디에도 없었다** — startDate/endDate 를
         // 저장만 하고 적용 시점에 보지 않았다. 가입 쿠폰의 31일 유효기간은 장식이었고,
         // 1년 전에 만료된 쿠폰도 그대로 할인됐다.
+        // [JA] 🕐 期間の検証。以前はこのチェックが**どこにもなかった** — startDate/endDate を
+        //      保存するだけで適用時に見ていなかった。登録クーポンの 31 日の有効期間は飾りで、
+        //      1 年前に期限切れのクーポンもそのまま割引された。
         if (!coupon.isUsableAt(LocalDateTime.now())) {
             return Quoted.rejected(CouponResponse.builder()
                     .message("사용 기간이 지난 쿠폰입니다.")
@@ -154,10 +169,15 @@ public class CouponService {
         // 🔒 할인의 기준 금액은 **서버가 읽은 장바구니**다. 요청 본문의 금액은 쓰지 않는다
         //    (docs/40 #10). 예전에는 제약 없는 쿠폰이 본문의 totalPrice 를 그대로 믿었고,
         //    그 값은 브라우저가 정했다.
+        // [JA] 🔒 割引の基準金額は**サーバーが読んだカート**だ。リクエスト本文の金額は使わない
+        //      (docs/40 #10)。以前は制約なしクーポンが本文の totalPrice をそのまま信じており、
+        //      その値はブラウザーが決めていた。
         CartDto cart = givenCart != null ? givenCart : fetchCart(userId);
         if (cart == null) {
             // 장바구니를 못 읽으면 금액을 정할 수 없다. 본문 값으로 대신하지 않는다 —
             // 그러면 장바구니 서비스를 잠시 막는 것만으로 원하는 금액을 부를 수 있다.
+            // [JA] カートを読めなければ金額を決められない。本文の値で代用しない —
+            //      そうするとカートサービスを一時的に止めるだけで好きな金額を言えてしまう。
             return Quoted.rejected(CouponResponse.builder()
                     .message("장바구니를 확인할 수 없어 쿠폰을 적용하지 못했습니다. 잠시 후 다시 시도해 주세요.")
                     .build());
@@ -172,6 +192,10 @@ public class CouponService {
         // 다만 **카테고리 조회(catalog 왕복)는 제약 있는 쿠폰에서만** 한다. 제약이 없으면
         // 어떤 카테고리인지 알 필요가 없고, 결제 직전 경로에 서비스 간 왕복을 더할 이유가
         // 없다.
+        // [JA] 行リストは**常に**作る。制約なしクーポンも商品金額を基準に割り引く必要があるからだ
+        //      (送料は割り引かない — CouponCalculator のコメント)。
+        //      ただし**カテゴリー照会(catalog 往復)は制約付きクーポンでだけ**行う。制約がなければ
+        //      どのカテゴリーか知る必要がなく、決済直前の経路にサービス間往復を足す理由がない。
         List<CouponCalculator.Line> lines = scope == CouponScope.ALL
                 ? plainLines(cart)
                 : cartLines(cart);
@@ -181,6 +205,7 @@ public class CouponService {
 
         if (scope != CouponScope.ALL && calc.eligibleItemCount() == 0) {
             // 조용히 0원 할인으로 끝내면 "쿠폰을 넣었는데 아무 일도 안 일어난다"가 된다.
+            // [JA] 黙って 0 円割引で終えると「クーポンを入れたのに何も起きない」になる。
             return Quoted.rejected(CouponResponse.builder()
                     .message("이 쿠폰을 적용할 수 있는 상품이 장바구니에 없습니다.")
                     .eligibleSubtotal(BigDecimal.ZERO)
@@ -205,6 +230,9 @@ public class CouponService {
      * <p>{@code usable} 이 false 인 응답에는 거절 사유({@code message})만 담긴다. 이 값이
      * 쿠폰 사용 이벤트를 발행할지를 가른다 — 거절된 계산으로 사용 처리를 하면 쓰지도
      * 못한 쿠폰이 소모된다.
+     *
+     * <p>[JA] 計算結果と、それが<b>実際に使える割引か</b>。
+     * <p>{@code usable} が false の応答には拒否理由({@code message})だけが入る。この値がクーポン使用イベントを発行するかを分ける — 拒否された計算で使用処理をすると使えもしなかったクーポンが消費される。
      */
     private record Quoted(CouponResponse response, Long userId, boolean usable) {
         static Quoted rejected(CouponResponse response) {
@@ -221,12 +249,17 @@ public class CouponService {
      * <p>예전에는 제약 있는 쿠폰일 때 <b>줄 금액의 합</b>(배송비 제외)을 기준으로 삼아,
      * 같은 장바구니인데 쿠폰 종류에 따라 기준 총액이 달랐다. 그래서 {@code totalAfterDiscount}
      * 가 "장바구니 총액 − 할인액" 과 맞지 않는 경우가 생겼다.
+     *
+     * <p>[JA] 割引計算の基準となるカート総額。
+     * <p>cart-service がカタログ価格で直接計算して保存した値だ({@code computeCartTotal})。送料が含まれ、ユーザーがカート画面で見る数字と同じ。
+     * <p>以前は制約付きクーポンのとき<b>行金額の合計</b>(送料除く)を基準にしており、同じカートでもクーポンの種類によって基準総額が違った。そのため {@code totalAfterDiscount} が「カート総額 − 割引額」と合わない場合があった。
      */
     private BigDecimal cartTotal(CartDto cart) {
         return cart.getCartTotal() == null ? BigDecimal.ZERO : cart.getCartTotal();
     }
 
     /** 이 쿠폰의 대상 id 집합. scope 가 ALL 이면 조회하지 않는다. 같은 클래스에서만 불린다 — 트랜잭션은 부르는 쪽의 것(B-108). */
+    // [JA] このクーポンの対象 id 集合。scope が ALL なら照会しない。同じクラスからだけ呼ばれる — トランザクションは呼ぶ側のもの(B-108)。
     Set<String> targetValues(Long couponId, CouponScope scope) {
         if (scope == CouponScope.ALL) {
             return Set.of();
@@ -250,6 +283,11 @@ public class CouponService {
      * 수 있다.
      *
      * <p>빈 장바구니도 {@code null} 로 본다. 담긴 것이 없으면 할인할 대상도 없다.
+     *
+     * <p>[JA] カートをサーバーで読む — <b>金額の唯一の根拠</b>だ。
+     * <p>cart-service はカタログ価格で総額を直接計算して保存するので、ここで読んだ {@code cartTotal} はブラウザーが手を出せない値だ。リクエスト本文の金額を使っていた経路をすべてこちらに移した(docs/40 #10)。
+     * <p>読めなければ {@code null} で、呼ぶ側は<b>拒否する。</b>例外を外には投げない — クーポンの失敗で決済画面が丸ごと飛んではならない。しかし本文の金額で代用もしない。そうするとカートサービスを一時的に止めるだけで好きな金額を言えてしまう。
+     * <p>空のカートも {@code null} とみなす。入っているものがなければ割り引く対象もない。
      */
     private CartDto fetchCart(Long userId) {
         try {
@@ -269,6 +307,9 @@ public class CouponService {
      *
      * <p>할인 기준이 되는 것은 {@code price × qty} 뿐이라 카테고리가 필요 없다.
      * catalog 를 부르지 않으므로 결제 직전 경로에 왕복이 늘지 않는다.
+     *
+     * <p>[JA] カテゴリーなしで行だけ作る — 制約なしクーポン用。
+     * <p>割引の基準になるのは {@code price × qty} だけなのでカテゴリーは不要。catalog を呼ばないので決済直前の経路に往復が増えない。
      */
     private List<CouponCalculator.Line> plainLines(CartDto cart) {
         List<CouponCalculator.Line> lines = new ArrayList<>();
@@ -285,6 +326,9 @@ public class CouponService {
      * <p>줄마다 상품을 조회하면 항목 수만큼 왕복이 생긴다 — 배치 엔드포인트를 쓴다
      * (cart-service 가 같은 이유로 이미 쓰고 있다). catalog 가 모르는 id 는 응답에서
      * 빠지고, 그 줄은 카테고리 null 로 남아 대상이 아닌 것으로 취급된다.
+     *
+     * <p>[JA] 各行のカテゴリーを catalog から<b>一度に</b>埋める。
+     * <p>行ごとに商品を照会すると項目数だけ往復が生じる — バッチエンドポイントを使う(cart-service が同じ理由で既に使っている)。catalog が知らない id は応答から抜け、その行はカテゴリー null のまま対象外として扱われる。
      */
     private List<CouponCalculator.Line> cartLines(CartDto cart) {
         Map<String, String> categoryByProduct = categoriesOf(cart.getProducts());
@@ -336,34 +380,46 @@ public class CouponService {
     // [JA] 決済確定の結果。
     public enum UseOutcome {
         /** NOT_USED → USED, 이 주문을 적었다. */
+        // [JA] NOT_USED → USED、この注文を記録した。
         USED,
         /** 이미 이 주문이 썼다 — 같은 결제 응답이 다시 왔다(멱등). */
+        // [JA] 既にこの注文が使った — 同じ決済応答が再び来た(冪等)。
         ALREADY_THIS_ORDER,
         /** 다른 주문이 이미 썼다 — 한 쿠폰으로 두 주문이 할인을 받았다(이중 사용). */
+        // [JA] 別の注文が既に使った — 一つのクーポンで二つの注文が割引を受けた(二重使用)。
         USED_BY_ANOTHER_ORDER,
         /** 이 사용자에게 그 이름의 쿠폰이 없다. */
+        // [JA] このユーザーにその名前のクーポンがない。
         NOT_FOUND
     }
 
     /** 다른 주문이 이 쿠폰으로 결제 중일 때 견적 · 결제 시작이 돌려주는 문구. */
+    // [JA] 別の注文がこのクーポンで決済中のとき、見積もり · 決済開始が返す文言。
     public static final String IN_PAYMENT_MESSAGE =
             "이 쿠폰으로 결제가 진행 중인 다른 주문이 있습니다. 그 결제를 마치거나 취소한 뒤 다시 시도해 주세요.";
 
     /** 결제 시작의 결과 — order 가 결제창을 열지 정한다. */
+    // [JA] 決済開始の結果 — order が決済ウィンドウを開くかを決める。
     public enum ClaimOutcome {
         /** 이 주문이 쿠폰을 잡았다(또는 이미 이 주문이 썼다). */
+        // [JA] この注文がクーポンを押さえた(または既にこの注文が使った)。
         CLAIMED,
         /** 그런 쿠폰이 없다(삭제 · 다른 사용자). */
+        // [JA] そのようなクーポンがない(削除 · 別ユーザー)。
         NOT_FOUND,
         /** 다른 주문이 이미 썼다. */
+        // [JA] 別の注文が既に使った。
         USED,
         /** 다른 주문이 지금 결제 중이다. */
+        // [JA] 別の注文が今決済中だ。
         IN_PAYMENT_ELSEWHERE,
         /** 사용 기간 밖이다 — 주문을 만들 때는 유효했어도 결제하는 지금 지났다(또는 아직 시작 전). */
+        // [JA] 使用期間外 — 注文作成時は有効でも決済する今は過ぎている(またはまだ開始前)。
         EXPIRED
     }
 
     /** 결제 중 표시의 상한 — order 가 넘기는 시간이 이보다 길면 줄인다(입금 기한 49시간 + 여유). */
+    // [JA] 決済中の印の上限 — order が渡す時間がこれより長ければ縮める(入金期限 49 時間 + 余裕)。
     static final java.time.Duration MAX_PAYMENT_HOLD = java.time.Duration.ofHours(72);
 
     /**
@@ -425,6 +481,7 @@ public class CouponService {
         if (coupon.getCouponStatus() == CouponStatus.NOT_USED) {
             if (coupon.inPaymentByAnotherOrder(response.getOrderId(), LocalDateTime.now())) {
                 // 결제는 이미 끝났다 — 되돌릴 수 없으니 이 주문이 쓴 것으로 적는다. 결제 중이던 다른 주문은 결제 확정에서 이중 사용이 된다.
+                // [JA] 決済は既に終わった — 取り消せないのでこの注文が使ったものとして記録する。決済中だった別の注文は決済確定で二重使用になる。
                 log.warn("결제 중 표시가 다른 주문인데 결제가 확정됐다 — 이 주문이 쓴 것으로 적는다. orderId={} paying={}",
                         response.getOrderId(), coupon.getPaymentOrderId());
             }
@@ -450,6 +507,9 @@ public class CouponService {
             // 대상 행을 먼저 지운다. FK 를 걸지 않았으므로(V5 주석) 여기서 챙기지 않으면
             // 고아 행이 남는다. 지금은 조회 시 쿠폰이 없어 무해하지만, 나중에 같은 TSID 가
             // 재사용될 일이 없더라도 쓰레기를 남길 이유는 없다.
+            // [JA] 対象行を先に消す。FK を張っていないので(V5 のコメント)ここで面倒を見ないと
+            //      孤児行が残る。今は照会時にクーポンがないので無害だが、後で同じ TSID が
+            //      再利用されることがないとしても、ゴミを残す理由はない。
             couponTargetRepository.deleteByCouponId(coupon.getCouponId());
             couponRepository.delete(coupon);
             return true;
@@ -532,6 +592,11 @@ public class CouponService {
         //    "이메일로 쿠폰을 발급한다"는 코드가 있는데 실제로는 500 만 났다.
         //
         //    해결한 id 를 끝까지 들고 간다. 쿠폰의 주인은 언제나 숫자 id 다.
+        // [JA] 🐛 <b>メールで発行する経路はこれまで一度も動いたことがない。</b>重複チェックだけメールを
+        //      数値 id に変えておきながら、肝心のクーポン作成では下で再び `Long.parseLong(request.getUserId())` を呼んでいた —
+        //      メールを数値としてパースするので NumberFormatException だ。チェックは通って保存で落ちる形で、
+        //      「メールでクーポンを発行する」コードがあるのに実際には 500 しか出なかった。
+        //      解決した id を最後まで持っていく。クーポンの持ち主は常に数値 id だ。
         Long ownerId;
         if (EmailValidator.isValidEmail(request.getUserId())) {
             ObjectMapper mapper = new ObjectMapper();
@@ -540,6 +605,7 @@ public class CouponService {
                     SharedUserDto.class);
             if (response == null || response.getUserId() == null) {
                 // 없는 사용자에게 쿠폰을 만들면 아무도 쓸 수 없는 행이 남는다.
+                // [JA] 存在しないユーザーにクーポンを作ると誰も使えない行が残る。
                 throw new IllegalArgumentException("쿠폰을 받을 사용자를 찾지 못했습니다.");
             }
             ownerId = response.getUserId();
@@ -568,6 +634,8 @@ public class CouponService {
             if (scope != CouponScope.ALL && targets.isEmpty()) {
                 // 대상 없는 제약 쿠폰은 아무 상품에도 적용되지 않는다. 만들어 두면
                 // "쿠폰은 있는데 무엇에도 안 먹는다"는 문의만 남는다. 만들지 않는다.
+                // [JA] 対象のない制約クーポンはどの商品にも適用されない。作っておくと
+                //      「クーポンはあるのに何にも効かない」という問い合わせだけが残る。作らない。
                 throw new IllegalArgumentException(
                         "scope 가 " + scope + " 인 쿠폰은 대상(targets)이 하나 이상 있어야 합니다.");
             }
@@ -593,6 +661,8 @@ public class CouponService {
                 Long couponId = newCoupon.getCouponId();
                 // distinct — 같은 대상이 두 번 들어오면 uk_coupon_target 위반으로 생성
                 // 전체가 실패한다. 중복은 요청자의 실수일 뿐 거절할 이유가 아니다.
+                // [JA] distinct — 同じ対象が二回入ると uk_coupon_target 違反で作成
+                //      全体が失敗する。重複は要求者のミスにすぎず拒否する理由ではない。
                 for (String target : targets.stream().filter(t -> t != null && !t.isBlank())
                         .map(String::trim).distinct().toList()) {
                     couponTargetRepository.save(CouponTarget.builder()
@@ -607,6 +677,10 @@ public class CouponService {
             //    는 메일 제목·SMS 문구·수신 설정까지 다 있는데 만드는 쪽만 없었다.
             //    발행 실패가 발급을 되돌리지는 않는다(CouponIssuedProducer 주석).
             // 커밋된 뒤에 알린다 — 🐛 예전에는 커밋 전에 보내, 동시 수령으로 롤백된 쿠폰(DB 에 없는 쿠폰)의 발급 알림이 나갔다(CP5).
+            // [JA] 🐛 これまでクーポンが発行されても誰も知らせなかった。NotificationType.COUPON_ISSUED
+            //      はメール件名・SMS 文言・受信設定まで全部あるのに、作る側だけがなかった。
+            //      発行失敗は発行を取り消さない(CouponIssuedProducer のコメント)。
+            //      コミットされた後に知らせる — 🐛 以前はコミット前に送り、同時受け取りでロールバックされたクーポン(DB にないクーポン)の発行通知が出ていた(CP5)。
             publishIssuedAfterCommit(newCoupon);
 
             return newCoupon;
@@ -632,8 +706,14 @@ public class CouponService {
      * 이미 끝난 기획전에 대해서도 사용자 조회가 한 번 나간다.
      *
      * @return 발급된 쿠폰. 이미 갖고 있으면 {@link ClaimResult#alreadyOwned()}
+     *
+     * <p>[JA] 企画展クーポンを受け取る。
+     * <p><b>なぜ配らずに受け取らせるのか。</b>企画展開始時に全ユーザーへ発行するとユーザー数だけ coupon 行ができる — お知らせ通知で個人別の行を作らないと決めたのと同じ問題で、しかも大半は使わない。受け取った人だけ行ができるようにすれば書き込み量が実際の関心に比例する。
+     * <p><b>重複受け取りは既に防がれている。</b>coupon テーブルの {@code uk_coupon_name_user_id} が一人が同じ名前のクーポンを二度持てないようにする。{@link #create} がそのチェックをし、既にあれば null を返すので、ここで別途防御を作らない — 作ると同じ規則が二か所にできる。
+     * <p>順序が重要: <b>企画展の条件を先に</b>読み、その後で顧客グループを見る。逆にすると既に終わった企画展についてもユーザー照会が一回出る。@return 発行されたクーポン。既に持っていれば {@link ClaimResult#alreadyOwned()}
      */
     // catalog · user-service 를 먼저(트랜잭션 밖), 발급만 짧은 트랜잭션으로(CP2).
+    // [JA] catalog · user-service を先に(トランザクションの外)、発行だけ短いトランザクションで(CP2)。
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public ClaimResult claimEventCoupon(String slug, Long userId) {
 
@@ -643,6 +723,8 @@ public class CouponService {
         } catch (Exception e) {
             // 404 (진행 중이 아니거나 쿠폰 없음)와 통신 실패를 구분하지 않는다 — 어느
             // 쪽이든 지금은 받을 수 없고, 사용자가 할 수 있는 일도 같다.
+            // [JA] 404(進行中でない、またはクーポンなし)と通信失敗を区別しない — どちらでも
+            //      今は受け取れず、ユーザーにできることも同じだ。
             log.info("기획전 쿠폰 조건을 읽지 못했다: slug={}, {}", slug, e.getMessage());
             return ClaimResult.unavailable("지금은 받을 수 없는 쿠폰입니다.");
         }
@@ -660,6 +742,7 @@ public class CouponService {
         }
         if (audience != AudienceSegment.ALL && !audience.matches(segmentsOf(userId))) {
             // 어떤 세그먼트에 속하는지는 알려주지 않는다 — 가입 시점을 되짚을 수 있다.
+            // [JA] どのセグメントに属するかは教えない — 登録時期を推測できてしまう。
             return ClaimResult.notEligible("이 쿠폰의 대상이 아닙니다.");
         }
 
@@ -675,6 +758,7 @@ public class CouponService {
             issued = inTransaction(() -> create(request));
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             // 두 번 누름 · 두 탭 — 둘 다 "없음" 을 보고 늦은 쪽이 uk_coupon_name_user_id 에 걸렸다(CP5). 🐛 예전에는 500 이었다.
+            // [JA] 二度押し · 二つのタブ — 両方が「なし」を見て遅い方が uk_coupon_name_user_id に掛かった(CP5)。🐛 以前は 500 だった。
             log.info("기획전 쿠폰 동시 수령 — 앞선 요청이 발급했다. slug={}", slug);
             return ClaimResult.alreadyOwned();
         }
@@ -686,6 +770,7 @@ public class CouponService {
     }
 
     /** 기획전의 고객군 — 비었으면 ALL, 모르는 값이면 null(발급하지 않는다, CP3). */
+    // [JA] 企画展の顧客グループ — 空なら ALL、知らない値なら null(発行しない, CP3)。
     static AudienceSegment strictAudience(String raw) {
         if (raw == null || raw.isBlank()) {
             return AudienceSegment.ALL;
@@ -698,6 +783,7 @@ public class CouponService {
     }
 
     /** 발급 같은 짧은 쓰기 트랜잭션. 세터 — 생성자를 쓰는 테스트가 많다. 없으면(단위 테스트) 그대로 돈다. */
+    // [JA] 発行のような短い書き込みトランザクション。セッター — コンストラクターを使うテストが多い。なければ(単体テスト)そのまま動く。
     private org.springframework.transaction.support.TransactionTemplate transactions;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -710,6 +796,7 @@ public class CouponService {
     }
 
     /** 이 사용자의 고객군. 판정은 user-service 가 한다(그쪽만 가입일을 갖고 있다). */
+    // [JA] このユーザーの顧客グループ。判定は user-service が行う(あちらだけが登録日を持つ)。
     private List<String> segmentsOf(Long userId) {
         try {
             Map<String, List<String>> body = userServiceClient.findUserSegments(userId).getBody();
@@ -718,6 +805,8 @@ public class CouponService {
         } catch (Exception e) {
             // 판정할 수 없으면 <b>주지 않는다.</b> 세그먼트 조회가 실패했을 때 통과시키면
             // 대상이 아닌 사람에게 쿠폰이 나가고, 그건 되돌리기 어렵다.
+            // [JA] 判定できなければ<b>与えない。</b>セグメント照会が失敗したときに通すと
+            //      対象でない人にクーポンが出て、それは取り消しにくい。
             log.warn("고객군을 확인하지 못했다 — 대상이 아닌 것으로 본다: {}", e.getMessage());
             return List.of();
         }
@@ -729,6 +818,9 @@ public class CouponService {
      * <p>"이미 갖고 있다"를 실패로 두지 않는 이유: 사용자 입장에서는 성공과 다르지 않다.
      * 버튼을 두 번 눌렀거나 다른 탭에서 이미 받은 것이고, 오류를 띄우면 무엇이 잘못됐는지
      * 찾게 만든다.
+     *
+     * <p>[JA] 受け取り結果。
+     * <p>「既に持っている」を失敗にしない理由: ユーザーにとっては成功と変わらない。ボタンを二度押したか別タブで既に受け取ったもので、エラーを出すと何が悪いのか探させてしまう。
      */
     public record ClaimResult(String status, String message, CouponDto coupon) {
 
@@ -769,6 +861,9 @@ public class CouponService {
      *
      * <p>읽기 전용 트랜잭션은 여기(컨트롤러가 부르는 입구)에 — 예전에는 안쪽 두 메서드에 붙어 자기 호출이라 적용되지 않았다(B-108).
      * 쿠폰 목록과 쿠폰마다의 대상 조회가 커넥션 하나로 돈다. 원격 호출은 없다.
+     *
+     * <p>[JA] このユーザーの未使用クーポン。ユーザー id で直接探す — 以前はメールで user-service に id を問い合わせていた。
+     * <p>読み取り専用トランザクションはここ(コントローラーが呼ぶ入口)に — 以前は内側の二つのメソッドに付いていて自己呼び出しのため適用されなかった(B-108)。クーポン一覧とクーポンごとの対象照会がコネクション一つで回る。遠隔呼び出しはない。
      */
     @Transactional(readOnly = true)
     public List<CouponDto> getCouponsNotUsed(Long userId) {
@@ -784,6 +879,8 @@ public class CouponService {
                 for (Coupon coupon : coupons) {
                     // 쿠폰 목록은 보통 한두 장이라 대상 조회를 쿠폰마다 해도 무방하다.
                     // 장 수가 늘면 couponId IN (...) 한 번으로 바꾸면 된다.
+                    // [JA] クーポン一覧は普通一、二枚なので対象照会をクーポンごとにしても差し支えない。
+                    //      枚数が増えたら couponId IN (...) 一回に変えればよい。
                     List<String> targets = new ArrayList<>(
                             targetValues(coupon.getCouponId(), coupon.scope()));
                     result.add(CouponDto.convertToDto(coupon, targets, now));
@@ -791,6 +888,8 @@ public class CouponService {
 
                 // 쓸 수 있는 것을 먼저, 그 안에서는 할인율이 큰 것을 먼저. 화면이 목록을
                 // 그대로 그리고 첫 번째를 기본 선택으로 쓰기 때문에 순서가 곧 UX 다.
+                // [JA] 使えるものを先に、その中では割引率の大きいものを先に。画面が一覧を
+                //      そのまま描き最初のものをデフォルト選択に使うので、順序がそのまま UX だ。
                 result.sort(java.util.Comparator
                         .comparing(CouponDto::isUsable).reversed()
                         .thenComparing(java.util.Comparator.comparingInt(CouponDto::getDiscount).reversed()));
@@ -802,10 +901,13 @@ public class CouponService {
 
         // 예전에는 null 을 돌려줬다. 화면은 `coupons?.length > 0` 로 받고 있어 동작은
         // 같지만, "쿠폰이 없다"는 빈 목록이지 값이 없는 것이 아니다.
+        // [JA] 以前は null を返していた。画面は `coupons?.length > 0` で受けているので動作は
+        //      同じだが、「クーポンがない」は空リストであって値がないことではない。
         return List.of();
     }
 
     // 같은 클래스에서만 불린다(자기 호출) — 예전의 readOnly 는 적용된 적이 없다, 저장소 호출 하나(B-108).
+    // [JA] 同じクラスからだけ呼ばれる(自己呼び出し) — 以前の readOnly は適用されたことがない、リポジトリ呼び出し一つ(B-108)。
     Coupon getCouponByNameAndUserIdAndCouponStatus(String couponName, Long userId, CouponStatus couponStatus) {
 
         Coupon coupon = couponRepository.findByNameAndUserIdAndCouponStatus(couponName, userId, couponStatus).orElse(null);
@@ -814,6 +916,7 @@ public class CouponService {
     }
 
     // 같은 클래스에서만 불린다 — 트랜잭션은 getCouponsNotUsed 의 것(B-108).
+    // [JA] 同じクラスからだけ呼ばれる — トランザクションは getCouponsNotUsed のもの(B-108)。
     List<Coupon> getCouponsByUserIdAndCouponStatus(Long userId, CouponStatus couponStatus) {
 
         List<Coupon> coupons = couponRepository.findByUserIdAndCouponStatus(userId, couponStatus).orElse(null);
@@ -829,7 +932,11 @@ public class CouponService {
      *
      * <p>메시지에 주문이 없거나(옛 프로듀서 v1) 쿠폰에 쓴 주문이 없으면(이 변경 전에 쓴 쿠폰) 누구의 것인지 모르므로 예전처럼 되돌린다.
      *
-     * <p>[JA] 補償 — その注文が使ったクーポンだけを戻す。以前は別注文の補償が決済済みのクーポンを戻していた。
+     * <p>[JA] サガの補償 — その注文が使ったクーポンだけを戻す。
+     * 🐛 以前は名前 · ユーザーで探した USED クーポンを無条件に NOT_USED に戻していた。同じクーポンを選んだ注文 A(決済済み) · B(決済失敗)が
+     * あると、B の補償が A の使ったクーポンを生き返らせた — 同じクーポンでまた割引を受けられた。
+     * メッセージに注文がない(古いプロデューサー v1)、またはクーポンに使った注文がない(この変更前に使ったクーポン)場合は、誰のものか
+     * 分からないので以前のように戻す。戻り値: 戻したクーポン、戻さなかったら null。
      *
      * @return 되돌린 쿠폰, 되돌리지 않았으면 null
      */
@@ -843,6 +950,8 @@ public class CouponService {
                 && request.getOrderId() != null && request.getOrderId().equals(coupon.getPaymentOrderId())) {
             // 결제를 시작했다가 실패 · 취소된 주문 — 결제 중 표시만 푼다(쓰이지 않았다). 예전에는 이 경우가 "되돌릴 것 없음" 이라
             // 재시도 뒤 DLT 로 갔다.
+            // [JA] 決済を始めたが失敗 · 取消になった注文 — 決済中の印だけを解く(使われていない)。以前はこの場合が「戻すものなし」で
+            //      リトライ後 DLT へ行っていた。
             coupon.clearPayment();
             return couponRepository.save(coupon);
         }

@@ -31,7 +31,9 @@ import com.project.coupon_service.repository.jpa.CouponTargetRepository;
  * <p>🐛 예전: 보상이 이름 · 사용자로 찾은 USED 쿠폰을 무조건 되돌렸다 — 결제가 실패한 주문 B 의 보상이 결제된 주문 A 의 쿠폰을
  * 되살려 같은 쿠폰을 또 쓸 수 있었다. 결제 확정은 재전달과 이중 사용을 가르지 못했다.
  *
- * <p>[JA] クーポンは使った注文に結び付く — 補償はその注文のものだけを戻す。
+ * <p>[JA] クーポンはそれを使った注文に結び付く — 決済確定が注文を記録し、補償はその注文のものだけを戻す。
+ * 🐛 以前: 補償が名前 · ユーザーで探した USED クーポンを無条件に戻していた — 決済に失敗した注文 B の補償が、決済済みの注文 A のクーポンを
+ * 生き返らせ、同じクーポンをまた使えた。決済確定は再配信と二重使用を区別できなかった。
  */
 @DisplayName("쿠폰 — 주문에 묶인 사용 · 보상")
 class CouponOrderBindingTest {
@@ -76,7 +78,7 @@ class CouponOrderBindingTest {
 
         assertThat(service.couponRollback(rollback(200L))).isNull();
         assertThat(coupon.getCouponStatus()).isEqualTo(CouponStatus.USED);
-        verify(coupons, org.mockito.Mockito.times(1)).save(any());   // useForOrder 의 저장뿐
+        verify(coupons, org.mockito.Mockito.times(1)).save(any());   // useForOrder 의 저장뿐 ／ [JA] useForOrder の保存だけ
     }
 
     @Test

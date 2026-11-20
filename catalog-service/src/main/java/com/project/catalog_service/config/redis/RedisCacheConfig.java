@@ -83,6 +83,7 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
     private Duration connectTimeout = Duration.ofSeconds(1);
 
     /** 상품 목록 · 상세 캐시(products)의 수명 — 쓰기마다 비우지만, 놓친 무효화(다른 파드의 할인 맵 등)도 이 시간 안에는 풀린다. */
+    // [JA] 商品一覧 · 詳細キャッシュ(products)の寿命 — 書き込みごとに消すが、取りこぼした無効化(他のポッドの割引マップなど)もこの時間内には解消する。
     static final Duration PRODUCTS_TTL = Duration.ofMinutes(30);
 
     /**
@@ -91,15 +92,22 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      *
      * <p>🐛 2026-10-20 ~ 21 실습 8시간(1,000만 · 넓힘, docs/83 §2.8): 이 넷이 설정 맵에 없어 기본 10분(흩어져 8 ~ 10분)이었다. 다시 계산할
      * 때(10분)가 오기 전에 Redis 에서 사라져, 카테고리마다 8 ~ 10분에 한 번 첫 쪽 검색이 메뉴 계산(1,000만에서 수십 초)을 1.5초 기다린 뒤
-     * 빈 메뉴로 나갔다 — 밤새 검색 p95 1,513ms. [JA] フィルターメニューのキャッシュの寿命 — 設定マップになく既定 10 分で、再計算の時刻より
-     * 先に Redis から消え、カテゴリごとに 8〜10 分に一度、1 ページ目がメニューを 1.5 秒待って空で返っていた。
+     * 빈 메뉴로 나갔다 — 밤새 검색 p95 1,513ms. 
+     * <p>[JA] フィルターメニューキャッシュ(brands · colors · sizes · details)の寿命 — 値に計算時刻があり、10 分
+     * ({@code catalog.facets.refresh-after})を過ぎると古い値を返しつつ裏で再計算する({@code SearchFilterFacets})。寿命はそれより
+     * ずっと長くないと、その「古い値」が残らない。
+     * 🐛 2026-10-20 〜 21 実習 8 時間(1,000 万 · 拡大、docs/83 §2.8): この四つが設定マップになく既定 10 分(散らして 8 〜 10 分)だった。
+     * 再計算の時刻(10 分)が来る前に Redis から消え、カテゴリごとに 8 〜 10 分に一度、1 ページ目の検索がメニュー計算(1,000 万で数十秒)を
+     * 1.5 秒待った後、空のメニューで返った — 一晩中、検索 p95 1,513ms。
      */
     static final Duration FACETS_TTL = Duration.ofHours(24);
 
     /** 필터 메뉴 캐시 이름 — SearchFilterFacets 가 쓴다. */
+    // [JA] フィルタメニューのキャッシュ名 — SearchFilterFacets が使う。
     static final java.util.List<String> FACET_CACHES = java.util.List.of("brands_cache", "colors_cache", "sizes_cache", "details_cache");
 
     /** 만료의 흩어짐 — 키마다 수명을 이만큼까지(비율) 줄인다. */
+    // [JA] 有効期限の分散 — キーごとに寿命をこの分まで(比率)縮める。
     static final double TTL_JITTER = 0.2;
 
     /**
@@ -109,7 +117,11 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      * 비운 뒤(flush-cache · 기획전 경계의 {@code EventScheduler} · 예전의 별점 갱신) 다시 채워진 {@code search_cache} 키 48개가 정확히
      * 60분 뒤 같은 초에 만료돼 20초 동안 DB 로 몰렸고, 그때 다시 채워진 48개가 또 모두 17:15 에 만료될 참이었다 — 한 번 생긴 무리는
      * 매시간 되풀이된다. 흩어 두면 한 바퀴 만에 무리가 풀린다.
-     * [JA] 一度に埋まったキーは一度に切れ、その群れは毎時繰り返す。キーごとに寿命を最大 20% 縮めて散らす。
+     * <p>[JA] 寿命をキーごとに少しずつ変える — {@code base} から最大 20% をランダムに引く。
+     * 🐛 2026-10-19 データ規模計測(docs/83 §5 · mixed {@code 160904Z}): 一度に埋まったキーは一度に切れる。キャッシュを丸ごと空けた後
+     * (flush-cache · 企画展境界の {@code EventScheduler} · 以前の評価更新)再び埋まった {@code search_cache} キー 48 個が、ちょうど
+     * 60 分後の同じ秒に切れて 20 秒間 DB に殺到し、そのとき再び埋まった 48 個がまた全部 17:15 に切れるところだった — 一度できた群れは
+     * 毎時繰り返す。散らしておけば一巡で群れがほどける。
      */
     static RedisCacheWriter.TtlFunction jittered(Duration base) {
         long millis = base.toMillis();
@@ -141,6 +153,10 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
             //    (공개 CA)로 검증한다. 관리형 Redis(Upstash 등)가 바로 이 경우다: 공개 CA 인증서에
             //    비밀번호 인증이고 클라이언트 인증서는 존재하지 않는다. 예전 코드는 빈 경로도
             //    무조건 열어서, TLS 를 켜는 순간 FileNotFoundException 으로 기동이 죽었다(docs/32 §4).
+            // [JA] ⚠️ 証明書パスが空なら SslOptions をそもそも作らない — JVM 既定のトラストストア
+            //         (公開 CA)で検証する。マネージド Redis(Upstash など)がまさにこの場合である: 公開 CA 証明書に
+            //         パスワード認証で、クライアント証明書は存在しない。以前のコードは空のパスも
+            //         無条件に開いていたため、TLS を有効にした瞬間に FileNotFoundException で起動が死んだ(docs/32 §4)。
             ClientOptions.Builder clientOptions = ClientOptions.builder()
                     .socketOptions(socket)
                     .protocolVersion(ProtocolVersion.RESP3);
@@ -190,11 +206,13 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
     @Bean
     public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory) {
         // 만료 기간이 없는 영구 캐시 설정
+        // [JA] 有効期限のない永続キャッシュ設定
         RedisCacheConfiguration permanentCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
             .disableCachingNullValues()
             .serializeValuesWith(SerializationPair.fromSerializer(permanentValueSerializer()));
         
         // 캐시 이름별 설정 맵 생성
+        // [JA] キャッシュ名ごとの設定マップを作成
         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
 
         // `products` 캐시 — 상품 목록 · 상세. 🐛 예전에는 만료 없이 영구였다 — 무효화를 하나 놓치면(상품 등록 · 색상 추가 · 별점 ·
@@ -206,16 +224,19 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
                 .serializeValuesWith(SerializationPair.fromSerializer(permanentValueSerializer())));
         
         // `search_cache` 캐시 설정: 30분 보관
+        // [JA] `search_cache` キャッシュ設定: 30 分保持
         cacheConfigurations.put("search_cache", redisCacheConfiguration(Duration.ofMinutes(60)));
 
         
 
         // 필터 메뉴 넷 — 24시간(다시 계산은 값의 계산 시각으로 10분마다 뒤에서, FACETS_TTL)
+        // [JA] フィルタメニュー 4 つ — 24 時間(再計算は値の計算時刻を基準に 10 分ごとに裏で、FACETS_TTL)
         for (String facets : FACET_CACHES) {
             cacheConfigurations.put(facets, redisCacheConfiguration(FACETS_TTL));
         }
 
         // `product_cache` 캐시 설정: 영구 보관
+        // [JA] `product_cache` キャッシュ設定: 永続保持
         cacheConfigurations.put("product_cache", permanentCacheConfig);
         cacheConfigurations.put("products_cache", permanentCacheConfig);
 
@@ -332,12 +353,17 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      * 캐시 값 직렬화기. 기본 {@link GenericJackson2JsonRedisSerializer} 와 동일하게 타입 정보를
      * 남기되, {@link PageJacksonModule} 을 추가해 {@code Page} 를 되읽을 수 있게 한다.
      * 이것이 없으면 검색 캐시가 히트하는 순간 역직렬화에 실패해 500 이 된다(docs/16 B-27).
+     *
+     * <p>[JA] キャッシュ値のシリアライザ。既定の {@link GenericJackson2JsonRedisSerializer} と同様に型情報を
+     *      残しつつ、{@link PageJacksonModule} を追加して {@code Page} を読み戻せるようにする。
+     *      これがないと検索キャッシュがヒットした瞬間にデシリアライズに失敗して 500 になる(docs/16 B-27)。
      */
     static GenericJackson2JsonRedisSerializer cacheValueSerializer() {
         return new SinglePassJsonRedisSerializer(cacheValueMapper(new ObjectMapper()));
     }
 
     /** {@link #cacheValueSerializer()} 의 매퍼 설정 — 테스트가 같은 설정을 다른 매퍼(세는 파서 공장)에 얹는다. */
+    // [JA] {@link #cacheValueSerializer()} のマッパー設定 — テストが同じ設定を別のマッパー(数えるパーサファクトリ)に載せる。
     static ObjectMapper cacheValueMapper(ObjectMapper mapper) {
         mapper.registerModule(new JavaTimeModule());
         mapper.registerModule(new PageJacksonModule());
@@ -345,6 +371,7 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
         // 모르는 필드는 무시한다 — permanentValueSerializer 와 같은 이유. ／ [JA] 未知のフィールドは無視する(同じ理由)。
         mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         // GenericJackson2JsonRedisSerializer 기본 동작과 동일하게 @class 로 타입을 남긴다.
+        // [JA] GenericJackson2JsonRedisSerializer の既定動作と同じく @class で型を残す。
         mapper.activateDefaultTypingAsProperty(
                 mapper.getPolymorphicTypeValidator(),
                 ObjectMapper.DefaultTyping.NON_FINAL,

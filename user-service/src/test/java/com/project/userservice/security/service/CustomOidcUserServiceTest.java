@@ -25,6 +25,9 @@ import com.project.userservice.security.response.GoogleResponse;
 /**
  * 🔴 회귀 — openid scope 가 있는 등록(구글·LINE)은 스프링이 OIDC 경로로 처리한다. 예전에는 그 경로에 계정 연결이 없어
  * 사용자가 만들어지지 않았고, 성공 핸들러의 {@code (CustomOAuth2User)} 형 변환이 실패했다.
+ *
+ * <p>[JA] 🔴 回帰 — openid scope のある登録(Google・LINE)は Spring が OIDC 経路で処理する。以前はその経路にアカウント連携がなく
+ * ユーザーが作られず、成功ハンドラーの {@code (CustomOAuth2User)} 型変換が失敗していた。
  */
 @DisplayName("OIDC 소셜 로그인 — 계정 연결은 OAuth2 경로와 같은 규칙으로")
 class CustomOidcUserServiceTest {
@@ -58,6 +61,7 @@ class CustomOidcUserServiceTest {
         verify(accounts).resolve(eq("google"), argThat(c -> "a@gmail.com".equals(c.get("email"))), eq("tok"));
         assertInstanceOf(CustomOidcUser.class, principal);
         // 성공 핸들러는 이 형 변환으로 사용자를 찾는다 — 예전에는 여기서 ClassCastException
+        // [JA] 成功ハンドラーはこの型変換でユーザーを探す — 以前はここで ClassCastException
         assertEquals("a@gmail.com", ((CustomOAuth2User) principal).getEmail());
         assertEquals("id-token", principal.getIdToken().getTokenValue());
         assertTrue(principal.getAuthorities().stream().anyMatch(a -> "ROLE_USER".equals(a.getAuthority())));

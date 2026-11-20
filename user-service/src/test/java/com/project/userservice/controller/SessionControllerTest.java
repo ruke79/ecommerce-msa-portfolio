@@ -31,6 +31,7 @@ import com.project.userservice.service.impl.UserServiceImpl;
 import jakarta.servlet.http.Cookie;
 
 /** 모든 기기에서 로그아웃 — 엔드포인트(docs/68 §8). 끊는 동작 자체는 RefreshTokenRotationTest(실제 Redis). */
+// [JA] 全機器からのログアウト — エンドポイント(docs/68 §8)。切る動作自体は RefreshTokenRotationTest(実際の Redis)。
 @DisplayName("모든 기기에서 로그아웃 — 엔드포인트")
 class SessionControllerTest {
 
@@ -61,6 +62,7 @@ class SessionControllerTest {
     }
 
     /** 실제 principal — JwtAuthFilter 가 세우는 것과 같다. 가입 아이디(kim)와 이메일이 다르다. */
+    // [JA] 実際の principal — JwtAuthFilter が立てるものと同じ。登録 ID(kim)とメールが違う。
     private static UserDetailsImpl realPrincipal() {
         User u = new User("kim", "kim@example.com", "x");
         u.setUserId(7L);

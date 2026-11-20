@@ -30,6 +30,18 @@ import com.project.order_service.repository.jpa.OrderRepository;
  * <p>이런 종류의 결함은 <b>기능 테스트로는 절대 잡히지 않는다</b> — 자기 주문을 조회하는
  * 정상 경로는 고치기 전에도 잘 동작했기 때문이다. 그래서 "남의 것을 요청하면 거절한다"를
  * 명시적으로 고정해 둔다.
+ *
+ * <p>[JA] 注文照会の<b>所有権チェック</b>の回帰テスト。
+ *
+ * <p>このテストが守ろうとするのは一つ: <b>他人の注文を読めてはならない。</b>
+ *
+ * <p>以前の実装は {@code getOrder(orderId, email, filter)} が {@code email}
+ * を引数に受けながら使わず、{@code orderRepository.findById(orderId)} だけを行っていた。
+ * コントローラーにもチェックがなく、{@code GET /api/order/1}、{@code /2}、{@code /3} …
+ * と番号をなぞるだけで全顧客の注文履歴・配送先・連絡先・決済金額を読めた(IDOR)。
+ *
+ * <p>この種の欠陥は<b>機能テストでは決して捕まらない</b> — 自分の注文を照会する正常経路は直す前もよく動いていたからである。
+ * だから「他人のものを要求したら拒否する」を明示的に固定しておく。
  */
 class OrderOwnershipTest {
 
@@ -44,6 +56,7 @@ class OrderOwnershipTest {
         orderRepository = mock(OrderRepository.class);
 
         // 생성자 인자 순서는 @RequiredArgsConstructor 가 만드는 필드 선언 순서를 따른다.
+        // [JA] コンストラクタ引数の順序は @RequiredArgsConstructor が作るフィールド宣言順に従う。
         service = new OrderDataService(
                 orderRepository,
                 new ObjectMapper(),
@@ -72,6 +85,7 @@ class OrderOwnershipTest {
     @DisplayName("남의 주문을 주문번호로 조회하면 아무것도 돌려주지 않는다")
     void otherCustomersOrderIsNotReadable() {
         // 침입자가 주문번호 1번(소유자: OWNER)을 그대로 요청한다.
+        // [JA] 侵入者が注文番号 1(所有者: OWNER)をそのまま要求する。
         assertThat(service.loadOrder(1L, INTRUDER_ID, "")).isNull();
     }
 
@@ -80,6 +94,7 @@ class OrderOwnershipTest {
     void unknownRequesterGetsNothing() {
         // 신원이 없는 요청이다. 소유자를 특정할 수 없으므로 통과시키면 안 된다 — null 을 "일치"로
         // 처리하면 전부 열린다.
+        // [JA] 本人情報のないリクエストである。所有者を特定できないので通してはならない — null を「一致」と扱うとすべて開いてしまう。
         assertThat(service.loadOrder(1L, null, "")).isNull();
     }
 

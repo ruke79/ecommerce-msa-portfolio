@@ -46,6 +46,8 @@ import jakarta.servlet.http.Cookie;
 
 /**
  * 🔴 패스키 엔드포인트 — 등록 전 최근 로그인 · 알림 · 남의 것 404 · 로그인 끝 처리(docs/68 §20).
+ *
+ * <p>[JA] 🔴 パスキーのエンドポイント — 登録前の最近のログイン・通知・他人のものは 404・ログイン完了処理(docs/68 §20)。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)

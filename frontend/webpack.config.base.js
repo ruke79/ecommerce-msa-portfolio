@@ -16,6 +16,8 @@ module.exports = {
       // jsconfig.json 의 baseUrl:"src" 는 에디터에만 적용된다. webpack 은 여기 적힌
       // alias 로만 해석하므로, 새 최상위 폴더를 만들면 이곳에도 등록해야 한다 —
       // 빠뜨리면 'Module not found: Can't resolve ...' 로 빌드가 깨진다.
+      // [JA] jsconfig.json の baseUrl:"src" はエディタにだけ効く。webpack はここに書かれた alias でしか解決しないので、
+      //      新しいトップレベルフォルダを作ったらここにも登録する必要がある — 漏れると 'Module not found: Can't resolve ...' でビルドが壊れる。
       api: path.resolve(__dirname, "./src/api"),
       components: path.resolve(__dirname, "./src/components"),
       pages: path.resolve(__dirname, "./src/pages"),
@@ -30,6 +32,8 @@ module.exports = {
       //    moduleDirectories:["node_modules","src"] 로 src 아래를 전부 해석하므로
       //    테스트 426개가 전부 통과했는데, webpack 은 여기 적힌 것만 본다 —
       //    운영 빌드에서만 'Can't resolve i18n/I18nProvider' 로 깨졌다.
+      // [JA] ⚠️ すぐ上のコメントが警告するその罠に実際にはまった。jest は moduleDirectories:["node_modules","src"] で src 以下をすべて解決するので
+      //      テスト 426 件がすべて通ったが、webpack はここに書かれたものしか見ない — 本番ビルドでだけ 'Can't resolve i18n/I18nProvider' で壊れた。
       i18n: path.resolve(__dirname, "./src/i18n"),
     },
     extensions: [".js", ".jsx"],
@@ -61,7 +65,7 @@ module.exports = {
         type: "asset",
         parser: {
           dataUrlCondition: {
-            maxSize: 8 * 1024, // 8KB 미만은 인라인으로 처리
+            maxSize: 8 * 1024, // 8KB 미만은 인라인으로 처리 ／ [JA] 8KB 未満はインライン化する
           },
         },
         generator: {

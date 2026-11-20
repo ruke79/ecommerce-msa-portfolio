@@ -39,16 +39,34 @@ package com.project.common.constants.event;
  *   <li><b>구매 이력</b> — {@link #PURCHASED} / {@link #NEVER_PURCHASED}</li>
  *   <li><b>등급</b> — {@link #TIER_SILVER} / {@link #TIER_GOLD} / {@link #TIER_VIP}</li>
  * </ul>
+ *
+ * <p>[JA] 企画展の対象顧客層。
+ * <b>この値が何を分けるか。</b>企画展に付いた<b>クーポンを誰が受け取れるか</b>である。陳列価格(商品に付く割引)は分けない — その理由がこの設計の核心なので以下に書く。
+ * 🔴 なぜ陳列価格をセグメントで分けないか:
+ * <b>1. 商品照会には身元がない。</b>ゲートウェイの catalog-service 公開ルートには {@code JwtAuthorization} が付かない(付けると非会員が商品を見られない)。
+ * そのため一覧と詳細を描くとき、サーバーは見ている人が誰か分からない。
+ * <b>2. キャッシュがセグメント数だけ分かれる。</b>商品一覧は Redis にキャッシュされる({@code @Cacheable(value="products", ...)})。人ごとに価格が違えば
+ * キャッシュキーにセグメントが入り、キャッシュ項目がセグメント数だけ増える。セグメントが増えるたびにキャッシュヒット率が下がる。
+ * <b>3. 何より、画面ごとに価格が変わる。</b>一覧で 30% を見て入ったのに詳細やカートで定価になる — 直したばかりのバグがまさにその形だった。
+ * 身元を知る画面と知らない画面が混ざると、そのバグが構造的に蘇る。
+ * だからセグメント割引は<b>クーポン</b>で与える。クーポンは決済時点に適用され、そのときは身元が確実で、陳列価格は誰が見ても同じである。
+ * 実際のコマースが「新規登録者に追加 20%」をクーポンで出す理由でもある。
+ * セグメントは利用者データを持つ <b>user-service が判定</b>する。「新規は何日か」はそちらのポリシーで、他サービスが登録日を受け取って各自計算すると規則が複数箇所に散らばる。
+ * 三つの軸: 値は互いに独立した三つの軸から来る。利用者は各軸から一つずつ受け取るので、リストが複数あるのが正常である — 例えばゴールド等級の既存顧客は
+ * {@code [EXISTING_USER, PURCHASED, TIER_SILVER, TIER_GOLD]} を持つ。軸は登録時点({@link #NEW_USER} / {@link #EXISTING_USER})、
+ * 購入履歴({@link #PURCHASED} / {@link #NEVER_PURCHASED})、等級({@link #TIER_SILVER} / {@link #TIER_GOLD} / {@link #TIER_VIP})。
  */
 public enum AudienceSegment {
 
-    /** 전체. 로그인한 사용자라면 누구나. */
+    /** 전체. 로그인한 사용자라면 누구나. ／ [JA] 全体。ログインした利用者なら誰でも。 */
     ALL,
 
     /**
      * 신규 가입자.
      *
      * <p>기준일 수는 user-service 설정({@code user.segment.new-user-days})이 정한다.
+     *
+     * <p>[JA] 新規登録者。基準日数は user-service の設定({@code user.segment.new-user-days})が決める。
      */
     NEW_USER,
 
@@ -57,6 +75,9 @@ public enum AudienceSegment {
      *
      * <p>"신규만" 의 반대편이 필요하다. 신규에게만 주는 혜택이 있으면 기존 고객에게만 주는
      * 혜택도 있어야 형평이 맞고, 둘을 합치면 정확히 {@link #ALL} 이 된다.
+     *
+     * <p>[JA] 既存登録者 — {@link #NEW_USER} でないログイン利用者。
+     * 「新規のみ」の反対側が必要である。新規にだけ与える特典があれば既存顧客にだけ与える特典もあって公平になり、両者を合わせると正確に {@link #ALL} になる。
      */
     EXISTING_USER,
 
@@ -66,6 +87,10 @@ public enum AudienceSegment {
      * <p>🔴 등급과 달리 <b>기간을 보지 않는다.</b> 등급은 "지금 얼마나 사는가" 를 묻고
      * 이쪽은 "산 적이 있는가" 를 묻는다. 여기에 3개월 창을 걸면 2년째 잘 사다가 최근에
      * 잠잠한 고객이 {@link #NEVER_PURCHASED} 로 분류돼 <b>첫 구매 쿠폰</b>을 받는다.
+     *
+     * <p>[JA] 購入履歴がある利用者 — <b>登録以降一度でも</b>決済したことがある。
+     * 🔴 等級と違い<b>期間を見ない。</b>等級は「今どれだけ買っているか」を問い、こちらは「買ったことがあるか」を問う。ここに 3 か月の窓を掛けると、
+     * 2 年間よく買っていて最近静かな顧客が {@link #NEVER_PURCHASED} に分類され<b>初回購入クーポン</b>を受け取る。
      */
     PURCHASED,
 
@@ -75,6 +100,10 @@ public enum AudienceSegment {
      * <p>{@link #NEW_USER} 와 다르다. 가입은 2년 전인데 아직 첫 주문이 없는 사람이 여기
      * 속하고, 어제 가입해서 바로 산 사람은 여기 속하지 않는다. 첫 구매 유도 쿠폰의
      * 진짜 대상은 가입일이 아니라 이쪽이다.
+     *
+     * <p>[JA] 一度も購入していない利用者。
+     * {@link #NEW_USER} とは違う。登録は 2 年前だがまだ初回注文がない人はここに属し、昨日登録してすぐ買った人はここに属さない。
+     * 初回購入を促すクーポンの本当の対象は登録日ではなくこちらである。
      */
     NEVER_PURCHASED,
 
@@ -89,16 +118,22 @@ public enum AudienceSegment {
      * <p>그래서 "일반 등급만" 같은 조건은 이 축으로 만들 수 없다 — 의도적이다. 등급이
      * 낮은 사람을 콕 집어 겨냥하는 판촉은 {@link #NEVER_PURCHASED}/{@link #NEW_USER}
      * 처럼 <b>행동</b>으로 표현하는 편이 정확하고, 사용자에게도 덜 불쾌하다.
+     *
+     * <p>[JA] シルバー<b>以上</b>。
+     * 🔴 <b>TIER_* はすべて「以上」である</b> — 「ちょうどその等級」ではない。ゴールド利用者は {@code TIER_SILVER} と {@code TIER_GOLD} を<b>両方</b>持つ
+     * ({@link CustomerTier#segments()})。おかげで「シルバー以上のみ」はここで単純な包含チェックで済み、等級の高低を知る場所が {@link CustomerTier} 一つに保たれる。
+     * そのため「一般等級のみ」のような条件はこの軸では作れない — 意図的である。等級の低い人を狙い撃ちする販促は {@link #NEVER_PURCHASED}/{@link #NEW_USER}
+     * のように<b>行動</b>で表す方が正確で、利用者にとっても不快感が少ない。
      */
     TIER_SILVER,
 
-    /** 골드 이상. {@link #TIER_SILVER} 의 주석 참고 — "이상"이다. */
+    /** 골드 이상. {@link #TIER_SILVER} 의 주석 참고 — "이상"이다. ／ [JA] ゴールド以上。{@link #TIER_SILVER} のコメント参照 — 「以上」である。 */
     TIER_GOLD,
 
-    /** VIP. 최상위라 "이상"과 "정확히"가 같다. */
+    /** VIP. 최상위라 "이상"과 "정확히"가 같다. ／ [JA] VIP。最上位なので「以上」と「ちょうど」が同じ。 */
     TIER_VIP;
 
-    /** 문자열을 안전하게 읽는다. 모르는 값이나 null 은 {@link #ALL}. */
+    /** 문자열을 안전하게 읽는다. 모르는 값이나 null 은 {@link #ALL}. ／ [JA] 文字列を安全に読む。不明な値や null は {@link #ALL}。 */
     public static AudienceSegment from(String raw) {
         if (raw == null || raw.isBlank()) {
             return ALL;
@@ -109,6 +144,8 @@ public enum AudienceSegment {
             // 모르는 값을 거절하지 않고 ALL 로 읽는다. 세그먼트가 나중에 늘어났을 때
             // 옛 서비스가 그 값을 만나도 "아무에게도 못 준다" 가 되지 않게 한다 —
             // 혜택을 못 받는 쪽이 조용히 틀리는 것보다 나쁘다.
+            // [JA] 不明な値を拒否せず ALL として読む。セグメントが後で増えたとき、古いサービスがその値に出会っても「誰にも与えられない」に
+            //      ならないようにする — 特典を受け取れない側が静かに誤る方が悪い。
             return ALL;
         }
     }
@@ -133,7 +170,7 @@ public enum AudienceSegment {
         }
     }
 
-    /** 이 사용자가 가진 세그먼트 목록으로 대상 여부를 판정한다. */
+    /** 이 사용자가 가진 세그먼트 목록으로 대상 여부를 판정한다. ／ [JA] この利用者が持つセグメント一覧で対象かどうかを判定する。 */
     public boolean matches(java.util.Collection<String> userSegments) {
         if (this == ALL) {
             return true;

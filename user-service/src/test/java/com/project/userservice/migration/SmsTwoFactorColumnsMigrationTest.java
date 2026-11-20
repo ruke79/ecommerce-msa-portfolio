@@ -62,6 +62,7 @@ class SmsTwoFactorColumnsMigrationTest {
                     + "|| coalesce(sms_two_factor_binding, '-') FROM users.users ORDER BY user_id"))
                     .containsExactly("1:true:false:-", "2:false:false:-");
             // 열을 모르는 옛 이미지의 가입 — 롤링 중 · 되돌린 뒤에도 된다
+            // [JA] 列を知らない旧イメージの登録 — ローリング中 · 戻した後でもできる
             exec(db, String.format(OLD_INSERT, 3, 3, 3, "false"));
             assertThat(rows(db, "SELECT sms_two_factor_enabled::text FROM users.users WHERE user_id = 3")).containsExactly("false");
             assertThat(rows(db, "SELECT character_maximum_length::text FROM information_schema.columns WHERE table_schema = 'users' "

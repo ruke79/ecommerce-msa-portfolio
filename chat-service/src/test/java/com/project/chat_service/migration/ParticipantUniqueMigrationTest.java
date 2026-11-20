@@ -19,6 +19,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /** 채팅 참여 (방, 회원) 유니크(V9) — 이미 생긴 중복을 지운 뒤 유니크를 거는지, 실제 PostgreSQL 에서. */
+// [JA] チャット参加(ルーム、会員)のユニーク(V9) — すでにできた重複を消してからユニークをかけるかを、実際の PostgreSQL で。
 @Tag("containers")
 @Testcontainers
 @DisplayName("채팅 참여 유니크 (V9, PostgreSQL)")

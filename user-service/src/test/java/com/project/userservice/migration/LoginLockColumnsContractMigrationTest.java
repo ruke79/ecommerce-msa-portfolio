@@ -53,6 +53,7 @@ class LoginLockColumnsContractMigrationTest {
         flyway("18").migrate();
         try (Connection db = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // 옛 모양: Redis 로 옮기기 전 코드가 남긴 값(실패 3회 · 잠금 시각)
+            // [JA] 古い形: Redis に移す前のコードが残した値(失敗 3 回 · ロック時刻)
             exec(db, "INSERT INTO users.users (user_id, username, email, account_non_expired, account_non_locked, "
                     + "credentials_non_expired, email_verified, enabled, is_two_factor_enabled, failed_login_attempts, lock_expires_at) "
                     + "VALUES (1, 'u1', 'u1@example.com', true, true, true, true, true, false, 3, now() + interval '10 minutes')");
@@ -63,6 +64,7 @@ class LoginLockColumnsContractMigrationTest {
             assertThat(rows(db, LOCK_COLUMNS)).as("V19 — 두 열이 없다").isEmpty();
             assertThat(rows(db, "SELECT user_id || ':' || email FROM users.users")).as("사용자 행은 그대로").containsExactly("1:u1@example.com");
             // 지금 코드의 가입 모양(두 열 없이)
+            // [JA] 今のコードの登録の形(二つの列なし)
             exec(db, "INSERT INTO users.users (user_id, username, email, account_non_expired, account_non_locked, "
                     + "credentials_non_expired, email_verified, enabled, is_two_factor_enabled) "
                     + "VALUES (2, 'u2', 'u2@example.com', true, true, true, true, true, false)");

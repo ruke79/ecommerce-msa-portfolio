@@ -17,6 +17,16 @@
 #
 # 등록 토큰: GitHub 저장소 → Settings → Actions → Runners → New self-hosted runner 화면의 `--token` 값(1시간 유효).
 # 🔒 토큰은 **명령줄 인자로 넘기지 않는다**(ps·셸 이력에 남는다) — 화면에서 입력받아 환경 변수로만 config.sh 에 넘긴다.
+# [JA] 運用アクション ㊵ — OCI Ampere(arm64)インスタンスに GitHub Actions の**セルフホステッドランナー**をインストールする(docs/36 §6)。
+#      なぜ: クラスタはインバウンドが SSH 22 番(特定 IP)一つだけなので GitHub ホステッドランナーが kube-apiserver に届かない。ランナーは
+#      GitHub 側への**外向き接続だけ**を使う — ポートを追加で開けない。デプロイワークフロー(.github/workflows/deploy-oci.yml)がこのランナーで
+#      `ops/28-deploy.sh` を実行する(Environment `production` の承認後)。
+#      ランナーは**運用者と同じユーザ**で動く — そうすれば ~/.kube/config(クラスタ)・~/.docker/config.json(GHCR)・デプロイ履歴
+#      (~/.ecommerce-msa/deploy-journal.tsv)が手でデプロイするときと同じになる。別ユーザを作ると履歴が二つに分かれる。
+#      使い方は上記(check = インストール前点検 — arm64・kubectl・docker・オーバーレイ・リポジトリの公開有無、install = 取得 → 登録(トークンは入力で) → サービスとして起動、
+#      status = サービス状態、uninstall = サービス停止・解除 → 登録解除(トークン必要))。
+#      登録トークン: GitHub リポジトリ → Settings → Actions → Runners → New self-hosted runner 画面の `--token` 値(1 時間有効)。
+#      🔒 トークンは**コマンドライン引数で渡さない**(ps・シェル履歴に残る)— 画面で入力を受け環境変数でのみ config.sh に渡す。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -81,6 +91,7 @@ install() {
         local tgz="actions-runner-linux-arm64-$ver.tar.gz"
         curl -fsSL -o "$RUNNER_DIR/$tgz" "https://github.com/actions/runner/releases/download/v$ver/$tgz"
         # 릴리스가 알리는 SHA-256 과 대조한다(받은 파일이 그 파일인가).
+        # [JA] リリースが公表する SHA-256 と照合する(受け取ったファイルが本当にそのファイルか)。
         local want
         want=$(curl -fsSL "https://api.github.com/repos/actions/runner/releases/tags/v$ver" \
             | tr ',' '\n' | grep -A2 "\"name\": *\"$tgz\"" | sed -n 's/.*"digest": *"sha256:\([0-9a-f]*\)".*/\1/p' | head -1) || true
@@ -100,6 +111,7 @@ install() {
     read -rs token; echo >&2
     [ -n "$token" ] || die "토큰이 비었다"
     # 🔒 인자가 아니라 환경 변수로 — 러너는 ACTIONS_RUNNER_INPUT_<이름> 을 같은 이름의 인자로 읽는다.
+    # [JA] 🔒 引数ではなく環境変数で — ランナーは ACTIONS_RUNNER_INPUT_<名前> を同名の引数として読む。
     ( cd "$RUNNER_DIR" && ACTIONS_RUNNER_INPUT_TOKEN="$token" ./config.sh --unattended --replace \
         --url "$REPO_URL" --name "$RUNNER_NAME" --labels "$LABELS" --work _work )
     unset token

@@ -23,11 +23,24 @@ const path = require("path");
  *       키를 가리키는 것이지 남의 브랜드를 사칭하는 것이 아니다. 오히려 이름을 바꾸면
  *       안내가 틀린 말이 된다.</li>
  * </ul>
+ *
+ * <p>[JA] 🔒 他人の商標が再び入り込まないよう防ぐ。
+ * このプロジェクトは Amazon クローンのテンプレートから出発し、ブランド文字列とロゴが差し替えられない
+ * まま <b>公開ドメインにデプロイされていた</b>。ログイン・登録・パスワード再設定画面に Amazon のロゴが
+ * 掛かっており、登録ボタンの下には Amazon の規約に同意する旨の文が書かれていた — 事実でない規約表示だ。
+ * 一度消すだけでは足りない。テンプレートからコードをさらに持ってきたり、戻すコミット
+ * ひとつで静かに復活する。実際にデプロイされるコードにその文字列が無いことを固定する。
+ * 二つは止めない: <b>Tailwind の色トークン</b>({@code amazon-blue_dark} など) — 画面に見える文字ではなく
+ * CSS クラス名だ。ここまで変えるとスタイルの全面差し替えになり、今防ぎたいこと(ユーザーに他人の商号で
+ * <b>見える</b>こと)とは別の問題だ。<b>{@code AMAZON_ACCESS_KEY} のような環境変数名</b> — このシステムは実際に AWS S3
+ * を使い、リポジトリのバナーが管理者に「このキーを確認せよ」と知らせる。本物の設定
+ * キーを指すもので他人のブランドを騙るものではない。むしろ名前を変えると案内が誤りになる。
  */
 
 const SRC = path.join(__dirname, "..");
 
 // 색상 토큰과 AWS 환경변수 이름(대문자 + 밑줄)은 제외한다.
+// [JA] 色トークンと AWS 環境変数名(大文字 + アンダースコア)は除外する。
 const ALLOWED_TOKEN = /amazon[-_](blue|orange)[a-z_]*|AMAZON_[A-Z_]+/g;
 const EXEMPT_FILES = new Set([
   path.join(SRC, "constants", "brand.js"),
@@ -49,6 +62,7 @@ function walk(dir, out = []) {
 }
 
 /** 주석을 걷어낸다 — "예전에는 Amazon 로고였다" 는 설명은 화면에 나가지 않는다. */
+// [JA] コメントを取り除く — 「以前は Amazon のロゴだった」という説明は画面に出ない。
 function stripComments(source) {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -80,6 +94,8 @@ describe("남의 상표가 코드에 남아 있지 않다", () => {
   it("로고 이미지 파일이 없다 — public/ 은 운영에서 그대로 서빙된다", () => {
     // webpack.config.prod 의 CopyPlugin 이 public/ 을 루트로 복사하므로, 코드가
     // 참조하지 않아도 파일이 남아 있으면 /assets/images/amazon-dark.png 로 공개된다.
+    // [JA] webpack.config.prod の CopyPlugin が public/ をルートにコピーするので、コードが
+    //      参照していなくてもファイルが残っていれば /assets/images/amazon-dark.png として公開される。
     for (const dir of [path.join(SRC, "assets", "images"),
                        path.join(SRC, "..", "public", "assets", "images")]) {
       if (!fs.existsSync(dir)) continue;

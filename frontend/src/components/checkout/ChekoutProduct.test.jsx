@@ -5,9 +5,11 @@ import Product from "components/checkout/ChekoutProduct";
 import { withI18n } from "i18n/testing";
 
 // 컴포넌트가 useTranslation 을 쓰므로 Provider 로 감싼다 — rerender 도 같은 wrapper 를 쓴다.
+// [JA] コンポーネントが useTranslation を使うので Provider で包む — rerender も同じ wrapper を使う。
 const render = (ui, options) => rtlRender(ui, { wrapper: ({ children }) => withI18n(children), ...options });
 
 /** 서버의 checkout 응답 모양(CartProductDto) — 색상은 {@code color.colorImage} 다. */
+// [JA] サーバーの checkout 応答の形(CartProductDto) — 色は color.colorImage である。
 const cart = {
     cartTotal: 129.98,
     products: [
@@ -29,6 +31,9 @@ const renderIt = (c = cart) => render(<MemoryRouter><Product cart={c} /></Memory
  * 🐛 색상 칩이 {@code color.image} 를 읽어 {@code src={undefined}} 가 됐고, 브라우저는 그런
  * {@code <img>} 를 빈 칸이 아니라 <b>alt(상품 이름)를 글자로</b> 그린다 — 칩마다 이름이
  * 배경처럼 겹쳐 보였다.
+ *
+ * <p>[JA] 🐛 色チップが color.image を読んで src={undefined} になり、ブラウザはそういう <img> を空欄ではなく
+ * alt(商品名)を文字として描く — チップごとに名前が背景のように重なって見えた。
  */
 describe("결제 화면의 장바구니 요약", () => {
     it("상품 이미지와 색상 칩은 DTO 의 image · color.colorImage 를 쓴다", () => {
@@ -47,12 +52,14 @@ describe("결제 화면의 장바구니 요약", () => {
     it("줄 금액과 소계를 상점 통화로 보여 준다", () => {
         renderIt();
         // 한국어 화면(ko-KR)의 달러 표기는 "US$" 다 — 통화 표기는 앱 언어를 따른다(useMoney).
+        // [JA] 韓国語画面(ko-KR)のドル表記は "US$" である — 通貨表記はアプリの言語に従う(useMoney)。
         expect(screen.getByText("US$119.98")).toBeInTheDocument();
         expect(screen.getByText("US$129.98")).toBeInTheDocument();
         expect(screen.getByText("2개")).toBeInTheDocument();
     });
 
     /** 🔴 일본어 화면에 영어("Cart"·"items"·"Subtotal")가 남으면 안 된다. */
+    // [JA] 🔴 日本語画面に英語("Cart" · "items" · "Subtotal")が残ってはならない。
     it("일본어로 그리면 제목·개수·소계가 일본어다", () => {
         rtlRender(withI18n(<MemoryRouter><Product cart={cart} /></MemoryRouter>, "ja"));
         expect(screen.getByRole("heading", { name: "カート" })).toBeInTheDocument();

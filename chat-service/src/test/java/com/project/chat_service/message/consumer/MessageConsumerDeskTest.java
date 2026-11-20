@@ -18,6 +18,8 @@ import com.project.common.constants.chat.MessageType;
 
 /**
  * 상담 메시지가 저장되면 데스크에 알린다 (docs/58 §9).
+ *
+ * <p>[JA] 相談メッセージが保存されたらデスクに知らせる(docs/58 §9)。
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("MessageConsumer — 상담 데스크 알림")

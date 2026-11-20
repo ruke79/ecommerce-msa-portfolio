@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /** 서킷 브레이커의 상태를 로그로 — 실패율 초과(ERROR) · 상태 전이(WARN). 개별 호출 실패는 DEBUG. */
+// [JA] サーキットブレーカーの状態をログに — 失敗率超過(ERROR) · 状態遷移(WARN)。個々の呼び出し失敗は DEBUG。
 @Configuration
 @Slf4j
 public class Resilience4jConfig {

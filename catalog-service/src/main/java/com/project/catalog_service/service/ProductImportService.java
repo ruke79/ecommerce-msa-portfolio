@@ -46,7 +46,23 @@ import lombok.extern.slf4j.Slf4j;
  * (k8s/41)에서 다시 누른 요청이 다른 파드로 가면 임포트가 동시에 두 번 돌았다 — 둘 다 "비어 있음" 을 통과해 카탈로그가
  * 두 벌이 되거나, reset 쪽이 다른 쪽이 넣는 중인 데이터를 지웠다. 진행 상황(status)은 여전히 요청을 받은 파드의 것이다.
  *
- * <p>[JA] ポッド間のロック(Redis)。以前は AtomicBoolean だけで、別ポッドに届いた再実行が同時に走った。
+ * <p>[JA] CSV 一括商品登録。三つを直す。
+ *
+ * <p>[JA] <b>1. 同期実行。</b> 以前の {@code POST /api/products/load} は {@code jobLauncher.run} をリクエストスレッドでそのまま回していた。
+ * Boot の既定ランチャーは {@code SyncTaskExecutor} なので、ジョブが終わるまで応答が出ない — このジョブは画像 60 枚を S3 へ上げるので数分
+ * かかり、ゲートウェイ · トンネルのタイムアウトに先にかかる。管理者は 504 を見るがジョブは動き続けている。それで「失敗したか?」と思って
+ * もう一度押すと<b>二重に入る。</b> 今はすぐ 202 を返し、進捗は別に問い合わせる。
+ *
+ * <p>[JA] <b>2. 重複実行。</b> このジョブは冪等ではない(エンティティを新しく作って入れる)。同時に二回走ると商品が二組できる。
+ * 一度に一つだけ走るよう止める。
+ *
+ * <p>[JA] <b>3. 開始前のストレージ点検。</b> 画像アップロードが失敗すると今はジョブが失敗する(ImageService.uploadClasspathImage)。
+ * 資格情報が死んでいると、カテゴリ · 商品まで半分入った後で SKU ステップで死ぬということだ。開始前に書き込み一回で確認すれば
+ * その半分を作らない。
+ *
+ * <p>[JA] <b>Pod 間のロック</b>({@link ImportLock}, Redis)。🐛 以前は {@code AtomicBoolean} 一つだけで、レプリカ 2 個(k8s/41)で
+ * 押し直したリクエストが別の Pod へ行くとインポートが同時に二回走った — 両方が「空」を通過してカタログが二組になるか、reset 側が
+ * もう一方の投入中のデータを消した。進捗(status)は依然としてリクエストを受けた Pod のものである。
  */
 @Slf4j
 @Service
@@ -66,6 +82,8 @@ public class ProductImportService {
 
     // 데몬 스레드 하나. 잡이 도는 중에 파드가 내려가면 어차피 중단되고, 데몬이라
     // 종료를 붙잡지 않는다(잡 상태는 BATCH_JOB_EXECUTION 에 남는다).
+    // [JA] デーモンスレッド一つ。ジョブ実行中にポッドが落ちればどのみち中断され、デーモンなので終了を引き止めない
+    //      (ジョブの状態は BATCH_JOB_EXECUTION に残る)。
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "product-import");
         t.setDaemon(true);
@@ -78,11 +96,13 @@ public class ProductImportService {
     }
 
     /** 지금 상태. 진행 중이면 RUNNING, 아니면 마지막 실행 결과. */
+    // [JA] 現在の状態。実行中なら RUNNING、そうでなければ最後の実行結果。
     public ImportStatus status() {
         return last.get();
     }
 
     /** 저장소가 쓰기 가능한지. 등록 화면이 폼을 그리기 전에 묻는다. */
+    // [JA] ストレージが書き込み可能か。登録画面がフォームを描く前に尋ねる。
     public StorageStatus storage() {
         return imageService.probe();
     }
@@ -93,6 +113,9 @@ public class ProductImportService {
      * @throws AlreadyRunningException  이미 돌고 있을 때
      * @throws StorageNotWritableException 이미지 저장소에 쓸 수 없을 때
      * @throws IllegalStateException    잡 빈이 없을 때
+     *
+     * <p>[JA] インポート開始。<b>すぐに戻る。</b>
+     * AlreadyRunningException はすでに動いているとき、StorageNotWritableException は画像ストレージに書けないとき、IllegalStateException はジョブ Bean がないとき。
      */
     public ImportStatus start(boolean reset) {
         Job job = allJobs.get(JOB_NAME);
@@ -105,7 +128,7 @@ public class ProductImportService {
         }
         if (!importLock.tryAcquire()) {
             running.set(false);
-            throw new AlreadyRunningException();   // 다른 파드에서 돌고 있다
+            throw new AlreadyRunningException();   // 다른 파드에서 돌고 있다 ／ [JA] 別のポッドで動いている
         }
 
         try {
@@ -124,6 +147,10 @@ public class ProductImportService {
             //
             //    reset=true 면 비우고 시작한다(CatalogResetService — 되돌릴 수 없다).
             //    시퀀스까지 1 로 되돌려야 하는 이유는 그 클래스 주석에 있다.
+            // [JA] ⚠️ このジョブは冪等ではない — すでに入っているものの上にさらに入れる。だからカタログが空でなければ**開始しない。**
+            //      以前はそのまま動き、失敗したインポートを再度押した運用者がカテゴリ 5→10・サブ 15→30 を作った後、商品で uq_product_slug に引っかかって止まった。
+            //      ユニーク制約がなければ黙って二重になっていた。
+            //      reset=true なら空にしてから始める(CatalogResetService — 元に戻せない)。シーケンスまで 1 に戻す必要がある理由はそのクラスのコメントにある。
             long rows = catalogResetService.countCatalogRows();
             if (rows > 0) {
                 if (!reset) {
@@ -140,6 +167,7 @@ public class ProductImportService {
         ImportStatus started = ImportStatus.running(LocalDateTime.now());
         last.set(started);
         // 가져오기를 시작한 관리자 요청의 traceId·userId 를 작업 스레드로 넘긴다(docs/51 §3).
+        // [JA] インポートを始めた管理者リクエストの traceId・userId を作業スレッドへ渡す(docs/51 §3)。
         executor.submit(com.project.common.logging.MdcTaskDecorator.wrap(() -> run(job)));
         log.info("상품 일괄 임포트를 시작합니다.");
         return started;
@@ -150,6 +178,7 @@ public class ProductImportService {
         try {
             // time 파라미터로 매번 새 인스턴스가 된다 — 같은 파라미터면 Spring Batch 가
             // 재실행을 거부한다(JobInstanceAlreadyCompleteException).
+            // [JA] time パラメータで毎回新しいインスタンスになる — 同じパラメータだと Spring Batch が再実行を拒む(JobInstanceAlreadyCompleteException)。
             JobParameters parameters = new JobParametersBuilder()
                     .addLong("time", System.currentTimeMillis())
                     .toJobParameters();
@@ -162,6 +191,7 @@ public class ProductImportService {
 
             // 실패 원인은 예외 타입까지 남긴다. "이미지 업로드 실패: images/food/Image_2.jpg"
             // 같은 메시지가 그대로 관리자 화면에 보여야 원인을 짚을 수 있다.
+            // [JA] 失敗原因は例外の型まで残す。「画像アップロード失敗: images/food/Image_2.jpg」のようなメッセージがそのまま管理者画面に見えてこそ原因を突き止められる。
             String message = execution.getAllFailureExceptions().isEmpty()
                     ? null
                     : execution.getAllFailureExceptions().get(0).getMessage();
@@ -190,6 +220,7 @@ public class ProductImportService {
     }
 
     // ── 응답 타입 ────────────────────────────────────────────────────────
+    // [JA] ── 応答型 ──
 
     /**
      * @param state IDLE / RUNNING / COMPLETED / FAILED
@@ -207,6 +238,7 @@ public class ProductImportService {
     }
 
     /** 스텝별 결과. 어느 스텝에서 몇 건 만에 멈췄는지가 원인 추적의 시작점이다. */
+    // [JA] ステップ別の結果。どのステップで何件目で止まったかが原因追跡の出発点である。
     public record StepResult(String name, String status, long read, long written, long skipped) {
 
         static StepResult of(StepExecution s) {
@@ -216,8 +248,10 @@ public class ProductImportService {
     }
 
     // ── 예외 ────────────────────────────────────────────────────────────
+    // [JA] ── 例外 ──
 
     /** 이미 돌고 있다. 두 번 돌리면 상품이 두 벌 생긴다. */
+    // [JA] すでに動いている。二回動かすと商品が二重にできる。
     public static class AlreadyRunningException extends RuntimeException {
         public AlreadyRunningException() {
             super("이미 임포트가 진행 중입니다.");
@@ -228,6 +262,9 @@ public class ProductImportService {
      * 카탈로그가 이미 차 있다. 이 잡은 멱등하지 않아 그대로 돌면 두 벌이 된다.
      *
      * <p>메시지에 다음 행동을 적는다 — 운영자가 화면만 보고 무엇을 해야 하는지 알아야 한다.
+     *
+     * <p>[JA] カタログがすでに埋まっている。このジョブは冪等でないので、そのまま動くと二重になる。
+     * <p>メッセージに次の行動を書く — 運用者が画面だけ見て何をすべきか分かる必要がある。
      */
     public static class CatalogNotEmptyException extends RuntimeException {
         public CatalogNotEmptyException(long rows) {
@@ -238,6 +275,7 @@ public class ProductImportService {
     }
 
     /** 이미지 저장소에 쓸 수 없다. 이 상태로 시작하면 데이터가 절반만 들어간다. */
+    // [JA] 画像ストレージに書けない。この状態で始めるとデータが半分だけ入る。
     public static class StorageNotWritableException extends RuntimeException {
         public StorageNotWritableException(String detail) {
             super("이미지 저장소에 쓸 수 없습니다: " + (detail == null ? "원인 미상" : detail));

@@ -39,6 +39,16 @@ public interface PaymentOutboxRepository extends CrudRepository<PaymentOutboxEve
      *
      * <p>배치 크기를 제한하는 이유: 제한이 없으면 한 레플리카가 밀린 이벤트를 전부 잠그고
      * 나머지는 할 일이 없어진다. 오래된 것부터 가져와 발행 순서도 대체로 보존한다.
+     *
+     * <p>[JA] 発行待ちのアウトボックスイベントを <b>排他的に先取り</b> する。
+     * なぜ必要か: 以前はスケジューラーが {@code findByOutboxStatus(STARTED)} で単に照会していた。レプリカが 1 つのときは表に出ないが、
+     * <b>2 つ以上だと両方が同じ行を読んで同じイベントを二度発行</b> する。決済リクエストが二度出るのでお金が絡む問題だ。
+     * {@code FOR UPDATE SKIP LOCKED} はすでに他のトランザクションがロックした行を <b>待たずに飛ばす。</b> そのためレプリカ A と B が
+     * 同時にポーリングしても重ならない行の集合を持っていく。通常の {@code FOR UPDATE} なら B が A を待ち、A がコミットした後に
+     * <b>同じ行を再び</b> 拾って重複発行がそのまま起きる — 待たずに飛ばすことが核心だ。
+     * Hibernate はロックタイムアウトのヒント {@code -2}(= {@code LockOptions.SKIP_LOCKED})をその構文に翻訳する。
+     * バッチサイズを制限する理由: 制限がないと 1 つのレプリカが滞留したイベントを全部ロックし、残りはやることがなくなる。
+     * 古いものから取って発行順序もおおむね保つ。
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))

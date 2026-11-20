@@ -32,6 +32,12 @@ import lombok.extern.slf4j.Slf4j;
  *   <li><b>기기 수에 상한을 둔다.</b> 상한이 없으면 쿠키를 지우는 브라우저 하나가 이
  *       사용자의 행을 무한히 늘린다.</li>
  * </ul>
+ *
+ * <p>[JA] このログインは初めて見る機器か。
+ * <p>SECURITY_ALERT を生む唯一の判断である。通知自体は SecurityAlertProducer が送り、ここでは<b>送るかどうか</b>だけを決める。
+ * <p><b>通知は黙って間違えやすい。</b> 出なければアカウントを盗られても気付かず、出すぎるとユーザーが無視するようになり本物の警告まで埋もれる。そこで二つを固めた:
+ * <b>最初の機器には通知しない</b>(登録して初めてログインした人に「新しい機器」は意味をなさない — 比較する機器がない。最初の印象が無駄な警告なら後の本物の警告も無視される)、
+ * <b>機器数に上限を置く</b>(上限がなければクッキーを消すブラウザ一つがこのユーザーの行を無限に増やす)。
  */
 @Slf4j
 @Service
@@ -44,6 +50,10 @@ public class DeviceRecognitionService {
      * <p>넘으면 가장 오래 안 쓴 것부터 지운다. 지워진 기기로 다시 로그인하면 새 기기로
      * 잡혀 알림이 한 번 더 나간다 — 그게 맞는 동작이다. 20대나 되는 기기를 번갈아 쓰는
      * 계정이라면 그 자체가 살펴볼 만한 신호다.
+     *
+     * <p>[JA] 一人のユーザーについて記憶する機器数。
+     * <p>超えたら最も長く使っていないものから消す。消された機器で再ログインすると新しい機器とみなされ通知がもう一度出る — それが正しい動作である。
+     * 20 台もの機器を代わる代わる使うアカウントなら、それ自体が調べる価値のあるシグナルだ。
      */
     @Value("${user.device.max-per-user:20}")
     private int maxPerUser;
@@ -53,8 +63,12 @@ public class DeviceRecognitionService {
     /**
      * 로그인한 기기를 기록하고, 처음 보는 기기면 알려야 한다고 답한다.
      *
+     * <p>[JA] ログインした機器を記録し、初めて見る機器なら通知すべきと答える。
+     *
      * @param presentedToken 브라우저가 보낸 기기 쿠키 값. 없으면 null.
+     *     [JA] ブラウザが送った機器クッキーの値。なければ null。
      * @return 기록 결과 — 호출자가 쿠키를 심고 알림을 보낸다
+     *     [JA] 記録結果 — 呼び出し側がクッキーを設定し通知を送る
      */
     @Transactional
     public Recognition recognize(Long userId, String presentedToken, String userAgent, String rawIp) {
@@ -70,12 +84,14 @@ public class DeviceRecognitionService {
                 device.touch(label, maskedIp, now);
                 // 아는 기기다. 쿠키를 다시 심지 않는다 — 값이 그대로이고, 매 로그인마다
                 // Set-Cookie 를 보낼 이유가 없다.
+                // [JA] 既知の機器。クッキーを再設定しない — 値はそのままで、ログインのたびに Set-Cookie を送る理由がない。
                 return Recognition.known(device);
             }
         }
 
         // 쿠키가 없거나, 있어도 이 사용자에게는 처음인 값이다. 후자는 흔하다 —
         // 한 브라우저를 두 사람이 쓰면 두 번째 사람에게는 새 기기다.
+        // [JA] クッキーがないか、あってもこのユーザーには初めての値。後者はよくある — 一つのブラウザを二人で使えば二人目には新しい機器だ。
         boolean firstEver = !knownDeviceRepository.existsByUserId(userId);
         String token = presentedToken != null ? presentedToken : DeviceIdentity.newToken();
 
@@ -83,12 +99,14 @@ public class DeviceRecognitionService {
         if (device == null) {
             // 같은 사용자가 동시에 두 번 로그인해 UNIQUE 에 걸렸다. 다른 쪽이 이미
             // 기록했고 알림도 그쪽이 보낸다 — 여기서 또 보내면 알림이 두 개다.
+            // [JA] 同じユーザーが同時に二回ログインして UNIQUE に引っかかった。相手側が既に記録し通知もそちらが送る — ここでまた送ると通知が二つになる。
             return Recognition.known(null);
         }
 
         enforceLimit(userId);
 
         // 🔴 첫 기기에는 알리지 않는다(클래스 주석).
+        // [JA] 🔴 最初の機器には通知しない(クラスコメント)。
         return firstEver ? Recognition.firstDevice(device, token) : Recognition.newDevice(device, token);
     }
 
@@ -120,6 +138,7 @@ public class DeviceRecognitionService {
     }
 
     /** 상한을 넘으면 가장 오래 안 쓴 것부터 지운다. */
+    // [JA] 上限を超えたら最も長く使っていないものから消す。
     private void enforceLimit(Long userId) {
         int limit = Math.max(1, maxPerUser);
         List<KnownDevice> devices = knownDeviceRepository.findByUserIdOrderByLastSeenAtDesc(userId);
@@ -132,6 +151,7 @@ public class DeviceRecognitionService {
     }
 
     /** 이 사용자가 로그인한 적 있는 기기들 — 화면 목록. */
+    // [JA] このユーザーがログインしたことのある機器 — 画面の一覧。
     @Transactional(readOnly = true)
     public List<KnownDevice> devicesOf(Long userId) {
         return knownDeviceRepository.findByUserIdOrderByLastSeenAtDesc(userId);
@@ -148,7 +168,13 @@ public class DeviceRecognitionService {
      * <p>🔒 남의 기기를 지울 수 없도록 <b>소유자까지 함께</b> 조회한다. id 만으로 지우면
      * 번호를 훑어 남의 기기 기록을 지울 수 있다.
      *
+     * <p>[JA] 機器の記憶を消す。
+     * <p><b>セッションは切らない。</b> その機器にログイン状態があればそのまま残る — この操作の意味は「次にその機器でログインしたら新しい機器とみなして通知する」だけ。
+     * 画面の文言もそう書くべきだ。「ログアウトさせる」と読めるとユーザーは対処したと信じてそれ以上何もしない。
+     * <p>🔒 他人の機器を消せないよう<b>所有者まで一緒に</b>検索する。id だけで消すと番号をなめて他人の機器記録を消せる。
+     *
      * @return 그런 기기가 있었으면 true
+     *     [JA] そのような機器があれば true
      */
     @Transactional
     public boolean forget(Long userId, Long deviceId) {
@@ -164,9 +190,14 @@ public class DeviceRecognitionService {
     /**
      * 기기 인식 결과.
      *
+     * <p>[JA] 機器認識の結果。
+     *
      * @param device     기록된 기기. 동시 로그인으로 다른 쪽이 먼저 기록했으면 null
+     *     [JA] 記録された機器。同時ログインで相手が先に記録していれば null
      * @param cookieToken 브라우저에 심어야 할 값. 이미 아는 기기면 null(다시 심지 않는다)
+     *     [JA] ブラウザに設定すべき値。既知の機器なら null(再設定しない)
      * @param shouldAlert 새 기기 알림을 보내야 하는가
+     *     [JA] 新しい機器の通知を送るべきか
      */
     public record Recognition(KnownDevice device, String cookieToken, boolean shouldAlert) {
 
@@ -175,6 +206,7 @@ public class DeviceRecognitionService {
         }
 
         /** 이 사용자의 첫 기기 — 기록은 하되 알리지 않는다. */
+        // [JA] このユーザーの最初の機器 — 記録はするが通知しない。
         static Recognition firstDevice(KnownDevice device, String token) {
             return new Recognition(device, token, false);
         }

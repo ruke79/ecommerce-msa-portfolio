@@ -14,6 +14,20 @@
 #   PROM=http://localhost:9090
 #
 # 종료 코드: 0=전부 통과, 1=실패 있음 (CI/배포 파이프라인 게이트로 사용 가능)
+# [JA] 運用アクション ⑥ — ステージングのスモークテスト(docs/14 の「次の段階」を実行版に)
+#
+#      このセッションの起動テストで分かったように、サービスは「コンパイルはできるが起動しない」状態でありうる。
+#      配備直後にこのスクリプトで **起動したか · 互いに見えるか · 主要経路が動くか** を 3 分以内に確認する。
+#
+#      使い方:
+#        GATEWAY=https://localhost:8000 ./ops/06-smoke-test.sh
+#        GATEWAY=https://shop.example.com ./ops/06-smoke-test.sh   # トンネル/Ingress 経由
+#        INSECURE=1                 # 自己署名 TLS(-k)
+#        SKIP_SAGA=1                # サーガ E2E を省略(読み取り専用の点検だけ)
+#        SKIP_DIRECT=0|1            # 個別サービスポートの直接点検。既定は $GATEWAY を見て自動判断
+#        EUREKA · KAFKA_BOOTSTRAP · PROM で各アドレスを指定
+#
+#      終了コード: 0=すべて通過、1=失敗あり(CI/配備パイプラインのゲートとして使える)
 set -uo pipefail
 
 GATEWAY="${GATEWAY:-https://localhost:8000}"
@@ -30,11 +44,15 @@ bad()  { echo "  ❌ $1"; fail=$((fail+1)); }
 skipm(){ echo "  ⏭  $1"; skip=$((skip+1)); }
 
 # 서비스명:포트 — 직접 접근이 가능한 환경에서 개별 헬스를 확인한다.
+# [JA] サービス名:ポート — 直接アクセスできる環境で個別のヘルスを確認する。
 SERVICES="user-service:8080 catalog-service:8081 cart-service:8082 order-service:8084 chat-service:8086 pay-service:8087 coupon-service:8183"
 
 # $GATEWAY 가 원격이면 localhost:<포트> 직접 점검은 의미가 없다 — 개별 서비스 포트는
 # 클러스터 밖으로 나오지 않는다. 실배포에서 이걸 켜지 않아 **가짜 실패 7개**가 났고,
 # 진짜 문제(§2)가 그 사이에 묻혔다. 그래서 명시적으로 끄지 않아도 알아서 판단한다.
+# [JA] $GATEWAY がリモートなら localhost:<ポート> の直接点検は意味がない — 個別サービスのポートは
+#      クラスタの外に出ない。実配備でこれを有効にしなかったせいで **偽の失敗が 7 個** 出て、
+#      本当の問題(§2)がその間に埋もれた。だから明示的に切らなくても自分で判断する。
 if [ -z "${SKIP_DIRECT:-}" ]; then
     case "$GATEWAY" in
         *//localhost*|*//127.0.0.1*|*//[*) SKIP_DIRECT=0 ;;
@@ -48,6 +66,8 @@ echo "════ 1. 서비스 기동 여부 (actuator readiness) ════"
 if [ "${SKIP_DIRECT:-0}" = "1" ]; then
     # k8s 배포에서는 개별 포트가 클러스터 밖으로 노출되지 않는다. 같은 검증(개별 readiness)을
     # kubelet 의 readinessProbe + rollout status 가 이미 수행했으므로 여기서는 생략한다(ops/13).
+    # [JA] k8s 配備では個別ポートがクラスタの外に公開されない。同じ検証(個別の readiness)を
+    #      kubelet の readinessProbe + rollout status がすでに行ったので、ここでは省略する(ops/13)。
     skipm "SKIP_DIRECT=1 — 개별 서비스 직접 점검 생략 (k8s 프로브가 대신 수행)"
 else
 echo "   기동 실패는 이 프로젝트의 실제 이력이 있는 실패 모드다 (docs/14)."
@@ -60,6 +80,9 @@ for s in $SERVICES; do
             # readiness 그룹은 기본적으로 readinessState 만 본다 — 의존성(DB/Mongo/Redis)이
             # 죽어도 UP 을 돌려준다. 실제로 chat-service 는 MongoDB 가 꺼진 상태에서도
             # readiness=UP / health=DOWN 이었다(docs/14 B-19). 그래서 종합 health 도 함께 본다.
+            # [JA] readiness グループは既定で readinessState しか見ない — 依存先(DB/Mongo/Redis)が
+            #      死んでも UP を返す。実際に chat-service は MongoDB が止まった状態でも
+            #      readiness=UP / health=DOWN だった(docs/14 B-19)。だから総合 health も一緒に見る。
             hstatus=$("${CURL[@]}" "$scheme://localhost:$port/actuator/health" 2>/dev/null)
             case "$hstatus" in
                 *'"status":"UP"'*) ;;
@@ -79,12 +102,21 @@ echo "════ 2. 게이트웨이 ════"
 #    index.html 을 200 으로 돌려준다. 그래서 `/actuator/health` 가 200 이어도 게이트웨이는
 #    쳐다보지도 않은 것일 수 있다 — 실배포에서 이 스크립트가 정확히 그렇게 통과했다.
 #    본문을 보고 **누가 대답했는지**부터 가린다.
+# [JA] ⚠️ ステータスコードだけを見てはいけない。$GATEWAY が Cloudflare Tunnel のような **共有ホスト名** なら、
+#         ゲートウェイにルーティングされない経路はフロントエンドに流れ、SPA はどんな経路にも
+#         index.html を 200 で返す。だから `/actuator/health` が 200 でもゲートウェイは
+#         見向きもしていないかもしれない — 実配備でこのスクリプトがまさにそうやって通過した。
+#         本文を見て **誰が答えたか** から見分ける。
 is_html() { case "$1" in *'<!DOCTYPE html'*|*'<!doctype html'*|*'<html'*) return 0 ;; *) return 1 ;; esac; }
 
 # Cloudflare 는 오리진에 닿지 못하면 HTML 이 아니라 `error code: 502` 같은 **평문**을
 # 돌려준다. 그러면 위의 is_html 에 걸리지 않아 "게이트웨이가 UP 이 아니다"로 보고되는데,
 # 사실은 게이트웨이를 쳐다보지도 못한 것이다. 원인이 전혀 다른 곳(터널 ingress 규칙,
 # 오리진 파드)에 있으므로 구분해서 알려 준다.
+# [JA] Cloudflare はオリジンに届かないと HTML ではなく `error code: 502` のような **平文** を
+#      返す。すると上の is_html に引っかからず「ゲートウェイが UP ではない」と報告されるが、
+#      実際はゲートウェイを見ることさえできていない。原因がまったく別の場所(トンネルの ingress 規則、
+#      オリジン Pod)にあるので区別して知らせる。
 is_edge_error() { case "$1" in 'error code: '*) return 0 ;; *) return 1 ;; esac; }
 
 body=$("${CURL[@]}" "$GATEWAY/actuator/health" 2>/dev/null)
@@ -110,6 +142,9 @@ fi
 # 폴백은 서킷브레이커가 열렸을 때 사용자에게 돌려주는 경로 — 살아있어야 한다.
 # Resilience4j 가 `forward:/fallback` 으로 **게이트웨이 내부에서** 전달하므로 외부에서
 # 닿지 않아도 기능은 정상이다. 직접 때릴 수 있을 때만 검증한다.
+# [JA] フォールバックはサーキットブレーカーが開いたときにユーザーに返す経路 — 生きていなければならない。
+#      Resilience4j が `forward:/fallback` で **ゲートウェイ内部で** 転送するので、外部から
+#      届かなくても機能は正常である。直接叩けるときだけ検証する。
 fb=$("${CURL[@]}" -o /dev/null -w "%{http_code}" "$GATEWAY/fallback" 2>/dev/null)
 fb_body=$("${CURL[@]}" "$GATEWAY/fallback" 2>/dev/null)
 if [ "$fb" = "503" ]; then
@@ -133,7 +168,14 @@ echo "════ 3. 레이트리미터 실동작 (429 발생 확인) ═══
 #    제한 명령은 통과(fail-open)인데, 첫 명령들이 연결 · 스크립트 적재를 치렀다(게이트웨이는 이제 readiness 전에 데운다 —
 #    RateLimiterWarmup). 그래도 전 서비스가 한꺼번에 뜬 단일 노드는 느리다 — 429 가 없으면 3초 쉬고 **한 번만** 다시 쏜다.
 #    제한이 빠진 게이트웨이는 몇 번을 쏴도 429 가 없으므로 이 재시도가 그 결함을 가리지 않는다. 결과마다 코드별 수를 남긴다.
-# [JA] 起動直後の最初の 70 発がすべて通過して自動復帰した(Redis タイムアウト超過は通過)。429 がなければ 3 秒後に一度だけ撃ち直す。
+# [JA] ⚠️ この検査はバケットを空にしたまま終わる。7 番が同じ URL を使うのでその影響をそのまま受ける — 7 番に再試行がある
+#      理由がこれである。ここの URL を変えたり発数を増やすときは 7 番のコメントも一緒に読むこと。
+#      ⚠️ 必ず同時に撃つ必要がある。トークンバケットは burst 40 + 毎秒 20 補充なので、順次の curl は(TLS ハンドシェイク込みで
+#      要求あたり数十 ms)補充速度に勝てず 429 が一度も出ない — ステージングのリハーサルで順次 70 発がすべて通過するのを実測した。
+#      🐛 2026-10-24 本番デプロイ: 起動したばかりのゲートウェイで最初の 70 発がすべて通過し、自動復帰した。Redis コマンドのタイムアウト
+#      (500ms)を超えた流入制限のコマンドは通過(fail-open)だが、最初のコマンド群が接続・スクリプト読み込みを負担した(ゲートウェイは
+#      今は readiness 前に温める — RateLimiterWarmup)。それでも全サービスが一斉に起動した単一ノードは遅い — 429 がなければ 3 秒休んで
+#      一度だけ撃ち直す。制限が抜けたゲートウェイは何度撃っても 429 が出ないので、この再試行がその欠陥を隠すことはない。結果ごとにコード別の数を残す。
 rl_burst() {
     local out; out=$(mktemp)
     for _ in $(seq 1 70); do
@@ -171,6 +213,8 @@ if [ -n "$KAFKA_BOOTSTRAP" ] && command -v kafka-topics.sh >/dev/null; then
     missing=0
     # ⚠️ ops/02 의 TOPICS 와 같은 목록이어야 한다. 늘릴 때 한쪽만 고치면 이 점검이
     #    "전부 있다"고 말하면서 실제로는 빠진 토픽을 보지 않는다.
+    # [JA] ⚠️ ops/02 の TOPICS と同じ一覧でなければならない。増やすときに片方だけ直すと、この点検が
+    #         「全部ある」と言いながら実際には抜けたトピックを見ない。
     DLT_TOPICS="order payment product-update user-created cart-empty cart-rollback coupon-use coupon-rollback chat outgoing-mail user-presence"
     expected=0
     for t in $DLT_TOPICS; do
@@ -181,6 +225,8 @@ if [ -n "$KAFKA_BOOTSTRAP" ] && command -v kafka-topics.sh >/dev/null; then
 
     # saga-projection 의 출력은 **컴팩션이어야** 한다. 존재만 보면 안 된다 — 브로커가 자동 생성한
     # delete 정책 토픽도 "존재"하고, 그 차이는 retention 이 지난 뒤에야 드러난다(docs/38 §1.17).
+    # [JA] saga-projection の出力は **コンパクションでなければならない**。存在だけ見てはいけない — ブローカーが自動作成した
+    #      delete ポリシーのトピックも「存在」し、その違いは retention が過ぎてから初めて表に出る(docs/38 §1.17)。
     STATE_TOPIC_NAME="${STATE_TOPIC:-order-saga-state}"
     if kafka-topics.sh --bootstrap-server "$KAFKA_BOOTSTRAP" --list 2>/dev/null | grep -qx "$STATE_TOPIC_NAME"; then
         if command -v kafka-configs.sh >/dev/null \
@@ -208,6 +254,16 @@ echo "════ 7. 핵심 경로: 상품 조회 (읽기) ════"
 #
 #    그래서 버킷이 다시 찰 때까지 기다렸다가 본다. 429 는 **여기서만** 재시도 사유다.
 #    다른 코드(5xx 등)는 진짜 실패이므로 즉시 보고한다.
+# [JA] ⚠️ 3 番が **まさにこの URL に** 70 発を同時に撃ってトークンバケットを空にしておく(burst 40、
+#         毎秒 20 補充)。4・5・6 番がすべて SKIP だとその間の時間が 0 秒なので、ここで空のバケットを
+#         叩いて 429 が出る — すると ops/28 が **正常な配備を失敗と判定して戻す。**
+#
+#         実際にそうなった。一度は 3 番で 429 が 29 回出て 7 番が通り、次の配備では
+#         18 回出て 7 番が 429 で落ちた。コードもクラスタもそのままだった — 純粋に競合である。
+#         「たまに失敗するゲート」はゲートではない。誰もその失敗を信じなくなる。
+#
+#         だからバケットが再び満ちるまで待ってから見る。429 は **ここでだけ** 再試行の理由になる。
+#         他のコード(5xx など)は本当の失敗なので即座に報告する。
 code=""
 for attempt in 1 2 3 4 5; do
     code=$("${CURL[@]}" -o /dev/null -w "%{http_code}" "$GATEWAY/catalog-service/api/category/categories" 2>/dev/null)
@@ -223,6 +279,8 @@ if [ "$code" = "200" ]; then
 elif [ "$code" = "429" ]; then
     # 10초를 기다려도 안 풀린다면 그건 3번의 여파가 아니다 — 한도 자체가 너무 빡빡하거나
     # 다른 트래픽이 있다는 뜻이므로 실패로 본다.
+    # [JA] 10 秒待っても解けないなら、それは 3 番の余波ではない — 上限そのものが厳しすぎるか
+    #      他のトラフィックがあるという意味なので、失敗とみなす。
     bad "카탈로그 조회 429 — 10초를 기다려도 레이트리미터가 풀리지 않습니다(한도 설정 확인)"
 else
     bad "카탈로그 조회 $code"

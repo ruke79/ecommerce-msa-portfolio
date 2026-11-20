@@ -27,12 +27,18 @@ import org.testcontainers.utility.DockerImageName;
  * <p>이 저장소에서 가장 비싼 버그들은 하나같이 <b>기동해야만 드러나는</b> 종류였다
  * (docs/14 B-1~B-14, docs/16). 예전에는 인프라가 없어 항상 실패하는 테스트라 꺼 둘 수밖에
  * 없었지만, 이제 컨테이너를 붙여 그 검증을 빌드가 대신 한다.
+ *
+ * <p>[JA] user-service の起動検証 — 実際の PostgreSQL/Redis コンテナの上で。
+ * <p>このリポジトリで最も高くついたバグはどれも<b>起動して初めて表れる</b>種類だった(docs/14 B-1~B-14, docs/16)。以前はインフラがなく常に失敗するテストなので切っておくしかなかったが、
+ * 今はコンテナを付けてその検証をビルドが代わりに行う。
  */
 @Tag("containers")
 @Testcontainers
 // @SpringBootTest 는 기본적으로 메트릭 내보내기를 끈다. 그러면 /actuator/prometheus 엔드포인트가
 // 아예 등록되지 않아 "보안 때문에 401" 인지 "엔드포인트가 없어서" 인지 구분할 수 없다.
 // 운영과 같은 조건으로 검증하려면 관측성 자동설정을 켜야 한다.
+// [JA] @SpringBootTest は既定でメトリクスのエクスポートを切る。すると /actuator/prometheus エンドポイントがそもそも登録されず、「セキュリティのせいで 401」なのか
+//      「エンドポイントがないから」なのか区別できない。運用と同じ条件で検証するには観測性の自動設定を有効にする必要がある。
 @AutoConfigureObservability
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @DisplayName("user-service 기동 (Testcontainers)")
@@ -47,6 +53,7 @@ class UserServiceApplicationTests {
 
 	// 빈 문자열 비밀번호는 Redisson 이 AUTH 를 보내다 실패하는 함정이라(docs/14 B-6)
 	// 운영 설정과 같은 형태로 비밀번호를 준다.
+	// [JA] 空文字列のパスワードは Redisson が AUTH を送って失敗する落とし穴なので(docs/14 B-6)運用設定と同じ形でパスワードを渡す。
 	@Container
 	static GenericContainer<?> redis =
 			new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
@@ -69,6 +76,7 @@ class UserServiceApplicationTests {
 		registry.add("server.ssl.enabled", () -> false);
 		// user-service 는 메일·S3·JWT 설정을 환경변수 placeholder 로 요구한다.
 		// 이 테스트의 관심사는 "컨텍스트가 뜨는가" 이므로 더미 값을 넣는다.
+		// [JA] user-service はメール・S3・JWT 設定を環境変数プレースホルダで要求する。このテストの関心は「コンテキストが立ち上がるか」なのでダミー値を入れる。
 		registry.add("MAIL_HOST", () -> "localhost");
 		registry.add("MAIL_PORT", () -> "25");
 		registry.add("MAIL_USERNAME", () -> "dummy");
@@ -79,6 +87,7 @@ class UserServiceApplicationTests {
 		registry.add("AMAZON_REGION", () -> "ap-northeast-2");
 		registry.add("JWT_SECRET_KEY", () -> "0123456789012345678901234567890123456789012345678901234567890123");
 		// TLS 는 이 테스트에서 쓰지 않지만, 설정 클래스들이 경로 placeholder 를 요구한다.
+		// [JA] TLS はこのテストでは使わないが、設定クラスがパスのプレースホルダを要求する。
 		registry.add("LOCAL_CACERT_PATH", () -> "");
 		registry.add("LOCAL_CRT_PATH", () -> "");
 		registry.add("LOCAL_KEY_PATH", () -> "");
@@ -108,6 +117,7 @@ class UserServiceApplicationTests {
 	void schemaTablesAreCreated() throws Exception {
 		// chat·coupon 은 @Table(schema=...) 를 쓰면서 스키마를 만드는 곳이 없어, DDL 이 WARN 만
 		// 남기고 실패한 채 "떠 있는" 상태였다(docs/14 B-13). 테이블 존재를 명시적으로 못 박는다.
+		// [JA] chat・coupon は @Table(schema=...) を使いながらスキーマを作る場所がなく、DDL が WARN だけ残して失敗したまま「起動している」状態だった(docs/14 B-13)。テーブルの存在を明示的に固定する。
 		try (var conn = java.sql.DriverManager.getConnection(
 						postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
 				var st = conn.createStatement();
@@ -129,6 +139,9 @@ class UserServiceApplicationTests {
 		//   - Prometheus 는 이 서비스만 스크레이프하지 못한다.
 		// 핵심은 "인증에 막히지 않는가" 이다. 종합 health 는 의존성 상태에 따라 503 일 수 있고
 		// 그건 인증 문제가 아니므로 401/403 만 실패로 본다.
+		// [JA] user-service だけが Spring Security を使うが .anyRequest().authenticated() だけなので /actuator/health/readiness が 401 を返していた。その状態でデプロイすると
+		//      k8s はポッドを永遠に NotReady にし(トラフィック不達)、Prometheus はこのサービスだけスクレイプできない。
+		//      要点は「認証に阻まれないか」である。総合 health は依存の状態によって 503 でありうるが、それは認証の問題ではないので 401/403 だけを失敗とみなす。
 		for (String path : new String[] {"/actuator/health", "/actuator/health/readiness",
 				"/actuator/health/liveness", "/actuator/prometheus"}) {
 			ResponseEntity<String> response = rest.getForEntity("http://localhost:" + port + path, String.class);
@@ -142,6 +155,7 @@ class UserServiceApplicationTests {
 	@DisplayName("프로브와 메트릭 엔드포인트는 200 을 돌려준다")
 	void probeEndpointsReturnOk() {
 		// liveness/readiness 는 의존성과 무관하게 컨테이너 상태만 보므로 200 이어야 한다.
+		// [JA] liveness/readiness は依存と無関係にコンテナの状態だけを見るので 200 でなければならない。
 		for (String path : new String[] {"/actuator/health/readiness", "/actuator/health/liveness",
 				"/actuator/prometheus"}) {
 			assertThat(rest.getForEntity("http://localhost:" + port + path, String.class).getStatusCode())
@@ -171,6 +185,7 @@ class UserServiceApplicationTests {
 					java.net.URI.create("http://localhost:" + port + path + "?token=not-a-real-token")).build(),
 					java.net.http.HttpResponse.BodyHandlers.discarding());
 			// 모르는 토큰 → 실패 화면으로 돌려보낸다(reason=invalid). 401 · 404 가 아니다.
+			// [JA] 知らないトークン → 失敗画面へ戻す(reason=invalid)。401 · 404 ではない。
 			assertThat(response.statusCode()).as(path).isBetween(300, 399);
 			assertThat(response.headers().firstValue("Location").orElse("")).as(path).contains("verification-failed?reason=invalid");
 		}
@@ -222,6 +237,7 @@ class UserServiceApplicationTests {
 				+ " VALUES (9002, 'long-review', 'long-review@example.com', true, true, true, true, true, false)");
 		jdbc.update("INSERT INTO users.review_style (rstyle_id, version, color, image) VALUES (9201, 0, 'black', 'img')");
 		// 무작위 음절 — 압축으로 줄어들지 않는 실제 문장에 가깝게(같은 글자 반복은 압축돼 한도를 넘지 않는다).
+		// [JA] ランダムな音節 — 圧縮で縮まない実際の文に近く(同じ文字の繰り返しは圧縮されて上限を超えない)。
 		var random = new java.util.Random(42);
 		var text = new StringBuilder();
 		for (int i = 0; i < 2000; i++) {

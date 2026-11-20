@@ -25,6 +25,14 @@ import org.springframework.core.io.ClassPathResource;
  * <p>Feign 접두사 사건(docs/37 §2.1)의 교훈대로, 적었다는 것과 읽힌다는 것은 다르다.
  * 여기서는 실제 yml 을 스프링 부트가 쓰는 바로 그 프로퍼티 클래스에 바인딩해 값이
  * 도달하는지 본다. 키를 잘못 적으면(예: {@code spring.task.scheduler}) 기본값 1 이 나온다.
+ *
+ * <p>[JA] スケジューラのプールサイズが<b>実際に読まれるか</b>。このモジュールには {@code @Scheduled}
+ * ジョブが三つ(SMS 送信・メール送信・メールのスクラブ)あるが、Spring
+ * の既定スケジューラはスレッド一つだ({@code TaskSchedulingProperties.Pool.size} の既定値 1 —
+ * バイトコードで確認)。そのため {@code application.yml} に 3 と書いた。Feign 接頭辞の件(docs/37 §2.1)
+ * の教訓どおり、書いたことと読まれることは違う。ここでは実際の yml を Spring Boot
+ * が使うまさにそのプロパティクラスにバインドして値が届くかを見る。キーを書き間違えると(例:
+ * {@code spring.task.scheduler})既定値 1 が出る。
  */
 @DisplayName("스케줄러 풀 크기 바인딩")
 class SchedulerPoolBindingTest {
@@ -44,6 +52,7 @@ class SchedulerPoolBindingTest {
                 .orElseThrow(() -> new AssertionError("spring.task.scheduling.* 가 바인딩되지 않았다"));
 
         // @Scheduled 작업 수(3) 이상이어야 한 작업의 외부 호출 대기가 다른 작업을 막지 않는다.
+        // [JA] @Scheduled ジョブ数(3)以上でないと、一つのジョブの外部呼び出し待ちが他のジョブを妨げる。
         assertThat(props.getPool().getSize())
                 .as("스케줄러 스레드 수 — @Scheduled 작업이 셋이다")
                 .isGreaterThanOrEqualTo(3);

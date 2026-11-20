@@ -13,6 +13,9 @@ import com.project.common.kafka.avro.AvroMapping;
  *
  * <p>매핑이 common 이 아니라 여기 있는 이유: DTO 가 chat-service 것이다. 스키마와 생성 클래스는
  * common 에 있어 notification 의 문자열 소비자도 같은 스키마로 읽는다({@code AvroDecoders}).
+ *
+ * <p>[JA] chat トピック: {@link MessageDto} ↔ Avro {@link ChatMessage}。
+ * <p>マッピングが common ではなくここにある理由: DTO が chat-service のものだからである。スキーマと生成クラスは common にあり、notification の文字列コンシューマも同じスキーマで読む({@code AvroDecoders})。
  */
 public class ChatMessageAvroMapping implements AvroMapping<MessageDto, ChatMessage> {
 
@@ -60,6 +63,8 @@ public class ChatMessageAvroMapping implements AvroMapping<MessageDto, ChatMessa
     public BinaryMessageDecoder<ChatMessage> decoder() {
         // 옛 스키마(v1·v2)로 쓴 레코드도 읽는다 — 배포 도중 옛 파드가 쓴 것(AvroSchemaHistory). v1 은 발신자가 이메일이라
         // 그 몇 건은 senderId 없이(발신자 모름) 읽힌다 — 이메일은 v3 에 필드가 없어 버려진다.
+        // [JA] 旧スキーマ(v1・v2)で書かれたレコードも読む — デプロイ途中に旧 Pod が書いたもの(AvroSchemaHistory)。v1 は送信者がメールなので
+        //      その数件は senderId なし(送信者不明)で読まれる — メールは v3 にフィールドがないので捨てられる。
         return ChatMessage.createDecoder(com.project.common.kafka.avro.AvroSchemaHistory.store(
                 com.project.common.kafka.avro.AvroSchemaHistory.CHAT_MESSAGE));
     }

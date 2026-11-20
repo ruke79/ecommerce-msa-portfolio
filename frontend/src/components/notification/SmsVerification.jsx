@@ -13,6 +13,12 @@ import "./notification.css";
  *
  * <p>형식 검증은 <b>서버에 맡긴다.</b> 프론트에서 정규식으로 미리 거르면 유효한 번호까지
  * 막힌다 — 한국의 10자리 010 번호나 019 대역이 대표적이다. 서버는 libphonenumber 로 판정한다.
+ *
+ * <p>[JA] 携帯番号認証 — 番号登録とログインの二段階認証が同じ画面を使う。
+ * 韓国 · 日本の番号を両方受ける。国の選択は国番号のない入力をどう解釈するかを決めるだけである —
+ * ユーザーが +81 で始まる番号を入れれば選択と無関係に日本の番号として処理される。
+ * 形式検証はサーバーに任せる。フロントで正規表現により先に弾くと有効な番号まで止まる —
+ * 韓国の 10 桁の 010 番号や 019 帯が代表的である。サーバーは libphonenumber で判定する。
  */
 export default function SmsVerification({ onVerified, initialRegion = "KR", title }) {
   const { t } = useTranslation();
@@ -28,6 +34,8 @@ export default function SmsVerification({ onVerified, initialRegion = "KR", titl
 
   // 재전송까지 남은 시간. 서버가 Retry-After 로 알려준 값을 그대로 센다 —
   // 프론트에서 임의로 정하면 서버 제한과 어긋나 "눌러도 계속 실패"가 된다.
+  // [JA] 再送までの残り時間。サーバーが Retry-After で知らせた値をそのまま数える —
+  //      フロントで勝手に決めるとサーバーの制限と食い違い「押しても失敗し続ける」になる。
   useEffect(() => {
     if (cooldown <= 0) return undefined;
     const timer = setInterval(() => setCooldown((s) => Math.max(0, s - 1)), 1000);
@@ -35,6 +43,7 @@ export default function SmsVerification({ onVerified, initialRegion = "KR", titl
   }, [cooldown]);
 
   // 코드 단계로 넘어가면 바로 입력할 수 있게 초점을 옮긴다.
+  // [JA] コード段階に進んだらすぐ入力できるようにフォーカスを移す。
   useEffect(() => {
     if (step === "code") codeInputRef.current?.focus();
   }, [step]);
@@ -52,6 +61,7 @@ export default function SmsVerification({ onVerified, initialRegion = "KR", titl
       setCooldown(60);
     } else if (result.tooMany) {
       // 남용 방지 제한이다. 오류가 아니라 정상 응답이므로 그대로 알려 준다.
+      // [JA] 濫用防止の制限である。エラーではなく正常な応答なのでそのまま知らせる。
       setError(result.message);
       setCooldown(Math.min(result.retryAfterSeconds ?? 60, 3600));
     } else {
@@ -72,6 +82,7 @@ export default function SmsVerification({ onVerified, initialRegion = "KR", titl
       onVerified?.(result.preference);
     } else {
       // 남은 시도 횟수를 보여 준다. 알려주지 않으면 사용자는 왜 갑자기 막혔는지 모른다.
+      // [JA] 残りの試行回数を見せる。知らせないとユーザーはなぜ急に止められたのか分からない。
       setError(
         typeof result.attemptsLeft === "number" && result.attemptsLeft > 0
           ? t("notification.sms.attempts_left", { message: result.message, count: result.attemptsLeft })
@@ -146,6 +157,7 @@ export default function SmsVerification({ onVerified, initialRegion = "KR", titl
             type="text"
             inputMode="numeric"
             // 브라우저·OS 가 문자에서 코드를 자동으로 채워 준다. 사용자가 앱을 오갈 필요가 없다.
+            // [JA] ブラウザ · OS がショートメッセージからコードを自動で埋めてくれる。ユーザーがアプリを行き来する必要がない。
             autoComplete="one-time-code"
             maxLength={6}
             placeholder="000000"

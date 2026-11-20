@@ -46,6 +46,11 @@ import com.project.common.dto.cart.request.CartRequest;
  *   <li>체크아웃이 서버 장바구니를 고른 줄로 <b>통째로 바꿨다</b> — 고르지 않은 줄은 서버에서 사라지고, 다른 기기에서는 옛 장바구니가 보였다.</li>
  *   <li>catalog 가 모르는 줄이 하나 있으면 장바구니 전체가 예외였다 — 그 줄을 빼는 요청까지 롤백됐다.</li>
  * </ul>
+ *
+ * <p>[JA] サーバーがカートの基準である — 追加・数量・削除がすぐサーバーに反映され、チェックアウトは選んだ行に <b>印を付ける</b> だけ(docs/40 0-b)。
+ *      🐛 回帰対象
+ *      · チェックアウトがサーバーのカートを選んだ行で <b>丸ごと置き換えていた</b> — 選ばなかった行はサーバーから消え、別の端末では古いカートが見えた。
+ *      · catalog が知らない行が 1 つあるとカート全体が例外だった — その行を外すリクエストまでロールバックされた。
  */
 @DisplayName("cart-service — 서버 기준 장바구니")
 class CartServerAuthoritativeTest {
@@ -77,6 +82,7 @@ class CartServerAuthoritativeTest {
         when(cartRepository.findByUserId(7L)).thenAnswer(i -> Optional.ofNullable(stored[0]));
         when(cartRepository.save(any(Cart.class))).thenAnswer(i -> stored[0] = i.getArgument(0));
         // 처음 담기 — 없을 때만 만든다(CartRepository.insertIfAbsent, V5)
+        // [JA] 最初の追加 — ないときだけ作る(CartRepository.insertIfAbsent, V5)
         when(cartRepository.insertIfAbsent(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenAnswer(i -> {
                     if (stored[0] != null) {
@@ -88,6 +94,7 @@ class CartServerAuthoritativeTest {
         org.mockito.Mockito.doAnswer(i -> stored[0] = null).when(cartRepository).delete(any(Cart.class));
 
         // catalog — 상품 1(M·L), 2(사이즈 없음), 색상은 SKU 가 정한다(5, 6)
+        // [JA] catalog — 商品 1(M·L)、2(サイズなし)、色は SKU が決める(5, 6)
         when(catalog.getProductsInfo(anyList())).thenAnswer(i -> {
             List<Long> ids = i.getArgument(0);
             List<ProductDto> found = new ArrayList<>();
@@ -120,6 +127,7 @@ class CartServerAuthoritativeTest {
 
     private static ProductInfoDto item(String id, String size, int qty) {
         // 본문의 색상은 믿지 않는다 — 일부러 엉뚱한 값을 싣는다
+        // [JA] 本文の色は信じない — わざと的外れな値を載せる
         return ProductInfoDto.builder().id(id).style(0).size(size).qty(qty)._uid("u" + id + size)
                 .color(ProductColorDto.builder().id("999").build()).build();
     }
@@ -149,7 +157,7 @@ class CartServerAuthoritativeTest {
             assertThat(line.getQty()).isEqualTo(2);
             assertThat(line.isSelected()).isTrue();
         });
-        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("50.00");   // 20×2 + 배송 10
+        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("50.00");   // 20×2 + 배송 10 ／ [JA] 20×2 + 送料 10
         assertThat(now).singleElement().satisfies(p -> assertThat(p.getQty()).isEqualTo(2));
     }
 
@@ -210,7 +218,7 @@ class CartServerAuthoritativeTest {
     void removeLastLineDeletesCart() {
         service.putItem(7L, item("1", "M", 1));
 
-        service.removeItem(7L, 1L, 99L, "M");                   // 색상이 다르면 다른 줄
+        service.removeItem(7L, 1L, 99L, "M");                   // 색상이 다르면 다른 줄 ／ [JA] 色が違えば別の行
         assertThat(stored[0]).isNotNull();
 
         List<ProductInfoDto> now = service.removeItem(7L, 1L, 5L, "M");
@@ -221,6 +229,7 @@ class CartServerAuthoritativeTest {
     }
 
     /** 🔴 핵심 — 체크아웃이 고르지 않은 줄을 지우지 않는다. */
+    // [JA] 🔴 核心 — チェックアウトが選ばなかった行を消さない。
     @Test
     @DisplayName("🔴 체크아웃은 고른 줄만 selected — 고르지 않은 줄은 남고, 총액·/checkout 은 고른 줄로만")
     void checkoutMarksSelectionWithoutDeleting() {
@@ -232,11 +241,11 @@ class CartServerAuthoritativeTest {
         assertThat(stored[0].getCartProducts()).hasSize(2);
         assertThat(stored[0].getCartProducts()).filteredOn(CartProduct::isSelected)
                 .extracting(CartProduct::getProductId).containsExactly(1L);
-        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("30.00");   // 20 + 배송 10
+        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("30.00");   // 20 + 배송 10 ／ [JA] 20 + 送料 10
 
         long id = 100;
         for (CartProduct line : stored[0].getCartProducts()) {
-            line.setCartproductId(id++);                        // JPA 가 채우는 값
+            line.setCartproductId(id++);                        // JPA 가 채우는 값 ／ [JA] JPA が埋める値
         }
         when(catalog.getColorsInfo(anyList())).thenReturn(ResponseEntity.ok(List.of()));
         @SuppressWarnings("unchecked")
@@ -249,6 +258,7 @@ class CartServerAuthoritativeTest {
         assertThat(checkoutView.getProducts()).extracting(p -> p.getProductId()).containsExactly("1");
 
         // 다음 체크아웃에서 다시 고르면 다시 들어간다
+        // [JA] 次のチェックアウトで再び選べば再び入る
         service.saveCart(checkout(item("2", "", 2)), 7L);
         assertThat(stored[0].getCartProducts()).filteredOn(CartProduct::isSelected)
                 .extracting(CartProduct::getProductId).containsExactly(2L);
@@ -267,6 +277,7 @@ class CartServerAuthoritativeTest {
     }
 
     /** 🔴 catalog 가 모르는 줄이 장바구니를 막지 않는다. */
+    // [JA] 🔴 catalog が知らない行がカートを塞がない。
     @Test
     @DisplayName("🔴 catalog 가 모르는 줄은 응답에서만 빠지고, 나머지 줄은 보이고, 그 줄도 뺄 수 있다")
     void unknownLineDoesNotBlockTheCart() {
@@ -284,22 +295,25 @@ class CartServerAuthoritativeTest {
     }
 
     /** 🔴 운영에서 겪은 것 — 옛 스키마의 줄(product_id 비어 있음) 하나 때문에 담기가 전부 400 이었다. */
+    // [JA] 🔴 運用で経験したこと — 旧スキーマの行(product_id が空)1 つのせいで追加がすべて 400 だった。
     @Test
     @DisplayName("🔴 상품 id 없는 옛 줄이 있어도 담기가 되고, 그 줄은 지워진다. 읽기·/checkout 에는 나오지 않는다")
     void legacyLineWithoutProductIdIsDropped() {
         service.putItem(7L, item("1", "M", 1));
         CartProduct legacy = CartProduct.builder().colorId(8L).size("M").qty(1)
-                .price(new BigDecimal("99")).shipping(BigDecimal.ZERO).build();   // productId 없음
+                .price(new BigDecimal("99")).shipping(BigDecimal.ZERO).build();   // productId 없음 ／ [JA] productId なし
         stored[0].getCartProducts().add(legacy);
 
         // 읽기 — 숨긴다(예전에는 Long.toString(null) 에서 NPE)
+        // [JA] 読み取り — 隠す(以前は Long.toString(null) で NPE)
         assertThat(service.loadCart(7L)).extracting(ProductInfoDto::getId).containsExactly("1");
 
         // 쓰기 — 지운다
+        // [JA] 書き込み — 消す
         List<ProductInfoDto> now = service.putItem(7L, item("2", "", 1));
         assertThat(now).extracting(ProductInfoDto::getId).containsExactly("1", "2");
         assertThat(stored[0].getCartProducts()).extracting(CartProduct::getProductId).containsExactly(1L, 2L);
-        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("60.00");   // 20+10 + 30+0 — 옛 줄의 99 는 없다
+        assertThat(stored[0].getCartTotal()).isEqualByComparingTo("60.00");   // 20+10 + 30+0 — 옛 줄의 99 는 없다 ／ [JA] 20+10 + 30+0 — 旧行の 99 はない
     }
 
     @Test
@@ -343,7 +357,7 @@ class CartServerAuthoritativeTest {
     void rollbackKeepsQuantities() {
         service.putItem(7L, item("1", "M", 3));
         service.putItem(7L, item("2", "", 2));
-        stored[0].setTotalAfterDiscount(new BigDecimal("1.00"));   // 쿠폰 적용액
+        stored[0].setTotalAfterDiscount(new BigDecimal("1.00"));   // 쿠폰 적용액 ／ [JA] クーポン適用額
 
         service.cartRollback(new com.project.common.message.dto.request.CartRollbackRequest(7L, 1));
 

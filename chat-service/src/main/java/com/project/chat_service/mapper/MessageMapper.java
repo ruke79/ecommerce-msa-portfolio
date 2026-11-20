@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 public class MessageMapper {
 
     /** createdAt(문자열 epoch millis)을 안전하게 파싱한다. 값이 없거나 형식이 어긋나면 0. */
+    // [JA] createdAt(文字列の epoch millis)を安全にパースする。値がないか形式が合わなければ 0。
     private static long parseCreatedAt(String createdAt) {
         if (createdAt == null || createdAt.isBlank()) {
             return 0L;
@@ -25,6 +26,10 @@ public class MessageMapper {
      *
      * @param dto 변환할 MessageDto 객체
      * @return ChatMessage 엔티티 객체
+     *
+     * <p>[JA] MessageDto を ChatMessage エンティティに変換する。
+     * 引数 dto: 変換する MessageDto オブジェクト
+     * 戻り値: ChatMessage エンティティオブジェクト
      */
     static public ChatMessage toChatMessage(MessageDto dto) {
         if (dto == null) {
@@ -36,6 +41,11 @@ public class MessageMapper {
         // 뒤바뀐 채 저장**됐다(docs/16 B-24). 그대로 저장되면 메시지의 roomId 가 사용자 닉네임이
         // 되어 findByRoomId 로 영영 조회되지 않는다. 인자 순서를 시그니처에 맞춘다.
         // 발신자는 id 로만 저장한다 — 이메일은 몽고에 남기지 않는다(docs/48 §6-⑥).
+        // [JA] ChatMessage.get のシグネチャは (type, nickname, email, roomId, ...) なのに
+        //      以前は (type, roomId, email, nickname, ...) の順で渡しており、**roomId と nickname が
+        //      入れ替わったまま保存**されていた(docs/16 B-24)。そのまま保存されるとメッセージの roomId がユーザーのニックネームに
+        //      なり findByRoomId で永遠に照会されない。引数の順序をシグネチャに合わせる。
+        //      送信者は id だけで保存する — メールは Mongo に残さない(docs/48 §6-⑥)。
         ChatMessage message = ChatMessage.get(
             dto.getType(),
             dto.getNickname(),
@@ -51,6 +61,10 @@ public class MessageMapper {
         // 이걸 빠뜨리면 MongoDB 가 매 저장마다 새 ObjectId 를 만들어, Kafka 재전달 때
         // **같은 메시지가 여러 건 저장**된다. id 를 실으면 save() 가 upsert 가 되어
         // 재전달이 몇 번 오든 문서는 한 건으로 수렴한다 — 별도 멱등 원장이 필요 없다.
+        // [JA] プロデューサ(ChatService.sendMessage)が発行前に付与したシーケンス id をそのままドキュメントの _id に使う。
+        //      これを落とすと MongoDB が保存のたびに新しい ObjectId を作り、Kafka の再配信時に
+        //      **同じメッセージが複数件保存**される。id を載せれば save() が upsert になり、
+        //      再配信が何度来てもドキュメントは 1 件に収束する — 別途の冪等台帳は不要である。
         message.setId(dto.getId());
         return message;
     }
@@ -60,6 +74,10 @@ public class MessageMapper {
      *
      * @param chat 변환할 ChatMessage 엔티티 객체
      * @return MessageDto 객체
+     *
+     * <p>[JA] ChatMessage エンティティを MessageDto に変換する。
+     * 引数 chat: 変換する ChatMessage エンティティオブジェクト
+     * 戻り値: MessageDto オブジェクト
      */
     static public MessageDto fromChatMessage(ChatMessage chat) {
         if (chat == null) {
@@ -78,6 +96,9 @@ public class MessageMapper {
             // MongoDB 는 스키마리스라 createdAt 이 비어 있거나 숫자가 아닌 문서가 섞일 수 있다.
             // 무방비 Long.parseLong 이라 **그런 문서 하나가 방 전체의 대화 이력 조회를 500 으로**
             // 만들었다(docs/16 B-24, 실제 재현). 파싱 실패는 그 메시지 하나만 0 으로 떨어뜨린다.
+            // [JA] MongoDB はスキーマレスなので createdAt が空だったり数値でないドキュメントが混ざり得る。
+            //      無防備な Long.parseLong だったため**そのようなドキュメント一つがルーム全体の会話履歴照会を 500 に**
+            //      していた(docs/16 B-24、実際に再現)。パース失敗はそのメッセージ一つだけを 0 に落とす。
             .createdAt(parseCreatedAt(chat.getCreatedAt()))
             .build();
     }

@@ -20,7 +20,10 @@ import org.junit.jupiter.params.provider.ValueSource;
  * 출처 경로나 http(s) 만, 255자 이하, 배열 리터럴을 깨는 글자 없이 — DB 에 닿기 전에 거절한다. 실제 적재는 catalog 의
  * {@code DemoCatalogSeedIntegrationTest}(컨테이너)가 본다.
  *
- * <p>[JA] デモ用プレースホルダー画像アドレスの検査。DB に触れる前に拒否する。
+ * <p>[JA] デモカタログのプレースホルダー画像アドレスの検査(generate-catalog-data.py {@code --placeholder-image}、ops/44 PLACEHOLDER_IMAGE)。
+ * このアドレスはすべての SKU 画像 · 色見本になり、カート · 注文の行にそのままコピーされる({@code image varchar(255)})。同一オリジンの
+ * パスか http(s) のみ、255 文字以下、配列リテラルを壊す文字なし — DB に届く前に拒否する。実際の投入は catalog の
+ * {@code DemoCatalogSeedIntegrationTest}(コンテナ)が見る。
  */
 @DisplayName("generate-catalog-data.py — --placeholder-image 주소 검사")
 class CatalogPlaceholderImageArgTest {
@@ -42,6 +45,7 @@ class CatalogPlaceholderImageArgTest {
     }
 
     /** DSN 은 닿지 않는 주소 — 검사를 통과하면 그 다음(연결 · psycopg2)에서 다른 오류로 멈춘다. */
+    // [JA] DSN は届かないアドレス — 検査を通ると、その次(接続 · psycopg2)で別のエラーで止まる。
     private static Run gen(String placeholder) throws Exception {
         ProcessBuilder pb = new ProcessBuilder("python3", "-I", "ops/tools/generate-catalog-data.py", "--products", "1",
                 "--copy", "host=127.0.0.1 port=1 dbname=x user=x connect_timeout=1", "--placeholder-image", placeholder)

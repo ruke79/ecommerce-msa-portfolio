@@ -24,6 +24,7 @@ const PEAK = rate(Math.min(10, USERS));
 const KEEP = __ENV.KEEP_ORDERS === '1';
 
 // 한 번 구매 전체의 시간 — 요청 하나하나가 아니라 손님이 느끼는 것
+// [JA] 1 回の購入全体の時間 — 個々のリクエストではなく客が感じるもの
 const purchase = new Trend('purchase_duration', true);
 
 export const options = {
@@ -63,7 +64,7 @@ export function setup() {
     fail('DEMO_PASSWORD 가 없다 — ops/53 이 PASSWORD_FILE 에서 넘긴다');
   }
   const home = homeOrFail(get('/catalog-service/api/content/home', { tags: { name: 'home' } }));
-  limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀)
+  limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀) ／ [JA] 流入制限を上げていなければここで止まる(smoke は飛ばす)
   const products = purchasable(home);
   if (!products.length) {
     fail('담을 수 있는 상품이 없다(SKU 하나 · 재고 5 이상) — 먼저 ops/44 load');
@@ -74,6 +75,7 @@ export function setup() {
 }
 
 // VU 마다의 세션 — setup 이 돌려준 것의 사본에서 시작해 이 VU 가 갱신한다
+// [JA] VU ごとのセッション — setup が返したもののコピーから始めてこの VU が更新する
 let session = null;
 
 function mySession(data) {
@@ -82,6 +84,7 @@ function mySession(data) {
     session = Object.assign({}, data.sessions[idx]);
   }
   // 액세스 토큰 15분 — 13분이 지나면 갱신(화면은 만료 10초 전)
+  // [JA] アクセストークンは 15 分 — 13 分経ったら更新(画面は期限の 10 秒前)
   if (Date.now() - session.at > 13 * 60 * 1000) {
     if (!refresh(session)) {
       fail('토큰 갱신 실패 — 같은 계정을 두 VU 가 쓰고 있지 않은지(USERS ≥ maxVUs)');
@@ -101,6 +104,7 @@ export function order(data) {
   const p = pick(data.products);
 
   // 상품 상세 → 담기 정보
+  // [JA] 商品詳細 → カート投入情報
   ok(send('GET', `/catalog-service/api/product/${encodeURIComponent(p.slug)}`, null, 'product'), 'product');
   sleep(Math.random());
   const infoRes = send('GET', `/catalog-service/api/cart/${encodeURIComponent(p.id)}?style=${p.style}&size=${p.size}`, null, 'cart_info');
@@ -111,6 +115,7 @@ export function order(data) {
   const line = Object.assign({}, info, { qty: 1, _uid: `${p.id}_${p.style}_${p.size}` });
 
   // 담기 — 응답은 장바구니 전체
+  // [JA] カート投入 — 応答はカート全体
   const addRes = send('PUT', '/cart-service/api/cart/items', line, 'cart_add');
   if (!ok(addRes, 'cart_add')) {
     return;
@@ -119,6 +124,7 @@ export function order(data) {
   const mine = cart.filter((l) => String(l.id) === String(p.id) && String(l.size) === String(info.size));
 
   // 체크아웃 버튼 — 고른 줄만 저장(나머지는 선택 해제)
+  // [JA] チェックアウトボタン — 選んだ行だけ保存(残りは選択解除)
   ok(send('POST', '/cart-service/api/cart/savecart', { products: mine.length ? mine : [line] }, 'cart_save'), 'cart_save');
   ok(send('GET', '/cart-service/api/cart/checkout', null, 'checkout'), 'checkout');
   const addrRes = send('GET', '/user-service/api/user/profile/address', null, 'address');
@@ -127,6 +133,7 @@ export function order(data) {
   sleep(Math.random());
 
   // 주문 — 화면처럼 시도마다 새 멱등 키, 무통장 입금은 paymentMethod "cash"
+  // [JA] 注文 — 画面のように試行ごとに新しい冪等キー、銀行振込は paymentMethod "cash"
   const createRes = send('POST', '/order-service/api/order/create',
     { shippingAddress: saved || FALLBACK_ADDRESS, paymentMethod: 'cash', couponApplied: '' },
     'order_create', { 'Idempotency-Key': idempotencyKey() });

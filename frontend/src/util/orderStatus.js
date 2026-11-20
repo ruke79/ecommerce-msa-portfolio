@@ -8,6 +8,16 @@
  * <p>🐛 화면 여러 곳이 이 값을 문자열로 직접 비교하다 틀렸다. 주문 목록은
  * {@code orderStatus === "UNPAID"} 일 때 초록 체크를 그렸다 — <b>미결제가 결제 완료처럼</b>
  * 보였다. 비교를 한 곳에 모아 둔다.
+ *
+ * <p>[JA] 注文状態の判定。
+ *
+ * <p>サーバーの値は {@code common/constants/OrderStatus.java} が決める:
+ * {@code NOT_PROCESSED · PAID · UNPAID · PROCESSING · DISPATCHED · DELIVERED ·
+ * CANCELED · COMPLETED}。
+ *
+ * <p>🐛 画面の何か所もがこの値を文字列で直接比較して間違えていた。注文一覧は
+ * {@code orderStatus === "UNPAID"} のときに緑のチェックを描いていた — <b>未決済が決済完了のように</b>
+ * 見えた。比較を一か所に集めておく。
  */
 
 /**
@@ -21,6 +31,17 @@
  * 매출·구매 이력·등급 산정의 기준이라, 여기와 어긋나면 "주문 내역에는 결제된 주문인데
  * 등급 계산에는 안 잡힌다" 가 된다. 언어가 달라 공유할 수 없으니 한쪽을 고치면 반대쪽도
  * 고쳐야 한다 — 서버 쪽에는 상태가 늘면 실패하는 테스트가 있다(PaidStatusesTest).
+ *
+ * <p>[JA] 決済が終わった状態たち。
+ *
+ * <p>「未決済でないもの」で判定しない理由: {@code NOT_PROCESSED} と {@code CANCELED}
+ * も決済済みの状態ではない。決済済みの側を列挙すれば<b>新しい状態が追加されても既定値は「未決済」</b>
+ * なので安全な側に間違える。逆にすると新しい状態がすべて「決済完了」に見える。
+ *
+ * <p>⚠️ この集合はサーバーの {@code OrderStatus.PAID_STATUSES} と<b>同じでなければならない。</b> そちらは
+ * 売上・購入履歴・等級算定の基準なので、こことずれると「注文履歴では決済済みの注文なのに
+ * 等級計算には入らない」となる。言語が違って共有できないので、片方を直したら反対側も
+ * 直す必要がある — サーバー側には状態が増えると失敗するテストがある(PaidStatusesTest)。
  */
 const PAID_STATUSES = new Set([
   "PAID",
@@ -36,6 +57,7 @@ export function isPaid(orderStatus) {
 }
 
 /** 무통장입금 입금 대기 — 안내를 받았고 기한 안에 돈이 와야 한다(docs/49 §11). */
+// [JA] 銀行振込の入金待ち — 案内を受け、期限内に入金されなければならない(docs/49 §11)。
 export function isAwaitingDeposit(orderStatus) {
   return String(orderStatus ?? "").trim().toUpperCase() === "UNPAID";
 }
@@ -45,6 +67,7 @@ export function isCanceled(orderStatus) {
 }
 
 /** 돈이 돌아간 주문. CANCELED(결제 전에 접음)와 다르다. */
+// [JA] お金が戻った注文。CANCELED(決済前に取りやめ)とは違う。
 export function isRefunded(orderStatus) {
   return String(orderStatus ?? "").trim().toUpperCase() === "REFUNDED";
 }
@@ -55,6 +78,12 @@ export function isRefunded(orderStatus) {
  * <p>서버의 {@code OrderDataService.SELF_SERVICE_REFUNDABLE} 과 같아야 한다. 발송된
  * 뒤에는 물건이 돌아와야 하므로 버튼 대신 고객센터 안내를 그린다 — 서버가 어차피
  * 거절하지만, 눌러 보고 거절당하는 것보다 처음부터 없는 편이 낫다.
+ *
+ * <p>[JA] ユーザーが<b>自分で</b>返金リクエストできる状態 — 品物がまだ出ていない。
+ *
+ * <p>サーバーの {@code OrderDataService.SELF_SERVICE_REFUNDABLE} と同じでなければならない。発送
+ * 後は品物が戻る必要があるので、ボタンの代わりにカスタマーセンターの案内を描く — サーバーがどのみち
+ * 拒否するが、押してみて拒否されるより最初からないほうがよい。
  */
 const SELF_SERVICE_REFUNDABLE = new Set(["PAID", "PROCESSING"]);
 
@@ -66,10 +95,14 @@ export function canRequestRefund(orderStatus) {
 /**
  * 물건이 창고를 떠난 상태 — 반품 입고를 기록할 수 있다. 서버의
  * {@code OrderDataService.SHIPPED_STATUSES} 와 같아야 한다.
+ *
+ * <p>[JA] 品物が倉庫を出た状態 — 返品の入庫を記録できる。サーバーの
+ * {@code OrderDataService.SHIPPED_STATUSES} と同じでなければならない。
  */
 const SHIPPED_STATUSES = new Set(["DISPATCHED", "DELIVERED", "COMPLETED"]);
 
 /** 물건이 도착한 주문 — 환불은 반품 절차를 거친다. */
+// [JA] 品物が届いた注文 — 返金は返品手続きを経る。
 export function isDelivered(orderStatus) {
   const s = String(orderStatus ?? "").trim().toUpperCase();
   return s === "DELIVERED" || s === "COMPLETED";
@@ -86,6 +119,12 @@ export function isShipped(orderStatus) {
  * <p>서버의 {@code OrderDeliveryStatusService.rank()} 와 같은 순서다. 배송 상태가 바뀐 뒤
  * 주문이 "그 단계까지 왔는가" 를 판정할 때 쓴다 — 주문은 Kafka 왕복 뒤에 바뀌므로 화면이
  * 따라잡을 때까지 다시 읽어야 한다.
+ *
+ * <p>[JA] PAID → PROCESSING → DISPATCHED → DELIVERED → COMPLETED のうち何番目か。それ以外は -1。
+ *
+ * <p>サーバーの {@code OrderDeliveryStatusService.rank()} と同じ順序である。配送状態が変わったあと
+ * 注文が「その段階まで来たか」を判定するときに使う — 注文は Kafka の往復のあとに変わるので、画面が
+ * 追いつくまで再取得しなければならない。
  */
 const ORDER_RANK = ["PAID", "PROCESSING", "DISPATCHED", "DELIVERED", "COMPLETED"];
 
@@ -97,6 +136,10 @@ export function orderRank(orderStatus) {
  * 배송 단계(delivery.stage)가 주문을 어디까지 데려가는가. 서버의
  * {@code OrderDeliveryStatusService.targetOf} 의 stage 분기와 같다. 취소·반송처럼 주문을
  * 앞으로 움직이지 않는 단계는 null.
+ *
+ * <p>[JA] 配送段階(delivery.stage)が注文をどこまで連れて行くか。サーバーの
+ * {@code OrderDeliveryStatusService.targetOf} の stage 分岐と同じ。キャンセル・返送のように注文を
+ * 前に進めない段階は null。
  */
 export function rankForDeliveryStage(stage) {
   switch (String(stage ?? "").trim().toUpperCase()) {
@@ -115,6 +158,7 @@ export function rankForDeliveryStage(stage) {
 }
 
 /** 구매가 확정된 주문 — 주문의 마지막 상태(docs/25 §12). */
+// [JA] 購入が確定した注文 — 注文の最後の状態(docs/25 §12)。
 export function isCompleted(orderStatus) {
   return String(orderStatus ?? "").trim().toUpperCase() === "COMPLETED";
 }
@@ -124,6 +168,11 @@ export function isCompleted(orderStatus) {
  *
  * <p>서버의 {@code OrderPurchaseConfirmationService} 와 같아야 한다. 이미 확정됐으면(COMPLETED)
  * 버튼 대신 완료 표시를 그리고, 그 밖의 상태에는 아무것도 그리지 않는다.
+ *
+ * <p>[JA] 客が購入確定を押せる状態 — <b>配達完了だけ</b>である。
+ *
+ * <p>サーバーの {@code OrderPurchaseConfirmationService} と同じでなければならない。すでに確定済みなら(COMPLETED)
+ * ボタンの代わりに完了表示を描き、それ以外の状態では何も描かない。
  */
 export function canConfirmPurchase(orderStatus) {
   return String(orderStatus ?? "").trim().toUpperCase() === "DELIVERED";

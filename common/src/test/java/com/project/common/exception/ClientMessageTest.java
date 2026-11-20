@@ -11,6 +11,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * 응답 본문에 싣는 예외 문구 — 우리가 사람에게 쓴 문구만 (docs/57 §1).
+ *
+ * <p>[JA] レスポンス本文に載せる例外の文言 — 自分たちが人に向けて書いた文言だけ(docs/57 §1)。
  */
 @DisplayName("ClientMessage — 예외 문구를 응답에 실어도 되는가")
 class ClientMessageTest {
@@ -27,6 +29,7 @@ class ClientMessageTest {
         assertThat(ClientMessage.of(new com.project.common.domain.exception.StateConflictException("이미 환불된 주문입니다.")))
                 .isEqualTo("이미 환불된 주문입니다.");
         // 🔒 IllegalStateException 은 운영자용 문구에 쓴다 — 내보내지 않는다(docs/57 §15).
+        // [JA] 🔒 IllegalStateException は運用者向けの文言に使う — 外に出さない(docs/57 §15)。
         assertThat(ClientMessage.of(new IllegalStateException("SKU 생성이 10회 연속 충돌했습니다 — product_sku_seq 시퀀스 상태를 확인하세요")))
                 .isEqualTo(ClientMessage.DEFAULT);
         assertThat(ClientMessage.of(new NoSuchElementException("주문이 없습니다."))).isEqualTo("주문이 없습니다.");
@@ -97,6 +100,7 @@ class ClientMessageTest {
     }
 
     /** 운영자용 표지를 단 우리 예외. */
+    // [JA] 運用者向けの印を付けた自前の例外。
     static final class OperatorOnly extends RuntimeException implements NotForClients {
         OperatorOnly(String message) {
             super(message);

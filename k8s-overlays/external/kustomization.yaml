@@ -56,6 +56,22 @@
 #
 # ⚠️ 어느 쪽이든 `k8s/70-autoscaling.yaml` 은 적용하지 않는다. prod 의 HPA 는 min=2 라
 #    11개 서비스가 5,300m 이 되어 4 OCPU 도 넘긴다.
+# [JA] external オーバーレイ — 状態を持つインフラをクラスターの**外**のマネージドサービスに出す(kubectl apply -k k8s-overlays/external)。
+#      ⚠️ k8s/70-autoscaling.yaml は**適用しない** — 下の §どの箱に入るか。prod オーバーレイをそのまま継承し(イメージ固定、replicas 削除、Cloudflare Tunnel)、**エンドポイントだけ**を変える。アプリケーションイメージは一行も違わない。
+#      ── 何が外に出て何が残るか ── PostgreSQL → 出る(Neon / Supabase / Aiven、すべて本物の PostgreSQL)。MongoDB → 出る(MongoDB Atlas M0)。
+#      Redis → **残る。** 節約できる資源が 50m/64Mi だけで、PG · Mongo を外した理由(emptyDir なので再起動するとデータが消える)がここには当てはまらない。キャッシュ · 分散ロック · カウンターはすべて再構成可能な値だ(docs/32 §6)。
+#      Kafka → **残る。** 常時無料のマネージド Kafka がない(docs/32 §3)。Elasticsearch → **残る。** nori 形態素解析プラグインが必要(docs/32 §3)。
+#      つまりこのオーバーレイは「すべて外へ」ではない。実際に出るものだけが出る — **二つだけ。** だから k8s/90-dev-infra.yaml を丸ごと立ち上げた後その二つだけ消す(postgres · mongodb の deploy を delete)。
+#      ⚠️ **redis は消さない。** PG · Mongo と並んでいて一緒に消しやすいが、消すと cart-service の Redisson ロック経路が死ぬ。誤って消したら 90-dev-infra を apply して戻す。
+#      ⚠️ 逆に**再び apply すると消した postgres · mongodb も一緒に戻ってくる。** このファイルは単独マニフェストなので部分適用ができない。redis を戻した後、二つを再び消すこと。
+#      (90-dev-infra は単独ファイルなのでオーバーレイから参照できない — dev/prod と同じ制約。Deployment だけ消して Service · Namespace は残るが、アプリは外部ホストを見るので無害だ。)
+#      ── 節約した資源 ── 90-dev-infra 基準の要求値で PG(100m/256Mi) + Redis(50m/64Mi) + Mongo(100m/256Mi) = **250m / 576Mi**。残る Kafka(200m/512Mi) + ES(200m/768Mi) が 400m/1280Mi。
+#      ⚠️ 勘違いしないこと: OCI Ampere を超える主犯はインフラではなく**アプリケーション**だ(prod HPA min=2 基準 5,300m)。インフラをすべて外してもアプリだけで超過する。docs/32 §2 の表参照。
+#      ── どの箱に入るか ── このオーバーレイは prod のリソース値(250m/384Mi)をそのまま使う。すべて 1 レプリカ + Kafka · ES · Redis で **3,550m / 6,592Mi**(2026-09 saga-projection · config-server 追加分含む)。
+#      4 OCPU / 24GB ✅ 入る。余裕 650m で主要なもの二、三個を 2 レプリカに上げてみられる。2 OCPU / 12GB 🔴 超える。そのときはこの上に `k8s-overlays/oci` を載せる(docs/33 §4)。
+#      ⚠️ Always Free Ampere の上限は**テナンシーごとに違う。** 2026-06-15 の縮小告知後も 4 OCPU/24GB がそのまま取れるアカウントがある。文書で断定せずインスタンスで `nproc` で確認すること —
+#      `ops/23-oci-ampere-bootstrap.sh --check` が見て選んでくれる。
+#      ⚠️ どちらでも `k8s/70-autoscaling.yaml` は適用しない。prod の HPA は min=2 なので 11 サービスが 5,300m になり 4 OCPU も超える。
 
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -63,8 +79,8 @@ kind: Kustomization
 namespace: ecommerce
 
 resources:
-  - ../prod          # prod 오버레이를 그대로 상속한다(디렉터리 베이스라 참조 가능)
-  - metrics-agent.yaml   # 서비스 지표 → 노드의 Prometheus(remote write, docs/63 §5 — B-95)
+  - ../prod          # prod 오버레이를 그대로 상속한다(디렉터리 베이스라 참조 가능) ／ [JA] prod オーバーレイをそのまま継承する(ディレクトリベースなので参照可能)
+  - metrics-agent.yaml   # 서비스 지표 → 노드의 Prometheus(remote write, docs/63 §5 — B-95) ／ [JA] サービスメトリクス → ノードの Prometheus(remote write、docs/63 §5 — B-95)
 
 # ── 레플리카 ───────────────────────────────────────────────────────────
 # prod 의 remove-replicas 패치가 HPA 대상에서 replicas 를 지워 전부 1이 되는데,
@@ -77,6 +93,11 @@ resources:
 # 더 쓰는 것은 이미 요청 합계가 노드의 85%를 넘는 상황에서 맞지 않는다 —
 # 자리가 모자라면 롤아웃이 Pending 에서 멈춘다(patch-java-requests.yaml 주석의 실측).
 # 진짜 다중 노드에 올릴 때는 prod 오버레이를 쓰고, 거기서는 2가 유지된다.
+# [JA] ── レプリカ ── prod の remove-replicas パッチが HPA 対象から replicas を消してすべて 1 になるが、saga-projection は HPA 対象ではないのでマニフェストの値(2)がそのまま残る。
+#      その 2 は**アクティブ 1 + スタンバイ 1** で、ノードが複数あるクラスターでポッド障害時に状態のコピーを既に持つインスタンスが引き継ぐための値だ(docs/38 §1.17)。
+#      このオーバーレイの対象は**単一ノードの箱**だ。二つのポッドが同じノードに立つのでノードが死ねば両方死に、残る利得はポッド単位の障害 · ローリングアップデートだけだ。
+#      その利得に 100m/384Mi を余分に使うのは、既に要求合計がノードの 85% を超える状況では合わない — 空きが足りないとロールアウトが Pending で止まる(patch-java-requests.yaml のコメントの実測)。
+#      本当のマルチノードに載せるときは prod オーバーレイを使い、そこでは 2 が維持される。
 replicas:
   - name: saga-projection
     count: 1
@@ -85,6 +106,8 @@ patches:
   # 엔드포인트만 갈아 끼운다. JDBC URL 은 베이스가 이미
   # `jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/<db>` 형태라
   # ConfigMap 두 키만 바꾸면 10개 데이터소스가 한꺼번에 따라온다.
+  # [JA] エンドポイントだけを差し替える。JDBC URL はベースが既に `jdbc:postgresql://$(POSTGRES_HOST):$(POSTGRES_PORT)/<db>` の形なので、
+  #      ConfigMap の二つのキーだけ変えれば 10 個のデータソースが一度についてくる。
   - path: patch-external-endpoints.yaml
 
   # CPU **요청**만 낮춘다(상한은 그대로). 베이스의 250m × 14개는 4 OCPU 노드를 99% 로
@@ -92,6 +115,8 @@ patches:
   #
   # JSON6902 인 이유: 컨테이너 이름이 Deployment 마다 달라 전략적 병합으로는 한 번에
   # 못 고친다. 인덱스 0 은 모든 Deployment 가 단일 컨테이너라 안전하다.
+  # [JA] CPU の**要求**だけ下げる(上限はそのまま)。ベースの 250m × 14 個は 4 OCPU ノードを 99% まで埋めてローリングアップデートが Pending で止まる — 実測だ。根拠はパッチファイルのコメント参照。
+  #      JSON6902 の理由: コンテナ名が Deployment ごとに違い戦略的マージでは一度に直せない。インデックス 0 はすべての Deployment が単一コンテナなので安全だ。
   - path: patch-java-requests.yaml
     target:
       kind: Deployment

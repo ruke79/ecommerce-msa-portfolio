@@ -41,6 +41,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p>상태 매핑은 <b>부분 문자열 포함</b>으로 한다. 택배사가 "배달완료", "배달완료(홍길동)",
  * "배달 완료" 처럼 표기를 조금씩 바꾸기 때문이다. 정확히 일치로 짜면 문구가 바뀌는 순간
  * 모든 배송이 상태 갱신을 멈추는데, 그 실패는 아무 오류도 내지 않아 알아채기 어렵다.
+ *
+ * <p>[JA] 郵便局(韓国)の配送追跡。
+ * <p>最初の連携に郵便局を選んだ理由は<b>公開された公共 API があるから</b>だ。民間宅配業者の API は大半が契約が先行し、リポジトリだけ見ても付けられない。国際郵便(EMS)まで同じ系列なので後で海外配送に広げるのも容易だ。
+ * <p><b>⚠️ 正直に — このアダプターは実際の API キーなしで実呼び出しを検証できていない。</b>そこで二つのことをした: <b>フィールド名を設定に出した</b>(公共データポータルの API は同じサービスでもバージョンによってフィールド名が違う。コードではなく yml を直して合わせられるようにした)。<b>マッピングロジックだけ別にテストする</b>(HTTP 呼び出しとパースを分離し、記録したサンプル応答で「この応答が来ればこのイベントが出る」を検証する。キーを受け取ればフィールド名を合わせるだけでよい)。実呼び出しの検証はキーができた後 {@code ops/} スクリプトで行う。
+ * <p>状態マッピングは<b>部分文字列の包含</b>で行う。宅配業者が「배달완료」「배달완료(홍길동)」「배달 완료」のように表記を少しずつ変えるからだ。完全一致で組むと文言が変わった瞬間すべての配送が状態更新を止めるが、その失敗は何のエラーも出さないので気づきにくい。
  */
 @Slf4j
 public class KoreaPostCarrierAdapter implements CarrierAdapter {
@@ -52,6 +57,9 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
      *
      * <p>순서가 중요하다. "배달완료" 가 "배달" 보다 먼저 와야 한다 — 뒤에 오면 배달완료가
      * OUT_FOR_DELIVERY 로 잘못 매핑된다.
+     *
+     * <p>[JA] 原文の状態 → 標準状態。郵便局が使う表現を基準にし、よくある変形を一緒に入れる。
+     * <p>順序が重要だ。「배달완료」が「배달」より先に来なければならない — 後に来ると배달완료が OUT_FOR_DELIVERY に誤ってマッピングされる。
      */
     private static final List<Map.Entry<String, DeliveryStatus>> STATUS_RULES = List.of(
             Map.entry("배달완료", DeliveryStatus.DELIVERED),
@@ -76,6 +84,7 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
             Map.entry("이동중", DeliveryStatus.IN_TRANSIT));
 
     /** 공공데이터포털이 쓰는 흔한 시각 형식들. 어느 것이 올지 확정할 수 없어 순서대로 시도한다. */
+    // [JA] 公共データポータルが使うよくある時刻形式。どれが来るか確定できないので順に試す。
     private static final List<DateTimeFormatter> TIME_FORMATS = List.of(
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
@@ -84,8 +93,9 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
     /** 응답 필드 이름. 버전마다 다르므로 설정으로 뺀다. */
+    // [JA] 応答フィールド名。バージョンごとに違うので設定に出す。
     public record FieldMapping(
-            String eventsPath,      // 이벤트 배열까지의 경로. '.' 로 구분
+            String eventsPath,      // 이벤트 배열까지의 경로. '.' 로 구분 ／ [JA] イベント配列までのパス。'.' で区切る
             String timeField,
             String statusField,
             String locationField,
@@ -121,6 +131,7 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
     public TrackingResult track(String trackingNumber, boolean international) {
         if (serviceKey == null || serviceKey.isBlank()) {
             // 키가 없으면 조용히 빈 결과를 주지 않는다 — 그러면 "왜 갱신이 안 되지"가 된다.
+            // [JA] キーがなければ黙って空の結果を返さない — そうすると「なぜ更新されないのか」になる。
             return TrackingResult.permanent("우체국 API 서비스키가 설정되지 않았습니다 "
                     + "(DELIVERY_KOREAPOST_SERVICE_KEY)");
         }
@@ -162,6 +173,8 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
     /**
      * 응답 본문 → 표준 이벤트. <b>HTTP 와 분리해 둔 이유가 여기 있다</b> — 이 메서드만
      * 기록된 샘플로 테스트할 수 있어야 키 없이도 매핑을 검증할 수 있다.
+     *
+     * <p>[JA] 応答本文 → 標準イベント。<b>HTTP と分離した理由がここにある</b> — このメソッドだけを記録したサンプルでテストできてこそ、キーなしでもマッピングを検証できる。
      */
     TrackingResult parse(String body) {
         try {
@@ -174,6 +187,7 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
                 return TrackingResult.notFound();
             }
             // 항목이 하나면 배열이 아니라 객체로 오는 경우가 있다 — 공공 API 의 흔한 함정이다.
+            // [JA] 項目が一つだと配列ではなくオブジェクトで来ることがある — 公共 API によくある罠だ。
             List<JsonNode> items = new ArrayList<>();
             if (node.isArray()) {
                 node.forEach(items::add);
@@ -190,6 +204,7 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
                 LocalDateTime occurredAt = parseTime(text(item, mapping.timeField()));
                 if (rawStatus == null || occurredAt == null) {
                     // 시각이나 상태가 없으면 타임라인에 놓을 수 없다. 버리되 이유를 남긴다.
+                    // [JA] 時刻や状態がなければタイムラインに置けない。捨てるが理由を残す。
                     log.debug("필드가 없어 건너뛴 이벤트: {}", item);
                     continue;
                 }
@@ -208,6 +223,7 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
 
         } catch (Exception e) {
             // 파싱 실패는 재시도해도 같다 — 응답 형식이 예상과 다르다는 뜻이다.
+            // [JA] パース失敗はリトライしても同じだ — 応答形式が予想と違うという意味だ。
             log.error("우체국 응답 파싱 실패: {}", e.getMessage());
             return TrackingResult.permanent("응답 파싱 실패: " + e.getMessage());
         }
@@ -219,6 +235,9 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
      * <p>매칭되지 않으면 {@code IN_TRANSIT} 로 둔다. 알 수 없는 상태를 EXCEPTION 으로 두면
      * 택배사가 문구를 하나 바꿨을 뿐인데 정상 배송이 전부 "문제 있음"으로 표시된다.
      * 진행 중으로 두면 최소한 사용자에게 잘못된 경보를 주지 않는다 — 대신 로그로 남긴다.
+     *
+     * <p>[JA] 原文の状態 → 標準状態。
+     * <p>マッチしなければ {@code IN_TRANSIT} にする。不明な状態を EXCEPTION にすると、宅配業者が文言を一つ変えただけで正常な配送がすべて「問題あり」と表示される。進行中にしておけば少なくともユーザーに誤った警告を与えない — 代わりにログに残す。
      */
     DeliveryStatus mapStatus(String rawStatus) {
         String normalized = rawStatus.replaceAll("\\s+", "");
@@ -241,9 +260,11 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
                 return LocalDateTime.parse(cleaned, format);
             } catch (DateTimeParseException ignored) {
                 // 다음 형식으로
+                // [JA] 次の形式で
             }
         }
         // 날짜만 온 경우 (yyyyMMdd / yyyy-MM-dd)
+        // [JA] 日付だけ来た場合 (yyyyMMdd / yyyy-MM-dd)
         try {
             String digits = cleaned.replaceAll("[^0-9]", "");
             if (digits.length() == 8) {
@@ -254,6 +275,7 @@ public class KoreaPostCarrierAdapter implements CarrierAdapter {
             }
         } catch (RuntimeException ignored) {
             // 아래에서 null 을 돌려준다
+            // [JA] 下で null を返す
         }
         log.debug("시각 형식을 해석하지 못함: '{}'", value);
         return null;

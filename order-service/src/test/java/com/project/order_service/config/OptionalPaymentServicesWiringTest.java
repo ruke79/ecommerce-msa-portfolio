@@ -31,6 +31,20 @@ import com.project.order_service.service.StripePaymentService;
  *
  * <p>여기서는 전체 컨텍스트 대신 서비스 둘만 올려 조건을 고정한다. 의존은 전부 모의다 —
  * 검증 대상은 배선이지 동작이 아니다.
+ *
+ * <p>[JA] 選択式決済手段のサービス Bean は<b>スイッチに従う。</b>
+ *
+ * <h3>🐛 無効にすると起動が失敗した</h3>
+ *
+ * <p>{@code StripeConfig}・{@code PortOneConfig} は {@code *.enabled=true}
+ * のときだけゲートウェイを作る。ところがそのゲートウェイをコンストラクタで受け取る {@code
+ * StripePaymentService}・{@code PortOnePaymentService} には条件がなかった。結果:
+ * 両方を切ったクラスター既定で order-service が "No qualifying bean of type
+ * StripeCheckoutGateway" で<b>起動すらできず</b>、デプロイスクリプトはロールアウトタイムアウト → 自動復帰 →
+ * 旧 Pod が Running なので成功のように見えた。単体テストはすべて通っていた —
+ * この種のバグは<b>コンテキストを立ち上げて初めて</b>現れる。
+ *
+ * <p>ここではコンテキスト全体の代わりにサービス二つだけを載せて条件を固定する。依存はすべてモック — 検証対象は配線であって動作ではない。
  */
 @DisplayName("선택 결제수단 서비스 빈의 조건")
 class OptionalPaymentServicesWiringTest {
@@ -39,6 +53,8 @@ class OptionalPaymentServicesWiringTest {
             .withBean(OrderCacheService.class, () -> mock(OrderCacheService.class))
             .withBean(OrderDataService.class, () -> mock(OrderDataService.class))
             // OrderDataService 의 @Autowired 세터(OrderStatusChanger, docs/76)는 목 하위 클래스에도 적용된다 — 빈이 있어야 뜬다.
+            // [JA] OrderDataService の @Autowired セッター(OrderStatusChanger、docs/76)
+            //      はモックのサブクラスにも適用される — Bean がないと立ち上がらない。
             .withBean(com.project.order_service.service.OrderStatusChanger.class,
                     com.project.order_service.service.OrderStatusChanger::withoutEvents)
             .withBean(BankTransferService.class, () -> mock(BankTransferService.class))
@@ -47,6 +63,7 @@ class OptionalPaymentServicesWiringTest {
             .withUserConfiguration(StripePaymentService.class, PortOnePaymentService.class);
 
     /** 🔴 핵심 가드 — 클러스터 기본값(둘 다 꺼짐)에서 컨텍스트가 뜬다. */
+    // [JA] 🔴 核心のガード — クラスター既定(両方無効)でコンテキストが立ち上がる。
     @Test
     @DisplayName("둘 다 꺼진 기본값이면 서비스 빈이 없고 컨텍스트는 뜬다")
     void disabledByDefault() {
@@ -83,6 +100,7 @@ class OptionalPaymentServicesWiringTest {
     }
 
     /** 켰는데 게이트웨이가 없으면 — 그건 설정 오류이고 기동이 막혀야 한다(반쯤 켜진 상태 금지). */
+    // [JA] 有効にしたのにゲートウェイがなければ — それは設定エラーで、起動が止まるべきである(半分有効な状態は禁止)。
     @Test
     @DisplayName("켰는데 게이트웨이가 없으면 기동이 막힌다")
     void enabledWithoutGatewayFails() {

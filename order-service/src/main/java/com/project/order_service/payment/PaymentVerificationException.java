@@ -8,6 +8,12 @@ package com.project.order_service.payment;
  *
  * <p>{@code DomainException} 을 상속하므로 컨트롤러가 400 + 이 문구로 바꾼다 —
  * 사용자가 읽을 문장으로 쓸 것.
+ *
+ * <p>[JA] 決済を確認できなかった。
+ * ⚠️ この例外が出たら<b>注文を決済完了として扱ってはならない。</b>「確認不可」と
+ * 「決済済み」を同じに扱った瞬間、決済検証全体が無意味になる。
+ * {@code DomainException} を継承するので、コントローラが 400 + この文言に変える —
+ * ユーザーが読む文として書くこと。
  */
 public class PaymentVerificationException extends com.project.common.domain.exception.DomainException {
 

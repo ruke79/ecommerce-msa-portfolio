@@ -18,11 +18,11 @@ export const options = {
       preAllocatedVUs: Math.max(20, PEAK),
       maxVUs: Math.max(100, PEAK * 4),
       stages: stages([
-        { duration: '2m', target: BASE },     // 평소
-        { duration: '20s', target: PEAK },    // 몰림
-        { duration: '3m', target: PEAK },     // HPA 가 따라오는 동안
-        { duration: '20s', target: BASE },    // 빠짐
-        { duration: '3m', target: BASE },     // 줄어드는 동안(scale-in 안정화 창)
+        { duration: '2m', target: BASE },     // 평소 ／ [JA] 平常
+        { duration: '20s', target: PEAK },    // 몰림 ／ [JA] 集中
+        { duration: '3m', target: PEAK },     // HPA 가 따라오는 동안 ／ [JA] HPA が追いつく間
+        { duration: '20s', target: BASE },    // 빠짐 ／ [JA] 引き
+        { duration: '3m', target: BASE },     // 줄어드는 동안(scale-in 안정화 창) ／ [JA] 縮小する間(scale-in の安定化ウィンドウ)
       ]),
     },
   },

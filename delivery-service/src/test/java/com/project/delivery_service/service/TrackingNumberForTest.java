@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** 송장번호 — 테스트 택배사는 비워 두면 만들어 준다. */
+// [JA] 送り状番号 — テスト宅配業者は空にしておくと作ってくれる。
 @DisplayName("송장번호 정하기")
 class TrackingNumberForTest {
 

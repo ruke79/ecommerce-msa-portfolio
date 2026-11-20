@@ -25,6 +25,15 @@ import lombok.Setter;
  * 의도적이다. 이 테이블은 {@code content} 스키마에 있고 상품은 {@code product} 스키마에
  * 있다. 스키마를 가로지르는 FK 를 걸면 "content 를 언젠가 떼어낼 수 있게 나눠 둔" 경계가
  * DB 제약으로 굳는다(V9·V11 주석).
+ *
+ * <p>[JA] 企画展の対象商品一つとその割引率。
+ * エンティティではなく @Embeddable である理由。この行には自分自身のアイデンティティがない — 「7 番の企画展の 42 番の商品」にすぎず、
+ * 企画展を離れては意味がなく、他の何もこの行を指さない。エンティティにすると自分の id とライフサイクルが生まれ、企画展を消すときにこの行が残らないよう
+ * cascade・orphanRemoval を正確にかける必要がある。値型ならその問題は最初からない — コレクションから抜ければ行も消える。
+ * 対象一覧を丸ごと差し替えることがこのコレクションの唯一の更新方式でもある(管理画面が対象全体を送ってくる)。
+ * 値型コレクションの delete-and-reinsert の動作がそれとぴったり合う。
+ * productId を Product の関連ではなく id 値で持つのも意図的だ。このテーブルは content スキーマにあり、商品は product スキーマにある。
+ * スキーマをまたぐ FK を張ると「content をいつか切り離せるよう分けておいた」境界が DB 制約で固まる(V9・V11 のコメント)。
  */
 @Embeddable
 @Getter
@@ -41,6 +50,9 @@ public class EventProduct {
      *
      * <p>{@code ProductSku.discount} 와 같은 단위여야 한다 — 하나는 퍼센트, 하나는 비율로
      * 두면 합성하는 쪽에서 반드시 틀린다.
+     *
+     * <p>[JA] 割引率。パーセント(0〜100)である。
+     * ProductSku.discount と同じ単位でなければならない — 一方をパーセント、もう一方を比率にすると、合成する側で必ず間違える。
      */
     @Column(name = "discount_rate", nullable = false)
     private int discountRate;

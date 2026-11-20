@@ -15,6 +15,11 @@ import com.project.notification_service.dto.NotificationResponse;
  *
  * <p>알림은 서버가 만든 한국어 문구로 저장되고, 목록을 내줄 때 요청 언어로 바꾼다. 새 문구를 NotificationTexts 에 더하고
  * 카탈로그를 빠뜨리면 일본어 화면에 한국어가 남는다 — 한국어 화면에서는 멀쩡해 보인다. 모양마다 예시 값을 넣어 본다.
+ *
+ * <p>[JA] 🔴 通知の件名・本文にはすべて日本語がある(docs/60 §9)。通知はサーバーが作った韓国語文言で保存され、
+ * 一覧を返すときに要求言語へ置き換える。新しい文言を NotificationTexts
+ * に加えてカタログを漏らすと日本語画面に韓国語が残る — 韓国語画面では問題なく見える。
+ * 形ごとに例の値を入れてみる。
  */
 @DisplayName("알림 문구 — 일본어")
 class NotificationTextsTest {

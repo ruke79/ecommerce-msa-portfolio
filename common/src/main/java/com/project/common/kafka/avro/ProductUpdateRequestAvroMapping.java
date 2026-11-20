@@ -54,6 +54,7 @@ public class ProductUpdateRequestAvroMapping implements AvroMapping<com.project.
     @Override
     public BinaryMessageDecoder<com.project.common.avro.ProductUpdateRequest> decoder() {
         // v1(autorizationToken 있음)으로 쓴 레코드도 읽는다 — 배포 도중 옛 order 가 쓴 것(AvroSchemaHistory).
+        // [JA] v1(autorizationToken あり)で書いたレコードも読む — デプロイ途中に古い order が書いたもの(AvroSchemaHistory)。
         return com.project.common.avro.ProductUpdateRequest.createDecoder(
                 AvroSchemaHistory.store(AvroSchemaHistory.PRODUCT_UPDATE));
     }

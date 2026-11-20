@@ -18,9 +18,16 @@ import { useTranslation } from "i18n/I18nProvider";
  * <p>토큰은 주소에서 읽어 <b>바디로</b> 보낸다. 쿼리스트링은 nginx 액세스 로그·프록시·
  * 브라우저 히스토리에 남는데, 이 토큰은 그 자체로 계정을 가져갈 수 있는 자격증명이다.
  * 링크(GET)로 오는 것은 어쩔 수 없지만 그것을 쓰는 요청까지 같은 자리에 둘 이유는 없다.
+ *
+ * <p>[JA] パスワード再設定 — メールのリンクが到着する画面。🐛 <b>この画面がなかった。</b>サーバーは再設定メールに {@code {frontendUrl}/reset-password?token=…} を
+ * 載せて送るのに、フロント全体に {@code reset-password} という文字列が 0 件だった — リンクを押すとルーターのエラー画面が出た。パスワード再発行は
+ * <b>最初から最後まで動いたことがない。</b>`/forgot`・`/verification-failed` と同じ種類の穴である。トークンはアドレスから読んで<b>ボディで</b>送る。
+ * クエリ文字列は nginx のアクセスログ・プロキシ・ブラウザの履歴に残るが、このトークンはそれ自体でアカウントを奪える認証情報である。
+ * リンク(GET)で来るのは仕方ないが、それを使うリクエストまで同じ場所に置く理由はない。
  */
 
 /** 서버의 비밀번호 정책과 맞춘다. 숫자를 문구 안에 적어 두면 정책이 바뀔 때 한쪽만 바뀐다. */
+// [JA] サーバーのパスワードポリシーと合わせる。数字を文言の中に書いておくと、ポリシーが変わったとき片方だけが変わる。
 const MIN_LENGTH = 6;
 
 const ResetPasswordPage = () => {
@@ -58,6 +65,8 @@ const ResetPasswordPage = () => {
 
         // 서버도 같은 것을 보지만, 여기서 막으면 왕복 한 번과 토큰 한 번의 소진을 아낀다.
         // 재설정 토큰은 1회용이라 잘못된 입력으로 태우면 메일을 다시 받아야 한다.
+        // [JA] サーバーも同じものを見るが、ここで防げば往復一回とトークン一回の消費を節約できる。
+        //      再設定トークンは使い捨てなので、間違った入力で消費するとメールを受け取り直さなければならない。
         if (password.length < MIN_LENGTH) {
             setError(t("auth.reset.too_short", { min: MIN_LENGTH }));
             return;
@@ -77,6 +86,7 @@ const ResetPasswordPage = () => {
             });
             setDone(data?.message ?? t("auth.reset.done"));
             // 바로 넘기지 않고 잠깐 보여준다 — 성공을 못 보고 넘어가면 바뀐 건지 알 수 없다.
+            // [JA] すぐには遷移せず少し見せる — 成功を見ずに遷移すると変わったのかどうか分からない。
             setTimeout(() => navigate("/signin"), 1500);
         } catch (err) {
             setError(
@@ -99,6 +109,7 @@ const ResetPasswordPage = () => {
                 <h3 className="text-xl font-bold">{t("auth.reset.title")}</h3>
 
                 {/* 토큰 없이 이 주소로 직접 오는 경우 — 폼을 그려 봐야 반드시 실패한다. */}
+                {/* [JA] トークンなしでこのアドレスに直接来た場合 — フォームを描いても必ず失敗する。 */}
                 {!token ? (
                     <>
                         <p role="alert" className="text-sm text-red-600">

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** 🔴 할인 값은 퍼센트 — catalog · cart · 화면이 같은 값을 낸다(옛 식 price − price/d 는 50% 를 2% 로 만들었다). */
+// [JA] 🔴 割引値はパーセント — catalog · cart · 画面が同じ値を出す(古い式 price − price/d は 50% を 2% にしていた)。
 @DisplayName("할인가 — 퍼센트")
 class DiscountTest {
 

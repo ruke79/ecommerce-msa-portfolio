@@ -49,12 +49,31 @@ import lombok.extern.slf4j.Slf4j;
  * "아직 0번" 을 읽고 전부 검증을 받았다(토큰 하나로 5번이 아니라 보낸 만큼). 증가에도 틈이 있었다: {@code INCR} 다음 줄의
  * {@code expire} 사이에 끊기면 TTL 없는 키가 남아 그 사용자의 2FA 가 영영 막혔다. 지금은 {@link #reserveAttempt} 가
  * <b>검증 전에</b> Lua 한 번(증가 + 첫 시도면 TTL)으로 센다 — LoginAttemptService · CurrentPasswordGuard · TotpReplayGuard 와 같은 모양.
+ *
+ * <p>[JA] 2 段階認証の待機トークン — 第一段階(パスワード・ソーシャル)は通過し、コード確認が残った状態。
+ * 🔴 なぜ別に置くか — 待機トークンがそのままアクセストークンだった。以前は二つの経路とも 2FA を迂回できた。パスワード
+ * ログインは 2FA アカウントにもアクセストークン(応答ヘッダー)と REFRESH Cookie を先に渡していた。コード入力を待って
+ * いたのはフロントだけだった — パスワードだけ知る人は応答ヘッダーのトークンをそのまま使えばよかった。ソーシャルログインは
+ * セッションの代わりに保留 Cookie を埋めたが、その Cookie の値が同じ鍵で署名した普通の JWT({@code uid} 含む)だった。
+ * ゲートウェイは署名と {@code uid} だけを見るので、その値を Bearer で送れば通った。
+ * そこで待機トークンはアクセストークンの鍵から派生した別の鍵で署名する。ゲートウェイ・chat・user-service のフィルターなど
+ * アクセストークンを検証するすべての場所が、何も直さずにこのトークンを署名不一致で拒否する。{@code uid} クレームも
+ * 入れない(二重ロック)。
+ * 試行回数・1 回限り: 6 桁の TOTP は 100 万通りである。回数制限がなければ 5 分以内に総当たりできる。トークンごとに試行を
+ * {@value #MAX_ATTEMPTS} 回まで数え、超えたらそのトークンを焼く — 最初(パスワード)からやり直す必要があり、そこには
+ * ログインロック(docs/27)がかかっている。成功したらすぐ焼き、同じトークンでセッションを二度受け取れないようにする。
+ * 🐛 以前は「読む(userIdOf)→ 検証する → 間違えたら足す(recordFailure)」の順だった — コードを数十個同時に送ると全部が
+ * 「まだ 0 回」を読み、すべて検証を受けた(トークン一つで 5 回ではなく送った分だけ)。増加にも隙があった: {@code INCR} と
+ * 次の行の {@code expire} の間で切れると TTL のないキーが残り、そのユーザーの 2FA が永久に塞がった。今は
+ * {@link #reserveAttempt} が検証の前に Lua 1 回(増加 + 初回なら TTL)で数える — LoginAttemptService・CurrentPasswordGuard・
+ * TotpReplayGuard と同じ形である。
  */
 @Slf4j
 @Component
 public class PendingTwoFactor {
 
     /** 쿠키 이름 — 소셜 경로(OAuth2SuccessHandler)와 비밀번호 경로(AuthLoginFilter)가 같이 쓴다. */
+    // [JA] Cookie 名 — ソーシャル経路(OAuth2SuccessHandler)とパスワード経路(AuthLoginFilter)が共用する。
     public static final String COOKIE = "PENDING_2FA";
     public static final long TTL_MS = 5 * 60 * 1000L;
     static final int MAX_ATTEMPTS = 5;
@@ -62,6 +81,7 @@ public class PendingTwoFactor {
     private static final String KEY_PREFIX = "2fa:pending:";
 
     /** 이번 시도를 세고(첫 시도면 토큰 수명만큼 TTL) 지금까지의 수를 돌려준다 — 읽기 · 증가 · 만료가 한 덩어리다. */
+    // [JA] 今回の試行を数え(初回ならトークンの寿命だけ TTL)これまでの数を返す — 読み取り・増加・期限が一塊である。
     private static final DefaultRedisScript<Long> RESERVE = new DefaultRedisScript<>("""
             local n = redis.call('INCR', KEYS[1])
             if n == 1 then
@@ -79,6 +99,7 @@ public class PendingTwoFactor {
     }
 
     /** 액세스 토큰 키에서 용도가 다른 키를 파생한다 — 같은 비밀 하나로 운영하되 서로 섞이지 않는다. */
+    // [JA] アクセストークンの鍵から用途の異なる鍵を派生する — 同じ秘密一つで運用しつつ互いに混ざらない。
     private static SecretKey derive(String secret) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
@@ -90,6 +111,7 @@ public class PendingTwoFactor {
     }
 
     /** 대기 토큰을 만든다. 세션을 등록하지 않는다 — 아직 로그인한 것이 아니다. */
+    // [JA] 待機トークンを作る。セッションは登録しない — まだログインしたわけではない。
     public String issue(Long userId) {
         long now = System.currentTimeMillis();
         return Jwts.builder()
@@ -105,8 +127,12 @@ public class PendingTwoFactor {
     /**
      * 이번 시도의 결과 — 누구인지와, 이 토큰으로 <b>더</b> 시도할 수 있는지.
      *
+     * <p>[JA] 今回の試行の結果 — 誰なのかと、このトークンでさらに試行できるか。
+     *
      * @param userId         대기 중인 사용자
+     *     [JA] 待機中のユーザー
      * @param moreAfterThis  이번이 마지막 시도가 아니면 true(틀렸을 때의 안내 문구가 갈린다)
+     *     [JA] 今回が最後の試行でなければ true(間違えたときの案内文言が分かれる)
      */
     public record Attempt(long userId, boolean moreAfterThis) {
     }
@@ -139,6 +165,7 @@ public class PendingTwoFactor {
     }
 
     /** 통과했다(또는 더 받지 않는다) — 같은 토큰을 다시 쓰지 못하게 태운다: 다음 {@link #reserveAttempt} 는 한도를 넘는다. */
+    // [JA] 通過した(またはもう受け付けない) — 同じトークンを再び使えないよう焼く: 次の {@link #reserveAttempt} は上限を超える。
     public void consume(String token) {
         Claims claims = parse(token);
         if (claims != null) {
@@ -168,6 +195,7 @@ public class PendingTwoFactor {
     }
 
     /** 대기 토큰 하나로 SMS 를 보낼 수 있는 횟수 — 재전송 두 번까지. 비밀번호를 아는 사람이 문자를 쏟아내지 못하게(요금은 우리가 낸다). */
+    // [JA] 待機トークン一つで SMS を送れる回数 — 再送 2 回まで。パスワードを知る人が SMS を大量に送れないように(料金はこちらが払う)。
     static final int MAX_SMS_SENDS = 3;
     private static final String SMS_KEY_PREFIX = "2fa:pending-sms:";
 
@@ -193,6 +221,7 @@ public class PendingTwoFactor {
             return PURPOSE.equals(claims.get("purpose")) && claims.getId() != null ? claims : null;
         } catch (JwtException | IllegalArgumentException e) {
             // 만료·위조·형식 오류를 구분해 알려주지 않는다 — 어차피 처음부터 다시 하면 된다.
+            // [JA] 期限切れ・偽造・形式エラーを区別して知らせない — どのみち最初からやり直せばよい。
             return null;
         }
     }

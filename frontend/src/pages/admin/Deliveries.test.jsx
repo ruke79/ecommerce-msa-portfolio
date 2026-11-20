@@ -30,6 +30,8 @@ const row = (over = {}, shipments = [shipment()]) => ({
  *
  * <p>지키는 것은 "어느 줄에 버튼이 있는가" 와 "무엇을 보내는가" 다. 송장번호와 택배사 코드
  * 외에는 아무것도 보내지 않고, 등록 뒤에는 서버에서 다시 읽는다.
+ *
+ * <p>[JA] 管理者配送 — 送り状登録。守るのは「どの行にボタンがあるか」と「何を送るか」である。送り状番号と宅配業者コード以外は何も送らず、登録後はサーバーから読み直す。
  */
 describe("배송 관리", () => {
     beforeEach(() => {
@@ -54,6 +56,7 @@ describe("배송 관리", () => {
         expect(adminListDeliveries).toHaveBeenCalledWith({ awaiting: true });
         expect(screen.getAllByRole("button", { name: "송장 등록" })).toHaveLength(1);
         // 이미 송장이 있는 줄은 택배사·송장을 보여 준다
+        // [JA] すでに送り状がある行は宅配業者・送り状を見せる
         expect(screen.getByText(/시뮬레이터 · SIM-1/)).toBeInTheDocument();
     });
 
@@ -69,6 +72,8 @@ describe("배송 관리", () => {
 
         // 🔴 18자리가 하나도 안 바뀐 채로 가야 한다. 숫자로 오가면 …920 이 되어 서버가
         //    그 주문을 찾지 못한다 — 송장 등록이 언제나 실패하던 이유였다(docs/25 §11.7).
+        // [JA] 🔴 18 桁が一つも変わらずに行かなければならない。数値でやり取りすると …920 になり、サーバーが
+        //      その注文を見つけられない — 送り状登録が常に失敗していた理由だった(docs/25 §11.7)。
         await waitFor(() => expect(registerTracking).toHaveBeenCalledWith("889196209423729897",
             { carrierCode: "KOREA_POST", trackingNumber: "1234567890" }));
         await waitFor(() => expect(adminListDeliveries).toHaveBeenCalledTimes(2));
@@ -113,6 +118,8 @@ describe("배송 관리", () => {
     /**
      * 🐛 결제는 됐는데 배송이 없는 주문은 이 목록에 **아예 안 나온다** — 배송이 없으니까.
      * 고칠 화면이 없으면 영영 못 고친다. 주문 번호로 직접 잇는다.
+     *
+     * <p>[JA] 🐛 決済は済んだが配送がない注文はこの一覧に**まったく出ない** — 配送がないのだから。直す画面がなければ永遠に直せない。注文番号で直接つなぐ。
      */
     it("🔴 배송이 없는 주문은 번호로 이어 만든다 — 보내는 것은 주문 번호뿐이다", async () => {
         adminCreateDeliveryForOrder.mockResolvedValue({ created: true, deliveryId: 9, orderId: 5 });
@@ -149,6 +156,7 @@ describe("배송 관리", () => {
     });
 
     /** 일본어로 바꾸면 한국어가 남지 않는다 — 서버 데이터(이름·주소)는 그대로다. */
+    // [JA] 日本語に切り替えると韓国語が残らない — サーバーのデータ(名前・住所)はそのままである。
     it("일본어 화면은 일본어 문구로 그린다", async () => {
         render(withI18n(<Deliveries />, "ja"));
         await screen.findByText("홍길동");

@@ -34,6 +34,18 @@ import org.springframework.core.env.Environment;
  * 상수 하나 때문에 kafka-clients 를 그쪽 런타임까지 끌고 갈 이유가 없다. 대신 이름이
  * 실제 상수와 일치하는지는 {@code KafkaSecuritySettingsTest} 가 kafka-clients 를
  * <b>테스트 클래스패스에서만</b> 가져와 검증한다.
+ *
+ * <p>[JA] Kafka クライアントの<b>セキュリティプロパティ</b>を一か所で作る。
+ * なぜ作ったか: 24 個の Kafka 設定クラスが同じ 6 行(SSL キーストア · トラストストアの設定)をそのまま複製していた。
+ * 複製そのものより悪かったのは<b>値が空でも無条件に入れる</b>点だった。ローカルのデフォルトは {@code KAFKA_SSL_KEY_STORE_LOCATION:} —
+ * つまり空文字列である。PLAINTEXT ブローカーでは Kafka クライアントが SSL 設定をまったく読まないので何も起きず、この組み合わせが
+ * 安全に見えた。ところがプロトコルを SSL/SASL_SSL に変えた瞬間 {@code ssl.truststore.location=""} が実際に解釈され、
+ * {@code NoSuchFileException: }(空のパス)でクライアント生成が失敗する。
+ * マネージド Kafka(Confluent Cloud, Redpanda, Aiven など)は<b>公開 CA 証明書 + SASL</b> の組み合わせを使う。トラストストアを
+ * 指定してはならず(JVM デフォルトの信頼ストアを使う)、クライアントキーストアはそもそもない。だから規則は一つ — <b>空なら入れない。</b>
+ * キー名を {@code SslConfigs}/{@code SaslConfigs} の定数ではなく文字列で書いた理由: common モジュールは Kafka を使わないモジュール
+ * (eureka-server, config-server など)も依存する。定数一つのために kafka-clients をそちらのランタイムまで引きずる理由はない。
+ * 代わりに名前が実際の定数と一致するかは {@code KafkaSecuritySettingsTest} が kafka-clients を<b>テストクラスパスでのみ</b>取り込んで検証する。
  */
 public final class KafkaSecuritySettings {
 
@@ -41,6 +53,7 @@ public final class KafkaSecuritySettings {
     }
 
     // ── Kafka 클라이언트 설정 키 (org.apache.kafka.common.config.SslConfigs 등과 동일) ──
+    // [JA] ── Kafka クライアントの設定キー (org.apache.kafka.common.config.SslConfigs などと同一) ──
     static final String SECURITY_PROTOCOL = "security.protocol";
     static final String SSL_TRUSTSTORE_LOCATION = "ssl.truststore.location";
     static final String SSL_TRUSTSTORE_PASSWORD = "ssl.truststore.password";
@@ -61,6 +74,9 @@ public final class KafkaSecuritySettings {
      * 프로듀서·컨슈머·AdminClient 에 그대로 {@code putAll} 할 수 있는 맵을 만든다.
      *
      * <p>프로토콜에 실제로 필요한 키만 담는다. PLAINTEXT 면 {@code security.protocol} 하나뿐이다.
+     *
+     * <p>[JA] {@code kafka.security.protocol} / {@code kafka.ssl.*} / {@code kafka.sasl.*} を読み、プロデューサー · コンシューマー · AdminClient に
+     * そのまま {@code putAll} できるマップを作る。プロトコルに実際に必要なキーだけを入れる。PLAINTEXT なら {@code security.protocol} 一つだけである。
      */
     public static Map<String, Object> from(Environment env) {
         String protocol = blankToNull(env.getProperty("kafka.security.protocol"));
@@ -86,6 +102,8 @@ public final class KafkaSecuritySettings {
     private static void putSsl(Map<String, Object> props, Environment env) {
         // 경로가 없으면 **아무것도 넣지 않는다** → JVM 기본 트러스트스토어(공개 CA)를 쓴다.
         // 관리형 Kafka 는 이 경로가 정답이고, 사설 CA 로 띄운 자체 브로커만 경로를 채운다.
+        // [JA] パスがなければ**何も入れない** → JVM デフォルトのトラストストア(公開 CA)を使う。
+        //      マネージド Kafka はこのパスが正解で、私設 CA で立てた自前ブローカーだけがパスを埋める。
         String trustStore = stripFileScheme(blankToNull(env.getProperty("kafka.ssl.trust-store-location")));
         if (trustStore != null) {
             props.put(SSL_TRUSTSTORE_LOCATION, trustStore);
@@ -94,6 +112,7 @@ public final class KafkaSecuritySettings {
         }
 
         // 클라이언트 키스토어는 mTLS 에서만 쓴다. SASL 인증에는 존재하지 않는다.
+        // [JA] クライアントキーストアは mTLS でのみ使う。SASL 認証には存在しない。
         String keyStore = stripFileScheme(blankToNull(env.getProperty("kafka.ssl.key-store-location")));
         if (keyStore != null) {
             props.put(SSL_KEYSTORE_LOCATION, keyStore);
@@ -113,6 +132,7 @@ public final class KafkaSecuritySettings {
         props.put(SASL_MECHANISM, mechanism);
 
         // JAAS 를 통째로 준 경우 그대로 쓴다(관리형 서비스 콘솔이 이 문자열을 그대로 준다).
+        // [JA] JAAS を丸ごと与えられた場合はそのまま使う(マネージドサービスのコンソールがこの文字列をそのままくれる)。
         String jaas = blankToNull(env.getProperty("kafka.sasl.jaas-config"));
         if (jaas != null) {
             props.put(SASL_JAAS_CONFIG, jaas);
@@ -124,6 +144,8 @@ public final class KafkaSecuritySettings {
         if (username == null) {
             // 여기서 죽는 편이 낫다. 이 값이 없으면 브로커가 돌려주는 것은
             // 'Authentication failed' 뿐이고, 원인이 설정 누락이라는 단서가 어디에도 없다.
+            // [JA] ここで落ちる方がよい。この値がないとブローカーが返すのは 'Authentication failed' だけで、
+            //      原因が設定漏れだという手がかりがどこにもない。
             throw new IllegalStateException(
                     "kafka.security.protocol=" + protocol + " 인데 SASL 자격증명이 없습니다. "
                             + "KAFKA_SASL_JAAS_CONFIG 를 통째로 주거나 "
@@ -140,16 +162,23 @@ public final class KafkaSecuritySettings {
      * JAAS 설정은 큰따옴표로 감싼 문자열이다. 값 안의 {@code "} 나 {@code \} 를 그대로 두면
      * 파서가 문자열을 엉뚱한 곳에서 끊어 'Unable to find login module' 같은 무관한 오류가 난다.
      * 관리형 서비스의 API 시크릿에는 실제로 이런 문자가 들어간다.
+     *
+     * <p>[JA] JAAS 設定はダブルクォートで囲んだ文字列である。値の中の {@code "} や {@code \} をそのままにすると、パーサーが文字列を
+     * おかしな位置で切り、'Unable to find login module' のような無関係なエラーになる。マネージドサービスの API シークレットには実際にこうした文字が入る。
      */
     private static String escapeJaas(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     // ---------------------------------------------------------------- 도우미
+    // [JA] ---------------------------------------------------------------- ヘルパー
 
     /**
      * {@code file:} / {@code file://} 접두어를 떼어 낸다. Kafka 클라이언트는 URL 이 아니라
      * <b>파일 시스템 경로</b>를 기대하는데, 설정에는 Spring 습관대로 file: 이 붙어 오곤 한다.
+     *
+     * <p>[JA] {@code file:} / {@code file://} 接頭辞を取り除く。Kafka クライアントは URL ではなく<b>ファイルシステムのパス</b>を期待するが、
+     * 設定には Spring の習慣で file: が付いてくることがある。
      */
     private static String stripFileScheme(String path) {
         if (path == null) {

@@ -31,6 +31,11 @@ import com.project.pay_service.repository.jpa.PaymentRepository;
  * 같은 trackingId 로 무엇이 오든 저장된 상태를 그대로 되돌려 보냈다. 재전달(같은 결제가
  * 두 번 옴)에는 맞는 동작이지만 환불에는 틀리다: 돈이 돌아갔는데 결제 행은 영원히
  * COMPLETED 였다.
+ *
+ * <p>[JA] 返金が決済行に反映されるか。
+ * 🐛 {@code persistPayment} の「既にある」分岐は<b>既存の行を決して変えなかった</b> —
+ * 同じ trackingId で何が来ても保存済みの状態をそのまま返していた。再配信(同じ決済が
+ * 二回来る)には正しい動作だが返金には誤り: お金は戻ったのに決済行は永遠に COMPLETED だった。
  */
 @DisplayName("pay-service — 환불 전이")
 class PaymentRefundTransitionTest {
@@ -86,6 +91,7 @@ class PaymentRefundTransitionTest {
     }
 
     /** 재전달은 예전처럼 — 같은 결제가 다시 와도 행을 건드리지 않는다. */
+    // [JA] 再配信は以前どおり — 同じ決済が再び来ても行に触れない。
     @Test
     @DisplayName("COMPLETED 재전달은 행을 바꾸지 않는다 — 기존 동작 그대로")
     void redeliveredCompletedIsANoOp() {
@@ -97,6 +103,7 @@ class PaymentRefundTransitionTest {
     }
 
     /** 🔴 순서 역전: CANCELED 뒤에 옛 COMPLETED 가 도착해도 결제가 되살아나면 안 된다. */
+    // [JA] 🔴 順序逆転: CANCELED のあとに古い COMPLETED が届いても決済が生き返ってはならない。
     @Test
     @DisplayName("🔴 CANCELED 뒤에 온 COMPLETED 는 결제를 되살리지 않는다")
     void completedAfterCanceledDoesNotResurrect() {

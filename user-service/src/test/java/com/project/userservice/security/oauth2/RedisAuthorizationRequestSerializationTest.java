@@ -41,6 +41,14 @@ import com.project.userservice.security.oauth2.repository.RedisOAuth2Authorizati
  *
  * <p>Redis 자체의 동작(GETDEL·TTL·파드 간 공유)은 컨테이너가 필요하므로
  * {@code RedisOAuth2AuthorizationRequestRepositoryTest} 가 맡는다.
+ *
+ * <p>[JA] 認可リクエストの<b>シリアライズ往復</b> — Redis なしで、本物の保存/復元コード経路で。
+ * ここがこの変更で最も静かに壊れうる箇所である。{@link OAuth2AuthorizationRequest} は普通の DTO ではなく、
+ * Spring Security の Jackson ミックスインがないと復元されず、そのミックスインは多態型情報(@class)を有効にしたマッパーを前提とする。
+ * 設定が一つでも抜けると<b>保存はできるのに復元できない</b>形で現れ、ユーザーには「ログインがなぜかできない」としか見えない。
+ * 特に {@code code_verifier} が生き残るかを見る。その値が失われるとプロバイダーは認可まで正常に処理した後
+ * <b>トークン交換でだけ</b>拒否するので、症状が出る箇所と原因のある箇所が離れる。
+ * Redis 自体の動作(GETDEL・TTL・Pod 間共有)はコンテナが必要なので {@code RedisOAuth2AuthorizationRequestRepositoryTest} が受け持つ。
  */
 @DisplayName("인가 요청 직렬화 왕복")
 class RedisAuthorizationRequestSerializationTest {
@@ -59,6 +67,7 @@ class RedisAuthorizationRequestSerializationTest {
     }
 
     /** 운영에서 실제로 만들어지는 것과 같은 모양 — PKCE 커스터마이저를 통과시킨다. */
+    // [JA] 運用で実際に作られるのと同じ形 — PKCE カスタマイザーを通す。
     private static OAuth2AuthorizationRequest pkceRequest() {
         OAuth2AuthorizationRequest.Builder builder = OAuth2AuthorizationRequest.authorizationCode()
                 .authorizationUri("https://accounts.google.com/o/oauth2/v2/auth")
@@ -69,6 +78,8 @@ class RedisAuthorizationRequestSerializationTest {
 
         // 실제 리졸버가 쓰는 그 커스터마이저를 그대로 통과시킨다 — 손으로 흉내 내면
         // 스프링이 형식을 바꿨을 때 테스트만 통과하고 운영이 깨진다.
+        // [JA] 実際のリゾルバーが使うそのカスタマイザーをそのまま通す — 手で真似ると、
+        //      Spring が形式を変えたときにテストだけ通って運用が壊れる。
         OAuth2AuthorizationRequestCustomizers.withPkce().accept(builder);
 
         Map<String, Object> attrs = new HashMap<>();
@@ -85,6 +96,7 @@ class RedisAuthorizationRequestSerializationTest {
                 any(Duration.class));
 
         // 저장된 그 문자열을 그대로 되돌려준다 — Redis 가 하는 일이 정확히 이것이다.
+        // [JA] 保存されたその文字列をそのまま返す — Redis がすることはまさにこれである。
         when(valueOps.get(anyString())).thenReturn(json.getValue());
 
         MockHttpServletRequest callback = new MockHttpServletRequest();
@@ -119,11 +131,13 @@ class RedisAuthorizationRequestSerializationTest {
         assertThat(restored.getGrantType()).isEqualTo(original.getGrantType());
 
         // 프로바이더로 나가는 PKCE 파라미터.
+        // [JA] プロバイダーへ出ていく PKCE パラメーター。
         assertThat(restored.getAdditionalParameters().get("code_challenge"))
                 .isEqualTo(original.getAdditionalParameters().get("code_challenge"));
         assertThat(restored.getAdditionalParameters().get("code_challenge_method")).isEqualTo("S256");
 
         // 콜백에서 어느 프로바이더였는지 알아내는 데 쓰인다 — 빠지면 콜백이 깨진다.
+        // [JA] コールバックでどのプロバイダーだったかを知るのに使う — 抜けるとコールバックが壊れる。
         assertThat(restored.getAttributes().get("registration_id")).isEqualTo("google");
     }
 
@@ -132,6 +146,8 @@ class RedisAuthorizationRequestSerializationTest {
     void noStateParameter_doesNotHitRedis() {
         // state 없는 콜백은 위조이거나 잘못 연결된 요청이다. Redis 에 물어볼 이유가 없고,
         // null 키로 조회하면 그쪽에서 NPE 가 난다.
+        // [JA] state のないコールバックは偽造か誤って結ばれたリクエストである。Redis に問い合わせる理由がなく、
+        //      null キーで照会するとそちらで NPE が出る。
         assertThat(repository.loadAuthorizationRequest(new MockHttpServletRequest())).isNull();
         verify(valueOps, never()).get(anyString());
     }

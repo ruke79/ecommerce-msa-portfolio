@@ -43,6 +43,13 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>그래서 트랜잭션은 <b>DB 를 실제로 만지는 메서드에만</b> 단다. 여기서는
  * {@link #sendNotification} 하나뿐이고, 그것도 짧게 끝난다.
+ *
+ * <p>[JA] SSE 購読と通知送信。
+ * <p><b>⚠️ クラスレベルの @Transactional を付けないこと。</b> 以前は付いていて、そのため createEmitter までトランザクション内で動いた。SSE リクエストは<b>終わらないリクエスト</b>なので、
+ * そのトランザクションが掴んだコネクションが接続が生きている間ずっと返却されなかった。プールが小さいと即障害になる。実測: SSE 接続 3 つ = HikariPool total=3, active=3, idle=0 →
+ * その後<b>すべての</b> DB リクエストが "Could not open JPA EntityManager for transaction" で失敗した。ログインすらできなかった。症状(「ログインできない」)が原因(「SSE がコネクションを握っている」)からかなり遠い。
+ * <p>しかもこのリークは長く潜伏していた — ゲートウェイの SSE ルートが誤って書かれており(/user-service/sse vs 実際の /api/sse)このメソッドに<b>到達すらしなかった</b>からだ。そのルートを直したデプロイで即座に爆発した。
+ * <p>だからトランザクションは<b>DB を実際に触るメソッドだけ</b>に付ける。ここでは sendNotification 一つだけで、それも短く終わる。
  */
 @Slf4j
 @Service
@@ -54,6 +61,7 @@ public class NotificationService {
     private final Map<String, SseEmitter> userEmitters = new ConcurrentHashMap<>();
     // 예전에는 여기서 Executors.newSingleThreadExecutor() 를 직접 만들었다 — 스레드 하나가
     // 접속한 모든 브라우저를 담당하고, 큐는 무제한이고, 종료 훅도 없었다. AsyncSseConfig 참조.
+    // [JA] 以前はここで Executors.newSingleThreadExecutor() を直接作っていた — スレッド一つが接続中の全ブラウザを担当し、キューは無制限、終了フックもなかった。AsyncSseConfig 参照。
     private final SseDispatcher sseDispatcher;
 
     private final NotificationRepository notificationRepository;
@@ -61,9 +69,11 @@ public class NotificationService {
     private final JwtUtils jwtUtils;
 
     /** 로그인 해제 표시(common SessionRevocation)를 읽는다 — 문자열로 적히므로 문자열 템플릿으로. */
+    // [JA] ログイン解除の印(common SessionRevocation)を読む — 文字列で書かれるので文字列テンプレートで。
     private final org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
 
     /** 세션 → 사용자. 로그인 해제 알림은 사용자 단위로 온다(docs/68 §9). */
+    // [JA] セッション → ユーザー。ログイン解除通知はユーザー単位で来る(docs/68 §9)。
     private final Map<String, Long> sessionUsers = new ConcurrentHashMap<>();
 
     /**
@@ -72,6 +82,9 @@ public class NotificationService {
      * <p>무한(0)으로 두지 않는 이유: 어떤 이유로든 정리되지 않은 구독이 영원히 남는 것보다,
      * 넉넉한 상한을 두고 클라이언트가 조용히 재연결하게 두는 편이 안전하다. EventSource 는
      * 스트림이 닫히면 알아서 다시 붙는다.
+     *
+     * <p>[JA] SSE 購読の寿命。Tomcat 既定(30 秒)は短すぎる — その周期で切れては繋がるを繰り返す。
+     * <p>無限(0)にしない理由: 何らかの理由で片付けられない購読が永遠に残るより、余裕のある上限を置いてクライアントに静かに再接続させる方が安全。EventSource はストリームが閉じれば自分で繋ぎ直す。
      */
     @Value("${app.sse.timeout-ms:1800000}")
     private long sseTimeoutMs;
@@ -92,6 +105,12 @@ public class NotificationService {
      * </ul>
      *
      * <p>지역 변수로 두면 람다가 그 값을 캡처하므로 둘 다 사라진다.
+     *
+     * <p>[JA] SSE 購読を開く。
+     * <p><b>⚠️ セッション id は必ずローカル変数であること。</b> 以前は private String sessionId のインスタンスフィールドだった。Spring Bean はシングルトンなのでそのフィールドは<b>全リクエストで共有</b>され、二つが壊れた:
+     * <b>関係ない人がログアウトされた</b>(B が SSE に繋いでフィールドが B のセッションになった直後に A が再ログインすると、A の前のセッションを切る通知が<b>B に</b>行った)、
+     * <b>emitter マップが汚染された</b>(下の三つのラムダがフィールドを<b>実行時に</b>読むので、切断時に自分のものでないキーを消した — 生きている購読がマップから消え(通知が永遠に届かない)死んだ購読が残った(リーク))。
+     * <p>ローカル変数にすればラムダがその値をキャプチャするので両方なくなる。
      */
     public SseEmitter createEmitter(String token) {
 
@@ -100,6 +119,8 @@ public class NotificationService {
 
         // 🔒 로그인이 해제된 뒤의 옛 토큰으로는 다시 붙지 못한다(docs/68 §9). 닫기만 하면 옛 토큰으로 곧장 다시 붙는다.
         //    거절 대신 "Reauth" 를 한 번 보내고 닫는다 — 프론트는 토큰을 갱신하고, 로그인이 끊겼다면 갱신이 실패해 로그인 화면으로 간다.
+        // [JA] 🔒 ログイン解除後の古いトークンでは再接続できない(docs/68 §9)。閉じるだけだと古いトークンですぐ繋ぎ直す。
+        //      拒否の代わりに "Reauth" を一度送って閉じる — フロントはトークンを更新し、ログインが切れていれば更新が失敗してログイン画面へ行く。
         if (live.userId() != null && !com.project.common.security.SessionRevocation.allowed(
                 stringRedisTemplate.opsForValue().get(com.project.common.security.SessionRevocation.cutoffKey(live.userId())),
                 live.issuedAtEpochSec())) {
@@ -108,6 +129,7 @@ public class NotificationService {
                 refused.send(SseEmitter.event().name("notification").data(com.project.common.security.SessionRevocation.SSE_REAUTH));
             } catch (IOException ignored) {
                 // 끊긴 브라우저 — 보낼 곳이 없다
+                // [JA] 切れたブラウザ — 送り先がない
             }
             refused.complete();
             return refused;
@@ -119,7 +141,11 @@ public class NotificationService {
         //
         // 🔴 스트림은 <b>토큰 만료</b>를 넘기지 않는다(docs/68 §9) — 예전에는 30분이라, 로그인이 끊긴 뒤에도 최대 30분 알림을 받았다.
         //    프론트는 만료 10초 전에 갱신한 토큰으로 이미 새로 붙어 있으므로(Notification.js) 사용자에게는 보이지 않는다.
-        //    [JA] ストリームはトークンの有効期限を超えない。フロントは期限 10 秒前に更新したトークンで既に張り直している。
+        //    [JA] ⚠️ 引数なしの `new SseEmitter()` は**コンテナ既定の非同期タイムアウト**を使う。
+        //    Tomcat の既定値が 30 秒なので、30 秒ごとに AsyncRequestTimeoutException でストリームが閉じ、
+        //    ブラウザには原因のないエラーとして現れた。実測で確認した症状である。
+        //    🔴 ストリームは<b>トークンの有効期限</b>を超えない(docs/68 §9)— 以前は 30 分で、ログインが切れた後も最大 30 分通知を受けていた。
+        //    フロントは期限 10 秒前に更新したトークンで既に張り直しているので(Notification.js)、ユーザーには見えない。
         long untilExpiry = Math.max(1_000L, live.expiresAtEpochMs() - System.currentTimeMillis());
         SseEmitter emitter = new SseEmitter(Math.min(sseTimeoutMs, untilExpiry));
         userEmitters.put(sessionId, emitter);
@@ -128,17 +154,19 @@ public class NotificationService {
         }
 
         // 람다가 **이 호출의** sessionId 를 캡처한다(위 주석 참조).
+        // [JA] ラムダが**この呼び出しの** sessionId をキャプチャする(上のコメント参照)。
         emitter.onCompletion(() -> forget(sessionId, emitter));
         emitter.onTimeout(() -> forget(sessionId, emitter));
         emitter.onError((e) -> forget(sessionId, emitter));
 
            // SSE 연결이 성공적으로 이루어졌음을 알리는 초기 이벤트 전송
+           // [JA] SSE 接続の成功を知らせる初期イベントの送信
         try {
             emitter.send(SseEmitter.event().name("init").data("connection established"));
             log.debug("SSE 구독 시작");
         } catch (IOException e) {
             log.error("Failed to send initial SSE event: {}", e.getMessage());
-            emitter.completeWithError(e); // 예외 발생 시 Emitter 종료
+            emitter.completeWithError(e); // 예외 발생 시 Emitter 종료 ／ [JA] 例外時に Emitter を終了
         }
         
         return emitter;
@@ -155,13 +183,21 @@ public class NotificationService {
      * <p>다중 로그인 차단이 대표적인 호출자다. "이전 세션을 끊는다"는 <b>그 이전 세션 id 를
      * 알고 있을 때만</b> 성립한다 — 계정만으로는 어느 것을 끊어야 할지 정할 수 없다.
      *
+     * <p>[JA] 特定の<b>セッション</b>に通知を送る。
+     * <p>対象セッションを引数で受ける理由: 配達は userEmitters.get(sessionId) で行われる。以前はこの値を共有フィールドから読んでいたので、同じアカウントの複数セッションのうち
+     * <b>どれに行くかが最後の SSE 購読者で決まった</b>(他のユーザーのセッションのこともあった)。
+     * <p>多重ログイン遮断が代表的な呼び出し元だ。「前のセッションを切る」は<b>その前のセッション id を知っているときだけ</b>成り立つ — アカウントだけではどれを切るか決められない。
+     *
      * @param userId    알림 소유자(감사·조회용)
+     *     [JA] 通知の所有者(監査・検索用)
      * @param sessionId <b>배달 대상</b> 세션. null 이면 보내지 않는다
+     *     [JA] <b>配達対象</b>のセッション。null なら送らない
      */
     @Transactional
     public void sendNotification(String userId, String sessionId, String message) {
         if (sessionId == null || sessionId.isBlank()) {
             // 대상이 없으면 조용히 아무에게나 보내는 것보다 안 보내는 편이 낫다.
+            // [JA] 対象がなければ誰かに黙って送るより送らない方がよい。
             log.warn("알림 대상 세션이 없어 보내지 않는다: userId={}, message={}", userId, message);
             return;
         }
@@ -173,6 +209,7 @@ public class NotificationService {
     private void publishNotification(Notification notification) {
         Long num = redisTemplate.convertAndSend("sse", notification);
         // 구독자 수만 남긴다 — 세션 id 는 INFO 로 남기지 않는다.
+        // [JA] 購読者数だけ残す — セッション id は INFO で残さない。
         log.debug("SSE 발행: 수신 구독자={}", num);
     }
     
@@ -184,6 +221,10 @@ public class NotificationService {
      *
      * <p>전송은 {@code sseExecutor} 로 넘긴다. 느린 클라이언트 하나가 스케줄러 스레드를
      * 붙잡으면 나머지 하트비트가 전부 밀린다.
+     *
+     * <p>[JA] 開いているすべての購読にハートビートを送る。
+     * <p>SSE は送るものがなければ何も流れず、途中のプロキシはそれを遊休接続とみなして切る(Cloudflare 約 100 秒)。タイムアウトだけ延ばすと今度はそこで切れる — 両方必要だ。
+     * <p>送信は sseExecutor に渡す。遅いクライアント一つがスケジューラスレッドを掴むと残りのハートビートが全部遅れる。
      */
     @Scheduled(fixedDelayString = "${app.sse.heartbeat-ms:20000}")
     public void heartbeat() {
@@ -192,6 +233,7 @@ public class NotificationService {
         }
         // 맵의 순서는 (세션, emitter) 인데 heartbeat 의 인자는 (emitter, 세션)이라
         // 메서드 참조로는 맞지 않는다.
+        // [JA] マップの順序は (セッション, emitter) だが heartbeat の引数は (emitter, セッション) なのでメソッド参照では合わない。
         userEmitters.forEach((sessionId, emitter) -> sseDispatcher.heartbeat(emitter, sessionId));
     }
 
@@ -203,6 +245,7 @@ public class NotificationService {
     }
     
     /** 이 emitter 가 아직 그 세션의 것일 때만 지운다 — 같은 세션이 새로 붙은 뒤 옛 emitter 의 콜백이 새 것을 지우지 않게. */
+    // [JA] この emitter がまだそのセッションのものであるときだけ消す — 同じセッションが新しく繋いだ後、古い emitter のコールバックが新しいものを消さないように。
     private void forget(String sessionId, SseEmitter emitter) {
         if (userEmitters.remove(sessionId, emitter)) {
             sessionUsers.remove(sessionId);
@@ -228,6 +271,7 @@ public class NotificationService {
                 emitter.send(SseEmitter.event().name("notification").data(com.project.common.security.SessionRevocation.SSE_REAUTH));
             } catch (IOException | IllegalStateException ignored) {
                 // 이미 끊긴 브라우저
+                // [JA] 既に切れたブラウザ
             }
             emitter.complete();
             forget(e.getKey(), emitter);
@@ -257,6 +301,7 @@ public class NotificationService {
         }, new PatternTopic("sse"));
 
         // 로그인 해제(docs/68 §9) — 본문은 사용자 id 하나. 모르는 값이면 무시한다(컨테이너를 죽이지 않는다).
+        // [JA] ログイン解除(docs/68 §9) — 本文はユーザー id 一つ。知らない値なら無視する(コンテナを殺さない)。
         container.addMessageListener((message, pattern) -> {
             try {
                 closeUserStreams(Long.parseLong(new String(message.getBody(),

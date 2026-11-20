@@ -37,6 +37,7 @@ const Search = ({searchHandler}) => {
                 className="hidden md:inline h-11 w-16 rounded-l text-gray-700 px-2 text-sm bg-gray-100 border-r border-gray-300 cursor-pointer outline-none"
             >
                 {/* value 는 코드 값이라 그대로 두고, 보이는 이름만 번역한다. */}
+                {/* [JA] value はコード値なのでそのままにし、表示名だけを翻訳する。 */}
                 <option disabled value="All">
                     {t("header.search.all")}
                 </option>

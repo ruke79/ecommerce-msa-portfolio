@@ -14,6 +14,7 @@ const renderCard = (review) => render(withI18n(
 ));
 
 /** 사이즈 없는 상품의 리뷰는 사이즈·착용감이 비어 있다 — "사이즈:"·"착용감:" 만 찍지 않는다. */
+// [JA] サイズのない商品のレビューはサイズ・フィット感が空だ — 「サイズ:」・「フィット感:」だけを表示しない。
 describe("리뷰 카드 — 사이즈·착용감", () => {
     it("있으면 보여 준다", () => {
         renderCard({ size: "M", fit: "True to size" });
@@ -29,6 +30,7 @@ describe("리뷰 카드 — 사이즈·착용감", () => {
 });
 
 /** 🐛 작성자 사진 — 사진을 올리지 않은 회원(대부분)은 image 가 null 이라 깨진 아이콘이 찍혔다. */
+// [JA] 🐛 投稿者の写真 — 写真を上げていない会員(大半)は image が null で壊れたアイコンが表示されていた。
 describe("리뷰 카드 — 작성자 사진", () => {
     it("🔴 사진이 없으면 이미지 대신 이름의 첫 글자", () => {
         const { container } = renderCard({ reviewedBy: { name: "yoon", image: null } });

@@ -40,6 +40,34 @@
 # 열려 있어 GitHub 호스티드 러너가 닿지 못한다. 이 파이프라인이 기본 브랜치의 push 로
 # 초록이 되면 deploy-oci.yml 이 이어받아, 사람의 승인 뒤 인스턴스의 셀프호스티드 러너가
 # ops/28-deploy.sh 를 실행한다 — 운영자가 손으로 하던 것과 **같은 절차**다(docs/36 §6).
+# [JA] デプロイパイプライン (deployment pipeline)
+#      『Continuous Delivery』(Humble & Farley) のデプロイパイプライン構造をそのまま移したもの。
+#      コミット 1 つがパイプラインの左から入り、右へ進むほど高価な検証を通り、
+#      最後まで通れば **デプロイ可能なリリース候補** になる(図は上の韓国語コメント参照)。
+#      ── この構造が直すもの ──
+#      このリポジトリの以前の CI はテストだけを回していた。そのため **デプロイされるバイナリとテストしたバイナリが
+#      別物だった** — CI が `./gradlew build` で jar を作って捨て、実際のデプロイ用
+#      イメージは後で開発者のノート PC で `ops/19-build-images.sh` が jar を **もう一度** 作って
+#      包んでいた。本が最も強く言う規則がまさにこれを禁じる:
+#      "you should only build your binaries once, during the commit stage of the build"
+#      再ビルドすると同じソースでも同じバイナリになる保証はない(ベースイメージ更新、
+#      依存解決の時点、ビルド環境)。すると受け入れテストが通ったという事実がデプロイ物について
+#      何も保証しない。
+#      そこでここでは:
+#      · コミットステージが jar とフロントエンドバンドルを **一度だけ** 作り、すぐにコンテナイメージに
+#        包んでレジストリ(GHCR)に上げる。レジストリが本の言う「成果物リポジトリ」である。
+#      · 受け入れステージはそのイメージを **受け取って** サガを回す。再ビルドしない。
+#      · デプロイもそのイメージをそのまま使う(ops/28-deploy.sh)。
+#      ── タグはコミット SHA ──
+#      人が選んだ `1.0.0` ではない。リリース候補の名前はリビジョンであるべきだ — そうすれば
+#      「今動いているのはどのコミットか」に答えられ、同じタグを上書きしてノードがキャッシュした
+#      古いイメージを使い続ける事故(imagePullPolicy: IfNotPresent)が根本からなくなる。
+#      実際にこのリポジトリでその事故を経験した(docs/33 §13)。
+#      ── デプロイステージは deploy-oci.yml ──
+#      デプロイ先クラスタ(OCI Ampere)はインバウンドが **SSH 22 番、それも特定 IP 1 つだけ** に
+#      開いており、GitHub ホステッドランナーは届かない。このパイプラインがデフォルトブランチの push で
+#      緑になると deploy-oci.yml が引き継ぎ、人の承認の後にインスタンスのセルフホステッドランナーが
+#      ops/28-deploy.sh を実行する — 運用者が手でやっていたのと **同じ手順** である(docs/36 §6)。
 name: deployment pipeline
 
 on:
@@ -49,12 +77,15 @@ on:
   workflow_dispatch:
   schedule:
     # 매주 월요일 03:00 UTC — 복원 훈련(restore-drill) 전용.
+    # [JA] 毎週月曜 03:00 UTC — 復元訓練(restore-drill)専用。
     - cron: "0 3 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   # 기본 브랜치에서는 취소하지 않는다. 취소된 실행은 릴리스 후보를 만들지 못하고,
   # 그러면 그 커밋은 배포할 수 없는 커밋이 된다 — "모든 커밋이 릴리스 후보"가 깨진다.
+  # [JA] デフォルトブランチではキャンセルしない。キャンセルされた実行はリリース候補を作れず、
+  #      そのコミットはデプロイできないコミットになる — 「すべてのコミットがリリース候補」が崩れる。
   cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
 
 permissions:
@@ -62,6 +93,9 @@ permissions:
   # GHCR push 에 필요하다. 다만 이것만으로는 부족할 수 있다 — GITHUB_TOKEN 은 **저장소에
   # 연결된 패키지**에만 쓸 수 있어서, 사람이 PAT 로 먼저 만들어 둔 패키지는 거부된다.
   # 아래 'GHCR 로그인' 단계 주석과 docs/36 §3.7 참조.
+  # [JA] GHCR push に必要。ただしこれだけでは足りないことがある — GITHUB_TOKEN は **リポジトリに
+  #      連結されたパッケージ** にしか使えず、人が PAT で先に作ったパッケージは拒否される。
+  #      下の「GHCR ログイン」ステップのコメントと docs/36 §3.7 を参照。
   packages: write
 
 env:
@@ -76,6 +110,10 @@ jobs:
   # 컴파일, 단위 테스트, **바이너리 1회 생성**, 이미지화. 이 스테이지가 초록이면
   # 개발자는 다음 일로 넘어가도 된다.
   # ══════════════════════════════════════════════════════════════════════
+  # [JA] 1. コミットステージ
+  #      本の基準: 理想は 5 分、超えても 10 分以内。ここでやることはちょうどその範囲 —
+  #      コンパイル、単体テスト、**バイナリの 1 回生成**、イメージ化。このステージが緑なら
+  #      開発者は次の作業に移ってよい。
   commit:
     name: 커밋 스테이지 (단위 테스트 · 바이너리 생성 · 이미지 발행)
     runs-on: ubuntu-latest
@@ -93,10 +131,15 @@ jobs:
         # PR 이벤트에서는 발행하지 않는다. 같은 저장소의 PR 은 브랜치 push 로 이미
         # 파이프라인이 돌아 이미지가 나오고, 포크 PR 은 GITHUB_TOKEN 이 읽기 전용이라
         # push 자체가 불가능하다. 발행하지 않는 실행은 인수 스테이지가 jar 로 폴백한다.
+        # [JA] リリース候補の名前。短い SHA 12 文字 — ops/19 の既定タグと同じ規則。
+        #      PR イベントでは発行しない。同じリポジトリの PR はブランチ push で既に
+        #      パイプラインが回ってイメージが出ており、フォーク PR は GITHUB_TOKEN が読み取り専用なので
+        #      push 自体ができない。発行しない実行では受け入れステージが jar にフォールバックする。
         run: |
           echo "version=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
           # 공개 저장소: 이미지 발행은 저장소 변수 PUBLISH_IMAGES=true 일 때만.
           # 기본값으로는 이미지를 만들지 않고 빌드·테스트만 돈다(인수 스테이지는 jar 로 폴백).
+          # [JA] 公開リポジトリ: イメージの発行はリポジトリ変数 PUBLISH_IMAGES=true のときだけ。既定ではイメージを作らずビルド・テストだけが走る(受け入れステージは jar にフォールバックする)。
           if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ vars.PUBLISH_IMAGES }}" != "true" ]; then
             echo "published=false" >> "$GITHUB_OUTPUT"
           else
@@ -123,6 +166,9 @@ jobs:
       #
       # 이 저장소에서 발견된 결함 27건은 거의 전부 "컴파일도 되고 리뷰도 통과하지만
       # 실행하면 죽는" 종류였다(docs/14 · docs/16 · docs/17).
+      # [JA] ── 単体テスト(Docker 不要) ──
+      #      このリポジトリで見つかった欠陥 27 件はほぼすべて「コンパイルも通りレビューも通るが
+      #      実行すると死ぬ」種類だった(docs/14 · docs/16 · docs/17)。
       - name: 자바 단위 테스트 · bootJar
         run: ./gradlew build --no-daemon --stacktrace
 
@@ -131,6 +177,9 @@ jobs:
         # 빌드보다 테스트를 먼저 돌린다. 빌드는 타입 오류 수준만 잡아내고, 실제로 문제가
         # 났던 것들(입력 글자 유실, disabled 무시, 할인 계산 오류, 권한 가드)은 전부
         # 빌드가 통과하는 코드였다.
+        # [JA] ビルドよりテストを先に回す。ビルドは型エラー程度しか捕まえず、実際に問題に
+        #      なったもの(入力文字の消失、disabled の無視、割引計算の誤り、権限ガード)はすべて
+        #      ビルドが通るコードだった。
         run: |
           npm ci
           npm test -- --ci
@@ -146,6 +195,14 @@ jobs:
       # 잡고 싶은 것의 실제 사례: checkout.jsx 가 react-query 의 isPending 을 쓰면서
       # @reduxjs/toolkit 의 동명 함수를 import 하고 있었다. 누가 그걸 조건으로 쓰면
       # 언제나 참인 함수 객체를 검사하게 된다.
+      # [JA] ── リントのラチェット ──
+      #      `no-unused-vars` を有効にする(docs/40 #18)。ただし既存の警告 198 個を一度に error に
+      #      上げると CI が初日から赤くなり、人は規則を直す代わりに規則を切る。
+      #      lint スクリプトが --max-warnings を現在の数に固定するので、**新しく出た警告 1 つで
+      #      ここで止まる。** 既存のものは直すたびにその数を下げて固定する — 上がらない。
+      #      捕まえたいものの実例: checkout.jsx が react-query の isPending を使いながら
+      #      @reduxjs/toolkit の同名関数を import していた。誰かがそれを条件に使うと
+      #      常に真の関数オブジェクトを検査することになる。
       - name: 프론트엔드 린트
         working-directory: frontend
         run: npm run lint
@@ -160,6 +217,7 @@ jobs:
           retention-days: 7
 
       # ── 바이너리를 이미지로 (한 번만) ──────────────────────────────────
+      # [JA] ── バイナリをイメージに(一度だけ) ──
       - name: QEMU (멀티아키텍처용)
         if: steps.rev.outputs.published == 'true'
         uses: docker/setup-qemu-action@v4
@@ -184,6 +242,14 @@ jobs:
           # 근본 해결은 패키지를 저장소에 연결하는 것이다(패키지 settings → Manage
           # Actions access → 이 저장소 → Write). 그러면 GHCR_PAT 을 지워도 된다.
           # docs/36 §3.7 참조.
+          # [JA] GHCR_PAT があればそれを、なければ GITHUB_TOKEN を使う。
+          #      なぜ両方必要か: GITHUB_TOKEN は **リポジトリに連結されたパッケージ** にしか使えない。
+          #      人が PAT で先に push したパッケージは連結されていないので、packages: write が
+          #      あっても push が `denied: permission_denied: read_package` で拒否される。
+          #      最初のパイプライン実行がまさにここで死んだ。
+          #      根本解決はパッケージをリポジトリに連結すること(パッケージ settings → Manage
+          #      Actions access → このリポジトリ → Write)。そうすれば GHCR_PAT を消してよい。
+          #      docs/36 §3.7 参照。
           password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
 
       - name: 릴리스 후보 이미지 발행
@@ -195,6 +261,12 @@ jobs:
           #    ops/frontend.env.example 의 키와 같다 — 전부 **공개값**이라 Secrets 가 아니라 저장소 Variables 에 둔다
           #    (Settings → Secrets and variables → Actions → Variables). 🐛 예전에는 둘만 넘겨, CI 가 만든 프론트 이미지에
           #    포트원·통화 설정이 빠져 있었다 — 운영에 그대로 쓸 수 없는 이미지였다.
+          # [JA] ⚠️ REACT_APP_* は **バンドルに埋め込まれる。** 実行時の環境変数では変えられない。
+          #      空ならフロントエンドは相対パスで API を呼び、それは nginx プロキシが
+          #      同じホストでゲートウェイに渡すデプロイ形態(現在の構成)では正常である。
+          #      ops/frontend.env.example のキーと同じ — すべて **公開値** なので Secrets ではなくリポジトリ Variables に置く
+          #      (Settings → Secrets and variables → Actions → Variables)。🐛 以前は 2 つしか渡さず、CI が作ったフロントイメージに
+          #      ポートワン・通貨設定が抜けていた — 運用にそのまま使えないイメージだった。
           REACT_APP_API_URL: ${{ vars.REACT_APP_API_URL }}
           REACT_APP_PAYPAL_CLIENT_ID: ${{ vars.REACT_APP_PAYPAL_CLIENT_ID }}
           REACT_APP_PORTONE_IMP_CODE: ${{ vars.REACT_APP_PORTONE_IMP_CODE }}
@@ -206,6 +278,10 @@ jobs:
         #    **같은 스크립트**를 호출한다. 두 벌이 되면 반드시 어긋나고, 그때부터
         #    "CI 에서는 되는데 손으로 하면 안 된다" 가 시작된다.
         #    --skip-gradle: 위에서 만든 jar 를 그대로 쓴다(다시 만들지 않는다).
+        # [JA] ⭐ CI 専用の docker build ステップを別に置かない。運用者が手で使うのと
+        #      **同じスクリプト** を呼ぶ。2 つに分かれると必ずずれ、そこから
+        #      「CI では動くが手でやるとダメ」が始まる。
+        #      --skip-gradle: 上で作った jar をそのまま使う(再作成しない)。
         run: |
           ./ops/19-build-images.sh \
             --registry "$REGISTRY" \
@@ -227,6 +303,14 @@ jobs:
   # 스크립트는 **값을 출력하지 않는다** — 종류와 경로만. 로그가 공개여도 새로 새지 않는다.
   # 찾으면 exit 2 로 실패하고, 릴리스 후보 승격이 막힌다. 할 일은 폐기·재발급이 먼저다(docs/30 §3).
   # ══════════════════════════════════════════════════════════════════════
+  # [JA] 0. シークレットスキャン (docs/57 §6)
+  #      漏洩は **コミットされた瞬間** に終わっている — 公開リポジトリは push 後数分でスクレイパーが読む。だから最も安い
+  #      この検査をすべての push・PR にかける。以前は ops/20 を人がたまに回していた(docs/30 §5)。
+  #      · --head  : 今のツリー
+  #      · --range : 今回入ったコミットが作った blob — PR の中で入れて次のコミットで消したシークレットも捕まえる
+  #                  (現在のツリーだけ見ると見逃す。マージされると履歴にそのまま残る)
+  #      スクリプトは **値を出力しない** — 種類とパスだけ。ログが公開でも新たに漏れない。
+  #      見つかれば exit 2 で失敗し、リリース候補への昇格が止まる。やるべきことはまず破棄・再発行(docs/30 §3)。
   secrets:
     name: 비밀 스캔 (ops/20)
     runs-on: ubuntu-latest
@@ -236,6 +320,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           # 범위 검사에 이력이 필요하다.
+          # [JA] 範囲検査に履歴が必要。
           fetch-depth: 0
 
       - name: 현재 트리
@@ -250,6 +335,7 @@ jobs:
         run: |
           # PR 은 대상 브랜치 이후의 커밋, 푸시는 직전 끝(before) 이후의 커밋. 새 브랜치의 첫 푸시는 before 가
           # 0000… 이라 기본 브랜치와의 차이로 대신한다. 어느 쪽도 못 정하면 현재 트리 검사로 충분하다고 보고 넘긴다.
+          # [JA] PR は対象ブランチ以降のコミット、プッシュは直前の先端(before)以降のコミット。新しいブランチの最初のプッシュは before が 0000… なので既定ブランチとの差分で代える。どちらも決められなければ現在のツリーの検査で十分とみなして通す。
           if [ "$EVENT" = "pull_request" ] && [ -n "$BASE_REF" ]; then
             RANGE="origin/${BASE_REF}..HEAD"
           elif [ -n "$BEFORE" ] && ! echo "$BEFORE" | grep -qE '^0+$' && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
@@ -270,6 +356,10 @@ jobs:
   # 검증되는 것: 8개 서비스가 기동하는가, 액추에이터 프로브가 인증에 막히지 않는가,
   # 사가 재전달 시 재고가 이중 차감되지 않는가.
   # ══════════════════════════════════════════════════════════════════════
+  # [JA] 2. 統合ステージ — サービスが空の DB から実際に起動するか
+  #      Testcontainers で本物の PostgreSQL/Redis/Kafka/Mongo/ES を起動する。ここで
+  #      検証するもの: 8 つのサービスが起動するか、アクチュエータのプローブが認証に阻まれないか、
+  #      サガ再配信時に在庫が二重に引かれないか。
   integration:
     name: 통합 테스트 (Testcontainers)
     runs-on: ubuntu-latest
@@ -290,6 +380,8 @@ jobs:
       - name: 서비스별 통합 테스트
         # -PwithContainers 가 'containers' 태그를 포함시킨다.
         # e2e 는 다음 스테이지가 **발행된 이미지로** 돌리므로 여기서는 뺀다.
+        # [JA] -PwithContainers が 'containers' タグを含める。
+        #      e2e は次のステージが **発行されたイメージで** 回すのでここでは外す。
         run: ./gradlew test -PwithContainers -x :e2e-tests:test --no-daemon --stacktrace
 
       - name: 테스트 리포트 업로드
@@ -309,6 +401,11 @@ jobs:
   #    않는다. 그래서 이 스테이지가 초록이라는 말은 "배포될 물건이 동작한다"는 뜻이고,
   #    다시 빌드했다면 "배포될 물건과 비슷한 무언가가 동작한다"는 뜻밖에 못 된다.
   # ══════════════════════════════════════════════════════════════════════
+  # [JA] 3. 受け入れステージ — リリース候補そのものを検証する
+  #      ⭐ ここが今回の改編の核心。注文→決済→在庫のサガ全区間を、**コミットステージが
+  #      レジストリに上げたまさにそのイメージ** を受け取って回す。ソースから再ビルドしない。
+  #      だからこのステージが緑だというのは「デプロイされる物が動く」という意味であり、
+  #      再ビルドしていたら「デプロイされる物に似た何かが動く」という意味にしかならない。
   acceptance:
     name: 인수 테스트 (사가 E2E — 발행된 이미지)
     runs-on: ubuntu-latest
@@ -342,6 +439,14 @@ jobs:
           # 근본 해결은 패키지를 저장소에 연결하는 것이다(패키지 settings → Manage
           # Actions access → 이 저장소 → Write). 그러면 GHCR_PAT 을 지워도 된다.
           # docs/36 §3.7 참조.
+          # [JA] GHCR_PAT があればそれを、なければ GITHUB_TOKEN を使う。
+          #      なぜ両方必要か: GITHUB_TOKEN は **リポジトリに連結されたパッケージ** にしか使えない。
+          #      人が PAT で先に push したパッケージは連結されていないので、packages: write が
+          #      あっても push が `denied: permission_denied: read_package` で拒否される。
+          #      最初のパイプライン実行がまさにここで死んだ。
+          #      根本解決はパッケージをリポジトリに連結すること(パッケージ settings → Manage
+          #      Actions access → このリポジトリ → Write)。そうすれば GHCR_PAT を消してよい。
+          #      docs/36 §3.7 参照。
           password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
 
       - name: 사가 전 구간 (발행된 이미지)
@@ -355,6 +460,8 @@ jobs:
         if: needs.commit.outputs.published != 'true'
         # 포크 PR 은 패키지 쓰기 권한이 없어 발행 자체가 불가능하다. 검증은 하되,
         # 이 경로로 통과한 것은 **릴리스 후보에 대한 보증이 아니다**(다른 바이너리다).
+        # [JA] フォーク PR はパッケージ書き込み権限がなく発行自体ができない。検証はするが、
+        #      この経路で通ったものは **リリース候補への保証ではない**(別のバイナリである)。
         run: ./gradlew :e2e-tests:test -PwithContainers --no-daemon --stacktrace
 
       - name: 테스트 리포트 업로드
@@ -373,10 +480,15 @@ jobs:
   # **기록**이다 — 어떤 리비전이, 어떤 이미지 목록으로, 어떤 검증을 통과했는지.
   # 배포는 이 기록에 적힌 버전을 그대로 인자로 받는다.
   # ══════════════════════════════════════════════════════════════════════
+  # [JA] 4. リリース候補への昇格
+  #      前のステージがすべて通ったときだけ到達する。ここで作るのは新しいバイナリではなく
+  #      **記録** である — どのリビジョンが、どのイメージ一覧で、どの検証を通ったか。
+  #      デプロイはこの記録に書かれたバージョンをそのまま引数に受け取る。
   release-candidate:
     name: 릴리스 후보 승격
     runs-on: ubuntu-latest
     # 비밀 스캔이 실패한 커밋은 릴리스 후보가 될 수 없다(docs/57 §6).
+    # [JA] シークレットスキャンが失敗したコミットはリリース候補になれない(docs/57 §6)。
     needs: [commit, integration, acceptance, secrets]
     if: needs.commit.outputs.published == 'true'
     timeout-minutes: 10
@@ -448,6 +560,10 @@ jobs:
   # 복구 절차는 필요한 날 반드시 실패한다. 책도 롤백 계획을 릴리스 전마다 연습하라고
   # 못박는다 — "practice your rollback plan ... before every release to make sure it works".
   # ══════════════════════════════════════════════════════════════════════
+  # [JA] 5. 復元訓練 — コミットごとではなく週 1 回
+  #      目的は「バックアップ手順がまだ動くか」の定期確認(docs/15 §5)。訓練していない
+  #      復旧手順は必要な日に必ず失敗する。本もロールバック計画をリリース前ごとに練習せよと
+  #      念を押す — "practice your rollback plan ... before every release to make sure it works"。
   restore-drill:
     name: PITR 복원 훈련
     runs-on: ubuntu-latest
@@ -458,4 +574,5 @@ jobs:
 
       - name: DROP TABLE 사고를 내고 시점 복구로 되돌린다
         # 실패하면 exit 1 — 백업이 복구 불가능해졌다는 뜻이므로 반드시 조사해야 한다.
+        # [JA] 失敗すれば exit 1 — バックアップが復旧不能になったという意味なので必ず調査すること。
         run: ./ops/09-restore-drill.sh

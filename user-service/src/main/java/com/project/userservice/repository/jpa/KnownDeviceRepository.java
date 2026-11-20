@@ -14,6 +14,7 @@ public interface KnownDeviceRepository extends JpaRepository<KnownDevice, Long> 
     Optional<KnownDevice> findByUserIdAndTokenHash(Long userId, String tokenHash);
 
     /** 최근에 쓴 순서. 화면 목록과 상한 정리가 모두 이 순서를 쓴다. */
+    // [JA] 最近使った順。画面の一覧と上限整理がどちらもこの順序を使う。
     List<KnownDevice> findByUserIdOrderByLastSeenAtDesc(Long userId);
 
     /**
@@ -23,12 +24,18 @@ public interface KnownDeviceRepository extends JpaRepository<KnownDevice, Long> 
      * "새로운 기기에서 로그인되었습니다" 를 보내면 그건 소음이다 — 비교할 기기가 없으니
      * 새롭다고 말할 것도 없다. 게다가 첫인상이 "쓸데없는 경고" 가 되면 나중의 진짜 경고도
      * 무시한다.
+     *
+     * <p>[JA] このユーザーに端末の記録が一つでもあるか。
+     * 🔴 最初の端末では通知しないために必要である。登録して初めてログインした人に「新しい端末からログインされました」を
+     * 送るとそれはノイズである — 比べる端末がないので新しいと言うこともない。しかも第一印象が「無駄な警告」になると、
+     * 後の本物の警告も無視される。
      */
     boolean existsByUserId(Long userId);
 
     Optional<KnownDevice> findByDeviceIdAndUserId(Long deviceId, Long userId);
 
     /** 회원 탈퇴 최종 처리(WithdrawalService) — 그 사용자의 행을 모두 지운다. */
+    // [JA] 会員退会の最終処理(WithdrawalService) — そのユーザーの行をすべて消す。
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("delete from KnownDevice x where x.userId = :userId")

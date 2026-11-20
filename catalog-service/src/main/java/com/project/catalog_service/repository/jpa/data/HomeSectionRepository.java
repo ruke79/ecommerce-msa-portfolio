@@ -19,6 +19,10 @@ public interface HomeSectionRepository extends JpaRepository<HomeSection, Long> 
      * <p>기간 판정을 쿼리에서 하는 이유는 배너와 같다 — 지난 기획전 섹션이 쌓였을 때
      * 전부 읽어 와서 거르지 않기 위해서다. {@link HomeSection#isVisibleAt} 과 <b>같은
      * 판정</b>이어야 하며, 두 곳에 있는 규칙이라 테스트가 그 정의를 고정한다.
+     *
+     * <p>[JA] 今表示されるセクション。
+     * 期間判定をクエリで行う理由はバナーと同じ — 過去の企画展セクションがたまったとき、全部読んできてから絞らないためだ。
+     * HomeSection#isVisibleAt と同じ判定でなければならず、二か所にある規則なのでテストがその定義を固定する。
      */
     @Query("select s from HomeSection s where s.published = true "
             + "and (s.startsAt is null or s.startsAt <= :now) "
@@ -27,5 +31,6 @@ public interface HomeSectionRepository extends JpaRepository<HomeSection, Long> 
     List<HomeSection> findVisible(@Param("now") LocalDateTime now);
 
     /** 관리자 목록 — 비공개·기간 지난 것까지 전부. */
+    // [JA] 管理者一覧 — 非公開・期間切れのものまで全部。
     List<HomeSection> findAllByOrderBySortOrderAscSectionIdAsc();
 }

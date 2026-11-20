@@ -52,10 +52,12 @@ public class OrderController {
     PurchaseStatsService purchaseStatsService;
 
     /** 리뷰 작성 자격(받은 상품인가) — user-service 가 묻는다. */
+    // [JA] レビュー作成の資格(受け取った商品か) — user-service が尋ねる。
     @Autowired
     com.project.order_service.repository.jpa.OrderProductRepository orderProductRepository;
 
     /** 배송 서비스가 묻는 주문의 배송 단면(수취인·주소·품목). */
+    // [JA] 配送サービスが尋ねる注文の配送断面(受取人・住所・品目)。
     @Autowired
     com.project.order_service.service.OrderShippingInfoService orderShippingInfoService;
 
@@ -63,11 +65,15 @@ public class OrderController {
      * Stripe 경로. {@code stripe.enabled=false} 면 빈이 없으므로 <b>null 이다</b> —
      * 그때는 해당 엔드포인트가 503 을 돌려준다. required=false 로 둔 이유는 Stripe 를
      * 쓰지 않는 환경에서 order-service 가 기동조차 못 하는 일을 막기 위해서다.
+     *
+     * <p>[JA] Stripe の経路。{@code stripe.enabled=false} なら Bean がないので <b>null だ</b> — そのときは該当エンドポイントが 503 を返す。
+     * required=false にした理由は、Stripe を使わない環境で order-service が起動すらできなくなるのを防ぐためだ。
      */
     @Autowired(required = false)
     com.project.order_service.service.StripePaymentService stripePaymentService;
 
     /** 포트원 경로. {@code portone.enabled=false} 면 null 이고, 해당 엔드포인트는 503 이다. */
+    // [JA] PortOne の経路。{@code portone.enabled=false} なら null で、該当エンドポイントは 503 だ。
     @Autowired(required = false)
     com.project.order_service.service.PortOnePaymentService portOnePaymentService;
 
@@ -104,6 +110,17 @@ public class OrderController {
      * <p>이제 <b>도메인 실패(사용자가 고칠 수 있음)</b>는 400 + 그 문구, <b>그 밖의 예외</b>는
      * 500 + 일반 문구 + 스택트레이스 로그로 나눈다. 예외 메시지를 그대로 내보내지 않는
      * 이유는 그것이 대개 내부 사정이기 때문이다.
+     *
+     * <p>[JA] 注文作成。
+     * 🐛 失敗が見えなかった: 以前は RuntimeException を catch して ClientMessage.of(e) を本文に 400 で返していた。3 つが同時に誤っていた。
+     * <b>ログがない。</b> どんな例外が出ても黙って 400 に変わる。実際にユーザーが 400 を受けたとき order-service のログには
+     * <b>その時刻の行が 1 行もなかった</b> — 何が失敗したかを知る方法がない。
+     * <b>サービスが null を返していた。</b> カートが空のとき・顧客がいないときどちらも null で、すぐ下の {@code newOrder.getOrderId()} が NPE を出した。
+     * その NPE がこの catch に掛かり <b>本文が JVM の NPE 文言の 400</b> になった({@code "Cannot invoke ... because \"newOrder\" is null"})。
+     * ユーザー画面にそのまま出た — 内部実装が漏れることでもある。今は各分岐が理由を付けて {@link OrderDomainException} を投げる。
+     * <b>すべて 400 だった。</b> cart-service が落ちても、パースが壊れても「あなたのリクエストが誤っている」になる。ユーザーは直すものがないのに直せと言われる。
+     * 今は <b>ドメインの失敗(ユーザーが直せる)</b> は 400 + その文言、<b>それ以外の例外</b> は 500 + 一般的な文言 + スタックトレースのログに分ける。
+     * 例外メッセージをそのまま出さない理由は、それがたいてい内部の事情だからだ。
      */
     @PostMapping("/create")
     // @Valid — 배송지 검증(OrderAddressDto). 틀리면 서비스에 닿기 전에 400(CustomRestExceptionHandler).
@@ -111,6 +128,7 @@ public class OrderController {
     ResponseEntity<?> createOrder(@jakarta.validation.Valid @RequestBody OrderRequest request,
             @RequestHeader(value = "User-Id", required = false) Long userId,
             // 멱등 키 — 같은 결제 시도의 재요청이면 이미 만든 주문을 돌려준다(OrderService.createOrder, V26)
+            // [JA] 冪等キー — 同じ決済試行の再リクエストなら作成済みの注文を返す(OrderService.createOrder, V26)
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
 
         // 🔒 주문자는 **게이트웨이가 검증한 토큰**에서만 온다.
@@ -122,6 +140,14 @@ public class OrderController {
         //    것과 같은 이유다(아래 getOrder 주석 참조).
         //    주문자 id 는 토큰의 uid(User-Id)다 — 이메일로 고객 사본을 찾지 않는다(docs/48 §6-①). 장바구니·쿠폰도
         //    같은 id 로 묻는다 — 이메일은 이 흐름 어디에도 필요 없다.
+        // [JA] 🔒 注文者は **ゲートウェイが検証したトークン** からだけ来る。
+        //         以前は `request.getEmail()` — つまり **リクエスト本文** をそのまま使っていた。その値が
+        //         カート照会・クーポン見積もり・注文者照会のすべてに使われるので、他人のメールを入れて
+        //         送ると **その人のカートで注文が作られ配送先は自分のもの** になる。
+        //         このリポジトリの他のエンドポイントがクエリパラメーター email を捨ててヘッダーに移したのと
+        //         同じ理由だ(下の getOrder のコメント参照)。
+        //         注文者 id はトークンの uid(User-Id)だ — メールで顧客のコピーを探さない(docs/48 §6-①)。カート・クーポンも
+        //         同じ id で尋ねる — メールはこの流れのどこにも必要ない。
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new MessageResponse("로그인이 필요합니다."));
@@ -137,6 +163,7 @@ public class OrderController {
 
         } catch (DomainException e) {
             // 사용자가 고칠 수 있는 실패다. 문구는 이미 사용자를 향해 쓰여 있다.
+            // [JA] ユーザーが直せる失敗だ。文言はすでにユーザーに向けて書かれている。
             log.warn("주문 생성 거절: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new MessageResponse(ClientMessage.of(e)));
@@ -144,6 +171,8 @@ public class OrderController {
         } catch (RuntimeException e) {
             // 여기까지 온 것은 우리 잘못이다. 스택트레이스를 남긴다 — 이게 없어서
             // 지난번 400 의 원인을 로그에서 찾을 수 없었다.
+            // [JA] ここまで来たのはこちらの落ち度だ。スタックトレースを残す — これがなくて
+            //      前回の 400 の原因をログから見つけられなかった。
             log.error("주문 생성 실패(예상치 못한 오류)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new MessageResponse("주문을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."));
@@ -164,6 +193,14 @@ public class OrderController {
      * <p>이제 신원은 <b>게이트웨이가 검증한 토큰</b>에서만 온다({@code User-Id} 헤더 — 토큰의 uid).
      * 클라이언트가 보낸 값은 게이트웨이가 지우므로 사칭할 수 없다. 쿼리 파라미터 email 은
      * 더 이상 신뢰하지 않는다 — 하위 호환을 위해 받기만 하고 무시한다.
+     *
+     * <p>[JA] 注文詳細。
+     * 🔒 <b>以前は誰でもどの注文でも見られた。</b> このメソッドは {@code email} をクエリパラメーターで受けていたが、その値は
+     * <b>どこにも使われておらず</b>({@code OrderDataService.getOrder} は引数の email を無視して {@code orderRepository.findById(orderId)} だけをする)
+     * 所有権のチェックもなかった。つまり {@code GET /api/order/1}, {@code /2}, {@code /3} ... と注文番号をなめるだけで
+     * <b>すべての顧客の注文履歴・配送先住所・電話番号・決済金額</b> を読めた。
+     * 今は身元は <b>ゲートウェイが検証したトークン</b> からだけ来る({@code User-Id} ヘッダー — トークンの uid)。クライアントが送った値は
+     * ゲートウェイが消すので成りすませない。クエリパラメーター email はもう信頼しない — 下位互換のため受けるだけで無視する。
      */
     @GetMapping("/{orderId}")
     ResponseEntity<?> getOrder(@PathVariable("orderId") String orderId,
@@ -177,6 +214,8 @@ public class OrderController {
         try {
             // 소유권 검사는 OrderDataService.getOrder 안에서 한다(엔티티의 customerId 를
             // 봐야 하는데 OrderDto 에는 소유자 필드가 없다). 남의 주문이면 null 이 온다.
+            // [JA] 所有権のチェックは OrderDataService.getOrder の中で行う(エンティティの customerId を
+            //      見る必要があるが OrderDto には所有者フィールドがない)。他人の注文なら null が来る。
             OrderDto response = orderService.getOrder(Long.parseLong(orderId), userId, "");
 
             if (response == null) {
@@ -190,6 +229,7 @@ public class OrderController {
                     .body(new MessageResponse("잘못된 주문 번호입니다."));
         } catch (RuntimeException e) {
             // 예전에는 로그 없이 400 이었다 — 화면에는 400 만, 서버에는 아무것도 남지 않아 원인을 찾을 수 없었다.
+            // [JA] 以前はログなしで 400 だった — 画面には 400 だけ、サーバーには何も残らず原因を探せなかった。
             log.warn("주문 조회 실패: orderId={} ({})", orderId, e.toString());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new MessageResponse(ClientMessage.of(e)));
@@ -202,6 +242,9 @@ public class OrderController {
      *
      * <p>🔒 예전에는 {@code ?email=} 로 <b>남의 이메일을 넣으면 그 사람의 주문 목록</b>이
      * 그대로 나왔다. 이메일만 알면 되므로 사실상 전체 주문 조회다.
+     *
+     * <p>[JA] 自分の注文一覧。
+     * 🔒 以前は {@code ?email=} に <b>他人のメールを入れるとその人の注文一覧</b> がそのまま出た。メールさえ知っていればよいので事実上の全注文照会だ。
      */
     @GetMapping("/orders")
     public ResponseEntity<?> getOrders(@RequestParam(value="filter", required = false) String filter,
@@ -230,8 +273,17 @@ public class OrderController {
      * <p>{@code /orders} 는 지우지 않았다 — 다른 호출부가 있는지 확인되지 않았고, 화면을
      * 옮긴 뒤에 정리하는 편이 안전하다.
      *
+     * <p>[JA] 注文一覧 — カーソルページング(段階的な読み込み)。
+     * 🐛 上の {@code /orders} は顧客の注文を <b>すべて</b> 返す。注文が溜まるほど応答が大きくなり、しかも注文ごとに DB 照会 + user-service の
+     * Feign + catalog 呼び出しが再び起き(N+1)、状態で絞るときは条件に合わない注文が <b>null として一覧に混ざって出る。</b>
+     * 詳しくは {@code OrderDataService.getOrdersPage} のコメントにある。
+     * こちらは状態を SQL で絞りカーソルで区切って渡す。画面はスクロールするたびに次のまとまりを受け取る。
+     * {@code /orders} は消していない — 他の呼び出し元があるか確認できておらず、画面を移した後に整理する方が安全だ。
+     *
      * @param cursor 마지막으로 받은 주문 id. 첫 페이지는 생략하거나 0.
+     *     [JA] 最後に受け取った注文 id。最初のページは省略するか 0。
      * @param filter 비어 있으면 상태로 거르지 않는다(화면의 "All Orders").
+     *     [JA] 空なら状態で絞らない(画面の "All Orders")。
      */
     @GetMapping("/orders/page")
     public ResponseEntity<?> getOrdersPage(
@@ -250,6 +302,7 @@ public class OrderController {
             List<OrderDto> contents = page.getContent();
 
             // 다음 커서는 이번 묶음의 마지막 주문 id 다. 덜 받았으면 끝이다.
+            // [JA] 次のカーソルは今回のまとまりの最後の注文 id だ。少なく受け取ったなら終わりだ。
             Long nextCursor = null;
             if (!contents.isEmpty() && contents.size() >= Math.min(size, OrderDataService.MAX_ORDER_PAGE_SIZE)) {
                 nextCursor = Long.parseLong(contents.get(contents.size() - 1).getId());
@@ -258,11 +311,14 @@ public class OrderController {
             return ResponseEntity.ok(Map.of(
                     "contents", contents,
                     // Map.of 는 null 을 담지 못한다. 없음은 -1 로 나타낸다(카탈로그 쪽과 같은 규칙).
+                    // [JA] Map.of は null を入れられない。なしは -1 で表す(カタログ側と同じ規則)。
                     "nextCursor", nextCursor == null ? -1L : nextCursor));
 
         } catch (IllegalStateException e) {
             // OrderStatus.getStatus 가 모르는 상태 문자열에 던진다. 잘못된 요청이지
             // 서버 오류가 아니다.
+            // [JA] OrderStatus.getStatus が知らない状態文字列で例外を投げる。誤ったリクエストであって
+            //      サーバーエラーではない。
             return ResponseEntity.badRequest()
                     .body(new MessageResponse("알 수 없는 주문 상태입니다: " + filter));
         }
@@ -288,6 +344,15 @@ public class OrderController {
      *
      * <p><b>두 수정이 부딪힌 자리다.</b> 둘 다 각자는 옳았고, 같은 엔드포인트에 있었기
      * 때문에 한쪽을 고치자 다른 쪽이 조용히 깨졌다. 연산이 다르면 문도 달라야 한다.
+     *
+     * <p>[JA] 決済の <b>取消</b> — PayPal のウィンドウを承認せずに閉じた場合。
+     * 🐛 取消が決済と同じ入口から入ってきた: フロントの {@code onApproveHandler} と {@code onCancelHandler} が <b>どちらも</b>
+     * {@code /payment/paypal} を呼び、区別は本文の {@code paymentStatus: "CANCELED"} 1 フィールドだった。ところがサーバーはそのフィールドを
+     * <b>わざと読まない</b> — ブラウザに決済状態を決めさせることが docs/35 の欠陥の出発点だった。
+     * そのため取消も決済として扱われキャプチャ検証に引っかかった。承認すらしていない注文は PayPal で {@code CREATED} なので、
+     * 結果は常に 400 だった(status=CREATED のエラー)。
+     * <b>2 つの修正がぶつかった場所だ。</b> どちらもそれぞれは正しく、同じエンドポイントにあったため片方を直すともう片方が黙って壊れた。
+     * 演算が違えば入口も違うべきだ。
      */
     @PostMapping("/payment/paypal/cancel")
     public ResponseEntity<?> cancelPaypalPayment(@RequestBody PaypalPaymentRequest request,
@@ -295,6 +360,8 @@ public class OrderController {
 
         // 🔒 요청자는 게이트웨이가 검증한 헤더에서만 온다. 본문의 userId 은 믿지 않는다 —
         //    취소는 남의 주문 상태를 바꿀 수 있는 연산이다.
+        // [JA] 🔒 リクエスト者はゲートウェイが検証したヘッダーからだけ来る。本文の userId は信じない —
+        //         取消は他人の注文状態を変え得る操作だ。
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new MessageResponse("로그인이 필요합니다."));
@@ -320,6 +387,11 @@ public class OrderController {
      *
      * <p>역할 판정은 {@link InternalCallGuard#isAdmin} 하나를 쓴다 — ADMIN 과 ROLE_ADMIN
      * 을 둘 다 받는 규칙이 한 곳에 있어야 한다.
+     *
+     * <p>[JA] 返金。
+     * 本文はどの注文・なぜだけだ。リクエスト者は {@code User-Id}、管理者かどうかは {@code User-Role} — どちらもゲートウェイがトークンから
+     * 抜き出して入れ、クライアントが送ったコピーは消す。管理者なら他人の注文も、発送済みの注文も返金できる。
+     * 役割の判定は {@link InternalCallGuard#isAdmin} 1 つを使う — ADMIN と ROLE_ADMIN の両方を受ける規則は 1 か所にあるべきだ。
      */
     /**
      * 관리자 주문 목록 — 환불 화면용.
@@ -327,6 +399,11 @@ public class OrderController {
      * <p>🔒 <b>관리자만.</b> 소유권 검사가 없는 유일한 목록이라 역할 판정이 곧 접근 통제다.
      * {@code User-Role} 은 게이트웨이가 토큰에서 뽑아 넣고 클라이언트 사본은 지운다.
      * 403 이 아니라 404 를 돌려주지 않는 이유: 이 경로가 존재한다는 사실은 비밀이 아니다.
+     *
+     * <p>[JA] 管理者の注文一覧 — 返金画面用。
+     * 🔒 <b>管理者だけ。</b> 所有権チェックのない唯一の一覧なので役割の判定がそのままアクセス制御だ。
+     * {@code User-Role} はゲートウェイがトークンから抜き出して入れ、クライアントのコピーは消す。
+     * 403 ではなく 404 を返さない理由: このパスが存在するという事実は秘密ではない。
      */
     @GetMapping("/admin/orders")
     public ResponseEntity<?> adminOrders(
@@ -344,6 +421,7 @@ public class OrderController {
             return ResponseEntity.ok(orderService.listOrdersForAdmin(status, trackingId, page, size));
         } catch (IllegalStateException e) {
             // OrderStatus.getStatus — 모르는 상태 이름.
+            // [JA] OrderStatus.getStatus — 知らない状態名。
             return ResponseEntity.badRequest().body(new MessageResponse("알 수 없는 주문 상태입니다: " + status));
         }
     }
@@ -375,10 +453,12 @@ public class OrderController {
 
         } catch (DomainException e) {
             // 규칙에 걸린 거절(결제 전 · 배송 후 · 남의 주문). 예상된 경로라 warn 이다.
+            // [JA] 規則に掛かった拒否(決済前 · 配送後 · 他人の注文)。想定された経路なので warn だ。
             log.warn("환불 거절: {}", e.getMessage());
             return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
         } catch (RuntimeException e) {
             // 제공자 호출 실패 등. 원인이 로그에 남아야 한다(docs/47).
+            // [JA] 提供者の呼び出し失敗など。原因がログに残らなければならない(docs/47)。
             log.error("환불 처리 실패: trackingId={}", request.getTrackingId(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new MessageResponse("환불을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."));
@@ -395,6 +475,10 @@ public class OrderController {
      * {@code User-Id} 뿐이다. 남의 주문이면 404 — 403 은 "그 주문이 존재한다" 를 알려
      * 준다({@code GET /{orderId}} 와 같은 규칙). 이미 확정된 주문이면 200 으로 그대로
      * 돌려준다(멱등).
+     *
+     * <p>[JA] 購入確定 — {@code DELIVERED → COMPLETED}(docs/25 §12)。
+     * 本文はない。どの注文かはパス、誰かはゲートウェイがトークンから抜き出して入れた {@code User-Id} だけだ。他人の注文なら 404
+     * — 403 は「その注文が存在する」ことを教えてしまう({@code GET /{orderId}} と同じ規則)。すでに確定した注文なら 200 でそのまま返す(冪等)。
      */
     @PostMapping("/{orderId}/confirm")
     public ResponseEntity<?> confirmPurchase(@PathVariable("orderId") String orderId,
@@ -431,6 +515,9 @@ public class OrderController {
      *
      * <p>🔒 관리자만 — 재고를 늘리는 경로다. 본문은 어느 주문·재고로 되돌릴지뿐이고, 수량은
      * DB 의 주문 품목 그대로다.
+     *
+     * <p>[JA] 返品の入庫(管理者)。
+     * 🔒 管理者だけ — 在庫を増やす経路だ。本文はどの注文・在庫に戻すかだけで、数量は DB の注文品目そのままだ。
      */
     @PostMapping("/admin/return-received")
     public ResponseEntity<?> returnReceived(
@@ -465,11 +552,15 @@ public class OrderController {
     /**
      * 결제창을 열기 직전 — 재고 예약을 새로 잡는다(docs/59 §8). 모자라면 400 과 이유("재고가 부족해 결제를 시작하지 못했습니다…"),
      * 잡았거나 예약할 수 없는 상황(fail-open)이면 200. 🔒 주문자만(아니면 404).
+     *
+     * <p>[JA] 決済画面を開く直前 — 在庫の仮押さえを新たに取る(docs/59 §8)。足りなければ 400 と理由("재고가 부족해 결제를 시작하지 못했습니다…")、
+     * 取れたか仮押さえできない状況(fail-open)なら 200。🔒 注文者だけ(でなければ 404)。
      */
     @PostMapping("/payment/stock-hold/{trackingId}")
     public ResponseEntity<?> renewStockHold(@PathVariable("trackingId") String trackingId,
             @RequestHeader(value = "User-Id", required = false) Long userId,
             // 창마다의 결제 시도 키(V27) — 다른 창이 이 주문을 결제 중이면 400. 옛 화면은 보내지 않는다.
+            // [JA] ウィンドウごとの決済試行キー(V27) — 別のウィンドウがこの注文を決済中なら 400。古い画面は送らない。
             @RequestHeader(value = "Payment-Attempt", required = false) String paymentAttempt) {
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new MessageResponse("로그인이 필요합니다."));
@@ -486,11 +577,13 @@ public class OrderController {
     }
 
     // ── 무통장입금 (docs/49 §11) ────────────────────────────────────────────
+    // [JA] ── 銀行振込(docs/49 §11) ──
 
     @Autowired
     private com.project.order_service.service.BankTransferService bankTransferService;
 
     /** 입금 안내 받기 — NOT_PROCESSED → UNPAID. 응답이 계좌·금액·기한이다. */
+    // [JA] 入金案内を受け取る — NOT_PROCESSED → UNPAID。応答が口座・金額・期限だ。
     @PostMapping("/payment/bank-transfer/start")
     public ResponseEntity<?> startBankTransfer(
             @RequestBody com.project.common.dto.request.BankTransferRequest request,
@@ -514,6 +607,7 @@ public class OrderController {
     }
 
     /** 입금 안내 다시 보기 — 입금 대기 주문의 계좌·금액·기한. 🔒 주문자만. */
+    // [JA] 入金案内の再表示 — 入金待ちの注文の口座・金額・期限。🔒 注文者だけ。
     @GetMapping("/payment/bank-transfer/{trackingId}")
     public ResponseEntity<?> bankTransferNotice(@PathVariable("trackingId") String trackingId,
             @RequestHeader(value = "User-Id", required = false) Long userId) {
@@ -528,6 +622,7 @@ public class OrderController {
     }
 
     /** 입금 전 취소 — 고객 스스로, 또는 관리자. 돈이 오지 않았으니 환불이 아니라 취소다. */
+    // [JA] 入金前の取消 — 顧客自身、または管理者。お金が来ていないので返金ではなく取消だ。
     @PostMapping("/payment/bank-transfer/cancel")
     public ResponseEntity<?> cancelBankTransfer(
             @RequestBody com.project.common.dto.request.BankTransferRequest request,
@@ -554,6 +649,9 @@ public class OrderController {
     /**
      * 🔒 입금 확인 — 관리자만. 카드 결제 확인과 같은 무게다: 재고가 나가고 매출이 잡힌다.
      * 금액은 받지 않는다 — 청구액과 다르게 왔으면 확인하지 말고 고객에게 연락한다.
+     *
+     * <p>[JA] 🔒 入金確認 — 管理者だけ。カード決済の確認と同じ重さだ: 在庫が出て売上が計上される。
+     * 金額は受け取らない — 請求額と違って届いたなら確認せず顧客に連絡する。
      */
     @PostMapping("/admin/deposit-confirmed")
     public ResponseEntity<?> depositConfirmed(
@@ -588,6 +686,8 @@ public class OrderController {
 
         // 🔒 요청자는 게이트웨이가 검증한 헤더에서만 온다. 예전에는 본문의 userId 을
         //    그대로 썼다 — 남의 주문에 결제를 붙일 수 있었다.
+        // [JA] 🔒 リクエスト者はゲートウェイが検証したヘッダーからだけ来る。以前は本文の userId を
+        //         そのまま使っていた — 他人の注文に決済を付けられた。
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new MessageResponse("로그인이 필요합니다."));
@@ -613,6 +713,9 @@ public class OrderController {
      *
      * <p>브라우저는 응답의 {@code url} 로 이동하기만 한다. <b>금액은 서버가 정한다</b> —
      * 요청 본문에는 어느 주문인지 말고는 아무것도 없다.
+     *
+     * <p>[JA] Stripe の決済ページを開く。
+     * ブラウザは応答の {@code url} に移動するだけだ。<b>金額はサーバーが決める</b> — リクエスト本文にはどの注文か以外は何もない。
      */
     @PostMapping("/payment/stripe/session")
     public ResponseEntity<?> createStripeSession(@RequestBody PaypalPaymentRequest request,
@@ -624,6 +727,7 @@ public class OrderController {
         }
         if (stripePaymentService == null) {
             // stripe.enabled=false 인 환경이다. 500 이 아니라 "지원하지 않는다" 가 맞다.
+            // [JA] stripe.enabled=false の環境だ。500 ではなく「サポートしていない」が正しい。
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(new MessageResponse("Stripe 결제가 설정되지 않았습니다."));
         }
@@ -655,6 +759,10 @@ public class OrderController {
      * Stripe 에 조회해 금액까지 대조한다.
      *
      * <p>웹훅과 <b>겹쳐서 도착하는 것이 정상</b>이다. 반영은 멱등하다.
+     *
+     * <p>[JA] Stripe 決済後にブラウザが戻ってきた。
+     * ブラウザが報告するのはセッション id 1 つだけで、それすら信じない — サーバーがそのセッションを Stripe に照会し金額まで照合する。
+     * Webhook と <b>重なって届くのが正常</b> だ。反映は冪等だ。
      */
     @PostMapping("/payment/stripe/confirm")
     public ResponseEntity<?> confirmStripePayment(@RequestBody PaypalPaymentRequest request,
@@ -686,6 +794,10 @@ public class OrderController {
      *
      * <p>포트원은 <b>브라우저가 결제창을 연다</b>(Stripe Checkout 과 달리 서버가 세션을
      * 만들지 않는다). 그래서 시작 엔드포인트가 없고 확인만 있다 — PayPal 과 같은 모양이다.
+     *
+     * <p>[JA] PortOne の決済確認 — ブラウザの決済画面が閉じてコールバックが来た。
+     * PortOne は <b>ブラウザが決済画面を開く</b>(Stripe Checkout と違いサーバーがセッションを作らない)。そのため開始エンドポイントがなく
+     * 確認だけがある — PayPal と同じ形だ。
      */
     @PostMapping("/payment/portone/confirm")
     public ResponseEntity<?> confirmPortOnePayment(@RequestBody PaypalPaymentRequest request,
@@ -731,10 +843,18 @@ public class OrderController {
      *
      * <p>가상계좌처럼 <b>결제가 며칠 뒤에 완료되는</b> 수단에서는 이 경로가 유일하다 —
      * 복귀 콜백이 아예 없기 때문이다.
+     *
+     * <p>[JA] PortOne の Webhook — <b>認証なしで開いた経路</b>。
+     * ⚠️ PortOne V1 の Webhook には署名がない: Stripe と違い送信者を証明する署名がない。そこで <b>本文を手がかりとしてだけ使う</b> —
+     * {@code imp_uid} 1 つだけを取り、金額・状態・注文参照はすべて捨てた後 PortOne API に問い直す。詳しい根拠は {@code PortOnePaymentService} のコメントにある。
+     * 仮想口座のように <b>決済が数日後に完了する</b> 手段ではこの経路が唯一だ — 戻りのコールバックがまったくないからだ。
      */
     /**
      * 포트원 웹훅. V2 는 Standard Webhooks 헤더 셋으로 서명을 보낸다 — V1 은 없다.
      * 헤더가 없어도 받아들이고, 서명 검증 여부는 서비스가 버전에 따라 정한다.
+     *
+     * <p>[JA] PortOne の Webhook。V2 は Standard Webhooks のヘッダー 3 つで署名を送る — V1 にはない。
+     * ヘッダーがなくても受け入れ、署名検証の有無はサービスがバージョンに応じて決める。
      */
     @PostMapping("/payment/portone/webhook")
     public ResponseEntity<?> portOneWebhook(@RequestBody String payload,
@@ -752,6 +872,7 @@ public class OrderController {
 
         } catch (DomainException e) {
             // 다시 보내도 같은 결과일 것들이다 — 재시도를 유도하지 않는다.
+            // [JA] 送り直しても同じ結果になるものだ — リトライを誘導しない。
             log.warn("포트원 웹훅 거절: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
 
@@ -776,6 +897,13 @@ public class OrderController {
      *
      * <p>실패해도 상세를 응답에 담지 않는다 — 인증 없는 경로라 오류 문구 자체가 탐색
      * 단서가 된다. 원인은 로그에 남긴다.
+     *
+     * <p>[JA] Stripe の Webhook — <b>認証なしで開いた経路</b>。
+     * 🔒 身元は署名が証明する: Stripe は私たちのトークンを持てないので、この経路に認証をかけられない。代わりに
+     * {@code Stripe-Signature} ヘッダーを <b>Webhook の秘密鍵で検証</b> する — それだけが「本当に Stripe が送ったか」の答えだ。
+     * 検証を飛ばすとこの URL に JSON を POST するだけで決済が改ざんされる。
+     * ⚠️ 本文を {@code String} で受けるのは <b>署名のため</b> だ。JSON にパースしてから再シリアライズすると空白・キーの順序が変わり署名が壊れる。
+     * 失敗しても詳細を応答に入れない — 認証のない経路なのでエラー文言自体が探索の手がかりになる。原因はログに残す。
      */
     @PostMapping("/payment/stripe/webhook")
     public ResponseEntity<?> stripeWebhook(@RequestBody String payload,
@@ -788,16 +916,20 @@ public class OrderController {
         try {
             stripePaymentService.handleWebhook(payload, signature);
             // 200 을 돌려줘야 Stripe 가 재시도를 멈춘다.
+            // [JA] 200 を返して初めて Stripe がリトライを止める。
             return ResponseEntity.ok().build();
 
         } catch (DomainException e) {
             // 서명 불일치·알 수 없는 주문 등. 400 이면 Stripe 가 재시도하지 않는다 —
             // 다시 보내도 같은 결과일 것들이다.
+            // [JA] 署名不一致・不明な注文など。400 なら Stripe はリトライしない —
+            //      送り直しても同じ結果になるものだ。
             log.warn("Stripe 웹훅 거절: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
 
         } catch (RuntimeException e) {
             // 우리 쪽 일시적 실패다. 500 을 주면 Stripe 가 재시도한다 — 그게 맞다.
+            // [JA] こちら側の一時的な失敗だ。500 を返すと Stripe がリトライする — それが正しい。
             log.error("Stripe 웹훅 처리 실패(예상치 못한 오류)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
@@ -823,6 +955,17 @@ public class OrderController {
      * ({@code PurchaseStatsService.MAX_BATCH})이 있어서, 그보다 큰 {@code size} 를 요청하면
      * 말없이 잘라서 돌려준다. 덜 찬 응답을 끝으로 읽으면 아직 보지 않은 고객이 통째로
      * 누락된다.
+     *
+     * <p>[JA] 顧客別の購入集計 — 等級バッチが呼ぶ。
+     * 🔒 ゲートウェイを通ったリクエストには身元ヘッダーが付く — <b>ヘッダーがある = 外部から来たリクエスト</b> で、そのときは管理者だけ許可する。
+     * サービス間の Feign 呼び出しはゲートウェイを通らないのでヘッダーがない。判定は {@link InternalCallGuard} が行う。
+     * ⚠️ {@code User-Role} <b>1 つだけ</b> を見てはならない。ゲートウェイはトークンから抜いた値があるときだけそのヘッダーを付けるので、
+     * role クレームのないトークンはヘッダーなしで届き「内部呼び出し」として通過する。3 つのヘッダーのうち 1 つでもあれば外部とみなす。
+     * この規則がなければログインした誰でも <b>全顧客の決済金額</b> をページ単位で抜き取れる。個別の注文照会には所有権チェックがあるが、
+     * 集計には「自分のもの」という概念がないので、ここで防がなければ防ぐ場所がない。
+     * カーソル方式だ。応答の最後の {@code customerId} を次の呼び出しの {@code afterCustomerId} に渡す。<b>終わりは空の応答でだけ判定する</b>
+     * — ここには応答 1 つのサイズ上限({@code PurchaseStatsService.MAX_BATCH})があり、それより大きい {@code size} を要求すると
+     * 黙って切って返す。満たない応答を終わりと読むと、まだ見ていない顧客が丸ごと漏れる。
      */
     @GetMapping("/internal/purchase-stats")
     ResponseEntity<?> purchaseStats(
@@ -835,6 +978,8 @@ public class OrderController {
 
         // 헤더 하나만 보면 role 클레임이 없는 토큰이 "내부 호출" 로 통과한다
         // (InternalCallGuard 주석 참조).
+        // [JA] ヘッダー 1 つだけを見ると role クレームのないトークンが「内部呼び出し」として通過する
+        //      (InternalCallGuard のコメント参照)。
         if (!InternalCallGuard.allowed(callerRole, callerEmail, callerId)) {
             log.warn("외부에서 구매 집계 조회 시도를 차단");
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -854,6 +999,12 @@ public class OrderController {
      * <p>🔒 구매 집계와 같은 규칙이다 — 게이트웨이 신원 헤더가 있으면 외부 요청이고 그때는
      * 관리자만. 주소와 연락처가 들어 있으니 개별 주문 조회보다 가벼운 데이터가 아니다.
      * 금액은 싣지 않는다.
+     *
+     * <p>[JA] 配送サービスが配送を作るときに読む注文の断面 — 受取人・住所・品目。
+     * 決済完了イベントには住所がない。以前の delivery-service はイベントから住所を探して見つからず例外を投げ、
+     * <b>すべての決済が DLT に行き配送は 1 件もできなかった</b>(docs/25 §11)。このエンドポイントがその空白を埋める。
+     * 🔒 購入集計と同じ規則だ — ゲートウェイの身元ヘッダーがあれば外部リクエストで、そのときは管理者だけ。
+     * 住所と連絡先が入っているので個別の注文照会より軽いデータではない。金額は載せない。
      */
     @GetMapping("/internal/orders/{orderId}/shipping")
     ResponseEntity<?> shippingInfo(
@@ -880,6 +1031,10 @@ public class OrderController {
      *
      * <p>🔒 구매 집계와 같은 규칙 — 게이트웨이 신원 헤더가 있으면 외부 요청이고 그때는 관리자만. 밖에서 열려 있으면 남의 구매
      * 이력을 상품 단위로 캐낼 수 있다.
+     *
+     * <p>[JA] この顧客がこの商品を受け取ったか(配送完了・購入確定) — user-service がレビューを受け付ける前に尋ねる(docs/57 §13)。
+     * 🔒 購入集計と同じ規則 — ゲートウェイの身元ヘッダーがあれば外部リクエストで、そのときは管理者だけ。外から開いていると他人の購入
+     * 履歴を商品単位で探り出せる。
      */
     @GetMapping("/internal/purchased")
     ResponseEntity<?> purchased(

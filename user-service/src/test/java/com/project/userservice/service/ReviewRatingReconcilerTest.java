@@ -17,6 +17,8 @@ import com.project.userservice.repository.jpa.ReviewRepository;
 
 /**
  * 평점 대사 — 리뷰에서 평균을 다시 계산해 보낸다. 반영이 한 번 실패한 상품도 다음 날에는 맞는다(docs/57 §13).
+ *
+ * <p>[JA] 評価の突き合わせ — レビューから平均を再計算して送る。反映に一度失敗した商品も翌日には合う(docs/57 §13)。
  */
 @DisplayName("평점 대사")
 class ReviewRatingReconcilerTest {

@@ -24,6 +24,9 @@ import jakarta.servlet.http.HttpServletRequest;
  * 🔒 서비스 간 mTLS — "내부 호출" 은 내부 CA 의 클라이언트 인증서로 판정한다(docs/57 §16).
  *
  * <p>인증서는 JDK 의 keytool 로 만든다(외부 라이브러리 없이): 내부 CA, 그 CA 가 서명한 서비스 인증서, 다른 CA 가 서명한 인증서.
+ *
+ * <p>[JA] 🔒 サービス間 mTLS —「内部呼び出し」は内部 CA のクライアント証明書で判定する(docs/57 §16)。
+ * 証明書は JDK の keytool で作る(外部ライブラリなしで): 内部 CA、その CA が署名したサービス証明書、別の CA が署名した証明書。
  */
 @DisplayName("InternalCallerFilter — 서비스 간 mTLS 판정")
 class InternalCallerFilterTest {
@@ -32,9 +35,9 @@ class InternalCallerFilterTest {
     static Path dir;
 
     static X509Certificate ca;
-    static X509Certificate service;      // 내부 CA 가 서명, CN=order-service
-    static X509Certificate stranger;     // 다른 CA 가 서명
-    static X509Certificate gateway;      // 내부 CA 가 서명, CN=gateway-server
+    static X509Certificate service;      // 내부 CA 가 서명, CN=order-service ／ [JA] 内部 CA が署名、CN=order-service
+    static X509Certificate stranger;     // 다른 CA 가 서명 ／ [JA] 別の CA が署名
+    static X509Certificate gateway;      // 내부 CA 가 서명, CN=gateway-server ／ [JA] 内部 CA が署名、CN=gateway-server
 
     @BeforeAll
     static void issue() throws Exception {
@@ -46,6 +49,7 @@ class InternalCallerFilterTest {
     }
 
     // ── keytool 로 인증서 만들기 ─────────────────────────────────────────────
+    // [JA] ── keytool で証明書を作る ──
 
     private static void keytool(String... args) throws Exception {
         String bin = Path.of(System.getProperty("java.home"), "bin", "keytool").toString();
@@ -80,6 +84,7 @@ class InternalCallerFilterTest {
     }
 
     // ── 필터를 한 번 통과시킨 요청 ───────────────────────────────────────────
+    // [JA] ── フィルターを一度通したリクエスト ──
 
     private static HttpServletRequest pass(InternalCallerFilter filter, MockHttpServletRequest req) throws Exception {
         MockFilterChain chain = new MockFilterChain();
@@ -145,6 +150,7 @@ class InternalCallerFilterTest {
     }
 
     // ── 신원 헤더는 누가 보냈나 (identity-mode=enforce) ───────────────────────
+    // [JA] ── 身元ヘッダーは誰が送ったか(identity-mode=enforce) ──
 
     private static InternalCallerFilter identityEnforce(Set<String> allowed) {
         return new InternalCallerFilter(InternalCallerFilter.Mode.ENFORCE, ca, allowed, List.of("/internal/"), List.of(),
@@ -219,6 +225,7 @@ class InternalCallerFilterTest {
     }
 
     // ── 서비스별 신원 — 허용 주체·경로 규칙 ──────────────────────────────────
+    // [JA] ── サービス別の身元 — 許可主体・パスルール ──
 
     private static InternalCallerFilter withRules(InternalCallerFilter.Mode rulesMode, Set<String> allowed,
             InternalCallerFilter.PathRule... rules) {
@@ -245,7 +252,7 @@ class InternalCallerFilterTest {
     @DisplayName("🔴 인코딩 · ;… · // 로 경로 규칙을 피하지 못한다 — 컨트롤러가 매칭하는 것과 같은 경로로 대조한다")
     void encodedPathsCannotDodgeRules() throws Exception {
         var f = withRules(InternalCallerFilter.Mode.ENFORCE, Set.of(),
-                rule("/api/order/internal/orders", "delivery-service"));   // service = CN=order-service — 부를 수 없다
+                rule("/api/order/internal/orders", "delivery-service"));   // service = CN=order-service — 부를 수 없다 ／ [JA] service = CN=order-service — 呼べない
         for (String uri : List.of("/api/order/internal/orders/123/shipping",
                 "/api/order/intern%61l/orders/123/shipping",
                 "/api/order/internal;x/orders/123/shipping",
@@ -304,6 +311,7 @@ class InternalCallerFilterTest {
     }
 
     // ── 기록(로그) ──────────────────────────────────────────────────────────
+    // [JA] ── 記録(ログ) ──
 
     private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> capture() {
         ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(InternalCallerFilter.class);
@@ -318,6 +326,7 @@ class InternalCallerFilterTest {
     }
 
     /** 🐛 예전: 호출자 기록과 신원 경고가 칸(상한 1000) 하나를 같이 써서, 경로가 많으면 칸이 찬 뒤 신원 경고가 조용히 사라졌다. */
+    // [JA] 🐛 以前: 呼び出し元の記録と身元警告が枠(上限 1000)一つを共有していて、パスが多いと枠が埋まった後に身元警告が黙って消えた。
     @Test
     @DisplayName("🔴 호출자 기록이 칸을 다 채워도 신원 경고는 남는다 — 칸이 따로다")
     void identityWarningsHaveTheirOwnBudget() throws Exception {
@@ -336,6 +345,7 @@ class InternalCallerFilterTest {
     }
 
     /** 🐛 예전: 게이트웨이 인증서로 온 헤더 없는 요청도 "내부 인증서 없이 온 요청" 으로 적어, 라우트 설정 문제와 구분할 수 없었다. */
+    // [JA] 🐛 以前: ゲートウェイ証明書で来たヘッダーなしのリクエストも「内部証明書なしで来たリクエスト」と書き、ルート設定の問題と区別できなかった。
     @Test
     @DisplayName("🔴 게이트웨이 인증서로 온 헤더 없는 내부 경로 요청은 '게이트웨이가 넘긴 요청' 으로 적는다 — '인증서 없이' 가 아니다")
     void gatewayRequestIsNotReportedAsCertless() throws Exception {
@@ -343,7 +353,7 @@ class InternalCallerFilterTest {
                 InternalCallerFilter.Mode.OBSERVE, InternalCallerFilter.Mode.OBSERVE, Set.of("order-service"));
         var logs = capture();
         try {
-            pass(f, internalPath(service));   // service 인증서의 CN(order-service)을 게이트웨이로 둔다
+            pass(f, internalPath(service));   // service 인증서의 CN(order-service)을 게이트웨이로 둔다 ／ [JA] service 証明書の CN(order-service)をゲートウェイとして置く
             assertThat(logs.list).anyMatch(e -> e.getFormattedMessage().contains("게이트웨이(order-service)"))
                     .noneMatch(e -> e.getFormattedMessage().contains("내부 인증서 없이"));
         } finally {

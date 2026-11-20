@@ -55,6 +55,7 @@ describe("관리자 상품 목록 액션", () => {
     await waitFor(() => expect(patchRequest).toHaveBeenCalledWith(
       "/catalog-service/api/product/1/status?status=SOLD_OUT", null));
     // 상태 반영은 비동기다 — 관찰 가능한 결과(배지·버튼 라벨)를 기다려서 단언한다.
+    // [JA] 状態の反映は非同期である — 観察可能な結果(バッジ・ボタンのラベル)を待ってからアサートする。
     expect(await screen.findByTestId("badge-1")).toHaveTextContent("품절");
     await waitFor(() =>
       expect(screen.getByTestId("soldout-1")).toHaveTextContent("판매 재개"));
@@ -72,6 +73,8 @@ describe("관리자 상품 목록 액션", () => {
       expect(screen.queryByText("테스트 상품")).not.toBeInTheDocument());
     // confirm 문구가 되돌릴 수 없음을 말한다 — 소프트 삭제지만 화면·서버 어느 쪽에서도
     // 복구 경로가 없다(V8).
+    // [JA] confirm の文言が元に戻せないことを言う — ソフト削除だが画面・サーバーのどちらにも
+    //      復旧経路がない(V8)。
     expect(window.confirm.mock.calls[0][0]).toMatch(/되돌릴 수 없습니다/);
   });
 
@@ -85,6 +88,7 @@ describe("관리자 상품 목록 액션", () => {
     const question = window.confirm.mock.calls[0][0];
     expect(question).toContain("「테스트 상품」を削除します");
     // 상품 이름(서버 데이터)을 빼면 한글이 하나도 없어야 한다.
+    // [JA] 商品名(サーバーのデータ)を除けばハングルが一つもあってはならない。
     expect(question.replace("테스트 상품", "")).not.toMatch(/[가-힣]/);
   });
 

@@ -63,6 +63,7 @@ class ProductLiveIndexesMigrationTest {
     void liveIndexesServeTheAppQueries() throws SQLException {
         try (Connection admin = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
             // 운영 · 데모와 같은 모양 — 서비스 계정은 슈퍼유저가 아니고 DB 의 소유자다(k8s/90 · ops/04 · ops/25)
+            // [JA] 運用・デモと同じ形 — サービスアカウントはスーパーユーザーではなく DB の所有者である(k8s/90・ops/04・ops/25)
             exec(admin, "create role " + OWNER + " login nosuperuser password '" + OWNER_PW + "'");
             exec(admin, "create database productdb owner " + OWNER);
         }
@@ -71,6 +72,8 @@ class ProductLiveIndexesMigrationTest {
             assertThat(scalar(db, "select count(*) from pg_roles where rolname = current_user and rolsuper")).as("슈퍼유저가 아니다").isZero();
             // 측정 데이터의 모양 — 가장 큰 카테고리가 13%(100만 중 13만), 줄 폭 ~1.4KB(설명 1,000자). 이름에 'Hoodie' 는 97개마다 하나.
             // (좁은 줄 · 한 카테고리가 대부분이면 표를 통째로 읽는 편이 싸서 플래너가 어느 인덱스도 쓰지 않는다 — 이 시험이 보려는 것이 아니다)
+            // [JA] 測定データの形 — 最大のカテゴリが 13%(100 万中 13 万)、行幅 約 1.4KB(説明 1,000 文字)。名前に 'Hoodie' は 97 個に一つ。
+            //      (行が狭い・一つのカテゴリがほとんどならテーブルを丸ごと読む方が安く、プランナーがどのインデックスも使わない — この試験が見たいものではない)
             exec(db, "insert into product.category (category_id, category_name, slug) "
                     + "select g, 'c' || g, 'c-' || g from generate_series(1, 8) g");
             exec(db, "insert into product.product (product_id, category_id, name, slug, brand, description, status, rating, version) "
@@ -85,6 +88,7 @@ class ProductLiveIndexesMigrationTest {
             assertThat(plan(db, name)).as("V20 — 이름 검색은 인덱스가 없다").doesNotContain("trgm");
 
             // V21 까지 — 이름 검색의 lower(name) 인덱스는 V23(search_key)으로 바뀌고 V24(contract)에서 지운다(ProductNameTrgmDropMigrationTest)
+            // [JA] V21 まで — 名前検索の lower(name) インデックスは V23(search_key)に変わり、V24(contract)で消す(ProductNameTrgmDropMigrationTest)
             flyway("21").migrate();
             exec(db, "vacuum analyze product.product");
 
@@ -93,6 +97,7 @@ class ProductLiveIndexesMigrationTest {
                     + "order by product_id desc offset 900 limit 10")).as("카테고리 목록(최신 순)").contains("idx_product_category");
             assertThat(plan(db, name)).as("이름 검색").contains("idx_product_name_trgm");
             // 앱은 값을 바인드한다(lower(?) — Querydsl likeIgnoreCase) — 5번째 실행부터 쓰일 수 있는 일반 계획에서도
+            // [JA] アプリは値をバインドする(lower(?) — Querydsl likeIgnoreCase) — 5 回目の実行から使われうる汎用プランでも
             exec(db, "set plan_cache_mode = force_generic_plan");
             exec(db, "prepare by_name(text) as select count(*) from product.product where status <> 'DELETED' "
                     + "and lower(name) like lower($1) escape '!'");

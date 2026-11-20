@@ -35,6 +35,10 @@ import ch.qos.logback.core.status.Status;
  * <p>이 파일은 모든 서비스가 쓴다. 클래스 이름 오타 하나, 없는 의존성 하나면 스프링이
  * "Logback configuration error detected" 로 <b>열두 서비스의 기동을 한꺼번에 막는다.</b>
  * 서비스를 띄워 보기 전에 여기서 잡는다. 그리고 실제로 찍힌 줄을 읽어 가려졌는지, JSON 이 맞는지 본다.
+ *
+ * <p>[JA] 共通 logback 設定を<b>Spring がサービス起動時に開く方法そのままで</b>開いてみる。
+ * このファイルは全サービスが使う。クラス名のタイポ一つ、存在しない依存一つで、Spring が "Logback configuration error detected" で
+ * <b>12 サービスの起動を一斉に止める。</b>サービスを起動してみる前にここで捕まえる。そして実際に出力された行を読み、隠されたか、JSON が正しいかを見る。
  */
 @DisplayName("공통 logback-spring.xml")
 class CommonLogbackConfigTest {
@@ -53,6 +57,7 @@ class CommonLogbackConfigTest {
     }
 
     /** 서비스 기동과 같은 경로로 설정을 연다. 오류가 있으면 여기서 예외가 난다. */
+    // [JA] サービス起動と同じ経路で設定を開く。エラーがあればここで例外が出る。
     private void start(String... extraProperties) {
         MockEnvironment env = new MockEnvironment()
                 .withProperty("spring.application.name", "test-svc")
@@ -81,6 +86,7 @@ class CommonLogbackConfigTest {
     }
 
     /** 비동기 큐까지 비워 파일을 끝까지 쓰게 한다 — 서비스 종료 때 스프링이 하는 것과 같다. */
+    // [JA] 非同期キューまで空にしてファイルを最後まで書かせる — サービス終了時に Spring がすることと同じだ。
     private void flush() {
         ((LoggerContext) LoggerFactory.getILoggerFactory()).stop();
     }
@@ -136,6 +142,9 @@ class CommonLogbackConfigTest {
     /**
      * 🐛 운영에서 {@code ...enabled.%n2026-09-24 12:53:07 ...} 처럼 줄바꿈 자리에 {@code %n} 이 글자로
      * 찍혀 두 줄이 한 줄로 붙었다. 콘솔 줄이 붙으면 kubectl logs 로 오류를 읽을 수 없다.
+     *
+     * <p>[JA] 🐛 運用で {@code ...enabled.%n2026-09-24 12:53:07 ...} のように改行の位置に {@code %n} が文字として出力され、2 行が 1 行につながった。
+     * コンソールの行がつながると kubectl logs でエラーを読めない。
      */
     @Test
     @DisplayName("🔴 콘솔: 줄마다 끝에 줄바꿈이 들어간다 — %n 이 글자로 찍히지 않는다")
@@ -176,6 +185,7 @@ class CommonLogbackConfigTest {
                 .contains("IllegalStateException").contains("h****@example.com").doesNotContain("hong@example.com");
         assertThat(line.has("@timestamp")).isTrue();
         // 스프링이 넣는 컨텍스트 값이 줄마다 붙으면 안 된다(includeContext=false).
+        // [JA] Spring が入れるコンテキスト値が行ごとに付いてはいけない(includeContext=false)。
         assertThat(line.has("LOG_FILE")).isFalse();
         assertThat(line.has("CONSOLE_FORMAT")).isFalse();
     }
@@ -199,7 +209,7 @@ class CommonLogbackConfigTest {
         logSample();
         flush();
 
-        assertThat(consoleText()).contains("h****@example.com");   // 콘솔은 그대로
+        assertThat(consoleText()).contains("h****@example.com");   // 콘솔은 그대로 ／ [JA] コンソールはそのまま
         String written = Files.exists(jsonFile()) ? Files.readString(jsonFile(), StandardCharsets.UTF_8) : "";
         assertThat(written).isEmpty();
     }

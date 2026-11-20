@@ -19,6 +19,7 @@ public class ProductSubcategoryMapper {
     }
 
     // Dto에서 Entity로 변환하는 메서드 추가
+    // [JA] Dto から Entity へ変換するメソッドを追加
     public static ProductSubcategory toEntity(SubCategoryDto dto) {
         if (dto == null) {
             return null;

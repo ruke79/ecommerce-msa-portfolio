@@ -29,6 +29,7 @@ const Account = () => {
 
     const isLoadingRef = useRef(false);
     // 로그인 정보에는 이메일만 있다(util/jwtUser). 헤더 줄에는 앞부분만 — 전체는 팝업과 title 에.
+    // [JA] ログイン情報にはメールアドレスしかない(util/jwtUser)。ヘッダー行には先頭部分だけ — 全体はポップアップと title に。
     const email = user?.email ?? "";
     const displayName = email.includes("@") ? email.slice(0, email.indexOf("@")) : email;
     const reRender = useReRenderer();
@@ -44,6 +45,7 @@ const Account = () => {
               * 사용자에게도 로그인하라고 하고, 누르면 로그인 화면으로 보냈다.
               * 데스크톱 블록(바로 아래)은 처음부터 상태를 보고 있었는데 이쪽만 빠져 있었다.
               */}
+            {/* [JA] account Icon in Mobile。🐛 以前は認証状態を見ずに**常に** "Sign in" だった。ログインしたユーザーにもログインするよう促し、押すとログイン画面へ送っていた。デスクトップのブロック(すぐ下)は最初から状態を見ていたのに、こちらだけ漏れていた。 */}
             <div className=" md:hidden">
                 <Link
                     className="flex items-center"
@@ -66,6 +68,7 @@ const Account = () => {
               *    title 로), 버튼은 그 아래 줄에서 필요하면 줄바꿈한다. 헤더 줄의 인사도 이메일 앞부분만, 폭을 넘으면
               *    말줄임한다.
               */}
+            {/* [JA] アカウントメニュー(デスクトップ、マウスを乗せるとポップアップ)。🐛 以前は文言がすべて英語で("Hello", "Account & Lists", "Profile", "Sign Out", "Your List"…)一覧の項目はリンクではなく文字だった。そしてメールアドレスとボタンが**一行**(flex justify-between)にあったので、メールアドレスが長いとボタンがポップアップの外へ押し出された — メールアドレスには改行できる場所がない。今はメールアドレスは自分の行で省略表示(全体は title で)、ボタンはその下の行で必要なら折り返す。ヘッダー行の挨拶もメールアドレスの先頭部分だけで、幅を超えると省略する。 */}
             <div className="hidden md:inline link relative show-account p-1" data-testid="account-menu">
                 <p className="text-xs text-slate-300 max-w-[11rem] truncate" title={isAuthenticated ? email : undefined}>
                     {isAuthenticated ? t("account.hello", { name: displayName }) : t("account.hello_guest")}
@@ -91,6 +94,7 @@ const Account = () => {
                             </Link>
                             <div className="mt-2 flex flex-wrap gap-2" data-testid="account-actions">
                                 {/* 상담원·관리자에게만 — 상담 데스크(docs/58). 서버도 같은 규칙을 강제한다. */}
+                                {/* [JA] 相談員・管理者にだけ — 相談デスク(docs/58)。サーバーも同じ規則を強制する。 */}
                                 {hasSupportRole(user) && (
                                     <Link to="/support/desk" className="button-orange px-3 py-[0.3rem] text-sm text-gray-900 whitespace-nowrap">
                                         {t("support.desk.title")}
@@ -142,6 +146,7 @@ const Account = () => {
                         )}
 
                     {/* 예전의 "Your List"(Create a list·Registry…)는 없는 기능이었다. 있는 화면으로만 잇는다. */}
+                    {/* [JA] 以前の "Your List"(Create a list・Registry…)は存在しない機能だった。存在する画面にだけつなぐ。 */}
                     <div className="grid grid-cols-2 gap-4 m-3">
                         <div className="flex flex-col min-w-0">
                             <h4 className="font-bold text-base text-black mb-2">{t("account.menu.shopping")}</h4>
@@ -178,6 +183,7 @@ const Account = () => {
               * 사용자는 버튼이 고장난 줄 안다. 로그인 화면으로 보내고, 로그인하면 원래
               * 가려던 장바구니로 돌아온다(SignInPage 의 redirectTo).
               */}
+            {/* [JA] 🐛 `token ? navigate("/cart") : {}` だった。ログインしていない状態でカートを押すと**何も起きない** — 画面も変わらず案内もないので、ユーザーはボタンが壊れていると思う。ログイン画面へ送り、ログインすると本来行こうとしたカートに戻る(SignInPage の redirectTo)。 */}
             <div
                 onClick={() =>
                     token
