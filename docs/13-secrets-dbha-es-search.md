@@ -74,6 +74,49 @@ db-host=<DB 호스트>
 
 > 🕰️ 今: `search.engine=es` は「ES の Bean · 索引がある」ことだけを決め、検索ごとにどのエンジンへ行くかは機能フラグ `catalog.search-engine`（ConfigMap `feature-flags` — `k8s/15-feature-flags.yaml` ＋ `ops/28 --config-only`、再起動なしで比率で · `SearchEngineSelector`、docs/74）が決める。戻すのもその比率を 0 に。
 
+### ES を立てる手順（実習 · デモ — 本番に ES はない）
+
+`k8s/90-dev-infra.yaml` に ES の四つ（Namespace · PVC 5Gi · Deployment · Service 9200）がある。**まるごと apply しない** — 他のインフラまでリポジトリの原本に巻き戻す（docs/22 §4）。ラベルで ES だけを選ぶ（ガード **B-120** が四つにラベルがあるかを守る）:
+
+```bash
+# 0) ノードの準備 — ES は vm.max_map_count ≥ 262144 がないと起動中に死ぬ（bootstrap check）
+sudo sysctl -w vm.max_map_count=262144
+echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-elasticsearch.conf   # 再起動後も
+
+# 1) ES の四つだけ
+kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=elasticsearch
+
+# 2) 起動まで — 初回はプラグイン（nori · kuromoji）を取得するので initContainer が 1 〜 2 分
+kubectl -n elasticsearch get pod -w
+kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins
+kubectl -n elasticsearch exec deploy/elasticsearch -- curl -s localhost:9200/_cluster/health
+```
+
+- メモリ: ヒープ 1g · コンテナ上限 2Gi（`ES_JAVA_OPTS` · `resources.limits`）。ノードにその余裕が必要 — なければ `OOMKilled` を繰り返す。
+- ディスク: PVC 5Gi（local-path = ノードのディスク）。プラグインも PVC の中（`.es-plugins`）に置く — 再起動にネットワークが要らない。
+- `strategy: Recreate` · `replicas: 1` — 二つの Pod が同じ data 経路を開くと二番目が `node.lock` で死ぬ。
+- ネットワークポリシー: `k8s/95` の `allow-ecommerce-only`（elasticsearch ネームスペース）が **ecommerce ネームスペースからだけ**受ける。⚠️ 複数ノードのクラスタでは kube-router が `namespaceSelector` で他ノードの Pod を塞ぐ— catalog と ES が別ノードならそこから見る。
+- catalog はすでに `SPRING_ELASTICSEARCH_URIS=http://elasticsearch.elasticsearch.svc.cluster.local:9200`（k8s/41）を持っている。状態（`/actuator/health`）に ES を入れるならその Deployment に `MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED=true`（既定は無効 — ガード B-116: ES のない本番で health が常に DOWN だった）。
+
+その後の再索引 · alias · 件数 · アナライザー · フラグは `ops/03-enable-es-search.sh` が一度に行う:
+
+```bash
+# 再索引は管理者の書き込み — ゲートウェイ経由で管理者トークンで呼ぶ（catalog への直接呼び出しは 401:
+# AdminWriteInterceptor ＋ internal-auth.identity-mode=enforce — 身元ヘッダーはゲートウェイが mTLS で送ったものだけを信頼）
+GATEWAY=https://shop.lab ADMIN_TOKEN=<管理者のアクセストークン> ES_URL=http://localhost:9200 INSECURE=1 \
+  ./ops/03-enable-es-search.sh
+```
+
+再索引は 202 ですぐ返り、バッチは後ろで回る — スクリプトは alias `product-alias` ができるまで待ち、**索引中の件数**も出す（既定 30 分）。実測: 実習デモの**商品 1,000 万**が毎秒約 5.7 万件 · 約 3 分（`data-node` 6 vCPU · ES ヒープ 3g）。時間切れでも件数が増えていれば「遅いだけ」と言う — そのとき `sync` を再度呼ぶと 409（重複実行の防止）なので `TIMEOUT` を伸ばして待つ。管理者アカウントがなければ `./ops/30-admin-account.sh promote <メール>`。
+
+切り替えは**二段階**で、どちらもリポジトリを直して `ops/28 --config-only` で上げる（`kubectl patch` は禁止）:
+
+1. `SEARCH_ENGINE=es`（`k8s/10-configmap.yaml` またはその環境のオーバーレイ）＋ `--restart catalog-service` — 「ES の Bean · 索引がある」ことだけを決める。
+2. 機能フラグ `catalog.search-engine` の比率（`k8s/15-feature-flags.yaml`）— 実際に検索を ES へ送るのはこちら。再起動なしで 1 分前後。
+
+戻すのは 2 の比率を 0 に（最も速い）→ そのあと 1 を `postgres` に。
+
+
 ### 残っているもの（後続）
 - 関連度の順序が Postgres のハイドレーションで保たれない（現在のソートは従来ロジック） — 順序の保持が必要なら、esIds の順序に基づく再ソートを追加。
 - category/subcategory など他のインデックスの明示的マッピング、`search_after` ページネーション、DB↔ES の増分同期（Outbox ベース、docs/07 R-C3）。

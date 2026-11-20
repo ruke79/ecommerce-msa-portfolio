@@ -640,6 +640,33 @@
 
 ---
 
+## 22. デプロイ前の点検が嘘をついた — 暗黙の文脈(search_path · `$0/..`)が答えを決める
+
+**📖 参考** — Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*、Schemas · `search_path`。「表名だけを書くとどのスキーマを読むかは**接続したロール**が決める」という説明をデプロイ前の点検ツールに当ててみました。
+
+**問題**
+- `ops/32-db-migration.sh` は Flyway の履歴を `select … from flyway_schema_history` で読んでいました — スキーマを書かず `search_path` に任せていたのです。クエリは Pod の中で **postgres スーパーユーザー**として走るので `search_path` は `"$user", public`、`postgres` スキーマは無いため常に **public** を読んでいました。
+- catalog は 2026-10-21 から `spring.flyway.default-schema: product` です(空の DB の二回目の起動が V1 からすべて再実行していた事故のため — [docs/83 §2.8](83-demo-load-test.md))。したがって本当の履歴は `product` にあり、`public` にはそれ以前の古い記録(V5)が残っています。
+- 結果: 本番で `./ops/32 summary` が catalog を**「適用 5 · リポジトリ 24 · 待ち 19 件」**、`pending` が**「V6 から全部適用される」**と言いました。デプロイ前に「このデプロイが DB を何に変えるか」を問う場所が嘘をついたのです — 無い危険を見てデプロイを止めるか、古い記録のチェックサムで `drift` が見当違いのファイルを指します。`repair` はもっと悪く、修飾しない `DELETE` は**別のスキーマの行**を消します。
+- 同じ日に同じ種類をもう一度踏みました。`ops/62-secrets-sops.sh` を `/tmp` にコピーして回すと `cd "$(dirname "$0")/.."` がルートを `/` と決め、`.sops.yaml` を `/` に書き(`sudo` だったので成功しました)、リポジトリには何も生まれませんでした。平文 · 例のファイルもすべて `/` で探し「平文が無い」と言いました。
+
+**対処**
+- service の履歴スキーマを**設定から読みます**: `flyway_schema_of()` が `application-local.yml` → `application.yml` の順で `spring.flyway.default-schema` を探し(無ければ `public`)、`hist_of()` が修飾した名前を作ります。設定に書かれたものを読むので二重管理になりません — DB 名を jdbc URL から読むのと同じ原則です。
+- `summary` · `info` · `pending` · `drift` · `repair` の**すべての**クエリを修飾しました。`repair` の `DELETE` も同じです。
+- 同じ DB の**別の**スキーマに履歴表がもう一つあれば知らせます(`information_schema.tables`) — 本番 productdb の `public` 版のように古い記録が残っている場合です。消しません: 消す理由が無く、消す方が危険です。
+- 同じ点検でもう一つ出ました: catalog が `適用 25 · リポジトリ 24` でした。本番 catalog は 2026-09-11 に Flyway **baseline** で始まり `V0 << Flyway Baseline >>` 行があるのに、それも数えて「適用済みマイグレーション」の基準が二つ(履歴の行数 vs リポジトリのファイル数)になっていました。baseline 行は数えず「この DB は baseline から始まった」と別に知らせます(チェックサムが無いので `drift` は元々スキップします)。
+- テスト `DbMigrationScriptTest` 7 — 偽 `kubectl` の psql が **`search_path` を真似します**(修飾しない名前 = public 版)。productdb に `product` 24 行 + baseline 1 行 · `public` 5 行を置き、修飾を戻すと本番で見た「待ち 19 件」·「V6 から」が、baseline 除外を戻すと `適用 25` がそのまま返ります。最後のテストはソースに修飾の無い `from flyway_schema_history` が残っていないかを見ます。
+
+**限界**
+- `default-schema` を yml から文字として読みます — 環境変数で渡すと(`SPRING_FLYWAY_DEFAULT_SCHEMA`)見えません。いまのマニフェストにその変数はありません。
+- `spring.flyway.schemas`(リストの最初の項目が既定スキーマになる場合)は見ません — このリポジトリでは使っていません。
+
+**教訓** — ツールが「いまの状態」を問うなら、その答えを決める文脈は**ツールが握る**べきです。接続したロールが決める `search_path`、スクリプトの位置が決める作業ディレクトリのような暗黙のものに任せると、答えが間違っているのではなく**別の問いに答えている**ことになり、気づきにくくなります。デプロイ前の点検のように「何も無い」が正常な場所ではなおさらです。
+
+→ `DbMigrationScriptTest` · `ops/32-db-migration.sh` の `flyway_schema_of` · `hist_of`
+
+---
+
 ## 参考書一覧
 
 | 本 | 出版 | 事例 |
@@ -656,4 +683,4 @@
 | Charity Majors, Liz Fong-Jones, George Miranda, *Observability Engineering* | O'Reilly, 2022 | 15 |
 | Titus Winters, Tom Manshreck, Hyrum Wright, *Software Engineering at Google* | O'Reilly, 2020 | 16 |
 | David Flanagan, *JavaScript: The Definitive Guide*, 7th ed. | O'Reilly, 2020 | 17 |
-| Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. | O'Reilly, 2017 | 20 |
+| Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. | O'Reilly, 2017 | 20 · 22 |

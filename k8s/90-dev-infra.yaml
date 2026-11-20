@@ -114,7 +114,14 @@ metadata: { name: mongodb }
 ---
 apiVersion: v1
 kind: Namespace
-metadata: { name: elasticsearch }
+metadata:
+  name: elasticsearch
+  # ES 넷(이 Namespace · PVC · Deployment · Service)만 한 번에 올린다 — 다른 인프라를 원본으로 되돌리지 않게
+  # (docs/22 §4 의 postgres 와 같은 방식, 가드 B-120):
+  #   kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=elasticsearch
+  # 운영(OCI)에는 ES 가 없다 — 실습 · 데모에서 검색을 ES 로 돌릴 때 쓴다(docs/13 · ops/03).
+  # [JA] ES の四つだけをまとめて適用する(他のインフラを巻き戻さないため)。
+  labels: { ecommerce.io/infra: elasticsearch }
 ---
 # ── PostgreSQL ──────────────────────────────────────────────────────────────
 # 서비스 datasource 가 sslmode=require 이므로 SSL 을 켠다. 인증서는 ops/07 산출물.
@@ -138,6 +145,8 @@ metadata: { name: elasticsearch }
 #      そのため最初の Pod だけが起動し、Pod を作り直すと(rollout restart・ノード再起動・退避・ops/29 setup)
 #      `FATAL: could not load server certificate file "/var/lib/postgresql/tls/tls.crt"` で CrashLoopBackOff だった
 #      (ConfigurationGuardrailTest B-93)。
+# [JA] 証明書は initContainer が起動のたびに emptyDir へ複製する。以前は初期化スクリプト(空の PGDATA で一度だけ)が
+#      PVC の外へ複製していたため、Pod を作り直すと証明書がなく起動できなかった。
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -500,6 +509,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: es-data
   namespace: elasticsearch
+  labels: { ecommerce.io/infra: elasticsearch }
 spec:
   accessModes: [ ReadWriteOnce ]
   resources:
@@ -511,6 +521,7 @@ kind: Deployment
 metadata:
   name: elasticsearch
   namespace: elasticsearch
+  labels: { ecommerce.io/infra: elasticsearch }
 spec:
   replicas: 1
   # 노드 둘이 같은 data 경로를 열면 두 번째가 node.lock 에서 죽는다.
@@ -596,6 +607,7 @@ kind: Service
 metadata:
   name: elasticsearch
   namespace: elasticsearch
+  labels: { ecommerce.io/infra: elasticsearch }
 spec:
   selector: { app: elasticsearch }
   ports: [ { port: 9200, targetPort: 9200 } ]

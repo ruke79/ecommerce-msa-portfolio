@@ -36,12 +36,20 @@ spec:
           image: REGISTRY_PLACEHOLDER/ecommerce-msa/saga-projection:1.0.0
           ports:
             - containerPort: 8190
+            # 관리 포트(actuator) — 프로브 · 지표 에이전트만. 앱 포트에는 /actuator 가 없다(B-119, docs/57 §25).
+            # [JA] 管理ポート(actuator) — プローブ · 指標エージェントだけ。アプリのポートには /actuator がない。
+            - name: management
+              containerPort: 9180
           envFrom:
             - configMapRef:
                 name: ecommerce-config
             - secretRef:
                 name: ecommerce-secrets
           env:
+            # actuator 를 앱 포트에서 떼어 관리 포트로(B-119) — 같은 네임스페이스의 다른 파드는 이 포트에 닿지 못한다(k8s/95).
+            # TLS(server.ssl) · 보안 규칙은 앱 포트의 것을 그대로 물려받는다. [JA] actuator を管理ポートへ分ける。
+            - name: MANAGEMENT_SERVER_PORT
+              value: "9180"
             # Eureka 등록 · 하트비트에 내는 클라이언트 인증서 = 이 서비스의 신원(/app/identity, CN=서비스 이름). Eureka 는 등록부를 바꾸는
             # 요청을 그 CN 이 앱 이름과 같을 때만 받는다(EUREKA_WRITE_AUTH_MODE, docs/57 §16 "Eureka 쓰기"). JVM 키스토어는 Eureka
             # 클라이언트가 쓰지 않는다 — 설정은 common application-common.yml 의 eureka.client.tls(B-86).
@@ -156,7 +164,7 @@ spec:
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: 8190
+              port: management
               scheme: HTTPS
             # 기동 시 변경 로그에서 상태를 복구한다. 주문 수에 비례하므로 다른 서비스와 같은 5분 예산.
             # [JA] 起動時に変更ログから状態を復旧する。注文数に比例するので他のサービスと同じ 5 分の予算。
@@ -165,7 +173,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: 8190
+              port: management
               scheme: HTTPS
             periodSeconds: 15
           readinessProbe:
@@ -175,7 +183,7 @@ spec:
             #      JVM は生きていてもトラフィックから外れる。
             httpGet:
               path: /actuator/health/readiness
-              port: 8190
+              port: management
               scheme: HTTPS
             periodSeconds: 10
       volumes:

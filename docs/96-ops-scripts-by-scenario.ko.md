@@ -131,7 +131,7 @@ OCI Ampere(arm64) 한 대에 k3s 를 올리고, 바깥에는 포트를 열지 �
 
 | 하고 싶은 것 | 명령 |
 |---|---|
-| 서비스마다 지금 버전 | `./ops/32-db-migration.sh` |
+| 서비스마다 지금 버전 | `./ops/32-db-migration.sh` — catalog 의 이력은 `product` 스키마에 있습니다(도구가 설정에서 읽습니다, [docs/62 §22](62-engineering-casebook.ko.md)) |
 | 한 서비스의 적용 이력 | `./ops/32-db-migration.sh info user-service` |
 | 배포하면 적용될 것 | `./ops/32-db-migration.sh pending` |
 | 적용된 파일이 바뀌었나 · 저장소에 없는 적용이 있나 | `./ops/32-db-migration.sh drift` — 2026-11-19 기록에 없던 배포를 이것으로 찾았다 |
@@ -200,6 +200,9 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 ./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(왕복 확인 뒤) → 커밋
 ./ops/62-secrets-sops.sh check                       # 값이 모두 암호문 · 풀리는가 · 예시와 키 이름 · 평문과 같은가
 ./ops/62-secrets-sops.sh apply                       # 평문 파일 없이 바로 kubectl apply
+./ops/62-secrets-sops.sh drift                       # 암호문 ↔ 클러스터 Secret — 다른 키 이름만(ops/28 이 배포 전에도 부른다)
+./ops/62-secrets-sops.sh rotation                    # 분기 교체 점검표 — 키마다 값이 마지막으로 바뀐 날, 90일 넘으면 ⏰
+./ops/62-secrets-sops.sh drill /media/usb/age-offline-backup.txt   # 분기마다 — 보관 키 하나로 풀리는가(이 기계의 키는 쓰지 않는다)
 ```
 
 §6-1 로 값을 바꾼 뒤에는 `encrypt`(또는 평문이 없으면 `decrypt` → 고치기 → `encrypt`). 받는 사람을 바꾸면 `updatekeys` — 뺀 사람이 값을 본 적이 있으면 값 자체를 §6-1 로 교체합니다.
@@ -209,8 +212,8 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 | 스크립트 | 보는 것 |
 |---|---|
 | `11-check-db-exposure.sh` | DB 포트가 바깥에서 열려 있지 않은가 |
-| `35-network-policy.sh check` · `apply` · `remove` | NetworkPolicy — 허용돼야 할 흐름은 붙고 막혀야 할 것은 막히나. `apply` 는 틀리면 스스로 되돌린다 |
-| `35-network-policy.sh egress-check` · `egress-apply` · `egress-remove` | 나가는 연결(k8s/97 — 두 그룹, IP 목록 없음, [docs/57 §23](57-remaining-priorities.ko.md)). `egress-render` 는 노드 IP 를 펼친 매니페스트 출력만, `egress-apply` 도 막히면 되돌린다 |
+| `35-network-policy.sh check` · `apply` · `remove` | NetworkPolicy — 허용돼야 할 흐름은 붙고 막혀야 할 것은 막히나 · 관리 포트(9180, actuator)는 지표 에이전트만([docs/57 §25](57-remaining-priorities.ko.md)). `apply` 는 틀리면 스스로 되돌린다 |
+| `35-network-policy.sh egress-check` · `egress-apply` · `egress-remove` | 나가는 연결(k8s/97 — 1단계 두 그룹, 2단계 443 만 · 메일 · Atlas · 지표 에이전트 · cloudflared · 백업, IP 목록 없음, [docs/57 §23 · §26](57-remaining-priorities.ko.md)). `egress-render` 는 노드 IP 를 펼친 매니페스트 출력만, `egress-apply` 도 막히면 되돌린다 |
 | `37-check-mtls.sh` | ② 인증서 유무로 403/200, ① `[mTLS observe]` · ①-2 `[mTLS rule]` · ①-3 `[mTLS identity]` 가 0 인가 — **0 이어야 enforce 로 올린다** |
 | `27-check-secret-drift.sh` | Secret 과 실제 서버의 자격증명이 어긋나지 않았나 |
 

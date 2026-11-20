@@ -192,7 +192,12 @@ PATTERNS = {
 IGNORE = re.compile(rb'(?i)REPLACE_ME|CHANGE_?ME|example\.com|changeit|localhost|'
                     rb'secretKeyRef|secretName|password\.file|your[-_]|xxx+|\.\.\.|'
                     rb'0123456789012345|abcdef0123|local-dev|dry-run|test-?pw|hunter2|'
-                    rb'\$\{|\$\(')
+                    rb'\$\{|\$\(|'
+                    # SOPS 암호문의 값(k8s/20-secret.enc.yaml, docs/57 §24) — 키 이름은 평문이라 `JWT_SECRET_KEY: ENC[…]` 가
+                    # 패턴에 걸린다. sops 는 값 전체를 암호화하므로(부분 평문 없음) 값이 이 꼴이면 비밀이 아니다(2026-11-20 — 암호문을
+                    # 커밋한 뒤 CI 의 현재 트리 검사가 실패했다). 평문 섞임은 ops/62 check · 가드 B-118 이 따로 본다.
+                    # [JA] SOPS 暗号文の値 — キー名は平文なのでパターンに当たる。値全体が暗号化されるので秘密ではない。
+                    rb'ENC\[AES256_GCM,data:')
 
 # ops/21 이 남기는 치환 표식. **값 전체가 표식일 때만** 넘긴다.
 #

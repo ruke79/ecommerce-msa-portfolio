@@ -1,5 +1,5 @@
-# 네트워크 정책 — 나가는(egress) 연결 1단계 (docs/57 §23)
-# [JA] ネットワークポリシー — 外向き(egress)接続の第 1 段階。
+# 네트워크 정책 — 나가는(egress) 연결 1 · 2단계 (docs/57 §23 · §26)
+# [JA] ネットワークポリシー — 外向き(egress)接続の第 1 · 2 段階。
 #
 # ⚠️ kustomization.yaml 에 넣지 않았다 — **ops/35-network-policy.sh egress-apply** 로만 적용한다. 그 스크립트가
 #    ① 아래 `__NODE_IP__` 줄을 노드마다 펼치고(그대로 apply 하면 CIDR 이 틀려 거절된다 — 일부러),
@@ -19,10 +19,14 @@
 # 두 그룹 모두 여는 것: 같은 네임스페이스(서비스끼리 Eureka · Feign · Kafka 대신 HTTP), 인프라 네임스페이스(postgres · redis ·
 # kafka · mongodb · elasticsearch), kube-system 의 DNS(53), 노드의 OTLP 수집기(4318 — 추적을 노드의 관측 스택으로 보낸다, docs/63).
 #
-# 고르지 않는 파드(정책 밖 — 예전처럼 다 열림): metrics-agent(노드 9090 · API 서버) · cloudflared(Cloudflare) · 백업 CronJob
-# (mongo-backup 은 Atlas) — 각자 바깥 · 노드가 필요하고 손님 요청을 직접 받지 않는다. 2단계에서 본다.
+# 2단계(2026-11-20, docs/57 §26):
+#   3) public 그룹의 인터넷은 **TCP 443 만** — 바깥 API 는 모두 https 다(가드 B-117 이 코드의 http:// 를 막는다).
+#      메일(587 · 465)은 notification 에만, MongoDB Atlas(27017)는 chat · mongo-backup 에만 따로 연다.
+#   4) 1단계에서 정책 밖이던 것: metrics-agent(관리 포트 9180 · API 서버 · remote write 9090), cloudflared(Cloudflare 7844 ·
+#      443 · gateway · traefik), PostgreSQL 백업 · 복원 훈련(postgres 5432 만). 손님 요청을 받지 않지만 뚫리면 노드 · 사설망으로
+#      가는 다리가 된다.
 #
-# 시험용 이름: netpol-probe-internal · netpol-probe-public 은 ops/35 가 띄우는 두드리기 파드다(같은 정책을 받게).
+# 시험용 이름: netpol-probe-<그룹> 은 ops/35 가 띄우는 두드리기 파드다(같은 정책을 받게).
 
 # ── 1) 바깥이 필요 없는 서비스 — 클러스터 안 · 노드 수집기만 ─────────────────────────────────
 # [JA] ── 1) 外部が不要なサービス — クラスター内 · ノードの収集器のみ ──
@@ -76,7 +80,7 @@ spec:
       - key: app
         operator: In
         values: [ user-service, catalog-service, order-service, notification-service, delivery-service, chat-service,
-                  config-server, netpol-probe-public ]
+                  config-server, netpol-probe-public, netpol-probe-mail ]
   policyTypes: [ Egress ]
   egress:
     - to:
@@ -97,7 +101,183 @@ spec:
         - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다 ／ [JA] ops/35 がノードごとに展開する
       ports:
         - { protocol: TCP, port: 4318 }
+    # 2단계: https 만(TCP 443). 메일 · Atlas 는 아래 정책이 그 서비스에만 더한다. [JA] 第 2 段階: https だけ。
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except: [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8 ]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+# ── 3a) 메일(SMTP) — notification 만. MAIL_PORT 가 465 · 587 밖이면 ops/35 가 적용하지 않는다 ─────────────────────
+# [JA] ── 3a) メール(SMTP) — notification のみ。MAIL_PORT が 465 · 587 以外なら ops/35 は適用しない ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-smtp
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ notification-service, netpol-probe-mail ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8 ]
+      ports:
+        - { protocol: TCP, port: 587 }
+        - { protocol: TCP, port: 465 }
+---
+# ── 3b) MongoDB Atlas — chat · mongo-backup 만(TCP 27017, SRV 는 DNS) ─────────────────────────────────────────
+# [JA] ── 3b) MongoDB Atlas — chat · mongo-backup のみ(TCP 27017、SRV は DNS) ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-mongo-atlas
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ chat-service, mongo-backup, netpol-probe-mongo ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: mongodb }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8 ]
+      ports:
+        - { protocol: TCP, port: 27017 }
+---
+# ── 4a) 지표 에이전트 — 관리 포트(9180) · API 서버(파드 찾기) · remote write(9090) 만 ───────────────────────────
+#   remote write 는 운영이 노드 IP:9090, 데모가 관측 VM(사설 IP):9090 이라 대역 대신 포트로 좁힌다(메타데이터 · 루프백만 뺀다).
+#   API 서버: kubernetes Service(443)는 노드의 6443 으로 바뀐 뒤 정책을 지난다(kube-proxy DNAT) — 노드 IP:6443.
+# [JA] ── 4a) 指標エージェント — 管理ポート(9180) · API サーバー(Pod 探索) · remote write(9090) のみ ──
+#      remote write は本番がノード IP:9090、デモが観測 VM(プライベート IP):9090 なので、帯域ではなくポートで絞る(メタデータ · ループバックだけ外す)。
+#      API サーバー: kubernetes Service(443)はノードの 6443 に変換された後でポリシーを通る(kube-proxy DNAT) — ノード IP:6443。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-metrics-agent
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ metrics-agent, netpol-probe-metrics ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 9180 }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다 ／ [JA] ops/35 がノードごとに展開する
+      ports:
+        - { protocol: TCP, port: 6443 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [ 169.254.0.0/16, 127.0.0.0/8 ]
+      ports:
+        - { protocol: TCP, port: 9090 }
+---
+# ── 4b) cloudflared — 터널(Cloudflare 7844 TCP · UDP, 443) · 오리진(gateway · traefik) 만 ─────────────────────
+# [JA] ── 4b) cloudflared — トンネル(Cloudflare 7844 TCP · UDP、443) · オリジン(gateway · traefik)のみ ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-cloudflared
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ cloudflared, netpol-probe-cloudflared ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: [ gateway-server, frontend ] }
+      ports:
+        - { protocol: TCP, port: 8000 }
+        - { protocol: TCP, port: 8080 }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: traefik }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8 ]
+      ports:
+        - { protocol: TCP, port: 7844 }
+        - { protocol: UDP, port: 7844 }
+        - { protocol: TCP, port: 443 }
+---
+# ── 4c) PostgreSQL 백업 · 복원 훈련 — postgres 네임스페이스(5432) · DNS 만. 복원 훈련은 파드 안 PostgreSQL 로만 ─────
+#   backup-config 의 PGHOST 가 클러스터 밖이면(관리형 DB) ops/35 가 적용하지 않는다.
+# [JA] ── 4c) PostgreSQL バックアップ · 復元訓練 — postgres ネームスペース(5432) · DNS のみ。復元訓練は Pod 内の PostgreSQL にだけ ──
+#      backup-config の PGHOST がクラスター外なら(マネージド DB) ops/35 は適用しない。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-backup-postgres
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [ postgres-backup, restore-drill, netpol-probe-backup ]
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

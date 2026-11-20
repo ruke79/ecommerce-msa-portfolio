@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.yaml.snakeyaml.Yaml;
 
 /**
  * ops/62 — 운영 Secret 을 SOPS + age 로 암호화해 저장소에(docs/57 §24). 실제 sops · age 로 왕복한다 — 둘이 PATH 에 없으면 건너뛴다
@@ -112,6 +115,18 @@ class SopsSecretsScriptTest {
     }
 
     @Test
+    @DisplayName("init — 같은 받는 사람을 두 번 넘겨도 한 번만 쓴다(순서 유지 · 중복 개수를 알린다)")
+    void initDropsDuplicateRecipients() throws Exception {
+        Run r = run("init", pub1, pub2, pub1);
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(r.out()).contains("받는 사람 2명", "중복 1개 제거");
+        String conf = Files.readString(tmp.resolve(".sops.yaml"), StandardCharsets.UTF_8);
+        String age = conf.lines().filter(l -> l.contains("age:")).findFirst().orElseThrow();
+        assertThat(age).isEqualTo("    age: " + pub1 + "," + pub2);
+        assertThat(age.split(",")).hasSize(2);
+    }
+
+    @Test
     @DisplayName("받는 사람이 자리표시(age1REPLACE_ME)이거나 age 키가 아니면 암호화하지 않는다")
     void refusesWithoutRealRecipients() throws Exception {
         Files.writeString(tmp.resolve(".sops.yaml"), "creation_rules:\n  - age: age1REPLACE_ME\n");
@@ -204,5 +219,119 @@ class SopsSecretsScriptTest {
         assertThat(r.code()).as(r.out()).isZero();
         assertThat(Files.readString(applied)).contains("s3cr3t-value", "name: ecommerce-secrets");
         assertThat(tmp.resolve("k8s/20-secret.yaml")).doesNotExist();
+    }
+
+    /** 평문의 stringData 를 클러스터 Secret JSON(data = base64)으로 — {@code change} 의 키는 다른 값으로. */
+    // [JA] 平文の stringData をクラスターの Secret JSON(data = base64)に — {@code change} のキーは別の値にする。
+    @SuppressWarnings("unchecked")
+    private Path clusterSecretJson(Map<String, String> change) throws Exception {
+        Map<String, Object> doc = new Yaml().load(Files.readString(tmp.resolve("k8s/20-secret.yaml")));
+        Map<String, Object> data = new LinkedHashMap<>();
+        ((Map<String, Object>) doc.get("stringData")).forEach((k, v) -> data.put(k, Base64.getEncoder().encodeToString(
+                change.getOrDefault(k, v == null ? "" : String.valueOf(v)).getBytes(StandardCharsets.UTF_8))));
+        StringBuilder json = new StringBuilder("{\"kind\":\"Secret\",\"data\":{");
+        data.forEach((k, v) -> json.append('"').append(k).append("\":\"").append(v).append("\","));
+        json.setLength(json.length() - 1);
+        json.append("}}");
+        Path p = tmp.resolve("cluster-" + change.size() + ".json");
+        Files.writeString(p, json);
+        return p;
+    }
+
+    /** get secret 은 $SECRET_JSON 을, 그 밖은 실패하는 가짜 kubectl. */
+    // [JA] get secret では $SECRET_JSON を返し、それ以外は失敗する偽の kubectl。
+    private Map<String, String> fakeKubectl(Path secretJson) throws Exception {
+        Path bin = Files.createDirectories(tmp.resolve("bin-drift"));
+        Path kubectl = bin.resolve("kubectl");
+        Files.writeString(kubectl, "#!/bin/sh\ncase \"$*\" in *\"get secret ecommerce-secrets -o json\"*) "
+                + "[ -n \"$SECRET_JSON\" ] && cat \"$SECRET_JSON\" && exit 0;; esac\necho 'connection refused' >&2; exit 1\n");
+        Files.setPosixFilePermissions(kubectl, PosixFilePermissions.fromString("rwx------"));
+        return Map.of("PATH", bin + ":" + System.getenv("PATH"), "SECRET_JSON", secretJson == null ? "" : secretJson.toString());
+    }
+
+    private String firstKey() throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sd = (Map<String, Object>) ((Map<String, Object>) new Yaml()
+                .load(Files.readString(tmp.resolve("k8s/20-secret.yaml")))).get("stringData");
+        return sd.keySet().iterator().next();
+    }
+
+    @Test
+    @DisplayName("🔴 drift — 클러스터 Secret 과 같으면 0, 다르면 그 키 이름만(값은 출력하지 않는다) · 종료 1")
+    void driftNamesChangedKeysWithoutValues() throws Exception {
+        run("init", pub1);
+        assertThat(run("encrypt").code()).isZero();
+
+        Run same = run("k1.txt", fakeKubectl(clusterSecretJson(Map.of())), "drift");
+        assertThat(same.code()).as(same.out()).isZero();
+        assertThat(same.out()).contains("✅ 같다");
+
+        String key = firstKey();
+        Run differ = run("k1.txt", fakeKubectl(clusterSecretJson(Map.of(key, "hand-edited-in-cluster"))), "drift");
+        assertThat(differ.code()).as(differ.out()).isEqualTo(1);
+        assertThat(differ.out()).contains("값이 다른 키: " + key).doesNotContain("hand-edited-in-cluster", "s3cr3t-value");
+    }
+
+    @Test
+    @DisplayName("🔴 drill — 보관 키 하나로 풀리면 통과, 받는 사람이 아닌 키는 실패(이 기계의 키는 쓰지 않는다)")
+    void drillProvesTheOfflineKeyAlone() throws Exception {
+        Path offline = tmp.resolve("vault/offline.txt");
+        String pubOffline = run("k1.txt", Map.of(), "keygen", offline.toString()).out().lines()
+                .filter(l -> l.startsWith("age1")).findFirst().orElseThrow();
+        run("init", pub1, pubOffline);
+        assertThat(run("encrypt").code()).isZero();
+
+        Run ok = run("k1.txt", fakeKubectl(clusterSecretJson(Map.of())), "drill", offline.toString());
+        assertThat(ok.code()).as(ok.out()).isZero();
+        assertThat(ok.out()).contains("받는 사람에 있다", "이 키 하나로 풀린다", "평문과 같다", "클러스터와 같다", "훈련 통과")
+                .doesNotContain("s3cr3t-value");
+
+        Run notRecipient = run("k1.txt", fakeKubectl(null), "drill", tmp.resolve("k2.txt").toString());
+        assertThat(notRecipient.code()).as(notRecipient.out()).isEqualTo(1);
+        assertThat(notRecipient.out()).contains("받는 사람에 없다", "이 키로 풀리지 않는다");
+    }
+
+    @Test
+    @DisplayName("🔴 rotation — 암호문 줄이 아니라 값의 지문으로 마지막 교체일을 본다(다시 암호화만 한 판은 교체가 아니다)")
+    void rotationFollowsValueFingerprints() throws Exception {
+        Path repo = tmp.resolve("k8s");
+        git(repo, Map.of(), "init", "-q");
+        run("init", pub1);
+        run("encrypt");
+        git(repo, Map.of(), "add", "20-secret.enc.yaml");
+        commit(repo, "2026-01-01T00:00:00Z");
+
+        String key = firstKey();
+        Path plain = tmp.resolve("k8s/20-secret.yaml");
+        String text = Files.readString(plain);
+        String line = text.lines().filter(l -> l.trim().startsWith(key + ":")).findFirst().orElseThrow();
+        Files.writeString(plain, text.replace(line, "  " + key + ": \"rotated-value\""));
+        run("encrypt");
+        commit(repo, "2026-11-01T00:00:00Z");
+        run("encrypt");   // 값은 그대로 — 암호문 줄은 모두 바뀐다(새 IV) ／ [JA] 値はそのまま — 暗号文の行はすべて変わる(新しい IV)
+        commit(repo, "2026-11-15T00:00:00Z");
+
+        Run r = run("k1.txt", Map.of("ROTATION_DAYS", "90"), "rotation");
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(r.out()).contains("판 3개", key + " — 2026-11-01").doesNotContain("rotated-value", "s3cr3t-value");
+        String other = r.out().lines().filter(l -> l.contains("—") && !l.contains(key + " —") && l.contains("⏰")).findFirst()
+                .orElseThrow(() -> new AssertionError("바꾸지 않은 키가 오래된 것으로 나오지 않았다:\n" + r.out()));
+        assertThat(other).contains("2026-01-01");
+    }
+
+    private void commit(Path repo, String date) throws Exception {
+        git(repo, Map.of("GIT_AUTHOR_DATE", date, "GIT_COMMITTER_DATE", date), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                "commit", "-q", "-am", "secret " + date);
+    }
+
+    private void git(Path repo, Map<String, String> env, String... args) throws Exception {
+        List<String> cmd = new java.util.ArrayList<>(List.of("git", "-C", repo.toString()));
+        cmd.addAll(List.of(args));
+        ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
+        pb.environment().putAll(env);
+        Process p = pb.start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(p.waitFor(60, TimeUnit.SECONDS)).isTrue();
+        assertThat(p.exitValue()).as(out).isZero();
     }
 }

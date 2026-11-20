@@ -34,12 +34,20 @@ spec:
           image: REGISTRY_PLACEHOLDER/ecommerce-msa/eureka-server:1.0.0
           ports:
             - containerPort: 8761
+            # 관리 포트(actuator) — 프로브 · 지표 에이전트만. 앱 포트에는 /actuator 가 없다(B-119, docs/57 §25).
+            # [JA] 管理ポート(actuator) — プローブ · 指標エージェントだけ。アプリのポートには /actuator がない。
+            - name: management
+              containerPort: 9180
           envFrom:
             - configMapRef:
                 name: ecommerce-config
             - secretRef:
                 name: ecommerce-secrets
           env:
+            # actuator 를 앱 포트에서 떼어 관리 포트로(B-119) — 같은 네임스페이스의 다른 파드는 이 포트에 닿지 못한다(k8s/95).
+            # TLS(server.ssl) · 보안 규칙은 앱 포트의 것을 그대로 물려받는다. [JA] actuator を管理ポートへ分ける。
+            - name: MANAGEMENT_SERVER_PORT
+              value: "9180"
             # 클라이언트 인증서를 **요청**한다(want — 없어도 연결은 된다: 프로브 · 대시보드 · 등록부 읽기). 등록부를 바꾸는 요청은
             # RegistryWriteGuard 가 그 인증서의 CN 으로 판정한다(EUREKA_WRITE_AUTH_MODE, ConfigMap). 클라이언트는 신원 인증서를
             # 공통 설정의 eureka.client.tls 로 낸다(B-86). need 로 올리지 않는다 — 판정이 쓰기만 막으면 되고, 프로브는 인증서가 없다.

@@ -10,9 +10,9 @@
 #   ./ops/35-network-policy.sh apply     # 적용 → 확인 → 허용돼야 할 흐름이 막히면 되돌린다
 #   ./ops/35-network-policy.sh remove    # 정책을 지운다(되돌리기)
 #
-#   나가는 연결(egress) 1단계 — k8s/97-network-policy-egress.yaml (docs/57 §23):
+#   나가는 연결(egress) 1 · 2단계 — k8s/97-network-policy-egress.yaml (docs/57 §23 · §26):
 #   ./ops/35-network-policy.sh egress-render   # 노드 IP 를 펼친 매니페스트를 출력만 한다
-#   ./ops/35-network-policy.sh egress-check    # 두 그룹의 허용 · 차단 흐름을 두드려 본다(바꾸지 않는다)
+#   ./ops/35-network-policy.sh egress-check    # 그룹마다(internal · public · mail · mongo · metrics · cloudflared · backup) 허용 · 차단 흐름을 두드린다
 #   ./ops/35-network-policy.sh egress-apply    # 사전 점검 → 적용 전 두드리기 → 적용 → 두드리기 → 막히면 되돌린다
 #   ./ops/35-network-policy.sh egress-remove   # egress 정책만 지운다(되돌리기)
 #   [JA] 運用アクション ㉟ — ネットワークポリシー(k8s/95-network-policy.yaml)を確認しながら適用し、間違っていれば自分で戻す(docs/57 §11)。
@@ -24,15 +24,23 @@
 #        マニフェストを出力するだけ、egress-check = 二つのグループの許可・遮断の流れを叩いてみる(変えない)、egress-apply = 事前点検 →
 #        適用前の叩き → 適用 → 叩き → 塞がれたら戻す、egress-remove = egress ポリシーだけを消す(戻す)。
 #
+#   [JA] egress 第 1 段階 — render(出力のみ) · check · apply(事前点検 → 適用 → 確認 → 塞がれば戻す) · remove。
+#
 # 두드리는 방법: 잠깐 뜨는 busybox 파드에서 `nc -z` 로 TCP 연결만 해 본다(자격증명은 쓰지 않는다).
 #   · 허용돼야 할 흐름 — ecommerce 네임스페이스에서: 각 서비스, Postgres·Redis·Kafka·Mongo·ES
 #   · 막혀야 할 흐름   — default 네임스페이스에서: user-service·order-service 내부 API, Postgres·Redis
+#   · 관리 포트(9180, B-119) — netpol-probe-metrics(metrics-agent 와 같은 정책) 파드는 닿고, 같은 네임스페이스의 다른 파드는 막힌다
+#     (파드 IP 로 — Service 는 그 포트를 내지 않는다)
 # 그리고 적용 뒤 ecommerce 의 모든 파드가 준비 상태를 유지하는지(kubelet 프로브가 막히지 않는지) 본다.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 MANIFEST="k8s/95-network-policy.yaml"
 EGRESS_MANIFEST="k8s/97-network-policy-egress.yaml"
+# k8s/97 의 정책 이름 · 두드리는 그룹(두드리기 파드 라벨 netpol-probe-<그룹>). 정책을 더하면 둘 다.
+# [JA] k8s/97 のポリシー名 · 叩くグループ(叩き用 Pod のラベル netpol-probe-<グループ>)。ポリシーを足すなら両方とも。
+EGRESS_POLICIES="egress-cluster-only egress-public-no-private egress-smtp egress-mongo-atlas egress-metrics-agent egress-cloudflared egress-backup-postgres"
+EGRESS_GROUPS="internal public mail mongo metrics cloudflared backup"
 IMAGE="${PROBE_IMAGE:-mirror.gcr.io/library/busybox:1.36}"
 TIMEOUT=3
 
@@ -88,6 +96,18 @@ probe() {
 #      🐛 最初は適用**後**にだけ叩いていた。そのため元々届かなかった対象(外部 Atlas を使うため Pod のない MongoDB など)も「ポリシーが
 #      塞いだ」と読んで元に戻していた。今は「前は開いていたのに後で塞がれたもの」だけをポリシーのせいとする。
 BASELINE=""
+MGMT_BASELINE=""
+
+# 관리 포트(9180, actuator — B-119)를 두드릴 파드 IP — 관리 포트를 내는 user-service 파드 하나. Service 는 관리 포트를 내지 않는다.
+# 시험은 NETPOL_MGMT_IP 로 준다. 없으면(옛 매니페스트 · 파드 없음) 관리 포트 점검을 건너뛴다.
+# [JA] 管理ポート(9180、actuator — B-119)を叩く Pod IP — 管理ポートを出す user-service の Pod 一つ。Service は管理ポートを出さない。
+#      テストは NETPOL_MGMT_IP で与える。なければ(古いマニフェスト · Pod なし)管理ポートの点検を飛ばす。
+mgmt_ip() {
+    if [ -n "${NETPOL_MGMT_IP+x}" ]; then echo "$NETPOL_MGMT_IP"; return 0; fi
+    kubectl -n ecommerce get pods -l app=user-service \
+        -o jsonpath='{range .items[*]}{.status.podIP}{" "}{.spec.containers[0].ports[*].name}{"\n"}{end}' 2>/dev/null \
+        | awk '/management/ && $1 != "" { print $1; exit }' || true   # 못 찾으면 빈 값(set -e 로 멈추지 않게) ／ [JA] 見つからなければ空(set -e で止まらないように)
+}
 
 baseline() {
     echo "▶ 적용 전 — 허용돼야 할 흐름이 지금 열려 있나"
@@ -99,6 +119,14 @@ baseline() {
             echo "  ℹ️  $target — 정책 전에도 닿지 않는다(쓰지 않거나 떠 있지 않다). 판정에서 뺀다"
         fi
     done < <(probe ecommerce "${ALLOWED_FROM_ECOMMERCE[@]}")
+    local mip; mip=$(mgmt_ip)
+    if [ -n "$mip" ]; then
+        if [[ "$(PROBE_LABEL=netpol-probe-metrics probe ecommerce "$mip:9180")" == *"$mip:9180 OK"* ]]; then
+            MGMT_BASELINE=open; echo "  ✅ metrics-agent → $mip:9180 (관리 포트)"
+        else
+            echo "  ℹ️  metrics-agent → $mip:9180 — 정책 전에도 닿지 않는다. 판정에서 뺀다"
+        fi
+    fi
 }
 
 check() {
@@ -122,6 +150,26 @@ check() {
         if [ "$result" = "FAIL" ]; then echo "  ✅ $target — 막혔다"; else echo "  ⚠️  $target — 열려 있다"; enforced=0; fi
     done < <(probe default "${BLOCKED_FROM_DEFAULT[@]}")
 
+    # 관리 포트(B-119) — 지표 에이전트는 닿고, 같은 네임스페이스의 다른 파드는 막힌다. [JA] 管理ポート — エージェントだけ届く。
+    local mip; mip=$(mgmt_ip)
+    if [ -z "$mip" ]; then
+        echo "▶ 관리 포트 — 관리 포트를 내는 user-service 파드가 없다(옛 매니페스트?) · 건너뛴다"
+    else
+        echo "▶ 관리 포트 $mip:9180 (actuator)"
+        if [[ "$(PROBE_LABEL=netpol-probe-metrics probe ecommerce "$mip:9180")" == *"$mip:9180 OK"* ]]; then
+            echo "  ✅ metrics-agent → 관리 포트"
+        elif [ -n "$BASELINE" ] && [ "$MGMT_BASELINE" != open ]; then
+            echo "  ℹ️  metrics-agent → 관리 포트 — 닿지 않지만 정책 전에도 그랬다"
+        else
+            echo "  🔴 metrics-agent → 관리 포트 — 막혔다(지표가 끊긴다)"; bad=1
+        fi
+        if [[ "$(probe ecommerce "$mip:9180")" == *"$mip:9180 FAIL"* ]]; then
+            echo "  ✅ 다른 파드(ecommerce) → 관리 포트 — 막혔다"
+        else
+            echo "  ⚠️  다른 파드(ecommerce) → 관리 포트 — 열려 있다"; enforced=0
+        fi
+    fi
+
     echo "▶ ecommerce 파드 준비 상태"
     local not_ready
     not_ready=$(kubectl -n ecommerce get pods --no-headers 2>/dev/null \
@@ -139,6 +187,7 @@ check() {
 
 # ══ 나가는 연결(egress) 1단계 — k8s/97 (docs/57 §23) ═══════════════════════════════════════════
 # [JA] 外向き接続(egress)第 1 段階 — k8s/97(docs/57 §23)。
+# [JA] 外向き接続の第 1 段階。
 
 # 노드 InternalIP — 파드의 HOST_IP(추적을 보내는 OTLP 수집기 주소)와 같은 값. 시험은 NETPOL_NODE_IPS 로 준다.
 # [JA] ノード InternalIP — Pod の HOST_IP(トレースを送る OTLP コレクタのアドレス)と同じ値。テストは NETPOL_NODE_IPS で与える。
@@ -208,6 +257,35 @@ egress_precheck() {
             echo "  🔴 $host — 클러스터 밖이다. '바깥이 필요 없는' 그룹(cart · coupon · pay · gateway …)이 이것을 쓰면 끊긴다"; bad=1
         fi
     done
+    egress_precheck_stage2 || bad=1
+    return $bad
+}
+
+# 2단계의 전제(docs/57 §26) — 좁힌 포트 밖을 쓰는 설정이면 적용하지 않는다. 값은 출력하지 않는다(맞는지만).
+#   · 메일 포트(Secret MAIL_PORT)는 465 · 587 — 25 · 2525 같은 포트면 egress-smtp 가 막는다
+#   · 설정 저장소(config-server 의 CONFIG_GIT_URI)는 https — ssh(22) 는 public 의 443 밖
+#   · PostgreSQL 백업(backup-config 의 PGHOST)은 클러스터 안 — 관리형 DB 면 egress-backup-postgres 가 막는다
+# 시험은 NETPOL_MAIL_PORT · NETPOL_GIT_URI · NETPOL_BACKUP_PGHOST 로 준다(빈 값 = 쓰지 않음).
+# [JA] 第 2 段階の前提 — 狭めたポートの外を使う設定なら適用しない(値は出さない)。
+egress_precheck_stage2() {
+    local bad=0 v
+    if [ -n "${NETPOL_MAIL_PORT+x}" ]; then v="$NETPOL_MAIL_PORT"
+    else v=$(kubectl -n ecommerce get secret ecommerce-secrets -o 'jsonpath={.data.MAIL_PORT}' 2>/dev/null | base64 -d 2>/dev/null || true); fi
+    case "$v" in
+        ""|465|587) echo "  ✅ 메일 포트 — 465 · 587 이거나 쓰지 않는다" ;;
+        *) echo "  🔴 메일 포트(Secret MAIL_PORT)가 465 · 587 이 아니다 — egress-smtp 가 막는다(k8s/97 의 그 정책에 포트를 더하고 다시)"; bad=1 ;;
+    esac
+    if [ -n "${NETPOL_GIT_URI+x}" ]; then v="$NETPOL_GIT_URI"
+    else v=$(kubectl -n ecommerce get deploy config-server \
+        -o 'jsonpath={.spec.template.spec.containers[0].env[?(@.name=="CONFIG_GIT_URI")].value}' 2>/dev/null || true); fi
+    case "$v" in
+        ssh://*|git@*|git://*) echo "  🔴 설정 저장소 주소가 ssh/git 프로토콜이다 — public 그룹은 https(443) 만 나간다. https 주소로 바꾸고 다시"; bad=1 ;;
+        *) echo "  ✅ 설정 저장소 — https 이거나 쓰지 않는다" ;;
+    esac
+    if [ -n "${NETPOL_BACKUP_PGHOST+x}" ]; then v="$NETPOL_BACKUP_PGHOST"
+    else v=$(kubectl -n ecommerce get configmap backup-config -o 'jsonpath={.data.PGHOST}' 2>/dev/null || true); fi
+    if [ -z "$v" ] || [[ "$v" == *.svc.cluster.local || "$v" == *.svc ]]; then echo "  ✅ 백업 PGHOST — 클러스터 안이거나 백업 설정 없음"
+    else echo "  🔴 백업 PGHOST($v)가 클러스터 밖이다 — egress-backup-postgres 는 postgres 네임스페이스만 연다"; bad=1; fi
     return $bad
 }
 
@@ -224,11 +302,37 @@ egress_targets() {   # $1 = internal | public
     # 막혀야 할 것: 클라우드 메타데이터, 노드의 kubelet(10250 — 늘 떠 있다)
     # [JA] 塞がれるべきもの: クラウドメタデータ、ノードの kubelet(10250 — 常に起動している)
     BLOCK=( "169.254.169.254:80" "$node:10250" )
-    if [ "$1" = public ]; then
-        ALLOW+=( "dns:api.stripe.com" "api.stripe.com:443" "1.1.1.1:443" )
-    else
-        BLOCK+=( "1.1.1.1:443" "api.stripe.com:443" )
-    fi
+    case "$1" in
+        public)
+            ALLOW+=( "dns:api.stripe.com" "api.stripe.com:443" "1.1.1.1:443" )
+            BLOCK+=( "1.1.1.1:80" ) ;;   # 2단계: 인터넷은 443 만 ／ [JA] 第 2 段階: インターネットは 443 のみ
+        internal)
+            BLOCK+=( "1.1.1.1:443" "api.stripe.com:443" ) ;;
+        mail)   # notification — public + SMTP(587 · 465) ／ [JA] notification — public + SMTP(587 · 465)
+            ALLOW+=( "1.1.1.1:443" "smtp.gmail.com:587" )
+            BLOCK+=( "1.1.1.1:80" ) ;;
+        # 아래는 1 · 2단계의 두 그룹 밖 — 각자 정책 하나만 받는다
+        # [JA] 以下は第 1 · 2 段階の二つのグループの外 — それぞれポリシーを一つだけ受ける
+        mongo)  # mongo-backup — DNS · Atlas(27017) · 클러스터 안 mongodb ／ [JA] mongo-backup — DNS · Atlas(27017) · クラスター内の mongodb
+            ALLOW=( "dns:kafka.kafka.svc.cluster.local" "mongodb.mongodb.svc.cluster.local:27017" )
+            BLOCK=( "169.254.169.254:80" "$node:10250" "1.1.1.1:443" "postgres.postgres.svc.cluster.local:5432"
+                    "gateway-server.ecommerce.svc.cluster.local:8000" ) ;;
+        metrics)   # metrics-agent — 관리 포트 · API 서버 · remote write ／ [JA] metrics-agent — 管理ポート · API サーバー · remote write
+            local mip; mip=$(mgmt_ip)
+            ALLOW=( "dns:kafka.kafka.svc.cluster.local" "$node:6443" "$node:9090" )
+            [ -z "$mip" ] || ALLOW+=( "$mip:9180" )
+            BLOCK=( "169.254.169.254:80" "$node:10250" "1.1.1.1:443" "postgres.postgres.svc.cluster.local:5432"
+                    "user-service.ecommerce.svc.cluster.local:8080" ) ;;
+        cloudflared)   # 터널 — Cloudflare · gateway · traefik ／ [JA] トンネル — Cloudflare · gateway · traefik
+            ALLOW=( "dns:region1.v2.argotunnel.com" "gateway-server.ecommerce.svc.cluster.local:8000"
+                    "traefik.kube-system.svc.cluster.local:80" "1.1.1.1:443" )
+            BLOCK=( "169.254.169.254:80" "$node:10250" "1.1.1.1:80" "postgres.postgres.svc.cluster.local:5432"
+                    "user-service.ecommerce.svc.cluster.local:8080" ) ;;
+        backup)   # postgres-backup · restore-drill — postgres 만 ／ [JA] postgres-backup · restore-drill — postgres のみ
+            ALLOW=( "dns:postgres.postgres.svc.cluster.local" "postgres.postgres.svc.cluster.local:5432" )
+            BLOCK=( "169.254.169.254:80" "$node:10250" "1.1.1.1:443" "redis.redis.svc.cluster.local:6379"
+                    "gateway-server.ecommerce.svc.cluster.local:8000" ) ;;
+    esac
 }
 
 # 한 그룹을 두드린다. 결과는 "그룹 대상 OK|FAIL" 줄 — EGRESS_BEFORE 에 적용 전 결과를 담아 두면 "전에도 막혔던 것" 을 판정에서 뺀다.
@@ -242,10 +346,10 @@ EGRESS_BEFORE=""
 egress_check() {
     local bad=0 blocked=0 leaked=0 group target result
     local results=""
-    for group in internal public; do
+    for group in $EGRESS_GROUPS; do
         results+=$(egress_probe "$group")$'\n'
     done
-    for group in internal public; do
+    for group in $EGRESS_GROUPS; do
         egress_targets "$group"
         echo "▶ $group 그룹 — 허용돼야 할 흐름"
         for target in "${ALLOW[@]}"; do
@@ -287,24 +391,26 @@ egress_apply() {
     local rendered
     rendered=$(egress_render) || exit 1
     EGRESS_NODE=$(node_ips | head -1)
-    echo "▶ 적용 전 — 두 그룹의 흐름을 기록한다"
+    echo "▶ 적용 전 — 그룹마다의 흐름을 기록한다"
     EGRESS_BEFORE=""
     local group
-    for group in internal public; do EGRESS_BEFORE+=$(egress_probe "$group")$'\n'; done
+    for group in $EGRESS_GROUPS; do EGRESS_BEFORE+=$(egress_probe "$group")$'\n'; done
     grep -q ' OK$' <<<"$EGRESS_BEFORE" || { echo "🔴 적용 전인데도 열린 흐름이 하나도 없다 — 두드리는 파드가 뜨지 않았을 수 있다. 적용하지 않는다."; exit 1; }
     kubectl apply -f - <<<"$rendered"
     echo "정책이 퍼지기를 ${NETPOL_SETTLE:-10}초 기다린다…"; sleep "${NETPOL_SETTLE:-10}"
     egress_check
     if [ "$CHECK_BAD" != 0 ]; then
         echo "🔴 허용돼야 할 흐름이 막혔다 — 되돌린다."
-        kubectl -n ecommerce delete networkpolicy egress-cluster-only egress-public-no-private --ignore-not-found
+        # shellcheck disable=SC2086
+        kubectl -n ecommerce delete networkpolicy $EGRESS_POLICIES --ignore-not-found
         exit 1
     fi
     if [ "$CHECK_ENFORCED" != 1 ]; then
         echo "⚠️  정책은 적용됐지만 막혀야 할 흐름이 열려 있다(⚠️ 줄) — 클러스터가 egress 정책을 집행하지 않거나 정책이 기대와 다르다. 남겨 둔다(해롭지 않다)."
         exit 2
     fi
-    echo "✅ egress 1단계 적용 — 바깥이 필요 없는 서비스는 클러스터 밖으로, 바깥이 필요한 서비스는 사설 대역 · 메타데이터로 나가지 못한다."
+    echo "✅ egress 1 · 2단계 적용 — 바깥이 필요 없는 서비스는 클러스터 밖으로, 바깥이 필요한 서비스는 사설 대역 · 메타데이터 · 443 밖으로,"
+    echo "   지표 에이전트 · cloudflared · 백업은 제 할 일 밖으로 나가지 못한다."
 }
 
 case "${1:-}" in
@@ -348,7 +454,8 @@ case "${1:-}" in
     egress_apply
     ;;
   egress-remove)
-    kubectl -n ecommerce delete networkpolicy egress-cluster-only egress-public-no-private --ignore-not-found
+    # shellcheck disable=SC2086
+    kubectl -n ecommerce delete networkpolicy $EGRESS_POLICIES --ignore-not-found
     ;;
   *)
     sed -n '2,27p' "$0"; exit 1 ;;

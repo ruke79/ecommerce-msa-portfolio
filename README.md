@@ -15,11 +15,13 @@ Spring Cloud ベースのマイクロサービス EC サイトです。**実際�
 |---|---|
 | 構成 | Spring Boot アプリ **13 個**（ドメイン 10 + ゲートウェイ・Eureka・Config）+ React 18 SPA |
 | 運用 | OCI Ampere（arm64）単一ノード k3s · **インバウンドポート 0**（Cloudflare Tunnel）· サービス間 **mTLS**（サービスごとの証明書、cert-manager で自動更新） |
-| テスト | バックエンド **2,688 件** · フロントエンド **1,096 件** · 設定ガードレール **B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-108 · B-110 ~ B-118**（元に戻して失敗することを確認した回帰ガード） |
+| セキュリティ | サービス間 mTLS · 身元ヘッダー enforce · **アクセストークンの即時失効**（ログアウト · パスワード変更の直後から 401）· 二段階認証（TOTP · SMS）とリカバリーコード · actuator は**管理ポートに分離** · 外向き接続の NetworkPolicy · 本番 Secret は **SOPS の暗号文**でリポジトリに |
+| 可観測性 | **SLO 5 つ**（可用性 · レイテンシ）と 14 日のエラーバジェット警報 · サイト外からの監視 · トレースから作る RED ダッシュボード · GC · コンシューマー遅延の指標 |
+| テスト | バックエンド **2,724 件** · フロントエンド **1,096 件** · 設定ガードレール **B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-108 · B-110 ~ B-120**（元に戻して失敗することを確認した回帰ガード） |
 | デプロイ | GitHub Actions — コミット SHA タグのイメージを**一度だけ**ビルド（amd64・arm64）→ 統合・受け入れテスト → **承認** → 本番ノードのランナーがデプロイ。スモーク失敗時は**自動ロールバック** |
 | 決済 | PayPal · Stripe · PortOne V1/V2 · 銀行振込 · バーチャル口座、部分返金 |
 | 多言語 | 韓国語 · 日本語（画面の文言 1,091 箇所、サーバー応答の文言 約 290 件） |
-| ドキュメント | 設計・障害分析 **81 本**（[docs/](docs/README.md)）· 運用スクリプト **56 本**（[ops/](ops/README.md)） |
+| ドキュメント | 設計・障害分析 **83 本**（[docs/](docs/README.md)）· 運用スクリプト **53 本**（[ops/](ops/README.md)） |
 
 ---
 
@@ -167,15 +169,15 @@ flowchart TB
 
 | サービス | 役割 | ストレージ |
 |---|---|---|
-| gateway-server | JWT 検証、身元ヘッダーの書き換え、レートリミット、サーキットブレーカー、内部エンドポイント（actuator・API 仕様）の遮断 | Redis |
-| user-service | 会員登録（メール認証）、ログイン（アカウントロック · 2FA · リフレッシュトークンのローテーション · 多重ログイン検知）、レビュー | PostgreSQL · Redis |
+| gateway-server | JWT 検証、**ログアウト済みトークンの即時拒否**、身元ヘッダーの書き換え、レートリミット、サーキットブレーカー、内部エンドポイント（actuator・API 仕様）の遮断 | Redis |
+| user-service | 会員登録（メール認証）、ログイン（アカウントロック · 2FA（TOTP · SMS）· リカバリーコード · リフレッシュトークンのローテーション · 多重ログイン検知 · 漏えいパスワードの変更勧告）、レビュー | PostgreSQL · Redis |
 | catalog-service | 商品、検索（nori 形態素解析）、在庫予約、再入荷通知 | PostgreSQL · Elasticsearch · Redis |
 | cart-service | サーバー基準のカート（端末間で同期） | PostgreSQL · Redis |
 | order-service | 注文、**Saga オーケストレータ**、決済確認、返金・返品、購入確定 | PostgreSQL |
 | pay-service | 決済記録、Outbox | PostgreSQL |
 | coupon-service | クーポンの発行、見積もり、使用 | PostgreSQL |
 | chat-service | 友だちチャット、カスタマーサポート（STOMP） | PostgreSQL · MongoDB |
-| notification-service | SMS（韓国・日本の番号）、トランザクションメール、通知 | PostgreSQL |
+| notification-service | SMS（韓国・日本の番号 · 二段階認証コード）、トランザクションメール、通知 | PostgreSQL |
 | delivery-service | 分割配送、国際配送（通関）、配送業者アダプター、状態ごとのポーリング | PostgreSQL |
 | saga-projection | Saga のイベントを Kafka Streams で集め、注文の進み具合を照会 | Kafka Streams の状態ストア |
 | eureka-server · config-server | サービスディスカバリ · 設定 | — |
@@ -184,26 +186,30 @@ flowchart TB
 
 ## 技術スタック
 
-- **Back End** — Java 17 · Spring Boot 3.5 · Spring Cloud 2025.0（Gateway · OpenFeign · Eureka · Config）·
+- **Back End** — Java 17（Temurin 17.0.21）· Spring Boot 3.5 · Spring Cloud 2025.0（Gateway · OpenFeign · Eureka · Config）·
   Spring Security · Spring Batch · Kafka · Kafka Streams · PostgreSQL · Flyway · Elasticsearch（nori）·
   MongoDB · Redis（Redisson）· Testcontainers
 - **Front End** — React 18 · React Query v5 · Redux Toolkit · Tailwind CSS · Material UI · Webpack 5 ·
   Jest + Testing Library
 - **Infra** — k3s · kustomize · cert-manager · Cloudflare Tunnel · GitHub Actions · GHCR（amd64 · arm64）·
-  OpenTelemetry（Collector · Jaeger）· Prometheus · Grafana · Alertmanager · Loki
+  OpenTelemetry（Collector · Jaeger）· Prometheus · Grafana · Alertmanager · Loki · blackbox-exporter ·
+  NetworkPolicy（内向き · 外向き）· SOPS + age · k6
 
 ---
 
 ## テストと品質の仕組み
 
-- **バックエンド 2,688 件** — 単体テストと実 JPA テスト（H2）です。CI の統合ステージでは、Testcontainers（PostgreSQL · Kafka · Redis など）と Saga の E2E がさらに走ります。
+- **バックエンド 2,724 件** — 単体テストと実 JPA テスト（H2）です。CI の統合ステージでは、Testcontainers（PostgreSQL · Kafka · Redis など）と Saga の E2E がさらに走ります。
 - **フロントエンド 1,096 件** — 画面の動作テストのほかに、コードの構造を検査するガードがあります。
   - 画面にハードコードされた文言がないか（構文木で探します）
   - import パスが webpack と jest で同じように解決されるか
-- **設定ガードレール（B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-108 · B-110 〜 B-118）** — 設定ファイルとコードを読み、「起動して初めてわかる欠陥」をビルドの段階で捕まえます。例:
+- **設定ガードレール（B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-108 · B-110 〜 B-119）** — 設定ファイルとコードを読み、「起動して初めてわかる欠陥」をビルドの段階で捕まえます。例:
   - 戻せないマイグレーションなのに `ROLLBACK-UNSAFE` の宣言がない
   - Feign が呼ぶ内部パスが mTLS の許可ルールにない
   - 証明書の更新後にサービスを再起動させるアノテーションが抜けている
+  - 外部を必要としないサービスのコードに外部アドレスが現れた · どの外向き接続ポリシーにも入らない Pod がある（B-117）
+  - コミットした Secret の暗号文に平文の値が混ざっている（B-118）· actuator がアプリのポートで開いている（B-119）
+- **SLO ルールのテスト** — 警報 · 記録ルールを promtool で試験し、ヒストグラムの境界とルールの `le` がずれていないかをガードが見ます。
 - **CI のシークレットスキャン** — 入れてから消したシークレットまで、コミット範囲単位で探します。
 
 ---
@@ -213,7 +219,8 @@ flowchart TB
 - **単一ノードです。** ノード 1 台の障害がそのまま全体の障害になります。コストを優先した判断です（[docs/23](docs/23-infrastructure-decision.md)）。
 - **バックアップは毎日回りますが、PITR はまだです。** PostgreSQL · MongoDB のバックアップ CronJob が毎日、復元訓練が毎週回り、ノード外の写しは別の機械が毎日取りに来ます（30 日）。PITR（WAL アーカイブ）とオブジェクトストレージへの保管はまだです（[docs/22 §2](docs/22-alerting-and-backup-automation.md) · [docs/15](docs/15-backup-and-dr.md)）。
 - **PortOne は決済画面まで届いていません。** Stripe · PayPal（サンドボックス）· 銀行振込は本番で一通り確認しました。PortOne（KG イニシス日本決済）はイニシスのテストサーバーにつながらず（IP 許可リスト — 問い合わせ中）、チェックアウトで隠しています（[docs/49 §6](docs/49-payment-providers.md)）。実際の API 応答を開いて、`customData` が二重に包まれる欠陥を見つけて直しました。fail closed なので、対応が間違っていてもお金が漏れることはありません。
-- **身元ヘッダー · Eureka 書き込みの判定はまだ observe です。** 一日分のログで食い違う呼び出しが 0 であることを見てから enforce に上げます（[docs/57 §16](docs/57-remaining-priorities.md)）。
+- **外向き接続のポリシー（egress）は本番適用前です。** マニフェスト · 適用スクリプト（事前点検 · 失敗時の巻き戻し）· ガードは揃えましたが、kube-router の実際の適用を実習クラスタで確かめてから本番に上げます（[docs/57 §23 · §26](docs/57-remaining-priorities.md)）。本番 Secret は SOPS の暗号文が原本になり（2026-11-19）、四半期ごとの保管鍵の復旧訓練 · 交換点検はこれからです（§24）。
+- **SMS の二段階認証はまだ有効にできません。** コード · 画面はありますが、本番の SMS 送信がまだログに残すだけの実装なので、事業者を接続してから使います（[docs/24 §9 · §10](docs/24-sms-notifications.md)）。それまでは TOTP とリカバリーコードです。
 - **本番 DB には商品が 200 万件（デモデータ）あります。** フィルター検索の件数はなくしましたが、合う商品がごく少ない条件は一覧がカテゴリを最後まで走査して 503 になります（[docs/62 §20](docs/62-engineering-casebook.md)）。
 - **可観測性で残っているもの:** 観測経路の TLS 信頼設定と、トレースのサンプリング率（今は 1.0）の調整です。
 - **config-server には設定リポジトリを接続していません。** 設定 · 復号 API はパスワードなしでは拒否するようになりました。管理エンドポイントは外部経路から除外しています。
@@ -231,10 +238,11 @@ flowchart TB
    在庫 [59](docs/59-stock-reservation.md) · デプロイ [36](docs/36-deployment-pipeline.md)・[55](docs/55-zero-downtime-migrations.md) ·
    セキュリティ [27](docs/27-security-review.md)・[30](docs/30-git-history-secret-exposure.md) ·
    可観測性 [11](docs/11-observability-and-kafka-reliability.md)・[51](docs/51-logging.md)・[63](docs/63-opentelemetry.md) ·
-   負荷測定 [83](docs/83-load-test.md) · 本番リリース [85](docs/85-release-deploy-runbook.md)
+   負荷測定 [83](docs/83-load-test.md) · 本番リリース [85](docs/85-release-deploy-runbook.md) ·
+   SLO · 容量 [91](docs/91-slo-and-capacity.md) · セキュリティの残り [57](docs/57-remaining-priorities.md) · 運用スクリプト（状況別）[96](docs/96-ops-scripts-by-scenario.md)
 5. 全体の一覧 — [docs/README.md](docs/README.md)
-6. **コードを読むなら** — コードのコメントは韓国語で書かれていますが、中核のクラス 38 個には各コメントの直後に
-   `[JA]` で始まる日本語訳を付けています。入口としては、アウトボックスと Kafka 越しのトレース
+6. **コードを読むなら** — コードのコメントは韓国語で書かれていますが、**すべての韓国語コメントの直後に
+   `[JA]` で始まる日本語訳を付けています**（Java · JS · シェル · YAML · Dockerfile すべて）。入口としては、アウトボックスと Kafka 越しのトレース
    （`common/.../outbox/OutboxTraceContext.java`）、サービス間 mTLS の判定（`common/.../security/InternalCallerFilter.java`）、
    決済 Saga（`order-service/.../saga/OrderSaga.java`）、Webhook 署名検証（`.../payment/stripe/StripeWebhookVerifier.java`）、
    在庫の仮押さえ（`catalog-service/.../service/StockReservationService.java`）、トレースの Collector 設定（`observability/otel-collector.yml`）がおすすめです。
@@ -271,6 +279,7 @@ cd frontend && npm ci && npm test && npm start
 | 2025.08 〜 2025.10 | Elasticsearch の導入、mTLS、マルチステージビルド |
 | 2025.10 〜 2026.09 | **信頼性 · セキュリティ · 運用 · 品質** — 上の主な事例。配送 · 通知 · カスタマーサポート · 在庫予約 · 多言語 · 決済手段の拡張、OCI への本番デプロイと CI/CD |
 | 2026.10 | **規模 · 運用** — 実習クラスタで商品 100 万 · 1,000 万の負荷測定とゲームデイ（[docs/83](docs/83-load-test.md)）、サービスごとのレビュー修正をまとめた本番の一括リリース（[docs/85](docs/85-release-deploy-runbook.md)）、日本語入力の NFKC · 日本決済、CSP の強制、ストアのパスワード交換ツール（ops/59） |
+| 2026.11 | **SLO · セキュリティ強化** — SLO 5 つとエラーバジェット · 外部監視（[docs/91](docs/91-slo-and-capacity.md)）、JVM · GC の測定シナリオ（[docs/92](docs/92-jvm-measurement-scenarios.md)）、JRE · nginx のセキュリティ修正、アクセストークンの即時失効 · 二段階認証のリカバリーコード · SMS 二段階認証、Kafka デシリアライズの信頼パッケージ制限、actuator の管理ポート分離、外向き接続の NetworkPolicy、SOPS 暗号文の Secret、コードコメントの日本語併記 |
 
 ## ERD
 

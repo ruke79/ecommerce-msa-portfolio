@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -173,5 +174,129 @@ class EgressPolicyGuardTest {
         assertThat(kustomization).doesNotContain("97-network-policy-egress").doesNotContain("95-network-policy");
         String ops = Files.readString(repoRoot().resolve("ops/35-network-policy.sh"), StandardCharsets.UTF_8);
         assertThat(ops).contains("__NODE_IP__").contains("egress-apply").contains("egress_precheck");
+    }
+
+    // ── 2단계(2026-11-20, docs/57 §26) ─────────────────────────────────────────────────────────────────
+    // [JA] ── 第 2 段階(2026-11-20, docs/57 §26)
+    @SuppressWarnings("unchecked")
+    private static Map<String, Map<String, Object>> policies() throws IOException {
+        Map<String, Map<String, Object>> out = new java.util.LinkedHashMap<>();
+        for (Object o : new org.yaml.snakeyaml.Yaml().loadAll(
+                Files.readString(repoRoot().resolve("k8s/97-network-policy-egress.yaml"), StandardCharsets.UTF_8))) {
+            if (o instanceof Map<?, ?> m) {
+                out.put(String.valueOf(((Map<String, Object>) m.get("metadata")).get("name")), (Map<String, Object>) m);
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> egressRules(Map<String, Object> policy) {
+        return (List<Map<String, Object>>) ((Map<String, Object>) policy.get("spec")).get("egress");
+    }
+
+    /** 정책이 고르는 app(두드리기 파드 밖). */
+    // [JA] 方針が選ぶ app(叩き用ポッドは除く)。
+    @SuppressWarnings("unchecked")
+    private static Set<String> selected(Map<String, Object> policy) {
+        Map<String, Object> sel = (Map<String, Object>) ((Map<String, Object>) policy.get("spec")).get("podSelector");
+        Set<String> out = new TreeSet<>();
+        for (Map<String, Object> e : (List<Map<String, Object>>) sel.get("matchExpressions")) {
+            for (Object v : (List<Object>) e.get("values")) {
+                if (!String.valueOf(v).startsWith("netpol-probe-")) {
+                    out.add(String.valueOf(v));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 0.0.0.0/0 을 여는 규칙의 포트 "TCP/443" 꼴. */
+    // [JA] 0.0.0.0/0 を開く規則のポート("TCP/443" の形)。
+    @SuppressWarnings("unchecked")
+    private static Set<String> internetPorts(Map<String, Object> policy) {
+        Set<String> out = new TreeSet<>();
+        for (Map<String, Object> rule : egressRules(policy)) {
+            boolean internet = ((List<Map<String, Object>>) rule.getOrDefault("to", List.of())).stream()
+                    .anyMatch(to -> to.get("ipBlock") != null && "0.0.0.0/0".equals(((Map<String, Object>) to.get("ipBlock")).get("cidr")));
+            if (internet) {
+                for (Map<String, Object> p : (List<Map<String, Object>>) rule.getOrDefault("ports", List.of())) {
+                    out.add(p.get("protocol") + "/" + p.get("port"));
+                }
+            }
+        }
+        return out;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("🔴 2단계 — 인터넷(0.0.0.0/0)을 여는 규칙은 모두 포트가 있다 · public 은 443 만, 메일 · Atlas · 터널은 그 파드만")
+    void stage2NarrowsInternetPorts() throws IOException {
+        Map<String, Map<String, Object>> p = policies();
+        for (var e : p.entrySet()) {
+            for (Map<String, Object> rule : egressRules(e.getValue())) {
+                boolean internet = String.valueOf(rule.get("to")).contains("cidr=0.0.0.0/0");
+                if (internet) {
+                    assertThat(rule).as(e.getKey() + " — 포트 없는 인터넷 규칙(모든 포트가 열린다)").containsKey("ports");
+                }
+            }
+        }
+        assertThat(internetPorts(p.get(PUBLIC))).containsExactly("TCP/443");
+        assertThat(internetPorts(p.get("egress-smtp"))).containsExactlyInAnyOrder("TCP/587", "TCP/465");
+        assertThat(selected(p.get("egress-smtp"))).containsExactly("notification-service");
+        assertThat(internetPorts(p.get("egress-mongo-atlas"))).containsExactly("TCP/27017");
+        assertThat(selected(p.get("egress-mongo-atlas"))).containsExactlyInAnyOrder("chat-service", "mongo-backup");
+        assertThat(internetPorts(p.get("egress-cloudflared"))).containsExactlyInAnyOrder("TCP/7844", "UDP/7844", "TCP/443");
+        assertThat(selected(p.get("egress-cloudflared"))).containsExactly("cloudflared");
+        assertThat(internetPorts(p.get("egress-metrics-agent"))).containsExactly("TCP/9090");
+        assertThat(selected(p.get("egress-metrics-agent"))).containsExactly("metrics-agent");
+        assertThat(selected(p.get("egress-backup-postgres"))).containsExactlyInAnyOrder("postgres-backup", "restore-drill");
+        assertThat(String.valueOf(egressRules(p.get("egress-backup-postgres")))).as("백업은 IP 대역을 열지 않는다").doesNotContain("ipBlock");
+
+        // 메일 · Atlas 를 받는 서비스는 public 그룹이기도 하다(DNS · 443 · 클러스터 안은 그쪽에서)
+        // [JA] メール · Atlas を受けるサービスは public グループでもある(DNS · 443 · クラスター内はそちらで)
+        Set<String> pub = apps(policyDoc(PUBLIC));
+        assertThat(pub).contains("notification-service", "chat-service");
+        // 지표 에이전트는 같은 네임스페이스에 관리 포트(9180)만 — 앱 포트 · DB 로는 못 간다
+        // [JA] メトリクスエージェントは同じネームスペースへは管理ポート(9180)のみ — アプリのポート · DB へは行けない
+        String sameNs = egressRules(p.get("egress-metrics-agent")).stream().filter(r -> String.valueOf(r.get("to")).equals("[{podSelector={}}]"))
+                .map(r -> String.valueOf(r.get("ports"))).findFirst().orElseThrow();
+        assertThat(sameNs).isEqualTo("[{protocol=TCP, port=9180}]");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("🔴 2단계 — 정책이 고르는 이름이 실제 파드 라벨과 같다(백업 CronJob · metrics-agent · cloudflared) · ops/35 가 모든 정책을 지운다")
+    void stage2SelectorsMatchRealPods() throws IOException {
+        Map<String, Map<String, Object>> p = policies();
+        Set<String> cronLabels = new TreeSet<>();
+        for (Object o : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(repoRoot().resolve("k8s/85-backup-cronjobs.yaml")))) {
+            if (o instanceof Map<?, ?> m && "CronJob".equals(m.get("kind"))) {
+                Map<String, Object> tmpl = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
+                        m.get("spec")).get("jobTemplate")).get("spec")).get("template");
+                Map<String, Object> meta = (Map<String, Object>) tmpl.get("metadata");
+                assertThat(meta).as("CronJob 파드 라벨 — 없으면 egress 정책이 고르지 못한다").isNotNull();
+                cronLabels.add(String.valueOf(((Map<String, Object>) meta.get("labels")).get("app")));
+            }
+        }
+        Set<String> backupSelected = new TreeSet<>(selected(p.get("egress-backup-postgres")));
+        backupSelected.addAll(selected(p.get("egress-mongo-atlas")));
+        assertThat(backupSelected).containsAll(cronLabels);
+        assertThat(cronLabels).containsExactlyInAnyOrder("postgres-backup", "mongo-backup", "restore-drill");
+
+        assertThat(Files.readString(repoRoot().resolve("k8s-overlays/external/metrics-agent.yaml"))).contains("app: metrics-agent");
+        assertThat(Files.readString(repoRoot().resolve("k8s-overlays/prod/cloudflared.yaml"))).contains("app: cloudflared");
+
+        String ops = Files.readString(repoRoot().resolve("ops/35-network-policy.sh"), StandardCharsets.UTF_8);
+        Matcher names = Pattern.compile("(?m)^EGRESS_POLICIES=\"([^\"]+)\"").matcher(ops);
+        assertThat(names.find()).isTrue();
+        assertThat(new TreeSet<>(List.of(names.group(1).split(" ")))).as("ops/35 가 되돌릴 때 지우는 정책 = k8s/97 의 정책")
+                .isEqualTo(new TreeSet<>(p.keySet()));
+        Matcher groups = Pattern.compile("(?m)^EGRESS_GROUPS=\"([^\"]+)\"").matcher(ops);
+        assertThat(groups.find()).isTrue();
+        String manifest = Files.readString(repoRoot().resolve("k8s/97-network-policy-egress.yaml"));
+        for (String g : groups.group(1).split(" ")) {
+            assertThat(manifest).as("두드리기 파드 netpol-probe-" + g + " 가 정책에").contains("netpol-probe-" + g);
+        }
     }
 }

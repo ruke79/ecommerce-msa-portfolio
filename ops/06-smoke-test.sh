@@ -10,6 +10,8 @@
 #   INSECURE=1                 # 자가서명 TLS (-k)
 #   SKIP_SAGA=1                # 사가 E2E 생략(읽기 전용 점검만)
 #   SKIP_DIRECT=0|1            # 개별 서비스 포트 직접 점검. 기본은 $GATEWAY 를 보고 자동 판단
+#   GATEWAY_HEALTH=https://localhost:19180/actuator/health   # 게이트웨이 관리 포트(k8s — B-119). 비우면 $GATEWAY/actuator/health
+#                              (관리 포트는 노드 · port-forward 에서만 닿는 사설 구간이라 자체 서명 인증서를 검증하지 않는다)
 #   EUREKA=https://localhost:8761  KAFKA_BOOTSTRAP=localhost:29092
 #   PROM=http://localhost:9090
 #
@@ -119,7 +121,11 @@ is_html() { case "$1" in *'<!DOCTYPE html'*|*'<!doctype html'*|*'<html'*) return
 #      オリジン Pod)にあるので区別して知らせる。
 is_edge_error() { case "$1" in 'error code: '*) return 0 ;; *) return 1 ;; esac; }
 
-body=$("${CURL[@]}" "$GATEWAY/actuator/health" 2>/dev/null)
+if [ -n "${GATEWAY_HEALTH:-}" ]; then
+    body=$("${CURL[@]}" -k "$GATEWAY_HEALTH" 2>/dev/null)
+else
+    body=$("${CURL[@]}" "$GATEWAY/actuator/health" 2>/dev/null)
+fi
 if case "$body" in *'"status":"UP"'*) true ;; *) false ;; esac; then
     ok "gateway health UP"
 elif is_edge_error "$body"; then
@@ -132,7 +138,7 @@ elif is_html "$body"; then
     echo "      터널·Ingress 구성에서는 정상이다. actuator 는 일부러 공개하지 않는다."
     echo "      게이트웨이 헬스는 클러스터 안에서 확인한다:"
     echo "        kubectl -n ecommerce exec deploy/gateway-server -- \\"
-    echo "          curl -sk https://localhost:8000/actuator/health"
+    echo "          curl -sk https://localhost:9180/actuator/health   # 관리 포트(B-119) — 옛 버전은 8000"
 elif [ -z "$body" ]; then
     bad "gateway health 무응답 — $GATEWAY 에 닿지 않는다"
 else
@@ -176,6 +182,7 @@ echo "════ 3. 레이트리미터 실동작 (429 발생 확인) ═══
 #      (500ms)を超えた流入制限のコマンドは通過(fail-open)だが、最初のコマンド群が接続・スクリプト読み込みを負担した(ゲートウェイは
 #      今は readiness 前に温める — RateLimiterWarmup)。それでも全サービスが一斉に起動した単一ノードは遅い — 429 がなければ 3 秒休んで
 #      一度だけ撃ち直す。制限が抜けたゲートウェイは何度撃っても 429 が出ないので、この再試行がその欠陥を隠すことはない。結果ごとにコード別の数を残す。
+# [JA] 起動直後の最初の 70 発がすべて通過して自動復帰した(Redis タイムアウト超過は通過)。429 がなければ 3 秒後に一度だけ撃ち直す。
 rl_burst() {
     local out; out=$(mktemp)
     for _ in $(seq 1 70); do

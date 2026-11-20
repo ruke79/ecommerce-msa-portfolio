@@ -27,6 +27,8 @@ k8s/20-secret.yaml*
 # [JA] エディタのバックアップ。元が何であれコミットする理由はなく、シークレットファイルのコピーのときが最も危険。
 *.save
 *.bak
+*.save
+*.bak
 
 apllication-prd.yml
 chat-connector.json
@@ -41,6 +43,7 @@ build/
 
 # QueryDSL 등 annotation processor가 생성하는 소스 (컴파일 산출물)
 # [JA] QueryDSL などの annotation processor が生成するソース(コンパイル成果物)
+**/src/main/generated/
 **/src/main/generated/
 
 bin/
@@ -152,3 +155,10 @@ __pycache__/
 # 부하 시험 결과(ops/14 · ops/53) — 그때의 이미지 판 · 노드 이름이 들어 있다, 커밋하지 않는다
 # [JA] 負荷試験の結果(ops/14 · ops/53) — その時のイメージ版・ノード名が入っている、コミットしない
 load-results/
+
+# 운영 · 실습 노드의 작업 트리에 남는 덤프와 도구 내려받기 자취 — 커밋되면 운영 데이터가 저장소에 들어간다.
+# 2026-11-19 운영 인스턴스에서 product_size-20260928-0155.dump 가 추적 밖으로 떠 있었다(git add . 한 번에 들어간다).
+# [JA] 本番 · 演習ノードの作業ツリーに残るダンプとツールのダウンロード痕跡 — コミットされると本番データがリポジトリに入る。
+*.dump
+sops-v*.checksums.txt
+sops-v*.checksums.sigstore.json

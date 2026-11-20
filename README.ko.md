@@ -15,11 +15,13 @@ Spring Cloud 기반 마이크로서비스 이커머스입니다. **실제로 운
 |---|---|
 | 구성 | Spring Boot 애플리케이션 **13개**(도메인 10 + 게이트웨이·Eureka·Config) + React 18 SPA |
 | 운영 | OCI Ampere(arm64) 단일 노드 k3s · **인바운드 포트 0개**(Cloudflare Tunnel) · 서비스 간 **mTLS**(서비스별 인증서, cert-manager 자동 갱신) |
-| 테스트 | 백엔드 **2,688개** · 프론트엔드 **1,096개** · 설정 가드레일 **B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-108 · B-110 ~ B-118**(되돌려서 실패하는지 확인한 회귀 가드) |
+| 보안 | 서비스 간 mTLS · 신원 헤더 enforce · **액세스 토큰 즉시 폐기**(로그아웃 · 비밀번호 변경 뒤 바로 401) · 2단계 인증(TOTP · SMS)과 복구 코드 · actuator 는 **관리 포트로 분리** · 나가는 연결 NetworkPolicy · 운영 Secret 은 **SOPS 암호문**으로 저장소에 |
+| 관측 | **SLO 다섯**(가용성 · 지연)과 14일 오류 예산 경보 · 사이트 바깥 탐침 · 추적에서 뽑은 RED 대시보드 · GC · 컨슈머 지연 지표 |
+| 테스트 | 백엔드 **2,724개** · 프론트엔드 **1,096개** · 설정 가드레일 **B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-108 · B-110 ~ B-120**(되돌려서 실패하는지 확인한 회귀 가드) |
 | 배포 | GitHub Actions — 커밋 SHA 태그 이미지를 **한 번만** 빌드(amd64·arm64) → 통합·인수 테스트 → **승인** → 운영 노드 러너가 배포, 스모크 실패 시 **자동 롤백** |
 | 결제 | PayPal · Stripe · 포트원 V1/V2 · 무통장입금 · 가상계좌, 부분 환불 |
 | 다국어 | 한국어 · 일본어(화면 문구 1,091곳, 서버 응답 문구 약 290개) |
-| 문서 | 설계·장애 분석 **81편**([docs/](docs/README.ko.md)) · 운영 스크립트 **56개**([ops/](ops/README.ko.md)) |
+| 문서 | 설계·장애 분석 **83편**([docs/](docs/README.ko.md)) · 운영 스크립트 **53개**([ops/](ops/README.ko.md)) |
 
 ---
 
@@ -166,15 +168,15 @@ flowchart TB
 
 | 서비스 | 역할 | 저장소 |
 |---|---|---|
-| gateway-server | JWT 검증, 신원 헤더 재작성, 레이트리밋, 서킷 브레이커, 내부 엔드포인트(actuator·API 명세) 차단 | Redis |
-| user-service | 가입(메일 인증), 로그인(계정 잠금 · 2FA · 리프레시 토큰 회전 · 다중 로그인 감지), 리뷰 | PostgreSQL · Redis |
+| gateway-server | JWT 검증, **로그인 해제된 토큰 즉시 거절**, 신원 헤더 재작성, 레이트리밋, 서킷 브레이커, 내부 엔드포인트(actuator·API 명세) 차단 | Redis |
+| user-service | 가입(메일 인증), 로그인(계정 잠금 · 2FA(TOTP · SMS) · 복구 코드 · 리프레시 토큰 회전 · 다중 로그인 감지 · 유출 비밀번호 권고), 리뷰 | PostgreSQL · Redis |
 | catalog-service | 상품, 검색(nori 형태소 분석), 재고 예약, 재입고 알림 | PostgreSQL · Elasticsearch · Redis |
 | cart-service | 서버 기준 장바구니(기기 간 동기화) | PostgreSQL · Redis |
 | order-service | 주문, **사가 오케스트레이터**, 결제 확인, 환불·반품, 구매 확정 | PostgreSQL |
 | pay-service | 결제 기록, 아웃박스 | PostgreSQL |
 | coupon-service | 쿠폰 발급, 견적, 사용 | PostgreSQL |
 | chat-service | 친구 채팅, 고객센터 상담(STOMP) | PostgreSQL · MongoDB |
-| notification-service | SMS(한국·일본 번호), 트랜잭션 메일, 알림 | PostgreSQL |
+| notification-service | SMS(한국·일본 번호 · 2단계 인증 코드), 트랜잭션 메일, 알림 | PostgreSQL |
 | delivery-service | 분할 배송, 국제 배송(통관), 택배사 어댑터, 상태별 폴링 | PostgreSQL |
 | saga-projection | 사가 이벤트를 Kafka Streams 로 모아 주문 진행 상황 조회 | Kafka Streams 상태 저장소 |
 | eureka-server · config-server | 서비스 디스커버리 · 설정 | — |
@@ -183,26 +185,30 @@ flowchart TB
 
 ## 기술 스택
 
-- **Back End** — Java 17 · Spring Boot 3.5 · Spring Cloud 2025.0(Gateway · OpenFeign · Eureka · Config) ·
+- **Back End** — Java 17(Temurin 17.0.21) · Spring Boot 3.5 · Spring Cloud 2025.0(Gateway · OpenFeign · Eureka · Config) ·
   Spring Security · Spring Batch · Kafka · Kafka Streams · PostgreSQL · Flyway · Elasticsearch(nori) ·
   MongoDB · Redis(Redisson) · Testcontainers
 - **Front End** — React 18 · React Query v5 · Redux Toolkit · Tailwind CSS · Material UI · Webpack 5 ·
   Jest + Testing Library
 - **Infra** — k3s · kustomize · cert-manager · Cloudflare Tunnel · GitHub Actions · GHCR(amd64 · arm64) ·
-  OpenTelemetry(Collector · Jaeger) · Prometheus · Grafana · Alertmanager · Loki
+  OpenTelemetry(Collector · Jaeger) · Prometheus · Grafana · Alertmanager · Loki · blackbox-exporter ·
+  NetworkPolicy(들어오는 · 나가는 연결) · SOPS + age · k6
 
 ---
 
 ## 테스트와 품질 장치
 
-- **백엔드 2,688개** — 단위 테스트와 실제 JPA 테스트(H2)입니다. CI 통합 단계에서는 Testcontainers(PostgreSQL · Kafka · Redis 등)와 사가 E2E 가 더 돕니다.
+- **백엔드 2,724개** — 단위 테스트와 실제 JPA 테스트(H2)입니다. CI 통합 단계에서는 Testcontainers(PostgreSQL · Kafka · Redis 등)와 사가 E2E 가 더 돕니다.
 - **프론트엔드 1,096개** — 화면 동작 테스트 외에 코드 구조를 검사하는 가드가 있습니다.
   - 화면에 박힌 문구가 없는지(구문 트리로 찾습니다)
   - import 경로가 webpack 과 jest 에서 같게 풀리는지
-- **설정 가드레일(B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-108 · B-110 ~ B-118)** — 설정 파일과 코드를 읽어 "실행해야 드러나는 결함"을 빌드에서 잡습니다. 예:
+- **설정 가드레일(B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-108 · B-110 ~ B-119)** — 설정 파일과 코드를 읽어 "실행해야 드러나는 결함"을 빌드에서 잡습니다. 예:
   - 되돌릴 수 없는 마이그레이션인데 `ROLLBACK-UNSAFE` 선언이 없는 것
   - Feign 이 부르는 내부 경로가 mTLS 허용 규칙에 없는 것
   - 인증서 갱신 뒤 서비스를 재시작하게 하는 주석이 빠진 것
+  - 바깥이 필요 없는 서비스의 코드에 바깥 주소가 생긴 것 · 어느 나가는 연결 정책에도 들지 않는 파드(B-117)
+  - 커밋된 Secret 암호문에 평문 값이 섞인 것(B-118) · actuator 가 앱 포트로 열린 것(B-119)
+- **SLO 규칙 시험** — 경보 · 기록 규칙을 promtool 로 시험하고, 히스토그램 경계와 규칙의 `le` 가 어긋나지 않는지 가드가 봅니다.
 - **CI 비밀 스캔** — 넣었다가 지운 비밀까지 커밋 범위 단위로 찾습니다.
 
 ---
@@ -212,7 +218,8 @@ flowchart TB
 - **단일 노드입니다.** 노드 하나가 곧 전체 장애입니다. 비용 때문에 내린 결정입니다([docs/23](docs/23-infrastructure-decision.ko.md)).
 - **백업은 매일 돌지만 PITR 은 아직입니다.** PostgreSQL · MongoDB 백업 CronJob 이 매일, 복원 훈련이 매주 돌고, 노드 밖 사본은 다른 기계가 매일 받아 갑니다(30일). PITR(WAL 아카이빙)과 오브젝트 스토리지 보관은 아직입니다([docs/22 §2](docs/22-alerting-and-backup-automation.ko.md) · [docs/15](docs/15-backup-and-dr.ko.md)).
 - **포트원은 결제창까지 가지 못했습니다.** Stripe · PayPal(샌드박스) · 무통장은 운영에서 한 바퀴 확인했습니다. 포트원(KG이니시스 일본결제)은 이니시스 테스트 서버에 연결되지 않아(IP 허용 목록 — 문의 중) 체크아웃에서 숨겨 두었습니다([docs/49 §6](docs/49-payment-providers.ko.md)). 실제 API 응답을 열어 보다 `customData` 가 두 번 감싸이는 결함을 찾아 고쳤습니다. fail closed 라서 매핑이 틀려도 돈이 새지는 않습니다.
-- **신원 헤더 · Eureka 쓰기 판정은 아직 observe 입니다.** 하루치 로그에 어긋난 호출이 0 인 것을 본 뒤 enforce 로 올립니다([docs/57 §16](docs/57-remaining-priorities.ko.md)).
+- **나가는 연결 정책(egress)은 운영 적용 전입니다.** 매니페스트 · 적용 스크립트(사전 점검 · 실패 시 되돌림) · 가드는 갖췄지만, kube-router 의 실제 집행을 실습 클러스터에서 확인한 뒤 운영에 올립니다([docs/57 §23 · §26](docs/57-remaining-priorities.ko.md)). 운영 Secret 은 SOPS 암호문이 원본이 됐고(2026-11-19), 분기마다의 보관 키 복구 훈련 · 교체 점검은 이제 시작입니다(§24).
+- **SMS 2단계 인증은 켤 수 없습니다.** 코드 · 화면은 있지만 운영 SMS 발송기가 아직 로그만 남기는 구현이라, 공급자를 연결한 뒤부터 씁니다([docs/24 §9 · §10](docs/24-sms-notifications.ko.md)). 그동안은 TOTP 와 복구 코드입니다.
 - **운영 DB 에는 상품이 200만 개(데모 데이터) 있습니다.** 필터 검색의 개수 세기는 없앴지만, 맞는 상품이 아주 드문 조건은 목록이 카테고리를 끝까지 훑어 503 이 납니다([docs/62 §20](docs/62-engineering-casebook.ko.md)).
 - **관측 스택에 남은 것:** 관측 경로의 TLS 신뢰 설정과 추적 샘플링(지금 1.0) 조정입니다.
 - **config-server 에는 설정 저장소를 연결하지 않았습니다.** 설정 · 복호화 API 는 이제 비밀번호 없이는 거절합니다. 관리 엔드포인트는 외부 경로에서 제외했습니다.
@@ -230,10 +237,11 @@ flowchart TB
    재고 [59](docs/59-stock-reservation.ko.md) · 배포 [36](docs/36-deployment-pipeline.ko.md)·[55](docs/55-zero-downtime-migrations.ko.md) ·
    보안 [27](docs/27-security-review.ko.md)·[30](docs/30-git-history-secret-exposure.ko.md) ·
    관측 [11](docs/11-observability-and-kafka-reliability.ko.md)·[51](docs/51-logging.ko.md)·[63](docs/63-opentelemetry.ko.md) ·
-   부하 측정 [83](docs/83-load-test.ko.md) · 운영 릴리스 [85](docs/85-release-deploy-runbook.ko.md)
+   부하 측정 [83](docs/83-load-test.ko.md) · 운영 릴리스 [85](docs/85-release-deploy-runbook.ko.md) ·
+   SLO · 용량 [91](docs/91-slo-and-capacity.ko.md) · 보안 남은 일 [57](docs/57-remaining-priorities.ko.md) · 운영 스크립트(상황별) [96](docs/96-ops-scripts-by-scenario.ko.md)
 5. 전체 목록 — [docs/README.ko.md](docs/README.ko.md)
-6. **코드를 읽는다면** — 코드 주석은 한국어로 썼고, 핵심 클래스 38개에는 주석마다 바로 아래에 `[JA]` 로 시작하는
-   일본어 번역을 붙였습니다. 입구로는 아웃박스와 Kafka 를 건너는 추적(`common/.../outbox/OutboxTraceContext.java`),
+6. **코드를 읽는다면** — 코드 주석은 한국어로 썼고, **모든 한국어 주석 바로 아래에 `[JA]` 로 시작하는
+   일본어 번역을 붙였습니다**(Java · JS · 셸 · YAML · Dockerfile 모두). 입구로는 아웃박스와 Kafka 를 건너는 추적(`common/.../outbox/OutboxTraceContext.java`),
    서비스 간 mTLS 판정(`common/.../security/InternalCallerFilter.java`), 결제 사가(`order-service/.../saga/OrderSaga.java`),
    웹훅 서명 검증(`.../payment/stripe/StripeWebhookVerifier.java`), 재고 예약(`catalog-service/.../service/StockReservationService.java`),
    추적 Collector 설정(`observability/otel-collector.yml`)을 권합니다.
@@ -270,6 +278,7 @@ cd frontend && npm ci && npm test && npm start
 | 2025.08 ~ 2025.10 | Elasticsearch 도입, mTLS, 멀티 스테이지 빌드 |
 | 2025.10 ~ 2026.09 | **신뢰성 · 보안 · 운영 · 품질** — 위의 핵심 사례들. 배송 · 알림 · 고객센터 · 재고 예약 · 다국어 · 결제수단 확장, OCI 운영 배포와 CI/CD |
 | 2026.10 | **규모 · 운영** — 실습 클러스터에서 상품 100만 · 1,000만 부하 측정과 게임데이([docs/83](docs/83-load-test.ko.md)), 서비스별 리뷰 수정을 모은 운영 묶음 릴리스([docs/85](docs/85-release-deploy-runbook.ko.md)), 일본어 입력 NFKC · 일본결제, CSP 강제, 스토어 비밀번호 교체 도구(ops/59) |
+| 2026.11 | **SLO · 보안 강화** — SLO 다섯과 오류 예산 · 바깥 탐침([docs/91](docs/91-slo-and-capacity.ko.md)), JVM · GC 측정 시나리오([docs/92](docs/92-jvm-measurement-scenarios.ko.md)), JRE · nginx 보안 수정, 액세스 토큰 즉시 폐기 · 2단계 인증 복구 코드 · SMS 2단계 인증, Kafka 역직렬화 신뢰 패키지 제한, actuator 관리 포트 분리, 나가는 연결 NetworkPolicy, SOPS 암호문 Secret, 코드 주석 일본어 병기 |
 
 ## ERD
 

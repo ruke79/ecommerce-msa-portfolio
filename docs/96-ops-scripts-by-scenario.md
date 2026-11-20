@@ -131,7 +131,7 @@ OCI Ampere(arm64)1 台に k3s を載せ、外にはポートを開けず Cloudfl
 
 | やりたいこと | コマンド |
 |---|---|
-| サービスごとのいまのバージョン | `./ops/32-db-migration.sh` |
+| サービスごとのいまのバージョン | `./ops/32-db-migration.sh` — catalog の履歴は `product` スキーマにあります(ツールが設定から読みます、[docs/62 §22](62-engineering-casebook.md)) |
 | 1 サービスの適用履歴 | `./ops/32-db-migration.sh info user-service` |
 | デプロイすると適用されるもの | `./ops/32-db-migration.sh pending` |
 | 適用済みファイルが変わったか · リポジトリにない適用があるか | `./ops/32-db-migration.sh drift` — 2026-11-19、記録になかったデプロイをこれで見つけた |
@@ -200,6 +200,9 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 ./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(往復確認の後) → コミット
 ./ops/62-secrets-sops.sh check                       # 値がすべて暗号文 · 復号できるか · 例とキー名 · 平文と同じか
 ./ops/62-secrets-sops.sh apply                       # 平文ファイルなしで直接 kubectl apply
+./ops/62-secrets-sops.sh drift                       # 暗号文 ↔ クラスタの Secret — 違うキー名だけ(ops/28 もデプロイ前に呼ぶ)
+./ops/62-secrets-sops.sh rotation                    # 四半期の交換チェックリスト — キーごとに値が最後に変わった日、90 日を超えると ⏰
+./ops/62-secrets-sops.sh drill /media/usb/age-offline-backup.txt   # 四半期ごと — 保管鍵一つで復号できるか(この機械の鍵は使わない)
 ```
 
 §6-1 で値を替えた後は `encrypt`(平文がなければ `decrypt` → 修正 → `encrypt`)。受け取る人を替えたら `updatekeys` — 外した人が値を見たことがあれば値そのものを §6-1 で交換します。
@@ -209,8 +212,8 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 | スクリプト | 見るもの |
 |---|---|
 | `11-check-db-exposure.sh` | DB ポートが外から開いていないか |
-| `35-network-policy.sh check` · `apply` · `remove` | NetworkPolicy — 許可されるべき流れはつながり、塞ぐべきものは塞がるか。`apply` は間違っていれば自分で戻す |
-| `35-network-policy.sh egress-check` · `egress-apply` · `egress-remove` | 外向きの接続(k8s/97 — 2 グループ、IP 一覧なし、[docs/57 §23](57-remaining-priorities.md))。`egress-render` はノード IP を展開したマニフェストの出力のみ、`egress-apply` も塞がれば戻す |
+| `35-network-policy.sh check` · `apply` · `remove` | NetworkPolicy — 許可されるべき流れはつながり、塞ぐべきものは塞がるか · 管理ポート(9180、actuator)は指標エージェントだけ([docs/57 §25](57-remaining-priorities.md))。`apply` は間違っていれば自分で戻す |
+| `35-network-policy.sh egress-check` · `egress-apply` · `egress-remove` | 外向きの接続(k8s/97 — 第 1 段階は 2 グループ、第 2 段階は 443 だけ · メール · Atlas · 指標エージェント · cloudflared · バックアップ、IP 一覧なし、[docs/57 §23 · §26](57-remaining-priorities.md))。`egress-render` はノード IP を展開したマニフェストの出力のみ、`egress-apply` も塞がれば戻す |
 | `37-check-mtls.sh` | ② 証明書の有無で 403/200、① `[mTLS observe]` · ①-2 `[mTLS rule]` · ①-3 `[mTLS identity]` が 0 か — **0 でなければ enforce に上げない** |
 | `27-check-secret-drift.sh` | Secret と実サーバーの資格情報がずれていないか |
 

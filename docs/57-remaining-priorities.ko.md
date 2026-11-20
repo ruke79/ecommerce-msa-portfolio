@@ -883,7 +883,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **남은 것(코드만으로는 끝나지 않는다)**:
 - NetworkPolicy egress 허용 목록 — 결제사 · SMS · 메일 · 택배사 · HIBP · DNS 목록을 정한 뒤(잘못 막으면 결제가 멈춘다). → 🕰️ 1단계는 §23(IP 목록 없이).
 - 공유 서버 인증서 `tls-keystore`(825일)를 서비스별로 · cert-manager + Reloader(§18), 비밀 관리 도구(SOPS · Sealed Secrets · Vault)와 정기 회전, 개인 키 HSM/KMS — 운영 장비 · 비용 판단.
-- 관리 포트 분리(`management.server.port`) — 프로브 · metrics-agent · 매니페스트 13개를 함께 바꾸는 배포 작업.
+- ~~관리 포트 분리(`management.server.port`) — 프로브 · metrics-agent · 매니페스트 13개를 함께 바꾸는 배포 작업.~~ → 🕰️ 2026-11-20 §25.
 - react-router v7 · jest 30 메이저 판 올림 — 화면 전체 회귀가 필요한 별도 작업.
 - 같은 전화번호를 두 계정이 쓰는 것 — 막을지(가족 공용 번호)부터 정할 일.
 
@@ -911,7 +911,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 **순서**: 실습 클러스터 `egress-apply` → 결제(카드 · PayPal) · 메일 · 소셜 로그인 · 이미지 업로드 · 채팅 · 택배 조회를 한 바퀴 → 운영 노드에서 `egress-apply`(되돌리기는 `egress-remove`). 운영은 하이브리드 원격 노드(docs/71)가 있으면 노드 IP 가 둘 — 스크립트가 둘 다 펼친다.
 
-**2단계(남은 것)**: metrics-agent · cloudflared · 백업 CronJob 의 정책, public 그룹의 포트 좁히기(443 · 465/587 · 27017 등), 바깥 주소별 허용(도메인 단위가 필요해지면 Cilium 등 — 노드가 늘 때 함께 판단).
+**2단계** → 🕰️ 2026-11-20 §26(metrics-agent · cloudflared · 백업 CronJob 의 정책, public 그룹의 포트 좁히기). 남은 것: 바깥 주소별 허용(도메인 단위가 필요해지면 Cilium 등 — 노드가 늘 때 함께 판단).
 
 ## 24. 운영 Secret 을 암호문으로 저장소에 — SOPS + age(2026-11-19)
 
@@ -921,7 +921,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 **한 것**:
 - `ops/62-secrets-sops.sh` — `keygen [<파일>]`(age 키, 공개 키만 출력 — 파일을 주면 그 이름으로: 보관용 · 다른 기계용 키를 이 기계의 키와 따로) · `init <age1…>`(받는 사람) · `encrypt`(왕복 확인 뒤에만 암호문을 바꾼다) · `check`(값이 모두 암호문 · 이 기계의 키로 풀리나 · 예시와 키 이름 · 평문과 같은가 — 값 대신 sha256 앞 12자로 비교) · `apply`(평문 파일 없이 파이프로 `kubectl apply`) · `decrypt`(0600, 다른 평문은 덮어쓰지 않는다 — `FORCE=1`) · `updatekeys`. 어떤 경로도 값을 출력하지 않는다.
-- `.sops.yaml` — 그 파일만 · 값만 암호화. 받는 사람은 자리표시(`age1REPLACE_ME`)로 커밋 — 자리표시인 동안 `encrypt` 는 거절한다.
+- `.sops.yaml` — 그 파일만 · 값만 암호화. 받는 사람은 처음 자리표시(`age1REPLACE_ME`)로 커밋했고 — 자리표시인 동안 `encrypt` 는 거절한다 — 2026-11-19 에 실제 공개 키 셋으로 바꿨다.
 - 암호문 `k8s/20-secret.enc.yaml` 은 `.gitignore`(`k8s/20-secret.yaml*`)에 걸리지 않는다 — 커밋한다. 포트폴리오(공개)에는 옮기지 않는다(`.sops.yaml` 도).
 - 받는 사람은 셋을 권한다 — 운영 노드 · 작업 PC · 오프라인 보관(종이 · 비밀번호 관리자). 개인 키를 모두 잃으면 암호문은 풀 수 없다.
 
@@ -930,8 +930,83 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 **처음 한 번**(운영 노드에서 — 평문이 있는 곳):
 1. sops · age 설치(age 는 `apt install age`, sops 는 릴리스 바이너리 + 체크섬).
-2. 운영 노드 · 작업 PC 는 각자 `./ops/62-secrets-sops.sh keygen`, 보관용은 이름을 주어 `keygen ~/age-offline-backup.txt`(옮긴 뒤 그 기계에서는 지운다) → 공개 키 셋을 모아 `init age1… age1… age1…`.
+2. 운영 노드 · 작업 PC 는 각자 `./ops/62-secrets-sops.sh keygen`, 보관용은 이름을 주어 `keygen ~/age-offline-backup.txt`(옮긴 뒤 그 기계에서는 지운다) → 공개 키 셋을 모아 `init age1… age1… age1…`. **끝(2026-11-19)** — 받는 사람 셋(작업 PC · 오프라인 보관 · 운영 노드, 세 키 모두 작업 PC 에서 만들어 옮겼다)을 `.sops.yaml` 에 커밋했다.
+   ⚠️ `init` 은 **저장소 안에서** 돌린다 — 스크립트가 자기 위치(`$0/..`)로 저장소 루트를 잡는다. `/tmp` 에 사본을 꺼내 `sudo` 로 돌리면 루트가 `/` 가 되어 `/.sops.yaml` 에 root 소유로 쓴다(저장소에는 아무것도 생기지 않는다). 운영 체크아웃을 더럽히지 않으려면 자리만 지정한다: `SOPS_CONFIG=$HOME/ecommerce-msa/.sops.yaml /tmp/62.sh init …`.
+   ⚠️ 같은 공개 키를 두 번 넘겨도 `sops` 는 거절하지 않는다 — 리뷰에서 "받는 사람이 셋" 으로 보여 누가 더 있는지 세게 만든다. `init` 이 중복을 걸러내고 몇 개를 뺐는지 말한다(실제로 운영 노드의 첫 `.sops.yaml` 에 같은 키가 둘 있었다).
 3. `encrypt` → `check` → `git add k8s/20-secret.enc.yaml .sops.yaml` → 커밋 · push(값은 암호문).
 4. 그 뒤로는 평문 대신 암호문이 원본 — 바꿀 때는 `decrypt` → 고치기 → `encrypt` → 커밋, 적용은 `apply`. ops/27 · 46 · 59 처럼 평문을 읽는 스크립트는 `decrypt` 로 평문을 만든 뒤 돌린다.
 
-**남은 것**: ops/28 이 배포 때 암호문과 클러스터 Secret 의 어긋남을 경고하기, 정기 교체 점검표(분기 — DB · Redis · JWT · 스토어 비밀번호), 오프라인 보관 키의 복구 훈련.
+**첫 암호화(2026-11-19, 운영 노드)**: `encrypt` → 키 **32개** 암호화 · `check` 네 줄 초록(값이 모두 암호문 · 이 기계 키로 풀림 · 평문과 같음). `check` 가 낸 두 줄은 **운영의 실제 상태**이고 결함이 아니다:
+- 예시에는 있고 암호문에 없는 셋 — `TOTP_ENCRYPTION_KEY`(없으면 `TotpSecretCipher` 가 JWT 비밀에서 파생한 키를 쓰고 경고를 찍는다, docs/70 — **JWT 비밀을 교체하기 전에** 전용 키를 넣고 한 번 배포해야 한다) · `JWT_SIGNING_KEYS` · `JWT_ACTIVE_KID`(없으면 legacy = `JWT_SECRET_KEY` 한 키, ops/46 을 아직 돌리지 않았다). 클러스터 Secret 도 32개라 파일과 어긋난 것은 없다.
+- 암호문에만 있는 넷 — `OAUTH2_{GOOGLE,GITHUB}_CLIENT_{ID,SECRET}`. 예시에서 선택 제공자는 주석이라 비교에 잡히지 않는다.
+⚠️ 운영 노드에서 `ops/62` 를 돌릴 때는 **스크립트를 저장소의 `ops/` 안에 두고** 돌린다(`$0/..` 로 루트를 잡으므로 `/tmp` 사본은 평문 · 예시 · 암호문 자리를 모두 `/` 에서 찾는다 — `SOPS_PLAIN` · `SOPS_ENC` 는 바꿀 수 있지만 예시 경로는 못 바꾼다). 끝나면 꺼낸 파일을 지워 체크아웃을 배포 버전 그대로 둔다(docs/85 §9-2 ⓠ).
+🐛 그때 디스크에 평문이 셋 있었다 — nano 가 남긴 `20-secret.yaml.save`(2026-08-01) · `.save.1`(2026-10-24, 스토어 비밀번호 교체 직전)로 지문이 서로 달랐다. `.gitignore` 의 `k8s/20-secret.yaml*` 이 커밋은 막지만, "어느 것이 최신인지 모른다" 는 이 절이 없애려던 문제 그 자체다 — `shred -u` 로 지웠다(암호문의 커밋 이력이 그 역할을 한다).
+
+**남은 것** → 🕰️ 2026-11-20 아래 §24-1(어긋남 경고 · 교체 점검표 · 보관 키 복구 훈련). 아직 남은 것: 전용 `TOTP_ENCRYPTION_KEY` 넣기(JWT 비밀 교체의 전제 — §24-1 표).
+
+### 24-1. 어긋남 경고 · 교체 점검표 · 보관 키 복구 훈련(2026-11-20)
+
+- `./ops/62-secrets-sops.sh drift` — 암호문 ↔ 클러스터의 `ecommerce/ecommerce-secrets`. 값 대신 정규화한 지문(stringData 는 값 그대로, `data` · 클러스터는 base64 를 푼 바이트의 sha256 앞 12자)으로 **키 이름만** 말한다: 한쪽에만 있는 키 · 값이 다른 키. 같으면 0, 다르면 1.
+  **`ops/28` 이 배포 전에 부른다**(`check_secret_drift`) — 다르면 알리고 배포는 계속한다. sops · 이 기계의 키 · 암호문이 없으면 건너뛴다(`SKIP_SECRET_DRIFT=1` 로도).
+- `./ops/62-secrets-sops.sh drill <보관 키 파일>` — **이 기계의 키를 쓰지 않고** 그 키 하나로 풀리는가 · `.sops.yaml` 의 받는 사람에 있는가 · 평문 · 클러스터와 같은가. 분기마다 오프라인 키를 꺼내 한 번 돌리고 날짜를 아래 표에 적는다(키는 다시 오프라인으로).
+- `./ops/62-secrets-sops.sh rotation` — 키마다 **값이 마지막으로 바뀐 날**, 오래된 순 · `ROTATION_DAYS`(기본 90) 넘으면 ⏰. 🐛 처음에는 암호문의 그 키 줄이 바뀐 커밋으로 봤는데, `encrypt` 는 값을 **모두 새로 암호화**(새 IV)해 줄이 매번 바뀐다 — 그 날짜는 "마지막 encrypt" 일 뿐이다. 이력의 판마다 이 기계의 키로 풀어 지문이 마지막으로 바뀐 판을 찾는다(풀리지 않는 옛 판에서 멈춘다, 값 · 평문 파일은 남기지 않는다).
+
+**분기 교체 점검표**(`rotation` 의 ⏰ 부터):
+
+| 키 | 바꾸는 법 | 다시 읽는 곳 |
+|---|---|---|
+| `LOCAL_DB_PASSWORD` | DB 에서 `ALTER ROLE product PASSWORD …` → `decrypt` → 고치기 → `encrypt` → `apply` | DB 를 쓰는 백엔드 모두 재시작 — 바꾸는 동안 옛 연결은 그대로, 새 연결만 새 값 |
+| `LOCAL_KEY_STORE_PASSWORD` · `LOCAL_KEY_PASSWORD` | `ops/59-rotate-store-password.sh` check → apply → 하루 뒤 cleanup(스토어 · Secret · 평문을 함께) | ops/59 가 하나씩 재시작 |
+| `JWT_SIGNING_KEYS` · `JWT_ACTIVE_KID` | `ops/46-rotate-jwt-key.sh` add → activate → 토큰 수명 뒤 retire(docs/68 §17) | user · gateway · chat |
+| `JWT_SECRET_KEY` · `TOTP_ENCRYPTION_KEY` · `SMS_CODE_PEPPER` | **정기 교체하지 않는다** — 2FA 대기 토큰 · 복구 코드(`auth.recovery-code.pepper` 가 없으면) · TOTP 비밀 · 인증번호의 뿌리라 바꾸면 그것들이 무효. 샜을 때만, 사용자 재등록 안내와 함께 | user · notification |
+| `KAFKA_SSL_*` | 브로커 스토어와 함께 | Kafka 를 쓰는 서비스 |
+| 바깥 API 키(`AMAZON_*` · `PORTONE_*` · `STRIPE_*` · `PAYPAL_*` · `MAIL_PASSWORD` · `DELIVERY_*` · `SPRING_DATA_MONGODB_PASSWORD` · ES) | 제공자 콘솔에서 새 키 → `encrypt` → `apply` → 그 서비스 재시작 → 확인 뒤 옛 키 폐기 | 그 키를 읽는 서비스 |
+
+Redis 비밀번호는 이 Secret 에 없다(인프라 쪽). 교체 · 훈련 기록:
+
+| 날짜 | 한 것 | 결과 |
+|---|---|---|
+| — | (첫 `drill` · `rotation` 을 여기에) | |
+
+**확인**: `SopsSecretsScriptTest` +3(실제 sops · age — `drift` 는 다른 키 이름만 · 값은 출력하지 않음 · 종료 1, `drill` 은 보관 키 하나로 통과하고 받는 사람이 아닌 키는 실패, `rotation` 은 다시 암호화만 한 판을 교체로 세지 않는다) · 가드 `SopsSecretGuardTest` +1(ops/28 이 `drift` 를 한 번 부른다). 변이: 지문 비교를 빼면 · `drill` 이 이 기계의 키로 풀면 · `rotation` 이 판 0 의 날짜만 보면 각각 실패.
+
+## 25. 관리 포트 분리 — actuator 는 9180, 지표 에이전트만(2026-11-20, 가드 B-119)
+
+**문제**: actuator(health 상세 · metrics · prometheus)가 앱 포트에 있었고, 들어오는 정책(§11, k8s/95)은 같은 네임스페이스에 **모든 포트**를 열었다. B-112 로 노출 목록을 넷으로 줄였지만, 같은 네임스페이스의 파드 하나만 뚫려도 모든 서비스의 지표 · health 상세를 인증 없이 읽었다. egress 1단계(§23)도 같은 네임스페이스는 연다 — 그 길은 받는 쪽에서 닫아야 한다.
+
+**한 것**:
+- 자바 Deployment 열셋(k8s/30 ~ 49)에 `MANAGEMENT_SERVER_PORT=9180` · 컨테이너 포트 `management`(9180) · actuator HTTP 프로브는 `port: management`. **설정 파일(yml)에는 넣지 않았다** — 개발 PC 는 서비스를 한 기계에서 함께 띄우므로 관리 포트가 겹친다. 그래서 바뀌는 것은 k8s 뿐이다.
+- 관리 포트는 **앱 포트의 TLS 를 물려받는다**(`server.ssl` — 프로브는 그대로 HTTPS) · Spring Security 의 규칙도 물려받는다(config-server 의 비밀번호, user-service 의 `EndpointRequest`). Service 는 관리 포트를 내지 않는다 — Ingress · 터널 · 다른 파드가 Service 이름으로 닿을 길이 없다.
+- k8s/95: `allow-same-namespace` 는 **앱 포트 목록만**(매니페스트의 containerPort 와 같다 — 포트를 더하면 여기도, 가드가 맞춘다) · 새 `allow-management-from-metrics-agent`(9180 은 `app=metrics-agent` · 두드리기 파드만) · traefik → 앱 포트(8000 · 8080)만. kubelet 프로브 · `kubectl port-forward` 는 노드에서 오므로 정책과 무관하다(kube-router).
+- 지표 에이전트(external · demo)는 포트 이름 `management` 만 긁는다(예전에는 포트마다 긁고 gRPC 9095 만 뺐다).
+- 배포 스모크: `ops/28` 이 게이트웨이 health 를 `port-forward deploy/gateway-server 19180:9180` 로 본다(`GATEWAY_HEALTH` → ops/06). 관리 포트가 없는 옛 버전(자동 복귀 뒤)이면 예전처럼 앱 포트를 본다. ⚠️ 이것을 고치지 않았다면 스모크의 "게이트웨이 health" 가 404 로 실패해 **모든 배포가 자동 복귀**했을 것이다.
+- `ops/35 check · apply` 가 관리 포트를 두드린다(파드 IP:9180 — 지표 에이전트 라벨은 닿고, 같은 네임스페이스의 다른 파드는 막힌다 · 에이전트가 막히면 되돌린다).
+
+**배포 순서**(이미지 변경 없음 — 매니페스트만, 다음 배포에 함께):
+1. `ops/28` 로 배포 — 파드가 관리 포트로 다시 뜬다(프로브가 그 포트).
+2. **곧바로** 지표 에이전트를 새 규칙으로: `kubectl apply -f k8s-overlays/external/metrics-agent.yaml && kubectl -n ecommerce rollout restart deploy/metrics-agent`. 그 사이 서비스 지표가 끊긴다(옛 규칙은 앱 포트를 긁어 404 — `ServiceDown`). `ops/28` 이 옛 규칙이면 알린다(`warn_metrics_agent`).
+3. 들어오는 정책을 쓰는 클러스터면 `./ops/35-network-policy.sh apply`(관리 포트 줄이 새로 나온다).
+4. 확인: `curl -sk https://localhost:9180/actuator/health` 를 파드 안에서 · `up{job="spring-actuator"}` 가 11개 · 앱 포트의 `/actuator/health` 는 404.
+
+**확인**: gateway · config-server `ManagementPortTest`(시험 인증서를 그 자리에서 만들어 **HTTPS 로** — 앱 포트 /actuator 404, 관리 포트는 TLS 로 health · prometheus, config-server 는 관리 포트에서도 비밀번호 없이 401 · 맞으면 404(노출 밖) — 보안 규칙이 걸린다는 증거) · user-service `ManagementPortTest`(컨테이너 — `EndpointRequest` 규칙이 관리 포트에도, 업무 API 는 401) · 가드 **B-119** `ManagementPortGuardTest` 5 · `NetworkPolicyScriptTest` 3. 변이: 프로브 하나를 앱 포트로 · 같은 네임스페이스 허용에서 포트 목록을 빼면 · 에이전트의 keep 규칙을 drop 으로 · 스모크를 앱 포트로 · 시험에서 관리 포트 설정을 빼면 · ops/35 가 에이전트 막힘을 실패로 보지 않으면 각각 실패.
+
+## 26. 나가는 연결(egress) 2단계 — 포트 좁히기 · 정책 밖이던 파드(2026-11-20)
+
+1단계(§23)의 남은 것을 했다. 적용은 그대로 `./ops/35-network-policy.sh egress-apply` 로만(k8s/97 전체 — 1 · 2단계를 한 번에).
+
+| 정책 | 고르는 파드 | 여는 것 |
+|---|---|---|
+| `egress-public-no-private` | 바깥이 필요한 일곱 | 1단계 그대로 + 인터넷은 **TCP 443 만**(예전에는 모든 포트) |
+| `egress-smtp` | notification | 메일 587 · 465(사설 · 메타데이터 밖) |
+| `egress-mongo-atlas` | chat · mongo-backup | Atlas 27017 · DNS · 클러스터 안 mongodb |
+| `egress-metrics-agent` | metrics-agent | 같은 네임스페이스의 **9180 만**(관리 포트, §25) · 노드 IP:6443(API 서버 — kubernetes Service 는 DNAT 뒤 노드의 6443) · remote write TCP 9090(운영은 노드 IP, 데모는 관측 VM 의 사설 IP — 그래서 대역 대신 포트) · DNS |
+| `egress-cloudflared` | cloudflared | Cloudflare TCP · UDP 7844 · TCP 443(사설 밖) · gateway(8000) · frontend(8080) · kube-system 의 traefik · DNS |
+| `egress-backup-postgres` | postgres-backup · restore-drill | postgres 네임스페이스 5432 · DNS — IP 대역은 하나도 열지 않는다 |
+
+- 백업 CronJob 파드에는 고를 라벨이 없었다 — `app: postgres-backup · mongo-backup · restore-drill` 를 더했다(k8s/85 — 적용은 늘 `ACTION=cronjobs ./ops/29`).
+- 사전 점검이 2단계의 전제를 본다(값은 출력하지 않는다): 메일 포트(Secret `MAIL_PORT`)가 465 · 587 · 설정 저장소(`CONFIG_GIT_URI`)가 https(ssh 면 443 밖) · 백업 `PGHOST` 가 클러스터 안. 하나라도 아니면 적용하지 않는다.
+- 두드리기 그룹이 일곱(internal · public · mail · mongo · metrics · cloudflared · backup) — public 은 `1.1.1.1:80` 이 막혀야 하고, 지표 에이전트는 앱 포트 · DB 로, cloudflared 는 DB · 앱 서비스로, 백업은 Redis · gateway · 인터넷으로 못 가야 한다. 되돌리기(`egress-remove` · 자동)는 일곱 정책을 모두 지운다.
+
+**아직 못 본 것**: kube-router 실제 집행(1단계와 같다 — 이 환경의 docker 안 k3s 는 파드를 못 띄운다). 특히 ① 지표 에이전트의 API 서버 접속(정책이 DNAT 뒤 노드:6443 을 본다는 가정) ② cloudflared 의 QUIC(UDP 7844) ③ traefik 파드 라벨 `app.kubernetes.io/name: traefik`(k3s 기본 차트). 실습 클러스터에서 `egress-apply` → 지표 11개 up · 사이트 · 결제 · 메일 · 채팅 · 백업 한 번(`kubectl create job --from=cronjob/postgres-backup …`) → 운영.
+
+**확인**: `EgressPolicyScriptTest` 9(+2 — public 의 443 밖이 열리면 성공이 아니다, 메일 포트 · ssh 저장소 · 바깥 PGHOST 면 적용하지 않고 값을 말하지 않는다) · 가드 B-117 `EgressPolicyGuardTest` 6(+2 — 인터넷 규칙은 모두 포트가 있다 · public 443 · 메일 · Atlas · 터널 · 에이전트 포트와 고르는 파드, 백업은 IP 대역 없음, 정책의 이름이 CronJob · 오버레이의 실제 라벨과 같다, ops/35 가 지우는 정책 = k8s/97). 변이: public 의 포트를 빼면 · CronJob 라벨을 바꾸면 · 지울 목록에서 하나를 빼면 · public 의 80 확인을 빼면 · 메일 포트 점검을 열면 각각 실패.

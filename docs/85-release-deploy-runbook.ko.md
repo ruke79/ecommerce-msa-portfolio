@@ -377,6 +377,12 @@ kubectl -n ecommerce get pods   # 재시작 0
 ### 9-2. 배포 전
 
 ```bash
+# ⓪ 체크아웃이 지금 운영 버전인지 — ops/28 은 이 트리를 읽는다. 다르면 먼저 맞춘다(git switch --detach <운영 SHA>).
+#    2026-11-19 에 두 번 걸렸다: ops/32 drift 가 '적용됐는데 저장소에 파일이 없다'(체크아웃이 9일 낡았다)로 잡아냈고,
+#    같은 날 인스턴스에서 git switch <브랜치> + git pull 로 또 벗어났다. 운영에서 git pull 은 쓰지 않는다 — 필요한
+#    파일만 git fetch + git show FETCH_HEAD:<경로> 로 꺼낸다(ops/45 머리 참고).
+git -C ~/ecommerce-msa log --oneline -1
+git -C ~/ecommerce-msa status -sb | head -3        # '## HEAD (no branch)' · 미커밋 변경 없음
 # ① 게이트 — 대상 커밋의 CI 가 릴리스 후보까지 초록
 # ② 긴 트랜잭션 0 · 03:00 UTC 백업 창을 피한다(§8-2 의 2-1)
 q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -v ON_ERROR_STOP=1 -c "$2"; }

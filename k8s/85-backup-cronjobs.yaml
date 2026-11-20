@@ -120,6 +120,9 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        metadata:
+          # 나가는 연결 정책(k8s/97 2단계)이 고르는 이름 — 바꾸면 그 정책도. [JA] egress ポリシーが選ぶ名前。
+          labels: { app: postgres-backup }
         spec:
           # ⚠️ OnFailure 가 아니라 Never 다. 차이가 실패했을 때 드러난다:
           #    OnFailure 는 **같은 파드를 그 자리에서 재시작**하고, 백오프 한도에 닿으면
@@ -145,6 +148,7 @@ spec:
           #      ディレクトリは root で動く mongo-backup が先に作るので root 所有 0755 である — 999 は新しいファイルを作れない
           #      (2026-10-10 本番実測: バックアップは成功したのに 'can't create /metrics/pg_backup.prom: Permission denied'
           #      でジョブが失敗し、再試行がバックアップ全体を取り直した)。ファイル一つだけを渡し、ディレクトリの権限には触れない。
+          # [JA] hostPath のディレクトリは root 所有なので、指標ファイルだけを先に作って 999 に渡す。
           initContainers:
             - name: prepare-metrics
               image: postgres:16-alpine
@@ -198,6 +202,7 @@ spec:
                   #      ⚠️ エラーを /dev/null に捨てない。以前は 'ERROR: … 接続できません' の一行だけで、パスワード・pg_hba・
                   #      ネットワークのどれなのか、Pod を別に立てて再現し直す必要があった。
                   #      psql のエラーにパスワードは出ない(ホスト・ポート・ユーザー・理由だけ)。
+                  # [JA] 新しい Pod は数秒間 NetworkPolicy に拒否されるため再試行し、最後は psql のエラーをそのまま出す。
                   tries=0
                   until psql -U "$PGUSER" -d postgres -tAc 'select 1' >/dev/null 2>/tmp/connect.err; do
                       tries=$((tries + 1))
@@ -262,6 +267,7 @@ spec:
                   #      大きく警告するだけにし、続くアラート(指標が古い・無い)が人を呼ぶ。
                   #      (理由はシェルが直接出す — 'can't create …: Permission denied'。リダイレクトが失敗すると後ろの 2> は
                   #      開かれもしないので、エラーを別ファイルで受けようとはしない。)
+                  # [JA] 指標の書き込みに失敗してもジョブは失敗させない(再試行がバックアップ全体をやり直すため)。
                   #    (사유는 셸이 직접 찍는다 — 'can't create …: Permission denied'. 리다이렉션이 실패하면 뒤의 2> 는
                   #     열리지도 않으므로 오류를 따로 파일로 받으려 하지 않는다.)
                   if ! cat > /metrics/pg_backup.prom <<EOF
@@ -301,6 +307,9 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        metadata:
+          # 나가는 연결 정책(k8s/97 2단계)이 고르는 이름 — 바꾸면 그 정책도. [JA] egress ポリシーが選ぶ名前。
+          labels: { app: mongo-backup }
         spec:
           # postgres-backup 과 같은 이유로 Never — 실패한 파드를 남겨 로그를 볼 수 있게 한다.
           # [JA] postgres-backup と同じ理由で Never — 失敗したポッドを残してログを見られるようにする。
@@ -418,6 +427,9 @@ spec:
     spec:
       backoffLimit: 0            # 재시도하지 않는다 — 실패 자체가 알아야 할 신호다 ／ [JA] 再試行しない — 失敗そのものが知るべきシグナルである
       template:
+        metadata:
+          # 나가는 연결 정책(k8s/97 2단계)이 고르는 이름 — 바꾸면 그 정책도. [JA] egress ポリシーが選ぶ名前。
+          labels: { app: restore-drill }
         spec:
           restartPolicy: Never
           containers:
@@ -444,6 +456,7 @@ spec:
                   #      ノードのディスクにそのまま残る — 失敗 Pod は原因を見るために残し(restartPolicy: Never)、成功 Pod も
                   #      successfulJobsHistoryLimit の分だけ残る。2026-10-12 本番実測: 訓練一回でノードの空きが 23G → 16G。
                   #      必要なのはログであって、展開したデータではない。
+                  # [JA] 終了時(成否を問わず)に復元先を止めて消す。Pod が残る間、展開した 5.6G がノードのディスクを占めるため。
                   cleanup() {
                       pg_ctl -D "$RESTORE" -m immediate stop >/dev/null 2>&1 || true
                       rm -rf "$RESTORE"
@@ -466,6 +479,7 @@ spec:
                   #      PostgreSQL は初期化時に 'ssl = on' とデータディレクトリ外の証明書パス(/var/lib/postgresql/tls)を書いておくので
                   #      (k8s/90-dev-infra.yaml pg-init)、そのまま起動すると証明書がなく起動できない。アーカイブを有効にした後なら
                   #      復元先が本番のアーカイブパスへ WAL を書こうとする — 訓練が本番の真似をする理由はない。
+                  # [JA] 本番の postgresql.conf を引き継ぐので、証明書(データディレクトリ外)とアーカイブを切って起動する。
                   pg_ctl -D "$RESTORE" -o "-p 5433 -c listen_addresses=127.0.0.1 -c ssl=off -c archive_mode=off" -w -t 120 start
 
                   echo ">>> 데이터가 실제로 읽히는지 확인 — 데이터베이스마다"
@@ -475,6 +489,7 @@ spec:
                   # [JA] ⚠️ psql の既定 DB はユーザー名と同じ 'postgres' である。サービスのデータは cartdb・productdb・orderdb …
                   #      (k8s/90-dev-infra.yaml pg-init)にあり postgres DB は元々空である — そこだけ数えると復元が正常でも
                   #      「テーブル 0 個」で失敗する(2026-10-12 本番の初訓練がまさにそうだった: 起動は 2 分で済んだ)。
+                  # [JA] 既定の postgres DB は空。サービスのデータベースごとに数える。
                   q() { psql -h 127.0.0.1 -p 5433 -U postgres -d "$1" -tAc "$2"; }
                   total=0
                   for db in $(q postgres "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1"); do

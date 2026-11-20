@@ -640,6 +640,33 @@
 
 ---
 
+## 22. 배포 전 점검이 거짓을 말했다 — 암묵적인 문맥(search_path · `$0/..`)이 답을 정한다
+
+**📖 참고** — Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, Schemas · `search_path`. "표 이름만 쓰면 어느 스키마를 읽는지는 **접속한 롤**이 정한다" 는 설명을 배포 전 점검 도구에 대 봤습니다.
+
+**문제**
+- `ops/32-db-migration.sh` 는 Flyway 이력을 `select … from flyway_schema_history` 로 읽었습니다 — 스키마를 적지 않고 `search_path` 에 맡긴 것입니다. 쿼리는 파드 안에서 **postgres 수퍼유저**로 도니 `search_path` 는 `"$user", public` 이고, `postgres` 스키마는 없으므로 늘 **public** 을 읽었습니다.
+- catalog 는 2026-10-21 부터 `spring.flyway.default-schema: product` 입니다(빈 DB 의 두 번째 기동이 V1 부터 다시 돌던 사고 때문 — [docs/83 §2.8](83-demo-load-test.ko.md)). 그래서 진짜 이력은 `product` 에 있고, `public` 에는 그 전의 옛 기록(V5)이 남아 있습니다.
+- 결과: 운영에서 `./ops/32 summary` 가 catalog 를 **"적용 5 · 저장소 24 · 대기 19건"** 으로, `pending` 이 **"V6 부터 전부 적용된다"** 로 말했습니다. 배포 전에 "이 배포가 DB 를 무엇으로 바꾸나" 를 묻는 자리가 거짓을 말한 것입니다 — 없는 위험을 보고 배포를 멈추거나, 옛 기록의 체크섬으로 `drift` 가 엉뚱한 파일을 가리킵니다. `repair` 는 더 나쁩니다: 한정하지 않은 `DELETE` 는 **다른 스키마의 행**을 지웁니다.
+- 같은 날 같은 종류를 한 번 더 겪었습니다. `ops/62-secrets-sops.sh` 를 `/tmp` 에 사본으로 꺼내 돌리자 `cd "$(dirname "$0")/.."` 가 루트를 `/` 로 잡아 `.sops.yaml` 을 `/` 에 썼고(`sudo` 였기에 성공했습니다), 저장소에는 아무것도 생기지 않았습니다. 평문 · 예시 파일도 모두 `/` 에서 찾아 "평문이 없다" 고 했습니다.
+
+**처리한 내용**
+- 서비스의 이력 스키마를 **설정에서 읽습니다**: `flyway_schema_of()` 가 `application-local.yml` → `application.yml` 순서로 `spring.flyway.default-schema` 를 찾고(없으면 `public`), `hist_of()` 가 한정된 이름을 만듭니다. 설정에 적힌 것을 읽으니 두 벌이 생기지 않습니다 — DB 이름을 jdbc URL 에서 읽는 것과 같은 원칙입니다.
+- `summary` · `info` · `pending` · `drift` · `repair`의 **모든** 쿼리를 한정했습니다. `repair` 의 `DELETE` 도 그렇습니다.
+- 같은 DB 의 **다른** 스키마에 이력 표가 또 있으면 알립니다(`information_schema.tables`) — 운영 productdb 의 `public` 판처럼 옛 기록이 남아 있는 경우입니다. 지우지 않습니다: 지울 이유가 없고, 지우는 것이 위험한 쪽입니다.
+- 같은 점검에서 하나 더 나왔습니다: catalog 가 `적용 25 · 저장소 24` 였습니다. 운영 catalog 는 2026-09-11 에 Flyway **baseline** 으로 시작해 `V0 << Flyway Baseline >>` 행이 있는데, 그것까지 세어 "적용된 마이그레이션" 의 기준이 둘(이력 행 수 vs 저장소 파일 수)이 됐습니다. baseline 행은 세지 않고 "이 DB 는 baseline 에서 시작했습니다" 로 따로 알립니다(체크섬이 없어 `drift` 는 원래 건너뜁니다).
+- 시험 `DbMigrationScriptTest` 7 — 가짜 `kubectl` 의 psql 이 **`search_path` 를 흉내냅니다**(한정하지 않은 이름 = public 판). productdb 에는 `product` 24행 + baseline 1행 · `public` 5행을 두어, 한정을 되돌리면 운영에서 본 "대기 19건" · "V6 부터" 가, baseline 제외를 되돌리면 `적용 25` 가 그대로 돌아옵니다. 마지막 시험은 소스에 한정 없는 `from flyway_schema_history` 가 남지 않았는지 봅니다.
+
+**한계**
+- `default-schema` 를 yml 에서 글자로 읽습니다 — 환경 변수로 넘기면(`SPRING_FLYWAY_DEFAULT_SCHEMA`) 보지 못합니다. 지금 매니페스트에는 그 변수가 없습니다.
+- `spring.flyway.schemas`(목록의 첫 항목이 기본 스키마가 되는 경우)는 보지 않습니다 — 이 저장소는 쓰지 않습니다.
+
+**교훈** — 도구가 "지금 상태" 를 묻는다면, 그 답을 정하는 문맥을 **도구가 쥐어야** 합니다. 접속한 롤이 정하는 `search_path`, 스크립트 위치가 정하는 작업 디렉터리처럼 암묵적인 것에 맡기면, 답이 틀린 것이 아니라 **다른 질문에 답한 것**이 되어 눈치채기 어렵습니다. 배포 전 점검처럼 "아무 일 없음" 이 정상인 자리에서는 더욱 그렇습니다.
+
+→ `DbMigrationScriptTest` · `ops/32-db-migration.sh` 의 `flyway_schema_of` · `hist_of`
+
+---
+
 ## 참고서 목록
 
 | 책 | 출판 | 사례 |
@@ -656,4 +683,4 @@
 | Charity Majors, Liz Fong-Jones, George Miranda, *Observability Engineering* | O'Reilly, 2022 | 15 |
 | Titus Winters, Tom Manshreck, Hyrum Wright, *Software Engineering at Google* | O'Reilly, 2020 | 16 |
 | David Flanagan, *JavaScript: The Definitive Guide*, 7th ed. | O'Reilly, 2020 | 17 |
-| Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. | O'Reilly, 2017 | 20 |
+| Regina Obe, Leo Hsu, *PostgreSQL: Up and Running*, 3rd ed. | O'Reilly, 2017 | 20 · 22 |

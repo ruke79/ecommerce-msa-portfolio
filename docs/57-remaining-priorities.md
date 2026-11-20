@@ -882,7 +882,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 **残り（コードだけでは終わらない）**:
 - NetworkPolicy の egress 許可リスト — 決済 · SMS · メール · 配送会社 · HIBP · DNS の一覧を決めてから（誤って止めると決済が止まる）。 → 🕰️ 第 1 段階は §23（IP リストなし）。
 - 共有サーバー証明書 `tls-keystore`（825 日）をサービスごとに · cert-manager + Reloader（§18）、秘密管理ツール（SOPS · Sealed Secrets · Vault）と定期ローテーション、秘密鍵の HSM/KMS — 本番機材 · コストの判断。
-- 管理ポートの分離（`management.server.port`）— プローブ · metrics-agent · マニフェスト 13 個を一緒に変えるデプロイ作業。
+- ~~管理ポートの分離（`management.server.port`）— プローブ · metrics-agent · マニフェスト 13 個を一緒に変えるデプロイ作業。~~ → 🕰️ 2026-11-20 §25。
 - react-router v7 · jest 30 のメジャーアップ — 画面全体の回帰が必要な別作業。
 - 同じ電話番号を二つのアカウントが使うこと — 止めるか（家族共用の番号）から決めること。
 
@@ -910,7 +910,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 **順序**: 実習クラスタで `egress-apply` → 決済（カード · PayPal）· メール · ソーシャルログイン · 画像アップロード · チャット · 配送照会を一巡 → 本番ノードで `egress-apply`（戻すのは `egress-remove`）。本番にハイブリッドのリモートノード（docs/71）があればノード IP は二つ — スクリプトが両方を展開する。
 
-**第 2 段階（残り）**: metrics-agent · cloudflared · バックアップ CronJob のポリシー、public グループのポート絞り込み（443 · 465/587 · 27017 など）、外部アドレスごとの許可（ドメイン単位が必要になれば Cilium など — ノードが増えるときに一緒に判断）。
+**第 2 段階** → 🕰️ 2026-11-20 §26（metrics-agent · cloudflared · バックアップ CronJob のポリシー、public グループのポート絞り込み）。残り: 外部アドレスごとの許可（ドメイン単位が必要になれば Cilium など — ノードが増えるときに一緒に判断）。
 
 ## 24. 本番 Secret を暗号文でリポジトリに — SOPS + age（2026-11-19）
 
@@ -920,7 +920,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 **したこと**:
 - `ops/62-secrets-sops.sh` — `keygen [<ファイル>]`（age 鍵、公開鍵だけ出力 — ファイルを渡すとその名前で: 保管用 · 別の機械用の鍵をこの機械の鍵と別に）· `init <age1…>`（受け取る人）· `encrypt`（往復確認の後にだけ暗号文を替える）· `check`（値がすべて暗号文 · この機械の鍵で復号できるか · 例とキー名 · 平文と同じか — 値の代わりに sha256 の先頭 12 文字で比較）· `apply`（平文ファイルなしでパイプで `kubectl apply`）· `decrypt`（0600、違う平文は上書きしない — `FORCE=1`）· `updatekeys`。どの経路も値を出力しない。
-- `.sops.yaml` — そのファイルだけ · 値だけを暗号化。受け取る人はプレースホルダー（`age1REPLACE_ME`）でコミット — プレースホルダーの間 `encrypt` は拒否する。
+- `.sops.yaml` — そのファイルだけ · 値だけを暗号化。受け取る人は最初プレースホルダー（`age1REPLACE_ME`）でコミットし — プレースホルダーの間 `encrypt` は拒否する — 2026-11-19 に実際の公開鍵三つに替えた。
 - 暗号文 `k8s/20-secret.enc.yaml` は `.gitignore`（`k8s/20-secret.yaml*`）にかからない — コミットする。ポートフォリオ（公開）には移さない（`.sops.yaml` も）。
 - 受け取る人は三つを勧める — 本番ノード · 作業 PC · オフライン保管（紙 · パスワード管理）。秘密鍵をすべて失うと暗号文は復号できない。
 
@@ -929,8 +929,83 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 **最初の一回**（本番ノードで — 平文がある所）:
 1. sops · age をインストール（age は `apt install age`、sops はリリースのバイナリ + チェックサム）。
-2. 本番ノード · 作業 PC はそれぞれ `./ops/62-secrets-sops.sh keygen`、保管用は名前を渡して `keygen ~/age-offline-backup.txt`（移した後その機械では消す）→ 公開鍵三つを集めて `init age1… age1… age1…`。
+2. 本番ノード · 作業 PC はそれぞれ `./ops/62-secrets-sops.sh keygen`、保管用は名前を渡して `keygen ~/age-offline-backup.txt`（移した後その機械では消す）→ 公開鍵三つを集めて `init age1… age1… age1…`。**完了（2026-11-19）** — 受け取る人三つ（作業 PC · オフライン保管 · 本番ノード、三つとも作業 PC で作って移した）を `.sops.yaml` にコミットした。
+   ⚠️ `init` は**リポジトリの中で**回す — スクリプトは自分の位置（`$0/..`）でリポジトリのルートを決める。`/tmp` にコピーを出して `sudo` で回すとルートが `/` になり、`/.sops.yaml` に root 所有で書く（リポジトリには何も生まれない）。本番のチェックアウトを汚さないなら場所だけ指定する: `SOPS_CONFIG=$HOME/ecommerce-msa/.sops.yaml /tmp/62.sh init …`。
+   ⚠️ 同じ公開鍵を二度渡しても `sops` は拒否しない — レビューで「受け取る人が三つ」に見え、誰がもう一人いるのかと数えさせる。`init` が重複を取り除き、いくつ外したかを言う（実際に本番ノードの最初の `.sops.yaml` に同じ鍵が二つあった）。
 3. `encrypt` → `check` → `git add k8s/20-secret.enc.yaml .sops.yaml` → コミット · push（値は暗号文）。
 4. その後は平文ではなく暗号文が原本 — 変えるときは `decrypt` → 修正 → `encrypt` → コミット、適用は `apply`。ops/27 · 46 · 59 のように平文を読むスクリプトは `decrypt` で平文を作ってから回す。
 
-**残り**: ops/28 がデプロイ時に暗号文とクラスタの Secret のずれを警告すること、定期交換のチェックリスト（四半期 — DB · Redis · JWT · ストアのパスワード）、オフライン保管の鍵の復旧訓練。
+**最初の暗号化（2026-11-19、本番ノード）**: `encrypt` → キー **32 個**を暗号化 · `check` は四行緑（値はすべて暗号文 · この機械の鍵で復号 · 平文と同じ）。`check` が出した二行は**本番の実際の状態**で、欠陥ではない:
+- 例にあって暗号文にない三つ — `TOTP_ENCRYPTION_KEY`（なければ `TotpSecretCipher` が JWT 秘密から派生した鍵を使い警告を出す、docs/70 — **JWT 秘密を交換する前に**専用鍵を入れて一度デプロイする必要がある）· `JWT_SIGNING_KEYS` · `JWT_ACTIVE_KID`（なければ legacy = `JWT_SECRET_KEY` の一鍵、ops/46 をまだ回していない）。クラスタの Secret も 32 個でファイルとずれはない。
+- 暗号文にだけある四つ — `OAUTH2_{GOOGLE,GITHUB}_CLIENT_{ID,SECRET}`。例では任意のプロバイダーはコメントなので比較に乗らない。
+⚠️ 本番ノードで `ops/62` を回すときは**スクリプトをリポジトリの `ops/` の中に置いて**回す（`$0/..` でルートを決めるため `/tmp` のコピーは平文 · 例 · 暗号文の場所をすべて `/` で探す — `SOPS_PLAIN` · `SOPS_ENC` は変えられるが例のパスは変えられない）。終わったら取り出したファイルを消し、チェックアウトをデプロイ版のままにする（docs/85 §9-2 ⓠ）。
+🐛 そのときディスクに平文が三つあった — nano が残した `20-secret.yaml.save`（2026-08-01）· `.save.1`（2026-10-24、ストアのパスワード交換の直前）で指紋が互いに違った。`.gitignore` の `k8s/20-secret.yaml*` はコミットを塞ぐが、「どれが最新か分からない」はこの節が無くそうとした問題そのものだ — `shred -u` で消した（暗号文のコミット履歴がその役を果たす）。
+
+**残り** → 🕰️ 2026-11-20 下の §24-1（ずれの警告 · 交換チェックリスト · 保管鍵の復旧訓練）。まだ残るもの: 専用の `TOTP_ENCRYPTION_KEY` を入れる（JWT 秘密の交換の前提 — §24-1 の表）。
+
+### 24-1. ずれの警告 · 交換チェックリスト · 保管鍵の復旧訓練（2026-11-20）
+
+- `./ops/62-secrets-sops.sh drift` — 暗号文 ↔ クラスタの `ecommerce/ecommerce-secrets`。値の代わりに正規化した指紋（stringData は値のまま、`data` · クラスタは base64 を解いたバイトの sha256 先頭 12 文字）で**キー名だけ**を言う: 片方にだけあるキー · 値が違うキー。同じなら 0、違えば 1。
+  **`ops/28` がデプロイ前に呼ぶ**（`check_secret_drift`）— 違えば知らせ、デプロイは続ける。sops · この機械の鍵 · 暗号文がなければ飛ばす（`SKIP_SECRET_DRIFT=1` でも）。
+- `./ops/62-secrets-sops.sh drill <保管鍵ファイル>` — **この機械の鍵を使わず**その鍵一つで復号できるか · `.sops.yaml` の受け取る人にいるか · 平文 · クラスタと同じか。四半期ごとにオフラインの鍵を出して一度回し、日付を下の表に書く（鍵は再びオフラインへ）。
+- `./ops/62-secrets-sops.sh rotation` — キーごとに**値が最後に変わった日**、古い順 · `ROTATION_DAYS`（既定 90）を超えると ⏰。🐛 最初は暗号文のそのキーの行が変わったコミットで見たが、`encrypt` は値を**すべて暗号化し直す**（新しい IV）ので行は毎回変わる — その日付は「最後の encrypt」にすぎない。履歴の版ごとにこの機械の鍵で復号し、指紋が最後に変わった版を探す（復号できない古い版で止まる、値 · 平文ファイルは残さない）。
+
+**四半期の交換チェックリスト**（`rotation` の ⏰ から）:
+
+| キー | 変え方 | 読み直すところ |
+|---|---|---|
+| `LOCAL_DB_PASSWORD` | DB で `ALTER ROLE product PASSWORD …` → `decrypt` → 修正 → `encrypt` → `apply` | DB を使うバックエンドをすべて再起動 — 変える間、古い接続はそのまま、新しい接続だけ新しい値 |
+| `LOCAL_KEY_STORE_PASSWORD` · `LOCAL_KEY_PASSWORD` | `ops/59-rotate-store-password.sh` check → apply → 一日後に cleanup（ストア · Secret · 平文を一緒に） | ops/59 が一つずつ再起動 |
+| `JWT_SIGNING_KEYS` · `JWT_ACTIVE_KID` | `ops/46-rotate-jwt-key.sh` add → activate → トークンの寿命の後に retire（docs/68 §17） | user · gateway · chat |
+| `JWT_SECRET_KEY` · `TOTP_ENCRYPTION_KEY` · `SMS_CODE_PEPPER` | **定期交換しない** — 2FA 待ちトークン · リカバリーコード（`auth.recovery-code.pepper` がなければ）· TOTP の秘密 · 認証番号の根なので、変えるとそれらが無効になる。漏れたときだけ、利用者の再登録の案内と一緒に | user · notification |
+| `KAFKA_SSL_*` | ブローカーのストアと一緒に | Kafka を使うサービス |
+| 外部 API キー（`AMAZON_*` · `PORTONE_*` · `STRIPE_*` · `PAYPAL_*` · `MAIL_PASSWORD` · `DELIVERY_*` · `SPRING_DATA_MONGODB_PASSWORD` · ES） | 提供元のコンソールで新しいキー → `encrypt` → `apply` → そのサービスを再起動 → 確認後に古いキーを廃棄 | そのキーを読むサービス |
+
+Redis のパスワードはこの Secret にない（インフラ側）。交換 · 訓練の記録:
+
+| 日付 | したこと | 結果 |
+|---|---|---|
+| — | （最初の `drill` · `rotation` をここに） | |
+
+**確認**: `SopsSecretsScriptTest` +3（実際の sops · age — `drift` は違うキー名だけ · 値を出さない · 終了 1、`drill` は保管鍵一つで通り、受け取る人でない鍵は失敗、`rotation` は暗号化し直しただけの版を交換と数えない）· ガード `SopsSecretGuardTest` +1（ops/28 が `drift` を一度呼ぶ）。変異: 指紋の比較を外す · `drill` がこの機械の鍵で復号する · `rotation` が版 0 の日付だけを見る、でそれぞれ失敗。
+
+## 25. 管理ポートの分離 — actuator は 9180、指標エージェントだけ（2026-11-20、ガード B-119）
+
+**問題**: actuator（health の詳細 · metrics · prometheus）がアプリのポートにあり、入ってくるポリシー（§11、k8s/95）は同じネームスペースに**すべてのポート**を開いていた。B-112 で公開リストを四つに絞ったが、同じネームスペースの Pod が一つ破られるだけで全サービスの指標 · health の詳細を認証なしで読めた。egress 第 1 段階（§23）も同じネームスペースは開く — その道は受ける側で閉じる必要がある。
+
+**したこと**:
+- Java の Deployment 13 個（k8s/30 〜 49）に `MANAGEMENT_SERVER_PORT=9180` · コンテナポート `management`（9180）· actuator の HTTP プローブは `port: management`。**設定ファイル（yml）には入れていない** — 開発 PC はサービスを一台で一緒に立てるので管理ポートが重なる。変わるのは k8s だけ。
+- 管理ポートは**アプリのポートの TLS を引き継ぐ**（`server.ssl` — プローブはそのまま HTTPS）· Spring Security の規則も引き継ぐ（config-server のパスワード、user-service の `EndpointRequest`）。Service は管理ポートを出さない — Ingress · トンネル · 他の Pod が Service 名で届く道がない。
+- k8s/95: `allow-same-namespace` は**アプリのポートのリストだけ**（マニフェストの containerPort と同じ — ポートを足すならここにも、ガードが合わせる）· 新しい `allow-management-from-metrics-agent`（9180 は `app=metrics-agent` · 確認用 Pod だけ）· traefik → アプリのポート（8000 · 8080）だけ。kubelet のプローブ · `kubectl port-forward` はノードから来るのでポリシーと無関係（kube-router）。
+- 指標エージェント（external · demo）はポート名 `management` だけを収集する（以前はポートごとに収集し gRPC 9095 だけを外していた）。
+- デプロイのスモーク: `ops/28` がゲートウェイの health を `port-forward deploy/gateway-server 19180:9180` で見る（`GATEWAY_HEALTH` → ops/06）。管理ポートのない旧バージョン（自動復帰の後）なら以前どおりアプリのポートを見る。⚠️ これを直さなければスモークの「ゲートウェイ health」が 404 で失敗し、**すべてのデプロイが自動復帰**していた。
+- `ops/35 check · apply` が管理ポートを確認する（Pod IP:9180 — 指標エージェントのラベルは届き、同じネームスペースの他の Pod は塞がれる · エージェントが塞がれたら戻す）。
+
+**デプロイの順序**（イメージの変更なし — マニフェストだけ、次のデプロイと一緒に）:
+1. `ops/28` でデプロイ — Pod が管理ポートで立ち直す（プローブがそのポート）。
+2. **すぐに**指標エージェントを新しい規則に: `kubectl apply -f k8s-overlays/external/metrics-agent.yaml && kubectl -n ecommerce rollout restart deploy/metrics-agent`。その間はサービスの指標が途切れる（旧規則はアプリのポートを収集して 404 — `ServiceDown`）。`ops/28` は旧規則なら知らせる（`warn_metrics_agent`）。
+3. 入ってくるポリシーを使うクラスタなら `./ops/35-network-policy.sh apply`（管理ポートの行が新しく出る）。
+4. 確認: Pod の中で `curl -sk https://localhost:9180/actuator/health` · `up{job="spring-actuator"}` が 11 個 · アプリのポートの `/actuator/health` は 404。
+
+**確認**: gateway · config-server の `ManagementPortTest`（テスト用の証明書をその場で作り **HTTPS で** — アプリのポートの /actuator は 404、管理ポートは TLS で health · prometheus、config-server は管理ポートでもパスワードなしで 401 · 正しければ 404（公開外）— セキュリティ規則がかかる証拠）· user-service の `ManagementPortTest`（コンテナ — `EndpointRequest` の規則が管理ポートにも、業務 API は 401）· ガード **B-119** `ManagementPortGuardTest` 5 · `NetworkPolicyScriptTest` 3。変異: プローブ一つをアプリのポートに · 同じネームスペースの許可からポートのリストを外す · エージェントの keep 規則を drop に · スモークをアプリのポートに · テストから管理ポートの設定を外す · ops/35 がエージェントの遮断を失敗と見ない、でそれぞれ失敗。
+
+## 26. 外向き接続（egress）第 2 段階 — ポートの絞り込み · ポリシー外だった Pod（2026-11-20）
+
+第 1 段階（§23）の残りをした。適用はそのまま `./ops/35-network-policy.sh egress-apply` だけ（k8s/97 全体 — 第 1 · 2 段階を一度に）。
+
+| ポリシー | 選ぶ Pod | 開くもの |
+|---|---|---|
+| `egress-public-no-private` | 外が必要な七つ | 第 1 段階のまま + インターネットは **TCP 443 だけ**（以前はすべてのポート） |
+| `egress-smtp` | notification | メール 587 · 465（プライベート · メタデータの外） |
+| `egress-mongo-atlas` | chat · mongo-backup | Atlas 27017 · DNS · クラスタ内の mongodb |
+| `egress-metrics-agent` | metrics-agent | 同じネームスペースの **9180 だけ**（管理ポート、§25）· ノード IP:6443（API サーバー — kubernetes Service は DNAT の後ノードの 6443）· remote write TCP 9090（本番はノード IP、デモは観測 VM のプライベート IP — だから帯域ではなくポートで）· DNS |
+| `egress-cloudflared` | cloudflared | Cloudflare TCP · UDP 7844 · TCP 443（プライベートの外）· gateway（8000）· frontend（8080）· kube-system の traefik · DNS |
+| `egress-backup-postgres` | postgres-backup · restore-drill | postgres ネームスペースの 5432 · DNS — IP 帯域は一つも開かない |
+
+- バックアップの CronJob の Pod には選ぶためのラベルがなかった — `app: postgres-backup · mongo-backup · restore-drill` を足した（k8s/85 — 適用はいつも `ACTION=cronjobs ./ops/29`）。
+- 事前点検が第 2 段階の前提を見る（値は出さない）: メールのポート（Secret `MAIL_PORT`）が 465 · 587 · 設定リポジトリ（`CONFIG_GIT_URI`）が https（ssh なら 443 の外）· バックアップの `PGHOST` がクラスタ内。一つでも違えば適用しない。
+- 確認するグループは七つ（internal · public · mail · mongo · metrics · cloudflared · backup）— public は `1.1.1.1:80` が塞がれ、指標エージェントはアプリのポート · DB へ、cloudflared は DB · アプリのサービスへ、バックアップは Redis · gateway · インターネットへ行けないこと。戻し（`egress-remove` · 自動）は七つのポリシーをすべて消す。
+
+**まだ見ていないもの**: kube-router の実際の適用（第 1 段階と同じ — この環境の docker 内の k3s は Pod を立てられない）。特に ① 指標エージェントの API サーバーへの接続（ポリシーが DNAT の後のノード:6443 を見るという前提）② cloudflared の QUIC（UDP 7844）③ traefik の Pod ラベル `app.kubernetes.io/name: traefik`（k3s の既定チャート）。実習クラスタで `egress-apply` → 指標 11 個 up · サイト · 決済 · メール · チャット · バックアップ一回（`kubectl create job --from=cronjob/postgres-backup …`）→ 本番。
+
+**確認**: `EgressPolicyScriptTest` 9（+2 — public の 443 の外が開いていれば成功ではない、メールのポート · ssh のリポジトリ · 外の PGHOST なら適用せず値を言わない）· ガード B-117 `EgressPolicyGuardTest` 6（+2 — インターネットの規則はすべてポートを持つ · public 443 · メール · Atlas · トンネル · エージェントのポートと選ぶ Pod、バックアップは IP 帯域なし、ポリシーの名前が CronJob · オーバーレイの実際のラベルと同じ、ops/35 が消すポリシー = k8s/97）。変異: public のポートを外す · CronJob のラベルを変える · 消すリストから一つ外す · public の 80 の確認を外す · メールのポートの点検を開く、でそれぞれ失敗。

@@ -33,6 +33,10 @@ import org.junit.jupiter.api.Test;
  * 🐛 実際にそうなった: 注文進行タイムライン(docs/76)の {@code /saga-projection/...} がトンネルの正規表現になかった。B-49 はフロントの
  * パスとゲートウェイを照合するが、そのリストも {@code *-service} だけなのでこのパスを見ていなかった。
  *
+ *
+ * <p>[JA] 外(Cloudflare トンネル)がゲートウェイへ送るパス = ゲートウェイがルーティングするパス。トンネルを忘れるとエラーではなく
+ * HTML 200 が返り、サーバーログにも残らない。saga-projection が実際に抜けていた。
+ *
  * <p>B-85: 바깥으로 들어오는 길은 터널 하나뿐 — 매니페스트(k8s/ · k8s-overlays/)에 노드 포트를 여는 것(Service
  * {@code type: LoadBalancer · NodePort}, {@code nodePort} · {@code hostPort} · {@code hostNetwork: true})이 없다.
  * 🐛 게이트웨이 Service 가 LoadBalancer 였다 — 운영은 {@code --disable servicelb} 라 외부 IP 는 없었지만 LoadBalancer 는
@@ -41,6 +45,7 @@ import org.junit.jupiter.api.Test;
  * {@code type: LoadBalancer · NodePort}、{@code nodePort} · {@code hostPort} · {@code hostNetwork: true})がない。
  * 🐛 ゲートウェイの Service が LoadBalancer だった — 本番は {@code --disable servicelb} なので外部 IP はなかったが、LoadBalancer は
  * nodePort も一緒に受け、全ノードの 30000 番台のポートがゲートウェイへ開いていた。
+ * [JA] 外から入る道はトンネルだけ。LoadBalancer は servicelb 無効でも nodePort を受け、全ノードのポートが開いていた。
  */
 @DisplayName("B-82 · B-85: 터널이 게이트웨이로 보내는 경로 = 게이트웨이 라우트, 노드 포트를 여는 매니페스트 없음")
 public class EdgeRoutingGuardTest {

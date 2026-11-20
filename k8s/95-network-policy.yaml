@@ -8,7 +8,8 @@
 # 위에 있다 — 파드 하나만 뚫리면 전부 열린다(docs/27 §14, docs/54 §10.1).
 #
 # 무엇을 열어 두나:
-#   · ecommerce 안끼리는 모두 — 서비스끼리 Eureka(파드 IP)로 부르고, cloudflared·백업 CronJob 도 여기 있다.
+#   · ecommerce 안끼리는 앱 포트 모두 — 서비스끼리 Eureka(파드 IP)로 부르고, cloudflared·백업 CronJob 도 여기 있다.
+#     관리 포트(9180, actuator)는 metrics-agent 만(2026-11-20, B-119 · docs/57 §25).
 #   · kube-system(traefik) → frontend·gateway-server — 터널의 나머지 경로가 traefik 을 거친다(k8s-overlays/prod/cloudflared.yaml).
 #   · 인프라 네임스페이스(postgres·redis·kafka·mongodb·elasticsearch)는 ecommerce 와 자기 네임스페이스에서만.
 #   · 노드 자신(kubelet 프로브, kubectl port-forward/exec, 노드의 관측 스택)은 k3s 의 정책 컨트롤러(kube-router)가
@@ -60,8 +61,47 @@ spec:
   podSelector: {}
   policyTypes: [ Ingress ]
   ingress:
+    # 앱 포트만 — 관리 포트(9180, actuator)는 빼고 아래 allow-management-from-metrics-agent 가 따로 연다(B-119, docs/57 §25).
+    # 🐛 예전에는 포트를 적지 않아 같은 네임스페이스의 아무 파드나 다른 서비스의 /actuator(지표 · health 상세)를 인증 없이 읽었다.
+    # 매니페스트에 앱 포트를 더하면 여기에도 — 가드 ManagementPortGuardTest 가 containerPort 와 맞춘다.
+    # [JA] アプリのポートだけ — 管理ポート(9180)は外し、下の allow-management-from-metrics-agent が別に開く。
     - from:
         - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 8000 }   # gateway-server
+        - { protocol: TCP, port: 8080 }   # user-service · frontend
+        - { protocol: TCP, port: 8081 }   # catalog-service
+        - { protocol: TCP, port: 8082 }   # cart-service
+        - { protocol: TCP, port: 8084 }   # order-service
+        - { protocol: TCP, port: 8086 }   # chat-service
+        - { protocol: TCP, port: 8087 }   # pay-service
+        - { protocol: TCP, port: 8183 }   # coupon-service
+        - { protocol: TCP, port: 8188 }   # notification-service
+        - { protocol: TCP, port: 8189 }   # delivery-service
+        - { protocol: TCP, port: 8190 }   # saga-projection
+        - { protocol: TCP, port: 8761 }   # eureka-server
+        - { protocol: TCP, port: 8888 }   # config-server
+        - { protocol: TCP, port: 9095 }   # catalog-service gRPC(재고 예약) ／ [JA] catalog-service gRPC(在庫予約)
+---
+# 관리 포트(actuator) — 지표 에이전트만(k8s-overlays/external · demo 의 metrics-agent). kubelet 프로브 · kubectl port-forward 는
+# 노드에서 오므로 정책과 무관하게 열린다(kube-router). [JA] 管理ポート — 指標エージェントだけ。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-management-from-metrics-agent
+  namespace: ecommerce
+spec:
+  podSelector: {}
+  policyTypes: [ Ingress ]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              # netpol-probe-metrics 는 ops/35 가 띄우는 두드리기 파드(같은 정책을 받게 — k8s/97 의 egress-metrics-agent 도)
+              # [JA] netpol-probe-metrics は ops/35 が立ち上げる叩き用 Pod(同じポリシーを受けるように — k8s/97 の egress-metrics-agent も)
+              - { key: app, operator: In, values: [ metrics-agent, netpol-probe-metrics ] }
+      ports:
+        - { protocol: TCP, port: 9180 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -74,9 +114,14 @@ spec:
       - { key: app, operator: In, values: [ frontend, gateway-server ] }
   policyTypes: [ Ingress ]
   ingress:
+    # traefik 은 앱 포트로만 보낸다(Ingress 의 Service 포트) — 관리 포트는 열지 않는다(B-119).
+    # [JA] traefik はアプリポートにだけ送る(Ingress の Service ポート) — 管理ポートは開けない(B-119)。
     - from:
         - namespaceSelector:
             matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: TCP, port: 8000 }   # gateway-server
+        - { protocol: TCP, port: 8080 }   # frontend
 ---
 # ── 인프라 — ecommerce 와 자기 네임스페이스에서만 ─────────────────────────────────
 # [JA] ── インフラ — ecommerce と自分のネームスペースからのみ ──

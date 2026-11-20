@@ -234,7 +234,7 @@ Cloudflare トンネル（`k8s-overlays/prod/cloudflared.yaml`）が `https://ga
 
 - ~~HorizontalPodAutoscaler、PodDisruptionBudget~~ → `70-autoscaling.yaml` で追加済み。
   chat-service はインメモリの STOMP ブローカーなのでスケールアウトから除外（docs/03 F-7）、eureka は peer-awareness の設定が先に必要なため除外。
-- ~~NetworkPolicy による名前空間間のトラフィック制限~~ → `95-network-policy.yaml`（受信接続のみ）。kustomization の外 — `ops/35-network-policy.sh apply` で確認しながら適用（docs/57 §11）。外向き接続の第 1 段階は `97-network-policy-egress.yaml` — `ops/35-network-policy.sh egress-apply` だけで（ノード IP を展開し · バックエンドがクラスタ内か確認し · 塞がれば戻す、docs/57 §23）。
+- ~~NetworkPolicy による名前空間間のトラフィック制限~~ → `95-network-policy.yaml`（受信接続のみ）。kustomization の外 — `ops/35-network-policy.sh apply` で確認しながら適用（docs/57 §11）。外向き接続の第 1 段階は `97-network-policy-egress.yaml` — `ops/35-network-policy.sh egress-apply` だけで（ノード IP を展開し · バックエンドがクラスタ内か確認し · 塞がれば戻す、docs/57 §23）。第 2 段階（443 だけ · メール · Atlas · 指標エージェント · cloudflared · バックアップ）も同じファイル（docs/57 §26）。管理ポート: Java の Pod の actuator は 9180（`management`、Service の外 · 95 が指標エージェントにだけ開く、docs/57 §25 · B-119）。
 - インフラ（Kafka/Postgres/Redis/Mongo/ES）まで StatefulSet/Operator でクラスター内に取り込む
 - ゲートウェイ前段の TLS passthrough Ingress（公開証明書を使う場合）
 - Secret を平文の代わりに Sealed Secrets / External Secrets Operator で管理

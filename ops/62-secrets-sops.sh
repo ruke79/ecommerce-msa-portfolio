@@ -18,6 +18,9 @@
 #   ./ops/62-secrets-sops.sh apply                  # 풀어서 곧바로 kubectl apply — 평문 파일을 만들지 않는다
 #   ./ops/62-secrets-sops.sh decrypt                # 평문 파일로 푼다(0600) — 다른 ops 스크립트가 평문을 읽을 때만
 #   ./ops/62-secrets-sops.sh updatekeys             # .sops.yaml 의 받는 사람이 바뀐 뒤 — 값은 그대로, 받는 사람만 다시
+#   ./ops/62-secrets-sops.sh drift                  # 암호문 ↔ 클러스터의 Secret — 어느 키가 다른지(값 없이 지문). ops/28 이 배포 전에 부른다
+#   ./ops/62-secrets-sops.sh drill <키 파일>         # 보관 키 복구 훈련 — 그 키 하나로 풀리는가 · 평문 · 클러스터와 같은가(분기마다, docs/57 §24)
+#   ./ops/62-secrets-sops.sh rotation               # 교체 점검표 — 키마다 값이 마지막으로 바뀐 날(이력의 판마다 지문) · 오래된 순
 #
 # 지키는 것: 값을 출력하지 않는다(키 이름 · 개수 · 지문 앞 12자만). 평문은 umask 077 · 임시 파일은 지운다.
 # 개인 키 위치: SOPS_AGE_KEY_FILE(기본 ~/.config/sops/age/keys.txt) — 저장소 밖. 잃으면 그 키로만 풀리던 암호문은 못 푼다 →
@@ -30,6 +33,8 @@ ENC="${SOPS_ENC:-k8s/20-secret.enc.yaml}"
 EXAMPLE="k8s/20-secret.example.yaml"
 CONFIG="${SOPS_CONFIG:-.sops.yaml}"
 KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
+NS="${SECRET_NAMESPACE:-ecommerce}"
+SECRET_NAME="${SECRET_NAME:-ecommerce-secrets}"
 export SOPS_AGE_KEY_FILE="$KEY_FILE"
 SOPS="${SOPS_BIN:-sops}"
 
@@ -101,8 +106,17 @@ cmd_init() {
     for r in "$@"; do
         [[ "$r" =~ ^age1[0-9a-z]{58}$ ]] || die "age 공개 키 모양이 아니다: ${r:0:12}…"
     done
+    # 같은 키를 두 번 넘겨도 한 번만 쓴다(순서 유지) — 2026-11-19 운영 노드의 .sops.yaml 에 같은 키가 둘 들어가 있었다.
+    # sops 는 중복을 거절하지 않아 조용히 남고, 리뷰에서 "받는 사람이 셋" 으로 보여 누가 더 있는지 세게 만든다.
+    # [JA] 同じ鍵を二度渡しても一度だけ書く(順序は保つ)— sops は重複を拒まないため静かに残り、レビューで数を誤らせる。
+    local uniq=() seen
+    for r in "$@"; do
+        seen=0
+        for u in "${uniq[@]:-}"; do [ "$u" = "$r" ] && seen=1 && break; done
+        [ "$seen" = 1 ] || uniq+=("$r")
+    done
     local joined
-    joined=$(IFS=,; echo "$*")
+    joined=$(IFS=,; echo "${uniq[*]}")
     cat > "$CONFIG" <<EOF
 # SOPS 규칙 — ops/62-secrets-sops.sh init 이 쓴다(docs/57 §24). 받는 사람은 공개 키라 커밋해도 된다.
 # [JA] SOPS の規則 — 受け取る人は公開鍵なのでコミットしてよい。
@@ -113,7 +127,7 @@ creation_rules:
     encrypted_regex: ^(data|stringData)\$
     age: $joined
 EOF
-    echo "✅ $CONFIG — 받는 사람 $#명. 이미 암호문이 있으면: ./ops/62-secrets-sops.sh updatekeys"
+    echo "✅ $CONFIG — 받는 사람 ${#uniq[@]}명$([ "${#uniq[@]}" -ne "$#" ] && echo " (중복 $(( $# - ${#uniq[@]} ))개 제거)"). 이미 암호문이 있으면: ./ops/62-secrets-sops.sh updatekeys"
 }
 
 cmd_encrypt() {
@@ -219,6 +233,144 @@ cmd_updatekeys() {
     echo "✅ 받는 사람을 $CONFIG 대로 — 뺀 사람의 키로는 이제 못 푼다(그 사람이 값을 이미 봤다면 값 자체를 교체한다)"
 }
 
+# 값을 정규화한 지문 — stringData 는 값 그대로, data · 클러스터 Secret 은 base64 를 푼 바이트. 같은 값이면 같은 지문이다.
+# [JA] 値を正規化した指紋 — stringData はそのまま、data · クラスターの Secret は base64 を解いたバイト。
+normalized_fingerprints() {   # $1 = 매니페스트 yaml | secret json, $2 = yaml|json ／ [JA] $1 = マニフェスト yaml | secret json、$2 = yaml|json
+    python3 - "$1" "$2" <<'PY'
+import base64, hashlib, json, sys, yaml
+path, kind = sys.argv[1], sys.argv[2]
+doc = json.load(open(path)) if kind == "json" else yaml.safe_load(open(path))
+out = {}
+for k, v in (doc.get("stringData") or {}).items():
+    out[k] = hashlib.sha256(("" if v is None else str(v)).encode()).hexdigest()[:12]
+for k, v in (doc.get("data") or {}).items():
+    out[k] = hashlib.sha256(base64.b64decode(v or "")).hexdigest()[:12]
+for k in sorted(out):
+    print(k, out[k])
+PY
+}
+
+# 두 지문 목록의 차이를 키 이름으로만. 같으면 0, 다르면 1. [JA] 二つの指紋の差をキー名だけで。
+compare_fingerprints() {   # $1 왼쪽 이름, $2 왼쪽 파일, $3 오른쪽 이름, $4 오른쪽 파일 ／ [JA] $1 左の名前、$2 左のファイル、$3 右の名前、$4 右のファイル
+    local only_l only_r differ
+    only_l=$(join -v1 <(cut -d' ' -f1 "$2") <(cut -d' ' -f1 "$4") | tr '\n' ' ')
+    only_r=$(join -v2 <(cut -d' ' -f1 "$2") <(cut -d' ' -f1 "$4") | tr '\n' ' ')
+    differ=$(join "$2" "$4" | awk '$2 != $3 { print $1 }' | tr '\n' ' ')
+    [ -z "${only_l// /}" ] || echo "  ⚠️  $1 에만 있는 키: $only_l"
+    [ -z "${only_r// /}" ] || echo "  ⚠️  $3 에만 있는 키: $only_r"
+    [ -z "${differ// /}" ] || echo "  ⚠️  값이 다른 키: $differ"
+    [ -z "${only_l// /}${only_r// /}${differ// /}" ]
+}
+
+cmd_drift() {
+    need "$SOPS" "sops 를 설치한다"
+    need kubectl "클러스터에 닿는 곳에서 돌린다"
+    [ -f "$ENC" ] || die "$ENC 이 없다 — 암호문을 아직 만들지 않았다(encrypt)"
+    local dir
+    dir=$(mktemp -d); chmod 700 "$dir"
+    trap 'rm -rf "$dir"' RETURN
+    (umask 077; "$SOPS" --decrypt --input-type yaml --output-type yaml "$ENC" > "$dir/plain.yaml" 2>/dev/null) \
+        || die "이 기계의 키($KEY_FILE)로 암호문이 풀리지 않는다"
+    (umask 077; kubectl -n "$NS" get secret "$SECRET_NAME" -o json > "$dir/cluster.json" 2>/dev/null) \
+        || die "클러스터에서 $NS/$SECRET_NAME 를 읽지 못했다(컨텍스트: $(kubectl config current-context 2>/dev/null || echo 없음))"
+    normalized_fingerprints "$dir/plain.yaml" yaml > "$dir/a"
+    normalized_fingerprints "$dir/cluster.json" json > "$dir/b"
+    echo "▶ 암호문 $ENC ↔ 클러스터 $NS/$SECRET_NAME (키 $(wc -l < "$dir/a")개 · $(wc -l < "$dir/b")개)"
+    if compare_fingerprints "암호문" "$dir/a" "클러스터" "$dir/b"; then
+        echo "  ✅ 같다"
+    else
+        echo "  → 암호문이 최신이면 ./ops/62-secrets-sops.sh apply, 클러스터가 최신이면(손으로 바꿨다) decrypt → 그 값으로 고치기 → encrypt"
+        return 1
+    fi
+}
+
+cmd_drill() {
+    [ "$#" -ge 1 ] || die "보관 키 파일을 준다 — 예: drill /media/usb/age-offline-backup.txt"
+    local key="$1"
+    [ -f "$key" ] || die "$key 이 없다"
+    need "$SOPS" "sops 를 설치한다"
+    need age-keygen "age 를 설치한다"
+    [ -f "$ENC" ] || die "$ENC 이 없다"
+    local pub
+    pub=$(age-keygen -y "$key" 2>/dev/null) || die "$key 은 age 개인 키가 아니다"
+    echo "▶ 보관 키 복구 훈련 — $key (공개 키 ${pub:0:16}…)"
+    local bad=0
+    if grep -q "$pub" "$CONFIG" 2>/dev/null; then echo "  ✅ $CONFIG 의 받는 사람에 있다"
+    else echo "  🔴 $CONFIG 의 받는 사람에 없다 — 이 키로는 다음 encrypt 부터 풀 수 없다(init 에 넣고 updatekeys)"; bad=1; fi
+    local dir
+    dir=$(mktemp -d); chmod 700 "$dir"
+    trap 'rm -rf "$dir"' RETURN
+    # 이 기계의 키는 쓰지 않는다 — 보관 키 하나만으로 풀려야 한다.
+    # [JA] このマシンの鍵は使わない — 保管鍵一つだけで復号できなければならない。
+    if (umask 077; SOPS_AGE_KEY_FILE="$key" "$SOPS" --decrypt --input-type yaml --output-type yaml "$ENC" > "$dir/plain.yaml" 2>/dev/null); then
+        normalized_fingerprints "$dir/plain.yaml" yaml > "$dir/a"
+        echo "  ✅ 이 키 하나로 풀린다 — 키 $(wc -l < "$dir/a")개"
+        if [ -f "$PLAIN" ]; then
+            normalized_fingerprints "$PLAIN" yaml > "$dir/p"
+            if compare_fingerprints "보관 키로 푼 것" "$dir/a" "평문 $PLAIN" "$dir/p"; then echo "  ✅ 평문과 같다"; else bad=1; fi
+        fi
+        if command -v kubectl >/dev/null 2>&1 && kubectl -n "$NS" get secret "$SECRET_NAME" -o json > "$dir/cluster.json" 2>/dev/null; then
+            normalized_fingerprints "$dir/cluster.json" json > "$dir/b"
+            if compare_fingerprints "보관 키로 푼 것" "$dir/a" "클러스터" "$dir/b"; then echo "  ✅ 클러스터와 같다"; else bad=1; fi
+        else
+            echo "  ℹ️  클러스터에 닿지 않아 비교하지 않았다"
+        fi
+    else
+        echo "  🔴 이 키로 풀리지 않는다 — 받는 사람에서 빠졌거나 다른 키다. 다른 키가 모두 사라지면 운영 비밀을 잃는다"; bad=1
+    fi
+    [ "$bad" = 0 ] && echo "✅ 훈련 통과 — 날짜를 docs/57 §24 의 점검표에 적는다(키는 다시 오프라인으로)"
+    return $bad
+}
+
+# 분기 교체 점검표 — 키마다 값이 마지막으로 바뀐 커밋 날짜, 오래된 순. 암호문의 줄이 아니라 **값의 지문**으로 본다: encrypt 는 값을 모두
+# 새로 암호화하므로(새 IV) 줄은 매번 바뀐다. 이력의 판마다 이 기계의 키로 풀어 지문만 남긴다(값 · 평문 파일은 남기지 않는다).
+# [JA] 四半期の交換点検表 — キーごとに値が最後に変わったコミット日、古い順。暗号文の行ではなく値の指紋で見る(encrypt は毎回すべて再暗号化)。
+cmd_rotation() {
+    need "$SOPS" "sops 를 설치한다"
+    [ -f "$ENC" ] || die "$ENC 이 없다"
+    # 이력은 암호문이 든 저장소에서 읽는다(SOPS_ENC 로 다른 곳을 가리켜도).
+    # [JA] 履歴は暗号文が入っているリポジトリから読む(SOPS_ENC で別の場所を指していても)。
+    local gdir gname
+    gdir=$(dirname "$ENC"); gname=$(basename "$ENC")
+    git -C "$gdir" ls-files --error-unmatch "$gname" >/dev/null 2>&1 || die "$ENC 이 아직 커밋되지 않았다 — 이력이 없다"
+    local days="${ROTATION_DAYS:-90}" now dir i=0 h ct cs
+    now=$(date -u +%s)
+    dir=$(mktemp -d); chmod 700 "$dir"
+    trap 'rm -rf "$dir"' RETURN
+    # 새것부터: 판마다 "판번호 커밋시각 날짜 키 지문" 줄. 풀리지 않는 판(이 기계가 받는 사람이 아니던 때)에서 멈춘다.
+    # [JA] 新しいものから: 版ごとに「版番号 コミット時刻 日付 キー 指紋」の行。復号できない版(このマシンが受信者でなかった頃)で止まる。
+    while read -r h ct cs; do
+        git -C "$gdir" show "$h:./$gname" > "$dir/enc.yaml" 2>/dev/null || continue
+        (umask 077; "$SOPS" --decrypt --input-type yaml --output-type yaml "$dir/enc.yaml" > "$dir/plain.yaml" 2>/dev/null) || {
+            echo "  ℹ️  $cs 판부터는 이 기계의 키로 풀리지 않는다 — 그 앞은 보지 않는다"; break; }
+        normalized_fingerprints "$dir/plain.yaml" yaml | sed "s/^/$i $ct $cs /" >> "$dir/history"
+        rm -f "$dir/plain.yaml"
+        i=$((i + 1))
+    done < <(git -C "$gdir" log --format='%H %ct %cs' -- "$gname")
+    [ -s "$dir/history" ] || die "이력의 어느 판도 풀리지 않았다"
+    echo "▶ 분기 교체 점검표 — 값이 마지막으로 바뀐 날(판 $i개 · 기준 ${days}일)"
+    # 키마다: 지금(판 0)의 지문과 같은 판이 끊기지 않고 이어지는 가장 오래된 판 = 그 값이 들어온 커밋
+    # [JA] キーごとに: 現在(版 0)の指紋と同じ版が途切れずに続く最も古い版 = その値が入ったコミット
+    python3 - "$dir/history" > "$dir/since" <<'PY'
+import sys
+by = {}
+for line in open(sys.argv[1]):
+    idx, ct, cs, k, fp = line.split()
+    by.setdefault(int(idx), {})[k] = (ct, cs, fp)
+for k, (ct, cs, fp) in by[0].items():
+    since, i = (ct, cs), 1
+    while i in by and by[i].get(k, (None, None, None))[2] == fp:
+        since, i = by[i][k][:2], i + 1
+    print(f"{since[0]}\t{since[1]}\t{k}")
+PY
+    local when d k age
+    while IFS=$'\t' read -r when d k; do
+        age=$(( (now - when) / 86400 ))
+        if [ "$age" -ge "$days" ]; then echo "  ⏰ $k — $d (${age}일)"; else echo "  ✅ $k — $d (${age}일)"; fi
+    done < <(sort -n "$dir/since")
+    echo "  ⏰ 는 교체 차례 — 어떤 값을 바꾸면 무엇을 재시작하는지는 docs/57 §24 의 점검표"
+}
+
 case "${1:-}" in
   keygen)     shift; cmd_keygen "$@" ;;
   init)       shift; cmd_init "$@" ;;
@@ -227,5 +379,8 @@ case "${1:-}" in
   apply)      cmd_apply ;;
   decrypt)    cmd_decrypt ;;
   updatekeys) cmd_updatekeys ;;
-  *) sed -n '2,24p' "$0"; exit 1 ;;
+  drift)      cmd_drift ;;
+  drill)      shift; cmd_drill "$@" ;;
+  rotation)   cmd_rotation ;;
+  *) sed -n '2,27p' "$0"; exit 1 ;;
 esac

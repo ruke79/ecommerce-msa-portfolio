@@ -377,6 +377,12 @@ kubectl -n ecommerce get pods   # 再起動 0
 ### 9-2. デプロイ前
 
 ```bash
+# ⓪ チェックアウトが今の本番バージョンか — ops/28 はこのツリーを読む。違えば先に合わせる（git switch --detach <本番 SHA>）。
+#    2026-11-19 に二度踏んだ: ops/32 drift が「適用済みなのにリポジトリにファイルがない」（チェックアウトが 9 日古い）で
+#    捕まえ、同じ日にインスタンスで git switch <ブランチ> + git pull でまた外れた。本番で git pull は使わない —
+#    必要なファイルだけ git fetch + git show FETCH_HEAD:<パス> で取り出す（ops/45 の冒頭）。
+git -C ~/ecommerce-msa log --oneline -1
+git -C ~/ecommerce-msa status -sb | head -3        # '## HEAD (no branch)' · 未コミットの変更なし
 # ① ゲート — 対象コミットの CI がリリース候補まで緑
 # ② 長いトランザクション 0 · 03:00 UTC のバックアップ窓を避ける（§8-2 の 2-1）
 q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -v ON_ERROR_STOP=1 -c "$2"; }

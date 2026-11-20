@@ -601,6 +601,8 @@ EOF
 #      消して手でも見られなかった(2026-10-17 デモ、saga-projection 再起動 6 回・Pending 3 個)。OOMKilled はログに原因がなく grep では永遠に見えなかった。
 #      今は再起動が最多の Pod(同じなら最新)を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す
 #      (FAILED_POD_DIR、既定 ~/.ecommerce-msa/failed-pods — 700)。
+# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
+#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 show_startup_error() {   # show_startup_error <deployment>
     local d="$1" pod info node reason code image dir logs
     # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
@@ -642,6 +644,7 @@ show_startup_error() {   # show_startup_error <deployment>
     # [JA] 🐛 2026-10-18 デモ: saga-projection が "Invalid or corrupt jarfile" で落ちたが、レジストリのイメージの jar は正常だった
     #      (ハッシュがビルド結果と同じで、ノードのダイジェストもレジストリと同じだった) — そのノードが展開したコピーだけが壊れていた。
     #      同じタグなので kubelet は再取得しない(IfNotPresent) — そのノードで消す必要がある。
+    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     if printf '%s\n' "$logs" | grep -qE "Invalid or corrupt jarfile|Unable to access jarfile|no main manifest attribute"; then
         printf '      → jar 를 열지 못했습니다. 레지스트리 이미지가 멀쩡해도 노드 %s 의 사본만 깨졌을 수 있습니다:\n' "${node:-?}"
         printf '          확인(빌드 VM):  docker run --rm --entrypoint sha256sum <레지스트리>/%s /app/app.jar  ↔ build/libs 의 jar\n' "${image#*/}"
@@ -797,7 +800,11 @@ stamp_change_cause() {   # stamp_change_cause <버전> <deployment...> ／ [JA] 
 #      Pod がすべて Running なのにサイトが 522 を返す状態を実際に経験した(docs/33 §2)。
 
 SMOKE_PF_PID=""
-cleanup_pf() { [ -n "$SMOKE_PF_PID" ] && kill "$SMOKE_PF_PID" 2>/dev/null; SMOKE_PF_PID=""; }
+SMOKE_MGMT_PF_PID=""
+cleanup_pf() {
+    [ -n "$SMOKE_PF_PID" ] && kill "$SMOKE_PF_PID" 2>/dev/null; SMOKE_PF_PID=""
+    [ -n "$SMOKE_MGMT_PF_PID" ] && kill "$SMOKE_MGMT_PF_PID" 2>/dev/null; SMOKE_MGMT_PF_PID=""
+}
 trap cleanup_pf EXIT
 
 # ⚠️ 결과를 echo 로 돌려주지 않고 전역 SMOKE_TARGET 에 담는다.
@@ -861,18 +868,40 @@ resolve_gateway() {
     SMOKE_SKIP_DIRECT=1
 }
 
+# 게이트웨이 health 는 관리 포트(9180)에 있다 — 앱 포트(8000)에는 /actuator 가 없다(B-119, docs/57 §25). Service 는 관리 포트를
+# 내지 않으므로 Deployment 로 port-forward 한다. 옛 버전(관리 포트 없음 — 되돌리기 뒤)이면 열리지 않으니 예전처럼 앱 포트의
+# /actuator/health 를 본다(SMOKE_GATEWAY_HEALTH 를 비워 둔다).
+# [JA] ゲートウェイの health は管理ポート(9180)にある。開かなければ(旧バージョン)以前どおりアプリのポートを見る。
+SMOKE_GATEWAY_HEALTH=""
+resolve_gateway_health() {
+    SMOKE_GATEWAY_HEALTH=""
+    [ -n "${GATEWAY_HEALTH:-}" ] && { SMOKE_GATEWAY_HEALTH="$GATEWAY_HEALTH"; return 0; }
+    kubectl -n "$NS" get deploy gateway-server -o jsonpath='{.spec.template.spec.containers[0].ports[*].name}' 2>/dev/null \
+        | grep -qw management || return 0
+    kubectl -n "$NS" port-forward deploy/gateway-server 19180:9180 >/dev/null 2>&1 &
+    SMOKE_MGMT_PF_PID=$!
+    local i
+    for i in $(seq 1 20); do
+        if (exec 3<>/dev/tcp/127.0.0.1/19180) 2>/dev/null; then exec 3<&- 3>&-; SMOKE_GATEWAY_HEALTH="https://localhost:19180/actuator/health"; return 0; fi
+        sleep 0.5
+    done
+    warn "게이트웨이 관리 포트(9180) port-forward 가 열리지 않았다 — 앱 포트의 /actuator/health 로 본다"
+}
+
 run_smoke() {
     if [ "${NO_SMOKE:-0}" = "1" ]; then
         warn "NO_SMOKE=1 — 스모크 게이트를 건너뜁니다. **검증되지 않은 배포**입니다."
         return 0
     fi
     resolve_gateway
-    log "스모크 테스트  ($SMOKE_TARGET)"
+    resolve_gateway_health
+    log "스모크 테스트  ($SMOKE_TARGET${SMOKE_GATEWAY_HEALTH:+ · health $SMOKE_GATEWAY_HEALTH})"
     # SKIP_DIRECT 는 빈 값이면 ops/06 이 스스로 판단한다 — 그 자동 판단을 덮어써야 하는
     # 경우(포트포워드)에만 값이 들어 있다.
     # [JA] SKIP_DIRECT は空なら ops/06 が自分で判断する — その自動判断を上書きすべき
     #      場合(ポートフォワード)にだけ値が入っている。
     GATEWAY="$SMOKE_TARGET" \
+        GATEWAY_HEALTH="$SMOKE_GATEWAY_HEALTH" \
         INSECURE="${SMOKE_INSECURE:-${INSECURE:-0}}" \
         SKIP_DIRECT="${SMOKE_SKIP_DIRECT:-${SKIP_DIRECT:-}}" \
         ./ops/06-smoke-test.sh
@@ -906,6 +935,7 @@ deploy_version() {   # deploy_version <버전> ／ [JA] deploy_version <バー�
         # 실제로 배포된 것과 다른 버전이 이력에 남으면 없느니만 못하다.
         # [JA] ゲートウェイはまだ $CURRENT_VERSION に固定されているのでここでは記録しない —
         #      実際にデプロイされたものと違うバージョンが履歴に残るならないほうがましだ。
+        # shellcheck disable=SC2086
         # shellcheck disable=SC2086
         stamp_change_cause "$ver" user-service $OTHER_DEPLOYS
         # shellcheck disable=SC2086
@@ -1060,7 +1090,28 @@ check_load_overrides() {
 # [JA] --config-only は今動いているイメージをそのまま使うのでレジストリ確認は不要だ
 #      (タグがレジストリから消えていてもノードには残っている)。
 [ "$CONFIG_ONLY" = "1" ] || verify_images
+# ---------------------------------------------------------------- 운영 Secret 이 암호문과 같은가
+#
+# 운영 Secret 의 원본은 암호문 k8s/20-secret.enc.yaml(SOPS + age, docs/57 §24). 누가 클러스터의 Secret 을 손으로 바꾸고 암호문을
+# 고치지 않았으면(또는 그 반대) 다음 apply 가 어느 한쪽 값을 덮는다. 배포를 막지는 않고 알린다 — 값은 보지 않는다(키 이름만).
+# sops · 이 기계의 키 · 암호문이 없으면 조용히 건너뛴다(개발 PC · 아직 암호문을 만들기 전).
+# [JA] 本番 Secret が暗号文と同じか — 配備は止めずに知らせる(キー名だけ)。sops · 鍵 · 暗号文がなければ飛ばす。
+check_secret_drift() {
+    [ "${SKIP_SECRET_DRIFT:-0}" = "1" ] && return 0
+    [ -f k8s/20-secret.enc.yaml ] || return 0
+    command -v "${SOPS_BIN:-sops}" >/dev/null 2>&1 || { info "sops 가 없어 운영 Secret ↔ 암호문 비교를 건너뜁니다(docs/57 §24)"; return 0; }
+    [ -f "${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" ] || return 0
+    local out
+    if out=$(SECRET_NAMESPACE="$NS" ./ops/62-secrets-sops.sh drift 2>&1); then
+        info "운영 Secret = 암호문(k8s/20-secret.enc.yaml)"
+    else
+        warn "운영 Secret 이 암호문과 다릅니다 — 배포는 계속합니다(값은 보지 않았다):"
+        printf '%s\n' "$out" | sed 's/^/    /' >&2
+    fi
+}
+
 check_identity_secrets
+check_secret_drift
 # --config-only 는 스모크를 돌리지 않는다.
 # [JA] --config-only はスモークを回さない。
 [ "$CONFIG_ONLY" = "1" ] || check_load_overrides
@@ -1107,8 +1158,20 @@ fi
 
 START_EPOCH=$(date -u +%s)
 
+# 지표 에이전트(k8s-overlays/external · demo 의 metrics-agent)는 이 배포가 적용하지 않는다. 관리 포트(B-119)로 바뀐 서비스를
+# 옛 규칙(포트마다 긁기)으로 긁으면 앱 포트의 /actuator/prometheus 가 404 → 서비스 지표 0 · ServiceDown. 옛 규칙이면 알린다.
+# [JA] 指標エージェントはこのデプロイが適用しない。旧規則のままなら知らせる。
+warn_metrics_agent() {
+    kubectl -n "$NS" get configmap metrics-agent-config >/dev/null 2>&1 || return 0
+    if ! kubectl -n "$NS" get configmap metrics-agent-config -o yaml 2>/dev/null | grep -q '__meta_kubernetes_pod_container_port_name'; then
+        warn "지표 에이전트가 옛 규칙이다 — 관리 포트(9180)를 긁지 않아 서비스 지표가 끊긴다(B-119). 지금 다시 적용한다:"
+        warn "  kubectl apply -f k8s-overlays/external/metrics-agent.yaml && kubectl -n $NS rollout restart deploy/metrics-agent   # 운영(oci)"
+    fi
+}
+
 if deploy_version "$VERSION" && run_smoke; then
     journal_append "$ENVIRONMENT" "$VERSION" ok
+    warn_metrics_agent
     ELAPSED=$(( $(date -u +%s) - START_EPOCH ))
     log "배포 완료 — $ENVIRONMENT @ $VERSION  (${ELAPSED}초)"
     info "되돌리려면:  $0 $ENVIRONMENT --rollback   (→ ${CURRENT_VERSION:-이력 참조})"

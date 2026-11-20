@@ -74,6 +74,49 @@ db-host=<DB 호스트>
 
 > 🕰️ 지금: `search.engine=es` 는 "ES 빈 · 색인이 있다" 만 정하고, 검색마다 어느 엔진으로 갈지는 기능 플래그 `catalog.search-engine`(ConfigMap `feature-flags` — `k8s/15-feature-flags.yaml` + `ops/28 --config-only`, 재기동 없이 비율로 · `SearchEngineSelector`, docs/74)가 정한다. 되돌리기도 그 비율을 0 으로.
 
+### ES 를 띄우는 절차 (실습 · 데모 — 운영에는 ES 가 없다)
+
+`k8s/90-dev-infra.yaml` 에 ES 넷(Namespace · PVC 5Gi · Deployment · Service 9200)이 있다. **통째로 apply 하지 않는다** — 다른 인프라까지 저장소의 원본으로 되돌린다(docs/22 §4). 라벨로 ES 만 고른다(가드 **B-120** 이 넷에 라벨이 있는지 지킨다):
+
+```bash
+# 0) 노드 준비 — ES 는 vm.max_map_count ≥ 262144 가 없으면 기동 중에 죽는다(bootstrap check)
+sudo sysctl -w vm.max_map_count=262144
+echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-elasticsearch.conf   # 재부팅에도
+
+# 1) ES 넷만
+kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=elasticsearch
+
+# 2) 뜨기까지 — 처음은 플러그인(nori · kuromoji)을 받아 initContainer 가 1 ~ 2분
+kubectl -n elasticsearch get pod -w
+kubectl -n elasticsearch logs deploy/elasticsearch -c install-analysis-plugins
+kubectl -n elasticsearch exec deploy/elasticsearch -- curl -s localhost:9200/_cluster/health
+```
+
+- 메모리: 힙 1g · 컨테이너 상한 2Gi(`ES_JAVA_OPTS` · `resources.limits`). 노드에 그만큼 여유가 있어야 한다 — 없으면 `OOMKilled` 로 되풀이한다.
+- 디스크: PVC 5Gi(local-path = 노드 디스크). 플러그인도 PVC 안(`.es-plugins`)에 둔다 — 재시작에 네트워크가 필요 없다.
+- `strategy: Recreate` · `replicas: 1` — 두 파드가 같은 data 경로를 열면 두 번째가 `node.lock` 에서 죽는다.
+- 네트워크 정책: `k8s/95` 의 `allow-ecommerce-only`(elasticsearch 네임스페이스)가 **ecommerce 네임스페이스에서만** 받는다. ⚠️ 여러 노드인 클러스터에서 kube-router 는 `namespaceSelector` 로 다른 노드의 파드를 막는다 — catalog 와 ES 가 다른 노드면 그것부터 본다.
+- catalog 는 이미 `SPRING_ELASTICSEARCH_URIS=http://elasticsearch.elasticsearch.svc.cluster.local:9200`(k8s/41)을 들고 있다. 상태(`/actuator/health`)에 ES 를 넣으려면 그 배포에 `MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED=true`(기본 꺼짐 — 가드 B-116: ES 가 없는 운영에서 health 가 늘 DOWN 이었다).
+
+그다음 재색인 · alias · 개수 · 애널라이저 · 플래그는 `ops/03-enable-es-search.sh` 가 한 번에 한다:
+
+```bash
+# 재색인은 관리자 쓰기다 — 게이트웨이를 거쳐 관리자 토큰으로 부른다(catalog 직접 호출은 401:
+# AdminWriteInterceptor + internal-auth.identity-mode=enforce — 신원 헤더는 게이트웨이가 mTLS 로 보낸 것만 신뢰)
+GATEWAY=https://shop.lab ADMIN_TOKEN=<관리자 액세스 토큰> ES_URL=http://localhost:9200 INSECURE=1 \
+  ./ops/03-enable-es-search.sh
+```
+
+재색인은 202 로 바로 돌아오고 배치가 뒤에서 돈다 — 스크립트는 alias `product-alias` 가 생길 때까지 기다리며 **색인 중인 문서 수**를 함께 적는다(기본 30분). 실측: 실습 데모 **상품 1,000만** 이 초당 약 5.7만 건 · 약 3분(`data-node` 6 vCPU · ES 힙 3g). 시간이 다 돼도 문서 수가 늘고 있었으면 "느린 것" 이라고 말해 준다 — 그때 `sync` 를 다시 부르면 409(중복 실행 방지)이니 `TIMEOUT` 을 늘려 기다린다. 관리자 계정이 없으면 `./ops/30-admin-account.sh promote <이메일>`.
+
+전환은 **두 단계**이고 둘 다 저장소를 고쳐 `ops/28 --config-only` 로 올린다(`kubectl patch` 금지):
+
+1. `SEARCH_ENGINE=es`(`k8s/10-configmap.yaml` 또는 그 환경 오버레이) + `--restart catalog-service` — "ES 빈 · 색인이 있다" 만 정한다.
+2. 기능 플래그 `catalog.search-engine` 의 비율(`k8s/15-feature-flags.yaml`) — 실제로 검색을 ES 로 보내는 것은 이쪽이다. 재기동 없이 1분 안팎.
+
+되돌리기는 2 의 비율을 0 으로(가장 빠르다) → 그다음 1 을 `postgres` 로.
+
+
 ### 남은 것 (후속)
 - 관련도 순서가 Postgres 하이드레이션에서 보존되지 않음(현재 정렬은 기존 로직) — 정렬 보존 필요 시 esIds 순서 기반 재정렬 추가.
 - category/subcategory 등 다른 인덱스들의 명시적 매핑, `search_after` 페이지네이션, DB↔ES 증분 동기(outbox 기반, docs/07 R-C3).

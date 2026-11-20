@@ -33,6 +33,8 @@ import org.junit.jupiter.api.Test;
  *   <li>.gitignore は平文({@code 20-secret.yaml*})を防ぎ、暗号文は防がない — 防ぐと暗号文がコミットされない。</li>
  *   <li>ポートフォリオ(公開)には移さない — 本番値の暗号文 · 受信者。</li>
  * </ul>
+ *
+ * <p>[JA] 本番 Secret の暗号文は値がすべて暗号文で、平文は今もコミットされない。ポートフォリオ(公開)には移さない。
  */
 @DisplayName("B-118: SOPS 암호문 · 규칙 · gitignore · 포트폴리오 제외")
 class SopsSecretGuardTest {
@@ -125,5 +127,15 @@ class SopsSecretGuardTest {
             String sync = read("ops/tools/portfolio-sync.py");
             assertThat(sync).contains("'k8s/20-secret.enc.yaml'").contains("'.sops.yaml'");
         }
+    }
+
+    @Test
+    @DisplayName("🔴 배포(ops/28)는 적용 전에 암호문 ↔ 클러스터 Secret 어긋남을 알린다 — 막지 않고, 값은 보지 않는다")
+    void deployWarnsOnSecretDrift() throws IOException {
+        String deploy = read("ops/28-deploy.sh");
+        assertThat(deploy).contains("check_secret_drift()", "ops/62-secrets-sops.sh drift");
+        assertThat(deploy.lines().filter(l -> l.trim().equals("check_secret_drift")).count()).as("부르는 줄").isEqualTo(1);
+        String sops = read("ops/62-secrets-sops.sh");
+        assertThat(sops).contains("drift)      cmd_drift", "drill)      shift; cmd_drill", "rotation)   cmd_rotation");
     }
 }

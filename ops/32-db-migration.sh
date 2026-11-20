@@ -96,6 +96,56 @@ db_of() {
         "$1/src/main/resources/application-local.yml" 2>/dev/null | head -1
 }
 
+# 서비스의 Flyway 이력 표가 **어느 스키마**에 있나. [JA] その service の Flyway 履歴表のスキーマ。
+#
+# 🐛 2026-11-19: 이 스크립트는 표 이름만 적어(`from flyway_schema_history`) psql 의 search_path 에
+#    맡겼다. 쿼리는 postgres 수퍼유저로 도니 search_path 는 `"$user", public` → postgres 스키마는
+#    없어 **늘 public** 이다. catalog 는 2026-10-21 부터 `spring.flyway.default-schema: product`
+#    (빈 DB 의 두 번째 기동이 V1 부터 다시 돌던 사고 — docs/83 §2.8)라 진짜 이력은 product 에 있고
+#    public 에는 그 전의 옛 기록(V5)이 남아 있다. 그래서 운영에서 `pending` 은 "V6 부터 전부 대기",
+#    `drift` 는 "적용됐는데 저장소에 파일이 없다" 로 **거짓을 말했다** — 배포 전 점검이 거짓을 말하는
+#    자리다. 이제 스키마를 설정에서 읽어 표 이름을 한정한다(표 이름만 적지 않는다).
+# [JA] 🐛 2026-11-19: このスクリプトは表名だけを書き(`from flyway_schema_history`)psql の search_path に
+#      任せていた。クエリは postgres スーパーユーザーで走るので search_path は `"$user", public` → postgres スキーマは
+#      存在せず**常に public** になる。catalog は 2026-10-21 から `spring.flyway.default-schema: product`
+#      (空の DB の 2 回目の起動が V1 から再実行された事故 — docs/83 §2.8)なので本当の履歴は product にあり、
+#      public にはそれ以前の古い記録(V5)が残っている。そのため本番で `pending` は「V6 から全部待機」、
+#      `drift` は「適用済みなのにリポジトリにファイルがない」と**嘘をついた** — デプロイ前の点検が嘘をつく
+#      箇所である。今はスキーマを設定から読んで表名を修飾する(表名だけを書かない)。
+flyway_schema_of() {   # flyway_schema_of <서비스> ／ [JA] flyway_schema_of <サービス>
+    local f sch
+    # local 프로파일이 base 를 덮는다 — 읽는 순서도 그렇게.
+    # [JA] local プロファイルが base を上書きする — 読む順序もそのとおりにする。
+    for f in "$1/src/main/resources/application-local.yml" "$1/src/main/resources/application.yml"; do
+        [ -f "$f" ] || continue
+        sch=$(awk '
+            /^[ ]*flyway:[ ]*$/        { ind = match($0, /[^ ]/) - 1; inblk = 1; next }
+            inblk {
+                if ($0 ~ /^[ ]*(#.*)?$/) next                      # 빈 줄 · 주석은 블록을 끝내지 않는다 ／ [JA] 空行 · コメントはブロックを終わらせない
+                if (match($0, /[^ ]/) - 1 <= ind) { inblk = 0; next }
+                if ($0 ~ /^[ ]*default-schema:/) {
+                    sub(/^[ ]*default-schema:[ ]*/, ""); sub(/[ ]*(#.*)?$/, "")
+                    gsub(/["\x27]/, ""); print; exit
+                }
+            }' "$f")
+        [ -n "$sch" ] && { echo "$sch"; return; }
+    done
+    echo public   # 적지 않은 서비스는 search_path 가 결정한다 = public ／ [JA] 書いていないサービスは search_path が決める = public
+}
+
+# 쿼리에 쓸 한정된 이름. 이것만 쓴다. [JA] 修飾した名前だけを使う。
+hist_of() { echo "$(flyway_schema_of "$1").flyway_schema_history"; }
+
+# 같은 DB 의 **다른** 스키마에도 이력 표가 있나 — 있으면 옛 기록이고, 한정하지 않은 쿼리가
+# 그것을 읽는다(위 🐛 가 그 경우였다). 운영 productdb 의 public 판은 옛 기록이라 그대로 둔다.
+# [JA] 同じ DB の**別の**スキーマにも履歴表があるか — あれば古い記録で、修飾していないクエリが
+#      それを読む(上の 🐛 がその場合だった)。本番 productdb の public 版は古い記録なのでそのままにする。
+other_history_schemas() {   # other_history_schemas <db> <쓰는 스키마> ／ [JA] other_history_schemas <db> <使うスキーマ>
+    q "$1" "select table_schema from information_schema.tables
+            where table_name = 'flyway_schema_history' and table_schema <> '$2'
+            order by table_schema" | tr '\n' ' '
+}
+
 SERVICES="user-service catalog-service cart-service order-service pay-service
           coupon-service chat-service notification-service delivery-service"
 
@@ -121,12 +171,8 @@ local_versions() {
 # ⚠️ comm 을 쓰지 않는다. comm 은 양쪽이 **같은 정렬 규칙**이어야 하는데 버전은 1,2,10 처럼
 #    숫자라 `sort -V`(자연순)와 comm 이 기대하는 사전순이 어긋난다 — "file 1 is not in
 #    sorted order" 로 조용히 틀린 답을 낸다. 집합 차이는 정렬 없이 구한다.
-# [JA] リポジトリにはあるがまだ適用されていないバージョン。
-#      ⚠️ comm は使わない。comm は両側が**同じソート規則**である必要があるが、バージョンは 1,2,10 のような
-#      数字なので `sort -V`(自然順)と comm が期待する辞書順がずれる — "file 1 is not in
-#      sorted order" で黙って誤った答えを出す。集合差はソートせずに求める。
 pending_versions() {  # pending_versions <서비스> <db> ／ [JA] pending_versions <サービス> <db>
-    local applied; applied=$(q "$2" "select version from flyway_schema_history where version is not null")
+    local applied; applied=$(q "$2" "select version from $(hist_of "$1") where version is not null")
     if [ -z "$applied" ]; then
         local_versions "$1"
     else
@@ -147,9 +193,13 @@ summary() {
         local db; db=$(db_of "$s")
         [ -n "$db" ] || { printf '  %-22s %s\n' "$s" "jdbc URL 을 읽지 못함"; continue; }
 
-        local applied failed have state
-        applied=$(q "$db" "select count(*) from flyway_schema_history where success")
-        failed=$(q "$db" "select count(*) from flyway_schema_history where not success")
+        local applied failed have state hist base; hist=$(hist_of "$s")
+        # 🐛 baseline 행(V0 `<< Flyway Baseline >>`)은 적용된 마이그레이션이 아니다 — 세면 세는 기준이 둘이 된다
+        #    (이력 행 수 vs 저장소 파일 수). 운영 catalog 는 2026-09-11 에 baseline 으로 시작해 '적용 25 · 저장소 24'
+        #    로 보였다. 체크섬이 없어 drift 는 원래 건너뛴다. [JA] baseline 行は適用済みマイグレーションではない。
+        applied=$(q "$db" "select count(*) from $hist where success and type <> 'BASELINE'")
+        failed=$(q "$db" "select count(*) from $hist where not success")
+        base=$(q "$db" "select count(*) from $hist where type = 'BASELINE'")
         have=$(local_versions "$s" | grep -c .)
 
         if [ -z "$applied" ]; then
@@ -163,6 +213,13 @@ summary() {
             state="최신"
         fi
         printf '  %-22s %-20s %-6s %-6s %s\n' "$s" "$db" "${applied:-–}" "$have" "$state"
+
+        [ "${base:-0}" = "0" ] || info "  ↑ 이 DB 는 Flyway baseline 에서 시작했습니다(V0 행 ${base}개) — '적용' 은 그 행을 세지 않습니다"
+
+        # 다른 스키마의 옛 이력 표 — 한정하지 않은 쿼리가 그걸 읽는다. 지우지 말고 알아만 둔다.
+        # [JA] 別のスキーマの古い履歴表 — 修飾していないクエリがそれを読む。消さずに知っておくだけにする。
+        local others; others=$(other_history_schemas "$db" "${hist%%.*}")
+        [ -z "$others" ] || info "  ↑ 이력 표는 ${hist%%.*} 를 읽습니다. 다른 스키마에도 있습니다(옛 기록): $others"
     done
 
     if [ "$rc" = "1" ]; then
@@ -181,11 +238,12 @@ info_one() {
     local s="$1" db; db=$(db_of "$s")
     [ -n "$db" ] || die "$s 의 DB 를 알 수 없습니다"
 
-    log "$s ($db) 적용 이력"
+    local hist; hist=$(hist_of "$s")
+    log "$s ($db, 이력 스키마 ${hist%%.*}) 적용 이력"
     local rows
     rows=$(q "$db" "select installed_rank, version, description, success,
                            to_char(installed_on,'YYYY-MM-DD HH24:MI'), execution_time
-                    from flyway_schema_history order by installed_rank")
+                    from $hist order by installed_rank")
     if [ -z "$rows" ]; then
         info "이력이 없습니다 — 이 서비스가 아직 한 번도 뜨지 않았거나 DB 가 다릅니다"
         return 0
@@ -288,7 +346,7 @@ drift_all() {
         local db; db=$(db_of "$s")
         [ -n "$db" ] || continue
 
-        local rows; rows=$(q "$db" "select version, checksum from flyway_schema_history
+        local rows; rows=$(q "$db" "select version, checksum from $(hist_of "$s")
                                     where success and version is not null and checksum is not null")
         [ -n "$rows" ] || continue
 
@@ -327,11 +385,12 @@ repair_one() {
     local s="$1" db; db=$(db_of "$s")
     [ -n "$db" ] || die "$s 의 DB 를 알 수 없습니다"
 
-    log "$s ($db) 실패한 마이그레이션 정리"
+    local hist; hist=$(hist_of "$s")
+    log "$s ($db, 이력 스키마 ${hist%%.*}) 실패한 마이그레이션 정리"
 
     local rows
     rows=$(q "$db" "select installed_rank, version, description
-                    from flyway_schema_history where not success order by installed_rank")
+                    from $hist where not success order by installed_rank")
     if [ -z "$rows" ]; then
         ok "실패한 마이그레이션이 없습니다 — 할 일이 없습니다"
         return 0
@@ -364,7 +423,7 @@ EOF
     # 실패 행만 지운다. 성공 행은 건드리지 않는다 — 지우면 이미 적용된 것을 다시 돌린다.
     # [JA] 失敗行だけを消す。成功行には触らない — 消すと既に適用されたものを再実行する。
     local deleted
-    deleted=$(q "$db" "delete from flyway_schema_history where not success")
+    deleted=$(q "$db" "delete from $hist where not success")
     ok "실패 행을 제거했습니다. 파드를 재시작하면 다시 시도합니다:"
     echo "      kubectl -n ecommerce rollout restart deploy/$s"
 }

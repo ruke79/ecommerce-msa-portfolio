@@ -176,6 +176,55 @@ class ConfigurationGuardrailTest {
     }
 
     @Test
+    @DisplayName("B-120: ES 넷(Namespace · PVC · Deployment · Service)은 모두 ecommerce.io/infra=elasticsearch — 한 명령으로 올린다")
+    void elasticsearchDocumentsAreSelectableAsOneGroup() throws IOException {
+        // 운영(OCI)에는 ES 가 없고, 실습 · 데모에서 검색을 ES 로 돌릴 때만 올린다. 그런데 90-dev-infra.yaml 을 통째로
+        // apply 하면 **다른 인프라까지 저장소의 원본으로 되돌린다**(docs/22 §4 — postgres 는 그래서 라벨로 고른다).
+        // 🐛 2026-11-19: ES 넷에는 그 라벨이 없어 `-l` 로 고를 수 없었고, 그때그때 문서를 손으로 잘라 내야 했다 —
+        //    매니페스트를 손으로 자르는 절차는 틀리기 쉽고, 틀려도 조용히 일부만 올라간다(Service 를 빼먹으면
+        //    catalog 가 ES 를 찾지 못한다). 네 문서가 한 라벨로 묶여 있어야 한다.
+        // [JA] ES の四つは一つのラベルで選べること — マニフェストを手で切り出す手順は間違えやすい。
+        Path infra = repoRoot().resolve("k8s/90-dev-infra.yaml");
+        if (!Files.exists(infra)) {
+            return;
+        }
+        List<String> unlabelled = new ArrayList<>();
+        List<String> labelled = new ArrayList<>();
+        for (Object doc : new org.yaml.snakeyaml.Yaml().loadAll(Files.readString(infra, StandardCharsets.UTF_8))) {
+            if (!(doc instanceof Map<?, ?> m)) {
+                continue;
+            }
+            Map<String, Object> meta = (Map<String, Object>) m.get("metadata");
+            if (meta == null) {
+                continue;
+            }
+            String kind = String.valueOf(m.get("kind"));
+            String name = String.valueOf(meta.get("name"));
+            // ES 그룹 = elasticsearch 네임스페이스의 객체 + 그 Namespace 자체
+            // [JA] ES グループ = elasticsearch ネームスペースのオブジェクト + その Namespace 自体
+            boolean isEs = "elasticsearch".equals(String.valueOf(meta.get("namespace")))
+                    || ("Namespace".equals(kind) && "elasticsearch".equals(name));
+            if (!isEs) {
+                continue;
+            }
+            Map<String, Object> labels = (Map<String, Object>) meta.get("labels");
+            String group = labels == null ? null : String.valueOf(labels.get("ecommerce.io/infra"));
+            if ("elasticsearch".equals(group)) {
+                labelled.add(kind + "/" + name);
+            } else {
+                unlabelled.add(kind + "/" + name);
+            }
+        }
+        assertThat(unlabelled)
+                .as("`kubectl apply -f k8s/90-dev-infra.yaml -l ecommerce.io/infra=elasticsearch` 가 이 문서를 빠뜨린다 — "
+                        + "metadata.labels 에 { ecommerce.io/infra: elasticsearch } 를 더할 것")
+                .isEmpty();
+        assertThat(labelled).as("ES 그룹은 Namespace · PVC · Deployment · Service 넷")
+                .containsExactlyInAnyOrder("Namespace/elasticsearch", "PersistentVolumeClaim/es-data",
+                        "Deployment/elasticsearch", "Service/elasticsearch");
+    }
+
+    @Test
     @DisplayName("B-12: PostgreSQL 데이터소스에 MySQL dialect 를 쓰면 안 된다")
     void postgresDatasourceMustNotUseMySqlDialect() throws IOException {
         // chat-service 가 PostgreSQL URL 에 MySQLDialect 를 쓰고 있었다. Hibernate 가 MySQL DDL
@@ -748,6 +797,7 @@ class ConfigurationGuardrailTest {
         // [JA] chat-service は複数 Pod である(2026-11-01, docs/21 §2)。ブローカーは依然として Pod ごとのインメモリ(enableSimpleBroker)で、
         //      Kafka コンシューマーグループはメッセージを一つの Pod にしか渡さない — その Pod が SimpMessagingTemplate で直接送ると、その Pod に
         //      つながった人だけが受け取る(Pod 二つなら半分が黙って受け取れない)。だから送信は StompFanout(Redis pub/sub → 全 Pod)一つに。
+        // [JA] chat の購読者への送信は StompFanout だけ — 直接送ると別の Pod の購読者に届かない。
         Path src = repoRoot().resolve("chat-service/src/main/java");
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> files = Files.walk(src)) {
@@ -1269,11 +1319,6 @@ class ConfigurationGuardrailTest {
         // 안내문에 명령을 적을 일은 계속 있다. 그러니 규칙은 하나다: 따옴표 없는 heredoc
         // 안에서 백틱은 \` 로 쓴다. ops/22 는 이미 그렇게 하고 있었다.
         // [JA] ops/19 の「次のステップ」案内文は $TAG を置換するために `cat <<EOF` で(引用符なしで)開かれていた。その中の 1 行がこうだった:
-        //          ⚠️ ... `kubectl apply -f k8s/` 는 더 이상 쓸 수 없다.
-        //      引用符なしの heredoc ではバッククォートは**コマンド置換**だ。そのためこの案内文はビルドのたびに実際に kubectl apply -f k8s/ を実行していた —
-        //      HPA を復活させ、オーバーレイなしで base マニフェストを適用して直前のデプロイを 1.0.0 に戻した。ジャーナルに 5 回連続 fail が記録された事故の根だ。
-        //      しかもそのコマンドの stdout が案内文の真ん中に挟まって出てきたので、ログを読む人は「誰がこれを打ったのか」と人を疑った(docs/39 §7.6)。
-        //      案内文にコマンドを書くことは今後もある。だからルールは一つ: 引用符なしの heredoc の中ではバッククォートを \` と書く。ops/22 はすでにそうしていた。
         Pattern open = Pattern.compile("<<-?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$");
         List<String> offenders = new ArrayList<>();
 
@@ -1539,17 +1584,6 @@ class ConfigurationGuardrailTest {
         //   · 주석 안의 예시 — 실행되지 않는다(이 주석 자체가 그렇다)
         // [JA] NotificationController にこんな 2 行があった:
         //          log.info("Request Authorization Header: {}", accessToken);
-        //          log.info("토큰에서 추출한 Session ID: {}", sessionId);   // 実はトークン全文だった
-        //      どちらも**有効なアクセストークンを平文で**残す。ログを読める人なら誰でも、期限切れまでそのユーザーになりすませる。
-        //      しかも SSE は接続のたびに出力され、トークン更新のたびにまた出力されるので(TokenRefresher が期限 10 秒前に更新する)すぐに溜まる。
-        //      ログ収集基盤に出てしまえば回収する手段もない。
-        //      2 行目は名前まで間違っていてより危険だった — "Session ID" と書かれているので、レビューで誰もトークンだと思わない。
-        //      だから**名前ではなく値の出所**で止める。
-        //      ルール: **資格情報が入る名前**がログ引数に渡されたら失敗。フォーマット文字列に何と書かれているかは見ない —
-        //      上の 2 行目が示すように説明は間違い得るが、値の出所は間違わない。
-        //      安全な形は通す:
-        //        · `authorizationHeader != null ? "present" : "absent"` — リテラルだけが出る
-        //        · コメント内の例 — 実行されない(このコメント自体がそうだ)
         Pattern logCall = Pattern.compile(
                 "log\\.(?:trace|debug|info|warn|error)\\s*\\(([^;]*)\\)\\s*;", Pattern.DOTALL);
         Pattern credentialArg = Pattern.compile(
@@ -1810,6 +1844,7 @@ class ConfigurationGuardrailTest {
         //      承認ゲートだと書かれていた。しかし非公開リポジトリは Free · Pro · Team プランで Required reviewers を使えない — `production` は
         //      初回実行が作った空の Environment で、ランナーがオンラインだったら事前点検 · バックアップなしで元に戻せないマイグレーションが
         //      出ていくところだった(2026-10-05)。だからトリガーを手動実行一つに絞る。
+        // [JA] 非公開リポジトリでは承認ゲートが無いため、デプロイは手動実行だけで始まるようにする。
         String wf = Files.readString(repoRoot().resolve(".github/workflows/deploy-oci.yml"), StandardCharsets.UTF_8);
 
         // 최상위 `on:` 블록의 트리거 이름(두 칸 들여쓴 키)만 모은다
@@ -1850,6 +1885,8 @@ class ConfigurationGuardrailTest {
      * {@code webhook_configs}(Alertmanager 固有の JSON)なので、ops/17 の例どおり Slack · Discord の URL を入れても形式で拒否されていたはずだ。
      * 0.27 の {@code discord_configs} は URL を設定に直接書くことしか受け付けない(秘密がコミットされる)— ファイル読み取りは 0.28 から(amtool で確認)。
      * ops/17 の到達試験は discord 配送の指標を見る。ローカルで 0.28.1 + 偽 Discord で ops/17 MODE=test が 9/9 · embed 受信。
+     *
+     * <p>[JA] アラートは Discord へ — discord_configs でファイルから URL を読む。0.27 は直書きのみ、ファイルは 0.28 から。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -1905,6 +1942,8 @@ class ConfigurationGuardrailTest {
      * ノード IP で埋める · ノード側の上書きが受信を有効にし既定の引数をすべて書き直す · 本番設定は開発 PC のターゲットだけ外した · 指標が丸ごと
      * なければアラート(ServiceMetricsMissing — そのとき ServiceDown は鳴れない)。ローカルで同じ v2.53.0 でレンダー · promtool · エージェント →
      * 受信(up=1、absent 解消)を確認した。
+     *
+     * <p>[JA] 本番のサービス指標 — クラスタ内のエージェントが集めてノードの Prometheus へ remote write する。以前は 7 日間 0 だった。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -2029,6 +2068,9 @@ class ConfigurationGuardrailTest {
      * PostgresBackupStale は鳴れなかった。守るもの: 上書きの jaeger 上限 · node-exporter(正確な版 · textfile コレクター · k8s/85 の hostPath を
      * 読み取り専用 · ポート公開なし)· 本番 Prometheus がそれを収集する · アラートルールが見る指標名をバックアップ Job が書く。同じ版(v1.8.2)で
      * その引数で起動し {@code ecommerce_pg_backup_last_success_timestamp} が出ることを確認した。
+     *
+     * <p>[JA] 本番ノードの観測上書き — Jaeger のメモリ上限は溜まった追跡に合わせ(≥ 1g)、バックアップ成功時刻の textfile を読む
+     * node_exporter を置く(ポートは公開しない)。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -2087,6 +2129,9 @@ class ConfigurationGuardrailTest {
      * postgresql.conf(PVC の中)にそのパスを書いていたので、最初の Pod だけが起動し、Pod を作り直すと {@code FATAL: could not load server
      * certificate file} で CrashLoopBackOff だった(2026-10-20 実習クラスターの rollout restart — ノード再起動 · 退避 · ops/29 setup も同じ)。
      * パスのディレクトリは PGDATA ボリュームの中か、initContainer が同じボリュームに書くマウントでなければならない。
+     *
+     * <p>[JA] 証明書パスは Pod 起動のたびに埋まること。初期化スクリプトは空の PGDATA で一度だけ動くので、PVC の外へ複製すると
+     * Pod の作り直しで起動できない。
      */
     @Test
     @DisplayName("B-93: 클러스터 안 PostgreSQL 의 ssl 인증서 경로는 PGDATA 안이거나 initContainer 가 파드마다 채우는 볼륨")
@@ -2167,6 +2212,9 @@ class ConfigurationGuardrailTest {
      * 片方のデプロイがもう片方のコンシューマーを再調整する。chat · user-service に使われていないファクトリが notification-service のグループ
      * {@code notification} であった(2026-10-16 削除)。{@code coupon} はすでに本番にある二つのグループなので(cart {@code coupon-use} · coupon
      * {@code coupon-rollback} — トピックが違い再調整だけが絡む)残す — 名前を変えるとオフセットが最初からになるので別にデプロイする。
+     *
+     * <p>[JA] コンシューマーグループ id を二つのモジュールで共有しない。同じトピックなら互いのメッセージを黙って失い、違っても片方の
+     * デプロイがもう片方を再調整する。
      */
     @Test
     @DisplayName("B-92: 컨슈머 그룹 id 는 모듈마다 따로다(알려진 coupon 하나 빼고)")
@@ -2286,6 +2334,9 @@ class ConfigurationGuardrailTest {
      * クラスパスの外だ。それなのにファイルがあると、読む人はその設定({@code spring.cloud.config.uri} など)が生きていると信じる — eureka ·
      * gateway の {@code src/main/resources/bootstrap.yml} とモジュール 9 か所の直下の写しがそうだった(pay の写しは名前まで order-service だった、
      * 2026-10-15 削除)。設定は {@code application*.yml} に置く。
+     *
+     * <p>[JA] 読まれない bootstrap.yml を置かない。spring-cloud-starter-bootstrap がなければ読まれず、モジュール直下の写しはクラスパスの
+     * 外。あると設定が生きていると誤解される。
      */
     @Test
     @DisplayName("B-89: bootstrap.yml 은 spring-cloud-starter-bootstrap 이 있는 모듈의 src/main/resources 에만")
@@ -2468,6 +2519,9 @@ class ConfigurationGuardrailTest {
      * トランザクションの外に出した遠隔呼び出し(catalog · coupon · 決済プロバイダー)も接続を握ったまま待つ。プールが 5 個なので、遅い catalog
      * 一つが他のリクエストまで止めた。切った後は、トランザクションの外で使うエンティティを照会が関連と一緒に読む(@EntityGraph —
      * OrderRepository.findByTrackingId · CartRepository.findByUserId)。
+     *
+     * <p>[JA] order · cart は open-in-view を切る。既定(オン)ではリクエスト中ずっと接続を持ち、トランザクション外の遠隔呼び出しも
+     * 接続を持ったまま待つ。
      */
     @Test
     @DisplayName("B-87: order · cart · coupon 의 spring.jpa.open-in-view 는 false")
@@ -2554,6 +2608,10 @@ class ConfigurationGuardrailTest {
      *       subPath マウントは ConfigMap が変わっても更新されない(再起動しないと反映されない = フラグの意味がない)</li>
      *   <li>ベースの kustomization に入っている</li>
      * </ol>
+     *
+     * <p>[JA] 機能フラグ(docs/74) — 定義ファイル・コード・マニフェストが噛み合い、使い終わったフラグが溜まらない。フラグごとに
+     * owner ・ expires が必要で、期限切れはこのガードが赤くなる。コードが参照するキーは定義ファイルに、定義ファイルの
+     * フラグはコードにある。catalog は ConfigMap を<b>ディレクトリとして</b>マウントする(subPath は更新されない)。
      */
     @Test
     @DisplayName("B-76: 기능 플래그 — 정의 파일이 읽히고, owner · 만료일이 있고, 코드 · 마운트와 맞는다")
@@ -3435,6 +3493,8 @@ class ConfigurationGuardrailTest {
      *
      * <p>[JA] 2026-10-23 実習 CPU プロファイル(docs/83 §5): 七つのサービスに同じようにあったこのアスペクトが、サービスパッケージの全メソッド
      * 呼び出しごとに INFO を一行書き、catalog CPU の 7.9% だった。実行時間は追跡(B-72)· HTTP 指標に残る。
+     *
+     * <p>[JA] サービスメソッドごとの実行時間ログのアスペクトは既定オフ — 全メソッド呼び出しで INFO を書き catalog CPU の 7.9% だった。
      */
     @Test
     @DisplayName("B-105: 메서드마다의 실행 시간 로그(애스펙트)는 기본 끔 — EXECUTION_TIME_LOG_ENABLED=true 일 때만 빈이 생긴다")
@@ -3483,6 +3543,8 @@ class ConfigurationGuardrailTest {
      * <p>[JA] 2026-10-23 実習 CPU プロファイル(capacity-steps 300 段階、ops/58 · docs/83 §5): catalog CPU の 3.9% がリーク検出だった — 有効だと
      * Hikari は接続を借りるたびに {@code ProxyLeakTask} を作り、スタックトレースを含む例外を一つずつ作る。2026-10-19 に九つのサービス
      * すべてで 20 秒に設定していた。終わらない読み取り(死んだ接続)は今はソケット上限が切る(catalog {@code socketTimeout})。
+     *
+     * <p>[JA] Hikari のリーク検出は既定オフ — 有効だと接続を借りるたびにスタックトレース付きの例外を作る(catalog CPU の 3.9%)。
      */
     @Test
     @DisplayName("B-104: Hikari 누수 감지는 기본 끔(${DB_LEAK_DETECTION_MS:0}) — 켜 두면 커넥션을 빌릴 때마다 예외 하나(catalog CPU 3.9%)")
@@ -3909,9 +3971,6 @@ class ConfigurationGuardrailTest {
      * 정규식은 규칙의 expr 에 그대로 있어야 하며, compose 가 규칙 디렉터리를 테넌트 경로에 붙여야 한다.
      *
      * <p>[JA] B-61:「人が手を入れるべき作業」のログ文言が Loki アラートの正規表現に引っかかる(docs/51 §4i)。
-     * アラートはログ文言を正規表現で探す。誰かが「수동 확인 필요」を「수동으로 확인 바람」に変えるとアラートが<b>黙って</b>来なくなる —
-     * 普段は何の症状もなく、本当に必要な日に気づかない。コードの log.error/warn の文言のうち「수동」と「필요」が一緒にあるものはすべて
-     * ルールファイルの {@code MANUAL_ACTION_REGEX} にかかる必要があり、その正規表現はルールの expr にそのままあるべきで、compose がルールディレクトリをテナントのパスにマウントしなければならない。
      */
     @Test
     @DisplayName("B-61: '수동 … 필요' 로그 문구가 전부 Loki 경보 규칙에 걸린다")
@@ -4443,6 +4502,8 @@ class ConfigurationGuardrailTest {
      * <p>[JA] 🐛 2026-10-21 実習 8 時間(docs/83 §2.8): 浮動タグ(`17-jre-jammy`)なのでビルドごとにその日の最新パッチが入り(本番 b7c5053 も
      * 17.0.20.1 — 2026-10-21 にやっと分かった)、JVM クラッシュ · C2 コンパイル停止が起きたイメージにどの JVM が入っていたかリポジトリからは
      * 分からなかった。
+     *
+     * <p>[JA] JRE ベースイメージは正確な版 + ダイジェスト一つ — Dockerfile.runtime にだけ書き、ビルドスクリプトはその行を読む。
      */
     @Test
     @DisplayName("B-98: JRE 이미지는 정확한 판 + 다이제스트로 고정 · 한 곳(Dockerfile.runtime)에만 — 떠다니는 태그 금지")
@@ -4478,6 +4539,8 @@ class ConfigurationGuardrailTest {
      * ヘッダー · パスキー応答 · 2FA 待機トークン)。2026-11-18 時点で Temurin の修正版イメージがまだないので、報道された回避策(組み込み関数を
      * 切る)を置く。JRE を修正版に上げるとこのガードはオプションを要求しない — そのときオプションを外す(残しても害はない、Base64 が純粋な
      * Java で動く)。
+     *
+     * <p>[JA] JRE が CVE-2026-114938 の修正版でなければエントリーポイントが内蔵関数を切る — どこでも再び有効にしない。修正版に上げたら外せる。
      */
     @Test
     @DisplayName("B-113: JRE 가 CVE-2026-114938 수정판(17.0.21.1 · 21.0.13.1 …) 아래면 -XX:-UseBASE64Intrinsics — 매니페스트 · 스크립트에서 다시 켜지 않는다")
@@ -4526,6 +4589,8 @@ class ConfigurationGuardrailTest {
      * 1.30 未満の系はサポートが終わって修正版がない(以前は 1.27)。そしてフロントの nginx は HTTP/1.1 だけを聞く — 客の HTTP/2 · 3 は
      * Cloudflare が受け、内側(cloudflared → traefik → frontend)は HTTP/1.1 なので、有効にする理由なくそのコードパスを開かない
      * (resolver · mail も使わない)。
+     *
+     * <p>[JA] フロントの nginx イメージは正確な版 + ダイジェスト、三か所同じ行、NGINX2Root の修正版未満に戻さない。HTTP/1.1 だけを聞く。
      */
     @Test
     @DisplayName("B-114: 프론트 nginx 는 NGINX2Root 수정판(1.30.7 · 1.31.9) 이상 · 다이제스트 고정 · 세 곳 같은 줄, nginx.conf 는 HTTP/1.1 만")
@@ -4570,6 +4635,9 @@ class ConfigurationGuardrailTest {
      * (2026-11-19 確認)。Pod は Ready だった — コンテナのプローブは {@code liveness} · {@code readiness} グループしか見ないからだ。問題は
      * 可用性ではなく**信号が死ぬこと**である: DB が本当に切れても同じ 503 なので、そのエンドポイントで障害を区別できない。ES を立ち上げた
      * 環境では環境変数で有効にする。
+     *
+     * <p>[JA] ES スターターを使うモジュールは health インジケーターを明示的に（既定はオフ）— ES のない環境で /actuator/health が
+     * 恒久的に DOWN になり、信号として使えなくなるため。
      */
     @Test
     @DisplayName("B-116: ES 스타터를 쓰는 모듈은 management.health.elasticsearch.enabled 를 명시 · 기본값 꺼짐 — 영구 DOWN 금지")
@@ -4626,6 +4694,8 @@ class ConfigurationGuardrailTest {
      * {@code heapdump} · {@code loggers} は入れない。2026-11-17: ゲートウェイ yml に {@code …, refresh, busrefresh} が残っていたが、
      * {@code spring.config.import} で読んだ application-common.yml が優先して実際には公開されていなかった(死んだ設定 — 消した)。その動作は
      * ゲートウェイの {@code ActuatorExposureTest} が実際の起動で守る。このガードは共通リストを含め、どこに入れても引っかかる。
+     *
+     * <p>[JA] actuator の Web 公開は読み取りの四つだけ。クラスター内からは認証なしで届くので、refresh などの書き込み・秘密を出すものは入れない。
      */
     @Test
     @DisplayName("B-112: actuator 웹 노출은 health · info · metrics · prometheus 만(설정 파일 · 매니페스트 env) — refresh 등 쓰기 · 비밀 노출 금지")
@@ -4703,6 +4773,8 @@ class ConfigurationGuardrailTest {
      * 増えた状態でオーバーレイを apply すると 1 に落ちて接続中の STOMP セッションが切れうった(2026-11-14 文書点検で発見 — 本番は
      * ops/28 local でこのオーバーレイを apply しないため実際には起きなかった)。逆に HPA のないもの(eureka · saga-projection — 待機
      * レプリカが num.standby.replicas と対)を入れると replicas が既定値 1 になる。
+     *
+     * <p>[JA] prod オーバーレイが replicas を消す Deployment = k8s/70 の HPA 対象。chat に HPA ができたのにリストになかった。
      */
     @Test
     @DisplayName("B-111: prod 오버레이의 replicas 제거 대상 = k8s/70 의 HPA 대상(빠지면 apply 마다 떨어지고, 더하면 기본값 1)")
@@ -4739,6 +4811,9 @@ class ConfigurationGuardrailTest {
      * chat(メッセージ保存)が latest で、ブローカーを移す瞬間(docs/89 §2-1)に決済済みなのに決済前の注文 · 保存されない会話が残りえた。
      * どれも読み直しても安全だ(処理台帳 · サガの状態確認 · 前にだけ進む遷移 · 同じ _id の保存)。Kafka の既定値が latest なので、
      * グループを置くファクトリは値を常に書く。許可: notification の接続通知(presence)— 古い接続を再通知してはならない(N-M5)。
+     *
+     * <p>[JA] Kafka コンシューマーのオフセット既定は earliest — latest は理由付きの許可リストだけ。オフセットがないとき latest はそれ以前の
+     * メッセージを飛ばす。新しいクラスターへ移す瞬間に「決済済みなのに未決済」が残りうった。
      */
     @Test
     @DisplayName("B-110: 컨슈머 오프셋 기본값은 earliest — latest 는 허용 목록(접속 알림)만, 그룹을 두는 팩토리는 값을 늘 적는다")
@@ -4790,6 +4865,8 @@ class ConfigurationGuardrailTest {
      *
      * <p>[JA] 🐛 2026-11-19 まで 10 か所が {@code addTrustedPackages("*")} だった。コンシューマーがヘッダー({@code __TypeId__})に従うので、
      * トピックに書ける誰でもヘッダー一つでクラスパスの任意のクラスを作らせることができた(Jackson ガジェットの入口、docs/57 §22)。
+     *
+     * <p>[JA] Kafka JSON デシリアライズの信頼パッケージに "*" 禁止 — メッセージ DTO パッケージだけ。
      */
     @Test
     @DisplayName("B-115: Kafka JSON 역직렬화의 신뢰 패키지에 \"*\" 금지 — 메시지 DTO 패키지만(KafkaTrustedPackages)")
