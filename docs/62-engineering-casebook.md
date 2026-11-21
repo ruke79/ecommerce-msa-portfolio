@@ -667,11 +667,36 @@
 
 ---
 
+## 23. 同じ教訓を二度学べなかった — ポッドの中の錠、そして入れ子文書を数えた `docs.count`
+
+**📖 参考** — Martin Kleppmann, *Designing Data-Intensive Applications*、8 章の分散ロックの節。「プロセス内の錠は、プロセスが二つあれば錠ではない」をこのリポジトリの二つのバッチに当ててみました。
+
+**問題**
+- 2026-11-20 の実習（商品 1,000 万）で全体再索引（`POST /api/products/sync`）を二度呼びました。重複実行の防止はコントローラーの `AtomicBoolean` 一つで、catalog のレプリカが **2 個**のため、ゲートウェイが別のポッドへ送った二度目の要求はそのまま通りました — ジョブ二つが **21 時間**一緒に走りました。
+- そのコントローラーのコメントは既にその危険を書いていました: リーダー Bean がすべて `@StepScope` のないシングルトンなので「同じジョブが同時に二つ走ると**同じリーダーのインスタンス**を分けて読む」。さらに悪いことに、**同じ欠陥は一括インポートでは既に直っていました**（`ProductImportService` の `🐛 以前は AtomicBoolean だけでレプリカ 2 個…` → `ImportLock`、Redis）。教訓が一つの経路にだけ適用され、隣には移されていませんでした。
+- 診断しながら私も間違えました。`_cat/indices` の `docs.count` が商品 1,000 万に対し **37,003,969** だったので「重複を 3.7 倍書いている」と読みました。違います — `ProductDocument` の `skus` · `subcategories` が `FieldType.Nested` で、**入れ子のオブジェクトは Lucene 文書として別に数えられます**: 10,000,000（親）＋ 17,003,969（SKU）＋ 10,000,000（下位分類）= 37,003,969 でぴたりと一致しました。親だけ数える `_count` は 10,000,000 でした。索引は正常でした。
+
+**対処**
+- `ReindexLock`（Redis `SET NX PX`、キー `catalog:product-reindex:lock`）— `ImportLock` と同じ構造。違いはリースが長いこと（既定 12 時間、`catalog.reindex.lock-lease`）: 再索引は商品 1,000 万 · SKU 1,700 万 · サイズ 3,000 万で数時間走ります。
+- Redis に届かなければ**拒否**します（503）。防げないことを知らずに二つ目のジョブを立てる方が悪いからです。
+- テスト: `ReindexLockTest`（二つのポッドの Bean が同じキーを使う · 取れなければ解放しない · インポートとは別のキー · リースは設定）· `ReindexGuardTest`（409 でジョブを立てない · Redis 故障なら 503 · 202 の後、終われば解放）。
+- 運用の勘所: 検索が読むのは別名 `product-alias` **一つ**だけです（他の索引はバッチが書くが読むコードがない）。だからジョブが後段で止まって別名を切り替えられなくても、完成した商品索引に別名を手で付ければ検索はすぐ立ちます（`POST /_aliases`）— 数時間を回し直す必要はありませんでした。
+
+**限界**
+- ポッドが錠を持ったまま死ぬと、リース（12 時間）まで次の再索引が塞がれます。待たないならそのキーを消します（`DEL catalog:product-reindex:lock`）。リースを短くして更新する方が定石ですが、再索引は一日に何度も走るものではないので単純さを選びました。
+- 錠は「二つのジョブが同時に走ること」だけを防ぎます。すでに乱れた索引は直しません — そのときは書きかけの索引を消して回し直します（別名を最後に切り替える設計なので削除が安全です）。
+
+**教訓** — 同じ欠陥を直したなら、**同じ形の別の経路も一緒に見る**こと。そして数に驚いたときは、その数の**定義**を先に確かめること: ここでは計算がぴたりと合うことが「重複ではない」の証拠でした。
+
+→ `ReindexLockTest` · `ReindexGuardTest` · `catalog-service` の `ReindexLock` · `ImportLock`
+
+---
+
 ## 参考書一覧
 
 | 本 | 出版 | 事例 |
 |---|---|---|
-| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 · 19 |
+| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 · 19 · 23 |
 | Sam Newman, *Building Microservices*, 2nd ed. | O'Reilly, 2021 | 5 · 6 · 8 · 13 |
 | Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty, *Kafka: The Definitive Guide*, 2nd ed. | O'Reilly, 2021 | 4 |
 | Andrew Hoffman, *Web Application Security*, 2nd ed. | O'Reilly, 2024 | 1 |

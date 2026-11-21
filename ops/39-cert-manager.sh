@@ -10,7 +10,7 @@
 #   ./ops/39-cert-manager.sh              # 전부 — install → ca → apply → check (각 단계는 이미 돼 있으면 건너뛴다)
 #   ./ops/39-cert-manager.sh install      # cert-manager·Reloader 설치(고정 버전)
 #   ./ops/39-cert-manager.sh ca           # ops/07 의 CA 를 ClusterIssuer 로 등록(cert-manager 네임스페이스에만)
-#   ./ops/39-cert-manager.sh apply        # k8s/96 — Certificate 10개
+#   ./ops/39-cert-manager.sh apply        # k8s/96 — Certificate 13개
 #   ./ops/39-cert-manager.sh check        # Certificate Ready·만료·다음 갱신
 #   ./ops/39-cert-manager.sh renew <서비스>  # 지금 새로 발급(연습·사고 대응) — Reloader 가 그 서비스를 재시작한다
 #
@@ -34,7 +34,7 @@ CERT_MANAGER_URL="${CERT_MANAGER_URL:-https://github.com/cert-manager/cert-manag
 RELOADER_VERSION="${RELOADER_VERSION:-v1.1.0}"
 RELOADER_URL="${RELOADER_URL:-https://raw.githubusercontent.com/stakater/Reloader/${RELOADER_VERSION}/deployments/kubernetes/reloader.yaml}"
 MANIFEST="k8s/96-service-identities.yaml"
-SERVICES="gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server"
+SERVICES="gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server eureka-server"
 
 ok()   { echo "  ✅ $*"; }
 info() { echo "  ℹ️  $*"; }

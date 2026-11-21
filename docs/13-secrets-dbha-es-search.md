@@ -98,6 +98,20 @@ kubectl -n elasticsearch exec deploy/elasticsearch -- curl -s localhost:9200/_cl
 - ネットワークポリシー: `k8s/95` の `allow-ecommerce-only`（elasticsearch ネームスペース）が **ecommerce ネームスペースからだけ**受ける。⚠️ 複数ノードのクラスタでは kube-router が `namespaceSelector` で他ノードの Pod を塞ぐ— catalog と ES が別ノードならそこから見る。
 - catalog はすでに `SPRING_ELASTICSEARCH_URIS=http://elasticsearch.elasticsearch.svc.cluster.local:9200`（k8s/41）を持っている。状態（`/actuator/health`）に ES を入れるならその Deployment に `MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED=true`（既定は無効 — ガード B-116: ES のない本番で health が常に DOWN だった）。
 
+⚠️ **再索引は一度に一つだけ** — catalog のレプリカが 2 個以上だと二度目の要求が別のポッドへ行き、ジョブが二つ走ることがあった（2026-11-20 の実習で 21 時間、[docs/62 §23](62-engineering-casebook.md)）。今は Redis のロック（`catalog:product-reindex:lock`）なのでポッド数に依らない — 二度目は 409、Redis に届かなければ 503。ポッドがロックを持ったまま死んだら `redis-cli DEL catalog:product-reindex:lock`。
+
+💡 **ジョブが終わる前でも検索は立てられる。** 検索が読むのは別名 `product-alias` 一つだけで（他の索引はバッチが書くが読むコードがない）、別名の切り替えは**最後の段階の後**だ。商品索引が埋まったら（親の数 = 商品数）手で付けてもよい:
+
+```bash
+ES="kubectl -n elasticsearch exec deploy/elasticsearch -c elasticsearch -- curl -s"
+$ES "localhost:9200/_cat/indices/products-*-products?v"      # docs.count は親 + 入れ子
+$ES -XPOST -H 'Content-Type: application/json' localhost:9200/_aliases \
+  -d '{"actions":[{"add":{"index":"products-<タイムスタンプ>-products","alias":"product-alias"}}]}'
+$ES localhost:9200/product-alias/_count                       # これは親だけ — 商品数と同じはず
+```
+
+⚠️ `_cat/indices` の `docs.count` に驚かないこと — `ProductDocument` の `skus` · `subcategories` が `Nested` なので**入れ子のオブジェクトが Lucene 文書として別に数えられる**。実習の実測: 商品 1,000 万 → `docs.count` **37,003,969** = 1,000 万（親）＋ 17,003,969（SKU）＋ 1,000 万（下位分類）、`_count` はちょうど 1,000 万。重複ではない。
+
 その後の再索引 · alias · 件数 · アナライザー · フラグは `ops/03-enable-es-search.sh` が一度に行う:
 
 ```bash
@@ -115,6 +129,46 @@ GATEWAY=https://shop.lab ADMIN_TOKEN=<管理者のアクセストークン> ES_U
 2. 機能フラグ `catalog.search-engine` の比率（`k8s/15-feature-flags.yaml`）— 実際に検索を ES へ送るのはこちら。再起動なしで 1 分前後。
 
 戻すのは 2 の比率を 0 に（最も速い）→ そのあと 1 を `postgres` に。
+
+**いま決めた値（2026-11-20）**: 実習 · デモは `SEARCH_ENGINE=es`· 比率 **es 100%**（ベース `k8s/15-feature-flags.yaml` は本番基準の **0%**）。本番（OCI）はベースの `postgres` のままで、**比率が変わっても影響はない** — `SearchEngineSelector` は ES の Bean が無ければ（`esDeployed=false`）フラグを**評価すらしない**（トレースに 'es' と嘘が残らないように）。適用は `./ops/28-deploy.sh demo --config-only --restart catalog-service`（①）· `--config-only`（②、再起動なし）。最初は 10% にし、下の実測で 100% に上げた — 一日見て `catalog_search_*` · 応答のレイテンシ · ES 側のエラーを比べてから上げる。
+
+#### 実測 — なぜデモは 100% か（2026-11-20、商品 1,000 万）
+
+同じ検索語で ES に直接問い、同じ検索語を API で呼んで**キャッシュキーからエンジンを事後に確認した**（`search_cache::SimpleKey [SearchParamsRequest(...), POSTGRES]`）。
+
+| 検索語 | ES 直接 | API（PostgreSQL 経路） |
+|---|---|---|
+| Parmesan | 5ms · 1 万件以上 | 200 · **3.97 秒** |
+| Sandals | 2ms · 1 万件以上 | 200 · **3.57 秒** |
+| Kettle | 2ms · 1 万件以上 | 200 · **1.60 秒** |
+| Blower | 3ms · 1 万件以上 | 200 · **1.61 秒** |
+| Patio | 2ms · 1 万件以上 | 200 · **1.61 秒** |
+| 가방 · nike | 1〜11ms · **0 件**（デモの名前は英語） | **503** · 5.0〜5.4 秒（クエリ上限） |
+
+**100% に上げた後（同日、デモ `26e0ea1533ce`）** — 同じ五語が ES へ行った（キャッシュキーに `ES` ができたことで確認）:
+
+| 検索語 | PostgreSQL 経路（前） | **ES 経路（後）** | ES のクエリ自体 |
+|---|---|---|---|
+| Parmesan | 3.97 秒 | **2.81 秒** | 5ms |
+| Sandals | 3.57 秒 | **2.67 秒** | 2ms |
+| Kettle | 1.60 秒 | **0.82 秒** | 2ms |
+| Blower | 1.61 秒 | **0.76 秒** | 3ms |
+| Patio | 1.61 秒 | **0.70 秒** | 2ms |
+| 가방 · nike（0 件） | **503** · 5.0 〜 5.4 秒 | **200** · 0.052 · 0.063 秒 | 1 〜 11ms |
+
+**端から端では約 2 倍**だ — ES のクエリは 2 〜 5ms なのに応答が 0.70 〜 2.81 秒なのは、残りが **ES の外**にあるということだ: 関連度で選んだ id で詳細を読む `productId IN (esIds)`（docs/07 R-C1 の「ES で関連度、Postgres でハイドレーション」）＋ 最初のページのフィルターメニュー。次の改善はそこだ（ページサイズ分だけ読む · メニューを ES の集計で）。いまの利得は速さよりも **5 秒上限の 503 が消えたこと**で、ES に 0 件の検索語も空の結果を速く返す（PostgreSQL は無いものを探して最後まで走査していた）。
+
+十五の検索語のうち ES へルーティングされたのは一つだった（比率 10% と合う）— つまり**比率を上げなければ ES があっても使われない**。
+
+⚠️ **エンジンは推測せずキャッシュキーで確認する。** 速かったから ES とは限らない（2026-11-20: `운동화` は 0.68 秒だったがキャッシュキーは `POSTGRES` — その条件が PG で安く済んだだけ）。
+```bash
+kubectl -n redis exec deploy/redis -- sh -c '
+  redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "search_cache*"' \
+  | grep -oE 'search=[^,]*|, (ES|POSTGRES)\]' | paste - -
+```
+⚠️ `grep -oE '(ES|POSTGRES)\]'` のように **`]` をすぐ後ろに置くと `POSTGRES` の末尾二文字（`ES]`）に当たって全部 ES に見える。** 前に `, ` を付けるか `grep -oE 'ES|POSTGRES'`（最長一致が勝つ）で数える。
+⚠️ 日本語 · 韓国語の検索語を `curl` で送るときは `-G --data-urlencode` — エンコードしないと **400** になる（ブラウザは常にエンコードする）。
+
 
 
 ### 残っているもの（後続）

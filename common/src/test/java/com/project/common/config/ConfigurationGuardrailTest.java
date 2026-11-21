@@ -354,7 +354,7 @@ class ConfigurationGuardrailTest {
         try (Stream<Path> paths = Files.walk(root)) {
             for (Path script : paths
                     .filter(p -> p.getFileName().toString().endsWith(".sh"))
-                    .filter(p -> !p.toString().contains("/build/"))
+                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/bin/"))
                     .filter(p -> !p.toString().contains("/node_modules/"))
                     .filter(p -> !p.toString().contains("/.git/"))
                     .toList()) {
@@ -798,6 +798,7 @@ class ConfigurationGuardrailTest {
         //      Kafka コンシューマーグループはメッセージを一つの Pod にしか渡さない — その Pod が SimpMessagingTemplate で直接送ると、その Pod に
         //      つながった人だけが受け取る(Pod 二つなら半分が黙って受け取れない)。だから送信は StompFanout(Redis pub/sub → 全 Pod)一つに。
         // [JA] chat の購読者への送信は StompFanout だけ — 直接送ると別の Pod の購読者に届かない。
+        // [JA] chat の購読者への送信は StompFanout だけ — 直接送ると別の Pod の購読者に届かない。
         Path src = repoRoot().resolve("chat-service/src/main/java");
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> files = Files.walk(src)) {
@@ -936,7 +937,7 @@ class ConfigurationGuardrailTest {
             for (Path p : paths.filter(Files::isRegularFile)
                     .filter(f -> f.toString().endsWith(".java"))
                     .filter(f -> f.toString().contains("/src/main/java/"))
-                    .filter(f -> !f.toString().contains("/build/"))
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/bin/"))
                     .toList()) {
                 listened.addAll(listenerTopics(Files.readString(p, StandardCharsets.UTF_8)));
             }
@@ -968,7 +969,7 @@ class ConfigurationGuardrailTest {
             for (Path p : paths.filter(Files::isRegularFile)
                     .filter(f -> f.getFileName().toString().equals("KafkaConsumerConfig.java"))
                     .filter(f -> f.toString().contains("/src/main/java/"))
-                    .filter(f -> !f.toString().contains("/build/"))
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/bin/"))
                     .toList()) {
                 String rel = repoRoot().relativize(p).toString();
                 // @Bean 단위로 자른다. 마지막 조각까지 포함해야 파일 끝의 팩토리를 놓치지 않는다.
@@ -1595,7 +1596,7 @@ class ConfigurationGuardrailTest {
             for (Path p : paths.filter(Files::isRegularFile)
                     .filter(f -> f.toString().endsWith(".java"))
                     .filter(f -> f.toString().contains("/src/main/java/"))
-                    .filter(f -> !f.toString().contains("/build/"))
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/bin/"))
                     .sorted()
                     .toList()) {
                 String src = stripComments(Files.readString(p, StandardCharsets.UTF_8));
@@ -1790,7 +1791,7 @@ class ConfigurationGuardrailTest {
             for (Path sql : paths.filter(Files::isRegularFile)
                     .filter(f -> f.toString().endsWith(".sql"))
                     .filter(f -> f.toString().contains("/db/migration/"))
-                    .filter(f -> !f.toString().contains("/build/"))
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/bin/"))
                     .sorted()
                     .toList()) {
                 if (alreadyApplied.contains(repoRoot().relativize(sql).toString())) {
@@ -1845,6 +1846,7 @@ class ConfigurationGuardrailTest {
         //      初回実行が作った空の Environment で、ランナーがオンラインだったら事前点検 · バックアップなしで元に戻せないマイグレーションが
         //      出ていくところだった(2026-10-05)。だからトリガーを手動実行一つに絞る。
         // [JA] 非公開リポジトリでは承認ゲートが無いため、デプロイは手動実行だけで始まるようにする。
+        // [JA] 非公開リポジトリでは承認ゲートが無いため、デプロイは手動実行だけで始まるようにする。
         String wf = Files.readString(repoRoot().resolve(".github/workflows/deploy-oci.yml"), StandardCharsets.UTF_8);
 
         // 최상위 `on:` 블록의 트리거 이름(두 칸 들여쓴 키)만 모은다
@@ -1885,6 +1887,8 @@ class ConfigurationGuardrailTest {
      * {@code webhook_configs}(Alertmanager 固有の JSON)なので、ops/17 の例どおり Slack · Discord の URL を入れても形式で拒否されていたはずだ。
      * 0.27 の {@code discord_configs} は URL を設定に直接書くことしか受け付けない(秘密がコミットされる)— ファイル読み取りは 0.28 から(amtool で確認)。
      * ops/17 の到達試験は discord 配送の指標を見る。ローカルで 0.28.1 + 偽 Discord で ops/17 MODE=test が 9/9 · embed 受信。
+     *
+     * <p>[JA] アラートは Discord へ — discord_configs でファイルから URL を読む。0.27 は直書きのみ、ファイルは 0.28 から。
      *
      * <p>[JA] アラートは Discord へ — discord_configs でファイルから URL を読む。0.27 は直書きのみ、ファイルは 0.28 から。
      */
@@ -1942,6 +1946,8 @@ class ConfigurationGuardrailTest {
      * ノード IP で埋める · ノード側の上書きが受信を有効にし既定の引数をすべて書き直す · 本番設定は開発 PC のターゲットだけ外した · 指標が丸ごと
      * なければアラート(ServiceMetricsMissing — そのとき ServiceDown は鳴れない)。ローカルで同じ v2.53.0 でレンダー · promtool · エージェント →
      * 受信(up=1、absent 解消)を確認した。
+     *
+     * <p>[JA] 本番のサービス指標 — クラスタ内のエージェントが集めてノードの Prometheus へ remote write する。以前は 7 日間 0 だった。
      *
      * <p>[JA] 本番のサービス指標 — クラスタ内のエージェントが集めてノードの Prometheus へ remote write する。以前は 7 日間 0 だった。
      */
@@ -2071,6 +2077,9 @@ class ConfigurationGuardrailTest {
      *
      * <p>[JA] 本番ノードの観測上書き — Jaeger のメモリ上限は溜まった追跡に合わせ(≥ 1g)、バックアップ成功時刻の textfile を読む
      * node_exporter を置く(ポートは公開しない)。
+     *
+     * <p>[JA] 本番ノードの観測上書き — Jaeger のメモリ上限は溜まった追跡に合わせ(≥ 1g)、バックアップ成功時刻の textfile を読む
+     * node_exporter を置く(ポートは公開しない)。
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -2129,6 +2138,9 @@ class ConfigurationGuardrailTest {
      * postgresql.conf(PVC の中)にそのパスを書いていたので、最初の Pod だけが起動し、Pod を作り直すと {@code FATAL: could not load server
      * certificate file} で CrashLoopBackOff だった(2026-10-20 実習クラスターの rollout restart — ノード再起動 · 退避 · ops/29 setup も同じ)。
      * パスのディレクトリは PGDATA ボリュームの中か、initContainer が同じボリュームに書くマウントでなければならない。
+     *
+     * <p>[JA] 証明書パスは Pod 起動のたびに埋まること。初期化スクリプトは空の PGDATA で一度だけ動くので、PVC の外へ複製すると
+     * Pod の作り直しで起動できない。
      *
      * <p>[JA] 証明書パスは Pod 起動のたびに埋まること。初期化スクリプトは空の PGDATA で一度だけ動くので、PVC の外へ複製すると
      * Pod の作り直しで起動できない。
@@ -2212,6 +2224,9 @@ class ConfigurationGuardrailTest {
      * 片方のデプロイがもう片方のコンシューマーを再調整する。chat · user-service に使われていないファクトリが notification-service のグループ
      * {@code notification} であった(2026-10-16 削除)。{@code coupon} はすでに本番にある二つのグループなので(cart {@code coupon-use} · coupon
      * {@code coupon-rollback} — トピックが違い再調整だけが絡む)残す — 名前を変えるとオフセットが最初からになるので別にデプロイする。
+     *
+     * <p>[JA] コンシューマーグループ id を二つのモジュールで共有しない。同じトピックなら互いのメッセージを黙って失い、違っても片方の
+     * デプロイがもう片方を再調整する。
      *
      * <p>[JA] コンシューマーグループ id を二つのモジュールで共有しない。同じトピックなら互いのメッセージを黙って失い、違っても片方の
      * デプロイがもう片方を再調整する。
@@ -2334,6 +2349,9 @@ class ConfigurationGuardrailTest {
      * クラスパスの外だ。それなのにファイルがあると、読む人はその設定({@code spring.cloud.config.uri} など)が生きていると信じる — eureka ·
      * gateway の {@code src/main/resources/bootstrap.yml} とモジュール 9 か所の直下の写しがそうだった(pay の写しは名前まで order-service だった、
      * 2026-10-15 削除)。設定は {@code application*.yml} に置く。
+     *
+     * <p>[JA] 読まれない bootstrap.yml を置かない。spring-cloud-starter-bootstrap がなければ読まれず、モジュール直下の写しはクラスパスの
+     * 外。あると設定が生きていると誤解される。
      *
      * <p>[JA] 読まれない bootstrap.yml を置かない。spring-cloud-starter-bootstrap がなければ読まれず、モジュール直下の写しはクラスパスの
      * 外。あると設定が生きていると誤解される。
@@ -2522,6 +2540,9 @@ class ConfigurationGuardrailTest {
      *
      * <p>[JA] order · cart は open-in-view を切る。既定(オン)ではリクエスト中ずっと接続を持ち、トランザクション外の遠隔呼び出しも
      * 接続を持ったまま待つ。
+     *
+     * <p>[JA] order · cart は open-in-view を切る。既定(オン)ではリクエスト中ずっと接続を持ち、トランザクション外の遠隔呼び出しも
+     * 接続を持ったまま待つ。
      */
     @Test
     @DisplayName("B-87: order · cart · coupon 의 spring.jpa.open-in-view 는 false")
@@ -2608,6 +2629,10 @@ class ConfigurationGuardrailTest {
      *       subPath マウントは ConfigMap が変わっても更新されない(再起動しないと反映されない = フラグの意味がない)</li>
      *   <li>ベースの kustomization に入っている</li>
      * </ol>
+     *
+     * <p>[JA] 機能フラグ(docs/74) — 定義ファイル・コード・マニフェストが噛み合い、使い終わったフラグが溜まらない。フラグごとに
+     * owner ・ expires が必要で、期限切れはこのガードが赤くなる。コードが参照するキーは定義ファイルに、定義ファイルの
+     * フラグはコードにある。catalog は ConfigMap を<b>ディレクトリとして</b>マウントする(subPath は更新されない)。
      *
      * <p>[JA] 機能フラグ(docs/74) — 定義ファイル・コード・マニフェストが噛み合い、使い終わったフラグが溜まらない。フラグごとに
      * owner ・ expires が必要で、期限切れはこのガードが赤くなる。コードが参照するキーは定義ファイルに、定義ファイルの
@@ -3371,7 +3396,7 @@ class ConfigurationGuardrailTest {
 
         try (Stream<Path> files = Files.walk(repoRoot(), 5)) {
             for (Path f : files.filter(Files::isRegularFile)
-                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/node_modules/")
+                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/bin/") && !p.toString().contains("/node_modules/")
                             && !p.toString().contains("/.gradle/"))
                     .filter(p -> {
                         String n = p.getFileName().toString();
@@ -3495,6 +3520,8 @@ class ConfigurationGuardrailTest {
      * 呼び出しごとに INFO を一行書き、catalog CPU の 7.9% だった。実行時間は追跡(B-72)· HTTP 指標に残る。
      *
      * <p>[JA] サービスメソッドごとの実行時間ログのアスペクトは既定オフ — 全メソッド呼び出しで INFO を書き catalog CPU の 7.9% だった。
+     *
+     * <p>[JA] サービスメソッドごとの実行時間ログのアスペクトは既定オフ — 全メソッド呼び出しで INFO を書き catalog CPU の 7.9% だった。
      */
     @Test
     @DisplayName("B-105: 메서드마다의 실행 시간 로그(애스펙트)는 기본 끔 — EXECUTION_TIME_LOG_ENABLED=true 일 때만 빈이 생긴다")
@@ -3504,7 +3531,7 @@ class ConfigurationGuardrailTest {
         try (Stream<Path> files = Files.walk(repoRoot(), 12)) {
             for (Path f : files.filter(Files::isRegularFile)
                     .filter(f -> f.toString().replace('\\', '/').matches(".*/src/main/java/.*\\.java"))
-                    .filter(f -> !f.toString().contains("/build/")).toList()) {
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/bin/")).toList()) {
                 String src = Files.readString(f, StandardCharsets.UTF_8);
                 if (!src.contains("@Aspect") || !src.contains("executed in")) {
                     continue;
@@ -3545,6 +3572,8 @@ class ConfigurationGuardrailTest {
      * すべてで 20 秒に設定していた。終わらない読み取り(死んだ接続)は今はソケット上限が切る(catalog {@code socketTimeout})。
      *
      * <p>[JA] Hikari のリーク検出は既定オフ — 有効だと接続を借りるたびにスタックトレース付きの例外を作る(catalog CPU の 3.9%)。
+     *
+     * <p>[JA] Hikari のリーク検出は既定オフ — 有効だと接続を借りるたびにスタックトレース付きの例外を作る(catalog CPU の 3.9%)。
      */
     @Test
     @DisplayName("B-104: Hikari 누수 감지는 기본 끔(${DB_LEAK_DETECTION_MS:0}) — 켜 두면 커넥션을 빌릴 때마다 예외 하나(catalog CPU 3.9%)")
@@ -3554,7 +3583,7 @@ class ConfigurationGuardrailTest {
         try (Stream<Path> files = Files.walk(repoRoot(), 6)) {
             for (Path f : files.filter(Files::isRegularFile)
                     .filter(f -> f.toString().replace('\\', '/').matches(".*/src/main/resources/[^/]*\\.ya?ml"))
-                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/node_modules/")).toList()) {
+                    .filter(f -> !f.toString().contains("/build/") && !f.toString().contains("/bin/") && !f.toString().contains("/node_modules/")).toList()) {
                 for (String line : Files.readAllLines(f, StandardCharsets.UTF_8)) {
                     String t = line.strip();
                     if (t.startsWith("leak-detection-threshold:")) {
@@ -4130,7 +4159,7 @@ class ConfigurationGuardrailTest {
         int checked = 0;
         try (Stream<Path> paths = Files.walk(repoRoot(), 12)) {
             for (Path file : paths.filter(p -> p.toString().endsWith(".java")
-                    && p.toString().contains("/src/main/java/") && !p.toString().contains("/build/")).toList()) {
+                    && p.toString().contains("/src/main/java/") && !p.toString().contains("/build/") && !p.toString().contains("/bin/")).toList()) {
                 String src = Files.readString(file, StandardCharsets.UTF_8);
                 if (!beanAnno.matcher(src).find()) {
                     continue;
@@ -4196,7 +4225,7 @@ class ConfigurationGuardrailTest {
         int checked = 0;
         try (Stream<Path> paths = Files.walk(repoRoot(), 12)) {
             for (Path file : paths.filter(p -> p.toString().endsWith(".java") && p.toString().contains("/src/main/java/")
-                    && !p.toString().contains("/build/")).toList()) {
+                    && !p.toString().contains("/build/") && !p.toString().contains("/bin/")).toList()) {
                 String src = stripJavaComments(Files.readString(file, StandardCharsets.UTF_8));
                 if (!src.contains("@FeignClient")) {
                     continue;
@@ -4316,7 +4345,7 @@ class ConfigurationGuardrailTest {
             List<Path> files = paths
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(p -> p.toString().contains("/src/main/java/"))
-                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/node_modules/"))
+                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/bin/") && !p.toString().contains("/node_modules/"))
                     .toList();
             for (Path file : files) {
                 String src = stripJavaComments(Files.readString(file, StandardCharsets.UTF_8));
@@ -4423,7 +4452,7 @@ class ConfigurationGuardrailTest {
             List<Path> migrationDirs = paths
                     .filter(Files::isDirectory)
                     .filter(p -> p.endsWith(Path.of("src", "main", "resources", "db", "migration")))
-                    .filter(p -> !p.toString().contains("/build/"))
+                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/bin/"))
                     .toList();
             for (Path dir : migrationDirs) {
                 dirs++;
@@ -4504,6 +4533,8 @@ class ConfigurationGuardrailTest {
      * 分からなかった。
      *
      * <p>[JA] JRE ベースイメージは正確な版 + ダイジェスト一つ — Dockerfile.runtime にだけ書き、ビルドスクリプトはその行を読む。
+     *
+     * <p>[JA] JRE ベースイメージは正確な版 + ダイジェスト一つ — Dockerfile.runtime にだけ書き、ビルドスクリプトはその行を読む。
      */
     @Test
     @DisplayName("B-98: JRE 이미지는 정확한 판 + 다이제스트로 고정 · 한 곳(Dockerfile.runtime)에만 — 떠다니는 태그 금지")
@@ -4539,6 +4570,8 @@ class ConfigurationGuardrailTest {
      * ヘッダー · パスキー応答 · 2FA 待機トークン)。2026-11-18 時点で Temurin の修正版イメージがまだないので、報道された回避策(組み込み関数を
      * 切る)を置く。JRE を修正版に上げるとこのガードはオプションを要求しない — そのときオプションを外す(残しても害はない、Base64 が純粋な
      * Java で動く)。
+     *
+     * <p>[JA] JRE が CVE-2026-114938 の修正版でなければエントリーポイントが内蔵関数を切る — どこでも再び有効にしない。修正版に上げたら外せる。
      *
      * <p>[JA] JRE が CVE-2026-114938 の修正版でなければエントリーポイントが内蔵関数を切る — どこでも再び有効にしない。修正版に上げたら外せる。
      */
@@ -4591,6 +4624,8 @@ class ConfigurationGuardrailTest {
      * (resolver · mail も使わない)。
      *
      * <p>[JA] フロントの nginx イメージは正確な版 + ダイジェスト、三か所同じ行、NGINX2Root の修正版未満に戻さない。HTTP/1.1 だけを聞く。
+     *
+     * <p>[JA] フロントの nginx イメージは正確な版 + ダイジェスト、三か所同じ行、NGINX2Root の修正版未満に戻さない。HTTP/1.1 だけを聞く。
      */
     @Test
     @DisplayName("B-114: 프론트 nginx 는 NGINX2Root 수정판(1.30.7 · 1.31.9) 이상 · 다이제스트 고정 · 세 곳 같은 줄, nginx.conf 는 HTTP/1.1 만")
@@ -4635,6 +4670,9 @@ class ConfigurationGuardrailTest {
      * (2026-11-19 確認)。Pod は Ready だった — コンテナのプローブは {@code liveness} · {@code readiness} グループしか見ないからだ。問題は
      * 可用性ではなく**信号が死ぬこと**である: DB が本当に切れても同じ 503 なので、そのエンドポイントで障害を区別できない。ES を立ち上げた
      * 環境では環境変数で有効にする。
+     *
+     * <p>[JA] ES スターターを使うモジュールは health インジケーターを明示的に（既定はオフ）— ES のない環境で /actuator/health が
+     * 恒久的に DOWN になり、信号として使えなくなるため。
      *
      * <p>[JA] ES スターターを使うモジュールは health インジケーターを明示的に（既定はオフ）— ES のない環境で /actuator/health が
      * 恒久的に DOWN になり、信号として使えなくなるため。
@@ -4694,6 +4732,8 @@ class ConfigurationGuardrailTest {
      * {@code heapdump} · {@code loggers} は入れない。2026-11-17: ゲートウェイ yml に {@code …, refresh, busrefresh} が残っていたが、
      * {@code spring.config.import} で読んだ application-common.yml が優先して実際には公開されていなかった(死んだ設定 — 消した)。その動作は
      * ゲートウェイの {@code ActuatorExposureTest} が実際の起動で守る。このガードは共通リストを含め、どこに入れても引っかかる。
+     *
+     * <p>[JA] actuator の Web 公開は読み取りの四つだけ。クラスター内からは認証なしで届くので、refresh などの書き込み・秘密を出すものは入れない。
      *
      * <p>[JA] actuator の Web 公開は読み取りの四つだけ。クラスター内からは認証なしで届くので、refresh などの書き込み・秘密を出すものは入れない。
      */
@@ -4775,6 +4815,8 @@ class ConfigurationGuardrailTest {
      * レプリカが num.standby.replicas と対)を入れると replicas が既定値 1 になる。
      *
      * <p>[JA] prod オーバーレイが replicas を消す Deployment = k8s/70 の HPA 対象。chat に HPA ができたのにリストになかった。
+     *
+     * <p>[JA] prod オーバーレイが replicas を消す Deployment = k8s/70 の HPA 対象。chat に HPA ができたのにリストになかった。
      */
     @Test
     @DisplayName("B-111: prod 오버레이의 replicas 제거 대상 = k8s/70 의 HPA 대상(빠지면 apply 마다 떨어지고, 더하면 기본값 1)")
@@ -4811,6 +4853,9 @@ class ConfigurationGuardrailTest {
      * chat(メッセージ保存)が latest で、ブローカーを移す瞬間(docs/89 §2-1)に決済済みなのに決済前の注文 · 保存されない会話が残りえた。
      * どれも読み直しても安全だ(処理台帳 · サガの状態確認 · 前にだけ進む遷移 · 同じ _id の保存)。Kafka の既定値が latest なので、
      * グループを置くファクトリは値を常に書く。許可: notification の接続通知(presence)— 古い接続を再通知してはならない(N-M5)。
+     *
+     * <p>[JA] Kafka コンシューマーのオフセット既定は earliest — latest は理由付きの許可リストだけ。オフセットがないとき latest はそれ以前の
+     * メッセージを飛ばす。新しいクラスターへ移す瞬間に「決済済みなのに未決済」が残りうった。
      *
      * <p>[JA] Kafka コンシューマーのオフセット既定は earliest — latest は理由付きの許可リストだけ。オフセットがないとき latest はそれ以前の
      * メッセージを飛ばす。新しいクラスターへ移す瞬間に「決済済みなのに未決済」が残りうった。
@@ -4865,6 +4910,8 @@ class ConfigurationGuardrailTest {
      *
      * <p>[JA] 🐛 2026-11-19 まで 10 か所が {@code addTrustedPackages("*")} だった。コンシューマーがヘッダー({@code __TypeId__})に従うので、
      * トピックに書ける誰でもヘッダー一つでクラスパスの任意のクラスを作らせることができた(Jackson ガジェットの入口、docs/57 §22)。
+     *
+     * <p>[JA] Kafka JSON デシリアライズの信頼パッケージに "*" 禁止 — メッセージ DTO パッケージだけ。
      *
      * <p>[JA] Kafka JSON デシリアライズの信頼パッケージに "*" 禁止 — メッセージ DTO パッケージだけ。
      */

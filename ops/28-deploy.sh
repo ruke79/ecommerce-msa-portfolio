@@ -603,6 +603,8 @@ EOF
 #      (FAILED_POD_DIR、既定 ~/.ecommerce-msa/failed-pods — 700)。
 # [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
+# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
+#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 show_startup_error() {   # show_startup_error <deployment>
     local d="$1" pod info node reason code image dir logs
     # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
@@ -644,6 +646,7 @@ show_startup_error() {   # show_startup_error <deployment>
     # [JA] 🐛 2026-10-18 デモ: saga-projection が "Invalid or corrupt jarfile" で落ちたが、レジストリのイメージの jar は正常だった
     #      (ハッシュがビルド結果と同じで、ノードのダイジェストもレジストリと同じだった) — そのノードが展開したコピーだけが壊れていた。
     #      同じタグなので kubelet は再取得しない(IfNotPresent) — そのノードで消す必要がある。
+    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     if printf '%s\n' "$logs" | grep -qE "Invalid or corrupt jarfile|Unable to access jarfile|no main manifest attribute"; then
         printf '      → jar 를 열지 못했습니다. 레지스트리 이미지가 멀쩡해도 노드 %s 의 사본만 깨졌을 수 있습니다:\n' "${node:-?}"
@@ -937,6 +940,7 @@ deploy_version() {   # deploy_version <버전> ／ [JA] deploy_version <バー�
         #      実際にデプロイされたものと違うバージョンが履歴に残るならないほうがましだ。
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
+        # shellcheck disable=SC2086
         stamp_change_cause "$ver" user-service $OTHER_DEPLOYS
         # shellcheck disable=SC2086
         wait_rollouts user-service $OTHER_DEPLOYS || return 1
@@ -1039,6 +1043,19 @@ check_identity_secrets() {
     done
     [ -z "$missing" ] || die "서비스별 신원 Secret 이 없습니다:$missing
   먼저 발급하세요: ./ops/38-issue-service-identities.sh   (ops/07 의 CA 로, 값은 출력하지 않는다)"
+    # 신원이 서버 인증서도 된다(B-121) — 지표 에이전트가 확인하는 이름이 없으면 배포 뒤 서비스 지표가 모두 끊긴다(ServiceDown).
+    # 2026-11-20 전에 만든 신원에는 그 이름이 없다. 인증서는 공개 정보라 읽어도 된다 — 키는 읽지 않는다.
+    # [JA] 身元がサーバー証明書にもなる(B-121) — メトリクスエージェントが確認する名前がなければ、デプロイ後にサービス指標が
+    #      すべて途切れる(ServiceDown)。2026-11-20 より前に作った身元にはその名前がない。証明書は公開情報なので読んでよい — 鍵は読まない。
+    local noname="" san
+    for name in $(grep -ho 'secretName: tls-id-[a-z-]*' "$ROOT"/k8s/*.yaml 2>/dev/null | awk '{print $2}' | sort -u); do
+        san=$(kubectl -n "$NS" get secret "$name" -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null \
+            | openssl x509 -noout -ext subjectAltName 2>/dev/null) || true
+        printf '%s' "$san" | grep -q "DNS:metrics.$NS.svc.cluster.local" || noname="$noname $name"
+    done
+    [ -z "$noname" ] || die "서버 인증서로 쓸 신원에 지표 에이전트의 이름(metrics.$NS.svc.cluster.local)이 없습니다:$noname
+  cert-manager 면: ./ops/39-cert-manager.sh apply   (k8s/96 의 dnsNames 가 바뀌어 다시 발급된다)
+  손 발급이면:     ./ops/38-issue-service-identities.sh   (그 이름이 없는 신원을 다시 만든다, docs/57 §27)"
 }
 
 # ---------------------------------------------------------------- 측정용 예외가 남아 있는가

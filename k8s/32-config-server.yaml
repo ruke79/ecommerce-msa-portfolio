@@ -114,11 +114,19 @@ spec:
             #   value: "true"
             # - name: CONFIG_GIT_CLONE_ON_START
             #   value: "true"
+            # - name: CONFIG_GIT_CLONE_ON_START
+            #   value: "true"
 
             # 비공개 저장소라면. 이 둘은 하이픈이 없어 Spring 프로퍼티 이름을 그대로 써도
             # 매핑이 모호하지 않다. **반드시 Secret 으로** — value: 로 적으면 커밋된다.
             # [JA] 非公開リポジトリなら。この 2 つはハイフンがないので Spring プロパティ名をそのまま使っても
             #      マッピングが曖昧にならない。**必ず Secret で** — value: で書くとコミットされる。
+            # - name: SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME
+            #   valueFrom:
+            #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_GIT_USERNAME }
+            # - name: SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_GIT_PASSWORD }
             # - name: SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME
             #   valueFrom:
             #     secretKeyRef: { name: ecommerce-secrets, key: CONFIG_GIT_USERNAME }
@@ -197,14 +205,20 @@ spec:
                 secretKeyRef:
                   name: ecommerce-secrets
                   key: LOCAL_KEY_PASSWORD
+            # 서버 인증서는 이 서비스의 신원(CN=config-server · 90일 — cert-manager 가 만료 30일 전 새로 발급, Reloader 가 재시작)이다.
+            # 공유 tls-keystore(825일 · 모든 서비스 이름의 와일드카드)는 서버로 쓰지 않는다 — 그 키 하나가 새면 어느 서비스로도
+            # 행세할 수 있었다. 신원에는 serverAuth · 서비스 이름 · 지표 에이전트가 확인하는 이름이 있다(docs/57 §27, B-121).
+            # [JA] サーバー証明書はこのサービスの身元(CN=config-server · 90 日 — cert-manager が期限 30 日前に再発行し、Reloader が再起動)である。
+            #      共有 tls-keystore(825 日 · 全サービス名のワイルドカード)はサーバーには使わない — その鍵一つが漏れればどのサービスにも
+            #      成りすませた。身元には serverAuth · サービス名 · メトリクスエージェントが確認する名前がある(docs/57 §27、B-121)。
             - name: SERVER_SSL_KEY_STORE
-              value: "/app/resources/keystore.p12"
+              value: "/app/identity/keystore.p12"
             - name: SERVER_SSL_KEY_STORE_TYPE
               value: "PKCS12"
             - name: SERVER_SSL_KEY_STORE_PASSWORD
               value: "$(LOCAL_KEY_STORE_PASSWORD)"
             - name: SERVER_SSL_KEY_PASSWORD
-              value: "$(LOCAL_KEY_PASSWORD)"
+              value: "$(LOCAL_KEY_STORE_PASSWORD)"
 
             # 사설 CA 를 JVM 기본 트러스트스토어로 신뢰하게 한다 — Eureka 등록(Jersey)과
             # 액추에이터 아웃바운드는 server.ssl 이 아니라 이쪽을 쓴다(30-eureka-server.yaml 주석).

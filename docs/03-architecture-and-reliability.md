@@ -39,6 +39,77 @@ PayPal 決済とリアルタイムチャットを備えた**Amazon クローン�
 
 ## 2. システム構成図
 
+### 2.0 リクエストの経路（ホップ）と 5xx の診断 — 外から内へ
+
+障害のとき**コードを先に見ると外す**。リクエストは複数のホップを通り、5xx はたいていそのうち一つの問題だ。前段は**本番とデモで違う** — これを知らないと同じ症状で見当違いの場所を掘る。
+
+```mermaid
+flowchart TB
+    BR["ブラウザ"]
+    BR -->|"本番: www.ysyproject.com"| CF["Cloudflare"]
+    CF --> CFD["cloudflared Pod<br/>(トンネル · k8s-overlays/external)"]
+    BR -->|"デモ · 実習: shop.lab<br/>(hosts ファイル → ノード IP)"| TR["traefik<br/>(k3s 同梱の Ingress コントローラー)"]
+
+    CFD -->|"/ — 平文 HTTP"| FE["frontend nginx :8080<br/>/api/ · /sse/ · /ws/ は自身もゲートウェイへ渡す"]
+    TR -->|"/ — 平文 HTTP<br/>Ingress ecommerce-frontend (k8s/60)"| FE
+
+    CFD -->|"/&lt;service&gt;/** — HTTPS · noTLSVerify"| GW
+    TR -->|"/&lt;service&gt;/** — HTTPS<br/>Service の注釈 serversscheme=https +<br/>ServersTransport gateway-tls(CA 検証 · アイドル接続 100)<br/>Ingress ecommerce-gateway (デモのオーバーレイ)"| GW
+
+    GW["gateway-server :8000<br/>TLS 終端 · JWT 検証 · 流入制限(Redis) · ルート"]
+    GW -->|"lb://&lt;service&gt; → Eureka が選んだインスタンス IP:ポート<br/>(GET の接続失敗は別インスタンスへ 2 回 · 接続上限 2 秒)"| POD["service の Pod :80xx<br/>(HTTPS · サービス証明書 mTLS)"]
+    GW -.->|"レジストリ参照(キャッシュ 30 秒)"| EU["eureka-server :8761"]
+    POD -.->|"登録 · ハートビート 30 秒<br/>書き込みはサービス証明書が必要(B-86)"| EU
+    FE -.->|"/api/ · /ws/"| GW
+```
+
+**本番ではゲートウェイの前に traefik はいない。** `k8s/60-ingress.yaml` は frontend だけを公開し、API は Cloudflare トンネルが ClusterIP Service へ直接送る（B-85 — 外はトンネルだけ）。デモにはトンネルが無いので デモオーバーレイの Ingress がその ① ルールの代わりをする — つまり**デモにだけ traefik → ゲートウェイのホップが一つ多い**。
+
+#### 診断の順序 — この順を守れば一度で狭まる
+
+| # | 確認 | コマンド | 読み方 |
+|---|---|---|---|
+| ① | フロント | `curl -sk https://<ホスト>/ -o /dev/null -w '%{http_code}'` | 200 なのに API だけ 5xx → **前段からゲートウェイへのルール**（② へ） |
+| ② | Ingress · トンネル → ゲートウェイ | `curl -sk https://<ホスト>/catalog-service/api/content/home` | 502 ならそのホップ。デモは traefik、本番は cloudflared |
+| ③ | ゲートウェイに直接 | `kubectl -n ecommerce port-forward deploy/gateway-server 18000:8000` → `curl -sk https://localhost:18000/...` | **200 ならゲートウェイ · service は無罪** — ①② だけが残る |
+| ④ | ゲートウェイ → service | `kubectl -n ecommerce exec deploy/gateway-server -- curl -sk https://<service>.ecommerce.svc.cluster.local:<ポート>/...` | 届けば Service · Pod は生きている（ルーティング · Eureka へ） |
+| ⑤ | Eureka の登録 | `kubectl -n ecommerce exec deploy/eureka-server -- curl -sk https://localhost:8761/eureka/apps/<SERVICE 大文字> -H 'Accept: application/json'` | **インスタンス数 ≠ Pod 数**なら死んだ登録（下の罠 2） |
+| ⑥ | service の Pod に直接 | `kubectl -n ecommerce exec deploy/<service> -- curl -sk https://localhost:<ポート>/...` | ここで 5xx ならそのときコード · 設定を見る |
+| ⑦ | その service のログ | `kubectl -n ecommerce logs deploy/<service> --tail=-1 \| grep -viE 'otel\|truststore'` | ⚠️ `--tail=-1` が無いと Pod ごとに 10 行だけ。OTel の送信失敗はノイズ（実習に Collector が無い） |
+
+**⑥ · ⑦ に例外が一つも無ければコードの問題ではない — ホップの問題だ。** そのとき ①〜⑤ に戻る。
+
+#### 実際に踏んだ罠 三つ（2026-11-20 実習、[docs/62 §22](62-engineering-casebook.md)）
+
+1. **traefik が Kubernetes API に `Unauthorized`** — トークンが無効になると traefik は死なず**古いキャッシュで回り続ける**。再起動されていないバックエンド（frontend）は 200 で、Pod が作り直されたバックエンド（ゲートウェイ）は**消えた古い IP** へ送って 502 になる。ログに `failed to list *v1.Endpoints: Unauthorized` があればそれ — `kubectl -n kube-system rollout restart deploy/traefik`。
+2. **`ops/28 --restart` の後、Eureka に死んだインスタンスが残る** — Pod の IP が変わるが、四つのうち二つ（50%）がハートビートを止めると Eureka の**自己保存モード**が期限切れを止める。ゲートウェイは半分を死んだ IP へ送って 502（接続上限 2 秒 × リトライ）。自然には治らない。
+3. **その死んだ登録を素の `curl` で消すと 403** — `EUREKA_WRITE_AUTH_MODE=ENFORCE`（B-86）が書き込みにサービス証明書を要求する。正しい消し方は**身元をマウントした Pod から**:
+   ```bash
+   kubectl -n ecommerce exec deploy/catalog-service -- sh -c '
+     curl -sk --cert /app/identity/tls.crt --key /app/identity/tls.key \
+       -X DELETE "https://eureka-server.ecommerce.svc.cluster.local:8761/eureka/apps/CATALOG-SERVICE/<instanceId>"'
+   ```
+   実習では `rollout restart deploy/eureka-server`（レジストリはメモリ）の方が簡単 — 全 service が 30 秒内に再登録する。本番では上の DELETE を使う。
+
+#### service ごとの経路 · データ
+
+| service | 外部の接頭辞 | ポート | PostgreSQL | その他 | 受け取る Kafka トピック | 出すもの（確認済み） |
+|---|---|---|---|---|---|---|
+| user-service | `/user-service` | 8080 | `userdb` · `users` | Redis（ロック · セッション cutoff） | — | `user-created` · `user-updated` · `user-deleted` · `outgoing-mail` · `security-alert` |
+| catalog-service | `/catalog-service` | 8081 · gRPC 9095 | `productdb` · `product` · `content` · `meta` | Redis（検索 · 一覧 · ファセットのキャッシュ）、**Elasticsearch**（`product-alias`） | `product-update` | — |
+| cart-service | `/cart-service` | 8082 | `cartdb` · `cart` | — | `cart-empty` · `cart-rollback` · `coupon-use` | — |
+| order-service | `/order-service` | 8084 | `orderdb` · `orders` | — | `payment` · `delivery-status` · `stock-shortage` | `product-update` · `cart-empty` · `order-status` · `order-completed` · `order-refunded` |
+| pay-service | `/pay-service` | 8087 | `paydb` · `pay` | Redis | `order` | （アウトボックスのリレーが決済応答を送る） |
+| coupon-service | `/coupon-service` | 8183 | `coupondb` · `coupon` | — | `payment` · `coupon-rollback` · `user-created` | — |
+| chat-service | `/chat-service` | 8086 | `chatdb` · `chat` | **MongoDB Atlas**（会話）、Redis（ファンアウト · presence） | `user-created` · `user-updated` · `user-deleted` | `chat` · `support-reply` |
+| notification-service | `/notification-service` | 8188 | `notificationdb` · `notification` | SMTP · SMS プロバイダー | 十四（`order` · `payment` · `delivery-status` · `coupon-issued` · `outgoing-mail` · `security-alert` · `chat` · `support-reply` · `user-presence` · `notice-published` · `event-started` · `order-completed` · `order-refunded` · `product-stock`） | — |
+| delivery-service | `/delivery-service` | 8189 | `deliverydb` · `delivery` | 配送業者 API | `payment` | （状態イベント — `delivery-status`） |
+| saga-projection | `/saga-projection` | 8190 | — | Kafka Streams の状態ストア（`order-saga-state-store` · `order-timeline-store`） | `order-requests` · `payment-responses` · `order-status-changes` | — |
+
+- **同期呼び出し（Feign）**: order → cart · catalog · user · coupon、cart → catalog · user、coupon → user、chat → user、delivery → order、user → notification。在庫予約だけ gRPC（order → catalog 9095）で、`STOCK_TRANSPORT=http` なら Feign に行く。
+- **アウトボックス**: user · order · pay · cart は同じトランザクションでアウトボックス行を書き、リレーが Kafka へ送る（[docs/12](12-dlq-rollout-idempotency-alerts.md)）— だから「出すもの」がコードにリテラルで見えない service がある。
+- ポートは `application-local.yml`、スキーマは `db/migration/*.sql`、トピックはリスナー · 発行部から取った（2026-11-20 確認）。接頭辞はゲートウェイの Path 述語の最初の断片で、デモの Ingress · 本番トンネルのルールと同じ一覧だ（B-82 · ガード `EdgeRoutingGuardTest` · `DemoOverlayTest`）。
+
 ### 2.1 コンポーネント / 通信の概要
 
 ```mermaid
@@ -61,6 +132,9 @@ flowchart TB
       CHAT["chat-service :8086"]
       PAY["pay-service :8087"]
       COUP["coupon-service :8183"]
+      NOTI["notification-service :8188"]
+      DEL["delivery-service :8189"]
+      SAGA["saga-projection :8190<br/>(Kafka Streams の読み取りモデル)"]
     end
 
     subgraph Data

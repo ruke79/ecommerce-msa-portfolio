@@ -806,6 +806,8 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 **남은 것**: 공유 서버 인증서(`tls-keystore`)는 여전히 손으로 — 825일이라 급하지 않지만, 같은 방식(Certificate + Reloader)으로
 옮길 수 있다. 그때는 Kafka·Redis·Postgres 클라이언트가 같은 파일을 쓰므로 인프라 쪽 재시작까지 함께 계획해야 한다.
 
+> 🕰️ 2026-11-20: 서버 인증서는 §27 로 옮겼다 — 새 Certificate 를 만들지 않고 이 신원을 서버 인증서로도 쓴다(eureka-server 신원 추가). 공유 파일의 Kafka 클라이언트 키 · CA 는 그대로.
+
 ## 19. 브라우저 보안 헤더 · 외부 CSS — 프론트엔드 점검(2026-10-22)
 
 `manuscripts/보안-면접`(problem-solving 저장소)의 브라우저 쪽 문항(Q5 · Q9 · Q10 · Q25 ~ Q28 · Q33 · Q36)을 점검표로 frontend 를 봤다. 토큰(메모리 + `HttpOnly · Secure · SameSite=Lax` 리프레시 쿠키) · XSS 싱크(0건) · 열린 리다이렉트(역슬래시까지 거름) · 번들의 비밀(공개 id 뿐) · 소스맵(404)은 이미 기준을 지켰다. 빈 곳 둘을 메웠다.
@@ -882,7 +884,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 
 **남은 것(코드만으로는 끝나지 않는다)**:
 - NetworkPolicy egress 허용 목록 — 결제사 · SMS · 메일 · 택배사 · HIBP · DNS 목록을 정한 뒤(잘못 막으면 결제가 멈춘다). → 🕰️ 1단계는 §23(IP 목록 없이).
-- 공유 서버 인증서 `tls-keystore`(825일)를 서비스별로 · cert-manager + Reloader(§18), 비밀 관리 도구(SOPS · Sealed Secrets · Vault)와 정기 회전, 개인 키 HSM/KMS — 운영 장비 · 비용 판단.
+- ~~공유 서버 인증서 `tls-keystore`(825일)를 서비스별로 · cert-manager + Reloader(§18)~~ → 🕰️ 2026-11-20 §27(서버 인증서 = 서비스별 신원), 비밀 관리 도구(SOPS · Sealed Secrets · Vault)와 정기 회전, 개인 키 HSM/KMS — 운영 장비 · 비용 판단.
 - ~~관리 포트 분리(`management.server.port`) — 프로브 · metrics-agent · 매니페스트 13개를 함께 바꾸는 배포 작업.~~ → 🕰️ 2026-11-20 §25.
 - react-router v7 · jest 30 메이저 판 올림 — 화면 전체 회귀가 필요한 별도 작업.
 - 같은 전화번호를 두 계정이 쓰는 것 — 막을지(가족 공용 번호)부터 정할 일.
@@ -1010,3 +1012,27 @@ Redis 비밀번호는 이 Secret 에 없다(인프라 쪽). 교체 · 훈련 기
 **아직 못 본 것**: kube-router 실제 집행(1단계와 같다 — 이 환경의 docker 안 k3s 는 파드를 못 띄운다). 특히 ① 지표 에이전트의 API 서버 접속(정책이 DNAT 뒤 노드:6443 을 본다는 가정) ② cloudflared 의 QUIC(UDP 7844) ③ traefik 파드 라벨 `app.kubernetes.io/name: traefik`(k3s 기본 차트). 실습 클러스터에서 `egress-apply` → 지표 11개 up · 사이트 · 결제 · 메일 · 채팅 · 백업 한 번(`kubectl create job --from=cronjob/postgres-backup …`) → 운영.
 
 **확인**: `EgressPolicyScriptTest` 9(+2 — public 의 443 밖이 열리면 성공이 아니다, 메일 포트 · ssh 저장소 · 바깥 PGHOST 면 적용하지 않고 값을 말하지 않는다) · 가드 B-117 `EgressPolicyGuardTest` 6(+2 — 인터넷 규칙은 모두 포트가 있다 · public 443 · 메일 · Atlas · 터널 · 에이전트 포트와 고르는 파드, 백업은 IP 대역 없음, 정책의 이름이 CronJob · 오버레이의 실제 라벨과 같다, ops/35 가 지우는 정책 = k8s/97). 변이: public 의 포트를 빼면 · CronJob 라벨을 바꾸면 · 지울 목록에서 하나를 빼면 · public 의 80 확인을 빼면 · 메일 포트 점검을 열면 각각 실패.
+
+## 27. 서버 인증서를 서비스마다 — 공유 `tls-keystore` 대신 신원으로(2026-11-20, 가드 B-121)
+
+**문제**: 자바 서비스 열셋이 모두 **같은 서버 키**(ops/07 의 `keystore.p12`, Secret `tls-keystore`)로 HTTPS 를 열었다. 그 인증서의 SAN 에는 `*.ecommerce.svc.cluster.local` 와 모든 서비스 이름이 있다 — 파드 하나에서 그 키가 새면 **어느 서비스로도 행세**할 수 있었다(게이트웨이 → 백엔드 · Feign · Eureka 등록이 서버를 확인할 때 모두 통과한다). 유효 825일 · 손으로 바꾸고 모든 파드를 재시작해야 했다(§18 의 남은 것). 서비스별 신원(§16 · §18 — 90일, cert-manager 가 만료 30일 전 새로 발급, Reloader 가 재시작)에는 이미 `server auth` 와 그 서비스의 이름 · FQDN 이 있었다 — gRPC 서버(catalog 9095)는 원래 그것을 썼다.
+
+**한 것**:
+- 자바 Deployment 열셋(k8s/30 ~ 49)에 `SERVER_SSL_KEY_STORE=/app/identity/keystore.p12` · 형식 PKCS12 · 비밀번호 둘 다 `$(LOCAL_KEY_STORE_PASSWORD)`(cert-manager 의 PKCS12 는 키 비밀번호 = 스토어 비밀번호). 환경 변수가 yml 의 `server.ssl.key-store: ${LOCAL_KEY_STORE_PATH}` 보다 앞선다(Spring 의 속성 순서) — **`LOCAL_KEY_STORE_PATH` 는 그대로**: Postgres(`sslrootcert`) · Redis 설정이 같은 변수를 읽는다. 관리 포트(§25)는 서버 TLS 를 물려받으므로 함께 바뀐다.
+- eureka-server 에도 신원 `id-eureka-server`(k8s/96 · ops/38 · ops/39) — 마운트 · Reloader 주석 · `EUREKA_CLIENT_TLS_ENABLED=true`(신원을 마운트한 파드의 규칙 B-86 — 자기 피어 복제도 그 인증서를 낸다). config-server 는 이미 `SERVER_SSL_*` 넷이 있어(B-91) 경로만 신원으로.
+- 신원마다 이름 하나 더: `metrics.ecommerce.svc.cluster.local` — 지표 에이전트(k8s-overlays/external)가 파드 IP 로 긁으며 **모든 파드에서 이 이름으로** 서버를 확인한다(Prometheus 는 대상마다 `server_name` 을 바꿀 수 없다). 예전에는 공유 인증서의 와일드카드가 덮었다. 이 이름으로 접속하는 것은 에이전트뿐이고 에이전트는 "내부 CA 가 낸 인증서인가" 만 본다 — 지금과 같은 보증.
+- `ops/38`(손 발급): eureka-server 추가 · SAN 에 그 이름 · **기한이 남아도 그 이름이 없는 옛 신원은 다시 만든다** · `check` 가 알린다. `ops/39`(cert-manager): 목록에 eureka-server — k8s/96 의 `dnsNames` 가 바뀌어 `apply` 하면 cert-manager 가 열셋을 다시 발급하고 Reloader 가 하나씩 재시작한다.
+- `ops/28` 배포 전 점검: 마운트하는 신원 Secret 마다 지표 이름이 없으면 **멈춘다**(없이 배포하면 서비스 지표가 모두 끊긴다 — `ServiceDown`).
+- 공유 `tls-keystore` 는 남는다 — 사설 CA(`ca.crt` · 트러스트스토어), Kafka 클라이언트 키스토어, Postgres · Redis 클라이언트 설정이 읽는다. 서버 키로는 이제 아무도 쓰지 않는다(운영 클러스터 밖 — 개발 PC 의 `LOCAL_KEY_STORE_PATH` 는 그대로 그 키).
+
+**바뀌지 않는 것**: 서버를 확인하는 쪽이 쓰는 이름 — 게이트웨이(Eureka 의 `EUREKA_INSTANCE_HOSTNAME` = FQDN) · Feign(`FEIGN_*_URL` = FQDN) · Eureka 등록 · config 클라이언트(FQDN) · 데모 Ingress(`serverName` = 게이트웨이 FQDN) — 모두 신원의 `dnsNames` 에 있다. cloudflared 는 `noTLSVerify`, kubelet 프로브는 확인하지 않는다. CA 가 같으므로 트러스트스토어도 그대로다.
+
+**배포 순서**(이미지 변경 없음 — 매니페스트만, 다음 배포에 함께):
+1. 신원을 새 이름으로: cert-manager 면 `./ops/39-cert-manager.sh apply`(열셋 다시 발급 · Reloader 가 재시작 — 아직 옛 매니페스트라 동작은 같다), 손 발급이면 `./ops/38-issue-service-identities.sh`(eureka-server 를 새로 · 이름 없는 신원을 다시) → 서비스 재시작은 2 가 한다.
+2. `ops/28` 로 배포 — 위 점검이 이름 · eureka 신원을 확인한 뒤 적용, 파드가 신원으로 HTTPS 를 다시 연다.
+3. 확인: `./ops/37-check-mtls.sh`(내부 호출 200 · 403 그대로) · `up{job="spring-actuator"}` 11 · 아무 파드에서 `openssl s_client -connect order-service.ecommerce.svc.cluster.local:8084 -servername order-service.ecommerce.svc.cluster.local </dev/null 2>/dev/null | openssl x509 -noout -subject -enddate` 가 `CN=order-service` · 90일 안.
+4. 되돌리기: 이전 버전으로 `ops/28 --rollback`(옛 매니페스트 = 공유 키) — 신원의 이름이 늘어난 것은 옛 매니페스트에도 해가 없다.
+
+**확인**: 가드 **B-121** `ServerCertificateGuardTest` 3(자바 Deployment 마다 서버 키스토어 = 자기 신원 · `LOCAL_KEY_STORE_PATH` 그대로 · 그 Secret 마운트 · Reloader 주석, k8s/96 의 Certificate 마다 server auth · 이름 · FQDN · 지표 이름 · 와일드카드 없음, ops/38 · ops/39 · 자바 Deployment 의 목록이 같고 ops/38 의 SAN · 다시 만들기 · ops/28 의 점검). 변이: 서비스 하나의 서버 키스토어를 공유 키로 · 신원 하나에서 지표 이름을 빼면 · ops/38 이 이름 없는 신원을 기한만 보고 건너뛰면 각각 실패. ops/38 의 openssl 설정으로 만든 인증서가 serverAuth · 세 이름을 갖는 것을 따로 확인했다. **아직 못 본 것**: 실제 클러스터에서 새 키스토어로 기동 · 갱신 뒤 재시작(이 환경의 docker 안 k3s 는 파드를 못 띄운다) — 실습 클러스터에서 1 → 3 순서로.
+
+**남은 것**: 공유 `tls-keystore` 의 Kafka 클라이언트 키(브로커가 확인하는 클라이언트 인증서)도 서비스별로 · 인프라(Kafka · Redis · Postgres) 서버 인증서를 cert-manager 로 — 인프라 재시작이 함께라 따로 계획한다. 개인 키 HSM/KMS 는 운영 장비 · 비용 판단.

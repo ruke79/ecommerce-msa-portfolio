@@ -21,6 +21,7 @@ spec:
   #      開始は 1、増やすのは HPA(k8s/70 — 1 ~ 3)。⚠️ SockJS の WebSocket 以外のフォールバック(xhr)は要求が同じ Pod へ行く必要があり、
   #      Pod が二つ以上のときそのユーザーは再接続を繰り返しうる(ゲートウェイに固定セッションはない — WebSocket で繋がる大半は無関係)。
   # [JA] 複数 Pod 可。ブローカーは Pod ごとのインメモリのままだが、Redis のファンアウトですべての Pod の購読者に届く。
+  # [JA] 複数 Pod 可。ブローカーは Pod ごとのインメモリのままだが、Redis のファンアウトですべての Pod の購読者に届く。
   replicas: 1
   selector:
     matchLabels:
@@ -151,6 +152,20 @@ spec:
               value: "want"
             - name: LOCAL_KEY_STORE_PATH
               value: "/app/resources/keystore.p12"
+            # 서버 인증서는 이 서비스의 신원(CN=chat-service · 90일 — cert-manager 가 만료 30일 전 새로 발급, Reloader 가 재시작)이다.
+            # 공유 tls-keystore(825일 · 모든 서비스 이름의 와일드카드)는 서버로 쓰지 않는다 — 그 키 하나가 새면 어느 서비스로도
+            # 행세할 수 있었다. 신원에는 serverAuth · 서비스 이름 · 지표 에이전트가 확인하는 이름이 있다(docs/57 §27, B-121).
+            # [JA] サーバー証明書はこのサービスの身元(CN=chat-service · 90 日 — cert-manager が期限 30 日前に再発行し、Reloader が再起動)である。
+            #      共有 tls-keystore(825 日 · 全サービス名のワイルドカード)はサーバーには使わない — その鍵一つが漏れればどのサービスにも
+            #      成りすませた。身元には serverAuth · サービス名 · メトリクスエージェントが確認する名前がある(docs/57 §27、B-121)。
+            - name: SERVER_SSL_KEY_STORE
+              value: "/app/identity/keystore.p12"
+            - name: SERVER_SSL_KEY_STORE_TYPE
+              value: "PKCS12"
+            - name: SERVER_SSL_KEY_STORE_PASSWORD
+              value: "$(LOCAL_KEY_STORE_PASSWORD)"
+            - name: SERVER_SSL_KEY_PASSWORD
+              value: "$(LOCAL_KEY_STORE_PASSWORD)"
             # 인증서 경로는 키스토어 하나가 아니라 **다섯 개가 한 세트**다(docs/18 §4 산출물 표).
             # 예전에는 키스토어 경로만 주입해, eureka.client.tls 의 file:${LOCAL_TRUST_STORE_PATH} 가
             # placeholder 그대로 남아 'KeyStore not exists: URL [file:${...}]' 로 기동이 죽었다

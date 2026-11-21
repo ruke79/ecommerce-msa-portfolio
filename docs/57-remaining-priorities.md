@@ -805,6 +805,8 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 **残っているもの**: 共有サーバー証明書（`tls-keystore`）は依然として手作業だ — 825 日なので急ぎではないが、同じ方式（Certificate ＋ Reloader）に
 移せる。そのときは Kafka・Redis・Postgres のクライアントが同じファイルを使うので、インフラ側の再起動まで一緒に計画する必要がある。
 
+> 🕰️ 2026-11-20: サーバー証明書は §27 に移した — 新しい Certificate は作らず、この身元をサーバー証明書にも使う（eureka-server の身元を追加）。共有ファイルの Kafka クライアント鍵 · CA はそのまま。
+
 ## 19. ブラウザのセキュリティヘッダー・外部 CSS — フロントエンド点検(2026-10-22)
 
 `manuscripts/보안-면접`(problem-solving リポジトリ)のブラウザ側の設問(Q5・Q9・Q10・Q25〜Q28・Q33・Q36)を点検表にして frontend を見た。トークン(メモリ + `HttpOnly・Secure・SameSite=Lax` のリフレッシュ Cookie)・XSS のシンク(0 件)・オープンリダイレクト(バックスラッシュまで除外)・バンドル内の秘密(公開 id のみ)・ソースマップ(404)はすでに基準を満たしていた。空いていた二つを埋めた。
@@ -881,7 +883,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 
 **残り（コードだけでは終わらない）**:
 - NetworkPolicy の egress 許可リスト — 決済 · SMS · メール · 配送会社 · HIBP · DNS の一覧を決めてから（誤って止めると決済が止まる）。 → 🕰️ 第 1 段階は §23（IP リストなし）。
-- 共有サーバー証明書 `tls-keystore`（825 日）をサービスごとに · cert-manager + Reloader（§18）、秘密管理ツール（SOPS · Sealed Secrets · Vault）と定期ローテーション、秘密鍵の HSM/KMS — 本番機材 · コストの判断。
+- ~~共有サーバー証明書 `tls-keystore`（825 日）をサービスごとに · cert-manager + Reloader（§18）~~ → 🕰️ 2026-11-20 §27（サーバー証明書 = サービスごとの身元）、秘密管理ツール（SOPS · Sealed Secrets · Vault）と定期ローテーション、秘密鍵の HSM/KMS — 本番機材 · コストの判断。
 - ~~管理ポートの分離（`management.server.port`）— プローブ · metrics-agent · マニフェスト 13 個を一緒に変えるデプロイ作業。~~ → 🕰️ 2026-11-20 §25。
 - react-router v7 · jest 30 のメジャーアップ — 画面全体の回帰が必要な別作業。
 - 同じ電話番号を二つのアカウントが使うこと — 止めるか（家族共用の番号）から決めること。
@@ -1009,3 +1011,27 @@ Redis のパスワードはこの Secret にない（インフラ側）。交換
 **まだ見ていないもの**: kube-router の実際の適用（第 1 段階と同じ — この環境の docker 内の k3s は Pod を立てられない）。特に ① 指標エージェントの API サーバーへの接続（ポリシーが DNAT の後のノード:6443 を見るという前提）② cloudflared の QUIC（UDP 7844）③ traefik の Pod ラベル `app.kubernetes.io/name: traefik`（k3s の既定チャート）。実習クラスタで `egress-apply` → 指標 11 個 up · サイト · 決済 · メール · チャット · バックアップ一回（`kubectl create job --from=cronjob/postgres-backup …`）→ 本番。
 
 **確認**: `EgressPolicyScriptTest` 9（+2 — public の 443 の外が開いていれば成功ではない、メールのポート · ssh のリポジトリ · 外の PGHOST なら適用せず値を言わない）· ガード B-117 `EgressPolicyGuardTest` 6（+2 — インターネットの規則はすべてポートを持つ · public 443 · メール · Atlas · トンネル · エージェントのポートと選ぶ Pod、バックアップは IP 帯域なし、ポリシーの名前が CronJob · オーバーレイの実際のラベルと同じ、ops/35 が消すポリシー = k8s/97）。変異: public のポートを外す · CronJob のラベルを変える · 消すリストから一つ外す · public の 80 の確認を外す · メールのポートの点検を開く、でそれぞれ失敗。
+
+## 27. サーバー証明書をサービスごとに — 共有 `tls-keystore` の代わりに身元で（2026-11-20、ガード B-121）
+
+**問題**: Java サービス 13 個がすべて**同じサーバー鍵**（ops/07 の `keystore.p12`、Secret `tls-keystore`）で HTTPS を開いていた。その証明書の SAN には `*.ecommerce.svc.cluster.local` と全サービス名がある — Pod 一つでその鍵が漏れれば**どのサービスにも成りすませた**（ゲートウェイ → バックエンド · Feign · Eureka 登録がサーバーを確認するとき、すべて通る）。有効期間 825 日 · 手で交換して全 Pod を再起動する必要があった（§18 の残り）。サービスごとの身元（§16 · §18 — 90 日、cert-manager が期限 30 日前に再発行、Reloader が再起動）にはすでに `server auth` とそのサービス名 · FQDN があった — gRPC サーバー（catalog 9095）はもともとそれを使っていた。
+
+**やったこと**:
+- Java Deployment 13 個（k8s/30 〜 49）に `SERVER_SSL_KEY_STORE=/app/identity/keystore.p12` · 形式 PKCS12 · パスワードは両方 `$(LOCAL_KEY_STORE_PASSWORD)`（cert-manager の PKCS12 は鍵パスワード = ストアパスワード）。環境変数は yml の `server.ssl.key-store: ${LOCAL_KEY_STORE_PATH}` より優先される（Spring のプロパティ順序）— **`LOCAL_KEY_STORE_PATH` はそのまま**: Postgres（`sslrootcert`）· Redis の設定が同じ変数を読む。管理ポート（§25）はサーバー TLS を引き継ぐので一緒に変わる。
+- eureka-server にも身元 `id-eureka-server`（k8s/96 · ops/38 · ops/39）— マウント · Reloader 注釈 · `EUREKA_CLIENT_TLS_ENABLED=true`（身元をマウントした Pod の規則 B-86 — 自分のピア複製もその証明書を出す）。config-server はすでに `SERVER_SSL_*` 四つがあり（B-91）、パスだけ身元に。
+- 身元ごとに名前を一つ追加: `metrics.ecommerce.svc.cluster.local` — 指標エージェント（k8s-overlays/external）が Pod IP で収集し、**全 Pod でこの名前で**サーバーを確認する（Prometheus は対象ごとに `server_name` を変えられない）。以前は共有証明書のワイルドカードがカバーしていた。この名前で接続するのはエージェントだけで、エージェントは「内部 CA が出した証明書か」だけを見る — 今と同じ保証。
+- `ops/38`（手発行）: eureka-server を追加 · SAN にその名前 · **期限が残っていてもその名前のない古い身元は作り直す** · `check` が知らせる。`ops/39`（cert-manager）: 一覧に eureka-server — k8s/96 の `dnsNames` が変わるので `apply` すると cert-manager が 13 個を再発行し、Reloader が一つずつ再起動する。
+- `ops/28` のデプロイ前点検: マウントする身元 Secret ごとに指標の名前がなければ**止める**（なしでデプロイするとサービス指標がすべて途切れる — `ServiceDown`）。
+- 共有 `tls-keystore` は残る — 私設 CA（`ca.crt` · トラストストア）、Kafka クライアントのキーストア、Postgres · Redis クライアント設定が読む。サーバー鍵としてはもう誰も使わない（本番クラスタの外 — 開発 PC の `LOCAL_KEY_STORE_PATH` はそのままその鍵）。
+
+**変わらないもの**: サーバーを確認する側が使う名前 — ゲートウェイ（Eureka の `EUREKA_INSTANCE_HOSTNAME` = FQDN）· Feign（`FEIGN_*_URL` = FQDN）· Eureka 登録 · config クライアント（FQDN）· デモ Ingress（`serverName` = ゲートウェイ FQDN）— すべて身元の `dnsNames` にある。cloudflared は `noTLSVerify`、kubelet のプローブは確認しない。CA が同じなのでトラストストアもそのまま。
+
+**デプロイ順序**（イメージ変更なし — マニフェストだけ、次のデプロイに一緒に）:
+1. 身元を新しい名前で: cert-manager なら `./ops/39-cert-manager.sh apply`（13 個を再発行 · Reloader が再起動 — まだ古いマニフェストなので動作は同じ）、手発行なら `./ops/38-issue-service-identities.sh`（eureka-server を新規 · 名前のない身元を作り直し）→ サービスの再起動は 2 が行う。
+2. `ops/28` でデプロイ — 上の点検が名前 · eureka の身元を確認してから適用し、Pod が身元で HTTPS を開き直す。
+3. 確認: `./ops/37-check-mtls.sh`（内部呼び出しの 200 · 403 はそのまま）· `up{job="spring-actuator"}` 11 · どれかの Pod で `openssl s_client -connect order-service.ecommerce.svc.cluster.local:8084 -servername order-service.ecommerce.svc.cluster.local </dev/null 2>/dev/null | openssl x509 -noout -subject -enddate` が `CN=order-service` · 90 日以内。
+4. 戻し: 前のバージョンへ `ops/28 --rollback`（古いマニフェスト = 共有鍵）— 身元の名前が増えたことは古いマニフェストにも害がない。
+
+**確認**: ガード **B-121** `ServerCertificateGuardTest` 3（Java Deployment ごとにサーバーキーストア = 自分の身元 · `LOCAL_KEY_STORE_PATH` そのまま · その Secret をマウント · Reloader 注釈、k8s/96 の Certificate ごとに server auth · 名前 · FQDN · 指標の名前 · ワイルドカードなし、ops/38 · ops/39 · Java Deployment の一覧が同じで ops/38 の SAN · 作り直し · ops/28 の点検）。変異: サービス一つのサーバーキーストアを共有鍵に · 身元一つから指標の名前を抜く · ops/38 が名前のない身元を期限だけ見て飛ばす、のそれぞれで失敗。ops/38 の openssl 設定で作った証明書が serverAuth · 三つの名前を持つことを別に確認した。**まだ見ていないもの**: 実クラスタで新しいキーストアでの起動 · 更新後の再起動（この環境の docker 内の k3s は Pod を立てられない）— 実習クラスタで 1 → 3 の順に。
+
+**残り**: 共有 `tls-keystore` の Kafka クライアント鍵（ブローカーが確認するクライアント証明書）もサービスごとに · インフラ（Kafka · Redis · Postgres）のサーバー証明書を cert-manager に — インフラの再起動を伴うので別に計画する。秘密鍵の HSM/KMS は本番機材 · コストの判断。

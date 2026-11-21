@@ -54,10 +54,14 @@ public class SearchController {
     // [JA] この検索を ES で行うか — 機能フラグ(docs/74)。キャッシュの外で決めてキャッシュキーに入れる。
     private final com.project.catalog_service.service.SearchEngineSelector searchEngineSelector;
 
-    /** 한 번에 하나만. 싱글턴 리더를 두 실행이 나눠 읽으면 색인이 조용히 망가진다. */
-    // [JA] 一度に一つだけ。シングルトンのリーダーを二つの実行で分け合って読むと、インデックスが黙って壊れる。
-    private final java.util.concurrent.atomic.AtomicBoolean indexing =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
+    /**
+     * 재색인 중복 실행 방지 — <b>클러스터 전체</b>(Redis, {@link com.project.catalog_service.service.ReindexLock}).
+     *
+     * <p>🐛 2026-11-20 실습: 예전에는 여기 {@code AtomicBoolean} 하나였다. 레플리카가 2개라 게이트웨이가 다른 파드로
+     * 보내면 그냥 통과해 재색인 잡 둘이 21시간 함께 돌았다 — 아래 문단이 적어 둔 "리더를 나눠 읽는다" 가 실제로 났다.
+     * [JA] 以前は AtomicBoolean だけで、レプリカ 2 個のため別ポッドの要求が通っていた。
+     */
+    private final com.project.catalog_service.service.ReindexLock reindexLock;
 
     // 데몬 스레드 하나 — 파드가 내려갈 때 종료를 붙잡지 않는다(잡 상태는 메타 테이블에 남는다).
     // [JA] デーモンスレッド一つ — Pod が落ちるときに終了を引き止めない(ジョブの状態はメタテーブルに残る)。
@@ -98,6 +102,8 @@ public class SearchController {
      * <p>[JA] 2026-10-20 実習(商品 1,000 万、docs/83 §2.8): 上限がなく、フィルター検索一つが 75 〜 195 秒間接続を握った。ゲートウェイは 10 秒で
      * 諦めるが catalog のスレッドと接続は照会が終わるまで縛られ、Pod ごとに 5 本しかないプールが埋まると home · banners まで 5 秒待ちの末 5xx だった
      * (フィルター検索の測定失敗 95.04%)。今は高い検索だけが失敗し、残りは生きる。
+     *
+     * <p>[JA] 検索照会が時間上限に掛かった — 503。照会は DB で取り消され、接続はすぐ戻る。以前は上限がなく、一件が接続を 3 分握って全体が 5xx だった。
      */
     @org.springframework.web.bind.annotation.ExceptionHandler({
             org.springframework.dao.DataAccessException.class, jakarta.persistence.PersistenceException.class,
@@ -189,6 +195,11 @@ public class SearchController {
      * 읽는다. 읽기 위치가 뒤엉켜 색인이 중간부터 비거나 {@code ReaderNotOpenException} 이
      * 난다. ProductImportService 와 같은 이유·같은 방식으로 한 번에 하나만 돌린다.
      *
+     * <p>🐛 그런데 그 "한 번에 하나" 가 파드 안의 {@code AtomicBoolean} 이었다 — 레플리카 2개에서는
+     * 다른 파드로 간 두 번째 요청이 그냥 통과했고, 2026-11-20 실습에서 잡 둘이 21시간을 함께 돌았다.
+     * 이제 Redis 잠금({@link com.project.catalog_service.service.ReindexLock})이라 파드 수와 무관하다.
+     * Redis 에 닿지 못하면 <b>거절한다</b>(503) — 막지 못한 채 두 번째 잡을 띄우는 것이 더 나쁘다.
+     *
      * <p>202 로 즉시 돌아온다. 이 잡은 새 인덱스에 쓴 뒤 별칭을 바꾸는 방식이라
      * (newIndexName) 실패해도 현재 검색은 그대로다 — 임포트와 달리 재실행이 안전하다.
      *
@@ -210,9 +221,17 @@ public class SearchController {
             return ResponseEntity.internalServerError().body("Product indexing job not found!");
         }
 
-        if (!indexing.compareAndSet(false, true)) {
+        boolean acquired;
+        try {
+            acquired = reindexLock.tryAcquire();
+        } catch (RuntimeException e) {
+            log.error("재색인 잠금을 확인하지 못했다 — 시작하지 않는다({})", e.getClass().getSimpleName(), e);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("재색인 중복 실행을 확인할 수 없어 시작하지 않았습니다(Redis).");
+        }
+        if (!acquired) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body("색인 작업이 이미 진행 중입니다.");
+                    .body("색인 작업이 이미 진행 중입니다(클러스터 전체).");
         }
 
         String newIndexName = "products-" + System.currentTimeMillis();
@@ -232,7 +251,7 @@ public class SearchController {
                 // [JA] ジョブの失敗は BATCH_JOB_EXECUTION に残る。ここでは原因だけをログに残す。
                 log.error("ES 재색인 실패: {}", e.getMessage(), e);
             } finally {
-                indexing.set(false);
+                reindexLock.release();
             }
         }));
 

@@ -29,6 +29,8 @@ k8s/20-secret.yaml*
 *.bak
 *.save
 *.bak
+*.save
+*.bak
 
 apllication-prd.yml
 chat-connector.json
@@ -43,6 +45,7 @@ build/
 
 # QueryDSL 등 annotation processor가 생성하는 소스 (컴파일 산출물)
 # [JA] QueryDSL などの annotation processor が生成するソース(コンパイル成果物)
+**/src/main/generated/
 **/src/main/generated/
 **/src/main/generated/
 
@@ -162,3 +165,4 @@ load-results/
 *.dump
 sops-v*.checksums.txt
 sops-v*.checksums.sigstore.json
+

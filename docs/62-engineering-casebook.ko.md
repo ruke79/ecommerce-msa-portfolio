@@ -667,11 +667,36 @@
 
 ---
 
+## 23. 같은 교훈을 두 번 배우지 못했다 — 파드 안의 자물쇠, 그리고 중첩 문서를 센 `docs.count`
+
+**📖 참고** — Martin Kleppmann, *Designing Data-Intensive Applications*, 8장 "Distributed Systems Trouble" 의 분산 잠금 절. "프로세스 안의 자물쇠는 프로세스가 둘이면 자물쇠가 아니다" 를 이 저장소의 두 배치에 대 봤습니다.
+
+**문제**
+- 2026-11-20 실습(상품 1,000만)에서 전체 재색인(`POST /api/products/sync`)을 두 번 불렀습니다. 중복 실행 방지는 컨트롤러의 `AtomicBoolean` 하나였고, catalog 레플리카가 **2개**라 게이트웨이가 다른 파드로 보낸 두 번째 요청이 그냥 통과했습니다 — 잡 둘이 **21시간** 동안 함께 돌았습니다.
+- 그 컨트롤러의 주석은 이미 그 위험을 적어 두었습니다: 리더 빈이 모두 `@StepScope` 없는 싱글턴이라 "같은 잡이 동시에 둘 돌면 **같은 리더 인스턴스**를 나눠 읽는다". 더 나쁜 것은, **같은 결함이 일괄 임포트에서는 이미 고쳐져 있었다**는 점입니다(`ProductImportService` 의 `🐛 예전에는 AtomicBoolean 하나뿐이라 레플리카 2개…` → `ImportLock`, Redis). 교훈이 한 경로에만 적용되고 옆 경로에는 옮겨지지 않았습니다.
+- 진단하면서 저도 틀렸습니다. `_cat/indices` 의 `docs.count` 가 상품 1,000만에 **37,003,969** 라 "중복을 3.7배 쓰고 있다" 고 읽었습니다. 아닙니다 — `ProductDocument` 의 `skus` · `subcategories` 가 `FieldType.Nested` 이고 **중첩 객체는 Lucene 문서로 따로 셉니다**: 10,000,000(부모) + 17,003,969(SKU) + 10,000,000(하위 분류) = 37,003,969, 정확히 일치했습니다. 부모만 세는 `_count` 는 10,000,000 이었습니다. 색인은 멀쩡했습니다.
+
+**처리한 내용**
+- `ReindexLock`(Redis `SET NX PX`, 키 `catalog:product-reindex:lock`) — `ImportLock` 과 같은 구조. 다른 점은 리스가 길다는 것(기본 12시간, `catalog.reindex.lock-lease`): 재색인은 상품 1,000만 · SKU 1,700만 · 사이즈 3,000만에서 몇 시간을 돕니다.
+- Redis 에 닿지 못하면 **거절**합니다(503). 막지 못하는 것을 모른 채 두 번째 잡을 띄우는 쪽이 더 나쁩니다.
+- 시험: `ReindexLockTest`(두 파드의 빈이 같은 키를 쓴다 · 잡지 못했으면 풀지 않는다 · 임포트와 다른 키 · 리스는 설정) · `ReindexGuardTest`(409 이고 잡을 띄우지 않음 · Redis 고장이면 503 · 202 뒤 끝나면 푼다).
+- 운영 요령 하나: 검색이 읽는 것은 별칭 `product-alias` **하나**뿐입니다(다른 인덱스는 배치가 쓰지만 읽는 코드가 없습니다). 그래서 잡이 뒷단계에서 멈춰 별칭을 못 바꿨어도, 완성된 상품 인덱스에 별칭을 손으로 붙이면 검색이 바로 섭니다(`POST /_aliases`) — 몇 시간을 다시 돌릴 필요가 없었습니다.
+
+**한계**
+- 파드가 잠금을 쥔 채 죽으면 리스(12시간)까지 다음 재색인이 막힙니다. 기다리지 않으려면 그 키를 지웁니다(`DEL catalog:product-reindex:lock`). 리스를 짧게 하고 갱신하는 쪽이 정석이지만, 재색인이 하루에 몇 번 돌 일이 아니라 단순함을 택했습니다.
+- 잠금은 "두 잡이 함께 도는 것" 만 막습니다. 이미 뒤엉킨 색인을 고치지는 않습니다 — 그때는 쓰다 만 인덱스를 지우고 다시 돕니다(별칭을 마지막에 바꾸는 설계라 지우기가 안전합니다).
+
+**교훈** — 같은 결함을 고쳤다면 **같은 모양의 다른 경로도 함께 봐야** 합니다. 그리고 수를 보고 놀랐을 때는 그 수의 **정의**를 먼저 확인할 것입니다: 여기서는 산수가 정확히 맞아떨어지는 것이 "중복이 아니다" 의 증거였습니다.
+
+→ `ReindexLockTest` · `ReindexGuardTest` · `catalog-service` 의 `ReindexLock` · `ImportLock`
+
+---
+
 ## 참고서 목록
 
 | 책 | 출판 | 사례 |
 |---|---|---|
-| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 · 19 |
+| Martin Kleppmann, *Designing Data-Intensive Applications* | O'Reilly, 2017 | 2 · 3 · 12 · 18 · 19 · 23 |
 | Sam Newman, *Building Microservices*, 2nd ed. | O'Reilly, 2021 | 5 · 6 · 8 · 13 |
 | Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty, *Kafka: The Definitive Guide*, 2nd ed. | O'Reilly, 2021 | 4 |
 | Andrew Hoffman, *Web Application Security*, 2nd ed. | O'Reilly, 2024 | 1 |

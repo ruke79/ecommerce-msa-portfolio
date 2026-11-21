@@ -50,12 +50,14 @@ ORG="${ORG:-ecommerce-msa}"
 # 다른 서비스를 부르거나(Feign) 앞으로 부를 수 있는 백엔드 + 게이트웨이. 게이트웨이 인증서는 내부 API 를 부르려는 것이 아니라
 # **신원 헤더를 붙여 넘기는 쪽**이라는 증명이다 — 받는 쪽은 그 헤더를 이 CN 으로 온 요청에서만 믿는다(docs/57 §16).
 # config-server 는 내부 API 를 부르지 않지만 Eureka 에 자기를 등록한다 — Eureka 는 등록을 그 서비스 자신의 CN 으로만 받는다
-# (docs/57 §16 "Eureka 쓰기"). eureka-server 는 자기에게 등록하지 않는다 — 신원이 없다.
-# [JA] 他のサービスを呼ぶ(Feign)か今後呼びうるバックエンド + ゲートウェイ。ゲートウェイ証明書は内部 API を呼ぶためではなく
-#      **アイデンティティヘッダを付けて渡す側**であることの証明だ — 受ける側はそのヘッダをこの CN で来たリクエストでだけ信じる(docs/57 §16)。
-#      config-server は内部 API を呼ばないが Eureka に自分を登録する — Eureka は登録をそのサービス自身の CN でだけ受け付ける
-#      (docs/57 §16「Eureka 書き込み」)。eureka-server は自分には登録しない — アイデンティティがない。
-SERVICES="${SERVICES:-gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server}"
+# (docs/57 §16 "Eureka 쓰기"). eureka-server 는 부르지도 등록하지도 않지만, 신원이 **서버 인증서**도 된다(2026-11-20, B-121 —
+# 모든 서비스가 공유 tls-keystore(825일) 대신 자기 신원으로 HTTPS 를 연다).
+# [JA] eureka-server は呼びも登録もしないが、身元が**サーバー証明書**にもなる(2026-11-20、B-121 — 全サービスが共有 tls-keystore
+#      (825 日)の代わりに自分の身元で HTTPS を開く)。
+SERVICES="${SERVICES:-gateway-server user-service catalog-service cart-service order-service pay-service coupon-service chat-service notification-service delivery-service saga-projection config-server eureka-server}"
+# 지표 에이전트(k8s-overlays/external/metrics-agent.yaml)가 모든 파드에서 확인하는 이름 — 신원마다 들어 있어야 긁힌다.
+# [JA] メトリクスエージェントが全 Pod で確認する名前 — 身元ごとに入っていないと収集できない。
+METRICS_NAME="metrics.$NS.svc.cluster.local"
 
 MODE="issue"
 while [ $# -gt 0 ]; do
@@ -85,6 +87,13 @@ days_left() {
     echo $(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
 }
 
+# 서버 인증서로 쓸 이름이 다 있나(지표 에이전트의 이름) — 2026-11-20 전에 만든 신원에는 없다
+# [JA] サーバー証明書として使う名前が揃っているか(メトリクスエージェントの名前) — 2026-11-20 より前の身元にはない
+san_ok() {
+    kubectl -n "$NS" get secret "tls-id-$1" -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null \
+        | openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:$METRICS_NAME"
+}
+
 cn_of() {
     kubectl -n "$NS" get secret "tls-id-$1" -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null \
         | openssl x509 -noout -subject -nameopt RFC2253 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p'
@@ -98,6 +107,8 @@ if [ "$MODE" = "check" ]; then
             warn "$s: 없다 — $0 --only $s"
         elif [ "$d" -lt "$RENEW_DAYS" ]; then
             warn "$s: CN=$(cn_of "$s") · ${d}일 남음 — 곧 만료. 다시 발급 후 재시작"
+        elif ! san_ok "$s"; then
+            warn "$s: 서버 인증서 이름($METRICS_NAME)이 없다 — $0 --only $s 로 다시 발급(지표가 끊긴다, B-121)"
         else
             ok "$s: CN=$(cn_of "$s") · ${d}일 남음"
         fi
@@ -144,7 +155,7 @@ for s in $SERVICES; do
     fi
     if [ "$FORCE" != "1" ]; then
         d=$(days_left "$s")
-        if [ "$d" -ge "$RENEW_DAYS" ]; then
+        if [ "$d" -ge "$RENEW_DAYS" ] && san_ok "$s"; then
             info "$s: 이미 있다(${d}일 남음) — 건너뜀. 다시 만들려면 FORCE=1"
             continue
         fi
@@ -161,7 +172,7 @@ O = $ORG
 basicConstraints = critical, CA:FALSE
 keyUsage = critical, digitalSignature, keyEncipherment
 extendedKeyUsage = clientAuth, serverAuth
-subjectAltName = DNS:$s, DNS:$s.$NS.svc.cluster.local
+subjectAltName = DNS:$s, DNS:$s.$NS.svc.cluster.local, DNS:$METRICS_NAME
 EOF
     openssl req -new -newkey rsa:2048 -nodes -keyout "$dir/tls.key" -out "$dir/tls.csr" -config "$dir/ext.cnf" 2>/dev/null
     openssl x509 -req -in "$dir/tls.csr" -CA "$CA_DIR/ca.crt" -CAkey "$CA_DIR/ca.key" -CAcreateserial \

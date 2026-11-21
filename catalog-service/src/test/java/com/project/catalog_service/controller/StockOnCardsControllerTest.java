@@ -89,7 +89,8 @@ class StockOnCardsControllerTest {
         com.project.catalog_service.service.SearchFilterFacets facets = mock(com.project.catalog_service.service.SearchFilterFacets.class);
         when(facets.attach(any(), any())).thenAnswer(i -> i.getArgument(0));
         SearchController controller = new SearchController(search, availability, null, null, null, facets,
-                mock(com.project.catalog_service.service.SearchEngineSelector.class));
+                mock(com.project.catalog_service.service.SearchEngineSelector.class),
+                com.project.catalog_service.service.ReindexLock.LOCAL);
 
         SearchResultDto shown = (SearchResultDto) controller.searchProducts(mock(SearchParamsRequest.class)).getBody();
 

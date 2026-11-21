@@ -53,7 +53,7 @@ class KafkaTransactionGuardrailTest {
             List<Path> sources = paths.filter(Files::isRegularFile)
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(p -> p.toString().contains("/src/main/java/"))
-                    .filter(p -> !p.toString().contains("/build/"))
+                    .filter(p -> !p.toString().contains("/build/") && !p.toString().contains("/bin/"))
                     .toList();
 
             for (Path p : sources) {

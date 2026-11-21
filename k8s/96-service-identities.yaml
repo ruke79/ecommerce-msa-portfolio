@@ -51,6 +51,7 @@ spec:
   dnsNames:
     - gateway-server
     - gateway-server.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -82,6 +83,7 @@ spec:
   dnsNames:
     - user-service
     - user-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -113,6 +115,7 @@ spec:
   dnsNames:
     - catalog-service
     - catalog-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -144,6 +147,7 @@ spec:
   dnsNames:
     - cart-service
     - cart-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -175,6 +179,7 @@ spec:
   dnsNames:
     - order-service
     - order-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -206,6 +211,7 @@ spec:
   dnsNames:
     - pay-service
     - pay-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -237,6 +243,7 @@ spec:
   dnsNames:
     - coupon-service
     - coupon-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -268,6 +275,7 @@ spec:
   dnsNames:
     - chat-service
     - chat-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -299,6 +307,7 @@ spec:
   dnsNames:
     - notification-service
     - notification-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -330,6 +339,7 @@ spec:
   dnsNames:
     - delivery-service
     - delivery-service.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -361,6 +371,7 @@ spec:
   dnsNames:
     - saga-projection
     - saga-projection.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -394,6 +405,7 @@ spec:
   dnsNames:
     - config-server
     - config-server.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
   usages: [client auth, server auth, digital signature, key encipherment]
   duration: 2160h      # 90일 ／ [JA] 90 日
   renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
@@ -411,3 +423,38 @@ spec:
   issuerRef:
     name: internal-ca
     kind: ClusterIssuer
+---
+# eureka-server — 서버 인증서용 신원(2026-11-20, B-121). 이전에는 공유 tls-keystore 로 떴다.
+# [JA] eureka-server — サーバー証明書用の身元(2026-11-20、B-121)。以前は共有 tls-keystore で起動していた。
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: id-eureka-server
+  namespace: ecommerce
+spec:
+  secretName: tls-id-eureka-server
+  commonName: eureka-server
+  subject:
+    organizations: [ecommerce-msa]
+  dnsNames:
+    - eureka-server
+    - eureka-server.ecommerce.svc.cluster.local
+    - metrics.ecommerce.svc.cluster.local   # 지표 에이전트가 확인하는 이름(B-121) ／ [JA] メトリクスエージェントが確認する名前
+  usages: [client auth, server auth, digital signature, key encipherment]
+  duration: 2160h      # 90일 ／ [JA] 90 日
+  renewBefore: 720h    # 만료 30일 전 ／ [JA] 期限切れ 30 日前
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  keystores:
+    pkcs12:
+      create: true
+      profile: Modern2023          # AES-256/PBKDF2 — 자바 17 이 읽는다 ／ [JA] AES-256/PBKDF2 — Java 17 が読める
+      passwordSecretRef:
+        name: ecommerce-secrets
+        key: LOCAL_KEY_STORE_PASSWORD
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+

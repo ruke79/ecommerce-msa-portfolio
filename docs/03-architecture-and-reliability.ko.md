@@ -39,6 +39,77 @@ PayPal 결제와 실시간 채팅을 갖춘 **아마존 클론형 e-commerce 플
 
 ## 2. 시스템 구조도
 
+### 2.0 요청 경로(홉)와 5xx 진단 — 바깥에서 안으로
+
+사고 때 **코드를 먼저 보면 틀린다.** 요청은 여러 홉을 지나고, 5xx 는 대개 그중 한 홉의 문제다. 앞단은 **운영과 데모가 다르다** — 이것을 모르면 같은 증상에서 엉뚱한 곳을 판다.
+
+```mermaid
+flowchart TB
+    BR["브라우저"]
+    BR -->|"운영: www.ysyproject.com"| CF["Cloudflare"]
+    CF --> CFD["cloudflared 파드<br/>(터널 · k8s-overlays/external)"]
+    BR -->|"데모 · 실습: shop.lab<br/>(hosts 파일 → 노드 IP)"| TR["traefik<br/>(k3s 내장 Ingress 컨트롤러)"]
+
+    CFD -->|"/ — 평문 HTTP"| FE["frontend nginx :8080<br/>/api/ · /sse/ · /ws/ 는 자기도 게이트웨이로 넘긴다"]
+    TR -->|"/ — 평문 HTTP<br/>Ingress ecommerce-frontend (k8s/60)"| FE
+
+    CFD -->|"/&lt;서비스&gt;/** — HTTPS · noTLSVerify"| GW
+    TR -->|"/&lt;서비스&gt;/** — HTTPS<br/>Service 어노테이션 serversscheme=https +<br/>ServersTransport gateway-tls(CA 검증 · 유지 연결 100)<br/>Ingress ecommerce-gateway (데모 오버레이)"| GW
+
+    GW["gateway-server :8000<br/>TLS 종단 · JWT 검증 · 유입 제한(Redis) · 라우트"]
+    GW -->|"lb://&lt;서비스&gt; → Eureka 가 고른 인스턴스 IP:포트<br/>(GET 연결 실패는 다른 인스턴스로 2회 · 연결 상한 2초)"| POD["서비스 파드 :80xx<br/>(HTTPS · 서비스 인증서 mTLS)"]
+    GW -.->|"레지스트리 조회(캐시 30초)"| EU["eureka-server :8761"]
+    POD -.->|"등록 · 하트비트 30초<br/>쓰기는 서비스 인증서 필요(B-86)"| EU
+    FE -.->|"/api/ · /ws/"| GW
+```
+
+**운영에는 traefik 이 게이트웨이 앞에 없다.** `k8s/60-ingress.yaml` 은 frontend 만 노출하고, API 는 Cloudflare 터널이 ClusterIP Service 로 바로 보낸다(B-85 — 바깥은 터널로만). 데모에는 터널이 없어 데모 오버레이의 Ingress 가 그 ① 규칙을 대신한다 — 그래서 **데모에만 traefik → 게이트웨이 홉이 하나 더 있다.**
+
+#### 진단 순서 — 이 순서를 지키면 한 번에 좁혀진다
+
+| # | 확인 | 명령 | 읽는 법 |
+|---|---|---|---|
+| ① | 프론트 | `curl -sk https://<호스트>/ -o /dev/null -w '%{http_code}'` | 200 인데 API 만 5xx → **앞단에서 게이트웨이로 가는 규칙**(② 로) |
+| ② | 인그레스 · 터널 → 게이트웨이 | `curl -sk https://<호스트>/catalog-service/api/content/home` | 502 면 그 홉. 데모는 traefik, 운영은 cloudflared |
+| ③ | 게이트웨이 직접 | `kubectl -n ecommerce port-forward deploy/gateway-server 18000:8000` → `curl -sk https://localhost:18000/...` | **200 이면 게이트웨이 · 서비스는 무죄** — ①② 만 남는다 |
+| ④ | 게이트웨이 → 서비스 | `kubectl -n ecommerce exec deploy/gateway-server -- curl -sk https://<서비스>.ecommerce.svc.cluster.local:<포트>/...` | 닿으면 Service · 파드는 살아 있다(라우팅 · Eureka 로) |
+| ⑤ | Eureka 등록 | `kubectl -n ecommerce exec deploy/eureka-server -- curl -sk https://localhost:8761/eureka/apps/<서비스 대문자> -H 'Accept: application/json'` | **인스턴스 수 ≠ 파드 수**면 죽은 등록이다(아래 함정 2) |
+| ⑥ | 서비스 파드 직접 | `kubectl -n ecommerce exec deploy/<서비스> -- curl -sk https://localhost:<포트>/...` | 여기서 5xx 면 그때 코드·설정을 본다 |
+| ⑦ | 그 서비스 로그 | `kubectl -n ecommerce logs deploy/<서비스> --tail=-1 \| grep -viE 'otel\|truststore'` | ⚠️ `--tail=-1` 없으면 파드마다 10줄만. OTel 수출 실패는 소음이다(실습에 Collector 가 없다) |
+
+**⑥·⑦ 에 예외가 하나도 없으면 코드 문제가 아니다 — 홉 문제다.** 그때 ①~⑤ 로 돌아간다.
+
+#### 실제로 겪은 함정 셋 (2026-11-20 실습, [docs/62 §22](62-engineering-casebook.ko.md))
+
+1. **traefik 이 쿠버네티스 API 에 `Unauthorized`** — 토큰이 무효가 되면 traefik 은 죽지 않고 **옛 캐시로 계속 돈다.** 재시작되지 않은 백엔드(frontend)는 200 이고, 파드가 새로 뜬 백엔드(게이트웨이)는 **없어진 옛 IP** 로 보내 502 다. 로그에 `failed to list *v1.Endpoints: Unauthorized` 가 있으면 그것 — `kubectl -n kube-system rollout restart deploy/traefik`.
+2. **`ops/28 --restart` 뒤 Eureka 에 죽은 인스턴스가 남는다** — 파드 IP 가 바뀌는데, 넷 중 둘이 하트비트를 멈추면(50%) Eureka 의 **자기 보호 모드**가 만료를 멈춘다. 게이트웨이는 절반을 죽은 IP 로 보내 502(연결 상한 2초 × 재시도). 스스로 낫지 않는다.
+3. **그 죽은 등록을 맨 `curl` 로 지우면 403** — `EUREKA_WRITE_AUTH_MODE=ENFORCE`(B-86)가 쓰기에 서비스 인증서를 요구한다. 지우는 올바른 방법은 **신원을 마운트한 파드에서**:
+   ```bash
+   kubectl -n ecommerce exec deploy/catalog-service -- sh -c '
+     curl -sk --cert /app/identity/tls.crt --key /app/identity/tls.key \
+       -X DELETE "https://eureka-server.ecommerce.svc.cluster.local:8761/eureka/apps/CATALOG-SERVICE/<instanceId>"'
+   ```
+   실습에서는 `rollout restart deploy/eureka-server`(레지스트리는 메모리) 가 더 간단하다 — 모든 서비스가 30초 안에 다시 등록한다. 운영에서는 위 DELETE 를 쓴다.
+
+#### 서비스별 경로 · 데이터
+
+| 서비스 | 외부 접두사 | 포트 | PostgreSQL | 그 밖 | 받는 Kafka 토픽 | 내는 것(확인된 것) |
+|---|---|---|---|---|---|---|
+| user-service | `/user-service` | 8080 | `userdb` · `users` | Redis(잠금 · 세션 컷오프) | — | `user-created` · `user-updated` · `user-deleted` · `outgoing-mail` · `security-alert` |
+| catalog-service | `/catalog-service` | 8081 · gRPC 9095 | `productdb` · `product` · `content` · `meta` | Redis(검색 · 목록 · 패싯 캐시), **Elasticsearch**(`product-alias`) | `product-update` | — |
+| cart-service | `/cart-service` | 8082 | `cartdb` · `cart` | — | `cart-empty` · `cart-rollback` · `coupon-use` | — |
+| order-service | `/order-service` | 8084 | `orderdb` · `orders` | — | `payment` · `delivery-status` · `stock-shortage` | `product-update` · `cart-empty` · `order-status` · `order-completed` · `order-refunded` |
+| pay-service | `/pay-service` | 8087 | `paydb` · `pay` | Redis | `order` | (아웃박스 릴레이가 결제 응답을 보낸다) |
+| coupon-service | `/coupon-service` | 8183 | `coupondb` · `coupon` | — | `payment` · `coupon-rollback` · `user-created` | — |
+| chat-service | `/chat-service` | 8086 | `chatdb` · `chat` | **MongoDB Atlas**(대화), Redis(팬아웃 · presence) | `user-created` · `user-updated` · `user-deleted` | `chat` · `support-reply` |
+| notification-service | `/notification-service` | 8188 | `notificationdb` · `notification` | SMTP · SMS 공급자 | 열넷(`order` · `payment` · `delivery-status` · `coupon-issued` · `outgoing-mail` · `security-alert` · `chat` · `support-reply` · `user-presence` · `notice-published` · `event-started` · `order-completed` · `order-refunded` · `product-stock`) | — |
+| delivery-service | `/delivery-service` | 8189 | `deliverydb` · `delivery` | 택배사 API | `payment` | (상태 이벤트 — `delivery-status`) |
+| saga-projection | `/saga-projection` | 8190 | — | Kafka Streams 상태 저장소(`order-saga-state-store` · `order-timeline-store`) | `order-requests` · `payment-responses` · `order-status-changes` | — |
+
+- **동기 호출(Feign)**: order → cart · catalog · user · coupon, cart → catalog · user, coupon → user, chat → user, delivery → order, user → notification. 재고 예약만 gRPC(order → catalog 9095)이고 `STOCK_TRANSPORT=http` 면 Feign 으로 간다.
+- **아웃박스**: user · order · pay · cart 는 같은 트랜잭션에 아웃박스 행을 쓰고 릴레이가 Kafka 로 보낸다([docs/12](12-dlq-rollout-idempotency-alerts.ko.md)) — 그래서 "내는 것" 이 코드에 리터럴로 안 보이는 서비스가 있다.
+- 포트는 `application-local.yml`, 스키마는 `db/migration/*.sql`, 토픽은 리스너 · 발행부에서 뽑았다(2026-11-20 확인). 접두사는 게이트웨이 Path 술어의 첫 조각이고 데모 인그레스 · 운영 터널 규칙과 같은 목록이다(B-82 · 가드 `EdgeRoutingGuardTest` · `DemoOverlayTest`).
+
 ### 2.1 컴포넌트 / 통신 개요
 
 ```mermaid
@@ -61,6 +132,9 @@ flowchart TB
       CHAT["chat-service :8086"]
       PAY["pay-service :8087"]
       COUP["coupon-service :8183"]
+      NOTI["notification-service :8188"]
+      DEL["delivery-service :8189"]
+      SAGA["saga-projection :8190<br/>(Kafka Streams 읽기 모델)"]
     end
 
     subgraph Data
@@ -85,7 +159,8 @@ flowchart TB
     COUP -->|Feign| USER
     CHAT -->|Feign| USER
 
-    USER & CAT & CART & ORDER & PAY & COUP <-->|produce/consume| KAFKA
+    USER & CAT & CART & ORDER & PAY & COUP & NOTI & DEL & CHAT <-->|produce/consume| KAFKA
+    SAGA -->|Kafka Streams| KAFKA
 
     USER --> PG
     CAT --> PG & ES & REDIS
@@ -93,7 +168,9 @@ flowchart TB
     ORDER --> PG
     PAY --> PG & REDIS
     COUP --> PG
-    CHAT --> MONGO
+    NOTI --> PG
+    DEL --> PG
+    CHAT --> PG & MONGO & REDIS
 ```
 
 ### 2.2 결제·주문 Saga (핵심 정합성 흐름)

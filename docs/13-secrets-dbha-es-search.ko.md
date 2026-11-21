@@ -98,6 +98,20 @@ kubectl -n elasticsearch exec deploy/elasticsearch -- curl -s localhost:9200/_cl
 - 네트워크 정책: `k8s/95` 의 `allow-ecommerce-only`(elasticsearch 네임스페이스)가 **ecommerce 네임스페이스에서만** 받는다. ⚠️ 여러 노드인 클러스터에서 kube-router 는 `namespaceSelector` 로 다른 노드의 파드를 막는다 — catalog 와 ES 가 다른 노드면 그것부터 본다.
 - catalog 는 이미 `SPRING_ELASTICSEARCH_URIS=http://elasticsearch.elasticsearch.svc.cluster.local:9200`(k8s/41)을 들고 있다. 상태(`/actuator/health`)에 ES 를 넣으려면 그 배포에 `MANAGEMENT_HEALTH_ELASTICSEARCH_ENABLED=true`(기본 꺼짐 — 가드 B-116: ES 가 없는 운영에서 health 가 늘 DOWN 이었다).
 
+⚠️ **재색인은 한 번에 하나만** — catalog 레플리카가 2개 이상이면 두 번째 요청이 다른 파드로 가 잡이 둘 돌 수 있었다(2026-11-20 실습에서 21시간, [docs/62 §23](62-engineering-casebook.ko.md)). 이제 Redis 잠금(`catalog:product-reindex:lock`)이라 파드 수와 무관하다 — 두 번째는 409, Redis 에 닿지 못하면 503. 파드가 잠금을 쥔 채 죽었으면 `redis-cli DEL catalog:product-reindex:lock`.
+
+💡 **잡이 끝나기 전에도 검색을 세울 수 있다.** 검색이 읽는 것은 별칭 `product-alias` 하나뿐이고(다른 인덱스는 배치가 쓰지만 읽는 코드가 없다), 별칭 교체는 **마지막 단계 뒤**다. 상품 인덱스가 다 차면(부모 수 = 상품 수) 손으로 붙여도 된다:
+
+```bash
+ES="kubectl -n elasticsearch exec deploy/elasticsearch -c elasticsearch -- curl -s"
+$ES "localhost:9200/_cat/indices/products-*-products?v"      # docs.count 는 부모 + 중첩이다
+$ES -XPOST -H 'Content-Type: application/json' localhost:9200/_aliases \
+  -d '{"actions":[{"add":{"index":"products-<타임스탬프>-products","alias":"product-alias"}}]}'
+$ES localhost:9200/product-alias/_count                       # 이것은 부모만 — 상품 수와 같아야 한다
+```
+
+⚠️ `_cat/indices` 의 `docs.count` 에 놀라지 말 것 — `ProductDocument` 의 `skus` · `subcategories` 가 `Nested` 라 **중첩 객체가 Lucene 문서로 따로 셉니다**. 실습 실측: 상품 1,000만 → `docs.count` **37,003,969** = 1,000만(부모) + 17,003,969(SKU) + 1,000만(하위 분류), `_count` 는 정확히 1,000만. 중복이 아니다.
+
 그다음 재색인 · alias · 개수 · 애널라이저 · 플래그는 `ops/03-enable-es-search.sh` 가 한 번에 한다:
 
 ```bash
@@ -115,6 +129,46 @@ GATEWAY=https://shop.lab ADMIN_TOKEN=<관리자 액세스 토큰> ES_URL=http://
 2. 기능 플래그 `catalog.search-engine` 의 비율(`k8s/15-feature-flags.yaml`) — 실제로 검색을 ES 로 보내는 것은 이쪽이다. 재기동 없이 1분 안팎.
 
 되돌리기는 2 의 비율을 0 으로(가장 빠르다) → 그다음 1 을 `postgres` 로.
+
+**지금 정해 둔 값(2026-11-20)**: 실습 · 데모는 `SEARCH_ENGINE=es` · 비율 **es 100%**(베이스 `k8s/15-feature-flags.yaml` 은 운영 기준 **0%**). 운영(OCI)은 베이스의 `postgres` 그대로이고 **비율이 바뀌어도 영향이 없다** — `SearchEngineSelector` 는 ES 빈이 없으면(`esDeployed=false`) 플래그를 **평가하지도 않는다**(추적에 'es' 로 거짓 기록이 남지 않게). 적용은 `./ops/28-deploy.sh demo --config-only --restart catalog-service`(①) · `--config-only`(②, 재기동 없음). 처음에는 10% 로 두었다가 아래 실측으로 100% 로 올렸다 — 하루 보고 `catalog_search_*` · 응답 지연 · ES 쪽 오류를 비교한 뒤 올린다.
+
+#### 실측 — 왜 데모는 100% 인가 (2026-11-20, 상품 1,000만)
+
+같은 검색어로 ES 에 직접 묻고, 같은 검색어를 API 로 불러 **캐시 키로 엔진을 사후에 확인했다**(`search_cache::SimpleKey [SearchParamsRequest(...), POSTGRES]`).
+
+| 검색어 | ES 직접 | API(PostgreSQL 경로) |
+|---|---|---|
+| Parmesan | 5ms · 1만 건 이상 | 200 · **3.97초** |
+| Sandals | 2ms · 1만 건 이상 | 200 · **3.57초** |
+| Kettle | 2ms · 1만 건 이상 | 200 · **1.60초** |
+| Blower | 3ms · 1만 건 이상 | 200 · **1.61초** |
+| Patio | 2ms · 1만 건 이상 | 200 · **1.61초** |
+| 가방 · nike | 1~11ms · **0건**(데모 이름은 영어) | **503** · 5.0~5.4초(질의 상한) |
+
+**100% 로 올린 뒤(같은 날, 데모 `26e0ea1533ce`)** — 같은 다섯 단어가 ES 로 갔다(캐시 키에 `ES` 가 생긴 것으로 확인):
+
+| 검색어 | PostgreSQL 경로(전) | **ES 경로(후)** | ES 질의 자체 |
+|---|---|---|---|
+| Parmesan | 3.97초 | **2.81초** | 5ms |
+| Sandals | 3.57초 | **2.67초** | 2ms |
+| Kettle | 1.60초 | **0.82초** | 2ms |
+| Blower | 1.61초 | **0.76초** | 3ms |
+| Patio | 1.61초 | **0.70초** | 2ms |
+| 가방 · nike(0건) | **503** · 5.0 ~ 5.4초 | **200** · 0.052 · 0.063초 | 1 ~ 11ms |
+
+**끝까지는 약 2배**다 — ES 질의는 2 ~ 5ms 인데 응답이 0.70 ~ 2.81초인 것은 나머지가 **ES 밖**에 있다는 뜻이다: 관련도로 고른 id 로 상세를 읽는 `productId IN (esIds)`(docs/07 R-C1 의 "ES 로 관련도, Postgres 로 하이드레이션") + 첫 쪽의 필터 메뉴. 다음 개선은 거기다(페이지 크기만큼만 읽기 · 메뉴를 ES 집계로). 지금의 이득은 속도보다 **5초 상한 503 이 사라진 것**이고, ES 에 0건인 검색어도 빈 결과를 빠르게 돌려준다(PostgreSQL 은 없는 것을 찾느라 끝까지 훑었다).
+
+열다섯 검색어 중 ES 로 라우팅된 것은 하나였다(비율 10% 와 맞는다) — 그래서 **비율을 올리지 않으면 ES 가 있어도 쓰이지 않는다.**
+
+⚠️ **엔진은 추측하지 말고 캐시 키로 확인한다.** 응답이 빨랐다고 ES 인 것이 아니다(2026-11-20: `운동화` 가 0.68초였지만 캐시 키는 `POSTGRES` 였다 — 그 조건이 PG 에서 싸게 끝난 것이다).
+```bash
+kubectl -n redis exec deploy/redis -- sh -c '
+  redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "search_cache*"' \
+  | grep -oE 'search=[^,]*|, (ES|POSTGRES)\]' | paste - -
+```
+⚠️ `grep -oE '(ES|POSTGRES)\]'` 처럼 **`]` 를 바로 뒤에 두면 `POSTGRES` 의 끝 두 글자(`ES]`)에 걸려 전부 ES 로 보인다.** 앞에 `, ` 를 붙이거나 `grep -oE 'ES|POSTGRES'`(가장 긴 쪽이 이긴다)로 센다.
+⚠️ 한국어 검색어를 `curl` 로 보낼 때는 `-G --data-urlencode` — 인코딩하지 않으면 **400** 이다(브라우저는 늘 인코딩한다).
+
 
 
 ### 남은 것 (후속)
