@@ -22,8 +22,10 @@
 //        · SPREAD=1 — 検索の組み合わせを広げて search_cache(60 分)を避ける: 深いページは既定 1000 ページ・名前検索は 1 ~ NAME_PAGES
 //          (既定 50)ページ・FILTER_SEARCH の割合(既定 0 — 与えれば)だけ価格帯・色・サイズのフィルター検索(filter_search)。🐛 それ以前の
 //          100 万の回は最初の 1 分半以降、検索がすべてキャッシュから出てデータのコストが見えなかった(docs/83 §5)。アドレス生成は spread.js
+// [JA] データ規模モード — ops/44 で入れた範囲全体から選ぶ(詳細はランダムな id、一覧は深いページ、名前検索を一定割合)。
+//      SPREAD=1 は検索の組み合わせを広げてキャッシュ外を測る(FILTER_SEARCH で価格帯 · 色 · サイズのフィルター検索も)。
 import { sleep, fail } from 'k6';
-import { get, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, purchasable, categories, pick, rate, stages } from './lib.js';
+import { get, getWhenReachable, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, purchasable, categories, pick, rate, stages } from './lib.js';
 import { deepSearchPath, nameSearchPath, filterSearchPath } from './spread.js';
 
 const PEAK = rate(100);
@@ -92,7 +94,7 @@ let products = null;
 let cats = null;
 
 export function setup() {
-  const home = homeOrFail(get('/catalog-service/api/content/home', { tags: { name: 'home' } }));
+  const home = homeOrFail(getWhenReachable('/catalog-service/api/content/home', { tags: { name: 'home' } }));
   limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀) ／ [JA] 流入制限を上げていなければここで止まる(smoke は飛ばす)
   const list = purchasable(home);
   if (!list.length) {

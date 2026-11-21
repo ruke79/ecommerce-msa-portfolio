@@ -107,6 +107,25 @@ Notify for alerts failed ... open /etc/alertmanager/secrets/webhook-url-critical
 
 本番適用(2026-10-20): Discord に試験アラートと実際のアラートが届いた(3 件)。ところが `ops/17` は「送信失敗(試行 6 · 失敗 4)」と判定した — URL ファイルを作る前に Alertmanager を起動し直したので、すでに鳴っていたアラートが失敗として積もった分まで数えたためだ。今は到達試験が試験前の累積値との差だけを見て、Prometheus が Alertmanager を集めて直近 15 分の送信失敗にアラート `AlertDeliveryFailing` を掛ける(同じ道なのでこのアラートも届かないことがある — `./ops/05` の「直近 15 分の送信失敗」で見る)。
 
+**Grafana 管理者パスワードも同じ場所**(2026-11-21 セキュリティ点検): `observability/secrets/grafana-admin-password` にファイルで置く(git-ignore · ノード専用)。本番上書き(`docker-compose-observability.oci.yml`)がそのディレクトリを Grafana にマウントし `GF_SECURITY_ADMIN_PASSWORD__FILE` で読み、既定ファイルの `admin` を上書きする — ファイルが無ければ Grafana は起動しない(admin/admin 防止)。Kubernetes Secret(`k8s/20-secret.enc.yaml`)には入れない — 観測スタックは k8s 外の docker compose で、その Secret を読めない。
+
+一度だけ作成(値は会話 · コミットに書かない)。⚠️ **末尾に改行を入れない** — Grafana はファイルの中身を**そのまま**パスワードに使う。`echo '値' >` や here-string(`<<<'値'`)は末尾に `\n` を付けてパスワードが `値\n` になり、ブラウザでは改行を打てずログインが常に 401(5 回失敗で Grafana が数分ロックする、2026-11-21 本番で遭遇)。`printf '%s'`(改行なし)で書く。コンテナの grafana(uid 472)が読めるよう `chown 472:472` · `chmod 600`:
+
+```bash
+printf '%s' '<決めた値>' | sudo tee observability/secrets/grafana-admin-password >/dev/null
+sudo chown 472:472 observability/secrets/grafana-admin-password
+sudo chmod 600 observability/secrets/grafana-admin-password
+wc -c observability/secrets/grafana-admin-password   # = パスワードの文字数(改行があれば +1)
+```
+
+すでに末尾に改行が入ったファイルは、**打ち直さず**改行だけを取る(`$(cat …)` が末尾改行を取り、`printf '%s'` が改行なしで書き直す):
+
+```bash
+sudo bash -c 'f=observability/secrets/grafana-admin-password; printf "%s" "$(cat "$f")" > "$f.new" && mv "$f.new" "$f"; chown 472:472 "$f"; chmod 600 "$f"; wc -c "$f"'
+```
+
+コンテナが既に起動していれば `up -d --force-recreate grafana` でファイルを読み直す。急ぎなら `docker exec -it grafana grafana cli admin reset-admin-password '<決めた値>'` で DB に直接設定する(次の再生成時にファイル値へ戻るので、ファイルも改行なしで同じ値にしておく)。接続は `ssh -L 3001:127.0.0.1:3001 <本番ノード>` → `http://localhost:3001`(ループバックのみ)。
+
 ## 2. バックアップスクリプトはあるのに動いていなかった
 
 `ops/08`・`ops/10`・`ops/09` は実際の障害を巻き戻すところまで検証した([docs/15](15-backup-and-dr.md))。
@@ -212,6 +231,18 @@ docker exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=ecomm
 ```
 
 バックアップ → 復元 → データ読み取りまで実際につながることを確認した。
+
+### 2-2. デプロイ前の手動バックアップの保管 — 方針は人が、削除は自動(2026-11-21、第 4 段階 ⑥)
+
+デプロイ前のバックアップ(`~/backups/pre-<版>-<UTC>`、docs/72 §3 — 物理 · 論理 · Mongo、一つ約 5.5G)は誰も消していなかった。「毎月の整理」は実際にはなく、2026-11-21 に 9 個 · 34G が溜まりディスクが 87% だった(手で ノードの外へ移して削除 → 52%)。Google SRE の基準(手で繰り返す作業はトイル · 削除の自動化は最も危険な自動化)どおりに分ける:
+
+| 誰が | 何を | 安全装置 |
+|---|---|---|
+| 保管マシンの取得(読み取り専用) · タイマー 07:00 UTC | `pre-*/` を受け取って `DEST/predeploy` へ — 空ファイル拒否 · `.gz` は gzip -t · `.tar` は tar -t、30 日 · 最新 3 個 | **別の鍵**(`ecommerce-predeploy-pull`)で `~/backups` を `rrsync -ro`(sudo なし)— 受け取る側は消せない、失敗はタイマーの失敗として見える |
+| 本番ノード `ops/63 prune` — `ops/28` が本番デプロイ成功の後に呼ぶ | 最新 2 個の外 · 7 日を過ぎたものを消す | 最新 2 個は年齢にかかわらず、7 日未満(その間に毎日の受け取りが何度も回る)、名前の形が違うもの · リンク · ファイルは触らない、手動では既定 dry-run(`APPLY=1`)、無効化 `PREDEPLOY_PRUNE=0` |
+
+本番ノードはノード外の写しを直接確認できない — 受け取る側の鍵が読み取り専用だから(本番ノードが破られても写しを消せないように)。そこで「写しがある」は受け取る側の失敗の監視(タイマー · `status`)と 7 日の窓で守る。
+
 
 ## 3. 適用順序
 

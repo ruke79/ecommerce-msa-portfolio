@@ -40,6 +40,7 @@ services:
   #      成功時刻を書くが、🐛 本番にはそれを読む node_exporter がなく、バックアップが毎日成功しても PostgresBackupMetricMissing が鳴り、
   #      PostgresBackupStale(48 時間成功なし)は鳴りようがなかった(2026-10-23 確認)。textfile コレクタだけを有効にする — ノード指標は今回の目的外。
   #      ポートは開けない — 同じ compose ネットワークの Prometheus だけが node-exporter:9100 を収集する(観測ポートは公開しない)。
+  # [JA] 本番にはバックアップ成功時刻の textfile を読む node_exporter がなかった。textfile コレクタだけ、ポートは開けない。
   node-exporter:
     image: prom/node-exporter:v1.8.2
     container_name: node-exporter
@@ -58,6 +59,7 @@ services:
   # [JA] 外部プローブ(docs/91 §2-6)— このノードから Cloudflare 経由で客と同じアドレス(トップ画面 · ホーム API)を開く。サービス側の指標が
   #      見られないトンネル · Cloudflare · ゲートウェイ · フロントの障害を、SLO site-probe と警報 SiteProbeDown で捉える。ノードが丸ごと死ぬと
   #      これも一緒に死ぬ — その場合は外部監視が別に必要。ポートは開けない — 同じ compose ネットワークの Prometheus だけが blackbox-exporter:9115 を呼ぶ。
+  # [JA] 外部プローブ — このノードから Cloudflare 経由で客と同じアドレスを開く。ポートは公開しない。
   blackbox-exporter:
     image: prom/blackbox-exporter:v0.25.0
     container_name: blackbox-exporter
@@ -67,3 +69,18 @@ services:
     volumes:
       - ./observability/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     mem_limit: 64m
+
+  # 🔒 운영 Grafana 관리자 비밀번호는 Alertmanager 웹훅과 같은 자리 — observability/secrets/(git-ignore, 노드 전용)의 파일에서
+  #    읽는다. `__FILE` 접미사는 Grafana 가 그 파일 내용을 값으로 쓰게 한다(기본 파일의 admin 기본값을 덮는다). 노드에서 한 번
+  #    `install -m600 /dev/stdin observability/secrets/grafana-admin-password <<<'<정한 값>'` 로 만든다 — up 마다 export 할 필요가
+  #    없고, 파일이 없으면 Grafana 가 뜨지 않는다(admin/admin 방지, 보안 점검 2026-11-21). compose · 대화 · 커밋에 값은 적지 않는다.
+  # [JA] 本番の Grafana 管理者パスワードは Alertmanager の webhook と同じ observability/secrets/ のファイルから読む(__FILE)。
+  #      up ごとの export は不要、ファイルが無ければ Grafana は起動しない(admin/admin 防止)。
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/secrets/grafana-admin-password
+      # 기본 파일의 GF_SECURITY_ADMIN_PASSWORD 를 빈 값으로 덮는다 — Grafana 는 평문 변수와 __FILE 이 둘 다 set 이면
+      # "exclusive" 로 기동을 거부한다(빈 문자열은 set 으로 보지 않는다). [JA] 平文と __FILE の両方が set だと Grafana は起動を拒む。
+      - GF_SECURITY_ADMIN_PASSWORD=
+    volumes:
+      - ./observability/secrets:/etc/grafana/secrets:ro

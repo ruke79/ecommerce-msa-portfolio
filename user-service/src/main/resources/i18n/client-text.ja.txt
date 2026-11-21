@@ -195,6 +195,13 @@ SHA-256 을 쓸 수 없습니다
 users.roles 에 ROLE_USER 가 없습니다 — V3__seed_roles.sql 확인
 = -
 
+# DemoAccountService — 데모 계정 설정 · 기동(docs/100)
+users.roles 에 ROLE_USER 가 없다
+= -
+
+demo.accounts.count 는 1 ~ 50 — {}
+= -
+
 users.roles 에 ROLE_USER 가 없습니다. 마이그레이션 V3__seed_roles.sql 이 적용됐는지 확인하세요 — 이 행이 없으면 회원가입이 아무도 되지 않습니다.
 = -
 

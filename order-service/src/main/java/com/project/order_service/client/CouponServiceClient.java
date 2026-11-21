@@ -32,7 +32,9 @@ import com.project.order_service.config.FeignConfig;
  * 誰の見積もりかは <b>ユーザー id</b> で尋ねる(docs/48 §6-⑥)。以前はメールを渡し、coupon がそのメールで user-service に id を問い直していた。
  * {@code User-Role} などの身元ヘッダーはゲートウェイだけが付けるのでこの呼び出しにはなく、相手はそれを「内部呼び出し」と読む。
  */
-@FeignClient(name = "coupon-service", url = "${feign.coupon-url}", configuration = FeignConfig.class)
+// primary = false — 주입 기본값은 서킷 브레이커로 감싼 것(config/UpstreamCircuitBreakerConfig, 4단계 ④). 이 원본은 qualifier 로만.
+// [JA] 注入の既定はサーキットブレーカーで包んだもの。この元のクライアントは qualifier でだけ。
+@FeignClient(name = "coupon-service", url = "${feign.coupon-url}", configuration = FeignConfig.class, primary = false, qualifiers = "rawCouponServiceClient")
 public interface CouponServiceClient {
 
     /**
@@ -66,6 +68,7 @@ public interface CouponServiceClient {
      *
      * <p>[JA] coupon-service の {@code CouponResponse} のうち金額計算に必要な部分。
      * 相手の DTO をそのまま持ってきて使わない理由はモジュール境界だ — coupon-service の内部表現が変わってもここが壊れない。知らないフィールドは無視される。
+     *
      *
      * @param totalAfterDiscount 할인 후 총액
      *     [JA] 割引後の総額

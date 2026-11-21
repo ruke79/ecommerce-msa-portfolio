@@ -35,6 +35,11 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     Optional<Notification> findBySourceEventId(String sourceEventId);
 
+    /** 공개 데모 계정의 알림을 지운다 — 매일 초기화(docs/100). [JA] 公開デモアカウントの通知を消す — 毎日の初期化。 */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from Notification n where n.recipientId in :recipientIds")
+    int deleteAllOfRecipients(@Param("recipientIds") java.util.Collection<Long> recipientIds);
+
     /**
      * 발송 대기·재시도 대상을 <b>선점</b>한다.
      *

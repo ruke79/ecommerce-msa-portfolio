@@ -245,7 +245,15 @@ logging:
   # [JA] 出力パターンは common の logback-spring.xml が決める — メッセージ・例外を %mask で包んで機微情報を隠す。ここに logging.pattern を置いても使われない(ガード B-57)。
 
 # 회원가입 확인 메일 관련 설정.
-# [JA] 会員登録確認メール関連の設定。
+# 공개 데모 계정(docs/100) — 켜면 기동 때 demo1 ~ N@<도메인> 을 만들고 로그인 화면에 '데모 계정으로 둘러보기' 가 보인다.
+# 게이트웨이가 데모 토큰의 계정 · 자격 · 리뷰 · 인증 SMS 쓰기를 막는다(DemoAccessPolicy). 스키마 변경 없음(signUpMethod = demo).
+# [JA] 公開デモアカウント — 有効にすると起動時に demo1 〜 N を作り、ログイン画面に「デモアカウントで試す」が出る。スキーマ変更なし。
+demo:
+  accounts:
+    enabled: ${DEMO_ACCOUNTS_ENABLED:false}
+    count: ${DEMO_ACCOUNTS_COUNT:5}
+    email-domain: ${DEMO_ACCOUNTS_EMAIL_DOMAIN:demo.invalid}
+
 app:
   # 확인 링크에 넣을 백엔드 공개 주소. 환경마다 다르므로 반드시 주입한다.
   # [JA] 確認リンクに入れるバックエンドの公開アドレス。環境ごとに違うので必ず注入する。

@@ -58,8 +58,6 @@ public class CartService {
      * @return 상품 ID
      *
      * <p>[JA] カート商品 ID を使って商品 ID を照会する。
-     *      @param cartProductId カート商品 ID
-     *      @return 商品 ID
      */
     @Transactional(readOnly = true)
     public Long getProductId(String cartProductId) {
@@ -94,8 +92,6 @@ public class CartService {
      * @return 카트 DTO, 없으면 null
      *
      * <p>[JA] ユーザーのカート。まずキャッシュから照会し、なければ DB から取得してキャッシュに保存する。
-     *      @param userId ゲートウェイが検証したトークンの uid({@code User-Id} ヘッダ)
-     *      @return カート DTO、なければ null
      */
     // catalog(색상 · SKU)를 부른다 — 트랜잭션 밖에서(B-87). 장바구니는 줄과 함께 짧게 읽는다(findByUserId 의 @EntityGraph).
     // [JA] catalog(色 · SKU)を呼ぶ — トランザクションの外で(B-87)。カートは行と一緒に短く読む(findByUserId の @EntityGraph)。
@@ -157,6 +153,9 @@ public class CartService {
      *
      * <p>catalog はトランザクションの外で呼び、変わった行があるときだけ短いトランザクションで保存する。catalog に届かなければ保存済みの価格のまま
      * — 注文は止めない(警告を残す)。
+     *
+     * <p>[JA] チェックアウト — 選んだ行の価格 · 送料を catalog の現在値に合わせて返す。以前は入れた時の価格のままで、セール終了後も
+     * セール価格で決済された。
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public CartDto getCartForCheckout(Long userId) {
@@ -292,8 +291,6 @@ public class CartService {
      * @return 업데이트된 상품 정보 DTO 리스트
      *
      * <p>[JA] カートの商品情報を更新する。
-     *      @param request 商品情報リクエスト DTO
-     *      @return 更新された商品情報 DTO のリスト
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // DB 를 쓰지 않고 catalog 만 부른다 ／ [JA] DB を使わず catalog だけを呼ぶ
     public List<ProductInfoDto> updateCart(ProductInfoRequest request) {
@@ -316,8 +313,6 @@ public class CartService {
      * @return 상품 정보 DTO 리스트
      *
      * <p>[JA] ユーザー ID を使ってカート情報を読み込む。
-     *      @param userId ゲートウェイが検証したトークンの uid
-     *      @return 商品情報 DTO のリスト
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 를 부른다 — 장바구니는 줄과 함께 짧게 읽는다 ／ [JA] catalog を呼ぶ — カートは行と一緒に短く読む
     public List<ProductInfoDto> loadCart(Long userId) {
@@ -465,7 +460,6 @@ public class CartService {
      *      ブラウザにしかなく、別の端末では古いカートが見えた(docs/40 0-b)。今は追加・数量・削除は {@link #putItem}・{@link #setItemQty}・
      *      {@link #removeItem} がすぐサーバーに反映し、チェックアウトは選んだ行を(なければ足して)selected に、残りを selected=false にする。
      *      注文(order-service が読む /checkout)は選んだ行だけで作る。
-     *      @return カート、選んだ行がなければ null(以前と同じ)
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 는 앞에서, 저장은 짧은 트랜잭션으로(B-87) ／ [JA] catalog は前で、保存は短いトランザクションで(B-87)
     public Cart saveCart(CartRequest request, Long userId) {
@@ -513,8 +507,6 @@ public class CartService {
      * @throws IllegalArgumentException 수량이 1 보다 작거나, 상품·색상·사이즈를 catalog 가 모른다
      *
      * <p>[JA] 追加する — 同じ行(商品・色・サイズ)があれば数量をこの値に変える(画面の「カートに入れる」がそう動く)。新しく入れた行は選択済みである。
-     *      @return 今のカート(loadCart と同じ形)
-     *      @throws IllegalArgumentException 数量が 1 未満、または商品・色・サイズを catalog が知らない
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)   // catalog 는 앞뒤로, 저장만 짧은 트랜잭션(B-87) ／ [JA] catalog は前後で、保存だけ短いトランザクション(B-87)
     public List<ProductInfoDto> putItem(Long userId, ProductInfoDto item) {
@@ -705,8 +697,6 @@ public class CartService {
      *
      * <p>[JA] クーポン使用後のカート合計額を更新する。
      *      トランザクションのコミット後にキャッシュを更新する。
-     *      @param request クーポン使用リクエスト DTO
-     *      @return 更新されたカートエンティティ
      */
     public Cart couponUsed(CouponUseRequest request) {
         log.debug("Applying coupon for user ID: {}", request.getUserId());
@@ -733,7 +723,6 @@ public class CartService {
      *
      * <p>[JA] カートのすべての項目を空にする。
      *      トランザクションのコミット後にキャッシュを削除する。
-     *      @param request カート空にするリクエスト DTO
      */
     public void cartEmpty(CartEmptyRequest request) {
         log.debug("Emptying cart for user ID: {}", request.getUserId());
@@ -870,9 +859,19 @@ public class CartService {
      * トランザクションは呼び出し側のもの — private なのでプロキシを通らない(B-108)。以前の {@code @Transactional(readOnly = true)}
      * は一度も適用されていなかった: NOT_SUPPORTED の経路(getCart · getCartForCheckout)ではリポジトリ呼び出し一つが自分のトランザクションで動き、
      * 行 · 関連は {@code findByUserId} が一緒に読む。
+     * <p>[JA] トランザクションは呼び出し側のもの — private なのでプロキシを通らない。以前の readOnly は一度も効いていなかった。
      */
     private Cart getCartByUserId(long userId) {
         return cartRepository.findByUserId(userId).orElse(null);
+    }
+
+    /**
+     * 공개 데모 계정의 장바구니를 통째로 비운다 — 매일 초기화(DemoCartReset, docs/100). 캐시는 커밋 뒤에 지운다.
+     * [JA] 公開デモアカウントのカートを丸ごと空にする — 毎日の初期化。キャッシュはコミット後に消す。
+     */
+    public void resetDemoCart(Long userId) {
+        deleteCartByUserId(userId);
+        evictAfterCommit(userId);
     }
 
     /**

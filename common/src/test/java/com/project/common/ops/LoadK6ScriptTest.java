@@ -37,6 +37,8 @@ import org.junit.jupiter.params.provider.ValueSource;
  * <p>[JA] 二つを守る。① シナリオが呼ぶアドレスは<b>画面が呼ぶアドレス</b>である(frontend/src に同じパスがあり、最初の区切りはゲートウェイのルート) —
  * 画面がアドレスを変えたのにシナリオだけ古いアドレスを叩くと 404 · 400 を測ることになる。② 実行器は本番に掛けず、パスワードをコマンドラインに載せず、
  * 流入制限を本番クラスタで変えない。k6 · kubectl は偽のコマンドに替えて実行する(bash · POSIX がなければスキップ)。
+ *
+ * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
  */
 @DisplayName("ops/53 · ops/k6 — 부하 시나리오와 실행기 (docs/83)")
 class LoadK6ScriptTest {
@@ -1300,6 +1302,17 @@ class LoadK6ScriptTest {
                 .as("처리량 목표(browse 기본 1,000)와 견준다").contains("처리량 목표 1,000 요청/초(docs/91 §2-5): 천장 500.0 — 못 미친다(목표의 50%)");
         assertThat(Files.readString(tmp.resolve("curl.log"))).contains("time=", "kafka_consumer_fetch_manager_records_lag_max",
                 "hikaricp_connections_pending");
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling — k6 가 0 · 99 밖으로 끝난 계단(부하가 돌지 않음)은 '통과' 가 아니라 측정 무효로 멈춘다(2026-11-21 운영 첫 측정)")
+    void ceilingStopsWhenK6DidNotRun() throws Exception {
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Run r = run(Map.of("FAKE_SUMMARY", "1", "FAKE_MS_PER_RATE", "1", "CEILING_RATES", "10,50,100", "K6_EXIT", "107"),
+                "ceiling", "browse");
+        assertThat(r.code()).as(r.out()).isNotZero();
+        assertThat(r.out()).contains("계단 10 — k6 가 107 로 끝났다(부하가 돌지 않았다, 측정 무효)").doesNotContain("→ 통과");
+        assertThat(Files.readAllLines(tmp.resolve("k6.calls"))).as("첫 계단에서 멈춘다").hasSize(1);
     }
 
     /** catalog 의 GC 종류 — jvm_gc_pause 의 gc 라벨 둘(SerialGC: 젊은 세대 Copy · 늙은 세대 MarkSweepCompact). */

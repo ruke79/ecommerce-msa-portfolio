@@ -204,6 +204,8 @@ PayPal 에 닿지 못했을 때(네트워크·토큰 발급 실패) "일단 통�
 
 > 🕰️ 그 뒤(2026-11-14): **환불**은 서버가 제공자에 요청하는 관리자 환불이 생겼다(`POST /api/order/refund`, 부분 환불 V9 — PayPal 도 `RefundingGateway`). 다만 PayPal 콘솔에서 직접 한 환불 · 분쟁을 받는 PayPal 웹훅은 여전히 없다(웹훅은 Stripe · 포트원만). **통화**는 주문마다 저장한다(V6 — 상점 통화 `base-currency` 와 청구 통화를 나눈다).
 
+> 🕰️ 그 뒤(2026-11-21, 5단계 14): **PayPal 웹훅이 생겼다** — `POST /order-service/api/order/payment/paypal/webhook`(공개, `PAYPAL_WEBHOOK_ID` 가 비면 503). 서명은 PayPal 의 `verify-webhook-signature` 에 받은 본문 그대로 묻는다. `PAYMENT.CAPTURE.REFUNDED · REVERSED` 는 캡처 id 로 PayPal 에 다시 물어 주문을 찾아 **외부 환불**로 반영한다(`OrderDataService.recordExternalRefund` — 제공자를 다시 부르지 않는다 · 같은 환불 id 면 건너뜀: 우리 API 환불의 웹훅도 온다 · 전액이면 REFUNDED + pay CANCELED, 일부면 금액만 + 경보 `ExternalRefundNeedsReview`). `CUSTOMER.DISPUTE.*` 는 이벤트 id 로 한 번만 세고 critical 경보 `PaymentDisputeOpened`(배송을 멈출지는 사람이). 그 밖(구독 `BILLING.SUBSCRIPTION.*` · `PAYMENT.SALE.*`)은 200 · 로그만 — 리소스 버전은 이벤트마다 PayPal 이 정한다(캡처 2.0 · 분쟁 · Sale 1.0). 콘솔(sandbox · live 따로)에 URL · 이벤트를 등록하고 Webhook ID 를 ConfigMap 에. Stripe 의 콘솔 환불 · 분쟁은 아직(다음).
+
 ## 6. 샌드박스로 테스트하기 (한국에서 결제가 안 될 때)
 
 PayPal 은 한국 개인계정의 수취를 제한한다. 그래서 **라이브 자격증명으로는 국내에서 결제

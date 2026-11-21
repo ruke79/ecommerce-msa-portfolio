@@ -98,6 +98,23 @@ class OrderServiceApplicationTests {
 	}
 
 	/**
+	 * 🔴 catalog · coupon 클라이언트를 주입하면 서킷 브레이커로 감싼 것이 온다(4단계 ④) — Feign 원본은 primary=false · qualifier 로만.
+	 * 둘 다 primary 면 기동이 'more than one primary' 로 실패한다. 상태 지표도 뜬다.
+	 * [JA] catalog · coupon のクライアントを注入するとブレーカーで包んだものが来る。状態指標も出る。
+	 */
+	@Test
+	@DisplayName("🔴 catalog · coupon 클라이언트 주입값은 서킷 브레이커 프록시 — 원본은 qualifier 로만, 상태 지표가 뜬다")
+	void upstreamClientsAreWrappedInCircuitBreakers() {
+		// catalog 는 이 시험이 @MockitoBean 으로 바꿔 끼운다(주입 기본값 = 감싼 빈 자리) — 정의가 있는지만 본다. coupon 은 실제 프록시.
+		// [JA] catalog はこの試験が @MockitoBean で差し替える — 定義があるかだけ見る。coupon は実際のプロキシ。
+		assertThat(context.containsBeanDefinition("catalogServiceClientWithBreaker")).isTrue();
+		assertThat(context.getBean(com.project.order_service.client.CouponServiceClient.class).toString()).startsWith("CircuitBreaker(");
+		assertThat(context.getBean("rawCouponServiceClient").toString()).doesNotStartWith("CircuitBreaker(");
+		io.micrometer.core.instrument.MeterRegistry meters = context.getBean(io.micrometer.core.instrument.MeterRegistry.class);
+		assertThat(meters.find(com.project.common.feign.UpstreamCircuitBreakers.STATE_METRIC).tag("name", "order-coupon").gauge()).isNotNull();
+	}
+
+	/**
 	 * 🔴 common 을 컴포넌트 스캔하는 이 앱에서도 파티션 잡이 뜬다. 예전에는 AutoConfigurationExcludeFilter 가 빠져 자동 설정이
 	 * 스캔으로 먼저 평가돼 통째로 빠졌다 — 잡이 한 번도 돌지 않았다(OutboxPartitionComponentScanTest).
 	 * [JA] common をスキャンするこのアプリでもパーティションジョブが起動する。以前は自動設定が丸ごと外れていた。

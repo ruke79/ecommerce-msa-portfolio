@@ -48,7 +48,7 @@ class OutboxFailedCounterZeroTest {
     void everyEventTypeStartsAtZero() {
         PaymentOutboxScheduler relay = new PaymentOutboxScheduler(mock(PaymentOutboxHelper.class),
                 mock(PaymentRequestKafkaPublisher.class), mock(OrderStatusKafkaPublisher.class), OutboxTraceContext.NOOP,
-                mock(ProductUpdateKafkaPublisher.class), mock(CartEmptyKafkaPublisher.class));
+                mock(ProductUpdateKafkaPublisher.class), mock(CartEmptyKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
 
         relay.registerAlertCounters();
 

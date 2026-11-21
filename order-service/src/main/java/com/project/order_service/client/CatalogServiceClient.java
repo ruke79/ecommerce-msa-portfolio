@@ -19,7 +19,9 @@ import com.project.order_service.config.FeignConfig;
  *
  * <p>[JA] マイクロサービス間の呼び出しのための FeignClient
  */
-@FeignClient(name = "catalog-service", url="${feign.catalog-url}",  configuration = FeignConfig.class)
+// primary = false — 주입 기본값은 서킷 브레이커로 감싼 것(config/UpstreamCircuitBreakerConfig, 4단계 ④). 이 원본은 qualifier 로만.
+// [JA] 注入の既定はサーキットブレーカーで包んだもの。この元のクライアントは qualifier でだけ。
+@FeignClient(name = "catalog-service", url="${feign.catalog-url}",  configuration = FeignConfig.class, primary = false, qualifiers = "rawCatalogServiceClient")
 public interface CatalogServiceClient {
 
     // @RequestMapping(method = RequestMethod.GET, value = "/api/{productId}")
@@ -34,9 +36,6 @@ public interface CatalogServiceClient {
      */
     @GetMapping("/api/colors/info")
     public ResponseEntity<List<ProductColorDto>> getColorsInfo(@RequestParam("ids") List<Long> ids);
-
-    @GetMapping("/api/color/{colorId}")
-    public ResponseEntity<?> getColorInfo(@PathVariable("colorId") String colorId);
 
     /**
      * 결제 전 재고 예약 — 잡기·다시 잡기(연장) (docs/59). catalog 의 내부 전용 경로다 — 이 Feign 은 신원 헤더(User-*)를 싣지

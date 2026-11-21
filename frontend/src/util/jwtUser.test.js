@@ -14,6 +14,12 @@ import { toUser, normalizeRoles, isAdmin, uidOf, sameUserId } from "util/jwtUser
  * ガードを追加した瞬間に本物の管理者まで遮断された。
  */
 describe("normalizeRoles", () => {
+  it("🔴 carries the demo claim — the banner reads it (docs/100)", () => {
+    expect(toUser({ sub: "demo1@demo.invalid", role: "ROLE_USER", demo: true }).demo).toBe(true);
+    expect(toUser({ sub: "a@example.com", role: "ROLE_USER" }).demo).toBe(false);
+    expect(toUser({ sub: "a@example.com", demo: "true" }).demo).toBe(false);
+  });
+
   it("reads the singular `role` claim the backend actually emits", () => {
     // 이 한 줄이 버그의 핵심이다. 고치기 전에는 [] 였다.
     // [JA] この一行がバグの核心である。直す前は [] だった。
@@ -80,6 +86,7 @@ describe("toUser", () => {
       email: "a@example.com",
       userId: "42",
       roles: ["ROLE_ADMIN"],
+      demo: false,
     });
   });
 

@@ -399,6 +399,9 @@ public class ProductService  {
      * <p>[JA] 2026-10-19 データ規模測定(docs/83 §5 · §2.2): 以前は上の七つのキャッシュを {@code allEntries} で丸ごと消していた — レビュー毎秒
      * 1 件でトップのカード · 一覧 · 検索 · メニューが常にキャッシュ外になり、すべてのリクエストが DB 接続を待ち(待ち 37 〜 47、取得まで 1 〜 2 秒)、失敗
      * 0.25% → 79.90%。その前は逆に products を消さず、詳細の評価が永続キャッシュに古い値で残っていた — 詳細は今もすぐ合う。
+     *
+     * <p>[JA] 評価はその商品のキャッシュだけを合わせる(id の詳細は置き換え、slug · 名前の照会は消す)。一覧 · 検索の評価は期限(30 · 60 分)
+     * まで古い値。以前は七つのキャッシュを丸ごと消し、レビュー毎秒 1 件で失敗が 0.25% → 79.90% になった。
      */
     @Caching(
             put = @CachePut(value = "product", key = "#productId"),
@@ -1353,9 +1356,11 @@ public class ProductService  {
 
     // A transactional public method that orchestrates the update
     @Transactional
-    // 판매량/재고 변경(주문 성공 Kafka 소비 경로)도 검색 필터(재고·판매량 기반)에 영향 → 캐시 무효화.
-    // [JA] 販売数/在庫の変更(注文成功の Kafka 消費経路)も検索フィルタ(在庫・販売数ベース)に影響する → キャッシュ無効化。
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
+    // 판매량/재고 변경(주문 성공 Kafka 소비 경로)은 검색 결과(재고 · 판매량 표시)에 영향 → 결과 캐시만 무효화.
+    // 🐛 2026-11-21 운영 읽기 천장(docs/95 §5-1): 예전에는 필터 메뉴 캐시 넷(브랜드 · 색상 · 사이즈 · 상세)도 지웠다 — 주문 결제 확정마다
+    //    모든 카테고리의 메뉴가 비어, 첫 쪽 검색이 메뉴 계산(200만 상품)을 1.5초 다 기다렸다(Redis 에 카테고리 4 ~ 5개만 남음). 메뉴 질의는
+    //    재고 · 판매량 · 상태를 보지 않는다(FacetQueries — 시험 StockCacheEvictionTest). [JA] 在庫変更ではフィルターメニューのキャッシュを消さない。
+    @CacheEvict(value = {"search_cache", "products_by_category"}, allEntries = true)
     // "product" 캐시는 ProductDto 를 담는다 — 여기 있던 @CachePut 은 ProductSku 를 넣으려 했다(자기 호출이라 실제로는 돌지 않았다).
     // [JA] "product" キャッシュは ProductDto を入れる — ここにあった @CachePut は ProductSku を入れようとしていた(自己呼び出しなので実際には動いていなかった)。
     public ProductSku updateSoldValue(Long productId, String slug, String size, Long colorId, int qty) {
@@ -1410,7 +1415,10 @@ public class ProductService  {
     }
 
     @Transactional
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
+    // 🐛 2026-11-21 운영 읽기 천장(docs/95 §5-1): 예전에는 필터 메뉴 캐시 넷(브랜드 · 색상 · 사이즈 · 상세)도 지웠다 — 주문 결제 확정마다
+    //    모든 카테고리의 메뉴가 비어, 첫 쪽 검색이 메뉴 계산(200만 상품)을 1.5초 다 기다렸다(Redis 에 카테고리 4 ~ 5개만 남음). 메뉴 질의는
+    //    재고 · 판매량 · 상태를 보지 않는다(FacetQueries — 시험 StockCacheEvictionTest). [JA] 在庫変更ではフィルターメニューのキャッシュを消さない。
+    @CacheEvict(value = {"search_cache", "products_by_category"}, allEntries = true)
     // "product" 캐시에 ProductSize 를 넣으려던 @CachePut 을 지웠다(위와 같은 이유).
     // [JA] "product" キャッシュに ProductSize を入れようとしていた @CachePut を消した(上と同じ理由)。
     public ProductSize updateProductSize_Qty(String slug, Long skuId, String size, int qty) {
@@ -1491,7 +1499,10 @@ public class ProductService  {
      * 戻り値は変わった行。そのサイズがなければ null。
      */
     @Transactional
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
+    // 🐛 2026-11-21 운영 읽기 천장(docs/95 §5-1): 예전에는 필터 메뉴 캐시 넷(브랜드 · 색상 · 사이즈 · 상세)도 지웠다 — 주문 결제 확정마다
+    //    모든 카테고리의 메뉴가 비어, 첫 쪽 검색이 메뉴 계산(200만 상품)을 1.5초 다 기다렸다(Redis 에 카테고리 4 ~ 5개만 남음). 메뉴 질의는
+    //    재고 · 판매량 · 상태를 보지 않는다(FacetQueries — 시험 StockCacheEvictionTest). [JA] 在庫変更ではフィルターメニューのキャッシュを消さない。
+    @CacheEvict(value = {"search_cache", "products_by_category"}, allEntries = true)
     public StockRow setStock(Long sizeId, int quantity) {
         if (quantity < 0) {
             throw new IllegalArgumentException("재고는 0 이상이어야 합니다: " + quantity);
@@ -1565,12 +1576,13 @@ public class ProductService  {
      * リスナーが同じトランザクションで不足記録(アウトボックス)を残す — order がその数だけ自動返金する(docs/53 §売り越し)。商品・SKU・サイズが見つからない行はすべて不足とみなす(送れない)。
      */
     @Transactional
-    // 주문 성공 시 판매량/재고가 바뀌므로 검색/필터 캐시를 무효화한다.
+    // 주문 성공 시 판매량/재고가 바뀌므로 검색 결과 캐시를 무효화한다(필터 메뉴는 재고와 무관 — 지우지 않는다).
     // (updateSoldValue/updateProductSize_Qty는 여기서 this로 자기호출되어 그쪽 애노테이션은 프록시를 타지 않으므로,
     //  실제 외부 진입점인 이 메서드에 무효화를 건다.)
-    // [JA] 注文成功時は販売数/在庫が変わるので検索/フィルタキャッシュを無効化する。
-    //      (updateSoldValue/updateProductSize_Qty はここで this による自己呼び出しになり、そちらのアノテーションはプロキシを通らないので、実際の外部入口であるこのメソッドに無効化をかける。)
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
+    // 🐛 2026-11-21 운영 읽기 천장(docs/95 §5-1): 예전에는 필터 메뉴 캐시 넷(브랜드 · 색상 · 사이즈 · 상세)도 지웠다 — 주문 결제 확정마다
+    //    모든 카테고리의 메뉴가 비어, 첫 쪽 검색이 메뉴 계산(200만 상품)을 1.5초 다 기다렸다(Redis 에 카테고리 4 ~ 5개만 남음). 메뉴 질의는
+    //    재고 · 판매량 · 상태를 보지 않는다(FacetQueries — 시험 StockCacheEvictionTest). [JA] 在庫変更ではフィルターメニューのキャッシュを消さない。
+    @CacheEvict(value = {"search_cache", "products_by_category"}, allEntries = true)
     public StockApplyResult productUpdated(ProductUpdateRequest request) {
         return productUpdated(request, HeldQuantities.NONE);
     }
@@ -1582,7 +1594,10 @@ public class ProductService  {
      * <p>[JA] held: この差し引きが使えない数 — <b>他の</b>注文が決済前に押さえた数(docs/59)。決済確定の差し引きは自分の注文の予約を使うので、それは除いて渡される(StockReservationService.heldByOthers)。
      */
     @Transactional
-    @CacheEvict(value = {"search_cache", "colors_cache", "sizes_cache", "details_cache", "brands_cache", "products_by_category"}, allEntries = true)
+    // 🐛 2026-11-21 운영 읽기 천장(docs/95 §5-1): 예전에는 필터 메뉴 캐시 넷(브랜드 · 색상 · 사이즈 · 상세)도 지웠다 — 주문 결제 확정마다
+    //    모든 카테고리의 메뉴가 비어, 첫 쪽 검색이 메뉴 계산(200만 상품)을 1.5초 다 기다렸다(Redis 에 카테고리 4 ~ 5개만 남음). 메뉴 질의는
+    //    재고 · 판매량 · 상태를 보지 않는다(FacetQueries — 시험 StockCacheEvictionTest). [JA] 在庫変更ではフィルターメニューのキャッシュを消さない。
+    @CacheEvict(value = {"search_cache", "products_by_category"}, allEntries = true)
     public StockApplyResult productUpdated(ProductUpdateRequest request, HeldQuantities held) {
 
         ProductSize lastUpdated = null;
@@ -1652,6 +1667,8 @@ public class ProductService  {
      * <p>[JA] 以前は注文行の順で SKU をロックしていた(仮押さえだけ並べていた)。[A, B] 注文と [B, A] 注文の減算 · 復元が重なると互いの
      * ロックを待ち、PostgreSQL が片方をデッドロック(40P01)で切り、切られた決済確定の減算は再試行を使い切ると DLT へ行った —
      * 在庫は減らないまま仮押さえが期限切れになり、同じ数量が再び売れた。
+     *
+     * <p>[JA] ロック順序 — 仮押さえと同じ (商品, 色, サイズ) 順で行を回る。以前は注文行の順でロックし、逆順の注文同士がデッドロックした。
      */
     static List<OrderProductRequest> inLockOrder(List<OrderProductRequest> lines) {
         List<OrderProductRequest> sorted = new ArrayList<>(lines);

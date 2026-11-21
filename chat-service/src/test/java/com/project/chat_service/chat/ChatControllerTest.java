@@ -1,6 +1,5 @@
 package com.project.chat_service.chat;
 
-import com.project.chat_service.client.UserServiceClient;
 import com.project.chat_service.controller.ChatApiController;
 import com.project.chat_service.controller.StompController;
 import com.project.chat_service.dto.MessageDto;
@@ -25,6 +24,8 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
@@ -46,8 +47,6 @@ public class ChatControllerTest extends MvcTestBasic {
     @MockBean
     ChatService chatService;
 
-    @MockBean
-    UserServiceClient shoppingServiceClient;
     
 
     @Test
@@ -117,6 +116,41 @@ public class ChatControllerTest extends MvcTestBasic {
         // [JA] (コメントアウトされたコード) 期待する content は「こんにちは」
     }
 
-    
+    @org.springframework.beans.factory.annotation.Autowired
+    com.project.chat_service.common.util.TokenHandler tokenHandler;
+
+    /**
+     * 🔒 공개 채팅방 모델 — GET /api/chat/rooms 가 모든 인증 사용자에게 방 목록을 주고 GET /api/chat/room/{id} 가 참여 확인 없이
+     * 기록을 준다(의도된 공개 단체 채팅). 그런데 1:1 상담(support-<번호>)은 본인 · 상담원만 봐야 한다 — 그 기록이 이 공개 경로로
+     * 새지 않도록 컨트롤러가 support- 방을 404 로 막는다(본인 · 상담원 경로는 /api/chat/support/threads/{id}, docs/58). 보안 점검
+     * (2026-11-21)에서 이 경계를 회귀 시험으로 고정한다 — 막는 줄을 지우면 상담 기록이 아무 로그인 사용자에게 열린다.
+     * [JA] 公開グループチャットは意図的。だが 1:1 サポート(support-)は本人・担当者だけ — この公開経路で漏れないよう 404 で塞ぐ。
+     */
+    @Test
+    @DisplayName("🔴 상담(support-) 방 기록은 공개 방 경로로 읽을 수 없다 — 404, 서비스도 부르지 않는다")
+    @WithMockCustomAccount
+    void supportRoomNotReadableViaPublicRoomPath() throws Exception {
+        given(tokenHandler.resolveVerifiedUserId(any())).willReturn(1L);
+
+        mvc.perform(get("/api/chat/room/{roomId}", "support-5")
+                        .headers(GenerateMockToken.getToken())
+                        .param("cursor", "-1"))
+                .andExpect(status().isNotFound());
+
+        then(chatService).should(never()).getRoomMessagesByCurser(any(), any());
+    }
+
+    @Test
+    @DisplayName("보통 방은 공개 방 경로로 읽힌다 — 200(위 404 가 상담 방에만 적용됨을 보인다)")
+    @WithMockCustomAccount
+    void normalRoomReadableViaPublicRoomPath() throws Exception {
+        given(tokenHandler.resolveVerifiedUserId(any())).willReturn(1L);
+        given(chatService.getRoomMessagesByCurser(eq("room-xyz"), any())).willReturn(List.of());
+
+        mvc.perform(get("/api/chat/room/{roomId}", "room-xyz")
+                        .headers(GenerateMockToken.getToken())
+                        .param("cursor", "-1"))
+                .andExpect(status().isOk());
+    }
 
 }

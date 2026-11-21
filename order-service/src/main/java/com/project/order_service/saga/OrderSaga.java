@@ -37,6 +37,23 @@ public class OrderSaga {
     // [JA] 決済応答で PAID になり得る状態 — カードは NOT_PROCESSED、銀行振込は UNPAID。
     static final List<OrderStatus> AWAITING_PAYMENT = List.of(OrderStatus.NOT_PROCESSED, OrderStatus.UNPAID);
 
+    /**
+     * 결제 완료가 결제를 받을 수 없는 주문(취소 · 환불 · 없음)에 도착한 수 — 경보 {@code OrderPaymentForInactiveOrder}(5단계 12).
+     * 설계상 생기지 않는다: 결제가 기록된 주문은 어떤 경로로도 취소되지 않는다(customer · unpaid · deposit-expired · 사가 롤백). 그래도
+     * 생기면 손님은 돈을 냈는데 주문은 없다 — 주문에 제공자 결제 id 가 없어 자동 환불은 안전하지 않으니 사람이 제공자 콘솔에서 본다.
+     * [JA] 決済完了が決済を受けられない注文(取消 · 返金 · なし)に届いた数。設計上起きない。起きたら人が提供者のコンソールで確認する。
+     */
+    static final String PAYMENT_FOR_INACTIVE_METRIC = "order.payment.inactive_order";
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    io.micrometer.core.instrument.MeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+    /** 경보 계수기를 기동 때 0 으로 — 첫 사고도 increase() 가 본다(B-101). [JA] 警報カウンターを起動時に 0 で作る。 */
+    @jakarta.annotation.PostConstruct
+    void registerAlertCounters() {
+        meters.counter(PAYMENT_FOR_INACTIVE_METRIC);
+    }
+
     private final OrderRepository orderRepository;
     private final OrderProductRepository orderProductRepository;
     /**
@@ -137,7 +154,19 @@ public class OrderSaga {
             log.info("OrderSaga: Published cart empty state for customer {}.", order.getCustomerId());
 
         } else {
-            log.warn("OrderSaga: Order for payment ID {} (Order ID: {}) not found or not in NOT_PROCESSED status. Skipping processing.", paymentResponse.getPaymentId(), paymentResponse.getOrderId());
+            Order current = orderRepository.findById(paymentResponse.getOrderId()).orElse(null);
+            boolean alreadyPaid = current != null && OrderStatus.PAID_STATUSES.contains(current.getOrderStatus());
+            if (paymentResponse.getPaymentStatus() == com.project.common.constants.PaymentStatus.COMPLETED && !alreadyPaid) {
+                // 손님은 돈을 냈는데 받을 주문이 없다 — 사람이 제공자 콘솔에서 확인 · 환불한다(위 계수기 주석)
+                // [JA] お客さまは支払ったのに受ける注文がない — 人が提供者のコンソールで確認 · 返金する
+                meters.counter(PAYMENT_FOR_INACTIVE_METRIC).increment();
+                log.error("결제 완료가 결제를 받을 수 없는 주문에 도착했다 — 제공자 콘솔에서 확인 · 환불: orderId={} status={} paymentId={}",
+                        paymentResponse.getOrderId(), current == null ? "없음" : current.getOrderStatus(), paymentResponse.getPaymentId());
+            } else {
+                // 이미 결제된 주문의 재전달 등 — 정상 [JA] 決済済み注文の再配信など — 正常
+                log.info("OrderSaga: 결제 응답을 건너뛴다(이미 처리됨): orderId={} status={}", paymentResponse.getOrderId(),
+                        current == null ? "없음" : current.getOrderStatus());
+            }
         }
     }
 

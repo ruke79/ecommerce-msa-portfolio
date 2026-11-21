@@ -32,9 +32,6 @@ const apiUrl = API_BASE;
 // 실행되지 않았고, onSuccess 안에서 `response.headers` 접근이 터진 뒤 "Login Failed.
 // Please retry." 라는 뭉뚱그린 메시지만 떴다. 서버가 알려준 진짜 이유는 콘솔에만 남았다.
 // [JA] エラーを捕まえない。以前は catch がログを出すだけで終わり、関数が undefined を返し、
-//      useMutation はそれを **成功** として受け取った。そのためパスワードが違っても onError は一度も
-//      実行されず、onSuccess 内の `response.headers` アクセスが落ちたあと "Login Failed.
-//      Please retry." という大雑把なメッセージだけが出た。サーバーが伝えた本当の理由はコンソールにしか残らなかった。
 const signin = (user) => api.post("/user-service/api/auth/public/signin", user);
 
 const LOGIN_QUERY_KEY = 'login';
@@ -44,14 +41,12 @@ const LOGIN_QUERY_KEY = 'login';
 // 문구가 아니라 키를 담는다 — 모듈 로드 때 한 번 평가되는 상수에 문구를 넣으면 언어를 바꿔도 그대로다.
 // 서버 쪽 짝: OAuth2FailureHandler.SHOWN_CODES — 거기서 허용한 코드만 이유를 따로 안내한다.
 // [JA] ソーシャルログイン失敗時にサーバーが ?error= で返すコード → 文言キー。
-//      文言ではなくキーを持つ — モジュール読み込み時に一度だけ評価される定数に文言を入れると、言語を切り替えてもそのままになる。
-//      サーバー側の対: OAuth2FailureHandler.SHOWN_CODES — そこで許可したコードだけ理由を個別に案内する。
 const OAUTH_ERROR_KEYS = {
     oauth_user_not_found: "user.signin.oauth_user_not_found",
     email_required: "user.signin.oauth_email_required",
     unverified_email: "user.signin.oauth_unverified_email",
     access_denied: "user.signin.oauth_cancelled",
-    account_restricted: "user.signin.account_restricted",   // OAuth2SuccessHandler — 관리자가 잠그거나 만료한 계정 ／ [JA] OAuth2SuccessHandler — 管理者がロックまたは失効させたアカウント
+    account_restricted: "user.signin.account_restricted",   // OAuth2SuccessHandler — 관리자가 잠그거나 만료한 계정 ／ [JA] 管理者がロック · 期限切れにしたアカウント
 };
 
 const SignInPage = () => {
@@ -64,13 +59,11 @@ const SignInPage = () => {
     // 소셜 로그인의 2FA 단계인가. 성공 핸들러가 PENDING_2FA(httpOnly) 쿠키를 심고
     // ?oauth2fa=1 로 보낸다 — 토큰은 쿠키에 있으므로 화면은 코드만 물어보면 된다.
     // [JA] ソーシャルログインの 2FA 段階か。成功ハンドラが PENDING_2FA(httpOnly)Cookie を埋めて
-    //      ?oauth2fa=1 に送る — トークンは Cookie にあるので、画面はコードだけ尋ねればよい。
     const isOauth2fa = searchParams.get("oauth2fa") === "1";
 
     // 소셜 로그인 실패는 XHR 응답이 아니라 **리다이렉트 쿼리**로 돌아온다 — 여기서
     // 받아 주지 않으면 사용자는 로그인 화면으로 조용히 튕겨 이유를 모른다.
     // [JA] ソーシャルログインの失敗は XHR 応答ではなく **リダイレクトのクエリ** で戻ってくる — ここで
-    //      受け取らなければ、ユーザーは理由もわからず黙ってログイン画面に弾かれる。
     useEffect(() => {
         const code = searchParams.get("error");
         if (code) {
@@ -83,15 +76,12 @@ const SignInPage = () => {
         //    않았다.** 사용자는 링크를 누른 뒤 아무 설명 없는 로그인 화면을 보고, 인증이
         //    된 것인지 아닌지 알 수 없었다. 인증은 한 번뿐인 행동이라 확인이 더 중요하다.
         // [JA] 🐛 メール認証に成功するとサーバーは `/signin?verified=1` に送るが、**誰も読んで
-        //      いなかった。** ユーザーはリンクを押したあと説明のないログイン画面を見て、認証が
-        //      済んだのかどうかわからなかった。認証は一度きりの行動なので確認がより重要である。
         if (searchParams.get("verified") === "1") {
             toast.success(t("auth.signin.verified"), { id: "verified" });
         }
         // t 는 언어가 바뀔 때만 새로 만들어진다(useCallback). 빠뜨리면 언어를 바꾼 직후
         // 이 효과가 옛 언어의 문구를 띄운다.
         // [JA] t は言語が変わったときだけ作り直される(useCallback)。抜かすと言語を切り替えた直後に
-        //      この effect が古い言語の文言を出す。
     }, [searchParams, t]);
     // ⚠️ 폼 값은 **Formik 이 소유한다.** 예전에는 여기 별도의 user 상태를 두고 LoginInput 에
     // onChange 를 내려보내 Formik 의 onChange 를 덮어썼다(LoginInput 이 {...field} 뒤에
@@ -99,31 +89,21 @@ const SignInPage = () => {
     // 키 입력마다 Formik 을 초기화하면서 **입력한 글자가 실제로 유실됐다** —
     // "a@example.com" 을 치면 "aeapecm" 이 남는다. 상태를 한 곳으로 모아 해결한다.
     // [JA] ⚠️ フォームの値は **Formik が所有する。** 以前はここに別の user 状態を置いて LoginInput に
-    //      onChange を渡し、Formik の onChange を上書きしていた(LoginInput が {...field} の後に
-    //      {...props} を展開するため)。すると値の出どころが二つになり、enableReinitialize が
-    //      キー入力ごとに Formik を初期化して **入力した文字が実際に失われた** —
-    //      "a@example.com" と打つと "aeapecm" が残る。状態を一か所にまとめて解決する。
     /**
      * 실패 사유.
+     * [JA] 失敗の理由。
      *
      * <p>🐛 예전에는 setter 가 없는 `useState("")` 라 <b>영원히 빈 문자열</b>이었다 —
      * 아래 `{login_error && ...}` 블록은 한 번도 그려지지 않는 죽은 코드였다. 실패는
      * 토스트로만 알렸는데, 토스트는 몇 초 뒤 사라지고 나면 사용자는 아무 흔적도 없는
      * 폼을 보게 된다. 특히 "메일 인증을 해 주세요" 처럼 <b>읽고 행동해야 하는</b> 안내는
      * 사라지면 안 된다.
-     *
-     * <p>[JA] 失敗理由。
-     *
-     * <p>🐛 以前は setter のない `useState("")` だったので <b>永遠に空文字列</b>だった —
-     * 下の `{login_error && ...}` ブロックは一度も描画されない死んだコードだった。失敗は
-     * トーストでしか知らせず、トーストが数秒後に消えるとユーザーは何の痕跡もない
-     * フォームを見ることになる。特に「メール認証をしてください」のように<b>読んで行動すべき</b>案内は
-     * 消えてはならない。
      */
     const [login_error, setLoginError] = useState("");
 
     /**
      * 메일 인증이 안 된 계정이라 거부됐는가.
+     * [JA] メール認証が済んでいないアカウントなので拒否されたか。
      *
      * <p>🐛 로그인 실패 문구는 "확인 메일 재발송을 이용해 주세요" 라고 안내하는데
      * <b>이용할 화면이 없었다.</b> 서버의 재발송 엔드포인트는 구현돼 있었지만 프론트에서
@@ -131,15 +111,6 @@ const SignInPage = () => {
      *
      * <p>판단은 서버가 보낸 {@code code} 로 한다. 한국어 문구를 비교하면 문구를 다듬는
      * 순간 조용히 깨지고, 사용자는 재발송 경로가 사라진 것을 알 방법이 없다.
-     *
-     * <p>[JA] メール認証が済んでいないアカウントとして拒否されたか。
-     *
-     * <p>🐛 ログイン失敗の文言は「確認メールの再送をご利用ください」と案内するのに、
-     * <b>利用する画面がなかった。</b> サーバーの再送エンドポイントは実装されていたが、フロントから
-     * 呼ぶ箇所が一つもなかった。案内だけして道がない状態だった。
-     *
-     * <p>判断はサーバーが送る {@code code} で行う。韓国語の文言を比較すると、文言を手直しした
-     * 瞬間に黙って壊れ、ユーザーは再送の経路が消えたことを知るすべがない。
      */
     const [needsVerification, setNeedsVerification] = useState(false);
 
@@ -153,6 +124,7 @@ const SignInPage = () => {
 
     /**
      * 로그인 후 어디로 갈 것인가.
+     * [JA] ログイン後どこへ行くか。
      *
      * <p>🐛 예전에는 무조건 `navigate('/')` 였다. /checkout 에서 세션이 끊겨 로그인하러
      * 갔다 오면 홈으로 떨어져, 장바구니부터 다시 시작해야 했다. ProtectedRoute 가
@@ -161,16 +133,6 @@ const SignInPage = () => {
      * <p>넘어온 경로가 **내부 경로인지 확인한다.** 그냥 믿고 navigate 하면
      * `/signin` 링크에 외부 주소를 심어 로그인 직후 다른 사이트로 보내는 열린
      * 리다이렉트가 된다. `/` 로 시작하되 `//`(프로토콜 상대 URL)는 아닌 것만 받는다.
-     *
-     * <p>[JA] ログイン後にどこへ行くか。
-     *
-     * <p>🐛 以前は無条件に `navigate('/')` だった。/checkout でセッションが切れてログインしに
-     * 行って戻ると、ホームに落ちてカートからやり直す羽目になった。ProtectedRoute が
-     * `state.from` にブロックされた位置を渡してくれる。
-     *
-     * <p>渡された経路が **内部の経路かを確かめる。** そのまま信じて navigate すると、
-     * `/signin` リンクに外部アドレスを仕込んでログイン直後に別サイトへ送るオープン
-     * リダイレクトになる。`/` で始まり、かつ `//`(プロトコル相対 URL)でないものだけを受け付ける。
      */
     const redirectTo = (() => {
         const from = location.state?.from;
@@ -180,7 +142,6 @@ const SignInPage = () => {
         // 역슬래시·제어 문자도 막는다 — 브라우저는 `/\evil.com` 을 `//evil.com`(외부)으로 읽는다. react-router 6 의 열린
         // 리다이렉트 권고(GHSA-wrjc-x8rr-h8h6, 수정은 7.18)가 바로 이 우회다. 앱의 내부 경로에는 둘 다 쓸 일이 없다.
         // [JA] バックスラッシュ・制御文字も防ぐ — ブラウザは `/\evil.com` を `//evil.com`(外部)と読む。react-router 6 のオープン
-        //      リダイレクト勧告(GHSA-wrjc-x8rr-h8h6、修正は 7.18)がまさにこの回避である。アプリの内部経路ではどちらも使うことがない。
         if (/[\\\u0000-\u001f]/.test(path)) return "/";
         if (path.startsWith("/signin") || path.startsWith("/register")) return "/";
         const search = typeof from === "object" ? (from.search ?? "") : "";
@@ -195,9 +156,6 @@ const SignInPage = () => {
     //    2FA 를 건너뛰었다. 이제 서버는 2FA 계정에 토큰 대신 대기 쿠키(PENDING_2FA, httpOnly)만 심고
     //    code=two_factor_required 로 답한다. 비밀번호 경로도 소셜 경로와 같은 끝이다.
     // [JA] 🔴 2FA はサーバーが強制する。以前はパスワードさえ合えばサーバーがアクセストークンを先に渡し、この画面がそのトークンを
-    //      持ったままコード確認後にようやく login() を呼んでいた — 防いでいたのは画面だけなので、応答ヘッダーのトークンを直接使えば
-    //      2FA を飛ばせた。いまサーバーは 2FA アカウントにトークンの代わりに待機 Cookie(PENDING_2FA、httpOnly)だけを埋め、
-    //      code=two_factor_required で応える。パスワード経路もソーシャル経路と同じ終わり方である。
     const [code2fa, setCode2fa] = useState("");
     // 두 번째 단계가 무엇인가 — "totp"(2단계 인증 앱) 또는 "email"(처음 보는 기기 + 공격 신호일 때 메일로 보낸 코드, docs/68 §19).
     // [JA] 2 段階目が何か — "totp"(認証アプリ)または "email"(未知の端末 + 攻撃信号のときメールで送ったコード)。
@@ -266,7 +224,6 @@ const SignInPage = () => {
         // throwOnError 를 켜면 실패가 ErrorBoundary 로 올라가 로그인 화면 자체가 사라진다.
         // 로그인 실패는 이 화면에서 처리해야 하는 정상적인 흐름이므로 여기서 잡는다.
         // [JA] throwOnError を有効にすると失敗が ErrorBoundary に上がり、ログイン画面そのものが消える。
-        //      ログイン失敗はこの画面で扱うべき正常なフローなので、ここで捕まえる。
         throwOnError: false,
         onSuccess: (response) => {
             setLoginError("");
@@ -287,28 +244,22 @@ const SignInPage = () => {
             // 무시되고 **모든 쿼리**가 무효화됐다. 로그인할 때마다 장바구니·주문·상품까지
             // 전부 다시 불러왔다.
             // [JA] タイポだった: `querykey`(小文字の k)は react-query が知らないキーなのでフィルターがまるごと
-            //      無視され、**すべてのクエリ** が無効化された。ログインのたびにカート・注文・商品まで
-            //      すべて再取得していた。
             queryClient.invalidateQueries({ queryKey: [LOGIN_QUERY_KEY] });
         },
         onError: (error) => {
             // 서버가 보낸 사유를 그대로 쓴다 — 잠금까지 남은 시간이나 메일 인증 안내처럼
             // 서버만 아는 사실이 담겨 있다(util/loginError 주석).
             // [JA] サーバーが送った理由をそのまま使う — ロックまでの残り時間やメール認証の案内のように
-            //      サーバーだけが知る事実が入っている(util/loginError のコメント)。
             const message = loginErrorMessage(error);
             setLoginError(message);
             // 서버가 붙여 보내는 코드로만 판단한다(AuthLoginFilter.EMAIL_NOT_VERIFIED_CODE).
             // 이 코드는 **비밀번호가 맞은 뒤에만** 나오므로, 재발송 폼이 뜨는 것 자체가
             // 가입 여부를 남에게 알려주지 않는다.
             // [JA] サーバーが付けて送るコードだけで判断する(AuthLoginFilter.EMAIL_NOT_VERIFIED_CODE)。
-            //      このコードは **パスワードが合った後にだけ** 出るので、再送フォームが出ること自体が
-            //      登録の有無を他人に教えることにはならない。
             setNeedsVerification(error?.response?.data?.code === "email_not_verified");
             // 인라인으로 남기고 토스트로도 한 번 알린다. 503 은 인터셉터가 이미 띄우므로
             // 같은 말을 두 번 쌓지 않는다.
             // [JA] インラインで残し、トーストでも一度知らせる。503 はインターセプターがすでに出すので
-            //      同じことを二度重ねない。
             if (!alreadyToasted(error)) {
                 toast.error(message, { id: "loginFailed" });
             }
@@ -318,20 +269,39 @@ const SignInPage = () => {
 
     /**
      * 2단계 인증 코드 확인 — 비밀번호 경로와 소셜 경로가 같다.
+     * [JA] 二段階認証コードの確認 — パスワード経路とソーシャル経路は同じ。
      *
      * <p>신원은 PENDING_2FA httpOnly 쿠키가 나른다(withCredentials 로 같이 간다). 화면은 토큰을 만지지 않는다.
      * 통과하면 서버가 REFRESH 쿠키를 심으므로, 전체 리로드로 앱을 다시 띄우면 TokenRefresher 가 그 쿠키로
      * 세션을 복구한다 — 정상 로그인과 같은 끝. 가려던 곳(redirectTo)은 내부 경로만 남아 있다.
-     *
-     * <p>[JA] 2 段階認証コードの確認 — パスワード経路とソーシャル経路で同じ。
-     *
-     * <p>身元は PENDING_2FA httpOnly Cookie が運ぶ(withCredentials で一緒に送られる)。画面はトークンに触れない。
-     * 通過するとサーバーが REFRESH Cookie を埋めるので、フルリロードでアプリを立ち上げ直すと TokenRefresher がその Cookie で
-     * セッションを復元する — 通常のログインと同じ終わり方。行こうとしていた先(redirectTo)は内部経路だけが残っている。
      */
     // 패스키 로그인(user-service docs/68 §20) — 이메일을 먼저 묻지 않는다. 기기가 이 사이트의 계정 목록을 보여 준다.
     // 통과하면 서버가 REFRESH 쿠키를 심는다 — 2FA 확인과 같은 끝(전체 리로드).
     // [JA] パスキーログイン — メールを先に聞かない。通過したらサーバーが REFRESH Cookie を付ける(2FA 確認と同じ終わり方)。
+    // 데모 계정으로 둘러보기(docs/100) — 서버가 켜 둔 곳에서만 버튼을 보인다. 응답 모양은 보통 로그인과 같다(헤더 access · REFRESH 쿠키).
+    // [JA] デモアカウントで試す — サーバーが有効にした所でだけボタンを出す。応答の形は通常ログインと同じ。
+    const [demoEnabled, setDemoEnabled] = useState(false);
+    const [demoBusy, setDemoBusy] = useState(false);
+    useEffect(() => {
+        let alive = true;
+        api.get("/user-service/api/auth/public/demo-login")
+            .then((res) => { if (alive) setDemoEnabled(res?.data?.enabled === true); })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, []);
+    const demoHandler = async () => {
+        setDemoBusy(true);
+        try {
+            const response = await api.post("/user-service/api/auth/public/demo-login");
+            handleSuccessfulLogin(response, jwtDecode(response.headers['access']));
+        } catch (error) {
+            if (!alreadyToasted(error)) {
+                toast.error(t("user.signin.demo.failed"), { id: "demoLoginFailed" });
+            }
+            setDemoBusy(false);
+        }
+    };
+
     const [passkeyBusy, setPasskeyBusy] = useState(false);
     const [passkeyError, setPasskeyError] = useState("");
     const passkeyHandler = async () => {
@@ -376,7 +346,6 @@ const SignInPage = () => {
     // 화면의 다른 문구는 전부 한국어인데 검증 메시지만 영어였고, 그중 하나는 오타였다
     // ("Please endter a valid address") 였다.
     // [JA] 画面の他の文言はすべて韓国語なのに検証メッセージだけ英語で、そのうち一つはタイポ
-    //      ("Please endter a valid address")だった。
     const loginValidation = Yup.object({
         email: Yup.string()
             .required(t("user.signin.email_required"))
@@ -497,7 +466,6 @@ const SignInPage = () => {
                                 // 소셜 경로면 쿼리(oauth2fa=1)까지 지워야 새로고침해도
                                 // 2FA 화면으로 돌아오지 않는다.
                                 // [JA] ソーシャル経路ならクエリ(oauth2fa=1)まで消さないと、リロードしても
-                                //      2FA 画面に戻ってきてしまう。
                                 if (isOauth2fa) {
                                     window.location.href = "/signin";
                                     return;
@@ -505,7 +473,6 @@ const SignInPage = () => {
                                 // 처음으로 돌아간다. 대기 쿠키는 5분 뒤 스스로 사라지고, 새 로그인이
                                 // 덮어쓴다.
                                 // [JA] 最初に戻る。待機 Cookie は 5 分後に自然に消え、新しいログインが
-                                //      上書きする。
                                 setCode2fa("");
                                 setTwoFactorError("");
                                 setStep(1);
@@ -557,7 +524,7 @@ const SignInPage = () => {
                                     name="password"
                                     placeholder={t("user.signin.password_placeholder")}
                                 />
-                                <ButtonInput type="submit" text={t("user.signin.submit")}  disabled={isPending}  // isPending 상태를 사용하여 버튼을 비활성화합니다. ／ [JA] isPending 状態を使ってボタンを無効化する。
+                                <ButtonInput type="submit" text={t("user.signin.submit")}  disabled={isPending}  // isPending 상태를 사용하여 버튼을 비활성화합니다.
                               />
                             </Form>
                         )}
@@ -653,6 +620,20 @@ const SignInPage = () => {
                     )}
 
                     <SocialLogin />
+
+                    {demoEnabled && (
+                        <div className="flex flex-col space-y-1 pt-2">
+                            <button
+                                type="button"
+                                onClick={demoHandler}
+                                disabled={demoBusy}
+                                className="w-full border border-amber-400 bg-amber-50 rounded py-2 text-sm hover:bg-amber-100 disabled:opacity-40"
+                            >
+                                {t("user.signin.demo.button")}
+                            </button>
+                            <p className="text-xs text-gray-500">{t("user.signin.demo.hint")}</p>
+                        </div>
+                    )}
                 </div>
                 )}
 

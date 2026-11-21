@@ -3,6 +3,7 @@ import Header from './header/Header';
 import Footer from './Footer';
 import MenuSideBar from './header/MenuSidebar';
 import NavigationProgress from 'components/loader/NavigationProgress';
+import DemoBanner from 'components/demo/DemoBanner';
 import { useAuthContext, STATUS } from 'store/AuthContext';
 
 function RootPage() {
@@ -29,6 +30,7 @@ function RootPage() {
         */}
       {/* [JA] ルーターが次の画面を準備している間、上部に細いバーを描く(docs/43 D5)。ここにあった `{navigation.state === 'loading' && <p>Loading...</p>}` はコメントアウトされていた。そのため `/browse` でフィルターを押しても応答が来るまで何の反応もなかった — データルーターはローダーが終わってから URL を変えるので、クリックが効いたかどうかすら分からず、ユーザーはもう一度押してしまう。文言ではなくバーにした理由は NavigationProgress のコメントに書いた: 覆わず、レイアウトを押し出さず、短い遷移ではそもそも現れない。 */}
       <NavigationProgress />
+      <DemoBanner />
       <Header />      
       <main>
         <Outlet />

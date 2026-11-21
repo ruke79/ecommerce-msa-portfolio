@@ -94,4 +94,34 @@ class OrderSagaProcessTest {
     void awaitingStatuses() {
         assertThat(OrderSaga.AWAITING_PAYMENT).containsExactly(OrderStatus.NOT_PROCESSED, OrderStatus.UNPAID);
     }
+
+    private double inactiveCount() {
+        var c = ((io.micrometer.core.instrument.MeterRegistry) org.springframework.test.util.ReflectionTestUtils.getField(saga, "meters"))
+                .find(OrderSaga.PAYMENT_FOR_INACTIVE_METRIC).counter();
+        return c == null ? 0 : c.count();
+    }
+
+    @Test
+    @DisplayName("🔴 결제 완료가 취소된 주문 · 없는 주문에 도착하면 세고(경보) 주문은 건드리지 않는다 — 이미 결제된 주문의 재전달은 세지 않는다(5단계 12)")
+    void completedForInactiveOrderIsCounted() {
+        when(orderRepository.findByOrderIdAndOrderStatusIn(eq(1L), any())).thenReturn(Optional.empty());
+        PaymentResponse completed = PaymentResponse.builder().orderId(1L).paymentId(9L)
+                .paymentStatus(com.project.common.constants.PaymentStatus.COMPLETED).build();
+
+        Order canceled = Order.builder().orderId(1L).customerId(7L).orderStatus(OrderStatus.CANCELED).build();
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(canceled));
+        saga.process(completed);
+        assertThat(inactiveCount()).isEqualTo(1);
+        assertThat(canceled.getOrderStatus()).as("취소된 주문을 되살리지 않는다").isEqualTo(OrderStatus.CANCELED);
+
+        when(orderRepository.findById(1L)).thenReturn(Optional.empty());
+        saga.process(completed);
+        assertThat(inactiveCount()).as("없는 주문").isEqualTo(2);
+
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(
+                Order.builder().orderId(1L).customerId(7L).orderStatus(OrderStatus.PAID).build()));
+        saga.process(completed);
+        assertThat(inactiveCount()).as("이미 결제된 주문의 재전달은 정상").isEqualTo(2);
+        verify(outbox, never()).saveEventOutbox(any(), any(), any());
+    }
 }

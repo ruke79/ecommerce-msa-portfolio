@@ -180,9 +180,10 @@ public class TrackingPoller {
                 return;
             }
             case PERMANENT -> {
-                // 인증 실패나 응답 형식 오류다. 재시도해도 같으므로 길게 물러서고 사람이 보게 남긴다.
-                // [JA] 認証失敗か応答形式のエラーである。再試行しても同じなので長く引き下がり、人が見るように残す。
-                log.error("추적 영구 실패: shipmentId={} 택배사={} {}",
+                // 인증 실패나 응답 형식 오류다. 재시도해도 같으므로 길게 물러서고 사람이 보게 남긴다. WARN — 한 송장의 문제라
+                // 서비스 경보(ErrorLogSurge)를 울릴 일이 아니고, 물러선 주기마다(약 4시간) 되풀이된다(docs/99 §4).
+                // [JA] 認証失敗や応答形式の誤り。WARN — 一つの送り状の問題でサービス警報を鳴らすことではなく、後退した周期ごとに繰り返す。
+                log.warn("추적 영구 실패: shipmentId={} 택배사={} {}",
                         shipment.getShipmentId(), shipment.getCarrierCode(), result.detail());
                 shipment.recordSyncFailure();
                 return;

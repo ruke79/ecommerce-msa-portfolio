@@ -200,6 +200,66 @@ public class HttpPaypalOrderVerifier implements PaypalOrderVerifier {
                 refundedCurrency);
     }
 
+    // ------------------------------------------------------------------ 웹훅(5단계 14)
+    // [JA] Webhook
+
+    /** 서명 검증에 쓰는 헤더 — PayPal 이 보낸 그대로. [JA] 署名検証のヘッダー。 */
+    public static final java.util.List<String> WEBHOOK_HEADERS = java.util.List.of(
+            "paypal-auth-algo", "paypal-cert-url", "paypal-transmission-id", "paypal-transmission-sig", "paypal-transmission-time");
+
+    @Override
+    public boolean verifyWebhookSignature(String webhookId, java.util.Map<String, String> headers, String rawEvent) {
+        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+        StringBuilder body = new StringBuilder("{");
+        try {
+            for (String h : WEBHOOK_HEADERS) {
+                String v = headers.get(h);
+                if (v == null || v.isBlank()) {
+                    return false;
+                }
+                body.append(om.writeValueAsString(h.substring("paypal-".length()).replace('-', '_'))).append(':')
+                        .append(om.writeValueAsString(v)).append(',');
+            }
+            body.append("\"webhook_id\":").append(om.writeValueAsString(webhookId))
+                    .append(",\"webhook_event\":").append(rawEvent).append('}');
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return false;
+        }
+        JsonNode res;
+        try {
+            res = http.post()
+                    .uri("/v1/notifications/verify-webhook-signature")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body.toString())
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientException e) {
+            throw new PaypalVerificationException("PayPal 웹훅 서명 확인 호출 실패", e);
+        }
+        return res != null && "SUCCESS".equals(res.path("verification_status").asText());
+    }
+
+    @Override
+    public String paypalOrderIdOfCapture(String captureId) {
+        if (captureId == null || !captureId.matches("[A-Za-z0-9-]{1,64}")) {
+            return null;
+        }
+        JsonNode capture;
+        try {
+            capture = http.get()
+                    .uri("/v2/payments/captures/{id}", captureId)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken())
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientException e) {
+            throw new PaypalVerificationException("PayPal 캡처 조회 실패: " + captureId, e);
+        }
+        String id = capture == null ? "" : capture.path("supplementary_data").path("related_ids").path("order_id").asText("");
+        return id.isBlank() ? null : id;
+    }
+
     // ------------------------------------------------------------------ 토큰
     // [JA] ------------------------------------------------------------------ トークン
 

@@ -14,6 +14,7 @@
 const admin1 = {
     // ── 관리자: 환불 (pages/admin/Refunds.jsx) ─────────────────────────────
     // [JA] ── 管理者: 返金 (pages/admin/Refunds.jsx) ──
+    "admin.demo.badge": "デモ",
     "admin.refunds.title": "返金管理",
     "admin.refunds.status.all": "すべて",
     "admin.refunds.status.paid": "決済完了",

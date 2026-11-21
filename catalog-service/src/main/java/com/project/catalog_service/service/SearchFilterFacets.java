@@ -40,8 +40,10 @@ import lombok.extern.slf4j.Slf4j;
  * 함께 들어 있어 오래 그대로였다 — 이제 결과 캐시에는 넣지 않고 매 요청 이 빈이 붙인다({@link #attach}).
  *
  * <ul>
- *   <li>값과 계산 시각을 함께 둔다({@link FacetEntry}, 캐시 24시간). {@code catalog.facets.refresh-after}(기본 10분)가 지나면 옛 값을
- *       내주면서 뒤에서 다시 계산한다 — 만료 순간 요청이 질의를 기다리지 않는다.</li>
+ *   <li>값과 계산 시각을 함께 둔다({@link FacetEntry}, 캐시 24시간). {@code catalog.facets.refresh-after}(기본 6시간)가 지나면 옛 값을
+ *       내주면서 뒤에서 다시 계산한다 — 만료 순간 요청이 질의를 기다리지 않는다. 🐛 2026-11-21 운영(상품 200만): 기본 10분이었는데
+ *       카테고리 하나의 메뉴 질의 넷이 약 100초(사이즈 59 · 색상 28 · 브랜드 16초)라 방문된 카테고리마다 10분에 100초씩 DB 를 썼다.
+ *       메뉴는 상품 쓰기에서만 바뀌고 그때 캐시를 지운다 — 이 주기는 안전망이다. 미리 채우기는 {@link FacetWarmer}.</li>
  *   <li>계산은 키마다 하나(파드 안), 실행기 스레드는 {@code catalog.facets.threads}(기본 1)개 — 메뉴 질의가 파드의 커넥션을 한 개 넘게
  *       쓰지 않는다. 질의 자체의 시간 상한은 {@link FacetQueries}(기본 600초).</li>
  *   <li>그리고 <b>클러스터에서 한 파드만</b>({@link FacetRefreshClaim}) — 맡지 못한 파드는 옛 값을 그대로(없으면 메뉴 없이) 내주고, 새 값은 맡은
@@ -69,6 +71,9 @@ import lombok.extern.slf4j.Slf4j;
  *       この Pod で計算する。</li>
  *   <li>[JA] 商品書き込みの {@code @CacheEvict}(ProductService)が消すと、次のリクエストが再び計算を任せる。</li>
  * </ul>
+ *
+ * <p>[JA] 検索 1 ページ目のフィルターメニュー。リクエストは計算しない — キャッシュを読み、なければ専用実行器に任せて短く待つだけ。1,000 万商品で
+ * メニュー照会(76 秒)がリクエスト内で走り、キャッシュ満了のたびに接続を数分握ってプールが詰まり、home まで 5xx だった。
  */
 @Slf4j
 @Service
@@ -93,7 +98,7 @@ public class SearchFilterFacets {
 
     @Autowired
     public SearchFilterFacets(FacetQueries queries, @Qualifier("redisCacheManager") CacheManager cacheManager,
-            @Value("${catalog.facets.refresh-after:10m}") Duration refreshAfter,
+            @Value("${catalog.facets.refresh-after:6h}") Duration refreshAfter,
             @Value("${catalog.facets.wait:1500ms}") Duration wait,
             @Value("${catalog.facets.threads:1}") int threads,
             FacetRefreshClaim claim) {
@@ -161,6 +166,24 @@ public class SearchFilterFacets {
                 .sizes(cast(await(sizes, deadline)))
                 .details(SearchFilterFacets.<ProductDetailsDto>cast(await(details, deadline)))
                 .build();
+    }
+
+    /**
+     * 그 카테고리의 메뉴 넷을 미리 채운다({@link FacetWarmer}) — 없거나 오래된 것만 계산을 맡기고, 끝나면(실패 · 다른 파드가 맡음 포함) 완료.
+     * 요청과 같은 키 · 같은 맡기라 둘이 겹쳐도 계산은 한 번이다.
+     * [JA] そのカテゴリのメニュー四つを前もって満たす — ないか古いものだけ計算を任せ、終われば(失敗 · 他 Pod が引き受けも)完了。
+     */
+    public CompletableFuture<Void> warm(long categoryId) {
+        String all = String.valueOf(categoryId);
+        return CompletableFuture.allOf(
+                quiet(lookup("brands_cache", "id:" + categoryId, () -> queries.brands(categoryId))),
+                quiet(lookup("colors_cache", all, () -> queries.colors(categoryId))),
+                quiet(lookup("sizes_cache", all, () -> queries.sizes(categoryId))),
+                quiet(lookup("details_cache", all, () -> queries.details(categoryId))));
+    }
+
+    private static CompletableFuture<?> quiet(CompletableFuture<List<Object>> f) {
+        return f.handle((v, e) -> null);
     }
 
     /** 캐시에 있으면 그 값(오래됐으면 뒤에서 다시 계산을 맡긴다), 없으면 진행 중인 계산. */

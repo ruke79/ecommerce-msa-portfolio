@@ -96,10 +96,11 @@ spec:
               value: "1"
             # RocksDB 상태. emptyDir 라 파드가 교체되면 사라지고 변경 로그에서 복구한다 — 같은 파드의
             # 재시작에서는 남아 있어 복구를 건너뛴다. 주문 수 × 수백 바이트라 작다.
-            # [JA] RocksDB の状態。emptyDir なのでポッドが交換されると消えて変更ログから復旧する — 同じポッドの
-            #      再起動では残っていて復旧を飛ばす。注文数 × 数百バイトなので小さい。
+            # 마운트 뿌리가 아니라 그 아래 — Kafka Streams 가 디렉터리를 만들고 권한(700)을 바꾸는데, emptyDir 뿌리는 root 소유라
+            # 앱(uid 1000)이 바꾸지 못해 기동마다 ERROR 'Error changing permissions' 가 났다(docs/99 §4). 앱이 만든 하위는 앱 소유다.
+            # [JA] マウントの根ではなくその下 — emptyDir の根は root 所有でアプリが権限を変えられず起動ごとに ERROR が出た。
             - name: SAGA_STATE_DIR
-              value: "/app/state"
+              value: "/app/state/streams"
             # 서비스 JVM 이 사설 CA 를 신뢰하게 한다(48-delivery-service.yaml 의 JAVA_TOOL_OPTIONS 주석 참조).
             # [JA] サービスの JVM が私設 CA を信頼するようにする(48-delivery-service.yaml の JAVA_TOOL_OPTIONS のコメント参照)。
             - name: LOCAL_KEY_STORE_PASSWORD

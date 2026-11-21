@@ -68,6 +68,11 @@ public class ShipmentItem {
     @Column(name = "sku_code", length = 96)
     private String skuCode;
 
+    /** 보낼 수를 줄인다(재고 부족 — 5단계 15). 늘리지는 않는다. [JA] 送る数を減らす(在庫不足)。増やさない。 */
+    void reduceBy(int units) {
+        this.quantity = Math.max(0, quantity - Math.max(0, units));
+    }
+
     public ShipmentItem(Shipment shipment, Long orderProductId, Long productId,
                         String productName, String imageUrl, int quantity, String skuCode) {
         this.skuCode = skuCode;

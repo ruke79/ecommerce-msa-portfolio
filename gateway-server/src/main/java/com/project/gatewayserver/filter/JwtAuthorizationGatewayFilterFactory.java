@@ -84,6 +84,8 @@ public class JwtAuthorizationGatewayFilterFactory
      */
     // [JA] 解除確認の結果を数える。以前は通過も拒否も debug ログだけで、2026-11-21 本番で別ブラウザが残ったとき 401 を返したかすら分からなかった。
     static final String CUTOFF_METRIC = "gateway.session.cutoff";
+    /** 데모 계정이 막힌 동작으로 403 을 받은 수. [JA] デモアカウントが止められた操作で 403 を受けた数。 */
+    static final String DEMO_BLOCKED_METRIC = "gateway.demo.blocked";
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private io.micrometer.core.instrument.MeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
@@ -178,6 +180,13 @@ public class JwtAuthorizationGatewayFilterFactory
             if (uid == null) {
                 return unauthorized(exchange, "no uid claim", relogin(exchange));
             }
+            // 🔒 공개 데모 계정은 계정 · 자격 · 남에게 보이는 글 · 인증 SMS 를 바꾸지 못한다 — 여러 방문자가 돌려 쓰므로(DemoAccessPolicy).
+            //    경로는 RewritePath 전의 원래 경로로 본다(서비스 이름까지).
+            // [JA] 🔒 公開デモアカウントはアカウント · 資格 · 他人に見える投稿 · 認証 SMS を変えられない — 複数の訪問者が使い回すため。
+            if (Boolean.TRUE.equals(claims.get(DemoAccessPolicy.DEMO_CLAIM, Boolean.class))
+                    && DemoAccessPolicy.blocked(request.getMethod(), originalUri(exchange))) {
+                return demoForbidden(exchange);
+            }
             String email = claims.getSubject();
             Object role = claims.get("role");
 
@@ -189,6 +198,7 @@ public class JwtAuthorizationGatewayFilterFactory
                         h.remove("User-Id");
                         h.remove("User-Email");
                         h.remove("User-Role");
+                        h.remove("User-Demo");
                     })
                     .header("User-Id", String.valueOf(uid));
             if (email != null) {
@@ -196,6 +206,11 @@ public class JwtAuthorizationGatewayFilterFactory
             }
             if (role != null) {
                 mutated.header("User-Role", role.toString());
+            }
+            // 공개 데모 계정 — 하위 서비스가 데모만의 상한(결제 전 주문 수 등)을 건다(docs/100). 검증된 클레임에서만.
+            // [JA] 公開デモアカウント — 下位サービスがデモだけの上限(決済前の注文数など)をかける。検証済みクレームからだけ。
+            if (Boolean.TRUE.equals(claims.get(DemoAccessPolicy.DEMO_CLAIM, Boolean.class))) {
+                mutated.header("User-Demo", "true");
             }
             ServerWebExchange forwarded = exchange.mutate().request(mutated.build()).build();
             return sessionStillValid(uid, claims).flatMap(valid -> {
@@ -302,6 +317,28 @@ public class JwtAuthorizationGatewayFilterFactory
      * 401 과 요청 언어의 문구. 로그는 한 줄 · DEBUG — 만료 · 미로그인은 정상 흐름이라 ERROR 로 두면 경보 잡음이 된다(예전에는 문구 그대로
      * ERROR 두 번). 토큰 · 신원은 남기지 않는다.
      */
+    /** RewritePath 전의 요청 주소 — 없으면(라우트 밖 시험) 지금 주소. [JA] RewritePath 前の要求アドレス。 */
+    static java.net.URI originalUri(ServerWebExchange exchange) {
+        java.util.Set<java.net.URI> originals = exchange.getAttribute(
+                org.springframework.cloud.gateway.support.ServerWebExchangeUtils.GATEWAY_ORIGINAL_REQUEST_URL_ATTR);
+        if (originals != null && !originals.isEmpty()) {
+            return originals.iterator().next();
+        }
+        return exchange.getRequest().getURI();
+    }
+
+    /** 데모 계정이 막힌 동작을 하면 403 과 요청 언어의 안내. [JA] デモアカウントが止められた操作をすると 403 と案内。 */
+    private Mono<Void> demoForbidden(ServerWebExchange exchange) {
+        log.debug("403 — demo account ({})", exchange.getRequest().getPath().value());
+        meters.counter(DEMO_BLOCKED_METRIC).increment();
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.FORBIDDEN);
+        response.getHeaders().setContentType(new MediaType(MediaType.TEXT_PLAIN, StandardCharsets.UTF_8));
+        String message = GatewayText.pick(exchange,
+                "데모 계정에서는 사용할 수 없는 기능입니다.", "デモアカウントではご利用いただけない機能です。");
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(message.getBytes(StandardCharsets.UTF_8))));
+    }
+
     // [JA] 401 とリクエスト言語の文言。ログは一行・DEBUG — 期限切れ・未ログインは正常な流れ。トークン・身元は残さない。
     private Mono<Void> unauthorized(ServerWebExchange exchange, String reason, String message) {
         log.debug("401 — {} ({})", reason, exchange.getRequest().getPath().value());

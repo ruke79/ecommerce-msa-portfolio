@@ -74,6 +74,9 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     /** 결제 뒤 장바구니 비우기 — 토픽 cart-empty. */
     // [JA] 決済後のカートを空にする — トピック cart-empty。
     private final com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher cartEmptyPublisher;
+    /** 배송 수량 다시 맞추기 — 토픽 delivery-resync(5단계 15). */
+    // [JA] 配送数量の再調整 — トピック delivery-resync。
+    private final com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher deliveryResyncPublisher;
 
     // 한 번에 선점할 행 수. 제한이 없으면 한 레플리카가 밀린 이벤트를 전부 잠가
     // 나머지 레플리카가 놀게 되고, 트랜잭션도 길어진다.
@@ -144,7 +147,8 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
     @jakarta.annotation.PostConstruct
     public void registerAlertCounters() {
         for (String type : List.of("payment-request", PaymentOutboxHelper.ORDER_STATUS_EVENT,
-                PaymentOutboxHelper.PRODUCT_UPDATE_EVENT, PaymentOutboxHelper.CART_EMPTY_EVENT)) {
+                PaymentOutboxHelper.PRODUCT_UPDATE_EVENT, PaymentOutboxHelper.CART_EMPTY_EVENT,
+                PaymentOutboxHelper.DELIVERY_RESYNC_EVENT)) {
             io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC, "type", type);
         }
     }
@@ -169,6 +173,9 @@ public class PaymentOutboxScheduler implements OutboxScheduler {
         } else if (PaymentOutboxHelper.CART_EMPTY_EVENT.equals(outbox.getEventType())) {
             settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay cart-empty",
                     () -> cartEmptyPublisher.publish(outbox, this::updateOutboxStatus));
+        } else if (PaymentOutboxHelper.DELIVERY_RESYNC_EVENT.equals(outbox.getEventType())) {
+            settled = outboxTraceContext.resume(outbox.getTraceContext(), "outbox relay delivery-resync",
+                    () -> deliveryResyncPublisher.publish(outbox, this::updateOutboxStatus));
         } else {
             // 알 수 없는 이벤트 타입을 STARTED 로 두면 매 폴링마다 다시 집어 무한 반복한다.
             // [JA] 未知のイベントタイプを STARTED のままにすると、ポーリングのたびに拾い直して無限に繰り返す。

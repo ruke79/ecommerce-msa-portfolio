@@ -78,17 +78,71 @@ class RegistrationMailRelayTest {
         mail = mock(OutgoingMailProducer.class);
         txm = new RecordingTxManager();
         relay = new RegistrationMailRelay(outbox, users, userService, mail, new ObjectMapper(), new TransactionTemplate(txm),
-                "https://shop.example/", () -> "1");
+                "https://shop.example/", "https://www.shop.example/", () -> "1");
+    }
+
+    private static OutboxEvent resetRow(long userId) {
+        return new OutboxEvent(String.valueOf(userId), "User", RegistrationMailRelay.PASSWORD_RESET_EVENT_TYPE, "{}");
+    }
+
+    @Test
+    @DisplayName("🔴 비밀번호 재설정 행 — 보낼 때 토큰을 만들어 링크에 싣고, 성공하면 완료 · 커밋(4단계 ⑤)")
+    void passwordResetIssuesTokenAtSendTime() {
+        OutboxEvent r = resetRow(7);
+        when(outbox.claimRegistrationMail(1)).thenReturn(List.of(r)).thenReturn(List.of());
+        when(users.findById(7L)).thenReturn(Optional.of(user(7, true)));
+        when(userService.issuePasswordResetToken(any())).thenReturn("reset-token");
+        when(mail.publish(any())).thenReturn(true);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+
+        ArgumentCaptor<OutgoingMailRequest> req = ArgumentCaptor.forClass(OutgoingMailRequest.class);
+        verify(mail).publish(req.capture());
+        assertThat(req.getValue().getKind()).isEqualTo("PASSWORD_RESET");
+        assertThat(req.getValue().getParams().get("resetUrl")).isEqualTo("https://www.shop.example/reset-password?token=reset-token");
+        assertThat(req.getValue().getToEmail()).isEqualTo("u7@example.com");
+        assertThat(req.getValue().getSourceEventId()).doesNotContain("reset-token");
+        assertThat(r.getOutboxStatus().name()).isEqualTo("COMPLETED");
+        verify(userService, never()).regenerateVerificationToken(any());
+    }
+
+    @Test
+    @DisplayName("🔴 비밀번호 재설정 — 보내지 못하면 롤백(토큰도) · 행은 STARTED · 묶음 멈춤 — 다음 주기에 다시")
+    void passwordResetPublishFailureRollsBack() {
+        OutboxEvent r = resetRow(7);
+        when(outbox.claimRegistrationMail(1)).thenReturn(List.of(r));
+        when(users.findById(7L)).thenReturn(Optional.of(user(7, true)));
+        when(userService.issuePasswordResetToken(any())).thenReturn("t");
+        when(mail.publish(any())).thenReturn(false);
+
+        assertThat(relay.relayOnce()).isZero();
+        assertThat(txm.ends).containsExactly("rollback");
+        assertThat(r.getOutboxStatus().name()).isNotEqualTo("COMPLETED");
+    }
+
+    @Test
+    @DisplayName("비밀번호 재설정 — 그 사이 사용자가 없어졌으면 보내지 않고 완료")
+    void passwordResetForMissingUserIsSkipped() {
+        OutboxEvent r = resetRow(9);
+        when(outbox.claimRegistrationMail(1)).thenReturn(List.of(r)).thenReturn(List.of());
+        when(users.findById(9L)).thenReturn(Optional.empty());
+
+        relay.relayOnce();
+        verify(mail, never()).publish(any());
+        verify(userService, never()).issuePasswordResetToken(any());
+        assertThat(r.getOutboxStatus().name()).isEqualTo("COMPLETED");
     }
 
     private static OutboxEvent row(long userId) {
         return new OutboxEvent(String.valueOf(userId), "User", RegistrationMailRelay.EVENT_TYPE, "{\"locale\":\"ja-JP\"}");
     }
 
-    private static User user(long id, boolean enabled) {
+    /** @param verified 확인 링크를 이미 눌렀나(emailVerified) — 활성 여부는 운영처럼 늘 true. [JA] 確認済みか。有効かは本番同様つねに true。 */
+    private static User user(long id, boolean verified) {
         User u = new User("u" + id, "u" + id + "@example.com", "pw");
         u.setUserId(id);
-        u.setEnabled(enabled);
+        u.setEnabled(true);
+        u.setEmailVerified(verified);
         return u;
     }
 
@@ -127,6 +181,21 @@ class RegistrationMailRelayTest {
         assertThat(txm.ends).containsExactly("rollback");
         assertThat(r.getOutboxStatus().name()).as("완료로 표시하지 않는다 — 롤백으로 STARTED 가 남는다").isNotEqualTo("COMPLETED");
         verify(outbox, times(1)).claimRegistrationMail(anyInt());
+    }
+
+    @Test
+    @DisplayName("🔴 인증 게이트가 꺼진 운영 — 계정이 처음부터 활성이어도 아직 인증하지 않았으면 보낸다(2026-11-21 회귀)")
+    void enabledButUnverifiedIsSent() {
+        OutboxEvent r = row(7);
+        when(outbox.claimRegistrationMail(1)).thenReturn(List.of(r)).thenReturn(List.of());
+        User u = user(7, false);
+        assertThat(u.isEnabled()).as("운영: APP_REQUIRE_EMAIL_VERIFICATION=false 라 가입 즉시 활성").isTrue();
+        when(users.findById(7L)).thenReturn(Optional.of(u));
+        when(userService.regenerateVerificationToken(any())).thenReturn("t");
+        when(mail.publish(any())).thenReturn(true);
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        verify(mail).publish(any());
     }
 
     @Test

@@ -108,6 +108,7 @@ public class User extends BaseEntity{
     //    [JA] 🔒 TOTP の秘密 — この値があればそのアカウントの 6 桁をいつでも作れる(docs/70)。
     //    · 応答には絶対に載せない(@JsonIgnore)— 以前は管理者のユーザー一覧がエンティティをそのまま出しており、全ユーザーの秘密が載っていた。
     //    · DB には AES-256-GCM の暗号文で置く(TotpSecretConverter)。エンティティのコードは平文だけを見る。
+    //    [JA] TOTP の秘密 — 応答に載せない(@JsonIgnore)、DB には暗号文で置く。
     @JsonIgnore
     @jakarta.persistence.Convert(converter = com.project.userservice.security.totp.TotpSecretConverter.class)
     private String twoFactorSecret;
@@ -138,6 +139,19 @@ public class User extends BaseEntity{
     }
     private String signUpMethod;
 
+    /** 공개 데모 계정의 {@code signUpMethod} — 가입(email) · 소셜(설정의 provider 이름)로는 생기지 않는다(docs/100). [JA] 公開デモアカウントの signUpMethod。 */
+    public static final String DEMO_SIGN_UP_METHOD = "demo";
+
+    /**
+     * 공개 데모 계정인가 — 여러 방문자가 돌려 쓴다. 토큰에 {@code demo} 클레임이 실리고 게이트웨이가 계정 · 자격 · 리뷰 쓰기를 막는다.
+     * 열을 더하지 않으려고 이미 있는 signUpMethod 로 가린다.
+     * [JA] 公開デモアカウントか — 複数の訪問者が使い回す。列を追加しないよう既存の signUpMethod で見分ける。
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isDemo() {
+        return DEMO_SIGN_UP_METHOD.equals(signUpMethod);
+    }
+
     /**
      * 비밀번호가 마지막으로 바뀐 시각 (V10). <b>null 이면 한 번도 바꾼 적 없음</b>이고,
      * 그때는 아무 토큰도 거절하지 않는다.
@@ -167,6 +181,7 @@ public class User extends BaseEntity{
     //      failed_login_attempts · lock_expires_at 列は Redis に移した後誰も読まないのに、フィールドと「ロック判定は lockExpiresAt」のコメント
     //      だけが残り、レビューがそのコメントを事実として読んだ(UserLockFieldsTest)。列は contract リリース(V19)で消した(それまで
     //      failed_login_attempts は NOT NULL DEFAULT 0 なので、フィールドがなくても INSERT できた)。
+    // [JA] エンティティにない — 回数・ロックは Redis。V4 の列は誰も読まず、フィールドと古い注釈だけが残っていた。列は contract(V19)で削除した。
 
     // ── 회원 탈퇴 (V6) ────────────────────────────────────────────────
     // 상태를 boolean 이 아니라 시각으로 둔다. "언제 지워지는지"를 답할 수 있어야 화면이

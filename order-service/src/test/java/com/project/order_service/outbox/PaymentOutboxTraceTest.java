@@ -105,7 +105,7 @@ class PaymentOutboxTraceTest {
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(
                 claiming, publisher,
                 mock(com.project.order_service.ports.output.message.publisher.OrderStatusKafkaPublisher.class), traceContext,
-                mock(com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class));
+                mock(com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
         scheduler.processOutboxMessage();
 

@@ -121,7 +121,7 @@ data:
   #        ✅ 2026-10-01 リポジトリのデフォルトは enforce。ずれた呼び出しは匿名扱いになり、その内部 API が 403 を返す。B-67 が Feign 呼び出し ↔ ルールを、
   #        B-73 が gRPC サービス ↔ ルールを照合する。戻し方: observe に変えて ./ops/28-deploy.sh <env> --config-only + バックエンド再起動。
   INTERNAL_AUTH_ALLOWED_SUBJECTS: "user-service,catalog-service,cart-service,order-service,pay-service,coupon-service,chat-service,notification-service,delivery-service,saga-projection"
-  INTERNAL_AUTH_PATH_RULES: "/api/order/internal/purchase-stats=user-service;/api/order/internal/purchased=user-service;/api/order/internal/orders=delivery-service;/api/coupon/internal/quote=order-service;/api/coupon/internal/payment-claim=order-service;/api/internal/stock/reservations=order-service;/ecommerce.stock.v1.StockReservation/=order-service;/api/product/rating=user-service;/api/auth/user/emails=order-service;/api/auth/user/name=order-service;/api/auth/user/segments=coupon-service;/api/auth/user/id=coupon-service|order-service|chat-service;/api/auth/user/email/=none;/api/auth/user/profile/=none;/api/notifications/internal/two-factor=user-service"
+  INTERNAL_AUTH_PATH_RULES: "/api/order/internal/purchase-stats=user-service;/api/order/internal/purchased=user-service;/api/order/internal/orders=delivery-service;/api/coupon/internal/quote=order-service;/api/coupon/internal/payment-claim=order-service;/api/internal/stock/reservations=order-service;/ecommerce.stock.v1.StockReservation/=order-service;/api/product/rating=user-service;/api/auth/user/emails=order-service;/api/auth/user/name=order-service;/api/auth/user/segments=coupon-service;/api/auth/user/id=coupon-service|order-service|chat-service;/api/auth/user/email/=none;/api/auth/user/profile/=none;/api/notifications/internal/two-factor=user-service;/api/notifications/internal/demo-reset=user-service;/api/auth/user/demo-accounts=cart-service"
   INTERNAL_AUTH_RULES_MODE: "enforce"
   # 신원 헤더(User-Id · User-Role · User-Email)는 누가 보냈나 — 게이트웨이 인증서(CN=gateway-server)면 셋 다, 내부 서비스면
   # User-Id 만(사용자를 대신한 호출), 내부 인증서가 없으면 셋 다 버리고 익명. 예전에는 헤더만 있으면 믿어서 클러스터 안의 파드가
@@ -261,11 +261,6 @@ data:
   #      ⚠️ サーバーだけ変えてはいけない — フロントビルドの REACT_APP_PAYPAL_CLIENT_ID と
   #         Secret の PAYPAL_CLIENT_ID/SECRET も同じ環境でなければならない。ずれても起動は
   #         成功し、症状は決済画面まで進んで初めて出る(order-service 起動ログの
-  #         "PayPal 결제 검증 활성화: env=… clientId=…" の行で照合すること)。
-  #      Stripe を付けるか。デフォルトがオフなのは PayPal と逆である — PayPal 検証は既に使っている
-  #      手段なので「設定を忘れると検証なしで通過」になってはならず、デフォルトはオンで、Stripe は
-  #      新しい手段なので、設定していない環境で起動が失敗すると既存のデプロイが止まる。
-  #      ⚠️ 有効にすると STRIPE_SECRET_KEY と STRIPE_WEBHOOK_SECRET が**両方**必要である(なければ起動失敗)。
   STRIPE_ENABLED: "false"
   # 포트원(구 아임포트). 켜면 PORTONE_API_KEY/SECRET 이 둘 다 필요하다(없으면 기동 실패).
   # ⚠️ 프론트의 REACT_APP_PORTONE_IMP_CODE(가맹점 식별코드)도 같은 상점이어야 한다 —
@@ -321,6 +316,10 @@ data:
   #      ⚠️ 有効にするには order-service ポッドから api.frankfurter.app への HTTPS が開いている必要がある。
   STORE_CURRENCY: "USD"
   PAYPAL_CURRENCY: "USD"
+  # PayPal 웹훅(5단계 14 — 콘솔 환불 · 차지백 · 분쟁) — 개발자 콘솔의 그 앱(sandbox · live 따로)에 웹훅을 등록하면 나오는 Webhook ID.
+  # 비면 /payment/paypal/webhook 은 503(받지 않는다). 비밀은 아니다 — 서명 확인에 쓴다. 바꾸면 ops/28 --config-only --restart order-service.
+  # [JA] PayPal のウェブフック ID — 空なら受けない(503)。秘密ではない(署名確認に使う)。
+  PAYPAL_WEBHOOK_ID: ""
   STRIPE_CURRENCY: "USD"
   PORTONE_CURRENCY: "KRW"
   FX_RATE_KRW: "1350"

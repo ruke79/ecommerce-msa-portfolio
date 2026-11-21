@@ -23,8 +23,9 @@ public class JwtAuthEntryPoint implements AuthenticationEntryPoint {
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException)
             throws IOException, ServletException {
-        logger.error("Unauthorized error: {}", authException.getMessage());
-        System.out.println(authException);
+        // 로그인 전 · 만료 토큰의 401 은 정상 흐름이다 — DEBUG. 🐛 예전에는 ERROR + System.out 이라 운영 ERROR 의 큰 몫이었다(docs/99 §4).
+        // [JA] ログイン前 · 期限切れトークンの 401 は正常な流れ — DEBUG。以前は ERROR + System.out で本番 ERROR の大きな割合だった。
+        logger.debug("401 — {} ({})", authException.getClass().getSimpleName(), request.getServletPath());
 
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

@@ -19,6 +19,7 @@ export const notJson = new Counter('not_json');
 // 5xx 인지(서버) 4xx 인지(데이터 · 요청) 시간 초과인지 알 수 없었다. 엔드포인트별 값은 errorThresholds 가 요약에 남긴다.
 // [JA] 429 以外の失敗を種類別に数える — 🐛 2026-10-18: 要約に http_req_failed の比率だけが残り、cart_add の失敗 464 件・browse の 1.06% が
 //      5xx(サーバー)か 4xx(データ・要求)かタイムアウトか分からなかった。エンドポイント別の値は errorThresholds が要約に残す。
+// [JA] 429 以外の失敗を種類別に数える(5xx · 4xx · 応答なし)。
 export const errors5xx = new Counter('errors_5xx');
 export const errors4xx = new Counter('errors_4xx');
 export const noResponse = new Counter('errors_no_response');
@@ -108,6 +109,7 @@ export function homeOrFail(res) {
  *      IP 一つのバケットを分け合った — catalog が受けた要求は正確に毎秒 20 で、browse の失敗 138,046 件のうち 137,981 件が 429 だった。
  *      サービスの容量ではなく制限値を測った結果なので、すべて捨てた。smoke は制限を上げる前に回す点検なので飛ばす。
  *      制限そのものを測るには ALLOW_RATE_LIMIT=1。
+ * [JA] 開始前に流入制限が上がっているかを確かめる。既定値のまま計測して 429 だけを測った(2026-10-18)。
  */
 export function limitsRaisedOrFail() {
   // 손님 IP 를 흉내 내면 제한은 손님마다다 — 기본 제한 그대로 재는 것이 목적이라 확인하지 않는다(docs/83 §2.6)
@@ -142,6 +144,22 @@ export function authHeaders(access) {
 
 export function get(path, params = {}) {
   return http.get(`${GATEWAY}${path}`, Object.assign({ headers: baseHeaders() }, params));
+}
+
+/**
+ * 시작 확인용 GET — 응답이 status 0(연결 자체가 안 됨)이면 잠깐 기다려 다시 한다(기본 30초).
+ * 🐛 2026-11-21 운영 첫 천장 측정: 클러스터 안 k6 Job 파드의 **첫 요청이 거부**됐다(1ms · connection refused) — k3s 의 네트워크 정책
+ *    (kube-router)이 새 파드를 '같은 네임스페이스' 허용 집합에 넣기까지 몇 초 걸린다(5초 뒤부터 200). setup() 이 그 한 번으로 멈춰
+ *    측정이 통째로 돌지 않았다. 0 밖의 상태(429 · 5xx · 4xx)는 다시 하지 않는다 — 그건 진짜 응답이다.
+ * [JA] 開始確認用の GET — status 0(接続不可)なら少し待って再試行。新しい Pod はネットワークポリシーに入るまで数秒かかる(2026-11-21)。
+ */
+export function getWhenReachable(path, params = {}, seconds = 30) {
+  let res = get(path, params);
+  for (let waited = 0; res.status === 0 && waited < seconds; waited += 2) {
+    sleep(2);
+    res = get(path, params);
+  }
+  return res;
 }
 
 /** 데모 계정 이메일 — ops/48 과 같은 번호(7자리, 0부터). */

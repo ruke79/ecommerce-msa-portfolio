@@ -83,7 +83,7 @@ class CartServiceBatchLookupTest {
     }
 
     @Test
-    @DisplayName("항목 셋(같은 상품 둘 포함) → getProductsInfo 한 번, 중복 없는 id 로; 단건 getProductInfo 는 0번")
+    @DisplayName("항목 셋(같은 상품 둘 포함) → getProductsInfo 한 번, 중복 없는 id 로")
     void updateCart_fetchesCatalogOnce_withDistinctIds() {
         when(catalogServiceClient.getProductsInfo(List.of(1L, 2L)))
                 .thenReturn(ResponseEntity.ok(List.of(
@@ -98,7 +98,6 @@ class CartServiceBatchLookupTest {
         // 왕복 횟수 — 이 테스트의 존재 이유.
         // [JA] 往復回数 — このテストの存在理由。
         verify(catalogServiceClient, times(1)).getProductsInfo(List.of(1L, 2L));
-        verify(catalogServiceClient, never()).getProductInfo(anyString());
 
         // 계산은 예전과 같아야 한다.
         // [JA] 計算は以前と同じであるべき。
@@ -180,8 +179,6 @@ class CartServiceBatchLookupTest {
         // 배치 요청에 세 항목이 productId:style:sizeIndex 로 정확히 담겼는가.
         // [JA] バッチリクエストに 3 項目が productId:style:sizeIndex で正確に入ったか。
         verify(catalogServiceClient, times(1)).getCartProductsInfo(List.of("1:0:0", "1:0:1", "2:0:0"));
-        verify(catalogServiceClient, never()).getProductInfo(anyString());
-        verify(catalogServiceClient, never()).getCartProductInfo(anyString(), anyInt(), anyInt());
 
         // 계산은 예전과 같아야 한다.
         // [JA] 計算は以前と同じであるべき。
@@ -215,7 +212,6 @@ class CartServiceBatchLookupTest {
         var dto = cartService.getCart(7L);
 
         verify(catalogServiceClient, times(1)).getColorsInfo(List.of(1L, 2L));
-        verify(catalogServiceClient, never()).getColorInfo(anyString());
         assertThat(dto.getProducts()).hasSize(3);
         assertThat(dto.getProducts().get(0).getColor().getColor()).isEqualTo("red");
         assertThat(dto.getProducts().get(2).getColor().getColor()).isEqualTo("blue");

@@ -199,4 +199,16 @@ public class UserOutboxHelper {
                 RegistrationMailRelay.EVENT_TYPE, payload).withTraceContext(outboxTraceContext.capture()));
         registrationMailTrigger.afterCommit();
     }
+
+    /**
+     * 비밀번호 재설정 메일 행 — 요청과 같은 트랜잭션에(4단계 ⑤). 행에는 아무것도 싣지 않는다(토큰 · 이메일 없음) — 릴레이가
+     * 보낼 때 재설정 토큰을 만든다. 🐛 예전에는 커밋 뒤 메일 일꾼에서 바로 발행해, Kafka 가 흔들리면 그 메일은 사라졌다(로그 ERROR 뿐).
+     * [JA] パスワード再設定メールの行 — 要求と同じトランザクションに。行には何も載せない — リレーが送るときにトークンを作る。以前は
+     *      コミット後にそのまま発行し、Kafka が揺れるとそのメールは消えた。
+     */
+    public void recordPasswordResetMail(User user) {
+        outboxEventRepository.save(new OutboxEvent(String.valueOf(user.getUserId()), AGGREGATE_TYPE,
+                RegistrationMailRelay.PASSWORD_RESET_EVENT_TYPE, "{}").withTraceContext(outboxTraceContext.capture()));
+        registrationMailTrigger.afterCommit();
+    }
 }

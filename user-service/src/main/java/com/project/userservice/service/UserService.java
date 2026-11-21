@@ -45,6 +45,12 @@ public interface UserService {
 
     void generatePasswordResetToken(String email);
 
+    /**
+     * 재설정 토큰을 새로 만들어(사용자당 한 행) 원문을 돌려준다 — 메일 릴레이가 보낼 때 부른다(4단계 ⑤). 저장은 해시.
+     * [JA] 再設定トークンを新しく作って原文を返す — メールのリレーが送るときに呼ぶ。保存はハッシュ。
+     */
+    String issuePasswordResetToken(com.project.userservice.model.User user);
+
     void resetPassword(String token, String newPassword);
 
     LoginResponse getLoginInfoByEmail(String email);
@@ -93,6 +99,7 @@ public interface UserService {
 
     /** 로그인 중의 2FA 변경 결과(docs/68 §14). */
     // [JA] ログイン中の 2FA 変更結果(docs/68 §14)。
+    /*
     /*
     /*
      * NO_PHONE · PHONE_CHANGED · UNAVAILABLE 은 SMS 수단에서만 나온다(docs/24 §10) — 인증된 번호가 없다 · 켤 때의 번호와 다르다 ·

@@ -96,7 +96,7 @@ public class IdentityHeaderScrubFilter implements GlobalFilter, Ordered {
      * 身元らしく見える名前は入ってくるたびに消しておけば、後で誰がどの名前で読んでもクライアントの値は届かない。
      */
     static final List<String> IDENTITY_HEADERS = List.of(
-            "User-Id", "User-Email", "User-Role",
+            "User-Id", "User-Email", "User-Role", "User-Demo",
             "X-User-Id", "X-User-Email", "X-User-Role");
 
     @Override

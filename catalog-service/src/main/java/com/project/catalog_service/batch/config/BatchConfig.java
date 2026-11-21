@@ -233,93 +233,97 @@ public class BatchConfig {
     }
 
     // --- Step Beans ---
+    /** 건너뛸 수 있는 행 수의 상한 — 스텝마다(ImportFaultTolerance, 5단계 13). [JA] 飛ばせる行数の上限 — ステップごと。 */
+    @org.springframework.beans.factory.annotation.Value("${catalog.import.skip-limit:100}")
+    int importSkipLimit = 100;
+
     @Bean
     public Step categoryStep() {
-        return new StepBuilder("categoryStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("categoryStep", jobRepository)
                 .<CategoryCsvDto, Category>chunk(10, batchTransactionManager)
                 .reader(categoryFileReader())
                 .processor(categoryItemProcessor)
-                .writer(categoryWriter())
+                .writer(categoryWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step subcategoryStep() {
-        return new StepBuilder("subcategoryStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("subcategoryStep", jobRepository)
                 .<SubcategoryCsvDto, Subcategory>chunk(10, batchTransactionManager)
                 .reader(subcategoryFileReader())
                 .processor(subcategoryItemProcessor)
-                .writer(subcategoryWriter())
+                .writer(subcategoryWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productStep() {
-        return new StepBuilder("productStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productStep", jobRepository)
                 .<ProductCsvDto, Product>chunk(10, batchTransactionManager)
                 .reader(productFileReader())
                 .processor(productItemProcessor)
-                .writer(productWriter())
+                .writer(productWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productColorStep() {
-        return new StepBuilder("productColorStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productColorStep", jobRepository)
                 .<ProductColorCsvDto, ProductColor>chunk(10, batchTransactionManager)
                 .reader(productColorFileReader())
                 .processor(productColorItemProcessor)
-                .writer(productColorWriter())
+                .writer(productColorWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productSkuStep() {
-        return new StepBuilder("productSkuStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productSkuStep", jobRepository)
                 .<ProductSkuCsvDto, ProductSku>chunk(10, batchTransactionManager)
                 .reader(productSkuFileReader())
                 .processor(productSkuCsvItemProcessor())
-                .writer(productSkuWriter())
+                .writer(productSkuWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productDetailsStep() {
-        return new StepBuilder("productDetailsStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productDetailsStep", jobRepository)
                 .<ProductDetailsCsvDto, ProductDetails>chunk(10, batchTransactionManager)
                 .reader(productDetailsFileReader())
                 .processor(productDetailsCsvItemProcessor())
-                .writer(productDetailsWriter())
+                .writer(productDetailsWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productQAStep() {
-        return new StepBuilder("productQAStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productQAStep", jobRepository)
                 .<ProductQACsvDto, ProductQA>chunk(10, batchTransactionManager)
                 .reader(productQAFileReader())
                 .processor(productQACsvItemProcessor())
-                .writer(productQAWriter())
+                .writer(productQAWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productSubcategoryStep() {
-        return new StepBuilder("productSubcategoryStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productSubcategoryStep", jobRepository)
                 .<ProductSubcategoryCsvDto, ProductSubcategory>chunk(10, batchTransactionManager)
                 .reader(productSubcategoryFileReader())
                 .processor(productSubcategoryCsvItemProcessor())
-                .writer(productSubcategoryWriter())
+                .writer(productSubcategoryWriter()), importSkipLimit)
                 .build();
     }
 
     @Bean
     public Step productSizeStep() {
-        return new StepBuilder("productSizeStep", jobRepository)
+        return ImportFaultTolerance.apply(new StepBuilder("productSizeStep", jobRepository)
                 .<ProductSizeCsvDto, ProductSize>chunk(10, batchTransactionManager)
                 .reader(productSizeFileReader())
                 .processor(productSizeCsvItemProcessor())
-                .writer(productSizeWriter())
+                .writer(productSizeWriter()), importSkipLimit)
                 .build();
     }
 

@@ -3,6 +3,8 @@ package com.project.catalog_service.config.redis;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import com.fasterxml.jackson.databind.jsontype.PolymorphicTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
@@ -92,13 +94,8 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      *
      * <p>🐛 2026-10-20 ~ 21 실습 8시간(1,000만 · 넓힘, docs/83 §2.8): 이 넷이 설정 맵에 없어 기본 10분(흩어져 8 ~ 10분)이었다. 다시 계산할
      * 때(10분)가 오기 전에 Redis 에서 사라져, 카테고리마다 8 ~ 10분에 한 번 첫 쪽 검색이 메뉴 계산(1,000만에서 수십 초)을 1.5초 기다린 뒤
-     * 빈 메뉴로 나갔다 — 밤새 검색 p95 1,513ms. 
-     * <p>[JA] フィルターメニューキャッシュ(brands · colors · sizes · details)の寿命 — 値に計算時刻があり、10 分
-     * ({@code catalog.facets.refresh-after})を過ぎると古い値を返しつつ裏で再計算する({@code SearchFilterFacets})。寿命はそれより
-     * ずっと長くないと、その「古い値」が残らない。
-     * 🐛 2026-10-20 〜 21 実習 8 時間(1,000 万 · 拡大、docs/83 §2.8): この四つが設定マップになく既定 10 分(散らして 8 〜 10 分)だった。
-     * 再計算の時刻(10 分)が来る前に Redis から消え、カテゴリごとに 8 〜 10 分に一度、1 ページ目の検索がメニュー計算(1,000 万で数十秒)を
-     * 1.5 秒待った後、空のメニューで返った — 一晩中、検索 p95 1,513ms。
+     * 빈 메뉴로 나갔다 — 밤새 검색 p95 1,513ms. [JA] フィルターメニューのキャッシュの寿命 — 設定マップになく既定 10 分で、再計算の時刻より
+     * 先に Redis から消え、カテゴリごとに 8〜10 分に一度、1 ページ目がメニューを 1.5 秒待って空で返っていた。
      */
     static final Duration FACETS_TTL = Duration.ofHours(24);
 
@@ -122,6 +119,7 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
      * (flush-cache · 企画展境界の {@code EventScheduler} · 以前の評価更新)再び埋まった {@code search_cache} キー 48 個が、ちょうど
      * 60 分後の同じ秒に切れて 20 秒間 DB に殺到し、そのとき再び埋まった 48 個がまた全部 17:15 に切れるところだった — 一度できた群れは
      * 毎時繰り返す。散らしておけば一巡で群れがほどける。
+     * [JA] 一度に埋まったキーは一度に切れ、その群れは毎時繰り返す。キーごとに寿命を最大 20% 縮めて散らす。
      */
     static RedisCacheWriter.TtlFunction jittered(Duration base) {
         long millis = base.toMillis();
@@ -370,10 +368,24 @@ public class RedisCacheConfig implements org.springframework.cache.annotation.Ca
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         // 모르는 필드는 무시한다 — permanentValueSerializer 와 같은 이유. ／ [JA] 未知のフィールドは無視する(同じ理由)。
         mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-        // GenericJackson2JsonRedisSerializer 기본 동작과 동일하게 @class 로 타입을 남긴다.
-        // [JA] GenericJackson2JsonRedisSerializer の既定動作と同じく @class で型を残す。
+        // GenericJackson2JsonRedisSerializer 기본 동작과 동일하게 @class 로 타입을 남긴다. 🔒 단, @class 로 되살릴 수 있는 타입을
+        // 캐시가 실제로 담는 것들로만 좁힌다 — 맨 ObjectMapper 의 기본 검증기({@code getPolymorphicTypeValidator()})는
+        // LaissezFaireSubTypeValidator 라 @class 가 가리키는 어떤 non-final 타입이든 만든다(Jackson 기본 타이핑 가젯의 전형). Redis 는
+        // 클러스터 안이라 공격자가 캐시 바이트를 직접 쓸 수는 없지만, common 의 RedisConfig 와 같은 방어를 둔다. 허용: 우리 DTO ·
+        // 엔티티(com.project.), 검색 결과의 Page(org.springframework.data.domain.PageImpl — pageable · sort 는 역직렬화기가 건너뛴다),
+        // 목록(java.util. — ArrayList · Page.getContent() 의 Collections$Unmodifiable* · facet 의 FacetEntry 안 ArrayList), 값 타입
+        // (java.time. · BigDecimal). 그 밖(java.io · javax · com.sun · org.springframework.context …)은 거절 → 역직렬화가 막힌다.
+        // [JA] @class で復元できる型をキャッシュが実際に持つものだけに絞る — 既定の LaissezFaire 検証器は任意の non-final 型を作る
+        //      (Jackson デフォルトタイピングのガジェットの典型)。Redis はクラスタ内だが、common の RedisConfig と同じ防御を置く。
+        PolymorphicTypeValidator ptv = BasicPolymorphicTypeValidator.builder()
+                .allowIfSubType("com.project.")
+                .allowIfSubType("org.springframework.data.domain.")
+                .allowIfSubType("java.util.")
+                .allowIfSubType("java.time.")
+                .allowIfSubType(java.math.BigDecimal.class)
+                .build();
         mapper.activateDefaultTypingAsProperty(
-                mapper.getPolymorphicTypeValidator(),
+                ptv,
                 ObjectMapper.DefaultTyping.NON_FINAL,
                 "@class");
         return mapper;

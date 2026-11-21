@@ -31,6 +31,10 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
     @Query("select categoryName from Category")
     public List<String> findAllCategoryNames();
 
+    /** 모든 카테고리 id — 필터 메뉴 미리 채우기(FacetWarmer). [JA] 全カテゴリの id。 */
+    @Query("select categoryId from Category order by categoryId")
+    public List<Long> findAllCategoryIds();
+
     @Query("select categoryId from Category where categoryName = :name")
     public Long findIdByCategoryName(@Param("name") String categoryName);
 

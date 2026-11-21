@@ -54,6 +54,12 @@ public class RegistrationMailRelay {
 
     /** {@code users.outbox_event.event_type} — 토픽 이름이 아니라 '이 사용자에게 확인 메일을 보내라' 는 뜻. */
     // [JA] event_type — トピック名ではなく「このユーザーに確認メールを送れ」という意味。
+    /**
+     * 비밀번호 재설정 메일 행(4단계 ⑤) — 같은 릴레이가 보낸다: 보낼 때 토큰을 만들고, 보내지 못하면 롤백(토큰도 그대로) · 다음 주기.
+     * [JA] パスワード再設定メールの行 — 同じリレーが送る。送るときにトークンを作り、送れなければロールバックして次の周期。
+     */
+    public static final String PASSWORD_RESET_EVENT_TYPE = "password-reset-mail";
+
     public static final String EVENT_TYPE = "registration-mail";
 
     /** 한 번에 보내는 메일 수 — 가입은 분당 몇 건이라 넉넉하다. [JA] 一度に送るメール数。 */
@@ -68,20 +74,22 @@ public class RegistrationMailRelay {
     private final ObjectMapper objectMapper;
     private final TransactionTemplate tx;
     private final String publicUrl;
+    private final String frontendUrl;
     private final Supplier<String> attemptId;
 
     @org.springframework.beans.factory.annotation.Autowired
     public RegistrationMailRelay(OutboxEventRepository outboxEventRepository, UserRepository userRepository,
             @org.springframework.context.annotation.Lazy UserService userService, OutgoingMailProducer mailProducer,
             ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
-            @Value("${app.public-url:https://localhost:8000}") String publicUrl) {
+            @Value("${app.public-url:https://localhost:8000}") String publicUrl,
+            @Value("${frontend.url}") String frontendUrl) {
         this(outboxEventRepository, userRepository, userService, mailProducer, objectMapper,
-                new TransactionTemplate(transactionManager), publicUrl, () -> String.valueOf(System.nanoTime()));
+                new TransactionTemplate(transactionManager), publicUrl, frontendUrl, () -> String.valueOf(System.nanoTime()));
     }
 
     RegistrationMailRelay(OutboxEventRepository outboxEventRepository, UserRepository userRepository, UserService userService,
             OutgoingMailProducer mailProducer, ObjectMapper objectMapper, TransactionTemplate tx, String publicUrl,
-            Supplier<String> attemptId) {
+            String frontendUrl, Supplier<String> attemptId) {
         this.outboxEventRepository = outboxEventRepository;
         this.userRepository = userRepository;
         this.userService = userService;
@@ -89,6 +97,7 @@ public class RegistrationMailRelay {
         this.objectMapper = objectMapper;
         this.tx = tx;
         this.publicUrl = publicUrl;
+        this.frontendUrl = frontendUrl;
         this.attemptId = attemptId;
     }
 
@@ -129,7 +138,7 @@ public class RegistrationMailRelay {
             }
         }
         if (sent + skipped > 0 || failed) {
-            log.info("가입 확인 메일 아웃박스 처리: 발행={} 건너뜀={} 실패로 멈춤={}", sent, skipped, failed);
+            log.info("메일 아웃박스 처리(가입 확인 · 비밀번호 재설정): 발행={} 건너뜀={} 실패로 멈춤={}", sent, skipped, failed);
         }
         return sent;
     }
@@ -141,7 +150,15 @@ public class RegistrationMailRelay {
         }
         OutboxEvent row = rows.get(0);
         User user = userRepository.findById(Long.valueOf(row.getAggregateId())).orElse(null);
-        if (user == null || user.isEnabled()) {
+        if (PASSWORD_RESET_EVENT_TYPE.equals(row.getEventType())) {
+            return sendPasswordReset(row, user);
+        }
+        // 이미 인증했나는 emailVerified 로 본다 — enabled 가 아니다. 🐛 2026-11-21 첫 판은 enabled 로 봐서, 인증 게이트가 꺼진 운영
+        // (APP_REQUIRE_EMAIL_VERIFICATION=false — 계정이 처음부터 활성)에서 가입 메일이 하나도 나가지 않았다. 확인 링크는 활성 ·
+        // 미인증 계정도 받아 emailVerified 를 세운다(UserServiceImpl 확인 처리).
+        // [JA] 認証済みかは emailVerified で見る — enabled ではない。初版は enabled で見ており、認証ゲートが無効な本番(アカウントが
+        //      最初から有効)で加入メールが一通も出なかった。確認リンクは有効 · 未認証のアカウントも受け付け emailVerified を立てる。
+        if (user == null || user.isEmailVerified()) {
             row.markCompleted();   // 그 사이 인증했거나 없어졌다 — 보낼 것이 없다 [JA] その間に認証済み · 消えた
             return Step.SKIPPED;
         }
@@ -162,6 +179,31 @@ public class RegistrationMailRelay {
         }
         row.markCompleted();
         log.info("가입 확인 메일 요청 발행: userId={}", user.getUserId());
+        return Step.SENT;
+    }
+
+    /** 비밀번호 재설정 — 보낼 때 토큰을 만든다. 원문 링크는 메일 요청에만(로그 · 행에 없음). [JA] 送るときにトークンを作る。 */
+    private Step sendPasswordReset(OutboxEvent row, User user) {
+        if (user == null) {
+            row.markCompleted();   // 그 사이 탈퇴 · 삭제 — 보낼 곳이 없다 [JA] その間に退会 · 削除
+            return Step.SKIPPED;
+        }
+        String rawToken = userService.issuePasswordResetToken(user);
+        String resetUrl = frontendUrl.replaceAll("/+$", "") + "/reset-password?token=" + rawToken;
+        boolean published = mailProducer.publish(OutgoingMailRequest.builder()
+                // ⚠️ 멱등 키에 토큰을 넣지 않는다 — 시도마다 다른 값(재시도가 새 토큰이면 새 메일). [JA] 冪等キーにトークンを入れない。
+                .sourceEventId("password-reset:" + user.getUserId() + ":" + attemptId.get())
+                .toEmail(user.getEmail())
+                .recipientUserId(user.getUserId())
+                .kind("PASSWORD_RESET")
+                .params(Map.of("resetUrl", resetUrl))
+                .build());
+        if (!published) {
+            log.warn("비밀번호 재설정 메일 요청을 보내지 못했다 — 다음 주기에 다시 보낸다: userId={}", user.getUserId());
+            return Step.FAILED;
+        }
+        row.markCompleted();
+        log.info("비밀번호 재설정 메일 요청 발행: userId={}", user.getUserId());
         return Step.SENT;
     }
 

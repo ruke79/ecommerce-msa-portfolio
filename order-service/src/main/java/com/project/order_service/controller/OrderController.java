@@ -72,6 +72,10 @@ public class OrderController {
     @Autowired(required = false)
     com.project.order_service.service.StripePaymentService stripePaymentService;
 
+    /** 공개 데모 계정의 결제 전 주문 상한(docs/100). 시험이 컨트롤러를 직접 만들면 null — 그때는 막지 않는다. [JA] デモの決済前注文上限。 */
+    @Autowired(required = false)
+    com.project.order_service.service.DemoOrderLimit demoOrderLimit;
+
     /** 포트원 경로. {@code portone.enabled=false} 면 null 이고, 해당 엔드포인트는 503 이다. */
     // [JA] PortOne の経路。{@code portone.enabled=false} なら null で、該当エンドポイントは 503 だ。
     @Autowired(required = false)
@@ -128,8 +132,10 @@ public class OrderController {
     ResponseEntity<?> createOrder(@jakarta.validation.Valid @RequestBody OrderRequest request,
             @RequestHeader(value = "User-Id", required = false) Long userId,
             // 멱등 키 — 같은 결제 시도의 재요청이면 이미 만든 주문을 돌려준다(OrderService.createOrder, V26)
-            // [JA] 冪等キー — 同じ決済試行の再リクエストなら作成済みの注文を返す(OrderService.createOrder, V26)
-            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+            // [JA] 冪等キー — 同じ決済試行の再要求なら作成済みの注文を返す(V26)
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            // 공개 데모 계정 — 게이트웨이가 검증된 데모 토큰에만 싣는다(docs/100). [JA] 公開デモアカウント — ゲートウェイがデモトークンにだけ載せる。
+            @RequestHeader(value = "User-Demo", required = false) String demo) {
 
         // 🔒 주문자는 **게이트웨이가 검증한 토큰**에서만 온다.
         //
@@ -154,6 +160,9 @@ public class OrderController {
         }
 
         try {
+            if (demoOrderLimit != null) {
+                demoOrderLimit.check(demo, userId, idempotencyKey);
+            }
             Order newOrder = orderService.createOrder(request, userId, idempotencyKey);
 
             Map<String, String> data = new HashMap<>();
@@ -169,6 +178,14 @@ public class OrderController {
                     .body(new MessageResponse(ClientMessage.of(e)));
 
         } catch (RuntimeException e) {
+            // 상류(cart · catalog · coupon)가 아프거나 서킷 브레이커가 열렸다 — 우리 잘못이 아니고 다시 하면 될 수 있다: 503.
+            // 🐛 예전에는 cart 호출 실패도 아래 500 이었다(docs/101 §4). [JA] 上流の不調 · ブレーカー開は 503 — 以前は 500 だった。
+            if (com.project.common.feign.UpstreamCircuitBreakers.isUpstreamFailure(e)
+                    || e instanceof io.github.resilience4j.circuitbreaker.CallNotPermittedException) {
+                log.warn("주문 생성 실패 — 상류 서비스 응답 없음: {}", e.toString());
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(new MessageResponse("주문을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."));
+            }
             // 여기까지 온 것은 우리 잘못이다. 스택트레이스를 남긴다 — 이게 없어서
             // 지난번 400 의 원인을 로그에서 찾을 수 없었다.
             // [JA] ここまで来たのはこちらの落ち度だ。スタックトレースを残す — これがなくて
@@ -279,6 +296,7 @@ public class OrderController {
      * 詳しくは {@code OrderDataService.getOrdersPage} のコメントにある。
      * こちらは状態を SQL で絞りカーソルで区切って渡す。画面はスクロールするたびに次のまとまりを受け取る。
      * {@code /orders} は消していない — 他の呼び出し元があるか確認できておらず、画面を移した後に整理する方が安全だ。
+     *
      *
      * @param cursor 마지막으로 받은 주문 id. 첫 페이지는 생략하거나 0.
      *     [JA] 最後に受け取った注文 id。最初のページは省略するか 0。
@@ -905,6 +923,40 @@ public class OrderController {
      * ⚠️ 本文を {@code String} で受けるのは <b>署名のため</b> だ。JSON にパースしてから再シリアライズすると空白・キーの順序が変わり署名が壊れる。
      * 失敗しても詳細を応答に入れない — 認証のない経路なのでエラー文言自体が探索の手がかりになる。原因はログに残す。
      */
+    @Autowired(required = false)
+    com.project.order_service.payment.PaypalWebhookService paypalWebhookService;
+
+    /**
+     * PayPal 웹훅(5단계 14) — 콘솔 환불 · 차지백 · 분쟁. 인증 없는 공개 경로(게이트웨이 order-service-paypal-webhook)라 상세를 응답에 담지
+     * 않는다. {@code PAYPAL_WEBHOOK_ID} 가 비면 503(받지 않는다). 서명 · 본문이 틀리면 400(다시 보내도 같다), 우리 쪽 일시 실패는 500
+     * (PayPal 이 다시 보낸다). 본문은 String — 서명 확인에 받은 그대로 넘긴다.
+     * [JA] PayPal のウェブフック。webhook-id が空なら 503、署名 · 本文の誤りは 400、こちらの一時的失敗は 500(PayPal が再送)。
+     */
+    @PostMapping("/payment/paypal/webhook")
+    public ResponseEntity<?> paypalWebhook(@RequestBody String payload,
+            @RequestHeader org.springframework.http.HttpHeaders headers) {
+        if (paypalWebhookService == null || !paypalWebhookService.enabled()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+        }
+        java.util.Map<String, String> h = new java.util.HashMap<>();
+        for (String name : com.project.order_service.payment.HttpPaypalOrderVerifier.WEBHOOK_HEADERS) {
+            String v = headers.getFirst(name);
+            if (v != null) {
+                h.put(name, v);
+            }
+        }
+        try {
+            paypalWebhookService.handle(payload, h);
+            return ResponseEntity.ok().build();
+        } catch (com.project.order_service.payment.PaypalWebhookService.Rejected e) {
+            log.warn("PayPal 웹훅 거절: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (RuntimeException e) {
+            log.error("PayPal 웹훅 처리 실패(예상치 못한 오류 — PayPal 이 다시 보낸다)", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     @PostMapping("/payment/stripe/webhook")
     public ResponseEntity<?> stripeWebhook(@RequestBody String payload,
             @RequestHeader(value = "Stripe-Signature", required = false) String signature) {

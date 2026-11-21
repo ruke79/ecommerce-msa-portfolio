@@ -81,6 +81,19 @@ class CartServiceApplicationTests {
 	}
 
 	/**
+	 * 🔴 catalog 클라이언트를 주입하면 서킷 브레이커로 감싼 것이 온다(4단계 ④) — Feign 원본은 primary=false · qualifier 로만. 상태 지표도 뜬다.
+	 * [JA] catalog のクライアントを注入するとブレーカーで包んだものが来る。
+	 */
+	@Test
+	@DisplayName("🔴 catalog 클라이언트 주입값은 서킷 브레이커 프록시 — 원본은 qualifier 로만, 상태 지표가 뜬다")
+	void catalogClientIsWrappedInCircuitBreaker() {
+		assertThat(context.getBean(com.project.cart_service.client.CatalogServiceClient.class).toString()).startsWith("CircuitBreaker(");
+		assertThat(context.getBean("rawCatalogServiceClient").toString()).doesNotStartWith("CircuitBreaker(");
+		assertThat(context.getBean(io.micrometer.core.instrument.MeterRegistry.class)
+				.find(com.project.common.feign.UpstreamCircuitBreakers.STATE_METRIC).tag("name", "cart-catalog").gauge()).isNotNull();
+	}
+
+	/**
 	 * 🔴 common 을 컴포넌트 스캔하는 이 앱에서도 파티션 잡이 뜬다. 예전에는 AutoConfigurationExcludeFilter 가 빠져 자동 설정이
 	 * 스캔으로 먼저 평가돼 통째로 빠졌다 — 잡이 한 번도 돌지 않았다(OutboxPartitionComponentScanTest).
 	 * [JA] common をスキャンするこのアプリでもパーティションジョブが起動する。以前は自動設定が丸ごと外れていた。

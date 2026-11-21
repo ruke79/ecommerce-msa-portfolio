@@ -8,6 +8,7 @@ import ItemQtyPicker, { anySelected, toItems } from "components/order/ItemQtyPic
 import { formatDateTime } from "util/datetime";
 import { useTranslation } from "i18n/I18nProvider";
 import { orderStatusLabel } from "util/statusLabel";
+import { isDemoEmail } from "util/demoAccount";
 
 /**
  * 화면의 상태 필터. 서버의 OrderStatus 이름 그대로 보낸다 — 번역하지 않는다.
@@ -271,7 +272,13 @@ const Refunds = () => {
                                 <div className="font-mono">#{row.orderId}</div>
                                 <div className="text-xs text-slate-500">{row.trackingId}</div>
                             </td>
-                            <td className="p-2">{row.customerEmail ?? `#${row.customerId ?? "-"}`}</td>
+                            <td className="p-2">
+                                {row.customerEmail ?? `#${row.customerId ?? "-"}`}
+                                {/* 공개 데모 계정의 주문 — 시험 결제다(docs/100). [JA] 公開デモアカウントの注文 — テスト決済。 */}
+                                {isDemoEmail(row.customerEmail) && (
+                                    <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900">{t("admin.demo.badge")}</span>
+                                )}
+                            </td>
                             <td className="p-2">
                                 <div>{money(Number(row.total ?? 0))}</div>
                                 {row.currency && (

@@ -161,6 +161,18 @@ public class TokenHandler {
         }
     }
 
+    /**
+     * 이미 검증된 원시 토큰이 공개 데모 계정의 것인가({@code demo} 클레임, docs/100). 호출 전에 {@link #verifyToken} 을 통과시킬 것.
+     * [JA] 検証済みトークンが公開デモアカウントのものか。
+     */
+    public boolean isDemo(String token) {
+        try {
+            return Boolean.TRUE.equals(JWT.decode(token).getClaim("demo").asBoolean());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /** "Bearer {token}" 헤더를 검증하고 {@code role} 클레임을 돌려준다. 검증에 실패하면 401. */
     // [JA] "Bearer {token}" ヘッダを検証し {@code role} クレームを返す。検証に失敗すれば 401。
     public String resolveVerifiedRole(String authorizationHeader) {

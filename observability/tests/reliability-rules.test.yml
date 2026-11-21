@@ -93,3 +93,117 @@ tests:
   - eval_time: 20m
     alertname: OrderStockHoldUnavailable
     exp_alerts: []
+# 서킷 브레이커가 열림(1) · 반열림(2)을 오가며 닫히지 못하면 5분 뒤 울린다 — 닫힘(0)으로 돌아온 쪽은 조용(docs/101)
+# [JA] ブレーカーが開(1)· 半開(2)を行き来して閉じないと 5 分後に鳴る — 閉(0)に戻った方は静か
+- interval: 1m
+  input_series:
+  - series: upstream_circuit_state{service="cart-service",instance="c-1",name="cart-catalog"}
+    values: 0 1 1 2 1 2 1 1 2 1 1 1
+  - series: upstream_circuit_state{service="order-service",instance="o-1",name="order-coupon"}
+    values: 0 1 2 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: UpstreamCircuitOpen
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: UpstreamCircuitOpen
+    exp_alerts:
+    - exp_labels:
+        service: cart-service
+        name: cart-catalog
+        severity: warning
+      exp_annotations:
+        summary: "cart-service 의 상류 서킷 브레이커 cart-catalog 가 5분 넘게 열려 있습니다"
+        description: "그 상류 서비스가 연결 실패 · 시간 초과 · 5xx 를 되풀이합니다. 부르는 쪽은 바로 실패 처리로 넘어가는 중입니다(docs/101). 상류의 파드 · 지연 · 오류를 확인하세요."
+# 결제 완료가 취소된 주문에 한 건 — 바로 울린다(critical). 0 은 조용(5단계 12)
+# [JA] 決済完了が取消済み注文に一件 — すぐ鳴る。0 は静か
+- interval: 1m
+  input_series:
+  - series: order_payment_inactive_order_total{service="order-service",instance="o-1"}
+    values: 0 0 0 1 1 1 1 1
+  - series: order_payment_inactive_order_total{service="order-service",instance="o-2"}
+    values: 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: OrderPaymentForInactiveOrder
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: OrderPaymentForInactiveOrder
+    exp_alerts:
+    - exp_labels:
+        service: order-service
+        severity: critical
+      exp_annotations:
+        summary: "결제 완료가 취소 · 환불된(또는 없는) 주문에 도착했습니다 — 최근 30분 1건"
+        description: "손님은 돈을 냈는데 받을 주문이 없습니다. order-service 로그 '결제를 받을 수 없는 주문' 의 orderId 로 결제 제공자 콘솔에서 결제를 찾아 환불하세요(설계상 생기지 않는 경우 5 · 6단계 12)."
+# 결제 분쟁 한 건 · 콘솔 일부 환불 한 건 — 둘 다 울린다(5단계 14). 다른 결과(full)는 조용
+# [JA] 紛争一件 · コンソールの一部返金一件 — どちらも鳴る。full は静か
+- interval: 1m
+  input_series:
+  - series: order_payment_dispute_total{service="order-service",instance="o-1",provider="paypal"}
+    values: 0 0 1 1 1 1
+  - series: order_payment_external_refund_total{service="order-service",instance="o-1",provider="paypal",result="partial"}
+    values: 0 0 1 1 1 1
+  - series: order_payment_external_refund_total{service="order-service",instance="o-1",provider="paypal",result="full"}
+    values: 0 0 5 5 5 5
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: PaymentDisputeOpened
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: PaymentDisputeOpened
+    exp_alerts:
+    - exp_labels:
+        service: order-service
+        provider: paypal
+        severity: critical
+      exp_annotations:
+        summary: "paypal 결제 분쟁 이벤트가 왔습니다 — 최근 30분 1건"
+        description: "order-service 로그 'PayPal 분쟁' 의 캡처 id 로 주문을 찾아 배송을 멈출지 정하고, 제공자 콘솔에서 기한 안에 증빙을 내세요."
+  - eval_time: 4m
+    alertname: ExternalRefundNeedsReview
+    exp_alerts:
+    - exp_labels:
+        service: order-service
+        provider: paypal
+        result: partial
+        severity: warning
+      exp_annotations:
+        summary: "paypal 콘솔 환불을 손으로 확인해야 합니다(partial) — 최근 30분 1건"
+        description: "partial: 금액만 반영 — 어느 품목인지 관리자 화면에서 수량 · 재고를 맞추세요. unmatched: 주문을 찾지 못했거나 상태 · 통화가 맞지 않아 반영하지 않았습니다 — 로그 '외부 환불' 을 보세요."
+# HighP99Latency — SSE(30초)만 느리면 조용, 보통 경로가 5초면 울린다(2026-11-21 SSE 오탐)
+# [JA] SSE(30 秒)だけ遅いなら静か、普通の経路が 5 秒なら鳴る
+- interval: 1m
+  input_series:
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/api/sse",le="3.0"}
+    values: 0+0x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/api/sse",le="30.0"}
+    values: 0+20x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/api/sse",le="+Inf"}
+    values: 0+20x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/error",le="3.0"}
+    values: 0+0x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/error",le="30.0"}
+    values: 0+20x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/error",le="+Inf"}
+    values: 0+20x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/api/token/refresh",le="3.0"}
+    values: 0+100x20
+  - series: http_server_requests_seconds_bucket{service="user-service",uri="/api/token/refresh",le="+Inf"}
+    values: 0+100x20
+  - series: http_server_requests_seconds_bucket{service="cart-service",uri="/api/cart/loadcart",le="3.0"}
+    values: 0+0x20
+  - series: http_server_requests_seconds_bucket{service="cart-service",uri="/api/cart/loadcart",le="10.0"}
+    values: 0+10x20
+  - series: http_server_requests_seconds_bucket{service="cart-service",uri="/api/cart/loadcart",le="+Inf"}
+    values: 0+10x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: HighP99Latency
+    exp_alerts:
+    - exp_labels:
+        service: cart-service
+        severity: warning
+      exp_annotations:
+        summary: "cart-service p99 지연 3s 초과"
+        description: "요청 p99가 3초를 넘었습니다. (히스토그램은 application-common.yml 의 percentiles-histogram 설정으로 노출)"

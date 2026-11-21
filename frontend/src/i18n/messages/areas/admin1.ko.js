@@ -15,6 +15,7 @@ const admin1 = {
     // ── 관리자: 환불 (pages/admin/Refunds.jsx) ─────────────────────────────
     // [JA] ── 管理者: 返金 (pages/admin/Refunds.jsx) ──
     "admin.refunds.title": "환불 관리",
+    "admin.demo.badge": "데모",
     // 상태 필터 — 값(OrderStatus 이름)은 서버로 그대로 가고 이름표만 번역한다.
     // [JA] 状態フィルター — 値(OrderStatus 名)はサーバーへそのまま行き、ラベルだけ翻訳する。
     "admin.refunds.status.all": "전체",

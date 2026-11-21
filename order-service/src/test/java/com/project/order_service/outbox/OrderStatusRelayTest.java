@@ -48,7 +48,7 @@ class OrderStatusRelayTest {
 
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(claiming,
                 mock(PaymentRequestKafkaPublisher.class), publisher, traceContext,
-                mock(com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class));
+                mock(com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
         scheduler.processOutboxMessage();
 
@@ -74,7 +74,7 @@ class OrderStatusRelayTest {
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
 
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(claiming, mock(PaymentRequestKafkaPublisher.class),
-                mock(OrderStatusKafkaPublisher.class), traceContext, products, carts);
+                mock(OrderStatusKafkaPublisher.class), traceContext, products, carts, mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
         scheduler.processOutboxMessage();
 
@@ -104,7 +104,7 @@ class OrderStatusRelayTest {
         try {
             PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(claiming, mock(PaymentRequestKafkaPublisher.class),
                     statuses, traceContext, products,
-                    mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class));
+                    mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
             ReflectionTestUtils.setField(scheduler, "batchSize", 10);
             scheduler.processOutboxMessage();
 
@@ -130,7 +130,7 @@ class OrderStatusRelayTest {
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
         PaymentOutboxScheduler scheduler = new PaymentOutboxScheduler(claiming, mock(PaymentRequestKafkaPublisher.class),
                 statuses, traceContext, mock(com.project.order_service.ports.output.message.publisher.ProductUpdateKafkaPublisher.class),
-                mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class));
+                mock(com.project.order_service.ports.output.message.publisher.CartEmptyKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
         ReflectionTestUtils.setField(scheduler, "batchSize", 10);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(scheduler::processOutboxMessage)

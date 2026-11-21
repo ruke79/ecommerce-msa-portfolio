@@ -202,6 +202,7 @@ public class OrderDataService {
      * 三つを一度になくす: 状態は SQL で絞り、身元照会は<b>一度だけ</b>行い、
      * 色はページ単位で<b>一度に</b>受け取る。
      *
+     *
      * @param cursor 마지막으로 받은 주문 id. 첫 페이지는 null 또는 0.
      *               [JA] 最後に受け取った注文 id。最初のページは null または 0。
      * @param filter 비어 있으면 상태로 거르지 않는다(화면의 "All Orders").
@@ -300,6 +301,7 @@ public class OrderDataService {
      * そこでリモート呼び出しをすべて<b>トランザクションの外</b>({@code OrderService.createOrder})へ
      * 移し、このメソッドは既に受け取った値だけを使う。引数が増えたのはその代価である —
      * 「このメソッドはリモート呼び出しをしない」がシグネチャに表れるほうがよい。
+     *
      *
      * @param latestCart 서버가 읽은 장바구니. 주문 품목과 금액의 근거다
      *                   [JA] サーバが読んだカート。注文品目と金額の根拠である
@@ -467,6 +469,7 @@ public class OrderDataService {
      * <p>[JA] 在庫が足りず成立しなかった注文を消す(docs/59)。決済前・決済参照なしが条件なので、誤って呼んでも決済済みの注文は
      * 消えない(0 行)。注文と住所が互いを指すので順番に消す。
      *
+     *
      * @return 지웠으면 true
      *         [JA] 消したら true
      */
@@ -613,6 +616,7 @@ public class OrderDataService {
      * 冪等である — 既に取消された注文にまた来ても静かに成功する。ユーザーが二回閉じる
      * ことはよくあり、その時エラーを出すと正常に取消された注文が失敗に見える。
      *
+     *
      * @param requesterId 게이트웨이가 검증한 요청자(토큰의 uid → User-Id). 본문의 값이 아니다
      *                    [JA] ゲートウェイが検証した要求者(トークンの uid → User-Id)。本文の値ではない
      */
@@ -689,6 +693,7 @@ public class OrderDataService {
      * 通貨が同じか — 金額だけ見ると 59.98 USD を 59.98 KRW にすり替えられる /
      * その決済が<b>既に別の注文に使われたか</b> — DB のユニーク制約で防ぐ。
      *
+     *
      * @param requesterId 게이트웨이가 검증한 요청자(토큰의 uid). 웹훅이면 주문의 고객 id. <b>본문의 값이 아니다</b> — 예전에는
      *                       {@code request.getUserEmail()} 을 그대로 썼다
      *                    [JA] ゲートウェイが検証した要求者(トークンの uid)。Webhook なら注文の顧客 id。<b>本文の値ではない</b> — 以前は
@@ -730,6 +735,7 @@ public class OrderDataService {
         //      🔒 同じ注文の決済記録を直列化する — 二つのタブの決済が重なると、遅い方が下の二重決済検査を見ることになる(lockVersion のコメント)。
         //      🐛 以前は遅い方を「別のリクエストが処理中」として拒否していた — その決済もすでにお金が出ていたのに警報なしで終わった(PayPal は
         //      画面が送り直さなければ永遠に見えない)。今はロックしたまま読み直し、二重決済検査(警報 OrderDuplicatePayment)に掛かるようにする。
+        // [JA] 同じ注文の決済記録を直列化する — 遅い方はロックしたまま読み直し、二重決済検査(警報)に掛かる。以前は警報なしで拒否していた。
         lockFresh(order);
 
         boolean alreadyRecorded = provider == order.getPaymentProvider()
@@ -894,6 +900,7 @@ public class OrderDataService {
      * 注文である。売上集計は {@code total − refundedAmount} を見る。残り数量が 0 になる
      * 返金だけが {@code REFUNDED} に変え、pay-service に CANCELED を知らせる。
      *
+     *
      * @param admin 게이트웨이의 {@code User-Role} 로 판정한 값. 본문에서 오지 않는다
      *              [JA] ゲートウェイの {@code User-Role} で判定した値。本文からは来ない
      * @param items 환불할 품목·수량. 비어 있으면 아직 환불되지 않은 전부
@@ -974,6 +981,9 @@ public class OrderDataService {
      * 開き直して終わりを延ばす。終わりが過ぎた試行は引き継ぐ。キーがなければ(古い画面)試行は記録しない。
      * すでに決済が付いた注文(決済記録の後、サガが PAID に変える前を含む)はキーに関係なく拒否する。
      * 例外 PaymentVerificationException: すでに決済済み · 別の画面が決済中。
+     *
+     *
+     * <p>[JA] 決済開始 — この注文の決済画面を一つに。window の間は別のキーを拒む。決済済みの注文はキーに関係なく拒む。
      *
      * @throws PaymentVerificationException 이미 결제됐다 · 다른 창이 결제 중이다
      */
@@ -1189,6 +1199,80 @@ public class OrderDataService {
         // [JA] 返金通知(OrderRefundedKafkaPublisher)がトランザクションの外で返金一覧を読む — open-in-view を切ってからはいま読んでおく(B-87)。
         org.hibernate.Hibernate.initialize(order.getRefunds());
         return order;
+    }
+
+    /** 외부 환불을 반영한 결과. [JA] 外部返金の反映結果。 */
+    public enum ExternalRefund { RECORDED_FULL, RECORDED_PARTIAL, ALREADY_RECORDED, UNKNOWN_ORDER, NOT_REFUNDABLE }
+
+    /**
+     * 제공자 콘솔(또는 차지백)에서 일어난 환불을 주문에 반영한다 — 제공자를 다시 부르지 않는다(이미 환불됐다, 5단계 14).
+     *
+     * <ul>
+     *   <li>같은 환불 참조가 이미 있으면 아무것도 하지 않는다 — 우리가 API 로 한 환불도 같은 웹훅이 온다(refundOrder 가 같은 id 를 남긴다).</li>
+     *   <li>전액이 되면 REFUNDED + pay 에 CANCELED(일반 환불과 같은 메시지 — 배송 취소 · 쿠폰 · 재고가 같은 길로 돈다).</li>
+     *   <li>일부면 금액만 남긴다 — 어느 품목인지 모르므로 수량 · 재고는 사람이(호출자가 경보를 센다).</li>
+     * </ul>
+     * 금액은 청구 통화로 온다 — 상점 통화는 주문의 청구액 비율로 바꾸고, 전액이면 남은 환불 가능액을 그대로 쓴다(반올림 어긋남 방지).
+     *
+     * <p>[JA] 提供者のコンソール(またはチャージバック)で起きた返金を注文に反映する — 提供者を再び呼ばない。同じ返金参照が既にあれば何も
+     *      しない(自分の API 返金も同じウェブフックが来る)。全額なら REFUNDED + pay に CANCELED、一部なら金額だけ残す(品目は人が)。
+     */
+    @Transactional
+    public ExternalRefund recordExternalRefund(com.project.common.constants.PaymentProvider provider, String providerPaymentId,
+            String refundRef, BigDecimal chargedAmount, String currency, String source) {
+        Order order = providerPaymentId == null ? null
+                : orderRepository.findByPaymentProviderAndProviderPaymentId(provider, providerPaymentId).orElse(null);
+        if (order == null) {
+            log.warn("외부 환불 — 주문을 찾지 못했다: provider={} paymentId={} refund={}", provider, providerPaymentId, refundRef);
+            return ExternalRefund.UNKNOWN_ORDER;
+        }
+        if (refundRef != null && order.getRefunds().stream().anyMatch(r -> refundRef.equals(r.getRefundRef()))) {
+            return ExternalRefund.ALREADY_RECORDED;
+        }
+        PaymentCurrencyPolicy.Charge expected = expectedCharge(order);
+        if (!OrderStatus.PAID_STATUSES.contains(order.getOrderStatus()) || chargedAmount == null || chargedAmount.signum() <= 0
+                || currency == null || !expected.currency().equalsIgnoreCase(currency)) {
+            log.error("외부 환불을 반영하지 못했다(상태 · 금액 · 통화) — 사람이 본다: orderId={} status={} amount={} {} expected={}",
+                    order.getOrderId(), order.getOrderStatus(), chargedAmount, currency, expected.currency());
+            return ExternalRefund.NOT_REFUNDABLE;
+        }
+        BigDecimal chargedAfter = order.getRefundedChargedAmount().add(chargedAmount);
+        boolean full = chargedAfter.compareTo(expected.amount()) >= 0;
+        BigDecimal store = full ? order.remainingRefundable()
+                : chargedAmount.multiply(order.getTotal())
+                        .divide(expected.amount(), Math.max(order.getTotal().scale(), 2), java.math.RoundingMode.HALF_UP)
+                        .min(order.remainingRefundable());
+        order.setRefundedAmount(order.getRefundedAmount().add(store));
+        order.setRefundedChargedAmount(chargedAfter.min(expected.amount()));
+        order.setRefundId(refundRef);
+        order.setRefundedAt(LocalDateTime.now());
+        order.getRefunds().add(OrderRefund.builder()
+                .order(order).refundRef(refundRef)
+                .amount(store).chargedAmount(chargedAmount).currency(expected.currency())
+                .reason(sanitizeReason("external:" + source))
+                .build());
+        if (full) {
+            statusChanger.change(order, OrderStatus.REFUNDED, "provider");
+        }
+        orderRepository.saveAndFlush(order);
+        log.info("외부 환불 반영: orderId={} provider={} refund={} charged={} {} store={} full={}",
+                order.getOrderId(), provider, refundRef, chargedAmount, currency, store, full);
+        if (full) {
+            paymentOutboxHelper.savePaymentOutbox(PaymentRequest.builder()
+                    .orderId(order.getOrderId())
+                    .customerId(order.getCustomerId())
+                    .trackingId(order.getTrackingId())
+                    .amounts(order.getRefundedAmount())
+                    .paymentProvider(order.getPaymentProvider())
+                    .providerPaymentId(order.getProviderPaymentId())
+                    .couponName(order.getCouponApplied())
+                    .orderStatus(OrderStatus.REFUNDED)
+                    .paymentType(paymentTypeOf(order.getPaymentProvider()))
+                    .paymentStatus(PaymentStatus.CANCELED)
+                    .createdAt(LocalDateTime.now())
+                    .build(), OutboxStatus.STARTED);
+        }
+        return full ? ExternalRefund.RECORDED_FULL : ExternalRefund.RECORDED_PARTIAL;
     }
 
     /** 옛 호출 — 남은 전부. */
@@ -1424,6 +1508,7 @@ public class OrderDataService {
      * 注文の請求額と照合する: 1 ウォンの仮想口座を付けておいて入金しても決済確認でどのみち
      * 拒絶されるが、顧客に誤った案内を見せないためにここで先に防ぐ。
      *
+     *
      * @param requesterId 브라우저 복귀면 요청자(주문자여야 한다). 웹훅이면 {@code null} —
      *                       그때는 결제 참조가 포트원에서 이 주문을 가리킨다는 것이 근거다
      *                    [JA] ブラウザの復帰なら要求者(注文者でなければならない)。Webhook なら {@code null} —
@@ -1565,6 +1650,7 @@ public class OrderDataService {
      * 送る(Kafka の発行を DB トランザクションの中に置かない)。{@code restock=false}(破損など)なら
      * その数量は {@code discardedQty} へ行き、在庫には行かない。
      *
+     *
      * @param items 품목·수량. 비어 있으면 아직 돌아오지 않은 전부
      *              [JA] 品目・数量。空ならまだ戻っていないもの全部
      * @return 입고가 기록된 주문
@@ -1665,6 +1751,7 @@ public class OrderDataService {
      * 呼び出し側が管理者であることを<b>既に確認していなければならない</b>(コントローラの {@code User-Role})。
      * このメソッドは所有権を見ない — それが管理者一覧の定義である。
      * 顧客メールは一度にまとめて付ける。注文ごとに顧客を別々に読むとページあたり N+1 である。
+     *
      *
      * @param status     {@code OrderStatus} 이름. 비어 있으면 전체. 모르는 값이면 예외 —
      *                   조용히 전체를 주면 "필터가 안 먹는다" 가 된다(docs/50 의 교훈)

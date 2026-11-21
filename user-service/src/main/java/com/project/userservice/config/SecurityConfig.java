@@ -242,6 +242,10 @@ public class SecurityConfig {
                                 .requestMatchers("/api/review/**").permitAll()
                                 .requestMatchers("/api/search/**").permitAll()
                                 .requestMatchers("/api/token/**").permitAll()
+                                // 데모 계정 목록(docs/100) — cart 의 매일 초기화가 요청 없이(스케줄러) 부른다: 토큰이 없다. 막는 것은
+                                // 경로 규칙(cart-service 인증서만) · InternalCallGuard(게이트웨이를 거친 요청 거절)다. 아래 규칙보다 먼저.
+                                // [JA] デモアカウント一覧 — cart の毎日の初期化がスケジューラーから呼ぶのでトークンがない。止めるのは経路規則 · InternalCallGuard。
+                                .requestMatchers("/api/auth/user/demo-accounts").permitAll()
                                 .requestMatchers("/api/auth/user/**").hasAnyRole("USER", "ADMIN", "SUPPORT")
                                 .requestMatchers("/api/auth/logout").hasAnyRole("USER", "ADMIN", "SUPPORT")
                                 .requestMatchers("/api/auth/public/**").permitAll()
@@ -302,6 +306,7 @@ public class SecurityConfig {
                 // [JA] JWT フィルターはログインフィルターの位置(UsernamePasswordAuthenticationFilter)の前。以前は AuthLoginFilter.class を基準に与え
                 //      継承に頼っていた — そのクラスが UsernamePasswordAuthenticationFilter の継承をやめると起動が IllegalArgumentException で
                 //      死ぬ。標準の位置を直接指す(下の addFilterAt と同じ位置 · 同じ順序)。
+                // [JA] JWT フィルターはログインフィルターの位置の前。以前は AuthLoginFilter.class 基準で継承に頼っていた。
                 http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
 
                 http.addFilterBefore(new AuthLogoutFilter(jwtUtils, refreshTokenService), LogoutFilter.class);

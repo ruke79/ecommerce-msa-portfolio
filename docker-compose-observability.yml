@@ -56,12 +56,18 @@ services:
     restart: unless-stopped
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}   # 운영에서는 반드시 변경 ／ [JA] 運用では必ず変更
+      # 로컬 편의로 기본값 admin(포트는 127.0.0.1 에만 연다). 🔒 운영은 docker-compose-observability.oci.yml 이 observability/secrets/
+      # 의 파일(GF_SECURITY_ADMIN_PASSWORD__FILE)로 덮는다 — 그 파일이 없으면 뜨지 않는다. [JA] ローカルは既定 admin。本番は oci が
+      # observability/secrets/ のファイルで上書きする。
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "3001:3000"    # 프론트엔드(3000)와 충돌 방지 ／ [JA] フロントエンド(3000)との衝突回避
+      # 🔒 운영자만 본다(ssh -L) — 공개 포트가 아니다. 다른 컨테이너는 compose 망의 grafana 로 닿는다(공개 포트를 쓰지 않는다).
+      #    예전에는 0.0.0.0 이라 VCN 방화벽(22번만) 한 겹에만 기댔다 — Jaeger · Collector 헬스처럼 루프백에 묶는다(보안 점검 2026-11-21).
+      # [JA] 運用者だけ(ssh -L)。公開ポートではない。他コンテナは compose 網で届く — Jaeger と同じくループバックに。
+      - "127.0.0.1:3001:3000"    # 프론트엔드(3000)와 충돌 방지 ／ [JA] フロントエンド(3000)との衝突防止
     depends_on:
       - prometheus
     mem_limit: 512m
@@ -86,7 +92,7 @@ services:
       #      ./ops/05 がファイルと配信失敗を点検する。
       - ./observability/secrets:/etc/alertmanager/secrets:ro
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"   # 🔒 운영자만(ssh -L) · Prometheus · Loki 는 compose 망(alertmanager:9093)으로 보낸다 ／ [JA] 運用者だけ(ssh -L)
     mem_limit: 256m
 
   # ── 추적 (docs/63) — OpenTelemetry 데모의 구성: 서비스 → Collector → Jaeger / span_metrics → Prometheus ──
@@ -163,7 +169,7 @@ services:
       - ./observability/loki-rules:/etc/loki/rules/fake:ro
       - loki-data:/loki
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"   # 🔒 운영자만(ssh -L) · Alloy · Grafana 는 compose 망(loki:3100)으로 닿는다 ／ [JA] 運用者だけ(ssh -L)
     mem_limit: 512m
 
   # Promtail 이 아니라 Alloy 다 — Grafana 가 Promtail 을 지원 종료하고 Alloy 를 후속으로 내놓았다.
@@ -207,7 +213,7 @@ services:
     # [JA] ポッドのログファイルは root 所有(0640)なので root で読む。マウントはすべて読み取り専用である。
     user: "0:0"
     ports:
-      - "12345:12345"
+      - "127.0.0.1:12345:12345"   # 🔒 운영자만(ssh -L) · Prometheus 는 compose 망(alloy:12345)으로 긁는다(이 컨테이너는 root 로 돈다) ／ [JA] 運用者だけ(ssh -L)
     depends_on:
       - loki
     mem_limit: 256m

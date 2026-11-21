@@ -153,7 +153,7 @@ KUBE_WORKLOAD="${KUBE_WORKLOAD:-deploy/kafka}"
 #         後にできた)。ConfigurationGuardrailTest B-41 が二つの一覧を照合する。
 TOPICS=(order payment product-update user-created cart-empty cart-rollback coupon-use coupon-rollback chat
         outgoing-mail user-presence delivery-status coupon-issued notice-published event-started security-alert
-        order-completed order-refunded product-stock user-updated user-deleted stock-shortage support-reply)
+        order-completed order-refunded product-stock user-updated user-deleted stock-shortage support-reply delivery-resync)
 for t in ${EXTRA_TOPICS:-}; do TOPICS+=("$t"); done
 
 info() { printf '  \033[0;32m✓\033[0m %s\n' "$*"; }

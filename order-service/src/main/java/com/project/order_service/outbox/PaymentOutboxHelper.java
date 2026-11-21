@@ -120,6 +120,10 @@ public class PaymentOutboxHelper {
     // [JA] 決済後、買い物かごから注文した明細行を外す(cart) — トピック cart-empty。
     public static final String CART_EMPTY_EVENT = "cart-empty";
 
+    /** 배송 수량 다시 맞추기(delivery) — 토픽 delivery-resync, 키 주문 id(5단계 15 — 재고 부족이 배송 생성보다 늦게 적혔을 때).
+     *  [JA] 配送数量の合わせ直し(delivery) — トピック delivery-resync、キーは注文 id。 */
+    public static final String DELIVERY_RESYNC_EVENT = "delivery-resync";
+
     /**
      * 사가의 후속 메시지(재고 차감 · 복원 · 장바구니 비우기)를 <b>상태 변경과 같은 트랜잭션</b>의 아웃박스 행으로 쓴다.
      *

@@ -174,6 +174,23 @@ public class CustomRestExceptionHandler extends ResponseEntityExceptionHandler {
         return new ResponseEntity<Object>(apiError, new HttpHeaders(), apiError.getStatus());
     }
 
+    // 503
+
+    /**
+     * 다른 서비스가 아프다(상류가 5xx · 429 · 4xx 를 돌려줬다 — {@link UpstreamCallException}) — 우리 잘못이 아니고 다시 하면 될 수 있다.
+     * 상류의 4xx 도 여기로 오는데, 그것은 우리 쪽 호출이 틀렸다는 뜻이라 손님이 고칠 것은 없다(그래서 400 이 아니다). 상류 본문은 싣지 않는다.
+     * 🐛 예전에는 아래 handleAll 의 500 이었다(docs/101 §4).
+     *
+     * <p>[JA] 他のサービスの不調 — 自分の誤りではなく、やり直せば通るかもしれないので 503。上流の本文は載せない。以前は 500 だった。
+     */
+    @ExceptionHandler({ UpstreamCallException.class })
+    public ResponseEntity<Object> handleUpstream(final UpstreamCallException ex, final WebRequest request) {
+        logger.warn("상류 호출 실패: " + ex.getMessage());
+        final ApiError apiError = new ApiError(HttpStatus.SERVICE_UNAVAILABLE,
+                "서버 오류가 발생했습니다. 잠시 뒤 다시 시도해 주세요.", "upstream unavailable");
+        return new ResponseEntity<Object>(apiError, new HttpHeaders(), apiError.getStatus());
+    }
+
     // 500
 
     /**

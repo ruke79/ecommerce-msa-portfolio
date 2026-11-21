@@ -55,6 +55,18 @@ class OrderRefundedNotificationTest {
     }
 
     @Test
+    @DisplayName("🔴 재고 부족 자동 환불(cause=stock-shortage)이면 '일부 상품 품절 취소' — 무엇이 왜 빠졌는지 · 나머지는 보낸다(5단계 15)")
+    void stockShortageRefundIsASoldOutCancellation() {
+        String json = event(false, 1).replace("\"complete\"", "\"cause\": \"stock-shortage\", \"complete\"");
+        listener.onOrderRefunded(List.of(json), null);
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(notificationService).create(eq(7L), eq(NotificationType.PAYMENT_REFUNDED), eq("일부 상품 품절 취소"),
+                body.capture(), eq("order/1234"), eq("order-refunded:1234:1"), any());
+        assertThat(body.getValue()).contains("주문 1234", "품절", "8,000 KRW", "나머지 상품은 그대로");
+    }
+
+    @Test
     @DisplayName("전액 환불은 건너뛴다 — 결제 응답 쪽이 '환불 완료' 를 이미 만든다(두 번 알리지 않는다)")
     void completingRefundIsLeftToThePaymentResponse() {
         listener.onOrderRefunded(List.of(event(true, 2), "{\"orderId\":1,\"customerId\":7,\"eventId\":\"x\"}"), null);

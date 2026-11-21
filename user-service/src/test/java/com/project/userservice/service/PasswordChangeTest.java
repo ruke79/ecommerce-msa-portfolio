@@ -58,7 +58,7 @@ class PasswordChangeTest {
     @Mock private UserRepository userRepository;
     @Mock private PasswordResetTokenRepository passwordResetTokenRepository;
     @Mock private PasswordEncoder passwordEncoder;
-    @Mock private EmailService emailService;
+    @Mock private com.project.userservice.message.UserOutboxHelper userOutboxHelper;
     @Mock private com.project.userservice.security.RedisSessionManager sessionManager;
     @Mock private com.project.userservice.service.RefreshTokenService refreshTokenService;
     @Mock private com.project.userservice.message.producer.SecurityAlertProducer securityAlertProducer;
@@ -178,7 +178,21 @@ class PasswordChangeTest {
         assertThatCode(() -> userService.generatePasswordResetToken("nobody@example.com"))
                 .doesNotThrowAnyException();
 
-        verify(emailService, never()).sendPasswordResetEmail(any(), any(), any());
+        verify(userOutboxHelper, never()).recordPasswordResetMail(any());
+    }
+
+    /**
+     * 🔴 비밀번호 찾기는 아웃박스 행 하나만 쓴다 — 요청 안에서 토큰을 만들거나 메일을 보내지 않는다(4단계 ⑤). 토큰은 릴레이가 보낼 때
+     * 만든다(issuePasswordResetToken). 🐛 예전에는 커밋 뒤 바로 발행해 Kafka 가 흔들리면 메일이 사라졌다.
+     * [JA] パスワード再設定の要求はアウトボックスの行を一つ書くだけ — 要求の中でトークンを作ったりメールを送ったりしない。
+     */
+    @Test
+    @DisplayName("🔴 비밀번호 찾기 — 아웃박스 행만 쓰고, 요청 안에서는 토큰을 만들지 않는다")
+    void forgotPasswordRecordsOutboxRowOnly() {
+        userService.generatePasswordResetToken("buyer@example.com");
+
+        verify(userOutboxHelper).recordPasswordResetMail(user);
+        verify(passwordResetTokenRepository, never()).save(any());
     }
 
     /**
@@ -193,15 +207,10 @@ class PasswordChangeTest {
     void resetTokenIsHashed() {
         when(passwordResetTokenRepository.findByUser(user)).thenReturn(Optional.empty());
 
-        userService.generatePasswordResetToken("buyer@example.com");
+        String rawToken = userService.issuePasswordResetToken(user);
 
         ArgumentCaptor<PasswordResetToken> saved = ArgumentCaptor.forClass(PasswordResetToken.class);
         verify(passwordResetTokenRepository).save(saved.capture());
-
-        ArgumentCaptor<String> url = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendPasswordResetEmail(any(), any(), url.capture());
-
-        String rawToken = url.getValue().substring(url.getValue().indexOf("token=") + 6);
         assertThat(saved.getValue().getToken())
                 .as("저장된 값이 링크의 원문과 같으면 평문 저장이다")
                 .isNotEqualTo(rawToken)
@@ -224,7 +233,7 @@ class PasswordChangeTest {
         String before = existing.getToken();
         when(passwordResetTokenRepository.findByUser(user)).thenReturn(Optional.of(existing));
 
-        userService.generatePasswordResetToken("buyer@example.com");
+        userService.issuePasswordResetToken(user);
 
         ArgumentCaptor<PasswordResetToken> saved = ArgumentCaptor.forClass(PasswordResetToken.class);
         verify(passwordResetTokenRepository).save(saved.capture());
@@ -300,7 +309,7 @@ class PasswordChangeTest {
         when(passwordResetTokenRepository.findByUser(user)).thenReturn(Optional.empty());
         Instant before = Instant.now();
 
-        userService.generatePasswordResetToken("buyer@example.com");
+        userService.issuePasswordResetToken(user);
 
         ArgumentCaptor<PasswordResetToken> saved = ArgumentCaptor.forClass(PasswordResetToken.class);
         verify(passwordResetTokenRepository).save(saved.capture());

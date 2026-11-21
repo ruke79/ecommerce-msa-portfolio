@@ -49,6 +49,15 @@ class OrderRefundedKafkaPublisherTest {
     }
 
     @Test
+    @DisplayName("🔴 재고 부족 자동 환불이면 cause=stock-shortage(품절 취소 안내) — 다른 환불에는 싣지 않는다")
+    void stockShortageRefundCarriesCause() {
+        OrderRefund shortage = refund("R-3", "8000", "KRW");
+        shortage.setReason(com.project.order_service.service.OrderStockShortageService.REFUND_REASON);
+        assertThat(OrderRefundedKafkaPublisher.eventFor(order(OrderStatus.PAID, shortage))).containsEntry("cause", "stock-shortage");
+        assertThat(OrderRefundedKafkaPublisher.eventFor(order(OrderStatus.PAID, refund("R-4", "8000", "KRW")))).doesNotContainKey("cause");
+    }
+
+    @Test
     @DisplayName("전액이 다 돌아간 환불 — complete=true (알림은 결제 응답 쪽이 이미 보낸다)")
     void completingRefund() {
         assertThat(OrderRefundedKafkaPublisher.eventFor(order(OrderStatus.REFUNDED, refund("R-1", "59.00", "USD"))))

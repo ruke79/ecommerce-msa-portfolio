@@ -70,6 +70,11 @@ public class StompHandler implements ChannelInterceptor {
     /** 세션에 담는 토큰 만료(epoch ms) — 이 뒤의 SUBSCRIBE · SEND 는 거절한다(닫기 예약이 늦어도 막는다). */
     // [JA] セッションに入れるトークン有効期限(epoch ms) — これ以降の SUBSCRIBE・SEND は拒否する(クローズ予約が遅れても防ぐ)。
     public static final String SESSION_ATTR_EXPIRES_AT = "tokenExpiresAt";
+    /** 공개 데모 계정의 세션 — 보내기 속도 제한(docs/100). [JA] 公開デモアカウントのセッション — 送信の速度制限。 */
+    public static final String SESSION_ATTR_DEMO = "demo";
+
+    @Autowired(required = false)
+    private com.project.chat_service.service.DemoChatLimiter demoChatLimiter;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -114,6 +119,9 @@ public class StompHandler implements ChannelInterceptor {
             String role = tokenHandler.getRole(accessToken);
             if (role != null) {
                 accessor.getSessionAttributes().put(SESSION_ATTR_USER_ROLE, role);
+            }
+            if (tokenHandler.isDemo(accessToken)) {
+                accessor.getSessionAttributes().put(SESSION_ATTR_DEMO, Boolean.TRUE);
             }
 
         } else if (StompCommand.SUBSCRIBE == command) {
@@ -196,6 +204,14 @@ public class StompHandler implements ChannelInterceptor {
             if (destination == null || !destination.startsWith("/pub/")) {
                 log.warn("SEND rejected: not an application destination: {}", destination);
                 throw ErrorCode.unauthorizedTokenException();
+            }
+            // 공개 데모 계정은 보내기 수를 제한한다 — 넘으면 그 메시지만 버린다(연결은 끊지 않는다), docs/100.
+            // [JA] 公開デモアカウントは送信数を制限する — 超えたらそのメッセージだけ捨てる(接続は切らない)。
+            if (demoChatLimiter != null && accessor.getSessionAttributes() != null
+                    && Boolean.TRUE.equals(accessor.getSessionAttributes().get(SESSION_ATTR_DEMO))
+                    && !demoChatLimiter.allow(getAuthenticatedUserId(accessor))) {
+                log.info("SEND dropped: demo account over chat limit. userId={}", getAuthenticatedUserId(accessor));
+                return null;
             }
 
         } else if (StompCommand.UNSUBSCRIBE == command) {

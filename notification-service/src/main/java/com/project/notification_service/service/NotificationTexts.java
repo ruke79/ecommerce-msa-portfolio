@@ -45,6 +45,13 @@ public final class NotificationTexts {
         return "주문 " + orderId + " 의 일부 품목" + (amount == null ? "" : " " + amount) + " 이(가) 환불되었습니다.";
     }
 
+    /** 재고 부족으로 일부 품목을 보내지 못하고 취소 · 환불했다(5단계 15 — 대형 EC 의 '품절 취소' 안내). [JA] 一部商品の品切れキャンセル。 */
+    public static final String SOLD_OUT_CANCEL_TITLE = "일부 상품 품절 취소";
+    public static String soldOutCancel(String orderId, String amount) {
+        return "주문 " + orderId + " 의 일부 상품이 품절되어 보내 드리지 못하고 취소되었습니다"
+                + (amount == null ? "" : " — " + amount + " 이(가) 환불됩니다") + ". 나머지 상품은 그대로 보내 드립니다.";
+    }
+
     public static final String PURCHASE_CONFIRMED_TITLE = "구매가 확정되었습니다";
     public static String purchaseAutoConfirmed(String orderId) {
         return "주문 " + orderId + " 이 배송 완료 후 확정 기한이 지나 자동으로 구매 확정되었습니다.";
@@ -59,6 +66,7 @@ public final class NotificationTexts {
 
     // ── 배송 ──────────────────────────────────────────────────────────────
     // [JA] ── 配送 ──
+    /**
     /**
      * 상태별 제목. 내부 상태 이름을 그대로 보여주지 않는다 — 사용자에게 "OUT_FOR_DELIVERY" 는 아무 의미가 없다. 모르는 상태는
      * 뭉뚱그린 문구로 넘어간다(새 상태가 추가돼도 알림이 깨지지 않는다).
@@ -234,6 +242,7 @@ public final class NotificationTexts {
             PAYMENT_FAILED_TITLE, paymentFailed("{}"), PAYMENT_REFUNDED_TITLE, paymentRefunded("{}"),
             PAYMENT_COMPLETED_TITLE, paymentCompleted("{}"),
             PARTIAL_REFUND_TITLE, partialRefund("{}", "{}"), partialRefund("{}", null),
+            SOLD_OUT_CANCEL_TITLE, soldOutCancel("{}", "{}"), soldOutCancel("{}", null),
             PURCHASE_CONFIRMED_TITLE, purchaseAutoConfirmed("{}"), purchaseConfirmed("{}"),
             orderSubject("{}"),
             deliveryTitle("INFO_RECEIVED"), deliveryTitle("OUT_FOR_DELIVERY"), deliveryTitle("DELIVERED"),

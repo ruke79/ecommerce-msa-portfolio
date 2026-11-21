@@ -23,6 +23,14 @@ class CustomRestExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("🔴 상류 호출 실패(UpstreamCallException)는 503 — 상류 상태 · 메서드 이름은 본문에 없다(docs/101 §4, 예전 500)")
+    void upstreamCallIs503() {
+        ResponseEntity<Object> response = handler.handleUpstream(new UpstreamCallException("CatalogServiceClient#getProductsInfo(List)", 502), null);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(body(response).getMessage()).doesNotContain("CatalogServiceClient", "502");
+    }
+
+    @Test
     @DisplayName("🔴 처리되지 않은 JDBC 예외 — 500 이고, SQL·제약 이름은 본문에 없다")
     void dataAccessIsGeneric() {
         ResponseEntity<Object> response = handler.handleAll(new DataIntegrityViolationException(

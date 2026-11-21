@@ -86,10 +86,10 @@ for: 5m · warning
 |---|---|---|
 | eureka-server が自分自身（`eureka-server.ecommerce.svc.cluster.local`）へピア複製 → **403**（Eureka 書き込み判定 enforce） | インスタンスが一つなので複製は無意味で捨てられるだけ — 機能への影響はないように見える。ERROR の 9 割 | ✅ 原因確定 · 修正（2026-11-21、次のデプロイ）: この Pod も ConfigMap の defaultZone（自分の Service アドレス）を受け取るが `my-url` は yml の localhost — Eureka は equals で比べ自分を除外できなかった（10-26 の yml 修正は k8s では効いていない）。k8s/30 の `EUREKA_SERVER_MYURL`（= defaultZone + `/`）、試験 `PeerSelfReplicationTest`。デプロイ後この行は 0 |
 | config-server の Eureka **ハートビート失敗**（`Cannot execute request on any known server`） | config-server が Eureka に登録 · 更新できない。設定を Eureka で探すクライアントがあれば影響 | ✅ 原因確定 · 修正（2026-11-21、次のデプロイ）: 実際の要求は `http://localhost:8761`（Connection refused）。yml に `defaultZone` キーがないと env の値は小文字キー `defaultzone` に別に入り、既定値が使われる（Spring の Map バインディング）— config-server は common に依存せずそのキーがなかった。yml にキー、試験 `EurekaServiceUrlBindingTest`。デプロイ後初めて証明書を出して登録する（キーストア · トラストストアは Pod にあると確認） |
-| user-service の正常な 401（`JwtAuthEntryPoint`）が ERROR | 雑音 — 攻撃 · 期限切れトークンごとに ERROR | WARN（または INFO）に下げる |
+| user-service の正常な 401（`JwtAuthEntryPoint`）が ERROR | 雑音 — 攻撃 · 期限切れトークンごとに ERROR | ✅ 修正(2026-11-21、次のデプロイ): DEBUG に · `System.out` 削除、試験 `JwtAuthEntryPointLogLevelTest` |
 | gateway の流入制限 Redis タイムアウト · user の起動失敗 | デプロイ時刻だけ | デプロイ時刻の警報はミュート · 起動失敗は再起動数ですでに見ている |
-| delivery の郵便局追跡 HTTP 400 | その送り状の追跡が止まる | サービスキー · 送り状の形式を確認（docs/25）、永続失敗なら WARN + 管理画面に表示 |
-| saga-projection の状態ディレクトリの権限 | 起動時に一回 | ボリュームの権限（fsGroup）を確認 |
+| delivery の郵便局追跡 HTTP 400 | その送り状の追跡が止まる | ✅ ログは WARN に(2026-11-21、次のデプロイ — 一つの送り状の問題でサービス警報の対象ではない、試験 `TrackingPollerPermanentLogTest`)。残り: その送り状のサービスキー · 形式の確認(docs/25)· 管理画面の表示 |
+| saga-projection の状態ディレクトリの権限 | 起動時に一回 | ✅ 修正(2026-11-21、次のデプロイ — マニフェストのみ): emptyDir の根は root 所有でアプリ(uid 1000)が権限を変えられなかった → `SAGA_STATE_DIR=/app/state/streams`(アプリが作った下位)、ガード `SagaStateDirGuardTest` |
 
 ## 5. 測り直す方法
 

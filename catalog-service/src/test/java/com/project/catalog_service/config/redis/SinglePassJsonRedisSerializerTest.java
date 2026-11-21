@@ -1,6 +1,7 @@
 package com.project.catalog_service.config.redis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -32,6 +33,8 @@ import com.project.common.dto.ProductSkuDto;
  * <p>[JA] キャッシュ値を一度だけ読む — docs/83 §5(2026-10-23 CPU プロファイル: キャッシュ復元 13.6%、そのうち同じ JSON を読み直す分 5.2%)。
  * 二つを守る。① 一度だけ読む — パーサを何回開くかを数える(Spring Data Redis の既定は型を探すために二回)。② 保存形式 · 読んだ値が
  * 以前のシリアライザと同じ — 旧 Pod が書いたキャッシュを新 Pod がそのまま読み(逆も)、そのためデプロイ後にキャッシュを空けなくてよい。
+ *
+ * <p>[JA] キャッシュ値を一度だけ読む。パーサを開く回数を数え、保存形式と読んだ値が以前のシリアライザと同じことを確かめる。
  */
 @DisplayName("캐시 값 직렬화기 — 한 번만 읽고, 예전 직렬화기와 서로 읽는다")
 class SinglePassJsonRedisSerializerTest {
@@ -111,5 +114,31 @@ class SinglePassJsonRedisSerializerTest {
             // [JA] 読んだ値を書き戻して比べる — DTO に equals がなくても全フィールドを見る
             assertThat(PLAIN.readTree(old.serialize(readByNow))).isEqualTo(PLAIN.readTree(old.serialize(readByOld)));
         }
+    }
+
+    /**
+     * 🔒 캐시가 실제로 담지 않는 타입(@class)은 되살리지 않는다 — Jackson 기본 타이핑 가젯 방어(위 {@code sameValuesAndShapeAsBefore}
+     * 가 담는 타입 — SearchResultDto · PageImpl · ProductDto · ArrayList · BigDecimal — 은 그대로 읽히는 것을 이미 지킨다).
+     *
+     * <p>맨 {@code new ObjectMapper()} 의 기본 검증기는 LaissezFaire 라 @class 가 가리키는 어떤 non-final 타입이든 만든다. 좁힌 검증기
+     * ({@link RedisCacheConfig#cacheValueMapper})는 허용 목록 밖을 거절한다 — 되돌리면({@code getPolymorphicTypeValidator()}) 이
+     * 시험이 실패한다({@code java.io.File} 은 문자열 하나로 만들어진다). [JA] キャッシュが実際に持たない型は復元しない — ガジェット防御。
+     */
+    @Test
+    @DisplayName("🔴 캐시가 담지 않는 타입(@class = java.io.File)은 거절한다 — 가젯 방어")
+    void rejectsTypesOutsideCacheAllowlist() {
+        ObjectMapper mapper = RedisCacheConfig.cacheValueMapper(new ObjectMapper());
+        byte[] gadget = "[\"java.io.File\",\"/etc/passwd\"]".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertThatThrownBy(() -> mapper.readValue(gadget, Object.class))
+                .isInstanceOf(com.fasterxml.jackson.databind.JsonMappingException.class);
+    }
+
+    @Test
+    @DisplayName("facet · products_by_category 가 담는 java.util 목록은 그대로 읽힌다")
+    void allowsCollectionCacheTypes() {
+        GenericJackson2JsonRedisSerializer s = RedisCacheConfig.cacheValueSerializer();
+        Object back = s.deserialize(s.serialize(new ArrayList<>(List.of(product("1"), product("2")))));
+        assertThat(back).isInstanceOf(List.class);
+        assertThat((List<?>) back).hasSize(2).allSatisfy(e -> assertThat(e).isInstanceOf(ProductDto.class));
     }
 }

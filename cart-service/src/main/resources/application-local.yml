@@ -41,7 +41,9 @@ feign:
   #      @FeignClient(url="${feign.*-url}") の解決失敗で起動自体が不可能だった。
   #      環境変数(FEIGN_*_URL, k8s ConfigMap)で上書き可能。
   catalog-url: ${FEIGN_CATALOG_URL:https://localhost:8081}
-  # user-url 은 없다 — cart 는 user-service 를 부르지 않는다(신원·캐시 키가 사용자 id 다, docs/48 §6-⑥).
+  # user-url 은 데모 계정 목록(매일 초기화, docs/100)에만 쓴다 — 신원 · 캐시 키는 여전히 사용자 id 다(docs/48 §6-⑥).
+  # [JA] user-url はデモアカウント一覧(毎日の初期化)にだけ使う。
+  user-url: ${FEIGN_USER_URL:https://localhost:8080}
   # 타임아웃은 여기 두지 않는다 — common/application-common.yml 의
   # spring.cloud.openfeign.client.config.default 가 전 서비스의 유일한 정의다(docs/37 §2.1).
   # 예전에 여기 있던 feign.client.config.* 는 OpenFeign 4.x 가 읽지 않는 키였다.

@@ -130,10 +130,26 @@ order    stock-shortage 소비 ─┬─ 줄마다 short_qty 적기(V21, 멱등 
 - **이 절은 사후 보상이다.** 초과 판매가 일어난 뒤 몇 초 안에 돈을 돌려준다. 결제 전 재고 예약(주문 생성 때 잡고 결제 실패·이탈
   때 풀기, 기한 만료 잡)은 [docs/59](59-stock-reservation.ko.md) 에서 더했다 — 이 절은 그 뒤에도 예약이 만료된 뒤의 결제·catalog 에
   닿지 못한 주문(fail-open)·가상계좌의 안전망으로 남는다.
-- **부분 부족인데 배송이 먼저 만들어졌을 수 있다.** delivery-service 는 결제 완료 이벤트를 받자마자 배송 정보를 한 번 읽는다.
-  부족 기록보다 먼저 읽었으면 배송 수량이 주문 수량 그대로다. 전부 모자란 경우는 결제 취소로 배송이 취소되지만, 일부만
-  모자란 경우는 관리자가 주문 화면(품목의 `shortQty`)을 보고 송장을 맞춰야 한다. 발송 전 부분 환불 전반의 같은 틈이다.
+- ~~**부분 부족인데 배송이 먼저 만들어졌을 수 있다.**~~ → 2026-11-21 고침(5단계 15, 아래 '품절 취소 — 대형 EC 방식'). 예전에는 배송 수량이
+  주문 수량 그대로 남아 관리자가 품목의 `shortQty` 를 보고 송장을 맞춰야 했고, 전부 모자란 줄도 배송에 1개로 실렸다(`Math.max(1, …)`).
 - 발행기는 파드마다 돈다 — 같은 행을 둘이 보낼 수 있고, order 가 멱등 키로 버린다.
+
+
+### 품절 취소 — 대형 EC 방식(2026-11-21, 5단계 15)
+
+아마존 · 쿠팡 · 라쿠텐처럼 **있는 것만 보내고, 없는 것은 그 품목만 취소 · 환불하고, 손님에게 '품절 취소' 로 따로 알린다.**
+
+| 규칙 | 구현 |
+|---|---|
+| 부족을 적는 **같은 트랜잭션**에서 delivery 에 다시 맞추라고 알린다 — 무통장 · 환불 실패에도(보내지 않을 물건이다) | order `Recorder.record` 가 아웃박스 행 `delivery-resync`(키 주문 id) → 릴레이 → 토픽 `delivery-resync` |
+| delivery 는 보낼 수를 **지금** order 에 묻는다(배정된 수) — 재전달 · 순서가 바뀌어도 마지막 값으로 맞는다 | `DeliveryResyncListener` → 기존 내부 경로 `/api/order/internal/orders/{id}/shipping` → `DeliveryService.syncShippable` |
+| 발송 전 상자(송장 없음 · 대기)만 줄인다 — 분할 배송이면 **나중 상자부터** · 0 이 된 품목은 빼고 · 빈 상자는 취소 · 늘리지 않는다 · 멱등 | `Delivery.syncShippableQuantities` |
+| 송장이 붙은 상자는 고치지 않는다 — 환불은 이미 나갔다, 실물만 사람이 본다 | 로그 "재고 부족분이 이미 송장이 붙은 상자에 있다 — 수동 확인 필요"(Loki `ManualActionRequired`, B-61) |
+| 배송을 만들 때 보낼 수 0 인 줄은 싣지 않는다 · 전부 0 이면 만들지 않는다(결제 취소가 따른다) | `PaymentCompletedListener.commandFor` |
+| 손님에게는 '일부 상품 품절 취소' — 무엇이 왜 빠졌는지 · 나머지는 그대로 보낸다 | `order-refunded` 에 `cause: stock-shortage` → notification `SOLD_OUT_CANCEL_TITLE` · `soldOutCancel`(전액이면 결제 응답의 '환불 완료' 그대로) |
+
+배포: order · delivery · notification 이미지, 순서 상관없음(옛 delivery 면 토픽에 쌓였다가 새 파드가 earliest 로 읽는다 · 옛 notification 이면 예전 문구). DLT 는 `ops/02` 에 `delivery-resync` 를 더했다 — 배포 전에 한 번 돌린다.
+시험: `DeliveryShortageSyncTest`(3) · `DeliveryResyncListenerTest`(2) · `PaymentCompletedListenerTest` +1 · `OrderStockShortageServiceTest` +1 · `DeliveryResyncKafkaPublisherTest`(2) · `OrderRefundedKafkaPublisherTest` +1 · `OrderRefundedNotificationTest` +1.
 
 ### 가드
 

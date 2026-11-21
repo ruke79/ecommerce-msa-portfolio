@@ -22,14 +22,16 @@ import com.project.common.dto.ProductInfoDto;
  *
  * <p>[JA] マイクロサービス間の呼び出しのための FeignClient
  */
-@FeignClient(name = "catalog-service", url = "${feign.catalog-url}", configuration = FeignConfig.class)
+// primary = false — 주입 기본값은 서킷 브레이커로 감싼 것(config/UpstreamCircuitBreakerConfig, 4단계 ④). 이 원본은 qualifier 로만.
+// [JA] 注入の既定はサーキットブレーカーで包んだもの。この元のクライアントは qualifier でだけ。
+@FeignClient(name = "catalog-service", url = "${feign.catalog-url}", configuration = FeignConfig.class, primary = false, qualifiers = "rawCatalogServiceClient")
 public interface CatalogServiceClient {
 
-    @RequestMapping(method = RequestMethod.GET, value = "/api/{productId}")
-    public ResponseEntity<ProductDto> getProductInfo(@PathVariable("productId") String productId);
+    // 부르는 곳이 없던 단건 조회 셋(getProductInfo · getCartProductInfo · getColorInfo)은 지웠다 — 아래 묶음 조회로 바뀐 뒤 남아 있던
+    // 것이다(docs/101 §3). 항목마다 부르는 길로 되돌아가지 못하게. [JA] 呼ぶ所のない単件照会三つは削除した — 項目ごとの呼び出しに戻れないように。
 
     /**
-     * 여러 상품을 한 번에. 장바구니 항목마다 {@link #getProductInfo} 를 부르면 항목 수만큼
+     * 여러 상품을 한 번에. 장바구니 항목마다 상품 하나씩 부르면 항목 수만큼
      * 왕복이 생긴다 — 이쪽은 한 번이다(docs/38 §1.13). 찾지 못한 id 는 목록에서 빠진다.
      *
      * <p>[JA] 複数の商品を一度に。カート項目ごとに {@link #getProductInfo} を呼ぶと項目数だけ
@@ -37,10 +39,6 @@ public interface CatalogServiceClient {
      */
     @GetMapping("/api/products/info")
     public ResponseEntity<List<ProductDto>> getProductsInfo(@RequestParam("ids") List<Long> ids);
-
-    @GetMapping("/api/cart/{product_id}")
-    public ResponseEntity<?> getCartProductInfo(@PathVariable("product_id") String product_id,
-            @RequestParam("style") int style, @RequestParam("size") int size);
 
     /**
      * 장바구니 항목 여러 개의 (상품, 스타일, 사이즈) 정보를 한 번에. 항목은
@@ -54,11 +52,8 @@ public interface CatalogServiceClient {
     @GetMapping("/api/cart/info")
     public ResponseEntity<Map<String, ProductInfoDto>> getCartProductsInfo(@RequestParam("items") List<String> items);
 
-    @GetMapping("/api/color/{colorId}")
-    public ResponseEntity<?> getColorInfo(@PathVariable("colorId") String colorId);
-
-    /** 색상 여러 개를 한 번에 — 장바구니 항목마다 {@link #getColorInfo} 를 부르던 것의 대체. */
-    // [JA] 色の複数件を一度に — カート項目ごとに {@link #getColorInfo} を呼んでいたものの代替。
+    /** 색상 여러 개를 한 번에 — 장바구니 항목마다 색상 하나씩 부르던 것의 대체. */
+    // [JA] 色を複数まとめて — カート項目ごとに色を一つずつ呼んでいたものの代わり。
     @GetMapping("/api/colors/info")
     public ResponseEntity<List<ProductColorDto>> getColorsInfo(@RequestParam("ids") List<Long> ids);
 }

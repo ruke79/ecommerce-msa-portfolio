@@ -15,7 +15,7 @@ import http from 'k6/http';
 import { sleep, fail } from 'k6';
 import exec from 'k6/execution';
 import { Trend } from 'k6/metrics';
-import { GATEWAY, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, loginSessions, refresh, purchasable, categories, pick, rate, stages,
+import { GATEWAY, getWhenReachable, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, loginSessions, refresh, purchasable, categories, pick, rate, stages,
   idempotencyKey, FALLBACK_ADDRESS, get } from './lib.js';
 
 const USERS = Number(__ENV.USERS || 100);
@@ -63,7 +63,7 @@ export function setup() {
   if (!password) {
     fail('DEMO_PASSWORD 가 없다 — ops/53 이 PASSWORD_FILE 에서 넘긴다');
   }
-  const home = homeOrFail(get('/catalog-service/api/content/home', { tags: { name: 'home' } }));
+  const home = homeOrFail(getWhenReachable('/catalog-service/api/content/home', { tags: { name: 'home' } }));
   limitsRaisedOrFail();   // 유입 제한을 올리지 않았으면 여기서 멈춘다(smoke 는 건너뜀) ／ [JA] 流入制限を上げていなければここで止まる(smoke は飛ばす)
   const products = purchasable(home);
   if (!products.length) {

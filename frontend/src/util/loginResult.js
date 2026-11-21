@@ -38,14 +38,13 @@
 
 /** 사전에 문구가 있는 코드. 서버에 새 코드가 생기면 여기와 ko/ja 에 함께 넣는다. */
 // [JA] 辞書に文言があるコード。サーバーに新しいコードができたら、ここと ko/ja に一緒に入れる。
-export const KNOWN_RESULT_CODES = ["login_success", "multi_login"];
+export const KNOWN_RESULT_CODES = ["login_success", "multi_login", "demo"];
 
 /**
  * @param {object} data 로그인 응답 본문 ({ email, roles, message, code })
  * @param {(key: string) => string} t 사전 조회 함수
  *
  * [JA] @param {object} data ログイン応答のボディ({ email, roles, message, code })
- * @param {(key: string) => string} t 辞書の参照関数
  */
 export function loginResultMessage(data, t) {
     const code = data?.code;

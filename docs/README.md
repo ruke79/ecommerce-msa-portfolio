@@ -119,6 +119,8 @@
 | 66 | [gRPC の試行適用 — 在庫予約](66-grpc-stock-reservation.md) | order → catalog の在庫予約を gRPC で(HTTP と並べ、設定で切り替え)、mTLS 判定の再利用、期限の伝播、同等性テスト、B-73 | ✅ |
 | 51 | [ロギング](51-logging.md) | 認証番号のログ漏洩、出力段階でのマスキング、JSON ログ · Loki、トレースの往復 | 🟡 |
 | 99 | [警報の基準はどう決めるか](99-alert-thresholds.md) | 実務の原則（症状は呼び出し · 原因は warning、実データの分布 · 平常比 + 下限 · バックテスト · レベルの衛生）と ERROR ログ警報の実測 — 本番 Loki 7 日、候補三つのバックテスト（`and` の落とし穴 → `unless`）、基準の下に隠れた常時の ERROR（eureka の自己複製 403 · config-server のハートビート） | ✅ |
+| 100 | [公開デモアカウント — 会員登録なしで試す](100-demo-accounts.md) | ログイン画面のボタン · アカウント群(Redis で順番)· ゲートウェイがデモトークンのアカウント · 資格 · レビュー · 認証 SMS の書き込みを 403、スキーマ変更なし(`sign_up_method = 'demo'`)、毎日の初期化 · 注文上限は次の段階 | 🟡 |
+| 101 | [サービス間 Feign 呼び出し — サーキットブレーカーの方針](101-feign-circuit-breakers.md) | Feign 34 個の方針表、同じスレッド · 元の例外そのままのブレーカー(Spring Cloud 方式を使わない理由三つ)、第 1 次 cart→catalog · order→catalog · order→coupon、調査で分かった 500 · NPE · 使われないメソッド | 🟡 |
 | 16 | [Saga E2E · 可観測性の実地検証](16-saga-e2e-and-observability-verification.md) | 実際のインフラで検証 — チャットの保存と ES 検索は一度も動作したことがなかった | 🕰️ |
 | 19 | [ローカルでのパフォーマンスチューニング](19-local-performance-tuning.md) | N+1 · コネクションプール総和の超過を実測、構造的な事実はビルドで固定 | 🟡 |
 

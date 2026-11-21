@@ -43,6 +43,7 @@ eureka:
     #    eureka.client.tls)。ゲートウェイの Eureka クライアントは証明書なしで接続していた。今は共通設定(application-common.yml の
     #    eureka.client.tls — このファイルより優先する)が身元証明書(/app/identity、CN=gateway-server)を出す(docs/57 §16 "Eureka 書き込み")。
     # [JA] ここにあった tls ブロックは eureka.instance の下で誰も読まなかった。今は共通設定の eureka.client.tls が身元証明書を出す。
+    # [JA] ここにあった tls ブロックは eureka.instance の下で誰も読まなかった。今は共通設定の eureka.client.tls が身元証明書を出す。
     
   # ssl:
   #   bundle:
@@ -121,6 +122,7 @@ spring:
           #      無効なので、これまでゲートウェイ側の指標はルートを知らなかった。SLO `gateway`(docs/91 §2-7)がこれを読む — サーキットブレーカーの
           #      フォールバック(/fallback 503) · 接続失敗 · 下流のタイムアウトはサービス側の http.server.requests に残らない。境界バケットは
           #      application-common.yml。path タグ(path-tags)は有効にしない — リクエストパスごとに時系列ができる。
+          # [JA] ルートごとのタイマー(4.3 は既定で無効)。SLO gateway が読む — フォールバック 503 · 接続失敗はサービス側の指標に残らない。
           # [JA] ルートごとのタイマー(4.3 は既定で無効)。SLO gateway が読む — フォールバック 503 · 接続失敗はサービス側の指標に残らない。
           metrics:
             enabled: true
@@ -224,6 +226,8 @@ spring:
            #      ログインしたユーザーも IP 一つに縛られた。ルートフィルターにすれば JwtAuthorization の後に置ける。
            # [JA] 流入制限はここではなくルートごとに一つ置く。以前はここと ログインルートの二つで、同じバケットからリクエストごとに
            #      トークンを二つ使い、レビュー閲覧 · トークン更新がバケットを空にしてログアウトさせていた。
+           # [JA] 流入制限はここではなくルートごとに一つ置く。以前はここと ログインルートの二つで、同じバケットからリクエストごとに
+           #      トークンを二つ使い、レビュー閲覧 · トークン更新がバケットを空にしてログアウトさせていた。
       
           globalcors:
             add-to-simple-url-handler-mapping: true
@@ -287,6 +291,7 @@ spring:
               # [JA] ⚠️ user-service-auth(/user-service/api/auth/**)がこの経路(/api/auth/public/**)を覆う — 順序を数値で固定する。
               #    宣言順に頼ると、行を移した瞬間にログイン · 登録が JWT を要求して 401 になる(RouteMatchingTest)。
               # [JA] user-service-auth がこの経路を覆う — 順序を数値で固定する。
+              # [JA] user-service-auth がこの経路を覆う — 順序を数値で固定する。
               order: -1
               predicates:
                   # oauth2/** 는 소셜 로그인 시작(/oauth2/authorization/{provider}),
@@ -303,6 +308,7 @@ spring:
                   #      🐛 以前は複数行にわたって `, \` でつないでいた — YAML のプレーンスカラーでは `\` は継続ではなく文字そのものなので、
                   #      "\ /user-service/registrationConfirm" · "\ /user-service/oauth2/**" というパターンになり何にも一致しなかった。
                   #      登録確認メールのリンクとソーシャルログインの開始がゲートウェイで 404 だった(2026-09-28 から、RouteMatchingTest)。
+                  # [JA] 以前は複数行を `, \` でつないでいた — YAML では `\` は文字そのもので、二つの経路が何にも一致せず 404 だった。
                   # [JA] 以前は複数行を `, \` でつないでいた — YAML では `\` は文字そのもので、二つの経路が何にも一致せず 404 だった。
                   - Path=/user-service/api/auth/public/**,/user-service/registrationConfirm,/user-service/oauth2/**,/user-service/login/oauth2/**
               filters:
@@ -337,6 +343,7 @@ spring:
                   #    🐛 2026-10-21 実習 8 時間(docs/83 §2.8): catalog の Pod 一つが JVM クラッシュで死んで再起動する間、ゲートウェイがそのインスタンスへ
                   #    送り続け、home · banners · 商品まで 5xx だった(Eureka は死んだインスタンスを数十秒長く知らせる)。ルートごとに一つ(B-99、RouteRetryTest)。
                   #    [JA] 接続失敗だけ、GET だけ、別インスタンスへ 2 回まで送り直す。応答ステータス(5xx · 隔壁 503)は送り直さない。
+                  #    [JA] 接続失敗だけ、GET だけ、別インスタンスへ 2 回まで送り直す。応答ステータス(5xx · 隔壁 503)は送り直さない。
                   - &retry-connect
                     name: Retry
                     args:
@@ -364,6 +371,7 @@ spring:
                   #      値は環境変数で変えられる(既定は同じ)— 実習クラスタの容量測定(docs/83)だけ。トンネルのないデモではすべての非ログイン
                   #      リクエストが Traefik Pod 一つの IP に見え、バケット一つ(毎秒 20)を分け合う — そのままだと負荷試験が測るのはこの制限だけになる。
                   #      本番は変えない。ログイン(上のルート、毎秒 1)は変えられない。
+                  # [JA] 値は環境変数で変えられる(既定は同じ)— 実習クラスタの容量測定だけ。本番は変えない。ログインの制限は変えられない。
                   # [JA] 値は環境変数で変えられる(既定は同じ)— 実習クラスタの容量測定だけ。本番は変えない。ログインの制限は変えられない。
                   - &rate-default
                     name: RequestRateLimiter
@@ -574,6 +582,23 @@ spring:
                       fallbackUri: forward:/fallback
                   - *retry-connect
 
+            # PayPal 웹훅(5단계 14) — 같은 이유로 공개다. 서명은 order-service 가 PayPal 의 verify-webhook-signature 로 확인한다.
+            # [JA] PayPal のウェブフック — 同じ理由で公開。署名は order-service が PayPal に問う。
+            - id: order-service-paypal-webhook
+              uri: lb://order-service
+              order: -1
+              predicates:
+                  - Path=/order-service/api/order/payment/paypal/webhook
+              filters:
+                  - RemoveRequestHeader=Cookie
+                  - RewritePath=/order-service/(?<segment>.*), /$\{segment}
+                  - *rate-default
+                  - name: CircuitBreaker
+                    args:
+                      name: orderServiceCircuitBreaker
+                      fallbackUri: forward:/fallback
+                  - *retry-connect
+
             - id: order-service-stripe-webhook
               uri: lb://order-service
               # order-service(/order-service/**) 가 이 경로를 덮는다 — 순서를 숫자로 고정한다(선언 순서에 기대지 않는다).
@@ -714,10 +739,16 @@ resilience4j:
   #      docs/83 §5)。計測するときは GATEWAY_BULKHEAD_MAX_CONCURRENT で変える。
   # [JA] 同時呼び出し上限(バルクヘッド)。以前は未設定で既定値のままだった。測って決めた: 25 は失敗 1.06% · p95 267ms、100 は 1.71% · 814ms —
   #      CPU が先に詰まる下流では上限を上げても列が延びるだけ。値 = Pod あたり ~250/秒 × 正常時の応答 ~0.1 秒 ≈ 25。足りなければ Pod を増やす。
+  # [JA] 同時呼び出し上限(バルクヘッド)。以前は未設定で既定値のままだった。測って決めた: 25 は失敗 1.06% · p95 267ms、100 は 1.71% · 814ms —
+  #      CPU が先に詰まる下流では上限を上げても列が延びるだけ。値 = Pod あたり ~250/秒 × 正常時の応答 ~0.1 秒 ≈ 25。足りなければ Pod を増やす。
   bulkhead:
     configs:
       default:
         max-concurrent-calls: ${GATEWAY_BULKHEAD_MAX_CONCURRENT:25}
+        # ⚠️ 0 밖으로 올리지 않는다 — resilience4j 2.2 의 대기는 semaphore.tryAcquire(대기) 로 **부른 스레드를 막는다**(reactive 의 MonoBulkhead 도
+        #    같다). 게이트웨이에서 그 스레드는 Netty · Lettuce 이벤트 루프다(2026-11-21 운영 읽기 천장의 503 은 lettuce-nioEventLoop 에서 났다) —
+        #    격벽이 찰 때마다 Redis 연결 전체(유입 제한 · 로그인 해제 확인)가 멈춘다. 순간 넘침은 파드 · 상한으로 다룬다(docs/95 §5).
+        #    [JA] 0 より上げない — 待ちは呼んだスレッド(Netty · Lettuce のイベントループ)を塞ぐ。
         max-wait-duration: 0ms
 
   timelimiter:
@@ -783,6 +814,7 @@ management:
   #          · 2026-11-17 までここに残っていた `…, refresh, busrefresh` は実際には公開されていなかった — POST /actuator/refresh は 404(死んだ設定)。
   #          · gateway(POST でルートの追加 · 削除) · beans · refresh(POST で設定の再読込)は入れない — ゲートウェイには
   #            Spring Security がないので、クラスタ内(k8s/95)からは認証なしで届く。共通リストを変えるときも同じ(ガード B-112)。
+  #   [JA] 公開リストは application-common.yml のもの(import した側より優先)— ここに書いても無視される。refresh などは入れない。
   #   [JA] 公開リストは application-common.yml のもの(import した側より優先)— ここに書いても無視される。refresh などは入れない。
 
     

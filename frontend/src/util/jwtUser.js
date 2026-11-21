@@ -44,6 +44,9 @@ export function toUser(decodedToken, rawToken) {
     email: decodedToken?.sub,
     userId: uidOf(rawToken) ?? (decodedToken?.uid != null ? String(decodedToken.uid) : null),
     roles: normalizeRoles(decodedToken),
+    // 공개 데모 계정 — 게이트웨이가 계정 · 자격 · 리뷰 쓰기를 막는다(DemoAccessPolicy). 화면은 안내 띠만 띄운다.
+    // [JA] 公開デモアカウント — ゲートウェイが書き込みを止める。画面は案内バーだけ出す。
+    demo: decodedToken?.demo === true,
   };
 }
 
@@ -66,7 +69,6 @@ export function toUser(decodedToken, rawToken) {
  * なる(docs/48 §6-⑥)。そこでパース前の JSON テキストから数値を文字として取り出す。署名はここでは見ない —
  * 画面表示用であり、身元の判定はサーバーが検証済みトークンで行う。
  *
- * @returns 数字の文字列、なければまたは読めなければ null
  */
 export function uidOf(rawToken) {
   if (typeof rawToken !== "string") return null;

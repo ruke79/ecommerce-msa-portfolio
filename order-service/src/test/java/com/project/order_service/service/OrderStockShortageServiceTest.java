@@ -48,13 +48,15 @@ class OrderStockShortageServiceTest {
     private Order order;
     private OrderProduct tee;
     private OrderProduct cap;
+    private com.project.order_service.outbox.PaymentOutboxHelper outbox;
 
     @BeforeEach
     void setUp() {
         orderRepository = mock(OrderRepository.class);
         orderService = mock(OrderService.class);
+        outbox = mock(com.project.order_service.outbox.PaymentOutboxHelper.class);
         service = new OrderStockShortageService(
-                new OrderStockShortageService.Recorder(orderRepository, mock(OrderCacheEvictor.class)), orderService);
+                new OrderStockShortageService.Recorder(orderRepository, mock(OrderCacheEvictor.class), outbox), orderService);
 
         order = Order.builder().orderId(1L).trackingId("track-1").customerId(7L)
                 .total(new BigDecimal("50")).orderStatus(OrderStatus.PAID)
@@ -91,6 +93,20 @@ class OrderStockShortageServiceTest {
         assertThat(items.get(0).getOrderProductId()).isEqualTo(101L);
         assertThat(items.get(0).getQty()).isEqualTo(2);
         assertThat(order.getShortageEventId()).isEqualTo(EVENT);
+    }
+
+    /** 5단계 15 — 배송이 부족 기록보다 먼저 만들어졌으면 주문 수량 그대로다. 적는 같은 트랜잭션에서 delivery 에 다시 맞추라고 알린다. */
+    // [JA] 配送が不足記録より先に作られていれば注文数量のまま。記録する同じトランザクションで delivery に再調整を知らせる。
+    @Test
+    @DisplayName("🔴 부족을 적으면 같은 트랜잭션에 delivery-resync 아웃박스 행(키 주문 id) — 무통장(자동 환불 없음)에도, 재전달에는 다시 쓰지 않는다")
+    void recordingWritesADeliveryResyncOutboxRow() {
+        order.setPaymentProvider(PaymentProvider.BANK_TRANSFER);
+        service.apply(1L, EVENT, List.of(new Line(10L, 5L, "M", 2)));
+        verify(outbox).saveEventOutbox(eq(com.project.order_service.outbox.PaymentOutboxHelper.DELIVERY_RESYNC_EVENT), eq("1"),
+                eq(java.util.Map.of("orderId", 1L, "eventId", "delivery-resync:" + EVENT)));
+
+        service.apply(1L, EVENT, List.of(new Line(10L, 5L, "M", 2)));
+        verify(outbox, times(1)).saveEventOutbox(anyString(), anyString(), any());
     }
 
     @Test

@@ -21,7 +21,6 @@ import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.project.chat_service.client.UserServiceClient;
 import com.project.chat_service.common.util.KafkaUtil;
 import com.project.chat_service.common.util.TokenHandler;
 import com.project.chat_service.dto.MessageDto;

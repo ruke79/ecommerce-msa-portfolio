@@ -503,8 +503,9 @@ public class AuthController {
             User user = userService.findByEmail(email);
 
             // 없는 계정, 이미 인증된 계정 — 어느 쪽이든 같은 응답을 돌려주고 아무것도 하지 않는다.
-            // [JA] 存在しないアカウント、既に認証済みのアカウント — どちらでも同じ応答を返し何もしない。
-            if (user == null || user.isEnabled()) {
+            // 인증 여부는 emailVerified 로 본다 — 인증 게이트가 꺼지면 계정이 처음부터 활성이다(RegistrationMailRelay 와 같은 기준).
+            // [JA] 認証済みかは emailVerified で見る — 認証ゲートが無効ならアカウントは最初から有効(RegistrationMailRelay と同じ基準)。
+            if (user == null || user.isEmailVerified()) {
                 log.debug("재발송 요청이지만 보낼 대상이 아니다(미가입 또는 이미 인증됨)");
                 return ResponseEntity.ok(sameAnswer);
             }

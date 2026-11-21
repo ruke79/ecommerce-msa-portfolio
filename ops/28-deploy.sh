@@ -34,6 +34,11 @@
 #
 #   ./ops/28-deploy.sh <환경> <버전>
 #   ./ops/28-deploy.sh <환경> --rollback        직전 성공 버전으로 되돌린다
+#   ./ops/28-deploy.sh <환경> latest            기본 브랜치의 가장 최근 초록 커밋(ops/tools/latest-green.sh — build.yml push 성공)
+#                                               체크아웃이 그 커밋이어야 한다 — 아니면 fetch · switch 명령을 알려 주고 멈춘다
+#   운영 클러스터(APP_PUBLIC_URL 이 운영 주소)에서 성공하면 git 태그 prod/<UTC 날짜-시각>-<SHA12> 를 만들어 push 한다
+#   (GHCR 정리가 그 태그의 이미지를 남긴다 — 손 기록을 줄인다). 끄기 DEPLOY_TAG=0, 운영 밖에서 켜기 DEPLOY_TAG=1
+#   이어서 배포 전 백업(~/backups/pre-*)을 정리한다(ops/63 — 최신 2개 · 7일 안 된 것은 남긴다). 끄기 PREDEPLOY_PRUNE=0
 #
 # ⚠️ **되돌리기는 스키마를 되돌리지 않는다.** --rollback 은 이미지만 바꾼다. 마이그레이션은
 #    앱이 뜰 때 적용되고 앞으로만 간다. 그래서 어떤 배포가 컬럼을 지우거나 이름을 바꿨다면
@@ -324,6 +329,26 @@ if [ "$DO_ROLLBACK" = "1" ]; then
         [ -n "$VERSION" ] || die "지금 도는 $CURRENT_VERSION 말고는 성공한 배포 이력이 없습니다"
     fi
     warn "롤백 대상: $VERSION (현재 $CURRENT_VERSION)"
+fi
+
+# ── latest: 기본 브랜치의 가장 최근 초록 커밋(4단계 ②) ─────────────────
+# 매니페스트는 이 체크아웃에서 오므로 그 커밋이어야 한다 — 이 스크립트가 스스로 switch 하지 않는다(실행 중인 스크립트 파일이
+# 바뀐다). 맞지 않으면 명령을 알려 주고 멈춘다. [JA] latest — 既定ブランチの最新の緑のコミット。チェックアウトがそのコミットでなければ止まる。
+resolve_latest() {
+    local sha head
+    sha="$("$ROOT/ops/tools/latest-green.sh")" || die "가장 최근 초록 커밋을 찾지 못했다(위 latest-green 메시지) — 버전을 직접 주세요"
+    head="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || true)"
+    if [ "$head" != "$sha" ]; then
+        die "가장 최근 초록 커밋은 $sha 인데 이 체크아웃은 ${head:-?} 다 — 매니페스트도 그 커밋이어야 한다:
+  git fetch origin && git switch --detach $sha && $0 $ENVIRONMENT $sha"
+    fi
+    printf '%s' "$sha"
+}
+
+if [ "$VERSION" = "latest" ]; then
+    [ "$DO_ROLLBACK" = "0" ] && [ "$CONFIG_ONLY" = "0" ] || die "latest 는 --rollback · --config-only 와 함께 쓸 수 없습니다"
+    VERSION="$(resolve_latest)" || exit 1   # die 는 $(…) 안에서는 그 하위 셸만 끝낸다 ／ [JA] die は $(…) の中ではそのサブシェルだけを終える
+    info "latest → $VERSION (기본 브랜치의 가장 최근 초록 커밋 · 이 체크아웃과 같다)"
 fi
 
 # --config-only: 버전은 **클러스터가 정한다.** 사람이 태그를 적을 일이 없어야 한다 —
@@ -624,6 +649,8 @@ EOF
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 # [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
+# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
+#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 show_startup_error() {   # show_startup_error <deployment>
     local d="$1" pod info node reason code image dir logs
     # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
@@ -665,6 +692,7 @@ show_startup_error() {   # show_startup_error <deployment>
     # [JA] 🐛 2026-10-18 デモ: saga-projection が "Invalid or corrupt jarfile" で落ちたが、レジストリのイメージの jar は正常だった
     #      (ハッシュがビルド結果と同じで、ノードのダイジェストもレジストリと同じだった) — そのノードが展開したコピーだけが壊れていた。
     #      同じタグなので kubelet は再取得しない(IfNotPresent) — そのノードで消す必要がある。
+    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
@@ -962,6 +990,7 @@ deploy_version() {   # deploy_version <버전> ／ [JA] deploy_version <バー�
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
+        # shellcheck disable=SC2086
         stamp_change_cause "$ver" user-service $OTHER_DEPLOYS
         # shellcheck disable=SC2086
         wait_rollouts user-service $OTHER_DEPLOYS || return 1
@@ -1242,8 +1271,55 @@ warn_metrics_agent() {
     fi
 }
 
+# ── 배포 태그(4단계 ②): 운영에서 성공하면 prod/<UTC>-<SHA12> 를 만들어 push 한다 ──────────
+# "지금 운영이 무엇인가 · 언제 무엇이 나갔나" 를 git 이 기억한다 — GHCR 정리가 이 태그의 이미지를 남긴다.
+# 실패해도 배포는 성공이다(경고만). 태그 push 는 CI 를 깨우지 않는다(build.yml 의 push 는 브랜치만).
+# [JA] デプロイタグ: 本番で成功したら prod/<UTC>-<SHA12> を作って push する。失敗してもデプロイは成功(警告だけ)。
+is_prod_cluster() {
+    local url
+    url="$(kubectl -n "$NS" get configmap ecommerce-config -o jsonpath='{.data.APP_PUBLIC_URL}' 2>/dev/null || true)"
+    case "$url" in *ysyproject.com*) return 0 ;; esac
+    return 1
+}
+
+tag_deploy() {   # tag_deploy <version>
+    case "${DEPLOY_TAG:-auto}" in
+        0) return 0 ;;
+        1) ;;
+        *) is_prod_cluster || return 0 ;;
+    esac
+    local full tag
+    full="$(git -C "$ROOT" rev-parse -q --verify "$1^{commit}" 2>/dev/null)"         || { warn "배포 태그: 이 체크아웃에 $1 커밋이 없어 건너뛴다 — git fetch 뒤 다시 태그할 수 있다"; return 0; }
+    tag="prod/$(date -u +%Y%m%d-%H%M)-$1"
+    if git -C "$ROOT" tag -a "$tag" "$full" -m "deploy $ENVIRONMENT $1" 2>/dev/null \
+        && git -C "$ROOT" push -q origin "refs/tags/$tag" 2>/dev/null; then
+        info "배포 태그 $tag 를 push 했다"
+    else
+        warn "배포 태그 $tag 를 만들거나 push 하지 못했다(배포는 성공) — 나중에: git tag -a $tag $full -m deploy && git push origin $tag"
+    fi
+}
+
+# ── 배포 전 백업 정리(4단계 ⑥): 운영에서 성공하면 ops/63 — 최신 2개 · 7일 안 된 것은 남기고 지운다 ────────────────
+# 노드 밖 사본은 보관 기계가 매일 받아 간다(읽기 전용 키). 실패해도 배포는 성공(경고만). 끄기 PREDEPLOY_PRUNE=0.
+# [JA] デプロイ前バックアップの整理: 本番で成功したら ops/63 — 最新 2 個 · 7 日未満は残す。失敗してもデプロイは成功。
+prune_predeploy_backups() {
+    case "${PREDEPLOY_PRUNE:-auto}" in
+        0) return 0 ;;
+        1) ;;
+        *) is_prod_cluster || return 0 ;;
+    esac
+    local out
+    if out="$(APPLY=1 "$ROOT/ops/63-predeploy-backups.sh" prune 2>&1)"; then
+        info "$(printf '%s\n' "$out" | tail -1)"
+    else
+        warn "배포 전 백업 정리가 실패했다(배포는 성공) — ./ops/63-predeploy-backups.sh list 로 본다: $(printf '%s\n' "$out" | tail -1)"
+    fi
+}
+
 if deploy_version "$VERSION" && run_smoke; then
     journal_append "$ENVIRONMENT" "$VERSION" ok
+    [ "$CONFIG_ONLY" = "1" ] || tag_deploy "$VERSION"
+    [ "$CONFIG_ONLY" = "1" ] || prune_predeploy_backups
     warn_metrics_agent
     ELAPSED=$(( $(date -u +%s) - START_EPOCH ))
     log "배포 완료 — $ENVIRONMENT @ $VERSION  (${ELAPSED}초)"

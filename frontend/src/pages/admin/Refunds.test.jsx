@@ -44,6 +44,16 @@ describe("환불 관리", () => {
         ]));
     });
 
+    it("🔴 공개 데모 계정의 주문에는 '데모' 표시 — 보통 손님에게는 없다(docs/100)", async () => {
+        adminListOrders.mockResolvedValue(page([
+            row(),
+            row({ orderId: 5, trackingId: "track-5", customerEmail: "demo1@demo.invalid" }),
+        ]));
+        render(withI18n(<Refunds />));
+        await screen.findByText("demo1@demo.invalid", { exact: false });
+        expect(screen.getAllByText("데모")).toHaveLength(1);
+    });
+
     it("기본은 결제 완료(PAID) 목록이다", async () => {
         render(withI18n(<Refunds />));
         await screen.findAllByText("buyer@example.com");

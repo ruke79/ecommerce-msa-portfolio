@@ -86,10 +86,10 @@ for: 5m · warning
 |---|---|---|
 | eureka-server 가 자기 자신(`eureka-server.ecommerce.svc.cluster.local`)에 피어 복제 → **403**(Eureka 쓰기 판정 enforce) | 인스턴스 하나라 복제는 쓸모없고 버려질 뿐 — 기능 영향은 없어 보인다. ERROR 의 9할 | ✅ 원인 확정 · 고침(2026-11-21, 다음 배포): 이 파드도 ConfigMap 의 defaultZone(자기 Service 주소)을 받는데 `my-url` 은 yml 의 localhost — Eureka 는 equals 로 비교해 자기를 걸러내지 못했다(10-26 의 yml 고침은 k8s 에서 효과 없음). k8s/30 `EUREKA_SERVER_MYURL`(= defaultZone + `/`), 시험 `PeerSelfReplicationTest`. 배포 뒤 이 줄 0 |
 | config-server 의 Eureka **하트비트 실패**(`Cannot execute request on any known server`) | config-server 가 Eureka 에 등록 · 갱신되지 못한다. 설정을 Eureka 로 찾는 클라이언트가 있으면 영향 | ✅ 원인 확정 · 고침(2026-11-21, 다음 배포): 실제 요청이 `http://localhost:8761`(Connection refused). yml 에 `defaultZone` 키가 없으면 env 값이 소문자 키 `defaultzone` 으로 따로 들어가 기본값이 쓰인다(Spring Map 바인딩) — config-server 는 common 에 의존하지 않아 그 키가 없었다. yml 에 키, 시험 `EurekaServiceUrlBindingTest`. 배포 뒤 처음으로 인증서를 내며 등록한다(키스토어 · 트러스트스토어는 파드에 있음 확인) |
-| user-service 의 정상 401(`JwtAuthEntryPoint`)이 ERROR | 잡음 — 공격 · 만료 토큰마다 ERROR | WARN(또는 INFO)으로 내린다 |
+| user-service 의 정상 401(`JwtAuthEntryPoint`)이 ERROR | 잡음 — 공격 · 만료 토큰마다 ERROR | ✅ 고침(2026-11-21, 다음 배포): DEBUG 로 · `System.out` 삭제, 시험 `JwtAuthEntryPointLogLevelTest` |
 | gateway 의 유입 제한 Redis 타임아웃 · user 기동 실패 | 배포 시각에만 | 배포 시각의 경보는 묵음 · 기동 실패는 재시작 수로 이미 본다 |
-| delivery 의 우체국 추적 HTTP 400 | 그 송장의 추적이 멈춤 | 서비스키 · 송장 형식 확인(docs/25), 영구 실패면 WARN + 관리자 화면 표시 |
-| saga-projection 의 상태 디렉터리 권한 | 기동 때 한 번 | 볼륨 권한(fsGroup) 확인 |
+| delivery 의 우체국 추적 HTTP 400 | 그 송장의 추적이 멈춤 | ✅ 로그는 WARN 으로(2026-11-21, 다음 배포 — 한 송장의 문제라 서비스 경보 대상이 아니다, 시험 `TrackingPollerPermanentLogTest`). 남은 것: 그 송장의 서비스키 · 형식 확인(docs/25) · 관리자 화면 표시 |
+| saga-projection 의 상태 디렉터리 권한 | 기동 때 한 번 | ✅ 고침(2026-11-21, 다음 배포 — 매니페스트만): emptyDir 뿌리는 root 소유라 앱(uid 1000)이 권한을 못 바꿨다 → `SAGA_STATE_DIR=/app/state/streams`(앱이 만든 하위), 가드 `SagaStateDirGuardTest` |
 
 ## 5. 다시 재는 법
 

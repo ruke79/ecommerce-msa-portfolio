@@ -20,7 +20,6 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.filter.CharacterEncodingFilter;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.project.chat_service.client.UserServiceClient;
 import com.project.chat_service.common.util.TokenHandler;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -35,7 +34,6 @@ import org.junit.jupiter.api.BeforeEach;
 // @MockBean(ChatRoomService.class)
  @MockBean(TokenHandler.class)
 // @MockBean(ChatRepository.class)
-@MockBean(UserServiceClient.class)
 @AutoConfigureMockMvc
 @ExtendWith(SpringExtension.class)
 public class MvcTestBasic {

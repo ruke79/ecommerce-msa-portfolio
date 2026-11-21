@@ -331,6 +331,88 @@ public class Delivery {
 
     /** 발송 전 취소. 모든 상자가 발송 전이어야 한다. */
     // [JA] 発送前の取消。すべての箱が発送前でなければならない。
+    /**
+     * 다시 맞춘 결과. {@code dispatchedExcess} 는 이미 송장이 붙은 상자에 있어 줄이지 못한 수(품목 id → 수) — 사람이 실물을 본다.
+     * [JA] 合わせ直しの結果。dispatchedExcess は送り状のある箱にあって減らせなかった数。
+     */
+    public record QuantitySync(int reducedUnits, java.util.List<Integer> cancelledShipments, java.util.Map<Long, Integer> dispatchedExcess) {
+        public boolean changed() {
+            return reducedUnits > 0;
+        }
+    }
+
+    /**
+     * 보낼 수(주문의 배정된 수, 품목 id 마다)에 맞춰 상자의 수량을 <b>줄인다</b> — 5단계 15, 대형 EC 의 '있는 것만 보내고 없는 것은 취소':
+     * <ul>
+     *   <li>고칠 수 있는 상자(송장 없음 · 대기)만 — 나중 상자부터(분할 배송의 마지막 상자가 아직 안 집혔을 가능성이 크다).</li>
+     *   <li>0 이 된 품목은 빼고, 그래서 빈 상자는 취소한다.</li>
+     *   <li>늘리지 않는다 · 목록에 없는 품목은 그대로(옛 주문 · 다른 경로로 더한 줄).</li>
+     *   <li>송장이 붙은 상자에 남은 초과분은 줄이지 않고 돌려준다(이미 집었다 — 사람이 확인).</li>
+     * </ul>
+     * 멱등이다 — 같은 목표로 다시 불러도 아무것도 줄지 않는다.
+     * [JA] 送る数(注文の割り当て数)に合わせて箱の数量を減らす — 直せる箱だけ、後の箱から。0 の品目は外し、空の箱は取り消す。冪等。
+     */
+    public QuantitySync syncShippableQuantities(java.util.Map<Long, Integer> shippable) {
+        java.util.Map<Long, Integer> current = new java.util.LinkedHashMap<>();
+        for (Shipment s : shipments) {
+            if (s.getStatus() == DeliveryStatus.CANCELLED) {
+                continue;
+            }
+            for (ShipmentItem item : s.getItems()) {
+                if (item.getOrderProductId() != null) {
+                    current.merge(item.getOrderProductId(), item.getQuantity(), Integer::sum);
+                }
+            }
+        }
+        java.util.List<Shipment> editable = shipments.stream().filter(Shipment::isEditable)
+                .sorted(Comparator.comparingInt(Shipment::getSequenceNo).reversed()).toList();
+        int reduced = 0;
+        java.util.Set<Shipment> touched = new java.util.HashSet<>();
+        java.util.Map<Long, Integer> late = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<Long, Integer> e : current.entrySet()) {
+            Integer target = shippable.get(e.getKey());
+            if (target == null) {
+                continue;
+            }
+            int excess = e.getValue() - Math.max(0, target);
+            for (Shipment s : editable) {
+                if (excess <= 0) {
+                    break;
+                }
+                for (ShipmentItem item : new java.util.ArrayList<>(s.getItems())) {
+                    if (excess <= 0) {
+                        break;
+                    }
+                    if (!e.getKey().equals(item.getOrderProductId()) || item.getQuantity() <= 0) {
+                        continue;
+                    }
+                    int cut = Math.min(excess, item.getQuantity());
+                    item.reduceBy(cut);
+                    excess -= cut;
+                    reduced += cut;
+                    touched.add(s);
+                    if (item.getQuantity() == 0) {
+                        s.removeItem(item);
+                    }
+                }
+            }
+            if (excess > 0) {
+                late.put(e.getKey(), excess);
+            }
+        }
+        java.util.List<Integer> cancelled = new java.util.ArrayList<>();
+        for (Shipment s : touched) {
+            if (s.getItems().isEmpty() && s.cancel()) {
+                cancelled.add(s.getSequenceNo());
+            }
+        }
+        if (reduced > 0) {
+            touch();
+        }
+        java.util.Collections.sort(cancelled);
+        return new QuantitySync(reduced, cancelled, late);
+    }
+
     public boolean cancel() {
         if (shipments.isEmpty()) {
             touch();

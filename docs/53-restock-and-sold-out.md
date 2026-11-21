@@ -130,10 +130,26 @@ order    stock-shortage 消費 ─┬─ 行ごとに short_qty を記録（V21,
 - **この節は事後の補償である。** 売り越しが起きてから数秒以内にお金を返す。決済前の在庫予約（注文作成時に確保し、決済失敗・離脱
   時に解放する、期限切れジョブ）は [docs/59](59-stock-reservation.md) で追加した — この節はその後も、予約が期限切れになった後の決済・catalog に
   届かなかった注文（fail-open）・バーチャル口座のセーフティネットとして残る。
-- **一部不足なのに配送が先に作られている可能性がある。** delivery-service は決済完了イベントを受け取るとすぐに配送情報を一度読む。
-  不足の記録より先に読んでいれば、配送数量は注文数量のままだ。すべて不足した場合は決済取り消しで配送が取り消されるが、一部だけ
-  不足した場合は管理者が注文画面（品目の `shortQty`）を見て送り状を合わせなければならない。発送前の部分返金全般に共通する隙間である。
+- ~~**一部不足なのに配送が先に作られている可能性がある。**~~ → 2026-11-21 修正(5 段階 15、下の「品切れキャンセル — 大手 EC 方式」)。以前は配送数量が
+  注文数量のまま残り、管理者が品目の `shortQty` を見て送り状を合わせる必要があり、全部不足の行も配送に 1 個として載っていた(`Math.max(1, …)`)。
 - 発行器は Pod ごとに動く — 同じ行を2つが送ることがあり、order が冪等キーで捨てる。
+
+
+### 品切れキャンセル — 大手 EC 方式(2026-11-21、5 段階 15)
+
+Amazon · Coupang · 楽天のように**あるものだけ送り、ないものはその品目だけ取り消して返金し、お客様に「品切れキャンセル」として別に知らせる。**
+
+| 規則 | 実装 |
+|---|---|
+| 不足を記録する**同じトランザクション**で delivery に合わせ直すよう知らせる — 銀行振込 · 返金失敗でも(送らない品物だ) | order `Recorder.record` がアウトボックス行 `delivery-resync`(キーは注文 id) → リレー → トピック `delivery-resync` |
+| delivery は送る数を**今の** order に問う(割り当て数) — 再配信 · 順序が変わっても最後の値で合う | `DeliveryResyncListener` → 既存の内部経路 `/api/order/internal/orders/{id}/shipping` → `DeliveryService.syncShippable` |
+| 発送前の箱(送り状なし · 待機)だけ減らす — 分割配送なら**後の箱から** · 0 の品目は外す · 空の箱は取り消す · 増やさない · 冪等 | `Delivery.syncShippableQuantities` |
+| 送り状のある箱は直さない — 返金はもう出た、現物だけ人が見る | ログ「재고 부족분이 이미 송장이 붙은 상자에 있다 — 수동 확인 필요」(Loki `ManualActionRequired`、B-61) |
+| 配送を作るとき送る数 0 の行は載せない · 全部 0 なら作らない(決済取消が続く) | `PaymentCompletedListener.commandFor` |
+| お客様には「一部商品の品切れキャンセル」 — 何がなぜ外れたか · 残りはそのまま送る | `order-refunded` に `cause: stock-shortage` → notification `SOLD_OUT_CANCEL_TITLE` · `soldOutCancel`(全額なら決済応答の「返金完了」のまま) |
+
+デプロイ: order · delivery · notification イメージ、順序は問わない(古い delivery ならトピックに溜まり新しい Pod が earliest で読む · 古い notification なら以前の文言)。DLT は `ops/02` に `delivery-resync` を足した — デプロイ前に一度回す。
+試験: `DeliveryShortageSyncTest`(3) · `DeliveryResyncListenerTest`(2) · `PaymentCompletedListenerTest` +1 · `OrderStockShortageServiceTest` +1 · `DeliveryResyncKafkaPublisherTest`(2) · `OrderRefundedKafkaPublisherTest` +1 · `OrderRefundedNotificationTest` +1。
 
 ### ガード
 

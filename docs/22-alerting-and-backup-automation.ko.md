@@ -107,6 +107,25 @@ Notify for alerts failed ... open /etc/alertmanager/secrets/webhook-url-critical
 
 운영 적용(2026-10-20): Discord 로 시험 경보와 실제 경보가 왔다(3건). 그런데 `ops/17` 이 "전달 실패(시도 6 · 실패 4)" 로 판정했다 — 주소 파일을 만들기 전에 Alertmanager 를 새로 띄워, 이미 울리던 경보가 실패로 쌓인 것까지 셌기 때문이다. 이제 도달 시험은 시험 전 누적값과의 차이만 보고, Prometheus 가 Alertmanager 를 긁어 최근 15분의 전달 실패에 경보 `AlertDeliveryFailing` 을 건다(같은 길이라 이 경보도 못 갈 수 있다 — `./ops/05` 의 "최근 15분 전달 실패" 로 본다).
 
+**Grafana 관리자 비밀번호도 같은 자리**(2026-11-21 보안 점검): `observability/secrets/grafana-admin-password` 에 파일로 둔다(git-ignore · 노드 전용). 운영 덧씌우기(`docker-compose-observability.oci.yml`)가 그 디렉터리를 Grafana 에 마운트하고 `GF_SECURITY_ADMIN_PASSWORD__FILE` 로 읽어, 기본 파일의 `admin` 기본값을 덮는다 — 파일이 없으면 Grafana 가 뜨지 않는다(admin/admin 방지). 쿠버네티스 Secret(`k8s/20-secret.enc.yaml`)에는 넣지 않는다 — 관측 스택은 k8s 밖의 docker compose 라 그 Secret 을 읽지 못한다.
+
+한 번 만들기(값은 대화 · 커밋에 적지 않는다). ⚠️ **끝에 줄바꿈을 넣지 않는다** — Grafana 는 파일 내용을 **그대로** 비밀번호로 쓴다. `echo '값' >` · here-string(`<<<'값'`)은 끝에 `\n` 을 붙여 비밀번호가 `값\n` 이 되고, 브라우저에서는 줄바꿈을 칠 수 없어 로그인이 늘 401(5회 틀리면 Grafana 가 몇 분간 잠근다, 2026-11-21 운영에서 겪음). `printf '%s'`(줄바꿈 없음)로 쓴다. 컨테이너의 grafana(uid 472)가 읽어야 하니 `chown 472:472` · `chmod 600`:
+
+```bash
+printf '%s' '<정한 값>' | sudo tee observability/secrets/grafana-admin-password >/dev/null
+sudo chown 472:472 observability/secrets/grafana-admin-password
+sudo chmod 600 observability/secrets/grafana-admin-password
+wc -c observability/secrets/grafana-admin-password   # = 비밀번호 글자 수(줄바꿈이 있으면 +1)
+```
+
+이미 끝에 줄바꿈이 들어간 파일은 **다시 타이핑하지 않고** 줄바꿈만 뗀다(`$(cat …)` 가 끝 줄바꿈을 떼고 `printf '%s'` 가 줄바꿈 없이 다시 쓴다):
+
+```bash
+sudo bash -c 'f=observability/secrets/grafana-admin-password; printf "%s" "$(cat "$f")" > "$f.new" && mv "$f.new" "$f"; chown 472:472 "$f"; chmod 600 "$f"; wc -c "$f"'
+```
+
+컨테이너가 이미 떠 있으면 `up -d --force-recreate grafana` 로 파일을 다시 읽히거나, 급하면 `docker exec -it grafana grafana cli admin reset-admin-password '<정한 값>'` 로 DB 에 직접 박는다(다음 재생성 때 파일 값으로 다시 맞춰지니 파일도 줄바꿈 없이 같은 값이어야 한다). 접속은 `ssh -L 3001:127.0.0.1:3001 <운영 노드>` → `http://localhost:3001`(루프백에만 연다).
+
 ## 2. 백업 스크립트는 있는데 돌고 있지 않았다
 
 `ops/08`·`ops/10`·`ops/09` 는 실제 사고를 되돌리는 것까지 검증했다([docs/15](15-backup-and-dr.ko.md)).
@@ -212,6 +231,18 @@ docker exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=ecomm
 ```
 
 백업 → 복원 → 데이터 읽기까지 실제로 이어지는 것을 확인했다.
+
+### 2-2. 배포 전 수동 백업의 보관 — 정책은 사람이, 지우기는 자동(2026-11-21, 4단계 ⑥)
+
+배포 전 백업(`~/backups/pre-<버전>-<UTC>`, docs/72 §3 — 물리 · 논리 · Mongo, 하나 약 5.5G)은 아무도 지우지 않았다. '매월 정리' 는 실제로 없었고 2026-11-21 에 9개 · 34G 가 쌓여 디스크가 87% 였다(손으로 노드 밖으로 옮기고 지움 → 52%). Google SRE 의 기준(손으로 반복하는 일은 토일 · 지우는 자동화는 가장 위험한 자동화)대로 나눈다:
+
+| 누가 | 무엇 | 안전장치 |
+|---|---|---|
+| 보관 기계의 받기(읽기 전용) · 타이머 07:00 UTC | `pre-*/` 를 받아 `DEST/predeploy` 에 — 빈 파일 거절 · `.gz` 는 gzip -t · `.tar` 는 tar -t, 30일 · 최신 3개 | **다른 키**(`ecommerce-predeploy-pull`)로 `~/backups` 를 `rrsync -ro`(sudo 없음) — 받는 쪽은 지울 수 없다, 실패는 타이머 실패로 보인다 |
+| 운영 노드 `ops/63 prune` — `ops/28` 이 운영 배포 성공 뒤 부른다 | 최신 2개 밖 · 7일 지난 것을 지운다 | 최신 2개는 나이와 상관없이, 7일 안 된 것(그 사이 매일 받기가 여러 번 돈다), 이름 모양이 다른 것 · 링크 · 파일은 건드리지 않는다, 손으로는 기본 dry-run(`APPLY=1`), 끄기 `PREDEPLOY_PRUNE=0` |
+
+운영 노드는 노드 밖 사본을 직접 확인하지 못한다 — 받는 쪽 키가 읽기 전용이라서다(운영 노드가 뚫려도 사본을 못 지우게). 그래서 '사본이 있다' 는 받는 쪽의 실패 감시(타이머 · `status`)와 7일 창으로 지킨다.
+
 
 ## 3. 적용 순서
 

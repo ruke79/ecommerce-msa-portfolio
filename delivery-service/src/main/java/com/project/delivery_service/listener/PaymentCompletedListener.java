@@ -188,8 +188,20 @@ public class PaymentCompletedListener {
         List<CreateDeliveryCommand.Item> items = new ArrayList<>();
         if (order.items() != null) {
             for (OrderShippingDto.Item item : order.items()) {
+                // 보낼 수(배정된 수)가 0 인 줄은 싣지 않는다 — 재고 부족으로 취소된 품목이다(5단계 15).
+                // 🐛 예전에는 Math.max(1, …) 라 다 모자란 줄도 1개로 실려 없는 물건을 집으라고 했다.
+                // [JA] 送る数が 0 の行は載せない — 在庫不足で取り消された品目。以前は 1 に繰り上げていた。
+                if (item.quantity() <= 0) {
+                    continue;
+                }
                 items.add(new CreateDeliveryCommand.Item(item.orderProductId(), item.productId(),
-                        item.name(), item.image(), Math.max(1, item.quantity()), item.skuCode()));
+                        item.name(), item.image(), item.quantity(), item.skuCode()));
+            }
+            if (items.isEmpty() && !order.items().isEmpty()) {
+                // 전부 모자랐다 — 주문 전체가 환불되고 결제 취소가 따른다. 빈 상자를 만들지 않는다.
+                // [JA] 全部足りなかった — 注文全体が返金され決済取消が続く。空の箱は作らない。
+                log.warn("보낼 품목이 하나도 없다(전부 재고 부족) — 배송을 만들지 않는다: orderId={}", orderId);
+                return null;
             }
         }
         return new CreateDeliveryCommand(

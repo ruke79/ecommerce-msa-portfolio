@@ -85,7 +85,6 @@ public class UserServiceImpl implements UserService {
 
     private final PasswordResetTokenRepository passwordResetTokenRepository;
 
-    private final EmailService emailService;
 
     /** 로그인 중 "현재 비밀번호" 의 시도 제한(비밀번호 변경). */
     // [JA] ログイン中の「現在のパスワード」の試行制限(パスワード変更)。
@@ -573,6 +572,8 @@ public class UserServiceImpl implements UserService {
      * パスワードはすべてここを通る。漏洩リストにあれば変えない(再設定リンクも消費されないので再試行できる)。
      *
      * <p>[JA] 新しいパスワードの方針 — トランザクションの外で呼ぶ。新しいパスワードはすべてここを通る。
+     *
+     * <p>[JA] 新しいパスワードの方針 — トランザクションの外で呼ぶ。新しいパスワードはすべてここを通る。
      */
     private AcceptedPassword acceptNewPassword(String rawPassword) {
         if (rawPassword == null || rawPassword.length() < PASSWORD_MIN || rawPassword.length() > PASSWORD_MAX) {
@@ -643,6 +644,17 @@ public class UserServiceImpl implements UserService {
             return;
         }
 
+        // 아웃박스에 적는다 — 토큰은 릴레이가 보낼 때 만든다(issuePasswordResetToken, 4단계 ⑤). 🐛 예전에는 여기서 토큰을 만들고 커밋 뒤 메일
+        // 일꾼이 바로 발행해, Kafka 가 흔들리면 그 메일은 사라졌다(재시도 없음 · ERROR 한 줄). 응답 시간은 가입 여부와 상관없이 같다
+        // (행 하나를 쓸 뿐 — 발행을 기다리지 않는다).
+        // [JA] アウトボックスに書く — トークンはリレーが送るときに作る。以前はここでトークンを作りコミット後にすぐ発行し、Kafka が揺れると消えた。
+        userOutboxHelper.recordPasswordResetMail(user);
+        log.info("비밀번호 재설정 메일 요청: userId={}", user.getUserId());
+    }
+
+    @Override
+    @Transactional
+    public String issuePasswordResetToken(User user) {
         String token = UUID.randomUUID().toString();
         // 1시간(docs/68 §15) — 예전 24시간은 메일함이 털렸을 때 쓸 수 있는 시간이 그만큼 길었다. 메일은 보통 몇 분 안에 온다.
         // [JA] 1 時間(docs/68 §15) — 以前の 24 時間はメールボックスを盗られたとき使える時間がそれだけ長かった。メールは普通数分で届く。
@@ -658,15 +670,8 @@ public class UserServiceImpl implements UserService {
                 .orElseGet(() -> new PasswordResetToken(token, expiryDate, user));
         resetToken.refresh(token, expiryDate);
         passwordResetTokenRepository.save(resetToken);
-
-        String resetUrl = frontendUrl + "/reset-password?token=" + token;
-        // 메일은 여기서 보내지 않고 요청만 한다 — 발송·재시도는 notification-service 가 맡는다.
-        // 발행이 실패해도 예외가 올라오지 않으므로 이 트랜잭션(토큰 저장)은 그대로 커밋된다.
-        // ⚠️ resetUrl 은 자격증명이다 — 로그에 남기지 않는다.
-        // [JA] メールはここで送らず要求だけする — 送信・リトライは notification-service が担う。発行が失敗しても例外が上がらないのでこのトランザクション(トークン保存)はそのままコミットされる。
-        //      ⚠️ resetUrl は資格情報である — ログに残さない。
-        emailService.sendPasswordResetEmail(user.getUserId(), user.getEmail(), resetUrl);
-        log.info("비밀번호 재설정 메일 요청: userId={}", user.getUserId());
+        // ⚠️ 원문은 메일 링크에만 — 로그에 남기지 않는다. [JA] 原文はメールのリンクにだけ。
+        return token;
     }
 
     /**
@@ -1001,6 +1006,7 @@ public class UserServiceImpl implements UserService {
         //      攻撃者が別のコード数百個を同時に送ると、すべて「ロックされていない」を読んで検証された(一度に数百個の総当たり、15 分ごとに繰り返し)。
         //      上限を超えた試行は検証しない。合えば下で消す。
         // [JA] 試行を検証の前に原子的に数える。以前は読む → 検証 → 失敗なら加算で、同時に数百のコードを試せた。
+        // [JA] 試行を検証の前に原子的に数える。以前は読む → 検証 → 失敗なら加算で、同時に数百のコードを試せた。
         long attempt = totpReplayGuard.reserveAttempt(userId);
         if (attempt > totpReplayGuard.maxFailures()) {
             return TwoFactorChange.TOO_MANY_ATTEMPTS;
@@ -1286,6 +1292,7 @@ public class UserServiceImpl implements UserService {
         //      enabled なので**すべての**利用者がこの経路に来た。リンクを押してアドレスを証明した利用者も「確認されたことなし」のまま残り、後で
         //      同じアドレスでソーシャルログインすると SocialAccountLinker がパスワードを消してセッションを切った。トークンは消さない — メール
         //      スキャナーが先に開いても利用者のクリックが失敗しないように(このアカウントでトークンができることはこの表示を立てることだけだ)。
+        // [JA] 以前はここで返して emailVerified を立てなかった — 既定ではすべての利用者がこの経路で、リンクで証明しても未確認のままだった。
         // [JA] 以前はここで返して emailVerified を立てなかった — 既定ではすべての利用者がこの経路で、リンクで証明しても未確認のままだった。
         if (user != null && user.isEnabled()) {
             if (!user.isEmailVerified() && !verificationToken.isExpired()) {

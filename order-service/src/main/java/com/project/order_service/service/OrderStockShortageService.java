@@ -66,7 +66,7 @@ import lombok.extern.slf4j.Slf4j;
 public class OrderStockShortageService {
 
     static final String METRIC = "order.stock.shortage";
-    static final String REFUND_REASON = "재고 부족 — 보낼 수 없는 수량을 자동 환불했습니다";
+    public static final String REFUND_REASON = "재고 부족 — 보낼 수 없는 수량을 자동 환불했습니다";
 
     public enum Outcome { DUPLICATE, UNKNOWN_ORDER, NOTHING_TO_REFUND, REFUNDED, MANUAL }
 
@@ -161,10 +161,13 @@ public class OrderStockShortageService {
 
         private final OrderRepository orderRepository;
         private final OrderCacheEvictor cacheEvictor;
+        private final com.project.order_service.outbox.PaymentOutboxHelper outbox;
 
-        public Recorder(OrderRepository orderRepository, OrderCacheEvictor cacheEvictor) {
+        public Recorder(OrderRepository orderRepository, OrderCacheEvictor cacheEvictor,
+                com.project.order_service.outbox.PaymentOutboxHelper outbox) {
             this.orderRepository = orderRepository;
             this.cacheEvictor = cacheEvictor;
+            this.outbox = outbox;
         }
 
         @Transactional
@@ -197,6 +200,11 @@ public class OrderStockShortageService {
                 order.setShortageEventId(eventId);
                 orderRepository.saveAndFlush(order);
                 cacheEvictor.evictOrderCaches(orderId, "stockShortage");
+                // 5단계 15 — 배송이 이 기록보다 먼저 만들어졌으면 주문 수량 그대로다. 같은 트랜잭션의 아웃박스 행으로 delivery 에
+                // 다시 맞추라고 알린다(무통장 · 환불 실패에도 — 보내지 않을 물건이다). delivery 는 주문의 지금 값(배정된 수)을 다시 읽는다.
+                // [JA] 配送がこの記録より先に作られていれば注文数量のままだ。同じトランザクションのアウトボックス行で delivery に知らせる。
+                outbox.saveEventOutbox(com.project.order_service.outbox.PaymentOutboxHelper.DELIVERY_RESYNC_EVENT, String.valueOf(orderId),
+                        java.util.Map.of("orderId", orderId, "eventId", "delivery-resync:" + eventId));
             } else if (!order.getShortageEventId().equals(eventId)) {
                 // 차감은 주문당 한 번이라 부족 알림도 하나다. 다른 키가 오면 발행 쪽이 바뀐 것이다.
                 // [JA] 差し引きは注文ごとに一度なので不足通知も一つである。別のキーが来たら発行側が変わったということだ。

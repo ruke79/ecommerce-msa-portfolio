@@ -85,6 +85,22 @@ class OrderCreateAddressValidationTest {
     }
 
     @Test
+    @DisplayName("🔴 상류(cart · catalog · coupon)가 아프거나 서킷 브레이커가 열리면 503 — 우리 버그(그 밖의 예외)만 500(docs/101 §4)")
+    void upstreamFailureIs503() throws Exception {
+        org.mockito.Mockito.doThrow(new com.project.common.exception.UpstreamCallException("CartServiceClient#getCart", 503))
+                .when(orderService).createOrder(any(), anyLong(), any());
+        create(address()).andExpect(status().isServiceUnavailable());
+
+        org.mockito.Mockito.doThrow(io.github.resilience4j.circuitbreaker.CallNotPermittedException.createCallNotPermittedException(
+                        io.github.resilience4j.circuitbreaker.CircuitBreaker.ofDefaults("order-catalog")))
+                .when(orderService).createOrder(any(), anyLong(), any());
+        create(address()).andExpect(status().isServiceUnavailable());
+
+        org.mockito.Mockito.doThrow(new IllegalStateException("bug")).when(orderService).createOrder(any(), anyLong(), any());
+        create(address()).andExpect(status().isInternalServerError());
+    }
+
+    @Test
     @DisplayName("정상 주소는 그대로 통과한다 — 한쪽에만 이름을 적은 주소록 주소도")
     void validAddressPasses() throws Exception {
         create(address()).andExpect(status().isOk()).andExpect(jsonPath("$.orderId").value("42"));

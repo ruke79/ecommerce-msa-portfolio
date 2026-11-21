@@ -82,7 +82,6 @@ class OrderColorBatchTest {
         // 왕복 횟수 — 이 테스트의 존재 이유.
         // [JA] 往復回数 — このテストの存在理由。
         verify(catalog, times(1)).getColorsInfo(List.of(1L, 2L));
-        verify(catalog, never()).getColorInfo(anyString());
 
         // 색상이 각 상품에 제대로 붙었는가.
         // [JA] 色が各商品に正しく付いたか。

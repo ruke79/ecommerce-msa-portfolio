@@ -20,4 +20,9 @@ public interface BroadcastReadRepository
     List<BroadcastRead> findByRecipientIdAndBroadcastIdIn(Long recipientId, Collection<Long> broadcastIds);
 
     void deleteByBroadcastId(Long broadcastId);
+
+    /** 공개 데모 계정의 공지 읽음 · 숨김 표시를 지운다 — 매일 초기화(docs/100). [JA] 公開デモアカウントのお知らせ既読 · 非表示を消す。 */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("delete from BroadcastRead b where b.recipientId in :recipientIds")
+    int deleteAllOfRecipients(@org.springframework.data.repository.query.Param("recipientIds") Collection<Long> recipientIds);
 }

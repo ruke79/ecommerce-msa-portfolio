@@ -301,6 +301,33 @@ public class DeliveryService {
     }
 
     /**
+     * 배송 수량을 주문의 보낼 수(배정된 수)에 다시 맞춘다 — 재고 부족이 배송 생성보다 늦게 적혔을 때(5단계 15, {@code delivery-resync}).
+     * 규칙은 {@link Delivery#syncShippableQuantities}. 배송이 아직 없으면 할 일이 없다(만들 때 이미 배정된 수를 읽는다).
+     * 송장이 붙은 상자의 초과분은 고치지 않고 "수동 확인 필요" 로 남긴다(환불은 이미 나갔다 — 실물만 맞추면 된다).
+     * [JA] 配送数量を注文の送る数に合わせ直す — 在庫不足が配送作成より遅れて記録されたとき。送り状のある箱の超過分は直さず手動確認へ。
+     */
+    @Transactional
+    public Optional<Delivery.QuantitySync> syncShippable(Long orderId, java.util.Map<Long, Integer> shippable) {
+        Optional<Delivery> found = deliveryRepository.findByOrderId(orderId);
+        if (found.isEmpty() || found.get().overallStatus() == DeliveryStatus.CANCELLED) {
+            log.info("배송 수량 다시 맞추기 — 배송이 없거나 취소됨, 할 일 없음: orderId={}", orderId);
+            return Optional.empty();
+        }
+        Delivery delivery = found.get();
+        Delivery.QuantitySync sync = delivery.syncShippableQuantities(shippable);
+        if (sync.changed()) {
+            deliveryRepository.saveAndFlush(delivery);
+            log.warn("배송 수량 다시 맞춤(재고 부족): orderId={} 줄인 수={} 취소한 상자={}", orderId, sync.reducedUnits(),
+                    sync.cancelledShipments());
+        }
+        if (!sync.dispatchedExcess().isEmpty()) {
+            log.error("재고 부족분이 이미 송장이 붙은 상자에 있다 — 수동 확인 필요(실물 · 출고 취소). orderId={} 품목별 초과={}",
+                    orderId, sync.dispatchedExcess());
+        }
+        return Optional.of(sync);
+    }
+
+    /**
      * 송장을 기다리는 배송 — 관리자 화면의 기본 목록. 오래된 것부터.
      *
      * <p>"기다린다" 는 것은 상자 중 하나라도 송장 없이 {@code PENDING} 인 것이다.

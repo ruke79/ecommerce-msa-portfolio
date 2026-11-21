@@ -536,4 +536,54 @@ class OrderRefundTest {
         inOrder.verify(orderRepository).lockVersion(1L);
         inOrder.verify(gateway).refund(anyString(), any(), anyString(), any(), any());
     }
+
+    // ── 외부 환불(제공자 콘솔 · 차지백 웹훅, 5단계 14) ─────────────────────────
+    // [JA] 外部返金(プロバイダーのコンソール · チャージバックの Webhook)
+
+    private OrderDataService.ExternalRefund external(String ref, String amount, String currency) {
+        when(orderRepository.findByPaymentProviderAndProviderPaymentId(PaymentProvider.STRIPE, "cs_test_1"))
+                .thenReturn(Optional.of(order));
+        return service.recordExternalRefund(PaymentProvider.STRIPE, "cs_test_1", ref, new BigDecimal(amount), currency, "test");
+    }
+
+    @Test
+    @DisplayName("🔴 콘솔 전액 환불 — 제공자를 다시 부르지 않고 REFUNDED · pay 에 CANCELED(배송 취소 · 쿠폰 · 재고가 같은 길)")
+    void externalFullRefundCompletesOrder() {
+        assertThat(external("re_ext_1", "5998.00", "USD")).isEqualTo(OrderDataService.ExternalRefund.RECORDED_FULL);
+
+        assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.REFUNDED);
+        assertThat(order.getRefundedAmount()).isEqualByComparingTo(ORDER_TOTAL);
+        assertThat(order.getRefunds()).singleElement().satisfies(r -> assertThat(r.getRefundRef()).isEqualTo("re_ext_1"));
+        verify(gateway, never()).refund(any(), any(), any(), any(), any(), any());
+        ArgumentCaptor<PaymentRequest> pay = ArgumentCaptor.forClass(PaymentRequest.class);
+        verify(outboxHelper).savePaymentOutbox(pay.capture(), eq(OutboxStatus.STARTED));
+        assertThat(pay.getValue().getPaymentStatus()).isEqualTo(PaymentStatus.CANCELED);
+    }
+
+    @Test
+    @DisplayName("🔴 콘솔 일부 환불 — 금액만 남기고 주문은 그대로(품목은 사람이), pay 에 보내지 않는다")
+    void externalPartialRefundRecordsAmountOnly() {
+        assertThat(external("re_ext_2", "1000.00", "USD")).isEqualTo(OrderDataService.ExternalRefund.RECORDED_PARTIAL);
+        assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAID);
+        assertThat(order.getRefundedAmount()).isEqualByComparingTo("1000.00");
+        verify(outboxHelper, never()).savePaymentOutbox(any(), any());
+    }
+
+    @Test
+    @DisplayName("🔴 같은 환불 id 는 한 번만 — 우리 API 환불도 같은 웹훅이 온다")
+    void sameRefundRefIsRecordedOnce() {
+        external("re_ext_3", "1000.00", "USD");
+        assertThat(external("re_ext_3", "1000.00", "USD")).isEqualTo(OrderDataService.ExternalRefund.ALREADY_RECORDED);
+        assertThat(order.getRefunds()).hasSize(1);
+        assertThat(order.getRefundedAmount()).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    @DisplayName("통화가 다르거나 주문을 모르면 반영하지 않는다")
+    void mismatchesAreNotRecorded() {
+        assertThat(external("re_ext_4", "10.00", "JPY")).isEqualTo(OrderDataService.ExternalRefund.NOT_REFUNDABLE);
+        assertThat(order.getRefunds()).isEmpty();
+        assertThat(service.recordExternalRefund(PaymentProvider.PAYPAL, "PO-unknown", "r", BigDecimal.TEN, "USD", "test"))
+                .isEqualTo(OrderDataService.ExternalRefund.UNKNOWN_ORDER);
+    }
 }

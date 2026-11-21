@@ -52,7 +52,7 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, String
     @Query(value = """
             select * from users.outbox_event
             where outbox_status = 'STARTED'
-              and event_type <> 'registration-mail'
+              and event_type not in ('registration-mail', 'password-reset-mail')
             order by created_at
             limit :limit
             for update skip locked
@@ -60,14 +60,14 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, String
     List<OutboxEvent> claimPending(@Param("limit") int limit);
 
     /**
-     * 가입 확인 메일 행(RegistrationMailRelay) — 위 {@link #claimPending} 은 이 종류를 가져가지 않는다: 가입 이벤트 릴레이는 실패하면 FAILED
+     * 가입 확인 메일 · 비밀번호 재설정 메일 행(RegistrationMailRelay, 4단계 ⑤) — 위 {@link #claimPending} 은 이 두 종류를 가져가지 않는다: 가입 이벤트 릴레이는 실패하면 FAILED
      * 로 굳히는데(자동 재시도 없음) 메일은 토큰을 보낼 때 만들고 실패하면 다시 보내야 한다(docs/93 ③ 2단계).
      * [JA] 登録確認メールの行 — 上の claimPending はこの種類を取らない(イベントのリレーは失敗で FAILED に固め、メールは再送する)。
      */
     @Query(value = """
             select * from users.outbox_event
             where outbox_status = 'STARTED'
-              and event_type = 'registration-mail'
+              and event_type in ('registration-mail', 'password-reset-mail')
             order by created_at
             limit :limit
             for update skip locked

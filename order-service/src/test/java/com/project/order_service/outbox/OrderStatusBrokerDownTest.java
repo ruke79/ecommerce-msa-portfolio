@@ -91,7 +91,7 @@ class OrderStatusBrokerDownTest {
         when(trace.resume(any(), anyString(), any(Supplier.class)))
                 .thenAnswer(i -> ((Supplier<Object>) i.getArgument(2)).get());
         PaymentOutboxScheduler relay = new PaymentOutboxScheduler(helper, mock(PaymentRequestKafkaPublisher.class),
-                publisher, trace, mock(ProductUpdateKafkaPublisher.class), mock(CartEmptyKafkaPublisher.class));
+                publisher, trace, mock(ProductUpdateKafkaPublisher.class), mock(CartEmptyKafkaPublisher.class), mock(com.project.order_service.ports.output.message.publisher.DeliveryResyncKafkaPublisher.class));
         ReflectionTestUtils.setField(relay, "batchSize", 10);
 
         relay.processOutboxMessage();

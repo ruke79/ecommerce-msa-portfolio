@@ -642,10 +642,13 @@ public class NotificationEventListener {
                     continue;
                 }
                 String amount = refundAmount(textOf(event, "amount"), textOf(event, "currency"));
+                // 재고 부족 자동 환불(cause=stock-shortage)이면 '품절 취소' 문구 — 무엇이 왜 빠졌는지 알린다(5단계 15).
+                // [JA] 在庫不足の自動返金なら「品切れキャンセル」の文言 — 何がなぜ外れたかを知らせる。
+                boolean soldOut = "stock-shortage".equals(textOf(event, "cause"));
                 notificationService.create(
                         userId, NotificationType.PAYMENT_REFUNDED,
-                        NotificationTexts.PARTIAL_REFUND_TITLE,
-                        NotificationTexts.partialRefund(orderId, amount),
+                        soldOut ? NotificationTexts.SOLD_OUT_CANCEL_TITLE : NotificationTexts.PARTIAL_REFUND_TITLE,
+                        soldOut ? NotificationTexts.soldOutCancel(orderId, amount) : NotificationTexts.partialRefund(orderId, amount),
                         NotificationType.PAYMENT_REFUNDED.path() + orderId,
                         eventId,
                         Map.of("subject", NotificationTexts.orderSubject(orderId)));

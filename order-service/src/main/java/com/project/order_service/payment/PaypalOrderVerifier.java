@@ -60,6 +60,7 @@ public interface PaypalOrderVerifier {
      * PayPal は<b>注文</b> id ではなく<b>キャプチャ</b> id で返金する。実装が注文を照会して
      * キャプチャ id を探しに行く — 呼び出し側は保存しておいた注文 id しか知らない。
      *
+     *
      * @param refundKey 이 환불의 멱등 키({@code PayPal-Request-Id} 에 실린다). 부분 환불은
      *                  같은 캡처에 환불이 여럿이라 캡처 id 만으로는 두 번째가 첫 번째의
      *                  응답으로 대체된다. {@code null} 이면 캡처 id 만
@@ -69,4 +70,21 @@ public interface PaypalOrderVerifier {
      */
     RefundedPaypalOrder refund(String paypalOrderId, java.math.BigDecimal amount, String currency,
             String refundKey);
+
+    /**
+     * 웹훅의 서명을 PayPal 에 묻는다({@code POST /v1/notifications/verify-webhook-signature}, 5단계 14). 본문은 받은 그대로 —
+     * 파싱했다 다시 쓰면 숫자 · 공백이 달라져 검증이 깨질 수 있다. 꺼진 모드면 거절(검증 없이 받지 않는다).
+     * [JA] ウェブフックの署名を PayPal に問う。本文は受け取ったまま。無効モードなら拒否。
+     */
+    default boolean verifyWebhookSignature(String webhookId, java.util.Map<String, String> headers, String rawEvent) {
+        throw new PaypalVerificationException("PayPal 검증이 꺼져 있어 웹훅을 받지 않습니다.");
+    }
+
+    /**
+     * 캡처 id → 그 캡처의 PayPal 주문 id({@code GET /v2/payments/captures/{id}} 의 supplementary_data.related_ids.order_id).
+     * 웹훅 본문을 믿지 않고 PayPal 이 답한 값으로 우리 주문을 찾는다. [JA] キャプチャ id → PayPal の注文 id(PayPal の答えで探す)。
+     */
+    default String paypalOrderIdOfCapture(String captureId) {
+        throw new PaypalVerificationException("PayPal 검증이 꺼져 있어 캡처를 조회하지 않습니다.");
+    }
 }

@@ -99,6 +99,11 @@ public class OrderRefundedKafkaPublisher {
         event.put("currency", latest.getCurrency());
         event.put("complete", order.getOrderStatus() == OrderStatus.REFUNDED);
         event.put("refundCount", refunds.size());
+        // 재고 부족(품절) 자동 환불이면 표시 — notification 이 "일부 상품 품절 취소" 로 알린다(5단계 15, 대형 EC 의 품절 취소 안내).
+        // [JA] 在庫不足(品切れ)の自動返金なら印 — notification が「一部商品の品切れキャンセル」として知らせる。
+        if (com.project.order_service.service.OrderStockShortageService.REFUND_REASON.equals(latest.getReason())) {
+            event.put("cause", "stock-shortage");
+        }
         // 키는 환불 **순번**이다 — 환불 참조는 제공자에 따라 결제 참조로 대신 채워져 여러 번의 부분 환불이
         // 같은 값을 가질 수 있다(그러면 두 번째 알림이 중복으로 걸러진다). n 번째 환불은 하나뿐이다.
         // [JA] キーは返金の**順番**である — 返金参照はプロバイダによって決済参照で代わりに埋められ、複数回の部分返金が

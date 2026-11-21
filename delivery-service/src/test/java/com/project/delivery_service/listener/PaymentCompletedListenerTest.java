@@ -60,7 +60,8 @@ class PaymentCompletedListenerTest {
     private static OrderShippingDto order(OrderShippingDto.Address address) {
         return new OrderShippingDto(889196209423729897L, 7L, "PAID", address, List.of(
                 new OrderShippingDto.Item(101L, 10L, "티셔츠", "/img/t.png", 2, "TEE-BLK-M"),
-                new OrderShippingDto.Item(102L, 11L, "바지", "/img/p.png", 0)));
+                new OrderShippingDto.Item(102L, 11L, "바지", "/img/p.png", 1),
+                new OrderShippingDto.Item(103L, 12L, "모자", "/img/c.png", 0, "CAP-F")));
     }
 
     private static OrderShippingDto.Address seoul() {
@@ -88,13 +89,22 @@ class PaymentCompletedListenerTest {
         assertThat(c.addressLine1()).isEqualTo("서울 강남구 테헤란로 1");
         assertThat(c.addressLine2()).isEqualTo("3층");
         assertThat(c.country()).isEqualTo("KR");
+        // 🔴 보낼 수(배정된 수) 0 인 줄은 싣지 않는다 — 재고 부족으로 취소된 품목(5단계 15). 예전 규칙은 '최소 1' 이라 없는 물건을 실었다.
+        // [JA] 送る数(割り当て数)が 0 の行は載せない — 在庫不足で取り消された品目。以前の規則は「最低 1」で、ない物を載せていた。
         assertThat(c.items()).extracting(CreateDeliveryCommand.Item::orderProductId).containsExactly(101L, 102L);
-        // 수량 0 은 상자에 넣을 수 없다 — 최소 1
-        // [JA] 数量 0 は箱に入れられない — 最小 1
         assertThat(c.items()).extracting(CreateDeliveryCommand.Item::quantity).containsExactly(2, 1);
         // 포장 목록의 SKU — 주문 품목이 복사해 둔 값을 그대로. SKU 가 없던 주문(옛 품목)은 null 인 채로 배송은 만들어진다
         // [JA] 梱包リストの SKU — 注文品目がコピーしておいた値をそのまま。SKU がなかった注文(古い品目)は null のまま配送が作られる
         assertThat(c.items()).extracting(CreateDeliveryCommand.Item::skuCode).containsExactly("TEE-BLK-M", null);
+    }
+
+    @Test
+    @DisplayName("🔴 보낼 품목이 하나도 없으면(전부 재고 부족) 배송을 만들지 않는다 — 결제 취소가 뒤따른다")
+    void allShortCreatesNoDelivery() {
+        when(orderServiceClient.shipping(889196209423729897L)).thenReturn(new OrderShippingDto(889196209423729897L, 7L, "PAID", seoul(),
+                List.of(new OrderShippingDto.Item(101L, 10L, "티셔츠", "/img/t.png", 0, "TEE"))));
+        listener.onPayment(List.of(COMPLETED), null);
+        verify(deliveryService, never()).createFromOrder(any());
     }
 
     @Test

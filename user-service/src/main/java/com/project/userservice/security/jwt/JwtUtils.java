@@ -214,6 +214,8 @@ public class JwtUtils {
    * 通用する(最大14日、その後は自然に消える)。
    */
   public static final String TOKEN_TYPE_CLAIM = "tokenType";
+  /** 공개 데모 계정 표시(게이트웨이 DemoAccessPolicy 와 같은 이름). [JA] 公開デモアカウントの表示。 */
+  public static final String DEMO_CLAIM = "demo";
   public static final String ACCESS = "access";
   public static final String REFRESH = "refresh";
 
@@ -225,13 +227,19 @@ public class JwtUtils {
     String sessionId = generateSessionId();
     redisSessionMgr.addSession(email, sessionId);
 
-    return Jwts.builder()
+    var builder = Jwts.builder()
         .subject(email)
         .claim(UID_CLAIM, user.getUserId())
         .claim("role", role)
         .claim("is2faEnabled", user.isTwoFactorEnabled())
         .claim("sessionId", sessionId)
-        .claim(TOKEN_TYPE_CLAIM, ACCESS)
+        .claim(TOKEN_TYPE_CLAIM, ACCESS);
+    // 공개 데모 계정 — 게이트웨이가 이 표시로 계정 · 자격 · 리뷰 쓰기를 막는다(DemoAccessPolicy). 갱신(리프레시)도 이 메서드라 표시가 이어진다.
+    // [JA] 公開デモアカウント — ゲートウェイがこの表示で書き込みを止める。更新(リフレッシュ)もこのメソッドなので表示が続く。
+    if (user.isDemo()) {
+      builder.claim(DEMO_CLAIM, true);
+    }
+    return builder
         .issuedAt(new Date(System.currentTimeMillis()))
         .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
         .header().keyId(ring().activeKid()).and()

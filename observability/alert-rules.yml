@@ -48,8 +48,11 @@ groups:
 
       - alert: HighP99Latency
         expr: |
+          # 오래 열린 연결은 뺀다 — SSE(/api/sse 15분) · SockJS(/chat/**) · 그 비동기 시간 초과(/error) · 게이트웨이 WebSocket 중계(UNKNOWN).
+          # 🐛 2026-11-21: 누군가 사이트를 열어 두면 user-service 의 SSE 30초가 p99 가 되어 늘 울렸다(지연과 무관 — 측정 전 확인을 막았다).
+          # [JA] 長く開く接続は除く — SSE · SockJS · その非同期タイムアウト(/error) · ゲートウェイの WebSocket 中継(UNKNOWN)。
           histogram_quantile(0.99,
-            sum by (service, le) (rate(http_server_requests_seconds_bucket[5m]))) > 3
+            sum by (service, le) (rate(http_server_requests_seconds_bucket{uri!~"/api/sse|/chat/\\*\\*|/error|UNKNOWN"}[5m]))) > 3
         for: 5m
         labels: { severity: warning }
         annotations:
@@ -115,6 +118,46 @@ groups:
         annotations:
           summary: "재고 예약 없이 받은 주문이 최근 15분 {{ $value | humanize }}건입니다 — catalog 에 닿지 못함(fail-open)"
           description: "주문은 막지 않았지만 그 동안은 마지막 재고의 이중 판매를 막지 못합니다(초과분은 결제 뒤 자동 환불 — StockShortageOccurred). order-service 로그의 '재고 예약 불가' 와 catalog 의 gRPC · 재고 예약 지연을 확인하세요(docs/59)."
+
+      # 서비스 간 Feign 서킷 브레이커가 5분 넘게 닫히지 못했다(열림 1 · 반열림 2 — 반열림 시험도 실패해 다시 열리기를 되풀이), docs/101.
+      # 그 상류가 아프다: 부르는 쪽은 기다리지 않고 바로 기존 실패 처리(503 · 예약 없이 진행 · 쿠폰 막음)를 탄다. 처리: name 의 상류
+      # 서비스(cart-catalog → catalog)의 파드 · 지연 · 오류를 본다. 상태 전이는 그 서비스 로그의 '상류 서킷 브레이커' WARN.
+      # [JA] サービス間 Feign のサーキットブレーカーが 5 分以上閉じられない — その上流が不調。
+      # 결제 완료가 결제를 받을 수 없는 주문(취소 · 환불 · 없음)에 도착했다(5단계 12) — 손님은 돈을 냈는데 주문이 없다. 설계상 생기지
+      # 않는다(결제가 기록된 주문은 취소되지 않는다). 처리: 로그 '결제를 받을 수 없는 주문' 의 orderId 로 제공자 콘솔에서 결제를 찾아 환불.
+      # [JA] 決済完了が決済を受けられない注文に届いた — お客さまは支払ったのに注文がない。提供者のコンソールで確認 · 返金する。
+      - alert: OrderPaymentForInactiveOrder
+        expr: sum by (service) (increase(order_payment_inactive_order_total[30m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "결제 완료가 취소 · 환불된(또는 없는) 주문에 도착했습니다 — 최근 30분 {{ $value | humanize }}건"
+          description: "손님은 돈을 냈는데 받을 주문이 없습니다. order-service 로그 '결제를 받을 수 없는 주문' 의 orderId 로 결제 제공자 콘솔에서 결제를 찾아 환불하세요(설계상 생기지 않는 경우 5 · 6단계 12)."
+
+      # 결제 분쟁(차지백 청구)이 열렸다 · 진행됐다(5단계 14 — PayPal 웹훅 CUSTOMER.DISPUTE.*). 처리: 로그 'PayPal 분쟁' 의 캡처로 주문을 찾아
+      # 배송을 멈출지 정하고 PayPal 콘솔에서 증빙을 낸다(기한이 있다). [JA] 決済の紛争が開いた — 出荷を止めるか決め、コンソールで証憑を出す。
+      - alert: PaymentDisputeOpened
+        expr: sum by (service, provider) (increase(order_payment_dispute_total[30m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.provider }} 결제 분쟁 이벤트가 왔습니다 — 최근 30분 {{ $value | humanize }}건"
+          description: "order-service 로그 'PayPal 분쟁' 의 캡처 id 로 주문을 찾아 배송을 멈출지 정하고, 제공자 콘솔에서 기한 안에 증빙을 내세요."
+
+      # 제공자 콘솔에서 일부만 환불됐다 · 웹훅 환불을 주문에 맞추지 못했다(5단계 14). 일부 환불은 금액만 반영되고 품목 · 재고는 그대로다.
+      # [JA] コンソールで一部だけ返金された · 注文に合わせられなかった — 品目 · 在庫は人が直す。
+      - alert: ExternalRefundNeedsReview
+        expr: sum by (service, provider, result) (increase(order_payment_external_refund_total{result=~"partial|unmatched"}[30m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.provider }} 콘솔 환불을 손으로 확인해야 합니다({{ $labels.result }}) — 최근 30분 {{ $value | humanize }}건"
+          description: "partial: 금액만 반영 — 어느 품목인지 관리자 화면에서 수량 · 재고를 맞추세요. unmatched: 주문을 찾지 못했거나 상태 · 통화가 맞지 않아 반영하지 않았습니다 — 로그 '외부 환불' 을 보세요."
+
+      - alert: UpstreamCircuitOpen
+        expr: max by (service, name) (upstream_circuit_state) >= 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} 의 상류 서킷 브레이커 {{ $labels.name }} 가 5분 넘게 열려 있습니다"
+          description: "그 상류 서비스가 연결 실패 · 시간 초과 · 5xx 를 되풀이합니다. 부르는 쪽은 바로 실패 처리로 넘어가는 중입니다(docs/101). 상류의 파드 · 지연 · 오류를 확인하세요."
 
       # 결제 확정 차감 · 복원(product-update)이 DLT 로 갔다 — 재고가 줄지 않은 채 예약이 만료되면 같은 수량이 다시 팔린다(돈은 받았고
       # 물건은 없다). 일시적 DB 실패는 약 3분 다시 하므로(catalog KafkaDltConfig) 여기까지 온 것은 사람이 봐야 한다.
@@ -373,6 +416,7 @@ groups:
   #      Collector の指標名はバージョンによって _total が付くこともあるので両方受ける。
   #      アラートが出ていけない — このアラート自身も出ていけないかもしれない(同じ経路)。そのため ops/05 · Grafana で見えるようにしておく(docs/22 §1)。
   # [JA] アラートが出ていけない — このアラート自身も届かないかもしれない。ops/05 · Grafana で見えるようにしておく。
+  # [JA] アラートが出ていけない — このアラート自身も届かないかもしれない。ops/05 · Grafana で見えるようにしておく。
   - name: alert-delivery
     rules:
       - alert: AlertDeliveryFailing
@@ -518,6 +562,7 @@ groups:
   #      エラー = 5xx のみ(4xx は客側)。遅延 = 境界を超えた要求の割合(5xx 含む)。
   #      バーンレート警報(Google SRE workbook 5 章): 速い 1h · 5m が 14.4 倍、遅い 6h · 30m が 6 倍。窓は 14 日 — 本番 Prometheus の保持が
   #      15 日なので 30 日予算は数えられない(docs/91 §2-4)。要求が少なければ(1 時間平均 毎秒 0.03 = 毎時約 100 未満)鳴らない。
+  # [JA] SLO 五つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
   # [JA] SLO 五つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
   - name: slo
     rules:

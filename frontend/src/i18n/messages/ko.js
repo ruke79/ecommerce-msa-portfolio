@@ -95,6 +95,7 @@ const ko = {
     // [JA] ログイン成功後にサーバーがコードで知らせる結果。サーバーは表示言語を知らないので
     //      文言はここで選ぶ(LoginResponse のコメント)。
     "auth.signin.result.login_success": "로그인되었습니다.",
+    "auth.signin.result.demo": "데모 계정으로 로그인했습니다.",
     "auth.signin.password_breached": "이 비밀번호는 다른 사이트에서 유출된 비밀번호 목록에 있습니다. 내 정보 › 보안에서 비밀번호를 바꿔 주세요.",
     "auth.signin.result.multi_login":
         "다른 기기에서 로그인되어 있어 이전 접속을 종료했습니다.",

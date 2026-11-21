@@ -157,7 +157,7 @@ public class Shipment {
     @OrderBy("occurredAt ASC")
     private List<DeliveryEvent> events = new ArrayList<>();
 
-    @OneToMany(mappedBy = "shipment", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "shipment", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<ShipmentItem> items = new ArrayList<>();
 
     @Column(name = "created_at", nullable = false)
@@ -251,6 +251,7 @@ public class Shipment {
     /** 조회에 성공했다. 실패 카운터를 지우고 다음 주기를 잡는다. */
     // [JA] 照会に成功した。失敗カウンタを消し、次の周期を設定する。
     /**
+    /**
      * 폴러가 이 상자를 가져갔다 — 조회를 마칠 때까지 다른 파드가 다시 가져가지 않도록 다음 조회 시각을 잠시 미룬다(리스).
      * 조회 결과를 반영하면 {@link #recordSyncSuccess} · {@link #recordSyncFailure} 가 제 시각으로 다시 잡는다.
      *
@@ -333,6 +334,17 @@ public class Shipment {
 
     public void addItem(ShipmentItem item) {
         this.items.add(item);
+    }
+
+    /** 품목을 뺀다 — 보낼 수가 0 이 된 줄(재고 부족, 5단계 15). 행은 orphanRemoval 이 지운다. [JA] 送る数が 0 になった行を外す。 */
+    void removeItem(ShipmentItem item) {
+        this.items.remove(item);
+        touch();
+    }
+
+    /** 아직 고칠 수 있는 상자 — 송장이 없고 대기 중. 송장이 붙으면 창고가 집었거나 택배사에 넘어갔다. [JA] まだ直せる箱 — 送り状なし · 待機中。 */
+    public boolean isEditable() {
+        return status == DeliveryStatus.PENDING && (trackingNumber == null || trackingNumber.isBlank());
     }
 
     private void touch() {

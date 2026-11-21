@@ -88,10 +88,11 @@ public class CartController {
                  Cart cart;
                  try {
                      cart = cartService.saveCart(request, userId);
-                 } catch (IllegalArgumentException e) {
-                     // 수량이 범위 밖이다(CartService.checkedQty) — 고칠 수 있는 요청 오류다.
-                     // [JA] 数量が範囲外(CartService.checkedQty) — 直せるリクエストエラーである。
-                     return ResponseEntity.badRequest().body(new MessageResponse(ClientMessage.of(e)));
+                 } catch (RuntimeException e) {
+                     // 수량이 범위 밖(IllegalArgumentException)은 400, catalog 호출 실패 · 서킷 브레이커 열림 · DB 는 503 — 다른 장바구니 경로와 같다.
+                     // 🐛 예전에는 IllegalArgumentException 만 잡아 catalog 가 아프면 전역 처리기의 500 이었다(docs/101 §4).
+                     // [JA] 範囲外の数量は 400、catalog の失敗 · ブレーカー開 · DB は 503 — 以前は catalog の失敗が 500 だった。
+                     return failure("저장", userId, e);
                  }
 
                  if (null != cart ) {

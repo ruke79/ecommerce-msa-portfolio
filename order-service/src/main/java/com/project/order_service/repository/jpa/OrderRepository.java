@@ -26,10 +26,13 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // 비관적 잠금: 주문을 조회할 때 다른 트랜잭션이 해당 주문을 변경하지 못하도록 락을 겁니다.
     // [JA] 悲観的ロック: 注文を照会する時、他のトランザクションがその注文を変更できないようロックをかける。
     //@Lock(LockModeType.PESSIMISTIC_WRITE)
+    //@Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Order> findByOrderIdAndOrderStatus(Long orderId, OrderStatus status);
 
     // 낙관적 잠금: 주문 엔티티의 @Version 필드를 활용하여 동시성 문제를 해결합니다.
     // [JA] 楽観的ロック: 注文エンティティの @Version フィールドを活用して同時実行の問題を解決する。
+    //@Lock(LockModeType.OPTIMISTIC)
+    /**
     //@Lock(LockModeType.OPTIMISTIC)
     /**
      * 추적 번호로 주문 — 품목 · 배송지를 함께 읽는다. 결제 시작 · 입금 안내 · Stripe 처럼 트랜잭션 밖에서 이 주문의 품목을 쓰는 곳이 많다
@@ -41,6 +44,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"orderedProducts", "shippingAddress"})
     Optional<Order> findByTrackingId(String trackingId);
 
+    /** 제공자 웹훅(콘솔 환불 · 분쟁)이 가리키는 주문 — 제공자 + 그 제공자의 결제 id(5단계 14). [JA] 提供者のウェブフックが指す注文。 */
+    Optional<Order> findByPaymentProviderAndProviderPaymentId(com.project.common.constants.PaymentProvider paymentProvider,
+            String providerPaymentId);
+
     /**
      * 주문 행을 잠그고(SELECT … FOR UPDATE) 지금 버전을 읽는다 — 돈이 오가는 경로(환불 · 결제 기록)를 줄 세운다.
      *
@@ -51,6 +58,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      * 以前はロックせずに読み、@Version はコミット時にしか見なかった。同じ注文の返金二つが重なると両方とも提供者にお金を返させた後、
      * 遅い方のコミットだけが楽観ロックで失敗した — お金は二回出て記録は一回だった。ロック後にバージョンが読んだものと違えば
      * (その間に別のリクエストが変えた)提供者を呼ぶ前に止まる。
+     * [JA] 注文行をロックして現在のバージョンを読む — 返金を直列化する。以前は二つの返金が両方とも提供者を呼び、記録は一回だった。
      */
     @org.springframework.data.jpa.repository.Query(value = "select version from orders.orders where order_id = :id for update",
             nativeQuery = true)
@@ -58,9 +66,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     /**
      * 결제는 기록됐는데(제공자 결제 참조가 붙었다) 결제 응답이 오지 않아 아직 결제 전인 주문 — 대사(UnconfirmedPaymentWatch).
-     * 정상이면 몇 초 안에 PAID 가 된다.
-     * [JA] 決済は記録された(提供者の決済参照が付いた)のに決済応答が来ず、まだ決済前の注文 — 照合(UnconfirmedPaymentWatch)。
-     * 正常なら数秒以内に PAID になる。
+     * 정상이면 몇 초 안에 PAID 가 된다. [JA] 決済は記録されたのに決済応答が来ず、まだ決済前の注文 — 照合用。
      */
     @org.springframework.data.jpa.repository.Query("select o.orderId from Order o where o.orderStatus = :status"
             + " and o.providerPaymentId is not null and o.updatedAt < :before order by o.orderId")
@@ -127,6 +133,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      // --- 페이지 기반 조회 메서드 (Pageable) ---
      // [JA] --- ページベースの照会メソッド (Pageable) ---
     /**
+    /**
      * 고객 ID로 주문 목록을 페이지 단위로 조회합니다.
      *
      * <p>[JA] 顧客 ID で注文一覧をページ単位で照会する。
@@ -142,6 +149,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // --- 커서 기반 조회 메서드 (Cursor-based Pagination) ---
     // [JA] --- カーソルベースの照会メソッド (Cursor-based Pagination) ---
+    /**
     /**
      * 특정 고객의 주문 목록을 커서를 기준으로 페이지 단위로 조회합니다.
      * 커서는 마지막으로 조회한 주문 ID를 의미하며, 이 ID보다 작은 주문을 가져옵니다.

@@ -204,6 +204,8 @@ PayPal に届かなかったとき（ネットワーク・トークン発行の�
 
 > 🕰️ その後(2026-11-14): **返金**はサーバーが提供者に要求する管理者返金ができた(`POST /api/order/refund`、部分返金 V9 — PayPal も `RefundingGateway`)。ただし PayPal のコンソールで直接行った返金 · 紛争を受ける PayPal の Webhook は今もない(Webhook は Stripe · ポートワンだけ)。**通貨**は注文ごとに保存する(V6 — ストア通貨 `base-currency` と請求通貨を分ける)。
 
+> 🕰️ その後(2026-11-21、第 5 段階 14): **PayPal の Webhook ができた** — `POST /order-service/api/order/payment/paypal/webhook`(公開、`PAYPAL_WEBHOOK_ID` が空なら 503)。署名は PayPal の `verify-webhook-signature` に受け取った本文のまま問う。`PAYMENT.CAPTURE.REFUNDED · REVERSED` はキャプチャ id で PayPal に問い直して注文を探し **外部返金** として反映する(`OrderDataService.recordExternalRefund` — 提供者を再び呼ばない · 同じ返金 id なら飛ばす: 自分の API 返金の Webhook も来る · 全額なら REFUNDED + pay CANCELED、一部なら金額だけ + 警報 `ExternalRefundNeedsReview`)。`CUSTOMER.DISPUTE.*` はイベント id で一度だけ数え critical 警報 `PaymentDisputeOpened`(出荷を止めるかは人が)。その他(サブスク `BILLING.SUBSCRIPTION.*` · `PAYMENT.SALE.*`)は 200 · ログだけ — リソースのバージョンはイベントごとに PayPal が決める(キャプチャ 2.0 · 紛争 · Sale 1.0)。コンソール(sandbox · live 別)に URL · イベントを登録し Webhook ID を ConfigMap に。Stripe のコンソール返金 · 紛争はまだ(次)。
+
 ## 6. サンドボックスでテストする（韓国で決済が通らないとき）
 
 PayPal は韓国の個人アカウントの受け取りを制限している。そのため **ライブの資格情報では国内で決済

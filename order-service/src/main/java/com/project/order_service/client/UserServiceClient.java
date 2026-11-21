@@ -45,22 +45,8 @@ import com.project.order_service.config.FeignConfig;
 @FeignClient(name="user-service", url="${feign.user-url}", configuration = FeignConfig.class)
 public interface UserServiceClient {
 
-   /**
-    * 이메일로 사용자를 찾는다.
-    *
-    * <p>⚠️ 게이트웨이를 거치지 않는 <b>서비스 간 직접 호출</b>이라 {@code User-Role} 헤더가
-    * 붙지 않는다. 받는 쪽은 그것을 "내부 호출" 의 근거로 삼는다
-    * ({@code AuthController.findUserByEmail}) — 그러니 이 호출에 {@code User-Role} 을
-    * 실어 보내면 <b>관리자가 아니라는 이유로 403</b> 이 된다. 인터셉터가 그 헤더를
-    * 전달하지 않는 것은 의도된 것이다.
-    *
-    * <p>[JA] メールでユーザーを探す。
-    * ⚠️ ゲートウェイを通らない <b>サービス間の直接呼び出し</b> なので {@code User-Role} ヘッダーが付かない。受ける側はそれを
-    * 「内部呼び出し」の根拠にする({@code AuthController.findUserByEmail}) — だからこの呼び出しに {@code User-Role} を載せると
-    * <b>管理者でないという理由で 403</b> になる。インターセプターがそのヘッダーを渡さないのは意図したものだ。
-    */
-   @GetMapping("api/auth/user/id")
-   public ResponseEntity<?> findUserByEmail(@RequestParam("email") String email);
+   // 부르는 곳이 없던 findUserByEmail · findUserByName · getUserInfoWithAddresses · selectShippingAddresses 는 지웠다(docs/101 §3).
+   // [JA] 呼ぶ所のない四つは削除した。
 
    /**
     * id 여럿 → 이메일({@code {"<id>": "<email>"}}). 관리자 주문 목록의 표시용이다 — 고객 사본을 없애면서 옮겨 왔다
@@ -71,13 +57,4 @@ public interface UserServiceClient {
     */
    @GetMapping("api/auth/user/emails")
    java.util.Map<String, String> findEmailsByIds(@RequestParam("ids") java.util.List<Long> ids);
-
-   @GetMapping("api/auth/user/name")
-   public ResponseEntity<?> findUserByName(@RequestParam("userName") String userName);
-
-   @GetMapping("/api/user/profile/address")
-   ResponseEntity<?> getUserInfoWithAddresses();
-
-   @GetMapping("/api/user/profile/select/{addressId}")
-    ResponseEntity<?> selectShippingAddresses(@PathVariable("addressId") String addressId);
 }

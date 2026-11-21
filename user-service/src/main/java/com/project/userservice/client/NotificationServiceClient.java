@@ -31,6 +31,13 @@ public interface NotificationServiceClient {
      * @param code    확인할 6자리(발송에는 null). 쿼리가 아니라 본문 — URL 은 접근 로그 · 추적에 남는다.
      *     [JA] 確認する 6 桁(送信には null)。クエリではなく本文 — URL はアクセスログ · 追跡に残る。
      */
+    /** 공개 데모 계정의 알림 초기화(docs/100). [JA] 公開デモアカウントの通知初期化。 */
+    @PostMapping("api/notifications/internal/demo-reset")
+    java.util.Map<String, Integer> demoReset(@RequestBody DemoResetRequest request);
+
+    record DemoResetRequest(java.util.List<Long> userIds) {
+    }
+
     record TwoFactorSmsRequest(Long userId, String binding, String code) {
 
         /** 코드 · 결속값을 문자열 표현에 남기지 않는다(Feign 로그 · 예외 메시지). */
