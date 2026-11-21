@@ -506,5 +506,5 @@ log.error/warn のうち "수동 … 필요" の文言がすべてルールの�
 - **ランタイムのログレベル変更**（actuator `loggers`）は開放しなかった。認証なしで開くと、facebook 側のように誰でもレベルを
   変えられる — 管理ポートの分離や認証と一緒に行う必要がある。
 - **ログベースのアラート**（ERROR の急増など）とログ氾濫の防御（毎秒の上限）は今回の範囲外だ。
-  🕰️ その後入ったログのアラートは §4i の 2 つ（`ManualActionRequired` · `ProductSoldOut`）だけ — ERROR の急増 · 氾濫の防御はまだない。
+  🕰️ その後入ったログのアラートは §4i の 2 つ（`ManualActionRequired` · `ProductSoldOut`）だけ — ERROR の急増 · 氾濫の防御はまだない。 → 🕰️ 2026-11-21: ERROR の急増は `ErrorLogSurge`（サービスごとに 5 分 20 行超 · 直前 1 時間平均の 3 倍超が 5 分、`level` ラベル — Alloy。基準は本番 7 日のバックテストで — [docs/99](99-alert-thresholds.md)）。⚠️ ルールファイル一つに LogQL のエラーがあると Loki はそのファイル全体を捨てる（API は `groups: []` で成功）— `LokiRulesLoadTest`（コンテナ、Loki 3.4.2）が防ぐ。氾濫の防御（毎秒の上限）はまだ。
 - **config-server** は common を使わないので、マスキング・JSON が適用されない。ユーザーデータを扱わない。

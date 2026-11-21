@@ -152,14 +152,15 @@ class RegisterDuplicateTest {
 
         controller.registerUserAccount(signup(), request);
 
-        verify(userService, never()).registerNewUserAccount(any());
+        verify(userService, never()).registerNewUserAccountWithConfirmationMail(any(), any());
     }
     /** 🐛 예전: 400 의 본문이 문자열 하나라 화면이 이유를 읽지 못했다(docs/68 §18 — 유출 비밀번호를 고칠 수 없었다). */
     // [JA] 🐛 以前: 400 の本文が文字列一つで画面が理由を読めなかった(docs/68 §18 — 漏洩パスワードを直せなかった)。
     @Test
     @DisplayName("🔴 400 도 message 를 담는다 — 유출 비밀번호면 화면이 그 이유를 보여 줄 수 있다")
     void badRequestCarriesMessage() throws Exception {
-        org.mockito.Mockito.when(userService.registerNewUserAccount(org.mockito.ArgumentMatchers.any()))
+        org.mockito.Mockito.when(userService.registerNewUserAccountWithConfirmationMail(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenThrow(new com.project.userservice.security.password.BreachedPasswordException());
 
         ResponseEntity<?> response = controller.registerUserAccount(signup(), request);

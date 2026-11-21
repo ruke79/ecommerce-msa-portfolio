@@ -282,3 +282,7 @@ outbox.partitions.retention-months 는 0(끔) 또는 {} 이상: {}
 # common/util/ImageUploads — 업로드 이미지 형식(리뷰 · 프로필 · 상품 이미지)
 이미지 파일(png · jpg · gif · webp)만 올릴 수 있습니다.
 = 画像ファイル(png・jpg・gif・webp)のみアップロードできます。
+
+# 장바구니 — 한 요청의 줄 수 상한(CartRequest · ProductInfoRequest)
+장바구니 줄은 한 번에 100개까지입니다.
+= カートの行は一度に 100 件までです。

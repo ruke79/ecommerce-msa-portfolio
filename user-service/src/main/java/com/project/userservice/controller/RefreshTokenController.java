@@ -166,6 +166,12 @@ public class RefreshTokenController {
             if (issuedAt == null || issuedAt.before(changedAt)) {
                 log.info("비밀번호 변경 이전에 발급된 리프레시 토큰을 거절한다: userId={}",
                         tokenOwner.getUserId());
+                // 🐛 예전: 쿠키를 남겨 둬, 화면의 갱신이 겹칠 때마다(알림 · 채팅 연결 · 401 재시도) 같은 쿠키로 다시 와 같은 거절을
+                //    되풀이했다(2026-11-21 운영 — 0.26초 간격 4번). 다른 거절처럼 쿠키를 지우고 그 묶음도 끊는다 — 다음 시도는
+                //    쿠키가 없어 바로 204(로그아웃)다.
+                // [JA] 以前は Cookie を残し、画面の更新が重なるたびに同じ拒否を繰り返した(本番で 0.26 秒間隔 4 回)。他の拒否と同じく Cookie を消し、ファミリーも切る。
+                refreshTokenService.revoke(refresh);
+                expireRefreshCookie(response);
                 return new ResponseEntity<>("password changed", HttpStatus.UNAUTHORIZED);
             }
         }
@@ -181,6 +187,7 @@ public class RefreshTokenController {
         // [JA] 🔒 停止 · ロック · 期限切れのアカウントは更新しない(docs/68 §13)。🐛 以前は見ておらず、管理者が止めてもすでにログインした利用者は
         //      最大 30 日間更新し続けた。止めるときにまとめて切りもするが(UserServiceImpl.endSessions)ここが最後の防衛線だ。
         //      ログイン 5 回失敗の自動ロック(Redis, LoginAttemptService)は見ない — 攻撃者がパスワードを間違えて他人のログインを切れてしまう。
+        // [JA] 停止 · ロック · 期限切れのアカウントは更新しない。自動ロック(Redis)は見ない — 攻撃者が他人のログインを切れてしまう。
         if (!tokenOwner.canSignIn()) {
             log.info("막힌 계정의 리프레시 토큰을 거절한다: userId={}", tokenOwner.getUserId());
             refreshTokenService.revoke(refresh);

@@ -445,10 +445,9 @@ public class AuthController {
                             HttpStatus.CONFLICT);
                 }
 
-                user = userService.registerNewUserAccount(accountDto);
-                //userService.addUserLocation(registered, getClientIP(request));
-                eventPublisher.publishEvent(new com.project.userservice.registration.OnRegistrationCompleteEvent(user,
-                        request.getLocale(), getAppUrl(request)));
+                // 계정과 확인 메일 행을 한 트랜잭션에 — 메일은 아웃박스 릴레이가 보낸다(docs/93 ③ 2단계).
+                // [JA] アカウントと確認メールの行を一つのトランザクションで — メールはアウトボックスのリレーが送る。
+                user = userService.registerNewUserAccountWithConfirmationMail(accountDto, request.getLocale());
 
                 //userService.registerConfirmed(user);
 
@@ -511,9 +510,8 @@ public class AuthController {
             }
 
             // 새 토큰을 발급하고 메일을 다시 보낸다. 리스너가 커밋 이후 비동기로 처리한다.
-            // [JA] 新しいトークンを発行しメールを再送する。リスナーがコミット後に非同期で処理する。
-            eventPublisher.publishEvent(new com.project.userservice.registration.OnRegistrationCompleteEvent(
-                    user, request.getLocale(), getAppUrl(request)));
+            // 아웃박스에 적는다 — 보내기 · 재시도는 릴레이(docs/93 ③ 2단계). [JA] アウトボックスに書く — 送信 · 再試行はリレー。
+            userService.requestVerificationMail(user, request.getLocale());
 
             log.info("확인 메일 재발송 요청: userId={}", user.getUserId());
 

@@ -118,6 +118,7 @@
 | 65 | [사이즈 단위 SKU](65-size-level-sku.ko.md) | SKU 를 색상에서 사이즈 한 줄로, 규칙은 DB 함수 한 곳, 장바구니 → 주문 → 포장 목록 기록, 관리자 등록 사이즈의 부모 누락 버그 | ✅ |
 | 66 | [gRPC 시범 적용 — 재고 예약](66-grpc-stock-reservation.ko.md) | order → catalog 재고 예약을 gRPC 로(HTTP 와 나란히, 설정으로 전환), mTLS 판정 재사용, 기한 전파, 동등성 테스트, B-73 | ✅ |
 | 51 | [로깅](51-logging.ko.md) | 인증번호 로그 누출, 출력 단계 마스킹, JSON 로그 · Loki, 추적 왕복 | 🟡 |
+| 99 | [경보 기준은 어떻게 잡나](99-alert-thresholds.ko.md) | 실무 원칙(증상은 호출 · 원인은 warning, 실데이터 분포 · 평소 대비 + 바닥 · 백테스트 · 레벨 위생)과 ERROR 로그 경보의 실측 — 운영 Loki 7일, 후보 셋 백테스트(`and` 함정 → `unless`), 기준 아래 숨은 상시 ERROR(eureka 자기 복제 403 · config-server 하트비트) | ✅ |
 | 16 | [사가 E2E · 관측성 실증](16-saga-e2e-and-observability-verification.ko.md) | 실제 인프라로 검증 — 채팅 저장과 ES 검색은 한 번도 동작한 적 없었다 | 🕰️ |
 | 19 | [로컬 성능 튜닝](19-local-performance-tuning.ko.md) | N+1 · 커넥션 풀 총합 초과 실측, 구조적 사실은 빌드로 고정 | 🟡 |
 

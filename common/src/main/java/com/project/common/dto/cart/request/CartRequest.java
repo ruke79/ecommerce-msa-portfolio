@@ -4,6 +4,7 @@ package com.project.common.dto.cart.request;
 import java.util.List;
 
 import com.project.common.dto.ProductInfoDto;
+import com.project.common.dto.catalog.request.ProductInfoRequest;
 
 import jakarta.validation.constraints.NotNull;
 import lombok.AccessLevel;
@@ -22,5 +23,8 @@ import lombok.Setter;
 public class CartRequest {
 
     @NotNull
+    // 한 요청의 줄 수 상한 — 줄마다 catalog 조회가 붙는다. 🐛 2026-11-21 까지 제한이 없었다(docs/93 ③ 3단계 · docs/38 §2.5).
+    // [JA] 一回の要求の行数の上限 — 行ごとに catalog の照会が付く。以前は制限がなかった。
+    @jakarta.validation.constraints.Size(max = ProductInfoRequest.MAX_LINES, message = "장바구니 줄은 한 번에 100개까지입니다.")
     private List<ProductInfoDto> products;
  }

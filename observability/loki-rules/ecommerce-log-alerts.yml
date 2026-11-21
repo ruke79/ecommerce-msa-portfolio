@@ -54,3 +54,36 @@ groups:
           description: >-
             최근 5분 동안 {{ $value }} 개 옵션이 품절됐습니다. Grafana Explore → Loki 에서
             {service="catalog-service"} |= "품절 발생" 으로 상품·사이즈를 확인하세요.
+
+  - name: error-rate
+    interval: 1m
+    rules:
+      # ERROR 로그가 한 서비스에서 **평소보다** 몰린다(docs/99 — 기준을 7일 운영 로그로 백테스트해 골랐다). 지표가 없는 실패(예외를 잡아
+      # 로그만 남기는 곳 · 경보 계수기가 없는 경로)도 여기서는 보인다. level 은 Alloy 가 붙인다(파일: JSON 의 level, k3s 파드: 줄 머리).
+      #
+      # 모양: 바닥(5분 20줄)을 넘고 **그리고** 직전 1시간 평균(5분당)의 3배를 넘을 때. 왜 둘 다인가(docs/99 §3):
+      #   · 절대값만(5분 30줄)이면 늘 깨져 있는 서비스가 한 번 울린 뒤 일주일 내내 울린 채로 있다 — 2026-11-21 운영의 eureka-server 가
+      #     5분마다 ~100줄(자기 복제 403)이라 7일 2,018창 모두 참이었다. 늘 켜진 경보는 아무도 안 본다.
+      #   · 평소 대비만이면 바닥이 없어 평소 0줄인 서비스의 2줄도 '무한 배' 다.
+      # ⚠️ `and` 로 쓰면 직전 1시간에 ERROR 가 0줄인 서비스는 '평소' 시계열이 없어 짝을 못 찾고 사라진다 — 평소 조용하던 서비스가 갑자기
+      #    터지는, 가장 잡고 싶은 경우를 놓친다(백테스트에서 gateway 배포 시각 33 · 38줄을 놓쳤다). 그래서 `unless`: 평소 값이 없으면 통과.
+      # 로그 폭주 방어(초당 상한)는 성격이 달라 따로 한다.
+      # [JA] ERROR ログが一つのサービスで平常より集中する(docs/99 — 基準は本番 7 日のログでバックテストして選んだ)。下限(5 分 20 行)を超え、
+      #      かつ直前 1 時間平均の 3 倍を超えるとき。絶対値だけだと常に壊れているサービス(eureka の自己複製 403)が一週間鳴りっぱなし、
+      #      平常比だけだと平常 0 行のサービスの 2 行も「無限倍」。`and` だと直前 1 時間に ERROR 0 行のサービスは平常の時系列がなく
+      #      消える(静かだったサービスの急増を逃す)ので `unless`。ログ氾濫の防御(毎秒の上限)は性格が違うので別に。
+      - alert: ErrorLogSurge
+        expr: |
+          (sum by (service) (count_over_time({job=~"ecommerce.*", level="ERROR"} [5m])) > 20)
+          unless
+          (sum by (service) (count_over_time({job=~"ecommerce.*", level="ERROR"} [5m]))
+            <= 3 * (sum by (service) (count_over_time({job=~"ecommerce.*", level="ERROR"} [1h] offset 5m)) / 12))
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }}: ERROR 로그가 5분에 {{ $value }}줄 — 평소의 3배 넘게"
+          description: >-
+            {{ $labels.service }} 의 ERROR 로그가 평소(직전 1시간)보다 크게 늘었습니다. Grafana Explore → Loki 에서
+            {service="{{ $labels.service }}", level="ERROR"} 로 가장 많은 문구를 찾고, 줄의 traceId 로 Jaeger(또는
+            ops/41-show-trace.sh)에서 앞뒤를 보세요. 같은 시간의 Prometheus 경보(5xx · DLT · 아웃박스)와 함께 봅니다.
+            배포 직후라면 기동 실패 · Redis 타임아웃인지 먼저 봅니다(docs/99 §4).

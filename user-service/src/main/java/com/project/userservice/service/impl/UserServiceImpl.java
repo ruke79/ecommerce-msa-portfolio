@@ -571,6 +571,8 @@ public class UserServiceImpl implements UserService {
      * <p>[JA] 🐛 パスワード方針が登録にしかなかった — 変更 · 再設定 · 管理者の経路は空文字列("")も受け取って保存し(ログインフィルターが
      * 空パスワードを拒否するので本人がロックアウトされた)、漏洩確認が判断できないと(fail-open)一文字のパスワードも通った。新しい
      * パスワードはすべてここを通る。漏洩リストにあれば変えない(再設定リンクも消費されないので再試行できる)。
+     *
+     * <p>[JA] 新しいパスワードの方針 — トランザクションの外で呼ぶ。新しいパスワードはすべてここを通る。
      */
     private AcceptedPassword acceptNewPassword(String rawPassword) {
         if (rawPassword == null || rawPassword.length() < PASSWORD_MIN || rawPassword.length() > PASSWORD_MAX) {
@@ -771,6 +773,29 @@ public class UserServiceImpl implements UserService {
         //      トランザクションの外で(外部呼び出し — tx のコメント)。アカウント · 登録イベント(アウトボックス、MANDATORY)は下の一つのトランザクション。
         breachedPasswordChecker.assertAcceptable(request.getPassword());
         return tx.execute(status -> createAccount(request));
+    }
+
+    /**
+     * 가입 + 확인 메일 의도를 한 트랜잭션에(docs/93 ③ 2단계). 🐛 예전에는 컨트롤러가 가입 커밋 뒤에 이벤트를 내고 비동기 리스너가 Kafka 에
+     * 바로 보냈다 — 그 발행이 실패하면 메일은 사라졌다(docs/29 §5 '남은 창'). 이제 계정과 메일 행이 함께 커밋되고, 릴레이가 보낼 때까지
+     * 다시 보낸다. 옛 /public/signup(화면이 쓰지 않는다)은 예전처럼 메일 없이 {@link #registerNewUserAccount}.
+     * [JA] 登録 + 確認メールの意図を一つのトランザクションで。以前はコミット後のリスナーが直接送り、失敗すればメールは消えた。
+     */
+    @Override
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public User registerNewUserAccountWithConfirmationMail(SignupRequest request, java.util.Locale locale) {
+        breachedPasswordChecker.assertAcceptable(request.getPassword());
+        return tx.execute(status -> {
+            User saved = createAccount(request);
+            userOutboxHelper.recordRegistrationMail(saved, locale);
+            return saved;
+        });
+    }
+
+    @Override
+    @Transactional
+    public void requestVerificationMail(User user, java.util.Locale locale) {
+        userOutboxHelper.recordRegistrationMail(user, locale);
     }
 
     private User createAccount(SignupRequest request) {
@@ -975,6 +1000,7 @@ public class UserServiceImpl implements UserService {
         // [JA] 🔒 試行を**検証する前に**原子的に数える(INCR)。🐛 以前は locked() で読み → 検証し → 間違えば加算していた — パスワードを知る
         //      攻撃者が別のコード数百個を同時に送ると、すべて「ロックされていない」を読んで検証された(一度に数百個の総当たり、15 分ごとに繰り返し)。
         //      上限を超えた試行は検証しない。合えば下で消す。
+        // [JA] 試行を検証の前に原子的に数える。以前は読む → 検証 → 失敗なら加算で、同時に数百のコードを試せた。
         long attempt = totpReplayGuard.reserveAttempt(userId);
         if (attempt > totpReplayGuard.maxFailures()) {
             return TwoFactorChange.TOO_MANY_ATTEMPTS;
@@ -1260,6 +1286,7 @@ public class UserServiceImpl implements UserService {
         //      enabled なので**すべての**利用者がこの経路に来た。リンクを押してアドレスを証明した利用者も「確認されたことなし」のまま残り、後で
         //      同じアドレスでソーシャルログインすると SocialAccountLinker がパスワードを消してセッションを切った。トークンは消さない — メール
         //      スキャナーが先に開いても利用者のクリックが失敗しないように(このアカウントでトークンができることはこの表示を立てることだけだ)。
+        // [JA] 以前はここで返して emailVerified を立てなかった — 既定ではすべての利用者がこの経路で、リンクで証明しても未確認のままだった。
         if (user != null && user.isEnabled()) {
             if (!user.isEmailVerified() && !verificationToken.isExpired()) {
                 user.setEmailVerified(true);

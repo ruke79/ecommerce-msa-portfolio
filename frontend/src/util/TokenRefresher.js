@@ -43,6 +43,7 @@ function reportForcedLogout(config, refreshStatus) {
   // 콘솔 문구는 개발자용이라 번역하지 않는다. 사유는 갱신 응답 코드(없으면 요청 자체가 실패)로 받는다.
   // [JA] コンソールの文言は開発者向けなので翻訳しない。理由は更新応答のコード(なければリクエスト自体の失敗)で受け取る。
   // eslint-disable-next-line no-console
+  // eslint-disable-next-line no-console
   console.warn(
     `[auth] 강제 로그아웃 — ${refreshStatus != null ? `토큰 갱신이 ${refreshStatus} 응답` : "토큰 갱신 요청 자체가 실패"}. ` +
     `원인 요청: ${config?.method?.toUpperCase() ?? "GET"} ${config?.url ?? "(알 수 없음)"}`
@@ -186,15 +187,38 @@ export function useTokenRefresh() {
   } = useAuthContext();
   const tokenRef = useRef(token);
 
-  
+  /**
+   * 갱신 요청은 한 번에 하나 — 겹친 호출은 진행 중인 요청의 결과를 함께 받는다.
+   *
+   * <p>🐛 2026-11-21 운영: 비밀번호 재설정 뒤 끊긴 브라우저가 갱신을 0.26초 간격으로 4번 보냈다. 부르는 곳이 셋(알림 연결의 Reauth ·
+   * 채팅 연결의 4401 · 401 재시도)인데 서로의 진행을 몰랐고, 서버는 거절하면서 쿠키를 남겼다(서버도 고쳤다 — 이제 쿠키를 지운다).
+   * 갱신마다 리프레시 토큰이 회전하므로 로그인이 살아 있을 때도 겹치면 안 된다.
+   */
+  // [JA] 更新リクエストは一度に一つ — 重なった呼び出しは進行中のリクエストの結果を共有する。本番で再設定後に 0.26 秒間隔で 4 回送っていた。
+  const refreshInFlight = useRef(null);
+  const requestRefresh = useCallback(() => {
+    if (!refreshInFlight.current) {
+      refreshInFlight.current = Promise.resolve()
+        .then(() => getRequest(REFRESH_URL))
+        .finally(() => {
+          refreshInFlight.current = null;
+        });
+    }
+    return refreshInFlight.current;
+  }, []);
+
+  /** 갱신이 실패해 로그인이 끝났다 — 다음 로그인(새 토큰)까지 연결들의 갱신 부탁을 받지 않는다. */
+  // [JA] 更新が失敗してログインが終わった — 次のログイン(新しいトークン)まで接続からの更新依頼を受けない。
+  const sessionEnded = useRef(false);
 
   /** @param options.broadcast false 면 결과를 다른 탭에 알리지 않는다(다른 탭의 알림을 받아 갱신할 때). */
   // [JA] @param options.broadcast false なら結果を他のタブに知らせない(他のタブの通知を受けて更新するとき)。
   const refreshAccessToken = useCallback(async ({ broadcast = true } = {}) => {
     try {
-      const response = await getRequest("/user-service/api/token/refresh");
+      const response = await requestRefresh();
 
       if (response.status === 204) {
+        sessionEnded.current = true;
         logout({ broadcast });
       } else if (response.status === 200) {
         const accessToken = response.headers["access"];
@@ -205,10 +229,11 @@ export function useTokenRefresh() {
         //setAuthenticationStatus(STATUS.SUCCEEDED);  --> flicking problem
       }
     } catch (error) {
+      sessionEnded.current = true;
       logout({ broadcast });
       //setAuthenticationStatus(STATUS.FAILED);  --> flicking problem
     }
-  }, [login, logout]);
+  }, [login, logout, requestRefresh]);
 
   // 다른 탭의 로그인 · 로그아웃을 따라간다(util/authSync). 받은 알림으로는 다시 알리지 않는다 — 탭끼리 주고받기가 멈추지 않는다.
   // [JA] 他のタブのログイン · ログアウトに追従する。受けた通知では再通知しない。
@@ -247,6 +272,7 @@ export function useTokenRefresh() {
   // [JA] 前回のログアウトがサーバーに反映されていない(util/pendingLogout)— 自動復旧の代わりにサーバーのログアウトを先に完了させる。
   //      ログアウト API はゲートウェイがアクセストークンを要求するので、一度更新して受け取ったトークンで呼び、そのトークンは画面の状態に入れない。
   //      サーバーが答えたら(成功でも「既に終わったセッション」でも)印を消す。ネットワークが使えなければ印を残し、ログアウト状態にしておく。
+  // [JA] 前回のログアウトがサーバーに反映されていない — 自動復旧の代わりにサーバーのログアウトを先に完了させる。
   const finishPendingLogout = useCallback(async () => {
     try {
       const response = await getRequest(REFRESH_URL);
@@ -280,7 +306,7 @@ export function useTokenRefresh() {
   const eventRefreshInFlight = useRef(false);
   useEffect(() => {
     const onRefreshNeeded = async () => {
-      if (!isAuthenticated || eventRefreshInFlight.current) return;
+      if (!isAuthenticated || eventRefreshInFlight.current || sessionEnded.current) return;
       eventRefreshInFlight.current = true;
       try {
         await refreshAccessToken();
@@ -314,6 +340,9 @@ export function useTokenRefresh() {
     setPrevToken(token);
 
     tokenRef.current = token;
+    // 새 토큰 = 새로 로그인했거나 갱신에 성공했다 — 갱신 부탁을 다시 받는다.
+    // [JA] 新しいトークン = 新しくログインしたか更新に成功した — 更新依頼を再び受ける。
+    if (token) sessionEnded.current = false;
   }
 
   useEffect(() => {
@@ -458,9 +487,7 @@ export function useTokenRefresh() {
             if (!isRefreshing.current) {
               isRefreshing.current = true;
               try {
-                const response = await getRequest(
-                  "/user-service/api/token/refresh"
-                );
+                const response = await requestRefresh();
 
                 if (response.status === 200) {
                   const accessToken = response.headers["access"];
@@ -490,6 +517,7 @@ export function useTokenRefresh() {
                 );
                 refreshAndRetryQueue.current.length = 0;
                 reportForcedLogout(originalConfig, response.status);
+                sessionEnded.current = true;
                 logout();
                 return Promise.reject(authError);
               } catch (refreshError) {
@@ -498,6 +526,7 @@ export function useTokenRefresh() {
                 );
                 refreshAndRetryQueue.current.length = 0;
                 reportForcedLogout(originalConfig, null);
+                sessionEnded.current = true;
                 logout();
                 return Promise.reject(refreshError);
               } finally {
@@ -527,7 +556,7 @@ export function useTokenRefresh() {
       api.interceptors.request.eject(reqInterceptor);
       api.interceptors.response.eject(resInterceptor);
     };
-  }, [token, login, logout]);
+  }, [token, login, logout, requestRefresh]);
 }
 
 export default function TokenRefresher() {

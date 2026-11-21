@@ -23,6 +23,8 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.jsonwebtoken.Jwts;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import reactor.core.publisher.Mono;
 
 /**
@@ -53,7 +55,12 @@ class JwtSessionCutoffTest {
     /** @return 아래로 보냈으면 null, 아니면 응답 상태 */
     // [JA] 下流へ送ったなら null、そうでなければ応答ステータス
     private static HttpStatus run(String token, ReactiveStringRedisTemplate redis) {
+        return run(token, redis, new SimpleMeterRegistry());
+    }
+
+    private static HttpStatus run(String token, ReactiveStringRedisTemplate redis, MeterRegistry meters) {
         JwtAuthorizationGatewayFilterFactory factory = new JwtAuthorizationGatewayFilterFactory();
+        ReflectionTestUtils.setField(factory, "meters", meters);
         ReflectionTestUtils.setField(factory, "secretKey", SECRET);
         ReflectionTestUtils.setField(factory, "redis", redis);
         ReflectionTestUtils.setField(factory, "sessionCutoffTimeout", Duration.ofMillis(200));
@@ -94,5 +101,45 @@ class JwtSessionCutoffTest {
     void redisTroubleFailsOpen() {
         assertThat(run(accessIssuedAt(NOW - 120), redisReturning(Mono.error(new IllegalStateException("down"))))).isNull();
         assertThat(run(accessIssuedAt(NOW - 120), redisReturning(Mono.never()))).isNull();
+    }
+
+    private static double count(MeterRegistry meters, String result) {
+        var c = meters.find(JwtAuthorizationGatewayFilterFactory.CUTOFF_METRIC).tag("result", result).counter();
+        return c == null ? -1 : c.count();
+    }
+
+    @Test
+    @DisplayName("🔴 해제로 401 을 주면 revoked 를 센다 — 운영에서 '게이트웨이가 막았나' 를 판정한다(2026-11-21)")
+    void revokedIsCounted() {
+        MeterRegistry meters = new SimpleMeterRegistry();
+        run(accessIssuedAt(NOW - 120), redisReturning(Mono.just(String.valueOf(NOW - 60))), meters);
+        assertThat(count(meters, "revoked")).isEqualTo(1);
+        run(accessIssuedAt(NOW - 10), redisReturning(Mono.just(String.valueOf(NOW - 60))), meters);
+        assertThat(count(meters, "revoked")).as("통과한 요청은 세지 않는다").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("🔴 확인하지 못해 통과시키면 그 이유(error · timeout · no_redis)를 센다 — 예전에는 debug 로그뿐")
+    void skippedChecksAreCounted() {
+        MeterRegistry meters = new SimpleMeterRegistry();
+        run(accessIssuedAt(NOW - 120), redisReturning(Mono.error(new IllegalStateException("down"))), meters);
+        run(accessIssuedAt(NOW - 120), redisReturning(Mono.never()), meters);
+        run(accessIssuedAt(NOW - 120), null, meters);
+        assertThat(count(meters, "error")).isEqualTo(1);
+        assertThat(count(meters, "timeout")).isEqualTo(1);
+        assertThat(count(meters, "no_redis")).isEqualTo(1);
+        assertThat(count(meters, "revoked")).isEqualTo(-1);
+    }
+
+    @Test
+    @DisplayName("계수기는 기동 때 0 으로 넷 모두 있다(B-101)")
+    void countersExistAtStartup() {
+        JwtAuthorizationGatewayFilterFactory factory = new JwtAuthorizationGatewayFilterFactory();
+        MeterRegistry meters = new SimpleMeterRegistry();
+        ReflectionTestUtils.setField(factory, "meters", meters);
+        factory.registerAlertCounters();
+        for (String r : new String[] {"revoked", "error", "timeout", "no_redis"}) {
+            assertThat(count(meters, r)).as(r).isZero();
+        }
     }
 }

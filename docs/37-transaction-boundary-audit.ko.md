@@ -20,6 +20,8 @@
 | §4 `REQUIRES_NEW` · `timeout=` 0건 | `REQUIRES_NEW` 는 지금도 0건(쓰지 않는 이유가 `UserOutboxHelper` · `NotificationService` 주석에 있다). 트랜잭션 시간 상한은 catalog 둘뿐 — 필터 메뉴(`FacetQueries`, 600초) · 검색(`SearchBulkhead`, 5초). §6 ④ 의 PayPal `timeout = 20` 은 넣지 않았다 | — |
 | 남은 것 | #21 chat `sendMessage` 등(클래스 레벨 `@Transactional` 아래에서 Mongo · Kafka 만), #16 catalog `addProduct` 의 S3 업로드(클래스 레벨 트랜잭션 안) | `ChatService` · `ProductService` |
 
+> 🕰️ 2026-11-21(docs/93 ③ 3단계): **#21 끝** — `ChatService` 의 클래스 단위 `@Transactional` 을 걷고 JPA 를 쓰는 메서드(`connect` · `ensureMember` · `saveChatRoom` · 조회 둘)에만 남겼다. Kafka · Redis · Mongo 만 하는 메서드와 `createChatRoom` 의 잠금 대기는 트랜잭션 밖, 방 저장만 잠금 뒤 `TransactionTemplate`. 시험 `ChatServiceTransactionBoundaryTest`(Spring 의 판정기로 — 클래스 단위를 되살리면 실패). #16 은 그대로(보상이 있고 관리자 등록만).
+
 > 점검 질문: DB 트랜잭션 안에서 외부 API 를 호출하는 곳이 있는가? 전체 스프링 모듈을 대상으로 점검했다.
 >
 > 답: **있다. 많다.** 12개 모듈 중 9개에서 발견됐고, 그중 몇 곳은 이 저장소에서 가장 긴

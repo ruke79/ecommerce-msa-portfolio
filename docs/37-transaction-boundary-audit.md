@@ -20,6 +20,8 @@
 | §4 `REQUIRES_NEW` · `timeout=` 0 件 | `REQUIRES_NEW` は今も 0 件（使わない理由が `UserOutboxHelper` · `NotificationService` のコメントにある）。トランザクションの時間上限は catalog の 2 つだけ — フィルタメニュー（`FacetQueries`、600 秒）· 検索（`SearchBulkhead`、5 秒）。§6 ④ の PayPal `timeout = 20` は入れていない | — |
 | 残り | #21 chat `sendMessage` など（クラスレベル `@Transactional` の下で Mongo · Kafka だけ）、#16 catalog `addProduct` の S3 アップロード（クラスレベルのトランザクション内） | `ChatService` · `ProductService` |
 
+> 🕰️ 2026-11-21（docs/93 ③ 3 段階）: **#21 完了** — `ChatService` のクラスレベル `@Transactional` を外し、JPA を使うメソッド（`connect` · `ensureMember` · `saveChatRoom` · 参照二つ）だけに残した。Kafka · Redis · Mongo だけのメソッドと `createChatRoom` のロック待ちはトランザクションの外、部屋の保存だけロック後に `TransactionTemplate`。試験 `ChatServiceTransactionBoundaryTest`（Spring の判定器で — クラスレベルを戻すと失敗）。#16 はそのまま（補償があり管理者の登録だけ）。
+
 > 点検の問い: DB トランザクション中に外部 API を呼び出している箇所はあるか？ 全 Spring モジュールを対象に点検した。
 >
 > 答え: **ある。多い。** 12 モジュール中 9 つで見つかり、そのうちいくつかはこのリポジトリで最も長い

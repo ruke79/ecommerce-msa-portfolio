@@ -88,6 +88,45 @@ public class OutboxPartitionAutoConfiguration {
                 Duration.parse(initialDelay), Duration.parse(interval));
     }
 
+    /**
+     * 아웃박스 발행 지연 측정기 — 같은 테이블 목록(docs/93 ③). 측정은 아래 {@link OutboxBacklogJob} 이 주기마다 하고, 지표는 캐시만 읽는다.
+     * [JA] アウトボックスの発行遅延の計測器 — 同じテーブル一覧。計測は OutboxBacklogJob が周期ごとに行い、指標はキャッシュだけを読む。
+     */
+    @Bean
+    OutboxBacklogProbe outboxBacklogProbe(DataSource dataSource, OutboxPartitionMaintainer maintainer) {
+        return new OutboxBacklogProbe(dataSource, maintainer.tables(), Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "outbox.backlog", name = "enabled", havingValue = "true", matchIfMissing = true)
+    OutboxBacklogJob outboxBacklogJob(OutboxBacklogProbe probe,
+            @Value("${outbox.backlog.interval:PT30S}") String interval,
+            @Value("${outbox.backlog.initial-delay:PT20S}") String initialDelay) {
+        return new OutboxBacklogJob(probe, Duration.parse(initialDelay), Duration.parse(interval));
+    }
+
+    /** 적체 측정의 주기 실행 — 파티션 잡과 스레드를 나눈다(파티션 잡의 긴 DETACH 가 측정을 막지 않게). */
+    // [JA] 滞留計測の定期実行 — パーティションジョブとスレッドを分ける(パーティションジョブの長い DETACH が計測を止めないように)。
+    static final class OutboxBacklogJob implements DisposableBean {
+
+        private final ScheduledExecutorService executor;
+
+        OutboxBacklogJob(OutboxBacklogProbe probe, Duration initialDelay, Duration interval) {
+            this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "outbox-backlog");
+                t.setDaemon(true);
+                return t;
+            });
+            executor.scheduleWithFixedDelay(() -> OutboxPartitionJob.runSafely(probe::sample), initialDelay.toMillis(),
+                    interval.toMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public void destroy() {
+            executor.shutdownNow();
+        }
+    }
+
     /** 주기 실행. 빈이 닫히면(종료·재시작) 스레드도 멈춘다. */
     // [JA] 定期実行。Bean が閉じられると(終了・再起動)スレッドも止まる。
     static final class OutboxPartitionJob implements DisposableBean {
@@ -154,8 +193,20 @@ public class OutboxPartitionAutoConfiguration {
     static class Metrics {
 
         @Bean
-        MeterBinder outboxPartitionMetrics(OutboxPartitionMaintainer maintainer) {
+        MeterBinder outboxPartitionMetrics(OutboxPartitionMaintainer maintainer, OutboxBacklogProbe backlog) {
             return registry -> {
+                // 발행 지연(docs/93 ③) — 경보 OutboxPublishLagging. 아직 못 쟀으면 NaN.
+                // [JA] 発行遅延 — 警報 OutboxPublishLagging。まだ測れていなければ NaN。
+                for (String table : backlog.tables()) {
+                    Gauge.builder("outbox.pending.rows", backlog, b -> b.last(table).rows())
+                            .tag("table", table)
+                            .description("아직 발행하지 못한 아웃박스 행(STARTED) 수 — 마지막 측정")
+                            .register(registry);
+                    Gauge.builder("outbox.pending.oldest.age.seconds", backlog, b -> b.last(table).oldestAgeSeconds())
+                            .tag("table", table)
+                            .description("가장 오래된 STARTED 아웃박스 행의 나이(초) — 없으면 0, 못 쟀으면 NaN")
+                            .register(registry);
+                }
                 for (String table : maintainer.tables()) {
                     Gauge.builder("outbox.partition.months.ahead", maintainer, m -> m.monthsAheadNow(table))
                             .tag("table", table)

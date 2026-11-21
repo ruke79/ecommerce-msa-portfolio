@@ -197,7 +197,25 @@ public class OrderStockHold {
         }
     }
 
+    /** Prometheus 이름 {@code order_stock_hold_total} — 경보 {@code OrderStockHoldUnavailable} 이 {@code result="unavailable"} 를 본다. */
+    // [JA] Prometheus 名 order_stock_hold_total — 警報 OrderStockHoldUnavailable が result="unavailable" を見る。
+    static final String METRIC = "order.stock.hold";
+
+    /**
+     * 경보가 {@code increase()} 로 보는 계수기를 기동 때 0 으로 만든다(B-101) — 첫 사고에 생기면 Prometheus 가 처음 보는 값이 이미 1 이라
+     * {@code increase()} 가 0 이다. 🐛 2026-11-21 전에는 이름을 {@code "order_stock_hold_total"} 로 적어 B-101 가드가 이 계수기를
+     * '앱 밖 지표' 로 보고 건너뛰었다 — Micrometer 관례({@code order.stock.hold})로 적어야 가드가 찾는다(내보내는 이름은 같다).
+     * [JA] 警報が increase() で見るカウンターを起動時に 0 で作る(B-101)。以前は名前を order_stock_hold_total と書き、B-101 のガードが
+     *      「アプリ外の指標」として飛ばしていた — Micrometer の慣例(order.stock.hold)で書く(出力される名前は同じ)。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerAlertCounters() {
+        for (String result : List.of("held", "short", "rejected", "unavailable")) {
+            meters.counter(METRIC, "result", result);
+        }
+    }
+
     private void count(String result) {
-        meters.counter("order_stock_hold_total", "result", result).increment();
+        meters.counter(METRIC, "result", result).increment();
     }
 }

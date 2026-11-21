@@ -54,6 +54,12 @@ public class KafkaProducerConfig {
         config.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, AggregateKeyPartitioner.class);
         config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         config.put(ProducerConfig.ACKS_CONFIG, "all");
+        // 브로커가 없을 때 send() 가 메타데이터를 기다리는 상한 — 기본 60초면 아웃박스 릴레이가 그동안 DB 트랜잭션(advisory 잠금)을
+        // 쥔다. 5초 · 응답 상한 5초 · 전달 상한 10초(pay · user 와 같은 값). 못 보낸 행은 STARTED 로 남아 다음 주기에 간다.
+        // [JA] ブローカーがないとき send() がメタデータを待つ上限 — 既定 60 秒だとリレーがその間 DB トランザクションを握る。
+        config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5_000);
+        config.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
+        config.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
         config.putAll(securityProps());
         return new DefaultKafkaProducerFactory<>(config);
     }

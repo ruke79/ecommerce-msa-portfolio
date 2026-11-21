@@ -67,4 +67,10 @@ class SloRulesPromtoolTest {
     void budgetAlertsFireOnlyWhenTheyShould() {
         assertThat(promtool("test", "rules", "/o/tests/slo-budget.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
     }
+
+    @Test
+    @DisplayName("🔴 promtool test rules — 신뢰성 1단계(docs/93 ③): 아웃박스 발행 지연 5분이 10분 · 그 지표 없음 1시간 · 재고 예약 fail-open 15분 3건(한 건 · NaN 은 조용)")
+    void reliabilityAlertsFireOnlyWhenTheyShould() {
+        assertThat(promtool("test", "rules", "/o/tests/reliability-rules.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
+    }
 }

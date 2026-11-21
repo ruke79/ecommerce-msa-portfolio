@@ -201,7 +201,8 @@ public class CartController {
     }
 
     @PutMapping("/updatecart")
-    ResponseEntity<?> updateCart(@RequestBody ProductInfoRequest products) {
+    // @Valid — 줄 수 상한(ProductInfoRequest.MAX_LINES). 로그인 없이 불리는 경로라 특히. [JA] 行数の上限 — ログインなしで呼ばれる経路なので特に。
+    ResponseEntity<?> updateCart(@jakarta.validation.Valid @RequestBody ProductInfoRequest products) {
         
 
         try {

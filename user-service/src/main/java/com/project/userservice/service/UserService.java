@@ -60,6 +60,15 @@ public interface UserService {
 
     User registerNewUserAccount(SignupRequest request);
 
+    /**
+     * 가입 + 확인 메일 의도(아웃박스)를 <b>한 트랜잭션</b>에(/public/register, docs/93 ③ 2단계). 메일은 RegistrationMailRelay 가 보낸다.
+     * [JA] 登録 + 確認メールの意図(アウトボックス)を一つのトランザクションで。
+     */
+    User registerNewUserAccountWithConfirmationMail(SignupRequest request, java.util.Locale locale);
+
+    /** 확인 메일 재발송 — 아웃박스에 적는다(보내기 · 재시도는 릴레이). [JA] 確認メールの再送 — アウトボックスに書く。 */
+    void requestVerificationMail(User user, java.util.Locale locale);
+
     void registerConfirmed(User user) throws JsonProcessingException;
 
     void deleteUser(User user);
@@ -84,6 +93,7 @@ public interface UserService {
 
     /** 로그인 중의 2FA 변경 결과(docs/68 §14). */
     // [JA] ログイン中の 2FA 変更結果(docs/68 §14)。
+    /*
     /*
      * NO_PHONE · PHONE_CHANGED · UNAVAILABLE 은 SMS 수단에서만 나온다(docs/24 §10) — 인증된 번호가 없다 · 켤 때의 번호와 다르다 ·
      * notification 에 닿지 못했다(그때는 통과시키지 않는다).

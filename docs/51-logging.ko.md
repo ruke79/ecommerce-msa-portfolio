@@ -506,5 +506,5 @@ log.error/warn 중 "수동 … 필요" 문구가 전부 규칙의 정규식에 �
 - **런타임 로그 레벨 변경**(actuator `loggers`)은 열지 않았다. 인증 없이 열면 facebook 쪽처럼 누구나 레벨을
   바꿀 수 있다 — 관리 포트 분리나 인증과 함께 해야 한다.
 - **로그 기반 경보**(ERROR 급증 등)와 로그 폭주 방어(초당 상한)는 이번 범위 밖이다.
-  🕰️ 그 뒤 들어온 로그 경보는 §4i 의 둘(`ManualActionRequired` · `ProductSoldOut`)뿐이다 — ERROR 급증 · 폭주 방어는 아직 없다.
+  🕰️ 그 뒤 들어온 로그 경보는 §4i 의 둘(`ManualActionRequired` · `ProductSoldOut`)뿐이다 — ERROR 급증 · 폭주 방어는 아직 없다. → 🕰️ 2026-11-21: ERROR 급증은 `ErrorLogSurge`(서비스마다 5분 20줄 초과 · 직전 1시간 평균의 3배 초과가 5분, `level` 라벨 — Alloy; 기준은 운영 7일 백테스트로 — [docs/99](99-alert-thresholds.ko.md)). ⚠️ 규칙 파일 하나에 LogQL 오류가 있으면 Loki 는 그 파일 전체를 버린다(API 는 `groups: []` 로 성공) — `LokiRulesLoadTest`(컨테이너, Loki 3.4.2)가 막는다. 폭주 방어(초당 상한)는 아직.
 - **config-server** 는 common 을 쓰지 않아 마스킹·JSON 이 적용되지 않는다. 사용자 데이터를 다루지 않는다.

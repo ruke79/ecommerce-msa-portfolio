@@ -186,4 +186,26 @@ class RefreshTokenRotationControllerTest {
         assertThat(response.getCookie(TokenType.REFRESH.getType()).getMaxAge()).isZero();
         verify(refreshTokenService, never()).rotate(anyString(), any());
     }
+
+    /**
+     * 🐛 2026-11-21 운영: 비밀번호 재설정 뒤 다른 브라우저의 갱신이 0.26초 간격으로 4번 같은 거절을 받았다 — 이 거절만 쿠키를 남겼다.
+     *
+     * <p>[JA] 2026-11-21 本番: パスワード再設定後、別ブラウザの更新が 0.26 秒間隔で 4 回同じ拒否を受けた — この拒否だけ Cookie を残していた。
+     */
+    @Test
+    @DisplayName("🔴 비밀번호 변경 이전의 토큰 — 401 'password changed', 쿠키를 지우고 그 묶음을 끊는다(되풀이 갱신 방지)")
+    void passwordChangedClearsTheCookie() throws Exception {
+        when(owner.getPasswordChangedAt()).thenReturn(java.time.LocalDateTime.now());
+        when(jwtUtils.getIssuedAtFromJwtToken(PRESENTED)).thenReturn(new java.util.Date(System.currentTimeMillis() - 3_600_000));
+
+        ResponseEntity<?> r = controller.refreshtoken(request, response);
+
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(r.getBody()).isEqualTo("password changed");
+        assertThat(response.getCookie(TokenType.REFRESH.getType())).as("쿠키를 지운다").isNotNull();
+        assertThat(response.getCookie(TokenType.REFRESH.getType()).getMaxAge()).isZero();
+        verify(refreshTokenService).revoke(PRESENTED);
+        verify(refreshTokenService, never()).rotate(anyString(), any());
+        verify(jwtUtils, never()).generateTokenFromUser(any());
+    }
 }

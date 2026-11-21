@@ -64,6 +64,16 @@ spec:
               value: "want"
             - name: SPRING_APPLICATION_NAME
               value: "discovery-service"
+            # 이 서버 자신의 주소(eureka.server.my-url) — ConfigMap 의 EUREKA_CLIENT_SERVICEURL_DEFAULTZONE 끝에 '/' 를 붙인 것과
+            # **글자 하나까지** 같아야 한다(Eureka 가 equals 로 비교하고, Spring Cloud 는 피어 주소 끝에 '/' 를 붙인다).
+            # 🐛 2026-11-21 까지 없었다. 이 파드도 그 ConfigMap 을 받아 피어 목록이 자기 Service 주소가 됐는데, my-url 은 yml 의 localhost
+            #    그대로라 자기를 걸러내지 못했다 — 모든 등록 · 하트비트를 인증서 없이 자기에게 복제해 쓰기 enforce 가 403(5분마다 ~100줄,
+            #    운영 ERROR 의 9할, docs/99 §4). 2026-10-26 의 yml my-url 수정은 yml 의 defaultZone(localhost)과만 맞춰 k8s 에서는 효과가
+            #    없었다. 시험 eureka-server PeerSelfReplicationTest(이 매니페스트 + ConfigMap + yml 을 묶어 피어 0 을 본다).
+            # [JA] このサーバー自身の URL — ConfigMap の defaultZone に '/' を付けたものと一字一句同じにする。以前はなく、ピア一覧が
+            #      自分の Service アドレスになって自分へ複製し、書き込み enforce で 403 だった。
+            - name: EUREKA_SERVER_MYURL
+              value: "https://eureka-server.ecommerce.svc.cluster.local:8761/eureka/"
             # 서비스 JVM 이 사설 CA 를 신뢰하게 한다.
             # LOCAL_TRUST_STORE_PATH 는 server.ssl / eureka.client.tls 같은 **특정 설정**만 읽는다.
             # 반면 Eureka 클라이언트 등록(Jersey), Feign 호출, 액추에이터 아웃바운드는 전부

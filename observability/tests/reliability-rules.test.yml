@@ -1,0 +1,95 @@
+# promtool 단위 시험 — 신뢰성 1단계(docs/93 ③): 아웃박스 발행 지연 · 그 지표 없음 · 재고 예약 fail-open. 실행: SloRulesPromtoolTest(컨테이너) 또는
+#   docker run --rm -v "$PWD/observability:/o" --entrypoint promtool prom/prometheus:v2.53.0 test rules /o/tests/reliability-rules.test.yml
+# [JA] promtool の単体テスト — 信頼性 1 段階: アウトボックスの発行遅延 · その指標なし · 在庫予約の fail-open。
+rule_files:
+- ../alert-rules.yml
+evaluation_interval: 1m
+tests:
+# 가장 오래된 STARTED 가 400초 — 10분이 되기 전에는 아직, 지나면 울린다. 120초(정상 범위) · NaN(측정 전 · 실패)은 조용
+# [JA] 最も古い STARTED が 400 秒 — 10 分になる前はまだ、過ぎれば鳴る。120 秒(正常範囲)· NaN(計測前 · 失敗)は静か
+- interval: 1m
+  input_series:
+  - series: outbox_pending_oldest_age_seconds{service="order-service",instance="o-1",table="orders.payment_outbox_event"}
+    values: 400x30
+  - series: outbox_pending_oldest_age_seconds{service="cart-service",instance="c-1",table="cart.outbox_event"}
+    values: 120x30
+  - series: outbox_pending_oldest_age_seconds{service="pay-service",instance="p-1",table="pay.order_outbox_event"}
+    values: NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: OutboxPublishLagging
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: OutboxPublishLagging
+    exp_alerts:
+    - exp_labels:
+        service: order-service
+        table: orders.payment_outbox_event
+        severity: warning
+      exp_annotations:
+        summary: "아웃박스 발행이 6m 40s 밀렸습니다 (orders.payment_outbox_event)"
+        description: "가장 오래된 STARTED 행이 5분 넘게 남아 있습니다(outbox_pending_rows 가 적체 수). 결제 응답 · 재고 차감 · 장바구니 비우기 · 가입 이벤트가 늦어지는 중일 수 있습니다. 그 서비스의 아웃박스 릴레이 로그(user 는 '아웃박스 처리' 요약 줄)와 Kafka 상태를 확인하세요."
+  - eval_time: 15m
+    alertname: OutboxBacklogMetricsMissing
+    exp_alerts: []
+# 잠깐 밀렸다 풀리면(브로커 재시작 몇 분) 울리지 않는다
+# [JA] 少し滞ってから解ければ(ブローカーの再起動の数分)鳴らない
+- interval: 1m
+  input_series:
+  - series: outbox_pending_oldest_age_seconds{service="user-service",instance="u-1",table="users.outbox_event"}
+    values: 0x5 360x6 0x20
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: OutboxPublishLagging
+    exp_alerts: []
+# 지표가 아예 없다(새 이미지 전 · 수집 대상 아님) — 1시간 뒤 울린다
+# [JA] 指標がそもそもない(新しいイメージの前 · 収集対象でない)— 1 時間後に鳴る
+- interval: 1m
+  input_series:
+  - series: up{job="spring-actuator",service="order-service"}
+    values: 1x90
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: OutboxBacklogMetricsMissing
+    exp_alerts: []
+  - eval_time: 70m
+    alertname: OutboxBacklogMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: "아웃박스 발행 지연 지표가 없습니다 — OutboxPublishLagging 이 울릴 수 없는 상태입니다"
+        description: "cart · order · pay · user 의 /actuator/prometheus 에 outbox_pending_* 가 있는지 확인하세요(OutboxPartitionAutoConfiguration · OutboxBacklogProbe, outbox.backlog.enabled)."
+# 재고 예약 fail-open — 15분에 6건이면 울린다, 배포 롤링의 한 건은 조용. 계수기는 기동 때 0 으로 있다(B-101)
+# [JA] 在庫予約の fail-open — 15 分に 6 件なら鳴る、デプロイのローリングの 1 件は静か。カウンターは起動時に 0 で存在する(B-101)
+- interval: 1m
+  input_series:
+  - series: order_stock_hold_total{service="order-service",instance="o-1",result="unavailable"}
+    values: 0x10 1 2 3 4 5 6 6x10
+  - series: order_stock_hold_total{service="order-service",instance="o-2",result="unavailable"}
+    values: 0x20 1x10
+  - series: order_stock_hold_total{service="order-service",instance="o-1",result="held"}
+    values: 0+10x30
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: OrderStockHoldUnavailable
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: OrderStockHoldUnavailable
+    exp_alerts:
+    - exp_labels:
+        service: order-service
+        severity: warning
+      exp_annotations:
+        summary: "재고 예약 없이 받은 주문이 최근 15분 6건입니다 — catalog 에 닿지 못함(fail-open)"
+        description: "주문은 막지 않았지만 그 동안은 마지막 재고의 이중 판매를 막지 못합니다(초과분은 결제 뒤 자동 환불 — StockShortageOccurred). order-service 로그의 '재고 예약 불가' 와 catalog 의 gRPC · 재고 예약 지연을 확인하세요(docs/59)."
+# 한 건(롤링 중 한 파드)만이면 조용
+# [JA] 1 件(ローリング中の一つの Pod)だけなら静か
+- interval: 1m
+  input_series:
+  - series: order_stock_hold_total{service="order-service",instance="o-1",result="unavailable"}
+    values: 0x10 1x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: OrderStockHoldUnavailable
+    exp_alerts: []

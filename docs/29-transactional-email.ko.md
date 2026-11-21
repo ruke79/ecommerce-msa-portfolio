@@ -272,6 +272,8 @@ user-service 에 아웃박스가 있긴 하다:
 이번 작업 범위 밖이라 손대지 않았다.
 
 > 🕰️ 2026-11-14: 아웃박스는 살아났다 — `UserOutboxScheduler`(`FOR UPDATE SKIP LOCKED`, 발행을 트랜잭션 안에서 동기로 기다림) · `UserOutboxHelper`(사용자 이벤트 · 탈퇴 · 복제 대사가 쓴다). 메일은 여전히 그 길이 아니다 — `RegistrationListener` · `EmailService` 가 `OutgoingMailProducer.publish()`(트랜잭션 밖 `send().get()`)를 바로 부르므로, 위의 발행 실패 창은 남아 있다.
+>
+> 🕰️ 2026-11-21(docs/93 ③ 2단계): **가입 확인 메일은 이제 아웃박스로 간다.** `/public/register` 가 계정과 `registration-mail` 행을 한 트랜잭션에 적고(`registerNewUserAccountWithConfirmationMail`), `RegistrationMailRelay` 가 보낼 때 토큰을 만들어(DB 에는 해시만) 메일 요청을 보낸다 — 행에는 언어만(원문 토큰 · 이메일 없음). 보내지 못하면 그 트랜잭션을 롤백하고 다음 주기에 다시(가입 이벤트 릴레이는 이 종류를 선점하지 않는다 — 그쪽은 실패하면 FAILED · 재시도 없음). 재발송도 같은 길. `RegistrationListener` · `OnRegistrationCompleteEvent` 는 지웠다. ⚠️ 비밀번호 재설정 · 보안 알림 등 `EmailService` 의 메일은 아직 `publish()` 를 바로 부른다 — 사용자가 다시 요청할 수 있는 메일이라 뒤로 둔다. 시험 `RegistrationMailRelayTest`.
 
 ### 5.2 바운스 처리가 없다
 

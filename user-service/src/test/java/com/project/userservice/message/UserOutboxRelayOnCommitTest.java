@@ -37,7 +37,8 @@ class UserOutboxRelayOnCommitTest {
         OutboxEventRepository repository = mock(OutboxEventRepository.class);
         when(repository.save(any(OutboxEvent.class))).thenAnswer(i -> i.getArgument(0));
         trigger = mock(OutboxRelayTrigger.class);
-        helper = new UserOutboxHelper(repository, new ObjectMapper(), OutboxTraceContext.NOOP, trigger);
+        helper = new UserOutboxHelper(repository, new ObjectMapper(), OutboxTraceContext.NOOP, trigger,
+                RegistrationMailTrigger.DISABLED);
     }
 
     private static User user() {

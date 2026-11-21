@@ -4,12 +4,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.project.common.outbox.OutboxRelayTrigger;
 import com.project.delivery_service.domain.Delivery;
 import com.project.delivery_service.domain.DeliveryStatus;
+import com.project.delivery_service.outbox.DeliveryOutbox;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,27 +27,17 @@ import lombok.extern.slf4j.Slf4j;
  *       그 값들은 enum 에만 있고 아무도 채우지 않던 것들이다(docs/25 §0).</li>
  * </ul>
  *
- * <p>발행 실패가 배송 처리를 막지 않는다. 상태는 이미 DB 에 있고, 다음 폴링에서 다시 전이가
- * 감지되지는 않으므로 알림 하나를 놓칠 수는 있다 — 그래도 배송 자체가 멈추는 것보다 낫다.
- * (아웃박스로 옮기는 것이 정석이지만, 그건 이 서비스에 outbox 테이블을 두는 별도 작업이다.)
+ * <p><b>아웃박스에 적는다(2026-11-21, docs/93 ③ 2단계).</b> 상태를 바꾼 그 트랜잭션 안에서 {@link DeliveryOutbox} 에 이벤트를 적고,
+ * 커밋 직후 릴레이({@code DeliveryOutboxRelay})를 깨운다 — 상태와 이벤트가 함께 커밋되거나 함께 롤백된다. 보내기는 릴레이가 하고,
+ * 실패하면 다음 주기에 다시 보낸다(발행 실패 {@value #FAILED_METRIC} · 발행 지연 {@code outbox_pending_*}).
  *
- * <p><b>커밋 뒤에 보낸다 · 실패를 센다.</b> 🐛 예전에는 트랜잭션 안에서 바로 보냈고 {@code send} 의 결과를 보지 않았다 —
- * 롤백되면 저장되지 않은 상태가 나갔고, 브로커 장애로 생긴 비동기 실패는 로그조차 없었다. 이제 트랜잭션이 있으면 커밋 뒤에 보내고,
- * 실패는 {@value #FAILED_METRIC} 로 센다(경보 {@code DeliveryStatusPublishFailed} — 그 주문은 상태가 멈췄을 수 있다).
+ * <p>🐛 그 전: ① 트랜잭션 안에서 바로 보내고 결과를 보지 않았다 — 롤백되면 저장되지 않은 상태가 나갔고 비동기 실패는 로그조차
+ * 없었다. ② 그 뒤 '커밋 뒤에 보내고 실패를 센다' 로 고쳤지만 실패한 이벤트는 그대로 사라졌다 — 상태는 이미 DB 에 있어 다음
+ * 폴링에서도 다시 감지되지 않았으므로 주문 상태(DISPATCHED · DELIVERED)와 알림이 멈췄다(경보만 울렸다). 이제 릴레이가 보낼 때까지
+ * 행이 남는다.
  *
- * <p>[JA] 配送状態の変更を知らせる。聞いているのは二か所:
- * <ul>
- *   <li><b>notification-service</b> — 通知 · SMS。{@code OUT_FOR_DELIVERY} と {@code DELIVERED}、
- *       そして通関保留のようにユーザーが対応すべき状態が特に重要(docs/24)。</li>
- *   <li><b>order-service</b> — 注文状態を {@code DISPATCHED}/{@code DELIVERED} に反映。
- *       これらの値は enum にあるだけで誰も埋めていなかったもの(docs/25 §0)。</li>
- * </ul>
- * 発行の失敗は配送処理を止めない。状態は既に DB にあり、次のポーリングで改めて遷移が検出されることはないので
- * 通知を一つ逃すことはありうる — それでも配送自体が止まるよりはよい。
- * (アウトボックスに移すのが定石だが、それはこのサービスに outbox テーブルを置く別作業である。)
- * <b>コミットの後に送る · 失敗を数える。</b> 🐛 以前はトランザクション内で即送信し、{@code send} の結果を見ていなかった —
- * ロールバックされると保存されていない状態が出ていき、ブローカー障害による非同期の失敗はログすらなかった。今はトランザクションがあれば
- * コミット後に送り、失敗は {@value #FAILED_METRIC} で数える(警報 {@code DeliveryStatusPublishFailed} — その注文は状態が止まったかもしれない)。
+ * <p>[JA] アウトボックスに書く — 状態を変えたトランザクション内でイベントを書き、コミット直後にリレーを起こす(状態とイベントは一緒に
+ * コミット · ロールバック)。以前はコミット後に直接送り失敗は数えるだけで、失敗したイベントは消え、注文の状態と通知が止まった。
  */
 @Slf4j
 @Component
@@ -66,7 +58,8 @@ public class DeliveryStatusPublisher {
         io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC);
     }
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final DeliveryOutbox outbox;
+    private final OutboxRelayTrigger deliveryOutboxTrigger;
     private final ObjectMapper objectMapper;
 
     @Value("${delivery.topics.status:delivery-status}")
@@ -95,57 +88,32 @@ public class DeliveryStatusPublisher {
         return true;
     }
 
+    /**
+     * 이벤트를 아웃박스에 적는다 — 부르는 쪽의 트랜잭션에 든다. 적지 못하면(DB) 예외가 그대로 올라가 상태 변경도 롤백된다 —
+     * 상태만 바뀌고 이벤트가 없는 것이 이 아웃박스가 막으려던 바로 그 경우다.
+     * [JA] イベントをアウトボックスに書く — 呼び出し側のトランザクションに入る。書けなければ例外がそのまま上がり状態変更もロールバック。
+     */
     public void publish(Delivery delivery, DeliveryStatus status) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("deliveryId", delivery.getDeliveryId());
+        event.put("orderId", delivery.getOrderId());
+        event.put("customerId", delivery.getCustomerId());
+        event.put("status", status.name());
+        event.put("stage", status.stage().name());
+        event.put("worthNotifying", status.isWorthNotifying());
+        event.put("occurredAt", java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).toString());
+        // 알림 서비스가 이 값으로 중복을 거른다 — 같은 상태 전이가 재전달돼도 알림은 하나다.
+        // [JA] 通知サービスがこの値で重複を除く — 同じ状態遷移が再配信されても通知は一つ。
+        event.put("eventId", "delivery:" + delivery.getOrderId() + ":" + status.name());
+
+        String payload;
         try {
-            Map<String, Object> event = new LinkedHashMap<>();
-            event.put("deliveryId", delivery.getDeliveryId());
-            event.put("orderId", delivery.getOrderId());
-            event.put("customerId", delivery.getCustomerId());
-            event.put("status", status.name());
-            event.put("stage", status.stage().name());
-            event.put("worthNotifying", status.isWorthNotifying());
-            event.put("occurredAt", java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).toString());
-            // 알림 서비스가 이 값으로 중복을 거른다 — 같은 상태 전이가 재전달돼도 알림은 하나다.
-            // [JA] 通知サービスがこの値で重複を除く — 同じ状態遷移が再配信されても通知は一つである。
-            event.put("eventId", "delivery:" + delivery.getOrderId() + ":" + status.name());
-
-            String key = String.valueOf(delivery.getOrderId());
-            String payload = objectMapper.writeValueAsString(event);
-            Long orderId = delivery.getOrderId();
-            if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                        new org.springframework.transaction.support.TransactionSynchronization() {
-                            @Override
-                            public void afterCommit() {
-                                send(key, payload, orderId, status);
-                            }
-                        });
-            } else {
-                send(key, payload, orderId, status);
-            }
-
-        } catch (Exception e) {
-            failed(delivery.getOrderId(), status, e);
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("배송 상태 이벤트를 직렬화하지 못했다", e);
         }
-    }
-
-    private void send(String key, String payload, Long orderId, DeliveryStatus status) {
-        try {
-            kafkaTemplate.send(topic, key, payload).whenComplete((result, ex) -> {
-                if (ex != null) {
-                    failed(orderId, status, ex);
-                } else {
-                    log.debug("배송 상태 발행: orderId={} status={}", orderId, status);
-                }
-            });
-        } catch (RuntimeException e) {
-            failed(orderId, status, e);
-        }
-    }
-
-    private void failed(Long orderId, DeliveryStatus status, Throwable e) {
-        io.micrometer.core.instrument.Metrics.counter(FAILED_METRIC).increment();
-        log.error("배송 상태 발행 실패: orderId={} status={} — 주문 상태 · 알림이 멈췄을 수 있다: {}",
-                orderId, status, e.toString());
+        outbox.enqueue(topic, String.valueOf(delivery.getOrderId()), payload);
+        deliveryOutboxTrigger.afterCommit();
+        log.debug("배송 상태 이벤트를 아웃박스에 적음: orderId={} status={}", delivery.getOrderId(), status);
     }
 }

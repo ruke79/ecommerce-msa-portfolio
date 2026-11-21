@@ -96,7 +96,7 @@
 
 **改善点**
 - 予約の期限切れ直前の決済を防ぐか延長するルールを設けます。
-- fail-open の回数をメトリクスにしてアラートを出します。
+- fail-open の回数をメトリクスにしてアラートを出します。 🕰️ 2026-11-21 — 警報 `OrderStockHoldUnavailable`（15 分 3 件、カウンターは起動時に 0 · B-101）。
 
 → [docs/59](59-stock-reservation.md) · [docs/53](53-restock-and-sold-out.md)
 
@@ -178,7 +178,7 @@
   - 🕰️ 2026-10-15（D-M1 · M2）: ポーラーは短いトランザクションで先取り · リース（`delivery.polling.lease-minutes`、10 分）→ 配送業者の呼び出しはトランザクションの外 → 反映は箱ごと。Outbox は今もなく、状態イベントはコミット後に発行 · 失敗はアラート `DeliveryStatusPublishFailed`（D-M4）。
 
 **改善点**
-- delivery の発行を Outbox に移します。
+- delivery の発行を Outbox に移します。 🕰️ 2026-11-21 — 完了: `delivery.outbox_event`（V5、月次パーティション）· `DeliveryOutboxRelay`（一つの Pod だけ · ブローカーのエラーならそのまとまりを止めて次の周期 · 永続エラーはその行だけ FAILED）、試験 `DeliveryOutboxPostgresTest`。
 - ポーリングを「照会（トランザクション外）→ 反映（短いトランザクション）」に分けます。
 
 → [docs/25](25-delivery-service-design.md) · [docs/37](37-transaction-boundary-audit.md) · [docs/56](56-saga-latency.md)
@@ -456,7 +456,7 @@
 **限界**
 - サンプリング決定（30 秒）の後に起きた非同期エラーはトレースに残りません（ログ · メトリクスには残ります）。
 - トレースの保存（badger）とテールサンプリングはノード1台を前提にしています。
-- ログベースの ERROR 急増アラートがありません。
+- ログベースの ERROR 急増アラートがありません。 🕰️ 2026-11-21 — Loki `ErrorLogSurge`（5 分 20 行超 · 平常の 3 倍、基準はバックテスト — docs/99）、ルールファイルがすべて読まれるかは `LokiRulesLoadTest`。
   - 🕰️ 2026-11-14: テールサンプリングのエラー · 遅いトレースのポリシーには今は上限がある（B-102 — 200 · 100 スパン/秒）。SLO 消費率アラート 4 つ（`SloErrorBudgetBurnFast` など）ができた（[docs/91](91-slo-and-capacity.md)）。ERROR 急増アラートは今もない。
 - 可観測性スタックがノードの compose で動いています。
 

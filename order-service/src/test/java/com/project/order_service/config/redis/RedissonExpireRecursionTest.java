@@ -30,8 +30,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 @DisplayName("Redisson ↔ Spring Data Redis — expire 가 재귀하지 않는다")
 class RedissonExpireRecursionTest {
 
-    /** 이 호출이 StackOverflowError 를 내지 않는지 — 가짜 클라이언트라 다른 예외는 괜찮다. */
-    // [JA] この呼び出しが StackOverflowError を出さないか — 偽クライアントなので他の例外は構わない。
+    /** 이 호출이 StackOverflowError 를 내지 않는지 — 가짜 클라이언트라 다른 예외는 괜찮다. [JA] この呼び出しが StackOverflowError を出さないか — 偽のクライアントなので他の例外は構わない。 */
     private static Throwable call(Runnable r) {
         try {
             r.run();
@@ -45,7 +44,7 @@ class RedissonExpireRecursionTest {
     @DisplayName("🔴 연결의 pExpire(조건 있는 판 · 없는 판) · StringRedisTemplate.expire 가 StackOverflowError 를 내지 않는다")
     void expireDoesNotRecurse() {
         // 닿지 않는 주소 · 지연 초기화 — 연결을 만들지 않고 클라이언트만 띄운다(재귀는 Redis 에 닿기 전에 일어난다)
-        // [JA] 届かないアドレス · 遅延初期化 — 接続を作らずクライアントだけ起動する(再帰は Redis に届く前に起きる)
+        // [JA] 届かないアドレス · 遅延初期化 — 接続を作らずクライアントだけ立てる(再帰は Redis に届く前に起きる)
         org.redisson.config.Config config = new org.redisson.config.Config();
         config.setLazyInitialization(true);
         config.useSingleServer().setAddress("redis://127.0.0.1:1").setConnectTimeout(200).setTimeout(200).setRetryAttempts(0);

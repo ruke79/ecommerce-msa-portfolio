@@ -51,6 +51,12 @@ public class Cart extends BaseEntity {
     // [JA] MERGE も — 以前は PERSIST だけだったので、既に保存済みのカートに行を付けて merge で保存すると新しい行が黙って抜けた
     //      (実際に「追加できない」バグだった — CartService が新しい行を直接 save して防いでいる。その回避を忘れる新しいコードでも安全なように)。
     cascade = {CascadeType.PERSIST, CascadeType.MERGE}, targetEntity = CartProduct.class, orphanRemoval = true)
+    // 담은 순서로 고정한다 — 줄 id 는 TSID(만든 시각 순으로 커진다). 🐛 2026-11-21 운영: 수량을 바꾸면 그 상품이 목록 맨 뒤로 갔다.
+    //    순서가 없으면 DB 가 돌려주는 순서인데, PostgreSQL 은 UPDATE 한 행을 새 버전으로 테이블 뒤쪽에 써서 방금 고친 줄이 뒤로 나온다
+    //    (수량 PATCH 의 응답 = loadCart → 화면이 그 순서를 그대로 쓴다). 시험 CartLineOrderTest.
+    // [JA] 入れた順に固定する — 行 id は TSID(作成時刻順に大きくなる)。以前は順序がなく、PostgreSQL は UPDATE した行を新しい版として
+    //      テーブルの後ろに書くので、数量を変えた商品が一覧の末尾へ動いた。
+    @jakarta.persistence.OrderBy("cartproductId ASC")
     private List<CartProduct> cartProducts = new ArrayList<>();
 
 

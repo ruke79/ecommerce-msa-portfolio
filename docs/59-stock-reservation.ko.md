@@ -127,6 +127,7 @@
   catalog 에 닿지 못한 경우(fail-open)뿐이다. 그래도 모자라면 입금 뒤 §7 경로로 "수동 환불 필요".
 - **fail-open 동안 만들어진 주문은 예약이 없다.** `order_stock_hold_total{result="unavailable"}` 가 늘면 그 시간 동안의 초과 판매는
   §7 의 보상에 기대고 있다는 뜻이다.
+  🕰️ 2026-11-21: 경보 `OrderStockHoldUnavailable`(15분 3건 — 배포 롤링의 한두 건은 넘긴다). 계수기는 기동 때 0(B-101 — 예전 이름 `"order_stock_hold_total"` 은 가드가 앱 밖 지표로 보고 건너뛰었다, 이제 `order.stock.hold`, 내보내는 이름은 같다).
 - 장바구니 단계에서는 잡지 않는다. 장바구니는 오래 머물러 재고를 묶어 두는 비용이 크다 — 실무도 대개 결제 단계에서 잡는다.
 
 ## 7. 운영

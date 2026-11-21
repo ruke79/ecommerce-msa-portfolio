@@ -213,6 +213,9 @@ users.roles 에 ROLE_USER 가 없습니다. 마이그레이션 V3__seed_roles.sq
 user-created 페이로드를 만들지 못했다: userId={}
 = -
 
+가입 확인 메일 행을 만들지 못했다: userId={}
+= -
+
 {} 페이로드를 만들지 못했다: userId={}
 = -
 

@@ -80,6 +80,19 @@ class PasskeyServiceTest {
                 .filter(r -> r.getPasskeyId().equals(inv.getArgument(0)) && r.getUserId().equals(inv.getArgument(1)))
                 .findFirst());
         org.mockito.Mockito.doAnswer(inv -> rows.remove(inv.<PasskeyCredential>getArgument(0))).when(repo).delete(any());
+        // 로그인 기록 — 실제 SQL 처럼 카운터는 더 큰 값만(GREATEST, PasskeySignCountMonotonicTest 가 실제 DB 로 본다).
+        // [JA] ログインの記録 — 実際の SQL のようにカウンターは大きい値だけ。
+        when(repo.recordLogin(anyLong(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyBoolean(), any()))
+                .thenAnswer(inv -> {
+                    long id = inv.getArgument(0);
+                    long count = inv.getArgument(1);
+                    rows.stream().filter(r -> r.getPasskeyId() == id).forEach(r -> {
+                        r.setSignCount(Math.max(r.getSignCount(), count));
+                        r.setBackupState(inv.getArgument(2));
+                        r.setLastUsedAt(inv.getArgument(3));
+                    });
+                    return 1;
+                });
 
         service = new PasskeyService(repo, redis, new SimpleMeterRegistry(), ORIGIN, "", "", "Shop");
         user = User.builder().build();

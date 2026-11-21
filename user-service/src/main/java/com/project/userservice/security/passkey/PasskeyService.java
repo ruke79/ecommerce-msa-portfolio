@@ -174,6 +174,7 @@ public class PasskeyService {
      *
      * <p>[JA] 登録を終える — ブラウザが返した応答(PublicKeyCredential の JSON)を検証して公開鍵を保存する。
      *
+     *
      * @throws PasskeyException 시간이 지났다 · 검증 실패 · 이미 등록됨 · 개수 초과
      *     [JA] 時間切れ・検証失敗・登録済み・個数超過
      */
@@ -263,6 +264,7 @@ public class PasskeyService {
      *
      * <p>[JA] ログイン署名を検証する。
      *
+     *
      * @return 통과하면 사용자 id. 시간 초과 · 모르는 패스키 · 다른 계정의 user handle · 서명 · 출처 · UV · 복제 의심은 모두 빈 값
      *         (이유를 응답으로 구분해 주지 않는다 — 운영 지표 · 로그에만)
      *     [JA] 通過すればユーザー id。時間切れ・未知のパスキー・別アカウントの user handle・署名・出所・UV・複製の疑いはすべて空
@@ -313,10 +315,9 @@ public class PasskeyService {
         }
 
         AuthenticatorData<?> authData = parsed.getAuthenticatorData();
-        row.setSignCount(authData.getSignCount());
-        row.setBackupState(authData.isFlagBS());
-        row.setLastUsedAt(LocalDateTime.now());
-        repository.save(row);
+        // 카운터는 줄지 않게 한 문장으로 — 엔티티를 고쳐 save 하면 동시 로그인에서 작은 값이 덮어쓴다(recordLogin).
+        // [JA] カウンターは減らないよう一文で — エンティティを直して save すると同時ログインで小さい値が上書きする。
+        repository.recordLogin(row.getPasskeyId(), authData.getSignCount(), authData.isFlagBS(), LocalDateTime.now());
         meters.counter(METRIC, "event", "login").increment();
         return Optional.of(row.getUserId());
     }

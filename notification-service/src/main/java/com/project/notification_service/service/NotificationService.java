@@ -57,6 +57,7 @@ public class NotificationService {
      *
      * <p>[JA] 通知を作る。同じ {@code sourceEventId} では一度だけ作られる。
      *
+     *
      * @return 새로 만들어졌으면 그 알림, 이미 있으면 비어 있음
      *         [JA] 新しく作られたらその通知、すでにあれば空
      */
@@ -241,19 +242,10 @@ public class NotificationService {
                 .orElse(false);
     }
 
+    /** 안 읽은 알림 모두 — 한 문장(NotificationRepository.markAllReadOf). [JA] 未読の通知すべて — 一文で。 */
     @Transactional
     public int markAllRead(Long recipientId) {
-        List<Notification> unread =
-                notificationRepository.findByRecipientIdAndDeletedFalseOrderByCreatedAtDesc(
-                        recipientId, PageRequest.of(0, 500));
-        int changed = 0;
-        for (Notification n : unread) {
-            if (!n.isRead()) {
-                n.markRead();
-                changed++;
-            }
-        }
-        return changed;
+        return notificationRepository.markAllReadOf(recipientId);
     }
 
     @Transactional

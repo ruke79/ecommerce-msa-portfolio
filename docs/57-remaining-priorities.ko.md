@@ -689,6 +689,8 @@ kubectl -n ecommerce logs deploy/eureka-server --since=24h | grep -c '\[eureka w
 되돌리기: `EUREKA_WRITE_AUTH_MODE` 를 observe 로 같은 절차. 서버가 재시작해도 클라이언트는 30초 하트비트로 다시 등록한다.
 
 > 🕰️ 2026-11-14: `my-url` 고침은 2026-10-26 운영에 들어갔고, 2026-10-30 다시 하루 0건을 보고 enforce 로 올렸다(로그 `mode=ENFORCE (CA 읽음)` · 10분 `[eureka write]` 0 · 재시작 0).
+>
+> 🕰️ 2026-11-21 정정(docs/99 §4): **그 고침은 k8s 에서 효과가 없었다.** eureka-server 파드도 ConfigMap 의 `EUREKA_CLIENT_SERVICEURL_DEFAULTZONE`(자기 Service 주소)을 받아 피어 목록이 자기가 됐고, `my-url` 은 yml 의 localhost 그대로라 걸러지지 않았다 — 자기 복제가 enforce 뒤 403 으로 5분마다 ~100줄(운영 ERROR 의 9할). `[eureka write]` 는 같은 줄을 파드마다 한 번만 남겨 '하루 0건' 이 이를 가렸다. 또 config-server 는 yml 에 `defaultZone` 키가 없어 env 가 먹지 않고 평문 localhost 로 붙어 **한 번도 Eureka 에 닿지 않았다** — 그 서비스의 '0건' 은 인증서가 맞아서가 아니었다. 고침: k8s/30 `EUREKA_SERVER_MYURL`(= ConfigMap defaultZone + `/`, 시험 `PeerSelfReplicationTest` — 매니페스트 + ConfigMap + yml 을 묶는다) · config-server yml 의 `service-url.defaultZone`(시험 `EurekaServiceUrlBindingTest`). 다음 배포 뒤 두 ERROR 줄 0 · config-server 가 등록부에 보인다.
 
 테스트: `RegistryWriteGuardTlsTest`(실제 TLS 로 띄운 Eureka 에 **실제 Eureka 클라이언트**가 공통 설정 그대로 등록 — 신원은 통과 · TLS 를 끈
 클라이언트는 JVM 키스토어가 있어도 인증서를 내지 않아 거절 · 다른 서비스 인증서로 남의 앱 등록 거절 · 인증서 없이 OUT_OF_SERVICE 403 ·
@@ -889,6 +891,18 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 - react-router v7 · jest 30 메이저 판 올림 — 화면 전체 회귀가 필요한 별도 작업.
 - 같은 전화번호를 두 계정이 쓰는 것 — 막을지(가족 공용 번호)부터 정할 일.
 
+### 22-1. 해제 확인이 보이게(2026-11-21)
+
+**문제**: 운영에서 비밀번호를 재설정했는데 다른 브라우저(시크릿 창)가 그대로 진행됐다(user-service 로그 `끊은 로그인=0`, `auth:cutoff` 는 있었다). 그런데 게이트웨이가 그 브라우저에 401 을 줬는지 알 수 없었다 — 거절도, Redis 를 못 읽어 통과시킨 것도 debug 로그뿐이었다.
+
+**한 것**: 계수기 `gateway_session_cutoff_total{result}` — `revoked`(해제 뒤 토큰을 401) · `error` · `timeout` · `no_redis`(확인하지 못해 통과). 기동 때 넷 모두 0(B-101). 로그: 거절은 한 줄씩 INFO `[auth] 로그인 해제 뒤의 액세스 토큰 — 401 uid= 경로=`(uid 와 경로만), 통과는 분마다 한 줄 WARN(그 사이 건수와 함께), 확인이 꺼져 있거나 Redis 템플릿이 없으면 기동 때 WARN. 시험 gateway `JwtSessionCutoffTest` +3(변이 넷: 각 계수 · 기동 등록을 빼면 실패).
+
+**판정(배포 뒤 같은 일이 생기면)**: `kubectl -n ecommerce logs deploy/gateway-server --since=1h | grep '\[auth\] 로그인 해제'` — 401 줄이 있으면 게이트웨이는 막았다(그 뒤는 화면 · 갱신 쪽), WARN 이면 Redis, 아무것도 없으면 그 브라우저는 로그인이 필요한 요청을 보내지 않았다(공개 화면만). 지표는 `sum by (result) (increase(gateway_session_cutoff_total[1h]))`. 경보는 아직 두지 않았다 — 평소 값을 본 뒤 정한다.
+
+**운영 확인(2026-11-21 07:46 UTC)**: 크롬 시크릿 창 로그인 → 파이어폭스에서 재설정 → `끊은 로그인=1`, 0.3초 뒤 갱신이 `비밀번호 변경 이전에 발급된 리프레시 토큰` 으로 4번 거절되고 크롬이 로그아웃됐다. 게이트웨이 `revoked` 는 0 — 알림 연결(SSE)이 먼저 닫혀 화면이 옛 액세스 토큰을 쓰기 전에 갱신으로 끊겼다(게이트웨이는 그 길이 없을 때의 두 번째 겹). 앞의 두 번의 `끊은 로그인=0` 은 같은 조건에서 재현되지 않았다 — 그 순간 색인에 그 로그인이 없었던 것으로 본다.
+
+**되풀이 갱신 고침(2026-11-21)**: 위 확인에서 끊긴 브라우저가 갱신을 0.26초 간격으로 4번 보내 같은 거절을 4번 받았다. 서버 — 비밀번호 변경으로 거절할 때만 리프레시 쿠키를 남겼다 → 다른 거절처럼 쿠키를 지우고 그 묶음도 끊는다(다음 시도는 쿠키가 없어 204, `RefreshTokenRotationControllerTest` +1, 변이 둘). 화면 — 갱신을 부르는 셋(알림 연결의 Reauth · 채팅 연결의 4401 · 401 재시도)이 서로의 진행을 몰랐다 → 갱신 요청은 한 번에 하나(겹치면 같은 결과를 함께 받는다), 갱신이 실패해 로그인이 끝나면 새 로그인까지 연결의 갱신 부탁을 보내지 않는다(`TokenRefresher.test.jsx` +2, 변이 둘). 배포 뒤 재설정 → `비밀번호 변경 이전에 발급된` 줄이 한 번.
+
 ## 23. 나가는 연결(egress) 1단계 — IP 목록 없이(2026-11-19)
 
 **문제**: 들어오는 연결은 §11 로 막았지만 나가는 연결은 모두 열려 있었다. 서비스 하나에 SSRF · 원격 코드 실행이 생기면 그 파드에서 클라우드 메타데이터(`169.254.169.254` — 자격증명) · 노드의 다른 포트(kubelet · SSH · 관측 스택) · 같은 VCN 의 장비에 닿고, 바깥으로 데이터를 내보낼 수 있다. 다만 NetworkPolicy 는 도메인이 아니라 IP 로만 고르고, 결제사 · Atlas · Gmail · S3 의 IP 는 바뀐다 — IP 허용 목록은 언젠가 결제를 멈춘다(§22).
@@ -978,7 +992,8 @@ Redis 비밀번호(`SPRING_DATA_REDIS_PASSWORD`)는 이 Secret 에 **있다**(�
 | 날짜 | 한 것 | 결과 |
 |---|---|---|
 | 2026-11-20 | 낡은 암호문 적용 사고 복구(§24-2) → `from-cluster` 로 암호문 다시 만듦 + `TOTP_ENCRYPTION_KEY` 새로 | `drift` 키 35 · 35 같음, 2FA 비밀 0행(다시 잠글 것 없음), 커밋 `539a2a2c` |
-| — | (첫 `drill` · `rotation` 을 여기에) | |
+| 2026-11-21 | 첫 `rotation`(작업 PC 의 키, 암호문 판 4개) | 키 34개 모두 ✅ — 2026-11-19 · 20 (0 ~ 1일), ⏰ 0. ⚠️ 날짜는 암호문 이력이 시작된 2026-11-19 부터만 센다 — 그 전에 언제 바뀌었는지는 모른다(교체했다는 뜻이 아니다). 첫 ⏰ 는 2027-02-17 무렵 |
+| 2026-11-21 | 첫 `drill` — 보관 키는 오프라인 보관 PC에 있어 **그 PC 에서**(키를 운영 노드로 옮기지 않는다 · 이 PC 의 키를 쓰지 않음 `SOPS_AGE_KEY_FILE=/nonexistent` · 실습 Secret 과 비교하지 않게 `KUBECONFIG=/dev/null`) + 운영 노드에서 `drift` | 받는 사람에 있다 · 그 키 하나로 풀린다(키 34개) ✅. 운영 노드: 체크아웃의 암호문 = 원격 끝, `drift` 34 · 34 같다 — 보관 키로 푼 값 = 운영 Secret. 다음 훈련 2027-02 무렵(분기) |
 
 **확인**: `SopsSecretsScriptTest` +3(실제 sops · age — `drift` 는 다른 키 이름만 · 값은 출력하지 않음 · 종료 1, `drill` 은 보관 키 하나로 통과하고 받는 사람이 아닌 키는 실패, `rotation` 은 다시 암호화만 한 판을 교체로 세지 않는다) · 가드 `SopsSecretGuardTest` +1(ops/28 이 `drift` 를 한 번 부른다). 변이: 지문 비교를 빼면 · `drill` 이 이 기계의 키로 풀면 · `rotation` 이 판 0 의 날짜만 보면 각각 실패.
 

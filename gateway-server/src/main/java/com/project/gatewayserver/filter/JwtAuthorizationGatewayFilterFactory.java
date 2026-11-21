@@ -77,6 +77,56 @@ public class JwtAuthorizationGatewayFilterFactory
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.data.redis.core.ReactiveStringRedisTemplate redis;
 
+    /**
+     * 해제 확인의 결과를 센다 — {@value #CUTOFF_METRIC}{@code {result}}: {@code revoked}(해제 뒤의 토큰을 401) · {@code error} ·
+     * {@code timeout} · {@code no_redis}(확인하지 못해 통과). 🐛 예전에는 통과도 거절도 debug 로그뿐이라, 2026-11-21 운영에서
+     * "비밀번호를 재설정했는데 다른 브라우저가 그대로" 일 때 게이트웨이가 401 을 줬는지조차 알 수 없었다.
+     */
+    // [JA] 解除確認の結果を数える。以前は通過も拒否も debug ログだけで、2026-11-21 本番で別ブラウザが残ったとき 401 を返したかすら分からなかった。
+    static final String CUTOFF_METRIC = "gateway.session.cutoff";
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private io.micrometer.core.instrument.MeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+    /** 확인을 건너뛴 경고는 분마다 한 줄 — Redis 가 죽으면 모든 인증 요청이 건너뛴다. [JA] スキップの警告は 1 分に 1 行。 */
+    private final java.util.concurrent.atomic.AtomicLong lastSkipWarnMs = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong skippedSinceWarn = new java.util.concurrent.atomic.AtomicLong();
+    static final long SKIP_WARN_INTERVAL_MS = 60_000;
+
+    /** 기동 때 0 으로 만든다(B-101 — 첫 사고에 생기면 increase() 가 0 으로 본다). 확인이 꺼져 있으면 한 줄 남긴다. */
+    // [JA] 起動時に 0 で作る(B-101)。確認が無効なら一行残す。
+    @jakarta.annotation.PostConstruct
+    void registerAlertCounters() {
+        for (String result : new String[] {"revoked", "error", "timeout", "no_redis"}) {
+            cutoffCounter(result);
+        }
+        if (!sessionCutoffEnabled) {
+            log.warn("[auth] 로그인 해제 확인 꺼짐(gateway.session-cutoff.enabled=false) — 해제 뒤의 액세스 토큰이 만료까지 통한다");
+        } else if (redis == null) {
+            log.warn("[auth] 로그인 해제 확인을 할 수 없다 — Redis 템플릿 없음, 해제 뒤의 액세스 토큰이 만료까지 통한다");
+        }
+    }
+
+    private io.micrometer.core.instrument.Counter cutoffCounter(String result) {
+        return io.micrometer.core.instrument.Counter.builder(CUTOFF_METRIC)
+                .description("로그인 해제 확인 결과 — revoked 는 401, 나머지는 확인하지 못해 통과")
+                .tag("result", result).register(meters);
+    }
+
+    /** 확인하지 못해 통과시켰다 — 세고, 분마다 한 줄 경고(그 사이 건수와 함께). 토큰 · 이메일은 남기지 않는다. */
+    // [JA] 確認できずに通した — 数えて、1 分ごとに一行警告。トークン · メールは残さない。
+    private void skipped(String result, Long uid, Throwable cause) {
+        cutoffCounter(result).increment();
+        long n = skippedSinceWarn.incrementAndGet();
+        long now = System.currentTimeMillis();
+        long last = lastSkipWarnMs.get();
+        if (now - last >= SKIP_WARN_INTERVAL_MS && lastSkipWarnMs.compareAndSet(last, now)) {
+            skippedSinceWarn.addAndGet(-n);
+            log.warn("[auth] 로그인 해제 시각을 확인하지 못해 통과 — result={} uid={} 원인={} (지난 경고 뒤 {}건)", result, uid,
+                    cause == null ? "-" : cause.getClass().getSimpleName(), n);
+        }
+    }
+
     private volatile String ringSource;
     private volatile com.project.common.security.JwtKeyRing ring;
 
@@ -148,9 +198,16 @@ public class JwtAuthorizationGatewayFilterFactory
                 mutated.header("User-Role", role.toString());
             }
             ServerWebExchange forwarded = exchange.mutate().request(mutated.build()).build();
-            return sessionStillValid(uid, claims).flatMap(valid -> valid
-                    ? chain.filter(forwarded)
-                    : unauthorized(exchange, "session revoked", relogin(exchange)));
+            return sessionStillValid(uid, claims).flatMap(valid -> {
+                if (valid) {
+                    return chain.filter(forwarded);
+                }
+                // 드물다(해제 직후 그 사용자의 다른 기기만) — 한 줄씩 남긴다. uid 와 경로만.
+                // [JA] まれ(解除直後のそのユーザーの他の端末だけ) — 一行ずつ。uid とパスだけ。
+                cutoffCounter("revoked").increment();
+                log.info("[auth] 로그인 해제 뒤의 액세스 토큰 — 401 uid={} 경로={}", uid, request.getPath().value());
+                return unauthorized(exchange, "session revoked", relogin(exchange));
+            });
         };
     }
 
@@ -167,7 +224,11 @@ public class JwtAuthorizationGatewayFilterFactory
      * 最大 15 分通った。Redis が遅い · 落ちているときは通す(全体障害にしない、期限が 15 分の上限)。
      */
     Mono<Boolean> sessionStillValid(Long uid, Claims claims) {
-        if (!sessionCutoffEnabled || redis == null) {
+        if (!sessionCutoffEnabled) {
+            return Mono.just(true);
+        }
+        if (redis == null) {
+            skipped("no_redis", uid, null);
             return Mono.just(true);
         }
         java.util.Date issuedAt = claims.getIssuedAt();
@@ -180,7 +241,7 @@ public class JwtAuthorizationGatewayFilterFactory
                 .defaultIfEmpty(true)
                 .timeout(sessionCutoffTimeout)
                 .onErrorResume(e -> {
-                    log.debug("로그인 해제 시각을 읽지 못해 통과 — {}", e.getClass().getSimpleName());
+                    skipped(e instanceof java.util.concurrent.TimeoutException ? "timeout" : "error", uid, e);
                     return Mono.just(true);
                 });
     }

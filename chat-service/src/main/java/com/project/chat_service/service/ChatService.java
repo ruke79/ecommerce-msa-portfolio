@@ -43,11 +43,29 @@ import lombok.extern.log4j.Log4j2;
 
 
 
+// 🐛 2026-11-21 까지 클래스 전체에 @Transactional 이 있었다 — 메시지 하나(sendMessage)마다 DB 커넥션을 쥔 채 Kafka 로 보냈고
+//    (max.block 5초), 입장 · 퇴장 안내 · 끊김(Redis) · Mongo 저장 · 방 만들기의 Redisson 잠금 대기(최대 10초)도 그랬다. 브로커가
+//    흔들리면 채팅 메시지마다 커넥션이 묶여 풀이 바닥나고 방 · 상담 조회까지 막힐 수 있었다(docs/93 ③ 3단계, docs/37 #21).
+//    이제 DB(JPA)를 쓰는 메서드에만 트랜잭션을 둔다 — 시험 ChatServiceTransactionBoundaryTest.
+// [JA] 以前はクラス全体に @Transactional があり、メッセージ一つごとに DB 接続を握ったまま Kafka へ送っていた(入退室の案内 · 切断(Redis)
+//      · Mongo 保存 · 部屋作成の Redisson ロック待ちも)。ブローカーが揺れるとプールが尽き得た。今は JPA を使うメソッドだけにトランザクション。
 @Log4j2
 @RequiredArgsConstructor
 @Service
-@Transactional
 public class ChatService {
+
+    /**
+     * 방 만들기에서 잠금을 잡은 뒤의 DB 저장만 감싼다 — 잠금을 기다리는 동안 커넥션을 쥐지 않는다. 기본값은 트랜잭션 없이(단위 시험),
+     * 앱에서는 JPA 트랜잭션 관리자로 바뀐다(아래 세터).
+     * [JA] 部屋作成でロックを取った後の DB 保存だけを包む — ロック待ちの間に接続を握らない。既定はトランザクションなし(単体試験)。
+     */
+    private org.springframework.transaction.support.TransactionOperations tx =
+            org.springframework.transaction.support.TransactionOperations.withoutTransaction();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    }
 
     @PersistenceContext
     private EntityManager em;
@@ -74,6 +92,7 @@ public class ChatService {
      * <p>[JA] 購読(入室)時の参加者登録。
      * <p>{@code userId} は CONNECT 時に検証されたトークンの {@code uid} で、それがそのまま身元である(member_id)。以前はメールが身元で、uid は会員行を即席で作るときにだけ別に渡していた(docs/48 §6-⑥)。
      */
+    @Transactional
     public void connect(String roomId, String userSessionId, Long userId) {
 
         // 세션↔방 매핑이 먼저다. 참여자 등록이 실패해도 DISCONNECT 가 정리할 것은 남는다.
@@ -102,7 +121,7 @@ public class ChatService {
         chatRoomRepository.removeUserEnterInfo(userSessionId);
     }
 
-    @Transactional(readOnly = true)
+    // Mongo 만 읽는다 — JPA 트랜잭션을 열지 않는다. [JA] Mongo だけを読む — JPA のトランザクションを開かない。
     public List<MessageDto> getRoomMessagesByCurser(String roomId, String cursorId) {
 
          PageRequest pageable = PageRequest.of(0, 20 + 1);
@@ -227,12 +246,17 @@ public class ChatService {
             boolean isLocked = lock.tryLock(10, 5, TimeUnit.SECONDS);
             if (isLocked) {
                 try {
-                    ChatRoom chatRoom = ChatRoom.create(roomName);
-                    saveChatRoom(chatRoom);
+                    // 잠금을 잡은 뒤의 저장만 한 트랜잭션 — 잠금을 기다리는 동안은 커넥션을 쥐지 않는다.
+                    // [JA] ロックを取った後の保存だけを一つのトランザクションで — ロック待ちの間は接続を握らない。
                     // 예전에는 Redis 해시(CHAT_ROOM)에도 방 사본을 넣었다 — 목록이 DB 기준이 된 뒤로 읽는 곳이 없는, 쌓이기만 하는 사본이었다.
-                    // [JA] 以前は Redis ハッシュ(CHAT_ROOM)にもルームのコピーを入れていた — 一覧が DB 基準になってからは読む箇所がなく、溜まる一方のコピーだった。
-                    chatRoomDto = ChatRoomDto.builder().name(chatRoom.getRoomName()).roomId(chatRoom.getRoomUid()).build();
-                    saveParticipantRoom(chatRoom.getRoomUid(), userId);
+                    // [JA] 以前は Redis のハッシュ(CHAT_ROOM)にも部屋の写しを入れていた — 一覧が DB 基準になってから読む所のない写しだった。
+                    final String name = roomName;
+                    chatRoomDto = tx.execute(status -> {
+                        ChatRoom chatRoom = ChatRoom.create(name);
+                        em.persist(chatRoom);
+                        saveParticipantRoom(chatRoom.getRoomUid(), userId);
+                        return ChatRoomDto.builder().name(chatRoom.getRoomName()).roomId(chatRoom.getRoomUid()).build();
+                    });
                 } finally {
                     lock.unlock();
                 }
@@ -257,7 +281,7 @@ public class ChatService {
      * <p>[JA] 入室案内。🔒 文言はルームの相手の画面にそのまま表示される — 識別子を入れない。ニックネームは本文(クライアントの任意値)ではなく会員行から来る(sendMessage と同じ、docs/48 §6-⑥)。
      * <p>以前はここでセッション属性 {@code email}(セッション値を再記録していた)と {@code nickname}(<b>本文の値</b>)を記録していた。どちらも読む箇所がなかった。今はセッションにはルーム番号だけを記録する。身元は CONNECT が記録した {@code userId} 一つである。
      */
-    @Transactional(readOnly = true)
+    // Kafka 로 보낸다 — 트랜잭션 밖(커넥션을 쥔 채 브로커를 기다리지 않는다). [JA] Kafka へ送る — トランザクションの外。
     public void  sendEnterMessage(MessageDto msg, SimpMessageHeaderAccessor headerAccessor) {
         Objects.requireNonNull(headerAccessor.getSessionAttributes()).put("roomId", msg.getRoomId());
         String nickname = displayNameOf(msg.getSenderId());
@@ -267,7 +291,7 @@ public class ChatService {
         messageProducer.send(KafkaUtil.KAFKA_TOPIC, msg);
     }
 
-    @Transactional(readOnly = true)
+    // Kafka 로 보낸다 — 트랜잭션 밖. [JA] Kafka へ送る — トランザクションの外。
     public void  sendLeaveMessage(MessageDto msg, SimpMessageHeaderAccessor headerAccessor) {
         Objects.requireNonNull(headerAccessor.getSessionAttributes()).put("roomId", msg.getRoomId());
         String nickname = displayNameOf(msg.getSenderId());
@@ -349,6 +373,7 @@ public class ChatService {
      * <p>[JA] 会員行を保証する — あればそれ、なければ即席で作る(下の {@link #createMissingMember})。
      * 相談スレッド(docs/58)が顧客・相談員 id で外部キーを張る前に呼ぶ。
      */
+    @Transactional
     public ChatMember ensureMember(Long userId) {
         ChatMember member = chatMemberService.findById(userId);
         return member != null ? member : createMissingMember(userId);

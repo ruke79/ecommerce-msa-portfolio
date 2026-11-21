@@ -272,6 +272,8 @@ user-service に Outbox があるにはある:
 今回の作業範囲外なので手を付けなかった。
 
 > 🕰️ 2026-11-14: Outbox は復活した — `UserOutboxScheduler`(`FOR UPDATE SKIP LOCKED`、発行をトランザクション内で同期的に待つ) · `UserOutboxHelper`(ユーザーイベント · 退会 · 複製の照合が使う)。メールは今もその経路ではない — `RegistrationListener` · `EmailService` が `OutgoingMailProducer.publish()`(トランザクション外の `send().get()`)を直接呼ぶので、上の発行失敗の窓は残っている。
+>
+> 🕰️ 2026-11-21（docs/93 ③ 2 段階）: **登録確認メールは今はアウトボックスを通る。** `/public/register` がアカウントと `registration-mail` の行を一つのトランザクションで書き（`registerNewUserAccountWithConfirmationMail`）、`RegistrationMailRelay` が送るときにトークンを作って（DB にはハッシュだけ）メール要求を送る — 行には言語だけ（原文のトークン · メールなし）。送れなければそのトランザクションをロールバックし次の周期に再度（登録イベントのリレーはこの種類を取らない — そちらは失敗で FAILED · 再試行なし）。再送も同じ経路。`RegistrationListener` · `OnRegistrationCompleteEvent` は削除した。⚠️ パスワード再設定 · セキュリティ通知など `EmailService` のメールはまだ `publish()` を直接呼ぶ — ユーザーが再要求できるメールなので後回し。試験 `RegistrationMailRelayTest`。
 
 ### 5.2 バウンス処理がない
 

@@ -102,6 +102,20 @@ groups:
           summary: "결제된 주문의 재고가 모자랐습니다 (최근 30분 {{ $value }}개)"
           description: "catalog 가 결제 뒤 재고 차감에서 모자란 수량을 order 에 알렸고, order 가 그만큼 자동 환불합니다. 재고 수치가 실물과 맞는지, 품절 처리가 늦지 않았는지 확인하세요(docs/53)."
 
+      # 결제 전 재고 예약이 catalog 에 닿지 못해 예약 없이 주문을 받았다(fail-open — order OrderStockHold, docs/59). 막지 않는 것은
+      # 설계다: 그래도 생긴 초과 판매는 결제 뒤 차감의 부족분 자동 환불(StockShortageOccurred)이 받는다. 다만 이어지면 catalog(gRPC ·
+      # 재고 예약 경로)가 아픈 것이고 그 동안의 주문은 마지막 1개 이중 판매를 막지 못한다. 배포 롤링의 한두 건은 넘기려고 3건부터(docs/93 ③).
+      # 처리: order 로그의 '재고 예약 불가'(orderId · transport) · catalog 의 gRPC(9095) · 재고 예약 지연을 본다. 계수기는 기동 때 0(B-101).
+      # [JA] 決済前の在庫予約が catalog に届かず予約なしで注文を受けた(fail-open)。止めないのは設計 — それでも出た売り越しは決済後の減算の
+      #      不足分自動返金が受ける。続くなら catalog(gRPC · 在庫予約の経路)が具合が悪く、その間の注文は最後の 1 個の二重販売を防げない。
+      #      デプロイのローリングの 1 〜 2 件は見逃すため 3 件から。対応: order のログ '재고 예약 불가' · catalog の gRPC · 在庫予約の遅延。
+      - alert: OrderStockHoldUnavailable
+        expr: sum by (service) (increase(order_stock_hold_total{result="unavailable"}[15m])) >= 3
+        labels: { severity: warning }
+        annotations:
+          summary: "재고 예약 없이 받은 주문이 최근 15분 {{ $value | humanize }}건입니다 — catalog 에 닿지 못함(fail-open)"
+          description: "주문은 막지 않았지만 그 동안은 마지막 재고의 이중 판매를 막지 못합니다(초과분은 결제 뒤 자동 환불 — StockShortageOccurred). order-service 로그의 '재고 예약 불가' 와 catalog 의 gRPC · 재고 예약 지연을 확인하세요(docs/59)."
+
       # 결제 확정 차감 · 복원(product-update)이 DLT 로 갔다 — 재고가 줄지 않은 채 예약이 만료되면 같은 수량이 다시 팔린다(돈은 받았고
       # 물건은 없다). 일시적 DB 실패는 약 3분 다시 하므로(catalog KafkaDltConfig) 여기까지 온 것은 사람이 봐야 한다.
       # 처리: DLT 레코드의 eventId(order-<주문>) 로 주문을 찾아, 재고를 손으로 맞추거나 원래 토픽으로 다시 보낸다(멱등 — 이미 반영됐으면 건너뛴다).
@@ -174,12 +188,16 @@ groups:
           summary: "pay 결제 응답 아웃박스 행을 보내지 못해 FAILED 로 뒀습니다 (최근 30분 {{ $value }}건)"
           description: "pay-service 로그의 \"결제 응답 아웃박스 행을 보낼 수 없다\" 에 행 id 가 있습니다. pay.order_outbox_event 를 확인하세요 — 그 주문은 결제 응답을 받지 못했습니다."
 
+      # 2026-11-21 부터 배송 상태 이벤트는 아웃박스(delivery.outbox_event, docs/93 ③ 2단계) — 일시 실패는 다음 주기에 다시 보내므로
+      # 사라지지 않는다. 이 경보는 '시도가 실패했다' 를 알리고, 오래 밀리면 OutboxPublishLagging · 그 행만 멈춘 것은 로그 '영구 실패'.
+      # [JA] 2026-11-21 から配送ステータスのイベントはアウトボックス — 一時的な失敗は次の周期に送り直すので消えない。この警報は「試行が
+      #      失敗した」を知らせ、長く滞れば OutboxPublishLagging、その行だけ止まったものはログの「永続失敗」。
       - alert: DeliveryStatusPublishFailed
         expr: sum(increase(delivery_status_publish_failed_total[30m])) > 0
         labels: { severity: warning }
         annotations:
-          summary: "delivery 가 배송 상태 이벤트를 보내지 못했습니다 (최근 30분 {{ $value }}건)"
-          description: "delivery-service 로그의 \"배송 상태 발행 실패\" 에 orderId 와 상태가 있습니다. 그 주문의 상태(DISPATCHED · DELIVERED)와 알림이 멈췄을 수 있습니다 — 배송 화면의 상태와 주문 상태를 맞춰 보세요."
+          summary: "delivery 가 배송 상태 이벤트를 보내지 못했습니다 (최근 30분 {{ $value }}건 시도 실패)"
+          description: "아웃박스가 다음 주기에 다시 보냅니다(사라지지 않음). delivery-service 로그의 \"배송 상태 발행 실패\"(다시 보냄) · \"영구 실패\"(그 행만 FAILED — delivery.outbox_event)를 보세요. 오래 이어지면 OutboxPublishLagging 이 함께 울립니다 — Kafka 상태를 확인하세요."
 
       - alert: ChatMessagePublishFailed
         expr: sum(increase(chat_message_publish_failed_total[30m])) > 0
@@ -279,6 +297,31 @@ groups:
           summary: "아웃박스 파티션 지표가 없습니다 — 파티션 경보가 모두 울릴 수 없는 상태입니다"
           description: "cart · order · pay · user 의 /actuator/prometheus 에 outbox_partition_* 가 있는지, 그 서비스들이 수집 대상인지 확인하세요(OutboxPartitionAutoConfiguration.Metrics)."
 
+      # 발행 지연(docs/93 ③) — 아직 보내지 못한 행(STARTED)이 오래 남았다. 릴레이는 10초마다 돌고 커밋 직후에도 깨우므로 정상이면
+      # 수십 초. 5분이 10분 동안 이어지면 브로커가 느리거나 · 릴레이가 멈췄거나 · 같은 키의 앞 행이 막혔다(user 는 같은 사용자의 앞
+      # 이벤트 ack 를 기다린다). FAILED 는 따로(OrderOutboxRowFailed · PayOutboxRowFailed). 측정 전 · 측정 실패는 NaN 이라 울리지 않는다.
+      # 처리: 그 서비스의 아웃박스 릴레이 로그(user 는 '아웃박스 처리' 요약 줄) · Kafka 브로커 · kafka-consumer 그룹 경보를 본다.
+      # [JA] 発行遅延 — まだ送れていない行(STARTED)が長く残った。リレーは 10 秒ごと + コミット直後に動くので正常なら数十秒。5 分が 10 分
+      #      続けばブローカーが遅い · リレーが止まった · 同じキーの前の行が詰まった。FAILED は別。計測前 · 失敗は NaN で鳴らない。
+      #      対応: そのサービスのリレーのログ · Kafka ブローカー · kafka-consumer グループの警報を見る。
+      - alert: OutboxPublishLagging
+        expr: max by (service, table) (outbox_pending_oldest_age_seconds) > 300
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "아웃박스 발행이 {{ $value | humanizeDuration }} 밀렸습니다 ({{ $labels.table }})"
+          description: "가장 오래된 STARTED 행이 5분 넘게 남아 있습니다(outbox_pending_rows 가 적체 수). 결제 응답 · 재고 차감 · 장바구니 비우기 · 가입 이벤트가 늦어지는 중일 수 있습니다. 그 서비스의 아웃박스 릴레이 로그(user 는 '아웃박스 처리' 요약 줄)와 Kafka 상태를 확인하세요."
+
+      - alert: OutboxBacklogMetricsMissing
+        # 아웃박스를 쓰는 서비스가 하나도 발행 지연 지표를 내지 않는다 — OutboxPublishLagging 이 울릴 수 없다(새 이미지 전에는 당연히 없다).
+        # [JA] アウトボックスを使うサービスが一つも発行遅延の指標を出さない — OutboxPublishLagging が鳴れない(新しいイメージの前は当然ない)。
+        expr: absent(outbox_pending_oldest_age_seconds)
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "아웃박스 발행 지연 지표가 없습니다 — OutboxPublishLagging 이 울릴 수 없는 상태입니다"
+          description: "cart · order · pay · user 의 /actuator/prometheus 에 outbox_pending_* 가 있는지 확인하세요(OutboxPartitionAutoConfiguration · OutboxBacklogProbe, outbox.backlog.enabled)."
+
       - alert: OutboxPartitionRunwayShort
         # 지금 기준 이번 달 뒤로 미리 만들어진 파티션 수. 정상이면 3. 잡이 멈추면 달이 바뀔 때마다 1 씩 준다 — 1 이면 두 달 가까이 못 돌았다.
         # [JA] 現在基準で今月より後に先に作られたパーティション数。正常なら 3。ジョブが止まると月が変わるたびに 1
@@ -329,6 +372,7 @@ groups:
   #      (OTLP エクスポートは失敗したバッチを捨てて続ける)。そのため「トレースが見えない」を人が先に気付く前にここで捉える。
   #      Collector の指標名はバージョンによって _total が付くこともあるので両方受ける。
   #      アラートが出ていけない — このアラート自身も出ていけないかもしれない(同じ経路)。そのため ops/05 · Grafana で見えるようにしておく(docs/22 §1)。
+  # [JA] アラートが出ていけない — このアラート自身も届かないかもしれない。ops/05 · Grafana で見えるようにしておく。
   - name: alert-delivery
     rules:
       - alert: AlertDeliveryFailing
@@ -474,6 +518,7 @@ groups:
   #      エラー = 5xx のみ(4xx は客側)。遅延 = 境界を超えた要求の割合(5xx 含む)。
   #      バーンレート警報(Google SRE workbook 5 章): 速い 1h · 5m が 14.4 倍、遅い 6h · 30m が 6 倍。窓は 14 日 — 本番 Prometheus の保持が
   #      15 日なので 30 日予算は数えられない(docs/91 §2-4)。要求が少なければ(1 時間平均 毎秒 0.03 = 毎時約 100 未満)鳴らない。
+  # [JA] SLO 五つ — 目標値は slo:objective:* の二行だけ。窓は 14 日(本番 Prometheus の保持が 15 日)。リクエストが少ないと鳴らない。
   - name: slo
     rules:
       # catalog-browse — 홈 · 상품 상세 · 배너 · 공지 · 기획전 GET(/api/search* · 관리자 · 내부 · actuator 제외): 가용성 99.5%(노드 한 대인 지금 — 목표 99.9%) · 300ms 안 99%

@@ -77,6 +77,8 @@ public class UserOutboxHelper {
      * 写し(chat_member)と登録クーポンがまだなかった最大 10 秒をなくす。
      */
     private final com.project.common.outbox.OutboxRelayTrigger relayTrigger;
+    /** 가입 확인 메일 릴레이를 커밋 직후 깨운다(RegistrationMailRelay). [JA] 登録確認メールのリレーをコミット直後に起こす。 */
+    private final RegistrationMailTrigger registrationMailTrigger;
 
     /**
      * 가입 확정 이벤트를 적는다.
@@ -175,5 +177,26 @@ public class UserOutboxHelper {
                 .withTraceContext(outboxTraceContext.capture()));
         relayTrigger.afterCommit();
         log.info("{} 아웃박스 기록: userId={}", topic, userId);
+    }
+
+    /**
+     * 가입 확인 메일을 보내야 한다고 적는다 — 부르는 쪽의 트랜잭션에 든다(가입이면 계정 저장과 한 트랜잭션, docs/93 ③ 2단계).
+     * 행에는 <b>언어만</b> 싣는다 — 원문 토큰 · 이메일을 아웃박스 행에 남기지 않는다. 토큰 · 링크 · 받는 주소는
+     * {@link RegistrationMailRelay} 가 보낼 때 만든다.
+     * [JA] 登録確認メールを送るべきと書く — 呼び出し側のトランザクションに入る。行には言語だけを載せる(トークン · メールは残さない)。
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordRegistrationMail(User user, java.util.Locale locale) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("locale", locale == null ? null : locale.toLanguageTag());
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(body);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("가입 확인 메일 행을 만들지 못했다: userId=" + user.getUserId(), e);
+        }
+        outboxEventRepository.save(new OutboxEvent(String.valueOf(user.getUserId()), AGGREGATE_TYPE,
+                RegistrationMailRelay.EVENT_TYPE, payload).withTraceContext(outboxTraceContext.capture()));
+        registrationMailTrigger.afterCommit();
     }
 }

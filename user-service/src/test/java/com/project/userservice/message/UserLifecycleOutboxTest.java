@@ -41,7 +41,8 @@ class UserLifecycleOutboxTest {
 
     private final OutboxEventRepository repository = mock(OutboxEventRepository.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final UserOutboxHelper helper = new UserOutboxHelper(repository, objectMapper, OutboxTraceContext.NOOP, OutboxRelayTrigger.DISABLED);
+    private final UserOutboxHelper helper = new UserOutboxHelper(repository, objectMapper, OutboxTraceContext.NOOP, OutboxRelayTrigger.DISABLED,
+            RegistrationMailTrigger.DISABLED);
 
     private User user() {
         User u = User.builder().email("buyer@example.com").username("buyer").build();

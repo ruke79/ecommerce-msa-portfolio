@@ -96,7 +96,7 @@
 
 **개선할 점**
 - 예약 만료 직전 결제를 막거나 연장하는 규칙을 둡니다.
-- fail-open 횟수를 지표로 경보합니다.
+- fail-open 횟수를 지표로 경보합니다. 🕰️ 2026-11-21 — 경보 `OrderStockHoldUnavailable`(15분 3건, 계수기는 기동 때 0 · B-101).
 
 → [docs/59](59-stock-reservation.ko.md) · [docs/53](53-restock-and-sold-out.ko.md)
 
@@ -178,7 +178,7 @@
   - 🕰️ 2026-10-15(D-M1 · M2): 폴러는 짧은 트랜잭션으로 선점 · 리스(`delivery.polling.lease-minutes`, 10분) → 택배사 호출은 트랜잭션 밖 → 반영은 상자마다. 아웃박스는 여전히 없고, 상태 이벤트는 커밋 뒤 발행 · 실패는 경보 `DeliveryStatusPublishFailed`(D-M4).
 
 **개선할 점**
-- delivery 발행을 아웃박스로 옮깁니다.
+- delivery 발행을 아웃박스로 옮깁니다. 🕰️ 2026-11-21 — 끝: `delivery.outbox_event`(V5, 월 파티션) · `DeliveryOutboxRelay`(한 파드만 · 브로커 오류면 그 묶음을 멈추고 다음 주기 · 영구 오류는 그 행만 FAILED), 시험 `DeliveryOutboxPostgresTest`.
 - 폴링을 "조회(트랜잭션 밖) → 반영(짧은 트랜잭션)" 으로 나눕니다.
 
 → [docs/25](25-delivery-service-design.ko.md) · [docs/37](37-transaction-boundary-audit.ko.md) · [docs/56](56-saga-latency.ko.md)
@@ -456,7 +456,7 @@
 **한계**
 - 샘플링 결정(30초) 뒤에 난 비동기 오류는 추적에 남지 않습니다(로그 · 지표에는 남습니다).
 - 추적 저장(badger)과 꼬리 샘플링은 노드 하나를 전제로 합니다.
-- 로그 기반의 ERROR 급증 경보가 없습니다.
+- 로그 기반의 ERROR 급증 경보가 없습니다. 🕰️ 2026-11-21 — Loki `ErrorLogSurge`(5분 20줄 초과 · 평소의 3배, 기준은 백테스트 — docs/99), 규칙 파일이 모두 읽히는지는 `LokiRulesLoadTest`.
   - 🕰️ 2026-11-14: 꼬리 샘플링의 오류 · 느린 추적 정책에는 이제 상한이 있다(B-102 — 200 · 100 스팬/초). SLO 소진율 경보 넷(`SloErrorBudgetBurnFast` 등)이 생겼다([docs/91](91-slo-and-capacity.ko.md)). ERROR 급증 경보는 여전히 없다.
 - 관측 스택이 노드의 compose 로 돌고 있습니다.
 

@@ -55,7 +55,7 @@ class OrderStockHoldTest {
     }
 
     private double count(String result) {
-        var c = meters.find("order_stock_hold_total").tag("result", result).counter();
+        var c = meters.find(OrderStockHold.METRIC).tag("result", result).counter();
         return c == null ? 0 : c.count();
     }
 
@@ -149,5 +149,16 @@ class OrderStockHoldTest {
         assertThat(OrderStockHold.isRejection(io.grpc.Status.INVALID_ARGUMENT.asRuntimeException())).isTrue();
         assertThat(OrderStockHold.isRejection(io.grpc.Status.DEADLINE_EXCEEDED.asRuntimeException())).isFalse();
         assertThat(OrderStockHold.isRejection(io.grpc.Status.UNAVAILABLE.asRuntimeException())).isFalse();
+    }
+
+    @Test
+    @DisplayName("🔴 경보 계수기는 기동 때 0 으로 있다(B-101) — 첫 fail-open 도 increase() 가 본다, 내보내는 이름은 order_stock_hold_total")
+    void alertCountersExistAtZero() {
+        hold.registerAlertCounters();
+        var c = meters.find(OrderStockHold.METRIC).tag("result", "unavailable").counter();
+        assertThat(c).as("첫 사고에 생기면 Prometheus 가 처음 보는 값이 1 — increase() 가 0").isNotNull();
+        assertThat(c.count()).isZero();
+        assertThat(c.getId().getConventionName(io.micrometer.core.instrument.config.NamingConvention.snakeCase))
+                .as("경보식 이름의 바탕").isEqualTo("order_stock_hold");
     }
 }

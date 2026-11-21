@@ -853,7 +853,7 @@ path の不一致で Cookie が消えない）、`CsrfController`、`message/Out
 | 2 | 🟠 | `NotificationService.java:57` vs `SmsDispatcher.java:100-101` | `create(..., smsParams)` の最後の引数が本文で参照されない → 注文番号が抜けて "결제가 완료되었습니다. 결제 완료"（決済が完了しました。決済完了） | |
 | 3 | 🟠 | `KoreaPostCarrierAdapter.java:234-260` | 配送業者の時刻（KST）をタイムゾーン変換なしに `LocalDateTime` で受け取り、UTC として保存 → タイムラインが 9 時間ずれる | 変換の欠如は確認 / KST の前提は疑い |
 | 4 | 🟠 | `DeliveryService.java:120-132`, `Shipment.java:164-173` | 送り状の再登録が既存の送り状を無条件に上書きし、状態を `INFO_RECEIVED` に戻す; UNIQUE 違反は 500 | |
-| 5 | 🟠 | `NotificationService.java:197-210` | `markAllRead` は直近 500 件だけ、バッジは全件のカウント → 600 件以上だとバッジが永遠に残る | |
+| 5 | 🟠 | `NotificationService.java:197-210` | `markAllRead` は直近 500 件だけ、バッジは全件のカウント → 600 件以上だとバッジが永遠に残る | | 🕰️ 2026-11-21 修正 — 一文の UPDATE（`markAllReadOf`）、試験 `NotificationMarkAllReadTest`（600 件） |
 | 6 | 🟠 | `VerificationService.java:198-202` | `purgeExpired()` を呼ぶ所がない（`@Scheduled` の漏れ）→ 電話番号の台帳が無限に増加 | |
 | 7 | 🟡 | `CarrierConfig.java:77-82` + `V3__seed_carriers.sql` | シミュレーターが `matchIfMissing=true` でデフォルト有効 — 本番でオフにし忘れると、現物が倉庫にあるのに「配達完了」 | |
 | 8 | 🟡 | `SmsMessage.java:19,33-41` | `SMS_BYTE_LIMIT=90`（LMS の境界、料金 3〜4 倍）が宣言されているだけで使われていない | |
@@ -891,7 +891,7 @@ path の不一致で Cookie が消えない）、`CsrfController`、`message/Out
 | L2 | コンシューマーグループ三つとも `latest` — オフセットがない間の cart-empty が消え、注文した物がカートに残る | `earliest`(cart-empty は台帳 V6、残りは合計の再計算なので冪等)。本番はグループがあるので変化なし | `CartKafkaOffsetResetTest` |
 | L3 | デッドコード — `paymentFailed*` ファクトリー(聞くリスナーなし)· `CartProductRepository.findByProductId` · `CouponUseConsumer.seq` | 削除 | — |
 
-残したもの: リクエスト一覧の上限(`CartRequest.products` — 画面の最大行数を決めてから)、`evictAfterCommit` の `isSynchronizationActive()` ガード(本番経路はすべてトランザクション内)。
+残したもの: リクエスト一覧の上限(`CartRequest.products` — 画面の最大行数を決めてから)、`evictAfterCommit` の `isSynchronizationActive()` ガード(本番経路はすべてトランザクション内)。 → 🕰️ 2026-11-21: 要求一覧の上限は入れた — `CartRequest` · `ProductInfoRequest` 100 行（`MAX_LINES`）、`updatecart` にも `@Valid`、試験 `CartRequestLimitTest`。
 
 ### 2.6 common · gateway-server
 

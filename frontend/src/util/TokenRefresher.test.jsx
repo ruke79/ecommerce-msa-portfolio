@@ -328,4 +328,50 @@ describe("TokenRefresher — 긴 연결이 갱신을 부탁할 때(docs/68 §9)"
 
     expect(mockGetRequest).not.toHaveBeenCalled();
   });
+
+  /**
+   * 🐛 2026-11-21 운영: 비밀번호 재설정 뒤 끊긴 브라우저가 갱신을 0.26초 간격으로 4번 보냈다 — 알림 연결 · 채팅 연결 · 401 재시도가
+   * 서로의 갱신을 몰랐다.
+   *
+   * [JA] 2026-11-21 本番: パスワード再設定後、切られたブラウザが更新を 0.26 秒間隔で 4 回送った — 通知接続 · チャット接続 · 401 再試行が互いの更新を知らなかった。
+   */
+  it("🔴 연결의 갱신 부탁과 401 재시도가 겹쳐도 갱신 요청은 하나다", async () => {
+    let resolve;
+    mockGetRequest.mockReturnValue(new Promise((r) => { resolve = r; }));
+    mockDecode.mockReturnValue({ sub: "a@b.com", uid: 1, exp: 999 });
+    mockApi.mockResolvedValue({ status: 200, data: "ok" });
+    mockAuth = {
+      login: mockLogin, logout: mockLogout, token: "old", addresses: null,
+      status: "succeeded", isAuthenticated: true, expiresAt: null,
+      setAuthenticationStatus: jest.fn(),
+    };
+    render(<TokenRefresher />);
+
+    window.dispatchEvent(new Event("auth:refresh-needed"));
+    const retried = onError()(axiosError(401));
+    resolve({ status: 200, headers: { access: "new" } });
+    await retried;
+
+    expect(mockGetRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("🔴 갱신이 거절돼 로그인이 끝나면, 뒤이은 연결의 갱신 부탁은 보내지 않는다(새 로그인 전까지)", async () => {
+    mockGetRequest.mockRejectedValue({ response: { status: 401, data: "password changed" } });
+    mockAuth = {
+      login: mockLogin, logout: mockLogout, token: "old", addresses: null,
+      status: "succeeded", isAuthenticated: true, expiresAt: null,
+      setAuthenticationStatus: jest.fn(),
+    };
+    render(<TokenRefresher />);
+
+    window.dispatchEvent(new Event("auth:refresh-needed"));
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+    // 화면 상태가 아직 '로그인됨' 인 틈에 다른 연결이 닫힌다(실제로는 다시 그리기 전).
+    // [JA] 画面の状態がまだ「ログイン済み」の隙に別の接続が閉じる(実際には再描画の前)。
+    window.dispatchEvent(new Event("auth:refresh-needed"));
+    window.dispatchEvent(new Event("auth:refresh-needed"));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(mockGetRequest).toHaveBeenCalledTimes(1);
+  });
 });

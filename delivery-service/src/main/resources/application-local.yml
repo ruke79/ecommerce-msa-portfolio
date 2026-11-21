@@ -86,6 +86,15 @@ delivery:
   # [JA] 発送国。この国の外へ行く配送は国際配送とみなし、通関段階を入れる。
   origin-country: ${DELIVERY_ORIGIN_COUNTRY:KR}
 
+  # 배송 상태 이벤트 아웃박스(V5, docs/93 ③ 2단계) — 상태 변경과 같은 트랜잭션에 적고 릴레이가 보낸다(DeliveryOutboxRelay).
+  # 커밋 직후 한 번 깨우고(trigger), 이 주기는 안전망 · 실패한 행의 재시도다. send-timeout 은 Kafka 응답을 기다리는 상한.
+  # [JA] 配送ステータスのアウトボックス — 状態変更と同じトランザクションに書き、リレーが送る。周期は安全網 · 失敗行の再試行。
+  outbox:
+    fixed-delay-ms: ${DELIVERY_OUTBOX_FIXED_DELAY_MS:10000}
+    initial-delay-ms: ${DELIVERY_OUTBOX_INITIAL_DELAY_MS:5000}
+    send-timeout-ms: ${DELIVERY_OUTBOX_SEND_TIMEOUT_MS:10000}
+    trigger-enabled: ${DELIVERY_OUTBOX_TRIGGER_ENABLED:true}
+
   polling:
     # 스케줄러가 도는 주기. 실제 조회 간격은 배송 **상태**가 정한다(DeliveryStatus).
     # 배달 출발이면 30분, 이동 중이면 3시간, 끝났으면 아예 조회하지 않는다 —
@@ -140,5 +149,10 @@ logging:
     name: ${logging.file.path}/delivery_service.json   # JSON 한 줄씩 — common 의 logback-spring.xml 이 쓴다(docs/51) ／ [JA] JSON 一行ずつ — common の logback-spring.xml が書く(docs/51)
   # 출력 패턴은 common 의 logback-spring.xml 이 정한다 — 메시지·예외를 %mask 로 감싸 민감정보를 가린다.
   # 여기 logging.pattern 을 두어도 쓰이지 않는다(가드 B-57).
-  # [JA] 出力パターンは common の logback-spring.xml が決める — メッセージ・例外を %mask で包んで機微情報を隠す。
-  #      ここに logging.pattern を置いても使われない(ガード B-57)。
+  # [JA] 出力パターンは common の logback-spring.xml が決める(メッセージ · 例外を %mask で包む)。ここに logging.pattern を置いても使われない(B-57)。
+
+# 아웃박스 월 파티션 · 발행 지연 측정(common OutboxPartitionAutoConfiguration · OutboxBacklogProbe — B-70, docs/09 §4.6).
+# [JA] アウトボックスの月次パーティション · 発行遅延の計測。
+outbox:
+  partitions:
+    tables: delivery.outbox_event

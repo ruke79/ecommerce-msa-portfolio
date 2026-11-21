@@ -118,6 +118,7 @@
 | 65 | [サイズ単位の SKU](65-size-level-sku.md) | SKU を色からサイズの 1 行へ、ルールは DB 関数の 1 か所、カート → 注文 → 梱包リストへ記録、管理者登録サイズの親欠落バグ | ✅ |
 | 66 | [gRPC の試行適用 — 在庫予約](66-grpc-stock-reservation.md) | order → catalog の在庫予約を gRPC で(HTTP と並べ、設定で切り替え)、mTLS 判定の再利用、期限の伝播、同等性テスト、B-73 | ✅ |
 | 51 | [ロギング](51-logging.md) | 認証番号のログ漏洩、出力段階でのマスキング、JSON ログ · Loki、トレースの往復 | 🟡 |
+| 99 | [警報の基準はどう決めるか](99-alert-thresholds.md) | 実務の原則（症状は呼び出し · 原因は warning、実データの分布 · 平常比 + 下限 · バックテスト · レベルの衛生）と ERROR ログ警報の実測 — 本番 Loki 7 日、候補三つのバックテスト（`and` の落とし穴 → `unless`）、基準の下に隠れた常時の ERROR（eureka の自己複製 403 · config-server のハートビート） | ✅ |
 | 16 | [Saga E2E · 可観測性の実地検証](16-saga-e2e-and-observability-verification.md) | 実際のインフラで検証 — チャットの保存と ES 検索は一度も動作したことがなかった | 🕰️ |
 | 19 | [ローカルでのパフォーマンスチューニング](19-local-performance-tuning.md) | N+1 · コネクションプール総和の超過を実測、構造的な事実はビルドで固定 | 🟡 |
 

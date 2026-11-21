@@ -23,6 +23,16 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     long countByRecipientIdAndReadFalseAndDeletedFalse(Long recipientId);
 
+    /**
+     * 받는 사람의 안 읽은(지우지 않은) 알림을 모두 읽음으로 — 한 문장. 🐛 2026-11-21 까지 서비스가 최신 500건을 읽어 하나씩 고쳤다 —
+     * 읽은 것까지 섞인 500건이라 알림이 많은 사용자는 오래된 안 읽은 알림이 남았고(배지가 0 이 되지 않았다), 엔티티 N개를 읽고 썼다.
+     * [JA] 受取人の未読(削除していない)通知をすべて既読に — 一文で。以前は最新 500 件を読んで一つずつ直し、通知の多いユーザーは
+     *      古い未読が残った(バッジが 0 にならない)。
+     */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update Notification n set n.read = true where n.recipientId = :recipientId and n.read = false and n.deleted = false")
+    int markAllReadOf(@Param("recipientId") Long recipientId);
+
     Optional<Notification> findBySourceEventId(String sourceEventId);
 
     /**

@@ -190,3 +190,5 @@ if (authorizationHeader != null) {
 | 아웃박스 발행 지연·재시도 지표 | 🟡 현재는 로그만 |
 
 > 🕰️ 지금(2026-11-14): 아웃박스는 로그만이 아니다 — 영구 오류 행 계수기 `order_outbox_failed_total` · `pay_outbox_failed_total`(경보 `OrderOutboxRowFailed` · `PayOutboxRowFailed`)와 파티션 지표 · 경보(`outbox-health` 그룹)가 있다. 발행 **지연** 지표는 아직 없다.
+>
+> 🕰️ 2026-11-21: 발행 **지연** 지표가 생겼다 — `outbox_pending_rows` · `outbox_pending_oldest_age_seconds`(common `OutboxBacklogProbe`, `outbox.partitions.tables` 의 테이블을 30초마다), 경보 `OutboxPublishLagging`(가장 오래된 STARTED 5분이 10분) · `OutboxBacklogMetricsMissing`.

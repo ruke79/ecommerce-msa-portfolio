@@ -190,3 +190,5 @@ if (authorizationHeader != null) {
 | Outbox 発行の遅延・再試行メトリクス | 🟡 現在はログのみ |
 
 > 🕰️ 今（2026-11-14）: アウトボックスはログだけではない — 恒久エラーの行のカウンター `order_outbox_failed_total` · `pay_outbox_failed_total`（アラート `OrderOutboxRowFailed` · `PayOutboxRowFailed`）とパーティションのメトリクス · アラート（`outbox-health` グループ）がある。発行の**遅延**のメトリクスはまだない。
+>
+> 🕰️ 2026-11-21: 発行の**遅延**指標ができた — `outbox_pending_rows` · `outbox_pending_oldest_age_seconds`（common `OutboxBacklogProbe`、`outbox.partitions.tables` のテーブルを 30 秒ごと）、警報 `OutboxPublishLagging`（最も古い STARTED が 5 分を 10 分）· `OutboxBacklogMetricsMissing`。

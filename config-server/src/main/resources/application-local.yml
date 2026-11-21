@@ -86,6 +86,19 @@ eureka:
     #      spring-cloud-commons の SSLContextFactory が警告だけ残して**鍵のない** SSL で接続していた — 証明書なしの登録 · ハートビートなので、
     #      observe では 30 秒ごとに [eureka write] が残って enforce 切り替え条件(24 時間 0 件)が満たされず、enforce なら登録簿から外れた。
     #      値は application-common.yml と同じでなければならない(ガード B-86 が照合する)。ローカル開発ではオフのまま(既定 false)。
+    # [JA] 他サービスはこのブロックを common の application-common.yml から受け取るが、config-server は common に依存せずその
+    #      ファイルがない。そのため鍵ストアが空で、証明書なしで登録していた。値は application-common.yml と同じにする(B-86)。
+    # Eureka 주소 — 운영은 ConfigMap 의 EUREKA_CLIENT_SERVICEURL_DEFAULTZONE 이 덮어쓴다. **이 키가 있어야 덮어쓴다.**
+    # 🐛 2026-11-21 까지 없었다. EurekaClientConfigBean.serviceUrl 은 처음부터 {"defaultZone": "http://localhost:8761/eureka/"} 를
+    #    갖고 있고, env 변수 이름에는 대소문자가 없어 yml 에 이 키가 없으면 env 값은 소문자 키 "defaultzone" 으로 따로 들어간다 —
+    #    조회는 get("defaultZone") 이라 기본값(평문 localhost)으로 붙어 `Connection refused`. config-server 는 한 번도 Eureka 에
+    #    등록되지 않았고 하트비트 실패가 5분마다 ~10줄 ERROR 였다(docs/99 §4). 다른 서비스는 common 의 application-common.yml 에
+    #    이 키가 있어 괜찮았다 — config-server 는 common 에 의존하지 않는다. 값은 그 파일과 같게(시험 EurekaServiceUrlBindingTest).
+    # [JA] Eureka のアドレス — 本番は ConfigMap の env が上書きする。このキーがあって初めて上書きされる。以前はなく、env の値は
+    #      小文字キー "defaultzone" に入り、get("defaultZone") は既定値(平文 localhost)のままで、config-server は一度も Eureka に
+    #      登録されなかった。
+    service-url:
+      defaultZone: http://localhost:8761/eureka
     tls:
       enabled: ${EUREKA_CLIENT_TLS_ENABLED:false}
       key-store: ${EUREKA_CLIENT_KEY_STORE:file:/app/identity/keystore.p12}

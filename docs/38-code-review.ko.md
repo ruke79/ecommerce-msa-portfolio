@@ -853,7 +853,7 @@ path 불일치로 쿠키가 안 지워진다), `CsrfController`, `message/Outbox
 | 2 | 🟠 | `NotificationService.java:57` vs `SmsDispatcher.java:100-101` | `create(..., smsParams)` 의 마지막 인자가 본문에서 참조되지 않는다 → 주문번호가 빠지고 "결제가 완료되었습니다. 결제 완료" | |
 | 3 | 🟠 | `KoreaPostCarrierAdapter.java:234-260` | 택배사 시각(KST)을 타임존 변환 없이 `LocalDateTime` 으로 받아 UTC 로 저장 → 타임라인이 9시간 밀린다 | 변환 부재 확인 / KST 전제는 의심 |
 | 4 | 🟠 | `DeliveryService.java:120-132`, `Shipment.java:164-173` | 송장 재등록이 기존 송장을 무조건 덮어쓰고 상태를 `INFO_RECEIVED` 로 되돌린다; UNIQUE 위반은 500 | |
-| 5 | 🟠 | `NotificationService.java:197-210` | `markAllRead` 는 최근 500건만, 배지는 전체 카운트 → 600건 이상이면 배지가 영원히 남는다 | |
+| 5 | 🟠 | `NotificationService.java:197-210` | `markAllRead` 는 최근 500건만, 배지는 전체 카운트 → 600건 이상이면 배지가 영원히 남는다 | | 🕰️ 2026-11-21 고침 — 한 문장 UPDATE(`markAllReadOf`), 시험 `NotificationMarkAllReadTest`(600건) |
 | 6 | 🟠 | `VerificationService.java:198-202` | `purgeExpired()` 를 부르는 곳이 없다(`@Scheduled` 누락) → 전화번호 원장이 무한 증가 | |
 | 7 | 🟡 | `CarrierConfig.java:77-82` + `V3__seed_carriers.sql` | 시뮬레이터가 `matchIfMissing=true` 로 기본 활성 — 운영에서 끄는 것을 잊으면 실물이 창고에 있는데 "배달완료" | |
 | 8 | 🟡 | `SmsMessage.java:19,33-41` | `SMS_BYTE_LIMIT=90`(LMS 경계, 요금 3~4배) 이 선언만 되고 쓰이지 않는다 | |
@@ -891,7 +891,7 @@ path 불일치로 쿠키가 안 지워진다), `CsrfController`, `message/Outbox
 | L2 | 세 컨슈머 그룹 모두 `latest` — 오프셋이 없던 사이의 cart-empty 가 사라져 주문한 물건이 장바구니에 남는다 | `earliest`(cart-empty 는 원장 V6, 나머지는 총액 재계산이라 멱등). 운영은 그룹이 있어 변화 없음 | `CartKafkaOffsetResetTest` |
 | L3 | 죽은 코드 — `paymentFailed*` 팩토리(듣는 리스너 없음) · `CartProductRepository.findByProductId` · `CouponUseConsumer.seq` | 삭제 | — |
 
-남긴 것: 요청 목록 상한(`CartRequest.products` — 화면의 최대 줄 수를 정한 뒤), `evictAfterCommit` 의 `isSynchronizationActive()` 가드(운영 경로는 모두 트랜잭션 안).
+남긴 것: 요청 목록 상한(`CartRequest.products` — 화면의 최대 줄 수를 정한 뒤), `evictAfterCommit` 의 `isSynchronizationActive()` 가드(운영 경로는 모두 트랜잭션 안). → 🕰️ 2026-11-21: 요청 목록 상한은 넣었다 — `CartRequest` · `ProductInfoRequest` 100줄(`MAX_LINES`), `updatecart` 에도 `@Valid`, 시험 `CartRequestLimitTest`.
 
 ### 2.6 common · gateway-server
 
