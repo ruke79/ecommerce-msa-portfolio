@@ -199,7 +199,8 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 ./ops/62-secrets-sops.sh init age1…ノード age1…PC age1…保管   # 受け取る人 — .sops.yaml(公開鍵なのでコミット)
 ./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(往復確認の後) → コミット
 ./ops/62-secrets-sops.sh check                       # 値がすべて暗号文 · 復号できるか · 例とキー名 · 平文と同じか
-./ops/62-secrets-sops.sh apply                       # 平文ファイルなしで直接 kubectl apply
+./ops/62-secrets-sops.sh apply                       # 平文ファイルなしで kubectl apply — 先にクラスタと比べる（変えるキーは EXPECT_CHANGED、docs/57 §24-2）
+./ops/62-secrets-sops.sh from-cluster                # 暗号文が古ければクラスタの Secret から平文を作り直す
 ./ops/62-secrets-sops.sh drift                       # 暗号文 ↔ クラスタの Secret — 違うキー名だけ(ops/28 もデプロイ前に呼ぶ)
 ./ops/62-secrets-sops.sh rotation                    # 四半期の交換チェックリスト — キーごとに値が最後に変わった日、90 日を超えると ⏰
 ./ops/62-secrets-sops.sh drill /media/usb/age-offline-backup.txt   # 四半期ごと — 保管鍵一つで復号できるか(この機械の鍵は使わない)

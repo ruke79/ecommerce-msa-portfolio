@@ -279,7 +279,7 @@ const ko = {
     "order.progress.payment": "결제",
     "order.progress.confirmed": "주문 확정",
     "order.progress.preparing": "상품 준비",
-    "order.progress.shipping": "배송 중",
+    "order.progress.shipping": "발송 완료",
     "order.progress.delivered": "배송 완료",
     "order.progress.settling": "결제가 확인됐습니다. 주문을 확정하는 중입니다…",
     "order.progress.settle_timeout": "결제는 확인됐지만 주문 확정이 늦어지고 있습니다. 잠시 후 새로고침해 주세요. 결제가 두 번 되지는 않습니다.",

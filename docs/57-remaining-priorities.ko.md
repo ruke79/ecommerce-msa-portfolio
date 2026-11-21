@@ -944,7 +944,7 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 ⚠️ 운영 노드에서 `ops/62` 를 돌릴 때는 **스크립트를 저장소의 `ops/` 안에 두고** 돌린다(`$0/..` 로 루트를 잡으므로 `/tmp` 사본은 평문 · 예시 · 암호문 자리를 모두 `/` 에서 찾는다 — `SOPS_PLAIN` · `SOPS_ENC` 는 바꿀 수 있지만 예시 경로는 못 바꾼다). 끝나면 꺼낸 파일을 지워 체크아웃을 배포 버전 그대로 둔다(docs/85 §9-2 ⓠ).
 🐛 그때 디스크에 평문이 셋 있었다 — nano 가 남긴 `20-secret.yaml.save`(2026-08-01) · `.save.1`(2026-10-24, 스토어 비밀번호 교체 직전)로 지문이 서로 달랐다. `.gitignore` 의 `k8s/20-secret.yaml*` 이 커밋은 막지만, "어느 것이 최신인지 모른다" 는 이 절이 없애려던 문제 그 자체다 — `shred -u` 로 지웠다(암호문의 커밋 이력이 그 역할을 한다).
 
-**남은 것** → 🕰️ 2026-11-20 아래 §24-1(어긋남 경고 · 교체 점검표 · 보관 키 복구 훈련). 아직 남은 것: 전용 `TOTP_ENCRYPTION_KEY` 넣기(JWT 비밀 교체의 전제 — §24-1 표).
+**남은 것** → 🕰️ 2026-11-20 아래 §24-1(어긋남 경고 · 교체 점검표 · 보관 키 복구 훈련). ~~아직 남은 것: 전용 `TOTP_ENCRYPTION_KEY` 넣기~~ — 끝(2026-11-20, §24-2 끝).
 
 ### 24-1. 어긋남 경고 · 교체 점검표 · 보관 키 복구 훈련(2026-11-20)
 
@@ -952,6 +952,15 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
   **`ops/28` 이 배포 전에 부른다**(`check_secret_drift`) — 다르면 알리고 배포는 계속한다. sops · 이 기계의 키 · 암호문이 없으면 건너뛴다(`SKIP_SECRET_DRIFT=1` 로도).
 - `./ops/62-secrets-sops.sh drill <보관 키 파일>` — **이 기계의 키를 쓰지 않고** 그 키 하나로 풀리는가 · `.sops.yaml` 의 받는 사람에 있는가 · 평문 · 클러스터와 같은가. 분기마다 오프라인 키를 꺼내 한 번 돌리고 날짜를 아래 표에 적는다(키는 다시 오프라인으로).
 - `./ops/62-secrets-sops.sh rotation` — 키마다 **값이 마지막으로 바뀐 날**, 오래된 순 · `ROTATION_DAYS`(기본 90) 넘으면 ⏰. 🐛 처음에는 암호문의 그 키 줄이 바뀐 커밋으로 봤는데, `encrypt` 는 값을 **모두 새로 암호화**(새 IV)해 줄이 매번 바뀐다 — 그 날짜는 "마지막 encrypt" 일 뿐이다. 이력의 판마다 이 기계의 키로 풀어 지문이 마지막으로 바뀐 판을 찾는다(풀리지 않는 옛 판에서 멈춘다, 값 · 평문 파일은 남기지 않는다).
+
+**🐛 첫 `drift` 가 찾아낸 두 가지(2026-11-20 운영, `ops/28` 배포 전 경고)** — 암호문 32 · 클러스터 34:
+
+- `SPRING_DATA_REDIS_PASSWORD` — **클러스터가 맞다.** 이 키는 예시 템플릿에서 따라온 **주석 줄**(`# SPRING_DATA_REDIS_PASSWORD: "REPLACE_ME…"`)로만 있었고, 값은 `ops/36-rotate-redis-password.sh` 가 클러스터에 직접 쓴다 — 첫 `encrypt` 가 평문 파일을 그대로 암호화했으니 **주석은 키가 아니라서** 빠졌다. ⚠️ 이때 `./ops/62 apply` 를 돌리면 안 된다 — `sops --decrypt | kubectl apply -f -` 라서, last-applied 주석에 따라 그 키를 **지울 수 있다**(Redis 를 쓰는 전부 — 유입 제한 · 장바구니 캐시 · chat 팬아웃 · 필터 메뉴 선점 — 이 인증 실패로 넘어간다). 클러스터 값을 암호문에 **넣는** 방향으로 고친다.
+- `REACT_APP_PAYPAL_CLIENT_ID` — **지울 것.** 빌드 시점 값이라 매니페스트에서 읽는 곳이 없고(B-51 — REACT_APP_* 는 k8s 에 두지 않는다), PayPal CLIENT_ID 는 공개 값이다. `kubectl -n ecommerce patch secret ecommerce-secrets --type=json -p '[{"op":"remove","path":"/data/REACT_APP_PAYPAL_CLIENT_ID"}]'`(2026-11-20 적용).
+
+평문에 키를 **더할 때**는 파일 끝에 붙이지 않는다 — `stringData` 블록 뒤에 긴 주석과 `sops:` 메타데이터가 있어 EOF 추가는 YAML 을 깨뜨린다(2026-11-20: 그래서 `encrypt` 가 `Error unmarshalling file: yaml: line 8` 로 거부했다 — **암호문은 그대로였고 피해는 없었다**). `stringData` 의 마지막 키 줄(4칸 들여쓰기) 뒤에 같은 들여쓰기로 끼우고, `encrypt` 전에 `yaml.safe_load` 로 읽히는지 · 값이 그대로인지 본다. 값은 `kubectl get secret … -o jsonpath` → 파일로 받아 쓰고 화면에 띄우지 않는다(§5).
+
+~~**남은 것**: `SPRING_DATA_REDIS_PASSWORD` 를 암호문에 넣어 `drift` 를 0 으로.~~ — 끝(2026-11-20, §24-2 끝 — `from-cluster` 로 다시 만든 암호문에 들어갔다).
 
 **분기 교체 점검표**(`rotation` 의 ⏰ 부터):
 
@@ -964,13 +973,29 @@ brokerMessagingTemplate → clientInboundChannel → StompHandler(인터셉터) 
 | `KAFKA_SSL_*` | 브로커 스토어와 함께 | Kafka 를 쓰는 서비스 |
 | 바깥 API 키(`AMAZON_*` · `PORTONE_*` · `STRIPE_*` · `PAYPAL_*` · `MAIL_PASSWORD` · `DELIVERY_*` · `SPRING_DATA_MONGODB_PASSWORD` · ES) | 제공자 콘솔에서 새 키 → `encrypt` → `apply` → 그 서비스 재시작 → 확인 뒤 옛 키 폐기 | 그 키를 읽는 서비스 |
 
-Redis 비밀번호는 이 Secret 에 없다(인프라 쪽). 교체 · 훈련 기록:
+Redis 비밀번호(`SPRING_DATA_REDIS_PASSWORD`)는 이 Secret 에 **있다**(🕰️ 2026-11-20 정정 — 처음에는 없다고 적었다): `ops/36-rotate-redis-password.sh` 가 이 키와 `redis/redis-auth` 를 함께 바꾼다 — 바꾼 뒤 `from-cluster` → `encrypt` 로 암호문에도. 교체 · 훈련 기록:
 
 | 날짜 | 한 것 | 결과 |
 |---|---|---|
+| 2026-11-20 | 낡은 암호문 적용 사고 복구(§24-2) → `from-cluster` 로 암호문 다시 만듦 + `TOTP_ENCRYPTION_KEY` 새로 | `drift` 키 35 · 35 같음, 2FA 비밀 0행(다시 잠글 것 없음), 커밋 `539a2a2c` |
 | — | (첫 `drill` · `rotation` 을 여기에) | |
 
 **확인**: `SopsSecretsScriptTest` +3(실제 sops · age — `drift` 는 다른 키 이름만 · 값은 출력하지 않음 · 종료 1, `drill` 은 보관 키 하나로 통과하고 받는 사람이 아닌 키는 실패, `rotation` 은 다시 암호화만 한 판을 교체로 세지 않는다) · 가드 `SopsSecretGuardTest` +1(ops/28 이 `drift` 를 한 번 부른다). 변이: 지문 비교를 빼면 · `drill` 이 이 기계의 키로 풀면 · `rotation` 이 판 0 의 날짜만 보면 각각 실패.
+
+### 24-2. 낡은 암호문을 적용한 사고 · apply 가 먼저 비교한다(2026-11-20)
+
+**무슨 일**: 운영 노드에서 TOTP 전용 키(docs/70)를 넣으려다 `encrypt` 가 "평문이 없다" 로 멈췄고, 그 전의 암호문(11-19 첫 `encrypt` — 그때의 평문이 이미 낡아 있었다)을 `sops -d … | kubectl apply -f -` 로 적용했다. 결과: **키 22개가 옛 값으로 덮였고**(10-25 에 바꾼 스토어 비밀번호 · JWT · DB · 메일 · 결제 …) 암호문에 없던 **다섯 개는 지워졌다**(`SPRING_DATA_REDIS_PASSWORD` · OAuth GitHub · Google 넷 — `kubectl apply` 는 지난 적용에 있던 키가 새 파일에 없으면 지운다). 빈 값 셋(`JWT_SIGNING_KEYS` · `JWT_ACTIVE_KID` · `TOTP_ENCRYPTION_KEY`)은 새로 생겼다. 재시작한 user-service 새 파드만 `keystore password was incorrect` 로 CrashLoop — Reloader 는 `tls-id-*` 만 보므로 다른 서비스는 재시작되지 않았고, 옛 파드가 버텨 손님 영향은 없었다.
+
+**되살린 방법**(값을 출력하지 않고): 살아 있는 옛 파드의 환경 변수가 적용 전 Secret 그대로다. ① 옛 파드 env 이름 ↔ Secret · ConfigMap 이름(`env -0 | cut -z -d= -f1` — 여러 줄 값의 조각이 이름 목록에 새지 않게) ② Secret 키마다 옛 파드 값과 sha256 비교 → 다른 키 · 지워진 키를 옛 파드의 값으로 `kubectl patch --type merge`(base64 를 파이프로) ③ 다시 비교해 0 · 새로 생긴 빈 키는 `null` 로 삭제 ④ `kubectl.kubernetes.io/last-applied-configuration` 주석 삭제(낡은 값이 그 안에 있고, 다음 apply 가 키를 지우는 근거다).
+
+**고친 것**(`ops/62`):
+- `apply` 는 먼저 클러스터와 지문으로 비교한다 — **클러스터에만 있는 키가 있으면 거절**(지워질 키 이름만), 값이 바뀌거나 새로 생기는 키는 **`EXPECT_CHANGED="K1 K2"` 로 이름을 대야** 적용한다(바꾸려던 키만 바뀌는가). 같으면 아무것도 하지 않는다. 클러스터에 닿지 못하면 비교 없이 적용하지 않는다(NotFound 일 때만 새로 만든다).
+- `from-cluster` — 클러스터 Secret 에서 평문(0600)을 만든다. 암호문이 운영보다 낡았을 때 운영 값에서 다시 시작한다: `from-cluster` → 바꿀 키만 고치기 → `encrypt` → `drift`(바꾼 키만 다르다) → `EXPECT_CHANGED=… apply` → 커밋.
+- `encrypt` 가 실패해도 임시 파일(`20-secret.enc.yaml.XXXXXX`)을 남기지 않는다 — RETURN 트랩은 `exit` 에서 돌지 않았다(운영 노드에 하나 남아 있었다). 이제 EXIT 트랩.
+
+**확인**: `SopsSecretsScriptTest` +4(실제 sops · age — 클러스터에만 있는 키 거절 · 이름 없는 변경 거절 · `EXPECT_CHANGED` 면 적용 · 같으면 아무것도 안 함, `from-cluster` → `encrypt` → `drift` 같음 · 있는 평문은 덮지 않음 · 따옴표 · 콜론 · 한글 값, `encrypt` 실패에 임시 파일 없음). 변이: 거절 검사 · 이름 검사 · 정리 등록을 각각 빼면 실패.
+
+**마무리(2026-11-20)**: 운영 노드에서 새 `ops/62` 로 `from-cluster`(키 34) → `TOTP_ENCRYPTION_KEY` 한 줄(`openssl rand -base64 32` — 처음 넣는 키라 새로 만들었다, 그 전 커밋 `4be5da5c` 의 값은 적용된 적 없다) → `encrypt` → `drift`(암호문에만 TOTP) → `EXPECT_CHANGED=TOTP_ENCRYPTION_KEY apply` → user-service 재시작. 확인: Secret 의 TOTP 길이 44 · 파드 로그에 'TOTP_ENCRYPTION_KEY 가 없다' 없음 · `users.users.two_factor_secret` 0행(TOTP 를 켠 사용자가 아직 없다 — 앞으로는 `enc:k1:`) · `drift` 35 · 35 같음 · 암호문 커밋 `539a2a2c`. 사고 중 만든 사본(잘못 적용된 Secret yaml · 낡은 암호문 둘)은 지웠다.
 
 ## 25. 관리 포트 분리 — actuator 는 9180, 지표 에이전트만(2026-11-20, 가드 B-119)
 
@@ -992,6 +1017,8 @@ Redis 비밀번호는 이 Secret 에 없다(인프라 쪽). 교체 · 훈련 기
 
 **확인**: gateway · config-server `ManagementPortTest`(시험 인증서를 그 자리에서 만들어 **HTTPS 로** — 앱 포트 /actuator 404, 관리 포트는 TLS 로 health · prometheus, config-server 는 관리 포트에서도 비밀번호 없이 401 · 맞으면 404(노출 밖) — 보안 규칙이 걸린다는 증거) · user-service `ManagementPortTest`(컨테이너 — `EndpointRequest` 규칙이 관리 포트에도, 업무 API 는 401) · 가드 **B-119** `ManagementPortGuardTest` 5 · `NetworkPolicyScriptTest` 3. 변이: 프로브 하나를 앱 포트로 · 같은 네임스페이스 허용에서 포트 목록을 빼면 · 에이전트의 keep 규칙을 drop 으로 · 스모크를 앱 포트로 · 시험에서 관리 포트 설정을 빼면 · ops/35 가 에이전트 막힘을 실패로 보지 않으면 각각 실패.
 
+> 🕰️ 2026-11-20 운영 배포(`d8922fc53e0c`) 뒤 **서비스 지표가 21분 끊겼다** — ConfigMap 은 이미 새 규칙이라 `ops/28` 이 경고하지 않았는데, 에이전트 **파드**는 옛 규칙을 쥐고 있었다(기동할 때 initContainer 가 ConfigMap 을 설정 파일로 만들고 그 뒤로는 다시 읽지 않는다). 이제 `ops/28` 은 배포 끝에 **파드가 뜬 시각 < ConfigMap 의 마지막 변경(managedFields 의 가장 늦은 시각)** 이면 에이전트를 재시작한다(`METRICS_AGENT_RESTART=0` 이면 알리기만 · 배포는 막지 않는다 · ConfigMap 이 옛 규칙이면 예전처럼 다시 적용하라고 알린다). 시험 `MetricsAgentStaleScriptTest` 5(변이: 시각 비교를 빼면 2 실패).
+
 ## 26. 나가는 연결(egress) 2단계 — 포트 좁히기 · 정책 밖이던 파드(2026-11-20)
 
 1단계(§23)의 남은 것을 했다. 적용은 그대로 `./ops/35-network-policy.sh egress-apply` 로만(k8s/97 전체 — 1 · 2단계를 한 번에).
@@ -1012,6 +1039,10 @@ Redis 비밀번호는 이 Secret 에 없다(인프라 쪽). 교체 · 훈련 기
 **아직 못 본 것**: kube-router 실제 집행(1단계와 같다 — 이 환경의 docker 안 k3s 는 파드를 못 띄운다). 특히 ① 지표 에이전트의 API 서버 접속(정책이 DNAT 뒤 노드:6443 을 본다는 가정) ② cloudflared 의 QUIC(UDP 7844) ③ traefik 파드 라벨 `app.kubernetes.io/name: traefik`(k3s 기본 차트). 실습 클러스터에서 `egress-apply` → 지표 11개 up · 사이트 · 결제 · 메일 · 채팅 · 백업 한 번(`kubectl create job --from=cronjob/postgres-backup …`) → 운영.
 
 **확인**: `EgressPolicyScriptTest` 9(+2 — public 의 443 밖이 열리면 성공이 아니다, 메일 포트 · ssh 저장소 · 바깥 PGHOST 면 적용하지 않고 값을 말하지 않는다) · 가드 B-117 `EgressPolicyGuardTest` 6(+2 — 인터넷 규칙은 모두 포트가 있다 · public 443 · 메일 · Atlas · 터널 · 에이전트 포트와 고르는 파드, 백업은 IP 대역 없음, 정책의 이름이 CronJob · 오버레이의 실제 라벨과 같다, ops/35 가 지우는 정책 = k8s/97). 변이: public 의 포트를 빼면 · CronJob 라벨을 바꾸면 · 지울 목록에서 하나를 빼면 · public 의 80 확인을 빼면 · 메일 포트 점검을 열면 각각 실패.
+
+🕰️ **2026-11-20 첫 실습(server-node · agent 셋 · data, 1단계는 31시간 전부터 걸려 있었다)**: `egress-apply` 가 사전 점검에서 멈췄다 — 데모 Secret 의 메일은 `MAIL_HOST=localhost` · `MAIL_PORT=25`(보내지 않는 자리)인데 포트만 보고 거절했다. 파드 안 루프백은 NetworkPolicy 가 고르지 않으므로 이제 호스트가 localhost · 127.x · ::1 이면 '쓰지 않는다' 로 본다. 같은 `egress-check` 에서 metrics 그룹의 `첫 노드:6443` · `첫 노드:9090` 이 정책 전부터 닫혀 판정에서 빠졌다 — 여러 노드면 API 서버는 한 노드에만 있고 remote write 는 관측 VM 이다. 이제 metrics 그룹은 `kubernetes` 엔드포인트(실제 API 서버)와 `metrics-agent-config` 의 remote write url(`__HOST_IP__` 면 노드)을 두드린다. 실습 노드에는 OTLP 수집기(노드:4318)가 없어 그 줄은 늘 '정책 전에도 닫힘' 이다(실습 추적의 구성 문제 — 정책과 무관). 실습에는 백업 CronJob 이 없다 — 백업 정책은 두드리기 파드로만 보고 실제 Job 은 운영에서. 시험 `EgressPolicyScriptTest` +2(localhost 메일 · 바깥 호스트 25 거절, 지표 그룹의 실제 대상 — 변이: 두 수정을 각각 되돌리면 실패). 적용 결과(같은 날): rc=0 — 2단계 정책 다섯 생성 · public 의 80 막힘 · 메일 · Mongo · 지표 · cloudflared · 백업 그룹의 제 일 밖 모두 막힘, **지표 에이전트 → API 서버(`server-node:6443`, DNAT 뒤) · remote write(obs-vm) · 관리 포트 열림**, **cloudflared → traefik 열림**(라벨 확인) — 못 본 것 셋 가운데 둘이 풀렸다(QUIC 는 실습에 cloudflared 가 없어 운영에서). 함께 드러난 것(정책과 무관 — 정책을 다 빼도 같았다): ① 지표 에이전트 파드가 11-19 에 떠서 13:15 의 새 규칙을 모른 채 대상 42개(앱 포트까지)를 긁었다 — 재시작으로 21개 모두 up(지금 `ops/28` 은 이것을 잡는다) ② **채팅 SockJS 가 모두 403** — chat 만 `frontend.url` 이 `https://localhost:3000` 고정이라 `shop.lab` 출처를 거절했다, order · user 처럼 `APP_PUBLIC_URL` 을 따르게 고쳤다(chat 이미지, `WebSocketAllowedOriginTest` +2) ③ 실습의 추적 대상(`otel-collector` → obs-vm 사설 IP)은 노드 IP:4318 만 여는 정책 밖이라 막힌다 — 운영은 노드 위 수집기라 무관, 실습은 추적이 필요할 때 정책을 뺀다. ④ 출처를 고친 뒤에도 채팅이 끊겼다 — 상담 구독 · 끊김 처리가 `StackOverflowError`(스택은 `DefaultedRedisConnection.pExpire` 만): chat 의 Redisson 3.23.5 는 Spring Data Redis 3.1 용 모듈이라 Boot 3.5 의 조건 있는 `pExpire` 가 연결 자신을 다시 불렀다. `Error` 라 presence 의 catch 도 지나 STOMP 구독이 'Failed to send message to clientInboundChannel' 로 죽었다 — 3.50.0(`redisson-spring-data-35`)으로(시험 `RedissonExpireRecursionTest`, 옛 판에서 실패; `ChatScaleOutRedisTest` · `ChatStompIntegrationTest` 컨테이너 통과). cart · order 도 3.23.5 — `expire` 를 부르지 않아 지금은 드러나지 않았다 → 2026-11-21 같은 3.50.0 으로 맞췄다(cart 는 `RedisTemplate` · 캐시가 Redisson 연결 위, order 는 Lettuce 지만 starter 가 Redisson 빈을 만든다; 같은 이름의 시험 둘, 옛 판에서 실패 · 컨테이너 시험 통과, 다음 배포에 함께). ⑤ 그 뒤 WebSocket 만 403 — chat 직접은 101, 게이트웨이를 거치면 403, Origin 을 빼면 101: 게이트웨이 CORS 허용 출처가 `https://localhost:3000` 하나였다 → `${APP_PUBLIC_URL}` 을 더했다(gateway `CorsAllowedOriginTest`). 같은 날 결제 화면: Stripe 테스트 결제 → 배송 생성 → 발송까지 지나 order → `api.stripe.com:443` 확인. 위쪽 진행 막대의 네 번째 칸 이름은 `配送中` 이던 것을 주문 상태 글자(`発送済み` · `발송 완료`)로 — 아래 배송 추적의 '이동 중' 과 엇갈려 보였다(`OrderProgress.test.jsx`). 🕰️ 2026-11-21: 세 수정(`429a3f35` · `f1c205eb` · `c613ba2e`)을 담은 새 이미지를 실습에 배포 — **채팅 · 상담 동작, 진행 막대 `発送済み` 확인**(egress 정책을 건 채로). 운영은 다음 배포에 함께.
+
+🕰️ **2026-11-21 운영 첫 적용 — 스스로 되돌림(rc=1)**: 사전 점검 · 백업 라벨(`ACTION=cronjobs ./ops/29` — 라벨은 CronJob 이 아니라 파드 템플릿에 붙는다) 통과, 두드리기도 메일 587 · Stripe 443 · 지표 에이전트 → 노드 6443 · 9090 · 관리 포트 · cloudflared → traefik · 백업 → postgres 모두 열림 · 막아야 할 것 모두 막힘 — **노드 수집기 `노드IP:4318` 만 막혔다**(셋 그룹 모두). 원인: 운영 노드의 관측 스택은 docker compose 라 공개 포트가 DNAT 로 **컨테이너 IP(docker 브리지)** 로 바뀐다 — 정책은 바뀐 목적지를 보아 `노드IP/32` 규칙에 맞지 않았다(같은 compose 의 Prometheus 9090 은 지표 정책이 포트로만 열어 통과, k3s API 6443 은 호스트가 직접 받아 DNAT 없음). 실습 노드에는 수집기가 없어 드러나지 않았다. 고침: 4318 규칙에 docker 브리지 대역 `172.16.0.0/12` 를 더했다(그 규칙의 포트는 4318 하나 — 가드 `EgressPolicyGuardTest` 가 본다, 되돌리면 실패). 운영 Atlas 27017 은 두드리기 대상이 아니라(운영 mongodb 0/0 — ℹ️) 적용 뒤 채팅으로 본다. → 같은 날 두 번째 적용 **rc=0**(DNAT 목적지 `172.18.0.8:4318` 확인, 세 그룹 모두 4318 열림). 적용 뒤 운영 1:1 상담의 입력 버튼이 회색 — **정책을 빼도 같았다**: 브라우저 `…/chat-service/chat/…/xhr_streaming 403`, chat 로그 0줄 = 운영 이미지(`d8922fc53e0c`)의 SockJS 출처 고정(`429a3f35` 에서 고침)으로 egress 전부터 상담이 막혀 있었다. 다음 배포(chat · gateway · frontend)로 고쳐진다.
 
 ## 27. 서버 인증서를 서비스마다 — 공유 `tls-keystore` 대신 신원으로(2026-11-20, 가드 B-121)
 

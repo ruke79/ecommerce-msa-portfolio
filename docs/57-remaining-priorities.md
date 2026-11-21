@@ -943,7 +943,7 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 ⚠️ 本番ノードで `ops/62` を回すときは**スクリプトをリポジトリの `ops/` の中に置いて**回す（`$0/..` でルートを決めるため `/tmp` のコピーは平文 · 例 · 暗号文の場所をすべて `/` で探す — `SOPS_PLAIN` · `SOPS_ENC` は変えられるが例のパスは変えられない）。終わったら取り出したファイルを消し、チェックアウトをデプロイ版のままにする（docs/85 §9-2 ⓠ）。
 🐛 そのときディスクに平文が三つあった — nano が残した `20-secret.yaml.save`（2026-08-01）· `.save.1`（2026-10-24、ストアのパスワード交換の直前）で指紋が互いに違った。`.gitignore` の `k8s/20-secret.yaml*` はコミットを塞ぐが、「どれが最新か分からない」はこの節が無くそうとした問題そのものだ — `shred -u` で消した（暗号文のコミット履歴がその役を果たす）。
 
-**残り** → 🕰️ 2026-11-20 下の §24-1（ずれの警告 · 交換チェックリスト · 保管鍵の復旧訓練）。まだ残るもの: 専用の `TOTP_ENCRYPTION_KEY` を入れる（JWT 秘密の交換の前提 — §24-1 の表）。
+**残り** → 🕰️ 2026-11-20 下の §24-1（ずれの警告 · 交換チェックリスト · 保管鍵の復旧訓練）。~~まだ残るもの: 専用の `TOTP_ENCRYPTION_KEY` を入れる~~ — 完了（2026-11-20、§24-2 の末尾）。
 
 ### 24-1. ずれの警告 · 交換チェックリスト · 保管鍵の復旧訓練（2026-11-20）
 
@@ -951,6 +951,15 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
   **`ops/28` がデプロイ前に呼ぶ**（`check_secret_drift`）— 違えば知らせ、デプロイは続ける。sops · この機械の鍵 · 暗号文がなければ飛ばす（`SKIP_SECRET_DRIFT=1` でも）。
 - `./ops/62-secrets-sops.sh drill <保管鍵ファイル>` — **この機械の鍵を使わず**その鍵一つで復号できるか · `.sops.yaml` の受け取る人にいるか · 平文 · クラスタと同じか。四半期ごとにオフラインの鍵を出して一度回し、日付を下の表に書く（鍵は再びオフラインへ）。
 - `./ops/62-secrets-sops.sh rotation` — キーごとに**値が最後に変わった日**、古い順 · `ROTATION_DAYS`（既定 90）を超えると ⏰。🐛 最初は暗号文のそのキーの行が変わったコミットで見たが、`encrypt` は値を**すべて暗号化し直す**（新しい IV）ので行は毎回変わる — その日付は「最後の encrypt」にすぎない。履歴の版ごとにこの機械の鍵で復号し、指紋が最後に変わった版を探す（復号できない古い版で止まる、値 · 平文ファイルは残さない）。
+
+**🐛 最初の `drift` が見つけた 2 つ（2026-11-20 本番、`ops/28` のデプロイ前の警告）** — 暗号文 32 · クラスタ 34:
+
+- `SPRING_DATA_REDIS_PASSWORD` — **クラスタが正しい。** このキーはサンプルのテンプレートから来た**コメント行**（`# SPRING_DATA_REDIS_PASSWORD: "REPLACE_ME…"`）としてしかなく、値は `ops/36-rotate-redis-password.sh` がクラスタに直接書く — 最初の `encrypt` は平文ファイルをそのまま暗号化したので、**コメントはキーではなく**漏れた。⚠️ このとき `./ops/62 apply` を回してはいけない — `sops --decrypt | kubectl apply -f -` なので、last-applied の注釈次第でそのキーを**消し得る**（Redis を使う全部 — 流入制限 · カートのキャッシュ · chat のファンアウト · フィルターメニューの先取り — が認証失敗になる）。クラスタの値を暗号文に**入れる**方向で直す。
+- `REACT_APP_PAYPAL_CLIENT_ID` — **消すもの。** ビルド時点の値でマニフェストから読む場所がなく（B-51 — REACT_APP_* は k8s に置かない）、PayPal の CLIENT_ID は公開値だ。`kubectl -n ecommerce patch secret ecommerce-secrets --type=json -p '[{"op":"remove","path":"/data/REACT_APP_PAYPAL_CLIENT_ID"}]'`（2026-11-20 適用）。
+
+平文にキーを**足す**ときはファイルの末尾に付けない — `stringData` ブロックの後に長いコメントと `sops:` のメタデータがあり、EOF への追加は YAML を壊す（2026-11-20: それで `encrypt` が `Error unmarshalling file: yaml: line 8` で拒否した — **暗号文はそのままで被害はなかった**）。`stringData` の最後のキー行（4 スペースのインデント）の後に同じインデントで挿し、`encrypt` の前に `yaml.safe_load` で読めるか · 値がそのままかを見る。値は `kubectl get secret … -o jsonpath` → ファイルで受けて使い、画面に出さない（§5）。
+
+~~**残り**: `SPRING_DATA_REDIS_PASSWORD` を暗号文に入れて `drift` を 0 にする。~~ — 完了（2026-11-20、§24-2 の末尾 — `from-cluster` で作り直した暗号文に入った）。
 
 **四半期の交換チェックリスト**（`rotation` の ⏰ から）:
 
@@ -963,13 +972,29 @@ Spring Boot は循環を拒否する。サポート機能が今回初めて本�
 | `KAFKA_SSL_*` | ブローカーのストアと一緒に | Kafka を使うサービス |
 | 外部 API キー（`AMAZON_*` · `PORTONE_*` · `STRIPE_*` · `PAYPAL_*` · `MAIL_PASSWORD` · `DELIVERY_*` · `SPRING_DATA_MONGODB_PASSWORD` · ES） | 提供元のコンソールで新しいキー → `encrypt` → `apply` → そのサービスを再起動 → 確認後に古いキーを廃棄 | そのキーを読むサービス |
 
-Redis のパスワードはこの Secret にない（インフラ側）。交換 · 訓練の記録:
+Redis のパスワード（`SPRING_DATA_REDIS_PASSWORD`）はこの Secret に**ある**（🕰️ 2026-11-20 訂正 — 最初はないと書いた）: `ops/36-rotate-redis-password.sh` がこのキーと `redis/redis-auth` を一緒に変える — 変えた後 `from-cluster` → `encrypt` で暗号文にも。交換 · 訓練の記録:
 
 | 日付 | したこと | 結果 |
 |---|---|---|
+| 2026-11-20 | 古い暗号文の適用事故の復旧（§24-2）→ `from-cluster` で暗号文を作り直し + `TOTP_ENCRYPTION_KEY` を新しく | `drift` キー 35 · 35 で一致、2FA 秘密 0 行（再暗号化するものなし）、コミット `539a2a2c` |
 | — | （最初の `drill` · `rotation` をここに） | |
 
 **確認**: `SopsSecretsScriptTest` +3（実際の sops · age — `drift` は違うキー名だけ · 値を出さない · 終了 1、`drill` は保管鍵一つで通り、受け取る人でない鍵は失敗、`rotation` は暗号化し直しただけの版を交換と数えない）· ガード `SopsSecretGuardTest` +1（ops/28 が `drift` を一度呼ぶ）。変異: 指紋の比較を外す · `drill` がこの機械の鍵で復号する · `rotation` が版 0 の日付だけを見る、でそれぞれ失敗。
+
+### 24-2. 古い暗号文を適用した事故 · apply が先に比べる（2026-11-20）
+
+**何が起きたか**: 本番ノードで TOTP 専用鍵（docs/70）を入れようとして `encrypt` が「平文がない」で止まり、その前の暗号文（11-19 の最初の `encrypt` — そのときの平文がすでに古かった）を `sops -d … | kubectl apply -f -` で適用した。結果: **22 キーが古い値で上書きされ**（10-25 に変えたストアのパスワード · JWT · DB · メール · 決済 …）、暗号文になかった **5 キーは消えた**（`SPRING_DATA_REDIS_PASSWORD` · OAuth GitHub · Google の 4 つ — `kubectl apply` は前回の適用にあったキーが新しいファイルになければ消す）。空の値 3 つ（`JWT_SIGNING_KEYS` · `JWT_ACTIVE_KID` · `TOTP_ENCRYPTION_KEY`）は新しくできた。再起動した user-service の新しい Pod だけが `keystore password was incorrect` で CrashLoop — Reloader は `tls-id-*` しか見ないので他のサービスは再起動されず、古い Pod が持ちこたえて利用者への影響はなかった。
+
+**戻し方**（値を出力せずに）: 生きている古い Pod の環境変数は適用前の Secret そのままだ。① 古い Pod の env 名 ↔ Secret · ConfigMap の名前（`env -0 | cut -z -d= -f1` — 複数行の値の断片が名前の一覧に漏れないように）② Secret のキーごとに古い Pod の値と sha256 で比べる → 違うキー · 消えたキーを古い Pod の値で `kubectl patch --type merge`（base64 をパイプで）③ もう一度比べて 0 · 新しくできた空のキーは `null` で削除 ④ `kubectl.kubernetes.io/last-applied-configuration` 注釈を削除（古い値がその中にあり、次の apply がキーを消す根拠になる）。
+
+**直したこと**（`ops/62`）:
+- `apply` はまずクラスタと指紋で比べる — **クラスタにだけあるキーがあれば拒否**（消えるキーの名前だけ）、値が変わる · 新しくできるキーは **`EXPECT_CHANGED="K1 K2"` で名前を挙げたときだけ**適用する（変えるつもりのキーだけが変わるか）。同じなら何もしない。クラスタに届かなければ比較なしには適用しない（NotFound のときだけ新しく作る）。
+- `from-cluster` — クラスタの Secret から平文（0600）を作る。暗号文が本番より古いとき本番の値からやり直す: `from-cluster` → 変えるキーだけ直す → `encrypt` → `drift`（変えたキーだけが違う）→ `EXPECT_CHANGED=… apply` → コミット。
+- `encrypt` が失敗しても一時ファイル（`20-secret.enc.yaml.XXXXXX`）を残さない — RETURN トラップは `exit` では動かなかった（本番ノードに一つ残っていた）。今は EXIT トラップ。
+
+**確認**: `SopsSecretsScriptTest` +4（実際の sops · age — クラスタにだけあるキーの拒否 · 名前のない変更の拒否 · `EXPECT_CHANGED` なら適用 · 同じなら何もしない、`from-cluster` → `encrypt` → `drift` が同じ · 既存の平文は上書きしない · 引用符 · コロン · ハングルの値、`encrypt` 失敗で一時ファイルなし）。変異: 拒否の検査 · 名前の検査 · 後始末の登録をそれぞれ外すと失敗。
+
+**仕上げ（2026-11-20）**: 本番ノードで新しい `ops/62` により `from-cluster`（キー 34）→ `TOTP_ENCRYPTION_KEY` 1 行（`openssl rand -base64 32` — 初めて入れる鍵なので新しく作った。その前のコミット `4be5da5c` の値は適用されたことがない）→ `encrypt` → `drift`（暗号文にだけ TOTP）→ `EXPECT_CHANGED=TOTP_ENCRYPTION_KEY apply` → user-service 再起動。確認: Secret の TOTP 長 44 · Pod ログに「TOTP_ENCRYPTION_KEY がない」なし · `users.users.two_factor_secret` 0 行（TOTP を有効にした利用者はまだいない — 今後は `enc:k1:`）· `drift` 35 · 35 で一致 · 暗号文コミット `539a2a2c`。事故中に作った写し（誤って適用された Secret の yaml · 古い暗号文 2 つ）は消した。
 
 ## 25. 管理ポートの分離 — actuator は 9180、指標エージェントだけ（2026-11-20、ガード B-119）
 
@@ -991,6 +1016,8 @@ Redis のパスワードはこの Secret にない（インフラ側）。交換
 
 **確認**: gateway · config-server の `ManagementPortTest`（テスト用の証明書をその場で作り **HTTPS で** — アプリのポートの /actuator は 404、管理ポートは TLS で health · prometheus、config-server は管理ポートでもパスワードなしで 401 · 正しければ 404（公開外）— セキュリティ規則がかかる証拠）· user-service の `ManagementPortTest`（コンテナ — `EndpointRequest` の規則が管理ポートにも、業務 API は 401）· ガード **B-119** `ManagementPortGuardTest` 5 · `NetworkPolicyScriptTest` 3。変異: プローブ一つをアプリのポートに · 同じネームスペースの許可からポートのリストを外す · エージェントの keep 規則を drop に · スモークをアプリのポートに · テストから管理ポートの設定を外す · ops/35 がエージェントの遮断を失敗と見ない、でそれぞれ失敗。
 
+> 🕰️ 2026-11-20 の本番デプロイ（`d8922fc53e0c`）の後、**サービス指標が 21 分途切れた** — ConfigMap はすでに新しい規則だったので `ops/28` は警告しなかったが、エージェントの **Pod** は古い規則を握っていた（起動時に initContainer が ConfigMap を設定ファイルにし、その後は読み直さない）。今は `ops/28` がデプロイの最後に **Pod の起動時刻 < ConfigMap の最終更新（managedFields の最も遅い時刻）** ならエージェントを再起動する（`METRICS_AGENT_RESTART=0` なら知らせるだけ · デプロイは止めない · ConfigMap が古い規則なら以前どおり再適用を促す）。テスト `MetricsAgentStaleScriptTest` 5（変異: 時刻の比較を外すと 2 失敗）。
+
 ## 26. 外向き接続（egress）第 2 段階 — ポートの絞り込み · ポリシー外だった Pod（2026-11-20）
 
 第 1 段階（§23）の残りをした。適用はそのまま `./ops/35-network-policy.sh egress-apply` だけ（k8s/97 全体 — 第 1 · 2 段階を一度に）。
@@ -1011,6 +1038,10 @@ Redis のパスワードはこの Secret にない（インフラ側）。交換
 **まだ見ていないもの**: kube-router の実際の適用（第 1 段階と同じ — この環境の docker 内の k3s は Pod を立てられない）。特に ① 指標エージェントの API サーバーへの接続（ポリシーが DNAT の後のノード:6443 を見るという前提）② cloudflared の QUIC（UDP 7844）③ traefik の Pod ラベル `app.kubernetes.io/name: traefik`（k3s の既定チャート）。実習クラスタで `egress-apply` → 指標 11 個 up · サイト · 決済 · メール · チャット · バックアップ一回（`kubectl create job --from=cronjob/postgres-backup …`）→ 本番。
 
 **確認**: `EgressPolicyScriptTest` 9（+2 — public の 443 の外が開いていれば成功ではない、メールのポート · ssh のリポジトリ · 外の PGHOST なら適用せず値を言わない）· ガード B-117 `EgressPolicyGuardTest` 6（+2 — インターネットの規則はすべてポートを持つ · public 443 · メール · Atlas · トンネル · エージェントのポートと選ぶ Pod、バックアップは IP 帯域なし、ポリシーの名前が CronJob · オーバーレイの実際のラベルと同じ、ops/35 が消すポリシー = k8s/97）。変異: public のポートを外す · CronJob のラベルを変える · 消すリストから一つ外す · public の 80 の確認を外す · メールのポートの点検を開く、でそれぞれ失敗。
+
+🕰️ **2026-11-20 最初の実習（server-node · agent 三つ · data、第 1 段階は 31 時間前から掛かっていた）**: `egress-apply` が事前点検で止まった — デモの Secret のメールは `MAIL_HOST=localhost` · `MAIL_PORT=25`（送らない設定）なのにポートだけを見て拒否した。Pod 内のループバックは NetworkPolicy の対象外なので、今はホストが localhost · 127.x · ::1 なら「使わない」と見る。同じ `egress-check` で metrics グループの `最初のノード:6443` · `最初のノード:9090` がポリシー前から閉じていて判定から外れた — 複数ノードでは API サーバーは一つのノードにだけあり、remote write は観測 VM だ。今は metrics グループは `kubernetes` のエンドポイント（実際の API サーバー）と `metrics-agent-config` の remote write の url（`__HOST_IP__` ならノード）を叩く。実習のノードには OTLP 収集器（ノード:4318）がなく、その行は常に「ポリシー前から閉じていた」（実習のトレース構成の問題 — ポリシーとは無関係）。実習にはバックアップ CronJob がない — バックアップのポリシーは叩き Pod だけで見て、実際の Job は本番で。テスト `EgressPolicyScriptTest` +2（localhost のメール · 外部ホストの 25 は拒否、指標グループの実際の宛先 — 変異: 二つの修正をそれぞれ戻すと失敗）。適用結果（同日）: rc=0 — 第 2 段階のポリシー五つを作成 · public の 80 を遮断 · メール · Mongo · 指標 · cloudflared · バックアップのグループの担当外はすべて遮断、**指標エージェント → API サーバー（`server-node:6443`、DNAT 後）· remote write（obs-vm）· 管理ポートは開いている**、**cloudflared → traefik は開いている**（ラベル確認）— 未確認の三つのうち二つが解けた（QUIC は実習に cloudflared がなく本番で）。一緒に分かったこと（ポリシーとは無関係 — ポリシーを全部外しても同じだった）: ① 指標エージェントの Pod が 11-19 に起動し、13:15 の新しい規則を知らないまま対象 42 個（アプリのポートまで）を収集していた — 再起動で 21 個すべて up（今の `ops/28` はこれを捕まえる）② **チャットの SockJS がすべて 403** — chat だけ `frontend.url` が `https://localhost:3000` 固定で `shop.lab` のオリジンを拒否した。order · user と同じく `APP_PUBLIC_URL` に従うよう直した（chat イメージ、`WebSocketAllowedOriginTest` +2）③ 実習のトレース先（`otel-collector` → obs-vm のプライベート IP）はノード IP:4318 だけを開くポリシーの外なので遮断される — 本番はノード上の収集器なので無関係、実習でトレースが要るときはポリシーを外す。④ オリジンを直した後もチャットが切れた — 相談の購読 · 切断処理が `StackOverflowError`（スタックは `DefaultedRedisConnection.pExpire` だけ）: chat の Redisson 3.23.5 は Spring Data Redis 3.1 用のモジュールで、Boot 3.5 の条件付き `pExpire` が接続自身を呼び直した。`Error` なので presence の catch も通り抜け、STOMP の購読が「Failed to send message to clientInboundChannel」で死んだ — 3.50.0（`redisson-spring-data-35`）へ（テスト `RedissonExpireRecursionTest`、旧版で失敗; `ChatScaleOutRedisTest` · `ChatStompIntegrationTest` のコンテナ試験は通過）。cart · order も 3.23.5 — `expire` を呼ばないので表に出なかった → 2026-11-21 同じ 3.50.0 に合わせた（cart は `RedisTemplate` · キャッシュが Redisson 接続の上、order は Lettuce だが starter が Redisson の Bean を作る。同名の試験二つ、旧版で失敗 · コンテナ試験は通過、次のデプロイに同梱）。⑤ その後 WebSocket だけが 403 — chat 直接は 101、ゲートウェイ経由は 403、Origin を外すと 101: ゲートウェイの CORS 許可オリジンが `https://localhost:3000` だけだった → `${APP_PUBLIC_URL}` を加えた（gateway `CorsAllowedOriginTest`）。同じ日の決済画面: Stripe のテスト決済 → 配送作成 → 発送まで進み、order → `api.stripe.com:443` を確認。上の進行バーの 4 番目の名前は `配送中` だったものを注文状態の文字（`発送済み` · `발송 완료`）に — 下の配送追跡の「移動中」と食い違って見えた（`OrderProgress.test.jsx`）。🕰️ 2026-11-21: 三つの修正（`429a3f35` · `f1c205eb` · `c613ba2e`）を含む新しいイメージを実習へデプロイ — **チャット · 相談の動作、進行バーの `発送済み` を確認**（egress ポリシーを掛けたまま）。本番は次のデプロイで一緒に。
+
+🕰️ **2026-11-21 本番の最初の適用 — 自ら元に戻した（rc=1）**: 事前点検 · バックアップのラベル（`ACTION=cronjobs ./ops/29` — ラベルは CronJob ではなく Pod テンプレートに付く）は通過、叩きもメール 587 · Stripe 443 · 指標エージェント → ノード 6443 · 9090 · 管理ポート · cloudflared → traefik · バックアップ → postgres はすべて開き、塞ぐべきものはすべて塞がった — **ノードの収集器 `ノードIP:4318` だけが塞がれた**（三つのグループすべて）。原因: 本番ノードの観測スタックは docker compose で、公開ポートが DNAT で**コンテナ IP（docker ブリッジ）**に変わる — ポリシーは変わった宛先を見るので `ノードIP/32` の規則に合わなかった（同じ compose の Prometheus 9090 は指標ポリシーがポートだけで開いていて通過、k3s API 6443 はホストが直接受けるので DNAT なし）。実習のノードには収集器がなく表に出なかった。修正: 4318 の規則に docker ブリッジ帯域 `172.16.0.0/12` を加えた（その規則のポートは 4318 一つ — ガード `EgressPolicyGuardTest` が見る、戻すと失敗）。本番の Atlas 27017 は叩きの対象ではないので（本番 mongodb 0/0 — ℹ️）適用後にチャットで見る。→ 同日二度目の適用 **rc=0**（DNAT の宛先 `172.18.0.8:4318` を確認、三つのグループすべてで 4318 が開いた）。適用後、本番の 1:1 相談の入力ボタンがグレー — **ポリシーを外しても同じだった**: ブラウザ `…/chat-service/chat/…/xhr_streaming 403`、chat のログ 0 行 = 本番イメージ（`d8922fc53e0c`）の SockJS オリジン固定（`429a3f35` で修正）で egress 以前から相談が塞がっていた。次のデプロイ（chat · gateway · frontend）で直る。
 
 ## 27. サーバー証明書をサービスごとに — 共有 `tls-keystore` の代わりに身元で（2026-11-20、ガード B-121）
 

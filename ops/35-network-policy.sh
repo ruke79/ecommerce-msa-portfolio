@@ -26,6 +26,8 @@
 #
 #   [JA] egress 第 1 段階 — render(出力のみ) · check · apply(事前点検 → 適用 → 確認 → 塞がれば戻す) · remove。
 #
+#   [JA] egress 第 1 段階 — render(出力のみ) · check · apply(事前点検 → 適用 → 確認 → 塞がれば戻す) · remove。
+#
 # 두드리는 방법: 잠깐 뜨는 busybox 파드에서 `nc -z` 로 TCP 연결만 해 본다(자격증명은 쓰지 않는다).
 #   · 허용돼야 할 흐름 — ecommerce 네임스페이스에서: 각 서비스, Postgres·Redis·Kafka·Mongo·ES
 #   · 막혀야 할 흐름   — default 네임스페이스에서: user-service·order-service 내부 API, Postgres·Redis
@@ -188,6 +190,7 @@ check() {
 # ══ 나가는 연결(egress) 1단계 — k8s/97 (docs/57 §23) ═══════════════════════════════════════════
 # [JA] 外向き接続(egress)第 1 段階 — k8s/97(docs/57 §23)。
 # [JA] 外向き接続の第 1 段階。
+# [JA] 外向き接続の第 1 段階。
 
 # 노드 InternalIP — 파드의 HOST_IP(추적을 보내는 OTLP 수집기 주소)와 같은 값. 시험은 NETPOL_NODE_IPS 로 준다.
 # [JA] ノード InternalIP — Pod の HOST_IP(トレースを送る OTLP コレクタのアドレス)と同じ値。テストは NETPOL_NODE_IPS で与える。
@@ -269,10 +272,17 @@ egress_precheck() {
 # [JA] 第 2 段階の前提 — 狭めたポートの外を使う設定なら適用しない(値は出さない)。
 egress_precheck_stage2() {
     local bad=0 v
+    # 🐛 2026-11-20 실습: 실습 Secret 은 MAIL_HOST=localhost · MAIL_PORT=25(메일을 보내지 않는 자리) 인데 포트만 보고 거절했다.
+    #    파드 안 루프백은 NetworkPolicy 가 고르지 않는다 — 호스트가 localhost · 127.x · ::1 이면 '쓰지 않는다' 로 본다.
+    # [JA] 実習の Secret は localhost:25(メールを送らない設定)なのに拒否した。ループバックは NetworkPolicy の対象外。
+    local mhost
+    if [ -n "${NETPOL_MAIL_HOST+x}" ]; then mhost="$NETPOL_MAIL_HOST"
+    else mhost=$(kubectl -n ecommerce get secret ecommerce-secrets -o 'jsonpath={.data.MAIL_HOST}' 2>/dev/null | base64 -d 2>/dev/null || true); fi
     if [ -n "${NETPOL_MAIL_PORT+x}" ]; then v="$NETPOL_MAIL_PORT"
     else v=$(kubectl -n ecommerce get secret ecommerce-secrets -o 'jsonpath={.data.MAIL_PORT}' 2>/dev/null | base64 -d 2>/dev/null || true); fi
+    case "$mhost" in localhost|127.*|::1|"[::1]") v="" ;; esac
     case "$v" in
-        ""|465|587) echo "  ✅ 메일 포트 — 465 · 587 이거나 쓰지 않는다" ;;
+        ""|465|587) echo "  ✅ 메일 포트 — 465 · 587 이거나 쓰지 않는다(호스트가 localhost 면 쓰지 않는 것으로 본다)" ;;
         *) echo "  🔴 메일 포트(Secret MAIL_PORT)가 465 · 587 이 아니다 — egress-smtp 가 막는다(k8s/97 의 그 정책에 포트를 더하고 다시)"; bad=1 ;;
     esac
     if [ -n "${NETPOL_GIT_URI+x}" ]; then v="$NETPOL_GIT_URI"
@@ -287,6 +297,29 @@ egress_precheck_stage2() {
     if [ -z "$v" ] || [[ "$v" == *.svc.cluster.local || "$v" == *.svc ]]; then echo "  ✅ 백업 PGHOST — 클러스터 안이거나 백업 설정 없음"
     else echo "  🔴 백업 PGHOST($v)가 클러스터 밖이다 — egress-backup-postgres 는 postgres 네임스페이스만 연다"; bad=1; fi
     return $bad
+}
+
+# 지표 에이전트가 실제로 가는 곳 — 여러 노드 클러스터(실습)에서는 API 서버가 한 노드에만 있고 remote write 는 노드 밖(관측 VM)이다.
+# 🐛 2026-11-20 실습: 첫 노드 IP 의 6443 · 9090 을 두드려 '정책 전에도 닫힘' 으로만 나와 그 두 경로를 판정하지 못했다.
+#    API 서버 = kubernetes 엔드포인트, remote write = metrics-agent ConfigMap 의 url(`__HOST_IP__` 면 노드). 못 읽으면 예전처럼 노드.
+# [JA] 指標エージェントの実際の行き先 — API サーバーは kubernetes のエンドポイント、remote write は ConfigMap の url。
+api_server_target() {   # $1 = 대신 쓸 노드 IP ／ [JA] 代わりに使うノード IP
+    if [ -n "${NETPOL_API_TARGET:-}" ]; then echo "$NETPOL_API_TARGET"; return 0; fi
+    local ip port
+    ip=$(kubectl -n default get endpoints kubernetes -o 'jsonpath={.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+    port=$(kubectl -n default get endpoints kubernetes -o 'jsonpath={.subsets[0].ports[0].port}' 2>/dev/null || true)
+    if [[ "$ip" =~ ^[0-9.]+$ && "$port" =~ ^[0-9]+$ ]]; then echo "$ip:$port"; else echo "$1:6443"; fi
+}
+remote_write_target() {   # $1 = 대신 쓸 노드 IP ／ [JA] 代わりに使うノード IP
+    if [ -n "${NETPOL_RW_TARGET:-}" ]; then echo "$NETPOL_RW_TARGET"; return 0; fi
+    local hp
+    hp=$(kubectl -n ecommerce get configmap metrics-agent-config -o yaml 2>/dev/null \
+        | grep -oE 'url: *https?://[^/ ]+' | head -1 | sed -E 's#.*://##' || true)
+    case "$hp" in
+        ""|__HOST_IP__*) echo "$1:9090" ;;
+        *:*) echo "$hp" ;;
+        *) echo "$hp:80" ;;
+    esac
 }
 
 EGRESS_NODE=""
@@ -319,7 +352,7 @@ egress_targets() {   # $1 = internal | public
                     "gateway-server.ecommerce.svc.cluster.local:8000" ) ;;
         metrics)   # metrics-agent — 관리 포트 · API 서버 · remote write ／ [JA] metrics-agent — 管理ポート · API サーバー · remote write
             local mip; mip=$(mgmt_ip)
-            ALLOW=( "dns:kafka.kafka.svc.cluster.local" "$node:6443" "$node:9090" )
+            ALLOW=( "dns:kafka.kafka.svc.cluster.local" "$(api_server_target "$node")" "$(remote_write_target "$node")" )
             [ -z "$mip" ] || ALLOW+=( "$mip:9180" )
             BLOCK=( "169.254.169.254:80" "$node:10250" "1.1.1.1:443" "postgres.postgres.svc.cluster.local:5432"
                     "user-service.ecommerce.svc.cluster.local:8080" ) ;;

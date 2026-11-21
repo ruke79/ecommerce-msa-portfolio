@@ -1,5 +1,8 @@
 frontend:
-  url: https://localhost:3000
+  # SockJS · WebSocket 이 허용하는 출처(WebSocketConfiguration.setAllowedOrigins) — 브라우저가 여는 주소와 같아야 한다.
+  # 🐛 2026-11-20 실습: 이 값만 localhost:3000 으로 고정돼 shop.lab 에서 SockJS 가 모두 403(채팅 입력이 회색) — order · user 처럼
+  #    APP_PUBLIC_URL 을 따른다. [JA] SockJS の許可オリジン — ブラウザが開くアドレスと同じでなければならない(APP_PUBLIC_URL に従う)。
+  url: ${FRONTEND_URL:${APP_PUBLIC_URL:https://localhost:3000}}
 
 server:
   port: 8086

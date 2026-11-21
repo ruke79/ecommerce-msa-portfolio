@@ -481,6 +481,23 @@ verify_images() {
     # [JA] クラスタ内の HTTP レジストリ — イメージ名からレジストリ部分を外してその API に問い合わせる。
     if [ -n "${REGISTRY_API:-}" ]; then
         prober=registry-api
+        # 먼저 그 API 가 있는지 — 닿지 못하면 태그마다 '없음' 14줄이 나와 '빌드가 안 됐다' 로 읽힌다.
+        # 🐛 2026-11-21 실습: 레지스트리는 별도 VM 인데 REGISTRY_API=http://127.0.0.1:5000(호스트 — 아무것도 없음)으로
+        #    배포해 '이미지 14 개를 찾지 못했습니다' 만 나왔다. 닿지 못함 · 레지스트리가 아님 · 태그 없음을 나눠 말한다.
+        # [JA] まずその API があるか — 届かないとタグごとに「なし」が 14 行出て「ビルドされていない」と読まれる。
+        #      届かない · レジストリでない · タグがない、を分けて言う。
+        local api="${REGISTRY_API%/}/v2/" code
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$api" 2>/dev/null || true)"
+        case "$code" in
+            200|401) ;;   # 401 — 인증을 묻는 레지스트리. API 는 있다(태그 확인에서 다시 드러난다) ／ [JA] 401 — 認証を求めるレジストリ。API はある
+            ""|000)
+                die "레지스트리에 닿지 못했습니다: $api (REGISTRY_API) — 이미지가 없다는 뜻이 아닙니다
+  · 레지스트리가 별도 VM 이면 그 IP 로:  REGISTRY_API=http://<그 IP>:5000
+  · 호스트 레지스트리면:  docker ps --filter name=registry
+  · 노드가 받는 곳과 같아야 한다:  ssh <노드> sudo cat /etc/rancher/k3s/registries.yaml" ;;
+            *)
+                die "REGISTRY_API 가 레지스트리 API 가 아닙니다: $api → HTTP $code — registry:2 는 /v2/ 에 200 을 준다" ;;
+        esac
     elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         prober=docker
     elif command -v skopeo >/dev/null 2>&1; then
@@ -605,6 +622,8 @@ EOF
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 # [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
+# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
+#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 show_startup_error() {   # show_startup_error <deployment>
     local d="$1" pod info node reason code image dir logs
     # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
@@ -646,6 +665,7 @@ show_startup_error() {   # show_startup_error <deployment>
     # [JA] 🐛 2026-10-18 デモ: saga-projection が "Invalid or corrupt jarfile" で落ちたが、レジストリのイメージの jar は正常だった
     #      (ハッシュがビルド結果と同じで、ノードのダイジェストもレジストリと同じだった) — そのノードが展開したコピーだけが壊れていた。
     #      同じタグなので kubelet は再取得しない(IfNotPresent) — そのノードで消す必要がある。
+    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     if printf '%s\n' "$logs" | grep -qE "Invalid or corrupt jarfile|Unable to access jarfile|no main manifest attribute"; then
@@ -941,6 +961,7 @@ deploy_version() {   # deploy_version <버전> ／ [JA] deploy_version <バー�
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
+        # shellcheck disable=SC2086
         stamp_change_cause "$ver" user-service $OTHER_DEPLOYS
         # shellcheck disable=SC2086
         wait_rollouts user-service $OTHER_DEPLOYS || return 1
@@ -1178,11 +1199,46 @@ START_EPOCH=$(date -u +%s)
 # 지표 에이전트(k8s-overlays/external · demo 의 metrics-agent)는 이 배포가 적용하지 않는다. 관리 포트(B-119)로 바뀐 서비스를
 # 옛 규칙(포트마다 긁기)으로 긁으면 앱 포트의 /actuator/prometheus 가 404 → 서비스 지표 0 · ServiceDown. 옛 규칙이면 알린다.
 # [JA] 指標エージェントはこのデプロイが適用しない。旧規則のままなら知らせる。
+#
+# 🐛 2026-11-20 운영(d8922fc53e0c): ConfigMap 은 이미 새 규칙이라 아무 경고도 없었는데 서비스 지표가 21분 끊겼다. 에이전트는
+# 기동할 때 initContainer 가 ConfigMap 을 설정 파일로 만들고 그 뒤로는 다시 읽지 않는다 — ConfigMap 을 고친 뒤 재시작하지 않은
+# 파드는 옛 규칙을 쥐고 있다. 이제 **파드가 뜬 시각 < ConfigMap 이 마지막으로 바뀐 시각** 이면 에이전트를 재시작한다
+# (METRICS_AGENT_RESTART=0 이면 알리기만). 지표만 잠깐 비는 일이라 배포를 막지 않는다.
+# [JA] 2026-11-20 本番: ConfigMap はすでに新しい規則で警告は出なかったが、サービス指標が 21 分途切れた。エージェントは起動時に
+#      initContainer が ConfigMap を設定ファイルにし、その後は読み直さない — ConfigMap を直した後に再起動していない Pod は古い
+#      規則を握っている。今は「Pod の起動時刻 < ConfigMap の最終更新時刻」ならエージェントを再起動する(METRICS_AGENT_RESTART=0
+#      なら知らせるだけ)。指標が少し空くだけなのでデプロイは止めない。
 warn_metrics_agent() {
     kubectl -n "$NS" get configmap metrics-agent-config >/dev/null 2>&1 || return 0
     if ! kubectl -n "$NS" get configmap metrics-agent-config -o yaml 2>/dev/null | grep -q '__meta_kubernetes_pod_container_port_name'; then
         warn "지표 에이전트가 옛 규칙이다 — 관리 포트(9180)를 긁지 않아 서비스 지표가 끊긴다(B-119). 지금 다시 적용한다:"
         warn "  kubectl apply -f k8s-overlays/external/metrics-agent.yaml && kubectl -n $NS rollout restart deploy/metrics-agent   # 운영(oci)"
+        return 0
+    fi
+    # ConfigMap 이 마지막으로 바뀐 시각(managedFields 의 가장 늦은 time) · 파드마다 뜬 시각 — 둘 다 RFC 3339 UTC 라 글자 비교로 된다
+    # [JA] ConfigMap の最終更新時刻 · Pod ごとの起動時刻 — どちらも RFC 3339 UTC なので文字列比較でよい
+    local cm_time stale="" name started
+    cm_time=$(kubectl -n "$NS" get configmap metrics-agent-config \
+        -o jsonpath='{range .metadata.managedFields[*]}{.time}{"\n"}{end}' 2>/dev/null | grep . | sort | tail -n 1) || true
+    [ -n "$cm_time" ] || return 0
+    while read -r name started; do
+        [ -n "$name" ] || continue
+        if [ -z "$started" ] || [[ "$started" < "$cm_time" ]]; then
+            stale="$stale $name"
+        fi
+    done < <(kubectl -n "$NS" get pods -l app=metrics-agent \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.startTime}{"\n"}{end}' 2>/dev/null)
+    [ -n "$stale" ] || return 0
+    warn "지표 에이전트 파드가 ConfigMap 이 바뀌기 전에 떴다($cm_time) — 옛 규칙을 쥐고 있다:$stale"
+    if [ "${METRICS_AGENT_RESTART:-1}" = "0" ]; then
+        warn "  METRICS_AGENT_RESTART=0 — 재시작하지 않았다:  kubectl -n $NS rollout restart deploy/metrics-agent"
+        return 0
+    fi
+    if kubectl -n "$NS" rollout restart deploy/metrics-agent >/dev/null 2>&1 \
+        && kubectl -n "$NS" rollout status deploy/metrics-agent --timeout=180s >/dev/null 2>&1; then
+        info "지표 에이전트를 재시작했다 — 서비스 지표는 다음 수집(15초)부터. 확인: count(up{job=\"spring-actuator\"} == 1) 이 11(재시작 직후 5분은 옛 타깃의 up=0 이 함께 보인다)"
+    else
+        warn "  지표 에이전트 재시작이 끝나지 않았다 — kubectl -n $NS rollout status deploy/metrics-agent 로 본다(배포는 그대로 성공)"
     fi
 }
 

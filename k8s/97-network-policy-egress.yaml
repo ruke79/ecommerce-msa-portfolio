@@ -59,7 +59,11 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다 ／ [JA] ops/35 がノードごとに展開する
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다
+        # 🐛 2026-11-20 운영 첫 적용: 노드의 수집기는 docker compose 라 노드IP:4318 이 DNAT 로 컨테이너 IP(docker 브리지)가 된다 —
+        #    정책은 바뀐 목적지를 보아 노드 IP 만으로는 막혔다(ops/35 가 스스로 되돌림). 브리지 대역을 4318 에만 연다.
+        # [JA] ノードの収集器は docker compose — ノードIP:4318 が DNAT でコンテナ IP になり、ノード IP だけでは塞がれた。
+        - ipBlock: { cidr: 172.16.0.0/12 }    # docker 브리지(기본 주소 풀) — 4318 만 ／ [JA] docker ブリッジ(既定のアドレスプール) — 4318 だけ
       ports:
         - { protocol: TCP, port: 4318 }
 ---
@@ -98,7 +102,11 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     - to:
-        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다 ／ [JA] ops/35 がノードごとに展開する
+        - ipBlock: { cidr: __NODE_IP__/32 }   # ops/35 가 노드마다 펼친다
+        # 🐛 2026-11-20 운영 첫 적용: 노드의 수집기는 docker compose 라 노드IP:4318 이 DNAT 로 컨테이너 IP(docker 브리지)가 된다 —
+        #    정책은 바뀐 목적지를 보아 노드 IP 만으로는 막혔다(ops/35 가 스스로 되돌림). 브리지 대역을 4318 에만 연다.
+        # [JA] ノードの収集器は docker compose — ノードIP:4318 が DNAT でコンテナ IP になり、ノード IP だけでは塞がれた。
+        - ipBlock: { cidr: 172.16.0.0/12 }    # docker 브리지(기본 주소 풀) — 4318 만 ／ [JA] docker ブリッジ(既定のアドレスプール) — 4318 だけ
       ports:
         - { protocol: TCP, port: 4318 }
     # 2단계: https 만(TCP 443). 메일 · Atlas 는 아래 정책이 그 서비스에만 더한다. [JA] 第 2 段階: https だけ。

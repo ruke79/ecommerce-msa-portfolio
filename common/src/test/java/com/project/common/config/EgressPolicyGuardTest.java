@@ -158,7 +158,10 @@ class EgressPolicyGuardTest {
         assertThat(internal).doesNotContain("0.0.0.0/0");
         Matcher cidrs = Pattern.compile("cidr:\\s*([^\\s}]+)").matcher(internal);
         while (cidrs.find()) {
-            assertThat(cidrs.group(1)).as("클러스터 안만 그룹의 IP 대역은 노드 자리표시뿐").isEqualTo("__NODE_IP__/32");
+            // 노드 자리표시와, 수집기의 docker 브리지(4318 규칙 안 — 아래 시험이 그 자리를 본다)만
+            // [JA] ノードのプレースホルダーと、収集器の docker ブリッジ(4318 のルール内)だけ
+            assertThat(cidrs.group(1)).as("클러스터 안만 그룹의 IP 대역은 노드 자리표시 · docker 브리지뿐")
+                    .isIn("__NODE_IP__/32", "172.16.0.0/12");
         }
     }
 
@@ -168,6 +171,19 @@ class EgressPolicyGuardTest {
         for (String name : List.of(INTERNAL, PUBLIC)) {
             String doc = policyDoc(name);
             assertThat(doc).as(name).contains("cidr: __NODE_IP__/32").contains("port: 4318").contains("k8s-app: kube-dns");
+            // 🔴 2026-11-20 운영: 수집기는 docker compose — 노드IP:4318 이 DNAT 로 브리지 IP 가 되어 노드 IP 만으로는 막혔다.
+            //    브리지 대역은 4318 규칙 안에만(같은 규칙의 포트가 4318 하나).
+            // [JA] 2026-11-20 本番: 収集器は docker compose — ノードIP:4318 が DNAT でブリッジ IP になり、ノード IP だけでは塞がれた。ブリッジ帯は 4318 のルール内だけ。
+            Matcher rule = Pattern.compile("- to:\\n((?:\\s+- ipBlock:[^\\n]*\\n|\\s+#[^\\n]*\\n)+)\\s+ports:\\n((?:\\s+- \\{[^\\n]*\\n)+)").matcher(doc);
+            boolean found = false;
+            while (rule.find()) {
+                if (rule.group(1).contains("172.16.0.0/12")) {
+                    found = true;
+                    assertThat(rule.group(1)).as(name).contains("__NODE_IP__/32");
+                    assertThat(rule.group(2).trim()).as(name + " — 브리지 대역은 4318 만").isEqualTo("- { protocol: TCP, port: 4318 }");
+                }
+            }
+            assertThat(found).as(name + " — 4318 규칙에 docker 브리지 대역").isTrue();
             assertThat(doc).as(name + " — 두드리기 파드가 같은 정책을 받는다").contains("netpol-probe-");
         }
         String kustomization = Files.readString(repoRoot().resolve("k8s/kustomization.yaml"), StandardCharsets.UTF_8);

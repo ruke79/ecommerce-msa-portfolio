@@ -199,7 +199,8 @@ ACTION=cronjobs ./ops/29-enable-pitr-in-cluster.sh   # postgres-backup 03:00 · 
 ./ops/62-secrets-sops.sh init age1…노드 age1…PC age1…보관   # 받는 사람 — .sops.yaml(공개 키라 커밋)
 ./ops/62-secrets-sops.sh encrypt                     # k8s/20-secret.yaml → k8s/20-secret.enc.yaml(왕복 확인 뒤) → 커밋
 ./ops/62-secrets-sops.sh check                       # 값이 모두 암호문 · 풀리는가 · 예시와 키 이름 · 평문과 같은가
-./ops/62-secrets-sops.sh apply                       # 평문 파일 없이 바로 kubectl apply
+./ops/62-secrets-sops.sh apply                       # 평문 파일 없이 kubectl apply — 먼저 클러스터와 비교(바꿀 키는 EXPECT_CHANGED, docs/57 §24-2)
+./ops/62-secrets-sops.sh from-cluster                # 암호문이 낡았으면 클러스터 Secret 에서 평문을 다시 만든다
 ./ops/62-secrets-sops.sh drift                       # 암호문 ↔ 클러스터 Secret — 다른 키 이름만(ops/28 이 배포 전에도 부른다)
 ./ops/62-secrets-sops.sh rotation                    # 분기 교체 점검표 — 키마다 값이 마지막으로 바뀐 날, 90일 넘으면 ⏰
 ./ops/62-secrets-sops.sh drill /media/usb/age-offline-backup.txt   # 분기마다 — 보관 키 하나로 풀리는가(이 기계의 키는 쓰지 않는다)

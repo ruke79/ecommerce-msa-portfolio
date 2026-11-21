@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 
 import OrderProgress, { stepOf } from "components/order/OrderProgress";
+import ja from "i18n/messages/ja";
+import ko from "i18n/messages/ko";
 
 jest.mock("i18n/I18nProvider", () => ({
     useTranslation: () => ({ t: (key) => key }),
@@ -70,5 +72,15 @@ describe("OrderProgress — 주문 진행 단계", () => {
         expect(screen.getByRole("status")).toHaveTextContent("order.progress.canceled");
         rerender(<OrderProgress order={{ orderStatus: "REFUNDED" }} />);
         expect(screen.getByRole("status")).toHaveTextContent("order.progress.refunded");
+    });
+    /**
+     * 🔴 네 번째 단계(DISPATCHED)의 이름은 주문 상태 글자와 같다 — "配送中" 이던 때는 아래 배송 추적이 같은 주문을 "発送しました ·
+     * 비행기(配送中) 회색" 으로 그려 둘이 엇갈려 보였다(2026-11-20 실습). 택배사가 이동 중을 알리기 전이라 "発送済み" 가 맞다.
+     * [JA] 4 番目の段階の名前は注文状態の文字と同じ — 「配送中」だった頃は下の配送追跡と食い違って見えた。
+     */
+    it("🔴 발송 단계의 이름은 주문 상태(DISPATCHED)의 글자와 같다 — 配送中 이 아니다", () => {
+        expect(ja["order.progress.shipping"]).toBe(ja["status.order.DISPATCHED"]);
+        expect(ja["order.progress.shipping"]).toBe("発送済み");
+        expect(ko["order.progress.shipping"]).toBe(ko["status.order.DISPATCHED"]);
     });
 });

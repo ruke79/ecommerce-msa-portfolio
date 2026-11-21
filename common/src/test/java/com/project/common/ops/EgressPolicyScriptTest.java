@@ -61,6 +61,12 @@ class EgressPolicyScriptTest {
             case "$a" in
               *"get nodes"*) printf '%s\\n' $NODE_IPS ;;
               *"get configmap ecommerce-config -o name"*) echo "configmap/ecommerce-config" ;;
+              *"get endpoints kubernetes"*)
+                [ -n "${FAKE_API_IP:-}" ] || exit 1
+                case "$a" in *addresses*) printf '%s' "$FAKE_API_IP" ;; *) printf '6443' ;; esac ;;
+              *"get configmap metrics-agent-config -o yaml"*)
+                [ -n "${FAKE_RW_URL:-}" ] || exit 1
+                printf '    remote_write:\n      - url: %s\n' "$FAKE_RW_URL" ;;
               *"get configmap ecommerce-config"*)
                 k=$(sed -E 's/.*\\{\\.data\\.([A-Z_]+)\\}.*/\\1/' <<<"$a"); v="CM_$k"; printf '%s' "${!v:-}" ;;
               *"run netpol-probe-"*)
@@ -253,5 +259,30 @@ class EgressPolicyScriptTest {
         Run ok = run("egress-apply", "", ENFORCED, IN_CLUSTER, "", Map.of("NETPOL_MAIL_PORT", "587",
                 "NETPOL_GIT_URI", "https://github.com/org/config.git", "NETPOL_BACKUP_PGHOST", "postgres.postgres.svc.cluster.local"));
         assertThat(ok.code()).as(ok.out()).isZero();
+    }
+
+    @Test
+    @DisplayName("🔴 2단계 전제 — 메일 호스트가 localhost 면(데모 — 보내지 않는 자리) 포트가 25 여도 적용한다, 바깥 호스트의 25 는 거절")
+    void localhostMailIsNotUsed() throws Exception {
+        Run demo = run("egress-apply", "", ENFORCED, IN_CLUSTER, "", Map.of("NETPOL_MAIL_HOST", "localhost", "NETPOL_MAIL_PORT", "25"));
+        assertThat(demo.code()).as(demo.out()).isZero();
+        assertThat(demo.out()).contains("메일 포트 — 465 · 587 이거나 쓰지 않는다");
+
+        Files.deleteIfExists(state.resolve("applied"));
+        Run real = run("egress-apply", "", ENFORCED, IN_CLUSTER, "", Map.of("NETPOL_MAIL_HOST", "smtp.example.com", "NETPOL_MAIL_PORT", "25"));
+        assertThat(real.code()).isEqualTo(1);
+        assertThat(real.out()).contains("메일 포트(Secret MAIL_PORT)가 465 · 587 이 아니다").doesNotContain("smtp.example.com");
+    }
+
+    @Test
+    @DisplayName("🔴 지표 에이전트 그룹은 실제 API 서버(kubernetes 엔드포인트) · 실제 remote write 대상을 두드린다 — 여러 노드면 첫 노드가 아니다(2026-11-20 실습)")
+    void metricsProbesRealTargets() throws Exception {
+        Run multi = run("egress-check", "", "", IN_CLUSTER, "", Map.of("FAKE_API_IP", "10.0.0.9",
+                "FAKE_RW_URL", "http://obs-prometheus.ecommerce.svc.cluster.local:9090/api/v1/write"));
+        assertThat(multi.out()).as(multi.out()).contains("10.0.0.9:6443", "obs-prometheus.ecommerce.svc.cluster.local:9090")
+                .doesNotContain("10.0.0.5:6443", "10.0.0.5:9090");
+
+        Run single = run("egress-check", "", "", IN_CLUSTER, "", Map.of("FAKE_RW_URL", "http://__HOST_IP__:9090/api/v1/write"));
+        assertThat(single.out()).as(single.out()).contains("10.0.0.5:6443", "10.0.0.5:9090");
     }
 }

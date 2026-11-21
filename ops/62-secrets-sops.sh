@@ -15,7 +15,10 @@
 #   ./ops/62-secrets-sops.sh init <age1…> [<age1…>] # .sops.yaml 의 받는 사람(공개 키)을 정한다 — 운영 노드 · 작업 PC · 보관용 하나씩
 #   ./ops/62-secrets-sops.sh encrypt                # 평문 → 암호문(왕복 확인 뒤 바꾼다)
 #   ./ops/62-secrets-sops.sh check                  # 암호문이 모두 암호화됐는지 · 풀리는지 · 예시와 키 이름이 같은지 · 평문과 같은지
-#   ./ops/62-secrets-sops.sh apply                  # 풀어서 곧바로 kubectl apply — 평문 파일을 만들지 않는다
+#   ./ops/62-secrets-sops.sh apply                  # 풀어서 kubectl apply(평문은 700 임시 디렉터리에만). 먼저 클러스터와 비교 —
+#                                                    클러스터에만 있는 키가 있으면 거절(apply 가 지운다), 바뀌거나 새로 생기는 키는
+#                                                    EXPECT_CHANGED="K1 K2" 로 이름을 대야 한다 — 낡은 암호문이 운영 값을 덮지 않게(2026-11-20)
+#   ./ops/62-secrets-sops.sh from-cluster           # 클러스터 Secret → 평문(0600) — 암호문이 운영보다 낡았을 때 운영 값에서 다시 시작한다
 #   ./ops/62-secrets-sops.sh decrypt                # 평문 파일로 푼다(0600) — 다른 ops 스크립트가 평문을 읽을 때만
 #   ./ops/62-secrets-sops.sh updatekeys             # .sops.yaml 의 받는 사람이 바뀐 뒤 — 값은 그대로, 받는 사람만 다시
 #   ./ops/62-secrets-sops.sh drift                  # 암호문 ↔ 클러스터의 Secret — 어느 키가 다른지(값 없이 지문). ops/28 이 배포 전에 부른다
@@ -39,6 +42,11 @@ export SOPS_AGE_KEY_FILE="$KEY_FILE"
 SOPS="${SOPS_BIN:-sops}"
 
 die() { echo "🔴 $*" >&2; exit 1; }
+
+# die(exit) 로 끝나도 임시 파일을 지운다 — RETURN 트랩은 exit 에서 돌지 않아 encrypt 가 실패하면 `20-secret.enc.yaml.XXXXXX`
+# 가 k8s/ 에 남았다(2026-11-20 운영 노드). [JA] exit でも一時ファイルを消す(RETURN トラップは exit では動かない)。
+CLEANUP=()
+trap 'rm -rf ${CLEANUP[@]+"${CLEANUP[@]}"}' EXIT
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 이 없다 — $2"; }
 
 # stringData · data 의 키 이름(정렬) — 값은 보지 않는다. [JA] キー名だけ(値は見ない)。
@@ -136,13 +144,12 @@ cmd_encrypt() {
     plain_not_tracked
     [ -f "$PLAIN" ] || die "$PLAIN 이 없다 — 평문을 이 자리에 두고 다시"
     local tmp
-    tmp=$(mktemp "${ENC}.XXXXXX")
-    trap 'rm -f "$tmp"' RETURN
+    tmp=$(mktemp "${ENC}.XXXXXX"); CLEANUP+=("$tmp")
     "$SOPS" --config "$CONFIG" --encrypt --filename-override "$ENC" --input-type yaml --output-type yaml "$PLAIN" > "$tmp"
     # 왕복 확인 — 풀어서 같은 키 · 같은 값(지문)인지 본 뒤에만 바꾼다.
     # [JA] 往復確認 — 復号して同じキー · 同じ値(指紋)かを確かめてからだけ置き換える。
     local back
-    back=$(mktemp)
+    back=$(mktemp); CLEANUP+=("$back")
     (umask 077; "$SOPS" --decrypt --input-type yaml --output-type yaml "$tmp" > "$back") \
         || { rm -f "$back"; die "방금 만든 암호문을 이 기계의 키로 풀지 못했다 — 이 기계의 공개 키가 받는 사람에 있는가(keygen 의 출력)"; }
     if [ "$(fingerprints "$PLAIN")" != "$(fingerprints "$back")" ]; then
@@ -151,6 +158,7 @@ cmd_encrypt() {
     rm -f "$back"
     mv "$tmp" "$ENC"
     echo "✅ $ENC — 키 $(key_names "$PLAIN" | wc -l)개 암호화. 커밋한다: git add $ENC $CONFIG"
+    echo "   클러스터와 같은지: ./ops/62-secrets-sops.sh drift — 바꾼 키만 달라야 한다(apply 는 그 이름을 EXPECT_CHANGED 로)"
 }
 
 cmd_check() {
@@ -202,10 +210,87 @@ cmd_apply() {
     need "$SOPS" "sops 를 설치한다"
     need kubectl "클러스터에 닿는 곳에서 돌린다"
     [ -f "$ENC" ] || die "$ENC 이 없다"
-    # 평문 파일 없이 파이프로 — 디스크에 남지 않는다.
-    # [JA] 平文ファイルなしでパイプで — ディスクに残らない。
-    "$SOPS" --decrypt --input-type yaml --output-type yaml "$ENC" | kubectl apply -f -
+    # 🐛 2026-11-20 운영: 11-19 의 낡은 평문으로 만든 암호문을 적용해 키 22개가 옛 값으로 덮이고(10-25 에 바꾼 스토어 비밀번호 ·
+    #    JWT · DB …) 암호문에 없던 키 다섯(Redis 비밀번호 · OAuth 넷)은 지워졌다 — kubectl apply 는 지난 적용에 있던 키가 새 파일에
+    #    없으면 지운다. 새 user-service 파드가 키스토어를 열지 못해 CrashLoop, 옛 파드들이 쥔 값으로 되살렸다.
+    #    이제 먼저 클러스터와 비교한다: 클러스터에만 있는 키 → 거절, 값이 바뀌거나 새로 생기는 키 → EXPECT_CHANGED 에 이름이 있어야 한다.
+    # [JA] 古い暗号文の適用で 22 キーが古い値に戻り、5 キーが消えた。今はクラスターと先に比べる — クラスターにだけあるキーは拒否、
+    #      変わる · 増えるキーは EXPECT_CHANGED に名前が必要。
+    local dir err
+    dir=$(mktemp -d); chmod 700 "$dir"; CLEANUP+=("$dir")
+    (umask 077; "$SOPS" --decrypt --input-type yaml --output-type yaml "$ENC" > "$dir/plain.yaml" 2>/dev/null) \
+        || die "이 기계의 키($KEY_FILE)로 암호문이 풀리지 않는다"
+    if (umask 077; kubectl -n "$NS" get secret "$SECRET_NAME" -o json > "$dir/cluster.json" 2> "$dir/err" < /dev/null); then
+        normalized_fingerprints "$dir/plain.yaml" yaml > "$dir/a"
+        normalized_fingerprints "$dir/cluster.json" json > "$dir/b"
+        local only_cluster changed k unexpected=""
+        only_cluster=$(join -v2 <(cut -d' ' -f1 "$dir/a") <(cut -d' ' -f1 "$dir/b") | tr '\n' ' ')
+        changed=$( { join -v1 <(cut -d' ' -f1 "$dir/a") <(cut -d' ' -f1 "$dir/b"); join "$dir/a" "$dir/b" | awk '$2 != $3 { print $1 }'; } \
+            | sort -u | tr '\n' ' ')
+        if [ -n "${only_cluster// /}" ]; then
+            die "클러스터에만 있는 키: ${only_cluster}— 적용하면 지워진다. 암호문이 낡았다: ./ops/62-secrets-sops.sh from-cluster → 고치기 → encrypt → drift"
+        fi
+        for k in $changed; do
+            [[ " ${EXPECT_CHANGED:-} " == *" $k "* ]] || unexpected="$unexpected$k "
+        done
+        if [ -n "$unexpected" ]; then
+            die "바뀌거나 새로 생기는 키: ${unexpected}— 바꾸려던 키가 맞으면 EXPECT_CHANGED=\"${unexpected% }\" 로 다시. 아니면 암호문이 낡았다(from-cluster → encrypt)"
+        fi
+        if [ -z "${changed// /}" ]; then echo "✅ 클러스터와 같다 — 적용할 것이 없다"; return 0; fi
+        echo "▶ 바뀌는 키: $changed"
+    else
+        err=$(cat "$dir/err")
+        [[ "$err" == *NotFound* || "$err" == *"not found"* ]] \
+            || die "클러스터에서 $NS/$SECRET_NAME 를 읽지 못했다 — 비교 없이 적용하지 않는다"
+        echo "ℹ️  클러스터에 $NS/$SECRET_NAME 이 없다 — 새로 만든다"
+    fi
+    # 평문은 700 임시 디렉터리 안에서만 — 끝나면 EXIT 트랩이 지운다.
+    # [JA] 平文は 700 の一時ディレクトリの中だけ — 終われば EXIT トラップが消す。
+    kubectl apply -f "$dir/plain.yaml" < /dev/null
     echo "✅ 적용 — 값이 바뀐 키를 읽는 Deployment 는 재시작해야 새 값을 읽는다(ops/28 --restart 또는 해당 ops)"
+}
+
+# 클러스터 Secret → 평문 — 암호문이 운영보다 낡았을 때 운영 값에서 다시 시작한다(2026-11-20). 값은 출력하지 않는다.
+# UTF-8 값은 stringData(한 줄 JSON 문자열 — 손으로 고치기 쉽게), 그 밖의 바이트는 data(base64).
+# [JA] クラスターの Secret → 平文 — 暗号文が本番より古いとき本番の値からやり直す。値は出力しない。
+cmd_from_cluster() {
+    need kubectl "클러스터에 닿는 곳에서 돌린다"
+    need python3 "python3 를 설치한다"
+    if [ -f "$PLAIN" ] && [ "${FORCE:-0}" != 1 ]; then
+        die "$PLAIN 이 이미 있다 — 덮어쓰지 않는다(그 평문이 낡았으면 FORCE=1)"
+    fi
+    local dir tmp
+    dir=$(mktemp -d); chmod 700 "$dir"; CLEANUP+=("$dir")
+    (umask 077; kubectl -n "$NS" get secret "$SECRET_NAME" -o json > "$dir/cluster.json" < /dev/null) \
+        || die "클러스터에서 $NS/$SECRET_NAME 를 읽지 못했다"
+    (umask 077; python3 - "$dir/cluster.json" > "$dir/plain.yaml") <<'PY' || die "평문을 만들지 못했다"
+import base64, json, sys
+doc = json.load(open(sys.argv[1]))
+meta = doc.get("metadata") or {}
+text, raw = {}, {}
+for k, v in sorted((doc.get("data") or {}).items()):
+    b = base64.b64decode(v or "")
+    try:
+        text[k] = b.decode("utf-8")
+    except UnicodeDecodeError:
+        raw[k] = v
+out = ["# ops/62 from-cluster — 클러스터 Secret 에서 만든 평문. 커밋하지 않는다(gitignore). 고친 뒤 encrypt → drift.",
+       "apiVersion: v1", "kind: Secret", "metadata:",
+       "  name: " + json.dumps(meta.get("name", "")),
+       "  namespace: " + json.dumps(meta.get("namespace", "")),
+       "type: " + json.dumps(doc.get("type", "Opaque"))]
+if text:
+    out.append("stringData:")
+    out += ["  %s: %s" % (k, json.dumps(v, ensure_ascii=False)) for k, v in text.items()]
+if raw:
+    out.append("data:")
+    out += ["  %s: %s" % (k, v) for k, v in raw.items()]
+print("\n".join(out))
+PY
+    tmp=$(mktemp "${PLAIN}.XXXXXX"); CLEANUP+=("$tmp")
+    cat "$dir/plain.yaml" > "$tmp"; chmod 600 "$tmp"; mv "$tmp" "$PLAIN"
+    plain_not_tracked
+    echo "✅ $PLAIN (0600) — 클러스터의 키 $(key_names "$PLAIN" | wc -l)개. 고친 뒤 encrypt → drift(바꾼 키만 달라야 한다)"
 }
 
 cmd_decrypt() {
@@ -377,10 +462,11 @@ case "${1:-}" in
   encrypt)    cmd_encrypt ;;
   check)      cmd_check ;;
   apply)      cmd_apply ;;
+  from-cluster) cmd_from_cluster ;;
   decrypt)    cmd_decrypt ;;
   updatekeys) cmd_updatekeys ;;
   drift)      cmd_drift ;;
   drill)      shift; cmd_drill "$@" ;;
   rotation)   cmd_rotation ;;
-  *) sed -n '2,27p' "$0"; exit 1 ;;
+  *) sed -n '2,31p' "$0"; exit 1 ;;
 esac

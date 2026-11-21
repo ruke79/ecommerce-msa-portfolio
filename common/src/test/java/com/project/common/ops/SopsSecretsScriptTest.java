@@ -202,23 +202,124 @@ class SopsSecretsScriptTest {
         assertThat(run("check").out()).contains("풀린다");
     }
 
+    /** get secret 은 $SECRET_JSON(비면 NotFound), apply -f 는 그 파일을 $APPLIED 로 옮기는 가짜 kubectl. */
+    // [JA] get secret は $SECRET_JSON(空なら NotFound)、apply -f はそのファイルを $APPLIED へ移す偽 kubectl。
+    private Map<String, String> applyKubectl(Path secretJson, Path applied) throws Exception {
+        Path bin = Files.createDirectories(tmp.resolve("bin-apply"));
+        Path kubectl = bin.resolve("kubectl");
+        Files.writeString(kubectl, """
+                #!/bin/sh
+                case "$*" in
+                  *"get secret ecommerce-secrets -o json"*)
+                    if [ -n "$SECRET_JSON" ]; then cat "$SECRET_JSON"; exit 0; fi
+                    echo 'Error from server (NotFound): secrets "ecommerce-secrets" not found' >&2; exit 1 ;;
+                  *"apply -f "*) f=$(echo "$*" | sed 's/.*apply -f //'); cp "$f" "$APPLIED"; echo secret/ecommerce-secrets configured ;;
+                  *) echo "unexpected: $*" >&2; exit 1 ;;
+                esac
+                """);
+        Files.setPosixFilePermissions(kubectl, PosixFilePermissions.fromString("rwx------"));
+        return Map.of("PATH", bin + ":" + System.getenv("PATH"), "APPLIED", applied.toString(),
+                "SECRET_JSON", secretJson == null ? "" : secretJson.toString());
+    }
+
     @Test
-    @DisplayName("🔴 apply 는 평문 파일 없이 kubectl 로 바로 — 디스크에 평문이 남지 않는다")
-    void applyStreamsWithoutPlaintextFile() throws Exception {
+    @DisplayName("🔴 apply — 클러스터에 Secret 이 없으면 만든다 · 평문 파일은 남지 않는다")
+    void applyCreatesWithoutLeavingPlaintext() throws Exception {
         run("init", pub1);
         run("encrypt");
         Files.delete(tmp.resolve("k8s/20-secret.yaml"));
-        Path bin = Files.createDirectories(tmp.resolve("bin"));
-        Path kubectl = bin.resolve("kubectl");
-        Files.writeString(kubectl, "#!/bin/sh\ncat > \"$APPLIED\"\necho secret/ecommerce-secrets configured\n");
-        Files.setPosixFilePermissions(kubectl, PosixFilePermissions.fromString("rwx------"));
         Path applied = tmp.resolve("applied.yaml");
 
-        Run r = run("k1.txt", Map.of("PATH", bin + ":" + System.getenv("PATH"), "APPLIED", applied.toString()), "apply");
+        Run r = run("k1.txt", applyKubectl(null, applied), "apply");
 
         assertThat(r.code()).as(r.out()).isZero();
+        assertThat(r.out()).contains("새로 만든다").doesNotContain("s3cr3t-value");
         assertThat(Files.readString(applied)).contains("s3cr3t-value", "name: ecommerce-secrets");
         assertThat(tmp.resolve("k8s/20-secret.yaml")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("🔴 apply — 클러스터에만 있는 키가 있으면 거절한다(apply 가 지운다 — 2026-11-20 운영의 Redis 비밀번호 · OAuth 넷)")
+    void applyRefusesWhenCiphertextLacksClusterKeys() throws Exception {
+        run("init", pub1);
+        run("encrypt");
+        Path cluster = clusterSecretJson(Map.of());
+        String json = Files.readString(cluster);
+        Files.writeString(cluster, json.replace("\"data\":{", "\"data\":{\"SPRING_DATA_REDIS_PASSWORD\":\""
+                + Base64.getEncoder().encodeToString("only-in-cluster".getBytes(StandardCharsets.UTF_8)) + "\","));
+        Path applied = tmp.resolve("applied.yaml");
+
+        Run r = run("k1.txt", applyKubectl(cluster, applied), "apply");
+
+        assertThat(r.code()).as(r.out()).isEqualTo(1);
+        assertThat(r.out()).contains("클러스터에만 있는 키: SPRING_DATA_REDIS_PASSWORD", "from-cluster")
+                .doesNotContain("only-in-cluster", "s3cr3t-value");
+        assertThat(applied).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("🔴 apply — 바뀌는 키는 EXPECT_CHANGED 로 이름을 대야 한다(낡은 암호문이 운영 값을 덮지 않게) · 같으면 아무것도 안 한다")
+    void applyNeedsChangedKeysNamed() throws Exception {
+        run("init", pub1);
+        run("encrypt");
+        String key = firstKey();
+        Path stale = clusterSecretJson(Map.of(key, "current-prod-value"));
+        Path applied = tmp.resolve("applied.yaml");
+
+        Run refused = run("k1.txt", applyKubectl(stale, applied), "apply");
+        assertThat(refused.code()).as(refused.out()).isEqualTo(1);
+        assertThat(refused.out()).contains("바뀌거나 새로 생기는 키: " + key, "EXPECT_CHANGED=\"" + key + "\"")
+                .doesNotContain("current-prod-value", "s3cr3t-value");
+        assertThat(applied).doesNotExist();
+
+        Map<String, String> env = new LinkedHashMap<>(applyKubectl(stale, applied));
+        env.put("EXPECT_CHANGED", "OTHER_KEY " + key);
+        Run ok = run("k1.txt", env, "apply");
+        assertThat(ok.code()).as(ok.out()).isZero();
+        assertThat(ok.out()).contains("바뀌는 키: " + key);
+        assertThat(applied).exists();
+
+        Files.delete(applied);
+        Run same = run("k1.txt", applyKubectl(clusterSecretJson(Map.of()), applied), "apply");
+        assertThat(same.code()).as(same.out()).isZero();
+        assertThat(same.out()).contains("클러스터와 같다");
+        assertThat(applied).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("🔴 from-cluster → encrypt → drift 가 같다 · 있는 평문은 덮지 않는다 · 값은 출력하지 않는다")
+    void fromClusterRebuildsPlaintext() throws Exception {
+        run("init", pub1);
+        String key = firstKey();
+        Path cluster = clusterSecretJson(Map.of(key, "prod \"quoted\" value: 한글"));
+
+        Run refused = run("k1.txt", applyKubectl(cluster, tmp.resolve("x")), "from-cluster");
+        assertThat(refused.code()).as(refused.out()).isEqualTo(1);
+        assertThat(refused.out()).contains("덮어쓰지 않는다");
+
+        Map<String, String> env = new LinkedHashMap<>(applyKubectl(cluster, tmp.resolve("x")));
+        env.put("FORCE", "1");
+        Run r = run("k1.txt", env, "from-cluster");
+        assertThat(r.code()).as(r.out()).isZero();
+        assertThat(r.out()).doesNotContain("s3cr3t-value", "quoted");
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(tmp.resolve("k8s/20-secret.yaml")))).isEqualTo("rw-------");
+
+        assertThat(run("encrypt").code()).isZero();
+        Run drift = run("k1.txt", fakeKubectl(cluster), "drift");
+        assertThat(drift.code()).as(drift.out()).isZero();
+        assertThat(drift.out()).contains("✅ 같다");
+    }
+
+    @Test
+    @DisplayName("🔴 encrypt 가 실패해도 임시 파일(20-secret.enc.yaml.XXXXXX)을 남기지 않는다(2026-11-20 운영 노드)")
+    void encryptFailureLeavesNoTempFile() throws Exception {
+        run("init", pub2);   // 이 기계의 키(k1)는 받는 사람이 아니다 — 왕복에서 실패 ／ [JA] この機械の鍵(k1)は受取人でない — 往復で失敗
+        Run r = run("encrypt");
+        assertThat(r.code()).as(r.out()).isNotZero();
+        try (var files = Files.list(tmp.resolve("k8s"))) {
+            assertThat(files.map(f -> f.getFileName().toString()))
+                    .noneMatch(n -> n.startsWith("20-secret.enc.yaml."));
+        }
     }
 
     /** 평문의 stringData 를 클러스터 Secret JSON(data = base64)으로 — {@code change} 의 키는 다른 값으로. */

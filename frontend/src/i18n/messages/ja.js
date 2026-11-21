@@ -283,7 +283,7 @@ const ja = {
     "order.progress.payment": "決済",
     "order.progress.confirmed": "注文確定",
     "order.progress.preparing": "商品準備",
-    "order.progress.shipping": "配送中",
+    "order.progress.shipping": "発送済み",
     "order.progress.delivered": "配送完了",
     "order.progress.settling": "お支払いを確認しました。注文を確定しています…",
     "order.progress.settle_timeout": "お支払いは確認できましたが、注文の確定が遅れています。しばらくしてから再読み込みしてください。二重に請求されることはありません。",

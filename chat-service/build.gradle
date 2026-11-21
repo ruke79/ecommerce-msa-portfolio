@@ -4,7 +4,11 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
 	 // Redisson
-    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능 ／ [JA] 最新の安定版に変更可能
+    // 🐛 3.23.5 의 redisson-spring-data-31 은 Spring Data Redis 3.1 용 — Boot 3.5(Spring Data Redis 3.5)에서 조건 있는 pExpire 가
+    //    무한 재귀(StackOverflowError)했다: 상담 presence 의 expire · 끊김 처리가 죽어 STOMP 구독이 끊겼다(2026-11-20 실습).
+    //    3.48+ 의 starter 가 redisson-spring-data-35 를 쓴다 — 시험 RedissonExpireRecursionTest. Boot 를 올리면 이 판도 맞춘다.
+    // [JA] 3.23.5 は Spring Data Redis 3.1 用で、Boot 3.5 では条件付き pExpire が無限再帰した — 3.50.0(spring-data-35)に合わせる。
+    implementation 'org.redisson:redisson-spring-boot-starter:3.50.0'
 	
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'

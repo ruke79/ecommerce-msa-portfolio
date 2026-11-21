@@ -6,7 +6,12 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
 	 // Redisson
-    implementation 'org.redisson:redisson-spring-boot-starter:3.23.5' // 최신 안정화 버전으로 변경 가능 ／ [JA] 最新の安定版に変更可能
+    // 🐛 3.23.5 의 redisson-spring-data-31 은 Spring Data Redis 3.1 용 — Boot 3.5(Spring Data Redis 3.5)에서 조건 있는 pExpire 가
+    //    무한 재귀(StackOverflowError)한다(chat 이 2026-11-20 실습에서 이것으로 죽었다). cart 의 RedisTemplate · 캐시는 Redisson 연결
+    //    위에 있다 — 아직 expire 를 부르지 않아 드러나지 않았을 뿐. 3.48+ 의 starter 가 spring-data-35 를 쓴다 — 시험
+    //    RedissonExpireRecursionTest. Boot 를 올리면 이 판도 맞춘다(chat · order 와 같은 판).
+    // [JA] 3.23.5 は Spring Data Redis 3.1 用で、Boot 3.5 では条件付き pExpire が無限再帰する — 3.50.0(spring-data-35)に合わせる。
+    implementation 'org.redisson:redisson-spring-boot-starter:3.50.0'
     
 	
 	implementation 'org.springframework.cloud:spring-cloud-starter'

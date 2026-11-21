@@ -2,8 +2,8 @@
 
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
-> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)에 이어, 2026-11-03 contract 릴리스(`7ef62043a98f` — §8-2)로 지금 운영은 **`7ef62043a98f`** 입니다(§0 "후속 배포" · "contract 릴리스"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
-> 📝 **다음 릴리스(2026-11-17 예정 — SLO 단계 0 · 앞단 캐시 표시 · 대기 항목) 점검표는 §9** 입니다.
+> **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)에 이어, 2026-11-03 contract 릴리스(`7ef62043a98f` — §8-2)에 이어, 2026-11-19 `64b7c7a38cb2`(JRE 보안 수정) · 2026-11-20 `d8922fc53e0c`(대기 묶음 — 관리 포트 · 서버 인증서 · SMS 2FA)로 지금 운영은 **`d8922fc53e0c`** 입니다(§0 "후속 배포" · "contract 릴리스"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
+> 📝 §9 는 **적용 끝**(2026-11-19 `64b7c7a38cb2`)입니다. 그 뒤 대기 묶음도 2026-11-20 `d8922fc53e0c` 로 들어갔습니다 — §0 의 마지막 두 줄.
 >
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
@@ -27,6 +27,7 @@
 | contract 릴리스(2026-11-03) | `7ef62043a98f` — order V29 · user V19 열 삭제(ROLLBACK-UNSAFE — `ops/28` 자동 복귀 꺼짐) · catalog V24 `DROP INDEX CONCURRENTLY` + chat Redis 팬아웃([docs/21 §2-1](21-horizontal-scaling.ko.md) — 운영은 `local` 이라 `k8s/70` 미적용 · chat 1개 그대로). 처음 대상 `50ef7995e94d` 는 CI 러너가 멈춰 있던 동안 이미지가 만들어지지 않았다 — 러너를 다시 띄운 뒤 빌드된 `7ef62043a98f`(릴리스 후보 초록 · 그 사이 코드 변경은 chat 뿐). 사전 점검: orderdb 의 30초 넘는 트랜잭션 1 = 10-24 연결이 끊긴 수동 `pg_dumpall`(9일 `idle in transaction` — 끊음, [docs/72 §3](72-model-refactor-deploy-runbook.ko.md)), 그 뒤 세 DB 0 · 출발 order 28 · user 18 · catalog 23. 배포 후: order 29 · user 19 · catalog 24 · 지운 열 0 · `idx_product_name_trgm` 0 · 무효 인덱스 0 · 재시작 0, `PUBSUB NUMSUB chat:stomp-fanout` 1 · 팬아웃 경고 0. 되돌리기 대상 `d68f0307e979`(지운 열을 쓰지 않는다 — `FORCE_UNSAFE_ROLLBACK=1`) |
 | 기록 없던 배포(2026-11-12) | `4393c3ddfee1` — cart 재검토(V8) · Kafka 오프셋 earliest · order V30 처리 원장이 이때 운영에 들어갔다. **배포 기록의 "운영 버전" 이 `7ef62043a98f` 로 남아 있었다** — 2026-11-19 에 `ops/32 drift` 가 "cart V8 · order V30 은 적용됐는데 저장소에 파일이 없다" 로 잡아냈다(체크아웃이 운영보다 낡았던 것). 배포 기록은 늘 이 표에 남긴다 |
 | JRE 보안 수정(2026-11-19 06:53 UTC) | **`64b7c7a38cb2`** — JRE `17.0.21_9` + `-XX:-UseBASE64Intrinsics`(CVE-2026-114938, B-113) · SLO 지표 다섯 · 앞단 캐시 표시 · 아웃박스 파티션 보존 · 관리자 폼. **마이그레이션 없음**(저장소 최대 = 적용된 값: cart 8 · order 30 · user 19 · coupon 9 · pay 7 · catalog 24) → 마이그레이션 리허설 생략, 자동 복귀 켬. 301초 · 스모크 통과 4/0(게이트웨이 health · 폴백 503 · 유입 제한 429 21회 · 카탈로그 200) · 파드 재시작 0. 확인: `java -version` **Temurin-17.0.21+9** · 세 서비스 명령줄에 그 옵션 · 사이트 200 · 아웃박스 보존 로그 1회. 되돌리기 대상 `4393c3ddfee1`. 배포 전 백업 `~/backups/pre-64b7c7a38cb2-20261119T062005Z`(물리 5.4G · 논리 318M · Mongo chat 7) |
+| 대기 묶음 릴리스(2026-11-20 16:06 UTC) | **`d8922fc53e0c`** — 프론트 nginx `1.30.7`(B-114) · SMS 2단계 인증(user V20 · notification V12) · 보안 남은 일 ①~⑦(user V21) · user 아웃박스 묶음 발행 · **관리 포트 9180**(B-119) · **서버 인증서를 서비스마다**(B-121) · 실습 ES 문서. 배포 **전**: `ops/38`(eureka-server 신원 새로 · gateway · config-server 를 새 SAN 으로) → `ops/28` 이 그래도 멈췄다(cert-manager 가 맡은 열 개에 `metrics.ecommerce.svc.cluster.local` 이 없었다) → `ops/39 apply`(k8s/96 의 dnsNames 가 바뀌어 Certificate 열셋 재발급 · Reloader 가 차례로 재시작). 17초 · 스모크 통과 4/0(health 를 **관리 포트 19180** 으로 본다 · 429 10회) · 파드 16개 재시작 0. 확인: user **21** · notification **12** · cart 8 · coupon 9 · order 30 · catalog 24(이번 릴리스에 catalog 마이그레이션 없음 — ⚠️ `product.flyway_schema_history` 를 봐야 한다, `public` 의 5 는 옛 기록), nginx **1.30.7**, 파드 안 `https://localhost:9180/actuator/health` UP, `CN=order-service` + SAN 셋(metrics 이름 포함), `ops/37-check-mtls.sh` enforce · ① · ①-2 · ①-3 0 · 403/200/403, 사이트 200, DLT 늘지 않음. ⚠️ **배포 뒤 21분간 서비스 지표가 끊겼다** — 옛 지표 에이전트가 앱 포트를 긁어 404(`up=0` 11개)였고, `metrics-agent` 재적용 · 재시작으로 고쳤다(그 뒤 `count(up{job="spring-actuator"})` **11** · `up == 0` 0 · `ServiceDown` 없음 — ⚠️ 재시작 직후에 세면 옛 타깃의 `up=0` 이 5분 staleness 창에 남아 22 · DOWN 11 로 보인다)(B-119 의 "배포 **곧바로**" 가 이것이다 — `ops/28` 은 ConfigMap 이 이미 새 규칙이라 경고하지 않았다: **파드가 옛 설정을 쥐고 있는 경우를 보지 않는다**). 저널에 `ok` 두 줄(15:54 · 16:06 — 두 번 돌렸다, `--rollback` 은 253번째 줄이 같은 버전을 건너뛰어 `64b7c7a38cb2` 를 잡는다). `ops/62 drift`: 클러스터에만 `REACT_APP_PAYPAL_CLIENT_ID`(읽는 곳 없음 · B-51 위반이라 클러스터에서 지웠다) · `SPRING_DATA_REDIS_PASSWORD`(암호문에는 주석으로만 있었다 — 첫 `encrypt` 때 빠졌다, 넣는 일은 docs/57 §24-1). 되돌리기 대상 `64b7c7a38cb2` |
 
 ## 1. 무엇이 바뀌나
 
@@ -356,7 +357,7 @@ kubectl -n ecommerce get pods   # 재시작 0
 
 ---
 
-## 9. 다음 릴리스(2026-11-17 예정) — SLO 단계 0 · 대기 항목 점검표
+## 9. SLO 단계 0 · 대기 항목 점검표 — 적용 끝(2026-11-19 `64b7c7a38cb2`)
 
 > **대상**: improve 최신 커밋 중 파이프라인이 초록인 것(12자리, §0 표에 적는다). 2026-11-15 기준 대기 항목은 아래 표 전부입니다. **되돌릴 수 없는 마이그레이션은 없습니다**(cart V8 · order V30 모두 더하기만) — 자동 복귀가 켜진 배포입니다. 단, 아웃박스 보존이 첫 주기에 **2026-07 파티션을 지웁니다**(§9-2 ③).
 
