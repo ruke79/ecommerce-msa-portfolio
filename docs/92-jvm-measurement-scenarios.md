@@ -115,7 +115,7 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 別の窓 �
 - **負荷**: 天井（§5 の L-1）の 80% で固定 — `RATE=<r> STAGES="1m:<r>,10m:<r>,30s:0" ./ops/53-load-k6.sh browse`（RATE は最も高い段階と同じに — docs/83 §3）。暖機は `smoke` と 1 分の段階。
 - **繰り返し**: 基準 · 対象を**交互に** 5 回以上（JP S2-1 · OC 2-1）。片方をまとめて測ると、ホストの状態が変わったとき片方だけが損をする。
 - **判定**: 前もって決める — p99 · Pod の CPU あたりのスループット（リクエスト/秒 ÷ 使ったコア）· GC 負担 · GC 停止の最大。Welch の t 検定で p < 0.1 かつ差が 10% 以上のとき「違う」。そうでなければ「結論なし」（同じ、ではない）。計算は標準ライブラリーの python 数行（JP S2-1 のもの）で足りるがリポジトリにない → 新ツール（§6）。
-- **測定用の例外**: 設定を変えるのは `ops/53` のモード（`limits` · `pool` · `replicas` · `jvm`）だけ — 実習クラスターの判定 · 戻し · デプロイ前の点検（`ops/28 check_load_overrides`）が付いている。**`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 上限を手で `kubectl set env` しない** — `ops/53 jvm`（2026-11-17）でだけ変える: 元の値（JAVA_OPTS · ヒープ比率 · CPU 上限）を Deployment の注釈 `ecommerce.io/jvm-measure` に書いて一回のロールアウトで変え、`jvm default` がその値で戻す。もう一度 `load` すると元の値の上に新しく（重ねない）。残っていれば `ops/28` がデプロイ前に知らせる（設定は `ops/28` だけで、測定用の例外は `ops/53` のモードだけで）。変えた後に JVM が本当にそう選んだかは `ops/60-jvm-facts.sh <サービス>`。
+- **測定用の例外**: 設定を変えるのは `ops/53` のモード（`limits` · `bulkhead` · `pool` · `replicas` · `jvm`）だけ — 実習クラスターの判定 · 戻し · デプロイ前の点検（`ops/28 check_load_overrides`）が付いている。**`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 上限を手で `kubectl set env` しない** — `ops/53 jvm`（2026-11-17）でだけ変える: 元の値（JAVA_OPTS · ヒープ比率 · CPU 上限）を Deployment の注釈 `ecommerce.io/jvm-measure` に書いて一回のロールアウトで変え、`jvm default` がその値で戻す。もう一度 `load` すると元の値の上に新しく（重ねない）。残っていれば `ops/28` がデプロイ前に知らせる（設定は `ops/28` だけで、測定用の例外は `ops/53` のモードだけで）。変えた後に JVM が本当にそう選んだかは `ops/60-jvm-facts.sh <サービス>`。
 
 ### 4-2. すぐ可能なもの
 

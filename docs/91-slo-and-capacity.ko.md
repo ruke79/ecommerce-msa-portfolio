@@ -173,8 +173,8 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 | 서비스 | 파드당 요청/초(SLO 안) | 먼저 막힌 곳 | 시나리오 · 계단 | 날짜 · 커밋 · 환경 |
 |---|---|---|---|---|
-| catalog-service | — | — | browse | — |
-| gateway-server | — | — | browse | — |
+| catalog-service | **174.6**(파드 1, 계단 40 — CPU 35% · p99 16ms) | 아니다 — 계단 80(369 요청/초)에서도 CPU 67% · DB 풀 대기 0 · 오류 0 | browse · 5,10,20,40,80 | 2026-11-23 06:31 UTC · `f5c04e958cb7` · 운영(OCI Ampere 1 노드 + 원격 1 — frontend 만) |
+| gateway-server | **174.6**(파드 1, 계단 40 — CPU 32%) | **catalog 격벽**(`catalogServiceCircuitBreaker` 동시 25 · 대기 0) — 계단 80 에서 가득 참 460건 → 5xx 0.813%. GC 아님(docs/95 §5-2) | browse · 5,10,20,40,80 | 2026-11-23 06:31 UTC · `f5c04e958cb7` · 운영(OCI Ampere) |
 | order-service | — | — | order | — |
 | cart-service | — | — | order | — |
 

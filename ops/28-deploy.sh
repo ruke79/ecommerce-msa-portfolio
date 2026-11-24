@@ -651,6 +651,8 @@ EOF
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 # [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
 #      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
+# [JA] 以前は最新の Pod(Pending だとログなし)を選び、自動復帰で CrashLoop の Pod が消えて証拠が残らなかった。
+#      今は再起動が最多の Pod を選び、ノード・直前の終了理由を出し、describe・ログ・イベントをファイルに残す。
 show_startup_error() {   # show_startup_error <deployment>
     local d="$1" pod info node reason code image dir logs
     # 컨테이너가 아직 없는(Pending) 파드는 재시작 칸이 비어 이름 하나만 나온다 → 0 으로 센다
@@ -692,6 +694,7 @@ show_startup_error() {   # show_startup_error <deployment>
     # [JA] 🐛 2026-10-18 デモ: saga-projection が "Invalid or corrupt jarfile" で落ちたが、レジストリのイメージの jar は正常だった
     #      (ハッシュがビルド結果と同じで、ノードのダイジェストもレジストリと同じだった) — そのノードが展開したコピーだけが壊れていた。
     #      同じタグなので kubelet は再取得しない(IfNotPresent) — そのノードで消す必要がある。
+    # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
     # [JA] レジストリのイメージは正常でも、ノードが展開したコピーだけ壊れていることがある。同じタグは再取得されない。
@@ -991,6 +994,7 @@ deploy_version() {   # deploy_version <버전> ／ [JA] deploy_version <バー�
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
         # shellcheck disable=SC2086
+        # shellcheck disable=SC2086
         stamp_change_cause "$ver" user-service $OTHER_DEPLOYS
         # shellcheck disable=SC2086
         wait_rollouts user-service $OTHER_DEPLOYS || return 1
@@ -1128,13 +1132,16 @@ check_load_overrides() {
         [ -z "$jvm" ] || warn "$d 에 측정용 JVM 설정이 남아 있습니다(GC · 힙 비율 · GC 로그 — 배포 뒤에도 남습니다) — 되돌리려면: ./ops/53-load-k6.sh jvm default $d"
         for var in $(kubectl -n "$NS" get deploy "$d" \
                 -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}' 2>/dev/null \
-                | grep -E '^(GATEWAY_RATE_LIMIT_[A-Z_]+|DB_POOL_SIZE)$' || true); do
+                | grep -E '^(GATEWAY_RATE_LIMIT_[A-Z_]+|GATEWAY_BULKHEAD_MAX_CONCURRENT|DB_POOL_SIZE)$' || true); do
             # 매니페스트가 선언한 값이면 측정용 예외가 아니다.
             # [JA] マニフェストが宣言した値なら計測用の例外ではない。
             printf '%s\n' "$RENDERED" | grep -qE "^ *- name: $var\$" && continue
             case "$var" in
                 GATEWAY_RATE_LIMIT_*) found_limit="$found_limit $d/$var" ;;
                 DB_POOL_SIZE) warn "$d 에 측정용 DB_POOL_SIZE 가 남아 있습니다(배포 뒤에도 남습니다) — 되돌리려면: ./ops/53-load-k6.sh pool default $d" ;;
+                # 격벽은 스모크를 깨지 않는다(유입 제한과 달리) — 알리기만. 남으면 운영과 다른 상한으로 손님을 받는다.
+                # [JA] バルクヘッドはスモークを壊さない(流入制限と違って) — 知らせるだけ。残ると本番と違う上限で客を受ける。
+                GATEWAY_BULKHEAD_MAX_CONCURRENT) warn "$d 에 측정용 격벽 동시 수(GATEWAY_BULKHEAD_MAX_CONCURRENT)가 남아 있습니다(배포 뒤에도 남습니다) — 되돌리려면: ./ops/53-load-k6.sh bulkhead default" ;;
             esac
         done
     done

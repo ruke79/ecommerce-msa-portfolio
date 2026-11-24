@@ -3,7 +3,7 @@
 **日本語** | [한국어](85-release-deploy-runbook.ko.md)
 
 > **状態(2026-10-24)** — **デプロイ完了: 本番は `4415e498565c`** です(1 回目は §7-1)。同じ日の続くデプロイ(`6501d3fd8e60`)と 2026-10-25 · 26 の続くデプロイ四つ(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)に続き、2026-11-03 の contract リリース(`7ef62043a98f` — §8-2)で、今の本番は **`7ef62043a98f`** です(§0「続くデプロイ」·「contract リリース」)。残りは §8。以前の本番は `b7c5053a45e8`(2026-10-10、[docs/72](72-model-refactor-deploy-runbook.md))でした。その後 improve にコミットが 260 件ほど溜まりました。決済 · クーポン · アウトボックスの欠陥修正、セキュリティ(身元ヘッダー · Eureka 書き込み · セキュリティヘッダー)、注文の進行タイムライン(docs/76)、機能フラグ(docs/74)、負荷測定の CPU 修正(docs/83)、カート画面のエラー修正が入っています。
-> 📝 §9 は**適用済み**(2026-11-19 `64b7c7a38cb2`)です。その後の待ち分も 2026-11-20 `d8922fc53e0c` で入りました — §0 の最後の 2 行。
+> 📝 §9 は**適用済み**(2026-11-19 `64b7c7a38cb2`)· その後の待ち分も 2026-11-20 `d8922fc53e0c` で入りました(§0)。**次のリリースの点検表は §10** です — ⚠️ 本番バージョンの記録が食い違っているので §10-0 から始めます。
 >
 > **対象バージョン**はこの文書が入ったコミット以降の improve 最新コミットです(パイプライン緑、12 桁 SHA)。デプロイ前に §0 の表に書きます。
 > 戻せないマイグレーション(ROLLBACK-UNSAFE)はありません。そのため **自動復帰が有効なデプロイ**です。ただし user V18 は重複行を消すので、バックアップは必須です(§3)。
@@ -465,3 +465,104 @@ curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -
 ### 9-5. 終わったら
 
 §0 の表に新しい本番バージョンを書く（適用済みに）。
+
+
+## 10. 次のリリースの点検表 — 2026-11-21 以降の待ち分
+
+> 🔴 **まず §10-0 で出発点を確定する。** この節を書いた 2026-11-23 時点で**記録が食い違っている**: 運用記録の「本番バージョン」は `d8922fc53e0c`、残りの作業の一覧 は `e6fc32f07520`(2026-11-21 07:22 UTC)、この文書の §0 にはそのデプロイ行がない。2026-11-12 の「記録になかったデプロイ」と同じ形だ — **クラスタに聞いてから始める。**
+
+### 10-0. 出発点 — クラスタに聞く(5 分)
+
+```bash
+# ① いま本番で動いているバージョン
+kubectl -n ecommerce get deploy gateway-server -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+# ② スキーマ — 適用済みのマイグレーション(ops/32 がスキーマを修飾して読む)
+./ops/32-db-migration.sh summary        # 9 サービス · 待ち 0
+# ③ チェックアウトがそのバージョンか(ops/28 はこのツリーを読む)
+git -C ~/ecommerce-msa log --oneline -1 && git -C ~/ecommerce-msa status -sb | head -2
+```
+
+- ① のタグ ≠ 運用記録の「本番バージョン」なら、**§9 とこの文書の §0 を先に直す** — その行が古いと `--rollback` の対象と GHCR の保持が一緒にずれる。
+- ② で **delivery のスキーマが 5** なら信頼性 2 段目は既に本番にある(10-1 から外して確認項目へ)。**4** なら今回の**唯一のマイグレーション**だ。
+
+### 10-1. 載るもの(運用記録基準)
+
+| まとまり | イメージ · マニフェスト | マイグレーション | 根拠 |
+|---|---|---|---|
+| 相談 · チャットの 403(SockJS の許可オリジン · Redisson 3.50.0 · CORS · 進捗バー) | chat · gateway · frontend | なし | 運用記録 |
+| 信頼性 1 段目 — アウトボックス遅延の指標 · 在庫 fail-open の警報 · Loki `ErrorLogSurge` | common · order **+ 観測スタック** | なし | 残りの作業の一覧 ③ · [docs/99](99-alert-thresholds.md) |
+| 信頼性 2 段目 — delivery 状態のアウトボックス · 登録メールのリレー | delivery · user | **delivery V5**(10-0 ② で確認) | 残りの作業の一覧 ③ |
+| 登録メールのリレー `emailVerified` の修正 | user | なし | 運用記録(11-21 のデプロイ後メール 0 件) |
+| 信頼性 3 段目 — chat のトランザクション境界 · 全部既読 · パスキーのカウンタ · カート上限 | chat · notification · user · cart | なし | 残りの作業の一覧 ③ |
+| 本番の常時 ERROR 2 つ — eureka の自己レプリケーション · config-server の登録 | **k8s/30 のマニフェスト** + config-server | なし | docs/99 §4 |
+| Feign サーキットブレーカー 1 次 | cart · order | なし | [docs/101](101-feign-circuit-breakers.md) |
+| パスワード再設定メールのアウトボックス | user | なし | 運用記録 4 段目 ⑤ |
+| カートの行順(`@OrderBy`) | cart | なし | 運用記録 |
+| フィルターメニューのキャッシュ · `FacetWarmer` · `HighP99Latency` の除外 | catalog **+ 観測スタック** | なし | [docs/95 §5-1](95-prod-read-ceiling-hybrid.md) |
+| 公開デモアカウント 1 〜 3 段目(**本番はオフのまま**) | gateway · user · frontend · cart · notification · order · chat | なし | [docs/100](100-demo-accounts.md) |
+| 5 段目 13 · 12 · 14 · 15(大量登録の耐障害性 · 受け取れない注文の警報 · PayPal の webhook · 品切れ取消) | catalog · order · delivery · notification | なし | 運用記録 |
+| ハイブリッド 7 段目 — 自宅ノードに frontend | **`k8s-overlays/local`**(frontend 2) | なし | ハイブリッド構成 |
+
+事実上**全サービスのイメージ + マニフェスト**だ。戻せないものはない(delivery V5 は追加のみ)→ **自動復帰が有効なデプロイ**。
+
+### 10-2. デプロイ前
+
+```bash
+# ⓪ ゲート — CI が回せて対象コミットが緑か。この時間に演習の ceiling は回さない
+V=$(./ops/tools/latest-green.sh); echo "$V"       # 12 桁 — これが対象(docs/72 §3 ①)
+# ① Kafka — 品切れ取消の DLT トピック(5 段目 15)
+./ops/02-create-topics.sh                          # delivery-resync · delivery-resync.DLT
+# ② 長いトランザクション 0 · 03:00 UTC のバックアップ窓を避ける(§8-2 の 2-1)
+q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -c "$2"; }
+for db in cartdb orderdb paydb userdb productdb coupondb deliverydb; do
+  echo "$db: $(q "$db" "select count(*) from pg_stat_activity where state <> 'idle' and xact_start < now() - interval '30 seconds'")"; done
+# ③ バックアップ — docs/72 §3(tmux で 1 行ずつ、V は上の ①)
+# ④ リハーサル(delivery V5 が今回なら推奨)— 本番バックアップのコピーでマイグレーションを先に回してみる
+```
+
+### 10-3. デプロイと直後
+
+```bash
+git -C ~/ecommerce-msa fetch origin && git -C ~/ecommerce-msa switch --detach "$V"
+./ops/28-deploy.sh local latest
+# スキーマ — delivery 5(今回なら)· 残りはそのまま
+for db in deliverydb userdb cartdb coupondb orderdb; do
+  echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+kubectl -n ecommerce get pods -o wide | grep -v Completed     # 再起動 0 · frontend が 2 つ、NODE が分かれる
+kubectl -n ecommerce get endpoints frontend                   # アドレス 2 つ(7 段目)
+./ops/56-dlt-replay.sh list | grep -E 'order\.DLT|payment\.DLT|delivery-resync'
+```
+
+⚠️ **観測スタックはデプロイの後に上げる** — 新しいイメージより先に規則を上げると `OutboxBacklogMetricsMissing` が鳴る(残りの作業の一覧 ③):
+
+```bash
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml \
+  up -d --force-recreate prometheus loki        # /-/reload は無効(§9-3)
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=count by (service) (outbox_pending_oldest_age_seconds)'
+curl -s localhost:3100/prometheus/api/v1/rules | head -c 200   # グループ 3 つ
+```
+
+指標エージェントは `ops/28` がデプロイの最後に自分で再起動する(B-119 · `MetricsAgentStaleScriptTest`)— その行がなければ手で `rollout restart deploy/metrics-agent`。
+
+### 10-4. デプロイ後の確認
+
+| 確認 | 期待 |
+|---|---|
+| サイト · 7 段目 | `for i in $(seq 1 20); do curl -s -o /dev/null -w '%{http_code}\n' https://www.ysyproject.com/; done` がすべて 200 · frontend の Pod 2 つが別ノード |
+| リモートノードの Pod | その Pod から `https://10.43.0.1:443/version` が **401**(docs/71-2 §3.2 の 4 段目) |
+| 相談 · チャット | 1:1 相談を 1 往復 · 進捗バー — 403 が消えたか |
+| 登録メール | 登録 1 回 → メール到着 · `users.outbox_event` の `registration-mail` が COMPLETED |
+| アウトボックス遅延 | `outbox_pending_oldest_age_seconds` に cart · order · pay · user(· delivery) |
+| eureka · config-server | eureka の 403 行 0 · レジストリに `CONFIG-SERVER` · `[eureka write]` 0 |
+| フィルターメニュー | catalog のログ `필터 메뉴 미리 채우기: 카테고리 N · 늦음 0`(初回はカテゴリ数 × 約 100 秒) |
+| カート | 最初の商品の数量を変えても位置がそのまま |
+| 通知 | 「全部既読」の後にバッジ 0 |
+| 指標 | `up{job="spring-actuator"}` が 11 |
+
+**デモアカウントはオンにしない** — イメージだけ上げて `DEMO_ACCOUNTS_ENABLED` は false のまま(オンにするときは ConfigMap → `ops/28 --config-only --restart user-service`、docs/100)。
+
+### 10-5. 終わったら
+
+- この文書の **§0 の表に今回のデプロイ行** · **運用記録の「本番バージョン」**を同じ値に(10-0 の食い違いを繰り返さない)。
+- 残る手作業: PayPal コンソールに webhook の URL · イベントを登録 → ConfigMap `PAYPAL_WEBHOOK_ID` → `--config-only --restart order-service`(5 段目 14)。
+- 残りの作業の一覧 §1 の該当行を ✅ に。

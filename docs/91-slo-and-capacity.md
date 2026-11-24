@@ -173,8 +173,8 @@ PROM=http://<obs-vm>:9090 CEILING_RATES=5,10,20,40 ./ops/53-load-k6.sh ceiling o
 
 | サービス | Pod あたりリクエスト/秒（SLO 内） | 先に詰まった場所 | シナリオ · 階段 | 日付 · コミット · 環境 |
 |---|---|---|---|---|
-| catalog-service | — | — | browse | — |
-| gateway-server | — | — | browse | — |
+| catalog-service | **174.6**(Pod 1、段 40 — CPU 35% · p99 16ms) | 違う — 段 80(369 リクエスト/秒)でも CPU 67% · DB プール待ち 0 · エラー 0 | browse · 5,10,20,40,80 | 2026-11-23 06:31 UTC · `f5c04e958cb7` · 本番(OCI Ampere 1 ノード + リモート 1 — frontend のみ) |
+| gateway-server | **174.6**(Pod 1、段 40 — CPU 32%) | **catalog のバルクヘッド**(`catalogServiceCircuitBreaker` 同時 25 · 待ち 0) — 段 80 で満杯 460 件 → 5xx 0.813%。GC ではない(docs/95 §5-2) | browse · 5,10,20,40,80 | 2026-11-23 06:31 UTC · `f5c04e958cb7` · 本番(OCI Ampere) |
 | order-service | — | — | order | — |
 | cart-service | — | — | order | — |
 

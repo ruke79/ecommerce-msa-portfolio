@@ -39,6 +39,8 @@ import org.junit.jupiter.params.provider.ValueSource;
  * 流入制限を本番クラスタで変えない。k6 · kubectl は偽のコマンドに替えて実行する(bash · POSIX がなければスキップ)。
  *
  * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
+ *
+ * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
  */
 @DisplayName("ops/53 · ops/k6 — 부하 시나리오와 실행기 (docs/83)")
 class LoadK6ScriptTest {
@@ -1269,6 +1271,56 @@ class LoadK6ScriptTest {
 
         Run empty = run(Map.of("FAKE_URL", ""), "limits", "load");
         assertThat(empty.code()).as("어느 클러스터인지 모르면 바꾸지 않는다").isNotZero();
+    }
+
+    @Test
+    @DisplayName("🔴 격벽 — 운영은 거절 · 실습에서는 동시 수만 바꾸고(5 ~ 200, 대기는 그대로) 되돌린다 · 바꾸기 전에 게이트웨이 로그 · 기본값 = 설정 파일")
+    void bulkheadOnlyOnLabClusterAndBounded() throws Exception {
+        // 2026-11-23 운영 읽기 천장(docs/95 §5-2)의 막힌 곳 — 다른 상한을 실습에서 번갈아 잰다(docs/92 §4-1: 설정은 ops/53 모드로만)
+        // [JA] 2026-11-23 本番の読み取り天井(docs/95 §5-2)で詰まった所 — 別の上限を実習で交互に測る(docs/92 §4-1: 設定は ops/53 のモードでだけ)
+        assumeTrue(posix(), "bash · POSIX 권한이 없다");
+        Path log = tmp.resolve("kubectl.log");
+        Path logs = tmp.resolve("gw-logs");
+        Map<String, String> lab = Map.of("GATEWAY_LOG_DIR", logs.toString());
+
+        Run prod = run(Map.of("FAKE_URL", "https://www.ysyproject.com", "GATEWAY_LOG_DIR", logs.toString()), "bulkhead", "load");
+        assertThat(prod.code()).isNotZero();
+        assertThat(prod.out()).contains("운영 클러스터").contains("게이트웨이 격벽");
+        assertThat(read(log)).doesNotContain("set env");
+
+        Files.delete(log);
+        Run load = run(lab, "bulkhead", "load");
+        assertThat(load.code()).as(load.out()).isZero();
+        assertThat(read(log)).contains("set env deploy/gateway-server GATEWAY_BULKHEAD_MAX_CONCURRENT=50")
+                .contains("rollout status deploy/gateway-server")
+                .as("대기(max-wait-duration)는 건드리지 않는다 — 이벤트 루프를 막는다").doesNotContain("WAIT");
+        assertThat(load.out()).contains("게이트웨이 로그를 남겼다(bulkhead-load").contains("bulkhead default");
+
+        for (String bad : new String[] {"4", "201", "0", "abc", "50ms"}) {
+            Files.deleteIfExists(log);
+            Run r = run(lab, "bulkhead", "load", bad);
+            assertThat(r.code()).as(bad).isNotZero();
+            assertThat(r.out()).as(bad).contains("동시 수는 5 ~ 200");
+            assertThat(tmp.resolve("kubectl.log")).as(bad + " — 값 검사는 바꾸기 전에").satisfies(p ->
+                    assertThat(Files.exists(p) ? read(p) : "").doesNotContain("set env"));
+        }
+
+        Run status = run(Map.of("FAKE_ENV", "SPRING_PROFILES_ACTIVE=local\nGATEWAY_BULKHEAD_MAX_CONCURRENT=60\n"), "bulkhead", "status");
+        assertThat(status.code()).as(status.out()).isZero();
+        assertThat(status.out()).contains("격벽 동시 60").contains("bulkhead default");
+        Run plain = run(Map.of("FAKE_ENV", "SPRING_PROFILES_ACTIVE=local\n"), "bulkhead", "status");
+        assertThat(plain.out()).contains("기본값(동시 25)");
+
+        Files.deleteIfExists(log);
+        Run back = run(lab, "bulkhead", "default");
+        assertThat(back.code()).as(back.out()).isZero();
+        assertThat(read(log)).contains("set env deploy/gateway-server GATEWAY_BULKHEAD_MAX_CONCURRENT-");
+
+        String yml = read(repoRoot().resolve("gateway-server/src/main/resources/application-local.yml"));
+        String script = read(repoRoot().resolve("ops/53-load-k6.sh"));
+        assertThat(yml).as("되돌린 뒤의 값 = 스크립트가 말하는 기본값")
+                .contains("max-concurrent-calls: ${GATEWAY_BULKHEAD_MAX_CONCURRENT:25}").contains("max-wait-duration: 0ms");
+        assertThat(script).contains("BULKHEAD_DEFAULT=25");
     }
 
     // ── ceiling — 천장 찾기(docs/91 §4) ─────────────────────────────────────────

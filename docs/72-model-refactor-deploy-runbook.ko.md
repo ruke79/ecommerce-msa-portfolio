@@ -81,13 +81,34 @@ V18 은 되돌릴 수 없고, V5 · V9 는 행을 지우고, 시각 보정은 �
 
 ⚠️ **인스턴스 안의 `tmux` 에서 돌립니다.** 덤프 중에 ssh 나 `kubectl exec` 스트림이 끊기면 pod 안의 `pg_dump` 는 받을 쪽이 없는 출력에 막힌 채 **트랜잭션을 연 채로 남습니다**(`idle in transaction` · 모든 표에 ACCESS SHARE) — 그 뒤의 `DROP COLUMN` · `ALTER TABLE` 이 그 뒤에 줄을 서고, 그 표의 요청이 모두 그 뒤에 선다. 덤프 파일은 그 DB 부터 빠진다(아래 2026-11-02 기록).
 
+**`V` 를 손으로 옮겨 적지 않는다** — 쓰임에 따라 셋 중 하나로 채운다(모두 12자리 소문자 16진수가 나온다):
+
+```bash
+# ① 지금 배포하려는 것이 `ops/28 … latest` 다(권장) — ops/28 이 고르는 바로 그 커밋
+V=$(./ops/tools/latest-green.sh)          # build.yml push 가 성공한 가장 최근 커밋(= 이미지가 있다)
+
+# ② 특정 브랜치의 최신 커밋으로 배포한다
+git fetch origin main      # ⚠️ 운영 체크아웃에서 git pull 하지 않는다(ops/45 머리)
+V=$(git rev-parse --short=12 FETCH_HEAD)
+
+# ③ '지금 돌고 있는 것' 을 백업한다(되돌릴 지점 · 배포와 무관한 정기 백업)
+V=$(kubectl -n ecommerce get deploy gateway-server -o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')
+
+# 어느 쪽이든 넣은 뒤 반드시 눈으로 확인한다 — 12자리가 아니면 newb 가 거절한다
+echo "$V"; [[ "$V" =~ ^[0-9a-f]{12}$ ]] && echo "✅ 12자리" || echo "⛔ 다시"
+```
+
+- ②의 `FETCH_HEAD` 는 **방금 받은 그 브랜치의 끝**이다 — 체크아웃을 옮기지 않으므로 운영의 `git switch --detach <운영 SHA>` 상태가 그대로 유지된다(그 함정).
+- ①과 ②가 다르면 ②가 **아직 CI 가 초록이 아닌 커밋**일 수 있다 — 그 버전으로는 이미지가 없어 `ops/28` 이 멈춘다. 배포 전 백업이라면 ①을 쓴다.
+- ③은 `ops/28 --rollback` 의 대상(직전 운영 버전)과 같은 값이라, 백업 폴더 이름만 보고 "어느 버전 상태의 백업인지" 를 알 수 있다.
+
 ```bash
 # ⚠️ 블록을 통째로 붙여 넣지 않는다 — 한 줄씩, 주석의 기대값을 보고 다음 줄로.
 tmux new -A -s backup          # 끊기면 다시 ssh 해서 같은 명령으로 붙는다 — B · V 가 그대로 남는다
 set -o pipefail
 newb(){ [[ "$V" =~ ^[A-Za-z0-9._-]+$ && "$V" != REPLACE_ME ]] || { echo "⛔ V 를 대상 버전으로: [$V]"; return 1; }; B=~/backups/pre-$V-$(date -u +%Y%m%dT%H%M%SZ) && mkdir -p "$B" && echo "B=$B"; }
 ok(){ [[ -d "$B" && "$B" == "$HOME/backups/pre-"?*-20*Z ]] || { echo "⛔ B 가 비었거나 잘못됨: [$B] — newb 부터"; return 1; }; }
-V=REPLACE_ME                   # 대상 버전으로 바꾼다(예: V=50ef7995e94d) — <…> 꺾쇠는 bash 가 리디렉션으로 읽는다
+V=REPLACE_ME                   # 위 ① ~ ③ 중 하나로 채운다(손으로 적지 않는다, 예: V=50ef7995e94d) — <…> 꺾쇠는 bash 가 리디렉션으로 읽는다
 newb && df -h ~ | tail -1      # B=/home/ubuntu/backups/pre-<V>-<시각> 을 보고 다음 줄로
 ok && kubectl -n postgres exec deploy/postgres -c postgres -- pg_basebackup -U postgres -D - -Ft -X fetch --checkpoint=fast > "$B/pg-base.tar"; echo "exit=$?"   # exit=0
 ok && tar -tf "$B/pg-base.tar" | grep -c backup_label                                   # 1

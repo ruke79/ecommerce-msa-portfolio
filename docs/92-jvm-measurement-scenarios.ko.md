@@ -115,7 +115,7 @@ PROM=$PROM WHEN=rps:gateway-server:900 ./ops/58-cpu-profile.sh    # 다른 창 �
 - **부하**: 천장(§5 의 L-1)의 80% 고정 — `RATE=<r> STAGES="1m:<r>,10m:<r>,30s:0" ./ops/53-load-k6.sh browse`(RATE 는 가장 높은 단계와 같게 — docs/83 §3). 데움은 `smoke` 와 1분 단계.
 - **반복**: 기준 · 대상을 **번갈아** 5회 이상(JP S2-1 · OC 2-1). 한쪽을 몰아서 재면 호스트 상태가 바뀔 때 한쪽만 손해를 본다.
 - **판정**: 미리 정한다 — p99 · 파드 CPU 당 처리량(요청/초 ÷ 쓴 코어) · GC 부담 · GC 정지 최대. Welch t-검정 p < 0.1 이고 차이가 10% 이상이어야 "다르다". 아니면 "결론 없음"(같다가 아니다). 계산은 표준 라이브러리 python 몇 줄(JP S2-1 의 것)이면 되지만 저장소에 없다 → 새 도구(§6).
-- **측정용 예외**: 설정을 바꾸는 것은 `ops/53` 의 모드(`limits` · `pool` · `replicas` · `jvm`)만 — 실습 클러스터 판정 · 되돌리기 · 배포 전 점검(`ops/28 check_load_overrides`)이 붙어 있다. **`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 한도를 손으로 `kubectl set env` 하지 않는다** — `ops/53 jvm`(2026-11-17)으로만 바꾼다: 원래 값(JAVA_OPTS · 힙 비율 · CPU 한도)을 Deployment 주석 `ecommerce.io/jvm-measure` 에 적고 한 번의 롤아웃으로 바꾸며, `jvm default` 가 그 값으로 되돌린다. 다시 `load` 하면 원래 값 위에 새로(겹쳐 쌓지 않는다). 남아 있으면 `ops/28` 이 배포 전에 알린다(설정은 `ops/28` 로만, 측정용 예외는 `ops/53` 의 모드로만). 바꾼 뒤 JVM 이 정말 그렇게 골랐는지는 `ops/60-jvm-facts.sh <서비스>`.
+- **측정용 예외**: 설정을 바꾸는 것은 `ops/53` 의 모드(`limits` · `bulkhead` · `pool` · `replicas` · `jvm`)만 — 실습 클러스터 판정 · 되돌리기 · 배포 전 점검(`ops/28 check_load_overrides`)이 붙어 있다. **`JAVA_OPTS` · `JVM_MAX_RAM_PERCENTAGE` · CPU 한도를 손으로 `kubectl set env` 하지 않는다** — `ops/53 jvm`(2026-11-17)으로만 바꾼다: 원래 값(JAVA_OPTS · 힙 비율 · CPU 한도)을 Deployment 주석 `ecommerce.io/jvm-measure` 에 적고 한 번의 롤아웃으로 바꾸며, `jvm default` 가 그 값으로 되돌린다. 다시 `load` 하면 원래 값 위에 새로(겹쳐 쌓지 않는다). 남아 있으면 `ops/28` 이 배포 전에 알린다(설정은 `ops/28` 로만, 측정용 예외는 `ops/53` 의 모드로만). 바꾼 뒤 JVM 이 정말 그렇게 골랐는지는 `ops/60-jvm-facts.sh <서비스>`.
 
 ### 4-2. 바로 가능한 것
 

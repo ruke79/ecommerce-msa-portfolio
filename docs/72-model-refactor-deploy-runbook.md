@@ -81,13 +81,34 @@ V18 は元に戻せず、V5・V9 は行を削除し、時刻の補正は Mongo �
 
 ⚠️ **インスタンス内の `tmux` で流します。** ダンプ中に ssh や `kubectl exec` のストリームが切れると、Pod 内の `pg_dump` は受け手のない出力に詰まったまま **トランザクションを開いたまま残ります**(`idle in transaction` · 全表に ACCESS SHARE)— その後の `DROP COLUMN` · `ALTER TABLE` がその後ろに並び、その表の要求がすべてその後ろに並ぶ。ダンプファイルはその DB から抜ける(下の 2026-11-02 の記録)。
 
+**`V` を手で書き写さない** — 用途に応じて次の三つのどれかで埋める(いずれも 12 桁の小文字 16 進が出る):
+
+```bash
+# ① これからデプロイするのが `ops/28 … latest` だ(推奨)— ops/28 が選ぶまさにそのコミット
+V=$(./ops/tools/latest-green.sh)          # build.yml の push が成功した最新のコミット(= イメージがある)
+
+# ② 特定のブランチの最新コミットでデプロイする
+git fetch origin main      # ⚠️ 本番のチェックアウトで git pull しない(ops/45 の冒頭)
+V=$(git rev-parse --short=12 FETCH_HEAD)
+
+# ③「いま動いているもの」をバックアップする(戻り先 · デプロイと無関係な定期バックアップ)
+V=$(kubectl -n ecommerce get deploy gateway-server -o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')
+
+# どれで入れても必ず目で確かめる — 12 桁でなければ newb が拒否する
+echo "$V"; [[ "$V" =~ ^[0-9a-f]{12}$ ]] && echo "✅ 12 桁" || echo "⛔ やり直し"
+```
+
+- ② の `FETCH_HEAD` は**いま取得したそのブランチの先端**だ — チェックアウトを動かさないので、本番の `git switch --detach <本番 SHA>` の状態がそのまま保たれる(あの罠)。
+- ① と ② が違うなら、② は**まだ CI が緑でないコミット**かもしれない — そのバージョンにはイメージがなく `ops/28` が止まる。デプロイ前のバックアップなら ① を使う。
+- ③ は `ops/28 --rollback` の対象(直前の本番バージョン)と同じ値なので、バックアップのフォルダ名だけで「どのバージョンの状態のバックアップか」が分かる。
+
 ```bash
 # ⚠️ ブロックをまとめて貼り付けない — 一行ずつ、コメントの期待値を見て次の行へ。
 tmux new -A -s backup          # 切れたら再び ssh して同じコマンドでつなぐ — B · V はそのまま残る
 set -o pipefail
 newb(){ [[ "$V" =~ ^[A-Za-z0-9._-]+$ && "$V" != REPLACE_ME ]] || { echo "⛔ V を対象バージョンに: [$V]"; return 1; }; B=~/backups/pre-$V-$(date -u +%Y%m%dT%H%M%SZ) && mkdir -p "$B" && echo "B=$B"; }
 ok(){ [[ -d "$B" && "$B" == "$HOME/backups/pre-"?*-20*Z ]] || { echo "⛔ B が空か不正: [$B] — newb から"; return 1; }; }
-V=REPLACE_ME                   # 対象バージョンに変える(例: V=50ef7995e94d)— <…> の山括弧は bash がリダイレクトとして読む
+V=REPLACE_ME                   # 上の ① 〜 ③ のどれかで埋める(手で書かない、例: V=50ef7995e94d)— <…> の山括弧は bash がリダイレクトとして読む
 newb && df -h ~ | tail -1      # B=/home/ubuntu/backups/pre-<V>-<時刻> を見て次の行へ
 ok && kubectl -n postgres exec deploy/postgres -c postgres -- pg_basebackup -U postgres -D - -Ft -X fetch --checkpoint=fast > "$B/pg-base.tar"; echo "exit=$?"   # exit=0
 ok && tar -tf "$B/pg-base.tar" | grep -c backup_label                                   # 1

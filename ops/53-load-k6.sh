@@ -32,6 +32,11 @@
 #   ./ops/53-load-k6.sh limits default         # 되돌린다(20 · 40). 측정이 끝나면 꼭 — 올린 채면 ops/06 스모크의 429 확인이 실패한다
 #   ./ops/53-load-k6.sh limits status          # 지금 값
 #
+#   ./ops/53-load-k6.sh bulkhead load [동시 수]   # 게이트웨이 격벽(회로마다 · 파드마다 동시 호출 상한)을 잠깐 바꾼다(기본 50, 5 ~ 200 — 운영값 25) — 실습 클러스터만,
+#                                              # 대기는 0 그대로(gateway application-local.yml — 이벤트 루프를 막는다). 확인은 resilience4j_bulkhead_max_allowed_concurrent_calls
+#   ./ops/53-load-k6.sh bulkhead default       # 되돌린다(25). 측정이 끝나면 꼭(ops/28 이 남은 것을 알린다)
+#   ./ops/53-load-k6.sh bulkhead status        # 지금 값
+#
 #   ./ops/53-load-k6.sh pool load [크기 [서비스]]  # 서비스의 DB 커넥션 풀을 잠깐 키운다(기본 10 · catalog-service) — 실습 클러스터만,
 #                                              # DB 의 max_connections 안에 드는지 먼저 센다. 파드가 다시 뜬다(데움 1분)
 #   ./ops/53-load-k6.sh pool default [서비스]   # 되돌린다(DB_POOL_SIZE 없음 = 5)
@@ -129,7 +134,7 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-    browse|order|spike|smoke|mixed|contention|limits|pool|outbox|replicas|jvm|reviews|stock|search|logs|report|ceiling) ;;
+    browse|order|spike|smoke|mixed|contention|limits|bulkhead|pool|outbox|replicas|jvm|reviews|stock|search|logs|report|ceiling) ;;
     *) usage ;;
 esac
 
@@ -144,6 +149,7 @@ esac
 #      「毎秒 20 で 429」だけになる。そこで計測の間だけゲートウェイの既定の制限を上げる(GATEWAY_RATE_LIMIT_*、gateway
 #      application-local.yml — 既定値はそのまま)。ログイン制限(毎秒 1)は変えられない。本番クラスタにはしない: このクラスタの
 #      APP_PUBLIC_URL が本番アドレスなら拒否する。
+# [JA] 計測の間だけゲートウェイの既定の流入制限を上げる。本番クラスタでは拒否する。ログイン制限は変えられない。
 # [JA] 計測の間だけゲートウェイの既定の流入制限を上げる。本番クラスタでは拒否する。ログイン制限は変えられない。
 # 실습 클러스터인가 — 측정용 예외(kubectl set env)를 운영에 걸지 않는다. 이 클러스터의 APP_PUBLIC_URL 이 운영 주소거나 비어 있으면 멈춘다.
 lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지> ／ [JA] lab_cluster_or_die <何を変えようとしているか>
@@ -169,6 +175,7 @@ lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지> ／ [J
 #      書き込みシナリオ(order・mixed・contention)は本番データ(注文・在庫・クーポン)を残すので拒否する。Cloudflare を経由すると
 #      エッジが CF-Connecting-IP を上書きし、一つの IP の流入制限(毎秒 20)しか測れない — クラスター内からゲートウェイへ直接送り、
 #      客の IP の模倣(CLIENT_IPS)でバケットを分ける(本番の制限設定は変えない)。
+# [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
 # [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
 cluster_public_url() {   # 지금 kubectl 컨텍스트의 APP_PUBLIC_URL(못 읽으면 빈 값) ／ [JA] 今の kubectl コンテキストの APP_PUBLIC_URL(読めなければ空)
     command -v kubectl >/dev/null 2>&1 || return 0
@@ -256,6 +263,7 @@ prod_confirm() {   # 운영이다 — YES=1 이 아니면 묻는다 ／ [JA] 運
 #      `logs` でいつでも。フォールバックログ(FallbackController: "Fallback triggered. Exception: <クラス>: …")を例外別に数えた要約も一緒に。
 #      ログにトークン・メールはないが(セキュリティ経路のログ規則)、運用者の機械の 0700 フォルダーにだけ置く。
 # [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
+# [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
 GATEWAY_LOG_DIR="${GATEWAY_LOG_DIR:-$HOME/.ecommerce-msa/gateway-logs}"
 save_gateway_logs() {   # save_gateway_logs <이유> ／ [JA] save_gateway_logs <理由>
     local pods p dir f old
@@ -324,6 +332,49 @@ if [ "$SCENARIO" = "limits" ]; then
     exit 0
 fi
 
+# ── 게이트웨이 격벽 — 측정하는 동안만 ──────────────────────────────────────
+#
+# 격벽(resilience4j bulkhead, 회로 차단기 이름마다 · 게이트웨이 파드마다)의 동시 호출 상한은 GATEWAY_BULKHEAD_MAX_CONCURRENT(기본 25 —
+# 2026-10-18 실습에서 25 · 100 을 재서 정함, docs/83 §5). 2026-11-23 운영 읽기 천장(docs/95 §5-2)은 이 25 가 막았다(CPU · 풀 · 디스크는 여유)
+# — 다른 상한을 실습에서 번갈아 재려고 둔다(docs/92 §4-1: 설정은 ops/53 모드로만). 대기(max-wait-duration)는 0 그대로 — 대기는 부른
+# 스레드(Netty · Lettuce 이벤트 루프)를 막는다. 운영 클러스터는 거절한다. 게이트웨이 파드가 다시 뜨므로 그 전 로그를 남긴다(limits 와 같다).
+# [JA] 計測の間だけゲートウェイのバルクヘッド(同時呼び出し上限)を変える。待ちは 0 のまま。本番クラスタでは拒否する。
+BULKHEAD_DEFAULT=25   # gateway-server application-local.yml 의 ${GATEWAY_BULKHEAD_MAX_CONCURRENT:25}(가드 LoadK6ScriptTest)
+# [JA] gateway-server の application-local.yml の ${GATEWAY_BULKHEAD_MAX_CONCURRENT:25}(ガード LoadK6ScriptTest)
+cmd_bulkhead() {
+    lab_cluster_or_die "게이트웨이 격벽"
+    local action="${2:-status}" n cur
+    case "$action" in
+        load)
+            n="${3:-50}"
+            [[ "$n" =~ ^[1-9][0-9]*$ ]] && [ "$n" -ge 5 ] && [ "$n" -le 200 ] \
+                || die "동시 수는 5 ~ 200 — 그보다 크면 하류(catalog 1 코어) 안에 줄만 선다(docs/83 §5: 100 이 25 보다 나빴다)"
+            save_gateway_logs "bulkhead-load"
+            info "게이트웨이 격벽 → 동시 $n (기본 $BULKHEAD_DEFAULT · 대기 0 그대로, $PUBLIC_URL) — 게이트웨이 파드가 다시 뜬다"
+            kubectl -n "$APP_NS" set env deploy/gateway-server GATEWAY_BULKHEAD_MAX_CONCURRENT="$n" >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/gateway-server --timeout=300s
+            echo "  확인:   max(resilience4j_bulkhead_max_allowed_concurrent_calls{service=\"gateway-server\"}) = $n"
+            echo "  끝나면: ./ops/53-load-k6.sh bulkhead default — 기준($BULKHEAD_DEFAULT)과 번갈아 잰다(docs/92 §4-1)"
+            ;;
+        default)
+            save_gateway_logs "bulkhead-default"
+            info "게이트웨이 격벽 → 기본값(동시 $BULKHEAD_DEFAULT) — 게이트웨이 파드가 다시 뜬다"
+            kubectl -n "$APP_NS" set env deploy/gateway-server GATEWAY_BULKHEAD_MAX_CONCURRENT- >/dev/null
+            kubectl -n "$APP_NS" rollout status deploy/gateway-server --timeout=300s
+            ;;
+        status)
+            cur="$(kubectl -n "$APP_NS" get deploy gateway-server -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+                | sed -n 's/^GATEWAY_BULKHEAD_MAX_CONCURRENT=//p' || true)"
+            if [ -n "$cur" ]; then echo "격벽 동시 $cur (측정용 — 되돌리기: ./ops/53-load-k6.sh bulkhead default)"; else echo "기본값(동시 $BULKHEAD_DEFAULT)"; fi
+            ;;
+        *) usage ;;
+    esac
+}
+if [ "$SCENARIO" = "bulkhead" ]; then
+    cmd_bulkhead "$@"
+    exit 0
+fi
+
 # ── 리뷰 자격 — 측정하는 동안만 ─────────────────────────────────────────
 #
 # 리뷰는 받은 상품만 쓸 수 있다(review.require-purchase, 기본 켬 — docs/57 §13). 데모 계정은 받은 상품이 없어 mixed 의 리뷰가 모두 403 이다.
@@ -331,6 +382,7 @@ fi
 # [JA] ── レビュー資格 — 計測の間だけ ── レビューは受け取った商品にだけ書ける(review.require-purchase、既定で有効 — docs/57 §13)。
 #      デモアカウントは受け取った商品がないので mixed のレビューがすべて 403 になる。計測の間だけ切る(REVIEW_REQUIRE_PURCHASE=false —
 #      デモ環境のために置いたスイッチ)。user-service が再起動する。本番クラスタでは拒否する。
+# [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
 # [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
 cmd_reviews() {
     lab_cluster_or_die "리뷰 자격"
@@ -368,6 +420,7 @@ fi
 #      競合ではない)。その商品の SKU 一つ・全サイズの数量を <数> に合わせ、元の値を運用者の機械(0700)に残す — stock restore が戻す。
 #      本番クラスタでは拒否する。残数 = 数量 − 生きている予約(docs/59) — 前の回が途中で切れて入金待ちが残っていればその分少ない
 #      (RELEASE_HELD=1 で解く)。
+# [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
 # [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
 PG_NS="${PG_NS:-postgres}"
 PG_DEPLOY="${PG_DEPLOY:-postgres}"
@@ -469,6 +522,7 @@ fi
 #      その束全体が FAILED(自動再試行なし)か再発行になる。そこで束は 1000 以下、間隔は 200ms 以上(もっと短いと空の照会が増えるだけ)。
 #      本番クラスタでは拒否する。
 # [JA] 計測用に user-service のアウトボックスのポーラー間隔を縮める。バッチは 1000 まで(1 トランザクションでロックしてまとめて ack を待つ — ロック・メモリ・失敗の範囲)。本番クラスタでは拒否する。
+# [JA] 計測用に user-service のアウトボックスのポーラー間隔を縮める。バッチは 1000 まで(1 トランザクションでロックしてまとめて ack を待つ — ロック・メモリ・失敗の範囲)。本番クラスタでは拒否する。
 OUTBOX_DEFAULT_DELAY_MS=10000   # user-service application-local.yml 의 APP_OUTBOX_FIXED_DELAY_MS 기본값(가드 LoadK6ScriptTest) ／ [JA] user-service application-local.yml の APP_OUTBOX_FIXED_DELAY_MS の既定値(ガード LoadK6ScriptTest)
 OUTBOX_DEFAULT_BATCH=100        # 같은 파일의 APP_OUTBOX_BATCH_SIZE 기본값 ／ [JA] 同じファイルの APP_OUTBOX_BATCH_SIZE の既定値
 outbox_env() {   # outbox_env <이름> → user-service Deployment 에 적힌 값(없으면 빈 값) ／ [JA] outbox_env <名前> → user-service Deployment に書かれた値(なければ空)
@@ -544,6 +598,7 @@ fi
 #      マニフェストに直接書かれた値なので、消すとフラグが永遠に切れる。ES は検索語のある検索(name_search)にだけ使われる — カテゴリ一覧・
 #      フィルターは常に PostgreSQL である。本番クラスタでは拒否する。
 # [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
+# [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
 ES_NS="${ES_NS:-elasticsearch}"
 FLAGS_FILE_DEFAULT="/app/flags/flags.json"   # k8s/41-catalog-service.yaml 의 FEATURE_FLAGS_FILE(가드 LoadK6ScriptTest) ／ [JA] k8s/41-catalog-service.yaml の FEATURE_FLAGS_FILE(ガード LoadK6ScriptTest)
 es_count() {   # 별칭 product-alias 의 문서 수(없으면 빈 값) — ES 파드 안의 curl(데모는 보안을 끈 단일 노드, k8s/90) ／ [JA] エイリアス product-alias のドキュメント数(なければ空) — ES Pod 内の curl(デモはセキュリティを切った単一ノード、k8s/90)
@@ -602,6 +657,7 @@ fi
 #      catalog p95 が 31 → 390ms、その分ゲートウェイのバルクヘッド(同時 25)があふれて 503 だった(docs/83 §5)。プール(DB_POOL_SIZE、既定 5)が
 #      ボトルネックかどうかは、プールだけを変えて同じ条件で測り直さないと分からない。データソース数(catalog は 2 個)× サイズ × HPA 最大レプリカの
 #      分だけ DB 接続が増えうるので、変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
+# [JA] 計測の間だけ DB コネクションプールを大きくする。変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
 # [JA] 計測の間だけ DB コネクションプールを大きくする。変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
 POOL_DEFAULT=5
 pool_now() {   # pool_now <deploy> → 지금 크기(설정 없으면 기본값) ／ [JA] pool_now <deploy> → 今のサイズ(設定がなければ既定値)
@@ -673,6 +729,7 @@ fi
 #      (docs/83 §5)。HPA は増やしはするが(requests 250m の 70%)、新しい Pod の起動・ウォームアップが 100 の段(2 分)より遅い — そこで先に
 #      増やして同じ条件で測る。HPA があれば最小値も一緒に上げる(そのままだと負荷のない間に HPA がまた減らす)。増やす前にスケジュール可能な
 #      ノード(NoSchedule テイント・cordon を除く)の requests の余裕を数える。本番クラスタでは拒否する。
+# [JA] 計測の間だけレプリカを先に増やす。HPA の最小値も上げる。増やす前にノードの requests の余裕を数える。本番クラスタでは拒否する。
 # [JA] 計測の間だけレプリカを先に増やす。HPA の最小値も上げる。増やす前にノードの requests の余裕を数える。本番クラスタでは拒否する。
 REPLICA_DEFAULT_SVCS="catalog-service gateway-server"
 hpa_manifest() {   # hpa_manifest <deploy> → "최소 최대" (k8s/70 에 없으면 빈 값) ／ [JA] hpa_manifest <deploy> → "最小 最大"(k8s/70 になければ空)
@@ -830,6 +887,7 @@ fi
 #      JDK 17 イメージの Spring は無視する)。pinning=1 は -Djdk.tracePinnedThreads=short — 仮想スレッドがキャリアを掴んだまま
 #      ブロックすると Pod のログにスタックを残す(JDK 21)。
 # [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
+# [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
 JVM_ANNOTATION="ecommerce.io/jvm-measure"
 JVM_GC_LOG="-Xlog:gc*,safepoint:file=/var/log/jvm/gc.log:time,uptime,level,tags:filecount=3,filesize=10m"
 jvm_state() {   # jvm_state <deploy> → 다섯 줄: JAVA_OPTS(base64 · 없으면 -) · 힙 비율 · CPU 한도 · 가상 스레드 · 주석 ／ [JA] jvm_state <deploy> → 5 行: JAVA_OPTS(base64 · なければ -) · ヒープ比率 · CPU 上限 · 仮想スレッド · アノテーション
@@ -961,6 +1019,7 @@ fi
 # [JA] ── 結果をまとめて見る ── 回ごとの summary.txt(k6 の画面そのまま — 進行バーまで長い)・meta.txt を別々に開かなくてよいように、
 #      summary.json・meta.txt から記録に使う値だけを抜き出す(docs/83 §5)。エンドポイント別の応答時間は、閾値をかけた名前だけが
 #      summary.json にある(k6 --summary-export)。
+# [JA] 結果をまとめて見る — summary.json と meta.txt から記録に使う値だけを出す。
 # [JA] 結果をまとめて見る — summary.json と meta.txt から記録に使う値だけを出す。
 cmd_report() {
     command -v python3 >/dev/null 2>&1 || die "python3 가 필요하다"

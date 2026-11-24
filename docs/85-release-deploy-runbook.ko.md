@@ -3,7 +3,7 @@
 [日本語](85-release-deploy-runbook.md) | **한국어**
 
 > **상태(2026-10-24)** — **배포 끝: 운영은 `4415e498565c`** 입니다(1차 시도는 §7-1). 같은 날 뒤이은 배포(`6501d3fd8e60`)와 2026-10-25 · 26 의 후속 배포 넷(`dc25b0f8a920` · `61f546a8b125` · `d837605d7902` · `d68f0307e979`)에 이어, 2026-11-03 contract 릴리스(`7ef62043a98f` — §8-2)에 이어, 2026-11-19 `64b7c7a38cb2`(JRE 보안 수정) · 2026-11-20 `d8922fc53e0c`(대기 묶음 — 관리 포트 · 서버 인증서 · SMS 2FA)로 지금 운영은 **`d8922fc53e0c`** 입니다(§0 "후속 배포" · "contract 릴리스"). 남은 것은 §8. 이전 운영은 `b7c5053a45e8`(2026-10-10, [docs/72](72-model-refactor-deploy-runbook.ko.md))였습니다. 그 뒤 improve 에 커밋 260여 개가 쌓였습니다. 결제 · 쿠폰 · 아웃박스 결함 수정, 보안(신원 헤더 · Eureka 쓰기 · 보안 헤더), 주문 진행 타임라인(docs/76), 기능 플래그(docs/74), 부하 측정의 CPU 수정(docs/83), 장바구니 화면 오류 수정이 들어 있습니다.
-> 📝 §9 는 **적용 끝**(2026-11-19 `64b7c7a38cb2`)입니다. 그 뒤 대기 묶음도 2026-11-20 `d8922fc53e0c` 로 들어갔습니다 — §0 의 마지막 두 줄.
+> 📝 §9 는 **적용 끝**(2026-11-19 `64b7c7a38cb2`) · 그 뒤 대기 묶음도 2026-11-20 `d8922fc53e0c` 로 들어갔습니다(§0). 그 뒤 묶음은 2026-11-21 `df51456d317e` · 2026-11-23 `f5c04e958cb7` 로 들어갔고 **점검표는 [§10](#10-대기-묶음-2-점검표--적용-끝2026-11-21-df51456d317e--2026-11-23-f5c04e958cb7)** 입니다 — 다음 묶음도 §10-0(클러스터에 묻기)부터 시작합니다.
 >
 > **대상 버전**은 이 문서가 들어간 커밋 이후의 improve 최신 커밋입니다(파이프라인 초록, 12자리 SHA). 배포 전에 §0 의 표에 적습니다.
 > 되돌릴 수 없는 마이그레이션(ROLLBACK-UNSAFE)은 없습니다. 그래서 **자동 복귀가 켜진 배포**입니다. 다만 user V18 은 중복 행을 지우므로 백업은 필수입니다(§3).
@@ -28,6 +28,9 @@
 | 기록 없던 배포(2026-11-12) | `4393c3ddfee1` — cart 재검토(V8) · Kafka 오프셋 earliest · order V30 처리 원장이 이때 운영에 들어갔다. **배포 기록의 "운영 버전" 이 `7ef62043a98f` 로 남아 있었다** — 2026-11-19 에 `ops/32 drift` 가 "cart V8 · order V30 은 적용됐는데 저장소에 파일이 없다" 로 잡아냈다(체크아웃이 운영보다 낡았던 것). 배포 기록은 늘 이 표에 남긴다 |
 | JRE 보안 수정(2026-11-19 06:53 UTC) | **`64b7c7a38cb2`** — JRE `17.0.21_9` + `-XX:-UseBASE64Intrinsics`(CVE-2026-114938, B-113) · SLO 지표 다섯 · 앞단 캐시 표시 · 아웃박스 파티션 보존 · 관리자 폼. **마이그레이션 없음**(저장소 최대 = 적용된 값: cart 8 · order 30 · user 19 · coupon 9 · pay 7 · catalog 24) → 마이그레이션 리허설 생략, 자동 복귀 켬. 301초 · 스모크 통과 4/0(게이트웨이 health · 폴백 503 · 유입 제한 429 21회 · 카탈로그 200) · 파드 재시작 0. 확인: `java -version` **Temurin-17.0.21+9** · 세 서비스 명령줄에 그 옵션 · 사이트 200 · 아웃박스 보존 로그 1회. 되돌리기 대상 `4393c3ddfee1`. 배포 전 백업 `~/backups/pre-64b7c7a38cb2-20261119T062005Z`(물리 5.4G · 논리 318M · Mongo chat 7) |
 | 대기 묶음 릴리스(2026-11-20 16:06 UTC) | **`d8922fc53e0c`** — 프론트 nginx `1.30.7`(B-114) · SMS 2단계 인증(user V20 · notification V12) · 보안 남은 일 ①~⑦(user V21) · user 아웃박스 묶음 발행 · **관리 포트 9180**(B-119) · **서버 인증서를 서비스마다**(B-121) · 실습 ES 문서. 배포 **전**: `ops/38`(eureka-server 신원 새로 · gateway · config-server 를 새 SAN 으로) → `ops/28` 이 그래도 멈췄다(cert-manager 가 맡은 열 개에 `metrics.ecommerce.svc.cluster.local` 이 없었다) → `ops/39 apply`(k8s/96 의 dnsNames 가 바뀌어 Certificate 열셋 재발급 · Reloader 가 차례로 재시작). 17초 · 스모크 통과 4/0(health 를 **관리 포트 19180** 으로 본다 · 429 10회) · 파드 16개 재시작 0. 확인: user **21** · notification **12** · cart 8 · coupon 9 · order 30 · catalog 24(이번 릴리스에 catalog 마이그레이션 없음 — ⚠️ `product.flyway_schema_history` 를 봐야 한다, `public` 의 5 는 옛 기록), nginx **1.30.7**, 파드 안 `https://localhost:9180/actuator/health` UP, `CN=order-service` + SAN 셋(metrics 이름 포함), `ops/37-check-mtls.sh` enforce · ① · ①-2 · ①-3 0 · 403/200/403, 사이트 200, DLT 늘지 않음. ⚠️ **배포 뒤 21분간 서비스 지표가 끊겼다** — 옛 지표 에이전트가 앱 포트를 긁어 404(`up=0` 11개)였고, `metrics-agent` 재적용 · 재시작으로 고쳤다(그 뒤 `count(up{job="spring-actuator"})` **11** · `up == 0` 0 · `ServiceDown` 없음 — ⚠️ 재시작 직후에 세면 옛 타깃의 `up=0` 이 5분 staleness 창에 남아 22 · DOWN 11 로 보인다)(B-119 의 "배포 **곧바로**" 가 이것이다 — `ops/28` 은 ConfigMap 이 이미 새 규칙이라 경고하지 않았다: **파드가 옛 설정을 쥐고 있는 경우를 보지 않는다**). 저널에 `ok` 두 줄(15:54 · 16:06 — 두 번 돌렸다, `--rollback` 은 253번째 줄이 같은 버전을 건너뛰어 `64b7c7a38cb2` 를 잡는다). `ops/62 drift`: 클러스터에만 `REACT_APP_PAYPAL_CLIENT_ID`(읽는 곳 없음 · B-51 위반이라 클러스터에서 지웠다) · `SPRING_DATA_REDIS_PASSWORD`(암호문에는 주석으로만 있었다 — 첫 `encrypt` 때 빠졌다, 넣는 일은 docs/57 §24-1). 되돌리기 대상 `64b7c7a38cb2` |
+| 후속(2026-11-21 07:22 UTC) | `e6fc32f07520` — gateway 로그인 해제 로그 · 지표 등. **이 줄은 2026-11-23 에 뒤늦게 적었다** |
+| 대기 묶음 2(2026-11-21 15:22 UTC) | **`df51456d317e`**(태그 `prod/20261121-1522-df51456d317e`) — §10-1 의 묶음 전부(신뢰성 1 ~ 3단계 · delivery V5 · 5단계 12 ~ 15 · Feign 브레이커 · 메일 아웃박스 · 필터 메뉴 · 7단계 · chat 출처 · 데모 계정 꺼짐). 배포 전 `ops/02` 를 빠뜨려 `delivery-resync.DLT` 가 없었다(2026-11-23 만듦). 원격 노드 NotReady 라 frontend 둘 다 Ampere. **관측 스택을 recreate 하지 않았다**(2026-11-23 에 함) |
+| 문서 · ops 배포(2026-11-23 05:46 UTC) | **`f5c04e958cb7`**(태그 `prod/20261123-0546-f5c04e958cb7`) — 이미지 코드는 `df51456d317e` 와 같다. 확인: 이미지 14 · 재시작 0 · delivery 5 · user 21 · cart 8 · coupon 9 · order 30 · DLT 셋 0 · 지표 11 · 아웃박스 지연 다섯 · 원격 파드 → API 401 · 200 × 20. 뒤처리: `--force-recreate prometheus loki`(`HighP99Latency` 새 식 확인) · frontend 하나 지워 Ampere · 집으로 · 고아 `ops/28` 둘 끝냄 |
 
 ## 1. 무엇이 바뀌나
 
@@ -465,3 +468,106 @@ curl -sI 'https://www.ysyproject.com/catalog-service/api/stock?items=1' | grep -
 ### 9-5. 끝나면
 
 §0 표에 새 운영 버전을 적는다(적용 끝으로).
+
+
+## 10. 대기 묶음 2 점검표 — 적용 끝(2026-11-21 `df51456d317e` · 2026-11-23 `f5c04e958cb7`)
+
+> ✅ **2026-11-23 정리** — 출발점을 클러스터에 물어 확정했다: 이 묶음은 `df51456d317e`(2026-11-21 15:22 UTC)로 들어갔고, 지금 운영은 같은 이미지 코드의 `f5c04e958cb7`(2026-11-23 05:46 UTC)이다. §0 · 운영 기록 을 맞췄다. 10-4 도 끝: 사이트 · 7단계 · 원격 파드 401 · 아웃박스 지연 · eureka · 지표 11(명령), 상담 · 채팅 403 · 가입 메일 · 장바구니 순서 · '모두 읽음' 배지(사용자 손 확인, 2026-11-23). 필터 메뉴 완료 로그는 기동 5분 뒤 시작이라 그때 아직 없었다. 아래는 다음 묶음 때 같은 순서로 쓴다.
+>
+> (예전 머리말: 2026-11-23 시점에 운영 기록 `d8922fc53e0c` · 남은 일 목록 `e6fc32f07520` · §0 에 줄 없음으로 기록이 어긋났다 — 2026-11-12 와 같은 모양.)
+
+### 10-0. 출발점 — 클러스터에 묻는다(5분)
+
+```bash
+# ① 지금 운영에 도는 버전
+kubectl -n ecommerce get deploy gateway-server -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+# ② 스키마 — 적용된 마이그레이션(ops/32 가 스키마를 한정해 읽는다)
+./ops/32-db-migration.sh summary        # 아홉 서비스 · 대기 0
+# ③ 체크아웃이 그 버전인지(ops/28 은 이 트리를 읽는다)
+git -C ~/ecommerce-msa log --oneline -1 && git -C ~/ecommerce-msa status -sb | head -2
+```
+
+- ①의 태그 ≠ 운영 기록의 "운영 버전" 이면 **§9 와 이 문서 §0 을 먼저 고친다** — 그 줄이 낡으면 `--rollback` 대상과 GHCR 보관이 함께 틀어진다.
+- ②에서 **delivery 스키마가 5** 면 신뢰성 2단계는 이미 운영에 있다(10-1 에서 빼고 확인 항목으로). **4** 면 이번 릴리스의 **유일한 마이그레이션**이다.
+
+### 10-1. 실리는 것(운영 기록 기준)
+
+| 묶음 | 이미지 · 매니페스트 | 마이그레이션 | 근거 |
+|---|---|---|---|
+| 상담 · 채팅 403(SockJS 출처 · Redisson 3.50.0 · CORS · 진행 막대) | chat · gateway · frontend | 없음 | 운영 기록 |
+| 신뢰성 1단계 — 아웃박스 지연 지표 · 재고 fail-open 경보 · Loki `ErrorLogSurge` | common · order **+ 관측 스택** | 없음 | 남은 일 목록 ③ · [docs/99](99-alert-thresholds.ko.md) |
+| 신뢰성 2단계 — delivery 상태 아웃박스 · 가입 메일 릴레이 | delivery · user | **delivery V5**(10-0 ②로 확인) | 남은 일 목록 ③ |
+| 가입 메일 릴레이 `emailVerified` 고침 | user | 없음 | 운영 기록(11-21 배포 뒤 메일 0건) |
+| 신뢰성 3단계 — chat 트랜잭션 경계 · 모두 읽음 · 패스키 카운터 · 장바구니 상한 | chat · notification · user · cart | 없음 | 남은 일 목록 ③ |
+| 운영 상시 ERROR 둘 — eureka 자기 복제 · config-server 등록 | **k8s/30 매니페스트** + config-server | 없음 | docs/99 §4 |
+| Feign 서킷 브레이커 1차 | cart · order | 없음 | [docs/101](101-feign-circuit-breakers.ko.md) |
+| 비밀번호 재설정 메일 아웃박스 | user | 없음 | 운영 기록 4단계 ⑤ |
+| 장바구니 줄 순서(`@OrderBy`) | cart | 없음 | 운영 기록 |
+| 필터 메뉴 캐시 · `FacetWarmer` · `HighP99Latency` 제외 | catalog **+ 관측 스택** | 없음 | [docs/95 §5-1](95-prod-read-ceiling-hybrid.ko.md) |
+| 공개 데모 계정 1 ~ 3단계(**운영은 끈 채**) | gateway · user · frontend · cart · notification · order · chat | 없음 | [docs/100](100-demo-accounts.ko.md) |
+| 5단계 13 · 12 · 14 · 15(대량 등록 내결함성 · 받을 수 없는 주문 경보 · PayPal 웹훅 · 품절 취소) | catalog · order · delivery · notification | 없음 | 운영 기록 |
+| 하이브리드 7단계 — 집 노드에 frontend | **`k8s-overlays/local`**(frontend 2) | 없음 | 하이브리드 구성 |
+
+사실상 **전 서비스 이미지 + 매니페스트**다. 되돌릴 수 없는 것은 없다(delivery V5 는 더하기만) → **자동 복귀가 켜진 배포**.
+
+### 10-2. 배포 전
+
+```bash
+# ⓪ 게이트 — CI 가 돌 수 있고 대상 커밋이 초록인가. 이 시간에 실습 ceiling 을 돌리지 않는다
+V=$(./ops/tools/latest-green.sh); echo "$V"       # 12자리 — 이 값이 대상(docs/72 §3 ①)
+# ① Kafka — 품절 취소의 DLT 토픽(5단계 15)
+./ops/02-create-dlt-topics.sh                      # delivery-resync · delivery-resync.DLT — 2026-11-21 에 빠뜨렸다
+# ② 긴 트랜잭션 0 · 03:00 UTC 백업 창 피하기(§8-2 2-1)
+q(){ kubectl -n postgres exec -i deploy/postgres -c postgres -- psql -U postgres -d "$1" -tAX -c "$2"; }
+for db in cartdb orderdb paydb userdb productdb coupondb deliverydb; do
+  echo "$db: $(q "$db" "select count(*) from pg_stat_activity where state <> 'idle' and xact_start < now() - interval '30 seconds'")"; done
+# ③ 백업 — docs/72 §3(tmux 에서 한 줄씩, V 는 위 ①)
+# ④ 리허설(delivery V5 가 이번이면 권장) — 운영 백업 사본에 마이그레이션을 미리 돌려 본다
+```
+
+### 10-3. 배포와 직후
+
+```bash
+git -C ~/ecommerce-msa fetch origin && git -C ~/ecommerce-msa switch --detach "$V"
+./ops/28-deploy.sh local latest
+# 스키마 — delivery 5(이번이면) · 나머지 그대로
+for db in deliverydb userdb cartdb coupondb orderdb; do
+  echo "$db: $(q "$db" 'SELECT max(version::int) FROM flyway_schema_history WHERE success')"; done
+kubectl -n ecommerce get pods -o wide | grep -v Completed     # 재시작 0 · frontend 둘, NODE 가 갈린다
+kubectl -n ecommerce get endpoints frontend                   # 주소 둘(7단계)
+./ops/56-dlt-replay.sh list | grep -E 'order\.DLT|payment\.DLT|delivery-resync'
+```
+
+⚠️ **관측 스택은 배포 뒤에 올린다** — 새 이미지보다 먼저 규칙을 올리면 `OutboxBacklogMetricsMissing` 이 울린다(남은 일 목록 ③):
+
+```bash
+docker compose -f docker-compose-observability.yml -f docker-compose-observability.oci.yml \
+  up -d --force-recreate prometheus loki        # /-/reload 는 꺼져 있다(§9-3)
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=count by (service) (outbox_pending_oldest_age_seconds)'
+curl -s localhost:3100/prometheus/api/v1/rules | head -c 200   # 그룹 셋
+```
+
+지표 에이전트는 `ops/28` 이 배포 끝에 알아서 재시작한다(B-119 · `MetricsAgentStaleScriptTest`) — 그 줄이 없으면 손으로 `rollout restart deploy/metrics-agent`.
+
+### 10-4. 배포 뒤 확인
+
+| 확인 | 기대 |
+|---|---|
+| 사이트 · 7단계 | `for i in $(seq 1 20); do curl -s -o /dev/null -w '%{http_code}\n' https://www.ysyproject.com/; done` 모두 200 · frontend 파드 둘이 다른 노드 |
+| 원격 노드 파드 | 그 파드에서 `https://10.43.0.1:443/version` 이 **401**(docs/71-2 §3.2 4단계) |
+| 상담 · 채팅 | 1:1 상담 한 줄 · 진행 막대 — 403 이 사라졌는지 |
+| 가입 메일 | 가입 한 번 → 메일 도착 · `users.outbox_event` 의 `registration-mail` 이 COMPLETED |
+| 아웃박스 지연 | `outbox_pending_oldest_age_seconds` 에 cart · order · pay · user(· delivery) |
+| eureka · config-server | eureka 403 줄 0 · 등록부에 `CONFIG-SERVER` · `[eureka write]` 0 |
+| 필터 메뉴 | catalog 로그 `필터 메뉴 미리 채우기: 카테고리 N · 늦음 0`(첫 회차는 카테고리 수 × 약 100초) |
+| 장바구니 | 첫 상품의 수량을 바꿔도 자리가 그대로 |
+| 알림 | '모두 읽음' 뒤 배지 0 |
+| 지표 | `up{job="spring-actuator"}` 11 |
+
+**데모 계정은 켜지 않는다** — 이미지만 올리고 `DEMO_ACCOUNTS_ENABLED` 는 false 그대로(켤 때 ConfigMap → `ops/28 --config-only --restart user-service`, docs/100).
+
+### 10-5. 끝나면
+
+- 이 문서 **§0 표에 이번 배포 줄** · **운영 기록의 "운영 버전"** 을 같은 값으로(10-0 의 어긋남을 되풀이하지 않는다).
+- 남는 손일: PayPal 콘솔에 웹훅 URL · 이벤트 등록 → ConfigMap `PAYPAL_WEBHOOK_ID` → `--config-only --restart order-service`(5단계 14).
+- 남은 일 목록 §1 의 해당 줄을 ✅ 로.

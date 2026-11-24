@@ -127,6 +127,23 @@ class DeployLoadOverrideScriptTest {
     }
 
     @Test
+    @DisplayName("ops/53 bulkhead load 의 격벽 동시 수가 남아 있으면 되돌리는 명령을 알린다 — 멈추지는 않는다(스모크는 깨지지 않는다)")
+    void bulkheadOverrideWarns() throws Exception {
+        assumeTrue(bashAvailable(), "bash 가 없다");
+        Run left = run("SPRING_PROFILES_ACTIVE\\nGATEWAY_BULKHEAD_MAX_CONCURRENT\\n", "", RENDERED, false);
+        assertThat(left.out()).as(left.out())
+                .contains("GATEWAY_BULKHEAD_MAX_CONCURRENT")
+                .contains("./ops/53-load-k6.sh bulkhead default")
+                .contains("continue rc=0")
+                .doesNotContain("limits default")
+                .doesNotContain("unexpected:");
+
+        Run declared = run("GATEWAY_BULKHEAD_MAX_CONCURRENT\\n", "",
+                RENDERED + "            - name: GATEWAY_BULKHEAD_MAX_CONCURRENT\n", false);
+        assertThat(declared.out()).as("매니페스트가 선언한 값은 측정용이 아니다").doesNotContain("bulkhead default").contains("continue rc=0");
+    }
+
+    @Test
     @DisplayName("ops/53 jvm load 의 측정용 JVM 설정(주석)이 남아 있으면 되돌리는 명령을 알린다 — 멈추지는 않는다(스모크는 깨지지 않는다)")
     void jvmMeasureOverrideWarns() throws Exception {
         assumeTrue(bashAvailable(), "bash 가 없다");
