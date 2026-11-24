@@ -1,0 +1,154 @@
+# promtool 단위 시험 — PostgreSQL 스탠바이 감시(alert-rules.yml 의 postgres-standby, k8s/91 · ops/65). 실행: SloRulesPromtoolTest(컨테이너) 또는
+#   docker run --rm -v "$PWD/observability:/o" --entrypoint promtool prom/prometheus:v2.53.0 test rules /o/tests/pg-standby-rules.test.yml
+# 각 경보는 울려야 할 때 울리고, 슬롯이 없으면(스탠바이를 일부러 뺐으면 — configured 0) 조용하다.
+# [JA] promtool の単体テスト — スタンバイ監視。鳴るべきときに鳴り、スロットがなければ(configured 0)静か。
+rule_files:
+- ../alert-rules.yml
+evaluation_interval: 1m
+tests:
+# 지표가 낡음 — 마지막 성공이 0초에 멈춤: 10분이 지나고 5분 더(16분)면 울린다. 1분마다 갱신되면 조용
+# [JA] 指標が古い — 最後の成功が 0 秒で止まる: 10 分過ぎてさらに 5 分(16 分)で鳴る。1 分ごとに更新されれば静か
+- interval: 1m
+  input_series:
+  - series: pg_standby_metrics_last_success_timestamp_seconds
+    values: 0x30
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: PgStandbyMetricsStale
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: PgStandbyMetricsStale
+    exp_alerts:
+    - exp_labels: { severity: warning }
+      exp_annotations:
+        summary: "PostgreSQL 스탠바이 감시 지표가 17m 0s 째 갱신되지 않았습니다"
+        description: "운영 노드의 ecommerce-pg-standby-metrics.timer 가 멈췄거나 primary 에 묻지 못하고 있습니다 — 스탠바이 상태를 모르는 채입니다. journalctl -u ecommerce-pg-standby-metrics.service 와 ./ops/65-pg-standby.sh check."
+- interval: 1m
+  input_series:
+  - series: pg_standby_metrics_last_success_timestamp_seconds
+    values: 0+60x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: PgStandbyMetricsStale
+    exp_alerts: []
+
+# 스트리밍 끊김 — 슬롯이 있는데(configured 1) 0 이 5분이면 울린다
+# [JA] ストリーミングの切断 — スロットがあるのに(configured 1)0 が 5 分続けば鳴る
+- interval: 1m
+  input_series:
+  - series: pg_standby_configured{slot="standby_oci2"}
+    values: 1x20
+  - series: pg_standby_streaming{application_name="standby-oci2"}
+    values: 0x20
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: PgStandbyNotStreaming
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: PgStandbyNotStreaming
+    exp_alerts:
+    - exp_labels: { application_name: standby-oci2, severity: warning }
+      exp_annotations:
+        summary: "PostgreSQL 스탠바이가 스트리밍하지 않습니다"
+        description: "primary 에 슬롯은 있는데 스탠바이가 붙어 있지 않습니다 — 지금 primary 를 잃으면 끊긴 때 이후의 데이터가 없습니다. 끊긴 동안 슬롯이 WAL 을 쌓습니다(PgStandbySlotRetainingWal). kubectl -n postgres get pod -l app=postgres-standby -o wide · logs."
+# 스탠바이를 일부러 뺐다(configured 0) — 스트리밍 0 · 슬롯 유실 지표 0 이어도 조용
+# [JA] スタンバイをわざと外した(configured 0) — ストリーミング 0 · スロット消失の指標 0 でも静か
+- interval: 1m
+  input_series:
+  - series: pg_standby_configured{slot="standby_oci2"}
+    values: 0x20
+  - series: pg_standby_streaming{application_name="standby-oci2"}
+    values: 0x20
+  - series: pg_standby_replay_lag_bytes{application_name="standby-oci2"}
+    values: 999999999x20
+  - series: pg_standby_slot_retained_bytes{slot="standby_oci2"}
+    values: 9999999999x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: PgStandbyNotStreaming
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: PgStandbyReplayLagging
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: PgStandbySlotRetainingWal
+    exp_alerts: []
+
+# 지연 — 300MiB 가 10분이면 울린다. 10MiB · 2초는 조용
+# [JA] 遅延 — 300MiB が 10 分続けば鳴る。10MiB · 2 秒は静か
+- interval: 1m
+  input_series:
+  - series: pg_standby_configured{slot="standby_oci2"}
+    values: 1x20
+  - series: pg_standby_replay_lag_bytes{application_name="standby-oci2"}
+    values: 314572800x20
+  - series: pg_standby_replay_lag_seconds{application_name="standby-oci2"}
+    values: 2x20
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: PgStandbyReplayLagging
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: PgStandbyReplayLagging
+    exp_alerts:
+    - exp_labels: { application_name: standby-oci2, severity: warning }
+      exp_annotations:
+        summary: "PostgreSQL 스탠바이가 밀려 있습니다"
+        description: "재생 지연이 256MiB 또는 5분을 10분 넘게 넘었습니다 — 데이터 노드의 디스크 · CPU · 노드 사이 망(WireGuard)을 봅니다. 승격하면 그만큼 잃습니다."
+- interval: 1m
+  input_series:
+  - series: pg_standby_configured{slot="standby_oci2"}
+    values: 1x20
+  - series: pg_standby_replay_lag_bytes{application_name="standby-oci2"}
+    values: 10485760x20
+  - series: pg_standby_replay_lag_seconds{application_name="standby-oci2"}
+    values: 2x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: PgStandbyReplayLagging
+    exp_alerts: []
+
+# 슬롯이 WAL 을 6GiB 붙잡음(상한 10GB 의 절반 넘음) — 10분이면 울린다. 1GiB 는 조용
+# [JA] スロットが WAL を 6GiB 握る(上限 10GB の半分を超える) — 10 分で鳴る。1GiB は静か
+- interval: 1m
+  input_series:
+  - series: pg_standby_configured{slot="standby_oci2"}
+    values: 1x20
+  - series: pg_standby_slot_retained_bytes{slot="standby_oci2"}
+    values: 6442450944x20
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: PgStandbySlotRetainingWal
+    exp_alerts:
+    - exp_labels: { slot: standby_oci2, severity: warning }
+      exp_annotations:
+        summary: "스탠바이 슬롯이 primary 에 WAL 을 6GiB 붙잡고 있습니다"
+        description: "상한(max_slot_wal_keep_size 10GB)의 절반을 넘었습니다. 스탠바이가 끊겼거나 많이 밀렸습니다 — 되살리거나, 오래 못 붙일 거면 ./ops/65-pg-standby.sh remove(슬롯까지 지운다)."
+- interval: 1m
+  input_series:
+  - series: pg_standby_configured{slot="standby_oci2"}
+    values: 1x20
+  - series: pg_standby_slot_retained_bytes{slot="standby_oci2"}
+    values: 1073741824x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: PgStandbySlotRetainingWal
+    exp_alerts: []
+
+# 슬롯 유실 — 바로(1분) critical. 0 은 조용
+# [JA] スロットの消失 — すぐに(1 分)critical。0 は静か
+- interval: 1m
+  input_series:
+  - series: pg_standby_slot_lost{slot="standby_oci2"}
+    values: 0 0 0 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: PgStandbySlotLost
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: PgStandbySlotLost
+    exp_alerts:
+    - exp_labels: { slot: standby_oci2, severity: critical }
+      exp_annotations:
+        summary: "스탠바이 슬롯이 버려졌습니다 — 스탠바이를 다시 받아야 합니다"
+        description: "WAL 이 상한을 넘어 슬롯이 lost 가 됐습니다. 스탠바이는 더 따라잡을 수 없고, 지금은 복제본이 없는 상태입니다. ./ops/65-pg-standby.sh remove 뒤 prepare · apply 로 다시 받습니다."

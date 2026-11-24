@@ -150,6 +150,7 @@ kubectl -n ecommerce patch secret ecommerce-secrets --type merge -p \
 > | `70-autoscaling.yaml` | HPA(minReplicas=2)가 되살아나 오버레이의 `replicas: 1` 을 15초 만에 되돌린다 |
 > | `90-dev-infra.yaml` | Postgres·Kafka·Redis·Mongo·Elasticsearch 가 **클러스터 안에** 뜬다. 관리형을 쓰는 배포에서는 순수한 낭비이고, 단일 노드에서는 그것만으로 노드가 마른다 |
 > | `85-backup-cronjobs.yaml` | 백업 CronJob 과 PVC 가 붙는다 |
+> | `91-postgres-standby.yaml` | PostgreSQL 스탠바이가 데이터 노드에 뜨고 primary 에서 통째로 받기 시작한다 — primary 쪽 준비(복제 계정 · 슬롯 · Secret `pg-replication` — 그 파일 머리말 ①) 전이면 받기에서 멈춘다 |
 > | 나머지 base 매니페스트 | 이미지가 **오버레이 이전 값**(`REGISTRY_PLACEHOLDER/...:1.0.0`)으로 돌아간다 — 방금 한 배포가 통째로 무효가 된다 |
 >
 > 게다가 `k8s/kustomization.yaml` 을 리소스로 읽으려다 이런 오류를 냅니다 —

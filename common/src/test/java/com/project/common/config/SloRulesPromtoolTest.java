@@ -73,4 +73,10 @@ class SloRulesPromtoolTest {
     void reliabilityAlertsFireOnlyWhenTheyShould() {
         assertThat(promtool("test", "rules", "/o/tests/reliability-rules.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
     }
+
+    @Test
+    @DisplayName("🔴 promtool test rules — PG 스탠바이(k8s/91 · ops/65): 지표 낡음 · 스트리밍 끊김 · 지연 · 슬롯 WAL 절반 · 슬롯 유실, 슬롯이 없으면 조용")
+    void pgStandbyAlertsFireOnlyWhenTheyShould() {
+        assertThat(promtool("test", "rules", "/o/tests/pg-standby-rules.test.yml")).contains("SUCCESS").doesNotContain("FAILED");
+    }
 }

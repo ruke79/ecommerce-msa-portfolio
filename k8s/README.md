@@ -150,6 +150,7 @@ kubectl -n ecommerce patch secret ecommerce-secrets --type merge -p \
 > | `70-autoscaling.yaml` | HPA（minReplicas=2）が復活し、オーバーレイの `replicas: 1` を 15 秒で戻してしまう |
 > | `90-dev-infra.yaml` | Postgres・Kafka・Redis・Mongo・Elasticsearch が**クラスター内に**起動する。マネージドを使うデプロイでは純粋な無駄であり、シングルノードではそれだけでノードのリソースが枯渇する |
 > | `85-backup-cronjobs.yaml` | バックアップの CronJob と PVC が追加される |
+> | `91-postgres-standby.yaml` | PostgreSQL スタンバイがデータノードに起動し、primary から丸ごと受け取り始める — primary 側の準備(複製アカウント · スロット · Secret `pg-replication` — そのファイルの冒頭 ①)の前なら受け取りで止まる |
 > | 残りの base マニフェスト | イメージが**オーバーレイ以前の値**（`REGISTRY_PLACEHOLDER/...:1.0.0`）に戻る — 直前のデプロイが丸ごと無効になる |
 >
 > さらに `k8s/kustomization.yaml` をリソースとして読もうとして、このようなエラーを出します —
