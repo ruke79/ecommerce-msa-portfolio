@@ -385,7 +385,7 @@ RATE=100 ./ops/53-load-k6.sh browse              # 同じ段 · 同じデータ
 - 増やす前にスケジュール可能なノード(NoSchedule · NoExecute テイント · cordon を除く — データノードは数えない)の割り当て可能 − すでに取られた requests(終わった Pod を除く)に
   増やす Pod の CPU · メモリ requests が入るかを数える。requests は 250m でも実際は 1 コアまで使うので `kubectl top nodes` も出す — ノードがすでに忙しければ増やしても同じコアを分け合う。
 - HPA の最小 · 最大を変える `kubectl patch hpa` · `kubectl scale` は `limits` · `pool` と同じ計測用の例外。次のデモのデプロイ(APPLY_HPA=1)も k8s/70 に戻す。
-- `replicas max <数> [サービス…]` は **HPA の最大だけ**上げる(最小 · 今のレプリカはそのまま) — spike で HPA が追いつくまでのエラーを測るとき(`replicas load` は最小も上げ、先に増えた状態で測る)。
+- `replicas max <数> [サービス…]` は **HPA の最大だけ**上げる(最小 · 今のレプリカはそのまま) — spike で HPA が追いつくまでのエラーを測るとき(`replicas load` は最小 = 最大 = 数に**固定**し、先に増えた状態で測る — 2026-11-24 から減らすときも最大をその数に。以前は大きい最大が残り、計測中に HPA が再び増やした)。
   requests の余裕は最大まで増えたときで数える(そのとき Pending なら HPA ではなくノードを測る)。HPA がない、または最小より小さい最大は拒否、戻すのは `replicas default`。
 
 **実行器の環境変数。** `GATEWAY`(既定 `https://shop.lab`)・`CA_FILE`(デモ CA — 検証を切らずにこれを信頼する、`SSL_CERT_FILE`)・

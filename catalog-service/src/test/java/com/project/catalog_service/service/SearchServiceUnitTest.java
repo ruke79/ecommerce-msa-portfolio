@@ -1,6 +1,7 @@
 package com.project.catalog_service.service;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -152,6 +153,58 @@ class SearchServiceUnitTest {
         assertThatCode(() -> service.searchProducts(params, SearchEngine.ES)).doesNotThrowAnyException();
         verify(es).searchProductIds(org.mockito.ArgumentMatchers.eq("shoes"),
                 org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("🔴 ES 는 격벽 자리 · 트랜잭션(= DB 커넥션) 밖에서 부른다 — 쥔 채 ES 를 기다리면 다른 검색 · home 까지 막힌다")
+    void esIsCalledOutsideBulkheadAndTransaction() {
+        // 🐛 2026-11-24 실습(상품 1,000만): 이름 검색 비율 0.2 를 섞자 첫 계단부터 검색 격벽 거절 561 · 커넥션 대기 26 ·
+        //    게이트웨이 fallback 619(catalog CPU 52%). ES 를 search() 안 — 자리와 커넥션을 쥔 채 — 불렀다.
+        // [JA] ES は隔壁の席 · トランザクションの外で呼ぶ。
+        java.util.concurrent.atomic.AtomicBoolean inTransaction = new java.util.concurrent.atomic.AtomicBoolean();
+        org.springframework.transaction.support.TransactionOperations tx =
+                new org.springframework.transaction.support.TransactionOperations() {
+                    @Override
+                    public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+                        inTransaction.set(true);
+                        try {
+                            return action.doInTransaction(null);
+                        } finally {
+                            inTransaction.set(false);
+                        }
+                    }
+                };
+        // 자리 하나 · 기다림 0 — ES 를 부르는 동안 자리를 쥐고 있으면 그 안에서 다른 검색이 Busy 로 거절된다
+        // [JA] 席一つ · 待ち 0 — ES を呼ぶ間に席を握っていると、その中で別の検索が Busy で拒否される
+        SearchBulkhead bulkhead = new SearchBulkhead(tx, 1, 1, java.time.Duration.ZERO,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        service = new SearchService(categoryRepository, subCategoryRepository,
+                productRepository, productSkuRepository, queryFactory, eventPricing, bulkhead);
+
+        java.util.List<Boolean> txDuringEs = new java.util.ArrayList<>();
+        java.util.List<String> otherSearchDuringEs = new java.util.ArrayList<>();
+        EsProductSearchService es = mock(EsProductSearchService.class);
+        org.mockito.Mockito.when(es.searchProductIds(org.mockito.ArgumentMatchers.eq("sofa"),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(i -> {
+                    txDuringEs.add(inTransaction.get());
+                    try {
+                        otherSearchDuringEs.add(bulkhead.run(false, () -> "자리 있음"));
+                    } catch (SearchBulkhead.Busy busy) {
+                        otherSearchDuringEs.add("Busy");
+                    }
+                    return java.util.List.of(1L, 2L);
+                });
+        service.esProductSearchService = es;
+
+        TestParams params = new TestParams();
+        params.setPage(1);
+        params.setPageSize(10);
+        params.setSearch("sofa");
+        assertThatCode(() -> service.searchProducts(params, SearchEngine.ES)).doesNotThrowAnyException();
+
+        assertThat(txDuringEs).as("ES 를 부르는 동안 트랜잭션(커넥션)이 열려 있으면 안 된다").containsExactly(false);
+        assertThat(otherSearchDuringEs).as("ES 를 부르는 동안 격벽 자리를 쥐고 있으면 안 된다").containsExactly("자리 있음");
     }
 
     @Test

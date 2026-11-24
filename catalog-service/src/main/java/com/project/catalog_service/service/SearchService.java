@@ -130,6 +130,9 @@ public class SearchService {
      * <p>[JA] 企画展割引は SQL が知らないメモリ上のマップなので、展開前のルール({@link EventPricing#rules()} — 商品指定 · カテゴリ指定)を
      * その商品の率を選ぶ CASE として載せる。高い率から見るので重なれば高い方 — {@code EventPricing.refresh} と同じルールだ。
      * サイズ · 色は値ごとに前方一致(大文字小文字無視、文字どおり — {@link #likeLiteral})。
+     *
+     * <p>[JA] 価格 · サイズ · 色の条件 — 合う SKU が一つでもある商品。以前は候補をカテゴリに関係なく全部アプリに読み、合う id を IN で
+     *      送り直していた(100 万商品で catalog がヒープ不足で倒れた)。今は相関サブクエリ(EXISTS)で DB の中で判定する。
      */
     com.querydsl.core.types.Predicate skuFilter(SearchParamsRequest params) {
         if (!hasSkuFilter(params)) {
@@ -303,6 +306,9 @@ public class SearchService {
      *   <li>ブランド · スタイル · 素材 · 性別は LIKE {@code '%^Nike|^Adidas%'} になった — {@code ^} · {@code |} を文字として探すので
      *       <b>画面で選んだフィルターが一度も合わなかった</b>(常に 0 件)</li>
      * </ul>
+     *
+     * <p>[JA] 画面が送る複数選択値({@code ^Red|^Blue})を文字どおりの値リストにする。以前は SQL の正規表現(500 · 高コスト)や
+     * LIKE '%^Nike|^Adidas%'(常に 0 件)になっていた。
      */
     static List<String> filterValues(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -407,23 +413,29 @@ public class SearchService {
      *
      * <p>트랜잭션(= 커넥션)은 여기서 열지 않는다({@code NOT_SUPPORTED}) — 캐시를 본 뒤 {@link SearchBulkhead} 가 자리를 얻고 나서 연다
      * (읽기 전용 · 시간 상한 {@code catalog.search.query-timeout-seconds}). 🐛 2026-10-20 실습: 필터 검색이 커넥션을 1 ~ 4초씩 쥐어 풀이
-     * 늘 차고 home · 상품까지 5xx 였다.
-     *
-     * <p>[JA] {@code sync = true} — 期限切れの瞬間、同じ検索を Pod ごとに一度だけ計算する({@code SingleFlightCache})。🐛 2026-10-19 mixed
-     * {@code 160904Z}(docs/83 §5): 一斉に埋められたキー 48 個が同じ秒に期限切れになると、キーごとに来たリクエストがすべて DB で計算し直し、
-     * 20 秒間接続待ち 22 · サーバー p95 1.5 秒。
-     *
-     * <p>[JA] トランザクション(= 接続)はここでは開かない({@code NOT_SUPPORTED})— キャッシュを見た後 {@link SearchBulkhead} が席を得てから開く
-     * (読み取り専用 · 時間上限 {@code catalog.search.query-timeout-seconds})。🐛 2026-10-20 実習: フィルター検索が接続を 1 ~ 4 秒ずつ握り、
-     * プールが常に埋まって home · 商品まで 5xx だった。
+     * 늘 차고 home · 상품까지 5xx 였다. [JA] トランザクション(接続)はここでは開かない — 隔壁が席を得てから開く。
      */
     @Cacheable(value = "search_cache", cacheManager = "redisCacheManager", sync = true)
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public SearchResultDto searchProducts(SearchParamsRequest params, SearchEngine engine) {
-        return searchBulkhead.run(hasSkuFilter(params), () -> search(params, engine));
+        // ES 관련도 검색(원격 HTTP)은 격벽 자리 · 트랜잭션(= DB 커넥션)을 얻기 **전에** 한다.
+        // 🐛 2026-11-24 실습(상품 1,000만): 예전에는 search() 안 — 자리와 커넥션을 쥔 채 ES 를 기다렸다. 부하 없이는 이름 검색
+        //    23 ~ 47ms 인데, 이름 검색 비율 0.2 를 섞자 첫 계단(초당 100 반복)부터 검색 격벽 거절 561 · 커넥션 대기 26 · 게이트웨이
+        //    fallback 619(catalog CPU 52% — 계산이 아니라 기다림이 자리를 막았다), name_search p99 3.2초. 일반 · 깊은 쪽 검색과
+        //    home · 상품까지 5xx 였다. 원격 호출은 트랜잭션 밖(B-87 과 같은 원칙).
+        // [JA] ES(リモート HTTP)は隔壁の席 · トランザクション(DB 接続)を得る前に呼ぶ — 以前は席と接続を握ったまま ES を待ち、
+        //      名前検索を混ぜると最初の段から他の検索 · ホームまで 5xx だった。
+        List<Long> esIds = hasSearchTerm(params) ? searchIdsViaEs(params.getSearch(), engine) : null;
+        return searchBulkhead.run(hasSkuFilter(params), () -> search(params, esIds));
     }
 
-    private SearchResultDto search(SearchParamsRequest params, SearchEngine engine) {
+    private static boolean hasSearchTerm(SearchParamsRequest params) {
+        return params.getSearch() != null && !params.getSearch().isEmpty();
+    }
+
+    /** @param esIds 이름 검색의 ES 후보 — null 이면 ES 를 쓰지 않음(엔진 POSTGRES · ES 빈 없음 · ES 실패 → LIKE), 빈 목록이면 매칭 없음 */
+    // [JA] @param esIds 名前検索の ES 候補 — null なら ES を使わない(エンジン POSTGRES · ES の Bean なし · ES 失敗 → LIKE)、空のリストなら一致なし
+    private SearchResultDto search(SearchParamsRequest params, List<Long> esIds) {
         // category는 숫자 id 또는 이름(name)일 수 있다. 숫자가 아니면 id로 파싱하지 않고 null 처리
         // (기존 Long.parseLong은 이름 검색 시 NumberFormatException → 500을 유발했다).
         // [JA] category は数値 id か名前(name)でありうる。数値でなければ id として解析せず null とする
@@ -445,7 +457,7 @@ public class SearchService {
         //      SKU 条件は相関サブクエリ(EXISTS)として同じ WHERE に入る。
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
-        BooleanBuilder builder = buildSearchPredicate(params, categoryId, skuFilter, engine);
+        BooleanBuilder builder = buildSearchPredicate(params, categoryId, skuFilter, esIds);
 
         // 상세(스타일 · 소재 · 성별) 필터가 있을 때만 상세 표를 조인한다 — 🐛 예전에는 늘 조인해 상품마다 상세 줄 수만큼 불린 뒤
         // count(distinct) · select distinct 로 다시 접었다(100만 상품의 큰 카테고리에서 개수 세기가 그만큼 무거웠다). 결과는 같다.
@@ -567,7 +579,7 @@ public class SearchService {
     }
 
     private BooleanBuilder buildSearchPredicate(SearchParamsRequest params, Long categoryId, com.querydsl.core.types.Predicate skuFilter,
-            SearchEngine engine) {
+            List<Long> esIds) {
         QProduct product = QProduct.product;
         QProductDetails productDetails = QProductDetails.productDetails;
         BooleanBuilder builder = new BooleanBuilder();
@@ -628,12 +640,11 @@ public class SearchService {
                     .exists());
         }
 
-        // 3. name 조건 — 이 검색의 엔진이 ES 면 관련도 검색으로 후보 id 를 구해 IN 으로 좁힌다 (docs/07 R-C1, docs/74).
-        //    POSTGRES · ES 장애 시에는 기존 LIKE 경로 유지(폴백).
-        // [JA] 3. name 条件 — この検索のエンジンが ES なら関連度検索で候補 id を求めて IN で絞る(docs/07 R-C1、docs/74)。
-        //      POSTGRES・ES 障害時は既存の LIKE 経路を維持(フォールバック)。
-        if (params.getSearch() != null && !params.getSearch().isEmpty()) {
-            List<Long> esIds = searchIdsViaEs(params.getSearch(), engine);
+        // 3. name 조건 — 이 검색의 엔진이 ES 면 관련도 검색으로 구한 후보 id(searchProducts 가 격벽 · 트랜잭션 밖에서 미리 구한다)로
+        //    IN 으로 좁힌다 (docs/07 R-C1, docs/74). POSTGRES · ES 장애 시에는 기존 LIKE 경로 유지(폴백).
+        // [JA] 3. name 条件 — この検索のエンジンが ES なら、関連度検索で求めた候補 id(searchProducts がバルクヘッド · トランザクションの外で先に求める)で
+        // [JA]    IN で絞る(docs/07 R-C1、docs/74)。POSTGRES · ES 障害時は既存の LIKE の経路を保つ(フォールバック)。
+        if (hasSearchTerm(params)) {
             if (esIds == null) {
                 // ES 비활성 또는 실패 → 선행 와일드카드 LIKE. 양쪽을 product.search_key(NFKC + 소문자, V23)로 비교한다 —
                 // 전각 · 반각으로 친 검색어가 원문 그대로 저장된 이름을 찾는다(검색어는 SearchParamsRequest 가 이미 NFKC).

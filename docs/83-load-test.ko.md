@@ -385,7 +385,7 @@ RATE=100 ./ops/53-load-k6.sh browse              # 같은 단계 · 같은 데�
 - 늘리기 전에 스케줄 가능한 노드(NoSchedule · NoExecute 테인트 · cordon 제외 — 데이터 노드는 세지 않는다)의 할당 가능 − 이미 잡힌 요청(끝난 파드 제외)으로
   늘릴 파드의 CPU · 메모리 요청이 들어가는지 센다. 요청은 250m 이지만 실제로는 1 코어까지 쓰니 `kubectl top nodes` 도 함께 보인다 — 노드가 이미 바쁘면 늘려도 같은 코어를 나눠 쓴다.
 - HPA 의 최소 · 최대를 바꾸는 `kubectl patch hpa` · `kubectl scale` 은 `limits` · `pool` 과 같은 측정용 예외다. 다음 데모 배포(APPLY_HPA=1)도 k8s/70 으로 되돌린다.
-- `replicas max <수> [서비스…]` 는 **HPA 최대만** 올린다(최소 · 지금 레플리카 그대로) — spike 에서 HPA 가 따라가는 동안의 오류를 잴 때(`replicas load` 는 최소도 올려 미리 늘어난 채로 잰다).
+- `replicas max <수> [서비스…]` 는 **HPA 최대만** 올린다(최소 · 지금 레플리카 그대로) — spike 에서 HPA 가 따라가는 동안의 오류를 잴 때(`replicas load` 는 최소 = 최대 = 수로 **고정**해 미리 늘어난 채로 잰다 — 2026-11-24 부터 줄일 때도 최대를 그 수로, 예전에는 큰 최대가 남아 측정 중 HPA 가 다시 늘렸다).
   요청 여유는 최대까지 늘었을 때로 센다(그때 Pending 이면 HPA 가 아니라 노드를 잰다). HPA 가 없거나 최소보다 작은 최대는 거절, 되돌리기는 `replicas default`.
 
 **실행기 환경 변수.** `GATEWAY`(기본 `https://shop.lab`) · `CA_FILE`(데모 CA — 검증을 끄지 않고 이것을 믿는다, `SSL_CERT_FILE`) ·

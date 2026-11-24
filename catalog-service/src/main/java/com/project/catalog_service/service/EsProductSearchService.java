@@ -11,9 +11,13 @@ import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.FetchSourceFilter;
 import org.springframework.stereotype.Service;
 
 import com.project.catalog_service.document.ProductDocument;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +49,13 @@ public class EsProductSearchService {
 
     private final ElasticsearchOperations elasticsearchOperations;
 
+    /**
+     * ES 이름 검색 한 번의 시간 — {@code catalog_search_es_seconds}(outcome = success · error). 부하 중 ES 가 느려지는지를 이것으로 본다.
+     * 🐛 2026-11-24: 부하 중 name_search p99 3.2초의 몫을 ES · SQL · 격벽 대기로 나눌 숫자가 없었다.
+     * [JA] ES 名前検索一回の時間 — 負荷中に ES が遅くなるかをこれで見る。
+     */
+    private final MeterRegistry meterRegistry;
+
     @Value("${elasticsearch.alias.name.product:product-alias}")
     private String productAliasName;
 
@@ -56,6 +67,21 @@ public class EsProductSearchService {
      * 失敗時は例外をそのまま投げる — フォールバック(既存の LIKE 経路)の判断は呼び出し元(SearchService)が行う。
      */
     public List<Long> searchProductIds(String term, int limit) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String outcome = "error";
+        try {
+            List<Long> ids = query(term, limit);
+            outcome = "success";
+            return ids;
+        } finally {
+            sample.stop(Timer.builder("catalog.search.es")
+                    .description("ES 이름 검색 한 번(후보 productId) — 격벽 · 트랜잭션 밖")
+                    .tag("outcome", outcome)
+                    .register(meterRegistry));
+        }
+    }
+
+    private List<Long> query(String term, int limit) {
         NativeQuery query = NativeQuery.builder()
                 .withQuery(q -> q.multiMatch(m -> m
                         .query(term)
@@ -63,6 +89,13 @@ public class EsProductSearchService {
                                 "brand", "brand.english", "brand.japanese",
                                 "description", "description.english", "description.japanese")))
                 .withPageable(PageRequest.of(0, limit))
+                // 🐛 2026-11-23 실습(상품 1,000만): 쓰는 것은 productId 하나인데 문서 전체(SKU · 사이즈 · 하위 분류 중첩까지)를
+                //    받아 1,000개를 ProductDocument 로 바꿨다 — ES 는 33ms(750KB)인데 캐시에 없는 이름 검색이 부하 없이 0.5초,
+                //    browse 천장이 첫 계단(p99 422ms)에서 멈췄다. productId 만 받고(113KB), 전체 건수도 세지 않는다(쓰지 않는다).
+                // [JA] 使うのは productId だけなのに文書全体(ネスト含む)を 1,000 件受け取り変換していた — ES は 33ms でも
+                //      キャッシュにない名前検索が無負荷で 0.5 秒。productId だけを受け取り、総件数も数えない。
+                .withSourceFilter(new FetchSourceFilter(true, new String[] { "productId" }, null))
+                .withTrackTotalHits(false)
                 .build();
 
         SearchHits<ProductDocument> hits = elasticsearchOperations.search(

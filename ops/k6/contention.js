@@ -18,7 +18,7 @@ import http from 'k6/http';
 import { sleep, fail } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
-import { GATEWAY, ok, json, authHeaders, loginSessions, refresh, errorThresholds, limitsRaisedOrFail, idempotencyKey,
+import { loginSetupTimeout, GATEWAY, ok, json, authHeaders, loginSessions, refresh, errorThresholds, limitsRaisedOrFail, idempotencyKey,
   FALLBACK_ADDRESS } from './lib.js';
 import { roundWindow, classify } from './contention-plan.js';
 
@@ -51,7 +51,7 @@ for (let r = 0; r < ROUNDS; r++) {
 const SHORT_OK = http.expectedStatuses(200, 400);
 
 export const options = {
-  setupTimeout: `${Math.ceil(USERS * 1.2) + 60}s`,
+  setupTimeout: loginSetupTimeout(USERS),
   scenarios: {
     contention: {
       executor: 'per-vu-iterations',

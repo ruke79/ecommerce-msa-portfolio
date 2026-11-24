@@ -41,6 +41,8 @@ import org.junit.jupiter.params.provider.ValueSource;
  * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
  *
  * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
+ *
+ * <p>[JA] k6 シナリオのアドレスは画面のアドレスと同じ。実行器は本番に掛けず、パスワードをコマンドラインに載せず、本番の流入制限を変えない。
  */
 @DisplayName("ops/53 · ops/k6 — 부하 시나리오와 실행기 (docs/83)")
 class LoadK6ScriptTest {
@@ -130,6 +132,32 @@ class LoadK6ScriptTest {
                 // 계정 하나는 VU 하나 — 리프레시 토큰이 회전한다
                 // [JA] アカウント一つは VU 一つ — リフレッシュトークンがローテーションする
                 .contains("maxVUs: USERS").contains("'Idempotency-Key': idempotencyKey()").contains("paymentMethod: 'cash'");
+    }
+
+    @Test
+    @DisplayName("🔴 로그인하는 시나리오의 setup 상한은 계정마다 간격 1.1초 + 로그인 응답 — 예전 USERS × 1.2 + 60 은 100명에서 180초로 order 천장이 첫 계단 전에 멈췄다(2026-11-23)")
+    void loginSetupTimeoutCoversLoginLatency() throws IOException {
+        String lib = read(repoRoot().resolve("ops/k6/lib.js"));
+        Matcher pace = Pattern.compile("if \\(i >= 9\\) \\{\\s*sleep\\(([0-9.]+)\\)").matcher(lib);
+        assertThat(pace.find()).as("loginSessions 의 간격").isTrue();
+        Matcher per = Pattern.compile("export const LOGIN_SECONDS_PER_USER = ([0-9.]+);").matcher(lib);
+        assertThat(per.find()).as("계정마다의 상한").isTrue();
+        // 간격 + 로그인 응답(실습 실측 약 0.7초 이상) — 간격만큼만 주면 응답 시간이 그대로 넘친다
+        // [JA] 間隔 + ログインの応答(実習の実測で約 0.7 秒以上) — 間隔だけ与えると応答時間の分がそのまま溢れる
+        assertThat(Double.parseDouble(per.group(1))).isGreaterThanOrEqualTo(Double.parseDouble(pace.group(1)) + 1.5);
+        assertThat(lib).contains("Math.ceil(users * LOGIN_SECONDS_PER_USER) + 60");
+        for (String s : k6Files()) {
+            String src = read(repoRoot().resolve("ops/k6/" + s));
+            if (src.contains("loginSessions(")) {
+                assertThat(src).as(s + " — setup 상한은 loginSetupTimeout 으로").contains("setupTimeout: loginSetupTimeout(USERS)");
+            }
+        }
+    }
+
+    private static List<String> k6Files() throws IOException {
+        try (Stream<Path> s = Files.list(repoRoot().resolve("ops/k6"))) {
+            return s.map(p -> p.getFileName().toString()).filter(n -> n.endsWith(".js") && !n.equals("lib.js")).sorted().toList();
+        }
     }
 
     @Test
@@ -600,7 +628,10 @@ class LoadK6ScriptTest {
                   *"s.size_id || '=' || s.quantity"*) printf '11=7\n12=3\n' ;;
                   *"coalesce(sum(qty), 0)"*) printf '%s' "${FAKE_HELD:-0}" ;;
                   *"'size ' || s.size_id"*) printf 'size 11 (S) 수량 20 · 예약 0\n' ;;
+                  *"get configmap ecommerce-config"*"SEARCH_ENGINE"*) printf '%s' "${FAKE_SEARCH_ENGINE:-postgres}" ;;
+                  *"get configmap feature-flags"*) printf '%s' "${FAKE_FLAGS:-}" ;;
                   *"get configmap ecommerce-config"*) printf '%s' "${FAKE_URL-https://shop.lab}" ;;
+                  *"get pods -l app="*"startTime"*) [ -n "${FAKE_POD_START:-}" ] && printf '%s\n' "$FAKE_POD_START" ;;
                   *"get pods -l app=gateway-server"*) printf '%s' "${FAKE_GW_PODS-gw-a
                 gw-b
                 }" ;;
@@ -1194,6 +1225,18 @@ class LoadK6ScriptTest {
         assertThat(read(log)).as("HPA 최대보다 크면 최대도 올린다 · 이름을 준 서비스만")
                 .contains("{\"spec\":{\"minReplicas\":4,\"maxReplicas\":4}}").doesNotContain("gateway-server --replicas");
 
+        // 🐛 2026-11-24 실습: HPA 최소 5 · 최대 5 에서 'load 3' 이 최대 5 를 남겨 측정 중 3 → 5. 줄일 때도 최대 = 수로 고정한다
+        //    (가짜 HPA 는 최소 2 · 최대 3 — 예전 코드는 최대 3 을 그대로 뒀다).
+        // [JA] 🐛 2026-11-24 実習: HPA 最小 5 · 最大 5 で 'load 3' が最大 5 を残し、測定中に 3 → 5。減らすときも最大 = 数に固定する
+        // [JA]    (偽の HPA は最小 2 · 最大 3 — 以前のコードは最大 3 をそのまま残していた)。
+        Files.delete(log);
+        Run down = run(Map.of(), "replicas", "load", "2", "catalog-service");
+        assertThat(down.code()).as(down.out()).isZero();
+        assertThat(read(log)).as("줄여도 최대 = 수 — HPA 가 측정 중 다시 늘리지 못하게")
+                .contains("patch hpa catalog-service --type merge -p {\"spec\":{\"minReplicas\":2,\"maxReplicas\":2}}")
+                .doesNotContain("\"maxReplicas\":3");
+        assertThat(down.out()).contains("(고정)");
+
         Files.delete(log);
         Run tight = run(Map.of("FAKE_CLUSTER", cluster(3700)), "replicas", "load");
         assertThat(tight.code()).as("여유 300m < 500m — 데이터 노드의 16 코어는 세지 않는다").isNotZero();
@@ -1210,6 +1253,49 @@ class LoadK6ScriptTest {
         assertThat(read(log)).as("k8s/70 의 최소 2 · 최대 3 으로")
                 .contains("patch hpa catalog-service --type merge -p {\"spec\":{\"minReplicas\":2,\"maxReplicas\":3}}")
                 .contains("patch hpa gateway-server --type merge -p {\"spec\":{\"minReplicas\":2,\"maxReplicas\":3}}");
+    }
+
+    @Test
+    @DisplayName("🔴 데움 안내 — 가장 늦게 뜬 파드 + catalog 6분(FacetWarmer 첫 회차 뒤) · 다른 서비스 1분의 시각과 남은 시간, 지났으면 바로")
+    void warmNoticeComputesMeasureAfterTime() throws Exception {
+        // 🐛 2026-11-24 실습: "처음 1분 · smoke 한 번 뒤에 잰다" 를 따라 새 catalog 파드가 뜬 지 2분 반 만에 재 계단 100 부터 5xx.
+        // [JA] 温め案内 — 最も遅く起動した Pod + catalog 6 分 · 他 1 分の時刻と残り時間。
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        java.time.Instant started = java.time.Instant.now().minusSeconds(120).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        java.time.format.DateTimeFormatter hms = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss").withZone(java.time.ZoneOffset.UTC);
+
+        Run cat = run(Map.of("FAKE_POD_START", started.toString()), "replicas", "load", "4", "catalog-service");
+        assertThat(cat.code()).as(cat.out()).isZero();
+        assertThat(cat.out()).as("catalog 는 기동 + 6분")
+                .contains("새 파드(catalog-service)는 " + hms.format(started.plusSeconds(360)) + " UTC 이후에 잰다 — 남은 ")
+                .containsPattern("남은 [34]분")
+                .doesNotContain("smoke 한 번 뒤에 잰다");
+
+        Run gw = run(Map.of("FAKE_POD_START", started.minusSeconds(30).toString()), "replicas", "load", "3", "gateway-server");
+        assertThat(gw.code()).as(gw.out()).isZero();
+        assertThat(gw.out()).as("다른 서비스는 1분 — 이미 지났다").contains("이미 데워졌다");
+
+        Run fixed = run(Map.of("FAKE_POD_START", started.toString(), "WARM_SECONDS", "600"), "replicas", "load", "4", "catalog-service");
+        assertThat(fixed.out()).contains(hms.format(started.plusSeconds(600)) + " UTC 이후에 잰다");
+    }
+
+    @Test
+    @DisplayName("🔴 replicas status — 이름을 준 서비스를 보인다(없으면 catalog · 게이트웨이) · 바꾸지 않는다")
+    void replicasStatusShowsNamedServices() throws Exception {
+        // 🐛 2026-11-24 실습: order 천장 전에 cart · coupon · user 의 레플리카를 보려 했는데 이름을 무시하고 기본 둘만 보였다.
+        // [JA] replicas status は名前を渡したサービスを表示する(以前は既定の二つだけ)。
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Path log = tmp.resolve("kubectl.log");
+        Run named = run(Map.of(), "replicas", "status", "order-service", "cart-service");
+        assertThat(named.code()).as(named.out()).isZero();
+        assertThat(named.out()).contains("order-service 레플리카 2").contains("cart-service 레플리카 2")
+                .doesNotContain("catalog-service 레플리카").doesNotContain("gateway-server 레플리카");
+        assertThat(read(log)).doesNotContain("patch").doesNotContain(" scale ");
+
+        Run plain = run(Map.of(), "replicas", "status");
+        assertThat(plain.code()).as(plain.out()).isZero();
+        assertThat(plain.out()).contains("catalog-service 레플리카 2").contains("gateway-server 레플리카 2")
+                .doesNotContain("order-service");
     }
 
     @Test
@@ -1443,6 +1529,55 @@ class LoadK6ScriptTest {
         Run down = run(Map.of("FAKE_SUMMARY", "1", "CEILING_RATES", "50,20"), "ceiling", "browse");
         assertThat(down.code()).isNotZero();
         assertThat(down.out()).contains("커지는 순서");
+    }
+
+    private static String flags(int es) {
+        return "{\"flags\":{\"catalog.search-engine\":{\"state\":\"ENABLED\",\"defaultVariant\":\"postgres\","
+                + "\"targeting\":{\"fractional\":[[\"es\"," + es + "],[\"postgres\"," + (100 - es) + "]]}}}}";
+    }
+
+    @Test
+    @DisplayName("🔴 ceiling browse — 이름 검색이 ES 로 가는데 색인이 비었으면 k6 전에 멈춘다(2026-11-23 실습: 폴백의 지연을 천장으로 쟀다)")
+    void ceilingRefusesWhenNameSearchHitsAnEmptyEsIndex() throws Exception {
+        assumeTrue(posix() && Files.isExecutable(Path.of("/usr/bin/python3")), "bash · python3 가 없다");
+        Map<String, String> es = Map.of("FAKE_SUMMARY", "1", "CEILING_RATES", "10", "PRODUCTS", "10000000",
+                "FAKE_SEARCH_ENGINE", "es", "FAKE_FLAGS", flags(100), "FAKE_ES_COUNT", "0");
+
+        Run empty = run(es, "ceiling", "browse");
+        assertThat(empty.code()).isNotZero();
+        assertThat(empty.out()).contains("product-alias 가 비었다", "PostgreSQL LIKE 로 폴백", "ops/03-enable-es-search.sh", "NAME_SEARCH=0");
+        assertThat(tmp.resolve("k6.calls")).as("k6 전에").doesNotExist();
+        assertThat(run(with(es, "FAKE_ES_READY", ""), "ceiling", "mixed").code()).as("mixed 도 browse 를 부른다").isNotZero();
+        assertThat(tmp.resolve("k6.calls")).doesNotExist();
+        // ops/53 search es — 배포 env 가 ConfigMap 보다 앞서고, 플래그 파일을 비우면 ConfigMap 의 비율(0%)과 무관하게 ES 100%
+        // [JA] ops/53 search es — デプロイの env が ConfigMap より優先し、フラグファイルを空にすると ConfigMap の比率(0%)に関係なく ES 100%
+        Map<String, String> switched = with(with(es, "FAKE_SEARCH_ENGINE", "postgres"), "FAKE_FLAGS", flags(0));
+        assertThat(run(with(switched, "FAKE_POOL", "SEARCH_ENGINE=es\nFEATURE_FLAGS_FILE=\n"), "ceiling", "browse").out())
+                .contains("product-alias 가 비었다");
+
+        Run indexed = run(with(es, "FAKE_ES_COUNT", "10000000"), "ceiling", "browse");
+        assertThat(indexed.code()).as(indexed.out()).isZero();
+        assertThat(indexed.out()).contains("ES 색인 product-alias: 문서 10000000 (이름 검색 비율 0.2)");
+        assertThat(run(with(es, "FAKE_ES_COUNT", "4000000"), "ceiling", "browse").out()).contains("색인 문서 4000000 < PRODUCTS 10000000");
+
+        // 이름 검색이 PostgreSQL 로 가거나 없으면 확인하지 않는다
+        // [JA] 名前検索が PostgreSQL に行くか、なければ確認しない
+        assertThat(run(with(es, "NAME_SEARCH", "0"), "ceiling", "browse").code()).isZero();
+        assertThat(run(with(es, "FAKE_SEARCH_ENGINE", "postgres"), "ceiling", "browse").code()).isZero();
+        assertThat(run(with(es, "FAKE_FLAGS", flags(0)), "ceiling", "browse").code()).isZero();
+        assertThat(run(with(es, "CEILING_ES_CHECK", "0"), "ceiling", "browse").code()).isZero();
+        Map<String, String> noScale = new java.util.HashMap<>(es);
+        noScale.remove("PRODUCTS");
+        assertThat(run(noScale, "ceiling", "browse").code()).as("데이터 규모 모드가 아니면 browse.js 의 이름 검색 기본은 0").isZero();
+        // 플래그를 읽지 못하면 확인하는 쪽으로
+        // [JA] フラグが読めなければ確認する側に
+        assertThat(run(with(es, "FAKE_FLAGS", "not json"), "ceiling", "browse").code()).isNotZero();
+    }
+
+    private static Map<String, String> with(Map<String, String> base, String k, String v) {
+        Map<String, String> m = new java.util.HashMap<>(base);
+        m.put(k, v);
+        return m;
     }
 
     // ── 운영 읽기 천장(docs/91 §4-2) ─────────────────────────────────────────

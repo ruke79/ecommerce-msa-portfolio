@@ -15,7 +15,7 @@ import http from 'k6/http';
 import { sleep, fail } from 'k6';
 import exec from 'k6/execution';
 import { Trend } from 'k6/metrics';
-import { GATEWAY, getWhenReachable, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, loginSessions, refresh, purchasable, categories, pick, rate, stages,
+import { loginSetupTimeout, GATEWAY, getWhenReachable, ok, json, homeOrFail, limitsRaisedOrFail, errorThresholds, authHeaders, loginSessions, refresh, purchasable, categories, pick, rate, stages,
   idempotencyKey, FALLBACK_ADDRESS, get } from './lib.js';
 
 const USERS = Number(__ENV.USERS || 100);
@@ -28,7 +28,7 @@ const KEEP = __ENV.KEEP_ORDERS === '1';
 const purchase = new Trend('purchase_duration', true);
 
 export const options = {
-  setupTimeout: `${Math.ceil(USERS * 1.2) + 60}s`,
+  setupTimeout: loginSetupTimeout(USERS),
   scenarios: {
     order: {
       executor: 'ramping-arrival-rate',

@@ -15,7 +15,7 @@
 import http from 'k6/http';
 import { fail } from 'k6';
 import exec from 'k6/execution';
-import { GATEWAY, ok, authHeaders, login, loginSessions, refresh, errorThresholds, pick, demoEmail } from './lib.js';
+import { loginSetupTimeout, GATEWAY, ok, authHeaders, login, loginSessions, refresh, errorThresholds, pick, demoEmail } from './lib.js';
 import { browse, setup as browseSetup, options as browseOptions, coldProductId, PRODUCTS } from './browse.js';
 import { totalSeconds } from './durations.js';
 
@@ -28,7 +28,7 @@ const BROWSE_NAMES = ['home', 'banners', 'search', 'search_deep', 'name_search',
 const browseScenario = browseOptions.scenarios.browse;
 
 export const options = {
-  setupTimeout: `${Math.ceil(USERS * 1.2) + 60}s`,
+  setupTimeout: loginSetupTimeout(USERS),
   scenarios: {
     browse: Object.assign({}, browseScenario, { exec: 'browse' }),
     reviews: {

@@ -16,6 +16,10 @@
 #   ./ops/44-bulk-catalog.sh status              # 생성 범위에 들어간 상품 수 · 표 크기
 #   ./ops/44-bulk-catalog.sh purge               # 생성 범위만 지우기 → VACUUM ANALYZE → 캐시 비우기
 #   ./ops/44-bulk-catalog.sh flush-cache         # 카탈로그 캐시만 비우기
+#   KEEP_FACETS=1 ./ops/44-bulk-catalog.sh flush-cache
+#                                                  # 필터 메뉴 캐시(FACET_CACHES)는 남기고 상품 · 검색 결과만 — 천장 측정 회차 사이에.
+#                                                  # 🐛 2026-11-24 실습(상품 1,000만): 통째로 비운 뒤 천장을 재니 첫 쪽 검색마다 메뉴를 1.5초
+#                                                  # 기다려 p99 1,518ms · catalog CPU 87% — 운영은 FacetWarmer 가 메뉴를 늘 채워 둔다(그 상태를 잰다)
 #
 #   PRODUCTS=500000 ./ops/44-bulk-catalog.sh load   # 개수 바꾸기(purge 도 같은 값으로)
 #   PRODUCTS=1000 PLACEHOLDER_IMAGE=/logo512.png ./ops/44-bulk-catalog.sh load
@@ -73,8 +77,11 @@ PLACEHOLDER_IMAGE="${PLACEHOLDER_IMAGE:-}"
 # [JA] 商品あたりのテーブル + インデックスのバイト数 — 生成器の MEASURED["bytes_per_product"] と同じ値(ローカル 50 万個の実測)
 BYTES_PER_PRODUCT=2108
 # 카탈로그가 쓰는 캐시 이름(@Cacheable). 키는 "<이름>::<키>" 다.
+# 필터 메뉴(SearchFilterFacets — 카테고리마다, 1,000만 상품에서 계산이 카테고리당 수 분)는 따로 — KEEP_FACETS=1 이면 남긴다.
 # [JA] カタログが使うキャッシュ名(@Cacheable)。キーは "<名前>::<キー>" だ。
-CACHES="products product products_by_category search_cache colors_cache sizes_cache details_cache brands_cache"
+# [JA] フィルターメニュー(SearchFilterFacets — カテゴリごと、1,000 万商品でカテゴリあたり数分の計算)は別 — KEEP_FACETS=1 なら残す。
+FACET_CACHES="colors_cache sizes_cache details_cache brands_cache"
+CACHES="products product products_by_category search_cache $FACET_CACHES"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GEN="$HERE/tools/generate-catalog-data.py"
@@ -175,13 +182,19 @@ check_disk() {
 }
 
 flush_cache() {
-    info "카탈로그 캐시 비우기 ($CACHES)"
+    local caches="$CACHES" c
+    if [ "${KEEP_FACETS:-0}" = "1" ]; then
+        caches=""
+        for c in $CACHES; do case " $FACET_CACHES " in *" $c "*) ;; *) caches="$caches${caches:+ }$c" ;; esac; done
+        info "필터 메뉴 캐시는 남긴다(KEEP_FACETS=1 — $FACET_CACHES)"
+    fi
+    info "카탈로그 캐시 비우기 ($caches)"
     # 비밀번호는 파드 안의 환경 변수(REDIS_PASSWORD)를 그대로 쓴다 — 밖으로 꺼내지 않는다.
     # [JA] パスワードは Pod 内の環境変数(REDIS_PASSWORD)をそのまま使う — 外に出さない。
     kubectl -n "$REDIS_NS" exec "deploy/$REDIS_DEPLOY" -- sh -c '
         export REDISCLI_AUTH="$REDIS_PASSWORD"
         total=0
-        for c in '"$CACHES"'; do
+        for c in '"$caches"'; do
             n=$(redis-cli --scan --pattern "$c::*" | tee /tmp/keys.$$ | wc -l)
             [ "$n" -gt 0 ] && xargs -n 500 redis-cli del < /tmp/keys.$$ >/dev/null
             total=$((total + n))

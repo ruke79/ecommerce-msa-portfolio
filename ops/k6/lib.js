@@ -20,6 +20,7 @@ export const notJson = new Counter('not_json');
 // [JA] 429 以外の失敗を種類別に数える — 🐛 2026-10-18: 要約に http_req_failed の比率だけが残り、cart_add の失敗 464 件・browse の 1.06% が
 //      5xx(サーバー)か 4xx(データ・要求)かタイムアウトか分からなかった。エンドポイント別の値は errorThresholds が要約に残す。
 // [JA] 429 以外の失敗を種類別に数える(5xx · 4xx · 応答なし)。
+// [JA] 429 以外の失敗を種類別に数える(5xx · 4xx · 応答なし)。
 export const errors5xx = new Counter('errors_5xx');
 export const errors4xx = new Counter('errors_4xx');
 export const noResponse = new Counter('errors_no_response');
@@ -110,6 +111,7 @@ export function homeOrFail(res) {
  *      サービスの容量ではなく制限値を測った結果なので、すべて捨てた。smoke は制限を上げる前に回す点検なので飛ばす。
  *      制限そのものを測るには ALLOW_RATE_LIMIT=1。
  * [JA] 開始前に流入制限が上がっているかを確かめる。既定値のまま計測して 429 だけを測った(2026-10-18)。
+ * [JA] 開始前に流入制限が上がっているかを確かめる。既定値のまま計測して 429 だけを測った(2026-10-18)。
  */
 export function limitsRaisedOrFail() {
   // 손님 IP 를 흉내 내면 제한은 손님마다다 — 기본 제한 그대로 재는 것이 목적이라 확인하지 않는다(docs/83 §2.6)
@@ -192,6 +194,17 @@ export function login(email, password) {
     return { error: `${res.status} ${body.code || ''}`.trim() };
   }
   return { access, refresh: cookieValue(res, 'REFRESH'), device: cookieValue(res, 'DEVICE'), at: Date.now() };
+}
+
+/**
+ * loginSessions 를 부르는 setup() 의 시간 상한 — 계정마다 3초 + 60초.
+ * 🐛 2026-11-23 실습: 예전 `USERS × 1.2 + 60`(100명 = 180초)은 간격 1.1초만 셌다 — 로그인 응답 자체(비밀번호 해시 ·
+ * user-service 1 코어)와 429 재시도(2초)가 더해져 order 천장이 첫 계단 전에 `setup() execution timed out after 180 seconds` 로 멈췄다.
+ * [JA] setup() の時間上限 — アカウントごとに 3 秒 + 60 秒。以前の USERS × 1.2 + 60 は間隔 1.1 秒だけを数え、ログイン応答と 429 再試行で 180 秒を超えた。
+ */
+export const LOGIN_SECONDS_PER_USER = 3;
+export function loginSetupTimeout(users) {
+  return `${Math.ceil(users * LOGIN_SECONDS_PER_USER) + 60}s`;
 }
 
 /**

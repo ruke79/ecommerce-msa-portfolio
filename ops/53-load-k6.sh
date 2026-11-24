@@ -47,12 +47,13 @@
 #   ./ops/53-load-k6.sh outbox default         # 되돌린다(10000ms · 100). 다 나간 뒤에 — 흘리는 동안은 측정하지 않는다
 #   ./ops/53-load-k6.sh outbox status          # 지금 값 · 밀린 user-created(STARTED · FAILED) · 지금 속도로 남은 시간
 #
-#   ./ops/53-load-k6.sh replicas load [수 [서비스…]]  # 레플리카를 미리 늘린다(기본 3 · catalog-service gateway-server) — 실습 클러스터만,
-#                                              # HPA 최소값을 함께 올리고, 노드에 CPU · 메모리 요청 여유가 있는지 먼저 센다
+#   ./ops/53-load-k6.sh replicas load [수 [서비스…]]  # 레플리카를 그 수로 고정한다(기본 3 · catalog-service gateway-server) — 실습 클러스터만,
+#                                              # HPA 최소 = 최대 = 수(늘리기 · 줄이기 모두), 노드에 CPU · 메모리 요청 여유가 있는지 먼저 센다
 #   ./ops/53-load-k6.sh replicas default [서비스…]   # 되돌린다(HPA 최소 · 최대는 k8s/70, HPA 없는 서비스는 demo 오버레이 값)
 #   ./ops/53-load-k6.sh replicas max <수> [서비스…]   # HPA 최대만 올린다(최소 · 지금 레플리카 그대로 — 늘리는 것은 HPA) — spike 에서
 #                                              # HPA 가 따라가는 동안을 잴 때. 요청 여유는 최대까지 늘었을 때로 센다. 되돌리기는 replicas default
-#   ./ops/53-load-k6.sh replicas status        # 지금 레플리카 · HPA
+#   ./ops/53-load-k6.sh replicas status [서비스…]    # 지금 레플리카 · 준비 · HPA(기본 catalog-service gateway-server — 2026-11-24 전에는
+#                                              # 이름을 줘도 그 둘만 보였다: order 측정 전에 cart · coupon · user 를 확인할 수 없었다)
 #
 #   ./ops/53-load-k6.sh jvm load [서비스…] [gc=serial|parallel|g1|z|shenandoah] [heap=25~75] [cpu=1|2|1500m …] [gclog=1] [vt=0|1] [pinning=1]
 #                                              # JVM 측정용 설정을 잠깐(docs/92 §4-3 X-2 ~ X-5) — 실습 클러스터만. 기본 서비스 catalog-service
@@ -108,6 +109,8 @@
 #                                  # 이 기준이라 보수적) · order 1000(order-create — order_create 요청만). 5xx 비율은 목표 가용성 99.9% 의 예산
 #   CEILING_TARGET_RPS             # 처리량 목표(요청/초, docs/91 §2-5) — browse · mixed 기본 1000(평시 피크), order 는 없음. 천장과 견준다
 #   CEILING_GC_OVERHEAD=0.10       # 막힌 곳 후보로 적는 GC 부담(jvm_gc_overhead, 0 ~ 1) — 1 코어 파드는 SerialGC(docs/91 §4-3)
+#   CEILING_ES_CHECK=0             # browse · mixed 의 사전 점검을 건너뛴다 — 기본은 이름 검색이 ES 로 가는데(SEARCH_ENGINE=es · 플래그 es > 0)
+#                                  # 색인 product-alias 가 비었으면 k6 전에 멈춘다(그대로 재면 PostgreSQL 폴백의 지연이 천장이 된다)
 #
 # 🔒 데모 계정은 모두 같은 비밀번호다 — 파일에서 읽어 k6 의 환경 변수로만 넘긴다(ps 에 보이는 명령줄 인자가 아니다).
 #    결과 파일에는 비밀번호 · 토큰을 쓰지 않는다.
@@ -151,6 +154,7 @@ esac
 #      APP_PUBLIC_URL が本番アドレスなら拒否する。
 # [JA] 計測の間だけゲートウェイの既定の流入制限を上げる。本番クラスタでは拒否する。ログイン制限は変えられない。
 # [JA] 計測の間だけゲートウェイの既定の流入制限を上げる。本番クラスタでは拒否する。ログイン制限は変えられない。
+# [JA] 計測の間だけゲートウェイの既定の流入制限を上げる。本番クラスタでは拒否する。ログイン制限は変えられない。
 # 실습 클러스터인가 — 측정용 예외(kubectl set env)를 운영에 걸지 않는다. 이 클러스터의 APP_PUBLIC_URL 이 운영 주소거나 비어 있으면 멈춘다.
 lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지> ／ [JA] lab_cluster_or_die <何を変えようとしているか>
     command -v kubectl >/dev/null 2>&1 || die "kubectl 이 필요하다"
@@ -175,6 +179,7 @@ lab_cluster_or_die() {   # lab_cluster_or_die <무엇을 바꾸려는지> ／ [J
 #      書き込みシナリオ(order・mixed・contention)は本番データ(注文・在庫・クーポン)を残すので拒否する。Cloudflare を経由すると
 #      エッジが CF-Connecting-IP を上書きし、一つの IP の流入制限(毎秒 20)しか測れない — クラスター内からゲートウェイへ直接送り、
 #      客の IP の模倣(CLIENT_IPS)でバケットを分ける(本番の制限設定は変えない)。
+# [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
 # [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
 # [JA] 本番は読み取りだけ、クラスター内から、上限付きで。書き込みシナリオは本番データを残すので拒否する。
 cluster_public_url() {   # 지금 kubectl 컨텍스트의 APP_PUBLIC_URL(못 읽으면 빈 값) ／ [JA] 今の kubectl コンテキストの APP_PUBLIC_URL(読めなければ空)
@@ -262,6 +267,7 @@ prod_confirm() {   # 운영이다 — YES=1 이 아니면 묻는다 ／ [JA] 運
 #      そこでゲートウェイ Pod を変えるコマンド(limits load・default、replicas のゲートウェイ)は変える前に Pod ごとにログ全体を残す —
 #      `logs` でいつでも。フォールバックログ(FallbackController: "Fallback triggered. Exception: <クラス>: …")を例外別に数えた要約も一緒に。
 #      ログにトークン・メールはないが(セキュリティ経路のログ規則)、運用者の機械の 0700 フォルダーにだけ置く。
+# [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
 # [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
 # [JA] ゲートウェイの Pod を入れ替える前にログを残す — 以前は limits default のローリングで計測時の Pod とログが消え、503 の内訳を数えられなかった。
 GATEWAY_LOG_DIR="${GATEWAY_LOG_DIR:-$HOME/.ecommerce-msa/gateway-logs}"
@@ -384,6 +390,7 @@ fi
 #      デモ環境のために置いたスイッチ)。user-service が再起動する。本番クラスタでは拒否する。
 # [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
 # [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
+# [JA] 計測の間だけレビューの「受け取った商品のみ」確認を切る。user-service が再起動する。本番クラスタでは拒否する。
 cmd_reviews() {
     lab_cluster_or_die "리뷰 자격"
     case "${2:-status}" in
@@ -420,6 +427,7 @@ fi
 #      競合ではない)。その商品の SKU 一つ・全サイズの数量を <数> に合わせ、元の値を運用者の機械(0700)に残す — stock restore が戻す。
 #      本番クラスタでは拒否する。残数 = 数量 − 生きている予約(docs/59) — 前の回が途中で切れて入金待ちが残っていればその分少ない
 #      (RELEASE_HELD=1 で解く)。
+# [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
 # [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
 # [JA] 競合させる商品の在庫を計測の間だけ合わせる。元の数量を残し stock restore で戻す。本番クラスタでは拒否する。
 PG_NS="${PG_NS:-postgres}"
@@ -523,6 +531,7 @@ fi
 #      本番クラスタでは拒否する。
 # [JA] 計測用に user-service のアウトボックスのポーラー間隔を縮める。バッチは 1000 まで(1 トランザクションでロックしてまとめて ack を待つ — ロック・メモリ・失敗の範囲)。本番クラスタでは拒否する。
 # [JA] 計測用に user-service のアウトボックスのポーラー間隔を縮める。バッチは 1000 まで(1 トランザクションでロックしてまとめて ack を待つ — ロック・メモリ・失敗の範囲)。本番クラスタでは拒否する。
+# [JA] 計測用に user-service のアウトボックスのポーラー間隔を縮める。バッチは 1000 まで(1 トランザクションでロックしてまとめて ack を待つ — ロック・メモリ・失敗の範囲)。本番クラスタでは拒否する。
 OUTBOX_DEFAULT_DELAY_MS=10000   # user-service application-local.yml 의 APP_OUTBOX_FIXED_DELAY_MS 기본값(가드 LoadK6ScriptTest) ／ [JA] user-service application-local.yml の APP_OUTBOX_FIXED_DELAY_MS の既定値(ガード LoadK6ScriptTest)
 OUTBOX_DEFAULT_BATCH=100        # 같은 파일의 APP_OUTBOX_BATCH_SIZE 기본값 ／ [JA] 同じファイルの APP_OUTBOX_BATCH_SIZE の既定値
 outbox_env() {   # outbox_env <이름> → user-service Deployment 에 적힌 값(없으면 빈 값) ／ [JA] outbox_env <名前> → user-service Deployment に書かれた値(なければ空)
@@ -599,6 +608,7 @@ fi
 #      フィルターは常に PostgreSQL である。本番クラスタでは拒否する。
 # [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
 # [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
+# [JA] 計測の間だけ名前検索を ES 100% にする。ConfigMap は触らない。戻すとき FEATURE_FLAGS_FILE は消さずマニフェストの値に戻す。
 ES_NS="${ES_NS:-elasticsearch}"
 FLAGS_FILE_DEFAULT="/app/flags/flags.json"   # k8s/41-catalog-service.yaml 의 FEATURE_FLAGS_FILE(가드 LoadK6ScriptTest) ／ [JA] k8s/41-catalog-service.yaml の FEATURE_FLAGS_FILE(ガード LoadK6ScriptTest)
 es_count() {   # 별칭 product-alias 의 문서 수(없으면 빈 값) — ES 파드 안의 curl(데모는 보안을 끈 단일 노드, k8s/90) ／ [JA] エイリアス product-alias のドキュメント数(なければ空) — ES Pod 内の curl(デモはセキュリティを切った単一ノード、k8s/90)
@@ -611,6 +621,67 @@ except Exception:
 }
 es_ready() {
     kubectl -n "$ES_NS" get deploy elasticsearch -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true
+}
+
+# 🐛 2026-11-23: 실습(상품 1,000만)에서 ceiling browse 가 첫 계단(10)에서 p99 490ms 로 멈췄다 — catalog CPU 20% 인데.
+#    ES 에 색인이 없었다(재색인을 하지 않은 클러스터). 데모는 이름 검색을 ES 100% 로 보내고(SEARCH_ENGINE=es · 플래그),
+#    색인이 없으면 catalog 는 경고 한 줄과 함께 PostgreSQL LIKE 로 폴백한다 — 이름 검색만 p95 1.05초 · p99 2.4초가 되어
+#    전체 p99 를 끌어올렸다. 잰 것은 천장이 아니라 폴백이었다. 이제 이름 검색이 ES 로 가는 구성이면 k6 전에 색인을 본다.
+# [JA] 名前検索が ES に向かう構成なら、k6 の前に索引(product-alias)を確かめる。無ければ PostgreSQL へのフォールバックを測ってしまう。
+name_search_share() {   # browse.js 와 같은 기본값 — NAME_SEARCH, 없으면 데이터 규모 모드(PRODUCTS > 0)에서 0.2, 아니면 0
+    # [JA] browse.js と同じ既定値 — NAME_SEARCH、なければデータ規模モード(PRODUCTS > 0)で 0.2、そうでなければ 0
+    if [ -n "${NAME_SEARCH:-}" ]; then printf '%s' "$NAME_SEARCH"
+    elif [ "${PRODUCTS:-0}" -gt 0 ] 2>/dev/null; then printf '0.2'
+    else printf '0'; fi
+}
+name_search_uses_es() {   # 0 = 이름 검색이 ES 로 간다(또는 모른다 — 보수적으로 확인한다), 1 = PostgreSQL 로 간다고 확실하다
+    # [JA] 0 = 名前検索が ES に行く(または分からない — 保守的に確認する)、1 = PostgreSQL に行くと確実
+    local env engine flags_file flags
+    env="$(kubectl -n "$APP_NS" get deploy catalog-service -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' 2>/dev/null || true)"
+    # 배포 env 가 ConfigMap 보다 앞선다(ops/53 search es 가 거기에 쓴다)
+    # [JA] デプロイの env が ConfigMap より優先する(ops/53 search es がそこに書く)
+    engine="$(sed -n 's/^SEARCH_ENGINE=//p' <<< "$env" | tail -1)"
+    [ -n "$engine" ] || engine="$(kubectl -n "$APP_NS" get configmap ecommerce-config -o jsonpath='{.data.SEARCH_ENGINE}' 2>/dev/null || true)"
+    [ "$engine" = "es" ] || return 1
+    # FEATURE_FLAGS_FILE 을 비우면 코드 기본값 = ES 가 있으면 ES(ops/53 search es)
+    # [JA] FEATURE_FLAGS_FILE を空にするとコードの既定値 = ES があれば ES(ops/53 search es)
+    if grep -qx 'FEATURE_FLAGS_FILE=' <<< "$env"; then return 0; fi
+    flags="$(kubectl -n "$APP_NS" get configmap feature-flags -o jsonpath='{.data.flags\.json}' 2>/dev/null || true)"
+    # es 비율이 0 이라고 읽힐 때만 PostgreSQL — 읽지 못하면 확인하는 쪽으로
+    # [JA] es の比率が 0 と読めたときだけ PostgreSQL — 読めなければ確認する側に
+    python3 -I -c '
+import json, sys
+try:
+    f = json.loads(sys.argv[1])["flags"]["catalog.search-engine"]
+except Exception:
+    sys.exit(0)
+if f.get("state") != "ENABLED":
+    sys.exit(0)
+frac = ((f.get("targeting") or {}).get("fractional"))
+if isinstance(frac, list):
+    es = sum(w for v, w in frac if v == "es")
+else:
+    es = 1 if f.get("defaultVariant") == "es" else 0
+sys.exit(0 if es > 0 else 1)' "$flags"
+}
+ceiling_es_guard() {   # browse · mixed 의 ceiling 전에 — 이름 검색이 ES 로 가는데 색인이 비었으면 멈춘다(CEILING_ES_CHECK=0 이면 건너뜀)
+    # [JA] browse · mixed の ceiling の前に — 名前検索が ES に行くのに索引が空なら止まる(CEILING_ES_CHECK=0 なら飛ばす)
+    [ "${CEILING_ES_CHECK:-1}" = "0" ] && return 0
+    local share count
+    share="$(name_search_share)"
+    python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[1]) > 0 else 1)' "$share" 2>/dev/null || return 0
+    command -v kubectl >/dev/null 2>&1 || { warn "kubectl 이 없다 — ES 색인(product-alias)을 확인하지 못했다(loadgen 이면 호스트에서 ./ops/53-load-k6.sh search status)"; return 0; }
+    name_search_uses_es || return 0
+    count="$(es_count)"
+    if [ -z "$count" ] || [ "$count" = "0" ]; then
+        die "이름 검색(NAME_SEARCH=$share)이 ES 로 가는데 색인 product-alias 가 비었다(문서 ${count:-없음}) — 이대로면 catalog 가 PostgreSQL LIKE 로 폴백해 그 지연을 천장으로 잰다.
+       재색인: ./ops/03-enable-es-search.sh(docs/13 §3) — 끝나면 product-alias/_count 가 상품 수와 같아야 한다.
+       이름 검색 없이 재려면 NAME_SEARCH=0 · 확인을 건너뛰려면 CEILING_ES_CHECK=0"
+    fi
+    if [ "${PRODUCTS:-0}" -gt 0 ] 2>/dev/null && [ "$count" -lt "$PRODUCTS" ] 2>/dev/null; then
+        warn "색인 문서 $count < PRODUCTS $PRODUCTS — 색인 밖 상품은 이름 검색에 나오지 않는다(재색인 뒤 상품을 더 넣었나)"
+    fi
+    info "ES 색인 product-alias: 문서 $count (이름 검색 비율 $share)"
 }
 cmd_search() {
     lab_cluster_or_die "검색 엔진"
@@ -659,12 +730,43 @@ fi
 #      分だけ DB 接続が増えうるので、変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
 # [JA] 計測の間だけ DB コネクションプールを大きくする。変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
 # [JA] 計測の間だけ DB コネクションプールを大きくする。変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
+# [JA] 計測の間だけ DB コネクションプールを大きくする。変える前に max_connections に収まるかを数える。本番クラスタでは拒否する。
 POOL_DEFAULT=5
 pool_now() {   # pool_now <deploy> → 지금 크기(설정 없으면 기본값) ／ [JA] pool_now <deploy> → 今のサイズ(設定がなければ既定値)
     local v
     v="$(kubectl -n "$APP_NS" get deploy "$1" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="DB_POOL_SIZE")].value}' 2>/dev/null)"
     echo "${v:-$POOL_DEFAULT}"
 }
+# warm_notice <서비스…> — 새 파드가 데워질 때까지 기다릴 시각을 계산해 알린다(가장 늦게 뜬 파드 기준).
+# catalog 는 기동 5분 뒤 FacetWarmer 첫 회차(catalog.facets.warm.initial-delay-ms 300000)가 돌고 끝나야 한다 → 6분,
+# 다른 서비스는 JIT · 캐시 1분. 🐛 2026-11-24 실습: 예전 안내 "처음 1분 · smoke 한 번 뒤에 잰다" 를 따라 새 catalog
+# 파드 둘이 뜬 지 2분 반 만에 천장을 재 계단 100 부터 5xx — smoke 의 요청 한두 건으로는 데워지지 않는다.
+# 바꾸기: WARM_SECONDS(모든 서비스에 같은 값).
+# [JA] 新しい Pod が温まるまで待つ時刻を計算して知らせる(catalog は起動 5 分後の FacetWarmer 初回が終わるまで → 6 分、他は 1 分)。
+warm_notice() {
+    local d secs ts t latest=0 latest_svc="" until_s now
+    for d in "$@"; do
+        if [ -n "${WARM_SECONDS:-}" ]; then secs="$WARM_SECONDS"
+        elif [ "$d" = "catalog-service" ]; then secs=360
+        else secs=60; fi
+        while IFS= read -r ts; do
+            [ -n "$ts" ] || continue
+            t="$(date -u -d "$ts" +%s 2>/dev/null)" || continue
+            if [ $(( t + secs )) -gt "$latest" ]; then latest=$(( t + secs )); latest_svc="$d"; fi
+        done < <(kubectl -n "$APP_NS" get pods -l "app=$d" -o jsonpath='{range .items[*]}{.status.startTime}{"\n"}{end}' 2>/dev/null || true)
+    done
+    now="$(date -u +%s)"
+    if [ "$latest" -eq 0 ]; then
+        info "데움: 파드 기동 시각을 읽지 못했다 — 새 파드면 catalog 는 6분(FacetWarmer 첫 회차 뒤), 다른 서비스는 1분 뒤에 잰다"
+    elif [ "$latest" -le "$now" ]; then
+        info "데움: 가장 늦은 파드도 이미 데워졌다($(date -u -d "@$latest" +%H:%M:%S) UTC 지남) — smoke 한 번(경로 확인) 뒤 바로 잴 수 있다"
+    else
+        until_s=$(( latest - now ))
+        info "데움: 새 파드($latest_svc)는 $(date -u -d "@$latest" +%H:%M:%S) UTC 이후에 잰다 — 남은 $(( until_s / 60 ))분 $(( until_s % 60 ))초" \
+             "(catalog 는 기동 5분 뒤 '필터 메뉴 미리 채우기' 줄이 나온 뒤 · smoke 는 경로 확인일 뿐 데우지 않는다)"
+    fi
+}
+
 cmd_pool() {
     lab_cluster_or_die "DB 커넥션 풀"
     local action="${2:-status}" size svc
@@ -713,7 +815,7 @@ cmd_pool() {
     info "$svc DB 커넥션 풀 $now → $size ($PUBLIC_URL) — 파드가 다시 뜬다. 끝나면 ./ops/53-load-k6.sh pool default $svc"
     kubectl -n "$APP_NS" set env "deploy/$svc" DB_POOL_SIZE="$size" >/dev/null
     kubectl -n "$APP_NS" rollout status "deploy/$svc" --timeout=600s
-    info "새 파드는 처음 1분이 데움이다(JIT · 캐시) — smoke 한 번 뒤에 잰다"
+    warm_notice "$svc"
 }
 if [ "$SCENARIO" = "pool" ]; then
     cmd_pool "$@"
@@ -729,6 +831,7 @@ fi
 #      (docs/83 §5)。HPA は増やしはするが(requests 250m の 70%)、新しい Pod の起動・ウォームアップが 100 の段(2 分)より遅い — そこで先に
 #      増やして同じ条件で測る。HPA があれば最小値も一緒に上げる(そのままだと負荷のない間に HPA がまた減らす)。増やす前にスケジュール可能な
 #      ノード(NoSchedule テイント・cordon を除く)の requests の余裕を数える。本番クラスタでは拒否する。
+# [JA] 計測の間だけレプリカを先に増やす。HPA の最小値も上げる。増やす前にノードの requests の余裕を数える。本番クラスタでは拒否する。
 # [JA] 計測の間だけレプリカを先に増やす。HPA の最小値も上げる。増やす前にノードの requests の余裕を数える。本番クラスタでは拒否する。
 # [JA] 計測の間だけレプリカを先に増やす。HPA の最小値も上げる。増やす前にノードの requests の余裕を数える。本番クラスタでは拒否する。
 REPLICA_DEFAULT_SVCS="catalog-service gateway-server"
@@ -755,7 +858,7 @@ cmd_replicas() {
         load)    n="${3:-3}"; shift $(( $# < 3 ? $# : 3 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
         max)     n="${3:-}"; shift $(( $# < 3 ? $# : 3 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
         default) shift $(( $# < 2 ? $# : 2 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
-        status)  svcs="$REPLICA_DEFAULT_SVCS" ;;
+        status)  shift $(( $# < 2 ? $# : 2 )); svcs="${*:-$REPLICA_DEFAULT_SVCS}" ;;
         *) usage ;;
     esac
     for d in $svcs; do
@@ -769,7 +872,7 @@ cmd_replicas() {
     fi
     if [ "$action" = "status" ]; then
         for d in $svcs; do
-            echo "$d 레플리카 $(kubectl -n "$APP_NS" get deploy "$d" -o jsonpath='{.spec.replicas}') · HPA(최소 최대) $(kubectl -n "$APP_NS" get hpa "$d" -o jsonpath='{.spec.minReplicas} {.spec.maxReplicas}' 2>/dev/null || echo 없음)"
+            echo "$d 레플리카 $(kubectl -n "$APP_NS" get deploy "$d" -o jsonpath='{.spec.replicas}') · 준비 $(kubectl -n "$APP_NS" get deploy "$d" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true) · HPA(최소 최대) $(kubectl -n "$APP_NS" get hpa "$d" -o jsonpath='{.spec.minReplicas} {.spec.maxReplicas}' 2>/dev/null || echo 없음)"
         done
         return 0
     fi
@@ -853,16 +956,19 @@ sys.exit(0 if nodes and add_c <= free_c and add_m <= free_m else 3)
         local mm max
         mm="$(kubectl -n "$APP_NS" get hpa "$d" -o jsonpath='{.spec.minReplicas} {.spec.maxReplicas}' 2>/dev/null || true)"
         if [ -n "$mm" ]; then
-            max="${mm#* }"; [ "$n" -gt "$max" ] && max="$n"
-            info "$d HPA 최소 ${mm% *} → $n (최대 $max) · 레플리카 → $n ($PUBLIC_URL) — 끝나면 ./ops/53-load-k6.sh replicas default"
-            kubectl -n "$APP_NS" patch hpa "$d" --type merge -p "{\"spec\":{\"minReplicas\":$n,\"maxReplicas\":$max}}" >/dev/null
+            # 🐛 2026-11-24 실습: 예전에는 최대가 n 보다 크면 그대로 뒀다 — 5 → 'load 3' 이 최소 3 · 최대 5 가 되어 천장 측정의
+            #    첫 계단에서 HPA 가 3 → 5 로 늘렸다(새 파드 둘 · 측정 무효). load 는 '그 수로 고정'(최소 = 최대 = n), HPA 가 따라가는
+            #    동안을 재려면 replicas max. [JA] load は「その数に固定」(最小 = 最大 = n)。
+            info "$d HPA 최소 · 최대 ${mm% *} · ${mm#* } → $n · $n (고정) · 레플리카 → $n ($PUBLIC_URL) — 끝나면 ./ops/53-load-k6.sh replicas default"
+            kubectl -n "$APP_NS" patch hpa "$d" --type merge -p "{\"spec\":{\"minReplicas\":$n,\"maxReplicas\":$n}}" >/dev/null
         else
             info "$d 레플리카 → $n (HPA 없음)"
         fi
         kubectl -n "$APP_NS" scale "deploy/$d" --replicas="$n" >/dev/null
     done
     for d in $svcs; do kubectl -n "$APP_NS" rollout status "deploy/$d" --timeout=600s; done
-    info "새 파드는 처음 1분이 데움이다(JIT · 캐시) — smoke 한 번 뒤에 잰다"
+    # shellcheck disable=SC2086
+    warm_notice $svcs
 }
 if [ "$SCENARIO" = "replicas" ]; then
     cmd_replicas "$@"
@@ -886,6 +992,7 @@ fi
 #      vt=0|1 は仮想スレッドのスイッチ(env VIRTUAL_THREADS_ENABLED — JDK 21 イメージの jdk21-build だけが読む、そのブランチの docs/75 §5;
 #      JDK 17 イメージの Spring は無視する)。pinning=1 は -Djdk.tracePinnedThreads=short — 仮想スレッドがキャリアを掴んだまま
 #      ブロックすると Pod のログにスタックを残す(JDK 21)。
+# [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
 # [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
 # [JA] JVM 計測用の設定(GC · CPU 上限 · ヒープ比率 · GC ログ)を計測の間だけ。元の値は Deployment の注釈に残し、default がそれで戻す。
 JVM_ANNOTATION="ecommerce.io/jvm-measure"
@@ -999,7 +1106,9 @@ cmd_jvm() {
         [ "$gclog" != "1" ] || info "GC 로그: kubectl -n $APP_NS cp <파드>:/var/log/jvm/gc.log ./gc.log (emptyDir — 파드를 지우기 전에)"
         [ -z "$vt" ] || info "가상 스레드 vt=$vt — JDK 21 이미지(jdk21-build)만 읽는다. JDK 17 이미지에서는 아무 일도 없다(이미지 판: ./ops/60-jvm-facts.sh 의 JDK 열)"
         [ "$pinning" != "1" ] || info "pinning 기록: kubectl -n $APP_NS logs <파드> | grep -B2 -A12 'monitors:' (캐리어를 붙잡은 채 막힌 가상 스레드의 스택)"
-        info "JVM 이 정말 그렇게 골랐는지: ./ops/60-jvm-facts.sh $svcs — 새 파드는 처음 1분이 데움이다(JIT · 캐시), smoke 한 번 뒤에 잰다"
+        info "JVM 이 정말 그렇게 골랐는지: ./ops/60-jvm-facts.sh $svcs"
+        # shellcheck disable=SC2086
+        warm_notice $svcs
     fi
 }
 if [ "$SCENARIO" = "jvm" ]; then
@@ -1019,6 +1128,7 @@ fi
 # [JA] ── 結果をまとめて見る ── 回ごとの summary.txt(k6 の画面そのまま — 進行バーまで長い)・meta.txt を別々に開かなくてよいように、
 #      summary.json・meta.txt から記録に使う値だけを抜き出す(docs/83 §5)。エンドポイント別の応答時間は、閾値をかけた名前だけが
 #      summary.json にある(k6 --summary-export)。
+# [JA] 結果をまとめて見る — summary.json と meta.txt から記録に使う値だけを出す。
 # [JA] 結果をまとめて見る — summary.json と meta.txt から記録に使う値だけを出す。
 # [JA] 結果をまとめて見る — summary.json と meta.txt から記録に使う値だけを出す。
 cmd_report() {
@@ -1281,6 +1391,9 @@ cmd_ceiling() {
     local rates="${CEILING_RATES:-10,20,50,100,200,400}" hold="${CEILING_HOLD:-3m}" ramp="${CEILING_RAMP:-30s}"
     local max5xx="${CEILING_MAX_5XX:-0.001}"
     [[ "$rates" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || die "CEILING_RATES 는 쉼표로 나눈 양의 정수(예 10,20,50)"
+    # 운영 묵음을 걸기 전에 — 여기서 멈추면 걸어 둔 묵음이 남는다
+    # [JA] 本番のサイレンスをかける前に — ここで止まるとかけたサイレンスが残る
+    case "$scenario" in browse|mixed) ceiling_es_guard ;; esac
     local prod_url; prod_url="$(cluster_public_url)"
     if is_prod_url "$prod_url" || [ "${PROD_READONLY:-}" = "1" ]; then
         prod_readonly_guard "$scenario" "${rates##*,}"
