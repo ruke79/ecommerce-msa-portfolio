@@ -168,9 +168,11 @@ kubectl -n ecommerce patch secret ecommerce-secrets --type merge -p \
 ```bash
 kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/10-configmap.yaml
-kubectl apply -f k8s/20-secret.yaml
+kubectl apply -f k8s/15-feature-flags.yaml
+kubectl apply -f k8s/20-secret.yaml       # 운영은 암호문 20-secret.enc.yaml 에서 ./ops/62-secrets-sops.sh apply(평문 파일 없이)
 kubectl apply -f k8s/30-eureka-server.yaml
 kubectl apply -f k8s/31-gateway-server.yaml
+kubectl apply -f k8s/32-config-server.yaml
 kubectl apply -f k8s/40-user-service.yaml
 kubectl apply -f k8s/41-catalog-service.yaml
 kubectl apply -f k8s/42-cart-service.yaml
@@ -178,6 +180,9 @@ kubectl apply -f k8s/43-order-service.yaml
 kubectl apply -f k8s/44-pay-service.yaml
 kubectl apply -f k8s/45-coupon-service.yaml
 kubectl apply -f k8s/46-chat-service.yaml
+kubectl apply -f k8s/47-notification-service.yaml
+kubectl apply -f k8s/48-delivery-service.yaml
+kubectl apply -f k8s/49-saga-projection.yaml
 kubectl apply -f k8s/50-frontend.yaml
 kubectl apply -f k8s/60-ingress.yaml
 kubectl apply -f k8s/70-autoscaling.yaml   # HPA + PDB — ⚠️ **노드가 여럿일 때만**
@@ -234,8 +239,10 @@ Cloudflare 터널(`k8s-overlays/prod/cloudflared.yaml`)이 `https://gateway-serv
 ## 향후 개선 방향 (미포함)
 
 - ~~HorizontalPodAutoscaler, PodDisruptionBudget~~ → `70-autoscaling.yaml`로 추가됨.
-  chat-service는 인메모리 STOMP 브로커라 스케일아웃 제외(docs/03 F-7), eureka는 peer-awareness 설정 선행 필요로 제외.
+  eureka 는 peer-awareness 설정 선행 필요로 제외(B-34 — 1개 고정은 이제 eureka 만). 🕰️ chat-service 는 예전에 인메모리 STOMP 브로커라 제외했지만(docs/03 F-7), 2026-11-01 Redis 팬아웃으로 HPA 1 ~ 3 에 들어갔다(docs/21 §2-1 · B-107 · B-111).
 - ~~NetworkPolicy로 네임스페이스 간 트래픽 제한~~ → `95-network-policy.yaml`(들어오는 연결만). kustomization 밖 — `ops/35-network-policy.sh apply` 로 확인하며 적용(docs/57 §11). 나가는 연결 1단계는 `97-network-policy-egress.yaml` — `ops/35-network-policy.sh egress-apply` 로만(노드 IP 를 펼치고 · 백엔드가 클러스터 안인지 보고 · 막히면 되돌린다, docs/57 §23). 2단계(443 만 · 메일 · Atlas · 지표 에이전트 · cloudflared · 백업)도 같은 파일(docs/57 §26). 관리 포트: 자바 파드의 actuator 는 9180(`management`, Service 밖 · 95 가 지표 에이전트에게만 연다, docs/57 §25 · B-119).
 - 인프라(Kafka/Postgres/Redis/Mongo/ES)까지 StatefulSet/Operator로 클러스터 내 편입
 - 게이트웨이 앞단 TLS passthrough Ingress(공인 인증서 사용 시)
-- Secret을 평문 대신 Sealed Secrets / External Secrets Operator로 관리
+- ~~Secret을 평문 대신 Sealed Secrets / External Secrets Operator로 관리~~ → SOPS + age 암호문 `20-secret.enc.yaml` 이 원본(`ops/62-secrets-sops.sh`, docs/57 §24 — 서버 없는 파일 하나를 골랐다).
+- 서비스별 신원 인증서: `96-service-identities.yaml`(cert-manager 의 Certificate — `ops/39-cert-manager.sh apply`, ops/38 로 손 발급도 된다, docs/57 §18).
+- PostgreSQL 이중화: `91-postgres-standby.yaml`(데이터 노드로 스트리밍 복제 · 수동 승격 — `ops/65-pg-standby.sh`, 2026-11-23 운영 적용). CloudNativePG 3노드 완성형은 CRD 가 필요해 `80-postgres-cnpg.yaml.example`(일괄 apply 에서 뺀다).

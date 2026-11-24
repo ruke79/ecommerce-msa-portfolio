@@ -14,14 +14,14 @@ Spring Cloud 기반 마이크로서비스 이커머스입니다. **실제로 운
 | | |
 |---|---|
 | 구성 | Spring Boot 애플리케이션 **13개**(도메인 10 + 게이트웨이·Eureka·Config) + React 18 SPA |
-| 운영 | OCI Ampere(arm64) 단일 노드 k3s · **인바운드 포트 0개**(Cloudflare Tunnel) · 서비스 간 **mTLS**(서비스별 인증서, cert-manager 자동 갱신) |
+| 운영 | k3s 세 노드 — OCI Ampere(arm64 · 서버 · 상태 전부) · 같은 VCN 의 데이터 노드(PostgreSQL 스탠바이) · 집 원격 노드(frontend 만, k3s 내장 WireGuard) · **인바운드 포트 0개**(Cloudflare Tunnel) · 서비스 간 **mTLS**(서비스별 인증서, cert-manager 자동 갱신) |
 | 보안 | 서비스 간 mTLS · 신원 헤더 enforce · **액세스 토큰 즉시 폐기**(로그아웃 · 비밀번호 변경 뒤 바로 401) · 2단계 인증(TOTP · SMS)과 복구 코드 · actuator 는 **관리 포트로 분리** · 나가는 연결 NetworkPolicy · 운영 Secret 은 **SOPS 암호문**으로 저장소에 |
 | 관측 | **SLO 다섯**(가용성 · 지연)과 14일 오류 예산 경보 · 사이트 바깥 탐침 · 추적에서 뽑은 RED 대시보드 · GC · 컨슈머 지연 지표 |
-| 테스트 | 백엔드 **2,892개** · 프론트엔드 **1,107개** · 설정 가드레일 **B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-108 · B-110 ~ B-121**(되돌려서 실패하는지 확인한 회귀 가드) |
+| 테스트 | 백엔드 **2,891개** · 프론트엔드 **1,107개** · 설정 가드레일 **B-1 ~ B-73 · B-75 · B-76 · B-78 · B-80 ~ B-108 · B-110 ~ B-121**(되돌려서 실패하는지 확인한 회귀 가드) |
 | 배포 | GitHub Actions — 커밋 SHA 태그 이미지를 **한 번만** 빌드(amd64·arm64) → 통합·인수 테스트 → **승인** → 운영 노드 러너가 배포, 스모크 실패 시 **자동 롤백** |
 | 결제 | PayPal · Stripe · 포트원 V1/V2 · 무통장입금 · 가상계좌, 부분 환불 |
 | 다국어 | 한국어 · 일본어(화면 문구 1,091곳, 서버 응답 문구 약 290개) |
-| 문서 | 설계·장애 분석 **85편**([docs/](docs/README.ko.md)) · 운영 스크립트 **55개**([ops/](ops/README.ko.md)) |
+| 문서 | 설계·장애 분석 **87편**([docs/](docs/README.ko.md)) · 운영 스크립트 **55개**([ops/](ops/README.ko.md)) |
 
 ---
 
@@ -127,7 +127,7 @@ flowchart TB
   - MySQL Dialect 로 PostgreSQL DDL 을 만들고 있었습니다.
   - 원저자 PC 경로(`file:E:/…`)가 하드코딩돼 있었습니다.
   - 파티션 키 시간대가 `Asia/Seoul` 로 고정돼 있었습니다.
-- **해결:** 전부 고치고 **설정 가드레일 테스트**를 만들었습니다. 지금 B-69 까지 있고, 모두 되돌려서 실패하는지 확인했습니다.
+- **해결:** 전부 고치고 **설정 가드레일 테스트**를 만들었습니다. 지금 B-121 까지 있고, 모두 되돌려서 실패하는지 확인했습니다.
 - **가장 흔한 결함은 "설정된 것처럼 보이는 미설정"이었습니다.**
   - Feign 타임아웃이 Spring Cloud 4 에서 바뀐 접두사 때문에 **적용되지 않아** 기본값(연결 10초 · 읽기 60초)으로 돌고 있었습니다.
   - 경보 수신자가 플레이스홀더라 경보가 어디로도 가지 않았습니다.
@@ -139,8 +139,8 @@ flowchart TB
 - **해결:**
   - 판정을 한 곳에 모으고, "남의 것을 요청하면 거절"을 테스트로 고정했습니다.
   - git 이력에 남은 자격증명은 이력을 지우는 것으로 끝나지 않습니다. **폐기한 뒤 실제로 로그인해서 통하지 않는지** 확인했습니다.
-  - 서비스 간 호출은 **서비스별 인증서(CN = 서비스 이름)** 로 판정합니다. 관찰 모드로 먼저 돌린 뒤 강제 모드로 바꿨습니다. "어느 서비스가 어느 내부 경로를 부를 수 있는가" 를 정한 경로별 허용 목록은 지금 관찰 모드로 위반을 기록하고 있습니다.
-  - NetworkPolicy 는 기본 거부입니다.
+  - 서비스 간 호출은 **서비스별 인증서(CN = 서비스 이름)** 로 판정합니다. 관찰 모드로 먼저 돌린 뒤 강제 모드로 바꿨습니다. "어느 서비스가 어느 내부 경로를 부를 수 있는가" 를 정한 경로별 허용 목록과 신원 헤더도 관찰 모드에서 위반 0 을 확인한 뒤 강제로 올렸습니다(2026-10-26).
+  - NetworkPolicy 는 들어오는 연결 기본 거부, 나가는 연결은 서비스마다 필요한 곳만 엽니다(2026-11-23 운영 적용).
 - → [docs/27](docs/27-security-review.ko.md) · [docs/30](docs/30-git-history-secret-exposure.ko.md) · [docs/54](docs/54-improvements-vs-practice.ko.md)
 
 ### 6. 🚚 테스트한 바이너리와 배포한 바이너리가 달랐다
@@ -198,7 +198,7 @@ flowchart TB
 
 ## 테스트와 품질 장치
 
-- **백엔드 2,892개** — 단위 테스트와 실제 JPA 테스트(H2)입니다. CI 통합 단계에서는 Testcontainers(PostgreSQL · Kafka · Redis 등)와 사가 E2E 가 더 돕니다.
+- **백엔드 2,891개** — 단위 테스트와 실제 JPA 테스트(H2)입니다. CI 통합 단계에서는 Testcontainers(PostgreSQL · Kafka · Redis 등)와 사가 E2E 가 더 돕니다.
 - **프론트엔드 1,107개** — 화면 동작 테스트 외에 코드 구조를 검사하는 가드가 있습니다.
   - 화면에 박힌 문구가 없는지(구문 트리로 찾습니다)
   - import 경로가 webpack 과 jest 에서 같게 풀리는지
@@ -229,10 +229,10 @@ flowchart TB
 
 ## 정직하게 — 아직 부족한 것
 
-- **단일 노드입니다.** 노드 하나가 곧 전체 장애입니다. 비용 때문에 내린 결정입니다([docs/23](docs/23-infrastructure-decision.ko.md)).
-- **백업은 매일 돌지만 PITR 은 아직입니다.** PostgreSQL · MongoDB 백업 CronJob 이 매일, 복원 훈련이 매주 돌고, 노드 밖 사본은 다른 기계가 매일 받아 갑니다(30일). PITR(WAL 아카이빙)과 오브젝트 스토리지 보관은 아직입니다([docs/22 §2](docs/22-alerting-and-backup-automation.ko.md) · [docs/15](docs/15-backup-and-dr.ko.md)).
+- **상태는 아직 노드 한 대에 있습니다.** 컨트롤 플레인 · PostgreSQL primary · Kafka · Redis 가 모두 Ampere 한 대입니다. 2026-11-23 같은 VCN 의 데이터 노드에 PostgreSQL 스탠바이를 붙여 RPO 를 24시간에서 수 초로 줄였지만, 승격은 손으로 합니다. Ampere 가 죽으면 승격할 때까지 쓰기가 멈추고 Kafka · Redis 는 함께 멈춥니다. 집 원격 노드는 frontend 만 받습니다. 비용 때문에 내린 결정입니다([docs/23](docs/23-infrastructure-decision.ko.md) · `k8s/91`).
+- **백업은 매일 돌지만 PITR 은 아직입니다.** PostgreSQL · MongoDB 백업 CronJob 이 매일, 복원 훈련이 매주 돌고, 노드 밖 사본은 다른 기계가 매일 받아 갑니다(30일). 구글 드라이브 주 1회 사본(age 암호화)은 도구만 있고 첫 설정이 남았습니다. PITR(WAL 아카이빙)과 오브젝트 스토리지 보관은 아직입니다([docs/22 §2](docs/22-alerting-and-backup-automation.ko.md) · [docs/15](docs/15-backup-and-dr.ko.md)).
 - **포트원은 결제창까지 가지 못했습니다.** Stripe · PayPal(샌드박스) · 무통장은 운영에서 한 바퀴 확인했습니다. 포트원(KG이니시스 일본결제)은 이니시스 테스트 서버에 연결되지 않아(IP 허용 목록 — 문의 중) 체크아웃에서 숨겨 두었습니다([docs/49 §6](docs/49-payment-providers.ko.md)). 실제 API 응답을 열어 보다 `customData` 가 두 번 감싸이는 결함을 찾아 고쳤습니다. fail closed 라서 매핑이 틀려도 돈이 새지는 않습니다.
-- **나가는 연결 정책(egress)은 운영 적용 전입니다.** 매니페스트 · 적용 스크립트(사전 점검 · 실패 시 되돌림) · 가드는 갖췄지만, kube-router 의 실제 집행을 실습 클러스터에서 확인한 뒤 운영에 올립니다([docs/57 §23 · §26](docs/57-remaining-priorities.ko.md)). 운영 Secret 은 SOPS 암호문이 원본이 됐고(2026-11-19), 분기마다의 보관 키 복구 훈련 · 교체 점검은 이제 시작입니다(§24).
+- **비밀 관리의 운영 절차는 이제 시작입니다.** 운영 Secret 은 SOPS 암호문이 원본이 됐지만(2026-11-19), 분기마다의 보관 키 복구 훈련 · 교체 점검은 아직 한 바퀴도 돌지 않았습니다([docs/57 §24](docs/57-remaining-priorities.ko.md)). 나가는 연결 정책은 2026-11-23 운영에 들어갔고(§23 · §26), 결제 · 메일 · 소셜 로그인의 손 확인이 남았습니다.
 - **SMS 2단계 인증은 켤 수 없습니다.** 코드 · 화면은 있지만 운영 SMS 발송기가 아직 로그만 남기는 구현이라, 공급자를 연결한 뒤부터 씁니다([docs/24 §9 · §10](docs/24-sms-notifications.ko.md)). 그동안은 TOTP 와 복구 코드입니다.
 - **운영 DB 에는 상품이 200만 개(데모 데이터) 있습니다.** 필터 검색의 개수 세기는 없앴지만, 맞는 상품이 아주 드문 조건은 목록이 카테고리를 끝까지 훑어 503 이 납니다([docs/62 §20](docs/62-engineering-casebook.ko.md)).
 - **관측 스택에 남은 것:** 관측 경로의 TLS 신뢰 설정과 추적 샘플링(지금 1.0) 조정입니다.
@@ -244,7 +244,7 @@ flowchart TB
 
 ## 문서 읽는 순서
 
-1. [**docs/62 — 기술 사례집**](docs/62-engineering-casebook.ko.md): 중요한 사례 20개를 문제 · 처리 · 한계 · 개선할 점과 참고한 오라일리 책으로 정리했습니다.
+1. [**docs/62 — 기술 사례집**](docs/62-engineering-casebook.ko.md): 중요한 사례 23개를 문제 · 처리 · 한계 · 개선할 점과 참고한 오라일리 책으로 정리했습니다.
 2. [**docs/00 — 전/후 종합 색인**](docs/00-before-after.ko.md): 발견한 문제와 해결을 한 표로 봅니다.
 3. [**docs/54 — 개선 사항과 실무 기준**](docs/54-improvements-vs-practice.ko.md): 영역별로 무엇이 부족했고 지금은 어떤지, 그리고 교훈 10가지.
 4. 관심 있는 주제 — 결제 [35](docs/35-payment-verification.ko.md)·[49](docs/49-payment-providers.ko.md) ·
@@ -252,7 +252,8 @@ flowchart TB
    보안 [27](docs/27-security-review.ko.md)·[30](docs/30-git-history-secret-exposure.ko.md) ·
    관측 [11](docs/11-observability-and-kafka-reliability.ko.md)·[51](docs/51-logging.ko.md)·[63](docs/63-opentelemetry.ko.md) ·
    부하 측정 [83](docs/83-load-test.ko.md) · 운영 릴리스 [85](docs/85-release-deploy-runbook.ko.md) ·
-   SLO · 용량 [91](docs/91-slo-and-capacity.ko.md) · 보안 남은 일 [57](docs/57-remaining-priorities.ko.md) · 운영 스크립트(상황별) [96](docs/96-ops-scripts-by-scenario.ko.md)
+   SLO · 용량 [91](docs/91-slo-and-capacity.ko.md) · 보안 남은 일 [57](docs/57-remaining-priorities.ko.md) · 운영 스크립트(상황별) [96](docs/96-ops-scripts-by-scenario.ko.md) ·
+   남은 일 총정리 [93](docs/93-remaining-work.ko.md)
 5. 전체 목록 — [docs/README.ko.md](docs/README.ko.md)
 6. **코드를 읽는다면** — 코드 주석은 한국어로 썼고, **모든 한국어 주석 바로 아래에 `[JA]` 로 시작하는
    일본어 번역을 붙였습니다**(Java · JS · 셸 · YAML · Dockerfile 모두). 입구로는 아웃박스와 Kafka 를 건너는 추적(`common/.../outbox/OutboxTraceContext.java`),
@@ -292,7 +293,7 @@ cd frontend && npm ci && npm test && npm start
 | 2025.08 ~ 2025.10 | Elasticsearch 도입, mTLS, 멀티 스테이지 빌드 |
 | 2025.10 ~ 2026.09 | **신뢰성 · 보안 · 운영 · 품질** — 위의 핵심 사례들. 배송 · 알림 · 고객센터 · 재고 예약 · 다국어 · 결제수단 확장, OCI 운영 배포와 CI/CD |
 | 2026.10 | **규모 · 운영** — 실습 클러스터에서 상품 100만 · 1,000만 부하 측정과 게임데이([docs/83](docs/83-load-test.ko.md)), 서비스별 리뷰 수정을 모은 운영 묶음 릴리스([docs/85](docs/85-release-deploy-runbook.ko.md)), 일본어 입력 NFKC · 일본결제, CSP 강제, 스토어 비밀번호 교체 도구(ops/59) |
-| 2026.11 | **SLO · 보안 강화** — SLO 다섯과 오류 예산 · 바깥 탐침([docs/91](docs/91-slo-and-capacity.ko.md)), JVM · GC 측정 시나리오([docs/92](docs/92-jvm-measurement-scenarios.ko.md)), JRE · nginx 보안 수정, 액세스 토큰 즉시 폐기 · 2단계 인증 복구 코드 · SMS 2단계 인증, Kafka 역직렬화 신뢰 패키지 제한, actuator 관리 포트 분리, 나가는 연결 NetworkPolicy, SOPS 암호문 Secret, 코드 주석 일본어 병기 |
+| 2026.11 | **SLO · 보안 강화** — SLO 다섯과 오류 예산 · 바깥 탐침([docs/91](docs/91-slo-and-capacity.ko.md)), JVM · GC 측정 시나리오([docs/92](docs/92-jvm-measurement-scenarios.ko.md)), JRE · nginx 보안 수정, 액세스 토큰 즉시 폐기 · 2단계 인증 복구 코드 · SMS 2단계 인증, Kafka 역직렬화 신뢰 패키지 제한, actuator 관리 포트 분리, 나가는 연결 NetworkPolicy, SOPS 암호문 Secret, 코드 주석 일본어 병기. 하순: PostgreSQL 스탠바이(RPO 수 초) · 집 원격 노드 하이브리드 · 나가는 연결 운영 적용 · 공개 데모 계정([docs/100](docs/100-demo-accounts.ko.md)) · Feign 서킷 브레이커([docs/101](docs/101-feign-circuit-breakers.ko.md)) · 필터 메뉴 미리 채우기 · 운영 읽기 천장 측정([docs/95](docs/95-prod-read-ceiling-hybrid.ko.md)) |
 
 ## ERD
 

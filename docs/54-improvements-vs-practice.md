@@ -2,9 +2,9 @@
 
 **日本語** | [한국어](54-improvements-vs-practice.ko.md)
 
-> 🕰️ **状態（2026-11-14）— 2026-09-25 時点の整理。本文はその時の「最終状態」として残し、その後変わったものだけを下の表に書きました。** 事例ごとの限界と改善点は [docs/62](62-engineering-casebook.md)、残りの作業は [docs/85 §8](85-release-deploy-runbook.md)。
+> 🕰️ **状態（2026-11-24）— 2026-09-25 時点の整理。本文はその時の「最終状態」として残し、その後変わったものだけを下の表に書きました。** 事例ごとの限界と改善点は [docs/62](62-engineering-casebook.md)、残りの作業は [docs/85 §8](85-release-deploy-runbook.md)。
 
-| 2026-09 のこの文書 | 現在（2026-11-14） | どこ |
+| 2026-09 のこの文書 | 現在（2026-11-14 · 最後の 2 行は 2026-11-24） | どこ |
 |---|---|---|
 | §1.3 · §10.2 アカウントロック — DB 列（V4）で 5 回 / 15 分 | 同じ規則を **Redis** で（Lua 1 回 — 試行はパスワード検査の前に数える、キーはメールのハッシュ）。旧列 `lock_expires_at` · `failed_login_attempts` は user V19 で削除（contract リリース、本番適用 2026-11-03） | `LoginAttemptService` · docs/85 §8-2 |
 | §1.8 トラストストアを `JAVA_TOOL_OPTIONS` で | パスだけ `JAVA_TOOL_OPTIONS`、ストアのパスワードは環境変数 `JAVAX_NET_SSL_{TRUST,KEY}_STORE_PASSWORD`（B-83 — JVM がその変数を起動ごとにログへ出していた）、ストアのパスワードも交換済み（2026-10-25） | [docs/57 §16](57-remaining-priorities.md) · `JvmSslPasswordsTest` |
@@ -13,6 +13,8 @@
 | §10.1 バックアップ「環境ごとに人が有効にする」 | 本番は 2026-10-13 に有効化（`postgres-backup` · `restore-drill`）、ノード外の保管は別の機械が取りに来る | [docs/22 §2](22-alerting-and-backup-automation.md) |
 | §10.1 突合バッチ「未着手」 | 最近のものを再送する突合 | [docs/57 §14](57-remaining-priorities.md) |
 | §10.1 スクレイプ `insecure_skip_verify` · サンプリング 1.0 | 本番はクラスター内の `metrics-agent` が CA で検証してノードの Prometheus へ（B-95、ローカルの `prometheus.yml` だけ skip）。サンプリングは下げず **1.0 固定**（B-72）— Collector のテールサンプリング（B-102）が選ぶ | [docs/63 §5](63-opentelemetry.md) |
+| §10.1「単一ノード k3s」 | 3 ノード — Ampere（コントロールプレーン · 状態すべて）· 同じ VCN のデータノードの **PostgreSQL スタンバイ**（ストリーミング複製 · 手動昇格、RPO 24 時間 → 数秒、2026-11-23）· 自宅のリモートノード（frontend だけ、2026-11-23）。Kafka · Redis · コントロールプレーンはまだ 1 台 | `k8s/91` · `ops/65` |
+| §10.1「NetworkPolicy 0 個」 | 受信はデフォルト拒否（k8s/95）· 外向き第 1 · 2 段階（k8s/97 — クラスター内だけ · public は 443 だけ、2026-11-23 本番適用）· actuator は管理ポート 9180（B-119） | [docs/57 §11 · §23 · §25 · §26](57-remaining-priorities.md) |
 
 > 作成日: 2026-09-25 · 基準: この日付のブランチの先端（ユーザー複製 ⑤⑥、2FA のサーバー強制、クーポン発行権限まで反映）。草稿を書きながらコードで新たに見つけた 🔴 2 件（§10.1 の 2FA・クーポン発行）は同日に直し、該当行は §1 に移した。
 > この文書はプロジェクト全体の改善を **最終状態を基準に**まとめ直したものである。途中で直してからまた変わったものは最後の形だけを書き、

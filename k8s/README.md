@@ -168,9 +168,11 @@ kubectl -n ecommerce patch secret ecommerce-secrets --type merge -p \
 ```bash
 kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/10-configmap.yaml
-kubectl apply -f k8s/20-secret.yaml
+kubectl apply -f k8s/15-feature-flags.yaml
+kubectl apply -f k8s/20-secret.yaml       # 運用は暗号文 20-secret.enc.yaml から ./ops/62-secrets-sops.sh apply(平文ファイルなし)
 kubectl apply -f k8s/30-eureka-server.yaml
 kubectl apply -f k8s/31-gateway-server.yaml
+kubectl apply -f k8s/32-config-server.yaml
 kubectl apply -f k8s/40-user-service.yaml
 kubectl apply -f k8s/41-catalog-service.yaml
 kubectl apply -f k8s/42-cart-service.yaml
@@ -178,6 +180,9 @@ kubectl apply -f k8s/43-order-service.yaml
 kubectl apply -f k8s/44-pay-service.yaml
 kubectl apply -f k8s/45-coupon-service.yaml
 kubectl apply -f k8s/46-chat-service.yaml
+kubectl apply -f k8s/47-notification-service.yaml
+kubectl apply -f k8s/48-delivery-service.yaml
+kubectl apply -f k8s/49-saga-projection.yaml
 kubectl apply -f k8s/50-frontend.yaml
 kubectl apply -f k8s/60-ingress.yaml
 kubectl apply -f k8s/70-autoscaling.yaml   # HPA + PDB — ⚠️ **ノードが複数あるときのみ**
@@ -234,8 +239,10 @@ Cloudflare トンネル（`k8s-overlays/prod/cloudflared.yaml`）が `https://ga
 ## 今後の改善方針（未対応）
 
 - ~~HorizontalPodAutoscaler、PodDisruptionBudget~~ → `70-autoscaling.yaml` で追加済み。
-  chat-service はインメモリの STOMP ブローカーなのでスケールアウトから除外（docs/03 F-7）、eureka は peer-awareness の設定が先に必要なため除外。
+  eureka は peer-awareness の設定が先に必要なため除外(B-34 — 1 つ固定はいま eureka だけ)。🕰️ chat-service は以前インメモリの STOMP ブローカーなので除外していたが(docs/03 F-7)、2026-11-01 の Redis ファンアウトで HPA 1 〜 3 に入った(docs/21 §2-1 · B-107 · B-111)。
 - ~~NetworkPolicy による名前空間間のトラフィック制限~~ → `95-network-policy.yaml`（受信接続のみ）。kustomization の外 — `ops/35-network-policy.sh apply` で確認しながら適用（docs/57 §11）。外向き接続の第 1 段階は `97-network-policy-egress.yaml` — `ops/35-network-policy.sh egress-apply` だけで（ノード IP を展開し · バックエンドがクラスタ内か確認し · 塞がれば戻す、docs/57 §23）。第 2 段階（443 だけ · メール · Atlas · 指標エージェント · cloudflared · バックアップ）も同じファイル（docs/57 §26）。管理ポート: Java の Pod の actuator は 9180（`management`、Service の外 · 95 が指標エージェントにだけ開く、docs/57 §25 · B-119）。
 - インフラ（Kafka/Postgres/Redis/Mongo/ES）まで StatefulSet/Operator でクラスター内に取り込む
 - ゲートウェイ前段の TLS passthrough Ingress（公開証明書を使う場合）
-- Secret を平文の代わりに Sealed Secrets / External Secrets Operator で管理
+- ~~Secret を平文の代わりに Sealed Secrets / External Secrets Operator で管理~~ → SOPS + age の暗号文 `20-secret.enc.yaml` が原本(`ops/62-secrets-sops.sh`、docs/57 §24 — サーバーなしのファイル一つを選んだ)。
+- サービスごとの身元証明書: `96-service-identities.yaml`(cert-manager の Certificate — `ops/39-cert-manager.sh apply`、ops/38 で手発行も可、docs/57 §18)。
+- PostgreSQL の冗長化: `91-postgres-standby.yaml`(データノードへのストリーミング複製 · 手動昇格 — `ops/65-pg-standby.sh`、2026-11-23 本番適用)。CloudNativePG 3 ノードの完成形は CRD が要るので `80-postgres-cnpg.yaml.example`(一括 apply から外す)。

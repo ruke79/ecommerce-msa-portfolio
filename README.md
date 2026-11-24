@@ -14,14 +14,14 @@ Spring Cloud ベースのマイクロサービス EC サイトです。**実際�
 | | |
 |---|---|
 | 構成 | Spring Boot アプリ **13 個**（ドメイン 10 + ゲートウェイ・Eureka・Config）+ React 18 SPA |
-| 運用 | OCI Ampere（arm64）単一ノード k3s · **インバウンドポート 0**（Cloudflare Tunnel）· サービス間 **mTLS**（サービスごとの証明書、cert-manager で自動更新） |
+| 運用 | k3s 3 ノード — OCI Ampere（arm64 · サーバー · 状態すべて）· 同じ VCN のデータノード（PostgreSQL スタンバイ）· 自宅のリモートノード（frontend だけ、k3s 内蔵 WireGuard）· **インバウンドポート 0**（Cloudflare Tunnel）· サービス間 **mTLS**（サービスごとの証明書、cert-manager で自動更新） |
 | セキュリティ | サービス間 mTLS · 身元ヘッダー enforce · **アクセストークンの即時失効**（ログアウト · パスワード変更の直後から 401）· 二段階認証（TOTP · SMS）とリカバリーコード · actuator は**管理ポートに分離** · 外向き接続の NetworkPolicy · 本番 Secret は **SOPS の暗号文**でリポジトリに |
 | 可観測性 | **SLO 5 つ**（可用性 · レイテンシ）と 14 日のエラーバジェット警報 · サイト外からの監視 · トレースから作る RED ダッシュボード · GC · コンシューマー遅延の指標 |
-| テスト | バックエンド **2,892 件** · フロントエンド **1,107 件** · 設定ガードレール **B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-108 · B-110 ~ B-121**（元に戻して失敗することを確認した回帰ガード） |
+| テスト | バックエンド **2,891 件** · フロントエンド **1,107 件** · 設定ガードレール **B-1 〜 B-73 · B-75 · B-76 · B-78 · B-80 〜 B-108 · B-110 ~ B-121**（元に戻して失敗することを確認した回帰ガード） |
 | デプロイ | GitHub Actions — コミット SHA タグのイメージを**一度だけ**ビルド（amd64・arm64）→ 統合・受け入れテスト → **承認** → 本番ノードのランナーがデプロイ。スモーク失敗時は**自動ロールバック** |
 | 決済 | PayPal · Stripe · PortOne V1/V2 · 銀行振込 · バーチャル口座、部分返金 |
 | 多言語 | 韓国語 · 日本語（画面の文言 1,091 箇所、サーバー応答の文言 約 290 件） |
-| ドキュメント | 設計・障害分析 **85 本**（[docs/](docs/README.md)）· 運用スクリプト **55 本**（[ops/](ops/README.md)） |
+| ドキュメント | 設計・障害分析 **87 本**（[docs/](docs/README.md)）· 運用スクリプト **55 本**（[ops/](ops/README.md)） |
 
 ---
 
@@ -128,7 +128,7 @@ flowchart TB
   - MySQL Dialect で PostgreSQL の DDL を生成していた。
   - 元の作者の PC のパス（`file:E:/…`）がハードコードされていた。
   - パーティションキーのタイムゾーンが `Asia/Seoul` に固定されていた。
-- **解決:** すべて直し、**設定ガードレールテスト**を作りました。いまは B-69 まであり、どれも元に戻して失敗することを確認しています。
+- **解決:** すべて直し、**設定ガードレールテスト**を作りました。いまは B-121 まであり、どれも元に戻して失敗することを確認しています。
 - **いちばん多かった欠陥は「設定済みに見えて、実は効いていない」ものでした。**
   - Feign のタイムアウトが、Spring Cloud 4 で変わったプレフィックスのせいで**適用されておらず**、デフォルト（接続 10 秒 · 読み取り 60 秒）で動いていた。
   - アラートの受信先がプレースホルダーのままで、アラートがどこにも届いていなかった。
@@ -140,8 +140,8 @@ flowchart TB
 - **解決:**
   - 判定を 1 箇所にまとめ、「他人のものを要求したら拒否」をテストで固定しました。
   - git 履歴の資格情報は、履歴を消しても解決しません。**失効させたうえで、実際にログインして通らないこと**を確かめました。
-  - サービス間の呼び出しは、**サービスごとの証明書（CN = サービス名）**で判定します。観察モードで動かしてから強制モードに切り替えました。「どのサービスがどの内部パスを呼べるか」を決めるパスごとの許可リストは、いまは観察モードで違反を記録しています。
-  - NetworkPolicy はデフォルト拒否です。
+  - サービス間の呼び出しは、**サービスごとの証明書（CN = サービス名）**で判定します。観察モードで動かしてから強制モードに切り替えました。「どのサービスがどの内部パスを呼べるか」を決めるパスごとの許可リストと身元ヘッダーも、観察モードで違反 0 を確かめてから強制にしました（2026-10-26）。
+  - NetworkPolicy は受信をデフォルト拒否、外向きはサービスごとに必要な先だけを開けます（2026-11-23 本番適用）。
 - → [docs/27](docs/27-security-review.md) · [docs/30](docs/30-git-history-secret-exposure.md) · [docs/54](docs/54-improvements-vs-practice.md)
 
 ### 6. 🚚 テストしたバイナリと、デプロイしたバイナリが別物だった
@@ -199,7 +199,7 @@ flowchart TB
 
 ## テストと品質の仕組み
 
-- **バックエンド 2,892 件** — 単体テストと実 JPA テスト（H2）です。CI の統合ステージでは、Testcontainers（PostgreSQL · Kafka · Redis など）と Saga の E2E がさらに走ります。
+- **バックエンド 2,891 件** — 単体テストと実 JPA テスト（H2）です。CI の統合ステージでは、Testcontainers（PostgreSQL · Kafka · Redis など）と Saga の E2E がさらに走ります。
 - **フロントエンド 1,107 件** — 画面の動作テストのほかに、コードの構造を検査するガードがあります。
   - 画面にハードコードされた文言がないか（構文木で探します）
   - import パスが webpack と jest で同じように解決されるか
@@ -230,10 +230,10 @@ flowchart TB
 
 ## 正直に — まだ足りないもの
 
-- **単一ノードです。** ノード 1 台の障害がそのまま全体の障害になります。コストを優先した判断です（[docs/23](docs/23-infrastructure-decision.md)）。
-- **バックアップは毎日回りますが、PITR はまだです。** PostgreSQL · MongoDB のバックアップ CronJob が毎日、復元訓練が毎週回り、ノード外の写しは別の機械が毎日取りに来ます（30 日）。PITR（WAL アーカイブ）とオブジェクトストレージへの保管はまだです（[docs/22 §2](docs/22-alerting-and-backup-automation.md) · [docs/15](docs/15-backup-and-dr.md)）。
+- **状態はまだノード 1 台にあります。** コントロールプレーン · PostgreSQL の primary · Kafka · Redis はすべて Ampere 1 台です。2026-11-23 に同じ VCN のデータノードへ PostgreSQL スタンバイを付けて RPO を 24 時間から数秒にしましたが、昇格は手で行います。Ampere が落ちると昇格まで書き込みが止まり、Kafka · Redis も一緒に止まります。自宅のリモートノードは frontend だけを受けます。コストを優先した判断です（[docs/23](docs/23-infrastructure-decision.md) · `k8s/91`）。
+- **バックアップは毎日回りますが、PITR はまだです。** PostgreSQL · MongoDB のバックアップ CronJob が毎日、復元訓練が毎週回り、ノード外の写しは別の機械が毎日取りに来ます（30 日）。Google ドライブへの週 1 回の写し（age 暗号化）は道具だけあり、初回設定が残っています。PITR（WAL アーカイブ）とオブジェクトストレージへの保管はまだです（[docs/22 §2](docs/22-alerting-and-backup-automation.md) · [docs/15](docs/15-backup-and-dr.md)）。
 - **PortOne は決済画面まで届いていません。** Stripe · PayPal（サンドボックス）· 銀行振込は本番で一通り確認しました。PortOne（KG イニシス日本決済）はイニシスのテストサーバーにつながらず（IP 許可リスト — 問い合わせ中）、チェックアウトで隠しています（[docs/49 §6](docs/49-payment-providers.md)）。実際の API 応答を開いて、`customData` が二重に包まれる欠陥を見つけて直しました。fail closed なので、対応が間違っていてもお金が漏れることはありません。
-- **外向き接続のポリシー（egress）は本番適用前です。** マニフェスト · 適用スクリプト（事前点検 · 失敗時の巻き戻し）· ガードは揃えましたが、kube-router の実際の適用を実習クラスタで確かめてから本番に上げます（[docs/57 §23 · §26](docs/57-remaining-priorities.md)）。本番 Secret は SOPS の暗号文が原本になり（2026-11-19）、四半期ごとの保管鍵の復旧訓練 · 交換点検はこれからです（§24）。
+- **秘密管理の運用手順はこれからです。** 本番 Secret は SOPS の暗号文が原本になりましたが（2026-11-19）、四半期ごとの保管鍵の復旧訓練 · 交換点検はまだ一周もしていません（[docs/57 §24](docs/57-remaining-priorities.md)）。外向き接続のポリシーは 2026-11-23 に本番に入り（§23 · §26）、決済 · メール · ソーシャルログインの手での確認が残っています。
 - **SMS の二段階認証はまだ有効にできません。** コード · 画面はありますが、本番の SMS 送信がまだログに残すだけの実装なので、事業者を接続してから使います（[docs/24 §9 · §10](docs/24-sms-notifications.md)）。それまでは TOTP とリカバリーコードです。
 - **本番 DB には商品が 200 万件（デモデータ）あります。** フィルター検索の件数はなくしましたが、合う商品がごく少ない条件は一覧がカテゴリを最後まで走査して 503 になります（[docs/62 §20](docs/62-engineering-casebook.md)）。
 - **可観測性で残っているもの:** 観測経路の TLS 信頼設定と、トレースのサンプリング率（今は 1.0）の調整です。
@@ -245,7 +245,7 @@ flowchart TB
 
 ## ドキュメントの読み方
 
-1. [**docs/62 — 技術事例集**](docs/62-engineering-casebook.md): 重要な事例 20 件を、問題 · 対応 · 限界 · 改善点と、参考にしたオライリーの本でまとめました。
+1. [**docs/62 — 技術事例集**](docs/62-engineering-casebook.md): 重要な事例 23 件を、問題 · 対応 · 限界 · 改善点と、参考にしたオライリーの本でまとめました。
 2. [**docs/00 — 前後の総合索引**](docs/00-before-after.md): 見つけた問題と解決を 1 つの表で見られます。
 3. [**docs/54 — 改善点と実務の基準**](docs/54-improvements-vs-practice.md): 領域ごとに何が足りず、いまどうなっているか。それと教訓 10 項目。
 4. 関心のあるテーマ — 決済 [35](docs/35-payment-verification.md)・[49](docs/49-payment-providers.md) ·
@@ -253,7 +253,8 @@ flowchart TB
    セキュリティ [27](docs/27-security-review.md)・[30](docs/30-git-history-secret-exposure.md) ·
    可観測性 [11](docs/11-observability-and-kafka-reliability.md)・[51](docs/51-logging.md)・[63](docs/63-opentelemetry.md) ·
    負荷測定 [83](docs/83-load-test.md) · 本番リリース [85](docs/85-release-deploy-runbook.md) ·
-   SLO · 容量 [91](docs/91-slo-and-capacity.md) · セキュリティの残り [57](docs/57-remaining-priorities.md) · 運用スクリプト（状況別）[96](docs/96-ops-scripts-by-scenario.md)
+   SLO · 容量 [91](docs/91-slo-and-capacity.md) · セキュリティの残り [57](docs/57-remaining-priorities.md) · 運用スクリプト（状況別）[96](docs/96-ops-scripts-by-scenario.md) ·
+   残りの作業の総まとめ [93](docs/93-remaining-work.md)
 5. 全体の一覧 — [docs/README.md](docs/README.md)
 6. **コードを読むなら** — コードのコメントは韓国語で書かれていますが、**すべての韓国語コメントの直後に
    `[JA]` で始まる日本語訳を付けています**（Java · JS · シェル · YAML · Dockerfile すべて）。入口としては、アウトボックスと Kafka 越しのトレース
@@ -293,7 +294,7 @@ cd frontend && npm ci && npm test && npm start
 | 2025.08 〜 2025.10 | Elasticsearch の導入、mTLS、マルチステージビルド |
 | 2025.10 〜 2026.09 | **信頼性 · セキュリティ · 運用 · 品質** — 上の主な事例。配送 · 通知 · カスタマーサポート · 在庫予約 · 多言語 · 決済手段の拡張、OCI への本番デプロイと CI/CD |
 | 2026.10 | **規模 · 運用** — 実習クラスタで商品 100 万 · 1,000 万の負荷測定とゲームデイ（[docs/83](docs/83-load-test.md)）、サービスごとのレビュー修正をまとめた本番の一括リリース（[docs/85](docs/85-release-deploy-runbook.md)）、日本語入力の NFKC · 日本決済、CSP の強制、ストアのパスワード交換ツール（ops/59） |
-| 2026.11 | **SLO · セキュリティ強化** — SLO 5 つとエラーバジェット · 外部監視（[docs/91](docs/91-slo-and-capacity.md)）、JVM · GC の測定シナリオ（[docs/92](docs/92-jvm-measurement-scenarios.md)）、JRE · nginx のセキュリティ修正、アクセストークンの即時失効 · 二段階認証のリカバリーコード · SMS 二段階認証、Kafka デシリアライズの信頼パッケージ制限、actuator の管理ポート分離、外向き接続の NetworkPolicy、SOPS 暗号文の Secret、コードコメントの日本語併記 |
+| 2026.11 | **SLO · セキュリティ強化** — SLO 5 つとエラーバジェット · 外部監視（[docs/91](docs/91-slo-and-capacity.md)）、JVM · GC の測定シナリオ（[docs/92](docs/92-jvm-measurement-scenarios.md)）、JRE · nginx のセキュリティ修正、アクセストークンの即時失効 · 二段階認証のリカバリーコード · SMS 二段階認証、Kafka デシリアライズの信頼パッケージ制限、actuator の管理ポート分離、外向き接続の NetworkPolicy、SOPS 暗号文の Secret、コードコメントの日本語併記。下旬: PostgreSQL スタンバイ（RPO 数秒）· 自宅リモートノードのハイブリッド · 外向き接続の本番適用 · 公開デモアカウント（[docs/100](docs/100-demo-accounts.md)）· Feign サーキットブレーカー（[docs/101](docs/101-feign-circuit-breakers.md)）· フィルターメニューの事前計算 · 本番の読み取り天井の測定（[docs/95](docs/95-prod-read-ceiling-hybrid.md)）|
 
 ## ERD
 

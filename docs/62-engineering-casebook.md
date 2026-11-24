@@ -646,7 +646,7 @@
 
 **問題**
 - `ops/32-db-migration.sh` は Flyway の履歴を `select … from flyway_schema_history` で読んでいました — スキーマを書かず `search_path` に任せていたのです。クエリは Pod の中で **postgres スーパーユーザー**として走るので `search_path` は `"$user", public`、`postgres` スキーマは無いため常に **public** を読んでいました。
-- catalog は 2026-10-21 から `spring.flyway.default-schema: product` です(空の DB の二回目の起動が V1 からすべて再実行していた事故のため — [docs/83 §2.8](83-demo-load-test.md))。したがって本当の履歴は `product` にあり、`public` にはそれ以前の古い記録(V5)が残っています。
+- catalog は 2026-10-21 から `spring.flyway.default-schema: product` です(空の DB の二回目の起動が V1 からすべて再実行していた事故のため — [docs/83 §2.8](83-load-test.md))。したがって本当の履歴は `product` にあり、`public` にはそれ以前の古い記録(V5)が残っています。
 - 結果: 本番で `./ops/32 summary` が catalog を**「適用 5 · リポジトリ 24 · 待ち 19 件」**、`pending` が**「V6 から全部適用される」**と言いました。デプロイ前に「このデプロイが DB を何に変えるか」を問う場所が嘘をついたのです — 無い危険を見てデプロイを止めるか、古い記録のチェックサムで `drift` が見当違いのファイルを指します。`repair` はもっと悪く、修飾しない `DELETE` は**別のスキーマの行**を消します。
 - 同じ日に同じ種類をもう一度踏みました。`ops/62-secrets-sops.sh` を `/tmp` にコピーして回すと `cd "$(dirname "$0")/.."` がルートを `/` と決め、`.sops.yaml` を `/` に書き(`sudo` だったので成功しました)、リポジトリには何も生まれませんでした。平文 · 例のファイルもすべて `/` で探し「平文が無い」と言いました。
 

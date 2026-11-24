@@ -646,7 +646,7 @@
 
 **문제**
 - `ops/32-db-migration.sh` 는 Flyway 이력을 `select … from flyway_schema_history` 로 읽었습니다 — 스키마를 적지 않고 `search_path` 에 맡긴 것입니다. 쿼리는 파드 안에서 **postgres 수퍼유저**로 도니 `search_path` 는 `"$user", public` 이고, `postgres` 스키마는 없으므로 늘 **public** 을 읽었습니다.
-- catalog 는 2026-10-21 부터 `spring.flyway.default-schema: product` 입니다(빈 DB 의 두 번째 기동이 V1 부터 다시 돌던 사고 때문 — [docs/83 §2.8](83-demo-load-test.ko.md)). 그래서 진짜 이력은 `product` 에 있고, `public` 에는 그 전의 옛 기록(V5)이 남아 있습니다.
+- catalog 는 2026-10-21 부터 `spring.flyway.default-schema: product` 입니다(빈 DB 의 두 번째 기동이 V1 부터 다시 돌던 사고 때문 — [docs/83 §2.8](83-load-test.ko.md)). 그래서 진짜 이력은 `product` 에 있고, `public` 에는 그 전의 옛 기록(V5)이 남아 있습니다.
 - 결과: 운영에서 `./ops/32 summary` 가 catalog 를 **"적용 5 · 저장소 24 · 대기 19건"** 으로, `pending` 이 **"V6 부터 전부 적용된다"** 로 말했습니다. 배포 전에 "이 배포가 DB 를 무엇으로 바꾸나" 를 묻는 자리가 거짓을 말한 것입니다 — 없는 위험을 보고 배포를 멈추거나, 옛 기록의 체크섬으로 `drift` 가 엉뚱한 파일을 가리킵니다. `repair` 는 더 나쁩니다: 한정하지 않은 `DELETE` 는 **다른 스키마의 행**을 지웁니다.
 - 같은 날 같은 종류를 한 번 더 겪었습니다. `ops/62-secrets-sops.sh` 를 `/tmp` 에 사본으로 꺼내 돌리자 `cd "$(dirname "$0")/.."` 가 루트를 `/` 로 잡아 `.sops.yaml` 을 `/` 에 썼고(`sudo` 였기에 성공했습니다), 저장소에는 아무것도 생기지 않았습니다. 평문 · 예시 파일도 모두 `/` 에서 찾아 "평문이 없다" 고 했습니다.
 
